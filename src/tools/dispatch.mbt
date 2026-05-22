@@ -689,8 +689,10 @@ fn notify_parent_from_audit_on_file_pr_worker(
     Some(reg) =>
       try {
         let agent = reg.get(caller_id)
+        let slug = @phase.extract_slug(caller_id)
+        let prefix = audit_on_file_pr_internal_caller_id + "-"
         agent.role == @types.Role::Worker &&
-        agent.parent == Some(audit_on_file_pr_internal_caller_id) &&
+        slug.has_prefix(prefix) &&
         agent.state == @types.AgentState::Active &&
         reg.is_alive(caller_id).unwrap_or(false)
       } catch {

@@ -1557,6 +1557,7 @@ fn audit_on_file_pr_worker_args(
   branch : String,
   head_sha : String,
   now_ms : Int64,
+  caller_id : String,
   prior_sha? : String? = None,
 ) -> WorkerSpawnArgs {
   let task = build_audit_on_file_pr_task(
@@ -1588,7 +1589,7 @@ fn audit_on_file_pr_worker_args(
       project_dir~,
     ),
     task_contract: { ..@types.TaskContract::empty(), goal: task },
-    caller_id: audit_on_file_pr_internal_caller_id,
+    caller_id,
     slug: audit_on_file_pr_worker_slug(head_sha, now_ms),
     agent_type: @types.AgentType::Codex,
   }
@@ -2449,6 +2450,7 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
         branch,
         head_sha,
         now_ms_fn(),
+        tracked_agent_id,
         prior_sha~,
       )
       match spawn_audit_worker(worker_args) {

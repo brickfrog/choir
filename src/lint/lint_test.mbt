@@ -89,6 +89,141 @@ test "flags exec capture through function alias" {
 }
 
 ///|
+test "flags one-hop helper call that reaches forbidden exec capture" {
+  let source =
+    #|fn helper_with_capture() {
+    #|  ignore(@exec.capture_stdout_with_cwd("gh", ["pr", "list"], None))
+    #|}
+    #|test "bad" {
+    #|  ignore(helper_with_capture())
+    #|}
+  match lint_source("src/bin/choir/uds_server.mbt", source) {
+    Ok(findings) => {
+      assert_eq(findings.length(), 1)
+      assert_eq(findings[0].rule_id, "test-exec-capture")
+      assert_true(findings[0].message.contains("declared at"))
+    }
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
+test "flags two-hop helper call that reaches forbidden exec capture" {
+  let source =
+    #|fn helper_with_capture() {
+    #|  ignore(@exec.capture_stdout_with_cwd("gh", ["pr", "list"], None))
+    #|}
+    #|fn helper_hop() {
+    #|  helper_with_capture()
+    #|}
+    #|test "bad" {
+    #|  ignore(helper_hop())
+    #|}
+  match lint_source("src/bin/choir/uds_server.mbt", source) {
+    Ok(findings) => {
+      assert_eq(findings.length(), 1)
+      assert_eq(findings[0].rule_id, "test-exec-capture")
+      assert_true(findings[0].message.contains("declared at"))
+    }
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
+test "does not flag helper that only parameterizes the capture function" {
+  let source =
+    #|fn capture(_ : String) -> Unit {
+    #|  ignore(@exec.replace_self("bin", 0))
+    #|}
+    #|fn helper_with_capture(
+    #|  capture : (String) -> Unit,
+    #|) {
+    #|  ignore(capture("safe"))
+    #|}
+    #|test "ok" {
+    #|  ignore(helper_with_capture(capture))
+    #|}
+  match lint_source("src/tools/file_pr.mbt", source) {
+    Ok(findings) => assert_eq(findings.length(), 0)
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
+test "does not flag helper calls shadowed by local and lambda bindings" {
+  let source =
+    #|fn helper_with_capture() {
+    #|  ignore(@exec.capture_stdout_with_cwd("gh", ["pr", "list"], None))
+    #|}
+    #|fn helper_calls_shadowed_locals() {
+    #|  let helper_with_capture = fn() { () }
+    #|  helper_with_capture()
+    #|  let call_local = fn(helper_with_capture : () -> Unit) {
+    #|    helper_with_capture()
+    #|  }
+    #|  call_local(fn() { () })
+    #|}
+    #|test "ok" {
+    #|  helper_calls_shadowed_locals()
+    #|}
+  match lint_source("src/bin/choir/uds_server.mbt", source) {
+    Ok(findings) => assert_eq(findings.length(), 0)
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
+test "does not flag non-dangerous helper chains" {
+  let source =
+    #|fn safe_helper() {
+    #|  ignore(@sys.shell_quote("status"))
+    #|}
+    #|test "ok" {
+    #|  ignore(safe_helper())
+    #|}
+  match lint_source("src/bin/choir/uds_server.mbt", source) {
+    Ok(findings) => assert_eq(findings.length(), 0)
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
+test "does not emit helper-chain findings from helper bodies" {
+  let source =
+    #|fn helper_with_capture() {
+    #|  ignore(@exec.capture_stdout_with_cwd("gh", ["pr", "list"], None))
+    #|}
+    #|fn helper_wrapper() {
+    #|  helper_with_capture()
+    #|}
+  match lint_source("src/example/helper_test.mbt", source) {
+    Ok(findings) =>
+      assert_false(
+        findings.any(fn(f) { f.message.contains("test calls helper") }),
+      )
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
+test "allows helper-chain calls in explicit real exec integration tests" {
+  let source =
+    #|fn helper_with_capture() {
+    #|  ignore(capture_command_merged({ program: "echo", args: ["ok"], workdir: None }))
+    #|}
+    #|async test "real exec integration: helper chain may use real exec" {
+    #|  helper_with_capture()
+    #|}
+  match lint_source("src/exec/exec_test.mbt", source) {
+    Ok(findings) =>
+      assert_false(
+        findings.any(fn(f) { f.message.contains("test calls helper") }),
+      )
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
 test "flags direct exec capture of gh and zellij helpers" {
   let source =
     #|async test "bad" {

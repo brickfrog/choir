@@ -167,7 +167,7 @@ test "audit progress treats failure reports as unknown findings without receipt"
 }
 
 ///|
-async test "audit progress capture maps audit worker reports to tracked leaf by head sha" {
+async test "audit progress capture maps audit worker reports to tracked leaf via spawn parent" {
   let config = @types.Config::default()
   let state = ServerState::new(config, make_hermetic_recovery_provider())
   let leaf_id = "main.tracked-leaf"
@@ -175,14 +175,20 @@ async test "audit progress capture maps audit worker reports to tracked leaf by 
   state.poller.track(
     77, leaf_id, leaf_id, "main", "https://example.test/pr/77", 0L,
   )
-  match state.poller.get(77) {
-    Some(tracked) =>
-      state.poller.tracked.set(77, {
-        ..tracked,
-        last_sha: "abcdef1234567890abcdef1234567890abcdef12",
-      })
-    None => fail("expected tracked PR")
-  }
+  ignore(
+    state.register_agent({
+      agent_id: @types.AgentId(worker_id),
+      role: @types.Role::Worker,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(leaf_id),
+      workspace: state.config.project_dir,
+      branch: worker_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
   state.capture_audit_on_file_pr_report(worker_id, {
     message: "Finding 1: still broken",
     status: @types.Status::Success,

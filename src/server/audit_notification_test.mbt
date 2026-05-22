@@ -43,6 +43,7 @@ fn audit_notification_seed_leaf(
   pr_number? : Int = 24,
   branch? : String = "feature/audit",
   sha? : String = "abcdef1234567890abcdef1234567890abcdef12",
+  seed_last_sha? : Bool = true,
 ) -> Unit {
   ignore(
     state.registry.upsert(
@@ -73,7 +74,10 @@ fn audit_notification_seed_leaf(
     10L,
   )
   match state.poller.get(pr_number) {
-    Some(tracked) => state.poller.restore({ ..tracked, last_sha: sha })
+    Some(tracked) =>
+      if seed_last_sha {
+        state.poller.restore({ ..tracked, last_sha: sha })
+      }
     None => ()
   }
 }
@@ -116,7 +120,7 @@ test "audit_digest_body formats normal cycle body with verbatim findings" {
     {
       leaf_agent_id: "main.leaf",
       parent_id: "main.tl",
-      pr_number: 24,
+      pr_number: Some(24),
       branch: "feature/audit",
       receipt_path: ".choir/audit-receipts/abcdef123456.json",
       cycle: 2,
@@ -136,7 +140,7 @@ test "TL exhaustion notification uses [AUDIT LOOP EXHAUSTED] per spec L18" {
     {
       leaf_agent_id: "main.leaf",
       parent_id: "main.tl",
-      pr_number: 24,
+      pr_number: Some(24),
       branch: "feature/audit",
       receipt_path: ".choir/audit-receipts/abcdef123456.json",
       cycle: 3,
@@ -159,7 +163,7 @@ test "PR comment exhaustion uses [AUDIT cycle N — LOOP EXHAUSTED] per spec L21
     {
       leaf_agent_id: "main.leaf",
       parent_id: "main.tl",
-      pr_number: 24,
+      pr_number: Some(24),
       branch: "feature/audit",
       receipt_path: ".choir/audit-receipts/abcdef123456.json",
       cycle: 3,
@@ -309,11 +313,8 @@ test "audit digest context resolves production worker id through tracked head sh
   let state = audit_notification_state()
   let leaf_id = "main.audit-leaf"
   let worker_id = "main.audit-on-file-pr-abcdef123-1779000000"
-  audit_notification_seed_leaf(
-    state,
-    leaf_id~,
-    sha="abcdef1234567890abcdef1234567890abcdef12",
-  )
+  audit_notification_seed_leaf(state, leaf_id~, sha="", seed_last_sha=false)
+  audit_notification_seed_worker(state, worker_id, leaf_id)
   ignore(state.record_audit_cycle_for_agent(leaf_id))
   match
     state.audit_digest_context(worker_id, {
@@ -323,9 +324,9 @@ test "audit digest context resolves production worker id through tracked head sh
     Some(ctx) => {
       assert_eq(ctx.leaf_agent_id, leaf_id)
       assert_eq(ctx.parent_id, "main.tl")
-      assert_eq(ctx.pr_number, 24)
+      assert_eq(ctx.pr_number, Some(24))
       assert_eq(ctx.branch, "feature/audit")
-      assert_eq(ctx.receipt_path, ".choir/audit-receipts/abcdef123456.json")
+      assert_eq(ctx.receipt_path, ".choir/audit-receipts/abcdef123.json")
       assert_eq(ctx.cycle, 1)
       assert_eq(ctx.findings_count, 1)
       assert_false(ctx.exhausted)
@@ -339,11 +340,8 @@ async test "notify_parent_about_audit uses second recorded cycle for production 
   let state = audit_notification_state()
   let leaf_id = "main.audit-leaf"
   let worker_id = "main.audit-on-file-pr-abcdef123-1779000000"
-  audit_notification_seed_leaf(
-    state,
-    leaf_id~,
-    sha="abcdef1234567890abcdef1234567890abcdef12",
-  )
+  audit_notification_seed_leaf(state, leaf_id~, sha="", seed_last_sha=false)
+  audit_notification_seed_worker(state, worker_id, leaf_id)
   ignore(state.record_audit_cycle_for_agent(leaf_id))
   ignore(state.record_audit_cycle_for_agent(leaf_id))
   let sent : Array[(String, String, String, @types.Status)] = []
@@ -362,6 +360,51 @@ async test "notify_parent_about_audit uses second recorded cycle for production 
   assert_eq(status, @types.Status::Info)
   assert_true(body.has_prefix("[AUDIT cycle 2] PR #24 on feature/audit\n"))
   assert_false(body.has_prefix("[AUDIT cycle 1]"))
+}
+
+///|
+async test "notify_parent_about_audit emits PR #pending when no tracked PR exists" {
+  let state = audit_notification_state()
+  let parent_id = "main.pending-parent"
+  let leaf_id = "main.pending-leaf"
+  let worker_id = "main.audit-on-file-pr-abcdef123456-1779000000"
+  ignore(
+    state.registry.upsert(
+      audit_notification_agent(
+        parent_id,
+        @types.Role::TL,
+        None,
+        state.config.project_dir,
+      ),
+    ),
+  )
+  ignore(
+    state.registry.upsert(
+      audit_notification_agent(
+        leaf_id,
+        @types.Role::Dev,
+        Some(parent_id),
+        state.config.project_dir,
+      ),
+    ),
+  )
+  audit_notification_seed_worker(state, worker_id, leaf_id)
+  let sent : Array[(String, String, String, @types.Status)] = []
+  state.notify_parent_about_audit(
+    worker_id,
+    { message: "Finding 1: alpha\n", status: @types.Status::Success },
+    send_message=async fn(parent, sender_id, body, status) {
+      @async.sleep(0)
+      sent.push((parent.agent_id.to_string(), sender_id, body, status))
+    },
+  )
+  assert_eq(sent.length(), 1)
+  let (_parent, sender_id, body, status) = sent[0]
+  assert_eq(sender_id, worker_id)
+  assert_eq(status, @types.Status::Info)
+  assert_true(
+    body.has_prefix("[AUDIT cycle 1] PR #pending on main.pending-leaf\n"),
+  )
 }
 
 ///|
@@ -633,6 +676,7 @@ async test "audit_max_rounds=1 returns AuditLoopExhausted after one cycle per sp
     },
     async fn(worker_id) {
       @async.sleep(0)
+      audit_notification_seed_worker(state, worker_id, leaf_id)
       state.capture_audit_on_file_pr_report_test(
         worker_id,
         findings_report,
@@ -762,6 +806,7 @@ async test "file_pr exhaustion drives real ServerState audit visibility pipeline
       },
       async fn(worker_id) {
         @async.sleep(0)
+        audit_notification_seed_worker(state, worker_id, leaf_id)
         state.capture_audit_on_file_pr_report_test(
           worker_id,
           findings_report,
@@ -933,6 +978,7 @@ async test "clean audit resets cycle counter before next consecutive findings ru
       },
       async fn(worker_id) {
         @async.sleep(0)
+        audit_notification_seed_worker(state, worker_id, leaf_id)
         state.capture_audit_on_file_pr_report_test(
           worker_id,
           report,
