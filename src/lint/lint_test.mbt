@@ -503,6 +503,23 @@ test "flags direct exec reference in tests even when not called" {
 }
 
 ///|
+test "flags dangerous exec references stashed in record fields" {
+  let assert_flagged = fn(field : String) raise {
+    let source = "async test \"bad\" {\n" +
+      "  let cfg = { " +
+      field +
+      ": @exec.capture_stdout_with_cwd }\n" +
+      "  ignore(cfg)\n" +
+      "}\n"
+    assert_single_rule(source, "test-exec-reference")
+  }
+  assert_flagged("capture")
+  assert_flagged("runner")
+  assert_flagged("run")
+  assert_flagged("spawn")
+}
+
+///|
 test "flags optional exec defaults in seam parameters" {
   let source =
     #|async fn check_idle_agents(
