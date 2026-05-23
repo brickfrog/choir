@@ -1032,9 +1032,14 @@ test "build_mutation_gate_task includes adapter-gap immediate-exit directives" {
     0.75,
   )
   assert_true(task.contains("If the adapter gap is detected"))
+  assert_true(
+    task.contains(
+      "run this sequence only once: notify_parent --status failure -> shutdown -> exit",
+    ),
+  )
+  assert_true(task.contains("EXIT IMMEDIATELY after that sequence"))
   assert_true(task.contains("call notify_parent --status failure ONCE"))
   assert_true(task.contains("notify_parent"))
-  assert_true(task.contains("EXIT IMMEDIATELY"))
   assert_true(task.contains("Do not background any subprocess"))
   assert_true(
     task.contains("Do not write a helper script that outlives this shell"),
