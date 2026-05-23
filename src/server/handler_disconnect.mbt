@@ -1230,6 +1230,45 @@ test "clear_agent_runtime_tracking clears worker no-handoff maps" {
 }
 
 ///|
+async test "supervisor disconnect clears startup disconnect context" {
+  let project_dir = "/tmp/choir-supervisor-disconnect-context-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let state = ServerState::new(
+    { ..@types.Config::default(), project_dir, terminal_session: "s" },
+    make_hermetic_recovery_provider(),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: "main.tl",
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: project_dir,
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  state.schedule_disconnect(
+    "main.tl",
+    0L,
+    connected_sec=Some(1L),
+    last_request_name=Some("register"),
+  )
+  assert_eq(state.disconnect_contexts.contains("main.tl"), true)
+  state.process_pending_disconnects_with_runner(1L, 0L, runner=async fn(_cmds) {
+    []
+  })
+  assert_eq(state.disconnect_contexts.contains("main.tl"), false)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 pub fn ServerState::list_agents(self : ServerState) -> Array[@types.Agent] {
   self.registry.list()
 }
@@ -1262,6 +1301,7 @@ async fn ServerState::handle_disconnect_confirming_with_runner(
     }
   }
   if @types.is_supervisor_role(agent.role) {
+    self.disconnect_contexts.remove(agent_id)
     return
   }
   match self.disconnect_contexts.get(agent_id) {

@@ -1192,7 +1192,14 @@ test "run_native_agy_cache_links_command is idempotent and preserves shared cach
     fail("selectedType missing")
   }
   @debug.assert_eq(selected_type, "oauth-personal".to_json())
+  assert_true(
+    @sys.write_file_sync(home + "/.gemini/settings.json", "{\"security\":{}}"),
+  )
   assert_eq(@workspace.run_native_agy_cache_links_command(cmd), 0)
+  assert_eq(
+    @sys.read_file(home + "/.gemini/settings.json"),
+    "{\"security\":{}}",
+  )
   assert_eq(@sys.read_file(playwright_link + "/sentinel.txt"), "shared")
   assert_eq(@sys.read_file(bin_link + "/agy-sentinel"), "bin")
   let second_cmd = @workspace.agy_cache_links(project, second_worktree)

@@ -824,9 +824,12 @@ fn run_native_agy_cache_links_paths_with_io(
     write_stderr("choir: warning: agy settings seed failed\n")
     return 0
   }
-  if !write_file(home + "/.gemini/settings.json", agy_gemini_settings_json()) {
-    write_stderr("choir: warning: agy settings seed failed\n")
-    return 0
+  let settings_path = home + "/.gemini/settings.json"
+  if file_size(settings_path) <= 0 {
+    if !write_file(settings_path, agy_gemini_settings_json()) {
+      write_stderr("choir: warning: agy settings seed failed\n")
+      return 0
+    }
   }
   0
 }
