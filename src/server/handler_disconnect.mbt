@@ -116,6 +116,7 @@ fn ServerState::clear_agent_runtime_tracking(
 ) -> Unit {
   self.stop_subscribe(agent_id)
   self.pending_disconnects.remove(agent_id)
+  self.disconnect_contexts.remove(agent_id)
   self.worker_no_handoff_prodded_at.remove(agent_id)
   self.worker_no_handoff_stalled_emitted.remove(agent_id)
   self.handoff_delivered.remove(agent_id)
@@ -1094,6 +1095,102 @@ async test "check_idle_agents skips supervisor roles before reading panes" {
 }
 
 ///|
+async fn handler_disconnect_moontrace_capture(
+  captured : Array[@moontrace.Event],
+  f : async () -> Unit,
+) -> Unit {
+  @moontrace.set_subscriber(fn(event) { captured.push(event) })
+  f() catch {
+    err => {
+      @moontrace.clear_subscriber()
+      raise err
+    }
+  }
+  @moontrace.clear_subscriber()
+}
+
+///|
+fn handler_disconnect_warning_count(
+  events : Array[@moontrace.Event],
+  message : String,
+) -> Int {
+  let mut count = 0
+  for event in events {
+    if event.level == @moontrace.Level::Warn && event.message == message {
+      count = count + 1
+    }
+  }
+  count
+}
+
+///|
+async test "startup disconnect after register emits startup prompt-gap warning" {
+  let project_dir = "/tmp/choir-startup-disconnect-warning-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(
+    @sys.create_dir_all(project_dir + "/.choir/worktrees/main.gemini-leaf"),
+  )
+  let parent_id = "main.tl"
+  let agent_id = "main.gemini-leaf"
+  let state = ServerState::new(
+    { ..@types.Config::default(), project_dir, terminal_session: "s" },
+    make_hermetic_recovery_provider(),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: parent_id,
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: project_dir,
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    state.register_agent({
+      agent_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Gemini,
+      parent: Some(parent_id),
+      workspace: project_dir + "/.choir/worktrees/main.gemini-leaf",
+      branch: agent_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  state.schedule_disconnect(
+    agent_id,
+    0L,
+    connected_sec=Some(1L),
+    last_request_name=Some("register"),
+  )
+  let captured : Array[@moontrace.Event] = []
+  handler_disconnect_moontrace_capture(captured, async fn() {
+    state.process_pending_disconnects_with_runner(61L, 60L, runner=async fn(
+      _cmds,
+    ) {
+      []
+    })
+  })
+  assert_eq(
+    handler_disconnect_warning_count(
+      captured, "worker disconnected immediately after register (likely interactive prompt block or config gap)",
+    ),
+    1,
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 test "clear_agent_runtime_tracking clears worker no-handoff maps" {
   let project_dir = "/tmp/choir-clear-worker-handoff-" +
     @sys.get_pid().to_string() +
@@ -1106,6 +1203,10 @@ test "clear_agent_runtime_tracking clears worker no-handoff maps" {
   )
   let agent_id = "main.worker"
   state.pending_disconnects.set(agent_id, 1L)
+  state.disconnect_contexts.set(agent_id, {
+    connected_sec: Some(1L),
+    last_request_name: Some("register"),
+  })
   state.handoff_delivered.set(agent_id, true)
   state.worker_no_handoff_prodded_at.set(agent_id, 2L)
   state.worker_no_handoff_stalled_emitted.set(agent_id, true)
@@ -1118,12 +1219,52 @@ test "clear_agent_runtime_tracking clears worker no-handoff maps" {
   state.clear_agent_runtime_tracking(agent_id)
 
   assert_eq(state.pending_disconnects.contains(agent_id), false)
+  assert_eq(state.disconnect_contexts.contains(agent_id), false)
   assert_eq(state.handoff_delivered.contains(agent_id), false)
   assert_eq(state.worker_no_handoff_prodded_at.contains(agent_id), false)
   assert_eq(state.worker_no_handoff_stalled_emitted.contains(agent_id), false)
   assert_eq(state.worker_no_handoff_exit_emitted.contains(agent_id), false)
   assert_eq(state.idle_agent_warned_at_70.contains(agent_id), false)
   assert_eq(state.recent_poller_event_emissions.contains(agent_id), false)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "supervisor disconnect clears startup disconnect context" {
+  let project_dir = "/tmp/choir-supervisor-disconnect-context-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let state = ServerState::new(
+    { ..@types.Config::default(), project_dir, terminal_session: "s" },
+    make_hermetic_recovery_provider(),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: "main.tl",
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: project_dir,
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  state.schedule_disconnect(
+    "main.tl",
+    0L,
+    connected_sec=Some(1L),
+    last_request_name=Some("register"),
+  )
+  assert_eq(state.disconnect_contexts.contains("main.tl"), true)
+  state.process_pending_disconnects_with_runner(1L, 0L, runner=async fn(_cmds) {
+    []
+  })
+  assert_eq(state.disconnect_contexts.contains("main.tl"), false)
   ignore(@sys.rm_rf(project_dir))
 }
 
@@ -1160,7 +1301,30 @@ async fn ServerState::handle_disconnect_confirming_with_runner(
     }
   }
   if @types.is_supervisor_role(agent.role) {
+    self.disconnect_contexts.remove(agent_id)
     return
+  }
+  match self.disconnect_contexts.get(agent_id) {
+    Some(ctx) =>
+      if ctx.last_request_name == Some("register") {
+        match ctx.connected_sec {
+          Some(sec) if sec < 2 =>
+            @moontrace.warn(
+              "worker disconnected immediately after register (likely interactive prompt block or config gap)",
+              fields=[
+                @moontrace.field("agent_id", agent_id),
+                @moontrace.field(
+                  "agent_type",
+                  agent.agent_type.to_wire_string(),
+                ),
+                @moontrace.field("connected_sec", sec.to_string()),
+                @moontrace.field("last_request", "register"),
+              ],
+            )
+          _ => ()
+        }
+      }
+    None => ()
   }
   let lifecycle = self.current_lifecycle(agent_id)
   match agent.state {
@@ -1335,12 +1499,19 @@ pub fn ServerState::schedule_disconnect(
   self : ServerState,
   agent_id : String,
   now : Int64,
+  connected_sec? : Int64? = None,
+  last_request_name? : String? = None,
 ) -> Unit {
   match self.registry.get_opt(agent_id) {
     Some(_) => ()
     None => return
   }
   self.mark_transport_soft_disconnected(agent_id, now)
+  if connected_sec != None || last_request_name != None {
+    self.disconnect_contexts.set(agent_id, { connected_sec, last_request_name })
+  } else {
+    self.disconnect_contexts.remove(agent_id)
+  }
   self.pending_disconnects.set(agent_id, now)
 }
 
@@ -1351,6 +1522,7 @@ pub fn ServerState::clear_pending_disconnect(
   agent_id : String,
 ) -> Unit {
   self.pending_disconnects.remove(agent_id)
+  self.disconnect_contexts.remove(agent_id)
   self.mark_transport_reconnected(agent_id)
   ignore(self.registry.set_alive(agent_id, true)) catch {
     _ => ()

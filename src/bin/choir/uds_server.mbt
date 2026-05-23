@@ -836,18 +836,21 @@ fn serve_close_uds_client(
       // a dropped session (e.g. the TL claude process dying) is identifiable
       // in the log instead of just "UDS client disconnected written=N".
       // One-shot CLI clients have no agent_id and stay silent here.
+      let connected_sec = @poller.now_sec() - client.connected_at_sec
       @moontrace.info("agent connection closed", fields=[
         @moontrace.field("agent", agent_id),
         @moontrace.field(
           "last_request",
           client.last_request_name.unwrap_or("(none)"),
         ),
-        @moontrace.field(
-          "connected_sec",
-          (@poller.now_sec() - client.connected_at_sec).to_string(),
-        ),
+        @moontrace.field("connected_sec", connected_sec.to_string()),
       ])
-      state.schedule_disconnect(agent_id, @poller.now_sec())
+      state.schedule_disconnect(
+        agent_id,
+        @poller.now_sec(),
+        connected_sec=Some(connected_sec),
+        last_request_name=Some(client.last_request_name.unwrap_or("(none)")),
+      )
     }
     None => ()
   }

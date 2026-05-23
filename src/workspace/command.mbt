@@ -733,6 +733,22 @@ pub fn run_native_agy_shared_cache_seed_if_needed_command_with_runner(
 }
 
 ///|
+fn agy_gemini_settings_json() -> String {
+  let settings : Map[String, Json] = {
+    "security": {
+      "auth": { "selectedType": "oauth-personal".to_json() }.to_json(),
+    }.to_json(),
+    "ui": { "theme": "ANSI".to_json() }.to_json(),
+    "approvalMode": "yolo".to_json(),
+    "general": {
+      "defaultApprovalMode": "yolo".to_json(),
+      "previewFeatures": true.to_json(),
+    }.to_json(),
+  }
+  settings.to_json().stringify(indent=2)
+}
+
+///|
 fn symlink_shared_cache_dir_with_io(
   shared_dir : String,
   link_path : String,
@@ -766,6 +782,7 @@ fn run_native_agy_cache_links_paths_with_io(
   create_dir_all? : (String) -> Bool = @sys.create_dir_all,
   rm_rf? : (String) -> Bool = @sys.rm_rf,
   symlink_force? : (String, String) -> Bool = @sys.symlink_force,
+  write_file? : (String, String) -> Bool = @sys.write_file_sync,
   write_stderr? : (String) -> Unit = @sys.write_stderr,
 ) -> Int {
   if project_dir == "" || worktree_path == "" {
@@ -802,6 +819,17 @@ fn run_native_agy_cache_links_paths_with_io(
     ) {
     write_stderr("choir: warning: agy shared cache binary link failed\n")
     return 0
+  }
+  if !create_dir_all(home + "/.gemini") {
+    write_stderr("choir: warning: agy settings seed failed\n")
+    return 0
+  }
+  let settings_path = home + "/.gemini/settings.json"
+  if file_size(settings_path) <= 0 {
+    if !write_file(settings_path, agy_gemini_settings_json()) {
+      write_stderr("choir: warning: agy settings seed failed\n")
+      return 0
+    }
   }
   0
 }
