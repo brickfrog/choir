@@ -15,6 +15,7 @@ priv struct LintEnv {
   decl_stack : Array[String]
   test_rules_enabled : Bool
   forbidden_helpers : Array[ForbiddenHelper]
+  package_aliases : Array[(String, String)]
 }
 
 ///|
@@ -30,6 +31,7 @@ priv struct ConstructorNameSearch {
 
 ///|
 priv struct ExecPackageRefSearch {
+  package_aliases : Array[(String, String)]
   mut found : Bool
 }
 
@@ -39,6 +41,10 @@ priv struct ForbiddenHelper {
   rule_id : String
   loc : @basic.Location
 }
+
+///|
+let package_alias_cache : @ref.Ref[Map[String, Array[(String, String)]]] = @ref.new({},
+)
 
 ///|
 priv struct FunctionCallInfo {
@@ -56,6 +62,7 @@ priv struct FunctionBodyCollector {
   known_functions : Array[String]
   shadowed_names : Array[String]
   aliases : Array[(String, DangerousCallKind)]
+  package_aliases : Array[(String, String)]
 }
 
 ///|
@@ -104,9 +111,51 @@ fn canonical_file(file : String) -> String {
 }
 
 ///|
-fn is_package_ident(expr : @syntax.Expr, pkg : String, id : String) -> Bool {
+fn package_path_matches_short_name(path : String, short_name : String) -> Bool {
+  path == short_name ||
+  path == "choir/src/" + short_name ||
+  path.has_suffix("/" + short_name)
+}
+
+///|
+fn resolved_package_path(
+  package_aliases : Array[(String, String)],
+  pkg : String,
+) -> String {
+  for entry in package_aliases.rev_iter() {
+    if entry.0 == pkg {
+      return entry.1
+    }
+  }
+  pkg
+}
+
+///|
+fn expr_package_matches(
+  package_aliases : Array[(String, String)],
+  expr : @syntax.Expr,
+  pkg : String,
+) -> Bool {
+  match dotted_ident_pkg(expr) {
+    Some(p) =>
+      package_path_matches_short_name(
+        resolved_package_path(package_aliases, p),
+        pkg,
+      )
+    None => false
+  }
+}
+
+///|
+fn is_package_ident(
+  package_aliases : Array[(String, String)],
+  expr : @syntax.Expr,
+  pkg : String,
+  id : String,
+) -> Bool {
   match expr {
-    Ident(id={ name: Dot(pkg=p, id=i), .. }, ..) => p == pkg && i == id
+    Ident(id={ name: Dot(id=i, ..), .. }, ..) =>
+      expr_package_matches(package_aliases, expr, pkg) && i == id
     _ => false
   }
 }
@@ -270,18 +319,25 @@ fn expr_contains_constructor_name(expr : @syntax.Expr, name : String) -> Bool {
 }
 
 ///|
-fn is_sys_shell_quote(expr : @syntax.Expr) -> Bool {
+fn is_sys_shell_quote(
+  package_aliases : Array[(String, String)],
+  expr : @syntax.Expr,
+) -> Bool {
   match expr {
     Apply(func~, args~, ..) =>
-      is_package_ident(func, "sys", "shell_quote") &&
+      is_package_ident(package_aliases, func, "sys", "shell_quote") &&
       first_argument(args) is Some(_)
-    Group(expr~, ..) => is_sys_shell_quote(expr)
+    Group(expr~, ..) => is_sys_shell_quote(package_aliases, expr)
     _ => false
   }
 }
 
 ///|
-fn is_allowed_test_system_command(file : String, expr : @syntax.Expr) -> Bool {
+fn is_allowed_test_system_command(
+  file : String,
+  package_aliases : Array[(String, String)],
+  expr : @syntax.Expr,
+) -> Bool {
   if canonical_file(file) != "src/workspace/workspace_test.mbt" {
     return false
   }
@@ -291,28 +347,35 @@ fn is_allowed_test_system_command(file : String, expr : @syntax.Expr) -> Bool {
       lhs=Constant(c=String("test -x "), ..),
       rhs~,
       ..
-    ) => is_sys_shell_quote(rhs)
-    Group(expr~, ..) => is_allowed_test_system_command(file, expr)
+    ) => is_sys_shell_quote(package_aliases, rhs)
+    Group(expr~, ..) =>
+      is_allowed_test_system_command(file, package_aliases, expr)
     _ => false
   }
 }
 
 ///|
-fn is_process_ref(expr : @syntax.Expr) -> Bool {
+fn is_process_ref(
+  package_aliases : Array[(String, String)],
+  expr : @syntax.Expr,
+) -> Bool {
   dotted_ident_name(expr) == Some("spawn_orphan") ||
   (
-    dotted_ident_pkg(expr) == Some("process") &&
+    expr_package_matches(package_aliases, expr, "process") &&
     dotted_ident_name(expr) == Some("run")
   )
 }
 
 ///|
-fn is_exec_capture_ref(expr : @syntax.Expr) -> Bool {
+fn is_exec_capture_ref(
+  package_aliases : Array[(String, String)],
+  expr : @syntax.Expr,
+) -> Bool {
   match dotted_ident_name(expr) {
     Some(id) =>
       id.has_prefix("capture_") ||
       id == "run_sequence" ||
-      (dotted_ident_pkg(expr) == Some("exec") && id == "run")
+      (expr_package_matches(package_aliases, expr, "exec") && id == "run")
     None => false
   }
 }
@@ -333,24 +396,35 @@ fn is_unqualified_exec_capture_ref(file : String, expr : @syntax.Expr) -> Bool {
 }
 
 ///|
-fn is_exec_capture_ref_for_file(file : String, expr : @syntax.Expr) -> Bool {
-  is_exec_capture_ref(expr) || is_unqualified_exec_capture_ref(file, expr)
+fn is_exec_capture_ref_for_file_with_package_aliases(
+  file : String,
+  package_aliases : Array[(String, String)],
+  expr : @syntax.Expr,
+) -> Bool {
+  is_exec_capture_ref(package_aliases, expr) ||
+  is_unqualified_exec_capture_ref(file, expr)
 }
 
 ///|
-fn is_exec_package_ref(expr : @syntax.Expr) -> Bool {
+fn is_exec_package_ref(
+  package_aliases : Array[(String, String)],
+  expr : @syntax.Expr,
+) -> Bool {
   match expr {
-    Group(expr~, ..) => is_exec_package_ref(expr)
-    _ => dotted_ident_pkg(expr) == Some("exec")
+    Group(expr~, ..) => is_exec_package_ref(package_aliases, expr)
+    _ => expr_package_matches(package_aliases, expr, "exec")
   }
 }
 
 ///|
-fn is_allowed_test_exec_package_ref(expr : @syntax.Expr) -> Bool {
+fn is_allowed_test_exec_package_ref(
+  package_aliases : Array[(String, String)],
+  expr : @syntax.Expr,
+) -> Bool {
   match expr {
-    Group(expr~, ..) => is_allowed_test_exec_package_ref(expr)
+    Group(expr~, ..) => is_allowed_test_exec_package_ref(package_aliases, expr)
     _ =>
-      if dotted_ident_pkg(expr) != Some("exec") {
+      if !expr_package_matches(package_aliases, expr, "exec") {
         false
       } else {
         match dotted_ident_name(expr) {
@@ -364,8 +438,12 @@ fn is_allowed_test_exec_package_ref(expr : @syntax.Expr) -> Bool {
 }
 
 ///|
-fn is_forbidden_test_exec_package_ref(expr : @syntax.Expr) -> Bool {
-  is_exec_package_ref(expr) && !is_allowed_test_exec_package_ref(expr)
+fn is_forbidden_test_exec_package_ref(
+  package_aliases : Array[(String, String)],
+  expr : @syntax.Expr,
+) -> Bool {
+  is_exec_package_ref(package_aliases, expr) &&
+  !is_allowed_test_exec_package_ref(package_aliases, expr)
 }
 
 ///|
@@ -380,10 +458,11 @@ fn called_function_name(expr : @syntax.Expr) -> String? {
 fn direct_forbidden_rule_for_apply(
   file : String,
   aliases : Array[(String, DangerousCallKind)],
+  package_aliases : Array[(String, String)],
   func : @syntax.Expr,
   args : @list.List[@syntax.Argument],
 ) -> String? {
-  match dangerous_call_kind_with_aliases(file, aliases, func) {
+  match dangerous_call_kind_with_aliases(file, aliases, package_aliases, func) {
     Some(ShellCommand) => Some("test-shell-command")
     Some(ProcessCommand) => Some("test-direct-process")
     Some(ExecCapture) =>
@@ -400,7 +479,9 @@ fn direct_forbidden_rule_for_apply(
     Some(ShellRecoveryProvider) =>
       match first_argument(args) {
         Some(capture) =>
-          if is_exec_capture_ref_for_file(file, capture) ||
+          if is_exec_capture_ref_for_file_with_package_aliases(
+              file, package_aliases, capture,
+            ) ||
             is_named_alias_with_aliases(aliases, capture, ExecCapture) {
             Some("test-shell-recovery-provider")
           } else {
@@ -409,7 +490,7 @@ fn direct_forbidden_rule_for_apply(
         None => None
       }
     None =>
-      if is_forbidden_test_exec_package_ref(func) {
+      if is_forbidden_test_exec_package_ref(package_aliases, func) {
         Some("test-exec-reference")
       } else {
         None
@@ -419,10 +500,11 @@ fn direct_forbidden_rule_for_apply(
 
 ///|
 fn direct_forbidden_rule_for_arg_refs(
+  package_aliases : Array[(String, String)],
   args : @list.List[@syntax.Argument],
 ) -> String? {
   for arg in args {
-    if is_forbidden_test_exec_package_ref(arg.value) {
+    if is_forbidden_test_exec_package_ref(package_aliases, arg.value) {
       return Some("test-exec-reference")
     }
   }
@@ -432,6 +514,7 @@ fn direct_forbidden_rule_for_arg_refs(
 ///|
 fn function_call_info_from_body(
   file : String,
+  package_aliases : Array[(String, String)],
   known_functions : Array[String],
   shadowed_names : Array[String],
   body : @syntax.DeclBody,
@@ -443,6 +526,7 @@ fn function_call_info_from_body(
     known_functions,
     shadowed_names,
     aliases: Array::new(capacity=4),
+    package_aliases,
   }
   collector.visit_DeclBody(body)
   (collector.direct_rule_id, collector.calls)
@@ -579,7 +663,13 @@ impl @syntax.IterVisitor for FunctionBodyCollector with visit_Expr(self, expr) {
     match expr {
       Apply(func~, args~, ..) =>
         match
-          direct_forbidden_rule_for_apply(self.file, self.aliases, func, args) {
+          direct_forbidden_rule_for_apply(
+            self.file,
+            self.aliases,
+            self.package_aliases,
+            func,
+            args,
+          ) {
           Some(rule_id) => self.direct_rule_id = Some(rule_id)
           None => {
             match called_function_name(func) {
@@ -590,7 +680,8 @@ impl @syntax.IterVisitor for FunctionBodyCollector with visit_Expr(self, expr) {
                 }
               None => ()
             }
-            match direct_forbidden_rule_for_arg_refs(args) {
+            match
+              direct_forbidden_rule_for_arg_refs(self.package_aliases, args) {
               Some(rule_id) => self.direct_rule_id = Some(rule_id)
               None => ()
             }
@@ -618,8 +709,14 @@ impl @syntax.IterVisitor for FunctionBodyCollector with visit_Expr(self, expr) {
         visit_children = false
         self.visit_Expr(value)
         if self.direct_rule_id is None {
-          bind_alias_with_aliases(self.aliases, self.file, pattern, value)
-          if is_forbidden_test_exec_package_ref(value) {
+          bind_alias_with_aliases(
+            self.aliases,
+            self.package_aliases,
+            self.file,
+            pattern,
+            value,
+          )
+          if is_forbidden_test_exec_package_ref(self.package_aliases, value) {
             self.direct_rule_id = Some("test-exec-reference")
           } else {
             let shadowed_len = self.shadowed_names.length()
@@ -640,6 +737,7 @@ impl @syntax.IterVisitor for FunctionBodyCollector with visit_Expr(self, expr) {
 ///|
 fn collect_forbidden_function_infos(
   file : String,
+  package_aliases : Array[(String, String)],
   impls : @syntax.Impls,
 ) -> Array[FunctionCallInfo] {
   let function_infos = Array::new(capacity=8)
@@ -655,7 +753,7 @@ fn collect_forbidden_function_infos(
       TopFuncDef(fun_decl~, decl_body~, loc~) => {
         let parameter_names = collect_parameter_names(fun_decl.decl_params)
         let (direct_rule_id, called) = function_call_info_from_body(
-          file, known_functions, parameter_names, decl_body,
+          file, package_aliases, known_functions, parameter_names, decl_body,
         )
         function_infos.push(FunctionCallInfo::{
           name: fun_decl.name.name,
@@ -741,12 +839,15 @@ fn forbidden_helper_info(
 }
 
 ///|
-fn exec_package_ref_name(expr : @syntax.Expr) -> String? {
+fn exec_package_ref_name(
+  package_aliases : Array[(String, String)],
+  expr : @syntax.Expr,
+) -> String? {
   match expr {
-    Group(expr~, ..) => exec_package_ref_name(expr)
-    Apply(func~, ..) => exec_package_ref_name(func)
+    Group(expr~, ..) => exec_package_ref_name(package_aliases, expr)
+    Apply(func~, ..) => exec_package_ref_name(package_aliases, func)
     _ =>
-      if dotted_ident_pkg(expr) == Some("exec") {
+      if expr_package_matches(package_aliases, expr, "exec") {
         dotted_ident_name(expr)
       } else {
         None
@@ -759,7 +860,7 @@ impl @syntax.IterVisitor for ExecPackageRefSearch with visit_Expr(self, expr) {
   if self.found {
     return
   }
-  if is_exec_package_ref(expr) {
+  if is_exec_package_ref(self.package_aliases, expr) {
     self.found = true
     return
   }
@@ -767,8 +868,11 @@ impl @syntax.IterVisitor for ExecPackageRefSearch with visit_Expr(self, expr) {
 }
 
 ///|
-fn expr_contains_exec_package_ref(expr : @syntax.Expr) -> Bool {
-  let search = ExecPackageRefSearch::{ found: false }
+fn expr_contains_exec_package_ref_with_package_aliases(
+  package_aliases : Array[(String, String)],
+  expr : @syntax.Expr,
+) -> Bool {
+  let search = ExecPackageRefSearch::{ package_aliases, found: false }
   search.visit_Expr(expr)
   search.found
 }
@@ -777,9 +881,10 @@ fn expr_contains_exec_package_ref(expr : @syntax.Expr) -> Bool {
 fn alias_kind_for_expr(
   file : String,
   aliases : Array[(String, DangerousCallKind)],
+  package_aliases : Array[(String, String)],
   expr : @syntax.Expr,
 ) -> DangerousCallKind? {
-  match direct_alias_kind_for_expr(file, expr) {
+  match direct_alias_kind_for_expr(file, package_aliases, expr) {
     Some(kind) => Some(kind)
     None => alias_kind_for_identifier(aliases, expr, Array::new(capacity=4))
   }
@@ -788,19 +893,24 @@ fn alias_kind_for_expr(
 ///|
 fn direct_alias_kind_for_expr(
   file : String,
+  package_aliases : Array[(String, String)],
   expr : @syntax.Expr,
 ) -> DangerousCallKind? {
-  if is_package_ident(expr, "sys", "system") {
+  if is_package_ident(package_aliases, expr, "sys", "system") {
     Some(ShellCommand)
-  } else if is_process_ref(expr) {
+  } else if is_process_ref(package_aliases, expr) {
     Some(ProcessCommand)
-  } else if is_exec_capture_ref_for_file(file, expr) {
+  } else if is_exec_capture_ref_for_file_with_package_aliases(
+      file, package_aliases, expr,
+    ) {
     Some(ExecCapture)
   } else if is_unqualified_ident(expr, "make_recovery_provider") ||
-    is_package_ident(expr, "server", "make_recovery_provider") {
+    is_package_ident(package_aliases, expr, "server", "make_recovery_provider") {
     Some(RecoveryProvider)
   } else if is_unqualified_ident(expr, "make_shell_recovery_provider") ||
-    is_package_ident(expr, "runtime", "make_shell_recovery_provider") {
+    is_package_ident(
+      package_aliases, expr, "runtime", "make_shell_recovery_provider",
+    ) {
     Some(ShellRecoveryProvider)
   } else {
     None
@@ -836,16 +946,22 @@ fn dangerous_call_kind(
   env : LintEnv,
   func : @syntax.Expr,
 ) -> DangerousCallKind? {
-  dangerous_call_kind_with_aliases(env.file, env.aliases, func)
+  dangerous_call_kind_with_aliases(
+    env.file,
+    env.aliases,
+    env.package_aliases,
+    func,
+  )
 }
 
 ///|
 fn dangerous_call_kind_with_aliases(
   file : String,
   aliases : Array[(String, DangerousCallKind)],
+  package_aliases : Array[(String, String)],
   func : @syntax.Expr,
 ) -> DangerousCallKind? {
-  match alias_kind_for_expr(file, aliases, func) {
+  match alias_kind_for_expr(file, aliases, package_aliases, func) {
     Some(kind) => Some(kind)
     None =>
       if is_named_alias_with_aliases(aliases, func, ShellCommand) {
@@ -957,17 +1073,24 @@ fn bind_alias_if_needed(
   pattern : @syntax.Pattern,
   expr : @syntax.Expr,
 ) -> Unit {
-  bind_alias_with_aliases(env.aliases, env.file, pattern, expr)
+  bind_alias_with_aliases(
+    env.aliases,
+    env.package_aliases,
+    env.file,
+    pattern,
+    expr,
+  )
 }
 
 ///|
 fn bind_alias_with_aliases(
   aliases : Array[(String, DangerousCallKind)],
+  package_aliases : Array[(String, String)],
   file : String,
   pattern : @syntax.Pattern,
   expr : @syntax.Expr,
 ) -> Unit {
-  match (pattern, alias_kind_for_expr(file, aliases, expr)) {
+  match (pattern, alias_kind_for_expr(file, aliases, package_aliases, expr)) {
     (Var({ name, .. }), Some(kind)) => aliases.push((name, kind))
     _ => ()
   }
@@ -1001,7 +1124,7 @@ fn is_staged_existing_exec_default(
   if env.file.has_suffix("_test.mbt") {
     return false
   }
-  let default_name = match exec_package_ref_name(default) {
+  let default_name = match exec_package_ref_name(env.package_aliases, default) {
     Some(name) => name
     None => return false
   }
@@ -1114,7 +1237,11 @@ fn check_test_apply(
     Some(ShellCommand) =>
       match first_argument(args) {
         Some(command) =>
-          if !is_allowed_test_system_command(env.file, command) {
+          if !is_allowed_test_system_command(
+              env.file,
+              env.package_aliases,
+              command,
+            ) {
             emit(
               env, "test-shell-command", "test files must not run shell commands; use injected adapters or a narrow helper instead",
               loc,
@@ -1159,7 +1286,11 @@ fn check_test_apply(
       match first_argument(args) {
         Some(capture) =>
           if (
-              is_exec_capture_ref_for_file(env.file, capture) ||
+              is_exec_capture_ref_for_file_with_package_aliases(
+                env.file,
+                env.package_aliases,
+                capture,
+              ) ||
               is_named_alias(env, capture, ExecCapture)
             ) &&
             !is_reported_direct_reference_alias(env, capture) {
@@ -1171,14 +1302,14 @@ fn check_test_apply(
         None => ()
       }
     None => {
-      if is_forbidden_test_exec_package_ref(func) {
+      if is_forbidden_test_exec_package_ref(env.package_aliases, func) {
         emit(
           env, "test-exec-reference", "test files must not reference real exec helpers; inject a mock capture/runner instead",
           loc,
         )
       }
       for arg in args {
-        if is_forbidden_test_exec_package_ref(arg.value) {
+        if is_forbidden_test_exec_package_ref(env.package_aliases, arg.value) {
           emit(
             env, "test-exec-reference", "test files must not reference real exec helpers; inject a mock capture/runner instead",
             loc,
@@ -1216,9 +1347,15 @@ fn test_decl_name(name : @syntax.TestName) -> String {
 }
 
 ///|
-fn scan_impls(file : String, impls : @syntax.Impls) -> Array[LintFinding] {
+fn scan_impls_with_package_aliases(
+  file : String,
+  impls : @syntax.Impls,
+  package_aliases : Array[(String, String)],
+) -> Array[LintFinding] {
   let canonical = canonical_file(file)
-  let function_infos = collect_forbidden_function_infos(canonical, impls)
+  let function_infos = collect_forbidden_function_infos(
+    canonical, package_aliases, impls,
+  )
   let forbidden_helpers = build_forbidden_helpers(function_infos)
   let findings = Array::new(capacity=4)
   let test_file = canonical.has_suffix("_test.mbt")
@@ -1236,6 +1373,7 @@ fn scan_impls(file : String, impls : @syntax.Impls) -> Array[LintFinding] {
       decl_stack: Array::new(capacity=2),
       test_rules_enabled,
       forbidden_helpers,
+      package_aliases,
     }
     match impl_ {
       TopTest(expr~, name~, ..) => {
@@ -1247,6 +1385,11 @@ fn scan_impls(file : String, impls : @syntax.Impls) -> Array[LintFinding] {
     }
   }
   findings
+}
+
+///|
+fn scan_impls(file : String, impls : @syntax.Impls) -> Array[LintFinding] {
+  scan_impls_with_package_aliases(file, impls, Array::new(capacity=0))
 }
 
 ///|
@@ -1333,7 +1476,8 @@ impl @syntax.IterVisitor for LintEnv with visit_Expr(env, expr) {
     DotApply(method_name~, args~, loc~, ..) =>
       check_test_method_apply(env, method_name.name, args, loc)
     Let(pattern~, expr=value, loc~, ..) =>
-      if env.test_rules_enabled && is_forbidden_test_exec_package_ref(value) {
+      if env.test_rules_enabled &&
+        is_forbidden_test_exec_package_ref(env.package_aliases, value) {
         emit(
           env, "test-exec-reference", "test files must not reference real exec helpers; inject a mock capture/runner instead",
           loc,
@@ -1358,11 +1502,13 @@ impl @syntax.IterVisitor for LintEnv with visit_Parameter_Optional(
   default~,
   ty~,
 ) {
-  // AUDIT: exec-default-parameter currently matches @exec-qualified defaults only.
-  // One-hop wrappers such as capture_command_output escape this static rule; Layer 1
-  // backstops them at runtime, and full wrapper/alias resolution is tracked by
-  // choir-lint-multilevel-aliases / choir-lint-package-aliases.
-  if expr_contains_exec_package_ref(default) &&
+  // AUDIT: one-hop wrappers such as capture_command_output escape this static
+  // rule; Layer 1 backstops them at runtime, and full wrapper resolution is
+  // tracked by choir-lint-multilevel-aliases / choir-lint-package-aliases.
+  if expr_contains_exec_package_ref_with_package_aliases(
+      env.package_aliases,
+      default,
+    ) &&
     !is_staged_existing_exec_default(env, binder, default) {
     emit(
       env,
@@ -1380,13 +1526,192 @@ pub fn lint_impls(file : String, impls : @syntax.Impls) -> Array[LintFinding] {
 }
 
 ///|
+fn file_parent_dir(file : String) -> String {
+  let mut i = file.length() - 1
+  while i >= 0 && file[i] != '/' {
+    i = i - 1
+  }
+  if i < 0 {
+    "."
+  } else if i == 0 {
+    "/"
+  } else {
+    file[:i].to_owned()
+  }
+}
+
+///|
+test "file_parent_dir handles root absolute child" {
+  assert_eq(file_parent_dir("/a"), "/")
+  assert_eq(file_parent_dir("/a/b"), "/a")
+}
+
+///|
+fn trim_trailing_comma(value : String) -> String {
+  let trimmed = value.trim().to_owned()
+  if trimmed.has_suffix(",") {
+    trimmed[:trimmed.length() - 1].trim().to_owned()
+  } else {
+    trimmed
+  }
+}
+
+///|
+fn alias_from_as_suffix(value : String) -> String? {
+  let trimmed = trim_trailing_comma(value)
+  if trimmed.has_prefix("as ") {
+    let alias_name = trim_trailing_comma(trimmed["as ".length():].to_owned())
+    if alias_name == "" {
+      None
+    } else {
+      Some(alias_name)
+    }
+  } else {
+    None
+  }
+}
+
+///|
+fn package_alias_from_spec(spec : String) -> (String, String)? {
+  match spec.find(" as ") {
+    Some(index) => {
+      let package_path = spec[:index].trim().to_owned()
+      let alias_name = trim_trailing_comma(
+        spec[index + " as ".length():].to_owned(),
+      )
+      if package_path == "" || alias_name == "" {
+        None
+      } else {
+        Some((alias_name, package_path))
+      }
+    }
+    None => None
+  }
+}
+
+///|
+fn package_alias_from_manifest_line(line : String) -> (String, String)? {
+  let trimmed = line.trim().to_owned()
+  let first_quote = match trimmed.find("\"") {
+    Some(index) => index
+    None => return None
+  }
+  let after_first = trimmed[first_quote + 1:].to_owned()
+  let second_quote = match after_first.find("\"") {
+    Some(index) => index
+    None => return None
+  }
+  let quoted = after_first[:second_quote].to_owned()
+  match package_alias_from_spec(quoted) {
+    Some(entry) => Some(entry)
+    None => {
+      let tail = after_first[second_quote + 1:].to_owned()
+      match alias_from_as_suffix(tail) {
+        Some(alias_name) => Some((alias_name, quoted))
+        None => None
+      }
+    }
+  }
+}
+
+///|
+fn package_aliases_from_manifest(content : String) -> Array[(String, String)] {
+  let aliases = Array::new(capacity=4)
+  for line in content.split("\n") {
+    match package_alias_from_manifest_line(line.to_owned()) {
+      Some(entry) => aliases.push(entry)
+      None => ()
+    }
+  }
+  aliases
+}
+
+///|
+fn package_manifest_path(dir : String, name : String) -> String {
+  if dir == "/" {
+    "/" + name
+  } else {
+    dir + "/" + name
+  }
+}
+
+///|
+fn package_aliases_for_file(
+  file : String,
+  read_file : (String) -> String,
+  path_exists : (String) -> Bool,
+  cache : @ref.Ref[Map[String, Array[(String, String)]]],
+) -> Array[(String, String)] {
+  let dir = file_parent_dir(canonical_file(file))
+  match cache.val.get(dir) {
+    Some(aliases) => return aliases
+    None => ()
+  }
+  let aliases = Array::new(capacity=4)
+  let paths = [
+    package_manifest_path(dir, "moon.pkg"),
+    package_manifest_path(dir, "moon.pkg.json"),
+  ]
+  for path in paths {
+    if path_exists(path) {
+      for entry in package_aliases_from_manifest(read_file(path)) {
+        aliases.push(entry)
+      }
+    }
+  }
+  cache.val.set(dir, aliases)
+  aliases
+}
+
+///|
+test "package_aliases_for_file caches by directory" {
+  let reads : Ref[Int] = @ref.new(0)
+  let cache : @ref.Ref[Map[String, Array[(String, String)]]] = @ref.new({})
+  let manifest =
+    #|import {
+    #|  "choir/src/exec" as ex,
+    #|}
+  let read_file = fn(path) {
+    reads.val += 1
+    if path == "src/example/moon.pkg" {
+      manifest
+    } else {
+      ""
+    }
+  }
+  let path_exists = fn(path) { path == "src/example/moon.pkg" }
+  let first = package_aliases_for_file(
+    "src/example/one_test.mbt", read_file, path_exists, cache,
+  )
+  let second = package_aliases_for_file(
+    "src/example/two_test.mbt", read_file, path_exists, cache,
+  )
+  assert_eq(reads.val, 1)
+  assert_eq(first.length(), 1)
+  assert_eq(second.length(), 1)
+  assert_eq(first[0].0, "ex")
+  assert_eq(second[0].1, "choir/src/exec")
+}
+
+///|
 pub fn lint_source(
   file : String,
   source : String,
+  read_file? : (String) -> String = @sys.read_file,
+  path_exists? : (String) -> Bool = @sys.path_exists,
+  package_alias_cache? : @ref.Ref[Map[String, Array[(String, String)]]] = package_alias_cache,
 ) -> Result[Array[LintFinding], @types.ChoirError] {
   let (impls, reports) = @parser.parse_string(source, name=file)
   if reports.length() > 0 {
     return Err(@types.ChoirError::validation_error(reports[0].to_string()))
   }
-  Ok(lint_impls(file, impls))
+  Ok(
+    scan_impls_with_package_aliases(
+      file,
+      impls,
+      package_aliases_for_file(
+        file, read_file, path_exists, package_alias_cache,
+      ),
+    ),
+  )
 }
