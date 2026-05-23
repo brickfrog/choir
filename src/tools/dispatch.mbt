@@ -1023,7 +1023,25 @@ pub async fn dispatch(
               if stale_parent_refresh || register_args.terminal_target is None {
                 prior.terminal_target
               } else {
-                register_args.terminal_target
+                match (prior.terminal_target, register_args.terminal_target) {
+                  (
+                    Some(
+                      {
+                        kind: @types.TargetKind::ZellijPane,
+                        session: prior_session,
+                        ..,
+                      } as prior_target
+                    ),
+                    Some(
+                      {
+                        kind: @types.TargetKind::ZellijTab,
+                        session: incoming_session,
+                        ..,
+                      }
+                    ),
+                  ) if prior_session == incoming_session => Some(prior_target)
+                  _ => register_args.terminal_target
+                }
               }
             None => register_args.terminal_target
           }
