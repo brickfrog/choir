@@ -48,6 +48,11 @@ jobs:
       - name: Test lint canary script
         run: sh tools/lint_canary_test.sh
 
+      - name: Canary hook wiring sanity
+        run: |
+          test -f .githooks/pre-commit || { echo "ERROR: .githooks/pre-commit missing"; exit 1; }
+          grep -q "tools/lint_canary.sh" .githooks/pre-commit || { echo "ERROR: .githooks/pre-commit does not invoke tools/lint_canary.sh — canary is unwired"; exit 1; }
+
       - name: Hermeticity lint
         run: |
           moon build src/bin/choir_lint --target native

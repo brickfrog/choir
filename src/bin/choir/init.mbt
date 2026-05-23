@@ -217,6 +217,44 @@ test "cleanup paths separate runtime restart from purge" {
 }
 
 ///|
+test "init_configure_git_hooks_path_when_githooks_present" {
+  let project_dir = "/tmp/project-hooks-present"
+  let cmd = init_compute_git_hooks_path_setup(
+    project_dir,
+    file_exists=fn(path) { path == project_dir + "/.githooks/pre-commit" },
+    git_config_get=fn(_) { "" },
+  )
+  match cmd {
+    Some(cmd) => {
+      assert_eq(cmd.program, "git")
+      assert_eq(cmd.args, ["config", "--local", "core.hooksPath", ".githooks"])
+      assert_eq(cmd.workdir, Some(project_dir))
+    }
+    None => assert_true(false)
+  }
+
+  let absent = init_compute_git_hooks_path_setup(
+    project_dir,
+    file_exists=fn(_path) { false },
+    git_config_get=fn(_) { "" },
+  )
+  assert_eq(absent, None)
+}
+
+///|
+test "init_skip_hooks_path_when_already_set" {
+  let project_dir = "/tmp/project-hooks-present"
+  assert_eq(
+    init_compute_git_hooks_path_setup(
+      project_dir,
+      file_exists=fn(path) { path == project_dir + "/.githooks/pre-commit" },
+      git_config_get=fn(_) { ".githooks\n" },
+    ),
+    None,
+  )
+}
+
+///|
 test "init server cleanup commands separate runtime restart from purge" {
   @debug.assert_eq(init_parse_server_pid_line("123"), Some(123))
   @debug.assert_eq(init_parse_server_pid_line(" 42 \n"), Some(42))
@@ -682,10 +720,41 @@ fn init_is_choir_source_tree(project_dir : String) -> Bool {
 }
 
 ///|
+fn init_compute_git_hooks_path_setup(
+  project_dir : String,
+  file_exists? : (String) -> Bool = fn(path) { @sys.path_exists(path) },
+  git_config_get? : (String) -> String = fn(_project_dir) { "" },
+) -> @workspace.Command? {
+  if !file_exists(project_dir + "/.githooks/pre-commit") {
+    return None
+  }
+  if git_config_get(project_dir).trim().to_owned() == ".githooks" {
+    return None
+  }
+  Some({
+    program: "git",
+    args: ["config", "--local", "core.hooksPath", ".githooks"],
+    workdir: Some(project_dir),
+  })
+}
+
+///|
 async fn init_run_or_exit(cmd : @workspace.Command) -> Unit {
   let exit_code = @exec.run(cmd) catch { _ => 1 }
   if exit_code != 0 {
     @sys.exit(exit_code)
+  }
+}
+
+///|
+async fn init_run_or_warn(cmd : @workspace.Command) -> Unit {
+  let exit_code = @exec.run(cmd) catch { _ => 1 }
+  if exit_code != 0 {
+    @sys.write_stderr(
+      "warning: failed to configure git core.hooksPath; using default hooks path\n",
+    )
+  } else {
+    @sys.write_stdout("→ configured git core.hooksPath = .githooks\n")
   }
 }
 
@@ -714,6 +783,22 @@ fn init_run() -> Unit {
 
       init_bootstrap_ensure_choir_dir_and_config_if_absent(
         init_config_toml_content(default_session),
+      )
+      let current_hooks_path = @exec.capture_stdout("git", [
+          "config", "--local", "--get", "core.hooksPath",
+        ])
+        .trim()
+        .to_string()
+      ignore(
+        match
+          init_compute_git_hooks_path_setup(
+            project_dir,
+            file_exists=fn(path) { @sys.path_exists(path) },
+            git_config_get=fn(_) { current_hooks_path },
+          ) {
+          Some(cmd) => ignore(init_run_or_warn(cmd))
+          None => ()
+        },
       )
       let home = match @sys.getenv("HOME") {
         Some(h) => if h == "" { "" } else { h }
