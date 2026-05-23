@@ -249,6 +249,7 @@ fn merge_pr_test_audit_receipt_with_findings(
     audited_at: 1L,
     agent_id: "audit-on-file-pr",
     findings_count,
+    findings: Some(""),
   }
   receipt.to_json().stringify() + "\n"
 }

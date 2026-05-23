@@ -742,6 +742,7 @@ fn file_pr_test_audit_receipt_for_branch(
     audited_at: 1770000000L,
     agent_id: "main.tl",
     findings_count,
+    findings: Some(""),
   }
   receipt.to_json().stringify() + "\n"
 }
@@ -2574,6 +2575,11 @@ async test "file_pr_auto_audit cap hit with findings stays blocked" {
   let mut spawn_calls = 0
   let mut wait_calls = 0
   let mut receipt_write_calls = 0
+  let mut receipt_findings_count = -1
+  let mut receipt_findings = ""
+  let mut receipt_dir = ""
+  let mut receipt_path = ""
+  let mut receipt_content = ""
   let got = file_pr_auto_audit_for_missing_receipt(
     project_dir,
     project_dir,
@@ -2596,9 +2602,24 @@ async test "file_pr_auto_audit cap hit with findings stays blocked" {
       })
     },
     fn(_) {  },
-    fn(_) {
+    fn(args) {
       receipt_write_calls = receipt_write_calls + 1
-      @types.Response::Err("unexpected receipt write")
+      receipt_findings_count = args.findings_count
+      receipt_findings = args.findings
+      interpret_write_audit_receipt(
+        args,
+        project_dir,
+        fn(path) {
+          receipt_dir = path
+          true
+        },
+        fn(path, content) {
+          receipt_path = path
+          receipt_content = content
+          true
+        },
+        now_sec=fn() { 1770000000L },
+      )
     },
     1000,
     0,
@@ -2623,7 +2644,27 @@ async test "file_pr_auto_audit cap hit with findings stays blocked" {
   }
   assert_eq(spawn_calls, 1)
   assert_eq(wait_calls, 1)
-  assert_eq(receipt_write_calls, 0)
+  assert_eq(receipt_write_calls, 1)
+  assert_eq(receipt_findings_count, 1)
+  assert_true(receipt_findings.contains("Finding 1: still broken at the cap"))
+  assert_true(receipt_dir.has_suffix("/.choir/audit-receipts"))
+  assert_true(
+    receipt_path.has_suffix("/.choir/audit-receipts/abcdef123456.json"),
+  )
+  let parsed_receipt = @json.parse(receipt_content) catch {
+    _ => fail("receipt did not parse")
+  }
+  let decoded : @types.AuditReceipt = @json.from_json(parsed_receipt) catch {
+    _ => fail("receipt did not decode")
+  }
+  assert_eq(decoded.sha, head)
+  assert_eq(decoded.branch, "feature/auto-audit")
+  assert_eq(decoded.agent_id, audit_on_file_pr_internal_caller_id)
+  assert_eq(decoded.findings_count, 1)
+  @debug.assert_eq(
+    decoded.findings,
+    Some("Finding 1: still broken at the cap\n"),
+  )
 }
 
 ///|
@@ -3364,6 +3405,7 @@ async test "interpret_file_pr Dev audit max rounds returns typed exhaustion on c
   let head = "abcdef1234567890abcdef1234567890abcdef12"
   let mut cycles = 0
   let mut wait_count = 0
+  let mut receipt_written = false
   let recorded_agents : Array[String] = []
   let got = interpret_file_pr(
     {
@@ -3386,6 +3428,11 @@ async test "interpret_file_pr Dev audit max rounds returns typed exhaustion on c
     caller_role=@types.Role::Dev,
     task_contract_reader=file_pr_test_empty_task_contract_reader,
     tdd_phase_reader=file_pr_test_tdd_done,
+    create_dir_all=fn(_) { true },
+    write_file_atomic=fn(_, _) {
+      receipt_written = true
+      true
+    },
     audit_max_rounds=1,
     record_audit_cycle_for_agent=fn(agent_id) {
       recorded_agents.push(agent_id)
@@ -3412,6 +3459,7 @@ async test "interpret_file_pr Dev audit max rounds returns typed exhaustion on c
   }
   assert_eq(cycles, 1)
   assert_eq(wait_count, 1)
+  assert_true(receipt_written)
   @debug.assert_eq(recorded_agents, ["feature/auto-audit"])
 }
 

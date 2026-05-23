@@ -2933,6 +2933,7 @@ fn handler_test_audit_receipt(
     audited_at: 1770000000L,
     agent_id: "main.tl",
     findings_count,
+    findings: Some(""),
   }
   receipt.to_json().stringify() + "\n"
 }

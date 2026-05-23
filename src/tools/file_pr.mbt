@@ -2592,6 +2592,22 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
   )
   if findings_count > 0 {
     if audit_max_rounds > 0 && cycles >= audit_max_rounds {
+      let receipt_resp = write_audit_receipt({
+        caller_id: audit_on_file_pr_internal_caller_id,
+        sha: head_sha,
+        branch,
+        findings_count,
+        findings: report.message,
+      })
+      if !receipt_resp.is_ok() {
+        return Err(
+          @types.ChoirError::validation_error(
+            receipt_resp
+            .error_message()
+            .unwrap_or("file_pr: failed to write audit receipt"),
+          ),
+        )
+      }
       return Err(
         @types.ChoirError::audit_loop_exhausted(
           cycles, findings_count, receipt_path,
@@ -2612,6 +2628,7 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
     sha: head_sha,
     branch,
     findings_count: 0,
+    findings: "",
   })
   if receipt_resp.is_ok() {
     clear_audit_cycle_for_agent(tracked_agent_id)
@@ -2783,6 +2800,7 @@ fn file_pr_receipt_root_test_body(sha : String) -> String {
     audited_at: 1L,
     agent_id: "main.tl",
     findings_count: 0,
+    findings: Some(""),
   }
   receipt.to_json().stringify() + "\n"
 }

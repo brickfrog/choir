@@ -255,6 +255,7 @@ pub(all) struct WriteAuditReceiptArgs {
   sha : String
   branch : String
   findings_count : Int
+  findings : String
 } derive(Debug, Eq)
 
 ///|

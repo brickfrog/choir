@@ -1798,7 +1798,8 @@ fn parse_write_audit_receipt_args(
         ),
       )
   }
-  Ok({ caller_id, sha, branch, findings_count })
+  let findings = tool_args_get(args, "findings").unwrap_or("")
+  Ok({ caller_id, sha, branch, findings_count, findings })
 }
 
 ///|

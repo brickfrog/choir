@@ -6,6 +6,7 @@ test "AuditReceipt JSON round trip" {
     audited_at: 1770000000L,
     agent_id: "main.tl",
     findings_count: 0,
+    findings: Some(""),
   }
   let encoded = receipt.to_json().stringify()
   let parsed = @json.parse(encoded) catch {
