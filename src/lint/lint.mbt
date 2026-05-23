@@ -660,6 +660,207 @@ fn pop_names_to(names : Array[String], length : Int) -> Unit {
 }
 
 ///|
+fn is_ident_char(c : Char) -> Bool {
+  let code = c.to_int()
+  (code >= 48 && code <= 57) ||
+  (code >= 65 && code <= 90) ||
+  (code >= 97 && code <= 122) ||
+  code == 95
+}
+
+///|
+fn is_whitespace(c : Char) -> Bool {
+  c == ' ' || c == '\t' || c == '\n' || c == '\r'
+}
+
+///|
+fn word_boundary_before(source : String, idx : Int) -> Bool {
+  idx == 0 || !is_ident_char(Int::unsafe_to_char(source[idx - 1].to_int()))
+}
+
+///|
+fn word_boundary_after(source : String, idx : Int, word_len : Int) -> Bool {
+  idx + word_len >= source.length() ||
+  !is_ident_char(Int::unsafe_to_char(source[idx + word_len].to_int()))
+}
+
+///|
+fn source_has_word(source : String, idx : Int, word : String) -> Bool {
+  if idx + word.length() > source.length() {
+    return false
+  }
+  source[idx:idx + word.length()] == word
+}
+
+///|
+fn is_word(source : String, idx : Int, word : String) -> Bool {
+  source_has_word(source, idx, word) &&
+  word_boundary_before(source, idx) &&
+  word_boundary_after(source, idx, word.length())
+}
+
+///|
+fn skip_whitespace(source : String, idx : Int) -> Int {
+  let mut next = idx
+  while next < source.length() &&
+        is_whitespace(Int::unsafe_to_char(source[next].to_int())) {
+    next += 1
+  }
+  next
+}
+
+///|
+fn normalize_with_fn_impl_headers(source : String) -> String {
+  let buf = StringBuilder::new()
+  let mut i = 0
+  let mut in_impl_header = false
+  let mut in_line_comment = false
+  let mut in_block_comment = false
+  let mut in_string = false
+  let mut in_char = false
+  let mut escaped = false
+
+  while i < source.length() {
+    let c = Int::unsafe_to_char(source[i].to_int())
+
+    if in_line_comment {
+      buf.write_char(c)
+      if c == '\n' {
+        in_line_comment = false
+      }
+      i += 1
+      continue
+    }
+
+    if in_string {
+      buf.write_char(c)
+      if escaped {
+        escaped = false
+      } else if c == '\\' {
+        escaped = true
+      } else if c == '"' {
+        in_string = false
+      }
+      i += 1
+      continue
+    }
+
+    if in_char {
+      buf.write_char(c)
+      if escaped {
+        escaped = false
+      } else if c == '\\' {
+        escaped = true
+      } else if c == '\'' {
+        in_char = false
+      }
+      i += 1
+      continue
+    }
+
+    if in_block_comment {
+      buf.write_char(c)
+      if c == '*' &&
+        i + 1 < source.length() &&
+        Int::unsafe_to_char(source[i + 1].to_int()) == '/' {
+        buf.write_char('/')
+        in_block_comment = false
+        i += 2
+      } else {
+        i += 1
+      }
+      continue
+    }
+
+    if c == '/' && i + 1 < source.length() {
+      let next = Int::unsafe_to_char(source[i + 1].to_int())
+      if next == '/' {
+        in_line_comment = true
+        buf.write_char('/')
+        buf.write_char('/')
+        i += 2
+        continue
+      }
+      if next == '*' {
+        in_block_comment = true
+        buf.write_char('/')
+        buf.write_char('*')
+        i += 2
+        continue
+      }
+    }
+
+    if c == '"' {
+      in_string = true
+      escaped = false
+      buf.write_char('"')
+      i += 1
+      continue
+    }
+
+    if c == '\'' {
+      in_char = true
+      escaped = false
+      buf.write_char('\'')
+      i += 1
+      continue
+    }
+
+    if !in_impl_header && is_word(source, i, "impl") {
+      in_impl_header = true
+      buf.write_string("impl")
+      i += 4
+      continue
+    }
+
+    if in_impl_header && c == '{' {
+      in_impl_header = false
+      buf.write_char(c)
+      i += 1
+      continue
+    }
+
+    if in_impl_header && is_word(source, i, "with") {
+      let j = skip_whitespace(source, i + 4)
+      if j < source.length() && is_word(source, j, "fn") {
+        buf.write_string("with")
+        buf.write_char(' ')
+        i = j + 2
+        continue
+      }
+    }
+
+    buf.write_char(c)
+    i += 1
+  }
+
+  buf.to_string()
+}
+
+///|
+fn parse_impls_from_source(
+  file : String,
+  source : String,
+) -> (@syntax.Impls, Array[@basic.Report]) {
+  let (impls, reports) = @parser.parse_string(
+    source,
+    name=file,
+    parser=@parser.Parser::MoonYacc,
+  )
+  if reports.length() == 0 {
+    return (impls, reports)
+  }
+  if !source.contains("with fn") {
+    return (impls, reports)
+  }
+  let normalized = normalize_with_fn_impl_headers(source)
+  if normalized == source {
+    return (impls, reports)
+  }
+  @parser.parse_string(normalized, name=file, parser=@parser.Parser::MoonYacc)
+}
+
+///|
 impl @syntax.IterVisitor for FunctionBodyCollector with fn visit_Expr(
   self,
   expr,
@@ -1716,26 +1917,6 @@ fn package_aliases_for_file(
   }
   cache.val.set(dir, aliases)
   aliases
-}
-
-///|
-fn parse_impls_from_source(
-  file : String,
-  source : String,
-) -> (@syntax.Impls, Array[@basic.Report]) {
-  let (impls, reports) = @parser.parse_string(
-    source,
-    name=file,
-    parser=@parser.Parser::MoonYacc,
-  )
-  if reports.length() == 0 {
-    return (impls, reports)
-  }
-  if !source.contains("with fn output") {
-    return (impls, reports)
-  }
-  let normalized = source.replace(old="with fn output", new="with output")
-  @parser.parse_string(normalized, name=file, parser=@parser.Parser::MoonYacc)
 }
 
 ///|
