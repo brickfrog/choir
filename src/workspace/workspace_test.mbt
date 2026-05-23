@@ -1618,15 +1618,14 @@ test "bash_bounded_script_body wraps bash in a timeout" {
 }
 
 ///|
-test "choir_lint_wrapper_script_body builds and execs native lint binary" {
+test "choir_lint_wrapper_script_body delegates to native lint command" {
   let body = @workspace.choir_lint_wrapper_script_body()
   assert_true(body.has_prefix("#!/bin/sh"))
-  assert_true(body.contains("moon build src/bin/choir_lint --target native"))
+  assert_true(body.contains("cd \"$project_dir\""))
   assert_true(
-    body.contains(
-      "exec \"$project_dir/_build/native/debug/build/src/bin/choir_lint/choir_lint.exe\" \"$@\"",
-    ),
+    body.contains("exec moon run src/bin/choir_lint --target native -- \"$@\""),
   )
+  assert_false(body.contains("_build/native"))
 }
 
 ///|

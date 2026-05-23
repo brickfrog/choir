@@ -263,16 +263,16 @@ pub fn bash_bounded_script_body() -> String {
 
 ///|
 /// Body of the `choir_lint` wrapper installed under
-/// `worktree_path/.choir/bin/choir_lint`. Builds the native lint binary when
-/// needed, then execs it with the leaf's arguments.
+/// `worktree_path/.choir/bin/choir_lint`. Delegates to Moon so the wrapper
+/// follows Moon's current build/run layout while forwarding the leaf's
+/// arguments to the linter.
 pub fn choir_lint_wrapper_script_body() -> String {
   (
     #|#!/bin/sh
     #|script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd) || exit 1
     #|project_dir=$(CDPATH= cd -- "$script_dir/../.." 2>/dev/null && pwd) || exit 1
     #|cd "$project_dir" || exit 1
-    #|moon build src/bin/choir_lint --target native || exit $?
-    #|exec "$project_dir/_build/native/debug/build/src/bin/choir_lint/choir_lint.exe" "$@"
+    #|exec moon run src/bin/choir_lint --target native -- "$@"
   )
 }
 
