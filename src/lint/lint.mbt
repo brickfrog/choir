@@ -1377,7 +1377,7 @@ fn check_test_record_fields(
       match forbidden_value_reference_rule(env, field.expr) {
         Some(rule_id) =>
           emit(
-            env, rule_id, "test files must not stash real exec/process helpers in injected capability fields; inject a mock capture/runner instead",
+            env, rule_id, "test files must not stash real shell/process/exec/recovery capabilities in injected fields; inject a mock capability instead",
             loc,
           )
         None => ()
