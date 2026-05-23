@@ -3189,12 +3189,11 @@ async test "PRMerged into default branch without audit receipt fires hooks once 
           @async.sleep(0)
           (0, "")
         },
-        hook_capture=async fn(
+        hook_capture=fn(
           _path : String,
           _input_json : String,
           _cwd : String?,
         ) -> (Int, String) {
-          @async.sleep(0)
           hook_calls = hook_calls + 1
           (0, "hook")
         },
@@ -3222,9 +3221,7 @@ async test "PRMerged into default branch without audit receipt fires hooks once 
           handler_test_audit_receipt(head, default_branch, 0)
         },
       )
-      @async.sleep(0)
     })
-    @async.sleep(0)
     assert_eq(pull_calls, 0)
     assert_eq(hook_calls, 2)
     assert_eq(receipt_read_calls, 0)
