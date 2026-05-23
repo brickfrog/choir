@@ -917,18 +917,71 @@ fn serve_write_status_dump_if_sigusr1_requested(
 ) -> Unit {
   if @sys.consume_sigusr1_flag() {
     let status_path = @server.server_status_path(state.config.project_dir)
-    if !state.write_server_status_snapshot(now_sec, fn(agent_id) {
-        @phase.read_lifecycle(state.config.project_dir, agent_id)
-      }) {
+    let lifecycle_reader = fn(agent_id) {
+      @phase.read_lifecycle(state.config.project_dir, agent_id)
+    }
+    if !state.write_server_status_snapshot(now_sec, lifecycle_reader) {
       @moontrace.error("server status dump failed", fields=[
         @moontrace.field("path", status_path),
       ])
     } else {
-      @moontrace.info("server status dump written", fields=[
+      let rows = @server.server_status_snapshot_rows(
+        state.registry,
+        state.poller,
+        lifecycle_reader,
+        now_sec,
+      )
+      let mut attention_count = 0
+      for row in rows {
+        if row.attention_needed != @tools.PaneAttention::Clear {
+          attention_count = attention_count + 1
+        }
+      }
+      @moontrace.info("status snapshot written", fields=[
         @moontrace.field("path", status_path),
-        @moontrace.field("agents", state.registry.list().length()),
+        @moontrace.field("timestamp", now_sec.to_string()),
+        @moontrace.field("agent_count", rows.length()),
+        @moontrace.field("attention_count", attention_count),
+        @moontrace.field("tracked_pr_count", state.poller.tracked.length()),
       ])
     }
+  }
+}
+
+///|
+fn serve_test_moontrace_field_value(
+  fields : Array[@moontrace.Field],
+  key : String,
+) -> Json? {
+  for field in fields {
+    if field.key == key {
+      return Some(field.value)
+    }
+  }
+  None
+}
+
+///|
+fn serve_test_assert_string_field(
+  fields : Array[@moontrace.Field],
+  key : String,
+  expected : String,
+) -> Unit raise {
+  match serve_test_moontrace_field_value(fields, key) {
+    Some(Json::String(value)) => assert_eq(value, expected)
+    _ => fail("expected string moontrace field " + key)
+  }
+}
+
+///|
+fn serve_test_assert_number_field(
+  fields : Array[@moontrace.Field],
+  key : String,
+  expected : Double,
+) -> Unit raise {
+  match serve_test_moontrace_field_value(fields, key) {
+    Some(Json::Number(value, ..)) => assert_eq(value, expected)
+    _ => fail("expected number moontrace field " + key)
   }
 }
 
@@ -948,13 +1001,41 @@ test "serve SIGUSR1 flag writes server status snapshot" {
   assert_true(
     content.contains("terminal_target=zellij-pane:uds-jsonrpc:terminal_1"),
   )
-  assert_true(
-    captured
-    .iter()
-    .any(fn(event) {
-      event.level == @moontrace.Level::Info &&
-      event.message == "server status dump written"
-    }),
+  let mut snapshot_written_count = 0
+  let mut snapshot_written_event : @moontrace.Event? = None
+  for event in captured {
+    if event.level == @moontrace.Level::Info &&
+      event.message == "status snapshot written" {
+      snapshot_written_count = snapshot_written_count + 1
+      snapshot_written_event = Some(event)
+    }
+  }
+  assert_eq(snapshot_written_count, 1)
+  let snapshot_written_event = snapshot_written_event.unwrap()
+  serve_test_assert_string_field(
+    snapshot_written_event.fields,
+    "path",
+    @server.server_status_path(project_dir),
+  )
+  serve_test_assert_string_field(
+    snapshot_written_event.fields,
+    "timestamp",
+    "100",
+  )
+  serve_test_assert_number_field(
+    snapshot_written_event.fields,
+    "agent_count",
+    1.0,
+  )
+  serve_test_assert_number_field(
+    snapshot_written_event.fields,
+    "attention_count",
+    0.0,
+  )
+  serve_test_assert_number_field(
+    snapshot_written_event.fields,
+    "tracked_pr_count",
+    0.0,
   )
   ignore(@sys.rm_rf(project_dir))
 }
