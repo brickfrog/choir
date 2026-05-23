@@ -3035,7 +3035,7 @@ fn ServerState::agent_state_counts_summary(self : ServerState) -> String {
 }
 
 ///|
-fn ServerState::previous_poller_delivery_age_sec(
+fn ServerState::last_poller_delivery_age_sec(
   self : ServerState,
   now : Int64,
 ) -> Int64? {
@@ -3075,7 +3075,7 @@ fn emit_tick_summary_line(
     Some(line) => {
       let agent_counts = state.agent_state_counts_summary()
       let tracked_prs = state.poller.tracked.length()
-      let previous_delivered_event_age_sec = state.previous_poller_delivery_age_sec(
+      let last_delivered_event_age_sec = state.last_poller_delivery_age_sec(
         now_sec,
       )
       @moontrace.info("poller tick", fields=[
@@ -3086,8 +3086,8 @@ fn emit_tick_summary_line(
         @moontrace.field("agent_counts", agent_counts),
         @moontrace.field("tracked_prs", tracked_prs),
         @moontrace.field(
-          "previous_delivered_event_age_sec",
-          optional_age_sec_to_string(previous_delivered_event_age_sec),
+          "last_delivered_event_age_sec",
+          optional_age_sec_to_string(last_delivered_event_age_sec),
         ),
       ])
       append_poller_delivery_line(
@@ -3098,8 +3098,8 @@ fn emit_tick_summary_line(
         agent_counts +
         " tracked_prs=" +
         tracked_prs.to_string() +
-        " previous_delivered_event_age_sec=" +
-        optional_age_sec_to_string(previous_delivered_event_age_sec),
+        " last_delivered_event_age_sec=" +
+        optional_age_sec_to_string(last_delivered_event_age_sec),
       )
     }
     None => ()
@@ -3259,12 +3259,6 @@ pub async fn ServerState::process_poller_tick_with(
     pending_agent_ids.push(synthetic_untracked_merge_agent_id(self))
   }
   tick_summary.changes = pending_events.length()
-  emit_tick_summary_line(
-    self,
-    tick_summary,
-    @env.now().reinterpret_as_int64(),
-    now,
-  )
   if pending_events.length() > 0 {
     self.request_goal_judge_tick()
   }
@@ -3284,6 +3278,13 @@ pub async fn ServerState::process_poller_tick_with(
     git_state_capture~,
     git_pull_runner~,
     sleep_fn~,
+  )
+  tick_summary.changes = pending_events.length()
+  emit_tick_summary_line(
+    self,
+    tick_summary,
+    @env.now().reinterpret_as_int64(),
+    now,
   )
   deliver_poller_stall_notifications(self, now, runner, sleep_fn~)
   self.sweep_outbox(now)
@@ -3345,12 +3346,6 @@ pub async fn ServerState::process_poller_tick(
   if pending_events.length() > 0 {
     self.request_goal_judge_tick()
   }
-  emit_tick_summary_line(
-    self,
-    tick_summary,
-    @env.now().reinterpret_as_int64(),
-    now,
-  )
   deliver_orphaned_pr_notifications(self, runner, sleep_fn~)
   deliver_pending_poll_events(
     self,
@@ -3363,6 +3358,13 @@ pub async fn ServerState::process_poller_tick(
     audit_receipt_exists~,
     audit_receipt_read~,
     sleep_fn~,
+  )
+  tick_summary.changes = pending_events.length()
+  emit_tick_summary_line(
+    self,
+    tick_summary,
+    @env.now().reinterpret_as_int64(),
+    now,
   )
   deliver_poller_stall_notifications(self, now, runner, sleep_fn~)
   self.sweep_outbox(now)

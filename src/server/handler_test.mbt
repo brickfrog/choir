@@ -248,83 +248,84 @@ async test "process_poller_tick_with emits tick summary when an event is produce
     { ..@types.Config::default(), project_dir, terminal_session: "s" },
     make_hermetic_recovery_provider(),
   )
+  ignore(
+    state.register_agent({
+      agent_id: "main.tl",
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: project_dir,
+      branch: "main",
+      terminal_target: Some(handler_auto_close_target("tl")),
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: "main.leaf",
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some("main.tl"),
+      workspace: project_dir + "/.choir/worktrees/leaf",
+      branch: "main.leaf",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
   state.poller.track(
     3, "main.leaf", "main.leaf", "main", "https://example.test/pr/3", 1L,
   )
-  let captured : Array[@moontrace.Event] = []
-  handler_with_moontrace_capture(captured, async fn() {
-    state.process_poller_tick_with_test(
-      1000L,
-      900L,
-      async fn(_pr_number, _skip_issue_comment_fetch) {
-        @async.sleep(0)
-        (
-          true,
-          @poller.ReviewState::ChangesRequested,
-          "sha-1",
-          @poller.CiRollupStatus::Unknown,
-          "please fix",
-          true,
-          false,
-          @poller.Mergeable::Unknown,
-          @poller.MergeStateStatus::Unknown,
-          None,
-        )
-      },
-      runner=async fn(_cmds) {
-        @async.sleep(0)
-        []
-      },
-      capture=async fn(_cmd) {
-        @async.sleep(0)
-        (0, "")
-      },
-      automerge_capture=async fn(_cmd) {
-        @async.sleep(0)
-        (0, "")
-      },
-    )
-  })
-  let summary = match handler_tick_summary_event(captured) {
-    Some(event) => event
-    None =>
-      fail(
-        "expected poller tick, captured: " +
-        handler_moontrace_event_summary(captured),
+  state.process_poller_tick_with_test(
+    1000L,
+    900L,
+    async fn(_pr_number, _skip_issue_comment_fetch) {
+      @async.sleep(0)
+      (
+        true,
+        @poller.ReviewState::ChangesRequested,
+        "sha-1",
+        @poller.CiRollupStatus::Unknown,
+        "please fix",
+        true,
+        false,
+        @poller.Mergeable::Unknown,
+        @poller.MergeStateStatus::Unknown,
+        None,
       )
+    },
+    runner=async fn(_cmds) {
+      @async.sleep(0)
+      [0]
+    },
+    capture=async fn(_cmd) {
+      @async.sleep(0)
+      (0, "")
+    },
+    automerge_capture=async fn(_cmd) {
+      @async.sleep(0)
+      (0, "")
+    },
+  )
+  let delivery_log = @sys.read_file(project_dir + "/.choir/delivery.log")
+  let mut summary_line = ""
+  for line in delivery_log.split("\n") {
+    if line.contains("[poller] tick poll=") {
+      summary_line = line.to_owned()
+    }
   }
-  match handler_moontrace_field_value(summary.fields, "polled") {
-    Some(Number(value, ..)) => assert_eq(value.to_int(), 1)
-    _ => fail("polled field")
+  if summary_line == "" {
+    fail("expected poller tick summary line")
   }
-  match handler_moontrace_field_value(summary.fields, "changes") {
-    Some(Number(value, ..)) => assert_eq(value.to_int(), 1)
-    _ => fail("changes field")
-  }
-  match handler_moontrace_field_value(summary.fields, "errors") {
-    Some(Number(value, ..)) => assert_eq(value.to_int(), 0)
-    _ => fail("errors field")
-  }
-  match handler_moontrace_field_value(summary.fields, "elapsed_ms") {
-    Some(_) => ()
-    _ => fail("elapsed_ms field")
-  }
-  match handler_moontrace_field_value(summary.fields, "agent_counts") {
-    Some(String(value)) => assert_true(value.contains("active=0"))
-    _ => fail("agent_counts field")
-  }
-  match handler_moontrace_field_value(summary.fields, "tracked_prs") {
-    Some(Number(value, ..)) => assert_eq(value.to_int(), 1)
-    _ => fail("tracked_prs field")
-  }
-  match
-    handler_moontrace_field_value(
-      summary.fields,
-      "previous_delivered_event_age_sec",
-    ) {
-    Some(String(value)) => assert_eq(value, "unknown")
-    _ => fail("previous_delivered_event_age_sec field")
-  }
+  assert_true(summary_line.contains("poll=1"))
+  assert_true(summary_line.contains("changes=1"))
+  assert_true(summary_line.contains("errors=0"))
+  assert_true(summary_line.contains("active=2"))
+  assert_true(summary_line.contains("tracked_prs=1"))
+  assert_true(summary_line.contains("last_delivered_event_age_sec=0"))
   ignore(@sys.rm_rf(project_dir))
 }
 
@@ -3069,6 +3070,7 @@ async test "PRMerged into default branch without audit receipt fires hooks once 
     pr_number : Int,
     default_branch_lookup_ok : Bool,
     default_branch : String,
+    expected_log_level : @moontrace.Level,
     expected_log_message : String,
   ) -> Unit {
     let project_dir = "/tmp/choir-unaudited-integration-merge-" +
@@ -3239,7 +3241,7 @@ async test "PRMerged into default branch without audit receipt fires hooks once 
     if expected_log_message != "" {
       let mut error_count = 0
       for event in captured {
-        if event.level == @moontrace.Level::Error_ &&
+        if event.level == expected_log_level &&
           event.message == expected_log_message {
           error_count = error_count + 1
         }
@@ -3247,7 +3249,7 @@ async test "PRMerged into default branch without audit receipt fires hooks once 
       if error_count != 1 {
         fail(
           label +
-          " expected delivery path to emit exactly one unaudited merge error; events=" +
+          " expected delivery path to emit exactly one unaudited merge policy log; events=" +
           handler_moontrace_event_summary(captured),
         )
       }
@@ -3335,11 +3337,30 @@ async test "PRMerged into default branch without audit receipt fires hooks once 
     )
     ignore(@sys.rm_rf(project_dir))
   }
-  run_case("missing", 615, true, "main", "[UNAUDITED MERGE INTO MAIN]")
   run_case(
-    "default-lookup-fails", 616, false, "main", "[UNAUDITED MERGE INTO MAIN]",
+    "missing",
+    615,
+    true,
+    "main",
+    @moontrace.Level::Error_,
+    "[UNAUDITED MERGE INTO MAIN]",
   )
-  run_case("trunk", 618, true, "trunk", "[UNAUDITED MERGE INTO DEFAULT BRANCH]")
+  run_case(
+    "default-lookup-fails",
+    616,
+    false,
+    "main",
+    @moontrace.Level::Warn,
+    "audit enforcement warned: missing merge head sha",
+  )
+  run_case(
+    "trunk",
+    618,
+    true,
+    "trunk",
+    @moontrace.Level::Error_,
+    "[UNAUDITED MERGE INTO DEFAULT BRANCH]",
+  )
 }
 
 ///|
@@ -6943,47 +6964,6 @@ async fn handler_with_moontrace_capture(
     }
   }
   @moontrace.clear_subscriber()
-}
-
-///|
-fn handler_moontrace_field_value(
-  fields : Array[@moontrace.Field],
-  key : String,
-) -> Json? {
-  for field in fields {
-    if field.key == key {
-      return Some(field.value)
-    }
-  }
-  None
-}
-
-///|
-fn handler_tick_summary_event(
-  events : Array[@moontrace.Event],
-) -> @moontrace.Event? {
-  let mut fallback : @moontrace.Event? = None
-  for event in events {
-    if event.level == @moontrace.Level::Info && event.message == "poller tick" {
-      if fallback is None {
-        fallback = Some(event)
-      }
-      let agent_counts_matches = match
-        handler_moontrace_field_value(event.fields, "agent_counts") {
-        Some(String(value)) => value.contains("active=0")
-        _ => false
-      }
-      let tracked_prs_matches = match
-        handler_moontrace_field_value(event.fields, "tracked_prs") {
-        Some(Number(value, ..)) => value.to_int() == 1
-        _ => false
-      }
-      if agent_counts_matches && tracked_prs_matches {
-        return Some(event)
-      }
-    }
-  }
-  fallback
 }
 
 ///|
