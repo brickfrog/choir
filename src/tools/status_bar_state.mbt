@@ -391,6 +391,14 @@ pub impl FromJson for StatusBarSnapshot with from_json(json, path) {
             ),
           )
       }
+      if schema_version != 2 {
+        raise @json.JsonDecodeError(
+          (
+            path.add_key("schema_version"),
+            "StatusBarSnapshot::from_json: expected schema_version 2",
+          ),
+        )
+      }
       let taken_at_ms : Int64 = match fields.get("taken_at_ms") {
         Some(value) =>
           status_bar_int64_from_json(value, path.add_key("taken_at_ms"))
@@ -948,7 +956,7 @@ pub fn build_status_bar_snapshot(
     }
   }
   {
-    schema_version: 1,
+    schema_version: 2,
     taken_at_ms: @types.non_negative_i64(now_ms),
     panes: sort_status_bar_panes(panes),
   }
@@ -1030,7 +1038,7 @@ fn build_status_bar_snapshot_by_session(
     }
   }
   {
-    schema_version: 1,
+    schema_version: 2,
     taken_at_ms: @types.non_negative_i64(now_ms),
     panes: sort_status_bar_panes(panes),
   }

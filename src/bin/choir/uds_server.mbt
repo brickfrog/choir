@@ -499,7 +499,7 @@ async test "serve UDS JSON-RPC tools call returns status bar structured content"
       guard result_obj.get("structuredContent") is Some(Object(snapshot)) else {
         fail("expected structuredContent object")
       }
-      @debug.assert_eq(snapshot.get("schema_version"), Some((1).to_json()))
+      @debug.assert_eq(snapshot.get("schema_version"), Some((2).to_json()))
       guard snapshot.get("panes") is Some(Array(panes)) else {
         fail("expected panes array")
       }
@@ -530,7 +530,7 @@ async test "serve UDS custom envelope still parses and dispatches" {
           match resp.ok_payload() {
             Some(fields) => {
               let body = fields.to_json_map()
-              @debug.assert_eq(body.get("schema_version"), Some((1).to_json()))
+              @debug.assert_eq(body.get("schema_version"), Some((2).to_json()))
               guard body.get("panes") is Some(Array(panes)) else {
                 fail("expected panes array")
               }
