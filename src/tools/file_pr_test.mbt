@@ -938,6 +938,14 @@ test "parse_findings_count counts multi-finding report" {
 }
 
 ///|
+test "parse_findings_count counts placeholder-looking body in multi-finding report" {
+  assert_eq(
+    parse_findings_count("Finding 1: No findings.\nFinding 2: real issue"),
+    2,
+  )
+}
+
+///|
 test "audit worker task pins review surface to audited head" {
   let head = "abcdef1234567890abcdef1234567890abcdef12"
   let task = build_audit_on_file_pr_task("/repo", "main.leaf", head)

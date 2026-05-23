@@ -1371,38 +1371,47 @@ fn string_index_is_digit(s : String, index : Int) -> Bool {
 }
 
 ///|
-fn report_has_finding_marker_at(report : String, index : Int) -> Bool {
+priv struct FindingMarkerSpan {
+  body_start : Int
+  body_end : Int
+}
+
+///|
+fn parse_finding_marker_at(report : String, index : Int) -> FindingMarkerSpan? {
   let marker = "Finding "
   if index + marker.length() >= report.length() {
-    return false
+    return None
   }
   if report[index:index + marker.length()].to_owned() != marker {
-    return false
+    return None
   }
   let mut pos = index + marker.length()
   let digit_start = pos
   while pos < report.length() && string_index_is_digit(report, pos) {
     pos = pos + 1
   }
-  pos > digit_start && pos < report.length() && report[pos] == ':'
-}
-
-///|
-fn finding_marker_inline_body(report : String, index : Int) -> String {
-  let marker = "Finding "
-  let mut pos = index + marker.length()
-  while pos < report.length() && string_index_is_digit(report, pos) {
-    pos = pos + 1
-  }
-  if pos >= report.length() || report[pos] != ':' {
-    return ""
+  if !(pos > digit_start && pos < report.length() && report[pos] == ':') {
+    return None
   }
   let body_start = pos + 1
   let mut body_end = body_start
   while body_end < report.length() && report[body_end] != '\n' {
     body_end = body_end + 1
   }
-  report[body_start:body_end].trim().to_owned()
+  Some({ body_start, body_end })
+}
+
+///|
+fn report_has_finding_marker_at(report : String, index : Int) -> Bool {
+  parse_finding_marker_at(report, index) is Some(_)
+}
+
+///|
+fn finding_marker_inline_body(report : String, index : Int) -> String {
+  match parse_finding_marker_at(report, index) {
+    Some(span) => report[span.body_start:span.body_end].trim().to_owned()
+    None => ""
+  }
 }
 
 ///|
@@ -1411,8 +1420,8 @@ fn finding_marker_is_no_findings_placeholder(
   index : Int,
 ) -> Bool {
   // Sarcasmotron/audit summaries sometimes encode a clean report as
-  // `Finding 1: No findings.`. Treat that placeholder as zero findings while
-  // keeping real `Finding N:` bodies countable.
+  // `Finding 1: No findings.`. When it is the sole marker in a report,
+  // `parse_findings_count` treats the placeholder as zero findings.
   match finding_marker_inline_body(report, index).to_lower() {
     "no findings" | "no findings." => true
     _ => false
@@ -1422,18 +1431,23 @@ fn finding_marker_is_no_findings_placeholder(
 ///|
 pub fn parse_findings_count(report : String) -> Int {
   let mut count = 0
+  let mut sole_marker_is_no_findings_placeholder = false
   let mut i = 0
   while i < report.length() {
     if report_has_finding_marker_at(report, i) {
-      if !finding_marker_is_no_findings_placeholder(report, i) {
-        count = count + 1
-      }
+      count = count + 1
+      sole_marker_is_no_findings_placeholder = count == 1 &&
+        finding_marker_is_no_findings_placeholder(report, i)
       i = i + "Finding ".length()
     } else {
       i = i + 1
     }
   }
-  count
+  if count == 1 && sole_marker_is_no_findings_placeholder {
+    0
+  } else {
+    count
+  }
 }
 
 ///|
