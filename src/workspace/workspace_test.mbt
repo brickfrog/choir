@@ -1618,7 +1618,18 @@ test "bash_bounded_script_body wraps bash in a timeout" {
 }
 
 ///|
-test "run_native_leaf_helpers_command installs gh shims alongside leaf-tool" {
+test "choir_lint_wrapper_script_body delegates to native lint command" {
+  let body = @workspace.choir_lint_wrapper_script_body()
+  assert_true(body.has_prefix("#!/bin/sh"))
+  assert_true(body.contains("cd \"$project_dir\""))
+  assert_true(
+    body.contains("exec moon run src/bin/choir_lint --target native -- \"$@\""),
+  )
+  assert_false(body.contains("_build/native"))
+}
+
+///|
+test "run_native_leaf_helpers_command installs leaf bin shims alongside leaf-tool" {
   let dir = "/tmp/choir-gh-shim-install-" +
     @sys.get_pid().to_string() +
     "-" +
@@ -1650,6 +1661,13 @@ test "run_native_leaf_helpers_command installs gh shims alongside leaf-tool" {
     @workspace.bash_bounded_script_body(),
   )
   assert_eq(@sys.system("test -x " + @sys.shell_quote(bash_bounded_path)), 0)
+  let choir_lint_path = bin_dir + "/choir_lint"
+  assert_true(@sys.path_exists(choir_lint_path))
+  assert_eq(
+    @sys.read_file(choir_lint_path),
+    @workspace.choir_lint_wrapper_script_body(),
+  )
+  assert_eq(@sys.system("test -x " + @sys.shell_quote(choir_lint_path)), 0)
   // Leaf-tool symlinks still installed -- shim is additive, not a replacement.
   assert_true(@sys.path_exists(bin_dir + "/file_pr"))
   assert_true(@sys.path_exists(bin_dir + "/resolve_my_review_threads"))
