@@ -507,6 +507,7 @@ pub async fn execute_delivery(
               sleep_fn~,
             ),
           )
+          log_delivery_success("teams:" + path)
           Ok(())
         }
         Err(e) => Err(e)
@@ -538,6 +539,7 @@ pub async fn execute_delivery(
     @message.DeliveryMethod::UdsHttp(sock_path, body) => {
       let result = @uds.http_post(sock_path, body)
       if result == 0 {
+        log_delivery_success("uds:" + sock_path)
         Ok(())
       } else {
         Err(

@@ -62,6 +62,11 @@ async fn record_sleep_success(ms : Int) -> Unit {
 }
 
 ///|
+async fn no_op_sleep(_ms : Int) -> Unit {
+  @async.sleep(0)
+}
+
+///|
 async fn runner_always_fail(cmds : Array[@workspace.Command]) -> Array[Int] {
   @async.sleep(0)
   ignore(increment_counter(test_counter_path("failure")))
@@ -121,6 +126,16 @@ fn sample_delivery(text : String) -> @message.DeliveryMethod {
 }
 
 ///|
+fn delivery_log_project_dir(name : String) -> String {
+  "/tmp/choir-delivery-" +
+  name +
+  "-" +
+  @sys.get_pid().to_string() +
+  "-" +
+  @env.now().reinterpret_as_int64().to_string()
+}
+
+///|
 async test "execute_delivery retries local terminal command with exponential backoff" {
   reset_test_files("success")
   let result = execute_delivery(
@@ -138,10 +153,7 @@ async test "execute_delivery retries local terminal command with exponential bac
 
 ///|
 async test "execute_delivery logs successful local terminal delivery" {
-  let project_dir = "/tmp/choir-delivery-success-" +
-    @sys.get_pid().to_string() +
-    "-" +
-    @env.now().reinterpret_as_int64().to_string()
+  let project_dir = delivery_log_project_dir("local-success")
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
   let result = execute_delivery(
     sample_delivery("hello success"),
@@ -155,6 +167,31 @@ async test "execute_delivery logs successful local terminal delivery" {
   let log = @sys.read_file(project_dir + "/.choir/delivery.log")
   assert_true(log.contains("[delivery-success]"))
   assert_true(log.contains("target=zellij-pane:test:terminal_1"))
+}
+
+///|
+async test "execute_delivery logs successful teams inbox delivery" {
+  let project_dir = delivery_log_project_dir("teams-success")
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let inbox_path = project_dir + "/inbox/default.json"
+  let delivery = @message.DeliveryMethod::TeamsInbox(
+    inbox_path,
+    "{\"content\":\"hello\"}",
+    fallback_target=None,
+  )
+  let result = execute_delivery(
+    delivery,
+    runner_always_succeed,
+    project_dir~,
+    sleep_fn=no_op_sleep,
+  )
+  match result {
+    Ok(_) => ()
+    Err(e) => fail("expected teams delivery success: " + e.message())
+  }
+  let log = @sys.read_file(project_dir + "/.choir/delivery.log")
+  assert_true(log.contains("[delivery-success]"))
+  assert_true(log.contains("target=teams:" + inbox_path))
 }
 
 ///|
