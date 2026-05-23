@@ -107,11 +107,7 @@ moon test --target native
 moon fmt
 ```
 
-Optional pre-commit hook:
-
-```bash
-git config core.hooksPath .githooks   # runs moon fmt + moon check
-```
+After cloning, run `choir init` to configure the lint canary hook automatically, or set it manually with `git config --local core.hooksPath .githooks`.
 
 ## Runtime Dependencies
 
