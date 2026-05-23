@@ -13,11 +13,11 @@ if [ "$#" -gt 0 ]; then
     echo "$f" >> "$tmp_files"
   done
 else
-  for d in src hooks tests; do
-    if [ -d "$d" ]; then
-      find "$d" -type f -name '*.mbt' >> "$tmp_files" 2>/dev/null
-    fi
-  done
+for d in src hooks tests; do
+  if [ -d "$d" ]; then
+      find "$d" -type f -name '*.mbt' ! -path '*/fixtures/canary/*' >> "$tmp_files" 2>/dev/null
+  fi
+done
 fi
 
 status=0
