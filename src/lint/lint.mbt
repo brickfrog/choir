@@ -75,7 +75,7 @@ priv enum DangerousCallKind {
 } derive(Eq)
 
 ///|
-impl @syntax.IterVisitor for GitProgramSearch with visit_Expr(self, expr) {
+impl @syntax.IterVisitor for GitProgramSearch with fn visit_Expr(self, expr) {
   match expr {
     Record(fields~, ..) =>
       for field in fields {
@@ -291,7 +291,10 @@ fn expr_is_none(expr : @syntax.Expr) -> Bool {
 }
 
 ///|
-impl @syntax.IterVisitor for ConstructorNameSearch with visit_Expr(self, expr) {
+impl @syntax.IterVisitor for ConstructorNameSearch with fn visit_Expr(
+  self,
+  expr,
+) {
   if self.found {
     return
   }
@@ -657,7 +660,10 @@ fn pop_names_to(names : Array[String], length : Int) -> Unit {
 }
 
 ///|
-impl @syntax.IterVisitor for FunctionBodyCollector with visit_Expr(self, expr) {
+impl @syntax.IterVisitor for FunctionBodyCollector with fn visit_Expr(
+  self,
+  expr,
+) {
   let mut visit_children = true
   if self.direct_rule_id is None {
     match expr {
@@ -856,7 +862,7 @@ fn exec_package_ref_name(
 }
 
 ///|
-impl @syntax.IterVisitor for ExecPackageRefSearch with visit_Expr(self, expr) {
+impl @syntax.IterVisitor for ExecPackageRefSearch with fn visit_Expr(self, expr) {
   if self.found {
     return
   }
@@ -1441,7 +1447,7 @@ fn scan_impls(file : String, impls : @syntax.Impls) -> Array[LintFinding] {
 }
 
 ///|
-impl @syntax.IterVisitor for LintEnv with visit_Impl_TopFuncDef(
+impl @syntax.IterVisitor for LintEnv with fn visit_Impl_TopFuncDef(
   env,
   fun_decl~,
   decl_body~,
@@ -1455,7 +1461,7 @@ impl @syntax.IterVisitor for LintEnv with visit_Impl_TopFuncDef(
 }
 
 ///|
-impl @syntax.IterVisitor for LintEnv with visit_Impl_TopImpl(
+impl @syntax.IterVisitor for LintEnv with fn visit_Impl_TopImpl(
   env,
   self_ty~,
   trait_~,
@@ -1495,7 +1501,7 @@ impl @syntax.IterVisitor for LintEnv with visit_Impl_TopImpl(
 }
 
 ///|
-impl @syntax.IterVisitor for LintEnv with visit_Expr(env, expr) {
+impl @syntax.IterVisitor for LintEnv with fn visit_Expr(env, expr) {
   match expr {
     Apply(func~, args~, loc~, ..) => {
       check_test_apply(env, func, args, loc)
@@ -1545,7 +1551,7 @@ impl @syntax.IterVisitor for LintEnv with visit_Expr(env, expr) {
 }
 
 ///|
-impl @syntax.IterVisitor for LintEnv with visit_Parameter_Optional(
+impl @syntax.IterVisitor for LintEnv with fn visit_Parameter_Optional(
   env,
   binder~,
   default~,
@@ -1713,6 +1719,26 @@ fn package_aliases_for_file(
 }
 
 ///|
+fn parse_impls_from_source(
+  file : String,
+  source : String,
+) -> (@syntax.Impls, Array[@basic.Report]) {
+  let (impls, reports) = @parser.parse_string(
+    source,
+    name=file,
+    parser=@parser.Parser::MoonYacc,
+  )
+  if reports.length() == 0 {
+    return (impls, reports)
+  }
+  if !source.contains("with fn output") {
+    return (impls, reports)
+  }
+  let normalized = source.replace(old="with fn output", new="with output")
+  @parser.parse_string(normalized, name=file, parser=@parser.Parser::MoonYacc)
+}
+
+///|
 test "package_aliases_for_file caches by directory" {
   let reads : Ref[Int] = @ref.new(0)
   let cache : @ref.Ref[Map[String, Array[(String, String)]]] = @ref.new({})
@@ -1750,7 +1776,7 @@ pub fn lint_source(
   path_exists? : (String) -> Bool = @sys.path_exists,
   package_alias_cache? : @ref.Ref[Map[String, Array[(String, String)]]] = package_alias_cache,
 ) -> Result[Array[LintFinding], @types.ChoirError] {
-  let (impls, reports) = @parser.parse_string(source, name=file)
+  let (impls, reports) = parse_impls_from_source(file, source)
   if reports.length() > 0 {
     return Err(@types.ChoirError::validation_error(reports[0].to_string()))
   }

@@ -663,6 +663,29 @@ test "does not flag git text without execution" {
 }
 
 ///|
+test "accepts both impl Show output syntaxes" {
+  let source =
+    #|enum A {
+    #|  A
+    #|}
+    #|enum B {
+    #|  B
+    #|}
+    #|pub impl Show for A with output(self, logger) -> Unit {
+    #|  ignore(self)
+    #|  ignore(logger)
+    #|}
+    #|pub impl Show for B with fn output(self, logger) -> Unit {
+    #|  ignore(self)
+    #|  ignore(logger)
+    #|}
+  match lint_source("src/example/show_impl_test.mbt", source) {
+    Ok(findings) => assert_eq(findings.length(), 0)
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
 fn assert_single_rule_for_file(
   source : String,
   file : String,
