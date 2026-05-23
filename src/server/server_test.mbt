@@ -32,7 +32,7 @@ async test "audit-on-file-pr report prepare buffers fast report before waiter" {
 async test "audit-on-file-pr report cleanup removes waiter queue" {
   let config = @types.Config::default()
   let state = ServerState::new(config, make_hermetic_recovery_provider())
-  let queue = @aqueue.Queue::new(kind=@aqueue.Kind::Unbounded)
+  let queue = @aqueue.Queue(kind=@aqueue.Kind::Unbounded)
   state.audit_on_file_pr_reports.set("worker-a", queue)
   state.cleanup_audit_on_file_pr_report("worker-a")
   assert_false(state.audit_on_file_pr_reports.contains("worker-a"))

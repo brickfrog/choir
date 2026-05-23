@@ -204,7 +204,7 @@ pub fn ServerState::new(
     handoff_delivered: {},
     audit_on_file_pr_reports: {},
     mutation_gate_reports: {},
-    audit_pr_comment_tasks: @aqueue.Queue::new(kind=@aqueue.Kind::Unbounded),
+    audit_pr_comment_tasks: @aqueue.Queue(kind=@aqueue.Kind::Unbounded),
     audit_cycle_counts: {},
     audit_progress: {},
     agent_task_contracts: {},
@@ -292,7 +292,7 @@ fn ServerState::audit_on_file_pr_report_queue(
   match self.audit_on_file_pr_reports.get(agent_id) {
     Some(queue) => queue
     None => {
-      let queue = @aqueue.Queue::new(kind=@aqueue.Kind::Unbounded)
+      let queue = @aqueue.Queue(kind=@aqueue.Kind::Unbounded)
       self.audit_on_file_pr_reports.set(agent_id, queue)
       queue
     }
@@ -307,7 +307,7 @@ fn ServerState::mutation_gate_report_queue(
   match self.mutation_gate_reports.get(agent_id) {
     Some(queue) => queue
     None => {
-      let queue = @aqueue.Queue::new(kind=@aqueue.Kind::Unbounded)
+      let queue = @aqueue.Queue(kind=@aqueue.Kind::Unbounded)
       self.mutation_gate_reports.set(agent_id, queue)
       queue
     }
