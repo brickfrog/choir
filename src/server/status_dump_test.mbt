@@ -225,6 +225,37 @@ test "server status snapshot keeps thread-independent failed attention explicit"
 }
 
 ///|
+test "server status row keeps fixed domains typed until formatting" {
+  let row = ServerStatusSnapshotRow::{
+    agent_id: "root.leaf",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Codex,
+    lifecycle: @phase.WorkflowState::Dev(@phase.DevLifecycle::Working),
+    terminal_target: "zellij-pane:s:leaf",
+    parent_agent_id: Some("root"),
+    last_activity_unix: 90L,
+    last_request_age_sec: Some(10L),
+    pr_number: Some(58),
+    unresolved_threads: @tools.StatusBarThreadCount::Count(1),
+    ci_rollup: Some(@poller.CiRollupStatus::NoChecks),
+    attention_needed: @tools.PaneAttention::Clear,
+  }
+  @debug.assert_eq(row.role, @types.Role::Dev)
+  @debug.assert_eq(row.agent_type, @types.AgentType::Codex)
+  @debug.assert_eq(
+    row.lifecycle,
+    @phase.WorkflowState::Dev(@phase.DevLifecycle::Working),
+  )
+  @debug.assert_eq(row.ci_rollup, Some(@poller.CiRollupStatus::NoChecks))
+  let text = format_server_status_snapshot([row], 100L)
+  assert_true(
+    text.contains(
+      "agent_id=root.leaf role=dev agent_type=codex lifecycle=working terminal_target=zellij-pane:s:leaf parent_agent_id=root last_activity_unix=90 last_request_age_sec=10 pr_number=58 unresolved_threads=1 ci_rollup=no_checks attention_needed=false\n",
+    ),
+  )
+}
+
+///|
 test "server status snapshot reports unknown attention when changes-requested threads are unfetched" {
   let registry = @registry.AgentRegistry::new()
   ignore(
