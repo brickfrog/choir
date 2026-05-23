@@ -8,7 +8,7 @@ pub(all) struct PendingWave {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for PendingWave with output(self, logger) -> Unit {
+pub impl Show for PendingWave with fn output(self, logger) -> Unit {
   self.to_repr().output(logger)
 }
 
@@ -481,7 +481,7 @@ pub(all) enum PendingWaveDecision {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for PendingWaveDecision with output(self, logger) -> Unit {
+pub impl Show for PendingWaveDecision with fn output(self, logger) -> Unit {
   self.to_repr().output(logger)
 }
 

@@ -7,7 +7,7 @@ pub(all) enum MergePrPreflightHostStep {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for MergePrPreflightHostStep with output(self, logger) -> Unit {
+pub impl Show for MergePrPreflightHostStep with fn output(self, logger) -> Unit {
   self.to_repr().output(logger)
 }
 
@@ -1063,7 +1063,7 @@ pub(all) enum MergePrHostStep {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for MergePrHostStep with output(self, logger) -> Unit {
+pub impl Show for MergePrHostStep with fn output(self, logger) -> Unit {
   self.to_repr().output(logger)
 }
 

@@ -95,6 +95,6 @@ pub fn ToolRequest::tool_name(self : ToolRequest) -> String {
 }
 
 ///|
-pub impl Show for ToolRequest with output(self, logger) -> Unit {
+pub impl Show for ToolRequest with fn output(self, logger) -> Unit {
   logger.write_string(self.tool_name())
 }

@@ -38,7 +38,7 @@ fn wave_state_optional_int64_to_json(value : Int64?) -> Json {
 }
 
 ///|
-pub impl ToJson for WaveStatePR with to_json(self) -> Json {
+pub impl ToJson for WaveStatePR with fn to_json(self) -> Json {
   let obj : Map[String, Json] = {
     "pr_number": self.pr_number.to_json(),
     "pr_url": self.pr_url.to_json(),

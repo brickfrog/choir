@@ -23,7 +23,7 @@ pub(all) enum TlTrackedPrWorkflowCategory {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for TlTrackedPrWorkflowCategory with output(self, logger) -> Unit {
+pub impl Show for TlTrackedPrWorkflowCategory with fn output(self, logger) -> Unit {
   self.to_repr().output(logger)
 }
 
@@ -60,7 +60,7 @@ pub(all) enum NextAction {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for NextAction with output(self, logger) -> Unit {
+pub impl Show for NextAction with fn output(self, logger) -> Unit {
   logger.write_string(self.to_wire_string())
 }
 
@@ -79,7 +79,7 @@ pub fn NextAction::to_wire_string(self : NextAction) -> String {
 }
 
 ///|
-pub impl ToJson for NextAction with to_json(self) -> Json {
+pub impl ToJson for NextAction with fn to_json(self) -> Json {
   self.to_wire_string().to_json()
 }
 

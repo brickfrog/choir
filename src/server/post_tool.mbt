@@ -5,7 +5,7 @@ pub(all) enum MergedDeliverySource {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for MergedDeliverySource with output(self, logger) -> Unit {
+pub impl Show for MergedDeliverySource with fn output(self, logger) -> Unit {
   self.to_repr().output(logger)
 }
 
@@ -65,7 +65,7 @@ pub(all) enum TeardownEffect {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for TeardownEffect with output(self, logger) -> Unit {
+pub impl Show for TeardownEffect with fn output(self, logger) -> Unit {
   self.to_repr().output(logger)
 }
 

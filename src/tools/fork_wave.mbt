@@ -585,7 +585,7 @@ pub(all) enum ForkWavePostSpawnHostStep {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for ForkWavePostSpawnHostStep with output(self, logger) -> Unit {
+pub impl Show for ForkWavePostSpawnHostStep with fn output(self, logger) -> Unit {
   self.to_repr().output(logger)
 }
 

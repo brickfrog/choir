@@ -8,7 +8,7 @@ pub(all) enum ReviewState {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for ReviewState with output(self, logger) -> Unit {
+pub impl Show for ReviewState with fn output(self, logger) -> Unit {
   logger.write_string(self.to_wire_string())
 }
 
@@ -23,7 +23,7 @@ pub fn ReviewState::to_wire_string(self : ReviewState) -> String {
 }
 
 ///|
-pub impl ToJson for ReviewState with to_json(self) -> Json {
+pub impl ToJson for ReviewState with fn to_json(self) -> Json {
   self.to_wire_string().to_json()
 }
 
@@ -60,12 +60,12 @@ pub fn Mergeable::to_wire_string(self : Mergeable) -> String {
 }
 
 ///|
-pub impl ToJson for Mergeable with to_json(self) -> Json {
+pub impl ToJson for Mergeable with fn to_json(self) -> Json {
   self.to_wire_string().to_json()
 }
 
 ///|
-pub impl Show for Mergeable with output(self, logger) -> Unit {
+pub impl Show for Mergeable with fn output(self, logger) -> Unit {
   logger.write_string(self.to_wire_string())
 }
 
@@ -95,12 +95,12 @@ pub fn MergeStateStatus::to_wire_string(self : MergeStateStatus) -> String {
 }
 
 ///|
-pub impl ToJson for MergeStateStatus with to_json(self) -> Json {
+pub impl ToJson for MergeStateStatus with fn to_json(self) -> Json {
   self.to_wire_string().to_json()
 }
 
 ///|
-pub impl Show for MergeStateStatus with output(self, logger) -> Unit {
+pub impl Show for MergeStateStatus with fn output(self, logger) -> Unit {
   logger.write_string(self.to_wire_string())
 }
 
@@ -112,7 +112,7 @@ pub(all) struct ReviewThreadRef {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for ReviewThreadRef with output(self, logger) -> Unit {
+pub impl Show for ReviewThreadRef with fn output(self, logger) -> Unit {
   self.to_repr().output(logger)
 }
 
@@ -158,7 +158,7 @@ pub(all) struct TrackedPR {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for TrackedPR with output(self, logger) -> Unit {
+pub impl Show for TrackedPR with fn output(self, logger) -> Unit {
   self.to_repr().output(logger)
 }
 
@@ -299,17 +299,17 @@ pub fn CiRollupStatus::to_wire_string(self : CiRollupStatus) -> String {
 }
 
 ///|
-pub impl ToJson for CiRollupStatus with to_json(self) -> Json {
+pub impl ToJson for CiRollupStatus with fn to_json(self) -> Json {
   self.to_wire_string().to_json()
 }
 
 ///|
-pub impl Show for CiRollupStatus with output(self, logger) -> Unit {
+pub impl Show for CiRollupStatus with fn output(self, logger) -> Unit {
   logger.write_string(self.to_wire_string())
 }
 
 ///|
-pub impl Show for PollEvent with output(self, logger) -> Unit {
+pub impl Show for PollEvent with fn output(self, logger) -> Unit {
   match self {
     ReviewReceived(n, s) => {
       logger.write_string("ReviewReceived(")

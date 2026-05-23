@@ -62,7 +62,7 @@ pub fn ChoirError::message(self : ChoirError) -> String {
 }
 
 ///|
-pub impl Show for ChoirError with output(self, logger) -> Unit {
+pub impl Show for ChoirError with fn output(self, logger) -> Unit {
   self.message().output(logger)
 }
 

@@ -7,6 +7,6 @@
 /// an inherent method wired to the existing free transition functions, while
 /// the trait captures the two type-invariant methods.
 pub trait StateMachine {
-  machine_name(Self) -> String
-  can_exit(Self) -> StopCheckResult
+  fn machine_name(Self) -> String
+  fn can_exit(Self) -> StopCheckResult
 }

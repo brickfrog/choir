@@ -11,7 +11,7 @@ pub(all) enum FinalizeReason {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-pub impl Show for FinalizeReason with output(self, logger) -> Unit {
+pub impl Show for FinalizeReason with fn output(self, logger) -> Unit {
   self.to_repr().output(logger)
 }
 
@@ -29,7 +29,7 @@ pub(all) enum FailureReason {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-pub impl Show for FailureReason with output(self, logger) -> Unit {
+pub impl Show for FailureReason with fn output(self, logger) -> Unit {
   self.to_repr().output(logger)
 }
 
@@ -73,7 +73,7 @@ pub(all) enum ChildLifecycleSummary {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-pub impl Show for ChildLifecycleSummary with output(self, logger) -> Unit {
+pub impl Show for ChildLifecycleSummary with fn output(self, logger) -> Unit {
   self.to_repr().output(logger)
 }
 
@@ -127,7 +127,7 @@ pub(all) enum WorkflowState {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-pub impl Show for WorkflowState with output(self, logger) -> Unit {
+pub impl Show for WorkflowState with fn output(self, logger) -> Unit {
   self.to_repr().output(logger)
 }
 
@@ -141,7 +141,7 @@ pub(all) enum ProcessState {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-pub impl Show for ProcessState with output(self, logger) -> Unit {
+pub impl Show for ProcessState with fn output(self, logger) -> Unit {
   self.to_repr().output(logger)
 }
 
@@ -155,7 +155,7 @@ pub(all) struct AgentLifecycle {
 } derive(Debug, Eq, ToJson)
 
 ///|
-pub impl FromJson for AgentLifecycle with from_json(json, path) {
+pub impl FromJson for AgentLifecycle with fn from_json(json, path) {
   match json {
     Object(fields) => {
       let agent_id : String = match fields.get("agent_id") {
@@ -214,7 +214,7 @@ pub impl FromJson for AgentLifecycle with from_json(json, path) {
 }
 
 ///|
-pub impl Show for AgentLifecycle with output(self, logger) -> Unit {
+pub impl Show for AgentLifecycle with fn output(self, logger) -> Unit {
   self.to_repr().output(logger)
 }
 
@@ -241,7 +241,7 @@ pub(all) enum LifecycleExitPolicy {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-pub impl Show for LifecycleExitPolicy with output(self, logger) -> Unit {
+pub impl Show for LifecycleExitPolicy with fn output(self, logger) -> Unit {
   self.to_repr().output(logger)
 }
 
@@ -254,7 +254,7 @@ pub(all) enum LifecycleDisconnectPolicy {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-pub impl Show for LifecycleDisconnectPolicy with output(self, logger) -> Unit {
+pub impl Show for LifecycleDisconnectPolicy with fn output(self, logger) -> Unit {
   self.to_repr().output(logger)
 }
 
@@ -1021,12 +1021,12 @@ pub fn remove_child_from_supervisor_lifecycle(
 }
 
 ///|
-pub impl StateMachine for SupervisorLifecycle with machine_name(_) -> String {
+pub impl StateMachine for SupervisorLifecycle with fn machine_name(_) -> String {
   "supervisor"
 }
 
 ///|
-pub impl StateMachine for SupervisorLifecycle with can_exit(self) -> StopCheckResult {
+pub impl StateMachine for SupervisorLifecycle with fn can_exit(self) -> StopCheckResult {
   match supervisor_exit_policy(self) {
     Blocked(reason~) => MustBlock(exit_block_reason_message(reason))
     Deferred(message~) => ShouldNudge(message)

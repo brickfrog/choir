@@ -37,7 +37,7 @@ pub(all) enum DeliveryMethod {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for DeliveryMethod with output(self, logger) -> Unit {
+pub impl Show for DeliveryMethod with fn output(self, logger) -> Unit {
   logger.write_string(self.to_display_string())
 }
 

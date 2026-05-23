@@ -9,7 +9,7 @@ pub(all) struct AuditReceipt {
 } derive(Debug, Eq, ToJson)
 
 ///|
-pub impl FromJson for AuditReceipt with from_json(json, path) {
+pub impl FromJson for AuditReceipt with fn from_json(json, path) {
   guard json is Object(fields) else {
     raise @json.JsonDecodeError(
       (path, "AuditReceipt::from_json: expected object"),

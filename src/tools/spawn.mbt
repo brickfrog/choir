@@ -194,7 +194,7 @@ pub(all) struct SpawnWorkerPlan {
 }
 
 ///|
-pub impl Show for SpawnWorkerPlan with output(self, logger) -> Unit {
+pub impl Show for SpawnWorkerPlan with fn output(self, logger) -> Unit {
   ignore(self)
   ignore(logger)
 }
@@ -598,7 +598,7 @@ pub(all) struct SpawnRemotePlan {
 }
 
 ///|
-pub impl Show for SpawnRemotePlan with output(self, logger) -> Unit {
+pub impl Show for SpawnRemotePlan with fn output(self, logger) -> Unit {
   ignore(self)
   ignore(logger)
 }
@@ -692,7 +692,7 @@ pub(all) struct SpawnGeminiPlan {
 }
 
 ///|
-pub impl Show for SpawnGeminiPlan with output(self, logger) -> Unit {
+pub impl Show for SpawnGeminiPlan with fn output(self, logger) -> Unit {
   ignore(self)
   ignore(logger)
 }

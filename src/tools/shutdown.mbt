@@ -73,7 +73,7 @@ pub(all) enum KillAgentAdapterHostStep {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for KillAgentAdapterHostStep with output(self, logger) -> Unit {
+pub impl Show for KillAgentAdapterHostStep with fn output(self, logger) -> Unit {
   self.to_repr().output(logger)
 }
 
@@ -374,7 +374,7 @@ pub(all) enum ShutdownAdapterHostStep {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for ShutdownAdapterHostStep with output(self, logger) -> Unit {
+pub impl Show for ShutdownAdapterHostStep with fn output(self, logger) -> Unit {
   self.to_repr().output(logger)
 }
 
