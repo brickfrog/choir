@@ -3222,7 +3222,9 @@ async test "PRMerged into default branch without audit receipt fires hooks once 
           handler_test_audit_receipt(head, default_branch, 0)
         },
       )
+      @async.sleep(0)
     })
+    @async.sleep(0)
     assert_eq(pull_calls, 0)
     assert_eq(hook_calls, 2)
     assert_eq(receipt_read_calls, 0)
@@ -3336,7 +3338,9 @@ async test "PRMerged into default branch without audit receipt fires hooks once 
     ignore(@sys.rm_rf(project_dir))
   }
   run_case("missing", 615, true, "main", "[UNAUDITED MERGE INTO MAIN]")
-  run_case("default-lookup-fails", 616, false, "main", "")
+  run_case(
+    "default-lookup-fails", 616, false, "main", "[UNAUDITED MERGE INTO MAIN]",
+  )
   run_case("trunk", 618, true, "trunk", "[UNAUDITED MERGE INTO DEFAULT BRANCH]")
 }
 
