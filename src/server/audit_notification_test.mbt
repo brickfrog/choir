@@ -511,8 +511,8 @@ async test "capture_audit_on_file_pr_report returns before slow PR comment captu
     sha="abcdef1234567890abcdef1234567890abcdef12",
   )
   audit_notification_seed_worker(state, worker_id, leaf_id)
-  let comment_started = @aqueue.Queue::new(kind=@aqueue.Kind::Unbounded)
-  let release_comment = @aqueue.Queue::new(kind=@aqueue.Kind::Unbounded)
+  let comment_started = @aqueue.Queue(kind=@aqueue.Kind::Unbounded)
+  let release_comment = @aqueue.Queue(kind=@aqueue.Kind::Unbounded)
   let mut capture_completed = false
   state.capture_audit_on_file_pr_report_test(
     worker_id,
