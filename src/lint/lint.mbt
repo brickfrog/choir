@@ -167,6 +167,7 @@ fn is_reported_direct_reference_alias(
   match expr {
     Ident(id={ name: Ident(name~), .. }, ..) =>
       env.direct_reference_aliases.any(fn(alias_name) { alias_name == name })
+    Group(expr~, ..) => is_reported_direct_reference_alias(env, expr)
     _ => false
   }
 }

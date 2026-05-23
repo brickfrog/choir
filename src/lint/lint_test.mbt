@@ -98,6 +98,16 @@ test "flags exec capture through function alias" {
 }
 
 ///|
+test "does not duplicate findings for parenthesized direct function alias" {
+  let source =
+    #|async test "bad" {
+    #|  let cap = @exec.capture_command_merged
+    #|  ignore((cap)({ program: "git", args: ["status"], workdir: None }))
+    #|}
+  assert_single_rule(source, "test-exec-reference")
+}
+
+///|
 test "flags exec capture through two-level function alias" {
   let source =
     #|async test "bad" {
