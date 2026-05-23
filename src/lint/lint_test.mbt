@@ -10,6 +10,15 @@ fn assert_single_rule(source : String, rule_id : String) -> Unit raise {
 }
 
 ///|
+fn assert_has_rule(source : String, rule_id : String) -> Unit raise {
+  match lint_source("src/example/bad_test.mbt", source) {
+    Ok(findings) =>
+      assert_true(findings.any(fn(finding) { finding.rule_id == rule_id }))
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
 test "flags the deleted shell-backed git fixture shape" {
   let source =
     #|test "bad" {
@@ -86,6 +95,52 @@ test "flags exec capture through function alias" {
     #|  ignore(cap({ program: "git", args: ["status"], workdir: None }))
     #|}
   assert_single_rule(source, "test-exec-reference")
+}
+
+///|
+test "does not duplicate findings for parenthesized direct function alias" {
+  let source =
+    #|async test "bad" {
+    #|  let cap = @exec.capture_command_merged
+    #|  ignore((cap)({ program: "git", args: ["status"], workdir: None }))
+    #|}
+  assert_single_rule(source, "test-exec-reference")
+}
+
+///|
+test "flags exec capture through two-level function alias" {
+  let source =
+    #|async test "bad" {
+    #|  let f = @exec.capture_stdout_with_cwd
+    #|  let g = f
+    #|  ignore(g("gh", ["pr", "list"], None))
+    #|}
+  assert_has_rule(source, "test-exec-capture")
+}
+
+///|
+test "flags exec capture through three-level function alias" {
+  let source =
+    #|async test "bad" {
+    #|  let f = @exec.capture_stdout_with_cwd
+    #|  let g = f
+    #|  let h = g
+    #|  ignore(h("gh", ["pr", "list"], None))
+    #|}
+  assert_has_rule(source, "test-exec-capture")
+}
+
+///|
+test "does not loop on self-referential function alias" {
+  let source =
+    #|async test "ok" {
+    #|  let f = f
+    #|  ignore(f)
+    #|}
+  match lint_source("src/example/cycle_test.mbt", source) {
+    Ok(findings) => assert_eq(findings.length(), 0)
+    Err(e) => fail(e.message())
+  }
 }
 
 ///|
