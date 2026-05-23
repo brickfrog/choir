@@ -15,5 +15,16 @@ $staged
 EOF
 fi
 
+echo "→ lint canary (moon-fmt corruption guard)"
+staged_mbt="$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.mbt$' || true)"
+if [ -n "$staged_mbt" ]; then
+  if ! tools/lint_canary.sh $staged_mbt; then
+    echo
+    echo "ERROR: moon fmt produced choir_lint-incompatible syntax."
+    echo "  Either revert the affected lines, or wait for moonbitlang/parser to ship a fn-accepting grammar (see choir-p8w6)."
+    exit 1
+  fi
+fi
+
 echo "→ moon check --target native"
 moon check --target native

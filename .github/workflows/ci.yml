@@ -42,6 +42,9 @@ jobs:
       - name: Update registry
         run: moon update
 
+      - name: Lint canary (moon-fmt corruption guard)
+        run: tools/lint_canary.sh
+
       - name: Hermeticity lint
         run: |
           moon build src/bin/choir_lint --target native
