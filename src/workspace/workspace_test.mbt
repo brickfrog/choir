@@ -1170,6 +1170,28 @@ test "run_native_agy_cache_links_command is idempotent and preserves shared cach
   assert_true(@sys.write_file_sync(shared_bin + "/agy-sentinel", "bin"))
   assert_eq(@sys.read_file(playwright_link + "/sentinel.txt"), "shared")
   assert_eq(@sys.read_file(bin_link + "/agy-sentinel"), "bin")
+  let settings_raw = @sys.read_file(home + "/.gemini/settings.json")
+  let settings_json = @json.parse(settings_raw) catch {
+    _ => fail("invalid .gemini/settings.json")
+  }
+  guard settings_json is Object(settings) else {
+    fail(".gemini/settings.json root is not object")
+  }
+  guard settings.get("ui") is Some(Object(ui)) else {
+    fail("ui section missing")
+  }
+  guard ui.get("theme") is Some(theme) else { fail("theme missing") }
+  @debug.assert_eq(theme, "ANSI".to_json())
+  guard settings.get("security") is Some(Object(security)) else {
+    fail("security section missing")
+  }
+  guard security.get("auth") is Some(Object(auth)) else {
+    fail("security.auth missing")
+  }
+  guard auth.get("selectedType") is Some(selected_type) else {
+    fail("selectedType missing")
+  }
+  @debug.assert_eq(selected_type, "oauth-personal".to_json())
   assert_eq(@workspace.run_native_agy_cache_links_command(cmd), 0)
   assert_eq(@sys.read_file(playwright_link + "/sentinel.txt"), "shared")
   assert_eq(@sys.read_file(bin_link + "/agy-sentinel"), "bin")

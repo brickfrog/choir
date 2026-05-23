@@ -23,6 +23,12 @@ pub(all) struct AuditProgress {
 } derive(Debug, Eq)
 
 ///|
+pub(all) struct DisconnectContext {
+  connected_sec : Int64?
+  last_request_name : String?
+} derive(Debug, Eq)
+
+///|
 pub(all) struct AuditPrCommentTask {
   run : async () -> Unit
 }
@@ -113,6 +119,7 @@ pub struct ServerState {
   kv_store : @kv.KvStore
   run_id : String
   pending_disconnects : Map[String, Int64]
+  disconnect_contexts : Map[String, DisconnectContext]
   delivery_failures : Map[String, Int]
   handoff_delivered : Map[String, Bool]
   audit_on_file_pr_reports : Map[
@@ -192,6 +199,7 @@ pub fn ServerState::new(
     kv_store: @kv.KvStore::new(config.project_dir),
     run_id,
     pending_disconnects: {},
+    disconnect_contexts: {},
     delivery_failures: {},
     handoff_delivered: {},
     audit_on_file_pr_reports: {},
