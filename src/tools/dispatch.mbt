@@ -834,6 +834,52 @@ fn resolve_my_review_threads_targets(
 }
 
 ///|
+async fn resolve_my_review_threads_self_resolve_error(
+  tracked : @poller.TrackedPR,
+  project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> String? {
+  let timestamps = match
+    fetch_pr_review_commit_timestamps(tracked.pr_number, project_dir, capture) {
+    Some(value) => value
+    None =>
+      return Some(
+        "resolve_my_review_threads refused: self-resolve requires a fix commit pushed after the latest review on PR #" +
+        tracked.pr_number.to_string() +
+        " (could not fetch latest review/commit timestamps). Push a fix commit, or escalate to the TL to resolve with rationale.",
+      )
+  }
+  let latest_review_at = match timestamps.latest_review_at {
+    Some(value) => value
+    None => return None
+  }
+  let latest_commit_at = match timestamps.latest_commit_at {
+    Some(value) => value
+    None =>
+      return Some(
+        "resolve_my_review_threads refused: self-resolve requires a fix commit pushed after the latest review on PR #" +
+        tracked.pr_number.to_string() +
+        " (latest review at " +
+        latest_review_at +
+        ", latest commit at unknown). Push a fix commit, or escalate to the TL to resolve with rationale.",
+      )
+  }
+  if latest_commit_at > latest_review_at {
+    None
+  } else {
+    Some(
+      "resolve_my_review_threads refused: self-resolve requires a fix commit pushed after the latest review on PR #" +
+      tracked.pr_number.to_string() +
+      " (latest review at " +
+      latest_review_at +
+      ", latest commit at " +
+      latest_commit_at +
+      "). Push a fix commit, or escalate to the TL to resolve with rationale.",
+    )
+  }
+}
+
+///|
 /// Server tool dispatch.
 pub async fn dispatch(
   req : ToolRequest,
@@ -1968,6 +2014,15 @@ pub async fn dispatch(
         let prior_count = current.unresolved_thread_ids.length()
         if prior_count == 0 {
           continue
+        }
+        if resolve_args.caller_id == current.agent_id {
+          match
+            resolve_my_review_threads_self_resolve_error(
+              current, project_dir, capture,
+            ) {
+            Some(msg) => return @types.Response::Err(msg)
+            None => ()
+          }
         }
         pr_count = pr_count + 1
         for thread in current.unresolved_thread_ids {
