@@ -1656,7 +1656,7 @@ pub fn MutationLanguage::to_wire_string(self : MutationLanguage) -> String {
 }
 
 ///|
-pub impl Show for MutationLanguage with fn output(self, logger) -> Unit {
+pub impl Show for MutationLanguage with output(self, logger) -> Unit {
   logger.write_string(self.to_wire_string())
 }
 
