@@ -256,6 +256,47 @@ test "server status row keeps fixed domains typed until formatting" {
 }
 
 ///|
+test "server status snapshot normalizes blank parent like status bar panes" {
+  let registry = @registry.AgentRegistry::new()
+  ignore(
+    registry.upsert(
+      status_dump_test_agent(
+        "root.leaf",
+        @types.Role::Dev,
+        Some(""),
+        Some("zellij-pane:s:leaf"),
+      ),
+    ),
+  )
+  let lifecycle = status_dump_test_lifecycle(
+    "root.leaf",
+    @types.Role::Dev,
+    @phase.WorkflowState::Dev(@phase.DevLifecycle::Working),
+    90L,
+  )
+  let rows = server_status_snapshot_rows(
+    registry,
+    @poller.PollerState::new(),
+    fn(agent_id) {
+      if agent_id == "root.leaf" {
+        Some(lifecycle)
+      } else {
+        None
+      }
+    },
+    100L,
+  )
+  @debug.assert_eq(rows.length(), 1)
+  @debug.assert_eq(rows[0].parent_agent_id, None)
+  let text = format_server_status_snapshot(rows, 100L)
+  assert_true(
+    text.contains(
+      "agent_id=root.leaf role=dev agent_type=codex lifecycle=working terminal_target=zellij-pane:s:leaf parent_agent_id=none last_activity_unix=90 last_request_age_sec=10 pr_number=none unresolved_threads=none ci_rollup=unknown attention_needed=false\n",
+    ),
+  )
+}
+
+///|
 test "server status snapshot reports unknown attention when changes-requested threads are unfetched" {
   let registry = @registry.AgentRegistry::new()
   ignore(
