@@ -1822,7 +1822,7 @@ pub fn build_mutation_gate_task(
     "- Do not background any subprocess. No `&`, no `nohup`, no `setsid`, no `disown`. Every subprocess must be foreground and synchronously awaited.",
     "- Do not write a helper script that outlives this shell. If you need a state machine, inline it in the shell session you control directly.",
     "- Bound every subprocess with `timeout 60s` (e.g. `timeout 60s moon test --target native --release`). Even a single unbounded `moon test` can run for 30+ minutes.",
-    "- If the adapter gap is detected, your only remaining actions are: (a) call notify_parent with status=failure ONCE, (b) call shutdown, (c) exit. Do not run any verify command, do not run any mutant, do not poll for more information.",
+    "- If the adapter gap is detected, your only remaining actions are: (a) call notify_parent --status failure ONCE, (b) call shutdown, (c) exit. Do not run any verify command, do not run any mutant, do not poll for more information.",
     "",
     "Context:",
     "- Project directory: " + project_dir,
@@ -1847,14 +1847,14 @@ pub fn build_mutation_gate_task(
     "- If kill_rate is below mutation_kill_rate_min, include every surviving mutant you can identify and explicitly tell the leaf to re-fix-tests.",
     "",
     "Handoff:",
-    "- Call notify_parent exactly once. Use status success if the mutation run completed, even when mutants survived. Use status failure only if the worker could not run the gate.",
+    "- Call notify_parent exactly once. Use `notify_parent --status success` if the mutation run completed, even when mutants survived. Use `notify_parent --status failure` only if the worker could not run the gate.",
     "- The notify_parent message MUST contain one line beginning with " +
     mutation_gate_report_json_marker +
     " followed by JSON with fields kill_rate, total_mutants, killed_mutants, surviving_mutants, unsupported_languages.",
     "- Example: " +
     mutation_gate_report_json_marker +
     " {\"kill_rate\":0.75,\"total_mutants\":4,\"killed_mutants\":3,\"surviving_mutants\":[\"src/foo.mbt:12 == -> !=\"],\"unsupported_languages\":[]}",
-    "- After notify_parent, call shutdown.",
+    "- After notify_parent, call shutdown, then exit.",
   ].join("\n")
 }
 
