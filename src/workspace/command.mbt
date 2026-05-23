@@ -749,6 +749,65 @@ fn agy_gemini_settings_json() -> String {
 }
 
 ///|
+fn agy_model_override() -> String? {
+  match @sys.getenv("CHOIR_AGY_MODEL") {
+    Some(model) => if model != "" { Some(model) } else { None }
+    None => None
+  }
+}
+
+///|
+fn agy_model_override_with_env(env : (String) -> String?) -> String? {
+  match env("CHOIR_AGY_MODEL") {
+    Some(model) => if model != "" { Some(model) } else { None }
+    None => None
+  }
+}
+
+///|
+fn run_agy_model_override(
+  settings_path : String,
+  model : String,
+  read_file? : (String) -> String = @sys.read_file,
+  write_file? : (String, String) -> Bool = @sys.write_file_sync,
+  write_stderr? : (String) -> Unit = @sys.write_stderr,
+) -> Unit {
+  if !@sys.path_entry_exists(settings_path) {
+    return
+  }
+  let raw = read_file(settings_path)
+  let settings = @json.parse(raw) catch {
+    _ => {
+      write_stderr(
+        "choir: warning: agy override: malformed JSON in " +
+        settings_path +
+        "; leaving file unchanged\n",
+      )
+      return
+    }
+  }
+  match settings {
+    Object(config) => {
+      config.set("model", model.to_json())
+      let rewritten = config.to_json().stringify(indent=2)
+      if !write_file(settings_path, rewritten) {
+        write_stderr(
+          "choir: warning: agy override: failed to write " +
+          settings_path +
+          "\n",
+        )
+      }
+    }
+    _ =>
+      write_stderr(
+        "choir: warning: agy override: unexpected JSON shape in " +
+        settings_path +
+        "; leaving file unchanged\n",
+      )
+  }
+}
+
+///|
 fn symlink_shared_cache_dir_with_io(
   shared_dir : String,
   link_path : String,
@@ -784,6 +843,7 @@ fn run_native_agy_cache_links_paths_with_io(
   symlink_force? : (String, String) -> Bool = @sys.symlink_force,
   write_file? : (String, String) -> Bool = @sys.write_file_sync,
   write_stderr? : (String) -> Unit = @sys.write_stderr,
+  getenv? : (String) -> String? = fn(_) { agy_model_override() },
 ) -> Int {
   if project_dir == "" || worktree_path == "" {
     return 1
@@ -831,6 +891,13 @@ fn run_native_agy_cache_links_paths_with_io(
       return 0
     }
   }
+  match agy_model_override_with_env(getenv) {
+    Some(model) => {
+      let override_path = home + "/.gemini/antigravity-cli/settings.json"
+      run_agy_model_override(override_path, model, write_file~, write_stderr~)
+    }
+    None => ()
+  }
   0
 }
 
@@ -850,6 +917,209 @@ pub fn run_native_agy_cache_links_command(
     cmd.args[1],
     write_stderr~,
   )
+}
+
+///|
+test "run_native_agy_cache_links_paths_with_io does nothing to model when CHOIR_AGY_MODEL is unset" {
+  let dir = "/tmp/choir-agy-model-override-unset-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let project = dir + "/project"
+  let worktree = project + "/.choir/worktrees/leaf"
+  let shared_root = project + "/.choir/agy-shared-cache"
+  let shared_playwright = shared_root + "/ms-playwright-go"
+  let shared_version = shared_playwright + "/1.57.0"
+  let shared_bin = shared_root + "/antigravity-cli-bin"
+  ignore(@sys.rm_rf(dir))
+  assert_true(@sys.create_dir_all(worktree))
+  assert_true(@sys.create_dir_all(shared_version + "/package"))
+  assert_true(@sys.create_dir_all(shared_bin))
+  assert_true(@sys.write_file_sync(shared_version + "/node", "node"))
+  assert_true(
+    @sys.write_file_sync(shared_version + "/package/package.json", "{}"),
+  )
+  assert_true(@sys.write_file_sync(shared_bin + "/webm_encoder", "agy-bin"))
+
+  let home = worktree + "/.choir/agy-home"
+  let override_path = home + "/.gemini/antigravity-cli/settings.json"
+  assert_true(@sys.create_dir_all(home + "/.gemini/antigravity-cli"))
+  assert_true(
+    @sys.write_file_sync(
+      override_path, "{\"model\":\"legacy\",\"other\":{\"k\":\"v\"}}",
+    ),
+  )
+
+  let warnings : Array[String] = []
+  assert_eq(
+    run_native_agy_cache_links_paths_with_io(
+      project,
+      worktree,
+      write_stderr=fn(msg) { warnings.push(msg) },
+      getenv=fn(_) { None },
+    ),
+    0,
+  )
+
+  let parsed = @json.parse(@sys.read_file(override_path)) catch {
+    _ => fail("invalid settings override json")
+  }
+  match parsed {
+    Object(settings) => {
+      @debug.assert_eq(settings.get("model"), Some("legacy".to_json()))
+      guard settings.get("other") is Some(Object(other)) else {
+        fail("other object missing")
+      }
+      @debug.assert_eq(other.get("k"), Some("v".to_json()))
+    }
+    _ => fail("settings root missing object")
+  }
+  assert_true(warnings.length() == 0)
+  ignore(@sys.rm_rf(dir))
+}
+
+///|
+test "run_native_agy_cache_links_paths_with_io updates model when CHOIR_AGY_MODEL is set" {
+  let dir = "/tmp/choir-agy-model-override-set-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let project = dir + "/project"
+  let worktree = project + "/.choir/worktrees/leaf"
+  let shared_root = project + "/.choir/agy-shared-cache"
+  let shared_playwright = shared_root + "/ms-playwright-go"
+  let shared_version = shared_playwright + "/1.57.0"
+  let shared_bin = shared_root + "/antigravity-cli-bin"
+  ignore(@sys.rm_rf(dir))
+  assert_true(@sys.create_dir_all(worktree))
+  assert_true(@sys.create_dir_all(shared_version + "/package"))
+  assert_true(@sys.create_dir_all(shared_bin))
+  assert_true(@sys.write_file_sync(shared_version + "/node", "node"))
+  assert_true(
+    @sys.write_file_sync(shared_version + "/package/package.json", "{}"),
+  )
+  assert_true(@sys.write_file_sync(shared_bin + "/webm_encoder", "agy-bin"))
+
+  let home = worktree + "/.choir/agy-home"
+  let override_path = home + "/.gemini/antigravity-cli/settings.json"
+  assert_true(@sys.create_dir_all(home + "/.gemini/antigravity-cli"))
+  assert_true(
+    @sys.write_file_sync(
+      override_path, "{\"model\":\"legacy\",\"other\":{\"k\":\"v\"}}",
+    ),
+  )
+
+  let warnings : Array[String] = []
+  assert_eq(
+    run_native_agy_cache_links_paths_with_io(
+      project,
+      worktree,
+      write_stderr=fn(msg) { warnings.push(msg) },
+      getenv=fn(_) { Some("Some Model Name") },
+    ),
+    0,
+  )
+
+  let parsed = @json.parse(@sys.read_file(override_path)) catch {
+    _ => fail("invalid settings override json")
+  }
+  match parsed {
+    Object(settings) => {
+      @debug.assert_eq(settings.get("model"), Some("Some Model Name".to_json()))
+      guard settings.get("other") is Some(Object(other)) else {
+        fail("other object missing")
+      }
+      @debug.assert_eq(other.get("k"), Some("v".to_json()))
+    }
+    _ => fail("settings root missing object")
+  }
+  assert_true(warnings.length() == 0)
+  ignore(@sys.rm_rf(dir))
+}
+
+///|
+test "run_native_agy_cache_links_paths_with_io skips override when model settings are missing" {
+  let dir = "/tmp/choir-agy-model-override-missing-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let project = dir + "/project"
+  let worktree = project + "/.choir/worktrees/leaf"
+  let shared_root = project + "/.choir/agy-shared-cache"
+  let shared_playwright = shared_root + "/ms-playwright-go"
+  let shared_version = shared_playwright + "/1.57.0"
+  let shared_bin = shared_root + "/antigravity-cli-bin"
+  ignore(@sys.rm_rf(dir))
+  assert_true(@sys.create_dir_all(worktree))
+  assert_true(@sys.create_dir_all(shared_version + "/package"))
+  assert_true(@sys.create_dir_all(shared_bin))
+  assert_true(@sys.write_file_sync(shared_version + "/node", "node"))
+  assert_true(
+    @sys.write_file_sync(shared_version + "/package/package.json", "{}"),
+  )
+  assert_true(@sys.write_file_sync(shared_bin + "/webm_encoder", "agy-bin"))
+
+  let home = worktree + "/.choir/agy-home"
+  let override_path = home + "/.gemini/antigravity-cli/settings.json"
+  assert_false(@sys.path_entry_exists(override_path))
+
+  let warnings : Array[String] = []
+  assert_eq(
+    run_native_agy_cache_links_paths_with_io(
+      project,
+      worktree,
+      write_stderr=fn(msg) { warnings.push(msg) },
+      getenv=fn(_) { Some("Some Model Name") },
+    ),
+    0,
+  )
+  assert_false(@sys.path_entry_exists(override_path))
+  assert_true(warnings.length() == 0)
+  ignore(@sys.rm_rf(dir))
+}
+
+///|
+test "run_native_agy_cache_links_paths_with_io preserves malformed settings.json" {
+  let dir = "/tmp/choir-agy-model-override-malformed-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let project = dir + "/project"
+  let worktree = project + "/.choir/worktrees/leaf"
+  let shared_root = project + "/.choir/agy-shared-cache"
+  let shared_playwright = shared_root + "/ms-playwright-go"
+  let shared_version = shared_playwright + "/1.57.0"
+  let shared_bin = shared_root + "/antigravity-cli-bin"
+  ignore(@sys.rm_rf(dir))
+  assert_true(@sys.create_dir_all(worktree))
+  assert_true(@sys.create_dir_all(shared_version + "/package"))
+  assert_true(@sys.create_dir_all(shared_bin))
+  assert_true(@sys.write_file_sync(shared_version + "/node", "node"))
+  assert_true(
+    @sys.write_file_sync(shared_version + "/package/package.json", "{}"),
+  )
+  assert_true(@sys.write_file_sync(shared_bin + "/webm_encoder", "agy-bin"))
+
+  let home = worktree + "/.choir/agy-home"
+  let override_path = home + "/.gemini/antigravity-cli/settings.json"
+  assert_true(@sys.create_dir_all(home + "/.gemini/antigravity-cli"))
+  assert_true(@sys.write_file_sync(override_path, "{bad json"))
+
+  let warnings : Array[String] = []
+  assert_eq(
+    run_native_agy_cache_links_paths_with_io(
+      project,
+      worktree,
+      write_stderr=fn(msg) { warnings.push(msg) },
+      getenv=fn(_) { Some("Some Model Name") },
+    ),
+    0,
+  )
+  assert_eq(@sys.read_file(override_path), "{bad json")
+  let warn_text = warnings.join("\n")
+  assert_true(warn_text.contains("malformed"))
+  assert_true(warn_text.contains("leaving file unchanged"))
+  ignore(@sys.rm_rf(dir))
 }
 
 ///|
