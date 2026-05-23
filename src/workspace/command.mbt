@@ -262,6 +262,21 @@ pub fn bash_bounded_script_body() -> String {
 }
 
 ///|
+/// Body of the `choir_lint` wrapper installed under
+/// `worktree_path/.choir/bin/choir_lint`. Builds the native lint binary when
+/// needed, then execs it with the leaf's arguments.
+pub fn choir_lint_wrapper_script_body() -> String {
+  (
+    #|#!/bin/sh
+    #|script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd) || exit 1
+    #|project_dir=$(CDPATH= cd -- "$script_dir/../.." 2>/dev/null && pwd) || exit 1
+    #|cd "$project_dir" || exit 1
+    #|moon build src/bin/choir_lint --target native || exit $?
+    #|exec "$project_dir/_build/native/debug/build/src/bin/choir_lint/choir_lint.exe" "$@"
+  )
+}
+
+///|
 /// Install leaf helper scripts under `worktree_path/.choir/bin` without shell heredocs.
 /// Returns `0` on success, `1` on failure, `-1` if `cmd` is not this native command.
 pub fn run_native_leaf_helpers_command(cmd : Command) -> Int {
@@ -316,6 +331,13 @@ pub fn run_native_leaf_helpers_command(cmd : Command) -> Int {
     return 1
   }
   if !@sys.chmod_mode(bash_bounded_path, 0o755) {
+    return 1
+  }
+  let choir_lint_path = bin_dir + "/choir_lint"
+  if !@sys.write_file_sync(choir_lint_path, choir_lint_wrapper_script_body()) {
+    return 1
+  }
+  if !@sys.chmod_mode(choir_lint_path, 0o755) {
     return 1
   }
   0
