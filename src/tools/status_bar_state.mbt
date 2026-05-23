@@ -439,14 +439,16 @@ fn status_bar_positive_pr_number(n : Int) -> Int? {
 }
 
 ///|
-fn status_bar_parent_agent_id(parent : String?) -> String? {
+pub fn status_bar_parent_agent_id(parent : String?) -> String? {
   match parent {
     Some(value) => {
-      let trimmed = value.trim().to_owned()
+      let trimmed = value.trim()
       if trimmed == "" {
         None
+      } else if trimmed == value {
+        Some(value)
       } else {
-        Some(trimmed)
+        Some(trimmed.to_owned())
       }
     }
     None => None

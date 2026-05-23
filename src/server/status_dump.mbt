@@ -171,7 +171,7 @@ pub fn server_status_snapshot_rows(
       terminal_target: agent.terminal_target
       .map(@types.LocalTarget::to_string)
       .unwrap_or("none"),
-      parent_agent_id: agent.parent,
+      parent_agent_id: @tools.status_bar_parent_agent_id(agent.parent),
       last_activity_unix: @types.non_negative_i64(
         lifecycle.last_updated_unix_sec,
       ),
