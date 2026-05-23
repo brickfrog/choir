@@ -918,6 +918,26 @@ test "parse_findings_count counts finding markers" {
 }
 
 ///|
+test "parse_findings_count treats sole no-findings placeholder as zero" {
+  assert_eq(parse_findings_count("Finding 1: No findings."), 0)
+}
+
+///|
+test "parse_findings_count counts real one-finding report" {
+  assert_eq(parse_findings_count("Finding 1: some real text here"), 1)
+}
+
+///|
+test "parse_findings_count counts multi-finding report" {
+  assert_eq(
+    parse_findings_count(
+      "Finding 1: some real text here\nFinding 2: another issue",
+    ),
+    2,
+  )
+}
+
+///|
 test "audit worker task pins review surface to audited head" {
   let head = "abcdef1234567890abcdef1234567890abcdef12"
   let task = build_audit_on_file_pr_task("/repo", "main.leaf", head)
