@@ -1016,6 +1016,31 @@ test "mutation gate worker task carries MoonBit adapter instructions and no cost
 }
 
 ///|
+test "build_mutation_gate_task includes immediate-exit-on-adapter-gap directives" {
+  let task = build_mutation_gate_task(
+    "/repo",
+    "main.leaf",
+    "abcdef1234567890abcdef1234567890abcdef12",
+    [
+      {
+        language: MutationLanguage::MoonBit,
+        source_path: "src/math.mbt",
+        test_paths: ["src/math_test.mbt"],
+      },
+    ],
+    ["moon test --target native"],
+    0.75,
+  )
+  assert_true(task.contains("EXIT IMMEDIATELY"))
+  assert_true(task.contains("notify_parent"))
+  assert_true(task.contains("Do not background any subprocess"))
+  assert_true(
+    task.contains("Do not write a helper script that outlives this shell"),
+  )
+  assert_true(task.contains("Bound every subprocess with `timeout"))
+}
+
+///|
 async test "interpret_file_pr runs mutation gate for TL-filed registered dev PR" {
   let project_dir = "/tmp/choir-fpr-mutation-tl-dev-" +
     @sys.get_pid().to_string()

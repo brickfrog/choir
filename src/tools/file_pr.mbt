@@ -1656,7 +1656,7 @@ pub fn MutationLanguage::to_wire_string(self : MutationLanguage) -> String {
 }
 
 ///|
-pub impl Show for MutationLanguage with output(self, logger) -> Unit {
+pub impl Show for MutationLanguage with fn output(self, logger) -> Unit {
   logger.write_string(self.to_wire_string())
 }
 
@@ -1815,6 +1815,13 @@ pub fn build_mutation_gate_task(
     "- Do not commit, push, file a PR, or add measurement reporting.",
     "- Do not add cost-measurement scaffold.",
     "- If a language adapter cannot run, report that adapter gap and stop instead of rabbit-holing on external tools.",
+    "",
+    "Process discipline (mandatory; bypassing this causes orphan subprocess trees):",
+    "- EXIT IMMEDIATELY after notify_parent. Do not linger. Do not \"verify cleanup\" via further subprocess calls.",
+    "- Do not background any subprocess. No `&`, no `nohup`, no `setsid`, no `disown`. Every subprocess must be foreground and synchronously awaited.",
+    "- Do not write a helper script that outlives this shell. If you need a state machine, inline it in the shell session you control directly.",
+    "- Bound every subprocess with `timeout 60s` (e.g. `timeout 60s moon test --target native --release`). Even a single unbounded `moon test` can run for 30+ minutes.",
+    "- If the adapter gap is detected, your only remaining actions are: (a) call notify_parent with status=failure ONCE, (b) call shutdown, (c) exit. Do not run any verify command, do not run any mutant, do not poll for more information.",
     "",
     "Context:",
     "- Project directory: " + project_dir,
