@@ -232,8 +232,18 @@ fn server_status_optional_string(value : String?) -> String {
 ///|
 fn server_status_optional_ci_rollup(value : @poller.CiRollupStatus?) -> String {
   match value {
-    Some(v) => @tools.ci_rollup_to_wire_string(v)
+    Some(v) => v.to_wire_string()
     None => "unknown"
+  }
+}
+
+///|
+fn server_status_agent_type_to_string(value : @types.AgentType) -> String {
+  let wire = value.to_wire_string()
+  if wire == "" {
+    "unknown"
+  } else {
+    wire
   }
 }
 
@@ -254,11 +264,9 @@ pub fn format_server_status_snapshot(
     out.write_string("agent_id=")
     out.write_string(row.agent_id)
     out.write_string(" role=")
-    out.write_string(@tools.role_to_wire_string(row.role))
+    out.write_string(row.role.to_wire_string())
     out.write_string(" agent_type=")
-    out.write_string(
-      @tools.agent_type_to_wire_string(row.agent_type).unwrap_or("unknown"),
-    )
+    out.write_string(server_status_agent_type_to_string(row.agent_type))
     out.write_string(" lifecycle=")
     out.write_string(@tools.lifecycle_to_wire_string(row.lifecycle))
     out.write_string(" terminal_target=")
