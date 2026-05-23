@@ -11,6 +11,7 @@ priv struct LintEnv {
   file : String
   findings : Array[LintFinding]
   aliases : Array[(String, DangerousCallKind)]
+  direct_reference_aliases : Array[String]
   decl_stack : Array[String]
   test_rules_enabled : Bool
   forbidden_helpers : Array[ForbiddenHelper]
@@ -154,6 +155,18 @@ fn is_named_alias(
   match expr {
     Ident(id={ name: Ident(name~), .. }, ..) =>
       env.aliases.any(fn(entry) { entry.0 == name && entry.1 == kind })
+    _ => false
+  }
+}
+
+///|
+fn is_reported_direct_reference_alias(
+  env : LintEnv,
+  expr : @syntax.Expr,
+) -> Bool {
+  match expr {
+    Ident(id={ name: Ident(name~), .. }, ..) =>
+      env.direct_reference_aliases.any(fn(alias_name) { alias_name == name })
     _ => false
   }
 }
@@ -762,6 +775,18 @@ fn expr_contains_exec_package_ref(expr : @syntax.Expr) -> Bool {
 ///|
 fn alias_kind_for_expr(
   file : String,
+  aliases : Array[(String, DangerousCallKind)],
+  expr : @syntax.Expr,
+) -> DangerousCallKind? {
+  match direct_alias_kind_for_expr(file, expr) {
+    Some(kind) => Some(kind)
+    None => alias_kind_for_identifier(aliases, expr, Array::new(capacity=4))
+  }
+}
+
+///|
+fn direct_alias_kind_for_expr(
+  file : String,
   expr : @syntax.Expr,
 ) -> DangerousCallKind? {
   if is_package_ident(expr, "sys", "system") {
@@ -782,6 +807,30 @@ fn alias_kind_for_expr(
 }
 
 ///|
+fn alias_kind_for_identifier(
+  aliases : Array[(String, DangerousCallKind)],
+  expr : @syntax.Expr,
+  visited : Array[String],
+) -> DangerousCallKind? {
+  match expr {
+    Ident(id={ name: Ident(name~), .. }, ..) => {
+      if visited.any(fn(seen) { seen == name }) {
+        return None
+      }
+      visited.push(name)
+      for entry in aliases.rev_iter() {
+        if entry.0 == name {
+          return Some(entry.1)
+        }
+      }
+      None
+    }
+    Group(expr~, ..) => alias_kind_for_identifier(aliases, expr, visited)
+    _ => None
+  }
+}
+
+///|
 fn dangerous_call_kind(
   env : LintEnv,
   func : @syntax.Expr,
@@ -795,7 +844,7 @@ fn dangerous_call_kind_with_aliases(
   aliases : Array[(String, DangerousCallKind)],
   func : @syntax.Expr,
 ) -> DangerousCallKind? {
-  match alias_kind_for_expr(file, func) {
+  match alias_kind_for_expr(file, aliases, func) {
     Some(kind) => Some(kind)
     None =>
       if is_named_alias_with_aliases(aliases, func, ShellCommand) {
@@ -917,7 +966,7 @@ fn bind_alias_with_aliases(
   pattern : @syntax.Pattern,
   expr : @syntax.Expr,
 ) -> Unit {
-  match (pattern, alias_kind_for_expr(file, expr)) {
+  match (pattern, alias_kind_for_expr(file, aliases, expr)) {
     (Var({ name, .. }), Some(kind)) => aliases.push((name, kind))
     _ => ()
   }
@@ -1082,7 +1131,8 @@ fn check_test_apply(
         loc,
       )
     Some(ExecCapture) =>
-      if is_explicit_real_exec_integration_test(env) {
+      if is_reported_direct_reference_alias(env, func) ||
+        is_explicit_real_exec_integration_test(env) {
         ()
       } else {
         let rule_id = match first_argument(args) {
@@ -1107,8 +1157,11 @@ fn check_test_apply(
     Some(ShellRecoveryProvider) =>
       match first_argument(args) {
         Some(capture) =>
-          if is_exec_capture_ref_for_file(env.file, capture) ||
-            is_named_alias(env, capture, ExecCapture) {
+          if (
+              is_exec_capture_ref_for_file(env.file, capture) ||
+              is_named_alias(env, capture, ExecCapture)
+            ) &&
+            !is_reported_direct_reference_alias(env, capture) {
             emit(
               env, "test-shell-recovery-provider", "tests must not wire shell recovery to real exec capture helpers",
               loc,
@@ -1178,6 +1231,7 @@ fn scan_impls(file : String, impls : @syntax.Impls) -> Array[LintFinding] {
       file: canonical,
       findings,
       aliases: Array::new(capacity=4),
+      direct_reference_aliases: Array::new(capacity=4),
       decl_stack: Array::new(capacity=2),
       test_rules_enabled,
       forbidden_helpers,
@@ -1283,6 +1337,11 @@ impl @syntax.IterVisitor for LintEnv with visit_Expr(env, expr) {
           env, "test-exec-reference", "test files must not reference real exec helpers; inject a mock capture/runner instead",
           loc,
         )
+        match pattern {
+          Var({ name, .. }) => env.direct_reference_aliases.push(name)
+          _ => ()
+        }
+        bind_alias_if_needed(env, pattern, value)
       } else {
         bind_alias_if_needed(env, pattern, value)
       }
