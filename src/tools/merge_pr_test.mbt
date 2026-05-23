@@ -62,6 +62,18 @@ async test "dispatch resolve_my_review_threads skips pulse when final fetch fail
       cmd.args.length() >= 3 &&
       cmd.args[1] == "gh" &&
       cmd.args.contains("graphql") &&
+      cmd.args.iter().any(fn(arg) { arg.contains("latestReviews") }) {
+      return (
+        0,
+        (
+          #|{"data":{"repository":{"pullRequest":{"latestReviews":{"nodes":[{"submittedAt":"2026-05-23T10:00:00Z"}]},"commits":{"nodes":[{"commit":{"pushedDate":"2026-05-23T10:00:01Z","committedDate":"2026-05-23T10:00:01Z"}}]}}}}}
+        ),
+      )
+    }
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[1] == "gh" &&
+      cmd.args.contains("graphql") &&
       cmd.args.iter().any(fn(arg) { arg.contains("resolveReviewThread") }) {
       return (
         0, "{\"data\":{\"resolveReviewThread\":{\"thread\":{\"isResolved\":true}}}}",
@@ -3794,6 +3806,18 @@ async test "dispatch resolve_my_review_threads resolves every fetched caller thr
       cmd.args.length() >= 3 &&
       cmd.args[1] == "gh" &&
       cmd.args.contains("graphql") &&
+      cmd.args.iter().any(fn(arg) { arg.contains("latestReviews") }) {
+      return (
+        0,
+        (
+          #|{"data":{"repository":{"pullRequest":{"latestReviews":{"nodes":[{"submittedAt":"2026-05-23T10:00:00Z"}]},"commits":{"nodes":[{"commit":{"pushedDate":"2026-05-23T10:00:01Z","committedDate":"2026-05-23T10:00:01Z"}}]}}}}}
+        ),
+      )
+    }
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[1] == "gh" &&
+      cmd.args.contains("graphql") &&
       cmd.args.iter().any(fn(arg) { arg.contains("resolveReviewThread") }) {
       for arg in cmd.args {
         if arg.has_prefix("threadId=") {
@@ -3940,6 +3964,283 @@ async test "dispatch resolve_my_review_threads lets TL target leaf PR by pr_numb
   @debug.assert_eq(resolved, ["PRRT_leaf"])
   @debug.assert_eq(pulses, [446])
   assert_eq(review_thread_fetches, 2)
+}
+
+///|
+async test "dispatch resolve_my_review_threads refuses owning leaf without post-review commit" {
+  let project_dir = "/tmp/choir-dispatch-resolve-my-stale-fix-" +
+    @sys.get_pid().to_string()
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    447,
+    "main.leaf",
+    "main.leaf",
+    "main",
+    "https://github.com/brickfrog/choir/pull/447",
+    0L,
+    @poller.ReviewState::ChangesRequested,
+    "fix this",
+    "sha-reviewed",
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  let resolved : Array[String] = []
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[1] == "gh" &&
+      cmd.args.contains("repo") &&
+      cmd.args.contains("view") {
+      return (0, "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}")
+    }
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[1] == "gh" &&
+      cmd.args.contains("graphql") &&
+      cmd.args.iter().any(fn(arg) { arg.contains("latestReviews") }) {
+      return (
+        0,
+        (
+          #|{"data":{"repository":{"pullRequest":{"latestReviews":{"nodes":[{"submittedAt":"2026-05-23T10:00:00Z"}]},"commits":{"nodes":[{"commit":{"pushedDate":"2026-05-23T09:59:59Z","committedDate":"2026-05-23T09:59:59Z"}}]}}}}}
+        ),
+      )
+    }
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[1] == "gh" &&
+      cmd.args.contains("graphql") &&
+      cmd.args.iter().any(fn(arg) { arg.contains("resolveReviewThread") }) {
+      for arg in cmd.args {
+        if arg.has_prefix("threadId=") {
+          resolved.push(arg["threadId=".length():].to_owned())
+        }
+      }
+      return (
+        0, "{\"data\":{\"resolveReviewThread\":{\"thread\":{\"isResolved\":true}}}}",
+      )
+    }
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[1] == "gh" &&
+      cmd.args.contains("graphql") &&
+      cmd.args.iter().any(fn(arg) { arg.contains("reviewThreads") }) {
+      return (
+        0,
+        (
+          #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_stale","isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"copilot-pull-request-reviewer[bot]"}}]}}]}}}}}
+        ),
+      )
+    }
+    (0, "")
+  }
+  let got = dispatch(
+    ToolRequest::ResolveMyReviewThreads({
+      caller_id: "main.leaf",
+      pr_number: Some(447),
+    }),
+    project_dir~,
+    poller_state=Some(ps),
+    caller_role=@types.Role::Dev,
+    capture~,
+  )
+  match got {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("self-resolve requires a fix commit"))
+      assert_true(msg.contains("latest review at 2026-05-23T10:00:00Z"))
+      assert_true(msg.contains("latest commit at 2026-05-23T09:59:59Z"))
+      assert_true(msg.contains("Push a fix commit, or escalate to the TL"))
+    }
+    @types.Response::Ok(_) => fail("expected stale self-resolve refusal")
+  }
+  @debug.assert_eq(resolved, [])
+}
+
+///|
+async test "dispatch resolve_my_review_threads allows owning leaf after post-review commit" {
+  let project_dir = "/tmp/choir-dispatch-resolve-my-fresh-fix-" +
+    @sys.get_pid().to_string()
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    448,
+    "main.leaf",
+    "main.leaf",
+    "main",
+    "https://github.com/brickfrog/choir/pull/448",
+    0L,
+    @poller.ReviewState::ChangesRequested,
+    "fix this",
+    "sha-fixed",
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  let resolved : Array[String] = []
+  let mut review_thread_fetches = 0
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[1] == "gh" &&
+      cmd.args.contains("repo") &&
+      cmd.args.contains("view") {
+      return (0, "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}")
+    }
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[1] == "gh" &&
+      cmd.args.contains("graphql") &&
+      cmd.args.iter().any(fn(arg) { arg.contains("latestReviews") }) {
+      return (
+        0,
+        (
+          #|{"data":{"repository":{"pullRequest":{"latestReviews":{"nodes":[{"submittedAt":"2026-05-23T10:00:00Z"}]},"commits":{"nodes":[{"commit":{"pushedDate":"2026-05-23T10:00:01Z","committedDate":"2026-05-23T10:00:01Z"}}]}}}}}
+        ),
+      )
+    }
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[1] == "gh" &&
+      cmd.args.contains("graphql") &&
+      cmd.args.iter().any(fn(arg) { arg.contains("resolveReviewThread") }) {
+      for arg in cmd.args {
+        if arg.has_prefix("threadId=") {
+          resolved.push(arg["threadId=".length():].to_owned())
+        }
+      }
+      return (
+        0, "{\"data\":{\"resolveReviewThread\":{\"thread\":{\"isResolved\":true}}}}",
+      )
+    }
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[1] == "gh" &&
+      cmd.args.contains("graphql") &&
+      cmd.args.iter().any(fn(arg) { arg.contains("reviewThreads") }) {
+      review_thread_fetches = review_thread_fetches + 1
+      if review_thread_fetches == 1 {
+        return (
+          0,
+          (
+            #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_fresh","isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"copilot-pull-request-reviewer[bot]"}}]}}]}}}}}
+          ),
+        )
+      }
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
+    (0, "")
+  }
+  let got = dispatch(
+    ToolRequest::ResolveMyReviewThreads({
+      caller_id: "main.leaf",
+      pr_number: Some(448),
+    }),
+    project_dir~,
+    poller_state=Some(ps),
+    caller_role=@types.Role::Dev,
+    capture~,
+  )
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      @debug.assert_eq(map.get("resolved_count"), Some(Int::to_json(1)))
+    }
+    @types.Response::Err(msg) => fail("expected ok: " + msg)
+  }
+  @debug.assert_eq(resolved, ["PRRT_fresh"])
+  assert_eq(review_thread_fetches, 2)
+}
+
+///|
+async test "dispatch resolve_my_review_threads allows non owning caller without post-review commit" {
+  let project_dir = "/tmp/choir-dispatch-resolve-my-non-owner-" +
+    @sys.get_pid().to_string()
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    449,
+    "main.leaf",
+    "main.leaf",
+    "main",
+    "https://github.com/brickfrog/choir/pull/449",
+    0L,
+    @poller.ReviewState::ChangesRequested,
+    "fix this",
+    "sha-reviewed",
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  let resolved : Array[String] = []
+  let mut timeline_fetches = 0
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[1] == "gh" &&
+      cmd.args.contains("repo") &&
+      cmd.args.contains("view") {
+      return (0, "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}")
+    }
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[1] == "gh" &&
+      cmd.args.contains("graphql") &&
+      cmd.args.iter().any(fn(arg) { arg.contains("latestReviews") }) {
+      timeline_fetches = timeline_fetches + 1
+      return (
+        0,
+        (
+          #|{"data":{"repository":{"pullRequest":{"latestReviews":{"nodes":[{"submittedAt":"2026-05-23T10:00:00Z"}]},"commits":{"nodes":[{"commit":{"pushedDate":"2026-05-23T09:59:59Z","committedDate":"2026-05-23T09:59:59Z"}}]}}}}}
+        ),
+      )
+    }
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[1] == "gh" &&
+      cmd.args.contains("graphql") &&
+      cmd.args.iter().any(fn(arg) { arg.contains("resolveReviewThread") }) {
+      for arg in cmd.args {
+        if arg.has_prefix("threadId=") {
+          resolved.push(arg["threadId=".length():].to_owned())
+        }
+      }
+      return (
+        0, "{\"data\":{\"resolveReviewThread\":{\"thread\":{\"isResolved\":true}}}}",
+      )
+    }
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[1] == "gh" &&
+      cmd.args.contains("graphql") &&
+      cmd.args.iter().any(fn(arg) { arg.contains("reviewThreads") }) {
+      return (
+        0,
+        (
+          #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_tl","isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"copilot-pull-request-reviewer[bot]"}}]}}]}}}}}
+        ),
+      )
+    }
+    (0, "")
+  }
+  let got = dispatch(
+    ToolRequest::ResolveMyReviewThreads({
+      caller_id: "main.tl",
+      pr_number: Some(449),
+    }),
+    project_dir~,
+    poller_state=Some(ps),
+    caller_role=@types.Role::TL,
+    capture~,
+  )
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      @debug.assert_eq(map.get("resolved_count"), Some(Int::to_json(1)))
+    }
+    @types.Response::Err(msg) => fail("expected ok: " + msg)
+  }
+  @debug.assert_eq(resolved, ["PRRT_tl"])
+  assert_eq(timeline_fetches, 0)
 }
 
 ///|

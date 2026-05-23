@@ -612,6 +612,89 @@ pub fn parse_review_thread_refs_response(
 }
 
 ///|
+pub(all) struct PrReviewCommitTimestamps {
+  latest_review_at : String?
+  latest_commit_at : String?
+} derive(Debug, Eq)
+
+///|
+pub fn parse_pr_review_commit_timestamps_response(
+  json_str : String,
+) -> PrReviewCommitTimestamps? {
+  let json = @json.parse(json_str) catch { _ => return None }
+  guard json is Object(root) else { return None }
+  let pr = match root.get("data") {
+    Some(Object(data)) =>
+      match data.get("repository") {
+        Some(Object(repo)) =>
+          match repo.get("pullRequest") {
+            Some(Object(pr)) => pr
+            _ => return None
+          }
+        _ => return None
+      }
+    _ => return None
+  }
+  let latest_review_at = match pr.get("latestReviews") {
+    Some(Object(reviews)) =>
+      match reviews.get("nodes") {
+        Some(Array(nodes)) =>
+          if nodes.length() == 0 {
+            None
+          } else {
+            match nodes[0] {
+              Object(review) =>
+                match review.get("submittedAt") {
+                  Some(String(value)) => Some(value)
+                  _ => return None
+                }
+              _ => return None
+            }
+          }
+        _ => return None
+      }
+    _ => return None
+  }
+  let latest_commit_at = match pr.get("commits") {
+    Some(Object(commits)) =>
+      match commits.get("nodes") {
+        Some(Array(nodes)) =>
+          if nodes.length() == 0 {
+            None
+          } else {
+            match nodes[nodes.length() - 1] {
+              Object(node) =>
+                match node.get("commit") {
+                  Some(Object(commit)) =>
+                    match commit.get("pushedDate") {
+                      Some(String(value)) =>
+                        if value != "" {
+                          Some(value)
+                        } else {
+                          match commit.get("committedDate") {
+                            Some(String(committed)) => Some(committed)
+                            _ => return None
+                          }
+                        }
+                      _ =>
+                        match commit.get("committedDate") {
+                          Some(String(committed)) => Some(committed)
+                          _ => return None
+                        }
+                    }
+                  _ => return None
+                }
+              _ => return None
+            }
+          }
+        _ => return None
+      }
+    _ => return None
+  }
+  Some({ latest_review_at, latest_commit_at })
+}
+
+///|
 fn review_thread_first_comment_author_login(
   thread : Map[String, Json],
 ) -> String {
@@ -919,6 +1002,50 @@ pub async fn fetch_unresolved_review_thread_refs_with_repo(
     return None
   }
   parse_review_thread_refs_response(output)
+}
+
+///|
+pub async fn fetch_pr_review_commit_timestamps_with_repo(
+  pr_number : Int,
+  owner : String,
+  repo : String,
+  project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> PrReviewCommitTimestamps? {
+  let query = "query($owner: String!, $repo: String!, $pr: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $pr) { latestReviews(first: 1) { nodes { submittedAt } } commits(last: 1) { nodes { commit { pushedDate committedDate } } } } } } }"
+  let cmd = bounded_gh_command(project_dir, [
+    "api",
+    "graphql",
+    "-f",
+    "query=" + query,
+    "-F",
+    "owner=" + owner,
+    "-F",
+    "repo=" + repo,
+    "-F",
+    "pr=" + pr_number.to_string(),
+  ])
+  let (exit_code, output) = capture(cmd)
+  if exit_code != 0 || output.trim().to_owned() == "" {
+    return None
+  }
+  parse_pr_review_commit_timestamps_response(output)
+}
+
+///|
+pub async fn fetch_pr_review_commit_timestamps(
+  pr_number : Int,
+  project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> PrReviewCommitTimestamps? {
+  let (owner, repo) = match
+    fetch_gh_repo_owner_name_bounded(project_dir, capture) {
+    Some(pair) => pair
+    None => return None
+  }
+  fetch_pr_review_commit_timestamps_with_repo(
+    pr_number, owner, repo, project_dir, capture,
+  )
 }
 
 ///|
