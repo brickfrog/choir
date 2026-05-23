@@ -5,6 +5,7 @@ import {
   "moonbitlang/parser",
   "moonbitlang/parser/basic",
   "moonbitlang/parser/syntax",
+  "choir/src/sys",
 }
 
 options(

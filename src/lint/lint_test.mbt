@@ -305,6 +305,37 @@ test "flags direct exec run in tests" {
 }
 
 ///|
+test "flags direct exec run through package alias" {
+  let source =
+    #|async test "bad" {
+    #|  ignore(@ex.run({ program: "git", args: ["status"], workdir: None }))
+    #|}
+  let manifest =
+    #|import {
+    #|  "choir/src/exec" as ex,
+    #|}
+  match
+    lint_source(
+      "src/example/exec_alias_test.mbt",
+      source,
+      read_file=fn(path) {
+        if path == "src/example/moon.pkg" {
+          manifest
+        } else {
+          ""
+        }
+      },
+      path_exists=fn(path) { path == "src/example/moon.pkg" },
+    ) {
+    Ok(findings) => {
+      assert_eq(findings.length(), 1)
+      assert_eq(findings[0].rule_id, "test-git-capture")
+    }
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
 test "flags explicit adapter self-test capture cases in test files" {
   let source =
     #|async test "bad" {
@@ -366,6 +397,37 @@ test "flags shell backed recovery provider in tests" {
     #|  let state = ServerState::new(config, make_recovery_provider())
     #|}
   assert_single_rule(source, "test-shell-recovery-provider")
+}
+
+///|
+test "flags shell backed recovery provider through package alias" {
+  let source =
+    #|async test "bad" {
+    #|  let state = ServerState::new(config, @srv.make_recovery_provider())
+    #|}
+  let manifest =
+    #|import {
+    #|  "choir/src/server" as srv,
+    #|}
+  match
+    lint_source(
+      "src/server/alias_test.mbt",
+      source,
+      read_file=fn(path) {
+        if path == "src/server/moon.pkg" {
+          manifest
+        } else {
+          ""
+        }
+      },
+      path_exists=fn(path) { path == "src/server/moon.pkg" },
+    ) {
+    Ok(findings) => {
+      assert_eq(findings.length(), 1)
+      assert_eq(findings[0].rule_id, "test-shell-recovery-provider")
+    }
+    Err(e) => fail(e.message())
+  }
 }
 
 ///|
