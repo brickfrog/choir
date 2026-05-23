@@ -3062,7 +3062,7 @@ async test "observed untracked merge with missing head sha skips audit receipt l
 }
 
 ///|
-async test "PRMerged into default branch without audit receipt fires hooks and stays re-checkable while skipping auto-pull" {
+async test "PRMerged into default branch without audit receipt fires hooks once while skipping auto-pull" {
   let run_case = async fn(
     label : String,
     pr_number : Int,
@@ -3189,12 +3189,11 @@ async test "PRMerged into default branch without audit receipt fires hooks and s
           @async.sleep(0)
           (0, "")
         },
-        hook_capture=async fn(
+        hook_capture=fn(
           _path : String,
           _input_json : String,
           _cwd : String?,
         ) -> (Int, String) {
-          @async.sleep(0)
           hook_calls = hook_calls + 1
           (0, "hook")
         },
@@ -3231,25 +3230,26 @@ async test "PRMerged into default branch without audit receipt fires hooks and s
     @debug.assert_eq(checked_receipts, [
       project_dir + "/.choir/audit-receipts/abcdef123456.json",
     ])
-    assert_false(
-      @sys.path_exists(project_dir + "/.choir/seen_merged_prs.json") &&
+    assert_true(
       @sys.read_file(project_dir + "/.choir/seen_merged_prs.json").contains(
         pr_number.to_string(),
       ),
     )
-    let mut error_count = 0
-    for event in captured {
-      if event.level == @moontrace.Level::Error_ &&
-        event.message == expected_log_message {
-        error_count = error_count + 1
+    if expected_log_message != "" {
+      let mut error_count = 0
+      for event in captured {
+        if event.level == @moontrace.Level::Error_ &&
+          event.message == expected_log_message {
+          error_count = error_count + 1
+        }
       }
-    }
-    if error_count != 1 {
-      fail(
-        label +
-        " expected delivery path to emit exactly one unaudited merge error; events=" +
-        handler_moontrace_event_summary(captured),
-      )
+      if error_count != 1 {
+        fail(
+          label +
+          " expected delivery path to emit exactly one unaudited merge error; events=" +
+          handler_moontrace_event_summary(captured),
+        )
+      }
     }
     receipt_available = true
     gh_list_enabled = true
@@ -3323,9 +3323,10 @@ async test "PRMerged into default branch without audit receipt fires hooks and s
         handler_test_audit_receipt(head, default_branch, 0)
       },
     )
-    assert_eq(hook_calls, 4)
-    assert_eq(pull_calls, 1)
-    assert_eq(receipt_read_calls, 2)
+    assert_eq(hook_calls, 2)
+    assert_eq(pull_calls, 0)
+    assert_eq(receipt_read_calls, 0)
+    assert_eq(checked_receipts.length(), 1)
     assert_true(
       @sys.read_file(project_dir + "/.choir/seen_merged_prs.json").contains(
         pr_number.to_string(),
