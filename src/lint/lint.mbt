@@ -1339,6 +1339,54 @@ fn check_test_method_apply(
 }
 
 ///|
+fn is_dangerous_capability_field(name : String) -> Bool {
+  name == "capture" || name == "runner" || name == "run" || name == "spawn"
+}
+
+///|
+fn forbidden_value_reference_rule(
+  env : LintEnv,
+  value : @syntax.Expr,
+) -> String? {
+  match dangerous_call_kind(env, value) {
+    Some(ShellCommand) => Some("test-shell-command")
+    Some(ProcessCommand) => Some("test-direct-process")
+    Some(ExecCapture) => Some("test-exec-reference")
+    Some(RecoveryProvider) | Some(ShellRecoveryProvider) =>
+      Some("test-shell-recovery-provider")
+    None =>
+      if is_forbidden_test_exec_package_ref(env.package_aliases, value) {
+        Some("test-exec-reference")
+      } else {
+        None
+      }
+  }
+}
+
+///|
+fn check_test_record_fields(
+  env : LintEnv,
+  fields : @list.List[@syntax.FieldDef],
+  loc : @basic.Location,
+) -> Unit {
+  if !env.test_rules_enabled {
+    return
+  }
+  for field in fields {
+    if is_dangerous_capability_field(field.label.name) {
+      match forbidden_value_reference_rule(env, field.expr) {
+        Some(rule_id) =>
+          emit(
+            env, rule_id, "test files must not stash real exec/process helpers in injected capability fields; inject a mock capture/runner instead",
+            loc,
+          )
+        None => ()
+      }
+    }
+  }
+}
+
+///|
 fn test_decl_name(name : @syntax.TestName) -> String {
   match name {
     Some((value, _)) => "test:" + value
@@ -1475,6 +1523,7 @@ impl @syntax.IterVisitor for LintEnv with visit_Expr(env, expr) {
     }
     DotApply(method_name~, args~, loc~, ..) =>
       check_test_method_apply(env, method_name.name, args, loc)
+    Record(fields~, loc~, ..) => check_test_record_fields(env, fields, loc)
     Let(pattern~, expr=value, loc~, ..) =>
       if env.test_rules_enabled &&
         is_forbidden_test_exec_package_ref(env.package_aliases, value) {
