@@ -2553,15 +2553,10 @@ async fn deliver_pending_poll_events(
     }
     match event {
       PRMerged(pr) => {
-        fire_pr_merged_completion_hooks(
-          state.config.project_dir,
-          pr,
-          capture~,
-          hook_capture~,
-        )
         let audit_outcome = detect_pr_merged_audit_enforcement(
           state, pr, capture, audit_receipt_exists, audit_receipt_read,
         )
+        let allow_auto_pull = audit_enforcement_allows_auto_pull(audit_outcome)
         let pr_head_sha = pr.last_sha.trim().to_owned()
         let audit_receipt_path = if pr_head_sha == "" {
           ""
@@ -2577,6 +2572,14 @@ async fn deliver_pending_poll_events(
           audit_receipt_path,
           audit_outcome,
         )
+        if allow_auto_pull {
+          fire_pr_merged_completion_hooks(
+            state.config.project_dir,
+            pr,
+            capture~,
+            hook_capture~,
+          )
+        }
         match tracked_for_delivery {
           Some(_) =>
             state.reconcile_external_merge_with_runner(
@@ -2590,15 +2593,11 @@ async fn deliver_pending_poll_events(
             )
           None => ()
         }
-        if audit_enforcement_allows_auto_pull(audit_outcome) {
-          state.record_seen_merged_pr_number(pr.pr_number)
+        state.record_seen_merged_pr_number(pr.pr_number)
+        if allow_auto_pull {
           maybe_auto_pull_parent_after_pr_merged(
             state, pr, capture, git_pull_capture, git_state_capture, git_pull_runner,
           )
-        } else if pr_head_sha != "" {
-          state.record_seen_merged_pr_number(pr.pr_number)
-        } else {
-          state.poller.mark_merged_observed(pr.pr_number)
         }
       }
       _ =>
