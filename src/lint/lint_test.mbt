@@ -326,11 +326,41 @@ test "flags direct exec run through package alias" {
         }
       },
       path_exists=fn(path) { path == "src/example/moon.pkg" },
+      package_alias_cache=@ref.new({}),
     ) {
     Ok(findings) => {
       assert_eq(findings.length(), 1)
       assert_eq(findings[0].rule_id, "test-git-capture")
     }
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
+test "allows executable-bit check through sys package alias" {
+  let source =
+    #|test "ok" {
+    #|  assert_eq(@s.system("test -x " + @s.shell_quote("/tmp/tool")), 0)
+    #|}
+  let manifest =
+    #|import {
+    #|  "choir/src/sys" as s,
+    #|}
+  match
+    lint_source(
+      "src/workspace/workspace_test.mbt",
+      source,
+      read_file=fn(path) {
+        if path == "src/workspace/moon.pkg" {
+          manifest
+        } else {
+          ""
+        }
+      },
+      path_exists=fn(path) { path == "src/workspace/moon.pkg" },
+      package_alias_cache=@ref.new({}),
+    ) {
+    Ok(findings) => assert_eq(findings.length(), 0)
     Err(e) => fail(e.message())
   }
 }
@@ -421,6 +451,7 @@ test "flags shell backed recovery provider through package alias" {
         }
       },
       path_exists=fn(path) { path == "src/server/moon.pkg" },
+      package_alias_cache=@ref.new({}),
     ) {
     Ok(findings) => {
       assert_eq(findings.length(), 1)

@@ -43,6 +43,10 @@ priv struct ForbiddenHelper {
 }
 
 ///|
+let package_alias_cache : @ref.Ref[Map[String, Array[(String, String)]]] = @ref.new({},
+)
+
+///|
 priv struct FunctionCallInfo {
   name : String
   loc : @basic.Location
@@ -315,18 +319,25 @@ fn expr_contains_constructor_name(expr : @syntax.Expr, name : String) -> Bool {
 }
 
 ///|
-fn is_sys_shell_quote(expr : @syntax.Expr) -> Bool {
+fn is_sys_shell_quote(
+  package_aliases : Array[(String, String)],
+  expr : @syntax.Expr,
+) -> Bool {
   match expr {
     Apply(func~, args~, ..) =>
-      is_package_ident(Array::new(capacity=0), func, "sys", "shell_quote") &&
+      is_package_ident(package_aliases, func, "sys", "shell_quote") &&
       first_argument(args) is Some(_)
-    Group(expr~, ..) => is_sys_shell_quote(expr)
+    Group(expr~, ..) => is_sys_shell_quote(package_aliases, expr)
     _ => false
   }
 }
 
 ///|
-fn is_allowed_test_system_command(file : String, expr : @syntax.Expr) -> Bool {
+fn is_allowed_test_system_command(
+  file : String,
+  package_aliases : Array[(String, String)],
+  expr : @syntax.Expr,
+) -> Bool {
   if canonical_file(file) != "src/workspace/workspace_test.mbt" {
     return false
   }
@@ -336,8 +347,9 @@ fn is_allowed_test_system_command(file : String, expr : @syntax.Expr) -> Bool {
       lhs=Constant(c=String("test -x "), ..),
       rhs~,
       ..
-    ) => is_sys_shell_quote(rhs)
-    Group(expr~, ..) => is_allowed_test_system_command(file, expr)
+    ) => is_sys_shell_quote(package_aliases, rhs)
+    Group(expr~, ..) =>
+      is_allowed_test_system_command(file, package_aliases, expr)
     _ => false
   }
 }
@@ -1225,7 +1237,11 @@ fn check_test_apply(
     Some(ShellCommand) =>
       match first_argument(args) {
         Some(command) =>
-          if !is_allowed_test_system_command(env.file, command) {
+          if !is_allowed_test_system_command(
+              env.file,
+              env.package_aliases,
+              command,
+            ) {
             emit(
               env, "test-shell-command", "test files must not run shell commands; use injected adapters or a narrow helper instead",
               loc,
@@ -1515,11 +1531,19 @@ fn file_parent_dir(file : String) -> String {
   while i >= 0 && file[i] != '/' {
     i = i - 1
   }
-  if i <= 0 {
+  if i < 0 {
     "."
+  } else if i == 0 {
+    "/"
   } else {
     file[:i].to_owned()
   }
+}
+
+///|
+test "file_parent_dir handles root absolute child" {
+  assert_eq(file_parent_dir("/a"), "/")
+  assert_eq(file_parent_dir("/a/b"), "/a")
 }
 
 ///|
@@ -1603,14 +1627,31 @@ fn package_aliases_from_manifest(content : String) -> Array[(String, String)] {
 }
 
 ///|
+fn package_manifest_path(dir : String, name : String) -> String {
+  if dir == "/" {
+    "/" + name
+  } else {
+    dir + "/" + name
+  }
+}
+
+///|
 fn package_aliases_for_file(
   file : String,
   read_file : (String) -> String,
   path_exists : (String) -> Bool,
+  cache : @ref.Ref[Map[String, Array[(String, String)]]],
 ) -> Array[(String, String)] {
   let dir = file_parent_dir(canonical_file(file))
+  match cache.val.get(dir) {
+    Some(aliases) => return aliases
+    None => ()
+  }
   let aliases = Array::new(capacity=4)
-  let paths = [dir + "/moon.pkg", dir + "/moon.pkg.json"]
+  let paths = [
+    package_manifest_path(dir, "moon.pkg"),
+    package_manifest_path(dir, "moon.pkg.json"),
+  ]
   for path in paths {
     if path_exists(path) {
       for entry in package_aliases_from_manifest(read_file(path)) {
@@ -1618,7 +1659,38 @@ fn package_aliases_for_file(
       }
     }
   }
+  cache.val.set(dir, aliases)
   aliases
+}
+
+///|
+test "package_aliases_for_file caches by directory" {
+  let reads : Ref[Int] = @ref.new(0)
+  let cache : @ref.Ref[Map[String, Array[(String, String)]]] = @ref.new({})
+  let manifest =
+    #|import {
+    #|  "choir/src/exec" as ex,
+    #|}
+  let read_file = fn(path) {
+    reads.val += 1
+    if path == "src/example/moon.pkg" {
+      manifest
+    } else {
+      ""
+    }
+  }
+  let path_exists = fn(path) { path == "src/example/moon.pkg" }
+  let first = package_aliases_for_file(
+    "src/example/one_test.mbt", read_file, path_exists, cache,
+  )
+  let second = package_aliases_for_file(
+    "src/example/two_test.mbt", read_file, path_exists, cache,
+  )
+  assert_eq(reads.val, 1)
+  assert_eq(first.length(), 1)
+  assert_eq(second.length(), 1)
+  assert_eq(first[0].0, "ex")
+  assert_eq(second[0].1, "choir/src/exec")
 }
 
 ///|
@@ -1627,6 +1699,7 @@ pub fn lint_source(
   source : String,
   read_file? : (String) -> String = @sys.read_file,
   path_exists? : (String) -> Bool = @sys.path_exists,
+  package_alias_cache? : @ref.Ref[Map[String, Array[(String, String)]]] = package_alias_cache,
 ) -> Result[Array[LintFinding], @types.ChoirError] {
   let (impls, reports) = @parser.parse_string(source, name=file)
   if reports.length() > 0 {
@@ -1636,7 +1709,9 @@ pub fn lint_source(
     scan_impls_with_package_aliases(
       file,
       impls,
-      package_aliases_for_file(file, read_file, path_exists),
+      package_aliases_for_file(
+        file, read_file, path_exists, package_alias_cache,
+      ),
     ),
   )
 }

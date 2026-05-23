@@ -2,6 +2,7 @@ import {
   "choir/src/types",
   "moonbitlang/core/debug",
   "moonbitlang/core/list",
+  "moonbitlang/core/ref",
   "moonbitlang/parser",
   "moonbitlang/parser/basic",
   "moonbitlang/parser/syntax",
