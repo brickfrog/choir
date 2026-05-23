@@ -73,6 +73,7 @@ pub fn plan_write_audit_receipt(
     audited_at,
     agent_id: caller_id,
     findings_count: args.findings_count,
+    findings: Some(args.findings),
   }
   Ok({ path, receipt, content: receipt.to_json().stringify() + "\n" })
 }

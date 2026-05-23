@@ -1128,6 +1128,7 @@ async test "existing valid audit receipt resets stale cycle counter through file
     audited_at: 1779000200L,
     agent_id: "main.audit",
     findings_count: 0,
+    findings: Some(""),
   }
   let mut waited_for_audit = false
   let mut recorded_audit_cycle = false

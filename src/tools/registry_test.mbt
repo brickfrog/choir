@@ -38,6 +38,7 @@ fn registry_test_audit_receipt(sha : String) -> String {
     audited_at: 1770000000L,
     agent_id: "main.tl",
     findings_count: 0,
+    findings: Some(""),
   }
   receipt.to_json().stringify() + "\n"
 }

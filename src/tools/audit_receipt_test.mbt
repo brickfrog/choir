@@ -7,6 +7,7 @@ test "plan_write_audit_receipt emits typed JSON payload" {
       sha,
       branch: "feature/workflow-gates",
       findings_count: 0,
+      findings: "",
     },
     1770000000L,
   ).unwrap()
@@ -36,6 +37,7 @@ test "plan_write_audit_receipt trims identity fields before writing" {
       sha: " abcdef1234567890abcdef1234567890abcdef12 ",
       branch: " feature/workflow-gates ",
       findings_count: 0,
+      findings: "",
     },
     1770000000L,
   ).unwrap()
@@ -55,6 +57,7 @@ test "interpret_write_audit_receipt writes typed receipt through injected fs" {
       sha: "fedcba654321fedcba654321fedcba654321fedc",
       branch: "feature/workflow-gates",
       findings_count: 2,
+      findings: "Finding 1: keep this visible",
     },
     "/repo",
     fn(path) {
@@ -98,6 +101,7 @@ test "interpret_write_audit_receipt writes typed receipt through injected fs" {
   }
   assert_eq(decoded.agent_id, "main.tl")
   assert_eq(decoded.findings_count, 2)
+  @debug.assert_eq(decoded.findings, Some("Finding 1: keep this visible"))
 }
 
 ///|
@@ -110,6 +114,7 @@ async test "dispatch write_audit_receipt routes injected filesystem capabilities
       sha: "abcdef1234567890abcdef1234567890abcdef12",
       branch: "feature/dispatch",
       findings_count: 0,
+      findings: "",
     }),
     project_dir="/repo",
     create_dir_all=fn(path) {
