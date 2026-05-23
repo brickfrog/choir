@@ -73,6 +73,16 @@ async fn runner_always_fail(cmds : Array[@workspace.Command]) -> Array[Int] {
 }
 
 ///|
+async fn runner_always_succeed(cmds : Array[@workspace.Command]) -> Array[Int] {
+  @async.sleep(0)
+  let statuses = []
+  for _ in cmds {
+    statuses.push(0)
+  }
+  statuses
+}
+
+///|
 async fn record_sleep_failure(ms : Int) -> Unit {
   ignore(
     @sys.append_file_sync(test_sleep_path("failure"), ms.to_string() + "\n"),
@@ -124,6 +134,27 @@ async test "execute_delivery retries local terminal command with exponential bac
   }
   assert_eq(read_counter(test_counter_path("success")), 4)
   assert_eq(@sys.read_file(test_sleep_path("success")), "1000\n2000\n4000\n")
+}
+
+///|
+async test "execute_delivery logs successful local terminal delivery" {
+  let project_dir = "/tmp/choir-delivery-success-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let result = execute_delivery(
+    sample_delivery("hello success"),
+    runner_always_succeed,
+    project_dir~,
+  )
+  match result {
+    Ok(_) => ()
+    Err(e) => fail("expected delivery success: " + e.message())
+  }
+  let log = @sys.read_file(project_dir + "/.choir/delivery.log")
+  assert_true(log.contains("[delivery-success]"))
+  assert_true(log.contains("target=zellij-pane:test:terminal_1"))
 }
 
 ///|

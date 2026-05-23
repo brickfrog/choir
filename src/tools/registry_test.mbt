@@ -1314,6 +1314,74 @@ async test "re-register explicit leaf metadata repairs stale prior row" {
 }
 
 ///|
+async test "re-register keeps resolved pane target instead of stale tab target" {
+  let reg = @registry.AgentRegistry::new()
+  let pane_target = match
+    @types.LocalTarget::parse("zellij-pane:choir:terminal_17") {
+    Some(t) => t
+    None => fail("expected parseable pane target")
+  }
+  let tab_target = match
+    @types.LocalTarget::parse("zellij-tab:choir:leaf-pane") {
+    Some(t) => t
+    None => fail("expected parseable tab target")
+  }
+  ignore(
+    reg.upsert({
+      agent_id: "main.leaf-pane",
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      state: @types.AgentState::Active,
+      parent: Some("main.tl"),
+      terminal_target: Some(pane_target),
+      host: @types.Host::Local,
+      workspace: "/repo/.choir/worktrees/leaf-pane",
+      branch: "main.leaf-pane",
+      spawn_depth: 0,
+    }),
+  )
+  let call = ToolCall::{
+    role: @types.Role::Dev,
+    name: "register",
+    args: {
+      "agent_id": "main.leaf-pane",
+      "parent_id": "main.tl",
+      "workspace": "/repo/.choir/worktrees/leaf-pane",
+      "branch": "main.leaf-pane",
+      "terminal_target": tab_target.to_string(),
+      "agent_type": "codex",
+    },
+  }
+  let res = @tools.dispatch_call(
+    call,
+    project_dir="/tmp/choir-test-noop",
+    registry=Some(reg),
+    capture=mock_registry_capture,
+  )
+  match res {
+    Ok(_) => ()
+    Err(e) => fail("register failed: " + e)
+  }
+  try reg.get("main.leaf-pane") catch {
+    _ => fail("expected registered agent")
+  } noraise {
+    agent => {
+      @debug.assert_eq(agent.terminal_target, Some(pane_target))
+      let delivery = @message.plan_delivery(
+        agent,
+        "main.child",
+        "done",
+        @types.Status::Success,
+      )
+      let expected = @message.DeliveryMethod::LocalTerminalInput(
+        pane_target, "[from: main.child] done",
+      )
+      @debug.assert_eq(delivery, expected)
+    }
+  }
+}
+
+///|
 async test "register accepts whitespace-trimmed spawn_depth" {
   let reg = @registry.AgentRegistry::new()
   let call = ToolCall::{

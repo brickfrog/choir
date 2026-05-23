@@ -442,6 +442,19 @@ pub async fn execute_delivery(
       ),
     )
   }
+  fn log_delivery_success(target : String) -> Unit {
+    ignore(
+      @sys.append_file_sync(
+        log_path,
+        @poller.delivery_log_line(
+          "[delivery-success] ts_ms=" +
+          delivery_timestamp() +
+          " target=" +
+          target,
+        ),
+      ),
+    )
+  }
   async fn run_with_retries(
     cmd : @workspace.Command,
     target : String,
@@ -465,7 +478,10 @@ pub async fn execute_delivery(
         ensure_success(statuses, cmd)
       }
       match attempt_result {
-        Ok(_) => return Ok(())
+        Ok(_) => {
+          log_delivery_success(target)
+          return Ok(())
+        }
         Err(e) => last_error = e
       }
       if attempt < backoff_ms.length() {
