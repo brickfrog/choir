@@ -2595,6 +2595,8 @@ async fn deliver_pending_poll_events(
           maybe_auto_pull_parent_after_pr_merged(
             state, pr, capture, git_pull_capture, git_state_capture, git_pull_runner,
           )
+        } else if pr_head_sha != "" {
+          state.record_seen_merged_pr_number(pr.pr_number)
         } else {
           state.poller.mark_merged_observed(pr.pr_number)
         }
