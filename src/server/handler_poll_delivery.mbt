@@ -3279,6 +3279,7 @@ pub async fn ServerState::process_poller_tick_with(
     git_pull_runner~,
     sleep_fn~,
   )
+  tick_summary.changes = pending_events.length()
   emit_tick_summary_line(
     self,
     tick_summary,
@@ -3358,6 +3359,7 @@ pub async fn ServerState::process_poller_tick(
     audit_receipt_read~,
     sleep_fn~,
   )
+  tick_summary.changes = pending_events.length()
   emit_tick_summary_line(
     self,
     tick_summary,

@@ -3249,7 +3249,7 @@ async test "PRMerged into default branch without audit receipt fires hooks once 
       if error_count != 1 {
         fail(
           label +
-          " expected delivery path to emit exactly one unaudited merge error; events=" +
+          " expected delivery path to emit exactly one unaudited merge policy log; events=" +
           handler_moontrace_event_summary(captured),
         )
       }
