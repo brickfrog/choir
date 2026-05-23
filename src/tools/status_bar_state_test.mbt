@@ -750,7 +750,7 @@ test "status_bar_state pane_needs_attention truth table" {
 ///|
 test "status_bar_state builds snapshot from registry and poller snapshots" {
   let snap = status_bar_test_snapshot()
-  assert_eq(snap.schema_version, 1)
+  assert_eq(snap.schema_version, 2)
   assert_eq(snap.taken_at_ms, 12_345L)
   assert_eq(snap.panes.length(), 2)
   let root = snap.panes[0]
@@ -982,7 +982,7 @@ test "status_bar_state from_json accepts previous string timestamp form" {
     "last_activity_unix": "456".to_json(),
   }
   let json : Json = {
-    "schema_version": (1).to_json(),
+    "schema_version": (2).to_json(),
     "taken_at_ms": "12345".to_json(),
     "panes": [pane.to_json()].to_json(),
   }.to_json()
@@ -994,6 +994,25 @@ test "status_bar_state from_json accepts previous string timestamp form" {
     _ => fail("expected re-encoded status bar json to parse")
   }
   assert_status_bar_timestamp_fields_are_numbers(encoded, 12_345L, 456L)
+}
+
+///|
+test "status_bar_state from_json rejects unsupported schema version" {
+  let panes : Array[Json] = []
+  let json : Json = {
+    "schema_version": (1).to_json(),
+    "taken_at_ms": (12_345).to_json(),
+    "panes": panes.to_json(),
+  }.to_json()
+  let result = try? ({
+    let _parsed : StatusBarSnapshot = @json.from_json(json)
+    ()
+  })
+  match result {
+    Err(err) =>
+      assert_true(err.to_string().contains("expected schema_version 2"))
+    Ok(_) => fail("expected unsupported schema_version to fail")
+  }
 }
 
 ///|
@@ -1033,7 +1052,7 @@ async test "interpret_status_bar_state returns direct structured payload" {
       assert_true(body.contains("panes"))
       assert_false(body.contains("snapshot"))
       let parsed : StatusBarSnapshot = @json.from_json(body.to_json())
-      assert_eq(parsed.schema_version, 1)
+      assert_eq(parsed.schema_version, 2)
       assert_eq(parsed.taken_at_ms, 99L)
       assert_eq(parsed.panes.length(), 1)
     }
