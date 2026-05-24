@@ -1371,6 +1371,7 @@ fn serve_run() -> Unit {
         config.terminal_session,
       )
       @server.recover_state(state, config.terminal_session, recovery_input)
+      @server.grandfather_existing_merges_at_startup(state, @exec.capture_command_merged)
       match inherited_uds_fd {
         Some(fd) =>
           match state.restore_reload_snapshot() {
