@@ -29,7 +29,12 @@ fn merge_user_skills_into_plugin(
   }
   let entries = @sys.list_dir(skills_dir)
   for entry in entries {
-    if entry == "audit" || entry == "crystallize" || entry == "decompose" {
+    if entry == "audit" ||
+      entry == "crystallize" ||
+      entry == "decompose" ||
+      entry == "tl-stance" ||
+      entry == "ship-pr" ||
+      entry == "dispatch-leaf" {
       let msg = "choir claude: user skill '" +
         entry +
         "' clashes with builtin; rename or remove ~/.config/choir/skills/" +
@@ -138,6 +143,38 @@ fn synthesize_plugin_dir(
     ) {
     return Err(
       @types.ChoirError::workspace_error("failed to write tl-stance/SKILL.md"),
+    )
+  }
+
+  if !@sys.create_dir_all(plugin_dir + "/skills/ship-pr") {
+    return Err(
+      @types.ChoirError::workspace_error("failed to create skills/ship-pr dir"),
+    )
+  }
+  if !@sys.write_file_sync(
+      plugin_dir + "/skills/ship-pr/SKILL.md",
+      @prompts.load_prompt(@prompts.PromptName::ShipPr, project_dir),
+    ) {
+    return Err(
+      @types.ChoirError::workspace_error("failed to write ship-pr/SKILL.md"),
+    )
+  }
+
+  if !@sys.create_dir_all(plugin_dir + "/skills/dispatch-leaf") {
+    return Err(
+      @types.ChoirError::workspace_error(
+        "failed to create skills/dispatch-leaf dir",
+      ),
+    )
+  }
+  if !@sys.write_file_sync(
+      plugin_dir + "/skills/dispatch-leaf/SKILL.md",
+      @prompts.load_prompt(@prompts.PromptName::DispatchLeaf, project_dir),
+    ) {
+    return Err(
+      @types.ChoirError::workspace_error(
+        "failed to write dispatch-leaf/SKILL.md",
+      ),
     )
   }
 
@@ -527,6 +564,10 @@ test "synthesize_plugin_dir produces all builtin skill directories" {
   assert_true(@sys.path_entry_exists(tmp + "/.choir/plugin/skills/crystallize"))
   assert_true(@sys.path_entry_exists(tmp + "/.choir/plugin/skills/decompose"))
   assert_true(@sys.path_entry_exists(tmp + "/.choir/plugin/skills/tl-stance"))
+  assert_true(@sys.path_entry_exists(tmp + "/.choir/plugin/skills/ship-pr"))
+  assert_true(
+    @sys.path_entry_exists(tmp + "/.choir/plugin/skills/dispatch-leaf"),
+  )
 
   // Each has a SKILL.md
   assert_true(@sys.path_exists(tmp + "/.choir/plugin/skills/audit/SKILL.md"))
@@ -538,6 +579,10 @@ test "synthesize_plugin_dir produces all builtin skill directories" {
   )
   assert_true(
     @sys.path_exists(tmp + "/.choir/plugin/skills/tl-stance/SKILL.md"),
+  )
+  assert_true(@sys.path_exists(tmp + "/.choir/plugin/skills/ship-pr/SKILL.md"))
+  assert_true(
+    @sys.path_exists(tmp + "/.choir/plugin/skills/dispatch-leaf/SKILL.md"),
   )
 
   ignore(@sys.rm_rf(tmp))
