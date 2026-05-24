@@ -119,6 +119,7 @@ pub struct ServerState {
   kv_store : @kv.KvStore
   run_id : String
   pending_disconnects : Map[String, Int64]
+  agent_pids : Map[String, Int]
   disconnect_contexts : Map[String, DisconnectContext]
   delivery_failures : Map[String, Int]
   handoff_delivered : Map[String, Bool]
@@ -199,6 +200,7 @@ pub fn ServerState::new(
     kv_store: @kv.KvStore::new(config.project_dir),
     run_id,
     pending_disconnects: {},
+    agent_pids: {},
     disconnect_contexts: {},
     delivery_failures: {},
     handoff_delivered: {},
@@ -222,6 +224,29 @@ pub fn ServerState::new(
     read_file: default_read_file,
     write_file_atomic: default_write_file_atomic,
     delete_file: @exec.delete_file_sync,
+  }
+}
+
+///|
+pub fn ServerState::register_agent_pid(
+  self : ServerState,
+  agent_id : String,
+  pid : Int,
+) -> Unit {
+  self.agent_pids.set(agent_id, pid)
+}
+
+///|
+pub fn ServerState::forget_agent_pid(
+  self : ServerState,
+  agent_id : String,
+) -> Int? {
+  match self.agent_pids.get(agent_id) {
+    Some(pid) => {
+      self.agent_pids.remove(agent_id)
+      Some(pid)
+    }
+    None => None
   }
 }
 

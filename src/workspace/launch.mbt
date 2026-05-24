@@ -26,12 +26,14 @@ fn wrap_with_shell(cmd : Command, shell : String) -> Command {
   { program, args: new_args, workdir: cmd.workdir }
 }
 
-///| POSIX single-quote quoting for embedding in bash -c script bodies.
+///|
+/// POSIX single-quote quoting for embedding in bash -c script bodies.
 fn shell_escape(raw : String) -> String {
   @sys.shell_quote(raw)
 }
 
-///| Wrap a spawned agent command in `setsid` + `bash -c` and ensure the shell trap
+///|
+/// Wrap a spawned agent command in `setsid` + `bash -c` and ensure the shell trap
 /// sends `SIGTERM` to the whole process group when the agent exits.
 fn wrap_with_setsid_and_pgroup_cleanup(cmd : Command) -> Command {
   let quoted_args : Array[String] = []
@@ -39,13 +41,9 @@ fn wrap_with_setsid_and_pgroup_cleanup(cmd : Command) -> Command {
   for arg in cmd.args {
     quoted_args.push(shell_escape(arg))
   }
-  let wrapped =
-    "trap 'kill -TERM -- -$$ 2>/dev/null' EXIT HUP TERM INT; " + quoted_args.join(" ")
-  {
-    program: "setsid",
-    args: ["bash", "-c", wrapped],
-    workdir: cmd.workdir,
-  }
+  let wrapped = "trap 'kill -TERM -- -$$ 2>/dev/null' EXIT HUP TERM INT; " +
+    quoted_args.join(" ")
+  { program: "setsid", args: ["bash", "-c", wrapped], workdir: cmd.workdir }
 }
 
 ///|
