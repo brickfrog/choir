@@ -1,9 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "→ moon fmt"
+# Collect staged .mbt files once, reuse for fmt + canary. Include renames (R)
+# so renamed-and-touched .mbt files still get formatted and lint-canary-scanned.
 staged="$(git diff --cached --name-only)"
-moon fmt
+staged_mbt=()
+while IFS= read -r f; do
+  [ -n "$f" ] && staged_mbt+=("$f")
+done < <(git diff --cached --name-only --diff-filter=ACMR -- '*.mbt')
+
+echo "→ moon fmt (staged .mbt files only)"
+if [ "${#staged_mbt[@]}" -gt 0 ]; then
+  moon fmt -- "${staged_mbt[@]}"
+else
+  echo "  (no staged .mbt files; skipping)"
+fi
 
 if [ -n "$staged" ]; then
   while IFS= read -r f; do
@@ -16,11 +27,6 @@ EOF
 fi
 
 echo "→ lint canary (moon-fmt corruption guard)"
-staged_mbt=()
-while IFS= read -r f; do
-  staged_mbt+=("$f")
-done < <(git diff --cached --name-only --diff-filter=ACM -- '*.mbt')
-
 if [ "${#staged_mbt[@]}" -gt 0 ]; then
   if ! tools/lint_canary.sh "${staged_mbt[@]}"; then
     echo
