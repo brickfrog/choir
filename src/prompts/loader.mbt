@@ -4,6 +4,8 @@ pub(all) enum PromptName {
   TlStance
   Crystallize
   Decompose
+  ShipPr
+  DispatchLeaf
   LeafProfile
   WorkerResearch
   WorkerReview
@@ -16,6 +18,8 @@ pub fn all_prompt_names() -> Array[PromptName] {
     PromptName::TlStance,
     PromptName::Crystallize,
     PromptName::Decompose,
+    PromptName::ShipPr,
+    PromptName::DispatchLeaf,
     PromptName::LeafProfile,
     PromptName::WorkerResearch,
     PromptName::WorkerReview,
@@ -38,6 +42,8 @@ fn prompt_dir_relative(name : PromptName) -> String {
     PromptName::TlStance => ".choir/prompts/skills"
     PromptName::Crystallize => ".choir/prompts/skills"
     PromptName::Decompose => ".choir/prompts/skills"
+    PromptName::ShipPr => ".choir/prompts/skills"
+    PromptName::DispatchLeaf => ".choir/prompts/skills"
     PromptName::LeafProfile => ".choir/prompts/profiles"
     PromptName::WorkerResearch => ".choir/prompts/profiles"
     PromptName::WorkerReview => ".choir/prompts/profiles"
@@ -51,6 +57,8 @@ pub fn prompt_relative_path(name : PromptName) -> String {
     PromptName::TlStance => ".choir/prompts/skills/tl-stance.md"
     PromptName::Crystallize => ".choir/prompts/skills/crystallize.md"
     PromptName::Decompose => ".choir/prompts/skills/decompose.md"
+    PromptName::ShipPr => ".choir/prompts/skills/ship-pr.md"
+    PromptName::DispatchLeaf => ".choir/prompts/skills/dispatch-leaf.md"
     PromptName::LeafProfile => ".choir/prompts/profiles/leaf.md"
     PromptName::WorkerResearch => ".choir/prompts/profiles/worker-research.md"
     PromptName::WorkerReview => ".choir/prompts/profiles/worker-review.md"
@@ -255,6 +263,78 @@ const DECOMPOSE_DEFAULT : String =
   #|
 
 ///|
+const SHIP_PR_DEFAULT : String =
+  #|---
+  #|name: ship-pr
+  #|description: Land a choir PR end-to-end. Covers leaf-flow AND TL-direct (root) with the gh-CLI fallback and gotchas.
+  #|---
+  #|Two paths — pick by caller.
+  #|
+  #|## Path A — leaf-flow (leaf has task contract)
+  #|
+  #|1. `mcp__choir__file_pr` from the leaf. Auto-audit + auto-track happens server-side.
+  #|2. Wait for `[PR READY]`, then `[REVIEW]` + `[CI LATEST HEAD] success`.
+  #|3. Copilot threads: have the leaf push fixes, then `mcp__choir__resolve_my_review_threads` after the new commit lands.
+  #|4. `mcp__choir__merge_pr` once threads clear + CI green.
+  #|
+  #|## Path B — TL-direct (root, no task contract)
+  #|
+  #|`mcp__choir__file_pr` will fail with `server task contract unavailable for tracked agent 'root'`. Fall back:
+  #|
+  #|1. `git push -u origin <branch>` from where the work lives.
+  #|2. `gh pr create --base main --head <branch> --title ... --body ...` via HEREDOC. Escape `@`-prefixed strings in the body (`@debug` etc. become GitHub mentions — use backticks or rewrite).
+  #|3. `git rev-parse HEAD` for the FULL sha — `write_audit_receipt` rejects 7-char shorts.
+  #|4. Cross-model audit: `mcp__choir__spawn_worker type=review agent_type=claude` (if builder was codex). Address findings inline before receipt.
+  #|5. `mcp__choir__write_audit_receipt sha=<full> branch=<branch> findings_count=0 caller_id=root`.
+  #|6. `mcp__choir__track_pr pr_number=<n> agent_id=root branch=<branch> parent_branch=main pr_url=...`
+  #|7. `mcp__choir__request_review pr_number=<n> reviewer=@copilot`.
+  #|8. After Copilot review + CI: `mcp__choir__merge_pr` fails with same task-contract error. Fall back: `gh pr merge <n> --merge --admin`.
+  #|
+  #|## Gotchas
+  #|
+  #|- Thread resolution: `mcp__choir__resolve_my_review_threads` refuses if latest commit isn't after latest review. Per-thread fallback: `gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "<id>"}) { thread { isResolved } } }'`.
+  #|- moon fmt corruption: pre-commit only formats staged `.mbt` now. If unstaged `with fn` shows up anyway, `git restore src/` before file_pr.
+  #|- Leaf cd'd out of worktree: leaf has no commits but main has unstaged edits matching its task — kill the leaf, finish TL-direct via Path B.
+  #|- Audit receipt: full 40-char sha required. Findings_count must be 0 to pass merge_pr gate.
+  #|
+
+///|
+const DISPATCH_LEAF_DEFAULT : String =
+  #|---
+  #|name: dispatch-leaf
+  #|description: Spawn a single codex leaf via fork_wave with the pre-flight checks that prevent recurring rakes (dirty tree, wrong branch, wrong premise, cd-out-of-worktree).
+  #|---
+  #|## Pre-flight (BEFORE fork_wave)
+  #|
+  #|1. `git status -s` — main must be clean. Dirty tree → fork_wave fails with `Working tree has uncommitted changes`. Commit or stash first.
+  #|2. `git branch --show-current` — should be `main` (or your intended parent_branch).
+  #|3. `bd --readonly show <bead-id> --json` — confirm the bead exists and you understand the literal ask, not a paraphrase.
+  #|4. If the bead had a prior failed attempt: read the prior audit findings. They're a free test contract for the new leaf.
+  #|
+  #|## Brief checklist (in fork_wave task/context)
+  #|
+  #|- Concrete steps, not goals. Codex over-broadens vague tasks.
+  #|- Test contract upfront: what RED must assert. If prior audit caught bugs (hard-coded paths, TOCTOU, missing guards), include each as an explicit "your test must cover this" line.
+  #|- Boundary: file count cap ("if you touch more than N files, STOP and notify_parent"). Codex respects these.
+  #|- Non-goals: what NOT to touch. Especially: `tools/lint_canary.sh`, `.githooks/pre-commit`, `moon.mod.json`, unrelated `src/` files.
+  #|- Cross-model audit: builder codex → audit claude.
+  #|- Stay in worktree: explicit "do NOT cd to the parent checkout; if PWD differs from your worktree, cd back."
+  #|- Tree-poison recovery: instruct `git restore src/` before file_pr if fmt corrupts unstaged.
+  #|
+  #|## After spawn
+  #|
+  #|- Sleep 240–480s for TDD ceremony.
+  #|- Check `/proc/<pid>/cwd` if leaf goes silent >15min — likely cd'd out.
+  #|- Mutation-gate orphan watch: `ps | grep mutation` within 2min of any `[MUTATION GATE INCOMPLETE]`.
+  #|
+  #|## When NOT to use a leaf
+  #|
+  #|- Single-file shell/config edit — TL-direct is faster.
+  #|- Leaf attempted and died with partial work — capture WIP commit, spawn fresh from that commit OR finish TL-direct.
+  #|- Multi-step refactor crossing >6 files — scope down or split into multiple beads.
+  #|
+
+///|
 const LEAF_PROFILE_DEFAULT : String =
   #|## Completion Protocol (Leaf)
   #|You are a leaf agent in your own git worktree and branch.
@@ -385,6 +465,8 @@ pub fn default_prompt(name : PromptName) -> String {
     PromptName::TlStance => TL_STANCE_DEFAULT
     PromptName::Crystallize => CRYSTALLIZE_DEFAULT
     PromptName::Decompose => DECOMPOSE_DEFAULT
+    PromptName::ShipPr => SHIP_PR_DEFAULT
+    PromptName::DispatchLeaf => DISPATCH_LEAF_DEFAULT
     PromptName::LeafProfile => LEAF_PROFILE_DEFAULT
     PromptName::WorkerResearch => WORKER_RESEARCH_DEFAULT
     PromptName::WorkerReview => WORKER_REVIEW_DEFAULT
