@@ -13,7 +13,7 @@ Two paths — pick by caller.
 
 ## Path B — TL-direct (root, no task contract)
 
-`mcp__choir__file_pr` will fail with `server task contract unavailable for tracked agent 'root'`. Fall back:
+`mcp__choir__file_pr` will fail with `server task contract unavailable for tracked agent 'root'`. This path is a workaround for that known server bug, not the normal shipping flow:
 
 1. `git push -u origin <branch>` from where the work lives.
 2. `gh pr create --base main --head <branch> --title ... --body ...` via HEREDOC. Escape `@`-prefixed strings in the body (`@debug` etc. become GitHub mentions — use backticks or rewrite).
@@ -22,7 +22,7 @@ Two paths — pick by caller.
 5. `mcp__choir__write_audit_receipt sha=<full> branch=<branch> findings_count=0 caller_id=root`.
 6. `mcp__choir__track_pr pr_number=<n> agent_id=root branch=<branch> parent_branch=main pr_url=...`
 7. `mcp__choir__request_review pr_number=<n> reviewer=@copilot`.
-8. After Copilot review + CI: `mcp__choir__merge_pr` fails with same task-contract error. Fall back: `gh pr merge <n> --merge --admin`.
+8. After Copilot review + CI: `mcp__choir__merge_pr` fails with same task-contract error. **Workaround** (until root-caller contract is fixed): `gh pr merge <n> --merge --admin`. This bypasses the choir gate — do NOT use for normal leaf flows. File follow-up tracked separately.
 
 ## Gotchas
 

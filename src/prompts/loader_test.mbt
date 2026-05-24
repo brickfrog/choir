@@ -343,6 +343,7 @@ test "leaf profile default prompt uses poller snapshots for review state" {
   assert_true(body.contains("tdd_red_check"))
   assert_true(body.contains("tdd_green_check"))
   assert_true(body.contains("refuses while your TDD phase is not Done"))
+  assert_false(body.contains("## Codebase exploration"))
   assert_true(
     body.contains(
       "without sending that required `notify_parent` handoff has failed",

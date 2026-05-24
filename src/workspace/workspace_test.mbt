@@ -351,6 +351,13 @@ test "agent_launch_command for each AgentType" {
   assert_true(cmd_codex_body.contains("\"main.test-slug\""))
   assert_false(cmd_codex_body.contains("\"-lc\""))
   assert_true(cmd_codex_body.contains("mcp_servers.choir.cwd=\"/path\""))
+  assert_true(cmd_codex_body.contains("mcp_servers.semble.command=\"uv\""))
+  assert_true(cmd_codex_body.contains("mcp_servers.semble.cwd=\"/path\""))
+  assert_true(cmd_codex_body.contains("## Codebase exploration"))
+  assert_true(
+    cmd_codex_body.contains("A `semble` MCP search tool is available"),
+  )
+  assert_true(cmd_codex_body.contains("Prefer it over `grep -r` / `find`"))
   assert_true(cmd_codex_body.contains("fix bugs"))
   @debug.assert_eq(cmd_codex.workdir, Some("/path"))
 
@@ -361,6 +368,15 @@ test "agent_launch_command for each AgentType" {
   assert_true(cmd_cursor_body.contains("/path"))
   assert_true(cmd_cursor_body.contains("fix bugs"))
   @debug.assert_eq(cmd_cursor.workdir, Some("/path"))
+
+  assert_false(cmd_claude_body.contains("mcp_servers.semble"))
+  assert_false(cmd_gemini_body.contains("mcp_servers.semble"))
+  assert_false(cmd_moon_body.contains("mcp_servers.semble"))
+  assert_false(cmd_cursor_body.contains("mcp_servers.semble"))
+  assert_false(cmd_claude_body.contains("## Codebase exploration"))
+  assert_false(cmd_gemini_body.contains("## Codebase exploration"))
+  assert_false(cmd_moon_body.contains("## Codebase exploration"))
+  assert_false(cmd_cursor_body.contains("## Codebase exploration"))
 }
 
 ///|
@@ -443,6 +459,24 @@ test "codex_mcp_override_args is argv-shaped Toml without sh" {
   assert_true(args[3].contains("\"mcp-stdio\""))
   assert_false(args[3].contains("\"sh\""))
   assert_false(args[3].contains("-lc"))
+}
+
+///|
+test "codex_mcp_override_args includes semble server when pilot is enabled" {
+  let args = @workspace.codex_mcp_override_args(
+    @types.Role::Dev,
+    "main.leaf",
+    "/proj/worktree",
+    semble_pilot=true,
+  )
+  let body = args.join("\n")
+  assert_true(body.contains("mcp_servers.semble.command=\"uv\""))
+  assert_true(
+    body.contains(
+      "mcp_servers.semble.args=[\"tool\",\"run\",\"--from\",\"semble[mcp]\",\"semble\"]",
+    ),
+  )
+  assert_true(body.contains("mcp_servers.semble.cwd=\"/proj/worktree\""))
 }
 
 ///|
