@@ -1,0 +1,14 @@
+name = "choir"
+
+version = "0.1.0"
+
+import {
+  "moonbitlang/async@0.19.1",
+  "moonbitlang/parser@0.2.5",
+  "brickfrog/moontrace@0.9.3",
+  "brickfrog/tempo@0.3.4",
+}
+
+readme = "README.md"
+
+license = "MIT"
