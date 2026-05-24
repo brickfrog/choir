@@ -328,6 +328,10 @@ test "agent_launch_command for each AgentType" {
   assert_true(cmd_claude_body.contains("\"main.test-slug\""))
   assert_true(cmd_claude_body.contains("--strict-mcp-config"))
   assert_true(cmd_claude_body.contains("fix bugs"))
+  // Claude Dev/Worker also get semble (mirrors Codex Dev) — both as MCP entry
+  // and as the prompt directive.
+  assert_true(cmd_claude_body.contains("\"semble\""))
+  assert_true(cmd_claude_body.contains("## Codebase exploration"))
   @debug.assert_eq(cmd_claude.workdir, Some("/path"))
 
   assert_true(cmd_gemini_body.contains("agy"))
@@ -369,11 +373,10 @@ test "agent_launch_command for each AgentType" {
   assert_true(cmd_cursor_body.contains("fix bugs"))
   @debug.assert_eq(cmd_cursor.workdir, Some("/path"))
 
-  assert_false(cmd_claude_body.contains("mcp_servers.semble"))
-  assert_false(cmd_gemini_body.contains("mcp_servers.semble"))
-  assert_false(cmd_moon_body.contains("mcp_servers.semble"))
-  assert_false(cmd_cursor_body.contains("mcp_servers.semble"))
-  assert_false(cmd_claude_body.contains("## Codebase exploration"))
+  // Non-pilot agent types stay clean.
+  assert_false(cmd_gemini_body.contains("semble"))
+  assert_false(cmd_moon_body.contains("semble"))
+  assert_false(cmd_cursor_body.contains("semble"))
   assert_false(cmd_gemini_body.contains("## Codebase exploration"))
   assert_false(cmd_moon_body.contains("## Codebase exploration"))
   assert_false(cmd_cursor_body.contains("## Codebase exploration"))
