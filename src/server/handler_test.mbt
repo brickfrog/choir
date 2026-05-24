@@ -2823,11 +2823,7 @@ async test "deliver_pending_poll_events fires PRMerged hook whether tracked or s
       assert_eq(fired_inputs[0].event, @hooks.HookEvent::PrMerged)
       @debug.assert_eq(fired_inputs[0].pr_number, Some(pr_number))
     }
-    assert_true(
-      @sys.read_file(project_dir + "/.choir/seen_merged_prs.json").contains(
-        pr_number.to_string(),
-      ),
-    )
+    assert_true(state.poller.merged_observed(pr_number))
     ignore(@sys.rm_rf(project_dir))
     fired_count
   }
@@ -2836,14 +2832,10 @@ async test "deliver_pending_poll_events fires PRMerged hook whether tracked or s
 }
 
 ///|
-test "seen merge cache predicate and capacity" {
+test "should_emit_untracked_pr_merged truth table" {
   assert_true(should_emit_untracked_pr_merged(false, false))
   assert_false(should_emit_untracked_pr_merged(true, false))
   assert_false(should_emit_untracked_pr_merged(false, true))
-  let cache = update_seen_merge_cache([1, 2, 3], 2, capacity=3)
-  @debug.assert_eq(cache, [1, 3, 2])
-  let bounded = update_seen_merge_cache(cache, 4, capacity=3)
-  @debug.assert_eq(bounded, [3, 2, 4])
 }
 
 ///|
@@ -3003,13 +2995,12 @@ async test "untracked merge detection emits synthetic PRMerged and fires hooks" 
   @debug.assert_eq(fired_inputs[0].branch, Some("feature/integration"))
   @debug.assert_eq(fired_inputs[0].parent_branch, Some("main"))
   assert_false(state.poller.merged_observed(612))
-  assert_false(@sys.path_exists(project_dir + "/.choir/seen_merged_prs.json"))
   ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
-async test "observed untracked merge with missing head sha skips audit receipt lookup" {
-  let project_dir = "/tmp/choir-untracked-missing-head-sha-" +
+async test "grandfather_existing_merges_at_startup suppresses subsequent emit" {
+  let project_dir = "/tmp/choir-grandfather-startup-" +
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
@@ -3022,10 +3013,6 @@ async test "observed untracked merge with missing head sha skips audit receipt l
     },
     make_hermetic_recovery_provider(),
   )
-  let pr_number = 619
-  state.poller.mark_merged_observed(pr_number)
-  let checked_receipts : Array[String] = []
-  let mut receipt_read_calls = 0
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
     if cmd.program == "git" &&
@@ -3034,32 +3021,15 @@ async test "observed untracked merge with missing head sha skips audit receipt l
     }
     if cmd.program == "gh" && cmd.args.contains("list") {
       return (
-        0,
-        "[{\"number\":" +
-        pr_number.to_string() +
-        ",\"url\":\"https://example.test/pull/" +
-        pr_number.to_string() +
-        "\",\"headRefName\":\"feature/missing-head\",\"headRefOid\":\"\",\"baseRefName\":\"main\",\"mergedAt\":\"2099-12-31T00:00:00Z\"}]",
+        0, "[{\"number\":408,\"url\":\"https://example.test/pull/408\",\"headRefName\":\"main.t92-gate-0\",\"headRefOid\":\"abcdef1234567890\",\"baseRefName\":\"main\",\"mergedAt\":\"2099-12-31T00:00:00Z\"}]",
       )
     }
     (0, "")
   }
-  let events = detect_untracked_pr_merged_events(
-    state,
-    1000L,
-    capture,
-    audit_receipt_exists=fn(path) {
-      checked_receipts.push(path)
-      true
-    },
-    audit_receipt_read=fn(_) {
-      receipt_read_calls = receipt_read_calls + 1
-      "{not json"
-    },
-  )
+  grandfather_existing_merges_at_startup(state, capture)
+  assert_true(state.poller.merged_observed(408))
+  let events = detect_untracked_pr_merged_events(state, 1000L, capture)
   assert_eq(events.length(), 0)
-  assert_eq(checked_receipts.length(), 0)
-  assert_eq(receipt_read_calls, 0)
   ignore(@sys.rm_rf(project_dir))
 }
 
@@ -3233,11 +3203,7 @@ async test "A: unaudited PRMerged event does NOT fire completion hooks" {
     @debug.assert_eq(checked_receipts, [
       project_dir + "/.choir/audit-receipts/abcdef123456.json",
     ])
-    assert_true(
-      @sys.read_file(project_dir + "/.choir/seen_merged_prs.json").contains(
-        pr_number.to_string(),
-      ),
-    )
+    assert_true(state.poller.merged_observed(pr_number))
     if expected_log_message != "" {
       let mut error_count = 0
       for event in captured {
@@ -3330,11 +3296,7 @@ async test "A: unaudited PRMerged event does NOT fire completion hooks" {
     assert_eq(pull_calls, 0)
     assert_eq(receipt_read_calls, 0)
     assert_eq(checked_receipts.length(), 1)
-    assert_true(
-      @sys.read_file(project_dir + "/.choir/seen_merged_prs.json").contains(
-        pr_number.to_string(),
-      ),
-    )
+    assert_true(state.poller.merged_observed(pr_number))
     ignore(@sys.rm_rf(project_dir))
   }
   run_case(
@@ -3524,16 +3486,12 @@ async test "B: audited PRMerged event DOES fire completion hooks (regression gua
   @debug.assert_eq(fired_inputs[0].parent_branch, Some("main"))
   assert_eq(pull_calls, 1)
   assert_eq(receipt_read_calls, 1)
-  assert_true(
-    @sys.read_file(project_dir + "/.choir/seen_merged_prs.json").contains(
-      pr_number.to_string(),
-    ),
-  )
+  assert_true(state.poller.merged_observed(pr_number))
   ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
-async test "C: empty-head_sha unaudited PRMerged persists to seen_merged_prs.json" {
+async test "C: empty-head_sha unaudited PRMerged records observation" {
   let project_dir = "/tmp/choir-tracked-missing-head-sha-" +
     @sys.get_pid().to_string() +
     "-" +
@@ -3675,12 +3633,7 @@ async test "C: empty-head_sha unaudited PRMerged persists to seen_merged_prs.jso
   assert_eq(receipt_read_calls, 0)
   assert_eq(hook_calls, 0)
   assert_eq(pull_calls, 0)
-  assert_true(
-    @sys.path_exists(project_dir + "/.choir/seen_merged_prs.json") &&
-    @sys.read_file(project_dir + "/.choir/seen_merged_prs.json").contains(
-      pr_number.to_string(),
-    ),
-  )
+  assert_true(state.poller.merged_observed(pr_number))
   ignore(@sys.rm_rf(project_dir))
 }
 
@@ -3813,11 +3766,7 @@ async test "tracked PRMerged with missing head sha warns when integration audit 
   assert_eq(checked_receipts.length(), 0)
   assert_eq(receipt_read_calls, 0)
   assert_eq(pull_calls, 1)
-  assert_true(
-    @sys.read_file(project_dir + "/.choir/seen_merged_prs.json").contains(
-      pr_number.to_string(),
-    ),
-  )
+  assert_true(state.poller.merged_observed(pr_number))
   ignore(@sys.rm_rf(project_dir))
 }
 
@@ -7972,18 +7921,6 @@ fn disconnect_confirmation_parent(parent_id : String) -> @types.Agent {
     spawn_depth: 0,
     state: @types.AgentState::Active,
   }
-}
-
-///|
-test "pr_merged_predates_seen_cache grandfathers older merges" {
-  // 2026-05-17 18:00:00 UTC == 1779056400
-  assert_true(pr_merged_predates_seen_cache(1779056400L, 1779058800L))
-  assert_false(pr_merged_predates_seen_cache(1779058800L, 1779056400L))
-  // Equal timestamps: NOT grandfathered (the merge is at the moment of enable).
-  assert_false(pr_merged_predates_seen_cache(1779058800L, 1779058800L))
-  // Parse-failed merge time (0) fails closed -> grandfathered.
-  assert_true(pr_merged_predates_seen_cache(0L, 1L))
-  assert_true(pr_merged_predates_seen_cache(0L, 0L))
 }
 
 ///|

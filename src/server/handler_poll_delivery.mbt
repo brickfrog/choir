@@ -872,126 +872,43 @@ pub fn should_emit_untracked_pr_merged(
 }
 
 ///|
-/// Grandfather predicate for untracked-PR-merge detection. Returns true iff
-/// the merge happened strictly before the cache was enabled. Used to suppress
-/// historical merges on first-startup-with-empty-cache (which otherwise
-/// fire the pr_merged hook for every PR ever merged into main; observed
-/// live as a notify-send storm on 2026-05-17).
-///
-/// `merged_at_unix == 0` means "merge time unknown" — fail closed by
-/// grandfathering (do not emit). The gh query supplies mergedAt for all
-/// real merges, so 0 only happens on parse failure.
-pub fn pr_merged_predates_seen_cache(
-  merged_at_unix : Int64,
-  enabled_at_unix : Int64,
-) -> Bool {
-  merged_at_unix == 0L || merged_at_unix < enabled_at_unix
-}
-
-///|
-fn seen_merge_enabled_at_path(project_dir : String) -> String {
-  project_dir + "/.choir/seen_merged_prs.enabled_at"
-}
-
-///|
-/// Read the seen-merge cache's `enabled_at` epoch-seconds. On first call
-/// (file absent), seed it with `now` so all currently-existing merges into
-/// main are grandfathered. Subsequent calls return the persisted value.
-fn ServerState::read_or_initialize_seen_merge_enabled_at(
-  self : ServerState,
-  now : Int64,
-) -> Int64 {
-  let path = seen_merge_enabled_at_path(self.config.project_dir)
-  let content = (self.read_file)(path)
-  let parsed = content.trim().to_owned()
-  if parsed != "" {
-    let json = @json.parse(parsed) catch { _ => "".to_json() }
-    match json {
-      Number(n, ..) => return n.to_int64()
-      _ => ()
-    }
-  }
-  ignore((self.write_file_atomic)(path, now.to_string() + "\n"))
-  now
-}
-
-///|
-pub fn update_seen_merge_cache(
-  cache : Array[Int],
-  pr_number : Int,
-  capacity? : Int = seen_merge_cache_capacity,
-) -> Array[Int] {
-  let next : Array[Int] = []
-  for value in cache {
-    if value != pr_number {
-      next.push(value)
-    }
-  }
-  next.push(pr_number)
-  let limit = if capacity < 1 { 1 } else { capacity }
-  while next.length() > limit {
-    ignore(next.remove(0))
-  }
-  next
-}
-
-///|
-fn parse_seen_merge_cache(content : String) -> Array[Int] {
-  let json = @json.parse(content) catch { _ => return [] }
-  let result : Array[Int] = []
-  match json {
-    Array(items) =>
-      for item in items {
-        match item {
-          Number(n, ..) => result.push(n.to_int())
-          _ => ()
-        }
-      }
-    _ => ()
-  }
-  result
-}
-
-///|
-fn seen_merge_cache_to_json(cache : Array[Int]) -> String {
-  let items : Array[Json] = cache.map(fn(n) { n.to_json() })
-  items.to_json().stringify()
-}
-
-///|
-fn seen_merge_cache_path(project_dir : String) -> String {
-  project_dir + "/.choir/seen_merged_prs.json"
-}
-
-///|
-fn ServerState::read_seen_merge_cache(self : ServerState) -> Array[Int] {
-  parse_seen_merge_cache(
-    (self.read_file)(seen_merge_cache_path(self.config.project_dir)),
-  )
-}
-
-///|
-fn ServerState::write_seen_merge_cache(
-  self : ServerState,
-  cache : Array[Int],
-) -> Unit {
-  ignore(
-    (self.write_file_atomic)(
-      seen_merge_cache_path(self.config.project_dir),
-      seen_merge_cache_to_json(cache) + "\n",
-    ),
-  )
-}
-
-///|
 fn ServerState::record_seen_merged_pr_number(
   self : ServerState,
   pr_number : Int,
 ) -> Unit {
-  let cache = self.read_seen_merge_cache()
-  let next = update_seen_merge_cache(cache, pr_number)
   self.poller.mark_merged_observed(pr_number)
-  self.write_seen_merge_cache(next)
+}
+
+///|
+/// Mark every PR currently merged into the default branch as observed.
+/// Called once at server startup so the untracked-merge scanner only emits
+/// for merges that happen while this process is alive.
+pub async fn grandfather_existing_merges_at_startup(
+  state : ServerState,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Unit {
+  let default_branch = match
+    detect_default_branch_for_wave_complete(state.config.project_dir, capture) {
+    Some(branch) => branch
+    None => return
+  }
+  let cmd = recent_merged_pull_requests_command(
+    state.config.project_dir,
+    default_branch,
+  )
+  let (exit_code, output) = capture(cmd)
+  if exit_code != 0 {
+    return
+  }
+  let mut count = 0
+  for info in parse_recent_merged_pull_requests(output, default_branch) {
+    state.poller.mark_merged_observed(info.pr_number)
+    count = count + 1
+  }
+  @moontrace.info("grandfathered merged prs at startup", fields=[
+    @moontrace.field("default_branch", default_branch),
+    @moontrace.field("count", count.to_string()),
+  ])
 }
 
 ///|
@@ -1115,8 +1032,6 @@ pub async fn detect_untracked_pr_merged_events(
   state : ServerState,
   now : Int64,
   capture : async (@workspace.Command) -> (Int, String),
-  audit_receipt_exists? : (String) -> Bool = @exec.path_entry_exists,
-  audit_receipt_read? : (String) -> String = @exec.read_file,
   same_tick_pr_merged_numbers? : Array[Int] = [],
 ) -> Array[@poller.PollEvent] {
   let default_branch = match
@@ -1132,21 +1047,15 @@ pub async fn detect_untracked_pr_merged_events(
   if exit_code != 0 {
     return []
   }
-  let seen_cache = state.read_seen_merge_cache()
-  let enabled_at = state.read_or_initialize_seen_merge_enabled_at(now)
   let events : Array[@poller.PollEvent] = []
   for info in parse_recent_merged_pull_requests(output, default_branch) {
     let tracked = state.poller.get(info.pr_number) is Some(_)
-    let durably_seen = seen_cache.contains(info.pr_number)
     let observed_this_process = state.poller.merged_observed(info.pr_number)
     let observed_this_tick = same_tick_pr_merged_numbers.contains(
       info.pr_number,
     )
-    let head_sha = info.head_sha.trim().to_owned()
-    if observed_this_process &&
-      !observed_this_tick &&
-      !durably_seen &&
-      head_sha == "" {
+    let already_seen = observed_this_process || observed_this_tick
+    if !tracked && !observed_this_process && info.head_sha.trim() == "" {
       let outcome = if state.config.pr_policy.require_integration_audit {
         AuditEnforcementOutcome::UnauditedBlocked
       } else {
@@ -1157,38 +1066,12 @@ pub async fn detect_untracked_pr_merged_events(
         @moontrace.field("branch", info.branch),
         @moontrace.field("parent_branch", info.parent_branch),
         @moontrace.field("default_branch", default_branch),
-        @moontrace.field("head_sha", head_sha),
+        @moontrace.field("head_sha", ""),
         @moontrace.field("pr_url", info.pr_url),
       ]
       emit_audit_enforcement_log(
         outcome, untracked_missing_head_audit_log_message, fields,
       )
-    }
-    let observed_but_recheckable = observed_this_process &&
-      !observed_this_tick &&
-      !durably_seen &&
-      head_sha != "" &&
-      valid_merge_audit_receipt_exists(
-        project_relative_path(
-          state.config.project_dir,
-          @tools.file_pr_audit_receipt_path_for_head(head_sha),
-        ),
-        default_branch,
-        head_sha,
-        audit_receipt_exists,
-        audit_receipt_read,
-      )
-    let already_seen = durably_seen ||
-      observed_this_tick ||
-      (observed_this_process && !observed_but_recheckable)
-    let grandfathered = pr_merged_predates_seen_cache(
-      info.merged_at_unix,
-      enabled_at,
-    )
-    if grandfathered {
-      // Pre-existing merge; record it as seen so we don't reconsider it.
-      state.poller.mark_merged_observed(info.pr_number)
-      continue
     }
     if should_emit_untracked_pr_merged(tracked, already_seen) {
       let pr = synthetic_untracked_merged_pr(
@@ -3250,8 +3133,6 @@ pub async fn ServerState::process_poller_tick_with(
       self,
       now,
       capture,
-      audit_receipt_exists~,
-      audit_receipt_read~,
       same_tick_pr_merged_numbers~,
     ) {
     pending_events.push(event)
@@ -3334,8 +3215,6 @@ pub async fn ServerState::process_poller_tick(
       self,
       now,
       capture,
-      audit_receipt_exists~,
-      audit_receipt_read~,
       same_tick_pr_merged_numbers~,
     ) {
     pending_events.push(event)
