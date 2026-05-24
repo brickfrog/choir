@@ -360,13 +360,16 @@ pub async fn ServerState::handle_with_runner_and_capture(
   if req.name == "kill_agent" {
     @async.sleep(0)
   }
-  self.interpret_teardown_effects(effects, runner, sleep_fn~)
+  // Reap pgroup BEFORE teardown_effects runs ClearRuntimeTracking (which removes agent_pids).
   if req.name == "kill_agent" && resp.is_ok() {
     match req.args.get("agent_id") {
       Some(agent_id) =>
         self.kill_tracked_agent_pgroup(agent_id, default_kill_pgid_best_effort)
       None => ()
     }
+  }
+  self.interpret_teardown_effects(effects, runner, sleep_fn~)
+  if req.name == "kill_agent" && resp.is_ok() {
     let caller_id = req.args
       .get("caller_id")
       .unwrap_or(request_agent_id(req).unwrap_or(""))

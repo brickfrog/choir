@@ -443,7 +443,10 @@ int choir_kill_pid(int pid) {
 }
 
 int choir_kill_pgid(int pgid) {
-    if (pgid <= 0) {
+    // Guard pgid <= 1: kill(-1, SIGTERM) is the broadcast form (signal every
+    // process the caller can signal), and pgid 0/1 are reserved (init's pgrp
+    // in container PID namespaces). The intent is bounded-pgroup cleanup.
+    if (pgid <= 1) {
         return 0;
     }
     if (kill(-(pid_t)pgid, SIGTERM) == 0) {
