@@ -208,6 +208,11 @@ pub fn shell_quote(_s : String) -> String {
 }
 
 ///|
+pub fn getppid() -> Int {
+  -1
+}
+
+///|
 pub fn path_exists(_path : String) -> Bool {
   false
 }
@@ -229,6 +234,11 @@ pub fn path_executable(_path : String) -> Bool {
 
 ///|
 pub fn kill_pid_best_effort(_pid : Int) -> Unit {
+
+}
+
+///|
+pub fn kill_pgid_best_effort(_pgid : Int) -> Unit {
 
 }
 

@@ -45,7 +45,13 @@ extern "C" fn c_exit(code : Int) = "choir_exit"
 extern "C" fn c_getpid() -> Int = "choir_getpid"
 
 ///|
+extern "C" fn c_getppid() -> Int = "choir_getppid"
+
+///|
 extern "C" fn c_kill_pid(pid : Int) -> Int = "choir_kill_pid"
+
+///|
+extern "C" fn c_kill_pgid(pgid : Int) -> Int = "choir_kill_pgid"
 
 ///|
 extern "C" fn c_init_kill_server_pid_sequence(pid : Int) = "choir_init_kill_server_pid_sequence"
@@ -276,10 +282,26 @@ pub fn get_pid() -> Int {
 }
 
 ///|
+/// Parent process id, useful for worker processes that need to report the
+/// supervising agent's PID to the server side for process-group cleanup.
+pub fn getppid() -> Int {
+  c_getppid()
+}
+
+///|
 /// Send `SIGTERM` to `pid` via `kill(2)`. No-op for non-positive `pid`. Treats "no such process"
 /// like `kill ... || true` (ignored).
 pub fn kill_pid_best_effort(pid : Int) -> Unit {
   ignore(c_kill_pid(pid))
+}
+
+///|
+/// Send `SIGTERM` to `pgid` via `kill(-pgid, SIGTERM)`. Groups `<= 1` are
+/// ignored as no-op: 0 is the caller's own group and 1 triggers the broadcast
+/// form (signal every process the caller can signal), both wider than the
+/// bounded-pgroup-cleanup intent.
+pub fn kill_pgid_best_effort(pgid : Int) -> Unit {
+  ignore(c_kill_pgid(pgid))
 }
 
 ///|

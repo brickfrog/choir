@@ -150,7 +150,8 @@ test "init_tl_zellij_tab_command wraps TL with policy watcher shell" {
   assert_true(script.contains("CHOIR_BRANCH='main'"))
   assert_false(script.contains("HOME="))
   assert_true(script.contains("choir tl-policy-watch --pid"))
-  assert_true(script.contains("exec claude"))
+  assert_true(script.contains("exec setsid"))
+  assert_true(script.contains("claude"))
   assert_false(script.contains("child_pid=$!"))
   assert_true(script.contains("[TL exited]"))
   assert_true(script.contains("exec bash -l"))
@@ -197,11 +198,12 @@ test "agy_binary_name resolves agy only" {
 ///|
 test "init_tl_agent_command supports agent alias for cursor" {
   let cmd = @workspace.init_tl_agent_command("agent", "/repo")
-  assert_eq(cmd.program, "agent")
-  assert_eq(cmd.args[0], "--yolo")
-  assert_eq(cmd.args[1], "--approve-mcps")
-  assert_eq(cmd.args[2], "--workspace")
-  assert_eq(cmd.args[3], "/repo")
+  let body = launch_cmd_body_contains_setsid(cmd)
+  assert_true(body.contains("agent"))
+  assert_true(body.contains("--yolo"))
+  assert_true(body.contains("--approve-mcps"))
+  assert_true(body.contains("--workspace"))
+  assert_true(body.contains("/repo"))
 }
 
 ///|
@@ -271,6 +273,17 @@ test "zellij_tab_name_exists_in_query_output strips ansi" {
 }
 
 ///|
+fn launch_cmd_body_contains_setsid(cmd : @workspace.Command) -> String raise {
+  assert_eq(cmd.program, "setsid")
+  assert_eq(cmd.args.length(), 3)
+  assert_eq(cmd.args[0], "bash")
+  assert_eq(cmd.args[1], "-c")
+  let body = cmd.args[2]
+  assert_true(body.contains("trap 'kill -TERM -- -$$ 2>/dev/null'"))
+  body
+}
+
+///|
 test "agent_launch_command for each AgentType" {
   let spec_claude = @types.SpawnSpec::{
     slug: "test-slug",
@@ -298,57 +311,55 @@ test "agent_launch_command for each AgentType" {
   let cmd_moon = @workspace.agent_launch_command(spec_moon, "/path")
   let cmd_codex = @workspace.agent_launch_command(spec_codex, "/path")
 
-  assert_eq(cmd_claude.program, "claude")
-  assert_eq(cmd_claude.args[0], "--dangerously-skip-permissions")
-  assert_eq(cmd_claude.args[1], "--mcp-config")
-  assert_true(cmd_claude.args[2].contains("\"mcpServers\""))
-  assert_true(cmd_claude.args[2].contains("\"--role\",\"dev\""))
-  assert_true(cmd_claude.args[2].contains("\"--name\",\"main.test-slug\""))
-  assert_eq(cmd_claude.args[3], "--strict-mcp-config")
-  assert_eq(cmd_claude.args[4], "fix bugs")
+  let cmd_claude_body = launch_cmd_body_contains_setsid(cmd_claude)
+  let cmd_gemini_body = launch_cmd_body_contains_setsid(cmd_gemini)
+  let cmd_moon_body = launch_cmd_body_contains_setsid(cmd_moon)
+  let cmd_codex_body = launch_cmd_body_contains_setsid(cmd_codex)
+  let cmd_cursor = @workspace.agent_launch_command(
+    { ..spec_claude, agent_type: @types.AgentType::CursorAgent },
+    "/path",
+  )
+  let cmd_cursor_body = launch_cmd_body_contains_setsid(cmd_cursor)
+
+  assert_true(cmd_claude_body.contains("claude"))
+  assert_true(cmd_claude_body.contains("--dangerously-skip-permissions"))
+  assert_true(cmd_claude_body.contains("--mcp-config"))
+  assert_true(cmd_claude_body.contains("\"mcpServers\""))
+  assert_true(cmd_claude_body.contains("\"main.test-slug\""))
+  assert_true(cmd_claude_body.contains("--strict-mcp-config"))
+  assert_true(cmd_claude_body.contains("fix bugs"))
   @debug.assert_eq(cmd_claude.workdir, Some("/path"))
 
-  assert_eq(cmd_gemini.program, "agy")
-  @debug.assert_eq(cmd_gemini.args, [
-    "--dangerously-skip-permissions", "--prompt-interactive", "fix bugs",
-  ])
+  assert_true(cmd_gemini_body.contains("agy"))
+  assert_true(cmd_gemini_body.contains("--dangerously-skip-permissions"))
+  assert_true(cmd_gemini_body.contains("--prompt-interactive"))
+  assert_true(cmd_gemini_body.contains("fix bugs"))
   @debug.assert_eq(cmd_gemini.workdir, Some("/path"))
 
-  assert_eq(cmd_moon.program, "moon")
-  @debug.assert_eq(cmd_moon.args, ["pilot", "fix bugs"])
+  assert_true(cmd_moon_body.contains("moon"))
+  assert_true(cmd_moon_body.contains("pilot"))
+  assert_true(cmd_moon_body.contains("fix bugs"))
   @debug.assert_eq(cmd_moon.workdir, Some("/path"))
 
-  assert_eq(cmd_codex.program, "codex")
-  assert_eq(cmd_codex.args[0], "--dangerously-bypass-approvals-and-sandbox")
-  assert_eq(cmd_codex.args[1], "--no-alt-screen")
-  assert_eq(cmd_codex.args[2], "-c")
-  assert_true(cmd_codex.args[3].contains("mcp_servers.choir.command=\"choir\""))
-  assert_eq(cmd_codex.args[4], "-c")
-  assert_true(cmd_codex.args[5].contains("\"mcp-stdio\""))
-  assert_true(cmd_codex.args[5].contains("\"--raw-stdio\""))
-  assert_true(cmd_codex.args[5].contains("\"--role\""))
-  assert_true(cmd_codex.args[5].contains("\"dev\""))
-  assert_true(cmd_codex.args[5].contains("\"--name\""))
-  assert_true(cmd_codex.args[5].contains("\"main.test-slug\""))
-  assert_true(cmd_codex.args[5].contains("\"--wait-socket-tries\""))
-  assert_true(cmd_codex.args[5].contains("\"300\""))
-  assert_true(cmd_codex.args[5].contains("\"--stderr-append-log\""))
-  assert_false(cmd_codex.args[5].contains("-lc"))
-  assert_eq(cmd_codex.args[6], "-c")
-  assert_true(cmd_codex.args[7].contains("mcp_servers.choir.cwd=\"/path\""))
-  assert_eq(cmd_codex.args[8], "-C")
-  assert_eq(cmd_codex.args[9], "/path")
-  assert_eq(cmd_codex.args[10], "fix bugs")
+  assert_true(cmd_codex_body.contains("codex"))
+  assert_true(
+    cmd_codex_body.contains("--dangerously-bypass-approvals-and-sandbox"),
+  )
+  assert_true(cmd_codex_body.contains("--no-alt-screen"))
+  assert_true(cmd_codex_body.contains("mcp_servers.choir.command=\"choir\""))
+  assert_true(cmd_codex_body.contains("\"mcp-stdio\""))
+  assert_true(cmd_codex_body.contains("\"main.test-slug\""))
+  assert_false(cmd_codex_body.contains("\"-lc\""))
+  assert_true(cmd_codex_body.contains("mcp_servers.choir.cwd=\"/path\""))
+  assert_true(cmd_codex_body.contains("fix bugs"))
   @debug.assert_eq(cmd_codex.workdir, Some("/path"))
 
-  let spec_cursor = { ..spec_claude, agent_type: @types.AgentType::CursorAgent }
-  let cmd_cursor = @workspace.agent_launch_command(spec_cursor, "/path")
-  assert_eq(cmd_cursor.program, "agent")
-  assert_eq(cmd_cursor.args[0], "--yolo")
-  assert_eq(cmd_cursor.args[1], "--approve-mcps")
-  assert_eq(cmd_cursor.args[2], "--workspace")
-  assert_eq(cmd_cursor.args[3], "/path")
-  assert_eq(cmd_cursor.args[4], "fix bugs")
+  assert_true(cmd_cursor_body.contains("agent"))
+  assert_true(cmd_cursor_body.contains("--yolo"))
+  assert_true(cmd_cursor_body.contains("--approve-mcps"))
+  assert_true(cmd_cursor_body.contains("--workspace"))
+  assert_true(cmd_cursor_body.contains("/path"))
+  assert_true(cmd_cursor_body.contains("fix bugs"))
   @debug.assert_eq(cmd_cursor.workdir, Some("/path"))
 }
 
@@ -379,12 +390,16 @@ test "agent_launch_command wraps with shell_command" {
   assert_eq(cmd.program, "nix")
   assert_eq(cmd.args[0], "develop")
   assert_eq(cmd.args[1], "--command")
-  assert_eq(cmd.args[2], "claude")
-  assert_eq(cmd.args[3], "--dangerously-skip-permissions")
-  assert_eq(cmd.args[4], "--mcp-config")
-  assert_true(cmd.args[5].contains("\"mcpServers\""))
-  assert_eq(cmd.args[6], "--strict-mcp-config")
-  assert_eq(cmd.args[7], "fix bugs")
+  assert_eq(cmd.args[2], "setsid")
+  assert_eq(cmd.args[3], "bash")
+  assert_eq(cmd.args[4], "-c")
+  let body = cmd.args[5]
+  assert_true(body.contains("claude"))
+  assert_true(body.contains("--dangerously-skip-permissions"))
+  assert_true(body.contains("--mcp-config"))
+  assert_true(body.contains("\"mcpServers\""))
+  assert_true(body.contains("--strict-mcp-config"))
+  assert_true(body.contains("fix bugs"))
   @debug.assert_eq(cmd.workdir, Some("/path"))
 }
 
@@ -408,12 +423,13 @@ test "agent_launch_command no wrap when shell_command is None" {
     wave_id: None,
   }
   let cmd = @workspace.agent_launch_command(spec, "/path", shell_command=None)
-  assert_eq(cmd.program, "claude")
-  assert_eq(cmd.args[0], "--dangerously-skip-permissions")
-  assert_eq(cmd.args[1], "--mcp-config")
-  assert_true(cmd.args[2].contains("\"mcpServers\""))
-  assert_eq(cmd.args[3], "--strict-mcp-config")
-  assert_eq(cmd.args[4], "fix bugs")
+  let body = launch_cmd_body_contains_setsid(cmd)
+  assert_true(body.contains("claude"))
+  assert_true(body.contains("--dangerously-skip-permissions"))
+  assert_true(body.contains("--mcp-config"))
+  assert_true(body.contains("\"mcpServers\""))
+  assert_true(body.contains("--strict-mcp-config"))
+  assert_true(body.contains("fix bugs"))
 }
 
 ///|
@@ -453,8 +469,9 @@ test "agent_launch_command supports command_override" {
     "/path",
     command_override=Some("my-gemini --flag"),
   )
-  assert_eq(cmd.program, "my-gemini")
-  assert_eq(cmd.args[0], "--flag")
+  let body = launch_cmd_body_contains_setsid(cmd)
+  assert_true(body.contains("my-gemini"))
+  assert_true(body.contains("--flag"))
   @debug.assert_eq(cmd.workdir, Some("/path"))
 }
 
@@ -478,12 +495,12 @@ test "agent_launch_command always uses agy for agy-backed types" {
     wave_id: None,
   }
   let gemini = @workspace.agent_launch_command(spec, "/path")
-  assert_eq(gemini.program, "agy")
+  assert_true(launch_cmd_body_contains_setsid(gemini).contains("agy"))
   let unknown = @workspace.agent_launch_command(
     { ..spec, agent_type: @types.AgentType::Unknown },
     "/path",
   )
-  assert_eq(unknown.program, "agy")
+  assert_true(launch_cmd_body_contains_setsid(unknown).contains("agy"))
 }
 
 ///|
@@ -510,15 +527,16 @@ test "agent_launch_command supports Claude fork_session" {
     "/path",
     parent_session_id=Some("session-123"),
   )
-  assert_eq(cmd.program, "claude")
-  assert_eq(cmd.args[0], "--dangerously-skip-permissions")
-  assert_eq(cmd.args[1], "--mcp-config")
-  assert_true(cmd.args[2].contains("\"mcpServers\""))
-  assert_eq(cmd.args[3], "--strict-mcp-config")
-  assert_eq(cmd.args[4], "--resume")
-  assert_eq(cmd.args[5], "session-123")
-  assert_eq(cmd.args[6], "--fork-session")
-  assert_eq(cmd.args[7], "fix bugs")
+  let body = launch_cmd_body_contains_setsid(cmd)
+  assert_true(body.contains("claude"))
+  assert_true(body.contains("--dangerously-skip-permissions"))
+  assert_true(body.contains("--mcp-config"))
+  assert_true(body.contains("\"mcpServers\""))
+  assert_true(body.contains("--strict-mcp-config"))
+  assert_true(body.contains("--resume"))
+  assert_true(body.contains("session-123"))
+  assert_true(body.contains("--fork-session"))
+  assert_true(body.contains("fix bugs"))
 }
 
 ///|
@@ -866,7 +884,8 @@ test "spawn_commands wraps TL worktree launch with policy watcher shell" {
   assert_true(script.contains("CHOIR_AGENT_ID='main.subtl-a'"))
   assert_true(script.contains("CHOIR_ROLE='tl'"))
   assert_true(script.contains("choir tl-policy-watch --pid"))
-  assert_true(script.contains("exec claude"))
+  assert_true(script.contains("exec setsid"))
+  assert_true(script.contains("claude"))
   assert_false(script.contains("child_pid=$!"))
 }
 

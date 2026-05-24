@@ -425,11 +425,31 @@ int choir_getpid(void) {
     return (int)getpid();
 }
 
+int choir_getppid(void) {
+    return (int)getppid();
+}
+
 int choir_kill_pid(int pid) {
     if (pid <= 0) {
         return 0;
     }
     if (kill((pid_t)pid, SIGTERM) == 0) {
+        return 0;
+    }
+    if (errno == ESRCH) {
+        return 0;
+    }
+    return -1;
+}
+
+int choir_kill_pgid(int pgid) {
+    // Guard pgid <= 1: kill(-1, SIGTERM) is the broadcast form (signal every
+    // process the caller can signal), and pgid 0/1 are reserved (init's pgrp
+    // in container PID namespaces). The intent is bounded-pgroup cleanup.
+    if (pgid <= 1) {
+        return 0;
+    }
+    if (kill(-(pid_t)pgid, SIGTERM) == 0) {
         return 0;
     }
     if (errno == ESRCH) {

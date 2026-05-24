@@ -116,6 +116,7 @@ fn ServerState::clear_agent_runtime_tracking(
 ) -> Unit {
   self.stop_subscribe(agent_id)
   self.pending_disconnects.remove(agent_id)
+  self.agent_pids.remove(agent_id)
   self.disconnect_contexts.remove(agent_id)
   self.worker_no_handoff_prodded_at.remove(agent_id)
   self.worker_no_handoff_stalled_emitted.remove(agent_id)
@@ -125,6 +126,23 @@ fn ServerState::clear_agent_runtime_tracking(
   self.clear_audit_cycle_count_for_agent(agent_id)
   self.clear_audit_progress_for_agent(agent_id)
   self.recent_poller_event_emissions.remove(agent_id)
+}
+
+///|
+fn default_kill_pgid_best_effort(pgid : Int) -> Unit {
+  @sys.kill_pgid_best_effort(pgid)
+}
+
+///|
+fn ServerState::kill_tracked_agent_pgroup(
+  self : ServerState,
+  agent_id : String,
+  kill_pgid : (Int) -> Unit,
+) -> Unit {
+  match self.forget_agent_pid(agent_id) {
+    Some(pgid) => kill_pgid(pgid)
+    None => ()
+  }
 }
 
 ///|
@@ -1293,6 +1311,7 @@ async fn ServerState::handle_disconnect_confirming_with_runner(
   self : ServerState,
   agent_id : String,
   runner : async (Array[@workspace.Command]) -> Array[Int],
+  kill_pgid? : (Int) -> Unit = default_kill_pgid_best_effort,
 ) -> Unit {
   let agent = self.registry.get(agent_id) catch {
     _ => {
@@ -1304,6 +1323,7 @@ async fn ServerState::handle_disconnect_confirming_with_runner(
     self.disconnect_contexts.remove(agent_id)
     return
   }
+  self.kill_tracked_agent_pgroup(agent_id, kill_pgid)
   match self.disconnect_contexts.get(agent_id) {
     Some(ctx) =>
       if ctx.last_request_name == Some("register") {
@@ -1480,8 +1500,9 @@ pub async fn ServerState::handle_disconnect_with_runner(
   self : ServerState,
   agent_id : String,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  kill_pgid? : (Int) -> Unit = default_kill_pgid_best_effort,
 ) -> Unit {
-  self.handle_disconnect_confirming_with_runner(agent_id, runner)
+  self.handle_disconnect_confirming_with_runner(agent_id, runner, kill_pgid~)
 }
 
 ///|
@@ -1581,6 +1602,7 @@ pub async fn ServerState::process_pending_disconnects_with_runner(
   now : Int64,
   grace_seconds : Int64,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  kill_pgid? : (Int) -> Unit = default_kill_pgid_best_effort,
 ) -> Unit {
   let stale : Array[String] = []
   for agent_id, disconnect_time in self.pending_disconnects {
@@ -1595,7 +1617,7 @@ pub async fn ServerState::process_pending_disconnects_with_runner(
     ignore(self.registry.set_alive(agent_id, false)) catch {
       _ => ()
     }
-    self.handle_disconnect_confirming_with_runner(agent_id, runner)
+    self.handle_disconnect_confirming_with_runner(agent_id, runner, kill_pgid~)
     ignore(self.registry.set_alive(agent_id, false)) catch {
       _ => ()
     }
