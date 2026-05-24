@@ -296,8 +296,10 @@ pub fn kill_pid_best_effort(pid : Int) -> Unit {
 }
 
 ///|
-/// Send `SIGTERM` to `pgid` via `kill(-pgid, SIGTERM)`. Non-positive groups are
-/// ignored as no-op.
+/// Send `SIGTERM` to `pgid` via `kill(-pgid, SIGTERM)`. Groups `<= 1` are
+/// ignored as no-op: 0 is the caller's own group and 1 triggers the broadcast
+/// form (signal every process the caller can signal), both wider than the
+/// bounded-pgroup-cleanup intent.
 pub fn kill_pgid_best_effort(pgid : Int) -> Unit {
   ignore(c_kill_pgid(pgid))
 }

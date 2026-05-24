@@ -129,8 +129,8 @@ fn ServerState::clear_agent_runtime_tracking(
 }
 
 ///|
-fn default_kill_pgid_best_effort(pid : Int) -> Unit {
-  @sys.kill_pgid_best_effort(pid)
+fn default_kill_pgid_best_effort(pgid : Int) -> Unit {
+  @sys.kill_pgid_best_effort(pgid)
 }
 
 ///|
@@ -140,7 +140,7 @@ fn ServerState::kill_tracked_agent_pgroup(
   kill_pgid : (Int) -> Unit,
 ) -> Unit {
   match self.forget_agent_pid(agent_id) {
-    Some(pid) => kill_pgid(pid)
+    Some(pgid) => kill_pgid(pgid)
     None => ()
   }
 }
