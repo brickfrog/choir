@@ -1,9 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "→ moon fmt"
+echo "→ moon fmt (staged .mbt files only)"
 staged="$(git diff --cached --name-only)"
-moon fmt
+staged_mbt=()
+while IFS= read -r f; do
+  [ -n "$f" ] && staged_mbt+=("$f")
+done < <(git diff --cached --name-only --diff-filter=ACM -- '*.mbt')
+
+if [ "${#staged_mbt[@]}" -gt 0 ]; then
+  moon fmt "${staged_mbt[@]}"
+else
+  echo "  (no staged .mbt files; skipping)"
+fi
 
 if [ -n "$staged" ]; then
   while IFS= read -r f; do
