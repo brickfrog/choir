@@ -214,6 +214,11 @@ fn build_claude_settings_json(
       "args": ["mcp-stdio", "--role", role_str, "--name", session_name].to_json(),
       "alwaysLoad": true.to_json(),
     }.to_json(),
+    "semble": {
+      "type": "stdio".to_json(),
+      "command": "uv".to_json(),
+      "args": ["tool", "run", "--from", "semble[mcp]", "semble"].to_json(),
+    }.to_json(),
   }
 
   let merged_mcp = match user_mcp_path {
@@ -789,6 +794,14 @@ test "build_claude_settings_json emits statusline and choir MCP stdio entry" {
   // TL hits choir's orchestration tools constantly; deferring them costs more
   // than it saves.
   @debug.assert_eq(choir.get("alwaysLoad"), Some(true.to_json()))
+  // TL session gets semble too (the TL is the highest-volume reader during
+  // scoping/audits). Mirrors the Claude Dev/Worker leaf wiring.
+  guard servers.get("semble") is Some(Object(semble)) else {
+    fail("mcpServers.semble missing or not an object")
+    return
+  }
+  @debug.assert_eq(semble.get("type"), Some("stdio".to_json()))
+  @debug.assert_eq(semble.get("command"), Some("uv".to_json()))
   guard top.get("enabledPlugins") is Some(Object(plugins)) else {
     fail("enabledPlugins missing or not an object")
     return

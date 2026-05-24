@@ -364,6 +364,7 @@ pub fn mcp_json_content(
   role : @types.Role,
   agent_id : String,
   extra_mcp_servers_json? : String? = None,
+  semble_pilot? : Bool = false,
 ) -> String {
   let role_str = match role {
     @types.Role::Root => "root"
@@ -375,6 +376,11 @@ pub fn mcp_json_content(
   // unknown MCP-entry keys, so it's safe to ship in the shared `.mcp.json` —
   // claude leaves get their orchestration tools resolved up-front, others are
   // unaffected.
+  let semble_entry = if semble_pilot {
+    ",\"semble\":{\"type\":\"stdio\",\"command\":\"uv\",\"args\":[\"tool\",\"run\",\"--from\",\"semble[mcp]\",\"semble\"]}"
+  } else {
+    ""
+  }
   let base = "{\"mcpServers\":{\"choir\":{\"type\":\"stdio\",\"command\":\"choir\",\"args\":[\"mcp-stdio\",\"--role\",\"" +
     role_str +
     "\",\"--name\",\"" +
@@ -382,18 +388,19 @@ pub fn mcp_json_content(
     "\",\"--stderr-append-log\",\".choir/mcp-stdio-" +
     @types.sanitize_agent_id(agent_id) +
     ".stderr.log" +
-    "\"],\"alwaysLoad\":true}}"
+    "\"],\"alwaysLoad\":true}" +
+    semble_entry
   match extra_mcp_servers_json {
     Some(extra) =>
       match strip_json_object_braces(extra) {
         Some(inner) =>
           if inner.trim() == "" {
-            base + "}"
+            base + "}}"
           } else {
-            base + "," + inner + "}"
+            base + "," + inner + "}}"
           }
-        None => base + "}"
+        None => base + "}}"
       }
-    None => base + "}"
+    None => base + "}}"
   }
 }

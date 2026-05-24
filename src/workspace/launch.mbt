@@ -104,7 +104,7 @@ pub fn codex_mcp_override_args(
 }
 
 ///|
-fn codex_dev_semble_task(task : String) -> String {
+fn semble_task(task : String) -> String {
   let directive =
     #|## Codebase exploration
   #|
@@ -119,10 +119,16 @@ fn claude_mcp_args(
   role : @types.Role,
   agent_id : String,
   extra_mcp_servers_json? : String? = None,
+  semble_pilot? : Bool = false,
 ) -> Array[String] {
   [
     "--mcp-config",
-    mcp_json_content(role, agent_id, extra_mcp_servers_json~),
+    mcp_json_content(
+      role,
+      agent_id,
+      extra_mcp_servers_json~,
+      semble_pilot~,
+    ),
     "--strict-mcp-config",
   ]
 }
@@ -184,10 +190,16 @@ fn provider_launch_command(
   tl_init_mode? : Bool = false,
   lean? : Bool = false,
 ) -> Command {
+  let semble_for_role = role == @types.Role::Dev || role == @types.Role::Worker
   let claude_mcp = if tl_init_mode {
     ["--mcp-config", init_tl_claude_mcp_config_json(), "--strict-mcp-config"]
   } else {
-    claude_mcp_args(role, agent_id, extra_mcp_servers_json~)
+    claude_mcp_args(
+      role,
+      agent_id,
+      extra_mcp_servers_json~,
+      semble_pilot=semble_for_role,
+    )
   }
   let task_args = match task {
     Some(t) => [t]
@@ -196,6 +208,19 @@ fn provider_launch_command(
   let cmd = match agent_type {
     Claude => {
       let program = cmd_program.unwrap_or("claude")
+      let claude_task_args : Array[String] = if tl_init_mode {
+        task_args
+      } else {
+        match task {
+          Some(t) =>
+            if semble_for_role {
+              [semble_task(t)]
+            } else {
+              [t]
+            }
+          None => []
+        }
+      }
       if tl_init_mode {
         let plugin_dir = workspace_path + "/.choir/plugin"
         let settings_path = workspace_path + "/.choir/claude-settings.json"
@@ -219,7 +244,7 @@ fn provider_launch_command(
               program,
               args: [
                 ..cmd_extra_args, "--dangerously-skip-permissions", ..claude_mcp,
-                "--resume", session_id, "--fork-session", ..task_args,
+                "--resume", session_id, "--fork-session", ..claude_task_args,
               ],
               workdir: Some(workspace_path),
             }
@@ -228,7 +253,7 @@ fn provider_launch_command(
               program,
               args: [
                 ..cmd_extra_args, "--dangerously-skip-permissions", ..claude_mcp,
-                ..task_args,
+                ..claude_task_args,
               ],
               workdir: Some(workspace_path),
             }
@@ -255,7 +280,7 @@ fn provider_launch_command(
         let codex_task_args = match task {
           Some(t) =>
             if role == @types.Role::Dev {
-              [codex_dev_semble_task(t)]
+              [semble_task(t)]
             } else {
               [t]
             }
