@@ -51,6 +51,7 @@ pub fn codex_mcp_override_args(
   role : @types.Role,
   agent_id : String,
   workspace_path : String,
+  semble_pilot? : Bool = false,
 ) -> Array[String] {
   // Codex MCP stdio: direct `choir` argv (no `sh -lc`). Socket wait and stderr log
   // are handled inside `mcp-stdio` via `--wait-socket-tries` / `--stderr-append-log`.
@@ -78,7 +79,7 @@ pub fn codex_mcp_override_args(
       ]
   }
   let args_lit = toml_string_array_literal(elems)
-  [
+  let args = [
     "-c",
     "mcp_servers.choir.command=\"choir\"",
     "-c",
@@ -86,6 +87,31 @@ pub fn codex_mcp_override_args(
     "-c",
     "mcp_servers.choir.cwd=\"" + escape_toml_string(workspace_path) + "\"",
   ]
+  if semble_pilot {
+    let semble_args = toml_string_array_literal([
+      "tool", "run", "--from", "semble[mcp]", "semble",
+    ])
+    args.push("-c")
+    args.push("mcp_servers.semble.command=\"uv\"")
+    args.push("-c")
+    args.push("mcp_servers.semble.args=" + semble_args)
+    args.push("-c")
+    args.push(
+      "mcp_servers.semble.cwd=\"" + escape_toml_string(workspace_path) + "\"",
+    )
+  }
+  args
+}
+
+///|
+fn codex_dev_semble_task(task : String) -> String {
+  let directive =
+    #|## Codebase exploration
+  #|
+  #|A `semble` MCP search tool is available. Prefer it over `grep -r` / `find` for any codebase exploration that isn't an exact-string lookup. Use grep only when you have a literal symbol/string to find; use semble for any "where does this concept live" / "how is X used" / "find files related to Y" question.
+  #|
+  #|
+  directive + task
 }
 
 ///|
@@ -226,17 +252,33 @@ fn provider_launch_command(
       }
     Codex =>
       {
-        program: cmd_program.unwrap_or("codex"),
-        args: [
-          ..cmd_extra_args,
-          "--dangerously-bypass-approvals-and-sandbox",
-          "--no-alt-screen",
-          ..codex_mcp_override_args(role, agent_id, workspace_path),
-          "-C",
-          workspace_path,
-          ..task_args,
-        ],
-        workdir: Some(workspace_path),
+        let codex_task_args = match task {
+          Some(t) =>
+            if role == @types.Role::Dev {
+              [codex_dev_semble_task(t)]
+            } else {
+              [t]
+            }
+          None => []
+        }
+        {
+          program: cmd_program.unwrap_or("codex"),
+          args: [
+            ..cmd_extra_args,
+            "--dangerously-bypass-approvals-and-sandbox",
+            "--no-alt-screen",
+            ..codex_mcp_override_args(
+              role,
+              agent_id,
+              workspace_path,
+              semble_pilot=role == @types.Role::Dev,
+            ),
+            "-C",
+            workspace_path,
+            ..codex_task_args,
+          ],
+          workdir: Some(workspace_path),
+        }
       }
     CursorAgent =>
       {
