@@ -2,10 +2,15 @@
 set -euo pipefail
 
 # Asserts .githooks/pre-commit's moon fmt step only touches STAGED .mbt files.
-# Two sub-tests:
-#   1. Stage one of two .mbt files in a fake project; verify the unstaged file
-#      is byte-identical after the hook runs.
-#   2. Stage only a non-.mbt file; verify the hook skips moon fmt entirely.
+# Three sub-tests:
+#   sub1     — Stage one of two .mbt files in a fake project; verify the
+#              unstaged file is byte-identical after the hook runs.
+#   sub_meta — Same fixture but with the BUGGY (bare `moon fmt`) hook; assert
+#              the unstaged file DOES get rewritten. Proves sub1's assertion
+#              has teeth — without this the test could pass against any
+#              fixture moon fmt happens to not walk.
+#   sub2     — Stage only a non-.mbt file; verify the hook logs the skip
+#              message and leaves unstaged .mbt untouched.
 #
 # The fixture mirrors a real MoonBit project layout (moon.mod.json + src/
 # package) so `moon fmt` actually has something to walk — a flat directory
