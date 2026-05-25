@@ -134,34 +134,69 @@ fn default_kill_pgid_best_effort(pgid : Int) -> Unit {
 }
 
 ///|
+/// Remove a git worktree, skipping the git call entirely when the path is
+/// already gone. Silent on any runner failure — matches the pre-existing
+/// `ignore(runner(...) catch _ => [])` semantics for this branch; only the
+/// no-op-when-missing behavior is new.
 async fn safe_remove_git_worktree(
   path : String,
-  capture : async (@workspace.Command) -> (Int, String),
-) -> Bool {
-  let (exit_code, output) = capture(@workspace.git_worktree_remove(path))
-  if exit_code == 0 {
-    return true
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  path_exists : (String) -> Bool,
+) -> Unit {
+  if !path_exists(path) {
+    return
   }
-  output.contains("is not a working tree")
+  ignore(runner([@workspace.git_worktree_remove(path)]) catch { _ => [] })
 }
 
 ///|
-async test "safe_remove_git_worktree treats missing worktree stderr as success" {
-  let mut captured = 0
-  let ok = safe_remove_git_worktree("/repo/.choir/worktrees/stale", async fn(
-    cmd : @workspace.Command,
-  ) -> (Int, String) {
-    captured = captured + 1
-    assert_eq(cmd.program, "git")
-    @debug.assert_eq(cmd.args, [
-      "worktree", "remove", "--force", "/repo/.choir/worktrees/stale",
-    ])
-    @async.sleep(0)
-    (128, "fatal: '/repo/.choir/worktrees/stale' is not a working tree\n")
-  })
+async test "safe_remove_git_worktree skips git call when path is gone" {
+  let mut runner_calls = 0
+  safe_remove_git_worktree(
+    "/repo/.choir/worktrees/gone",
+    async fn(_cmds) {
+      runner_calls = runner_calls + 1
+      []
+    },
+    _ => false,
+  )
+  assert_eq(runner_calls, 0)
+}
 
-  assert_true(ok)
-  assert_eq(captured, 1)
+///|
+async test "safe_remove_git_worktree invokes runner when path exists" {
+  let mut captured : Array[@workspace.Command] = []
+  safe_remove_git_worktree(
+    "/repo/.choir/worktrees/live",
+    async fn(cmds) {
+      captured = cmds
+      [0]
+    },
+    _ => true,
+  )
+  assert_eq(captured.length(), 1)
+  assert_eq(captured[0].program, "git")
+  @debug.assert_eq(captured[0].args, [
+    "worktree", "remove", "--force", "/repo/.choir/worktrees/live",
+  ])
+}
+
+///|
+async test "safe_remove_git_worktree swallows runner failure silently" {
+  // Existing path, runner returns non-zero — must not raise or propagate.
+  safe_remove_git_worktree(
+    "/repo/.choir/worktrees/present",
+    async fn(_cmds) { [128] },
+    _ => true,
+  )
+  // Also tolerate runner raising — pre-existing behavior preserved.
+  safe_remove_git_worktree(
+    "/repo/.choir/worktrees/present",
+    async fn(_cmds) {
+      raise @types.ChoirError::agent_not_found("synthetic")
+    },
+    _ => true,
+  )
 }
 
 ///|
@@ -229,12 +264,7 @@ async fn ServerState::reconcile_external_merge_with_runner(
     self.config.project_dir,
     notify_parent~,
   )
-  self.interpret_teardown_effects(
-    effects,
-    runner,
-    @exec.capture_command_merged,
-    sleep_fn~,
-  )
+  self.interpret_teardown_effects(effects, runner, sleep_fn~)
 }
 
 ///|
@@ -266,11 +296,7 @@ async fn ServerState::finalize_agent_with_runner(
         close_target~,
         remove_worktree~,
       )
-      self.interpret_teardown_effects(
-        effects,
-        runner,
-        @exec.capture_command_merged,
-      )
+      self.interpret_teardown_effects(effects, runner)
     }
   }
 }
@@ -315,11 +341,7 @@ pub async fn ServerState::fail_agent_with_runner(
         parent,
         close_target~,
       )
-      self.interpret_teardown_effects(
-        effects,
-        runner,
-        @exec.capture_command_merged,
-      )
+      self.interpret_teardown_effects(effects, runner)
       ignore(self.registry.set_alive(agent_id, false)) catch {
         _ => ()
       }
@@ -333,7 +355,7 @@ pub async fn ServerState::interpret_teardown_effects(
   effects : Array[TeardownEffect],
   runner : async (Array[@workspace.Command]) -> Array[Int],
   sleep_fn? : async (Int) -> Unit = @async.sleep,
-  worktree_remove_capture : async (@workspace.Command) -> (Int, String),
+  path_exists? : (String) -> Bool = @exec.path_entry_exists,
 ) -> Unit {
   for effect in effects {
     match effect {
@@ -404,11 +426,7 @@ pub async fn ServerState::interpret_teardown_effects(
         )
       RemoveWorktree(path) =>
         if @types.is_choir_managed_worktree_path(self.config.project_dir, path) {
-          if !safe_remove_git_worktree(path, worktree_remove_capture) {
-            @moontrace.warn("RemoveWorktree failed", fields=[
-              @moontrace.field("path", path),
-            ])
-          }
+          safe_remove_git_worktree(path, runner, path_exists)
         } else {
           @moontrace.warn("RemoveWorktree refused: unsafe path", fields=[
             @moontrace.field("path", path),
@@ -1399,11 +1417,7 @@ async fn ServerState::handle_disconnect_confirming_with_runner(
       }
       match agent.terminal_target {
         Some(target) =>
-          self.interpret_teardown_effects(
-            [CloseTerminal(target)],
-            runner,
-            @exec.capture_command_merged,
-          )
+          self.interpret_teardown_effects([CloseTerminal(target)], runner)
         None => ()
       }
       self.clear_agent_runtime_tracking(agent_id)

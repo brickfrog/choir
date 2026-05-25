@@ -146,9 +146,14 @@ pub impl Show for ProcessState with output(self, logger) -> Unit {
 }
 
 ///|
-pub fn process_state_terminal(process : ProcessState) -> Bool {
-  match process {
-    Finalized(..) | Failed(..) => true
+/// True when the agent's process has self-declared teardown intent or is
+/// already done — i.e. nothing more can usefully happen on its behalf.
+/// `Finalizing` is included: the agent began teardown and a server crash
+/// during that window leaves prior-session cruft of exactly the kind
+/// choir-dl2x targets.
+pub fn ProcessState::is_terminal(self : ProcessState) -> Bool {
+  match self {
+    Finalizing(..) | Finalized(..) | Failed(..) => true
     _ => false
   }
 }

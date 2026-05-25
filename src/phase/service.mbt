@@ -655,7 +655,7 @@ pub fn sync_parent_child_lifecycle(
         @moontrace.field("agent_id", agent_id),
         @moontrace.field("parent_id", parent_id),
       ]
-      if process_state_terminal(lifecycle.process) {
+      if lifecycle.process.is_terminal() {
         @moontrace.debug(
           "sync_parent_child_lifecycle: parent not in registry",
           fields~,

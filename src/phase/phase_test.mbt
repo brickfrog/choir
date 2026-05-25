@@ -63,13 +63,14 @@ fn phase_test_agent(
 }
 
 ///|
-fn phase_test_warning_count(
+fn phase_test_event_count(
   events : Array[@moontrace.Event],
+  level : @moontrace.Level,
   message : String,
 ) -> Int {
   let mut count = 0
   for event in events {
-    if event.level == @moontrace.Level::Warn && event.message == message {
+    if event.level == level && event.message == message {
       count = count + 1
     }
   }
@@ -77,11 +78,50 @@ fn phase_test_warning_count(
 }
 
 ///|
-test "sync_parent_child_lifecycle keeps warn for live child missing parent" {
-  let project_dir = "/tmp/choir-phase-live-missing-parent-" +
+fn phase_test_warning_count(
+  events : Array[@moontrace.Event],
+  message : String,
+) -> Int {
+  phase_test_event_count(events, @moontrace.Level::Warn, message)
+}
+
+///|
+/// Drive `body` with `@moontrace.set_subscriber` installed, then
+/// unconditionally clear it. Without this any assertion failure inside the
+/// body would leave a stale subscriber installed for the rest of the
+/// process — causing spurious cross-test event noise.
+fn phase_test_with_capture(
+  captured : Array[@moontrace.Event],
+  body : () -> Unit raise,
+) -> Unit raise {
+  @moontrace.set_subscriber(fn(event) { captured.push(event) })
+  let result = try body() catch {
+    e => {
+      @moontrace.clear_subscriber()
+      raise e
+    }
+  } noraise {
+    _ => ()
+  }
+  @moontrace.clear_subscriber()
+  result
+}
+
+///|
+fn phase_test_tmp_project_dir(label : String) -> String {
+  let dir = "/tmp/choir-phase-" +
+    label +
+    "-" +
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(dir))
+  dir
+}
+
+///|
+test "sync_parent_child_lifecycle keeps warn for live child missing parent" {
+  let project_dir = phase_test_tmp_project_dir("live-missing-parent")
   let registry = @registry.AgentRegistry::new()
   let agent_id = "feature/x.live-leaf"
   ignore(registry.upsert(phase_test_agent(agent_id, Some("feature/x.parent"))))
@@ -91,11 +131,11 @@ test "sync_parent_child_lifecycle keeps warn for live child missing parent" {
     workflow: WorkflowState::Dev(DevLifecycle::Working),
   }
   let captured : Array[@moontrace.Event] = []
-  @moontrace.set_subscriber(fn(event) { captured.push(event) })
-  sync_parent_child_lifecycle(
-    project_dir, "session", registry, agent_id, lifecycle,
-  )
-  @moontrace.clear_subscriber()
+  phase_test_with_capture(captured, fn() {
+    sync_parent_child_lifecycle(
+      project_dir, "session", registry, agent_id, lifecycle,
+    )
+  })
 
   assert_eq(
     phase_test_warning_count(
@@ -107,10 +147,7 @@ test "sync_parent_child_lifecycle keeps warn for live child missing parent" {
 
 ///|
 test "sync_parent_child_lifecycle downgrades missing parent for terminal child" {
-  let project_dir = "/tmp/choir-phase-terminal-missing-parent-" +
-    @sys.get_pid().to_string() +
-    "-" +
-    @env.now().reinterpret_as_int64().to_string()
+  let project_dir = phase_test_tmp_project_dir("terminal-missing-parent")
   let registry = @registry.AgentRegistry::new()
   let agent_id = "feature/x.done-leaf"
   ignore(registry.upsert(phase_test_agent(agent_id, Some("feature/x.parent"))))
@@ -122,18 +159,18 @@ test "sync_parent_child_lifecycle downgrades missing parent for terminal child" 
     ),
   }
   let captured : Array[@moontrace.Event] = []
-  @moontrace.set_subscriber(fn(event) { captured.push(event) })
-  sync_parent_child_lifecycle(
-    project_dir, "session", registry, agent_id, lifecycle,
-  )
-  @moontrace.clear_subscriber()
+  phase_test_with_capture(captured, fn() {
+    sync_parent_child_lifecycle(
+      project_dir, "session", registry, agent_id, lifecycle,
+    )
+  })
 
-  assert_eq(
-    phase_test_warning_count(
-      captured, "sync_parent_child_lifecycle: parent not in registry",
-    ),
-    0,
-  )
+  let msg = "sync_parent_child_lifecycle: parent not in registry"
+  assert_eq(phase_test_warning_count(captured, msg), 0)
+  // Pins the downgrade contract: silencing the warn must not also drop the
+  // signal entirely — the debug entry has to fire so prior-session zombies
+  // remain greppable in operator-trace.
+  assert_eq(phase_test_event_count(captured, @moontrace.Level::Debug, msg), 1)
 }
 
 ///|

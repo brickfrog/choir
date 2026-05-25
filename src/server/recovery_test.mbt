@@ -141,7 +141,14 @@ async test "discover_recovery_input keeps process-live agent alive without zelli
 }
 
 ///|
-async test "recover_state reaps stale terminal lifecycle without parent-registry warn" {
+async test "recover_state ReapStaleLifecycle deletes the on-disk lifecycle" {
+  // Narrowed from a prior "no parent-registry warn" framing: the reap
+  // branch does not call sync_parent_child_lifecycle at all, so asserting
+  // that warn is absent here was vacuous. The contract worth pinning is
+  // the file-deletion side effect plus the debug log; the wider boot-path
+  // "stale entry never triggers a warn" property is exercised end-to-end
+  // by `plan_stale_lifecycle_reaps` planner tests + the phase-side
+  // downgrade test in src/phase/phase_test.mbt.
   let project_dir = "/tmp/choir-recovery-reap-stale-lifecycle-" +
     @sys.get_pid().to_string() +
     "-" +
@@ -163,30 +170,34 @@ async test "recover_state reaps stale terminal lifecycle without parent-registry
   assert_true(@phase.write_lifecycle(project_dir, lifecycle))
   let captured : Array[@moontrace.Event] = []
   @moontrace.set_subscriber(fn(event) { captured.push(event) })
-  recover_state(state, terminal_session, {
-    panes: { live: { tabs: [], panes: [] } },
-    prs: { open_prs: [], polls: Map([], capacity=0), resolved_prs: [] },
-    files: { local_agents: [], persisted_tracked_prs: [] },
-    recovered_at: 200L,
-    prebuilt_agent_phase: Some({
-      recovered_agents: [],
-      agent_stage_actions: [
-        @runtime.RecoveryAction::ReapStaleLifecycle(
-          agent_id~,
-          kv_path=".choir/kv/lifecycle--feature_x--stale-leaf",
-        ),
-      ],
-    }),
-  })
-  @moontrace.clear_subscriber()
-
-  assert_true(@phase.read_lifecycle(project_dir, agent_id) is None)
-  for event in captured {
-    assert_false(
-      event.level == @moontrace.Level::Warn &&
-      event.message == "sync_parent_child_lifecycle: parent not in registry",
-    )
+  try
+    recover_state(state, terminal_session, {
+      panes: { live: { tabs: [], panes: [] } },
+      prs: { open_prs: [], polls: Map([], capacity=0), resolved_prs: [] },
+      files: { local_agents: [], persisted_tracked_prs: [] },
+      recovered_at: 200L,
+      prebuilt_agent_phase: Some({
+        recovered_agents: [],
+        agent_stage_actions: [
+          @runtime.RecoveryAction::ReapStaleLifecycle(agent_id~),
+        ],
+      }),
+    })
+  catch {
+    _ => @moontrace.clear_subscriber()
+  } noraise {
+    _ => ()
   }
+  @moontrace.clear_subscriber()
+  assert_true(@phase.read_lifecycle(project_dir, agent_id) is None)
+  let mut saw_reap_debug = false
+  for event in captured {
+    if event.level == @moontrace.Level::Debug &&
+      event.message == "reaped stale lifecycle" {
+      saw_reap_debug = true
+    }
+  }
+  assert_true(saw_reap_debug)
 }
 
 ///|

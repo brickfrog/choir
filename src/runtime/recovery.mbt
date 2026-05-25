@@ -107,7 +107,11 @@ pub(all) enum RecoveryAction {
     pr_url~ : String
   )
   FinalizeOfflineAgent(agent_id~ : String)
-  ReapStaleLifecycle(agent_id~ : String, kv_path~ : String)
+  // AUDIT: agent_id stays bare String to match every other RecoveryAction
+  // variant. AgentId-newtype boundary migration is its own pass (MEMORY.md
+  // "Known Design Debt — AgentId boundary gap"); changing only this one
+  // variant churns without closing the gap.
+  ReapStaleLifecycle(agent_id~ : String)
 } derive(Debug)
 
 ///|
@@ -935,11 +939,6 @@ fn build_agent_recovery_actions(
 }
 
 ///|
-pub fn lifecycle_recovery_kv_path(id : String) -> String {
-  ".choir/kv/lifecycle--" + id
-}
-
-///|
 fn recovered_agent_contains(
   recovered_agents : Array[@types.Agent],
   agent_id : String,
@@ -966,17 +965,14 @@ pub fn plan_stale_lifecycle_reaps(
       Some(lifecycle) => lifecycle
       None => continue
     }
-    if !@phase.process_state_terminal(lifecycle.process) {
+    if !lifecycle.process.is_terminal() {
       continue
     }
     if recovered_agent_contains(recovered_agents, lifecycle.agent_id) {
       continue
     }
     actions.push(
-      RecoveryAction::ReapStaleLifecycle(
-        agent_id=lifecycle.agent_id,
-        kv_path=lifecycle_recovery_kv_path(snapshot.id),
-      ),
+      RecoveryAction::ReapStaleLifecycle(agent_id=lifecycle.agent_id),
     )
   }
   actions
@@ -1220,6 +1216,12 @@ pub async fn discover_recovery_input(
   }
   let prebuilt = build_agent_recovery_actions(session, live, local_agents)
   let recovered_preview = prebuilt.0
+  // AUDIT: this is N additional file reads on boot, where N is the count of
+  // .choir/kv/lifecycle--* files. Each read is sub-ms; total is bounded by
+  // human-scale fork history; and boot is infrequent. Worth measuring only
+  // when fast-restart latency becomes a felt pain. Cheap predicate-only
+  // optimization later: skip the read_agent_config when the content fails to
+  // parse, which already happens via the None arm.
   let lifecycle_snapshots = []
   for id in (provider.list_lifecycle_ids)(project_dir) {
     let content = (provider.read_lifecycle_content)(project_dir, id)
