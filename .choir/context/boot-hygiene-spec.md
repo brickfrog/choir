@@ -162,12 +162,18 @@ Approach:
   (via the test harness or by triggering 20 stop-hook re-evaluations), then
   query `wave_state` / `status_bar_state` and grep for `agent-tl-` — count
   must not grow per cycle.
-- **Leaf 3 (observable):** set up a zellij session with synthetic stale
-  tabs `Server`, `TL`, plus user-tab false-positive shapes (`v1.0.0`,
-  `package.json`, `README.md`, `my.feature.branch`, and a leaf-branch
-  slug like `feature-x.leaf-0`). Run `choir init` against that session.
-  After init: the literal Server/TL tabs are gone; all other tabs are
-  preserved.
+- **Leaf 3 (observable):** the reap only fires through zellij's
+  resurrection cache, not against a live session — `choir init` against
+  a live session takes the early-attach return at init.mbt:1006-1007
+  and never reaches the reap. To exercise the reap end-to-end: set up
+  a zellij session with synthetic stale tabs `Server`, `TL`, plus
+  user-tab false-positive shapes (`v1.0.0`, `package.json`, `README.md`,
+  `my.feature.branch`, and a leaf-branch slug like `feature-x.leaf-0`),
+  then DETACH the session (and let it sit long enough that
+  `zellij list-sessions` no longer shows it as alive) so the
+  resurrection cache holds the layout. Run `choir init`; zellij
+  resurrects the session; the reap then closes the literal Server/TL
+  tabs while preserving all others.
 - **Leaf 4 (observable):** drive a leaf to `Failed(UnexpectedDisconnect)`
   (via a test fixture that simulates the disconnect timeout), assert
   the zellij tab is closed in the same tick. Grep serve.log for the

@@ -1087,6 +1087,35 @@ test "mcp_perform_registration_handshake returns Reconnect when write fails" {
 }
 
 ///|
+test "mcp_perform_registration_handshake returns Reconnect when read is empty" {
+  // Symmetric to the write-failure case: write succeeds but the server
+  // disconnects before sending a response line. The handshake must
+  // surface Reconnect rather than fall through into the request loop.
+  let cfg = { ..@types.Config::default(), agent_id: Some("root") }
+  let local_cfg = @types.LocalConfig::default()
+  let writes : Array[Bytes] = []
+  let mut reads = 0
+  let result = mcp_perform_registration_handshake(
+    @types.Role::Root,
+    cfg,
+    local_cfg,
+    fn(bytes) {
+      writes.push(bytes)
+      true
+    },
+    fn() {
+      reads = reads + 1
+      ""
+    },
+  )
+  guard result is Some(McpUdsLoopExit::Reconnect) else {
+    fail("expected Some(Reconnect)")
+  }
+  assert_eq(writes.length(), 1)
+  assert_eq(reads, 1)
+}
+
+///|
 test "mcp named TL keeps stable registration path" {
   let cfg = { ..@types.Config::default(), agent_id: Some("user-123-456") }
   let local_cfg = @types.LocalConfig::default()
