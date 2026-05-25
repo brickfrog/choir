@@ -1021,8 +1021,9 @@ fn init_run() -> Unit {
       if !recreate {
         // AUDIT: control reaches here only when the session was ABSENT
         // from `zellij list-sessions` (the `session_alive != 0` branch
-        // above; the `session_alive == 0` branch attaches and returns at
-        // line 1007 without ever running this reap). The just-issued
+        // above; the `session_alive == 0` branch above ends with
+        // `return` after `zellij_attach_session` and never runs this
+        // reap). The just-issued
         // `zellij_create_background_session` either creates a fresh
         // empty session or — when zellij's resurrection cache still
         // holds a stored session of this name — resurrects it with its

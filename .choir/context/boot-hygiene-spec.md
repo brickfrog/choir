@@ -153,21 +153,33 @@ Approach (as shipped — narrower than the initial spec hypothesis):
    slugs); assert close is called only for the literal Server/TL.
 
 ### Leaf 4 — Disconnect-orphan zellij tab (choir-disconnect-zellij-tab-orphan)
-Files: `src/phase/lifecycle.mbt` (the `plan_fail` / `plan_finalize` effect
-emitter), `src/server/handler_disconnect.mbt` (test infra).
+Files (as shipped — spec hypothesis was wrong twice over):
+- `src/server/handler_disconnect.mbt` carries the production change: a
+  single-line `close_target=true` flip in the
+  `LifecycleDisconnectPolicy::Fail` branch of
+  `handle_disconnect_confirming_with_runner`, plus the new hermetic
+  test that drives a Dev leaf into `Failed(UnexpectedDisconnect)` and
+  asserts the close-terminal command landed in the captured runner
+  output.
+- `src/server/post_tool.mbt` houses the effect emitters (`plan_fail`,
+  `plan_finalize`) — NOT `src/phase/lifecycle.mbt` as the initial spec
+  guessed. lifecycle.mbt has never contained `CloseTerminal`-emitting
+  code.
+- The emitter already accepted a `close_target?: Bool` parameter, so
+  no emitter change was needed. The fix was at the caller (the
+  `Fail`-branch flag flip).
 
-Approach:
-1. Locate the effect emitter for terminal lifecycle transitions. The
-   Done-via-merge path emits `CloseTerminal(target)` when
-   `agent.terminal_target: Some(_)`. The `Failed(UnexpectedDisconnect)`
-   path should mirror that.
-2. Add the `CloseTerminal` emission to the disconnect-failure branch of
-   the emitter. Be careful that the parent-notification effect still
-   fires (don't reorder effects to lose NotifyParent on the way).
-3. Hermetic test: drive a leaf into `Failed(UnexpectedDisconnect)` with a
-   `terminal_target: Some(...)` and assert the emitted effects include
-   `CloseTerminal(target)` in addition to the existing
-   `NotifyParent`/`PersistLifecycle`/etc.
+Approach (as shipped):
+1. The Done-via-merge path was already passing `close_target=true` to
+   `plan_finalize`; the `Failed(UnexpectedDisconnect)` path in
+   `handle_disconnect_confirming_with_runner` was passing the default
+   `close_target=false`. Flip it.
+2. Hermetic test in `src/server/handler_disconnect.mbt`: drive a Dev
+   leaf into `Failed(UnexpectedDisconnect)` with
+   `terminal_target: Some(...)`, assert both the close command and the
+   parent-failure NotifyParent command land in the captured runner
+   output, and that the persisted lifecycle reads
+   `Failed(reason=UnexpectedDisconnect)`.
 
 ## Verify
 - **Leaf 1 (observable):** `choir prompts diff` from a clean checkout exits 0
@@ -183,8 +195,10 @@ Approach:
   must not grow per cycle.
 - **Leaf 3 (observable):** the reap only fires through zellij's
   resurrection cache, not against a live session — `choir init` against
-  a live session takes the early-attach return at init.mbt:1006-1007
-  and never reaches the reap. To exercise the reap end-to-end: set up
+  a live session takes the early-attach return in the `session_alive
+  == 0` branch of `cmd_init` (the same branch that calls
+  `zellij_attach_session`) and never reaches the reap. To exercise the
+  reap end-to-end: set up
   a zellij session with synthetic stale tabs `Server`, `TL`, plus
   user-tab false-positive shapes (`v1.0.0`, `package.json`, `README.md`,
   `my.feature.branch`, and a leaf-branch slug like `feature-x.leaf-0`),
