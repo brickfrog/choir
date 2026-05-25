@@ -6960,9 +6960,10 @@ async test "test_close_terminal_warns_on_error" {
   let target = handler_auto_close_target("leaf-pane")
   let captured : Array[@moontrace.Event] = []
   handler_with_moontrace_capture(captured, async fn() {
-    state.interpret_teardown_effects([CloseTerminal(target)], _cmds => {
-      raise @types.ChoirError::agent_not_found("test error")
-    })
+    state.interpret_teardown_effects(
+      [CloseTerminal(target)],
+      _cmds => raise @types.ChoirError::agent_not_found("test error"),
+    )
   })
   assert_eq(handler_close_terminal_warn_count(captured), 1)
 }

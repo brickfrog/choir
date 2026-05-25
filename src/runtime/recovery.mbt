@@ -75,6 +75,12 @@ pub(all) struct RecoveryFilesSnapshot {
 } derive(Debug)
 
 ///|
+pub(all) struct LifecycleRecoverySnapshot {
+  lifecycle : @phase.AgentLifecycle
+  worktree_config_content : String
+} derive(Debug, Eq)
+
+///|
 pub(all) enum RecoveryAction {
   RegisterAgent(@types.Agent, Bool)
   RestorePRTracking(@poller.TrackedPR)
@@ -100,6 +106,11 @@ pub(all) enum RecoveryAction {
     pr_url~ : String
   )
   FinalizeOfflineAgent(agent_id~ : String)
+  // AUDIT: agent_id stays bare String to match every other RecoveryAction
+  // variant. AgentId-newtype boundary migration is its own pass (MEMORY.md
+  // "Known Design Debt — AgentId boundary gap"); changing only this one
+  // variant churns without closing the gap.
+  ReapStaleLifecycle(agent_id~ : String)
 } derive(Debug)
 
 ///|
@@ -927,6 +938,43 @@ fn build_agent_recovery_actions(
 }
 
 ///|
+fn recovered_agent_contains(
+  recovered_agents : Array[@types.Agent],
+  agent_id : String,
+) -> Bool {
+  for agent in recovered_agents {
+    if agent.agent_id.to_string() == agent_id {
+      return true
+    }
+  }
+  false
+}
+
+///|
+pub fn plan_stale_lifecycle_reaps(
+  lifecycles : Array[LifecycleRecoverySnapshot],
+  recovered_agents : Array[@types.Agent],
+) -> Array[RecoveryAction] {
+  let actions = []
+  for snapshot in lifecycles {
+    if snapshot.worktree_config_content.trim() != "" {
+      continue
+    }
+    let lifecycle = snapshot.lifecycle
+    if !lifecycle.process.is_terminal() {
+      continue
+    }
+    if recovered_agent_contains(recovered_agents, lifecycle.agent_id) {
+      continue
+    }
+    actions.push(
+      RecoveryAction::ReapStaleLifecycle(agent_id=lifecycle.agent_id),
+    )
+  }
+  actions
+}
+
+///|
 /// Maps [`RecoveryProvider::gh_poll_pr`] output into [`RecoveryPrPollRow`].
 /// Ignores `poll_ok` (gh parse / exit quality) and `pr_is_open` (used in full poller, not recovery planning).
 fn recovery_pr_poll_row_from_gh_tuple(
@@ -1164,9 +1212,51 @@ pub async fn discover_recovery_input(
   }
   let prebuilt = build_agent_recovery_actions(session, live, local_agents)
   let recovered_preview = prebuilt.0
+  // AUDIT: N additional file reads on boot, where N is the count of
+  // .choir/kv/lifecycle--* files. Each read is sub-ms; total is bounded by
+  // human-scale fork history; boot is infrequent. Skip-on-parse-failure
+  // ensures the worktree-config read only fires for valid lifecycles.
+  let lifecycle_snapshots = []
+  for id in (provider.list_lifecycle_ids)(project_dir) {
+    let content = (provider.read_lifecycle_content)(project_dir, id)
+    if content == "" {
+      continue
+    }
+    let lifecycle = match @phase.lifecycle_from_json(content) {
+      Some(lifecycle) => lifecycle
+      None => continue
+    }
+    // AUDIT: only the "worktrees" container is queried here. The bead's
+    // literal evidence is `.choir/worktrees/<slug>/` left as an empty
+    // directory; agents/ and inline/ containers stay in scope via the
+    // `recovered_agent_contains` guard below — parse_agent_from_config
+    // for their slugs feeds recovered_preview, and a parsed agent blocks
+    // the reap. Widening to all three containers is sub-ms-cheap, but
+    // doing it here would only catch the corner where an agents/<slug>/
+    // or inline/<slug>/ has a config too malformed to parse AND a
+    // terminal-state lifecycle on disk. Park as a follow-up bead if it
+    // ever surfaces in practice.
+    let worktree_config_content = (provider.read_agent_config)(
+      project_dir,
+      "worktrees",
+      @phase.extract_slug(lifecycle.agent_id),
+    )
+    lifecycle_snapshots.push(LifecycleRecoverySnapshot::{
+      lifecycle,
+      worktree_config_content,
+    })
+  }
+  let agent_stage_actions = []
+  for
+    action in plan_stale_lifecycle_reaps(lifecycle_snapshots, recovered_preview) {
+    agent_stage_actions.push(action)
+  }
+  for action in prebuilt.1 {
+    agent_stage_actions.push(action)
+  }
   let prebuilt_phase : PrebuiltAgentPhase = {
     recovered_agents: prebuilt.0,
-    agent_stage_actions: prebuilt.1,
+    agent_stage_actions,
   }
   let polls : Map[Int, RecoveryPrPollRow] = Map([], capacity=0)
   let resolved_prs : Array[KnownPR] = []

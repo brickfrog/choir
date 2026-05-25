@@ -651,10 +651,21 @@ pub fn sync_parent_child_lifecycle(
     project_dir, session, registry, parent_id,
   ) catch {
     _ => {
-      @moontrace.warn("sync_parent_child_lifecycle: parent not in registry", fields=[
+      let fields = [
         @moontrace.field("agent_id", agent_id),
         @moontrace.field("parent_id", parent_id),
-      ])
+      ]
+      if lifecycle.process.is_terminal() {
+        @moontrace.debug(
+          "sync_parent_child_lifecycle: parent not in registry",
+          fields~,
+        )
+      } else {
+        @moontrace.warn(
+          "sync_parent_child_lifecycle: parent not in registry",
+          fields~,
+        )
+      }
       return
     }
   }

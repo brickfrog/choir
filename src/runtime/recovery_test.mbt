@@ -171,6 +171,153 @@ async test "find_pr_for_branch_in_provider finds PR by head branch" {
 }
 
 ///|
+fn reap_test_lifecycle(
+  agent_id : String,
+  process : @phase.ProcessState,
+) -> @phase.AgentLifecycle {
+  let workflow = match process {
+    @phase.ProcessState::Connected | @phase.ProcessState::Disconnected(..) =>
+      @phase.WorkflowState::Dev(@phase.DevLifecycle::Working)
+    @phase.ProcessState::Failed(reason~) =>
+      @phase.WorkflowState::Dev(@phase.DevLifecycle::Failed(reason~))
+    @phase.ProcessState::Finalizing(reason~) =>
+      @phase.WorkflowState::Dev(@phase.DevLifecycle::Done(reason~))
+    @phase.ProcessState::Finalized(reason~) =>
+      @phase.WorkflowState::Dev(@phase.DevLifecycle::Done(reason~))
+  }
+  { ..@phase.lifecycle_for_role(agent_id, @types.Role::Dev), process, workflow }
+}
+
+///|
+fn reap_test_snapshot(
+  lifecycle : @phase.AgentLifecycle,
+  worktree_config_content~ : String = "",
+) -> LifecycleRecoverySnapshot {
+  { lifecycle, worktree_config_content }
+}
+
+///|
+fn reap_test_assert_reaped(
+  actions : Array[RecoveryAction],
+  agent_id : String,
+) -> Unit raise {
+  assert_eq(actions.length(), 1)
+  match actions[0] {
+    RecoveryAction::ReapStaleLifecycle(agent_id=got_agent_id) =>
+      assert_eq(got_agent_id, agent_id)
+    _ => fail("expected stale lifecycle reap")
+  }
+}
+
+///|
+test "plan_stale_lifecycle_reaps terminal Finalized without recovered worktree" {
+  let agent_id = "feature/x.stale-leaf"
+  let lifecycle = reap_test_lifecycle(
+    agent_id,
+    @phase.ProcessState::Finalized(reason=@phase.FinalizeReason::Merged),
+  )
+  let actions = plan_stale_lifecycle_reaps(
+    [reap_test_snapshot(lifecycle)],
+    [],
+  )
+  reap_test_assert_reaped(actions, agent_id)
+}
+
+///|
+test "plan_stale_lifecycle_reaps terminal Failed counts as reapable" {
+  let agent_id = "feature/x.failed-leaf"
+  let lifecycle = reap_test_lifecycle(
+    agent_id,
+    @phase.ProcessState::Failed(
+      reason=@phase.FailureReason::UnexpectedDisconnect,
+    ),
+  )
+  let actions = plan_stale_lifecycle_reaps(
+    [reap_test_snapshot(lifecycle)],
+    [],
+  )
+  reap_test_assert_reaped(actions, agent_id)
+}
+
+///|
+test "plan_stale_lifecycle_reaps Finalizing counts as reapable" {
+  // Pre-shutdown server crash leaves a child mid-teardown; the lifecycle is
+  // not Connected and the parent is gone, so it's exactly the prior-session
+  // zombie the bead is meant to silence.
+  let agent_id = "feature/x.finalizing-leaf"
+  let lifecycle = reap_test_lifecycle(
+    agent_id,
+    @phase.ProcessState::Finalizing(reason=@phase.FinalizeReason::Merged),
+  )
+  let actions = plan_stale_lifecycle_reaps(
+    [reap_test_snapshot(lifecycle)],
+    [],
+  )
+  reap_test_assert_reaped(actions, agent_id)
+}
+
+///|
+test "plan_stale_lifecycle_reaps keeps live lifecycle for missing-parent warning" {
+  let agent_id = "feature/x.live-leaf"
+  let lifecycle = reap_test_lifecycle(agent_id, @phase.ProcessState::Connected)
+  let actions = plan_stale_lifecycle_reaps(
+    [reap_test_snapshot(lifecycle)],
+    [],
+  )
+  assert_eq(actions.length(), 0)
+}
+
+///|
+test "plan_stale_lifecycle_reaps skips when agent is in recovered registry" {
+  // Live registry post-recovery means the agent is being rehydrated;
+  // reaping its lifecycle would clobber active state.
+  let agent_id = "feature/x.alive-leaf"
+  let lifecycle = reap_test_lifecycle(
+    agent_id,
+    @phase.ProcessState::Finalized(reason=@phase.FinalizeReason::Merged),
+  )
+  let recovered : Array[@types.Agent] = [
+    {
+      agent_id: @types.AgentId(agent_id),
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: None,
+      workspace: "/tmp/recovered",
+      branch: agent_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      state: @types.AgentState::Done,
+      spawn_depth: 0,
+    },
+  ]
+  let actions = plan_stale_lifecycle_reaps(
+    [reap_test_snapshot(lifecycle)],
+    recovered,
+  )
+  assert_eq(actions.length(), 0)
+}
+
+///|
+test "plan_stale_lifecycle_reaps skips when worktree config is still on disk" {
+  let agent_id = "feature/x.live-worktree-leaf"
+  let lifecycle = reap_test_lifecycle(
+    agent_id,
+    @phase.ProcessState::Finalized(reason=@phase.FinalizeReason::Merged),
+  )
+  let actions = plan_stale_lifecycle_reaps(
+    [
+      reap_test_snapshot(
+        lifecycle,
+        // Any non-whitespace content stands in for a real .choir/config.local.toml.
+        worktree_config_content="agent_id = \"x\"\n",
+      ),
+    ],
+    [],
+  )
+  assert_eq(actions.length(), 0)
+}
+
+///|
 test "parse_github_time_utc_sec handles valid and invalid timestamps" {
   @debug.assert_eq(
     parse_github_time_utc_sec("2026-03-20T01:02:03Z"),

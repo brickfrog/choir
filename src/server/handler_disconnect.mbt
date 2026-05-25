@@ -134,6 +134,99 @@ fn default_kill_pgid_best_effort(pgid : Int) -> Unit {
 }
 
 ///|
+/// Default predicate for `safe_remove_git_worktree`: a path is a git
+/// worktree iff it contains a `.git` entry (file or directory). Indirection
+/// keeps `@exec.*` out of the optional-default position; the lint's exec
+/// scanner does not chase through local references.
+fn default_path_is_git_worktree(path : String) -> Bool {
+  @exec.path_entry_exists(path + "/.git")
+}
+
+///|
+/// Remove a git worktree, skipping the git call entirely when the path is
+/// not a git worktree (path missing on disk, or a stale empty directory
+/// with no `.git` marker). This covers the literal bead evidence:
+/// `.choir/worktrees/<slug>/` left as an empty directory by a prior
+/// session — `git worktree remove --force` on that path emits
+/// `fatal: ... is not a working tree` because no `.git` is inside.
+/// Silent on any runner failure — matches the pre-existing
+/// `ignore(runner(...) catch _ => [])` semantics for this branch.
+async fn safe_remove_git_worktree(
+  path : String,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  is_git_worktree : (String) -> Bool,
+) -> Unit {
+  if !is_git_worktree(path) {
+    return
+  }
+  ignore(runner([@workspace.git_worktree_remove(path)]) catch { _ => [] })
+}
+
+///|
+async test "safe_remove_git_worktree skips when path is not a git worktree" {
+  let mut runner_calls = 0
+  safe_remove_git_worktree(
+    "/repo/.choir/worktrees/stale-empty-dir",
+    async fn(_cmds) {
+      runner_calls = runner_calls + 1
+      []
+    },
+    _ => false,
+  )
+  assert_eq(runner_calls, 0)
+}
+
+///|
+async test "safe_remove_git_worktree invokes runner when .git marker exists" {
+  let mut captured : Array[@workspace.Command] = []
+  safe_remove_git_worktree(
+    "/repo/.choir/worktrees/live",
+    async fn(cmds) {
+      captured = cmds
+      [0]
+    },
+    _ => true,
+  )
+  assert_eq(captured.length(), 1)
+  assert_eq(captured[0].program, "git")
+  @debug.assert_eq(captured[0].args, [
+    "worktree", "remove", "--force", "/repo/.choir/worktrees/live",
+  ])
+}
+
+///|
+async test "safe_remove_git_worktree swallows runner failure silently" {
+  // Pins the "silent on runner failure" contract observably: a non-zero
+  // exit and a raising runner both must complete without emitting any
+  // moontrace event from the helper itself.
+  let captured : Array[@moontrace.Event] = []
+  @moontrace.set_subscriber(fn(event) { captured.push(event) })
+  try {
+    safe_remove_git_worktree(
+      "/repo/.choir/worktrees/present",
+      async fn(_cmds) { [128] },
+      _ => true,
+    )
+    safe_remove_git_worktree(
+      "/repo/.choir/worktrees/present",
+      async fn(_cmds) {
+        raise @types.ChoirError::agent_not_found("synthetic")
+      },
+      _ => true,
+    )
+  } catch {
+    e => {
+      @moontrace.clear_subscriber()
+      raise e
+    }
+  } noraise {
+    _ => ()
+  }
+  @moontrace.clear_subscriber()
+  assert_eq(captured.length(), 0)
+}
+
+///|
 fn ServerState::kill_tracked_agent_pgroup(
   self : ServerState,
   agent_id : String,
@@ -289,6 +382,7 @@ pub async fn ServerState::interpret_teardown_effects(
   effects : Array[TeardownEffect],
   runner : async (Array[@workspace.Command]) -> Array[Int],
   sleep_fn? : async (Int) -> Unit = @async.sleep,
+  is_git_worktree? : (String) -> Bool = default_path_is_git_worktree,
 ) -> Unit {
   for effect in effects {
     match effect {
@@ -359,11 +453,7 @@ pub async fn ServerState::interpret_teardown_effects(
         )
       RemoveWorktree(path) =>
         if @types.is_choir_managed_worktree_path(self.config.project_dir, path) {
-          ignore(
-            runner([@workspace.git_worktree_remove(path)]) catch {
-              _ => []
-            },
-          )
+          safe_remove_git_worktree(path, runner, is_git_worktree)
         } else {
           @moontrace.warn("RemoveWorktree refused: unsafe path", fields=[
             @moontrace.field("path", path),
