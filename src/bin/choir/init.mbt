@@ -409,7 +409,9 @@ test "init choir zellij tab matcher only matches literal Server and TL" {
   // Leaf-branch slug shapes — explicitly NOT closed under the literal-only
   // matcher; tracked via persistent registry in a follow-up bead.
   assert_false(init_is_choir_managed_zellij_tab_name("feature-x.leaf-0"))
-  assert_false(init_is_choir_managed_zellij_tab_name("auto-rescue-pr-400-w2fix"))
+  assert_false(
+    init_is_choir_managed_zellij_tab_name("auto-rescue-pr-400-w2fix"),
+  )
   assert_false(init_is_choir_managed_zellij_tab_name("unrelated-user-tab"))
 }
 
@@ -1027,9 +1029,13 @@ fn init_run() -> Unit {
         // old Server/TL tabs. The reap catches that second case. With
         // resurrection disabled (or no cached session of this name) the
         // tab list comes back empty and the reap is a defensive no-op.
-        // Cheap to run unconditionally; end-to-end "resurrection + reap"
-        // verification is operator-driven (post-restart `tail
-        // .choir/serve.log | grep tab` smoke described in the bead).
+        // Cheap to run unconditionally. End-to-end "resurrection + reap"
+        // verification is operator-driven: after `choir init`,
+        // `zellij --session <session> action query-tab-names` should NOT
+        // list `Server` or `TL` from the prior boot (a fresh init creates
+        // them as new tabs, which is expected). The reap runs inside
+        // `choir init`, not `choir serve`, so `.choir/serve.log` is not
+        // the right observable for this leaf.
         init_reap_stale_zellij_tabs(session)
       }
       let server_tab_exists = init_tab_exists(session, "Server") catch {

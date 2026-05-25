@@ -173,8 +173,10 @@ Approach:
 - **Leaf 1 (observable):** `choir prompts diff` from a clean checkout exits 0
   with no output. Edit one prompt file (e.g. append a newline to
   `.choir/prompts/skills/tl-stance.md`), re-run — exit non-zero, diff shown.
-  Run `choir prompts sync` — file resets to default, `.choir/prompts-backup/
-  tl-stance.md.<ts>.bak` exists with the edited content. Re-run diff — clean.
+  Run `choir prompts sync` — file resets to default, and the backup lives at
+  `.choir/prompts-backup/skills/tl-stance.md.<ts>.bak` (the `skills/`
+  subdirectory mirrors the on-disk prompt-path hierarchy, preserved through
+  `prompt_display_name`). Re-run diff — clean.
 - **Leaf 2 (observable):** spawn a session, drive 20 register-call cycles
   (via the test harness or by triggering 20 stop-hook re-evaluations), then
   query `wave_state` / `status_bar_state` and grep for `agent-tl-` — count
