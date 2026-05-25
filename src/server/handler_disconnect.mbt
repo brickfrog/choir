@@ -229,7 +229,12 @@ async fn ServerState::reconcile_external_merge_with_runner(
     self.config.project_dir,
     notify_parent~,
   )
-  self.interpret_teardown_effects(effects, runner, sleep_fn~)
+  self.interpret_teardown_effects(
+    effects,
+    runner,
+    @exec.capture_command_merged,
+    sleep_fn~,
+  )
 }
 
 ///|
@@ -261,7 +266,11 @@ async fn ServerState::finalize_agent_with_runner(
         close_target~,
         remove_worktree~,
       )
-      self.interpret_teardown_effects(effects, runner)
+      self.interpret_teardown_effects(
+        effects,
+        runner,
+        @exec.capture_command_merged,
+      )
     }
   }
 }
@@ -306,7 +315,11 @@ pub async fn ServerState::fail_agent_with_runner(
         parent,
         close_target~,
       )
-      self.interpret_teardown_effects(effects, runner)
+      self.interpret_teardown_effects(
+        effects,
+        runner,
+        @exec.capture_command_merged,
+      )
       ignore(self.registry.set_alive(agent_id, false)) catch {
         _ => ()
       }
@@ -320,7 +333,7 @@ pub async fn ServerState::interpret_teardown_effects(
   effects : Array[TeardownEffect],
   runner : async (Array[@workspace.Command]) -> Array[Int],
   sleep_fn? : async (Int) -> Unit = @async.sleep,
-  worktree_remove_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
+  worktree_remove_capture : async (@workspace.Command) -> (Int, String),
 ) -> Unit {
   for effect in effects {
     match effect {
@@ -1386,7 +1399,11 @@ async fn ServerState::handle_disconnect_confirming_with_runner(
       }
       match agent.terminal_target {
         Some(target) =>
-          self.interpret_teardown_effects([CloseTerminal(target)], runner)
+          self.interpret_teardown_effects(
+            [CloseTerminal(target)],
+            runner,
+            @exec.capture_command_merged,
+          )
         None => ()
       }
       self.clear_agent_runtime_tracking(agent_id)

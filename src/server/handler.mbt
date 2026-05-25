@@ -368,7 +368,12 @@ pub async fn ServerState::handle_with_runner_and_capture(
       None => ()
     }
   }
-  self.interpret_teardown_effects(effects, runner, sleep_fn~)
+  self.interpret_teardown_effects(
+    effects,
+    runner,
+    @exec.capture_command_merged,
+    sleep_fn~,
+  )
   if req.name == "kill_agent" && resp.is_ok() {
     let caller_id = req.args
       .get("caller_id")

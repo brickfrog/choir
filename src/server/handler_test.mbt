@@ -1,3 +1,5 @@
+//|
+
 ///|
 test "poll_events_delivery_summary escapes newlines and truncates long events" {
   let tail = "b".repeat(220)
@@ -6921,7 +6923,9 @@ async test "test_close_terminal_warns_on_nonzero_exit" {
   let target = handler_auto_close_target("leaf-pane")
   let captured : Array[@moontrace.Event] = []
   handler_with_moontrace_capture(captured, async fn() {
-    state.interpret_teardown_effects([CloseTerminal(target)], _cmds => [1])
+    state.interpret_teardown_effects([CloseTerminal(target)], _cmds => [1], _cmd => {
+      (0, "")
+    })
   })
   assert_eq(handler_close_terminal_warn_count(captured), 1)
 }
@@ -6932,7 +6936,9 @@ async test "test_close_terminal_no_warn_on_zero_exit" {
   let target = handler_auto_close_target("leaf-pane")
   let captured : Array[@moontrace.Event] = []
   handler_with_moontrace_capture(captured, async fn() {
-    state.interpret_teardown_effects([CloseTerminal(target)], _cmds => [0])
+    state.interpret_teardown_effects([CloseTerminal(target)], _cmds => [0], _cmd => {
+      (0, "")
+    })
   })
   assert_eq(handler_close_terminal_warn_count(captured), 0)
 }
@@ -6949,7 +6955,9 @@ async test "test_close_terminal_no_warn_idempotent_absent_zellij_tab" {
   }
   let captured : Array[@moontrace.Event] = []
   handler_with_moontrace_capture(captured, async fn() {
-    state.interpret_teardown_effects([CloseTerminal(target)], _cmds => [0])
+    state.interpret_teardown_effects([CloseTerminal(target)], _cmds => [0], _cmd => {
+      (0, "")
+    })
   })
   assert_eq(handler_close_terminal_warn_count(captured), 0)
 }
@@ -6960,9 +6968,11 @@ async test "test_close_terminal_warns_on_error" {
   let target = handler_auto_close_target("leaf-pane")
   let captured : Array[@moontrace.Event] = []
   handler_with_moontrace_capture(captured, async fn() {
-    state.interpret_teardown_effects([CloseTerminal(target)], _cmds => {
-      raise @types.ChoirError::agent_not_found("test error")
-    })
+    state.interpret_teardown_effects(
+      [CloseTerminal(target)],
+      _cmds => raise @types.ChoirError::agent_not_found("test error"),
+      _cmd => (0, ""),
+    )
   })
   assert_eq(handler_close_terminal_warn_count(captured), 1)
 }
