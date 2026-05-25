@@ -37,6 +37,39 @@ fn tool_args_get_json(args : ToolArgs, key : String) -> Json? {
 }
 
 ///|
+fn transient_supervisor_agent_id(role : @types.Role, agent_id : String) -> Bool {
+  let prefix = match role {
+    @types.Role::Root => "agent-root-"
+    @types.Role::TL => "agent-tl-"
+    _ => return false
+  }
+  if !agent_id.has_prefix(prefix) {
+    return false
+  }
+  let suffix = agent_id[prefix.length():].to_owned()
+  if suffix == "" {
+    return false
+  }
+  for c in suffix {
+    if c < '0' || c > '9' {
+      return false
+    }
+  }
+  true
+}
+
+///|
+fn register_args_is_transient_supervisor_probe(args : RegisterArgs) -> Bool {
+  transient_supervisor_agent_id(args.role, args.agent_id) &&
+  args.parent is None &&
+  args.terminal_target is None &&
+  args.workspace == "" &&
+  args.branch == "" &&
+  args.spawn_depth == 0 &&
+  !args.agent_type_explicit
+}
+
+///|
 /// Parse a JSON value into an array of trimmed, non-empty strings.
 ///
 /// AUDIT: Non-string array elements are intentionally dropped (not an
@@ -1028,6 +1061,13 @@ pub async fn dispatch(
     ToolRequest::Register(register_args) =>
       match registry {
         Some(reg) => {
+          if register_args_is_transient_supervisor_probe(register_args) {
+            return @types.Response::ok_values({
+              "status": String::to_json("ignored_transient"),
+              "agent_id": String::to_json(register_args.agent_id),
+              "refreshed": Bool::to_json(false),
+            })
+          }
           // Re-register must not lose stable identity metadata when a child
           // refresh comes from the parent's cwd config. Missing fields keep the
           // prior row, including agent_type; an existing leaf row refreshed as

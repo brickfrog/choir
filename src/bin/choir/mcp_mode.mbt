@@ -23,11 +23,36 @@ fn mcp_resolved_agent_id(
       match local_cfg.agent_id {
         Some(id) => id
         None =>
-          "agent-" +
-          @config.role_to_string(role) +
-          "-" +
-          @sys.get_pid().to_string()
+          match role {
+            @types.Role::Root | @types.Role::TL => "root"
+            _ =>
+              "agent-" +
+              @config.role_to_string(role) +
+              "-" +
+              @sys.get_pid().to_string()
+          }
       }
+  }
+}
+
+///|
+fn mcp_connection_has_stable_agent_id(
+  config : @types.Config,
+  local_cfg : @types.LocalConfig,
+) -> Bool {
+  config.agent_id is Some(_) || local_cfg.agent_id is Some(_)
+}
+
+///|
+fn mcp_should_register_connection(
+  role : @types.Role,
+  config : @types.Config,
+  local_cfg : @types.LocalConfig,
+) -> Bool {
+  match role {
+    @types.Role::Root | @types.Role::TL =>
+      mcp_connection_has_stable_agent_id(config, local_cfg)
+    _ => true
   }
 }
 
@@ -550,14 +575,16 @@ fn mcp_run_uds_loop(
   local_cfg : @types.LocalConfig,
 ) -> McpUdsLoopExit {
   let reader = UDSLineReader::new(uds_fd)
-  let reg_msg = mcp_build_registration_message(role, config, local_cfg)
-  if !mcp_write_all_uds(uds_fd, @utf8.encode(reg_msg)) {
-    return Reconnect
-  }
+  if mcp_should_register_connection(role, config, local_cfg) {
+    let reg_msg = mcp_build_registration_message(role, config, local_cfg)
+    if !mcp_write_all_uds(uds_fd, @utf8.encode(reg_msg)) {
+      return Reconnect
+    }
 
-  let reg_resp = reader.read_line()
-  if reg_resp == "" {
-    return Reconnect
+    let reg_resp = reader.read_line()
+    if reg_resp == "" {
+      return Reconnect
+    }
   }
 
   mcp_run_request_loop(
@@ -942,6 +969,28 @@ test "mcp config keeps local agent id over CLI agent id" {
     mcp_resolved_agent_id(@types.Role::TL, cfg, local_cfg),
     "local-agent",
   )
+}
+
+///|
+test "mcp no-identity TL uses root caller and skips registration" {
+  let cfg = @types.Config::default()
+  let local_cfg = @types.LocalConfig::default()
+  assert_eq(mcp_resolved_agent_id(@types.Role::TL, cfg, local_cfg), "root")
+  assert_false(mcp_should_register_connection(@types.Role::TL, cfg, local_cfg))
+  assert_false(
+    mcp_should_register_connection(@types.Role::Root, cfg, local_cfg),
+  )
+}
+
+///|
+test "mcp named TL keeps stable registration path" {
+  let cfg = { ..@types.Config::default(), agent_id: Some("user-123-456") }
+  let local_cfg = @types.LocalConfig::default()
+  assert_eq(
+    mcp_resolved_agent_id(@types.Role::TL, cfg, local_cfg),
+    "user-123-456",
+  )
+  assert_true(mcp_should_register_connection(@types.Role::TL, cfg, local_cfg))
 }
 
 ///|

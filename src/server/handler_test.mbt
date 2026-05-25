@@ -5608,6 +5608,43 @@ async test "transport disconnect with live pane re-registers as active lifecycle
 }
 
 ///|
+async test "transient TL register probes do not grow registry" {
+  let project_dir = "/tmp/choir-transient-tl-register-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      terminal_session: "test-session",
+    },
+    make_hermetic_recovery_provider(),
+  )
+
+  let sent : Array[String] = []
+  for i = 0; i < 20; i = i + 1 {
+    let register_resp = state.handle_with_runner(
+      @types.Request::{
+        req_method: "register",
+        role: @types.Role::TL,
+        name: "register",
+        args: @types.RequestArgs::new({
+          "agent_id": "agent-tl-" + (1000000 + i).to_string(),
+          "connection_lifetime": "session",
+        }),
+      },
+      runner=async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    )
+    assert_true(register_resp.is_ok())
+    assert_eq(state.registry.list().length(), 0)
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "pending transport disconnect with live process does not fail idle MCP connection" {
   let project_dir = "/tmp/choir-live-process-disconnect-" +
     @sys.get_pid().to_string() +
