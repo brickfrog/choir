@@ -55,9 +55,10 @@ might see two leaves touching them; we'll keep edits surgical.
 - `agent-tl-NNNNNNN` registrations no longer accumulate in
   `wave_state`/`status_bar_state` snapshots across a session; root cause is
   fixed at the registration point, not swept post-hoc.
-- `choir init` on a fresh session reaps any leftover `Server`, `TL`, or
-  leaf-branch zellij tabs from prior sessions before spawning fresh ones,
-  using the existing zellij-action surface.
+- `choir init` on a fresh session reaps any leftover literal `Server` /
+  `TL` zellij tabs from prior sessions before spawning fresh ones, using
+  the existing zellij-action surface. Leaf-branch tab tracking is
+  deferred — see Follow-Ups.
 - A leaf whose process transitions to `ProcessState::Failed(reason=UnexpectedDisconnect)`
   has its zellij tab closed by the same `CloseTerminal` effect path that
   fires on `Done`-via-merge, within ~1 tick.
@@ -119,17 +120,20 @@ Files: `src/bin/choir/init.mbt`, the existing zellij-action surface
 in `src/workspace/` (likely `src/workspace/zellij.mbt` or similar — grep
 `zellij_list_tabs` / `close_tab`).
 
-Approach:
+Approach (as shipped — narrower than the initial spec hypothesis):
 1. At init time, before spawning fresh Server/TL tabs, enumerate existing
-   zellij tabs in the target session. If any match the choir-managed
-   patterns (`Server`, `TL`, or branch-name slugs), close them via
-   `zellij action close-tab` first.
-2. Be careful: only do this on fresh init, not on a `--recreate` over a
-   running server (that path is already destructive in the right way).
-   Use the existing init guard.
-3. Hermetic test: mock `zellij_list_tabs` to return a known stale set;
-   assert the close calls are issued for choir-pattern matches and not
-   for unrelated user tabs.
+   zellij tabs in the target session. Close only tabs literally named
+   `Server` or `TL` — those are the duplicate-from-prior-session offenders
+   in the bead's evidence (Server×3, TL×4). A heuristic dotted-slug matcher
+   was prototyped and rejected because it false-positived on common user
+   tab names (`v1.0.0`, `package.json`, `notes.md`). Leaf-branch tab
+   tracking via a persistent registry is deferred (Follow-Ups).
+2. Only run on fresh init (not on `--recreate`); the recreate path is
+   already destructive in the right way. Use the existing init guard.
+3. Hermetic test: mock `zellij_list_tabs` to return a known set including
+   literal Server/TL plus user-tab false-positive shapes
+   (v1.0.0, package.json, README.md, my.feature.branch, leaf-branch
+   slugs); assert close is called only for the literal Server/TL.
 
 ### Leaf 4 — Disconnect-orphan zellij tab (choir-disconnect-zellij-tab-orphan)
 Files: `src/phase/lifecycle.mbt` (the `plan_fail` / `plan_finalize` effect
@@ -159,9 +163,11 @@ Approach:
   query `wave_state` / `status_bar_state` and grep for `agent-tl-` — count
   must not grow per cycle.
 - **Leaf 3 (observable):** set up a zellij session with synthetic stale
-  tabs named `Server`, `TL`, `feature-x.leaf-0`. Run `choir init` against
-  that session. After init, query tab names; the synthetic stale tabs are
-  gone and only the fresh init's tabs remain.
+  tabs `Server`, `TL`, plus user-tab false-positive shapes (`v1.0.0`,
+  `package.json`, `README.md`, `my.feature.branch`, and a leaf-branch
+  slug like `feature-x.leaf-0`). Run `choir init` against that session.
+  After init: the literal Server/TL tabs are gone; all other tabs are
+  preserved.
 - **Leaf 4 (observable):** drive a leaf to `Failed(UnexpectedDisconnect)`
   (via a test fixture that simulates the disconnect timeout), assert
   the zellij tab is closed in the same tick. Grep serve.log for the
@@ -187,6 +193,10 @@ Approach:
 - No automatic prompt-resync on startup. Drift is operator-driven.
 
 ## Follow-Ups
+- Track leaf-branch zellij tabs via a persistent registry (`.choir/zellij-
+  tabs.json` or equivalent) so init-time reap can close them
+  deterministically without heuristic name matching. Filed as choir-axk2
+  (or whichever ID was assigned).
 - Widen the reap planner to also handle `agents/` and `inline/` containers
   (currently `worktrees/`-only — see the AUDIT comment in
   `src/runtime/recovery.mbt`).

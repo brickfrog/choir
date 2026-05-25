@@ -65,12 +65,17 @@ fn diff_lines(content : String) -> Array[String] {
 ///|
 /// Render a unified diff with common-prefix and common-suffix trimming.
 /// Correctly handles the common drift shapes — single-line edit, insertion-
-/// in-middle, append-at-end, delete-at-end — by emitting context lines for
-/// the matching prefix/suffix and -/+ lines only for the genuinely
-/// different middle hunk. For multi-section drift (rare for prompts) this
-/// degrades to a single big hunk rather than minimal LCS output; that's
-/// strictly better than the prior line-by-line zip which mis-attributed
-/// every line after the first insertion.
+/// in-middle, append-at-end, delete-at-end, and trailing-newline-only
+/// difference — by emitting context lines for the matching prefix/suffix
+/// and -/+ lines only for the genuinely different middle hunk. For
+/// multi-section drift (rare for prompts) this degrades to a single big
+/// hunk rather than minimal LCS output; strictly better than a line-by-
+/// line zip which mis-attributed every line after an insertion.
+///
+/// Trailing-newline-only difference (e.g. `"x\n"` vs `"x"`) cannot show in
+/// the line arrays (both flatten to `["x"]`), so it gets a dedicated
+/// hunk: the last line is emitted as -/+ pair and `\ No newline at end of
+/// file` follows the side missing the terminator (matches GNU diff -u).
 fn render_prompt_diff(
   display_name : String,
   default_content : String,
@@ -78,12 +83,49 @@ fn render_prompt_diff(
 ) -> String {
   let defaults = diff_lines(default_content)
   let disk = diff_lines(disk_content)
+  let default_trailing_nl = default_content.has_suffix("\n")
+  let disk_trailing_nl = disk_content.has_suffix("\n")
   let out = StringBuilder::new()
   out.write_string("--- defaults/" + display_name + "\n")
   out.write_string("+++ disk/" + display_name + "\n")
   out.write_string("@@\n")
   let n = defaults.length()
   let m = disk.length()
+
+  // Trailing-newline-only difference: line arrays match byte-for-byte but
+  // `default_content != disk_content` (we're only called for drifted
+  // files). Emit the last line as a -/+ pair with the no-newline marker
+  // on the side that lacks the terminator.
+  if n == m && default_trailing_nl != disk_trailing_nl {
+    let mut all_match = true
+    for i = 0; i < n; i = i + 1 {
+      if defaults[i] != disk[i] {
+        all_match = false
+        break
+      }
+    }
+    if all_match {
+      for i = 0; i < n - 1; i = i + 1 {
+        out.write_string(" " + defaults[i] + "\n")
+      }
+      if n > 0 {
+        out.write_string("-" + defaults[n - 1] + "\n")
+        if !default_trailing_nl {
+          out.write_string("\\ No newline at end of file\n")
+        }
+        out.write_string("+" + disk[n - 1] + "\n")
+        if !disk_trailing_nl {
+          out.write_string("\\ No newline at end of file\n")
+        }
+      } else if !default_trailing_nl {
+        out.write_string("\\ No newline at end of file (defaults)\n")
+      } else {
+        out.write_string("\\ No newline at end of file (disk)\n")
+      }
+      return out.to_string()
+    }
+  }
+
   let min_len = if n < m { n } else { m }
   let mut prefix = 0
   while prefix < min_len && defaults[prefix] == disk[prefix] {
@@ -100,8 +142,16 @@ fn render_prompt_diff(
   for i = prefix; i < n - suffix; i = i + 1 {
     out.write_string("-" + defaults[i] + "\n")
   }
+  // No-newline marker after the defaults middle hunk only when the LAST
+  // emitted -line is also the file's last line.
+  if !default_trailing_nl && suffix == 0 && n - suffix > prefix {
+    out.write_string("\\ No newline at end of file\n")
+  }
   for i = prefix; i < m - suffix; i = i + 1 {
     out.write_string("+" + disk[i] + "\n")
+  }
+  if !disk_trailing_nl && suffix == 0 && m - suffix > prefix {
+    out.write_string("\\ No newline at end of file\n")
   }
   for i = n - suffix; i < n; i = i + 1 {
     out.write_string(" " + defaults[i] + "\n")
@@ -289,9 +339,7 @@ test "render_prompt_diff handles insertion in middle without misattributing cont
   // as removed+added. Prefix/suffix trim must keep b/c/d as unchanged
   // context and only mark x as inserted.
   let rendered = render_prompt_diff(
-    "skills/tl-stance.md",
-    "a\nb\nc\nd\n",
-    "a\nx\nb\nc\nd\n",
+    "skills/tl-stance.md", "a\nb\nc\nd\n", "a\nx\nb\nc\nd\n",
   )
   assert_eq(
     rendered,
@@ -309,9 +357,7 @@ test "render_prompt_diff handles insertion in middle without misattributing cont
 ///|
 test "render_prompt_diff handles single-line edit as a clean -/+ hunk" {
   let rendered = render_prompt_diff(
-    "skills/tl-stance.md",
-    "a\nold\nc\n",
-    "a\nnew\nc\n",
+    "skills/tl-stance.md", "a\nold\nc\n", "a\nnew\nc\n",
   )
   assert_eq(
     rendered,
@@ -326,11 +372,47 @@ test "render_prompt_diff handles single-line edit as a clean -/+ hunk" {
 }
 
 ///|
+test "render_prompt_diff marks trailing-newline removal with no-newline marker" {
+  // Operator saved tl-stance.md without a final newline. The line arrays
+  // are identical (both ["default"]), but the bytes differ. Without the
+  // dedicated trailing-newline hunk this case rendered an empty diff
+  // body while the CLI still exited non-zero — drift detected, no
+  // explanation visible to the operator.
+  let rendered = render_prompt_diff(
+    "skills/tl-stance.md", "default\n", "default",
+  )
+  assert_eq(
+    rendered,
+    "--- defaults/skills/tl-stance.md\n" +
+    "+++ disk/skills/tl-stance.md\n" +
+    "@@\n" +
+    "-default\n" +
+    "+default\n" +
+    "\\ No newline at end of file\n",
+  )
+}
+
+///|
+test "render_prompt_diff marks trailing-newline addition with no-newline marker" {
+  // Mirror of the above: defaults lack newline, disk added one.
+  let rendered = render_prompt_diff(
+    "skills/tl-stance.md", "default", "default\n",
+  )
+  assert_eq(
+    rendered,
+    "--- defaults/skills/tl-stance.md\n" +
+    "+++ disk/skills/tl-stance.md\n" +
+    "@@\n" +
+    "-default\n" +
+    "\\ No newline at end of file\n" +
+    "+default\n",
+  )
+}
+
+///|
 test "render_prompt_diff handles deletion in middle" {
   let rendered = render_prompt_diff(
-    "skills/tl-stance.md",
-    "a\nb\nc\nd\n",
-    "a\nc\nd\n",
+    "skills/tl-stance.md", "a\nb\nc\nd\n", "a\nc\nd\n",
   )
   assert_eq(
     rendered,

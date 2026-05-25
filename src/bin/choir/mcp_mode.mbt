@@ -575,6 +575,16 @@ fn mcp_run_uds_loop(
   local_cfg : @types.LocalConfig,
 ) -> McpUdsLoopExit {
   let reader = UDSLineReader::new(uds_fd)
+  // LOAD-BEARING: this is the sole call site for the
+  // mcp_should_register_connection predicate, and the only place in the
+  // binary that decides whether a supervisor-shaped MCP stdio bridge
+  // sends a register handshake. The unit tests at
+  // mcp_should_register_connection's definition site pin the predicate's
+  // truth table; future refactors that decouple this branch from the
+  // registration write would let the agent-tl-NNNNNNN leak (choir-tl-id-
+  // leak) silently regress. Don't lift the registration call out of this
+  // guard without an end-to-end test that drives mcp_run_uds_loop and
+  // asserts no register message is written for the no-identity TL case.
   if mcp_should_register_connection(role, config, local_cfg) {
     let reg_msg = mcp_build_registration_message(role, config, local_cfg)
     if !mcp_write_all_uds(uds_fd, @utf8.encode(reg_msg)) {
