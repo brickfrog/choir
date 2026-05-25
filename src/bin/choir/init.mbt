@@ -141,44 +141,15 @@ fn init_reap_orphan_mcp_stdio_bridges(
 }
 
 ///|
-fn init_is_branch_slug_tab_name(name : String) -> Bool {
-  let dot = match name.rev_find(".") {
-    Some(i) => i
-    None => return false
-  }
-  if dot == 0 || dot + 1 >= name.length() {
-    return false
-  }
-  for i = 0; i < dot; i = i + 1 {
-    let c = name[i]
-    let ok = (c >= 'a' && c <= 'z') ||
-      (c >= 'A' && c <= 'Z') ||
-      (c >= '0' && c <= '9') ||
-      c == '-' ||
-      c == '_' ||
-      c == '/' ||
-      c == '.'
-    if !ok {
-      return false
-    }
-  }
-  for i = dot + 1; i < name.length(); i = i + 1 {
-    let c = name[i]
-    let ok = (c >= 'a' && c <= 'z') ||
-      (c >= 'A' && c <= 'Z') ||
-      (c >= '0' && c <= '9') ||
-      c == '-' ||
-      c == '_'
-    if !ok {
-      return false
-    }
-  }
-  true
-}
-
-///|
+/// Restricted to the literal supervisor tab names choir always creates
+/// (Server, TL). Leaf-branch tabs are NOT matched here because any
+/// heuristic "has a dot + safe chars" matcher false-positives on common
+/// user tabs (v1.0.0, package.json, notes.md, my.feature.branch) and any
+/// "-N suffix" matcher also misses real choir tabs whose slugs end in
+/// arbitrary text (auto-rescue-pr-400-w2fix). Proper leaf-branch
+/// tracking is via a persistent registry — tracked in a follow-up bead.
 fn init_is_choir_managed_zellij_tab_name(name : String) -> Bool {
-  name == "Server" || name == "TL" || init_is_branch_slug_tab_name(name)
+  name == "Server" || name == "TL"
 }
 
 ///|
@@ -397,7 +368,7 @@ test "init orphan mcp-stdio reaper kills listed pids and cleanup invokes once" {
 }
 
 ///|
-async test "init reaps stale choir zellij tabs only" {
+async test "init reaps stale choir Server/TL tabs and leaves everything else alone" {
   let closed : Array[String] = []
   let listed : Array[String] = []
   init_reap_stale_zellij_tabs(
@@ -405,7 +376,15 @@ async test "init reaps stale choir zellij tabs only" {
     list_tabs=async fn(session) {
       @async.sleep(0)
       listed.push(session)
-      ["Server", "Server", "TL", "TL", "feature-x.leaf-0", "unrelated-user-tab"]
+      // Mix of (a) literal choir tabs that must be reaped, (b) common user
+      // tab names that the previous heuristic matcher false-positived on
+      // (v1.0.0, package.json, my.feature.branch, README.md, notes.md),
+      // and (c) leaf-branch slugs which are explicitly NOT reaped under
+      // the literal-only matcher pending the registry-based follow-up.
+      [
+        "Server", "TL", "v1.0.0", "package.json", "my.feature.branch", "README.md",
+        "notes.md", "feature-x.leaf-0", "auto-rescue-pr-400-w2fix", "unrelated-user-tab",
+      ]
     },
     close_tab=async fn(session, tab) {
       @async.sleep(0)
@@ -413,22 +392,25 @@ async test "init reaps stale choir zellij tabs only" {
     },
   )
   @debug.assert_eq(listed, ["choir"])
-  @debug.assert_eq(closed, [
-    "choir:Server", "choir:Server", "choir:TL", "choir:TL", "choir:feature-x.leaf-0",
-  ])
+  @debug.assert_eq(closed, ["choir:Server", "choir:TL"])
 }
 
 ///|
-test "init choir zellij tab matcher leaves unrelated user tabs alone" {
+test "init choir zellij tab matcher only matches literal Server and TL" {
   assert_true(init_is_choir_managed_zellij_tab_name("Server"))
   assert_true(init_is_choir_managed_zellij_tab_name("TL"))
-  assert_true(init_is_choir_managed_zellij_tab_name("feature-x.leaf-0"))
-  assert_true(
-    init_is_choir_managed_zellij_tab_name("feature/boot-hygiene.leaf_0"),
-  )
+  // Common user tab names that the prior dotted-slug heuristic accepted —
+  // all must be rejected to prevent close-tab from firing against them.
+  assert_false(init_is_choir_managed_zellij_tab_name("v1.0.0"))
+  assert_false(init_is_choir_managed_zellij_tab_name("package.json"))
+  assert_false(init_is_choir_managed_zellij_tab_name("my.feature.branch"))
+  assert_false(init_is_choir_managed_zellij_tab_name("README.md"))
+  assert_false(init_is_choir_managed_zellij_tab_name("notes.md"))
+  // Leaf-branch slug shapes — explicitly NOT closed under the literal-only
+  // matcher; tracked via persistent registry in a follow-up bead.
+  assert_false(init_is_choir_managed_zellij_tab_name("feature-x.leaf-0"))
+  assert_false(init_is_choir_managed_zellij_tab_name("auto-rescue-pr-400-w2fix"))
   assert_false(init_is_choir_managed_zellij_tab_name("unrelated-user-tab"))
-  assert_false(init_is_choir_managed_zellij_tab_name("feature-x."))
-  assert_false(init_is_choir_managed_zellij_tab_name(".leaf-0"))
 }
 
 ///|
@@ -1035,6 +1017,16 @@ fn init_run() -> Unit {
       @sys.write_stdout("Creating session \{session}...\n")
       init_run_or_exit(@workspace.zellij_create_background_session(session))
       if !recreate {
+        // AUDIT: this fires after `zellij_create_background_session`, so it
+        // only reaps anything when zellij resurrects a prior session of the
+        // same name (the create-session call is a no-op against an already-
+        // running session in that case). With zellij's session resurrection
+        // disabled, this is a defensive no-op — the query returns an empty
+        // tab list and nothing is closed. That's the intended shape: the
+        // reap is cheap to run unconditionally and only takes action when
+        // there's something to reap. End-to-end "session resurrection + reap"
+        // verification is operator-driven (the post-restart `tail
+        // .choir/serve.log | grep tab` smoke described in the bead).
         init_reap_stale_zellij_tabs(session)
       }
       let server_tab_exists = init_tab_exists(session, "Server") catch {

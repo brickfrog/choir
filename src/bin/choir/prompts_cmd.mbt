@@ -63,6 +63,14 @@ fn diff_lines(content : String) -> Array[String] {
 }
 
 ///|
+/// Render a unified diff with common-prefix and common-suffix trimming.
+/// Correctly handles the common drift shapes — single-line edit, insertion-
+/// in-middle, append-at-end, delete-at-end — by emitting context lines for
+/// the matching prefix/suffix and -/+ lines only for the genuinely
+/// different middle hunk. For multi-section drift (rare for prompts) this
+/// degrades to a single big hunk rather than minimal LCS output; that's
+/// strictly better than the prior line-by-line zip which mis-attributed
+/// every line after the first insertion.
 fn render_prompt_diff(
   display_name : String,
   default_content : String,
@@ -74,30 +82,29 @@ fn render_prompt_diff(
   out.write_string("--- defaults/" + display_name + "\n")
   out.write_string("+++ disk/" + display_name + "\n")
   out.write_string("@@\n")
-  let shared = if defaults.length() < disk.length() {
-    defaults.length()
-  } else {
-    disk.length()
+  let n = defaults.length()
+  let m = disk.length()
+  let min_len = if n < m { n } else { m }
+  let mut prefix = 0
+  while prefix < min_len && defaults[prefix] == disk[prefix] {
+    prefix = prefix + 1
   }
-  for i = 0; i < shared; i = i + 1 {
-    let default_line = defaults[i]
-    let disk_line = disk[i]
-    if default_line == disk_line {
-      out.write_string(" " + default_line + "\n")
-    } else {
-      out.write_string("-" + default_line + "\n")
-      out.write_string("+" + disk_line + "\n")
-    }
+  let mut suffix = 0
+  while suffix < min_len - prefix &&
+        defaults[n - 1 - suffix] == disk[m - 1 - suffix] {
+    suffix = suffix + 1
   }
-  if defaults.length() > shared {
-    for i = shared; i < defaults.length(); i = i + 1 {
-      out.write_string("-" + defaults[i] + "\n")
-    }
+  for i = 0; i < prefix; i = i + 1 {
+    out.write_string(" " + defaults[i] + "\n")
   }
-  if disk.length() > shared {
-    for i = shared; i < disk.length(); i = i + 1 {
-      out.write_string("+" + disk[i] + "\n")
-    }
+  for i = prefix; i < n - suffix; i = i + 1 {
+    out.write_string("-" + defaults[i] + "\n")
+  }
+  for i = prefix; i < m - suffix; i = i + 1 {
+    out.write_string("+" + disk[i] + "\n")
+  }
+  for i = n - suffix; i < n; i = i + 1 {
+    out.write_string(" " + defaults[i] + "\n")
   }
   out.to_string()
 }
@@ -261,14 +268,80 @@ test "collect_prompt_drifts reports only prompt files that differ from baked def
 }
 
 ///|
-test "render_prompt_diff uses defaults and disk headers with changed lines" {
+test "render_prompt_diff emits headers with trailing-blank-line insertion" {
   let rendered = render_prompt_diff(
     "skills/tl-stance.md", "alpha\nbeta\n", "alpha\nbeta\n\n",
   )
-  assert_true(rendered.contains("--- defaults/skills/tl-stance.md\n"))
-  assert_true(rendered.contains("+++ disk/skills/tl-stance.md\n"))
-  assert_true(rendered.contains("@@\n"))
-  assert_true(rendered.contains("+\n"))
+  assert_eq(
+    rendered,
+    "--- defaults/skills/tl-stance.md\n" +
+    "+++ disk/skills/tl-stance.md\n" +
+    "@@\n" +
+    " alpha\n" +
+    " beta\n" +
+    "+\n",
+  )
+}
+
+///|
+test "render_prompt_diff handles insertion in middle without misattributing context" {
+  // Bare line-by-line zip mis-attributes every line after the insertion
+  // as removed+added. Prefix/suffix trim must keep b/c/d as unchanged
+  // context and only mark x as inserted.
+  let rendered = render_prompt_diff(
+    "skills/tl-stance.md",
+    "a\nb\nc\nd\n",
+    "a\nx\nb\nc\nd\n",
+  )
+  assert_eq(
+    rendered,
+    "--- defaults/skills/tl-stance.md\n" +
+    "+++ disk/skills/tl-stance.md\n" +
+    "@@\n" +
+    " a\n" +
+    "+x\n" +
+    " b\n" +
+    " c\n" +
+    " d\n",
+  )
+}
+
+///|
+test "render_prompt_diff handles single-line edit as a clean -/+ hunk" {
+  let rendered = render_prompt_diff(
+    "skills/tl-stance.md",
+    "a\nold\nc\n",
+    "a\nnew\nc\n",
+  )
+  assert_eq(
+    rendered,
+    "--- defaults/skills/tl-stance.md\n" +
+    "+++ disk/skills/tl-stance.md\n" +
+    "@@\n" +
+    " a\n" +
+    "-old\n" +
+    "+new\n" +
+    " c\n",
+  )
+}
+
+///|
+test "render_prompt_diff handles deletion in middle" {
+  let rendered = render_prompt_diff(
+    "skills/tl-stance.md",
+    "a\nb\nc\nd\n",
+    "a\nc\nd\n",
+  )
+  assert_eq(
+    rendered,
+    "--- defaults/skills/tl-stance.md\n" +
+    "+++ disk/skills/tl-stance.md\n" +
+    "@@\n" +
+    " a\n" +
+    "-b\n" +
+    " c\n" +
+    " d\n",
+  )
 }
 
 ///|

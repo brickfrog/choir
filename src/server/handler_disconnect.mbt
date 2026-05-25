@@ -211,8 +211,6 @@ async test "safe_remove_git_worktree swallows runner failure silently" {
       "/repo/.choir/worktrees/present",
       async fn(_cmds) {
         raise @types.ChoirError::agent_not_found("synthetic")
-        @async.sleep(0)
-        []
       },
       _ => true,
     )

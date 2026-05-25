@@ -95,16 +95,24 @@ Approach:
 4. Both subcommands are pure file I/O at the CLI boundary; no server RPC.
 
 ### Leaf 2 — TL-id leak (choir-tl-id-leak)
-Files: `src/server/handler.mbt` (register-tool dispatch), `src/server/goal_judge.mbt`.
+Files (as shipped — spec hypothesis was wrong): `src/bin/choir/mcp_mode.mbt`
+(client-side identity resolver; the actual producer of `agent-tl-NNNNNNN`
+IDs), `src/server/handler_test.mbt` (the registry-doesn't-grow regression).
+The initial spec hypothesis pointed at `src/server/handler.mbt` and
+`src/server/goal_judge.mbt`; the real source was MCP stdio bridges falling
+back to a pid-derived synthetic agent_id when no stable `--name` or local
+config was set. The fix routes those probes through the stable supervisor
+caller and skips the register handshake entirely.
 
-Approach:
-1. Grep for the call site that registers under `agent-tl-NNNNNNN`. The bead
-   hypothesizes goal-judge or stop-hook re-evaluation; verify.
-2. Decide the right fix: (a) reuse the supervisor's agent_id when the probe
-   is just a session liveness check, (b) make the probe ephemeral (no
-   register call), or (c) auto-deregister within the same handler scope.
-3. Add a hermetic test that drives the same call path N times and asserts
-   the registry size doesn't grow.
+Approach (as shipped):
+1. Locate the call site that registers under `agent-tl-NNNNNNN` — turned
+   out to be MCP stdio fallback on supervisor-shaped bridges with no
+   identity config.
+2. Skip the register handshake entirely for those bridges (option b: the
+   probe is ephemeral) and route their requests through the stable
+   supervisor caller (root).
+3. Hermetic regression in `src/server/handler_test.mbt` drives 20
+   transient TL register cycles and asserts the registry does not grow.
 
 ### Leaf 3 — Zellij tab reap on init (choir-zellij-tab-reap)
 Files: `src/bin/choir/init.mbt`, the existing zellij-action surface
