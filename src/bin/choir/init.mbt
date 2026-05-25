@@ -141,6 +141,87 @@ fn init_reap_orphan_mcp_stdio_bridges(
 }
 
 ///|
+fn init_is_branch_slug_tab_name(name : String) -> Bool {
+  let dot = match name.rev_find(".") {
+    Some(i) => i
+    None => return false
+  }
+  if dot == 0 || dot + 1 >= name.length() {
+    return false
+  }
+  for i = 0; i < dot; i = i + 1 {
+    let c = name[i]
+    let ok = (c >= 'a' && c <= 'z') ||
+      (c >= 'A' && c <= 'Z') ||
+      (c >= '0' && c <= '9') ||
+      c == '-' ||
+      c == '_' ||
+      c == '/' ||
+      c == '.'
+    if !ok {
+      return false
+    }
+  }
+  for i = dot + 1; i < name.length(); i = i + 1 {
+    let c = name[i]
+    let ok = (c >= 'a' && c <= 'z') ||
+      (c >= 'A' && c <= 'Z') ||
+      (c >= '0' && c <= '9') ||
+      c == '-' ||
+      c == '_'
+    if !ok {
+      return false
+    }
+  }
+  true
+}
+
+///|
+fn init_is_choir_managed_zellij_tab_name(name : String) -> Bool {
+  name == "Server" || name == "TL" || init_is_branch_slug_tab_name(name)
+}
+
+///|
+async fn init_list_zellij_tabs(session : String) -> Array[String] {
+  try {
+    let (code, output) = @exec.capture_command_merged(
+      @workspace.zellij_query_tab_names_command(session),
+    )
+    if code == 0 {
+      @workspace.zellij_tab_names_in_query_output(output)
+    } else {
+      []
+    }
+  } catch {
+    _ => []
+  }
+}
+
+///|
+async fn init_close_zellij_tab(session : String, tab : String) -> Unit {
+  ignore(
+    @exec.run(
+      @workspace.local_close_target(@workspace.zellij_tab_target(session, tab)),
+    ) catch {
+      _ => 0
+    },
+  )
+}
+
+///|
+async fn init_reap_stale_zellij_tabs(
+  session : String,
+  list_tabs? : async (String) -> Array[String] = init_list_zellij_tabs,
+  close_tab? : async (String, String) -> Unit = init_close_zellij_tab,
+) -> Unit {
+  for tab in list_tabs(session) {
+    if init_is_choir_managed_zellij_tab_name(tab) {
+      close_tab(session, tab)
+    }
+  }
+}
+
+///|
 fn init_cleanup_recreate_artifacts(
   reap_orphans? : () -> Unit = fn() { init_reap_orphan_mcp_stdio_bridges() },
   cleanup_runtime? : () -> Unit = fn() {
@@ -313,6 +394,41 @@ test "init orphan mcp-stdio reaper kills listed pids and cleanup invokes once" {
   assert_true(events.contains("rm:.choir/outbox"))
   assert_true(events.contains("rm:.choir/waves"))
   assert_true(events.contains("rm:.choir/inline"))
+}
+
+///|
+async test "init reaps stale choir zellij tabs only" {
+  let closed : Array[String] = []
+  let listed : Array[String] = []
+  init_reap_stale_zellij_tabs(
+    "choir",
+    list_tabs=async fn(session) {
+      @async.sleep(0)
+      listed.push(session)
+      ["Server", "Server", "TL", "TL", "feature-x.leaf-0", "unrelated-user-tab"]
+    },
+    close_tab=async fn(session, tab) {
+      @async.sleep(0)
+      closed.push(session + ":" + tab)
+    },
+  )
+  @debug.assert_eq(listed, ["choir"])
+  @debug.assert_eq(closed, [
+    "choir:Server", "choir:Server", "choir:TL", "choir:TL", "choir:feature-x.leaf-0",
+  ])
+}
+
+///|
+test "init choir zellij tab matcher leaves unrelated user tabs alone" {
+  assert_true(init_is_choir_managed_zellij_tab_name("Server"))
+  assert_true(init_is_choir_managed_zellij_tab_name("TL"))
+  assert_true(init_is_choir_managed_zellij_tab_name("feature-x.leaf-0"))
+  assert_true(
+    init_is_choir_managed_zellij_tab_name("feature/boot-hygiene.leaf_0"),
+  )
+  assert_false(init_is_choir_managed_zellij_tab_name("unrelated-user-tab"))
+  assert_false(init_is_choir_managed_zellij_tab_name("feature-x."))
+  assert_false(init_is_choir_managed_zellij_tab_name(".leaf-0"))
 }
 
 ///|
@@ -918,6 +1034,9 @@ fn init_run() -> Unit {
 
       @sys.write_stdout("Creating session \{session}...\n")
       init_run_or_exit(@workspace.zellij_create_background_session(session))
+      if !recreate {
+        init_reap_stale_zellij_tabs(session)
+      }
       let server_tab_exists = init_tab_exists(session, "Server") catch {
         _ => false
       }
