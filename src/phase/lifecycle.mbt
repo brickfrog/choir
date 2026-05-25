@@ -146,6 +146,14 @@ pub impl Show for ProcessState with output(self, logger) -> Unit {
 }
 
 ///|
+pub fn process_state_terminal(process : ProcessState) -> Bool {
+  match process {
+    Finalized(..) | Failed(..) => true
+    _ => false
+  }
+}
+
+///|
 pub(all) struct AgentLifecycle {
   agent_id : String
   role : @types.Role

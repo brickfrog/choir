@@ -171,6 +171,61 @@ async test "find_pr_for_branch_in_provider finds PR by head branch" {
 }
 
 ///|
+test "plan_stale_lifecycle_reaps terminal lifecycle without recovered worktree" {
+  let agent_id = "feature/x.stale-leaf"
+  let lifecycle = {
+    ..@phase.lifecycle_for_role(agent_id, @types.Role::Dev),
+    process: @phase.ProcessState::Finalized(
+      reason=@phase.FinalizeReason::Merged,
+    ),
+    workflow: @phase.WorkflowState::Dev(
+      @phase.DevLifecycle::Done(reason=@phase.FinalizeReason::Merged),
+    ),
+  }
+  let actions = plan_stale_lifecycle_reaps(
+    [
+      {
+        id: "feature_x--stale-leaf",
+        content: @phase.lifecycle_to_json(lifecycle),
+        worktree_config_content: "",
+      },
+    ],
+    [],
+  )
+
+  assert_eq(actions.length(), 1)
+  match actions[0] {
+    RecoveryAction::ReapStaleLifecycle(agent_id=got_agent_id, kv_path~) => {
+      assert_eq(got_agent_id, agent_id)
+      assert_eq(kv_path, ".choir/kv/lifecycle--feature_x--stale-leaf")
+    }
+    _ => fail("expected stale lifecycle reap")
+  }
+}
+
+///|
+test "plan_stale_lifecycle_reaps keeps live lifecycle for missing-parent warning" {
+  let agent_id = "feature/x.live-leaf"
+  let lifecycle = {
+    ..@phase.lifecycle_for_role(agent_id, @types.Role::Dev),
+    process: @phase.ProcessState::Connected,
+    workflow: @phase.WorkflowState::Dev(@phase.DevLifecycle::Working),
+  }
+  let actions = plan_stale_lifecycle_reaps(
+    [
+      {
+        id: "feature_x--live-leaf",
+        content: @phase.lifecycle_to_json(lifecycle),
+        worktree_config_content: "",
+      },
+    ],
+    [],
+  )
+
+  assert_eq(actions.length(), 0)
+}
+
+///|
 test "parse_github_time_utc_sec handles valid and invalid timestamps" {
   @debug.assert_eq(
     parse_github_time_utc_sec("2026-03-20T01:02:03Z"),

@@ -134,6 +134,37 @@ fn default_kill_pgid_best_effort(pgid : Int) -> Unit {
 }
 
 ///|
+async fn safe_remove_git_worktree(
+  path : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Bool {
+  let (exit_code, output) = capture(@workspace.git_worktree_remove(path))
+  if exit_code == 0 {
+    return true
+  }
+  output.contains("is not a working tree")
+}
+
+///|
+async test "safe_remove_git_worktree treats missing worktree stderr as success" {
+  let mut captured = 0
+  let ok = safe_remove_git_worktree("/repo/.choir/worktrees/stale", async fn(
+    cmd : @workspace.Command,
+  ) -> (Int, String) {
+    captured = captured + 1
+    assert_eq(cmd.program, "git")
+    @debug.assert_eq(cmd.args, [
+      "worktree", "remove", "--force", "/repo/.choir/worktrees/stale",
+    ])
+    @async.sleep(0)
+    (128, "fatal: '/repo/.choir/worktrees/stale' is not a working tree\n")
+  })
+
+  assert_true(ok)
+  assert_eq(captured, 1)
+}
+
+///|
 fn ServerState::kill_tracked_agent_pgroup(
   self : ServerState,
   agent_id : String,
@@ -289,6 +320,7 @@ pub async fn ServerState::interpret_teardown_effects(
   effects : Array[TeardownEffect],
   runner : async (Array[@workspace.Command]) -> Array[Int],
   sleep_fn? : async (Int) -> Unit = @async.sleep,
+  worktree_remove_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
 ) -> Unit {
   for effect in effects {
     match effect {
@@ -359,11 +391,11 @@ pub async fn ServerState::interpret_teardown_effects(
         )
       RemoveWorktree(path) =>
         if @types.is_choir_managed_worktree_path(self.config.project_dir, path) {
-          ignore(
-            runner([@workspace.git_worktree_remove(path)]) catch {
-              _ => []
-            },
-          )
+          if !safe_remove_git_worktree(path, worktree_remove_capture) {
+            @moontrace.warn("RemoveWorktree failed", fields=[
+              @moontrace.field("path", path),
+            ])
+          }
         } else {
           @moontrace.warn("RemoveWorktree refused: unsafe path", fields=[
             @moontrace.field("path", path),

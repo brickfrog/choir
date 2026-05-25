@@ -43,6 +43,100 @@ fn phase_test_failed_warn_event(
 }
 
 ///|
+fn phase_test_agent(
+  agent_id : String,
+  parent : String?,
+  state? : @types.AgentState = @types.AgentState::Active,
+) -> @types.Agent {
+  {
+    agent_id: @types.AgentId(agent_id),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Codex,
+    parent,
+    workspace: "/tmp/choir-phase-test/.choir/worktrees/leaf",
+    branch: "feature/x.leaf",
+    terminal_target: None,
+    host: @types.Host::Local,
+    spawn_depth: 0,
+    state,
+  }
+}
+
+///|
+fn phase_test_warning_count(
+  events : Array[@moontrace.Event],
+  message : String,
+) -> Int {
+  let mut count = 0
+  for event in events {
+    if event.level == @moontrace.Level::Warn && event.message == message {
+      count = count + 1
+    }
+  }
+  count
+}
+
+///|
+test "sync_parent_child_lifecycle keeps warn for live child missing parent" {
+  let project_dir = "/tmp/choir-phase-live-missing-parent-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let registry = @registry.AgentRegistry::new()
+  let agent_id = "feature/x.live-leaf"
+  ignore(registry.upsert(phase_test_agent(agent_id, Some("feature/x.parent"))))
+  let lifecycle = {
+    ..lifecycle_for_role(agent_id, @types.Role::Dev),
+    process: ProcessState::Connected,
+    workflow: WorkflowState::Dev(DevLifecycle::Working),
+  }
+  let captured : Array[@moontrace.Event] = []
+  @moontrace.set_subscriber(fn(event) { captured.push(event) })
+  sync_parent_child_lifecycle(
+    project_dir, "session", registry, agent_id, lifecycle,
+  )
+  @moontrace.clear_subscriber()
+
+  assert_eq(
+    phase_test_warning_count(
+      captured, "sync_parent_child_lifecycle: parent not in registry",
+    ),
+    1,
+  )
+}
+
+///|
+test "sync_parent_child_lifecycle downgrades missing parent for terminal child" {
+  let project_dir = "/tmp/choir-phase-terminal-missing-parent-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let registry = @registry.AgentRegistry::new()
+  let agent_id = "feature/x.done-leaf"
+  ignore(registry.upsert(phase_test_agent(agent_id, Some("feature/x.parent"))))
+  let lifecycle = {
+    ..lifecycle_for_role(agent_id, @types.Role::Dev),
+    process: ProcessState::Finalized(reason=FinalizeReason::Merged),
+    workflow: WorkflowState::Dev(
+      DevLifecycle::Done(reason=FinalizeReason::Merged),
+    ),
+  }
+  let captured : Array[@moontrace.Event] = []
+  @moontrace.set_subscriber(fn(event) { captured.push(event) })
+  sync_parent_child_lifecycle(
+    project_dir, "session", registry, agent_id, lifecycle,
+  )
+  @moontrace.clear_subscriber()
+
+  assert_eq(
+    phase_test_warning_count(
+      captured, "sync_parent_child_lifecycle: parent not in registry",
+    ),
+    0,
+  )
+}
+
+///|
 test "is_active_to_failed_transition matches non-failed workflow to failed workflow" {
   assert_true(
     is_active_to_failed_transition(

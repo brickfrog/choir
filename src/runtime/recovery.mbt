@@ -75,6 +75,13 @@ pub(all) struct RecoveryFilesSnapshot {
 } derive(Debug)
 
 ///|
+pub(all) struct LifecycleRecoverySnapshot {
+  id : String
+  content : String
+  worktree_config_content : String
+} derive(Debug, Eq)
+
+///|
 pub(all) enum RecoveryAction {
   RegisterAgent(@types.Agent, Bool)
   RestorePRTracking(@poller.TrackedPR)
@@ -100,6 +107,7 @@ pub(all) enum RecoveryAction {
     pr_url~ : String
   )
   FinalizeOfflineAgent(agent_id~ : String)
+  ReapStaleLifecycle(agent_id~ : String, kv_path~ : String)
 } derive(Debug)
 
 ///|
@@ -927,6 +935,54 @@ fn build_agent_recovery_actions(
 }
 
 ///|
+pub fn lifecycle_recovery_kv_path(id : String) -> String {
+  ".choir/kv/lifecycle--" + id
+}
+
+///|
+fn recovered_agent_contains(
+  recovered_agents : Array[@types.Agent],
+  agent_id : String,
+) -> Bool {
+  for agent in recovered_agents {
+    if agent.agent_id.to_string() == agent_id {
+      return true
+    }
+  }
+  false
+}
+
+///|
+pub fn plan_stale_lifecycle_reaps(
+  lifecycles : Array[LifecycleRecoverySnapshot],
+  recovered_agents : Array[@types.Agent],
+) -> Array[RecoveryAction] {
+  let actions = []
+  for snapshot in lifecycles {
+    if snapshot.content == "" || snapshot.worktree_config_content.trim() != "" {
+      continue
+    }
+    let lifecycle = match @phase.lifecycle_from_json(snapshot.content) {
+      Some(lifecycle) => lifecycle
+      None => continue
+    }
+    if !@phase.process_state_terminal(lifecycle.process) {
+      continue
+    }
+    if recovered_agent_contains(recovered_agents, lifecycle.agent_id) {
+      continue
+    }
+    actions.push(
+      RecoveryAction::ReapStaleLifecycle(
+        agent_id=lifecycle.agent_id,
+        kv_path=lifecycle_recovery_kv_path(snapshot.id),
+      ),
+    )
+  }
+  actions
+}
+
+///|
 /// Maps [`RecoveryProvider::gh_poll_pr`] output into [`RecoveryPrPollRow`].
 /// Ignores `poll_ok` (gh parse / exit quality) and `pr_is_open` (used in full poller, not recovery planning).
 fn recovery_pr_poll_row_from_gh_tuple(
@@ -1164,9 +1220,35 @@ pub async fn discover_recovery_input(
   }
   let prebuilt = build_agent_recovery_actions(session, live, local_agents)
   let recovered_preview = prebuilt.0
+  let lifecycle_snapshots = []
+  for id in (provider.list_lifecycle_ids)(project_dir) {
+    let content = (provider.read_lifecycle_content)(project_dir, id)
+    let worktree_config_content = match @phase.lifecycle_from_json(content) {
+      Some(lifecycle) =>
+        (provider.read_agent_config)(
+          project_dir,
+          "worktrees",
+          @phase.extract_slug(lifecycle.agent_id),
+        )
+      None => ""
+    }
+    lifecycle_snapshots.push(LifecycleRecoverySnapshot::{
+      id,
+      content,
+      worktree_config_content,
+    })
+  }
+  let agent_stage_actions = []
+  for
+    action in plan_stale_lifecycle_reaps(lifecycle_snapshots, recovered_preview) {
+    agent_stage_actions.push(action)
+  }
+  for action in prebuilt.1 {
+    agent_stage_actions.push(action)
+  }
   let prebuilt_phase : PrebuiltAgentPhase = {
     recovered_agents: prebuilt.0,
-    agent_stage_actions: prebuilt.1,
+    agent_stage_actions,
   }
   let polls : Map[Int, RecoveryPrPollRow] = Map([], capacity=0)
   let resolved_prs : Array[KnownPR] = []

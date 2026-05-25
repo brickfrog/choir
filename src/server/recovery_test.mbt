@@ -141,6 +141,55 @@ async test "discover_recovery_input keeps process-live agent alive without zelli
 }
 
 ///|
+async test "recover_state reaps stale terminal lifecycle without parent-registry warn" {
+  let project_dir = "/tmp/choir-recovery-reap-stale-lifecycle-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let terminal_session = "test-session"
+  let config = { ..@types.Config::default(), project_dir, terminal_session }
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
+  let agent_id = "feature/x.stale-leaf"
+  let lifecycle = {
+    ..@phase.lifecycle_for_role(agent_id, @types.Role::Dev),
+    process: @phase.ProcessState::Finalized(
+      reason=@phase.FinalizeReason::Merged,
+    ),
+    workflow: @phase.WorkflowState::Dev(
+      @phase.DevLifecycle::Done(reason=@phase.FinalizeReason::Merged),
+    ),
+  }
+  assert_true(@phase.write_lifecycle(project_dir, lifecycle))
+  let captured : Array[@moontrace.Event] = []
+  @moontrace.set_subscriber(fn(event) { captured.push(event) })
+  recover_state(state, terminal_session, {
+    panes: { live: { tabs: [], panes: [] } },
+    prs: { open_prs: [], polls: Map([], capacity=0), resolved_prs: [] },
+    files: { local_agents: [], persisted_tracked_prs: [] },
+    recovered_at: 200L,
+    prebuilt_agent_phase: Some({
+      recovered_agents: [],
+      agent_stage_actions: [
+        @runtime.RecoveryAction::ReapStaleLifecycle(
+          agent_id~,
+          kv_path=".choir/kv/lifecycle--feature_x--stale-leaf",
+        ),
+      ],
+    }),
+  })
+  @moontrace.clear_subscriber()
+
+  assert_true(@phase.read_lifecycle(project_dir, agent_id) is None)
+  for event in captured {
+    assert_false(
+      event.level == @moontrace.Level::Warn &&
+      event.message == "sync_parent_child_lifecycle: parent not in registry",
+    )
+  }
+}
+
+///|
 test "plan_recovery reconciles local agents and open PRs" {
   let polls : Map[Int, @runtime.RecoveryPrPollRow] = Map([], capacity=0)
   polls.set(123, {
