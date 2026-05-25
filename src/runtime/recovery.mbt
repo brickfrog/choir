@@ -1226,6 +1226,16 @@ pub async fn discover_recovery_input(
       Some(lifecycle) => lifecycle
       None => continue
     }
+    // AUDIT: only the "worktrees" container is queried here. The bead's
+    // literal evidence is `.choir/worktrees/<slug>/` left as an empty
+    // directory; agents/ and inline/ containers stay in scope via the
+    // `recovered_agent_contains` guard below — parse_agent_from_config
+    // for their slugs feeds recovered_preview, and a parsed agent blocks
+    // the reap. Widening to all three containers is sub-ms-cheap, but
+    // doing it here would only catch the corner where an agents/<slug>/
+    // or inline/<slug>/ has a config too malformed to parse AND a
+    // terminal-state lifecycle on disk. Park as a follow-up bead if it
+    // ever surfaces in practice.
     let worktree_config_content = (provider.read_agent_config)(
       project_dir,
       "worktrees",

@@ -184,7 +184,10 @@ async test "recover_state ReapStaleLifecycle deletes the on-disk lifecycle" {
       }),
     })
   catch {
-    _ => @moontrace.clear_subscriber()
+    e => {
+      @moontrace.clear_subscriber()
+      raise e
+    }
   } noraise {
     _ => ()
   }
@@ -198,6 +201,62 @@ async test "recover_state ReapStaleLifecycle deletes the on-disk lifecycle" {
     }
   }
   assert_true(saw_reap_debug)
+}
+
+///|
+async test "recover_state ReapStaleLifecycle warns when delete_lifecycle returns false" {
+  // Pins the warn-branch contract: when delete_file_sync fails (file already
+  // gone, ENOENT, permission, etc.), the dispatch arm must emit a warn so
+  // operators do not see a "reaped" line while the on-disk KV remains.
+  let project_dir = "/tmp/choir-recovery-reap-stale-lifecycle-fail-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let terminal_session = "test-session"
+  let config = { ..@types.Config::default(), project_dir, terminal_session }
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
+  let agent_id = "feature/x.never-written-leaf"
+  // Intentionally do NOT write the lifecycle. delete_file_sync returns false
+  // for a missing file -> the reap branch must take the warn arm.
+  let captured : Array[@moontrace.Event] = []
+  @moontrace.set_subscriber(fn(event) { captured.push(event) })
+  try
+    recover_state(state, terminal_session, {
+      panes: { live: { tabs: [], panes: [] } },
+      prs: { open_prs: [], polls: Map([], capacity=0), resolved_prs: [] },
+      files: { local_agents: [], persisted_tracked_prs: [] },
+      recovered_at: 200L,
+      prebuilt_agent_phase: Some({
+        recovered_agents: [],
+        agent_stage_actions: [
+          @runtime.RecoveryAction::ReapStaleLifecycle(agent_id~),
+        ],
+      }),
+    })
+  catch {
+    e => {
+      @moontrace.clear_subscriber()
+      raise e
+    }
+  } noraise {
+    _ => ()
+  }
+  @moontrace.clear_subscriber()
+  let mut saw_reap_debug = false
+  let mut saw_reap_failed_warn = false
+  for event in captured {
+    if event.message == "reaped stale lifecycle" {
+      saw_reap_debug = true
+    }
+    if event.level == @moontrace.Level::Warn &&
+      event.message ==
+      "reap stale lifecycle failed: delete_lifecycle returned false" {
+      saw_reap_failed_warn = true
+    }
+  }
+  assert_false(saw_reap_debug)
+  assert_true(saw_reap_failed_warn)
 }
 
 ///|
