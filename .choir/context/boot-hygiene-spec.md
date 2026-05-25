@@ -98,12 +98,17 @@ Approach:
 ### Leaf 2 — TL-id leak (choir-tl-id-leak)
 Files (as shipped — spec hypothesis was wrong): `src/bin/choir/mcp_mode.mbt`
 (client-side identity resolver; the actual producer of `agent-tl-NNNNNNN`
-IDs), `src/server/handler_test.mbt` (the registry-doesn't-grow regression).
-The initial spec hypothesis pointed at `src/server/handler.mbt` and
-`src/server/goal_judge.mbt`; the real source was MCP stdio bridges falling
-back to a pid-derived synthetic agent_id when no stable `--name` or local
-config was set. The fix routes those probes through the stable supervisor
-caller and skips the register handshake entirely.
+IDs, plus the call-site-binding tests). The initial spec hypothesis
+pointed at `src/server/handler.mbt` and `src/server/goal_judge.mbt`; the
+real source was MCP stdio bridges falling back to a pid-derived
+synthetic agent_id when no stable `--name` or local config was set. The
+fix routes those probes through the stable supervisor caller and skips
+the register handshake entirely.
+
+A round-1 audit fix-up also deleted a `src/server/handler_test.mbt`
+test that was exercising the (now-deleted) server-side dispatch
+register-filter. That test is gone for good — keeping it would have
+required restoring the compat shim.
 
 Approach (as shipped):
 1. Locate the call site that registers under `agent-tl-NNNNNNN` — turned
@@ -112,8 +117,20 @@ Approach (as shipped):
 2. Skip the register handshake entirely for those bridges (option b: the
    probe is ephemeral) and route their requests through the stable
    supervisor caller (root).
-3. Hermetic regression in `src/server/handler_test.mbt` drives 20
-   transient TL register cycles and asserts the registry does not grow.
+3. Pin the regression structurally rather than cyclically. The
+   contract is the predicate `mcp_should_register_connection` returning
+   false for the no-identity-supervisor shape AND the
+   `mcp_perform_registration_handshake` extraction binding that
+   predicate to the only call site that could write a register frame.
+   Tests in `src/bin/choir/mcp_mode.mbt`:
+   - `mcp no-identity TL uses root caller and skips registration` —
+     pins the predicate's truth table.
+   - `mcp_perform_registration_handshake skips writer for no-identity TL`
+     — pins the call-site contract (writer never invoked).
+   - `mcp_perform_registration_handshake writes register frame for
+     identified Root` — pins the positive branch.
+   - `mcp_perform_registration_handshake returns Reconnect when write
+     fails` / `... when read is empty` — pin the two failure exits.
 
 ### Leaf 3 — Zellij tab reap on init (choir-zellij-tab-reap)
 Files: `src/bin/choir/init.mbt`, the existing zellij-action surface
