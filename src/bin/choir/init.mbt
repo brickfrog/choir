@@ -1017,15 +1017,18 @@ fn init_run() -> Unit {
       @sys.write_stdout("Creating session \{session}...\n")
       init_run_or_exit(@workspace.zellij_create_background_session(session))
       if !recreate {
-        // AUDIT: this reap is only effective when zellij's resurrection
-        // cache holds a session named `session` from a prior boot:
-        // `session_alive == 0` got us past the early-attach return above,
-        // then `zellij_create_background_session` resurrected the stored
-        // session along with whatever Server/TL tabs it kept. With zellij
-        // resurrection disabled (or no cached session of this name), the
-        // tab list comes back empty and this is a defensive no-op. The
-        // reap is cheap to run unconditionally; end-to-end "resurrection
-        // + reap" verification is operator-driven (post-restart `tail
+        // AUDIT: control reaches here only when the session was ABSENT
+        // from `zellij list-sessions` (the `session_alive != 0` branch
+        // above; the `session_alive == 0` branch attaches and returns at
+        // line 1007 without ever running this reap). The just-issued
+        // `zellij_create_background_session` either creates a fresh
+        // empty session or — when zellij's resurrection cache still
+        // holds a stored session of this name — resurrects it with its
+        // old Server/TL tabs. The reap catches that second case. With
+        // resurrection disabled (or no cached session of this name) the
+        // tab list comes back empty and the reap is a defensive no-op.
+        // Cheap to run unconditionally; end-to-end "resurrection + reap"
+        // verification is operator-driven (post-restart `tail
         // .choir/serve.log | grep tab` smoke described in the bead).
         init_reap_stale_zellij_tabs(session)
       }
