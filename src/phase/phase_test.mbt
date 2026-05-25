@@ -131,18 +131,19 @@ test "sync_parent_child_lifecycle keeps warn for live child missing parent" {
     workflow: WorkflowState::Dev(DevLifecycle::Working),
   }
   let captured : Array[@moontrace.Event] = []
+  let msg = "sync_parent_child_lifecycle: parent not in registry"
   phase_test_with_capture(captured, fn() {
     sync_parent_child_lifecycle(
       project_dir, "session", registry, agent_id, lifecycle,
     )
+    // Assertions inside the closure so phase_test_with_capture's catch-and-
+    // clear arm actually fires if either side of the contract drifts.
+    assert_eq(phase_test_warning_count(captured, msg), 1)
+    // Pins the live-mid-run side of the contract: the warn must fire and
+    // the debug must NOT — accidentally double-emitting at the warn site
+    // would silently break the prior-session-zombie downgrade pair.
+    assert_eq(phase_test_event_count(captured, @moontrace.Level::Debug, msg), 0)
   })
-
-  assert_eq(
-    phase_test_warning_count(
-      captured, "sync_parent_child_lifecycle: parent not in registry",
-    ),
-    1,
-  )
 }
 
 ///|
@@ -159,18 +160,17 @@ test "sync_parent_child_lifecycle downgrades missing parent for terminal child" 
     ),
   }
   let captured : Array[@moontrace.Event] = []
+  let msg = "sync_parent_child_lifecycle: parent not in registry"
   phase_test_with_capture(captured, fn() {
     sync_parent_child_lifecycle(
       project_dir, "session", registry, agent_id, lifecycle,
     )
+    assert_eq(phase_test_warning_count(captured, msg), 0)
+    // Pins the downgrade contract: silencing the warn must not also drop
+    // the signal entirely — the debug entry has to fire so prior-session
+    // zombies remain greppable in operator-trace.
+    assert_eq(phase_test_event_count(captured, @moontrace.Level::Debug, msg), 1)
   })
-
-  let msg = "sync_parent_child_lifecycle: parent not in registry"
-  assert_eq(phase_test_warning_count(captured, msg), 0)
-  // Pins the downgrade contract: silencing the warn must not also drop the
-  // signal entirely — the debug entry has to fire so prior-session zombies
-  // remain greppable in operator-trace.
-  assert_eq(phase_test_event_count(captured, @moontrace.Level::Debug, msg), 1)
 }
 
 ///|

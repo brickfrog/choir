@@ -76,8 +76,7 @@ pub(all) struct RecoveryFilesSnapshot {
 
 ///|
 pub(all) struct LifecycleRecoverySnapshot {
-  id : String
-  content : String
+  lifecycle : @phase.AgentLifecycle
   worktree_config_content : String
 } derive(Debug, Eq)
 
@@ -958,13 +957,10 @@ pub fn plan_stale_lifecycle_reaps(
 ) -> Array[RecoveryAction] {
   let actions = []
   for snapshot in lifecycles {
-    if snapshot.content == "" || snapshot.worktree_config_content.trim() != "" {
+    if snapshot.worktree_config_content.trim() != "" {
       continue
     }
-    let lifecycle = match @phase.lifecycle_from_json(snapshot.content) {
-      Some(lifecycle) => lifecycle
-      None => continue
-    }
+    let lifecycle = snapshot.lifecycle
     if !lifecycle.process.is_terminal() {
       continue
     }
@@ -1216,27 +1212,27 @@ pub async fn discover_recovery_input(
   }
   let prebuilt = build_agent_recovery_actions(session, live, local_agents)
   let recovered_preview = prebuilt.0
-  // AUDIT: this is N additional file reads on boot, where N is the count of
+  // AUDIT: N additional file reads on boot, where N is the count of
   // .choir/kv/lifecycle--* files. Each read is sub-ms; total is bounded by
-  // human-scale fork history; and boot is infrequent. Worth measuring only
-  // when fast-restart latency becomes a felt pain. Cheap predicate-only
-  // optimization later: skip the read_agent_config when the content fails to
-  // parse, which already happens via the None arm.
+  // human-scale fork history; boot is infrequent. Skip-on-parse-failure
+  // ensures the worktree-config read only fires for valid lifecycles.
   let lifecycle_snapshots = []
   for id in (provider.list_lifecycle_ids)(project_dir) {
     let content = (provider.read_lifecycle_content)(project_dir, id)
-    let worktree_config_content = match @phase.lifecycle_from_json(content) {
-      Some(lifecycle) =>
-        (provider.read_agent_config)(
-          project_dir,
-          "worktrees",
-          @phase.extract_slug(lifecycle.agent_id),
-        )
-      None => ""
+    if content == "" {
+      continue
     }
+    let lifecycle = match @phase.lifecycle_from_json(content) {
+      Some(lifecycle) => lifecycle
+      None => continue
+    }
+    let worktree_config_content = (provider.read_agent_config)(
+      project_dir,
+      "worktrees",
+      @phase.extract_slug(lifecycle.agent_id),
+    )
     lifecycle_snapshots.push(LifecycleRecoverySnapshot::{
-      id,
-      content,
+      lifecycle,
       worktree_config_content,
     })
   }

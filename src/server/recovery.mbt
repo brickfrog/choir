@@ -140,12 +140,17 @@ pub async fn recover_state(
         )
       @runtime.RecoveryAction::FinalizeOfflineAgent(agent_id~) =>
         state.finalize_recovered_offline_agent(agent_id)
-      @runtime.RecoveryAction::ReapStaleLifecycle(agent_id~) => {
-        ignore(@phase.delete_lifecycle(state.config.project_dir, agent_id))
-        @moontrace.debug("reaped stale lifecycle", fields=[
-          @moontrace.field("agent_id", agent_id),
-        ])
-      }
+      @runtime.RecoveryAction::ReapStaleLifecycle(agent_id~) =>
+        if @phase.delete_lifecycle(state.config.project_dir, agent_id) {
+          @moontrace.debug("reaped stale lifecycle", fields=[
+            @moontrace.field("agent_id", agent_id),
+          ])
+        } else {
+          @moontrace.warn(
+            "reap stale lifecycle failed: delete_lifecycle returned false",
+            fields=[@moontrace.field("agent_id", agent_id)],
+          )
+        }
     }
   }
 

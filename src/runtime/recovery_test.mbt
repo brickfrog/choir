@@ -190,15 +190,10 @@ fn reap_test_lifecycle(
 
 ///|
 fn reap_test_snapshot(
-  id : String,
   lifecycle : @phase.AgentLifecycle,
   worktree_config_content~ : String = "",
 ) -> LifecycleRecoverySnapshot {
-  {
-    id,
-    content: @phase.lifecycle_to_json(lifecycle),
-    worktree_config_content,
-  }
+  { lifecycle, worktree_config_content }
 }
 
 ///|
@@ -222,7 +217,7 @@ test "plan_stale_lifecycle_reaps terminal Finalized without recovered worktree" 
     @phase.ProcessState::Finalized(reason=@phase.FinalizeReason::Merged),
   )
   let actions = plan_stale_lifecycle_reaps(
-    [reap_test_snapshot("feature_x--stale-leaf", lifecycle)],
+    [reap_test_snapshot(lifecycle)],
     [],
   )
   reap_test_assert_reaped(actions, agent_id)
@@ -238,7 +233,7 @@ test "plan_stale_lifecycle_reaps terminal Failed counts as reapable" {
     ),
   )
   let actions = plan_stale_lifecycle_reaps(
-    [reap_test_snapshot("feature_x--failed-leaf", lifecycle)],
+    [reap_test_snapshot(lifecycle)],
     [],
   )
   reap_test_assert_reaped(actions, agent_id)
@@ -255,7 +250,7 @@ test "plan_stale_lifecycle_reaps Finalizing counts as reapable" {
     @phase.ProcessState::Finalizing(reason=@phase.FinalizeReason::Merged),
   )
   let actions = plan_stale_lifecycle_reaps(
-    [reap_test_snapshot("feature_x--finalizing-leaf", lifecycle)],
+    [reap_test_snapshot(lifecycle)],
     [],
   )
   reap_test_assert_reaped(actions, agent_id)
@@ -266,7 +261,7 @@ test "plan_stale_lifecycle_reaps keeps live lifecycle for missing-parent warning
   let agent_id = "feature/x.live-leaf"
   let lifecycle = reap_test_lifecycle(agent_id, @phase.ProcessState::Connected)
   let actions = plan_stale_lifecycle_reaps(
-    [reap_test_snapshot("feature_x--live-leaf", lifecycle)],
+    [reap_test_snapshot(lifecycle)],
     [],
   )
   assert_eq(actions.length(), 0)
@@ -296,7 +291,7 @@ test "plan_stale_lifecycle_reaps skips when agent is in recovered registry" {
     },
   ]
   let actions = plan_stale_lifecycle_reaps(
-    [reap_test_snapshot("feature_x--alive-leaf", lifecycle)],
+    [reap_test_snapshot(lifecycle)],
     recovered,
   )
   assert_eq(actions.length(), 0)
@@ -312,35 +307,10 @@ test "plan_stale_lifecycle_reaps skips when worktree config is still on disk" {
   let actions = plan_stale_lifecycle_reaps(
     [
       reap_test_snapshot(
-        "feature_x--live-worktree-leaf",
         lifecycle,
         // Any non-whitespace content stands in for a real .choir/config.local.toml.
         worktree_config_content="agent_id = \"x\"\n",
       ),
-    ],
-    [],
-  )
-  assert_eq(actions.length(), 0)
-}
-
-///|
-test "plan_stale_lifecycle_reaps skips empty content" {
-  let actions = plan_stale_lifecycle_reaps(
-    [{ id: "feature_x--empty", content: "", worktree_config_content: "" }],
-    [],
-  )
-  assert_eq(actions.length(), 0)
-}
-
-///|
-test "plan_stale_lifecycle_reaps skips malformed lifecycle JSON" {
-  let actions = plan_stale_lifecycle_reaps(
-    [
-      {
-        id: "feature_x--bad-json",
-        content: "{not valid json",
-        worktree_config_content: "",
-      },
     ],
     [],
   )

@@ -1146,7 +1146,6 @@ fn is_staged_existing_exec_default(
     "src/server/handler.mbt|handle_with_runner_and_capture|runner|run_sequence",
     "src/server/handler_automerge.mbt|maybe_trigger_automerge_for_pending_event|capture|capture_command_merged",
     "src/server/handler_disconnect.mbt|handle_disconnect_with_runner|runner|run_sequence",
-    "src/server/handler_disconnect.mbt|interpret_teardown_effects|path_exists|path_entry_exists",
     "src/server/handler_disconnect.mbt|process_pending_disconnects_with_runner|runner|run_sequence",
     "src/server/handler_poll_delivery.mbt|deliver_pending_poll_events|audit_receipt_exists|path_entry_exists",
     "src/server/handler_poll_delivery.mbt|deliver_pending_poll_events|audit_receipt_read|read_file",

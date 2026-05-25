@@ -1,5 +1,3 @@
-//|
-
 ///|
 test "poll_events_delivery_summary escapes newlines and truncates long events" {
   let tail = "b".repeat(220)
