@@ -23,11 +23,36 @@ fn mcp_resolved_agent_id(
       match local_cfg.agent_id {
         Some(id) => id
         None =>
-          "agent-" +
-          @config.role_to_string(role) +
-          "-" +
-          @sys.get_pid().to_string()
+          match role {
+            @types.Role::Root | @types.Role::TL => "root"
+            _ =>
+              "agent-" +
+              @config.role_to_string(role) +
+              "-" +
+              @sys.get_pid().to_string()
+          }
       }
+  }
+}
+
+///|
+fn mcp_connection_has_stable_agent_id(
+  config : @types.Config,
+  local_cfg : @types.LocalConfig,
+) -> Bool {
+  config.agent_id is Some(_) || local_cfg.agent_id is Some(_)
+}
+
+///|
+fn mcp_should_register_connection(
+  role : @types.Role,
+  config : @types.Config,
+  local_cfg : @types.LocalConfig,
+) -> Bool {
+  match role {
+    @types.Role::Root | @types.Role::TL =>
+      mcp_connection_has_stable_agent_id(config, local_cfg)
+    _ => true
   }
 }
 
@@ -542,6 +567,37 @@ fn mcp_run_request_loop(
 }
 
 ///|
+/// Performs the optional registration handshake at the top of
+/// `mcp_run_uds_loop`. Extracted so the call-site contract — "do NOT
+/// write a registration frame when `mcp_should_register_connection`
+/// returns false" — is testable without a live UDS. Returns
+/// `Some(Reconnect)` on write or response failure (caller aborts the
+/// loop); returns `None` both when registration was skipped and when it
+/// completed cleanly. The bound test
+/// `mcp_perform_registration_handshake skips writer for no-identity TL`
+/// guards choir-tl-id-leak: any refactor that decouples the write from
+/// the predicate has to either preserve this skip or break the test.
+fn mcp_perform_registration_handshake(
+  role : @types.Role,
+  config : @types.Config,
+  local_cfg : @types.LocalConfig,
+  write : (Bytes) -> Bool,
+  read : () -> String,
+) -> McpUdsLoopExit? {
+  if !mcp_should_register_connection(role, config, local_cfg) {
+    return None
+  }
+  let reg_msg = mcp_build_registration_message(role, config, local_cfg)
+  if !write(@utf8.encode(reg_msg)) {
+    return Some(Reconnect)
+  }
+  if read() == "" {
+    return Some(Reconnect)
+  }
+  None
+}
+
+///|
 fn mcp_run_uds_loop(
   uds_fd : Int,
   raw_stdio : Bool,
@@ -550,14 +606,16 @@ fn mcp_run_uds_loop(
   local_cfg : @types.LocalConfig,
 ) -> McpUdsLoopExit {
   let reader = UDSLineReader::new(uds_fd)
-  let reg_msg = mcp_build_registration_message(role, config, local_cfg)
-  if !mcp_write_all_uds(uds_fd, @utf8.encode(reg_msg)) {
-    return Reconnect
-  }
-
-  let reg_resp = reader.read_line()
-  if reg_resp == "" {
-    return Reconnect
+  match
+    mcp_perform_registration_handshake(
+      role,
+      config,
+      local_cfg,
+      fn(bytes) { mcp_write_all_uds(uds_fd, bytes) },
+      fn() { reader.read_line() },
+    ) {
+    Some(exit) => return exit
+    None => ()
   }
 
   mcp_run_request_loop(
@@ -942,6 +1000,130 @@ test "mcp config keeps local agent id over CLI agent id" {
     mcp_resolved_agent_id(@types.Role::TL, cfg, local_cfg),
     "local-agent",
   )
+}
+
+///|
+test "mcp no-identity TL uses root caller and skips registration" {
+  let cfg = @types.Config::default()
+  let local_cfg = @types.LocalConfig::default()
+  assert_eq(mcp_resolved_agent_id(@types.Role::TL, cfg, local_cfg), "root")
+  assert_false(mcp_should_register_connection(@types.Role::TL, cfg, local_cfg))
+  assert_false(
+    mcp_should_register_connection(@types.Role::Root, cfg, local_cfg),
+  )
+}
+
+///|
+test "mcp_perform_registration_handshake skips writer for no-identity TL" {
+  // Pins the call-site contract that ties choir-tl-id-leak's fix to its
+  // call site: with no agent_id/parent/workspace set, the supervisor-
+  // shaped MCP stdio bridge must NOT send a registration frame, full
+  // stop. Any refactor that decouples the predicate from the write
+  // (inline, fuse with adjacent branch, etc.) breaks this test.
+  let cfg = @types.Config::default()
+  let local_cfg = @types.LocalConfig::default()
+  let writes : Array[Bytes] = []
+  let mut reads = 0
+  let result = mcp_perform_registration_handshake(
+    @types.Role::TL,
+    cfg,
+    local_cfg,
+    fn(bytes) {
+      writes.push(bytes)
+      true
+    },
+    fn() {
+      reads = reads + 1
+      ""
+    },
+  )
+  guard result is None else { fail("expected continue, got Some(_)") }
+  assert_eq(writes.length(), 0)
+  assert_eq(reads, 0)
+}
+
+///|
+test "mcp_perform_registration_handshake writes register frame for identified Root" {
+  // Mirror of the no-identity case: with an agent_id set, the handshake
+  // must write exactly one registration frame and consume exactly one
+  // response line.
+  let cfg = { ..@types.Config::default(), agent_id: Some("root") }
+  let local_cfg = @types.LocalConfig::default()
+  let writes : Array[Bytes] = []
+  let mut reads = 0
+  let result = mcp_perform_registration_handshake(
+    @types.Role::Root,
+    cfg,
+    local_cfg,
+    fn(bytes) {
+      writes.push(bytes)
+      true
+    },
+    fn() {
+      reads = reads + 1
+      // Non-empty response keeps the handshake successful.
+      "{}\n"
+    },
+  )
+  guard result is None else { fail("expected continue, got Some(_)") }
+  assert_eq(writes.length(), 1)
+  assert_eq(reads, 1)
+}
+
+///|
+test "mcp_perform_registration_handshake returns Reconnect when write fails" {
+  let cfg = { ..@types.Config::default(), agent_id: Some("root") }
+  let local_cfg = @types.LocalConfig::default()
+  let result = mcp_perform_registration_handshake(
+    @types.Role::Root,
+    cfg,
+    local_cfg,
+    fn(_bytes) { false },
+    fn() { "" },
+  )
+  guard result is Some(McpUdsLoopExit::Reconnect) else {
+    fail("expected Some(Reconnect)")
+  }
+}
+
+///|
+test "mcp_perform_registration_handshake returns Reconnect when read is empty" {
+  // Symmetric to the write-failure case: write succeeds but the server
+  // disconnects before sending a response line. The handshake must
+  // surface Reconnect rather than fall through into the request loop.
+  let cfg = { ..@types.Config::default(), agent_id: Some("root") }
+  let local_cfg = @types.LocalConfig::default()
+  let writes : Array[Bytes] = []
+  let mut reads = 0
+  let result = mcp_perform_registration_handshake(
+    @types.Role::Root,
+    cfg,
+    local_cfg,
+    fn(bytes) {
+      writes.push(bytes)
+      true
+    },
+    fn() {
+      reads = reads + 1
+      ""
+    },
+  )
+  guard result is Some(McpUdsLoopExit::Reconnect) else {
+    fail("expected Some(Reconnect)")
+  }
+  assert_eq(writes.length(), 1)
+  assert_eq(reads, 1)
+}
+
+///|
+test "mcp named TL keeps stable registration path" {
+  let cfg = { ..@types.Config::default(), agent_id: Some("user-123-456") }
+  let local_cfg = @types.LocalConfig::default()
+  assert_eq(
+    mcp_resolved_agent_id(@types.Role::TL, cfg, local_cfg),
+    "user-123-456",
+  )
+  assert_true(mcp_should_register_connection(@types.Role::TL, cfg, local_cfg))
 }
 
 ///|

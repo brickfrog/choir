@@ -36,6 +36,7 @@ options(
     "leaf_tool.mbt": [ "native" ],
     "main.mbt": [ "native" ],
     "mcp_mode.mbt": [ "native" ],
+    "prompts_cmd.mbt": [ "native" ],
     "runtime_commands.mbt": [ "native" ],
     "statusline.mbt": [ "native" ],
     "stub_main.mbt": [ "not", "native" ],
