@@ -110,15 +110,26 @@ pub fn zellij_query_tab_names_command(session : String) -> Command {
 }
 
 ///|
-/// True if some output line equals `tab_name` exactly (prior `awk '$0 == target'`), after stripping
-/// ANSI SGR sequences like [`strip_ansi_csi_sgr`].
+/// Non-empty tab-name lines from `query-tab-names`, after stripping ANSI SGR sequences.
+pub fn zellij_tab_names_in_query_output(output : String) -> Array[String] {
+  let names : Array[String] = []
+  let text = strip_ansi_csi_sgr(output)
+  for raw in text.split("\n") {
+    let line = raw.to_owned()
+    if line != "" {
+      names.push(line)
+    }
+  }
+  names
+}
+
+///|
+/// True if some output line equals `tab_name` exactly (prior `awk '$0 == target'`).
 pub fn zellij_tab_name_exists_in_query_output(
   output : String,
   tab_name : String,
 ) -> Bool {
-  let text = strip_ansi_csi_sgr(output)
-  for raw in text.split("\n") {
-    let line = raw.to_owned()
+  for line in zellij_tab_names_in_query_output(output) {
     if line == tab_name {
       return true
     }
