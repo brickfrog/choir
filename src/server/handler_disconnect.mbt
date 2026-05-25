@@ -211,6 +211,8 @@ async test "safe_remove_git_worktree swallows runner failure silently" {
       "/repo/.choir/worktrees/present",
       async fn(_cmds) {
         raise @types.ChoirError::agent_not_found("synthetic")
+        @async.sleep(0)
+        []
       },
       _ => true,
     )
@@ -1299,6 +1301,89 @@ async test "startup disconnect after register emits startup prompt-gap warning" 
 }
 
 ///|
+async test "unexpected disconnect closes terminal and preserves failure teardown" {
+  let project_dir = "/tmp/choir-unexpected-disconnect-close-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let parent_id = "main.tl"
+  let agent_id = "main.leaf"
+  let target : @types.LocalTarget = {
+    kind: @types.TargetKind::ZellijPane,
+    session: "s",
+    name: "leaf-pane",
+  }
+  let state = ServerState::new(
+    { ..@types.Config::default(), project_dir, terminal_session: "s" },
+    make_hermetic_recovery_provider(),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: @types.AgentId(parent_id),
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: project_dir,
+      branch: "main",
+      terminal_target: Some({
+        kind: @types.TargetKind::ZellijPane,
+        session: "s",
+        name: "parent-pane",
+      }),
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    state.register_agent({
+      agent_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Claude,
+      parent: Some(parent_id),
+      workspace: project_dir + "/.choir/worktrees/main.leaf",
+      branch: agent_id,
+      terminal_target: Some(target),
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let expected_close = @workspace.local_close_target(target)
+  let calls : Array[@workspace.Command] = []
+  state.handle_disconnect_with_runner(agent_id, runner=async fn(cmds) {
+    @async.sleep(0)
+    for cmd in cmds {
+      calls.push(cmd)
+    }
+    [0]
+  })
+  let mut saw_close = false
+  let mut saw_parent_failure = false
+  for cmd in calls {
+    if cmd == expected_close {
+      saw_close = true
+    }
+    if cmd.program == "choir" &&
+      cmd.args.contains("zellij-action") &&
+      cmd.args.contains("send") &&
+      cmd.args[cmd.args.length() - 1].contains("[FAILED: " + agent_id + "]") {
+      saw_parent_failure = true
+    }
+  }
+  assert_true(saw_close)
+  assert_true(saw_parent_failure)
+  match @phase.read_lifecycle(project_dir, agent_id) {
+    Some(
+      { process: @phase.ProcessState::Failed(reason=UnexpectedDisconnect), .. }
+    ) => ()
+    _ => fail("expected persisted Failed(UnexpectedDisconnect) lifecycle")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 test "clear_agent_runtime_tracking clears worker no-handoff maps" {
   let project_dir = "/tmp/choir-clear-worker-handoff-" +
     @sys.get_pid().to_string() +
@@ -1577,6 +1662,7 @@ async fn ServerState::handle_disconnect_confirming_with_runner(
                 msg,
                 @types.ExitReason::Disconnected,
                 runner,
+                close_target=true,
               )
             }
           }
