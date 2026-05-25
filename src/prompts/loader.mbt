@@ -176,36 +176,6 @@ const TL_STANCE_DEFAULT : String =
   #|- If the user orders a destructive or irreversible action under emotional
   #|  load, confirm before executing.
   #|
-  #|### File friction beads proactively — these are triggers, not suggestions
-  #|
-  #|When one of the following fires, file a Beads issue immediately
-  #|(`bd create "<title>" --type bug -p <n> --description "..."` — what
-  #|happened, what you ruled out, a proposed fix) and then continue. Do not
-  #|wait for the user to notice the friction first; "file beads for issues you
-  #|encounter" is non-deterministic prose unless it has concrete triggers.
-  #|
-  #|- A bounded external call (`gh api`, `bd`, a verify command) hangs, times
-  #|  out, or fails the same way twice in a row -> bead the discipline gap.
-  #|- Two parallel leaves conflict on the same file at merge/integration time
-  #|  -> bead the scaffold/decompose gap that allowed it.
-  #|- The TL process exits unexpectedly, or a leaf is killed by the watchdog,
-  #|  or a phantom-disconnect notification fires for a live agent -> bead it
-  #|  (process/lifecycle resilience).
-  #|- A poller notification repeats with identical content, or a CLI command
-  #|  emits the same warning on every invocation -> bead the noise.
-  #|- A CLAUDE.md / `tl.md` / prose rule had to be restated to a leaf because
-  #|  nothing enforced it -> bead "promote this prose to a gate."
-  #|- A multi-step ceremony was done by hand that the pipeline could
-  #|  auto-thread (crystallize->decompose->fork_wave, override-toggle dance,
-  #|  bead-epic wiring) -> bead the automation.
-  #|- An audit/review round found the same class of issue a prior round
-  #|  missed -> bead the detection gap, not just the instance.
-  #|- A duplicated implementation of the same logic is discovered -> bead the
-  #|  dedup (don't leave the second copy "just in case").
-  #|
-  #|When in doubt, file it. A redundant P3 bead costs nothing; an un-filed
-  #|friction point recurs.
-  #|
 
 ///|
 const CRYSTALLIZE_DEFAULT : String =
@@ -279,7 +249,7 @@ const SHIP_PR_DEFAULT : String =
   #|
   #|## Path B — TL-direct (root, no task contract)
   #|
-  #|`mcp__choir__file_pr` will fail with `server task contract unavailable for tracked agent 'root'`. Fall back:
+  #|`mcp__choir__file_pr` will fail with `server task contract unavailable for tracked agent 'root'`. This path is a workaround for that known server bug, not the normal shipping flow:
   #|
   #|1. `git push -u origin <branch>` from where the work lives.
   #|2. `gh pr create --base main --head <branch> --title ... --body ...` via HEREDOC. Escape `@`-prefixed strings in the body (`@debug` etc. become GitHub mentions — use backticks or rewrite).
@@ -288,7 +258,7 @@ const SHIP_PR_DEFAULT : String =
   #|5. `mcp__choir__write_audit_receipt sha=<full> branch=<branch> findings_count=0 caller_id=root`.
   #|6. `mcp__choir__track_pr pr_number=<n> agent_id=root branch=<branch> parent_branch=main pr_url=...`
   #|7. `mcp__choir__request_review pr_number=<n> reviewer=@copilot`.
-  #|8. After Copilot review + CI: `mcp__choir__merge_pr` fails with same task-contract error. Fall back: `gh pr merge <n> --merge --admin`.
+  #|8. After Copilot review + CI: `mcp__choir__merge_pr` fails with same task-contract error. **Workaround** (until root-caller contract is fixed): `gh pr merge <n> --merge --admin`. This bypasses the choir gate — do NOT use for normal leaf flows. File follow-up tracked separately.
   #|
   #|## Gotchas
   #|
@@ -323,7 +293,7 @@ const DISPATCH_LEAF_DEFAULT : String =
   #|
   #|## After spawn
   #|
-  #|- Sleep 240–480s for TDD ceremony.
+  #|- Wait for the leaf's `notify_parent` to deliver via the poller. Do NOT sleep-poll. Goal-mode autonomous runs that lack notification flow are the only exception — see TL operating notes.
   #|- Check `/proc/<pid>/cwd` if leaf goes silent >15min — likely cd'd out.
   #|- Mutation-gate orphan watch: `ps | grep mutation` within 2min of any `[MUTATION GATE INCOMPLETE]`.
   #|
@@ -435,6 +405,7 @@ const WORKER_RESEARCH_DEFAULT : String =
   #|   - For Beads issue lookups, prefer `task_get <id>` or `bd --readonly show <id> --json`; do not mutate Beads unless the task explicitly delegates that authority.
   #|   - The `<message>` must contain the complete report. Do not print it to stdout and say 'see below'.
   #|3. Call `shutdown` only after `notify_parent` returns.
+  #|
 
 ///|
 const WORKER_REVIEW_DEFAULT : String =
@@ -457,6 +428,7 @@ const WORKER_REVIEW_DEFAULT : String =
   #|   - For Beads issue lookups, prefer `task_get <id>` or `bd --readonly show <id> --json`; do not mutate Beads unless the task explicitly delegates that authority.
   #|   - The `<message>` must contain the complete report. Do not print it to stdout and say 'see below'.
   #|3. Call `shutdown` only after `notify_parent` returns.
+  #|
 
 ///|
 pub fn default_prompt(name : PromptName) -> String {
