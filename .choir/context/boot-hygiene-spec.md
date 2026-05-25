@@ -196,7 +196,7 @@ Approach (as shipped):
 - **Leaf 3 (observable):** the reap only fires through zellij's
   resurrection cache, not against a live session — `choir init` against
   a live session takes the early-attach return in the `session_alive
-  == 0` branch of `cmd_init` (the same branch that calls
+  == 0` branch of `init_run` (the same branch that calls
   `zellij_attach_session`) and never reaches the reap. To exercise the
   reap end-to-end: set up
   a zellij session with synthetic stale tabs `Server`, `TL`, plus
