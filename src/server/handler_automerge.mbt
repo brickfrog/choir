@@ -312,6 +312,18 @@ pub async fn maybe_trigger_automerge_for_pending_event(
   let task_contract = match task_contract_for_agent(state, tracked.agent_id) {
     Some(contract) => Some(contract)
     None => {
+      // Missing task contract is a permanent block for this head — re-running
+      // the sweep without a contract change cannot succeed, so stamp the
+      // attempt sha to prevent every subsequent poll-delivery tick from
+      // retrying and re-emitting the same log line.
+      match state.poller.get(tracked.pr_number) {
+        Some(current) =>
+          state.poller.restore({
+            ..current,
+            last_automerge_attempt_sha: tracked.last_sha,
+          })
+        None => ()
+      }
       append_poller_delivery_line(
         state.append_file,
         state.config.project_dir,

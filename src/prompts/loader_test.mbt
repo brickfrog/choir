@@ -368,23 +368,59 @@ test "ship pr default prompt does not promise file_pr sidecar audit" {
 }
 
 ///|
-test "ship pr default prompt runs /audit AFTER review threads clear (not before)" {
+fn ship_pr_section(
+  body : String,
+  start_heading : String,
+  end_heading : String?,
+) -> String {
+  let start = match body.find(start_heading) {
+    Some(i) => i
+    None => return ""
+  }
+  let end = match end_heading {
+    Some(h) =>
+      match body[start:].to_owned().find(h) {
+        Some(j) => start + j
+        None => body.length()
+      }
+    None => body.length()
+  }
+  body[start:end].to_owned()
+}
+
+///|
+test "ship pr Path A places /audit AFTER push fixes step within the Path A section" {
   let body = default_prompt(PromptName::ShipPr)
-  // Path A and Path B both must place /audit downstream of the Copilot
-  // push-fixes step — running audit before fixes mints a receipt for a
-  // HEAD that subsequent commits invalidate, which is exactly the
-  // workflow-induced stale-receipt bug a prior audit cycle caught.
-  let fixes_idx = body.find("push fixes")
-  let audit_idx = body.find("the TL runs `/audit`")
+  let path_a = ship_pr_section(body, "## Path A", Some("## Path B"))
+  assert_true(path_a.length() > 0, msg="Path A section not found")
+  let fixes_idx = path_a.find("push fixes")
+  let audit_idx = path_a.find("the TL runs `/audit`")
   match (fixes_idx, audit_idx) {
     (Some(fi), Some(ai)) =>
       assert_true(
         fi < ai,
-        msg="audit step must appear after push-fixes step in the skill body",
+        msg="Path A audit step must appear after Path A push-fixes step",
       )
-    _ => fail("expected both push-fixes and audit references in ship-pr body")
+    _ => fail("Path A missing push-fixes or audit reference")
   }
-  assert_true(body.contains("Audit must run AFTER fixes are pushed"))
+  assert_true(path_a.contains("Audit must run AFTER fixes are pushed"))
+}
+
+///|
+test "ship pr Path B places /audit AFTER push fixes step within the Path B section" {
+  let body = default_prompt(PromptName::ShipPr)
+  let path_b = ship_pr_section(body, "## Path B", Some("## Gotchas"))
+  assert_true(path_b.length() > 0, msg="Path B section not found")
+  let fixes_idx = path_b.find("push fixes")
+  let audit_idx = path_b.find("run `/audit`")
+  match (fixes_idx, audit_idx) {
+    (Some(fi), Some(ai)) =>
+      assert_true(
+        fi < ai,
+        msg="Path B audit step must appear after Path B push-fixes step",
+      )
+    _ => fail("Path B missing push-fixes or audit reference")
+  }
 }
 
 ///|
