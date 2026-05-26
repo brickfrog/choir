@@ -469,7 +469,6 @@ test "generate_pending_wave_id format" {
 test "generate_pending_wave_id flattens slash in slug_prefix" {
   let id = @tools.generate_pending_wave_id("feature/foo", 1700000000L, 4242)
   assert_eq(id, "feature-foo-1700000000-4242")
-  assert_false(id.contains("/"))
 }
 
 ///|

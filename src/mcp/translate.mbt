@@ -62,9 +62,10 @@ test "fork_wave schema exposes per leaf task contracts without requiring shared 
         if prop.name == "task_contracts" {
           has_task_contracts = true
           assert_true(
-            prop.desc.contains("JSON array of per-leaf task contract overrides"),
+            prop.desc.contains("JSON array of per-leaf TaskContract overrides"),
           )
           assert_true(prop.desc.contains("beads_issue_id"))
+          assert_true(prop.desc.contains("Omit to inherit"))
         }
       }
       assert_true(has_task_contracts)
@@ -237,7 +238,7 @@ fn tool_defs() -> Array[CatalogTool] {
         },
         {
           name: "task_contracts",
-          desc: "JSON array of per-leaf task contract overrides; each entry shape: {\"beads_issue_id\":\"<id>\"}. Length must match tasks-array length / count. Use this to give each leaf in a multi-bead wave its own Beads issue (so the TDD verify gate resolves per-leaf).",
+          desc: "Optional JSON array of per-leaf TaskContract overrides; each entry is an object whose fields override the wave-level base contract for that one leaf (omitted fields inherit). Recognized fields: beads_issue_id, goal, scope (array), acceptance_checks (array), done_criteria (array), constraints (array), non_goals (array), verify (array), verify_satisfied_by_ci, review_context. When provided, length must equal tasks-array length / count. Omit to inherit the base contract for every leaf. Primary use: give each leaf in a multi-bead wave its own Beads issue so the TDD verify gate resolves per-leaf.",
         },
         {
           name: "role",
@@ -249,7 +250,10 @@ fn tool_defs() -> Array[CatalogTool] {
         },
         { name: "branch", desc: "Compatibility alias for parent_branch" },
         { name: "count", desc: "Number of leaves when using shared task" },
-        { name: "slug_prefix", desc: "Slug prefix for spawned children" },
+        {
+          name: "slug_prefix",
+          desc: "Slug prefix for spawned children. Accepts '/' so hierarchical names like 'feature/foo' are valid input, but '/' is flattened to '-' when deriving wave_id and filesystem-side keys (e.g. .choir/kv/pending-wave--<id>) — storage stays flat. Child branch names still use the raw form via parent_branch concatenation.",
+        },
         {
           name: "automerge",
           desc: "Optional per-wave override for server-triggered merge_pr after merge policy reaches MergeNow; omitted inherits config default (default config is false)",
