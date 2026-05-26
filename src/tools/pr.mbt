@@ -692,15 +692,35 @@ pub async fn detect_default_branch(
 }
 
 ///|
-pub fn merge_pr_command(pr_number : Int) -> @workspace.Command {
+pub fn merge_strategy_to_gh_flag(strategy : @types.MergeStrategy) -> String {
+  match strategy {
+    Merge => "--merge"
+    Squash => "--squash"
+    Rebase => "--rebase"
+  }
+}
+
+///|
+pub fn merge_pr_command(
+  pr_number : Int,
+  strategy : @types.MergeStrategy,
+) -> @workspace.Command {
   {
     program: "gh",
-    args: ["pr", "merge", pr_number.to_string(), "--merge"],
+    args: [
+      "pr",
+      "merge",
+      pr_number.to_string(),
+      merge_strategy_to_gh_flag(strategy),
+    ],
     workdir: None,
   }
 }
 
 ///|
-pub fn merge_pr_commands(pr_number : Int) -> Array[@workspace.Command] {
-  [merge_pr_command(pr_number), @workspace.git_fetch()]
+pub fn merge_pr_commands(
+  pr_number : Int,
+  strategy : @types.MergeStrategy,
+) -> Array[@workspace.Command] {
+  [merge_pr_command(pr_number, strategy), @workspace.git_fetch()]
 }

@@ -405,6 +405,7 @@ fn fork_wave_args_base() -> ForkWaveArgs {
     review_context: None,
     automerge: None,
     review_mode: None,
+    merge_strategy: None,
     depends_on: [],
     scaffold_commit: None,
   }
@@ -429,6 +430,23 @@ test "fork_wave_spawn_plan builds specs and agent_ids for shared-task wave" {
 }
 
 ///|
+test "fork_wave_spawn_plan persists merge_strategy override to leaf local config" {
+  let args = {
+    ..fork_wave_args_base(),
+    merge_strategy: Some(@types.MergeStrategy::Squash),
+  }
+  let plan = fork_wave_spawn_plan(args, 0, None, "/proj", "choir")
+  let mut found = false
+  for cmd in plan.cmds {
+    if cmd.args.length() >= 3 && cmd.args[1] == "config.local.toml" {
+      found = true
+      assert_true(cmd.args[2].contains("merge_strategy = \"squash\""))
+    }
+  }
+  assert_true(found)
+}
+
+///|
 test "fork_wave_spawn_plan disambiguates duplicate raw slugs" {
   let args : ForkWaveArgs = {
     count: 2,
@@ -447,6 +465,7 @@ test "fork_wave_spawn_plan disambiguates duplicate raw slugs" {
     review_context: None,
     automerge: None,
     review_mode: None,
+    merge_strategy: None,
     depends_on: [],
     scaffold_commit: None,
   }
@@ -476,6 +495,7 @@ test "fork_wave_spawn_plan honors custom slug_prefix for per-leaf tasks" {
     review_context: None,
     automerge: None,
     review_mode: None,
+    merge_strategy: None,
     depends_on: [],
     scaffold_commit: None,
   }
@@ -507,6 +527,7 @@ test "fork_wave_spawn_plan flattens slash in slug_prefix for child slugs" {
     review_context: None,
     automerge: None,
     review_mode: None,
+    merge_strategy: None,
     depends_on: [],
     scaffold_commit: None,
   }

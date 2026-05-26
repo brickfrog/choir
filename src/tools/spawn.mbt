@@ -279,6 +279,7 @@ pub fn spawn_worker_plan(
     spawn_depth: 0,
     automerge: None,
     review_mode: None,
+    merge_strategy: None,
     wave_id: None,
   }
   let agent_id = @workspace.canonical_agent_id(spec)
@@ -620,6 +621,7 @@ pub fn spawn_remote_plan(args : RemoteSpawnArgs) -> SpawnRemotePlan {
     spawn_depth: 0,
     automerge: None,
     review_mode: None,
+    merge_strategy: None,
     wave_id: None,
   }
   let ok_response = @types.Response::ok_values({
@@ -714,6 +716,7 @@ pub fn spawn_gemini_plan(args : SpawnGeminiArgs) -> SpawnGeminiPlan {
     spawn_depth: 0,
     automerge: None,
     review_mode: None,
+    merge_strategy: None,
     wave_id: None,
   }
   let ok_response = @types.Response::ok_values({

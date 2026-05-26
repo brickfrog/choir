@@ -152,6 +152,7 @@ pub fn fork_wave_spawn_plan(
       spawn_depth: child_spawn_depth,
       automerge: fork_wave_args.automerge,
       review_mode: fork_wave_args.review_mode,
+      merge_strategy: fork_wave_args.merge_strategy,
       wave_id,
     }
     spawned_specs.push(spec)

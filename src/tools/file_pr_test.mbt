@@ -801,6 +801,7 @@ fn file_pr_test_write_verify_config(
     spawn_depth: 0,
     automerge: None,
     review_mode: None,
+    merge_strategy: None,
     wave_id: None,
   }
   ignore(
