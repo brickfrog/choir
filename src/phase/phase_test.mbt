@@ -132,7 +132,7 @@ test "sync_parent_child_lifecycle keeps warn for live child missing parent" {
   }
   let captured : Array[@moontrace.Event] = []
   let msg = "sync_parent_child_lifecycle: parent not in registry"
-  phase_test_with_capture(captured, fn() {
+  phase_test_with_capture(captured, fn() raise {
     sync_parent_child_lifecycle(
       project_dir, "session", registry, agent_id, lifecycle,
     )
@@ -161,7 +161,7 @@ test "sync_parent_child_lifecycle downgrades missing parent for terminal child" 
   }
   let captured : Array[@moontrace.Event] = []
   let msg = "sync_parent_child_lifecycle: parent not in registry"
-  phase_test_with_capture(captured, fn() {
+  phase_test_with_capture(captured, fn() raise {
     sync_parent_child_lifecycle(
       project_dir, "session", registry, agent_id, lifecycle,
     )

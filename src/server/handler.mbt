@@ -209,8 +209,6 @@ pub async fn ServerState::handle_with_runner_and_capture(
       global_review_mode=self.config.review_mode,
       merge_strategy=self.config.merge_strategy,
       moon_verify_target=self.config.moon_verify_target,
-      audit_heartbeat_sec=self.config.audit_heartbeat_sec,
-      audit_max_rounds=self.config.audit_max_rounds,
       prenotify_checks=self.config.prenotify_checks,
       mutation_kill_rate_min=self.config.mutation_kill_rate_min,
       agy_migration_incomplete=self.config.agy_migration_incomplete,
@@ -233,83 +231,6 @@ pub async fn ServerState::handle_with_runner_and_capture(
                 ],
               )
           }
-        }
-      },
-      prepare_audit_report=fn(agent_id) {
-        self.prepare_audit_on_file_pr_report(agent_id)
-      },
-      record_audit_cycle_for_agent=fn(agent_id) {
-        self.record_audit_cycle_for_agent(agent_id)
-      },
-      audit_cycle_count_for_agent=fn(agent_id) {
-        self.audit_cycle_count_for_agent(agent_id)
-      },
-      clear_audit_cycle_for_agent=fn(agent_id) {
-        self.clear_audit_cycle_count_for_agent(agent_id)
-      },
-      notify_audit_started=async fn(agent_id, pr_number, cycle_number) {
-        self.notify_parent_audit_started(
-          agent_id,
-          cycle_number,
-          pr_number~,
-          runner~,
-        )
-      },
-      audit_progress_reader=fn(agent_id) {
-        match self.audit_progress_for_agent(agent_id) {
-          Some(progress) =>
-            Some(@tools.WaveStateAuditProgress::{
-              cycles_so_far: progress.cycles_so_far,
-              last_findings_count: progress.last_findings_count,
-              last_receipt_path: progress.last_receipt_path,
-              last_cycle_at_ms: progress.last_cycle_at_ms,
-              exhausted: progress.exhausted,
-            })
-          None => None
-        }
-      },
-      audit_worker_alive=fn(agent_id) {
-        self.registry.is_alive(agent_id).unwrap_or(false)
-      },
-      wait_for_audit_report=async fn(agent_id) {
-        self.wait_for_audit_on_file_pr_report(agent_id)
-      },
-      capture_audit_on_file_pr_report=async fn(agent_id, report) {
-        self.capture_audit_on_file_pr_report(
-          agent_id,
-          report,
-          runner~,
-          capture~,
-        )
-      },
-      cleanup_audit_report=async fn(agent_id) {
-        self.cleanup_audit_on_file_pr_report(agent_id)
-        let kill_resp = @tools.interpret_kill_agent(
-          { agent_id, reason: "audit-on-file-pr timed out" },
-          Some(self.registry),
-          runner,
-          project_dir=self.config.project_dir,
-          capture~,
-        )
-        if kill_resp.is_ok() {
-          self.fail_agent_with_runner(
-            agent_id,
-            @phase.FailureReason::WatchdogTimeout,
-            "[FAILED: " +
-            agent_id +
-            "] audit-on-file-pr timed out; cleanup attempted",
-            @types.ExitReason::Shutdown,
-            runner,
-            close_target=false,
-          )
-        } else {
-          @moontrace.warn("audit-on-file-pr reap failed", fields=[
-            @moontrace.field("agent_id", agent_id),
-            @moontrace.field(
-              "error",
-              kill_resp.error_message().unwrap_or("unknown error"),
-            ),
-          ])
         }
       },
       prepare_mutation_gate_report=fn(agent_id) {

@@ -336,9 +336,9 @@ test "leaf profile default prompt uses poller snapshots for review state" {
   assert_true(body.contains("the moment the next poller snapshot shows"))
   assert_true(body.contains("notify_parent --status success"))
   assert_true(body.contains("Do not enter sleep loops"))
-  assert_true(body.contains("A 120s pause is normal"))
-  assert_true(body.contains("Do NOT report [FAILED] at 120s"))
-  assert_true(body.contains("audit-on-file-pr"))
+  assert_true(body.contains("Audit gate ownership"))
+  assert_true(body.contains("Leaves never call /audit"))
+  assert_true(body.contains("merge_pr returns a policy block"))
   assert_true(body.contains("tdd_intent"))
   assert_true(body.contains("tdd_red_check"))
   assert_true(body.contains("tdd_green_check"))
@@ -350,9 +350,21 @@ test "leaf profile default prompt uses poller snapshots for review state" {
     ),
   )
   assert_false(
-    body.contains("you (the leaf) must resolve each thread yourself"),
+    body.contains("you (the leaf) must resolve" + " each thread yourself"),
   )
-  assert_false(body.contains("resolveReviewThread(input: {threadId:"))
+  assert_false(body.contains("resolveReviewThread(input: " + "{threadId:"))
+}
+
+///|
+test "ship pr default prompt does not promise file_pr sidecar audit" {
+  let body = default_prompt(PromptName::ShipPr)
+  assert_false(body.contains("Auto-" + "audit"))
+  assert_false(body.contains("auto-" + "audit"))
+  assert_true(body.contains("audit does not run during file_pr"))
+  assert_true(body.contains("the TL runs `/audit`"))
+  assert_true(body.contains("merge_pr returns a policy block"))
+  assert_true(body.contains("poller snapshot to show zero unresolved threads"))
+  assert_false(body.contains("resolveReviewThread(input: " + "{threadId:"))
 }
 
 ///|

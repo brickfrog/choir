@@ -79,7 +79,7 @@ test "HookInput construction with all fields" {
     merge_provenance: None,
     role: Some(@types.Role::Dev),
     tool_name: Some("test_tool"),
-    tool_args: Some(Map::of([("key", "value")])),
+    tool_args: Some(Map([("key", "value")])),
     tool_result_status: None,
     exit_reason: None,
     suspend_reason: None,

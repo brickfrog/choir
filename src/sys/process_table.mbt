@@ -104,25 +104,25 @@ test "choir_mcp_stdio_pids_for_agent_from_processes filters by agent id" {
       {
         pid: 31,
         ppid: 99,
-        cmdline: "choir\u{0000}mcp-stdio\u{0000}--name\u{0000}main.audit-on-file-pr-abc-1",
+        cmdline: "choir\u{0000}mcp-stdio\u{0000}--name\u{0000}main.worker-abc-1",
       },
       {
         pid: 32,
         ppid: 99,
-        cmdline: "choir\u{0000}mcp-stdio\u{0000}--name\u{0000}main.audit-on-file-pr-abc-12",
+        cmdline: "choir\u{0000}mcp-stdio\u{0000}--name\u{0000}main.worker-abc-12",
       },
       {
         pid: 33,
         ppid: 99,
-        cmdline: "choir\u{0000}serve\u{0000}main.audit-on-file-pr-abc-1",
+        cmdline: "choir\u{0000}serve\u{0000}main.worker-abc-1",
       },
       {
         pid: 34,
         ppid: 99,
-        cmdline: "other\u{0000}mcp-stdio\u{0000}main.audit-on-file-pr-abc-1",
+        cmdline: "other\u{0000}mcp-stdio\u{0000}main.worker-abc-1",
       },
     ],
-    "main.audit-on-file-pr-abc-1",
+    "main.worker-abc-1",
   )
   @debug.assert_eq(pids, [31])
   @debug.assert_eq(choir_mcp_stdio_pids_for_agent_from_processes([], ""), [])

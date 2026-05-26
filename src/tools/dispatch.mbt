@@ -681,30 +681,6 @@ fn notify_parent_blocked_parent_warn_send_plan(
 }
 
 ///|
-fn notify_parent_from_audit_on_file_pr_worker(
-  registry : @registry.AgentRegistry?,
-  caller_id : String,
-) -> Bool {
-  match registry {
-    Some(reg) =>
-      try {
-        let agent = reg.get(caller_id)
-        let slug = @phase.extract_slug(caller_id)
-        let prefix = audit_on_file_pr_internal_caller_id + "-"
-        agent.role == @types.Role::Worker &&
-        slug.has_prefix(prefix) &&
-        agent.state == @types.AgentState::Active &&
-        reg.is_alive(caller_id).unwrap_or(false)
-      } catch {
-        _ => false
-      } noraise {
-        result => result
-      }
-    None => false
-  }
-}
-
-///|
 fn notify_parent_from_mutation_gate_worker(
   registry : @registry.AgentRegistry?,
   caller_id : String,
@@ -724,14 +700,6 @@ fn notify_parent_from_mutation_gate_worker(
         result => result
       }
     None => false
-  }
-}
-
-///|
-fn audit_on_file_pr_shutdown_report() -> AuditOnFilePrReport {
-  {
-    message: "audit worker shutdown without notify_parent report",
-    status: @types.Status::Failure,
   }
 }
 
@@ -932,8 +900,6 @@ pub async fn dispatch(
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
   merge_strategy? : @types.MergeStrategy = @types.Config::default().merge_strategy,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
-  audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
-  audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
   prenotify_checks? : Array[String] = @types.Config::default().prenotify_checks,
   mutation_kill_rate_min? : Double = @types.Config::default().mutation_kill_rate_min,
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
@@ -942,35 +908,6 @@ pub async fn dispatch(
     @types.next_goal_nonce(@env.now().reinterpret_as_int64())
   },
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
-  prepare_audit_report? : (String) -> Unit = fn(_agent_id) {  },
-  record_audit_cycle_for_agent? : (String) -> Int = fn(_agent_id) { 0 },
-  audit_cycle_count_for_agent? : (String) -> Int = fn(_agent_id) { 0 },
-  clear_audit_cycle_for_agent? : (String) -> Unit = fn(_agent_id) { () },
-  notify_audit_started? : async (String, Int?, Int) -> Unit = async fn(
-    _agent_id,
-    _pr_number,
-    _cycle_number,
-  ) {
-    @async.sleep(0)
-  },
-  audit_progress_reader? : (String) -> WaveStateAuditProgress? = fn(_) { None },
-  audit_worker_alive? : (String) -> Bool = fn(_agent_id) { true },
-  wait_for_audit_report? : async (String) -> AuditOnFilePrReport? = async fn(
-    _,
-  ) {
-    @async.sleep(0)
-    None
-  },
-  capture_audit_on_file_pr_report? : async (String, AuditOnFilePrReport) -> Unit = async fn(
-    _agent_id,
-    _report,
-  ) {
-    @async.sleep(0)
-    ()
-  },
-  cleanup_audit_report? : async (String) -> Unit = async fn(_) {
-    @async.sleep(0)
-  },
   prepare_mutation_gate_report? : (String) -> Unit = fn(_agent_id) {  },
   wait_for_mutation_gate_report? : async (String) -> MutationGateWorkerReport? = async fn(
     _,
@@ -1314,34 +1251,7 @@ pub async fn dispatch(
         ensure_pr,
         caller_role~,
         record_verify_event~,
-        create_dir_all~,
-        write_file_atomic~,
-        prepare_audit_report~,
-        wait_for_audit_report~,
-        cleanup_audit_report~,
-        audit_heartbeat_sec~,
-        audit_max_rounds~,
-        record_audit_cycle_for_agent~,
-        audit_cycle_count_for_agent~,
-        clear_audit_cycle_for_agent~,
         append_file~,
-        audit_worker_alive~,
-        list_audit_workers=fn() {
-          match registry {
-            Some(reg) => {
-              let entries : Array[@phase.ChildLifecycle] = []
-              for agent in reg.list() {
-                let agent_id = agent.agent_id.to_string()
-                if reg.is_alive(agent_id).unwrap_or(false) {
-                  entries.push(audit_on_file_pr_worker_entry_from_agent(agent))
-                }
-              }
-              entries
-            }
-            None => []
-          }
-        },
-        notify_audit_started~,
         prepare_mutation_gate_report~,
         wait_for_mutation_gate_report~,
         cancel_mutation_gate_worker~,
@@ -1398,26 +1308,8 @@ pub async fn dispatch(
         path_exists,
         read_file~,
         write_file_atomic~,
-        create_dir_all~,
-        prepare_audit_report~,
-        wait_for_audit_report~,
-        cleanup_audit_report~,
-        audit_heartbeat_sec~,
-        audit_max_rounds~,
-        record_audit_cycle_for_agent~,
-        audit_cycle_count_for_agent~,
-        clear_audit_cycle_for_agent~,
-        notify_audit_started~,
-        audit_worker_alive~,
         merge_strategy~,
-        session~,
-        extra_mcp_servers_json~,
-        shell_command~,
-        listen_uds~,
-        listen_tcp~,
-        tcp_auth_token~,
         task_contract_reader~,
-        record_task_contract~,
         moon_verify_target~,
       )
       if resp.is_ok() {
@@ -1512,19 +1404,6 @@ pub async fn dispatch(
               raise e
             }
         }
-      }
-      if notify_parent_from_audit_on_file_pr_worker(
-          registry,
-          notify_args.caller_id,
-        ) {
-        capture_audit_on_file_pr_report(notify_args.caller_id, {
-          message: notify_args.message,
-          status: notify_args.status,
-        })
-        record_handoff_delivered(notify_args.caller_id)
-        return @types.Response::ok_values({
-          "status": String::to_json("notified"),
-        })
       }
       if notify_parent_from_mutation_gate_worker(
           registry,
@@ -1641,7 +1520,6 @@ pub async fn dispatch(
         registry,
         poller_state,
         capture~,
-        audit_progress_reader~,
         tdd_phase_reader~,
       )
     ToolRequest::StatusBarState(status_bar_state_args) =>
@@ -1684,12 +1562,7 @@ pub async fn dispatch(
     ToolRequest::Shutdown(shutdown_args) => {
       match shutdown_args.caller_id {
         Some(caller_id) =>
-          if notify_parent_from_audit_on_file_pr_worker(registry, caller_id) {
-            capture_audit_on_file_pr_report(
-              caller_id,
-              audit_on_file_pr_shutdown_report(),
-            )
-          } else if notify_parent_from_mutation_gate_worker(registry, caller_id) {
+          if notify_parent_from_mutation_gate_worker(registry, caller_id) {
             capture_mutation_gate_report(
               caller_id,
               mutation_gate_shutdown_report(),
@@ -2188,8 +2061,6 @@ pub async fn handle_request(
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
   merge_strategy? : @types.MergeStrategy = @types.Config::default().merge_strategy,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
-  audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
-  audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
   prenotify_checks? : Array[String] = @types.Config::default().prenotify_checks,
   mutation_kill_rate_min? : Double = @types.Config::default().mutation_kill_rate_min,
   on_resolve_review_thread? : async (Array[Int]) -> Unit = fn(_pr_numbers) {
@@ -2201,35 +2072,6 @@ pub async fn handle_request(
     @types.next_goal_nonce(@env.now().reinterpret_as_int64())
   },
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
-  prepare_audit_report? : (String) -> Unit = fn(_agent_id) {  },
-  record_audit_cycle_for_agent? : (String) -> Int = fn(_agent_id) { 0 },
-  audit_cycle_count_for_agent? : (String) -> Int = fn(_agent_id) { 0 },
-  clear_audit_cycle_for_agent? : (String) -> Unit = fn(_agent_id) { () },
-  notify_audit_started? : async (String, Int?, Int) -> Unit = async fn(
-    _agent_id,
-    _pr_number,
-    _cycle_number,
-  ) {
-    @async.sleep(0)
-  },
-  audit_progress_reader? : (String) -> WaveStateAuditProgress? = fn(_) { None },
-  audit_worker_alive? : (String) -> Bool = fn(_agent_id) { true },
-  wait_for_audit_report? : async (String) -> AuditOnFilePrReport? = async fn(
-    _,
-  ) {
-    @async.sleep(0)
-    None
-  },
-  capture_audit_on_file_pr_report? : async (String, AuditOnFilePrReport) -> Unit = async fn(
-    _agent_id,
-    _report,
-  ) {
-    @async.sleep(0)
-    ()
-  },
-  cleanup_audit_report? : async (String) -> Unit = async fn(_) {
-    @async.sleep(0)
-  },
   prepare_mutation_gate_report? : (String) -> Unit = fn(_agent_id) {  },
   wait_for_mutation_gate_report? : async (String) -> MutationGateWorkerReport? = async fn(
     _,
@@ -2361,8 +2203,6 @@ pub async fn handle_request(
                   global_review_mode~,
                   merge_strategy~,
                   moon_verify_target~,
-                  audit_heartbeat_sec~,
-                  audit_max_rounds~,
                   prenotify_checks~,
                   mutation_kill_rate_min~,
                   append_file~,
@@ -2375,16 +2215,6 @@ pub async fn handle_request(
                   goal_request_tick~,
                   goal_nonce~,
                   record_handoff_delivered~,
-                  prepare_audit_report~,
-                  record_audit_cycle_for_agent~,
-                  audit_cycle_count_for_agent~,
-                  clear_audit_cycle_for_agent~,
-                  notify_audit_started~,
-                  audit_progress_reader~,
-                  audit_worker_alive~,
-                  wait_for_audit_report~,
-                  capture_audit_on_file_pr_report~,
-                  cleanup_audit_report~,
                   prepare_mutation_gate_report~,
                   wait_for_mutation_gate_report~,
                   capture_mutation_gate_report~,
@@ -2531,35 +2361,11 @@ pub async fn dispatch_call(
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
   merge_strategy? : @types.MergeStrategy = @types.Config::default().merge_strategy,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
-  audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
-  audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
   prenotify_checks? : Array[String] = @types.Config::default().prenotify_checks,
   mutation_kill_rate_min? : Double = @types.Config::default().mutation_kill_rate_min,
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
   goal_request_tick? : () -> Unit = goal_noop_request_tick,
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
-  prepare_audit_report? : (String) -> Unit = fn(_agent_id) {  },
-  record_audit_cycle_for_agent? : (String) -> Int = fn(_agent_id) { 0 },
-  audit_cycle_count_for_agent? : (String) -> Int = fn(_agent_id) { 0 },
-  clear_audit_cycle_for_agent? : (String) -> Unit = fn(_agent_id) { () },
-  audit_progress_reader? : (String) -> WaveStateAuditProgress? = fn(_) { None },
-  audit_worker_alive? : (String) -> Bool = fn(_agent_id) { true },
-  wait_for_audit_report? : async (String) -> AuditOnFilePrReport? = async fn(
-    _,
-  ) {
-    @async.sleep(0)
-    None
-  },
-  capture_audit_on_file_pr_report? : async (String, AuditOnFilePrReport) -> Unit = async fn(
-    _agent_id,
-    _report,
-  ) {
-    @async.sleep(0)
-    ()
-  },
-  cleanup_audit_report? : async (String) -> Unit = async fn(_) {
-    @async.sleep(0)
-  },
   prepare_mutation_gate_report? : (String) -> Unit = fn(_agent_id) {  },
   wait_for_mutation_gate_report? : async (String) -> MutationGateWorkerReport? = async fn(
     _,
@@ -2642,8 +2448,6 @@ pub async fn dispatch_call(
                   global_review_mode~,
                   merge_strategy~,
                   moon_verify_target~,
-                  audit_heartbeat_sec~,
-                  audit_max_rounds~,
                   prenotify_checks~,
                   mutation_kill_rate_min~,
                   append_file~,
@@ -2655,15 +2459,6 @@ pub async fn dispatch_call(
                   goal_deliver~,
                   goal_request_tick~,
                   record_handoff_delivered~,
-                  prepare_audit_report~,
-                  record_audit_cycle_for_agent~,
-                  audit_cycle_count_for_agent~,
-                  clear_audit_cycle_for_agent~,
-                  audit_progress_reader~,
-                  audit_worker_alive~,
-                  wait_for_audit_report~,
-                  capture_audit_on_file_pr_report~,
-                  cleanup_audit_report~,
                   prepare_mutation_gate_report~,
                   wait_for_mutation_gate_report~,
                   capture_mutation_gate_report~,

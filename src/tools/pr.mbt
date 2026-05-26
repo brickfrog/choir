@@ -704,23 +704,32 @@ pub fn merge_strategy_to_gh_flag(strategy : @types.MergeStrategy) -> String {
 pub fn merge_pr_command(
   pr_number : Int,
   strategy : @types.MergeStrategy,
+  match_head_sha? : String? = None,
 ) -> @workspace.Command {
-  {
-    program: "gh",
-    args: [
-      "pr",
-      "merge",
-      pr_number.to_string(),
-      merge_strategy_to_gh_flag(strategy),
-    ],
-    workdir: None,
+  let args = [
+    "pr",
+    "merge",
+    pr_number.to_string(),
+    merge_strategy_to_gh_flag(strategy),
+  ]
+  match match_head_sha {
+    Some(sha) if sha.trim().to_owned() != "" => {
+      args.push("--match-head-commit")
+      args.push(sha.trim().to_owned())
+    }
+    _ => ()
   }
+  { program: "gh", args, workdir: None }
 }
 
 ///|
 pub fn merge_pr_commands(
   pr_number : Int,
   strategy : @types.MergeStrategy,
+  match_head_sha? : String? = None,
 ) -> Array[@workspace.Command] {
-  [merge_pr_command(pr_number, strategy), @workspace.git_fetch()]
+  [
+    merge_pr_command(pr_number, strategy, match_head_sha~),
+    @workspace.git_fetch(),
+  ]
 }

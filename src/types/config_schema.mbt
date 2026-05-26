@@ -187,20 +187,6 @@ pub fn config_schema_entries() -> Array[ConfigSchemaEntry] {
     ),
     schema_entry(
       ConfigToml,
-      "audit_heartbeat_sec",
-      "Int",
-      "60",
-      "file_pr->main audit heartbeat cadence in seconds; 0 disables running heartbeats.",
-    ),
-    schema_entry(
-      ConfigToml,
-      "audit_max_rounds",
-      "Int",
-      "3",
-      "file_pr->main audit hard limit; exhausted findings return AuditLoopExhausted.",
-    ),
-    schema_entry(
-      ConfigToml,
       "mutation_kill_rate_min",
       "Double",
       "0.8",

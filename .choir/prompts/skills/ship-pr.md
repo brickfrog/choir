@@ -6,10 +6,11 @@ Two paths — pick by caller.
 
 ## Path A — leaf-flow (leaf has task contract)
 
-1. `mcp__choir__file_pr` from the leaf. Auto-audit + auto-track happens server-side.
+1. `mcp__choir__file_pr` from the leaf. It files the PR immediately and tracks it server-side; audit does not run during file_pr.
 2. Wait for `[PR READY]`, then `[REVIEW]` + `[CI LATEST HEAD] success`.
-3. Copilot threads: have the leaf push fixes, then `mcp__choir__resolve_my_review_threads` after the new commit lands.
-4. `mcp__choir__merge_pr` once threads clear + CI green.
+3. If the PR targets `main`, the TL runs `/audit` until the receipt has `findings_count=0`.
+4. Copilot threads: have the leaf push fixes, then wait for the poller snapshot to show zero unresolved threads; use `mcp__choir__resolve_my_review_threads` only if they persist.
+5. `mcp__choir__merge_pr` once threads clear + CI green. If the audit receipt is missing, merge_pr returns a policy block; run `/audit` and retry.
 
 ## Path B — TL-direct (root, no task contract)
 
@@ -26,7 +27,7 @@ Two paths — pick by caller.
 
 ## Gotchas
 
-- Thread resolution: `mcp__choir__resolve_my_review_threads` refuses if latest commit isn't after latest review. Per-thread fallback: `gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "<id>"}) { thread { isResolved } } }'`.
+- Thread resolution: after the leaf pushes fixes, wait for the next poller snapshot; the server resolves now-outdated threads for iterative-review PRs. Use `mcp__choir__resolve_my_review_threads` only for persistent unresolved threads.
 - moon fmt corruption: pre-commit only formats staged `.mbt` now. If unstaged `with fn` shows up anyway, `git restore src/` before file_pr.
 - Leaf cd'd out of worktree: leaf has no commits but main has unstaged edits matching its task — kill the leaf, finish TL-direct via Path B.
 - Audit receipt: full 40-char sha required. Findings_count must be 0 to pass merge_pr gate.

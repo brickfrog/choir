@@ -13,7 +13,6 @@ import {
   "choir/src/hooks",
   "choir/src/workspace",
   "choir/src/runtime",
-  "choir/src/policy",
   "choir/src/phase",
   "choir/src/prompts",
   "moonbitlang/core/env",

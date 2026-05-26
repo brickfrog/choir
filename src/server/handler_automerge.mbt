@@ -171,6 +171,52 @@ pub fn pr_needs_automerge_sweep_attempt(
 }
 
 ///|
+fn automerge_retryable_audit_policy_block(resp : @types.Response) -> String? {
+  match resp.error_message() {
+    Some(msg) if msg.contains("audit receipt gate") => Some(msg)
+    _ => None
+  }
+}
+
+///|
+fn automerge_delivery_log_error_detail(resp : @types.Response) -> String {
+  match resp.error_message() {
+    Some(msg) =>
+      " error=" + msg.replace(old="\n", new=" ").replace(old="\r", new=" ")
+    None => ""
+  }
+}
+
+///|
+async fn ServerState::deliver_automerge_audit_policy_block(
+  self : ServerState,
+  tracked : @poller.TrackedPR,
+  caller_id : String,
+  message : String,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  sleep_fn : async (Int) -> Unit,
+) -> Unit {
+  try {
+    let parent = self.registry.get(caller_id)
+    ignore(
+      self.durable_deliver_to_agent(
+        parent,
+        tracked.agent_id,
+        "[AUTOMERGE BLOCKED] PR #" +
+        tracked.pr_number.to_string() +
+        " needs TL audit action: " +
+        message,
+        @types.Status::Failure,
+        runner,
+        sleep_fn~,
+      ),
+    )
+  } catch {
+    _ => ()
+  }
+}
+
+///|
 fn automerge_parent_caller_id_for_tracked_pr(
   state : ServerState,
   tracked : @poller.TrackedPR,
@@ -287,6 +333,11 @@ pub async fn maybe_trigger_automerge_for_pending_event(
     Some(value) => value
     None => return false
   }
+  let previous_automerge_attempt_sha = match
+    state.poller.get(tracked.pr_number) {
+    Some(current) => current.last_automerge_attempt_sha
+    None => ""
+  }
   match state.poller.get(tracked.pr_number) {
     Some(current) =>
       state.poller.restore({
@@ -315,8 +366,33 @@ pub async fn maybe_trigger_automerge_for_pending_event(
     "automerge result pr=" +
     tracked.pr_number.to_string() +
     " status=" +
-    resp.status_tag(),
+    resp.status_tag() +
+    automerge_delivery_log_error_detail(resp),
   )
+  match automerge_retryable_audit_policy_block(resp) {
+    Some(msg) => {
+      match state.poller.get(tracked.pr_number) {
+        Some(current) =>
+          state.poller.restore({
+            ..current,
+            last_automerge_attempt_sha: previous_automerge_attempt_sha,
+          })
+        None => ()
+      }
+      append_poller_delivery_line(
+        state.append_file,
+        state.config.project_dir,
+        "automerge audit policy block pr=" +
+        tracked.pr_number.to_string() +
+        " retryable=true message=" +
+        msg.replace(old="\n", new=" ").replace(old="\r", new=" "),
+      )
+      state.deliver_automerge_audit_policy_block(
+        tracked, caller_id, msg, runner, sleep_fn,
+      )
+    }
+    None => ()
+  }
   resp.is_ok()
 }
 

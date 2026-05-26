@@ -551,7 +551,11 @@ async test "dispatch returns correct stub for each tool name" {
     ("fork_wave", "spawned", { "count": "1", "caller_id": "main.tl" }),
     ("fork_session", "ok", { "name": "nested-team" }),
     ("file_pr", "pr_created", { "branch": "test" }),
-    ("merge_pr", "merged", { "pr_number": "1" }),
+    (
+      "merge_pr",
+      "merged",
+      { "pr_number": "1", "parent_branch": "feature/base" },
+    ),
     ("track_pr", "tracked", { "pr_number": "1", "agent_id": "agent-1" }),
     ("notify_parent", "notified", { "caller_id": "test-agent" }),
     ("send_message", "sent", { "target_id": "test-agent" }),

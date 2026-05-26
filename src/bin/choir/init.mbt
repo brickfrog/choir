@@ -279,8 +279,10 @@ test "init_configure_git_hooks_path_when_githooks_present" {
   match cmd {
     Some(cmd) => {
       assert_eq(cmd.program, "git")
-      assert_eq(cmd.args, ["config", "--local", "core.hooksPath", ".githooks"])
-      assert_eq(cmd.workdir, Some(project_dir))
+      @debug.assert_eq(cmd.args, [
+        "config", "--local", "core.hooksPath", ".githooks",
+      ])
+      @debug.assert_eq(cmd.workdir, Some(project_dir))
     }
     None => assert_true(false)
   }
@@ -290,13 +292,13 @@ test "init_configure_git_hooks_path_when_githooks_present" {
     file_exists=fn(_path) { false },
     git_config_get=fn(_) { "" },
   )
-  assert_eq(absent, None)
+  @debug.assert_eq(absent, None)
 }
 
 ///|
 test "init_skip_hooks_path_when_already_set" {
   let project_dir = "/tmp/project-hooks-present"
-  assert_eq(
+  @debug.assert_eq(
     init_compute_git_hooks_path_setup(
       project_dir,
       file_exists=fn(path) { path == project_dir + "/.githooks/pre-commit" },
@@ -889,7 +891,7 @@ fn init_run() -> Unit {
           "config", "--local", "--get", "core.hooksPath",
         ])
         .trim()
-        .to_string()
+        .to_owned()
       ignore(
         match
           init_compute_git_hooks_path_setup(

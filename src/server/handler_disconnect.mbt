@@ -123,8 +123,6 @@ fn ServerState::clear_agent_runtime_tracking(
   self.handoff_delivered.remove(agent_id)
   self.worker_no_handoff_exit_emitted.remove(agent_id)
   self.idle_agent_warned_at_70.remove(agent_id)
-  self.clear_audit_cycle_count_for_agent(agent_id)
-  self.clear_audit_progress_for_agent(agent_id)
   self.recent_poller_event_emissions.remove(agent_id)
 }
 
@@ -168,6 +166,7 @@ async test "safe_remove_git_worktree skips when path is not a git worktree" {
   safe_remove_git_worktree(
     "/repo/.choir/worktrees/stale-empty-dir",
     async fn(_cmds) {
+      @async.sleep(0)
       runner_calls = runner_calls + 1
       []
     },
@@ -182,6 +181,7 @@ async test "safe_remove_git_worktree invokes runner when .git marker exists" {
   safe_remove_git_worktree(
     "/repo/.choir/worktrees/live",
     async fn(cmds) {
+      @async.sleep(0)
       captured = cmds
       [0]
     },
@@ -204,12 +204,16 @@ async test "safe_remove_git_worktree swallows runner failure silently" {
   try {
     safe_remove_git_worktree(
       "/repo/.choir/worktrees/present",
-      async fn(_cmds) { [128] },
+      async fn(_cmds) {
+        @async.sleep(0)
+        [128]
+      },
       _ => true,
     )
     safe_remove_git_worktree(
       "/repo/.choir/worktrees/present",
       async fn(_cmds) {
+        @async.sleep(0)
         raise @types.ChoirError::agent_not_found("synthetic")
       },
       _ => true,
@@ -1286,6 +1290,7 @@ async test "startup disconnect after register emits startup prompt-gap warning" 
     state.process_pending_disconnects_with_runner(61L, 60L, runner=async fn(
       _cmds,
     ) {
+      @async.sleep(0)
       []
     })
   })
@@ -1453,6 +1458,7 @@ async test "supervisor disconnect clears startup disconnect context" {
   )
   assert_eq(state.disconnect_contexts.contains("main.tl"), true)
   state.process_pending_disconnects_with_runner(1L, 0L, runner=async fn(_cmds) {
+    @async.sleep(0)
     []
   })
   assert_eq(state.disconnect_contexts.contains("main.tl"), false)
