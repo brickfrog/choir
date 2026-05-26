@@ -163,6 +163,31 @@ fn validate_slug(s : String) -> Result[Unit, @types.ChoirError] {
 }
 
 ///|
+fn validate_slug_prefix(s : String) -> Result[Unit, @types.ChoirError] {
+  if s == "" {
+    return Err(
+      @types.ChoirError::validation_error("slug_prefix cannot be empty"),
+    )
+  }
+  for c in s {
+    if !is_alphanumeric_or_dash(c) && c != '/' {
+      return Err(
+        @types.ChoirError::validation_error(
+          "invalid character in slug_prefix: " + c.to_string(),
+        ),
+      )
+    }
+  }
+  Ok(())
+}
+
+///|
+test "slug prefix allows slash without loosening strict slug validator" {
+  assert_true(validate_slug_prefix("feature/foo") is Ok(_))
+  assert_true(validate_slug("feature/foo") is Err(_))
+}
+
+///|
 fn validate_branch(s : String) -> Result[Unit, @types.ChoirError] {
   if s == "" {
     return Err(@types.ChoirError::validation_error("branch cannot be empty"))
@@ -997,7 +1022,7 @@ pub fn parse_fork_wave_args(
     Ok(value) => value
     Err(e) => return Err(e)
   }
-  match validate_slug(normalized_slug_prefix) {
+  match validate_slug_prefix(normalized_slug_prefix) {
     Ok(_) => ()
     Err(e) =>
       return Err(

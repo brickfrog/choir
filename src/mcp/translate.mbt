@@ -47,6 +47,35 @@ fn tool_json(tool : CatalogTool) -> Json {
 }
 
 ///|
+test "fork_wave schema exposes per leaf task contracts without requiring shared task or count" {
+  let mut fork_wave : CatalogTool? = None
+  for def in tool_defs() {
+    if def.name == "fork_wave" {
+      fork_wave = Some(def)
+      break
+    }
+  }
+  match fork_wave {
+    Some(def) => {
+      let mut has_task_contracts = false
+      for prop in def.props {
+        if prop.name == "task_contracts" {
+          has_task_contracts = true
+          assert_true(
+            prop.desc.contains("JSON array of per-leaf task contract overrides"),
+          )
+          assert_true(prop.desc.contains("beads_issue_id"))
+        }
+      }
+      assert_true(has_task_contracts)
+      assert_false(def.required.contains("task"))
+      assert_false(def.required.contains("count"))
+    }
+    None => fail("expected fork_wave tool definition")
+  }
+}
+
+///|
 fn text_content_json(text : String) -> Json {
   let entry : Map[String, Json] = {
     "type": "text".to_json(),
@@ -207,6 +236,10 @@ fn tool_defs() -> Array[CatalogTool] {
           desc: "Beads issue ID to pass through each leaf task contract",
         },
         {
+          name: "task_contracts",
+          desc: "JSON array of per-leaf task contract overrides; each entry shape: {\"beads_issue_id\":\"<id>\"}. Length must match tasks-array length / count. Use this to give each leaf in a multi-bead wave its own Beads issue (so the TDD verify gate resolves per-leaf).",
+        },
+        {
           name: "role",
           desc: "Spawned child role: dev (default) or tl (sub-TL; nesting limited to one level below root TL)",
         },
@@ -245,7 +278,7 @@ fn tool_defs() -> Array[CatalogTool] {
         },
         { name: "non_goals", desc: "Newline-separated non-goals" },
       ],
-      required: ["task", "count"],
+      required: [],
     },
     {
       name: "spawn_gemini",
