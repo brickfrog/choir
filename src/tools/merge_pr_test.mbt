@@ -2521,6 +2521,122 @@ async test "interpret_merge_pr ignores project local merge_strategy" {
 }
 
 ///|
+async test "interpret_merge_pr errors on malformed tracked agent merge_strategy local config" {
+  let project_dir = "/tmp/choir-mpr-bad-strategy-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  let worktree = project_dir + "/.choir/worktrees/leaf"
+  let local_config_path = worktree + "/.choir/config.local.toml"
+  assert_true(@sys.create_dir_all(worktree + "/.choir"))
+  assert_true(
+    @sys.write_file_sync(local_config_path, "merge_strategy = \"squashh\"\n"),
+  )
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    80,
+    "main.leaf",
+    "main.leaf",
+    "feature/base",
+    "https://github.com/o/r/pull/80",
+    200L,
+    @poller.ReviewState::Approved,
+    "",
+    "abcdef1234567890abcdef1234567890abcdef12",
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  let args : MergePrArgs = {
+    pr_number: 80,
+    parent_branch: "feature/base",
+    caller_id: "main.tl",
+    review_mode: Some(@types.ReviewMode::SinglePass),
+  }
+  let got = interpret_merge_pr(
+    args,
+    project_dir,
+    Some(ps),
+    None,
+    None,
+    mock_runner_merge_pr_must_not_run,
+    mock_preflight_capture_no_unresolved_threads,
+    @sys.append_file_sync,
+    @sys.path_entry_exists,
+    read_file=@sys.read_file,
+    task_contract_reader=merge_pr_test_empty_contract_reader,
+  )
+  match got {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("config error:"))
+      assert_true(msg.contains(local_config_path))
+      assert_true(msg.contains("merge_strategy must be"))
+      assert_false(msg.contains(": config error:"))
+    }
+    @types.Response::Ok(_) => fail("expected malformed local config error")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_merge_pr falls through to global merge_strategy when local config absent" {
+  let project_dir = "/tmp/choir-mpr-absent-strategy-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    81,
+    "main.leaf",
+    "main.leaf",
+    "feature/base",
+    "https://github.com/o/r/pull/81",
+    200L,
+    @poller.ReviewState::Approved,
+    "",
+    "abcdef1234567890abcdef1234567890abcdef12",
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  let args : MergePrArgs = {
+    pr_number: 81,
+    parent_branch: "feature/base",
+    caller_id: "main.tl",
+    review_mode: Some(@types.ReviewMode::SinglePass),
+  }
+  let seen : Array[@workspace.Command] = []
+  let got = interpret_merge_pr(
+    args,
+    project_dir,
+    Some(ps),
+    None,
+    None,
+    async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      for cmd in cmds {
+        seen.push(cmd)
+      }
+      [0, 0]
+    },
+    mock_preflight_capture_no_unresolved_threads,
+    @sys.append_file_sync,
+    @sys.path_entry_exists,
+    read_file=@sys.read_file,
+    merge_strategy=@types.MergeStrategy::Rebase,
+    task_contract_reader=merge_pr_test_empty_contract_reader,
+  )
+  match got {
+    @types.Response::Ok(fields) =>
+      assert_eq(fields.get("status").unwrap_or(""), "merged")
+    @types.Response::Err(msg) => fail("expected merge success: " + msg)
+  }
+  let mut saw_rebase_merge = false
+  for cmd in seen {
+    if cmd.program == "gh" && cmd.args == ["pr", "merge", "81", "--rebase"] {
+      saw_rebase_merge = true
+    }
+  }
+  assert_true(saw_rebase_merge)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "interpret_merge_pr reads tracked agent merge_strategy from local config" {
   let project_dir = "/tmp/choir-mpr-squash-strategy-" +
     @sys.get_pid().to_string()
