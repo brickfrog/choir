@@ -2346,6 +2346,15 @@ pub async fn file_pr_run_mutation_gate(
               ),
             )
         }
+        // Reaching this arm means the worker REPORTED but the gate did not
+        // clear (kill_rate below threshold OR malformed report). Reporting
+        // is not the same as exiting — the prompt instructs the worker to
+        // call shutdown after notify_parent, but the chain can hang on a
+        // stuck timeout-wrapped subprocess. Cancel for consistency with
+        // the other audit_incomplete branches.
+        if result is Some(_) {
+          should_cancel_worker = true
+        }
         result
       }
   }

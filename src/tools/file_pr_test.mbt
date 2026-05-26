@@ -1448,7 +1448,7 @@ async test "file_pr_run_mutation_gate computes kill rate from mutant counts" {
   let head = "abcdef1234567890abcdef1234567890abcdef12"
   let mut spawned_slug = ""
   let mut waited_worker = ""
-  let mut cleanup_calls = 0
+  let events : Array[String] = []
   let got = file_pr_run_mutation_gate(
     project_dir,
     project_dir,
@@ -1486,9 +1486,10 @@ async test "file_pr_run_mutation_gate computes kill rate from mutant counts" {
         status: @types.Status::Success,
       })
     },
-    fn(_) { cleanup_calls = cleanup_calls + 1 },
+    fn(id) { events.push("cleanup:" + id) },
     1000,
     fn() { 123456789L },
+    cancel_worker=fn(id) { events.push("cancel:" + id) },
   )
   match got {
     Err(e) => {
@@ -1501,9 +1502,16 @@ async test "file_pr_run_mutation_gate computes kill rate from mutant counts" {
     }
     Ok(_) => fail("expected low mutation kill rate to block file_pr")
   }
-  assert_eq(cleanup_calls, 1)
   assert_eq(spawned_slug, mutation_gate_worker_slug(head, 123456789L))
   assert_eq(waited_worker, "main." + spawned_slug)
+  // Worker reported success but kill rate is below threshold → still
+  // cancel for consistency with Timeout/NoReport/WorkerDied/Reported(failure).
+  // Reporting is not the same as exiting; the worker's shutdown chain
+  // can hang on a timeout-wrapped subprocess.
+  @debug.assert_eq(events, [
+    "cancel:main." + spawned_slug,
+    "cleanup:main." + spawned_slug,
+  ])
 }
 
 ///|
