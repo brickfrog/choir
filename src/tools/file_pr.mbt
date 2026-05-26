@@ -1822,6 +1822,7 @@ pub fn build_mutation_gate_task(
     "- Do not background any subprocess. No `&`, no `nohup`, no `setsid`, no `disown`. Every subprocess must be foreground and synchronously awaited.",
     "- Do not write a helper script that outlives this shell. If you need a state machine, inline it in the shell session you control directly.",
     "- Bound every subprocess with `timeout 60s` (e.g. `timeout 60s moon test --target native --release`). Even a single unbounded `moon test` can run for 30+ minutes.",
+    "- Wrap your ENTIRE mutation loop with `timeout 600s` (10 min cap). The 60s per-subprocess bounds protect individual hangs; the 600s outer bound protects against unbounded N-mutant loops. If your script structure can't be cleanly wrapped, use a wall-clock check before each iteration that exits when `start_time + 600s < now`.",
     "- If the adapter gap is detected, your only remaining actions are: (a) call notify_parent --status failure ONCE, (b) shutdown, (c) exit. Do not run any verify command, do not run any mutant, do not poll for more information.",
     "",
     "Context:",
@@ -2234,6 +2235,7 @@ pub async fn file_pr_run_mutation_gate(
   cleanup_mutation_report : async (String) -> Unit,
   mutation_budget_ms : Int,
   now_ms_fn : () -> Int64,
+  cancel_worker? : (String) -> Unit = fn(_) {  },
   mutation_worker_alive? : (String) -> Bool = fn(_) { true },
   sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Result[Unit, @types.ChoirError] {
@@ -2297,27 +2299,35 @@ pub async fn file_pr_run_mutation_gate(
     worker_id, wait_for_mutation_report, mutation_budget_ms, now_ms_fn, mutation_worker_alive,
     sleep_fn,
   )
+  let mut should_cancel_worker = false
   let result = match wait_result {
-    MutationGateWaitOutcome::Timeout =>
+    MutationGateWaitOutcome::Timeout => {
+      should_cancel_worker = true
       Some(
         @types.ChoirError::timeout(
           "[MUTATION GATE INCOMPLETE] file_pr: mutation gate budget exceeded",
         ),
       )
-    MutationGateWaitOutcome::NoReport =>
+    }
+    MutationGateWaitOutcome::NoReport => {
+      should_cancel_worker = true
       Some(
         @types.ChoirError::audit_incomplete(
           "[MUTATION GATE INCOMPLETE] file_pr: mutation gate worker did not report",
         ),
       )
-    MutationGateWaitOutcome::WorkerDied =>
+    }
+    MutationGateWaitOutcome::WorkerDied => {
+      should_cancel_worker = true
       Some(
         @types.ChoirError::audit_incomplete(
           "[MUTATION GATE INCOMPLETE] file_pr: mutation gate worker exited before report",
         ),
       )
+    }
     MutationGateWaitOutcome::Reported(report) =>
       if report.status == @types.Status::Failure {
+        should_cancel_worker = true
         Some(
           @types.ChoirError::audit_incomplete(
             "[MUTATION GATE INCOMPLETE] file_pr: mutation gate worker reported failure: " +
@@ -2338,6 +2348,9 @@ pub async fn file_pr_run_mutation_gate(
         }
         result
       }
+  }
+  if should_cancel_worker {
+    cancel_worker(worker_id)
   }
   cleanup_mutation_report(worker_id)
   match result {
@@ -3292,6 +3305,7 @@ pub async fn interpret_file_pr(
     @async.sleep(0)
     None
   },
+  cancel_mutation_gate_worker? : (String) -> Unit = fn(_) {  },
   cleanup_mutation_gate_report? : (String) -> Unit = fn(_) {  },
   mutation_gate_budget_ms? : Int = mutation_gate_default_budget_ms,
   mutation_kill_rate_min? : Double = @types.Config::default().mutation_kill_rate_min,
@@ -3522,6 +3536,7 @@ pub async fn interpret_file_pr(
           },
           mutation_gate_budget_ms,
           mutation_gate_now_ms_fn,
+          cancel_worker=cancel_mutation_gate_worker,
           mutation_worker_alive=fn(worker_id) {
             match registry {
               Some(reg) => reg.is_alive(worker_id).unwrap_or(false)

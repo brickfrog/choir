@@ -1048,6 +1048,34 @@ test "build_mutation_gate_task includes adapter-gap immediate-exit directives" {
 }
 
 ///|
+test "build_mutation_gate_task includes outer mutation-loop wall-clock cap" {
+  let task = build_mutation_gate_task(
+    "/repo",
+    "main.leaf",
+    "abcdef1234567890abcdef1234567890abcdef12",
+    [
+      {
+        language: MutationLanguage::MoonBit,
+        source_path: "src/math.mbt",
+        test_paths: ["src/math_test.mbt"],
+      },
+    ],
+    ["moon test --target native"],
+    0.75,
+  )
+  assert_true(
+    task.contains(
+      "Wrap your ENTIRE mutation loop with `timeout 600s` (10 min cap). The 60s per-subprocess bounds protect individual hangs; the 600s outer bound protects against unbounded N-mutant loops.",
+    ),
+  )
+  assert_true(
+    task.contains(
+      "If your script structure can't be cleanly wrapped, use a wall-clock check before each iteration that exits when `start_time + 600s < now`.",
+    ),
+  )
+}
+
+///|
 async test "interpret_file_pr runs mutation gate for TL-filed registered dev PR" {
   let project_dir = "/tmp/choir-fpr-mutation-tl-dev-" +
     @sys.get_pid().to_string()
@@ -1134,6 +1162,284 @@ async test "interpret_file_pr runs mutation gate for TL-filed registered dev PR"
   assert_eq(prepared_workers.length(), 1)
   assert_true(prepared_workers[0].contains("mutation-gate-abcdef123456-"))
   ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "file_pr_run_mutation_gate cancels worker before cleanup on timeout" {
+  let project_dir = "/tmp/choir-fpr-mutation-timeout-cancel-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let worker_id = "main.mutation-gate-fixed"
+  let events : Array[String] = []
+  let mut now_ms = 0L
+  let got = file_pr_run_mutation_gate(
+    project_dir,
+    project_dir,
+    @types.Role::Dev,
+    "main.leaf",
+    None,
+    "feature/leaf-tdd-discipline",
+    head,
+    ["moon test --target native"],
+    0.8,
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+        return (0, "main.leaf\n")
+      }
+      if cmd.program == "git" &&
+        cmd.args ==
+        ["diff", "--name-only", "feature/leaf-tdd-discipline..." + head] {
+        return (0, "src/math.mbt\nsrc/math_test.mbt\n")
+      }
+      (0, "")
+    },
+    async fn(_) {
+      @async.sleep(0)
+      Ok(worker_id)
+    },
+    async fn(_) {
+      @async.sleep(10)
+      None
+    },
+    fn(id) { events.push("cleanup:" + id) },
+    2,
+    fn() {
+      let value = now_ms
+      now_ms = now_ms + 1L
+      value
+    },
+    cancel_worker=fn(id) { events.push("cancel:" + id) },
+    sleep_fn=file_pr_test_no_sleep,
+  )
+  match got {
+    Err(e) =>
+      assert_true(
+        e
+        .validation_detail_or_message()
+        .contains("mutation gate budget exceeded"),
+      )
+    Ok(_) => fail("expected mutation gate timeout")
+  }
+  @debug.assert_eq(events, ["cancel:" + worker_id, "cleanup:" + worker_id])
+}
+
+///|
+async test "file_pr_run_mutation_gate cancels worker before cleanup on no report" {
+  let project_dir = "/tmp/choir-fpr-mutation-noreport-cancel-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let worker_id = "main.mutation-gate-fixed"
+  let events : Array[String] = []
+  let got = file_pr_run_mutation_gate(
+    project_dir,
+    project_dir,
+    @types.Role::Dev,
+    "main.leaf",
+    None,
+    "feature/leaf-tdd-discipline",
+    head,
+    ["moon test --target native"],
+    0.8,
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+        return (0, "main.leaf\n")
+      }
+      if cmd.program == "git" &&
+        cmd.args ==
+        ["diff", "--name-only", "feature/leaf-tdd-discipline..." + head] {
+        return (0, "src/math.mbt\nsrc/math_test.mbt\n")
+      }
+      (0, "")
+    },
+    async fn(_) {
+      @async.sleep(0)
+      Ok(worker_id)
+    },
+    async fn(_) {
+      @async.sleep(0)
+      None
+    },
+    fn(id) { events.push("cleanup:" + id) },
+    1000,
+    fn() { 123456789L },
+    cancel_worker=fn(id) { events.push("cancel:" + id) },
+  )
+  match got {
+    Err(e) =>
+      assert_true(
+        e.validation_detail_or_message().contains("worker did not report"),
+      )
+    Ok(_) => fail("expected mutation gate no-report failure")
+  }
+  @debug.assert_eq(events, ["cancel:" + worker_id, "cleanup:" + worker_id])
+}
+
+///|
+async test "file_pr_run_mutation_gate cancels worker before cleanup on worker died" {
+  let project_dir = "/tmp/choir-fpr-mutation-dead-cancel-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let worker_id = "main.mutation-gate-fixed"
+  let events : Array[String] = []
+  let got = file_pr_run_mutation_gate(
+    project_dir,
+    project_dir,
+    @types.Role::Dev,
+    "main.leaf",
+    None,
+    "feature/leaf-tdd-discipline",
+    head,
+    ["moon test --target native"],
+    0.8,
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+        return (0, "main.leaf\n")
+      }
+      if cmd.program == "git" &&
+        cmd.args ==
+        ["diff", "--name-only", "feature/leaf-tdd-discipline..." + head] {
+        return (0, "src/math.mbt\nsrc/math_test.mbt\n")
+      }
+      (0, "")
+    },
+    async fn(_) {
+      @async.sleep(0)
+      Ok(worker_id)
+    },
+    async fn(_) {
+      @async.sleep(0)
+      None
+    },
+    fn(id) { events.push("cleanup:" + id) },
+    1000,
+    fn() { 123456789L },
+    cancel_worker=fn(id) { events.push("cancel:" + id) },
+    mutation_worker_alive=fn(_) { false },
+  )
+  match got {
+    Err(e) =>
+      assert_true(
+        e.validation_detail_or_message().contains("exited before report"),
+      )
+    Ok(_) => fail("expected mutation worker death failure")
+  }
+  @debug.assert_eq(events, ["cancel:" + worker_id, "cleanup:" + worker_id])
+}
+
+///|
+async test "file_pr_run_mutation_gate does not cancel worker on success report" {
+  let project_dir = "/tmp/choir-fpr-mutation-success-no-cancel-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let worker_id = "main.mutation-gate-fixed"
+  let events : Array[String] = []
+  let got = file_pr_run_mutation_gate(
+    project_dir,
+    project_dir,
+    @types.Role::Dev,
+    "main.leaf",
+    None,
+    "feature/leaf-tdd-discipline",
+    head,
+    ["moon test --target native"],
+    0.8,
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+        return (0, "main.leaf\n")
+      }
+      if cmd.program == "git" &&
+        cmd.args ==
+        ["diff", "--name-only", "feature/leaf-tdd-discipline..." + head] {
+        return (0, "src/math.mbt\nsrc/math_test.mbt\n")
+      }
+      (0, "")
+    },
+    async fn(_) {
+      @async.sleep(0)
+      Ok(worker_id)
+    },
+    async fn(_) {
+      @async.sleep(0)
+      Some({
+        message: mutation_gate_report_json_marker +
+        " {\"kill_rate\":1.0,\"total_mutants\":4,\"killed_mutants\":4,\"surviving_mutants\":[],\"unsupported_languages\":[]}",
+        status: @types.Status::Success,
+      })
+    },
+    fn(id) { events.push("cleanup:" + id) },
+    1000,
+    fn() { 123456789L },
+    cancel_worker=fn(id) { events.push("cancel:" + id) },
+  )
+  match got {
+    Ok(_) => ()
+    Err(e) => fail("expected mutation gate success: " + e.message())
+  }
+  @debug.assert_eq(events, ["cleanup:" + worker_id])
+}
+
+///|
+async test "file_pr_run_mutation_gate cancels worker on failure report" {
+  let project_dir = "/tmp/choir-fpr-mutation-report-failure-cancel-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let worker_id = "main.mutation-gate-fixed"
+  let events : Array[String] = []
+  let got = file_pr_run_mutation_gate(
+    project_dir,
+    project_dir,
+    @types.Role::Dev,
+    "main.leaf",
+    None,
+    "feature/leaf-tdd-discipline",
+    head,
+    ["moon test --target native"],
+    0.8,
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+        return (0, "main.leaf\n")
+      }
+      if cmd.program == "git" &&
+        cmd.args ==
+        ["diff", "--name-only", "feature/leaf-tdd-discipline..." + head] {
+        return (0, "src/math.mbt\nsrc/math_test.mbt\n")
+      }
+      (0, "")
+    },
+    async fn(_) {
+      @async.sleep(0)
+      Ok(worker_id)
+    },
+    async fn(_) {
+      @async.sleep(0)
+      Some({
+        message: "adapter failed before clean shutdown",
+        status: @types.Status::Failure,
+      })
+    },
+    fn(id) { events.push("cleanup:" + id) },
+    1000,
+    fn() { 123456789L },
+    cancel_worker=fn(id) { events.push("cancel:" + id) },
+  )
+  match got {
+    Err(e) =>
+      assert_true(
+        e.validation_detail_or_message().contains("worker reported failure"),
+      )
+    Ok(_) => fail("expected mutation gate failure report")
+  }
+  @debug.assert_eq(events, ["cancel:" + worker_id, "cleanup:" + worker_id])
 }
 
 ///|
