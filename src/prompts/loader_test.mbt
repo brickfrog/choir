@@ -336,9 +336,9 @@ test "leaf profile default prompt uses poller snapshots for review state" {
   assert_true(body.contains("the moment the next poller snapshot shows"))
   assert_true(body.contains("notify_parent --status success"))
   assert_true(body.contains("Do not enter sleep loops"))
-  assert_true(body.contains("A 120s pause is normal"))
-  assert_true(body.contains("Do NOT report [FAILED] at 120s"))
-  assert_true(body.contains("audit-on-file-pr"))
+  assert_true(body.contains("Audit gate ownership"))
+  assert_true(body.contains("Leaves never call /audit"))
+  assert_true(body.contains("merge_pr returns a policy block"))
   assert_true(body.contains("tdd_intent"))
   assert_true(body.contains("tdd_red_check"))
   assert_true(body.contains("tdd_green_check"))
@@ -350,9 +350,85 @@ test "leaf profile default prompt uses poller snapshots for review state" {
     ),
   )
   assert_false(
-    body.contains("you (the leaf) must resolve each thread yourself"),
+    body.contains("you (the leaf) must resolve" + " each thread yourself"),
   )
-  assert_false(body.contains("resolveReviewThread(input: {threadId:"))
+  assert_false(body.contains("resolveReviewThread(input: " + "{threadId:"))
+}
+
+///|
+test "ship pr default prompt does not promise file_pr sidecar audit" {
+  let body = default_prompt(PromptName::ShipPr)
+  assert_false(body.contains("Auto-" + "audit"))
+  assert_false(body.contains("auto-" + "audit"))
+  assert_true(body.contains("audit does not run during file_pr"))
+  assert_true(body.contains("the TL runs `/audit`"))
+  assert_true(body.contains("merge_pr returns a policy block"))
+  assert_true(body.contains("poller snapshot to show zero unresolved threads"))
+  assert_false(body.contains("resolveReviewThread(input: " + "{threadId:"))
+}
+
+///|
+fn ship_pr_section(
+  body : String,
+  start_heading : String,
+  end_heading : String?,
+) -> String {
+  let start = match body.find(start_heading) {
+    Some(i) => i
+    None => return ""
+  }
+  let end = match end_heading {
+    Some(h) =>
+      match body[start:].to_owned().find(h) {
+        Some(j) => start + j
+        None => body.length()
+      }
+    None => body.length()
+  }
+  body[start:end].to_owned()
+}
+
+///|
+test "ship pr Path A places /audit AFTER push fixes step within the Path A section" {
+  let body = default_prompt(PromptName::ShipPr)
+  let path_a = ship_pr_section(body, "## Path A", Some("## Path B"))
+  assert_true(path_a.length() > 0, msg="Path A section not found")
+  let fixes_idx = path_a.find("push fixes")
+  let audit_idx = path_a.find("the TL runs `/audit`")
+  match (fixes_idx, audit_idx) {
+    (Some(fi), Some(ai)) =>
+      assert_true(
+        fi < ai,
+        msg="Path A audit step must appear after Path A push-fixes step",
+      )
+    _ => fail("Path A missing push-fixes or audit reference")
+  }
+  assert_true(path_a.contains("Audit must run AFTER fixes are pushed"))
+}
+
+///|
+test "ship pr Path B places /audit AFTER push fixes step within the Path B section" {
+  let body = default_prompt(PromptName::ShipPr)
+  let path_b = ship_pr_section(body, "## Path B", Some("## Gotchas"))
+  assert_true(path_b.length() > 0, msg="Path B section not found")
+  let fixes_idx = path_b.find("push fixes")
+  let audit_idx = path_b.find("run `/audit`")
+  match (fixes_idx, audit_idx) {
+    (Some(fi), Some(ai)) =>
+      assert_true(
+        fi < ai,
+        msg="Path B audit step must appear after Path B push-fixes step",
+      )
+    _ => fail("Path B missing push-fixes or audit reference")
+  }
+}
+
+///|
+test "ship pr default prompt does not embed gh pr merge --admin bypass command" {
+  let body = default_prompt(PromptName::ShipPr)
+  assert_false(body.contains("gh pr merge"))
+  assert_false(body.contains("--admin"))
+  assert_true(body.contains("surface that to the user"))
 }
 
 ///|

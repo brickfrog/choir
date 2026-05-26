@@ -456,7 +456,7 @@ async test "interpret_kill_agent skips /proc scan for project-root workspaces" {
 ///|
 async test "interpret_kill_agent kills named mcp-stdio process for inline worker" {
   let reg = @registry.AgentRegistry::new()
-  let agent_id = "main.audit-on-file-pr-abcdef123456-1779000000"
+  let agent_id = "main.worker-abcdef123456-1779000000"
   let agent = kill_agent_test_agent(
     None,
     "/proj",

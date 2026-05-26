@@ -291,7 +291,10 @@ fn expr_is_none(expr : @syntax.Expr) -> Bool {
 }
 
 ///|
-impl @syntax.IterVisitor for ConstructorNameSearch with visit_Expr(self, expr) {
+impl @syntax.IterVisitor for ConstructorNameSearch with visit_Expr(
+  self,
+  expr,
+) {
   if self.found {
     return
   }
@@ -657,7 +660,10 @@ fn pop_names_to(names : Array[String], length : Int) -> Unit {
 }
 
 ///|
-impl @syntax.IterVisitor for FunctionBodyCollector with visit_Expr(self, expr) {
+impl @syntax.IterVisitor for FunctionBodyCollector with visit_Expr(
+  self,
+  expr,
+) {
   let mut visit_children = true
   if self.direct_rule_id is None {
     match expr {
@@ -1048,7 +1054,6 @@ fn method_requires_test_sleep_fn(
   method_name == "process_poller_tick_with" ||
   method_name == "process_poller_tick" ||
   method_name == "refresh_pr_with" ||
-  method_name == "capture_audit_on_file_pr_report" ||
   method_name == "replay_pending_outbox_with"
 }
 
@@ -1180,9 +1185,6 @@ fn is_staged_existing_exec_default(
     "src/server/handler_poll_delivery.mbt|refresh_pr_with_runner|capture|capture_command_stdout",
     "src/server/handler_poll_delivery.mbt|sweep_tracked_prs_for_automerge|capture|capture_command_merged",
     "src/server/handler_request.mbt|replay_pending_outbox|runner|run_sequence", "src/server/handler_request.mbt|replay_pending_outbox_with|runner|run_sequence",
-    "src/server/state.mbt|capture_audit_on_file_pr_report|capture|capture_command_merged",
-    "src/server/state.mbt|capture_audit_on_file_pr_report|runner|run_sequence", "src/server/state.mbt|notify_parent_about_audit|runner|run_sequence",
-    "src/server/state.mbt|notify_parent_audit_started|runner|run_sequence", "src/server/state.mbt|post_audit_pr_comment|capture|capture_command_merged",
     "src/tools/cancel_wave.mbt|interpret_cancel_wave|capture|capture_command_stdout",
     "src/tools/dispatch.mbt|dispatch|bd_capture|capture_command_stdout_with_stderr_on_error",
     "src/tools/dispatch.mbt|dispatch|git_capture|capture_stdout", "src/tools/dispatch.mbt|dispatch|hook_capture|capture_hook_script_merged",

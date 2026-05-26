@@ -14,8 +14,6 @@ test "parse_config - full" {
     #|plugins_json = '[{"name":"plugin","command":"./plugin","tools":"search"}]'
     #|worker_no_handoff_prod_sec = 90
     #|worker_no_handoff_escalate_sec = 45
-    #|audit_heartbeat_sec = 30
-    #|audit_max_rounds = 2
     #|mutation_kill_rate_min = 0.9
     #|poller_heartbeat_tick_sec = 10
     #|prenotify_checks = ["moon check --target native", "moon test --target native", "moon run src/bin/choir_lint --target native"]
@@ -53,8 +51,6 @@ test "parse_config - full" {
   )
   assert_eq(cfg.worker_no_handoff_prod_sec, 90L)
   assert_eq(cfg.worker_no_handoff_escalate_sec, 45L)
-  assert_eq(cfg.audit_heartbeat_sec, 30)
-  assert_eq(cfg.audit_max_rounds, 2)
   assert_eq(cfg.mutation_kill_rate_min, 0.9)
   assert_eq(cfg.poller_heartbeat_tick_sec, 10)
   @debug.assert_eq(cfg.prenotify_checks, [
@@ -123,8 +119,6 @@ test "parse_config - minimal" {
   assert_eq(cfg.merge_strategy, @types.MergeStrategy::Merge)
   assert_eq(cfg.worker_no_handoff_prod_sec, 120L)
   assert_eq(cfg.worker_no_handoff_escalate_sec, 120L)
-  assert_eq(cfg.audit_heartbeat_sec, 60)
-  assert_eq(cfg.audit_max_rounds, 3)
   assert_eq(cfg.mutation_kill_rate_min, 0.8)
   assert_eq(cfg.poller_heartbeat_tick_sec, 60)
   @debug.assert_eq(cfg.prenotify_checks, [
@@ -236,13 +230,11 @@ test "parse_config worker no-handoff knobs accept zero disable" {
     (
       #|worker_no_handoff_prod_sec = 0
       #|worker_no_handoff_escalate_sec = 0
-      #|audit_heartbeat_sec = 0
       #|poller_heartbeat_tick_sec = 0
     ),
   ).unwrap()
   assert_eq(cfg.worker_no_handoff_prod_sec, 0L)
   assert_eq(cfg.worker_no_handoff_escalate_sec, 0L)
-  assert_eq(cfg.audit_heartbeat_sec, 0)
   assert_eq(cfg.poller_heartbeat_tick_sec, 0)
 }
 
@@ -259,59 +251,6 @@ test "parse_config worker no-handoff knobs reject fractional values" {
   match parse_config("worker_no_handoff_escalate_sec = 1.5") {
     Err(e) => assert_true(e.message().contains("expected integer"))
     Ok(_) => fail("expected fractional escalate config to fail")
-  }
-}
-
-///|
-test "parse_config audit heartbeat knob rejects invalid values" {
-  let max_cfg = parse_config(
-    "audit_heartbeat_sec = " + @types.audit_heartbeat_sec_max.to_string(),
-  ).unwrap()
-  assert_eq(max_cfg.audit_heartbeat_sec, @types.audit_heartbeat_sec_max)
-  match parse_config("audit_heartbeat_sec = -1") {
-    Err(e) => assert_true(e.message().contains("expected >= 0"))
-    Ok(_) => fail("expected negative audit heartbeat config to fail")
-  }
-  match parse_config("audit_heartbeat_sec = 1.5") {
-    Err(e) => assert_true(e.message().contains("expected integer"))
-    Ok(_) => fail("expected fractional audit heartbeat config to fail")
-  }
-  match
-    parse_config(
-      "audit_heartbeat_sec = " +
-      (@types.audit_heartbeat_sec_max.to_int64() + 1L).to_string(),
-    ) {
-    Err(e) => assert_true(e.message().contains("expected <= "))
-    Ok(_) => fail("expected oversized audit heartbeat config to fail")
-  }
-}
-
-///|
-test "parse_config audit max rounds knob parses default and rejects invalid values" {
-  assert_eq(parse_config("").unwrap().audit_max_rounds, 3)
-  let one_cfg = parse_config("audit_max_rounds = 1").unwrap()
-  assert_eq(one_cfg.audit_max_rounds, 1)
-  let max_cfg = parse_config(
-    "audit_max_rounds = " + @types.audit_max_rounds_max.to_string(),
-  ).unwrap()
-  assert_eq(max_cfg.audit_max_rounds, @types.audit_max_rounds_max)
-  match parse_config("audit_max_rounds = 0") {
-    Err(e) =>
-      assert_true(e.message().contains("audit_max_rounds must be >= 1; got 0"))
-    Ok(_) => fail("expected zero audit max rounds config to fail")
-  }
-  match parse_config("audit_max_rounds = -1") {
-    Err(e) =>
-      assert_true(e.message().contains("audit_max_rounds must be >= 1; got -1"))
-    Ok(_) => fail("expected negative audit max rounds config to fail")
-  }
-  match parse_config("audit_max_rounds = 1.5") {
-    Err(e) => assert_true(e.message().contains("expected integer"))
-    Ok(_) => fail("expected fractional audit max rounds config to fail")
-  }
-  match parse_config("audit_max_rounds = 9999999") {
-    Err(e) => assert_true(e.message().contains("expected <= "))
-    Ok(_) => fail("expected oversized audit max rounds config to fail")
   }
 }
 
@@ -345,9 +284,9 @@ test "parse_config mutation kill rate knob parses default and rejects invalid va
 ///|
 test "parse_config poller heartbeat knob rejects invalid values" {
   let max_cfg = parse_config(
-    "poller_heartbeat_tick_sec = " + @types.audit_heartbeat_sec_max.to_string(),
+    "poller_heartbeat_tick_sec = " + @types.heartbeat_sec_max.to_string(),
   ).unwrap()
-  assert_eq(max_cfg.poller_heartbeat_tick_sec, @types.audit_heartbeat_sec_max)
+  assert_eq(max_cfg.poller_heartbeat_tick_sec, @types.heartbeat_sec_max)
   match parse_config("poller_heartbeat_tick_sec = -1") {
     Err(e) => assert_true(e.message().contains("expected >= 0"))
     Ok(_) => fail("expected negative poller heartbeat config to fail")
@@ -359,7 +298,7 @@ test "parse_config poller heartbeat knob rejects invalid values" {
   match
     parse_config(
       "poller_heartbeat_tick_sec = " +
-      (@types.audit_heartbeat_sec_max.to_int64() + 1L).to_string(),
+      (@types.heartbeat_sec_max.to_int64() + 1L).to_string(),
     ) {
     Err(e) => assert_true(e.message().contains("expected <= "))
     Ok(_) => fail("expected oversized poller heartbeat config to fail")

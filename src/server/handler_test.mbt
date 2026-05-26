@@ -1268,6 +1268,13 @@ async test "maybe_trigger_automerge_for_pending_event blocks missing server cont
   )
   assert_false(merged)
   assert_false(merge_seen)
+  // The missing-task-contract branch must stamp last_automerge_attempt_sha
+  // to the current head so subsequent sweep ticks short-circuit via
+  // pr_needs_automerge_sweep_attempt instead of re-attempting forever.
+  match state.poller.get(pr_number) {
+    Some(after) => assert_eq(after.last_automerge_attempt_sha, tracked.last_sha)
+    None => fail("expected tracked PR to survive missing-contract early exit")
+  }
 }
 
 ///|
@@ -1875,6 +1882,232 @@ async test "quiet poller tick automerge sweep records attempted head on failure"
     automerge_capture=capture,
   )
   assert_eq(merge_seen_count, 1)
+}
+
+///|
+async test "automerge audit policy block is visible and retryable for same head" {
+  let pr_number = 100
+  let (state, _, project_dir) = blocked_gh_automerge_fixture(
+    "audit-policy-block",
+    pr_number,
+    review_mode=@types.ReviewMode::Iterative,
+  )
+  assert_true(
+    @sys.write_file_sync(
+      project_dir + "/.choir/audit-gate.json",
+      "{\"enabled_at_unix\":1}\n",
+    ),
+  )
+  match state.poller.get(pr_number) {
+    Some(tracked) =>
+      state.poller.restore({
+        ..tracked,
+        unresolved_thread_ids: [],
+        unresolved_thread_ids_fetched: true,
+      })
+    None => fail("expected tracked PR")
+  }
+  let parent_target = @workspace.local_target_for(
+    "test-session",
+    "TL",
+    @types.IsolationMode::Worktree,
+  ).to_string()
+  let parent_messages : Array[String] = []
+  let mut merge_seen = false
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "gh" &&
+        cmd.args.length() >= 3 &&
+        cmd.args[0] == "pr" &&
+        cmd.args[1] == "merge" {
+        merge_seen = true
+      }
+      if cmd.program == "choir" &&
+        cmd.args.length() >= 4 &&
+        cmd.args[0] == "zellij-action" &&
+        cmd.args[1] == "send" &&
+        cmd.args[2] == parent_target {
+        parent_messages.push(cmd.args[3])
+      }
+      statuses.push(0)
+    }
+    statuses
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    let repo_view_json =
+      #|{"owner":{"login":"brickfrog"},"name":"choir"}
+    if (
+        cmd.program == "gh" &&
+        cmd.args == ["repo", "view", "--json", "owner,name"]
+      ) ||
+      (
+        cmd.program == "timeout" &&
+        cmd.args == ["30s", "gh", "repo", "view", "--json", "owner,name"]
+      ) {
+      return (0, repo_view_json)
+    }
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1].has_suffix("/reviews") {
+      return (
+        0, "[{\"state\":\"APPROVED\",\"user\":{\"login\":\"copilot-pull-request-reviewer[bot]\"},\"submitted_at\":\"2026-05-10T00:00:00Z\"}]",
+      )
+    }
+    if cmd.args.contains("graphql") {
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
+    if cmd.program == "cat" {
+      return (1, "")
+    }
+    (0, "")
+  }
+  let tracked = match state.poller.get(pr_number) {
+    Some(value) => value
+    None => fail("expected tracked PR")
+  }
+  let merged = maybe_trigger_automerge_for_pending_event(
+    state,
+    @poller.PollEvent::MergeReady(pr_number),
+    tracked,
+    Some(0),
+    runner,
+    capture~,
+    review_mode=Some(@types.ReviewMode::Iterative),
+  )
+  assert_false(merged)
+  assert_false(merge_seen)
+  match state.poller.get(pr_number) {
+    Some(current) => assert_eq(current.last_automerge_attempt_sha, "")
+    None => fail("audit-blocked automerge must remain tracked")
+  }
+  let delivery_log = @sys.read_file(project_dir + "/.choir/delivery.log")
+  assert_true(delivery_log.contains("automerge result pr=100 status=error"))
+  assert_true(delivery_log.contains("Run `/audit` until findings_count == 0"))
+  assert_true(
+    delivery_log.contains("automerge audit policy block pr=100 retryable=true"),
+  )
+  let parent_text = parent_messages.join("\n")
+  assert_true(parent_text.contains("[AUTOMERGE BLOCKED] PR #100"))
+  assert_true(parent_text.contains("Run `/audit` until findings_count == 0"))
+}
+
+///|
+async test "automerge findings audit block is not retried for same head" {
+  let pr_number = 101
+  let label = "audit-findings-block"
+  let (state, _, project_dir) = blocked_gh_automerge_fixture(
+    label,
+    pr_number,
+    review_mode=@types.ReviewMode::Iterative,
+  )
+  assert_true(
+    @sys.write_file_sync(
+      project_dir + "/.choir/audit-gate.json",
+      "{\"enabled_at_unix\":1}\n",
+    ),
+  )
+  match state.poller.get(pr_number) {
+    Some(tracked) =>
+      state.poller.restore({
+        ..tracked,
+        unresolved_thread_ids: [],
+        unresolved_thread_ids_fetched: true,
+      })
+    None => fail("expected tracked PR")
+  }
+  let parent_target = @workspace.local_target_for(
+    "test-session",
+    "TL",
+    @types.IsolationMode::Worktree,
+  ).to_string()
+  let parent_messages : Array[String] = []
+  let mut merge_seen = false
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "gh" &&
+        cmd.args.length() >= 3 &&
+        cmd.args[0] == "pr" &&
+        cmd.args[1] == "merge" {
+        merge_seen = true
+      }
+      if cmd.program == "choir" &&
+        cmd.args.length() >= 4 &&
+        cmd.args[0] == "zellij-action" &&
+        cmd.args[1] == "send" &&
+        cmd.args[2] == parent_target {
+        parent_messages.push(cmd.args[3])
+      }
+      statuses.push(0)
+    }
+    statuses
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    let repo_view_json =
+      #|{"owner":{"login":"brickfrog"},"name":"choir"}
+    if (
+        cmd.program == "gh" &&
+        cmd.args == ["repo", "view", "--json", "owner,name"]
+      ) ||
+      (
+        cmd.program == "timeout" &&
+        cmd.args == ["30s", "gh", "repo", "view", "--json", "owner,name"]
+      ) {
+      return (0, repo_view_json)
+    }
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1].has_suffix("/reviews") {
+      return (
+        0, "[{\"state\":\"APPROVED\",\"user\":{\"login\":\"copilot-pull-request-reviewer[bot]\"},\"submitted_at\":\"2026-05-10T00:00:00Z\"}]",
+      )
+    }
+    if cmd.args.contains("graphql") {
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
+    if cmd.program == "cat" {
+      return (0, handler_test_audit_receipt("sha-" + label, "main", 2))
+    }
+    (0, "")
+  }
+  let tracked = match state.poller.get(pr_number) {
+    Some(value) => value
+    None => fail("expected tracked PR")
+  }
+  let merged = maybe_trigger_automerge_for_pending_event(
+    state,
+    @poller.PollEvent::MergeReady(pr_number),
+    tracked,
+    Some(0),
+    runner,
+    capture~,
+    review_mode=Some(@types.ReviewMode::Iterative),
+  )
+  assert_false(merged)
+  assert_false(merge_seen)
+  match state.poller.get(pr_number) {
+    Some(current) =>
+      assert_eq(current.last_automerge_attempt_sha, "sha-" + label)
+    None => fail("audit-blocked automerge must remain tracked")
+  }
+  let delivery_log = @sys.read_file(project_dir + "/.choir/delivery.log")
+  assert_true(delivery_log.contains("automerge result pr=101 status=error"))
+  assert_true(delivery_log.contains("reports 2 finding(s)"))
+  assert_false(
+    delivery_log.contains("automerge audit policy block pr=101 retryable=true"),
+  )
+  assert_eq(parent_messages.length(), 0)
 }
 
 ///|
@@ -4344,7 +4577,10 @@ async test "quiet poller tick never-fetched retry clear re-enters automerge pipe
     let statuses = []
     for cmd in cmds {
       if cmd.program == "gh" &&
-        cmd.args == ["pr", "merge", pr_number.to_string(), "--merge"] {
+        cmd.args.length() >= 3 &&
+        cmd.args[0] == "pr" &&
+        cmd.args[1] == "merge" &&
+        cmd.args[2] == pr_number.to_string() {
         merge_seen = true
       }
       if cmd.program == "choir" &&
@@ -6962,10 +7198,9 @@ async test "test_close_terminal_warns_on_error" {
   let target = handler_auto_close_target("leaf-pane")
   let captured : Array[@moontrace.Event] = []
   handler_with_moontrace_capture(captured, async fn() {
-    state.interpret_teardown_effects(
-      [CloseTerminal(target)],
-      _cmds => raise @types.ChoirError::agent_not_found("test error"),
-    )
+    state.interpret_teardown_effects([CloseTerminal(target)], _cmds => {
+      raise @types.ChoirError::agent_not_found("test error")
+    })
   })
   assert_eq(handler_close_terminal_warn_count(captured), 1)
 }

@@ -1,5 +1,9 @@
 # Choir Repo Rules
 
+## Banned Antipatterns
+
+- **Gates must not satisfy themselves.** If a gate (validation, precondition, receipt check) fails for a caller that has no way to produce the required artifact, the fix is NEVER to make the gate produce the artifact itself by spawning a worker / running a sidecar / inlining the missing work. The fix is to (a) give the caller the capability, or (b) move the gate to a caller that already has it. Heartbeats, cycle caps, soft-fail timeouts, and "incomplete" status fields layered onto a self-satisfying gate are all symptoms — when you see them, the gate is in the wrong place. (Historical case: file_pr's 900-line audit-on-file-pr subsystem.)
+
 ## Test Boundaries
 
 - Do not add shell-harness tests that drive large `sh` scripts, temp git repos, or broad filesystem mutation when the behavior can be covered by a unit test or a narrow adapter test.
@@ -52,5 +56,6 @@ When a user brings a feature request, follow the VSDD pipeline in `.choir/contex
 ## Leaf Agent Rules
 
 - **Always verify with `moon test --target native`**, not bare `moon test`. Bare `moon test` includes wasm-gc/js targets that have pre-existing failures unrelated to any leaf's changes. CI runs `moon test --target native`; that is the only verification that matters.
-- **Do not call `notify_parent` until all Copilot review threads are resolved.** Filing a PR and immediately reporting it as ready is incorrect if unresolved inline threads remain. Wait for Copilot to review, address every thread, and confirm zero unresolved threads before notifying the parent.
-- **Copilot reviews once.** It does not re-review after fixes are pushed. After addressing review comments, the leaf must resolve each thread itself via `gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "<id>"}) { thread { isResolved } } }'`, then verify zero unresolved threads before notifying parent.
+- Leaves never call /audit. The TL runs /audit on the integration branch when audit findings need to gate a merge. file_pr files the PR immediately; merge_pr returns a policy block if the receipt is missing — the TL handles it.
+- **Do not call `notify_parent` until all Copilot review threads are resolved.** Filing a PR and immediately reporting it as ready is incorrect if unresolved inline threads remain. Wait for Copilot to review, address every thread, push fixes, and confirm a poller snapshot reports zero unresolved threads before notifying the parent.
+- **Copilot reviews once.** It does not re-review after fixes are pushed. After addressing review comments, the leaf pushes fixes and waits for the next poller snapshot; the server resolves now-outdated review threads for iterative-review PRs. Do not call `gh` to resolve threads as part of the normal review cycle.

@@ -795,37 +795,6 @@ async test "interpret_spawn_worker gemini fails before runner when agy is unavai
 }
 
 ///|
-async test "interpret_spawn_worker rejects reserved audit caller externally" {
-  let worker_args : WorkerSpawnArgs = {
-    task: "unit",
-    task_contract: { ..@types.TaskContract::empty(), goal: "unit" },
-    caller_id: audit_on_file_pr_internal_caller_id,
-    slug: "w-reserved",
-    agent_type: @types.AgentType::Codex,
-  }
-  let mut runner_called = false
-  let got = interpret_spawn_worker(
-    worker_args,
-    "/tmp/p",
-    "choir",
-    async fn(cmds) {
-      @async.sleep(0)
-      ignore(cmds)
-      runner_called = true
-      []
-    },
-    mock_capture_origin_main,
-    None,
-  )
-  match got {
-    @types.Response::Err(msg) =>
-      assert_true(msg.contains("reserved for internal file_pr audit workers"))
-    _ => fail("expected reserved caller error")
-  }
-  assert_false(runner_called)
-}
-
-///|
 async test "interpret_spawn_worker rejects reserved mutation gate caller externally" {
   let worker_args : WorkerSpawnArgs = {
     task: "unit",

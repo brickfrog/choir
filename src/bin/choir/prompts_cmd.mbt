@@ -450,7 +450,7 @@ test "sync_prompt_drifts writes backup before restoring default content" {
     },
   )
   guard result is Ok(_) else { fail("sync should succeed") }
-  assert_eq(created, ["./.choir/prompts-backup/skills"])
+  @debug.assert_eq(created, ["./.choir/prompts-backup/skills"])
   assert_eq(writes.length(), 2)
   assert_eq(
     writes[0],

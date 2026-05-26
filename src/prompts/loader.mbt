@@ -242,27 +242,26 @@ const SHIP_PR_DEFAULT : String =
   #|
   #|## Path A — leaf-flow (leaf has task contract)
   #|
-  #|1. `mcp__choir__file_pr` from the leaf. Auto-audit + auto-track happens server-side.
+  #|1. `mcp__choir__file_pr` from the leaf. It files the PR immediately and tracks it server-side; audit does not run during file_pr.
   #|2. Wait for `[PR READY]`, then `[REVIEW]` + `[CI LATEST HEAD] success`.
-  #|3. Copilot threads: have the leaf push fixes, then `mcp__choir__resolve_my_review_threads` after the new commit lands.
-  #|4. `mcp__choir__merge_pr` once threads clear + CI green.
+  #|3. Copilot threads: have the leaf push fixes, then wait for the poller snapshot to show zero unresolved threads; use `mcp__choir__resolve_my_review_threads` only if they persist.
+  #|4. Once review threads are clear and CI is green, the TL runs `/audit` until the receipt has `findings_count=0`. Audit must run AFTER fixes are pushed; running it earlier just mints a receipt for a HEAD that subsequent commits will invalidate.
+  #|5. `mcp__choir__merge_pr`. If the audit receipt is missing, stale, or has findings, merge_pr returns a policy block; re-run `/audit` on the current HEAD and retry.
   #|
   #|## Path B — TL-direct (root, no task contract)
   #|
-  #|`mcp__choir__file_pr` will fail with `server task contract unavailable for tracked agent 'root'`. This path is a workaround for that known server bug, not the normal shipping flow:
+  #|`mcp__choir__file_pr` and `mcp__choir__merge_pr` both fail for root-tracked feature→main PRs with `server task contract unavailable for tracked agent 'root'`. That is a real server bug, tracked as **choir-v9gi**. The right fix is the server fix; do not normalize a bypass into the skill. Until choir-v9gi lands:
   #|
   #|1. `git push -u origin <branch>` from where the work lives.
   #|2. `gh pr create --base main --head <branch> --title ... --body ...` via HEREDOC. Escape `@`-prefixed strings in the body (`@debug` etc. become GitHub mentions — use backticks or rewrite).
-  #|3. `git rev-parse HEAD` for the FULL sha — `write_audit_receipt` rejects 7-char shorts.
-  #|4. Cross-model audit: `mcp__choir__spawn_worker type=review agent_type=claude` (if builder was codex). Address findings inline before receipt.
-  #|5. `mcp__choir__write_audit_receipt sha=<full> branch=<branch> findings_count=0 caller_id=root`.
-  #|6. `mcp__choir__track_pr pr_number=<n> agent_id=root branch=<branch> parent_branch=main pr_url=...`
-  #|7. `mcp__choir__request_review pr_number=<n> reviewer=@copilot`.
-  #|8. After Copilot review + CI: `mcp__choir__merge_pr` fails with same task-contract error. **Workaround** (until root-caller contract is fixed): `gh pr merge <n> --merge --admin`. This bypasses the choir gate — do NOT use for normal leaf flows. File follow-up tracked separately.
+  #|3. `mcp__choir__track_pr pr_number=<n> agent_id=root branch=<branch> parent_branch=main pr_url=...`
+  #|4. `mcp__choir__request_review pr_number=<n> reviewer=@copilot`. Address Copilot findings; push fixes; wait for the poller snapshot to show zero unresolved threads.
+  #|5. Once review threads are clear and CI is green, run `/audit` until the receipt has `findings_count=0`. The skill spawns Sarcasmotron, parses the worker's findings, and writes the receipt itself — never hand-write a receipt with `findings_count=0` to bypass the gate.
+  #|6. `mcp__choir__merge_pr`. If it fails with the choir-v9gi task-contract error, **stop and surface that to the user**. The skill body intentionally does not document an admin-merge incantation; embedding the bypass command here is the same banned antipattern this PR codified in CLAUDE.md. Fix choir-v9gi.
   #|
   #|## Gotchas
   #|
-  #|- Thread resolution: `mcp__choir__resolve_my_review_threads` refuses if latest commit isn't after latest review. Per-thread fallback: `gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "<id>"}) { thread { isResolved } } }'`.
+  #|- Thread resolution: after the leaf pushes fixes, wait for the next poller snapshot; the server resolves now-outdated threads for iterative-review PRs. Use `mcp__choir__resolve_my_review_threads` only for persistent unresolved threads.
   #|- moon fmt corruption: pre-commit only formats staged `.mbt` now. If unstaged `with fn` shows up anyway, `git restore src/` before file_pr.
   #|- Leaf cd'd out of worktree: leaf has no commits but main has unstaged edits matching its task — kill the leaf, finish TL-direct via Path B.
   #|- Audit receipt: full 40-char sha required. Findings_count must be 0 to pass merge_pr gate.
@@ -356,12 +355,9 @@ const LEAF_PROFILE_DEFAULT : String =
   #|- Do not enter sleep loops waiting for additional events. Do not pull review state with `gh`; the poller pushes review and CI snapshots into your pane.
   #|- A leaf that idles for minutes after a successful fix-push without sending that required `notify_parent` handoff has failed its task.
   #|
-  #|### file_pr main audit wait
+  #|### Audit gate ownership
   #|
-  #|- `file_pr` against `main` blocks for about 5-10 minutes while the server runs the Sarcasmotron audit worker against your diff. The MCP tool call stays pending during that server-side audit.
-  #|- A 120s pause is normal, expected, and does not mean the call failed. Do NOT report [FAILED] at 120s; wait for the actual `file_pr` response.
-  #|- A successful audit returns the PR URL. A blocking audit returns `audit found N findings: ...`; address those findings, push, and retry `file_pr`.
-  #|- Only treat the call as genuinely stuck when about 15 minutes have passed since the call started and `tail .choir/serve.log | grep 'audit-on-file-pr.*<your branch>'` shows the audit worker has shut down without your `file_pr` returning. In that case, report `[BLOCKED]` to your parent with the elapsed time and the last matching log line.
+  #|- Leaves never call /audit. The TL runs /audit on the integration branch when audit findings need to gate a merge. file_pr files the PR immediately; merge_pr returns a policy block if the receipt is missing.
   #|
   #|gh discipline:
   #|- Always bound `gh api` and `gh pr view` calls with `timeout 30s` (or use the `gh-bounded` wrapper provided in your worktree). `gh api graphql` and `gh pr view --json` are known to hang indefinitely without a timeout — they have stalled wave progress for minutes per failure.

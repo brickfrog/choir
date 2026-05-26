@@ -58,23 +58,6 @@ fn server_delivery_test_read_file(_path : String) -> String {
 }
 
 ///|
-async fn ServerState::capture_audit_on_file_pr_report_test(
-  self : ServerState,
-  agent_id : String,
-  report : @tools.AuditOnFilePrReport,
-  runner? : async (Array[@workspace.Command]) -> Array[Int] = server_delivery_test_runner,
-  capture? : async (@workspace.Command) -> (Int, String) = server_delivery_test_capture,
-) -> Unit {
-  self.capture_audit_on_file_pr_report(
-    agent_id,
-    report,
-    runner~,
-    capture~,
-    sleep_fn=server_delivery_test_sleep,
-  )
-}
-
-///|
 async fn ServerState::replay_pending_outbox_with_test(
   self : ServerState,
   now : Int64,

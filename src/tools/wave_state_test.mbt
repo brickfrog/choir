@@ -85,13 +85,6 @@ fn heartbeat_map_reader(map : Map[String, Int64]) -> (String) -> Int64? {
 }
 
 ///|
-fn audit_progress_map_reader(
-  map : Map[String, WaveStateAuditProgress],
-) -> (String) -> WaveStateAuditProgress? {
-  fn(id) { map.get(id) }
-}
-
-///|
 fn escape_wave_state_test_toml_string(s : String) -> String {
   let buf = StringBuilder::new()
   for c in s {
@@ -272,7 +265,7 @@ test "plan_wave_state assembles supervisor + dev + worker children" {
 }
 
 ///|
-test "plan_wave_state serializes audits only for tracked PRs with audit progress" {
+test "plan_wave_state serializes tdd phase for tracked PR children" {
   let reg = @registry.AgentRegistry::new()
   ignore(
     try? reg.insert(
@@ -329,14 +322,6 @@ test "plan_wave_state serializes audits only for tracked PRs with audit progress
       "sha-b",
     ),
   )
-  let audits : Map[String, WaveStateAuditProgress] = {}
-  audits.set("tl.leaf-a", {
-    cycles_so_far: 2,
-    last_findings_count: Some(3),
-    last_receipt_path: Some(".choir/audit-receipts/abc123.json"),
-    last_cycle_at_ms: Some(1776000000123L),
-    exhausted: false,
-  })
   let tdd_phases : Map[String, @types.LeafTddPhase] = {}
   tdd_phases.set("tl.leaf-a", @types.LeafTddPhase::Green)
   let snap = plan_wave_state(
@@ -347,7 +332,6 @@ test "plan_wave_state serializes audits only for tracked PRs with audit progress
     threads_zero_lookup,
     no_heartbeat,
     9_999_999L,
-    audit_progress_reader=audit_progress_map_reader(audits),
     tdd_phase_reader=fn(agent_id) { tdd_phases.get(agent_id) },
   ).unwrap()
   let leaf_a = snap.children
@@ -362,33 +346,13 @@ test "plan_wave_state serializes audits only for tracked PRs with audit progress
   @debug.assert_eq(leaf_b.tdd_phase, None)
   assert_true(leaf_a.pr is Some(_))
   assert_true(leaf_b.pr is Some(_))
-  match leaf_a.audits {
-    Some(progress) => {
-      assert_eq(progress.cycles_so_far, 2)
-      @debug.assert_eq(progress.last_findings_count, Some(3))
-      @debug.assert_eq(
-        progress.last_receipt_path,
-        Some(".choir/audit-receipts/abc123.json"),
-      )
-      @debug.assert_eq(progress.last_cycle_at_ms, Some(1776000000123L))
-      assert_false(progress.exhausted)
-    }
-    None => fail("expected audits for leaf-a")
-  }
-  @debug.assert_eq(leaf_b.audits, None)
   let snap_json = snap.to_json().stringify()
   let leaf_a_json = leaf_a.to_json().stringify()
   let leaf_b_json = leaf_b.to_json().stringify()
-  assert_true(leaf_a_json.contains("\"audits\":"))
-  assert_true(leaf_a_json.contains("\"cycles_so_far\":2"))
-  assert_true(leaf_a_json.contains("\"last_findings_count\":3"))
-  assert_true(
-    leaf_a_json.contains(
-      "\"last_receipt_path\":\".choir/audit-receipts/abc123.json\"",
-    ),
-  )
+  assert_true(leaf_a_json.contains("\"tdd_phase\":\"green\""))
+  assert_false(leaf_b_json.contains("\"tdd_phase\":\"green\""))
   assert_false(leaf_b_json.contains("\"audits\":"))
-  assert_true(snap_json.contains("\"audits\":"))
+  assert_false(snap_json.contains("\"audits\":"))
 }
 
 ///|

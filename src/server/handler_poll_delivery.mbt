@@ -647,8 +647,9 @@ pub fn valid_merge_audit_receipt_exists(
     return false
   }
   let body = audit_receipt_read(receipt_path)
-  match @tools.file_pr_required_audit_receipt_validation(head_sha, Some(body)) {
-    @tools.FilePrAuditReceiptValidation::AuditReceiptValid => true
+  match
+    @tools.merge_pr_required_audit_receipt_validation(head_sha, Some(body)) {
+    @tools.MergePrAuditReceiptValidation::MergeAuditReceiptValid => true
     _ => false
   }
 }
@@ -2742,14 +2743,6 @@ async fn ServerState::sweep_tracked_prs_for_automerge(
         sleep_fn~,
       ),
     )
-    match self.poller.get(current.pr_number) {
-      Some(after_attempt) =>
-        self.poller.restore({
-          ..after_attempt,
-          last_automerge_attempt_sha: current.last_sha,
-        })
-      None => ()
-    }
   }
 }
 

@@ -1371,7 +1371,9 @@ fn serve_run() -> Unit {
         config.terminal_session,
       )
       @server.recover_state(state, config.terminal_session, recovery_input)
-      @server.grandfather_existing_merges_at_startup(state, @exec.capture_command_merged)
+      @server.grandfather_existing_merges_at_startup(
+        state, @exec.capture_command_merged,
+      )
       match inherited_uds_fd {
         Some(fd) =>
           match state.restore_reload_snapshot() {
@@ -1388,7 +1390,6 @@ fn serve_run() -> Unit {
         None => ()
       }
       state.replay_pending_outbox(runner=@exec.run_sequence)
-      root.spawn_bg(async fn() { state.run_audit_pr_comment_task_loop() })
       root.spawn_bg(async fn() {
         for ;; {
           @async.sleep(1000)
@@ -1517,7 +1518,7 @@ fn serve_run() -> Unit {
       })
       match config.listen_tcp {
         Some(addr_str) => {
-          let server = @socket.TcpServer::new(@socket.Addr::parse(addr_str))
+          let server = @socket.TcpServer(@socket.Addr::parse(addr_str))
           try {
             @moontrace.info("TCP server listening", fields=[
               @moontrace.field("addr", addr_str),

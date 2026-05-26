@@ -4,7 +4,6 @@ test "default config" {
   assert_eq(config.default_role, @types.Role::TL)
   assert_eq(config.listen_uds, ".choir/server.sock")
   @debug.assert_eq(config.listen_tcp, None)
-  assert_eq(config.audit_max_rounds, 3)
   @debug.assert_eq(config.extra_mcp_servers_json, None)
   @debug.assert_eq(config.companions_json, None)
   @debug.assert_eq(config.plugins_json, None)

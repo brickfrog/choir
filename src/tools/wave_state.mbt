@@ -1,13 +1,4 @@
 ///|
-pub(all) struct WaveStateAuditProgress {
-  cycles_so_far : Int
-  last_findings_count : Int?
-  last_receipt_path : String?
-  last_cycle_at_ms : Int64?
-  exhausted : Bool
-} derive(Debug, Eq, ToJson)
-
-///|
 /// Typed per-PR snapshot used by `wave_state`.
 ///
 /// `unresolved_threads` and `threads_fetch_error` are fail-loud: when the
@@ -76,7 +67,6 @@ pub(all) struct WaveStateChild {
   workflow : @phase.WorkflowState
   agent_state : @types.AgentState
   tdd_phase : @types.LeafTddPhase?
-  audits : WaveStateAuditProgress?
   last_heartbeat_ms : Int64?
   pr : WaveStatePR?
 } derive(Debug, Eq, ToJson)
@@ -299,7 +289,6 @@ pub fn plan_wave_state(
   heartbeat_reader : (String) -> Int64?,
   now_ms : Int64,
   beads_issue_reader? : (@types.Agent) -> String? = wave_state_default_beads_issue_reader,
-  audit_progress_reader? : (String) -> WaveStateAuditProgress? = wave_state_default_audit_progress,
   tdd_phase_reader? : (String) -> @types.LeafTddPhase? = wave_state_default_tdd_phase,
 ) -> Result[WaveStateSnapshot, @types.ChoirError] {
   guard registry.get_opt(caller_id) is Some(agent) else {
@@ -363,7 +352,6 @@ pub fn plan_wave_state(
       workflow,
       agent_state: child.state,
       tdd_phase: tdd_phase_reader(child_id),
-      audits: audit_progress_reader(child_id),
       last_heartbeat_ms: heartbeat_reader(child_id),
       pr,
     })
@@ -390,13 +378,6 @@ fn wave_state_default_heartbeat(_agent_id : String) -> Int64? {
 }
 
 ///|
-fn wave_state_default_audit_progress(
-  _agent_id : String,
-) -> WaveStateAuditProgress? {
-  None
-}
-
-///|
 /// Effect layer for `wave_state`. Fetches unresolved review threads per
 /// tracked PR via `fetch_unresolved_review_threads`, assembles a typed
 /// snapshot, and returns a JSON response. Thread-fetch errors are reported
@@ -408,7 +389,6 @@ pub async fn interpret_wave_state(
   poller_state : @poller.PollerState?,
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
   heartbeat_reader? : (String) -> Int64? = wave_state_default_heartbeat,
-  audit_progress_reader? : (String) -> WaveStateAuditProgress? = wave_state_default_audit_progress,
   tdd_phase_reader? : (String) -> @types.LeafTddPhase? = wave_state_default_tdd_phase,
 ) -> @types.Response {
   let reg = match registry {
@@ -518,7 +498,6 @@ pub async fn interpret_wave_state(
       heartbeat_reader,
       @env.now().reinterpret_as_int64(),
       beads_issue_reader~,
-      audit_progress_reader~,
       tdd_phase_reader~,
     ) {
     Ok(s) => s

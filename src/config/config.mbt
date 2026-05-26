@@ -272,33 +272,6 @@ fn parse_nonnegative_int_config_value(
 }
 
 ///|
-fn parse_positive_int_config_value(
-  key : String,
-  raw : String,
-  max? : Int64 = 2_147_483_647L,
-) -> Result[Int, @types.ChoirError] {
-  match parse_int64_config_value(key, raw) {
-    Ok(v) =>
-      if v < 1L {
-        Err(
-          @types.ChoirError::config_error(
-            key + " must be >= 1; got " + v.to_string(),
-          ),
-        )
-      } else if v > max {
-        Err(
-          @types.ChoirError::config_error(
-            key + ": expected <= " + max.to_string(),
-          ),
-        )
-      } else {
-        Ok(v.to_int())
-      }
-    Err(e) => Err(e)
-  }
-}
-
-///|
 fn parse_string_array_config_value(
   key : String,
   raw : String,
@@ -519,32 +492,6 @@ pub fn parse_config(
         Err(e) => return Err(e)
       }
   }
-  let audit_heartbeat_sec = match doc.get("audit_heartbeat_sec") {
-    None => default_cfg.audit_heartbeat_sec
-    Some(raw) =>
-      match
-        parse_nonnegative_int_config_value(
-          "audit_heartbeat_sec",
-          raw,
-          max=@types.audit_heartbeat_sec_max.to_int64(),
-        ) {
-        Ok(v) => v
-        Err(e) => return Err(e)
-      }
-  }
-  let audit_max_rounds = match doc.get("audit_max_rounds") {
-    None => default_cfg.audit_max_rounds
-    Some(raw) =>
-      match
-        parse_positive_int_config_value(
-          "audit_max_rounds",
-          raw,
-          max=@types.audit_max_rounds_max.to_int64(),
-        ) {
-        Ok(v) => v
-        Err(e) => return Err(e)
-      }
-  }
   let mutation_kill_rate_min = match doc.get("mutation_kill_rate_min") {
     None => default_cfg.mutation_kill_rate_min
     Some(raw) =>
@@ -560,7 +507,7 @@ pub fn parse_config(
         parse_nonnegative_int_config_value(
           "poller_heartbeat_tick_sec",
           raw,
-          max=@types.audit_heartbeat_sec_max.to_int64(),
+          max=@types.heartbeat_sec_max.to_int64(),
         ) {
         Ok(v) => v
         Err(e) => return Err(e)
@@ -636,8 +583,6 @@ pub fn parse_config(
     agy_migration_incomplete,
     worker_no_handoff_prod_sec,
     worker_no_handoff_escalate_sec,
-    audit_heartbeat_sec,
-    audit_max_rounds,
     mutation_kill_rate_min,
     poller_heartbeat_tick_sec,
     prenotify_checks,

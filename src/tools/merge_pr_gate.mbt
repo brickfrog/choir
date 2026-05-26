@@ -18,34 +18,45 @@ fn merge_pr_gate_state_from_json(json : Json) -> MergeGateState? {
 }
 
 ///|
-pub fn load_or_initialize_gate_state(
+pub fn load_gate_state(
   project_dir : String,
-  now_fn : () -> Int64,
   read : (String) -> String,
-  write : (String, String) -> Bool,
+  path_exists? : (String) -> Bool = @sys.path_exists,
 ) -> Result[MergeGateState, @types.ChoirError] {
   let path = merge_pr_audit_gate_state_path(project_dir)
-  let body = read(path).trim().to_owned()
-  if body != "" {
-    let parsed : Json? = Some(@json.parse(body)) catch { _ => None }
-    match parsed {
-      Some(json) =>
-        match merge_pr_gate_state_from_json(json) {
-          Some(state) => return Ok(state)
-          None => ()
-        }
-      None => ()
-    }
-  }
-  let state : MergeGateState = { enabled_at_unix: now_fn() }
-  if write(path, state.to_json().stringify() + "\n") {
-    Ok(state)
-  } else {
-    Err(
+  if !path_exists(path) {
+    return Err(
       @types.ChoirError::validation_error(
-        "merge blocked: audit receipt gate could not persist .choir/audit-gate.json; refusing to merge because the grandfather timestamp is not durable",
+        "merge blocked: audit receipt gate state at .choir/audit-gate.json is missing. Seed it explicitly with an `enabled_at_unix` value chosen by the operator (e.g. `printf '{\"enabled_at_unix\":%s}' \"$(date +%s)\" > .choir/audit-gate.json`); merge_pr refuses to invent the grandfather boundary itself.",
       ),
     )
+  }
+  let body = read(path).trim().to_owned()
+  if body == "" {
+    return Err(
+      @types.ChoirError::validation_error(
+        "merge blocked: audit receipt gate state at .choir/audit-gate.json is empty; fix or delete the file deliberately rather than silently resetting the grandfather boundary",
+      ),
+    )
+  }
+  let parsed : Json? = Some(@json.parse(body)) catch { _ => None }
+  match parsed {
+    Some(json) =>
+      match merge_pr_gate_state_from_json(json) {
+        Some(state) => Ok(state)
+        None =>
+          Err(
+            @types.ChoirError::validation_error(
+              "merge blocked: audit receipt gate state at .choir/audit-gate.json is malformed (missing or non-positive enabled_at_unix); fix or delete the file deliberately rather than silently resetting the grandfather boundary",
+            ),
+          )
+      }
+    None =>
+      Err(
+        @types.ChoirError::validation_error(
+          "merge blocked: audit receipt gate state at .choir/audit-gate.json is not valid JSON; fix or delete the file deliberately rather than silently resetting the grandfather boundary",
+        ),
+      )
   }
 }
 

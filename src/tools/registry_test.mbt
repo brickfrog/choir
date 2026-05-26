@@ -407,6 +407,23 @@ test "tool registry lookup wrong role" {
 }
 
 ///|
+test "write_audit_receipt denied for Dev and Worker, allowed for Root and TL" {
+  let reg = @tools.ToolRegistry::new()
+  assert_true(
+    (try? reg.lookup(@types.Role::Dev, "write_audit_receipt")) is Err(_),
+  )
+  assert_true(
+    (try? reg.lookup(@types.Role::Worker, "write_audit_receipt")) is Err(_),
+  )
+  assert_true(
+    (try? reg.lookup(@types.Role::Root, "write_audit_receipt")) is Ok(_),
+  )
+  assert_true(
+    (try? reg.lookup(@types.Role::TL, "write_audit_receipt")) is Ok(_),
+  )
+}
+
+///|
 test "permission denied response uses wire role casing" {
   let reg = @tools.ToolRegistry::new()
   try reg.lookup(@types.Role::Worker, "fork_wave") catch {
@@ -551,7 +568,11 @@ async test "dispatch returns correct stub for each tool name" {
     ("fork_wave", "spawned", { "count": "1", "caller_id": "main.tl" }),
     ("fork_session", "ok", { "name": "nested-team" }),
     ("file_pr", "pr_created", { "branch": "test" }),
-    ("merge_pr", "merged", { "pr_number": "1" }),
+    (
+      "merge_pr",
+      "merged",
+      { "pr_number": "1", "parent_branch": "feature/base" },
+    ),
     ("track_pr", "tracked", { "pr_number": "1", "agent_id": "agent-1" }),
     ("notify_parent", "notified", { "caller_id": "test-agent" }),
     ("send_message", "sent", { "target_id": "test-agent" }),
@@ -577,8 +598,8 @@ async test "dispatch returns correct stub for each tool name" {
   ]
   for c in cases {
     let (name, expected_status, args) = c
-    // write_audit_receipt is restricted to Root/TL/Worker — Dev forging
-    // its own audit receipt would bypass the file_pr feature→main gate.
+    // write_audit_receipt is restricted to Root/TL — Dev or Worker
+    // forging its own audit receipt would bypass the merge_pr gate.
     // Drive the dispatch with a TL role for that case; everything else
     // stays on Dev to exercise the broader role permissions.
     let role = if name == "write_audit_receipt" {

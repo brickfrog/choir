@@ -11,12 +11,7 @@ suberror ChoirError {
   TransportError(String)
   GitError(String)
   ConfigError(String)
-  AuditIncomplete(String)
-  AuditLoopExhausted(
-    cycles~ : Int,
-    findings_count~ : Int,
-    receipt_path~ : String
-  )
+  MutationGateIncomplete(String)
 }
 
 ///|
@@ -32,8 +27,7 @@ pub fn ChoirError::to_wire_string(self : ChoirError) -> String {
     TransportError(_) => "transport_error"
     GitError(_) => "git_error"
     ConfigError(_) => "config_error"
-    AuditIncomplete(_) => "audit_incomplete"
-    AuditLoopExhausted(..) => "audit_loop_exhausted"
+    MutationGateIncomplete(_) => "mutation_gate_incomplete"
   }
 }
 
@@ -50,14 +44,7 @@ pub fn ChoirError::message(self : ChoirError) -> String {
     TransportError(msg) => "transport error: " + msg
     GitError(msg) => "git error: " + msg
     ConfigError(msg) => "config error: " + msg
-    AuditIncomplete(msg) => "audit incomplete: " + msg
-    AuditLoopExhausted(cycles~, findings_count~, receipt_path~) =>
-      "audit loop exhausted after " +
-      cycles.to_string() +
-      " cycle(s) with " +
-      findings_count.to_string() +
-      " finding(s) remaining; receipt: " +
-      receipt_path
+    MutationGateIncomplete(msg) => "mutation gate incomplete: " + msg
   }
 }
 
@@ -105,7 +92,7 @@ pub fn ChoirError::validation_detail_or_message(self : ChoirError) -> String {
   match self {
     ValidationError(msg) => msg
     Timeout(msg) => msg
-    AuditIncomplete(msg) => msg
+    MutationGateIncomplete(msg) => msg
     _ => self.message()
   }
 }
@@ -131,17 +118,8 @@ pub fn ChoirError::config_error(msg : String) -> ChoirError {
 }
 
 ///|
-pub fn ChoirError::audit_incomplete(msg : String) -> ChoirError {
-  AuditIncomplete(msg)
-}
-
-///|
-pub fn ChoirError::audit_loop_exhausted(
-  cycles : Int,
-  findings_count : Int,
-  receipt_path : String,
-) -> ChoirError {
-  AuditLoopExhausted(cycles~, findings_count~, receipt_path~)
+pub fn ChoirError::mutation_gate_incomplete(msg : String) -> ChoirError {
+  MutationGateIncomplete(msg)
 }
 
 ///|
@@ -161,9 +139,9 @@ pub fn ChoirError::is_timeout(self : ChoirError) -> Bool {
 }
 
 ///|
-pub fn ChoirError::is_audit_incomplete(self : ChoirError) -> Bool {
+pub fn ChoirError::is_mutation_gate_incomplete(self : ChoirError) -> Bool {
   match self {
-    AuditIncomplete(_) => true
+    MutationGateIncomplete(_) => true
     _ => false
   }
 }
@@ -183,9 +161,7 @@ pub fn choir_error_message_from_caught(e : Error) -> String {
     TransportError(msg) => ChoirError::transport_error(msg).message()
     GitError(msg) => ChoirError::git_error(msg).message()
     ConfigError(msg) => ChoirError::config_error(msg).message()
-    AuditIncomplete(msg) => ChoirError::audit_incomplete(msg).message()
-    AuditLoopExhausted(cycles~, findings_count~, receipt_path~) =>
-      ChoirError::audit_loop_exhausted(cycles, findings_count, receipt_path).message()
+    MutationGateIncomplete(msg) => ChoirError::mutation_gate_incomplete(msg).message()
     _ => "internal error"
   }
 }
@@ -204,8 +180,7 @@ pub fn caught_error_is_choir_error(e : Error) -> Bool {
     | TransportError(_)
     | GitError(_)
     | ConfigError(_)
-    | AuditIncomplete(_)
-    | AuditLoopExhausted(..) => true
+    | MutationGateIncomplete(_) => true
     _ => false
   }
 }

@@ -27,21 +27,24 @@ pub(all) enum MergePrAuditReceiptValidation {
 pub(all) enum MergePrAuditGateStatus {
   MergeAuditGateReceiptBlocked(MergePrAuditReceiptValidation)
   MergeAuditGateHeadUnavailable
-  MergeAuditGateAutoAuditTimedOut(Int)
-  MergeAuditGateAutoAuditSpawnFailed(String)
-  MergeAuditGateAutoAuditFailed(String)
 } derive(Debug, Eq)
 
 ///|
-fn MergePrAuditReceiptValidation::auto_audit_allowed(
-  self : MergePrAuditReceiptValidation,
-) -> Bool {
-  match self {
-    MergeAuditReceiptMissing(_)
-    | MergeAuditReceiptInvalid(_)
-    | MergeAuditReceiptStale(_, _) => true
-    MergeAuditReceiptValid | MergeAuditReceiptFindingsRemain(_, _) => false
+fn merge_pr_parse_audit_receipt(receipt_body : String) -> @types.AuditReceipt? {
+  let parsed = @json.parse(receipt_body.trim().to_owned()) catch {
+    _ => return None
   }
+  let receipt : @types.AuditReceipt = @json.from_json(parsed) catch {
+    _ => return None
+  }
+  if receipt.sha == "" ||
+    receipt.branch == "" ||
+    receipt.audited_at <= 0L ||
+    receipt.agent_id == "" ||
+    receipt.findings_count < 0 {
+    return None
+  }
+  Some(receipt)
 }
 
 ///|
@@ -58,9 +61,6 @@ fn MergePrAuditGateStatus::to_wire_string(
         MergeAuditReceiptFindingsRemain(_, _) => "receipt_findings_remain"
       }
     MergeAuditGateHeadUnavailable => "head_unavailable"
-    MergeAuditGateAutoAuditTimedOut(_) => "auto_audit_timeout"
-    MergeAuditGateAutoAuditSpawnFailed(_) => "auto_audit_spawn_failed"
-    MergeAuditGateAutoAuditFailed(_) => "auto_audit_failed"
   }
 }
 
@@ -70,15 +70,31 @@ pub fn merge_pr_audit_receipt_validation(
   current_head : String,
   receipt_body : String?,
 ) -> MergePrAuditReceiptValidation {
-  match
-    file_pr_audit_receipt_validation(parent_branch, current_head, receipt_body) {
-    AuditReceiptValid => MergeAuditReceiptValid
-    AuditReceiptMissing(short_sha) => MergeAuditReceiptMissing(short_sha)
-    AuditReceiptInvalid(short_sha) => MergeAuditReceiptInvalid(short_sha)
-    AuditReceiptStale(audited_sha, current_sha) =>
-      MergeAuditReceiptStale(audited_sha, current_sha)
-    AuditReceiptFindingsRemain(short_sha, count) =>
-      MergeAuditReceiptFindingsRemain(short_sha, count)
+  if !file_pr_audit_receipt_required(parent_branch) {
+    return MergeAuditReceiptValid
+  }
+  merge_pr_required_audit_receipt_validation(current_head, receipt_body)
+}
+
+///|
+pub fn merge_pr_required_audit_receipt_validation(
+  current_head : String,
+  receipt_body : String?,
+) -> MergePrAuditReceiptValidation {
+  let short_sha = file_pr_short_sha(current_head)
+  let receipt = match receipt_body {
+    Some(body) if body.trim() != "" => body
+    _ => return MergeAuditReceiptMissing(short_sha)
+  }
+  match merge_pr_parse_audit_receipt(receipt) {
+    Some(parsed) if parsed.sha == current_head =>
+      if parsed.findings_count == 0 {
+        MergeAuditReceiptValid
+      } else {
+        MergeAuditReceiptFindingsRemain(short_sha, parsed.findings_count)
+      }
+    Some(parsed) => MergeAuditReceiptStale(parsed.sha, current_head)
+    None => MergeAuditReceiptInvalid(short_sha)
   }
 }
 
@@ -122,44 +138,14 @@ pub fn merge_pr_audit_gate_policy_block_message(
     MergeAuditGateReceiptBlocked(MergeAuditReceiptValid) => None
     MergeAuditGateReceiptBlocked(validation) => {
       let summary = merge_pr_audit_receipt_validation_summary(validation)
-      let action = if validation.auto_audit_allowed() {
-        " Choir started an auto-audit for this PR; wait for the receipt to land, then retry merge_pr."
-      } else {
-        " Run `/audit` until findings_count == 0, then retry merge_pr."
-      }
       Some(
         "policy blocked: audit receipt gate blocked PR #" +
         pr_number.to_string() +
         ": " +
         summary +
-        "." +
-        action,
+        ". Run `/audit` until findings_count == 0, then retry merge_pr.",
       )
     }
-    MergeAuditGateAutoAuditTimedOut(audit_budget_ms) =>
-      Some(
-        "policy blocked: audit receipt gate blocked PR #" +
-        pr_number.to_string() +
-        ": auto-audit did not produce a valid receipt within audit budget " +
-        audit_budget_ms.to_string() +
-        "ms. Wait for the audit worker to finish or run `/audit` manually, then retry merge_pr.",
-      )
-    MergeAuditGateAutoAuditSpawnFailed(error) =>
-      Some(
-        "policy blocked: audit receipt gate blocked PR #" +
-        pr_number.to_string() +
-        ": could not start auto-audit (" +
-        error +
-        "). Run `/audit` manually, then retry merge_pr.",
-      )
-    MergeAuditGateAutoAuditFailed(error) =>
-      Some(
-        "policy blocked: audit receipt gate blocked PR #" +
-        pr_number.to_string() +
-        ": auto-audit failed (" +
-        error +
-        "). Run `/audit` manually, then retry merge_pr.",
-      )
   }
 }
 
@@ -675,110 +661,72 @@ fn merge_pr_audit_block_error(
 }
 
 ///|
-fn merge_pr_audit_workdir(
+fn merge_pr_parent_branch_mismatch_error(
   project_dir : String,
-  tracked : @poller.TrackedPR,
-  registry : @registry.AgentRegistry?,
-) -> String {
-  match registry {
-    Some(reg) =>
-      match (Some(reg.get(tracked.agent_id)) catch { _ => None }) {
-        Some(agent) =>
-          if agent.workspace != "" {
-            agent.workspace
-          } else {
-            project_dir
-          }
-        None => project_dir
-      }
-    None => project_dir
-  }
+  pr_number : Int,
+  requested_parent_branch : String,
+  tracked_parent_branch : String,
+  append_file : (String, String) -> Bool,
+) -> @types.ChoirError {
+  // parent_branch comes from tool args / poller state; keep delivery log and
+  // operator-facing error strings single-line before interpolation.
+  let requested = merge_pr_sanitize_branch_for_log(requested_parent_branch)
+  let tracked = merge_pr_sanitize_branch_for_log(tracked_parent_branch)
+  @moontrace.info("merge_pr", fields=[
+    @moontrace.field("pr", pr_number),
+    @moontrace.field("outcome", "parent_branch_mismatch"),
+    @moontrace.field("requested_parent_branch", requested),
+    @moontrace.field("tracked_parent_branch", tracked),
+  ])
+  merge_pr_delivery_log_line(
+    append_file,
+    project_dir,
+    "merge_pr pr=" +
+    pr_number.to_string() +
+    " outcome=parent_branch_mismatch requested_parent_branch=" +
+    requested +
+    " tracked_parent_branch=" +
+    tracked,
+  )
+  @types.ChoirError::validation_error(
+    "policy blocked: merge_pr parent_branch mismatch for PR #" +
+    pr_number.to_string() +
+    ": caller requested '" +
+    requested +
+    "' but tracked poller state says '" +
+    tracked +
+    "'. Retry merge_pr with parent_branch='" +
+    tracked +
+    "'.",
+  )
 }
 
 ///|
-fn merge_pr_live_audit_workers(
-  registry : @registry.AgentRegistry?,
-) -> Array[@phase.ChildLifecycle] {
-  match registry {
-    Some(reg) => {
-      let entries : Array[@phase.ChildLifecycle] = []
-      for agent in reg.list() {
-        let agent_id = agent.agent_id.to_string()
-        if reg.is_alive(agent_id).unwrap_or(false) {
-          entries.push(audit_on_file_pr_worker_entry_from_agent(agent))
-        }
-      }
-      entries
+fn merge_pr_sanitize_branch_for_log(raw : String) -> String {
+  let out = StringBuilder::new()
+  let mut i = 0
+  while i < raw.length() {
+    let c = raw[i]
+    if c <= '\u{001f}' || c == '\u{007f}' {
+      out.write_char(' ')
+    } else {
+      out.write_char(Int::unsafe_to_char(c.to_int()))
     }
-    None => []
+    i = i + 1
   }
-}
-
-///|
-fn merge_pr_audit_error_status(
-  err : @types.ChoirError,
-  audit_budget_ms : Int,
-  spawn_error : String?,
-) -> MergePrAuditGateStatus {
-  match spawn_error {
-    Some(msg) => MergeAuditGateAutoAuditSpawnFailed(msg)
-    None =>
-      if err.is_timeout() {
-        MergeAuditGateAutoAuditTimedOut(audit_budget_ms)
-      } else {
-        MergeAuditGateAutoAuditFailed(err.message())
-      }
-  }
+  out.to_string()
 }
 
 ///|
 pub async fn merge_pr_require_audit_receipt(
   parent_branch : String,
   project_dir : String,
-  file_pr_dir : String,
-  tracked_agent_id : String,
   pr_number : Int,
   head_sha : String,
   gate_state : MergeGateState,
   pr_first_seen_unix : Int64,
   capture : async (@workspace.Command) -> (Int, String),
-  spawn_audit_worker? : async (WorkerSpawnArgs) -> Result[
-    String,
-    @types.ChoirError,
-  ] = async fn(_) {
-    @async.sleep(0)
-    Err(@types.ChoirError::validation_error("audit worker spawn unavailable"))
-  },
-  wait_for_audit_report? : async (String) -> AuditOnFilePrReport? = async fn(
-    _,
-  ) {
-    @async.sleep(0)
-    None
-  },
-  cleanup_audit_report? : async (String) -> Unit = async fn(_) {
-    @async.sleep(0)
-  },
-  write_audit_receipt? : (WriteAuditReceiptArgs) -> @types.Response = fn(_) {
-    @types.Response::Err("audit receipt writer unavailable")
-  },
-  audit_budget_ms? : Int = audit_on_file_pr_default_budget_ms,
-  audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
-  audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
-  record_audit_cycle_for_agent? : (String) -> Int = fn(_) { 0 },
-  audit_cycle_count_for_agent? : (String) -> Int = fn(_) { 0 },
-  clear_audit_cycle_for_agent? : (String) -> Unit = fn(_) { () },
-  notify_audit_started? : async (String, Int?, Int) -> Unit = async fn(
-    _tracked_agent_id,
-    _pr_number,
-    _cycle_number,
-  ) {
-    @async.sleep(0)
-  },
   append_file? : (String, String) -> Bool = fn(_, _) { false },
-  audit_sleep_fn? : async (Int) -> Unit = @async.sleep,
-  audit_now_ms_fn? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() },
-  audit_worker_alive? : (String) -> Bool = fn(_) { true },
-  list_audit_workers? : () -> Array[@phase.ChildLifecycle] = fn() { [] },
 ) -> Result[Unit, @types.ChoirError] {
   if !file_pr_audit_receipt_required(parent_branch) {
     return Ok(())
@@ -800,73 +748,13 @@ pub async fn merge_pr_require_audit_receipt(
     parent_branch, project_dir, head_sha, capture,
   )
   match validation {
-    MergeAuditReceiptValid => return Ok(())
-    _ => ()
-  }
-  if !validation.auto_audit_allowed() {
-    return Err(
-      merge_pr_audit_block_error(
-        project_dir,
-        pr_number,
-        MergeAuditGateReceiptBlocked(validation),
-        append_file,
-      ),
-    )
-  }
-  let mut spawn_error : String? = None
-  match
-    file_pr_auto_audit_for_missing_receipt(
-      project_dir,
-      file_pr_dir,
-      tracked_agent_id,
-      parent_branch,
-      head_sha,
-      capture,
-      async fn(worker_args) {
-        match spawn_audit_worker(worker_args) {
-          Ok(worker_id) => Ok(worker_id)
-          Err(e) => {
-            spawn_error = Some(e.message())
-            Err(e)
-          }
-        }
-      },
-      wait_for_audit_report,
-      cleanup_audit_report,
-      write_audit_receipt,
-      audit_budget_ms,
-      audit_heartbeat_sec,
-      append_file,
-      audit_sleep_fn,
-      audit_now_ms_fn,
-      audit_worker_alive,
-      list_audit_workers~,
-      audit_max_rounds~,
-      record_audit_cycle_for_agent~,
-      audit_cycle_count_for_agent~,
-      clear_audit_cycle_for_agent~,
-      notify_audit_started~,
-      pr_number~,
-    ) {
-    Err(e) => {
-      let status = merge_pr_audit_error_status(e, audit_budget_ms, spawn_error)
-      return Err(
-        merge_pr_audit_block_error(project_dir, pr_number, status, append_file),
-      )
-    }
-    Ok(_) => ()
-  }
-  match
-    merge_pr_audit_receipt_validation_for_head(
-      parent_branch, project_dir, head_sha, capture,
-    ) {
     MergeAuditReceiptValid => Ok(())
-    after =>
+    _ =>
       Err(
         merge_pr_audit_block_error(
           project_dir,
           pr_number,
-          MergeAuditGateReceiptBlocked(after),
+          MergeAuditGateReceiptBlocked(validation),
           append_file,
         ),
       )
@@ -1179,6 +1067,7 @@ pub async fn interpret_merge_pr_merge_host(
   now_sec : Int64,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   capture : async (@workspace.Command) -> (Int, String),
+  match_head_sha? : String? = None,
 ) -> Result[Unit, @types.ChoirError] {
   let mutex_name = merge_pr_mutex_name(parent_branch)
   match mutex_registry {
@@ -1197,11 +1086,13 @@ pub async fn interpret_merge_pr_merge_host(
     }
     None => ()
   }
-  let cmds = merge_pr_commands(pr_number, merge_strategy)
+  let cmds = merge_pr_commands(pr_number, merge_strategy, match_head_sha~)
   let merge_result = run_strict(runner, cmds, capture~)
   let final_result = match merge_result {
     Err(_) => {
-      let (_, output) = capture(merge_pr_command(pr_number, merge_strategy))
+      let (_, output) = capture(
+        merge_pr_command(pr_number, merge_strategy, match_head_sha~),
+      )
       let trimmed = output.trim().to_owned()
       Err(
         @types.ChoirError::git_error(
@@ -2135,49 +2026,8 @@ pub async fn interpret_merge_pr(
   path_exists : (String) -> Bool,
   read_lifecycle? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
   read_file? : (String) -> String = fn(_) { "" },
-  write_file_atomic? : (String, String) -> Bool = fn(_, _) { false },
-  create_dir_all? : (String) -> Bool = fn(_) { false },
-  prepare_audit_report? : (String) -> Unit = fn(_agent_id) {  },
-  wait_for_audit_report? : async (String) -> AuditOnFilePrReport? = async fn(
-    _,
-  ) {
-    @async.sleep(0)
-    None
-  },
-  cleanup_audit_report? : async (String) -> Unit = async fn(_) {
-    @async.sleep(0)
-  },
-  audit_budget_ms? : Int = audit_on_file_pr_default_budget_ms,
-  audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
-  audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
-  record_audit_cycle_for_agent? : (String) -> Int = fn(_agent_id) { 0 },
-  audit_cycle_count_for_agent? : (String) -> Int = fn(_agent_id) { 0 },
-  clear_audit_cycle_for_agent? : (String) -> Unit = fn(_agent_id) { () },
-  notify_audit_started? : async (String, Int?, Int) -> Unit = async fn(
-    _agent_id,
-    _pr_number,
-    _cycle_number,
-  ) {
-    @async.sleep(0)
-  },
-  audit_sleep_fn? : async (Int) -> Unit = @async.sleep,
-  audit_now_ms_fn? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() },
-  audit_worker_alive? : (String) -> Bool = fn(_) { true },
   merge_strategy? : @types.MergeStrategy = @types.Config::default().merge_strategy,
-  merge_gate_now_sec_fn? : () -> Int64 = @poller.now_sec,
-  session? : String = "choir",
-  extra_mcp_servers_json? : String? = None,
-  shell_command? : String? = None,
-  listen_uds? : String = ".choir/server.sock",
-  listen_tcp? : String? = None,
-  tcp_auth_token? : String? = None,
   task_contract_reader? : (String) -> @types.TaskContract? = fn(_) { None },
-  record_task_contract? : (String, @types.TaskContract?) -> Unit = fn(
-    _agent_id,
-    _contract,
-  ) {
-    ()
-  },
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
 ) -> @types.Response {
   match
@@ -2208,102 +2058,66 @@ pub async fn interpret_merge_pr(
         Ok(strategy) => strategy
         Err(e) => return @types.Response::Err(e.message())
       }
-      match poller_state {
-        Some(ps) =>
-          match ps.get(merge_args.pr_number) {
-            Some(tracked) => {
-              let file_pr_dir = merge_pr_audit_workdir(
-                project_dir, tracked, registry,
-              )
-              let pr_first_seen_unix = tracked.first_seen
-              if file_pr_audit_receipt_required(merge_args.parent_branch) {
-                let gate_state = match
-                  load_or_initialize_gate_state(
-                    project_dir, merge_gate_now_sec_fn, read_file, write_file_atomic,
-                  ) {
-                  Ok(state) => state
-                  Err(e) => return @types.Response::Err(e.message())
-                }
-                match
-                  merge_pr_require_audit_receipt(
-                    merge_args.parent_branch,
-                    project_dir,
-                    file_pr_dir,
-                    tracked.agent_id,
-                    merge_args.pr_number,
-                    tracked.last_sha,
-                    gate_state,
-                    pr_first_seen_unix,
-                    capture,
-                    spawn_audit_worker=async fn(worker_args) {
-                      let resolved_parent_branch = detect_default_branch_with_capture(
-                        project_dir, capture,
-                      )
-                      let plan = spawn_worker_plan(
-                        worker_args, resolved_parent_branch, session, project_dir,
-                      )
-                      prepare_audit_report(plan.agent_id)
-                      let resp = interpret_spawn_worker(
-                        worker_args,
-                        project_dir,
-                        session,
-                        runner,
-                        capture,
-                        registry,
-                        extra_mcp_servers_json~,
-                        shell_command~,
-                        listen_uds~,
-                        listen_tcp~,
-                        tcp_auth_token~,
-                        allow_audit_on_file_pr_caller=true,
-                        record_task_contract~,
-                      )
-                      match resp.ok_field("agent_id") {
-                        Some(agent_id) => Ok(agent_id)
-                        None =>
-                          Err(
-                            @types.ChoirError::validation_error(
-                              resp
-                              .error_message()
-                              .unwrap_or("audit worker spawn failed"),
-                            ),
-                          )
-                      }
-                    },
-                    wait_for_audit_report~,
-                    cleanup_audit_report~,
-                    write_audit_receipt=fn(write_args) {
-                      interpret_write_audit_receipt(
-                        write_args, project_dir, create_dir_all, write_file_atomic,
-                      )
-                    },
-                    audit_budget_ms~,
-                    audit_heartbeat_sec~,
-                    audit_max_rounds~,
-                    record_audit_cycle_for_agent~,
-                    audit_cycle_count_for_agent~,
-                    clear_audit_cycle_for_agent~,
-                    notify_audit_started~,
-                    append_file~,
-                    audit_sleep_fn~,
-                    audit_now_ms_fn~,
-                    audit_worker_alive~,
-                    list_audit_workers=fn() {
-                      merge_pr_live_audit_workers(registry)
-                    },
-                  ) {
-                  Err(e) => return @types.Response::Err(e.message())
-                  Ok(_) => ()
-                }
-              }
-            }
-            None => ()
+      let tracked_for_merge = match poller_state {
+        Some(ps) => ps.get(merge_args.pr_number)
+        None => None
+      }
+      let effective_parent_branch = match tracked_for_merge {
+        Some(tracked) if tracked.parent_branch.trim().to_owned() != "" => {
+          let requested = merge_args.parent_branch.trim().to_owned()
+          let tracked_parent = tracked.parent_branch.trim().to_owned()
+          if requested != "" && requested != tracked_parent {
+            return @types.Response::Err(
+              merge_pr_parent_branch_mismatch_error(
+                project_dir,
+                merge_args.pr_number,
+                requested,
+                tracked_parent,
+                append_file,
+              ).message(),
+            )
           }
-        None => ()
+          tracked_parent
+        }
+        _ => merge_args.parent_branch
+      }
+      let mut merge_match_head_sha : String? = None
+      if file_pr_audit_receipt_required(effective_parent_branch) {
+        let gate_state = match
+          load_gate_state(project_dir, read_file, path_exists~) {
+          Ok(state) => state
+          Err(e) => return @types.Response::Err(e.message())
+        }
+        match tracked_for_merge {
+          Some(tracked) =>
+            match
+              merge_pr_require_audit_receipt(
+                effective_parent_branch,
+                project_dir,
+                merge_args.pr_number,
+                tracked.last_sha,
+                gate_state,
+                tracked.first_seen,
+                capture,
+                append_file~,
+              ) {
+              Err(e) => return @types.Response::Err(e.message())
+              Ok(_) => merge_match_head_sha = Some(tracked.last_sha)
+            }
+          None =>
+            return @types.Response::Err(
+              merge_pr_audit_block_error(
+                project_dir,
+                merge_args.pr_number,
+                MergeAuditGateHeadUnavailable,
+                append_file,
+              ).message(),
+            )
+        }
       }
       match
         interpret_merge_pr_merge_host(
-          merge_args.parent_branch,
+          effective_parent_branch,
           merge_args.pr_number,
           merge_args.caller_id,
           effective_merge_strategy,
@@ -2311,6 +2125,7 @@ pub async fn interpret_merge_pr(
           @poller.now_sec(),
           runner,
           capture,
+          match_head_sha=merge_match_head_sha,
         ) {
         Err(e) => @types.Response::Err(e.message())
         Ok(_) => {
@@ -2328,7 +2143,7 @@ pub async fn interpret_merge_pr(
           if resp.is_ok() {
             interpret_merge_pr_post_success_side_effects(
               project_dir,
-              merge_args.parent_branch,
+              effective_parent_branch,
               merge_args.pr_number,
               tracked,
               registry,

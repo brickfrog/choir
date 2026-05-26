@@ -21,6 +21,18 @@ test "merge_pr_command uses configured gh merge strategy flag" {
 }
 
 ///|
+test "merge_pr_command can guard an exact audited head sha" {
+  let cmd = merge_pr_command(
+    42,
+    @types.MergeStrategy::Merge,
+    match_head_sha=Some("abcdef123456"),
+  )
+  @debug.assert_eq(cmd.args, [
+    "pr", "merge", "42", "--merge", "--match-head-commit", "abcdef123456",
+  ])
+}
+
+///|
 test "parse_left_right_counts parses tab separated counts" {
   match parse_left_right_counts("2\t5\n") {
     Some((left, right)) => {
