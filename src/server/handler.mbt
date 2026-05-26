@@ -321,6 +321,9 @@ pub async fn ServerState::handle_with_runner_and_capture(
         self.capture_mutation_gate_report(agent_id, report)
         @async.sleep(0)
       },
+      cancel_mutation_gate_worker=fn(agent_id) {
+        self.kill_tracked_agent_pgroup(agent_id, default_kill_pgid_best_effort)
+      },
       cleanup_mutation_gate_report=fn(agent_id) {
         self.cleanup_mutation_gate_report(agent_id)
       },

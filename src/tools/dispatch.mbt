@@ -984,6 +984,7 @@ pub async fn dispatch(
     @async.sleep(0)
     ()
   },
+  cancel_mutation_gate_worker? : (String) -> Unit = fn(_) {  },
   cleanup_mutation_gate_report? : (String) -> Unit = fn(_) {  },
   agy_migration_incomplete? : Bool = false,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
@@ -1342,6 +1343,7 @@ pub async fn dispatch(
         notify_audit_started~,
         prepare_mutation_gate_report~,
         wait_for_mutation_gate_report~,
+        cancel_mutation_gate_worker~,
         cleanup_mutation_gate_report~,
         mutation_kill_rate_min~,
         extra_mcp_servers_json~,
@@ -2239,6 +2241,7 @@ pub async fn handle_request(
     @async.sleep(0)
     ()
   },
+  cancel_mutation_gate_worker? : (String) -> Unit = fn(_) {  },
   cleanup_mutation_gate_report? : (String) -> Unit = fn(_) {  },
   policy_enforcement_mode? : @policy.PolicyEnforcementMode = @policy.policy_enforcement_mode,
   parent_branch_lifecycle_reader? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
@@ -2381,6 +2384,7 @@ pub async fn handle_request(
                   prepare_mutation_gate_report~,
                   wait_for_mutation_gate_report~,
                   capture_mutation_gate_report~,
+                  cancel_mutation_gate_worker~,
                   cleanup_mutation_gate_report~,
                   agy_migration_incomplete~,
                   sleep_fn~,
@@ -2565,6 +2569,7 @@ pub async fn dispatch_call(
     @async.sleep(0)
     ()
   },
+  cancel_mutation_gate_worker? : (String) -> Unit = fn(_) {  },
   cleanup_mutation_gate_report? : (String) -> Unit = fn(_) {  },
   policy_enforcement_mode? : @policy.PolicyEnforcementMode = @policy.policy_enforcement_mode,
   parent_branch_lifecycle_reader? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
@@ -2656,6 +2661,7 @@ pub async fn dispatch_call(
                   prepare_mutation_gate_report~,
                   wait_for_mutation_gate_report~,
                   capture_mutation_gate_report~,
+                  cancel_mutation_gate_worker~,
                   cleanup_mutation_gate_report~,
                   agy_migration_incomplete~,
                   sleep_fn~,
