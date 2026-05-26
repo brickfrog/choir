@@ -221,7 +221,7 @@ fn tool_defs() -> Array[CatalogTool] {
   [
     {
       name: "fork_wave",
-      description: "Spawn agents in new worktrees (default dev leaves; optional role=tl for a sub-team-lead). For distinct tasks, pass a tasks array (one entry per leaf, count is inferred). For identical tasks, pass task + count. Optional automerge and review_mode override server defaults for that wave.",
+      description: "Spawn agents in new worktrees (default dev leaves; optional role=tl for a sub-team-lead). For distinct tasks, pass a tasks array (one entry per leaf, count is inferred). For identical tasks, pass task + count. Optional automerge, review_mode, and merge_strategy override server defaults for that wave.",
       props: [
         { name: "task", desc: "Shared task for all leaves (use with count)" },
         {
@@ -261,6 +261,10 @@ fn tool_defs() -> Array[CatalogTool] {
         {
           name: "review_mode",
           desc: "Optional per-wave override for review behavior after fixes are pushed: single_pass or iterative; omitted inherits the server config default",
+        },
+        {
+          name: "merge_strategy",
+          desc: "Optional per-wave override for gh pr merge strategy: merge, squash, or rebase; omitted inherits the server config default",
         },
         { name: "read_first", desc: "Newline-separated paths to read first" },
         { name: "steps", desc: "Newline-separated implementation steps" },

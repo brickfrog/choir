@@ -1,4 +1,26 @@
 ///|
+test "merge_strategy_to_gh_flag maps all merge strategies" {
+  assert_eq(merge_strategy_to_gh_flag(@types.MergeStrategy::Merge), "--merge")
+  assert_eq(merge_strategy_to_gh_flag(@types.MergeStrategy::Squash), "--squash")
+  assert_eq(merge_strategy_to_gh_flag(@types.MergeStrategy::Rebase), "--rebase")
+}
+
+///|
+test "merge_pr_command uses configured gh merge strategy flag" {
+  let merge_cmd = merge_pr_command(42, @types.MergeStrategy::Merge)
+  assert_eq(merge_cmd.program, "gh")
+  @debug.assert_eq(merge_cmd.args, ["pr", "merge", "42", "--merge"])
+
+  let squash_cmd = merge_pr_command(42, @types.MergeStrategy::Squash)
+  assert_eq(squash_cmd.program, "gh")
+  @debug.assert_eq(squash_cmd.args, ["pr", "merge", "42", "--squash"])
+
+  let rebase_cmd = merge_pr_command(42, @types.MergeStrategy::Rebase)
+  assert_eq(rebase_cmd.program, "gh")
+  @debug.assert_eq(rebase_cmd.args, ["pr", "merge", "42", "--rebase"])
+}
+
+///|
 test "parse_left_right_counts parses tab separated counts" {
   match parse_left_right_counts("2\t5\n") {
     Some((left, right)) => {

@@ -79,6 +79,7 @@ test "parse_config - minimal" {
   assert_eq(cfg.pr_review, true)
   assert_eq(cfg.automerge, false)
   assert_eq(cfg.review_mode, @types.ReviewMode::SinglePass)
+  assert_eq(cfg.merge_strategy, @types.MergeStrategy::Merge)
   assert_eq(cfg.worker_no_handoff_prod_sec, 120L)
   assert_eq(cfg.worker_no_handoff_escalate_sec, 120L)
   assert_eq(cfg.audit_heartbeat_sec, 60)
@@ -379,6 +380,30 @@ test "parse_config review_mode invalid is error" {
 }
 
 ///|
+test "parse_config merge_strategy explicit merge" {
+  let cfg = parse_config("merge_strategy = \"merge\"").unwrap()
+  assert_eq(cfg.merge_strategy, @types.MergeStrategy::Merge)
+}
+
+///|
+test "parse_config merge_strategy explicit squash" {
+  let cfg = parse_config("merge_strategy = \"squash\"").unwrap()
+  assert_eq(cfg.merge_strategy, @types.MergeStrategy::Squash)
+}
+
+///|
+test "parse_config merge_strategy explicit rebase" {
+  let cfg = parse_config("merge_strategy = \"rebase\"").unwrap()
+  assert_eq(cfg.merge_strategy, @types.MergeStrategy::Rebase)
+}
+
+///|
+test "parse_config merge_strategy invalid defaults to merge" {
+  let cfg = parse_config("merge_strategy = \"again\"").unwrap()
+  assert_eq(cfg.merge_strategy, @types.MergeStrategy::Merge)
+}
+
+///|
 test "parse_config pr_policy require_integration_audit invalid is error" {
   let r = parse_config(
     (
@@ -515,6 +540,15 @@ test "parse_local_config review_mode override" {
     #|review_mode = "iterative"
   let local_cfg = parse_local_config(content).unwrap()
   @debug.assert_eq(local_cfg.review_mode, Some(@types.ReviewMode::Iterative))
+}
+
+///|
+test "parse_local_config merge_strategy override" {
+  let content =
+    #|role = "dev"
+    #|merge_strategy = "squash"
+  let local_cfg = parse_local_config(content).unwrap()
+  @debug.assert_eq(local_cfg.merge_strategy, Some(@types.MergeStrategy::Squash))
 }
 
 ///|

@@ -124,6 +124,14 @@ fn json_optional_review_mode(value : @types.ReviewMode?) -> Json {
 }
 
 ///|
+fn json_optional_merge_strategy(value : @types.MergeStrategy?) -> Json {
+  match value {
+    Some(strategy) => strategy.to_wire_string().to_json()
+    None => ().to_json()
+  }
+}
+
+///|
 fn json_optional_scaffold_commit(value : ForkWaveScaffoldCommit?) -> Json {
   match value {
     Some(scaffold) =>
@@ -158,6 +166,7 @@ pub fn fork_wave_args_to_json(args : ForkWaveArgs) -> Json {
     "review_context": json_optional_string(args.review_context),
     "automerge": json_optional_bool(args.automerge),
     "review_mode": json_optional_review_mode(args.review_mode),
+    "merge_strategy": json_optional_merge_strategy(args.merge_strategy),
     "depends_on": args.depends_on.to_json(),
     "scaffold_commit": json_optional_scaffold_commit(args.scaffold_commit),
   }
@@ -288,6 +297,15 @@ fn parse_fork_wave_args_json(j : Json) -> ForkWaveArgs? {
       }
     None => None
   }
+  let merge_strategy = match
+    parse_json_optional_string(obj.get("merge_strategy")) {
+    Some(s) =>
+      match @config.parse_merge_strategy(s) {
+        Ok(strategy) => Some(strategy)
+        Err(_) => None
+      }
+    None => None
+  }
   let depends_on = parse_json_string_array(obj.get("depends_on"))
   let scaffold_commit = parse_json_scaffold_commit(obj.get("scaffold_commit"))
   Some({
@@ -304,6 +322,7 @@ fn parse_fork_wave_args_json(j : Json) -> ForkWaveArgs? {
     review_context,
     automerge,
     review_mode,
+    merge_strategy,
     depends_on,
     scaffold_commit,
   })

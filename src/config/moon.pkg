@@ -1,5 +1,6 @@
 import {
   "choir/src/types",
+  "brickfrog/moontrace",
   "moonbitlang/core/json",
   "moonbitlang/core/string",
   "moonbitlang/core/debug",

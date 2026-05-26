@@ -617,6 +617,7 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
     spawn_depth: 0,
     automerge: None,
     review_mode: None,
+    merge_strategy: None,
     wave_id: None,
   }
   assert_true(
@@ -790,6 +791,7 @@ async test "maybe_trigger_automerge_for_pending_event does not satisfy non-nativ
     spawn_depth: 0,
     automerge: None,
     review_mode: None,
+    merge_strategy: None,
     wave_id: None,
   }
   assert_true(

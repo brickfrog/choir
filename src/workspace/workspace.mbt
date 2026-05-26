@@ -213,6 +213,13 @@ pub fn config_local_content(
       "\"\n"
     None => ""
   }
+  let merge_strategy_line = match spec.merge_strategy {
+    Some(strategy) =>
+      "\nmerge_strategy = \"" +
+      escape_toml_string(@config.merge_strategy_to_string(strategy)) +
+      "\"\n"
+    None => ""
+  }
   let wave_id_line = match spec.wave_id {
     Some(id) => "\nwave_id = \"" + escape_toml_string(id) + "\"\n"
     None => ""
@@ -237,6 +244,7 @@ pub fn config_local_content(
   spec.spawn_depth.to_string() +
   automerge_line +
   review_mode_line +
+  merge_strategy_line +
   wave_id_line +
   task_contract_line
 }
@@ -254,7 +262,7 @@ fn strip_json_object_braces(s : String) -> String? {
 }
 
 ///|
-fn local_config_candidate_paths_for_agent_workspace(
+pub fn local_config_candidate_paths_for_agent_workspace(
   project_dir : String,
   agent_workspace : String?,
   agent_slug : String,

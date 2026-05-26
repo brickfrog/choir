@@ -35,6 +35,46 @@ pub fn review_mode_to_string(mode : @types.ReviewMode) -> String {
 }
 
 ///|
+pub fn parse_merge_strategy(
+  s : String,
+) -> Result[@types.MergeStrategy, @types.ChoirError] {
+  @types.MergeStrategy::try_parse_wire(s)
+}
+
+///|
+pub fn merge_strategy_to_string(strategy : @types.MergeStrategy) -> String {
+  strategy.to_wire_string()
+}
+
+///|
+fn warn_invalid_merge_strategy(
+  raw : String,
+  error : @types.ChoirError,
+  default_strategy : @types.MergeStrategy,
+) -> Unit {
+  let default_label = merge_strategy_to_string(default_strategy)
+  @moontrace.warn("invalid merge_strategy config value, defaulting to " + default_label, fields=[
+    @moontrace.field("value", raw),
+    @moontrace.field("error", error.message()),
+    @moontrace.field("default_strategy", default_label),
+  ])
+}
+
+///|
+fn parse_merge_strategy_or_default(
+  raw : String,
+  default_strategy : @types.MergeStrategy,
+) -> @types.MergeStrategy {
+  match parse_merge_strategy(raw) {
+    Ok(strategy) => strategy
+    Err(e) => {
+      warn_invalid_merge_strategy(raw, e, default_strategy)
+      default_strategy
+    }
+  }
+}
+
+///|
 fn parse_moon_verify_target(
   s : String,
 ) -> Result[@types.MoonVerifyTarget, @types.ChoirError] {
@@ -461,6 +501,11 @@ pub fn parse_config(
         Err(e) => return Err(e)
       }
   }
+  let merge_strategy = match doc.get("merge_strategy") {
+    None => default_cfg.merge_strategy
+    Some(raw) =>
+      parse_merge_strategy_or_default(raw, default_cfg.merge_strategy)
+  }
   let moon_verify_target = match doc.get("moon_verify_target") {
     None => default_cfg.moon_verify_target
     Some(raw) =>
@@ -611,6 +656,7 @@ pub fn parse_config(
     pr_review,
     automerge,
     review_mode,
+    merge_strategy,
     moon_verify_target,
     agy_migration_incomplete,
     worker_no_handoff_prod_sec,
@@ -740,6 +786,11 @@ pub fn parse_local_config(
       }
     None => None
   }
+  let merge_strategy = match doc.get("merge_strategy") {
+    Some(raw) =>
+      Some(parse_merge_strategy_or_default(raw, @types.MergeStrategy::Merge))
+    None => None
+  }
   let auto_pull_after_integration = match
     parse_optional_bool_config_value(doc, "auto_pull_after_integration") {
     Ok(v) => v
@@ -769,6 +820,7 @@ pub fn parse_local_config(
     task_contract,
     automerge,
     review_mode,
+    merge_strategy,
     auto_pull_after_integration,
     auto_rebuild_after_pull,
     auto_reload_after_rebuild,

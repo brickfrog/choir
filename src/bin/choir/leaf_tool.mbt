@@ -624,6 +624,7 @@ fn local_cfg_from_env_lookup(
     task_contract: None,
     automerge: None,
     review_mode: None,
+    merge_strategy: None,
     auto_pull_after_integration: None,
     auto_rebuild_after_pull: None,
     auto_reload_after_rebuild: None,

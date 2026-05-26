@@ -1073,6 +1073,108 @@ pub fn merge_pr_host_step_sequence() -> Array[MergePrHostStep] {
 }
 
 ///|
+fn merge_pr_agent_local_config_paths(
+  project_dir : String,
+  agent_id : String,
+  registry : @registry.AgentRegistry?,
+) -> Array[String] {
+  let agent_workspace = match registry {
+    Some(reg) =>
+      match reg.get_opt(agent_id) {
+        Some(agent) => Some(agent.workspace)
+        None => None
+      }
+    None => None
+  }
+  @workspace.local_config_candidate_paths_for_agent_workspace(
+    project_dir,
+    agent_workspace,
+    @phase.extract_slug(agent_id),
+    agent_id=Some(agent_id),
+  )
+}
+
+///|
+fn merge_pr_local_merge_strategy_for_agent(
+  project_dir : String,
+  agent_id : String,
+  registry : @registry.AgentRegistry?,
+  read_file : (String) -> String,
+) -> @types.MergeStrategy? {
+  for path in merge_pr_agent_local_config_paths(project_dir, agent_id, registry) {
+    let content = read_file(path)
+    if content == "" {
+      continue
+    }
+    match @config.parse_local_config(content) {
+      Ok(local_cfg) =>
+        match local_cfg.merge_strategy {
+          Some(strategy) => return Some(strategy)
+          None => ()
+        }
+      Err(_) => ()
+    }
+  }
+  None
+}
+
+///|
+fn merge_pr_project_local_merge_strategy(
+  project_dir : String,
+  read_file : (String) -> String,
+) -> @types.MergeStrategy? {
+  let content = read_file(project_dir + "/.choir/config.local.toml")
+  if content == "" {
+    return None
+  }
+  match @config.parse_local_config(content) {
+    Ok(local_cfg) => local_cfg.merge_strategy
+    Err(_) => None
+  }
+}
+
+///|
+fn merge_pr_effective_merge_strategy(
+  project_dir : String,
+  pr_number : Int,
+  caller_id : String,
+  poller_state : @poller.PollerState?,
+  registry : @registry.AgentRegistry?,
+  read_file : (String) -> String,
+  global_merge_strategy : @types.MergeStrategy,
+) -> @types.MergeStrategy {
+  match poller_state {
+    Some(ps) =>
+      match ps.get(pr_number) {
+        Some(tracked) =>
+          match
+            merge_pr_local_merge_strategy_for_agent(
+              project_dir,
+              tracked.agent_id,
+              registry,
+              read_file,
+            ) {
+            Some(strategy) => return strategy
+            None => ()
+          }
+        None => ()
+      }
+    None => ()
+  }
+  match
+    merge_pr_local_merge_strategy_for_agent(
+      project_dir, caller_id, registry, read_file,
+    ) {
+    Some(strategy) => strategy
+    None =>
+      match merge_pr_project_local_merge_strategy(project_dir, read_file) {
+        Some(strategy) => strategy
+        None => global_merge_strategy
+      }
+  }
+}
+
+///|
 /// If the mutex is busy, returns before running the merge. Otherwise acquires
 /// the mutex, runs the merge, and on either success or failure releases the
 /// mutex after capturing any failure output. Holding the mutex across failure
@@ -1082,6 +1184,7 @@ pub async fn interpret_merge_pr_merge_host(
   parent_branch : String,
   pr_number : Int,
   caller_id : String,
+  merge_strategy : @types.MergeStrategy,
   mutex_registry : @registry.MutexRegistry?,
   now_sec : Int64,
   runner : async (Array[@workspace.Command]) -> Array[Int],
@@ -1104,11 +1207,11 @@ pub async fn interpret_merge_pr_merge_host(
     }
     None => ()
   }
-  let cmds = merge_pr_commands(pr_number)
+  let cmds = merge_pr_commands(pr_number, merge_strategy)
   let merge_result = run_strict(runner, cmds, capture~)
   let final_result = match merge_result {
     Err(_) => {
-      let (_, output) = capture(merge_pr_command(pr_number))
+      let (_, output) = capture(merge_pr_command(pr_number, merge_strategy))
       let trimmed = output.trim().to_owned()
       Err(
         @types.ChoirError::git_error(
@@ -2070,6 +2173,7 @@ pub async fn interpret_merge_pr(
   audit_sleep_fn? : async (Int) -> Unit = @async.sleep,
   audit_now_ms_fn? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() },
   audit_worker_alive? : (String) -> Bool = fn(_) { true },
+  merge_strategy? : @types.MergeStrategy = @types.Config::default().merge_strategy,
   merge_gate_now_sec_fn? : () -> Int64 = @poller.now_sec,
   session? : String = "choir",
   extra_mcp_servers_json? : String? = None,
@@ -2101,6 +2205,15 @@ pub async fn interpret_merge_pr(
     ) {
     Err(e) => @types.Response::Err(e.message())
     Ok(_) => {
+      let effective_merge_strategy = merge_pr_effective_merge_strategy(
+        project_dir,
+        merge_args.pr_number,
+        merge_args.caller_id,
+        poller_state,
+        registry,
+        read_file,
+        merge_strategy,
+      )
       match poller_state {
         Some(ps) =>
           match ps.get(merge_args.pr_number) {
@@ -2199,6 +2312,7 @@ pub async fn interpret_merge_pr(
           merge_args.parent_branch,
           merge_args.pr_number,
           merge_args.caller_id,
+          effective_merge_strategy,
           mutex_registry,
           @poller.now_sec(),
           runner,

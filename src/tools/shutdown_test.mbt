@@ -1180,6 +1180,7 @@ fn shutdown_beads_registry_fixture(
     spawn_depth: 0,
     automerge: None,
     review_mode: None,
+    merge_strategy: None,
     wave_id: None,
   }
   ignore(

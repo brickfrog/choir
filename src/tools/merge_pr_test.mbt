@@ -891,6 +891,7 @@ fn merge_pr_test_write_beads_contract(
     spawn_depth: 0,
     automerge: None,
     review_mode: None,
+    merge_strategy: None,
     wave_id: Some("wv-feature"),
   }
   ignore(
@@ -2099,6 +2100,7 @@ async test "interpret_merge_pr_merge_host ok without mutex" {
     "main",
     42,
     "main.tl",
+    @types.MergeStrategy::Merge,
     None,
     0L,
     mock_merge_host_runner_ok,
@@ -2116,6 +2118,7 @@ async test "interpret_merge_pr_merge_host maps merge failure via merge_pr_comman
     "main",
     4,
     "main.tl",
+    @types.MergeStrategy::Merge,
     None,
     0L,
     mock_merge_host_runner_gh_fails,
@@ -2134,6 +2137,34 @@ async test "interpret_merge_pr_merge_host maps merge failure via merge_pr_comman
 }
 
 ///|
+async test "interpret_merge_pr_merge_host passes configured squash strategy to runner" {
+  let seen : Array[@workspace.Command] = []
+  let got = interpret_merge_pr_merge_host(
+    "main",
+    51,
+    "main.tl",
+    @types.MergeStrategy::Squash,
+    None,
+    0L,
+    async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      for cmd in cmds {
+        seen.push(cmd)
+      }
+      [0, 0]
+    },
+    mock_capture_empty,
+  )
+  match got {
+    Ok(_) => ()
+    Err(e) => fail("expected Ok got " + e.message())
+  }
+  assert_eq(seen.length(), 2)
+  assert_eq(seen[0].program, "gh")
+  @debug.assert_eq(seen[0].args, ["pr", "merge", "51", "--squash"])
+}
+
+///|
 async test "interpret_merge_pr_merge_host returns busy when mutex held" {
   let reg = @registry.MutexRegistry::new()
   let name = merge_pr_mutex_name("main")
@@ -2145,6 +2176,7 @@ async test "interpret_merge_pr_merge_host returns busy when mutex held" {
     "main",
     1,
     "waiter",
+    @types.MergeStrategy::Merge,
     Some(reg),
     50L,
     mock_merge_host_runner_ok,
@@ -2203,6 +2235,7 @@ async test "interpret_merge_pr_merge_host holds mutex across failure capture" {
     "main",
     4,
     "main.tl",
+    @types.MergeStrategy::Merge,
     Some(reg),
     50L,
     runner,
@@ -2270,6 +2303,7 @@ async test "interpret_merge_pr_merge_host returns busy for overlapping failure-c
           "main",
           5,
           "second",
+          @types.MergeStrategy::Merge,
           Some(reg),
           50L,
           second_runner,
@@ -2288,6 +2322,7 @@ async test "interpret_merge_pr_merge_host returns busy for overlapping failure-c
     "main",
     4,
     "first",
+    @types.MergeStrategy::Merge,
     Some(reg),
     50L,
     first_runner,
@@ -2426,6 +2461,126 @@ async test "interpret_merge_pr ok response matches merged envelope" {
     }
     _ => fail("expected ok merged")
   }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_merge_pr reads project local merge_strategy" {
+  let project_dir = "/tmp/choir-mpr-project-strategy-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  assert_true(
+    @sys.write_file_sync(
+      project_dir + "/.choir/config.local.toml",
+      "merge_strategy = \"squash\"\n",
+    ),
+  )
+  let args : MergePrArgs = {
+    pr_number: 79,
+    parent_branch: "feature/base",
+    caller_id: "main.tl",
+    review_mode: Some(@types.ReviewMode::SinglePass),
+  }
+  let seen : Array[@workspace.Command] = []
+  let got = interpret_merge_pr(
+    args,
+    project_dir,
+    None,
+    None,
+    None,
+    async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      for cmd in cmds {
+        seen.push(cmd)
+      }
+      [0, 0]
+    },
+    mock_preflight_capture_no_unresolved_threads,
+    @sys.append_file_sync,
+    @sys.path_entry_exists,
+    read_file=@sys.read_file,
+  )
+  match got {
+    @types.Response::Ok(fields) =>
+      assert_eq(fields.get("status").unwrap_or(""), "merged")
+    @types.Response::Err(msg) => fail("expected merge success: " + msg)
+  }
+  let mut saw_squash_merge = false
+  for cmd in seen {
+    if cmd.program == "gh" && cmd.args == ["pr", "merge", "79", "--squash"] {
+      saw_squash_merge = true
+    }
+  }
+  assert_true(saw_squash_merge)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_merge_pr reads tracked agent merge_strategy from local config" {
+  let project_dir = "/tmp/choir-mpr-squash-strategy-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  let worktree = project_dir + "/.choir/worktrees/leaf"
+  assert_true(@sys.create_dir_all(worktree + "/.choir"))
+  assert_true(
+    @sys.write_file_sync(
+      worktree + "/.choir/config.local.toml",
+      "merge_strategy = \"squash\"\n",
+    ),
+  )
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    78,
+    "main.leaf",
+    "main.leaf",
+    "feature/base",
+    "https://github.com/o/r/pull/78",
+    200L,
+    @poller.ReviewState::Approved,
+    "",
+    "abcdef1234567890abcdef1234567890abcdef12",
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  let args : MergePrArgs = {
+    pr_number: 78,
+    parent_branch: "feature/base",
+    caller_id: "main.tl",
+    review_mode: Some(@types.ReviewMode::SinglePass),
+  }
+  let seen : Array[@workspace.Command] = []
+  let got = interpret_merge_pr(
+    args,
+    project_dir,
+    Some(ps),
+    None,
+    None,
+    async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      for cmd in cmds {
+        seen.push(cmd)
+      }
+      [0, 0]
+    },
+    mock_preflight_capture_no_unresolved_threads,
+    @sys.append_file_sync,
+    @sys.path_entry_exists,
+    read_file=@sys.read_file,
+    task_contract_reader=merge_pr_test_empty_contract_reader,
+  )
+  match got {
+    @types.Response::Ok(fields) =>
+      assert_eq(fields.get("status").unwrap_or(""), "merged")
+    @types.Response::Err(msg) => fail("expected merge success: " + msg)
+  }
+  let mut saw_squash_merge = false
+  for cmd in seen {
+    if cmd.program == "gh" && cmd.args == ["pr", "merge", "78", "--squash"] {
+      saw_squash_merge = true
+    }
+  }
+  assert_true(saw_squash_merge)
   ignore(@sys.rm_rf(project_dir))
 }
 
