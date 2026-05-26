@@ -250,16 +250,14 @@ const SHIP_PR_DEFAULT : String =
   #|
   #|## Path B — TL-direct (root, no task contract)
   #|
-  #|`mcp__choir__file_pr` will fail with `server task contract unavailable for tracked agent 'root'`. This path is a workaround for that known server bug, not the normal shipping flow:
+  #|`mcp__choir__file_pr` will fail with `server task contract unavailable for tracked agent 'root'`. This path is a workaround for that known server bug (tracked: choir-v9gi), not the normal shipping flow. **Fix the root-caller contract; do not normalize the bypass.**
   #|
   #|1. `git push -u origin <branch>` from where the work lives.
   #|2. `gh pr create --base main --head <branch> --title ... --body ...` via HEREDOC. Escape `@`-prefixed strings in the body (`@debug` etc. become GitHub mentions — use backticks or rewrite).
-  #|3. `git rev-parse HEAD` for the FULL sha — `write_audit_receipt` rejects 7-char shorts.
-  #|4. Cross-model audit: `mcp__choir__spawn_worker type=review agent_type=claude` (if builder was codex). Address findings inline before receipt.
-  #|5. `mcp__choir__write_audit_receipt sha=<full> branch=<branch> findings_count=0 caller_id=root`.
-  #|6. `mcp__choir__track_pr pr_number=<n> agent_id=root branch=<branch> parent_branch=main pr_url=...`
-  #|7. `mcp__choir__request_review pr_number=<n> reviewer=@copilot`.
-  #|8. After Copilot review + CI: `mcp__choir__merge_pr` fails with same task-contract error. **Workaround** (until root-caller contract is fixed): `gh pr merge <n> --merge --admin`. This bypasses the choir gate — do NOT use for normal leaf flows. File follow-up tracked separately.
+  #|3. `mcp__choir__track_pr pr_number=<n> agent_id=root branch=<branch> parent_branch=main pr_url=...`
+  #|4. `mcp__choir__request_review pr_number=<n> reviewer=@copilot`. Address Copilot findings; push fixes; wait for poller to clear unresolved threads.
+  #|5. Run `/audit` until the receipt has `findings_count=0`. The skill spawns Sarcasmotron, parses the worker's findings, and writes the receipt itself — do NOT hand-write a receipt with `findings_count=0` to bypass the gate.
+  #|6. After Copilot review + CI green: `mcp__choir__merge_pr` will fail with the same task-contract bug above. Bypass is `gh pr merge <n> --merge --admin` AND it is a banned antipattern per CLAUDE.md — only use it when (a) every constituent leaf already has a green audit receipt, (b) you've filed/acknowledged choir-v9gi for the underlying gate fix, and (c) you tell the user explicitly that you bypassed.
   #|
   #|## Gotchas
   #|

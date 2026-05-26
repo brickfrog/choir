@@ -2087,7 +2087,11 @@ pub async fn interpret_merge_pr(
       if file_pr_audit_receipt_required(effective_parent_branch) {
         let gate_state = match
           load_or_initialize_gate_state(
-            project_dir, merge_gate_now_sec_fn, read_file, write_file_atomic,
+            project_dir,
+            merge_gate_now_sec_fn,
+            read_file,
+            write_file_atomic,
+            path_exists~,
           ) {
           Ok(state) => state
           Err(e) => return @types.Response::Err(e.message())

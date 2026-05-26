@@ -283,17 +283,80 @@ test "merge_pr_audit_gate_required grandfathers PRs first seen before gate times
 ///|
 test "load_or_initialize_gate_state fails closed when timestamp cannot persist" {
   match
-    load_or_initialize_gate_state("/repo", fn() { 123L }, fn(_) { "" }, fn(
-      _,
-      _,
+    load_or_initialize_gate_state(
+      "/repo",
+      fn() { 123L },
+      fn(_) { "" },
+      fn(_, _) { false },
+      path_exists=fn(_) { false },
     ) {
-      false
-    }) {
     Err(e) => {
       assert_true(e.message().contains("audit receipt gate"))
       assert_true(e.message().contains("not durable"))
     }
     Ok(_) => fail("expected gate state persistence failure")
+  }
+}
+
+///|
+test "load_or_initialize_gate_state fails closed when gate file is empty" {
+  let writes : Array[(String, String)] = []
+  match
+    load_or_initialize_gate_state(
+      "/repo",
+      fn() { 999L },
+      fn(_) { "" },
+      fn(path, body) {
+        writes.push((path, body))
+        true
+      },
+      path_exists=fn(path) { path.has_suffix("/.choir/audit-gate.json") },
+    ) {
+    Err(e) => {
+      assert_true(e.message().contains("audit receipt gate"))
+      assert_true(e.message().contains("is empty"))
+    }
+    Ok(_) =>
+      fail(
+        "expected fail-closed on empty gate file, got bootstrap write instead",
+      )
+  }
+  assert_eq(writes.length(), 0)
+}
+
+///|
+test "load_or_initialize_gate_state fails closed on malformed json gate file" {
+  match
+    load_or_initialize_gate_state(
+      "/repo",
+      fn() { 999L },
+      fn(_) { "{not json" },
+      fn(_, _) { true },
+      path_exists=fn(_) { true },
+    ) {
+    Err(e) => {
+      assert_true(e.message().contains("audit receipt gate"))
+      assert_true(e.message().contains("not valid JSON"))
+    }
+    Ok(_) => fail("expected fail-closed on malformed JSON gate file")
+  }
+}
+
+///|
+test "load_or_initialize_gate_state fails closed on schema-invalid gate file" {
+  match
+    load_or_initialize_gate_state(
+      "/repo",
+      fn() { 999L },
+      fn(_) { "{\"enabled_at_unix\":0}" },
+      fn(_, _) { true },
+      path_exists=fn(_) { true },
+    ) {
+    Err(e) => {
+      assert_true(e.message().contains("audit receipt gate"))
+      assert_true(e.message().contains("malformed"))
+    }
+    Ok(_) => fail("expected fail-closed on schema-invalid gate file")
   }
 }
 
@@ -436,7 +499,7 @@ async test "interpret_merge_pr missing audit receipt policy-blocks without spawn
       logs.push(content)
       true
     },
-    fn(_) { false },
+    fn(path) { path.has_suffix("/.choir/audit-gate.json") },
     read_file=fn(path) {
       if path.has_suffix("/.choir/audit-gate.json") {
         "{\"enabled_at_unix\":100}\n"
@@ -531,7 +594,7 @@ async test "interpret_merge_pr rejects caller parent branch mismatch before merg
       logs.push(content)
       true
     },
-    fn(_) { false },
+    fn(path) { path.has_suffix("/.choir/audit-gate.json") },
     read_file=fn(path) {
       if path.has_suffix("/.choir/audit-gate.json") {
         "{\"enabled_at_unix\":100}\n"
@@ -626,7 +689,7 @@ async test "interpret_merge_pr audit gate fails closed without poller state" {
       logs.push(content)
       true
     },
-    fn(_) { false },
+    fn(path) { path.has_suffix("/.choir/audit-gate.json") },
     read_file=fn(path) {
       if path.has_suffix("/.choir/audit-gate.json") {
         "{\"enabled_at_unix\":100}\n"
@@ -703,7 +766,7 @@ async test "interpret_merge_pr audit gate fails closed for untracked PR" {
       logs.push(content)
       true
     },
-    fn(_) { false },
+    fn(path) { path.has_suffix("/.choir/audit-gate.json") },
     read_file=fn(path) {
       if path.has_suffix("/.choir/audit-gate.json") {
         "{\"enabled_at_unix\":100}\n"
@@ -798,7 +861,7 @@ async test "interpret_merge_pr main audit gate merges only matching audited head
       (0, "")
     },
     fn(_, _) { true },
-    fn(_) { false },
+    fn(path) { path.has_suffix("/.choir/audit-gate.json") },
     read_file=fn(path) {
       if path.has_suffix("/.choir/audit-gate.json") {
         "{\"enabled_at_unix\":100}\n"
@@ -2875,7 +2938,7 @@ async test "interpret_merge_pr feature main closes wave and body beads then dele
     runner,
     capture,
     append_file,
-    fn(_path) { false },
+    fn(path) { path.has_suffix("/.choir/audit-gate.json") },
     read_file=merge_pr_test_gate_state_reader(1L),
     task_contract_reader=fn(agent_id) { task_contracts.get(agent_id) },
   )
@@ -2996,7 +3059,7 @@ async test "interpret_merge_pr feature main with no issue ids does not call bd c
     runner,
     capture,
     fn(_path, _content) { true },
-    fn(_path) { false },
+    fn(path) { path.has_suffix("/.choir/audit-gate.json") },
     read_file=merge_pr_test_gate_state_reader(1L),
     task_contract_reader=merge_pr_test_empty_contract_reader,
   )

@@ -23,10 +23,19 @@ pub fn load_or_initialize_gate_state(
   now_fn : () -> Int64,
   read : (String) -> String,
   write : (String, String) -> Bool,
+  path_exists? : (String) -> Bool = @sys.path_exists,
 ) -> Result[MergeGateState, @types.ChoirError] {
   let path = merge_pr_audit_gate_state_path(project_dir)
+  let file_present = path_exists(path)
   let body = read(path).trim().to_owned()
-  if body != "" {
+  if file_present {
+    if body == "" {
+      return Err(
+        @types.ChoirError::validation_error(
+          "merge blocked: audit receipt gate state at .choir/audit-gate.json is empty; fix or delete the file deliberately rather than silently resetting the grandfather boundary",
+        ),
+      )
+    }
     let parsed : Json? = Some(@json.parse(body)) catch { _ => None }
     match parsed {
       Some(json) =>
