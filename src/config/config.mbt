@@ -47,34 +47,6 @@ pub fn merge_strategy_to_string(strategy : @types.MergeStrategy) -> String {
 }
 
 ///|
-fn warn_invalid_merge_strategy(
-  raw : String,
-  error : @types.ChoirError,
-  default_strategy : @types.MergeStrategy,
-) -> Unit {
-  let default_label = merge_strategy_to_string(default_strategy)
-  @moontrace.warn("invalid merge_strategy config value, defaulting to " + default_label, fields=[
-    @moontrace.field("value", raw),
-    @moontrace.field("error", error.message()),
-    @moontrace.field("default_strategy", default_label),
-  ])
-}
-
-///|
-fn parse_merge_strategy_or_default(
-  raw : String,
-  default_strategy : @types.MergeStrategy,
-) -> @types.MergeStrategy {
-  match parse_merge_strategy(raw) {
-    Ok(strategy) => strategy
-    Err(e) => {
-      warn_invalid_merge_strategy(raw, e, default_strategy)
-      default_strategy
-    }
-  }
-}
-
-///|
 fn parse_moon_verify_target(
   s : String,
 ) -> Result[@types.MoonVerifyTarget, @types.ChoirError] {
@@ -504,7 +476,10 @@ pub fn parse_config(
   let merge_strategy = match doc.get("merge_strategy") {
     None => default_cfg.merge_strategy
     Some(raw) =>
-      parse_merge_strategy_or_default(raw, default_cfg.merge_strategy)
+      match parse_merge_strategy(raw) {
+        Ok(strategy) => strategy
+        Err(e) => return Err(e)
+      }
   }
   let moon_verify_target = match doc.get("moon_verify_target") {
     None => default_cfg.moon_verify_target
@@ -788,7 +763,10 @@ pub fn parse_local_config(
   }
   let merge_strategy = match doc.get("merge_strategy") {
     Some(raw) =>
-      Some(parse_merge_strategy_or_default(raw, @types.MergeStrategy::Merge))
+      match parse_merge_strategy(raw) {
+        Ok(strategy) => Some(strategy)
+        Err(e) => return Err(e)
+      }
     None => None
   }
   let auto_pull_after_integration = match

@@ -398,9 +398,9 @@ test "parse_config merge_strategy explicit rebase" {
 }
 
 ///|
-test "parse_config merge_strategy invalid defaults to merge" {
-  let cfg = parse_config("merge_strategy = \"again\"").unwrap()
-  assert_eq(cfg.merge_strategy, @types.MergeStrategy::Merge)
+test "parse_config merge_strategy invalid is error" {
+  let r = parse_config("merge_strategy = \"again\"")
+  assert_true(r is Err(_))
 }
 
 ///|
@@ -549,6 +549,15 @@ test "parse_local_config merge_strategy override" {
     #|merge_strategy = "squash"
   let local_cfg = parse_local_config(content).unwrap()
   @debug.assert_eq(local_cfg.merge_strategy, Some(@types.MergeStrategy::Squash))
+}
+
+///|
+test "parse_local_config merge_strategy invalid is error" {
+  let content =
+    #|role = "dev"
+    #|merge_strategy = "again"
+  let r = parse_local_config(content)
+  assert_true(r is Err(_))
 }
 
 ///|
