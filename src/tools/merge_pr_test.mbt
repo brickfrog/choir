@@ -963,8 +963,11 @@ async fn merge_pr_test_runner_record_ok(
 test "merge_pr_preflight_host_steps is poller snapshot then thread fetch" {
   let steps = merge_pr_preflight_host_steps()
   assert_eq(steps.length(), 2)
-  assert_eq(steps[0], MergePrPreflightHostStep::PollerSnapshot)
-  assert_eq(steps[1], MergePrPreflightHostStep::FetchUnresolvedReviewThreads)
+  @debug.assert_eq(steps[0], MergePrPreflightHostStep::PollerSnapshot)
+  @debug.assert_eq(
+    steps[1],
+    MergePrPreflightHostStep::FetchUnresolvedReviewThreads,
+  )
 }
 
 ///|
@@ -2019,8 +2022,8 @@ test "merge_pr_mutex_name prefixes branch" {
 test "merge_pr_host_step_sequence is gh merge then git fetch" {
   let steps = merge_pr_host_step_sequence()
   assert_eq(steps.length(), 2)
-  assert_eq(steps[0], MergePrHostStep::GhPrMerge)
-  assert_eq(steps[1], MergePrHostStep::GitFetch)
+  @debug.assert_eq(steps[0], MergePrHostStep::GhPrMerge)
+  @debug.assert_eq(steps[1], MergePrHostStep::GitFetch)
 }
 
 ///|
@@ -2465,7 +2468,7 @@ async test "interpret_merge_pr ok response matches merged envelope" {
 }
 
 ///|
-async test "interpret_merge_pr reads project local merge_strategy" {
+async test "interpret_merge_pr ignores project local merge_strategy" {
   let project_dir = "/tmp/choir-mpr-project-strategy-" +
     @sys.get_pid().to_string()
   ignore(@sys.rm_rf(project_dir))
@@ -2500,19 +2503,20 @@ async test "interpret_merge_pr reads project local merge_strategy" {
     @sys.append_file_sync,
     @sys.path_entry_exists,
     read_file=@sys.read_file,
+    merge_strategy=@types.MergeStrategy::Rebase,
   )
   match got {
     @types.Response::Ok(fields) =>
       assert_eq(fields.get("status").unwrap_or(""), "merged")
     @types.Response::Err(msg) => fail("expected merge success: " + msg)
   }
-  let mut saw_squash_merge = false
+  let mut saw_rebase_merge = false
   for cmd in seen {
-    if cmd.program == "gh" && cmd.args == ["pr", "merge", "79", "--squash"] {
-      saw_squash_merge = true
+    if cmd.program == "gh" && cmd.args == ["pr", "merge", "79", "--rebase"] {
+      saw_rebase_merge = true
     }
   }
-  assert_true(saw_squash_merge)
+  assert_true(saw_rebase_merge)
   ignore(@sys.rm_rf(project_dir))
 }
 

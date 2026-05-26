@@ -7,11 +7,6 @@ pub(all) enum MergePrPreflightHostStep {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for MergePrPreflightHostStep with output(self, logger) -> Unit {
-  self.to_repr().output(logger)
-}
-
-///|
 pub fn merge_pr_preflight_host_steps() -> Array[MergePrPreflightHostStep] {
   [
     MergePrPreflightHostStep::PollerSnapshot,
@@ -1063,11 +1058,6 @@ pub(all) enum MergePrHostStep {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for MergePrHostStep with output(self, logger) -> Unit {
-  self.to_repr().output(logger)
-}
-
-///|
 pub fn merge_pr_host_step_sequence() -> Array[MergePrHostStep] {
   [MergePrHostStep::GhPrMerge, MergePrHostStep::GitFetch]
 }
@@ -1119,21 +1109,6 @@ fn merge_pr_local_merge_strategy_for_agent(
 }
 
 ///|
-fn merge_pr_project_local_merge_strategy(
-  project_dir : String,
-  read_file : (String) -> String,
-) -> @types.MergeStrategy? {
-  let content = read_file(project_dir + "/.choir/config.local.toml")
-  if content == "" {
-    return None
-  }
-  match @config.parse_local_config(content) {
-    Ok(local_cfg) => local_cfg.merge_strategy
-    Err(_) => None
-  }
-}
-
-///|
 fn merge_pr_effective_merge_strategy(
   project_dir : String,
   pr_number : Int,
@@ -1166,11 +1141,7 @@ fn merge_pr_effective_merge_strategy(
       project_dir, caller_id, registry, read_file,
     ) {
     Some(strategy) => strategy
-    None =>
-      match merge_pr_project_local_merge_strategy(project_dir, read_file) {
-        Some(strategy) => strategy
-        None => global_merge_strategy
-      }
+    None => global_merge_strategy
   }
 }
 
