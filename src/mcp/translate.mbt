@@ -47,6 +47,36 @@ fn tool_json(tool : CatalogTool) -> Json {
 }
 
 ///|
+test "fork_wave schema exposes per leaf task contracts without requiring shared task or count" {
+  let mut fork_wave : CatalogTool? = None
+  for def in tool_defs() {
+    if def.name == "fork_wave" {
+      fork_wave = Some(def)
+      break
+    }
+  }
+  match fork_wave {
+    Some(def) => {
+      let mut has_task_contracts = false
+      for prop in def.props {
+        if prop.name == "task_contracts" {
+          has_task_contracts = true
+          assert_true(
+            prop.desc.contains("JSON array of per-leaf TaskContract overrides"),
+          )
+          assert_true(prop.desc.contains("beads_issue_id"))
+          assert_true(prop.desc.contains("Omit to inherit"))
+        }
+      }
+      assert_true(has_task_contracts)
+      assert_false(def.required.contains("task"))
+      assert_false(def.required.contains("count"))
+    }
+    None => fail("expected fork_wave tool definition")
+  }
+}
+
+///|
 fn text_content_json(text : String) -> Json {
   let entry : Map[String, Json] = {
     "type": "text".to_json(),
@@ -207,6 +237,10 @@ fn tool_defs() -> Array[CatalogTool] {
           desc: "Beads issue ID to pass through each leaf task contract",
         },
         {
+          name: "task_contracts",
+          desc: "Optional JSON array of per-leaf TaskContract overrides; each entry is an object whose fields override the wave-level base contract for that one leaf (omitted fields inherit). Recognized fields: beads_issue_id, goal, scope (array), acceptance_checks (array), done_criteria (array), constraints (array), non_goals (array), verify (array), verify_satisfied_by_ci, review_context. When provided, length must equal tasks-array length / count. Omit to inherit the base contract for every leaf. Primary use: give each leaf in a multi-bead wave its own Beads issue so the TDD verify gate resolves per-leaf.",
+        },
+        {
           name: "role",
           desc: "Spawned child role: dev (default) or tl (sub-TL; nesting limited to one level below root TL)",
         },
@@ -216,7 +250,10 @@ fn tool_defs() -> Array[CatalogTool] {
         },
         { name: "branch", desc: "Compatibility alias for parent_branch" },
         { name: "count", desc: "Number of leaves when using shared task" },
-        { name: "slug_prefix", desc: "Slug prefix for spawned children" },
+        {
+          name: "slug_prefix",
+          desc: "Slug prefix for spawned children. Accepts '/' so hierarchical names like 'feature/foo' are valid input, but '/' is flattened to '-' when deriving wave_id and filesystem-side keys (e.g. .choir/kv/pending-wave--<id>) — storage stays flat. Child branch names still use the raw form via parent_branch concatenation.",
+        },
         {
           name: "automerge",
           desc: "Optional per-wave override for server-triggered merge_pr after merge policy reaches MergeNow; omitted inherits config default (default config is false)",
@@ -245,7 +282,7 @@ fn tool_defs() -> Array[CatalogTool] {
         },
         { name: "non_goals", desc: "Newline-separated non-goals" },
       ],
-      required: ["task", "count"],
+      required: [],
     },
     {
       name: "spawn_gemini",

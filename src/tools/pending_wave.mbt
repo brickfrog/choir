@@ -33,6 +33,20 @@ pub fn failed_wave_kv_path(project_dir : String, wave_id : String) -> String {
 }
 
 ///|
+/// Flatten a `slug_prefix` for storage-side use. The parser accepts `/`
+/// in slug_prefix so callers can pass hierarchical labels like
+/// `feature/foo`, but several downstream sinks concatenate the prefix
+/// into flat path keys without their own sanitization:
+/// `.choir/waves/<wave_id>.json`, `.choir/kv/pending-wave--<wave_id>`,
+/// `.choir/worktrees/<slug>/`. Replacing `/` with `-` here keeps the
+/// storage layout flat (no accidental nested dirs that no one
+/// `mkdir -p`s) while letting branch names — which go through
+/// `parent_branch` concatenation, not this helper — keep the raw form.
+pub fn flat_slug_prefix(slug_prefix : String) -> String {
+  slug_prefix.replace(old="/", new="-")
+}
+
+///|
 /// Build the deterministic base of a pending wave id.
 ///
 /// `now_ticks` should be `@env.now().reinterpret_as_int64()` — the high
@@ -48,7 +62,11 @@ pub fn generate_pending_wave_id(
   now_ticks : Int64,
   pid : Int,
 ) -> String {
-  slug_prefix + "-" + now_ticks.to_string() + "-" + pid.to_string()
+  flat_slug_prefix(slug_prefix) +
+  "-" +
+  now_ticks.to_string() +
+  "-" +
+  pid.to_string()
 }
 
 ///|

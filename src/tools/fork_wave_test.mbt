@@ -489,6 +489,37 @@ test "fork_wave_spawn_plan honors custom slug_prefix for per-leaf tasks" {
 }
 
 ///|
+test "fork_wave_spawn_plan flattens slash in slug_prefix for child slugs" {
+  let args : ForkWaveArgs = {
+    count: 2,
+    tasks: ["Implement Leaf A", "Implement Leaf B"],
+    task_contracts: [
+      { ..@types.TaskContract::empty(), goal: "Implement Leaf A" },
+      { ..@types.TaskContract::empty(), goal: "Implement Leaf B" },
+    ],
+    has_per_leaf_tasks: true,
+    parent_branch: "pb",
+    caller_id: "pb.tl",
+    slug_prefix: "feature/foo",
+    agent_type: @types.AgentType::MoonPilot,
+    child_role: @types.Role::Dev,
+    parent_session_id: None,
+    review_context: None,
+    automerge: None,
+    review_mode: None,
+    depends_on: [],
+    scaffold_commit: None,
+  }
+  let plan = fork_wave_spawn_plan(args, 0, None, "/p", "sess")
+  assert_eq(plan.spawned_slugs[0], "feature-foo-implement-leaf-a")
+  assert_eq(plan.spawned_slugs[1], "feature-foo-implement-leaf-b")
+  assert_eq(
+    plan.agent_ids,
+    "pb.feature-foo-implement-leaf-a,pb.feature-foo-implement-leaf-b",
+  )
+}
+
+///|
 test "fork_wave_spawn_plan leaves active collision rejection to preflight" {
   let reg = @registry.AgentRegistry::new()
   ignore(

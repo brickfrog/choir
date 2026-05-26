@@ -163,6 +163,62 @@ fn validate_slug(s : String) -> Result[Unit, @types.ChoirError] {
 }
 
 ///|
+/// Validate `slug_prefix` as a relaxed slug that ALSO accepts `/` as a
+/// hierarchy separator. The downstream storage layer (wave_id, kv keys)
+/// flattens `/` to `-` via `@tools.flat_slug_prefix`; here we just reject
+/// pathological shapes that would flatten to ugly or ambiguous ids:
+/// leading/trailing `/`, consecutive `//`, and a bare `/`.
+fn validate_slug_prefix(s : String) -> Result[Unit, @types.ChoirError] {
+  if s == "" {
+    return Err(
+      @types.ChoirError::validation_error("slug_prefix cannot be empty"),
+    )
+  }
+  if s.has_prefix("/") || s.has_suffix("/") {
+    return Err(
+      @types.ChoirError::validation_error(
+        "slug_prefix must not start or end with '/'",
+      ),
+    )
+  }
+  if s.contains("//") {
+    return Err(
+      @types.ChoirError::validation_error(
+        "slug_prefix must not contain consecutive '/'",
+      ),
+    )
+  }
+  for c in s {
+    if !is_alphanumeric_or_dash(c) && c != '/' {
+      return Err(
+        @types.ChoirError::validation_error(
+          "invalid character in slug_prefix: " + c.to_string(),
+        ),
+      )
+    }
+  }
+  Ok(())
+}
+
+///|
+test "slug prefix allows slash without loosening strict slug validator" {
+  assert_true(validate_slug_prefix("feature/foo") is Ok(_))
+  assert_true(validate_slug("feature/foo") is Err(_))
+}
+
+///|
+test "slug prefix rejects pathological slash shapes" {
+  // Leading / trailing / consecutive slashes would flatten to ugly ids
+  // like "-feature-foo-..." or "feature--foo-..." — reject up front.
+  assert_true(validate_slug_prefix("/") is Err(_))
+  assert_true(validate_slug_prefix("/feature") is Err(_))
+  assert_true(validate_slug_prefix("feature/") is Err(_))
+  assert_true(validate_slug_prefix("//") is Err(_))
+  assert_true(validate_slug_prefix("feature//foo") is Err(_))
+  assert_true(validate_slug_prefix("a//b") is Err(_))
+}
+
+///|
 fn validate_branch(s : String) -> Result[Unit, @types.ChoirError] {
   if s == "" {
     return Err(@types.ChoirError::validation_error("branch cannot be empty"))
@@ -997,7 +1053,7 @@ pub fn parse_fork_wave_args(
     Ok(value) => value
     Err(e) => return Err(e)
   }
-  match validate_slug(normalized_slug_prefix) {
+  match validate_slug_prefix(normalized_slug_prefix) {
     Ok(_) => ()
     Err(e) =>
       return Err(
