@@ -482,7 +482,7 @@ async test "interpret_merge_pr rejects caller parent branch mismatch before merg
     97,
     "main.leaf",
     "feature/audit-gate",
-    "main\rtracked",
+    "main\rtracked\u{0000}branch",
     "https://github.com/o/r/pull/97",
     200L,
     @poller.ReviewState::Approved,
@@ -496,7 +496,7 @@ async test "interpret_merge_pr rejects caller parent branch mismatch before merg
   let resp = interpret_merge_pr(
     {
       pr_number: 97,
-      parent_branch: "feature/not-main\ninject",
+      parent_branch: "feature/not-main\ninject\t\u{1b}[31m",
       caller_id: "main.tl",
       review_mode: Some(@types.ReviewMode::SinglePass),
     },
@@ -545,10 +545,17 @@ async test "interpret_merge_pr rejects caller parent branch mismatch before merg
   match resp {
     @types.Response::Err(msg) => {
       assert_true(msg.contains("parent_branch mismatch for PR #97"))
-      assert_true(msg.contains("caller requested 'feature/not-main inject'"))
-      assert_true(msg.contains("tracked poller state says 'main tracked'"))
+      assert_true(
+        msg.contains("caller requested 'feature/not-main inject  [31m'"),
+      )
+      assert_true(
+        msg.contains("tracked poller state says 'main tracked branch'"),
+      )
       assert_false(msg.contains("feature/not-main\ninject"))
       assert_false(msg.contains("main\rtracked"))
+      assert_false(msg.contains("\t"))
+      assert_false(msg.contains("\u{1b}"))
+      assert_false(msg.contains("\u{0000}"))
     }
     @types.Response::Ok(_) =>
       fail("expected parent_branch mismatch policy block")
@@ -562,7 +569,10 @@ async test "interpret_merge_pr rejects caller parent branch mismatch before merg
     .iter()
     .any(fn(line) {
       line.contains("feature/not-main\ninject") ||
-      line.contains("main\rtracked")
+      line.contains("main\rtracked") ||
+      line.contains("\t") ||
+      line.contains("\u{1b}") ||
+      line.contains("\u{0000}")
     }),
   )
   ignore(@sys.rm_rf(project_dir))

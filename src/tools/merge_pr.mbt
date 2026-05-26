@@ -703,7 +703,18 @@ fn merge_pr_parent_branch_mismatch_error(
 
 ///|
 fn merge_pr_sanitize_branch_for_log(raw : String) -> String {
-  raw.replace(old="\n", new=" ").replace(old="\r", new=" ")
+  let out = StringBuilder::new()
+  let mut i = 0
+  while i < raw.length() {
+    let c = raw[i]
+    if c <= '\u{001f}' || c == '\u{007f}' {
+      out.write_char(' ')
+    } else {
+      out.write_char(Int::unsafe_to_char(c.to_int()))
+    }
+    i = i + 1
+  }
+  out.to_string()
 }
 
 ///|
