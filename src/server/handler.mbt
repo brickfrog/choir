@@ -331,7 +331,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
         // path, this becomes load-bearing without further changes
         // here. The Layer 2 outer wall-clock cap in the worker prompt
         // (grep `Wrap your ENTIRE mutation loop` in
-        // src/tools/file_pr.mbt's mutation_gate_worker_prompt) is the
+        // src/tools/file_pr.mbt's build_mutation_gate_task) is the
         // backstop until choir-19i6 lands.
         self.kill_tracked_agent_pgroup(agent_id, default_kill_pgid_best_effort)
       },
