@@ -2026,9 +2026,7 @@ pub async fn interpret_merge_pr(
   path_exists : (String) -> Bool,
   read_lifecycle? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
   read_file? : (String) -> String = fn(_) { "" },
-  write_file_atomic? : (String, String) -> Bool = fn(_, _) { false },
   merge_strategy? : @types.MergeStrategy = @types.Config::default().merge_strategy,
-  merge_gate_now_sec_fn? : () -> Int64 = @poller.now_sec,
   task_contract_reader? : (String) -> @types.TaskContract? = fn(_) { None },
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
 ) -> @types.Response {
@@ -2086,13 +2084,7 @@ pub async fn interpret_merge_pr(
       let mut merge_match_head_sha : String? = None
       if file_pr_audit_receipt_required(effective_parent_branch) {
         let gate_state = match
-          load_or_initialize_gate_state(
-            project_dir,
-            merge_gate_now_sec_fn,
-            read_file,
-            write_file_atomic,
-            path_exists~,
-          ) {
+          load_gate_state(project_dir, read_file, path_exists~) {
           Ok(state) => state
           Err(e) => return @types.Response::Err(e.message())
         }

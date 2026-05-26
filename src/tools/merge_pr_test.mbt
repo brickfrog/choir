@@ -281,57 +281,40 @@ test "merge_pr_audit_gate_required grandfathers PRs first seen before gate times
 }
 
 ///|
-test "load_or_initialize_gate_state fails closed when timestamp cannot persist" {
+test "load_gate_state fails closed when gate file is missing" {
   match
-    load_or_initialize_gate_state(
-      "/repo",
-      fn() { 123L },
-      fn(_) { "" },
-      fn(_, _) { false },
-      path_exists=fn(_) { false },
-    ) {
+    load_gate_state("/repo", fn(_) { "" }, path_exists=fn(_) { false }) {
     Err(e) => {
       assert_true(e.message().contains("audit receipt gate"))
-      assert_true(e.message().contains("not durable"))
+      assert_true(e.message().contains("missing"))
+      assert_true(e.message().contains("Seed it explicitly"))
     }
-    Ok(_) => fail("expected gate state persistence failure")
+    Ok(_) => fail("expected fail-closed on missing gate file")
   }
 }
 
 ///|
-test "load_or_initialize_gate_state fails closed when gate file is empty" {
-  let writes : Array[(String, String)] = []
+test "load_gate_state fails closed when gate file is empty" {
   match
-    load_or_initialize_gate_state(
+    load_gate_state(
       "/repo",
-      fn() { 999L },
       fn(_) { "" },
-      fn(path, body) {
-        writes.push((path, body))
-        true
-      },
       path_exists=fn(path) { path.has_suffix("/.choir/audit-gate.json") },
     ) {
     Err(e) => {
       assert_true(e.message().contains("audit receipt gate"))
       assert_true(e.message().contains("is empty"))
     }
-    Ok(_) =>
-      fail(
-        "expected fail-closed on empty gate file, got bootstrap write instead",
-      )
+    Ok(_) => fail("expected fail-closed on empty gate file")
   }
-  assert_eq(writes.length(), 0)
 }
 
 ///|
-test "load_or_initialize_gate_state fails closed on malformed json gate file" {
+test "load_gate_state fails closed on malformed json gate file" {
   match
-    load_or_initialize_gate_state(
+    load_gate_state(
       "/repo",
-      fn() { 999L },
       fn(_) { "{not json" },
-      fn(_, _) { true },
       path_exists=fn(_) { true },
     ) {
     Err(e) => {
@@ -343,13 +326,11 @@ test "load_or_initialize_gate_state fails closed on malformed json gate file" {
 }
 
 ///|
-test "load_or_initialize_gate_state fails closed on schema-invalid gate file" {
+test "load_gate_state fails closed on schema-invalid gate file" {
   match
-    load_or_initialize_gate_state(
+    load_gate_state(
       "/repo",
-      fn() { 999L },
       fn(_) { "{\"enabled_at_unix\":0}" },
-      fn(_, _) { true },
       path_exists=fn(_) { true },
     ) {
     Err(e) => {
@@ -357,6 +338,19 @@ test "load_or_initialize_gate_state fails closed on schema-invalid gate file" {
       assert_true(e.message().contains("malformed"))
     }
     Ok(_) => fail("expected fail-closed on schema-invalid gate file")
+  }
+}
+
+///|
+test "load_gate_state accepts a properly seeded gate file" {
+  match
+    load_gate_state(
+      "/repo",
+      fn(_) { "{\"enabled_at_unix\":100}" },
+      path_exists=fn(_) { true },
+    ) {
+    Ok(state) => assert_eq(state.enabled_at_unix, 100L)
+    Err(e) => fail("expected Ok, got " + e.message())
   }
 }
 
@@ -507,7 +501,6 @@ async test "interpret_merge_pr missing audit receipt policy-blocks without spawn
         ""
       }
     },
-    write_file_atomic=fn(_, _) { false },
     task_contract_reader=merge_pr_test_empty_contract_reader,
   )
   match resp {
@@ -602,7 +595,6 @@ async test "interpret_merge_pr rejects caller parent branch mismatch before merg
         ""
       }
     },
-    write_file_atomic=fn(_, _) { false },
     task_contract_reader=merge_pr_test_empty_contract_reader,
   )
   match resp {
@@ -697,7 +689,6 @@ async test "interpret_merge_pr audit gate fails closed without poller state" {
         ""
       }
     },
-    write_file_atomic=fn(_, _) { false },
   )
   match resp {
     @types.Response::Err(msg) => {
@@ -774,7 +765,6 @@ async test "interpret_merge_pr audit gate fails closed for untracked PR" {
         ""
       }
     },
-    write_file_atomic=fn(_, _) { false },
   )
   match resp {
     @types.Response::Err(msg) => {
@@ -869,7 +859,6 @@ async test "interpret_merge_pr main audit gate merges only matching audited head
         ""
       }
     },
-    write_file_atomic=fn(_, _) { false },
     task_contract_reader=merge_pr_test_empty_contract_reader,
   )
   match resp {

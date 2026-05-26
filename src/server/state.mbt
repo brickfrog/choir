@@ -14,6 +14,17 @@ fn default_write_file_atomic(path : String, content : String) -> Bool {
 }
 
 ///|
+fn ensure_audit_gate_state_initialized(project_dir : String) -> Unit {
+  let path = @tools.merge_pr_audit_gate_state_path(project_dir)
+  if @sys.path_exists(path) {
+    return
+  }
+  let now = @env.now().reinterpret_as_int64() / 1000L
+  let body = "{\"enabled_at_unix\":" + now.to_string() + "}\n"
+  ignore(@sys.write_file_atomic(path, body))
+}
+
+///|
 pub(all) struct DisconnectContext {
   connected_sec : Int64?
   last_request_name : String?
@@ -95,6 +106,12 @@ pub fn ServerState::new(
   recovery_provider : @runtime.RecoveryProvider,
 ) -> ServerState {
   let run_id = init_run_id(config.project_dir)
+  // Seed `.choir/audit-gate.json` on server boot if absent. Operators who
+  // want a different grandfather boundary should pre-seed the file before
+  // starting the server. merge_pr's load_gate_state fails closed if the
+  // file is missing/empty/malformed once the server is running; this init
+  // is the one explicit moment Choir writes the boundary itself.
+  ensure_audit_gate_state_initialized(config.project_dir)
   {
     config,
     registry: @registry.AgentRegistry::new(),

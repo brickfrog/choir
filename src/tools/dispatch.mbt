@@ -1307,7 +1307,6 @@ pub async fn dispatch(
         append_file,
         path_exists,
         read_file~,
-        write_file_atomic~,
         merge_strategy~,
         task_contract_reader~,
         moon_verify_target~,

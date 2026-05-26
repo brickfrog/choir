@@ -250,14 +250,14 @@ const SHIP_PR_DEFAULT : String =
   #|
   #|## Path B — TL-direct (root, no task contract)
   #|
-  #|`mcp__choir__file_pr` will fail with `server task contract unavailable for tracked agent 'root'`. This path is a workaround for that known server bug (tracked: choir-v9gi), not the normal shipping flow. **Fix the root-caller contract; do not normalize the bypass.**
+  #|`mcp__choir__file_pr` and `mcp__choir__merge_pr` both fail for root-tracked feature→main PRs with `server task contract unavailable for tracked agent 'root'`. That is a real server bug, tracked as **choir-v9gi**. The right fix is the server fix; do not normalize a bypass into the skill. Until choir-v9gi lands:
   #|
   #|1. `git push -u origin <branch>` from where the work lives.
   #|2. `gh pr create --base main --head <branch> --title ... --body ...` via HEREDOC. Escape `@`-prefixed strings in the body (`@debug` etc. become GitHub mentions — use backticks or rewrite).
   #|3. `mcp__choir__track_pr pr_number=<n> agent_id=root branch=<branch> parent_branch=main pr_url=...`
-  #|4. `mcp__choir__request_review pr_number=<n> reviewer=@copilot`. Address Copilot findings; push fixes; wait for poller to clear unresolved threads.
-  #|5. Run `/audit` until the receipt has `findings_count=0`. The skill spawns Sarcasmotron, parses the worker's findings, and writes the receipt itself — do NOT hand-write a receipt with `findings_count=0` to bypass the gate.
-  #|6. After Copilot review + CI green: `mcp__choir__merge_pr` will fail with the same task-contract bug above. Bypass is `gh pr merge <n> --merge --admin` AND it is a banned antipattern per CLAUDE.md — only use it when (a) every constituent leaf already has a green audit receipt, (b) you've filed/acknowledged choir-v9gi for the underlying gate fix, and (c) you tell the user explicitly that you bypassed.
+  #|4. `mcp__choir__request_review pr_number=<n> reviewer=@copilot`. Address Copilot findings; push fixes; wait for the poller snapshot to show zero unresolved threads.
+  #|5. Once review threads are clear and CI is green, run `/audit` until the receipt has `findings_count=0`. The skill spawns Sarcasmotron, parses the worker's findings, and writes the receipt itself — never hand-write a receipt with `findings_count=0` to bypass the gate.
+  #|6. `mcp__choir__merge_pr`. If it fails with the choir-v9gi task-contract error, **stop and surface that to the user**. The skill body intentionally does not document an admin-merge incantation; embedding the bypass command here is the same banned antipattern this PR codified in CLAUDE.md. Fix choir-v9gi.
   #|
   #|## Gotchas
   #|
