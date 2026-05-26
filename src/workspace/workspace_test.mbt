@@ -150,7 +150,7 @@ test "init_tl_zellij_tab_command wraps TL with policy watcher shell" {
   assert_true(script.contains("CHOIR_AGENT_ID='root'"))
   assert_true(script.contains("CHOIR_BRANCH='main'"))
   assert_false(script.contains("HOME="))
-  assert_true(script.contains("choir tl-policy-watch --pid"))
+  assert_false(script.contains("choir tl-policy-watch"))
   assert_true(script.contains("exec setsid"))
   assert_true(script.contains("claude"))
   assert_false(script.contains("child_pid=$!"))
@@ -962,7 +962,7 @@ test "spawn_commands wraps TL worktree launch with policy watcher shell" {
   let script = last.args[11]
   assert_true(script.contains("CHOIR_AGENT_ID='main.subtl-a'"))
   assert_true(script.contains("CHOIR_ROLE='tl'"))
-  assert_true(script.contains("choir tl-policy-watch --pid"))
+  assert_false(script.contains("choir tl-policy-watch"))
   assert_true(script.contains("exec setsid"))
   assert_true(script.contains("claude"))
   assert_false(script.contains("child_pid=$!"))

@@ -418,7 +418,7 @@ fn subcommand_args_contain_any(
 /// commands that touch tracked files (`sed -i`, `tee`, `> src/foo`, `python
 /// -c ...`). The synchronous gate only inspects Edit/Write/MultiEdit tool
 /// calls and git Bash commands; arbitrary shell mutations are out of scope by
-/// design and are the job of the post-hoc `tl-policy-watch` log, not this gate.
+/// design.
 fn detect_git_command_write(command : String) -> ParentBranchWriteKind? {
   let tokens = unquoted_tokens(shellish_tokens(command))
   for i = 0; i < tokens.length(); i = i + 1 {
@@ -516,8 +516,7 @@ fn detect_git_command_write(command : String) -> ParentBranchWriteKind? {
 /// tool calls (by path) and *git* commands inside a Bash tool call. A Bash
 /// command that mutates tracked files without git (`sed -i`, `tee`, shell
 /// redirection, `python -c ...`) is NOT detected here — that would require
-/// executing arbitrary shell to know, so it is out of scope by design; the
-/// post-hoc `tl-policy-watch` log is the backstop for those.
+/// executing arbitrary shell to know, so it is out of scope by design.
 pub fn detect_parent_branch_write_kind(
   req : @types.Request,
 ) -> ParentBranchWriteKind? {

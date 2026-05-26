@@ -41,7 +41,6 @@ options(
     "statusline.mbt": [ "native" ],
     "stub_main.mbt": [ "not", "native" ],
     "tcp_reader.mbt": [ "native" ],
-    "tl_policy.mbt": [ "native" ],
     "trust_gemini_folder.mbt": [ "native" ],
     "uds_reader.mbt": [ "native" ],
     "uds_server.mbt": [ "native" ],
