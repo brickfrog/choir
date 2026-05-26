@@ -1085,12 +1085,21 @@ fn merge_pr_agent_local_config_paths(
 }
 
 ///|
+fn merge_pr_local_config_error_detail(e : @types.ChoirError) -> String {
+  let message = e.message()
+  match message.strip_prefix("config error: ") {
+    Some(detail) => detail.to_owned()
+    None => message
+  }
+}
+
+///|
 fn merge_pr_local_merge_strategy_for_agent(
   project_dir : String,
   agent_id : String,
   registry : @registry.AgentRegistry?,
   read_file : (String) -> String,
-) -> @types.MergeStrategy? {
+) -> Result[@types.MergeStrategy?, @types.ChoirError] {
   for path in merge_pr_agent_local_config_paths(project_dir, agent_id, registry) {
     let content = read_file(path)
     if content == "" {
@@ -1099,13 +1108,21 @@ fn merge_pr_local_merge_strategy_for_agent(
     match @config.parse_local_config(content) {
       Ok(local_cfg) =>
         match local_cfg.merge_strategy {
-          Some(strategy) => return Some(strategy)
+          Some(strategy) => return Ok(Some(strategy))
           None => ()
         }
-      Err(_) => ()
+      Err(e) =>
+        return Err(
+          @types.ChoirError::config_error(
+            "invalid local config " +
+            path +
+            ": " +
+            merge_pr_local_config_error_detail(e),
+          ),
+        )
     }
   }
-  None
+  Ok(None)
 }
 
 ///|
@@ -1117,7 +1134,7 @@ fn merge_pr_effective_merge_strategy(
   registry : @registry.AgentRegistry?,
   read_file : (String) -> String,
   global_merge_strategy : @types.MergeStrategy,
-) -> @types.MergeStrategy {
+) -> Result[@types.MergeStrategy, @types.ChoirError] {
   match poller_state {
     Some(ps) =>
       match ps.get(pr_number) {
@@ -1129,8 +1146,9 @@ fn merge_pr_effective_merge_strategy(
               registry,
               read_file,
             ) {
-            Some(strategy) => return strategy
-            None => ()
+            Ok(Some(strategy)) => return Ok(strategy)
+            Ok(None) => ()
+            Err(e) => return Err(e)
           }
         None => ()
       }
@@ -1140,8 +1158,9 @@ fn merge_pr_effective_merge_strategy(
     merge_pr_local_merge_strategy_for_agent(
       project_dir, caller_id, registry, read_file,
     ) {
-    Some(strategy) => strategy
-    None => global_merge_strategy
+    Ok(Some(strategy)) => Ok(strategy)
+    Ok(None) => Ok(global_merge_strategy)
+    Err(e) => Err(e)
   }
 }
 
@@ -2185,6 +2204,10 @@ pub async fn interpret_merge_pr(
         read_file,
         merge_strategy,
       )
+      let effective_merge_strategy = match effective_merge_strategy {
+        Ok(strategy) => strategy
+        Err(e) => return @types.Response::Err(e.message())
+      }
       match poller_state {
         Some(ps) =>
           match ps.get(merge_args.pr_number) {
