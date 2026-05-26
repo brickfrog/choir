@@ -33,7 +33,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     ),
     tool_def(
       "fork_wave",
-      "Spawn one or more agents in worktrees. For nontrivial decomposition, create child Beads issues first and pass per-leaf task_contracts with beads_issue_id for each child; single-child waves may pass beads_issue_id directly. Optional agent_type (codex|claude|moon_pilot|gemini|cursor_agent, default codex); optional role (dev|tl, default dev) for sub-TL children; optional review_context appended to each leaf task for file_pr / Copilot review; optional automerge and review_mode override server defaults for that wave. Agents will automatically notify you of PR/completion via MCP events; do not poll or use side-channels.",
+      "Spawn one or more agents in worktrees. For nontrivial decomposition, create child Beads issues first and pass per-leaf task_contracts with beads_issue_id for each child; single-child waves may pass beads_issue_id directly. Optional agent_type (codex|claude|moon_pilot|gemini|cursor_agent, default codex); optional role (dev|tl, default dev) for sub-TL children; optional review_context appended to each leaf task for file_pr / Copilot review; optional automerge, review_mode, and merge_strategy override server defaults for that wave. Agents will automatically notify you of PR/completion via MCP events; do not poll or use side-channels.",
       [@types.Role::Root, @types.Role::TL],
     ),
     tool_def(

@@ -206,6 +206,7 @@ test "launch env serializers agree on the non-PATH key set" {
     spawn_depth: 0,
     automerge: None,
     review_mode: None,
+    merge_strategy: None,
     wave_id: None,
   }
   let target = @types.LocalTarget::{

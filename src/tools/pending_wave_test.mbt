@@ -28,6 +28,7 @@ fn pending_wave_test_args(
     review_context: Some("ctx"),
     automerge: Some(true),
     review_mode: Some(@types.ReviewMode::SinglePass),
+    merge_strategy: Some(@types.MergeStrategy::Squash),
     depends_on,
     scaffold_commit: None,
   }
@@ -86,6 +87,10 @@ test "pending_wave_to_json_string round-trip preserves args" {
       @debug.assert_eq(
         round_tripped.args.review_mode,
         Some(@types.ReviewMode::SinglePass),
+      )
+      @debug.assert_eq(
+        round_tripped.args.merge_strategy,
+        Some(@types.MergeStrategy::Squash),
       )
       @debug.assert_eq(round_tripped.args.depends_on, [
         "main.dep-a", "main.dep-b",

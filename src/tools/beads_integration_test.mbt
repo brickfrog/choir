@@ -187,6 +187,7 @@ async test "mirror_beads_note_for_agent appends note and audit for assigned bead
     spawn_depth: 0,
     automerge: None,
     review_mode: None,
+    merge_strategy: None,
     wave_id: None,
   }
   ignore(

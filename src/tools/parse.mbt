@@ -1113,6 +1113,26 @@ pub fn parse_fork_wave_args(
     }
     None => None
   }
+  let merge_strategy = match tool_args_get(args, "merge_strategy") {
+    Some(v) => {
+      let t = v.trim().to_owned()
+      if t == "" {
+        None
+      } else {
+        match @config.parse_merge_strategy(t) {
+          Ok(strategy) => Some(strategy)
+          Err(e) =>
+            return Err(
+              ParseError::InvalidFormat(
+                field="merge_strategy",
+                message=e.message(),
+              ),
+            )
+        }
+      }
+    }
+    None => None
+  }
   let caller_id = match tool_args_get(args, "caller_id") {
     Some(v) if v.trim() != "" => v
     _ => return Err(ParseError::MissingField(field="caller_id"))
@@ -1139,6 +1159,7 @@ pub fn parse_fork_wave_args(
     review_context,
     automerge,
     review_mode,
+    merge_strategy,
     depends_on,
     scaffold_commit,
   })

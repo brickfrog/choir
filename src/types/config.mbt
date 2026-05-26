@@ -35,6 +35,8 @@ pub(all) struct Config {
   automerge : Bool
   /// Review loop behavior after fixes are pushed for review comments.
   review_mode : ReviewMode
+  /// Strategy flag used when Choir runs `gh pr merge`.
+  merge_strategy : MergeStrategy
   /// Target appended to bare `moon check` / `moon test` verify commands.
   moon_verify_target : MoonVerifyTarget
   /// Safety kill-switch while the agy migration is incomplete: rejects Gemini provider spawns.
@@ -87,6 +89,8 @@ pub(all) struct LocalConfig {
   automerge : Bool?
   /// Per-wave review-mode override. `None` inherits global config.
   review_mode : ReviewMode?
+  /// Per-wave merge-strategy override. `None` inherits global config.
+  merge_strategy : MergeStrategy?
   /// Optional root-local override for post-integration-merge parent pull.
   auto_pull_after_integration : Bool?
   /// Placeholder only in v1; parsed but not acted on.
@@ -116,6 +120,7 @@ pub fn Config::default() -> Config {
     pr_review: true,
     automerge: false,
     review_mode: SinglePass,
+    merge_strategy: Merge,
     moon_verify_target: Native,
     agy_migration_incomplete: false,
     worker_no_handoff_prod_sec: 120L,
@@ -151,6 +156,7 @@ pub fn LocalConfig::default() -> LocalConfig {
     task_contract: None,
     automerge: None,
     review_mode: None,
+    merge_strategy: None,
     auto_pull_after_integration: None,
     auto_rebuild_after_pull: None,
     auto_reload_after_rebuild: None,

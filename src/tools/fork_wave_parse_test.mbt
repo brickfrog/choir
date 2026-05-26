@@ -98,6 +98,20 @@ test "parse_fork_wave_args defaults review_mode override to None" {
 }
 
 ///|
+test "parse_fork_wave_args defaults merge_strategy override to None" {
+  let args = @tools.tool_args_from_map({
+    "count": "1",
+    "task": "work",
+    "parent_branch": "main",
+    "caller_id": "root",
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Ok(fork) => @debug.assert_eq(fork.merge_strategy, None)
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}
+
+///|
 test "parse_fork_wave_args treats missing scaffold_commit as None" {
   let args = @tools.tool_args_from_map({
     "count": "1",
@@ -159,6 +173,34 @@ test "parse_fork_wave_args rejects invalid review_mode" {
     "parent_branch": "main",
     "caller_id": "root",
     "review_mode": "again",
+  })
+  assert_true(@tools.parse_fork_wave_args(".", args) is Err(_))
+}
+
+///|
+test "parse_fork_wave_args parses merge_strategy squash" {
+  let args = @tools.tool_args_from_map({
+    "count": "1",
+    "task": "work",
+    "parent_branch": "main",
+    "caller_id": "root",
+    "merge_strategy": "squash",
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Ok(fork) =>
+      @debug.assert_eq(fork.merge_strategy, Some(@types.MergeStrategy::Squash))
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}
+
+///|
+test "parse_fork_wave_args rejects invalid merge_strategy" {
+  let args = @tools.tool_args_from_map({
+    "count": "1",
+    "task": "work",
+    "parent_branch": "main",
+    "caller_id": "root",
+    "merge_strategy": "again",
   })
   assert_true(@tools.parse_fork_wave_args(".", args) is Err(_))
 }

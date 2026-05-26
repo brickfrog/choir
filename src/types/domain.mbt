@@ -255,6 +255,45 @@ pub fn ReviewMode::try_parse_wire(
 }
 
 ///|
+pub(all) enum MergeStrategy {
+  Merge
+  Squash
+  Rebase
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub fn MergeStrategy::to_wire_string(self : MergeStrategy) -> String {
+  match self {
+    Merge => "merge"
+    Squash => "squash"
+    Rebase => "rebase"
+  }
+}
+
+///|
+pub impl Show for MergeStrategy with output(self, logger) -> Unit {
+  self.to_wire_string().output(logger)
+}
+
+///|
+pub fn MergeStrategy::try_parse_wire(
+  raw : String,
+) -> Result[MergeStrategy, ChoirError] {
+  let normalized = raw.trim().to_lower().to_owned()
+  match normalized {
+    "merge" => Ok(Merge)
+    "squash" => Ok(Squash)
+    "rebase" => Ok(Rebase)
+    _ =>
+      Err(
+        ChoirError::config_error(
+          "merge_strategy must be \"merge\", \"squash\", or \"rebase\"",
+        ),
+      )
+  }
+}
+
+///|
 pub(all) enum MoonVerifyTarget {
   Native
   Wasm

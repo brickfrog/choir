@@ -93,6 +93,7 @@ async test "dispatch rejects fork_wave gemini when agy migration is incomplete" 
     review_context: None,
     automerge: None,
     review_mode: None,
+    merge_strategy: None,
     depends_on: [],
     scaffold_commit: None,
   }
