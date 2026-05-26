@@ -682,7 +682,8 @@ fn spawn_spec_workspace(
   spec : @types.SpawnSpec,
 ) -> String {
   match spec.isolation {
-    @types.IsolationMode::Inline => project_dir
+    @types.IsolationMode::Inline | @types.IsolationMode::InlineDedicatedTab =>
+      project_dir
     @types.IsolationMode::Worktree =>
       @workspace.worktree_path(
         project_dir,

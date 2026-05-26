@@ -170,6 +170,71 @@ test "spawn_worker_plan builds inline worker spec registry row and response" {
 }
 
 ///|
+test "spawn_worker_plan inline dedicated tab targets zellij tab" {
+  let worker_args : WorkerSpawnArgs = {
+    task: "audit",
+    task_contract: { ..@types.TaskContract::empty(), goal: "audit" },
+    caller_id: "main.tl",
+    slug: "audit-worker",
+    agent_type: @types.AgentType::Codex,
+  }
+  let plan = spawn_worker_plan(
+    worker_args,
+    "main",
+    "choir-session",
+    "/project",
+    isolation=@types.IsolationMode::InlineDedicatedTab,
+  )
+  assert_eq(plan.spec.isolation, @types.IsolationMode::InlineDedicatedTab)
+  assert_eq(plan.spec.isolation.to_string(), "inline_dedicated_tab")
+  assert_eq(plan.terminal_target.kind, @types.TargetKind::ZellijTab)
+  assert_eq(plan.terminal_target.session, "choir-session")
+  assert_eq(plan.terminal_target.name, "audit-worker")
+}
+
+///|
+test "spawn_worker_plan inline dedicated tab keeps project workspace" {
+  let worker_args : WorkerSpawnArgs = {
+    task: "audit",
+    task_contract: { ..@types.TaskContract::empty(), goal: "audit" },
+    caller_id: "main.tl",
+    slug: "audit-worker",
+    agent_type: @types.AgentType::Codex,
+  }
+  let plan = spawn_worker_plan(
+    worker_args,
+    "main",
+    "choir-session",
+    "/project",
+    isolation=@types.IsolationMode::InlineDedicatedTab,
+  )
+  assert_eq(plan.registry_agent.workspace, "/project")
+  assert_eq(plan.registry_agent.branch, "main.audit-worker")
+}
+
+///|
+test "launch_commands inline dedicated tab uses zellij new-tab" {
+  let cmds = @workspace.launch_commands(
+    "choir-session",
+    "audit-worker",
+    "/project",
+    [],
+    { program: "echo", args: ["READY"], workdir: None },
+    @types.IsolationMode::InlineDedicatedTab,
+  )
+  assert_eq(cmds.length(), 1)
+  let cmd = cmds[0]
+  assert_eq(cmd.program, "zellij")
+  assert_eq(cmd.args[0], "--session")
+  assert_eq(cmd.args[1], "choir-session")
+  assert_eq(cmd.args[2], "action")
+  assert_eq(cmd.args[3], "new-tab")
+  assert_eq(cmd.args[4], "--name")
+  assert_eq(cmd.args[5], "audit-worker")
+  assert_false(cmd.args[2] == "run")
+}
+
+///|
 async fn mock_capture_origin_main(_cmd : @workspace.Command) -> (Int, String) {
   @async.sleep(0)
   (0, "origin/main\n")

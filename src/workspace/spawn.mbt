@@ -326,7 +326,7 @@ pub fn spawn_commands(
   let branch = canonical_agent_id(spec)
   let workspace = match spec.isolation {
     Worktree => worktree_path(root_project, spawn_workspace_dir_slug(spec))
-    Inline => root_project
+    Inline | InlineDedicatedTab => root_project
     Standalone => root_project + "/.choir/agents/" + spec.slug
   }
   let launch_cmd = zellij_launch_inner_command(
@@ -418,7 +418,7 @@ pub fn spawn_commands(
       }
       cmds
     }
-    Inline => {
+    Inline | InlineDedicatedTab => {
       let cmds : Array[Command] = []
       cmds.push(
         write_local_config(

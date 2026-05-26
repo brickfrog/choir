@@ -3382,7 +3382,11 @@ pub async fn interpret_file_pr(
           project_dir, capture,
         )
         let plan = spawn_worker_plan(
-          worker_args, resolved_parent_branch, session, project_dir,
+          worker_args,
+          resolved_parent_branch,
+          session,
+          project_dir,
+          isolation=@types.IsolationMode::InlineDedicatedTab,
         )
         prepare_audit_report(plan.agent_id)
         let resp = interpret_spawn_worker(
@@ -3397,6 +3401,7 @@ pub async fn interpret_file_pr(
           listen_uds~,
           listen_tcp~,
           tcp_auth_token~,
+          isolation=@types.IsolationMode::InlineDedicatedTab,
           allow_audit_on_file_pr_caller=true,
           record_task_contract~,
         )

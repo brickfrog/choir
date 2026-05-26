@@ -294,7 +294,8 @@ pub fn spawn_worker_plan(
         project_dir,
         @workspace.spawn_workspace_dir_slug(spec),
       )
-    @types.IsolationMode::Inline => project_dir
+    @types.IsolationMode::Inline | @types.IsolationMode::InlineDedicatedTab =>
+      project_dir
     @types.IsolationMode::Standalone =>
       project_dir + "/.choir/agents/" + spec.slug
   }
