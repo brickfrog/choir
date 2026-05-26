@@ -14,14 +14,33 @@ fn default_write_file_atomic(path : String, content : String) -> Bool {
 }
 
 ///|
-fn ensure_audit_gate_state_initialized(project_dir : String) -> Unit {
+fn default_path_exists(path : String) -> Bool {
+  @sys.path_exists(path)
+}
+
+///|
+fn ensure_audit_gate_state_initialized(
+  project_dir : String,
+  path_exists : (String) -> Bool,
+  write_file_atomic : (String, String) -> Bool,
+  now_unix_sec : () -> Int64,
+) -> Result[Unit, @types.ChoirError] {
   let path = @tools.merge_pr_audit_gate_state_path(project_dir)
-  if @sys.path_exists(path) {
-    return
+  if path_exists(path) {
+    return Ok(())
   }
-  let now = @env.now().reinterpret_as_int64() / 1000L
-  let body = "{\"enabled_at_unix\":" + now.to_string() + "}\n"
-  ignore(@sys.write_file_atomic(path, body))
+  let body = "{\"enabled_at_unix\":" + now_unix_sec().to_string() + "}\n"
+  if write_file_atomic(path, body) {
+    Ok(())
+  } else {
+    Err(
+      @types.ChoirError::workspace_error(
+        "server boot: could not seed audit receipt gate state at " +
+        path +
+        "; refusing to start without a durable grandfather boundary",
+      ),
+    )
+  }
 }
 
 ///|
@@ -104,14 +123,27 @@ fn init_run_id(project_dir : String) -> String {
 pub fn ServerState::new(
   config : @types.Config,
   recovery_provider : @runtime.RecoveryProvider,
+  path_exists? : (String) -> Bool = default_path_exists,
+  write_file_atomic? : (String, String) -> Bool = default_write_file_atomic,
+  now_unix_sec? : () -> Int64 = fn() {
+    @env.now().reinterpret_as_int64() / 1000L
+  },
 ) -> ServerState {
   let run_id = init_run_id(config.project_dir)
   // Seed `.choir/audit-gate.json` on server boot if absent. Operators who
   // want a different grandfather boundary should pre-seed the file before
   // starting the server. merge_pr's load_gate_state fails closed if the
   // file is missing/empty/malformed once the server is running; this init
-  // is the one explicit moment Choir writes the boundary itself.
-  ensure_audit_gate_state_initialized(config.project_dir)
+  // is the one explicit moment Choir writes the boundary itself. A write
+  // failure here means the gate cannot be persisted at all — abort boot
+  // rather than starting a server whose merge gate has no anchor.
+  match
+    ensure_audit_gate_state_initialized(
+      config.project_dir, path_exists, write_file_atomic, now_unix_sec,
+    ) {
+    Ok(_) => ()
+    Err(e) => abort(e.message())
+  }
   {
     config,
     registry: @registry.AgentRegistry::new(),

@@ -8,9 +8,9 @@ Two paths — pick by caller.
 
 1. `mcp__choir__file_pr` from the leaf. It files the PR immediately and tracks it server-side; audit does not run during file_pr.
 2. Wait for `[PR READY]`, then `[REVIEW]` + `[CI LATEST HEAD] success`.
-3. If the PR targets `main`, the TL runs `/audit` until the receipt has `findings_count=0`.
-4. Copilot threads: have the leaf push fixes, then wait for the poller snapshot to show zero unresolved threads; use `mcp__choir__resolve_my_review_threads` only if they persist.
-5. `mcp__choir__merge_pr` once threads clear + CI green. If the audit receipt is missing, merge_pr returns a policy block; run `/audit` and retry.
+3. Copilot threads: have the leaf push fixes, then wait for the poller snapshot to show zero unresolved threads; use `mcp__choir__resolve_my_review_threads` only if they persist.
+4. Once review threads are clear and CI is green, the TL runs `/audit` until the receipt has `findings_count=0`. Audit must run AFTER fixes are pushed; running it earlier just mints a receipt for a HEAD that subsequent commits will invalidate.
+5. `mcp__choir__merge_pr`. If the audit receipt is missing, stale, or has findings, merge_pr returns a policy block; re-run `/audit` on the current HEAD and retry.
 
 ## Path B — TL-direct (root, no task contract)
 

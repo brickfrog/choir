@@ -368,6 +368,34 @@ test "ship pr default prompt does not promise file_pr sidecar audit" {
 }
 
 ///|
+test "ship pr default prompt runs /audit AFTER review threads clear (not before)" {
+  let body = default_prompt(PromptName::ShipPr)
+  // Path A and Path B both must place /audit downstream of the Copilot
+  // push-fixes step — running audit before fixes mints a receipt for a
+  // HEAD that subsequent commits invalidate, which is exactly the
+  // workflow-induced stale-receipt bug a prior audit cycle caught.
+  let fixes_idx = body.find("push fixes")
+  let audit_idx = body.find("the TL runs `/audit`")
+  match (fixes_idx, audit_idx) {
+    (Some(fi), Some(ai)) =>
+      assert_true(
+        fi < ai,
+        msg="audit step must appear after push-fixes step in the skill body",
+      )
+    _ => fail("expected both push-fixes and audit references in ship-pr body")
+  }
+  assert_true(body.contains("Audit must run AFTER fixes are pushed"))
+}
+
+///|
+test "ship pr default prompt does not embed gh pr merge --admin bypass command" {
+  let body = default_prompt(PromptName::ShipPr)
+  assert_false(body.contains("gh pr merge"))
+  assert_false(body.contains("--admin"))
+  assert_true(body.contains("surface that to the user"))
+}
+
+///|
 test "worker review default prompt leads done section with mandatory handoff" {
   let body = default_prompt(PromptName::WorkerReview)
   let done = match body.find("When you are done:") {

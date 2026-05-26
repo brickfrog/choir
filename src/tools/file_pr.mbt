@@ -1345,7 +1345,7 @@ pub async fn file_pr_run_mutation_gate(
     Ok(id) => id
     Err(e) =>
       return Err(
-        @types.ChoirError::audit_incomplete(
+        @types.ChoirError::mutation_gate_incomplete(
           "[MUTATION GATE INCOMPLETE] file_pr: mutation gate worker spawn failed: " +
           e.validation_detail_or_message(),
         ),
@@ -1368,7 +1368,7 @@ pub async fn file_pr_run_mutation_gate(
     MutationGateWaitOutcome::NoReport => {
       should_cancel_worker = true
       Some(
-        @types.ChoirError::audit_incomplete(
+        @types.ChoirError::mutation_gate_incomplete(
           "[MUTATION GATE INCOMPLETE] file_pr: mutation gate worker did not report",
         ),
       )
@@ -1376,7 +1376,7 @@ pub async fn file_pr_run_mutation_gate(
     MutationGateWaitOutcome::WorkerDied => {
       should_cancel_worker = true
       Some(
-        @types.ChoirError::audit_incomplete(
+        @types.ChoirError::mutation_gate_incomplete(
           "[MUTATION GATE INCOMPLETE] file_pr: mutation gate worker exited before report",
         ),
       )
@@ -1385,7 +1385,7 @@ pub async fn file_pr_run_mutation_gate(
       if report.status == @types.Status::Failure {
         should_cancel_worker = true
         Some(
-          @types.ChoirError::audit_incomplete(
+          @types.ChoirError::mutation_gate_incomplete(
             "[MUTATION GATE INCOMPLETE] file_pr: mutation gate worker reported failure: " +
             mutation_gate_report_summary(report.message),
           ),
@@ -1396,7 +1396,7 @@ pub async fn file_pr_run_mutation_gate(
             mutation_gate_result_to_error(value, mutation_kill_rate_min)
           None =>
             Some(
-              @types.ChoirError::audit_incomplete(
+              @types.ChoirError::mutation_gate_incomplete(
                 "[MUTATION GATE INCOMPLETE] file_pr: mutation gate worker did not return " +
                 mutation_gate_report_json_marker,
               ),
@@ -1407,7 +1407,7 @@ pub async fn file_pr_run_mutation_gate(
         // is not the same as exiting — the prompt instructs the worker to
         // call shutdown after notify_parent, but the chain can hang on a
         // stuck timeout-wrapped subprocess. Cancel for consistency with
-        // the other audit_incomplete branches.
+        // the other mutation_gate_incomplete branches.
         if result is Some(_) {
           should_cancel_worker = true
         }

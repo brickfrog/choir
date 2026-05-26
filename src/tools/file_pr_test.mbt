@@ -1278,7 +1278,7 @@ async test "file_pr_run_mutation_gate cancels worker on failure report" {
 async test "file_pr_run_mutation_gate cancels worker when success report lacks JSON marker" {
   // Worker called notify_parent --status success but its message did
   // NOT contain MUTATION_GATE_REPORT_JSON: ... . Per F3 the cancel
-  // must still fire — reporting != exiting, and the audit_incomplete
+  // must still fire — reporting != exiting, and the mutation_gate_incomplete
   // surface in mutation_gate_report_from_message's None arm is the
   // same orphan-shape as the other incomplete branches.
   let project_dir = "/tmp/choir-fpr-mutation-no-marker-" +
@@ -1330,7 +1330,8 @@ async test "file_pr_run_mutation_gate cancels worker when success report lacks J
   match got {
     Err(e) =>
       assert_true(e.validation_detail_or_message().contains("did not return"))
-    Ok(_) => fail("expected audit_incomplete when JSON marker is absent")
+    Ok(_) =>
+      fail("expected mutation_gate_incomplete when JSON marker is absent")
   }
   @debug.assert_eq(events, ["cancel:" + worker_id, "cleanup:" + worker_id])
 }
@@ -1456,7 +1457,7 @@ async test "file_pr_run_mutation_gate treats timeout as mutation-gate incomplete
   )
   match got {
     Err(e) => {
-      assert_true(e.is_audit_incomplete())
+      assert_true(e.is_mutation_gate_incomplete())
       let msg = e.validation_detail_or_message()
       assert_true(msg.contains("[MUTATION GATE INCOMPLETE]"))
     }
@@ -1576,7 +1577,7 @@ async test "file_pr_run_mutation_gate detects dead mutation worker promptly" {
   )
   match got {
     Err(e) => {
-      assert_true(e.is_audit_incomplete())
+      assert_true(e.is_mutation_gate_incomplete())
       let msg = e.validation_detail_or_message()
       assert_true(msg.contains("[MUTATION GATE INCOMPLETE]"))
       assert_true(msg.contains("exited before report"))
