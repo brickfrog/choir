@@ -15,7 +15,7 @@ if [ "$#" -gt 0 ]; then
 else
 for d in src hooks tests; do
   if [ -d "$d" ]; then
-      find "$d" -type f -name '*.mbt' ! -path '*/fixtures/canary/*' >> "$tmp_files" 2>/dev/null
+      find "$d" -type f -name '*.mbt' ! -path '*/fixtures/canary/*' >> "$tmp_files"
   fi
 done
 fi
@@ -62,7 +62,7 @@ while IFS= read -r file; do
           opens = count_char(line, "{")
           closes = count_char(line, "}")
           trait_depth = trait_depth + opens - closes
-          if (trait_depth <= 0) {
+          if (trait_depth <= 0 && closes > 0) {
             in_trait = 0
             trait_depth = 0
           }
@@ -75,9 +75,7 @@ while IFS= read -r file; do
       }' "$file"; then
     :
   else
-    if [ $? -ne 0 ]; then
-      status=1
-    fi
+    status=1
   fi
 done < "$tmp_files"
 

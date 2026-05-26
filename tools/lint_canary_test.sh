@@ -22,4 +22,14 @@ assert_exit tests/fixtures/canary/bad_impl.mbt 1 "bad_impl should fail"
 assert_exit tests/fixtures/canary/bad_trait.mbt 1 "bad_trait should fail"
 assert_exit tests/fixtures/canary/good.mbt 0 "good should pass"
 
+split_brace_trait="$(mktemp)"
+trap 'rm -f "$split_brace_trait"' EXIT
+cat > "$split_brace_trait" <<'EOF'
+trait Bar
+{
+  fn baz(Self) -> Int
+}
+EOF
+assert_exit "$split_brace_trait" 1 "split-brace trait should fail"
+
 echo "OK: lint_canary_test"
