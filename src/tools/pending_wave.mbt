@@ -33,6 +33,11 @@ pub fn failed_wave_kv_path(project_dir : String, wave_id : String) -> String {
 }
 
 ///|
+pub fn flat_slug_prefix(slug_prefix : String) -> String {
+  slug_prefix.replace(old="/", new="-")
+}
+
+///|
 /// Build the deterministic base of a pending wave id.
 ///
 /// `now_ticks` should be `@env.now().reinterpret_as_int64()` — the high
@@ -48,7 +53,11 @@ pub fn generate_pending_wave_id(
   now_ticks : Int64,
   pid : Int,
 ) -> String {
-  slug_prefix + "-" + now_ticks.to_string() + "-" + pid.to_string()
+  flat_slug_prefix(slug_prefix) +
+  "-" +
+  now_ticks.to_string() +
+  "-" +
+  pid.to_string()
 }
 
 ///|

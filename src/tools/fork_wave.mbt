@@ -52,15 +52,16 @@ fn fork_wave_slug_for_index(
   index : Int,
   seen_slugs : Map[String, Int],
 ) -> String {
+  let flat_prefix = flat_slug_prefix(fork_wave_args.slug_prefix)
   let raw_slug = if fork_wave_args.has_per_leaf_tasks {
     let task_slug = slugify_task(fork_wave_args.tasks[index], index)
-    if fork_wave_args.slug_prefix == "wave" {
+    if flat_prefix == "wave" {
       task_slug
     } else {
-      fork_wave_args.slug_prefix + "-" + task_slug
+      flat_prefix + "-" + task_slug
     }
   } else {
-    fork_wave_args.slug_prefix + "-" + index.to_string()
+    flat_prefix + "-" + index.to_string()
   }
   match seen_slugs.get(raw_slug) {
     Some(count) => {
