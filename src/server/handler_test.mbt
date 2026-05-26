@@ -1268,6 +1268,13 @@ async test "maybe_trigger_automerge_for_pending_event blocks missing server cont
   )
   assert_false(merged)
   assert_false(merge_seen)
+  // The missing-task-contract branch must stamp last_automerge_attempt_sha
+  // to the current head so subsequent sweep ticks short-circuit via
+  // pr_needs_automerge_sweep_attempt instead of re-attempting forever.
+  match state.poller.get(pr_number) {
+    Some(after) => assert_eq(after.last_automerge_attempt_sha, tracked.last_sha)
+    None => fail("expected tracked PR to survive missing-contract early exit")
+  }
 }
 
 ///|
@@ -7191,10 +7198,9 @@ async test "test_close_terminal_warns_on_error" {
   let target = handler_auto_close_target("leaf-pane")
   let captured : Array[@moontrace.Event] = []
   handler_with_moontrace_capture(captured, async fn() {
-    state.interpret_teardown_effects(
-      [CloseTerminal(target)],
-      _cmds => raise @types.ChoirError::agent_not_found("test error"),
-    )
+    state.interpret_teardown_effects([CloseTerminal(target)], _cmds => {
+      raise @types.ChoirError::agent_not_found("test error")
+    })
   })
   assert_eq(handler_close_terminal_warn_count(captured), 1)
 }
