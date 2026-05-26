@@ -1078,32 +1078,20 @@ fn merge_pr_agent_local_config_paths(
   agent_id : String,
   registry : @registry.AgentRegistry?,
 ) -> Array[String] {
-  let paths : Array[String] = []
-  let inline_path = @workspace.inline_agent_metadata_dir(project_dir, agent_id) +
-    "/.choir/config.local.toml"
-  paths.push(inline_path)
-  match registry {
-    Some(reg) => {
-      let agent = Some(reg.get(agent_id)) catch { _ => None }
-      match agent {
-        Some(a) =>
-          if a.workspace != "" {
-            paths.push(a.workspace + "/.choir/config.local.toml")
-          }
-        None => ()
+  let agent_workspace = match registry {
+    Some(reg) =>
+      match reg.get_opt(agent_id) {
+        Some(agent) => Some(agent.workspace)
+        None => None
       }
-    }
-    None => ()
+    None => None
   }
-  let worktree_path = @workspace.worktree_path(
-      project_dir,
-      @phase.extract_slug(agent_id),
-    ) +
-    "/.choir/config.local.toml"
-  if !paths.contains(worktree_path) {
-    paths.push(worktree_path)
-  }
-  paths
+  @workspace.local_config_candidate_paths_for_agent_workspace(
+    project_dir,
+    agent_workspace,
+    @phase.extract_slug(agent_id),
+    agent_id=Some(agent_id),
+  )
 }
 
 ///|

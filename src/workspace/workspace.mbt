@@ -262,7 +262,7 @@ fn strip_json_object_braces(s : String) -> String? {
 }
 
 ///|
-fn local_config_candidate_paths_for_agent_workspace(
+pub fn local_config_candidate_paths_for_agent_workspace(
   project_dir : String,
   agent_workspace : String?,
   agent_slug : String,

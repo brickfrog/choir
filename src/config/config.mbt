@@ -47,10 +47,16 @@ pub fn merge_strategy_to_string(strategy : @types.MergeStrategy) -> String {
 }
 
 ///|
-fn warn_invalid_merge_strategy(raw : String, error : @types.ChoirError) -> Unit {
-  @moontrace.warn("invalid merge_strategy config value, defaulting to merge", fields=[
+fn warn_invalid_merge_strategy(
+  raw : String,
+  error : @types.ChoirError,
+  default_strategy : @types.MergeStrategy,
+) -> Unit {
+  let default_label = merge_strategy_to_string(default_strategy)
+  @moontrace.warn("invalid merge_strategy config value, defaulting to " + default_label, fields=[
     @moontrace.field("value", raw),
     @moontrace.field("error", error.message()),
+    @moontrace.field("default_strategy", default_label),
   ])
 }
 
@@ -62,7 +68,7 @@ fn parse_merge_strategy_or_default(
   match parse_merge_strategy(raw) {
     Ok(strategy) => strategy
     Err(e) => {
-      warn_invalid_merge_strategy(raw, e)
+      warn_invalid_merge_strategy(raw, e, default_strategy)
       default_strategy
     }
   }
