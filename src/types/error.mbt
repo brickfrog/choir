@@ -12,11 +12,6 @@ suberror ChoirError {
   GitError(String)
   ConfigError(String)
   AuditIncomplete(String)
-  AuditLoopExhausted(
-    cycles~ : Int,
-    findings_count~ : Int,
-    receipt_path~ : String
-  )
 }
 
 ///|
@@ -33,7 +28,6 @@ pub fn ChoirError::to_wire_string(self : ChoirError) -> String {
     GitError(_) => "git_error"
     ConfigError(_) => "config_error"
     AuditIncomplete(_) => "audit_incomplete"
-    AuditLoopExhausted(..) => "audit_loop_exhausted"
   }
 }
 
@@ -51,13 +45,6 @@ pub fn ChoirError::message(self : ChoirError) -> String {
     GitError(msg) => "git error: " + msg
     ConfigError(msg) => "config error: " + msg
     AuditIncomplete(msg) => "audit incomplete: " + msg
-    AuditLoopExhausted(cycles~, findings_count~, receipt_path~) =>
-      "audit loop exhausted after " +
-      cycles.to_string() +
-      " cycle(s) with " +
-      findings_count.to_string() +
-      " finding(s) remaining; receipt: " +
-      receipt_path
   }
 }
 
@@ -136,15 +123,6 @@ pub fn ChoirError::audit_incomplete(msg : String) -> ChoirError {
 }
 
 ///|
-pub fn ChoirError::audit_loop_exhausted(
-  cycles : Int,
-  findings_count : Int,
-  receipt_path : String,
-) -> ChoirError {
-  AuditLoopExhausted(cycles~, findings_count~, receipt_path~)
-}
-
-///|
 pub fn ChoirError::is_tool_not_found(self : ChoirError) -> Bool {
   match self {
     ToolNotFound(_) => true
@@ -184,8 +162,6 @@ pub fn choir_error_message_from_caught(e : Error) -> String {
     GitError(msg) => ChoirError::git_error(msg).message()
     ConfigError(msg) => ChoirError::config_error(msg).message()
     AuditIncomplete(msg) => ChoirError::audit_incomplete(msg).message()
-    AuditLoopExhausted(cycles~, findings_count~, receipt_path~) =>
-      ChoirError::audit_loop_exhausted(cycles, findings_count, receipt_path).message()
     _ => "internal error"
   }
 }
@@ -204,8 +180,7 @@ pub fn caught_error_is_choir_error(e : Error) -> Bool {
     | TransportError(_)
     | GitError(_)
     | ConfigError(_)
-    | AuditIncomplete(_)
-    | AuditLoopExhausted(..) => true
+    | AuditIncomplete(_) => true
     _ => false
   }
 }
