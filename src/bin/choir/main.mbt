@@ -32,10 +32,9 @@ fn main {
       "logs" => @choir_commands.logs_subcommand_run()
       "stats" => @choir_commands.stats_subcommand_run()
       "smoke" => @choir_commands.smoke_subcommand_run()
-      "tl-policy-watch" => tl_policy_watch_run()
       _ => {
         @sys.write_stdout(
-          "usage: choir <serve|dev|reload|tool <tool>|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|zellij-action <send|close>|hook|init [--recreate] [--purge] [--tl claude|codex|gemini|cursor_agent|agent] [--lean]|claude [--lean] [args...]|stop [--purge]|reply|watch|statusline|goal <bead-id|text> [--verify <cmd>]...|goal-clear|prompts <diff|sync>|skill <add|list|remove>|mcp <add|list|remove>|config schema [--format=md|json]|beads <wave-from|gate|merge-slot|spec-link|doctor>|log --wave <wave_id>|logs [--source serve|delivery|events <agent>|wave <id>] [--tail N] [--follow|-f] [--grep PATTERN] [--level trace|debug|info|warn|error]|stats [--wave <wave_id>|--agent-type <type>]|smoke beads-handoff|tl-policy-watch --pid <pid>>\n",
+          "usage: choir <serve|dev|reload|tool <tool>|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|zellij-action <send|close>|hook|init [--recreate] [--purge] [--tl claude|codex|gemini|cursor_agent|agent] [--lean]|claude [--lean] [args...]|stop [--purge]|reply|watch|statusline|goal <bead-id|text> [--verify <cmd>]...|goal-clear|prompts <diff|sync>|skill <add|list|remove>|mcp <add|list|remove>|config schema [--format=md|json]|beads <wave-from|gate|merge-slot|spec-link|doctor>|log --wave <wave_id>|logs [--source serve|delivery|events <agent>|wave <id>] [--tail N] [--follow|-f] [--grep PATTERN] [--level trace|debug|info|warn|error]|stats [--wave <wave_id>|--agent-type <type>]|smoke beads-handoff>\n",
         )
         @sys.exit(1)
       }

@@ -4,13 +4,12 @@ fn command_text_for_launch(cmd : Command) -> String {
 }
 
 ///|
-fn tl_policy_supervised_shell_script(
+fn tl_lifecycle_shell_script(
   env_exports : String,
   inner : Command,
   post_exit_shell : String,
 ) -> String {
-  let foreground_script = "choir tl-policy-watch --pid $$ & exec " +
-    command_text_for_launch(inner)
+  let foreground_script = "exec " + command_text_for_launch(inner)
   // Diagnostics for choir-eek (TL/root claude process exits unexpectedly):
   //  - A `trap` on this OUTER shell for HUP/TERM logs that a signal arrived
   //    AND keeps the shell alive past it, so the `status=$?` below still
@@ -396,7 +395,7 @@ pub fn spawn_commands(
             session,
             spec.slug,
             workspace,
-            tl_policy_supervised_shell_script(
+            tl_lifecycle_shell_script(
               launch_env_exports(spec, session, workspace, terminal_target),
               launch_cmd,
               " exit \"$status\"",
@@ -437,7 +436,7 @@ pub fn spawn_commands(
             session,
             spec.slug,
             workspace,
-            tl_policy_supervised_shell_script(
+            tl_lifecycle_shell_script(
               launch_env_exports(spec, session, workspace, terminal_target),
               launch_cmd,
               " exit \"$status\"",
@@ -493,7 +492,7 @@ pub fn spawn_commands(
             session,
             spec.slug,
             workspace,
-            tl_policy_supervised_shell_script(
+            tl_lifecycle_shell_script(
               launch_env_exports(spec, session, workspace, terminal_target),
               launch_cmd,
               " exit \"$status\"",
@@ -694,7 +693,7 @@ pub fn init_tl_zellij_tab_command(
     session,
     "TL",
     project_dir,
-    tl_policy_supervised_shell_script(
+    tl_lifecycle_shell_script(
       env_exports,
       inner,
       INIT_TL_POST_EXIT_SHELL_SUFFIX,
