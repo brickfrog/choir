@@ -69,6 +69,47 @@ test "parse_config - full" {
 }
 
 ///|
+fn config_schema_key_present(file : @types.ConfigFile, key : String) -> Bool {
+  for entry in @types.config_schema_entries() {
+    if entry.file == file && entry.key == key {
+      return true
+    }
+  }
+  false
+}
+
+///|
+test "config schema nested keys match parser-accepted TOML shape" {
+  let file = @types.ConfigFile::ConfigToml
+  assert_true(
+    config_schema_key_present(file, "pr_policy.require_integration_audit"),
+  )
+  assert_false(config_schema_key_present(file, "pr_policy"))
+  assert_true(config_schema_key_present(file, "pricing.<agent_type>.rate_in"))
+  assert_true(config_schema_key_present(file, "pricing.<agent_type>.rate_out"))
+  assert_false(config_schema_key_present(file, "pricing"))
+
+  let cfg = parse_config(
+    (
+      #|[pr_policy]
+      #|require_integration_audit = false
+      #|
+      #|[pricing.codex]
+      #|rate_in = 0.01
+      #|rate_out = 0.02
+    ),
+  ).unwrap()
+  assert_eq(cfg.pr_policy.require_integration_audit, false)
+  match cfg.pricing.get("codex") {
+    Some(rate) => {
+      assert_eq(rate.rate_in, 0.01)
+      assert_eq(rate.rate_out, 0.02)
+    }
+    None => fail("expected pricing.codex to parse")
+  }
+}
+
+///|
 test "parse_config - minimal" {
   let content = "default_role = \"worker\""
   let cfg = parse_config(content).unwrap()

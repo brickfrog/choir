@@ -19,6 +19,7 @@ options(
   targets: {
     "beads_subcommand.mbt": [ "native" ],
     "config_subcommand.mbt": [ "native" ],
+    "config_subcommand_test.mbt": [ "native" ],
     "beads_subcommand_test.mbt": [ "native" ],
     "log_subcommand.mbt": [ "native" ],
     "log_subcommand_test.mbt": [ "native" ],

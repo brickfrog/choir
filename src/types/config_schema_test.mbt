@@ -21,7 +21,8 @@ fn expected_config_schema_keys() -> Array[String] {
     "moon_verify_target", "agy_migration_incomplete", "worker_no_handoff_prod_sec",
     "worker_no_handoff_escalate_sec", "audit_heartbeat_sec", "audit_max_rounds",
     "mutation_kill_rate_min", "poller_heartbeat_tick_sec", "prenotify_checks", "auto_pull_after_integration",
-    "pr_policy", "auto_rebuild_after_pull", "auto_reload_after_rebuild", "pricing",
+    "pr_policy.require_integration_audit", "auto_rebuild_after_pull", "auto_reload_after_rebuild",
+    "pricing.<agent_type>.rate_in", "pricing.<agent_type>.rate_out",
   ]
 }
 

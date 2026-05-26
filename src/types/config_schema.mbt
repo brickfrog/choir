@@ -229,9 +229,9 @@ pub fn config_schema_entries() -> Array[ConfigSchemaEntry] {
     ),
     schema_entry(
       ConfigToml,
-      "pr_policy",
-      "PrPolicy { require_integration_audit: Bool }",
-      "{ require_integration_audit = true }",
+      "pr_policy.require_integration_audit",
+      "Bool",
+      "true",
       "PR policy toggles for integration/default-branch merge enforcement.",
     ),
     schema_entry(
@@ -250,9 +250,16 @@ pub fn config_schema_entries() -> Array[ConfigSchemaEntry] {
     ),
     schema_entry(
       ConfigToml,
-      "pricing",
-      "Map[String, PricingRate { rate_in: Double, rate_out: Double }]",
-      "{}",
+      "pricing.<agent_type>.rate_in",
+      "Double",
+      "unset",
+      "Per-agent-type token pricing, keyed by canonical AgentType wire string.",
+    ),
+    schema_entry(
+      ConfigToml,
+      "pricing.<agent_type>.rate_out",
+      "Double",
+      "unset",
       "Per-agent-type token pricing, keyed by canonical AgentType wire string.",
     ),
     schema_entry(
