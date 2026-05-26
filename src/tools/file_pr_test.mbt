@@ -1443,6 +1443,67 @@ async test "file_pr_run_mutation_gate cancels worker on failure report" {
 }
 
 ///|
+async test "file_pr_run_mutation_gate cancels worker when success report lacks JSON marker" {
+  // Worker called notify_parent --status success but its message did
+  // NOT contain MUTATION_GATE_REPORT_JSON: ... . Per F3 the cancel
+  // must still fire — reporting != exiting, and the audit_incomplete
+  // surface in mutation_gate_report_from_message's None arm is the
+  // same orphan-shape as the other incomplete branches.
+  let project_dir = "/tmp/choir-fpr-mutation-no-marker-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let worker_id = "main.mutation-gate-fixed"
+  let events : Array[String] = []
+  let got = file_pr_run_mutation_gate(
+    project_dir,
+    project_dir,
+    @types.Role::Dev,
+    "main.leaf",
+    None,
+    "feature/leaf-tdd-discipline",
+    head,
+    ["moon test --target native"],
+    0.8,
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+        return (0, "main.leaf\n")
+      }
+      if cmd.program == "git" &&
+        cmd.args ==
+        ["diff", "--name-only", "feature/leaf-tdd-discipline..." + head] {
+        return (0, "src/math.mbt\nsrc/math_test.mbt\n")
+      }
+      (0, "")
+    },
+    async fn(_) {
+      @async.sleep(0)
+      Ok(worker_id)
+    },
+    async fn(_) {
+      @async.sleep(0)
+      Some({
+        // Success status but message has no JSON marker — the
+        // worker swallowed its own report shape.
+        message: "mutation pass complete, no findings",
+        status: @types.Status::Success,
+      })
+    },
+    fn(id) { events.push("cleanup:" + id) },
+    1000,
+    fn() { 123456789L },
+    cancel_worker=fn(id) { events.push("cancel:" + id) },
+  )
+  match got {
+    Err(e) =>
+      assert_true(e.validation_detail_or_message().contains("did not return"))
+    Ok(_) => fail("expected audit_incomplete when JSON marker is absent")
+  }
+  @debug.assert_eq(events, ["cancel:" + worker_id, "cleanup:" + worker_id])
+}
+
+///|
 async test "file_pr_run_mutation_gate computes kill rate from mutant counts" {
   let project_dir = "/tmp/choir-fpr-mutation-low-" + @sys.get_pid().to_string()
   let head = "abcdef1234567890abcdef1234567890abcdef12"
