@@ -17,17 +17,29 @@ pub fn PrPolicy::default() -> PrPolicy {
 ///|
 /// Parsed server configuration.
 pub(all) struct Config {
+  /// Default role used when local config does not override it.
   default_role : Role
+  /// Project root used for Choir-managed paths.
   project_dir : String
+  /// Optional shell command used when launching interactive agent panes.
   shell_command : String?
+  /// Unix-domain socket path for the Choir server.
   listen_uds : String
+  /// Optional TCP listen address for the Choir server.
   listen_tcp : String?
+  /// Optional bearer token required for TCP RPC clients.
   tcp_auth_token : String?
+  /// Optional OpenTelemetry OTLP endpoint for tracing.
   otlp_endpoint : String?
+  /// Optional canonical id for the current agent.
   agent_id : String?
+  /// Optional JSON object merged into generated MCP server settings.
   extra_mcp_servers_json : String?
+  /// Optional JSON array describing companion agents to launch.
   companions_json : String?
+  /// Optional JSON object for user plugin configuration.
   plugins_json : String?
+  /// Zellij session name used for local terminal targets.
   terminal_session : String
   /// When true, `file_pr` requests `@copilot` as a reviewer via `gh pr edit --add-reviewer` (best-effort).
   pr_review : Bool
@@ -75,15 +87,25 @@ pub(all) struct PricingRate {
 
 ///|
 pub(all) struct LocalConfig {
+  /// Local role override for this worktree or agent.
   role : Role?
+  /// Local canonical id for this agent.
   agent_id : String?
+  /// Parent agent id for handoff routing.
   parent_id : String?
+  /// Git branch assigned to this worktree.
   branch : String?
+  /// Branch this worktree files PRs into.
   parent_branch : String?
+  /// Filesystem path to this agent worktree.
   workspace : String?
+  /// Local terminal target for routing messages to this agent.
   terminal_target : LocalTarget?
+  /// Agent CLI/provider assigned to this worktree.
   agent_type : AgentType?
+  /// Depth marker used to prevent unbounded recursive spawning.
   spawn_depth : Int?
+  /// Task contract assigned by the server for gate enforcement.
   task_contract : TaskContract?
   /// Per-wave automerge override persisted into spawned leaf config. `None` inherits global config.
   automerge : Bool?

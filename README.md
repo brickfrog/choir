@@ -49,6 +49,10 @@ choir init --recreate     # restart server + TL, keep recovery state
 choir stop --purge        # shut down and remove worktrees/state
 ```
 
+## Configuration
+
+Run `choir config schema` to print the current config reference.
+
 ## TL Skills
 
 Auto-installed in the TL pane by `choir claude` / `choir init`:
