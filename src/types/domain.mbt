@@ -820,12 +820,16 @@ pub(all) struct Workspace {
 pub(all) enum IsolationMode {
   Worktree
   Inline
+  InlineDedicatedTab
   Standalone
 } derive(Debug, Eq)
 
 ///|
 pub impl Show for IsolationMode with output(self, logger) -> Unit {
-  self.to_repr().output(logger)
+  match self {
+    InlineDedicatedTab => logger.write_string("inline_dedicated_tab")
+    _ => self.to_repr().output(logger)
+  }
 }
 
 ///|

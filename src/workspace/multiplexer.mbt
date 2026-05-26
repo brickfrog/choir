@@ -19,6 +19,7 @@ pub fn local_target_for(
 ) -> @types.LocalTarget {
   match isolation {
     @types.IsolationMode::Inline => zellij_pane_target(session, slug)
+    @types.IsolationMode::InlineDedicatedTab => zellij_tab_target(session, slug)
     _ => zellij_tab_target(session, slug)
   }
 }
@@ -294,6 +295,8 @@ pub fn launch_commands(
   match isolation {
     @types.IsolationMode::Inline =>
       [zellij_run_pane(session, slug, workdir, env_assignments, inner)]
+    @types.IsolationMode::InlineDedicatedTab =>
+      [zellij_new_tab(session, slug, workdir, env_assignments, inner)]
     _ => [zellij_new_tab(session, slug, workdir, env_assignments, inner)]
   }
 }

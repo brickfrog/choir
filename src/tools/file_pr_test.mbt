@@ -3757,6 +3757,82 @@ async test "interpret_file_pr Dev missing audit auto-spawns writes receipt and r
 }
 
 ///|
+async test "interpret_file_pr audit worker launches in dedicated zellij tab" {
+  let project_dir = "/tmp/choir-fpr-auto-audit-tab-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let captured_zellij_args : Array[String] = []
+  let got = interpret_file_pr(
+    {
+      branch: "feature/auto-audit",
+      parent_branch: Some("main"),
+      tracked_agent_id: "feature/auto-audit",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    None,
+    false,
+    mock_preflight_ok,
+    async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      for cmd in cmds {
+        if cmd.program == "zellij" && captured_zellij_args.length() == 0 {
+          for arg in cmd.args {
+            captured_zellij_args.push(arg)
+          }
+        }
+      }
+      let statuses = []
+      for _ in cmds {
+        statuses.push(0)
+      }
+      statuses
+    },
+    file_pr_auto_audit_capture(head, None),
+    mock_ensure_pr_ok,
+    caller_role=@types.Role::Dev,
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
+    tdd_phase_reader=file_pr_test_tdd_done,
+    audit_now_ms_fn=fn() { 1234L },
+    create_dir_all=fn(_) { true },
+    write_file_atomic=fn(_, _) { true },
+    wait_for_audit_report=async fn(_) {
+      @async.sleep(0)
+      Some({
+        message: "No findings. The code is acceptable.",
+        status: @types.Status::Success,
+      })
+    },
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    @types.Response::Err(msg) => fail("expected PR response: " + msg)
+  }
+  assert_true(captured_zellij_args.length() > 0)
+  assert_eq(captured_zellij_args[2], "action")
+  assert_eq(captured_zellij_args[3], "new-tab")
+  assert_eq(captured_zellij_args[4], "--name")
+  assert_true(
+    captured_zellij_args[5].contains(audit_on_file_pr_internal_caller_id),
+  )
+  assert_eq(captured_zellij_args[6], "--cwd")
+  assert_eq(captured_zellij_args[7], project_dir)
+  assert_false(captured_zellij_args[2] == "run")
+  assert_true(
+    captured_zellij_args.any(fn(arg) {
+      arg.contains(
+        "CHOIR_TERMINAL_TARGET=zellij-tab:choir:" +
+        audit_on_file_pr_internal_caller_id,
+      )
+    }),
+  )
+}
+
+///|
 async test "interpret_file_pr Dev missing audit returns findings error" {
   let project_dir = "/tmp/choir-fpr-auto-audit-findings-" +
     @sys.get_pid().to_string()
