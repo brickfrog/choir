@@ -668,11 +668,15 @@ fn merge_pr_parent_branch_mismatch_error(
   tracked_parent_branch : String,
   append_file : (String, String) -> Bool,
 ) -> @types.ChoirError {
+  // parent_branch comes from tool args / poller state; keep delivery log and
+  // operator-facing error strings single-line before interpolation.
+  let requested = merge_pr_sanitize_branch_for_log(requested_parent_branch)
+  let tracked = merge_pr_sanitize_branch_for_log(tracked_parent_branch)
   @moontrace.info("merge_pr", fields=[
     @moontrace.field("pr", pr_number),
     @moontrace.field("outcome", "parent_branch_mismatch"),
-    @moontrace.field("requested_parent_branch", requested_parent_branch),
-    @moontrace.field("tracked_parent_branch", tracked_parent_branch),
+    @moontrace.field("requested_parent_branch", requested),
+    @moontrace.field("tracked_parent_branch", tracked),
   ])
   merge_pr_delivery_log_line(
     append_file,
@@ -680,21 +684,26 @@ fn merge_pr_parent_branch_mismatch_error(
     "merge_pr pr=" +
     pr_number.to_string() +
     " outcome=parent_branch_mismatch requested_parent_branch=" +
-    requested_parent_branch +
+    requested +
     " tracked_parent_branch=" +
-    tracked_parent_branch,
+    tracked,
   )
   @types.ChoirError::validation_error(
     "policy blocked: merge_pr parent_branch mismatch for PR #" +
     pr_number.to_string() +
     ": caller requested '" +
-    requested_parent_branch +
+    requested +
     "' but tracked poller state says '" +
-    tracked_parent_branch +
+    tracked +
     "'. Retry merge_pr with parent_branch='" +
-    tracked_parent_branch +
+    tracked +
     "'.",
   )
+}
+
+///|
+fn merge_pr_sanitize_branch_for_log(raw : String) -> String {
+  raw.replace(old="\n", new=" ").replace(old="\r", new=" ")
 }
 
 ///|

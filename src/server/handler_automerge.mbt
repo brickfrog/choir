@@ -172,8 +172,16 @@ pub fn pr_needs_automerge_sweep_attempt(
 
 ///|
 fn automerge_retryable_audit_policy_block(resp : @types.Response) -> String? {
+  // Only classify gate failures that a re-run of /audit on the same HEAD can
+  // resolve. `audit receipt for HEAD ... reports N finding(s)` requires new
+  // commits; retrying automerge in a loop will just spin without progress.
   match resp.error_message() {
-    Some(msg) if msg.contains("audit receipt gate") => Some(msg)
+    Some(msg) if msg.contains("audit receipt gate") &&
+      (
+        msg.contains("missing audit receipt") ||
+        msg.contains("malformed audit receipt") ||
+        msg.contains("stale audit receipt")
+      ) => Some(msg)
     _ => None
   }
 }
