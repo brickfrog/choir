@@ -35,52 +35,41 @@ fn server_reload_optional_string_json(value : String?) -> Json {
 }
 
 ///|
-fn server_reload_int64_entries_json(values : Map[String, Int64]) -> Json {
+fn[V : ToJson] map_to_json_entries(values : Map[String, V]) -> Json {
   let entries : Array[Json] = []
   for key, value in values {
     entries.push({ "key": key.to_json(), "value": value.to_json() }.to_json())
   }
   entries.to_json()
+}
+
+///|
+fn server_reload_int64_entries_json(values : Map[String, Int64]) -> Json {
+  map_to_json_entries(values)
 }
 
 ///|
 fn server_reload_bool_entries_json(values : Map[String, Bool]) -> Json {
-  let entries : Array[Json] = []
-  for key, value in values {
-    entries.push({ "key": key.to_json(), "value": value.to_json() }.to_json())
-  }
-  entries.to_json()
+  map_to_json_entries(values)
 }
 
 ///|
 fn server_reload_int_entries_json(values : Map[String, Int]) -> Json {
-  let entries : Array[Json] = []
-  for key, value in values {
-    entries.push({ "key": key.to_json(), "value": value.to_json() }.to_json())
-  }
-  entries.to_json()
+  map_to_json_entries(values)
 }
 
 ///|
 fn server_reload_leaf_tdd_phase_entries_json(
   values : Map[String, @types.LeafTddPhase],
 ) -> Json {
-  let entries : Array[Json] = []
-  for key, value in values {
-    entries.push({ "key": key.to_json(), "value": value.to_json() }.to_json())
-  }
-  entries.to_json()
+  map_to_json_entries(values)
 }
 
 ///|
 fn server_reload_task_contract_entries_json(
   values : Map[String, @types.TaskContract],
 ) -> Json {
-  let entries : Array[Json] = []
-  for key, value in values {
-    entries.push({ "key": key.to_json(), "value": value.to_json() }.to_json())
-  }
-  entries.to_json()
+  map_to_json_entries(values)
 }
 
 ///|
