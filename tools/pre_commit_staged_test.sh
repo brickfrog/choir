@@ -20,15 +20,13 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
-# Deliberately unformatted: moon fmt will rewrite the spacing and the
-# `with fn` rejection isn't relevant here — any rewrite means the file
-# changed.
+# Deliberately unformatted: moon fmt will rewrite the spacing — any
+# rewrite means the file changed.
 make_fixture() {
   local dir="$1"
   git init "$dir" >/dev/null
   mkdir -p "$dir/.githooks" "$dir/tools" "$dir/src"
   cp "$repo_root/.githooks/pre-commit" "$dir/.githooks/pre-commit"
-  cp "$repo_root/tools/lint_canary.sh" "$dir/tools/lint_canary.sh"
   cat > "$dir/moon.mod.json" <<'EOF'
 {"name":"fixture","version":"0.1.0"}
 EOF

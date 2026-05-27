@@ -75,7 +75,7 @@ priv enum DangerousCallKind {
 } derive(Eq)
 
 ///|
-impl @syntax.IterVisitor for GitProgramSearch with visit_Expr(self, expr) {
+impl @syntax.IterVisitor for GitProgramSearch with fn visit_Expr(self, expr) {
   match expr {
     Record(fields~, ..) =>
       for field in fields {
@@ -291,7 +291,7 @@ fn expr_is_none(expr : @syntax.Expr) -> Bool {
 }
 
 ///|
-impl @syntax.IterVisitor for ConstructorNameSearch with visit_Expr(
+impl @syntax.IterVisitor for ConstructorNameSearch with fn visit_Expr(
   self,
   expr,
 ) {
@@ -660,7 +660,7 @@ fn pop_names_to(names : Array[String], length : Int) -> Unit {
 }
 
 ///|
-impl @syntax.IterVisitor for FunctionBodyCollector with visit_Expr(
+impl @syntax.IterVisitor for FunctionBodyCollector with fn visit_Expr(
   self,
   expr,
 ) {
@@ -862,7 +862,7 @@ fn exec_package_ref_name(
 }
 
 ///|
-impl @syntax.IterVisitor for ExecPackageRefSearch with visit_Expr(self, expr) {
+impl @syntax.IterVisitor for ExecPackageRefSearch with fn visit_Expr(self, expr) {
   if self.found {
     return
   }
@@ -1443,7 +1443,7 @@ fn scan_impls(file : String, impls : @syntax.Impls) -> Array[LintFinding] {
 }
 
 ///|
-impl @syntax.IterVisitor for LintEnv with visit_Impl_TopFuncDef(
+impl @syntax.IterVisitor for LintEnv with fn visit_Impl_TopFuncDef(
   env,
   fun_decl~,
   decl_body~,
@@ -1457,7 +1457,7 @@ impl @syntax.IterVisitor for LintEnv with visit_Impl_TopFuncDef(
 }
 
 ///|
-impl @syntax.IterVisitor for LintEnv with visit_Impl_TopImpl(
+impl @syntax.IterVisitor for LintEnv with fn visit_Impl_TopImpl(
   env,
   self_ty~,
   trait_~,
@@ -1497,7 +1497,7 @@ impl @syntax.IterVisitor for LintEnv with visit_Impl_TopImpl(
 }
 
 ///|
-impl @syntax.IterVisitor for LintEnv with visit_Expr(env, expr) {
+impl @syntax.IterVisitor for LintEnv with fn visit_Expr(env, expr) {
   match expr {
     Apply(func~, args~, loc~, ..) => {
       check_test_apply(env, func, args, loc)
@@ -1547,7 +1547,7 @@ impl @syntax.IterVisitor for LintEnv with visit_Expr(env, expr) {
 }
 
 ///|
-impl @syntax.IterVisitor for LintEnv with visit_Parameter_Optional(
+impl @syntax.IterVisitor for LintEnv with fn visit_Parameter_Optional(
   env,
   binder~,
   default~,
@@ -1745,6 +1745,285 @@ test "package_aliases_for_file caches by directory" {
 }
 
 ///|
+/// moon fmt emits two patterns that moonbitlang/parser through 0.3.2 still
+/// rejects with "Unexpected token `fn`":
+///   1. `impl X for Y with fn method(...)` — trait impl with explicit `fn`
+///      keyword after `with`. Parser expects `with method(...)`.
+///   2. `pub trait T { fn method(Self) -> R }` — trait body with explicit
+///      `fn` keyword on method declarations. Parser expects `method(Self) -> R`.
+///
+/// Until upstream catches up, this preprocessor rewrites those two patterns
+/// on the source bytes before handing them to the parser, preserving every
+/// other byte offset so reported line/column positions still match the
+/// original source. Specifically: the `fn ` token (3 bytes) becomes three
+/// spaces.
+///
+/// For (2), we identify trait bodies by scanning for a `trait NAME {`
+/// header and walking the brace-balanced body. Inside the body, every
+/// `fn ` token is a method declaration (trait bodies don't contain
+/// function definitions).
+fn strip_with_fn_for_parser(source : String) -> String {
+  // Compute a parallel "is in code" mask: bytes inside `//` line comments
+  // (including `///` doc comments), `"..."` string literals, and `#|...`
+  // multi-line string lines are NOT code. Then run the transformations
+  // consulting the mask so braces, `trait` keywords, and `fn ` tokens
+  // inside comments/strings cannot mislead the structural scanner.
+  let mask = compute_code_mask(source)
+  let buf = StringBuilder::new(size_hint=source.length())
+  let n = source.length()
+  let mut i = 0
+  while i < n {
+    // Try the unconditional `with fn ` → `with    ` rewrite first; it
+    // only fires when ALL 8 bytes are in code.
+    if i + 8 <= n &&
+      bytes_in_code(mask, i, 8) &&
+      source[i].to_int() == 'w'.to_int() &&
+      source[i + 1].to_int() == 'i'.to_int() &&
+      source[i + 2].to_int() == 't'.to_int() &&
+      source[i + 3].to_int() == 'h'.to_int() &&
+      source[i + 4].to_int() == ' '.to_int() &&
+      source[i + 5].to_int() == 'f'.to_int() &&
+      source[i + 6].to_int() == 'n'.to_int() &&
+      source[i + 7].to_int() == ' '.to_int() {
+      buf.write_string("with    ")
+      i = i + 8
+      continue
+    }
+    match try_match_trait_open_brace(source, mask, i, n) {
+      Some(open_brace_idx) => {
+        for k = i; k <= open_brace_idx; k = k + 1 {
+          buf.write_char(Int::unsafe_to_char(source[k].to_int()))
+        }
+        let after_close = strip_fn_within_braces(
+          source,
+          mask,
+          open_brace_idx + 1,
+          n,
+          buf,
+        )
+        i = after_close
+      }
+      None => {
+        buf.write_char(Int::unsafe_to_char(source[i].to_int()))
+        i = i + 1
+      }
+    }
+  }
+  buf.to_string()
+}
+
+///|
+/// Returns a byte array of the same length as `source` where each entry is
+/// 1 if the corresponding byte is in code (parsed as MoonBit syntax) and 0
+/// if it is inside a line comment (`//` or `///`), a string literal
+/// (`"..."` with `\"` escape), or a `#|`-prefixed multi-line string line.
+/// MoonBit has no block comments. Char literals (`'x'`) are short enough
+/// that their interior bytes can't realistically match the structural
+/// keywords we scan for, so they are not specifically masked.
+fn compute_code_mask(source : String) -> Array[Int] {
+  let n = source.length()
+  let mask = Array::make(n, 1)
+  let mut i = 0
+  let mut at_line_start = true
+  while i < n {
+    let c = source[i].to_int()
+    // Line comment: // or ///
+    if c == '/'.to_int() && i + 1 < n && source[i + 1].to_int() == '/'.to_int() {
+      while i < n && source[i].to_int() != '\n'.to_int() {
+        mask[i] = 0
+        i = i + 1
+      }
+      at_line_start = true
+      continue
+    }
+    // Multi-line string line: starts with #| after only whitespace.
+    if at_line_start &&
+      c == '#'.to_int() &&
+      i + 1 < n &&
+      source[i + 1].to_int() == '|'.to_int() {
+      while i < n && source[i].to_int() != '\n'.to_int() {
+        mask[i] = 0
+        i = i + 1
+      }
+      at_line_start = true
+      continue
+    }
+    // String literal "..."
+    if c == '"'.to_int() {
+      mask[i] = 0
+      i = i + 1
+      while i < n && source[i].to_int() != '"'.to_int() {
+        mask[i] = 0
+        // Handle escape sequence: skip the next byte too.
+        if source[i].to_int() == '\\'.to_int() && i + 1 < n {
+          mask[i + 1] = 0
+          i = i + 2
+        } else {
+          if source[i].to_int() == '\n'.to_int() {
+            // Unterminated string literal at newline — bail out and treat
+            // the rest as code rather than masking the whole file.
+            break
+          }
+          i = i + 1
+        }
+      }
+      if i < n && source[i].to_int() == '"'.to_int() {
+        mask[i] = 0
+        i = i + 1
+      }
+      continue
+    }
+    if c == '\n'.to_int() {
+      at_line_start = true
+    } else if c != ' '.to_int() && c != '\t'.to_int() {
+      at_line_start = false
+    }
+    i = i + 1
+  }
+  mask
+}
+
+///|
+fn bytes_in_code(mask : Array[Int], start : Int, len : Int) -> Bool {
+  let end = start + len
+  for k = start; k < end; k = k + 1 {
+    if mask[k] == 0 {
+      return false
+    }
+  }
+  true
+}
+
+///|
+/// If `source[start..]` begins with the keyword `trait` (with all 5 bytes
+/// in code) followed by at least one identifier-start byte (the trait
+/// name) and an open brace — with no newline, semicolon, or backtick
+/// between the keyword and the brace, and the brace itself also in code —
+/// return the index of that open brace. `trait` must be preceded by a
+/// non-identifier byte so identifiers like `constraint` don't match. The
+/// comment/string mask handles the more dangerous case of `trait NAME {`
+/// appearing inside a doc comment.
+fn try_match_trait_open_brace(
+  source : String,
+  mask : Array[Int],
+  start : Int,
+  n : Int,
+) -> Int? {
+  if start + 6 > n {
+    return None
+  }
+  if !bytes_in_code(mask, start, 6) {
+    return None
+  }
+  let t = source[start].to_int()
+  if t != 't'.to_int() {
+    return None
+  }
+  if source[start + 1].to_int() != 'r'.to_int() ||
+    source[start + 2].to_int() != 'a'.to_int() ||
+    source[start + 3].to_int() != 'i'.to_int() ||
+    source[start + 4].to_int() != 't'.to_int() {
+    return None
+  }
+  let after = source[start + 5].to_int()
+  if after != ' '.to_int() && after != '\t'.to_int() {
+    return None
+  }
+  if start > 0 {
+    let prev = source[start - 1].to_int()
+    if is_ident_byte(prev) {
+      return None
+    }
+  }
+  let mut j = start + 6
+  while j < n &&
+        (
+          source[j].to_int() == ' '.to_int() ||
+          source[j].to_int() == '\t'.to_int()
+        ) {
+    j = j + 1
+  }
+  if j >= n || !is_ident_start_byte(source[j].to_int()) || mask[j] == 0 {
+    return None
+  }
+  while j < n {
+    let c = source[j].to_int()
+    if c == '{'.to_int() && mask[j] == 1 {
+      return Some(j)
+    }
+    if c == '\n'.to_int() || c == ';'.to_int() {
+      return None
+    }
+    j = j + 1
+  }
+  None
+}
+
+///|
+/// Starting at index `body_start` (one past the trait body's open brace),
+/// copy bytes to `buf` until the matching close brace. Braces and `fn `
+/// tokens inside comments and string literals are ignored via `mask` so
+/// a doc comment containing `}` doesn't close the body prematurely and
+/// a string literal containing `fn x` doesn't get its content rewritten.
+/// Inside real code in the body, every `fn ` followed by an
+/// identifier-start byte (ASCII letter or underscore) is replaced with
+/// three spaces so the parser sees the older grammar. Returns the index
+/// just past the matching close brace.
+fn strip_fn_within_braces(
+  source : String,
+  mask : Array[Int],
+  body_start : Int,
+  n : Int,
+  buf : StringBuilder,
+) -> Int {
+  let mut depth = 1
+  let mut i = body_start
+  while i < n && depth > 0 {
+    let c = source[i].to_int()
+    let in_code = mask[i] == 1
+    if c == '{'.to_int() && in_code {
+      depth = depth + 1
+      buf.write_char(Int::unsafe_to_char(c))
+      i = i + 1
+    } else if c == '}'.to_int() && in_code {
+      depth = depth - 1
+      buf.write_char(Int::unsafe_to_char(c))
+      i = i + 1
+    } else if in_code &&
+      c == 'f'.to_int() &&
+      i + 3 <= n &&
+      source[i + 1].to_int() == 'n'.to_int() &&
+      source[i + 2].to_int() == ' '.to_int() &&
+      bytes_in_code(mask, i, 3) &&
+      (i == 0 || !is_ident_byte(source[i - 1].to_int())) &&
+      i + 3 < n &&
+      is_ident_start_byte(source[i + 3].to_int()) {
+      buf.write_string("   ")
+      i = i + 3
+    } else {
+      buf.write_char(Int::unsafe_to_char(c))
+      i = i + 1
+    }
+  }
+  i
+}
+
+///|
+fn is_ident_byte(b : Int) -> Bool {
+  (b >= 'a'.to_int() && b <= 'z'.to_int()) ||
+  (b >= 'A'.to_int() && b <= 'Z'.to_int()) ||
+  (b >= '0'.to_int() && b <= '9'.to_int()) ||
+  b == '_'.to_int()
+}
+
+///|
+fn is_ident_start_byte(b : Int) -> Bool {
+  (b >= 'a'.to_int() && b <= 'z'.to_int()) ||
+  (b >= 'A'.to_int() && b <= 'Z'.to_int()) ||
+  b == '_'.to_int()
+}
+
+///|
 pub fn lint_source(
   file : String,
   source : String,
@@ -1752,7 +2031,8 @@ pub fn lint_source(
   path_exists? : (String) -> Bool = @sys.path_exists,
   package_alias_cache? : @ref.Ref[Map[String, Array[(String, String)]]] = package_alias_cache,
 ) -> Result[Array[LintFinding], @types.ChoirError] {
-  let (impls, reports) = @parser.parse_string(source, name=file)
+  let prepared = strip_with_fn_for_parser(source)
+  let (impls, reports) = @parser.parse_string(prepared, name=file)
   if reports.length() > 0 {
     return Err(@types.ChoirError::validation_error(reports[0].to_string()))
   }

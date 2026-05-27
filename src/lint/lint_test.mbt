@@ -702,3 +702,122 @@ test "does not apply test rules to production files" {
     Err(e) => fail(e.message())
   }
 }
+
+///|
+/// Regression: moon fmt emits `impl X for Y with fn method(...)` and
+/// `pub trait T { fn method(Self) -> R }`. The vendored
+/// moonbitlang/parser doesn't accept the `fn` keyword in either position.
+/// lint_source preprocesses the source to strip those `fn` tokens before
+/// parsing, so choir_lint never trips on fmt-emitted MoonBit syntax.
+test "parses with-fn trait impl emitted by moon fmt" {
+  let source =
+    #|pub impl Show for Foo with fn output(self, logger) -> Unit {
+    #|  logger.write_string("foo")
+    #|}
+  match lint_source("src/example/foo.mbt", source) {
+    Ok(findings) => assert_eq(findings.length(), 0)
+    Err(e) => fail("expected with-fn impl to parse cleanly: " + e.message())
+  }
+}
+
+///|
+test "parses fn-keyword trait body emitted by moon fmt" {
+  let source =
+    #|pub trait StateMachine {
+    #|  fn machine_name(Self) -> String
+    #|  fn can_exit(Self) -> Bool
+    #|}
+  match lint_source("src/phase/state_machine.mbt", source) {
+    Ok(findings) => assert_eq(findings.length(), 0)
+    Err(e) =>
+      fail("expected fn-keyword trait body to parse cleanly: " + e.message())
+  }
+}
+
+///|
+test "does not strip fn from nested function definitions outside trait bodies" {
+  let source =
+    #|pub fn outer(x : Int) -> Int {
+    #|  fn helper(y : Int) -> Int {
+    #|    y + 1
+    #|  }
+    #|  helper(x)
+    #|}
+  match lint_source("src/example/nested.mbt", source) {
+    Ok(findings) => assert_eq(findings.length(), 0)
+    Err(e) => fail("nested fn should survive preprocessor: " + e.message())
+  }
+}
+
+///|
+/// Regression: a doc comment that happens to contain `trait T {` must not
+/// fool the trait-header scanner into treating the source below it as a
+/// trait body. If it did, real `pub fn outer` and `fn helper` would get
+/// their `fn` tokens stripped and parsing would fail.
+test "preprocessor ignores trait header inside line comment" {
+  let source =
+    #|/// Example text: trait T {
+    #|pub fn outer(x : Int) -> Int {
+    #|  fn helper(y : Int) -> Int {
+    #|    y + 1
+    #|  }
+    #|  helper(x)
+    #|}
+  match lint_source("src/example/commented_trait.mbt", source) {
+    Ok(findings) => assert_eq(findings.length(), 0)
+    Err(e) =>
+      fail(
+        "comment containing trait header must not trigger preprocessor: " +
+        e.message(),
+      )
+  }
+}
+
+///|
+/// Regression: a `}` inside a doc comment must not be counted as the
+/// closing brace of a real trait body. If it were, the brace walker would
+/// exit early and leave the real method `fn` token unstripped, causing
+/// the parser to choke.
+test "preprocessor ignores close-brace inside trait body comment" {
+  let source =
+    #|pub trait T {
+    #|  /// docs mention } syntax
+    #|  fn m(Self) -> String
+    #|}
+  match lint_source("src/example/braced_comment_trait.mbt", source) {
+    Ok(findings) => assert_eq(findings.length(), 0)
+    Err(e) =>
+      fail(
+        "close brace inside trait body comment must not close the brace walk: " +
+        e.message(),
+      )
+  }
+}
+
+///|
+/// Regression: a string literal containing `trait T {` must not fool the
+/// trait-header scanner. If the string-mask branch in `compute_code_mask`
+/// were deleted, the matcher would open a fake trait body starting at the
+/// string content, then strip `fn` from the real nested function below.
+/// The observable signal is a parse failure on `fn helper`. This test
+/// fails closed if string-masking regresses (unlike a placebo that only
+/// checks the post-preprocessor source still parses).
+test "preprocessor masks trait header inside string literal" {
+  let source =
+    #|pub fn outer() -> Int {
+    #|  let s = "trait T {"
+    #|  fn helper(x : Int) -> Int {
+    #|    x + 1
+    #|  }
+    #|  ignore(s)
+    #|  helper(0)
+    #|}
+  match lint_source("src/example/string_with_trait.mbt", source) {
+    Ok(findings) => assert_eq(findings.length(), 0)
+    Err(e) =>
+      fail(
+        "trait header inside string literal must not trigger preprocessor — nested fn would get stripped: " +
+        e.message(),
+      )
+  }
+}

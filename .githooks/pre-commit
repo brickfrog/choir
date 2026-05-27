@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Collect staged .mbt files once, reuse for fmt + canary. Include renames (R)
-# so renamed-and-touched .mbt files still get formatted and lint-canary-scanned.
+# Collect staged .mbt files for moon fmt. Include renames (R) so
+# renamed-and-touched .mbt files still get formatted.
 staged="$(git diff --cached --name-only)"
 staged_mbt=()
 while IFS= read -r f; do
@@ -24,16 +24,6 @@ if [ -n "$staged" ]; then
   done <<EOF
 $staged
 EOF
-fi
-
-echo "→ lint canary (moon-fmt corruption guard)"
-if [ "${#staged_mbt[@]}" -gt 0 ]; then
-  if ! tools/lint_canary.sh "${staged_mbt[@]}"; then
-    echo
-    echo "ERROR: moon fmt produced choir_lint-incompatible syntax."
-    echo "  Either revert the affected lines, or wait for moonbitlang/parser to ship a fn-accepting grammar (see choir-p8w6)."
-    exit 1
-  fi
 fi
 
 echo "→ moon check --target native"
