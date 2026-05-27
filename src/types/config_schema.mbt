@@ -187,13 +187,6 @@ pub fn config_schema_entries() -> Array[ConfigSchemaEntry] {
     ),
     schema_entry(
       ConfigToml,
-      "mutation_kill_rate_min",
-      "Double",
-      "0.8",
-      "Minimum mutation kill rate required after a leaf's own tests pass.",
-    ),
-    schema_entry(
-      ConfigToml,
       "poller_heartbeat_tick_sec",
       "Int",
       "60",

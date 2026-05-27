@@ -130,20 +130,7 @@ fn fallback_spawn_worker_parent_id(agents : Array[@types.Agent]) -> String? {
 fn resolve_spawn_worker_parent_id(
   caller_id : String,
   registry : @registry.AgentRegistry?,
-  allow_mutation_gate_caller? : Bool = false,
 ) -> Result[String, @types.ChoirError] {
-  if caller_id == mutation_gate_internal_caller_id {
-    if allow_mutation_gate_caller {
-      return Ok(caller_id)
-    }
-    return Err(
-      @types.ChoirError::validation_error(
-        "spawn_worker caller_id '" +
-        mutation_gate_internal_caller_id +
-        "' is reserved for internal file_pr mutation-gate workers",
-      ),
-    )
-  }
   match registry {
     None => Ok(caller_id)
     Some(reg) =>
@@ -490,7 +477,6 @@ pub async fn interpret_spawn_worker(
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
   isolation? : @types.IsolationMode = @types.IsolationMode::Inline,
-  allow_mutation_gate_caller? : Bool = false,
   record_task_contract? : (String, @types.TaskContract?) -> Unit = fn(
     _agent_id,
     _contract,
@@ -499,11 +485,7 @@ pub async fn interpret_spawn_worker(
   },
 ) -> @types.Response {
   let normalized_args = match
-    resolve_spawn_worker_parent_id(
-      worker_args.caller_id,
-      registry,
-      allow_mutation_gate_caller~,
-    ) {
+    resolve_spawn_worker_parent_id(worker_args.caller_id, registry) {
     Ok(parent_id) => { ..worker_args, caller_id: parent_id }
     Err(e) => return @types.Response::Err(e.message())
   }

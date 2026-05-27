@@ -681,37 +681,6 @@ fn notify_parent_blocked_parent_warn_send_plan(
 }
 
 ///|
-fn notify_parent_from_mutation_gate_worker(
-  registry : @registry.AgentRegistry?,
-  caller_id : String,
-) -> Bool {
-  match registry {
-    Some(reg) =>
-      try {
-        let agent = reg.get(caller_id)
-        agent.role == @types.Role::Worker &&
-        @phase.extract_slug(caller_id).has_prefix(
-          mutation_gate_internal_caller_id + "-",
-        ) &&
-        reg.is_alive(caller_id).unwrap_or(false)
-      } catch {
-        _ => false
-      } noraise {
-        result => result
-      }
-    None => false
-  }
-}
-
-///|
-fn mutation_gate_shutdown_report() -> MutationGateWorkerReport {
-  {
-    message: "mutation gate worker shutdown without notify_parent report",
-    status: @types.Status::Failure,
-  }
-}
-
-///|
 pub fn should_synthesize_tick_on_resolve(
   prior_unresolved : Int,
   after_unresolved : Int,
@@ -901,29 +870,12 @@ pub async fn dispatch(
   merge_strategy? : @types.MergeStrategy = @types.Config::default().merge_strategy,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
   prenotify_checks? : Array[String] = @types.Config::default().prenotify_checks,
-  mutation_kill_rate_min? : Double = @types.Config::default().mutation_kill_rate_min,
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
   goal_request_tick? : () -> Unit = goal_noop_request_tick,
   goal_nonce? : () -> String = fn() {
     @types.next_goal_nonce(@env.now().reinterpret_as_int64())
   },
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
-  prepare_mutation_gate_report? : (String) -> Unit = fn(_agent_id) {  },
-  wait_for_mutation_gate_report? : async (String) -> MutationGateWorkerReport? = async fn(
-    _,
-  ) {
-    @async.sleep(0)
-    None
-  },
-  capture_mutation_gate_report? : async (String, MutationGateWorkerReport) -> Unit = async fn(
-    _agent_id,
-    _report,
-  ) {
-    @async.sleep(0)
-    ()
-  },
-  cancel_mutation_gate_worker? : (String) -> Unit = fn(_) {  },
-  cleanup_mutation_gate_report? : (String) -> Unit = fn(_) {  },
   agy_migration_incomplete? : Bool = false,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> @types.Response {
@@ -1252,19 +1204,8 @@ pub async fn dispatch(
         caller_role~,
         record_verify_event~,
         append_file~,
-        prepare_mutation_gate_report~,
-        wait_for_mutation_gate_report~,
-        cancel_mutation_gate_worker~,
-        cleanup_mutation_gate_report~,
-        mutation_kill_rate_min~,
-        extra_mcp_servers_json~,
-        shell_command~,
-        listen_uds~,
-        listen_tcp~,
-        tcp_auth_token~,
         global_review_mode~,
         task_contract_reader~,
-        record_task_contract~,
         tdd_phase_reader~,
         moon_verify_target~,
         sleep_fn~,
@@ -1403,19 +1344,6 @@ pub async fn dispatch(
               raise e
             }
         }
-      }
-      if notify_parent_from_mutation_gate_worker(
-          registry,
-          notify_args.caller_id,
-        ) {
-        capture_mutation_gate_report(notify_args.caller_id, {
-          message: notify_args.message,
-          status: notify_args.status,
-        })
-        record_handoff_delivered(notify_args.caller_id)
-        return @types.Response::ok_values({
-          "status": String::to_json("notified"),
-        })
       }
       if prenotify_checks_should_run(
           caller_role,
@@ -1558,17 +1486,7 @@ pub async fn dispatch(
         runner,
       )
     }
-    ToolRequest::Shutdown(shutdown_args) => {
-      match shutdown_args.caller_id {
-        Some(caller_id) =>
-          if notify_parent_from_mutation_gate_worker(registry, caller_id) {
-            capture_mutation_gate_report(
-              caller_id,
-              mutation_gate_shutdown_report(),
-            )
-          }
-        _ => ()
-      }
+    ToolRequest::Shutdown(shutdown_args) =>
       interpret_shutdown(
         shutdown_args,
         project_dir,
@@ -1577,7 +1495,6 @@ pub async fn dispatch(
         runner,
         capture=bd_capture,
       )
-    }
     ToolRequest::KillAgent(kill_args) =>
       interpret_kill_agent(kill_args, registry, runner, project_dir~, capture~)
     ToolRequest::Suspend(suspend_args) =>
@@ -2061,7 +1978,6 @@ pub async fn handle_request(
   merge_strategy? : @types.MergeStrategy = @types.Config::default().merge_strategy,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
   prenotify_checks? : Array[String] = @types.Config::default().prenotify_checks,
-  mutation_kill_rate_min? : Double = @types.Config::default().mutation_kill_rate_min,
   on_resolve_review_thread? : async (Array[Int]) -> Unit = fn(_pr_numbers) {
     ()
   },
@@ -2071,22 +1987,6 @@ pub async fn handle_request(
     @types.next_goal_nonce(@env.now().reinterpret_as_int64())
   },
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
-  prepare_mutation_gate_report? : (String) -> Unit = fn(_agent_id) {  },
-  wait_for_mutation_gate_report? : async (String) -> MutationGateWorkerReport? = async fn(
-    _,
-  ) {
-    @async.sleep(0)
-    None
-  },
-  capture_mutation_gate_report? : async (String, MutationGateWorkerReport) -> Unit = async fn(
-    _agent_id,
-    _report,
-  ) {
-    @async.sleep(0)
-    ()
-  },
-  cancel_mutation_gate_worker? : (String) -> Unit = fn(_) {  },
-  cleanup_mutation_gate_report? : (String) -> Unit = fn(_) {  },
   policy_enforcement_mode? : @policy.PolicyEnforcementMode = @policy.policy_enforcement_mode,
   parent_branch_lifecycle_reader? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
   append_file? : (String, String) -> Bool = @sys.append_file_sync,
@@ -2203,7 +2103,6 @@ pub async fn handle_request(
                   merge_strategy~,
                   moon_verify_target~,
                   prenotify_checks~,
-                  mutation_kill_rate_min~,
                   append_file~,
                   read_file~,
                   write_file_atomic~,
@@ -2214,11 +2113,6 @@ pub async fn handle_request(
                   goal_request_tick~,
                   goal_nonce~,
                   record_handoff_delivered~,
-                  prepare_mutation_gate_report~,
-                  wait_for_mutation_gate_report~,
-                  capture_mutation_gate_report~,
-                  cancel_mutation_gate_worker~,
-                  cleanup_mutation_gate_report~,
                   agy_migration_incomplete~,
                   sleep_fn~,
                 )
@@ -2361,26 +2255,9 @@ pub async fn dispatch_call(
   merge_strategy? : @types.MergeStrategy = @types.Config::default().merge_strategy,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
   prenotify_checks? : Array[String] = @types.Config::default().prenotify_checks,
-  mutation_kill_rate_min? : Double = @types.Config::default().mutation_kill_rate_min,
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
   goal_request_tick? : () -> Unit = goal_noop_request_tick,
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
-  prepare_mutation_gate_report? : (String) -> Unit = fn(_agent_id) {  },
-  wait_for_mutation_gate_report? : async (String) -> MutationGateWorkerReport? = async fn(
-    _,
-  ) {
-    @async.sleep(0)
-    None
-  },
-  capture_mutation_gate_report? : async (String, MutationGateWorkerReport) -> Unit = async fn(
-    _agent_id,
-    _report,
-  ) {
-    @async.sleep(0)
-    ()
-  },
-  cancel_mutation_gate_worker? : (String) -> Unit = fn(_) {  },
-  cleanup_mutation_gate_report? : (String) -> Unit = fn(_) {  },
   policy_enforcement_mode? : @policy.PolicyEnforcementMode = @policy.policy_enforcement_mode,
   parent_branch_lifecycle_reader? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
   append_file? : (String, String) -> Bool = @sys.append_file_sync,
@@ -2448,7 +2325,6 @@ pub async fn dispatch_call(
                   merge_strategy~,
                   moon_verify_target~,
                   prenotify_checks~,
-                  mutation_kill_rate_min~,
                   append_file~,
                   read_file~,
                   write_file_atomic~,
@@ -2458,11 +2334,6 @@ pub async fn dispatch_call(
                   goal_deliver~,
                   goal_request_tick~,
                   record_handoff_delivered~,
-                  prepare_mutation_gate_report~,
-                  wait_for_mutation_gate_report~,
-                  capture_mutation_gate_report~,
-                  cancel_mutation_gate_worker~,
-                  cleanup_mutation_gate_report~,
                   agy_migration_incomplete~,
                   sleep_fn~,
                 )

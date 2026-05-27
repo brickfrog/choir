@@ -210,7 +210,6 @@ pub async fn ServerState::handle_with_runner_and_capture(
       merge_strategy=self.config.merge_strategy,
       moon_verify_target=self.config.moon_verify_target,
       prenotify_checks=self.config.prenotify_checks,
-      mutation_kill_rate_min=self.config.mutation_kill_rate_min,
       agy_migration_incomplete=self.config.agy_migration_incomplete,
       goal_deliver=async fn(message, status) {
         self.deliver_goal_judge_message(message, status, runner)
@@ -232,33 +231,6 @@ pub async fn ServerState::handle_with_runner_and_capture(
               )
           }
         }
-      },
-      prepare_mutation_gate_report=fn(agent_id) {
-        self.prepare_mutation_gate_report(agent_id)
-      },
-      wait_for_mutation_gate_report=async fn(agent_id) {
-        self.wait_for_mutation_gate_report(agent_id)
-      },
-      capture_mutation_gate_report=async fn(agent_id, report) {
-        self.capture_mutation_gate_report(agent_id, report)
-        @async.sleep(0)
-      },
-      cancel_mutation_gate_worker=fn(agent_id) {
-        // AUDIT: this is plumbed end-to-end but is a complete no-op at
-        // the OS level today. kill_tracked_agent_pgroup reads from
-        // ServerState.agent_pids; no production code path writes to
-        // that map (only test code calls register_agent_pid). So
-        // forget_agent_pid returns None and kill_pgid is never called.
-        // After choir-19i6 wires register_agent_pid from the spawn
-        // path, this becomes load-bearing without further changes
-        // here. The Layer 2 outer wall-clock cap in the worker prompt
-        // (grep `Wrap your ENTIRE mutation loop` in
-        // src/tools/file_pr.mbt's build_mutation_gate_task) is the
-        // backstop until choir-19i6 lands.
-        self.kill_tracked_agent_pgroup(agent_id, default_kill_pgid_best_effort)
-      },
-      cleanup_mutation_gate_report=fn(agent_id) {
-        self.cleanup_mutation_gate_report(agent_id)
       },
     ) catch {
       e => @tools.tool_response_err_from_caught(e)

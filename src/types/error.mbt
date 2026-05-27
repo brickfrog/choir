@@ -11,7 +11,6 @@ suberror ChoirError {
   TransportError(String)
   GitError(String)
   ConfigError(String)
-  MutationGateIncomplete(String)
 }
 
 ///|
@@ -27,7 +26,6 @@ pub fn ChoirError::to_wire_string(self : ChoirError) -> String {
     TransportError(_) => "transport_error"
     GitError(_) => "git_error"
     ConfigError(_) => "config_error"
-    MutationGateIncomplete(_) => "mutation_gate_incomplete"
   }
 }
 
@@ -44,12 +42,11 @@ pub fn ChoirError::message(self : ChoirError) -> String {
     TransportError(msg) => "transport error: " + msg
     GitError(msg) => "git error: " + msg
     ConfigError(msg) => "config error: " + msg
-    MutationGateIncomplete(msg) => "mutation gate incomplete: " + msg
   }
 }
 
 ///|
-pub impl Show for ChoirError with output(self, logger) -> Unit {
+pub impl Show for ChoirError with fn output(self, logger) -> Unit {
   self.message().output(logger)
 }
 
@@ -92,7 +89,6 @@ pub fn ChoirError::validation_detail_or_message(self : ChoirError) -> String {
   match self {
     ValidationError(msg) => msg
     Timeout(msg) => msg
-    MutationGateIncomplete(msg) => msg
     _ => self.message()
   }
 }
@@ -118,11 +114,6 @@ pub fn ChoirError::config_error(msg : String) -> ChoirError {
 }
 
 ///|
-pub fn ChoirError::mutation_gate_incomplete(msg : String) -> ChoirError {
-  MutationGateIncomplete(msg)
-}
-
-///|
 pub fn ChoirError::is_tool_not_found(self : ChoirError) -> Bool {
   match self {
     ToolNotFound(_) => true
@@ -134,14 +125,6 @@ pub fn ChoirError::is_tool_not_found(self : ChoirError) -> Bool {
 pub fn ChoirError::is_timeout(self : ChoirError) -> Bool {
   match self {
     Timeout(_) => true
-    _ => false
-  }
-}
-
-///|
-pub fn ChoirError::is_mutation_gate_incomplete(self : ChoirError) -> Bool {
-  match self {
-    MutationGateIncomplete(_) => true
     _ => false
   }
 }
@@ -161,7 +144,6 @@ pub fn choir_error_message_from_caught(e : Error) -> String {
     TransportError(msg) => ChoirError::transport_error(msg).message()
     GitError(msg) => ChoirError::git_error(msg).message()
     ConfigError(msg) => ChoirError::config_error(msg).message()
-    MutationGateIncomplete(msg) => ChoirError::mutation_gate_incomplete(msg).message()
     _ => "internal error"
   }
 }
@@ -179,8 +161,7 @@ pub fn caught_error_is_choir_error(e : Error) -> Bool {
     | WorkspaceError(_)
     | TransportError(_)
     | GitError(_)
-    | ConfigError(_)
-    | MutationGateIncomplete(_) => true
+    | ConfigError(_) => true
     _ => false
   }
 }
