@@ -68,15 +68,11 @@ pub fn render_wave_index_json(idx : WaveIndex) -> String {
   for k, v in idx.rescued {
     rescued_obj.set(k, v.to_json())
   }
-  let agent_ids_json : Array[Json] = []
-  for a in idx.agent_ids {
-    agent_ids_json.push(a.to_json())
-  }
   let root : Map[String, Json] = {
     "wave_id": idx.wave_id.to_json(),
     "parent_branch": idx.parent_branch.to_json(),
     "fork_ts_ms": Json::number(idx.fork_ts_ms.to_double()),
-    "agent_ids": agent_ids_json.to_json(),
+    "agent_ids": idx.agent_ids.to_json(),
     "rescued": rescued_obj.to_json(),
     "usage": usage_obj.to_json(),
   }
