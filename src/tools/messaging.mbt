@@ -87,7 +87,7 @@ fn send_message_preview(message : String) -> String {
 ///|
 fn send_message_target_finalized_log_append(
   target_id : String,
-  state_wire : String,
+  state : @types.AgentState,
   sender_id : String,
   message_preview : String,
   now_ms? : Int64 = @env.now().reinterpret_as_int64(),
@@ -96,7 +96,7 @@ fn send_message_target_finalized_log_append(
     "[send_message] target=" +
     target_id +
     " state=" +
-    state_wire +
+    state.to_wire_string() +
     " sender=" +
     sender_id +
     " delivery=skipped_target_finalized message_preview=" +
@@ -115,7 +115,7 @@ pub(all) enum SendMessagePlan {
   RegistryLookupFailed(error_message~ : String)
   TargetFinalized(
     target_id~ : String,
-    state_wire~ : String,
+    state~ : @types.AgentState,
     sender_id~ : String,
     delivery_log_append~ : String,
     response~ : @types.Response
@@ -153,17 +153,16 @@ pub fn send_message_plan(
     Some(Ok(agent)) => {
       match agent.state {
         @types.AgentState::Done | @types.AgentState::Failed => {
-          let state_wire = agent.state.to_wire_string()
           let delivery_log_append = send_message_target_finalized_log_append(
             target_id,
-            state_wire,
+            agent.state,
             sender_id,
             send_message_preview(message),
             now_ms~,
           )
           return TargetFinalized(
             target_id~,
-            state_wire~,
+            state=agent.state,
             sender_id~,
             delivery_log_append~,
             response=@types.Response::ok_values({
@@ -194,43 +193,48 @@ pub fn send_message_plan(
 ///|
 /// Effectful `send_message` adapter: delivery-log append, `execute_delivery`,
 /// moontrace on failure. Preserves historical `ToolRequest::SendMessage` flow.
+/// Default delivery-log append wrapping `@sys.append_file_sync` so
+/// `interpret_send_message` doesn't reference `@sys.*` directly. The
+/// optional param at the call site is what satisfies the effect-architecture
+/// rule for src/tools; this thin default keeps the production behavior
+/// identical while making the append point mockable in tests.
+fn default_send_message_delivery_log_append(
+  path : String,
+  body : String,
+) -> Bool {
+  @sys.append_file_sync(path, body)
+}
+
+///|
 pub async fn interpret_send_message(
   plan : SendMessagePlan,
   project_dir : String,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   sleep_fn? : async (Int) -> Unit = @async.sleep,
+  append_file? : (String, String) -> Bool = default_send_message_delivery_log_append,
 ) -> @types.Response {
+  let delivery_log_path = project_dir + "/.choir/delivery.log"
   match plan {
     SendMessagePlan::NoRegistry(response~) => response
     SendMessagePlan::RegistryLookupFailed(error_message~) =>
       @types.Response::Err(error_message)
     SendMessagePlan::TargetFinalized(
       target_id~,
-      state_wire~,
+      state~,
       sender_id~,
       delivery_log_append~,
       response~
     ) => {
-      ignore(
-        @sys.append_file_sync(
-          project_dir + "/.choir/delivery.log",
-          delivery_log_append,
-        ),
-      )
+      ignore(append_file(delivery_log_path, delivery_log_append))
       @moontrace.info("send_message skipped: target finalized", fields=[
         @moontrace.field("target_id", target_id),
-        @moontrace.field("target_state", state_wire),
+        @moontrace.field("target_state", state.to_wire_string()),
         @moontrace.field("sender_id", sender_id),
       ])
       response
     }
     SendMessagePlan::Deliver(delivery~, delivery_log_append~, response_ok~) => {
-      ignore(
-        @sys.append_file_sync(
-          project_dir + "/.choir/delivery.log",
-          delivery_log_append,
-        ),
-      )
+      ignore(append_file(delivery_log_path, delivery_log_append))
       match execute_delivery(delivery, runner, project_dir~, sleep_fn~) {
         Ok(_) => response_ok
         Err(e) => {

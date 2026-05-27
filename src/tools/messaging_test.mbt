@@ -182,13 +182,13 @@ test "send_message_plan returns TargetFinalized when target agent state is Done"
     ) {
     SendMessagePlan::TargetFinalized(
       target_id~,
-      state_wire~,
+      state~,
       sender_id~,
       delivery_log_append~,
       response~
     ) => {
       assert_eq(target_id, "main.leaf")
-      assert_eq(state_wire, "done")
+      assert_eq(state, @types.AgentState::Done)
       assert_eq(sender_id, "main.tl")
       assert_eq(
         delivery_log_append,
@@ -218,13 +218,13 @@ test "send_message_plan returns TargetFinalized when target agent state is Faile
     ) {
     SendMessagePlan::TargetFinalized(
       target_id~,
-      state_wire~,
+      state~,
       sender_id~,
       delivery_log_append~,
       response~
     ) => {
       assert_eq(target_id, "main.leaf")
-      assert_eq(state_wire, "failed")
+      assert_eq(state, @types.AgentState::Failed)
       assert_eq(sender_id, "main.tl")
       assert_eq(
         delivery_log_append,
@@ -234,6 +234,48 @@ test "send_message_plan returns TargetFinalized when target agent state is Faile
         ),
       )
       assert_response_status(response, "skipped_target_finalized")
+    }
+    _ => fail("expected TargetFinalized")
+  }
+}
+
+///|
+/// Real coverage for the preview bounded-truncate-then-sanitize path:
+/// send the actual plan a long, newline-laden message and inspect the
+/// preview baked into the resulting delivery_log_append. If the production
+/// path regresses to replace-then-truncate (or grows back into unbounded
+/// allocation), this test will fail because the preview will either
+/// contain the post-cutoff `TAIL` or contain a literal `\n` byte.
+test "send_message_plan truncates and sanitizes long messages with embedded newlines" {
+  let now_ms = 1776000000123L
+  let agent = messaging_test_agent_with_state(@types.AgentState::Done)
+  let long_message = "first line\nsecond line\rthird line " +
+    "1234567890123456789012345678901234567890123456789012345678901234567890" +
+    "TAIL"
+  // The first 80 bytes (after \n/\r → space) become the preview. Any byte
+  // beyond position 79 — including "TAIL" — must not appear.
+  match
+    send_message_plan(
+      "main.leaf",
+      "main.tl",
+      long_message,
+      @types.Status::Info,
+      Some(Ok(agent)),
+      now_ms~,
+    ) {
+    SendMessagePlan::TargetFinalized(delivery_log_append~, ..) => {
+      // The preview must show newlines as spaces (sanitization happened)
+      // and must stop before "TAIL" (truncation happened).
+      assert_true(
+        delivery_log_append.contains(
+          "message_preview=first line second line third line",
+        ),
+      )
+      assert_false(delivery_log_append.contains("TAIL"))
+      // The unsanitized newline shape would have left `first line\n` in
+      // the preview text. The append-trailing newline from delivery_log_line
+      // is fine — we're testing that the raw \n didn't survive the cutoff.
+      assert_false(delivery_log_append.contains("first line\nsecond"))
     }
     _ => fail("expected TargetFinalized")
   }
@@ -548,7 +590,7 @@ async test "interpret_send_message TargetFinalized branch logs and returns ok wi
   }
   let plan = SendMessagePlan::TargetFinalized(
     target_id="main.leaf",
-    state_wire="done",
+    state=@types.AgentState::Done,
     sender_id="main.tl",
     delivery_log_append~,
     response=@types.Response::ok_values({
