@@ -5,7 +5,7 @@ pub(all) enum JsonRpcId {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for JsonRpcId with output(self, logger) -> Unit {
+pub impl Show for JsonRpcId with fn output(self, logger) -> Unit {
   match self {
     Number(n) => logger.write_string(n.to_string())
     String(s) => logger.write_string(s)

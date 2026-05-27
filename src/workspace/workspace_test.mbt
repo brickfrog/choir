@@ -357,6 +357,10 @@ test "agent_launch_command for each AgentType" {
   assert_true(cmd_codex_body.contains("\"main.test-slug\""))
   assert_false(cmd_codex_body.contains("\"-lc\""))
   assert_true(cmd_codex_body.contains("mcp_servers.choir.cwd=\"/path\""))
+  assert_true(cmd_codex_body.contains("2>>"))
+  assert_true(
+    cmd_codex_body.contains("/path/.choir/codex-main.test-slug.stderr.log"),
+  )
   assert_true(cmd_codex_body.contains("mcp_servers.semble.command=\"uv\""))
   assert_true(cmd_codex_body.contains("mcp_servers.semble.cwd=\"/path\""))
   assert_true(cmd_codex_body.contains("## Codebase exploration"))

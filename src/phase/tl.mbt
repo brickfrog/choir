@@ -9,6 +9,6 @@ pub(all) enum TLEvent {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-pub impl Show for TLEvent with output(self, logger) -> Unit {
+pub impl Show for TLEvent with fn output(self, logger) -> Unit {
   self.to_repr().output(logger)
 }

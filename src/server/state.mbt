@@ -135,7 +135,10 @@ pub fn ServerState::new(
   // rather than starting a server whose merge gate has no anchor.
   match
     ensure_audit_gate_state_initialized(
-      config.project_dir, path_exists, write_file_atomic, now_unix_sec,
+      config.project_dir,
+      path_exists,
+      write_file_atomic,
+      now_unix_sec,
     ) {
     Ok(_) => ()
     Err(e) => abort(e.message())

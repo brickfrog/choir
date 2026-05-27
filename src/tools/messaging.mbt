@@ -14,7 +14,7 @@ pub(all) enum NotifyParentPlan {
 }
 
 ///|
-pub impl Show for NotifyParentPlan with output(self, logger) -> Unit {
+pub impl Show for NotifyParentPlan with fn output(self, logger) -> Unit {
   ignore(self)
   ignore(logger)
 }
@@ -90,7 +90,7 @@ pub(all) enum SendMessagePlan {
 }
 
 ///|
-pub impl Show for SendMessagePlan with output(self, logger) -> Unit {
+pub impl Show for SendMessagePlan with fn output(self, logger) -> Unit {
   ignore(self)
   ignore(logger)
 }

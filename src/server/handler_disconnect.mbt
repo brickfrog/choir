@@ -1236,6 +1236,78 @@ fn handler_disconnect_warning_count(
 }
 
 ///|
+let codex_stderr_tail_missing : String = "(no codex stderr captured)"
+
+///|
+fn codex_stderr_warning_tail_from_content(content : String) -> String {
+  let max_bytes = 2000
+  let max_lines = 20
+  let byte_tail = if content.length() > max_bytes {
+    content[content.length() - max_bytes:]
+  } else {
+    content
+  }
+  let split_lines : Array[String] = []
+  for line in byte_tail.split("\n") {
+    split_lines.push(line.to_owned())
+  }
+  let mut end = split_lines.length()
+  if end > 0 && split_lines[end - 1] == "" {
+    end = end - 1
+  }
+  let start = if end > max_lines { end - max_lines } else { 0 }
+  let lines : Array[String] = []
+  for i = start; i < end; i = i + 1 {
+    lines.push(split_lines[i])
+  }
+  lines.join("\n")
+}
+
+///|
+fn codex_stderr_warning_tail(project_dir : String, agent_id : String) -> String {
+  let content = @sys.read_file(
+    @workspace.codex_stderr_log_path(project_dir, agent_id),
+  )
+  if content == "" {
+    return codex_stderr_tail_missing
+  }
+  let tail = codex_stderr_warning_tail_from_content(content)
+  if tail == "" {
+    codex_stderr_tail_missing
+  } else {
+    tail
+  }
+}
+
+///|
+test "codex_stderr_warning_tail_from_content returns last 20 lines" {
+  let lines : Array[String] = []
+  for i = 0; i < 24; i = i + 1 {
+    lines.push("codex stderr line " + i.to_string())
+  }
+  let expected : Array[String] = []
+  for i = 4; i < 24; i = i + 1 {
+    expected.push("codex stderr line " + i.to_string())
+  }
+  assert_eq(
+    codex_stderr_warning_tail_from_content(lines.join("\n") + "\n"),
+    expected.join("\n"),
+  )
+}
+
+///|
+test "codex_stderr_warning_tail_from_content caps at 2KB from the end" {
+  let big = StringBuilder::new(size_hint=3000)
+  for i = 0; i < 2500; i = i + 1 {
+    big.write_string("x")
+  }
+  big.write_string("\nTAIL")
+  let result = codex_stderr_warning_tail_from_content(big.to_string())
+  assert_true(result.length() <= 2000)
+  assert_true(result.has_suffix("TAIL"))
+}
+
+///|
 async test "startup disconnect after register emits startup prompt-gap warning" {
   let project_dir = "/tmp/choir-startup-disconnect-warning-" +
     @sys.get_pid().to_string() +
@@ -1518,6 +1590,10 @@ async fn ServerState::handle_disconnect_confirming_with_runner(
                 ),
                 @moontrace.field("connected_sec", sec.to_string()),
                 @moontrace.field("last_request", "register"),
+                @moontrace.field(
+                  "codex_stderr_tail",
+                  codex_stderr_warning_tail(self.config.project_dir, agent_id),
+                ),
               ],
             )
           _ => ()

@@ -335,6 +335,7 @@ pub fn spawn_commands(
       parent_session_id~,
       shell_command~,
       extra_mcp_servers_json~,
+      project_dir=root_project,
     ),
   )
   let terminal_target = local_target_for(session, spec.slug, spec.isolation)
