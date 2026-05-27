@@ -282,8 +282,7 @@ test "merge_pr_audit_gate_required grandfathers PRs first seen before gate times
 
 ///|
 test "load_gate_state fails closed when gate file is missing" {
-  match
-    load_gate_state("/repo", fn(_) { "" }, path_exists=fn(_) { false }) {
+  match load_gate_state("/repo", fn(_) { "" }, path_exists=fn(_) { false }) {
     Err(e) => {
       assert_true(e.message().contains("audit receipt gate"))
       assert_true(e.message().contains("missing"))
@@ -296,11 +295,9 @@ test "load_gate_state fails closed when gate file is missing" {
 ///|
 test "load_gate_state fails closed when gate file is empty" {
   match
-    load_gate_state(
-      "/repo",
-      fn(_) { "" },
-      path_exists=fn(path) { path.has_suffix("/.choir/audit-gate.json") },
-    ) {
+    load_gate_state("/repo", fn(_) { "" }, path_exists=fn(path) {
+      path.has_suffix("/.choir/audit-gate.json")
+    }) {
     Err(e) => {
       assert_true(e.message().contains("audit receipt gate"))
       assert_true(e.message().contains("is empty"))
@@ -312,11 +309,7 @@ test "load_gate_state fails closed when gate file is empty" {
 ///|
 test "load_gate_state fails closed on malformed json gate file" {
   match
-    load_gate_state(
-      "/repo",
-      fn(_) { "{not json" },
-      path_exists=fn(_) { true },
-    ) {
+    load_gate_state("/repo", fn(_) { "{not json" }, path_exists=fn(_) { true }) {
     Err(e) => {
       assert_true(e.message().contains("audit receipt gate"))
       assert_true(e.message().contains("not valid JSON"))
@@ -328,11 +321,11 @@ test "load_gate_state fails closed on malformed json gate file" {
 ///|
 test "load_gate_state fails closed on schema-invalid gate file" {
   match
-    load_gate_state(
-      "/repo",
-      fn(_) { "{\"enabled_at_unix\":0}" },
-      path_exists=fn(_) { true },
+    load_gate_state("/repo", fn(_) { "{\"enabled_at_unix\":0}" }, path_exists=fn(
+      _,
     ) {
+      true
+    }) {
     Err(e) => {
       assert_true(e.message().contains("audit receipt gate"))
       assert_true(e.message().contains("malformed"))
@@ -344,11 +337,11 @@ test "load_gate_state fails closed on schema-invalid gate file" {
 ///|
 test "load_gate_state accepts a properly seeded gate file" {
   match
-    load_gate_state(
-      "/repo",
-      fn(_) { "{\"enabled_at_unix\":100}" },
-      path_exists=fn(_) { true },
+    load_gate_state("/repo", fn(_) { "{\"enabled_at_unix\":100}" }, path_exists=fn(
+      _,
     ) {
+      true
+    }) {
     Ok(state) => assert_eq(state.enabled_at_unix, 100L)
     Err(e) => fail("expected Ok, got " + e.message())
   }
@@ -900,9 +893,7 @@ fn merge_pr_test_empty_contract_reader(
 }
 
 ///|
-fn merge_pr_test_no_contract_reader(
-  _agent_id : String,
-) -> @types.TaskContract? {
+fn merge_pr_test_no_contract_reader(_agent_id : String) -> @types.TaskContract? {
   None
 }
 
@@ -4442,6 +4433,95 @@ async test "dispatch resolve_my_review_threads refuses owning leaf without post-
       assert_true(msg.contains("Push a fix commit, or escalate to the TL"))
     }
     @types.Response::Ok(_) => fail("expected stale self-resolve refusal")
+  }
+  @debug.assert_eq(resolved, [])
+}
+
+///|
+async test "dispatch resolve_my_review_threads refuses same-second mixed timestamp formats" {
+  let project_dir = "/tmp/choir-dispatch-resolve-my-mixed-timestamp-" +
+    @sys.get_pid().to_string()
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    450,
+    "main.leaf",
+    "main.leaf",
+    "main",
+    "https://github.com/brickfrog/choir/pull/450",
+    0L,
+    @poller.ReviewState::ChangesRequested,
+    "fix this",
+    "sha-reviewed",
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  let resolved : Array[String] = []
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[1] == "gh" &&
+      cmd.args.contains("repo") &&
+      cmd.args.contains("view") {
+      return (0, "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}")
+    }
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[1] == "gh" &&
+      cmd.args.contains("graphql") &&
+      cmd.args.iter().any(fn(arg) { arg.contains("latestReviews") }) {
+      return (
+        0,
+        (
+          #|{"data":{"repository":{"pullRequest":{"latestReviews":{"nodes":[{"submittedAt":"2026-05-23T10:00:00.000Z"}]},"commits":{"nodes":[{"commit":{"pushedDate":"2026-05-23T10:00:00Z","committedDate":"2026-05-23T10:00:00Z"}}]}}}}}
+        ),
+      )
+    }
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[1] == "gh" &&
+      cmd.args.contains("graphql") &&
+      cmd.args.iter().any(fn(arg) { arg.contains("resolveReviewThread") }) {
+      for arg in cmd.args {
+        if arg.has_prefix("threadId=") {
+          resolved.push(arg["threadId=".length():].to_owned())
+        }
+      }
+      return (
+        0, "{\"data\":{\"resolveReviewThread\":{\"thread\":{\"isResolved\":true}}}}",
+      )
+    }
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[1] == "gh" &&
+      cmd.args.contains("graphql") &&
+      cmd.args.iter().any(fn(arg) { arg.contains("reviewThreads") }) {
+      return (
+        0,
+        (
+          #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_mixed","isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"copilot-pull-request-reviewer[bot]"}}]}}]}}}}}
+        ),
+      )
+    }
+    (0, "")
+  }
+  let got = dispatch(
+    ToolRequest::ResolveMyReviewThreads({
+      caller_id: "main.leaf",
+      pr_number: Some(450),
+    }),
+    project_dir~,
+    poller_state=Some(ps),
+    caller_role=@types.Role::Dev,
+    capture~,
+  )
+  match got {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("self-resolve requires a fix commit"))
+      assert_true(msg.contains("latest review at 2026-05-23T10:00:00.000Z"))
+      assert_true(msg.contains("latest commit at 2026-05-23T10:00:00Z"))
+    }
+    @types.Response::Ok(_) => fail("expected same-second self-resolve refusal")
   }
   @debug.assert_eq(resolved, [])
 }

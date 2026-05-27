@@ -618,6 +618,126 @@ pub(all) struct PrReviewCommitTimestamps {
 } derive(Debug, Eq)
 
 ///|
+fn iso8601_parse_n_digits(s : String, off : Int, count : Int) -> Int64? {
+  if off < 0 || count < 0 || off + count > s.length() {
+    return None
+  }
+  let mut v = 0L
+  for k = 0; k < count; k = k + 1 {
+    let c = s[off + k].to_int()
+    if c < 0x30 || c > 0x39 {
+      return None
+    }
+    v = v * 10L + (c - 0x30).to_int64()
+  }
+  Some(v)
+}
+
+///|
+fn iso8601_has_char_at(s : String, off : Int, code : Int) -> Bool {
+  off >= 0 && off < s.length() && s[off].to_int() == code
+}
+
+///|
+fn iso8601_is_leap_year(year : Int64) -> Bool {
+  (year % 4L == 0L && year % 100L != 0L) || year % 400L == 0L
+}
+
+///|
+fn iso8601_days_in_month(year : Int64, month : Int64) -> Int64 {
+  if month == 2L {
+    if iso8601_is_leap_year(year) {
+      29L
+    } else {
+      28L
+    }
+  } else if month == 4L || month == 6L || month == 9L || month == 11L {
+    30L
+  } else {
+    31L
+  }
+}
+
+///|
+fn iso8601_has_utc_suffix(s : String) -> Bool {
+  let len = s.length()
+  if len == 20 {
+    return iso8601_has_char_at(s, 19, 0x5a)
+  }
+  if len < 22 {
+    return false
+  }
+  if !iso8601_has_char_at(s, 19, 0x2e) || !iso8601_has_char_at(s, len - 1, 0x5a) {
+    return false
+  }
+  for i = 20; i < len - 1; i = i + 1 {
+    let c = s[i].to_int()
+    if c < 0x30 || c > 0x39 {
+      return false
+    }
+  }
+  true
+}
+
+///|
+pub fn iso8601_to_epoch_seconds(s : String) -> Int64? {
+  if s.length() < 20 {
+    return None
+  }
+  if !iso8601_has_char_at(s, 4, 0x2d) ||
+    !iso8601_has_char_at(s, 7, 0x2d) ||
+    !iso8601_has_char_at(s, 10, 0x54) ||
+    !iso8601_has_char_at(s, 13, 0x3a) ||
+    !iso8601_has_char_at(s, 16, 0x3a) ||
+    !iso8601_has_utc_suffix(s) {
+    return None
+  }
+  let year = match iso8601_parse_n_digits(s, 0, 4) {
+    Some(v) => v
+    None => return None
+  }
+  let month = match iso8601_parse_n_digits(s, 5, 2) {
+    Some(v) => v
+    None => return None
+  }
+  let day = match iso8601_parse_n_digits(s, 8, 2) {
+    Some(v) => v
+    None => return None
+  }
+  let hour = match iso8601_parse_n_digits(s, 11, 2) {
+    Some(v) => v
+    None => return None
+  }
+  let minute = match iso8601_parse_n_digits(s, 14, 2) {
+    Some(v) => v
+    None => return None
+  }
+  let second = match iso8601_parse_n_digits(s, 17, 2) {
+    Some(v) => v
+    None => return None
+  }
+  if month < 1L || month > 12L {
+    return None
+  }
+  if day < 1L || day > iso8601_days_in_month(year, month) {
+    return None
+  }
+  if hour > 23L || minute > 59L || second > 59L {
+    return None
+  }
+  // Days from civil - Howard Hinnant's algorithm. Inputs in proleptic
+  // Gregorian; output is days since 1970-01-01.
+  let y = if month <= 2L { year - 1L } else { year }
+  let era = if y >= 0L { y / 400L } else { (y - 399L) / 400L }
+  let yoe = y - era * 400L
+  let m_adj = if month > 2L { month - 3L } else { month + 9L }
+  let doy = (153L * m_adj + 2L) / 5L + day - 1L
+  let doe = yoe * 365L + yoe / 4L - yoe / 100L + doy
+  let days = era * 146097L + doe - 719468L
+  Some(days * 86400L + hour * 3600L + minute * 60L + second)
+}
+
+///|
 pub fn parse_pr_review_commit_timestamps_response(
   json_str : String,
 ) -> PrReviewCommitTimestamps? {

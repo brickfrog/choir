@@ -325,6 +325,43 @@ test "parse_review_thread_refs_response distinguishes empty nodes from malformed
 }
 
 ///|
+test "iso8601_to_epoch_seconds parses canonical and fractional UTC timestamps" {
+  @debug.assert_eq(
+    iso8601_to_epoch_seconds("2026-05-27T12:05:27Z"),
+    Some(1779883527L),
+  )
+  @debug.assert_eq(
+    iso8601_to_epoch_seconds("2026-05-27T12:05:27.243Z"),
+    Some(1779883527L),
+  )
+}
+
+///|
+test "iso8601_to_epoch_seconds orders parsed epoch seconds" {
+  match
+    (
+      iso8601_to_epoch_seconds("2026-05-27T12:05:27Z"),
+      iso8601_to_epoch_seconds("2026-05-27T12:05:28Z"),
+    ) {
+    (Some(left), Some(right)) => assert_true(left < right)
+    _ => fail("expected both timestamps to parse")
+  }
+}
+
+///|
+test "iso8601_to_epoch_seconds rejects invalid timestamps" {
+  @debug.assert_eq(iso8601_to_epoch_seconds("invalid"), None)
+}
+
+///|
+test "iso8601_to_epoch_seconds treats zero fractional seconds as same instant" {
+  @debug.assert_eq(
+    iso8601_to_epoch_seconds("2026-05-27T12:05:27.000Z"),
+    iso8601_to_epoch_seconds("2026-05-27T12:05:27Z"),
+  )
+}
+
+///|
 test "parse_gh_repo_view_output extracts owner and repo" {
   match
     parse_gh_repo_view_output(
