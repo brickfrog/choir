@@ -876,6 +876,7 @@ pub async fn dispatch(
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
   merge_strategy? : @types.MergeStrategy = @types.Config::default().merge_strategy,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
+  require_integration_audit? : Bool = @types.Config::default().pr_policy.require_integration_audit,
   prenotify_checks? : Array[String] = @types.Config::default().prenotify_checks,
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
   goal_request_tick? : () -> Unit = goal_noop_request_tick,
@@ -1255,9 +1256,11 @@ pub async fn dispatch(
         append_file,
         path_exists,
         read_file~,
+        hook_capture~,
         merge_strategy~,
         task_contract_reader~,
         moon_verify_target~,
+        require_integration_audit~,
       )
       if resp.is_ok() {
         try_dispatch_pending_waves(
@@ -1989,6 +1992,7 @@ pub async fn handle_request(
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
   merge_strategy? : @types.MergeStrategy = @types.Config::default().merge_strategy,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
+  require_integration_audit? : Bool = @types.Config::default().pr_policy.require_integration_audit,
   prenotify_checks? : Array[String] = @types.Config::default().prenotify_checks,
   on_resolve_review_thread? : async (Array[Int]) -> Unit = fn(_pr_numbers) {
     ()
@@ -2114,6 +2118,7 @@ pub async fn handle_request(
                   global_review_mode~,
                   merge_strategy~,
                   moon_verify_target~,
+                  require_integration_audit~,
                   prenotify_checks~,
                   append_file~,
                   read_file~,

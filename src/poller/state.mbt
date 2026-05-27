@@ -918,6 +918,24 @@ pub async fn PollerState::tick_pr_with(
     } else {
       { ..tracked_ok, last_sha: sha }
     }
+    if self.merged_observed(merged_ok.pr_number) {
+      log_pr({
+        pr_number,
+        agent_id,
+        skipped_backoff: false,
+        polled_network: true,
+        poll_succeeded: true,
+        untracked_closed: true,
+        backoff_until: 0L,
+        prior_review_state: prior_state,
+        detected_review_state: review,
+        events: [],
+        consecutive_failures: 0,
+        previous_consecutive_failures: prev_failures,
+      })
+      self.remove_tracked(pr_number)
+      return
+    }
     self.mark_merged_observed(merged_ok.pr_number)
     on_event(PRMerged(merged_ok), merged_ok.agent_id)
     log_pr({

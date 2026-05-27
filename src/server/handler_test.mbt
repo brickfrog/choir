@@ -2769,7 +2769,7 @@ async test "PRMerged completion hook fires only PrMerged for feature parent" {
   let path_exists = fn(path : String) -> Bool {
     path.has_suffix("/pr_merged.sh") || path.has_suffix("/wave_complete.sh")
   }
-  fire_pr_merged_completion_hooks(
+  @tools.fire_pr_merged_completion_hooks(
     "/repo",
     pr,
     capture~,
@@ -2816,7 +2816,7 @@ async test "PRMerged completion hook uses global hook when project hook is absen
     @debug.assert_eq(cwd, Some("/repo"))
     (0, "hook stdout")
   }
-  fire_pr_merged_completion_hooks(
+  @tools.fire_pr_merged_completion_hooks(
     "/repo",
     pr,
     capture~,
@@ -2859,7 +2859,7 @@ async test "PRMerged completion hook fires PrMerged and WaveComplete for main pa
   let path_exists = fn(path : String) -> Bool {
     path.has_suffix("/pr_merged.sh") || path.has_suffix("/wave_complete.sh")
   }
-  fire_pr_merged_completion_hooks(
+  @tools.fire_pr_merged_completion_hooks(
     "/repo",
     pr,
     capture~,
@@ -2908,7 +2908,7 @@ async test "PRMerged completion hook does not fire WaveComplete for non-default 
   let path_exists = fn(path : String) -> Bool {
     path.has_suffix("/pr_merged.sh") || path.has_suffix("/wave_complete.sh")
   }
-  fire_pr_merged_completion_hooks(
+  @tools.fire_pr_merged_completion_hooks(
     "/repo",
     pr,
     capture~,
@@ -3091,20 +3091,22 @@ test "detect_unaudited_integration_merge returns typed outcome for each path" {
   let receipt = "/repo/.choir/audit-receipts/abcdef123456.json"
   let valid_receipt_exists = fn(path : String) -> Bool { path == receipt }
   @debug.assert_eq(
-    detect_unaudited_integration_merge(receipt, valid_receipt_exists, true),
-    AuditEnforcementOutcome::Audited,
+    @tools.detect_unaudited_integration_merge(
+      receipt, valid_receipt_exists, true,
+    ),
+    @tools.AuditEnforcementOutcome::Audited,
   )
   @debug.assert_eq(
-    detect_unaudited_integration_merge(receipt, fn(_) { false }, true),
-    AuditEnforcementOutcome::UnauditedBlocked,
+    @tools.detect_unaudited_integration_merge(receipt, fn(_) { false }, true),
+    @tools.AuditEnforcementOutcome::UnauditedBlocked,
   )
   @debug.assert_eq(
-    detect_unaudited_integration_merge(receipt, fn(_) { false }, false),
-    AuditEnforcementOutcome::UnauditedWarned,
+    @tools.detect_unaudited_integration_merge(receipt, fn(_) { false }, false),
+    @tools.AuditEnforcementOutcome::UnauditedWarned,
   )
   @debug.assert_eq(
-    detect_unaudited_integration_merge("", valid_receipt_exists, true),
-    AuditEnforcementOutcome::NotApplicable,
+    @tools.detect_unaudited_integration_merge("", valid_receipt_exists, true),
+    @tools.AuditEnforcementOutcome::NotApplicable,
   )
 }
 
@@ -3121,22 +3123,30 @@ test "valid_merge_audit_receipt_exists checks sha and findings independent of re
     body
   }
   assert_true(
-    valid_merge_audit_receipt_exists(receipt_path, "trunk", head, exists, read),
+    @tools.valid_merge_audit_receipt_exists(
+      receipt_path, "trunk", head, exists, read,
+    ),
   )
   body = handler_test_audit_receipt(other_head, "feature/t92", 0)
   assert_false(
-    valid_merge_audit_receipt_exists(receipt_path, "trunk", head, exists, read),
+    @tools.valid_merge_audit_receipt_exists(
+      receipt_path, "trunk", head, exists, read,
+    ),
   )
   body = handler_test_audit_receipt(head, "feature/t92", 2)
   assert_false(
-    valid_merge_audit_receipt_exists(receipt_path, "trunk", head, exists, read),
+    @tools.valid_merge_audit_receipt_exists(
+      receipt_path, "trunk", head, exists, read,
+    ),
   )
   body = "{not json"
   assert_false(
-    valid_merge_audit_receipt_exists(receipt_path, "trunk", head, exists, read),
+    @tools.valid_merge_audit_receipt_exists(
+      receipt_path, "trunk", head, exists, read,
+    ),
   )
   assert_false(
-    valid_merge_audit_receipt_exists(
+    @tools.valid_merge_audit_receipt_exists(
       receipt_path,
       "trunk",
       head,
@@ -3203,7 +3213,7 @@ async test "untracked merge detection emits synthetic PRMerged and fires hooks" 
   assert_eq(pr.last_sha, "abcdef1234567890")
   @debug.assert_eq(pr.merged_at_unix, Some(4102358400L))
   let fired_inputs : Array[@hooks.HookInput] = []
-  fire_pr_merged_completion_hooks(
+  @tools.fire_pr_merged_completion_hooks(
     project_dir,
     pr,
     capture~,

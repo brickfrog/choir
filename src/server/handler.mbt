@@ -209,6 +209,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
       global_review_mode=self.config.review_mode,
       merge_strategy=self.config.merge_strategy,
       moon_verify_target=self.config.moon_verify_target,
+      require_integration_audit=self.config.pr_policy.require_integration_audit,
       prenotify_checks=self.config.prenotify_checks,
       agy_migration_incomplete=self.config.agy_migration_incomplete,
       goal_deliver=async fn(message, status) {
