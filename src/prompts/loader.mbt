@@ -262,7 +262,7 @@ const SHIP_PR_DEFAULT : String =
   #|## Gotchas
   #|
   #|- Thread resolution: after the leaf pushes fixes, wait for the next poller snapshot; the server resolves now-outdated threads for iterative-review PRs. Use `mcp__choir__resolve_my_review_threads` only for persistent unresolved threads.
-  #|- moon fmt corruption: pre-commit only formats staged `.mbt` now. If unstaged `with fn` shows up anyway, `git restore src/` before file_pr.
+  #|- moon fmt scope: pre-commit only formats staged `.mbt` files. If unstaged `.mbt` files got rewritten anyway (broken hook, pre-commit run from a different cwd), inspect with `git diff` first; `git restore src/` only after confirming the unstaged churn isn't real work you wanted. `with fn` and trait-body `fn` are no longer rejection patterns — `choir_lint` accepts them via a preprocessor (see choir-p8w6).
   #|- Leaf cd'd out of worktree: leaf has no commits but main has unstaged edits matching its task — kill the leaf, finish TL-direct via Path B.
   #|- Audit receipt: full 40-char sha required. Findings_count must be 0 to pass merge_pr gate.
   #|
