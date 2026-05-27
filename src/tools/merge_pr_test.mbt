@@ -1001,6 +1001,108 @@ async test "interpret_merge_pr success fires pr_merged completion hooks" {
   @debug.assert_eq(hook_inputs[0].agent_id, Some("main.leaf"))
   assert_true(ps.get(98) is None)
   assert_true(ps.merged_observed(98))
+  let persisted_json = @sys.read_file(project_dir + "/.choir/poller-state.json")
+  assert_false(persisted_json.contains("\"pr_number\":98"))
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_merge_pr suppresses pr_merged hooks when poller persist fails" {
+  let project_dir = "/tmp/choir-mpr-hooks-no-persist-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    98,
+    "main.leaf",
+    "main.leaf",
+    "main",
+    "https://github.com/o/r/pull/98",
+    200L,
+    @poller.ReviewState::Approved,
+    "",
+    head,
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  let hook_paths : Array[String] = []
+  let resp = interpret_merge_pr(
+    {
+      pr_number: 98,
+      parent_branch: "main",
+      caller_id: "main.tl",
+      review_mode: Some(@types.ReviewMode::SinglePass),
+    },
+    project_dir,
+    Some(ps),
+    None,
+    None,
+    async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      let statuses = []
+      for _ in cmds {
+        statuses.push(0)
+      }
+      statuses
+    },
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "gh" &&
+        cmd.args.length() >= 2 &&
+        cmd.args[0] == "api" &&
+        cmd.args[1].has_suffix("/reviews") {
+        return (0, "[{\"state\":\"APPROVED\"}]")
+      }
+      if cmd.program == "timeout" && cmd.args.contains("repo") {
+        return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
+      }
+      if cmd.program == "timeout" && cmd.args.contains("graphql") {
+        return (
+          0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+        )
+      }
+      if cmd.program == "git" &&
+        cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+        return (0, "origin/main\n")
+      }
+      if cmd.program == "cat" {
+        return (0, merge_pr_test_audit_receipt(head))
+      }
+      (0, "")
+    },
+    fn(_, _) { true },
+    fn(path) {
+      path.has_suffix("/.choir/audit-gate.json") ||
+      path.has_suffix("/.choir/hooks/pr_merged.sh") ||
+      path.has_suffix("/.choir/hooks/wave_complete.sh") ||
+      path.has_suffix("/.choir/audit-receipts/abcdef123456.json")
+    },
+    hook_capture=async fn(
+      path : String,
+      _input_json : String,
+      _cwd : String?,
+    ) -> (Int, String) {
+      @async.sleep(0)
+      hook_paths.push(path)
+      (0, "")
+    },
+    read_file=fn(path) {
+      if path.has_suffix("/.choir/audit-gate.json") {
+        "{\"enabled_at_unix\":100}\n"
+      } else if path.has_suffix("/.choir/audit-receipts/abcdef123456.json") {
+        merge_pr_test_audit_receipt(head)
+      } else {
+        ""
+      }
+    },
+    task_contract_reader=merge_pr_test_empty_contract_reader,
+    persist=fn(_, _) { false },
+  )
+  match resp {
+    @types.Response::Ok(_) => ()
+    @types.Response::Err(msg) => fail("expected merge success: " + msg)
+  }
+  assert_eq(hook_paths.length(), 0)
   ignore(@sys.rm_rf(project_dir))
 }
 

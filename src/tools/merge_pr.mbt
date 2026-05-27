@@ -2022,14 +2022,20 @@ async fn interpret_merge_pr_fire_completion_hooks(
 ///|
 /// After `interpret_merge_pr_merge_host` succeeds: resolve tracked branch,
 /// build `merge_pr_post_success_plan`, apply the TL lifecycle event, optionally
-/// untrack and persist poller state, return the tool response.
+/// untrack and persist poller state. Returns the tool response and whether the
+/// poller state was durably persisted to disk (or true when no persist was
+/// required). Callers must gate any post-merge side effects that would be
+/// re-emitted on restart (e.g. pr_merged completion hooks) on the persist bool.
 pub fn interpret_merge_pr_post_success(
   project_dir : String,
   caller_id : String,
   pr_number : Int,
   poller_state : @poller.PollerState?,
   registry : @registry.AgentRegistry?,
-) -> @types.Response {
+  persist? : (@poller.PollerState, String) -> Bool = fn(ps, dir) {
+    ps.write_state_file(dir)
+  },
+) -> (@types.Response, Bool) {
   let tracked_branch = merge_pr_tracked_branch_for_post_success(
     poller_state, pr_number,
   )
@@ -2045,7 +2051,7 @@ pub fn interpret_merge_pr_post_success(
     registry~,
   )
   @phase.interpret_lifecycle_effects(project_dir, tl_effects, registry~)
-  if plan.poller_untrack_and_write_state {
+  let persisted = if plan.poller_untrack_and_write_state {
     match poller_state {
       Some(ps) => {
         match ps.get(pr_number) {
@@ -2053,12 +2059,14 @@ pub fn interpret_merge_pr_post_success(
           None => ()
         }
         ps.untrack(pr_number)
-        ignore(ps.write_state_file(project_dir))
+        persist(ps, project_dir)
       }
-      None => ()
+      None => true
     }
+  } else {
+    true
   }
-  plan.response
+  (plan.response, persisted)
 }
 
 ///|
@@ -2088,6 +2096,9 @@ pub async fn interpret_merge_pr(
   ) {
     @async.sleep(0)
     (0, "")
+  },
+  persist? : (@poller.PollerState, String) -> Bool = fn(ps, dir) {
+    ps.write_state_file(dir)
   },
 ) -> @types.Response {
   match
@@ -2193,18 +2204,30 @@ pub async fn interpret_merge_pr(
             poller_state,
             merge_args.pr_number,
           )
-          let resp = interpret_merge_pr_post_success(
+          let (resp, persisted) = interpret_merge_pr_post_success(
             project_dir,
             merge_args.caller_id,
             merge_args.pr_number,
             poller_state,
             registry,
+            persist~,
           )
           if resp.is_ok() {
-            interpret_merge_pr_fire_completion_hooks(
-              project_dir, tracked, capture, hook_capture, path_exists, read_file,
-              require_integration_audit,
-            )
+            if persisted {
+              interpret_merge_pr_fire_completion_hooks(
+                project_dir, tracked, capture, hook_capture, path_exists, read_file,
+                require_integration_audit,
+              )
+            } else {
+              @moontrace.warn(
+                "merge_pr suppressing pr_merged completion hooks because poller state did not durably persist; a daemon restart may otherwise re-emit PRMerged from the stale on-disk tracked entry",
+                fields=[
+                  @moontrace.field("event", "merge_pr_hooks_suppressed_persist_failed"),
+                  @moontrace.field("pr_number", merge_args.pr_number),
+                  @moontrace.field("parent_branch", effective_parent_branch),
+                ],
+              )
+            }
             interpret_merge_pr_post_success_side_effects(
               project_dir,
               effective_parent_branch,
