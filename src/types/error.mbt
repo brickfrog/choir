@@ -1,3 +1,5 @@
+//|
+
 ///|
 /// Orchestrator error types (suberror for `raise` / `try?` interop).
 suberror ChoirError {
