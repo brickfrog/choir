@@ -748,3 +748,67 @@ test "does not strip fn from nested function definitions outside trait bodies" {
     Err(e) => fail("nested fn should survive preprocessor: " + e.message())
   }
 }
+
+///|
+/// Regression: a doc comment that happens to contain `trait T {` must not
+/// fool the trait-header scanner into treating the source below it as a
+/// trait body. If it did, real `pub fn outer` and `fn helper` would get
+/// their `fn` tokens stripped and parsing would fail.
+test "preprocessor ignores trait header inside line comment" {
+  let source =
+    #|/// Example text: trait T {
+    #|pub fn outer(x : Int) -> Int {
+    #|  fn helper(y : Int) -> Int {
+    #|    y + 1
+    #|  }
+    #|  helper(x)
+    #|}
+  match lint_source("src/example/commented_trait.mbt", source) {
+    Ok(findings) => assert_eq(findings.length(), 0)
+    Err(e) =>
+      fail(
+        "comment containing trait header must not trigger preprocessor: " +
+        e.message(),
+      )
+  }
+}
+
+///|
+/// Regression: a `}` inside a doc comment must not be counted as the
+/// closing brace of a real trait body. If it were, the brace walker would
+/// exit early and leave the real method `fn` token unstripped, causing
+/// the parser to choke.
+test "preprocessor ignores close-brace inside trait body comment" {
+  let source =
+    #|pub trait T {
+    #|  /// docs mention } syntax
+    #|  fn m(Self) -> String
+    #|}
+  match lint_source("src/example/braced_comment_trait.mbt", source) {
+    Ok(findings) => assert_eq(findings.length(), 0)
+    Err(e) =>
+      fail(
+        "close brace inside trait body comment must not close the brace walk: " +
+        e.message(),
+      )
+  }
+}
+
+///|
+/// Regression: string literals must not be rewritten by the `with fn `
+/// replacement. The lint inspects string literal contents (e.g. matching
+/// `"git"`); silently mutating them would break those rules.
+test "preprocessor leaves with-fn substring inside string literal alone" {
+  let source =
+    #|pub fn describe() -> String {
+    #|  "trait impl pattern: with fn output"
+    #|}
+  match lint_source("src/example/string_with_fn.mbt", source) {
+    Ok(findings) => assert_eq(findings.length(), 0)
+    Err(e) =>
+      fail(
+        "with fn inside string literal should not affect parsing: " +
+        e.message(),
+      )
+  }
+}
