@@ -801,18 +801,25 @@ async fn resolve_my_review_threads_self_resolve_error(
         ", latest commit at unknown). Push a fix commit, or escalate to the TL to resolve with rationale.",
       )
   }
-  if latest_commit_at > latest_review_at {
-    None
-  } else {
-    Some(
-      "resolve_my_review_threads refused: self-resolve requires a fix commit pushed after the latest review on PR #" +
-      tracked.pr_number.to_string() +
-      " (latest review at " +
-      latest_review_at +
-      ", latest commit at " +
-      latest_commit_at +
-      "). Push a fix commit, or escalate to the TL to resolve with rationale.",
-    )
+  let stale_error = "resolve_my_review_threads refused: self-resolve requires a fix commit pushed after the latest review on PR #" +
+    tracked.pr_number.to_string() +
+    " (latest review at " +
+    latest_review_at +
+    ", latest commit at " +
+    latest_commit_at +
+    "). Push a fix commit, or escalate to the TL to resolve with rationale."
+  match
+    (
+      iso8601_to_epoch_seconds(latest_commit_at),
+      iso8601_to_epoch_seconds(latest_review_at),
+    ) {
+    (Some(latest_commit_epoch), Some(latest_review_epoch)) =>
+      if latest_commit_epoch > latest_review_epoch {
+        None
+      } else {
+        Some(stale_error)
+      }
+    _ => Some(stale_error)
   }
 }
 
