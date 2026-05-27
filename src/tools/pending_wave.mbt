@@ -664,6 +664,7 @@ pub async fn mark_pending_wave_failed(
   runner : async (Array[@workspace.Command]) -> Array[Int],
   pw : PendingWave,
   dep_id : String,
+  append_file? : (String, String) -> Bool = @sys.append_file_sync,
 ) -> Unit {
   ignore(
     write_failed_wave_marker(project_dir, pw.wave_id, "dep failed: " + dep_id),
@@ -680,7 +681,7 @@ pub async fn mark_pending_wave_failed(
     @types.Status::Info,
     lookup,
   )
-  ignore(interpret_send_message(plan, project_dir, runner))
+  ignore(interpret_send_message(plan, project_dir, runner, append_file))
 }
 
 ///|

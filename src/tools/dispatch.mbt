@@ -1322,7 +1322,11 @@ pub async fn dispatch(
                     pr_number,
                     gh_failed,
                   )
-                  ignore(interpret_send_message(plan, project_dir, runner))
+                  ignore(
+                    interpret_send_message(
+                      plan, project_dir, runner, append_file,
+                    ),
+                  )
                 } catch {
                   e =>
                     if @types.caught_error_is_agent_not_found(e) {
@@ -1491,6 +1495,7 @@ pub async fn dispatch(
         ),
         project_dir,
         runner,
+        append_file,
       )
     }
     ToolRequest::Shutdown(shutdown_args) =>
