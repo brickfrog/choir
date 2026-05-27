@@ -1273,9 +1273,29 @@ fn codex_stderr_warning_tail_from_content(content : String) -> String {
 const CODEX_STDERR_MAX_READ_BYTES : Int = 65536
 
 ///|
-fn codex_stderr_warning_tail(project_dir : String, agent_id : String) -> String {
+/// Default file_size adapter for the warning path; wraps `@sys.file_size`
+/// so the server module itself doesn't reference `@sys.*` directly.
+fn default_codex_stderr_file_size(path : String) -> Int {
+  @sys.file_size(path)
+}
+
+///|
+/// Default read adapter; wraps `@sys.read_file` so the server module
+/// itself doesn't reference `@sys.*` directly. Injected at the call
+/// site so the warning-tail logic is mockable in tests.
+fn default_codex_stderr_read(path : String) -> String {
+  @sys.read_file(path)
+}
+
+///|
+fn codex_stderr_warning_tail(
+  project_dir : String,
+  agent_id : String,
+  file_size? : (String) -> Int = default_codex_stderr_file_size,
+  read_file? : (String) -> String = default_codex_stderr_read,
+) -> String {
   let path = @workspace.codex_stderr_log_path(project_dir, agent_id)
-  let size = @sys.file_size(path)
+  let size = file_size(path)
   if size <= 0 {
     return codex_stderr_tail_missing
   }
@@ -1286,7 +1306,7 @@ fn codex_stderr_warning_tail(project_dir : String, agent_id : String) -> String 
   if size > CODEX_STDERR_MAX_READ_BYTES {
     return "(codex stderr too large to tail: " + size.to_string() + " bytes)"
   }
-  let content = @sys.read_file(path)
+  let content = read_file(path)
   if content == "" {
     return codex_stderr_tail_missing
   }
@@ -1324,6 +1344,53 @@ test "codex_stderr_warning_tail_from_content caps at 2KB from the end" {
   let result = codex_stderr_warning_tail_from_content(big.to_string())
   assert_true(result.length() <= 2000)
   assert_true(result.has_suffix("TAIL"))
+}
+
+///|
+priv struct CodexStderrReadCallFlag {
+  mut val : Bool
+}
+
+///|
+test "codex_stderr_warning_tail bails on oversized file without reading" {
+  // Inject a size adapter that reports a multi-megabyte file and a read
+  // adapter that would fail loudly if called. The 64 KB cap must short-
+  // circuit BEFORE allocating.
+  let read_called : CodexStderrReadCallFlag = { val: false }
+  let result = codex_stderr_warning_tail(
+    "/proj",
+    "main.leaf",
+    file_size=fn(_) { CODEX_STDERR_MAX_READ_BYTES + 1024 },
+    read_file=fn(_) {
+      read_called.val = true
+      ""
+    },
+  )
+  assert_false(read_called.val)
+  assert_true(result.has_prefix("(codex stderr too large to tail: "))
+}
+
+///|
+test "codex_stderr_warning_tail returns missing sentinel for absent file" {
+  let result = codex_stderr_warning_tail(
+    "/proj",
+    "main.leaf",
+    file_size=fn(_) { 0 },
+    read_file=fn(_) { "" },
+  )
+  assert_eq(result, codex_stderr_tail_missing)
+}
+
+///|
+test "codex_stderr_warning_tail returns tail when file is in-bounds" {
+  let content = "boot ok\nspawn ok\nexit 0\n"
+  let result = codex_stderr_warning_tail(
+    "/proj",
+    "main.leaf",
+    file_size=fn(_) { content.length() },
+    read_file=fn(_) { content },
+  )
+  assert_eq(result, "boot ok\nspawn ok\nexit 0")
 }
 
 ///|
@@ -1391,6 +1458,22 @@ async test "startup disconnect after register emits startup prompt-gap warning" 
     ),
     1,
   )
+  // Non-Codex agent: the codex_stderr_tail field MUST NOT appear in the
+  // warning. Emitting it for Gemini/Claude/MoonPilot would always read
+  // "(no codex stderr captured)" and add noise.
+  let warning_message = "worker disconnected immediately after register (likely interactive prompt block or config gap)"
+  let mut found_codex_field = false
+  for event in captured {
+    if event.message != warning_message {
+      continue
+    }
+    for field in event.fields {
+      if field.key == "codex_stderr_tail" {
+        found_codex_field = true
+      }
+    }
+  }
+  assert_false(found_codex_field)
   ignore(@sys.rm_rf(project_dir))
 }
 
@@ -1601,10 +1684,7 @@ async fn ServerState::handle_disconnect_confirming_with_runner(
           Some(sec) if sec < 2 => {
             let fields : Array[@moontrace.Field] = [
               @moontrace.field("agent_id", agent_id),
-              @moontrace.field(
-                "agent_type",
-                agent.agent_type.to_wire_string(),
-              ),
+              @moontrace.field("agent_type", agent.agent_type.to_wire_string()),
               @moontrace.field("connected_sec", sec.to_string()),
               @moontrace.field("last_request", "register"),
             ]
@@ -1615,9 +1695,7 @@ async fn ServerState::handle_disconnect_confirming_with_runner(
               fields.push(
                 @moontrace.field(
                   "codex_stderr_tail",
-                  codex_stderr_warning_tail(
-                    self.config.project_dir, agent_id,
-                  ),
+                  codex_stderr_warning_tail(self.config.project_dir, agent_id),
                 ),
               )
             }
