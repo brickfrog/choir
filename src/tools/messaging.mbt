@@ -193,25 +193,20 @@ pub fn send_message_plan(
 ///|
 /// Effectful `send_message` adapter: delivery-log append, `execute_delivery`,
 /// moontrace on failure. Preserves historical `ToolRequest::SendMessage` flow.
-/// Default delivery-log append wrapping `@sys.append_file_sync` so
-/// `interpret_send_message` doesn't reference `@sys.*` directly. The
-/// optional param at the call site is what satisfies the effect-architecture
-/// rule for src/tools; this thin default keeps the production behavior
-/// identical while making the append point mockable in tests.
-fn default_send_message_delivery_log_append(
-  path : String,
-  body : String,
-) -> Bool {
-  @sys.append_file_sync(path, body)
-}
-
-///|
+///
+/// `append_file` is a REQUIRED injected capability — no in-module default.
+/// CLAUDE.md's effect-architecture read-only exception covers
+/// `@sys.path_exists` / `@sys.read_file` from `src/tools/*.mbt`; mutations
+/// like `@sys.append_file_sync` are not covered, so this module refuses to
+/// own the default. Production callers pass `dispatch_call`'s already-
+/// threaded `append_file` capability; tests pass a mock that records or
+/// asserts what was appended.
 pub async fn interpret_send_message(
   plan : SendMessagePlan,
   project_dir : String,
   runner : async (Array[@workspace.Command]) -> Array[Int],
+  append_file : (String, String) -> Bool,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
-  append_file? : (String, String) -> Bool = default_send_message_delivery_log_append,
 ) -> @types.Response {
   let delivery_log_path = project_dir + "/.choir/delivery.log"
   match plan {

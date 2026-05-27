@@ -410,7 +410,10 @@ test "send_message_plan deliver matches plan_delivery and log append" {
 async test "interpret_send_message no registry skips delivery" {
   let plan = send_message_plan("t", "s", "m", @types.Status::Info, None)
   let got = interpret_send_message(
-    plan, "/tmp/choir-send-msg-test", mock_runner_all_ok,
+    plan,
+    "/tmp/choir-send-msg-test",
+    mock_runner_all_ok,
+    fn(_, _) { true },
   )
   match got {
     @types.Response::Ok(fields) => {
@@ -432,7 +435,10 @@ async test "interpret_send_message registry lookup failed returns err" {
     Some(Err(err)),
   )
   let got = interpret_send_message(
-    plan, "/tmp/choir-send-msg-test", mock_runner_all_ok,
+    plan,
+    "/tmp/choir-send-msg-test",
+    mock_runner_all_ok,
+    fn(_, _) { true },
   )
   match got {
     @types.Response::Err(msg) => assert_eq(msg, err.message())
@@ -489,7 +495,9 @@ async test "interpret_send_message deliver tcp success appends send_message log"
     Some(Ok(agent)),
     now_ms~,
   )
-  let got = interpret_send_message(plan, project_dir, mock_runner_all_ok)
+  let got = interpret_send_message(
+    plan, project_dir, mock_runner_all_ok, @sys.append_file_sync,
+  )
   match got {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
@@ -543,6 +551,7 @@ async test "interpret_send_message deliver local terminal failure returns err an
     plan,
     project_dir,
     runner_send_msg_always_fail,
+    @sys.append_file_sync,
     sleep_fn=sleep_zero_for_send_msg,
   )
   match got {
@@ -597,7 +606,9 @@ async test "interpret_send_message TargetFinalized branch logs and returns ok wi
       "status": String::to_json("skipped_target_finalized"),
     }),
   )
-  let got = interpret_send_message(plan, project_dir, runner)
+  let got = interpret_send_message(
+    plan, project_dir, runner, @sys.append_file_sync,
+  )
   assert_response_status(got, "skipped_target_finalized")
   assert_eq(runner_calls[0], 0)
   let log_body = @sys.read_file(log_path)
