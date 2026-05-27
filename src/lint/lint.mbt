@@ -75,7 +75,7 @@ priv enum DangerousCallKind {
 } derive(Eq)
 
 ///|
-impl @syntax.IterVisitor for GitProgramSearch with visit_Expr(self, expr) {
+impl @syntax.IterVisitor for GitProgramSearch with fn visit_Expr(self, expr) {
   match expr {
     Record(fields~, ..) =>
       for field in fields {
@@ -291,7 +291,7 @@ fn expr_is_none(expr : @syntax.Expr) -> Bool {
 }
 
 ///|
-impl @syntax.IterVisitor for ConstructorNameSearch with visit_Expr(
+impl @syntax.IterVisitor for ConstructorNameSearch with fn visit_Expr(
   self,
   expr,
 ) {
@@ -660,7 +660,7 @@ fn pop_names_to(names : Array[String], length : Int) -> Unit {
 }
 
 ///|
-impl @syntax.IterVisitor for FunctionBodyCollector with visit_Expr(
+impl @syntax.IterVisitor for FunctionBodyCollector with fn visit_Expr(
   self,
   expr,
 ) {
@@ -862,7 +862,7 @@ fn exec_package_ref_name(
 }
 
 ///|
-impl @syntax.IterVisitor for ExecPackageRefSearch with visit_Expr(self, expr) {
+impl @syntax.IterVisitor for ExecPackageRefSearch with fn visit_Expr(self, expr) {
   if self.found {
     return
   }
@@ -1443,7 +1443,7 @@ fn scan_impls(file : String, impls : @syntax.Impls) -> Array[LintFinding] {
 }
 
 ///|
-impl @syntax.IterVisitor for LintEnv with visit_Impl_TopFuncDef(
+impl @syntax.IterVisitor for LintEnv with fn visit_Impl_TopFuncDef(
   env,
   fun_decl~,
   decl_body~,
@@ -1457,7 +1457,7 @@ impl @syntax.IterVisitor for LintEnv with visit_Impl_TopFuncDef(
 }
 
 ///|
-impl @syntax.IterVisitor for LintEnv with visit_Impl_TopImpl(
+impl @syntax.IterVisitor for LintEnv with fn visit_Impl_TopImpl(
   env,
   self_ty~,
   trait_~,
@@ -1497,7 +1497,7 @@ impl @syntax.IterVisitor for LintEnv with visit_Impl_TopImpl(
 }
 
 ///|
-impl @syntax.IterVisitor for LintEnv with visit_Expr(env, expr) {
+impl @syntax.IterVisitor for LintEnv with fn visit_Expr(env, expr) {
   match expr {
     Apply(func~, args~, loc~, ..) => {
       check_test_apply(env, func, args, loc)
@@ -1547,7 +1547,7 @@ impl @syntax.IterVisitor for LintEnv with visit_Expr(env, expr) {
 }
 
 ///|
-impl @syntax.IterVisitor for LintEnv with visit_Parameter_Optional(
+impl @syntax.IterVisitor for LintEnv with fn visit_Parameter_Optional(
   env,
   binder~,
   default~,
@@ -1779,7 +1779,10 @@ fn strip_fn_in_trait_bodies(source : String) -> String {
           buf.write_char(Int::unsafe_to_char(source[k].to_int()))
         }
         let after_close = strip_fn_within_braces(
-          source, open_brace_idx + 1, n, buf,
+          source,
+          open_brace_idx + 1,
+          n,
+          buf,
         )
         i = after_close
       }
@@ -1793,12 +1796,13 @@ fn strip_fn_in_trait_bodies(source : String) -> String {
 }
 
 ///|
-/// If `source[start..]` begins with the keyword `trait` followed by an ident
-/// and an open brace (with no nested `{`, newline, or backtick between the
-/// keyword and the brace), return the index of that open brace. The match
-/// requires `trait` to be preceded by a non-identifier byte so identifiers
-/// like `constraint` don't match, and a backtick guard so doc comments
-/// containing literal "`trait NAME {`" don't fool the scanner.
+/// If `source[start..]` begins with the keyword `trait` followed by at
+/// least one identifier-start byte (the trait name) and an open brace —
+/// with no newline, semicolon, or backtick between the keyword and the
+/// brace — return the index of that open brace. `trait` must be preceded
+/// by a non-identifier byte so identifiers like `constraint` don't match,
+/// and a backtick guard so doc comments containing literal
+/// "`trait NAME {`" don't fool the scanner.
 fn try_match_trait_open_brace(source : String, start : Int, n : Int) -> Int? {
   if start + 6 > n {
     return None
@@ -1824,6 +1828,20 @@ fn try_match_trait_open_brace(source : String, start : Int, n : Int) -> Int? {
     }
   }
   let mut j = start + 6
+  // Skip leading whitespace before the trait name.
+  while j < n &&
+        (
+          source[j].to_int() == ' '.to_int() ||
+          source[j].to_int() == '\t'.to_int()
+        ) {
+    j = j + 1
+  }
+  // Require at least one identifier-start byte for the trait name. This
+  // rejects malformed text like `trait {` and `trait   {` that happens
+  // to land in a stray code path (e.g., a doc comment).
+  if j >= n || !is_ident_start_byte(source[j].to_int()) {
+    return None
+  }
   while j < n {
     let c = source[j].to_int()
     if c == '{'.to_int() {
@@ -1840,9 +1858,14 @@ fn try_match_trait_open_brace(source : String, start : Int, n : Int) -> Int? {
 ///|
 /// Starting at index `body_start` (one past the trait body's open brace),
 /// copy bytes to `buf` until the matching close brace. Inside the body,
-/// every occurrence of `fn ` followed by a lowercase letter or underscore
-/// is replaced with three spaces so the parser sees the older grammar.
-/// Returns the index just past the matching close brace.
+/// every occurrence of `fn ` followed by an identifier-start byte
+/// (ASCII letter or underscore — `is_ident_start_byte`) is replaced with
+/// three spaces so the parser sees the older grammar. Trait method names
+/// in practice are lowercase, but the byte check accepts uppercase too;
+/// stripping `fn ` before an uppercase name does not break the parser
+/// (it just produces an identifier the parser would have accepted in
+/// the old grammar anyway). Returns the index just past the matching
+/// close brace.
 fn strip_fn_within_braces(
   source : String,
   body_start : Int,
