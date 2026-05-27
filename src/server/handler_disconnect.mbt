@@ -1264,10 +1264,29 @@ fn codex_stderr_warning_tail_from_content(content : String) -> String {
 }
 
 ///|
+/// Hard cap on the size of the stderr file we'll read into memory before
+/// trimming. The spawn-side wrapper opens the stderr log with `2>`, so each
+/// run truncates the previous content — a single chatty/runaway codex run
+/// is the only thing bounded by this cap. 64 KB is several orders of
+/// magnitude beyond what a startup-time disconnect can realistically
+/// produce, while keeping the worst-case allocation bounded.
+const CODEX_STDERR_MAX_READ_BYTES : Int = 65536
+
+///|
 fn codex_stderr_warning_tail(project_dir : String, agent_id : String) -> String {
-  let content = @sys.read_file(
-    @workspace.codex_stderr_log_path(project_dir, agent_id),
-  )
+  let path = @workspace.codex_stderr_log_path(project_dir, agent_id)
+  let size = @sys.file_size(path)
+  if size <= 0 {
+    return codex_stderr_tail_missing
+  }
+  // Refuse to materialize a multi-megabyte stderr blob in the warning path;
+  // the spawn wrapper truncates on each run, but we still defend against a
+  // pathological case (e.g. the truncate was disabled by an operator override
+  // or a stderr log left behind from a different code path).
+  if size > CODEX_STDERR_MAX_READ_BYTES {
+    return "(codex stderr too large to tail: " + size.to_string() + " bytes)"
+  }
+  let content = @sys.read_file(path)
   if content == "" {
     return codex_stderr_tail_missing
   }
@@ -1579,23 +1598,34 @@ async fn ServerState::handle_disconnect_confirming_with_runner(
     Some(ctx) =>
       if ctx.last_request_name == Some("register") {
         match ctx.connected_sec {
-          Some(sec) if sec < 2 =>
-            @moontrace.warn(
-              "worker disconnected immediately after register (likely interactive prompt block or config gap)",
-              fields=[
-                @moontrace.field("agent_id", agent_id),
-                @moontrace.field(
-                  "agent_type",
-                  agent.agent_type.to_wire_string(),
-                ),
-                @moontrace.field("connected_sec", sec.to_string()),
-                @moontrace.field("last_request", "register"),
+          Some(sec) if sec < 2 => {
+            let fields : Array[@moontrace.Field] = [
+              @moontrace.field("agent_id", agent_id),
+              @moontrace.field(
+                "agent_type",
+                agent.agent_type.to_wire_string(),
+              ),
+              @moontrace.field("connected_sec", sec.to_string()),
+              @moontrace.field("last_request", "register"),
+            ]
+            // Only codex captures stderr to a per-agent file today; emitting
+            // codex_stderr_tail for non-Codex providers would always read
+            // "(no codex stderr captured)" and add noise to the warning.
+            if agent.agent_type == @types.AgentType::Codex {
+              fields.push(
                 @moontrace.field(
                   "codex_stderr_tail",
-                  codex_stderr_warning_tail(self.config.project_dir, agent_id),
+                  codex_stderr_warning_tail(
+                    self.config.project_dir, agent_id,
+                  ),
                 ),
-              ],
+              )
+            }
+            @moontrace.warn(
+              "worker disconnected immediately after register (likely interactive prompt block or config gap)",
+              fields~,
             )
+          }
           _ => ()
         }
       }

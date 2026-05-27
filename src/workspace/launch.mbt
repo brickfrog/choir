@@ -43,13 +43,19 @@ pub fn codex_stderr_log_path(project_dir : String, agent_id : String) -> String 
 }
 
 ///|
-fn wrap_with_stderr_append(cmd : Command, stderr_path : String) -> Command {
+/// Wrap a command so its stderr is REDIRECTED (truncate-on-open `2>`, not
+/// append `2>>`) to `stderr_path`. Truncate-on-open bounds the on-disk
+/// stderr to a single run's output, so the disconnect-warning tail reader
+/// never has to deal with multi-run accretion. Operators tailing the file
+/// live still see the current run; the previous run is overwritten the
+/// moment a new agent is spawned with the same id.
+fn wrap_with_stderr_redirect(cmd : Command, stderr_path : String) -> Command {
   let quoted_args : Array[String] = []
   quoted_args.push(shell_escape(cmd.program))
   for arg in cmd.args {
     quoted_args.push(shell_escape(arg))
   }
-  let wrapped = quoted_args.join(" ") + " 2>>" + shell_escape(stderr_path)
+  let wrapped = quoted_args.join(" ") + " 2>" + shell_escape(stderr_path)
   { program: "bash", args: ["-c", wrapped], workdir: cmd.workdir }
 }
 
@@ -292,7 +298,7 @@ fn provider_launch_command(
         Some(t) => if role == @types.Role::Dev { [semble_task(t)] } else { [t] }
         None => []
       }
-      wrap_with_stderr_append(
+      wrap_with_stderr_redirect(
         {
           program: cmd_program.unwrap_or("codex"),
           args: [
