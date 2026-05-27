@@ -1986,10 +1986,14 @@ async fn interpret_merge_pr_post_success_side_effects(
 }
 
 ///|
-async fn interpret_merge_pr_completion_hooks_before_untrack(
+/// Fires pr_merged / wave_complete completion hooks for a merge_pr-driven
+/// merge. Must be invoked AFTER `interpret_merge_pr_post_success` so the
+/// poller state file no longer references the PR; that ordering is the
+/// durable commit point that prevents a daemon restart between hook firing
+/// and untrack from re-emitting PRMerged.
+async fn interpret_merge_pr_fire_completion_hooks(
   project_dir : String,
   pr : @poller.TrackedPR?,
-  poller_state : @poller.PollerState?,
   capture : async (@workspace.Command) -> (Int, String),
   hook_capture : async (String, String, String?) -> (Int, String),
   path_exists : (String) -> Bool,
@@ -1998,13 +2002,6 @@ async fn interpret_merge_pr_completion_hooks_before_untrack(
 ) -> Unit {
   match pr {
     Some(tracked) => {
-      match poller_state {
-        Some(ps) => {
-          ps.mark_merged_observed(tracked.pr_number)
-          ignore(ps.write_state_file(project_dir))
-        }
-        None => ()
-      }
       let audit_outcome = detect_pr_merged_audit_enforcement(
         project_dir, require_integration_audit, tracked, capture, path_exists, read_file,
       )
@@ -2196,10 +2193,6 @@ pub async fn interpret_merge_pr(
             poller_state,
             merge_args.pr_number,
           )
-          interpret_merge_pr_completion_hooks_before_untrack(
-            project_dir, tracked, poller_state, capture, hook_capture, path_exists,
-            read_file, require_integration_audit,
-          )
           let resp = interpret_merge_pr_post_success(
             project_dir,
             merge_args.caller_id,
@@ -2208,6 +2201,10 @@ pub async fn interpret_merge_pr(
             registry,
           )
           if resp.is_ok() {
+            interpret_merge_pr_fire_completion_hooks(
+              project_dir, tracked, capture, hook_capture, path_exists, read_file,
+              require_integration_audit,
+            )
             interpret_merge_pr_post_success_side_effects(
               project_dir,
               effective_parent_branch,
