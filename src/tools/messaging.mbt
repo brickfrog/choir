@@ -77,9 +77,11 @@ pub fn send_message_delivery_log_append(
 
 ///|
 fn send_message_preview(message : String) -> String {
-  let cleaned = message.replace(old="\n", new=" ").replace(old="\r", new=" ")
-  let preview_end = if cleaned.length() < 80 { cleaned.length() } else { 80 }
-  cleaned[:preview_end].to_owned()
+  let preview_end = if message.length() < 80 { message.length() } else { 80 }
+  message[:preview_end]
+  .to_owned()
+  .replace(old="\n", new=" ")
+  .replace(old="\r", new=" ")
 }
 
 ///|
@@ -115,7 +117,7 @@ pub(all) enum SendMessagePlan {
     target_id~ : String,
     state_wire~ : String,
     sender_id~ : String,
-    message_preview~ : String,
+    delivery_log_append~ : String,
     response~ : @types.Response
   )
   Deliver(
@@ -150,16 +152,25 @@ pub fn send_message_plan(
     Some(Err(e)) => RegistryLookupFailed(error_message=e.message())
     Some(Ok(agent)) => {
       match agent.state {
-        @types.AgentState::Done | @types.AgentState::Failed =>
+        @types.AgentState::Done | @types.AgentState::Failed => {
+          let state_wire = agent.state.to_wire_string()
+          let delivery_log_append = send_message_target_finalized_log_append(
+            target_id,
+            state_wire,
+            sender_id,
+            send_message_preview(message),
+            now_ms~,
+          )
           return TargetFinalized(
             target_id~,
-            state_wire=agent.state.to_wire_string(),
+            state_wire~,
             sender_id~,
-            message_preview=send_message_preview(message),
+            delivery_log_append~,
             response=@types.Response::ok_values({
               "status": String::to_json("skipped_target_finalized"),
             }),
           )
+        }
         _ => ()
       }
       let delivery = @message.plan_delivery(agent, sender_id, message, status)
@@ -197,15 +208,13 @@ pub async fn interpret_send_message(
       target_id~,
       state_wire~,
       sender_id~,
-      message_preview~,
+      delivery_log_append~,
       response~
     ) => {
       ignore(
         @sys.append_file_sync(
           project_dir + "/.choir/delivery.log",
-          send_message_target_finalized_log_append(
-            target_id, state_wire, sender_id, message_preview,
-          ),
+          delivery_log_append,
         ),
       )
       @moontrace.info("send_message skipped: target finalized", fields=[

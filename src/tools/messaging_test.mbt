@@ -169,6 +169,7 @@ test "send_message_delivery_log_append uses NONE without terminal_target" {
 
 ///|
 test "send_message_plan returns TargetFinalized when target agent state is Done" {
+  let now_ms = 1776000000123L
   let agent = messaging_test_agent_with_state(@types.AgentState::Done)
   match
     send_message_plan(
@@ -177,18 +178,25 @@ test "send_message_plan returns TargetFinalized when target agent state is Done"
       "merged; you may shut down",
       @types.Status::Info,
       Some(Ok(agent)),
+      now_ms~,
     ) {
     SendMessagePlan::TargetFinalized(
       target_id~,
       state_wire~,
       sender_id~,
-      message_preview~,
+      delivery_log_append~,
       response~
     ) => {
       assert_eq(target_id, "main.leaf")
       assert_eq(state_wire, "done")
       assert_eq(sender_id, "main.tl")
-      assert_eq(message_preview, "merged; you may shut down")
+      assert_eq(
+        delivery_log_append,
+        @poller.delivery_log_line(
+          "[send_message] target=main.leaf state=done sender=main.tl delivery=skipped_target_finalized message_preview=merged; you may shut down",
+          now_ms~,
+        ),
+      )
       assert_response_status(response, "skipped_target_finalized")
     }
     _ => fail("expected TargetFinalized")
@@ -197,6 +205,7 @@ test "send_message_plan returns TargetFinalized when target agent state is Done"
 
 ///|
 test "send_message_plan returns TargetFinalized when target agent state is Failed" {
+  let now_ms = 1776000000123L
   let agent = messaging_test_agent_with_state(@types.AgentState::Failed)
   match
     send_message_plan(
@@ -205,18 +214,25 @@ test "send_message_plan returns TargetFinalized when target agent state is Faile
       "ship failed; shutting down",
       @types.Status::Failure,
       Some(Ok(agent)),
+      now_ms~,
     ) {
     SendMessagePlan::TargetFinalized(
       target_id~,
       state_wire~,
       sender_id~,
-      message_preview~,
+      delivery_log_append~,
       response~
     ) => {
       assert_eq(target_id, "main.leaf")
       assert_eq(state_wire, "failed")
       assert_eq(sender_id, "main.tl")
-      assert_eq(message_preview, "ship failed; shutting down")
+      assert_eq(
+        delivery_log_append,
+        @poller.delivery_log_line(
+          "[send_message] target=main.leaf state=failed sender=main.tl delivery=skipped_target_finalized message_preview=ship failed; shutting down",
+          now_ms~,
+        ),
+      )
       assert_response_status(response, "skipped_target_finalized")
     }
     _ => fail("expected TargetFinalized")
@@ -515,6 +531,11 @@ async test "interpret_send_message TargetFinalized branch logs and returns ok wi
   ignore(@sys.delete_file_sync(log_path))
   let long_message = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopTAIL"
   let expected_preview = long_message[:80].to_owned()
+  let delivery_log_append = @poller.delivery_log_line(
+    "[send_message] target=main.leaf state=done sender=main.tl delivery=skipped_target_finalized message_preview=" +
+    expected_preview,
+    now_ms=1776000000123L,
+  )
   let runner_calls : Array[Int] = [0]
   let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
     @async.sleep(0)
@@ -529,7 +550,7 @@ async test "interpret_send_message TargetFinalized branch logs and returns ok wi
     target_id="main.leaf",
     state_wire="done",
     sender_id="main.tl",
-    message_preview=expected_preview,
+    delivery_log_append~,
     response=@types.Response::ok_values({
       "status": String::to_json("skipped_target_finalized"),
     }),
@@ -538,6 +559,7 @@ async test "interpret_send_message TargetFinalized branch logs and returns ok wi
   assert_response_status(got, "skipped_target_finalized")
   assert_eq(runner_calls[0], 0)
   let log_body = @sys.read_file(log_path)
+  assert_eq(log_body, delivery_log_append)
   assert_true(log_body.contains("[send_message]"))
   assert_true(log_body.contains("target=main.leaf"))
   assert_true(log_body.contains("state=done"))
