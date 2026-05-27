@@ -285,6 +285,28 @@ async test "tick_with closed PR event carries mergeability snapshot" {
 }
 
 ///|
+async test "tick_with closed PR suppresses already observed merge event" {
+  let ps = @poller.PollerState::new()
+  ps.track(45, "agent-45", "branch-45", "main", "url-45", 1L)
+  ps.mark_merged_observed(45)
+  let events : Array[@poller.PollEvent] = []
+  let logs : Array[@poller.PollerPrTickLog] = []
+  ps.tick_pr_with(
+    45,
+    100L,
+    900L,
+    poller_test_poll_success_closed,
+    fn(event, _agent_id) { events.push(event) },
+    fn(log) { logs.push(log) },
+  )
+  assert_eq(events.length(), 0)
+  assert_true(ps.get(45) is None)
+  assert_eq(logs.length(), 1)
+  assert_true(logs[0].untracked_closed)
+  assert_eq(logs[0].events.length(), 0)
+}
+
+///|
 test "Persist sees mutation between read and write and retries" {
   let ps = @poller.PollerState::new()
   ps.track(10, "agent-a", "branch-a", "main", "url-a", 1L)

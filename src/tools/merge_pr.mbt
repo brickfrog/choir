@@ -1989,6 +1989,7 @@ async fn interpret_merge_pr_post_success_side_effects(
 async fn interpret_merge_pr_completion_hooks_before_untrack(
   project_dir : String,
   pr : @poller.TrackedPR?,
+  poller_state : @poller.PollerState?,
   capture : async (@workspace.Command) -> (Int, String),
   hook_capture : async (String, String, String?) -> (Int, String),
   path_exists : (String) -> Bool,
@@ -1997,6 +1998,13 @@ async fn interpret_merge_pr_completion_hooks_before_untrack(
 ) -> Unit {
   match pr {
     Some(tracked) => {
+      match poller_state {
+        Some(ps) => {
+          ps.mark_merged_observed(tracked.pr_number)
+          ignore(ps.write_state_file(project_dir))
+        }
+        None => ()
+      }
       let audit_outcome = detect_pr_merged_audit_enforcement(
         project_dir, require_integration_audit, tracked, capture, path_exists, read_file,
       )
@@ -2072,11 +2080,18 @@ pub async fn interpret_merge_pr(
   path_exists : (String) -> Bool,
   read_lifecycle? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
   read_file? : (String) -> String = fn(_) { "" },
-  hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
   merge_strategy? : @types.MergeStrategy = @types.Config::default().merge_strategy,
   task_contract_reader? : (String) -> @types.TaskContract? = fn(_) { None },
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
   require_integration_audit? : Bool = @types.Config::default().pr_policy.require_integration_audit,
+  hook_capture? : async (String, String, String?) -> (Int, String) = async fn(
+    _hook_path,
+    _input_json,
+    _cwd,
+  ) {
+    @async.sleep(0)
+    (0, "")
+  },
 ) -> @types.Response {
   match
     interpret_merge_pr_preflight(
@@ -2182,8 +2197,8 @@ pub async fn interpret_merge_pr(
             merge_args.pr_number,
           )
           interpret_merge_pr_completion_hooks_before_untrack(
-            project_dir, tracked, capture, hook_capture, path_exists, read_file,
-            require_integration_audit,
+            project_dir, tracked, poller_state, capture, hook_capture, path_exists,
+            read_file, require_integration_audit,
           )
           let resp = interpret_merge_pr_post_success(
             project_dir,

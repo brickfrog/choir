@@ -958,6 +958,7 @@ async test "interpret_merge_pr success fires pr_merged completion hooks" {
       @async.sleep(0)
       hook_paths.push(path)
       assert_true(ps.get(98) is Some(_))
+      assert_true(ps.merged_observed(98))
       @debug.assert_eq(cwd, Some(project_dir))
       match @hooks.HookInput::from_json_string(input_json) {
         Some(input) => hook_inputs.push(input)
