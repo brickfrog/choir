@@ -449,6 +449,22 @@ fn merge_pr_missing_task_contract_error(
 }
 
 ///|
+fn merge_pr_effective_task_contract(
+  agent_id : String,
+  reader : (String) -> @types.TaskContract?,
+) -> @types.TaskContract? {
+  match reader(agent_id) {
+    Some(contract) => Some(contract)
+    None =>
+      if agent_id == "root" {
+        Some(@types.TaskContract::empty())
+      } else {
+        None
+      }
+  }
+}
+
+///|
 /// `merge_pr` preflight: GitHub changes-requested reviews are checked first,
 /// then the poller snapshot, unresolved review-thread fetch, and
 /// `merge_pr_preflight_block_message` must all pass.
@@ -479,7 +495,8 @@ pub async fn interpret_merge_pr_preflight(
   )
   let policy_decision = match poller_tracked {
     Some(tracked) => {
-      let task_contract_raw = match task_contract_reader(tracked.agent_id) {
+      let task_contract_raw = match
+        merge_pr_effective_task_contract(tracked.agent_id, task_contract_reader) {
         Some(contract) => Some(contract)
         None =>
           return Err(

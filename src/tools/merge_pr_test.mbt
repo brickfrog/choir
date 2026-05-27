@@ -900,6 +900,13 @@ fn merge_pr_test_empty_contract_reader(
 }
 
 ///|
+fn merge_pr_test_no_contract_reader(
+  _agent_id : String,
+) -> @types.TaskContract? {
+  None
+}
+
+///|
 fn merge_pr_test_write_beads_contract(
   project_dir : String,
   parent_branch : String,
@@ -1248,6 +1255,72 @@ async test "interpret_merge_pr_preflight fails closed when server contract missi
       assert_true(msg.contains("refusing to evaluate merge verify gate"))
     }
     Ok(_) => fail("expected missing server contract to block merge_pr")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_merge_pr_preflight accepts root-tracked PR without contract" {
+  let project_dir = "/tmp/choir-mpf-root-missing-contract-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  let ps = @poller.PollerState::new()
+  ps.tracked.set(7, {
+    ..merge_pr_test_tracked(@poller.ReviewState::Approved, "feature/root-pr"),
+    pr_number: 7,
+    agent_id: "root",
+    last_sha: "root-head",
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
+  })
+  let got = interpret_merge_pr_preflight(
+    7,
+    Some(ps),
+    project_dir,
+    "root",
+    mock_preflight_capture_no_unresolved_threads,
+    task_contract_reader=merge_pr_test_no_contract_reader,
+  )
+  match got {
+    Ok(_) => ()
+    Err(e) => fail("expected root PR without contract to pass: " + e.message())
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_merge_pr_preflight still rejects non-root tracked PR without contract" {
+  let project_dir = "/tmp/choir-mpf-nonroot-missing-contract-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  let ps = @poller.PollerState::new()
+  ps.tracked.set(7, {
+    ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
+    pr_number: 7,
+    agent_id: "main.leaf",
+    last_sha: "leaf-head",
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
+  })
+  let got = interpret_merge_pr_preflight(
+    7,
+    Some(ps),
+    project_dir,
+    "main.tl",
+    mock_preflight_capture_no_unresolved_threads,
+    task_contract_reader=merge_pr_test_no_contract_reader,
+  )
+  match got {
+    Err(e) => {
+      let msg = e.message()
+      assert_true(msg.contains("server task contract unavailable"))
+      assert_true(msg.contains("main.leaf"))
+    }
+    Ok(_) => fail("expected non-root PR without contract to block merge_pr")
   }
   ignore(@sys.rm_rf(project_dir))
 }
