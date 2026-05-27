@@ -76,12 +76,48 @@ pub fn send_message_delivery_log_append(
 }
 
 ///|
+fn send_message_preview(message : String) -> String {
+  let cleaned = message.replace(old="\n", new=" ").replace(old="\r", new=" ")
+  let preview_end = if cleaned.length() < 80 { cleaned.length() } else { 80 }
+  cleaned[:preview_end].to_owned()
+}
+
+///|
+fn send_message_target_finalized_log_append(
+  target_id : String,
+  state_wire : String,
+  sender_id : String,
+  message_preview : String,
+  now_ms? : Int64 = @env.now().reinterpret_as_int64(),
+) -> String {
+  @poller.delivery_log_line(
+    "[send_message] target=" +
+    target_id +
+    " state=" +
+    state_wire +
+    " sender=" +
+    sender_id +
+    " delivery=skipped_target_finalized message_preview=" +
+    message_preview,
+    now_ms~,
+  )
+}
+
+///|
 /// Pure plan for `send_message`: optional registry lookup maps to a no-registry
-/// best-effort ok, target lookup error, or delivery + log line + success
-/// response. The host appends `delivery_log_append` then runs `execute_delivery`.
+/// best-effort ok, target lookup error, finalized-target no-op, or delivery +
+/// log line + success response. The host appends the planned log line before
+/// returning the no-op or running `execute_delivery`.
 pub(all) enum SendMessagePlan {
   NoRegistry(response~ : @types.Response)
   RegistryLookupFailed(error_message~ : String)
+  TargetFinalized(
+    target_id~ : String,
+    state_wire~ : String,
+    sender_id~ : String,
+    message_preview~ : String,
+    response~ : @types.Response
+  )
   Deliver(
     delivery~ : @message.DeliveryMethod,
     delivery_log_append~ : String,
@@ -113,6 +149,19 @@ pub fn send_message_plan(
       )
     Some(Err(e)) => RegistryLookupFailed(error_message=e.message())
     Some(Ok(agent)) => {
+      match agent.state {
+        @types.AgentState::Done | @types.AgentState::Failed =>
+          return TargetFinalized(
+            target_id~,
+            state_wire=agent.state.to_wire_string(),
+            sender_id~,
+            message_preview=send_message_preview(message),
+            response=@types.Response::ok_values({
+              "status": String::to_json("skipped_target_finalized"),
+            }),
+          )
+        _ => ()
+      }
       let delivery = @message.plan_delivery(agent, sender_id, message, status)
       let delivery_log_append = send_message_delivery_log_append(
         target_id,
@@ -144,6 +193,28 @@ pub async fn interpret_send_message(
     SendMessagePlan::NoRegistry(response~) => response
     SendMessagePlan::RegistryLookupFailed(error_message~) =>
       @types.Response::Err(error_message)
+    SendMessagePlan::TargetFinalized(
+      target_id~,
+      state_wire~,
+      sender_id~,
+      message_preview~,
+      response~
+    ) => {
+      ignore(
+        @sys.append_file_sync(
+          project_dir + "/.choir/delivery.log",
+          send_message_target_finalized_log_append(
+            target_id, state_wire, sender_id, message_preview,
+          ),
+        ),
+      )
+      @moontrace.info("send_message skipped: target finalized", fields=[
+        @moontrace.field("target_id", target_id),
+        @moontrace.field("target_state", state_wire),
+        @moontrace.field("sender_id", sender_id),
+      ])
+      response
+    }
     SendMessagePlan::Deliver(delivery~, delivery_log_append~, response_ok~) => {
       ignore(
         @sys.append_file_sync(

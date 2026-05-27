@@ -80,6 +80,36 @@ test "notify_parent_plan deliver matches plan_delivery and success response" {
 }
 
 ///|
+fn messaging_test_agent_with_state(state : @types.AgentState) -> @types.Agent {
+  {
+    agent_id: @types.AgentId("main.leaf"),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    parent: Some("main"),
+    workspace: "/tmp",
+    branch: "main.leaf",
+    terminal_target: @types.LocalTarget::parse("zellij-tab:choir:leaf"),
+    host: @types.Host::Local,
+    spawn_depth: 0,
+    state,
+  }
+}
+
+///|
+fn assert_response_status(
+  response : @types.Response,
+  expected : String,
+) -> Unit raise {
+  match response {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      @debug.assert_eq(map.get("status"), Some(String::to_json(expected)))
+    }
+    _ => fail("expected ok response")
+  }
+}
+
+///|
 test "send_message_delivery_log_append matches dispatch log shape" {
   let now_ms = 1776000000123L
   let agent : @types.Agent = {
@@ -135,6 +165,102 @@ test "send_message_delivery_log_append uses NONE without terminal_target" {
       "terminal_target=NONE",
     ),
   )
+}
+
+///|
+test "send_message_plan returns TargetFinalized when target agent state is Done" {
+  let agent = messaging_test_agent_with_state(@types.AgentState::Done)
+  match
+    send_message_plan(
+      "main.leaf",
+      "main.tl",
+      "merged; you may shut down",
+      @types.Status::Info,
+      Some(Ok(agent)),
+    ) {
+    SendMessagePlan::TargetFinalized(
+      target_id~,
+      state_wire~,
+      sender_id~,
+      message_preview~,
+      response~
+    ) => {
+      assert_eq(target_id, "main.leaf")
+      assert_eq(state_wire, "done")
+      assert_eq(sender_id, "main.tl")
+      assert_eq(message_preview, "merged; you may shut down")
+      assert_response_status(response, "skipped_target_finalized")
+    }
+    _ => fail("expected TargetFinalized")
+  }
+}
+
+///|
+test "send_message_plan returns TargetFinalized when target agent state is Failed" {
+  let agent = messaging_test_agent_with_state(@types.AgentState::Failed)
+  match
+    send_message_plan(
+      "main.leaf",
+      "main.tl",
+      "ship failed; shutting down",
+      @types.Status::Failure,
+      Some(Ok(agent)),
+    ) {
+    SendMessagePlan::TargetFinalized(
+      target_id~,
+      state_wire~,
+      sender_id~,
+      message_preview~,
+      response~
+    ) => {
+      assert_eq(target_id, "main.leaf")
+      assert_eq(state_wire, "failed")
+      assert_eq(sender_id, "main.tl")
+      assert_eq(message_preview, "ship failed; shutting down")
+      assert_response_status(response, "skipped_target_finalized")
+    }
+    _ => fail("expected TargetFinalized")
+  }
+}
+
+///|
+test "send_message_plan still returns Deliver when target agent state is Active" {
+  let agent = messaging_test_agent_with_state(@types.AgentState::Active)
+  match
+    send_message_plan(
+      "main.leaf",
+      "main.tl",
+      "hello",
+      @types.Status::Info,
+      Some(Ok(agent)),
+    ) {
+    SendMessagePlan::Deliver(delivery~, delivery_log_append~, response_ok~) => {
+      ignore(delivery)
+      ignore(delivery_log_append)
+      assert_response_status(response_ok, "sent")
+    }
+    _ => fail("expected Deliver")
+  }
+}
+
+///|
+test "send_message_plan still returns Deliver when target agent state is Suspended" {
+  let agent = messaging_test_agent_with_state(@types.AgentState::Suspended)
+  match
+    send_message_plan(
+      "main.leaf",
+      "main.tl",
+      "resume when ready",
+      @types.Status::Info,
+      Some(Ok(agent)),
+    ) {
+    SendMessagePlan::Deliver(delivery~, delivery_log_append~, response_ok~) => {
+      ignore(delivery)
+      ignore(delivery_log_append)
+      assert_response_status(response_ok, "sent")
+    }
+    _ => fail("expected Deliver")
+  }
 }
 
 ///|
@@ -379,6 +505,45 @@ async test "interpret_send_message deliver local terminal failure returns err an
     now_ms~,
   )
   assert_true(@sys.read_file(log_path).contains(send_line))
+}
+
+///|
+async test "interpret_send_message TargetFinalized branch logs and returns ok without invoking runner" {
+  let project_dir = send_message_interpret_test_project_dir() + "-finalized"
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let log_path = project_dir + "/.choir/delivery.log"
+  ignore(@sys.delete_file_sync(log_path))
+  let long_message = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopTAIL"
+  let expected_preview = long_message[:80].to_owned()
+  let runner_calls : Array[Int] = [0]
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    runner_calls[0] = runner_calls[0] + 1
+    let statuses = []
+    for _ in cmds {
+      statuses.push(0)
+    }
+    statuses
+  }
+  let plan = SendMessagePlan::TargetFinalized(
+    target_id="main.leaf",
+    state_wire="done",
+    sender_id="main.tl",
+    message_preview=expected_preview,
+    response=@types.Response::ok_values({
+      "status": String::to_json("skipped_target_finalized"),
+    }),
+  )
+  let got = interpret_send_message(plan, project_dir, runner)
+  assert_response_status(got, "skipped_target_finalized")
+  assert_eq(runner_calls[0], 0)
+  let log_body = @sys.read_file(log_path)
+  assert_true(log_body.contains("[send_message]"))
+  assert_true(log_body.contains("target=main.leaf"))
+  assert_true(log_body.contains("state=done"))
+  assert_true(log_body.contains("sender=main.tl"))
+  assert_true(log_body.contains("message_preview=" + expected_preview))
+  assert_false(log_body.contains("TAIL"))
 }
 
 ///|
