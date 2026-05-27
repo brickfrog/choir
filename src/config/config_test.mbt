@@ -14,7 +14,6 @@ test "parse_config - full" {
     #|plugins_json = '[{"name":"plugin","command":"./plugin","tools":"search"}]'
     #|worker_no_handoff_prod_sec = 90
     #|worker_no_handoff_escalate_sec = 45
-    #|mutation_kill_rate_min = 0.9
     #|poller_heartbeat_tick_sec = 10
     #|prenotify_checks = ["moon check --target native", "moon test --target native", "moon run src/bin/choir_lint --target native"]
     #|moon_verify_target = "js"
@@ -51,7 +50,6 @@ test "parse_config - full" {
   )
   assert_eq(cfg.worker_no_handoff_prod_sec, 90L)
   assert_eq(cfg.worker_no_handoff_escalate_sec, 45L)
-  assert_eq(cfg.mutation_kill_rate_min, 0.9)
   assert_eq(cfg.poller_heartbeat_tick_sec, 10)
   @debug.assert_eq(cfg.prenotify_checks, [
     "moon check --target native", "moon test --target native", "moon run src/bin/choir_lint --target native",
@@ -119,7 +117,6 @@ test "parse_config - minimal" {
   assert_eq(cfg.merge_strategy, @types.MergeStrategy::Merge)
   assert_eq(cfg.worker_no_handoff_prod_sec, 120L)
   assert_eq(cfg.worker_no_handoff_escalate_sec, 120L)
-  assert_eq(cfg.mutation_kill_rate_min, 0.8)
   assert_eq(cfg.poller_heartbeat_tick_sec, 60)
   @debug.assert_eq(cfg.prenotify_checks, [
     "moon check --target native", "CHOIR_TEST_NO_EXEC=1 moon test --target native",
@@ -251,33 +248,6 @@ test "parse_config worker no-handoff knobs reject fractional values" {
   match parse_config("worker_no_handoff_escalate_sec = 1.5") {
     Err(e) => assert_true(e.message().contains("expected integer"))
     Ok(_) => fail("expected fractional escalate config to fail")
-  }
-}
-
-///|
-test "parse_config mutation kill rate knob parses default and rejects invalid values" {
-  assert_eq(parse_config("").unwrap().mutation_kill_rate_min, 0.8)
-  assert_eq(
-    parse_config("mutation_kill_rate_min = 0.75").unwrap().mutation_kill_rate_min,
-    0.75,
-  )
-  assert_eq(
-    parse_config("mutation_kill_rate_min = 1").unwrap().mutation_kill_rate_min,
-    1.0,
-  )
-  match parse_config("mutation_kill_rate_min = -0.01") {
-    Err(e) =>
-      assert_true(e.message().contains("mutation_kill_rate_min: expected 0..1"))
-    Ok(_) => fail("expected negative mutation kill rate to fail")
-  }
-  match parse_config("mutation_kill_rate_min = 1.01") {
-    Err(e) =>
-      assert_true(e.message().contains("mutation_kill_rate_min: expected 0..1"))
-    Ok(_) => fail("expected >1 mutation kill rate to fail")
-  }
-  match parse_config("mutation_kill_rate_min = nope") {
-    Err(e) => assert_true(e.message().contains("mutation_kill_rate_min"))
-    Ok(_) => fail("expected invalid mutation kill rate to fail")
   }
 }
 

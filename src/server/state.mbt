@@ -64,10 +64,6 @@ pub struct ServerState {
   disconnect_contexts : Map[String, DisconnectContext]
   delivery_failures : Map[String, Int]
   handoff_delivered : Map[String, Bool]
-  mutation_gate_reports : Map[
-    String,
-    @aqueue.Queue[@tools.MutationGateWorkerReport],
-  ]
   agent_task_contracts : Map[String, @types.TaskContract]
   leaf_tdd_phases : Map[String, @types.LeafTddPhase]
   worker_no_handoff_prodded_at : Map[String, Int64]
@@ -157,7 +153,6 @@ pub fn ServerState::new(
     disconnect_contexts: {},
     delivery_failures: {},
     handoff_delivered: {},
-    mutation_gate_reports: {},
     agent_task_contracts: {},
     leaf_tdd_phases: {},
     worker_no_handoff_prodded_at: {},
@@ -256,71 +251,4 @@ pub fn ServerState::with_pane_watcher(
   pane_watcher : @runtime.PaneWatcher,
 ) -> ServerState {
   { ..self, pane_watcher, }
-}
-
-///|
-fn ServerState::mutation_gate_report_queue(
-  self : ServerState,
-  agent_id : String,
-) -> @aqueue.Queue[@tools.MutationGateWorkerReport] {
-  match self.mutation_gate_reports.get(agent_id) {
-    Some(queue) => queue
-    None => {
-      let queue = @aqueue.Queue(kind=@aqueue.Kind::Unbounded)
-      self.mutation_gate_reports.set(agent_id, queue)
-      queue
-    }
-  }
-}
-
-///|
-pub fn ServerState::prepare_mutation_gate_report(
-  self : ServerState,
-  agent_id : String,
-) -> Unit {
-  ignore(self.mutation_gate_report_queue(agent_id))
-}
-
-///|
-pub fn ServerState::cleanup_mutation_gate_report(
-  self : ServerState,
-  agent_id : String,
-) -> Unit {
-  match self.mutation_gate_reports.get(agent_id) {
-    Some(queue) => {
-      self.mutation_gate_reports.remove(agent_id)
-      ignore(
-        queue.try_put({
-          message: "mutation gate worker cleaned up without report",
-          status: @types.Status::Failure,
-        }) catch {
-          _ => false
-        },
-      )
-    }
-    None => ()
-  }
-}
-
-///|
-pub fn ServerState::capture_mutation_gate_report(
-  self : ServerState,
-  agent_id : String,
-  report : @tools.MutationGateWorkerReport,
-) -> Unit {
-  match self.mutation_gate_reports.get(agent_id) {
-    Some(queue) => ignore(queue.try_put(report) catch { _ => false })
-    None => ()
-  }
-}
-
-///|
-pub async fn ServerState::wait_for_mutation_gate_report(
-  self : ServerState,
-  agent_id : String,
-) -> @tools.MutationGateWorkerReport? {
-  let queue = self.mutation_gate_report_queue(agent_id)
-  let report = queue.get()
-  self.mutation_gate_reports.remove(agent_id)
-  Some(report)
 }

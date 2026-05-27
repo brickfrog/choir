@@ -192,22 +192,6 @@ fn parse_double_config_value(
 }
 
 ///|
-fn parse_rate_config_value(
-  key : String,
-  raw : String,
-) -> Result[Double, @types.ChoirError] {
-  match parse_double_config_value(key, raw) {
-    Ok(value) =>
-      if value < 0.0 || value > 1.0 {
-        Err(@types.ChoirError::config_error(key + ": expected 0..1"))
-      } else {
-        Ok(value)
-      }
-    Err(e) => Err(e)
-  }
-}
-
-///|
 fn parse_int64_config_value(
   key : String,
   raw : String,
@@ -492,14 +476,6 @@ pub fn parse_config(
         Err(e) => return Err(e)
       }
   }
-  let mutation_kill_rate_min = match doc.get("mutation_kill_rate_min") {
-    None => default_cfg.mutation_kill_rate_min
-    Some(raw) =>
-      match parse_rate_config_value("mutation_kill_rate_min", raw) {
-        Ok(v) => v
-        Err(e) => return Err(e)
-      }
-  }
   let poller_heartbeat_tick_sec = match doc.get("poller_heartbeat_tick_sec") {
     None => default_cfg.poller_heartbeat_tick_sec
     Some(raw) =>
@@ -583,7 +559,6 @@ pub fn parse_config(
     agy_migration_incomplete,
     worker_no_handoff_prod_sec,
     worker_no_handoff_escalate_sec,
-    mutation_kill_rate_min,
     poller_heartbeat_tick_sec,
     prenotify_checks,
     auto_pull_after_integration,

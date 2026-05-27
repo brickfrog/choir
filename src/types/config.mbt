@@ -54,8 +54,6 @@ pub(all) struct Config {
   worker_no_handoff_prod_sec : Int64
   /// Worker-only no-handoff stalled-event grace after prod in seconds; 0 disables stalled event.
   worker_no_handoff_escalate_sec : Int64
-  /// Minimum mutation kill rate required after a leaf's own tests pass.
-  mutation_kill_rate_min : Double
   /// Poller heartbeat cadence in seconds; 0 disables heartbeat ticks.
   poller_heartbeat_tick_sec : Int
   /// Local checks that must pass before a Dev success `notify_parent` handoff.
@@ -140,7 +138,6 @@ pub fn Config::default() -> Config {
     agy_migration_incomplete: false,
     worker_no_handoff_prod_sec: 120L,
     worker_no_handoff_escalate_sec: 120L,
-    mutation_kill_rate_min: 0.8,
     poller_heartbeat_tick_sec: 60,
     prenotify_checks: [
       "moon check --target native", "CHOIR_TEST_NO_EXEC=1 moon test --target native",
