@@ -702,3 +702,49 @@ test "does not apply test rules to production files" {
     Err(e) => fail(e.message())
   }
 }
+
+///|
+/// Regression: moon fmt emits `impl X for Y with fn method(...)` and
+/// `pub trait T { fn method(Self) -> R }`. The vendored
+/// moonbitlang/parser doesn't accept the `fn` keyword in either position.
+/// lint_source preprocesses the source to strip those `fn` tokens before
+/// parsing, so choir_lint never trips on fmt-emitted MoonBit syntax.
+test "parses with-fn trait impl emitted by moon fmt" {
+  let source =
+    #|pub impl Show for Foo with fn output(self, logger) -> Unit {
+    #|  logger.write_string("foo")
+    #|}
+  match lint_source("src/example/foo.mbt", source) {
+    Ok(findings) => assert_eq(findings.length(), 0)
+    Err(e) => fail("expected with-fn impl to parse cleanly: " + e.message())
+  }
+}
+
+///|
+test "parses fn-keyword trait body emitted by moon fmt" {
+  let source =
+    #|pub trait StateMachine {
+    #|  fn machine_name(Self) -> String
+    #|  fn can_exit(Self) -> Bool
+    #|}
+  match lint_source("src/phase/state_machine.mbt", source) {
+    Ok(findings) => assert_eq(findings.length(), 0)
+    Err(e) =>
+      fail("expected fn-keyword trait body to parse cleanly: " + e.message())
+  }
+}
+
+///|
+test "does not strip fn from nested function definitions outside trait bodies" {
+  let source =
+    #|pub fn outer(x : Int) -> Int {
+    #|  fn helper(y : Int) -> Int {
+    #|    y + 1
+    #|  }
+    #|  helper(x)
+    #|}
+  match lint_source("src/example/nested.mbt", source) {
+    Ok(findings) => assert_eq(findings.length(), 0)
+    Err(e) => fail("nested fn should survive preprocessor: " + e.message())
+  }
+}

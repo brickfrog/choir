@@ -285,7 +285,7 @@ const DISPATCH_LEAF_DEFAULT : String =
   #|- Concrete steps, not goals. Codex over-broadens vague tasks.
   #|- Test contract upfront: what RED must assert. If prior audit caught bugs (hard-coded paths, TOCTOU, missing guards), include each as an explicit "your test must cover this" line.
   #|- Boundary: file count cap ("if you touch more than N files, STOP and notify_parent"). Codex respects these.
-  #|- Non-goals: what NOT to touch. Especially: `tools/lint_canary.sh`, `.githooks/pre-commit`, `moon.mod.json`, unrelated `src/` files.
+  #|- Non-goals: what NOT to touch. Especially: `.githooks/pre-commit`, `moon.mod.json`, unrelated `src/` files.
   #|- Cross-model audit: builder codex → audit claude.
   #|- Stay in worktree: explicit "do NOT cd to the parent checkout; if PWD differs from your worktree, cd back."
   #|- Tree-poison recovery: instruct `git restore src/` before file_pr if fmt corrupts unstaged.

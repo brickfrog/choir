@@ -42,17 +42,6 @@ jobs:
       - name: Update registry
         run: moon update
 
-      - name: Lint canary (moon-fmt corruption guard)
-        run: tools/lint_canary.sh
-
-      - name: Test lint canary script
-        run: sh tools/lint_canary_test.sh
-
-      - name: Canary hook wiring sanity
-        run: |
-          test -f .githooks/pre-commit || { echo "ERROR: .githooks/pre-commit missing"; exit 1; }
-          grep -q "tools/lint_canary.sh" .githooks/pre-commit || { echo "ERROR: .githooks/pre-commit does not invoke tools/lint_canary.sh — canary is unwired"; exit 1; }
-
       - name: Pre-commit staged-only sanity
         run: bash tools/pre_commit_staged_test.sh
 

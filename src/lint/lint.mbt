@@ -1745,6 +1745,155 @@ test "package_aliases_for_file caches by directory" {
 }
 
 ///|
+/// moon fmt emits two patterns that moonbitlang/parser through 0.3.2 still
+/// rejects with "Unexpected token `fn`":
+///   1. `impl X for Y with fn method(...)` — trait impl with explicit `fn`
+///      keyword after `with`. Parser expects `with method(...)`.
+///   2. `pub trait T { fn method(Self) -> R }` — trait body with explicit
+///      `fn` keyword on method declarations. Parser expects `method(Self) -> R`.
+///
+/// Until upstream catches up, this preprocessor rewrites those two patterns
+/// on the source bytes before handing them to the parser, preserving every
+/// other byte offset so reported line/column positions still match the
+/// original source. Specifically: the `fn ` token (3 bytes) becomes three
+/// spaces.
+///
+/// For (2), we identify trait bodies by scanning for a `trait NAME {`
+/// header and walking the brace-balanced body. Inside the body, every
+/// `fn ` token is a method declaration (trait bodies don't contain
+/// function definitions).
+fn strip_with_fn_for_parser(source : String) -> String {
+  let s1 = source.replace_all(old="with fn ", new="with    ")
+  strip_fn_in_trait_bodies(s1)
+}
+
+///|
+fn strip_fn_in_trait_bodies(source : String) -> String {
+  let buf = StringBuilder::new(size_hint=source.length())
+  let n = source.length()
+  let mut i = 0
+  while i < n {
+    match try_match_trait_open_brace(source, i, n) {
+      Some(open_brace_idx) => {
+        for k = i; k <= open_brace_idx; k = k + 1 {
+          buf.write_char(Int::unsafe_to_char(source[k].to_int()))
+        }
+        let after_close = strip_fn_within_braces(
+          source, open_brace_idx + 1, n, buf,
+        )
+        i = after_close
+      }
+      None => {
+        buf.write_char(Int::unsafe_to_char(source[i].to_int()))
+        i = i + 1
+      }
+    }
+  }
+  buf.to_string()
+}
+
+///|
+/// If `source[start..]` begins with the keyword `trait` followed by an ident
+/// and an open brace (with no nested `{`, newline, or backtick between the
+/// keyword and the brace), return the index of that open brace. The match
+/// requires `trait` to be preceded by a non-identifier byte so identifiers
+/// like `constraint` don't match, and a backtick guard so doc comments
+/// containing literal "`trait NAME {`" don't fool the scanner.
+fn try_match_trait_open_brace(source : String, start : Int, n : Int) -> Int? {
+  if start + 6 > n {
+    return None
+  }
+  let t = source[start].to_int()
+  if t != 't'.to_int() {
+    return None
+  }
+  if source[start + 1].to_int() != 'r'.to_int() ||
+    source[start + 2].to_int() != 'a'.to_int() ||
+    source[start + 3].to_int() != 'i'.to_int() ||
+    source[start + 4].to_int() != 't'.to_int() {
+    return None
+  }
+  let after = source[start + 5].to_int()
+  if after != ' '.to_int() && after != '\t'.to_int() {
+    return None
+  }
+  if start > 0 {
+    let prev = source[start - 1].to_int()
+    if is_ident_byte(prev) || prev == '`'.to_int() {
+      return None
+    }
+  }
+  let mut j = start + 6
+  while j < n {
+    let c = source[j].to_int()
+    if c == '{'.to_int() {
+      return Some(j)
+    }
+    if c == '\n'.to_int() || c == ';'.to_int() || c == '`'.to_int() {
+      return None
+    }
+    j = j + 1
+  }
+  None
+}
+
+///|
+/// Starting at index `body_start` (one past the trait body's open brace),
+/// copy bytes to `buf` until the matching close brace. Inside the body,
+/// every occurrence of `fn ` followed by a lowercase letter or underscore
+/// is replaced with three spaces so the parser sees the older grammar.
+/// Returns the index just past the matching close brace.
+fn strip_fn_within_braces(
+  source : String,
+  body_start : Int,
+  n : Int,
+  buf : StringBuilder,
+) -> Int {
+  let mut depth = 1
+  let mut i = body_start
+  while i < n && depth > 0 {
+    let c = source[i].to_int()
+    if c == '{'.to_int() {
+      depth = depth + 1
+      buf.write_char(Int::unsafe_to_char(c))
+      i = i + 1
+    } else if c == '}'.to_int() {
+      depth = depth - 1
+      buf.write_char(Int::unsafe_to_char(c))
+      i = i + 1
+    } else if c == 'f'.to_int() &&
+      i + 3 <= n &&
+      source[i + 1].to_int() == 'n'.to_int() &&
+      source[i + 2].to_int() == ' '.to_int() &&
+      (i == 0 || !is_ident_byte(source[i - 1].to_int())) &&
+      i + 3 < n &&
+      is_ident_start_byte(source[i + 3].to_int()) {
+      buf.write_string("   ")
+      i = i + 3
+    } else {
+      buf.write_char(Int::unsafe_to_char(c))
+      i = i + 1
+    }
+  }
+  i
+}
+
+///|
+fn is_ident_byte(b : Int) -> Bool {
+  (b >= 'a'.to_int() && b <= 'z'.to_int()) ||
+  (b >= 'A'.to_int() && b <= 'Z'.to_int()) ||
+  (b >= '0'.to_int() && b <= '9'.to_int()) ||
+  b == '_'.to_int()
+}
+
+///|
+fn is_ident_start_byte(b : Int) -> Bool {
+  (b >= 'a'.to_int() && b <= 'z'.to_int()) ||
+  (b >= 'A'.to_int() && b <= 'Z'.to_int()) ||
+  b == '_'.to_int()
+}
+
+///|
 pub fn lint_source(
   file : String,
   source : String,
@@ -1752,7 +1901,8 @@ pub fn lint_source(
   path_exists? : (String) -> Bool = @sys.path_exists,
   package_alias_cache? : @ref.Ref[Map[String, Array[(String, String)]]] = package_alias_cache,
 ) -> Result[Array[LintFinding], @types.ChoirError] {
-  let (impls, reports) = @parser.parse_string(source, name=file)
+  let prepared = strip_with_fn_for_parser(source)
+  let (impls, reports) = @parser.parse_string(prepared, name=file)
   if reports.length() > 0 {
     return Err(@types.ChoirError::validation_error(reports[0].to_string()))
   }
