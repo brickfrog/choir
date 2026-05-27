@@ -39,6 +39,6 @@ pub(all) enum DevEvent {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-pub impl Show for DevEvent with output(self, logger) -> Unit {
+pub impl Show for DevEvent with fn output(self, logger) -> Unit {
   self.to_repr().output(logger)
 }

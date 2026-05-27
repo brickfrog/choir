@@ -20,7 +20,7 @@ pub fn OutboxDeliveryState::to_wire_string(
 }
 
 ///|
-pub impl Show for OutboxDeliveryState with output(self, logger) -> Unit {
+pub impl Show for OutboxDeliveryState with fn output(self, logger) -> Unit {
   logger.write_string(self.to_wire_string())
 }
 

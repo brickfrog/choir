@@ -15,7 +15,7 @@ pub(all) enum WorkerNoHandoffDecision {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for WorkerNoHandoffDecision with output(self, logger) -> Unit {
+pub impl Show for WorkerNoHandoffDecision with fn output(self, logger) -> Unit {
   let label = match self {
     DoNothing => "DoNothing"
     Prod => "Prod"

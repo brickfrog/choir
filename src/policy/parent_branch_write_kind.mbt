@@ -32,7 +32,7 @@ pub fn ParentBranchWriteKind::to_wire_string(
 }
 
 ///|
-pub impl Show for ParentBranchWriteKind with output(self, logger) -> Unit {
+pub impl Show for ParentBranchWriteKind with fn output(self, logger) -> Unit {
   logger.write_string(self.to_wire_string())
 }
 

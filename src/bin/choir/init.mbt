@@ -755,6 +755,12 @@ fn init_companion_commands(
       workspace,
       command_override=Some(companion.command),
       extra_mcp_servers_json=config.extra_mcp_servers_json,
+      // Route codex stderr to <project>/.choir/codex-<agent>.stderr.log so
+      // the disconnect-warning tail reader (which uses project_dir) sees it.
+      // Default would be workspace_path which puts it under
+      // <project>/.choir/agents/<name>/.choir/codex-... — captured but
+      // never read.
+      project_dir~,
     )
     { ..c, workdir: None }
   }

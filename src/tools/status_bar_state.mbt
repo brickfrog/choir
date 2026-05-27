@@ -192,7 +192,7 @@ fn status_bar_int64_from_json(
 }
 
 ///|
-pub impl ToJson for StatusBarPane with to_json(self) -> Json {
+pub impl ToJson for StatusBarPane with fn to_json(self) -> Json {
   {
     "zellij_pane_id": self.zellij_pane_id.to_json(),
     "agent_id": self.agent_id.to_json(),
@@ -209,7 +209,7 @@ pub impl ToJson for StatusBarPane with to_json(self) -> Json {
 }
 
 ///|
-pub impl FromJson for StatusBarPane with from_json(json, path) {
+pub impl FromJson for StatusBarPane with fn from_json(json, path) {
   match json {
     Object(fields) => {
       let zellij_pane_id : Int = match fields.get("zellij_pane_id") {
@@ -372,12 +372,12 @@ pub fn StatusBarSnapshot::to_json_map(
 }
 
 ///|
-pub impl ToJson for StatusBarSnapshot with to_json(self) -> Json {
+pub impl ToJson for StatusBarSnapshot with fn to_json(self) -> Json {
   self.to_json_map().to_json()
 }
 
 ///|
-pub impl FromJson for StatusBarSnapshot with from_json(json, path) {
+pub impl FromJson for StatusBarSnapshot with fn from_json(json, path) {
   match json {
     Object(fields) => {
       let schema_version : Int = match fields.get("schema_version") {

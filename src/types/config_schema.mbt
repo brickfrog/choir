@@ -5,7 +5,7 @@ pub(all) enum ConfigFile {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for ConfigFile with output(self, logger) -> Unit {
+pub impl Show for ConfigFile with fn output(self, logger) -> Unit {
   logger.write_string(self.schema_file_name())
 }
 

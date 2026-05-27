@@ -14,7 +14,7 @@ pub(all) enum HookEvent {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for HookEvent with output(self, logger) -> Unit {
+pub impl Show for HookEvent with fn output(self, logger) -> Unit {
   logger.write_string(self.hook_event_wire_name())
 }
 
@@ -144,7 +144,7 @@ pub(all) struct HookResponse {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for HookResponse with output(self, logger) {
+pub impl Show for HookResponse with fn output(self, logger) {
   logger.write_string("HookResponse(continue_=")
   logger.write_string(self.continue_.to_string())
   match self.message {

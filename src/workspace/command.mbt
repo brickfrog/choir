@@ -6,7 +6,7 @@ pub(all) struct Command {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for Command with output(self, logger) -> Unit {
+pub impl Show for Command with fn output(self, logger) -> Unit {
   self.to_repr().output(logger)
 }
 

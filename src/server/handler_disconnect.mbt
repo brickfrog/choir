@@ -1236,6 +1236,164 @@ fn handler_disconnect_warning_count(
 }
 
 ///|
+let codex_stderr_tail_missing : String = "(no codex stderr captured)"
+
+///|
+fn codex_stderr_warning_tail_from_content(content : String) -> String {
+  let max_bytes = 2000
+  let max_lines = 20
+  let byte_tail = if content.length() > max_bytes {
+    content[content.length() - max_bytes:]
+  } else {
+    content
+  }
+  let split_lines : Array[String] = []
+  for line in byte_tail.split("\n") {
+    split_lines.push(line.to_owned())
+  }
+  let mut end = split_lines.length()
+  if end > 0 && split_lines[end - 1] == "" {
+    end = end - 1
+  }
+  let start = if end > max_lines { end - max_lines } else { 0 }
+  let lines : Array[String] = []
+  for i = start; i < end; i = i + 1 {
+    lines.push(split_lines[i])
+  }
+  lines.join("\n")
+}
+
+///|
+/// Hard cap on the size of the stderr file we'll read into memory before
+/// trimming. The spawn-side wrapper opens the stderr log with `2>`, so each
+/// run truncates the previous content — a single chatty/runaway codex run
+/// is the only thing bounded by this cap. 64 KB is several orders of
+/// magnitude beyond what a startup-time disconnect can realistically
+/// produce, while keeping the worst-case allocation bounded.
+const CODEX_STDERR_MAX_READ_BYTES : Int = 65536
+
+///|
+/// Default file_size adapter for the warning path; wraps `@sys.file_size`
+/// so the server module itself doesn't reference `@sys.*` directly.
+fn default_codex_stderr_file_size(path : String) -> Int {
+  @sys.file_size(path)
+}
+
+///|
+/// Default read adapter; wraps `@sys.read_file` so the server module
+/// itself doesn't reference `@sys.*` directly. Injected at the call
+/// site so the warning-tail logic is mockable in tests.
+fn default_codex_stderr_read(path : String) -> String {
+  @sys.read_file(path)
+}
+
+///|
+fn codex_stderr_warning_tail(
+  project_dir : String,
+  agent_id : String,
+  file_size? : (String) -> Int = default_codex_stderr_file_size,
+  read_file? : (String) -> String = default_codex_stderr_read,
+) -> String {
+  let path = @workspace.codex_stderr_log_path(project_dir, agent_id)
+  let size = file_size(path)
+  if size <= 0 {
+    return codex_stderr_tail_missing
+  }
+  // Refuse to materialize a multi-megabyte stderr blob in the warning path;
+  // the spawn wrapper truncates on each run, but we still defend against a
+  // pathological case (e.g. the truncate was disabled by an operator override
+  // or a stderr log left behind from a different code path).
+  if size > CODEX_STDERR_MAX_READ_BYTES {
+    return "(codex stderr too large to tail: " + size.to_string() + " bytes)"
+  }
+  let content = read_file(path)
+  if content == "" {
+    return codex_stderr_tail_missing
+  }
+  let tail = codex_stderr_warning_tail_from_content(content)
+  if tail == "" {
+    codex_stderr_tail_missing
+  } else {
+    tail
+  }
+}
+
+///|
+test "codex_stderr_warning_tail_from_content returns last 20 lines" {
+  let lines : Array[String] = []
+  for i = 0; i < 24; i = i + 1 {
+    lines.push("codex stderr line " + i.to_string())
+  }
+  let expected : Array[String] = []
+  for i = 4; i < 24; i = i + 1 {
+    expected.push("codex stderr line " + i.to_string())
+  }
+  assert_eq(
+    codex_stderr_warning_tail_from_content(lines.join("\n") + "\n"),
+    expected.join("\n"),
+  )
+}
+
+///|
+test "codex_stderr_warning_tail_from_content caps at 2KB from the end" {
+  let big = StringBuilder::new(size_hint=3000)
+  for i = 0; i < 2500; i = i + 1 {
+    big.write_string("x")
+  }
+  big.write_string("\nTAIL")
+  let result = codex_stderr_warning_tail_from_content(big.to_string())
+  assert_true(result.length() <= 2000)
+  assert_true(result.has_suffix("TAIL"))
+}
+
+///|
+priv struct CodexStderrReadCallFlag {
+  mut val : Bool
+}
+
+///|
+test "codex_stderr_warning_tail bails on oversized file without reading" {
+  // Inject a size adapter that reports a multi-megabyte file and a read
+  // adapter that would fail loudly if called. The 64 KB cap must short-
+  // circuit BEFORE allocating.
+  let read_called : CodexStderrReadCallFlag = { val: false }
+  let result = codex_stderr_warning_tail(
+    "/proj",
+    "main.leaf",
+    file_size=fn(_) { CODEX_STDERR_MAX_READ_BYTES + 1024 },
+    read_file=fn(_) {
+      read_called.val = true
+      ""
+    },
+  )
+  assert_false(read_called.val)
+  assert_true(result.has_prefix("(codex stderr too large to tail: "))
+}
+
+///|
+test "codex_stderr_warning_tail returns missing sentinel for absent file" {
+  let result = codex_stderr_warning_tail(
+    "/proj",
+    "main.leaf",
+    file_size=fn(_) { 0 },
+    read_file=fn(_) { "" },
+  )
+  assert_eq(result, codex_stderr_tail_missing)
+}
+
+///|
+test "codex_stderr_warning_tail returns tail when file is in-bounds" {
+  let content = "boot ok\nspawn ok\nexit 0\n"
+  let result = codex_stderr_warning_tail(
+    "/proj",
+    "main.leaf",
+    file_size=fn(_) { content.length() },
+    read_file=fn(_) { content },
+  )
+  assert_eq(result, "boot ok\nspawn ok\nexit 0")
+}
+
+///|
 async test "startup disconnect after register emits startup prompt-gap warning" {
   let project_dir = "/tmp/choir-startup-disconnect-warning-" +
     @sys.get_pid().to_string() +
@@ -1300,6 +1458,22 @@ async test "startup disconnect after register emits startup prompt-gap warning" 
     ),
     1,
   )
+  // Non-Codex agent: the codex_stderr_tail field MUST NOT appear in the
+  // warning. Emitting it for Gemini/Claude/MoonPilot would always read
+  // "(no codex stderr captured)" and add noise.
+  let warning_message = "worker disconnected immediately after register (likely interactive prompt block or config gap)"
+  let mut found_codex_field = false
+  for event in captured {
+    if event.message != warning_message {
+      continue
+    }
+    for field in event.fields {
+      if field.key == "codex_stderr_tail" {
+        found_codex_field = true
+      }
+    }
+  }
+  assert_false(found_codex_field)
   ignore(@sys.rm_rf(project_dir))
 }
 
@@ -1507,19 +1681,29 @@ async fn ServerState::handle_disconnect_confirming_with_runner(
     Some(ctx) =>
       if ctx.last_request_name == Some("register") {
         match ctx.connected_sec {
-          Some(sec) if sec < 2 =>
+          Some(sec) if sec < 2 => {
+            let fields : Array[@moontrace.Field] = [
+              @moontrace.field("agent_id", agent_id),
+              @moontrace.field("agent_type", agent.agent_type.to_wire_string()),
+              @moontrace.field("connected_sec", sec.to_string()),
+              @moontrace.field("last_request", "register"),
+            ]
+            // Only codex captures stderr to a per-agent file today; emitting
+            // codex_stderr_tail for non-Codex providers would always read
+            // "(no codex stderr captured)" and add noise to the warning.
+            if agent.agent_type == @types.AgentType::Codex {
+              fields.push(
+                @moontrace.field(
+                  "codex_stderr_tail",
+                  codex_stderr_warning_tail(self.config.project_dir, agent_id),
+                ),
+              )
+            }
             @moontrace.warn(
               "worker disconnected immediately after register (likely interactive prompt block or config gap)",
-              fields=[
-                @moontrace.field("agent_id", agent_id),
-                @moontrace.field(
-                  "agent_type",
-                  agent.agent_type.to_wire_string(),
-                ),
-                @moontrace.field("connected_sec", sec.to_string()),
-                @moontrace.field("last_request", "register"),
-              ],
+              fields~,
             )
+          }
           _ => ()
         }
       }

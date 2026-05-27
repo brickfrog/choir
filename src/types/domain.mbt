@@ -13,7 +13,7 @@ pub fn is_supervisor_role(role : Role) -> Bool {
 }
 
 ///|
-pub impl Show for Role with output(self, logger) -> Unit {
+pub impl Show for Role with fn output(self, logger) -> Unit {
   match self {
     Root => logger.write_string("Root")
     TL => logger.write_string("TL")
@@ -34,7 +34,7 @@ pub(all) enum AgentType {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for AgentType with output(self, logger) -> Unit {
+pub impl Show for AgentType with fn output(self, logger) -> Unit {
   logger.write_string(self.to_wire_string())
 }
 
@@ -46,7 +46,7 @@ pub(all) enum Host {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for Host with output(self, logger) -> Unit {
+pub impl Show for Host with fn output(self, logger) -> Unit {
   self.to_repr().output(logger)
 }
 
@@ -55,7 +55,7 @@ pub impl Show for Host with output(self, logger) -> Unit {
 pub(all) struct AgentId(String) derive(Debug, Eq, Compare, Hash)
 
 ///|
-pub impl Show for AgentId with output(self, logger) -> Unit {
+pub impl Show for AgentId with fn output(self, logger) -> Unit {
   logger.write_string(self.0)
 }
 
@@ -163,7 +163,7 @@ pub(all) enum AgentState {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for AgentState with output(self, logger) -> Unit {
+pub impl Show for AgentState with fn output(self, logger) -> Unit {
   logger.write_string(self.to_wire_string())
 }
 
@@ -188,7 +188,7 @@ pub(all) struct LeafTddState {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for LeafTddPhase with output(self, logger) -> Unit {
+pub impl Show for LeafTddPhase with fn output(self, logger) -> Unit {
   logger.write_string(self.to_wire_string())
 }
 
@@ -233,7 +233,7 @@ pub fn ReviewMode::to_wire_string(self : ReviewMode) -> String {
 }
 
 ///|
-pub impl Show for ReviewMode with output(self, logger) -> Unit {
+pub impl Show for ReviewMode with fn output(self, logger) -> Unit {
   logger.write_string(self.to_wire_string())
 }
 
@@ -271,7 +271,7 @@ pub fn MergeStrategy::to_wire_string(self : MergeStrategy) -> String {
 }
 
 ///|
-pub impl Show for MergeStrategy with output(self, logger) -> Unit {
+pub impl Show for MergeStrategy with fn output(self, logger) -> Unit {
   self.to_wire_string().output(logger)
 }
 
@@ -312,7 +312,7 @@ pub fn MoonVerifyTarget::to_wire_string(self : MoonVerifyTarget) -> String {
 }
 
 ///|
-pub impl Show for MoonVerifyTarget with output(self, logger) -> Unit {
+pub impl Show for MoonVerifyTarget with fn output(self, logger) -> Unit {
   logger.write_string(self.to_wire_string())
 }
 
@@ -695,7 +695,7 @@ pub(all) enum ExitReason {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for ExitReason with output(self, logger) -> Unit {
+pub impl Show for ExitReason with fn output(self, logger) -> Unit {
   match self {
     Merged => logger.write_string("Merged")
     Disconnected => logger.write_string("Disconnected")
@@ -720,7 +720,7 @@ pub(all) enum TargetKind {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for TargetKind with output(self, logger) -> Unit {
+pub impl Show for TargetKind with fn output(self, logger) -> Unit {
   match self {
     ZellijTab => logger.write_string("ZellijTab")
     ZellijPane => logger.write_string("ZellijPane")
@@ -736,7 +736,7 @@ pub(all) struct LocalTarget {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for LocalTarget with output(self, logger) -> Unit {
+pub impl Show for LocalTarget with fn output(self, logger) -> Unit {
   logger.write_string(self.to_string())
 }
 
@@ -793,7 +793,7 @@ pub(all) enum Status {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for Status with output(self, logger) -> Unit {
+pub impl Show for Status with fn output(self, logger) -> Unit {
   self.to_repr().output(logger)
 }
 
@@ -825,7 +825,7 @@ pub(all) enum IsolationMode {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for IsolationMode with output(self, logger) -> Unit {
+pub impl Show for IsolationMode with fn output(self, logger) -> Unit {
   match self {
     InlineDedicatedTab => logger.write_string("inline_dedicated_tab")
     _ => self.to_repr().output(logger)
@@ -889,7 +889,7 @@ pub(all) struct TaskContract {
 } derive(Debug, Eq, ToJson)
 
 ///|
-pub impl FromJson for TaskContract with from_json(json, path) {
+pub impl FromJson for TaskContract with fn from_json(json, path) {
   match json {
     Object(fields) => {
       let goal : String = match fields.get("goal") {
@@ -1022,7 +1022,7 @@ pub(all) enum EvaluationVerdict {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-pub impl Show for EvaluationVerdict with output(self, logger) -> Unit {
+pub impl Show for EvaluationVerdict with fn output(self, logger) -> Unit {
   self.to_repr().output(logger)
 }
 
@@ -1276,6 +1276,6 @@ pub fn EvaluationVerdict::label(self : EvaluationVerdict) -> String {
 }
 
 ///|
-pub impl Show for LifecycleTrigger with output(self, logger) -> Unit {
+pub impl Show for LifecycleTrigger with fn output(self, logger) -> Unit {
   logger.write_string(self.to_wire_string())
 }

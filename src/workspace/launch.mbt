@@ -33,6 +33,33 @@ fn shell_escape(raw : String) -> String {
 }
 
 ///|
+pub fn codex_stderr_log_relpath(agent_id : String) -> String {
+  ".choir/codex-" + agent_id.replace(old="/", new="-") + ".stderr.log"
+}
+
+///|
+pub fn codex_stderr_log_path(project_dir : String, agent_id : String) -> String {
+  project_dir + "/" + codex_stderr_log_relpath(agent_id)
+}
+
+///|
+/// Wrap a command so its stderr is REDIRECTED (truncate-on-open `2>`, not
+/// append `2>>`) to `stderr_path`. Truncate-on-open bounds the on-disk
+/// stderr to a single run's output, so the disconnect-warning tail reader
+/// never has to deal with multi-run accretion. Operators tailing the file
+/// live still see the current run; the previous run is overwritten the
+/// moment a new agent is spawned with the same id.
+fn wrap_with_stderr_redirect(cmd : Command, stderr_path : String) -> Command {
+  let quoted_args : Array[String] = []
+  quoted_args.push(shell_escape(cmd.program))
+  for arg in cmd.args {
+    quoted_args.push(shell_escape(arg))
+  }
+  let wrapped = quoted_args.join(" ") + " 2>" + shell_escape(stderr_path)
+  { program: "bash", args: ["-c", wrapped], workdir: cmd.workdir }
+}
+
+///|
 /// Wrap a spawned agent command in `setsid` + `bash -c` and ensure the shell trap
 /// sends `SIGTERM` to the whole process group when the agent exits.
 fn wrap_with_setsid_and_pgroup_cleanup(cmd : Command) -> Command {
@@ -107,10 +134,10 @@ pub fn codex_mcp_override_args(
 fn semble_task(task : String) -> String {
   let directive =
     #|## Codebase exploration
-  #|
-  #|A `semble` MCP search tool is available. Prefer it over `grep -r` / `find` for any codebase exploration that isn't an exact-string lookup. Use grep only when you have a literal symbol/string to find; use semble for any "where does this concept live" / "how is X used" / "find files related to Y" question.
-  #|
-  #|
+    #|
+    #|A `semble` MCP search tool is available. Prefer it over `grep -r` / `find` for any codebase exploration that isn't an exact-string lookup. Use grep only when you have a literal symbol/string to find; use semble for any "where does this concept live" / "how is X used" / "find files related to Y" question.
+    #|
+    #|
   directive + task
 }
 
@@ -123,12 +150,7 @@ fn claude_mcp_args(
 ) -> Array[String] {
   [
     "--mcp-config",
-    mcp_json_content(
-      role,
-      agent_id,
-      extra_mcp_servers_json~,
-      semble_pilot~,
-    ),
+    mcp_json_content(role, agent_id, extra_mcp_servers_json~, semble_pilot~),
     "--strict-mcp-config",
   ]
 }
@@ -189,6 +211,7 @@ fn provider_launch_command(
   extra_mcp_servers_json? : String? = None,
   tl_init_mode? : Bool = false,
   lean? : Bool = false,
+  project_dir? : String = workspace_path,
 ) -> Command {
   let semble_for_role = role == @types.Role::Dev || role == @types.Role::Worker
   let claude_mcp = if tl_init_mode {
@@ -212,12 +235,7 @@ fn provider_launch_command(
         task_args
       } else {
         match task {
-          Some(t) =>
-            if semble_for_role {
-              [semble_task(t)]
-            } else {
-              [t]
-            }
+          Some(t) => if semble_for_role { [semble_task(t)] } else { [t] }
           None => []
         }
       }
@@ -275,17 +293,12 @@ fn provider_launch_command(
         args: [..cmd_extra_args, "pilot", ..task_args],
         workdir: Some(workspace_path),
       }
-    Codex =>
-      {
-        let codex_task_args = match task {
-          Some(t) =>
-            if role == @types.Role::Dev {
-              [semble_task(t)]
-            } else {
-              [t]
-            }
-          None => []
-        }
+    Codex => {
+      let codex_task_args = match task {
+        Some(t) => if role == @types.Role::Dev { [semble_task(t)] } else { [t] }
+        None => []
+      }
+      wrap_with_stderr_redirect(
         {
           program: cmd_program.unwrap_or("codex"),
           args: [
@@ -303,8 +316,10 @@ fn provider_launch_command(
             ..codex_task_args,
           ],
           workdir: Some(workspace_path),
-        }
-      }
+        },
+        codex_stderr_log_path(project_dir, agent_id),
+      )
+    }
     CursorAgent =>
       {
         program: cmd_program.unwrap_or("agent"),
@@ -335,6 +350,7 @@ pub fn agent_launch_command(
   shell_command? : String? = None,
   command_override? : String? = None,
   extra_mcp_servers_json? : String? = None,
+  project_dir? : String = workspace_path,
 ) -> Command {
   let parts = match command_override {
     Some(cmd) => split_words(cmd)
@@ -360,6 +376,7 @@ pub fn agent_launch_command(
     cmd_program~,
     cmd_extra_args~,
     extra_mcp_servers_json~,
+    project_dir~,
   )
   match shell_command {
     Some(shell) => wrap_with_shell(cmd, shell)

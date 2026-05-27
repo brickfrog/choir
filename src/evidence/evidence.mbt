@@ -19,7 +19,7 @@ pub fn EvidenceCiStatus::to_wire_string(self : EvidenceCiStatus) -> String {
 }
 
 ///|
-pub impl Show for EvidenceCiStatus with output(self, logger) -> Unit {
+pub impl Show for EvidenceCiStatus with fn output(self, logger) -> Unit {
   logger.write_string(self.to_wire_string())
 }
 
@@ -56,7 +56,7 @@ pub fn EvidenceReviewState::to_wire_string(
 }
 
 ///|
-pub impl Show for EvidenceReviewState with output(self, logger) -> Unit {
+pub impl Show for EvidenceReviewState with fn output(self, logger) -> Unit {
   logger.write_string(self.to_wire_string())
 }
 
@@ -86,7 +86,7 @@ pub fn MergeExecutionMode::to_wire_string(self : MergeExecutionMode) -> String {
 }
 
 ///|
-pub impl Show for MergeExecutionMode with output(self, logger) -> Unit {
+pub impl Show for MergeExecutionMode with fn output(self, logger) -> Unit {
   logger.write_string(self.to_wire_string())
 }
 
@@ -145,7 +145,7 @@ pub fn EvidenceEvent::type_name(self : EvidenceEvent) -> String {
 }
 
 ///|
-pub impl Show for EvidenceEvent with output(self, logger) -> Unit {
+pub impl Show for EvidenceEvent with fn output(self, logger) -> Unit {
   logger.write_string(self.type_name())
 }
 
@@ -569,7 +569,7 @@ pub fn verify_results_for_required_at_head_with_ci(
 }
 
 ///|
-pub impl Show for EvidenceRecord with output(self, logger) -> Unit {
+pub impl Show for EvidenceRecord with fn output(self, logger) -> Unit {
   logger.write_string(
     self.ts.to_string() + " " + self.agent_id + " " + self.event.type_name(),
   )

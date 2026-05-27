@@ -6,7 +6,7 @@ pub(all) enum StopCheckResult {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-pub impl Show for StopCheckResult with output(self, logger) {
+pub impl Show for StopCheckResult with fn output(self, logger) {
   match self {
     MustBlock(reason) => {
       logger.write_string("MustBlock(")
@@ -29,7 +29,7 @@ pub(all) enum TransitionResult[P] {
 } derive(Debug, Eq)
 
 ///|
-pub impl[T : Show] Show for TransitionResult[T] with output(self, logger) {
+pub impl[T : Show] Show for TransitionResult[T] with fn output(self, logger) {
   match self {
     Transitioned(p) => {
       logger.write_string("Transitioned(")

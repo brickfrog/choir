@@ -66,12 +66,12 @@ pub fn AgentType::parse_wire(s : String) -> AgentType raise ChoirError {
 }
 
 ///|
-pub impl ToJson for AgentType with to_json(self) -> Json {
+pub impl ToJson for AgentType with fn to_json(self) -> Json {
   self.to_wire_string().to_json()
 }
 
 ///|
-pub impl FromJson for AgentType with from_json(json, path) {
+pub impl FromJson for AgentType with fn from_json(json, path) {
   match json {
     String(s) =>
       match AgentType::try_parse_wire(s) {
@@ -122,12 +122,12 @@ pub fn Status::try_parse_wire(s : String) -> Result[Status, ChoirError] {
 }
 
 ///|
-pub impl ToJson for Status with to_json(self) -> Json {
+pub impl ToJson for Status with fn to_json(self) -> Json {
   self.to_wire_string().to_json()
 }
 
 ///|
-pub impl FromJson for Status with from_json(json, path) {
+pub impl FromJson for Status with fn from_json(json, path) {
   match json {
     String(s) =>
       match Status::try_parse_wire(s) {
@@ -173,7 +173,7 @@ pub fn AgentState::parse_wire(s : String) -> AgentState raise ChoirError {
 }
 
 ///|
-pub impl ToJson for AgentState with to_json(self) -> Json {
+pub impl ToJson for AgentState with fn to_json(self) -> Json {
   self.to_wire_string().to_json()
 }
 
@@ -211,12 +211,12 @@ pub fn LeafTddPhase::parse_wire(s : String) -> LeafTddPhase raise ChoirError {
 }
 
 ///|
-pub impl ToJson for LeafTddPhase with to_json(self) -> Json {
+pub impl ToJson for LeafTddPhase with fn to_json(self) -> Json {
   self.to_wire_string().to_json()
 }
 
 ///|
-pub impl FromJson for LeafTddPhase with from_json(json, path) {
+pub impl FromJson for LeafTddPhase with fn from_json(json, path) {
   match json {
     String(s) =>
       match LeafTddPhase::try_parse_wire(s) {

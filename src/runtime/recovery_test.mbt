@@ -191,7 +191,7 @@ fn reap_test_lifecycle(
 ///|
 fn reap_test_snapshot(
   lifecycle : @phase.AgentLifecycle,
-  worktree_config_content~ : String = "",
+  worktree_config_content? : String = "",
 ) -> LifecycleRecoverySnapshot {
   { lifecycle, worktree_config_content }
 }
@@ -216,10 +216,7 @@ test "plan_stale_lifecycle_reaps terminal Finalized without recovered worktree" 
     agent_id,
     @phase.ProcessState::Finalized(reason=@phase.FinalizeReason::Merged),
   )
-  let actions = plan_stale_lifecycle_reaps(
-    [reap_test_snapshot(lifecycle)],
-    [],
-  )
+  let actions = plan_stale_lifecycle_reaps([reap_test_snapshot(lifecycle)], [])
   reap_test_assert_reaped(actions, agent_id)
 }
 
@@ -232,10 +229,7 @@ test "plan_stale_lifecycle_reaps terminal Failed counts as reapable" {
       reason=@phase.FailureReason::UnexpectedDisconnect,
     ),
   )
-  let actions = plan_stale_lifecycle_reaps(
-    [reap_test_snapshot(lifecycle)],
-    [],
-  )
+  let actions = plan_stale_lifecycle_reaps([reap_test_snapshot(lifecycle)], [])
   reap_test_assert_reaped(actions, agent_id)
 }
 
@@ -249,10 +243,7 @@ test "plan_stale_lifecycle_reaps Finalizing counts as reapable" {
     agent_id,
     @phase.ProcessState::Finalizing(reason=@phase.FinalizeReason::Merged),
   )
-  let actions = plan_stale_lifecycle_reaps(
-    [reap_test_snapshot(lifecycle)],
-    [],
-  )
+  let actions = plan_stale_lifecycle_reaps([reap_test_snapshot(lifecycle)], [])
   reap_test_assert_reaped(actions, agent_id)
 }
 
@@ -260,10 +251,7 @@ test "plan_stale_lifecycle_reaps Finalizing counts as reapable" {
 test "plan_stale_lifecycle_reaps keeps live lifecycle for missing-parent warning" {
   let agent_id = "feature/x.live-leaf"
   let lifecycle = reap_test_lifecycle(agent_id, @phase.ProcessState::Connected)
-  let actions = plan_stale_lifecycle_reaps(
-    [reap_test_snapshot(lifecycle)],
-    [],
-  )
+  let actions = plan_stale_lifecycle_reaps([reap_test_snapshot(lifecycle)], [])
   assert_eq(actions.length(), 0)
 }
 
