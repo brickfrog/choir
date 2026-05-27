@@ -2222,7 +2222,9 @@ pub async fn interpret_merge_pr(
               @moontrace.warn(
                 "merge_pr suppressing pr_merged completion hooks because poller state did not durably persist; a daemon restart may otherwise re-emit PRMerged from the stale on-disk tracked entry",
                 fields=[
-                  @moontrace.field("event", "merge_pr_hooks_suppressed_persist_failed"),
+                  @moontrace.field(
+                    "event", "merge_pr_hooks_suppressed_persist_failed",
+                  ),
                   @moontrace.field("pr_number", merge_args.pr_number),
                   @moontrace.field("parent_branch", effective_parent_branch),
                 ],

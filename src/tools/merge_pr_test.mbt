@@ -1001,7 +1001,8 @@ async test "interpret_merge_pr success fires pr_merged completion hooks" {
   @debug.assert_eq(hook_inputs[0].agent_id, Some("main.leaf"))
   assert_true(ps.get(98) is None)
   assert_true(ps.merged_observed(98))
-  let persisted_json = @sys.read_file(project_dir + "/.choir/poller-state.json")
+  let persisted_json = @sys.read_file(@poller.poller_state_path(project_dir))
+  assert_true(persisted_json != "")
   assert_false(persisted_json.contains("\"pr_number\":98"))
   ignore(@sys.rm_rf(project_dir))
 }
