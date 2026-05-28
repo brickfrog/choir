@@ -45,6 +45,9 @@ jobs:
       - name: Pre-commit staged-only sanity
         run: bash tools/pre_commit_staged_test.sh
 
+      - name: Pre-commit fmt-restore sanity
+        run: bash tools/test_pre_commit_hook.sh
+
       - name: Hermeticity lint
         run: |
           moon build src/bin/choir_lint --target native
