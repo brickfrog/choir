@@ -3411,6 +3411,113 @@ async test "untracked merge detection does not re-emit after boundary advances" 
 }
 
 ///|
+async test "untracked merge detection advances boundary for suppressed records" {
+  let project_dir = "/tmp/choir-untracked-boundary-suppressed-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      auto_pull_after_integration: false,
+    },
+    make_hermetic_recovery_provider(),
+  )
+  state.poller.set_untracked_merge_boundary_unix(4102358400L)
+  state.poller.track(
+    731, "agent-731", "tracked-branch", "main", "https://example.test/pull/731",
+    1000L,
+  )
+  state.poller.mark_merged_observed(732)
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
+    if cmd.program == "gh" && cmd.args.contains("list") {
+      return (
+        0,
+        "[" +
+        handler_test_recent_merged_pr_json(
+          731, "tracked-branch", "sha-tracked", "2099-12-31T00:00:01Z",
+        ) +
+        "," +
+        handler_test_recent_merged_pr_json(
+          732, "observed-branch", "sha-observed", "2099-12-31T00:00:02Z",
+        ) +
+        "]",
+      )
+    }
+    (0, "")
+  }
+
+  let events = detect_untracked_pr_merged_events(state, 1000L, capture)
+  assert_eq(events.length(), 0)
+  assert_eq(state.poller.untracked_merge_boundary_unix, 4102358402L)
+  let persisted = @poller.parse_poller_state_json(
+    @sys.read_file(@poller.poller_state_path(project_dir)),
+  )
+  assert_eq(persisted.untracked_merge_boundary_unix, 4102358402L)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "untracked merge boundary persist failure is logged" {
+  let project_dir = "/tmp/choir-untracked-boundary-persist-fail-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      auto_pull_after_integration: false,
+    },
+    make_hermetic_recovery_provider(),
+  )
+  state.poller.set_untracked_merge_boundary_unix(4102358400L)
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
+    if cmd.program == "gh" && cmd.args.contains("list") {
+      return (
+        0,
+        "[" +
+        handler_test_recent_merged_pr_json(
+          741, "new-one", "sha-one", "2099-12-31T00:00:01Z",
+        ) +
+        "]",
+      )
+    }
+    (0, "")
+  }
+  let failed_boundaries : Array[Int64] = []
+  let failed_project_dirs : Array[String] = []
+  let events = detect_untracked_pr_merged_events(
+    state,
+    1000L,
+    capture,
+    persist_boundary=fn(_project_dir, _poller) { false },
+    boundary_persist_failed=fn(boundary_unix, failed_project_dir) {
+      failed_boundaries.push(boundary_unix)
+      failed_project_dirs.push(failed_project_dir)
+    },
+  )
+  assert_eq(events.length(), 1)
+
+  @debug.assert_eq(failed_boundaries, [4102358401L])
+  @debug.assert_eq(failed_project_dirs, [project_dir])
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "A: unaudited PRMerged event does NOT fire completion hooks" {
   let run_case = async fn(
     label : String,
@@ -3585,7 +3692,8 @@ async test "A: unaudited PRMerged event does NOT fire completion hooks" {
       let mut error_count = 0
       for event in captured {
         if event.level == expected_log_level &&
-          event.message == expected_log_message {
+          event.message == expected_log_message &&
+          handler_moontrace_int_field(event.fields, "pr") == Some(pr_number) {
           error_count = error_count + 1
         }
       }
@@ -3689,8 +3797,8 @@ async test "A: unaudited PRMerged event does NOT fire completion hooks" {
     616,
     false,
     "main",
-    @moontrace.Level::Warn,
-    "audit enforcement warned: missing merge head sha",
+    @moontrace.Level::Error_,
+    "[UNAUDITED MERGE INTO MAIN]",
   )
   run_case(
     "trunk",
@@ -7258,6 +7366,22 @@ fn handler_moontrace_event_summary(events : Array[@moontrace.Event]) -> String {
     parts.push(event.message)
   }
   parts.join("; ")
+}
+
+///|
+fn handler_moontrace_int_field(
+  fields : Array[@moontrace.Field],
+  key : String,
+) -> Int? {
+  for field in fields {
+    if field.key == key {
+      match field.value {
+        Json::Number(value, ..) => return Some(value.to_int())
+        _ => return None
+      }
+    }
+  }
+  None
 }
 
 ///|

@@ -68,7 +68,7 @@ test "ServerState::new seeds boundary without clobbering persisted tracked PRs" 
     path_exists=fn(path) {
       path.has_suffix("/.choir/audit-gate.json") || path == poller_path
     },
-    read_file=fn(path) {
+    boot_read_file=fn(path) {
       if path == poller_path {
         persisted_before.to_json()
       } else {
@@ -93,5 +93,60 @@ test "ServerState::new seeds boundary without clobbering persisted tracked PRs" 
     persisted_after.get(44).map(fn(pr) { pr.agent_id }),
     Some("agent-44"),
   )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+test "ServerState::new quarantines corrupt poller state before seeding" {
+  let project_dir = "/tmp/choir-untracked-boundary-quarantine-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let poller_path = @poller.poller_state_path(project_dir)
+  let write_paths : Array[String] = []
+  let write_contents : Array[String] = []
+  let captured : Array[@moontrace.Event] = []
+  @moontrace.set_subscriber(fn(event) { captured.push(event) })
+  let state = ServerState::new(
+    { ..@types.Config::default(), project_dir, },
+    make_hermetic_recovery_provider(),
+    path_exists=fn(path) {
+      path.has_suffix("/.choir/audit-gate.json") || path == poller_path
+    },
+    boot_read_file=fn(path) {
+      if path == poller_path {
+        "{not-json"
+      } else {
+        ""
+      }
+    },
+    write_file_atomic=fn(path, content) {
+      write_paths.push(path)
+      write_contents.push(content)
+      true
+    },
+    now_unix_sec=fn() { 1779969000L },
+  )
+  @moontrace.clear_subscriber()
+
+  assert_eq(state.poller.untracked_merge_boundary_unix, 1779969000L)
+  assert_eq(write_paths.length(), 2)
+  assert_eq(
+    write_paths[0],
+    poller_path + ".quarantine." + 1779969000L.to_string(),
+  )
+  assert_eq(write_contents[0], "{not-json")
+  assert_eq(write_paths[1], poller_path)
+  let persisted = @poller.parse_poller_state_json(write_contents[1])
+  assert_eq(persisted.untracked_merge_boundary_unix, 1779969000L)
+  let mut saw_quarantine = false
+  for event in captured {
+    if event.level == @moontrace.Level::Warn &&
+      event.message ==
+      "poller_state.json parse error at boot; quarantined and starting with empty poller state" {
+      saw_quarantine = true
+    }
+  }
+  assert_true(saw_quarantine)
   ignore(@sys.rm_rf(project_dir))
 }

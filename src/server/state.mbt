@@ -47,18 +47,45 @@ fn ensure_audit_gate_state_initialized(
 fn load_poller_state_for_boot(
   project_dir : String,
   path_exists : (String) -> Bool,
-  read_file : (String) -> String,
+  boot_read_file : (String) -> String,
+  write_file_atomic : (String, String) -> Bool,
+  now_unix_sec : () -> Int64,
 ) -> @poller.PollerState {
   let path = @poller.poller_state_path(project_dir)
   if !path_exists(path) {
     return @poller.PollerState::new()
   }
-  let content = read_file(path)
+  let content = boot_read_file(path)
   if content == "" {
     return @poller.PollerState::new()
   }
   @poller.parse_poller_state_json(content) catch {
-    _ => @poller.PollerState::new()
+    e => {
+      let quarantine_path = path + ".quarantine." + now_unix_sec().to_string()
+      let error = @types.choir_error_message_from_caught(e)
+      if write_file_atomic(quarantine_path, content) {
+        @moontrace.warn(
+          "poller_state.json parse error at boot; quarantined and starting with empty poller state",
+          fields=[
+            @moontrace.field("event", "poller_state_boot_parse_quarantined"),
+            @moontrace.field("path", path),
+            @moontrace.field("quarantine_path", quarantine_path),
+            @moontrace.field("error", error),
+          ],
+        )
+      } else {
+        @moontrace.error(
+          "poller_state.json parse error at boot; failed to write quarantine",
+          fields=[
+            @moontrace.field("event", "poller_state_boot_quarantine_failed"),
+            @moontrace.field("path", path),
+            @moontrace.field("quarantine_path", quarantine_path),
+            @moontrace.field("error", error),
+          ],
+        )
+      }
+      @poller.PollerState::new()
+    }
   }
 }
 
@@ -170,7 +197,7 @@ pub fn ServerState::new(
   now_unix_sec? : () -> Int64 = fn() {
     @env.now().reinterpret_as_int64() / 1000L
   },
-  read_file? : (String) -> String = default_read_file,
+  boot_read_file? : (String) -> String = default_read_file,
 ) -> ServerState {
   let run_id = init_run_id(config.project_dir)
   // Seed `.choir/audit-gate.json` on server boot if absent. Operators who
@@ -193,7 +220,9 @@ pub fn ServerState::new(
   let persisted_poller = load_poller_state_for_boot(
     config.project_dir,
     path_exists,
-    read_file,
+    boot_read_file,
+    write_file_atomic,
+    now_unix_sec,
   )
   match
     seed_untracked_merge_boundary_if_needed(
