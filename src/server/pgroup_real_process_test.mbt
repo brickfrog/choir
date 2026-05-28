@@ -10,7 +10,7 @@ async fn wait_for_test_file(path : String, attempts : Int) -> Bool {
 }
 
 ///|
-async test "kill_tracked_agent_pgroup kills real setsid process and clears pid sidecar" {
+async test "real exec integration: kill_tracked_agent_pgroup kills real setsid process and clears pid sidecar" {
   let tmp = "/tmp/choir-pgroup-real-" +
     @sys.get_pid().to_string() +
     "-" +
