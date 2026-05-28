@@ -426,7 +426,7 @@ test "allows explicitly tagged real exec integration tests outside exec package"
     #|async test "real exec integration: process group fixture" {
     #|  ignore(@process.spawn_orphan("setsid", ["bash", "-c", "true"]))
     #|}
-  match lint_source("src/server/pgroup_real_process_test.mbt", source) {
+  match lint_source("src/server/handler_disconnect.mbt", source) {
     Ok(findings) => assert_eq(findings.length(), 0)
     Err(e) => fail(e.message())
   }
