@@ -668,6 +668,18 @@ fn untracked_missing_head_audit_log_message() -> String {
 }
 
 ///|
+fn emit_untracked_merge_boundary_persist_failed(
+  boundary_unix : Int64,
+  project_dir : String,
+) -> Unit {
+  @moontrace.warn("untracked merge boundary advanced but failed to persist", fields=[
+    @moontrace.field("event", "untracked_merge_boundary_persist_failed"),
+    @moontrace.field("boundary_unix", boundary_unix.to_string()),
+    @moontrace.field("project_dir", project_dir),
+  ])
+}
+
+///|
 pub fn should_emit_untracked_pr_merged(
   tracked : Bool,
   already_seen : Bool,
@@ -681,41 +693,6 @@ fn ServerState::record_seen_merged_pr_number(
   pr_number : Int,
 ) -> Unit {
   self.poller.mark_merged_observed(pr_number)
-}
-
-///|
-/// Mark every PR currently merged into the default branch as observed.
-/// Called once at server startup so the untracked-merge scanner only emits
-/// for merges that happen while this process is alive.
-pub async fn grandfather_existing_merges_at_startup(
-  state : ServerState,
-  capture : async (@workspace.Command) -> (Int, String),
-) -> Unit {
-  let default_branch = match
-    @tools.detect_default_branch_for_wave_complete(
-      state.config.project_dir,
-      capture,
-    ) {
-    Some(branch) => branch
-    None => return
-  }
-  let cmd = recent_merged_pull_requests_command(
-    state.config.project_dir,
-    default_branch,
-  )
-  let (exit_code, output) = capture(cmd)
-  if exit_code != 0 {
-    return
-  }
-  let mut count = 0
-  for info in parse_recent_merged_pull_requests(output, default_branch) {
-    state.poller.mark_merged_observed(info.pr_number)
-    count = count + 1
-  }
-  @moontrace.info("grandfathered merged prs at startup", fields=[
-    @moontrace.field("default_branch", default_branch),
-    @moontrace.field("count", count.to_string()),
-  ])
 }
 
 ///|
@@ -840,6 +817,13 @@ pub async fn detect_untracked_pr_merged_events(
   now : Int64,
   capture : async (@workspace.Command) -> (Int, String),
   same_tick_pr_merged_numbers? : Array[Int] = [],
+  persist_boundary? : (String, @poller.PollerState) -> Bool = fn(
+    project_dir,
+    poller,
+  ) {
+    poller.write_state_file(project_dir)
+  },
+  boundary_persist_failed? : (Int64, String) -> Unit = emit_untracked_merge_boundary_persist_failed,
 ) -> Array[@poller.PollEvent] {
   let default_branch = match
     @tools.detect_default_branch_for_wave_complete(
@@ -858,7 +842,15 @@ pub async fn detect_untracked_pr_merged_events(
     return []
   }
   let events : Array[@poller.PollEvent] = []
+  let boundary_at_start = state.poller.untracked_merge_boundary_unix
+  let mut boundary_advanced = false
   for info in parse_recent_merged_pull_requests(output, default_branch) {
+    if info.merged_at_unix <= boundary_at_start {
+      continue
+    }
+    if state.poller.advance_untracked_merge_boundary_unix(info.merged_at_unix) {
+      boundary_advanced = true
+    }
     let tracked = state.poller.get(info.pr_number) is Some(_)
     let observed_this_process = state.poller.merged_observed(info.pr_number)
     let observed_this_tick = same_tick_pr_merged_numbers.contains(
@@ -891,6 +883,15 @@ pub async fn detect_untracked_pr_merged_events(
         synthetic_untracked_merge_agent_id(state),
       )
       events.push(@poller.PollEvent::PRMerged(pr))
+    }
+  }
+  if boundary_advanced {
+    let persisted = persist_boundary(state.config.project_dir, state.poller)
+    if !persisted {
+      boundary_persist_failed(
+        state.poller.untracked_merge_boundary_unix,
+        state.config.project_dir,
+      )
     }
   }
   events

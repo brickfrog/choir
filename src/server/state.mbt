@@ -44,6 +44,79 @@ fn ensure_audit_gate_state_initialized(
 }
 
 ///|
+fn load_poller_state_for_boot(
+  project_dir : String,
+  path_exists : (String) -> Bool,
+  boot_read_file : (String) -> String,
+  write_file_atomic : (String, String) -> Bool,
+  now_unix_sec : () -> Int64,
+) -> @poller.PollerState {
+  let path = @poller.poller_state_path(project_dir)
+  if !path_exists(path) {
+    return @poller.PollerState::new()
+  }
+  let content = boot_read_file(path)
+  if content == "" {
+    return @poller.PollerState::new()
+  }
+  @poller.parse_poller_state_json(content) catch {
+    e => {
+      let quarantine_path = path + ".quarantine." + now_unix_sec().to_string()
+      let error = @types.choir_error_message_from_caught(e)
+      if write_file_atomic(quarantine_path, content) {
+        @moontrace.warn(
+          "poller_state.json parse error at boot; quarantined and starting with empty poller state",
+          fields=[
+            @moontrace.field("event", "poller_state_boot_parse_quarantined"),
+            @moontrace.field("path", path),
+            @moontrace.field("quarantine_path", quarantine_path),
+            @moontrace.field("error", error),
+          ],
+        )
+      } else {
+        @moontrace.error(
+          "poller_state.json parse error at boot; failed to write quarantine",
+          fields=[
+            @moontrace.field("event", "poller_state_boot_quarantine_failed"),
+            @moontrace.field("path", path),
+            @moontrace.field("quarantine_path", quarantine_path),
+            @moontrace.field("error", error),
+          ],
+        )
+      }
+      @poller.PollerState::new()
+    }
+  }
+}
+
+///|
+fn seed_untracked_merge_boundary_if_needed(
+  persisted_poller : @poller.PollerState,
+  project_dir : String,
+  write_file_atomic : (String, String) -> Bool,
+  now_unix_sec : () -> Int64,
+) -> Result[Unit, @types.ChoirError] {
+  if persisted_poller.untracked_merge_boundary_unix != 0L {
+    return Ok(())
+  }
+  persisted_poller.set_untracked_merge_boundary_unix(now_unix_sec())
+  if persisted_poller.write_state_file(
+      project_dir,
+      write_file=write_file_atomic,
+    ) {
+    Ok(())
+  } else {
+    Err(
+      @types.ChoirError::workspace_error(
+        "server boot: could not seed untracked merge boundary at " +
+        @poller.poller_state_path(project_dir) +
+        "; refusing to start without a durable restart boundary",
+      ),
+    )
+  }
+}
+
+///|
 pub(all) struct DisconnectContext {
   connected_sec : Int64?
   last_request_name : String?
@@ -124,6 +197,7 @@ pub fn ServerState::new(
   now_unix_sec? : () -> Int64 = fn() {
     @env.now().reinterpret_as_int64() / 1000L
   },
+  boot_read_file? : (String) -> String = default_read_file,
 ) -> ServerState {
   let run_id = init_run_id(config.project_dir)
   // Seed `.choir/audit-gate.json` on server boot if absent. Operators who
@@ -143,12 +217,33 @@ pub fn ServerState::new(
     Ok(_) => ()
     Err(e) => abort(e.message())
   }
+  let persisted_poller = load_poller_state_for_boot(
+    config.project_dir,
+    path_exists,
+    boot_read_file,
+    write_file_atomic,
+    now_unix_sec,
+  )
+  match
+    seed_untracked_merge_boundary_if_needed(
+      persisted_poller,
+      config.project_dir,
+      write_file_atomic,
+      now_unix_sec,
+    ) {
+    Ok(_) => ()
+    Err(e) => abort(e.message())
+  }
+  let poller = @poller.PollerState::new()
+  poller.set_untracked_merge_boundary_unix(
+    persisted_poller.untracked_merge_boundary_unix,
+  )
   {
     config,
     registry: @registry.AgentRegistry::new(),
     mutex_registry: @registry.MutexRegistry::new(),
     tool_registry: @tools.ToolRegistry::new(),
-    poller: @poller.PollerState::new(),
+    poller,
     kv_store: @kv.KvStore::new(config.project_dir),
     run_id,
     pending_disconnects: {},
