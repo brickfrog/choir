@@ -704,7 +704,7 @@ async test "dispatch_call reply then kv_get round trip reply-- key" {
 }
 
 ///|
-async test "dispatch spawn_worker registers inline worker with stable agent id" {
+async test "dispatch spawn_worker registers default dedicated-tab worker with stable agent id" {
   let project_dir = "/tmp/choir-spawn-worker-reg-" +
     @sys.get_pid().to_string() +
     "-" +
@@ -756,7 +756,7 @@ async test "dispatch spawn_worker registers inline worker with stable agent id" 
       assert_eq(agent.workspace, project_dir)
       @debug.assert_eq(
         agent.terminal_target,
-        @types.LocalTarget::parse("zellij-pane:choir:claude-worker"),
+        @types.LocalTarget::parse("zellij-tab:choir:claude-worker"),
       )
     }
   }
