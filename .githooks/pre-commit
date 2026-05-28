@@ -9,9 +9,40 @@ while IFS= read -r f; do
   [ -n "$f" ] && staged_mbt+=("$f")
 done < <(git diff --cached --name-only --diff-filter=ACMR -- '*.mbt')
 
+snapshot_dir=""
+cleanup_snapshot() {
+  if [ -n "$snapshot_dir" ]; then
+    rm -rf -- "$snapshot_dir"
+  fi
+}
+trap cleanup_snapshot EXIT
+
+restore_pre_fmt_snapshot() {
+  local restored=0
+  local f
+  for f in "${staged_mbt[@]}"; do
+    if [ -f "$snapshot_dir/$f" ]; then
+      mkdir -p -- "$(dirname -- "$f")"
+      cp -- "$snapshot_dir/$f" "$f"
+      git add -- "$f"
+      restored=$((restored + 1))
+    fi
+  done
+  echo "✗ moon fmt/check failed; restored $restored .mbt file(s) from pre-fmt snapshot" >&2
+}
+
 echo "→ moon fmt (staged .mbt files only)"
 if [ "${#staged_mbt[@]}" -gt 0 ]; then
-  moon fmt -- "${staged_mbt[@]}"
+  snapshot_dir="$(mktemp -d)"
+  for f in "${staged_mbt[@]}"; do
+    mkdir -p -- "$(dirname -- "$snapshot_dir/$f")"
+    cp -- "$f" "$snapshot_dir/$f"
+  done
+
+  if ! moon fmt -- "${staged_mbt[@]}"; then
+    restore_pre_fmt_snapshot
+    exit 1
+  fi
 else
   echo "  (no staged .mbt files; skipping)"
 fi
@@ -27,4 +58,9 @@ EOF
 fi
 
 echo "→ moon check --target native"
-moon check --target native
+if ! moon check --target native; then
+  if [ "${#staged_mbt[@]}" -gt 0 ]; then
+    restore_pre_fmt_snapshot
+  fi
+  exit 1
+fi
