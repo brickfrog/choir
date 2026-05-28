@@ -13,6 +13,7 @@ pub(all) struct PollerState {
   /// merge path. This is intentionally not serialized: after a restart, absence
   /// of a tracked row must not be treated as proof of merge.
   merged_observed : Map[Int, Bool]
+  mut untracked_merge_boundary_unix : Int64
   mut write_generation : Int
 }
 
@@ -367,7 +368,33 @@ pub fn PollerState::new() -> PollerState {
   {
     tracked: Map([], capacity=0),
     merged_observed: Map([], capacity=0),
+    untracked_merge_boundary_unix: 0L,
     write_generation: 0,
+  }
+}
+
+///|
+pub fn PollerState::set_untracked_merge_boundary_unix(
+  self : PollerState,
+  boundary : Int64,
+) -> Unit {
+  let normalized = if boundary < 0L { 0L } else { boundary }
+  if self.untracked_merge_boundary_unix != normalized {
+    self.untracked_merge_boundary_unix = normalized
+    self.bump_write_generation()
+  }
+}
+
+///|
+pub fn PollerState::advance_untracked_merge_boundary_unix(
+  self : PollerState,
+  candidate : Int64,
+) -> Bool {
+  if candidate > self.untracked_merge_boundary_unix {
+    self.set_untracked_merge_boundary_unix(candidate)
+    true
+  } else {
+    false
   }
 }
 
@@ -589,28 +616,22 @@ pub fn PollerState::merged_observed(
 ///|
 pub fn PollerState::to_json(self : PollerState) -> String {
   let buf = StringBuilder::new()
-  buf.write_char('[')
+  buf.write_string("{\"untracked_merge_boundary_unix\":")
+  buf.write_string(self.untracked_merge_boundary_unix.to_string())
+  buf.write_string(",\"tracked\":[")
   let entries = []
   for tracked in self.tracked.values() {
     entries.push(tracked.to_json())
   }
   buf.write_string(entries.join(","))
-  buf.write_char(']')
+  buf.write_string("]}")
   buf.to_string()
 }
 
 ///|
-pub fn parse_tracked_prs_json(content : String) -> Array[TrackedPR] raise {
+fn parse_tracked_pr_items(items : Array[Json]) -> Array[TrackedPR] raise {
   let tracked = []
-  let json = @json.parse(content)
-  let arr = match json {
-    Json::Array(items) => items
-    _ =>
-      raise @types.ChoirError::validation_error(
-        "poller_state.json is not a JSON array",
-      )
-  }
-  for item in arr {
+  for item in items {
     match item {
       Json::Object(fields) =>
         match parse_tracked_pr(fields) {
@@ -627,6 +648,57 @@ pub fn parse_tracked_prs_json(content : String) -> Array[TrackedPR] raise {
     }
   }
   tracked
+}
+
+///|
+fn poller_state_tracked_items(fields : Map[String, Json]) -> Array[Json] raise {
+  match fields.get("tracked") {
+    Some(Json::Array(items)) => items
+    Some(_) =>
+      raise @types.ChoirError::validation_error(
+        "poller_state.json tracked field is not a JSON array",
+      )
+    None => []
+  }
+}
+
+///|
+pub fn parse_poller_state_json(content : String) -> PollerState raise {
+  let json = @json.parse(content)
+  let (tracked_items, boundary) = match json {
+    Json::Array(items) => (items, 0L)
+    Json::Object(fields) =>
+      (
+        poller_state_tracked_items(fields),
+        @types.json_field_int64(fields, "untracked_merge_boundary_unix").unwrap_or(
+          0L,
+        ),
+      )
+    _ =>
+      raise @types.ChoirError::validation_error(
+        "poller_state.json is not a JSON array or object",
+      )
+  }
+  let state = PollerState::new()
+  state.set_untracked_merge_boundary_unix(boundary)
+  for tracked in parse_tracked_pr_items(tracked_items) {
+    state.restore(tracked)
+  }
+  state
+}
+
+///|
+pub fn parse_tracked_prs_json(content : String) -> Array[TrackedPR] raise {
+  let json = @json.parse(content)
+  match json {
+    Json::Array(items) => parse_tracked_pr_items(items)
+    Json::Object(fields) =>
+      parse_tracked_pr_items(poller_state_tracked_items(fields))
+    _ =>
+      raise @types.ChoirError::validation_error(
+        "poller_state.json is not a JSON array or object",
+      )
+  }
 }
 
 ///|

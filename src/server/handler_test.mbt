@@ -3177,6 +3177,26 @@ fn handler_test_audit_receipt(
 }
 
 ///|
+fn handler_test_recent_merged_pr_json(
+  pr_number : Int,
+  branch : String,
+  head_sha : String,
+  merged_at : String,
+) -> String {
+  "{\"number\":" +
+  pr_number.to_string() +
+  ",\"url\":\"https://example.test/pull/" +
+  pr_number.to_string() +
+  "\",\"headRefName\":\"" +
+  branch +
+  "\",\"headRefOid\":\"" +
+  head_sha +
+  "\",\"baseRefName\":\"main\",\"mergedAt\":\"" +
+  merged_at +
+  "\"}"
+}
+
+///|
 async test "untracked merge detection emits synthetic PRMerged and fires hooks" {
   let project_dir = "/tmp/choir-synthetic-untracked-merge-" +
     @sys.get_pid().to_string() +
@@ -3244,8 +3264,8 @@ async test "untracked merge detection emits synthetic PRMerged and fires hooks" 
 }
 
 ///|
-async test "grandfather_existing_merges_at_startup suppresses subsequent emit" {
-  let project_dir = "/tmp/choir-grandfather-startup-" +
+async test "untracked merge detection filters records at or before boundary" {
+  let project_dir = "/tmp/choir-untracked-boundary-filter-" +
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
@@ -3258,6 +3278,7 @@ async test "grandfather_existing_merges_at_startup suppresses subsequent emit" {
     },
     make_hermetic_recovery_provider(),
   )
+  state.poller.set_untracked_merge_boundary_unix(4102358400L)
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
     if cmd.program == "git" &&
@@ -3266,15 +3287,126 @@ async test "grandfather_existing_merges_at_startup suppresses subsequent emit" {
     }
     if cmd.program == "gh" && cmd.args.contains("list") {
       return (
-        0, "[{\"number\":408,\"url\":\"https://example.test/pull/408\",\"headRefName\":\"main.t92-gate-0\",\"headRefOid\":\"abcdef1234567890\",\"baseRefName\":\"main\",\"mergedAt\":\"2099-12-31T00:00:00Z\"}]",
+        0,
+        "[" +
+        handler_test_recent_merged_pr_json(
+          701, "historical-before", "sha-before", "2099-12-30T23:59:59Z",
+        ) +
+        "," +
+        handler_test_recent_merged_pr_json(
+          702, "historical-equal", "sha-equal", "2099-12-31T00:00:00Z",
+        ) +
+        "," +
+        handler_test_recent_merged_pr_json(
+          703, "new-after", "sha-after", "2099-12-31T00:00:01Z",
+        ) +
+        "]",
       )
     }
     (0, "")
   }
-  grandfather_existing_merges_at_startup(state, capture)
-  assert_true(state.poller.merged_observed(408))
   let events = detect_untracked_pr_merged_events(state, 1000L, capture)
-  assert_eq(events.length(), 0)
+  assert_eq(events.length(), 1)
+  let pr = match events[0] {
+    @poller.PollEvent::PRMerged(pr) => pr
+    _ => fail("expected synthetic PRMerged")
+  }
+  assert_eq(pr.pr_number, 703)
+  assert_eq(state.poller.untracked_merge_boundary_unix, 4102358401L)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "untracked merge detection advances and persists boundary at emission" {
+  let project_dir = "/tmp/choir-untracked-boundary-persist-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      auto_pull_after_integration: false,
+    },
+    make_hermetic_recovery_provider(),
+  )
+  state.poller.set_untracked_merge_boundary_unix(4102358400L)
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
+    if cmd.program == "gh" && cmd.args.contains("list") {
+      return (
+        0,
+        "[" +
+        handler_test_recent_merged_pr_json(
+          711, "new-one", "sha-one", "2099-12-31T00:00:01Z",
+        ) +
+        "," +
+        handler_test_recent_merged_pr_json(
+          712, "new-three", "sha-three", "2099-12-31T00:00:03Z",
+        ) +
+        "]",
+      )
+    }
+    (0, "")
+  }
+
+  let events = detect_untracked_pr_merged_events(state, 1000L, capture)
+  assert_eq(events.length(), 2)
+  assert_eq(state.poller.untracked_merge_boundary_unix, 4102358403L)
+  let persisted = @poller.parse_poller_state_json(
+    @sys.read_file(@poller.poller_state_path(project_dir)),
+  )
+  assert_eq(persisted.untracked_merge_boundary_unix, 4102358403L)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "untracked merge detection does not re-emit after boundary advances" {
+  let project_dir = "/tmp/choir-untracked-boundary-dedupe-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      auto_pull_after_integration: false,
+    },
+    make_hermetic_recovery_provider(),
+  )
+  state.poller.set_untracked_merge_boundary_unix(4102358400L)
+  let gh_output = "[" +
+    handler_test_recent_merged_pr_json(
+      721, "new-one", "sha-one", "2099-12-31T00:00:01Z",
+    ) +
+    "," +
+    handler_test_recent_merged_pr_json(
+      722, "new-two", "sha-two", "2099-12-31T00:00:02Z",
+    ) +
+    "]"
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
+    if cmd.program == "gh" && cmd.args.contains("list") {
+      return (0, gh_output)
+    }
+    (0, "")
+  }
+
+  let first = detect_untracked_pr_merged_events(state, 1000L, capture)
+  assert_eq(first.length(), 2)
+  let second = detect_untracked_pr_merged_events(state, 1001L, capture)
+  assert_eq(second.length(), 0)
+  assert_eq(state.poller.untracked_merge_boundary_unix, 4102358402L)
   ignore(@sys.rm_rf(project_dir))
 }
 

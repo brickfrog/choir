@@ -562,6 +562,26 @@ test "poller_state json round-trips review mode and unresolved thread refs" {
 }
 
 ///|
+test "poller_state json round-trips untracked merge boundary" {
+  let ps = @poller.PollerState::new()
+  ps.set_untracked_merge_boundary_unix(4102358400L)
+  ps.track(9, "agent-9", "branch-9", "main", "https://example.test/pr/9", 90L)
+
+  let parsed = @poller.parse_poller_state_json(ps.to_json())
+  assert_eq(parsed.untracked_merge_boundary_unix, 4102358400L)
+  assert_eq(parsed.tracked.length(), 1)
+  @debug.assert_eq(parsed.get(9).map(fn(pr) { pr.agent_id }), Some("agent-9"))
+
+  let tracked_only = @poller.parse_tracked_prs_json(ps.to_json())
+  assert_eq(tracked_only.length(), 1)
+  assert_eq(tracked_only[0].pr_number, 9)
+
+  let legacy = @poller.parse_poller_state_json("[]")
+  assert_eq(legacy.untracked_merge_boundary_unix, 0L)
+  assert_eq(legacy.tracked.length(), 0)
+}
+
+///|
 test "parse_tracked_prs_json maps legacy last_ci_failed to CiRollupStatus" {
   let json_legacy_failure =
     #|[

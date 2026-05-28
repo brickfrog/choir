@@ -684,41 +684,6 @@ fn ServerState::record_seen_merged_pr_number(
 }
 
 ///|
-/// Mark every PR currently merged into the default branch as observed.
-/// Called once at server startup so the untracked-merge scanner only emits
-/// for merges that happen while this process is alive.
-pub async fn grandfather_existing_merges_at_startup(
-  state : ServerState,
-  capture : async (@workspace.Command) -> (Int, String),
-) -> Unit {
-  let default_branch = match
-    @tools.detect_default_branch_for_wave_complete(
-      state.config.project_dir,
-      capture,
-    ) {
-    Some(branch) => branch
-    None => return
-  }
-  let cmd = recent_merged_pull_requests_command(
-    state.config.project_dir,
-    default_branch,
-  )
-  let (exit_code, output) = capture(cmd)
-  if exit_code != 0 {
-    return
-  }
-  let mut count = 0
-  for info in parse_recent_merged_pull_requests(output, default_branch) {
-    state.poller.mark_merged_observed(info.pr_number)
-    count = count + 1
-  }
-  @moontrace.info("grandfathered merged prs at startup", fields=[
-    @moontrace.field("default_branch", default_branch),
-    @moontrace.field("count", count.to_string()),
-  ])
-}
-
-///|
 fn recent_merged_pull_requests_command(
   project_dir : String,
   default_branch : String,
@@ -858,7 +823,12 @@ pub async fn detect_untracked_pr_merged_events(
     return []
   }
   let events : Array[@poller.PollEvent] = []
+  let boundary_at_start = state.poller.untracked_merge_boundary_unix
+  let mut boundary_advanced = false
   for info in parse_recent_merged_pull_requests(output, default_branch) {
+    if info.merged_at_unix <= boundary_at_start {
+      continue
+    }
     let tracked = state.poller.get(info.pr_number) is Some(_)
     let observed_this_process = state.poller.merged_observed(info.pr_number)
     let observed_this_tick = same_tick_pr_merged_numbers.contains(
@@ -891,7 +861,13 @@ pub async fn detect_untracked_pr_merged_events(
         synthetic_untracked_merge_agent_id(state),
       )
       events.push(@poller.PollEvent::PRMerged(pr))
+      if state.poller.advance_untracked_merge_boundary_unix(info.merged_at_unix) {
+        boundary_advanced = true
+      }
     }
+  }
+  if boundary_advanced {
+    ignore(state.poller.write_state_file(state.config.project_dir))
   }
   events
 }
