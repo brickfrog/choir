@@ -231,7 +231,7 @@ async test "safe_remove_git_worktree swallows runner failure silently" {
 }
 
 ///|
-fn ServerState::kill_tracked_agent_pgroup(
+pub fn ServerState::kill_tracked_agent_pgroup(
   self : ServerState,
   agent_id : String,
   kill_pgid : (Int) -> Unit,

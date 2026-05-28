@@ -286,6 +286,11 @@ pub fn ServerState::forget_agent_pid(
   match self.agent_pids.get(agent_id) {
     Some(pid) => {
       self.agent_pids.remove(agent_id)
+      ignore(
+        (self.delete_file)(
+          @workspace.agent_pid_file_path(self.config.project_dir, agent_id),
+        ),
+      )
       Some(pid)
     }
     None => None

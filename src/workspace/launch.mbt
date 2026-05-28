@@ -43,6 +43,27 @@ pub fn codex_stderr_log_path(project_dir : String, agent_id : String) -> String 
 }
 
 ///|
+pub fn agent_pid_file_path(project_dir : String, agent_id : String) -> String {
+  project_dir + "/.choir/pids/" + agent_id
+}
+
+///|
+fn agent_pid_file_dir(project_dir : String, agent_id : String) -> String {
+  let base = project_dir + "/.choir/pids"
+  let mut last_slash = -1
+  for i = 0; i < agent_id.length(); i = i + 1 {
+    if agent_id[i] == '/' {
+      last_slash = i
+    }
+  }
+  if last_slash < 0 {
+    base
+  } else {
+    base + "/" + agent_id[:last_slash].to_owned()
+  }
+}
+
+///|
 /// Wrap a command so its stderr is REDIRECTED (truncate-on-open `2>`, not
 /// append `2>>`) to `stderr_path`. Truncate-on-open bounds the on-disk
 /// stderr to a single run's output, so the disconnect-warning tail reader
@@ -62,13 +83,23 @@ fn wrap_with_stderr_redirect(cmd : Command, stderr_path : String) -> Command {
 ///|
 /// Wrap a spawned agent command in `setsid` + `bash -c` and ensure the shell trap
 /// sends `SIGTERM` to the whole process group when the agent exits.
-fn wrap_with_setsid_and_pgroup_cleanup(cmd : Command) -> Command {
+fn wrap_with_setsid_and_pgroup_cleanup(
+  cmd : Command,
+  agent_id : String,
+  project_dir : String,
+) -> Command {
   let quoted_args : Array[String] = []
   quoted_args.push(shell_escape(cmd.program))
   for arg in cmd.args {
     quoted_args.push(shell_escape(arg))
   }
-  let wrapped = "trap 'kill -TERM -- -$$ 2>/dev/null' EXIT HUP TERM INT; " +
+  let pid_path = agent_pid_file_path(project_dir, agent_id)
+  let pid_dir = agent_pid_file_dir(project_dir, agent_id)
+  let wrapped = "mkdir -p " +
+    shell_escape(pid_dir) +
+    " && printf '%s' \"$$\" > " +
+    shell_escape(pid_path) +
+    "; trap 'kill -TERM -- -$$ 2>/dev/null' EXIT HUP TERM INT; " +
     quoted_args.join(" ")
   { program: "setsid", args: ["bash", "-c", wrapped], workdir: cmd.workdir }
 }
@@ -339,7 +370,7 @@ fn provider_launch_command(
         workdir: Some(workspace_path),
       }
   }
-  wrap_with_setsid_and_pgroup_cleanup(cmd)
+  wrap_with_setsid_and_pgroup_cleanup(cmd, agent_id, project_dir)
 }
 
 ///|

@@ -199,7 +199,11 @@ test "agy_binary_name resolves agy only" {
 ///|
 test "init_tl_agent_command supports agent alias for cursor" {
   let cmd = @workspace.init_tl_agent_command("agent", "/repo")
-  let body = launch_cmd_body_contains_setsid(cmd)
+  let body = launch_cmd_body_contains_setsid(
+    cmd,
+    project_dir="/repo",
+    agent_id="root",
+  )
   assert_true(body.contains("agent"))
   assert_true(body.contains("--yolo"))
   assert_true(body.contains("--approve-mcps"))
@@ -274,12 +278,25 @@ test "zellij_tab_name_exists_in_query_output strips ansi" {
 }
 
 ///|
-fn launch_cmd_body_contains_setsid(cmd : @workspace.Command) -> String raise {
+fn launch_cmd_body_contains_setsid(
+  cmd : @workspace.Command,
+  project_dir? : String = "/path",
+  agent_id? : String = "main.test-slug",
+) -> String raise {
   assert_eq(cmd.program, "setsid")
   assert_eq(cmd.args.length(), 3)
   assert_eq(cmd.args[0], "bash")
   assert_eq(cmd.args[1], "-c")
   let body = cmd.args[2]
+  assert_true(
+    body.contains("mkdir -p " + @sys.shell_quote(project_dir + "/.choir/pids")),
+  )
+  assert_true(
+    body.contains(
+      "printf '%s' \"$$\" > " +
+      @sys.shell_quote(@workspace.agent_pid_file_path(project_dir, agent_id)),
+    ),
+  )
   assert_true(body.contains("trap 'kill -TERM -- -$$ 2>/dev/null'"))
   body
 }

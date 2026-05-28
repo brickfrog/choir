@@ -25,6 +25,10 @@ import {
   "moonbitlang/core/debug",
 }
 
+import {
+  "moonbitlang/async/process",
+} for "test"
+
 options(
   "is-main": false,
 )
