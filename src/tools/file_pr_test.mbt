@@ -1828,19 +1828,30 @@ async test "interpret_file_pr requests reviewer after verify push and ensure_pr"
 }
 
 ///|
-async fn file_pr_copilot_requested_reviewers_for_parent(
+struct FilePrCopilotPolicyObserved {
+  requested_reviewers : Array[String]
+  review_comments : Array[String]
+} derive(Debug, Eq)
+
+///|
+async fn file_pr_copilot_policy_observed_for_parent(
   parent_branch : String,
+  default_branch : String,
   skip_copilot_on_feature_branch : Bool,
-) -> Array[String] {
+  review_context : String?,
+) -> FilePrCopilotPolicyObserved {
   let project_dir = "/tmp/choir-fpr-copilot-policy-" +
     @sys.get_pid().to_string() +
     "-" +
     parent_branch.replace(old="/", new="-") +
     "-" +
+    default_branch +
+    "-" +
     skip_copilot_on_feature_branch.to_string()
   ignore(@sys.rm_rf(project_dir))
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
   let requested_reviewers : Array[String] = []
+  let review_comments : Array[String] = []
   let got = interpret_file_pr(
     {
       branch: "feature/copilot-policy.leaf",
@@ -1848,7 +1859,7 @@ async fn file_pr_copilot_requested_reviewers_for_parent(
       tracked_agent_id: "feature/copilot-policy.leaf",
       title: None,
       body: None,
-      review_context: None,
+      review_context,
     },
     project_dir,
     "choir",
@@ -1860,6 +1871,12 @@ async fn file_pr_copilot_requested_reviewers_for_parent(
       @async.sleep(0)
       let codes : Array[Int] = []
       for cmd in cmds {
+        if cmd.args.length() >= 5 &&
+          cmd.args[0] == "pr" &&
+          cmd.args[1] == "comment" &&
+          cmd.args[3] == "--body" {
+          review_comments.push(cmd.args[4])
+        }
         for i = 0; i + 1 < cmd.args.length(); i = i + 1 {
           if cmd.args[i] == "--add-reviewer" {
             requested_reviewers.push(cmd.args[i + 1])
@@ -1870,7 +1887,10 @@ async fn file_pr_copilot_requested_reviewers_for_parent(
       codes
     },
     fn(cmd : @workspace.Command) -> (Int, String) {
-      if cmd.program == "git" && cmd.args == ["rev-parse", "HEAD"] {
+      if cmd.program == "git" &&
+        cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+        (0, "origin/" + default_branch + "\n")
+      } else if cmd.program == "git" && cmd.args == ["rev-parse", "HEAD"] {
         (0, "abcdef1234567890abcdef1234567890abcdef12\n")
       } else {
         (0, "")
@@ -1886,30 +1906,68 @@ async fn file_pr_copilot_requested_reviewers_for_parent(
     @types.Response::Err(msg) => fail("expected file_pr success: " + msg)
   }
   ignore(@sys.rm_rf(project_dir))
-  requested_reviewers
+  { requested_reviewers, review_comments }
 }
 
 ///|
 async test "interpret_file_pr gates copilot reviewer request by parent branch policy" {
-  let feature_enabled = file_pr_copilot_requested_reviewers_for_parent(
-    "feature/foo", true,
+  let feature_enabled = file_pr_copilot_policy_observed_for_parent(
+    "feature/foo",
+    "main",
+    true,
+    None,
   )
-  assert_false(feature_enabled.contains("@copilot"))
+  assert_false(feature_enabled.requested_reviewers.contains("@copilot"))
 
-  let main_enabled = file_pr_copilot_requested_reviewers_for_parent(
-    "main", true,
+  let main_enabled = file_pr_copilot_policy_observed_for_parent(
+    "main",
+    "main",
+    true,
+    None,
   )
-  assert_true(main_enabled.contains("@copilot"))
+  assert_true(main_enabled.requested_reviewers.contains("@copilot"))
 
-  let feature_disabled = file_pr_copilot_requested_reviewers_for_parent(
-    "feature/foo", false,
+  let master_enabled = file_pr_copilot_policy_observed_for_parent(
+    "master",
+    "master",
+    true,
+    None,
   )
-  assert_true(feature_disabled.contains("@copilot"))
+  assert_true(master_enabled.requested_reviewers.contains("@copilot"))
 
-  let main_disabled = file_pr_copilot_requested_reviewers_for_parent(
-    "main", false,
+  let feature_disabled = file_pr_copilot_policy_observed_for_parent(
+    "feature/foo",
+    "main",
+    false,
+    None,
   )
-  assert_true(main_disabled.contains("@copilot"))
+  assert_true(feature_disabled.requested_reviewers.contains("@copilot"))
+
+  let main_disabled = file_pr_copilot_policy_observed_for_parent(
+    "main",
+    "main",
+    false,
+    None,
+  )
+  assert_true(main_disabled.requested_reviewers.contains("@copilot"))
+}
+
+///|
+async test "interpret_file_pr keeps copilot context comment when feature branch reviewer is skipped" {
+  let observed = file_pr_copilot_policy_observed_for_parent(
+    "feature/foo",
+    "main",
+    true,
+    Some("trace context"),
+  )
+  assert_false(observed.requested_reviewers.contains("@copilot"))
+  let expected_comment = file_pr_copilot_review_comment_body("trace context")
+  if !observed.review_comments.contains(expected_comment) {
+    fail(
+      "expected copilot context comment, saw: " +
+      observed.review_comments.join("|"),
+    )
+  }
 }
 
 ///|

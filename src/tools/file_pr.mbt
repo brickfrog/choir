@@ -334,18 +334,20 @@ pub async fn file_pr_request_copilot_reviewer(
 pub fn file_pr_should_request_copilot_review(
   pr_review : Bool,
   parent_branch : String,
+  default_branch : String,
   skip_copilot_on_feature_branch : Bool,
 ) -> Bool {
-  pr_review && !(skip_copilot_on_feature_branch && parent_branch != "main")
+  pr_review &&
+  !(skip_copilot_on_feature_branch && parent_branch != default_branch)
 }
 
 ///|
 /// Post-`ensure_pull_request` host path: poller ensure/write, dev lifecycle
 /// event, optional parent auto-notify (delivery log + `execute_delivery` +
-/// moontrace), optional best-effort Copilot reviewer request (`gh pr edit
-/// --add-reviewer @copilot` when `pr_review`), then the planned tool response.
-/// Preserves `ToolRequest::FilePr`
-/// ordering and strings from the prior dispatch arm.
+/// moontrace), optional Copilot context comment (`pr_review`), optional
+/// best-effort Copilot reviewer request (`request_copilot_reviewer`), then the
+/// planned tool response. Preserves `ToolRequest::FilePr` ordering and strings
+/// from the prior dispatch arm.
 pub async fn interpret_file_pr_post_success(
   project_dir : String,
   session : String,
@@ -359,6 +361,7 @@ pub async fn interpret_file_pr_post_success(
   registry : @registry.AgentRegistry?,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   append_file? : (String, String) -> Bool = @sys.append_file_sync,
+  request_copilot_reviewer? : Bool = true,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
   // Clock for delivery-log line timestamps. Called fresh at each append site —
   // not captured once — so writes that happen after slow `gh`/delivery commands
@@ -486,6 +489,8 @@ pub async fn interpret_file_pr_post_success(
       }
       None => ()
     }
+  }
+  if pr_review && request_copilot_reviewer {
     let ok = file_pr_request_copilot_reviewer(
       pr_number, file_pr_workdir, delivery_log_path, runner, append_file, now_ms_fn,
     )
@@ -1074,9 +1079,10 @@ pub async fn interpret_file_pr(
     Err(e) => return @types.Response::Err(e.validation_detail_or_message())
     Ok(_) => ()
   }
+  let default_branch = detect_default_branch_with_capture(project_dir, capture)
   let parent_branch = match file_pr_args.parent_branch {
     Some(pb) => pb
-    None => detect_default_branch_with_capture(project_dir, capture)
+    None => default_branch
   }
   let file_pr_dir = match
     file_pr_workdir(project_dir, tracked_agent_id, registry) {
@@ -1151,7 +1157,7 @@ pub async fn interpret_file_pr(
         registry is Some(_),
       )
       let request_copilot_review = file_pr_should_request_copilot_review(
-        pr_review, parent_branch, skip_copilot_on_feature_branch,
+        pr_review, parent_branch, default_branch, skip_copilot_on_feature_branch,
       )
       if pr_review && !request_copilot_review {
         @moontrace.info("copilot_skipped_for_feature_branch", fields=[
@@ -1166,12 +1172,13 @@ pub async fn interpret_file_pr(
         tracked_agent_id,
         file_pr_dir,
         pr.number,
-        request_copilot_review,
+        pr_review,
         effects,
         poller_state,
         registry,
         runner,
         append_file~,
+        request_copilot_reviewer=request_copilot_review,
         sleep_fn~,
       )
       if resp.is_ok() {
