@@ -67,10 +67,11 @@ fn MergePrAuditGateStatus::to_wire_string(
 ///|
 pub fn merge_pr_audit_receipt_validation(
   parent_branch : String,
+  default_branch : String,
   current_head : String,
   receipt_body : String?,
 ) -> MergePrAuditReceiptValidation {
-  if !file_pr_audit_receipt_required(parent_branch) {
+  if !file_pr_audit_receipt_required(parent_branch, default_branch) {
     return MergeAuditReceiptValid
   }
   merge_pr_required_audit_receipt_validation(current_head, receipt_body)
@@ -624,6 +625,7 @@ pub fn merge_pr_preflight_block_message(
 ///|
 async fn merge_pr_audit_receipt_validation_for_head(
   parent_branch : String,
+  default_branch : String,
   project_dir : String,
   head_sha : String,
   capture : async (@workspace.Command) -> (Int, String),
@@ -636,6 +638,7 @@ async fn merge_pr_audit_receipt_validation_for_head(
   })
   merge_pr_audit_receipt_validation(
     parent_branch,
+    default_branch,
     head_sha,
     if exit_code == 0 {
       Some(receipt_body)
@@ -737,6 +740,7 @@ fn merge_pr_sanitize_branch_for_log(raw : String) -> String {
 ///|
 pub async fn merge_pr_require_audit_receipt(
   parent_branch : String,
+  default_branch : String,
   project_dir : String,
   pr_number : Int,
   head_sha : String,
@@ -745,7 +749,7 @@ pub async fn merge_pr_require_audit_receipt(
   capture : async (@workspace.Command) -> (Int, String),
   append_file? : (String, String) -> Bool = fn(_, _) { false },
 ) -> Result[Unit, @types.ChoirError] {
-  if !file_pr_audit_receipt_required(parent_branch) {
+  if !file_pr_audit_receipt_required(parent_branch, default_branch) {
     return Ok(())
   }
   if !merge_pr_audit_gate_required(gate_state, pr_first_seen_unix) {
@@ -762,7 +766,7 @@ pub async fn merge_pr_require_audit_receipt(
     )
   }
   let validation = merge_pr_audit_receipt_validation_for_head(
-    parent_branch, project_dir, head_sha, capture,
+    parent_branch, default_branch, project_dir, head_sha, capture,
   )
   match validation {
     MergeAuditReceiptValid => Ok(())
@@ -2116,6 +2120,9 @@ pub async fn interpret_merge_pr(
     ) {
     Err(e) => @types.Response::Err(e.message())
     Ok(_) => {
+      let default_branch = detect_default_branch_with_capture(
+        project_dir, capture,
+      )
       let effective_merge_strategy = merge_pr_effective_merge_strategy(
         project_dir,
         merge_args.pr_number,
@@ -2153,7 +2160,7 @@ pub async fn interpret_merge_pr(
         _ => merge_args.parent_branch
       }
       let mut merge_match_head_sha : String? = None
-      if file_pr_audit_receipt_required(effective_parent_branch) {
+      if file_pr_audit_receipt_required(effective_parent_branch, default_branch) {
         let gate_state = match
           load_gate_state(project_dir, read_file, path_exists~) {
           Ok(state) => state
@@ -2164,6 +2171,7 @@ pub async fn interpret_merge_pr(
             match
               merge_pr_require_audit_receipt(
                 effective_parent_branch,
+                default_branch,
                 project_dir,
                 merge_args.pr_number,
                 tracked.last_sha,

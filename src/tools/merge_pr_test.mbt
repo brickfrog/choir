@@ -354,6 +354,7 @@ test "merge_pr_audit_receipt_validation distinguishes valid stale missing invali
   match
     merge_pr_audit_receipt_validation(
       "main",
+      "main",
       head,
       Some(merge_pr_test_audit_receipt(head)),
     ) {
@@ -362,6 +363,7 @@ test "merge_pr_audit_receipt_validation distinguishes valid stale missing invali
   }
   match
     merge_pr_audit_receipt_validation(
+      "main",
       "main",
       head,
       Some(merge_pr_test_audit_receipt(other)),
@@ -372,18 +374,20 @@ test "merge_pr_audit_receipt_validation distinguishes valid stale missing invali
     }
     _ => fail("expected stale receipt")
   }
-  match merge_pr_audit_receipt_validation("main", head, None) {
+  match merge_pr_audit_receipt_validation("main", "main", head, None) {
     MergeAuditReceiptMissing(short_sha) =>
       assert_eq(short_sha, file_pr_short_sha(head))
     _ => fail("expected missing receipt")
   }
-  match merge_pr_audit_receipt_validation("main", head, Some("{not json")) {
+  match
+    merge_pr_audit_receipt_validation("main", "main", head, Some("{not json")) {
     MergeAuditReceiptInvalid(short_sha) =>
       assert_eq(short_sha, file_pr_short_sha(head))
     _ => fail("expected invalid receipt")
   }
   match
     merge_pr_audit_receipt_validation(
+      "main",
       "main",
       head,
       Some(merge_pr_test_audit_receipt_with_findings(head, 2)),
@@ -396,6 +400,7 @@ test "merge_pr_audit_receipt_validation distinguishes valid stale missing invali
   }
   match
     merge_pr_audit_receipt_validation(
+      "main",
       "main",
       head,
       Some(
@@ -411,9 +416,23 @@ test "merge_pr_audit_receipt_validation distinguishes valid stale missing invali
 }
 
 ///|
+test "merge_pr audit validation applies to resolved default branch" {
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  match merge_pr_audit_receipt_validation("master", "master", head, None) {
+    MergeAuditReceiptMissing(short_sha) =>
+      assert_eq(short_sha, file_pr_short_sha(head))
+    _ => fail("expected audit receipt requirement on master default branch")
+  }
+  match merge_pr_audit_receipt_validation("feature/x", "master", head, None) {
+    MergeAuditReceiptValid => ()
+    _ => fail("expected feature branch parent to skip audit gate")
+  }
+}
 
 ///|
-async test "interpret_merge_pr missing audit receipt policy-blocks without spawning worker" {
+
+///|
+async test "interpret_merge_pr missing audit receipt policy-blocks on master default branch" {
   let project_dir = "/tmp/choir-mpr-audit-missing-no-spawn-" +
     @sys.get_pid().to_string()
   let head = "abcdef1234567890abcdef1234567890abcdef12"
@@ -422,7 +441,7 @@ async test "interpret_merge_pr missing audit receipt policy-blocks without spawn
     93,
     "main.leaf",
     "feature/audit-gate",
-    "main",
+    "master",
     "https://github.com/o/r/pull/93",
     200L,
     @poller.ReviewState::Approved,
@@ -437,7 +456,7 @@ async test "interpret_merge_pr missing audit receipt policy-blocks without spawn
   let resp = interpret_merge_pr(
     {
       pr_number: 93,
-      parent_branch: "main",
+      parent_branch: "master",
       caller_id: "main.tl",
       review_mode: Some(@types.ReviewMode::SinglePass),
     },
@@ -472,7 +491,7 @@ async test "interpret_merge_pr missing audit receipt policy-blocks without spawn
       }
       if cmd.program == "git" &&
         cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
-        return (0, "origin/main\n")
+        return (0, "origin/master\n")
       }
       if cmd.program == "git" &&
         cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {

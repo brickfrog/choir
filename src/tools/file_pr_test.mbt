@@ -4,6 +4,13 @@ fn file_pr_test_tdd_done(_agent_id : String) -> @types.LeafTddPhase? {
 }
 
 ///|
+test "file_pr_audit_receipt_required compares parent to default branch" {
+  assert_true(file_pr_audit_receipt_required("develop", "develop"))
+  assert_false(file_pr_audit_receipt_required("develop", "main"))
+  assert_true(file_pr_audit_receipt_required("main", "main"))
+}
+
+///|
 test "file_pr_plan builds tracked result when tracking enabled" {
   let args : FilePrArgs = {
     branch: "main.task-leaf",
