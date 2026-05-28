@@ -215,6 +215,13 @@ pub fn config_schema_entries() -> Array[ConfigSchemaEntry] {
     ),
     schema_entry(
       ConfigToml,
+      "pr_policy.skip_copilot_on_feature_branch",
+      "Bool",
+      "true",
+      "When true, `file_pr` skips Copilot reviewer requests for PRs targeting non-default parent branches.",
+    ),
+    schema_entry(
+      ConfigToml,
       "auto_rebuild_after_pull",
       "Bool",
       "false",

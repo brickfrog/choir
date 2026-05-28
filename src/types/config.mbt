@@ -4,11 +4,12 @@ pub let heartbeat_sec_max : Int = 2_147_483
 ///|
 pub(all) struct PrPolicy {
   require_integration_audit : Bool
+  skip_copilot_on_feature_branch : Bool
 } derive(Debug, Eq)
 
 ///|
 pub fn PrPolicy::default() -> PrPolicy {
-  { require_integration_audit: true }
+  { require_integration_audit: true, skip_copilot_on_feature_branch: true }
 }
 
 ///|

@@ -23,6 +23,7 @@ test "parse_config - full" {
     #|auto_reload_after_rebuild = true
     #|[pr_policy]
     #|require_integration_audit = false
+    #|skip_copilot_on_feature_branch = false
 
   let cfg = parse_config(content).unwrap()
   assert_eq(cfg.default_role, @types.Role::Dev)
@@ -58,6 +59,7 @@ test "parse_config - full" {
   assert_eq(cfg.agy_migration_incomplete, true)
   assert_eq(cfg.auto_pull_after_integration, false)
   assert_eq(cfg.pr_policy.require_integration_audit, false)
+  assert_eq(cfg.pr_policy.skip_copilot_on_feature_branch, false)
   assert_eq(cfg.auto_rebuild_after_pull, true)
   assert_eq(cfg.auto_reload_after_rebuild, true)
 }
@@ -78,6 +80,9 @@ test "config schema nested keys match parser-accepted TOML shape" {
   assert_true(
     config_schema_key_present(file, "pr_policy.require_integration_audit"),
   )
+  assert_true(
+    config_schema_key_present(file, "pr_policy.skip_copilot_on_feature_branch"),
+  )
   assert_false(config_schema_key_present(file, "pr_policy"))
   assert_true(config_schema_key_present(file, "pricing.<agent_type>.rate_in"))
   assert_true(config_schema_key_present(file, "pricing.<agent_type>.rate_out"))
@@ -87,6 +92,7 @@ test "config schema nested keys match parser-accepted TOML shape" {
     (
       #|[pr_policy]
       #|require_integration_audit = false
+      #|skip_copilot_on_feature_branch = false
       #|
       #|[pricing.codex]
       #|rate_in = 0.01
@@ -94,6 +100,7 @@ test "config schema nested keys match parser-accepted TOML shape" {
     ),
   ).unwrap()
   assert_eq(cfg.pr_policy.require_integration_audit, false)
+  assert_eq(cfg.pr_policy.skip_copilot_on_feature_branch, false)
   match cfg.pricing.get("codex") {
     Some(rate) => {
       assert_eq(rate.rate_in, 0.01)
@@ -125,6 +132,7 @@ test "parse_config - minimal" {
   assert_eq(cfg.agy_migration_incomplete, false)
   assert_eq(cfg.auto_pull_after_integration, true)
   assert_eq(cfg.pr_policy.require_integration_audit, true)
+  assert_eq(cfg.pr_policy.skip_copilot_on_feature_branch, true)
   assert_eq(cfg.auto_rebuild_after_pull, false)
   assert_eq(cfg.auto_reload_after_rebuild, false)
   assert_eq(cfg.moon_verify_target, @types.MoonVerifyTarget::Native)
@@ -365,6 +373,23 @@ test "parse_config pr_policy require_integration_audit invalid is error" {
     Ok(_) => fail("expected invalid pr_policy.require_integration_audit")
     Err(e) =>
       assert_true(e.message().contains("pr_policy.require_integration_audit"))
+  }
+}
+
+///|
+test "parse_config pr_policy skip_copilot_on_feature_branch invalid is error" {
+  let r = parse_config(
+    (
+      #|[pr_policy]
+      #|skip_copilot_on_feature_branch = "maybe"
+    ),
+  )
+  match r {
+    Ok(_) => fail("expected invalid pr_policy.skip_copilot_on_feature_branch")
+    Err(e) =>
+      assert_true(
+        e.message().contains("pr_policy.skip_copilot_on_feature_branch"),
+      )
   }
 }
 

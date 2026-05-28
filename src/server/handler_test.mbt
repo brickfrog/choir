@@ -943,7 +943,10 @@ async test "refresh_pr_with pending events fires automerge after fixes and CI cl
     terminal_session,
     automerge: true,
     review_mode: @types.ReviewMode::Iterative,
-    pr_policy: { require_integration_audit: false },
+    pr_policy: {
+      require_integration_audit: false,
+      skip_copilot_on_feature_branch: true,
+    },
   }
   let state = ServerState::new(config, make_hermetic_recovery_provider())
   let parent_id = "main.tl"
@@ -2942,7 +2945,10 @@ async test "deliver_pending_poll_events fires PRMerged hook whether tracked or s
         ..@types.Config::default(),
         project_dir,
         auto_pull_after_integration: false,
-        pr_policy: { require_integration_audit: false },
+        pr_policy: {
+          require_integration_audit: false,
+          skip_copilot_on_feature_branch: true,
+        },
       },
       make_hermetic_recovery_provider(),
     )
@@ -4133,7 +4139,10 @@ async test "tracked PRMerged with missing head sha warns when integration audit 
     {
       ..@types.Config::default(),
       project_dir,
-      pr_policy: { require_integration_audit: false },
+      pr_policy: {
+        require_integration_audit: false,
+        skip_copilot_on_feature_branch: true,
+      },
     },
     make_hermetic_recovery_provider(),
   )

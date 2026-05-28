@@ -515,6 +515,15 @@ pub fn parse_config(
     Ok(v) => v
     Err(e) => return Err(e)
   }
+  let pr_policy_skip_copilot_on_feature_branch = match
+    parse_required_bool_config_value(
+      doc,
+      "pr_policy.skip_copilot_on_feature_branch",
+      default_cfg.pr_policy.skip_copilot_on_feature_branch,
+    ) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
   let auto_rebuild_after_pull = match
     parse_required_bool_config_value(
       doc,
@@ -564,6 +573,7 @@ pub fn parse_config(
     auto_pull_after_integration,
     pr_policy: {
       require_integration_audit: pr_policy_require_integration_audit,
+      skip_copilot_on_feature_branch: pr_policy_skip_copilot_on_feature_branch,
     },
     auto_rebuild_after_pull,
     auto_reload_after_rebuild,

@@ -20,8 +20,9 @@ fn expected_config_schema_keys() -> Array[String] {
     "terminal_session", "pr_review", "automerge", "review_mode", "merge_strategy",
     "moon_verify_target", "agy_migration_incomplete", "worker_no_handoff_prod_sec",
     "worker_no_handoff_escalate_sec", "poller_heartbeat_tick_sec", "prenotify_checks",
-    "auto_pull_after_integration", "pr_policy.require_integration_audit", "auto_rebuild_after_pull",
-    "auto_reload_after_rebuild", "pricing.<agent_type>.rate_in", "pricing.<agent_type>.rate_out",
+    "auto_pull_after_integration", "pr_policy.require_integration_audit", "pr_policy.skip_copilot_on_feature_branch",
+    "auto_rebuild_after_pull", "auto_reload_after_rebuild", "pricing.<agent_type>.rate_in",
+    "pricing.<agent_type>.rate_out",
   ]
 }
 
