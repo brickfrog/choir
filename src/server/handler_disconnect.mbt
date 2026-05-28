@@ -1302,7 +1302,26 @@ fn handler_disconnect_warning_count(
 }
 
 ///|
+fn handler_disconnect_string_field(
+  event : @moontrace.Event,
+  key : String,
+) -> String? {
+  for field in event.fields {
+    if field.key == key {
+      match field.value {
+        Json::String(value) => return Some(value)
+        _ => return None
+      }
+    }
+  }
+  None
+}
+
+///|
 let codex_stderr_tail_missing : String = "(no codex stderr captured)"
+
+///|
+let agy_stderr_tail_missing : String = "(no agy stderr captured)"
 
 ///|
 fn codex_stderr_warning_tail_from_content(content : String) -> String {
@@ -1379,6 +1398,33 @@ fn codex_stderr_warning_tail(
   let tail = codex_stderr_warning_tail_from_content(content)
   if tail == "" {
     codex_stderr_tail_missing
+  } else {
+    tail
+  }
+}
+
+///|
+fn agy_stderr_warning_tail(
+  project_dir : String,
+  agent_id : String,
+  file_size? : (String) -> Int = default_codex_stderr_file_size,
+  read_file? : (String) -> String = default_codex_stderr_read,
+) -> String {
+  let path = @workspace.agy_stderr_log_path(project_dir, agent_id)
+  let size = file_size(path)
+  if size <= 0 {
+    return agy_stderr_tail_missing
+  }
+  if size > CODEX_STDERR_MAX_READ_BYTES {
+    return "(agy stderr too large to tail: " + size.to_string() + " bytes)"
+  }
+  let content = read_file(path)
+  if content == "" {
+    return agy_stderr_tail_missing
+  }
+  let tail = codex_stderr_warning_tail_from_content(content)
+  if tail == "" {
+    agy_stderr_tail_missing
   } else {
     tail
   }
@@ -1471,6 +1517,12 @@ async test "startup disconnect after register emits startup prompt-gap warning" 
   )
   let parent_id = "main.tl"
   let agent_id = "main.gemini-leaf"
+  ignore(
+    @sys.write_file_sync(
+      project_dir + "/.choir/agy-main.gemini-leaf.stderr.log",
+      "agy boot\nmcp bridge disconnected\n",
+    ),
+  )
   let state = ServerState::new(
     { ..@types.Config::default(), project_dir, terminal_session: "s" },
     make_hermetic_recovery_provider(),
@@ -1525,10 +1577,11 @@ async test "startup disconnect after register emits startup prompt-gap warning" 
     1,
   )
   // Non-Codex agent: the codex_stderr_tail field MUST NOT appear in the
-  // warning. Emitting it for Gemini/Claude/MoonPilot would always read
-  // "(no codex stderr captured)" and add noise.
+  // warning. Gemini/agy has its own stderr log and warning field.
   let warning_message = "worker disconnected immediately after register (likely interactive prompt block or config gap)"
   let mut found_codex_field = false
+  let mut found_agy_tail = false
+  let mut found_agy_event = false
   for event in captured {
     if event.message != warning_message {
       continue
@@ -1538,8 +1591,19 @@ async test "startup disconnect after register emits startup prompt-gap warning" 
         found_codex_field = true
       }
     }
+    match handler_disconnect_string_field(event, "agy_stderr_tail") {
+      Some(value) if value == "agy boot\nmcp bridge disconnected" =>
+        found_agy_tail = true
+      _ => ()
+    }
+    match handler_disconnect_string_field(event, "event") {
+      Some("agy_disconnect_stderr_tail") => found_agy_event = true
+      _ => ()
+    }
   }
   assert_false(found_codex_field)
+  assert_true(found_agy_event)
+  assert_true(found_agy_tail)
   ignore(@sys.rm_rf(project_dir))
 }
 
@@ -1762,6 +1826,16 @@ async fn ServerState::handle_disconnect_confirming_with_runner(
                 @moontrace.field(
                   "codex_stderr_tail",
                   codex_stderr_warning_tail(self.config.project_dir, agent_id),
+                ),
+              )
+            } else if agent.agent_type == @types.AgentType::Gemini {
+              fields.push(
+                @moontrace.field("event", "agy_disconnect_stderr_tail"),
+              )
+              fields.push(
+                @moontrace.field(
+                  "agy_stderr_tail",
+                  agy_stderr_warning_tail(self.config.project_dir, agent_id),
                 ),
               )
             }

@@ -357,6 +357,13 @@ test "agent_launch_command for each AgentType" {
   assert_true(cmd_gemini_body.contains("--dangerously-skip-permissions"))
   assert_true(cmd_gemini_body.contains("--prompt-interactive"))
   assert_true(cmd_gemini_body.contains("fix bugs"))
+  // Truncate-on-open (`2>` not `2>>`) so a fast agy disconnect leaves a
+  // single-run stderr log for the warning tail.
+  assert_true(cmd_gemini_body.contains(" 2>"))
+  assert_false(cmd_gemini_body.contains(" 2>>"))
+  assert_true(
+    cmd_gemini_body.contains("/path/.choir/agy-main.test-slug.stderr.log"),
+  )
   @debug.assert_eq(cmd_gemini.workdir, Some("/path"))
 
   assert_true(cmd_moon_body.contains("moon"))
@@ -414,6 +421,18 @@ test "agent_pid_file_path sanitizes agent ids as flat filenames" {
   assert_eq(
     @workspace.agent_pid_file_path("/project", "../../evil\\agent\u0000pid"),
     "/project/.choir/pids/.._.._evil_agent_pid",
+  )
+}
+
+///|
+test "agy_stderr_log_path sanitizes agent ids as flat filenames" {
+  assert_eq(
+    @workspace.agy_stderr_log_relpath("../../evil\\agent\u0000pid"),
+    ".choir/agy-.._.._evil_agent_pid.stderr.log",
+  )
+  assert_eq(
+    @workspace.agy_stderr_log_path("/project", "main.leaf"),
+    "/project/.choir/agy-main.leaf.stderr.log",
   )
 }
 

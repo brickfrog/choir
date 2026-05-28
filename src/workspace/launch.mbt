@@ -43,6 +43,16 @@ pub fn codex_stderr_log_path(project_dir : String, agent_id : String) -> String 
 }
 
 ///|
+pub fn agy_stderr_log_relpath(agent_id : String) -> String {
+  ".choir/agy-" + @types.sanitize_agent_id(agent_id) + ".stderr.log"
+}
+
+///|
+pub fn agy_stderr_log_path(project_dir : String, agent_id : String) -> String {
+  project_dir + "/" + agy_stderr_log_relpath(agent_id)
+}
+
+///|
 pub fn agent_pid_file_path(project_dir : String, agent_id : String) -> String {
   project_dir + "/.choir/pids/" + @types.sanitize_agent_id(agent_id)
 }
@@ -294,14 +304,17 @@ fn provider_launch_command(
       }
     }
     Gemini =>
-      {
-        program: cmd_program.unwrap_or(agy_binary_name()),
-        args: [
-          ..cmd_extra_args, "--dangerously-skip-permissions", "--prompt-interactive",
-          ..task_args,
-        ],
-        workdir: Some(workspace_path),
-      }
+      wrap_with_stderr_redirect(
+        {
+          program: cmd_program.unwrap_or(agy_binary_name()),
+          args: [
+            ..cmd_extra_args, "--dangerously-skip-permissions", "--prompt-interactive",
+            ..task_args,
+          ],
+          workdir: Some(workspace_path),
+        },
+        agy_stderr_log_path(project_dir, agent_id),
+      )
     MoonPilot =>
       {
         program: cmd_program.unwrap_or("moon"),
