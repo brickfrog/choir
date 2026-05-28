@@ -410,6 +410,14 @@ test "agent_launch_command for each AgentType" {
 }
 
 ///|
+test "agent_pid_file_path sanitizes agent ids as flat filenames" {
+  assert_eq(
+    @workspace.agent_pid_file_path("/project", "../../evil\\agent\u0000pid"),
+    "/project/.choir/pids/.._.._evil_agent_pid",
+  )
+}
+
+///|
 test "agent_launch_command wraps with shell_command" {
   let spec = @types.SpawnSpec::{
     slug: "test-slug",

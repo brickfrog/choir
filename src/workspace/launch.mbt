@@ -44,23 +44,7 @@ pub fn codex_stderr_log_path(project_dir : String, agent_id : String) -> String 
 
 ///|
 pub fn agent_pid_file_path(project_dir : String, agent_id : String) -> String {
-  project_dir + "/.choir/pids/" + agent_id
-}
-
-///|
-fn agent_pid_file_dir(project_dir : String, agent_id : String) -> String {
-  let base = project_dir + "/.choir/pids"
-  let mut last_slash = -1
-  for i = 0; i < agent_id.length(); i = i + 1 {
-    if agent_id[i] == '/' {
-      last_slash = i
-    }
-  }
-  if last_slash < 0 {
-    base
-  } else {
-    base + "/" + agent_id[:last_slash].to_owned()
-  }
+  project_dir + "/.choir/pids/" + @types.sanitize_agent_id(agent_id)
 }
 
 ///|
@@ -94,7 +78,7 @@ fn wrap_with_setsid_and_pgroup_cleanup(
     quoted_args.push(shell_escape(arg))
   }
   let pid_path = agent_pid_file_path(project_dir, agent_id)
-  let pid_dir = agent_pid_file_dir(project_dir, agent_id)
+  let pid_dir = project_dir + "/.choir/pids"
   let wrapped = "mkdir -p " +
     shell_escape(pid_dir) +
     " && printf '%s' \"$$\" > " +
