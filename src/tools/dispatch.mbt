@@ -873,6 +873,7 @@ pub async fn dispatch(
     ()
   },
   pr_review? : Bool = true,
+  skip_copilot_on_feature_branch? : Bool = @types.Config::default().pr_policy.skip_copilot_on_feature_branch,
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
   merge_strategy? : @types.MergeStrategy = @types.Config::default().merge_strategy,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
@@ -1216,6 +1217,7 @@ pub async fn dispatch(
         task_contract_reader~,
         tdd_phase_reader~,
         moon_verify_target~,
+        skip_copilot_on_feature_branch~,
         sleep_fn~,
       )
     ToolRequest::TddIntent(args) =>
@@ -1989,6 +1991,7 @@ pub async fn handle_request(
   list_panes_cache? : Map[String, CachedListPanesSnapshot]? = None,
   plugins_json? : String? = None,
   pr_review? : Bool = true,
+  skip_copilot_on_feature_branch? : Bool = @types.Config::default().pr_policy.skip_copilot_on_feature_branch,
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
   merge_strategy? : @types.MergeStrategy = @types.Config::default().merge_strategy,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
@@ -2115,6 +2118,7 @@ pub async fn handle_request(
                   caller_role=req.role,
                   on_resolve_review_thread~,
                   pr_review~,
+                  skip_copilot_on_feature_branch~,
                   global_review_mode~,
                   merge_strategy~,
                   moon_verify_target~,
@@ -2268,6 +2272,7 @@ pub async fn dispatch_call(
   tdd_state_writer? : (String, @types.LeafTddState) -> Unit = fn(_, _) { () },
   list_panes_cache? : Map[String, CachedListPanesSnapshot]? = None,
   pr_review? : Bool = true,
+  skip_copilot_on_feature_branch? : Bool = @types.Config::default().pr_policy.skip_copilot_on_feature_branch,
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
   merge_strategy? : @types.MergeStrategy = @types.Config::default().merge_strategy,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
@@ -2338,6 +2343,7 @@ pub async fn dispatch_call(
                   caller_id=tool_args_get(tool_args, "caller_id"),
                   caller_role=call.role,
                   pr_review~,
+                  skip_copilot_on_feature_branch~,
                   global_review_mode~,
                   merge_strategy~,
                   moon_verify_target~,

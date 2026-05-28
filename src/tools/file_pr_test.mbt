@@ -1828,6 +1828,91 @@ async test "interpret_file_pr requests reviewer after verify push and ensure_pr"
 }
 
 ///|
+async fn file_pr_copilot_requested_reviewers_for_parent(
+  parent_branch : String,
+  skip_copilot_on_feature_branch : Bool,
+) -> Array[String] {
+  let project_dir = "/tmp/choir-fpr-copilot-policy-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    parent_branch.replace(old="/", new="-") +
+    "-" +
+    skip_copilot_on_feature_branch.to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let requested_reviewers : Array[String] = []
+  let got = interpret_file_pr(
+    {
+      branch: "feature/copilot-policy.leaf",
+      parent_branch: Some(parent_branch),
+      tracked_agent_id: "feature/copilot-policy.leaf",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    None,
+    true,
+    mock_preflight_ok,
+    async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      let codes : Array[Int] = []
+      for cmd in cmds {
+        for i = 0; i + 1 < cmd.args.length(); i = i + 1 {
+          if cmd.args[i] == "--add-reviewer" {
+            requested_reviewers.push(cmd.args[i + 1])
+          }
+        }
+        codes.push(0)
+      }
+      codes
+    },
+    fn(cmd : @workspace.Command) -> (Int, String) {
+      if cmd.program == "git" && cmd.args == ["rev-parse", "HEAD"] {
+        (0, "abcdef1234567890abcdef1234567890abcdef12\n")
+      } else {
+        (0, "")
+      }
+    },
+    mock_ensure_pr_ok,
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
+    skip_copilot_on_feature_branch~,
+    sleep_fn=file_pr_test_no_sleep,
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    @types.Response::Err(msg) => fail("expected file_pr success: " + msg)
+  }
+  ignore(@sys.rm_rf(project_dir))
+  requested_reviewers
+}
+
+///|
+async test "interpret_file_pr gates copilot reviewer request by parent branch policy" {
+  let feature_enabled = file_pr_copilot_requested_reviewers_for_parent(
+    "feature/foo", true,
+  )
+  assert_false(feature_enabled.contains("@copilot"))
+
+  let main_enabled = file_pr_copilot_requested_reviewers_for_parent(
+    "main", true,
+  )
+  assert_true(main_enabled.contains("@copilot"))
+
+  let feature_disabled = file_pr_copilot_requested_reviewers_for_parent(
+    "feature/foo", false,
+  )
+  assert_true(feature_disabled.contains("@copilot"))
+
+  let main_disabled = file_pr_copilot_requested_reviewers_for_parent(
+    "main", false,
+  )
+  assert_true(main_disabled.contains("@copilot"))
+}
+
+///|
 test "file_pr_copilot_review_comment_body uses @copilot review prefix" {
   assert_eq(
     file_pr_copilot_review_comment_body("plan vs interpret"),

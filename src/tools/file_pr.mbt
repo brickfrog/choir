@@ -331,6 +331,15 @@ pub async fn file_pr_request_copilot_reviewer(
 }
 
 ///|
+pub fn file_pr_should_request_copilot_review(
+  pr_review : Bool,
+  parent_branch : String,
+  skip_copilot_on_feature_branch : Bool,
+) -> Bool {
+  pr_review && !(skip_copilot_on_feature_branch && parent_branch != "main")
+}
+
+///|
 /// Post-`ensure_pull_request` host path: poller ensure/write, dev lifecycle
 /// event, optional parent auto-notify (delivery log + `execute_delivery` +
 /// moontrace), optional best-effort Copilot reviewer request (`gh pr edit
@@ -1053,6 +1062,7 @@ pub async fn interpret_file_pr(
   task_contract_reader? : (String) -> @types.TaskContract? = fn(_) { None },
   tdd_phase_reader? : (String) -> @types.LeafTddPhase? = fn(_) { None },
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
+  skip_copilot_on_feature_branch? : Bool = @types.Config::default().pr_policy.skip_copilot_on_feature_branch,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> @types.Response {
   let branch = file_pr_args.branch
@@ -1140,6 +1150,15 @@ pub async fn interpret_file_pr(
         poller_state is Some(_),
         registry is Some(_),
       )
+      let request_copilot_review = file_pr_should_request_copilot_review(
+        pr_review, parent_branch, skip_copilot_on_feature_branch,
+      )
+      if pr_review && !request_copilot_review {
+        @moontrace.info("copilot_skipped_for_feature_branch", fields=[
+          @moontrace.field("pr_number", pr.number),
+          @moontrace.field("parent_branch", parent_branch),
+        ])
+      }
       let resp = interpret_file_pr_post_success(
         project_dir,
         session,
@@ -1147,7 +1166,7 @@ pub async fn interpret_file_pr(
         tracked_agent_id,
         file_pr_dir,
         pr.number,
-        pr_review,
+        request_copilot_review,
         effects,
         poller_state,
         registry,
