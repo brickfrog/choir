@@ -665,8 +665,11 @@ async fn file_pr_current_head_sha(
 }
 
 ///|
-pub fn file_pr_audit_receipt_required(parent_branch : String) -> Bool {
-  parent_branch == "main"
+pub fn file_pr_audit_receipt_required(
+  parent_branch : String,
+  default_branch : String,
+) -> Bool {
+  parent_branch == default_branch
 }
 
 ///|

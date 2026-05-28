@@ -3601,8 +3601,7 @@ async test "A: unaudited PRMerged event does NOT fire completion hooks" {
       state.process_poller_tick_with_test(
         1000L,
         900L,
-        async fn(_pr_number, _skip_issue_comment_fetch) {
-          @async.sleep(0)
+        fn(_pr_number, _skip_issue_comment_fetch) {
           (
             true,
             @poller.ReviewState::Approved,
@@ -3616,12 +3615,8 @@ async test "A: unaudited PRMerged event does NOT fire completion hooks" {
             Some(4102358400L),
           )
         },
-        runner=async fn(cmds : Array[@workspace.Command]) {
-          @async.sleep(0)
-          cmds.map(fn(_) { 0 })
-        },
-        capture=async fn(cmd : @workspace.Command) {
-          @async.sleep(0)
+        runner=fn(cmds : Array[@workspace.Command]) { cmds.map(fn(_) { 0 }) },
+        capture=fn(cmd : @workspace.Command) {
           if cmd.program == "git" &&
             cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
             if !default_branch_lookup_ok {
@@ -3648,10 +3643,7 @@ async test "A: unaudited PRMerged event does NOT fire completion hooks" {
           }
           (0, "")
         },
-        automerge_capture=async fn(_cmd : @workspace.Command) {
-          @async.sleep(0)
-          (0, "")
-        },
+        automerge_capture=fn(_cmd : @workspace.Command) { (0, "") },
         hook_capture=fn(
           _path : String,
           _input_json : String,
@@ -3660,18 +3652,16 @@ async test "A: unaudited PRMerged event does NOT fire completion hooks" {
           hook_calls = hook_calls + 1
           (0, "hook")
         },
-        git_state_capture=async fn(
+        git_state_capture=fn(
           _workdir : String,
           _capture : async (@workspace.Command) -> (Int, String),
         ) -> ParentWorktreeGitState? {
-          @async.sleep(0)
           Some(parent_worktree_git_state(default_branch, true))
         },
-        git_pull_runner=async fn(
+        git_pull_runner=fn(
           _workdir : String,
           _capture : async (@workspace.Command) -> (Int, String),
         ) -> Bool {
-          @async.sleep(0)
           pull_calls = pull_calls + 1
           true
         },
