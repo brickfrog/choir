@@ -1215,7 +1215,6 @@ fn is_staged_existing_exec_default(
 
 ///|
 fn is_explicit_real_exec_integration_test(env : LintEnv) -> Bool {
-  env.file.has_prefix("src/exec/") &&
   current_decl_name(env).has_prefix("test:real exec integration:")
 }
 
@@ -1256,10 +1255,14 @@ fn check_test_apply(
           )
       }
     Some(ProcessCommand) =>
-      emit(
-        env, "test-direct-process", "test files must not use @process directly; use injected adapters or exec-package helpers",
-        loc,
-      )
+      if is_explicit_real_exec_integration_test(env) {
+        ()
+      } else {
+        emit(
+          env, "test-direct-process", "test files must not use @process directly; use injected adapters or exec-package helpers",
+          loc,
+        )
+      }
     Some(ExecCapture) =>
       if is_reported_direct_reference_alias(env, func) ||
         is_explicit_real_exec_integration_test(env) {

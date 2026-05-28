@@ -6288,6 +6288,49 @@ async test "transport disconnect preserves suspended registry state" {
 }
 
 ///|
+async test "register reads pid sidecar into tracked agent pids" {
+  let project_dir = "/tmp/choir-register-pid-sidecar-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/pids"))
+  let agent_id = "main.pid-sidecar-leaf"
+  let pid_path = @workspace.agent_pid_file_path(project_dir, agent_id)
+  assert_true(@sys.write_file_sync(pid_path, "4321\n"))
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      terminal_session: "test-session",
+    },
+    make_hermetic_recovery_provider(),
+  )
+
+  let register_resp = state.handle_with_runner(
+    @types.Request::{
+      req_method: "register",
+      role: @types.Role::Dev,
+      name: "register",
+      args: @types.RequestArgs::new({
+        "agent_id": agent_id,
+        "parent_id": "main.tl",
+        "workspace": project_dir + "/.choir/worktrees/pid-sidecar-leaf",
+        "branch": agent_id,
+        "agent_type": "codex",
+      }),
+    },
+    runner=async fn(_cmds) {
+      @async.sleep(0)
+      []
+    },
+  )
+  assert_true(register_resp.is_ok())
+  @debug.assert_eq(state.agent_pids.get(agent_id), Some(4321))
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "register reconnect preserves suspended registry state" {
   let project_dir = "/tmp/choir-suspended-register-reconnect-" +
     @sys.get_pid().to_string() +

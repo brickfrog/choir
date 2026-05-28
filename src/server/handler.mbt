@@ -107,6 +107,41 @@ fn emit_span(
 }
 
 ///|
+fn ServerState::register_agent_pid_from_sidecar(
+  self : ServerState,
+  agent_id : String,
+) -> Unit {
+  let path = @workspace.agent_pid_file_path(self.config.project_dir, agent_id)
+  if !@exec.path_entry_exists(path) {
+    @moontrace.warn("agent pid sidecar missing at register", fields=[
+      @moontrace.field("agent_id", agent_id),
+      @moontrace.field("path", path),
+    ])
+    return
+  }
+  let raw = (self.read_file)(path).trim().to_owned()
+  let pid = @string.parse_int(raw) catch {
+    e => {
+      @moontrace.warn("agent pid sidecar parse failed at register", fields=[
+        @moontrace.field("agent_id", agent_id),
+        @moontrace.field("path", path),
+        @moontrace.field("error", e.to_string()),
+      ])
+      return
+    }
+  }
+  if pid <= 1 {
+    @moontrace.warn("agent pid sidecar invalid at register", fields=[
+      @moontrace.field("agent_id", agent_id),
+      @moontrace.field("path", path),
+      @moontrace.field("pid", pid),
+    ])
+    return
+  }
+  self.register_agent_pid(agent_id, pid)
+}
+
+///|
 pub async fn ServerState::handle(
   self : ServerState,
   req : @types.Request,
@@ -245,7 +280,10 @@ pub async fn ServerState::handle_with_runner_and_capture(
         try self.registry.get(agent_id) catch {
           _ => ()
         } noraise {
-          agent => self.register_agent(agent)
+          agent => {
+            self.register_agent(agent)
+            self.register_agent_pid_from_sidecar(agent_id)
+          }
         }
       None => ()
     }
