@@ -236,7 +236,7 @@ pub fn spawn_worker_plan(
   resolved_parent_branch : String,
   session : String,
   project_dir : String,
-  isolation? : @types.IsolationMode = @types.IsolationMode::Inline,
+  isolation? : @types.IsolationMode = @types.IsolationMode::InlineDedicatedTab,
 ) -> SpawnWorkerPlan {
   let spec = @types.SpawnSpec::{
     slug: worker_args.slug,
@@ -476,7 +476,7 @@ pub async fn interpret_spawn_worker(
   listen_uds? : String = ".choir/server.sock",
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
-  isolation? : @types.IsolationMode = @types.IsolationMode::Inline,
+  isolation? : @types.IsolationMode = @types.IsolationMode::InlineDedicatedTab,
   record_task_contract? : (String, @types.TaskContract?) -> Unit = fn(
     _agent_id,
     _contract,

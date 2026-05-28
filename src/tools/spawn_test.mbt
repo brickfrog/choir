@@ -116,7 +116,7 @@ async test "dispatch rejects fork_wave gemini when agy migration is incomplete" 
 }
 
 ///|
-test "spawn_worker_plan builds inline worker spec registry row and response" {
+test "spawn_worker_plan builds default dedicated-tab worker spec registry row and response" {
   let worker_args : WorkerSpawnArgs = {
     task: "t",
     task_contract: {
@@ -133,13 +133,13 @@ test "spawn_worker_plan builds inline worker spec registry row and response" {
   assert_eq(plan.spec.parent_branch, "develop")
   assert_eq(plan.spec.slug, "w1")
   assert_eq(plan.spec.role, @types.Role::Worker)
-  assert_eq(plan.spec.isolation, @types.IsolationMode::Inline)
+  assert_eq(plan.spec.isolation, @types.IsolationMode::InlineDedicatedTab)
   assert_eq(plan.spec.parent_id, "main.tl")
   assert_eq(plan.spec.spawn_depth, 0)
   let expected_tt = @workspace.local_target_for(
     "sess",
     "w1",
-    @types.IsolationMode::Inline,
+    @types.IsolationMode::InlineDedicatedTab,
   )
   assert_eq(plan.terminal_target, expected_tt)
   assert_eq(plan.registry_agent.role, @types.Role::Worker)
@@ -441,7 +441,7 @@ async test "interpret_spawn_worker registers agent on success" {
 }
 
 ///|
-async test "interpret_spawn_worker gemini seeds agy shared cache before inline launch" {
+async test "interpret_spawn_worker gemini seeds agy shared cache before default worker launch" {
   let worker_args : WorkerSpawnArgs = {
     task: "unit",
     task_contract: { ..@types.TaskContract::empty(), goal: "unit" },
