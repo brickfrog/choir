@@ -19,7 +19,7 @@ fn default_path_exists(path : String) -> Bool {
 }
 
 ///|
-pub fn agent_task_contracts_path(project_dir : String) -> String {
+fn agent_task_contracts_path(project_dir : String) -> String {
   project_dir + "/.choir/agent-task-contracts.json"
 }
 
@@ -550,7 +550,7 @@ test "ServerState::new restores persisted agent task contracts from cold boot st
 }
 
 ///|
-test "record_agent_task_contract writes full map through reload task contract parser" {
+test "record_agent_task_contract writes boot-readable full map envelope" {
   let project_dir = "/tmp/choir-agent-contract-write-" +
     @sys.get_pid().to_string() +
     "-" +
@@ -607,17 +607,24 @@ test "record_agent_task_contract writes full map through reload task contract pa
 
   assert_eq(writes.length(), 2)
   assert_eq(writes[1].0, agent_task_contracts_path(project_dir))
-  let json = @json.parse(writes[1].1) catch {
-    _ => fail("expected persisted task contracts JSON to parse")
-  }
-  guard json is Object(root) else {
-    fail("expected persisted task contracts JSON object")
-  }
-  let parsed = match
-    server_reload_parse_task_contract_map(root.get("agent_task_contracts")) {
-    Ok(value) => value
-    Err(e) => fail(e.message())
-  }
+  let quarantine_writes : Array[(String, String)] = []
+  let parsed = load_agent_task_contracts_for_boot(
+    project_dir,
+    fn(path) { path == agent_task_contracts_path(project_dir) },
+    fn(path) {
+      if path == agent_task_contracts_path(project_dir) {
+        writes[1].1
+      } else {
+        ""
+      }
+    },
+    fn(path, content) {
+      quarantine_writes.push((path, content))
+      true
+    },
+    fn() { 1779970110L },
+  )
+  assert_eq(quarantine_writes.length(), 0)
   @debug.assert_eq(
     parsed.get("leaf-agent-contract-write-a"),
     Some(first_contract),
