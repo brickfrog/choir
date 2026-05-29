@@ -33,6 +33,7 @@ fn merge_user_skills_into_plugin(
       entry == "crystallize" ||
       entry == "decompose" ||
       entry == "tl-stance" ||
+      entry == "onboard" ||
       entry == "ship-pr" ||
       entry == "dispatch-leaf" {
       let msg = "choir claude: user skill '" +
@@ -143,6 +144,20 @@ fn synthesize_plugin_dir(
     ) {
     return Err(
       @types.ChoirError::workspace_error("failed to write tl-stance/SKILL.md"),
+    )
+  }
+
+  if !@sys.create_dir_all(plugin_dir + "/skills/onboard") {
+    return Err(
+      @types.ChoirError::workspace_error("failed to create skills/onboard dir"),
+    )
+  }
+  if !@sys.write_file_sync(
+      plugin_dir + "/skills/onboard/SKILL.md",
+      @prompts.load_prompt(@prompts.PromptName::OnboardSkill, project_dir),
+    ) {
+    return Err(
+      @types.ChoirError::workspace_error("failed to write onboard/SKILL.md"),
     )
   }
 
@@ -569,6 +584,7 @@ test "synthesize_plugin_dir produces all builtin skill directories" {
   assert_true(@sys.path_entry_exists(tmp + "/.choir/plugin/skills/crystallize"))
   assert_true(@sys.path_entry_exists(tmp + "/.choir/plugin/skills/decompose"))
   assert_true(@sys.path_entry_exists(tmp + "/.choir/plugin/skills/tl-stance"))
+  assert_true(@sys.path_entry_exists(tmp + "/.choir/plugin/skills/onboard"))
   assert_true(@sys.path_entry_exists(tmp + "/.choir/plugin/skills/ship-pr"))
   assert_true(
     @sys.path_entry_exists(tmp + "/.choir/plugin/skills/dispatch-leaf"),
@@ -585,6 +601,7 @@ test "synthesize_plugin_dir produces all builtin skill directories" {
   assert_true(
     @sys.path_exists(tmp + "/.choir/plugin/skills/tl-stance/SKILL.md"),
   )
+  assert_true(@sys.path_exists(tmp + "/.choir/plugin/skills/onboard/SKILL.md"))
   assert_true(@sys.path_exists(tmp + "/.choir/plugin/skills/ship-pr/SKILL.md"))
   assert_true(
     @sys.path_exists(tmp + "/.choir/plugin/skills/dispatch-leaf/SKILL.md"),

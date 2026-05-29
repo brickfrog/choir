@@ -124,6 +124,32 @@ test "load_prompt returns fallback when file is missing" {
 }
 
 ///|
+test "onboard is a registered skill prompt with a baked fallback body" {
+  let mut found = false
+  for name in all_prompt_names() {
+    if name == PromptName::OnboardSkill {
+      found = true
+    }
+  }
+  assert_true(found)
+  assert_eq(
+    prompt_relative_path(PromptName::OnboardSkill),
+    ".choir/prompts/skills/onboard.md",
+  )
+  let fs = PromptFs::new()
+  let body = load_prompt(
+    PromptName::OnboardSkill,
+    "/repo",
+    path_exists=fn(p) { fs.exists(p) },
+    read_file=fn(p) { fs.read(p) },
+  )
+  assert_true(body.has_prefix("---\nname: onboard\n"))
+  assert_true(body.contains("Inspect a fresh target repo"))
+  assert_true(body.contains("Stage and stop for human review"))
+  assert_true(body.has_suffix("\n"))
+}
+
+///|
 test "detect_prompt_drift truth table" {
   assert_false(detect_prompt_drift(None, "default"))
   assert_false(detect_prompt_drift(Some("default"), "default"))
