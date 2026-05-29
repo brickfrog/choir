@@ -122,6 +122,7 @@ fn ServerState::clear_agent_runtime_tracking(
   self.worker_no_handoff_stalled_emitted.remove(agent_id)
   self.handoff_delivered.remove(agent_id)
   self.worker_no_handoff_exit_emitted.remove(agent_id)
+  self.spawn_registration_first_unseen.remove(agent_id)
   self.idle_agent_warned_at_70.remove(agent_id)
   self.recent_poller_event_emissions.remove(agent_id)
 }
@@ -1711,6 +1712,7 @@ test "clear_agent_runtime_tracking clears worker no-handoff maps" {
   state.worker_no_handoff_prodded_at.set(agent_id, 2L)
   state.worker_no_handoff_stalled_emitted.set(agent_id, true)
   state.worker_no_handoff_exit_emitted.set(agent_id, true)
+  state.spawn_registration_first_unseen.set(agent_id, 3L)
   state.idle_agent_warned_at_70.set(agent_id, true)
   state.recent_poller_event_emissions.set(agent_id, {
     "merge_ready": { content_hash: "hash", emitted_at_unix: 3L },
@@ -1724,6 +1726,7 @@ test "clear_agent_runtime_tracking clears worker no-handoff maps" {
   assert_eq(state.worker_no_handoff_prodded_at.contains(agent_id), false)
   assert_eq(state.worker_no_handoff_stalled_emitted.contains(agent_id), false)
   assert_eq(state.worker_no_handoff_exit_emitted.contains(agent_id), false)
+  assert_eq(state.spawn_registration_first_unseen.contains(agent_id), false)
   assert_eq(state.idle_agent_warned_at_70.contains(agent_id), false)
   assert_eq(state.recent_poller_event_emissions.contains(agent_id), false)
   ignore(@sys.rm_rf(project_dir))

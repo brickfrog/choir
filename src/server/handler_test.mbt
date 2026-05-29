@@ -7807,6 +7807,272 @@ fn worker_handoff_count_sent(sent : Array[String], needle : String) -> Int {
 }
 
 ///|
+test "spawn registration reap predicate only reaps never-registered spawning agents past deadline" {
+  assert_true(
+    spawn_registration_reap_due(
+      @types.AgentState::Spawning,
+      true,
+      10L,
+      190L,
+      180L,
+    ),
+  )
+  assert_false(
+    spawn_registration_reap_due(
+      @types.AgentState::Spawning,
+      true,
+      10L,
+      189L,
+      180L,
+    ),
+  )
+  assert_false(
+    spawn_registration_reap_due(
+      @types.AgentState::Active,
+      true,
+      10L,
+      400L,
+      180L,
+    ),
+  )
+  assert_false(
+    spawn_registration_reap_due(
+      @types.AgentState::Completing,
+      true,
+      10L,
+      400L,
+      180L,
+    ),
+  )
+  assert_false(
+    spawn_registration_reap_due(
+      @types.AgentState::Suspended,
+      true,
+      10L,
+      400L,
+      180L,
+    ),
+  )
+  assert_false(
+    spawn_registration_reap_due(
+      @types.AgentState::Spawning,
+      false,
+      10L,
+      400L,
+      180L,
+    ),
+  )
+}
+
+///|
+async fn spawn_registration_noop_poll(
+  _pr_number : Int,
+  _skip_issue_comment_fetch : Bool,
+) -> (
+  Bool,
+  @poller.ReviewState,
+  String,
+  @poller.CiRollupStatus,
+  String,
+  Bool,
+  Bool,
+  @poller.Mergeable,
+  @poller.MergeStateStatus,
+  Int64?,
+) {
+  @async.sleep(0)
+  (
+    true,
+    @poller.ReviewState::None_,
+    "",
+    @poller.CiRollupStatus::Unknown,
+    "",
+    false,
+    false,
+    @poller.Mergeable::Unknown,
+    @poller.MergeStateStatus::Unknown,
+    None,
+  )
+}
+
+///|
+async fn spawn_registration_capture_runner(
+  sent : Array[String],
+  closed : Array[String],
+  cmds : Array[@workspace.Command],
+) -> Array[Int] {
+  @async.sleep(0)
+  let statuses : Array[Int] = []
+  for cmd in cmds {
+    if cmd.program == "choir" &&
+      cmd.args.length() >= 4 &&
+      cmd.args[0] == "zellij-action" &&
+      cmd.args[1] == "send" {
+      sent.push(cmd.args[3])
+    }
+    if cmd.program == "choir" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[0] == "zellij-action" &&
+      cmd.args[1] == "close" {
+      closed.push(cmd.args[2])
+    }
+    statuses.push(0)
+  }
+  statuses
+}
+
+///|
+async fn spawn_registration_capture(cmd : @workspace.Command) -> (Int, String) {
+  @async.sleep(0)
+  if cmd.program == "git" &&
+    cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+    return (0, "origin/main\n")
+  }
+  if cmd.program == "gh" && cmd.args.contains("list") {
+    return (0, "[]")
+  }
+  (0, "")
+}
+
+///|
+async test "poller clears spawn-registration tracking when agent registers active" {
+  let state = handler_auto_close_test_state("spawn-registration-clears-active")
+  let parent_id = "main.parent"
+  let child_id = "main.spawn-clears"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.registry.upsert(
+      worker_handoff_dev(child_id, parent_id, @types.AgentState::Spawning),
+    ),
+  )
+  let sent : Array[String] = []
+  let closed : Array[String] = []
+  state.process_poller_tick_with_test(
+    100L,
+    900L,
+    spawn_registration_noop_poll,
+    runner=async fn(cmds) {
+      spawn_registration_capture_runner(sent, closed, cmds)
+    },
+    capture=spawn_registration_capture,
+  )
+  @debug.assert_eq(
+    state.spawn_registration_first_unseen.get(child_id),
+    Some(100L),
+  )
+  ignore(state.registry.set_state(child_id, @types.AgentState::Active))
+  state.process_poller_tick_with_test(
+    160L,
+    900L,
+    spawn_registration_noop_poll,
+    runner=async fn(cmds) {
+      spawn_registration_capture_runner(sent, closed, cmds)
+    },
+    capture=spawn_registration_capture,
+  )
+  @debug.assert_eq(state.spawn_registration_first_unseen.get(child_id), None)
+  assert_eq(sent.length(), 0)
+  assert_eq(closed.length(), 0)
+  ignore(@sys.rm_rf(state.config.project_dir))
+}
+
+///|
+async test "poller reaps never-registered spawning agent after first-observed deadline once" {
+  let state = handler_auto_close_test_state("spawn-registration-reap")
+  let parent_id = "main.parent"
+  let child_id = "main.spawn-zombie"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.registry.upsert(
+      worker_handoff_dev(child_id, parent_id, @types.AgentState::Spawning),
+    ),
+  )
+  let sent : Array[String] = []
+  let closed : Array[String] = []
+  state.process_poller_tick_with_test(
+    100L,
+    900L,
+    spawn_registration_noop_poll,
+    runner=async fn(cmds) {
+      spawn_registration_capture_runner(sent, closed, cmds)
+    },
+    capture=spawn_registration_capture,
+  )
+  @debug.assert_eq(
+    state.spawn_registration_first_unseen.get(child_id),
+    Some(100L),
+  )
+  state.process_poller_tick_with_test(
+    279L,
+    900L,
+    spawn_registration_noop_poll,
+    runner=async fn(cmds) {
+      spawn_registration_capture_runner(sent, closed, cmds)
+    },
+    capture=spawn_registration_capture,
+  )
+  @debug.assert_eq(
+    state.spawn_registration_first_unseen.get(child_id),
+    Some(100L),
+  )
+  @debug.assert_eq(
+    state.registry.get(child_id).state,
+    @types.AgentState::Spawning,
+  )
+  state.process_poller_tick_with_test(
+    280L,
+    900L,
+    spawn_registration_noop_poll,
+    runner=async fn(cmds) {
+      spawn_registration_capture_runner(sent, closed, cmds)
+    },
+    capture=spawn_registration_capture,
+  )
+  @debug.assert_eq(state.spawn_registration_first_unseen.get(child_id), None)
+  @debug.assert_eq(
+    state.registry.get(child_id).state,
+    @types.AgentState::Failed,
+  )
+  match @phase.read_lifecycle(state.config.project_dir, child_id) {
+    Some(
+      {
+        process: @phase.ProcessState::Failed(reason~),
+        workflow: @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::Failed(reason=workflow_reason)
+        ),
+        ..,
+      }
+    ) => {
+      assert_eq(reason, @phase.FailureReason::NeverRegistered)
+      assert_eq(workflow_reason, @phase.FailureReason::NeverRegistered)
+    }
+    Some(other) =>
+      fail(
+        "expected Failed(NeverRegistered), got: " + other.to_json().stringify(),
+      )
+    None => fail("expected failed lifecycle")
+  }
+  assert_eq(worker_handoff_count_sent(sent, "[SPAWN REGISTRATION TIMEOUT]"), 1)
+  assert_true(sent[0].contains(child_id))
+  assert_true(sent[0].contains("never registered"))
+  assert_true(sent[0].contains("first_observed=100"))
+  assert_false(sent[0].contains("first_seen="))
+  assert_eq(closed.length(), 1)
+  state.process_poller_tick_with_test(
+    500L,
+    900L,
+    spawn_registration_noop_poll,
+    runner=async fn(cmds) {
+      spawn_registration_capture_runner(sent, closed, cmds)
+    },
+    capture=spawn_registration_capture,
+  )
+  assert_eq(worker_handoff_count_sent(sent, "[SPAWN REGISTRATION TIMEOUT]"), 1)
+  assert_eq(closed.length(), 1)
+  ignore(@sys.rm_rf(state.config.project_dir))
+}
+
+///|
 fn handler_idle_warning_count(events : Array[@moontrace.Event]) -> Int {
   let mut count = 0
   for event in events {
