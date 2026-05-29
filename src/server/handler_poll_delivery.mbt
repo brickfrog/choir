@@ -2791,7 +2791,7 @@ fn spawn_registration_timeout_parent_message(
   agent_id +
   " never registered within " +
   deadline_sec.to_string() +
-  "s of first poller observation (first_seen=" +
+  "s of first poller observation (first_observed=" +
   first_unseen.to_string() +
   ", now=" +
   now.to_string() +

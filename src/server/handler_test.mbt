@@ -8055,6 +8055,8 @@ async test "poller reaps never-registered spawning agent after first-observed de
   assert_eq(worker_handoff_count_sent(sent, "[SPAWN REGISTRATION TIMEOUT]"), 1)
   assert_true(sent[0].contains(child_id))
   assert_true(sent[0].contains("never registered"))
+  assert_true(sent[0].contains("first_observed=100"))
+  assert_false(sent[0].contains("first_seen="))
   assert_eq(closed.length(), 1)
   state.process_poller_tick_with_test(
     500L,
