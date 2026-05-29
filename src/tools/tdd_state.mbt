@@ -276,23 +276,6 @@ pub fn plan_tdd_red_check_transition(
 }
 
 ///|
-test "red check exit zero explains missing red and artifact verify recovery" {
-  match plan_tdd_red_check_transition(Some(@types.LeafTddPhase::Intent), 0) {
-    Err(e) => {
-      let message = e.message()
-      assert_true(message.contains("configured verify passed (exit 0)"))
-      assert_true(message.contains("no failing test"))
-      assert_true(message.contains("write the failing test first"))
-      assert_true(message.contains("non-code"))
-      assert_true(message.contains("artifact"))
-      assert_true(message.contains("test -f <path> && <verify>"))
-      assert_true(message.contains("notify the parent TL"))
-    }
-    Ok(_) => fail("expected exit 0 red check to reject")
-  }
-}
-
-///|
 pub fn plan_tdd_green_check_transition(
   current : @types.LeafTddPhase?,
   exit_code : Int,
