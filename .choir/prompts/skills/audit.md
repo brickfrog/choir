@@ -3,11 +3,11 @@ name: audit
 description: Spawn a Sarcasmotron worker to critically audit the current branch diff.
 ---
 1. Determine the review surface.
-   - If HEAD is on a `feature/*` branch: review target is `git diff main...HEAD`.
-   - Otherwise: review target is `git diff $(git merge-base HEAD main)...HEAD`.
+   - If HEAD is on a `feature/*` branch: review target is `git diff <default_branch>...HEAD`.
+   - Otherwise: review target is `git diff $(git merge-base HEAD <default_branch>)...HEAD`.
    - Run the resulting `git diff <range>` and check that the output is non-empty.
    - If the diff is empty (no files changed in the review surface), STOP. Print:
-     `Audit skill invoked but review surface (git diff <range>) is empty. Switch to a feature branch with diff vs main, or pass an explicit comparison base. Refusing to spawn a no-op review.`
+     `Audit skill invoked but review surface (git diff <range>) is empty. Switch to a feature branch with diff vs <default_branch>, or pass an explicit comparison base. Refusing to spawn a no-op review.`
      Do NOT proceed to step 2 (`spawn_worker`).
 2. Call `spawn_worker` with a task that includes:
 
@@ -35,8 +35,9 @@ description: Spawn a Sarcasmotron worker to critically audit the current branch 
    (b) Context for the review:
    - Current branch name.
    - Review surface (the diff command from step 1).
-   - CLAUDE.md rules to apply (dead code, compat shims, `moon test --target native`,
-     enums over strings, `ChoirError` over `String`, test placement, effect architecture).
+   - Apply the conventions this repo documents in its agent doc (CLAUDE.md / AGENTS.md):
+     dead code, naming, test placement, error handling, and any architecture rules it specifies.
+   - Verify with the configured verify command.
    - Any relevant spec file from `.choir/context/<name>-spec.md`.
 
    (c) Deliverable: findings with file:line, categorized however Sarcasmotron
