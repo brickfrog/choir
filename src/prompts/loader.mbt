@@ -316,6 +316,7 @@ const ONBOARD_SKILL_DEFAULT : String =
   #|     - What was deliberately NOT done: NO commit, NO git hooks installed, and
   #|       NO git hooks modified.
   #|   - STOP. The human reviews `git status` and commits.
+  #|
 
 ///|
 const SHIP_PR_DEFAULT : String =
@@ -517,7 +518,7 @@ pub fn default_prompt(name : PromptName) -> String {
     PromptName::TlStance => TL_STANCE_DEFAULT
     PromptName::Crystallize => CRYSTALLIZE_DEFAULT
     PromptName::Decompose => DECOMPOSE_DEFAULT
-    PromptName::OnboardSkill => ONBOARD_SKILL_DEFAULT + "\n"
+    PromptName::OnboardSkill => ONBOARD_SKILL_DEFAULT
     PromptName::ShipPr => SHIP_PR_DEFAULT
     PromptName::DispatchLeaf => DISPATCH_LEAF_DEFAULT
     PromptName::LeafProfile => LEAF_PROFILE_DEFAULT
