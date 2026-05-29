@@ -162,6 +162,11 @@ pub fn parent_poll_event_message(
         default_branch~,
       )
   }
+  let review_required = @policy.review_required_for_branch(
+    skip_copilot_on_feature_branch,
+    tracked.parent_branch,
+    default_branch,
+  )
   match event {
     PRReady(n) => {
       let message = "[PR READY] " +
@@ -214,11 +219,20 @@ pub fn parent_poll_event_message(
       Some((message, @types.Status::Info))
     }
     ReviewTimeout(n) => {
+      let (summary, status) = if review_required {
+        (" — no review after timeout", @types.Status::Failure)
+      } else {
+        (
+          " — review skipped by policy; no review action required",
+          @types.Status::Info,
+        )
+      }
       let message = "[REVIEW TIMEOUT] " +
         agent_id +
         " PR #" +
         n.to_string() +
-        " — no review after timeout\n" +
+        summary +
+        "\n" +
         "branch: " +
         branch +
         "\n" +
@@ -230,7 +244,7 @@ pub fn parent_poll_event_message(
           notification_decision, n, parent_branch, merge_mode,
         ) +
         parent_poll_tl_decision_suffix(notification_decision, merge_mode)
-      Some((message, @types.Status::Failure))
+      Some((message, status))
     }
     ReviewReceived(n, comments) =>
       if comments == "" {
@@ -306,7 +320,7 @@ pub fn parent_poll_event_message(
         skip_copilot_on_feature_branch~,
         default_branch~,
       )
-      let prefix = parent_poll_ci_escalation_prefix(tracked)
+      let prefix = parent_poll_ci_escalation_prefix(tracked, review_required~)
       Some(
         (
           "[CI FAILURE CLEARED] " +
@@ -342,7 +356,7 @@ pub fn parent_poll_event_message(
         skip_copilot_on_feature_branch~,
         default_branch~,
       )
-      let prefix = parent_poll_ci_escalation_prefix(tracked)
+      let prefix = parent_poll_ci_escalation_prefix(tracked, review_required~)
       Some(
         (
           "[CI LATEST HEAD] " +
@@ -1235,6 +1249,7 @@ pub fn clamp_review_summary_for_pane(body : String) -> String {
 pub fn leaf_poll_review_injection_message(
   event : @poller.PollEvent,
   tracked : @poller.TrackedPR?,
+  review_required? : Bool = true,
 ) -> (String, @types.Status)? {
   match event {
     ReviewReceived(n, body) =>
@@ -1278,7 +1293,10 @@ pub fn leaf_poll_review_injection_message(
         ": CI no longer reports failure on latest head — verify full status on GitHub (not merge or approval)"
       let msg = match tracked {
         Some(pr) =>
-          if @poller.tl_tracked_pr_copilot_review_silent_escalation_active(pr) {
+          if @poller.tl_tracked_pr_copilot_review_silent_escalation_active(
+              pr,
+              review_required~,
+            ) {
             "[REVIEW] PR #" +
             n.to_string() +
             ": CI cleared but still no review. Run request_review(pr_number: \"" +
@@ -1297,7 +1315,10 @@ pub fn leaf_poll_review_injection_message(
         ": Actions rollup: all checks successful on latest head — re-check review thread and policy (not merge or approval by itself)"
       let msg = match tracked {
         Some(pr) =>
-          if @poller.tl_tracked_pr_copilot_review_silent_escalation_active(pr) {
+          if @poller.tl_tracked_pr_copilot_review_silent_escalation_active(
+              pr,
+              review_required~,
+            ) {
             "[REVIEW] PR #" +
             n.to_string() +
             ": CI green but still no review. Run request_review(pr_number: \"" +
@@ -1679,11 +1700,25 @@ pub fn ServerState::plan_poll_event_deliveries(
     }
   }
   // Owning leaf — direct `[REVIEW] PR #n: …` injection (terminal_target in registry)
+  let leaf_review_required = match tracked {
+    Some(pr) =>
+      @policy.review_required_for_branch(
+        self.config.pr_policy.skip_copilot_on_feature_branch,
+        pr.parent_branch,
+        default_branch,
+      )
+    None => true
+  }
   match leaf_owner {
     Some(agent) =>
       match agent.state {
         @types.AgentState::Active | @types.AgentState::Completing =>
-          match leaf_poll_review_injection_message(event, tracked) {
+          match
+            leaf_poll_review_injection_message(
+              event,
+              tracked,
+              review_required=leaf_review_required,
+            ) {
             Some((message, status)) =>
               deliveries.push({
                 recipient_id: agent.agent_id.to_string(),

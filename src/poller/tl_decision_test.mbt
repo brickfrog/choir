@@ -227,6 +227,29 @@ test "plan_tl_poll_event_parent observed merged external" {
 }
 
 ///|
+test "plan_tl_poll_event_parent suppresses timeout escalation when review not required" {
+  let t = { ..sample_tracked(None_, Success, 91), last_timeout_at: 999L }
+  assert_eq(
+    plan_tl_poll_event_parent(
+      ReviewTimeout(91),
+      t,
+      Some(0),
+      review_required=false,
+    ),
+    MergeGateOpenPendingPolicyConfirmation,
+  )
+  assert_eq(
+    plan_tl_poll_event_parent(
+      CILatestHeadRollupSucceeded(91),
+      t,
+      Some(0),
+      review_required=false,
+    ),
+    MergeGateOpenPendingPolicyConfirmation,
+  )
+}
+
+///|
 test "tl_tracked_pr_recheck_gate_line matches no blocked snapshot" {
   let t = sample_tracked(Approved, Success, 11)
   let line = tl_tracked_pr_recheck_gate_line(t, Some(0))

@@ -478,8 +478,11 @@ pub fn format_wave_rollup(
 /// reviewer-request flakiness (accepted but no review posted) vs ordinary waiting.
 pub fn tl_tracked_pr_copilot_review_silent_escalation_active(
   tracked : TrackedPR,
+  review_required? : Bool = true,
 ) -> Bool {
-  tracked.last_timeout_at > 0L && tracked.last_review_state == None_
+  review_required &&
+  tracked.last_timeout_at > 0L &&
+  tracked.last_review_state == None_
 }
 
 ///|
@@ -991,7 +994,10 @@ fn tl_snapshot_workflow_category(
   if !review_required {
     return ReadyForTLRecheck
   }
-  if tl_tracked_pr_copilot_review_silent_escalation_active(tracked) {
+  if tl_tracked_pr_copilot_review_silent_escalation_active(
+      tracked,
+      review_required~,
+    ) {
     return AttentionRequiredCopilotSilentAfterTimeout
   }
   if !tracked.copilot_issue_comment_seen {
@@ -1067,14 +1073,22 @@ pub fn plan_tl_poll_event_parent(
   )
   match event {
     PRMerged(_) => ObservedMergedExternal
-    ReviewTimeout(_) => AttentionRequiredCopilotSilentAfterTimeout
+    ReviewTimeout(_) =>
+      if review_required {
+        AttentionRequiredCopilotSilentAfterTimeout
+      } else {
+        tl_snapshot_workflow_category(tracked, merge_ready, review_required)
+      }
     CIFailed(_) => AttentionRequiredCIFailed
     CIFailureCleared(_) | CILatestHeadRollupSucceeded(_) =>
       if merge_ready {
         MergeGateOpenPendingPolicyConfirmation
       } else if tracked.last_review_state == ChangesRequested {
         BlockedOnChanges
-      } else if tl_tracked_pr_copilot_review_silent_escalation_active(tracked) {
+      } else if tl_tracked_pr_copilot_review_silent_escalation_active(
+          tracked,
+          review_required~,
+        ) {
         AttentionRequiredCopilotSilentAfterTimeout
       } else {
         ReadyForTLRecheck
@@ -1127,7 +1141,10 @@ pub fn tl_tracked_pr_recheck_gate_line(
     }
   } else {
     let parts : Array[String] = []
-    if tl_tracked_pr_copilot_review_silent_escalation_active(tracked) {
+    if tl_tracked_pr_copilot_review_silent_escalation_active(
+        tracked,
+        review_required~,
+      ) {
       parts.push(
         "review wait already timed out with no review in Choir snapshot (comment-triggered Copilot may be unreliable)",
       )
