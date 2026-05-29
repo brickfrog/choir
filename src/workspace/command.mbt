@@ -1212,16 +1212,6 @@ pub fn write_local_config(worktree_path : String, content : String) -> Command {
 }
 
 ///|
-/// Write .choir/config.toml into worktree with client connection settings.
-pub fn write_spawn_config(worktree_path : String, content : String) -> Command {
-  {
-    program: native_write_choir_file_program,
-    args: [worktree_path, "config.toml", content],
-    workdir: None,
-  }
-}
-
-///|
 fn resolve_named_context_path(project_dir : String, name : String) -> String? {
   let local_path = project_dir + "/.choir/context/" + name + ".md"
   if @sys.read_file(local_path) != "" {

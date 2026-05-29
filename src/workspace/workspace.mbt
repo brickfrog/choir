@@ -189,11 +189,22 @@ pub fn config_local_content(
   spec : @types.SpawnSpec,
   workspace : String,
   terminal_target : @types.LocalTarget,
+  project_dir? : String? = None,
+  listen_uds? : String? = None,
+  terminal_session? : String? = None,
 ) -> String {
   let role_str = @config.role_to_string(spec.role)
   let agent_type_str = @config.agent_type_to_string(spec.agent_type)
   let agent_id = canonical_agent_id(spec)
   let git_branch = spawn_git_branch(spec)
+  let local_project_dir = project_dir.unwrap_or(workspace)
+  let local_listen_uds = match listen_uds {
+    Some(path) => resolve_child_path(local_project_dir, path)
+    None => resolve_child_path(local_project_dir, ".choir/server.sock")
+  }
+  let local_terminal_session = terminal_session.unwrap_or(
+    terminal_target.session,
+  )
   let task_contract_line = match spec.task_contract {
     Some(contract) =>
       "\ntask_contract_json = \"" +
@@ -224,7 +235,15 @@ pub fn config_local_content(
     Some(id) => "\nwave_id = \"" + escape_toml_string(id) + "\"\n"
     None => ""
   }
-  "role = \"" +
+  "default_role = \"" +
+  escape_toml_string(role_str) +
+  "\"\nproject_dir = \"" +
+  escape_toml_string(local_project_dir) +
+  "\"\nlisten_uds = \"" +
+  escape_toml_string(local_listen_uds) +
+  "\"\nterminal_session = \"" +
+  escape_toml_string(local_terminal_session) +
+  "\"\nrole = \"" +
   escape_toml_string(role_str) +
   "\"\nagent_id = \"" +
   escape_toml_string(agent_id) +

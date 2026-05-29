@@ -384,6 +384,8 @@ pub fn spawn_commands(
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
 ) -> Array[Command] {
+  ignore(listen_tcp)
+  ignore(tcp_auth_token)
   let root_project = resolved_project_dir(project_dir)
   let listen_uds_env = absolute_listen_uds(root_project, listen_uds)
   let branch = canonical_agent_id(spec)
@@ -435,22 +437,16 @@ pub fn spawn_commands(
         cmds.push(command_seed_worktree_agent_runtime_gitexclude(workspace))
       }
       cmds.push(
-        write_spawn_config(
-          workspace,
-          child_config_content(
-            spec.role,
-            session,
-            root_project,
-            listen_uds,
-            listen_tcp~,
-            tcp_auth_token~,
-          ),
-        ),
-      )
-      cmds.push(
         write_local_config(
           workspace,
-          config_local_content(spec, workspace, terminal_target),
+          config_local_content(
+            spec,
+            workspace,
+            terminal_target,
+            project_dir=Some(root_project),
+            listen_uds=Some(listen_uds_env),
+            terminal_session=Some(session),
+          ),
         ),
       )
       cmds.push(write_leaf_helper_scripts(workspace))
@@ -497,7 +493,14 @@ pub fn spawn_commands(
       cmds.push(
         write_local_config(
           inline_agent_metadata_dir(root_project, canonical_agent_id(spec)),
-          config_local_content(spec, workspace, terminal_target),
+          config_local_content(
+            spec,
+            workspace,
+            terminal_target,
+            project_dir=Some(root_project),
+            listen_uds=Some(listen_uds_env),
+            terminal_session=Some(session),
+          ),
         ),
       )
       cmds.push(write_leaf_helper_scripts(workspace))
@@ -544,22 +547,16 @@ pub fn spawn_commands(
         { program: "git", args: ["init", workspace], workdir: None },
       ]
       cmds.push(
-        write_spawn_config(
-          workspace,
-          child_config_content(
-            spec.role,
-            session,
-            root_project,
-            listen_uds,
-            listen_tcp~,
-            tcp_auth_token~,
-          ),
-        ),
-      )
-      cmds.push(
         write_local_config(
           workspace,
-          config_local_content(spec, workspace, terminal_target),
+          config_local_content(
+            spec,
+            workspace,
+            terminal_target,
+            project_dir=Some(root_project),
+            listen_uds=Some(listen_uds_env),
+            terminal_session=Some(session),
+          ),
         ),
       )
       cmds.push(write_leaf_helper_scripts(workspace))
@@ -699,7 +696,14 @@ pub fn remote_spawn_commands(
     ".choir/server.sock",
     listen_tcp=Some(tcp_addr),
   )
-  let local_config_toml = config_local_content(spec, workspace, terminal_target)
+  let local_config_toml = config_local_content(
+    spec,
+    workspace,
+    terminal_target,
+    project_dir=Some(workspace),
+    listen_uds=Some(".choir/server.sock"),
+    terminal_session=Some("remote"),
+  )
   let launch_cmd = agent_launch_command(
     spec,
     workspace,
