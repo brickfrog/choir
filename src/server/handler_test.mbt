@@ -6412,6 +6412,92 @@ async test "register reads pid sidecar into tracked agent pids" {
 }
 
 ///|
+async test "register warns when spawned dev pid sidecar is missing" {
+  let project_dir = "/tmp/choir-register-missing-pid-sidecar-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  let agent_id = "main.missing-pid-sidecar-leaf"
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      terminal_session: "test-session",
+    },
+    make_hermetic_recovery_provider(),
+  )
+  let captured : Array[@moontrace.Event] = []
+  handler_with_moontrace_capture(captured, async fn() {
+    let register_resp = state.handle_with_runner(
+      @types.Request::{
+        req_method: "register",
+        role: @types.Role::Dev,
+        name: "register",
+        args: @types.RequestArgs::new({
+          "agent_id": agent_id,
+          "parent_id": "main.tl",
+          "workspace": project_dir +
+          "/.choir/worktrees/missing-pid-sidecar-leaf",
+          "branch": agent_id,
+          "agent_type": "codex",
+        }),
+      },
+      runner=async fn(_cmds) {
+        @async.sleep(0)
+        []
+      },
+    )
+    assert_true(register_resp.is_ok())
+  })
+  assert_eq(handler_pid_sidecar_missing_warn_count(captured), 1)
+  @debug.assert_eq(state.agent_pids.get(agent_id), None)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "register does not warn for parentless tl missing pid sidecar" {
+  let project_dir = "/tmp/choir-register-parentless-tl-pid-sidecar-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  let agent_id = "main.parentless-tl"
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      terminal_session: "test-session",
+    },
+    make_hermetic_recovery_provider(),
+  )
+  let captured : Array[@moontrace.Event] = []
+  handler_with_moontrace_capture(captured, async fn() {
+    let register_resp = state.handle_with_runner(
+      @types.Request::{
+        req_method: "register",
+        role: @types.Role::TL,
+        name: "register",
+        args: @types.RequestArgs::new({
+          "agent_id": agent_id,
+          "workspace": project_dir,
+          "branch": "main",
+          "agent_type": "codex",
+        }),
+      },
+      runner=async fn(_cmds) {
+        @async.sleep(0)
+        []
+      },
+    )
+    assert_true(register_resp.is_ok())
+  })
+  assert_eq(handler_pid_sidecar_missing_warn_count(captured), 0)
+  @debug.assert_eq(state.agent_pids.get(agent_id), None)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "register reconnect preserves suspended registry state" {
   let project_dir = "/tmp/choir-suspended-register-reconnect-" +
     @sys.get_pid().to_string() +
@@ -7543,6 +7629,20 @@ fn handler_moontrace_event_summary(events : Array[@moontrace.Event]) -> String {
     parts.push(event.message)
   }
   parts.join("; ")
+}
+
+///|
+fn handler_pid_sidecar_missing_warn_count(
+  events : Array[@moontrace.Event],
+) -> Int {
+  let mut count = 0
+  for event in events {
+    if event.level == @moontrace.Level::Warn &&
+      event.message == "agent pid sidecar missing at register" {
+      count = count + 1
+    }
+  }
+  count
 }
 
 ///|
