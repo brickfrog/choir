@@ -247,6 +247,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
       moon_verify_target=self.config.moon_verify_target,
       require_integration_audit=self.config.pr_policy.require_integration_audit,
       prenotify_checks=self.config.prenotify_checks,
+      project_verify_cmd=self.config.project.verify_cmd,
       agy_migration_incomplete=self.config.agy_migration_incomplete,
       goal_deliver=async fn(message, status) {
         self.deliver_goal_judge_message(message, status, runner)

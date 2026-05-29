@@ -1997,6 +1997,7 @@ pub async fn handle_request(
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
   require_integration_audit? : Bool = @types.Config::default().pr_policy.require_integration_audit,
   prenotify_checks? : Array[String] = @types.Config::default().prenotify_checks,
+  project_verify_cmd? : String? = None,
   on_resolve_review_thread? : async (Array[Int]) -> Unit = fn(_pr_numbers) {
     ()
   },
@@ -2087,7 +2088,13 @@ pub async fn handle_request(
           Some(r) => r
           None =>
             match
-              parse_tool_request(req.name, req.role, project_dir, tool_args) {
+              parse_tool_request(
+                req.name,
+                req.role,
+                project_dir,
+                tool_args,
+                project_verify_cmd~,
+              ) {
               Err(e) => @types.Response::Err(e.message())
               Ok(tool_req) => {
                 let out = dispatch(
@@ -2277,6 +2284,7 @@ pub async fn dispatch_call(
   merge_strategy? : @types.MergeStrategy = @types.Config::default().merge_strategy,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
   prenotify_checks? : Array[String] = @types.Config::default().prenotify_checks,
+  project_verify_cmd? : String? = None,
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
   goal_request_tick? : () -> Unit = goal_noop_request_tick,
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
@@ -2313,7 +2321,13 @@ pub async fn dispatch_call(
           Some(blocked) => blocked
           None =>
             match
-              parse_tool_request(call.name, call.role, project_dir, tool_args) {
+              parse_tool_request(
+                call.name,
+                call.role,
+                project_dir,
+                tool_args,
+                project_verify_cmd~,
+              ) {
               Err(e) => @types.Response::Err(e.message())
               Ok(tool_req) =>
                 dispatch(

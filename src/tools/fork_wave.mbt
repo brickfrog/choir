@@ -47,6 +47,37 @@ fn empty_fork_wave_spawn_plan() -> ForkWaveSpawnPlan {
 }
 
 ///|
+fn fork_wave_verify_has_nonempty_command(commands : Array[String]) -> Bool {
+  for command in commands {
+    if command.trim() != "" {
+      return true
+    }
+  }
+  false
+}
+
+///|
+pub fn fork_wave_task_contract_with_verify_default(
+  task_contract : @types.TaskContract,
+  project_verify_cmd? : String? = None,
+) -> @types.TaskContract {
+  if fork_wave_verify_has_nonempty_command(task_contract.verify) {
+    return task_contract
+  }
+  match project_verify_cmd {
+    Some(command) => {
+      let trimmed = command.trim().to_owned()
+      if trimmed == "" {
+        task_contract
+      } else {
+        { ..task_contract, verify: [trimmed] }
+      }
+    }
+    None => task_contract
+  }
+}
+
+///|
 fn fork_wave_slug_for_index(
   fork_wave_args : ForkWaveArgs,
   index : Int,
