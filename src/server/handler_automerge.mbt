@@ -351,12 +351,18 @@ pub async fn maybe_trigger_automerge_for_pending_event(
       )
     None => []
   }
+  let default_branch = @tools.detect_default_branch_with_capture(
+    state.config.project_dir,
+    capture,
+  )
   let decision = @poller.merge_policy_decision_for_tracked_pr(
     tracked,
     unresolved_threads,
     task_contract~,
     review_mode~,
     verify_results~,
+    skip_copilot_on_feature_branch=state.config.pr_policy.skip_copilot_on_feature_branch,
+    default_branch~,
   )
   guard decision is @policy.MergeDecision::MergeNow(_) else { return false }
   let caller_id = match

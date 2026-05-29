@@ -250,6 +250,50 @@ test "merge_policy_decision_for_tracked_pr returns merge_now when no CI checks e
 }
 
 ///|
+test "merge_policy_decision_for_tracked_pr allows feature branch when Copilot review is skipped" {
+  let t = {
+    ..sample_tracked(None_, Success, 120),
+    parent_branch: "feature/review-skip",
+  }
+  let contract = {
+    ..@types.TaskContract::empty(),
+    goal: "ship feature",
+    verify: ["moon test --target native"],
+  }
+  let decision = merge_policy_decision_for_tracked_pr(
+    t,
+    Some(0),
+    task_contract=Some(contract),
+    verify_results=[
+      {
+        name: "moon test --target native",
+        status: @types.VerifyStatus::Passed,
+        details: "exit: 0",
+      },
+    ],
+    skip_copilot_on_feature_branch=true,
+    default_branch="main",
+  )
+  assert_eq(decision.label(), "merge_now")
+}
+
+///|
+test "advisory_evaluation_result_for_tracked_pr allows feature branch when Copilot review is skipped" {
+  let t = {
+    ..sample_tracked(Commented, Success, 121),
+    parent_branch: "feature/review-skip",
+    copilot_issue_comment_seen: false,
+  }
+  let result = advisory_evaluation_result_for_tracked_pr(
+    t,
+    Some(0),
+    skip_copilot_on_feature_branch=true,
+    default_branch="main",
+  )
+  assert_eq(result.verdict, @types.EvaluationVerdict::Ready)
+}
+
+///|
 test "merge_policy_summary_line reflects missing verify evidence" {
   let t = sample_tracked(Approved, Success, 13)
   let contract = {

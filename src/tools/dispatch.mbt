@@ -1262,6 +1262,7 @@ pub async fn dispatch(
         merge_strategy~,
         task_contract_reader~,
         moon_verify_target~,
+        skip_copilot_on_feature_branch~,
         require_integration_audit~,
       )
       if resp.is_ok() {

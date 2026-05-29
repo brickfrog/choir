@@ -450,6 +450,109 @@ test "evaluation_cascade ready with passed required verify" {
 }
 
 ///|
+test "evaluation_cascade ready with absent review when review not required" {
+  let result = @types.evaluation_cascade(
+    ["moon test --target native"],
+    [
+      @types.EvaluationSignal::Review(
+        state=@types.EvaluationReviewState::None_,
+        body="",
+      ),
+      @types.EvaluationSignal::Ci(status=@types.EvaluationCiRollup::Success),
+      @types.EvaluationSignal::ThreadsObserved(count=0),
+      @types.EvaluationSignal::Verify(result={
+        name: "moon test --target native",
+        status: @types.VerifyStatus::Passed,
+        details: "satisfied by CI rollup success at head-sha",
+      }),
+    ],
+    review_required=false,
+  )
+  match result {
+    @types.CascadeVerdict::Ready(_) => ()
+    _ => fail("expected Ready")
+  }
+}
+
+///|
+test "evaluation_cascade still waits for absent review when review required" {
+  let result = @types.evaluation_cascade(
+    ["moon test --target native"],
+    [
+      @types.EvaluationSignal::Review(
+        state=@types.EvaluationReviewState::None_,
+        body="",
+      ),
+      @types.EvaluationSignal::Ci(status=@types.EvaluationCiRollup::Success),
+      @types.EvaluationSignal::ThreadsObserved(count=0),
+      @types.EvaluationSignal::Verify(result={
+        name: "moon test --target native",
+        status: @types.VerifyStatus::Passed,
+        details: "satisfied by CI rollup success at head-sha",
+      }),
+    ],
+    review_required=true,
+  )
+  match result {
+    @types.CascadeVerdict::Waiting(reason~) =>
+      assert_eq(reason, "waiting for review")
+    _ => fail("expected Waiting")
+  }
+}
+
+///|
+test "evaluation_cascade blocks changes requested even when review not required" {
+  let result = @types.evaluation_cascade(
+    ["moon test --target native"],
+    [
+      @types.EvaluationSignal::Review(
+        state=@types.EvaluationReviewState::ChangesRequested,
+        body="please fix",
+      ),
+      @types.EvaluationSignal::Ci(status=@types.EvaluationCiRollup::Success),
+      @types.EvaluationSignal::ThreadsObserved(count=0),
+      @types.EvaluationSignal::Verify(result={
+        name: "moon test --target native",
+        status: @types.VerifyStatus::Passed,
+        details: "satisfied by CI rollup success at head-sha",
+      }),
+    ],
+    review_required=false,
+  )
+  match result {
+    @types.CascadeVerdict::Blocked(reason~) =>
+      assert_true(reason.contains("changes requested"))
+    _ => fail("expected Blocked")
+  }
+}
+
+///|
+test "evaluation_cascade ready for comment-only review without Copilot comment when review not required" {
+  let result = @types.evaluation_cascade(
+    ["moon test --target native"],
+    [
+      @types.EvaluationSignal::Review(
+        state=@types.EvaluationReviewState::Commented,
+        body="left comments",
+      ),
+      @types.EvaluationSignal::CopilotIssueCommentUnobserved,
+      @types.EvaluationSignal::Ci(status=@types.EvaluationCiRollup::Success),
+      @types.EvaluationSignal::ThreadsObserved(count=0),
+      @types.EvaluationSignal::Verify(result={
+        name: "moon test --target native",
+        status: @types.VerifyStatus::Passed,
+        details: "satisfied by CI rollup success at head-sha",
+      }),
+    ],
+    review_required=false,
+  )
+  match result {
+    @types.CascadeVerdict::Ready(_) => ()
+    _ => fail("expected Ready")
+  }
+}
+
+///|
 test "advisory_evaluation_result ready when GitHub reports no CI checks" {
   let bundle : @types.EvaluationBundle = {
     task_contract: None,

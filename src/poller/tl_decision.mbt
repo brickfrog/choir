@@ -558,6 +558,19 @@ fn evaluation_ci_rollup_from_snapshot(
 }
 
 ///|
+fn review_required_for_tracked_pr(
+  tracked : TrackedPR,
+  skip_copilot_on_feature_branch : Bool,
+  default_branch : String,
+) -> Bool {
+  @policy.review_required_for_branch(
+    skip_copilot_on_feature_branch,
+    tracked.parent_branch,
+    default_branch,
+  )
+}
+
+///|
 pub fn advisory_evaluation_bundle_for_tracked_pr(
   tracked : TrackedPR,
   unresolved_threads : Int?,
@@ -604,7 +617,12 @@ pub fn advisory_evaluation_result_for_tracked_pr(
   task_contract? : @types.TaskContract? = None,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   verify_results? : Array[@types.VerifyCheckResult] = [],
+  skip_copilot_on_feature_branch? : Bool = false,
+  default_branch? : String = "",
 ) -> @types.EvaluationResult {
+  let review_required = review_required_for_tracked_pr(
+    tracked, skip_copilot_on_feature_branch, default_branch,
+  )
   @types.advisory_evaluation_result(
     advisory_evaluation_bundle_for_tracked_pr(
       tracked,
@@ -613,6 +631,7 @@ pub fn advisory_evaluation_result_for_tracked_pr(
       review_mode~,
       verify_results~,
     ),
+    review_required~,
   )
 }
 
@@ -623,6 +642,8 @@ pub fn advisory_evaluation_summary_line(
   task_contract? : @types.TaskContract? = None,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   verify_results? : Array[@types.VerifyCheckResult] = [],
+  skip_copilot_on_feature_branch? : Bool = false,
+  default_branch? : String = "",
 ) -> String {
   let result = advisory_evaluation_result_for_tracked_pr(
     tracked,
@@ -630,6 +651,8 @@ pub fn advisory_evaluation_summary_line(
     task_contract~,
     review_mode~,
     verify_results~,
+    skip_copilot_on_feature_branch~,
+    default_branch~,
   )
   "Advisory evaluation verdict: " +
   result.verdict.label() +
@@ -670,6 +693,8 @@ pub fn merge_policy_decision_for_tracked_pr(
   task_contract? : @types.TaskContract? = None,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   verify_results? : Array[@types.VerifyCheckResult] = [],
+  skip_copilot_on_feature_branch? : Bool = false,
+  default_branch? : String = "",
 ) -> @policy.MergeDecision {
   let bundle = advisory_evaluation_bundle_for_tracked_pr(
     tracked,
@@ -678,7 +703,10 @@ pub fn merge_policy_decision_for_tracked_pr(
     review_mode~,
     verify_results~,
   )
-  let canonical = @policy.decide_merge(task_contract, bundle)
+  let review_required = review_required_for_tracked_pr(
+    tracked, skip_copilot_on_feature_branch, default_branch,
+  )
+  let canonical = @policy.decide_merge(task_contract, bundle, review_required~)
   match unresolved_threads {
     Some(count) =>
       if count > 0 &&
@@ -717,6 +745,8 @@ pub fn merge_policy_summary_line(
   task_contract? : @types.TaskContract? = None,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   verify_results? : Array[@types.VerifyCheckResult] = [],
+  skip_copilot_on_feature_branch? : Bool = false,
+  default_branch? : String = "",
 ) -> String {
   let decision = merge_policy_decision_for_tracked_pr(
     tracked,
@@ -724,6 +754,8 @@ pub fn merge_policy_summary_line(
     task_contract~,
     review_mode~,
     verify_results~,
+    skip_copilot_on_feature_branch~,
+    default_branch~,
   )
   merge_policy_summary_line_for_decision(decision)
 }
@@ -839,6 +871,8 @@ pub fn pr_state_notification_decision_for_tracked_pr(
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   verify_results? : Array[@types.VerifyCheckResult] = [],
   merge_mode? : MergeOperatorMode = MergeOperatorMode::Manual,
+  skip_copilot_on_feature_branch? : Bool = false,
+  default_branch? : String = "",
 ) -> PrStateNotificationDecision {
   let category = plan_tl_poll_event_parent(
     event,
@@ -852,6 +886,8 @@ pub fn pr_state_notification_decision_for_tracked_pr(
     task_contract~,
     review_mode~,
     verify_results~,
+    skip_copilot_on_feature_branch~,
+    default_branch~,
   )
   let next_action = next_action_for_pr_state_notification(
     category, policy_decision, tracked, unresolved_threads, merge_mode,
