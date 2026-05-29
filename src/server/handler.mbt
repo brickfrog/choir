@@ -107,16 +107,32 @@ fn emit_span(
 }
 
 ///|
+fn agent_pid_sidecar_expected(agent : @types.Agent) -> Bool {
+  let spawned_role = agent.role == @types.Role::Dev ||
+    agent.role == @types.Role::Worker
+  if !spawned_role {
+    return false
+  }
+  match agent.parent {
+    Some(parent) => parent.trim() != ""
+    None => false
+  }
+}
+
+///|
 fn ServerState::register_agent_pid_from_sidecar(
   self : ServerState,
-  agent_id : String,
+  agent : @types.Agent,
 ) -> Unit {
+  let agent_id = agent.agent_id.to_string()
   let path = @workspace.agent_pid_file_path(self.config.project_dir, agent_id)
   if !@exec.path_entry_exists(path) {
-    @moontrace.warn("agent pid sidecar missing at register", fields=[
-      @moontrace.field("agent_id", agent_id),
-      @moontrace.field("path", path),
-    ])
+    if agent_pid_sidecar_expected(agent) {
+      @moontrace.warn("agent pid sidecar missing at register", fields=[
+        @moontrace.field("agent_id", agent_id),
+        @moontrace.field("path", path),
+      ])
+    }
     return
   }
   let raw = (self.read_file)(path).trim().to_owned()
@@ -284,7 +300,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
         } noraise {
           agent => {
             self.register_agent(agent)
-            self.register_agent_pid_from_sidecar(agent_id)
+            self.register_agent_pid_from_sidecar(agent)
           }
         }
       None => ()
