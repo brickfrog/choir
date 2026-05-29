@@ -62,6 +62,7 @@ fn mcp_config_with_cli_overrides(
   local_cfg : @types.LocalConfig,
   args : Array[String],
 ) -> @types.Config {
+  let base_config = config_with_local_listen_uds(base_config, local_cfg)
   {
     ..base_config,
     agent_id: match local_cfg.agent_id {

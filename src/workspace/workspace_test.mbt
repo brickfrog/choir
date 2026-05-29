@@ -1251,6 +1251,7 @@ test "spawn_commands launch text contains env vars" {
   }
   assert_true(joined.contains("CHOIR_AGENT_ID=main.feature-a"))
   assert_true(joined.contains("CHOIR_TERMINAL_TARGET=zellij-tab:exo:feature-a"))
+  assert_true(joined.contains("CHOIR_LISTEN_UDS=/proj/.choir/server.sock"))
   assert_true(joined.contains("CHOIR_PARENT_AGENT=root"))
   assert_true(
     joined.contains("HOME=/proj/.choir/worktrees/feature-a/.choir/agy-home"),
