@@ -299,6 +299,24 @@ test "audit default prompt refuses empty review surface" {
 }
 
 ///|
+test "audit default prompt detects default branch before diffing" {
+  let body = default_prompt(PromptName::AuditSkill)
+  assert_true(
+    body.contains(
+      "DEFAULT_BRANCH=\"$(git symbolic-ref --short refs/remotes/origin/HEAD | sed 's@^origin/@@')\"",
+    ),
+  )
+  assert_true(body.contains("git diff \"$DEFAULT_BRANCH\"...HEAD"))
+  assert_true(
+    body.contains(
+      "git diff \"$(git merge-base HEAD \"$DEFAULT_BRANCH\")\"...HEAD",
+    ),
+  )
+  assert_true(body.contains("diff vs $DEFAULT_BRANCH"))
+  assert_false(body.contains("<default_branch>"))
+}
+
+///|
 test "audit default prompt contains Sarcasmotron persona" {
   let review = default_prompt(PromptName::AuditSkill)
   assert_true(review.contains("You are Sarcasmotron"))
@@ -322,6 +340,19 @@ test "audit default prompt writes receipt after successful worker" {
   assert_true(body.contains("findings_count"))
   assert_true(body.contains("write_audit_receipt"))
   assert_true(body.contains("Do not write `.choir/audit-receipts` directly"))
+}
+
+///|
+test "audit default prompt defers repo conventions to agent docs" {
+  let body = default_prompt(PromptName::AuditSkill)
+  assert_true(body.contains("conventions this repo documents"))
+  assert_true(body.contains("CLAUDE.md / AGENTS.md"))
+  assert_true(
+    body.contains("dead code, naming, test placement, error handling"),
+  )
+  assert_true(body.contains("Verify with the configured verify command."))
+  assert_false(body.contains("moon test"))
+  assert_false(body.contains("ChoirError"))
 }
 
 ///|
@@ -353,6 +384,20 @@ test "leaf profile default prompt uses poller snapshots for review state" {
     body.contains("you (the leaf) must resolve" + " each thread yourself"),
   )
   assert_false(body.contains("resolveReviewThread(input: " + "{threadId:"))
+}
+
+///|
+test "ship pr default prompt keeps pre-commit guidance repo generic" {
+  let body = default_prompt(PromptName::ShipPr)
+  assert_true(body.contains("Respect the repo's pre-commit hook"))
+  assert_true(
+    body.contains(
+      "if it rewrites files unexpectedly, inspect with `git diff` before discarding",
+    ),
+  )
+  assert_false(body.contains("moon fmt"))
+  assert_false(body.contains(".mbt"))
+  assert_false(body.contains("choir_lint"))
 }
 
 ///|

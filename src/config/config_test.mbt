@@ -15,12 +15,14 @@ test "parse_config - full" {
     #|worker_no_handoff_prod_sec = 90
     #|worker_no_handoff_escalate_sec = 45
     #|poller_heartbeat_tick_sec = 10
-    #|prenotify_checks = ["moon check --target native", "moon test --target native", "moon run src/bin/choir_lint --target native"]
+    #|prenotify_checks = ["moon check --target native", "CHOIR_TEST_NO_EXEC=1 moon test --target native", "CHOIR_TEST_REAL_EXEC=1 moon test --target native src/exec", "moon run src/bin/choir_lint --target native"]
     #|moon_verify_target = "js"
     #|agy_migration_incomplete = true
     #|auto_pull_after_integration = false
     #|auto_rebuild_after_pull = true
     #|auto_reload_after_rebuild = true
+    #|[project]
+    #|verify_cmd = "cargo test"
     #|[pr_policy]
     #|require_integration_audit = false
     #|skip_copilot_on_feature_branch = false
@@ -53,11 +55,13 @@ test "parse_config - full" {
   assert_eq(cfg.worker_no_handoff_escalate_sec, 45L)
   assert_eq(cfg.poller_heartbeat_tick_sec, 10)
   @debug.assert_eq(cfg.prenotify_checks, [
-    "moon check --target native", "moon test --target native", "moon run src/bin/choir_lint --target native",
+    "moon check --target native", "CHOIR_TEST_NO_EXEC=1 moon test --target native",
+    "CHOIR_TEST_REAL_EXEC=1 moon test --target native src/exec", "moon run src/bin/choir_lint --target native",
   ])
   assert_eq(cfg.moon_verify_target, @types.MoonVerifyTarget::Js)
   assert_eq(cfg.agy_migration_incomplete, true)
   assert_eq(cfg.auto_pull_after_integration, false)
+  @debug.assert_eq(cfg.project.verify_cmd, Some("cargo test"))
   assert_eq(cfg.pr_policy.require_integration_audit, false)
   assert_eq(cfg.pr_policy.skip_copilot_on_feature_branch, false)
   assert_eq(cfg.auto_rebuild_after_pull, true)
@@ -84,6 +88,8 @@ test "config schema nested keys match parser-accepted TOML shape" {
     config_schema_key_present(file, "pr_policy.skip_copilot_on_feature_branch"),
   )
   assert_false(config_schema_key_present(file, "pr_policy"))
+  assert_true(config_schema_key_present(file, "project.verify_cmd"))
+  assert_false(config_schema_key_present(file, "project"))
   assert_true(config_schema_key_present(file, "pricing.<agent_type>.rate_in"))
   assert_true(config_schema_key_present(file, "pricing.<agent_type>.rate_out"))
   assert_false(config_schema_key_present(file, "pricing"))
@@ -111,6 +117,11 @@ test "config schema nested keys match parser-accepted TOML shape" {
 }
 
 ///|
+test "default config has neutral prenotify_checks" {
+  @debug.assert_eq(@types.Config::default().prenotify_checks, [])
+}
+
+///|
 test "parse_config - minimal" {
   let content = "default_role = \"worker\""
   let cfg = parse_config(content).unwrap()
@@ -125,17 +136,32 @@ test "parse_config - minimal" {
   assert_eq(cfg.worker_no_handoff_prod_sec, 120L)
   assert_eq(cfg.worker_no_handoff_escalate_sec, 120L)
   assert_eq(cfg.poller_heartbeat_tick_sec, 60)
-  @debug.assert_eq(cfg.prenotify_checks, [
-    "moon check --target native", "CHOIR_TEST_NO_EXEC=1 moon test --target native",
-    "CHOIR_TEST_REAL_EXEC=1 moon test --target native src/exec", "moon run src/bin/choir_lint --target native",
-  ])
+  @debug.assert_eq(cfg.prenotify_checks, [])
   assert_eq(cfg.agy_migration_incomplete, false)
   assert_eq(cfg.auto_pull_after_integration, true)
   assert_eq(cfg.pr_policy.require_integration_audit, true)
   assert_eq(cfg.pr_policy.skip_copilot_on_feature_branch, true)
+  @debug.assert_eq(cfg.project.verify_cmd, None)
   assert_eq(cfg.auto_rebuild_after_pull, false)
   assert_eq(cfg.auto_reload_after_rebuild, false)
   assert_eq(cfg.moon_verify_target, @types.MoonVerifyTarget::Native)
+}
+
+///|
+test "parse_config - project verify only keeps portable defaults" {
+  let content =
+    #|[project]
+    #|verify_cmd = "moon check --target native && moon test --target native"
+  let cfg = parse_config(content).unwrap()
+  assert_eq(cfg.default_role, @types.Role::TL)
+  assert_eq(cfg.project_dir, ".")
+  assert_eq(cfg.listen_uds, ".choir/server.sock")
+  assert_eq(cfg.terminal_session, "choir")
+  @debug.assert_eq(
+    cfg.project.verify_cmd,
+    Some("moon check --target native && moon test --target native"),
+  )
+  @debug.assert_eq(cfg.prenotify_checks, [])
 }
 
 ///|

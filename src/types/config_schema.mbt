@@ -61,6 +61,13 @@ pub fn config_schema_entries() -> Array[ConfigSchemaEntry] {
     ),
     schema_entry(
       ConfigToml,
+      "project.verify_cmd",
+      "String?",
+      "unset",
+      "Optional default verify command used for fork_wave task contracts when no per-leaf verify command is supplied.",
+    ),
+    schema_entry(
+      ConfigToml,
       "shell_command",
       "String?",
       "unset",
