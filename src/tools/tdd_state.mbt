@@ -170,7 +170,7 @@ fn tdd_configured_verify(
 
 ///|
 fn tdd_text_tail(raw : String) -> String {
-  let trimmed = raw.trim().to_owned()
+  let trimmed = collapse_cr_progress(raw).trim().to_owned()
   if trimmed == "" {
     ""
   } else if trimmed.length() <= 600 {
@@ -336,18 +336,28 @@ pub fn plan_tdd_green_check_transition(
 fn tdd_output_tail(output : String?) -> Json? {
   match output {
     Some(raw) => {
-      let trimmed = raw.trim().to_owned()
-      if trimmed == "" {
+      let tail = tdd_text_tail(raw)
+      if tail == "" {
         None
-      } else if trimmed.length() <= 600 {
-        Some(trimmed.to_json())
       } else {
-        Some(
-          ("[truncated]\n" + trimmed[trimmed.length() - 600:].to_owned()).to_json(),
-        )
+        Some(tail.to_json())
       }
     }
     None => None
+  }
+}
+
+///|
+test "tdd_output_tail uses collapsed carriage-return text tail" {
+  let raw = "red\n[>      ] 1/319\r[==>    ] 50/319\r[======] 319/319 done\n"
+  match tdd_output_tail(Some(raw)) {
+    Some(String(value)) => {
+      assert_false(value.contains("[>      ] 1/319"))
+      assert_false(value.contains("[==>    ] 50/319"))
+      assert_true(value.contains("[======] 319/319 done"))
+      assert_true(value.contains("red"))
+    }
+    _ => fail("expected output_tail json string")
   }
 }
 

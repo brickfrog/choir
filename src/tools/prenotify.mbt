@@ -7,13 +7,24 @@ pub(all) struct PrenotifyCheckOutcome {
 
 ///|
 fn prenotify_check_output_tail(output : String) -> String {
-  let trimmed = output.trim().to_owned()
+  let trimmed = collapse_cr_progress(output).trim().to_owned()
   let max_chars = 1200
   if trimmed.length() <= max_chars {
     trimmed
   } else {
     "[truncated]\n" + trimmed[trimmed.length() - max_chars:].to_owned()
   }
+}
+
+///|
+test "prenotify_check_output_tail collapses carriage-return progress frames" {
+  let raw = "setup\n[>      ] 1/319\r[==>    ] 50/319\r[======] 319/319 done\nsummary"
+  let tail = prenotify_check_output_tail(raw)
+  assert_false(tail.contains("[>      ] 1/319"))
+  assert_false(tail.contains("[==>    ] 50/319"))
+  assert_true(tail.contains("[======] 319/319 done"))
+  assert_true(tail.contains("setup"))
+  assert_true(tail.contains("summary"))
 }
 
 ///|
