@@ -506,13 +506,7 @@ fn init_default_terminal_session(project_dir : String) -> String {
 }
 
 ///|
-fn init_config_toml_content(default_session : String) -> String {
-  "default_role = \"tl\"\n" +
-  "project_dir = \".\"\n" +
-  "listen_uds = \".choir/server.sock\"\n" +
-  "terminal_session = \"" +
-  default_session +
-  "\"\n" +
+fn init_config_toml_content() -> String {
   "worker_no_handoff_prod_sec = 120\n" +
   "worker_no_handoff_escalate_sec = 120\n" +
   "auto_pull_after_integration = true\n" +
@@ -528,8 +522,144 @@ fn init_config_toml_content(default_session : String) -> String {
 }
 
 ///|
-fn init_config_has_terminal_session(content : String) -> Bool {
-  content.contains("terminal_session")
+test "init config.toml scaffold omits machine local fields" {
+  let content = init_config_toml_content()
+  assert_false(content.contains("default_role"))
+  assert_false(content.contains("project_dir"))
+  assert_false(content.contains("listen_uds"))
+  assert_false(content.contains("terminal_session"))
+  assert_true(content.contains("worker_no_handoff_prod_sec = 120"))
+  assert_true(content.contains("[pr_policy]"))
+}
+
+///|
+fn init_toml_escape_string(s : String) -> String {
+  let buf = StringBuilder::new()
+  for c in s {
+    match c {
+      '"' => buf.write_string("\\\"")
+      '\\' => buf.write_string("\\\\")
+      '\n' => buf.write_string("\\n")
+      '\r' => buf.write_string("\\r")
+      '\t' => buf.write_string("\\t")
+      _ => buf.write_char(c)
+    }
+  }
+  buf.to_string()
+}
+
+///|
+fn init_local_config_has_terminal_session(content : String) -> Bool {
+  match @config.parse_local_config(content) {
+    Ok(local_cfg) =>
+      match local_cfg.terminal_session {
+        Some(_) => true
+        None => false
+      }
+    Err(_) => content.contains("terminal_session")
+  }
+}
+
+///|
+fn init_local_config_with_terminal_session(
+  content : String,
+  default_session : String,
+) -> String {
+  if init_local_config_has_terminal_session(content) {
+    content
+  } else {
+    let separator = if content == "" || content.has_suffix("\n") {
+      ""
+    } else {
+      "\n"
+    }
+    content +
+    separator +
+    "terminal_session = \"" +
+    init_toml_escape_string(default_session) +
+    "\"\n"
+  }
+}
+
+///|
+fn init_ensure_local_terminal_session(
+  default_session : String,
+  read_file? : (String) -> String = fn(path) { @sys.read_file(path) },
+  write_file? : (String, String) -> Bool = fn(path, content) {
+    @sys.write_file_sync(path, content)
+  },
+) -> Unit {
+  let local_content = read_file(".choir/config.local.toml")
+  if !init_local_config_has_terminal_session(local_content) {
+    ignore(
+      write_file(
+        ".choir/config.local.toml",
+        init_local_config_with_terminal_session(local_content, default_session),
+      ),
+    )
+  }
+}
+
+///|
+test "init persists terminal_session in local config without touching portable config" {
+  let portable_config = "[project]\nverify_cmd = \"moon check --target native && moon test --target native\"\n"
+  let local_config = "default_role = \"dev\"\nproject_dir = \"/repo\"\nlisten_uds = \"/repo/.choir/server.sock\""
+  let reads : Array[String] = []
+  let write_paths : Array[String] = []
+  let write_bodies : Array[String] = []
+  init_ensure_local_terminal_session(
+    "choir-repo",
+    read_file=fn(path) {
+      reads.push(path)
+      if path == ".choir/config.toml" {
+        portable_config
+      } else if path == ".choir/config.local.toml" {
+        local_config
+      } else {
+        ""
+      }
+    },
+    write_file=fn(path, body) {
+      write_paths.push(path)
+      write_bodies.push(body)
+      true
+    },
+  )
+  @debug.assert_eq(reads, [".choir/config.local.toml"])
+  @debug.assert_eq(write_paths, [".choir/config.local.toml"])
+  assert_false(write_paths.contains(".choir/config.toml"))
+  assert_eq(write_bodies.length(), 1)
+  let updated = write_bodies[0]
+  @debug.assert_eq(
+    updated,
+    local_config + "\nterminal_session = \"choir-repo\"\n",
+  )
+  let cfg = @config.parse_config(portable_config, local_content=Some(updated)).unwrap()
+  assert_eq(cfg.terminal_session, "choir-repo")
+  @debug.assert_eq(
+    cfg.project.verify_cmd,
+    Some("moon check --target native && moon test --target native"),
+  )
+}
+
+///|
+test "init local terminal_session persistence is idempotent" {
+  let writes : Array[String] = []
+  init_ensure_local_terminal_session(
+    "choir-repo",
+    read_file=fn(path) {
+      if path == ".choir/config.local.toml" {
+        "role = \"dev\"\nterminal_session = \"existing\"\n"
+      } else {
+        ""
+      }
+    },
+    write_file=fn(path, _body) {
+      writes.push(path)
+      true
+    },
+  )
+  @debug.assert_eq(writes, [])
 }
 
 ///|
@@ -891,7 +1021,7 @@ fn init_run() -> Unit {
       }
 
       init_bootstrap_ensure_choir_dir_and_config_if_absent(
-        init_config_toml_content(default_session),
+        init_config_toml_content(),
       )
       let current_hooks_path = @exec.capture_stdout("git", [
           "config", "--local", "--get", "core.hooksPath",
@@ -935,21 +1065,7 @@ fn init_run() -> Unit {
           @workspace.init_tl_claude_settings_json(),
         ),
       )
-      let maybe_patch_config = @sys.read_file(".choir/config.toml")
-      if maybe_patch_config != "" &&
-        !init_config_has_terminal_session(maybe_patch_config) {
-        let separator = if maybe_patch_config.has_suffix("\n") {
-          ""
-        } else {
-          "\n"
-        }
-        let patched = maybe_patch_config +
-          separator +
-          "terminal_session = \"" +
-          default_session +
-          "\"\n"
-        ignore(@sys.write_file_sync(".choir/config.toml", patched))
-      }
+      init_ensure_local_terminal_session(default_session)
       let config_content = @sys.read_file(".choir/config.toml")
       let local_content = @sys.read_file(".choir/config.local.toml")
       let config = match
