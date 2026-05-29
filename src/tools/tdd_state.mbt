@@ -259,7 +259,7 @@ pub fn plan_tdd_red_check_transition(
   if exit_code == 0 {
     return Err(
       tdd_transition_error(
-        "red check expected failing test result (exit_code != 0)",
+        "red check rejected because the configured verify passed (exit 0): there is no failing test / no red to open the TDD gate. For code changes, write the failing test first, run the configured verify until it fails, then rerun tdd_red_check before implementing the fix. For non-code doc/skill/config work, a blanket verify (for example `moon test`) may be green before and after, so it can never produce the required red; the wave verify must red->green on the artifact, for example `test -f <path> && <verify>`. If this is non-code work, notify the parent TL to re-scope/re-fork the wave with an artifact verify.",
       ),
     )
   }
@@ -272,6 +272,23 @@ pub fn plan_tdd_red_check_transition(
           tdd_phase_label(current),
         ),
       )
+  }
+}
+
+///|
+test "red check exit zero explains missing red and artifact verify recovery" {
+  match plan_tdd_red_check_transition(Some(@types.LeafTddPhase::Intent), 0) {
+    Err(e) => {
+      let message = e.message()
+      assert_true(message.contains("configured verify passed (exit 0)"))
+      assert_true(message.contains("no failing test"))
+      assert_true(message.contains("write the failing test first"))
+      assert_true(message.contains("non-code"))
+      assert_true(message.contains("artifact"))
+      assert_true(message.contains("test -f <path> && <verify>"))
+      assert_true(message.contains("notify the parent TL"))
+    }
+    Ok(_) => fail("expected exit 0 red check to reject")
   }
 }
 
