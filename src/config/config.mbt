@@ -62,6 +62,34 @@ fn prefer_optional_string(value : String?, fallback : String?) -> String? {
 }
 
 ///|
+fn parse_local_config_overlay_doc(
+  doc : TomlDoc,
+) -> Result[@types.LocalConfig, @types.ChoirError] {
+  let default_role = match doc.get("default_role") {
+    Some(r) =>
+      match parse_role(r) {
+        Ok(role) => Some(role)
+        Err(e) => return Err(e)
+      }
+    None => None
+  }
+  Ok({
+    ..@types.LocalConfig::default(),
+    default_role,
+    project_dir: doc.get_optional_nonempty("project_dir"),
+    listen_uds: doc.get_optional_nonempty("listen_uds"),
+    terminal_session: doc.get_optional_nonempty("terminal_session"),
+  })
+}
+
+///|
+fn parse_local_config_overlay(
+  content : String,
+) -> Result[@types.LocalConfig, @types.ChoirError] {
+  parse_local_config_overlay_doc(parse_toml_doc(content))
+}
+
+///|
 pub(all) struct CompanionDef {
   name : String
   role : String
@@ -353,8 +381,17 @@ fn parse_pricing_config(
 /// Parses project config.toml
 pub fn parse_config(
   content : String,
+  local_content? : String? = None,
 ) -> Result[@types.Config, @types.ChoirError] {
   let doc = parse_toml_doc(content)
+  let local_cfg = match local_content {
+    Some(raw) =>
+      match parse_local_config_overlay(raw) {
+        Ok(cfg) => cfg
+        Err(e) => return Err(e)
+      }
+    None => @types.LocalConfig::default()
+  }
   let default_cfg = @types.Config::default()
 
   let default_role = match doc.get("default_role") {
@@ -363,15 +400,33 @@ pub fn parse_config(
         Ok(role) => role
         Err(e) => return Err(e)
       }
-    None => default_cfg.default_role
+    None =>
+      match local_cfg.default_role {
+        Some(role) => role
+        None => default_cfg.default_role
+      }
   }
 
-  let project_dir = doc.get_or("project_dir", default_cfg.project_dir)
+  let project_dir = match doc.get("project_dir") {
+    Some(value) => value
+    None =>
+      match local_cfg.project_dir {
+        Some(value) => value
+        None => default_cfg.project_dir
+      }
+  }
   let shell_command = prefer_optional_string(
     doc.get_optional_nonempty("shell_command"),
     default_cfg.shell_command,
   )
-  let listen_uds = doc.get_or("listen_uds", default_cfg.listen_uds)
+  let listen_uds = match doc.get("listen_uds") {
+    Some(value) => value
+    None =>
+      match local_cfg.listen_uds {
+        Some(value) => value
+        None => default_cfg.listen_uds
+      }
+  }
   let listen_tcp = prefer_optional_string(
     doc.get_optional_nonempty("listen_tcp"),
     default_cfg.listen_tcp,
@@ -402,7 +457,11 @@ pub fn parse_config(
   )
   let terminal_session = match doc.get_optional_nonempty("terminal_session") {
     Some(value) => value
-    None => default_cfg.terminal_session
+    None =>
+      match local_cfg.terminal_session {
+        Some(value) => value
+        None => default_cfg.terminal_session
+      }
   }
   let pr_review = match doc.get("pr_review") {
     None => default_cfg.pr_review
@@ -646,6 +705,17 @@ pub fn parse_local_config(
       }
     None => None
   }
+  let default_role = match doc.get("default_role") {
+    Some(r) =>
+      match parse_role(r) {
+        Ok(role) => Some(role)
+        Err(e) => return Err(e)
+      }
+    None => None
+  }
+  let project_dir = doc.get_optional_nonempty("project_dir")
+  let listen_uds = doc.get_optional_nonempty("listen_uds")
+  let terminal_session = doc.get_optional_nonempty("terminal_session")
   let agent_id = doc.get_optional_nonempty("agent_id")
   let parent_id = doc.get_optional_nonempty("parent_id")
   let branch = doc.get_optional_nonempty("branch")
@@ -722,6 +792,10 @@ pub fn parse_local_config(
   let wave_id = doc.get_optional_nonempty("wave_id")
   Ok({
     role,
+    default_role,
+    project_dir,
+    listen_uds,
+    terminal_session,
     agent_id,
     parent_id,
     branch,

@@ -29,9 +29,10 @@ fn expected_config_schema_keys() -> Array[String] {
 ///|
 fn expected_local_config_schema_keys() -> Array[String] {
   [
-    "role", "agent_id", "parent_id", "branch", "parent_branch", "workspace", "terminal_target",
-    "agent_type", "spawn_depth", "task_contract_json", "automerge", "review_mode",
-    "merge_strategy", "auto_pull_after_integration", "auto_rebuild_after_pull", "auto_reload_after_rebuild",
+    "role", "default_role", "project_dir", "listen_uds", "terminal_session", "agent_id",
+    "parent_id", "branch", "parent_branch", "workspace", "terminal_target", "agent_type",
+    "spawn_depth", "task_contract_json", "automerge", "review_mode", "merge_strategy",
+    "auto_pull_after_integration", "auto_rebuild_after_pull", "auto_reload_after_rebuild",
     "wave_id",
   ]
 }

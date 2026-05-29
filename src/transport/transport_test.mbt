@@ -169,6 +169,10 @@ test "format_request serializes internal wire request" {
 test "format_registration_request includes local config metadata" {
   let local_cfg = @types.LocalConfig::{
     role: None,
+    default_role: None,
+    project_dir: None,
+    listen_uds: None,
+    terminal_session: None,
     agent_id: None,
     parent_id: Some("root"),
     branch: Some("main.leaf-1"),

@@ -1291,7 +1291,9 @@ async test "heartbeat tick loop triggers automerge sweep path via process_poller
 ///|
 fn serve_run() -> Unit {
   let config_content = @sys.read_file(".choir/config.toml")
-  let config = match @config.parse_config(config_content) {
+  let local_content = @sys.read_file(".choir/config.local.toml")
+  let config = match
+    @config.parse_config(config_content, local_content=Some(local_content)) {
     Ok(cfg) => cfg
     Err(_) => @types.Config::default()
   }

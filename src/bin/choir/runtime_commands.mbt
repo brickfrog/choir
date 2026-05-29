@@ -3,7 +3,9 @@ fn stop_run() -> Unit {
   @async.run_async_main(async fn() {
     @async.with_task_group(async fn(_root) {
       let config_content = @sys.read_file(".choir/config.toml")
-      let config = match @config.parse_config(config_content) {
+      let local_content = @sys.read_file(".choir/config.local.toml")
+      let config = match
+        @config.parse_config(config_content, local_content=Some(local_content)) {
         Ok(cfg) => cfg
         Err(_) => @types.Config::default()
       }
@@ -98,11 +100,13 @@ fn dev_run() -> Unit {
 ///|
 fn reload_run() -> Unit {
   let config_content = @sys.read_file(".choir/config.toml")
+  let local_content = @sys.read_file(".choir/config.local.toml")
   if config_content == "" {
     client_emit(@types.Response::Err("missing .choir/config.toml"))
     return
   }
-  let config = match @config.parse_config(config_content) {
+  let config = match
+    @config.parse_config(config_content, local_content=Some(local_content)) {
     Ok(cfg) => cfg
     Err(e) => {
       client_emit(@types.Response::Err(e.message()))
@@ -172,7 +176,9 @@ fn reply_run() -> Unit {
   }
 
   let config_content = @sys.read_file(".choir/config.toml")
-  let config = match @config.parse_config(config_content) {
+  let local_content = @sys.read_file(".choir/config.local.toml")
+  let config = match
+    @config.parse_config(config_content, local_content=Some(local_content)) {
     Ok(cfg) => cfg
     Err(_) => @types.Config::default()
   }

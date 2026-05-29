@@ -484,7 +484,13 @@ fn leaf_tool_load_config(
   if config_content == "" {
     return Err(@types.ChoirError::workspace_error("missing .choir/config.toml"))
   }
-  let base_config = match @config.parse_config(config_content) {
+  let local_content = if path_exists(".choir/config.local.toml") {
+    read_file(".choir/config.local.toml")
+  } else {
+    ""
+  }
+  let base_config = match
+    @config.parse_config(config_content, local_content=Some(local_content)) {
     Ok(cfg) => cfg
     Err(e) => return Err(e)
   }
@@ -613,6 +619,10 @@ fn local_cfg_from_env_lookup(
   }
   {
     role,
+    default_role: None,
+    project_dir: None,
+    listen_uds: None,
+    terminal_session: None,
     agent_id: local_cfg_env_value(getenv, "CHOIR_AGENT_ID"),
     parent_id: local_cfg_env_value(getenv, "CHOIR_PARENT_ID"),
     branch: local_cfg_env_value(getenv, "CHOIR_BRANCH"),
@@ -656,11 +666,12 @@ fn tool_load_config(
   if config_content == "" {
     return Err("missing .choir/config.toml")
   }
-  let base_config = match @config.parse_config(config_content) {
+  let local_content = @sys.read_file(".choir/config.local.toml")
+  let base_config = match
+    @config.parse_config(config_content, local_content=Some(local_content)) {
     Ok(cfg) => cfg
     Err(e) => return Err(e.message())
   }
-  let local_content = @sys.read_file(".choir/config.local.toml")
   let local_cfg = tool_local_cfg_with_env_fallback(
     match @config.parse_local_config(local_content) {
       Ok(cfg) => cfg
