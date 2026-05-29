@@ -876,8 +876,17 @@ fn init_companion_commands(
     merge_strategy: None,
     wave_id: None,
   }
+  let listen_uds_abs = if config.listen_uds.has_prefix("/") {
+    config.listen_uds
+  } else {
+    project_dir + "/" + config.listen_uds
+  }
   let env_z = @workspace.launch_env_assignments(
-    spec, session, workspace, terminal_target,
+    spec,
+    session,
+    workspace,
+    terminal_target,
+    listen_uds_env=Some(listen_uds_abs),
   )
   let inner = {
     let c = @workspace.agent_launch_command(
@@ -900,20 +909,16 @@ fn init_companion_commands(
     ),
     @workspace.git_worktree_add(workspace, branch, current_branch),
     @workspace.command_seed_worktree_agent_runtime_gitexclude(workspace),
-    @workspace.write_spawn_config(
-      workspace,
-      @workspace.child_config_content(
-        role,
-        session,
-        project_dir,
-        config.listen_uds,
-        listen_tcp=config.listen_tcp,
-        tcp_auth_token=config.tcp_auth_token,
-      ),
-    ),
     @workspace.write_local_config(
       workspace,
-      @workspace.config_local_content(spec, workspace, terminal_target),
+      @workspace.config_local_content(
+        spec,
+        workspace,
+        terminal_target,
+        project_dir=Some(project_dir),
+        listen_uds=Some(listen_uds_abs),
+        terminal_session=Some(session),
+      ),
     ),
     @workspace.write_leaf_helper_scripts(workspace),
     @workspace.workspace_relative_file_command(
@@ -936,6 +941,41 @@ fn init_companion_commands(
     @workspace.zellij_new_tab(session, companion.name, workspace, env_z, inner),
   )
   cmds
+}
+
+///|
+test "init companion commands write connection metadata only to local config" {
+  let companion : @config.CompanionDef = {
+    name: "monitor",
+    role: "worker",
+    command: "claude",
+    task: "watch the build",
+  }
+  let cmds = init_companion_commands(
+    "/proj",
+    "exo",
+    @types.Config::default(),
+    "main",
+    companion,
+  )
+  let local_bodies : Array[String] = []
+  for cmd in cmds {
+    if cmd.program == @workspace.native_write_choir_file_program &&
+      cmd.args.length() >= 2 {
+      if cmd.args[1] == "config.toml" {
+        fail("init companion spawn must not write tracked config.toml")
+      }
+      if cmd.args[1] == "config.local.toml" {
+        local_bodies.push(cmd.args[2])
+      }
+    }
+  }
+  @debug.assert_eq(local_bodies.length(), 1)
+  let local_cfg = @config.parse_local_config(local_bodies[0]).unwrap()
+  @debug.assert_eq(local_cfg.default_role, Some(@types.Role::Worker))
+  @debug.assert_eq(local_cfg.project_dir, Some("/proj"))
+  @debug.assert_eq(local_cfg.listen_uds, Some("/proj/.choir/server.sock"))
+  @debug.assert_eq(local_cfg.terminal_session, Some("exo"))
 }
 
 ///|
