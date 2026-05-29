@@ -12,7 +12,7 @@ pre-commit hook is not appropriate for arbitrary repos.
    - Else if `package.json` exists, read it and use `scripts.test` when present.
      If `scripts.test` is absent, use `npm test`.
    - Else if `go.mod` exists, use `go test ./...`.
-   - Else if `moon.mod.json` exists, use `moon test --target native`.
+   - Else if `moon.mod` or `moon.mod.json` exists, use `moon test --target native`.
    - Else STOP and ask the human for the verify command before writing files.
 
 2. Detect the default branch.

@@ -3,11 +3,13 @@ name: audit
 description: Spawn a Sarcasmotron worker to critically audit the current branch diff.
 ---
 1. Determine the review surface.
-   - If HEAD is on a `feature/*` branch: review target is `git diff <default_branch>...HEAD`.
-   - Otherwise: review target is `git diff $(git merge-base HEAD <default_branch>)...HEAD`.
+   - Detect the default branch:
+     `DEFAULT_BRANCH="$(git symbolic-ref --short refs/remotes/origin/HEAD | sed 's@^origin/@@')"`
+   - If HEAD is on a `feature/*` branch: review target is `git diff "$DEFAULT_BRANCH"...HEAD`.
+   - Otherwise: review target is `git diff "$(git merge-base HEAD "$DEFAULT_BRANCH")"...HEAD`.
    - Run the resulting `git diff <range>` and check that the output is non-empty.
    - If the diff is empty (no files changed in the review surface), STOP. Print:
-     `Audit skill invoked but review surface (git diff <range>) is empty. Switch to a feature branch with diff vs <default_branch>, or pass an explicit comparison base. Refusing to spawn a no-op review.`
+     `Audit skill invoked but review surface (git diff <range>) is empty. Switch to a feature branch with diff vs $DEFAULT_BRANCH, or pass an explicit comparison base. Refusing to spawn a no-op review.`
      Do NOT proceed to step 2 (`spawn_worker`).
 2. Call `spawn_worker` with a task that includes:
 

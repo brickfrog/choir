@@ -145,6 +145,22 @@ test "parse_config - minimal" {
 }
 
 ///|
+test "parse_config - project verify only keeps portable defaults" {
+  let content =
+    #|[project]
+    #|verify_cmd = "moon check --target native && moon test --target native"
+  let cfg = parse_config(content).unwrap()
+  assert_eq(cfg.default_role, @types.Role::TL)
+  assert_eq(cfg.project_dir, ".")
+  assert_eq(cfg.listen_uds, ".choir/server.sock")
+  assert_eq(cfg.terminal_session, "choir")
+  @debug.assert_eq(
+    cfg.project.verify_cmd,
+    Some("moon check --target native && moon test --target native"),
+  )
+}
+
+///|
 test "parse_config moon_verify_target override" {
   let cfg = parse_config("moon_verify_target = \"wasm-gc\"").unwrap()
   assert_eq(cfg.moon_verify_target, @types.MoonVerifyTarget::WasmGc)
