@@ -473,8 +473,10 @@ test "statusline_pr_summary distinguishes manual and automerge merge-ready PRs" 
 
 ///|
 fn statusline_global_config(project_dir : String) -> @types.Config {
+  let config_content = @sys.read_file(project_dir + "/.choir/config.toml")
+  let local_content = @sys.read_file(project_dir + "/.choir/config.local.toml")
   match
-    @config.parse_config(@sys.read_file(project_dir + "/.choir/config.toml")) {
+    @config.parse_config(config_content, local_content=Some(local_content)) {
     Ok(cfg) => cfg
     Err(_) => @types.Config::default()
   }

@@ -646,7 +646,9 @@ fn mcp_run() -> Unit {
   }
   let wait_tries = mcp_cli_wait_socket_tries(args)
   let config_content = @sys.read_file(".choir/config.toml")
-  let base_config = match @config.parse_config(config_content) {
+  let local_content = @sys.read_file(".choir/config.local.toml")
+  let base_config = match
+    @config.parse_config(config_content, local_content=Some(local_content)) {
     Ok(cfg) => cfg
     Err(_) => {
       println("error: failed to parse .choir/config.toml")
@@ -655,7 +657,6 @@ fn mcp_run() -> Unit {
     }
   }
 
-  let local_content = @sys.read_file(".choir/config.local.toml")
   let local_cfg = mcp_local_cfg_with_agent_metadata_fallback(
     match @config.parse_local_config(local_content) {
       Ok(cfg) => cfg

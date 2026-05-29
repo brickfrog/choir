@@ -93,6 +93,14 @@ pub(all) struct PricingRate {
 pub(all) struct LocalConfig {
   /// Local role override for this worktree or agent.
   role : Role?
+  /// Machine-local default role fallback when config.toml omits it.
+  default_role : Role?
+  /// Machine-local project root fallback when config.toml omits it.
+  project_dir : String?
+  /// Machine-local Unix-domain socket fallback when config.toml omits it.
+  listen_uds : String?
+  /// Machine-local Zellij session fallback when config.toml omits it.
+  terminal_session : String?
   /// Local canonical id for this agent.
   agent_id : String?
   /// Parent agent id for handoff routing.
@@ -166,6 +174,10 @@ pub fn Config::default() -> Config {
 pub fn LocalConfig::default() -> LocalConfig {
   {
     role: None,
+    default_role: None,
+    project_dir: None,
+    listen_uds: None,
+    terminal_session: None,
     agent_id: None,
     parent_id: None,
     branch: None,

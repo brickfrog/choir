@@ -165,6 +165,45 @@ test "parse_config - project verify only keeps portable defaults" {
 }
 
 ///|
+test "parse_config uses config.local terminal_session when config omits it" {
+  let local_content =
+    #|terminal_session = "choir-choir"
+  let cfg = parse_config("", local_content=Some(local_content)).unwrap()
+  assert_eq(cfg.terminal_session, "choir-choir")
+}
+
+///|
+test "parse_config terminal_session in config wins over config.local" {
+  let local_content =
+    #|terminal_session = "choir-choir"
+  let cfg = parse_config(
+    "terminal_session = \"explicit\"",
+    local_content=Some(local_content),
+  ).unwrap()
+  assert_eq(cfg.terminal_session, "explicit")
+}
+
+///|
+test "parse_config terminal_session defaults when config and local omit it" {
+  let local_content =
+    #|role = "dev"
+  let cfg = parse_config("", local_content=Some(local_content)).unwrap()
+  assert_eq(cfg.terminal_session, "choir")
+}
+
+///|
+test "parse_config uses config.local machine fields when config omits them" {
+  let local_content =
+    #|default_role = "worker"
+    #|project_dir = "/repo"
+    #|listen_uds = "/repo/.choir/server.sock"
+  let cfg = parse_config("", local_content=Some(local_content)).unwrap()
+  assert_eq(cfg.default_role, @types.Role::Worker)
+  assert_eq(cfg.project_dir, "/repo")
+  assert_eq(cfg.listen_uds, "/repo/.choir/server.sock")
+}
+
+///|
 test "parse_config moon_verify_target override" {
   let cfg = parse_config("moon_verify_target = \"wasm-gc\"").unwrap()
   assert_eq(cfg.moon_verify_target, @types.MoonVerifyTarget::WasmGc)
@@ -492,6 +531,10 @@ test "parse_config_local - valid" {
 test "parse_local_config - metadata" {
   let content =
     #|role = "dev"
+    #|default_role = "tl"
+    #|project_dir = "/project"
+    #|listen_uds = "/project/.choir/server.sock"
+    #|terminal_session = "choir-choir"
     #|agent_id = "main.child"
     #|parent_id = "main"
     #|branch = "main.child"
@@ -502,6 +545,10 @@ test "parse_local_config - metadata" {
     #|wave_id = "wv-demo"
   let local_cfg = parse_local_config(content).unwrap()
   @debug.assert_eq(local_cfg.role, Some(@types.Role::Dev))
+  @debug.assert_eq(local_cfg.default_role, Some(@types.Role::TL))
+  @debug.assert_eq(local_cfg.project_dir, Some("/project"))
+  @debug.assert_eq(local_cfg.listen_uds, Some("/project/.choir/server.sock"))
+  @debug.assert_eq(local_cfg.terminal_session, Some("choir-choir"))
   @debug.assert_eq(local_cfg.agent_id, Some("main.child"))
   @debug.assert_eq(local_cfg.parent_id, Some("main"))
   @debug.assert_eq(local_cfg.branch, Some("main.child"))
