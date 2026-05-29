@@ -84,6 +84,15 @@ fn resolved_project_dir(project_dir : String) -> String {
 }
 
 ///|
+fn absolute_listen_uds(project_dir : String, listen_uds : String) -> String {
+  if listen_uds.has_prefix("/") {
+    listen_uds
+  } else {
+    resolved_project_dir(project_dir) + "/" + listen_uds
+  }
+}
+
+///|
 /// Canonical (key, value) list of every non-PATH environment variable that
 /// spawned agents receive. Single source of truth for the three serializers
 /// below; adding a new CHOIR_* var (or a new conditional) goes here once.
@@ -94,6 +103,7 @@ fn shared_env_pairs(
   session : String,
   workspace : String,
   terminal_target : @types.LocalTarget,
+  listen_uds_env? : String? = None,
 ) -> Array[(String, String)] {
   let role = @config.role_to_string(spec.role)
   let agent_id = canonical_agent_id(spec)
@@ -112,6 +122,10 @@ fn shared_env_pairs(
     ("CHOIR_SESSION_ID", agent_id),
     ("CHOIR_PARENT_AGENT", spec.parent_id),
   ]
+  match listen_uds_env {
+    Some(value) => pairs.push(("CHOIR_LISTEN_UDS", value))
+    None => ()
+  }
   if spec.agent_type == @types.AgentType::Gemini ||
     spec.agent_type == @types.AgentType::Unknown {
     pairs.push(("HOME", agy_home_path(workspace)))
@@ -129,10 +143,18 @@ pub fn launch_env_prefix(
   session : String,
   workspace : String,
   terminal_target : @types.LocalTarget,
+  listen_uds_env? : String? = None,
 ) -> String {
   let buf = StringBuilder::new()
   buf.write_string(path_assignment(workspace + "/.choir/bin"))
-  for pair in shared_env_pairs(spec, session, workspace, terminal_target) {
+  for
+    pair in shared_env_pairs(
+      spec,
+      session,
+      workspace,
+      terminal_target,
+      listen_uds_env~,
+    ) {
     let (k, v) = pair
     buf.write_char(' ')
     buf.write_string(env_assignment(k, v))
@@ -147,10 +169,18 @@ fn launch_env_exports(
   session : String,
   workspace : String,
   terminal_target : @types.LocalTarget,
+  listen_uds_env? : String? = None,
 ) -> String {
   let buf = StringBuilder::new()
   buf.write_string(export_path_assignment(workspace + "/.choir/bin"))
-  for pair in shared_env_pairs(spec, session, workspace, terminal_target) {
+  for
+    pair in shared_env_pairs(
+      spec,
+      session,
+      workspace,
+      terminal_target,
+      listen_uds_env~,
+    ) {
     let (k, v) = pair
     buf.write_string(export_assignment(k, v))
   }
@@ -165,11 +195,19 @@ pub fn launch_env_assignments(
   session : String,
   workspace : String,
   terminal_target : @types.LocalTarget,
+  listen_uds_env? : String? = None,
 ) -> Array[String] {
   let result : Array[String] = [
     path_env_merged_for_argv(workspace + "/.choir/bin"),
   ]
-  for pair in shared_env_pairs(spec, session, workspace, terminal_target) {
+  for
+    pair in shared_env_pairs(
+      spec,
+      session,
+      workspace,
+      terminal_target,
+      listen_uds_env~,
+    ) {
     let (k, v) = pair
     result.push(env_pair_raw(k, v))
   }
@@ -213,14 +251,27 @@ test "launch env serializers agree on the non-PATH key set" {
     session: "sess",
     name: "leaf-a",
   }
-  let pairs = shared_env_pairs(spec, "sess", "/ws", target)
+  let listen_uds_env = "/repo/.choir/server.sock"
+  let pairs = shared_env_pairs(
+    spec,
+    "sess",
+    "/ws",
+    target,
+    listen_uds_env=Some(listen_uds_env),
+  )
   let expected_keys : Array[String] = []
   for p in pairs {
     let (k, _) = p
     expected_keys.push(k)
   }
   // Prefix serializer: `PATH=... K1='v1' K2='v2' ... ` — split on space.
-  let prefix = launch_env_prefix(spec, "sess", "/ws", target)
+  let prefix = launch_env_prefix(
+    spec,
+    "sess",
+    "/ws",
+    target,
+    listen_uds_env=Some(listen_uds_env),
+  )
   let prefix_keys : Array[String] = []
   for token in prefix.split(" ") {
     let s = token.to_owned()
@@ -234,7 +285,13 @@ test "launch env serializers agree on the non-PATH key set" {
   }
   @debug.assert_eq(prefix_keys, expected_keys)
   // Exports serializer: `export PATH=...; export K1='v1'; ...` — split on `;`.
-  let exports = launch_env_exports(spec, "sess", "/ws", target)
+  let exports = launch_env_exports(
+    spec,
+    "sess",
+    "/ws",
+    target,
+    listen_uds_env=Some(listen_uds_env),
+  )
   let export_keys : Array[String] = []
   for stmt in exports.split(";") {
     let s = stmt.trim().to_owned()
@@ -252,7 +309,13 @@ test "launch env serializers agree on the non-PATH key set" {
   }
   @debug.assert_eq(export_keys, expected_keys)
   // Argv serializer: `Array[String]` — first entry is PATH, rest are K=V.
-  let argv = launch_env_assignments(spec, "sess", "/ws", target)
+  let argv = launch_env_assignments(
+    spec,
+    "sess",
+    "/ws",
+    target,
+    listen_uds_env=Some(listen_uds_env),
+  )
   let argv_keys : Array[String] = []
   for s in argv {
     if s.has_prefix("PATH=") {
@@ -322,6 +385,7 @@ pub fn spawn_commands(
   tcp_auth_token? : String? = None,
 ) -> Array[Command] {
   let root_project = resolved_project_dir(project_dir)
+  let listen_uds_env = absolute_listen_uds(root_project, listen_uds)
   let branch = canonical_agent_id(spec)
   let workspace = match spec.isolation {
     Worktree => worktree_path(root_project, spawn_workspace_dir_slug(spec))
@@ -340,7 +404,11 @@ pub fn spawn_commands(
   )
   let terminal_target = local_target_for(session, spec.slug, spec.isolation)
   let env_for_zellij = launch_env_assignments(
-    spec, session, workspace, terminal_target,
+    spec,
+    session,
+    workspace,
+    terminal_target,
+    listen_uds_env=Some(listen_uds_env),
   )
   let provider_cmds = provider_materialization_commands(
     spec.agent_type,
@@ -397,7 +465,13 @@ pub fn spawn_commands(
             spec.slug,
             workspace,
             tl_lifecycle_shell_script(
-              launch_env_exports(spec, session, workspace, terminal_target),
+              launch_env_exports(
+                spec,
+                session,
+                workspace,
+                terminal_target,
+                listen_uds_env=Some(listen_uds_env),
+              ),
               launch_cmd,
               " exit \"$status\"",
             ),
@@ -438,7 +512,13 @@ pub fn spawn_commands(
             spec.slug,
             workspace,
             tl_lifecycle_shell_script(
-              launch_env_exports(spec, session, workspace, terminal_target),
+              launch_env_exports(
+                spec,
+                session,
+                workspace,
+                terminal_target,
+                listen_uds_env=Some(listen_uds_env),
+              ),
               launch_cmd,
               " exit \"$status\"",
             ),
@@ -494,7 +574,13 @@ pub fn spawn_commands(
             spec.slug,
             workspace,
             tl_lifecycle_shell_script(
-              launch_env_exports(spec, session, workspace, terminal_target),
+              launch_env_exports(
+                spec,
+                session,
+                workspace,
+                terminal_target,
+                listen_uds_env=Some(listen_uds_env),
+              ),
               launch_cmd,
               " exit \"$status\"",
             ),

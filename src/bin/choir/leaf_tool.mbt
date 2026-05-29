@@ -558,10 +558,22 @@ fn local_cfg_has_registration_identity(local_cfg : @types.LocalConfig) -> Bool {
 }
 
 ///|
+fn config_with_local_listen_uds(
+  config : @types.Config,
+  local_cfg : @types.LocalConfig,
+) -> @types.Config {
+  match local_cfg.listen_uds {
+    Some(listen_uds) => { ..config, listen_uds, }
+    None => config
+  }
+}
+
+///|
 fn tool_effective_config(
   config : @types.Config,
   local_cfg : @types.LocalConfig,
 ) -> @types.Config {
+  let config = config_with_local_listen_uds(config, local_cfg)
   if local_cfg_has_registration_identity(local_cfg) {
     config
   } else {
@@ -621,7 +633,7 @@ fn local_cfg_from_env_lookup(
     role,
     default_role: None,
     project_dir: None,
-    listen_uds: None,
+    listen_uds: local_cfg_env_value(getenv, "CHOIR_LISTEN_UDS"),
     terminal_session: None,
     agent_id: local_cfg_env_value(getenv, "CHOIR_AGENT_ID"),
     parent_id: local_cfg_env_value(getenv, "CHOIR_PARENT_ID"),
@@ -1112,6 +1124,16 @@ test "tool local agent context keeps registration path" {
 }
 
 ///|
+test "tool effective config prefers env listen_uds over base config" {
+  let local_cfg = {
+    ..@types.LocalConfig::default(),
+    listen_uds: Some("/abs/.choir/server.sock"),
+  }
+  let config = tool_effective_config(@types.Config::default(), local_cfg)
+  assert_eq(config.listen_uds, "/abs/.choir/server.sock")
+}
+
+///|
 test "leaf tool registration is one-shot transport" {
   let local_cfg = {
     ..@types.LocalConfig::default(),
@@ -1136,6 +1158,7 @@ test "tool env fallback synthesizes inline worker identity" {
     "CHOIR_BRANCH": "main.claude-worker",
     "CHOIR_PARENT_BRANCH": "main",
     "CHOIR_WORKSPACE": "/proj",
+    "CHOIR_LISTEN_UDS": "/abs/.choir/server.sock",
     "CHOIR_TERMINAL_TARGET": "zellij-pane:choir:claude-worker",
     "CHOIR_AGENT_TYPE": "claude",
   }
@@ -1146,6 +1169,7 @@ test "tool env fallback synthesizes inline worker identity" {
   @debug.assert_eq(local_cfg.branch, Some("main.claude-worker"))
   @debug.assert_eq(local_cfg.parent_branch, Some("main"))
   @debug.assert_eq(local_cfg.workspace, Some("/proj"))
+  @debug.assert_eq(local_cfg.listen_uds, Some("/abs/.choir/server.sock"))
   @debug.assert_eq(local_cfg.agent_type, Some(@types.AgentType::Claude))
   assert_true(tool_should_register(local_cfg))
 }
@@ -1258,6 +1282,33 @@ test "leaf_tool_load_config falls back to env when config.local.toml is missing"
   assert_eq(role, @types.Role::Worker)
   @debug.assert_eq(local_cfg.agent_id, Some("main.fallback-worker"))
   @debug.assert_eq(local_cfg.parent_id, Some("root"))
+}
+
+///|
+test "leaf_tool_load_config applies env listen_uds when config.local.toml is missing" {
+  let env : Map[String, String] = {
+    "CHOIR_ROLE": "worker",
+    "CHOIR_AGENT_ID": "main.fallback-worker",
+    "CHOIR_LISTEN_UDS": "/abs/.choir/server.sock",
+  }
+  let stub_read = fn(path : String) -> String {
+    if path == ".choir/config.toml" {
+      "default_role = \"worker\"\nlisten_uds = \".choir/server.sock\"\n"
+    } else {
+      ""
+    }
+  }
+  let stub_path_exists = fn(path : String) -> Bool {
+    path == ".choir/config.toml"
+  }
+  let (_role, config, local_cfg) = leaf_tool_load_config(
+    [],
+    env_get=fn(key) { env.get(key) },
+    path_exists=stub_path_exists,
+    read_file=stub_read,
+  ).unwrap()
+  @debug.assert_eq(local_cfg.listen_uds, Some("/abs/.choir/server.sock"))
+  assert_eq(config.listen_uds, "/abs/.choir/server.sock")
 }
 
 ///|
