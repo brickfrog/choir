@@ -13,6 +13,16 @@ pub fn PrPolicy::default() -> PrPolicy {
 }
 
 ///|
+pub(all) struct Project {
+  verify_cmd : String?
+} derive(Debug, Eq)
+
+///|
+pub fn Project::default() -> Project {
+  { verify_cmd: None }
+}
+
+///|
 /// Parsed server configuration.
 pub(all) struct Config {
   /// Default role used when local config does not override it.
@@ -61,6 +71,8 @@ pub(all) struct Config {
   prenotify_checks : Array[String]
   /// Best-effort `git pull --ff-only` on the parent worktree after an integration PR merges.
   auto_pull_after_integration : Bool
+  /// Per-project defaults for repo-agnostic orchestration.
+  project : Project
   /// PR policy toggles for integration/default-branch merge enforcement.
   pr_policy : PrPolicy
   /// Placeholder only in v1; parsed and persisted but not acted on.
@@ -145,6 +157,7 @@ pub fn Config::default() -> Config {
       "CHOIR_TEST_REAL_EXEC=1 moon test --target native src/exec", "moon run src/bin/choir_lint --target native",
     ],
     auto_pull_after_integration: true,
+    project: Project::default(),
     pr_policy: PrPolicy::default(),
     auto_rebuild_after_pull: false,
     auto_reload_after_rebuild: false,

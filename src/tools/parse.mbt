@@ -934,6 +934,7 @@ fn parse_task_contracts_array(
 pub fn parse_fork_wave_args(
   project_dir : String,
   args : ToolArgs,
+  project_verify_cmd? : String? = None,
 ) -> Result[ForkWaveArgs, ParseError] {
   // Determine tasks: either per-leaf "tasks" array or shared "task" string
   let tasks_raw = tool_args_get(args, "tasks").unwrap_or("")
@@ -991,6 +992,10 @@ pub fn parse_fork_wave_args(
       } else {
         base_leaf_spec.task_contract
       }
+      let task_contract = fork_wave_task_contract_with_verify_default(
+        task_contract,
+        project_verify_cmd~,
+      )
       let spec = { ..base_leaf_spec, task_contract, }
       rendered.push(
         render_leaf_spawn_prompt_with_defaults(
@@ -1014,6 +1019,10 @@ pub fn parse_fork_wave_args(
       } else {
         base_spec.task_contract
       }
+      let task_contract = fork_wave_task_contract_with_verify_default(
+        task_contract,
+        project_verify_cmd~,
+      )
       let spec = { ..base_spec, task_contract, }
       arr.push(
         render_leaf_spawn_prompt_with_defaults(
@@ -1979,6 +1988,7 @@ fn parse_tool_request(
   _role : @types.Role,
   _project_dir : String,
   args : ToolArgs,
+  project_verify_cmd? : String? = None,
 ) -> Result[ToolRequest, ParseError] {
   match name {
     "register" =>
@@ -1988,7 +1998,7 @@ fn parse_tool_request(
         ToolRequest::SpawnGemini(a)
       })
     "fork_wave" =>
-      parse_fork_wave_args(_project_dir, args).map(fn(a) {
+      parse_fork_wave_args(_project_dir, args, project_verify_cmd~).map(fn(a) {
         ToolRequest::ForkWave(a)
       })
     "fork_session" =>

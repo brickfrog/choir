@@ -506,6 +506,10 @@ pub fn parse_config(
     Ok(v) => v
     Err(e) => return Err(e)
   }
+  let project_verify_cmd = prefer_optional_string(
+    doc.get_optional_nonempty("project.verify_cmd"),
+    default_cfg.project.verify_cmd,
+  )
   let pr_policy_require_integration_audit = match
     parse_required_bool_config_value(
       doc,
@@ -571,6 +575,7 @@ pub fn parse_config(
     poller_heartbeat_tick_sec,
     prenotify_checks,
     auto_pull_after_integration,
+    project: { verify_cmd: project_verify_cmd },
     pr_policy: {
       require_integration_audit: pr_policy_require_integration_audit,
       skip_copilot_on_feature_branch: pr_policy_skip_copilot_on_feature_branch,

@@ -21,6 +21,8 @@ test "parse_config - full" {
     #|auto_pull_after_integration = false
     #|auto_rebuild_after_pull = true
     #|auto_reload_after_rebuild = true
+    #|[project]
+    #|verify_cmd = "cargo test"
     #|[pr_policy]
     #|require_integration_audit = false
     #|skip_copilot_on_feature_branch = false
@@ -58,6 +60,7 @@ test "parse_config - full" {
   assert_eq(cfg.moon_verify_target, @types.MoonVerifyTarget::Js)
   assert_eq(cfg.agy_migration_incomplete, true)
   assert_eq(cfg.auto_pull_after_integration, false)
+  @debug.assert_eq(cfg.project.verify_cmd, Some("cargo test"))
   assert_eq(cfg.pr_policy.require_integration_audit, false)
   assert_eq(cfg.pr_policy.skip_copilot_on_feature_branch, false)
   assert_eq(cfg.auto_rebuild_after_pull, true)
@@ -84,6 +87,8 @@ test "config schema nested keys match parser-accepted TOML shape" {
     config_schema_key_present(file, "pr_policy.skip_copilot_on_feature_branch"),
   )
   assert_false(config_schema_key_present(file, "pr_policy"))
+  assert_true(config_schema_key_present(file, "project.verify_cmd"))
+  assert_false(config_schema_key_present(file, "project"))
   assert_true(config_schema_key_present(file, "pricing.<agent_type>.rate_in"))
   assert_true(config_schema_key_present(file, "pricing.<agent_type>.rate_out"))
   assert_false(config_schema_key_present(file, "pricing"))
@@ -133,6 +138,7 @@ test "parse_config - minimal" {
   assert_eq(cfg.auto_pull_after_integration, true)
   assert_eq(cfg.pr_policy.require_integration_audit, true)
   assert_eq(cfg.pr_policy.skip_copilot_on_feature_branch, true)
+  @debug.assert_eq(cfg.project.verify_cmd, None)
   assert_eq(cfg.auto_rebuild_after_pull, false)
   assert_eq(cfg.auto_reload_after_rebuild, false)
   assert_eq(cfg.moon_verify_target, @types.MoonVerifyTarget::Native)
