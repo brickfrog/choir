@@ -299,6 +299,24 @@ test "audit default prompt refuses empty review surface" {
 }
 
 ///|
+test "audit default prompt detects default branch before diffing" {
+  let body = default_prompt(PromptName::AuditSkill)
+  assert_true(
+    body.contains(
+      "DEFAULT_BRANCH=\"$(git symbolic-ref --short refs/remotes/origin/HEAD | sed 's@^origin/@@')\"",
+    ),
+  )
+  assert_true(body.contains("git diff \"$DEFAULT_BRANCH\"...HEAD"))
+  assert_true(
+    body.contains(
+      "git diff \"$(git merge-base HEAD \"$DEFAULT_BRANCH\")\"...HEAD",
+    ),
+  )
+  assert_true(body.contains("diff vs $DEFAULT_BRANCH"))
+  assert_false(body.contains("<default_branch>"))
+}
+
+///|
 test "audit default prompt contains Sarcasmotron persona" {
   let review = default_prompt(PromptName::AuditSkill)
   assert_true(review.contains("You are Sarcasmotron"))
