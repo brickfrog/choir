@@ -585,7 +585,7 @@ pub(all) struct FilePrVerifyOutcome {
 
 ///|
 fn file_pr_verify_output_tail(output : String) -> String {
-  let trimmed = output.trim().to_owned()
+  let trimmed = collapse_cr_progress(output).trim().to_owned()
   let max_chars = 1200
   if trimmed.length() <= max_chars {
     trimmed
