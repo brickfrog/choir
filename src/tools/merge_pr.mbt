@@ -798,6 +798,8 @@ pub fn format_tl_pr_recheck_summary(
   task_contract? : @types.TaskContract? = None,
   verify_results? : Array[@types.VerifyCheckResult] = [],
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
+  skip_copilot_on_feature_branch? : Bool = false,
+  default_branch? : String = "",
 ) -> String {
   let review = match tracked.last_review_state {
     None_ => "none"
@@ -821,8 +823,15 @@ pub fn format_tl_pr_recheck_summary(
   } else {
     "GitHub Copilot issue comment (REST): not seen"
   }
+  let review_required = @policy.review_required_for_branch(
+    skip_copilot_on_feature_branch,
+    tracked.parent_branch,
+    default_branch,
+  )
   let gate = @poller.tl_tracked_pr_recheck_gate_line(
-    tracked, unresolved_thread_count,
+    tracked,
+    unresolved_thread_count,
+    review_required~,
   )
 
   let task_contract = @types.task_contract_with_normalized_verify(
@@ -839,6 +848,8 @@ pub fn format_tl_pr_recheck_summary(
     task_contract~,
     review_mode=tracked.review_mode,
     verify_results~,
+    skip_copilot_on_feature_branch~,
+    default_branch~,
   )
   let policy = @poller.merge_policy_summary_line(
     tracked,
@@ -846,6 +857,8 @@ pub fn format_tl_pr_recheck_summary(
     task_contract~,
     review_mode=tracked.review_mode,
     verify_results~,
+    skip_copilot_on_feature_branch~,
+    default_branch~,
   )
 
   "PR re-check summary (Choir snapshot; not merge approval):\n" +

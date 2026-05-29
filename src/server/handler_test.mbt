@@ -5757,6 +5757,36 @@ test "parent_poll_event_message CILatestHeadRollupSucceeded stresses not merge o
 }
 
 ///|
+test "parent_poll_event_message applies skipped review policy for feature branch" {
+  let tracked : @poller.TrackedPR = {
+    ..parent_poll_event_test_tracked(172, "main.dev-z", "work/z", "abc"),
+    parent_branch: "feature/review-skip",
+    last_review_state: @poller.ReviewState::None_,
+    copilot_issue_comment_seen: false,
+  }
+  match
+    parent_poll_event_message(
+      tracked,
+      "/repo",
+      @poller.PollEvent::CILatestHeadRollupSucceeded(172),
+      Some(0),
+      skip_copilot_on_feature_branch=true,
+      default_branch="main",
+    ) {
+    Some((message, status)) => {
+      assert_eq(status, @types.Status::Info)
+      assert_true(message.contains("review skipped by policy"))
+      assert_true(message.contains("Advisory evaluation verdict: ready"))
+      assert_true(message.contains("Merge policy decision: merge_now"))
+      assert_true(message.contains("MERGE NOW"))
+      assert_false(message.contains("Waiting on Copilot review"))
+      assert_false(message.contains("waiting for review"))
+    }
+    None => fail("expected CILatestHeadRollupSucceeded message")
+  }
+}
+
+///|
 test "leaf_poll_review_injection_message CILatestHeadRollupSucceeded is scoped" {
   match
     leaf_poll_review_injection_message(

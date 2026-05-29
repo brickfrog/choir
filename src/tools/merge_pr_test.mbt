@@ -2095,6 +2095,30 @@ test "format_tl_pr_recheck_summary ready snapshot when approved success zero thr
 }
 
 ///|
+test "format_tl_pr_recheck_summary applies skipped review policy for feature branch" {
+  let t : @poller.TrackedPR = {
+    ..merge_pr_test_tracked(@poller.ReviewState::None_, "main.leaf"),
+    parent_branch: "feature/review-skip",
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
+  }
+  let s = format_tl_pr_recheck_summary(
+    t,
+    "/repo",
+    Some(0),
+    skip_copilot_on_feature_branch=true,
+    default_branch="main",
+  )
+  assert_true(s.contains("review skipped by policy"))
+  assert_true(s.contains("Advisory evaluation verdict: ready"))
+  assert_true(s.contains("Merge policy decision: merge_now"))
+  assert_false(s.contains("waiting for review"))
+  assert_false(s.contains("waiting for Copilot comments"))
+}
+
+///|
 test "format_tl_pr_recheck_summary lists blockers for changes requested" {
   let t : @poller.TrackedPR = {
     ..merge_pr_test_tracked(@poller.ReviewState::ChangesRequested, "main.leaf"),

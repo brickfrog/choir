@@ -634,6 +634,14 @@ test "tl_tracked_pr_merge_gate_snapshot_ready waits for Copilot comment on comme
 }
 
 ///|
+test "tl_tracked_pr_merge_gate_snapshot_ready skips comment-only review when review not required" {
+  let t = sample_tracked(Commented, Success, 1001)
+  assert_true(
+    tl_tracked_pr_merge_gate_snapshot_ready(t, Some(0), review_required=false),
+  )
+}
+
+///|
 test "tl_tracked_pr_merge_gate_snapshot_ready accepts comment-only review after Copilot comment is seen" {
   let t = {
     ..sample_tracked(Commented, Success, 101),
@@ -828,6 +836,14 @@ test "single_pass does NOT treat fresh ChangesRequested as gate-ready when no fi
     review_mode=@types.ReviewMode::SinglePass,
   )
   assert_eq(decision.label(), "blocked")
+}
+
+///|
+test "tl_tracked_pr_merge_gate_snapshot_ready still blocks changes requested when review not required" {
+  let t = sample_tracked(ChangesRequested, Success, 1041)
+  assert_false(
+    tl_tracked_pr_merge_gate_snapshot_ready(t, Some(0), review_required=false),
+  )
 }
 
 ///|
