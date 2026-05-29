@@ -152,10 +152,7 @@ pub fn Config::default() -> Config {
     worker_no_handoff_prod_sec: 120L,
     worker_no_handoff_escalate_sec: 120L,
     poller_heartbeat_tick_sec: 60,
-    prenotify_checks: [
-      "moon check --target native", "CHOIR_TEST_NO_EXEC=1 moon test --target native",
-      "CHOIR_TEST_REAL_EXEC=1 moon test --target native src/exec", "moon run src/bin/choir_lint --target native",
-    ],
+    prenotify_checks: [],
     auto_pull_after_integration: true,
     project: Project::default(),
     pr_policy: PrPolicy::default(),

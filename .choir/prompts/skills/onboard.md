@@ -40,6 +40,8 @@ pre-commit hook is not appropriate for arbitrary repos.
 
    - Do NOT add `language`, `fmt_cmd`, `lint_cmd`, or `conventions_file`.
      The only generated config value is `verify_cmd`.
+   - Repos may later add top-level `prenotify_checks` for their own handoff
+     gates; do NOT generate them by default.
 
 5. Seed the audit gate state.
    - Get the current Unix time in seconds.
