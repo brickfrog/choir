@@ -77,11 +77,11 @@ const AUDIT_SKILL_DEFAULT : String =
   #|description: Spawn a Sarcasmotron worker to critically audit the current branch diff.
   #|---
   #|1. Determine the review surface.
-  #|   - If HEAD is on a `feature/*` branch: review target is `git diff main...HEAD`.
-  #|   - Otherwise: review target is `git diff $(git merge-base HEAD main)...HEAD`.
+  #|   - If HEAD is on a `feature/*` branch: review target is `git diff <default_branch>...HEAD`.
+  #|   - Otherwise: review target is `git diff $(git merge-base HEAD <default_branch>)...HEAD`.
   #|   - Run the resulting `git diff <range>` and check that the output is non-empty.
   #|   - If the diff is empty (no files changed in the review surface), STOP. Print:
-  #|     `Audit skill invoked but review surface (git diff <range>) is empty. Switch to a feature branch with diff vs main, or pass an explicit comparison base. Refusing to spawn a no-op review.`
+  #|     `Audit skill invoked but review surface (git diff <range>) is empty. Switch to a feature branch with diff vs <default_branch>, or pass an explicit comparison base. Refusing to spawn a no-op review.`
   #|     Do NOT proceed to step 2 (`spawn_worker`).
   #|2. Call `spawn_worker` with a task that includes:
   #|
@@ -109,8 +109,9 @@ const AUDIT_SKILL_DEFAULT : String =
   #|   (b) Context for the review:
   #|   - Current branch name.
   #|   - Review surface (the diff command from step 1).
-  #|   - CLAUDE.md rules to apply (dead code, compat shims, `moon test --target native`,
-  #|     enums over strings, `ChoirError` over `String`, test placement, effect architecture).
+  #|   - Apply the conventions this repo documents in its agent doc (CLAUDE.md / AGENTS.md):
+  #|     dead code, naming, test placement, error handling, and any architecture rules it specifies.
+  #|   - Verify with the configured verify command.
   #|   - Any relevant spec file from `.choir/context/<name>-spec.md`.
   #|
   #|   (c) Deliverable: findings with file:line, categorized however Sarcasmotron
@@ -262,7 +263,7 @@ const SHIP_PR_DEFAULT : String =
   #|## Gotchas
   #|
   #|- Thread resolution: after the leaf pushes fixes, wait for the next poller snapshot; the server resolves now-outdated threads for iterative-review PRs. Use `mcp__choir__resolve_my_review_threads` only for persistent unresolved threads.
-  #|- moon fmt scope: pre-commit only formats staged `.mbt` files. If unstaged `.mbt` files got rewritten anyway (broken hook, pre-commit run from a different cwd), inspect with `git diff` first; `git restore src/` only after confirming the unstaged churn isn't real work you wanted. `with fn` and trait-body `fn` are no longer rejection patterns — `choir_lint` accepts them via a preprocessor (see choir-p8w6).
+  #|- Pre-commit hook: Respect the repo's pre-commit hook; if it rewrites files unexpectedly, inspect with `git diff` before discarding.
   #|- Leaf cd'd out of worktree: leaf has no commits but main has unstaged edits matching its task — kill the leaf, finish TL-direct via Path B.
   #|- Audit receipt: full 40-char sha required. Findings_count must be 0 to pass merge_pr gate.
   #|

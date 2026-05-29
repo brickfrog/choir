@@ -1,0 +1,7 @@
+default_role = "dev"
+project_dir = "/mnt/data/Code/choir/."
+listen_uds = "/mnt/data/Code/choir/./.choir/server.sock"
+terminal_session = "choir-choir"
+
+[project]
+verify_cmd = "moon check --target native && moon test --target native"
