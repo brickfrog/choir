@@ -26,6 +26,7 @@ pub(all) enum FailureReason {
   McpInitializeFailure
   ParentKilled
   BlockedByReview
+  NeverRegistered
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -45,6 +46,7 @@ pub fn FailureReason::to_wire_string(self : FailureReason) -> String {
     McpInitializeFailure => "mcp_initialize_failure"
     ParentKilled => "parent_killed"
     BlockedByReview => "blocked_by_review"
+    NeverRegistered => "never_registered"
   }
 }
 
@@ -825,6 +827,7 @@ pub fn failure_reason_message(reason : FailureReason) -> String {
     McpInitializeFailure => "MCP initialize failure"
     ParentKilled => "parent killed"
     BlockedByReview => "blocked by review"
+    NeverRegistered => "never registered"
   }
 }
 
@@ -862,6 +865,8 @@ pub fn classify_failure(message : String) -> FailureReason {
     first_line == "changes requested" ||
     first_line.has_prefix("changes requested:") {
     BlockedByReview
+  } else if lower.contains("never registered") {
+    NeverRegistered
   } else {
     ChildFailure(message~)
   }

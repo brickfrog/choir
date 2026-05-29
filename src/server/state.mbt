@@ -142,6 +142,7 @@ pub struct ServerState {
   worker_no_handoff_prodded_at : Map[String, Int64]
   worker_no_handoff_stalled_emitted : Map[String, Bool]
   worker_no_handoff_exit_emitted : Map[String, Bool]
+  spawn_registration_first_unseen : Map[String, Int64]
   idle_agent_warned_at_70 : Map[String, Bool]
   list_panes_cache : Map[String, @tools.CachedListPanesSnapshot]
   recent_poller_event_emissions : Map[String, Map[String, RecentEmission]]
@@ -256,6 +257,7 @@ pub fn ServerState::new(
     worker_no_handoff_prodded_at: {},
     worker_no_handoff_stalled_emitted: {},
     worker_no_handoff_exit_emitted: {},
+    spawn_registration_first_unseen: {},
     idle_agent_warned_at_70: {},
     list_panes_cache: {},
     recent_poller_event_emissions: {},

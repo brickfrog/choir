@@ -5,6 +5,9 @@ pub const DEDUP_WINDOW_SEC : Int64 = 60L
 pub const HEARTBEAT_WINDOW_SEC : Int64 = 300L
 
 ///|
+pub const SPAWN_REGISTRATION_TIMEOUT_SEC : Int64 = 180L
+
+///|
 pub(all) struct RecentEmission {
   content_hash : String
   emitted_at_unix : Int64
@@ -2754,6 +2757,138 @@ fn ServerState::last_poller_delivery_age_sec(
 }
 
 ///|
+pub fn spawn_registration_never_registered(
+  state : @types.AgentState,
+  last_updated_unix_sec : Int64,
+) -> Bool {
+  state == @types.AgentState::Spawning && last_updated_unix_sec == 0L
+}
+
+///|
+pub fn spawn_registration_reap_due(
+  state : @types.AgentState,
+  never_registered : Bool,
+  first_unseen : Int64,
+  now : Int64,
+  deadline_sec : Int64,
+) -> Bool {
+  if deadline_sec <= 0L {
+    return false
+  }
+  state == @types.AgentState::Spawning &&
+  never_registered &&
+  nonnegative_elapsed(now, first_unseen) >= deadline_sec
+}
+
+///|
+fn spawn_registration_timeout_parent_message(
+  agent_id : String,
+  first_unseen : Int64,
+  now : Int64,
+  deadline_sec : Int64,
+) -> String {
+  "[SPAWN REGISTRATION TIMEOUT] " +
+  agent_id +
+  " never registered within " +
+  deadline_sec.to_string() +
+  "s of first poller observation (first_seen=" +
+  first_unseen.to_string() +
+  ", now=" +
+  now.to_string() +
+  "). Reaped as Failed(NeverRegistered)."
+}
+
+///|
+fn spawn_registration_reapable_role(role : @types.Role) -> Bool {
+  role == @types.Role::Dev || role == @types.Role::Worker
+}
+
+///|
+async fn ServerState::reap_never_registered_spawn(
+  self : ServerState,
+  agent : @types.Agent,
+  first_unseen : Int64,
+  now : Int64,
+  deadline_sec : Int64,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  kill_pgid : (Int) -> Unit,
+) -> Unit {
+  let agent_id = agent.agent_id.to_string()
+  @moontrace.warn("spawn registration timeout reaping agent", fields=[
+    @moontrace.field("agent_id", agent_id),
+    @moontrace.field("role", agent.role.to_wire_string()),
+    @moontrace.field("first_unseen", first_unseen),
+    @moontrace.field("now", now),
+    @moontrace.field("deadline_sec", deadline_sec),
+  ])
+  self.kill_tracked_agent_pgroup(agent_id, kill_pgid)
+  self.fail_agent_with_runner(
+    agent_id,
+    @phase.FailureReason::NeverRegistered,
+    spawn_registration_timeout_parent_message(
+      agent_id, first_unseen, now, deadline_sec,
+    ),
+    @types.ExitReason::Shutdown,
+    runner,
+    close_target=true,
+  )
+}
+
+///|
+async fn ServerState::sweep_spawn_registration_timeouts(
+  self : ServerState,
+  now : Int64,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  deadline_sec? : Int64 = SPAWN_REGISTRATION_TIMEOUT_SEC,
+  kill_pgid? : (Int) -> Unit = default_kill_pgid_best_effort,
+) -> Unit {
+  let agents = self.registry.list()
+  let live_ids : Array[String] = []
+  for agent in agents {
+    let agent_id = agent.agent_id.to_string()
+    live_ids.push(agent_id)
+    if !spawn_registration_reapable_role(agent.role) {
+      self.spawn_registration_first_unseen.remove(agent_id)
+      continue
+    }
+    let lifecycle = self.current_lifecycle(agent_id)
+    let never_registered = spawn_registration_never_registered(
+      agent.state,
+      lifecycle.last_updated_unix_sec,
+    )
+    if !never_registered {
+      self.spawn_registration_first_unseen.remove(agent_id)
+      continue
+    }
+    match self.spawn_registration_first_unseen.get(agent_id) {
+      Some(first_unseen) =>
+        if spawn_registration_reap_due(
+            agent.state,
+            never_registered,
+            first_unseen,
+            now,
+            deadline_sec,
+          ) {
+          self.spawn_registration_first_unseen.remove(agent_id)
+          self.reap_never_registered_spawn(
+            agent, first_unseen, now, deadline_sec, runner, kill_pgid,
+          )
+        }
+      None => self.spawn_registration_first_unseen.set(agent_id, now)
+    }
+  }
+  let tracked_ids : Array[String] = []
+  for agent_id, _first_unseen in self.spawn_registration_first_unseen {
+    tracked_ids.push(agent_id)
+  }
+  for agent_id in tracked_ids {
+    if !live_ids.contains(agent_id) {
+      self.spawn_registration_first_unseen.remove(agent_id)
+    }
+  }
+}
+
+///|
 fn optional_age_sec_to_string(value : Int64?) -> String {
   match value {
     Some(v) => v.to_string()
@@ -2983,6 +3118,7 @@ pub async fn ServerState::process_poller_tick_with(
     now,
   )
   deliver_poller_stall_notifications(self, now, runner, sleep_fn~)
+  self.sweep_spawn_registration_timeouts(now, runner)
   self.sweep_outbox(now)
   ignore(self.poller.write_state_file(self.config.project_dir))
 }
@@ -3061,6 +3197,7 @@ pub async fn ServerState::process_poller_tick(
     now,
   )
   deliver_poller_stall_notifications(self, now, runner, sleep_fn~)
+  self.sweep_spawn_registration_timeouts(now, runner)
   self.sweep_outbox(now)
   ignore(self.poller.write_state_file(self.config.project_dir))
 }

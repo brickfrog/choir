@@ -95,6 +95,9 @@ fn ServerState::reload_runtime_snapshot_json(
     "worker_no_handoff_exit_emitted": server_reload_bool_entries_json(
       self.worker_no_handoff_exit_emitted,
     ),
+    "spawn_registration_first_unseen": server_reload_int64_entries_json(
+      self.spawn_registration_first_unseen,
+    ),
     "idle_agent_warned_at_70": server_reload_bool_entries_json(
       self.idle_agent_warned_at_70,
     ),
@@ -480,6 +483,13 @@ pub fn ServerState::restore_reload_snapshot(
     Ok(v) => v
     Err(e) => return Err(e)
   }
+  let parsed_spawn_registration_first_unseen = match
+    server_reload_parse_int64_map_or_empty(
+      root.get("spawn_registration_first_unseen"),
+    ) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
   let parsed_idle_agent_warned_at_70 = match
     server_reload_parse_bool_map_or_empty(root.get("idle_agent_warned_at_70")) {
     Ok(v) => v
@@ -525,6 +535,10 @@ pub fn ServerState::restore_reload_snapshot(
   server_reload_replace_map_contents(
     self.worker_no_handoff_exit_emitted,
     parsed_worker_no_handoff_exit_emitted,
+  )
+  server_reload_replace_map_contents(
+    self.spawn_registration_first_unseen,
+    parsed_spawn_registration_first_unseen,
   )
   server_reload_replace_map_contents(
     self.idle_agent_warned_at_70,
