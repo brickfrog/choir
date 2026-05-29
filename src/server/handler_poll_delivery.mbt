@@ -60,6 +60,8 @@ fn parent_pr_state_notification_decision(
   merge_mode? : @poller.MergeOperatorMode = @poller.MergeOperatorMode::Manual,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
+  skip_copilot_on_feature_branch? : Bool = false,
+  default_branch? : String = "",
 ) -> @poller.PrStateNotificationDecision {
   let task_contract = @types.task_contract_with_normalized_verify(
     task_contract, moon_verify_target,
@@ -83,6 +85,8 @@ fn parent_pr_state_notification_decision(
     review_mode~,
     verify_results~,
     merge_mode~,
+    skip_copilot_on_feature_branch~,
+    default_branch~,
   )
 }
 
@@ -123,6 +127,8 @@ pub fn parent_poll_event_message(
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
   precomputed_decision? : @poller.PrStateNotificationDecision? = None,
+  skip_copilot_on_feature_branch? : Bool = false,
+  default_branch? : String = "",
 ) -> (String, @types.Status)? {
   let agent_id = tracked.agent_id
   let branch = tracked.branch
@@ -152,8 +158,15 @@ pub fn parent_poll_event_message(
         merge_mode~,
         review_mode~,
         moon_verify_target~,
+        skip_copilot_on_feature_branch~,
+        default_branch~,
       )
   }
+  let review_required = @policy.review_required_for_branch(
+    skip_copilot_on_feature_branch,
+    tracked.parent_branch,
+    default_branch,
+  )
   match event {
     PRReady(n) => {
       let message = "[PR READY] " +
@@ -206,11 +219,20 @@ pub fn parent_poll_event_message(
       Some((message, @types.Status::Info))
     }
     ReviewTimeout(n) => {
+      let (summary, status) = if review_required {
+        (" — no review after timeout", @types.Status::Failure)
+      } else {
+        (
+          " — review skipped by policy; no review action required",
+          @types.Status::Info,
+        )
+      }
       let message = "[REVIEW TIMEOUT] " +
         agent_id +
         " PR #" +
         n.to_string() +
-        " — no review after timeout\n" +
+        summary +
+        "\n" +
         "branch: " +
         branch +
         "\n" +
@@ -222,7 +244,7 @@ pub fn parent_poll_event_message(
           notification_decision, n, parent_branch, merge_mode,
         ) +
         parent_poll_tl_decision_suffix(notification_decision, merge_mode)
-      Some((message, @types.Status::Failure))
+      Some((message, status))
     }
     ReviewReceived(n, comments) =>
       if comments == "" {
@@ -295,8 +317,10 @@ pub fn parent_poll_event_message(
         unresolved_threads_for_recheck,
         task_contract~,
         moon_verify_target~,
+        skip_copilot_on_feature_branch~,
+        default_branch~,
       )
-      let prefix = parent_poll_ci_escalation_prefix(tracked)
+      let prefix = parent_poll_ci_escalation_prefix(tracked, review_required~)
       Some(
         (
           "[CI FAILURE CLEARED] " +
@@ -329,8 +353,10 @@ pub fn parent_poll_event_message(
         unresolved_threads_for_recheck,
         task_contract~,
         moon_verify_target~,
+        skip_copilot_on_feature_branch~,
+        default_branch~,
       )
-      let prefix = parent_poll_ci_escalation_prefix(tracked)
+      let prefix = parent_poll_ci_escalation_prefix(tracked, review_required~)
       Some(
         (
           "[CI LATEST HEAD] " +
@@ -363,6 +389,8 @@ pub fn parent_poll_event_message(
         unresolved_threads_for_recheck,
         task_contract~,
         moon_verify_target~,
+        skip_copilot_on_feature_branch~,
+        default_branch~,
       )
       Some(
         (
@@ -391,8 +419,12 @@ pub fn parent_poll_event_message(
     PRMerged(_) => None
     MergeReady(n) => {
       let readiness_summary = match notification_decision.policy_decision {
-        @policy.MergeDecision::MergeNow(_) =>
-          " — reviewed, CI green, merge gate open\n"
+        @policy.MergeDecision::MergeNow(reason~) =>
+          if reason.contains("review skipped by policy") {
+            " — review skipped by policy, CI green, merge gate open\n"
+          } else {
+            " — reviewed, CI green, merge gate open\n"
+          }
         _ => " — merge readiness re-check required\n"
       }
       let message = "[MERGE READY] " +
@@ -423,6 +455,8 @@ pub fn parent_poll_event_message(
         unresolved_threads_for_recheck,
         task_contract~,
         moon_verify_target~,
+        skip_copilot_on_feature_branch~,
+        default_branch~,
       )
       let message = "[THREADS RESOLVED] " +
         agent_id +
@@ -1215,6 +1249,7 @@ pub fn clamp_review_summary_for_pane(body : String) -> String {
 pub fn leaf_poll_review_injection_message(
   event : @poller.PollEvent,
   tracked : @poller.TrackedPR?,
+  review_required? : Bool = true,
 ) -> (String, @types.Status)? {
   match event {
     ReviewReceived(n, body) =>
@@ -1258,7 +1293,10 @@ pub fn leaf_poll_review_injection_message(
         ": CI no longer reports failure on latest head — verify full status on GitHub (not merge or approval)"
       let msg = match tracked {
         Some(pr) =>
-          if @poller.tl_tracked_pr_copilot_review_silent_escalation_active(pr) {
+          if @poller.tl_tracked_pr_copilot_review_silent_escalation_active(
+              pr,
+              review_required~,
+            ) {
             "[REVIEW] PR #" +
             n.to_string() +
             ": CI cleared but still no review. Run request_review(pr_number: \"" +
@@ -1277,7 +1315,10 @@ pub fn leaf_poll_review_injection_message(
         ": Actions rollup: all checks successful on latest head — re-check review thread and policy (not merge or approval by itself)"
       let msg = match tracked {
         Some(pr) =>
-          if @poller.tl_tracked_pr_copilot_review_silent_escalation_active(pr) {
+          if @poller.tl_tracked_pr_copilot_review_silent_escalation_active(
+              pr,
+              review_required~,
+            ) {
             "[REVIEW] PR #" +
             n.to_string() +
             ": CI green but still no review. Run request_review(pr_number: \"" +
@@ -1521,6 +1562,7 @@ pub fn ServerState::plan_poll_event_deliveries(
   unresolved_threads_for_recheck : Int?,
   skip_parent? : Bool = false,
   now? : Int64 = @poller.now_sec(),
+  default_branch? : String = "",
 ) -> Array[PlannedDelivery] {
   let deliveries : Array[PlannedDelivery] = []
   let tracked = self.poller.get(poll_event_pr_number(event))
@@ -1590,6 +1632,8 @@ pub fn ServerState::plan_poll_event_deliveries(
           merge_mode~,
           review_mode~,
           moon_verify_target=self.config.moon_verify_target,
+          skip_copilot_on_feature_branch=self.config.pr_policy.skip_copilot_on_feature_branch,
+          default_branch~,
         )
         match
           parent_poll_event_message(
@@ -1601,6 +1645,8 @@ pub fn ServerState::plan_poll_event_deliveries(
             review_mode~,
             moon_verify_target=self.config.moon_verify_target,
             precomputed_decision=Some(notification_decision),
+            skip_copilot_on_feature_branch=self.config.pr_policy.skip_copilot_on_feature_branch,
+            default_branch~,
           ) {
           Some((message, status)) => {
             let (event_name, content_hash) = poller_parent_event_content_hash(
@@ -1654,11 +1700,25 @@ pub fn ServerState::plan_poll_event_deliveries(
     }
   }
   // Owning leaf — direct `[REVIEW] PR #n: …` injection (terminal_target in registry)
+  let leaf_review_required = match tracked {
+    Some(pr) =>
+      @policy.review_required_for_branch(
+        self.config.pr_policy.skip_copilot_on_feature_branch,
+        pr.parent_branch,
+        default_branch,
+      )
+    None => true
+  }
   match leaf_owner {
     Some(agent) =>
       match agent.state {
         @types.AgentState::Active | @types.AgentState::Completing =>
-          match leaf_poll_review_injection_message(event, tracked) {
+          match
+            leaf_poll_review_injection_message(
+              event,
+              tracked,
+              review_required=leaf_review_required,
+            ) {
             Some((message, status)) =>
               deliveries.push({
                 recipient_id: agent.agent_id.to_string(),
@@ -2129,6 +2189,11 @@ async fn deliver_pending_poll_events(
   if retried_events.length() > 0 {
     state.request_goal_judge_tick()
   }
+  let default_branch = if pending_events.length() > 0 {
+    @tools.detect_default_branch_with_capture(state.config.project_dir, capture)
+  } else {
+    ""
+  }
   for i = 0; i < pending_events.length(); i = i + 1 {
     let event = pending_events[i]
     let agent_id = pending_agent_ids[i]
@@ -2250,6 +2315,7 @@ async fn deliver_pending_poll_events(
             unresolved_threads,
             skip_parent=true,
             now~,
+            default_branch~,
           ) {
           ignore(state.durable_dispatch_planned(planned, runner, sleep_fn~))
         }
@@ -2289,6 +2355,8 @@ async fn deliver_pending_poll_events(
           merge_mode~,
           review_mode~,
           moon_verify_target=state.config.moon_verify_target,
+          skip_copilot_on_feature_branch=state.config.pr_policy.skip_copilot_on_feature_branch,
+          default_branch~,
         )
         match
           parent_poll_event_message(
@@ -2301,14 +2369,11 @@ async fn deliver_pending_poll_events(
             review_mode~,
             moon_verify_target=state.config.moon_verify_target,
             precomputed_decision=Some(notification_decision),
+            skip_copilot_on_feature_branch=state.config.pr_policy.skip_copilot_on_feature_branch,
+            default_branch~,
           ) {
           Some((message, status)) => {
-            let category = @poller.plan_tl_poll_event_parent(
-              event,
-              pr,
-              unresolved_threads,
-              review_mode~,
-            )
+            let category = notification_decision.category
             let (event_name, content_hash) = poller_parent_event_content_hash(
               pr,
               event,

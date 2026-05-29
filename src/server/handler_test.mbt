@@ -5757,6 +5757,39 @@ test "parent_poll_event_message CILatestHeadRollupSucceeded stresses not merge o
 }
 
 ///|
+test "parent_poll_event_message applies skipped review policy for feature branch" {
+  let tracked : @poller.TrackedPR = {
+    ..parent_poll_event_test_tracked(172, "main.dev-z", "work/z", "abc"),
+    parent_branch: "feature/review-skip",
+    last_review_state: @poller.ReviewState::None_,
+    last_timeout_at: 999L,
+    copilot_issue_comment_seen: false,
+  }
+  match
+    parent_poll_event_message(
+      tracked,
+      "/repo",
+      @poller.PollEvent::CILatestHeadRollupSucceeded(172),
+      Some(0),
+      skip_copilot_on_feature_branch=true,
+      default_branch="main",
+    ) {
+    Some((message, status)) => {
+      assert_eq(status, @types.Status::Info)
+      assert_true(message.contains("review skipped by policy"))
+      assert_true(message.contains("Advisory evaluation verdict: ready"))
+      assert_true(message.contains("Merge policy decision: merge_now"))
+      assert_true(message.contains("MERGE NOW"))
+      assert_false(message.contains("Review timeout already fired"))
+      assert_false(message.contains("Waiting on Copilot review"))
+      assert_false(message.contains("waiting for review"))
+      assert_false(message.contains("@copilot"))
+    }
+    None => fail("expected CILatestHeadRollupSucceeded message")
+  }
+}
+
+///|
 test "leaf_poll_review_injection_message CILatestHeadRollupSucceeded is scoped" {
   match
     leaf_poll_review_injection_message(
@@ -5817,6 +5850,55 @@ test "leaf_poll_review_injection_message CILatestHeadRollupSucceeded escalates w
       assert_false(message.contains("re-check review thread and policy"))
     }
     None => fail("expected leaf CI escalation injection")
+  }
+}
+
+///|
+test "leaf_poll_review_injection_message CILatestHeadRollupSucceeded suppresses escalation when review skipped" {
+  let tracked : @poller.TrackedPR = {
+    pr_number: 179,
+    agent_id: "main.dev-leaf",
+    branch: "work/leaf",
+    parent_branch: "feature/review-skip",
+    pr_url: "https://ex/pr/179",
+    first_seen: 0,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::None_,
+    last_review_bodies: "",
+    last_sha: "abc",
+    last_automerge_attempt_sha: "",
+    notified_parent: false,
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
+    last_timeout_at: 100L,
+    copilot_issue_comment_seen: false,
+    orphan_notified: false,
+    orphan_reconciling: false,
+    changes_requested_since: 0L,
+    stall_notified: false,
+    fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
+    unresolved_thread_ids_fetched: false,
+    auto_resolve_outdated_pending: false,
+  }
+  match
+    leaf_poll_review_injection_message(
+      @poller.PollEvent::CILatestHeadRollupSucceeded(179),
+      Some(tracked),
+      review_required=false,
+    ) {
+    Some((message, status)) => {
+      assert_eq(status, @types.Status::Info)
+      assert_true(message.contains("all checks successful"))
+      assert_false(message.contains("request_review"))
+      assert_false(message.contains("@copilot"))
+      assert_false(message.contains("still no review"))
+    }
+    None => fail("expected leaf CI message")
   }
 }
 
@@ -7004,6 +7086,59 @@ test "parent_poll_event_message REVIEW TIMEOUT uses attention-required decision"
       assert_true(message.contains("request_review"))
       assert_true(message.contains("@copilot"))
       assert_false(message.contains("15min"))
+    }
+    None => fail("expected ReviewTimeout message")
+  }
+}
+
+///|
+test "parent_poll_event_message ReviewTimeout is benign when review is skipped" {
+  let tracked : @poller.TrackedPR = {
+    pr_number: 62,
+    agent_id: "main.dev-timeout",
+    branch: "work/timeout",
+    parent_branch: "feature/review-skip",
+    pr_url: "https://ex/pr/62",
+    first_seen: 0,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::None_,
+    last_review_bodies: "",
+    last_sha: "sha",
+    last_automerge_attempt_sha: "",
+    notified_parent: false,
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
+    last_timeout_at: 999L,
+    copilot_issue_comment_seen: false,
+    orphan_notified: false,
+    orphan_reconciling: false,
+    changes_requested_since: 0L,
+    stall_notified: false,
+    fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
+    unresolved_thread_ids_fetched: false,
+    auto_resolve_outdated_pending: false,
+  }
+  match
+    parent_poll_event_message(
+      tracked,
+      "/repo",
+      @poller.PollEvent::ReviewTimeout(62),
+      Some(0),
+      skip_copilot_on_feature_branch=true,
+      default_branch="main",
+    ) {
+    Some((message, status)) => {
+      assert_eq(status, @types.Status::Info)
+      assert_true(message.contains("review skipped by policy"))
+      assert_true(message.contains("MERGE NOW"))
+      assert_false(message.contains("request_review"))
+      assert_false(message.contains("@copilot"))
+      assert_false(message.contains("ACTION REQUIRED: no review"))
     }
     None => fail("expected ReviewTimeout message")
   }

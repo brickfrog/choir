@@ -478,6 +478,8 @@ pub async fn interpret_merge_pr_preflight(
   task_contract_reader? : (String) -> @types.TaskContract? = fn(_) { None },
   review_mode? : @types.ReviewMode = @types.ReviewMode::SinglePass,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
+  skip_copilot_on_feature_branch? : Bool = @types.Config::default().pr_policy.skip_copilot_on_feature_branch,
+  default_branch? : String = "",
 ) -> Result[Unit, @types.ChoirError] {
   ignore(caller_id)
   match
@@ -517,6 +519,8 @@ pub async fn interpret_merge_pr_preflight(
           task_contract~,
           review_mode~,
           verify_results~,
+          skip_copilot_on_feature_branch~,
+          default_branch~,
         ),
       )
     }
@@ -794,6 +798,8 @@ pub fn format_tl_pr_recheck_summary(
   task_contract? : @types.TaskContract? = None,
   verify_results? : Array[@types.VerifyCheckResult] = [],
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
+  skip_copilot_on_feature_branch? : Bool = false,
+  default_branch? : String = "",
 ) -> String {
   let review = match tracked.last_review_state {
     None_ => "none"
@@ -817,8 +823,15 @@ pub fn format_tl_pr_recheck_summary(
   } else {
     "GitHub Copilot issue comment (REST): not seen"
   }
+  let review_required = @policy.review_required_for_branch(
+    skip_copilot_on_feature_branch,
+    tracked.parent_branch,
+    default_branch,
+  )
   let gate = @poller.tl_tracked_pr_recheck_gate_line(
-    tracked, unresolved_thread_count,
+    tracked,
+    unresolved_thread_count,
+    review_required~,
   )
 
   let task_contract = @types.task_contract_with_normalized_verify(
@@ -835,6 +848,8 @@ pub fn format_tl_pr_recheck_summary(
     task_contract~,
     review_mode=tracked.review_mode,
     verify_results~,
+    skip_copilot_on_feature_branch~,
+    default_branch~,
   )
   let policy = @poller.merge_policy_summary_line(
     tracked,
@@ -842,6 +857,8 @@ pub fn format_tl_pr_recheck_summary(
     task_contract~,
     review_mode=tracked.review_mode,
     verify_results~,
+    skip_copilot_on_feature_branch~,
+    default_branch~,
   )
 
   "PR re-check summary (Choir snapshot; not merge approval):\n" +
@@ -2092,6 +2109,7 @@ pub async fn interpret_merge_pr(
   merge_strategy? : @types.MergeStrategy = @types.Config::default().merge_strategy,
   task_contract_reader? : (String) -> @types.TaskContract? = fn(_) { None },
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
+  skip_copilot_on_feature_branch? : Bool = @types.Config::default().pr_policy.skip_copilot_on_feature_branch,
   require_integration_audit? : Bool = @types.Config::default().pr_policy.require_integration_audit,
   hook_capture? : async (String, String, String?) -> (Int, String) = async fn(
     _hook_path,
@@ -2105,6 +2123,7 @@ pub async fn interpret_merge_pr(
     ps.write_state_file(dir)
   },
 ) -> @types.Response {
+  let default_branch = detect_default_branch_with_capture(project_dir, capture)
   match
     interpret_merge_pr_preflight(
       merge_args.pr_number,
@@ -2117,12 +2136,11 @@ pub async fn interpret_merge_pr(
         @types.ReviewMode::SinglePass,
       ),
       moon_verify_target~,
+      skip_copilot_on_feature_branch~,
+      default_branch~,
     ) {
     Err(e) => @types.Response::Err(e.message())
     Ok(_) => {
-      let default_branch = detect_default_branch_with_capture(
-        project_dir, capture,
-      )
       let effective_merge_strategy = merge_pr_effective_merge_strategy(
         project_dir,
         merge_args.pr_number,

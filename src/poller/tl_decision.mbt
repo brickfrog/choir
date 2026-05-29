@@ -214,6 +214,24 @@ pub fn tl_merge_gate_sentence(mode : MergeOperatorMode) -> String {
 }
 
 ///|
+fn tl_merge_gate_sentence_for_reason(
+  mode : MergeOperatorMode,
+  reason : String,
+) -> String {
+  if !reason.contains("review skipped by policy") {
+    return tl_merge_gate_sentence(mode)
+  }
+  match mode {
+    Manual =>
+      "MERGE NOW: review skipped by policy, CI green, threads resolved. Run merge_pr."
+    Automerge =>
+      "AUTO-MERGE READY: review skipped by policy, CI green, threads resolved. The server should merge automatically."
+    Mixed =>
+      "MERGE READY: review skipped by policy, CI green, threads resolved. Check per-leaf merge mode."
+  }
+}
+
+///|
 pub(all) struct WaveRollupEntry {
   pr_number : Int
   agent_id : String
@@ -460,8 +478,11 @@ pub fn format_wave_rollup(
 /// reviewer-request flakiness (accepted but no review posted) vs ordinary waiting.
 pub fn tl_tracked_pr_copilot_review_silent_escalation_active(
   tracked : TrackedPR,
+  review_required? : Bool = true,
 ) -> Bool {
-  tracked.last_timeout_at > 0L && tracked.last_review_state == None_
+  review_required &&
+  tracked.last_timeout_at > 0L &&
+  tracked.last_review_state == None_
 }
 
 ///|
@@ -498,12 +519,14 @@ pub fn tl_tracked_pr_merge_gate_snapshot_ready(
   tracked : TrackedPR,
   unresolved_threads : Int?,
   review_mode? : @types.ReviewMode = tracked.review_mode,
+  review_required? : Bool = true,
 ) -> Bool {
   let threads_clear = match unresolved_threads {
     Some(n) => n == 0
     None => false
   }
-  let review_ok = tracked.last_review_state == Approved ||
+  let review_ok = if review_required {
+    tracked.last_review_state == Approved ||
     (
       tracked.last_review_state == Commented &&
       tracked.copilot_issue_comment_seen
@@ -515,6 +538,9 @@ pub fn tl_tracked_pr_merge_gate_snapshot_ready(
       review_mode == @types.ReviewMode::SinglePass &&
       tracked_changes_requested_fixed(tracked)
     )
+  } else {
+    tracked.last_review_state != ChangesRequested
+  }
   if !review_ok {
     return false
   }
@@ -555,6 +581,19 @@ fn evaluation_ci_rollup_from_snapshot(
     Success => @types.EvaluationCiRollup::Success
     Failure => @types.EvaluationCiRollup::Failure
   }
+}
+
+///|
+fn review_required_for_tracked_pr(
+  tracked : TrackedPR,
+  skip_copilot_on_feature_branch : Bool,
+  default_branch : String,
+) -> Bool {
+  @policy.review_required_for_branch(
+    skip_copilot_on_feature_branch,
+    tracked.parent_branch,
+    default_branch,
+  )
 }
 
 ///|
@@ -604,7 +643,12 @@ pub fn advisory_evaluation_result_for_tracked_pr(
   task_contract? : @types.TaskContract? = None,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   verify_results? : Array[@types.VerifyCheckResult] = [],
+  skip_copilot_on_feature_branch? : Bool = false,
+  default_branch? : String = "",
 ) -> @types.EvaluationResult {
+  let review_required = review_required_for_tracked_pr(
+    tracked, skip_copilot_on_feature_branch, default_branch,
+  )
   @types.advisory_evaluation_result(
     advisory_evaluation_bundle_for_tracked_pr(
       tracked,
@@ -613,6 +657,7 @@ pub fn advisory_evaluation_result_for_tracked_pr(
       review_mode~,
       verify_results~,
     ),
+    review_required~,
   )
 }
 
@@ -623,6 +668,8 @@ pub fn advisory_evaluation_summary_line(
   task_contract? : @types.TaskContract? = None,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   verify_results? : Array[@types.VerifyCheckResult] = [],
+  skip_copilot_on_feature_branch? : Bool = false,
+  default_branch? : String = "",
 ) -> String {
   let result = advisory_evaluation_result_for_tracked_pr(
     tracked,
@@ -630,6 +677,8 @@ pub fn advisory_evaluation_summary_line(
     task_contract~,
     review_mode~,
     verify_results~,
+    skip_copilot_on_feature_branch~,
+    default_branch~,
   )
   "Advisory evaluation verdict: " +
   result.verdict.label() +
@@ -670,6 +719,8 @@ pub fn merge_policy_decision_for_tracked_pr(
   task_contract? : @types.TaskContract? = None,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   verify_results? : Array[@types.VerifyCheckResult] = [],
+  skip_copilot_on_feature_branch? : Bool = false,
+  default_branch? : String = "",
 ) -> @policy.MergeDecision {
   let bundle = advisory_evaluation_bundle_for_tracked_pr(
     tracked,
@@ -678,7 +729,10 @@ pub fn merge_policy_decision_for_tracked_pr(
     review_mode~,
     verify_results~,
   )
-  let canonical = @policy.decide_merge(task_contract, bundle)
+  let review_required = review_required_for_tracked_pr(
+    tracked, skip_copilot_on_feature_branch, default_branch,
+  )
+  let canonical = @policy.decide_merge(task_contract, bundle, review_required~)
   match unresolved_threads {
     Some(count) =>
       if count > 0 &&
@@ -717,6 +771,8 @@ pub fn merge_policy_summary_line(
   task_contract? : @types.TaskContract? = None,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   verify_results? : Array[@types.VerifyCheckResult] = [],
+  skip_copilot_on_feature_branch? : Bool = false,
+  default_branch? : String = "",
 ) -> String {
   let decision = merge_policy_decision_for_tracked_pr(
     tracked,
@@ -724,6 +780,8 @@ pub fn merge_policy_summary_line(
     task_contract~,
     review_mode~,
     verify_results~,
+    skip_copilot_on_feature_branch~,
+    default_branch~,
   )
   merge_policy_summary_line_for_decision(decision)
 }
@@ -839,12 +897,18 @@ pub fn pr_state_notification_decision_for_tracked_pr(
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   verify_results? : Array[@types.VerifyCheckResult] = [],
   merge_mode? : MergeOperatorMode = MergeOperatorMode::Manual,
+  skip_copilot_on_feature_branch? : Bool = false,
+  default_branch? : String = "",
 ) -> PrStateNotificationDecision {
+  let review_required = review_required_for_tracked_pr(
+    tracked, skip_copilot_on_feature_branch, default_branch,
+  )
   let category = plan_tl_poll_event_parent(
     event,
     tracked,
     unresolved_threads,
     review_mode~,
+    review_required~,
   )
   let policy_decision = merge_policy_decision_for_tracked_pr(
     tracked,
@@ -852,6 +916,8 @@ pub fn pr_state_notification_decision_for_tracked_pr(
     task_contract~,
     review_mode~,
     verify_results~,
+    skip_copilot_on_feature_branch~,
+    default_branch~,
   )
   let next_action = next_action_for_pr_state_notification(
     category, policy_decision, tracked, unresolved_threads, merge_mode,
@@ -880,19 +946,19 @@ pub fn tl_pr_state_notification_sentence(
       ", CI is green, and " +
       count.to_string() +
       " unresolved inline review thread(s) remain. Use the server-side resolve_my_review_threads tool; merge_pr must still wait until the poller shows zero unresolved threads."
-    MergeNow(_) =>
+    MergeNow(reason~) =>
       match decision.next_action {
         Wait =>
           if merge_mode == Automerge {
-            tl_merge_gate_sentence(Automerge)
+            tl_merge_gate_sentence_for_reason(Automerge, reason)
           } else {
             tl_tracked_pr_workflow_category_sentence(decision.category)
           }
-        MergeNow => tl_merge_gate_sentence(merge_mode)
+        MergeNow => tl_merge_gate_sentence_for_reason(merge_mode, reason)
         // Mixed-mode merge gate: render the Mixed sentence directly so the
         // category fall-through doesn't drop us back onto the hardcoded
         // Manual "MERGE NOW: ... Run merge_pr." prose.
-        CrossCheckMergeMode => tl_merge_gate_sentence(Mixed)
+        CrossCheckMergeMode => tl_merge_gate_sentence_for_reason(Mixed, reason)
         _ => tl_tracked_pr_workflow_category_sentence(decision.category)
       }
     NeedsHuman(reason~) =>
@@ -917,6 +983,7 @@ pub fn tl_pr_state_notification_sentence(
 fn tl_snapshot_workflow_category(
   tracked : TrackedPR,
   merge_ready : Bool,
+  review_required : Bool,
 ) -> TlTrackedPrWorkflowCategory {
   if tracked.last_review_state == ChangesRequested {
     return BlockedOnChanges
@@ -924,7 +991,13 @@ fn tl_snapshot_workflow_category(
   if merge_ready {
     return MergeGateOpenPendingPolicyConfirmation
   }
-  if tl_tracked_pr_copilot_review_silent_escalation_active(tracked) {
+  if !review_required {
+    return ReadyForTLRecheck
+  }
+  if tl_tracked_pr_copilot_review_silent_escalation_active(
+      tracked,
+      review_required~,
+    ) {
     return AttentionRequiredCopilotSilentAfterTimeout
   }
   if !tracked.copilot_issue_comment_seen {
@@ -940,11 +1013,14 @@ fn tl_snapshot_workflow_category(
 pub fn tl_classify_tracked_pr_workflow(
   tracked : TrackedPR,
   unresolved_threads : Int?,
+  review_required? : Bool = true,
 ) -> TlTrackedPrWorkflowCategory {
   let merge_ready = tl_tracked_pr_merge_gate_snapshot_ready(
-    tracked, unresolved_threads,
+    tracked,
+    unresolved_threads,
+    review_required~,
   )
-  tl_snapshot_workflow_category(tracked, merge_ready)
+  tl_snapshot_workflow_category(tracked, merge_ready, review_required)
 }
 
 ///|
@@ -987,27 +1063,38 @@ pub fn plan_tl_poll_event_parent(
   tracked : TrackedPR,
   unresolved_threads : Int?,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
+  review_required? : Bool = true,
 ) -> TlTrackedPrWorkflowCategory {
   let merge_ready = tl_tracked_pr_merge_gate_snapshot_ready(
     tracked,
     unresolved_threads,
     review_mode~,
+    review_required~,
   )
   match event {
     PRMerged(_) => ObservedMergedExternal
-    ReviewTimeout(_) => AttentionRequiredCopilotSilentAfterTimeout
+    ReviewTimeout(_) =>
+      if review_required {
+        AttentionRequiredCopilotSilentAfterTimeout
+      } else {
+        tl_snapshot_workflow_category(tracked, merge_ready, review_required)
+      }
     CIFailed(_) => AttentionRequiredCIFailed
     CIFailureCleared(_) | CILatestHeadRollupSucceeded(_) =>
       if merge_ready {
         MergeGateOpenPendingPolicyConfirmation
       } else if tracked.last_review_state == ChangesRequested {
         BlockedOnChanges
-      } else if tl_tracked_pr_copilot_review_silent_escalation_active(tracked) {
+      } else if tl_tracked_pr_copilot_review_silent_escalation_active(
+          tracked,
+          review_required~,
+        ) {
         AttentionRequiredCopilotSilentAfterTimeout
       } else {
         ReadyForTLRecheck
       }
-    PRReady(_) => tl_snapshot_workflow_category(tracked, merge_ready)
+    PRReady(_) =>
+      tl_snapshot_workflow_category(tracked, merge_ready, review_required)
     FixesPushed(_) =>
       if merge_ready {
         MergeGateOpenPendingPolicyConfirmation
@@ -1020,10 +1107,12 @@ pub fn plan_tl_poll_event_parent(
       } else {
         WaitingOnReviewOrCI
       }
-    ReviewCommented(_, _) => tl_snapshot_workflow_category(tracked, merge_ready)
+    ReviewCommented(_, _) =>
+      tl_snapshot_workflow_category(tracked, merge_ready, review_required)
     CopilotIssueCommentSeen(_) =>
-      tl_snapshot_workflow_category(tracked, merge_ready)
-    MergeReady(_) => tl_snapshot_workflow_category(tracked, merge_ready)
+      tl_snapshot_workflow_category(tracked, merge_ready, review_required)
+    MergeReady(_) =>
+      tl_snapshot_workflow_category(tracked, merge_ready, review_required)
     ReviewThreadsResolved(_) => ReadyForTLRecheck
   }
 }
@@ -1034,11 +1123,17 @@ pub fn plan_tl_poll_event_parent(
 pub fn tl_tracked_pr_recheck_gate_line(
   tracked : TrackedPR,
   unresolved_thread_count : Int?,
+  review_required? : Bool = true,
 ) -> String {
   let snapshot_ready = tl_tracked_pr_merge_gate_snapshot_ready(
-    tracked, unresolved_thread_count,
+    tracked,
+    unresolved_thread_count,
+    review_required~,
   )
   if snapshot_ready {
+    if !review_required {
+      return "Choir snapshot: no tracked blockers (review skipped by policy, CI success/no checks, zero unresolved threads). Confirm repo policy, then merge_pr if appropriate. Does not merge."
+    }
     if tracked.copilot_issue_comment_seen {
       "Choir snapshot: no tracked blockers (reviewed, CI success/no checks, zero unresolved threads). Copilot issue comment observed. Confirm repo policy, then merge_pr if appropriate. Does not merge."
     } else {
@@ -1046,12 +1141,15 @@ pub fn tl_tracked_pr_recheck_gate_line(
     }
   } else {
     let parts : Array[String] = []
-    if tl_tracked_pr_copilot_review_silent_escalation_active(tracked) {
+    if tl_tracked_pr_copilot_review_silent_escalation_active(
+        tracked,
+        review_required~,
+      ) {
       parts.push(
         "review wait already timed out with no review in Choir snapshot (comment-triggered Copilot may be unreliable)",
       )
     }
-    if !tracked.copilot_issue_comment_seen {
+    if review_required && !tracked.copilot_issue_comment_seen {
       parts.push(
         "no GitHub Copilot issue comment observed (REST issue comments)",
       )
@@ -1059,7 +1157,7 @@ pub fn tl_tracked_pr_recheck_gate_line(
     if tracked.last_review_state == ChangesRequested {
       parts.push("GitHub review requests changes")
     }
-    if tracked.last_review_state == None_ {
+    if review_required && tracked.last_review_state == None_ {
       parts.push("no review in GitHub snapshot")
     }
     match unresolved_thread_count {

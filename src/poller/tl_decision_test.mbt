@@ -227,6 +227,29 @@ test "plan_tl_poll_event_parent observed merged external" {
 }
 
 ///|
+test "plan_tl_poll_event_parent suppresses timeout escalation when review not required" {
+  let t = { ..sample_tracked(None_, Success, 91), last_timeout_at: 999L }
+  assert_eq(
+    plan_tl_poll_event_parent(
+      ReviewTimeout(91),
+      t,
+      Some(0),
+      review_required=false,
+    ),
+    MergeGateOpenPendingPolicyConfirmation,
+  )
+  assert_eq(
+    plan_tl_poll_event_parent(
+      CILatestHeadRollupSucceeded(91),
+      t,
+      Some(0),
+      review_required=false,
+    ),
+    MergeGateOpenPendingPolicyConfirmation,
+  )
+}
+
+///|
 test "tl_tracked_pr_recheck_gate_line matches no blocked snapshot" {
   let t = sample_tracked(Approved, Success, 11)
   let line = tl_tracked_pr_recheck_gate_line(t, Some(0))
@@ -247,6 +270,50 @@ test "merge_policy_decision_for_tracked_pr returns merge_now when no CI checks e
   let t = sample_tracked(Approved, NoChecks, 12)
   let decision = merge_policy_decision_for_tracked_pr(t, Some(0))
   assert_eq(decision.label(), "merge_now")
+}
+
+///|
+test "merge_policy_decision_for_tracked_pr allows feature branch when Copilot review is skipped" {
+  let t = {
+    ..sample_tracked(None_, Success, 120),
+    parent_branch: "feature/review-skip",
+  }
+  let contract = {
+    ..@types.TaskContract::empty(),
+    goal: "ship feature",
+    verify: ["moon test --target native"],
+  }
+  let decision = merge_policy_decision_for_tracked_pr(
+    t,
+    Some(0),
+    task_contract=Some(contract),
+    verify_results=[
+      {
+        name: "moon test --target native",
+        status: @types.VerifyStatus::Passed,
+        details: "exit: 0",
+      },
+    ],
+    skip_copilot_on_feature_branch=true,
+    default_branch="main",
+  )
+  assert_eq(decision.label(), "merge_now")
+}
+
+///|
+test "advisory_evaluation_result_for_tracked_pr allows feature branch when Copilot review is skipped" {
+  let t = {
+    ..sample_tracked(Commented, Success, 121),
+    parent_branch: "feature/review-skip",
+    copilot_issue_comment_seen: false,
+  }
+  let result = advisory_evaluation_result_for_tracked_pr(
+    t,
+    Some(0),
+    skip_copilot_on_feature_branch=true,
+    default_branch="main",
+  )
+  assert_eq(result.verdict, @types.EvaluationVerdict::Ready)
 }
 
 ///|
@@ -590,6 +657,14 @@ test "tl_tracked_pr_merge_gate_snapshot_ready waits for Copilot comment on comme
 }
 
 ///|
+test "tl_tracked_pr_merge_gate_snapshot_ready skips comment-only review when review not required" {
+  let t = sample_tracked(Commented, Success, 1001)
+  assert_true(
+    tl_tracked_pr_merge_gate_snapshot_ready(t, Some(0), review_required=false),
+  )
+}
+
+///|
 test "tl_tracked_pr_merge_gate_snapshot_ready accepts comment-only review after Copilot comment is seen" {
   let t = {
     ..sample_tracked(Commented, Success, 101),
@@ -784,6 +859,14 @@ test "single_pass does NOT treat fresh ChangesRequested as gate-ready when no fi
     review_mode=@types.ReviewMode::SinglePass,
   )
   assert_eq(decision.label(), "blocked")
+}
+
+///|
+test "tl_tracked_pr_merge_gate_snapshot_ready still blocks changes requested when review not required" {
+  let t = sample_tracked(ChangesRequested, Success, 1041)
+  assert_false(
+    tl_tracked_pr_merge_gate_snapshot_ready(t, Some(0), review_required=false),
+  )
 }
 
 ///|

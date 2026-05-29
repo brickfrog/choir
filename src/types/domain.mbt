@@ -1184,6 +1184,7 @@ pub(all) enum CascadeVerdict {
 pub fn evaluation_cascade(
   verify_required : Array[String],
   signals : Array[EvaluationSignal],
+  review_required? : Bool = true,
 ) -> CascadeVerdict {
   let review = evaluation_latest_review_state(signals)
   let ci = evaluation_latest_ci_rollup(signals)
@@ -1228,11 +1229,16 @@ pub fn evaluation_cascade(
   if threads is None {
     return CascadeVerdict::NeedsHuman(reason="review threads not fetched")
   }
-  if review == EvaluationReviewState::Unknown ||
-    review == EvaluationReviewState::None_ {
+  if review_required &&
+    (
+      review == EvaluationReviewState::Unknown ||
+      review == EvaluationReviewState::None_
+    ) {
     return CascadeVerdict::Waiting(reason="waiting for review")
   }
-  if review == EvaluationReviewState::Commented && !copilot_seen {
+  if review_required &&
+    review == EvaluationReviewState::Commented &&
+    !copilot_seen {
     return CascadeVerdict::Waiting(reason="waiting for Copilot comments")
   }
   if ci == EvaluationCiRollup::Unknown || ci == EvaluationCiRollup::InProgress {
@@ -1249,12 +1255,17 @@ pub fn evaluation_cascade(
 ///|
 pub fn advisory_evaluation_result(
   bundle : EvaluationBundle,
+  review_required? : Bool = true,
 ) -> EvaluationResult {
   let verify_required = match bundle.task_contract {
     Some(contract) => contract.verify
     None => []
   }
-  let cascade = evaluation_cascade(verify_required, bundle.signals)
+  let cascade = evaluation_cascade(
+    verify_required,
+    bundle.signals,
+    review_required~,
+  )
   match cascade {
     Ready(reason~) => { verdict: EvaluationVerdict::Ready, summary: reason }
     Blocked(reason~) =>
