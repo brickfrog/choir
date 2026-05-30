@@ -737,7 +737,16 @@ pub async fn interpret_fork_wave_post_spawn(
     @phase.interpret_lifecycle_effects(project_dir, tl_effects, registry~)
     match resolve_zellij_tab_terminal_target(session, slug, capture~) {
       Some(pane_id) => resolved_pane_ids.push((agent_id, pane_id))
-      None => ()
+      None =>
+        @moontrace.warn(
+          "spawned leaf produced no resolvable zellij tab/pane after launch; likely causes: zellij new-tab no-op / immediate agent exit",
+          fields=[
+            @moontrace.field("event", "spawn_no_zellij_tab"),
+            @moontrace.field("agent_id", agent_id),
+            @moontrace.field("slug", slug),
+            @moontrace.field("session", session),
+          ],
+        )
     }
   }
   match registry {
