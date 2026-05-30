@@ -330,6 +330,52 @@ fn fork_wave_spawn_commands_phase(
 }
 
 ///|
+fn git_status_paths_in_status_line(line : String) -> Array[String] {
+  if line.length() < 4 {
+    return []
+  }
+  let payload = line[3:].to_owned()
+  let arrow = " -> "
+  match payload.find(arrow) {
+    Some(idx) =>
+      [payload[:idx].to_owned(), payload[idx + arrow.length():].to_owned()]
+    None => [payload]
+  }
+}
+
+///|
+fn fork_wave_clean_gate_ignored_beads_path(path : String) -> Bool {
+  path.has_prefix(".beads/") && path.has_suffix(".jsonl")
+}
+
+///|
+fn fork_wave_clean_gate_ignored_status_line(line : String) -> Bool {
+  let paths = git_status_paths_in_status_line(line)
+  if paths.length() == 0 {
+    return false
+  }
+  for path in paths {
+    if !fork_wave_clean_gate_ignored_beads_path(path) {
+      return false
+    }
+  }
+  true
+}
+
+///|
+pub fn fork_wave_clean_gate_relevant_status(status_out : String) -> String {
+  let lines : Array[String] = []
+  for line in status_out.split("\n") {
+    let owned = line.to_owned()
+    if owned.trim() == "" || fork_wave_clean_gate_ignored_status_line(owned) {
+      continue
+    }
+    lines.push(owned)
+  }
+  lines.join("\n")
+}
+
+///|
 fn fork_wave_clean_gate_phase(
   project_dir : String,
   cmds : Array[@workspace.Command],
@@ -341,8 +387,9 @@ fn fork_wave_clean_gate_phase(
   GitCapture(program="git", args=["-C", project_dir, "status", "--porcelain"], cont=fn(
     status_out,
   ) {
-    if status_out.trim().to_owned() != "" {
-      Pure(Err(UncommittedChanges(output=status_out.trim().to_owned())))
+    let relevant_status = fork_wave_clean_gate_relevant_status(status_out)
+    if relevant_status.trim().to_owned() != "" {
+      Pure(Err(UncommittedChanges(output=relevant_status.trim().to_owned())))
     } else {
       GitCapture(
         program="git",
@@ -529,18 +576,7 @@ fn fork_wave_scaffold_commit_phase(
 /// scaffold paths so a rename of a scaffold path isn't mis-flagged as
 /// unrelated.
 fn scaffold_preflight_paths_in_status_line(line : String) -> Array[String] {
-  // Line shape: 'XY path' with path starting at index 3. Empty / too-short
-  // lines have no paths.
-  if line.length() < 4 {
-    return []
-  }
-  let payload = line[3:].to_owned()
-  let arrow = " -> "
-  match payload.find(arrow) {
-    Some(idx) =>
-      [payload[:idx].to_owned(), payload[idx + arrow.length():].to_owned()]
-    None => [payload]
-  }
+  git_status_paths_in_status_line(line)
 }
 
 ///|
