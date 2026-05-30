@@ -82,26 +82,62 @@ fn fork_wave_slug_for_index(
   fork_wave_args : ForkWaveArgs,
   index : Int,
   seen_slugs : Map[String, Int],
+  wave_id : String?,
 ) -> String {
   let flat_prefix = flat_slug_prefix(fork_wave_args.slug_prefix)
+  let wave_discriminator = fork_wave_discriminator(flat_prefix, wave_id)
   let raw_slug = if fork_wave_args.has_per_leaf_tasks {
     let task_slug = slugify_task(fork_wave_args.tasks[index], index)
-    if flat_prefix == "wave" {
+    let human_slug = if flat_prefix == "wave" {
       task_slug
     } else {
       flat_prefix + "-" + task_slug
     }
-  } else {
-    flat_prefix + "-" + index.to_string()
-  }
-  match seen_slugs.get(raw_slug) {
-    Some(count) => {
-      seen_slugs.set(raw_slug, count + 1)
-      raw_slug + "-" + index.to_string()
+    match wave_discriminator {
+      Some(discriminator) => human_slug + "-" + discriminator
+      None => human_slug
     }
-    None => {
-      seen_slugs.set(raw_slug, 1)
-      raw_slug
+  } else {
+    match wave_discriminator {
+      Some(discriminator) =>
+        flat_prefix + "-" + discriminator + "-" + index.to_string()
+      None => flat_prefix + "-" + index.to_string()
+    }
+  }
+  // Disambiguate against previously EMITTED slugs (the map keys), not just the
+  // raw slug, so a later leaf whose raw slug equals an earlier leaf's
+  // disambiguated slug (e.g. tasks ["a b", "a b", "a b 1"]) still receives a
+  // unique final slug instead of silently colliding branches/worktrees/tabs.
+  let mut candidate = raw_slug
+  let mut suffix = index
+  for ;; {
+    match seen_slugs.get(candidate) {
+      None => break
+      Some(_) => {
+        candidate = raw_slug + "-" + suffix.to_string()
+        suffix = suffix + 1
+      }
+    }
+  }
+  seen_slugs.set(candidate, 1)
+  candidate
+}
+
+///|
+fn fork_wave_discriminator(flat_prefix : String, wave_id : String?) -> String? {
+  match wave_id {
+    None => None
+    Some(id) => {
+      if id == "" {
+        return None
+      }
+      let redundant_prefix = flat_prefix + "-"
+      if id.has_prefix(redundant_prefix) &&
+        id.length() > redundant_prefix.length() {
+        Some(id[redundant_prefix.length():id.length()].to_owned())
+      } else {
+        Some(id)
+      }
     }
   }
 }
@@ -110,13 +146,16 @@ fn fork_wave_slug_for_index(
 fn ensure_fork_wave_spawn_ids_do_not_collide(
   fork_wave_args : ForkWaveArgs,
   registry : @registry.AgentRegistry?,
+  wave_id? : String? = None,
 ) -> Result[Unit, @types.ChoirError] {
   match registry {
     None => Ok(())
     Some(_) => {
       let seen_slugs : Map[String, Int] = {}
       for i = 0; i < fork_wave_args.count; i = i + 1 {
-        let slug = fork_wave_slug_for_index(fork_wave_args, i, seen_slugs)
+        let slug = fork_wave_slug_for_index(
+          fork_wave_args, i, seen_slugs, wave_id,
+        )
         let agent_id = fork_wave_args.parent_branch + "." + slug
         match
           ensure_no_live_spawn_agent_collision("fork_wave", agent_id, registry) {
@@ -155,7 +194,7 @@ pub fn fork_wave_spawn_plan(
   let mut spawned_count = 0
   let seen_slugs : Map[String, Int] = {}
   for i = 0; i < fork_wave_args.count; i = i + 1 {
-    let slug = fork_wave_slug_for_index(fork_wave_args, i, seen_slugs)
+    let slug = fork_wave_slug_for_index(fork_wave_args, i, seen_slugs, wave_id)
     let agent_id = fork_wave_args.parent_branch + "." + slug
     if spawned_count > 0 {
       agent_ids.write_string(",")
@@ -440,7 +479,12 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
   let fork_wave_args = fork_wave_resolve_args_parent_branch(
     fork_wave_args, project_dir, capture,
   )
-  match ensure_fork_wave_spawn_ids_do_not_collide(fork_wave_args, registry) {
+  match
+    ensure_fork_wave_spawn_ids_do_not_collide(
+      fork_wave_args,
+      registry,
+      wave_id~,
+    ) {
     Ok(_) => ()
     Err(e) =>
       return (

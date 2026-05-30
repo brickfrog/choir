@@ -430,6 +430,71 @@ test "fork_wave_spawn_plan builds specs and agent_ids for shared-task wave" {
 }
 
 ///|
+test "fork_wave_spawn_plan embeds wave_id discriminator in shared leaf identity" {
+  let args = {
+    ..fork_wave_args_base(),
+    count: 1,
+    tasks: ["shared task"],
+    task_contracts: [{ ..@types.TaskContract::empty(), goal: "shared task" }],
+  }
+  let first = fork_wave_spawn_plan(
+    args,
+    0,
+    None,
+    "/proj",
+    "choir",
+    wave_id=Some("wave-1776000000000-4242"),
+  )
+  let second = fork_wave_spawn_plan(
+    args,
+    0,
+    None,
+    "/proj",
+    "choir",
+    wave_id=Some("wave-1776000000001-4242"),
+  )
+  assert_eq(first.spawned_count, 1)
+  assert_eq(second.spawned_count, 1)
+  let first_slug = first.spawned_slugs[0]
+  let second_slug = second.spawned_slugs[0]
+  assert_eq(first_slug, "wave-1776000000000-4242-0")
+  assert_eq(second_slug, "wave-1776000000001-4242-0")
+  assert_false(first_slug.contains("."))
+  assert_false(second_slug.contains("."))
+  assert_true(first_slug != second_slug)
+  assert_true(first.agent_ids != second.agent_ids)
+  assert_eq(first.agent_ids, "main.wave-1776000000000-4242-0")
+  assert_eq(second.agent_ids, "main.wave-1776000000001-4242-0")
+  let first_agent = fork_wave_spawned_registry_agent(
+    first.spawned_specs[0],
+    "/proj",
+    "choir",
+  )
+  let second_agent = fork_wave_spawned_registry_agent(
+    second.spawned_specs[0],
+    "/proj",
+    "choir",
+  )
+  assert_true(first_agent.branch != second_agent.branch)
+  assert_true(first_agent.workspace != second_agent.workspace)
+  assert_eq(first_agent.branch, "main.wave-1776000000000-4242-0")
+  assert_eq(
+    first_agent.workspace,
+    "/proj/.choir/worktrees/wave-1776000000000-4242-0",
+  )
+  @debug.assert_eq(
+    first_agent.terminal_target,
+    Some(
+      @workspace.local_target_for(
+        "choir",
+        "wave-1776000000000-4242-0",
+        @types.IsolationMode::Worktree,
+      ),
+    ),
+  )
+}
+
+///|
 test "fork_wave_spawn_plan persists merge_strategy override to leaf local config" {
   let args = {
     ..fork_wave_args_base(),
@@ -474,6 +539,92 @@ test "fork_wave_spawn_plan disambiguates duplicate raw slugs" {
   assert_eq(plan.spawned_slugs[0], "alpha-beta")
   assert_eq(plan.spawned_slugs[1], "alpha-beta-1")
   assert_eq(plan.agent_ids, "pb.alpha-beta,pb.alpha-beta-1")
+}
+
+///|
+test "fork_wave_spawn_plan disambiguates when a later raw slug matches an earlier emitted slug" {
+  // tasks ["alpha beta", "alpha beta", "alpha beta 1"]: leaf 1's disambiguated
+  // slug ("alpha-beta-1") equals leaf 2's raw slug. seen_slugs must track
+  // EMITTED slugs, not just raw, so all three stay distinct.
+  let args : ForkWaveArgs = {
+    count: 3,
+    tasks: ["alpha beta", "alpha beta", "alpha beta 1"],
+    task_contracts: [
+      { ..@types.TaskContract::empty(), goal: "alpha beta" },
+      { ..@types.TaskContract::empty(), goal: "alpha beta" },
+      { ..@types.TaskContract::empty(), goal: "alpha beta 1" },
+    ],
+    has_per_leaf_tasks: true,
+    parent_branch: "pb",
+    caller_id: "pb.tl",
+    slug_prefix: "wave",
+    agent_type: @types.AgentType::MoonPilot,
+    child_role: @types.Role::Dev,
+    parent_session_id: None,
+    review_context: None,
+    automerge: None,
+    review_mode: None,
+    merge_strategy: None,
+    depends_on: [],
+    scaffold_commit: None,
+  }
+  let plan = fork_wave_spawn_plan(args, 0, None, "/p", "sess")
+  assert_eq(plan.spawned_count, 3)
+  let slugs = plan.spawned_slugs
+  let unique : Map[String, Int] = {}
+  for s in slugs {
+    unique.set(s, 1)
+  }
+  assert_eq(unique.length(), 3)
+}
+
+///|
+test "fork_wave_spawn_plan embeds wave_id discriminator in per-leaf task slugs" {
+  let args : ForkWaveArgs = {
+    count: 2,
+    tasks: ["Implement Leaf A", "Implement Leaf B"],
+    task_contracts: [
+      { ..@types.TaskContract::empty(), goal: "Implement Leaf A" },
+      { ..@types.TaskContract::empty(), goal: "Implement Leaf B" },
+    ],
+    has_per_leaf_tasks: true,
+    parent_branch: "pb",
+    caller_id: "pb.tl",
+    slug_prefix: "feature/foo",
+    agent_type: @types.AgentType::MoonPilot,
+    child_role: @types.Role::Dev,
+    parent_session_id: None,
+    review_context: None,
+    automerge: None,
+    review_mode: None,
+    merge_strategy: None,
+    depends_on: [],
+    scaffold_commit: None,
+  }
+  let plan = fork_wave_spawn_plan(
+    args,
+    0,
+    None,
+    "/p",
+    "sess",
+    wave_id=Some("feature-foo-1776000000000-4242"),
+  )
+  assert_eq(
+    plan.spawned_slugs[0],
+    "feature-foo-implement-leaf-a-1776000000000-4242",
+  )
+  assert_eq(
+    plan.spawned_slugs[1],
+    "feature-foo-implement-leaf-b-1776000000000-4242",
+  )
+  assert_false(plan.spawned_slugs[0].contains("."))
+  assert_false(plan.spawned_slugs[1].contains("."))
+  assert_false(plan.spawned_slugs[0].contains("--"))
+  assert_false(plan.spawned_slugs[1].contains("--"))
+  assert_eq(
+    plan.agent_ids,
+    "pb.feature-foo-implement-leaf-a-1776000000000-4242,pb.feature-foo-implement-leaf-b-1776000000000-4242",
+  )
 }
 
 ///|
@@ -628,6 +779,48 @@ async test "interpret_fork_wave_spawn_effect_phase rejects live canonical agent 
       assert_true(msg.contains("live"))
     }
     @types.Response::Ok(_) => fail("expected live id collision rejection")
+  }
+}
+
+///|
+async test "interpret_fork_wave_spawn_effect_phase preflights wave_id leaf identity" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: "feature/parent.wave-0",
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Claude,
+      parent: Some("main.tl"),
+      workspace: "/w",
+      branch: "feature/parent.wave-0",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let args = {
+    ..fork_wave_args_base(),
+    count: 1,
+    tasks: ["shared task"],
+    task_contracts: [{ ..@types.TaskContract::empty(), goal: "shared task" }],
+    parent_branch: "feature/parent",
+  }
+  let (resp, _, spawn_plan) = interpret_fork_wave_spawn_effect_phase(
+    args,
+    "/proj",
+    "choir",
+    Some(reg),
+    mock_capture_fork_wave_must_not_run,
+    mock_git_capture_fork_wave_clean,
+    mock_runner_all_ok,
+    wave_id=Some("wave-1776000000000-4242"),
+  )
+  assert_eq(spawn_plan.spawned_count, 1)
+  assert_eq(spawn_plan.agent_ids, "feature/parent.wave-1776000000000-4242-0")
+  match resp {
+    @types.Response::Ok(_) => ()
+    @types.Response::Err(msg) => fail("unexpected err: " + msg)
   }
 }
 
