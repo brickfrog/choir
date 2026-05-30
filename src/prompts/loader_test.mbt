@@ -411,6 +411,7 @@ test "leaf profile default prompt uses poller snapshots for review state" {
   assert_true(body.contains("Leaves never call /audit"))
   assert_true(body.contains("merge_pr returns a policy block"))
   assert_true(body.contains("tdd_intent"))
+  assert_true(body.contains("tdd_intent --artifact <relative-path>"))
   assert_true(body.contains("tdd_red_check"))
   assert_true(body.contains("tdd_green_check"))
   assert_true(body.contains("refuses while your TDD phase is not Done"))

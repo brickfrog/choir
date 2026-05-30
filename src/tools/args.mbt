@@ -32,6 +32,7 @@ pub(all) struct TddIntentArgs {
   caller_id : String
   intent : String
   test_command : String?
+  artifact_path : String?
 } derive(Debug, Eq)
 
 ///|

@@ -371,7 +371,7 @@ fn leaf_tool_usage(tool : String) -> String {
       "usage: notify_parent [--status <success|failure|info>] <message>"
     "report_usage" =>
       "usage: report_usage --tokens-in <n> --tokens-out <n> --elapsed-s <seconds> [--cost-usd <usd>]"
-    "tdd_intent" => "usage: tdd_intent --intent <intent>"
+    "tdd_intent" => "usage: tdd_intent --intent <intent> [--artifact <path>]"
     "tdd_red_check" => "usage: tdd_red_check --exit-code <nonzero>"
     "tdd_green_check" =>
       "usage: tdd_green_check --exit-code 0 [--next-phase <green|refactor|done>]"

@@ -91,6 +91,75 @@ fn tdd_validate_leaf_declared_command(
 }
 
 ///|
+fn tdd_validate_artifact_path(
+  raw : String,
+) -> Result[String, @types.ChoirError] {
+  let path = raw.trim().to_owned()
+  if path == "" {
+    return Err(tdd_transition_error("artifact_path must be non-empty"))
+  }
+  if path.has_prefix("/") {
+    return Err(tdd_transition_error("artifact_path must be relative"))
+  }
+  for c in path {
+    if c == '\n' || c == '\r' {
+      return Err(tdd_transition_error("artifact_path must stay on one line"))
+    }
+  }
+  for part in path.split("/") {
+    if part == ".." {
+      return Err(tdd_transition_error("artifact_path must not contain '..'"))
+    }
+  }
+  Ok(path)
+}
+
+///|
+fn tdd_configured_verify_mentions_artifact(
+  configured : TddConfiguredVerify,
+  artifact_path : String,
+) -> Bool {
+  if configured.command.contains(artifact_path) {
+    return true
+  }
+  for command in configured.commands {
+    if command.contains(artifact_path) {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn tdd_validate_artifact_intent(
+  raw : String?,
+  configured : TddConfiguredVerify,
+) -> Result[String?, @types.ChoirError] {
+  match raw {
+    None => Ok(None)
+    Some(value) => {
+      let artifact_path = match tdd_validate_artifact_path(value) {
+        Ok(path) => path
+        Err(e) => return Err(e)
+      }
+      if tdd_configured_verify_mentions_artifact(configured, artifact_path) {
+        Ok(Some(artifact_path))
+      } else {
+        Err(
+          tdd_transition_error(
+            "artifact mode requires the configured verify command to mention artifact_path `" +
+            artifact_path +
+            "`; re-scope the wave with an artifact verify such as `test -f " +
+            artifact_path +
+            " && <verify>`",
+          ),
+        )
+      }
+    }
+  }
+}
+
+///|
 fn tdd_check_command(
   project_dir : String,
   command : String,
@@ -408,6 +477,11 @@ pub fn interpret_tdd_intent(
     Ok(_) => ()
     Err(e) => return @types.Response::Err(e.message())
   }
+  let artifact_path = match
+    tdd_validate_artifact_intent(args.artifact_path, configured) {
+    Ok(value) => value
+    Err(e) => return @types.Response::Err(e.message())
+  }
   match
     plan_tdd_intent_transition(
       tdd_state_phase(tdd_state_reader(args.caller_id)),
@@ -423,6 +497,10 @@ pub fn interpret_tdd_intent(
         "intent": args.intent.to_json(),
       }
       fields.set("test_command", configured.command.to_json())
+      match artifact_path {
+        Some(value) => fields.set("artifact_path", value.to_json())
+        None => ()
+      }
       @types.Response::ok_values(fields)
     }
   }

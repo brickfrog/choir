@@ -367,7 +367,29 @@ fn parse_tdd_intent_args(args : ToolArgs) -> Result[TddIntentArgs, ParseError] {
     }
     None => None
   }
-  Ok({ caller_id, intent, test_command })
+  let artifact_path = match tool_args_get(args, "artifact_path") {
+    Some(value) => {
+      let trimmed = value.trim().to_owned()
+      if trimmed == "" {
+        return Err(ParseError::InvalidValue(field="artifact_path", value~))
+      } else {
+        Some(trimmed)
+      }
+    }
+    None =>
+      match tool_args_get(args, "artifact") {
+        Some(value) => {
+          let trimmed = value.trim().to_owned()
+          if trimmed == "" {
+            return Err(ParseError::InvalidValue(field="artifact", value~))
+          } else {
+            Some(trimmed)
+          }
+        }
+        None => None
+      }
+  }
+  Ok({ caller_id, intent, test_command, artifact_path })
 }
 
 ///|
@@ -386,6 +408,39 @@ test "parse_tdd_intent_args treats empty optional test_command as invalid" {
     }
     Err(e) => fail("expected invalid test_command, got: " + e.message())
     Ok(_) => fail("expected empty test_command to be invalid")
+  }
+}
+
+///|
+test "parse_tdd_intent_args accepts artifact alias and rejects empty artifact" {
+  match
+    parse_tdd_intent_args({
+      values: {
+        "caller_id": "main.leaf".to_json(),
+        "intent": "write docs".to_json(),
+        "artifact": "docs/non-code.md".to_json(),
+      },
+    }) {
+    Ok(args) => {
+      @debug.assert_eq(args.artifact_path, Some("docs/non-code.md"))
+      @debug.assert_eq(args.test_command, None)
+    }
+    Err(e) => fail("expected artifact alias to parse: " + e.message())
+  }
+  match
+    parse_tdd_intent_args({
+      values: {
+        "caller_id": "main.leaf".to_json(),
+        "intent": "write docs".to_json(),
+        "artifact_path": "   ".to_json(),
+      },
+    }) {
+    Err(ParseError::InvalidValue(field~, value~)) => {
+      assert_eq(field, "artifact_path")
+      assert_eq(value, "   ")
+    }
+    Err(e) => fail("expected invalid artifact_path, got: " + e.message())
+    Ok(_) => fail("expected empty artifact_path to be invalid")
   }
 }
 
