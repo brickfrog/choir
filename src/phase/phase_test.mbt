@@ -1084,6 +1084,26 @@ test "interpret_lifecycle_effects updates registry after successful persist" {
 }
 
 ///|
+test "persist_lifecycle preserves suspended registry overlay for active lifecycle" {
+  let project_dir = "/tmp/choir-persist-suspended-overlay-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let reg = @registry.AgentRegistry::new()
+  let agent_id = "p.suspended"
+  ignore(reg.upsert(phase_test_agent(agent_id, None, state=Suspended)))
+  let lifecycle = lifecycle_for_role(agent_id, @types.Role::Dev)
+  assert_true(persist_lifecycle(project_dir, reg, lifecycle))
+  try reg.get(agent_id) catch {
+    _ => fail("expected agent in registry")
+  } noraise {
+    a => assert_eq(a.state, @types.AgentState::Suspended)
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 test "interpret_lifecycle_effects append ignored when last persist is another agent" {
   let project_dir = "/tmp/choir-interp-pair-" +
     @sys.get_pid().to_string() +

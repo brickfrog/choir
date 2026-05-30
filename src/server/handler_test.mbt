@@ -6571,6 +6571,64 @@ async test "register reconnect preserves suspended registry state" {
 }
 
 ///|
+test "direct register_agent preserves suspended registry state" {
+  let project_dir = "/tmp/choir-suspended-direct-register-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let parent_id = "main.tl"
+  let agent_id = "main.suspended-direct-leaf"
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      terminal_session: "test-session",
+    },
+    make_hermetic_recovery_provider(),
+  )
+  ignore(state.register_agent(disconnect_confirmation_parent(parent_id)))
+  ignore(
+    state.register_agent({
+      agent_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace: project_dir + "/.choir/worktrees/suspended-direct-leaf",
+      branch: agent_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let suspend_result = try? state.registry.set_state(
+    agent_id,
+    @types.AgentState::Suspended,
+  )
+  assert_true(suspend_result is Ok(_))
+
+  ignore(
+    state.register_agent({
+      agent_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace: project_dir + "/.choir/worktrees/suspended-direct-leaf",
+      branch: agent_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+
+  assert_eq(state.registry.get(agent_id).state, @types.AgentState::Suspended)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "resume RPC clears suspended state after reconnect preservation" {
   let project_dir = "/tmp/choir-suspended-resume-clears-" +
     @sys.get_pid().to_string() +
