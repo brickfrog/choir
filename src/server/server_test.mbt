@@ -49,6 +49,197 @@ async test "status_bar_state server handler caches list-panes per session" {
 }
 
 ///|
+fn server_test_escape_toml_string(s : String) -> String {
+  let buf = StringBuilder::new()
+  for c in s {
+    match c {
+      '"' => buf.write_string("\\\"")
+      '\\' => buf.write_string("\\\\")
+      '\n' => buf.write_string("\\n")
+      '\r' => buf.write_string("\\r")
+      '\t' => buf.write_string("\\t")
+      _ => buf.write_char(c)
+    }
+  }
+  buf.to_string()
+}
+
+///|
+fn server_test_task_contract_local_config(
+  contract : @types.TaskContract,
+) -> String {
+  "task_contract_json = \"" +
+  server_test_escape_toml_string(contract.to_json_string()) +
+  "\"\n"
+}
+
+///|
+async test "wave_state server handler does not repair task contracts from local config" {
+  let project_dir = "/tmp/choir-wave-state-no-repair-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let parent_id = "main.tl"
+  let child_id = "main.leaf"
+  let child_workspace = project_dir + "/.choir/worktrees/leaf"
+  let contract = {
+    ..@types.TaskContract::empty(),
+    goal: "cached reads only",
+    verify: ["moon test --target native"],
+  }
+  let local_content = server_test_task_contract_local_config(contract)
+  ignore(@sys.create_dir_all(child_workspace + "/.choir"))
+  assert_true(
+    @sys.write_file_sync(
+      child_workspace + "/.choir/config.local.toml",
+      local_content,
+    ),
+  )
+  let state = ServerState::new(
+    { ..@types.Config::default(), project_dir, },
+    make_hermetic_recovery_provider(),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: parent_id,
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Codex,
+      parent: None,
+      workspace: project_dir,
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: child_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace: child_workspace,
+      branch: child_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  state.poller.track_recovered(
+    77,
+    child_id,
+    child_id,
+    "main",
+    "https://example.test/pr/77",
+    100L,
+    @poller.ReviewState::Approved,
+    "",
+    "head-sha",
+    @poller.CiRollupStatus::Success,
+    false,
+  )
+  let contracts_path = project_dir + "/.choir/agent-task-contracts.json"
+  assert_false(@sys.path_entry_exists(contracts_path))
+  let req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::TL,
+    name: "wave_state",
+    args: @types.RequestArgs::new({ "caller_id": parent_id }),
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.args.contains("repo") {
+      return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
+    }
+    if cmd.args.contains("graphql") {
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
+    (0, "")
+  }
+  let resp = state.handle_with_runner_and_capture(req, capture~)
+  assert_true(resp.is_ok())
+  assert_false(@sys.path_entry_exists(contracts_path))
+  @debug.assert_eq(state.task_contract_for_agent(child_id), None)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "tdd_intent server handler repairs missing task contract on write path" {
+  let project_dir = "/tmp/choir-tdd-intent-contract-repair-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let parent_id = "main.tl"
+  let child_id = "main.leaf"
+  let child_workspace = project_dir + "/.choir/worktrees/leaf"
+  let contract = {
+    ..@types.TaskContract::empty(),
+    goal: "repair before TDD",
+    verify: ["moon test --target native"],
+  }
+  let local_content = server_test_task_contract_local_config(contract)
+  ignore(@sys.create_dir_all(child_workspace + "/.choir"))
+  assert_true(
+    @sys.write_file_sync(
+      child_workspace + "/.choir/config.local.toml",
+      local_content,
+    ),
+  )
+  let state = ServerState::new(
+    { ..@types.Config::default(), project_dir, },
+    make_hermetic_recovery_provider(),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: parent_id,
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Codex,
+      parent: None,
+      workspace: project_dir,
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: child_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace: child_workspace,
+      branch: child_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::Dev,
+    name: "tdd_intent",
+    args: @types.RequestArgs::new({
+      "caller_id": child_id,
+      "intent": "write red test",
+    }),
+  }
+  let resp = state.handle_with_runner_and_capture(req)
+  assert_true(resp.is_ok())
+  @debug.assert_eq(state.task_contract_for_agent(child_id), Some(contract))
+  assert_true(
+    @sys.path_entry_exists(project_dir + "/.choir/agent-task-contracts.json"),
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 test "notify_parent uses live registry parent when present" {
   let project_dir = "/tmp/choir-notify-parent-test-" +
     "live-present-" +

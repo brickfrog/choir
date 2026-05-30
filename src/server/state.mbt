@@ -537,6 +537,14 @@ pub fn ServerState::task_contract_for_agent(
   self : ServerState,
   agent_id : String,
 ) -> @types.TaskContract? {
+  self.agent_task_contracts.get(agent_id)
+}
+
+///|
+pub fn ServerState::repair_task_contract_for_agent(
+  self : ServerState,
+  agent_id : String,
+) -> @types.TaskContract? {
   match self.agent_task_contracts.get(agent_id) {
     Some(existing) =>
       if task_contract_has_nonempty_verify(existing) {
@@ -799,7 +807,7 @@ fn state_test_local_config_with_contract(
 }
 
 ///|
-test "task_contract_for_agent falls back to leaf config.local and repairs map" {
+test "task_contract_for_agent reads cached contract without local repair" {
   let project_dir = "/tmp/choir-agent-contract-fallback-" +
     @sys.get_pid().to_string() +
     "-" +
@@ -846,7 +854,14 @@ test "task_contract_for_agent falls back to leaf config.local and repairs map" {
     }),
   )
 
-  @debug.assert_eq(state.task_contract_for_agent(agent_id), Some(contract))
+  @debug.assert_eq(state.task_contract_for_agent(agent_id), None)
+  @debug.assert_eq(state.agent_task_contracts.get(agent_id), None)
+  assert_eq(writes.length(), 0)
+
+  @debug.assert_eq(
+    state.repair_task_contract_for_agent(agent_id),
+    Some(contract),
+  )
   @debug.assert_eq(state.agent_task_contracts.get(agent_id), Some(contract))
   assert_eq(writes.length(), 1)
   assert_eq(writes[0].0, agent_task_contracts_path(project_dir))
@@ -854,7 +869,7 @@ test "task_contract_for_agent falls back to leaf config.local and repairs map" {
 }
 
 ///|
-test "task_contract_for_agent replaces empty persisted contract from leaf local config" {
+test "repair_task_contract_for_agent replaces empty persisted contract from leaf local config" {
   let project_dir = "/tmp/choir-agent-contract-repair-empty-" +
     @sys.get_pid().to_string() +
     "-" +
@@ -898,7 +913,14 @@ test "task_contract_for_agent replaces empty persisted contract from leaf local 
   )
   state.agent_task_contracts.set(agent_id, @types.TaskContract::empty())
 
-  @debug.assert_eq(state.task_contract_for_agent(agent_id), Some(contract))
+  @debug.assert_eq(
+    state.task_contract_for_agent(agent_id),
+    Some(@types.TaskContract::empty()),
+  )
+  @debug.assert_eq(
+    state.repair_task_contract_for_agent(agent_id),
+    Some(contract),
+  )
   @debug.assert_eq(state.agent_task_contracts.get(agent_id), Some(contract))
   ignore(@sys.rm_rf(project_dir))
 }

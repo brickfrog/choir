@@ -47,6 +47,14 @@ fn task_contract_for_agent(
 }
 
 ///|
+fn repair_task_contract_for_agent(
+  state : ServerState,
+  agent_id : String,
+) -> @types.TaskContract? {
+  state.repair_task_contract_for_agent(agent_id)
+}
+
+///|
 fn local_config_for_agent(
   project_dir : String,
   registry : @registry.AgentRegistry,
@@ -315,7 +323,8 @@ pub async fn maybe_trigger_automerge_for_pending_event(
       )
     _ => ()
   }
-  let task_contract = match task_contract_for_agent(state, tracked.agent_id) {
+  let task_contract = match
+    repair_task_contract_for_agent(state, tracked.agent_id) {
     Some(contract) => Some(contract)
     None => {
       // Missing task contract is a permanent block for this head — re-running
