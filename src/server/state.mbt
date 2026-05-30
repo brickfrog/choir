@@ -434,6 +434,19 @@ pub fn ServerState::record_leaf_tdd_state(
   agent_id : String,
   state : @types.LeafTddState,
 ) -> Unit {
+  match self.leaf_tdd_phases.get(agent_id) {
+    Some(existing) =>
+      if existing == state.phase {
+        ()
+      } else {
+        self.worker_no_handoff_prodded_at.remove(agent_id)
+        self.worker_no_handoff_stalled_emitted.remove(agent_id)
+      }
+    None => {
+      self.worker_no_handoff_prodded_at.remove(agent_id)
+      self.worker_no_handoff_stalled_emitted.remove(agent_id)
+    }
+  }
   self.leaf_tdd_phases.set(agent_id, state.phase)
 }
 

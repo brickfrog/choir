@@ -8687,6 +8687,68 @@ async test "check_idle_agents does not prod non-ReviewOwned dev leaf" {
 }
 
 ///|
+async test "check_idle_agents prods working dev leaf before TDD handoff then notifies parent" {
+  let snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"committed changes\",\"moon test passed\"]}"
+  let state = worker_handoff_test_state("leaf-pre-tdd-stall", snapshot)
+  let parent_id = "main.parent"
+  let leaf_id = "main.dev-pre-tdd"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      worker_handoff_dev(leaf_id, parent_id, @types.AgentState::Active),
+    ),
+  )
+  ignore(
+    @phase.write_lifecycle(
+      state.config.project_dir,
+      {
+        agent_id: leaf_id,
+        role: @types.Role::Dev,
+        process: @phase.ProcessState::Connected,
+        workflow: @phase.WorkflowState::Dev(@phase.DevLifecycle::Working),
+        last_updated_unix_sec: 0L,
+      },
+      now_sec=0L,
+    ),
+  )
+  state.watch_pane(leaf_id)
+
+  let sent : Array[String] = []
+  let start = @poller.now_sec()
+  state.check_idle_agents(
+    start,
+    999L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  state.check_idle_agents(
+    start + 120L,
+    999L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  assert_eq(worker_handoff_count_sent(sent, "tdd_intent"), 1)
+  assert_true(state.worker_no_handoff_prodded_at.contains(leaf_id))
+
+  state.check_idle_agents(
+    start + 240L,
+    999L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  assert_eq(
+    worker_handoff_count_sent(
+      sent, "[LEAF STALLED BEFORE TDD/file_pr] dev-pre-tdd",
+    ),
+    1,
+  )
+  assert_eq(worker_handoff_count_sent(sent, "[WATCHDOG] agent"), 0)
+}
+
+///|
 async test "check_idle_agents prods worker then emits one stalled no-handoff event" {
   let snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"audit complete\",\"Finding 1\"]}"
   let state = worker_handoff_test_state("worker-no-handoff-stall", snapshot)

@@ -855,6 +855,65 @@ async fn ServerState::prod_leaf_no_handoff(
 }
 
 ///|
+async fn ServerState::prod_leaf_pre_tdd_stall(
+  self : ServerState,
+  agent : @types.Agent,
+  now : Int64,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> Unit {
+  let agent_id = agent.agent_id.to_string()
+  if self.worker_no_handoff_prodded_at.contains(agent_id) ||
+    self.handoff_was_delivered(agent_id) {
+    return
+  }
+  self.worker_no_handoff_prodded_at.set(agent_id, now)
+  ignore(
+    self.durable_deliver_to_agent(
+      agent,
+      "watchdog",
+      leaf_pre_tdd_stall_prod_text,
+      @types.Status::Info,
+      runner,
+    ),
+  ) catch {
+    _ => ()
+  }
+}
+
+///|
+async fn ServerState::emit_leaf_pre_tdd_stalled(
+  self : ServerState,
+  agent : @types.Agent,
+  idle_sec : Int64,
+  tdd_phase : @types.LeafTddPhase?,
+  screen : String,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> Unit {
+  let agent_id = agent.agent_id.to_string()
+  if self.worker_no_handoff_stalled_emitted.contains(agent_id) ||
+    self.handoff_was_delivered(agent_id) {
+    return
+  }
+  self.worker_no_handoff_stalled_emitted.set(agent_id, true)
+  let message = leaf_pre_tdd_stalled_parent_message(
+    @phase.extract_slug(agent_id),
+    idle_sec,
+    tdd_phase,
+    screen,
+  )
+  ignore(
+    self.durable_deliver_to_parent(
+      agent_id,
+      message,
+      @types.Status::Failure,
+      runner,
+    ),
+  ) catch {
+    _ => ()
+  }
+}
+
+///|
 async fn ServerState::emit_leaf_stalled_no_handoff(
   self : ServerState,
   agent : @types.Agent,
@@ -1021,6 +1080,31 @@ async fn ServerState::check_leaf_no_handoff(
       prod_sec + post_prod_idle_sec
     }
     None => observation.idle_sec
+  }
+  let tdd_phase = self.leaf_tdd_phase_for_agent(agent_id)
+  match
+    leaf_pre_tdd_stall_decision(
+      agent.role,
+      lifecycle,
+      tdd_phase,
+      decision_idle_sec,
+      self.handoff_was_delivered(agent_id),
+      prodded,
+      self.worker_no_handoff_stalled_emitted.contains(agent_id),
+      prod_sec,
+      escalate_sec,
+    ) {
+    WorkerNoHandoffDecision::Prod =>
+      self.prod_leaf_pre_tdd_stall(agent, now, runner)
+    WorkerNoHandoffDecision::EmitStalled =>
+      self.emit_leaf_pre_tdd_stalled(
+        agent,
+        observation.idle_sec,
+        tdd_phase,
+        observation.screen,
+        runner,
+      )
+    WorkerNoHandoffDecision::DoNothing => ()
   }
   match
     leaf_no_handoff_decision(

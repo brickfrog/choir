@@ -273,6 +273,30 @@ test "reload snapshot restores registry pending state and mutexes" {
 }
 
 ///|
+test "record_leaf_tdd_state clears pre-tdd stall tracking on progress" {
+  let project_dir = "/tmp/choir-leaf-tdd-progress-clears-stall-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  let state = ServerState::new(
+    { ..@types.Config::default(), project_dir, },
+    make_hermetic_recovery_provider(),
+  )
+  let agent_id = "root.leaf"
+  state.worker_no_handoff_prodded_at.set(agent_id, 12L)
+  state.worker_no_handoff_stalled_emitted.set(agent_id, true)
+  state.record_leaf_tdd_state(agent_id, { phase: @types.LeafTddPhase::Intent })
+  assert_false(state.worker_no_handoff_prodded_at.contains(agent_id))
+  assert_false(state.worker_no_handoff_stalled_emitted.contains(agent_id))
+  @debug.assert_eq(
+    state.leaf_tdd_phase_for_agent(agent_id),
+    Some(@types.LeafTddPhase::Intent),
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 test "reload snapshot fails closed when authoritative contracts are missing" {
   let project_dir = "/tmp/choir-reload-missing-contracts-" +
     @sys.get_pid().to_string() +
