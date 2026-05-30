@@ -383,6 +383,7 @@ pub fn spawn_commands(
   listen_uds? : String = ".choir/server.sock",
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
+  project_config_content? : String = "",
 ) -> Array[Command] {
   ignore(listen_tcp)
   ignore(tcp_auth_token)
@@ -436,6 +437,7 @@ pub fn spawn_commands(
         )
         cmds.push(command_seed_worktree_agent_runtime_gitexclude(workspace))
       }
+      cmds.push(write_worktree_config_toml(workspace, project_config_content))
       cmds.push(
         write_local_config(
           workspace,

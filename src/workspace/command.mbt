@@ -1201,6 +1201,20 @@ pub fn workspace_relative_file_command(
 }
 
 ///|
+/// Write .choir/config.toml into worktree using portable project config content.
+/// Executed as a native file write by `exec.run`, not an inline shell snippet.
+pub fn write_worktree_config_toml(
+  worktree_path : String,
+  content : String,
+) -> Command {
+  {
+    program: native_write_choir_file_program,
+    args: [worktree_path, "config.toml", content],
+    workdir: None,
+  }
+}
+
+///|
 /// Write .choir/config.local.toml into worktree with role override.
 /// Executed as a native file write by `exec.run`, not an inline shell snippet.
 pub fn write_local_config(worktree_path : String, content : String) -> Command {

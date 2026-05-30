@@ -1142,6 +1142,7 @@ pub async fn dispatch(
           listen_tcp~,
           tcp_auth_token~,
           wave_id=Some(wave_id),
+          read_file~,
         )
         // Post-spawn side effects: only run if spawn succeeded. If spawn fails,
         // the reservation remains as an empty orphan so concurrent allocation
@@ -1278,6 +1279,7 @@ pub async fn dispatch(
           listen_uds~,
           listen_tcp~,
           tcp_auth_token~,
+          read_file~,
           record_task_contract~,
         )
       }
@@ -1692,6 +1694,7 @@ pub async fn dispatch(
                 listen_uds~,
                 listen_tcp~,
                 tcp_auth_token~,
+                read_file~,
               )
           }
       }
@@ -1724,6 +1727,7 @@ pub async fn dispatch(
               listen_uds~,
               listen_tcp~,
               tcp_auth_token~,
+              read_file~,
               record_task_contract~,
             )
         }
@@ -1740,6 +1744,7 @@ pub async fn dispatch(
           listen_uds~,
           listen_tcp~,
           tcp_auth_token~,
+          read_file~,
           record_task_contract~,
         )
       }

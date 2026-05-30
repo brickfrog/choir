@@ -706,6 +706,7 @@ pub async fn try_dispatch_pending_waves(
   listen_uds? : String = ".choir/server.sock",
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
+  read_file? : (String) -> String = @sys.read_file,
   record_task_contract? : (String, @types.TaskContract?) -> Unit = fn(
     _agent_id,
     _contract,
@@ -738,6 +739,7 @@ pub async fn try_dispatch_pending_waves(
           listen_tcp~,
           tcp_auth_token~,
           wave_id=Some(pw.wave_id),
+          read_file~,
         )
         if resp.is_ok() && spawn_plan.spawned_count > 0 {
           match
