@@ -386,8 +386,10 @@ test "reload snapshot restores registry pending state and mutexes" {
   state.pending_disconnects.set("root.leaf", 1234L)
   state.delivery_failures.set("root.leaf", 2)
   state.handoff_delivered.set("root.leaf", true)
-  state.worker_no_handoff_prodded_at.set("root.worker", 2222L)
-  state.worker_no_handoff_stalled_emitted.set("root.worker", true)
+  state.worker_no_handoff_prodded_at.set("worker-no-handoff:root.worker", 2222L)
+  state.worker_no_handoff_stalled_emitted.set(
+    "worker-no-handoff:root.worker", true,
+  )
   state.worker_no_handoff_exit_emitted.set("root.worker", true)
   state.spawn_registration_first_unseen.set("root.spawning", 3333L)
   state.idle_agent_warned_at_70.set("root.worker", true)
@@ -423,11 +425,15 @@ test "reload snapshot restores registry pending state and mutexes" {
       @debug.assert_eq(restored.delivery_failures.get("root.leaf"), Some(2))
       @debug.assert_eq(restored.handoff_delivered.get("root.leaf"), Some(true))
       @debug.assert_eq(
-        restored.worker_no_handoff_prodded_at.get("root.worker"),
+        restored.worker_no_handoff_prodded_at.get(
+          "worker-no-handoff:root.worker",
+        ),
         Some(2222L),
       )
       @debug.assert_eq(
-        restored.worker_no_handoff_stalled_emitted.get("root.worker"),
+        restored.worker_no_handoff_stalled_emitted.get(
+          "worker-no-handoff:root.worker",
+        ),
         Some(true),
       )
       @debug.assert_eq(
@@ -475,11 +481,17 @@ test "record_leaf_tdd_state clears pre-tdd stall tracking on progress" {
     make_hermetic_recovery_provider(),
   )
   let agent_id = "root.leaf"
-  state.worker_no_handoff_prodded_at.set(agent_id, 12L)
-  state.worker_no_handoff_stalled_emitted.set(agent_id, true)
+  let pre_tdd_key = "leaf-pre-tdd-stall:" + agent_id
+  let post_fix_key = "leaf-post-fix-no-handoff:" + agent_id
+  state.worker_no_handoff_prodded_at.set(pre_tdd_key, 12L)
+  state.worker_no_handoff_stalled_emitted.set(pre_tdd_key, true)
+  state.worker_no_handoff_prodded_at.set(post_fix_key, 34L)
+  state.worker_no_handoff_stalled_emitted.set(post_fix_key, true)
   state.record_leaf_tdd_state(agent_id, { phase: @types.LeafTddPhase::Intent })
-  assert_false(state.worker_no_handoff_prodded_at.contains(agent_id))
-  assert_false(state.worker_no_handoff_stalled_emitted.contains(agent_id))
+  assert_false(state.worker_no_handoff_prodded_at.contains(pre_tdd_key))
+  assert_false(state.worker_no_handoff_stalled_emitted.contains(pre_tdd_key))
+  assert_false(state.worker_no_handoff_prodded_at.contains(post_fix_key))
+  assert_false(state.worker_no_handoff_stalled_emitted.contains(post_fix_key))
   @debug.assert_eq(
     state.leaf_tdd_phase_for_agent(agent_id),
     Some(@types.LeafTddPhase::Intent),

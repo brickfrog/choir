@@ -226,6 +226,54 @@ pub(all) struct DisconnectContext {
 } derive(Debug, Eq)
 
 ///|
+enum NoHandoffWatchdogKind {
+  WorkerNoHandoff
+  LeafPostFixNoHandoff
+  LeafPreTddStall
+} derive(Debug, Eq)
+
+///|
+fn no_handoff_watchdog_state_key(
+  agent_id : String,
+  kind : NoHandoffWatchdogKind,
+) -> String {
+  match kind {
+    WorkerNoHandoff => "worker-no-handoff:" + agent_id
+    LeafPostFixNoHandoff => "leaf-post-fix-no-handoff:" + agent_id
+    LeafPreTddStall => "leaf-pre-tdd-stall:" + agent_id
+  }
+}
+
+///|
+fn ServerState::clear_no_handoff_watchdog_state(
+  self : ServerState,
+  agent_id : String,
+  kind : NoHandoffWatchdogKind,
+) -> Unit {
+  let key = no_handoff_watchdog_state_key(agent_id, kind)
+  self.worker_no_handoff_prodded_at.remove(key)
+  self.worker_no_handoff_stalled_emitted.remove(key)
+}
+
+///|
+fn ServerState::clear_leaf_no_handoff_watchdog_state(
+  self : ServerState,
+  agent_id : String,
+) -> Unit {
+  self.clear_no_handoff_watchdog_state(agent_id, LeafPostFixNoHandoff)
+  self.clear_no_handoff_watchdog_state(agent_id, LeafPreTddStall)
+}
+
+///|
+fn ServerState::clear_all_no_handoff_watchdog_state(
+  self : ServerState,
+  agent_id : String,
+) -> Unit {
+  self.clear_no_handoff_watchdog_state(agent_id, WorkerNoHandoff)
+  self.clear_leaf_no_handoff_watchdog_state(agent_id)
+}
+
+///|
 /// Shared server state, passed to all tool handlers.
 pub struct ServerState {
   config : @types.Config
@@ -439,13 +487,9 @@ pub fn ServerState::record_leaf_tdd_state(
       if existing == state.phase {
         ()
       } else {
-        self.worker_no_handoff_prodded_at.remove(agent_id)
-        self.worker_no_handoff_stalled_emitted.remove(agent_id)
+        self.clear_leaf_no_handoff_watchdog_state(agent_id)
       }
-    None => {
-      self.worker_no_handoff_prodded_at.remove(agent_id)
-      self.worker_no_handoff_stalled_emitted.remove(agent_id)
-    }
+    None => self.clear_leaf_no_handoff_watchdog_state(agent_id)
   }
   self.leaf_tdd_phases.set(agent_id, state.phase)
 }
