@@ -23,10 +23,20 @@ pub fn ServerState::register_agent(
     Some(existing) => lifecycle_for_registered_agent(existing)
     None => @phase.lifecycle_for_agent(agent)
   }
-  ignore(self.registry.upsert(agent))
+  let existed = self.registry.get_opt(agent_id) is Some(_)
+  if !existed {
+    ignore(self.registry.upsert(agent))
+  }
   ignore(
     @phase.persist_lifecycle(self.config.project_dir, self.registry, lifecycle),
   )
+  if existed {
+    let state = match self.registry.get_opt(agent_id) {
+      Some(current) => current.state
+      None => lifecycle.to_agent_state()
+    }
+    ignore(self.registry.upsert({ ..agent, state, }))
+  }
   @phase.sync_parent_child_lifecycle(
     self.config.project_dir,
     self.config.terminal_session,
