@@ -661,6 +661,35 @@ fn assert_no_tracked_config_write(
 }
 
 ///|
+fn command_program_index(
+  cmds : Array[@workspace.Command],
+  program : String,
+) -> Int {
+  for i = 0; i < cmds.length(); i = i + 1 {
+    if cmds[i].program == program {
+      return i
+    }
+  }
+  -1
+}
+
+///|
+fn choir_file_write_index(
+  cmds : Array[@workspace.Command],
+  basename : String,
+) -> Int {
+  for i = 0; i < cmds.length(); i = i + 1 {
+    let cmd = cmds[i]
+    if cmd.program == @workspace.native_write_choir_file_program &&
+      cmd.args.length() >= 2 &&
+      cmd.args[1] == basename {
+      return i
+    }
+  }
+  -1
+}
+
+///|
 fn assert_local_connection_fields(
   content : String,
   role : @types.Role,
@@ -979,9 +1008,8 @@ test "spawn_commands for worktree mode returns zellij tab" {
     wave_id: None,
   }
   let cmds = @workspace.spawn_commands(spec, "/project", "session")
-  // cleanup, fetch parent, git worktree add, seed info/exclude, local config, helpers, zellij
-  assert_eq(cmds.length(), 7)
-  assert_no_tracked_config_write(cmds)
+  // cleanup, fetch parent, git worktree add, seed info/exclude, config.toml, local config, helpers, zellij
+  assert_eq(cmds.length(), 8)
   assert_eq(
     cmds[0].program,
     @workspace.native_worktree_bootstrap_cleanup_program,
@@ -1005,10 +1033,14 @@ test "spawn_commands for worktree mode returns zellij tab" {
   )
   assert_eq(cmds[3].args[0], "/project/.choir/worktrees/test-slug")
   assert_true(cmds[3].args[1].contains(".cursor/"))
-  assert_eq(cmds[5].program, @workspace.native_leaf_helpers_program)
-  @debug.assert_eq(cmds[5].args, ["/project/.choir/worktrees/test-slug"])
-  assert_eq(cmds[6].program, "zellij")
-  assert_eq(cmds[6].args[3], "new-tab")
+  assert_eq(cmds[4].program, @workspace.native_write_choir_file_program)
+  assert_eq(cmds[4].args[1], "config.toml")
+  assert_eq(cmds[5].program, @workspace.native_write_choir_file_program)
+  assert_eq(cmds[5].args[1], "config.local.toml")
+  assert_eq(cmds[6].program, @workspace.native_leaf_helpers_program)
+  @debug.assert_eq(cmds[6].args, ["/project/.choir/worktrees/test-slug"])
+  assert_eq(cmds[7].program, "zellij")
+  assert_eq(cmds[7].args[3], "new-tab")
 }
 
 ///|
@@ -1032,25 +1064,92 @@ test "spawn_commands worktree config write content" {
     wave_id: None,
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
-  assert_eq(cmds.length(), 7)
-  assert_no_tracked_config_write(cmds)
+  assert_eq(cmds.length(), 8)
   assert_eq(cmds[4].program, @workspace.native_write_choir_file_program)
   assert_true(cmds[4].args[0].contains("feature-a"))
-  assert_eq(cmds[4].args[1], "config.local.toml")
+  assert_eq(cmds[4].args[1], "config.toml")
+  assert_eq(cmds[5].program, @workspace.native_write_choir_file_program)
+  assert_true(cmds[5].args[0].contains("feature-a"))
+  assert_eq(cmds[5].args[1], "config.local.toml")
   assert_local_connection_fields(
-    cmds[4].args[2],
+    cmds[5].args[2],
     @types.Role::Dev,
     "/proj",
     "/proj/.choir/server.sock",
     "exo",
   )
-  assert_true(cmds[4].args[2].contains("agent_id = \"main.feature-a\""))
-  assert_true(cmds[4].args[2].contains("parent_id = \"root\""))
+  assert_true(cmds[5].args[2].contains("agent_id = \"main.feature-a\""))
+  assert_true(cmds[5].args[2].contains("parent_id = \"root\""))
   assert_true(
-    cmds[4].args[2].contains("terminal_target = \"zellij-tab:exo:feature-a\""),
+    cmds[5].args[2].contains("terminal_target = \"zellij-tab:exo:feature-a\""),
   )
-  assert_eq(cmds[5].program, @workspace.native_leaf_helpers_program)
-  assert_eq(cmds[6].program, "zellij")
+  assert_eq(cmds[6].program, @workspace.native_leaf_helpers_program)
+  assert_eq(cmds[7].program, "zellij")
+}
+
+///|
+test "spawn_commands worktree materializes portable config before launch" {
+  let spec = @types.SpawnSpec::{
+    slug: "feature-portable",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    task: "do something",
+    task_contract: None,
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "root",
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+    automerge: None,
+    review_mode: None,
+    merge_strategy: None,
+    wave_id: None,
+  }
+  let portable_config =
+    #|prenotify_checks = ["moon check --target native"]
+    #|merge_strategy = "rebase"
+    #|moon_verify_target = "native"
+    #|
+    #|[project]
+    #|verify_cmd = "moon check --target native && moon test --target native"
+  let cmds = @workspace.spawn_commands(
+    spec,
+    "/proj",
+    "exo",
+    project_config_content=portable_config,
+  )
+  let config_index = choir_file_write_index(cmds, "config.toml")
+  let local_index = choir_file_write_index(cmds, "config.local.toml")
+  let helper_index = command_program_index(
+    cmds, @workspace.native_leaf_helpers_program,
+  )
+  assert_true(config_index >= 0)
+  assert_true(local_index >= 0)
+  assert_true(helper_index >= 0)
+  assert_true(config_index < helper_index)
+  assert_true(local_index < helper_index)
+  let config_cmd = cmds[config_index]
+  @debug.assert_eq(config_cmd.args, [
+    "/proj/.choir/worktrees/feature-portable", "config.toml", portable_config,
+  ])
+  assert_true(config_cmd.args[2].contains("[project]"))
+  assert_true(config_cmd.args[2].contains("verify_cmd = "))
+  assert_true(config_cmd.args[2].contains("prenotify_checks = "))
+  assert_true(config_cmd.args[2].contains("merge_strategy = "))
+  assert_true(config_cmd.args[2].contains("moon_verify_target = "))
+  assert_false(config_cmd.args[2].contains("listen_uds = "))
+  assert_false(config_cmd.args[2].contains("project_dir = "))
+  let local_cmd = cmds[local_index]
+  assert_eq(local_cmd.args[1], "config.local.toml")
+  assert_local_connection_fields(
+    local_cmd.args[2],
+    @types.Role::Dev,
+    "/proj",
+    "/proj/.choir/server.sock",
+    "exo",
+  )
 }
 
 ///|
@@ -1108,22 +1207,26 @@ test "spawn_commands gemini worktree adds agy bootstrap and config" {
     wave_id: None,
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "howdy")
-  assert_eq(cmds.length(), 11)
-  assert_no_tracked_config_write(cmds)
-  assert_eq(cmds[6].program, @workspace.native_agy_cache_links_program)
-  assert_eq(cmds[7].program, "env")
+  assert_eq(cmds.length(), 12)
+  assert_eq(cmds[4].program, @workspace.native_write_choir_file_program)
+  assert_eq(cmds[4].args[1], "config.toml")
+  assert_eq(cmds[7].program, @workspace.native_agy_cache_links_program)
+  assert_eq(cmds[8].program, "env")
   assert_eq(
-    cmds[7].args[0],
+    cmds[8].args[0],
     "HOME=/proj/.choir/worktrees/feature-z/.choir/agy-home",
   )
-  assert_eq(cmds[8].program, @workspace.native_write_workspace_rel_file_program)
-  assert_eq(cmds[8].args[1], ".choir/agy-home/.gemini/config/mcp_config.json")
   assert_eq(cmds[9].program, @workspace.native_write_workspace_rel_file_program)
-  assert_eq(cmds[9].args[1], ".choir/agy-home/.gemini/config/hooks.json")
-  assert_eq(cmds[10].program, "zellij")
-  assert_eq(cmds[10].args[3], "new-tab")
+  assert_eq(cmds[9].args[1], ".choir/agy-home/.gemini/config/mcp_config.json")
+  assert_eq(
+    cmds[10].program,
+    @workspace.native_write_workspace_rel_file_program,
+  )
+  assert_eq(cmds[10].args[1], ".choir/agy-home/.gemini/config/hooks.json")
+  assert_eq(cmds[11].program, "zellij")
+  assert_eq(cmds[11].args[3], "new-tab")
   assert_true(
-    cmds[4].args[2].contains("terminal_target = \"zellij-tab:howdy:feature-z\""),
+    cmds[5].args[2].contains("terminal_target = \"zellij-tab:howdy:feature-z\""),
   )
 }
 
@@ -1191,23 +1294,27 @@ test "spawn_commands adds Gemini trust bootstrap" {
     wave_id: None,
   }
   let cmds = @workspace.spawn_commands(spec, "/project", "session")
-  assert_eq(cmds.length(), 11)
-  assert_no_tracked_config_write(cmds)
-  assert_eq(cmds[6].program, @workspace.native_agy_cache_links_program)
-  @debug.assert_eq(cmds[6].args, [
+  assert_eq(cmds.length(), 12)
+  assert_eq(cmds[4].program, @workspace.native_write_choir_file_program)
+  assert_eq(cmds[4].args[1], "config.toml")
+  assert_eq(cmds[7].program, @workspace.native_agy_cache_links_program)
+  @debug.assert_eq(cmds[7].args, [
     "/project", "/project/.choir/worktrees/gemini-slug",
   ])
-  assert_eq(cmds[7].program, "env")
-  @debug.assert_eq(cmds[7].args, [
+  assert_eq(cmds[8].program, "env")
+  @debug.assert_eq(cmds[8].args, [
     "HOME=/project/.choir/worktrees/gemini-slug/.choir/agy-home", "choir", "trust-gemini-folder",
     "/project/.choir/worktrees/gemini-slug",
   ])
-  assert_eq(cmds[8].program, @workspace.native_write_workspace_rel_file_program)
-  assert_eq(cmds[8].args[1], ".choir/agy-home/.gemini/config/mcp_config.json")
-  assert_true(cmds[8].args[2].contains("mcpServers"))
-  assert_true(cmds[8].args[2].contains("main.gemini-slug"))
   assert_eq(cmds[9].program, @workspace.native_write_workspace_rel_file_program)
-  assert_eq(cmds[9].args[1], ".choir/agy-home/.gemini/config/hooks.json")
+  assert_eq(cmds[9].args[1], ".choir/agy-home/.gemini/config/mcp_config.json")
+  assert_true(cmds[9].args[2].contains("mcpServers"))
+  assert_true(cmds[9].args[2].contains("main.gemini-slug"))
+  assert_eq(
+    cmds[10].program,
+    @workspace.native_write_workspace_rel_file_program,
+  )
+  assert_eq(cmds[10].args[1], ".choir/agy-home/.gemini/config/hooks.json")
 }
 
 ///|
@@ -1231,15 +1338,16 @@ test "spawn_commands cursor_agent worktree adds mcp json" {
     wave_id: None,
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "howdy")
-  // cleanup, fetch, worktree add, seed exclude, local config, helpers, mcp json, zellij
-  assert_eq(cmds.length(), 8)
-  assert_no_tracked_config_write(cmds)
-  assert_eq(cmds[6].program, @workspace.native_write_workspace_rel_file_program)
-  assert_eq(cmds[6].args[1], ".cursor/mcp.json")
-  assert_true(cmds[6].args[2].contains("mcpServers"))
-  assert_true(cmds[6].args[2].contains("main.feature-c"))
-  assert_eq(cmds[7].program, "zellij")
-  assert_eq(cmds[7].args[3], "new-tab")
+  // cleanup, fetch, worktree add, seed exclude, config.toml, local config, helpers, mcp json, zellij
+  assert_eq(cmds.length(), 9)
+  assert_eq(cmds[4].program, @workspace.native_write_choir_file_program)
+  assert_eq(cmds[4].args[1], "config.toml")
+  assert_eq(cmds[7].program, @workspace.native_write_workspace_rel_file_program)
+  assert_eq(cmds[7].args[1], ".cursor/mcp.json")
+  assert_true(cmds[7].args[2].contains("mcpServers"))
+  assert_true(cmds[7].args[2].contains("main.feature-c"))
+  assert_eq(cmds[8].program, "zellij")
+  assert_eq(cmds[8].args[3], "new-tab")
 }
 
 ///|
@@ -1331,6 +1439,13 @@ test "write_local_config uses native choir file commands" {
   let local_cmd = @workspace.write_local_config("/wt", "b=toml")
   assert_eq(local_cmd.program, @workspace.native_write_choir_file_program)
   @debug.assert_eq(local_cmd.args, ["/wt", "config.local.toml", "b=toml"])
+}
+
+///|
+test "write_worktree_config_toml uses native choir file commands" {
+  let cmd = @workspace.write_worktree_config_toml("/wt", "portable=toml")
+  assert_eq(cmd.program, @workspace.native_write_choir_file_program)
+  @debug.assert_eq(cmd.args, ["/wt", "config.toml", "portable=toml"])
 }
 
 ///|
@@ -2329,10 +2444,11 @@ test "spawn_commands worktree reuse skips destructive bootstrap" {
     wave_id: None,
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
-  assert_eq(cmds.length(), 4)
-  assert_no_tracked_config_write(cmds)
+  assert_eq(cmds.length(), 5)
   assert_eq(cmds[0].program, @workspace.native_write_choir_file_program)
-  assert_eq(cmds[0].args[1], "config.local.toml")
+  assert_eq(cmds[0].args[1], "config.toml")
+  assert_eq(cmds[1].program, @workspace.native_write_choir_file_program)
+  assert_eq(cmds[1].args[1], "config.local.toml")
 }
 
 ///|

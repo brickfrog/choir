@@ -42,6 +42,14 @@ pub fn ensure_caller_can_spawn(
 }
 
 ///|
+pub fn read_project_config_toml(
+  project_dir : String,
+  read_file? : (String) -> String = @sys.read_file,
+) -> String {
+  read_file(project_dir + "/.choir/config.toml")
+}
+
+///|
 fn spawn_agent_state_is_terminal(state : @types.AgentState) -> Bool {
   state == @types.AgentState::Done || state == @types.AgentState::Failed
 }
@@ -476,6 +484,7 @@ pub async fn interpret_spawn_worker(
   listen_uds? : String = ".choir/server.sock",
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
+  read_file? : (String) -> String = @sys.read_file,
   isolation? : @types.IsolationMode = @types.IsolationMode::InlineDedicatedTab,
   record_task_contract? : (String, @types.TaskContract?) -> Unit = fn(
     _agent_id,
@@ -532,6 +541,7 @@ pub async fn interpret_spawn_worker(
     listen_uds~,
     listen_tcp~,
     tcp_auth_token~,
+    project_config_content=read_project_config_toml(project_dir, read_file~),
   )
   match run_strict(runner, cmds, capture~) {
     Ok(_) => {
@@ -712,6 +722,7 @@ pub async fn interpret_spawn_gemini(
   listen_uds? : String = ".choir/server.sock",
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
+  read_file? : (String) -> String = @sys.read_file,
 ) -> @types.Response {
   let plan = spawn_gemini_plan(spawn_args)
   match
@@ -743,6 +754,7 @@ pub async fn interpret_spawn_gemini(
     listen_uds~,
     listen_tcp~,
     tcp_auth_token~,
+    project_config_content=read_project_config_toml(project_dir, read_file~),
   )
   match run_strict(runner, cmds, capture~) {
     Ok(_) =>

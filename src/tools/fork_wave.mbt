@@ -185,6 +185,7 @@ pub fn fork_wave_spawn_plan(
   listen_uds? : String = ".choir/server.sock",
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
+  project_config_content? : String = "",
 ) -> ForkWaveSpawnPlan {
   ignore(registry)
   let agent_ids = StringBuilder::new()
@@ -237,6 +238,7 @@ pub fn fork_wave_spawn_plan(
         listen_uds~,
         listen_tcp~,
         tcp_auth_token~,
+        project_config_content~,
       ) {
       cmds.push(cmd)
     }
@@ -475,6 +477,7 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
   wave_id? : String? = None,
+  read_file? : (String) -> String = @sys.read_file,
 ) -> (@types.Response, ForkWaveArgs, ForkWaveSpawnPlan) {
   let fork_wave_args = fork_wave_resolve_args_parent_branch(
     fork_wave_args, project_dir, capture,
@@ -514,6 +517,7 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
     listen_uds~,
     listen_tcp~,
     tcp_auth_token~,
+    project_config_content=read_project_config_toml(project_dir, read_file~),
   )
   let mut seed_warning : String? = None
   if fork_wave_args.agent_type == @types.AgentType::Gemini &&
