@@ -1672,6 +1672,8 @@ async test "interpret_merge_pr_preflight matches normalized moon verify evidence
     merge_state_status: @poller.MergeStateStatus::Unknown,
     merged_at_unix: None,
   })
+  let captured : Array[@moontrace.Event] = []
+  @moontrace.set_subscriber(fn(event) { captured.push(event) })
   let got = interpret_merge_pr_preflight(
     7,
     Some(ps),
@@ -1680,6 +1682,7 @@ async test "interpret_merge_pr_preflight matches normalized moon verify evidence
     mock_preflight_capture_no_unresolved_threads,
     task_contract_reader=merge_pr_test_contract_reader(contract),
   )
+  @moontrace.clear_subscriber()
   match got {
     Ok(_) => ()
     Err(e) =>
@@ -1687,6 +1690,14 @@ async test "interpret_merge_pr_preflight matches normalized moon verify evidence
         "expected normalized verify evidence to satisfy policy: " + e.message(),
       )
   }
+  assert_true(
+    captured
+    .iter()
+    .any(fn(event) {
+      event.level == @moontrace.Level::Warn &&
+      event.message == "moon verify command normalized"
+    }),
+  )
   ignore(@sys.rm_rf(project_dir))
 }
 

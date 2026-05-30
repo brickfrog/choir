@@ -470,6 +470,31 @@ fn merge_pr_effective_task_contract(
 }
 
 ///|
+fn merge_pr_warn_moon_verify_normalization(
+  context : String,
+  task_contract : @types.TaskContract?,
+  moon_verify_target : @types.MoonVerifyTarget,
+) -> Unit {
+  match task_contract {
+    Some(contract) =>
+      for
+        notice in @types.moon_verify_normalization_notices(
+          contract.verify,
+          moon_verify_target,
+        ) {
+        @moontrace.warn("moon verify command normalized", fields=[
+          @moontrace.field("event", "moon_verify_command_normalized"),
+          @moontrace.field("context", context),
+          @moontrace.field("command", notice.command),
+          @moontrace.field("normalized", notice.normalized),
+          @moontrace.field("moon_verify_target", notice.target.to_wire_string()),
+        ])
+      }
+    None => ()
+  }
+}
+
+///|
 /// `merge_pr` preflight: GitHub changes-requested reviews are checked first,
 /// then the poller snapshot, unresolved review-thread fetch, and
 /// `merge_pr_preflight_block_message` must all pass.
@@ -512,6 +537,9 @@ pub async fn interpret_merge_pr_preflight(
       }
       let task_contract = @types.task_contract_with_normalized_verify(
         task_contract_raw, moon_verify_target,
+      )
+      merge_pr_warn_moon_verify_normalization(
+        "merge_pr_preflight", task_contract_raw, moon_verify_target,
       )
       let verify_results = merge_pr_verify_results_for_tracked(
         project_dir, tracked, task_contract,

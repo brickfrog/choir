@@ -348,6 +348,13 @@ priv struct MoonVerifyInvocation {
 }
 
 ///|
+pub(all) struct MoonVerifyNormalizationNotice {
+  command : String
+  normalized : String
+  target : MoonVerifyTarget
+} derive(Debug, Eq)
+
+///|
 fn moon_verify_segment_space(c : UInt16) -> Bool {
   c == ' ' || c == '\t' || c == '\r'
 }
@@ -698,6 +705,22 @@ pub fn moon_verify_normalize_commands(
     normalized.push(moon_verify_normalize_command(command, target))
   }
   normalized
+}
+
+///|
+pub fn moon_verify_normalization_notices(
+  commands : Array[String],
+  target : MoonVerifyTarget,
+) -> Array[MoonVerifyNormalizationNotice] {
+  let notices : Array[MoonVerifyNormalizationNotice] = []
+  for command in commands {
+    let trimmed = command.trim().to_owned()
+    let normalized = moon_verify_normalize_command(trimmed, target)
+    if trimmed != normalized {
+      notices.push({ command: trimmed, normalized, target })
+    }
+  }
+  notices
 }
 
 ///|

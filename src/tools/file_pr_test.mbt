@@ -1297,6 +1297,8 @@ async test "interpret_file_pr runs required verify with configured moon target a
   let reg = file_pr_test_registry(file_pr_dir)
   let bodies : Array[String] = []
   let sh_args : Array[Array[String]] = []
+  let captured : Array[@moontrace.Event] = []
+  @moontrace.set_subscriber(fn(event) { captured.push(event) })
   let got = interpret_file_pr(
     {
       branch: "main.leaf",
@@ -1339,6 +1341,7 @@ async test "interpret_file_pr runs required verify with configured moon target a
     moon_verify_target=@types.MoonVerifyTarget::WasmGc,
     sleep_fn=file_pr_test_no_sleep,
   )
+  @moontrace.clear_subscriber()
   match got {
     @types.Response::Ok(_) => ()
     @types.Response::Err(msg) => fail("expected file_pr success: " + msg)
@@ -1350,6 +1353,14 @@ async test "interpret_file_pr runs required verify with configured moon target a
   assert_true(bodies[0].contains("## Verification"))
   assert_true(bodies[0].contains("`moon check --target wasm-gc`"))
   assert_true(bodies[0].contains("moon check ok"))
+  assert_true(
+    captured
+    .iter()
+    .any(fn(event) {
+      event.level == @moontrace.Level::Warn &&
+      event.message == "moon verify command normalized"
+    }),
+  )
   let records = @evidence.load_agent_evidence_records(project_dir, "main.leaf")
   assert_eq(records.length(), 1)
   match records[0].event {

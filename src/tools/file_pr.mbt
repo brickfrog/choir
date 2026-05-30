@@ -751,12 +751,24 @@ pub async fn file_pr_run_required_verify(
   let outcomes : Array[FilePrVerifyOutcome] = []
   let head_sha = file_pr_current_head_sha(file_pr_dir, capture)
   for raw in verify_commands {
+    let raw_command = raw.trim().to_owned()
     let command = @types.moon_verify_normalize_command(
-      raw.trim().to_owned(),
-      moon_verify_target,
+      raw_command, moon_verify_target,
     )
     if command == "" {
       continue
+    }
+    if command != raw_command {
+      @moontrace.warn("moon verify command normalized", fields=[
+        @moontrace.field("event", "moon_verify_command_normalized"),
+        @moontrace.field("context", "file_pr_verify"),
+        @moontrace.field("command", raw_command),
+        @moontrace.field("normalized", command),
+        @moontrace.field(
+          "moon_verify_target",
+          moon_verify_target.to_wire_string(),
+        ),
+      ])
     }
     let (exit_code, output) = capture(
       file_pr_verify_command(command, file_pr_dir),

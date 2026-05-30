@@ -407,6 +407,17 @@ test "moon verify command normalization appends default native target only when 
       "moon --target wasm-gc test",
     ]),
   )
+  let notices = @types.moon_verify_normalization_notices(
+    [" moon test ", "moon check --target native", "npm test"],
+    @types.MoonVerifyTarget::WasmGc,
+  )
+  @debug.assert_eq(notices, [
+    {
+      command: "moon test",
+      normalized: "moon test --target wasm-gc",
+      target: @types.MoonVerifyTarget::WasmGc,
+    },
+  ])
   match
     @types.task_contract_with_normalized_verify(
       Some({
