@@ -96,5 +96,12 @@ pub fn detect_events(
     current_sha == tracked.last_sha {
     events.push(PollEvent::CILatestHeadRollupSucceeded(tracked.pr_number))
   }
+  if ci_rollup == NoChecks &&
+    tracked.last_ci_rollup != NoChecks &&
+    tracked.last_ci_rollup != Failure &&
+    current_sha != "" &&
+    current_sha == tracked.last_sha {
+    events.push(PollEvent::CILatestHeadRollupSucceeded(tracked.pr_number))
+  }
   events
 }

@@ -852,6 +852,82 @@ async test "maybe_trigger_automerge_for_pending_event does not satisfy non-nativ
 }
 
 ///|
+async test "maybe_trigger_automerge_for_pending_event treats NoChecks as verify-satisfied" {
+  let pr_number = 93
+  let label = "no-ci-verify"
+  let (state, child_id, project_dir) = blocked_gh_automerge_fixture(
+    label,
+    pr_number,
+    review_mode=@types.ReviewMode::Iterative,
+  )
+  let contract = {
+    ..@types.TaskContract::empty(),
+    goal: "automerge no-ci verify",
+    verify: ["moon test --target native"],
+    verify_satisfied_by_ci: true,
+  }
+  state.agent_task_contracts.remove(child_id)
+  state.record_agent_task_contract(child_id, Some(contract))
+  match state.poller.get(pr_number) {
+    Some(tracked) =>
+      state.poller.restore({
+        ..tracked,
+        last_sha: "sha-no-ci-verify-new-head",
+        last_ci_rollup: @poller.CiRollupStatus::NoChecks,
+      })
+    None => fail("expected tracked PR")
+  }
+  let tracked = match state.poller.get(pr_number) {
+    Some(value) => value
+    None => fail("expected tracked PR")
+  }
+  let mut merge_seen = false
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "gh" &&
+        cmd.args.length() >= 3 &&
+        cmd.args[0] == "pr" &&
+        cmd.args[1] == "merge" {
+        merge_seen = true
+      }
+      statuses.push(0)
+    }
+    statuses
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    let repo_view_json = "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}"
+    let review_threads_json = "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}"
+    if cmd.args.contains("repo") && cmd.args.contains("view") {
+      return (0, repo_view_json)
+    }
+    if cmd.args.contains("graphql") {
+      return (0, review_threads_json)
+    }
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1].has_suffix("/reviews") {
+      return (0, "[{\"state\":\"APPROVED\"}]")
+    }
+    (0, "")
+  }
+  let merged = maybe_trigger_automerge_for_pending_event(
+    state,
+    @poller.PollEvent::MergeReady(pr_number),
+    tracked,
+    Some(0),
+    runner,
+    capture~,
+  )
+  assert_true(merged)
+  assert_true(merge_seen)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "maybe_trigger_automerge_for_pending_event skips already merged PR" {
   let pr_number = 92
   let (state, _, _) = blocked_gh_automerge_fixture(
@@ -5201,6 +5277,52 @@ test "parent_poll_event_message normalizes moon verify before checking evidence"
       assert_false(message.contains("local verify not observed"))
     }
     None => fail("expected MergeReady message")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+test "parent_poll_event_message treats NoChecks as verify-satisfied when enabled" {
+  let project_dir = "/tmp/choir-parent-no-ci-verify-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let head = "sha-parent-no-ci"
+  let tracked = {
+    ..parent_poll_event_test_tracked(172, "main.dev-no-ci", "work/no-ci", head),
+    last_ci_rollup: @poller.CiRollupStatus::NoChecks,
+  }
+  let contract = {
+    ..@types.TaskContract::empty(),
+    verify: ["moon test --target native"],
+    verify_satisfied_by_ci: true,
+  }
+  match
+    parent_poll_event_message(
+      tracked,
+      project_dir,
+      @poller.PollEvent::CILatestHeadRollupSucceeded(172),
+      Some(0),
+      task_contract=Some(contract),
+    ) {
+    Some((message, _status)) => {
+      assert_true(message.contains("Advisory evaluation verdict: ready"))
+      assert_true(message.contains("Merge policy decision: merge_now"))
+      assert_false(message.contains("local verify not observed"))
+    }
+    None => fail("expected CI latest-head message")
+  }
+  match
+    parent_poll_event_message(
+      tracked,
+      project_dir,
+      @poller.PollEvent::CILatestHeadRollupSucceeded(172),
+      Some(0),
+      task_contract=Some({ ..contract, verify_satisfied_by_ci: false }),
+    ) {
+    Some((message, _status)) =>
+      assert_true(message.contains("local verify not observed"))
+    None => fail("expected strict CI latest-head message")
   }
   ignore(@sys.rm_rf(project_dir))
 }

@@ -571,15 +571,15 @@ fn evaluation_review_state_from_snapshot(
 }
 
 ///|
-fn evaluation_ci_rollup_from_snapshot(
+pub fn evaluation_ci_rollup_from_snapshot(
   ci : CiRollupStatus,
 ) -> @types.EvaluationCiRollup {
   match ci {
-    Unknown => @types.EvaluationCiRollup::Unknown
-    NoChecks => @types.EvaluationCiRollup::NoChecks
-    InProgress => @types.EvaluationCiRollup::InProgress
-    Success => @types.EvaluationCiRollup::Success
-    Failure => @types.EvaluationCiRollup::Failure
+    CiRollupStatus::Unknown => @types.EvaluationCiRollup::Unknown
+    CiRollupStatus::NoChecks => @types.EvaluationCiRollup::NoChecks
+    CiRollupStatus::InProgress => @types.EvaluationCiRollup::InProgress
+    CiRollupStatus::Success => @types.EvaluationCiRollup::Success
+    CiRollupStatus::Failure => @types.EvaluationCiRollup::Failure
   }
 }
 
