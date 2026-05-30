@@ -203,6 +203,66 @@ test "verify_results_for_required_at_head_with_ci upgrades only matching CI succ
 }
 
 ///|
+test "verify_results_for_required_at_head_with_ci upgrades NoChecks rollup only when enabled" {
+  let project_dir = "/tmp/choir-evidence-ci-no-checks-verify-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  let no_ci = verify_results_for_required_at_head_with_ci(
+    project_dir,
+    "main.leaf",
+    ["moon test --target native"],
+    "head-x",
+    true,
+    ci_rollup=@types.EvaluationCiRollup::NoChecks,
+  )
+  assert_eq(no_ci.length(), 1)
+  assert_true(no_ci[0].status == @types.VerifyStatus::Passed)
+  assert_eq(
+    no_ci[0].details,
+    "no CI configured; satisfied per no-CI policy at head-x",
+  )
+  let strict = verify_results_for_required_at_head_with_ci(
+    project_dir,
+    "main.leaf",
+    ["moon test --target native"],
+    "head-x",
+    false,
+    ci_rollup=@types.EvaluationCiRollup::NoChecks,
+  )
+  assert_true(strict[0].status == @types.VerifyStatus::NotObserved)
+  let success_without_ci_evidence = verify_results_for_required_at_head_with_ci(
+    project_dir,
+    "main.leaf",
+    ["moon test --target native"],
+    "head-x",
+    true,
+    ci_rollup=@types.EvaluationCiRollup::Success,
+  )
+  assert_true(
+    success_without_ci_evidence[0].status == @types.VerifyStatus::NotObserved,
+  )
+  let unknown = verify_results_for_required_at_head_with_ci(
+    project_dir,
+    "main.leaf",
+    ["moon test --target native"],
+    "head-x",
+    true,
+    ci_rollup=@types.EvaluationCiRollup::Unknown,
+  )
+  assert_true(unknown[0].status == @types.VerifyStatus::NotObserved)
+  let in_progress = verify_results_for_required_at_head_with_ci(
+    project_dir,
+    "main.leaf",
+    ["moon test --target native"],
+    "head-x",
+    true,
+    ci_rollup=@types.EvaluationCiRollup::InProgress,
+  )
+  assert_true(in_progress[0].status == @types.VerifyStatus::NotObserved)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 test "verify_results_for_required_at_head_with_ci preserves failures and non-success CI" {
   let project_dir = "/tmp/choir-evidence-ci-no-upgrade-" +
     @sys.get_pid().to_string()

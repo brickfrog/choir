@@ -536,12 +536,29 @@ fn latest_ci_observed_matches_head(
 }
 
 ///|
+fn upgrade_not_observed_verify_results(
+  results : Array[@types.VerifyCheckResult],
+  details : String,
+) -> Array[@types.VerifyCheckResult] {
+  let upgraded : Array[@types.VerifyCheckResult] = []
+  for result in results {
+    if result.status == @types.VerifyStatus::NotObserved {
+      upgraded.push({ ..result, status: @types.VerifyStatus::Passed, details })
+    } else {
+      upgraded.push(result)
+    }
+  }
+  upgraded
+}
+
+///|
 pub fn verify_results_for_required_at_head_with_ci(
   project_dir : String,
   agent_id : String,
   required : Array[String],
   head_sha : String,
   verify_satisfied_by_ci : Bool,
+  ci_rollup? : @types.EvaluationCiRollup = @types.EvaluationCiRollup::Unknown,
 ) -> Array[@types.VerifyCheckResult] {
   let events = replay_agent_evidence_records(project_dir, agent_id)
   let results = verify_results_for_required_at_head_from_events(
@@ -550,22 +567,19 @@ pub fn verify_results_for_required_at_head_with_ci(
   if !verify_satisfied_by_ci || head_sha == "" {
     return results
   }
+  if ci_rollup == @types.EvaluationCiRollup::NoChecks {
+    return upgrade_not_observed_verify_results(
+      results,
+      "no CI configured; satisfied per no-CI policy at " + head_sha,
+    )
+  }
   if !latest_ci_observed_matches_head(events, head_sha) {
     return results
   }
-  let upgraded : Array[@types.VerifyCheckResult] = []
-  for result in results {
-    if result.status == @types.VerifyStatus::NotObserved {
-      upgraded.push({
-        ..result,
-        status: @types.VerifyStatus::Passed,
-        details: "satisfied by CI rollup success at " + head_sha,
-      })
-    } else {
-      upgraded.push(result)
-    }
-  }
-  upgraded
+  upgrade_not_observed_verify_results(
+    results,
+    "satisfied by CI rollup success at " + head_sha,
+  )
 }
 
 ///|

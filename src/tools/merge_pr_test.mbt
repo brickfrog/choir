@@ -1753,6 +1753,66 @@ async test "interpret_merge_pr_preflight accepts CI-satisfied verify at head" {
 }
 
 ///|
+async test "interpret_merge_pr_preflight accepts NoChecks verify policy when enabled" {
+  let project_dir = "/tmp/choir-mpf-no-ci-verify-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  let contract = merge_pr_test_verify_contract(["moon test --target native"])
+  let ps = @poller.PollerState::new()
+  ps.tracked.set(7, {
+    ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
+    pr_number: 7,
+    last_sha: "head-x",
+    last_ci_rollup: @poller.CiRollupStatus::NoChecks,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
+  })
+  let got = interpret_merge_pr_preflight(
+    7,
+    Some(ps),
+    project_dir,
+    "main.tl",
+    mock_preflight_capture_no_unresolved_threads,
+    task_contract_reader=merge_pr_test_contract_reader(contract),
+  )
+  match got {
+    Ok(_) => ()
+    Err(e) =>
+      fail("expected NoChecks rollup to satisfy verify policy: " + e.message())
+  }
+  let strict_dir = project_dir + "-strict"
+  ignore(@sys.rm_rf(strict_dir))
+  let strict_contract = merge_pr_test_verify_contract(
+    ["moon test --target native"],
+    verify_satisfied_by_ci=false,
+  )
+  let strict_ps = @poller.PollerState::new()
+  strict_ps.tracked.set(7, {
+    ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
+    pr_number: 7,
+    last_sha: "head-x",
+    last_ci_rollup: @poller.CiRollupStatus::NoChecks,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
+  })
+  let strict = interpret_merge_pr_preflight(
+    7,
+    Some(strict_ps),
+    strict_dir,
+    "main.tl",
+    mock_preflight_capture_no_unresolved_threads,
+    task_contract_reader=merge_pr_test_contract_reader(strict_contract),
+  )
+  match strict {
+    Err(e) => assert_true(e.message().contains("local verify not observed"))
+    Ok(_) => fail("expected strict NoChecks policy to require local evidence")
+  }
+  ignore(@sys.rm_rf(project_dir))
+  ignore(@sys.rm_rf(strict_dir))
+}
+
+///|
 async test "interpret_merge_pr_preflight rejects CI-only verify for non-native moon target" {
   let project_dir = "/tmp/choir-mpf-ci-verify-nonnative-" +
     @sys.get_pid().to_string()

@@ -349,6 +349,26 @@ test "detect_events CILatestHeadRollupSucceeded when Unknown becomes Success on 
 }
 
 ///|
+test "detect_events CILatestHeadRollupSucceeded when Unknown becomes NoChecks on same head" {
+  let tracked = detect_test_tracked(23, 0L, Approved, "", "sha-n", Unknown, 0L)
+  let ev = detect_events(
+    tracked,
+    Approved,
+    "sha-n",
+    NoChecks,
+    "",
+    13L,
+    900L,
+    false,
+  )
+  assert_eq(ev.length(), 1)
+  match ev[0] {
+    CILatestHeadRollupSucceeded(n) => assert_eq(n, 23)
+    _ => fail("expected CILatestHeadRollupSucceeded")
+  }
+}
+
+///|
 test "detect_events no duplicate rollup success when already Success on same head" {
   let tracked = detect_test_tracked(22, 0L, Approved, "", "sha-s", Success, 0L)
   let ev = detect_events(
@@ -358,6 +378,22 @@ test "detect_events no duplicate rollup success when already Success on same hea
     Success,
     "",
     12L,
+    900L,
+    false,
+  )
+  assert_eq(ev.length(), 0)
+}
+
+///|
+test "detect_events no duplicate rollup success when already NoChecks on same head" {
+  let tracked = detect_test_tracked(24, 0L, Approved, "", "sha-n", NoChecks, 0L)
+  let ev = detect_events(
+    tracked,
+    Approved,
+    "sha-n",
+    NoChecks,
+    "",
+    14L,
     900L,
     false,
   )
