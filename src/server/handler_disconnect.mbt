@@ -454,6 +454,7 @@ pub async fn ServerState::interpret_teardown_effects(
   runner : async (Array[@workspace.Command]) -> Array[Int],
   sleep_fn? : async (Int) -> Unit = @async.sleep,
   is_git_worktree? : (String) -> Bool = default_path_is_git_worktree,
+  kill_pgid? : (Int) -> Unit = default_kill_pgid_best_effort,
 ) -> Unit {
   for effect in effects {
     match effect {
@@ -564,8 +565,10 @@ pub async fn ServerState::interpret_teardown_effects(
             _ => Ok(())
           },
         )
-      ClearRuntimeTracking(agent_id) =>
+      ClearRuntimeTracking(agent_id) => {
+        self.kill_tracked_agent_pgroup(agent_id, kill_pgid)
         self.clear_agent_runtime_tracking(agent_id)
+      }
       WatchPane(agent_id~) =>
         try self.registry.get(agent_id) catch {
           _ => ()
