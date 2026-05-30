@@ -1202,7 +1202,6 @@ fn is_staged_existing_exec_default(
     "src/tools/pr_merged_completion_hooks.mbt|fire_pr_merged_completion_hooks|hook_capture|capture_hook_script_merged",
     "src/tools/pr_merged_completion_hooks.mbt|fire_pr_merged_completion_hooks|path_exists|path_entry_exists",
     "src/tools/pr_merged_completion_hooks.mbt|fire_pr_merged_completion_hooks|xdg_config_home|hook_xdg_config_home",
-    "src/tools/shutdown.mbt|interpret_kill_agent|capture|capture_command_stdout",
     "src/tools/shutdown.mbt|interpret_shutdown|capture|capture_command_stdout_with_stderr_on_error",
     "src/tools/status_bar_state.mbt|capture_zellij_list_panes_snapshot|capture|capture_command_stdout",
     "src/tools/status_bar_state.mbt|capture_zellij_list_panes_snapshot_result|capture|capture_command_stdout",
