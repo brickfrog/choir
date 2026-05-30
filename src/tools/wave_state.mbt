@@ -287,7 +287,7 @@ fn wave_state_default_tdd_phase(_agent_id : String) -> @types.LeafTddPhase? {
 fn wave_state_default_task_contract_reader(
   _agent_id : String,
 ) -> @types.TaskContract? {
-  Some(@types.TaskContract::empty())
+  None
 }
 
 ///|

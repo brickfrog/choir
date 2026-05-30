@@ -1226,7 +1226,7 @@ async test "interpret_wave_state unresolved_threads=Some(0) on clean graphql" {
   assert_true(resp.is_ok())
   let body = resp.ok_field("snapshot").unwrap()
   assert_true(body.contains("\"unresolved_threads\":0"))
-  assert_true(body.contains("\"merge_gate_ready\":true"))
+  assert_true(body.contains("\"merge_gate_ready\":false"))
   assert_true(body.contains("\"mergeable\":\"unknown\""))
   assert_true(body.contains("\"merge_state_status\":\"unknown\""))
   assert_true(body.contains("\"merged_at_unix\":null"))
