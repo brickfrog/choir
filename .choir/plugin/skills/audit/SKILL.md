@@ -53,12 +53,13 @@ description: Spawn a Sarcasmotron worker to critically audit the current branch 
    `write_audit_receipt` MCP tool.
 
    - Get `sha` with `git rev-parse HEAD`.
+   - Get `tree_sha` with `git rev-parse 'HEAD^{tree}'`.
    - Get `branch` with `git rev-parse --abbrev-ref HEAD`.
    - Compute `findings_count` from Sarcasmotron's response. Count explicit
      finding markers such as `Finding 1:`, `Finding 2:`, or numbered finding
      lines like `1. ...`; if the worker explicitly says there are no
      findings, use `0`.
-   - Call `write_audit_receipt` with `sha`, `branch`, and
+   - Call `write_audit_receipt` with `sha`, `tree_sha`, `branch`, and
      `findings_count`. Do not write `.choir/audit-receipts` directly; the
      MCP tool fills `audited_at` and `agent_id`.
 
