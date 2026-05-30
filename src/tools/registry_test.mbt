@@ -108,19 +108,6 @@ async fn mock_registry_capture(cmd : @workspace.Command) -> (Int, String) {
 }
 
 ///|
-async fn mock_registry_capture_with_pane(
-  cmd : @workspace.Command,
-) -> (Int, String) {
-  @async.sleep(0)
-  if cmd.program == "zellij" {
-    return (
-      0, "[{\"id\":17,\"tab_name\":\"claude-pane-leaf-0\",\"is_plugin\":false}]",
-    )
-  }
-  mock_registry_capture(cmd)
-}
-
-///|
 fn escape_registry_test_toml_string(s : String) -> String {
   let buf = StringBuilder::new()
   for c in s {
@@ -134,6 +121,30 @@ fn escape_registry_test_toml_string(s : String) -> String {
     }
   }
   buf.to_string()
+}
+
+///|
+fn registry_test_worktree_slug_from_arg(
+  arg : String,
+  slug_prefix : String,
+) -> String? {
+  let marker = "/.choir/worktrees/"
+  match arg.find(marker) {
+    Some(i) => {
+      let rest_start = i + marker.length()
+      let rest = arg[rest_start:arg.length()].to_owned()
+      let slug = match rest.find("/") {
+        Some(j) => rest[:j].to_owned()
+        None => rest
+      }
+      if slug.has_prefix(slug_prefix + "-") {
+        Some(slug)
+      } else {
+        None
+      }
+    }
+    None => None
+  }
 }
 
 ///|
@@ -809,14 +820,30 @@ async test "dispatch fork_wave preregisters spawned child for immediate agent_li
     mutex_registry=Some(@registry.MutexRegistry::new()),
     poller_state=Some(@poller.PollerState::new()),
   )
-  match res {
+  let child_id = match res {
     Ok(map) => {
       @debug.assert_eq(map.get("status"), Some("spawned"))
-      @debug.assert_eq(map.get("agent_ids"), Some("master.claude-smoke-leaf-0"))
+      let agent_ids = match map.get("agent_ids") {
+        Some(id) => id
+        None => {
+          fail("missing agent_ids")
+          ""
+        }
+      }
+      assert_true(agent_ids.has_prefix("master.claude-smoke-leaf-"))
+      assert_true(agent_ids.has_suffix("-0"))
+      let slug = agent_ids["master.".length():agent_ids.length()].to_owned()
+      assert_false(slug.contains("."))
+      assert_false(slug.contains("--"))
+      agent_ids
     }
-    Err(msg) => fail("fork_wave failed: " + msg)
+    Err(msg) => {
+      fail("fork_wave failed: " + msg)
+      ""
+    }
   }
-  try agent_reg.get("master.claude-smoke-leaf-0") catch {
+  let child_slug = child_id["master.".length():child_id.length()].to_owned()
+  try agent_reg.get(child_id) catch {
     e =>
       fail(
         "missing child registration: " +
@@ -828,12 +855,10 @@ async test "dispatch fork_wave preregisters spawned child for immediate agent_li
       assert_eq(agent.agent_type, @types.AgentType::Claude)
       @debug.assert_eq(agent.parent, Some("root"))
       assert_eq(agent.state, @types.AgentState::Spawning)
-      assert_true(
-        agent.workspace.contains("/.choir/worktrees/claude-smoke-leaf-0"),
-      )
+      assert_true(agent.workspace.contains("/.choir/worktrees/" + child_slug))
       @debug.assert_eq(
         agent.terminal_target,
-        @types.LocalTarget::parse("zellij-tab:choir:claude-smoke-leaf-0"),
+        @types.LocalTarget::parse("zellij-tab:choir:" + child_slug),
       )
     }
   }
@@ -873,24 +898,65 @@ async test "dispatch fork_wave post-spawn pane resolution uses injected capture"
       "task": "open a PR",
     },
   }
+  let spawned_slug : Array[String] = [""]
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    for cmd in cmds {
+      for arg in cmd.args {
+        match registry_test_worktree_slug_from_arg(arg, "claude-pane-leaf") {
+          Some(slug) => spawned_slug[0] = slug
+          None => ()
+        }
+      }
+    }
+    let statuses = []
+    for _ in cmds {
+      statuses.push(0)
+    }
+    statuses
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "zellij" {
+      let slug = spawned_slug[0]
+      assert_true(slug != "")
+      return (
+        0,
+        "[{\"id\":17,\"tab_name\":\"" + slug + "\",\"is_plugin\":false}]",
+      )
+    }
+    mock_registry_capture(cmd)
+  }
   let res = @tools.dispatch_call(
     call,
     project_dir~,
     session="choir",
-    runner=mock_registry_runner,
+    runner~,
     git_capture=mock_clean_git,
-    capture=mock_registry_capture_with_pane,
+    capture~,
     ensure_branch_ready=Some(mock_registry_branch_ready),
     ensure_pr=Some(mock_registry_ensure_pr),
     registry=Some(agent_reg),
     mutex_registry=Some(@registry.MutexRegistry::new()),
     poller_state=Some(@poller.PollerState::new()),
   )
-  match res {
-    Ok(map) => @debug.assert_eq(map.get("status"), Some("spawned"))
-    Err(msg) => fail("fork_wave failed: " + msg)
+  let child_id = match res {
+    Ok(map) => {
+      @debug.assert_eq(map.get("status"), Some("spawned"))
+      match map.get("agent_ids") {
+        Some(id) => id
+        None => {
+          fail("missing agent_ids")
+          ""
+        }
+      }
+    }
+    Err(msg) => {
+      fail("fork_wave failed: " + msg)
+      ""
+    }
   }
-  try agent_reg.get("master.claude-pane-leaf-0") catch {
+  try agent_reg.get(child_id) catch {
     e =>
       fail(
         "missing child registration: " +
