@@ -871,6 +871,175 @@ test "fork_wave_post_spawn_host_steps ordering" {
 }
 
 ///|
+fn fork_wave_test_field_value(
+  fields : Array[@moontrace.Field],
+  key : String,
+) -> Json? {
+  for field in fields {
+    if field.key == key {
+      return Some(field.value)
+    }
+  }
+  None
+}
+
+///|
+fn fork_wave_event_has_string_field(
+  event : @moontrace.Event,
+  key : String,
+  expected : String,
+) -> Bool {
+  match fork_wave_test_field_value(event.fields, key) {
+    Some(value) => value == String::to_json(expected)
+    None => false
+  }
+}
+
+///|
+fn fork_wave_event_is_no_zellij_tab_warn_for(
+  event : @moontrace.Event,
+  agent_id : String,
+  slug : String,
+  session : String,
+) -> Bool {
+  event.level == @moontrace.Level::Warn &&
+  fork_wave_event_has_string_field(event, "event", "spawn_no_zellij_tab") &&
+  fork_wave_event_has_string_field(event, "agent_id", agent_id) &&
+  fork_wave_event_has_string_field(event, "slug", slug) &&
+  fork_wave_event_has_string_field(event, "session", session)
+}
+
+///|
+fn fork_wave_no_zellij_tab_warn_count(events : Array[@moontrace.Event]) -> Int {
+  let mut count = 0
+  for event in events {
+    if event.level == @moontrace.Level::Warn {
+      match fork_wave_test_field_value(event.fields, "event") {
+        Some(value) =>
+          if value == String::to_json("spawn_no_zellij_tab") {
+            count = count + 1
+          }
+        None => ()
+      }
+    }
+  }
+  count
+}
+
+///|
+fn fork_wave_no_zellij_tab_warn_event_for(
+  events : Array[@moontrace.Event],
+  agent_id : String,
+  slug : String,
+  session : String,
+) -> @moontrace.Event? {
+  for event in events {
+    if fork_wave_event_is_no_zellij_tab_warn_for(event, agent_id, slug, session) {
+      return Some(event)
+    }
+  }
+  None
+}
+
+///|
+fn assert_fork_wave_string_field(
+  fields : Array[@moontrace.Field],
+  key : String,
+  expected : String,
+) -> Unit raise {
+  match fork_wave_test_field_value(fields, key) {
+    Some(value) => @debug.assert_eq(value, String::to_json(expected))
+    None => fail("expected moontrace field " + key)
+  }
+}
+
+///|
+fn fork_wave_single_leaf_args(slug_prefix : String) -> ForkWaveArgs {
+  {
+    ..fork_wave_args_base(),
+    count: 1,
+    tasks: ["shared task"],
+    task_contracts: [{ ..@types.TaskContract::empty(), goal: "shared task" }],
+    slug_prefix,
+  }
+}
+
+///|
+async test "fork_wave post-spawn warns only when spawned tab has no resolvable pane" {
+  let project_dir = "/tmp/choir-fork-wave-missing-pane-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  let session = "choir-missing-pane-test"
+  let args = fork_wave_single_leaf_args("no-tab")
+  let plan = fork_wave_spawn_plan(args, 0, None, project_dir, session)
+  let reg = @registry.AgentRegistry::new()
+  let captured : Array[@moontrace.Event] = []
+  @moontrace.set_subscriber(fn(event) { captured.push(event) })
+  interpret_fork_wave_post_spawn(args, plan, project_dir, session, Some(reg), capture=async fn(
+    cmd,
+  ) {
+    @async.sleep(0)
+    if cmd.program == "zellij" {
+      (0, "[]")
+    } else {
+      (0, "")
+    }
+  })
+  @moontrace.clear_subscriber()
+  let warn = match
+    fork_wave_no_zellij_tab_warn_event_for(
+      captured, "main.no-tab-0", "no-tab-0", session,
+    ) {
+    Some(event) => event
+    None => fail("expected missing zellij tab warning")
+  }
+  assert_true(
+    warn.message.contains("no resolvable zellij tab/pane after launch"),
+  )
+  assert_true(warn.message.contains("zellij new-tab no-op"))
+  assert_true(warn.message.contains("immediate agent exit"))
+  assert_fork_wave_string_field(warn.fields, "event", "spawn_no_zellij_tab")
+  assert_fork_wave_string_field(warn.fields, "agent_id", "main.no-tab-0")
+  assert_fork_wave_string_field(warn.fields, "slug", "no-tab-0")
+  assert_fork_wave_string_field(warn.fields, "session", session)
+  ignore(@sys.rm_rf(project_dir))
+
+  let resolved_project_dir = "/tmp/choir-fork-wave-resolved-pane-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(resolved_project_dir))
+  let resolved_session = "choir-resolved-pane-test"
+  let resolved_args = fork_wave_single_leaf_args("resolved-tab")
+  let resolved_plan = fork_wave_spawn_plan(
+    resolved_args,
+    0,
+    None,
+    resolved_project_dir,
+    resolved_session,
+  )
+  let resolved_reg = @registry.AgentRegistry::new()
+  let resolved_captured : Array[@moontrace.Event] = []
+  @moontrace.set_subscriber(fn(event) { resolved_captured.push(event) })
+  interpret_fork_wave_post_spawn(
+    resolved_args,
+    resolved_plan,
+    resolved_project_dir,
+    resolved_session,
+    Some(resolved_reg),
+    capture=async fn(cmd) {
+      @async.sleep(0)
+      if cmd.program == "zellij" {
+        (0, "[{\"id\":7,\"tab_name\":\"resolved-tab-0\",\"is_plugin\":false}]")
+      } else {
+        (0, "")
+      }
+    },
+  )
+  @moontrace.clear_subscriber()
+  assert_eq(fork_wave_no_zellij_tab_warn_count(resolved_captured), 0)
+  ignore(@sys.rm_rf(resolved_project_dir))
+}
+
+///|
 async test "fork_wave post-spawn records server task contracts" {
   let project_dir = "/tmp/choir-fork-wave-contract-capture-" +
     @sys.get_pid().to_string()
@@ -885,9 +1054,15 @@ async test "fork_wave post-spawn records server task contracts" {
     project_dir,
     "choir",
     Some(reg),
-    capture=async fn(_cmd) {
+    capture=async fn(cmd) {
       @async.sleep(0)
-      (0, "")
+      if cmd.program == "zellij" {
+        (
+          0, "[{\"id\":7,\"tab_name\":\"wave-0\",\"is_plugin\":false},{\"id\":8,\"tab_name\":\"wave-1\",\"is_plugin\":false}]",
+        )
+      } else {
+        (0, "")
+      }
     },
     record_task_contract=fn(agent_id, contract) {
       match contract {
@@ -933,7 +1108,7 @@ async test "fork_wave post-spawn does not clobber a live registry collision" {
     _cmd,
   ) {
     @async.sleep(0)
-    (0, "terminal_9\n")
+    (0, "[{\"id\":9,\"tab_name\":\"wave-1\",\"is_plugin\":false}]")
   })
   try reg.get("main.wave-0") catch {
     _ => fail("expected existing live agent to remain in registry")
