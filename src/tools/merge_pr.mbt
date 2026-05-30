@@ -430,22 +430,11 @@ fn merge_pr_verify_results_for_tracked(
         contract.verify,
         tracked.last_sha,
         @types.task_contract_verify_satisfied_by_native_ci(contract),
-        ci_rollup=merge_pr_evaluation_ci_rollup(tracked.last_ci_rollup),
+        ci_rollup=@poller.evaluation_ci_rollup_from_snapshot(
+          tracked.last_ci_rollup,
+        ),
       )
     None => []
-  }
-}
-
-///|
-fn merge_pr_evaluation_ci_rollup(
-  ci : @poller.CiRollupStatus,
-) -> @types.EvaluationCiRollup {
-  match ci {
-    Unknown => @types.EvaluationCiRollup::Unknown
-    NoChecks => @types.EvaluationCiRollup::NoChecks
-    InProgress => @types.EvaluationCiRollup::InProgress
-    Success => @types.EvaluationCiRollup::Success
-    Failure => @types.EvaluationCiRollup::Failure
   }
 }
 

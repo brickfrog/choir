@@ -77,6 +77,9 @@ fn parent_pr_state_notification_decision(
         contract.verify,
         tracked.last_sha,
         @types.task_contract_verify_satisfied_by_native_ci(contract),
+        ci_rollup=@poller.evaluation_ci_rollup_from_snapshot(
+          tracked.last_ci_rollup,
+        ),
       )
     None => []
   }
