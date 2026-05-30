@@ -239,7 +239,11 @@ test "verify_results_for_required_at_head_with_ci upgrades NoChecks rollup only 
     ci_rollup=@types.EvaluationCiRollup::Success,
   )
   assert_true(
-    success_without_ci_evidence[0].status == @types.VerifyStatus::NotObserved,
+    success_without_ci_evidence[0].status == @types.VerifyStatus::Passed,
+  )
+  assert_eq(
+    success_without_ci_evidence[0].details,
+    "satisfied by current CI rollup success at head-x",
   )
   let unknown = verify_results_for_required_at_head_with_ci(
     project_dir,

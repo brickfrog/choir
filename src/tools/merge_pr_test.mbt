@@ -1705,7 +1705,10 @@ async test "interpret_merge_pr_preflight matches normalized moon verify evidence
 async test "interpret_merge_pr_preflight rejects stale verify evidence" {
   let project_dir = "/tmp/choir-mpf-stale-verify-" + @sys.get_pid().to_string()
   ignore(@sys.rm_rf(project_dir))
-  let contract = merge_pr_test_verify_contract(["moon test --target native"])
+  let contract = merge_pr_test_verify_contract(
+    ["moon test --target native"],
+    verify_satisfied_by_ci=false,
+  )
   ignore(
     @evidence.append_agent_evidence_event(
       @sys.append_file_sync,
@@ -1783,6 +1786,40 @@ async test "interpret_merge_pr_preflight accepts CI-satisfied verify at head" {
     Ok(_) => ()
     Err(e) =>
       fail("expected CI evidence to satisfy verify policy: " + e.message())
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_merge_pr_preflight accepts current CI success before evidence log catches up" {
+  let project_dir = "/tmp/choir-mpf-ci-verify-poller-lag-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  let contract = merge_pr_test_verify_contract(["moon test --target native"])
+  let ps = @poller.PollerState::new()
+  ps.tracked.set(7, {
+    ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
+    pr_number: 7,
+    last_sha: "head-x",
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
+  })
+  let got = interpret_merge_pr_preflight(
+    7,
+    Some(ps),
+    project_dir,
+    "main.tl",
+    mock_preflight_capture_no_unresolved_threads,
+    task_contract_reader=merge_pr_test_contract_reader(contract),
+  )
+  match got {
+    Ok(_) => ()
+    Err(e) =>
+      fail(
+        "expected current CI rollup to satisfy verify policy: " + e.message(),
+      )
   }
   ignore(@sys.rm_rf(project_dir))
 }
@@ -1956,7 +1993,7 @@ async test "interpret_merge_pr_preflight rejects CI-only verify when disabled or
     ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
     pr_number: 7,
     last_sha: "head-y",
-    last_ci_rollup: @poller.CiRollupStatus::Success,
+    last_ci_rollup: @poller.CiRollupStatus::InProgress,
     mergeable: @poller.Mergeable::Unknown,
     merge_state_status: @poller.MergeStateStatus::Unknown,
     merged_at_unix: None,
@@ -2355,7 +2392,11 @@ test "format_tl_pr_recheck_summary treats matching CI evidence as verify when en
   assert_true(strict.contains("Advisory evaluation verdict: needs_human"))
   assert_true(strict.contains("local verify not observed"))
   let stale = format_tl_pr_recheck_summary(
-    { ..t, last_sha: "head-y" },
+    {
+      ..t,
+      last_sha: "head-y",
+      last_ci_rollup: @poller.CiRollupStatus::InProgress,
+    },
     project_dir,
     Some(0),
     task_contract=Some(contract),

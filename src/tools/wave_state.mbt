@@ -94,12 +94,31 @@ fn wave_state_pr_from_tracked(
   tracked : @poller.TrackedPR,
   unresolved_threads : Int?,
   threads_fetch_error : String?,
+  task_contract : @types.TaskContract?,
+  verify_results : Array[@types.VerifyCheckResult],
+  missing_task_contract_blocks : Bool,
+  skip_copilot_on_feature_branch : Bool,
+  default_branch : String,
 ) -> WaveStatePR {
-  let merge_gate_ready = @poller.tl_tracked_pr_merge_gate_snapshot_ready(
-    tracked,
-    unresolved_threads,
-    review_mode=tracked.review_mode,
-  )
+  let merge_gate_ready = if missing_task_contract_blocks &&
+    task_contract is None &&
+    tracked.agent_id != "root" {
+    false
+  } else {
+    match
+      @poller.merge_policy_decision_for_tracked_pr(
+        tracked,
+        unresolved_threads,
+        task_contract~,
+        review_mode=tracked.review_mode,
+        verify_results~,
+        skip_copilot_on_feature_branch~,
+        default_branch~,
+      ) {
+      @policy.MergeDecision::MergeNow(_) => true
+      _ => false
+    }
+  }
   {
     pr_number: tracked.pr_number,
     pr_url: tracked.pr_url,
@@ -265,6 +284,21 @@ fn wave_state_default_tdd_phase(_agent_id : String) -> @types.LeafTddPhase? {
 }
 
 ///|
+fn wave_state_default_task_contract_reader(
+  _agent_id : String,
+) -> @types.TaskContract? {
+  Some(@types.TaskContract::empty())
+}
+
+///|
+fn wave_state_default_verify_results_reader(
+  _tracked : @poller.TrackedPR,
+  _contract : @types.TaskContract,
+) -> Array[@types.VerifyCheckResult] {
+  []
+}
+
+///|
 /// Pure planner for `wave_state`. Assembles a typed snapshot from injected
 /// reader capabilities:
 ///
@@ -290,6 +324,13 @@ pub fn plan_wave_state(
   now_ms : Int64,
   beads_issue_reader? : (@types.Agent) -> String? = wave_state_default_beads_issue_reader,
   tdd_phase_reader? : (String) -> @types.LeafTddPhase? = wave_state_default_tdd_phase,
+  task_contract_reader? : (String) -> @types.TaskContract? = wave_state_default_task_contract_reader,
+  verify_results_reader? : (@poller.TrackedPR, @types.TaskContract) -> Array[
+    @types.VerifyCheckResult,
+  ] = wave_state_default_verify_results_reader,
+  missing_task_contract_blocks? : Bool = false,
+  skip_copilot_on_feature_branch? : Bool = false,
+  default_branch? : String = "",
 ) -> Result[WaveStateSnapshot, @types.ChoirError] {
   guard registry.get_opt(caller_id) is Some(agent) else {
     return Err(@types.ChoirError::agent_not_found(caller_id))
@@ -314,7 +355,17 @@ pub fn plan_wave_state(
           match ps.get(pr_number) {
             Some(tracked) => {
               let (threads, err) = threads_lookup(pr_number)
-              Some(wave_state_pr_from_tracked(tracked, threads, err))
+              let task_contract = task_contract_reader(tracked.agent_id)
+              let verify_results = match task_contract {
+                Some(contract) => verify_results_reader(tracked, contract)
+                None => []
+              }
+              Some(
+                wave_state_pr_from_tracked(
+                  tracked, threads, err, task_contract, verify_results, missing_task_contract_blocks,
+                  skip_copilot_on_feature_branch, default_branch,
+                ),
+              )
             }
             None => None
           }
@@ -338,7 +389,17 @@ pub fn plan_wave_state(
     let pr = match tracked_by_agent.get(child_id) {
       Some(tracked) => {
         let (threads, err) = threads_lookup(tracked.pr_number)
-        Some(wave_state_pr_from_tracked(tracked, threads, err))
+        let task_contract = task_contract_reader(tracked.agent_id)
+        let verify_results = match task_contract {
+          Some(contract) => verify_results_reader(tracked, contract)
+          None => []
+        }
+        Some(
+          wave_state_pr_from_tracked(
+            tracked, threads, err, task_contract, verify_results, missing_task_contract_blocks,
+            skip_copilot_on_feature_branch, default_branch,
+          ),
+        )
       }
       None => None
     }
@@ -390,6 +451,9 @@ pub async fn interpret_wave_state(
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
   heartbeat_reader? : (String) -> Int64? = wave_state_default_heartbeat,
   tdd_phase_reader? : (String) -> @types.LeafTddPhase? = wave_state_default_tdd_phase,
+  task_contract_reader? : (String) -> @types.TaskContract? = wave_state_default_task_contract_reader,
+  moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
+  skip_copilot_on_feature_branch? : Bool = @types.Config::default().pr_policy.skip_copilot_on_feature_branch,
 ) -> @types.Response {
   let reg = match registry {
     Some(r) => r
@@ -482,11 +546,39 @@ pub async fn interpret_wave_state(
       None => (None, Some("thread state not fetched"))
     }
   }
+  let default_branch = if skip_copilot_on_feature_branch {
+    detect_default_branch_with_capture(project_dir, capture)
+  } else {
+    ""
+  }
   let lifecycle_reader = fn(agent_id : String) -> @phase.AgentLifecycle? {
     @phase.read_lifecycle(project_dir, agent_id)
   }
   let beads_issue_reader = fn(agent : @types.Agent) -> String? {
     @workspace.beads_issue_id_for_agent(project_dir, agent)
+  }
+  let normalized_task_contract_reader = fn(
+    agent_id : String,
+  ) -> @types.TaskContract? {
+    @types.task_contract_with_normalized_verify(
+      task_contract_reader(agent_id),
+      moon_verify_target,
+    )
+  }
+  let verify_results_reader = fn(
+    tracked : @poller.TrackedPR,
+    contract : @types.TaskContract,
+  ) -> Array[@types.VerifyCheckResult] {
+    @evidence.verify_results_for_required_at_head_with_ci(
+      project_dir,
+      tracked.agent_id,
+      contract.verify,
+      tracked.last_sha,
+      @types.task_contract_verify_satisfied_by_native_ci(contract),
+      ci_rollup=@poller.evaluation_ci_rollup_from_snapshot(
+        tracked.last_ci_rollup,
+      ),
+    )
   }
   let snapshot = match
     plan_wave_state(
@@ -499,6 +591,11 @@ pub async fn interpret_wave_state(
       @env.now().reinterpret_as_int64(),
       beads_issue_reader~,
       tdd_phase_reader~,
+      task_contract_reader=normalized_task_contract_reader,
+      verify_results_reader~,
+      missing_task_contract_blocks=true,
+      skip_copilot_on_feature_branch~,
+      default_branch~,
     ) {
     Ok(s) => s
     Err(e) => return @types.Response::Err(e.message())

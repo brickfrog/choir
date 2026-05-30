@@ -561,6 +561,81 @@ test "plan_wave_state merge_gate_ready: approved + threads=0 + CI success" {
 }
 
 ///|
+test "plan_wave_state merge_gate_ready includes task-contract verify policy" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    try? reg.insert(
+      make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
+    ),
+  )
+  ignore(
+    try? reg.insert(
+      make_agent(
+        "tl.leaf",
+        @types.Role::Dev,
+        Some("tl"),
+        @types.AgentType::Gemini,
+      ),
+    ),
+  )
+  let lifecycles : Map[String, @phase.AgentLifecycle] = {}
+  lifecycles.set(
+    "tl",
+    make_supervisor_lifecycle("tl", @phase.SupervisorLifecycle::Planning),
+  )
+  let ps = @poller.PollerState::new()
+  ps.tracked.set(
+    11,
+    tracked_pr_with(
+      11,
+      "tl.leaf",
+      @poller.ReviewState::Approved,
+      @poller.CiRollupStatus::Success,
+      false,
+      0L,
+      "abc",
+    ),
+  )
+  let contract = {
+    ..@types.TaskContract::empty(),
+    goal: "ship feature",
+    verify: ["moon test --target native"],
+  }
+  let missing_verify = plan_wave_state(
+    "tl",
+    reg,
+    lifecycle_map_reader(lifecycles),
+    Some(ps),
+    threads_zero_lookup,
+    no_heartbeat,
+    0L,
+    task_contract_reader=fn(_) { Some(contract) },
+  ).unwrap()
+  assert_eq(missing_verify.children[0].pr.unwrap().merge_gate_ready, false)
+
+  let observed_verify = plan_wave_state(
+    "tl",
+    reg,
+    lifecycle_map_reader(lifecycles),
+    Some(ps),
+    threads_zero_lookup,
+    no_heartbeat,
+    0L,
+    task_contract_reader=fn(_) { Some(contract) },
+    verify_results_reader=fn(_, _) {
+      [
+        {
+          name: "moon test --target native",
+          status: @types.VerifyStatus::Passed,
+          details: "exit: 0\nhead: abc",
+        },
+      ]
+    },
+  ).unwrap()
+  assert_eq(observed_verify.children[0].pr.unwrap().merge_gate_ready, true)
+}
+
+///|
 test "plan_wave_state merge_gate_ready SinglePass: ChangesRequested + fixes_pushed" {
   let reg = @registry.AgentRegistry::new()
   ignore(
@@ -1156,6 +1231,78 @@ async test "interpret_wave_state unresolved_threads=Some(0) on clean graphql" {
   assert_true(body.contains("\"merge_state_status\":\"unknown\""))
   assert_true(body.contains("\"merged_at_unix\":null"))
   assert_true(body.contains("\"beads_issue_id\":\"choir-poller-state-race\""))
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_wave_state merge_gate_ready matches verify policy" {
+  let project_dir = wave_state_test_project_dir("verify")
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    try? reg.insert(
+      make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
+    ),
+  )
+  ignore(
+    try? reg.insert(
+      make_agent(
+        "tl.leaf",
+        @types.Role::Dev,
+        Some("tl"),
+        @types.AgentType::Gemini,
+      ),
+    ),
+  )
+  ignore(
+    @phase.write_lifecycle(
+      project_dir,
+      make_supervisor_lifecycle("tl", @phase.SupervisorLifecycle::Planning),
+    ),
+  )
+  let ps = @poller.PollerState::new()
+  ps.tracked.set(
+    102,
+    tracked_pr_with(
+      102,
+      "tl.leaf",
+      @poller.ReviewState::Approved,
+      @poller.CiRollupStatus::Success,
+      false,
+      0L,
+      "head-x",
+    ),
+  )
+  let native_ci_contract = {
+    ..@types.TaskContract::empty(),
+    goal: "ship feature",
+    verify: ["moon test --target native"],
+  }
+  let ready = interpret_wave_state(
+    { caller_id: "tl" },
+    project_dir,
+    Some(reg),
+    Some(ps),
+    capture=mock_wave_state_capture_threads_none,
+    task_contract_reader=fn(_) { Some(native_ci_contract) },
+  )
+  assert_true(ready.is_ok())
+  assert_true(
+    ready.ok_field("snapshot").unwrap().contains("\"merge_gate_ready\":true"),
+  )
+
+  let strict_contract = { ..native_ci_contract, verify_satisfied_by_ci: false }
+  let blocked = interpret_wave_state(
+    { caller_id: "tl" },
+    project_dir,
+    Some(reg),
+    Some(ps),
+    capture=mock_wave_state_capture_threads_none,
+    task_contract_reader=fn(_) { Some(strict_contract) },
+  )
+  assert_true(blocked.is_ok())
+  assert_true(
+    blocked.ok_field("snapshot").unwrap().contains("\"merge_gate_ready\":false"),
+  )
   ignore(@sys.rm_rf(project_dir))
 }
 
