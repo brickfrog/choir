@@ -1,7 +1,0 @@
-{
-  "database": "dolt",
-  "backend": "dolt",
-  "dolt_mode": "embedded",
-  "dolt_database": "choir",
-  "project_id": "dc9d0d68-7ad1-42fa-8862-b8a07b8f8cf3"
-}
