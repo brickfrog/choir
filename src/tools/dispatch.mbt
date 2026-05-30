@@ -1514,7 +1514,13 @@ pub async fn dispatch(
         capture=bd_capture,
       )
     ToolRequest::KillAgent(kill_args) =>
-      interpret_kill_agent(kill_args, registry, runner, project_dir~, capture~)
+      interpret_kill_agent(
+        kill_args,
+        registry,
+        runner,
+        project_dir~,
+        capture=bd_capture,
+      )
     ToolRequest::Suspend(suspend_args) =>
       interpret_suspend(suspend_args, registry, project_dir, hook_capture~)
     ToolRequest::Resume(resume_args) =>
