@@ -256,6 +256,20 @@ test "moon render suppression appends no-render to runtime moon commands" {
     "moon -C subdir test --target native --no-render",
   )
   assert_eq(
+    @types.moon_render_suppress_command("/usr/bin/moon test # run verify"),
+    "/usr/bin/moon test --no-render # run verify",
+  )
+  assert_eq(
+    @types.moon_render_suppress_command("moon test # comment && moon check"),
+    "moon test --no-render # comment && moon check",
+  )
+  assert_eq(
+    @types.moon_render_suppress_command(
+      "./.moon/bin/moon --target wasm-gc check",
+    ),
+    "./.moon/bin/moon --target wasm-gc check --no-render",
+  )
+  assert_eq(
     @types.moon_render_suppress_command(
       "echo \"moon test\"; moon test --no-render",
     ),
@@ -313,6 +327,20 @@ test "moon verify command normalization appends default native target only when 
       @types.MoonVerifyTarget::Native,
     ),
     ["moon test --target native && moon check --target js"],
+  )
+  @debug.assert_eq(
+    @types.moon_verify_normalize_commands(
+      ["/usr/bin/moon test # run verify"],
+      @types.MoonVerifyTarget::Native,
+    ),
+    ["/usr/bin/moon test --target native # run verify"],
+  )
+  @debug.assert_eq(
+    @types.moon_verify_normalize_commands(
+      ["moon test # comment && moon check"],
+      @types.MoonVerifyTarget::Native,
+    ),
+    ["moon test --target native # comment && moon check"],
   )
   @debug.assert_eq(
     @types.moon_verify_normalize_commands(

@@ -268,6 +268,15 @@ test "command_with_suppressed_moon_render adds no-render to direct moon build" {
   @debug.assert_eq(command_with_suppressed_moon_render(cmd).args, [
     "build", "--no-render", "--target", "native", "--release",
   ])
+  let target_before_subcommand = @workspace.Command::{
+    program: "/usr/bin/moon",
+    args: ["--target", "wasm-gc", "test"],
+    workdir: None,
+  }
+  @debug.assert_eq(
+    command_with_suppressed_moon_render(target_before_subcommand).args,
+    ["--target", "wasm-gc", "test", "--no-render"],
+  )
 }
 
 ///|

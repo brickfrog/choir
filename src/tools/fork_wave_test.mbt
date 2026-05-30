@@ -467,6 +467,41 @@ test "fork_wave_validate_resolved_task_contracts accepts per-leaf verify" {
 }
 
 ///|
+test "fork_wave_validate_resolved_task_contracts rejects short arrays for all roles" {
+  let worker_args = {
+    ..fork_wave_args_base(),
+    child_role: @types.Role::Worker,
+    count: 2,
+    tasks: ["worker one", "worker two"],
+    task_contracts: [{ ..@types.TaskContract::empty(), goal: "one" }],
+  }
+  match fork_wave_validate_resolved_task_contracts(worker_args) {
+    Ok(_) => fail("expected short task_contracts rejection")
+    Err(e) => {
+      assert_true(e.message().contains("task count 2"))
+      assert_true(e.message().contains("task_contracts length 1"))
+    }
+  }
+  let task_args = {
+    ..fork_wave_args_base(),
+    child_role: @types.Role::TL,
+    count: 2,
+    tasks: ["only one"],
+    task_contracts: [
+      { ..@types.TaskContract::empty(), goal: "one" },
+      { ..@types.TaskContract::empty(), goal: "two" },
+    ],
+  }
+  match fork_wave_validate_resolved_task_contracts(task_args) {
+    Ok(_) => fail("expected short tasks rejection")
+    Err(e) => {
+      assert_true(e.message().contains("task count 2"))
+      assert_true(e.message().contains("tasks length 1"))
+    }
+  }
+}
+
+///|
 test "fork_wave_spawn_plan embeds wave_id discriminator in shared leaf identity" {
   let args = {
     ..fork_wave_args_base(),

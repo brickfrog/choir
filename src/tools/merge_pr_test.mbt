@@ -563,6 +563,105 @@ async test "interpret_merge_pr missing audit receipt policy-blocks on master def
 }
 
 ///|
+async test "interpret_merge_pr audit receipt remains valid when commit changes but tree matches" {
+  let project_dir = "/tmp/choir-mpr-audit-tree-reuse-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let audited_commit = "1111111111112222222222223333333333334444"
+  let tree = "9999999999999999999999999999999999999999"
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    94,
+    "main.leaf",
+    "feature/audit-gate",
+    "master",
+    "https://github.com/o/r/pull/94",
+    200L,
+    @poller.ReviewState::Approved,
+    "",
+    head,
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  let cat_paths : Array[String] = []
+  let mut runner_calls = 0
+  let resp = interpret_merge_pr(
+    {
+      pr_number: 94,
+      parent_branch: "master",
+      caller_id: "main.tl",
+      review_mode: Some(@types.ReviewMode::SinglePass),
+    },
+    project_dir,
+    Some(ps),
+    None,
+    None,
+    async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      runner_calls = runner_calls + 1
+      let statuses = []
+      for _ in cmds {
+        statuses.push(0)
+      }
+      statuses
+    },
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "gh" &&
+        cmd.args.length() >= 2 &&
+        cmd.args[0] == "api" &&
+        cmd.args[1].has_suffix("/reviews") {
+        return (0, "[{\"state\":\"APPROVED\"}]")
+      }
+      if cmd.program == "timeout" && cmd.args.contains("repo") {
+        return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
+      }
+      if cmd.program == "timeout" && cmd.args.contains("graphql") {
+        return (
+          0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+        )
+      }
+      if cmd.program == "git" &&
+        cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+        return (0, "origin/master\n")
+      }
+      if cmd.program == "git" &&
+        cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+        return (0, "feature/audit-gate\n")
+      }
+      if cmd.program == "git" && cmd.args == ["rev-parse", head + "^{tree}"] {
+        return (0, tree + "\n")
+      }
+      if cmd.program == "cat" {
+        cat_paths.push(cmd.args[0])
+        return (
+          0,
+          merge_pr_test_audit_receipt_for_tree(audited_commit, tree, 0),
+        )
+      }
+      (0, "")
+    },
+    fn(_, _) { true },
+    fn(path) { path.has_suffix("/.choir/audit-gate.json") },
+    read_file=fn(path) {
+      if path.has_suffix("/.choir/audit-gate.json") {
+        "{\"enabled_at_unix\":100}\n"
+      } else {
+        ""
+      }
+    },
+    task_contract_reader=merge_pr_test_empty_contract_reader,
+  )
+  match resp {
+    @types.Response::Ok(_) => ()
+    @types.Response::Err(msg) => fail("expected merge success: " + msg)
+  }
+  assert_eq(runner_calls, 1)
+  @debug.assert_eq(cat_paths, [file_pr_audit_receipt_path_for_head(tree)])
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "interpret_merge_pr rejects caller parent branch mismatch before merge" {
   let project_dir = "/tmp/choir-mpr-audit-parent-mismatch-" +
     @sys.get_pid().to_string()

@@ -579,6 +579,9 @@ pub fn verify_results_for_required_at_head_with_ci(
       "satisfied by CI rollup success at " + head_sha,
     )
   }
+  // Poller snapshots update last_sha and last_ci_rollup together. Trust the
+  // caller's current rollup to bridge the short lag before the evidence log
+  // records the matching CiObserved event for this head.
   if ci_rollup == @types.EvaluationCiRollup::Success {
     return upgrade_not_observed_verify_results(
       results,

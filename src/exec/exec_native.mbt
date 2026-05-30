@@ -1315,9 +1315,19 @@ pub async fn capture_stdout_with_cwd(
 ///|
 fn moon_direct_global_flag_takes_value(flag : String) -> Bool {
   flag == "-C" ||
+  flag == "--directory" ||
+  flag == "--target" ||
+  flag == "--source-dir" ||
   flag == "--target-dir" ||
+  flag == "--build-dir" ||
+  flag == "--config" ||
   flag == "-Z" ||
   flag == "--unstable-feature"
+}
+
+///|
+fn moon_direct_program_is_moon(program : String) -> Bool {
+  program == "moon" || program.has_suffix("/moon")
 }
 
 ///|
@@ -1359,7 +1369,7 @@ fn moon_direct_args_with_suppressed_render(
 pub fn command_with_suppressed_moon_render(
   cmd : @workspace.Command,
 ) -> @workspace.Command {
-  if cmd.program == "moon" {
+  if moon_direct_program_is_moon(cmd.program) {
     let args = moon_direct_args_with_suppressed_render(cmd.args)
     if args != cmd.args {
       return { ..cmd, args, }

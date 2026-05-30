@@ -144,7 +144,7 @@ async test "leaf TDD intent accepts non-code artifact when configured verify own
   let leaf_worktree = project_dir + "/.choir/worktrees/leaf"
   ignore(@sys.rm_rf(project_dir))
   let contract = tdd_test_verify_contract([
-    "test -f docs/non-code.md && moon test --target native",
+    "test -f 'docs/non-code.md' && moon test --target native",
   ])
   tdd_test_write_verify_config(leaf_worktree, contract.verify)
   let reg = tdd_test_registry(leaf_worktree)
@@ -174,7 +174,9 @@ async test "leaf TDD intent accepts non-code artifact when configured verify own
       )
       @debug.assert_eq(
         fields.get_json("test_command"),
-        Some("test -f docs/non-code.md && moon test --target native".to_json()),
+        Some(
+          "test -f 'docs/non-code.md' && moon test --target native".to_json(),
+        ),
       )
     }
     @types.Response::Err(msg) => fail("expected artifact intent ok: " + msg)
@@ -213,7 +215,7 @@ async test "leaf TDD intent rejects artifact path not owned by configured verify
     @types.Response::Err(msg) => {
       assert_true(
         msg.contains(
-          "artifact mode requires the configured verify command to mention",
+          "artifact mode requires the configured verify command to check",
         ),
       )
       assert_true(msg.contains("docs/non-code.md"))
@@ -221,6 +223,28 @@ async test "leaf TDD intent rejects artifact path not owned by configured verify
     }
     @types.Response::Ok(_) =>
       fail("expected unowned artifact_path to be rejected")
+  }
+  let substring_intent = interpret_tdd_intent(
+    {
+      caller_id: "main.leaf",
+      intent: "write non-code artifact",
+      test_command: None,
+      artifact_path: Some("test"),
+    },
+    reader,
+    writer,
+    registry=Some(reg),
+    task_contract_reader=tdd_test_contract_reader(contract),
+  )
+  match substring_intent {
+    @types.Response::Err(msg) =>
+      assert_true(
+        msg.contains(
+          "artifact mode requires the configured verify command to check",
+        ),
+      )
+    @types.Response::Ok(_) =>
+      fail("expected substring artifact_path to be rejected")
   }
   @debug.assert_eq(stored, None)
   ignore(@sys.rm_rf(project_dir))

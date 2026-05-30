@@ -21,6 +21,7 @@ pub(all) enum MergePrAuditReceiptValidation {
   MergeAuditReceiptInvalid(String)
   MergeAuditReceiptStale(String, String)
   MergeAuditReceiptFindingsRemain(String, Int)
+  MergeAuditReceiptTreeUnavailable(String)
 } derive(Debug, Eq)
 
 ///|
@@ -60,6 +61,7 @@ fn MergePrAuditGateStatus::to_wire_string(
         MergeAuditReceiptInvalid(_) => "receipt_invalid"
         MergeAuditReceiptStale(_, _) => "receipt_stale"
         MergeAuditReceiptFindingsRemain(_, _) => "receipt_findings_remain"
+        MergeAuditReceiptTreeUnavailable(_) => "receipt_tree_unavailable"
       }
     MergeAuditGateHeadUnavailable => "head_unavailable"
   }
@@ -122,6 +124,8 @@ fn merge_pr_audit_receipt_validation_summary(
       " reports " +
       count.to_string() +
       " finding(s)"
+    MergeAuditReceiptTreeUnavailable(short_sha) =>
+      "could not resolve HEAD tree for commit " + short_sha
   }
 }
 
@@ -666,18 +670,10 @@ async fn merge_pr_audit_receipt_validation_for_head(
   head_sha : String,
   capture : async (@workspace.Command) -> (Int, String),
 ) -> MergePrAuditReceiptValidation {
-  let (tree_exit_code, tree_output) = capture({
-    program: "git",
-    args: ["rev-parse", head_sha + "^{tree}"],
-    workdir: Some(project_dir),
-  })
-  let tree_sha = if tree_exit_code == 0 {
-    tree_output.trim().to_owned()
-  } else {
-    ""
-  }
-  if tree_sha == "" {
-    return MergeAuditReceiptMissing(file_pr_short_sha(head_sha))
+  let tree_sha = match
+    audit_receipt_tree_sha_for_head(project_dir, head_sha, capture) {
+    Some(value) => value
+    None => return MergeAuditReceiptTreeUnavailable(file_pr_short_sha(head_sha))
   }
   let receipt_path = file_pr_audit_receipt_path_for_head(tree_sha)
   let (exit_code, receipt_body) = capture({

@@ -119,13 +119,121 @@ fn tdd_configured_verify_mentions_artifact(
   configured : TddConfiguredVerify,
   artifact_path : String,
 ) -> Bool {
-  if configured.command.contains(artifact_path) {
-    return true
-  }
   for command in configured.commands {
-    if command.contains(artifact_path) {
+    if tdd_command_checks_artifact_path(command, artifact_path) {
       return true
     }
+  }
+  false
+}
+
+///|
+fn tdd_unquoted_comment_index(segment : String) -> Int? {
+  let mut in_double = false
+  let mut in_single = false
+  let mut i = 0
+  while i < segment.length() {
+    let c = segment[i]
+    if c == '"' && !in_single {
+      in_double = !in_double
+    } else if c == '\'' && !in_double {
+      in_single = !in_single
+    } else if c == '#' &&
+      !in_single &&
+      !in_double &&
+      (i == 0 || tdd_token_space(segment[i - 1])) {
+      return Some(i)
+    }
+    i = i + 1
+  }
+  None
+}
+
+///|
+fn tdd_token_space(c : UInt16) -> Bool {
+  c == ' ' || c == '\t' || c == '\n' || c == '\r'
+}
+
+///|
+fn tdd_command_tokens(command : String) -> Array[String] {
+  let command = match tdd_unquoted_comment_index(command) {
+    Some(idx) => command[:idx].to_owned()
+    None => command
+  }
+  let tokens : Array[String] = []
+  let mut token = ""
+  let mut token_active = false
+  let mut in_double = false
+  let mut in_single = false
+  let mut i = 0
+  while i < command.length() {
+    let c = command[i]
+    if c == '"' && !in_single {
+      in_double = !in_double
+      token_active = true
+    } else if c == '\'' && !in_double {
+      in_single = !in_single
+      token_active = true
+    } else if !in_single && !in_double && tdd_token_space(c) {
+      if token_active {
+        tokens.push(token)
+        token = ""
+        token_active = false
+      }
+    } else {
+      token = token + command[i:i + 1].to_owned()
+      token_active = true
+    }
+    i = i + 1
+  }
+  if token_active {
+    tokens.push(token)
+  }
+  tokens
+}
+
+///|
+fn tdd_file_test_operator(token : String) -> Bool {
+  token == "-e" || token == "-f" || token == "-s"
+}
+
+///|
+fn tdd_token_is_shell_separator(token : String) -> Bool {
+  token == "&&" || token == "||" || token == ";" || token == "|"
+}
+
+///|
+fn tdd_test_command_checks_artifact(
+  tokens : Array[String],
+  start : Int,
+  artifact_path : String,
+) -> Bool {
+  let mut i = start + 1
+  while i < tokens.length() && !tdd_token_is_shell_separator(tokens[i]) {
+    if tdd_file_test_operator(tokens[i]) &&
+      i + 1 < tokens.length() &&
+      tokens[i + 1] == artifact_path {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+///|
+fn tdd_command_checks_artifact_path(
+  command : String,
+  artifact_path : String,
+) -> Bool {
+  let tokens = tdd_command_tokens(command)
+  let mut i = 0
+  while i < tokens.length() {
+    if tokens[i] == "test" || tokens[i] == "[" || tokens[i] == "[[" {
+      if tdd_test_command_checks_artifact(tokens, i, artifact_path) {
+        return true
+      }
+    }
+    i = i + 1
   }
   false
 }
@@ -147,9 +255,9 @@ fn tdd_validate_artifact_intent(
       } else {
         Err(
           tdd_transition_error(
-            "artifact mode requires the configured verify command to mention artifact_path `" +
+            "artifact mode requires the configured verify command to check artifact_path `" +
             artifact_path +
-            "`; re-scope the wave with an artifact verify such as `test -f " +
+            "` as a file-test operand; re-scope the wave with an artifact verify such as `test -f " +
             artifact_path +
             " && <verify>`",
           ),

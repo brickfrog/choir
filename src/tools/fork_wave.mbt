@@ -82,6 +82,26 @@ pub fn fork_wave_validate_resolved_task_contracts(
   fork_wave_args : ForkWaveArgs,
   wave_id? : String? = None,
 ) -> Result[Unit, @types.ChoirError] {
+  if fork_wave_args.count > fork_wave_args.tasks.length() {
+    return Err(
+      @types.ChoirError::validation_error(
+        "fork_wave refused to spawn: task count " +
+        fork_wave_args.count.to_string() +
+        " exceeds resolved tasks length " +
+        fork_wave_args.tasks.length().to_string(),
+      ),
+    )
+  }
+  if fork_wave_args.count > fork_wave_args.task_contracts.length() {
+    return Err(
+      @types.ChoirError::validation_error(
+        "fork_wave refused to spawn: task count " +
+        fork_wave_args.count.to_string() +
+        " exceeds resolved task_contracts length " +
+        fork_wave_args.task_contracts.length().to_string(),
+      ),
+    )
+  }
   if fork_wave_args.child_role != @types.Role::Dev {
     return Ok(())
   }

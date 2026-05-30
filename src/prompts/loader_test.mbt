@@ -449,6 +449,8 @@ test "ship pr default prompt does not promise file_pr sidecar audit" {
   assert_true(body.contains("audit does not run during file_pr"))
   assert_true(body.contains("the TL runs `/audit`"))
   assert_true(body.contains("merge_pr returns a policy block"))
+  assert_true(body.contains("current HEAD tree"))
+  assert_true(body.contains("receipts are keyed by HEAD tree"))
   assert_true(body.contains("poller snapshot to show zero unresolved threads"))
   assert_false(body.contains("resolveReviewThread(input: " + "{threadId:"))
 }

@@ -468,7 +468,15 @@ pub fn ServerState::record_agent_task_contract(
   match contract {
     Some(value) => {
       match self.agent_task_contracts.get(agent_id) {
-        Some(existing) => if existing == value { return }
+        Some(existing) => {
+          if existing == value {
+            return
+          }
+          if task_contract_has_nonempty_verify(existing) &&
+            !task_contract_has_nonempty_verify(value) {
+            return
+          }
+        }
         None => ()
       }
       self.agent_task_contracts.set(agent_id, value)
@@ -701,6 +709,55 @@ test "record_agent_task_contract writes boot-readable full map envelope" {
     parsed.get("leaf-agent-contract-write-b"),
     Some(second_contract),
   )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+test "record_agent_task_contract refuses to downgrade non-empty verify" {
+  let project_dir = "/tmp/choir-agent-contract-downgrade-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let poller_path = @poller.poller_state_path(project_dir)
+  let agent_id = "leaf-agent-contract-downgrade"
+  let good_contract = {
+    ..@types.TaskContract::empty(),
+    goal: "persist good contract",
+    verify: ["moon test --target native"],
+  }
+  let empty_contract = {
+    ..@types.TaskContract::empty(),
+    goal: "empty contract must not clobber",
+  }
+  let writes : Array[(String, String)] = []
+  let state = {
+    ..ServerState::new(
+      { ..@types.Config::default(), project_dir, },
+      make_hermetic_recovery_provider(),
+      path_exists=fn(path) {
+        path.has_suffix("/.choir/audit-gate.json") || path == poller_path
+      },
+      boot_read_file=fn(path) {
+        if path == poller_path {
+          "{\"untracked_merge_boundary_unix\":1779970100,\"tracked\":[]}"
+        } else {
+          ""
+        }
+      },
+      write_file_atomic=fn(_path, _content) { true },
+      now_unix_sec=fn() { 1779970100L },
+    ),
+    write_file_atomic: fn(path, content) {
+      writes.push((path, content))
+      true
+    },
+  }
+
+  state.record_agent_task_contract(agent_id, Some(good_contract))
+  state.record_agent_task_contract(agent_id, Some(empty_contract))
+
+  assert_eq(writes.length(), 1)
+  @debug.assert_eq(state.task_contract_for_agent(agent_id), Some(good_contract))
   ignore(@sys.rm_rf(project_dir))
 }
 
