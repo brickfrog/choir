@@ -149,11 +149,15 @@ test "onboard is a registered skill prompt with a baked fallback body" {
   // MoonBit detection must not blindly hardcode the native backend; it must
   // detect+mirror the repo's actual target (choir-updv).
   assert_true(body.contains("detect the MoonBit backend"))
+  assert_true(body.contains("required_linear_history"))
+  assert_true(body.contains("merge_strategy = \"squash\""))
+  assert_true(body.contains("merge strategy not detected"))
   assert_false(
     body.contains(
       "Else if `moon.mod` or `moon.mod.json` exists, use `moon test --target native`",
     ),
   )
+  assert_false(body.contains("with only this project section"))
   assert_true(body.has_suffix("\n"))
 }
 
