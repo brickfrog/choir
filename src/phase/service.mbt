@@ -268,7 +268,13 @@ fn sync_registry_after_persist(
 ) -> Unit {
   try {
     let agent = registry.get(lifecycle.agent_id)
-    ignore(registry.upsert({ ..agent, state: lifecycle.to_agent_state() }))
+    let lifecycle_state = lifecycle.to_agent_state()
+    let state = match (agent.state, lifecycle_state) {
+      (@types.AgentState::Suspended, @types.AgentState::Active) =>
+        @types.AgentState::Suspended
+      _ => lifecycle_state
+    }
+    ignore(registry.upsert({ ..agent, state, }))
   } catch {
     _ => ()
   }
@@ -608,12 +614,7 @@ pub fn persist_lifecycle(
   let now_sec = @env.now().reinterpret_as_int64() / 1000L
   let stamped = { ..lifecycle, last_updated_unix_sec: now_sec }
   let ok = write_lifecycle(project_dir, stamped, now_sec~)
-  try {
-    let agent = registry.get(stamped.agent_id)
-    ignore(registry.upsert({ ..agent, state: stamped.to_agent_state() }))
-  } catch {
-    _ => ()
-  }
+  sync_registry_after_persist(registry, stamped)
   ok
 }
 
