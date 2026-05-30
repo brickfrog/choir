@@ -240,6 +240,30 @@ test "TaskContract missing verify_satisfied_by_ci decodes as true" {
 }
 
 ///|
+test "moon render suppression appends no-render to runtime moon commands" {
+  assert_eq(
+    @types.moon_render_suppress_command("moon test --target native"),
+    "moon test --target native --no-render",
+  )
+  assert_eq(
+    @types.moon_render_suppress_command(
+      "CC=cc moon check && moon build --target native",
+    ),
+    "CC=cc moon check --no-render && moon build --target native --no-render",
+  )
+  assert_eq(
+    @types.moon_render_suppress_command("moon -C subdir test --target native"),
+    "moon -C subdir test --target native --no-render",
+  )
+  assert_eq(
+    @types.moon_render_suppress_command(
+      "echo \"moon test\"; moon test --no-render",
+    ),
+    "echo \"moon test\"; moon test --no-render",
+  )
+}
+
+///|
 test "moon verify command normalization appends default native target only when missing" {
   @debug.assert_eq(
     @types.moon_verify_normalize_commands(

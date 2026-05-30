@@ -1313,65 +1313,131 @@ pub async fn capture_stdout_with_cwd(
 }
 
 ///|
+fn moon_direct_global_flag_takes_value(flag : String) -> Bool {
+  flag == "-C" ||
+  flag == "--target-dir" ||
+  flag == "-Z" ||
+  flag == "--unstable-feature"
+}
+
+///|
+fn moon_direct_render_subcommand(subcommand : String) -> Bool {
+  subcommand == "check" || subcommand == "test" || subcommand == "build"
+}
+
+///|
+fn moon_direct_args_with_suppressed_render(
+  args : Array[String],
+) -> Array[String] {
+  if args.contains("--no-render") {
+    return args
+  }
+  let mut i = 0
+  while i < args.length() && args[i].has_prefix("-") {
+    let flag = args[i]
+    i = i + 1
+    if moon_direct_global_flag_takes_value(flag) &&
+      !flag.contains("=") &&
+      i < args.length() {
+      i = i + 1
+    }
+  }
+  if i >= args.length() || !moon_direct_render_subcommand(args[i]) {
+    return args
+  }
+  let out : Array[String] = []
+  for j = 0; j < args.length(); j = j + 1 {
+    out.push(args[j])
+    if j == i {
+      out.push("--no-render")
+    }
+  }
+  out
+}
+
+///|
+pub fn command_with_suppressed_moon_render(
+  cmd : @workspace.Command,
+) -> @workspace.Command {
+  if cmd.program == "moon" {
+    let args = moon_direct_args_with_suppressed_render(cmd.args)
+    if args != cmd.args {
+      return { ..cmd, args, }
+    }
+    return cmd
+  }
+  if (cmd.program == "sh" || cmd.program == "bash") &&
+    cmd.args.length() == 2 &&
+    (cmd.args[0] == "-lc" || cmd.args[0] == "-c") {
+    let script = @types.moon_render_suppress_command(cmd.args[1])
+    if script != cmd.args[1] {
+      return { ..cmd, args: [cmd.args[0], script] }
+    }
+  }
+  cmd
+}
+
+///|
 pub async fn run(cmd : @workspace.Command) -> Int {
-  abort_if_hermetic_test_exec(command_to_shell_string(cmd))
-  let native = @workspace.run_native_choir_file_command(cmd)
+  let run_cmd = command_with_suppressed_moon_render(cmd)
+  abort_if_hermetic_test_exec(command_to_shell_string(run_cmd))
+  let native = @workspace.run_native_choir_file_command(run_cmd)
   if native >= 0 {
     return native
   }
-  let native_rel = @workspace.run_native_workspace_rel_file_command(cmd)
+  let native_rel = @workspace.run_native_workspace_rel_file_command(run_cmd)
   if native_rel >= 0 {
     return native_rel
   }
-  let native_leaf_helpers = @workspace.run_native_leaf_helpers_command(cmd)
+  let native_leaf_helpers = @workspace.run_native_leaf_helpers_command(run_cmd)
   if native_leaf_helpers >= 0 {
     return native_leaf_helpers
   }
   let native_wt_cleanup = @workspace.run_native_worktree_bootstrap_cleanup_command(
-    cmd,
+    run_cmd,
   )
   if native_wt_cleanup >= 0 {
     return native_wt_cleanup
   }
   let native_fetch = @workspace.run_native_git_fetch_origin_branch_best_effort_command(
-    cmd,
+    run_cmd,
   )
   if native_fetch >= 0 {
     return native_fetch
   }
   let native_seed = @workspace.run_native_worktree_seed_agent_runtime_gitexclude_command(
-    cmd,
+    run_cmd,
   )
   if native_seed >= 0 {
     return native_seed
   }
   let native_agy_cache_links = @workspace.run_native_agy_cache_links_command(
-    cmd,
+    run_cmd,
   )
   if native_agy_cache_links >= 0 {
     return native_agy_cache_links
   }
   let native_agy_prepare = @workspace.run_native_agy_shared_cache_prepare_command(
-    cmd,
+    run_cmd,
   )
   if native_agy_prepare >= 0 {
     return native_agy_prepare
   }
   let native_agy_validate = @workspace.run_native_agy_shared_cache_validate_command(
-    cmd,
+    run_cmd,
   )
   if native_agy_validate >= 0 {
     return native_agy_validate
   }
   let native_agy_seed_if_needed = run_agy_shared_cache_seed_if_needed_command(
-    cmd,
+    run_cmd,
   )
   if native_agy_seed_if_needed >= 0 {
     return native_agy_seed_if_needed
   }
-  let prog = cmd.program
-  let args = cmd.args[:]
-  match cmd.workdir {
+  let prog = run_cmd.program
+  let args = run_cmd.args[:]
+  match run_cmd.workdir {
     Some(dir) => @process.run(prog, args, cwd=dir)
     None => @process.run(prog, args)
   }

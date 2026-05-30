@@ -608,6 +608,78 @@ pub fn moon_verify_normalize_command(
 }
 
 ///|
+fn moon_render_subcommand_suppressed(subcommand : String) -> Bool {
+  subcommand == "check" || subcommand == "test" || subcommand == "build"
+}
+
+///|
+fn moon_render_has_no_render(tokens : Array[String]) -> Bool {
+  for token in tokens {
+    if token == "--no-render" {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn moon_render_segment_needs_no_render(segment : String) -> Bool {
+  let tokens = moon_verify_segment_tokens(segment)
+  let mut i = 0
+  while i < tokens.length() && moon_verify_env_assignment_token(tokens[i]) {
+    i = i + 1
+  }
+  if i >= tokens.length() || tokens[i] != "moon" {
+    return false
+  }
+  i = i + 1
+  while i < tokens.length() && tokens[i].has_prefix("-") {
+    let flag = tokens[i]
+    i = i + 1
+    if moon_verify_global_flag_takes_value(flag) &&
+      !flag.contains("=") &&
+      i < tokens.length() {
+      i = i + 1
+    }
+  }
+  if i >= tokens.length() || !moon_render_subcommand_suppressed(tokens[i]) {
+    return false
+  }
+  !moon_render_has_no_render(tokens)
+}
+
+///|
+fn moon_render_suppress_segment(segment : String) -> String {
+  let mut start = 0
+  while start < segment.length() && moon_verify_segment_space(segment[start]) {
+    start = start + 1
+  }
+  let mut end = segment.length()
+  while end > start && moon_verify_segment_space(segment[end - 1]) {
+    end = end - 1
+  }
+  let leading = segment[:start].to_owned()
+  let body = segment[start:end].to_owned()
+  let trailing = segment[end:].to_owned()
+  if moon_render_segment_needs_no_render(body) {
+    leading + body + " --no-render" + trailing
+  } else {
+    segment
+  }
+}
+
+///|
+pub fn moon_render_suppress_command(command : String) -> String {
+  let mut normalized = ""
+  for part in moon_verify_shell_parts(command) {
+    normalized = normalized +
+      moon_render_suppress_segment(part.segment) +
+      part.separator
+  }
+  normalized
+}
+
+///|
 fn moon_verify_segment_requires_non_native_target(segment : String) -> Bool {
   match moon_verify_probe_segment(segment) {
     Some(invocation) =>

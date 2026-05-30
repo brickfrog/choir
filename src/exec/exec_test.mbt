@@ -259,6 +259,44 @@ test "strip_terminal_responses leaves normal text unchanged" {
 }
 
 ///|
+test "command_with_suppressed_moon_render adds no-render to direct moon build" {
+  let cmd = @workspace.Command::{
+    program: "moon",
+    args: ["build", "--target", "native", "--release"],
+    workdir: None,
+  }
+  @debug.assert_eq(command_with_suppressed_moon_render(cmd).args, [
+    "build", "--no-render", "--target", "native", "--release",
+  ])
+}
+
+///|
+test "command_with_suppressed_moon_render rewrites shell moon verify commands" {
+  let cmd = @workspace.Command::{
+    program: "sh",
+    args: ["-lc", "moon check --target native && echo ok && moon test"],
+    workdir: Some("/repo"),
+  }
+  @debug.assert_eq(command_with_suppressed_moon_render(cmd), @workspace.Command::{
+    program: "sh",
+    args: [
+      "-lc", "moon check --target native --no-render && echo ok && moon test --no-render",
+    ],
+    workdir: Some("/repo"),
+  })
+}
+
+///|
+test "command_with_suppressed_moon_render does not rewrite non-moon commands" {
+  let cmd = @workspace.Command::{
+    program: "sh",
+    args: ["-lc", "echo 'moon test'"],
+    workdir: None,
+  }
+  @debug.assert_eq(command_with_suppressed_moon_render(cmd), cmd)
+}
+
+///|
 test "plugin_capture_uses_shell detects unquoted compound commands" {
   assert_true(plugin_capture_uses_shell("a && b"))
   assert_false(plugin_capture_uses_shell("choir tool x"))
