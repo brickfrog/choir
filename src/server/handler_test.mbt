@@ -214,7 +214,7 @@ async test "deliver_pending_poll_events commits dedup only after durable parent 
           true,
           @poller.Mergeable::Unknown,
           @poller.MergeStateStatus::Unknown,
-          None,
+          Some(4102358400L),
         )
       },
       runner~,
@@ -1670,7 +1670,10 @@ async test "quiet poller tick automerge sweep finalizes stale-role tracked leaf 
     child => ignore(state.registry.upsert({ ..child, role: @types.Role::TL }))
   }
   state.pending_disconnects.set(child_id, 1L)
-  state.worker_no_handoff_prodded_at.set(child_id, 2L)
+  state.worker_no_handoff_prodded_at.set(
+    "leaf-post-fix-no-handoff:" + child_id,
+    2L,
+  )
   let parent_target = @workspace.local_target_for(
     "test-session",
     "TL",
@@ -1783,7 +1786,12 @@ async test "quiet poller tick automerge sweep finalizes stale-role tracked leaf 
   assert_true(delivered_merged)
   assert_true(state.poller.get(pr_number) == None)
   @debug.assert_eq(state.pending_disconnects.get(child_id), None)
-  @debug.assert_eq(state.worker_no_handoff_prodded_at.get(child_id), None)
+  @debug.assert_eq(
+    state.worker_no_handoff_prodded_at.get(
+      "leaf-post-fix-no-handoff:" + child_id,
+    ),
+    None,
+  )
   match @phase.read_lifecycle(project_dir, child_id) {
     Some(lifecycle) => {
       assert_eq(
@@ -2041,6 +2049,10 @@ async test "automerge audit policy block is visible and retryable for same head"
         0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
       )
     }
+    if cmd.program == "git" &&
+      cmd.args == ["rev-parse", "sha-audit-policy-block^{tree}"] {
+      return (0, "sha-audit-policy-block\n")
+    }
     if cmd.program == "cat" {
       return (1, "")
     }
@@ -2154,6 +2166,10 @@ async test "automerge findings audit block is not retried for same head" {
       return (
         0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
       )
+    }
+    if cmd.program == "git" &&
+      cmd.args == ["rev-parse", "sha-" + label + "^{tree}"] {
+      return (0, "sha-" + label + "\n")
     }
     if cmd.program == "cat" {
       return (0, handler_test_audit_receipt("sha-" + label, "main", 2))
@@ -3088,7 +3104,7 @@ async test "deliver_pending_poll_events fires PRMerged hook whether tracked or s
           true,
           @poller.Mergeable::Unknown,
           @poller.MergeStateStatus::Unknown,
-          None,
+          Some(4102358400L),
         )
       },
       runner=async fn(cmds : Array[@workspace.Command]) {
@@ -3193,7 +3209,7 @@ test "detect_unaudited_integration_merge returns typed outcome for each path" {
 }
 
 ///|
-test "valid_merge_audit_receipt_exists checks sha and findings independent of receipt branch" {
+test "valid_merge_audit_receipt_exists checks tree and findings independent of receipt branch" {
   let head = "abcdef1234567890abcdef1234567890abcdef12"
   let other_head = "0000000000000000000000000000000000000000"
   let receipt_path = "/repo/.choir/audit-receipts/abcdef123456.json"
@@ -3209,7 +3225,17 @@ test "valid_merge_audit_receipt_exists checks sha and findings independent of re
       receipt_path, "trunk", head, exists, read,
     ),
   )
-  body = handler_test_audit_receipt(other_head, "feature/t92", 0)
+  body = handler_test_audit_receipt_with_tree(
+    other_head, head, "feature/t92", 0,
+  )
+  assert_true(
+    @tools.valid_merge_audit_receipt_exists(
+      receipt_path, "trunk", head, exists, read,
+    ),
+  )
+  body = handler_test_audit_receipt_with_tree(
+    other_head, other_head, "feature/t92", 0,
+  )
   assert_false(
     @tools.valid_merge_audit_receipt_exists(
       receipt_path, "trunk", head, exists, read,
@@ -3247,8 +3273,19 @@ fn handler_test_audit_receipt(
   branch : String,
   findings_count : Int,
 ) -> String {
+  handler_test_audit_receipt_with_tree(sha, sha, branch, findings_count)
+}
+
+///|
+fn handler_test_audit_receipt_with_tree(
+  sha : String,
+  tree_sha : String,
+  branch : String,
+  findings_count : Int,
+) -> String {
   let receipt : @types.AuditReceipt = {
     sha,
+    tree_sha,
     branch,
     audited_at: 1770000000L,
     agent_id: "main.tl",
@@ -3700,6 +3737,9 @@ async test "A: unaudited PRMerged event does NOT fire completion hooks" {
             }
             return (0, "origin/" + default_branch + "\n")
           }
+          if cmd.program == "git" && cmd.args == ["rev-parse", head + "^{tree}"] {
+            return (0, head + "\n")
+          }
           if cmd.program == "gh" && cmd.args.contains("list") {
             if gh_list_enabled {
               return (
@@ -3983,6 +4023,9 @@ async test "B: audited PRMerged event DOES fire completion hooks (regression gua
       if cmd.program == "git" &&
         cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
         return (0, "origin/main\n")
+      }
+      if cmd.program == "git" && cmd.args == ["rev-parse", head + "^{tree}"] {
+        return (0, head + "\n")
       }
       if cmd.program == "gh" && cmd.args.contains("list") {
         return (
@@ -8687,6 +8730,176 @@ async test "check_idle_agents does not prod non-ReviewOwned dev leaf" {
 }
 
 ///|
+async test "check_idle_agents prods working dev leaf before TDD handoff then notifies parent" {
+  let snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"committed changes\",\"moon test passed\"]}"
+  let state = worker_handoff_test_state("leaf-pre-tdd-stall", snapshot)
+  let parent_id = "main.parent"
+  let leaf_id = "main.dev-pre-tdd"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      worker_handoff_dev(leaf_id, parent_id, @types.AgentState::Active),
+    ),
+  )
+  ignore(
+    @phase.write_lifecycle(
+      state.config.project_dir,
+      {
+        agent_id: leaf_id,
+        role: @types.Role::Dev,
+        process: @phase.ProcessState::Connected,
+        workflow: @phase.WorkflowState::Dev(@phase.DevLifecycle::Working),
+        last_updated_unix_sec: 0L,
+      },
+      now_sec=0L,
+    ),
+  )
+  state.watch_pane(leaf_id)
+
+  let sent : Array[String] = []
+  let start = @poller.now_sec()
+  state.check_idle_agents(
+    start,
+    999L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  state.check_idle_agents(
+    start + 120L,
+    999L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  assert_eq(worker_handoff_count_sent(sent, "tdd_intent"), 1)
+  assert_true(
+    state.worker_no_handoff_prodded_at.contains("leaf-pre-tdd-stall:" + leaf_id),
+  )
+
+  state.check_idle_agents(
+    start + 240L,
+    999L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  assert_eq(
+    worker_handoff_count_sent(
+      sent, "[LEAF STALLED BEFORE TDD/file_pr] dev-pre-tdd",
+    ),
+    1,
+  )
+  assert_eq(worker_handoff_count_sent(sent, "[WATCHDOG] agent"), 0)
+}
+
+///|
+async test "check_idle_agents keeps pre-TDD and post-fix leaf watchdog state separate" {
+  let snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"committed changes\",\"waiting\"]}"
+  let state = worker_handoff_test_state("leaf-watchdog-split", snapshot)
+  let parent_id = "main.parent"
+  let leaf_id = "main.dev-split"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      worker_handoff_dev(leaf_id, parent_id, @types.AgentState::Active),
+    ),
+  )
+  ignore(
+    @phase.write_lifecycle(
+      state.config.project_dir,
+      {
+        agent_id: leaf_id,
+        role: @types.Role::Dev,
+        process: @phase.ProcessState::Connected,
+        workflow: @phase.WorkflowState::Dev(@phase.DevLifecycle::Working),
+        last_updated_unix_sec: 0L,
+      },
+      now_sec=0L,
+    ),
+  )
+  state.watch_pane(leaf_id)
+
+  let sent : Array[String] = []
+  let start = @poller.now_sec()
+  state.check_idle_agents(
+    start,
+    999L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  state.check_idle_agents(
+    start + 120L,
+    999L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  assert_eq(worker_handoff_count_sent(sent, "tdd_intent"), 1)
+  assert_true(
+    state.worker_no_handoff_prodded_at.contains("leaf-pre-tdd-stall:" + leaf_id),
+  )
+
+  ignore(
+    @phase.write_lifecycle(
+      state.config.project_dir,
+      {
+        agent_id: leaf_id,
+        role: @types.Role::Dev,
+        process: @phase.ProcessState::Connected,
+        workflow: @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::ReviewOwned(
+            pr_number=81,
+            state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
+          ),
+        ),
+        last_updated_unix_sec: 0L,
+      },
+      now_sec=0L,
+    ),
+  )
+  state.poller.restore({
+    ..parent_poll_test_ready_tracked(81),
+    agent_id: leaf_id,
+    branch: leaf_id,
+    unresolved_thread_ids_fetched: true,
+  })
+  state.check_idle_agents(
+    start + 240L,
+    999L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  assert_eq(
+    worker_handoff_count_sent(sent, "[LEAF POST-FIX-PUSH HANDOFF] dev-split"),
+    1,
+  )
+  assert_eq(
+    worker_handoff_count_sent(sent, "[LEAF STALLED AFTER FIX-PUSH] dev-split"),
+    0,
+  )
+  assert_true(
+    state.worker_no_handoff_prodded_at.contains(
+      "leaf-post-fix-no-handoff:" + leaf_id,
+    ),
+  )
+
+  state.check_idle_agents(
+    start + 360L,
+    999L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  assert_eq(
+    worker_handoff_count_sent(sent, "[LEAF STALLED AFTER FIX-PUSH] dev-split"),
+    1,
+  )
+}
+
+///|
 async test "check_idle_agents prods worker then emits one stalled no-handoff event" {
   let snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"audit complete\",\"Finding 1\"]}"
   let state = worker_handoff_test_state("worker-no-handoff-stall", snapshot)
@@ -8720,7 +8933,11 @@ async test "check_idle_agents prods worker then emits one stalled no-handoff eve
     worker_handoff_count_sent(sent, "printed output is not the handoff"),
     1,
   )
-  assert_true(state.worker_no_handoff_prodded_at.contains(worker_id))
+  assert_true(
+    state.worker_no_handoff_prodded_at.contains(
+      "worker-no-handoff:" + worker_id,
+    ),
+  )
 
   state.check_idle_agents(
     start + 242L,

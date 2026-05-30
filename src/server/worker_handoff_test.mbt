@@ -101,6 +101,115 @@ test "worker_no_handoff_decision escalate zero disables stalled event" {
 }
 
 ///|
+test "leaf_pre_tdd_stall_decision truth table" {
+  let working = @phase.WorkflowState::Dev(@phase.DevLifecycle::Working)
+  let review_owned = @phase.WorkflowState::Dev(
+    @phase.DevLifecycle::ReviewOwned(
+      pr_number=12,
+      state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
+    ),
+  )
+  assert_eq(
+    leaf_pre_tdd_stall_decision(
+      @types.Role::Worker,
+      working,
+      None,
+      999L,
+      false,
+      false,
+      false,
+      120L,
+      120L,
+    ),
+    WorkerNoHandoffDecision::DoNothing,
+  )
+  assert_eq(
+    leaf_pre_tdd_stall_decision(
+      @types.Role::Dev,
+      review_owned,
+      None,
+      999L,
+      false,
+      false,
+      false,
+      120L,
+      120L,
+    ),
+    WorkerNoHandoffDecision::DoNothing,
+  )
+  assert_eq(
+    leaf_pre_tdd_stall_decision(
+      @types.Role::Dev,
+      working,
+      Some(@types.LeafTddPhase::Done),
+      999L,
+      false,
+      false,
+      false,
+      120L,
+      120L,
+    ),
+    WorkerNoHandoffDecision::DoNothing,
+  )
+  assert_eq(
+    leaf_pre_tdd_stall_decision(
+      @types.Role::Dev,
+      working,
+      None,
+      119L,
+      false,
+      false,
+      false,
+      120L,
+      120L,
+    ),
+    WorkerNoHandoffDecision::DoNothing,
+  )
+  assert_eq(
+    leaf_pre_tdd_stall_decision(
+      @types.Role::Dev,
+      working,
+      None,
+      120L,
+      false,
+      false,
+      false,
+      120L,
+      120L,
+    ),
+    WorkerNoHandoffDecision::Prod,
+  )
+  assert_eq(
+    leaf_pre_tdd_stall_decision(
+      @types.Role::Dev,
+      working,
+      Some(@types.LeafTddPhase::Green),
+      240L,
+      false,
+      true,
+      false,
+      120L,
+      120L,
+    ),
+    WorkerNoHandoffDecision::EmitStalled,
+  )
+  assert_eq(
+    leaf_pre_tdd_stall_decision(
+      @types.Role::Dev,
+      working,
+      None,
+      240L,
+      false,
+      true,
+      true,
+      120L,
+      120L,
+    ),
+    WorkerNoHandoffDecision::DoNothing,
+  )
+}
+
+///|
 test "leaf_no_handoff_decision truth table" {
   let review_owned = @phase.WorkflowState::Dev(
     @phase.DevLifecycle::ReviewOwned(
@@ -267,6 +376,23 @@ test "leaf_no_handoff_decision truth table" {
 
 ///|
 test "leaf no-handoff messages include fix-push headers and pane tail" {
+  let pre_tdd_prod = leaf_pre_tdd_stall_prod_text
+  assert_true(pre_tdd_prod.contains("tdd_intent"))
+  assert_true(pre_tdd_prod.contains("file_pr"))
+  assert_true(pre_tdd_prod.contains("notify_parent --status failure"))
+
+  let pre_tdd_stalled = leaf_pre_tdd_stalled_parent_message(
+    "leaf-a",
+    240L,
+    Some(@types.LeafTddPhase::Green),
+    "line 1\nline 2",
+  )
+  assert_true(
+    pre_tdd_stalled.contains("[LEAF STALLED BEFORE TDD/file_pr] leaf-a"),
+  )
+  assert_true(pre_tdd_stalled.contains("TDD phase is green"))
+  assert_true(pre_tdd_stalled.contains("Pane tail:\nline 1\nline 2"))
+
   let prod = leaf_stalled_no_handoff_prod_message("leaf-a")
   assert_true(prod.contains("[LEAF POST-FIX-PUSH HANDOFF] leaf-a"))
   assert_true(prod.contains("notify_parent --status success"))

@@ -10,7 +10,7 @@ Two paths — pick by caller.
 2. Wait for `[PR READY]`, then `[REVIEW]` + `[CI LATEST HEAD] success`.
 3. Copilot threads: have the leaf push fixes, then wait for the poller snapshot to show zero unresolved threads; use `mcp__choir__resolve_my_review_threads` only if they persist.
 4. Once review threads are clear and CI is green, the TL runs `/audit` until the receipt has `findings_count=0`. Audit must run AFTER fixes are pushed; running it earlier just mints a receipt for a HEAD that subsequent commits will invalidate.
-5. `mcp__choir__merge_pr`. If the audit receipt is missing, stale, or has findings, merge_pr returns a policy block; re-run `/audit` on the current HEAD and retry.
+5. `mcp__choir__merge_pr`. If the audit receipt is missing, stale, or has findings, merge_pr returns a policy block; re-run `/audit` on the current HEAD tree and retry.
 
 ## Path B — TL-direct (root, no task contract)
 
@@ -28,4 +28,4 @@ Two paths — pick by caller.
 - Thread resolution: after the leaf pushes fixes, wait for the next poller snapshot; the server resolves now-outdated threads for iterative-review PRs. Use `mcp__choir__resolve_my_review_threads` only for persistent unresolved threads.
 - Pre-commit hook: Respect the repo's pre-commit hook; if it rewrites files unexpectedly, inspect with `git diff` before discarding.
 - Leaf cd'd out of worktree: leaf has no commits but main has unstaged edits matching its task — kill the leaf, finish TL-direct via Path B.
-- Audit receipt: full 40-char sha required. Findings_count must be 0 to pass merge_pr gate.
+- Audit receipt: receipts are keyed by HEAD tree; identical file trees reuse the same receipt across commits/branches. Full 40-char sha and tree_sha required. Findings_count must be 0 to pass merge_pr gate.

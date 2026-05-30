@@ -240,6 +240,44 @@ test "TaskContract missing verify_satisfied_by_ci decodes as true" {
 }
 
 ///|
+test "moon render suppression appends no-render to runtime moon commands" {
+  assert_eq(
+    @types.moon_render_suppress_command("moon test --target native"),
+    "moon test --target native --no-render",
+  )
+  assert_eq(
+    @types.moon_render_suppress_command(
+      "CC=cc moon check && moon build --target native",
+    ),
+    "CC=cc moon check --no-render && moon build --target native --no-render",
+  )
+  assert_eq(
+    @types.moon_render_suppress_command("moon -C subdir test --target native"),
+    "moon -C subdir test --target native --no-render",
+  )
+  assert_eq(
+    @types.moon_render_suppress_command("/usr/bin/moon test # run verify"),
+    "/usr/bin/moon test --no-render # run verify",
+  )
+  assert_eq(
+    @types.moon_render_suppress_command("moon test # comment && moon check"),
+    "moon test --no-render # comment && moon check",
+  )
+  assert_eq(
+    @types.moon_render_suppress_command(
+      "./.moon/bin/moon --target wasm-gc check",
+    ),
+    "./.moon/bin/moon --target wasm-gc check --no-render",
+  )
+  assert_eq(
+    @types.moon_render_suppress_command(
+      "echo \"moon test\"; moon test --no-render",
+    ),
+    "echo \"moon test\"; moon test --no-render",
+  )
+}
+
+///|
 test "moon verify command normalization appends default native target only when missing" {
   @debug.assert_eq(
     @types.moon_verify_normalize_commands(
@@ -289,6 +327,20 @@ test "moon verify command normalization appends default native target only when 
       @types.MoonVerifyTarget::Native,
     ),
     ["moon test --target native && moon check --target js"],
+  )
+  @debug.assert_eq(
+    @types.moon_verify_normalize_commands(
+      ["/usr/bin/moon test # run verify"],
+      @types.MoonVerifyTarget::Native,
+    ),
+    ["/usr/bin/moon test --target native # run verify"],
+  )
+  @debug.assert_eq(
+    @types.moon_verify_normalize_commands(
+      ["moon test # comment && moon check"],
+      @types.MoonVerifyTarget::Native,
+    ),
+    ["moon test --target native # comment && moon check"],
   )
   @debug.assert_eq(
     @types.moon_verify_normalize_commands(
@@ -383,6 +435,17 @@ test "moon verify command normalization appends default native target only when 
       "moon --target wasm-gc test",
     ]),
   )
+  let notices = @types.moon_verify_normalization_notices(
+    [" moon test ", "moon check --target native", "npm test"],
+    @types.MoonVerifyTarget::WasmGc,
+  )
+  @debug.assert_eq(notices, [
+    {
+      command: "moon test",
+      normalized: "moon test --target wasm-gc",
+      target: @types.MoonVerifyTarget::WasmGc,
+    },
+  ])
   match
     @types.task_contract_with_normalized_verify(
       Some({

@@ -117,6 +117,7 @@ async test "leaf TDD intent rejects leaf-authored command outside configured ver
       caller_id: "main.leaf",
       intent: "forge with a marker file",
       test_command: Some("test -e forge.marker"),
+      artifact_path: None,
     },
     reader,
     writer,
@@ -131,6 +132,156 @@ async test "leaf TDD intent rejects leaf-authored command outside configured ver
     }
     @types.Response::Ok(_) =>
       fail("expected forged test_command to be rejected")
+  }
+  @debug.assert_eq(stored, None)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "leaf TDD intent accepts non-code artifact when configured verify owns artifact path" {
+  let project_dir = "/tmp/choir-tdd-artifact-intent-" +
+    @sys.get_pid().to_string()
+  let leaf_worktree = project_dir + "/.choir/worktrees/leaf"
+  ignore(@sys.rm_rf(project_dir))
+  let contract = tdd_test_verify_contract([
+    "test -f 'docs/non-code.md' && moon test --target native",
+  ])
+  tdd_test_write_verify_config(leaf_worktree, contract.verify)
+  let reg = tdd_test_registry(leaf_worktree)
+  let mut stored : @types.LeafTddState? = None
+  let reader = fn(_agent_id : String) -> @types.LeafTddState? { stored }
+  let writer = fn(_agent_id : String, state : @types.LeafTddState) -> Unit {
+    stored = Some(state)
+  }
+  let intent = interpret_tdd_intent(
+    {
+      caller_id: "main.leaf",
+      intent: "write non-code artifact",
+      test_command: None,
+      artifact_path: Some("docs/non-code.md"),
+    },
+    reader,
+    writer,
+    registry=Some(reg),
+    task_contract_reader=tdd_test_contract_reader(contract),
+  )
+  match intent {
+    @types.Response::Ok(fields) => {
+      @debug.assert_eq(fields.get_json("phase"), Some("intent".to_json()))
+      @debug.assert_eq(
+        fields.get_json("artifact_path"),
+        Some("docs/non-code.md".to_json()),
+      )
+      @debug.assert_eq(
+        fields.get_json("test_command"),
+        Some(
+          "test -f 'docs/non-code.md' && moon test --target native".to_json(),
+        ),
+      )
+    }
+    @types.Response::Err(msg) => fail("expected artifact intent ok: " + msg)
+  }
+  @debug.assert_eq(stored, Some({ phase: @types.LeafTddPhase::Intent }))
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "leaf TDD intent rejects artifact path not owned by configured verify" {
+  let project_dir = "/tmp/choir-tdd-artifact-reject-" +
+    @sys.get_pid().to_string()
+  let leaf_worktree = project_dir + "/.choir/worktrees/leaf"
+  ignore(@sys.rm_rf(project_dir))
+  let contract = tdd_test_verify_contract(["moon test --target native"])
+  tdd_test_write_verify_config(leaf_worktree, contract.verify)
+  let reg = tdd_test_registry(leaf_worktree)
+  let mut stored : @types.LeafTddState? = None
+  let reader = fn(_agent_id : String) -> @types.LeafTddState? { stored }
+  let writer = fn(_agent_id : String, state : @types.LeafTddState) -> Unit {
+    stored = Some(state)
+  }
+  let intent = interpret_tdd_intent(
+    {
+      caller_id: "main.leaf",
+      intent: "write non-code artifact",
+      test_command: None,
+      artifact_path: Some("docs/non-code.md"),
+    },
+    reader,
+    writer,
+    registry=Some(reg),
+    task_contract_reader=tdd_test_contract_reader(contract),
+  )
+  match intent {
+    @types.Response::Err(msg) => {
+      assert_true(
+        msg.contains(
+          "artifact mode requires the configured verify command to check",
+        ),
+      )
+      assert_true(msg.contains("docs/non-code.md"))
+      assert_true(msg.contains("test -f docs/non-code.md && <verify>"))
+    }
+    @types.Response::Ok(_) =>
+      fail("expected unowned artifact_path to be rejected")
+  }
+  let substring_intent = interpret_tdd_intent(
+    {
+      caller_id: "main.leaf",
+      intent: "write non-code artifact",
+      test_command: None,
+      artifact_path: Some("test"),
+    },
+    reader,
+    writer,
+    registry=Some(reg),
+    task_contract_reader=tdd_test_contract_reader(contract),
+  )
+  match substring_intent {
+    @types.Response::Err(msg) =>
+      assert_true(
+        msg.contains(
+          "artifact mode requires the configured verify command to check",
+        ),
+      )
+    @types.Response::Ok(_) =>
+      fail("expected substring artifact_path to be rejected")
+  }
+  @debug.assert_eq(stored, None)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "leaf TDD intent rejects unsafe artifact paths" {
+  let project_dir = "/tmp/choir-tdd-artifact-path-" + @sys.get_pid().to_string()
+  let leaf_worktree = project_dir + "/.choir/worktrees/leaf"
+  ignore(@sys.rm_rf(project_dir))
+  let contract = tdd_test_verify_contract([
+    "test -f docs/non-code.md && moon test --target native",
+  ])
+  tdd_test_write_verify_config(leaf_worktree, contract.verify)
+  let reg = tdd_test_registry(leaf_worktree)
+  let mut stored : @types.LeafTddState? = None
+  let reader = fn(_agent_id : String) -> @types.LeafTddState? { stored }
+  let writer = fn(_agent_id : String, state : @types.LeafTddState) -> Unit {
+    stored = Some(state)
+  }
+  for path in ["/tmp/out.md", "../out.md", "docs/../out.md"] {
+    let intent = interpret_tdd_intent(
+      {
+        caller_id: "main.leaf",
+        intent: "write non-code artifact",
+        test_command: None,
+        artifact_path: Some(path),
+      },
+      reader,
+      writer,
+      registry=Some(reg),
+      task_contract_reader=tdd_test_contract_reader(contract),
+    )
+    match intent {
+      @types.Response::Err(msg) => assert_true(msg.contains("artifact_path"))
+      @types.Response::Ok(_) => fail("expected unsafe artifact path rejection")
+    }
   }
   @debug.assert_eq(stored, None)
   ignore(@sys.rm_rf(project_dir))
@@ -418,7 +569,12 @@ async test "leaf TDD tool handlers persist phase through injected tracker" {
     (exit_code, "captured command " + capture_index.to_string())
   }
   let intent = interpret_tdd_intent(
-    { caller_id: "main.leaf", intent: "cover file_pr gate", test_command: None },
+    {
+      caller_id: "main.leaf",
+      intent: "cover file_pr gate",
+      test_command: None,
+      artifact_path: None,
+    },
     reader,
     writer,
     registry=Some(reg),

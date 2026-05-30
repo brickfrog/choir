@@ -131,12 +131,13 @@ const AUDIT_SKILL_DEFAULT : String =
   #|   `write_audit_receipt` MCP tool.
   #|
   #|   - Get `sha` with `git rev-parse HEAD`.
+  #|   - Get `tree_sha` with `git rev-parse 'HEAD^{tree}'`.
   #|   - Get `branch` with `git rev-parse --abbrev-ref HEAD`.
   #|   - Compute `findings_count` from Sarcasmotron's response. Count explicit
   #|     finding markers such as `Finding 1:`, `Finding 2:`, or numbered finding
   #|     lines like `1. ...`; if the worker explicitly says there are no
   #|     findings, use `0`.
-  #|   - Call `write_audit_receipt` with `sha`, `branch`, and
+  #|   - Call `write_audit_receipt` with `sha`, `tree_sha`, `branch`, and
   #|     `findings_count`. Do not write `.choir/audit-receipts` directly; the
   #|     MCP tool fills `audited_at` and `agent_id`.
   #|
@@ -270,28 +271,62 @@ const ONBOARD_SKILL_DEFAULT : String =
   #|   - If the command fails or no remote HEAD is configured, ask the human for the
   #|     default branch before continuing.
   #|
-  #|3. Note the repository's agent documentation.
+  #|3. Detect whether GitHub requires linear history.
+  #|   - Default to omitting `merge_strategy`; Choir's default merge behavior is
+  #|     correct for repos that allow merge commits.
+  #|   - If the repo has a GitHub remote and `gh` is authenticated, resolve
+  #|     `OWNER/REPO` with:
+  #|
+  #|     ```sh
+  #|     gh repo view --json nameWithOwner --jq .nameWithOwner
+  #|     ```
+  #|
+  #|   - Check active rulesets, including inherited rulesets, and branch protection
+  #|     for the detected default branch. Use structured JSON, not text scraping:
+  #|
+  #|     ```sh
+  #|     gh api "repos/OWNER/REPO/rulesets?includes_parents=true"
+  #|     gh api "repos/OWNER/REPO/branches/<default-branch>/protection"
+  #|     ```
+  #|
+  #|   - If any active ruleset that applies to the default branch contains a rule
+  #|     with `"type": "required_linear_history"`, or branch protection reports
+  #|     `required_linear_history.enabled = true`, set the generated config's
+  #|     top-level merge strategy to squash:
+  #|
+  #|     ```toml
+  #|     merge_strategy = "squash"
+  #|     ```
+  #|
+  #|   - If GitHub cannot be queried, or the rules cannot be determined, do NOT
+  #|     guess. Omit `merge_strategy` and include "merge strategy not detected" in
+  #|     the final summary so the human can set `squash` or `rebase` if needed.
+  #|
+  #|4. Note the repository's agent documentation.
   #|   - Check for `CLAUDE.md` and `AGENTS.md`.
   #|   - Do NOT generate either file.
   #|   - If neither file exists, include a recommendation in the final summary that
   #|     the human add one. Agents read these files for repo conventions, and the
   #|     generic Choir audit/TL prompts defer to those documented conventions.
   #|
-  #|4. Write the minimal Choir project config.
+  #|5. Write the minimal Choir project config.
   #|   - Create `.choir/` if needed.
-  #|   - Write `.choir/config.toml` with only this project section:
+  #|   - Write `.choir/config.toml` with this project section:
   #|
   #|     ```toml
   #|     [project]
   #|     verify_cmd = "<detected verify command>"
   #|     ```
   #|
+  #|   - If step 3 detected required linear history, include the top-level
+  #|     `merge_strategy = "squash"` before `[project]`.
   #|   - Do NOT add `language`, `fmt_cmd`, `lint_cmd`, or `conventions_file`.
-  #|     The only generated config value is `verify_cmd`.
+  #|     Apart from the conditional `merge_strategy`, the only generated config
+  #|     value is `verify_cmd`.
   #|   - Repos may later add top-level `prenotify_checks` for their own handoff
   #|     gates; do NOT generate them by default.
   #|
-  #|5. Seed the audit gate state.
+  #|6. Seed the audit gate state.
   #|   - Get the current Unix time in seconds.
   #|   - Write `.choir/audit-gate.json` with the same shape the server seeds at
   #|     boot:
@@ -300,7 +335,7 @@ const ONBOARD_SKILL_DEFAULT : String =
   #|     {"enabled_at_unix":<current unix seconds>}
   #|     ```
   #|
-  #|6. Initialize Beads if needed.
+  #|7. Initialize Beads if needed.
   #|   - If `.beads/` is absent, run:
   #|
   #|     ```sh
@@ -310,11 +345,13 @@ const ONBOARD_SKILL_DEFAULT : String =
   #|   - These flags avoid clobbering `AGENTS.md`, avoid installing Beads hooks,
   #|     keep the run non-interactive, and do not auto-commit.
   #|
-  #|7. Stage and stop for human review.
+  #|8. Stage and stop for human review.
   #|   - Run `git add -A`.
   #|   - Print a summary that includes:
   #|     - The detected verify command.
   #|     - The detected default branch.
+  #|     - The detected merge strategy: `squash` because required linear history was
+  #|       found, or "not detected / omitted".
   #|     - Whether `CLAUDE.md` or `AGENTS.md` was found, or that adding one is
   #|       recommended.
   #|     - Files written, including `.choir/config.toml`, `.choir/audit-gate.json`,
@@ -338,7 +375,7 @@ const SHIP_PR_DEFAULT : String =
   #|2. Wait for `[PR READY]`, then `[REVIEW]` + `[CI LATEST HEAD] success`.
   #|3. Copilot threads: have the leaf push fixes, then wait for the poller snapshot to show zero unresolved threads; use `mcp__choir__resolve_my_review_threads` only if they persist.
   #|4. Once review threads are clear and CI is green, the TL runs `/audit` until the receipt has `findings_count=0`. Audit must run AFTER fixes are pushed; running it earlier just mints a receipt for a HEAD that subsequent commits will invalidate.
-  #|5. `mcp__choir__merge_pr`. If the audit receipt is missing, stale, or has findings, merge_pr returns a policy block; re-run `/audit` on the current HEAD and retry.
+  #|5. `mcp__choir__merge_pr`. If the audit receipt is missing, stale, or has findings, merge_pr returns a policy block; re-run `/audit` on the current HEAD tree and retry.
   #|
   #|## Path B — TL-direct (root, no task contract)
   #|
@@ -356,7 +393,7 @@ const SHIP_PR_DEFAULT : String =
   #|- Thread resolution: after the leaf pushes fixes, wait for the next poller snapshot; the server resolves now-outdated threads for iterative-review PRs. Use `mcp__choir__resolve_my_review_threads` only for persistent unresolved threads.
   #|- Pre-commit hook: Respect the repo's pre-commit hook; if it rewrites files unexpectedly, inspect with `git diff` before discarding.
   #|- Leaf cd'd out of worktree: leaf has no commits but main has unstaged edits matching its task — kill the leaf, finish TL-direct via Path B.
-  #|- Audit receipt: full 40-char sha required. Findings_count must be 0 to pass merge_pr gate.
+  #|- Audit receipt: receipts are keyed by HEAD tree; identical file trees reuse the same receipt across commits/branches. Full 40-char sha and tree_sha required. Findings_count must be 0 to pass merge_pr gate.
   #|
 
 ///|
@@ -407,6 +444,7 @@ const LEAF_PROFILE_DEFAULT : String =
   #|
   #|TDD phase gate:
   #|- Before writing the failing test, call `tdd_intent` with a concise intent. The server pins the gate to the task contract's configured verify command.
+  #|- For non-code doc/skill/config tasks, use `tdd_intent --artifact <relative-path>` only when the configured verify command already checks that artifact, for example `test -f <relative-path> && <verify>`. Red/green still come from the configured verify command.
   #|- After writing the test, run the configured verify command yourself and call `tdd_red_check` with its non-zero exit code. Red means the verify command failed for the behavior you are about to implement.
   #|- After the implementation passes, run the configured verify command and call `tdd_green_check` with exit code 0. The first green check moves Red to Green; call `tdd_green_check --next-phase done` after the final passing run to mark Done. If you refactor, use `--next-phase refactor`, refactor, then run the verify command and call `tdd_green_check --next-phase done`.
   #|- `file_pr` refuses while your TDD phase is not Done. Do not file a PR until the tool sequence has reached TDD phase is Done.

@@ -91,6 +91,70 @@ pub(all) enum Eff[A] {
 }
 
 ///|
+fn command_arg_value(args : Array[String], flag : String) -> String? {
+  for i = 0; i + 1 < args.length(); i = i + 1 {
+    if args[i] == flag {
+      return Some(args[i + 1])
+    }
+  }
+  None
+}
+
+///|
+fn zellij_launch_action(cmd : @workspace.Command) -> String? {
+  if cmd.program != "zellij" {
+    return None
+  }
+  for arg in cmd.args {
+    if arg == "new-tab" {
+      return Some("new-tab")
+    }
+    if arg == "run" {
+      return Some("run")
+    }
+  }
+  None
+}
+
+///|
+fn trace_zellij_launch_statuses(
+  cmds : Array[@workspace.Command],
+  statuses : Array[Int],
+) -> Unit {
+  for i = 0; i < cmds.length(); i = i + 1 {
+    if i >= statuses.length() {
+      continue
+    }
+    let cmd = cmds[i]
+    match zellij_launch_action(cmd) {
+      Some(action) => {
+        let fields : Array[@moontrace.Field] = [
+          @moontrace.field("event", "zellij_launch_command_exit"),
+          @moontrace.field("action", action),
+          @moontrace.field("status", statuses[i]),
+          @moontrace.field("command_index", i),
+          @moontrace.field("arg_count", cmd.args.length()),
+        ]
+        match command_arg_value(cmd.args, "--session") {
+          Some(session) => fields.push(@moontrace.field("session", session))
+          None => ()
+        }
+        match command_arg_value(cmd.args, "--name") {
+          Some(name) => fields.push(@moontrace.field("name", name))
+          None => ()
+        }
+        match command_arg_value(cmd.args, "--cwd") {
+          Some(cwd) => fields.push(@moontrace.field("cwd", cwd))
+          None => ()
+        }
+        @moontrace.info("zellij launch command exit", fields~)
+      }
+      None => ()
+    }
+  }
+}
+
+///|
 /// Execute an `Eff[A]` tree by dispatching each effect to the provided
 /// runners and threading results back through continuations.
 ///
@@ -109,8 +173,11 @@ pub async fn[A] interpret(
         git_capture~,
         runner~,
       )
-    RunCommands(cmds~, cont~) =>
-      interpret(cont(runner(cmds) catch { _ => [] }), git_capture~, runner~)
+    RunCommands(cmds~, cont~) => {
+      let statuses = runner(cmds) catch { _ => [] }
+      trace_zellij_launch_statuses(cmds, statuses)
+      interpret(cont(statuses), git_capture~, runner~)
+    }
   }
 }
 
@@ -134,12 +201,93 @@ fn first_failed_command(
       break
     }
   }
+  if failed_idx < 0 && exit_codes.length() < cmds.length() {
+    failed_idx = exit_codes.length()
+    failed_status = -1
+  }
   let failing = if failed_idx >= 0 && failed_idx < cmds.length() {
     Some(cmds[failed_idx])
   } else {
     None
   }
   (failed_idx, failed_status, failing)
+}
+
+///|
+test "first_failed_command treats missing statuses as failed command" {
+  let cmds = [
+    @workspace.Command::{ program: "true", args: [], workdir: None },
+    @workspace.Command::{ program: "zellij", args: ["run"], workdir: None },
+  ]
+  let (idx, status, failing) = first_failed_command(cmds, [0])
+  assert_eq(idx, 1)
+  assert_eq(status, -1)
+  @debug.assert_eq(failing, Some(cmds[1]))
+}
+
+///|
+fn effects_test_field_value(
+  fields : Array[@moontrace.Field],
+  key : String,
+) -> Json? {
+  for field in fields {
+    if field.key == key {
+      return Some(field.value)
+    }
+  }
+  None
+}
+
+///|
+fn effects_event_has_field(
+  event : @moontrace.Event,
+  key : String,
+  expected : Json,
+) -> Bool {
+  match effects_test_field_value(event.fields, key) {
+    Some(value) => value == expected
+    None => false
+  }
+}
+
+///|
+async test "interpret logs zellij launch exit status" {
+  let events : Array[@moontrace.Event] = []
+  @moontrace.set_subscriber(fn(event) { events.push(event) })
+  let cmd = @workspace.Command::{
+    program: "zellij",
+    args: [
+      "--session", "choir", "action", "new-tab", "--name", "leaf-a", "--cwd", "/repo/.choir/worktrees/leaf-a",
+      "--", "env", "CHOIR_AGENT_ID=main.leaf-a", "codex",
+    ],
+    workdir: None,
+  }
+  let statuses = interpret(
+    RunCommands(cmds=[cmd], cont=fn(values) { Pure(values) }),
+    runner=async fn(_cmds) {
+      @async.sleep(0)
+      [0]
+    },
+  )
+  @moontrace.clear_subscriber()
+  @debug.assert_eq(statuses, [0])
+  let mut found = false
+  for event in events {
+    if event.level == @moontrace.Level::Info &&
+      event.message == "zellij launch command exit" &&
+      effects_event_has_field(
+        event,
+        "event",
+        String::to_json("zellij_launch_command_exit"),
+      ) &&
+      effects_event_has_field(event, "action", String::to_json("new-tab")) &&
+      effects_event_has_field(event, "session", String::to_json("choir")) &&
+      effects_event_has_field(event, "name", String::to_json("leaf-a")) &&
+      effects_event_has_field(event, "status", Int::to_json(0)) {
+      found = true
+    }
+  }
+  assert_true(found)
 }
 
 ///|
@@ -182,6 +330,52 @@ fn fork_wave_spawn_commands_phase(
 }
 
 ///|
+fn git_status_paths_in_status_line(line : String) -> Array[String] {
+  if line.length() < 4 {
+    return []
+  }
+  let payload = line[3:].to_owned()
+  let arrow = " -> "
+  match payload.find(arrow) {
+    Some(idx) =>
+      [payload[:idx].to_owned(), payload[idx + arrow.length():].to_owned()]
+    None => [payload]
+  }
+}
+
+///|
+fn fork_wave_clean_gate_ignored_beads_path(path : String) -> Bool {
+  path.has_prefix(".beads/") && path.has_suffix(".jsonl")
+}
+
+///|
+fn fork_wave_clean_gate_ignored_status_line(line : String) -> Bool {
+  let paths = git_status_paths_in_status_line(line)
+  if paths.length() == 0 {
+    return false
+  }
+  for path in paths {
+    if !fork_wave_clean_gate_ignored_beads_path(path) {
+      return false
+    }
+  }
+  true
+}
+
+///|
+pub fn fork_wave_clean_gate_relevant_status(status_out : String) -> String {
+  let lines : Array[String] = []
+  for line in status_out.split("\n") {
+    let owned = line.to_owned()
+    if owned.trim() == "" || fork_wave_clean_gate_ignored_status_line(owned) {
+      continue
+    }
+    lines.push(owned)
+  }
+  lines.join("\n")
+}
+
+///|
 fn fork_wave_clean_gate_phase(
   project_dir : String,
   cmds : Array[@workspace.Command],
@@ -193,8 +387,9 @@ fn fork_wave_clean_gate_phase(
   GitCapture(program="git", args=["-C", project_dir, "status", "--porcelain"], cont=fn(
     status_out,
   ) {
-    if status_out.trim().to_owned() != "" {
-      Pure(Err(UncommittedChanges(output=status_out.trim().to_owned())))
+    let relevant_status = fork_wave_clean_gate_relevant_status(status_out)
+    if relevant_status.trim().to_owned() != "" {
+      Pure(Err(UncommittedChanges(output=relevant_status.trim().to_owned())))
     } else {
       GitCapture(
         program="git",
@@ -381,18 +576,7 @@ fn fork_wave_scaffold_commit_phase(
 /// scaffold paths so a rename of a scaffold path isn't mis-flagged as
 /// unrelated.
 fn scaffold_preflight_paths_in_status_line(line : String) -> Array[String] {
-  // Line shape: 'XY path' with path starting at index 3. Empty / too-short
-  // lines have no paths.
-  if line.length() < 4 {
-    return []
-  }
-  let payload = line[3:].to_owned()
-  let arrow = " -> "
-  match payload.find(arrow) {
-    Some(idx) =>
-      [payload[:idx].to_owned(), payload[idx + arrow.length():].to_owned()]
-    None => [payload]
-  }
+  git_status_paths_in_status_line(line)
 }
 
 ///|

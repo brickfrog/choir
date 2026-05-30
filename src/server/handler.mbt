@@ -46,6 +46,18 @@ fn emit_request_log(
 }
 
 ///|
+fn request_repairs_task_contract(req : @types.Request) -> Bool {
+  if req.req_method != "tools/call" {
+    return false
+  }
+  req.name == "file_pr" ||
+  req.name == "tdd_intent" ||
+  req.name == "tdd_red_check" ||
+  req.name == "tdd_green_check" ||
+  req.name == "merge_pr"
+}
+
+///|
 fn emit_span(
   state : ServerState,
   req : @types.Request,
@@ -244,7 +256,11 @@ pub async fn ServerState::handle_with_runner_and_capture(
       mutex_registry=Some(self.mutex_registry),
       poller_state=Some(self.poller),
       task_contract_reader=fn(agent_id) {
-        self.task_contract_for_agent(agent_id)
+        if request_repairs_task_contract(effective_req) {
+          self.repair_task_contract_for_agent(agent_id)
+        } else {
+          self.task_contract_for_agent(agent_id)
+        }
       },
       record_task_contract=fn(agent_id, contract) {
         self.record_agent_task_contract(agent_id, contract)

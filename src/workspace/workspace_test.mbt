@@ -77,6 +77,7 @@ test "agent_runtime_gitexclude_snippet lists agent runtime dirs" {
   assert_true(s.contains(".gemini/"))
   assert_true(s.contains(".antigravitycli/"))
   assert_true(s.contains(".choir/agy-home/"))
+  assert_true(s.contains(".choir/config.toml"))
   assert_false(s.contains(".claude/"))
   assert_true(s.contains("# choir: agent-runtime junk"))
 }

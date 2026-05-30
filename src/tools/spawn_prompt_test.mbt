@@ -117,7 +117,10 @@ test "render_leaf_spawn_prompt normalizes verify with configured moon target" {
     "task": "Verify target-sensitive prompt",
     "verify": "moon test\nmoon check --target native\necho ok",
   })
+  let captured : Array[@moontrace.Event] = []
+  @moontrace.set_subscriber(fn(event) { captured.push(event) })
   let prompt = render_leaf_spawn_prompt_with_defaults(spec, [], project_dir~)
+  @moontrace.clear_subscriber()
 
   ignore(@sys.rm_rf(project_dir))
   assert_true(prompt.contains("- `moon test --target wasm-gc`"))
@@ -127,6 +130,14 @@ test "render_leaf_spawn_prompt normalizes verify with configured moon target" {
   @debug.assert_eq(spec.task_contract.verify, [
     "moon test --target wasm-gc", "moon check --target native", "echo ok",
   ])
+  assert_true(
+    captured
+    .iter()
+    .any(fn(event) {
+      event.level == @moontrace.Level::Warn &&
+      event.message == "moon verify command normalized"
+    }),
+  )
 }
 
 ///|

@@ -21,6 +21,7 @@ pub(all) enum MergePrAuditReceiptValidation {
   MergeAuditReceiptInvalid(String)
   MergeAuditReceiptStale(String, String)
   MergeAuditReceiptFindingsRemain(String, Int)
+  MergeAuditReceiptTreeUnavailable(String)
 } derive(Debug, Eq)
 
 ///|
@@ -38,6 +39,7 @@ fn merge_pr_parse_audit_receipt(receipt_body : String) -> @types.AuditReceipt? {
     _ => return None
   }
   if receipt.sha == "" ||
+    receipt.tree_sha == "" ||
     receipt.branch == "" ||
     receipt.audited_at <= 0L ||
     receipt.agent_id == "" ||
@@ -59,6 +61,7 @@ fn MergePrAuditGateStatus::to_wire_string(
         MergeAuditReceiptInvalid(_) => "receipt_invalid"
         MergeAuditReceiptStale(_, _) => "receipt_stale"
         MergeAuditReceiptFindingsRemain(_, _) => "receipt_findings_remain"
+        MergeAuditReceiptTreeUnavailable(_) => "receipt_tree_unavailable"
       }
     MergeAuditGateHeadUnavailable => "head_unavailable"
   }
@@ -68,33 +71,33 @@ fn MergePrAuditGateStatus::to_wire_string(
 pub fn merge_pr_audit_receipt_validation(
   parent_branch : String,
   default_branch : String,
-  current_head : String,
+  current_tree : String,
   receipt_body : String?,
 ) -> MergePrAuditReceiptValidation {
   if !file_pr_audit_receipt_required(parent_branch, default_branch) {
     return MergeAuditReceiptValid
   }
-  merge_pr_required_audit_receipt_validation(current_head, receipt_body)
+  merge_pr_required_audit_receipt_validation(current_tree, receipt_body)
 }
 
 ///|
 pub fn merge_pr_required_audit_receipt_validation(
-  current_head : String,
+  current_tree : String,
   receipt_body : String?,
 ) -> MergePrAuditReceiptValidation {
-  let short_sha = file_pr_short_sha(current_head)
+  let short_sha = file_pr_short_sha(current_tree)
   let receipt = match receipt_body {
     Some(body) if body.trim() != "" => body
     _ => return MergeAuditReceiptMissing(short_sha)
   }
   match merge_pr_parse_audit_receipt(receipt) {
-    Some(parsed) if parsed.sha == current_head =>
+    Some(parsed) if parsed.tree_sha == current_tree =>
       if parsed.findings_count == 0 {
         MergeAuditReceiptValid
       } else {
         MergeAuditReceiptFindingsRemain(short_sha, parsed.findings_count)
       }
-    Some(parsed) => MergeAuditReceiptStale(parsed.sha, current_head)
+    Some(parsed) => MergeAuditReceiptStale(parsed.tree_sha, current_tree)
     None => MergeAuditReceiptInvalid(short_sha)
   }
 }
@@ -106,21 +109,23 @@ fn merge_pr_audit_receipt_validation_summary(
   match validation {
     MergeAuditReceiptValid => "valid audit receipt"
     MergeAuditReceiptMissing(short_sha) =>
-      "missing audit receipt for HEAD " + short_sha
+      "missing audit receipt for HEAD tree " + short_sha
     MergeAuditReceiptInvalid(short_sha) =>
-      "malformed audit receipt for HEAD " + short_sha
-    MergeAuditReceiptStale(audited_sha, current_sha) =>
-      "stale audit receipt (audit ran on " +
-      audited_sha +
-      ", current HEAD is " +
-      current_sha +
+      "malformed audit receipt for HEAD tree " + short_sha
+    MergeAuditReceiptStale(audited_tree_sha, current_tree_sha) =>
+      "stale audit receipt (audit ran on tree " +
+      audited_tree_sha +
+      ", current tree is " +
+      current_tree_sha +
       ")"
     MergeAuditReceiptFindingsRemain(short_sha, count) =>
-      "audit receipt for HEAD " +
+      "audit receipt for HEAD tree " +
       short_sha +
       " reports " +
       count.to_string() +
       " finding(s)"
+    MergeAuditReceiptTreeUnavailable(short_sha) =>
+      "could not resolve HEAD tree for commit " + short_sha
   }
 }
 
@@ -469,6 +474,31 @@ fn merge_pr_effective_task_contract(
 }
 
 ///|
+fn merge_pr_warn_moon_verify_normalization(
+  context : String,
+  task_contract : @types.TaskContract?,
+  moon_verify_target : @types.MoonVerifyTarget,
+) -> Unit {
+  match task_contract {
+    Some(contract) =>
+      for
+        notice in @types.moon_verify_normalization_notices(
+          contract.verify,
+          moon_verify_target,
+        ) {
+        @moontrace.warn("moon verify command normalized", fields=[
+          @moontrace.field("event", "moon_verify_command_normalized"),
+          @moontrace.field("context", context),
+          @moontrace.field("command", notice.command),
+          @moontrace.field("normalized", notice.normalized),
+          @moontrace.field("moon_verify_target", notice.target.to_wire_string()),
+        ])
+      }
+    None => ()
+  }
+}
+
+///|
 /// `merge_pr` preflight: GitHub changes-requested reviews are checked first,
 /// then the poller snapshot, unresolved review-thread fetch, and
 /// `merge_pr_preflight_block_message` must all pass.
@@ -511,6 +541,9 @@ pub async fn interpret_merge_pr_preflight(
       }
       let task_contract = @types.task_contract_with_normalized_verify(
         task_contract_raw, moon_verify_target,
+      )
+      merge_pr_warn_moon_verify_normalization(
+        "merge_pr_preflight", task_contract_raw, moon_verify_target,
       )
       let verify_results = merge_pr_verify_results_for_tracked(
         project_dir, tracked, task_contract,
@@ -637,7 +670,12 @@ async fn merge_pr_audit_receipt_validation_for_head(
   head_sha : String,
   capture : async (@workspace.Command) -> (Int, String),
 ) -> MergePrAuditReceiptValidation {
-  let receipt_path = file_pr_audit_receipt_path_for_head(head_sha)
+  let tree_sha = match
+    audit_receipt_tree_sha_for_head(project_dir, head_sha, capture) {
+    Some(value) => value
+    None => return MergeAuditReceiptTreeUnavailable(file_pr_short_sha(head_sha))
+  }
+  let receipt_path = file_pr_audit_receipt_path_for_head(tree_sha)
   let (exit_code, receipt_body) = capture({
     program: "cat",
     args: [receipt_path],
@@ -646,7 +684,7 @@ async fn merge_pr_audit_receipt_validation_for_head(
   merge_pr_audit_receipt_validation(
     parent_branch,
     default_branch,
-    head_sha,
+    tree_sha,
     if exit_code == 0 {
       Some(receipt_body)
     } else {

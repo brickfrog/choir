@@ -143,18 +143,40 @@ pub fn audit_enforcement_allows_auto_pull(
 pub fn valid_merge_audit_receipt_exists(
   receipt_path : String,
   default_branch : String,
-  head_sha : String,
+  tree_sha : String,
   audit_receipt_exists : (String) -> Bool,
   audit_receipt_read : (String) -> String,
 ) -> Bool {
-  if default_branch == "" || !audit_receipt_exists(receipt_path) {
+  if default_branch == "" ||
+    tree_sha == "" ||
+    !audit_receipt_exists(receipt_path) {
     return false
   }
   let body = audit_receipt_read(receipt_path)
-  match merge_pr_required_audit_receipt_validation(head_sha, Some(body)) {
+  match merge_pr_required_audit_receipt_validation(tree_sha, Some(body)) {
     MergePrAuditReceiptValidation::MergeAuditReceiptValid => true
     _ => false
   }
+}
+
+///|
+pub async fn audit_receipt_tree_sha_for_head(
+  project_dir : String,
+  head_sha : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> String? {
+  let (exit_code, output) = capture({
+    program: "git",
+    args: ["rev-parse", head_sha + "^{tree}"],
+    workdir: Some(project_dir),
+  })
+  if exit_code == 0 {
+    let tree_sha = output.trim().to_owned()
+    if tree_sha != "" {
+      return Some(tree_sha)
+    }
+  }
+  None
 }
 
 ///|
@@ -183,10 +205,20 @@ pub async fn detect_pr_merged_audit_enforcement(
     }
     return AuditEnforcementOutcome::UnauditedWarned
   }
-  let receipt_rel_path = file_pr_audit_receipt_path_for_head(head_sha)
+  let tree_sha = match
+    audit_receipt_tree_sha_for_head(project_dir, head_sha, capture) {
+    Some(value) => value
+    None =>
+      if require_integration_audit {
+        return AuditEnforcementOutcome::UnauditedBlocked
+      } else {
+        return AuditEnforcementOutcome::UnauditedWarned
+      }
+  }
+  let receipt_rel_path = file_pr_audit_receipt_path_for_head(tree_sha)
   let receipt_path = project_relative_path(project_dir, receipt_rel_path)
   let receipt_is_valid = valid_merge_audit_receipt_exists(
-    receipt_path, default_branch, head_sha, audit_receipt_exists, audit_receipt_read,
+    receipt_path, default_branch, tree_sha, audit_receipt_exists, audit_receipt_read,
   )
   let outcome = detect_unaudited_integration_merge(
     receipt_path,

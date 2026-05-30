@@ -326,13 +326,17 @@ fn tool_defs() -> Array[CatalogTool] {
     },
     {
       name: "tdd_intent",
-      description: "Declare the leaf's TDD intent before writing the failing test. The server pins red/green checks to the task contract verify command; file_pr refuses until the leaf reaches Done.",
+      description: "Declare the leaf's TDD intent before writing the failing test or artifact. The server pins red/green checks to the task contract verify command; file_pr refuses until the leaf reaches Done.",
       props: [
         { name: "caller_id", desc: "ID of the calling leaf" },
         { name: "intent", desc: "Short description of the behavior under test" },
         {
           name: "test_command",
           desc: "Optional compatibility field. If supplied, it must match the configured verify command.",
+        },
+        {
+          name: "artifact_path",
+          desc: "Optional non-code artifact path. If supplied, it must be a relative path mentioned by the configured verify command, e.g. test -f <path> && <verify>.",
         },
       ],
       required: ["caller_id", "intent"],
@@ -442,6 +446,10 @@ fn tool_defs() -> Array[CatalogTool] {
       description: "Write a typed audit receipt for the audited HEAD. The tool fills audited_at from server time and agent_id from caller_id.",
       props: [
         { name: "sha", desc: "Full audited HEAD sha" },
+        {
+          name: "tree_sha",
+          desc: "Full audited HEAD tree sha (`git rev-parse HEAD^{tree}`)",
+        },
         { name: "branch", desc: "Branch audited" },
         {
           name: "findings_count",
@@ -449,7 +457,7 @@ fn tool_defs() -> Array[CatalogTool] {
         },
         { name: "caller_id", desc: "ID of the calling agent" },
       ],
-      required: ["sha", "branch", "findings_count", "caller_id"],
+      required: ["sha", "tree_sha", "branch", "findings_count", "caller_id"],
     },
     {
       name: "send_message",

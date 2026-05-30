@@ -110,6 +110,13 @@ pub async fn capture_stdout_with_cwd(
 }
 
 ///|
+pub fn command_with_suppressed_moon_render(
+  cmd : @workspace.Command,
+) -> @workspace.Command {
+  cmd
+}
+
+///|
 pub async fn run(cmd : @workspace.Command) -> Int {
   let native = @workspace.run_native_choir_file_command(cmd)
   if native >= 0 {

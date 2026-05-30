@@ -47,6 +47,14 @@ fn task_contract_for_agent(
 }
 
 ///|
+fn repair_task_contract_for_agent(
+  state : ServerState,
+  agent_id : String,
+) -> @types.TaskContract? {
+  state.repair_task_contract_for_agent(agent_id)
+}
+
+///|
 fn local_config_for_agent(
   project_dir : String,
   registry : @registry.AgentRegistry,
@@ -186,15 +194,15 @@ fn automerge_audit_policy_block_retryable_message(msg : String) -> Bool {
   if !policy_msg.has_prefix("policy blocked: audit receipt gate blocked PR #") {
     return false
   }
-  policy_msg.contains(": missing audit receipt for HEAD ") ||
-  policy_msg.contains(": malformed audit receipt for HEAD ") ||
+  policy_msg.contains(": missing audit receipt for HEAD tree ") ||
+  policy_msg.contains(": malformed audit receipt for HEAD tree ") ||
   policy_msg.contains(": stale audit receipt (")
 }
 
 ///|
 fn automerge_retryable_audit_policy_block(resp : @types.Response) -> String? {
   // Only classify gate failures that a re-run of /audit on the same HEAD can
-  // resolve. `audit receipt for HEAD ... reports N finding(s)` requires new
+  // resolve. `audit receipt for HEAD tree ... reports N finding(s)` requires new
   // commits; retrying automerge in a loop will just spin without progress.
   match resp.error_message() {
     Some(msg) if automerge_audit_policy_block_retryable_message(msg) =>
@@ -315,7 +323,8 @@ pub async fn maybe_trigger_automerge_for_pending_event(
       )
     _ => ()
   }
-  let task_contract = match task_contract_for_agent(state, tracked.agent_id) {
+  let task_contract = match
+    repair_task_contract_for_agent(state, tracked.agent_id) {
     Some(contract) => Some(contract)
     None => {
       // Missing task contract is a permanent block for this head — re-running

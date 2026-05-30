@@ -34,6 +34,7 @@ async fn mock_registry_runner(cmds : Array[@workspace.Command]) -> Array[Int] {
 fn registry_test_audit_receipt(sha : String) -> String {
   let receipt : @types.AuditReceipt = {
     sha,
+    tree_sha: sha,
     branch: "test",
     audited_at: 1770000000L,
     agent_id: "main.tl",
@@ -58,6 +59,9 @@ async fn mock_registry_capture(cmd : @workspace.Command) -> (Int, String) {
     return (0, "origin/main\n")
   }
   if cmd.program == "git" && cmd.args == ["rev-parse", "HEAD"] {
+    return (0, "hash\n")
+  }
+  if cmd.program == "git" && cmd.args == ["rev-parse", "hash^{tree}"] {
     return (0, "hash\n")
   }
   if cmd.program == "git" && cmd.args == ["remote", "get-url", "origin"] {
@@ -513,7 +517,11 @@ async test "handle_request with valid tool returns Ok" {
     req_method: "tools/call",
     role: @types.Role::TL,
     name: "fork_wave",
-    args: @types.RequestArgs::new({ "count": "3", "caller_id": "main.tl" }),
+    args: @types.RequestArgs::new({
+      "count": "3",
+      "caller_id": "main.tl",
+      "verify": "true",
+    }),
   }
   let res = handle_request(
     reg,
@@ -576,7 +584,11 @@ async test "dispatch returns correct stub for each tool name" {
     @env.now().reinterpret_as_int64().to_string()
   assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let cases = [
-    ("fork_wave", "spawned", { "count": "1", "caller_id": "main.tl" }),
+    (
+      "fork_wave",
+      "spawned",
+      { "count": "1", "caller_id": "main.tl", "verify": "true" },
+    ),
     ("fork_session", "ok", { "name": "nested-team" }),
     ("file_pr", "pr_created", { "branch": "test" }),
     (
@@ -601,6 +613,7 @@ async test "dispatch returns correct stub for each tool name" {
         // anything else to defend against path traversal in the on-disk
         // receipt filename.
         "sha": "0123456789abcdef0123456789abcdef01234567",
+        "tree_sha": "fedcba9876543210fedcba9876543210fedcba98",
         "branch": "test",
         "findings_count": "0",
       },
@@ -805,6 +818,7 @@ async test "dispatch fork_wave preregisters spawned child for immediate agent_li
       "count": "1",
       "agent_type": "claude",
       "task": "open a PR",
+      "verify": "true",
     },
   }
   let res = @tools.dispatch_call(
@@ -896,6 +910,7 @@ async test "dispatch fork_wave post-spawn pane resolution uses injected capture"
       "count": "1",
       "agent_type": "claude",
       "task": "open a PR",
+      "verify": "true",
     },
   }
   let spawned_slug : Array[String] = [""]
@@ -1201,6 +1216,7 @@ async test "fork_wave scaffold gate blocks dirty working tree" {
       "count": "1",
       "task": "work",
       "parent_branch": "main",
+      "verify": "true",
     },
   }
   let res = @tools.dispatch_call(
@@ -1226,6 +1242,7 @@ async test "fork_wave scaffold gate blocks unpushed commits" {
       "count": "1",
       "task": "work",
       "parent_branch": "main",
+      "verify": "true",
     },
   }
   let res = @tools.dispatch_call(

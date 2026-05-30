@@ -348,6 +348,13 @@ priv struct MoonVerifyInvocation {
 }
 
 ///|
+pub(all) struct MoonVerifyNormalizationNotice {
+  command : String
+  normalized : String
+  target : MoonVerifyTarget
+} derive(Debug, Eq)
+
+///|
 fn moon_verify_segment_space(c : UInt16) -> Bool {
   c == ' ' || c == '\t' || c == '\r'
 }
@@ -404,16 +411,31 @@ fn moon_verify_shell_parts(command : String) -> Array[MoonVerifyShellPart] {
   let parts : Array[MoonVerifyShellPart] = []
   let mut in_double = false
   let mut in_single = false
+  let mut in_comment = false
   let mut segment_start = 0
   let mut i = 0
   while i < command.length() {
     let c = command[i]
-    if c == '"' && !in_single {
+    if in_comment {
+      if c == '\n' {
+        parts.push({
+          segment: command[segment_start:i].to_owned(),
+          separator: "\n",
+        })
+        i = i + 1
+        segment_start = i
+        in_comment = false
+        continue
+      }
+    } else if c == '"' && !in_single {
       in_double = !in_double
     } else if c == '\'' && !in_double {
       in_single = !in_single
     } else if !in_single && !in_double {
-      if moon_verify_shell_separator_at(command, i) {
+      if c == '#' &&
+        (i == segment_start || moon_verify_segment_space(command[i - 1])) {
+        in_comment = true
+      } else if moon_verify_shell_separator_at(command, i) {
         let separator_end = moon_verify_shell_separator_end(command, i)
         parts.push({
           segment: command[segment_start:i].to_owned(),
@@ -432,6 +454,7 @@ fn moon_verify_shell_parts(command : String) -> Array[MoonVerifyShellPart] {
 
 ///|
 fn moon_verify_segment_tokens(segment : String) -> Array[String] {
+  let segment = moon_verify_strip_unquoted_comment(segment)
   let tokens : Array[String] = []
   let mut token = ""
   let mut token_active = false
@@ -462,6 +485,64 @@ fn moon_verify_segment_tokens(segment : String) -> Array[String] {
     tokens.push(token)
   }
   tokens
+}
+
+///|
+fn moon_verify_unquoted_comment_index(segment : String) -> Int? {
+  let mut in_double = false
+  let mut in_single = false
+  let mut i = 0
+  while i < segment.length() {
+    let c = segment[i]
+    if c == '"' && !in_single {
+      in_double = !in_double
+    } else if c == '\'' && !in_double {
+      in_single = !in_single
+    } else if c == '#' &&
+      !in_single &&
+      !in_double &&
+      (i == 0 || moon_verify_segment_space(segment[i - 1])) {
+      return Some(i)
+    }
+    i = i + 1
+  }
+  None
+}
+
+///|
+fn moon_verify_strip_unquoted_comment(segment : String) -> String {
+  match moon_verify_unquoted_comment_index(segment) {
+    Some(idx) => segment[:idx].to_owned()
+    None => segment
+  }
+}
+
+///|
+fn moon_verify_append_suffix_before_comment(
+  body : String,
+  suffix : String,
+) -> String {
+  match moon_verify_unquoted_comment_index(body) {
+    Some(idx) => {
+      let before = body[:idx].to_owned()
+      let comment = body[idx:].to_owned()
+      let mut command_end = before.length()
+      while command_end > 0 &&
+            moon_verify_segment_space(before[command_end - 1]) {
+        command_end = command_end - 1
+      }
+      let command = before[:command_end].to_owned()
+      let spacer = before[command_end:].to_owned()
+      let comment_spacer = if spacer == "" { " " } else { spacer }
+      command + suffix + comment_spacer + comment
+    }
+    None => body + suffix
+  }
+}
+
+///|
+fn moon_command_token_is_moon(token : String) -> Bool {
+  token == "moon" || token.has_suffix("/moon")
 }
 
 ///|
@@ -541,7 +622,7 @@ fn moon_verify_probe_segment(segment : String) -> MoonVerifyInvocation? {
   while i < tokens.length() && moon_verify_env_assignment_token(tokens[i]) {
     i = i + 1
   }
-  if i >= tokens.length() || tokens[i] != "moon" {
+  if i >= tokens.length() || !moon_command_token_is_moon(tokens[i]) {
     return None
   }
   i = i + 1
@@ -583,9 +664,10 @@ fn moon_verify_normalize_segment(
     Some(invocation) =>
       if !invocation.has_explicit_target {
         return leading +
-          body +
-          " --target " +
-          target.to_wire_string() +
+          moon_verify_append_suffix_before_comment(
+            body,
+            " --target " + target.to_wire_string(),
+          ) +
           trailing
       }
     None => ()
@@ -602,6 +684,80 @@ pub fn moon_verify_normalize_command(
   for part in moon_verify_shell_parts(command) {
     normalized = normalized +
       moon_verify_normalize_segment(part.segment, target) +
+      part.separator
+  }
+  normalized
+}
+
+///|
+fn moon_render_subcommand_suppressed(subcommand : String) -> Bool {
+  subcommand == "check" || subcommand == "test" || subcommand == "build"
+}
+
+///|
+fn moon_render_has_no_render(tokens : Array[String]) -> Bool {
+  for token in tokens {
+    if token == "--no-render" {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn moon_render_segment_needs_no_render(segment : String) -> Bool {
+  let tokens = moon_verify_segment_tokens(segment)
+  let mut i = 0
+  while i < tokens.length() && moon_verify_env_assignment_token(tokens[i]) {
+    i = i + 1
+  }
+  if i >= tokens.length() || !moon_command_token_is_moon(tokens[i]) {
+    return false
+  }
+  i = i + 1
+  while i < tokens.length() && tokens[i].has_prefix("-") {
+    let flag = tokens[i]
+    i = i + 1
+    if moon_verify_global_flag_takes_value(flag) &&
+      !flag.contains("=") &&
+      i < tokens.length() {
+      i = i + 1
+    }
+  }
+  if i >= tokens.length() || !moon_render_subcommand_suppressed(tokens[i]) {
+    return false
+  }
+  !moon_render_has_no_render(tokens)
+}
+
+///|
+fn moon_render_suppress_segment(segment : String) -> String {
+  let mut start = 0
+  while start < segment.length() && moon_verify_segment_space(segment[start]) {
+    start = start + 1
+  }
+  let mut end = segment.length()
+  while end > start && moon_verify_segment_space(segment[end - 1]) {
+    end = end - 1
+  }
+  let leading = segment[:start].to_owned()
+  let body = segment[start:end].to_owned()
+  let trailing = segment[end:].to_owned()
+  if moon_render_segment_needs_no_render(body) {
+    leading +
+    moon_verify_append_suffix_before_comment(body, " --no-render") +
+    trailing
+  } else {
+    segment
+  }
+}
+
+///|
+pub fn moon_render_suppress_command(command : String) -> String {
+  let mut normalized = ""
+  for part in moon_verify_shell_parts(command) {
+    normalized = normalized +
+      moon_render_suppress_segment(part.segment) +
       part.separator
   }
   normalized
@@ -626,6 +782,22 @@ pub fn moon_verify_normalize_commands(
     normalized.push(moon_verify_normalize_command(command, target))
   }
   normalized
+}
+
+///|
+pub fn moon_verify_normalization_notices(
+  commands : Array[String],
+  target : MoonVerifyTarget,
+) -> Array[MoonVerifyNormalizationNotice] {
+  let notices : Array[MoonVerifyNormalizationNotice] = []
+  for command in commands {
+    let trimmed = command.trim().to_owned()
+    let normalized = moon_verify_normalize_command(trimmed, target)
+    if trimmed != normalized {
+      notices.push({ command: trimmed, normalized, target })
+    }
+  }
+  notices
 }
 
 ///|

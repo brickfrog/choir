@@ -91,6 +91,183 @@ fn tdd_validate_leaf_declared_command(
 }
 
 ///|
+fn tdd_validate_artifact_path(
+  raw : String,
+) -> Result[String, @types.ChoirError] {
+  let path = raw.trim().to_owned()
+  if path == "" {
+    return Err(tdd_transition_error("artifact_path must be non-empty"))
+  }
+  if path.has_prefix("/") {
+    return Err(tdd_transition_error("artifact_path must be relative"))
+  }
+  for c in path {
+    if c == '\n' || c == '\r' {
+      return Err(tdd_transition_error("artifact_path must stay on one line"))
+    }
+  }
+  for part in path.split("/") {
+    if part == ".." {
+      return Err(tdd_transition_error("artifact_path must not contain '..'"))
+    }
+  }
+  Ok(path)
+}
+
+///|
+fn tdd_configured_verify_mentions_artifact(
+  configured : TddConfiguredVerify,
+  artifact_path : String,
+) -> Bool {
+  for command in configured.commands {
+    if tdd_command_checks_artifact_path(command, artifact_path) {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn tdd_unquoted_comment_index(segment : String) -> Int? {
+  let mut in_double = false
+  let mut in_single = false
+  let mut i = 0
+  while i < segment.length() {
+    let c = segment[i]
+    if c == '"' && !in_single {
+      in_double = !in_double
+    } else if c == '\'' && !in_double {
+      in_single = !in_single
+    } else if c == '#' &&
+      !in_single &&
+      !in_double &&
+      (i == 0 || tdd_token_space(segment[i - 1])) {
+      return Some(i)
+    }
+    i = i + 1
+  }
+  None
+}
+
+///|
+fn tdd_token_space(c : UInt16) -> Bool {
+  c == ' ' || c == '\t' || c == '\n' || c == '\r'
+}
+
+///|
+fn tdd_command_tokens(command : String) -> Array[String] {
+  let command = match tdd_unquoted_comment_index(command) {
+    Some(idx) => command[:idx].to_owned()
+    None => command
+  }
+  let tokens : Array[String] = []
+  let mut token = ""
+  let mut token_active = false
+  let mut in_double = false
+  let mut in_single = false
+  let mut i = 0
+  while i < command.length() {
+    let c = command[i]
+    if c == '"' && !in_single {
+      in_double = !in_double
+      token_active = true
+    } else if c == '\'' && !in_double {
+      in_single = !in_single
+      token_active = true
+    } else if !in_single && !in_double && tdd_token_space(c) {
+      if token_active {
+        tokens.push(token)
+        token = ""
+        token_active = false
+      }
+    } else {
+      token = token + command[i:i + 1].to_owned()
+      token_active = true
+    }
+    i = i + 1
+  }
+  if token_active {
+    tokens.push(token)
+  }
+  tokens
+}
+
+///|
+fn tdd_file_test_operator(token : String) -> Bool {
+  token == "-e" || token == "-f" || token == "-s"
+}
+
+///|
+fn tdd_token_is_shell_separator(token : String) -> Bool {
+  token == "&&" || token == "||" || token == ";" || token == "|"
+}
+
+///|
+fn tdd_test_command_checks_artifact(
+  tokens : Array[String],
+  start : Int,
+  artifact_path : String,
+) -> Bool {
+  let mut i = start + 1
+  while i < tokens.length() && !tdd_token_is_shell_separator(tokens[i]) {
+    if tdd_file_test_operator(tokens[i]) &&
+      i + 1 < tokens.length() &&
+      tokens[i + 1] == artifact_path {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+///|
+fn tdd_command_checks_artifact_path(
+  command : String,
+  artifact_path : String,
+) -> Bool {
+  let tokens = tdd_command_tokens(command)
+  let mut i = 0
+  while i < tokens.length() {
+    if tokens[i] == "test" || tokens[i] == "[" || tokens[i] == "[[" {
+      if tdd_test_command_checks_artifact(tokens, i, artifact_path) {
+        return true
+      }
+    }
+    i = i + 1
+  }
+  false
+}
+
+///|
+fn tdd_validate_artifact_intent(
+  raw : String?,
+  configured : TddConfiguredVerify,
+) -> Result[String?, @types.ChoirError] {
+  match raw {
+    None => Ok(None)
+    Some(value) => {
+      let artifact_path = match tdd_validate_artifact_path(value) {
+        Ok(path) => path
+        Err(e) => return Err(e)
+      }
+      if tdd_configured_verify_mentions_artifact(configured, artifact_path) {
+        Ok(Some(artifact_path))
+      } else {
+        Err(
+          tdd_transition_error(
+            "artifact mode requires the configured verify command to check artifact_path `" +
+            artifact_path +
+            "` as a file-test operand; re-scope the wave with an artifact verify such as `test -f " +
+            artifact_path +
+            " && <verify>`",
+          ),
+        )
+      }
+    }
+  }
+}
+
+///|
 fn tdd_check_command(
   project_dir : String,
   command : String,
@@ -408,6 +585,11 @@ pub fn interpret_tdd_intent(
     Ok(_) => ()
     Err(e) => return @types.Response::Err(e.message())
   }
+  let artifact_path = match
+    tdd_validate_artifact_intent(args.artifact_path, configured) {
+    Ok(value) => value
+    Err(e) => return @types.Response::Err(e.message())
+  }
   match
     plan_tdd_intent_transition(
       tdd_state_phase(tdd_state_reader(args.caller_id)),
@@ -423,6 +605,10 @@ pub fn interpret_tdd_intent(
         "intent": args.intent.to_json(),
       }
       fields.set("test_command", configured.command.to_json())
+      match artifact_path {
+        Some(value) => fields.set("artifact_path", value.to_json())
+        None => ()
+      }
       @types.Response::ok_values(fields)
     }
   }

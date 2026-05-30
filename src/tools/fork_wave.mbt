@@ -78,6 +78,58 @@ pub fn fork_wave_task_contract_with_verify_default(
 }
 
 ///|
+pub fn fork_wave_validate_resolved_task_contracts(
+  fork_wave_args : ForkWaveArgs,
+  wave_id? : String? = None,
+) -> Result[Unit, @types.ChoirError] {
+  if fork_wave_args.count > fork_wave_args.tasks.length() {
+    return Err(
+      @types.ChoirError::validation_error(
+        "fork_wave refused to spawn: task count " +
+        fork_wave_args.count.to_string() +
+        " exceeds resolved tasks length " +
+        fork_wave_args.tasks.length().to_string(),
+      ),
+    )
+  }
+  if fork_wave_args.count > fork_wave_args.task_contracts.length() {
+    return Err(
+      @types.ChoirError::validation_error(
+        "fork_wave refused to spawn: task count " +
+        fork_wave_args.count.to_string() +
+        " exceeds resolved task_contracts length " +
+        fork_wave_args.task_contracts.length().to_string(),
+      ),
+    )
+  }
+  if fork_wave_args.child_role != @types.Role::Dev {
+    return Ok(())
+  }
+  let seen_slugs : Map[String, Int] = {}
+  for i = 0; i < fork_wave_args.count; i = i + 1 {
+    if i >= fork_wave_args.task_contracts.length() ||
+      !fork_wave_verify_has_nonempty_command(
+        fork_wave_args.task_contracts[i].verify,
+      ) {
+      let slug = fork_wave_slug_for_index(
+        fork_wave_args, i, seen_slugs, wave_id,
+      )
+      let agent_id = fork_wave_args.parent_branch + "." + slug
+      return Err(
+        @types.ChoirError::validation_error(
+          "fork_wave refused to spawn leaf " +
+          i.to_string() +
+          " (" +
+          agent_id +
+          "): resolved task contract has no verify command. Pass a wave-level `verify` command, include `verify` in that leaf's task_contract, or set [project].verify_cmd in .choir/config.toml before spawning.",
+        ),
+      )
+    }
+  }
+  Ok(())
+}
+
+///|
 fn fork_wave_slug_for_index(
   fork_wave_args : ForkWaveArgs,
   index : Int,
@@ -504,6 +556,15 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
     caller_spawn_depth,
     fork_wave_args.child_role,
   )
+  match fork_wave_validate_resolved_task_contracts(fork_wave_args, wave_id~) {
+    Ok(_) => ()
+    Err(e) =>
+      return (
+        @types.Response::Err(e.message()),
+        fork_wave_args,
+        empty_fork_wave_spawn_plan(),
+      )
+  }
 
   let spawn_plan = fork_wave_spawn_plan(
     fork_wave_args,

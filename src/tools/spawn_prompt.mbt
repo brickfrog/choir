@@ -293,10 +293,31 @@ fn prompt_moon_verify_target(project_dir : String) -> @types.MoonVerifyTarget {
 }
 
 ///|
+fn warn_moon_verify_normalization(
+  context : String,
+  notice : @types.MoonVerifyNormalizationNotice,
+) -> Unit {
+  @moontrace.warn("moon verify command normalized", fields=[
+    @moontrace.field("event", "moon_verify_command_normalized"),
+    @moontrace.field("context", context),
+    @moontrace.field("command", notice.command),
+    @moontrace.field("normalized", notice.normalized),
+    @moontrace.field("moon_verify_target", notice.target.to_wire_string()),
+  ])
+}
+
+///|
 fn normalize_prompt_task_contract(
   task_contract : @types.TaskContract,
   moon_verify_target : @types.MoonVerifyTarget,
 ) -> @types.TaskContract {
+  for
+    notice in @types.moon_verify_normalization_notices(
+      task_contract.verify,
+      moon_verify_target,
+    ) {
+    warn_moon_verify_normalization("spawn_prompt", notice)
+  }
   let normalized = @types.task_contract_with_normalized_verify(
     Some(task_contract),
     moon_verify_target,

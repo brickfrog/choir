@@ -149,11 +149,15 @@ test "onboard is a registered skill prompt with a baked fallback body" {
   // MoonBit detection must not blindly hardcode the native backend; it must
   // detect+mirror the repo's actual target (choir-updv).
   assert_true(body.contains("detect the MoonBit backend"))
+  assert_true(body.contains("required_linear_history"))
+  assert_true(body.contains("merge_strategy = \"squash\""))
+  assert_true(body.contains("merge strategy not detected"))
   assert_false(
     body.contains(
       "Else if `moon.mod` or `moon.mod.json` exists, use `moon test --target native`",
     ),
   )
+  assert_false(body.contains("with only this project section"))
   assert_true(body.has_suffix("\n"))
 }
 
@@ -370,7 +374,9 @@ test "audit default prompt writes receipt after successful worker" {
   let body = default_prompt(PromptName::AuditSkill)
   assert_true(body.contains("After the worker returns successfully"))
   assert_true(body.contains("git rev-parse HEAD"))
+  assert_true(body.contains("git rev-parse 'HEAD^{tree}'"))
   assert_true(body.contains("git rev-parse --abbrev-ref HEAD"))
+  assert_true(body.contains("tree_sha"))
   assert_true(body.contains("findings_count"))
   assert_true(body.contains("write_audit_receipt"))
   assert_true(body.contains("Do not write `.choir/audit-receipts` directly"))
@@ -405,6 +411,7 @@ test "leaf profile default prompt uses poller snapshots for review state" {
   assert_true(body.contains("Leaves never call /audit"))
   assert_true(body.contains("merge_pr returns a policy block"))
   assert_true(body.contains("tdd_intent"))
+  assert_true(body.contains("tdd_intent --artifact <relative-path>"))
   assert_true(body.contains("tdd_red_check"))
   assert_true(body.contains("tdd_green_check"))
   assert_true(body.contains("refuses while your TDD phase is not Done"))
@@ -442,6 +449,8 @@ test "ship pr default prompt does not promise file_pr sidecar audit" {
   assert_true(body.contains("audit does not run during file_pr"))
   assert_true(body.contains("the TL runs `/audit`"))
   assert_true(body.contains("merge_pr returns a policy block"))
+  assert_true(body.contains("current HEAD tree"))
+  assert_true(body.contains("receipts are keyed by HEAD tree"))
   assert_true(body.contains("poller snapshot to show zero unresolved threads"))
   assert_false(body.contains("resolveReviewThread(input: " + "{threadId:"))
 }

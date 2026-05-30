@@ -2274,10 +2274,19 @@ async fn deliver_pending_poll_events(
         let audit_receipt_path = if pr_head_sha == "" {
           ""
         } else {
-          @tools.project_relative_path(
-            state.config.project_dir,
-            @tools.file_pr_audit_receipt_path_for_head(pr_head_sha),
-          )
+          match
+            @tools.audit_receipt_tree_sha_for_head(
+              state.config.project_dir,
+              pr_head_sha,
+              capture,
+            ) {
+            Some(tree_sha) =>
+              @tools.project_relative_path(
+                state.config.project_dir,
+                @tools.file_pr_audit_receipt_path_for_head(tree_sha),
+              )
+            None => ""
+          }
         }
         log_unaudited_integration_merge(
           pr,

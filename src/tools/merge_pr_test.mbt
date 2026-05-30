@@ -243,8 +243,18 @@ fn merge_pr_test_audit_receipt_with_findings(
   sha : String,
   findings_count : Int,
 ) -> String {
+  merge_pr_test_audit_receipt_for_tree(sha, sha, findings_count)
+}
+
+///|
+fn merge_pr_test_audit_receipt_for_tree(
+  sha : String,
+  tree_sha : String,
+  findings_count : Int,
+) -> String {
   let receipt : @types.AuditReceipt = {
     sha,
+    tree_sha,
     branch: "feature/audit-gate",
     audited_at: 1L,
     agent_id: "main.tl",
@@ -350,13 +360,15 @@ test "load_gate_state accepts a properly seeded gate file" {
 ///|
 test "merge_pr_audit_receipt_validation distinguishes valid stale missing invalid" {
   let head = "abcdef1234567890abcdef1234567890abcdef12"
-  let other = "1111111111112222222222223333333333334444"
+  let tree = "9999999999999999999999999999999999999999"
+  let other_head = "1111111111112222222222223333333333334444"
+  let other_tree = "2222222222222222222222222222222222222222"
   match
     merge_pr_audit_receipt_validation(
       "main",
       "main",
-      head,
-      Some(merge_pr_test_audit_receipt(head)),
+      tree,
+      Some(merge_pr_test_audit_receipt_for_tree(other_head, tree, 0)),
     ) {
     MergeAuditReceiptValid => ()
     _ => fail("expected valid receipt")
@@ -365,35 +377,35 @@ test "merge_pr_audit_receipt_validation distinguishes valid stale missing invali
     merge_pr_audit_receipt_validation(
       "main",
       "main",
-      head,
-      Some(merge_pr_test_audit_receipt(other)),
+      tree,
+      Some(merge_pr_test_audit_receipt_for_tree(head, other_tree, 0)),
     ) {
     MergeAuditReceiptStale(audited, current) => {
-      assert_eq(audited, other)
-      assert_eq(current, head)
+      assert_eq(audited, other_tree)
+      assert_eq(current, tree)
     }
     _ => fail("expected stale receipt")
   }
-  match merge_pr_audit_receipt_validation("main", "main", head, None) {
+  match merge_pr_audit_receipt_validation("main", "main", tree, None) {
     MergeAuditReceiptMissing(short_sha) =>
-      assert_eq(short_sha, file_pr_short_sha(head))
+      assert_eq(short_sha, file_pr_short_sha(tree))
     _ => fail("expected missing receipt")
   }
   match
-    merge_pr_audit_receipt_validation("main", "main", head, Some("{not json")) {
+    merge_pr_audit_receipt_validation("main", "main", tree, Some("{not json")) {
     MergeAuditReceiptInvalid(short_sha) =>
-      assert_eq(short_sha, file_pr_short_sha(head))
+      assert_eq(short_sha, file_pr_short_sha(tree))
     _ => fail("expected invalid receipt")
   }
   match
     merge_pr_audit_receipt_validation(
       "main",
       "main",
-      head,
-      Some(merge_pr_test_audit_receipt_with_findings(head, 2)),
+      tree,
+      Some(merge_pr_test_audit_receipt_for_tree(head, tree, 2)),
     ) {
     MergeAuditReceiptFindingsRemain(short_sha, count) => {
-      assert_eq(short_sha, file_pr_short_sha(head))
+      assert_eq(short_sha, file_pr_short_sha(tree))
       assert_eq(count, 2)
     }
     _ => fail("expected findings receipt")
@@ -402,7 +414,7 @@ test "merge_pr_audit_receipt_validation distinguishes valid stale missing invali
     merge_pr_audit_receipt_validation(
       "main",
       "main",
-      head,
+      tree,
       Some(
         "{\"sha\":\"" +
         head +
@@ -410,20 +422,20 @@ test "merge_pr_audit_receipt_validation distinguishes valid stale missing invali
       ),
     ) {
     MergeAuditReceiptInvalid(short_sha) =>
-      assert_eq(short_sha, file_pr_short_sha(head))
+      assert_eq(short_sha, file_pr_short_sha(tree))
     _ => fail("expected legacy receipt to be invalid")
   }
 }
 
 ///|
 test "merge_pr audit validation applies to resolved default branch" {
-  let head = "abcdef1234567890abcdef1234567890abcdef12"
-  match merge_pr_audit_receipt_validation("master", "master", head, None) {
+  let tree = "9999999999999999999999999999999999999999"
+  match merge_pr_audit_receipt_validation("master", "master", tree, None) {
     MergeAuditReceiptMissing(short_sha) =>
-      assert_eq(short_sha, file_pr_short_sha(head))
+      assert_eq(short_sha, file_pr_short_sha(tree))
     _ => fail("expected audit receipt requirement on master default branch")
   }
-  match merge_pr_audit_receipt_validation("feature/x", "master", head, None) {
+  match merge_pr_audit_receipt_validation("feature/x", "master", tree, None) {
     MergeAuditReceiptValid => ()
     _ => fail("expected feature branch parent to skip audit gate")
   }
@@ -497,6 +509,9 @@ async test "interpret_merge_pr missing audit receipt policy-blocks on master def
         cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
         return (0, "feature/audit-gate\n")
       }
+      if cmd.program == "git" && cmd.args == ["rev-parse", head + "^{tree}"] {
+        return (0, head + "\n")
+      }
       if cmd.program == "cat" {
         return (1, "")
       }
@@ -544,6 +559,105 @@ async test "interpret_merge_pr missing audit receipt policy-blocks on master def
   assert_true(
     logs.iter().any(fn(line) { line.contains("audit_gate=receipt_missing") }),
   )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_merge_pr audit receipt remains valid when commit changes but tree matches" {
+  let project_dir = "/tmp/choir-mpr-audit-tree-reuse-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let audited_commit = "1111111111112222222222223333333333334444"
+  let tree = "9999999999999999999999999999999999999999"
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    94,
+    "main.leaf",
+    "feature/audit-gate",
+    "master",
+    "https://github.com/o/r/pull/94",
+    200L,
+    @poller.ReviewState::Approved,
+    "",
+    head,
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  let cat_paths : Array[String] = []
+  let mut runner_calls = 0
+  let resp = interpret_merge_pr(
+    {
+      pr_number: 94,
+      parent_branch: "master",
+      caller_id: "main.tl",
+      review_mode: Some(@types.ReviewMode::SinglePass),
+    },
+    project_dir,
+    Some(ps),
+    None,
+    None,
+    async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      runner_calls = runner_calls + 1
+      let statuses = []
+      for _ in cmds {
+        statuses.push(0)
+      }
+      statuses
+    },
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "gh" &&
+        cmd.args.length() >= 2 &&
+        cmd.args[0] == "api" &&
+        cmd.args[1].has_suffix("/reviews") {
+        return (0, "[{\"state\":\"APPROVED\"}]")
+      }
+      if cmd.program == "timeout" && cmd.args.contains("repo") {
+        return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
+      }
+      if cmd.program == "timeout" && cmd.args.contains("graphql") {
+        return (
+          0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+        )
+      }
+      if cmd.program == "git" &&
+        cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+        return (0, "origin/master\n")
+      }
+      if cmd.program == "git" &&
+        cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+        return (0, "feature/audit-gate\n")
+      }
+      if cmd.program == "git" && cmd.args == ["rev-parse", head + "^{tree}"] {
+        return (0, tree + "\n")
+      }
+      if cmd.program == "cat" {
+        cat_paths.push(cmd.args[0])
+        return (
+          0,
+          merge_pr_test_audit_receipt_for_tree(audited_commit, tree, 0),
+        )
+      }
+      (0, "")
+    },
+    fn(_, _) { true },
+    fn(path) { path.has_suffix("/.choir/audit-gate.json") },
+    read_file=fn(path) {
+      if path.has_suffix("/.choir/audit-gate.json") {
+        "{\"enabled_at_unix\":100}\n"
+      } else {
+        ""
+      }
+    },
+    task_contract_reader=merge_pr_test_empty_contract_reader,
+  )
+  match resp {
+    @types.Response::Ok(_) => ()
+    @types.Response::Err(msg) => fail("expected merge success: " + msg)
+  }
+  assert_eq(runner_calls, 1)
+  @debug.assert_eq(cat_paths, [file_pr_audit_receipt_path_for_head(tree)])
   ignore(@sys.rm_rf(project_dir))
 }
 
@@ -864,6 +978,9 @@ async test "interpret_merge_pr main audit gate merges only matching audited head
           0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
         )
       }
+      if cmd.program == "git" && cmd.args == ["rev-parse", head + "^{tree}"] {
+        return (0, head + "\n")
+      }
       if cmd.program == "cat" {
         return (0, merge_pr_test_audit_receipt(head))
       }
@@ -956,6 +1073,9 @@ async test "interpret_merge_pr success fires pr_merged completion hooks" {
       if cmd.program == "git" &&
         cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
         return (0, "origin/main\n")
+      }
+      if cmd.program == "git" && cmd.args == ["rev-parse", head + "^{tree}"] {
+        return (0, head + "\n")
       }
       if cmd.program == "cat" {
         return (0, merge_pr_test_audit_receipt(head))
@@ -1084,6 +1204,9 @@ async test "interpret_merge_pr suppresses pr_merged hooks when poller persist fa
       if cmd.program == "git" &&
         cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
         return (0, "origin/main\n")
+      }
+      if cmd.program == "git" && cmd.args == ["rev-parse", head + "^{tree}"] {
+        return (0, head + "\n")
       }
       if cmd.program == "cat" {
         return (0, merge_pr_test_audit_receipt(head))
@@ -1648,6 +1771,8 @@ async test "interpret_merge_pr_preflight matches normalized moon verify evidence
     merge_state_status: @poller.MergeStateStatus::Unknown,
     merged_at_unix: None,
   })
+  let captured : Array[@moontrace.Event] = []
+  @moontrace.set_subscriber(fn(event) { captured.push(event) })
   let got = interpret_merge_pr_preflight(
     7,
     Some(ps),
@@ -1656,6 +1781,7 @@ async test "interpret_merge_pr_preflight matches normalized moon verify evidence
     mock_preflight_capture_no_unresolved_threads,
     task_contract_reader=merge_pr_test_contract_reader(contract),
   )
+  @moontrace.clear_subscriber()
   match got {
     Ok(_) => ()
     Err(e) =>
@@ -1663,6 +1789,14 @@ async test "interpret_merge_pr_preflight matches normalized moon verify evidence
         "expected normalized verify evidence to satisfy policy: " + e.message(),
       )
   }
+  assert_true(
+    captured
+    .iter()
+    .any(fn(event) {
+      event.level == @moontrace.Level::Warn &&
+      event.message == "moon verify command normalized"
+    }),
+  )
   ignore(@sys.rm_rf(project_dir))
 }
 
@@ -1670,7 +1804,10 @@ async test "interpret_merge_pr_preflight matches normalized moon verify evidence
 async test "interpret_merge_pr_preflight rejects stale verify evidence" {
   let project_dir = "/tmp/choir-mpf-stale-verify-" + @sys.get_pid().to_string()
   ignore(@sys.rm_rf(project_dir))
-  let contract = merge_pr_test_verify_contract(["moon test --target native"])
+  let contract = merge_pr_test_verify_contract(
+    ["moon test --target native"],
+    verify_satisfied_by_ci=false,
+  )
   ignore(
     @evidence.append_agent_evidence_event(
       @sys.append_file_sync,
@@ -1748,6 +1885,40 @@ async test "interpret_merge_pr_preflight accepts CI-satisfied verify at head" {
     Ok(_) => ()
     Err(e) =>
       fail("expected CI evidence to satisfy verify policy: " + e.message())
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_merge_pr_preflight accepts current CI success before evidence log catches up" {
+  let project_dir = "/tmp/choir-mpf-ci-verify-poller-lag-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  let contract = merge_pr_test_verify_contract(["moon test --target native"])
+  let ps = @poller.PollerState::new()
+  ps.tracked.set(7, {
+    ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
+    pr_number: 7,
+    last_sha: "head-x",
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
+  })
+  let got = interpret_merge_pr_preflight(
+    7,
+    Some(ps),
+    project_dir,
+    "main.tl",
+    mock_preflight_capture_no_unresolved_threads,
+    task_contract_reader=merge_pr_test_contract_reader(contract),
+  )
+  match got {
+    Ok(_) => ()
+    Err(e) =>
+      fail(
+        "expected current CI rollup to satisfy verify policy: " + e.message(),
+      )
   }
   ignore(@sys.rm_rf(project_dir))
 }
@@ -1921,7 +2092,7 @@ async test "interpret_merge_pr_preflight rejects CI-only verify when disabled or
     ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
     pr_number: 7,
     last_sha: "head-y",
-    last_ci_rollup: @poller.CiRollupStatus::Success,
+    last_ci_rollup: @poller.CiRollupStatus::InProgress,
     mergeable: @poller.Mergeable::Unknown,
     merge_state_status: @poller.MergeStateStatus::Unknown,
     merged_at_unix: None,
@@ -2320,7 +2491,11 @@ test "format_tl_pr_recheck_summary treats matching CI evidence as verify when en
   assert_true(strict.contains("Advisory evaluation verdict: needs_human"))
   assert_true(strict.contains("local verify not observed"))
   let stale = format_tl_pr_recheck_summary(
-    { ..t, last_sha: "head-y" },
+    {
+      ..t,
+      last_sha: "head-y",
+      last_ci_rollup: @poller.CiRollupStatus::InProgress,
+    },
     project_dir,
     Some(0),
     task_contract=Some(contract),

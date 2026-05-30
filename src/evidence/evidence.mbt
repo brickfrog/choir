@@ -573,13 +573,22 @@ pub fn verify_results_for_required_at_head_with_ci(
       "no CI configured; satisfied per no-CI policy at " + head_sha,
     )
   }
-  if !latest_ci_observed_matches_head(events, head_sha) {
-    return results
+  if latest_ci_observed_matches_head(events, head_sha) {
+    return upgrade_not_observed_verify_results(
+      results,
+      "satisfied by CI rollup success at " + head_sha,
+    )
   }
-  upgrade_not_observed_verify_results(
-    results,
-    "satisfied by CI rollup success at " + head_sha,
-  )
+  // Poller snapshots update last_sha and last_ci_rollup together. Trust the
+  // caller's current rollup to bridge the short lag before the evidence log
+  // records the matching CiObserved event for this head.
+  if ci_rollup == @types.EvaluationCiRollup::Success {
+    return upgrade_not_observed_verify_results(
+      results,
+      "satisfied by current CI rollup success at " + head_sha,
+    )
+  }
+  results
 }
 
 ///|

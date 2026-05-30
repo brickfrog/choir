@@ -49,6 +49,197 @@ async test "status_bar_state server handler caches list-panes per session" {
 }
 
 ///|
+fn server_test_escape_toml_string(s : String) -> String {
+  let buf = StringBuilder::new()
+  for c in s {
+    match c {
+      '"' => buf.write_string("\\\"")
+      '\\' => buf.write_string("\\\\")
+      '\n' => buf.write_string("\\n")
+      '\r' => buf.write_string("\\r")
+      '\t' => buf.write_string("\\t")
+      _ => buf.write_char(c)
+    }
+  }
+  buf.to_string()
+}
+
+///|
+fn server_test_task_contract_local_config(
+  contract : @types.TaskContract,
+) -> String {
+  "task_contract_json = \"" +
+  server_test_escape_toml_string(contract.to_json_string()) +
+  "\"\n"
+}
+
+///|
+async test "wave_state server handler does not repair task contracts from local config" {
+  let project_dir = "/tmp/choir-wave-state-no-repair-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let parent_id = "main.tl"
+  let child_id = "main.leaf"
+  let child_workspace = project_dir + "/.choir/worktrees/leaf"
+  let contract = {
+    ..@types.TaskContract::empty(),
+    goal: "cached reads only",
+    verify: ["moon test --target native"],
+  }
+  let local_content = server_test_task_contract_local_config(contract)
+  ignore(@sys.create_dir_all(child_workspace + "/.choir"))
+  assert_true(
+    @sys.write_file_sync(
+      child_workspace + "/.choir/config.local.toml",
+      local_content,
+    ),
+  )
+  let state = ServerState::new(
+    { ..@types.Config::default(), project_dir, },
+    make_hermetic_recovery_provider(),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: parent_id,
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Codex,
+      parent: None,
+      workspace: project_dir,
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: child_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace: child_workspace,
+      branch: child_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  state.poller.track_recovered(
+    77,
+    child_id,
+    child_id,
+    "main",
+    "https://example.test/pr/77",
+    100L,
+    @poller.ReviewState::Approved,
+    "",
+    "head-sha",
+    @poller.CiRollupStatus::Success,
+    false,
+  )
+  let contracts_path = project_dir + "/.choir/agent-task-contracts.json"
+  assert_false(@sys.path_entry_exists(contracts_path))
+  let req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::TL,
+    name: "wave_state",
+    args: @types.RequestArgs::new({ "caller_id": parent_id }),
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.args.contains("repo") {
+      return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
+    }
+    if cmd.args.contains("graphql") {
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
+    (0, "")
+  }
+  let resp = state.handle_with_runner_and_capture(req, capture~)
+  assert_true(resp.is_ok())
+  assert_false(@sys.path_entry_exists(contracts_path))
+  @debug.assert_eq(state.task_contract_for_agent(child_id), None)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "tdd_intent server handler repairs missing task contract on write path" {
+  let project_dir = "/tmp/choir-tdd-intent-contract-repair-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let parent_id = "main.tl"
+  let child_id = "main.leaf"
+  let child_workspace = project_dir + "/.choir/worktrees/leaf"
+  let contract = {
+    ..@types.TaskContract::empty(),
+    goal: "repair before TDD",
+    verify: ["moon test --target native"],
+  }
+  let local_content = server_test_task_contract_local_config(contract)
+  ignore(@sys.create_dir_all(child_workspace + "/.choir"))
+  assert_true(
+    @sys.write_file_sync(
+      child_workspace + "/.choir/config.local.toml",
+      local_content,
+    ),
+  )
+  let state = ServerState::new(
+    { ..@types.Config::default(), project_dir, },
+    make_hermetic_recovery_provider(),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: parent_id,
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Codex,
+      parent: None,
+      workspace: project_dir,
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: child_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace: child_workspace,
+      branch: child_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::Dev,
+    name: "tdd_intent",
+    args: @types.RequestArgs::new({
+      "caller_id": child_id,
+      "intent": "write red test",
+    }),
+  }
+  let resp = state.handle_with_runner_and_capture(req)
+  assert_true(resp.is_ok())
+  @debug.assert_eq(state.task_contract_for_agent(child_id), Some(contract))
+  assert_true(
+    @sys.path_entry_exists(project_dir + "/.choir/agent-task-contracts.json"),
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 test "notify_parent uses live registry parent when present" {
   let project_dir = "/tmp/choir-notify-parent-test-" +
     "live-present-" +
@@ -195,8 +386,10 @@ test "reload snapshot restores registry pending state and mutexes" {
   state.pending_disconnects.set("root.leaf", 1234L)
   state.delivery_failures.set("root.leaf", 2)
   state.handoff_delivered.set("root.leaf", true)
-  state.worker_no_handoff_prodded_at.set("root.worker", 2222L)
-  state.worker_no_handoff_stalled_emitted.set("root.worker", true)
+  state.worker_no_handoff_prodded_at.set("worker-no-handoff:root.worker", 2222L)
+  state.worker_no_handoff_stalled_emitted.set(
+    "worker-no-handoff:root.worker", true,
+  )
   state.worker_no_handoff_exit_emitted.set("root.worker", true)
   state.spawn_registration_first_unseen.set("root.spawning", 3333L)
   state.idle_agent_warned_at_70.set("root.worker", true)
@@ -232,11 +425,15 @@ test "reload snapshot restores registry pending state and mutexes" {
       @debug.assert_eq(restored.delivery_failures.get("root.leaf"), Some(2))
       @debug.assert_eq(restored.handoff_delivered.get("root.leaf"), Some(true))
       @debug.assert_eq(
-        restored.worker_no_handoff_prodded_at.get("root.worker"),
+        restored.worker_no_handoff_prodded_at.get(
+          "worker-no-handoff:root.worker",
+        ),
         Some(2222L),
       )
       @debug.assert_eq(
-        restored.worker_no_handoff_stalled_emitted.get("root.worker"),
+        restored.worker_no_handoff_stalled_emitted.get(
+          "worker-no-handoff:root.worker",
+        ),
         Some(true),
       )
       @debug.assert_eq(
@@ -270,6 +467,36 @@ test "reload snapshot restores registry pending state and mutexes" {
     }
     Err(e) => fail(e.message())
   }
+}
+
+///|
+test "record_leaf_tdd_state clears pre-tdd stall tracking on progress" {
+  let project_dir = "/tmp/choir-leaf-tdd-progress-clears-stall-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  let state = ServerState::new(
+    { ..@types.Config::default(), project_dir, },
+    make_hermetic_recovery_provider(),
+  )
+  let agent_id = "root.leaf"
+  let pre_tdd_key = "leaf-pre-tdd-stall:" + agent_id
+  let post_fix_key = "leaf-post-fix-no-handoff:" + agent_id
+  state.worker_no_handoff_prodded_at.set(pre_tdd_key, 12L)
+  state.worker_no_handoff_stalled_emitted.set(pre_tdd_key, true)
+  state.worker_no_handoff_prodded_at.set(post_fix_key, 34L)
+  state.worker_no_handoff_stalled_emitted.set(post_fix_key, true)
+  state.record_leaf_tdd_state(agent_id, { phase: @types.LeafTddPhase::Intent })
+  assert_false(state.worker_no_handoff_prodded_at.contains(pre_tdd_key))
+  assert_false(state.worker_no_handoff_stalled_emitted.contains(pre_tdd_key))
+  assert_false(state.worker_no_handoff_prodded_at.contains(post_fix_key))
+  assert_false(state.worker_no_handoff_stalled_emitted.contains(post_fix_key))
+  @debug.assert_eq(
+    state.leaf_tdd_phase_for_agent(agent_id),
+    Some(@types.LeafTddPhase::Intent),
+  )
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
@@ -1493,7 +1720,7 @@ async test "process_poller_tick_with finalizes externally merged leaf and notifi
         false,
         @poller.Mergeable::Unknown,
         @poller.MergeStateStatus::Unknown,
-        None,
+        Some(1779064079L),
       )
     },
     runner~,

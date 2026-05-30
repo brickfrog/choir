@@ -35,6 +35,38 @@ test "dirty working tree yields UncommittedChanges after status capture" {
 }
 
 ///|
+test "beads journals alone do not dirty fork_wave clean gate" {
+  let plan = @tools.fork_wave_plan(".", [], 1, 0, "main.leaf", "")
+  let after_status = match plan {
+    GitCapture(cont~, ..) =>
+      cont(" M .beads/choir.jsonl\n?? .beads/new-child.jsonl\n")
+    _ => fail("expected GitCapture as first step")
+  }
+  assert_true(
+    match after_status {
+      GitCapture(args~, ..) => args.contains("log")
+      _ => false
+    },
+  )
+}
+
+///|
+test "beads journals are omitted from fork_wave dirty detail when mixed" {
+  let plan = @tools.fork_wave_plan(".", [], 1, 0, "main.leaf", "")
+  let after_status = match plan {
+    GitCapture(cont~, ..) => cont(" M .beads/choir.jsonl\n M src/foo.mbt\n")
+    _ => fail("expected GitCapture as first step")
+  }
+  match after_status {
+    Pure(Err(@tools.ForkWaveError::UncommittedChanges(output~))) => {
+      assert_true(output.contains("src/foo.mbt"))
+      assert_false(output.contains(".beads/choir.jsonl"))
+    }
+    _ => fail("expected Pure(Err(UncommittedChanges))")
+  }
+}
+
+///|
 test "clean status proceeds to unpushed check" {
   let plan = @tools.fork_wave_plan(".", [], 1, 0, "main.leaf", "")
   let after_status = match plan {

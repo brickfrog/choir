@@ -392,8 +392,8 @@ fn fork_wave_args_base() -> ForkWaveArgs {
     count: 2,
     tasks: ["shared task", "shared task"],
     task_contracts: [
-      { ..@types.TaskContract::empty(), goal: "shared task" },
-      { ..@types.TaskContract::empty(), goal: "shared task" },
+      { ..@types.TaskContract::empty(), goal: "shared task", verify: ["true"] },
+      { ..@types.TaskContract::empty(), goal: "shared task", verify: ["true"] },
     ],
     has_per_leaf_tasks: false,
     parent_branch: "main",
@@ -427,6 +427,78 @@ test "fork_wave_spawn_plan builds specs and agent_ids for shared-task wave" {
   assert_eq(plan.spawned_specs[0].task, "shared task")
   assert_eq(plan.spawned_specs[1].task, "shared task")
   assert_true(plan.cmds.length() > 0)
+}
+
+///|
+test "fork_wave_validate_resolved_task_contracts rejects dev leaf without verify" {
+  let args = {
+    ..fork_wave_args_base(),
+    task_contracts: [
+      { ..@types.TaskContract::empty(), goal: "shared task" },
+      { ..@types.TaskContract::empty(), goal: "shared task" },
+    ],
+  }
+  match
+    fork_wave_validate_resolved_task_contracts(
+      args,
+      wave_id=Some("wave-1776000000000-4242"),
+    ) {
+    Ok(_) => fail("expected missing verify rejection")
+    Err(e) => {
+      assert_true(e.message().contains("no verify command"))
+      assert_true(e.message().contains("main.wave-1776000000000-4242-0"))
+    }
+  }
+}
+
+///|
+test "fork_wave_validate_resolved_task_contracts accepts per-leaf verify" {
+  let args = {
+    ..fork_wave_args_base(),
+    task_contracts: [
+      { ..@types.TaskContract::empty(), verify: ["npm test"] },
+      { ..@types.TaskContract::empty(), verify: ["cargo test"] },
+    ],
+  }
+  match fork_wave_validate_resolved_task_contracts(args) {
+    Ok(_) => ()
+    Err(e) => fail("expected valid contracts: " + e.message())
+  }
+}
+
+///|
+test "fork_wave_validate_resolved_task_contracts rejects short arrays for all roles" {
+  let worker_args = {
+    ..fork_wave_args_base(),
+    child_role: @types.Role::Worker,
+    count: 2,
+    tasks: ["worker one", "worker two"],
+    task_contracts: [{ ..@types.TaskContract::empty(), goal: "one" }],
+  }
+  match fork_wave_validate_resolved_task_contracts(worker_args) {
+    Ok(_) => fail("expected short task_contracts rejection")
+    Err(e) => {
+      assert_true(e.message().contains("task count 2"))
+      assert_true(e.message().contains("task_contracts length 1"))
+    }
+  }
+  let task_args = {
+    ..fork_wave_args_base(),
+    child_role: @types.Role::TL,
+    count: 2,
+    tasks: ["only one"],
+    task_contracts: [
+      { ..@types.TaskContract::empty(), goal: "one" },
+      { ..@types.TaskContract::empty(), goal: "two" },
+    ],
+  }
+  match fork_wave_validate_resolved_task_contracts(task_args) {
+    Ok(_) => fail("expected short tasks rejection")
+    Err(e) => {
+      assert_true(e.message().contains("task count 2"))
+      assert_true(e.message().contains("tasks length 1"))
+    }
+  }
 }
 
 ///|
@@ -803,7 +875,9 @@ async test "interpret_fork_wave_spawn_effect_phase preflights wave_id leaf ident
     ..fork_wave_args_base(),
     count: 1,
     tasks: ["shared task"],
-    task_contracts: [{ ..@types.TaskContract::empty(), goal: "shared task" }],
+    task_contracts: [
+      { ..@types.TaskContract::empty(), goal: "shared task", verify: ["true"] },
+    ],
     parent_branch: "feature/parent",
   }
   let (resp, _, spawn_plan) = interpret_fork_wave_spawn_effect_phase(
@@ -1073,11 +1147,19 @@ async test "fork_wave post-spawn records server task contracts" {
   )
   @debug.assert_eq(
     captured.get("main.wave-0"),
-    Some({ ..@types.TaskContract::empty(), goal: "shared task" }),
+    Some({
+      ..@types.TaskContract::empty(),
+      goal: "shared task",
+      verify: ["true"],
+    }),
   )
   @debug.assert_eq(
     captured.get("main.wave-1"),
-    Some({ ..@types.TaskContract::empty(), goal: "shared task" }),
+    Some({
+      ..@types.TaskContract::empty(),
+      goal: "shared task",
+      verify: ["true"],
+    }),
   )
   ignore(@sys.rm_rf(project_dir))
 }
@@ -1867,11 +1949,13 @@ async test "interpret_fork_wave_spawn_effect_phase resolves parent branch and re
         ..@types.TaskContract::empty(),
         goal: "shared task",
         beads_issue_id: Some("choir-leaf-a"),
+        verify: ["true"],
       },
       {
         ..@types.TaskContract::empty(),
         goal: "shared task",
         beads_issue_id: Some("choir-leaf-b"),
+        verify: ["true"],
       },
     ],
   }
