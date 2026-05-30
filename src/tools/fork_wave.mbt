@@ -104,16 +104,23 @@ fn fork_wave_slug_for_index(
       None => flat_prefix + "-" + index.to_string()
     }
   }
-  match seen_slugs.get(raw_slug) {
-    Some(count) => {
-      seen_slugs.set(raw_slug, count + 1)
-      raw_slug + "-" + index.to_string()
-    }
-    None => {
-      seen_slugs.set(raw_slug, 1)
-      raw_slug
+  // Disambiguate against previously EMITTED slugs (the map keys), not just the
+  // raw slug, so a later leaf whose raw slug equals an earlier leaf's
+  // disambiguated slug (e.g. tasks ["a b", "a b", "a b 1"]) still receives a
+  // unique final slug instead of silently colliding branches/worktrees/tabs.
+  let mut candidate = raw_slug
+  let mut suffix = index
+  for ;; {
+    match seen_slugs.get(candidate) {
+      None => break
+      Some(_) => {
+        candidate = raw_slug + "-" + suffix.to_string()
+        suffix = suffix + 1
+      }
     }
   }
+  seen_slugs.set(candidate, 1)
+  candidate
 }
 
 ///|

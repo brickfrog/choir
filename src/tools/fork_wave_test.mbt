@@ -542,6 +542,43 @@ test "fork_wave_spawn_plan disambiguates duplicate raw slugs" {
 }
 
 ///|
+test "fork_wave_spawn_plan disambiguates when a later raw slug matches an earlier emitted slug" {
+  // tasks ["alpha beta", "alpha beta", "alpha beta 1"]: leaf 1's disambiguated
+  // slug ("alpha-beta-1") equals leaf 2's raw slug. seen_slugs must track
+  // EMITTED slugs, not just raw, so all three stay distinct.
+  let args : ForkWaveArgs = {
+    count: 3,
+    tasks: ["alpha beta", "alpha beta", "alpha beta 1"],
+    task_contracts: [
+      { ..@types.TaskContract::empty(), goal: "alpha beta" },
+      { ..@types.TaskContract::empty(), goal: "alpha beta" },
+      { ..@types.TaskContract::empty(), goal: "alpha beta 1" },
+    ],
+    has_per_leaf_tasks: true,
+    parent_branch: "pb",
+    caller_id: "pb.tl",
+    slug_prefix: "wave",
+    agent_type: @types.AgentType::MoonPilot,
+    child_role: @types.Role::Dev,
+    parent_session_id: None,
+    review_context: None,
+    automerge: None,
+    review_mode: None,
+    merge_strategy: None,
+    depends_on: [],
+    scaffold_commit: None,
+  }
+  let plan = fork_wave_spawn_plan(args, 0, None, "/p", "sess")
+  assert_eq(plan.spawned_count, 3)
+  let slugs = plan.spawned_slugs
+  let unique : Map[String, Int] = {}
+  for s in slugs {
+    unique.set(s, 1)
+  }
+  assert_eq(unique.length(), 3)
+}
+
+///|
 test "fork_wave_spawn_plan embeds wave_id discriminator in per-leaf task slugs" {
   let args : ForkWaveArgs = {
     count: 2,
