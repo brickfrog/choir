@@ -127,7 +127,12 @@ pub async fn interpret_kill_agent(
   registry : @registry.AgentRegistry?,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   project_dir? : String = ".",
-  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+  // Dispatch injects the production Beads capture; the interpreter default
+  // keeps direct adapter tests hermetic when a local config names a bead.
+  capture? : async (@workspace.Command) -> (Int, String) = async fn(_) {
+    @async.sleep(0)
+    (0, "")
+  },
   list_pids? : (String) -> Array[Int] = fn(p) {
     @sys.list_pids_with_cwd_prefix(p)
   },

@@ -1352,6 +1352,51 @@ async test "interpret_shutdown mirrors lifecycle state to Beads on graceful exit
 }
 
 ///|
+async test "dispatch kill_agent mirrors Beads state through bd_capture" {
+  let tmp = "/tmp/choir-kill-agent-beads-dispatch-" + @sys.get_pid().to_string()
+  let workspace = tmp + "/worker"
+  ignore(@sys.rm_rf(tmp))
+  let reg = shutdown_beads_registry_fixture(workspace, @types.Role::Worker)
+  let seen : Array[String] = []
+  let resp = dispatch(
+    ToolRequest::KillAgent({ agent_id: "main.leaf", reason: "cleanup" }),
+    project_dir=tmp,
+    registry=Some(reg),
+    runner=mock_shutdown_runner_record_worktree,
+    capture=async fn(_cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      fail("kill_agent Beads mirror must use bd_capture, not generic capture")
+      (-1, "")
+    },
+    bd_capture=async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      seen.push(cmd.program + " " + cmd.args.join(" "))
+      (0, "")
+    },
+  )
+  match resp {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      @debug.assert_eq(map.get("status"), Some(String::to_json("killed")))
+      @debug.assert_eq(map.get("agent_id"), Some(String::to_json("main.leaf")))
+    }
+    _ => fail("expected kill_agent ok")
+  }
+  let rendered = seen.join("\n")
+  assert_true(
+    rendered.contains(
+      "bd set-state choir-shutdown lifecycle=killed --reason Choir kill_agent: cleanup",
+    ),
+  )
+  assert_true(
+    rendered.contains(
+      "bd audit record --kind tool_call --tool-name kill_agent --response Choir kill_agent: cleanup --issue-id choir-shutdown",
+    ),
+  )
+  ignore(@sys.rm_rf(tmp))
+}
+
+///|
 async test "interpret_shutdown skips Beads shutdown mirror when exit is deferred" {
   let tmp = "/tmp/choir-shutdown-beads-deferred-" + @sys.get_pid().to_string()
   let workspace = tmp + "/worker"
