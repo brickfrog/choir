@@ -910,16 +910,17 @@ fn fork_wave_event_is_no_zellij_tab_warn_for(
 }
 
 ///|
-fn fork_wave_no_zellij_tab_warn_count_for(
-  events : Array[@moontrace.Event],
-  agent_id : String,
-  slug : String,
-  session : String,
-) -> Int {
+fn fork_wave_no_zellij_tab_warn_count(events : Array[@moontrace.Event]) -> Int {
   let mut count = 0
   for event in events {
-    if fork_wave_event_is_no_zellij_tab_warn_for(event, agent_id, slug, session) {
-      count = count + 1
+    if event.level == @moontrace.Level::Warn {
+      match fork_wave_test_field_value(event.fields, "event") {
+        Some(value) =>
+          if value == String::to_json("spawn_no_zellij_tab") {
+            count = count + 1
+          }
+        None => ()
+      }
     }
   }
   count
@@ -1034,12 +1035,7 @@ async test "fork_wave post-spawn warns only when spawned tab has no resolvable p
     },
   )
   @moontrace.clear_subscriber()
-  assert_eq(
-    fork_wave_no_zellij_tab_warn_count_for(
-      resolved_captured, "main.resolved-tab-0", "resolved-tab-0", resolved_session,
-    ),
-    0,
-  )
+  assert_eq(fork_wave_no_zellij_tab_warn_count(resolved_captured), 0)
   ignore(@sys.rm_rf(resolved_project_dir))
 }
 
@@ -1058,9 +1054,15 @@ async test "fork_wave post-spawn records server task contracts" {
     project_dir,
     "choir",
     Some(reg),
-    capture=async fn(_cmd) {
+    capture=async fn(cmd) {
       @async.sleep(0)
-      (0, "")
+      if cmd.program == "zellij" {
+        (
+          0, "[{\"id\":7,\"tab_name\":\"wave-0\",\"is_plugin\":false},{\"id\":8,\"tab_name\":\"wave-1\",\"is_plugin\":false}]",
+        )
+      } else {
+        (0, "")
+      }
     },
     record_task_contract=fn(agent_id, contract) {
       match contract {
@@ -1106,7 +1108,7 @@ async test "fork_wave post-spawn does not clobber a live registry collision" {
     _cmd,
   ) {
     @async.sleep(0)
-    (0, "terminal_9\n")
+    (0, "[{\"id\":9,\"tab_name\":\"wave-1\",\"is_plugin\":false}]")
   })
   try reg.get("main.wave-0") catch {
     _ => fail("expected existing live agent to remain in registry")
