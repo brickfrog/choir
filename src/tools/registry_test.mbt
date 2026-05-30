@@ -34,6 +34,7 @@ async fn mock_registry_runner(cmds : Array[@workspace.Command]) -> Array[Int] {
 fn registry_test_audit_receipt(sha : String) -> String {
   let receipt : @types.AuditReceipt = {
     sha,
+    tree_sha: sha,
     branch: "test",
     audited_at: 1770000000L,
     agent_id: "main.tl",
@@ -58,6 +59,9 @@ async fn mock_registry_capture(cmd : @workspace.Command) -> (Int, String) {
     return (0, "origin/main\n")
   }
   if cmd.program == "git" && cmd.args == ["rev-parse", "HEAD"] {
+    return (0, "hash\n")
+  }
+  if cmd.program == "git" && cmd.args == ["rev-parse", "hash^{tree}"] {
     return (0, "hash\n")
   }
   if cmd.program == "git" && cmd.args == ["remote", "get-url", "origin"] {
@@ -609,6 +613,7 @@ async test "dispatch returns correct stub for each tool name" {
         // anything else to defend against path traversal in the on-disk
         // receipt filename.
         "sha": "0123456789abcdef0123456789abcdef01234567",
+        "tree_sha": "fedcba9876543210fedcba9876543210fedcba98",
         "branch": "test",
         "findings_count": "0",
       },

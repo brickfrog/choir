@@ -131,12 +131,13 @@ const AUDIT_SKILL_DEFAULT : String =
   #|   `write_audit_receipt` MCP tool.
   #|
   #|   - Get `sha` with `git rev-parse HEAD`.
+  #|   - Get `tree_sha` with `git rev-parse 'HEAD^{tree}'`.
   #|   - Get `branch` with `git rev-parse --abbrev-ref HEAD`.
   #|   - Compute `findings_count` from Sarcasmotron's response. Count explicit
   #|     finding markers such as `Finding 1:`, `Finding 2:`, or numbered finding
   #|     lines like `1. ...`; if the worker explicitly says there are no
   #|     findings, use `0`.
-  #|   - Call `write_audit_receipt` with `sha`, `branch`, and
+  #|   - Call `write_audit_receipt` with `sha`, `tree_sha`, `branch`, and
   #|     `findings_count`. Do not write `.choir/audit-receipts` directly; the
   #|     MCP tool fills `audited_at` and `agent_id`.
   #|
@@ -374,7 +375,7 @@ const SHIP_PR_DEFAULT : String =
   #|2. Wait for `[PR READY]`, then `[REVIEW]` + `[CI LATEST HEAD] success`.
   #|3. Copilot threads: have the leaf push fixes, then wait for the poller snapshot to show zero unresolved threads; use `mcp__choir__resolve_my_review_threads` only if they persist.
   #|4. Once review threads are clear and CI is green, the TL runs `/audit` until the receipt has `findings_count=0`. Audit must run AFTER fixes are pushed; running it earlier just mints a receipt for a HEAD that subsequent commits will invalidate.
-  #|5. `mcp__choir__merge_pr`. If the audit receipt is missing, stale, or has findings, merge_pr returns a policy block; re-run `/audit` on the current HEAD and retry.
+  #|5. `mcp__choir__merge_pr`. If the audit receipt is missing, stale, or has findings, merge_pr returns a policy block; re-run `/audit` on the current HEAD tree and retry.
   #|
   #|## Path B — TL-direct (root, no task contract)
   #|

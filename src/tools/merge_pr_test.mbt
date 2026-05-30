@@ -243,8 +243,18 @@ fn merge_pr_test_audit_receipt_with_findings(
   sha : String,
   findings_count : Int,
 ) -> String {
+  merge_pr_test_audit_receipt_for_tree(sha, sha, findings_count)
+}
+
+///|
+fn merge_pr_test_audit_receipt_for_tree(
+  sha : String,
+  tree_sha : String,
+  findings_count : Int,
+) -> String {
   let receipt : @types.AuditReceipt = {
     sha,
+    tree_sha,
     branch: "feature/audit-gate",
     audited_at: 1L,
     agent_id: "main.tl",
@@ -350,13 +360,15 @@ test "load_gate_state accepts a properly seeded gate file" {
 ///|
 test "merge_pr_audit_receipt_validation distinguishes valid stale missing invalid" {
   let head = "abcdef1234567890abcdef1234567890abcdef12"
-  let other = "1111111111112222222222223333333333334444"
+  let tree = "9999999999999999999999999999999999999999"
+  let other_head = "1111111111112222222222223333333333334444"
+  let other_tree = "2222222222222222222222222222222222222222"
   match
     merge_pr_audit_receipt_validation(
       "main",
       "main",
-      head,
-      Some(merge_pr_test_audit_receipt(head)),
+      tree,
+      Some(merge_pr_test_audit_receipt_for_tree(other_head, tree, 0)),
     ) {
     MergeAuditReceiptValid => ()
     _ => fail("expected valid receipt")
@@ -365,35 +377,35 @@ test "merge_pr_audit_receipt_validation distinguishes valid stale missing invali
     merge_pr_audit_receipt_validation(
       "main",
       "main",
-      head,
-      Some(merge_pr_test_audit_receipt(other)),
+      tree,
+      Some(merge_pr_test_audit_receipt_for_tree(head, other_tree, 0)),
     ) {
     MergeAuditReceiptStale(audited, current) => {
-      assert_eq(audited, other)
-      assert_eq(current, head)
+      assert_eq(audited, other_tree)
+      assert_eq(current, tree)
     }
     _ => fail("expected stale receipt")
   }
-  match merge_pr_audit_receipt_validation("main", "main", head, None) {
+  match merge_pr_audit_receipt_validation("main", "main", tree, None) {
     MergeAuditReceiptMissing(short_sha) =>
-      assert_eq(short_sha, file_pr_short_sha(head))
+      assert_eq(short_sha, file_pr_short_sha(tree))
     _ => fail("expected missing receipt")
   }
   match
-    merge_pr_audit_receipt_validation("main", "main", head, Some("{not json")) {
+    merge_pr_audit_receipt_validation("main", "main", tree, Some("{not json")) {
     MergeAuditReceiptInvalid(short_sha) =>
-      assert_eq(short_sha, file_pr_short_sha(head))
+      assert_eq(short_sha, file_pr_short_sha(tree))
     _ => fail("expected invalid receipt")
   }
   match
     merge_pr_audit_receipt_validation(
       "main",
       "main",
-      head,
-      Some(merge_pr_test_audit_receipt_with_findings(head, 2)),
+      tree,
+      Some(merge_pr_test_audit_receipt_for_tree(head, tree, 2)),
     ) {
     MergeAuditReceiptFindingsRemain(short_sha, count) => {
-      assert_eq(short_sha, file_pr_short_sha(head))
+      assert_eq(short_sha, file_pr_short_sha(tree))
       assert_eq(count, 2)
     }
     _ => fail("expected findings receipt")
@@ -402,7 +414,7 @@ test "merge_pr_audit_receipt_validation distinguishes valid stale missing invali
     merge_pr_audit_receipt_validation(
       "main",
       "main",
-      head,
+      tree,
       Some(
         "{\"sha\":\"" +
         head +
@@ -410,20 +422,20 @@ test "merge_pr_audit_receipt_validation distinguishes valid stale missing invali
       ),
     ) {
     MergeAuditReceiptInvalid(short_sha) =>
-      assert_eq(short_sha, file_pr_short_sha(head))
+      assert_eq(short_sha, file_pr_short_sha(tree))
     _ => fail("expected legacy receipt to be invalid")
   }
 }
 
 ///|
 test "merge_pr audit validation applies to resolved default branch" {
-  let head = "abcdef1234567890abcdef1234567890abcdef12"
-  match merge_pr_audit_receipt_validation("master", "master", head, None) {
+  let tree = "9999999999999999999999999999999999999999"
+  match merge_pr_audit_receipt_validation("master", "master", tree, None) {
     MergeAuditReceiptMissing(short_sha) =>
-      assert_eq(short_sha, file_pr_short_sha(head))
+      assert_eq(short_sha, file_pr_short_sha(tree))
     _ => fail("expected audit receipt requirement on master default branch")
   }
-  match merge_pr_audit_receipt_validation("feature/x", "master", head, None) {
+  match merge_pr_audit_receipt_validation("feature/x", "master", tree, None) {
     MergeAuditReceiptValid => ()
     _ => fail("expected feature branch parent to skip audit gate")
   }
@@ -496,6 +508,9 @@ async test "interpret_merge_pr missing audit receipt policy-blocks on master def
       if cmd.program == "git" &&
         cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
         return (0, "feature/audit-gate\n")
+      }
+      if cmd.program == "git" && cmd.args == ["rev-parse", head + "^{tree}"] {
+        return (0, head + "\n")
       }
       if cmd.program == "cat" {
         return (1, "")
@@ -864,6 +879,9 @@ async test "interpret_merge_pr main audit gate merges only matching audited head
           0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
         )
       }
+      if cmd.program == "git" && cmd.args == ["rev-parse", head + "^{tree}"] {
+        return (0, head + "\n")
+      }
       if cmd.program == "cat" {
         return (0, merge_pr_test_audit_receipt(head))
       }
@@ -956,6 +974,9 @@ async test "interpret_merge_pr success fires pr_merged completion hooks" {
       if cmd.program == "git" &&
         cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
         return (0, "origin/main\n")
+      }
+      if cmd.program == "git" && cmd.args == ["rev-parse", head + "^{tree}"] {
+        return (0, head + "\n")
       }
       if cmd.program == "cat" {
         return (0, merge_pr_test_audit_receipt(head))
@@ -1084,6 +1105,9 @@ async test "interpret_merge_pr suppresses pr_merged hooks when poller persist fa
       if cmd.program == "git" &&
         cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
         return (0, "origin/main\n")
+      }
+      if cmd.program == "git" && cmd.args == ["rev-parse", head + "^{tree}"] {
+        return (0, head + "\n")
       }
       if cmd.program == "cat" {
         return (0, merge_pr_test_audit_receipt(head))

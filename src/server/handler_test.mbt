@@ -2041,6 +2041,10 @@ async test "automerge audit policy block is visible and retryable for same head"
         0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
       )
     }
+    if cmd.program == "git" &&
+      cmd.args == ["rev-parse", "sha-audit-policy-block^{tree}"] {
+      return (0, "sha-audit-policy-block\n")
+    }
     if cmd.program == "cat" {
       return (1, "")
     }
@@ -2154,6 +2158,10 @@ async test "automerge findings audit block is not retried for same head" {
       return (
         0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
       )
+    }
+    if cmd.program == "git" &&
+      cmd.args == ["rev-parse", "sha-" + label + "^{tree}"] {
+      return (0, "sha-" + label + "\n")
     }
     if cmd.program == "cat" {
       return (0, handler_test_audit_receipt("sha-" + label, "main", 2))
@@ -3193,7 +3201,7 @@ test "detect_unaudited_integration_merge returns typed outcome for each path" {
 }
 
 ///|
-test "valid_merge_audit_receipt_exists checks sha and findings independent of receipt branch" {
+test "valid_merge_audit_receipt_exists checks tree and findings independent of receipt branch" {
   let head = "abcdef1234567890abcdef1234567890abcdef12"
   let other_head = "0000000000000000000000000000000000000000"
   let receipt_path = "/repo/.choir/audit-receipts/abcdef123456.json"
@@ -3209,7 +3217,17 @@ test "valid_merge_audit_receipt_exists checks sha and findings independent of re
       receipt_path, "trunk", head, exists, read,
     ),
   )
-  body = handler_test_audit_receipt(other_head, "feature/t92", 0)
+  body = handler_test_audit_receipt_with_tree(
+    other_head, head, "feature/t92", 0,
+  )
+  assert_true(
+    @tools.valid_merge_audit_receipt_exists(
+      receipt_path, "trunk", head, exists, read,
+    ),
+  )
+  body = handler_test_audit_receipt_with_tree(
+    other_head, other_head, "feature/t92", 0,
+  )
   assert_false(
     @tools.valid_merge_audit_receipt_exists(
       receipt_path, "trunk", head, exists, read,
@@ -3247,8 +3265,19 @@ fn handler_test_audit_receipt(
   branch : String,
   findings_count : Int,
 ) -> String {
+  handler_test_audit_receipt_with_tree(sha, sha, branch, findings_count)
+}
+
+///|
+fn handler_test_audit_receipt_with_tree(
+  sha : String,
+  tree_sha : String,
+  branch : String,
+  findings_count : Int,
+) -> String {
   let receipt : @types.AuditReceipt = {
     sha,
+    tree_sha,
     branch,
     audited_at: 1770000000L,
     agent_id: "main.tl",
@@ -3700,6 +3729,9 @@ async test "A: unaudited PRMerged event does NOT fire completion hooks" {
             }
             return (0, "origin/" + default_branch + "\n")
           }
+          if cmd.program == "git" && cmd.args == ["rev-parse", head + "^{tree}"] {
+            return (0, head + "\n")
+          }
           if cmd.program == "gh" && cmd.args.contains("list") {
             if gh_list_enabled {
               return (
@@ -3983,6 +4015,9 @@ async test "B: audited PRMerged event DOES fire completion hooks (regression gua
       if cmd.program == "git" &&
         cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
         return (0, "origin/main\n")
+      }
+      if cmd.program == "git" && cmd.args == ["rev-parse", head + "^{tree}"] {
+        return (0, head + "\n")
       }
       if cmd.program == "gh" && cmd.args.contains("list") {
         return (

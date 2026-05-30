@@ -2,6 +2,7 @@
 test "AuditReceipt JSON round trip" {
   let receipt : AuditReceipt = {
     sha: "abcdef1234567890abcdef1234567890abcdef12",
+    tree_sha: "9999999999999999999999999999999999999999",
     branch: "feature/workflow-gates",
     audited_at: 1770000000L,
     agent_id: "main.tl",
@@ -25,7 +26,7 @@ test "AuditReceipt JSON round trip" {
 }
 
 ///|
-test "AuditReceipt JSON decodes legacy receipt without findings body" {
+test "AuditReceipt JSON rejects receipt without tree sha" {
   let body = "{" +
     "\"sha\":\"abcdef1234567890abcdef1234567890abcdef12\"," +
     "\"branch\":\"feature/workflow-gates\"," +
@@ -35,20 +36,10 @@ test "AuditReceipt JSON decodes legacy receipt without findings body" {
     "}"
   let parsed = @json.parse(body) catch {
     _ => {
-      fail("legacy receipt JSON did not parse")
+      fail("receipt JSON did not parse")
       return
     }
   }
-  let decoded : AuditReceipt = @json.from_json(parsed) catch {
-    _ => {
-      fail("legacy receipt JSON did not decode")
-      return
-    }
-  }
-  assert_eq(decoded.sha, "abcdef1234567890abcdef1234567890abcdef12")
-  assert_eq(decoded.branch, "feature/workflow-gates")
-  assert_eq(decoded.audited_at, 1770000000L)
-  assert_eq(decoded.agent_id, "main.tl")
-  assert_eq(decoded.findings_count, 0)
-  @debug.assert_eq(decoded.findings, None)
+  let _decoded : AuditReceipt = @json.from_json(parsed) catch { _ => return }
+  fail("receipt without tree_sha should not decode")
 }

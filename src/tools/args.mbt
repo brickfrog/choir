@@ -255,6 +255,7 @@ pub(all) struct CrystallizeSpecArgs {
 pub(all) struct WriteAuditReceiptArgs {
   caller_id : String
   sha : String
+  tree_sha : String
   branch : String
   findings_count : Int
   findings : String

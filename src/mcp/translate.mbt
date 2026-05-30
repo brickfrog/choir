@@ -442,6 +442,10 @@ fn tool_defs() -> Array[CatalogTool] {
       description: "Write a typed audit receipt for the audited HEAD. The tool fills audited_at from server time and agent_id from caller_id.",
       props: [
         { name: "sha", desc: "Full audited HEAD sha" },
+        {
+          name: "tree_sha",
+          desc: "Full audited HEAD tree sha (`git rev-parse HEAD^{tree}`)",
+        },
         { name: "branch", desc: "Branch audited" },
         {
           name: "findings_count",
@@ -449,7 +453,7 @@ fn tool_defs() -> Array[CatalogTool] {
         },
         { name: "caller_id", desc: "ID of the calling agent" },
       ],
-      required: ["sha", "branch", "findings_count", "caller_id"],
+      required: ["sha", "tree_sha", "branch", "findings_count", "caller_id"],
     },
     {
       name: "send_message",

@@ -186,15 +186,15 @@ fn automerge_audit_policy_block_retryable_message(msg : String) -> Bool {
   if !policy_msg.has_prefix("policy blocked: audit receipt gate blocked PR #") {
     return false
   }
-  policy_msg.contains(": missing audit receipt for HEAD ") ||
-  policy_msg.contains(": malformed audit receipt for HEAD ") ||
+  policy_msg.contains(": missing audit receipt for HEAD tree ") ||
+  policy_msg.contains(": malformed audit receipt for HEAD tree ") ||
   policy_msg.contains(": stale audit receipt (")
 }
 
 ///|
 fn automerge_retryable_audit_policy_block(resp : @types.Response) -> String? {
   // Only classify gate failures that a re-run of /audit on the same HEAD can
-  // resolve. `audit receipt for HEAD ... reports N finding(s)` requires new
+  // resolve. `audit receipt for HEAD tree ... reports N finding(s)` requires new
   // commits; retrying automerge in a loop will just spin without progress.
   match resp.error_message() {
     Some(msg) if automerge_audit_policy_block_retryable_message(msg) =>

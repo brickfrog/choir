@@ -38,6 +38,7 @@ fn merge_pr_parse_audit_receipt(receipt_body : String) -> @types.AuditReceipt? {
     _ => return None
   }
   if receipt.sha == "" ||
+    receipt.tree_sha == "" ||
     receipt.branch == "" ||
     receipt.audited_at <= 0L ||
     receipt.agent_id == "" ||
@@ -68,33 +69,33 @@ fn MergePrAuditGateStatus::to_wire_string(
 pub fn merge_pr_audit_receipt_validation(
   parent_branch : String,
   default_branch : String,
-  current_head : String,
+  current_tree : String,
   receipt_body : String?,
 ) -> MergePrAuditReceiptValidation {
   if !file_pr_audit_receipt_required(parent_branch, default_branch) {
     return MergeAuditReceiptValid
   }
-  merge_pr_required_audit_receipt_validation(current_head, receipt_body)
+  merge_pr_required_audit_receipt_validation(current_tree, receipt_body)
 }
 
 ///|
 pub fn merge_pr_required_audit_receipt_validation(
-  current_head : String,
+  current_tree : String,
   receipt_body : String?,
 ) -> MergePrAuditReceiptValidation {
-  let short_sha = file_pr_short_sha(current_head)
+  let short_sha = file_pr_short_sha(current_tree)
   let receipt = match receipt_body {
     Some(body) if body.trim() != "" => body
     _ => return MergeAuditReceiptMissing(short_sha)
   }
   match merge_pr_parse_audit_receipt(receipt) {
-    Some(parsed) if parsed.sha == current_head =>
+    Some(parsed) if parsed.tree_sha == current_tree =>
       if parsed.findings_count == 0 {
         MergeAuditReceiptValid
       } else {
         MergeAuditReceiptFindingsRemain(short_sha, parsed.findings_count)
       }
-    Some(parsed) => MergeAuditReceiptStale(parsed.sha, current_head)
+    Some(parsed) => MergeAuditReceiptStale(parsed.tree_sha, current_tree)
     None => MergeAuditReceiptInvalid(short_sha)
   }
 }
@@ -106,17 +107,17 @@ fn merge_pr_audit_receipt_validation_summary(
   match validation {
     MergeAuditReceiptValid => "valid audit receipt"
     MergeAuditReceiptMissing(short_sha) =>
-      "missing audit receipt for HEAD " + short_sha
+      "missing audit receipt for HEAD tree " + short_sha
     MergeAuditReceiptInvalid(short_sha) =>
-      "malformed audit receipt for HEAD " + short_sha
-    MergeAuditReceiptStale(audited_sha, current_sha) =>
-      "stale audit receipt (audit ran on " +
-      audited_sha +
-      ", current HEAD is " +
-      current_sha +
+      "malformed audit receipt for HEAD tree " + short_sha
+    MergeAuditReceiptStale(audited_tree_sha, current_tree_sha) =>
+      "stale audit receipt (audit ran on tree " +
+      audited_tree_sha +
+      ", current tree is " +
+      current_tree_sha +
       ")"
     MergeAuditReceiptFindingsRemain(short_sha, count) =>
-      "audit receipt for HEAD " +
+      "audit receipt for HEAD tree " +
       short_sha +
       " reports " +
       count.to_string() +
@@ -637,7 +638,20 @@ async fn merge_pr_audit_receipt_validation_for_head(
   head_sha : String,
   capture : async (@workspace.Command) -> (Int, String),
 ) -> MergePrAuditReceiptValidation {
-  let receipt_path = file_pr_audit_receipt_path_for_head(head_sha)
+  let (tree_exit_code, tree_output) = capture({
+    program: "git",
+    args: ["rev-parse", head_sha + "^{tree}"],
+    workdir: Some(project_dir),
+  })
+  let tree_sha = if tree_exit_code == 0 {
+    tree_output.trim().to_owned()
+  } else {
+    ""
+  }
+  if tree_sha == "" {
+    return MergeAuditReceiptMissing(file_pr_short_sha(head_sha))
+  }
+  let receipt_path = file_pr_audit_receipt_path_for_head(tree_sha)
   let (exit_code, receipt_body) = capture({
     program: "cat",
     args: [receipt_path],
@@ -646,7 +660,7 @@ async fn merge_pr_audit_receipt_validation_for_head(
   merge_pr_audit_receipt_validation(
     parent_branch,
     default_branch,
-    head_sha,
+    tree_sha,
     if exit_code == 0 {
       Some(receipt_body)
     } else {

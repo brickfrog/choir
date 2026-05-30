@@ -8,10 +8,10 @@ pub(all) struct AuditReceiptWritePlan {
 ///|
 
 ///|
-/// Validate that `sha` looks like a git SHA — lowercase hex of length 40
+/// Validate that a commit or tree hash looks like a git SHA — lowercase hex of length 40
 /// (SHA-1) or 64 (SHA-256). This is a defense against path traversal in
 /// `file_pr_audit_receipt_path_for_head` which derives the on-disk file
-/// name from the sha; an unvalidated `../../etc/foo` would escape the
+/// name from the hash; an unvalidated `../../etc/foo` would escape the
 /// `.choir/audit-receipts/` directory with a forced .json suffix.
 fn audit_receipt_validate_sha_format(sha : String) -> Bool {
   if sha.length() != 40 && sha.length() != 64 {
@@ -34,6 +34,7 @@ pub fn plan_write_audit_receipt(
   audited_at : Int64,
 ) -> Result[AuditReceiptWritePlan, @types.ChoirError] {
   let sha = args.sha.trim().to_owned()
+  let tree_sha = args.tree_sha.trim().to_owned()
   let branch = args.branch.trim().to_owned()
   let caller_id = args.caller_id.trim().to_owned()
   if sha == "" {
@@ -44,6 +45,18 @@ pub fn plan_write_audit_receipt(
       @types.ChoirError::validation_error(
         "sha must be a lowercase-hex git SHA (40 or 64 chars); got " +
         sha.length().to_string() +
+        " chars",
+      ),
+    )
+  }
+  if tree_sha == "" {
+    return Err(@types.ChoirError::validation_error("tree_sha cannot be empty"))
+  }
+  if !audit_receipt_validate_sha_format(tree_sha) {
+    return Err(
+      @types.ChoirError::validation_error(
+        "tree_sha must be a lowercase-hex git tree SHA (40 or 64 chars); got " +
+        tree_sha.length().to_string() +
         " chars",
       ),
     )
@@ -66,9 +79,10 @@ pub fn plan_write_audit_receipt(
       ),
     )
   }
-  let path = file_pr_audit_receipt_path_for_head(sha)
+  let path = file_pr_audit_receipt_path_for_head(tree_sha)
   let receipt : @types.AuditReceipt = {
     sha,
+    tree_sha,
     branch,
     audited_at,
     agent_id: caller_id,
@@ -103,6 +117,7 @@ pub fn interpret_write_audit_receipt(
     "status": "ok".to_json(),
     "path": plan.path.to_json(),
     "sha": plan.receipt.sha.to_json(),
+    "tree_sha": plan.receipt.tree_sha.to_json(),
     "findings_count": plan.receipt.findings_count.to_json(),
   })
 }

@@ -1866,6 +1866,10 @@ fn parse_write_audit_receipt_args(
   if sha == "" {
     return Err(ParseError::MissingField(field="sha"))
   }
+  let tree_sha = tool_args_get(args, "tree_sha").unwrap_or("")
+  if tree_sha == "" {
+    return Err(ParseError::MissingField(field="tree_sha"))
+  }
   let branch = tool_args_get(args, "branch").unwrap_or("")
   if branch == "" {
     return Err(ParseError::MissingField(field="branch"))
@@ -1885,7 +1889,7 @@ fn parse_write_audit_receipt_args(
       )
   }
   let findings = tool_args_get(args, "findings").unwrap_or("")
-  Ok({ caller_id, sha, branch, findings_count, findings })
+  Ok({ caller_id, sha, tree_sha, branch, findings_count, findings })
 }
 
 ///|
@@ -2402,11 +2406,28 @@ test "parse_write_audit_receipt_args requires findings_count" {
       tool_args_from_map({
         "caller_id": "main.tl",
         "sha": "abcdef1234567890abcdef1234567890abcdef12",
+        "tree_sha": "9999999999999999999999999999999999999999",
         "branch": "feature/workflow-gates",
       }),
     ) {
     Err(ParseError::MissingField(field~)) => assert_eq(field, "findings_count")
     _ => fail("expected MissingField(findings_count)")
+  }
+}
+
+///|
+test "parse_write_audit_receipt_args requires tree_sha" {
+  match
+    parse_write_audit_receipt_args(
+      tool_args_from_map({
+        "caller_id": "main.tl",
+        "sha": "abcdef1234567890abcdef1234567890abcdef12",
+        "branch": "feature/workflow-gates",
+        "findings_count": "0",
+      }),
+    ) {
+    Err(ParseError::MissingField(field~)) => assert_eq(field, "tree_sha")
+    _ => fail("expected MissingField(tree_sha)")
   }
 }
 

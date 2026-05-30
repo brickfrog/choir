@@ -1,6 +1,7 @@
 ///|
 pub(all) struct AuditReceipt {
   sha : String
+  tree_sha : String
   branch : String
   audited_at : Int64
   agent_id : String
@@ -20,6 +21,16 @@ pub impl FromJson for AuditReceipt with fn from_json(json, path) {
     None =>
       raise @json.JsonDecodeError(
         (path.add_key("sha"), "AuditReceipt::from_json: missing field sha"),
+      )
+  }
+  let tree_sha = match json_field_string(fields, "tree_sha") {
+    Some(value) => value
+    None =>
+      raise @json.JsonDecodeError(
+        (
+          path.add_key("tree_sha"),
+          "AuditReceipt::from_json: missing field tree_sha",
+        ),
       )
   }
   let branch = match json_field_string(fields, "branch") {
@@ -63,5 +74,5 @@ pub impl FromJson for AuditReceipt with fn from_json(json, path) {
       )
   }
   let findings = json_field_string(fields, "findings")
-  { sha, branch, audited_at, agent_id, findings_count, findings }
+  { sha, tree_sha, branch, audited_at, agent_id, findings_count, findings }
 }
