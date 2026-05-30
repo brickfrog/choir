@@ -146,6 +146,14 @@ test "onboard is a registered skill prompt with a baked fallback body" {
   assert_true(body.has_prefix("---\nname: onboard\n"))
   assert_true(body.contains("Inspect a fresh target repo"))
   assert_true(body.contains("Stage and stop for human review"))
+  // MoonBit detection must not blindly hardcode the native backend; it must
+  // detect+mirror the repo's actual target (choir-updv).
+  assert_true(body.contains("detect the MoonBit backend"))
+  assert_false(
+    body.contains(
+      "Else if `moon.mod` or `moon.mod.json` exists, use `moon test --target native`",
+    ),
+  )
   assert_true(body.has_suffix("\n"))
 }
 

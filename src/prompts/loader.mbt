@@ -254,7 +254,13 @@ const ONBOARD_SKILL_DEFAULT : String =
   #|   - Else if `package.json` exists, read it and use `scripts.test` when present.
   #|     If `scripts.test` is absent, use `npm test`.
   #|   - Else if `go.mod` exists, use `go test ./...`.
-  #|   - Else if `moon.mod` or `moon.mod.json` exists, use `moon test --target native`.
+  #|   - Else if `moon.mod` or `moon.mod.json` exists, detect the MoonBit backend
+  #|     and mirror it: inspect how the repo runs its own tests (its
+  #|     `.github/workflows/*.yml`, `Makefile`/`justfile`/scripts, or `README`) and
+  #|     use that exact `moon test` invocation, including the `--target` it uses
+  #|     (`native`/`wasm`/`wasm-gc`/`js`). If the repo's own `moon test` invocation
+  #|     cannot be found or the target is ambiguous, STOP and ask the human for the
+  #|     verify command, and do NOT assume `--target native`.
   #|   - Else STOP and ask the human for the verify command before writing files.
   #|
   #|2. Detect the default branch.
