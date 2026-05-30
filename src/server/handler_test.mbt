@@ -214,7 +214,7 @@ async test "deliver_pending_poll_events commits dedup only after durable parent 
           true,
           @poller.Mergeable::Unknown,
           @poller.MergeStateStatus::Unknown,
-          None,
+          Some(4102358400L),
         )
       },
       runner~,
@@ -3088,7 +3088,7 @@ async test "deliver_pending_poll_events fires PRMerged hook whether tracked or s
           true,
           @poller.Mergeable::Unknown,
           @poller.MergeStateStatus::Unknown,
-          None,
+          Some(4102358400L),
         )
       },
       runner=async fn(cmds : Array[@workspace.Command]) {

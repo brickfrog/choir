@@ -1493,7 +1493,7 @@ async test "process_poller_tick_with finalizes externally merged leaf and notifi
         false,
         @poller.Mergeable::Unknown,
         @poller.MergeStateStatus::Unknown,
-        None,
+        Some(1779064079L),
       )
     },
     runner~,

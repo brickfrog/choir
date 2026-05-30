@@ -96,6 +96,32 @@ test "parse_gh_pr_view_output maps invalid mergedAt to unknown timestamp" {
 }
 
 ///|
+test "parse_gh_pr_view_output keeps closed unmerged distinct from merged" {
+  let json =
+    #|{"reviews":[],
+    #|"headRefOid":"abc123def",
+    #|"statusCheckRollup":[],
+    #|"state":"CLOSED",
+    #|"mergeable":"UNKNOWN",
+    #|"mergeStateStatus":"UNKNOWN",
+    #|"mergedAt":null}
+  let (
+    ok,
+    _review,
+    _sha,
+    _ci_rollup,
+    _bodies,
+    open,
+    _mergeable,
+    _merge_state_status,
+    merged_at_unix,
+  ) = parse_gh_pr_view_output(json)
+  assert_true(ok)
+  assert_false(open)
+  @debug.assert_eq(merged_at_unix, None)
+}
+
+///|
 test "parse_gh_pr_view_output empty reviews yields None_" {
   let json =
     #|{"reviews":[],

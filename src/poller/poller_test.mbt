@@ -129,6 +129,37 @@ async fn poller_test_poll_success_closed(
 }
 
 ///|
+async fn poller_test_poll_success_closed_unmerged(
+  _pr_number : Int,
+  _skip_issue : Bool,
+) -> (
+  Bool,
+  @poller.ReviewState,
+  String,
+  @poller.CiRollupStatus,
+  String,
+  Bool,
+  Bool,
+  @poller.Mergeable,
+  @poller.MergeStateStatus,
+  Int64?,
+) {
+  @async.sleep(0)
+  (
+    true,
+    Approved,
+    "sha-closed-unmerged",
+    Success,
+    "",
+    false,
+    false,
+    @poller.Mergeable::Unknown,
+    @poller.MergeStateStatus::Unknown,
+    None,
+  )
+}
+
+///|
 fn parsed_state_has_pr(content : String, pr_number : Int) -> Bool raise {
   @poller.parse_tracked_prs_json(content).any(fn(pr) {
     pr.pr_number == pr_number
@@ -301,6 +332,28 @@ async test "tick_with closed PR suppresses already observed merge event" {
   )
   assert_eq(events.length(), 0)
   assert_true(ps.get(45) is None)
+  assert_eq(logs.length(), 1)
+  assert_true(logs[0].untracked_closed)
+  assert_eq(logs[0].events.length(), 0)
+}
+
+///|
+async test "tick_with closed unmerged PR does not emit PRMerged" {
+  let ps = @poller.PollerState::new()
+  ps.track(46, "agent-46", "branch-46", "main", "url-46", 1L)
+  let events : Array[@poller.PollEvent] = []
+  let logs : Array[@poller.PollerPrTickLog] = []
+  ps.tick_pr_with(
+    46,
+    100L,
+    900L,
+    poller_test_poll_success_closed_unmerged,
+    fn(event, _agent_id) { events.push(event) },
+    fn(log) { logs.push(log) },
+  )
+  assert_eq(events.length(), 0)
+  assert_false(ps.merged_observed(46))
+  assert_true(ps.get(46) is None)
   assert_eq(logs.length(), 1)
   assert_true(logs[0].untracked_closed)
   assert_eq(logs[0].events.length(), 0)

@@ -513,7 +513,11 @@ async test "handle_request with valid tool returns Ok" {
     req_method: "tools/call",
     role: @types.Role::TL,
     name: "fork_wave",
-    args: @types.RequestArgs::new({ "count": "3", "caller_id": "main.tl" }),
+    args: @types.RequestArgs::new({
+      "count": "3",
+      "caller_id": "main.tl",
+      "verify": "true",
+    }),
   }
   let res = handle_request(
     reg,
@@ -576,7 +580,11 @@ async test "dispatch returns correct stub for each tool name" {
     @env.now().reinterpret_as_int64().to_string()
   assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let cases = [
-    ("fork_wave", "spawned", { "count": "1", "caller_id": "main.tl" }),
+    (
+      "fork_wave",
+      "spawned",
+      { "count": "1", "caller_id": "main.tl", "verify": "true" },
+    ),
     ("fork_session", "ok", { "name": "nested-team" }),
     ("file_pr", "pr_created", { "branch": "test" }),
     (
@@ -805,6 +813,7 @@ async test "dispatch fork_wave preregisters spawned child for immediate agent_li
       "count": "1",
       "agent_type": "claude",
       "task": "open a PR",
+      "verify": "true",
     },
   }
   let res = @tools.dispatch_call(
@@ -896,6 +905,7 @@ async test "dispatch fork_wave post-spawn pane resolution uses injected capture"
       "count": "1",
       "agent_type": "claude",
       "task": "open a PR",
+      "verify": "true",
     },
   }
   let spawned_slug : Array[String] = [""]
@@ -1201,6 +1211,7 @@ async test "fork_wave scaffold gate blocks dirty working tree" {
       "count": "1",
       "task": "work",
       "parent_branch": "main",
+      "verify": "true",
     },
   }
   let res = @tools.dispatch_call(
@@ -1226,6 +1237,7 @@ async test "fork_wave scaffold gate blocks unpushed commits" {
       "count": "1",
       "task": "work",
       "parent_branch": "main",
+      "verify": "true",
     },
   }
   let res = @tools.dispatch_call(

@@ -452,11 +452,12 @@ pub fn ServerState::record_agent_task_contract(
   agent_id : String,
   contract : @types.TaskContract?,
 ) -> Unit {
-  if self.agent_task_contracts.contains(agent_id) {
-    return
-  }
   match contract {
     Some(value) => {
+      match self.agent_task_contracts.get(agent_id) {
+        Some(existing) => if existing == value { return }
+        None => ()
+      }
       self.agent_task_contracts.set(agent_id, value)
       if !self.persist_agent_task_contracts() {
         @moontrace.error(
@@ -481,11 +482,65 @@ pub fn ServerState::record_agent_task_contract(
 }
 
 ///|
+fn task_contract_has_nonempty_verify(contract : @types.TaskContract) -> Bool {
+  for command in contract.verify {
+    if command.trim() != "" {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn ServerState::task_contract_from_agent_local_config(
+  self : ServerState,
+  agent_id : String,
+) -> @types.TaskContract? {
+  let workspace = try self.registry.get(agent_id).workspace catch {
+    _ => return None
+  } noraise {
+    value => value
+  }
+  let content = (self.read_file)(workspace + "/.choir/config.local.toml")
+  if content.trim() == "" {
+    return None
+  }
+  match @config.parse_local_config(content) {
+    Ok(local_cfg) => local_cfg.task_contract
+    Err(_) => None
+  }
+}
+
+///|
 pub fn ServerState::task_contract_for_agent(
   self : ServerState,
   agent_id : String,
 ) -> @types.TaskContract? {
-  self.agent_task_contracts.get(agent_id)
+  match self.agent_task_contracts.get(agent_id) {
+    Some(existing) =>
+      if task_contract_has_nonempty_verify(existing) {
+        Some(existing)
+      } else {
+        match self.task_contract_from_agent_local_config(agent_id) {
+          Some(local_contract) =>
+            if task_contract_has_nonempty_verify(local_contract) {
+              self.record_agent_task_contract(agent_id, Some(local_contract))
+              Some(local_contract)
+            } else {
+              Some(existing)
+            }
+          None => Some(existing)
+        }
+      }
+    None =>
+      match self.task_contract_from_agent_local_config(agent_id) {
+        Some(local_contract) => {
+          self.record_agent_task_contract(agent_id, Some(local_contract))
+          Some(local_contract)
+        }
+        None => None
+      }
+  }
 }
 
 ///|
@@ -633,6 +688,148 @@ test "record_agent_task_contract writes boot-readable full map envelope" {
     parsed.get("leaf-agent-contract-write-b"),
     Some(second_contract),
   )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+fn state_test_local_config_with_contract(
+  contract : @types.TaskContract,
+  workspace : String,
+) -> String {
+  let target = match @types.LocalTarget::parse("zellij-tab:choir:leaf") {
+    Some(value) => value
+    None => abort("expected parseable target")
+  }
+  let spec : @types.SpawnSpec = {
+    slug: "leaf",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Codex,
+    task: "ship",
+    task_contract: Some(contract),
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "main.tl",
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 1,
+    automerge: None,
+    review_mode: None,
+    merge_strategy: None,
+    wave_id: None,
+  }
+  @workspace.config_local_content(
+    spec,
+    workspace,
+    target,
+    project_dir=Some("/tmp/project"),
+    listen_uds=Some("/tmp/project/.choir/server.sock"),
+    terminal_session=Some("choir"),
+  )
+}
+
+///|
+test "task_contract_for_agent falls back to leaf config.local and repairs map" {
+  let project_dir = "/tmp/choir-agent-contract-fallback-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let workspace = project_dir + "/.choir/worktrees/leaf"
+  let agent_id = "main.leaf"
+  let contract = {
+    ..@types.TaskContract::empty(),
+    goal: "recover per-leaf contract",
+    verify: ["npm test"],
+  }
+  let local_content = state_test_local_config_with_contract(contract, workspace)
+  let writes : Array[(String, String)] = []
+  let state = {
+    ..ServerState::new(
+      { ..@types.Config::default(), project_dir, },
+      make_hermetic_recovery_provider(),
+      write_file_atomic=fn(_path, _content) { true },
+    ),
+    read_file: fn(path) {
+      if path == workspace + "/.choir/config.local.toml" {
+        local_content
+      } else {
+        ""
+      }
+    },
+    write_file_atomic: fn(path, content) {
+      writes.push((path, content))
+      true
+    },
+  }
+  ignore(
+    state.register_agent({
+      agent_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some("main.tl"),
+      workspace,
+      branch: agent_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 1,
+      state: @types.AgentState::Spawning,
+    }),
+  )
+
+  @debug.assert_eq(state.task_contract_for_agent(agent_id), Some(contract))
+  @debug.assert_eq(state.agent_task_contracts.get(agent_id), Some(contract))
+  assert_eq(writes.length(), 1)
+  assert_eq(writes[0].0, agent_task_contracts_path(project_dir))
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+test "task_contract_for_agent replaces empty persisted contract from leaf local config" {
+  let project_dir = "/tmp/choir-agent-contract-repair-empty-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let workspace = project_dir + "/.choir/worktrees/leaf"
+  let agent_id = "main.leaf"
+  let contract = {
+    ..@types.TaskContract::empty(),
+    goal: "replace empty verify",
+    verify: ["cargo test"],
+  }
+  let local_content = state_test_local_config_with_contract(contract, workspace)
+  let state = {
+    ..ServerState::new(
+      { ..@types.Config::default(), project_dir, },
+      make_hermetic_recovery_provider(),
+      write_file_atomic=fn(_path, _content) { true },
+    ),
+    read_file: fn(path) {
+      if path == workspace + "/.choir/config.local.toml" {
+        local_content
+      } else {
+        ""
+      }
+    },
+    write_file_atomic: fn(_path, _content) { true },
+  }
+  ignore(
+    state.register_agent({
+      agent_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some("main.tl"),
+      workspace,
+      branch: agent_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 1,
+      state: @types.AgentState::Spawning,
+    }),
+  )
+  state.agent_task_contracts.set(agent_id, @types.TaskContract::empty())
+
+  @debug.assert_eq(state.task_contract_for_agent(agent_id), Some(contract))
+  @debug.assert_eq(state.agent_task_contracts.get(agent_id), Some(contract))
   ignore(@sys.rm_rf(project_dir))
 }
 
