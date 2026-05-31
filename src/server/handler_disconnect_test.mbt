@@ -111,3 +111,52 @@ async test "interpret_teardown_effects reaps tracked pgroup on ClearRuntimeTrack
 
   ignore(@sys.rm_rf(project_dir))
 }
+
+///|
+async test "interpret_teardown_effects reaps cwd process tree on RemoveWorktree" {
+  let project_dir = "/tmp/choir-rmwt-reap-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      terminal_session: "test-session",
+    },
+    make_hermetic_recovery_provider(),
+  )
+  // Managed worktree: the pid-sidecar pgroup reap can miss the full tree
+  // (bash -> node -> codex + helpers, never-registered/partial spawns), so
+  // RemoveWorktree must SIGKILL every process whose cwd resolves under it.
+  let killed : Array[Int] = []
+  let wt = project_dir + "/.choir/worktrees/leaf-x"
+  state.interpret_teardown_effects(
+    [RemoveWorktree(wt)],
+    async fn(_cmds) {
+      @async.sleep(0)
+      []
+    },
+    is_git_worktree=fn(_p) { false },
+    list_workspace_pids=fn(p) { if p == wt { [4111, 4222] } else { [] } },
+    kill_pid=fn(pid) { killed.push(pid) },
+  )
+  @debug.assert_eq(killed, [4111, 4222])
+
+  // Unsafe (non-worktree) path: refused — no scan, no kill, no host-wide reap.
+  let killed_unsafe : Array[Int] = []
+  state.interpret_teardown_effects(
+    [RemoveWorktree(project_dir + "/src")],
+    async fn(_cmds) {
+      @async.sleep(0)
+      []
+    },
+    is_git_worktree=fn(_p) { false },
+    list_workspace_pids=fn(_p) { [9999] },
+    kill_pid=fn(pid) { killed_unsafe.push(pid) },
+  )
+  @debug.assert_eq(killed_unsafe, [])
+
+  ignore(@sys.rm_rf(project_dir))
+}
