@@ -240,6 +240,18 @@ test "TaskContract missing verify_satisfied_by_ci decodes as true" {
 }
 
 ///|
+test "TaskContract CI satisfaction trusts contract field for moon targets" {
+  let ci_satisfied = {
+    ..@types.TaskContract::empty(),
+    verify: ["moon test --target wasm-gc"],
+    verify_satisfied_by_ci: true,
+  }
+  assert_true(@types.task_contract_verify_satisfied_by_ci(ci_satisfied))
+  let ci_not_satisfied = { ..ci_satisfied, verify_satisfied_by_ci: false }
+  assert_false(@types.task_contract_verify_satisfied_by_ci(ci_not_satisfied))
+}
+
+///|
 test "moon render suppression appends no-render to runtime moon commands" {
   assert_eq(
     @types.moon_render_suppress_command("moon test --target native"),
@@ -407,34 +419,6 @@ test "moon verify command normalization appends default native target only when 
     ),
     ["moon test 2>&1 --target native && moon check 1>&2 --target native"],
   )
-  assert_true(
-    @types.moon_verify_commands_allow_native_ci_satisfaction([
-      "moon check --target native",
-    ]),
-  )
-  assert_false(
-    @types.moon_verify_commands_allow_native_ci_satisfaction(
-      @types.moon_verify_normalize_commands(
-        ["moon check"],
-        @types.MoonVerifyTarget::WasmGc,
-      ),
-    ),
-  )
-  assert_false(
-    @types.moon_verify_commands_allow_native_ci_satisfaction([
-      "moon check --target js",
-    ]),
-  )
-  assert_false(
-    @types.moon_verify_commands_allow_native_ci_satisfaction([
-      "RUST_BACKTRACE=1 moon test --target js",
-    ]),
-  )
-  assert_false(
-    @types.moon_verify_commands_allow_native_ci_satisfaction([
-      "moon --target wasm-gc test",
-    ]),
-  )
   let notices = @types.moon_verify_normalization_notices(
     [" moon test ", "moon check --target native", "npm test"],
     @types.MoonVerifyTarget::WasmGc,
@@ -457,7 +441,7 @@ test "moon verify command normalization appends default native target only when 
     ) {
     Some(contract) => {
       @debug.assert_eq(contract.verify, ["moon check --target wasm-gc"])
-      assert_false(@types.task_contract_verify_satisfied_by_native_ci(contract))
+      assert_true(@types.task_contract_verify_satisfied_by_ci(contract))
     }
     None => fail("expected normalized task contract")
   }

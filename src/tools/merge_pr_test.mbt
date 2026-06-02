@@ -1984,7 +1984,7 @@ async test "interpret_merge_pr_preflight accepts NoChecks verify policy when ena
 }
 
 ///|
-async test "interpret_merge_pr_preflight rejects CI-only verify for non-native moon target" {
+async test "interpret_merge_pr_preflight accepts CI-only verify for non-native moon target when enabled" {
   let project_dir = "/tmp/choir-mpf-ci-verify-nonnative-" +
     @sys.get_pid().to_string()
   ignore(@sys.rm_rf(project_dir))
@@ -2021,8 +2021,8 @@ async test "interpret_merge_pr_preflight rejects CI-only verify for non-native m
     moon_verify_target=@types.MoonVerifyTarget::WasmGc,
   )
   match got {
-    Err(e) => assert_true(e.message().contains("local verify not observed"))
-    Ok(_) => fail("expected non-native target to require local verify evidence")
+    Ok(_) => ()
+    Err(e) => fail(e.message())
   }
   ignore(@sys.rm_rf(project_dir))
 }
@@ -2509,10 +2509,8 @@ test "format_tl_pr_recheck_summary treats matching CI evidence as verify when en
     task_contract=Some({ ..contract, verify: ["moon test"] }),
     moon_verify_target=@types.MoonVerifyTarget::WasmGc,
   )
-  assert_true(
-    non_native_config.contains("Advisory evaluation verdict: needs_human"),
-  )
-  assert_true(non_native_config.contains("local verify not observed"))
+  assert_true(non_native_config.contains("Advisory evaluation verdict: ready"))
+  assert_true(non_native_config.contains("Merge policy decision: merge_now"))
   let explicit_non_native = format_tl_pr_recheck_summary(
     t,
     project_dir,
@@ -2520,9 +2518,9 @@ test "format_tl_pr_recheck_summary treats matching CI evidence as verify when en
     task_contract=Some({ ..contract, verify: ["moon test --target wasm-gc"] }),
   )
   assert_true(
-    explicit_non_native.contains("Advisory evaluation verdict: needs_human"),
+    explicit_non_native.contains("Advisory evaluation verdict: ready"),
   )
-  assert_true(explicit_non_native.contains("local verify not observed"))
+  assert_true(explicit_non_native.contains("Merge policy decision: merge_now"))
   ignore(@sys.rm_rf(project_dir))
 }
 

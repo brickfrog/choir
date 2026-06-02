@@ -752,7 +752,7 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
 }
 
 ///|
-async test "maybe_trigger_automerge_for_pending_event does not satisfy non-native moon verify with native CI" {
+async test "maybe_trigger_automerge_for_pending_event satisfies non-native moon verify with CI" {
   let pr_number = 91
   let label = "non-native-ci"
   let (state, child_id, project_dir) = blocked_gh_automerge_fixture(
@@ -845,9 +845,9 @@ async test "maybe_trigger_automerge_for_pending_event does not satisfy non-nativ
     runner,
     capture~,
   )
-  assert_false(merged)
-  assert_false(merge_seen)
-  assert_true(state.poller.get(pr_number) != None)
+  assert_true(merged)
+  assert_true(merge_seen)
+  assert_true(state.poller.get(pr_number) == None)
   ignore(@sys.rm_rf(project_dir))
 }
 
