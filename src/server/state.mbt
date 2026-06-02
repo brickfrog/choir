@@ -300,6 +300,7 @@ pub struct ServerState {
   goal_judge : GoalJudgeState
   pane_watcher : @runtime.PaneWatcher
   recovery_provider : @runtime.RecoveryProvider
+  otlp_exporter : OtlpSpanExporter?
   append_file : (String, String) -> Bool
   read_file : (String) -> String
   write_file_atomic : (String, String) -> Bool
@@ -350,6 +351,7 @@ pub fn ServerState::new(
     @env.now().reinterpret_as_int64() / 1000L
   },
   boot_read_file? : (String) -> String = default_read_file,
+  otlp_exporter_factory? : (String) -> OtlpSpanExporter = make_otlp_span_exporter,
 ) -> ServerState {
   let run_id = init_run_id(config.project_dir)
   // Seed `.choir/audit-gate.json` on server boot if absent. Operators who
@@ -422,6 +424,10 @@ pub fn ServerState::new(
     goal_judge: GoalJudgeState::new(),
     pane_watcher: @runtime.PaneWatcher::new(),
     recovery_provider,
+    otlp_exporter: otlp_span_exporter_for_config(
+      config,
+      factory=otlp_exporter_factory,
+    ),
     append_file: default_append_file_sync,
     read_file: default_read_file,
     write_file_atomic: default_write_file_atomic,
