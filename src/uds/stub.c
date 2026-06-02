@@ -60,17 +60,10 @@ static int choir_set_cloexec(int fd) {
 }
 
 static int choir_accept_cloexec(int server_fd) {
-    int fd;
 #if defined(__linux__) && defined(SOCK_CLOEXEC)
-    fd = accept4(server_fd, NULL, NULL, SOCK_CLOEXEC);
-    if (fd >= 0) {
-        return fd;
-    }
-    if (errno != ENOSYS && errno != EINVAL) {
-        return -1;
-    }
-#endif
-    fd = accept(server_fd, NULL, NULL);
+    return accept4(server_fd, NULL, NULL, SOCK_CLOEXEC);
+#else
+    int fd = accept(server_fd, NULL, NULL);
     if (fd >= 0 && choir_set_cloexec(fd) != 0) {
         int err = errno;
         close(fd);
@@ -78,6 +71,7 @@ static int choir_accept_cloexec(int server_fd) {
         return -1;
     }
     return fd;
+#endif
 }
 
 int choir_uds_server_create(const char *path, int path_len) {
