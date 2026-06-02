@@ -23,6 +23,16 @@ async fn refresh_test_no_sleep(_ms : Int) -> Unit {
 }
 
 ///|
+async fn refresh_test_hook_capture(
+  _path : String,
+  _input_json : String,
+  _cwd : String?,
+) -> (Int, String) {
+  @async.sleep(0)
+  (0, "")
+}
+
+///|
 async test "ServerState::refresh_pr_with triggers poll and updates state" {
   let project_dir = "/tmp/choir-refresh-state-test-" +
     @sys.get_pid().to_string() +
@@ -118,6 +128,7 @@ async test "ServerState::refresh_pr_with triggers poll and updates state" {
     200L,
     900L,
     mock_poll,
+    refresh_test_hook_capture,
     runner=async fn(cmds) {
       @async.sleep(0)
       runner_called = true
@@ -255,6 +266,7 @@ async test "ServerState::refresh_pr_with does not synthesize ReviewThreadsResolv
     200L,
     900L,
     mock_poll,
+    refresh_test_hook_capture,
     runner=async fn(_cmds) {
       @async.sleep(0)
       runner_called = true

@@ -39,12 +39,12 @@ async fn server_delivery_test_capture(
 
 ///|
 async fn server_delivery_test_hook_capture(
-  hook_path : String,
+  _hook_path : String,
   _stdin_body : String,
   _cwd : String?,
 ) -> (Int, String) {
   @async.sleep(0)
-  abort(@exec.hermetic_exec_violation_message(hook_path))
+  (0, "")
 }
 
 ///|
@@ -91,12 +91,14 @@ async fn ServerState::refresh_pr_with_test(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = server_delivery_test_runner,
   capture? : async (@workspace.Command) -> (Int, String) = server_delivery_test_capture,
   automerge_capture? : async (@workspace.Command) -> (Int, String) = server_delivery_test_capture,
+  hook_capture? : async (String, String, String?) -> (Int, String) = server_delivery_test_hook_capture,
 ) -> Unit {
   self.refresh_pr_with(
     pr_number,
     now,
     timeout,
     poll,
+    hook_capture,
     runner~,
     capture~,
     automerge_capture~,
