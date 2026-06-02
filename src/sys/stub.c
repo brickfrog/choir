@@ -252,10 +252,6 @@ int choir_unblock_sigusr1_for_test(void) {
     return choir_unblock_signal_for_test(SIGUSR1);
 }
 
-int choir_unblock_sigterm_for_test(void) {
-    return choir_unblock_signal_for_test(SIGTERM);
-}
-
 static int choir_write_pid_file_for_test(const char *path, pid_t pid) {
     int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd < 0) {

@@ -734,9 +734,6 @@ extern "C" fn c_raise_sigusr1_for_test() -> Int = "choir_raise_sigusr1_for_test"
 extern "C" fn c_unblock_sigusr1_for_test() -> Int = "choir_unblock_sigusr1_for_test"
 
 ///|
-extern "C" fn c_unblock_sigterm_for_test() -> Int = "choir_unblock_sigterm_for_test"
-
-///|
 #borrow(pid_path, sidecar_path, sentinel_path)
 extern "C" fn c_spawn_sigterm_unblocked_pgroup_for_test(
   pid_path : Bytes,
@@ -873,11 +870,6 @@ pub fn raise_sigusr1_for_test() -> Bool {
 ///|
 pub fn unblock_sigusr1_for_test() -> Bool {
   c_unblock_sigusr1_for_test() == 0
-}
-
-///|
-pub fn unblock_sigterm_for_test() -> Bool {
-  c_unblock_sigterm_for_test() == 0
 }
 
 ///|

@@ -164,9 +164,14 @@ fn uds_test_socket_path(label : String) -> String {
 }
 
 ///|
-fn uds_accept_for_cloexec_test(path : String, nonblocking : Bool) -> Int {
+fn uds_accept_for_cloexec_test(path : String, nonblocking : Bool) -> (Int, Int) {
   uds_unlink_test_path(path)
   let server_fd = server_create(path)
+  let listener_flags = if server_fd >= 0 {
+    uds_fd_has_cloexec_for_test_ffi(server_fd)
+  } else {
+    -1
+  }
   let set_nonblocking_ok = if nonblocking && server_fd >= 0 {
     set_nonblocking(server_fd)
   } else {
@@ -201,17 +206,23 @@ fn uds_accept_for_cloexec_test(path : String, nonblocking : Bool) -> Int {
     close(server_fd)
   }
   uds_unlink_test_path(path)
-  flags
+  (listener_flags, flags)
 }
 
 ///|
 test "accepted UDS fd from blocking accept is close-on-exec" {
   let path = uds_test_socket_path("blocking-cloexec")
-  assert_eq(uds_accept_for_cloexec_test(path, false), 1)
+  let (listener_flags, accepted_flags) = uds_accept_for_cloexec_test(
+    path, false,
+  )
+  assert_eq(listener_flags, 0)
+  assert_eq(accepted_flags, 1)
 }
 
 ///|
 test "accepted UDS fd from nonblocking accept is close-on-exec" {
   let path = uds_test_socket_path("nonblocking-cloexec")
-  assert_eq(uds_accept_for_cloexec_test(path, true), 1)
+  let (listener_flags, accepted_flags) = uds_accept_for_cloexec_test(path, true)
+  assert_eq(listener_flags, 0)
+  assert_eq(accepted_flags, 1)
 }

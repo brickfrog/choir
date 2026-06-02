@@ -188,11 +188,6 @@ pub fn unblock_sigusr1_for_test() -> Bool {
 }
 
 ///|
-pub fn unblock_sigterm_for_test() -> Bool {
-  false
-}
-
-///|
 pub fn spawn_sigterm_unblocked_pgroup_for_test(
   _pid_path : String,
   _sidecar_path : String,
