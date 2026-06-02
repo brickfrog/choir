@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include <stddef.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -57,6 +59,27 @@ static int choir_set_cloexec(int fd) {
     return 0;
 }
 
+static int choir_accept_cloexec(int server_fd) {
+    int fd;
+#if defined(__linux__) && defined(SOCK_CLOEXEC)
+    fd = accept4(server_fd, NULL, NULL, SOCK_CLOEXEC);
+    if (fd >= 0) {
+        return fd;
+    }
+    if (errno != ENOSYS && errno != EINVAL) {
+        return -1;
+    }
+#endif
+    fd = accept(server_fd, NULL, NULL);
+    if (fd >= 0 && choir_set_cloexec(fd) != 0) {
+        int err = errno;
+        close(fd);
+        errno = err;
+        return -1;
+    }
+    return fd;
+}
+
 int choir_uds_server_create(const char *path, int path_len) {
     struct sockaddr_un addr;
     if (choir_copy_uds_path(&addr, path, path_len) != 0) {
@@ -89,22 +112,13 @@ int choir_uds_server_create(const char *path, int path_len) {
 }
 
 int choir_uds_accept(int server_fd) {
-    int fd = accept(server_fd, NULL, NULL);
-    if (fd >= 0 && choir_set_cloexec(fd) != 0) {
-        close(fd);
-        return -1;
-    }
-    return fd;
+    return choir_accept_cloexec(server_fd);
 }
 
 int choir_uds_accept_nonblocking(int server_fd) {
-    int fd = accept(server_fd, NULL, NULL);
+    int fd = choir_accept_cloexec(server_fd);
     if (fd < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
         return -2;
-    }
-    if (fd >= 0 && choir_set_cloexec(fd) != 0) {
-        close(fd);
-        return -1;
     }
     return fd;
 }
