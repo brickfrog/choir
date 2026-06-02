@@ -362,7 +362,7 @@ pub async fn maybe_trigger_automerge_for_pending_event(
         tracked.agent_id,
         contract.verify,
         tracked.last_sha,
-        @types.task_contract_verify_satisfied_by_native_ci(contract),
+        @types.task_contract_verify_satisfied_by_ci(contract),
         ci_rollup=@poller.evaluation_ci_rollup_from_snapshot(
           tracked.last_ci_rollup,
         ),

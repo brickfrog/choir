@@ -344,7 +344,6 @@ priv struct MoonVerifyShellPart {
 ///|
 priv struct MoonVerifyInvocation {
   has_explicit_target : Bool
-  explicit_target_native : Bool
 }
 
 ///|
@@ -587,32 +586,19 @@ fn moon_verify_global_flag_takes_value(flag : String) -> Bool {
 }
 
 ///|
-fn moon_verify_target_word_kind(raw : String) -> (Bool, Bool) {
-  match MoonVerifyTarget::try_parse_wire(raw) {
-    Ok(Native) => (true, true)
-    Ok(_) | Err(_) => (true, false)
-  }
-}
-
-///|
-fn moon_verify_explicit_target_kind(tokens : Array[String]) -> (Bool, Bool) {
+fn moon_verify_has_explicit_target(tokens : Array[String]) -> Bool {
   let mut i = 0
   while i < tokens.length() {
     let word = tokens[i]
     if word.has_prefix("--target=") {
-      return moon_verify_target_word_kind(
-        word["--target=".length():].to_owned(),
-      )
+      return true
     }
     if word == "--target" {
-      if i + 1 < tokens.length() {
-        return moon_verify_target_word_kind(tokens[i + 1])
-      }
-      return (true, false)
+      return true
     }
     i = i + 1
   }
-  (false, false)
+  false
 }
 
 ///|
@@ -638,10 +624,7 @@ fn moon_verify_probe_segment(segment : String) -> MoonVerifyInvocation? {
   if i >= tokens.length() || (tokens[i] != "check" && tokens[i] != "test") {
     return None
   }
-  let (has_explicit_target, explicit_target_native) = moon_verify_explicit_target_kind(
-    tokens,
-  )
-  Some({ has_explicit_target, explicit_target_native })
+  Some({ has_explicit_target: moon_verify_has_explicit_target(tokens) })
 }
 
 ///|
@@ -764,15 +747,6 @@ pub fn moon_render_suppress_command(command : String) -> String {
 }
 
 ///|
-fn moon_verify_segment_requires_non_native_target(segment : String) -> Bool {
-  match moon_verify_probe_segment(segment) {
-    Some(invocation) =>
-      invocation.has_explicit_target && !invocation.explicit_target_native
-    None => false
-  }
-}
-
-///|
 pub fn moon_verify_normalize_commands(
   commands : Array[String],
   target : MoonVerifyTarget,
@@ -810,25 +784,10 @@ pub fn task_contract_with_normalized_verify(
       Some({
         ..contract,
         verify: moon_verify_normalize_commands(contract.verify, target),
-        verify_satisfied_by_ci: contract.verify_satisfied_by_ci &&
-        target == MoonVerifyTarget::Native,
+        verify_satisfied_by_ci: contract.verify_satisfied_by_ci,
       })
     None => None
   }
-}
-
-///|
-pub fn moon_verify_commands_allow_native_ci_satisfaction(
-  commands : Array[String],
-) -> Bool {
-  for command in commands {
-    for part in moon_verify_shell_parts(command) {
-      if moon_verify_segment_requires_non_native_target(part.segment) {
-        return false
-      }
-    }
-  }
-  true
 }
 
 ///|
@@ -1126,11 +1085,8 @@ pub impl FromJson for TaskContract with fn from_json(json, path) {
 }
 
 ///|
-pub fn task_contract_verify_satisfied_by_native_ci(
-  contract : TaskContract,
-) -> Bool {
-  contract.verify_satisfied_by_ci &&
-  moon_verify_commands_allow_native_ci_satisfaction(contract.verify)
+pub fn task_contract_verify_satisfied_by_ci(contract : TaskContract) -> Bool {
+  contract.verify_satisfied_by_ci
 }
 
 ///|
