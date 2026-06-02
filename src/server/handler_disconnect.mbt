@@ -275,17 +275,12 @@ async test "real exec integration: kill_tracked_agent_pgroup kills real setsid p
   ignore(@sys.rm_rf(tmp))
   assert_true(@sys.create_dir_all(tmp + "/.choir/pids"))
   let sidecar_path = @workspace.agent_pid_file_path(tmp, agent_id)
-  let script = "printf '%s' \"$$\" > " +
-    @sys.shell_quote(pid_path) +
-    "; printf '%s' \"$$\" > " +
-    @sys.shell_quote(sidecar_path) +
-    "; trap 'kill -TERM -- -$$ 2>/dev/null' EXIT HUP TERM INT; sleep 30; touch " +
-    @sys.shell_quote(sentinel_path)
-  let outer_pid = @process.spawn_orphan("setsid", ["bash", "-c", script]) catch {
-    e => {
-      ignore(@sys.rm_rf(tmp))
-      raise e
-    }
+  let outer_pid = @sys.spawn_sigterm_unblocked_pgroup_for_test(
+    pid_path, sidecar_path, sentinel_path,
+  )
+  if outer_pid <= 0 {
+    ignore(@sys.rm_rf(tmp))
+    fail("expected sigterm-unblocked pgroup test process to spawn")
   }
   try {
     assert_true(wait_for_pgroup_test_file(pid_path, 80))

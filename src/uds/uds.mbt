@@ -9,6 +9,16 @@ extern "C" fn uds_accept_ffi(server_fd : Int) -> Int = "choir_uds_accept"
 extern "C" fn uds_accept_nonblocking_ffi(server_fd : Int) -> Int = "choir_uds_accept_nonblocking"
 
 ///|
+extern "C" fn uds_fd_has_cloexec_for_test_ffi(fd : Int) -> Int = "choir_uds_fd_has_cloexec_for_test"
+
+///|
+#borrow(path)
+extern "C" fn uds_unlink_path_for_test_ffi(path : Bytes, len : Int) -> Int = "choir_uds_unlink_path_for_test"
+
+///|
+extern "C" fn uds_getpid_for_test_ffi() -> Int = "choir_uds_getpid_for_test"
+
+///|
 #borrow(path)
 extern "C" fn uds_client_connect_ffi(path : Bytes, len : Int) -> Int = "choir_uds_client_connect"
 
@@ -136,4 +146,72 @@ pub fn http_post(sock_path : String, body : String) -> Int {
   let (path_bytes, path_len) = string_to_null_terminated_bytes(sock_path)
   let body_encoded = @utf8.encode(body)
   uds_http_post_ffi(path_bytes, path_len, body_encoded, body_encoded.length())
+}
+
+///|
+fn uds_unlink_test_path(path : String) -> Unit {
+  let (path_bytes, path_len) = string_to_null_terminated_bytes(path)
+  ignore(uds_unlink_path_for_test_ffi(path_bytes, path_len))
+}
+
+///|
+fn uds_test_socket_path(label : String) -> String {
+  "/tmp/choir-uds-" +
+  label +
+  "-" +
+  uds_getpid_for_test_ffi().to_string() +
+  ".sock"
+}
+
+///|
+fn uds_accept_for_cloexec_test(path : String, nonblocking : Bool) -> Int {
+  uds_unlink_test_path(path)
+  let server_fd = server_create(path)
+  let set_nonblocking_ok = if nonblocking && server_fd >= 0 {
+    set_nonblocking(server_fd)
+  } else {
+    true
+  }
+  let client_fd = if server_fd >= 0 && set_nonblocking_ok {
+    client_connect(path)
+  } else {
+    -1
+  }
+  let accepted_fd = if client_fd >= 0 {
+    if nonblocking {
+      accept_nonblocking(server_fd)
+    } else {
+      accept(server_fd)
+    }
+  } else {
+    -1
+  }
+  let flags = if accepted_fd >= 0 {
+    uds_fd_has_cloexec_for_test_ffi(accepted_fd)
+  } else {
+    -1
+  }
+  if accepted_fd >= 0 {
+    close(accepted_fd)
+  }
+  if client_fd >= 0 {
+    close(client_fd)
+  }
+  if server_fd >= 0 {
+    close(server_fd)
+  }
+  uds_unlink_test_path(path)
+  flags
+}
+
+///|
+test "accepted UDS fd from blocking accept is close-on-exec" {
+  let path = uds_test_socket_path("blocking-cloexec")
+  assert_eq(uds_accept_for_cloexec_test(path, false), 1)
+}
+
+///|
+test "accepted UDS fd from nonblocking accept is close-on-exec" {
+  let path = uds_test_socket_path("nonblocking-cloexec")
+  assert_eq(uds_accept_for_cloexec_test(path, true), 1)
 }

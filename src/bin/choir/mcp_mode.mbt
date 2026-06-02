@@ -637,6 +637,9 @@ fn mcp_run_uds_loop(
 
 ///|
 fn mcp_run() -> Unit {
+  if !@sys.ignore_sigpipe() {
+    @moontrace.trace("failed to ignore SIGPIPE", fields=[])
+  }
   if !@sys.set_parent_death_signal_term() {
     @moontrace.trace("failed to set parent death signal", fields=[])
   }

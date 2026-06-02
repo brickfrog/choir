@@ -991,6 +991,7 @@ fn serve_test_assert_number_field(
 ///|
 test "serve SIGUSR1 flag writes server status snapshot" {
   let (state, project_dir) = serve_test_state_with_root("sigusr1-status")
+  assert_true(@sys.unblock_sigusr1_for_test())
   ignore(@sys.consume_sigusr1_flag())
   assert_true(@sys.install_sigusr1_handler())
   assert_true(@sys.raise_sigusr1_for_test())

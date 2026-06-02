@@ -19,6 +19,8 @@
 
 static volatile sig_atomic_t choir_cleanup_runtime_native = 0;
 static volatile sig_atomic_t choir_sigusr1_flag = 0;
+static struct sigaction choir_saved_sigpipe_for_test;
+static int choir_saved_sigpipe_for_test_valid = 0;
 #define CHOIR_MAX_SLEEP_MS_FOR_USLEEP (INT_MAX / 1000)
 #ifdef CLOCK_REALTIME_COARSE
 #define CHOIR_SIGNAL_EXIT_CLOCK CLOCK_REALTIME_COARSE
@@ -237,6 +239,118 @@ int choir_consume_sigusr1_flag(void) {
 
 int choir_raise_sigusr1_for_test(void) {
     return raise(SIGUSR1);
+}
+
+static int choir_unblock_signal_for_test(int sig) {
+    sigset_t set;
+    sigemptyset(&set);
+    sigaddset(&set, sig);
+    return sigprocmask(SIG_UNBLOCK, &set, NULL);
+}
+
+int choir_unblock_sigusr1_for_test(void) {
+    return choir_unblock_signal_for_test(SIGUSR1);
+}
+
+int choir_unblock_sigterm_for_test(void) {
+    return choir_unblock_signal_for_test(SIGTERM);
+}
+
+static int choir_write_pid_file_for_test(const char *path, pid_t pid) {
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        return -1;
+    }
+    char buf[32];
+    int len = snprintf(buf, sizeof(buf), "%ld", (long)pid);
+    if (len <= 0 || len >= (int)sizeof(buf)) {
+        close(fd);
+        return -1;
+    }
+    int written = 0;
+    while (written < len) {
+        ssize_t n = write(fd, buf + written, (size_t)(len - written));
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            close(fd);
+            return -1;
+        }
+        if (n == 0) {
+            close(fd);
+            return -1;
+        }
+        written += (int)n;
+    }
+    close(fd);
+    return 0;
+}
+
+static void choir_touch_file_for_test(const char *path) {
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd >= 0) {
+        close(fd);
+    }
+}
+
+int choir_spawn_sigterm_unblocked_pgroup_for_test(
+    const char *pid_path,
+    const char *sidecar_path,
+    const char *sentinel_path) {
+    pid_t pid = fork();
+    if (pid < 0) {
+        return -1;
+    }
+    if (pid == 0) {
+        if (setsid() < 0) {
+            _exit(127);
+        }
+        (void)choir_unblock_signal_for_test(SIGTERM);
+        pid_t self = getpid();
+        if (choir_write_pid_file_for_test(pid_path, self) != 0 ||
+            choir_write_pid_file_for_test(sidecar_path, self) != 0) {
+            _exit(127);
+        }
+        sleep(30);
+        choir_touch_file_for_test(sentinel_path);
+        _exit(0);
+    }
+    return (int)pid;
+}
+
+int choir_ignore_sigpipe(void) {
+    return signal(SIGPIPE, SIG_IGN) == SIG_ERR ? -1 : 0;
+}
+
+int choir_sigpipe_ignored_for_test(void) {
+    struct sigaction current;
+    memset(&current, 0, sizeof(current));
+    if (sigaction(SIGPIPE, NULL, &current) != 0) {
+        return -1;
+    }
+    return current.sa_handler == SIG_IGN ? 1 : 0;
+}
+
+int choir_reset_sigpipe_default_for_test(void) {
+    return signal(SIGPIPE, SIG_DFL) == SIG_ERR ? -1 : 0;
+}
+
+int choir_save_sigpipe_for_test(void) {
+    memset(&choir_saved_sigpipe_for_test, 0, sizeof(choir_saved_sigpipe_for_test));
+    if (sigaction(SIGPIPE, NULL, &choir_saved_sigpipe_for_test) != 0) {
+        choir_saved_sigpipe_for_test_valid = 0;
+        return -1;
+    }
+    choir_saved_sigpipe_for_test_valid = 1;
+    return 0;
+}
+
+int choir_restore_sigpipe_for_test(void) {
+    if (!choir_saved_sigpipe_for_test_valid) {
+        return -1;
+    }
+    int rc = sigaction(SIGPIPE, &choir_saved_sigpipe_for_test, NULL);
+    choir_saved_sigpipe_for_test_valid = 0;
+    return rc;
 }
 
 static int choir_signal_handler_installed(int sig, int require_crash_flags) {
