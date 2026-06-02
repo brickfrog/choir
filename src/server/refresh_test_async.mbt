@@ -129,6 +129,8 @@ async test "ServerState::refresh_pr_with triggers poll and updates state" {
     900L,
     mock_poll,
     refresh_test_hook_capture,
+    None,
+    "",
     runner=async fn(cmds) {
       @async.sleep(0)
       runner_called = true
@@ -267,6 +269,8 @@ async test "ServerState::refresh_pr_with does not synthesize ReviewThreadsResolv
     900L,
     mock_poll,
     refresh_test_hook_capture,
+    None,
+    "",
     runner=async fn(_cmds) {
       @async.sleep(0)
       runner_called = true

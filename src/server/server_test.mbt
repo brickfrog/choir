@@ -1723,6 +1723,8 @@ async test "process_poller_tick_with finalizes externally merged leaf and notifi
         Some(1779064079L),
       )
     },
+    None,
+    "",
     runner~,
     capture=async fn(_cmd) {
       @async.sleep(0)

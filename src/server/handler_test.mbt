@@ -217,6 +217,8 @@ async test "deliver_pending_poll_events commits dedup only after durable parent 
           Some(4102358400L),
         )
       },
+      None,
+      "",
       runner~,
       capture~,
       automerge_capture=capture,
@@ -297,6 +299,8 @@ async test "process_poller_tick_with emits tick summary when an event is produce
         None,
       )
     },
+    None,
+    "",
     runner=async fn(_cmds) {
       @async.sleep(0)
       [0]
@@ -1210,6 +1214,8 @@ async test "refresh_pr_with pending events fires automerge after fixes and CI cl
         None,
       )
     },
+    None,
+    "",
     runner~,
     capture~,
     automerge_capture=capture,
@@ -1239,6 +1245,8 @@ async test "refresh_pr_with pending events fires automerge after fixes and CI cl
         None,
       )
     },
+    None,
+    "",
     runner~,
     capture~,
     automerge_capture=capture,
@@ -1267,6 +1275,8 @@ async test "refresh_pr_with pending events fires automerge after fixes and CI cl
         None,
       )
     },
+    None,
+    "",
     runner~,
     capture~,
     automerge_capture=capture,
@@ -1631,6 +1641,8 @@ async test "quiet poller tick automerge sweep records attempted head on success"
         None,
       )
     },
+    None,
+    "",
     runner~,
     capture~,
     automerge_capture=capture,
@@ -1758,6 +1770,8 @@ async test "quiet poller tick automerge sweep finalizes stale-role tracked leaf 
         None,
       )
     },
+    None,
+    "",
     runner~,
     capture~,
     automerge_capture=capture,
@@ -1926,6 +1940,8 @@ async test "quiet poller tick automerge sweep records attempted head on failure"
     500L,
     900L,
     poll_same_head,
+    None,
+    "",
     runner~,
     capture~,
     automerge_capture=capture,
@@ -1964,6 +1980,8 @@ async test "quiet poller tick automerge sweep records attempted head on failure"
     600L,
     900L,
     poll_same_head,
+    None,
+    "",
     runner~,
     capture~,
     automerge_capture=capture,
@@ -2303,6 +2321,8 @@ async test "automerge sweep runs after queued parent rows are delivered" {
         None,
       )
     },
+    None,
+    "",
     runner~,
     capture~,
     automerge_capture=capture,
@@ -3029,8 +3049,12 @@ async test "deliver_pending_poll_events fires PRMerged hook whether tracked or s
       @sys.get_pid().to_string() +
       "-" +
       @env.now().reinterpret_as_int64().to_string()
+    let config_home = project_dir + "/xdg-empty"
+    let home_dir = project_dir + "/home-empty"
     ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
     ignore(@sys.create_dir_all(project_dir + "/.choir/hooks"))
+    ignore(@sys.create_dir_all(config_home))
+    ignore(@sys.create_dir_all(home_dir))
     ignore(@sys.write_file_sync(project_dir + "/.choir/hooks/pr_merged.sh", ""))
     let state = ServerState::new(
       {
@@ -3107,6 +3131,8 @@ async test "deliver_pending_poll_events fires PRMerged hook whether tracked or s
           Some(4102358400L),
         )
       },
+      Some(config_home),
+      home_dir,
       runner=async fn(cmds : Array[@workspace.Command]) {
         @async.sleep(0)
         cmds.map(fn(_) { 0 })
@@ -3165,6 +3191,255 @@ async test "deliver_pending_poll_events fires PRMerged hook whether tracked or s
 }
 
 ///|
+async test "deliver_pending_poll_events uses injected global hook config home" {
+  let temp_root = "/tmp/choir-deliver-global-hook-config-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let project_dir = temp_root + "/project"
+  let config_home = temp_root + "/xdg"
+  let home_dir = temp_root + "/home"
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(config_home + "/choir/hooks"))
+  ignore(@sys.create_dir_all(home_dir))
+  let pr_hook = config_home + "/choir/hooks/pr_merged.sh"
+  let wave_hook = config_home + "/choir/hooks/wave_complete.sh"
+  ignore(@sys.write_file_sync(pr_hook, ""))
+  ignore(@sys.write_file_sync(wave_hook, ""))
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      auto_pull_after_integration: false,
+      pr_policy: {
+        require_integration_audit: false,
+        skip_copilot_on_feature_branch: true,
+      },
+    },
+    make_hermetic_recovery_provider(),
+  )
+  let parent_id = "main.parent-global-hook"
+  let child_id = "main.child-global-hook"
+  ignore(
+    state.register_agent({
+      agent_id: parent_id,
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: project_dir,
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: child_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace: project_dir + "/.choir/worktrees/child-global-hook",
+      branch: child_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 1,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let pr_number = 623
+  state.poller.track(
+    pr_number, child_id, child_id, "main", "https://example.test/pull/623", 100L,
+  )
+  let hook_paths : Array[String] = []
+  let hook_inputs : Array[@hooks.HookInput] = []
+  state.process_poller_tick_with_test(
+    1000L,
+    900L,
+    async fn(_pr_number, _skip_issue_comment_fetch) {
+      @async.sleep(0)
+      (
+        true,
+        @poller.ReviewState::Approved,
+        "sha-global-hook",
+        @poller.CiRollupStatus::Success,
+        "",
+        false,
+        false,
+        @poller.Mergeable::Unknown,
+        @poller.MergeStateStatus::Unknown,
+        Some(4102358400L),
+      )
+    },
+    Some(config_home),
+    home_dir,
+    runner=async fn(cmds : Array[@workspace.Command]) {
+      @async.sleep(0)
+      cmds.map(fn(_) { 0 })
+    },
+    capture=async fn(cmd : @workspace.Command) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+        return (0, "origin/main\n")
+      }
+      if cmd.program == "gh" && cmd.args.contains("list") {
+        return (0, "[]")
+      }
+      (0, "")
+    },
+    automerge_capture=async fn(_cmd : @workspace.Command) {
+      @async.sleep(0)
+      (0, "")
+    },
+    hook_capture=async fn(
+      path : String,
+      input_json : String,
+      _cwd : String?,
+    ) -> (Int, String) {
+      @async.sleep(0)
+      hook_paths.push(path)
+      match @hooks.HookInput::from_json_string(input_json) {
+        Some(input) => hook_inputs.push(input)
+        None => fail("expected hook JSON")
+      }
+      (0, "hook")
+    },
+  )
+  @debug.assert_eq(hook_paths, [pr_hook, wave_hook])
+  assert_eq(hook_inputs.length(), 2)
+  assert_eq(hook_inputs[0].event, @hooks.HookEvent::PrMerged)
+  assert_eq(hook_inputs[1].event, @hooks.HookEvent::WaveComplete)
+  @debug.assert_eq(hook_inputs[0].pr_number, Some(pr_number))
+  @debug.assert_eq(hook_inputs[1].pr_number, Some(pr_number))
+  ignore(@sys.rm_rf(temp_root))
+}
+
+///|
+async test "deliver_pending_poll_events ignores absent injected global hook fallback" {
+  let temp_root = "/tmp/choir-deliver-empty-hook-config-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let project_dir = temp_root + "/project"
+  let config_home = temp_root + "/xdg-empty"
+  let home_dir = temp_root + "/home-empty"
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/hooks"))
+  ignore(@sys.create_dir_all(config_home))
+  ignore(@sys.create_dir_all(home_dir))
+  let pr_hook = project_dir + "/.choir/hooks/pr_merged.sh"
+  ignore(@sys.write_file_sync(pr_hook, ""))
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      auto_pull_after_integration: false,
+      pr_policy: {
+        require_integration_audit: false,
+        skip_copilot_on_feature_branch: true,
+      },
+    },
+    make_hermetic_recovery_provider(),
+  )
+  let parent_id = "main.parent-empty-hook"
+  let child_id = "main.child-empty-hook"
+  ignore(
+    state.register_agent({
+      agent_id: parent_id,
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: project_dir,
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: child_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace: project_dir + "/.choir/worktrees/child-empty-hook",
+      branch: child_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 1,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let pr_number = 624
+  state.poller.track(
+    pr_number, child_id, child_id, "main", "https://example.test/pull/624", 100L,
+  )
+  let hook_paths : Array[String] = []
+  let hook_inputs : Array[@hooks.HookInput] = []
+  state.process_poller_tick_with_test(
+    1000L,
+    900L,
+    async fn(_pr_number, _skip_issue_comment_fetch) {
+      @async.sleep(0)
+      (
+        true,
+        @poller.ReviewState::Approved,
+        "sha-empty-hook",
+        @poller.CiRollupStatus::Success,
+        "",
+        false,
+        false,
+        @poller.Mergeable::Unknown,
+        @poller.MergeStateStatus::Unknown,
+        Some(4102358400L),
+      )
+    },
+    Some(config_home),
+    home_dir,
+    runner=async fn(cmds : Array[@workspace.Command]) {
+      @async.sleep(0)
+      cmds.map(fn(_) { 0 })
+    },
+    capture=async fn(cmd : @workspace.Command) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+        return (0, "origin/main\n")
+      }
+      if cmd.program == "gh" && cmd.args.contains("list") {
+        return (0, "[]")
+      }
+      (0, "")
+    },
+    automerge_capture=async fn(_cmd : @workspace.Command) {
+      @async.sleep(0)
+      (0, "")
+    },
+    hook_capture=async fn(
+      path : String,
+      input_json : String,
+      _cwd : String?,
+    ) -> (Int, String) {
+      @async.sleep(0)
+      hook_paths.push(path)
+      match @hooks.HookInput::from_json_string(input_json) {
+        Some(input) => hook_inputs.push(input)
+        None => fail("expected hook JSON")
+      }
+      (0, "hook")
+    },
+  )
+  @debug.assert_eq(hook_paths, [pr_hook])
+  assert_eq(hook_inputs.length(), 1)
+  assert_eq(hook_inputs[0].event, @hooks.HookEvent::PrMerged)
+  @debug.assert_eq(hook_inputs[0].pr_number, Some(pr_number))
+  ignore(@sys.rm_rf(temp_root))
+}
+
+///|
 async test "refresh_pr_with_test uses injected hook capture when project hook resolves" {
   let project_dir = "/tmp/choir-refresh-pr-merged-hook-hermetic-" +
     @sys.get_pid().to_string() +
@@ -3172,6 +3447,10 @@ async test "refresh_pr_with_test uses injected hook capture when project hook re
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
   ignore(@sys.create_dir_all(project_dir + "/.choir/hooks"))
+  let config_home = project_dir + "/xdg-empty"
+  let home_dir = project_dir + "/home-empty"
+  ignore(@sys.create_dir_all(config_home))
+  ignore(@sys.create_dir_all(home_dir))
   let hook_path = project_dir + "/.choir/hooks/pr_merged.sh"
   assert_true(@sys.write_file_sync(hook_path, "#!/bin/sh\nexit 73\n"))
   let state = ServerState::new(
@@ -3242,6 +3521,8 @@ async test "refresh_pr_with_test uses injected hook capture when project hook re
         Some(4102358400L),
       )
     },
+    Some(config_home),
+    home_dir,
     runner=async fn(cmds : Array[@workspace.Command]) {
       @async.sleep(0)
       cmds.map(fn(_) { 0 })
@@ -3848,6 +4129,8 @@ async test "A: unaudited PRMerged event does NOT fire completion hooks" {
             Some(4102358400L),
           )
         },
+        None,
+        "",
         runner=fn(cmds : Array[@workspace.Command]) { cmds.map(fn(_) { 0 }) },
         capture=fn(cmd : @workspace.Command) {
           if cmd.program == "git" &&
@@ -3946,6 +4229,8 @@ async test "A: unaudited PRMerged event does NOT fire completion hooks" {
         @async.sleep(0)
         fail("no tracked PR should remain before the re-check tick")
       },
+      None,
+      "",
       runner=async fn(cmds : Array[@workspace.Command]) {
         @async.sleep(0)
         cmds.map(fn(_) { 0 })
@@ -4134,6 +4419,8 @@ async test "B: audited PRMerged event DOES fire completion hooks (regression gua
         Some(4102358400L),
       )
     },
+    None,
+    "",
     runner=async fn(cmds : Array[@workspace.Command]) {
       @async.sleep(0)
       cmds.map(fn(_) { 0 })
@@ -4288,6 +4575,8 @@ async test "C: empty-head_sha unaudited PRMerged records observation" {
         Some(4102358400L),
       )
     },
+    None,
+    "",
     runner=async fn(cmds : Array[@workspace.Command]) {
       @async.sleep(0)
       cmds.map(fn(_) { 0 })
@@ -4436,6 +4725,8 @@ async test "tracked PRMerged with missing head sha warns when integration audit 
         Some(4102358400L),
       )
     },
+    None,
+    "",
     runner=async fn(cmds : Array[@workspace.Command]) {
       @async.sleep(0)
       cmds.map(fn(_) { 0 })
@@ -4876,6 +5167,8 @@ async test "quiet poller tick successful auto resolve retry re-enters automerge 
         None,
       )
     },
+    None,
+    "",
     runner~,
     capture~,
     automerge_capture=capture,
@@ -5001,6 +5294,8 @@ async test "quiet poller tick refetch count drop re-enters review-thread pipelin
         None,
       )
     },
+    None,
+    "",
     runner~,
     capture~,
     automerge_capture=capture,
@@ -5133,6 +5428,8 @@ async test "quiet poller tick never-fetched retry clear re-enters automerge pipe
         None,
       )
     },
+    None,
+    "",
     runner~,
     capture~,
     automerge_capture=capture,
@@ -5224,6 +5521,8 @@ async test "fresh PR first thread refs fetch failure leaves merge gate unknown" 
         None,
       )
     },
+    None,
+    "",
     runner~,
     capture~,
     automerge_capture=capture,
@@ -8394,6 +8693,8 @@ async test "poller clears spawn-registration tracking when agent registers activ
     100L,
     900L,
     spawn_registration_noop_poll,
+    None,
+    "",
     runner=async fn(cmds) {
       spawn_registration_capture_runner(sent, closed, cmds)
     },
@@ -8408,6 +8709,8 @@ async test "poller clears spawn-registration tracking when agent registers activ
     160L,
     900L,
     spawn_registration_noop_poll,
+    None,
+    "",
     runner=async fn(cmds) {
       spawn_registration_capture_runner(sent, closed, cmds)
     },
@@ -8436,6 +8739,8 @@ async test "poller reaps never-registered spawning agent after first-observed de
     100L,
     900L,
     spawn_registration_noop_poll,
+    None,
+    "",
     runner=async fn(cmds) {
       spawn_registration_capture_runner(sent, closed, cmds)
     },
@@ -8449,6 +8754,8 @@ async test "poller reaps never-registered spawning agent after first-observed de
     279L,
     900L,
     spawn_registration_noop_poll,
+    None,
+    "",
     runner=async fn(cmds) {
       spawn_registration_capture_runner(sent, closed, cmds)
     },
@@ -8466,6 +8773,8 @@ async test "poller reaps never-registered spawning agent after first-observed de
     280L,
     900L,
     spawn_registration_noop_poll,
+    None,
+    "",
     runner=async fn(cmds) {
       spawn_registration_capture_runner(sent, closed, cmds)
     },
@@ -8505,6 +8814,8 @@ async test "poller reaps never-registered spawning agent after first-observed de
     500L,
     900L,
     spawn_registration_noop_poll,
+    None,
+    "",
     runner=async fn(cmds) {
       spawn_registration_capture_runner(sent, closed, cmds)
     },

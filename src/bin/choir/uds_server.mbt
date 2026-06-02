@@ -1277,6 +1277,8 @@ async test "heartbeat tick loop triggers automerge sweep path via process_poller
         now,
         timeout_sec,
         poll,
+        None,
+        "",
         runner~,
         capture~,
         automerge_capture=capture,
