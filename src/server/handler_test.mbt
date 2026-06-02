@@ -3165,6 +3165,126 @@ async test "deliver_pending_poll_events fires PRMerged hook whether tracked or s
 }
 
 ///|
+async test "refresh_pr_with_test uses injected hook capture when project hook resolves" {
+  let project_dir = "/tmp/choir-refresh-pr-merged-hook-hermetic-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/hooks"))
+  let hook_path = project_dir + "/.choir/hooks/pr_merged.sh"
+  assert_true(@sys.write_file_sync(hook_path, "#!/bin/sh\nexit 73\n"))
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      auto_pull_after_integration: false,
+      pr_policy: {
+        require_integration_audit: false,
+        skip_copilot_on_feature_branch: true,
+      },
+    },
+    make_hermetic_recovery_provider(),
+  )
+  let parent_id = "main.parent-hook-hermetic"
+  let child_id = "main.child-hook-hermetic"
+  ignore(
+    state.register_agent({
+      agent_id: parent_id,
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: project_dir,
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: child_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace: project_dir + "/.choir/worktrees/child-hook-hermetic",
+      branch: child_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 1,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let pr_number = 622
+  state.poller.track(
+    pr_number, child_id, child_id, "main", "https://example.test/pull/622", 100L,
+  )
+  let hook_paths : Array[String] = []
+  let hook_inputs : Array[@hooks.HookInput] = []
+  let hook_cwds : Array[String] = []
+  state.refresh_pr_with_test(
+    pr_number,
+    1000L,
+    900L,
+    async fn(_pr_number, _skip_issue_comment_fetch) {
+      @async.sleep(0)
+      (
+        true,
+        @poller.ReviewState::Approved,
+        "sha-hook-hermetic",
+        @poller.CiRollupStatus::Success,
+        "",
+        false,
+        false,
+        @poller.Mergeable::Unknown,
+        @poller.MergeStateStatus::Unknown,
+        Some(4102358400L),
+      )
+    },
+    runner=async fn(cmds : Array[@workspace.Command]) {
+      @async.sleep(0)
+      cmds.map(fn(_) { 0 })
+    },
+    capture=async fn(cmd : @workspace.Command) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+        return (0, "origin/main\n")
+      }
+      (0, "")
+    },
+    automerge_capture=async fn(_cmd : @workspace.Command) {
+      @async.sleep(0)
+      (0, "")
+    },
+    hook_capture=async fn(
+      path : String,
+      input_json : String,
+      cwd : String?,
+    ) -> (Int, String) {
+      @async.sleep(0)
+      hook_paths.push(path)
+      hook_cwds.push(cwd.unwrap_or(""))
+      match @hooks.HookInput::from_json_string(input_json) {
+        Some(input) => hook_inputs.push(input)
+        None => fail("expected hook JSON")
+      }
+      (0, "")
+    },
+  )
+  @debug.assert_eq(hook_paths, [hook_path])
+  @debug.assert_eq(hook_cwds, [project_dir])
+  assert_eq(hook_inputs.length(), 1)
+  assert_eq(hook_inputs[0].event, @hooks.HookEvent::PrMerged)
+  @debug.assert_eq(hook_inputs[0].pr_number, Some(pr_number))
+  @debug.assert_eq(hook_inputs[0].branch, Some(child_id))
+  @debug.assert_eq(hook_inputs[0].parent_branch, Some("main"))
+  assert_true(state.poller.merged_observed(pr_number))
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 test "should_emit_untracked_pr_merged truth table" {
   assert_true(should_emit_untracked_pr_merged(false, false))
   assert_false(should_emit_untracked_pr_merged(true, false))
