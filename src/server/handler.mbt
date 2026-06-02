@@ -81,15 +81,15 @@ fn emit_span(
     None => ()
   }
   emit_request_log(request_log_level_for_request(state, req), name, fields)
-  match state.config.otlp_endpoint {
-    Some(ep) => {
+  match state.otlp_exporter {
+    Some(exporter) => {
       let mt_span = @moontrace.span_with_trace(
         name,
         normalize_trace_id(state.run_id),
         fields~,
       )
-      mt_span.start_time = start_ms
-      mt_span.end_time = end_ms
+      mt_span.start_time = otlp_unix_ms_to_ns(start_ms)
+      mt_span.end_time = otlp_unix_ms_to_ns(end_ms)
       mt_span.status = if resp.is_ok() {
         @moontrace.Ok
       } else {
@@ -97,7 +97,7 @@ fn emit_span(
       }
       mt_span.status_message = resp.error_message().unwrap_or("")
       let otlp_span = @otlp.span_to_otlp(mt_span)
-      export_otlp_span(otlp_span, ep)
+      exporter.enqueue(otlp_span)
     }
     None => ()
   }
@@ -116,6 +116,70 @@ fn emit_span(
       ),
     )
   }
+}
+
+///|
+test "emit_span enqueues OTLP span without flushing request hot path" {
+  let exported : Array[Array[@otlp.OtlpSpan]] = []
+  let endpoints : Array[String] = []
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir: "/tmp/choir-emit-span-otlp-queue-" +
+      @env.now().reinterpret_as_int64().to_string(),
+      otlp_endpoint: Some("http://collector:4318"),
+    },
+    make_hermetic_recovery_provider(),
+    otlp_exporter_factory=fn(endpoint) {
+      endpoints.push(endpoint)
+      make_otlp_span_exporter_with_batch(async fn(spans, _resource, _scope) {
+        @async.sleep(0)
+        exported.push(spans)
+        Ok({
+          success: true,
+          attempts: 1,
+          status_code: Some(200),
+          error: None,
+          retry_class: @transport.Success,
+        })
+      })
+    },
+  )
+  @debug.assert_eq(endpoints, ["http://collector:4318"])
+  let req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::Dev,
+    name: "notify_parent",
+    args: @types.RequestArgs::from_values({ "caller_id": "main.leaf".to_json() }),
+  }
+  emit_span(
+    state,
+    req,
+    (1000 : UInt64),
+    (1025 : UInt64),
+    @types.Response::Ok(@types.FieldMap::from_values({})),
+  )
+  assert_eq(state.otlp_queued_span_count(), 1)
+  assert_eq(exported.length(), 0)
+  match state.otlp_exporter {
+    Some(exporter) => {
+      let span = exporter.spans[0]
+      assert_eq(span.trace_id.length(), 32)
+      for i = 0; i < span.trace_id.length(); i = i + 1 {
+        let c = span.trace_id[i]
+        assert_true((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))
+      }
+      assert_eq(span.span_id.length(), 16)
+      for i = 0; i < span.span_id.length(); i = i + 1 {
+        let c = span.span_id[i]
+        assert_true((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))
+      }
+      assert_eq(span.start_time_unix_nano, (1_000_000_000 : UInt64))
+      assert_eq(span.end_time_unix_nano, (1_025_000_000 : UInt64))
+    }
+    None => fail("expected OTLP exporter")
+  }
+  ignore(@sys.rm_rf(state.config.project_dir))
 }
 
 ///|

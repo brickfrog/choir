@@ -1390,6 +1390,9 @@ fn serve_run() -> Unit {
         None => ()
       }
       state.replay_pending_outbox(runner=@exec.run_sequence)
+      if state.has_otlp_span_exporter() {
+        root.spawn_bg(async fn() { state.run_otlp_span_export_loop() })
+      }
       root.spawn_bg(async fn() {
         for ;; {
           @async.sleep(1000)

@@ -5,7 +5,7 @@ version = "0.1.0"
 import {
   "moonbitlang/async@0.19.1",
   "moonbitlang/parser@0.2.5",
-  "brickfrog/moontrace@0.9.3",
+  "brickfrog/moontrace@0.13.0",
   "brickfrog/tempo@0.3.4",
 }
 
