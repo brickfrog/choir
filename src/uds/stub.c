@@ -48,6 +48,7 @@ static int choir_set_nonblocking(int fd) {
     return 0;
 }
 
+#if !(defined(__linux__) && defined(SOCK_CLOEXEC))
 static int choir_set_cloexec(int fd) {
     int flags = fcntl(fd, F_GETFD, 0);
     if (flags < 0) {
@@ -58,6 +59,7 @@ static int choir_set_cloexec(int fd) {
     }
     return 0;
 }
+#endif
 
 static int choir_accept_cloexec(int server_fd) {
 #if defined(__linux__) && defined(SOCK_CLOEXEC)
