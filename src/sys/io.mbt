@@ -731,6 +731,32 @@ extern "C" fn c_consume_sigusr1_flag() -> Int = "choir_consume_sigusr1_flag"
 extern "C" fn c_raise_sigusr1_for_test() -> Int = "choir_raise_sigusr1_for_test"
 
 ///|
+extern "C" fn c_unblock_sigusr1_for_test() -> Int = "choir_unblock_sigusr1_for_test"
+
+///|
+#borrow(pid_path, sidecar_path, sentinel_path)
+extern "C" fn c_spawn_sigterm_unblocked_pgroup_for_test(
+  pid_path : Bytes,
+  sidecar_path : Bytes,
+  sentinel_path : Bytes,
+) -> Int = "choir_spawn_sigterm_unblocked_pgroup_for_test"
+
+///|
+extern "C" fn c_ignore_sigpipe() -> Int = "choir_ignore_sigpipe"
+
+///|
+extern "C" fn c_sigpipe_ignored_for_test() -> Int = "choir_sigpipe_ignored_for_test"
+
+///|
+extern "C" fn c_reset_sigpipe_default_for_test() -> Int = "choir_reset_sigpipe_default_for_test"
+
+///|
+extern "C" fn c_save_sigpipe_for_test() -> Int = "choir_save_sigpipe_for_test"
+
+///|
+extern "C" fn c_restore_sigpipe_for_test() -> Int = "choir_restore_sigpipe_for_test"
+
+///|
 extern "C" fn c_install_crash_handlers() = "choir_install_crash_handlers"
 
 ///|
@@ -839,6 +865,44 @@ pub fn consume_sigusr1_flag() -> Bool {
 ///|
 pub fn raise_sigusr1_for_test() -> Bool {
   c_raise_sigusr1_for_test() == 0
+}
+
+///|
+pub fn unblock_sigusr1_for_test() -> Bool {
+  c_unblock_sigusr1_for_test() == 0
+}
+
+///|
+pub fn spawn_sigterm_unblocked_pgroup_for_test(
+  pid_path : String,
+  sidecar_path : String,
+  sentinel_path : String,
+) -> Int {
+  c_spawn_sigterm_unblocked_pgroup_for_test(
+    string_to_null_terminated_bytes(pid_path),
+    string_to_null_terminated_bytes(sidecar_path),
+    string_to_null_terminated_bytes(sentinel_path),
+  )
+}
+
+///|
+pub fn ignore_sigpipe() -> Bool {
+  c_ignore_sigpipe() == 0
+}
+
+///|
+test "ignore_sigpipe installs ignored SIGPIPE disposition" {
+  let saved = c_save_sigpipe_for_test() == 0
+  let reset = c_reset_sigpipe_default_for_test() == 0
+  let ignored_before = c_sigpipe_ignored_for_test()
+  let ignored_result = ignore_sigpipe()
+  let ignored_after = c_sigpipe_ignored_for_test()
+  ignore(c_restore_sigpipe_for_test())
+  assert_true(saved)
+  assert_true(reset)
+  assert_false(ignored_before != 0)
+  assert_true(ignored_result)
+  assert_true(ignored_after != 0)
 }
 
 ///|
