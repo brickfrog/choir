@@ -37,6 +37,7 @@ pub async fn ensure_agy_binary_available(
 fn empty_fork_wave_spawn_plan() -> ForkWaveSpawnPlan {
   {
     cmds: [],
+    spawn_launch_bindings: [],
     spawned_specs: [],
     spawned_slugs: [],
     spawned_count: 0,
@@ -242,6 +243,7 @@ pub fn fork_wave_spawn_plan(
   ignore(registry)
   let agent_ids = StringBuilder::new()
   let cmds : Array[@workspace.Command] = []
+  let spawn_launch_bindings : Array[SpawnLaunchCommandBinding] = []
   let spawned_specs : Array[@types.SpawnSpec] = []
   let spawned_slugs : Array[String] = []
   let mut spawned_count = 0
@@ -279,24 +281,33 @@ pub fn fork_wave_spawn_plan(
       wave_id,
     }
     spawned_specs.push(spec)
+    let leaf_cmds = @workspace.spawn_commands(
+      spec,
+      project_dir,
+      session,
+      parent_session_id=fork_wave_args.parent_session_id,
+      extra_mcp_servers_json~,
+      shell_command~,
+      listen_uds~,
+      listen_tcp~,
+      tcp_auth_token~,
+      project_config_content~,
+    )
     for
-      cmd in @workspace.spawn_commands(
-        spec,
-        project_dir,
-        session,
-        parent_session_id=fork_wave_args.parent_session_id,
-        extra_mcp_servers_json~,
-        shell_command~,
-        listen_uds~,
-        listen_tcp~,
-        tcp_auth_token~,
-        project_config_content~,
+      binding in spawn_launch_command_bindings_for_agent(
+        agent_id,
+        cmds.length(),
+        leaf_cmds,
       ) {
+      spawn_launch_bindings.push(binding)
+    }
+    for cmd in leaf_cmds {
       cmds.push(cmd)
     }
   }
   {
     cmds,
+    spawn_launch_bindings,
     spawned_specs,
     spawned_slugs,
     spawned_count,
@@ -404,15 +415,21 @@ pub fn fork_wave_response_with_beads_policy_warning(
 pub async fn fork_wave_response_from_interpret_result(
   interpret_result : Result[@types.Response, ForkWaveError],
   capture_output : async (@workspace.Command) -> (Int, String),
+  cmds? : Array[@workspace.Command] = [],
+  captured_outputs? : Map[Int, String] = {},
 ) -> @types.Response {
   match interpret_result {
     Ok(r) => r
     Err(CommandFailed(status~, failing_cmd~)) => {
       let detail = match failing_cmd {
-        Some(cmd) => {
-          let (_, output) = capture_output(cmd)
-          output.trim().to_owned()
-        }
+        Some(cmd) =>
+          match captured_output_for_command(cmd, cmds, captured_outputs) {
+            Some(output) => output.trim().to_owned()
+            None => {
+              let (_, output) = capture_output(cmd)
+              output.trim().to_owned()
+            }
+          }
         None => ""
       }
       if detail != "" {
@@ -467,6 +484,23 @@ pub async fn fork_wave_response_from_interpret_result(
 }
 
 ///|
+fn captured_output_for_command(
+  cmd : @workspace.Command,
+  cmds : Array[@workspace.Command],
+  captured_outputs : Map[Int, String],
+) -> String? {
+  for i = 0; i < cmds.length(); i = i + 1 {
+    if same_command(cmds[i], cmd) {
+      match captured_outputs.get(i) {
+        Some(output) => return Some(output)
+        None => ()
+      }
+    }
+  }
+  None
+}
+
+///|
 fn fork_wave_response_with_spawn_metadata(
   resp : @types.Response,
   spawned_specs : Array[@types.SpawnSpec],
@@ -510,6 +544,38 @@ fn fork_wave_response_with_spawn_metadata(
 }
 
 ///|
+fn same_optional_workdir(left : String?, right : String?) -> Bool {
+  match (left, right) {
+    (None, None) => true
+    (Some(a), Some(b)) => a == b
+    _ => false
+  }
+}
+
+///|
+fn same_command(left : @workspace.Command, right : @workspace.Command) -> Bool {
+  left.program == right.program &&
+  left.args == right.args &&
+  same_optional_workdir(left.workdir, right.workdir)
+}
+
+///|
+fn same_command_array(
+  left : Array[@workspace.Command],
+  right : Array[@workspace.Command],
+) -> Bool {
+  if left.length() != right.length() {
+    return false
+  }
+  for i = 0; i < left.length(); i = i + 1 {
+    if !same_command(left[i], right[i]) {
+      return false
+    }
+  }
+  true
+}
+
+///|
 /// Single entry point (from dispatch) for `fork_wave` pre-spawn / effect-phase
 /// wiring: parent-branch defaulting, caller spawn-depth resolution, spawn plan,
 /// scaffold gate + spawn via `interpret`, and spawn failure response mapping.
@@ -530,6 +596,9 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
   tcp_auth_token? : String? = None,
   wave_id? : String? = None,
   read_file? : (String) -> String = @sys.read_file,
+  record_spawn_launch_diagnostic? : (SpawnLaunchDiagnostic) -> Unit = fn(_) {
+    ()
+  },
 ) -> (@types.Response, ForkWaveArgs, ForkWaveSpawnPlan) {
   let fork_wave_args = fork_wave_resolve_args_parent_branch(
     fork_wave_args, project_dir, capture,
@@ -609,8 +678,31 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
     scaffold_commit=fork_wave_args.scaffold_commit,
     parent_branch=fork_wave_args.parent_branch,
   )
-  let interpret_result = interpret(plan, git_capture~, runner~)
-  let resp = fork_wave_response_from_interpret_result(interpret_result, capture)
+  let spawn_launch_captured_outputs : Map[Int, String] = {}
+  let spawn_runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    if !same_command_array(cmds, spawn_plan.cmds) {
+      return runner(cmds)
+    }
+    let (statuses, captured_outputs) = run_commands_with_spawn_launch_capture(
+      spawn_plan.spawn_launch_bindings,
+      cmds,
+      runner,
+      capture,
+      record_spawn_launch_diagnostic,
+    )
+    for index, output in captured_outputs {
+      spawn_launch_captured_outputs.set(index, output)
+    }
+    statuses
+  }
+  let interpret_result = interpret(plan, git_capture~, runner=spawn_runner)
+  let resp = fork_wave_response_from_interpret_result(
+    interpret_result,
+    capture,
+    cmds=spawn_plan.cmds,
+    captured_outputs=spawn_launch_captured_outputs,
+  )
   let resp = fork_wave_response_with_beads_policy_warning(
     fork_wave_response_with_spawn_metadata(resp, spawn_plan.spawned_specs),
     fork_wave_args,

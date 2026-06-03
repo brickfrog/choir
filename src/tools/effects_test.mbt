@@ -336,3 +336,95 @@ test "failed command yields CommandFailed(status=1)" {
     _ => fail("expected Pure(Err(CommandFailed(1)))")
   }
 }
+
+///|
+async test "spawn launch diagnostics capture failing zellij once and redact stderr" {
+  let secret_arg = "tcp_auth_token=super-secret"
+  let setup = @workspace.Command::{
+    program: "mkdir",
+    args: ["-p", "/repo/.choir/worktrees/leaf-a"],
+    workdir: None,
+  }
+  let launch = @workspace.Command::{
+    program: "zellij",
+    args: [
+      "--session", "choir", "action", "new-tab", "--name", "leaf-a", "--cwd", "/repo/.choir/worktrees/leaf-a",
+      "--", "env", secret_arg, "codex",
+    ],
+    workdir: None,
+  }
+  let runner_cmds : Array[@workspace.Command] = []
+  let captured_cmds : Array[@workspace.Command] = []
+  let diagnostics : Array[@tools.SpawnLaunchDiagnostic] = []
+  let long_prefix = "x".repeat(2200)
+  let (statuses, captured_outputs) = @tools.run_commands_with_spawn_launch_capture(
+    [
+      @tools.SpawnLaunchCommandBinding::{
+        agent_id: "main.leaf-a",
+        command_index: 1,
+      },
+    ],
+    [setup, launch],
+    async fn(cmds) {
+      @async.sleep(0)
+      let statuses = []
+      for cmd in cmds {
+        assert_false(cmd.program == "zellij")
+        runner_cmds.push(cmd)
+        statuses.push(0)
+      }
+      statuses
+    },
+    async fn(captured) {
+      @async.sleep(0)
+      captured_cmds.push(captured)
+      (
+        27,
+        long_prefix +
+        "\nzellij stderr: tab failed tcp_auth_token=stderr-secret Authorization: Bearer bearer-secret\n",
+      )
+    },
+    fn(diagnostic) { diagnostics.push(diagnostic) },
+  )
+  assert_eq(statuses.length(), 2)
+  assert_eq(statuses[0], 0)
+  assert_eq(statuses[1], 27)
+  assert_eq(runner_cmds.length(), 1)
+  assert_eq(runner_cmds[0].program, "mkdir")
+  assert_eq(captured_cmds.length(), 1)
+  assert_eq(captured_cmds[0].program, "zellij")
+  match captured_outputs.get(1) {
+    Some(output) => {
+      assert_true(output.contains("zellij stderr: tab failed"))
+      assert_true(output.contains("tcp_auth_token=[REDACTED]"))
+      assert_true(output.contains("Bearer [REDACTED]"))
+      assert_false(output.contains("stderr-secret"))
+      assert_false(output.contains("bearer-secret"))
+    }
+    None => fail("expected cached spawn launch capture output")
+  }
+  assert_eq(diagnostics.length(), 1)
+  match diagnostics[0] {
+    @tools.SpawnLaunchDiagnostic::SpawnCommandFailed(
+      agent_id~,
+      command_index~,
+      status~,
+      command_summary~,
+      stderr_tail~
+    ) => {
+      assert_eq(agent_id, "main.leaf-a")
+      assert_eq(command_index, 1)
+      assert_eq(status, 27)
+      assert_true(command_summary.contains("zellij action new-tab"))
+      assert_true(command_summary.contains("name=leaf-a"))
+      assert_false(command_summary.contains(secret_arg))
+      assert_true(stderr_tail.contains("zellij stderr: tab failed"))
+      assert_true(stderr_tail.contains("tcp_auth_token=[REDACTED]"))
+      assert_true(stderr_tail.contains("Bearer [REDACTED]"))
+      assert_false(stderr_tail.contains("stderr-secret"))
+      assert_false(stderr_tail.contains("bearer-secret"))
+      assert_true(stderr_tail.length() <= 2048)
+    }
+    _ => fail("expected SpawnCommandFailed diagnostic")
+  }
+}

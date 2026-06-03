@@ -863,6 +863,9 @@ pub async fn dispatch(
   ) {
     ()
   },
+  record_spawn_launch_diagnostic? : (SpawnLaunchDiagnostic) -> Unit = fn(_) {
+    ()
+  },
   tdd_phase_reader? : (String) -> @types.LeafTddPhase? = fn(_) { None },
   tdd_state_reader? : (String) -> @types.LeafTddState? = fn(_) { None },
   tdd_state_writer? : (String, @types.LeafTddState) -> Unit = fn(_, _) { () },
@@ -1143,6 +1146,7 @@ pub async fn dispatch(
           tcp_auth_token~,
           wave_id=Some(wave_id),
           read_file~,
+          record_spawn_launch_diagnostic~,
         )
         // Post-spawn side effects: only run if spawn succeeded. If spawn fails,
         // the reservation remains as an empty orphan so concurrent allocation
@@ -1281,6 +1285,7 @@ pub async fn dispatch(
           tcp_auth_token~,
           read_file~,
           record_task_contract~,
+          record_spawn_launch_diagnostic~,
         )
       }
       resp
@@ -1698,6 +1703,7 @@ pub async fn dispatch(
                 listen_tcp~,
                 tcp_auth_token~,
                 read_file~,
+                record_spawn_launch_diagnostic~,
               )
           }
       }
@@ -1711,6 +1717,7 @@ pub async fn dispatch(
             capture,
             registry~,
             extra_mcp_servers_json~,
+            record_spawn_launch_diagnostic~,
           )
       }
     ToolRequest::SpawnWorker(worker_args) =>
@@ -1732,6 +1739,7 @@ pub async fn dispatch(
               tcp_auth_token~,
               read_file~,
               record_task_contract~,
+              record_spawn_launch_diagnostic~,
             )
         }
       } else {
@@ -1749,6 +1757,7 @@ pub async fn dispatch(
           tcp_auth_token~,
           read_file~,
           record_task_contract~,
+          record_spawn_launch_diagnostic~,
         )
       }
     ToolRequest::Reply(reply_args) => {
@@ -2000,6 +2009,9 @@ pub async fn handle_request(
   ) {
     ()
   },
+  record_spawn_launch_diagnostic? : (SpawnLaunchDiagnostic) -> Unit = fn(_) {
+    ()
+  },
   tdd_phase_reader? : (String) -> @types.LeafTddPhase? = fn(_) { None },
   tdd_state_reader? : (String) -> @types.LeafTddState? = fn(_) { None },
   tdd_state_writer? : (String, @types.LeafTddState) -> Unit = fn(_, _) { () },
@@ -2132,6 +2144,7 @@ pub async fn handle_request(
                   poller_state~,
                   task_contract_reader~,
                   record_task_contract~,
+                  record_spawn_launch_diagnostic~,
                   tdd_phase_reader~,
                   tdd_state_reader~,
                   tdd_state_writer~,
@@ -2289,6 +2302,9 @@ pub async fn dispatch_call(
   ) {
     ()
   },
+  record_spawn_launch_diagnostic? : (SpawnLaunchDiagnostic) -> Unit = fn(_) {
+    ()
+  },
   tdd_phase_reader? : (String) -> @types.LeafTddPhase? = fn(_) { None },
   tdd_state_reader? : (String) -> @types.LeafTddState? = fn(_) { None },
   tdd_state_writer? : (String, @types.LeafTddState) -> Unit = fn(_, _) { () },
@@ -2365,6 +2381,7 @@ pub async fn dispatch_call(
                   poller_state~,
                   task_contract_reader~,
                   record_task_contract~,
+                  record_spawn_launch_diagnostic~,
                   tdd_phase_reader~,
                   tdd_state_reader~,
                   tdd_state_writer~,

@@ -18,6 +18,7 @@ pub fn ServerState::register_agent(
 ) -> Unit {
   self.clear_pending_disconnect(agent.agent_id.to_string())
   let agent_id = agent.agent_id.to_string()
+  self.spawn_launch_diagnostics.remove(agent_id)
   let lifecycle = match
     @phase.read_lifecycle(self.config.project_dir, agent_id) {
     Some(existing) => lifecycle_for_registered_agent(existing)

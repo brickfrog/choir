@@ -713,6 +713,9 @@ pub async fn try_dispatch_pending_waves(
   ) {
     ()
   },
+  record_spawn_launch_diagnostic? : (SpawnLaunchDiagnostic) -> Unit = fn(_) {
+    ()
+  },
 ) -> Unit {
   // Sweep orphans first so a malformed `pending-wave--*` file does not stay
   // forever counted by the statusline (which scans by filename prefix) while
@@ -740,6 +743,7 @@ pub async fn try_dispatch_pending_waves(
           tcp_auth_token~,
           wave_id=Some(pw.wave_id),
           read_file~,
+          record_spawn_launch_diagnostic~,
         )
         if resp.is_ok() && spawn_plan.spawned_count > 0 {
           match

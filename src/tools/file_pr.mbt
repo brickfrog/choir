@@ -1022,6 +1022,7 @@ pub fn interpret_track_pr(
 /// bookkeeping, [`SpawnSpec`] rows, and accumulated `spawn_commands` — no host I/O.
 pub(all) struct ForkWaveSpawnPlan {
   cmds : Array[@workspace.Command]
+  spawn_launch_bindings : Array[SpawnLaunchCommandBinding]
   spawned_specs : Array[@types.SpawnSpec]
   spawned_slugs : Array[String]
   spawned_count : Int

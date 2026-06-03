@@ -1332,9 +1332,13 @@ test "fork_wave_caller_spawn_depth_from_registry matches dispatch lookup" {
 
 ///|
 async fn mock_capture_fork_wave_must_not_run(
-  _cmd : @workspace.Command,
+  cmd : @workspace.Command,
 ) -> (Int, String) {
   @async.sleep(0)
+  if cmd.program == "zellij" &&
+    (cmd.args.contains("new-tab") || cmd.args.contains("run")) {
+    return (0, "")
+  }
   fail("unexpected capture when parent_branch is not main")
   (0, "")
 }
@@ -1461,9 +1465,10 @@ async test "interpret_fork_wave_spawn_effect_phase commits scaffold before workt
       for cmd in cmds {
         assert_false(cmd.args.contains("worktree"))
       }
-    } else if seq == 1 {
+    } else if seq == 1 || seq == 2 {
       let mut saw_worktree_add = false
       for cmd in cmds {
+        assert_false(cmd.program == "zellij")
         if cmd.program == "git" &&
           cmd.args.contains("worktree") &&
           cmd.args.contains("add") {
@@ -1490,7 +1495,7 @@ async test "interpret_fork_wave_spawn_effect_phase commits scaffold before workt
     runner,
   )
   assert_eq(spawn_plan.spawned_count, 2)
-  assert_eq(runner_seq[0], 2)
+  assert_eq(runner_seq[0], 3)
   match resp {
     @types.Response::Ok(fields) =>
       @debug.assert_eq(fields.get("status"), Some("spawned"))
@@ -1538,13 +1543,14 @@ async test "interpret_fork_wave_spawn_effect_phase seeds agy shared cache once b
         @debug.assert_eq(cmds[0].args, ["/proj"])
         [0]
       }
-      3 => {
+      3 | 4 => {
         assert_true(cmds.length() > 1)
         let mut seed_count = 0
         let mut eager_bootstrap_count = 0
         let mut first_worktree_add = -1
         for i = 0; i < cmds.length(); i = i + 1 {
           let cmd = cmds[i]
+          assert_false(cmd.program == "zellij")
           if cmd.program ==
             @workspace.native_agy_shared_cache_seed_if_needed_program ||
             cmd.program == @workspace.native_agy_shared_cache_prepare_program ||
@@ -1582,6 +1588,10 @@ async test "interpret_fork_wave_spawn_effect_phase seeds agy shared cache once b
       @debug.assert_eq(cmd.workdir, Some("/proj"))
       return (0, "READY.")
     }
+    if cmd.program == "zellij" &&
+      (cmd.args.contains("new-tab") || cmd.args.contains("run")) {
+      return (0, "")
+    }
     fail("unexpected capture: " + cmd.to_string())
     (0, "")
   }
@@ -1596,7 +1606,7 @@ async test "interpret_fork_wave_spawn_effect_phase seeds agy shared cache once b
     runner,
   )
 
-  assert_eq(runner_seq[0], 4)
+  assert_eq(runner_seq[0], 5)
   assert_eq(spawn_plan.spawned_count, 2)
   match resp {
     @types.Response::Ok(fields) =>
@@ -1642,10 +1652,11 @@ async test "interpret_fork_wave_spawn_effect_phase warns and spawns when agy see
         )
         [1]
       }
-      3 => {
+      3 | 4 => {
         assert_true(cmds.length() > 1)
         let mut saw_worktree_add = false
         for cmd in cmds {
+          assert_false(cmd.program == "zellij")
           if cmd.program == "git" &&
             cmd.args.contains("worktree") &&
             cmd.args.contains("add") {
@@ -1670,6 +1681,10 @@ async test "interpret_fork_wave_spawn_effect_phase warns and spawns when agy see
     if cmd.program == "env" && cmd.args.contains("agy") {
       return (0, "READY.")
     }
+    if cmd.program == "zellij" &&
+      (cmd.args.contains("new-tab") || cmd.args.contains("run")) {
+      return (0, "")
+    }
     fail("unexpected capture: " + cmd.to_string())
     (0, "")
   }
@@ -1684,7 +1699,7 @@ async test "interpret_fork_wave_spawn_effect_phase warns and spawns when agy see
     runner,
   )
 
-  assert_eq(runner_seq[0], 4)
+  assert_eq(runner_seq[0], 5)
   assert_eq(spawn_plan.spawned_count, 2)
   match resp {
     @types.Response::Ok(fields) =>

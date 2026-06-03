@@ -705,10 +705,8 @@ async test "interpret_spawn_worker gemini seeds agy shared cache before default 
       false,
     )
     let mut cache_links_index = -1
-    let mut launch_index = -1
     let mut eager_bootstrap_count = 0
     let mut cache_links_args_ok = false
-    let mut launch_has_agy_home = false
     for i = 0; i < cmds.length(); i = i + 1 {
       let cmd = cmds[i]
       if cache_links_index < 0 &&
@@ -719,22 +717,14 @@ async test "interpret_spawn_worker gemini seeds agy shared cache before default 
         cmd.args == ["/tmp/p", "/tmp/p"] {
         cache_links_args_ok = true
       }
-      if launch_index < 0 && cmd.program == "zellij" {
-        launch_index = i
-      }
-      if cmd.program == "zellij" &&
-        cmd.args.contains("HOME=/tmp/p/.choir/agy-home") {
-        launch_has_agy_home = true
-      }
+      assert_false(cmd.program == "zellij")
       if cmd.program == "env" && cmd.args.contains("agy") {
         eager_bootstrap_count = eager_bootstrap_count + 1
       }
     }
     assert_eq(eager_bootstrap_count, 0)
     assert_true(cache_links_index >= 0)
-    assert_true(launch_index > cache_links_index)
     assert_true(cache_links_args_ok)
-    assert_true(launch_has_agy_home)
     let statuses = []
     for _ in cmds {
       statuses.push(0)
@@ -755,6 +745,11 @@ async test "interpret_spawn_worker gemini seeds agy shared cache before default 
     capture_seen.contains(
       "env HOME=/tmp/p/.choir/agy-shared-cache/home agy --dangerously-skip-permissions --print Reply READY.",
     ),
+  )
+  assert_true(
+    capture_seen.any(fn(seen) {
+      seen.has_prefix("zellij ") && seen.contains("HOME=/tmp/p/.choir/agy-home")
+    }),
   )
   match got {
     @types.Response::Ok(fields) => {
@@ -826,7 +821,7 @@ async test "interpret_spawn_worker gemini warns and proceeds after revalidate se
           cmd.program == @workspace.native_agy_cache_links_program
         }),
       )
-      assert_true(cmds.any(fn(cmd) { cmd.program == "zellij" }))
+      assert_false(cmds.any(fn(cmd) { cmd.program == "zellij" }))
       for _ in cmds {
         statuses.push(0)
       }
@@ -918,7 +913,7 @@ async test "interpret_spawn_worker gemini warns with bootstrap stderr without re
       )
       [0]
     } else {
-      assert_true(cmds.any(fn(cmd) { cmd.program == "zellij" }))
+      assert_false(cmds.any(fn(cmd) { cmd.program == "zellij" }))
       let statuses = []
       for _ in cmds {
         statuses.push(0)

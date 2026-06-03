@@ -72,6 +72,10 @@ async fn mock_registry_capture(cmd : @workspace.Command) -> (Int, String) {
     cmd.args[0] == ".choir/audit-receipts/hash.json" {
     return (0, registry_test_audit_receipt("hash"))
   }
+  if cmd.program == "zellij" &&
+    (cmd.args.contains("new-tab") || cmd.args.contains("run")) {
+    return (0, "")
+  }
   if cmd.program == "zellij" {
     return (1, "")
   }

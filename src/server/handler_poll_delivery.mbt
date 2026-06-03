@@ -2802,7 +2802,9 @@ fn spawn_registration_timeout_parent_message(
   first_unseen : Int64,
   now : Int64,
   deadline_sec : Int64,
+  diagnostic : @tools.SpawnLaunchDiagnostic?,
 ) -> String {
+  let cause = spawn_registration_timeout_cause_detail(deadline_sec, diagnostic)
   "[SPAWN REGISTRATION TIMEOUT] " +
   agent_id +
   " never registered within " +
@@ -2811,7 +2813,92 @@ fn spawn_registration_timeout_parent_message(
   first_unseen.to_string() +
   ", now=" +
   now.to_string() +
-  "). Reaped as Failed(NeverRegistered)."
+  "). " +
+  cause +
+  ". Reaped as Failed(NeverRegistered)."
+}
+
+///|
+fn spawn_registration_timeout_cause_detail(
+  deadline_sec : Int64,
+  diagnostic : @tools.SpawnLaunchDiagnostic?,
+) -> String {
+  match diagnostic {
+    Some(
+      @tools.SpawnLaunchDiagnostic::SpawnCommandFailed(
+        command_index~,
+        status~,
+        command_summary~,
+        stderr_tail~,
+        ..
+      )
+    ) => {
+      let tail = @tools.spawn_launch_sanitized_stderr_tail(stderr_tail)
+        .replace(old="\n", new=" ")
+        .replace(old="\r", new=" ")
+      "spawn_class=spawn-command-failed command_index=" +
+      command_index.to_string() +
+      " command=" +
+      command_summary +
+      " exit=" +
+      status.to_string() +
+      " stderr_tail=" +
+      tail
+    }
+    Some(
+      @tools.SpawnLaunchDiagnostic::SpawnCommandsSucceeded(launch_count~, ..)
+    ) =>
+      "spawn_class=launched-but-never-registered launch_count=" +
+      launch_count.to_string() +
+      " detail=spawn commands succeeded but agent never registered within " +
+      deadline_sec.to_string() +
+      "s"
+    None =>
+      "spawn_class=launched-but-never-registered detail=spawn launch diagnostic unavailable; spawn commands succeeded or no launch failure was captured; agent never registered within " +
+      deadline_sec.to_string() +
+      "s"
+  }
+}
+
+///|
+fn spawn_registration_add_diagnostic_fields(
+  fields : Array[@moontrace.Field],
+  diagnostic : @tools.SpawnLaunchDiagnostic?,
+) -> Unit {
+  match diagnostic {
+    Some(
+      @tools.SpawnLaunchDiagnostic::SpawnCommandFailed(
+        command_index~,
+        status~,
+        command_summary~,
+        stderr_tail~,
+        ..
+      )
+    ) => {
+      fields.push(@moontrace.field("spawn_class", "spawn-command-failed"))
+      fields.push(@moontrace.field("spawn_command_index", command_index))
+      fields.push(@moontrace.field("spawn_exit_code", status))
+      fields.push(@moontrace.field("spawn_command", command_summary))
+      fields.push(
+        @moontrace.field(
+          "spawn_stderr_tail",
+          @tools.spawn_launch_sanitized_stderr_tail(stderr_tail),
+        ),
+      )
+    }
+    Some(
+      @tools.SpawnLaunchDiagnostic::SpawnCommandsSucceeded(launch_count~, ..)
+    ) => {
+      fields.push(
+        @moontrace.field("spawn_class", "launched-but-never-registered"),
+      )
+      fields.push(@moontrace.field("spawn_launch_count", launch_count))
+    }
+    None =>
+      fields.push(
+        @moontrace.field("spawn_class", "launched-but-never-registered"),
+      )
+  }
 }
 
 ///|
@@ -2830,19 +2917,22 @@ async fn ServerState::reap_never_registered_spawn(
   kill_pgid : (Int) -> Unit,
 ) -> Unit {
   let agent_id = agent.agent_id.to_string()
-  @moontrace.warn("spawn registration timeout reaping agent", fields=[
+  let diagnostic = self.spawn_launch_diagnostics.get(agent_id)
+  let fields = [
     @moontrace.field("agent_id", agent_id),
     @moontrace.field("role", agent.role.to_wire_string()),
     @moontrace.field("first_unseen", first_unseen),
     @moontrace.field("now", now),
     @moontrace.field("deadline_sec", deadline_sec),
-  ])
+  ]
+  spawn_registration_add_diagnostic_fields(fields, diagnostic)
+  @moontrace.warn("spawn registration timeout reaping agent", fields~)
   self.kill_tracked_agent_pgroup(agent_id, kill_pgid)
   self.fail_agent_with_runner(
     agent_id,
     @phase.FailureReason::NeverRegistered,
     spawn_registration_timeout_parent_message(
-      agent_id, first_unseen, now, deadline_sec,
+      agent_id, first_unseen, now, deadline_sec, diagnostic,
     ),
     @types.ExitReason::Shutdown,
     runner,

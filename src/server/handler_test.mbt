@@ -8677,6 +8677,86 @@ async fn spawn_registration_capture(cmd : @workspace.Command) -> (Int, String) {
 }
 
 ///|
+async fn spawn_registration_clean_git(
+  _program : String,
+  args : Array[String],
+) -> String {
+  @async.sleep(0)
+  if args.contains("log") {
+    ""
+  } else if args.contains("status") {
+    ""
+  } else if args.contains("rev-parse") {
+    "hash\n"
+  } else {
+    ""
+  }
+}
+
+///|
+fn spawn_registration_fork_wave_args(
+  slug_prefix : String,
+) -> @tools.ForkWaveArgs {
+  {
+    count: 1,
+    tasks: ["diagnose spawn"],
+    task_contracts: [
+      {
+        ..@types.TaskContract::empty(),
+        goal: "diagnose spawn",
+        verify: ["true"],
+      },
+    ],
+    has_per_leaf_tasks: false,
+    parent_branch: "main",
+    caller_id: "main.parent",
+    slug_prefix,
+    agent_type: @types.AgentType::Codex,
+    child_role: @types.Role::Dev,
+    parent_session_id: None,
+    review_context: None,
+    automerge: None,
+    review_mode: None,
+    merge_strategy: None,
+    depends_on: [],
+    scaffold_commit: None,
+  }
+}
+
+///|
+async fn dispatch_spawn_registration_fork_wave(
+  state : ServerState,
+  slug_prefix : String,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  capture : async (@workspace.Command) -> (Int, String),
+) -> @types.Response {
+  @tools.dispatch(
+    @tools.ToolRequest::ForkWave(spawn_registration_fork_wave_args(slug_prefix)),
+    project_dir=state.config.project_dir,
+    session=state.config.terminal_session,
+    runner~,
+    git_capture=spawn_registration_clean_git,
+    capture~,
+    registry=Some(state.registry),
+    poller_state=Some(state.poller),
+    record_spawn_launch_diagnostic=fn(diagnostic) {
+      state.record_spawn_launch_diagnostic(diagnostic)
+    },
+    read_file=fn(_) { "" },
+  )
+}
+
+///|
+fn spawn_registration_only_launch_diagnostic(
+  state : ServerState,
+) -> (String, @tools.SpawnLaunchDiagnostic)? {
+  for agent_id, diagnostic in state.spawn_launch_diagnostics {
+    return Some((agent_id, diagnostic))
+  }
+  None
+}
+
+///|
 async test "poller clears spawn-registration tracking when agent registers active" {
   let state = handler_auto_close_test_state("spawn-registration-clears-active")
   let parent_id = "main.parent"
@@ -8822,6 +8902,287 @@ async test "poller reaps never-registered spawning agent after first-observed de
     capture=spawn_registration_capture,
   )
   assert_eq(worker_handoff_count_sent(sent, "[SPAWN REGISTRATION TIMEOUT]"), 1)
+  assert_eq(closed.length(), 1)
+  ignore(@sys.rm_rf(state.config.project_dir))
+}
+
+///|
+async test "spawn command failure diagnostic travels dispatch to NeverRegistered timeout" {
+  let state = handler_auto_close_test_state(
+    "spawn-registration-e2e-spawn-failed",
+  )
+  let parent_id = "main.parent"
+  let slug_prefix = "spawn-failed-e2e"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  let runner_launch_count : Array[Int] = [0]
+  let zellij_launch_captures : Array[Int] = [0]
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "zellij" &&
+        (cmd.args.contains("new-tab") || cmd.args.contains("run")) {
+        runner_launch_count[0] = runner_launch_count[0] + 1
+      }
+      statuses.push(0)
+    }
+    statuses
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "zellij" && cmd.args.contains("new-tab") {
+      zellij_launch_captures[0] = zellij_launch_captures[0] + 1
+      return (
+        27, "zellij refused launch tcp_auth_token=stderr-secret Authorization: Bearer bearer-secret",
+      )
+    }
+    (0, "")
+  }
+  let resp = dispatch_spawn_registration_fork_wave(
+    state, slug_prefix, runner, capture,
+  )
+  match resp {
+    @types.Response::Err(msg) => assert_true(msg.contains("exit 27"))
+    @types.Response::Ok(_) => fail("expected failed zellij launch response")
+  }
+  assert_eq(runner_launch_count[0], 0)
+  assert_eq(zellij_launch_captures[0], 1)
+  let (child_id, diagnostic) = match
+    spawn_registration_only_launch_diagnostic(state) {
+    Some(pair) => pair
+    None => fail("expected recorded spawn command failure diagnostic")
+  }
+  assert_true(child_id.has_prefix("main." + slug_prefix + "-"))
+  match diagnostic {
+    @tools.SpawnLaunchDiagnostic::SpawnCommandFailed(status~, stderr_tail~, ..) => {
+      assert_eq(status, 27)
+      assert_true(stderr_tail.contains("tcp_auth_token=[REDACTED]"))
+      assert_true(stderr_tail.contains("Bearer [REDACTED]"))
+      assert_false(stderr_tail.contains("stderr-secret"))
+      assert_false(stderr_tail.contains("bearer-secret"))
+    }
+    _ => fail("expected recorded spawn command failure diagnostic")
+  }
+
+  ignore(
+    state.registry.upsert(
+      worker_handoff_dev(child_id, parent_id, @types.AgentState::Spawning),
+    ),
+  )
+  state.spawn_registration_first_unseen.set(child_id, 100L)
+  let sent : Array[String] = []
+  let closed : Array[String] = []
+  state.process_poller_tick_with_test(
+    280L,
+    900L,
+    spawn_registration_noop_poll,
+    None,
+    "",
+    runner=async fn(cmds) {
+      spawn_registration_capture_runner(sent, closed, cmds)
+    },
+    capture=spawn_registration_capture,
+  )
+  assert_eq(worker_handoff_count_sent(sent, "[SPAWN REGISTRATION TIMEOUT]"), 1)
+  assert_true(sent[0].contains("spawn_class=spawn-command-failed"))
+  assert_true(sent[0].contains("exit=27"))
+  assert_true(sent[0].contains("tcp_auth_token=[REDACTED]"))
+  assert_true(sent[0].contains("Bearer [REDACTED]"))
+  assert_false(sent[0].contains("stderr-secret"))
+  assert_false(sent[0].contains("bearer-secret"))
+  assert_eq(closed.length(), 1)
+  ignore(@sys.rm_rf(state.config.project_dir))
+}
+
+///|
+async test "successful spawn launch diagnostic travels dispatch to launched timeout" {
+  let state = handler_auto_close_test_state(
+    "spawn-registration-e2e-launched-timeout",
+  )
+  let parent_id = "main.parent"
+  let slug_prefix = "spawn-launched-e2e"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  let runner_launch_count : Array[Int] = [0]
+  let zellij_launch_captures : Array[Int] = [0]
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "zellij" &&
+        (cmd.args.contains("new-tab") || cmd.args.contains("run")) {
+        runner_launch_count[0] = runner_launch_count[0] + 1
+      }
+      statuses.push(0)
+    }
+    statuses
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "zellij" && cmd.args.contains("new-tab") {
+      zellij_launch_captures[0] = zellij_launch_captures[0] + 1
+      return (0, "")
+    }
+    if cmd.program == "zellij" && cmd.args.contains("list-panes") {
+      return (
+        0,
+        "[{\"id\":7,\"tab_name\":\"" +
+        slug_prefix +
+        "-0\",\"is_plugin\":false}]",
+      )
+    }
+    (0, "")
+  }
+  let resp = dispatch_spawn_registration_fork_wave(
+    state, slug_prefix, runner, capture,
+  )
+  match resp {
+    @types.Response::Ok(_) => ()
+    @types.Response::Err(msg) => fail("expected successful fork_wave: " + msg)
+  }
+  assert_eq(runner_launch_count[0], 0)
+  assert_eq(zellij_launch_captures[0], 1)
+  let (child_id, diagnostic) = match
+    spawn_registration_only_launch_diagnostic(state) {
+    Some(pair) => pair
+    None => fail("expected recorded spawn launch success diagnostic")
+  }
+  assert_true(child_id.has_prefix("main." + slug_prefix + "-"))
+  match diagnostic {
+    @tools.SpawnLaunchDiagnostic::SpawnCommandsSucceeded(launch_count~, ..) =>
+      assert_eq(launch_count, 1)
+    _ => fail("expected recorded spawn launch success diagnostic")
+  }
+  @debug.assert_eq(
+    state.registry.get(child_id).state,
+    @types.AgentState::Spawning,
+  )
+
+  let sent : Array[String] = []
+  let closed : Array[String] = []
+  state.process_poller_tick_with_test(
+    100L,
+    900L,
+    spawn_registration_noop_poll,
+    None,
+    "",
+    runner=async fn(cmds) {
+      spawn_registration_capture_runner(sent, closed, cmds)
+    },
+    capture=spawn_registration_capture,
+  )
+  state.process_poller_tick_with_test(
+    280L,
+    900L,
+    spawn_registration_noop_poll,
+    None,
+    "",
+    runner=async fn(cmds) {
+      spawn_registration_capture_runner(sent, closed, cmds)
+    },
+    capture=spawn_registration_capture,
+  )
+  assert_eq(worker_handoff_count_sent(sent, "[SPAWN REGISTRATION TIMEOUT]"), 1)
+  assert_true(sent[0].contains("spawn_class=launched-but-never-registered"))
+  assert_true(
+    sent[0].contains(
+      "spawn commands succeeded but agent never registered within 180s",
+    ),
+  )
+  assert_false(sent[0].contains("spawn-command-failed"))
+  assert_eq(closed.length(), 1)
+  ignore(@sys.rm_rf(state.config.project_dir))
+}
+
+///|
+async test "spawn registration timeout reports captured spawn command failure cause" {
+  let state = handler_auto_close_test_state("spawn-registration-spawn-failed")
+  let parent_id = "main.parent"
+  let child_id = "main.spawn-failed"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.registry.upsert(
+      worker_handoff_dev(child_id, parent_id, @types.AgentState::Spawning),
+    ),
+  )
+  state.record_spawn_launch_diagnostic(
+    @tools.SpawnLaunchDiagnostic::SpawnCommandFailed(
+      agent_id=child_id,
+      command_index=7,
+      status=27,
+      command_summary="zellij action new-tab (12 args) session=choir name=spawn-failed cwd=/repo/.choir/worktrees/spawn-failed",
+      stderr_tail="zellij stderr: tab failed",
+    ),
+  )
+  state.spawn_registration_first_unseen.set(child_id, 100L)
+
+  let sent : Array[String] = []
+  let closed : Array[String] = []
+  state.process_poller_tick_with_test(
+    280L,
+    900L,
+    spawn_registration_noop_poll,
+    None,
+    "",
+    runner=async fn(cmds) {
+      spawn_registration_capture_runner(sent, closed, cmds)
+    },
+    capture=spawn_registration_capture,
+  )
+
+  assert_eq(worker_handoff_count_sent(sent, "[SPAWN REGISTRATION TIMEOUT]"), 1)
+  assert_true(sent[0].contains("spawn_class=spawn-command-failed"))
+  assert_true(sent[0].contains("command_index=7"))
+  assert_true(sent[0].contains("exit=27"))
+  assert_true(sent[0].contains("zellij action new-tab"))
+  assert_true(sent[0].contains("zellij stderr: tab failed"))
+  assert_false(sent[0].contains("launched-but-never-registered"))
+  assert_eq(closed.length(), 1)
+  ignore(@sys.rm_rf(state.config.project_dir))
+}
+
+///|
+async test "spawn registration timeout reports launched but never registered cause" {
+  let state = handler_auto_close_test_state(
+    "spawn-registration-launched-timeout",
+  )
+  let parent_id = "main.parent"
+  let child_id = "main.spawn-launched"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.registry.upsert(
+      worker_handoff_dev(child_id, parent_id, @types.AgentState::Spawning),
+    ),
+  )
+  state.record_spawn_launch_diagnostic(
+    @tools.SpawnLaunchDiagnostic::SpawnCommandsSucceeded(
+      agent_id=child_id,
+      launch_count=1,
+    ),
+  )
+  state.spawn_registration_first_unseen.set(child_id, 100L)
+
+  let sent : Array[String] = []
+  let closed : Array[String] = []
+  state.process_poller_tick_with_test(
+    280L,
+    900L,
+    spawn_registration_noop_poll,
+    None,
+    "",
+    runner=async fn(cmds) {
+      spawn_registration_capture_runner(sent, closed, cmds)
+    },
+    capture=spawn_registration_capture,
+  )
+
+  assert_eq(worker_handoff_count_sent(sent, "[SPAWN REGISTRATION TIMEOUT]"), 1)
+  assert_true(sent[0].contains("spawn_class=launched-but-never-registered"))
+  assert_true(
+    sent[0].contains(
+      "spawn commands succeeded but agent never registered within 180s",
+    ),
+  )
+  assert_false(sent[0].contains("spawn-command-failed"))
   assert_eq(closed.length(), 1)
   ignore(@sys.rm_rf(state.config.project_dir))
 }
