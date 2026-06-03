@@ -1283,9 +1283,9 @@ fn parse_worker_spawn_args(
   args : ToolArgs,
 ) -> Result[WorkerSpawnArgs, ParseError] {
   let prompt_spec = prompt_spec_from_tool_args(args)
-  match prompt_spec.worker_type {
-    "research" => ()
-    "review" => ()
+  let worker_kind = match prompt_spec.worker_type {
+    "research" => WorkerKind::Research
+    "review" => WorkerKind::Review
     _ =>
       return Err(
         ParseError::InvalidValue(
@@ -1329,6 +1329,7 @@ fn parse_worker_spawn_args(
     caller_id,
     slug,
     agent_type,
+    worker_kind,
   })
 }
 
@@ -2343,6 +2344,24 @@ test "parse_worker_spawn_args propagates beads issue and defaults codex" {
     }
     Err(e) => fail("unexpected parse error: " + e.message())
   }
+}
+
+///|
+test "parse_worker_spawn_args records worker kind from type" {
+  let review = parse_worker_spawn_args(
+    ".",
+    tool_args_from_map({
+      "task": "Audit the branch",
+      "caller_id": "root",
+      "type": "review",
+    }),
+  ).unwrap()
+  assert_eq(review.worker_kind, WorkerKind::Review)
+  let research = parse_worker_spawn_args(
+    ".",
+    tool_args_from_map({ "task": "Investigate", "caller_id": "root" }),
+  ).unwrap()
+  assert_eq(research.worker_kind, WorkerKind::Research)
 }
 
 ///|

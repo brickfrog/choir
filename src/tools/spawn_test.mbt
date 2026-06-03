@@ -127,6 +127,7 @@ test "spawn_worker_plan builds default dedicated-tab worker spec registry row an
     caller_id: "main.tl",
     slug: "w1",
     agent_type: @types.AgentType::MoonPilot,
+    worker_kind: WorkerKind::Research,
   }
   let plan = spawn_worker_plan(worker_args, "develop", "sess", "/proj")
   assert_eq(plan.agent_id, "develop.w1")
@@ -177,6 +178,7 @@ test "spawn_worker_plan inline dedicated tab targets zellij tab" {
     caller_id: "main.tl",
     slug: "audit-worker",
     agent_type: @types.AgentType::Codex,
+    worker_kind: WorkerKind::Research,
   }
   let plan = spawn_worker_plan(
     worker_args,
@@ -200,6 +202,7 @@ test "spawn_worker_plan inline dedicated tab keeps project workspace" {
     caller_id: "main.tl",
     slug: "audit-worker",
     agent_type: @types.AgentType::Codex,
+    worker_kind: WorkerKind::Research,
   }
   let plan = spawn_worker_plan(
     worker_args,
@@ -210,6 +213,30 @@ test "spawn_worker_plan inline dedicated tab keeps project workspace" {
   )
   assert_eq(plan.registry_agent.workspace, "/project")
   assert_eq(plan.registry_agent.branch, "main.audit-worker")
+}
+
+///|
+test "spawn_worker_plan isolates review worker from shared and leaf workspaces" {
+  let worker_args : WorkerSpawnArgs = {
+    task: "review branch with mutation probes",
+    task_contract: { ..@types.TaskContract::empty(), goal: "review branch" },
+    caller_id: "main.tl",
+    slug: "audit-worker",
+    agent_type: @types.AgentType::Codex,
+    worker_kind: WorkerKind::Review,
+  }
+  let plan = spawn_worker_plan(
+    worker_args, "feature/review-target", "choir-session", "/project",
+  )
+  assert_eq(plan.spec.isolation, @types.IsolationMode::Worktree)
+  assert_eq(
+    plan.registry_agent.workspace,
+    "/project/.choir/worktrees/audit-worker",
+  )
+  assert_false(plan.registry_agent.workspace == "/project")
+  assert_false(
+    plan.registry_agent.workspace == "/project/.choir/worktrees/live-leaf",
+  )
 }
 
 ///|
@@ -322,6 +349,7 @@ async test "interpret_spawn_worker rejects live canonical agent id collision" {
     caller_id: "main.tl",
     slug: "w1",
     agent_type: @types.AgentType::Claude,
+    worker_kind: WorkerKind::Research,
   }
   let reg = @registry.AgentRegistry::new()
   upsert_spawn_test_parent(reg, "main.tl")
@@ -365,6 +393,7 @@ async test "interpret_spawn_worker allows terminal canonical agent id collision"
     caller_id: "main.tl",
     slug: "w1",
     agent_type: @types.AgentType::Claude,
+    worker_kind: WorkerKind::Research,
   }
   let reg = @registry.AgentRegistry::new()
   upsert_spawn_test_parent(reg, "main.tl")
@@ -402,6 +431,7 @@ async test "interpret_spawn_worker registers agent on success" {
     caller_id: "main.tl",
     slug: "w1",
     agent_type: @types.AgentType::Claude,
+    worker_kind: WorkerKind::Research,
   }
   let reg = @registry.AgentRegistry::new()
   let captured : Map[String, @types.TaskContract] = {}
@@ -441,6 +471,88 @@ async test "interpret_spawn_worker registers agent on success" {
 }
 
 ///|
+async test "interpret_spawn_worker review uses isolated worktree for current branch" {
+  let worker_args : WorkerSpawnArgs = {
+    task: "review branch with mutation probes",
+    task_contract: { ..@types.TaskContract::empty(), goal: "review branch" },
+    caller_id: "main.tl",
+    slug: "audit-worker",
+    agent_type: @types.AgentType::Codex,
+    worker_kind: WorkerKind::Review,
+  }
+  let reg = @registry.AgentRegistry::new()
+  upsert_spawn_test_parent(reg, "main.tl")
+  let saw_current_branch : Array[Bool] = [false]
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "git" && cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+      saw_current_branch[0] = true
+      return (0, "feature/review-target\n")
+    }
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
+    (0, "")
+  }
+  let saw_fetch : Array[Bool] = [false]
+  let saw_worktree_add : Array[Bool] = [false]
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    for cmd in cmds {
+      if cmd.program ==
+        @workspace.native_git_fetch_origin_branch_best_effort_program &&
+        cmd.args == ["/tmp/p", "feature/review-target"] {
+        saw_fetch[0] = true
+      }
+      if cmd.program == "git" &&
+        cmd.args ==
+        [
+          "worktree", "add", "/tmp/p/.choir/worktrees/audit-worker", "-b", "feature/review-target.audit-worker",
+          "origin/feature/review-target",
+        ] {
+        saw_worktree_add[0] = true
+      }
+    }
+    let statuses = []
+    for _ in cmds {
+      statuses.push(0)
+    }
+    statuses
+  }
+  let got = interpret_spawn_worker(
+    worker_args,
+    "/tmp/p",
+    "choir",
+    runner,
+    capture,
+    Some(reg),
+  )
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      @debug.assert_eq(
+        map.get("agent_id"),
+        Some(String::to_json("feature/review-target.audit-worker")),
+      )
+    }
+    @types.Response::Err(msg) => fail("unexpected err: " + msg)
+  }
+  try reg.get("feature/review-target.audit-worker") catch {
+    _ => fail("expected review worker in registry")
+  } noraise {
+    agent => {
+      assert_eq(agent.workspace, "/tmp/p/.choir/worktrees/audit-worker")
+      assert_false(agent.workspace == "/tmp/p")
+      assert_false(agent.workspace == "/tmp/p/.choir/worktrees/live-leaf")
+    }
+  }
+  assert_true(saw_current_branch[0])
+  assert_true(saw_fetch[0])
+  assert_true(saw_worktree_add[0])
+}
+
+///|
 async test "interpret_spawn_worker gemini seeds agy shared cache before default worker launch" {
   let worker_args : WorkerSpawnArgs = {
     task: "unit",
@@ -448,6 +560,7 @@ async test "interpret_spawn_worker gemini seeds agy shared cache before default 
     caller_id: "main.tl",
     slug: "w-agy",
     agent_type: @types.AgentType::Gemini,
+    worker_kind: WorkerKind::Research,
   }
   let capture_seen : Array[String] = []
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
@@ -574,6 +687,7 @@ async test "interpret_spawn_worker gemini warns and proceeds after revalidate se
     caller_id: "main.tl",
     slug: "w-agy-seed-warn",
     agent_type: @types.AgentType::Gemini,
+    worker_kind: WorkerKind::Research,
   }
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
@@ -675,6 +789,7 @@ async test "interpret_spawn_worker gemini warns with bootstrap stderr without re
     caller_id: "main.tl",
     slug: "w-agy-bootstrap-fail",
     agent_type: @types.AgentType::Gemini,
+    worker_kind: WorkerKind::Research,
   }
   let bootstrap_captures : Array[Int] = [0]
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
@@ -761,6 +876,7 @@ async test "interpret_spawn_worker gemini fails before runner when agy is unavai
     caller_id: "main.tl",
     slug: "w-agy-missing",
     agent_type: @types.AgentType::Gemini,
+    worker_kind: WorkerKind::Research,
   }
   let runner_called : Array[Bool] = [false]
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
@@ -802,6 +918,7 @@ async test "interpret_spawn_worker normalizes unregistered caller_id to register
     caller_id: "main",
     slug: "w-unregistered",
     agent_type: @types.AgentType::Claude,
+    worker_kind: WorkerKind::Research,
   }
   let reg = @registry.AgentRegistry::new()
   upsert_spawn_test_root(reg)
@@ -831,6 +948,7 @@ async test "interpret_spawn_worker prefers Role::Root over root name-match" {
     caller_id: "main",
     slug: "w-role-root",
     agent_type: @types.AgentType::Claude,
+    worker_kind: WorkerKind::Research,
   }
   let reg = @registry.AgentRegistry::new()
   upsert_spawn_test_parent_with_role(reg, "primary", @types.Role::Root)
@@ -858,6 +976,7 @@ async test "interpret_spawn_worker preserves registered caller_id as parent" {
     caller_id: "root",
     slug: "w-registered",
     agent_type: @types.AgentType::Claude,
+    worker_kind: WorkerKind::Research,
   }
   let reg = @registry.AgentRegistry::new()
   upsert_spawn_test_root(reg)
@@ -884,6 +1003,7 @@ async test "interpret_spawn_worker rejects ambiguous multi-TL with no root" {
     caller_id: "main",
     slug: "w-ambiguous",
     agent_type: @types.AgentType::Claude,
+    worker_kind: WorkerKind::Research,
   }
   let reg = @registry.AgentRegistry::new()
   upsert_spawn_test_parent(reg, "tl-a")
@@ -915,6 +1035,7 @@ async test "interpret_spawn_worker rejects ambiguous multiple Role::Root agents"
     caller_id: "main",
     slug: "w-multi-root",
     agent_type: @types.AgentType::Claude,
+    worker_kind: WorkerKind::Research,
   }
   let reg = @registry.AgentRegistry::new()
   upsert_spawn_test_parent_with_role(reg, "root-a", @types.Role::Root)
@@ -946,6 +1067,7 @@ async test "interpret_spawn_worker normalizes unregistered caller_id to single n
     caller_id: "main",
     slug: "w-single-tl",
     agent_type: @types.AgentType::Claude,
+    worker_kind: WorkerKind::Research,
   }
   let reg = @registry.AgentRegistry::new()
   upsert_spawn_test_parent(reg, "only-tl")
@@ -976,6 +1098,7 @@ async test "interpret_spawn_worker mirrors assigned beads on success" {
     caller_id: "main.tl",
     slug: "w1",
     agent_type: @types.AgentType::Codex,
+    worker_kind: WorkerKind::Research,
   }
   let seen : Array[String] = []
   let got = interpret_spawn_worker(

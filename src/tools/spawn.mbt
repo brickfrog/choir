@@ -198,6 +198,22 @@ fn task_contract_beads_issue_id(contract : @types.TaskContract?) -> String? {
 }
 
 ///|
+fn spawn_worker_effective_isolation(
+  worker_kind : WorkerKind,
+  requested_isolation : @types.IsolationMode,
+) -> @types.IsolationMode {
+  match worker_kind {
+    // Review workers may run mutation probes and other in-place audit edits.
+    // Keep those writes in a throwaway worktree even if the historical worker
+    // default or a caller override asks for inline execution.
+    WorkerKind::Review => @types.IsolationMode::Worktree
+    // Research workers keep the historical inline-default behavior unless a
+    // test or internal caller injects another isolation mode.
+    WorkerKind::Research => requested_isolation
+  }
+}
+
+///|
 fn spawn_response_agent_json(
   agent_id : String,
   role : @types.Role,
@@ -246,6 +262,10 @@ pub fn spawn_worker_plan(
   project_dir : String,
   isolation? : @types.IsolationMode = @types.IsolationMode::InlineDedicatedTab,
 ) -> SpawnWorkerPlan {
+  let isolation = spawn_worker_effective_isolation(
+    worker_args.worker_kind,
+    isolation,
+  )
   let spec = @types.SpawnSpec::{
     slug: worker_args.slug,
     role: @types.Role::Worker,
@@ -469,6 +489,45 @@ async fn run_spawn_agy_seed_if_needed(
 }
 
 ///|
+async fn detect_current_branch_with_capture(
+  project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> String? {
+  let cmd : @workspace.Command = {
+    program: "git",
+    args: ["rev-parse", "--abbrev-ref", "HEAD"],
+    workdir: Some(project_dir),
+  }
+  let (exit_code, output) = capture(cmd)
+  if exit_code != 0 {
+    return None
+  }
+  let branch = output.trim().to_owned()
+  if branch == "" || branch == "HEAD" {
+    None
+  } else {
+    Some(branch)
+  }
+}
+
+///|
+async fn resolve_spawn_worker_parent_branch(
+  worker_args : WorkerSpawnArgs,
+  project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> String {
+  match worker_args.worker_kind {
+    WorkerKind::Review =>
+      match detect_current_branch_with_capture(project_dir, capture) {
+        Some(branch) => branch
+        None => detect_default_branch_with_capture(project_dir, capture)
+      }
+    WorkerKind::Research =>
+      detect_default_branch_with_capture(project_dir, capture)
+  }
+}
+
+///|
 /// `spawn_worker` host path: resolve default branch, build plan, spawn
 /// commands, registry upsert, success response. Preserves historical
 /// `ToolRequest::SpawnWorker` control flow while keeping `dispatch` as a thin caller.
@@ -502,8 +561,8 @@ pub async fn interpret_spawn_worker(
     Ok(_) => ()
     Err(e) => return @types.Response::Err(e.message())
   }
-  let resolved_parent_branch = detect_default_branch_with_capture(
-    project_dir, capture,
+  let resolved_parent_branch = resolve_spawn_worker_parent_branch(
+    normalized_args, project_dir, capture,
   )
   let plan = spawn_worker_plan(
     normalized_args,
