@@ -679,24 +679,24 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
     parent_branch=fork_wave_args.parent_branch,
   )
   let spawn_launch_captured_outputs : Map[Int, String] = {}
-  let interpret_result = interpret(plan, git_capture~, runner~, on_run_commands=async fn(
-    cmds,
-    statuses,
-  ) {
+  let spawn_runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
     @async.sleep(0)
-    if same_command_array(cmds, spawn_plan.cmds) {
-      let captured_outputs = record_spawn_launch_diagnostics_for_commands(
-        spawn_plan.spawn_launch_bindings,
-        cmds,
-        statuses,
-        capture,
-        record_spawn_launch_diagnostic,
-      )
-      for index, output in captured_outputs {
-        spawn_launch_captured_outputs.set(index, output)
-      }
+    if !same_command_array(cmds, spawn_plan.cmds) {
+      return runner(cmds)
     }
-  })
+    let (statuses, captured_outputs) = run_commands_with_spawn_launch_capture(
+      spawn_plan.spawn_launch_bindings,
+      cmds,
+      runner,
+      capture,
+      record_spawn_launch_diagnostic,
+    )
+    for index, output in captured_outputs {
+      spawn_launch_captured_outputs.set(index, output)
+    }
+    statuses
+  }
+  let interpret_result = interpret(plan, git_capture~, runner=spawn_runner)
   let resp = fork_wave_response_from_interpret_result(
     interpret_result,
     capture,

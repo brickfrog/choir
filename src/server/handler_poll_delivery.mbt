@@ -2833,7 +2833,7 @@ fn spawn_registration_timeout_cause_detail(
         ..
       )
     ) => {
-      let tail = stderr_tail
+      let tail = @tools.spawn_launch_sanitized_stderr_tail(stderr_tail)
         .replace(old="\n", new=" ")
         .replace(old="\r", new=" ")
       "spawn_class=spawn-command-failed command_index=" +
@@ -2879,7 +2879,12 @@ fn spawn_registration_add_diagnostic_fields(
       fields.push(@moontrace.field("spawn_command_index", command_index))
       fields.push(@moontrace.field("spawn_exit_code", status))
       fields.push(@moontrace.field("spawn_command", command_summary))
-      fields.push(@moontrace.field("spawn_stderr_tail", stderr_tail))
+      fields.push(
+        @moontrace.field(
+          "spawn_stderr_tail",
+          @tools.spawn_launch_sanitized_stderr_tail(stderr_tail),
+        ),
+      )
     }
     Some(
       @tools.SpawnLaunchDiagnostic::SpawnCommandsSucceeded(launch_count~, ..)

@@ -47,12 +47,11 @@ pub async fn run_strict(
     ()
   },
 ) -> Result[Unit, @types.ChoirError] {
-  let statuses = runner(cmds) catch {
+  let (statuses, spawn_launch_captured_outputs) = run_commands_with_spawn_launch_capture(
+    spawn_launch_bindings, cmds, runner, capture, record_spawn_launch_diagnostic,
+  ) catch {
     e => return Err(@types.ChoirError::transport_error(e.to_string()))
   }
-  let spawn_launch_captured_outputs = record_spawn_launch_diagnostics_for_commands(
-    spawn_launch_bindings, cmds, statuses, capture, record_spawn_launch_diagnostic,
-  )
   for i = 0; i < statuses.length(); i = i + 1 {
     let status = statuses[i]
     if status != 0 {

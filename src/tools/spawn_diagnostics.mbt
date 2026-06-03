@@ -103,59 +103,123 @@ pub fn spawn_launch_stderr_tail(output : String) -> String {
 }
 
 ///|
-fn status_for_command_index(statuses : Array[Int], index : Int) -> Int {
-  if index < 0 {
-    -1
-  } else if index < statuses.length() {
-    statuses[index]
-  } else {
-    -1
+fn spawn_launch_stderr_word_needs_redaction(word : String) -> Bool {
+  let lower = word.to_lower()
+  lower.contains("token") ||
+  lower.contains("secret") ||
+  lower.contains("password") ||
+  lower.contains("passwd") ||
+  lower.contains("api_key") ||
+  lower.contains("apikey") ||
+  lower.contains("authorization")
+}
+
+///|
+fn spawn_launch_redact_secret_word(word : String) -> String {
+  match word.split_once("=") {
+    Some((key, _)) =>
+      if spawn_launch_stderr_word_needs_redaction(key.to_owned()) {
+        key.to_owned() + "=[REDACTED]"
+      } else {
+        word
+      }
+    None =>
+      match word.split_once(":") {
+        Some((key, _)) =>
+          if spawn_launch_stderr_word_needs_redaction(key.to_owned()) {
+            key.to_owned() + ":[REDACTED]"
+          } else {
+            word
+          }
+        None => word
+      }
   }
 }
 
 ///|
-async fn spawn_launch_failed_diagnostic(
+fn spawn_launch_redact_secret_like_content(text : String) -> String {
+  let words : Array[String] = []
+  let mut redact_next = false
+  for raw in text.split(" ") {
+    let word = raw.to_owned()
+    let lower = word.to_lower()
+    if redact_next && word != "" {
+      if lower == "bearer" {
+        words.push(word)
+        continue
+      }
+      words.push("[REDACTED]")
+      redact_next = false
+      continue
+    }
+    if lower == "bearer" || lower == "authorization:" {
+      words.push(word)
+      redact_next = true
+      continue
+    }
+    words.push(spawn_launch_redact_secret_word(word))
+  }
+  words.join(" ")
+}
+
+///|
+pub fn spawn_launch_sanitized_stderr_tail(output : String) -> String {
+  spawn_launch_redact_secret_like_content(spawn_launch_stderr_tail(output))
+}
+
+///|
+fn spawn_launch_binding_for_index(
+  bindings : Array[SpawnLaunchCommandBinding],
+  index : Int,
+) -> SpawnLaunchCommandBinding? {
+  for binding in bindings {
+    if binding.command_index == index {
+      return Some(binding)
+    }
+  }
+  None
+}
+
+///|
+async fn run_spawn_launch_non_observable_segment(
+  cmds : Array[@workspace.Command],
+  start : Int,
+  end : Int,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> Array[Int] {
+  if start >= end {
+    return []
+  }
+  let segment : Array[@workspace.Command] = []
+  for i = start; i < end; i = i + 1 {
+    segment.push(cmds[i])
+  }
+  runner(segment)
+}
+
+///|
+fn spawn_launch_failure_diagnostic_from_output(
   binding : SpawnLaunchCommandBinding,
   cmds : Array[@workspace.Command],
   status : Int,
-  command_ran : Bool,
-  capture : async (@workspace.Command) -> (Int, String),
-) -> (SpawnLaunchDiagnostic, String?) {
+  output : String,
+) -> SpawnLaunchDiagnostic {
   if binding.command_index < 0 || binding.command_index >= cmds.length() {
-    return (
-      SpawnCommandFailed(
-        agent_id=binding.agent_id,
-        command_index=binding.command_index,
-        status~,
-        command_summary="missing spawn launch command",
-        stderr_tail="",
-      ),
-      None,
-    )
-  }
-  let cmd = cmds[binding.command_index]
-  if !command_ran {
-    return (
-      SpawnCommandFailed(
-        agent_id=binding.agent_id,
-        command_index=binding.command_index,
-        status~,
-        command_summary=spawn_launch_command_summary(cmd),
-        stderr_tail="spawn launch command was not run because an earlier spawn command failed",
-      ),
-      None,
-    )
-  }
-  let (_, output) = capture(cmd)
-  (
-    SpawnCommandFailed(
+    return SpawnCommandFailed(
       agent_id=binding.agent_id,
       command_index=binding.command_index,
       status~,
-      command_summary=spawn_launch_command_summary(cmd),
-      stderr_tail=spawn_launch_stderr_tail(output),
-    ),
-    Some(output),
+      command_summary="missing spawn launch command",
+      stderr_tail="",
+    )
+  }
+  let cmd = cmds[binding.command_index]
+  SpawnCommandFailed(
+    agent_id=binding.agent_id,
+    command_index=binding.command_index,
+    status~,
+    command_summary=spawn_launch_command_summary(cmd),
+    stderr_tail=spawn_launch_sanitized_stderr_tail(output),
   )
 }
 
@@ -182,42 +246,95 @@ fn trace_spawn_launch_failure(diagnostic : SpawnLaunchDiagnostic) -> Unit {
 }
 
 ///|
-pub async fn record_spawn_launch_diagnostics_for_commands(
-  bindings : Array[SpawnLaunchCommandBinding],
-  cmds : Array[@workspace.Command],
-  statuses : Array[Int],
-  capture : async (@workspace.Command) -> (Int, String),
+fn record_spawn_launch_success_diagnostics(
+  success_counts : Map[String, Int],
+  failed_agents : Map[String, Bool],
   record : (SpawnLaunchDiagnostic) -> Unit,
-) -> Map[Int, String] {
-  let success_counts : Map[String, Int] = {}
-  let failed_agents : Map[String, Bool] = {}
-  let captured_outputs : Map[Int, String] = {}
-  for binding in bindings {
-    let status = status_for_command_index(statuses, binding.command_index)
-    let command_ran = binding.command_index >= 0 &&
-      binding.command_index < statuses.length()
-    if status == 0 {
-      success_counts.set(
-        binding.agent_id,
-        success_counts.get(binding.agent_id).unwrap_or(0) + 1,
-      )
-    } else {
-      failed_agents.set(binding.agent_id, true)
-      let (diagnostic, captured_output) = spawn_launch_failed_diagnostic(
-        binding, cmds, status, command_ran, capture,
-      )
-      match captured_output {
-        Some(output) => captured_outputs.set(binding.command_index, output)
-        None => ()
-      }
-      trace_spawn_launch_failure(diagnostic)
-      record(diagnostic)
-    }
-  }
+) -> Unit {
   for agent_id, count in success_counts {
     if !failed_agents.get(agent_id).unwrap_or(false) {
       record(SpawnCommandsSucceeded(agent_id~, launch_count=count))
     }
   }
-  captured_outputs
+}
+
+///|
+pub async fn run_commands_with_spawn_launch_capture(
+  bindings : Array[SpawnLaunchCommandBinding],
+  cmds : Array[@workspace.Command],
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  capture : async (@workspace.Command) -> (Int, String),
+  record : (SpawnLaunchDiagnostic) -> Unit,
+) -> (Array[Int], Map[Int, String]) {
+  if bindings.length() == 0 {
+    return (runner(cmds), {})
+  }
+  let statuses : Array[Int] = []
+  let captured_outputs : Map[Int, String] = {}
+  let success_counts : Map[String, Int] = {}
+  let failed_agents : Map[String, Bool] = {}
+  let mut segment_start = 0
+  for i = 0; i < cmds.length(); i = i + 1 {
+    match spawn_launch_binding_for_index(bindings, i) {
+      None => ()
+      Some(binding) => {
+        let segment_statuses = run_spawn_launch_non_observable_segment(
+          cmds, segment_start, i, runner,
+        )
+        for status in segment_statuses {
+          statuses.push(status)
+        }
+        if segment_statuses.length() < i - segment_start {
+          return (statuses, captured_outputs)
+        }
+        for status in segment_statuses {
+          if status != 0 {
+            return (statuses, captured_outputs)
+          }
+        }
+        let (status, output) = capture(cmds[i])
+        statuses.push(status)
+        let redacted_output = spawn_launch_sanitized_stderr_tail(output)
+        captured_outputs.set(i, redacted_output)
+        if status == 0 {
+          success_counts.set(
+            binding.agent_id,
+            success_counts.get(binding.agent_id).unwrap_or(0) + 1,
+          )
+        } else {
+          failed_agents.set(binding.agent_id, true)
+          let diagnostic = spawn_launch_failure_diagnostic_from_output(
+            binding, cmds, status, output,
+          )
+          trace_spawn_launch_failure(diagnostic)
+          record(diagnostic)
+          return (statuses, captured_outputs)
+        }
+        segment_start = i + 1
+      }
+    }
+  }
+  let tail_statuses = run_spawn_launch_non_observable_segment(
+    cmds,
+    segment_start,
+    cmds.length(),
+    runner,
+  )
+  for status in tail_statuses {
+    statuses.push(status)
+  }
+  if tail_statuses.length() == cmds.length() - segment_start {
+    let mut all_ok = true
+    for status in tail_statuses {
+      if status != 0 {
+        all_ok = false
+      }
+    }
+    if all_ok {
+      record_spawn_launch_success_diagnostics(
+        success_counts, failed_agents, record,
+      )
+    }
+  }
+  (statuses, captured_outputs)
 }
