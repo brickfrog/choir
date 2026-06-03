@@ -14,7 +14,7 @@ pub fn shutdown_poller_block_message(pr_number : Int) -> String {
 
 ///|
 /// Pure predicate: workspace path qualifies for choir-managed worktree removal.
-/// This accepts only paths under `.choir/worktrees/`, never the project root.
+/// This accepts only managed leaf/review worktree paths, never the project root.
 pub fn shutdown_intent_remove_choir_worktree(workspace : String) -> Bool {
   @types.is_choir_managed_worktree_path(".", workspace)
 }

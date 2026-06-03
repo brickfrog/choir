@@ -137,7 +137,9 @@ pub fn is_choir_managed_worktree_path(
     return false
   }
   let under_marker = target.has_prefix(".choir/worktrees/") ||
-    target.contains("/.choir/worktrees/")
+    target.contains("/.choir/worktrees/") ||
+    target.has_prefix(".choir/review-worktrees/") ||
+    target.contains("/.choir/review-worktrees/")
   if !under_marker {
     return false
   }
@@ -146,7 +148,12 @@ pub fn is_choir_managed_worktree_path(
     return true
   }
   let project_prefix = guard_path_child_prefix(root) + ".choir/worktrees/"
-  target.has_prefix(project_prefix) || target.has_prefix(".choir/worktrees/")
+  let review_project_prefix = guard_path_child_prefix(root) +
+    ".choir/review-worktrees/"
+  target.has_prefix(project_prefix) ||
+  target.has_prefix(review_project_prefix) ||
+  target.has_prefix(".choir/worktrees/") ||
+  target.has_prefix(".choir/review-worktrees/")
 }
 
 ///|
