@@ -42,16 +42,26 @@ pub async fn run_strict(
   runner : async (Array[@workspace.Command]) -> Array[Int],
   cmds : Array[@workspace.Command],
   capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
+  spawn_launch_bindings? : Array[SpawnLaunchCommandBinding] = [],
+  record_spawn_launch_diagnostic? : (SpawnLaunchDiagnostic) -> Unit = fn(_) {
+    ()
+  },
 ) -> Result[Unit, @types.ChoirError] {
   let statuses = runner(cmds) catch {
     e => return Err(@types.ChoirError::transport_error(e.to_string()))
   }
+  let spawn_launch_captured_outputs = record_spawn_launch_diagnostics_for_commands(
+    spawn_launch_bindings, cmds, statuses, capture, record_spawn_launch_diagnostic,
+  )
   for i = 0; i < statuses.length(); i = i + 1 {
     let status = statuses[i]
     if status != 0 {
-      // Re-run the failing command with stderr capture for a useful error message
+      // Include merged stderr when available for a useful error message.
       let cmd = cmds[i]
-      let msg = command_failure_message(status, cmd, capture)
+      let msg = match spawn_launch_captured_outputs.get(i) {
+        Some(output) => command_failure_message_from_output(status, cmd, output)
+        None => command_failure_message(status, cmd, capture)
+      }
       return Err(@types.ChoirError::transport_error(msg))
     }
   }

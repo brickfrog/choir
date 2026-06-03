@@ -274,6 +274,19 @@ fn ServerState::clear_all_no_handoff_watchdog_state(
 }
 
 ///|
+pub fn ServerState::record_spawn_launch_diagnostic(
+  self : ServerState,
+  diagnostic : @tools.SpawnLaunchDiagnostic,
+) -> Unit {
+  let agent_id = match diagnostic {
+    @tools.SpawnLaunchDiagnostic::SpawnCommandFailed(agent_id~, ..) => agent_id
+    @tools.SpawnLaunchDiagnostic::SpawnCommandsSucceeded(agent_id~, ..) =>
+      agent_id
+  }
+  self.spawn_launch_diagnostics.set(agent_id, diagnostic)
+}
+
+///|
 /// Shared server state, passed to all tool handlers.
 pub struct ServerState {
   config : @types.Config
@@ -294,6 +307,7 @@ pub struct ServerState {
   worker_no_handoff_stalled_emitted : Map[String, Bool]
   worker_no_handoff_exit_emitted : Map[String, Bool]
   spawn_registration_first_unseen : Map[String, Int64]
+  spawn_launch_diagnostics : Map[String, @tools.SpawnLaunchDiagnostic]
   idle_agent_warned_at_70 : Map[String, Bool]
   list_panes_cache : Map[String, @tools.CachedListPanesSnapshot]
   recent_poller_event_emissions : Map[String, Map[String, RecentEmission]]
@@ -418,6 +432,7 @@ pub fn ServerState::new(
     worker_no_handoff_stalled_emitted: {},
     worker_no_handoff_exit_emitted: {},
     spawn_registration_first_unseen: {},
+    spawn_launch_diagnostics: {},
     idle_agent_warned_at_70: {},
     list_panes_cache: {},
     recent_poller_event_emissions: {},

@@ -8827,6 +8827,100 @@ async test "poller reaps never-registered spawning agent after first-observed de
 }
 
 ///|
+async test "spawn registration timeout reports captured spawn command failure cause" {
+  let state = handler_auto_close_test_state("spawn-registration-spawn-failed")
+  let parent_id = "main.parent"
+  let child_id = "main.spawn-failed"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.registry.upsert(
+      worker_handoff_dev(child_id, parent_id, @types.AgentState::Spawning),
+    ),
+  )
+  state.record_spawn_launch_diagnostic(
+    @tools.SpawnLaunchDiagnostic::SpawnCommandFailed(
+      agent_id=child_id,
+      command_index=7,
+      status=27,
+      command_summary="zellij action new-tab (12 args) session=choir name=spawn-failed cwd=/repo/.choir/worktrees/spawn-failed",
+      stderr_tail="zellij stderr: tab failed",
+    ),
+  )
+  state.spawn_registration_first_unseen.set(child_id, 100L)
+
+  let sent : Array[String] = []
+  let closed : Array[String] = []
+  state.process_poller_tick_with_test(
+    280L,
+    900L,
+    spawn_registration_noop_poll,
+    None,
+    "",
+    runner=async fn(cmds) {
+      spawn_registration_capture_runner(sent, closed, cmds)
+    },
+    capture=spawn_registration_capture,
+  )
+
+  assert_eq(worker_handoff_count_sent(sent, "[SPAWN REGISTRATION TIMEOUT]"), 1)
+  assert_true(sent[0].contains("spawn_class=spawn-command-failed"))
+  assert_true(sent[0].contains("command_index=7"))
+  assert_true(sent[0].contains("exit=27"))
+  assert_true(sent[0].contains("zellij action new-tab"))
+  assert_true(sent[0].contains("zellij stderr: tab failed"))
+  assert_false(sent[0].contains("launched-but-never-registered"))
+  assert_eq(closed.length(), 1)
+  ignore(@sys.rm_rf(state.config.project_dir))
+}
+
+///|
+async test "spawn registration timeout reports launched but never registered cause" {
+  let state = handler_auto_close_test_state(
+    "spawn-registration-launched-timeout",
+  )
+  let parent_id = "main.parent"
+  let child_id = "main.spawn-launched"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.registry.upsert(
+      worker_handoff_dev(child_id, parent_id, @types.AgentState::Spawning),
+    ),
+  )
+  state.record_spawn_launch_diagnostic(
+    @tools.SpawnLaunchDiagnostic::SpawnCommandsSucceeded(
+      agent_id=child_id,
+      launch_count=1,
+    ),
+  )
+  state.spawn_registration_first_unseen.set(child_id, 100L)
+
+  let sent : Array[String] = []
+  let closed : Array[String] = []
+  state.process_poller_tick_with_test(
+    280L,
+    900L,
+    spawn_registration_noop_poll,
+    None,
+    "",
+    runner=async fn(cmds) {
+      spawn_registration_capture_runner(sent, closed, cmds)
+    },
+    capture=spawn_registration_capture,
+  )
+
+  assert_eq(worker_handoff_count_sent(sent, "[SPAWN REGISTRATION TIMEOUT]"), 1)
+  assert_true(sent[0].contains("spawn_class=launched-but-never-registered"))
+  assert_true(
+    sent[0].contains(
+      "spawn commands succeeded but agent never registered within 180s",
+    ),
+  )
+  assert_false(sent[0].contains("spawn-command-failed"))
+  assert_eq(closed.length(), 1)
+  ignore(@sys.rm_rf(state.config.project_dir))
+}
+
+///|
 fn handler_idle_warning_count(events : Array[@moontrace.Event]) -> Int {
   let mut count = 0
   for event in events {

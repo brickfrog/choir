@@ -520,6 +520,9 @@ pub async fn interpret_spawn_worker(
   ) {
     ()
   },
+  record_spawn_launch_diagnostic? : (SpawnLaunchDiagnostic) -> Unit = fn(_) {
+    ()
+  },
 ) -> @types.Response {
   let normalized_args = match
     resolve_spawn_worker_parent_id(worker_args.caller_id, registry) {
@@ -573,7 +576,19 @@ pub async fn interpret_spawn_worker(
     tcp_auth_token~,
     project_config_content=read_project_config_toml(project_dir, read_file~),
   )
-  match run_strict(runner, cmds, capture~) {
+  let spawn_launch_bindings = spawn_launch_command_bindings_for_agent(
+    plan.agent_id,
+    0,
+    cmds,
+  )
+  match
+    run_strict(
+      runner,
+      cmds,
+      capture~,
+      spawn_launch_bindings~,
+      record_spawn_launch_diagnostic~,
+    ) {
     Ok(_) => {
       match registry {
         Some(reg) => ignore(reg.upsert(plan.registry_agent))
@@ -652,6 +667,9 @@ pub async fn interpret_spawn_remote(
   capture : async (@workspace.Command) -> (Int, String),
   registry? : @registry.AgentRegistry? = None,
   extra_mcp_servers_json? : String? = None,
+  record_spawn_launch_diagnostic? : (SpawnLaunchDiagnostic) -> Unit = fn(_) {
+    ()
+  },
 ) -> @types.Response {
   let plan = spawn_remote_plan(spawn_args)
   match
@@ -671,7 +689,24 @@ pub async fn interpret_spawn_remote(
     parent_session_id=spawn_args.parent_session_id,
     extra_mcp_servers_json~,
   )
-  match run_strict(runner, cmds, capture~) {
+  let spawn_launch_bindings = if cmds.length() == 0 {
+    []
+  } else {
+    [
+      SpawnLaunchCommandBinding::{
+        agent_id: @workspace.canonical_agent_id(plan.spec),
+        command_index: cmds.length() - 1,
+      },
+    ]
+  }
+  match
+    run_strict(
+      runner,
+      cmds,
+      capture~,
+      spawn_launch_bindings~,
+      record_spawn_launch_diagnostic~,
+    ) {
     Ok(_) => plan.ok_response
     Err(e) => @types.Response::Err(e.message())
   }
@@ -753,6 +788,9 @@ pub async fn interpret_spawn_gemini(
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
   read_file? : (String) -> String = @sys.read_file,
+  record_spawn_launch_diagnostic? : (SpawnLaunchDiagnostic) -> Unit = fn(_) {
+    ()
+  },
 ) -> @types.Response {
   let plan = spawn_gemini_plan(spawn_args)
   match
@@ -786,7 +824,19 @@ pub async fn interpret_spawn_gemini(
     tcp_auth_token~,
     project_config_content=read_project_config_toml(project_dir, read_file~),
   )
-  match run_strict(runner, cmds, capture~) {
+  let spawn_launch_bindings = spawn_launch_command_bindings_for_agent(
+    @workspace.canonical_agent_id(plan.spec),
+    0,
+    cmds,
+  )
+  match
+    run_strict(
+      runner,
+      cmds,
+      capture~,
+      spawn_launch_bindings~,
+      record_spawn_launch_diagnostic~,
+    ) {
     Ok(_) =>
       match seed_warning {
         Some(warning) => plan.ok_response.with_warning(warning)

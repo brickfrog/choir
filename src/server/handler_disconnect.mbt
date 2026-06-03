@@ -122,6 +122,7 @@ fn ServerState::clear_agent_runtime_tracking(
   self.handoff_delivered.remove(agent_id)
   self.worker_no_handoff_exit_emitted.remove(agent_id)
   self.spawn_registration_first_unseen.remove(agent_id)
+  self.spawn_launch_diagnostics.remove(agent_id)
   self.idle_agent_warned_at_70.remove(agent_id)
   self.recent_poller_event_emissions.remove(agent_id)
 }

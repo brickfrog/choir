@@ -155,6 +155,14 @@ fn trace_zellij_launch_statuses(
 }
 
 ///|
+async fn noop_run_commands_observer(
+  _cmds : Array[@workspace.Command],
+  _statuses : Array[Int],
+) -> Unit {
+  @async.sleep(0)
+}
+
+///|
 /// Execute an `Eff[A]` tree by dispatching each effect to the provided
 /// runners and threading results back through continuations.
 ///
@@ -164,6 +172,7 @@ pub async fn[A] interpret(
   m : Eff[A],
   git_capture? : async (String, Array[String]) -> String = @exec.capture_stdout,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  on_run_commands? : async (Array[@workspace.Command], Array[Int]) -> Unit = noop_run_commands_observer,
 ) -> A {
   match m {
     Pure(a) => a
@@ -172,11 +181,13 @@ pub async fn[A] interpret(
         cont(git_capture(program, args) catch { _ => "" }),
         git_capture~,
         runner~,
+        on_run_commands~,
       )
     RunCommands(cmds~, cont~) => {
       let statuses = runner(cmds) catch { _ => [] }
       trace_zellij_launch_statuses(cmds, statuses)
-      interpret(cont(statuses), git_capture~, runner~)
+      on_run_commands(cmds, statuses)
+      interpret(cont(statuses), git_capture~, runner~, on_run_commands~)
     }
   }
 }

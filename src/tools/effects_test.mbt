@@ -336,3 +336,60 @@ test "failed command yields CommandFailed(status=1)" {
     _ => fail("expected Pure(Err(CommandFailed(1)))")
   }
 }
+
+///|
+async test "spawn launch diagnostics captures failing zellij stderr tail without argv bodies" {
+  let secret_arg = "tcp_auth_token=super-secret"
+  let cmd = @workspace.Command::{
+    program: "zellij",
+    args: [
+      "--session", "choir", "action", "new-tab", "--name", "leaf-a", "--cwd", "/repo/.choir/worktrees/leaf-a",
+      "--", "env", secret_arg, "codex",
+    ],
+    workdir: None,
+  }
+  let captured_cmds : Array[@workspace.Command] = []
+  let diagnostics : Array[@tools.SpawnLaunchDiagnostic] = []
+  let long_prefix = "x".repeat(2200)
+  let captured_outputs = @tools.record_spawn_launch_diagnostics_for_commands(
+    [
+      @tools.SpawnLaunchCommandBinding::{
+        agent_id: "main.leaf-a",
+        command_index: 0,
+      },
+    ],
+    [cmd],
+    [27],
+    async fn(captured) {
+      @async.sleep(0)
+      captured_cmds.push(captured)
+      (27, long_prefix + "\nzellij stderr: tab failed\n")
+    },
+    fn(diagnostic) { diagnostics.push(diagnostic) },
+  )
+  assert_eq(captured_cmds.length(), 1)
+  match captured_outputs.get(0) {
+    Some(output) => assert_true(output.contains("zellij stderr: tab failed"))
+    None => fail("expected cached spawn launch capture output")
+  }
+  assert_eq(diagnostics.length(), 1)
+  match diagnostics[0] {
+    @tools.SpawnLaunchDiagnostic::SpawnCommandFailed(
+      agent_id~,
+      command_index~,
+      status~,
+      command_summary~,
+      stderr_tail~
+    ) => {
+      assert_eq(agent_id, "main.leaf-a")
+      assert_eq(command_index, 0)
+      assert_eq(status, 27)
+      assert_true(command_summary.contains("zellij action new-tab"))
+      assert_true(command_summary.contains("name=leaf-a"))
+      assert_false(command_summary.contains(secret_arg))
+      assert_true(stderr_tail.contains("zellij stderr: tab failed"))
+      assert_true(stderr_tail.length() <= 2048)
+    }
+    _ => fail("expected SpawnCommandFailed diagnostic")
+  }
+}

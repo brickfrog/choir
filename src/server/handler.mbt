@@ -329,6 +329,9 @@ pub async fn ServerState::handle_with_runner_and_capture(
       record_task_contract=fn(agent_id, contract) {
         self.record_agent_task_contract(agent_id, contract)
       },
+      record_spawn_launch_diagnostic=fn(diagnostic) {
+        self.record_spawn_launch_diagnostic(diagnostic)
+      },
       tdd_phase_reader=fn(agent_id) { self.leaf_tdd_phase_for_agent(agent_id) },
       tdd_state_reader=fn(agent_id) { self.leaf_tdd_state_for_agent(agent_id) },
       tdd_state_writer=fn(agent_id, state) {
