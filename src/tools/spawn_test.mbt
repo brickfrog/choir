@@ -128,6 +128,8 @@ test "spawn_worker_plan builds default dedicated-tab worker spec registry row an
     slug: "w1",
     agent_type: @types.AgentType::MoonPilot,
     worker_kind: WorkerKind::Research,
+    parent_branch: None,
+    isolation: None,
   }
   let plan = spawn_worker_plan(worker_args, "develop", "sess", "/proj")
   assert_eq(plan.agent_id, "develop.w1")
@@ -179,6 +181,8 @@ test "spawn_worker_plan inline dedicated tab targets zellij tab" {
     slug: "audit-worker",
     agent_type: @types.AgentType::Codex,
     worker_kind: WorkerKind::Research,
+    parent_branch: None,
+    isolation: None,
   }
   let plan = spawn_worker_plan(
     worker_args,
@@ -203,6 +207,8 @@ test "spawn_worker_plan inline dedicated tab keeps project workspace" {
     slug: "audit-worker",
     agent_type: @types.AgentType::Codex,
     worker_kind: WorkerKind::Research,
+    parent_branch: None,
+    isolation: None,
   }
   let plan = spawn_worker_plan(
     worker_args,
@@ -216,7 +222,27 @@ test "spawn_worker_plan inline dedicated tab keeps project workspace" {
 }
 
 ///|
-test "spawn_worker_plan isolates review worker from shared and leaf workspaces" {
+test "spawn_worker_plan keeps default review worker in project workspace" {
+  let worker_args : WorkerSpawnArgs = {
+    task: "read-only review",
+    task_contract: { ..@types.TaskContract::empty(), goal: "review branch" },
+    caller_id: "main.tl",
+    slug: "audit-worker",
+    agent_type: @types.AgentType::Codex,
+    worker_kind: WorkerKind::Review,
+    parent_branch: None,
+    isolation: None,
+  }
+  let plan = spawn_worker_plan(
+    worker_args, "feature/review-target", "choir-session", "/project",
+  )
+  assert_eq(plan.spec.isolation, @types.IsolationMode::InlineDedicatedTab)
+  assert_eq(plan.registry_agent.workspace, "/project")
+  assert_eq(plan.registry_agent.branch, "feature/review-target.audit-worker")
+}
+
+///|
+test "spawn_worker_plan isolates opt-in review worker in review namespace" {
   let worker_args : WorkerSpawnArgs = {
     task: "review branch with mutation probes",
     task_contract: { ..@types.TaskContract::empty(), goal: "review branch" },
@@ -224,6 +250,8 @@ test "spawn_worker_plan isolates review worker from shared and leaf workspaces" 
     slug: "audit-worker",
     agent_type: @types.AgentType::Codex,
     worker_kind: WorkerKind::Review,
+    parent_branch: Some("feature/review-target"),
+    isolation: Some(@types.IsolationMode::Worktree),
   }
   let plan = spawn_worker_plan(
     worker_args, "feature/review-target", "choir-session", "/project",
@@ -231,9 +259,12 @@ test "spawn_worker_plan isolates review worker from shared and leaf workspaces" 
   assert_eq(plan.spec.isolation, @types.IsolationMode::Worktree)
   assert_eq(
     plan.registry_agent.workspace,
-    "/project/.choir/worktrees/audit-worker",
+    "/project/.choir/review-worktrees/feature_review-target.audit-worker",
   )
   assert_false(plan.registry_agent.workspace == "/project")
+  assert_false(
+    plan.registry_agent.workspace == "/project/.choir/worktrees/audit-worker",
+  )
   assert_false(
     plan.registry_agent.workspace == "/project/.choir/worktrees/live-leaf",
   )
@@ -350,6 +381,8 @@ async test "interpret_spawn_worker rejects live canonical agent id collision" {
     slug: "w1",
     agent_type: @types.AgentType::Claude,
     worker_kind: WorkerKind::Research,
+    parent_branch: None,
+    isolation: None,
   }
   let reg = @registry.AgentRegistry::new()
   upsert_spawn_test_parent(reg, "main.tl")
@@ -394,6 +427,8 @@ async test "interpret_spawn_worker allows terminal canonical agent id collision"
     slug: "w1",
     agent_type: @types.AgentType::Claude,
     worker_kind: WorkerKind::Research,
+    parent_branch: None,
+    isolation: None,
   }
   let reg = @registry.AgentRegistry::new()
   upsert_spawn_test_parent(reg, "main.tl")
@@ -432,6 +467,8 @@ async test "interpret_spawn_worker registers agent on success" {
     slug: "w1",
     agent_type: @types.AgentType::Claude,
     worker_kind: WorkerKind::Research,
+    parent_branch: None,
+    isolation: None,
   }
   let reg = @registry.AgentRegistry::new()
   let captured : Map[String, @types.TaskContract] = {}
@@ -471,7 +508,7 @@ async test "interpret_spawn_worker registers agent on success" {
 }
 
 ///|
-async test "interpret_spawn_worker review uses isolated worktree for current branch" {
+async test "interpret_spawn_worker isolated review targets explicit parent branch" {
   let worker_args : WorkerSpawnArgs = {
     task: "review branch with mutation probes",
     task_contract: { ..@types.TaskContract::empty(), goal: "review branch" },
@@ -479,18 +516,22 @@ async test "interpret_spawn_worker review uses isolated worktree for current bra
     slug: "audit-worker",
     agent_type: @types.AgentType::Codex,
     worker_kind: WorkerKind::Review,
+    parent_branch: Some("feature/review-target"),
+    isolation: Some(@types.IsolationMode::Worktree),
   }
   let reg = @registry.AgentRegistry::new()
   upsert_spawn_test_parent(reg, "main.tl")
   let saw_current_branch : Array[Bool] = [false]
+  let saw_default_branch : Array[Bool] = [false]
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
     if cmd.program == "git" && cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
       saw_current_branch[0] = true
-      return (0, "feature/review-target\n")
+      return (0, "main\n")
     }
     if cmd.program == "git" &&
       cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      saw_default_branch[0] = true
       return (0, "origin/main\n")
     }
     (0, "")
@@ -508,8 +549,8 @@ async test "interpret_spawn_worker review uses isolated worktree for current bra
       if cmd.program == "git" &&
         cmd.args ==
         [
-          "worktree", "add", "/tmp/p/.choir/worktrees/audit-worker", "-b", "feature/review-target.audit-worker",
-          "origin/feature/review-target",
+          "worktree", "add", "/tmp/p/.choir/review-worktrees/feature_review-target.audit-worker",
+          "-b", "feature/review-target.audit-worker", "origin/feature/review-target",
         ] {
         saw_worktree_add[0] = true
       }
@@ -542,14 +583,59 @@ async test "interpret_spawn_worker review uses isolated worktree for current bra
     _ => fail("expected review worker in registry")
   } noraise {
     agent => {
-      assert_eq(agent.workspace, "/tmp/p/.choir/worktrees/audit-worker")
+      assert_eq(
+        agent.workspace,
+        "/tmp/p/.choir/review-worktrees/feature_review-target.audit-worker",
+      )
       assert_false(agent.workspace == "/tmp/p")
-      assert_false(agent.workspace == "/tmp/p/.choir/worktrees/live-leaf")
+      assert_false(agent.workspace == "/tmp/p/.choir/worktrees/audit-worker")
     }
   }
-  assert_true(saw_current_branch[0])
+  assert_false(saw_current_branch[0])
+  assert_false(saw_default_branch[0])
   assert_true(saw_fetch[0])
   assert_true(saw_worktree_add[0])
+}
+
+///|
+async test "interpret_spawn_worker isolated review rejects missing parent branch" {
+  let worker_args : WorkerSpawnArgs = {
+    task: "review branch with mutation probes",
+    task_contract: { ..@types.TaskContract::empty(), goal: "review branch" },
+    caller_id: "main.tl",
+    slug: "audit-worker",
+    agent_type: @types.AgentType::Codex,
+    worker_kind: WorkerKind::Review,
+    parent_branch: None,
+    isolation: Some(@types.IsolationMode::Worktree),
+  }
+  let runner_called : Array[Bool] = [false]
+  let capture_called : Array[Bool] = [false]
+  let got = interpret_spawn_worker(
+    worker_args,
+    "/tmp/p",
+    "choir",
+    async fn(_cmds) {
+      @async.sleep(0)
+      runner_called[0] = true
+      []
+    },
+    async fn(_cmd) {
+      @async.sleep(0)
+      capture_called[0] = true
+      (0, "")
+    },
+    None,
+  )
+  match got {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("requires explicit parent_branch"))
+      assert_true(msg.contains("refusing to infer review target"))
+    }
+    _ => fail("expected missing parent_branch rejection")
+  }
+  assert_false(runner_called[0])
+  assert_false(capture_called[0])
 }
 
 ///|
@@ -561,6 +647,8 @@ async test "interpret_spawn_worker gemini seeds agy shared cache before default 
     slug: "w-agy",
     agent_type: @types.AgentType::Gemini,
     worker_kind: WorkerKind::Research,
+    parent_branch: None,
+    isolation: None,
   }
   let capture_seen : Array[String] = []
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
@@ -688,6 +776,8 @@ async test "interpret_spawn_worker gemini warns and proceeds after revalidate se
     slug: "w-agy-seed-warn",
     agent_type: @types.AgentType::Gemini,
     worker_kind: WorkerKind::Research,
+    parent_branch: None,
+    isolation: None,
   }
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
@@ -790,6 +880,8 @@ async test "interpret_spawn_worker gemini warns with bootstrap stderr without re
     slug: "w-agy-bootstrap-fail",
     agent_type: @types.AgentType::Gemini,
     worker_kind: WorkerKind::Research,
+    parent_branch: None,
+    isolation: None,
   }
   let bootstrap_captures : Array[Int] = [0]
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
@@ -877,6 +969,8 @@ async test "interpret_spawn_worker gemini fails before runner when agy is unavai
     slug: "w-agy-missing",
     agent_type: @types.AgentType::Gemini,
     worker_kind: WorkerKind::Research,
+    parent_branch: None,
+    isolation: None,
   }
   let runner_called : Array[Bool] = [false]
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
@@ -919,6 +1013,8 @@ async test "interpret_spawn_worker normalizes unregistered caller_id to register
     slug: "w-unregistered",
     agent_type: @types.AgentType::Claude,
     worker_kind: WorkerKind::Research,
+    parent_branch: None,
+    isolation: None,
   }
   let reg = @registry.AgentRegistry::new()
   upsert_spawn_test_root(reg)
@@ -949,6 +1045,8 @@ async test "interpret_spawn_worker prefers Role::Root over root name-match" {
     slug: "w-role-root",
     agent_type: @types.AgentType::Claude,
     worker_kind: WorkerKind::Research,
+    parent_branch: None,
+    isolation: None,
   }
   let reg = @registry.AgentRegistry::new()
   upsert_spawn_test_parent_with_role(reg, "primary", @types.Role::Root)
@@ -977,6 +1075,8 @@ async test "interpret_spawn_worker preserves registered caller_id as parent" {
     slug: "w-registered",
     agent_type: @types.AgentType::Claude,
     worker_kind: WorkerKind::Research,
+    parent_branch: None,
+    isolation: None,
   }
   let reg = @registry.AgentRegistry::new()
   upsert_spawn_test_root(reg)
@@ -1004,6 +1104,8 @@ async test "interpret_spawn_worker rejects ambiguous multi-TL with no root" {
     slug: "w-ambiguous",
     agent_type: @types.AgentType::Claude,
     worker_kind: WorkerKind::Research,
+    parent_branch: None,
+    isolation: None,
   }
   let reg = @registry.AgentRegistry::new()
   upsert_spawn_test_parent(reg, "tl-a")
@@ -1036,6 +1138,8 @@ async test "interpret_spawn_worker rejects ambiguous multiple Role::Root agents"
     slug: "w-multi-root",
     agent_type: @types.AgentType::Claude,
     worker_kind: WorkerKind::Research,
+    parent_branch: None,
+    isolation: None,
   }
   let reg = @registry.AgentRegistry::new()
   upsert_spawn_test_parent_with_role(reg, "root-a", @types.Role::Root)
@@ -1068,6 +1172,8 @@ async test "interpret_spawn_worker normalizes unregistered caller_id to single n
     slug: "w-single-tl",
     agent_type: @types.AgentType::Claude,
     worker_kind: WorkerKind::Research,
+    parent_branch: None,
+    isolation: None,
   }
   let reg = @registry.AgentRegistry::new()
   upsert_spawn_test_parent(reg, "only-tl")
@@ -1099,6 +1205,8 @@ async test "interpret_spawn_worker mirrors assigned beads on success" {
     slug: "w1",
     agent_type: @types.AgentType::Codex,
     worker_kind: WorkerKind::Research,
+    parent_branch: None,
+    isolation: None,
   }
   let seen : Array[String] = []
   let got = interpret_spawn_worker(

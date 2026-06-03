@@ -522,6 +522,7 @@ test "ship pr default prompt does not embed gh pr merge --admin bypass command" 
 ///|
 test "worker review default prompt leads done section with mandatory handoff" {
   let body = default_prompt(PromptName::WorkerReview)
+  assert_true(body.contains("inspect and read files only; do NOT edit files"))
   let done = match body.find("When you are done:") {
     Some(i) => body[i:].to_owned()
     None => fail("missing done section")
@@ -533,4 +534,12 @@ test "worker review default prompt leads done section with mandatory handoff" {
   )
   assert_true(done.contains("MUST call `notify_parent`"))
   assert_true(done.contains("FAILED its task"))
+}
+
+///|
+test "worker review write default prompt permits isolated edits" {
+  let body = default_prompt(PromptName::WorkerReviewWrite)
+  assert_true(body.contains("isolated write-capable review worker"))
+  assert_true(body.contains("read and edit files inside this isolated"))
+  assert_false(body.contains("inspect and read files only; do NOT edit files"))
 }

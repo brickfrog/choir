@@ -238,17 +238,28 @@ fn leaf_profile_text(project_dir : String) -> String {
 }
 
 ///|
-fn worker_profile_name(worker_type : String) -> @prompts.PromptName {
-  if worker_type == "review" {
-    @prompts.PromptName::WorkerReview
-  } else {
-    @prompts.PromptName::WorkerResearch
+fn worker_profile_name(
+  worker_type : String,
+  worker_isolation : @types.IsolationMode?,
+) -> @prompts.PromptName {
+  match (worker_type, worker_isolation) {
+    ("review", Some(@types.IsolationMode::Worktree)) =>
+      @prompts.PromptName::WorkerReviewWrite
+    ("review", _) => @prompts.PromptName::WorkerReview
+    _ => @prompts.PromptName::WorkerResearch
   }
 }
 
 ///|
-fn worker_profile_text(worker_type : String, project_dir : String) -> String {
-  @prompts.load_prompt(worker_profile_name(worker_type), project_dir)
+fn worker_profile_text(
+  worker_type : String,
+  project_dir : String,
+  worker_isolation : @types.IsolationMode?,
+) -> String {
+  @prompts.load_prompt(
+    worker_profile_name(worker_type, worker_isolation),
+    project_dir,
+  )
 }
 
 ///|
@@ -466,13 +477,14 @@ pub fn render_worker_spawn_prompt_with_defaults(
   default_read_first : Array[String],
   project_dir? : String = ".",
   moon_verify_target? : @types.MoonVerifyTarget? = None,
+  worker_isolation? : @types.IsolationMode? = None,
 ) -> String {
   let resolved_moon_verify_target = moon_verify_target.unwrap_or(
     prompt_moon_verify_target(project_dir),
   )
   render_common_prompt(
     spec,
-    worker_profile_text(spec.worker_type, project_dir),
+    worker_profile_text(spec.worker_type, project_dir, worker_isolation),
     default_read_first,
     sanitize_worker=true,
     moon_verify_target=resolved_moon_verify_target,
@@ -483,10 +495,12 @@ pub fn render_worker_spawn_prompt_with_defaults(
 pub fn render_worker_spawn_prompt(
   spec : PromptSpec,
   moon_verify_target? : @types.MoonVerifyTarget? = None,
+  worker_isolation? : @types.IsolationMode? = None,
 ) -> String {
   render_worker_spawn_prompt_with_defaults(
     spec,
     [".choir/context/common.md", ".choir/context/worker.md"],
     moon_verify_target~,
+    worker_isolation~,
   )
 }

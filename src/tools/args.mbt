@@ -124,6 +124,8 @@ pub(all) struct WorkerSpawnArgs {
   slug : String
   agent_type : @types.AgentType
   worker_kind : WorkerKind
+  parent_branch : String?
+  isolation : @types.IsolationMode?
 } derive(Debug, Eq)
 
 ///|

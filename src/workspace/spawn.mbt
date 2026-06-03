@@ -390,11 +390,7 @@ pub fn spawn_commands(
   let root_project = resolved_project_dir(project_dir)
   let listen_uds_env = absolute_listen_uds(root_project, listen_uds)
   let branch = canonical_agent_id(spec)
-  let workspace = match spec.isolation {
-    Worktree => worktree_path(root_project, spawn_workspace_dir_slug(spec))
-    Inline | InlineDedicatedTab => root_project
-    Standalone => root_project + "/.choir/agents/" + spec.slug
-  }
+  let workspace = spawn_workspace_path(root_project, spec)
   let launch_cmd = zellij_launch_inner_command(
     agent_launch_command(
       spec,

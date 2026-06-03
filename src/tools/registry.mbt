@@ -53,7 +53,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     ),
     tool_def(
       "spawn_worker",
-      "Spawn an inline worker for research/review; create a worker Beads issue first for durable nontrivial work and pass beads_issue_id. Optional agent_type (codex|claude|moon_pilot|gemini|cursor_agent, default codex). Workers do not own a branch or PR. The worker will automatically send you its final report via the `notify_parent` tool once it finishes; wait for this notification in your MCP event stream instead of polling or waiting on KV keys.",
+      "Spawn a read-only research/review worker in the root checkout by default; create a worker Beads issue first for durable nontrivial work and pass beads_issue_id. Optional agent_type (codex|claude|moon_pilot|gemini|cursor_agent, default codex). For write-capable mutation-testing review only, pass type=review isolation=worktree parent_branch=<branch>; Choir creates an isolated review worktree. Workers do not own a branch or PR. The worker will automatically send you its final report via the `notify_parent` tool once it finishes; wait for this notification in your MCP event stream instead of polling or waiting on KV keys.",
       [@types.Role::Root, @types.Role::TL],
     ),
     tool_def(
