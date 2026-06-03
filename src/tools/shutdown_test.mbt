@@ -23,6 +23,11 @@ test "shutdown_intent_remove_choir_worktree matches choir worktree paths" {
   assert_true(
     shutdown_intent_remove_choir_worktree("/repo/.choir/worktrees/foo"),
   )
+  assert_true(
+    shutdown_intent_remove_choir_worktree(
+      "/repo/.choir/review-worktrees/main.audit-worker",
+    ),
+  )
   assert_false(shutdown_intent_remove_choir_worktree("/repo"))
 }
 
@@ -81,6 +86,21 @@ test "kill_agent_worktree_remove_command follows choir worktree path rule" {
       ])
     }
     None => fail("expected worktree remove")
+  }
+  let review_worker = kill_agent_test_agent(
+    None,
+    "/proj/.choir/review-worktrees/main.audit-worker",
+    role=@types.Role::Worker,
+    agent_id="main.audit-worker",
+  )
+  match kill_agent_worktree_remove_command(review_worker, project_dir="/proj") {
+    Some(cmd) => {
+      assert_eq(cmd.program, "git")
+      @debug.assert_eq(cmd.args, [
+        "worktree", "remove", "--force", "/proj/.choir/review-worktrees/main.audit-worker",
+      ])
+    }
+    None => fail("expected review worktree remove")
   }
   let no_wt = kill_agent_test_agent(None, "/proj")
   @debug.assert_eq(kill_agent_worktree_remove_command(no_wt), None)
@@ -386,6 +406,49 @@ async test "interpret_kill_agent runs process-kill fallback after pane close and
   // Step 4/5: SIGTERM-SIGKILL sequence per PID, in scan order.
   assert_eq(events[3], "kill_pid:4242")
   assert_eq(events[4], "kill_pid:4243")
+}
+
+///|
+async test "interpret_kill_agent removes isolated review worker worktree" {
+  let reg = @registry.AgentRegistry::new()
+  let workspace = "/proj/.choir/review-worktrees/main.audit-worker"
+  let agent = kill_agent_test_agent(
+    None,
+    workspace,
+    role=@types.Role::Worker,
+    agent_id="main.audit-worker",
+  )
+  ignore(reg.upsert(agent))
+  let ran : Array[@workspace.Command] = []
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      ran.push(cmd)
+      statuses.push(0)
+    }
+    statuses
+  }
+  let got = interpret_kill_agent(
+    { agent_id: "main.audit-worker", reason: "cleanup" },
+    Some(reg),
+    runner,
+    project_dir="/proj",
+    list_pids=fn(_) { [] },
+    kill_pid=fn(_) { () },
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    _ => fail("expected ok")
+  }
+  assert_true(
+    ran
+    .iter()
+    .any(fn(cmd) {
+      cmd.program == "git" &&
+      cmd.args == ["worktree", "remove", "--force", workspace]
+    }),
+  )
 }
 
 ///|
@@ -1308,6 +1371,56 @@ async test "interpret_shutdown ok when caller missing uses best-effort" {
     }
     _ => fail("expected missing-caller ok")
   }
+}
+
+///|
+async test "interpret_shutdown removes isolated review worker worktree" {
+  let reg = @registry.AgentRegistry::new()
+  let workspace = "/proj/.choir/review-worktrees/main.audit-worker"
+  let agent = kill_agent_test_agent(
+    None,
+    workspace,
+    role=@types.Role::Worker,
+    agent_id="main.audit-worker",
+  )
+  ignore(reg.upsert(agent))
+  let ran : Array[@workspace.Command] = []
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      ran.push(cmd)
+      statuses.push(0)
+    }
+    statuses
+  }
+  let got = interpret_shutdown(
+    { caller_id: Some("main.audit-worker") },
+    "/proj",
+    None,
+    Some(reg),
+    runner,
+    capture=async fn(_cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      (0, "")
+    },
+  )
+  match got {
+    @types.Response::Ok(fields) =>
+      @debug.assert_eq(
+        fields.to_json_map().get("status"),
+        Some(String::to_json("shutdown")),
+      )
+    _ => fail("expected shutdown ok")
+  }
+  assert_true(
+    ran
+    .iter()
+    .any(fn(cmd) {
+      cmd.program == "git" &&
+      cmd.args == ["worktree", "remove", "--force", workspace]
+    }),
+  )
 }
 
 ///|

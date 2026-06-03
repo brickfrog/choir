@@ -94,6 +94,20 @@ pub(all) struct SpawnGeminiArgs {
 } derive(Debug, Eq)
 
 ///|
+pub(all) enum WorkerKind {
+  Research
+  Review
+} derive(Debug, Eq)
+
+///|
+pub impl Show for WorkerKind with fn output(self, logger) -> Unit {
+  match self {
+    Research => logger.write_string("research")
+    Review => logger.write_string("review")
+  }
+}
+
+///|
 struct LeafSpawnArgs {
   task : String
   task_contract : @types.TaskContract
@@ -109,6 +123,9 @@ pub(all) struct WorkerSpawnArgs {
   caller_id : String
   slug : String
   agent_type : @types.AgentType
+  worker_kind : WorkerKind
+  parent_branch : String?
+  isolation : @types.IsolationMode?
 } derive(Debug, Eq)
 
 ///|

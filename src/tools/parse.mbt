@@ -1278,14 +1278,33 @@ fn parse_leaf_spawn_args(
 }
 
 ///|
+fn parse_worker_isolation_arg(
+  value : String?,
+) -> Result[@types.IsolationMode?, ParseError] {
+  match value {
+    None => Ok(None)
+    Some(raw) => {
+      let normalized = raw.trim().to_lower()
+      if normalized == "" {
+        Ok(None)
+      } else if normalized == "worktree" {
+        Ok(Some(@types.IsolationMode::Worktree))
+      } else {
+        Err(ParseError::InvalidValue(field="isolation", value=raw))
+      }
+    }
+  }
+}
+
+///|
 fn parse_worker_spawn_args(
   project_dir : String,
   args : ToolArgs,
 ) -> Result[WorkerSpawnArgs, ParseError] {
   let prompt_spec = prompt_spec_from_tool_args(args)
-  match prompt_spec.worker_type {
-    "research" => ()
-    "review" => ()
+  let worker_kind = match prompt_spec.worker_type {
+    "research" => WorkerKind::Research
+    "review" => WorkerKind::Review
     _ =>
       return Err(
         ParseError::InvalidValue(
@@ -1319,16 +1338,56 @@ fn parse_worker_spawn_args(
     Some(v) if v.trim() != "" => v
     _ => return Err(ParseError::MissingField(field="caller_id"))
   }
+  let isolation = match
+    parse_worker_isolation_arg(tool_args_get(args, "isolation")) {
+    Ok(value) => value
+    Err(e) => return Err(e)
+  }
+  let parent_branch = match tool_args_get(args, "parent_branch") {
+    Some(v) if v.trim() != "" => Some(v.trim().to_owned())
+    _ => None
+  }
+  match isolation {
+    Some(@types.IsolationMode::Worktree) => {
+      if worker_kind != WorkerKind::Review {
+        return Err(
+          ParseError::InvalidValue(
+            field="worker_type",
+            value=prompt_spec.worker_type,
+          ),
+        )
+      }
+      match parent_branch {
+        Some(branch) =>
+          match validate_branch(branch) {
+            Ok(_) => ()
+            Err(e) =>
+              return Err(
+                ParseError::InvalidFormat(
+                  field="parent_branch",
+                  message=e.validation_detail_or_message(),
+                ),
+              )
+          }
+        None => return Err(ParseError::MissingField(field="parent_branch"))
+      }
+    }
+    _ => ()
+  }
   Ok({
     task: render_worker_spawn_prompt_with_defaults(
       prompt_spec,
       @workspace.resolve_context_paths(project_dir, "worker"),
       project_dir~,
+      worker_isolation=isolation,
     ),
     task_contract: prompt_spec.task_contract,
     caller_id,
     slug,
     agent_type,
+    worker_kind,
+    parent_branch,
+    isolation,
   })
 }
 
@@ -2330,6 +2389,9 @@ test "parse_worker_spawn_args propagates beads issue and defaults codex" {
   match parsed {
     Ok(worker) => {
       assert_eq(worker.agent_type, @types.AgentType::Codex)
+      assert_eq(worker.worker_kind, WorkerKind::Research)
+      @debug.assert_eq(worker.parent_branch, None)
+      @debug.assert_eq(worker.isolation, None)
       @debug.assert_eq(
         worker.task_contract.beads_issue_id,
         Some("choir-standardized-error-context"),
@@ -2342,6 +2404,80 @@ test "parse_worker_spawn_args propagates beads issue and defaults codex" {
       )
     }
     Err(e) => fail("unexpected parse error: " + e.message())
+  }
+}
+
+///|
+test "parse_worker_spawn_args records worker kind from type" {
+  let review = parse_worker_spawn_args(
+    ".",
+    tool_args_from_map({
+      "task": "Audit the branch",
+      "caller_id": "root",
+      "type": "review",
+    }),
+  ).unwrap()
+  assert_eq(review.worker_kind, WorkerKind::Review)
+  @debug.assert_eq(review.isolation, None)
+  let research = parse_worker_spawn_args(
+    ".",
+    tool_args_from_map({ "task": "Investigate", "caller_id": "root" }),
+  ).unwrap()
+  assert_eq(research.worker_kind, WorkerKind::Research)
+  @debug.assert_eq(research.isolation, None)
+}
+
+///|
+test "parse_worker_spawn_args accepts isolated write-capable review target" {
+  let parsed = parse_worker_spawn_args(
+    ".",
+    tool_args_from_map({
+      "task": "Mutation audit",
+      "caller_id": "root",
+      "type": "review",
+      "isolation": "worktree",
+      "parent_branch": "feature/review-target",
+    }),
+  ).unwrap()
+  assert_eq(parsed.worker_kind, WorkerKind::Review)
+  @debug.assert_eq(parsed.isolation, Some(@types.IsolationMode::Worktree))
+  @debug.assert_eq(parsed.parent_branch, Some("feature/review-target"))
+  assert_true(parsed.task.contains("isolated write-capable review worker"))
+  assert_true(parsed.task.contains("read and edit files inside this isolated"))
+}
+
+///|
+test "parse_worker_spawn_args rejects isolated worker without target ref" {
+  match
+    parse_worker_spawn_args(
+      ".",
+      tool_args_from_map({
+        "task": "Mutation audit",
+        "caller_id": "root",
+        "type": "review",
+        "isolation": "worktree",
+      }),
+    ) {
+    Err(ParseError::MissingField(field~)) => assert_eq(field, "parent_branch")
+    _ => fail("expected MissingField(parent_branch)")
+  }
+}
+
+///|
+test "parse_worker_spawn_args rejects isolated research worker" {
+  match
+    parse_worker_spawn_args(
+      ".",
+      tool_args_from_map({
+        "task": "Mutating research",
+        "caller_id": "root",
+        "type": "research",
+        "isolation": "worktree",
+        "parent_branch": "feature/review-target",
+      }),
+    ) {
+    Err(ParseError::InvalidValue(field~, ..)) => assert_eq(field, "worker_type")
+    _ => fail("expected InvalidValue(worker_type)")
   }
 }
 

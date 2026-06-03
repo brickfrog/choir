@@ -88,6 +88,11 @@ test "path guards reject project root and accept managed worktrees" {
     ),
   )
   assert_true(
+    @types.is_choir_managed_worktree_path(
+      "/repo", "/repo/.choir/review-worktrees/main.audit-worker",
+    ),
+  )
+  assert_true(
     @types.is_choir_managed_worktree_path(".", "./.choir/worktrees/leaf"),
   )
   assert_false(@types.is_choir_managed_worktree_path("/repo", "/repo"))

@@ -143,7 +143,7 @@ pub fn to_internal_request(
 /// Create a JSON-RPC response for the MCP initialize handshake.
 fn choir_mcp_instructions() -> String {
   (
-    #|Choir is an agent orchestration server. You are the Team Lead (TL). Delegate all implementation to leaf agents via fork_wave (default codex; set agent_type for claude, moon_pilot, gemini, or cursor_agent). Never edit files directly -- read code to understand it, then delegate. If the user explicitly asks for work to be done via leaves/waves/agents, do not implement the feature directly on the parent branch. The parent branch is only for pre-fork scaffold, integrating completed leaf work, or cleaning up stale leaves/PRs. If a parent-branch change or user decision supersedes a leaf, kill that leaf immediately and close or abandon its PR before continuing. For distinct subtasks, pass a tasks array to fork_wave (one string per leaf). For identical parallel work, pass task + count. spawn_worker is research-only -- workers cannot edit files or file PRs. After spawning leaves, stop and wait for notify_parent messages. Do not poll with sleep or git log. Use merge_pr to merge PRs, not git merge. Merge one at a time. If merge_pr returns a policy block, address the block (resolve threads, wait for CI, fix the verify gate, etc.) -- DO NOT bypass it with raw `gh pr merge`; the shim blocks that anyway. If you believe the gate itself is wrong, surface the bug to the user and fix the gate; never route around it. Call `wave_state` to read per-leaf PR/review/CI state; do not track merge/review status from notification prose. If you spawned a wave with automerge enabled, do not manually call merge_pr just because you saw [MERGE READY] — wait for [PR MERGED] unless the server reports an error or the user asks you to intervene. Only state merged after merge_pr returns success in this session (in turn) or you have directly verified the PR is merged (for example on GitHub). The server sends [PR MERGED] to your pane after merge_pr succeeds — treat that as the orchestration-level merge signal.
+    #|Choir is an agent orchestration server. You are the Team Lead (TL). Delegate all implementation to leaf agents via fork_wave (default codex; set agent_type for claude, moon_pilot, gemini, or cursor_agent). Never edit files directly -- read code to understand it, then delegate. If the user explicitly asks for work to be done via leaves/waves/agents, do not implement the feature directly on the parent branch. The parent branch is only for pre-fork scaffold, integrating completed leaf work, or cleaning up stale leaves/PRs. If a parent-branch change or user decision supersedes a leaf, kill that leaf immediately and close or abandon its PR before continuing. For distinct subtasks, pass a tasks array to fork_wave (one string per leaf). For identical parallel work, pass task + count. spawn_worker defaults to read-only research/review in the root checkout; only type=review isolation=worktree parent_branch=<branch> may run write-capable mutation-testing review in an isolated review worktree. Workers do not own a branch or PR. After spawning leaves, stop and wait for notify_parent messages. Do not poll with sleep or git log. Use merge_pr to merge PRs, not git merge. Merge one at a time. If merge_pr returns a policy block, address the block (resolve threads, wait for CI, fix the verify gate, etc.) -- DO NOT bypass it with raw `gh pr merge`; the shim blocks that anyway. If you believe the gate itself is wrong, surface the bug to the user and fix the gate; never route around it. Call `wave_state` to read per-leaf PR/review/CI state; do not track merge/review status from notification prose. If you spawned a wave with automerge enabled, do not manually call merge_pr just because you saw [MERGE READY] — wait for [PR MERGED] unless the server reports an error or the user asks you to intervene. Only state merged after merge_pr returns success in this session (in turn) or you have directly verified the PR is merged (for example on GitHub). The server sends [PR MERGED] to your pane after merge_pr succeeds — treat that as the orchestration-level merge signal.
     #|
     #|When given an implementation task, before calling any tools, reason through:
     #|1. Boundaries — what are the independent units of work? Each leaf should own a complete vertical slice (types + logic + tests) with no runtime coupling to other leaves' changes.
@@ -194,6 +194,14 @@ fn spawn_worker_props() -> Array[SchemaProp] {
       desc: "Beads issue ID to pass through the task contract",
     },
     { name: "type", desc: "Worker profile: research or review" },
+    {
+      name: "isolation",
+      desc: "Optional opt-in isolation mode for write-capable review workers: worktree",
+    },
+    {
+      name: "parent_branch",
+      desc: "Required explicit branch/ref when isolation=worktree",
+    },
     { name: "read_first", desc: "Newline-separated paths to read first" },
     { name: "steps", desc: "Newline-separated implementation steps" },
     { name: "verify", desc: "Newline-separated verification commands" },
@@ -301,7 +309,7 @@ fn tool_defs() -> Array[CatalogTool] {
     },
     {
       name: "spawn_worker",
-      description: "Spawn an inline worker for research/review. Workers do not own a branch or PR",
+      description: "Spawn a read-only research/review worker in the root checkout by default. For write-capable mutation-testing review, pass type=review isolation=worktree parent_branch=<branch>",
       props: spawn_worker_props(),
       required: ["task"],
     },

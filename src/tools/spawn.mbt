@@ -198,6 +198,14 @@ fn task_contract_beads_issue_id(contract : @types.TaskContract?) -> String? {
 }
 
 ///|
+fn spawn_worker_effective_isolation(
+  worker_args : WorkerSpawnArgs,
+  requested_isolation : @types.IsolationMode,
+) -> @types.IsolationMode {
+  worker_args.isolation.unwrap_or(requested_isolation)
+}
+
+///|
 fn spawn_response_agent_json(
   agent_id : String,
   role : @types.Role,
@@ -246,6 +254,7 @@ pub fn spawn_worker_plan(
   project_dir : String,
   isolation? : @types.IsolationMode = @types.IsolationMode::InlineDedicatedTab,
 ) -> SpawnWorkerPlan {
+  let isolation = spawn_worker_effective_isolation(worker_args, isolation)
   let spec = @types.SpawnSpec::{
     slug: worker_args.slug,
     role: @types.Role::Worker,
@@ -270,17 +279,7 @@ pub fn spawn_worker_plan(
     spec.slug,
     spec.isolation,
   )
-  let workspace = match spec.isolation {
-    @types.IsolationMode::Worktree =>
-      @workspace.worktree_path(
-        project_dir,
-        @workspace.spawn_workspace_dir_slug(spec),
-      )
-    @types.IsolationMode::Inline | @types.IsolationMode::InlineDedicatedTab =>
-      project_dir
-    @types.IsolationMode::Standalone =>
-      project_dir + "/.choir/agents/" + spec.slug
-  }
+  let workspace = @workspace.spawn_workspace_path(project_dir, spec)
   let registry_agent = @types.Agent::{
     agent_id,
     role: @types.Role::Worker,
@@ -469,6 +468,35 @@ async fn run_spawn_agy_seed_if_needed(
 }
 
 ///|
+async fn resolve_spawn_worker_parent_branch(
+  worker_args : WorkerSpawnArgs,
+  project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Result[String, @types.ChoirError] {
+  match worker_args.isolation {
+    Some(@types.IsolationMode::Worktree) => {
+      if worker_args.worker_kind != WorkerKind::Review {
+        return Err(
+          @types.ChoirError::validation_error(
+            "spawn_worker isolation=worktree is only supported for type=review write-capable audit workers",
+          ),
+        )
+      }
+      match worker_args.parent_branch {
+        Some(branch) if branch.trim() != "" => Ok(branch.trim().to_owned())
+        _ =>
+          Err(
+            @types.ChoirError::validation_error(
+              "spawn_worker isolation=worktree requires explicit parent_branch target ref; refusing to infer review target from the root checkout",
+            ),
+          )
+      }
+    }
+    _ => Ok(detect_default_branch_with_capture(project_dir, capture))
+  }
+}
+
+///|
 /// `spawn_worker` host path: resolve default branch, build plan, spawn
 /// commands, registry upsert, success response. Preserves historical
 /// `ToolRequest::SpawnWorker` control flow while keeping `dispatch` as a thin caller.
@@ -502,9 +530,11 @@ pub async fn interpret_spawn_worker(
     Ok(_) => ()
     Err(e) => return @types.Response::Err(e.message())
   }
-  let resolved_parent_branch = detect_default_branch_with_capture(
-    project_dir, capture,
-  )
+  let resolved_parent_branch = match
+    resolve_spawn_worker_parent_branch(normalized_args, project_dir, capture) {
+    Ok(branch) => branch
+    Err(e) => return @types.Response::Err(e.message())
+  }
   let plan = spawn_worker_plan(
     normalized_args,
     resolved_parent_branch,

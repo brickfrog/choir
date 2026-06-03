@@ -178,6 +178,7 @@ test "render_worker_spawn_prompt uses research profile" {
   assert_true(prompt.contains("## TASK\nInvestigate flaky tests"))
   assert_true(prompt.contains("## Completion Protocol (Worker)"))
   assert_true(prompt.contains("research worker"))
+  assert_true(prompt.contains("inspect and read files only; do NOT edit files"))
   assert_true(prompt.contains("do not own a branch"))
   assert_true(prompt.contains("notify_parent"))
 }
@@ -209,6 +210,30 @@ test "render_worker_spawn_prompt loads review profile from project prompt file" 
 }
 
 ///|
+test "render_worker_spawn_prompt uses read-only review profile by default" {
+  let prompt = render_worker_spawn_prompt(
+    PromptSpec::from_map({ "task": "Review command wrappers", "type": "review" }),
+  )
+  assert_true(prompt.contains("review worker"))
+  assert_true(prompt.contains("inspect and read files only; do NOT edit files"))
+  assert_false(prompt.contains("isolated write-capable review worker"))
+  assert_false(prompt.contains("read and edit files inside this isolated"))
+}
+
+///|
+test "render_worker_spawn_prompt uses write-capable review profile for worktree isolation" {
+  let prompt = render_worker_spawn_prompt(
+    PromptSpec::from_map({ "task": "Review command wrappers", "type": "review" }),
+    worker_isolation=Some(@types.IsolationMode::Worktree),
+  )
+  assert_true(prompt.contains("isolated write-capable review worker"))
+  assert_true(prompt.contains("read and edit files inside this isolated"))
+  assert_false(
+    prompt.contains("inspect and read files only; do NOT edit files"),
+  )
+}
+
+///|
 test "render_worker_spawn_prompt includes shell command discipline" {
   let prompt = render_worker_spawn_prompt(
     PromptSpec::from_map({ "task": "Review command wrappers", "type": "review" }),
@@ -221,6 +246,7 @@ test "render_worker_spawn_prompt includes shell command discipline" {
   assert_true(
     prompt.contains("Do NOT walk `~/.moon`, `_build/`, `.choir/worktrees/`"),
   )
+  assert_true(prompt.contains("`.choir/review-worktrees/`"))
   assert_true(prompt.contains("`.choir/plugin/`"))
   assert_true(prompt.contains("`.choir/bin/`"))
   assert_true(prompt.contains("`.choir/kv/`"))

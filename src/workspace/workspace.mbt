@@ -5,6 +5,12 @@ pub fn worktree_path(project_dir : String, slug : String) -> String {
 }
 
 ///|
+/// Construct the isolated review-worker worktree path from the canonical agent id.
+pub fn review_worktree_path(project_dir : String, agent_id : String) -> String {
+  project_dir + "/.choir/review-worktrees/" + @types.sanitize_agent_id(agent_id)
+}
+
+///|
 /// Construct the branch name from parent branch and slug.
 pub fn branch_name(parent_branch : String, slug : String) -> String {
   if parent_branch == "" {
@@ -73,6 +79,25 @@ pub fn spawn_workspace_dir_slug(spec : @types.SpawnSpec) -> String {
     }
   } else {
     spec.slug
+  }
+}
+
+///|
+pub fn spawn_workspace_path(
+  project_dir : String,
+  spec : @types.SpawnSpec,
+) -> String {
+  match spec.isolation {
+    @types.IsolationMode::Worktree =>
+      if spec.role == @types.Role::Worker {
+        review_worktree_path(project_dir, canonical_agent_id(spec))
+      } else {
+        worktree_path(project_dir, spawn_workspace_dir_slug(spec))
+      }
+    @types.IsolationMode::Inline | @types.IsolationMode::InlineDedicatedTab =>
+      project_dir
+    @types.IsolationMode::Standalone =>
+      project_dir + "/.choir/agents/" + spec.slug
   }
 }
 
