@@ -162,12 +162,32 @@ test "interpret_crystallize_spec refuses when spec already exists" {
 ///|
 test "crystallize_spec registry denies Dev and Worker callers" {
   let reg = @tools.ToolRegistry::new()
-  let dev_lookup = try? reg.lookup(@types.Role::Dev, "crystallize_spec")
+  let dev_lookup = try reg.lookup(@types.Role::Dev, "crystallize_spec") catch {
+    e => Err(e)
+  } noraise {
+    tool => Ok(tool)
+  }
   assert_true(dev_lookup is Err(_))
-  let worker_lookup = try? reg.lookup(@types.Role::Worker, "crystallize_spec")
+  let worker_lookup = try
+    reg.lookup(@types.Role::Worker, "crystallize_spec")
+  catch {
+    e => Err(e)
+  } noraise {
+    tool => Ok(tool)
+  }
   assert_true(worker_lookup is Err(_))
-  let tl_lookup = try? reg.lookup(@types.Role::TL, "crystallize_spec")
+  let tl_lookup = try reg.lookup(@types.Role::TL, "crystallize_spec") catch {
+    e => Err(e)
+  } noraise {
+    tool => Ok(tool)
+  }
   assert_true(tl_lookup is Ok(_))
-  let root_lookup = try? reg.lookup(@types.Role::Root, "crystallize_spec")
+  let root_lookup = try
+    reg.lookup(@types.Role::Root, "crystallize_spec")
+  catch {
+    e => Err(e)
+  } noraise {
+    tool => Ok(tool)
+  }
   assert_true(root_lookup is Ok(_))
 }

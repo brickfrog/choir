@@ -1390,12 +1390,18 @@ pub async fn dispatch(
       let parent_resolution = match registry {
         Some(reg) =>
           Some(
-            try? resolve_parent_for_notify(
-              project_dir,
-              session,
-              reg,
-              notify_args.caller_id,
-            ),
+            try
+              resolve_parent_for_notify(
+                project_dir,
+                session,
+                reg,
+                notify_args.caller_id,
+              )
+            catch {
+              e => Err(e)
+            } noraise {
+              parent => Ok(parent)
+            },
           )
         None => None
       }
@@ -1498,7 +1504,14 @@ pub async fn dispatch(
       )
     ToolRequest::SendMessage(send_args) => {
       let registry_lookup = match registry {
-        Some(reg) => Some(try? reg.get(send_args.target_id))
+        Some(reg) =>
+          Some(
+            try reg.get(send_args.target_id) catch {
+              e => Err(e)
+            } noraise {
+              agent => Ok(agent)
+            },
+          )
         None => None
       }
       interpret_send_message(

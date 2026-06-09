@@ -671,7 +671,14 @@ pub async fn mark_pending_wave_failed(
   )
   delete_pending_wave(project_dir, pw.wave_id)
   let lookup = match registry {
-    Some(reg) => Some(try? reg.get(pw.args.caller_id))
+    Some(reg) =>
+      Some(
+        try reg.get(pw.args.caller_id) catch {
+          e => Err(e)
+        } noraise {
+          agent => Ok(agent)
+        },
+      )
     None => None
   }
   let plan = send_message_plan(

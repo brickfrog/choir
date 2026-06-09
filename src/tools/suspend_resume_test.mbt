@@ -15,7 +15,11 @@ fn make_test_registry_with_active_agent(
     spawn_depth: 0,
     state: @types.AgentState::Active,
   }
-  ignore(try? reg.insert(agent))
+  try reg.insert(agent) catch {
+    _ => ()
+  } noraise {
+    _ => ()
+  }
   reg
 }
 
@@ -62,7 +66,11 @@ async test "interpret_suspend returns error when no registry" {
 ///|
 async test "interpret_resume transitions agent back to Active and returns ok" {
   let reg = make_test_registry_with_active_agent("tl.leaf")
-  ignore(try? reg.set_state("tl.leaf", @types.AgentState::Suspended))
+  try reg.set_state("tl.leaf", @types.AgentState::Suspended) catch {
+    _ => ()
+  } noraise {
+    _ => ()
+  }
   let resp = interpret_resume({ agent_id: "tl.leaf" }, Some(reg), ".", hook_capture=fn(
     _path,
     _input,

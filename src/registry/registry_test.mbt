@@ -1,4 +1,24 @@
 ///|
+fn[T] registry_test_capture(
+  body : () -> T raise @types.ChoirError,
+) -> Result[T, @types.ChoirError] {
+  try body() catch {
+    e => Err(e)
+  } noraise {
+    value => Ok(value)
+  }
+}
+
+///|
+fn registry_test_ignore(body : () -> Unit raise @types.ChoirError) -> Unit {
+  try body() catch {
+    _ => ()
+  } noraise {
+    _ => ()
+  }
+}
+
+///|
 test "registry insert and get" {
   let reg = @registry.AgentRegistry::new()
   let agent : @types.Agent = {
@@ -13,8 +33,8 @@ test "registry insert and get" {
     spawn_depth: 0,
     state: @types.AgentState::Active,
   }
-  ignore(try? reg.insert(agent))
-  let found = try? reg.get("main.feat")
+  registry_test_ignore(() => reg.insert(agent))
+  let found = registry_test_capture(() => reg.get("main.feat"))
   assert_true(found is Ok(_))
 }
 
@@ -33,8 +53,8 @@ test "registry duplicate insert fails" {
     spawn_depth: 0,
     state: @types.AgentState::Active,
   }
-  ignore(try? reg.insert(agent))
-  let result = try? reg.insert(agent)
+  registry_test_ignore(() => reg.insert(agent))
+  let result = registry_test_capture(() => reg.insert(agent))
   assert_true(result is Err(_))
 }
 
@@ -101,9 +121,9 @@ test "registry get parent" {
     spawn_depth: 0,
     state: @types.AgentState::Active,
   }
-  ignore(try? reg.insert(parent))
-  ignore(try? reg.insert(child))
-  let found_parent = try? reg.get_parent("main.child")
+  registry_test_ignore(() => reg.insert(parent))
+  registry_test_ignore(() => reg.insert(child))
+  let found_parent = registry_test_capture(() => reg.get_parent("main.child"))
   match found_parent {
     Ok(p) => assert_eq(p.agent_id, "root")
     Err(_) => fail("expected parent")
@@ -149,9 +169,9 @@ test "registry children" {
     spawn_depth: 0,
     state: @types.AgentState::Active,
   }
-  ignore(try? reg.insert(parent))
-  ignore(try? reg.insert(child1))
-  ignore(try? reg.insert(child2))
+  registry_test_ignore(() => reg.insert(parent))
+  registry_test_ignore(() => reg.insert(child1))
+  registry_test_ignore(() => reg.insert(child2))
   let kids = reg.children("root")
   assert_eq(kids.length(), 2)
 }
@@ -171,10 +191,12 @@ test "registry set state valid transitions" {
     spawn_depth: 0,
     state: @types.AgentState::Spawning,
   }
-  ignore(try? reg.insert(agent))
+  registry_test_ignore(() => reg.insert(agent))
 
   // Spawning -> Active
-  let res = try? reg.set_state("main.test", @types.AgentState::Active)
+  let res = registry_test_capture(() => {
+    reg.set_state("main.test", @types.AgentState::Active)
+  })
   assert_true(res is Ok(_))
   try reg.get("main.test") catch {
     _ => fail("expected agent")
@@ -183,11 +205,15 @@ test "registry set state valid transitions" {
   }
 
   // Active -> Completing
-  let res2 = try? reg.set_state("main.test", @types.AgentState::Completing)
+  let res2 = registry_test_capture(() => {
+    reg.set_state("main.test", @types.AgentState::Completing)
+  })
   assert_true(res2 is Ok(_))
 
   // Completing -> Done
-  let res3 = try? reg.set_state("main.test", @types.AgentState::Done)
+  let res3 = registry_test_capture(() => {
+    reg.set_state("main.test", @types.AgentState::Done)
+  })
   assert_true(res3 is Ok(_))
 
   // Test Active -> Failed and Failed -> Done
@@ -196,12 +222,16 @@ test "registry set state valid transitions" {
     agent_id: "main.fail",
     state: @types.AgentState::Active,
   }
-  ignore(try? reg.insert(agent2))
+  registry_test_ignore(() => reg.insert(agent2))
 
-  let res4 = try? reg.set_state("main.fail", @types.AgentState::Failed)
+  let res4 = registry_test_capture(() => {
+    reg.set_state("main.fail", @types.AgentState::Failed)
+  })
   assert_true(res4 is Ok(_))
 
-  let res5 = try? reg.set_state("main.fail", @types.AgentState::Done)
+  let res5 = registry_test_capture(() => {
+    reg.set_state("main.fail", @types.AgentState::Done)
+  })
   assert_true(res5 is Ok(_))
 }
 
@@ -220,10 +250,12 @@ test "registry set state invalid transition" {
     spawn_depth: 0,
     state: @types.AgentState::Spawning,
   }
-  ignore(try? reg.insert(agent))
+  registry_test_ignore(() => reg.insert(agent))
 
   // Spawning -> Done (invalid)
-  let res = try? reg.set_state("main.test", @types.AgentState::Done)
+  let res = registry_test_capture(() => {
+    reg.set_state("main.test", @types.AgentState::Done)
+  })
   assert_true(res is Err(_))
 }
 
@@ -242,12 +274,12 @@ test "registry set alive" {
     spawn_depth: 0,
     state: @types.AgentState::Active,
   }
-  ignore(try? reg.insert(agent))
+  registry_test_ignore(() => reg.insert(agent))
 
-  let res = try? reg.set_alive("main.test", false)
+  let res = registry_test_capture(() => reg.set_alive("main.test", false))
   assert_true(res is Ok(_))
 
-  let res_err = try? reg.set_alive("nonexistent", false)
+  let res_err = registry_test_capture(() => reg.set_alive("nonexistent", false))
   assert_true(res_err is Err(_))
 }
 
@@ -285,9 +317,9 @@ test "registry snapshot write read round trip" {
     spawn_depth: 1,
     state: @types.AgentState::Suspended,
   }
-  ignore(try? reg.insert(root))
-  ignore(try? reg.insert(worker))
-  ignore(try? reg.set_alive("root.worker", false))
+  registry_test_ignore(() => reg.insert(root))
+  registry_test_ignore(() => reg.insert(worker))
+  registry_test_ignore(() => reg.set_alive("root.worker", false))
 
   match reg.write_snapshot_file(project_dir) {
     Ok(_) => ()
@@ -298,8 +330,8 @@ test "registry snapshot write read round trip" {
     Err(e) => fail(e.message())
   }
 
-  let restored_root = try? restored.get("root")
-  let restored_worker = try? restored.get("root.worker")
+  let restored_root = registry_test_capture(() => restored.get("root"))
+  let restored_worker = registry_test_capture(() => restored.get("root.worker"))
   ignore(@sys.rm_rf(project_dir))
   match (restored_root, restored_worker) {
     (Ok(r), Ok(w)) => {
@@ -349,9 +381,9 @@ test "registry active agents" {
     state: @types.AgentState::Completing,
   }
 
-  ignore(try? reg.insert(a1))
-  ignore(try? reg.insert(a2))
-  ignore(try? reg.insert(a3))
+  registry_test_ignore(() => reg.insert(a1))
+  registry_test_ignore(() => reg.insert(a2))
+  registry_test_ignore(() => reg.insert(a3))
 
   let active = reg.active_agents()
   assert_eq(active.length(), 1)
@@ -376,9 +408,9 @@ test "registry by role" {
   let a2 : @types.Agent = { ..a1, agent_id: "a2", role: @types.Role::Dev }
   let a3 : @types.Agent = { ..a1, agent_id: "a3", role: @types.Role::Dev }
 
-  ignore(try? reg.insert(a1))
-  ignore(try? reg.insert(a2))
-  ignore(try? reg.insert(a3))
+  registry_test_ignore(() => reg.insert(a1))
+  registry_test_ignore(() => reg.insert(a2))
+  registry_test_ignore(() => reg.insert(a3))
 
   let tl_agents = reg.by_role(@types.Role::TL)
   assert_eq(tl_agents.length(), 1)
@@ -478,15 +510,19 @@ fn make_active_agent(id : String) -> @types.Agent {
 ///|
 test "registry Active → Suspended → Active round-trip" {
   let reg = @registry.AgentRegistry::new()
-  ignore(try? reg.insert(make_active_agent("tl.leaf")))
-  let r1 = try? reg.set_state("tl.leaf", @types.AgentState::Suspended)
+  registry_test_ignore(() => reg.insert(make_active_agent("tl.leaf")))
+  let r1 = registry_test_capture(() => {
+    reg.set_state("tl.leaf", @types.AgentState::Suspended)
+  })
   assert_true(r1 is Ok(_))
   try reg.get("tl.leaf") catch {
     _ => fail("expected agent")
   } noraise {
     a => assert_eq(a.state, @types.AgentState::Suspended)
   }
-  let r2 = try? reg.set_state("tl.leaf", @types.AgentState::Active)
+  let r2 = registry_test_capture(() => {
+    reg.set_state("tl.leaf", @types.AgentState::Active)
+  })
   assert_true(r2 is Ok(_))
   try reg.get("tl.leaf") catch {
     _ => fail("expected agent")
@@ -498,18 +534,26 @@ test "registry Active → Suspended → Active round-trip" {
 ///|
 test "registry Suspended → Failed is rejected" {
   let reg = @registry.AgentRegistry::new()
-  ignore(try? reg.insert(make_active_agent("tl.leaf2")))
-  ignore(try? reg.set_state("tl.leaf2", @types.AgentState::Suspended))
-  let r = try? reg.set_state("tl.leaf2", @types.AgentState::Failed)
+  registry_test_ignore(() => reg.insert(make_active_agent("tl.leaf2")))
+  registry_test_ignore(() => {
+    reg.set_state("tl.leaf2", @types.AgentState::Suspended)
+  })
+  let r = registry_test_capture(() => {
+    reg.set_state("tl.leaf2", @types.AgentState::Failed)
+  })
   assert_true(r is Err(_))
 }
 
 ///|
 test "registry Suspended → Done is rejected" {
   let reg = @registry.AgentRegistry::new()
-  ignore(try? reg.insert(make_active_agent("tl.leaf3")))
-  ignore(try? reg.set_state("tl.leaf3", @types.AgentState::Suspended))
-  let r = try? reg.set_state("tl.leaf3", @types.AgentState::Done)
+  registry_test_ignore(() => reg.insert(make_active_agent("tl.leaf3")))
+  registry_test_ignore(() => {
+    reg.set_state("tl.leaf3", @types.AgentState::Suspended)
+  })
+  let r = registry_test_capture(() => {
+    reg.set_state("tl.leaf3", @types.AgentState::Done)
+  })
   assert_true(r is Err(_))
 }
 
@@ -520,8 +564,10 @@ test "registry Spawning → Suspended is rejected" {
     ..make_active_agent("tl.leaf4"),
     state: @types.AgentState::Spawning,
   }
-  ignore(try? reg.insert(agent))
-  let r = try? reg.set_state("tl.leaf4", @types.AgentState::Suspended)
+  registry_test_ignore(() => reg.insert(agent))
+  let r = registry_test_capture(() => {
+    reg.set_state("tl.leaf4", @types.AgentState::Suspended)
+  })
   assert_true(r is Err(_))
 }
 

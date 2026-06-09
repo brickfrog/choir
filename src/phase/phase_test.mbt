@@ -758,9 +758,13 @@ test "resolve_agent_with_fallback - in registry" {
     spawn_depth: 0,
   }
   ignore(reg.upsert(agent))
-  let resolved = try? resolve_agent_with_fallback(
-    project_dir, session, reg, agent_id,
-  )
+  let resolved = try
+    resolve_agent_with_fallback(project_dir, session, reg, agent_id)
+  catch {
+    e => Err(e)
+  } noraise {
+    agent => Ok(agent)
+  }
   match resolved {
     Ok(a) => {
       assert_eq(a.agent_id.to_string(), agent_id)
@@ -786,9 +790,13 @@ test "resolve_agent_with_fallback - fallback to lifecycle" {
   let lifecycle = lifecycle_for_role(agent_id, @types.Role::TL)
   ignore(write_lifecycle(project_dir, lifecycle))
 
-  let resolved = try? resolve_agent_with_fallback(
-    project_dir, session, reg, agent_id,
-  )
+  let resolved = try
+    resolve_agent_with_fallback(project_dir, session, reg, agent_id)
+  catch {
+    e => Err(e)
+  } noraise {
+    agent => Ok(agent)
+  }
   match resolved {
     Ok(a) => {
       assert_eq(a.agent_id.to_string(), agent_id)
@@ -849,9 +857,13 @@ test "resolve_parent_with_fallback - parent in registry" {
   }
   ignore(reg.upsert(parent))
 
-  let resolved = try? resolve_parent_with_fallback(
-    project_dir, session, reg, caller_id,
-  )
+  let resolved = try
+    resolve_parent_with_fallback(project_dir, session, reg, caller_id)
+  catch {
+    e => Err(e)
+  } noraise {
+    agent => Ok(agent)
+  }
   match resolved {
     Ok(a) => assert_eq(a.agent_id.to_string(), parent_id)
     Err(e) => fail("should have resolved parent: " + e.message())

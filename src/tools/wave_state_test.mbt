@@ -20,6 +20,26 @@ fn make_agent(
 }
 
 ///|
+fn[T] wave_state_test_capture(
+  body : () -> T raise @types.ChoirError,
+) -> Result[T, @types.ChoirError] {
+  try body() catch {
+    e => Err(e)
+  } noraise {
+    value => Ok(value)
+  }
+}
+
+///|
+fn wave_state_test_ignore(body : () -> Unit raise @types.ChoirError) -> Unit {
+  try body() catch {
+    _ => ()
+  } noraise {
+    _ => ()
+  }
+}
+
+///|
 fn make_agent_with_state(
   id : String,
   role : @types.Role,
@@ -161,29 +181,35 @@ fn tracked_pr_with(
 test "plan_wave_state assembles supervisor + dev + worker children" {
   let reg = @registry.AgentRegistry::new()
   ignore(
-    try? reg.insert(
-      make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
+      )
+    }),
   )
   ignore(
-    try? reg.insert(
-      make_agent(
-        "tl.leaf-a",
-        @types.Role::Dev,
-        Some("tl"),
-        @types.AgentType::Gemini,
-      ),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent(
+          "tl.leaf-a",
+          @types.Role::Dev,
+          Some("tl"),
+          @types.AgentType::Gemini,
+        ),
+      )
+    }),
   )
   ignore(
-    try? reg.insert(
-      make_agent(
-        "tl.worker-b",
-        @types.Role::Worker,
-        Some("tl"),
-        @types.AgentType::Claude,
-      ),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent(
+          "tl.worker-b",
+          @types.Role::Worker,
+          Some("tl"),
+          @types.AgentType::Claude,
+        ),
+      )
+    }),
   )
   let lifecycles : Map[String, @phase.AgentLifecycle] = {}
   lifecycles.set(
@@ -268,29 +294,35 @@ test "plan_wave_state assembles supervisor + dev + worker children" {
 test "plan_wave_state serializes tdd phase for tracked PR children" {
   let reg = @registry.AgentRegistry::new()
   ignore(
-    try? reg.insert(
-      make_agent("tl", @types.Role::TL, None, @types.AgentType::Codex),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent("tl", @types.Role::TL, None, @types.AgentType::Codex),
+      )
+    }),
   )
   ignore(
-    try? reg.insert(
-      make_agent(
-        "tl.leaf-a",
-        @types.Role::Dev,
-        Some("tl"),
-        @types.AgentType::Codex,
-      ),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent(
+          "tl.leaf-a",
+          @types.Role::Dev,
+          Some("tl"),
+          @types.AgentType::Codex,
+        ),
+      )
+    }),
   )
   ignore(
-    try? reg.insert(
-      make_agent(
-        "tl.leaf-b",
-        @types.Role::Dev,
-        Some("tl"),
-        @types.AgentType::Codex,
-      ),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent(
+          "tl.leaf-b",
+          @types.Role::Dev,
+          Some("tl"),
+          @types.AgentType::Codex,
+        ),
+      )
+    }),
   )
   let lifecycles : Map[String, @phase.AgentLifecycle] = {}
   lifecycles.set(
@@ -359,19 +391,23 @@ test "plan_wave_state serializes tdd phase for tracked PR children" {
 test "plan_wave_state carries mergeability snapshot fields" {
   let reg = @registry.AgentRegistry::new()
   ignore(
-    try? reg.insert(
-      make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
+      )
+    }),
   )
   ignore(
-    try? reg.insert(
-      make_agent(
-        "tl.leaf",
-        @types.Role::Dev,
-        Some("tl"),
-        @types.AgentType::Gemini,
-      ),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent(
+          "tl.leaf",
+          @types.Role::Dev,
+          Some("tl"),
+          @types.AgentType::Gemini,
+        ),
+      )
+    }),
   )
   let lifecycles : Map[String, @phase.AgentLifecycle] = {}
   lifecycles.set(
@@ -428,9 +464,11 @@ test "plan_wave_state masks UnexpectedDisconnect on active root with unknown hea
   // give the benefit of the doubt and treat it as Planning.
   let reg = @registry.AgentRegistry::new()
   ignore(
-    try? reg.insert(
-      make_agent("root", @types.Role::Root, None, @types.AgentType::Codex),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent("root", @types.Role::Root, None, @types.AgentType::Codex),
+      )
+    }),
   )
   let lifecycles : Map[String, @phase.AgentLifecycle] = {}
   lifecycles.set("root", {
@@ -468,9 +506,11 @@ test "plan_wave_state preserves UnexpectedDisconnect on active root with stale h
   // silent — don't mask the disconnect just because role==Root.
   let reg = @registry.AgentRegistry::new()
   ignore(
-    try? reg.insert(
-      make_agent("root", @types.Role::Root, None, @types.AgentType::Codex),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent("root", @types.Role::Root, None, @types.AgentType::Codex),
+      )
+    }),
   )
   let lifecycles : Map[String, @phase.AgentLifecycle] = {}
   lifecycles.set("root", {
@@ -505,19 +545,23 @@ test "plan_wave_state preserves UnexpectedDisconnect on active root with stale h
 test "plan_wave_state merge_gate_ready: approved + threads=0 + CI success" {
   let reg = @registry.AgentRegistry::new()
   ignore(
-    try? reg.insert(
-      make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
+      )
+    }),
   )
   ignore(
-    try? reg.insert(
-      make_agent(
-        "tl.leaf",
-        @types.Role::Dev,
-        Some("tl"),
-        @types.AgentType::Gemini,
-      ),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent(
+          "tl.leaf",
+          @types.Role::Dev,
+          Some("tl"),
+          @types.AgentType::Gemini,
+        ),
+      )
+    }),
   )
   let lifecycles : Map[String, @phase.AgentLifecycle] = {}
   lifecycles.set(
@@ -564,19 +608,23 @@ test "plan_wave_state merge_gate_ready: approved + threads=0 + CI success" {
 test "plan_wave_state merge_gate_ready includes task-contract verify policy" {
   let reg = @registry.AgentRegistry::new()
   ignore(
-    try? reg.insert(
-      make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
+      )
+    }),
   )
   ignore(
-    try? reg.insert(
-      make_agent(
-        "tl.leaf",
-        @types.Role::Dev,
-        Some("tl"),
-        @types.AgentType::Gemini,
-      ),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent(
+          "tl.leaf",
+          @types.Role::Dev,
+          Some("tl"),
+          @types.AgentType::Gemini,
+        ),
+      )
+    }),
   )
   let lifecycles : Map[String, @phase.AgentLifecycle] = {}
   lifecycles.set(
@@ -639,19 +687,23 @@ test "plan_wave_state merge_gate_ready includes task-contract verify policy" {
 test "plan_wave_state merge_gate_ready SinglePass: ChangesRequested + fixes_pushed" {
   let reg = @registry.AgentRegistry::new()
   ignore(
-    try? reg.insert(
-      make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
+      )
+    }),
   )
   ignore(
-    try? reg.insert(
-      make_agent(
-        "tl.leaf",
-        @types.Role::Dev,
-        Some("tl"),
-        @types.AgentType::Gemini,
-      ),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent(
+          "tl.leaf",
+          @types.Role::Dev,
+          Some("tl"),
+          @types.AgentType::Gemini,
+        ),
+      )
+    }),
   )
   let lifecycles : Map[String, @phase.AgentLifecycle] = {}
   lifecycles.set(
@@ -710,29 +762,35 @@ test "plan_wave_state merge_gate_ready SinglePass: ChangesRequested + fixes_push
 test "plan_wave_state merge_gate_ready uses each tracked PR review_mode" {
   let reg = @registry.AgentRegistry::new()
   ignore(
-    try? reg.insert(
-      make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
+      )
+    }),
   )
   ignore(
-    try? reg.insert(
-      make_agent(
-        "tl.iter",
-        @types.Role::Dev,
-        Some("tl"),
-        @types.AgentType::Gemini,
-      ),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent(
+          "tl.iter",
+          @types.Role::Dev,
+          Some("tl"),
+          @types.AgentType::Gemini,
+        ),
+      )
+    }),
   )
   ignore(
-    try? reg.insert(
-      make_agent(
-        "tl.single",
-        @types.Role::Dev,
-        Some("tl"),
-        @types.AgentType::Gemini,
-      ),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent(
+          "tl.single",
+          @types.Role::Dev,
+          Some("tl"),
+          @types.AgentType::Gemini,
+        ),
+      )
+    }),
   )
   let lifecycles : Map[String, @phase.AgentLifecycle] = {}
   lifecycles.set(
@@ -791,19 +849,23 @@ test "plan_wave_state merge_gate_ready uses each tracked PR review_mode" {
 test "plan_wave_state merge_gate_ready false when CI is not success" {
   let reg = @registry.AgentRegistry::new()
   ignore(
-    try? reg.insert(
-      make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
+      )
+    }),
   )
   ignore(
-    try? reg.insert(
-      make_agent(
-        "tl.leaf",
-        @types.Role::Dev,
-        Some("tl"),
-        @types.AgentType::Gemini,
-      ),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent(
+          "tl.leaf",
+          @types.Role::Dev,
+          Some("tl"),
+          @types.AgentType::Gemini,
+        ),
+      )
+    }),
   )
   let lifecycles : Map[String, @phase.AgentLifecycle] = {}
   lifecycles.set(
@@ -839,19 +901,23 @@ test "plan_wave_state merge_gate_ready false when CI is not success" {
 test "plan_wave_state merge_gate_ready false when unresolved threads > 0" {
   let reg = @registry.AgentRegistry::new()
   ignore(
-    try? reg.insert(
-      make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
+      )
+    }),
   )
   ignore(
-    try? reg.insert(
-      make_agent(
-        "tl.leaf",
-        @types.Role::Dev,
-        Some("tl"),
-        @types.AgentType::Gemini,
-      ),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent(
+          "tl.leaf",
+          @types.Role::Dev,
+          Some("tl"),
+          @types.AgentType::Gemini,
+        ),
+      )
+    }),
   )
   let lifecycles : Map[String, @phase.AgentLifecycle] = {}
   lifecycles.set(
@@ -890,19 +956,23 @@ test "plan_wave_state merge_gate_ready false when unresolved threads > 0" {
 test "plan_wave_state reports threads_fetch_error on fail-loud path" {
   let reg = @registry.AgentRegistry::new()
   ignore(
-    try? reg.insert(
-      make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
+      )
+    }),
   )
   ignore(
-    try? reg.insert(
-      make_agent(
-        "tl.leaf",
-        @types.Role::Dev,
-        Some("tl"),
-        @types.AgentType::Gemini,
-      ),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent(
+          "tl.leaf",
+          @types.Role::Dev,
+          Some("tl"),
+          @types.AgentType::Gemini,
+        ),
+      )
+    }),
   )
   let lifecycles : Map[String, @phase.AgentLifecycle] = {}
   lifecycles.set(
@@ -944,13 +1014,21 @@ test "plan_wave_state reports threads_fetch_error on fail-loud path" {
 ///|
 test "wave_state registry denies Dev and Worker callers" {
   let tools = @tools.ToolRegistry::new()
-  let dev_lookup = try? tools.lookup(@types.Role::Dev, "wave_state")
+  let dev_lookup = wave_state_test_capture(() => {
+    tools.lookup(@types.Role::Dev, "wave_state")
+  })
   assert_true(dev_lookup is Err(_))
-  let worker_lookup = try? tools.lookup(@types.Role::Worker, "wave_state")
+  let worker_lookup = wave_state_test_capture(() => {
+    tools.lookup(@types.Role::Worker, "wave_state")
+  })
   assert_true(worker_lookup is Err(_))
-  let tl_lookup = try? tools.lookup(@types.Role::TL, "wave_state")
+  let tl_lookup = wave_state_test_capture(() => {
+    tools.lookup(@types.Role::TL, "wave_state")
+  })
   assert_true(tl_lookup is Ok(_))
-  let root_lookup = try? tools.lookup(@types.Role::Root, "wave_state")
+  let root_lookup = wave_state_test_capture(() => {
+    tools.lookup(@types.Role::Root, "wave_state")
+  })
   assert_true(root_lookup is Ok(_))
 }
 
@@ -958,19 +1036,23 @@ test "wave_state registry denies Dev and Worker callers" {
 test "plan_wave_state worker with stale heartbeat appears in snapshot" {
   let reg = @registry.AgentRegistry::new()
   ignore(
-    try? reg.insert(
-      make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
+      )
+    }),
   )
   ignore(
-    try? reg.insert(
-      make_agent(
-        "tl.sarcasmotron",
-        @types.Role::Worker,
-        Some("tl"),
-        @types.AgentType::Claude,
-      ),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent(
+          "tl.sarcasmotron",
+          @types.Role::Worker,
+          Some("tl"),
+          @types.AgentType::Claude,
+        ),
+      )
+    }),
   )
   let lifecycles : Map[String, @phase.AgentLifecycle] = {}
   lifecycles.set(
@@ -1011,41 +1093,49 @@ test "plan_wave_state worker with stale heartbeat appears in snapshot" {
 test "plan_wave_state filters terminal children outside the current wave" {
   let reg = @registry.AgentRegistry::new()
   ignore(
-    try? reg.insert(
-      make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
+      )
+    }),
   )
   ignore(
-    try? reg.insert(
-      make_agent_with_state(
-        "tl.current",
-        @types.Role::Dev,
-        Some("tl"),
-        @types.AgentType::Gemini,
-        @types.AgentState::Done,
-      ),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent_with_state(
+          "tl.current",
+          @types.Role::Dev,
+          Some("tl"),
+          @types.AgentType::Gemini,
+          @types.AgentState::Done,
+        ),
+      )
+    }),
   )
   ignore(
-    try? reg.insert(
-      make_agent_with_state(
-        "tl.old-failed",
-        @types.Role::Dev,
-        Some("tl"),
-        @types.AgentType::Gemini,
-        @types.AgentState::Failed,
-      ),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent_with_state(
+          "tl.old-failed",
+          @types.Role::Dev,
+          Some("tl"),
+          @types.AgentType::Gemini,
+          @types.AgentState::Failed,
+        ),
+      )
+    }),
   )
   ignore(
-    try? reg.insert(
-      make_agent(
-        "tl.active-orphan",
-        @types.Role::Worker,
-        Some("tl"),
-        @types.AgentType::Claude,
-      ),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent(
+          "tl.active-orphan",
+          @types.Role::Worker,
+          Some("tl"),
+          @types.AgentType::Claude,
+        ),
+      )
+    }),
   )
   let lifecycles : Map[String, @phase.AgentLifecycle] = {}
   lifecycles.set(
@@ -1086,9 +1176,11 @@ test "plan_wave_state filters terminal children outside the current wave" {
 test "plan_wave_state rejects non-supervisor caller with permission_denied" {
   let reg = @registry.AgentRegistry::new()
   ignore(
-    try? reg.insert(
-      make_agent("leaf", @types.Role::Dev, None, @types.AgentType::Gemini),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent("leaf", @types.Role::Dev, None, @types.AgentType::Gemini),
+      )
+    }),
   )
   let lifecycles : Map[String, @phase.AgentLifecycle] = {}
   let result = plan_wave_state(
@@ -1167,19 +1259,23 @@ async test "interpret_wave_state unresolved_threads=Some(0) on clean graphql" {
   let project_dir = wave_state_test_project_dir("zero")
   let reg = @registry.AgentRegistry::new()
   ignore(
-    try? reg.insert(
-      make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
+      )
+    }),
   )
   ignore(
-    try? reg.insert(
-      make_agent(
-        "tl.leaf",
-        @types.Role::Dev,
-        Some("tl"),
-        @types.AgentType::Gemini,
-      ),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent(
+          "tl.leaf",
+          @types.Role::Dev,
+          Some("tl"),
+          @types.AgentType::Gemini,
+        ),
+      )
+    }),
   )
   ignore(
     @phase.write_lifecycle(
@@ -1239,19 +1335,23 @@ async test "interpret_wave_state merge_gate_ready matches verify policy" {
   let project_dir = wave_state_test_project_dir("verify")
   let reg = @registry.AgentRegistry::new()
   ignore(
-    try? reg.insert(
-      make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
+      )
+    }),
   )
   ignore(
-    try? reg.insert(
-      make_agent(
-        "tl.leaf",
-        @types.Role::Dev,
-        Some("tl"),
-        @types.AgentType::Gemini,
-      ),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent(
+          "tl.leaf",
+          @types.Role::Dev,
+          Some("tl"),
+          @types.AgentType::Gemini,
+        ),
+      )
+    }),
   )
   ignore(
     @phase.write_lifecycle(
@@ -1311,19 +1411,23 @@ async test "interpret_wave_state unresolved_threads=Some(N) blocks merge_gate_re
   let project_dir = wave_state_test_project_dir("two")
   let reg = @registry.AgentRegistry::new()
   ignore(
-    try? reg.insert(
-      make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
+      )
+    }),
   )
   ignore(
-    try? reg.insert(
-      make_agent(
-        "tl.leaf",
-        @types.Role::Dev,
-        Some("tl"),
-        @types.AgentType::Gemini,
-      ),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent(
+          "tl.leaf",
+          @types.Role::Dev,
+          Some("tl"),
+          @types.AgentType::Gemini,
+        ),
+      )
+    }),
   )
   ignore(
     @phase.write_lifecycle(
@@ -1362,19 +1466,23 @@ async test "interpret_wave_state fail-loud when gh graphql fails" {
   let project_dir = wave_state_test_project_dir("fail")
   let reg = @registry.AgentRegistry::new()
   ignore(
-    try? reg.insert(
-      make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
+      )
+    }),
   )
   ignore(
-    try? reg.insert(
-      make_agent(
-        "tl.leaf",
-        @types.Role::Dev,
-        Some("tl"),
-        @types.AgentType::Gemini,
-      ),
-    ),
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent(
+          "tl.leaf",
+          @types.Role::Dev,
+          Some("tl"),
+          @types.AgentType::Gemini,
+        ),
+      )
+    }),
   )
   ignore(
     @phase.write_lifecycle(
