@@ -52,7 +52,11 @@ test "Role parse_wire agrees with try_parse_wire on every wire string" {
 test "Role parse_wire raises on unknown strings matching try_parse_wire error" {
   let unknowns = ["TL", "Worker", "", "ROOT", "unknown"]
   for s in unknowns {
-    let parse_wire_result = try? @types.Role::parse_wire(s)
+    let parse_wire_result = try @types.Role::parse_wire(s) catch {
+      e => Err(e)
+    } noraise {
+      role => Ok(role)
+    }
     match (parse_wire_result, @types.Role::try_parse_wire(s)) {
       (Err(raised), Err(expected)) =>
         assert_eq(raised.message(), expected.message())
@@ -189,7 +193,11 @@ test "AgentType parse_wire agrees with try_parse_wire on canonical and alias str
 test "AgentType parse_wire raises on unknown strings matching try_parse_wire error" {
   let unknowns = ["Claude", "MoonPilot", "gpt4", "CODEX"]
   for s in unknowns {
-    let parse_wire_result = try? @types.AgentType::parse_wire(s)
+    let parse_wire_result = try @types.AgentType::parse_wire(s) catch {
+      e => Err(e)
+    } noraise {
+      agent_type => Ok(agent_type)
+    }
     match (parse_wire_result, @types.AgentType::try_parse_wire(s)) {
       (Err(raised), Err(expected)) =>
         assert_eq(raised.message(), expected.message())

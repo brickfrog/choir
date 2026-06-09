@@ -1,4 +1,15 @@
 ///|
+fn[T] tool_registry_test_capture(
+  body : () -> T raise @types.ChoirError,
+) -> Result[T, @types.ChoirError] {
+  try body() catch {
+    e => Err(e)
+  } noraise {
+    value => Ok(value)
+  }
+}
+
+///|
 async fn mock_registry_ensure_pr(
   branch : String,
   _parent_branch : String,
@@ -359,7 +370,9 @@ async fn mock_registry_runner_capture_workdir(
 ///|
 test "tool registry lookup success" {
   let reg = @tools.ToolRegistry::new()
-  let result = try? reg.lookup(@types.Role::TL, "fork_wave")
+  let result = tool_registry_test_capture(() => {
+    reg.lookup(@types.Role::TL, "fork_wave")
+  })
   assert_true(result is Ok(_))
 }
 
@@ -367,13 +380,29 @@ test "tool registry lookup success" {
 test "tool registry exposes PR plumbing tools to leaves and supervisors" {
   let reg = @tools.ToolRegistry::new()
   assert_true(
-    (try? reg.lookup(@types.Role::Dev, "resolve_my_review_threads")) is Ok(_),
+    tool_registry_test_capture(() => {
+      reg.lookup(@types.Role::Dev, "resolve_my_review_threads")
+    })
+    is Ok(_),
   )
   assert_true(
-    (try? reg.lookup(@types.Role::TL, "resolve_my_review_threads")) is Ok(_),
+    tool_registry_test_capture(() => {
+      reg.lookup(@types.Role::TL, "resolve_my_review_threads")
+    })
+    is Ok(_),
   )
-  assert_true((try? reg.lookup(@types.Role::Dev, "request_review")) is Ok(_))
-  assert_true((try? reg.lookup(@types.Role::TL, "request_review")) is Ok(_))
+  assert_true(
+    tool_registry_test_capture(() => {
+      reg.lookup(@types.Role::Dev, "request_review")
+    })
+    is Ok(_),
+  )
+  assert_true(
+    tool_registry_test_capture(() => {
+      reg.lookup(@types.Role::TL, "request_review")
+    })
+    is Ok(_),
+  )
 }
 
 ///|
@@ -421,7 +450,9 @@ test "tool registry defaults mutating tools to read_only false" {
 ///|
 test "tool registry lookup wrong role" {
   let reg = @tools.ToolRegistry::new()
-  let result = try? reg.lookup(@types.Role::Worker, "fork_wave")
+  let result = tool_registry_test_capture(() => {
+    reg.lookup(@types.Role::Worker, "fork_wave")
+  })
   assert_true(result is Err(_))
 }
 
@@ -429,16 +460,28 @@ test "tool registry lookup wrong role" {
 test "write_audit_receipt denied for Dev and Worker, allowed for Root and TL" {
   let reg = @tools.ToolRegistry::new()
   assert_true(
-    (try? reg.lookup(@types.Role::Dev, "write_audit_receipt")) is Err(_),
+    tool_registry_test_capture(() => {
+      reg.lookup(@types.Role::Dev, "write_audit_receipt")
+    })
+    is Err(_),
   )
   assert_true(
-    (try? reg.lookup(@types.Role::Worker, "write_audit_receipt")) is Err(_),
+    tool_registry_test_capture(() => {
+      reg.lookup(@types.Role::Worker, "write_audit_receipt")
+    })
+    is Err(_),
   )
   assert_true(
-    (try? reg.lookup(@types.Role::Root, "write_audit_receipt")) is Ok(_),
+    tool_registry_test_capture(() => {
+      reg.lookup(@types.Role::Root, "write_audit_receipt")
+    })
+    is Ok(_),
   )
   assert_true(
-    (try? reg.lookup(@types.Role::TL, "write_audit_receipt")) is Ok(_),
+    tool_registry_test_capture(() => {
+      reg.lookup(@types.Role::TL, "write_audit_receipt")
+    })
+    is Ok(_),
   )
 }
 
@@ -459,7 +502,9 @@ test "permission denied response uses wire role casing" {
 ///|
 test "tool registry lookup unknown tool" {
   let reg = @tools.ToolRegistry::new()
-  let result = try? reg.lookup(@types.Role::TL, "nonexistent")
+  let result = tool_registry_test_capture(() => {
+    reg.lookup(@types.Role::TL, "nonexistent")
+  })
   assert_true(result is Err(_))
 }
 
@@ -473,7 +518,9 @@ test "send_message allowed for all roles" {
     @types.Role::Worker,
   ]
   for role in roles {
-    let result = try? reg.lookup(role, "send_message")
+    let result = tool_registry_test_capture(() => {
+      reg.lookup(role, "send_message")
+    })
     assert_true(result is Ok(_))
   }
 }
@@ -488,7 +535,7 @@ test "reply allowed for all roles" {
     @types.Role::Worker,
   ]
   for role in roles {
-    let result = try? reg.lookup(role, "reply")
+    let result = tool_registry_test_capture(() => reg.lookup(role, "reply"))
     assert_true(result is Ok(_))
   }
 }
@@ -508,7 +555,7 @@ test "kv tools allowed for all roles" {
   ]
   for role in roles {
     for name in names {
-      let result = try? reg.lookup(role, name)
+      let result = tool_registry_test_capture(() => reg.lookup(role, name))
       assert_true(result is Ok(_))
     }
   }
@@ -1175,7 +1222,9 @@ async test "dispatch file_pr logs auto-notify failure when parent is not resolva
 ///|
 test "tool registry lookup spawn_worker allowed for TL" {
   let reg = @tools.ToolRegistry::new()
-  let result = try? reg.lookup(@types.Role::TL, "spawn_worker")
+  let result = tool_registry_test_capture(() => {
+    reg.lookup(@types.Role::TL, "spawn_worker")
+  })
   assert_true(result is Ok(_))
 }
 
@@ -1206,7 +1255,9 @@ test "tool registry spawn descriptions distinguish leaves from workers" {
 ///|
 test "tool registry lookup fork_session allowed for TL" {
   let reg = @tools.ToolRegistry::new()
-  let result = try? reg.lookup(@types.Role::TL, "fork_session")
+  let result = tool_registry_test_capture(() => {
+    reg.lookup(@types.Role::TL, "fork_session")
+  })
   assert_true(result is Ok(_))
 }
 

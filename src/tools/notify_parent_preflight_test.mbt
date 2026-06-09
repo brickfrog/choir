@@ -1,4 +1,15 @@
 ///|
+fn notify_parent_preflight_test_ignore(
+  body : () -> Unit raise @types.ChoirError,
+) -> Unit {
+  try body() catch {
+    _ => ()
+  } noraise {
+    _ => ()
+  }
+}
+
+///|
 async fn mock_capture_threads_failed(cmd : @workspace.Command) -> (Int, String) {
   @async.sleep(0)
   if cmd.args.contains("graphql") {
@@ -152,8 +163,8 @@ async test "dispatch NotifyParent rejects success when prenotify check fails" {
     state: @types.AgentState::Active,
     spawn_depth: 0,
   }
-  ignore(try? reg.insert(child))
-  ignore(try? reg.insert(parent))
+  notify_parent_preflight_test_ignore(() => reg.insert(child))
+  notify_parent_preflight_test_ignore(() => reg.insert(parent))
   let handoffs : Array[String] = []
   let req = ToolRequest::NotifyParent({
     caller_id: agent_id,
@@ -216,8 +227,8 @@ async test "dispatch NotifyParent runs prenotify checks for TL caller on registe
     state: @types.AgentState::Active,
     spawn_depth: 0,
   }
-  ignore(try? reg.insert(child))
-  ignore(try? reg.insert(parent))
+  notify_parent_preflight_test_ignore(() => reg.insert(child))
+  notify_parent_preflight_test_ignore(() => reg.insert(parent))
   let handoffs : Array[String] = []
   let workdirs : Array[String] = []
   let req = ToolRequest::NotifyParent({
@@ -287,8 +298,8 @@ async test "dispatch NotifyParent allows success after prenotify checks pass" {
     state: @types.AgentState::Active,
     spawn_depth: 0,
   }
-  ignore(try? reg.insert(child))
-  ignore(try? reg.insert(parent))
+  notify_parent_preflight_test_ignore(() => reg.insert(child))
+  notify_parent_preflight_test_ignore(() => reg.insert(parent))
   let handoffs : Array[String] = []
   let workdirs : Array[String] = []
   let req = ToolRequest::NotifyParent({
@@ -348,8 +359,8 @@ async test "dispatch NotifyParent rejects success when caller workspace is empty
     state: @types.AgentState::Active,
     spawn_depth: 0,
   }
-  ignore(try? reg.insert(child))
-  ignore(try? reg.insert(parent))
+  notify_parent_preflight_test_ignore(() => reg.insert(child))
+  notify_parent_preflight_test_ignore(() => reg.insert(parent))
   let captures : Array[String] = []
   let req = ToolRequest::NotifyParent({
     caller_id: agent_id,
@@ -414,8 +425,8 @@ async test "dispatch NotifyParent blocked attempts local zellij send with NOTIFY
     state: @types.AgentState::Active,
     spawn_depth: 0,
   }
-  ignore(try? reg.insert(child))
-  ignore(try? reg.insert(parent))
+  notify_parent_preflight_test_ignore(() => reg.insert(child))
+  notify_parent_preflight_test_ignore(() => reg.insert(parent))
 
   write_notify_gate_leaf_review_owned(project_dir, agent_id, pr_number)
   let req = ToolRequest::NotifyParent({
@@ -488,8 +499,8 @@ async test "dispatch NotifyParent blocks on unresolved threads" {
     state: @types.AgentState::Active,
     spawn_depth: 0,
   }
-  ignore(try? reg.insert(child))
-  ignore(try? reg.insert(parent))
+  notify_parent_preflight_test_ignore(() => reg.insert(child))
+  notify_parent_preflight_test_ignore(() => reg.insert(parent))
 
   let req = ToolRequest::NotifyParent({
     caller_id: agent_id,
@@ -594,8 +605,8 @@ async test "dispatch NotifyParent blocks ExitRequestedDeferred on unresolved thr
     state: @types.AgentState::Active,
     spawn_depth: 0,
   }
-  ignore(try? reg.insert(child))
-  ignore(try? reg.insert(parent))
+  notify_parent_preflight_test_ignore(() => reg.insert(child))
+  notify_parent_preflight_test_ignore(() => reg.insert(parent))
 
   write_notify_gate_leaf_exit_requested_deferred(
     project_dir, agent_id, pr_number,
@@ -658,8 +669,8 @@ async test "dispatch NotifyParent blocks ChangesRequested on unresolved threads"
     state: @types.AgentState::Active,
     spawn_depth: 0,
   }
-  ignore(try? reg.insert(child))
-  ignore(try? reg.insert(parent))
+  notify_parent_preflight_test_ignore(() => reg.insert(child))
+  notify_parent_preflight_test_ignore(() => reg.insert(parent))
 
   write_notify_gate_leaf_changes_requested(project_dir, agent_id, pr_number)
   let req = ToolRequest::NotifyParent({
@@ -719,8 +730,8 @@ async test "dispatch NotifyParent gate is status-agnostic (Failure still blocked
     state: @types.AgentState::Active,
     spawn_depth: 0,
   }
-  ignore(try? reg.insert(child))
-  ignore(try? reg.insert(parent))
+  notify_parent_preflight_test_ignore(() => reg.insert(child))
+  notify_parent_preflight_test_ignore(() => reg.insert(parent))
 
   write_notify_gate_leaf_review_owned(project_dir, agent_id, pr_number)
   let req = ToolRequest::NotifyParent({

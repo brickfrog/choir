@@ -1,4 +1,24 @@
 ///|
+fn[T] server_test_capture(
+  body : () -> T raise @types.ChoirError,
+) -> Result[T, @types.ChoirError] {
+  try body() catch {
+    e => Err(e)
+  } noraise {
+    value => Ok(value)
+  }
+}
+
+///|
+fn server_test_ignore(body : () -> Unit raise @types.ChoirError) -> Unit {
+  try body() catch {
+    _ => ()
+  } noraise {
+    _ => ()
+  }
+}
+
+///|
 async test "status_bar_state server handler caches list-panes per session" {
   let project_dir = "/tmp/choir-status-bar-cache-" +
     @sys.get_pid().to_string() +
@@ -291,7 +311,9 @@ test "notify_parent uses live registry parent when present" {
   )
 
   let message = "hello parent"
-  let res = try? state.notify_parent(caller_id, message, @types.Status::Success)
+  let res = server_test_capture(() => {
+    state.notify_parent(caller_id, message, @types.Status::Success)
+  })
   match res {
     Ok(@message.DeliveryMethod::LocalTerminalInput(target, text)) => {
       assert_eq(target, live_target)
@@ -382,7 +404,7 @@ test "reload snapshot restores registry pending state and mutexes" {
   }
   ignore(state.registry.upsert(root_agent))
   ignore(state.registry.upsert(agent))
-  ignore(try? state.registry.set_alive("root.leaf", false))
+  server_test_ignore(() => state.registry.set_alive("root.leaf", false))
   state.pending_disconnects.set("root.leaf", 1234L)
   state.delivery_failures.set("root.leaf", 2)
   state.handoff_delivered.set("root.leaf", true)
@@ -412,7 +434,9 @@ test "reload snapshot restores registry pending state and mutexes" {
     Ok(_) => ()
     Err(e) => fail(e.message())
   }
-  let restored_agent = try? restored.registry.get("root.leaf")
+  let restored_agent = server_test_capture(() => {
+    restored.registry.get("root.leaf")
+  })
   ignore(@sys.rm_rf(project_dir))
   match restored_agent {
     Ok(agent) => {
@@ -653,7 +677,9 @@ test "notify_parent falls back to persisted lifecycle when parent missing from r
   )
 
   let message = "hello parent"
-  let res = try? state.notify_parent(caller_id, message, @types.Status::Success)
+  let res = server_test_capture(() => {
+    state.notify_parent(caller_id, message, @types.Status::Success)
+  })
   match res {
     Ok(@message.DeliveryMethod::LocalTerminalInput(target, text)) => {
       let expected_target = match
@@ -704,7 +730,9 @@ test "notify_parent synthesizes user root TL parent when lifecycle is absent" {
   assert_true(@phase.read_lifecycle(project_dir, root_tl_id) == None)
 
   let message = "root tl delivery"
-  let res = try? state.notify_parent(caller_id, message, @types.Status::Success)
+  let res = server_test_capture(() => {
+    state.notify_parent(caller_id, message, @types.Status::Success)
+  })
   match res {
     Ok(@message.DeliveryMethod::LocalTerminalInput(target, text)) => {
       let expected_target = match
@@ -751,11 +779,13 @@ fn assert_notify_parent_does_not_synthesize_parent_id(
     }),
   )
 
-  let res = try? state.notify_parent(
-    caller_id,
-    "should not synthesize",
-    @types.Status::Success,
-  )
+  let res = server_test_capture(() => {
+    state.notify_parent(
+      caller_id,
+      "should not synthesize",
+      @types.Status::Success,
+    )
+  })
   match res {
     Ok(_) => fail("expected Err AgentNotFound for " + parent_id + ", got Ok")
     Err(e) => assert_eq(e.message(), "agent not found: " + parent_id)
@@ -806,7 +836,9 @@ test "notify_parent returns clear error when parent cannot be resolved" {
   assert_true(@phase.read_lifecycle(project_dir, parent_id) == None)
 
   let message = "hello parent"
-  let res = try? state.notify_parent(caller_id, message, @types.Status::Success)
+  let res = server_test_capture(() => {
+    state.notify_parent(caller_id, message, @types.Status::Success)
+  })
   match res {
     Ok(_) => fail("expected Err AgentNotFound, got Ok")
     Err(e) => assert_eq(e.message(), "agent not found: " + parent_id)

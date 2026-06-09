@@ -23,7 +23,11 @@ async test "cancel_wave force=false clean" {
     state: @types.AgentState::Active,
     spawn_depth: 0,
   }
-  ignore(try? reg.insert(agent1))
+  try reg.insert(agent1) catch {
+    _ => ()
+  } noraise {
+    _ => ()
+  }
   let ps = @poller.PollerState::new()
 
   let req = ToolRequest::CancelWave({ force: false })
@@ -73,7 +77,11 @@ async test "cancel_wave cancels spawning agent" {
     state: @types.AgentState::Spawning,
     spawn_depth: 0,
   }
-  ignore(try? reg.insert(agent1))
+  try reg.insert(agent1) catch {
+    _ => ()
+  } noraise {
+    _ => ()
+  }
 
   let req = ToolRequest::CancelWave({ force: false })
   let resp = dispatch(
@@ -142,7 +150,11 @@ async test "cancel_wave force=false blocked by PR" {
     state: @types.AgentState::Active,
     spawn_depth: 0,
   }
-  ignore(try? reg.insert(agent1))
+  try reg.insert(agent1) catch {
+    _ => ()
+  } noraise {
+    _ => ()
+  }
 
   let ps = @poller.PollerState::new()
   ps.track_recovered(
@@ -199,7 +211,11 @@ async test "cancel_wave force=true overrides PR block" {
     state: @types.AgentState::Active,
     spawn_depth: 0,
   }
-  ignore(try? reg.insert(agent1))
+  try reg.insert(agent1) catch {
+    _ => ()
+  } noraise {
+    _ => ()
+  }
 
   let ps = @poller.PollerState::new()
   ps.track_recovered(

@@ -392,9 +392,15 @@ pub async fn interpret_file_pr_post_success(
   match (effects.notify_message_for_parent, registry) {
     (Some(notify_message), Some(reg)) => {
       let plan = file_pr_auto_notify_plan(
-        try? @phase.resolve_parent_with_fallback(
-          project_dir, session, reg, tracked_agent_id,
-        ),
+        try
+          @phase.resolve_parent_with_fallback(
+            project_dir, session, reg, tracked_agent_id,
+          )
+        catch {
+          e => Err(e)
+        } noraise {
+          parent => Ok(parent)
+        },
         tracked_agent_id,
         notify_message,
         now_ms=now_ms_fn(),

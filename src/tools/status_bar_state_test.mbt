@@ -9,6 +9,26 @@ fn status_bar_test_tab_target(name : String) -> @types.LocalTarget {
 }
 
 ///|
+fn[T] status_bar_test_capture(
+  body : () -> T raise @types.ChoirError,
+) -> Result[T, @types.ChoirError] {
+  try body() catch {
+    e => Err(e)
+  } noraise {
+    value => Ok(value)
+  }
+}
+
+///|
+fn status_bar_test_ignore(body : () -> Unit raise @types.ChoirError) -> Unit {
+  try body() catch {
+    _ => ()
+  } noraise {
+    _ => ()
+  }
+}
+
+///|
 fn status_bar_test_list_panes_snapshot() -> ZellijListPanesSnapshot {
   {
     entries: [
@@ -1004,10 +1024,14 @@ test "status_bar_state from_json rejects unsupported schema version" {
     "taken_at_ms": (12_345).to_json(),
     "panes": panes.to_json(),
   }.to_json()
-  let result = try? ({
+  let result = try {
     let _parsed : StatusBarSnapshot = @json.from_json(json)
     ()
-  })
+  } catch {
+    err => Err(err)
+  } noraise {
+    value => Ok(value)
+  }
   match result {
     Err(err) =>
       assert_true(err.to_string().contains("expected schema_version 2"))
@@ -1019,15 +1043,17 @@ test "status_bar_state from_json rejects unsupported schema version" {
 async test "interpret_status_bar_state returns direct structured payload" {
   let reg = @registry.AgentRegistry::new()
   ignore(
-    try? reg.insert(
-      status_bar_test_agent(
-        "root",
-        @types.Role::Root,
-        None,
-        @types.AgentType::Codex,
-        Some(status_bar_test_pane_target("terminal_1")),
-      ),
-    ),
+    status_bar_test_ignore(() => {
+      reg.insert(
+        status_bar_test_agent(
+          "root",
+          @types.Role::Root,
+          None,
+          @types.AgentType::Codex,
+          Some(status_bar_test_pane_target("terminal_1")),
+        ),
+      )
+    }),
   )
   let lifecycle = status_bar_test_lifecycle(
     "root",
@@ -1064,15 +1090,17 @@ async test "interpret_status_bar_state returns direct structured payload" {
 async test "interpret_status_bar_state uses injected list-panes snapshot" {
   let reg = @registry.AgentRegistry::new()
   ignore(
-    try? reg.insert(
-      status_bar_test_agent(
-        "root.tl",
-        @types.Role::TL,
-        Some("root"),
-        @types.AgentType::Codex,
-        Some(status_bar_test_tab_target("TL")),
-      ),
-    ),
+    status_bar_test_ignore(() => {
+      reg.insert(
+        status_bar_test_agent(
+          "root.tl",
+          @types.Role::TL,
+          Some("root"),
+          @types.AgentType::Codex,
+          Some(status_bar_test_tab_target("TL")),
+        ),
+      )
+    }),
   )
   let lifecycle = status_bar_test_lifecycle(
     "root.tl",
@@ -1113,15 +1141,17 @@ async test "interpret_status_bar_state uses injected list-panes snapshot" {
 async test "interpret_status_bar_state reuses list-panes within ttl and refreshes after ttl" {
   let reg = @registry.AgentRegistry::new()
   ignore(
-    try? reg.insert(
-      status_bar_test_agent(
-        "root.tl",
-        @types.Role::TL,
-        Some("root"),
-        @types.AgentType::Codex,
-        Some(status_bar_test_tab_target("TL")),
-      ),
-    ),
+    status_bar_test_ignore(() => {
+      reg.insert(
+        status_bar_test_agent(
+          "root.tl",
+          @types.Role::TL,
+          Some("root"),
+          @types.AgentType::Codex,
+          Some(status_bar_test_tab_target("TL")),
+        ),
+      )
+    }),
   )
   let lifecycle = status_bar_test_lifecycle(
     "root.tl",
@@ -1188,15 +1218,17 @@ async test "interpret_status_bar_state reuses list-panes within ttl and refreshe
 async test "interpret_status_bar_state does not store failed list-panes capture" {
   let reg = @registry.AgentRegistry::new()
   ignore(
-    try? reg.insert(
-      status_bar_test_agent(
-        "root.tl",
-        @types.Role::TL,
-        Some("root"),
-        @types.AgentType::Codex,
-        Some(status_bar_test_tab_target("TL")),
-      ),
-    ),
+    status_bar_test_ignore(() => {
+      reg.insert(
+        status_bar_test_agent(
+          "root.tl",
+          @types.Role::TL,
+          Some("root"),
+          @types.AgentType::Codex,
+          Some(status_bar_test_tab_target("TL")),
+        ),
+      )
+    }),
   )
   let lifecycle = status_bar_test_lifecycle(
     "root.tl",
@@ -1264,10 +1296,18 @@ async test "interpret_status_bar_state fails without registry" {
 ///|
 test "status_bar_state tool registry allows all roles" {
   let tools = @tools.ToolRegistry::new()
-  let root_lookup = try? tools.lookup(@types.Role::Root, "status_bar_state")
-  let tl_lookup = try? tools.lookup(@types.Role::TL, "status_bar_state")
-  let dev_lookup = try? tools.lookup(@types.Role::Dev, "status_bar_state")
-  let worker_lookup = try? tools.lookup(@types.Role::Worker, "status_bar_state")
+  let root_lookup = status_bar_test_capture(() => {
+    tools.lookup(@types.Role::Root, "status_bar_state")
+  })
+  let tl_lookup = status_bar_test_capture(() => {
+    tools.lookup(@types.Role::TL, "status_bar_state")
+  })
+  let dev_lookup = status_bar_test_capture(() => {
+    tools.lookup(@types.Role::Dev, "status_bar_state")
+  })
+  let worker_lookup = status_bar_test_capture(() => {
+    tools.lookup(@types.Role::Worker, "status_bar_state")
+  })
   assert_true(root_lookup is Ok(_))
   assert_true(tl_lookup is Ok(_))
   assert_true(dev_lookup is Ok(_))

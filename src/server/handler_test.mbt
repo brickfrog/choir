@@ -1,4 +1,15 @@
 ///|
+fn[T] handler_test_capture(
+  body : () -> T raise @types.ChoirError,
+) -> Result[T, @types.ChoirError] {
+  try body() catch {
+    e => Err(e)
+  } noraise {
+    value => Ok(value)
+  }
+}
+
+///|
 test "poll_events_delivery_summary escapes newlines and truncates long events" {
   let tail = "b".repeat(220)
   let ev = @poller.PollEvent::ReviewReceived(3, "alpha\nbeta\n" + tail)
@@ -6923,10 +6934,9 @@ async test "transport disconnect preserves suspended registry state" {
       state: @types.AgentState::Active,
     }),
   )
-  let suspend_result = try? state.registry.set_state(
-    agent_id,
-    @types.AgentState::Suspended,
-  )
+  let suspend_result = handler_test_capture(() => {
+    state.registry.set_state(agent_id, @types.AgentState::Suspended)
+  })
   assert_true(suspend_result is Ok(_))
 
   state.schedule_disconnect(agent_id, 0L)
@@ -7116,10 +7126,9 @@ async test "register reconnect preserves suspended registry state" {
       state: @types.AgentState::Active,
     }),
   )
-  let suspend_result = try? state.registry.set_state(
-    agent_id,
-    @types.AgentState::Suspended,
-  )
+  let suspend_result = handler_test_capture(() => {
+    state.registry.set_state(agent_id, @types.AgentState::Suspended)
+  })
   assert_true(suspend_result is Ok(_))
 
   let sent : Array[String] = []
@@ -7187,10 +7196,9 @@ test "direct register_agent preserves suspended registry state" {
       state: @types.AgentState::Active,
     }),
   )
-  let suspend_result = try? state.registry.set_state(
-    agent_id,
-    @types.AgentState::Suspended,
-  )
+  let suspend_result = handler_test_capture(() => {
+    state.registry.set_state(agent_id, @types.AgentState::Suspended)
+  })
   assert_true(suspend_result is Ok(_))
 
   ignore(
@@ -7245,10 +7253,9 @@ async test "resume RPC clears suspended state after reconnect preservation" {
       state: @types.AgentState::Active,
     }),
   )
-  let suspend_result = try? state.registry.set_state(
-    agent_id,
-    @types.AgentState::Suspended,
-  )
+  let suspend_result = handler_test_capture(() => {
+    state.registry.set_state(agent_id, @types.AgentState::Suspended)
+  })
   assert_true(suspend_result is Ok(_))
 
   let register_resp = state.handle_with_runner(
@@ -7431,10 +7438,9 @@ async test "failed lifecycle register does not restore suspended registry state"
       state: @types.AgentState::Active,
     }),
   )
-  let suspend_result = try? state.registry.set_state(
-    agent_id,
-    @types.AgentState::Suspended,
-  )
+  let suspend_result = handler_test_capture(() => {
+    state.registry.set_state(agent_id, @types.AgentState::Suspended)
+  })
   assert_true(suspend_result is Ok(_))
   ignore(
     @phase.write_lifecycle(project_dir, {
