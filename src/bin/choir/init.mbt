@@ -983,17 +983,23 @@ fn init_is_choir_source_files(
   moon_mod_content : String,
   main_mbt_content : String,
 ) -> Bool {
-  main_mbt_content != "" &&
-  (
-    moon_mod_content.contains("\"name\": \"choir\"") ||
-    moon_mod_content.contains("\"name\":\"choir\"")
+  main_mbt_content != "" && moon_mod_content.contains("name = \"choir\"")
+}
+
+///|
+test "init source detection accepts moon.mod DSL manifest" {
+  @debug.assert_eq(
+    init_is_choir_source_files(
+      "name = \"choir\"\n\nversion = \"0.1.0\"\n", "fn main() -> Unit { () }\n",
+    ),
+    true,
   )
 }
 
 ///|
 fn init_is_choir_source_tree(project_dir : String) -> Bool {
   init_is_choir_source_files(
-    @sys.read_file(project_dir + "/moon.mod.json"),
+    @sys.read_file(project_dir + "/moon.mod"),
     @sys.read_file(project_dir + "/src/bin/choir/main.mbt"),
   )
 }

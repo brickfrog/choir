@@ -15,12 +15,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Validate tag matches moon.mod.json
+      - name: Validate tag matches moon.mod
         run: |
           tag_version="${GITHUB_REF_NAME#v}"
-          file_version="$(python3 -c 'import json; print(json.load(open("moon.mod.json", "r", encoding="utf-8"))["version"])')"
+          file_version="$(
+            python3 - <<'PY'
+          import pathlib
+          import re
+
+          text = pathlib.Path("moon.mod").read_text(encoding="utf-8")
+          match = re.search(r'(?m)^version\s*=\s*"([^"]+)"\s*$', text)
+          if not match:
+              raise SystemExit('moon.mod is missing a version = "..." line')
+          print(match.group(1))
+          PY
+          )"
           if [ "$tag_version" != "$file_version" ]; then
-            echo "tag version ($tag_version) does not match moon.mod.json ($file_version)" >&2
+            echo "tag version ($tag_version) does not match moon.mod ($file_version)" >&2
             exit 1
           fi
 
@@ -74,7 +85,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .mooncakes
-          key: release-${{ runner.os }}-mooncakes-${{ hashFiles('moon.mod.json', 'src/**/moon.pkg', 'src/**/moon.pkg.json') }}
+          key: release-${{ runner.os }}-mooncakes-${{ hashFiles('moon.mod', 'src/**/moon.pkg') }}
           restore-keys: |
             release-${{ runner.os }}-mooncakes-
             ${{ runner.os }}-mooncakes-
