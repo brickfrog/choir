@@ -29,6 +29,7 @@ options(
   "is-main": true,
   targets: {
     "claude_wrapper.mbt": [ "native" ],
+    "goal_cli.mbt": [ "native" ],
     "hook.mbt": [ "native" ],
     "init.mbt": [ "native" ],
     "init_bootstrap.mbt": [ "native" ],
