@@ -2165,6 +2165,7 @@ async fn deliver_pending_poll_events(
   automerge_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
   git_pull_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
   hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
+  hook_path_exists? : (String) -> Bool = @exec.path_entry_exists,
   audit_receipt_exists? : (String) -> Bool = @exec.path_entry_exists,
   audit_receipt_read? : (String) -> String = @exec.read_file,
   git_state_capture? : async (
@@ -2302,6 +2303,7 @@ async fn deliver_pending_poll_events(
             pr,
             capture~,
             hook_capture~,
+            path_exists=hook_path_exists,
             xdg_config_home=hook_xdg_config_home,
             home=hook_home,
           )
@@ -2356,6 +2358,8 @@ async fn deliver_pending_poll_events(
               runner,
               capture=automerge_capture,
               review_mode=Some(review_mode),
+              hook_capture~,
+              hook_path_exists~,
               sleep_fn~,
             ) {
             continue
@@ -3154,6 +3158,7 @@ pub async fn ServerState::process_poller_tick_with(
   automerge_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
   git_pull_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
   hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
+  hook_path_exists? : (String) -> Bool = @exec.path_entry_exists,
   audit_receipt_exists? : (String) -> Bool = @exec.path_entry_exists,
   audit_receipt_read? : (String) -> String = @exec.read_file,
   git_state_capture? : async (
@@ -3214,6 +3219,7 @@ pub async fn ServerState::process_poller_tick_with(
     automerge_capture~,
     git_pull_capture~,
     hook_capture~,
+    hook_path_exists~,
     audit_receipt_exists~,
     audit_receipt_read~,
     git_state_capture~,
@@ -3335,6 +3341,7 @@ pub async fn ServerState::refresh_pr_with(
   hook_capture : async (String, String, String?) -> (Int, String),
   hook_xdg_config_home : String?,
   hook_home : String,
+  hook_path_exists? : (String) -> Bool = @exec.path_entry_exists,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
   automerge_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
@@ -3375,6 +3382,7 @@ pub async fn ServerState::refresh_pr_with(
     capture~,
     automerge_capture~,
     hook_capture~,
+    hook_path_exists~,
     audit_receipt_exists~,
     audit_receipt_read~,
     sleep_fn~,

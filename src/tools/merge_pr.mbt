@@ -2059,6 +2059,7 @@ async fn interpret_merge_pr_fire_completion_hooks(
   capture : async (@workspace.Command) -> (Int, String),
   hook_capture : async (String, String, String?) -> (Int, String),
   path_exists : (String) -> Bool,
+  hook_path_exists : (String) -> Bool,
   read_file : (String) -> String,
   require_integration_audit : Bool,
 ) -> Unit {
@@ -2073,7 +2074,7 @@ async fn interpret_merge_pr_fire_completion_hooks(
           tracked,
           capture~,
           hook_capture~,
-          path_exists~,
+          path_exists=hook_path_exists,
         )
       }
     }
@@ -2145,6 +2146,7 @@ pub async fn interpret_merge_pr(
   capture : async (@workspace.Command) -> (Int, String),
   append_file : (String, String) -> Bool,
   path_exists : (String) -> Bool,
+  hook_path_exists? : (String) -> Bool = path_exists,
   read_lifecycle? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
   read_file? : (String) -> String = fn(_) { "" },
   merge_strategy? : @types.MergeStrategy = @types.Config::default().merge_strategy,
@@ -2282,8 +2284,8 @@ pub async fn interpret_merge_pr(
           if resp.is_ok() {
             if persisted {
               interpret_merge_pr_fire_completion_hooks(
-                project_dir, tracked, capture, hook_capture, path_exists, read_file,
-                require_integration_audit,
+                project_dir, tracked, capture, hook_capture, path_exists, hook_path_exists,
+                read_file, require_integration_audit,
               )
             } else {
               @moontrace.warn(

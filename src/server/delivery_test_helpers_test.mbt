@@ -94,6 +94,7 @@ async fn ServerState::refresh_pr_with_test(
   capture? : async (@workspace.Command) -> (Int, String) = server_delivery_test_capture,
   automerge_capture? : async (@workspace.Command) -> (Int, String) = server_delivery_test_capture,
   hook_capture? : async (String, String, String?) -> (Int, String) = server_delivery_test_hook_capture,
+  hook_path_exists? : (String) -> Bool = server_delivery_test_path_entry_exists,
 ) -> Unit {
   self.refresh_pr_with(
     pr_number,
@@ -106,6 +107,7 @@ async fn ServerState::refresh_pr_with_test(
     runner~,
     capture~,
     automerge_capture~,
+    hook_path_exists~,
     sleep_fn=server_delivery_test_sleep,
   )
 }
@@ -134,6 +136,7 @@ async fn ServerState::process_poller_tick_with_test(
   automerge_capture? : async (@workspace.Command) -> (Int, String) = server_delivery_test_capture,
   git_pull_capture? : async (@workspace.Command) -> (Int, String) = server_delivery_test_capture,
   hook_capture? : async (String, String, String?) -> (Int, String) = server_delivery_test_hook_capture,
+  hook_path_exists? : (String) -> Bool = server_delivery_test_path_entry_exists,
   audit_receipt_exists? : (String) -> Bool = server_delivery_test_path_entry_exists,
   audit_receipt_read? : (String) -> String = server_delivery_test_read_file,
   git_state_capture? : async (
@@ -165,6 +168,7 @@ async fn ServerState::process_poller_tick_with_test(
     automerge_capture~,
     git_pull_capture~,
     hook_capture~,
+    hook_path_exists~,
     audit_receipt_exists~,
     audit_receipt_read~,
     git_state_capture~,
