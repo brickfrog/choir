@@ -30,4 +30,5 @@ import {
 
 options(
   "is-main": false,
+  targets: { "handler_disconnect_native_wbtest.mbt": [ "native" ] },
 )
