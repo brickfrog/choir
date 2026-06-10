@@ -3,15 +3,15 @@
 /// Input: JSON string (the LLM request payload)
 /// Output: JSON string (rewritten request)
 pub fn before_model() -> Int {
-  let input = @host.input_string()
+  let input = host_input_string()
   let rules = load_rules()
   if rules.length() == 0 {
     // No rules configured — pass through unchanged
-    @host.output_string(input)
+    host_output_string(input)
     return 0
   }
   let rewritten = rewrite_forward(input, rules)
-  @host.output_string(rewritten)
+  host_output_string(rewritten)
   0
 }
 
@@ -20,14 +20,14 @@ pub fn before_model() -> Int {
 /// Input: JSON string (the LLM response payload)
 /// Output: JSON string (restored response)
 pub fn after_model() -> Int {
-  let input = @host.input_string()
+  let input = host_input_string()
   let rules = load_rules()
   if rules.length() == 0 {
-    @host.output_string(input)
+    host_output_string(input)
     return 0
   }
   let restored = rewrite_reverse(input, rules)
-  @host.output_string(restored)
+  host_output_string(restored)
   0
 }
 
@@ -35,24 +35,12 @@ pub fn after_model() -> Int {
 /// PreToolUse hook: validate tool inputs before execution.
 /// Blocks known Gemini failure patterns.
 /// Input: JSON string (tool call with name and parameters)
-/// Output: JSON string (pass-through or modified)
+/// Output: JSON deny payload on block, empty output on allow.
 pub fn pre_tool_use() -> Int {
-  let input = @host.input_string()
-  let json = @json.parse(input) catch {
-    _ => {
-      @host.output_string(input)
-      return 0
-    }
+  let result = pre_tool_use_response(host_input_string())
+  match result.output {
+    Some(output) => host_output_string(output)
+    None => ()
   }
-  // Check for known bad patterns
-  match check_tool_guards(json) {
-    Some(reason) => {
-      @host.set_error(reason)
-      return 1
-    }
-    None => {
-      @host.output_string(input)
-      return 0
-    }
-  }
+  result.exit_code
 }

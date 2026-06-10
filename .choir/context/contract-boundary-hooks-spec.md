@@ -63,8 +63,9 @@ Three independent leaves; the wasm leaf has no MoonBit-server overlap and the tw
 ## Verify
 - `moon -C hooks test --target wasm-gc`, `scripts/build-hooks.sh`, and `moon test --target native` — all green.
 - Observable, end-to-end (manual or scripted): build and install the checkout-local wasm with `scripts/build-hooks.sh`, then
-  `echo '{"tool_name":"Edit","tool_input":{"file_path":".githooks/pre-commit","old_string":"a","new_string":"b"}}' | extism call .choir/hooks/hook.wasm pre_tool_use --wasi --config guard_paths='[".githooks/**"]' --config workspace_root="$PWD" --stdin`
-  → output contains `BLOCKED` and names the path. Same payload with non-matching guard_paths → pass-through.
+  `printf '%s' '{"tool_name":"Edit","tool_input":{"file_path":".githooks/pre-commit","old_string":"a","new_string":"b"}}' | extism call .choir/hooks/hook.wasm pre_tool_use --wasi --config guard_paths='[".githooks/**"]' --config workspace_root="$PWD" --stdin`
+  → stdout is JSON with `hookSpecificOutput.hookEventName="PreToolUse"`, `permissionDecision="deny"`, and `permissionDecisionReason` containing `BLOCKED: .githooks/pre-commit is outside your task contract (guard_paths)`; exit status is 0.
+  Same payload with non-matching guard_paths via `printf '%s' ... --config guard_paths='["src/**"]'` → empty stdout and exit status 0.
 - apply_patch shape: crafted codex payload with `*** Update File: .githooks/pre-commit` → `BLOCKED`.
 - Wiring: workspace test asserts codex `[hooks]`/claude `PreToolUse` blocks contain the extism call with the leaf's guard_paths; with `hooks_enforcement=false` (default) nothing is emitted.
 

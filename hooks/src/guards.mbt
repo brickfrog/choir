@@ -2,6 +2,17 @@
 /// Check tool call against known Gemini failure patterns.
 /// Returns Some(reason) to block, None to allow.
 fn check_tool_guards(json : Json) -> String? {
+  let guard_paths = load_guard_paths()
+  let workspace_root = load_workspace_root()
+  check_tool_guards_with_guard_paths(json, guard_paths, workspace_root~)
+}
+
+///|
+fn check_tool_guards_with_guard_paths(
+  json : Json,
+  guard_paths : Array[String],
+  workspace_root? : String? = None,
+) -> String? {
   guard json is Object(obj) else { return None }
   let tool_name = match obj.get("tool_name") {
     Some(String(v)) => v
@@ -20,8 +31,6 @@ fn check_tool_guards(json : Json) -> String? {
       }
   }
   if is_path_guarded_tool(tool_name) {
-    let guard_paths = load_guard_paths()
-    let workspace_root = load_workspace_root()
     match
       check_path_boundary(tool_name, tool_input, guard_paths, workspace_root~) {
       Some(reason) => return Some(reason)
@@ -50,7 +59,7 @@ fn check_tool_guards(json : Json) -> String? {
 /// Load blocklisted task-contract guard paths from extism config.
 fn load_guard_paths() -> Array[String] {
   let guard_paths : Array[String] = []
-  let config_str = match @config.get("guard_paths") {
+  let config_str = match host_config_get("guard_paths") {
     Some(s) => s
     None => return guard_paths
   }
@@ -73,7 +82,7 @@ fn load_guard_paths() -> Array[String] {
 ///|
 /// Load the absolute worktree root used to relativize absolute tool paths.
 fn load_workspace_root() -> String? {
-  let root = match @config.get("workspace_root") {
+  let root = match host_config_get("workspace_root") {
     Some(s) => normalize_workspace_root(s)
     None => return None
   }
@@ -420,6 +429,69 @@ fn check_json_constructor(tool_input : Json) -> String? {
 }
 
 ///|
+priv struct PreToolUseResponse {
+  exit_code : Int
+  output : String?
+}
+
+///|
+fn pre_tool_use_deny_output(reason : String) -> String {
+  let hook_specific_output : Map[String, Json] = {
+    "hookEventName": "PreToolUse".to_json(),
+    "permissionDecision": "deny".to_json(),
+    "permissionDecisionReason": reason.to_json(),
+  }
+  let output : Map[String, Json] = {
+    "hookSpecificOutput": hook_specific_output.to_json(),
+  }
+  output.to_json().stringify()
+}
+
+///|
+fn pre_tool_use_response(
+  input : String,
+  guard_checker? : (Json) -> String? = check_tool_guards,
+) -> PreToolUseResponse {
+  let json = @json.parse(input) catch {
+    _ => return { exit_code: 0, output: Some(input) }
+  }
+  match guard_checker(json) {
+    Some(reason) =>
+      { exit_code: 0, output: Some(pre_tool_use_deny_output(reason)) }
+    None => { exit_code: 0, output: None }
+  }
+}
+
+///|
+fn assert_pre_tool_deny_json(
+  output : String,
+  expected_reason_part : String,
+) -> Unit raise {
+  let json = @json.parse(output) catch {
+    _ => fail("deny output was not JSON: " + output)
+  }
+  guard json is Object(obj) else { fail("deny output was not a JSON object") }
+  guard obj.get("hookSpecificOutput") is Some(Object(hook_output)) else {
+    fail("deny output missing hookSpecificOutput object")
+  }
+  match hook_output.get("hookEventName") {
+    Some(String(value)) => assert_eq(value, "PreToolUse")
+    _ => fail("deny output missing hookEventName")
+  }
+  match hook_output.get("permissionDecision") {
+    Some(String(value)) => assert_eq(value, "deny")
+    _ => fail("deny output missing permissionDecision")
+  }
+  match hook_output.get("permissionDecisionReason") {
+    Some(String(reason)) => {
+      assert_true(reason.contains("BLOCKED: "))
+      assert_true(reason.contains(expected_reason_part))
+    }
+    _ => fail("deny output missing permissionDecisionReason")
+  }
+}
+
+///|
 test "glob matcher supports literals star and globstar" {
   assert_true(glob_matches(".githooks/**", ".githooks/pre-commit"))
   assert_true(glob_matches("hooks/**/guards.mbt", "hooks/src/guards.mbt"))
@@ -607,5 +679,68 @@ test "path boundary guard allows absolute paths without workspace root config" {
     check_path_boundary("Edit", input, [".githooks/**"], workspace_root=None) {
     None => ()
     Some(reason) => fail("expected no-config absolute path to pass: " + reason)
+  }
+}
+
+///|
+test "pre_tool_use path boundary block emits codex deny json" {
+  let input =
+    #|{"tool_name":"Edit","tool_input":{"file_path":".githooks/pre-commit","old_string":"a","new_string":"b"}}
+  let result = pre_tool_use_response(input, guard_checker=fn(json) {
+    check_tool_guards_with_guard_paths(json, [".githooks/**"])
+  })
+  assert_eq(result.exit_code, 0)
+  match result.output {
+    Some(output) => assert_pre_tool_deny_json(output, ".githooks/pre-commit")
+    None => fail("expected path boundary deny output")
+  }
+}
+
+///|
+test "pre_tool_use pragma block emits codex deny json" {
+  let input =
+    #|{"tool_name":"Edit","tool_input":{"file_path":"src/main.mbt","old_string":"{-# LANGUAGE OverloadedStrings #-}","new_string":"{# LANGUAGE OverloadedStrings #}"}}
+  let result = pre_tool_use_response(input)
+  assert_eq(result.exit_code, 0)
+  match result.output {
+    Some(output) => assert_pre_tool_deny_json(output, "LANGUAGE pragmas")
+    None => fail("expected pragma deny output")
+  }
+}
+
+///|
+test "pre_tool_use Json constructor block emits codex deny json" {
+  let input =
+    #|{"tool_name":"Write","tool_input":{"file_path":"src/main.mbt","content":"let v = Json::String(\"bad\")"}}
+  let result = pre_tool_use_response(input)
+  assert_eq(result.exit_code, 0)
+  match result.output {
+    Some(output) => assert_pre_tool_deny_json(output, "Json constructors")
+    None => fail("expected Json constructor deny output")
+  }
+}
+
+///|
+test "pre_tool_use allow emits no output" {
+  let input =
+    #|{"tool_name":"Edit","tool_input":{"file_path":"src/main.mbt","old_string":"a","new_string":"b"}}
+  let result = pre_tool_use_response(input, guard_checker=fn(json) {
+    check_tool_guards_with_guard_paths(json, [".githooks/**"])
+  })
+  assert_eq(result.exit_code, 0)
+  match result.output {
+    None => ()
+    Some(output) => fail("expected empty allow output, got: " + output)
+  }
+}
+
+///|
+test "pre_tool_use malformed payload still passes through" {
+  let input = "not-json"
+  let result = pre_tool_use_response(input)
+  assert_eq(result.exit_code, 0)
+  match result.output {
+    Some(output) => assert_eq(output, input)
+    None => fail("expected malformed payload pass-through output")
   }
 }
