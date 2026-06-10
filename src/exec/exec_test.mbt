@@ -65,6 +65,22 @@ test "replace_self returns error for missing binary" {
 }
 
 ///|
+test "default reload binary path resolves current executable" {
+  let project_dir = "/tmp/choir-target-project-not-the-server"
+  match @sys.realpath_native("/proc/self/exe") {
+    Some(self_exe) =>
+      match default_reload_binary_path(project_dir) {
+        Ok(path) => {
+          assert_eq(path, self_exe)
+          assert_false(path.contains(project_dir + "/_build/native/release"))
+        }
+        Err(e) => fail(e.message())
+      }
+    None => fail("expected /proc/self/exe to resolve on native backend")
+  }
+}
+
+///|
 async test "real exec integration: capture_command_merged captures stdout" {
   if !real_exec_integration_enabled() {
     return

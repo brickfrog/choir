@@ -72,10 +72,11 @@ fn serve_is_reload_request(req : @types.Request) -> Bool {
 fn serve_reload_binary_path_for_request(
   state : @server.ServerState,
   req : @types.Request,
-) -> String {
-  req.args
-  .get("binary_path")
-  .unwrap_or(@exec.reload_binary_path(state.config.project_dir))
+) -> Result[String, @types.ChoirError] {
+  match req.args.get("binary_path") {
+    Some(path) => Ok(path)
+    None => @exec.reload_binary_path(state.config.project_dir)
+  }
 }
 
 ///|
@@ -90,7 +91,16 @@ fn serve_replace_self_after_reload_ack(
     ])
     return
   }
-  let binary_path = serve_reload_binary_path_for_request(state, req)
+  let binary_path = match serve_reload_binary_path_for_request(state, req) {
+    Ok(path) => path
+    Err(e) => {
+      @moontrace.error("server reload binary path resolution failed", fields=[
+        @moontrace.field("error", e.message()),
+      ])
+      @sys.write_stderr("[server_reload] exec failed: " + e.message() + "\n")
+      return
+    }
+  }
   match @exec.replace_self(binary_path, server_fd) {
     Ok(_) => ()
     Err(e) => {

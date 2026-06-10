@@ -1,11 +1,19 @@
 ///|
 /// Non-native: `moonbitlang/async/process` is native-only; stubs keep wasm/js type-check clean.
-pub fn default_reload_binary_path(project_dir : String) -> String {
-  project_dir + "/_build/native/release/build/src/bin/choir/choir.exe"
+pub fn default_reload_binary_path(
+  _project_dir : String,
+) -> Result[String, @types.ChoirError] {
+  Err(
+    @types.ChoirError::workspace_error(
+      "reload binary path resolution is native-only",
+    ),
+  )
 }
 
 ///|
-pub fn reload_binary_path(project_dir : String) -> String {
+pub fn reload_binary_path(
+  project_dir : String,
+) -> Result[String, @types.ChoirError] {
   default_reload_binary_path(project_dir)
 }
 

@@ -113,7 +113,13 @@ fn reload_run() -> Unit {
       return
     }
   }
-  let binary_path = @exec.reload_binary_path(config.project_dir)
+  let binary_path = match @exec.reload_binary_path(config.project_dir) {
+    Ok(path) => path
+    Err(e) => {
+      client_emit(@types.Response::Err(e.message()))
+      return
+    }
+  }
   let req : @types.Request = {
     req_method: "tools/call",
     role: @types.Role::Root,
