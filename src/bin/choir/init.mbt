@@ -988,11 +988,34 @@ fn init_is_choir_source_files(
 }
 
 ///|
-fn init_strip_moon_mod_line_comment(line : String) -> String {
-  for part in line.split("//") {
-    return part.to_owned().trim().to_owned()
+fn init_moon_mod_line_string_value(line : String, key : String) -> String? {
+  let trimmed = line.trim().to_owned()
+  if !trimmed.has_prefix(key) {
+    return None
   }
-  ""
+  let rest = trimmed[key.length():].trim().to_owned()
+  if !rest.has_prefix("=") {
+    return None
+  }
+  let value_and_suffix = rest[1:].trim().to_owned()
+  if !value_and_suffix.has_prefix("\"") {
+    return None
+  }
+  let mut value = ""
+  let mut saw_value = false
+  for part in value_and_suffix[1:].split("\"") {
+    if !saw_value {
+      value = part.to_owned()
+      saw_value = true
+      continue
+    }
+    let suffix = part.to_owned().trim().to_owned()
+    if suffix == "" || suffix.has_prefix("//") {
+      return Some(value)
+    }
+    return None
+  }
+  None
 }
 
 ///|
@@ -1001,14 +1024,10 @@ fn init_moon_mod_has_string_assignment(
   key : String,
   value : String,
 ) -> Bool {
-  let expected = "\"" + value + "\""
   for raw in content.split("\n") {
-    let line = init_strip_moon_mod_line_comment(raw.to_owned())
-    if line.has_prefix(key) {
-      let rest = line[key.length():].trim().to_owned()
-      if rest.has_prefix("=") && rest[1:].trim().to_owned() == expected {
-        return true
-      }
+    match init_moon_mod_line_string_value(raw.to_owned(), key) {
+      Some(found) => if found == value { return true }
+      None => ()
     }
   }
   false
@@ -1039,6 +1058,32 @@ test "moon.mod assignment parser accepts indented and commented version lines" {
       "version = \"0.1.0\" // release\n", "version", "0.1.0",
     ),
     true,
+  )
+}
+
+///|
+test "moon.mod assignment parser rejects newline-spanning quoted values" {
+  @debug.assert_eq(
+    init_moon_mod_has_string_assignment(
+      "version = \"0.1.0\n\"\n", "version", "0.1.0",
+    ),
+    false,
+  )
+}
+
+///|
+test "moon.mod assignment parser preserves comment markers inside quotes" {
+  @debug.assert_eq(
+    init_moon_mod_has_string_assignment(
+      "name = \"choir//dev\"\n", "name", "choir//dev",
+    ),
+    true,
+  )
+  @debug.assert_eq(
+    init_moon_mod_has_string_assignment(
+      "name = \"choir//dev\"\n", "name", "choir",
+    ),
+    false,
   )
 }
 

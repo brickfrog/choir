@@ -39,7 +39,7 @@ import re
 
 text = pathlib.Path("moon.mod").read_text(encoding="utf-8")
 match = re.search(
-    r'(?m)^[ \t]*version[ \t]*=[ \t]*"([^"]+)"(?:[ \t]*(?://.*)?)?$',
+    r'(?m)^[ \t]*version[ \t]*=[ \t]*"([^\n"]+)"(?:[ \t]*(?://.*)?)?$',
     text,
 )
 if not match:
@@ -90,7 +90,7 @@ version = sys.argv[1]
 path = pathlib.Path("moon.mod")
 text = path.read_text(encoding="utf-8")
 updated, count = re.subn(
-    r'(?m)^([ \t]*version[ \t]*=[ \t]*")[^"]*(")([ \t]*(?://.*)?)?$',
+    r'(?m)^([ \t]*version[ \t]*=[ \t]*")[^\n"]*(")([ \t]*(?://.*)?)?$',
     rf'\g<1>{version}\g<2>\g<3>',
     text,
     count=1,
