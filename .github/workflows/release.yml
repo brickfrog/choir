@@ -79,6 +79,15 @@ jobs:
             release-${{ runner.os }}-mooncakes-
             ${{ runner.os }}-mooncakes-
 
+      - name: Update registry
+        run: |
+          for attempt in 1 2 3; do
+            moon update && exit 0
+            echo "moon update attempt $attempt failed; retrying in 15s" >&2
+            sleep 15
+          done
+          moon update
+
       - name: Build release binary
         run: moon build --target native --release
 
