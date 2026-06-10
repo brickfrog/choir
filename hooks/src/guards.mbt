@@ -94,11 +94,15 @@ fn load_workspace_root() -> String? {
 
 ///|
 fn normalize_workspace_root(root : String) -> String {
-  let mut normalized = root.trim().to_owned()
-  while normalized.length() > 1 && normalized.has_suffix("/") {
-    normalized = normalized[0:normalized.length() - 1].to_owned()
+  let normalized = normalize_path_text(root)
+  if normalized == "" || !normalized.has_prefix("/") {
+    return normalized
   }
-  normalized
+  let segments = path_segments(normalized)
+  if segments.length() == 0 {
+    return "/"
+  }
+  "/" + segments.join("/")
 }
 
 ///|
@@ -646,6 +650,52 @@ test "path boundary guard blocks absolute paths under workspace root" {
         reason, "BLOCKED: /fake/root/.githooks/pre-commit is outside your task contract (guard_paths)",
       )
     None => fail("expected workspace-root absolute path to be blocked")
+  }
+}
+
+///|
+test "path boundary guard blocks absolute paths with trailing dot workspace root" {
+  let input_json =
+    #|{"file_path":"/fake/root/.githooks/pre-commit","old_string":"a","new_string":"b"}
+  let input = @json.parse(input_json) catch {
+    _ => fail("failed to parse trailing-dot workspace-root edit input")
+  }
+  match
+    check_path_boundary(
+      "Edit",
+      input,
+      [".githooks/**"],
+      workspace_root=Some("/fake/root/."),
+    ) {
+    Some(reason) =>
+      assert_eq(
+        reason, "BLOCKED: /fake/root/.githooks/pre-commit is outside your task contract (guard_paths)",
+      )
+    None =>
+      fail("expected trailing-dot workspace-root absolute path to be blocked")
+  }
+}
+
+///|
+test "path boundary guard blocks absolute paths with interior dot workspace root" {
+  let input_json =
+    #|{"file_path":"/fake/root/.githooks/pre-commit","old_string":"a","new_string":"b"}
+  let input = @json.parse(input_json) catch {
+    _ => fail("failed to parse interior-dot workspace-root edit input")
+  }
+  match
+    check_path_boundary(
+      "Edit",
+      input,
+      [".githooks/**"],
+      workspace_root=Some("/fake/./root"),
+    ) {
+    Some(reason) =>
+      assert_eq(
+        reason, "BLOCKED: /fake/root/.githooks/pre-commit is outside your task contract (guard_paths)",
+      )
+    None =>
+      fail("expected interior-dot workspace-root absolute path to be blocked")
   }
 }
 
