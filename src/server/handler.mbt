@@ -264,6 +264,9 @@ pub async fn ServerState::handle_with_runner_and_capture(
   req : @types.Request,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
+  hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
+  path_exists? : (String) -> Bool = @exec.path_entry_exists,
+  hook_path_exists? : (String) -> Bool = path_exists,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> @types.Response {
   let start_ms = @env.now()
@@ -311,6 +314,9 @@ pub async fn ServerState::handle_with_runner_and_capture(
       runner~,
       sleep_fn~,
       capture~,
+      hook_capture~,
+      path_exists~,
+      hook_path_exists~,
       extra_mcp_servers_json=self.config.extra_mcp_servers_json,
       shell_command=self.config.shell_command,
       listen_uds=self.config.listen_uds,

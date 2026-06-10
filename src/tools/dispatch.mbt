@@ -839,6 +839,7 @@ pub async fn dispatch(
   write_file_atomic? : (String, String) -> Bool = @sys.write_file_atomic,
   delete_file? : (String) -> Bool = @sys.delete_file_sync,
   path_exists? : (String) -> Bool = @sys.path_entry_exists,
+  hook_path_exists? : (String) -> Bool = path_exists,
   create_dir_all? : (String) -> Bool = @sys.create_dir_all,
   ensure_branch_ready? : (async (String, String, String) -> Result[
     Unit,
@@ -1262,6 +1263,7 @@ pub async fn dispatch(
         capture,
         append_file,
         path_exists,
+        hook_path_exists~,
         read_file~,
         hook_capture~,
         merge_strategy~,
@@ -2054,6 +2056,7 @@ pub async fn handle_request(
   write_file_atomic? : (String, String) -> Bool = @sys.write_file_atomic,
   delete_file? : (String) -> Bool = @sys.delete_file_sync,
   path_exists? : (String) -> Bool = @sys.path_entry_exists,
+  hook_path_exists? : (String) -> Bool = path_exists,
   hook_xdg_config_home? : String? = @exec.hook_xdg_config_home(),
   hook_home? : String = @exec.hook_home(),
   create_dir_all? : (String) -> Bool = @sys.create_dir_all,
@@ -2081,7 +2084,7 @@ pub async fn handle_request(
             @hooks.HookEvent::PreToolUse.script_name(),
             hook_xdg_config_home,
             hook_home,
-            path_exists,
+            hook_path_exists,
           ) {
           Some(hook_path) => {
             let input = @hooks.HookInput::{
@@ -2177,6 +2180,7 @@ pub async fn handle_request(
                   write_file_atomic~,
                   delete_file~,
                   path_exists~,
+                  hook_path_exists~,
                   create_dir_all~,
                   goal_deliver~,
                   goal_request_tick~,
@@ -2222,7 +2226,7 @@ pub async fn handle_request(
       },
       project_dir,
       hook_capture~,
-      path_exists~,
+      path_exists=hook_path_exists,
       xdg_config_home=hook_xdg_config_home,
       home=hook_home,
     )
@@ -2339,6 +2343,7 @@ pub async fn dispatch_call(
   write_file_atomic? : (String, String) -> Bool = @sys.write_file_atomic,
   delete_file? : (String) -> Bool = @sys.delete_file_sync,
   path_exists? : (String) -> Bool = @sys.path_entry_exists,
+  hook_path_exists? : (String) -> Bool = path_exists,
   create_dir_all? : (String) -> Bool = @sys.create_dir_all,
   agy_migration_incomplete? : Bool = false,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
@@ -2412,6 +2417,7 @@ pub async fn dispatch_call(
                   write_file_atomic~,
                   delete_file~,
                   path_exists~,
+                  hook_path_exists~,
                   create_dir_all~,
                   goal_deliver~,
                   goal_request_tick~,

@@ -294,6 +294,8 @@ pub async fn maybe_trigger_automerge_for_pending_event(
   runner : async (Array[@workspace.Command]) -> Array[Int],
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
   review_mode? : @types.ReviewMode? = None,
+  hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
+  hook_path_exists? : (String) -> Bool = @exec.path_entry_exists,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Bool {
   if tracked.merged_at_unix != None ||
@@ -413,6 +415,8 @@ pub async fn maybe_trigger_automerge_for_pending_event(
     automerge_merge_pr_request(tracked, caller_id, review_mode),
     runner~,
     capture~,
+    hook_capture~,
+    hook_path_exists~,
     sleep_fn~,
   )
   append_poller_delivery_line(

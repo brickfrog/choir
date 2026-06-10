@@ -3066,7 +3066,8 @@ async test "deliver_pending_poll_events fires PRMerged hook whether tracked or s
     ignore(@sys.create_dir_all(project_dir + "/.choir/hooks"))
     ignore(@sys.create_dir_all(config_home))
     ignore(@sys.create_dir_all(home_dir))
-    ignore(@sys.write_file_sync(project_dir + "/.choir/hooks/pr_merged.sh", ""))
+    let pr_hook = project_dir + "/.choir/hooks/pr_merged.sh"
+    ignore(@sys.write_file_sync(pr_hook, ""))
     let state = ServerState::new(
       {
         ..@types.Config::default(),
@@ -3187,6 +3188,7 @@ async test "deliver_pending_poll_events fires PRMerged hook whether tracked or s
         }
         (0, "hook")
       },
+      hook_path_exists=fn(path) { path == pr_hook },
     )
     let fired_count = fired_inputs.length()
     if fired_count > 0 {
@@ -3317,6 +3319,7 @@ async test "deliver_pending_poll_events uses injected global hook config home" {
       }
       (0, "hook")
     },
+    hook_path_exists=fn(path) { path == pr_hook || path == wave_hook },
   )
   @debug.assert_eq(hook_paths, [pr_hook, wave_hook])
   assert_eq(hook_inputs.length(), 2)
@@ -3442,6 +3445,7 @@ async test "deliver_pending_poll_events ignores absent injected global hook fall
       }
       (0, "hook")
     },
+    hook_path_exists=fn(path) { path == pr_hook },
   )
   @debug.assert_eq(hook_paths, [pr_hook])
   assert_eq(hook_inputs.length(), 1)
@@ -3564,6 +3568,7 @@ async test "refresh_pr_with_test uses injected hook capture when project hook re
       }
       (0, "")
     },
+    hook_path_exists=fn(path) { path == hook_path },
   )
   @debug.assert_eq(hook_paths, [hook_path])
   @debug.assert_eq(hook_cwds, [project_dir])
@@ -4474,6 +4479,10 @@ async test "B: audited PRMerged event DOES fire completion hooks (regression gua
         None => fail("expected hook JSON")
       }
       (0, "hook")
+    },
+    hook_path_exists=fn(path) {
+      path == project_dir + "/.choir/hooks/pr_merged.sh" ||
+      path == project_dir + "/.choir/hooks/wave_complete.sh"
     },
     git_state_capture=async fn(
       _workdir : String,
