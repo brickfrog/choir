@@ -393,10 +393,10 @@ fn render_common_prompt(
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
 ) -> String {
   if spec.prompt != "" {
-    return spec.prompt + "\n\n" + profile
+    return profile + "\n\n" + spec.prompt
   }
 
-  let sections : Array[String] = []
+  let sections : Array[String] = [profile]
   add_section(sections, "TASK", spec.task_contract.goal)
   match spec.task_contract.beads_issue_id {
     Some(id) => add_section(sections, "BEADS ISSUE", render_beads_issue(id))
@@ -446,7 +446,6 @@ fn render_common_prompt(
     constraints.push("Do not commit. Report back when done or blocked.")
   }
   add_section(sections, "CONSTRAINTS", render_bullets(constraints))
-  sections.push(profile)
   join_sections(sections)
 }
 
