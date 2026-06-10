@@ -120,6 +120,7 @@ fn task_contract_from_json_object(value : Json?) -> @types.TaskContract {
         acceptance_checks,
         constraints: json_string_list(obj.get("constraints")),
         non_goals: json_string_list(obj.get("non_goals")),
+        guard_paths: json_string_list(obj.get("guard_paths")),
         beads_issue_id: json_optional_issue_id(obj),
         review_context: json_optional_trimmed_string(obj.get("review_context")),
         verify: json_string_list(obj.get("verify")),
@@ -162,6 +163,7 @@ fn merge_task_contracts(
     ),
     constraints: merge_unique_lines(nested.constraints, top_level.constraints),
     non_goals: merge_unique_lines(nested.non_goals, top_level.non_goals),
+    guard_paths: merge_unique_lines(nested.guard_paths, top_level.guard_paths),
     beads_issue_id: match top_level.beads_issue_id {
       Some(value) => Some(value)
       None => nested.beads_issue_id

@@ -181,6 +181,7 @@ pub fn PromptSpec::from_map(args : Map[String, String]) -> PromptSpec {
       acceptance_checks,
       constraints,
       non_goals,
+      guard_paths: [],
       beads_issue_id,
       review_context,
       verify,
