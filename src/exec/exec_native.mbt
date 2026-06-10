@@ -23,20 +23,37 @@ fn exec_string_to_null_terminated_bytes(s : String) -> (Bytes, Int) {
 }
 
 ///|
-pub fn default_reload_binary_path(project_dir : String) -> String {
-  project_dir + "/_build/native/release/build/src/bin/choir/choir.exe"
+fn reload_binary_path_resolution_error() -> @types.ChoirError {
+  @types.ChoirError::workspace_error(
+    "cannot resolve reload binary path from /proc/self/exe",
+  )
 }
 
 ///|
-pub fn reload_binary_path(project_dir : String) -> String {
+pub fn default_reload_binary_path(
+  realpath? : (String) -> String? = @sys.realpath_native,
+) -> Result[String, @types.ChoirError] {
+  match realpath("/proc/self/exe") {
+    Some(path) =>
+      if path.trim() == "" {
+        Err(reload_binary_path_resolution_error())
+      } else {
+        Ok(path)
+      }
+    None => Err(reload_binary_path_resolution_error())
+  }
+}
+
+///|
+pub fn reload_binary_path() -> Result[String, @types.ChoirError] {
   match @sys.getenv("CHOIR_BINARY_PATH") {
     Some(path) =>
       if path.trim() == "" {
-        default_reload_binary_path(project_dir)
+        default_reload_binary_path()
       } else {
-        path
+        Ok(path)
       }
-    None => default_reload_binary_path(project_dir)
+    None => default_reload_binary_path()
   }
 }
 

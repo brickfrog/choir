@@ -579,9 +579,14 @@ pub fn ServerState::handle_server_reload_request(
   ignore(self.tool_registry.lookup(req.role, req.name)) catch {
     e => return @tools.tool_response_err_from_caught(e)
   }
-  let binary_path = req.args
-    .get("binary_path")
-    .unwrap_or(@exec.reload_binary_path(self.config.project_dir))
+  let binary_path = match req.args.get("binary_path") {
+    Some(path) => path
+    None =>
+      match @exec.reload_binary_path() {
+        Ok(path) => path
+        Err(e) => return @types.Response::Err(e.message())
+      }
+  }
   match @exec.validate_replace_self_binary(binary_path) {
     Ok(_) => ()
     Err(e) => return @types.Response::Err(e.message())

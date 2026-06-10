@@ -70,18 +70,17 @@ fn serve_is_reload_request(req : @types.Request) -> Bool {
 
 ///|
 fn serve_reload_binary_path_for_request(
-  state : @server.ServerState,
   req : @types.Request,
-) -> String {
-  req.args
-  .get("binary_path")
-  .unwrap_or(@exec.reload_binary_path(state.config.project_dir))
+) -> Result[String, @types.ChoirError] {
+  match req.args.get("binary_path") {
+    Some(path) => Ok(path)
+    None => @exec.reload_binary_path()
+  }
 }
 
 ///|
 fn serve_replace_self_after_reload_ack(
   server_fd : Int,
-  state : @server.ServerState,
   req : @types.Request,
 ) -> Unit {
   if !@uds.clear_cloexec(server_fd) {
@@ -90,7 +89,16 @@ fn serve_replace_self_after_reload_ack(
     ])
     return
   }
-  let binary_path = serve_reload_binary_path_for_request(state, req)
+  let binary_path = match serve_reload_binary_path_for_request(req) {
+    Ok(path) => path
+    Err(e) => {
+      @moontrace.error("server reload binary path resolution failed", fields=[
+        @moontrace.field("error", e.message()),
+      ])
+      @sys.write_stderr("[server_reload] exec failed: " + e.message() + "\n")
+      return
+    }
+  }
   match @exec.replace_self(binary_path, server_fd) {
     Ok(_) => ()
     Err(e) => {
@@ -711,7 +719,7 @@ async fn serve_handle_uds_request_line(
   serve_write_all_uds(client.fd, @utf8.encode(resp_str))
   client.busy = false
   if serve_is_reload_request(req) && resp.is_ok() {
-    serve_replace_self_after_reload_ack(server_fd, state, req)
+    serve_replace_self_after_reload_ack(server_fd, req)
   }
 }
 
@@ -737,7 +745,7 @@ async fn serve_handle_uds_jsonrpc_request_line(
   }
   client.busy = false
   match result.reload_request {
-    Some(req) => serve_replace_self_after_reload_ack(server_fd, state, req)
+    Some(req) => serve_replace_self_after_reload_ack(server_fd, req)
     None => ()
   }
 }
