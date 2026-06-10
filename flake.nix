@@ -13,14 +13,20 @@
       let
         pkgs = import nixpkgs { inherit system; };
 
+        moonbitToolchainVersion = "0.8.3+cd28f524e+c9ac7ee";
+        moonbitOverlayTag =
+          "v" + builtins.replaceStrings [ "+" ] [ "%2B" ] moonbitToolchainVersion;
+        moonbitOverlayReleaseUrl =
+          "https://github.com/moonbit-community/moonbit-overlay/releases/download/${moonbitOverlayTag}";
+
         moonbitBinary =
           {
             x86_64-linux = {
-              url = "https://cli.moonbitlang.com/binaries/latest/moonbit-linux-x86_64.tar.gz";
+              url = "${moonbitOverlayReleaseUrl}/moonbit-linux-x86_64.tar.gz";
               hash = "sha256-EUkAeuLqL4GZOq2OAR2qFRjbOz5Mg4+5OWh0++QIZq4=";
             };
             aarch64-darwin = {
-              url = "https://cli.moonbitlang.com/binaries/latest/moonbit-darwin-aarch64.tar.gz";
+              url = "${moonbitOverlayReleaseUrl}/moonbit-darwin-aarch64.tar.gz";
               hash = "sha256-HVfJDlZjBWqIB2Vfmum96TSqblJKyOAEarCTgxP/6KI=";
             };
           }
@@ -32,20 +38,20 @@
         };
 
         coreTarball = pkgs.fetchurl {
-          url = "https://cli.moonbitlang.com/cores/core-latest.tar.gz";
+          url = "${moonbitOverlayReleaseUrl}/moonbit-core.tar.gz";
           hash = "sha256-uBzb9dpP+vSIaj+ifL52wLTLxgQNMfJJ+Zp5ENAstlo=";
         };
 
         asyncSrc = pkgs.fetchFromGitHub {
           owner = "moonbitlang";
           repo = "async";
-          rev = "v0.4.0";
-          hash = "sha256-aaxBSny1TSyuFBSrnqBpohAiD4pleW4GEakcaVTah/c=";
+          rev = "v0.19.1";
+          hash = "sha256-0T4BTcsO5/aMEFxlkzJlV7yHthdss6vORjxGd7rdTTY=";
         };
 
         moonbitToolchain = pkgs.stdenvNoCC.mkDerivation {
           pname = "moonbit-toolchain";
-          version = "latest";
+          version = moonbitToolchainVersion;
           dontUnpack = true;
           nativeBuildInputs = [
             pkgs.gnutar
