@@ -21,7 +21,9 @@ fn check_tool_guards(json : Json) -> String? {
   }
   if is_path_guarded_tool(tool_name) {
     let guard_paths = load_guard_paths()
-    match check_path_boundary(tool_name, tool_input, guard_paths) {
+    let workspace_root = load_workspace_root()
+    match
+      check_path_boundary(tool_name, tool_input, guard_paths, workspace_root~) {
       Some(reason) => return Some(reason)
       None => ()
     }
@@ -69,6 +71,28 @@ fn load_guard_paths() -> Array[String] {
 }
 
 ///|
+/// Load the absolute worktree root used to relativize absolute tool paths.
+fn load_workspace_root() -> String? {
+  let root = match @config.get("workspace_root") {
+    Some(s) => normalize_workspace_root(s)
+    None => return None
+  }
+  if root == "" || !root.has_prefix("/") {
+    return None
+  }
+  Some(root)
+}
+
+///|
+fn normalize_workspace_root(root : String) -> String {
+  let mut normalized = root.trim().to_owned()
+  while normalized.length() > 1 && normalized.has_suffix("/") {
+    normalized = normalized[0:normalized.length() - 1].to_owned()
+  }
+  normalized
+}
+
+///|
 fn is_path_guarded_tool(tool_name : String) -> Bool {
   tool_name == "Edit" ||
   tool_name == "Write" ||
@@ -82,6 +106,7 @@ fn check_path_boundary(
   tool_name : String,
   tool_input : Json,
   guard_paths : Array[String],
+  workspace_root? : String? = None,
 ) -> String? {
   if guard_paths.length() == 0 || !is_path_guarded_tool(tool_name) {
     return None
@@ -89,7 +114,7 @@ fn check_path_boundary(
   let paths = extract_guard_paths_from_tool_input(tool_name, tool_input)
   for path in paths {
     for guard_path in guard_paths {
-      if glob_matches(guard_path, path) {
+      if glob_matches(guard_path, path, workspace_root~) {
         return Some(
           "BLOCKED: " + path + " is outside your task contract (guard_paths)",
         )
@@ -159,7 +184,9 @@ fn append_apply_patch_paths_from_field(
 
 ///|
 fn append_apply_patch_paths(patch : String, paths : Array[String]) -> Unit {
-  let prefixes = ["*** Update File: ", "*** Add File: ", "*** Delete File: "]
+  let prefixes = [
+    "*** Update File: ", "*** Add File: ", "*** Delete File: ", "*** Move to: ",
+  ]
   for raw_line in patch.split("\n") {
     let line = raw_line.to_owned()
     for prefix in prefixes {
@@ -211,31 +238,29 @@ fn path_segments(path : String) -> Array[String] {
 }
 
 ///|
-fn join_segments_from(segments : Array[String], start : Int) -> String {
-  let buf = StringBuilder::new()
-  for i = start; i < segments.length(); i = i + 1 {
-    if i > start {
-      buf.write_string("/")
-    }
-    buf.write_string(segments[i])
-  }
-  buf.to_string()
-}
-
-///|
-fn path_match_candidates(path : String) -> Array[String] {
+fn path_match_candidates(
+  path : String,
+  workspace_root? : String? = None,
+) -> Array[String] {
   let candidates : Array[String] = []
   let normalized = normalize_path_text(path)
   if normalized == "" {
     return candidates
   }
   if normalized.has_prefix("/") {
-    let without_root = normalized[1:].to_owned()
-    let segments = path_segments(without_root)
-    for i = 0; i < segments.length(); i = i + 1 {
-      let candidate = join_segments_from(segments, i)
-      if candidate != "" {
-        candidates.push(candidate)
+    let root = match workspace_root {
+      Some(raw_root) => normalize_workspace_root(raw_root)
+      None => return candidates
+    }
+    if root == "" || !root.has_prefix("/") {
+      return candidates
+    }
+    let prefix = root + "/"
+    if normalized.has_prefix(prefix) {
+      let relative = normalized[prefix.length():].to_owned()
+      let relative_normalized = normalize_path_text(relative)
+      if relative_normalized != "" {
+        candidates.push(relative_normalized)
       }
     }
   } else {
@@ -245,12 +270,16 @@ fn path_match_candidates(path : String) -> Array[String] {
 }
 
 ///|
-fn glob_matches(pattern : String, path : String) -> Bool {
+fn glob_matches(
+  pattern : String,
+  path : String,
+  workspace_root? : String? = None,
+) -> Bool {
   let pattern_segments = path_segments(pattern)
   if pattern_segments.length() == 0 {
     return false
   }
-  for candidate in path_match_candidates(path) {
+  for candidate in path_match_candidates(path, workspace_root~) {
     if glob_match_segments(pattern_segments, 0, path_segments(candidate), 0) {
       return true
     }
@@ -402,14 +431,14 @@ test "glob matcher supports literals star and globstar" {
 ///|
 test "path boundary guard blocks matching edit paths" {
   let input_json =
-    #|{"file_path":"/workspace/project/.githooks/pre-commit","old_string":"a","new_string":"b"}
+    #|{"file_path":".githooks/pre-commit","old_string":"a","new_string":"b"}
   let input = @json.parse(input_json) catch {
     _ => fail("failed to parse edit input")
   }
   match check_path_boundary("Edit", input, [".githooks/**"]) {
     Some(reason) =>
       assert_eq(
-        reason, "BLOCKED: /workspace/project/.githooks/pre-commit is outside your task contract (guard_paths)",
+        reason, "BLOCKED: .githooks/pre-commit is outside your task contract (guard_paths)",
       )
     None => fail("expected matching edit path to be blocked")
   }
@@ -502,5 +531,81 @@ test "path boundary guard checks every apply_patch file header" {
         reason, "BLOCKED: .githooks/pre-commit is outside your task contract (guard_paths)",
       )
     None => fail("expected apply_patch path to be blocked")
+  }
+}
+
+///|
+test "path boundary guard checks apply_patch move targets" {
+  let input_json =
+    #|{"patch":"*** Begin Patch\n*** Update File: README.md\n*** Move to: .githooks/pre-commit\n@@\n-old\n+new\n*** End Patch"}
+  let input = @json.parse(input_json) catch {
+    _ => fail("failed to parse apply_patch move input")
+  }
+  let paths = extract_guard_paths_from_tool_input("apply_patch", input)
+  assert_eq(paths.length(), 2)
+  assert_eq(paths[0], "README.md")
+  assert_eq(paths[1], ".githooks/pre-commit")
+  match check_path_boundary("apply_patch", input, [".githooks/**"]) {
+    Some(reason) =>
+      assert_eq(
+        reason, "BLOCKED: .githooks/pre-commit is outside your task contract (guard_paths)",
+      )
+    None => fail("expected apply_patch move target to be blocked")
+  }
+}
+
+///|
+test "path boundary guard blocks absolute paths under workspace root" {
+  let input_json =
+    #|{"file_path":"/fake/root/.githooks/pre-commit","old_string":"a","new_string":"b"}
+  let input = @json.parse(input_json) catch {
+    _ => fail("failed to parse workspace-root edit input")
+  }
+  match
+    check_path_boundary(
+      "Edit",
+      input,
+      [".githooks/**"],
+      workspace_root=Some("/fake/root"),
+    ) {
+    Some(reason) =>
+      assert_eq(
+        reason, "BLOCKED: /fake/root/.githooks/pre-commit is outside your task contract (guard_paths)",
+      )
+    None => fail("expected workspace-root absolute path to be blocked")
+  }
+}
+
+///|
+test "path boundary guard allows absolute paths outside workspace root" {
+  let input_json =
+    #|{"file_path":"/tmp/outside/.githooks/pre-commit","old_string":"a","new_string":"b"}
+  let input = @json.parse(input_json) catch {
+    _ => fail("failed to parse outside-root edit input")
+  }
+  match
+    check_path_boundary(
+      "Edit",
+      input,
+      [".githooks/**"],
+      workspace_root=Some("/fake/root"),
+    ) {
+    None => ()
+    Some(reason) =>
+      fail("expected outside-root absolute path to pass: " + reason)
+  }
+}
+
+///|
+test "path boundary guard allows absolute paths without workspace root config" {
+  let input_json =
+    #|{"file_path":"/fake/root/.githooks/pre-commit","old_string":"a","new_string":"b"}
+  let input = @json.parse(input_json) catch {
+    _ => fail("failed to parse no-workspace-root edit input")
+  }
+  match
+    check_path_boundary("Edit", input, [".githooks/**"], workspace_root=None) {
+    None => ()
+    Some(reason) => fail("expected no-config absolute path to pass: " + reason)
   }
 }
