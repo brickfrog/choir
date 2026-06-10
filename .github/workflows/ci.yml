@@ -35,7 +35,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .mooncakes
-          key: ${{ runner.os }}-mooncakes-${{ hashFiles('moon.mod.json', 'src/**/moon.pkg', 'src/**/moon.pkg.json') }}
+          key: ${{ runner.os }}-mooncakes-${{ hashFiles('moon.mod', 'src/**/moon.pkg') }}
           restore-keys: |
             ${{ runner.os }}-mooncakes-
 

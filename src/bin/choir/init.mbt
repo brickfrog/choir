@@ -984,16 +984,130 @@ fn init_is_choir_source_files(
   main_mbt_content : String,
 ) -> Bool {
   main_mbt_content != "" &&
-  (
-    moon_mod_content.contains("\"name\": \"choir\"") ||
-    moon_mod_content.contains("\"name\":\"choir\"")
+  init_moon_mod_has_string_assignment(moon_mod_content, "name", "choir")
+}
+
+///|
+fn init_moon_mod_line_string_value(line : String, key : String) -> String? {
+  let trimmed = line.trim().to_owned()
+  if !trimmed.has_prefix(key) {
+    return None
+  }
+  let rest = trimmed[key.length():].trim().to_owned()
+  if !rest.has_prefix("=") {
+    return None
+  }
+  let value_and_suffix = rest[1:].trim().to_owned()
+  if !value_and_suffix.has_prefix("\"") {
+    return None
+  }
+  let after_open = value_and_suffix[1:].to_owned()
+  if !after_open.contains("\"") {
+    return None
+  }
+  let mut value = ""
+  let mut saw_value = false
+  for part in after_open.split("\"") {
+    if !saw_value {
+      value = part.to_owned()
+      saw_value = true
+    }
+  }
+  let suffix_start = value.length() + 2
+  let suffix = value_and_suffix[suffix_start:].trim().to_owned()
+  if suffix == "" || suffix.has_prefix("//") {
+    return Some(value)
+  }
+  None
+}
+
+///|
+fn init_moon_mod_has_string_assignment(
+  content : String,
+  key : String,
+  value : String,
+) -> Bool {
+  for raw in content.split("\n") {
+    match init_moon_mod_line_string_value(raw.to_owned(), key) {
+      Some(found) => if found == value { return true }
+      None => ()
+    }
+  }
+  false
+}
+
+///|
+test "init source detection accepts moon.mod DSL manifest" {
+  let main_mbt = "fn main() -> Unit { () }\n"
+  let manifests = [
+    "name = \"choir\"\n\nversion = \"0.1.0\"\n", "  name = \"choir\"\n\n  version = \"0.1.0\"\n",
+    "name = \"choir\" // source tree\nversion = \"0.1.0\" // release\n", "\tname\t=\t\"choir\"\n\n\tversion\t=\t\"0.1.0\" // release\n",
+  ]
+  for manifest in manifests {
+    @debug.assert_eq(init_is_choir_source_files(manifest, main_mbt), true)
+  }
+}
+
+///|
+test "moon.mod assignment parser accepts indented and commented version lines" {
+  @debug.assert_eq(
+    init_moon_mod_has_string_assignment(
+      "  version = \"0.1.0\"\n", "version", "0.1.0",
+    ),
+    true,
+  )
+  @debug.assert_eq(
+    init_moon_mod_has_string_assignment(
+      "version = \"0.1.0\" // release\n", "version", "0.1.0",
+    ),
+    true,
+  )
+}
+
+///|
+test "moon.mod assignment parser rejects newline-spanning quoted values" {
+  @debug.assert_eq(
+    init_moon_mod_has_string_assignment(
+      "version = \"0.1.0\n\"\n", "version", "0.1.0",
+    ),
+    false,
+  )
+}
+
+///|
+test "moon.mod assignment parser preserves comment markers inside quotes" {
+  @debug.assert_eq(
+    init_moon_mod_has_string_assignment(
+      "name = \"choir//dev\"\n", "name", "choir//dev",
+    ),
+    true,
+  )
+  @debug.assert_eq(
+    init_moon_mod_has_string_assignment(
+      "name = \"choir//dev\"\n", "name", "choir",
+    ),
+    false,
+  )
+}
+
+///|
+test "init source detection rejects extra tokens after manifest name" {
+  @debug.assert_eq(
+    init_moon_mod_line_string_value("name = \"choir\" \"extra\"", "name"),
+    None,
+  )
+  @debug.assert_eq(
+    init_is_choir_source_files(
+      "name = \"choir\" \"extra\"\nversion = \"0.1.0\"\n", "fn main() -> Unit { () }\n",
+    ),
+    false,
   )
 }
 
 ///|
 fn init_is_choir_source_tree(project_dir : String) -> Bool {
   init_is_choir_source_files(
-    @sys.read_file(project_dir + "/moon.mod.json"),
+    @sys.read_file(project_dir + "/moon.mod"),
     @sys.read_file(project_dir + "/src/bin/choir/main.mbt"),
   )
 }

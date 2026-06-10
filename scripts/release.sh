@@ -34,9 +34,17 @@ fi
 
 current_version="$(
   python3 - <<'PY'
-import json
-with open("moon.mod.json", "r", encoding="utf-8") as f:
-    print(json.load(f)["version"])
+import pathlib
+import re
+
+text = pathlib.Path("moon.mod").read_text(encoding="utf-8")
+match = re.search(
+    r'(?m)^[ \t]*version[ \t]*=[ \t]*"([^\n"]+)"(?:[ \t]*(?://.*)?)?$',
+    text,
+)
+if not match:
+    raise SystemExit('moon.mod is missing a version = "..." line')
+print(match.group(1))
 PY
 )"
 
@@ -74,16 +82,22 @@ PY
 release_date="$(date -u +%F)"
 
 python3 - "$next_version" <<'PY'
-import json
+import pathlib
+import re
 import sys
 
 version = sys.argv[1]
-with open("moon.mod.json", "r", encoding="utf-8") as f:
-    data = json.load(f)
-data["version"] = version
-with open("moon.mod.json", "w", encoding="utf-8") as f:
-    json.dump(data, f, indent=2)
-    f.write("\n")
+path = pathlib.Path("moon.mod")
+text = path.read_text(encoding="utf-8")
+updated, count = re.subn(
+    r'(?m)^([ \t]*version[ \t]*=[ \t]*")[^\n"]*(")([ \t]*(?://.*)?)?$',
+    rf'\g<1>{version}\g<2>\g<3>',
+    text,
+    count=1,
+)
+if count != 1:
+    raise SystemExit('moon.mod is missing a version = "..." line')
+path.write_text(updated, encoding="utf-8")
 PY
 
 python3 - "$next_version" "$release_date" <<'PY'
@@ -101,7 +115,7 @@ if needle not in text:
 path.write_text(text.replace(needle, entry, 1), encoding="utf-8")
 PY
 
-git add moon.mod.json CHANGELOG.md
+git add moon.mod CHANGELOG.md
 git commit -m "release: v${next_version}"
 git tag -a "v${next_version}" -m "v${next_version}"
 
