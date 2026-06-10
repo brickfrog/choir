@@ -18,7 +18,7 @@ jobs:
       - name: Validate tag matches moon.mod
         run: |
           tag_version="${GITHUB_REF_NAME#v}"
-          file_version="$(python3 -c 'import pathlib, re, sys; text = pathlib.Path("moon.mod").read_text(encoding="utf-8"); match = re.search(r"(?m)^version\s*=\s*\"([^\"]+)\"\s*$", text); sys.exit("moon.mod is missing a version = \"...\" line") if match is None else print(match.group(1))')"
+          file_version="$(python3 -c 'import pathlib, re, sys; text = pathlib.Path("moon.mod").read_text(encoding="utf-8"); match = re.search("(?m)^[ \\t]*version[ \\t]*=[ \\t]*\"([^\"]+)\"(?:[ \\t]*(?://.*)?)?$", text); sys.exit("moon.mod is missing a version = \"...\" line") if match is None else print(match.group(1))')"
           if [ "$tag_version" != "$file_version" ]; then
             echo "tag version ($tag_version) does not match moon.mod ($file_version)" >&2
             exit 1

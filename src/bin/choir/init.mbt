@@ -983,14 +983,60 @@ fn init_is_choir_source_files(
   moon_mod_content : String,
   main_mbt_content : String,
 ) -> Bool {
-  main_mbt_content != "" && moon_mod_content.contains("name = \"choir\"")
+  main_mbt_content != "" &&
+  init_moon_mod_has_string_assignment(moon_mod_content, "name", "choir")
+}
+
+///|
+fn init_strip_moon_mod_line_comment(line : String) -> String {
+  for part in line.split("//") {
+    return part.to_owned().trim().to_owned()
+  }
+  ""
+}
+
+///|
+fn init_moon_mod_has_string_assignment(
+  content : String,
+  key : String,
+  value : String,
+) -> Bool {
+  let expected = "\"" + value + "\""
+  for raw in content.split("\n") {
+    let line = init_strip_moon_mod_line_comment(raw.to_owned())
+    if line.has_prefix(key) {
+      let rest = line[key.length():].trim().to_owned()
+      if rest.has_prefix("=") && rest[1:].trim().to_owned() == expected {
+        return true
+      }
+    }
+  }
+  false
 }
 
 ///|
 test "init source detection accepts moon.mod DSL manifest" {
+  let main_mbt = "fn main() -> Unit { () }\n"
+  let manifests = [
+    "name = \"choir\"\n\nversion = \"0.1.0\"\n", "  name = \"choir\"\n\n  version = \"0.1.0\"\n",
+    "name = \"choir\" // source tree\nversion = \"0.1.0\" // release\n", "\tname\t=\t\"choir\"\n\n\tversion\t=\t\"0.1.0\" // release\n",
+  ]
+  for manifest in manifests {
+    @debug.assert_eq(init_is_choir_source_files(manifest, main_mbt), true)
+  }
+}
+
+///|
+test "moon.mod assignment parser accepts indented and commented version lines" {
   @debug.assert_eq(
-    init_is_choir_source_files(
-      "name = \"choir\"\n\nversion = \"0.1.0\"\n", "fn main() -> Unit { () }\n",
+    init_moon_mod_has_string_assignment(
+      "  version = \"0.1.0\"\n", "version", "0.1.0",
+    ),
+    true,
+  )
+  @debug.assert_eq(
+    init_moon_mod_has_string_assignment(
+      "version = \"0.1.0\" // release\n", "version", "0.1.0",
     ),
     true,
   )
