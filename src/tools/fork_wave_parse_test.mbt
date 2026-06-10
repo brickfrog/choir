@@ -299,6 +299,30 @@ test "parse_fork_wave_args supports per leaf task contracts" {
 }
 
 ///|
+test "parse_fork_wave_args threads guard_paths into wave and per-leaf contracts" {
+  let args = @tools.tool_args_from_map({
+    "tasks": "[\"Implement A\",\"Implement B\"]",
+    "parent_branch": "main",
+    "caller_id": "root",
+    "verify": "moon test --target native",
+    "guard_paths": "hooks/**\n.choir/hooks/hook.wasm",
+    "task_contracts": "[{\"guard_paths\":[\"src/workspace/**\"]},{}]",
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Ok(fork) => {
+      assert_eq(fork.count, 2)
+      @debug.assert_eq(fork.task_contracts[0].guard_paths, [
+        "hooks/**", ".choir/hooks/hook.wasm", "src/workspace/**",
+      ])
+      @debug.assert_eq(fork.task_contracts[1].guard_paths, [
+        "hooks/**", ".choir/hooks/hook.wasm",
+      ])
+    }
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}
+
+///|
 test "parse_fork_wave_args rejects mismatched task contracts" {
   let args = @tools.tool_args_from_map({
     "tasks": "[\"Implement A\",\"Implement B\"]",

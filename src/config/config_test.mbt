@@ -12,6 +12,7 @@ test "parse_config - full" {
     #|extra_mcp_servers_json = '{"notebook":{"type":"stdio","command":"node"}}'
     #|companions_json = '[{"name":"monitor","role":"worker","command":"claude","task":"Monitor the build"}]'
     #|plugins_json = '[{"name":"plugin","command":"./plugin","tools":"search"}]'
+    #|hooks_enforcement = true
     #|worker_no_handoff_prod_sec = 90
     #|worker_no_handoff_escalate_sec = 45
     #|poller_heartbeat_tick_sec = 10
@@ -53,6 +54,7 @@ test "parse_config - full" {
   )
   assert_eq(cfg.worker_no_handoff_prod_sec, 90L)
   assert_eq(cfg.worker_no_handoff_escalate_sec, 45L)
+  assert_eq(cfg.hooks_enforcement, true)
   assert_eq(cfg.poller_heartbeat_tick_sec, 10)
   @debug.assert_eq(cfg.prenotify_checks, [
     "moon check --target native", "CHOIR_TEST_NO_EXEC=1 moon test --target native",
@@ -90,6 +92,7 @@ test "config schema nested keys match parser-accepted TOML shape" {
   assert_false(config_schema_key_present(file, "pr_policy"))
   assert_true(config_schema_key_present(file, "project.verify_cmd"))
   assert_false(config_schema_key_present(file, "project"))
+  assert_true(config_schema_key_present(file, "hooks_enforcement"))
   assert_true(config_schema_key_present(file, "pricing.<agent_type>.rate_in"))
   assert_true(config_schema_key_present(file, "pricing.<agent_type>.rate_out"))
   assert_false(config_schema_key_present(file, "pricing"))
@@ -135,6 +138,7 @@ test "parse_config - minimal" {
   assert_eq(cfg.merge_strategy, @types.MergeStrategy::Merge)
   assert_eq(cfg.worker_no_handoff_prod_sec, 120L)
   assert_eq(cfg.worker_no_handoff_escalate_sec, 120L)
+  assert_eq(cfg.hooks_enforcement, false)
   assert_eq(cfg.poller_heartbeat_tick_sec, 60)
   @debug.assert_eq(cfg.prenotify_checks, [])
   assert_eq(cfg.agy_migration_incomplete, false)
@@ -145,6 +149,19 @@ test "parse_config - minimal" {
   assert_eq(cfg.auto_rebuild_after_pull, false)
   assert_eq(cfg.auto_reload_after_rebuild, false)
   assert_eq(cfg.moon_verify_target, @types.MoonVerifyTarget::Native)
+}
+
+///|
+test "parse_config hooks_enforcement defaults false and parses explicit bool" {
+  assert_eq(parse_config("").unwrap().hooks_enforcement, false)
+  assert_eq(
+    parse_config("hooks_enforcement = true").unwrap().hooks_enforcement,
+    true,
+  )
+  assert_eq(
+    parse_config("hooks_enforcement = false").unwrap().hooks_enforcement,
+    false,
+  )
 }
 
 ///|

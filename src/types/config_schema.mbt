@@ -180,6 +180,13 @@ pub fn config_schema_entries() -> Array[ConfigSchemaEntry] {
     ),
     schema_entry(
       ConfigToml,
+      "hooks_enforcement",
+      "Bool",
+      "false",
+      "When true, spawned hook-capable agents get task-contract boundary guard hooks.",
+    ),
+    schema_entry(
+      ConfigToml,
       "worker_no_handoff_prod_sec",
       "Int64",
       "120",
