@@ -49,7 +49,8 @@ fn check_pragma_corruption(tool_input : Json) -> String? {
     Some(String(v)) => v
     _ => return None
   }
-  if old_string.contains("#-}") && not(new_string.contains("#-}")) &&
+  if old_string.contains("#-}") &&
+    !new_string.contains("#-}") &&
     new_string.contains("#}") {
     return Some(
       "BLOCKED: Your replacement corrupts LANGUAGE pragmas. The correct closing is `#-}`, NOT `#}`. Re-do this edit preserving all pragma syntax.",
@@ -70,8 +71,10 @@ fn check_json_constructor(tool_input : Json) -> String? {
         _ => return None
       }
   }
-  if content.contains("Json::String(") || content.contains("Json::Number(") ||
-    content.contains("Json::Array(") || content.contains("Json::Object(") {
+  if content.contains("Json::String(") ||
+    content.contains("Json::Number(") ||
+    content.contains("Json::Array(") ||
+    content.contains("Json::Object(") {
     return Some(
       "BLOCKED: Json constructors are read-only in MoonBit. Use .to_json() instead: \"hello\".to_json() not Json::String(\"hello\").",
     )
