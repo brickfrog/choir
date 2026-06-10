@@ -1,7 +1,0 @@
-{
-  "name": "choir_hooks",
-  "version": "0.1.0",
-  "deps": {
-    "extism/moonbit-pdk": "0.47.12"
-  }
-}

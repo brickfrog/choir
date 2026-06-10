@@ -11,7 +11,7 @@ priv struct RewriteRule {
 /// Falls back to empty rules if not configured.
 fn load_rules() -> Array[RewriteRule] {
   let rules : Array[RewriteRule] = []
-  let config_str = match @config.get("rewrite_rules") {
+  let config_str = match host_config_get("rewrite_rules") {
     Some(s) => s
     None => return rules
   }
