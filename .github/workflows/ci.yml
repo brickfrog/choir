@@ -40,7 +40,13 @@ jobs:
             ${{ runner.os }}-mooncakes-
 
       - name: Update registry
-        run: moon update
+        run: |
+          for attempt in 1 2 3; do
+            moon update && exit 0
+            echo "moon update attempt $attempt failed; retrying in 15s" >&2
+            sleep 15
+          done
+          moon update
 
       - name: Pre-commit staged-only sanity
         run: bash tools/pre_commit_staged_test.sh
