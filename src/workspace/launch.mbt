@@ -237,6 +237,7 @@ fn provider_launch_command(
   tl_init_mode? : Bool = false,
   lean? : Bool = false,
   project_dir? : String = workspace_path,
+  claude_settings_path? : String? = None,
 ) -> Command {
   let semble_for_role = role == @types.Role::Dev || role == @types.Role::Worker
   let claude_mcp = if tl_init_mode {
@@ -281,13 +282,17 @@ fn provider_launch_command(
           workdir: Some(workspace_path),
         }
       } else {
+        let settings_args : Array[String] = match claude_settings_path {
+          Some(path) => ["--settings", path]
+          None => []
+        }
         match parent_session_id {
           Some(session_id) =>
             {
               program,
               args: [
                 ..cmd_extra_args, "--dangerously-skip-permissions", ..claude_mcp,
-                "--resume", session_id, "--fork-session", ..claude_task_args,
+                ..settings_args, "--resume", session_id, "--fork-session", ..claude_task_args,
               ],
               workdir: Some(workspace_path),
             }
@@ -296,7 +301,7 @@ fn provider_launch_command(
               program,
               args: [
                 ..cmd_extra_args, "--dangerously-skip-permissions", ..claude_mcp,
-                ..claude_task_args,
+                ..settings_args, ..claude_task_args,
               ],
               workdir: Some(workspace_path),
             }
@@ -379,6 +384,7 @@ pub fn agent_launch_command(
   command_override? : String? = None,
   extra_mcp_servers_json? : String? = None,
   project_dir? : String = workspace_path,
+  claude_settings_path? : String? = None,
 ) -> Command {
   let parts = match command_override {
     Some(cmd) => split_words(cmd)
@@ -405,6 +411,7 @@ pub fn agent_launch_command(
     cmd_extra_args~,
     extra_mcp_servers_json~,
     project_dir~,
+    claude_settings_path~,
   )
   match shell_command {
     Some(shell) => wrap_with_shell(cmd, shell)
