@@ -1001,19 +1001,22 @@ fn init_moon_mod_line_string_value(line : String, key : String) -> String? {
   if !value_and_suffix.has_prefix("\"") {
     return None
   }
+  let after_open = value_and_suffix[1:].to_owned()
+  if !after_open.contains("\"") {
+    return None
+  }
   let mut value = ""
   let mut saw_value = false
-  for part in value_and_suffix[1:].split("\"") {
+  for part in after_open.split("\"") {
     if !saw_value {
       value = part.to_owned()
       saw_value = true
-      continue
     }
-    let suffix = part.to_owned().trim().to_owned()
-    if suffix == "" || suffix.has_prefix("//") {
-      return Some(value)
-    }
-    return None
+  }
+  let suffix_start = value.length() + 2
+  let suffix = value_and_suffix[suffix_start:].trim().to_owned()
+  if suffix == "" || suffix.has_prefix("//") {
+    return Some(value)
   }
   None
 }
@@ -1082,6 +1085,20 @@ test "moon.mod assignment parser preserves comment markers inside quotes" {
   @debug.assert_eq(
     init_moon_mod_has_string_assignment(
       "name = \"choir//dev\"\n", "name", "choir",
+    ),
+    false,
+  )
+}
+
+///|
+test "init source detection rejects extra tokens after manifest name" {
+  @debug.assert_eq(
+    init_moon_mod_line_string_value("name = \"choir\" \"extra\"", "name"),
+    None,
+  )
+  @debug.assert_eq(
+    init_is_choir_source_files(
+      "name = \"choir\" \"extra\"\nversion = \"0.1.0\"\n", "fn main() -> Unit { () }\n",
     ),
     false,
   )
