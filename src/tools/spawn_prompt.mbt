@@ -45,10 +45,14 @@ fn merge_unique_lines(
   items : Array[String],
   more : Array[String],
 ) -> Array[String] {
-  for value in more {
-    push_unique(items, value.trim().to_owned())
+  let merged : Array[String] = []
+  for value in items {
+    push_unique(merged, value.trim().to_owned())
   }
-  items
+  for value in more {
+    push_unique(merged, value.trim().to_owned())
+  }
+  merged
 }
 
 ///|
@@ -165,6 +169,10 @@ pub fn PromptSpec::from_map(args : Map[String, String]) -> PromptSpec {
     split_nonempty_lines(args.get("non_goals").unwrap_or("")),
     [],
   )
+  let guard_paths = merge_unique_lines(
+    split_nonempty_lines(args.get("guard_paths").unwrap_or("")),
+    [],
+  )
   let verify = merge_unique_lines(
     split_nonempty_lines(args.get("verify").unwrap_or("")),
     [],
@@ -181,7 +189,7 @@ pub fn PromptSpec::from_map(args : Map[String, String]) -> PromptSpec {
       acceptance_checks,
       constraints,
       non_goals,
-      guard_paths: [],
+      guard_paths,
       beads_issue_id,
       review_context,
       verify,

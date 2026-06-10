@@ -514,6 +514,15 @@ pub fn parse_config(
     Ok(v) => v
     Err(e) => return Err(e)
   }
+  let hooks_enforcement = match
+    parse_required_bool_config_value(
+      doc,
+      "hooks_enforcement",
+      default_cfg.hooks_enforcement,
+    ) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
   let worker_no_handoff_prod_sec = match doc.get("worker_no_handoff_prod_sec") {
     None => default_cfg.worker_no_handoff_prod_sec
     Some(raw) =>
@@ -629,6 +638,7 @@ pub fn parse_config(
     merge_strategy,
     moon_verify_target,
     agy_migration_incomplete,
+    hooks_enforcement,
     worker_no_handoff_prod_sec,
     worker_no_handoff_escalate_sec,
     poller_heartbeat_tick_sec,

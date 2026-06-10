@@ -18,7 +18,7 @@ fn expected_config_schema_keys() -> Array[String] {
     "default_role", "project_dir", "shell_command", "listen_uds", "listen_tcp", "tcp_auth_token",
     "otlp_endpoint", "agent_id", "extra_mcp_servers_json", "companions_json", "plugins_json",
     "terminal_session", "pr_review", "automerge", "review_mode", "merge_strategy",
-    "moon_verify_target", "agy_migration_incomplete", "worker_no_handoff_prod_sec",
+    "moon_verify_target", "agy_migration_incomplete", "hooks_enforcement", "worker_no_handoff_prod_sec",
     "worker_no_handoff_escalate_sec", "poller_heartbeat_tick_sec", "prenotify_checks",
     "auto_pull_after_integration", "project.verify_cmd", "pr_policy.require_integration_audit",
     "pr_policy.skip_copilot_on_feature_branch", "auto_rebuild_after_pull", "auto_reload_after_rebuild",
@@ -63,6 +63,7 @@ test "config_schema_entries are complete enough to render" {
   assert_true(schema_has_entry(entries, ConfigLocalToml, "automerge"))
   assert_true(schema_has_entry(entries, ConfigToml, "review_mode"))
   assert_true(schema_has_entry(entries, ConfigLocalToml, "review_mode"))
+  assert_true(schema_has_entry(entries, ConfigToml, "hooks_enforcement"))
 }
 
 ///|
