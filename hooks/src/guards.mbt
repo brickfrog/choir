@@ -19,10 +19,12 @@ fn check_tool_guards(json : Json) -> String? {
         _ => return None
       }
   }
-  let guard_paths = load_guard_paths()
-  match check_path_boundary(tool_name, tool_input, guard_paths) {
-    Some(reason) => return Some(reason)
-    None => ()
+  if is_path_guarded_tool(tool_name) {
+    let guard_paths = load_guard_paths()
+    match check_path_boundary(tool_name, tool_input, guard_paths) {
+      Some(reason) => return Some(reason)
+      None => ()
+    }
   }
   // Guard: MoonBit pragma corruption
   // Gemini strips the dash from {-# LANGUAGE ... #-} producing {# ... #}
@@ -186,11 +188,24 @@ fn normalize_path_text(path : String) -> String {
 ///|
 fn path_segments(path : String) -> Array[String] {
   let segments : Array[String] = []
-  for raw in normalize_path_text(path).split("/") {
+  let normalized = normalize_path_text(path)
+  let absolute = normalized.has_prefix("/")
+  for raw in normalized.split("/") {
     let segment = raw.to_owned()
-    if segment != "" && segment != "." {
-      segments.push(segment)
+    if segment == "" || segment == "." {
+      continue
     }
+    if segment == ".." {
+      if segments.length() > 0 && segments[segments.length() - 1] != ".." {
+        ignore(segments.pop())
+      } else if !absolute {
+        // Leading `..` escapes workspace-relative matching. Preserve it so a
+        // blocklist glob for in-workspace paths cannot accidentally match it.
+        segments.push("..")
+      }
+      continue
+    }
+    segments.push(segment)
   }
   segments
 }
@@ -405,6 +420,51 @@ test "path boundary guard blocks matching edit paths" {
   match check_path_boundary("Edit", input, ["src/**"]) {
     None => ()
     Some(reason) => fail("expected non-matching guard_paths to pass: " + reason)
+  }
+}
+
+///|
+test "path boundary guard normalizes traversal segments before matching" {
+  let input_json =
+    #|{"file_path":"src/../.githooks/pre-commit","old_string":"a","new_string":"b"}
+  let input = @json.parse(input_json) catch {
+    _ => fail("failed to parse traversal edit input")
+  }
+  match check_path_boundary("Edit", input, [".githooks/**"]) {
+    Some(reason) =>
+      assert_eq(
+        reason, "BLOCKED: src/../.githooks/pre-commit is outside your task contract (guard_paths)",
+      )
+    None => fail("expected traversal path to be blocked")
+  }
+}
+
+///|
+test "path boundary guard normalizes dot-prefixed paths before matching" {
+  let input_json =
+    #|{"file_path":"./.githooks/pre-commit","old_string":"a","new_string":"b"}
+  let input = @json.parse(input_json) catch {
+    _ => fail("failed to parse dot-prefixed edit input")
+  }
+  match check_path_boundary("Edit", input, [".githooks/**"]) {
+    Some(reason) =>
+      assert_eq(
+        reason, "BLOCKED: ./.githooks/pre-commit is outside your task contract (guard_paths)",
+      )
+    None => fail("expected dot-prefixed path to be blocked")
+  }
+}
+
+///|
+test "path boundary guard does not match paths escaping workspace root" {
+  let input_json =
+    #|{"file_path":"../elsewhere/file","old_string":"a","new_string":"b"}
+  let input = @json.parse(input_json) catch {
+    _ => fail("failed to parse root-escaping edit input")
+  }
+  match check_path_boundary("Edit", input, ["elsewhere/**"]) {
+    None => ()
+    Some(reason) => fail("expected root-escaping path to pass: " + reason)
   }
 }
 
