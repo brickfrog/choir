@@ -14,8 +14,10 @@
         pkgs = import nixpkgs { inherit system; };
 
         moonbitToolchainVersion = "0.8.3+cd28f524e+c9ac7ee";
+        moonbitOverlayTag =
+          "v" + builtins.replaceStrings [ "+" ] [ "%2B" ] moonbitToolchainVersion;
         moonbitOverlayReleaseUrl =
-          "https://github.com/moonbit-community/moonbit-overlay/releases/download/v0.8.3%2Bcd28f524e%2Bc9ac7ee";
+          "https://github.com/moonbit-community/moonbit-overlay/releases/download/${moonbitOverlayTag}";
 
         moonbitBinary =
           {
