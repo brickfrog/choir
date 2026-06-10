@@ -1020,6 +1020,7 @@ pub(all) struct TaskContract {
   acceptance_checks : Array[String]
   constraints : Array[String]
   non_goals : Array[String]
+  guard_paths : Array[String]
   beads_issue_id : String?
   review_context : String?
   verify : Array[String]
@@ -1052,6 +1053,10 @@ pub impl FromJson for TaskContract with fn from_json(json, path) {
         Some(value) => @json.from_json(value, path=path.add_key("non_goals"))
         None => []
       }
+      let guard_paths : Array[String] = match fields.get("guard_paths") {
+        Some(value) => @json.from_json(value, path=path.add_key("guard_paths"))
+        None => []
+      }
       let beads_issue_id : String? = match fields.get("beads_issue_id") {
         None | Some(Null) => None
         Some(value) =>
@@ -1078,6 +1083,7 @@ pub impl FromJson for TaskContract with fn from_json(json, path) {
         acceptance_checks,
         constraints,
         non_goals,
+        guard_paths,
         beads_issue_id,
         review_context,
         verify,
@@ -1175,6 +1181,7 @@ pub fn TaskContract::empty() -> TaskContract {
     acceptance_checks: [],
     constraints: [],
     non_goals: [],
+    guard_paths: [],
     beads_issue_id: None,
     review_context: None,
     verify: [],
@@ -1189,6 +1196,7 @@ pub fn TaskContract::is_empty(self : TaskContract) -> Bool {
   self.acceptance_checks.length() == 0 &&
   self.constraints.length() == 0 &&
   self.non_goals.length() == 0 &&
+  self.guard_paths.length() == 0 &&
   self.beads_issue_id is None &&
   self.review_context is None &&
   self.verify.length() == 0 &&

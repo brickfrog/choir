@@ -61,6 +61,8 @@ pub(all) struct Config {
   moon_verify_target : MoonVerifyTarget
   /// Safety kill-switch while the agy migration is incomplete: rejects Gemini provider spawns.
   agy_migration_incomplete : Bool
+  /// When true, spawned hook-capable agents get task-contract boundary guard hooks.
+  hooks_enforcement : Bool
   /// Worker-only no-handoff prod threshold in seconds; 0 disables prod/stall.
   worker_no_handoff_prod_sec : Int64
   /// Worker-only no-handoff stalled-event grace after prod in seconds; 0 disables stalled event.
@@ -157,6 +159,7 @@ pub fn Config::default() -> Config {
     merge_strategy: Merge,
     moon_verify_target: Native,
     agy_migration_incomplete: false,
+    hooks_enforcement: false,
     worker_no_handoff_prod_sec: 120L,
     worker_no_handoff_escalate_sec: 120L,
     poller_heartbeat_tick_sec: 60,

@@ -2408,6 +2408,25 @@ test "parse_worker_spawn_args propagates beads issue and defaults codex" {
 }
 
 ///|
+test "parse_worker_spawn_args propagates guard_paths" {
+  let parsed = parse_worker_spawn_args(
+    ".",
+    tool_args_from_map({
+      "task": "Investigate protected paths",
+      "caller_id": "root",
+      "guard_paths": "hooks/**\n.choir/hooks/hook.wasm",
+    }),
+  )
+  match parsed {
+    Ok(worker) =>
+      @debug.assert_eq(worker.task_contract.guard_paths, [
+        "hooks/**", ".choir/hooks/hook.wasm",
+      ])
+    Err(e) => fail("unexpected parse error: " + e.message())
+  }
+}
+
+///|
 test "parse_worker_spawn_args records worker kind from type" {
   let review = parse_worker_spawn_args(
     ".",

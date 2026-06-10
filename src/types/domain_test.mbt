@@ -236,6 +236,23 @@ test "TaskContract round trips verify_satisfied_by_ci" {
 }
 
 ///|
+test "TaskContract round trips guard_paths" {
+  let contract = {
+    ..@types.TaskContract::empty(),
+    goal: "protect generated files",
+    guard_paths: ["hooks/**", ".choir/hooks/hook.wasm"],
+  }
+  let json = @json.parse(contract.to_json_string()) catch {
+    _ => fail("expected contract JSON to parse")
+  }
+  let parsed : @types.TaskContract = @json.from_json(json) catch {
+    _ => fail("expected contract JSON to decode")
+  }
+  @debug.assert_eq(parsed, contract)
+  @debug.assert_eq(parsed.guard_paths, ["hooks/**", ".choir/hooks/hook.wasm"])
+}
+
+///|
 test "TaskContract missing verify_satisfied_by_ci decodes as true" {
   let parsed_json = @json.parse(
     (

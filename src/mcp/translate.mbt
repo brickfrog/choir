@@ -215,6 +215,10 @@ fn spawn_worker_props() -> Array[SchemaProp] {
       desc: "Newline-separated things the worker must not do",
     },
     { name: "constraints", desc: "Newline-separated extra constraints" },
+    {
+      name: "guard_paths",
+      desc: "Newline-separated protected path globs for task-contract hook guardrails",
+    },
     { name: "context", desc: "Context or reasoning summary for the worker" },
     {
       name: "key_decisions",
@@ -246,7 +250,7 @@ fn tool_defs() -> Array[CatalogTool] {
         },
         {
           name: "task_contracts",
-          desc: "Optional JSON array of per-leaf TaskContract overrides; each entry is an object whose fields override the wave-level base contract for that one leaf (omitted fields inherit). Recognized fields: beads_issue_id, goal, scope (array), acceptance_checks (array), done_criteria (array), constraints (array), non_goals (array), verify (array), verify_satisfied_by_ci, review_context. When provided, length must equal tasks-array length / count. Omit to inherit the base contract for every leaf. Primary use: give each leaf in a multi-bead wave its own Beads issue so the TDD verify gate resolves per-leaf.",
+          desc: "Optional JSON array of per-leaf TaskContract overrides; each entry is an object whose fields override the wave-level base contract for that one leaf (omitted fields inherit). Recognized fields: beads_issue_id, goal, scope (array), acceptance_checks (array), done_criteria (array), constraints (array), non_goals (array), guard_paths (array), verify (array), verify_satisfied_by_ci, review_context. When provided, length must equal tasks-array length / count. Omit to inherit the base contract for every leaf. Primary use: give each leaf in a multi-bead wave its own Beads issue so the TDD verify gate resolves per-leaf.",
         },
         {
           name: "role",
@@ -287,6 +291,10 @@ fn tool_defs() -> Array[CatalogTool] {
           desc: "Newline-separated things children must not do",
         },
         { name: "constraints", desc: "Newline-separated extra constraints" },
+        {
+          name: "guard_paths",
+          desc: "Newline-separated protected path globs for task-contract hook guardrails",
+        },
         { name: "context", desc: "Context or reasoning summary for the wave" },
         {
           name: "key_decisions",
