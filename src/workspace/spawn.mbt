@@ -345,26 +345,190 @@ fn ssh_cmd(target : String, remote_shell : String) -> Command {
 }
 
 ///|
+priv struct ContractBoundaryHookPlan {
+  wasm_hooks_path : String?
+  guard_paths : Array[String]
+  warning : Command?
+}
+
+///|
+fn strip_inline_comment(s : String) -> String {
+  let mut in_double = false
+  let mut in_single = false
+  let mut cut = s.length()
+  let mut i = 0
+  while i < s.length() {
+    let c = s[i]
+    if c == '"' && !in_single {
+      in_double = !in_double
+    } else if c == '\'' && !in_double {
+      in_single = !in_single
+    } else if c == '#' && !in_single && !in_double {
+      cut = i
+      break
+    }
+    i = i + 1
+  }
+  s[0:cut].to_owned().trim().to_owned()
+}
+
+///|
+fn hooks_enforcement_enabled(config_content : String) -> Bool {
+  match @config.parse_toml_doc(config_content).get("hooks_enforcement") {
+    Some(raw) => {
+      let v = strip_inline_comment(raw).to_lower()
+      v == "true" || v == "1" || v == "yes"
+    }
+    None => false
+  }
+}
+
+///|
+fn task_contract_guard_paths(contract : @types.TaskContract?) -> Array[String] {
+  match contract {
+    Some(c) => c.guard_paths
+    None => []
+  }
+}
+
+///|
+fn executable_on_path(
+  name : String,
+  getenv : (String) -> String?,
+  path_executable : (String) -> Bool,
+) -> Bool {
+  let path_var = match getenv("PATH") {
+    Some(p) => p
+    None => "/usr/local/bin:/usr/bin:/bin"
+  }
+  for raw in path_var.split(":") {
+    let dir = raw.trim().to_owned()
+    if dir == "" {
+      continue
+    }
+    if path_executable(dir + "/" + name) {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn extism_on_path_default() -> Bool {
+  executable_on_path("extism", @sys.getenv, @sys.path_executable)
+}
+
+///|
+fn contract_boundary_hook_warning_command(
+  agent_id : String,
+  missing : Array[String],
+) -> Command {
+  {
+    program: "sh",
+    args: [
+      "-c",
+      "printf '%s\\n' \"$1\" >&2",
+      "choir-hooks-warning",
+      "choir: warning: hooks_enforcement requested for " +
+      agent_id +
+      " but contract-boundary hooks are disabled because " +
+      missing.join(" and ") +
+      " missing; continuing fail-open",
+    ],
+    workdir: None,
+  }
+}
+
+///|
+fn contract_boundary_hook_plan(
+  root_project : String,
+  agent_id : String,
+  task_contract : @types.TaskContract?,
+  project_config_content : String,
+  read_file : (String) -> String,
+  extism_on_path : () -> Bool,
+) -> ContractBoundaryHookPlan {
+  let guard_paths = task_contract_guard_paths(task_contract)
+  if guard_paths.length() == 0 ||
+    !hooks_enforcement_enabled(project_config_content) {
+    return { wasm_hooks_path: None, guard_paths: [], warning: None }
+  }
+  let wasm_path = root_project + "/.choir/hooks/hook.wasm"
+  let wasm_present = read_file(wasm_path) != ""
+  let extism_present = extism_on_path()
+  if wasm_present && extism_present {
+    return { wasm_hooks_path: Some(wasm_path), guard_paths, warning: None }
+  }
+  let missing : Array[String] = []
+  if !extism_present {
+    missing.push("extism on PATH")
+  }
+  if !wasm_present {
+    missing.push(".choir/hooks/hook.wasm")
+  }
+  {
+    wasm_hooks_path: None,
+    guard_paths: [],
+    warning: Some(contract_boundary_hook_warning_command(agent_id, missing)),
+  }
+}
+
+///|
 pub fn provider_materialization_commands(
   agent_type : @types.AgentType,
   root_project : String,
   workspace : String,
   agent_id : String,
   role : @types.Role,
+  contract_boundary_wasm_hooks_path? : String? = None,
+  contract_boundary_guard_paths? : Array[String] = [],
 ) -> Array[Command] {
   let cmds : Array[Command] = []
   let role_str = @config.role_to_string(role)
+  match contract_boundary_wasm_hooks_path {
+    Some(path) =>
+      if contract_boundary_guard_paths.length() > 0 {
+        if agent_type == Codex {
+          cmds.push(
+            write_codex_hooks_config_toml(
+              workspace, path, contract_boundary_guard_paths,
+            ),
+          )
+        } else if agent_type == Claude {
+          cmds.push(
+            write_claude_settings_with_contract_boundary_hook(
+              workspace, path, contract_boundary_guard_paths,
+            ),
+          )
+        }
+      }
+    None => ()
+  }
   if agent_type == Gemini || agent_type == Unknown {
     cmds.push(agy_cache_links(root_project, workspace))
     cmds.push(trust_gemini_folder(workspace))
     let wasm_path = root_project + "/.choir/hooks/hook.wasm"
-    let wasm_hooks = if @sys.read_file(wasm_path) != "" {
-      Some(wasm_path)
-    } else {
-      None
+    let wasm_hooks = match contract_boundary_wasm_hooks_path {
+      Some(path) => Some(path)
+      None =>
+        if @sys.read_file(wasm_path) != "" {
+          Some(wasm_path)
+        } else {
+          None
+        }
     }
     cmds.push(write_agy_mcp_config(workspace, agent_id, role_str))
-    cmds.push(write_agy_hooks(workspace, wasm_hooks_path=wasm_hooks))
+    let agy_guard_paths = match contract_boundary_wasm_hooks_path {
+      Some(_) => contract_boundary_guard_paths
+      None => []
+    }
+    cmds.push(
+      write_agy_hooks(
+        workspace,
+        wasm_hooks_path=wasm_hooks,
+        guard_paths=agy_guard_paths,
+      ),
+    )
   }
   if agent_type == CursorAgent {
     cmds.push(write_cursor_mcp_json(workspace, agent_id, role_str))
@@ -384,6 +548,8 @@ pub fn spawn_commands(
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
   project_config_content? : String = "",
+  read_file? : (String) -> String = @sys.read_file,
+  extism_on_path? : () -> Bool = extism_on_path_default,
 ) -> Array[Command] {
   ignore(listen_tcp)
   ignore(tcp_auth_token)
@@ -391,6 +557,28 @@ pub fn spawn_commands(
   let listen_uds_env = absolute_listen_uds(root_project, listen_uds)
   let branch = canonical_agent_id(spec)
   let workspace = spawn_workspace_path(root_project, spec)
+  let boundary_hook_plan = if spec.isolation == @types.IsolationMode::Worktree {
+    contract_boundary_hook_plan(
+      root_project,
+      canonical_agent_id(spec),
+      spec.task_contract,
+      project_config_content,
+      read_file,
+      extism_on_path,
+    )
+  } else {
+    { wasm_hooks_path: None, guard_paths: [], warning: None }
+  }
+  let claude_settings_path = match boundary_hook_plan.wasm_hooks_path {
+    Some(_) =>
+      if spec.agent_type == Claude &&
+        boundary_hook_plan.guard_paths.length() > 0 {
+        Some(workspace + "/.choir/claude-settings.json")
+      } else {
+        None
+      }
+    None => None
+  }
   let launch_cmd = zellij_launch_inner_command(
     agent_launch_command(
       spec,
@@ -399,6 +587,7 @@ pub fn spawn_commands(
       shell_command~,
       extra_mcp_servers_json~,
       project_dir=root_project,
+      claude_settings_path~,
     ),
   )
   let terminal_target = local_target_for(session, spec.slug, spec.isolation)
@@ -415,6 +604,8 @@ pub fn spawn_commands(
     workspace,
     canonical_agent_id(spec),
     spec.role,
+    contract_boundary_wasm_hooks_path=boundary_hook_plan.wasm_hooks_path,
+    contract_boundary_guard_paths=boundary_hook_plan.guard_paths,
   )
   match spec.isolation {
     Worktree => {
@@ -448,6 +639,10 @@ pub fn spawn_commands(
         ),
       )
       cmds.push(write_leaf_helper_scripts(workspace))
+      match boundary_hook_plan.warning {
+        Some(cmd) => cmds.push(cmd)
+        None => ()
+      }
       for cmd in provider_cmds {
         cmds.push(cmd)
       }

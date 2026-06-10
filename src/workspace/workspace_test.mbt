@@ -691,6 +691,36 @@ fn choir_file_write_index(
 }
 
 ///|
+fn workspace_rel_file_write_index(
+  cmds : Array[@workspace.Command],
+  relative_path : String,
+) -> Int {
+  for i = 0; i < cmds.length(); i = i + 1 {
+    let cmd = cmds[i]
+    if cmd.program == @workspace.native_write_workspace_rel_file_program &&
+      cmd.args.length() >= 2 &&
+      cmd.args[1] == relative_path {
+      return i
+    }
+  }
+  -1
+}
+
+///|
+fn command_program_count(
+  cmds : Array[@workspace.Command],
+  program : String,
+) -> Int {
+  let mut count = 0
+  for cmd in cmds {
+    if cmd.program == program {
+      count = count + 1
+    }
+  }
+  count
+}
+
+///|
 fn assert_local_connection_fields(
   content : String,
   role : @types.Role,
@@ -2152,6 +2182,323 @@ test "agy mcp config and cursor mcp json use native file commands" {
   assert_eq(cur.program, @workspace.native_write_workspace_rel_file_program)
   assert_eq(cur.args[1], ".cursor/mcp.json")
   assert_true(cur.args[2].contains("\"choir\""))
+}
+
+///|
+test "agy hooks json carries guard_paths only on PreToolUse" {
+  let hooks_json = @workspace.agy_hooks_json(
+    wasm_hooks_path=Some("/hooks/hook.wasm"),
+    guard_paths=["src/workspace/**", ".choir/**"],
+  )
+  let parsed = @json.parse(hooks_json) catch {
+    _ => fail("invalid agy hooks JSON")
+  }
+  guard parsed is Object(root) else { fail("agy hooks root missing object") }
+  guard root.get("PreInvocation") is Some(Array(pre_invocation)) else {
+    fail("PreInvocation missing")
+  }
+  guard root.get("PostInvocation") is Some(Array(post_invocation)) else {
+    fail("PostInvocation missing")
+  }
+  guard root.get("PreToolUse") is Some(Array(pre_tool_use)) else {
+    fail("PreToolUse missing")
+  }
+  guard pre_invocation[0] is Object(pre_hook) else {
+    fail("PreInvocation hook missing object")
+  }
+  guard post_invocation[0] is Object(post_hook) else {
+    fail("PostInvocation hook missing object")
+  }
+  guard pre_tool_use[0] is Object(pre_tool_hook) else {
+    fail("PreToolUse hook missing object")
+  }
+  @debug.assert_eq(
+    pre_hook.get("command"),
+    Some("extism call '/hooks/hook.wasm' before_model --wasi".to_json()),
+  )
+  @debug.assert_eq(
+    post_hook.get("command"),
+    Some("extism call '/hooks/hook.wasm' after_model --wasi".to_json()),
+  )
+  guard pre_tool_hook.get("command") is Some(String(pre_tool_cmd)) else {
+    fail("PreToolUse command missing")
+  }
+  assert_true(pre_tool_cmd.contains("pre_tool_use --wasi"))
+  assert_true(pre_tool_cmd.contains("--config guard_paths='["))
+  assert_true(pre_tool_cmd.contains("src/workspace/**"))
+  assert_true(pre_tool_cmd.contains(".choir/**"))
+}
+
+///|
+test "spawn_commands writes codex project hooks config when enforcement is available" {
+  let spec = @types.SpawnSpec::{
+    slug: "codex-guarded",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Codex,
+    task: "do guarded work",
+    task_contract: Some({
+      ..@types.TaskContract::empty(),
+      guard_paths: ["src/workspace/**", ".choir/**"],
+    }),
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "root",
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+    automerge: None,
+    review_mode: None,
+    merge_strategy: None,
+    wave_id: None,
+  }
+  let cmds = @workspace.spawn_commands(
+    spec,
+    "/project",
+    "session",
+    project_config_content="hooks_enforcement = true\n",
+    extism_on_path=fn() { true },
+    read_file=fn(path) {
+      if path == "/project/.choir/hooks/hook.wasm" {
+        "wasm"
+      } else {
+        ""
+      }
+    },
+  )
+  let codex_index = workspace_rel_file_write_index(cmds, ".codex/config.toml")
+  assert_true(codex_index >= 0)
+  let content = cmds[codex_index].args[2]
+  assert_true(content.contains("[[hooks.PreToolUse]]"))
+  assert_true(
+    content.contains("matcher = \"Edit|Write|replace|apply_patch|write_file\""),
+  )
+  assert_true(content.contains("[[hooks.PreToolUse.hooks]]"))
+  assert_true(content.contains("type = \"command\""))
+  assert_true(
+    content.contains(
+      "extism call '/project/.choir/hooks/hook.wasm' pre_tool_use --wasi",
+    ),
+  )
+  assert_true(content.contains("guard_paths='["))
+  assert_true(content.contains("src/workspace/**"))
+  assert_true(content.contains(".choir/**"))
+  assert_false(content.contains("codex_hooks"))
+  assert_eq(command_program_count(cmds, "sh"), 0)
+}
+
+///|
+test "spawn_commands writes claude settings hooks and launches with settings path" {
+  let spec = @types.SpawnSpec::{
+    slug: "claude-guarded",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    task: "do guarded work",
+    task_contract: Some({
+      ..@types.TaskContract::empty(),
+      guard_paths: ["src/workspace/**"],
+    }),
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "root",
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+    automerge: None,
+    review_mode: None,
+    merge_strategy: None,
+    wave_id: None,
+  }
+  let cmds = @workspace.spawn_commands(
+    spec,
+    "/project",
+    "session",
+    project_config_content="hooks_enforcement = true\n",
+    extism_on_path=fn() { true },
+    read_file=fn(path) {
+      if path == "/project/.choir/hooks/hook.wasm" {
+        "wasm"
+      } else {
+        ""
+      }
+    },
+  )
+  let settings_index = workspace_rel_file_write_index(
+    cmds, ".choir/claude-settings.json",
+  )
+  assert_true(settings_index >= 0)
+  let parsed = @json.parse(cmds[settings_index].args[2]) catch {
+    _ => fail("invalid claude settings JSON")
+  }
+  guard parsed is Object(settings) else { fail("settings root missing object") }
+  guard settings.get("hooks") is Some(Object(hooks)) else {
+    fail("hooks missing")
+  }
+  guard hooks.get("PreToolUse") is Some(Array(pre_tool_use)) else {
+    fail("PreToolUse missing")
+  }
+  guard pre_tool_use[0] is Object(group) else {
+    fail("PreToolUse group missing")
+  }
+  @debug.assert_eq(
+    group.get("matcher"),
+    Some("Edit|Write|replace|apply_patch|write_file".to_json()),
+  )
+  guard group.get("hooks") is Some(Array(handlers)) else {
+    fail("PreToolUse handlers missing")
+  }
+  guard handlers[0] is Object(handler) else { fail("handler missing") }
+  guard handler.get("command") is Some(String(command)) else {
+    fail("command missing")
+  }
+  assert_true(
+    command.contains(
+      "extism call '/project/.choir/hooks/hook.wasm' pre_tool_use --wasi",
+    ),
+  )
+  assert_true(command.contains("guard_paths='["))
+  assert_true(command.contains("src/workspace/**"))
+  let launch = cmds[cmds.length() - 1]
+  let launch_args = launch.args.join("\n")
+  assert_true(launch_args.contains("--settings"))
+  assert_true(
+    launch_args.contains(
+      "/project/.choir/worktrees/claude-guarded/.choir/claude-settings.json",
+    ),
+  )
+  assert_eq(command_program_count(cmds, "sh"), 0)
+}
+
+///|
+test "spawn_commands adds guard_paths to agy hooks when enforcement is available" {
+  let spec = @types.SpawnSpec::{
+    slug: "agy-guarded",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Gemini,
+    task: "do guarded work",
+    task_contract: Some({
+      ..@types.TaskContract::empty(),
+      guard_paths: ["src/workspace/**"],
+    }),
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "root",
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+    automerge: None,
+    review_mode: None,
+    merge_strategy: None,
+    wave_id: None,
+  }
+  let cmds = @workspace.spawn_commands(
+    spec,
+    "/project",
+    "session",
+    project_config_content="hooks_enforcement = true\n",
+    extism_on_path=fn() { true },
+    read_file=fn(path) {
+      if path == "/project/.choir/hooks/hook.wasm" {
+        "wasm"
+      } else {
+        ""
+      }
+    },
+  )
+  let hooks_index = workspace_rel_file_write_index(
+    cmds, ".choir/agy-home/.gemini/config/hooks.json",
+  )
+  assert_true(hooks_index >= 0)
+  assert_true(cmds[hooks_index].args[2].contains("guard_paths='["))
+  assert_true(cmds[hooks_index].args[2].contains("src/workspace/**"))
+  assert_eq(command_program_count(cmds, "sh"), 0)
+}
+
+///|
+test "spawn_commands flag off emits no contract-boundary hook wiring" {
+  let spec = @types.SpawnSpec::{
+    slug: "codex-unguarded",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Codex,
+    task: "do guarded work",
+    task_contract: Some({
+      ..@types.TaskContract::empty(),
+      guard_paths: ["src/workspace/**"],
+    }),
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "root",
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+    automerge: None,
+    review_mode: None,
+    merge_strategy: None,
+    wave_id: None,
+  }
+  let cmds = @workspace.spawn_commands(
+    spec,
+    "/project",
+    "session",
+    project_config_content="hooks_enforcement = false\n",
+    extism_on_path=fn() { true },
+    read_file=fn(path) {
+      if path == "/project/.choir/hooks/hook.wasm" {
+        "wasm"
+      } else {
+        ""
+      }
+    },
+  )
+  assert_eq(workspace_rel_file_write_index(cmds, ".codex/config.toml"), -1)
+  assert_eq(
+    workspace_rel_file_write_index(cmds, ".choir/claude-settings.json"),
+    -1,
+  )
+  assert_eq(command_program_count(cmds, "sh"), 0)
+}
+
+///|
+test "spawn_commands enforcement warning is fail-open when prerequisites are missing" {
+  let spec = @types.SpawnSpec::{
+    slug: "codex-missing-hook",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Codex,
+    task: "do guarded work",
+    task_contract: Some({
+      ..@types.TaskContract::empty(),
+      guard_paths: ["src/workspace/**"],
+    }),
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "root",
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+    automerge: None,
+    review_mode: None,
+    merge_strategy: None,
+    wave_id: None,
+  }
+  let cmds = @workspace.spawn_commands(
+    spec,
+    "/project",
+    "session",
+    project_config_content="hooks_enforcement = true\n",
+    extism_on_path=fn() { false },
+    read_file=fn(_) { "" },
+  )
+  assert_eq(workspace_rel_file_write_index(cmds, ".codex/config.toml"), -1)
+  assert_eq(command_program_count(cmds, "sh"), 1)
+  let warning_index = command_program_index(cmds, "sh")
+  assert_true(cmds[warning_index].args[3].contains("hooks_enforcement"))
+  assert_true(cmds[warning_index].args[3].contains("extism"))
+  assert_true(cmds[warning_index].args[3].contains("hook.wasm"))
+  assert_true(cmds[warning_index].args[3].contains("fail-open"))
 }
 
 ///|
