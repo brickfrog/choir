@@ -79,9 +79,6 @@ jobs:
             release-${{ runner.os }}-mooncakes-
             ${{ runner.os }}-mooncakes-
 
-      - name: Update registry
-        run: moon update
-
       - name: Build release binary
         run: moon build --target native --release
 

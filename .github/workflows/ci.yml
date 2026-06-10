@@ -39,9 +39,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-mooncakes-
 
-      - name: Update registry
-        run: moon update
-
       - name: Pre-commit staged-only sanity
         run: bash tools/pre_commit_staged_test.sh
 
