@@ -1,4 +1,12 @@
 ///|
+fn marker_index(haystack : String, marker : String) -> Int {
+  match haystack.find(marker) {
+    Some(i) => i
+    None => -1
+  }
+}
+
+///|
 test "render_leaf_spawn_prompt builds structured sections and completion protocol" {
   let prompt = render_leaf_spawn_prompt(
     PromptSpec::from_map({
@@ -41,6 +49,36 @@ test "render_leaf_spawn_prompt builds structured sections and completion protoco
     prompt.contains("Run requested verification once per code change"),
   )
   assert_true(prompt.contains("Do not rerun the same tests repeatedly"))
+}
+
+///|
+test "render spawn prompts keep stable profile before volatile task body" {
+  let leaf_prompt = render_leaf_spawn_prompt(
+    PromptSpec::from_map({ "task": "Implement volatile leaf task" }),
+  )
+  let leaf_profile = marker_index(leaf_prompt, "## Completion Protocol (Leaf)")
+  let leaf_task = marker_index(
+    leaf_prompt, "## TASK\nImplement volatile leaf task",
+  )
+  assert_true(leaf_profile >= 0)
+  assert_true(leaf_task >= 0)
+  assert_true(leaf_profile < leaf_task)
+
+  let worker_prompt = render_worker_spawn_prompt(
+    PromptSpec::from_map({
+      "task": "Investigate volatile worker task",
+      "type": "research",
+    }),
+  )
+  let worker_profile = marker_index(
+    worker_prompt, "## Completion Protocol (Worker)",
+  )
+  let worker_task = marker_index(
+    worker_prompt, "## TASK\nInvestigate volatile worker task",
+  )
+  assert_true(worker_profile >= 0)
+  assert_true(worker_task >= 0)
+  assert_true(worker_profile < worker_task)
 }
 
 ///|
@@ -302,7 +340,11 @@ test "render_worker_spawn_prompt respects prompt override" {
       "type": "review",
     }),
   )
-  assert_true(prompt.has_prefix("Use this exact prompt."))
+  let profile = marker_index(prompt, "## Completion Protocol (Worker)")
+  let override_prompt = marker_index(prompt, "Use this exact prompt.")
+  assert_true(profile >= 0)
+  assert_true(override_prompt >= 0)
+  assert_true(profile < override_prompt)
   assert_true(prompt.contains("## Completion Protocol (Worker)"))
 }
 
