@@ -582,7 +582,7 @@ pub fn ServerState::handle_server_reload_request(
   let binary_path = match req.args.get("binary_path") {
     Some(path) => path
     None =>
-      match @exec.reload_binary_path(self.config.project_dir) {
+      match @exec.reload_binary_path() {
         Ok(path) => path
         Err(e) => return @types.Response::Err(e.message())
       }

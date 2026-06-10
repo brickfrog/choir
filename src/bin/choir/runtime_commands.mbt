@@ -113,7 +113,7 @@ fn reload_run() -> Unit {
       return
     }
   }
-  let binary_path = match @exec.reload_binary_path(config.project_dir) {
+  let binary_path = match @exec.reload_binary_path() {
     Ok(path) => path
     Err(e) => {
       client_emit(@types.Response::Err(e.message()))

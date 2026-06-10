@@ -23,41 +23,37 @@ fn exec_string_to_null_terminated_bytes(s : String) -> (Bytes, Int) {
 }
 
 ///|
+fn reload_binary_path_resolution_error() -> @types.ChoirError {
+  @types.ChoirError::workspace_error(
+    "cannot resolve reload binary path from /proc/self/exe",
+  )
+}
+
+///|
 pub fn default_reload_binary_path(
-  _project_dir : String,
+  realpath? : (String) -> String? = @sys.realpath_native,
 ) -> Result[String, @types.ChoirError] {
-  match @sys.realpath_native("/proc/self/exe") {
+  match realpath("/proc/self/exe") {
     Some(path) =>
       if path.trim() == "" {
-        Err(
-          @types.ChoirError::workspace_error(
-            "cannot resolve reload binary path from /proc/self/exe",
-          ),
-        )
+        Err(reload_binary_path_resolution_error())
       } else {
         Ok(path)
       }
-    None =>
-      Err(
-        @types.ChoirError::workspace_error(
-          "cannot resolve reload binary path from /proc/self/exe",
-        ),
-      )
+    None => Err(reload_binary_path_resolution_error())
   }
 }
 
 ///|
-pub fn reload_binary_path(
-  project_dir : String,
-) -> Result[String, @types.ChoirError] {
+pub fn reload_binary_path() -> Result[String, @types.ChoirError] {
   match @sys.getenv("CHOIR_BINARY_PATH") {
     Some(path) =>
       if path.trim() == "" {
-        default_reload_binary_path(project_dir)
+        default_reload_binary_path()
       } else {
         Ok(path)
       }
-    None => default_reload_binary_path(project_dir)
+    None => default_reload_binary_path()
   }
 }
 

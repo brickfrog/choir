@@ -66,13 +66,60 @@ test "replace_self returns error for missing binary" {
 
 ///|
 test "default reload binary path resolves current executable" {
-  let project_dir = "/tmp/choir-target-project-not-the-server"
+  let seen : Array[String] = []
+  match
+    default_reload_binary_path(realpath=fn(path) {
+      seen.push(path)
+      Some("/opt/choir/bin/choir")
+    }) {
+    Ok(path) => {
+      assert_eq(path, "/opt/choir/bin/choir")
+      @debug.assert_eq(seen, ["/proc/self/exe"])
+    }
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
+test "default reload binary path fails closed when current executable is missing" {
+  match default_reload_binary_path(realpath=fn(_) { None }) {
+    Ok(path) => fail("expected missing /proc/self/exe to fail, got " + path)
+    Err(e) => {
+      let message = e.message()
+      assert_true(
+        message.contains(
+          "cannot resolve reload binary path from /proc/self/exe",
+        ),
+      )
+      assert_false(message.contains("_build/native/release"))
+    }
+  }
+}
+
+///|
+test "default reload binary path fails closed when current executable is empty" {
+  match default_reload_binary_path(realpath=fn(_) { Some("") }) {
+    Ok(path) => fail("expected empty /proc/self/exe to fail, got " + path)
+    Err(e) => {
+      let message = e.message()
+      assert_true(
+        message.contains(
+          "cannot resolve reload binary path from /proc/self/exe",
+        ),
+      )
+      assert_false(message.contains("_build/native/release"))
+    }
+  }
+}
+
+///|
+test "default reload binary path resolves real native executable" {
   match @sys.realpath_native("/proc/self/exe") {
     Some(self_exe) =>
-      match default_reload_binary_path(project_dir) {
+      match default_reload_binary_path() {
         Ok(path) => {
           assert_eq(path, self_exe)
-          assert_false(path.contains(project_dir + "/_build/native/release"))
+          assert_false(path.contains("_build/native/release"))
         }
         Err(e) => fail(e.message())
       }
