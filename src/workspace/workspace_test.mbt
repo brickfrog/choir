@@ -2164,7 +2164,7 @@ test "agy mcp config and cursor mcp json use native file commands" {
   @debug.assert_eq(pre_tool_hook.get("type"), Some("command".to_json()))
   @debug.assert_eq(
     pre_tool_hook.get("command"),
-    Some("extism call '/hooks/hook.wasm' pre_tool_use --wasi".to_json()),
+    Some("extism call '/hooks/hook.wasm' pre_tool_use --wasi --stdin".to_json()),
   )
   @debug.assert_eq(pre_tool_hook.get("timeout"), Some(Int::to_json(60)))
   @debug.assert_eq(stop_hook.get("type"), Some("command".to_json()))
@@ -2186,10 +2186,12 @@ test "agy mcp config and cursor mcp json use native file commands" {
 
 ///|
 test "agy hooks json carries guard_paths only on PreToolUse" {
-  let hooks_json = @workspace.agy_hooks_json(
+  let hooks_cmd = @workspace.write_agy_hooks(
+    "/wt",
     wasm_hooks_path=Some("/hooks/hook.wasm"),
     guard_paths=["src/workspace/**", ".choir/**"],
   )
+  let hooks_json = hooks_cmd.args[2]
   let parsed = @json.parse(hooks_json) catch {
     _ => fail("invalid agy hooks JSON")
   }
@@ -2225,6 +2227,8 @@ test "agy hooks json carries guard_paths only on PreToolUse" {
   }
   assert_true(pre_tool_cmd.contains("pre_tool_use --wasi"))
   assert_true(pre_tool_cmd.contains("--config guard_paths='["))
+  assert_true(pre_tool_cmd.contains("--config workspace_root='/wt'"))
+  assert_true(pre_tool_cmd.contains("--stdin"))
   assert_true(pre_tool_cmd.contains("src/workspace/**"))
   assert_true(pre_tool_cmd.contains(".choir/**"))
 }
@@ -2281,9 +2285,15 @@ test "spawn_commands writes codex project hooks config when enforcement is avail
     ),
   )
   assert_true(content.contains("guard_paths='["))
+  assert_true(
+    content.contains("workspace_root='/project/.choir/worktrees/codex-guarded'"),
+  )
+  assert_true(content.contains("--stdin"))
   assert_true(content.contains("src/workspace/**"))
   assert_true(content.contains(".choir/**"))
   assert_false(content.contains("codex_hooks"))
+  let launch_args = cmds[cmds.length() - 1].args.join("\n")
+  assert_true(launch_args.contains("--dangerously-bypass-hook-trust"))
   assert_eq(command_program_count(cmds, "sh"), 0)
 }
 
@@ -2358,6 +2368,12 @@ test "spawn_commands writes claude settings hooks and launches with settings pat
     ),
   )
   assert_true(command.contains("guard_paths='["))
+  assert_true(
+    command.contains(
+      "workspace_root='/project/.choir/worktrees/claude-guarded'",
+    ),
+  )
+  assert_true(command.contains("--stdin"))
   assert_true(command.contains("src/workspace/**"))
   let launch = cmds[cmds.length() - 1]
   let launch_args = launch.args.join("\n")
@@ -2412,6 +2428,12 @@ test "spawn_commands adds guard_paths to agy hooks when enforcement is available
   )
   assert_true(hooks_index >= 0)
   assert_true(cmds[hooks_index].args[2].contains("guard_paths='["))
+  assert_true(
+    cmds[hooks_index].args[2].contains(
+      "workspace_root='/project/.choir/worktrees/agy-guarded'",
+    ),
+  )
+  assert_true(cmds[hooks_index].args[2].contains("--stdin"))
   assert_true(cmds[hooks_index].args[2].contains("src/workspace/**"))
   assert_eq(command_program_count(cmds, "sh"), 0)
 }
@@ -2454,6 +2476,8 @@ test "spawn_commands flag off emits no contract-boundary hook wiring" {
     },
   )
   assert_eq(workspace_rel_file_write_index(cmds, ".codex/config.toml"), -1)
+  let launch_args = cmds[cmds.length() - 1].args.join("\n")
+  assert_false(launch_args.contains("--dangerously-bypass-hook-trust"))
   assert_eq(
     workspace_rel_file_write_index(cmds, ".choir/claude-settings.json"),
     -1,
@@ -2493,6 +2517,8 @@ test "spawn_commands enforcement warning is fail-open when prerequisites are mis
     read_file=fn(_) { "" },
   )
   assert_eq(workspace_rel_file_write_index(cmds, ".codex/config.toml"), -1)
+  let launch_args = cmds[cmds.length() - 1].args.join("\n")
+  assert_false(launch_args.contains("--dangerously-bypass-hook-trust"))
   assert_eq(command_program_count(cmds, "sh"), 1)
   let warning_index = command_program_index(cmds, "sh")
   assert_true(cmds[warning_index].args[3].contains("hooks_enforcement"))

@@ -1336,14 +1336,27 @@ fn guard_paths_json_arg(guard_paths : Array[String]) -> String {
 }
 
 ///|
+fn contract_boundary_workspace_root_arg(workspace_root : String) -> String {
+  let mut root = workspace_root.trim().to_owned()
+  while root.length() > 1 && root.has_suffix("/") {
+    root = root[0:root.length() - 1].to_owned()
+  }
+  root
+}
+
+///|
 pub fn contract_boundary_extism_command(
   wasm_hooks_path : String,
   guard_paths : Array[String],
+  workspace_root : String,
 ) -> String {
   "extism call " +
   @sys.shell_quote(wasm_hooks_path) +
   " pre_tool_use --wasi --config guard_paths=" +
-  @sys.shell_quote(guard_paths_json_arg(guard_paths))
+  @sys.shell_quote(guard_paths_json_arg(guard_paths)) +
+  " --config workspace_root=" +
+  @sys.shell_quote(contract_boundary_workspace_root_arg(workspace_root)) +
+  " --stdin"
 }
 
 ///|
@@ -1367,11 +1380,14 @@ fn contract_boundary_pre_tool_use_group(command : String) -> Json {
 pub fn claude_settings_json_with_contract_boundary_hook(
   wasm_hooks_path : String,
   guard_paths : Array[String],
+  workspace_root : String,
 ) -> String {
   let hooks = {
     "PreToolUse": [
       contract_boundary_pre_tool_use_group(
-        contract_boundary_extism_command(wasm_hooks_path, guard_paths),
+        contract_boundary_extism_command(
+          wasm_hooks_path, guard_paths, workspace_root,
+        ),
       ),
     ].to_json(),
   }
@@ -1383,8 +1399,11 @@ pub fn claude_settings_json_with_contract_boundary_hook(
 pub fn codex_hooks_config_toml(
   wasm_hooks_path : String,
   guard_paths : Array[String],
+  workspace_root : String,
 ) -> String {
-  let command = contract_boundary_extism_command(wasm_hooks_path, guard_paths)
+  let command = contract_boundary_extism_command(
+    wasm_hooks_path, guard_paths, workspace_root,
+  )
   "[[hooks.PreToolUse]]\n" +
   "matcher = \"" +
   escape_toml_string(contract_boundary_hook_matcher()) +
@@ -1405,6 +1424,7 @@ pub fn codex_hooks_config_toml(
 pub fn agy_hooks_json(
   wasm_hooks_path? : String? = None,
   guard_paths? : Array[String] = [],
+  workspace_root? : String? = None,
 ) -> String {
   let hook_spec : Map[String, Json] = {
     "Stop": [agy_command_hook("choir hook worker-exit --runtime gemini")].to_json(),
@@ -1417,10 +1437,26 @@ pub fn agy_hooks_json(
           " " +
           func_name +
           " --wasi"
-        let guarded = if func_name == "pre_tool_use" && guard_paths.length() > 0 {
-          command +
-          " --config guard_paths=" +
-          @sys.shell_quote(guard_paths_json_arg(guard_paths))
+        let guarded = if func_name == "pre_tool_use" {
+          let with_guard_paths = if guard_paths.length() > 0 {
+            command +
+            " --config guard_paths=" +
+            @sys.shell_quote(guard_paths_json_arg(guard_paths))
+          } else {
+            command
+          }
+          let with_workspace_root = match workspace_root {
+            Some(root) =>
+              if guard_paths.length() > 0 {
+                with_guard_paths +
+                " --config workspace_root=" +
+                @sys.shell_quote(contract_boundary_workspace_root_arg(root))
+              } else {
+                with_guard_paths
+              }
+            None => with_guard_paths
+          }
+          with_workspace_root + " --stdin"
         } else {
           command
         }
@@ -1455,7 +1491,11 @@ pub fn write_agy_hooks(
   wasm_hooks_path? : String? = None,
   guard_paths? : Array[String] = [],
 ) -> Command {
-  let content = agy_hooks_json(wasm_hooks_path~, guard_paths~)
+  let content = agy_hooks_json(
+    wasm_hooks_path~,
+    guard_paths~,
+    workspace_root=Some(worktree_path),
+  )
   workspace_relative_file_command(
     worktree_path,
     agy_hooks_relative_path(),
@@ -1473,7 +1513,7 @@ pub fn write_claude_settings_with_contract_boundary_hook(
     worktree_path,
     ".choir/claude-settings.json",
     claude_settings_json_with_contract_boundary_hook(
-      wasm_hooks_path, guard_paths,
+      wasm_hooks_path, guard_paths, worktree_path,
     ),
   )
 }
@@ -1487,7 +1527,7 @@ pub fn write_codex_hooks_config_toml(
   workspace_relative_file_command(
     worktree_path,
     ".codex/config.toml",
-    codex_hooks_config_toml(wasm_hooks_path, guard_paths),
+    codex_hooks_config_toml(wasm_hooks_path, guard_paths, worktree_path),
   )
 }
 

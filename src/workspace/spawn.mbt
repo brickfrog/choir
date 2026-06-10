@@ -588,6 +588,7 @@ pub fn spawn_commands(
       extra_mcp_servers_json~,
       project_dir=root_project,
       claude_settings_path~,
+      codex_bypass_hook_trust=boundary_hook_plan.wasm_hooks_path is Some(_),
     ),
   )
   let terminal_target = local_target_for(session, spec.slug, spec.isolation)
