@@ -265,8 +265,9 @@ fn path_match_candidates(
       return candidates
     }
     let prefix = root + "/"
-    if normalized.has_prefix(prefix) {
-      let relative = normalized[prefix.length():].to_owned()
+    let absolute_normalized = "/" + path_segments(normalized).join("/")
+    if absolute_normalized.has_prefix(prefix) {
+      let relative = absolute_normalized[prefix.length():].to_owned()
       let relative_normalized = normalize_path_text(relative)
       if relative_normalized != "" {
         candidates.push(relative_normalized)
@@ -649,6 +650,50 @@ test "path boundary guard blocks absolute paths under workspace root" {
 }
 
 ///|
+test "path boundary guard blocks absolute paths that escape and re-enter workspace root" {
+  let input_json =
+    #|{"file_path":"/fake/root/../root/.githooks/pre-commit","old_string":"a","new_string":"b"}
+  let input = @json.parse(input_json) catch {
+    _ => fail("failed to parse escape-and-reenter edit input")
+  }
+  match
+    check_path_boundary(
+      "Edit",
+      input,
+      [".githooks/**"],
+      workspace_root=Some("/fake/root"),
+    ) {
+    Some(reason) =>
+      assert_eq(
+        reason, "BLOCKED: /fake/root/../root/.githooks/pre-commit is outside your task contract (guard_paths)",
+      )
+    None => fail("expected escape-and-reenter absolute path to be blocked")
+  }
+}
+
+///|
+test "path boundary guard blocks absolute paths that re-enter workspace root from another prefix" {
+  let input_json =
+    #|{"file_path":"/other/../fake/root/.githooks/pre-commit","old_string":"a","new_string":"b"}
+  let input = @json.parse(input_json) catch {
+    _ => fail("failed to parse other-prefix reenter edit input")
+  }
+  match
+    check_path_boundary(
+      "Edit",
+      input,
+      [".githooks/**"],
+      workspace_root=Some("/fake/root"),
+    ) {
+    Some(reason) =>
+      assert_eq(
+        reason, "BLOCKED: /other/../fake/root/.githooks/pre-commit is outside your task contract (guard_paths)",
+      )
+    None => fail("expected other-prefix reenter absolute path to be blocked")
+  }
+}
+
+///|
 test "path boundary guard allows absolute paths outside workspace root" {
   let input_json =
     #|{"file_path":"/tmp/outside/.githooks/pre-commit","old_string":"a","new_string":"b"}
@@ -665,6 +710,26 @@ test "path boundary guard allows absolute paths outside workspace root" {
     None => ()
     Some(reason) =>
       fail("expected outside-root absolute path to pass: " + reason)
+  }
+}
+
+///|
+test "path boundary guard allows genuinely outside absolute paths after normalization" {
+  let input_json =
+    #|{"file_path":"/tmp/elsewhere/.githooks/x","old_string":"a","new_string":"b"}
+  let input = @json.parse(input_json) catch {
+    _ => fail("failed to parse genuinely outside-root edit input")
+  }
+  match
+    check_path_boundary(
+      "Edit",
+      input,
+      [".githooks/**"],
+      workspace_root=Some("/fake/root"),
+    ) {
+    None => ()
+    Some(reason) =>
+      fail("expected genuinely outside-root absolute path to pass: " + reason)
   }
 }
 
