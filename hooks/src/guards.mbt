@@ -453,7 +453,7 @@ fn pre_tool_use_response(
   guard_checker? : (Json) -> String? = check_tool_guards,
 ) -> PreToolUseResponse {
   let json = @json.parse(input) catch {
-    _ => return { exit_code: 0, output: Some(input) }
+    _ => return { exit_code: 0, output: None }
   }
   match guard_checker(json) {
     Some(reason) =>
@@ -735,12 +735,13 @@ test "pre_tool_use allow emits no output" {
 }
 
 ///|
-test "pre_tool_use malformed payload still passes through" {
+test "pre_tool_use malformed payload emits no output" {
   let input = "not-json"
   let result = pre_tool_use_response(input)
   assert_eq(result.exit_code, 0)
   match result.output {
-    Some(output) => assert_eq(output, input)
-    None => fail("expected malformed payload pass-through output")
+    None => ()
+    Some(output) =>
+      fail("expected empty malformed-payload output, got: " + output)
   }
 }
