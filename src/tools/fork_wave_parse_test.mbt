@@ -299,7 +299,149 @@ test "parse_fork_wave_args supports per leaf task contracts" {
 }
 
 ///|
-test "parse_fork_wave_args threads guard_paths into wave and per-leaf contracts" {
+test "parse_fork_wave_args isolates per leaf task contract arrays" {
+  let task_contracts = "[" +
+    "{\"verify\":[\"verify leaf 0\"],\"non_goals\":[\"non-goal leaf 0\"],\"acceptance_checks\":[\"accept leaf 0\"],\"guard_paths\":[\"src/leaf0/**\"]}," +
+    "{\"verify\":[\"verify leaf 1\"],\"non_goals\":[\"non-goal leaf 1\"],\"acceptance_checks\":[\"accept leaf 1\"],\"guard_paths\":[\"src/leaf1/**\"]}," +
+    "{\"verify\":[\"verify leaf 2\"],\"non_goals\":[\"non-goal leaf 2\"],\"acceptance_checks\":[\"accept leaf 2\"],\"guard_paths\":[\"src/leaf2/**\"]}" +
+    "]"
+  let args = @tools.tool_args_from_map({
+    "tasks": "[\"Implement A\",\"Implement B\",\"Implement C\"]",
+    "parent_branch": "main",
+    "caller_id": "root",
+    "task_contracts": task_contracts,
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Ok(fork) => {
+      assert_eq(fork.count, 3)
+      @debug.assert_eq(fork.task_contracts[0].verify, ["verify leaf 0"])
+      @debug.assert_eq(fork.task_contracts[1].verify, ["verify leaf 1"])
+      @debug.assert_eq(fork.task_contracts[2].verify, ["verify leaf 2"])
+      @debug.assert_eq(fork.task_contracts[0].non_goals, ["non-goal leaf 0"])
+      @debug.assert_eq(fork.task_contracts[1].non_goals, ["non-goal leaf 1"])
+      @debug.assert_eq(fork.task_contracts[2].non_goals, ["non-goal leaf 2"])
+      @debug.assert_eq(fork.task_contracts[0].acceptance_checks, [
+        "accept leaf 0",
+      ])
+      @debug.assert_eq(fork.task_contracts[1].acceptance_checks, [
+        "accept leaf 1",
+      ])
+      @debug.assert_eq(fork.task_contracts[2].acceptance_checks, [
+        "accept leaf 2",
+      ])
+      @debug.assert_eq(fork.task_contracts[0].guard_paths, ["src/leaf0/**"])
+      @debug.assert_eq(fork.task_contracts[1].guard_paths, ["src/leaf1/**"])
+      @debug.assert_eq(fork.task_contracts[2].guard_paths, ["src/leaf2/**"])
+      assert_false(fork.task_contracts[0].verify.contains("verify leaf 1"))
+      assert_false(fork.task_contracts[0].non_goals.contains("non-goal leaf 1"))
+      assert_false(
+        fork.task_contracts[0].acceptance_checks.contains("accept leaf 1"),
+      )
+      assert_false(fork.task_contracts[0].guard_paths.contains("src/leaf1/**"))
+    }
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}
+
+///|
+test "parse_fork_wave_args per leaf task contracts override base arrays" {
+  let args = @tools.tool_args_from_map({
+    "tasks": "[\"Implement hooks\",\"Implement docs\"]",
+    "parent_branch": "main",
+    "caller_id": "root",
+    "verify": "moon test --target native",
+    "non_goals": "base non-goal",
+    "done_criteria": "base done",
+    "task_contracts": "[{\"verify\":[\"moon -C hooks test --target native\"],\"non_goals\":[\"leaf non-goal\"],\"done_criteria\":[\"leaf done\"]},{}]",
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Ok(fork) => {
+      assert_eq(fork.count, 2)
+      @debug.assert_eq(fork.task_contracts[0].verify, [
+        "moon -C hooks test --target native",
+      ])
+      @debug.assert_eq(fork.task_contracts[1].verify, [
+        "moon test --target native",
+      ])
+      @debug.assert_eq(fork.task_contracts[0].non_goals, ["leaf non-goal"])
+      @debug.assert_eq(fork.task_contracts[1].non_goals, ["base non-goal"])
+      @debug.assert_eq(fork.task_contracts[0].acceptance_checks, ["leaf done"])
+      @debug.assert_eq(fork.task_contracts[1].acceptance_checks, ["base done"])
+    }
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}
+
+///|
+test "parse_fork_wave_args shared task contracts override base arrays" {
+  let args = @tools.tool_args_from_map({
+    "count": "2",
+    "task": "Implement shared shard",
+    "parent_branch": "main",
+    "caller_id": "root",
+    "verify": "moon test --target native",
+    "non_goals": "base non-goal",
+    "acceptance_checks": "base acceptance",
+    "task_contracts": "[{\"verify\":[\"npm test\"],\"non_goals\":[\"leaf non-goal\"],\"acceptance_checks\":[\"leaf acceptance\"]},{}]",
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Ok(fork) => {
+      assert_eq(fork.count, 2)
+      assert_false(fork.has_per_leaf_tasks)
+      @debug.assert_eq(fork.task_contracts[0].verify, ["npm test"])
+      @debug.assert_eq(fork.task_contracts[1].verify, [
+        "moon test --target native",
+      ])
+      @debug.assert_eq(fork.task_contracts[0].non_goals, ["leaf non-goal"])
+      @debug.assert_eq(fork.task_contracts[1].non_goals, ["base non-goal"])
+      @debug.assert_eq(fork.task_contracts[0].acceptance_checks, [
+        "leaf acceptance",
+      ])
+      @debug.assert_eq(fork.task_contracts[1].acceptance_checks, [
+        "base acceptance",
+      ])
+    }
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}
+
+///|
+test "parse_fork_wave_args inherited arrays are not aliased between leaves" {
+  let args = @tools.tool_args_from_map({
+    "tasks": "[\"Implement A\",\"Implement B\",\"Implement C\"]",
+    "parent_branch": "main",
+    "caller_id": "root",
+    "verify": "moon test --target native",
+    "non_goals": "base non-goal",
+    "task_contracts": "[{},{},{}]",
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Ok(fork) => {
+      fork.task_contracts[0].verify.push("verify sentinel")
+      fork.task_contracts[0].non_goals.push("non-goal sentinel")
+      @debug.assert_eq(fork.task_contracts[1].verify, [
+        "moon test --target native",
+      ])
+      @debug.assert_eq(fork.task_contracts[2].verify, [
+        "moon test --target native",
+      ])
+      @debug.assert_eq(fork.task_contracts[1].non_goals, ["base non-goal"])
+      @debug.assert_eq(fork.task_contracts[2].non_goals, ["base non-goal"])
+      assert_false(fork.task_contracts[1].verify.contains("verify sentinel"))
+      assert_false(fork.task_contracts[2].verify.contains("verify sentinel"))
+      assert_false(
+        fork.task_contracts[1].non_goals.contains("non-goal sentinel"),
+      )
+      assert_false(
+        fork.task_contracts[2].non_goals.contains("non-goal sentinel"),
+      )
+    }
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}
+
+///|
+test "parse_fork_wave_args overrides or inherits guard_paths per leaf" {
   let args = @tools.tool_args_from_map({
     "tasks": "[\"Implement A\",\"Implement B\"]",
     "parent_branch": "main",
@@ -311,9 +453,7 @@ test "parse_fork_wave_args threads guard_paths into wave and per-leaf contracts"
   match @tools.parse_fork_wave_args(".", args) {
     Ok(fork) => {
       assert_eq(fork.count, 2)
-      @debug.assert_eq(fork.task_contracts[0].guard_paths, [
-        "hooks/**", ".choir/hooks/hook.wasm", "src/workspace/**",
-      ])
+      @debug.assert_eq(fork.task_contracts[0].guard_paths, ["src/workspace/**"])
       @debug.assert_eq(fork.task_contracts[1].guard_paths, [
         "hooks/**", ".choir/hooks/hook.wasm",
       ])

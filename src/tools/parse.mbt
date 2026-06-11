@@ -986,6 +986,69 @@ fn parse_task_contracts_array(
 }
 
 ///|
+fn task_contract_copy_lines(lines : Array[String]) -> Array[String] {
+  let copied : Array[String] = []
+  for line in lines {
+    copied.push(line)
+  }
+  copied
+}
+
+///|
+fn task_contract_override_lines(
+  base : Array[String],
+  patch_lines : Array[String],
+) -> Array[String] {
+  if patch_lines.length() > 0 {
+    task_contract_copy_lines(patch_lines)
+  } else {
+    task_contract_copy_lines(base)
+  }
+}
+
+///|
+fn apply_task_contract_override(
+  base : @types.TaskContract,
+  patch_contract : @types.TaskContract,
+) -> @types.TaskContract {
+  {
+    goal: if patch_contract.goal != "" {
+      patch_contract.goal
+    } else {
+      base.goal
+    },
+    scope: task_contract_override_lines(base.scope, patch_contract.scope),
+    acceptance_checks: task_contract_override_lines(
+      base.acceptance_checks,
+      patch_contract.acceptance_checks,
+    ),
+    constraints: task_contract_override_lines(
+      base.constraints,
+      patch_contract.constraints,
+    ),
+    non_goals: task_contract_override_lines(
+      base.non_goals,
+      patch_contract.non_goals,
+    ),
+    guard_paths: task_contract_override_lines(
+      base.guard_paths,
+      patch_contract.guard_paths,
+    ),
+    beads_issue_id: match patch_contract.beads_issue_id {
+      Some(value) => Some(value)
+      None => base.beads_issue_id
+    },
+    review_context: match patch_contract.review_context {
+      Some(value) => Some(value)
+      None => base.review_context
+    },
+    verify: task_contract_override_lines(base.verify, patch_contract.verify),
+    verify_satisfied_by_ci: base.verify_satisfied_by_ci &&
+    patch_contract.verify_satisfied_by_ci,
+  }
+}
+
+///|
 pub fn parse_fork_wave_args(
   project_dir : String,
   args : ToolArgs,
@@ -1039,14 +1102,15 @@ pub fn parse_fork_wave_args(
     for i = 0; i < per_leaf_tasks.length(); i = i + 1 {
       let task = per_leaf_tasks[i]
       let base_leaf_spec = prompt_spec_with_task(base_spec, task)
-      let task_contract = if explicit_task_contracts.length() > 0 {
-        merge_task_contracts(
-          base_leaf_spec.task_contract,
-          explicit_task_contracts[i],
-        )
+      let task_contract_override = if explicit_task_contracts.length() > 0 {
+        explicit_task_contracts[i]
       } else {
-        base_leaf_spec.task_contract
+        @types.TaskContract::empty()
       }
+      let task_contract = apply_task_contract_override(
+        base_leaf_spec.task_contract,
+        task_contract_override,
+      )
       let task_contract = fork_wave_task_contract_with_verify_default(
         task_contract,
         project_verify_cmd~,
@@ -1066,14 +1130,15 @@ pub fn parse_fork_wave_args(
     // Shared task — same prompt for all leaves
     let arr : Array[String] = []
     for i = 0; i < count; i = i + 1 {
-      let task_contract = if explicit_task_contracts.length() > 0 {
-        merge_task_contracts(
-          base_spec.task_contract,
-          explicit_task_contracts[i],
-        )
+      let task_contract_override = if explicit_task_contracts.length() > 0 {
+        explicit_task_contracts[i]
       } else {
-        base_spec.task_contract
+        @types.TaskContract::empty()
       }
+      let task_contract = apply_task_contract_override(
+        base_spec.task_contract,
+        task_contract_override,
+      )
       let task_contract = fork_wave_task_contract_with_verify_default(
         task_contract,
         project_verify_cmd~,
