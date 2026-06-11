@@ -999,6 +999,8 @@ fn task_contract_override_lines(
   base : Array[String],
   patch_lines : Array[String],
 ) -> Array[String] {
+  // Per-leaf TaskContract parsing collapses omitted and explicit empty arrays;
+  // empty therefore inherits, and only non-empty arrays replace the base.
   if patch_lines.length() > 0 {
     task_contract_copy_lines(patch_lines)
   } else {
