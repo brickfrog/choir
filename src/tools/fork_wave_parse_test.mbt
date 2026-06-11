@@ -441,6 +441,42 @@ test "parse_fork_wave_args inherited arrays are not aliased between leaves" {
 }
 
 ///|
+test "parse_fork_wave_args omitted task contracts do not alias inherited arrays" {
+  let args = @tools.tool_args_from_map({
+    "tasks": "[\"Implement A\",\"Implement B\",\"Implement C\"]",
+    "parent_branch": "main",
+    "caller_id": "root",
+    "verify": "moon test --target native",
+    "non_goals": "base non-goal",
+    "done_criteria": "base done",
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Ok(fork) => {
+      assert_eq(fork.count, 3)
+      fork.task_contracts[0].verify.push("verify sentinel")
+      fork.task_contracts[0].non_goals.push("non-goal sentinel")
+      @debug.assert_eq(fork.task_contracts[1].verify, [
+        "moon test --target native",
+      ])
+      @debug.assert_eq(fork.task_contracts[2].verify, [
+        "moon test --target native",
+      ])
+      @debug.assert_eq(fork.task_contracts[1].non_goals, ["base non-goal"])
+      @debug.assert_eq(fork.task_contracts[2].non_goals, ["base non-goal"])
+      assert_false(fork.task_contracts[1].verify.contains("verify sentinel"))
+      assert_false(fork.task_contracts[2].verify.contains("verify sentinel"))
+      assert_false(
+        fork.task_contracts[1].non_goals.contains("non-goal sentinel"),
+      )
+      assert_false(
+        fork.task_contracts[2].non_goals.contains("non-goal sentinel"),
+      )
+    }
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}
+
+///|
 test "parse_fork_wave_args overrides or inherits guard_paths per leaf" {
   let args = @tools.tool_args_from_map({
     "tasks": "[\"Implement A\",\"Implement B\"]",
