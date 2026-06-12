@@ -310,7 +310,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
     self.handle_server_reload_request(effective_req)
   } else if effective_req.req_method == "tools/call" &&
     effective_req.name == "tui_snapshot" {
-    self.handle_tui_snapshot_request(effective_req, capture, bd_capture)
+    self.handle_tui_snapshot_request(effective_req)
   } else if effective_req.req_method == "tools/call" &&
     effective_req.name == "tui_events_since" {
     self.handle_tui_events_since_request(effective_req)
@@ -326,6 +326,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
       runner~,
       sleep_fn~,
       capture~,
+      bd_capture~,
       hook_capture~,
       path_exists~,
       hook_path_exists~,

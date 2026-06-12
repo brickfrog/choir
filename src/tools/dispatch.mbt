@@ -850,7 +850,7 @@ pub async fn dispatch(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   git_capture? : async (String, Array[String]) -> String = @exec.capture_stdout,
   capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
-  bd_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout_with_stderr_on_error,
+  bd_capture? : async (@workspace.Command) -> (Int, String) = capture,
   hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
   append_file? : (String, String) -> Bool = @sys.append_file_sync,
   read_file? : (String) -> String = @sys.read_file,
@@ -920,14 +920,6 @@ pub async fn dispatch(
     async (Int) -> Unit,
   ) -> Result[Unit, @types.ChoirError] = default_interpret_planned_delivery,
 ) -> @types.Response {
-  let plan_delivery_fn = fn(
-    agent : @types.Agent,
-    sender : String,
-    content : String,
-    status : @types.Status,
-  ) -> @message.DeliveryMethod {
-    @message.plan_delivery_via_inbox(agent, sender, content, status)
-  }
   let ensure_branch_ready = match ensure_branch_ready {
     Some(f) => f
     None =>
@@ -1261,7 +1253,6 @@ pub async fn dispatch(
         moon_verify_target~,
         skip_copilot_on_feature_branch~,
         sleep_fn~,
-        plan_delivery_fn~,
       )
     ToolRequest::TddIntent(args) =>
       interpret_tdd_intent(
@@ -1374,7 +1365,6 @@ pub async fn dispatch(
                     notify_args.caller_id,
                     pr_number,
                     gh_failed,
-                    plan_delivery_fn~,
                   )
                   ignore(
                     interpret_send_message(
@@ -1446,8 +1436,7 @@ pub async fn dispatch(
           )
         None => None
       }
-      match
-        notify_parent_plan(notify_args, parent_resolution, plan_delivery_fn~) {
+      match notify_parent_plan(notify_args, parent_resolution) {
         NotifyParentPlan::NoRegistry(dev_event~, response~) => {
           apply_dev_event(
             project_dir,
@@ -1580,7 +1569,6 @@ pub async fn dispatch(
         send_args.message,
         send_args.status,
         registry_lookup,
-        plan_delivery_fn~,
       )
       match plan {
         SendMessagePlan::Deliver(delivery~, delivery_log_append~, response_ok~) => {
@@ -2096,6 +2084,7 @@ pub async fn handle_request(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   git_capture? : async (String, Array[String]) -> String = @exec.capture_stdout,
   capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
+  bd_capture? : async (@workspace.Command) -> (Int, String) = capture,
   hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
   ensure_branch_ready? : (async (String, String, String) -> Result[
     Unit,
@@ -2253,6 +2242,7 @@ pub async fn handle_request(
                   runner~,
                   git_capture~,
                   capture~,
+                  bd_capture~,
                   hook_capture~,
                   ensure_branch_ready~,
                   ensure_pr~,

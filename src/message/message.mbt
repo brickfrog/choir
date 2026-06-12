@@ -85,18 +85,6 @@ pub fn format_inbox_nudge(pending : Int) -> String {
 }
 
 ///|
-/// Inbox-aware planning stays pure: enqueueing and terminal nudge selection
-/// happen in the server interpreter at delivery time.
-pub fn plan_delivery_via_inbox(
-  agent : @types.Agent,
-  sender_id : String,
-  content : String,
-  status : @types.Status,
-) -> DeliveryMethod {
-  plan_delivery(agent, sender_id, content, status)
-}
-
-///|
 pub fn plan_delivery(
   agent : @types.Agent,
   sender_id : String,

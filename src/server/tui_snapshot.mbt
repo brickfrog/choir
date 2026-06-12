@@ -362,10 +362,8 @@ fn tui_beads_list_commands(project_dir : String) -> Array[@workspace.Command] {
 }
 
 ///|
-/// Lazily refresh the daemon-side bead summary cache. No-op inside the TTL;
-/// a failed/absent `bd` still stamps the cache so a broken CLI cannot turn
-/// every snapshot into a retry storm. Emits BeadSummaryChanged for new or
-/// changed summaries.
+/// Lazily refresh the daemon-side bead summary cache. No-op inside the TTL.
+/// Emits BeadSummaryChanged for new or changed summaries.
 pub async fn ServerState::refresh_tui_beads_cache_if_stale(
   self : ServerState,
   now_ms : Int64,
@@ -381,11 +379,13 @@ pub async fn ServerState::refresh_tui_beads_cache_if_stale(
   self.tui_beads_cache.refresh_in_flight = true
   let summaries : Array[@types.TuiBeadSummary] = []
   let seen : Map[String, Bool] = {}
+  let mut captured_any = false
   for command in tui_beads_list_commands(self.config.project_dir) {
     let (code, output) = bd_capture(command)
     if code != 0 {
       continue
     }
+    captured_any = true
     match @tools.parse_beads_issues_json(output) {
       Ok(issues) =>
         for issue in issues {
@@ -402,6 +402,10 @@ pub async fn ServerState::refresh_tui_beads_cache_if_stale(
         }
       Err(_) => ()
     }
+  }
+  if !captured_any {
+    self.tui_beads_cache.refresh_in_flight = false
+    return
   }
   let previous : Map[String, @types.TuiBeadSummary] = {}
   for summary in self.tui_beads_cache.summaries {
