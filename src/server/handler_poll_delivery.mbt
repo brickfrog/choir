@@ -3314,6 +3314,7 @@ pub async fn ServerState::process_poller_tick_with(
   sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Unit {
   self.mutex_registry.expire(now)
+  self.refresh_tui_snapshot_caches_for_poller_tick(now, capture)
   let pending_events = []
   let pending_agent_ids = []
   let tick_summary = @poller.TickSummary::new(@env.now().reinterpret_as_int64())
@@ -3403,6 +3404,7 @@ pub async fn ServerState::process_poller_tick(
   sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Unit {
   self.mutex_registry.expire(now)
+  self.refresh_tui_snapshot_caches_for_poller_tick(now, capture)
   let pending_events = []
   let pending_agent_ids = []
   let project_dir = self.config.project_dir

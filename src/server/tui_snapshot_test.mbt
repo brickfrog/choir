@@ -225,26 +225,25 @@ async test "tui_default_branch_cached does not cache skip-disabled empty value" 
 }
 
 ///|
-async fn tui_snapshot_test_bd_capture(
+async fn tui_snapshot_fail_if_called_capture(
   cmd : @workspace.Command,
 ) -> (Int, String) {
   @async.sleep(0)
-  if cmd.program == "bd" && cmd.args.length() > 0 && cmd.args[0] == "ready" {
-    return (
-      0, "[{\"id\":\"ch-1\",\"title\":\"reviewer policy\",\"status\":\"ready\"}]",
-    )
-  }
-  if cmd.program == "bd" && cmd.args.length() > 0 && cmd.args[0] == "list" {
-    return (
-      0, "[{\"id\":\"ch-2\",\"title\":\"tui spike\",\"status\":\"in_progress\",\"assignee\":\"main.leaf-a\"}]",
-    )
-  }
-  (1, "")
+  abort("tui_snapshot must not execute command: " + cmd.program)
 }
 
 ///|
-async test "tui_snapshot handler refreshes bead cache and serves snapshot json" {
-  let state = tui_snapshot_test_state("handler")
+async test "tui_snapshot handler serves cached beads without process capture" {
+  let state = tui_snapshot_test_state("handler-cache")
+  state.tui_beads_cache.summaries = [
+    {
+      issue_id: "ch-cached",
+      title: "cached snapshot bead",
+      status: "ready",
+      assignee: "main.leaf-a",
+    },
+  ]
+  state.tui_beads_cache.taken_at_ms = Some(1L)
   let req : @types.Request = {
     req_method: "tools/call",
     role: @types.Role::Operator,
@@ -252,7 +251,7 @@ async test "tui_snapshot handler refreshes bead cache and serves snapshot json" 
     args: @types.RequestArgs::from_values({}),
   }
   let resp = state.handle_tui_snapshot_request(
-    req, tui_snapshot_test_bd_capture, tui_snapshot_test_bd_capture,
+    req, tui_snapshot_fail_if_called_capture, tui_snapshot_fail_if_called_capture,
   )
   assert_true(resp.is_ok())
   match resp.ok_payload() {
@@ -261,13 +260,10 @@ async test "tui_snapshot handler refreshes bead cache and serves snapshot json" 
         Some(snapshot_json) =>
           match @types.parse_tui_snapshot_json(snapshot_json) {
             Ok(snapshot) => {
-              assert_eq(snapshot.beads.length(), 2)
-              assert_eq(snapshot.beads[0].issue_id, "ch-1")
-              assert_eq(snapshot.beads[1].status, "in_progress")
-              match snapshot.beads_as_of_ms {
-                Some(_) => ()
-                None => fail("expected bead cache staleness timestamp")
-              }
+              assert_eq(snapshot.beads.length(), 1)
+              assert_eq(snapshot.beads[0].issue_id, "ch-cached")
+              assert_eq(snapshot.beads[0].status, "ready")
+              @debug.assert_eq(snapshot.beads_as_of_ms, Some(1L))
             }
             Err(e) => fail("snapshot roundtrip failed: " + e.message())
           }
@@ -278,7 +274,7 @@ async test "tui_snapshot handler refreshes bead cache and serves snapshot json" 
 }
 
 ///|
-async test "bead cache refresh emits removals and skips when in flight" {
+async test "poller tick refreshes bead cache, emits removals, and skips when in flight" {
   let state = tui_snapshot_test_state("bead-removal")
   let calls : Array[String] = []
   let bd_capture = async fn(cmd : @workspace.Command) {
@@ -303,11 +299,40 @@ async test "bead cache refresh emits removals and skips when in flight" {
     }
     (1, "")
   }
-  state.refresh_tui_beads_cache_if_stale(1000L, bd_capture)
+  let poll = async fn(
+    _pr_number : Int,
+    _skip_issue_comment_fetch : Bool,
+  ) -> (
+    Bool,
+    @poller.ReviewState,
+    String,
+    @poller.CiRollupStatus,
+    String,
+    Bool,
+    Bool,
+    @poller.Mergeable,
+    @poller.MergeStateStatus,
+    Int64?,
+  ) {
+    @async.sleep(0)
+    abort("poller tick should not poll PRs in this bead cache test")
+  }
+  state.process_poller_tick_with_test(
+    1000L,
+    900L,
+    poll,
+    None,
+    "",
+    capture=bd_capture,
+  )
   assert_eq(state.tui_beads_cache.summaries.length(), 2)
-  state.refresh_tui_beads_cache_if_stale(
+  state.process_poller_tick_with_test(
     1000L + @server.tui_beads_cache_ttl_ms + 1L,
-    bd_capture,
+    900L,
+    poll,
+    None,
+    "",
+    capture=bd_capture,
   )
   assert_eq(state.tui_beads_cache.summaries.length(), 1)
   let mut saw_removed = false
@@ -328,9 +353,13 @@ async test "bead cache refresh emits removals and skips when in flight" {
 
   state.tui_beads_cache.refresh_in_flight = true
   let before = calls.length()
-  state.refresh_tui_beads_cache_if_stale(
+  state.process_poller_tick_with_test(
     1000L + @server.tui_beads_cache_ttl_ms * 2L + 2L,
-    bd_capture,
+    900L,
+    poll,
+    None,
+    "",
+    capture=bd_capture,
   )
   assert_eq(calls.length(), before)
 }

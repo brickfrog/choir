@@ -28,9 +28,8 @@ fn request_int64_arg(req : @types.Request, key : String) -> Int64? {
 
 ///|
 /// `tui_snapshot`: the canonical full-state read model plus the current
-/// journal sequence number. Zero network I/O — the only effects are the
-/// lazily refreshed bead cache (`bd` CLI, local Dolt db) and a once-per-
-/// process local-git default-branch read.
+/// journal sequence number. Pure in-memory read: poller ticks refresh the
+/// bead/default-branch caches that this request serves as-is.
 pub async fn ServerState::handle_tui_snapshot_request(
   self : ServerState,
   req : @types.Request,
@@ -41,8 +40,7 @@ pub async fn ServerState::handle_tui_snapshot_request(
     e => return @tools.tool_response_err_from_caught(e)
   }
   let now_ms = @env.now().reinterpret_as_int64()
-  self.refresh_tui_beads_cache_if_stale(now_ms, bd_capture)
-  let default_branch = self.tui_default_branch_cached(capture)
+  let default_branch = self.tui_default_branch.unwrap_or("")
   let snapshot = self.build_tui_snapshot(now_ms, default_branch~)
   @types.Response::ok_values({ "snapshot": snapshot.to_json() })
 }
