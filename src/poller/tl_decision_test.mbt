@@ -317,6 +317,20 @@ test "advisory_evaluation_result_for_tracked_pr allows feature branch when Copil
 }
 
 ///|
+test "advisory_evaluation_summary_line omits Copilot wording when reviewer is none" {
+  let t = sample_tracked(None_, Success, 122)
+  let line = advisory_evaluation_summary_line(
+    t,
+    Some(0),
+    reviewer=@types.Reviewer::None,
+  )
+  assert_true(line.contains("Advisory evaluation verdict: ready"))
+  assert_true(line.contains("review skipped by policy"))
+  assert_false(line.contains("Copilot"))
+  assert_false(line.contains("waiting for review"))
+}
+
+///|
 test "merge_policy_summary_line reflects missing verify evidence" {
   let t = sample_tracked(Approved, Success, 13)
   let contract = {
@@ -919,4 +933,76 @@ test "merge_policy_decision_for_tracked_pr returns merge_now for comment-only re
   }
   let decision = merge_policy_decision_for_tracked_pr(t, Some(0))
   assert_eq(decision.label(), "merge_now")
+}
+
+///|
+test "pr_state_notification_decision reviewer none is merge-ready without review prose" {
+  let t = sample_tracked(None_, Success, 204)
+  let decision = pr_state_notification_decision_for_tracked_pr(
+    CILatestHeadRollupSucceeded(204),
+    t,
+    Some(0),
+    reviewer=@types.Reviewer::None,
+  )
+  assert_eq(decision.category, MergeGateOpenPendingPolicyConfirmation)
+  assert_eq(decision.next_action, MergeNow)
+  assert_eq(decision.policy_decision.label(), "merge_now")
+  let sentence = tl_pr_state_notification_sentence(decision, Manual)
+  assert_true(sentence.contains("review skipped by policy"))
+  assert_false(sentence.contains("Copilot"))
+  assert_false(sentence.contains("waiting for review"))
+}
+
+///|
+test "pr_state_notification_decision reviewer none fixes-pushed rechecks gates without Copilot re-review prose" {
+  let t = sample_tracked(None_, InProgress, 205)
+  let decision = pr_state_notification_decision_for_tracked_pr(
+    FixesPushed(205),
+    t,
+    None,
+    reviewer=@types.Reviewer::None,
+  )
+  let sentence = tl_pr_state_notification_sentence(decision, Manual)
+  assert_eq(decision.category, ReadyForTLRecheck)
+  assert_false(sentence.contains("Copilot"))
+  assert_false(sentence.contains("re-review"))
+  assert_false(sentence.contains("waiting for review"))
+}
+
+///|
+test "pr_state_notification_decision copilot reviewer still waits for Copilot comment" {
+  let t = sample_tracked(Commented, Success, 206)
+  let decision = pr_state_notification_decision_for_tracked_pr(
+    CILatestHeadRollupSucceeded(206),
+    t,
+    Some(0),
+    reviewer=@types.Reviewer::Copilot,
+  )
+  assert_eq(decision.category, ReadyForTLRecheck)
+  assert_eq(decision.policy_decision.label(), "wait")
+  let advisory = advisory_evaluation_summary_line(
+    t,
+    Some(0),
+    reviewer=@types.Reviewer::Copilot,
+  )
+  assert_true(advisory.contains("waiting for Copilot comments"))
+}
+
+///|
+test "pr_state_notification_decision named reviewer keeps configured-reviewer wait behavior" {
+  let t = sample_tracked(Commented, Success, 207)
+  let decision = pr_state_notification_decision_for_tracked_pr(
+    CILatestHeadRollupSucceeded(207),
+    t,
+    Some(0),
+    reviewer=@types.Reviewer::Named("octocat"),
+  )
+  assert_eq(decision.category, ReadyForTLRecheck)
+  assert_eq(decision.policy_decision.label(), "wait")
+  let advisory = advisory_evaluation_summary_line(
+    t,
+    Some(0),
+    reviewer=@types.Reviewer::Named("octocat"),
+  )
+  assert_true(advisory.contains("waiting for Copilot comments"))
 }

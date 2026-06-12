@@ -692,3 +692,32 @@ pub fn evaluation_bundle_from_evidence(
 
   { task_contract, signals }
 }
+
+///|
+fn advisory_review_required_for_reviewer(reviewer : @types.Reviewer) -> Bool {
+  match reviewer {
+    @types.Reviewer::None => false
+    @types.Reviewer::Copilot | @types.Reviewer::Named(_) => true
+  }
+}
+
+///|
+pub fn advisory_evaluation_result_from_evidence(
+  events : Array[EvidenceEvent],
+  task_contract? : @types.TaskContract? = None,
+  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
+) -> @types.EvaluationResult {
+  let review_required = advisory_review_required_for_reviewer(reviewer)
+  let result = @types.advisory_evaluation_result(
+    evaluation_bundle_from_evidence(events, task_contract~),
+    review_required~,
+  )
+  if !review_required && result.verdict == @types.EvaluationVerdict::Ready {
+    {
+      ..result,
+      summary: "ready: review skipped by policy; no tracked blockers",
+    }
+  } else {
+    result
+  }
+}

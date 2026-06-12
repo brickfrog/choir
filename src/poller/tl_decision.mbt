@@ -665,6 +665,18 @@ pub fn advisory_evaluation_result_for_tracked_pr(
 }
 
 ///|
+fn advisory_summary_for_review_requirement(
+  result : @types.EvaluationResult,
+  review_required : Bool,
+) -> String {
+  if !review_required && result.verdict == @types.EvaluationVerdict::Ready {
+    "ready: review skipped by policy; no tracked blockers"
+  } else {
+    result.summary
+  }
+}
+
+///|
 pub fn advisory_evaluation_summary_line(
   tracked : TrackedPR,
   unresolved_threads : Int?,
@@ -675,6 +687,9 @@ pub fn advisory_evaluation_summary_line(
   skip_copilot_on_feature_branch? : Bool = false,
   default_branch? : String = "",
 ) -> String {
+  let review_required = review_required_for_tracked_pr(
+    tracked, reviewer, skip_copilot_on_feature_branch, default_branch,
+  )
   let result = advisory_evaluation_result_for_tracked_pr(
     tracked,
     unresolved_threads,
@@ -688,7 +703,7 @@ pub fn advisory_evaluation_summary_line(
   "Advisory evaluation verdict: " +
   result.verdict.label() +
   " (" +
-  result.summary +
+  advisory_summary_for_review_requirement(result, review_required) +
   ")."
 }
 
@@ -1108,6 +1123,8 @@ pub fn plan_tl_poll_event_parent(
     FixesPushed(_) =>
       if merge_ready {
         MergeGateOpenPendingPolicyConfirmation
+      } else if !review_required {
+        ReadyForTLRecheck
       } else {
         FixesPushedAwaitingGates
       }
