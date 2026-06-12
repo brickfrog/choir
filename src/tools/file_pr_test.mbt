@@ -4,13 +4,6 @@ fn file_pr_test_tdd_done(_agent_id : String) -> @types.LeafTddPhase? {
 }
 
 ///|
-test "file_pr_audit_receipt_required compares parent to default branch" {
-  assert_true(file_pr_audit_receipt_required("develop", "develop"))
-  assert_false(file_pr_audit_receipt_required("develop", "main"))
-  assert_true(file_pr_audit_receipt_required("main", "main"))
-}
-
-///|
 test "file_pr_plan builds tracked result when tracking enabled" {
   let args : FilePrArgs = {
     branch: "main.task-leaf",
@@ -261,7 +254,7 @@ async test "interpret_file_pr_post_success returns plan ok without poller or reg
     args.tracked_agent_id,
     project_dir,
     pr.number,
-    false,
+    @types.Reviewer::None,
     effects,
     None,
     None,
@@ -304,7 +297,7 @@ async test "interpret_file_pr_post_success registers poller when tracked" {
     args.tracked_agent_id,
     project_dir,
     pr.number,
-    false,
+    @types.Reviewer::None,
     effects,
     Some(ps),
     None,
@@ -380,7 +373,7 @@ async test "interpret_file_pr_post_success auto-notify tcp appends delivery log"
     args.tracked_agent_id,
     project_dir,
     pr.number,
-    false,
+    @types.Reviewer::None,
     effects,
     None,
     Some(reg),
@@ -451,7 +444,7 @@ async test "interpret_file_pr_post_success parent missing appends resolve failur
     args.tracked_agent_id,
     project_dir,
     pr.number,
-    false,
+    @types.Reviewer::None,
     effects,
     None,
     Some(reg),
@@ -490,7 +483,7 @@ async test "interpret_file_pr_post_success reads the clock fresh for each delive
     state: "OPEN",
   }
   let plan = file_pr_plan(args, "main", pr, false)
-  // No registry → no auto-notify append; pr_review=true + a runner that fails
+  // No registry -> no auto-notify append; reviewer=copilot + a runner that fails
   // both copilot commands → exactly two delivery-log appends.
   let effects = file_pr_post_success_effects(plan, false, false)
   let base = 1_700_000_000_000L
@@ -503,7 +496,7 @@ async test "interpret_file_pr_post_success reads the clock fresh for each delive
     args.tracked_agent_id,
     project_dir,
     pr.number,
-    true,
+    @types.Reviewer::Copilot,
     effects,
     None,
     None,
@@ -538,7 +531,7 @@ async test "interpret_file_pr_post_success reads the clock fresh for each delive
   assert_true(
     log.contains(
       @poller.delivery_log_line(
-        "[file_pr] copilot_reviewer_request failed pr=55",
+        "[file_pr] reviewer_request failed pr=55 reviewer=@copilot",
         now_ms=base + 2000L,
       ),
     ),
@@ -606,7 +599,7 @@ async fn interpret_file_pr_post_success_test(
   tracked_agent_id : String,
   file_pr_workdir : String,
   pr_number : Int,
-  pr_review : Bool,
+  reviewer : @types.Reviewer,
   effects : FilePrPostSuccessEffects,
   poller_state : @poller.PollerState?,
   registry : @registry.AgentRegistry?,
@@ -620,7 +613,7 @@ async fn interpret_file_pr_post_success_test(
     tracked_agent_id,
     file_pr_workdir,
     pr_number,
-    pr_review,
+    reviewer,
     effects,
     poller_state,
     registry,
@@ -1018,7 +1011,7 @@ async test "interpret_file_pr returns preflight error without post-success" {
     "choir",
     None,
     None,
-    false,
+    @types.Reviewer::None,
     mock_preflight_err,
     mock_runner_all_ok,
     mock_capture_empty,
@@ -1052,7 +1045,7 @@ async test "interpret_file_pr skips required verify when branch preflight fails"
     "choir",
     None,
     Some(reg),
-    false,
+    @types.Reviewer::None,
     mock_preflight_err,
     mock_runner_all_ok,
     fn(cmd : @workspace.Command) -> (Int, String) {
@@ -1095,7 +1088,7 @@ async test "interpret_file_pr fails closed when server task contract is missing"
     "choir",
     None,
     Some(reg),
-    false,
+    @types.Reviewer::None,
     mock_preflight_ok,
     mock_runner_all_ok,
     fn(cmd : @workspace.Command) -> (Int, String) {
@@ -1150,7 +1143,7 @@ async test "interpret_file_pr feature main succeeds without audit receipt" {
     "choir",
     None,
     None,
-    false,
+    @types.Reviewer::None,
     mock_preflight_ok,
     mock_runner_all_ok,
     fn(cmd : @workspace.Command) -> (Int, String) {
@@ -1206,7 +1199,7 @@ async test "interpret_file_pr leaf to feature does not require audit receipt" {
     "choir",
     None,
     None,
-    false,
+    @types.Reviewer::None,
     mock_preflight_ok,
     mock_runner_all_ok,
     fn(cmd : @workspace.Command) -> (Int, String) {
@@ -1256,7 +1249,7 @@ async test "interpret_file_pr tracked dev leaf refuses before TDD phase is done"
     "choir",
     None,
     Some(reg),
-    false,
+    @types.Reviewer::None,
     mock_preflight_ok,
     mock_runner_all_ok,
     mock_capture_empty,
@@ -1312,7 +1305,7 @@ async test "interpret_file_pr runs required verify with configured moon target a
     "choir",
     None,
     Some(reg),
-    false,
+    @types.Reviewer::None,
     mock_preflight_ok,
     mock_runner_all_ok,
     fn(cmd : @workspace.Command) -> (Int, String) {
@@ -1399,7 +1392,7 @@ async test "dispatch file_pr records verify evidence through injected append_fil
     project_dir~,
     session="choir",
     registry=Some(reg),
-    pr_review=false,
+    reviewer=@types.Reviewer::None,
     ensure_branch_ready=Some(mock_preflight_ok),
     runner=mock_runner_all_ok,
     capture=async fn(cmd : @workspace.Command) -> (Int, String) {
@@ -1464,7 +1457,7 @@ async test "interpret_file_pr blocks before PR creation when required verify fai
     "choir",
     None,
     Some(reg),
-    false,
+    @types.Reviewer::None,
     mock_preflight_ok,
     mock_runner_all_ok,
     fn(cmd : @workspace.Command) -> (Int, String) {
@@ -1539,7 +1532,7 @@ async test "interpret_file_pr files leaf PR with changed tests without hidden mu
     "choir",
     None,
     Some(reg),
-    false,
+    @types.Reviewer::None,
     async fn(_branch, _parent_branch, _dir) {
       @async.sleep(0)
       Ok(())
@@ -1625,7 +1618,7 @@ async test "interpret_file_pr ok response matches full pipeline" {
     "choir",
     None,
     None,
-    false,
+    @types.Reviewer::None,
     mock_preflight_ok,
     mock_runner_all_ok,
     mock_capture_empty,
@@ -1667,7 +1660,7 @@ async test "interpret_file_pr tracks global review mode when no local override e
     "choir",
     Some(ps),
     None,
-    false,
+    @types.Reviewer::None,
     mock_preflight_ok,
     mock_runner_all_ok,
     mock_capture_empty,
@@ -1784,7 +1777,7 @@ async test "interpret_file_pr requests reviewer after verify push and ensure_pr"
     "choir",
     None,
     None,
-    true,
+    @types.Reviewer::Copilot,
     mock_preflight_ok,
     async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
       @async.sleep(0)
@@ -1856,6 +1849,7 @@ async fn file_pr_copilot_policy_observed_for_parent(
   parent_branch : String,
   default_branch : String,
   skip_copilot_on_feature_branch : Bool,
+  reviewer : @types.Reviewer,
   review_context : String?,
 ) -> FilePrCopilotPolicyObserved {
   let project_dir = "/tmp/choir-fpr-copilot-policy-" +
@@ -1883,7 +1877,7 @@ async fn file_pr_copilot_policy_observed_for_parent(
     "choir",
     None,
     None,
-    true,
+    reviewer,
     mock_preflight_ok,
     async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
       @async.sleep(0)
@@ -1933,6 +1927,7 @@ async test "interpret_file_pr gates copilot reviewer request by parent branch po
     "feature/foo",
     "main",
     true,
+    @types.Reviewer::Copilot,
     None,
   )
   assert_false(feature_enabled.requested_reviewers.contains("@copilot"))
@@ -1941,6 +1936,7 @@ async test "interpret_file_pr gates copilot reviewer request by parent branch po
     "main",
     "main",
     true,
+    @types.Reviewer::Copilot,
     None,
   )
   assert_true(main_enabled.requested_reviewers.contains("@copilot"))
@@ -1949,6 +1945,7 @@ async test "interpret_file_pr gates copilot reviewer request by parent branch po
     "master",
     "master",
     true,
+    @types.Reviewer::Copilot,
     None,
   )
   assert_true(master_enabled.requested_reviewers.contains("@copilot"))
@@ -1957,6 +1954,7 @@ async test "interpret_file_pr gates copilot reviewer request by parent branch po
     "feature/foo",
     "main",
     false,
+    @types.Reviewer::Copilot,
     None,
   )
   assert_true(feature_disabled.requested_reviewers.contains("@copilot"))
@@ -1965,9 +1963,36 @@ async test "interpret_file_pr gates copilot reviewer request by parent branch po
     "main",
     "main",
     false,
+    @types.Reviewer::Copilot,
     None,
   )
   assert_true(main_disabled.requested_reviewers.contains("@copilot"))
+}
+
+///|
+async test "interpret_file_pr requests configured named reviewer handle" {
+  let observed = file_pr_copilot_policy_observed_for_parent(
+    "main",
+    "main",
+    true,
+    @types.Reviewer::Named("octocat"),
+    None,
+  )
+  assert_true(observed.requested_reviewers.contains("octocat"))
+  assert_false(observed.requested_reviewers.contains("@copilot"))
+}
+
+///|
+async test "interpret_file_pr skips reviewer request when reviewer none" {
+  let observed = file_pr_copilot_policy_observed_for_parent(
+    "main",
+    "main",
+    true,
+    @types.Reviewer::None,
+    Some("trace context"),
+  )
+  assert_eq(observed.requested_reviewers.length(), 0)
+  assert_eq(observed.review_comments.length(), 0)
 }
 
 ///|
@@ -1976,6 +2001,7 @@ async test "interpret_file_pr keeps copilot context comment when feature branch 
     "feature/foo",
     "main",
     true,
+    @types.Reviewer::Copilot,
     Some("trace context"),
   )
   assert_false(observed.requested_reviewers.contains("@copilot"))

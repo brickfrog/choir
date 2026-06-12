@@ -1037,6 +1037,7 @@ async test "refresh_pr_with pending events fires automerge after fixes and CI cl
     pr_policy: {
       require_integration_audit: false,
       skip_copilot_on_feature_branch: true,
+      reviewer: @types.Reviewer::Copilot,
     },
   }
   let state = ServerState::new(config, make_hermetic_recovery_provider())
@@ -3076,6 +3077,7 @@ async test "deliver_pending_poll_events fires PRMerged hook whether tracked or s
         pr_policy: {
           require_integration_audit: false,
           skip_copilot_on_feature_branch: true,
+          reviewer: @types.Reviewer::Copilot,
         },
       },
       make_hermetic_recovery_provider(),
@@ -3227,6 +3229,7 @@ async test "deliver_pending_poll_events uses injected global hook config home" {
       pr_policy: {
         require_integration_audit: false,
         skip_copilot_on_feature_branch: true,
+        reviewer: @types.Reviewer::Copilot,
       },
     },
     make_hermetic_recovery_provider(),
@@ -3353,6 +3356,7 @@ async test "deliver_pending_poll_events ignores absent injected global hook fall
       pr_policy: {
         require_integration_audit: false,
         skip_copilot_on_feature_branch: true,
+        reviewer: @types.Reviewer::Copilot,
       },
     },
     make_hermetic_recovery_provider(),
@@ -3476,6 +3480,7 @@ async test "refresh_pr_with_test uses injected hook capture when project hook re
       pr_policy: {
         require_integration_audit: false,
         skip_copilot_on_feature_branch: true,
+        reviewer: @types.Reviewer::Copilot,
       },
     },
     make_hermetic_recovery_provider(),
@@ -4680,6 +4685,7 @@ async test "tracked PRMerged with missing head sha warns when integration audit 
       pr_policy: {
         require_integration_audit: false,
         skip_copilot_on_feature_branch: true,
+        reviewer: @types.Reviewer::Copilot,
       },
     },
     make_hermetic_recovery_provider(),

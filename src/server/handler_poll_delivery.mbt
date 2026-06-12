@@ -63,6 +63,7 @@ fn parent_pr_state_notification_decision(
   merge_mode? : @poller.MergeOperatorMode = @poller.MergeOperatorMode::Manual,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
+  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
   skip_copilot_on_feature_branch? : Bool = false,
   default_branch? : String = "",
 ) -> @poller.PrStateNotificationDecision {
@@ -91,6 +92,7 @@ fn parent_pr_state_notification_decision(
     review_mode~,
     verify_results~,
     merge_mode~,
+    reviewer~,
     skip_copilot_on_feature_branch~,
     default_branch~,
   )
@@ -133,6 +135,7 @@ pub fn parent_poll_event_message(
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
   precomputed_decision? : @poller.PrStateNotificationDecision? = None,
+  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
   skip_copilot_on_feature_branch? : Bool = false,
   default_branch? : String = "",
 ) -> (String, @types.Status)? {
@@ -164,11 +167,13 @@ pub fn parent_poll_event_message(
         merge_mode~,
         review_mode~,
         moon_verify_target~,
+        reviewer~,
         skip_copilot_on_feature_branch~,
         default_branch~,
       )
   }
   let review_required = @policy.review_required_for_branch(
+    reviewer,
     skip_copilot_on_feature_branch,
     tracked.parent_branch,
     default_branch,
@@ -323,6 +328,7 @@ pub fn parent_poll_event_message(
         unresolved_threads_for_recheck,
         task_contract~,
         moon_verify_target~,
+        reviewer~,
         skip_copilot_on_feature_branch~,
         default_branch~,
       )
@@ -359,6 +365,7 @@ pub fn parent_poll_event_message(
         unresolved_threads_for_recheck,
         task_contract~,
         moon_verify_target~,
+        reviewer~,
         skip_copilot_on_feature_branch~,
         default_branch~,
       )
@@ -395,6 +402,7 @@ pub fn parent_poll_event_message(
         unresolved_threads_for_recheck,
         task_contract~,
         moon_verify_target~,
+        reviewer~,
         skip_copilot_on_feature_branch~,
         default_branch~,
       )
@@ -461,6 +469,7 @@ pub fn parent_poll_event_message(
         unresolved_threads_for_recheck,
         task_contract~,
         moon_verify_target~,
+        reviewer~,
         skip_copilot_on_feature_branch~,
         default_branch~,
       )
@@ -1638,6 +1647,7 @@ pub fn ServerState::plan_poll_event_deliveries(
           merge_mode~,
           review_mode~,
           moon_verify_target=self.config.moon_verify_target,
+          reviewer=self.config.pr_policy.reviewer,
           skip_copilot_on_feature_branch=self.config.pr_policy.skip_copilot_on_feature_branch,
           default_branch~,
         )
@@ -1651,6 +1661,7 @@ pub fn ServerState::plan_poll_event_deliveries(
             review_mode~,
             moon_verify_target=self.config.moon_verify_target,
             precomputed_decision=Some(notification_decision),
+            reviewer=self.config.pr_policy.reviewer,
             skip_copilot_on_feature_branch=self.config.pr_policy.skip_copilot_on_feature_branch,
             default_branch~,
           ) {
@@ -1709,6 +1720,7 @@ pub fn ServerState::plan_poll_event_deliveries(
   let leaf_review_required = match tracked {
     Some(pr) =>
       @policy.review_required_for_branch(
+        self.config.pr_policy.reviewer,
         self.config.pr_policy.skip_copilot_on_feature_branch,
         pr.parent_branch,
         default_branch,
@@ -2378,6 +2390,7 @@ async fn deliver_pending_poll_events(
           merge_mode~,
           review_mode~,
           moon_verify_target=state.config.moon_verify_target,
+          reviewer=state.config.pr_policy.reviewer,
           skip_copilot_on_feature_branch=state.config.pr_policy.skip_copilot_on_feature_branch,
           default_branch~,
         )
@@ -2392,6 +2405,7 @@ async fn deliver_pending_poll_events(
             review_mode~,
             moon_verify_target=state.config.moon_verify_target,
             precomputed_decision=Some(notification_decision),
+            reviewer=state.config.pr_policy.reviewer,
             skip_copilot_on_feature_branch=state.config.pr_policy.skip_copilot_on_feature_branch,
             default_branch~,
           ) {

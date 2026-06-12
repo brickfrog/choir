@@ -169,6 +169,47 @@ fn parse_bool_config_value(raw : String) -> Result[Bool, String] {
 }
 
 ///|
+fn parse_reviewer_config_value(
+  key : String,
+  raw : String,
+) -> Result[@types.Reviewer, @types.ChoirError] {
+  let stripped = strip_toml_inline_comment(raw)
+  let value = if stripped.has_prefix("\"") &&
+    stripped.has_suffix("\"") &&
+    stripped.length() >= 2 {
+    let parsed = @json.parse(stripped) catch {
+      e =>
+        return Err(
+          @types.ChoirError::config_error(
+            key + ": invalid string: " + e.to_string(),
+          ),
+        )
+    }
+    match parsed {
+      String(s) => s
+      _ =>
+        return Err(@types.ChoirError::config_error(key + ": expected string"))
+    }
+  } else if stripped.has_prefix("'") &&
+    stripped.has_suffix("'") &&
+    stripped.length() >= 2 {
+    stripped[1:stripped.length() - 1].to_owned()
+  } else {
+    stripped
+  }
+  match @types.Reviewer::try_parse_wire(value) {
+    Ok(reviewer) => Ok(reviewer)
+    Err(e) => {
+      let detail = match e.message().strip_prefix("config error: ") {
+        Some(message) => message.to_owned()
+        None => e.message()
+      }
+      Err(@types.ChoirError::config_error(key + ": " + detail))
+    }
+  }
+}
+
+///|
 fn parse_required_bool_config_value(
   doc : TomlDoc,
   key : String,
@@ -463,15 +504,6 @@ pub fn parse_config(
         None => default_cfg.terminal_session
       }
   }
-  let pr_review = match doc.get("pr_review") {
-    None => default_cfg.pr_review
-    Some(raw) =>
-      match parse_bool_config_value(raw) {
-        Ok(b) => b
-        Err(msg) =>
-          return Err(@types.ChoirError::config_error("pr_review: " + msg))
-      }
-  }
   let automerge = match doc.get("automerge") {
     None => default_cfg.automerge
     Some(raw) =>
@@ -596,6 +628,14 @@ pub fn parse_config(
     Ok(v) => v
     Err(e) => return Err(e)
   }
+  let pr_policy_reviewer = match doc.get("pr_policy.reviewer") {
+    None => default_cfg.pr_policy.reviewer
+    Some(raw) =>
+      match parse_reviewer_config_value("pr_policy.reviewer", raw) {
+        Ok(reviewer) => reviewer
+        Err(e) => return Err(e)
+      }
+  }
   let auto_rebuild_after_pull = match
     parse_required_bool_config_value(
       doc,
@@ -632,7 +672,6 @@ pub fn parse_config(
     companions_json,
     plugins_json,
     terminal_session,
-    pr_review,
     automerge,
     review_mode,
     merge_strategy,
@@ -648,6 +687,7 @@ pub fn parse_config(
     pr_policy: {
       require_integration_audit: pr_policy_require_integration_audit,
       skip_copilot_on_feature_branch: pr_policy_skip_copilot_on_feature_branch,
+      reviewer: pr_policy_reviewer,
     },
     auto_rebuild_after_pull,
     auto_reload_after_rebuild,

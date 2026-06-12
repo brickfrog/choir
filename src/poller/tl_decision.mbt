@@ -586,10 +586,12 @@ pub fn evaluation_ci_rollup_from_snapshot(
 ///|
 fn review_required_for_tracked_pr(
   tracked : TrackedPR,
+  reviewer : @types.Reviewer,
   skip_copilot_on_feature_branch : Bool,
   default_branch : String,
 ) -> Bool {
   @policy.review_required_for_branch(
+    reviewer,
     skip_copilot_on_feature_branch,
     tracked.parent_branch,
     default_branch,
@@ -643,11 +645,12 @@ pub fn advisory_evaluation_result_for_tracked_pr(
   task_contract? : @types.TaskContract? = None,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   verify_results? : Array[@types.VerifyCheckResult] = [],
+  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
   skip_copilot_on_feature_branch? : Bool = false,
   default_branch? : String = "",
 ) -> @types.EvaluationResult {
   let review_required = review_required_for_tracked_pr(
-    tracked, skip_copilot_on_feature_branch, default_branch,
+    tracked, reviewer, skip_copilot_on_feature_branch, default_branch,
   )
   @types.advisory_evaluation_result(
     advisory_evaluation_bundle_for_tracked_pr(
@@ -668,6 +671,7 @@ pub fn advisory_evaluation_summary_line(
   task_contract? : @types.TaskContract? = None,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   verify_results? : Array[@types.VerifyCheckResult] = [],
+  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
   skip_copilot_on_feature_branch? : Bool = false,
   default_branch? : String = "",
 ) -> String {
@@ -677,6 +681,7 @@ pub fn advisory_evaluation_summary_line(
     task_contract~,
     review_mode~,
     verify_results~,
+    reviewer~,
     skip_copilot_on_feature_branch~,
     default_branch~,
   )
@@ -719,6 +724,7 @@ pub fn merge_policy_decision_for_tracked_pr(
   task_contract? : @types.TaskContract? = None,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   verify_results? : Array[@types.VerifyCheckResult] = [],
+  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
   skip_copilot_on_feature_branch? : Bool = false,
   default_branch? : String = "",
 ) -> @policy.MergeDecision {
@@ -730,7 +736,7 @@ pub fn merge_policy_decision_for_tracked_pr(
     verify_results~,
   )
   let review_required = review_required_for_tracked_pr(
-    tracked, skip_copilot_on_feature_branch, default_branch,
+    tracked, reviewer, skip_copilot_on_feature_branch, default_branch,
   )
   let canonical = @policy.decide_merge(task_contract, bundle, review_required~)
   match unresolved_threads {
@@ -771,6 +777,7 @@ pub fn merge_policy_summary_line(
   task_contract? : @types.TaskContract? = None,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   verify_results? : Array[@types.VerifyCheckResult] = [],
+  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
   skip_copilot_on_feature_branch? : Bool = false,
   default_branch? : String = "",
 ) -> String {
@@ -780,6 +787,7 @@ pub fn merge_policy_summary_line(
     task_contract~,
     review_mode~,
     verify_results~,
+    reviewer~,
     skip_copilot_on_feature_branch~,
     default_branch~,
   )
@@ -897,11 +905,12 @@ pub fn pr_state_notification_decision_for_tracked_pr(
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   verify_results? : Array[@types.VerifyCheckResult] = [],
   merge_mode? : MergeOperatorMode = MergeOperatorMode::Manual,
+  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
   skip_copilot_on_feature_branch? : Bool = false,
   default_branch? : String = "",
 ) -> PrStateNotificationDecision {
   let review_required = review_required_for_tracked_pr(
-    tracked, skip_copilot_on_feature_branch, default_branch,
+    tracked, reviewer, skip_copilot_on_feature_branch, default_branch,
   )
   let category = plan_tl_poll_event_parent(
     event,
@@ -916,6 +925,7 @@ pub fn pr_state_notification_decision_for_tracked_pr(
     task_contract~,
     review_mode~,
     verify_results~,
+    reviewer~,
     skip_copilot_on_feature_branch~,
     default_branch~,
   )

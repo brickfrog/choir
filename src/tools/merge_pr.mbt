@@ -74,9 +74,8 @@ pub fn merge_pr_audit_receipt_validation(
   current_tree : String,
   receipt_body : String?,
 ) -> MergePrAuditReceiptValidation {
-  if !file_pr_audit_receipt_required(parent_branch, default_branch) {
-    return MergeAuditReceiptValid
-  }
+  ignore(parent_branch)
+  ignore(default_branch)
   merge_pr_required_audit_receipt_validation(current_tree, receipt_body)
 }
 
@@ -511,6 +510,7 @@ pub async fn interpret_merge_pr_preflight(
   task_contract_reader? : (String) -> @types.TaskContract? = fn(_) { None },
   review_mode? : @types.ReviewMode = @types.ReviewMode::SinglePass,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
+  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
   skip_copilot_on_feature_branch? : Bool = @types.Config::default().pr_policy.skip_copilot_on_feature_branch,
   default_branch? : String = "",
 ) -> Result[Unit, @types.ChoirError] {
@@ -555,6 +555,7 @@ pub async fn interpret_merge_pr_preflight(
           task_contract~,
           review_mode~,
           verify_results~,
+          reviewer~,
           skip_copilot_on_feature_branch~,
           default_branch~,
         ),
@@ -794,9 +795,6 @@ pub async fn merge_pr_require_audit_receipt(
   capture : async (@workspace.Command) -> (Int, String),
   append_file? : (String, String) -> Bool = fn(_, _) { false },
 ) -> Result[Unit, @types.ChoirError] {
-  if !file_pr_audit_receipt_required(parent_branch, default_branch) {
-    return Ok(())
-  }
   if !merge_pr_audit_gate_required(gate_state, pr_first_seen_unix) {
     return Ok(())
   }
@@ -839,6 +837,7 @@ pub fn format_tl_pr_recheck_summary(
   task_contract? : @types.TaskContract? = None,
   verify_results? : Array[@types.VerifyCheckResult] = [],
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
+  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
   skip_copilot_on_feature_branch? : Bool = false,
   default_branch? : String = "",
 ) -> String {
@@ -865,6 +864,7 @@ pub fn format_tl_pr_recheck_summary(
     "GitHub Copilot issue comment (REST): not seen"
   }
   let review_required = @policy.review_required_for_branch(
+    reviewer,
     skip_copilot_on_feature_branch,
     tracked.parent_branch,
     default_branch,
@@ -889,6 +889,7 @@ pub fn format_tl_pr_recheck_summary(
     task_contract~,
     review_mode=tracked.review_mode,
     verify_results~,
+    reviewer~,
     skip_copilot_on_feature_branch~,
     default_branch~,
   )
@@ -898,6 +899,7 @@ pub fn format_tl_pr_recheck_summary(
     task_contract~,
     review_mode=tracked.review_mode,
     verify_results~,
+    reviewer~,
     skip_copilot_on_feature_branch~,
     default_branch~,
   )
@@ -2152,6 +2154,7 @@ pub async fn interpret_merge_pr(
   merge_strategy? : @types.MergeStrategy = @types.Config::default().merge_strategy,
   task_contract_reader? : (String) -> @types.TaskContract? = fn(_) { None },
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
+  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
   skip_copilot_on_feature_branch? : Bool = @types.Config::default().pr_policy.skip_copilot_on_feature_branch,
   require_integration_audit? : Bool = @types.Config::default().pr_policy.require_integration_audit,
   hook_capture? : async (String, String, String?) -> (Int, String) = async fn(
@@ -2179,6 +2182,7 @@ pub async fn interpret_merge_pr(
         @types.ReviewMode::SinglePass,
       ),
       moon_verify_target~,
+      reviewer~,
       skip_copilot_on_feature_branch~,
       default_branch~,
     ) {
@@ -2221,39 +2225,44 @@ pub async fn interpret_merge_pr(
         _ => merge_args.parent_branch
       }
       let mut merge_match_head_sha : String? = None
-      if file_pr_audit_receipt_required(effective_parent_branch, default_branch) {
-        let gate_state = match
-          load_gate_state(project_dir, read_file, path_exists~) {
-          Ok(state) => state
-          Err(e) => return @types.Response::Err(e.message())
+      match tracked_for_merge {
+        Some(tracked) => {
+          let gate_state = match
+            load_gate_state(project_dir, read_file, path_exists~) {
+            Ok(state) => state
+            Err(e) => return @types.Response::Err(e.message())
+          }
+          match
+            merge_pr_require_audit_receipt(
+              effective_parent_branch,
+              default_branch,
+              project_dir,
+              merge_args.pr_number,
+              tracked.last_sha,
+              gate_state,
+              tracked.first_seen,
+              capture,
+              append_file~,
+            ) {
+            Err(e) => return @types.Response::Err(e.message())
+            Ok(_) => merge_match_head_sha = Some(tracked.last_sha)
+          }
         }
-        match tracked_for_merge {
-          Some(tracked) =>
-            match
-              merge_pr_require_audit_receipt(
-                effective_parent_branch,
-                default_branch,
-                project_dir,
-                merge_args.pr_number,
-                tracked.last_sha,
-                gate_state,
-                tracked.first_seen,
-                capture,
-                append_file~,
-              ) {
+        None =>
+          if path_exists(merge_pr_audit_gate_state_path(project_dir)) {
+            match load_gate_state(project_dir, read_file, path_exists~) {
+              Ok(_) =>
+                return @types.Response::Err(
+                  merge_pr_audit_block_error(
+                    project_dir,
+                    merge_args.pr_number,
+                    MergeAuditGateHeadUnavailable,
+                    append_file,
+                  ).message(),
+                )
               Err(e) => return @types.Response::Err(e.message())
-              Ok(_) => merge_match_head_sha = Some(tracked.last_sha)
             }
-          None =>
-            return @types.Response::Err(
-              merge_pr_audit_block_error(
-                project_dir,
-                merge_args.pr_number,
-                MergeAuditGateHeadUnavailable,
-                append_file,
-              ).message(),
-            )
-        }
+          }
       }
       match
         interpret_merge_pr_merge_host(
