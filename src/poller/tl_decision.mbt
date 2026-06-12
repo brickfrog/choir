@@ -51,10 +51,9 @@ pub(all) enum NextAction {
   /// `Mixed` no longer collapses to MergeNow — that asserted a merge that
   /// the parent can't safely fire without checking the leaf's local config.
   CrossCheckMergeMode
-  /// Review timeout: poller saw no Copilot review within the window.
+  /// Review timeout: poller saw no configured review within the window.
   /// Parent escalates (e.g., re-add the reviewer). Distinct from `Wait`
   /// because the prose tells the parent to act, not sit idle.
-  EscalateReview
   EscalateConfiguredReview(reviewer~ : @types.Reviewer)
   /// Fixes and green CI are present, but unresolved review threads still gate merge.
   ResolveThreadsNow
@@ -74,7 +73,6 @@ pub fn NextAction::to_wire_string(self : NextAction) -> String {
     AddressThreads => "address_threads"
     CrossCheckThreads => "cross_check_threads"
     CrossCheckMergeMode => "cross_check_merge_mode"
-    EscalateReview => "escalate_review"
     EscalateConfiguredReview(_) => "escalate_review"
     ResolveThreadsNow => "resolve_threads_now"
   }
@@ -201,10 +199,6 @@ pub fn next_action_detail_line(
       "Next action: verify review threads via GitHub GraphQL plus CI/policy, then merge_pr only if clear."
     CrossCheckMergeMode =>
       "Next action: wave merge mode is mixed — confirm this leaf's per-leaf merge mode (manual vs automerge) before running merge_pr."
-    EscalateReview =>
-      "Next action: `request_review(pr_number: \"" +
-      pr_number.to_string() +
-      "\", reviewer: \"@copilot\")` (Copilot has not reviewed within the timeout window)."
     EscalateConfiguredReview(reviewer~) =>
       "Next action: `request_review(pr_number: \"" +
       pr_number.to_string() +
@@ -950,10 +944,7 @@ pub fn next_action_for_pr_state_notification(
       recheck_next_action(decision, tracked, unresolved_threads, mode)
     OrphanedPRNeedsManualAction => CrossCheckThreads
     AttentionRequiredCopilotSilentAfterTimeout =>
-      match reviewer {
-        @types.Reviewer::Named(_) => EscalateConfiguredReview(reviewer~)
-        _ => EscalateReview
-      }
+      EscalateConfiguredReview(reviewer~)
     WaitingOnReviewOrCI
     | WaitingOnCopilotIssueComment
     | AttentionRequiredCIFailed
@@ -1234,8 +1225,10 @@ pub fn plan_tl_poll_event_parent(
 pub fn tl_tracked_pr_recheck_gate_line(
   tracked : TrackedPR,
   unresolved_thread_count : Int?,
+  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
   review_required? : Bool = true,
 ) -> String {
+  let reviewer_label = reviewer_text_label(reviewer)
   let snapshot_ready = tl_tracked_pr_merge_gate_snapshot_ready(
     tracked,
     unresolved_thread_count,
@@ -1246,9 +1239,13 @@ pub fn tl_tracked_pr_recheck_gate_line(
       return "Choir snapshot: no tracked blockers (review skipped by policy, CI success/no checks, zero unresolved threads). Confirm repo policy, then merge_pr if appropriate. Does not merge."
     }
     if tracked.copilot_issue_comment_seen {
-      "Choir snapshot: no tracked blockers (reviewed, CI success/no checks, zero unresolved threads). Copilot issue comment observed. Confirm repo policy, then merge_pr if appropriate. Does not merge."
+      "Choir snapshot: no tracked blockers (reviewed, CI success/no checks, zero unresolved threads). " +
+      reviewer_label +
+      " issue comment observed. Confirm repo policy, then merge_pr if appropriate. Does not merge."
     } else {
-      "Choir snapshot: no tracked blockers (reviewed, CI success/no checks, zero unresolved threads), but no Copilot issue comment observed on this PR yet — confirm policy before merge_pr. Does not merge."
+      "Choir snapshot: no tracked blockers (reviewed, CI success/no checks, zero unresolved threads), but no " +
+      reviewer_label +
+      " issue comment observed on this PR yet — confirm policy before merge_pr. Does not merge."
     }
   } else {
     let parts : Array[String] = []
@@ -1257,12 +1254,16 @@ pub fn tl_tracked_pr_recheck_gate_line(
         review_required~,
       ) {
       parts.push(
-        "review wait already timed out with no review in Choir snapshot (comment-triggered Copilot may be unreliable)",
+        "review wait already timed out with no review in Choir snapshot (comment-triggered " +
+        reviewer_label +
+        " may be unreliable)",
       )
     }
     if review_required && !tracked.copilot_issue_comment_seen {
       parts.push(
-        "no GitHub Copilot issue comment observed (REST issue comments)",
+        "no GitHub " +
+        reviewer_label +
+        " issue comment observed (REST issue comments)",
       )
     }
     if tracked.last_review_state == ChangesRequested {

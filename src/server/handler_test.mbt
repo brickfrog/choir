@@ -6174,7 +6174,7 @@ test "parent_poll_event_message MergeReady on Mixed mode says MERGE READY (not M
 }
 
 ///|
-test "parent_poll_event_message ReviewTimeout emits EscalateReview next_action with reviewer-add detail" {
+test "parent_poll_event_message ReviewTimeout emits EscalateConfiguredReview next_action with reviewer-add detail" {
   let tracked = parent_poll_test_ready_tracked(77)
   match
     parent_poll_event_message(
@@ -6185,7 +6185,12 @@ test "parent_poll_event_message ReviewTimeout emits EscalateReview next_action w
       merge_mode=@poller.MergeOperatorMode::Manual,
     ) {
     Some((message, _)) => {
-      assert_next_action_line(message, @poller.NextAction::EscalateReview)
+      assert_next_action_line(
+        message,
+        @poller.NextAction::EscalateConfiguredReview(
+          reviewer=@types.Reviewer::Copilot,
+        ),
+      )
       assert_true(message.contains("request_review"))
       assert_true(message.contains("@copilot"))
     }
@@ -6581,6 +6586,34 @@ test "leaf_poll_review_injection_message CILatestHeadRollupSucceeded escalates w
       assert_true(message.contains("request_review"))
       assert_true(message.contains("@copilot"))
       assert_false(message.contains("re-check review thread and policy"))
+    }
+    None => fail("expected leaf CI escalation injection")
+  }
+}
+
+///|
+test "leaf_poll_review_injection_message CILatestHeadRollupSucceeded names configured reviewer in escalation" {
+  let tracked = {
+    ..parent_poll_test_ready_tracked(180),
+    agent_id: "main.dev-leaf",
+    branch: "work/leaf",
+    last_review_state: @poller.ReviewState::None_,
+    last_timeout_at: 100L,
+    copilot_issue_comment_seen: false,
+  }
+  match
+    leaf_poll_review_injection_message(
+      @poller.PollEvent::CILatestHeadRollupSucceeded(180),
+      Some(tracked),
+      reviewer=@types.Reviewer::Named("alice"),
+    ) {
+    Some((message, status)) => {
+      assert_eq(status, @types.Status::Info)
+      assert_true(message.contains("no review"))
+      assert_true(message.contains("request_review"))
+      assert_true(message.contains("reviewer: \"alice\""))
+      assert_false(message.contains("@copilot"))
+      assert_false(message.contains("Copilot"))
     }
     None => fail("expected leaf CI escalation injection")
   }
@@ -8060,6 +8093,38 @@ test "parent_poll_event_message CI LATEST HEAD adds escalation when review timeo
       assert_true(message.contains("Review timeout already fired"))
       assert_true(message.contains("TLDecision:"))
       assert_true(message.contains("ACTION REQUIRED: no review"))
+    }
+    None => fail("expected CILatestHeadRollupSucceeded escalation message")
+  }
+}
+
+///|
+test "parent_poll_event_message CI LATEST HEAD names configured reviewer in escalation" {
+  let tracked = {
+    ..parent_poll_test_ready_tracked(172),
+    last_review_state: @poller.ReviewState::None_,
+    last_timeout_at: 999L,
+    copilot_issue_comment_seen: false,
+  }
+  match
+    parent_poll_event_message(
+      tracked,
+      "/repo",
+      @poller.PollEvent::CILatestHeadRollupSucceeded(172),
+      Some(0),
+      reviewer=@types.Reviewer::Named("alice"),
+    ) {
+    Some((message, status)) => {
+      assert_eq(status, @types.Status::Info)
+      assert_true(message.contains("Review timeout already fired"))
+      assert_true(
+        message.contains(
+          "request_review(pr_number: \"172\", reviewer: \"alice\")",
+        ),
+      )
+      assert_true(message.contains("alice"))
+      assert_false(message.contains("@copilot"))
+      assert_false(message.contains("Copilot"))
     }
     None => fail("expected CILatestHeadRollupSucceeded escalation message")
   }

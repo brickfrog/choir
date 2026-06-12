@@ -465,6 +465,20 @@ test "tl_tracked_pr_recheck_gate_line mentions escalation when copilot silent af
 }
 
 ///|
+test "tl_tracked_pr_recheck_gate_line names configured reviewer after timeout" {
+  let t = { ..sample_tracked(None_, Success, 43), last_timeout_at: 50L }
+  let line = tl_tracked_pr_recheck_gate_line(
+    t,
+    Some(0),
+    reviewer=@types.Reviewer::Named("alice"),
+  )
+  assert_true(line.contains("timed out"))
+  assert_true(line.contains("alice"))
+  assert_false(line.contains("Copilot"))
+  assert_false(line.contains("@copilot"))
+}
+
+///|
 test "detect_orphaned_prs returns PR when agent inactive and not yet notified" {
   let pr = sample_tracked(None_, Unknown, 501)
   let got = detect_orphaned_prs([(pr, false)])

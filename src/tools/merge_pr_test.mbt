@@ -2537,6 +2537,26 @@ test "format_tl_pr_recheck_summary notes Copilot issue comment when seen on merg
 }
 
 ///|
+test "format_tl_pr_recheck_summary names configured reviewer without Copilot prose" {
+  let t : @poller.TrackedPR = {
+    ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
+  }
+  let s = format_tl_pr_recheck_summary(
+    t,
+    "/repo",
+    Some(0),
+    reviewer=@types.Reviewer::Named("alice"),
+  )
+  assert_true(s.contains("alice"))
+  assert_false(s.contains("Copilot"))
+  assert_false(s.contains("@copilot"))
+}
+
+///|
 test "format_tl_pr_recheck_summary policy needs human when required verify is missing" {
   let t : @poller.TrackedPR = {
     ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),

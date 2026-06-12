@@ -181,6 +181,7 @@ fn parent_reviewerless_recheck_summary(
   let gate = @poller.tl_tracked_pr_recheck_gate_line(
     tracked,
     unresolved_threads_for_recheck,
+    reviewer~,
     review_required=false,
   )
   let advisory = @poller.advisory_evaluation_summary_line(
@@ -457,7 +458,11 @@ pub fn parent_poll_event_message(
         tracked, project_dir, unresolved_threads_for_recheck, task_contract, moon_verify_target,
         reviewer, skip_copilot_on_feature_branch, default_branch, review_required,
       )
-      let prefix = parent_poll_ci_escalation_prefix(tracked, review_required~)
+      let prefix = parent_poll_ci_escalation_prefix(
+        tracked,
+        reviewer~,
+        review_required~,
+      )
       Some(
         (
           "[CI FAILURE CLEARED] " +
@@ -488,7 +493,11 @@ pub fn parent_poll_event_message(
         tracked, project_dir, unresolved_threads_for_recheck, task_contract, moon_verify_target,
         reviewer, skip_copilot_on_feature_branch, default_branch, review_required,
       )
-      let prefix = parent_poll_ci_escalation_prefix(tracked, review_required~)
+      let prefix = parent_poll_ci_escalation_prefix(
+        tracked,
+        reviewer~,
+        review_required~,
+      )
       Some(
         (
           "[CI LATEST HEAD] " +
@@ -1371,6 +1380,7 @@ pub fn clamp_review_summary_for_pane(body : String) -> String {
 pub fn leaf_poll_review_injection_message(
   event : @poller.PollEvent,
   tracked : @poller.TrackedPR?,
+  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
   review_required? : Bool = true,
 ) -> (String, @types.Status)? {
   match event {
@@ -1419,11 +1429,14 @@ pub fn leaf_poll_review_injection_message(
               pr,
               review_required~,
             ) {
+            let reviewer_handle = parent_poll_request_review_handle(reviewer)
             "[REVIEW] PR #" +
             n.to_string() +
             ": CI cleared but still no review. Run request_review(pr_number: \"" +
             n.to_string() +
-            "\", reviewer: \"@copilot\")"
+            "\", reviewer: \"" +
+            reviewer_handle +
+            "\")"
           } else {
             base
           }
@@ -1441,11 +1454,14 @@ pub fn leaf_poll_review_injection_message(
               pr,
               review_required~,
             ) {
+            let reviewer_handle = parent_poll_request_review_handle(reviewer)
             "[REVIEW] PR #" +
             n.to_string() +
             ": CI green but still no review. Run request_review(pr_number: \"" +
             n.to_string() +
-            "\", reviewer: \"@copilot\")"
+            "\", reviewer: \"" +
+            reviewer_handle +
+            "\")"
           } else {
             base
           }
@@ -1842,6 +1858,7 @@ pub fn ServerState::plan_poll_event_deliveries(
             leaf_poll_review_injection_message(
               event,
               tracked,
+              reviewer=self.config.pr_policy.reviewer,
               review_required=leaf_review_required,
             ) {
             Some((message, status)) =>
