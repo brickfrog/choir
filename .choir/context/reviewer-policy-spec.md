@@ -134,9 +134,11 @@ otherwise PR readiness is CI + threads + TL audit." No behavior changes.
 
 ## Verify
 - `moon test --target native`
-- `grep -rnE '\bpr_review\b' src/ | wc -l` → `0` (field fully deleted, no
-  shim; word-boundary so pre-existing `merge_pr_review_*` / `parse_pr_review_*`
-  symbols, which merely contain the substring, are out of scope)
+- `grep -rnE '\bpr_review\b' src/ --include="*.mbt" | grep -v _test | wc -l`
+  → `0` (field fully deleted from production source, no shim; word-boundary
+  so pre-existing `merge_pr_review_*` / `parse_pr_review_*` symbols are out
+  of scope; the legacy-key-ignored migration TEST legitimately mentions the
+  old key, and gitignored `pkg.generated.mbti` build artifacts may lag)
 - `grep -n "reviewer" src/types/config_schema.mbt` → schema documents
   `pr_policy.reviewer` with `none|copilot|<handle>`
 
