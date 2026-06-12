@@ -2682,10 +2682,17 @@ async fn ServerState::sweep_tracked_prs_for_automerge(
     )
     let automerge_enabled = automerge_enabled_for_agent(self.config, local_cfg)
     let unresolved_threads = tracked_unresolved_thread_count_for_gate(current)
+    let review_required = @policy.review_required_for_branch(
+      self.config.pr_policy.reviewer,
+      self.config.pr_policy.skip_copilot_on_feature_branch,
+      current.parent_branch,
+      "",
+    )
     let gate_ready = @poller.tl_tracked_pr_merge_gate_snapshot_ready(
       current,
       unresolved_threads,
       review_mode=current.review_mode,
+      review_required~,
     )
     if !pr_needs_automerge_sweep_attempt(current, gate_ready, automerge_enabled) {
       continue

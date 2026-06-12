@@ -1485,6 +1485,7 @@ pub async fn dispatch(
         tdd_phase_reader~,
         task_contract_reader~,
         moon_verify_target~,
+        reviewer~,
         skip_copilot_on_feature_branch~,
       )
     ToolRequest::StatusBarState(status_bar_state_args) =>

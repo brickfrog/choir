@@ -1407,6 +1407,64 @@ async test "interpret_wave_state merge_gate_ready matches verify policy" {
 }
 
 ///|
+async test "interpret_wave_state reviewer none marks green threadless PR merge_gate_ready" {
+  let project_dir = wave_state_test_project_dir("reviewer-none")
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
+      )
+    }),
+  )
+  ignore(
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent(
+          "tl.leaf",
+          @types.Role::Dev,
+          Some("tl"),
+          @types.AgentType::Gemini,
+        ),
+      )
+    }),
+  )
+  ignore(
+    @phase.write_lifecycle(
+      project_dir,
+      make_supervisor_lifecycle("tl", @phase.SupervisorLifecycle::Planning),
+    ),
+  )
+  let ps = @poller.PollerState::new()
+  ps.tracked.set(
+    103,
+    tracked_pr_with(
+      103,
+      "tl.leaf",
+      @poller.ReviewState::None_,
+      @poller.CiRollupStatus::Success,
+      false,
+      0L,
+      "head-reviewer-none",
+    ),
+  )
+  let contract = { ..@types.TaskContract::empty(), goal: "ship reviewerless" }
+  let ready = interpret_wave_state(
+    { caller_id: "tl" },
+    project_dir,
+    Some(reg),
+    Some(ps),
+    capture=mock_wave_state_capture_threads_none,
+    task_contract_reader=fn(_) { Some(contract) },
+  )
+  assert_true(ready.is_ok())
+  assert_true(
+    ready.ok_field("snapshot").unwrap().contains("\"merge_gate_ready\":true"),
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "interpret_wave_state unresolved_threads=Some(N) blocks merge_gate_ready" {
   let project_dir = wave_state_test_project_dir("two")
   let reg = @registry.AgentRegistry::new()
