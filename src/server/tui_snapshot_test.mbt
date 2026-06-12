@@ -61,13 +61,11 @@ test "build_tui_snapshot assembles agents, wave, prs, vitals, and journal tail" 
     duration_ms: 45100L,
     ts_ms: 1779970001000L,
   })
-  state.record_leaf_tdd_state("main.leaf-a", { phase: @types.LeafTddPhase::Green })
+  state.record_leaf_tdd_state("main.leaf-a", {
+    phase: @types.LeafTddPhase::Green,
+  })
   state.poller.track(
-    561,
-    "main.leaf-a",
-    "main.leaf-a",
-    "main",
-    "https://example.invalid/pr/561",
+    561, "main.leaf-a", "main.leaf-a", "main", "https://example.invalid/pr/561",
     1779970000L,
   )
   // Journal some events so seq and the recent slice are non-trivial.

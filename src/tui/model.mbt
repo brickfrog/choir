@@ -309,10 +309,7 @@ fn load_snapshot(model : Model, snapshot : @types.TuiSnapshot) -> Model {
   for agent in snapshot.agents {
     if agent.state == @types.AgentState::Failed {
       swept = push_alarm(swept, "leaf failed: " + agent.agent_id)
-      swept = {
-        ..swept,
-        ui: { ..swept.ui, badge_agents: true },
-      }
+      swept = { ..swept, ui: { ..swept.ui, badge_agents: true } }
     }
   }
   for pr in snapshot.prs {
@@ -426,7 +423,8 @@ fn apply_event(model : Model, envelope : @types.TuiEventEnvelope) -> Model {
       }
     @types.TuiEvent::TddPhaseChanged(agent_id~, phase~) =>
       match next.agents.get(agent_id) {
-        Some(agent) => next.agents.set(agent_id, { ..agent, tdd_phase: Some(phase) })
+        Some(agent) =>
+          next.agents.set(agent_id, { ..agent, tdd_phase: Some(phase) })
         None => ()
       }
     @types.TuiEvent::TddGateViolation(agent_id~, tool~, ..) => {
@@ -476,7 +474,8 @@ fn apply_event(model : Model, envelope : @types.TuiEventEnvelope) -> Model {
             @types.PrEventKind::CiFailed => { ..pr, ci_rollup: "failure" }
             @types.PrEventKind::CiFailureCleared
             | @types.PrEventKind::CiSucceeded => { ..pr, ci_rollup: "success" }
-            @types.PrEventKind::ReviewReceived => { ..pr, review_state: "changes_requested" }
+            @types.PrEventKind::ReviewReceived =>
+              { ..pr, review_state: "changes_requested" }
             @types.PrEventKind::ReviewThreadsResolved =>
               { ..pr, unresolved_threads: Some(0) }
             @types.PrEventKind::MergeReady => { ..pr, merge_gate_ready: true }
@@ -580,12 +579,7 @@ fn move_selection(model : Model, delta : Int) -> Model {
     Agents => { ..ui, agents_sel: clamp(ui.agents_sel + delta) }
     Beads => { ..ui, beads_sel: clamp(ui.beads_sel + delta) }
     Prs => { ..ui, prs_sel: clamp(ui.prs_sel + delta) }
-    Log =>
-      {
-        ..ui,
-        log_follow: false,
-        log_scroll: clamp(ui.log_scroll + delta),
-      }
+    Log => { ..ui, log_follow: false, log_scroll: clamp(ui.log_scroll + delta) }
   }
   { ..model, ui: next_ui }
 }
@@ -629,7 +623,10 @@ fn set_tab(model : Model, tab : Tab) -> Model {
 }
 
 ///|
-fn handle_filter_key(model : Model, key : @pippa.KeyMsg) -> (Model, Array[TuiEffect]) {
+fn handle_filter_key(
+  model : Model,
+  key : @pippa.KeyMsg,
+) -> (Model, Array[TuiEffect]) {
   let ui = model.ui
   match key {
     @pippa.KeyMsg::Special("enter") =>
@@ -700,10 +697,7 @@ fn handle_pending_key(
       }
     }
     @pippa.KeyMsg::Char('n') | @pippa.KeyMsg::Special("esc") =>
-      (
-        { ..model, ui: { ..model.ui, pending: None, status_line: "" } },
-        [],
-      )
+      ({ ..model, ui: { ..model.ui, pending: None, status_line: "" } }, [])
     _ => (model, [])
   }
 }
@@ -777,9 +771,7 @@ fn handle_key(model : Model, key : @pippa.KeyMsg) -> (Model, Array[TuiEffect]) {
               ui: {
                 ..model.ui,
                 pending: Some(ConfirmMerge(pr.pr_number)),
-                status_line: "merge PR #" +
-                pr.pr_number.to_string() +
-                "? [y/n]",
+                status_line: "merge PR #" + pr.pr_number.to_string() + "? [y/n]",
               },
             },
             [],
@@ -803,13 +795,7 @@ fn handle_key(model : Model, key : @pippa.KeyMsg) -> (Model, Array[TuiEffect]) {
         None => (model, [])
       }
     @pippa.KeyMsg::Char('f') =>
-      (
-        {
-          ..model,
-          ui: { ..model.ui, log_follow: !model.ui.log_follow },
-        },
-        [],
-      )
+      ({ ..model, ui: { ..model.ui, log_follow: !model.ui.log_follow } }, [])
     @pippa.KeyMsg::Char('/') =>
       (
         {

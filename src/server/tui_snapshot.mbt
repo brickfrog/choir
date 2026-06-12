@@ -180,7 +180,10 @@ fn ServerState::tui_snapshot_pr(
     merged_at_unix: tracked.merged_at_unix,
     copilot_issue_comment_seen: tracked.copilot_issue_comment_seen,
     copilot_skipped_reason: tui_copilot_skipped_reason(
-      reviewer, skip_copilot, tracked.parent_branch, default_branch,
+      reviewer,
+      skip_copilot,
+      tracked.parent_branch,
+      default_branch,
     ),
     merge_gate_ready,
     consecutive_failures: tracked.consecutive_failures,
@@ -204,7 +207,8 @@ pub fn ServerState::build_tui_snapshot(
   let project_dir = self.config.project_dir
   let read_lifecycle = match lifecycle_reader {
     Some(f) => f
-    None => fn(agent_id : String) { @phase.read_lifecycle(project_dir, agent_id) }
+    None =>
+      fn(agent_id : String) { @phase.read_lifecycle(project_dir, agent_id) }
   }
   let agents : Array[@types.TuiSnapshotAgent] = []
   let status_tracked_by_agent = @tools.status_tracked_by_agent(

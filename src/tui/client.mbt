@@ -54,11 +54,15 @@ fn TuiClient::write_all(self : TuiClient, line : String) -> Bool {
   let deadline = @env.now().reinterpret_as_int64() +
     tui_client_read_deadline_ms.to_int64()
   while offset < bytes.length() {
-    let written = @uds.write_bytes(self.fd, bytes, offset, bytes.length() - offset)
+    let written = @uds.write_bytes(
+      self.fd,
+      bytes,
+      offset,
+      bytes.length() - offset,
+    )
     if written > 0 {
       offset = offset + written
-    } else if written == 0 ||
-      @env.now().reinterpret_as_int64() > deadline {
+    } else if written == 0 || @env.now().reinterpret_as_int64() > deadline {
       return false
     } else {
       // Transient EAGAIN-style failure on a non-blocking fd: yield briefly.
@@ -134,7 +138,10 @@ pub fn TuiClient::request(
 }
 
 ///|
-fn operator_request(name : String, args : Map[String, String]) -> @types.Request {
+fn operator_request(
+  name : String,
+  args : Map[String, String],
+) -> @types.Request {
   {
     req_method: "tools/call",
     role: @types.Role::Operator,

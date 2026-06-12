@@ -89,7 +89,10 @@ fn effect_cmd(client : TuiClient, effect : TuiEffect) -> @pippa.Cmd[Msg] {
 }
 
 ///|
-fn effects_cmd(client : TuiClient, effects : Array[TuiEffect]) -> @pippa.Cmd[Msg] {
+fn effects_cmd(
+  client : TuiClient,
+  effects : Array[TuiEffect],
+) -> @pippa.Cmd[Msg] {
   let cmds : Array[@pippa.Cmd[Msg]] = []
   for effect in effects {
     cmds.push(effect_cmd(client, effect))

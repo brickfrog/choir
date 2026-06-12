@@ -9222,9 +9222,13 @@ async test "spawn command failure diagnostic travels dispatch to NeverRegistered
     capture=spawn_registration_capture,
   )
   assert_eq(inbox_count_containing(state, "[SPAWN REGISTRATION TIMEOUT]"), 1)
-  assert_true(inbox_bodies(state).join("\n").contains("spawn_class=spawn-command-failed"))
+  assert_true(
+    inbox_bodies(state).join("\n").contains("spawn_class=spawn-command-failed"),
+  )
   assert_true(inbox_bodies(state).join("\n").contains("exit=27"))
-  assert_true(inbox_bodies(state).join("\n").contains("tcp_auth_token=[REDACTED]"))
+  assert_true(
+    inbox_bodies(state).join("\n").contains("tcp_auth_token=[REDACTED]"),
+  )
   assert_true(inbox_bodies(state).join("\n").contains("Bearer [REDACTED]"))
   assert_false(inbox_bodies(state).join("\n").contains("stderr-secret"))
   assert_false(inbox_bodies(state).join("\n").contains("bearer-secret"))
@@ -9320,11 +9324,15 @@ async test "successful spawn launch diagnostic travels dispatch to launched time
     capture=spawn_registration_capture,
   )
   assert_eq(inbox_count_containing(state, "[SPAWN REGISTRATION TIMEOUT]"), 1)
-  assert_true(inbox_bodies(state).join("\n").contains("spawn_class=launched-but-never-registered"))
   assert_true(
-    inbox_bodies(state).join("\n").contains(
-      "spawn commands succeeded but agent never registered within 180s",
-    ),
+    inbox_bodies(state)
+    .join("\n")
+    .contains("spawn_class=launched-but-never-registered"),
+  )
+  assert_true(
+    inbox_bodies(state)
+    .join("\n")
+    .contains("spawn commands succeeded but agent never registered within 180s"),
   )
   assert_false(inbox_bodies(state).join("\n").contains("spawn-command-failed"))
   assert_eq(closed.length(), 1)
@@ -9368,12 +9376,18 @@ async test "spawn registration timeout reports captured spawn command failure ca
   )
 
   assert_eq(inbox_count_containing(state, "[SPAWN REGISTRATION TIMEOUT]"), 1)
-  assert_true(inbox_bodies(state).join("\n").contains("spawn_class=spawn-command-failed"))
+  assert_true(
+    inbox_bodies(state).join("\n").contains("spawn_class=spawn-command-failed"),
+  )
   assert_true(inbox_bodies(state).join("\n").contains("command_index=7"))
   assert_true(inbox_bodies(state).join("\n").contains("exit=27"))
   assert_true(inbox_bodies(state).join("\n").contains("zellij action new-tab"))
-  assert_true(inbox_bodies(state).join("\n").contains("zellij stderr: tab failed"))
-  assert_false(inbox_bodies(state).join("\n").contains("launched-but-never-registered"))
+  assert_true(
+    inbox_bodies(state).join("\n").contains("zellij stderr: tab failed"),
+  )
+  assert_false(
+    inbox_bodies(state).join("\n").contains("launched-but-never-registered"),
+  )
   assert_eq(closed.length(), 1)
   ignore(@sys.rm_rf(state.config.project_dir))
 }
@@ -9414,11 +9428,15 @@ async test "spawn registration timeout reports launched but never registered cau
   )
 
   assert_eq(inbox_count_containing(state, "[SPAWN REGISTRATION TIMEOUT]"), 1)
-  assert_true(inbox_bodies(state).join("\n").contains("spawn_class=launched-but-never-registered"))
   assert_true(
-    inbox_bodies(state).join("\n").contains(
-      "spawn commands succeeded but agent never registered within 180s",
-    ),
+    inbox_bodies(state)
+    .join("\n")
+    .contains("spawn_class=launched-but-never-registered"),
+  )
+  assert_true(
+    inbox_bodies(state)
+    .join("\n")
+    .contains("spawn commands succeeded but agent never registered within 180s"),
   )
   assert_false(inbox_bodies(state).join("\n").contains("spawn-command-failed"))
   assert_eq(closed.length(), 1)

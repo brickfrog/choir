@@ -56,6 +56,13 @@ fn init_should_launch_server_tab(server_alive : Bool) -> Bool {
 }
 
 ///|
+/// Server tab launch script: daemon in the background of the same pane,
+/// TUI as the pane's visible process.
+fn init_server_tab_script() -> String {
+  "choir serve > /dev/null 2>&1 & exec choir tui"
+}
+
+///|
 fn init_server_socket_wait_tries() -> Int {
   // `choir init` is a foreground flow with the user watching the terminal, so
   // keep the pre-TL socket wait to about 20s and warn before launching anyway.
@@ -1324,17 +1331,24 @@ fn init_run() -> Unit {
         _ => false
       }
       if !server_tab_exists {
-        if init_should_launch_server_tab(server_alive == 0) {
-          init_run_or_exit(
-            @workspace.zellij_new_tab(session, "Server", project_dir, [], {
-              program: "choir",
-              args: ["serve"],
-              workdir: None,
-            }),
-          )
+        // The Server tab's visible process is the TUI dashboard; the daemon
+        // runs behind it in the same pane, stdout silenced so it cannot
+        // corrupt the alt screen (.choir/serve.log keeps the full log — the
+        // TUI's log tab replaces tailing the server pane). When a server
+        // process is already running, the tab hosts just the TUI.
+        let script = if init_should_launch_server_tab(server_alive == 0) {
+          init_server_tab_script()
         } else {
-          @sys.write_stdout("Reusing existing server process.\n")
+          @sys.write_stdout(
+            "Reusing existing server process; Server tab runs the TUI.\n",
+          )
+          "exec choir tui"
         }
+        init_run_or_exit(
+          @workspace.zellij_new_tab_shell(
+            session, "Server", project_dir, script,
+          ),
+        )
       } else {
         @sys.write_stdout("Reusing existing Server tab.\n")
       }

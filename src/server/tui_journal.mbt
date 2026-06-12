@@ -66,10 +66,7 @@ pub fn TuiJournal::open(
 ) -> TuiJournal {
   ignore(
     serve_rotate_log_if_large(
-      project_dir,
-      tui_journal_rel_path,
-      file_size,
-      rename_file,
+      project_dir, tui_journal_rel_path, file_size, rename_file,
     ),
   )
   let path = tui_journal_path(project_dir)
@@ -163,7 +160,11 @@ pub fn TuiJournal::recent(
   self : TuiJournal,
   max? : Int = 100,
 ) -> Array[@types.TuiEventEnvelope] {
-  let start = if self.ring.length() > max { self.ring.length() - max } else { 0 }
+  let start = if self.ring.length() > max {
+    self.ring.length() - max
+  } else {
+    0
+  }
   let out : Array[@types.TuiEventEnvelope] = []
   for i = start; i < self.ring.length(); i = i + 1 {
     out.push(self.ring[i])
@@ -261,12 +262,7 @@ pub fn TuiJournal::events_since(
     first_retained,
   )
   match first_retained.val {
-    Some(first) =>
-      if cursor + 1L < first {
-        StaleCursor
-      } else {
-        Events(out)
-      }
+    Some(first) => if cursor + 1L < first { StaleCursor } else { Events(out) }
     // Nothing retained on disk at all, yet latest_seq() says events exist:
     // the journal was deleted or never writable. The gap is unservable.
     None => StaleCursor

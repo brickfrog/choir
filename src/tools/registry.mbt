@@ -140,8 +140,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     ),
     tool_def("send_message", "Send message to any agent by ID", all_roles),
     tool_def(
-      "check_inbox",
-      "Drain your pending inbox: returns all queued messages and marks them delivered. Call this whenever you see a 'choir: N messages pending' nudge in your terminal.",
+      "check_inbox", "Drain your pending inbox: returns all queued messages and marks them delivered. Call this whenever you see a 'choir: N messages pending' nudge in your terminal.",
       all_roles,
     ),
     tool_def(

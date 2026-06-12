@@ -66,7 +66,10 @@ pub fn server_status_snapshot_rows(
     )
     let workflow = lifecycle.workflow
     let derived = @tools.derive_agent_status(
-      agent_id, workflow, poller.tracked, tracked_by_agent,
+      agent_id,
+      workflow,
+      poller.tracked,
+      tracked_by_agent,
     )
     rows.push({
       agent_id,

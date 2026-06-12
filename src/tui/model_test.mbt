@@ -42,7 +42,11 @@ fn test_snapshot() -> @types.TuiSnapshot {
       supervisor_id: Some("root-tl"),
     },
     agents: [
-      test_snapshot_agent("root-tl", @types.Role::Root, @types.AgentState::Active),
+      test_snapshot_agent(
+        "root-tl",
+        @types.Role::Root,
+        @types.AgentState::Active,
+      ),
       test_snapshot_agent(
         "main.leaf-a",
         @types.Role::Dev,
@@ -267,7 +271,10 @@ test "merge keybinding requires confirmation then sends the daemon command" {
     @tui.Msg::KeyInput(@pippa.KeyMsg::Char('m')),
   )
   assert_eq(effects0.length(), 0)
-  @debug.assert_eq(armed.ui.pending, Some(@tui.PendingAction::ConfirmMerge(561)))
+  @debug.assert_eq(
+    armed.ui.pending,
+    Some(@tui.PendingAction::ConfirmMerge(561)),
+  )
   let (_, effects) = @tui.update_model(
     armed,
     @tui.Msg::KeyInput(@pippa.KeyMsg::Char('y')),

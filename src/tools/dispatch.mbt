@@ -899,7 +899,7 @@ pub async fn dispatch(
     _recipient,
     _sender,
     _body,
-    _status
+    _status,
   ) {
     None
   },
@@ -910,7 +910,9 @@ pub async fn dispatch(
     content : String,
     status : @types.Status,
   ) -> @message.DeliveryMethod {
-    @message.plan_delivery_via_inbox(agent, sender, content, status, inbox_queue)
+    @message.plan_delivery_via_inbox(
+      agent, sender, content, status, inbox_queue,
+    )
   }
   let ensure_branch_ready = match ensure_branch_ready {
     Some(f) => f
@@ -1430,7 +1432,8 @@ pub async fn dispatch(
           )
         None => None
       }
-      match notify_parent_plan(notify_args, parent_resolution, plan_delivery_fn~) {
+      match
+        notify_parent_plan(notify_args, parent_resolution, plan_delivery_fn~) {
         NotifyParentPlan::NoRegistry(dev_event~, response~) => {
           apply_dev_event(
             project_dir,
@@ -2091,7 +2094,7 @@ pub async fn handle_request(
     _recipient,
     _sender,
     _body,
-    _status
+    _status,
   ) {
     None
   },

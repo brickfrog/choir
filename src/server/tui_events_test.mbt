@@ -98,12 +98,7 @@ test "plan_tui_dispatch_events ignores non tool calls" {
 test "tui_event_from_poll_event maps merge and status kinds" {
   let poller_state = @poller.PollerState::new()
   poller_state.track(
-    561,
-    "main.leaf",
-    "main.leaf",
-    "main",
-    "https://example.invalid/pr/561",
-    1779970000L,
+    561, "main.leaf", "main.leaf", "main", "https://example.invalid/pr/561", 1779970000L,
   )
   let tracked = match poller_state.get(561) {
     Some(pr) => pr

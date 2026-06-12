@@ -9,7 +9,9 @@ fn TuiJournalTestFs::new() -> TuiJournalTestFs {
 }
 
 ///|
-fn TuiJournalTestFs::append(self : TuiJournalTestFs) -> (String, String) -> Bool {
+fn TuiJournalTestFs::append(
+  self : TuiJournalTestFs,
+) -> (String, String) -> Bool {
   fn(path, content) {
     self.files.set(path, self.files.get(path).unwrap_or("") + content)
     true
@@ -89,7 +91,8 @@ test "events_since serves from ring with bounded batches" {
     _ => fail("expected bounded batch")
   }
   match journal.events_since(7L) {
-    @server.TuiEventsSinceResult::Events(events) => assert_eq(events.length(), 0)
+    @server.TuiEventsSinceResult::Events(events) =>
+      assert_eq(events.length(), 0)
     _ => fail("expected empty batch at head")
   }
 }

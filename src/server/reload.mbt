@@ -605,7 +605,9 @@ pub fn ServerState::handle_server_reload_request(
       // Journal the graceful shutdown before the response is written; the
       // re-exec'd server recovers the seq from the journal tail, so TUI
       // cursors survive the reload.
-      self.emit_tui_event(@types.TuiEvent::DaemonShutdown(reason="server_reload"))
+      self.emit_tui_event(
+        @types.TuiEvent::DaemonShutdown(reason="server_reload"),
+      )
       @types.Response::ok_values({
         "status": ServerReloadStatus::ReloadScheduled.to_wire_string().to_json(),
         "binary_path": binary_path.to_json(),

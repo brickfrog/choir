@@ -48,7 +48,12 @@ pub fn AgentLifecycle::workflow_label(self : AgentLifecycle) -> String {
 
 ///|
 priv struct LifecycleTransitionObserverSlot {
-  mut observer : ((String, AgentLifecycle, AgentLifecycle, @types.LifecycleTrigger) -> Unit)?
+  mut observer : ((
+    String,
+    AgentLifecycle,
+    AgentLifecycle,
+    @types.LifecycleTrigger,
+  ) -> Unit)?
 }
 
 ///|

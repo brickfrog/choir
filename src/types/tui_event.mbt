@@ -24,7 +24,9 @@ pub fn parse_tool_call_record_json(
   json : Json,
 ) -> Result[ToolCallRecord, ChoirError] {
   guard json is Object(obj) else {
-    return Err(ChoirError::validation_error("tool call record: expected object"))
+    return Err(
+      ChoirError::validation_error("tool call record: expected object"),
+    )
   }
   let tool = match json_field_string(obj, "tool") {
     Some(v) => v
