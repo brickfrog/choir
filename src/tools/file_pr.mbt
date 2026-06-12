@@ -724,6 +724,14 @@ pub fn file_pr_audit_receipt_path_for_head(sha : String) -> String {
 }
 
 ///|
+pub fn file_pr_audit_receipt_required(
+  parent_branch : String,
+  default_branch : String,
+) -> Bool {
+  parent_branch == default_branch
+}
+
+///|
 fn file_pr_registered_dev_gate_applies(
   caller_role : @types.Role,
   tracked_agent_id : String,
