@@ -73,35 +73,6 @@ test "parse_config - full" {
 }
 
 ///|
-test "Reviewer wire strings round-trip fixed values and named handles" {
-  let cases : Array[@types.Reviewer] = [
-    @types.Reviewer::None,
-    @types.Reviewer::Copilot,
-    @types.Reviewer::Named("octocat"),
-    @types.Reviewer::Named("@maintainer"),
-  ]
-  for reviewer in cases {
-    match @types.Reviewer::try_parse_wire(reviewer.to_wire_string()) {
-      Ok(parsed) => assert_eq(parsed, reviewer)
-      Err(e) => fail(e.message())
-    }
-  }
-}
-
-///|
-test "Reviewer try_parse_wire maps non-empty custom handles to Named" {
-  match @types.Reviewer::try_parse_wire("alice") {
-    Ok(@types.Reviewer::Named(handle)) => assert_eq(handle, "alice")
-    Ok(other) => fail("expected named reviewer, got " + other.to_wire_string())
-    Err(e) => fail(e.message())
-  }
-  match @types.Reviewer::try_parse_wire("") {
-    Err(e) => assert_true(e.message().contains("reviewer"))
-    Ok(_) => fail("expected empty reviewer to be rejected")
-  }
-}
-
-///|
 fn config_schema_key_present(file : @types.ConfigFile, key : String) -> Bool {
   for entry in @types.config_schema_entries() {
     if entry.file == file && entry.key == key {
@@ -151,6 +122,16 @@ test "config schema nested keys match parser-accepted TOML shape" {
     }
     None => fail("expected pricing.codex to parse")
   }
+}
+
+///|
+test "parse_config silently ignores removed pr_review key" {
+  let content =
+    #|[pr_policy]
+    #|pr_review = true
+
+  let cfg = parse_config(content).unwrap()
+  @debug.assert_eq(cfg.pr_policy.reviewer, @types.Reviewer::None)
 }
 
 ///|

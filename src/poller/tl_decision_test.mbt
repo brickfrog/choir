@@ -1004,5 +1004,30 @@ test "pr_state_notification_decision named reviewer keeps configured-reviewer wa
     Some(0),
     reviewer=@types.Reviewer::Named("octocat"),
   )
-  assert_true(advisory.contains("waiting for Copilot comments"))
+  assert_true(advisory.contains("waiting for octocat comments"))
+  assert_false(advisory.contains("Copilot"))
+}
+
+///|
+test "pr_state_notification_decision named timeout escalation names configured reviewer" {
+  let t = { ..sample_tracked(None_, Success, 208), last_timeout_at: 1L }
+  let decision = pr_state_notification_decision_for_tracked_pr(
+    CILatestHeadRollupSucceeded(208),
+    t,
+    Some(0),
+    reviewer=@types.Reviewer::Named("octocat"),
+  )
+  assert_eq(decision.category, AttentionRequiredCopilotSilentAfterTimeout)
+  assert_eq(decision.next_action.to_wire_string(), "escalate_review")
+  let sentence = tl_pr_state_notification_sentence(decision, Manual)
+  assert_true(sentence.contains("octocat"))
+  assert_false(sentence.contains("@copilot"))
+  let detail = next_action_detail_line(
+    decision.next_action,
+    208,
+    Some("main"),
+    Manual,
+  )
+  assert_true(detail.contains("reviewer: \"octocat\""))
+  assert_false(detail.contains("@copilot"))
 }

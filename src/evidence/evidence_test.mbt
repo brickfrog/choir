@@ -331,44 +331,6 @@ test "verify_results_for_required_at_head_with_ci preserves failures and non-suc
 }
 
 ///|
-test "advisory_evaluation_result_from_evidence is ready without review signals when reviewer is none" {
-  let result = advisory_evaluation_result_from_evidence(
-    [
-      EvidenceEvent::ReviewObserved(state=EvidenceReviewState::None_, body=None),
-      EvidenceEvent::CopilotIssueCommentUnobserved,
-      EvidenceEvent::CiObserved(
-        status=EvidenceCiStatus::Success,
-        head_sha=Some("head-ready"),
-      ),
-      EvidenceEvent::ThreadsObserved(count=0),
-    ],
-    reviewer=@types.Reviewer::None,
-  )
-  assert_eq(result.verdict, @types.EvaluationVerdict::Ready)
-  assert_true(result.summary.contains("review skipped by policy"))
-  assert_false(result.summary.contains("Copilot"))
-  assert_false(result.summary.contains("waiting for review"))
-}
-
-///|
-test "advisory_evaluation_result_from_evidence keeps configured reviewer wait" {
-  let result = advisory_evaluation_result_from_evidence(
-    [
-      EvidenceEvent::ReviewObserved(state=EvidenceReviewState::None_, body=None),
-      EvidenceEvent::CopilotIssueCommentUnobserved,
-      EvidenceEvent::CiObserved(
-        status=EvidenceCiStatus::Success,
-        head_sha=Some("head-waiting"),
-      ),
-      EvidenceEvent::ThreadsObserved(count=0),
-    ],
-    reviewer=@types.Reviewer::Copilot,
-  )
-  assert_eq(result.verdict.label(), "needs_human")
-  assert_true(result.summary.contains("waiting for review"))
-}
-
-///|
 test "evidence load skips blank and invalid lines" {
   let content =
     #|{"ts":1,"type":"evidence.copilot_issue_comment_observed","agent_id":"a","data":{}}

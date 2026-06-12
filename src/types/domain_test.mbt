@@ -10,6 +10,35 @@ test "default config" {
 }
 
 ///|
+test "Reviewer wire strings round-trip fixed values and named handles" {
+  let cases : Array[@types.Reviewer] = [
+    @types.Reviewer::None,
+    @types.Reviewer::Copilot,
+    @types.Reviewer::Named("octocat"),
+    @types.Reviewer::Named("@maintainer"),
+  ]
+  for reviewer in cases {
+    match @types.Reviewer::try_parse_wire(reviewer.to_wire_string()) {
+      Ok(parsed) => assert_eq(parsed, reviewer)
+      Err(e) => fail(e.message())
+    }
+  }
+}
+
+///|
+test "Reviewer try_parse_wire maps non-empty custom handles to Named" {
+  match @types.Reviewer::try_parse_wire("alice") {
+    Ok(@types.Reviewer::Named(handle)) => assert_eq(handle, "alice")
+    Ok(other) => fail("expected named reviewer, got " + other.to_wire_string())
+    Err(e) => fail(e.message())
+  }
+  match @types.Reviewer::try_parse_wire("") {
+    Err(e) => assert_true(e.message().contains("reviewer"))
+    Ok(_) => fail("expected empty reviewer to be rejected")
+  }
+}
+
+///|
 test "Role try_parse_wire round-trips to_wire_string for all roles" {
   let roles : Array[@types.Role] = [
     @types.Role::Root,

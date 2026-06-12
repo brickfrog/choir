@@ -64,7 +64,9 @@ async fn mock_runner_expect_copilot_reviewer_only(
   assert_eq(cmds[0].program, "gh")
   assert_eq(
     cmds[0],
-    file_pr_copilot_reviewer_gh_command(21, "/tmp/copilot-fpr"),
+    file_pr_reviewer_gh_command(
+      21, file_pr_copilot_reviewer_handle, "/tmp/copilot-fpr",
+    ),
   )
   [0]
 }
@@ -155,7 +157,12 @@ async test "interpret_file_pr_post_success posts copilot review comment then req
         )
         @debug.assert_eq(cmds[0].workdir, Some(project_dir))
       } else if n == 1 {
-        assert_eq(cmds[0], file_pr_copilot_reviewer_gh_command(55, project_dir))
+        assert_eq(
+          cmds[0],
+          file_pr_reviewer_gh_command(
+            55, file_pr_copilot_reviewer_handle, project_dir,
+          ),
+        )
       } else {
         fail("unexpected extra runner invocation for file_pr copilot")
       }
@@ -237,7 +244,10 @@ async fn mock_runner_copilot_uses_worktree_path(
   @async.sleep(0)
   let wt = "/tmp/pr-split-test/.choir/worktrees/agent"
   assert_eq(cmds.length(), 1)
-  assert_eq(cmds[0], file_pr_copilot_reviewer_gh_command(99, wt))
+  assert_eq(
+    cmds[0],
+    file_pr_reviewer_gh_command(99, file_pr_copilot_reviewer_handle, wt),
+  )
   [0]
 }
 

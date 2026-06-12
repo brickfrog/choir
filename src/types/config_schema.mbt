@@ -232,7 +232,7 @@ pub fn config_schema_entries() -> Array[ConfigSchemaEntry] {
       "pr_policy.reviewer",
       "Reviewer { none | copilot | <handle> }",
       "\"none\"",
-      "Reviewer requested by `file_pr`; `none` disables external reviewer requests.",
+      "Reviewer requested by `file_pr`; `none` disables external reviewer requests. A configured Named reviewer is waited on like Copilot: a non-responsive reviewer stalls merge until the TL intervenes or config changes. Chosen reviewer = chosen wait.",
     ),
     schema_entry(
       ConfigToml,

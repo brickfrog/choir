@@ -1680,8 +1680,10 @@ async test "interpret_file_pr tracks global review mode when no local override e
 }
 
 ///|
-test "file_pr_copilot_reviewer_gh_command requests @copilot reviewer" {
-  let cmd = file_pr_copilot_reviewer_gh_command(44, "/wt/agent-checkout")
+test "file_pr_reviewer_gh_command requests @copilot reviewer" {
+  let cmd = file_pr_reviewer_gh_command(
+    44, file_pr_copilot_reviewer_handle, "/wt/agent-checkout",
+  )
   assert_eq(cmd.program, "timeout")
   @debug.assert_eq(cmd.workdir, Some("/wt/agent-checkout"))
   @debug.assert_eq(cmd.args, [
@@ -1976,10 +1978,20 @@ async test "interpret_file_pr requests configured named reviewer handle" {
     "main",
     true,
     @types.Reviewer::Named("octocat"),
-    None,
+    Some("trace context"),
   )
   assert_true(observed.requested_reviewers.contains("octocat"))
   assert_false(observed.requested_reviewers.contains("@copilot"))
+  let expected_comment = "@octocat review: trace context"
+  if !observed.review_comments.contains(expected_comment) {
+    fail(
+      "expected named reviewer context comment, saw: " +
+      observed.review_comments.join("|"),
+    )
+  }
+  assert_false(
+    observed.review_comments.contains("@copilot review: trace context"),
+  )
 }
 
 ///|

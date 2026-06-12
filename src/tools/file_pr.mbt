@@ -180,27 +180,65 @@ pub let file_pr_copilot_reviewer_handle : String = "@copilot"
 
 ///|
 /// Prefix for the PR issue comment that nudges Copilot review with caller-supplied context.
-pub let file_pr_copilot_review_comment_prefix : String = "@copilot review: "
+pub let file_pr_copilot_review_comment_prefix : String = file_pr_copilot_reviewer_handle +
+  " review: "
+
+///|
+pub fn file_pr_reviewer_review_comment_mention(
+  reviewer_handle : String,
+) -> String {
+  if reviewer_handle.has_prefix("@") {
+    reviewer_handle
+  } else {
+    "@" + reviewer_handle
+  }
+}
+
+///|
+pub fn file_pr_reviewer_review_comment_body(
+  reviewer_handle : String,
+  review_context_trimmed : String,
+) -> String {
+  file_pr_reviewer_review_comment_mention(reviewer_handle) +
+  " review: " +
+  review_context_trimmed
+}
 
 ///|
 pub fn file_pr_copilot_review_comment_body(
   review_context_trimmed : String,
 ) -> String {
-  file_pr_copilot_review_comment_prefix + review_context_trimmed
+  file_pr_reviewer_review_comment_body(
+    file_pr_copilot_reviewer_handle, review_context_trimmed,
+  )
 }
 
 ///|
-/// `gh pr comment` body for Copilot review context ([`interpret_file_pr_post_success`] when
+/// `gh pr comment` body for review context ([`interpret_file_pr_post_success`] when
 /// a reviewer is configured and [`FilePrPostSuccessEffects::review_context`] is non-empty).
-pub fn file_pr_copilot_review_comment_gh_command(
+pub fn file_pr_reviewer_review_comment_gh_command(
   pr_number : Int,
+  reviewer_handle : String,
   review_context_trimmed : String,
   gh_workdir : String,
 ) -> @workspace.Command {
   @workspace.gh_pr_comment(
     pr_number,
-    file_pr_copilot_review_comment_body(review_context_trimmed),
+    file_pr_reviewer_review_comment_body(
+      reviewer_handle, review_context_trimmed,
+    ),
     gh_workdir,
+  )
+}
+
+///|
+pub fn file_pr_copilot_review_comment_gh_command(
+  pr_number : Int,
+  review_context_trimmed : String,
+  gh_workdir : String,
+) -> @workspace.Command {
+  file_pr_reviewer_review_comment_gh_command(
+    pr_number, file_pr_copilot_reviewer_handle, review_context_trimmed, gh_workdir,
   )
 }
 
@@ -245,17 +283,6 @@ pub async fn interpret_request_review(
     output,
     args.pr_number,
     args.reviewer,
-  )
-}
-
-///|
-/// `gh pr edit --add-reviewer @copilot` for the Copilot reviewer.
-pub fn file_pr_copilot_reviewer_gh_command(
-  pr_number : Int,
-  gh_workdir : String,
-) -> @workspace.Command {
-  @workspace.gh_pr_add_reviewer(
-    pr_number, file_pr_copilot_reviewer_handle, gh_workdir,
   )
 }
 
@@ -468,61 +495,63 @@ pub async fn interpret_file_pr_post_success(
     _ => ()
   }
   let mut review_request_failed = false
-  if reviewer_handle is Some(_) {
-    match effects.review_context {
-      Some(ctx) => {
-        let comment_cmd = file_pr_copilot_review_comment_gh_command(
-          pr_number, ctx, file_pr_workdir,
-        )
-        let mut spawn_err_comment : String? = None
-        let codes_comment = runner([comment_cmd]) catch {
-          e => {
-            spawn_err_comment = Some(e.to_string())
-            []
-          }
-        }
-        let ok_comment = spawn_err_comment is None &&
-          codes_comment.length() > 0 &&
-          codes_comment[0] == 0
-        if !ok_comment {
-          let exit_json_c = if codes_comment.length() > 0 {
-            codes_comment[0].to_json()
-          } else {
-            "none".to_json()
-          }
-          let fields = match spawn_err_comment {
-            Some(err) =>
-              [
-                @moontrace.field("pr_number", pr_number),
-                @moontrace.field("exit", exit_json_c),
-                @moontrace.field("error", err),
-              ]
-            None =>
-              [
-                @moontrace.field("pr_number", pr_number),
-                @moontrace.field("exit", exit_json_c),
-              ]
-          }
-          @moontrace.warn("file_pr copilot review comment failed", fields~)
-          let err_part_c = match spawn_err_comment {
-            Some(err) => " error=" + err
-            None => ""
-          }
-          ignore(
-            @sys.append_file_sync(
-              delivery_log_path,
-              @poller.delivery_log_line(
-                "[file_pr] copilot_review_comment failed pr=" +
-                pr_number.to_string() +
-                err_part_c,
-                now_ms=now_ms_fn(),
-              ),
-            ),
+  match reviewer_handle {
+    Some(handle) =>
+      match effects.review_context {
+        Some(ctx) => {
+          let comment_cmd = file_pr_reviewer_review_comment_gh_command(
+            pr_number, handle, ctx, file_pr_workdir,
           )
+          let mut spawn_err_comment : String? = None
+          let codes_comment = runner([comment_cmd]) catch {
+            e => {
+              spawn_err_comment = Some(e.to_string())
+              []
+            }
+          }
+          let ok_comment = spawn_err_comment is None &&
+            codes_comment.length() > 0 &&
+            codes_comment[0] == 0
+          if !ok_comment {
+            let exit_json_c = if codes_comment.length() > 0 {
+              codes_comment[0].to_json()
+            } else {
+              "none".to_json()
+            }
+            let fields = match spawn_err_comment {
+              Some(err) =>
+                [
+                  @moontrace.field("pr_number", pr_number),
+                  @moontrace.field("exit", exit_json_c),
+                  @moontrace.field("error", err),
+                ]
+              None =>
+                [
+                  @moontrace.field("pr_number", pr_number),
+                  @moontrace.field("exit", exit_json_c),
+                ]
+            }
+            @moontrace.warn("file_pr copilot review comment failed", fields~)
+            let err_part_c = match spawn_err_comment {
+              Some(err) => " error=" + err
+              None => ""
+            }
+            ignore(
+              @sys.append_file_sync(
+                delivery_log_path,
+                @poller.delivery_log_line(
+                  "[file_pr] copilot_review_comment failed pr=" +
+                  pr_number.to_string() +
+                  err_part_c,
+                  now_ms=now_ms_fn(),
+                ),
+              ),
+            )
+          }
         }
+        None => ()
       }
-      None => ()
-    }
+    None => ()
   }
   if request_copilot_reviewer {
     match reviewer_handle {
@@ -539,16 +568,19 @@ pub async fn interpret_file_pr_post_success(
     }
   }
   if review_request_failed {
-    let handle = reviewer_handle.unwrap_or(file_pr_copilot_reviewer_handle)
-    effects.response.with_warning(
-      "review_request_failed: reviewer request for " +
-      handle +
-      " failed — use request_review(pr_number: \"" +
-      pr_number.to_string() +
-      "\", reviewer: \"" +
-      handle +
-      "\") from the parent/server path",
-    )
+    match reviewer_handle {
+      Some(handle) =>
+        effects.response.with_warning(
+          "review_request_failed: reviewer request for " +
+          handle +
+          " failed — use request_review(pr_number: \"" +
+          pr_number.to_string() +
+          "\", reviewer: \"" +
+          handle +
+          "\") from the parent/server path",
+        )
+      None => effects.response
+    }
   } else {
     effects.response
   }
@@ -1221,10 +1253,15 @@ pub async fn interpret_file_pr(
         reviewer, parent_branch, default_branch, skip_copilot_on_feature_branch,
       )
       if reviewer != @types.Reviewer::None && !request_review {
-        @moontrace.info("copilot_skipped_for_feature_branch", fields=[
-          @moontrace.field("pr_number", pr.number),
-          @moontrace.field("parent_branch", parent_branch),
-        ])
+        match file_pr_reviewer_handle(reviewer) {
+          Some(handle) =>
+            @moontrace.info("reviewer_skipped_for_feature_branch", fields=[
+              @moontrace.field("pr_number", pr.number),
+              @moontrace.field("parent_branch", parent_branch),
+              @moontrace.field("reviewer", handle),
+            ])
+          None => ()
+        }
       }
       let resp = interpret_file_pr_post_success(
         project_dir,
