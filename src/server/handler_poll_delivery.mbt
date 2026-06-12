@@ -3387,6 +3387,7 @@ pub async fn ServerState::process_poller_tick_with(
   deliver_poller_stall_notifications(self, now, runner, sleep_fn~)
   self.sweep_spawn_registration_timeouts(now, runner)
   self.sweep_outbox(now)
+  self.sweep_stale_inbox_nudges(now, runner, sleep_fn~)
   ignore(self.poller.write_state_file(self.config.project_dir))
 }
 
@@ -3474,6 +3475,7 @@ pub async fn ServerState::process_poller_tick(
   deliver_poller_stall_notifications(self, now, runner, sleep_fn~)
   self.sweep_spawn_registration_timeouts(now, runner)
   self.sweep_outbox(now)
+  self.sweep_stale_inbox_nudges(now, runner, sleep_fn~)
   ignore(self.poller.write_state_file(self.config.project_dir))
 }
 

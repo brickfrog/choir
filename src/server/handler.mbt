@@ -373,7 +373,36 @@ pub async fn ServerState::handle_with_runner_and_capture(
       record_handoff_delivered=fn(agent_id) {
         self.mark_handoff_delivered(agent_id)
       },
-      inbox_queue=self.inbox_queue_capability(),
+      interpret_planned_delivery=async fn(
+        recipient,
+        sender_id,
+        body,
+        status,
+        delivery,
+        project_dir,
+        delivery_runner,
+        delivery_sleep_fn,
+      ) {
+        match delivery {
+          @message.DeliveryMethod::LocalTerminalInput(target, _) =>
+            self.deliver_inbox_terminal_message(
+              recipient.agent_id.to_string(),
+              target,
+              sender_id,
+              body,
+              status,
+              delivery_runner,
+              sleep_fn=delivery_sleep_fn,
+            )
+          _ =>
+            @tools.execute_delivery(
+              delivery,
+              delivery_runner,
+              project_dir~,
+              sleep_fn=delivery_sleep_fn,
+            )
+        }
+      },
       on_resolve_review_thread=async fn(pr_numbers : Array[Int]) {
         if pr_numbers.length() > 0 {
           self.sweep_tracked_prs_for_automerge(runner, sleep_fn~) catch {

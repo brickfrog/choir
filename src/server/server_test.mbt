@@ -1722,8 +1722,8 @@ async test "process_poller_tick_with finalizes externally merged leaf and notifi
     for cmd in cmds {
       if cmd.program == "choir" && cmd.args.contains("send") {
         let text = cmd.args[cmd.args.length() - 1]
-        // Inbox era: content travels via check_inbox; the pane gets a nudge.
-        if text.contains("call check_inbox") {
+        if text.contains("external merge observed") ||
+          text.contains("call check_inbox") {
           sent_parent_merge = true
         }
       }
@@ -1790,9 +1790,7 @@ async test "process_poller_tick_with finalizes externally merged leaf and notifi
   let outbox = @outbox.load_recipient_outbox(
     @sys.read_file, project_dir, parent_id,
   )
-  assert_eq(outbox.length(), 1)
-  assert_eq(outbox[0].delivery_state, @outbox.OutboxDeliveryState::Delivered)
-  assert_true(outbox[0].body.contains("external merge observed"))
+  assert_eq(outbox.length(), 0)
 }
 
 ///|
