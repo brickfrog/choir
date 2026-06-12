@@ -242,6 +242,7 @@ pub async fn ServerState::handle(
     req,
     runner=@exec.run_sequence,
     capture=@exec.capture_command_merged,
+    bd_capture=@exec.capture_command_stdout_with_stderr_on_error,
   )
 }
 
@@ -255,6 +256,7 @@ pub async fn ServerState::handle_with_runner(
     req,
     runner~,
     capture=@exec.capture_command_merged,
+    bd_capture=@exec.capture_command_stdout_with_stderr_on_error,
   )
 }
 
@@ -264,6 +266,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
   req : @types.Request,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
+  bd_capture? : async (@workspace.Command) -> (Int, String) = capture,
   hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
   path_exists? : (String) -> Bool = @exec.path_entry_exists,
   hook_path_exists? : (String) -> Bool = path_exists,
@@ -307,7 +310,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
     self.handle_server_reload_request(effective_req)
   } else if effective_req.req_method == "tools/call" &&
     effective_req.name == "tui_snapshot" {
-    self.handle_tui_snapshot_request(effective_req, capture~)
+    self.handle_tui_snapshot_request(effective_req, capture, bd_capture)
   } else if effective_req.req_method == "tools/call" &&
     effective_req.name == "tui_events_since" {
     self.handle_tui_events_since_request(effective_req)

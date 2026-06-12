@@ -34,15 +34,15 @@ fn request_int64_arg(req : @types.Request, key : String) -> Int64? {
 pub async fn ServerState::handle_tui_snapshot_request(
   self : ServerState,
   req : @types.Request,
-  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
-  bd_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout_with_stderr_on_error,
+  capture : async (@workspace.Command) -> (Int, String),
+  bd_capture : async (@workspace.Command) -> (Int, String),
 ) -> @types.Response {
   ignore(self.tool_registry.lookup(req.role, req.name)) catch {
     e => return @tools.tool_response_err_from_caught(e)
   }
   let now_ms = @env.now().reinterpret_as_int64()
-  self.refresh_tui_beads_cache_if_stale(now_ms, bd_capture~)
-  let default_branch = self.tui_default_branch_cached(capture~)
+  self.refresh_tui_beads_cache_if_stale(now_ms, bd_capture)
+  let default_branch = self.tui_default_branch_cached(capture)
   let snapshot = self.build_tui_snapshot(now_ms, default_branch~)
   @types.Response::ok_values({ "snapshot": snapshot.to_json() })
 }

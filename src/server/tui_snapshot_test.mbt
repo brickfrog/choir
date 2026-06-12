@@ -215,9 +215,7 @@ async test "tui_default_branch_cached does not cache skip-disabled empty value" 
     now_unix_sec=fn() { 1779970000L },
   )
   let calls : Array[@workspace.Command] = []
-  let branch = state.tui_default_branch_cached(capture=fn(
-    cmd : @workspace.Command,
-  ) {
+  let branch = state.tui_default_branch_cached(fn(cmd : @workspace.Command) {
     calls.push(cmd)
     (0, "origin/main\n")
   })
@@ -254,9 +252,7 @@ async test "tui_snapshot handler refreshes bead cache and serves snapshot json" 
     args: @types.RequestArgs::from_values({}),
   }
   let resp = state.handle_tui_snapshot_request(
-    req,
-    capture=tui_snapshot_test_bd_capture,
-    bd_capture=tui_snapshot_test_bd_capture,
+    req, tui_snapshot_test_bd_capture, tui_snapshot_test_bd_capture,
   )
   assert_true(resp.is_ok())
   match resp.ok_payload() {
@@ -307,11 +303,11 @@ async test "bead cache refresh emits removals and skips when in flight" {
     }
     (1, "")
   }
-  state.refresh_tui_beads_cache_if_stale(1000L, bd_capture~)
+  state.refresh_tui_beads_cache_if_stale(1000L, bd_capture)
   assert_eq(state.tui_beads_cache.summaries.length(), 2)
   state.refresh_tui_beads_cache_if_stale(
     1000L + @server.tui_beads_cache_ttl_ms + 1L,
-    bd_capture~,
+    bd_capture,
   )
   assert_eq(state.tui_beads_cache.summaries.length(), 1)
   let mut saw_removed = false
@@ -334,7 +330,7 @@ async test "bead cache refresh emits removals and skips when in flight" {
   let before = calls.length()
   state.refresh_tui_beads_cache_if_stale(
     1000L + @server.tui_beads_cache_ttl_ms * 2L + 2L,
-    bd_capture~,
+    bd_capture,
   )
   assert_eq(calls.length(), before)
 }
