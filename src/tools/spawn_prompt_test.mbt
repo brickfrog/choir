@@ -105,7 +105,7 @@ test "render_leaf_spawn_prompt includes gh discipline and bounded wrapper" {
   )
   assert_true(
     prompt.contains(
-      "The choir poller pushes [REVIEW], [COPILOT ISSUE COMMENT], [FIXES PUSHED], [MERGE READY], [PR MERGED] events into your pane automatically after file_pr",
+      "The choir poller pushes review, CI, fixes-pushed, merge-ready, and merge-complete events into your pane automatically after file_pr",
     ),
   )
   assert_true(
