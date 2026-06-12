@@ -20,20 +20,6 @@ pub fn server_status_path(project_dir : String) -> String {
 }
 
 ///|
-fn server_status_tracked_pr_by_agent(
-  poller : @poller.PollerState,
-) -> Map[String, @poller.TrackedPR] {
-  let by_agent : Map[String, @poller.TrackedPR] = {}
-  for tracked in poller.tracked.values() {
-    match by_agent.get(tracked.agent_id) {
-      Some(existing) if existing.pr_number >= tracked.pr_number => ()
-      _ => by_agent.set(tracked.agent_id, tracked)
-    }
-  }
-  by_agent
-}
-
-///|
 fn server_status_last_request_age_sec(
   now_sec : Int64,
   lifecycle : @phase.AgentLifecycle,
@@ -42,72 +28,6 @@ fn server_status_last_request_age_sec(
     return None
   }
   Some(@types.non_negative_i64(now_sec - lifecycle.last_updated_unix_sec))
-}
-
-///|
-fn server_status_positive_pr_number(number : Int) -> Int? {
-  if number > 0 {
-    Some(number)
-  } else {
-    None
-  }
-}
-
-///|
-fn server_status_workflow_pr_number(workflow : @phase.WorkflowState) -> Int? {
-  match workflow {
-    @phase.WorkflowState::Dev(@phase.DevLifecycle::ReviewOwned(pr_number~, ..)) =>
-      server_status_positive_pr_number(pr_number)
-    @phase.WorkflowState::Dev(
-      @phase.DevLifecycle::ChangesRequested(pr_number~, ..)
-    ) => server_status_positive_pr_number(pr_number)
-    @phase.WorkflowState::Dev(
-      @phase.DevLifecycle::ExitRequestedDeferred(pr_number~, ..)
-    ) => server_status_positive_pr_number(pr_number)
-    @phase.WorkflowState::Supervisor(
-      @phase.SupervisorLifecycle::OwnPRFiled(number~, ..)
-    ) => server_status_positive_pr_number(number)
-    _ => None
-  }
-}
-
-///|
-fn server_status_tracked_for_workflow(
-  poller : @poller.PollerState,
-  agent_id : String,
-  workflow_pr_number : Int?,
-  tracked_by_agent : Map[String, @poller.TrackedPR],
-) -> @poller.TrackedPR? {
-  match workflow_pr_number {
-    Some(pr_number) =>
-      match poller.tracked.get(pr_number) {
-        Some(tracked) if tracked.agent_id == agent_id => Some(tracked)
-        _ => None
-      }
-    None => tracked_by_agent.get(agent_id)
-  }
-}
-
-///|
-fn server_status_thread_count(
-  pr_number : Int?,
-  tracked : @poller.TrackedPR?,
-) -> @tools.StatusBarThreadCount {
-  match pr_number {
-    None => @tools.StatusBarThreadCount::NoPR
-    Some(_) =>
-      match tracked {
-        Some(value) =>
-          if value.unresolved_thread_ids_fetched {
-            @tools.StatusBarThreadCount::Count(
-              value.unresolved_thread_ids.length(),
-            )
-          } else {
-            @tools.StatusBarThreadCount::Unknown
-          }
-        None => @tools.StatusBarThreadCount::Unknown
-      }
-  }
 }
 
 ///|
@@ -134,7 +54,10 @@ pub fn server_status_snapshot_rows(
   lifecycle_reader : (String) -> @phase.AgentLifecycle?,
   now_sec : Int64,
 ) -> Array[ServerStatusSnapshotRow] {
-  let tracked_by_agent = server_status_tracked_pr_by_agent(poller)
+  // Projection of the shared status core (src/tools/status_core.mbt): PR
+  // selection, thread tri-state, CI rollup, and attention come from the
+  // same derivation that feeds status_bar_state and the canonical snapshot.
+  let tracked_by_agent = @tools.status_tracked_by_agent(poller.tracked)
   let rows : Array[ServerStatusSnapshotRow] = []
   for agent in registry.list() {
     let agent_id = agent.agent_id.to_string()
@@ -142,27 +65,12 @@ pub fn server_status_snapshot_rows(
       @phase.lifecycle_for_agent(agent),
     )
     let workflow = lifecycle.workflow
-    let workflow_pr_number = server_status_workflow_pr_number(workflow)
-    let tracked = server_status_tracked_for_workflow(
-      poller, agent_id, workflow_pr_number, tracked_by_agent,
+    let derived = @tools.derive_agent_status(
+      agent_id,
+      workflow,
+      poller.tracked,
+      tracked_by_agent,
     )
-    let pr_number = match workflow_pr_number {
-      Some(value) => Some(value)
-      None =>
-        match tracked {
-          Some(value) => server_status_positive_pr_number(value.pr_number)
-          None => None
-        }
-    }
-    let unresolved_threads = server_status_thread_count(pr_number, tracked)
-    let ci_rollup = match tracked {
-      Some(value) => Some(value.last_ci_rollup)
-      None => None
-    }
-    let fixes_pushed_at = match tracked {
-      Some(value) => value.fixes_pushed_at
-      None => 0L
-    }
     rows.push({
       agent_id,
       role: agent.role,
@@ -178,12 +86,10 @@ pub fn server_status_snapshot_rows(
       last_request_age_sec: server_status_last_request_age_sec(
         now_sec, lifecycle,
       ),
-      pr_number,
-      unresolved_threads,
-      ci_rollup,
-      attention_needed: @tools.pane_needs_attention(
-        workflow, fixes_pushed_at, unresolved_threads,
-      ),
+      pr_number: derived.pr_number,
+      unresolved_threads: derived.unresolved_threads,
+      ci_rollup: derived.ci_rollup,
+      attention_needed: derived.attention,
     })
   }
   sort_server_status_rows(rows)

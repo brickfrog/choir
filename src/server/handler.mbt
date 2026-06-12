@@ -242,6 +242,7 @@ pub async fn ServerState::handle(
     req,
     runner=@exec.run_sequence,
     capture=@exec.capture_command_merged,
+    bd_capture=@exec.capture_command_stdout_with_stderr_on_error,
   )
 }
 
@@ -255,6 +256,7 @@ pub async fn ServerState::handle_with_runner(
     req,
     runner~,
     capture=@exec.capture_command_merged,
+    bd_capture=@exec.capture_command_stdout_with_stderr_on_error,
   )
 }
 
@@ -264,6 +266,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
   req : @types.Request,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
+  bd_capture? : async (@workspace.Command) -> (Int, String) = capture,
   hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
   path_exists? : (String) -> Bool = @exec.path_entry_exists,
   hook_path_exists? : (String) -> Bool = path_exists,
@@ -305,6 +308,15 @@ pub async fn ServerState::handle_with_runner_and_capture(
   let resp = if effective_req.req_method == "tools/call" &&
     effective_req.name == "server_reload" {
     self.handle_server_reload_request(effective_req)
+  } else if effective_req.req_method == "tools/call" &&
+    effective_req.name == "tui_snapshot" {
+    self.handle_tui_snapshot_request(effective_req)
+  } else if effective_req.req_method == "tools/call" &&
+    effective_req.name == "tui_events_since" {
+    self.handle_tui_events_since_request(effective_req)
+  } else if effective_req.req_method == "tools/call" &&
+    effective_req.name == "check_inbox" {
+    self.handle_check_inbox_request(effective_req)
   } else {
     @tools.handle_request(
       self.tool_registry,
@@ -314,6 +326,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
       runner~,
       sleep_fn~,
       capture~,
+      bd_capture~,
       hook_capture~,
       path_exists~,
       hook_path_exists~,
@@ -360,6 +373,36 @@ pub async fn ServerState::handle_with_runner_and_capture(
       goal_request_tick=fn() { self.request_goal_judge_tick() },
       record_handoff_delivered=fn(agent_id) {
         self.mark_handoff_delivered(agent_id)
+      },
+      interpret_planned_delivery=async fn(
+        recipient,
+        sender_id,
+        body,
+        status,
+        delivery,
+        project_dir,
+        delivery_runner,
+        delivery_sleep_fn,
+      ) {
+        match delivery {
+          @message.DeliveryMethod::LocalTerminalInput(target, _) =>
+            self.deliver_inbox_terminal_message(
+              recipient.agent_id.to_string(),
+              target,
+              sender_id,
+              body,
+              status,
+              delivery_runner,
+              sleep_fn=delivery_sleep_fn,
+            )
+          _ =>
+            @tools.execute_delivery(
+              delivery,
+              delivery_runner,
+              project_dir~,
+              sleep_fn=delivery_sleep_fn,
+            )
+        }
       },
       on_resolve_review_thread=async fn(pr_numbers : Array[Int]) {
         if pr_numbers.length() > 0 {
@@ -453,6 +496,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
 
   let end_ms = @env.now()
   emit_span(self, req, start_ms, end_ms, resp)
+  self.record_tui_dispatch_completion(effective_req, resp, start_ms, end_ms)
   match merged_pr_context {
     Some(ctx) =>
       append_merge_pr_evidence_if_needed(

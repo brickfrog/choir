@@ -106,18 +106,6 @@ pub fn PaneWatcher::read_viewport(
 }
 
 ///|
-pub fn parse_int_simple(s : String) -> Int {
-  let mut result = 0
-  for c in s {
-    let d = c.to_int() - '0'.to_int()
-    if d >= 0 && d <= 9 {
-      result = result * 10 + d
-    }
-  }
-  result
-}
-
-///|
 /// Extract viewport text from a zellij subscribe JSON snapshot.
 /// Format: {"event":"pane_update","viewport":["line1","line2",...]}
 pub fn extract_viewport_text(json_str : String) -> String {

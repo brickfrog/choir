@@ -5,6 +5,10 @@ pub(all) enum Role {
   TL
   Dev
   Worker
+  /// Human operator driving the TUI remote control. Strictly allowlisted:
+  /// merge_pr, suspend, tui_snapshot, tui_events_since — and nothing else.
+  /// The TUI must not impersonate Root/TL.
+  Operator
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -19,6 +23,7 @@ pub impl Show for Role with fn output(self, logger) -> Unit {
     TL => logger.write_string("TL")
     Dev => logger.write_string("Dev")
     Worker => logger.write_string("Worker")
+    Operator => logger.write_string("Operator")
   }
 }
 

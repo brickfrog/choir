@@ -3314,6 +3314,7 @@ pub async fn ServerState::process_poller_tick_with(
   sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Unit {
   self.mutex_registry.expire(now)
+  self.refresh_tui_snapshot_caches_for_poller_tick(now, capture)
   let pending_events = []
   let pending_agent_ids = []
   let tick_summary = @poller.TickSummary::new(@env.now().reinterpret_as_int64())
@@ -3378,9 +3379,16 @@ pub async fn ServerState::process_poller_tick_with(
     @env.now().reinterpret_as_int64(),
     now,
   )
+  self.record_tui_poller_tick(
+    pending_events,
+    pending_agent_ids,
+    tick_summary,
+    @env.now().reinterpret_as_int64(),
+  )
   deliver_poller_stall_notifications(self, now, runner, sleep_fn~)
   self.sweep_spawn_registration_timeouts(now, runner)
   self.sweep_outbox(now)
+  self.sweep_stale_inbox_nudges(now, runner, sleep_fn~)
   ignore(self.poller.write_state_file(self.config.project_dir))
 }
 
@@ -3397,6 +3405,7 @@ pub async fn ServerState::process_poller_tick(
   sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Unit {
   self.mutex_registry.expire(now)
+  self.refresh_tui_snapshot_caches_for_poller_tick(now, capture)
   let pending_events = []
   let pending_agent_ids = []
   let project_dir = self.config.project_dir
@@ -3459,9 +3468,16 @@ pub async fn ServerState::process_poller_tick(
     @env.now().reinterpret_as_int64(),
     now,
   )
+  self.record_tui_poller_tick(
+    pending_events,
+    pending_agent_ids,
+    tick_summary,
+    @env.now().reinterpret_as_int64(),
+  )
   deliver_poller_stall_notifications(self, now, runner, sleep_fn~)
   self.sweep_spawn_registration_timeouts(now, runner)
   self.sweep_outbox(now)
+  self.sweep_stale_inbox_nudges(now, runner, sleep_fn~)
   ignore(self.poller.write_state_file(self.config.project_dir))
 }
 

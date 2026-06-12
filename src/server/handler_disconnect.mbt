@@ -611,8 +611,12 @@ pub async fn ServerState::interpret_teardown_effects(
                 let reason_str = reason.to_wire_string()
                 let msg = @message.format_failure(agent_id, reason_str)
                 ignore(
-                  @tools.execute_delivery(
-                    @message.DeliveryMethod::LocalTerminalInput(target, msg),
+                  self.deliver_inbox_terminal_message(
+                    p.agent_id.to_string(),
+                    target,
+                    agent_id,
+                    msg,
+                    @types.Status::Failure,
                     runner,
                   ) catch {
                     _ => Ok(())
@@ -1764,6 +1768,17 @@ async test "unexpected disconnect closes terminal and preserves failure teardown
   }
   assert_true(saw_close)
   assert_true(saw_parent_failure)
+  // Content is still retained durably even when the pane gets a short inline copy.
+  let mut inbox_has_failure = false
+  for entry in state.inboxes {
+    let (_, messages) = entry
+    for message in messages {
+      if message.body.contains("[FAILED: " + agent_id + "]") {
+        inbox_has_failure = true
+      }
+    }
+  }
+  assert_true(inbox_has_failure)
   match @phase.read_lifecycle(project_dir, agent_id) {
     Some(
       { process: @phase.ProcessState::Failed(reason=UnexpectedDisconnect), .. }

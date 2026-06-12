@@ -129,10 +129,11 @@ pub fn file_pr_auto_notify_plan(
   tracked_agent_id : String,
   notify_message : String,
   now_ms? : Int64 = @env.now().reinterpret_as_int64(),
+  plan_delivery_fn? : (@types.Agent, String, String, @types.Status) -> @message.DeliveryMethod = @message.plan_delivery,
 ) -> FilePrAutoNotifyPlan {
   match parent_result {
     Ok(parent) => {
-      let delivery = @message.plan_delivery(
+      let delivery = plan_delivery_fn(
         parent,
         tracked_agent_id,
         notify_message,
@@ -396,6 +397,7 @@ pub async fn interpret_file_pr_post_success(
   // not captured once — so writes that happen after slow `gh`/delivery commands
   // record their real wall-clock time rather than a stale snapshot.
   now_ms_fn? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() },
+  plan_delivery_fn? : (@types.Agent, String, String, @types.Status) -> @message.DeliveryMethod = @message.plan_delivery,
 ) -> @types.Response {
   let reviewer_handle = file_pr_reviewer_handle(reviewer)
   match effects.poller_track {
@@ -434,6 +436,7 @@ pub async fn interpret_file_pr_post_success(
         tracked_agent_id,
         notify_message,
         now_ms=now_ms_fn(),
+        plan_delivery_fn~,
       )
       match plan {
         FilePrAutoNotifyPlan::Deliver(delivery~, delivery_log_append~) => {
@@ -1141,6 +1144,7 @@ pub async fn interpret_file_pr(
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
   skip_copilot_on_feature_branch? : Bool = @types.Config::default().pr_policy.skip_copilot_on_feature_branch,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
+  plan_delivery_fn? : (@types.Agent, String, String, @types.Status) -> @message.DeliveryMethod = @message.plan_delivery,
 ) -> @types.Response {
   let branch = file_pr_args.branch
   let tracked_agent_id = file_pr_args.tracked_agent_id
@@ -1257,6 +1261,7 @@ pub async fn interpret_file_pr(
         append_file~,
         request_reviewer=request_review,
         sleep_fn~,
+        plan_delivery_fn~,
       )
       if resp.is_ok() {
         file_pr_mirror_beads_created(

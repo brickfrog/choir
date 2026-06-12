@@ -79,7 +79,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     tool_def(
       "merge_pr",
       "Merge a child's PR; optional args: parent_branch (defaults to main), caller_id",
-      [@types.Role::Root, @types.Role::TL],
+      [@types.Role::Root, @types.Role::TL, @types.Role::Operator],
     ),
     tool_def(
       "track_pr",
@@ -109,6 +109,18 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       read_only=true,
     ),
     tool_def(
+      "tui_snapshot",
+      "Read the canonical full-state TUI snapshot (agents, tracked PRs, poller vitals, journal seq, recent events). Zero network I/O.",
+      [@types.Role::Root, @types.Role::TL, @types.Role::Operator],
+      read_only=true,
+    ),
+    tool_def(
+      "tui_events_since",
+      "Read journal events with seq > cursor (bounded batch) plus the latest seq; reports a stale cursor when rotation discarded the gap.",
+      [@types.Role::Root, @types.Role::TL, @types.Role::Operator],
+      read_only=true,
+    ),
+    tool_def(
       "crystallize_spec",
       "Scaffold a canonical eight-section spec template at .choir/context/<feature_slug>-spec.md. Refuses if the spec file already exists.",
       [@types.Role::Root, @types.Role::TL],
@@ -127,6 +139,10 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       [@types.Role::Root, @types.Role::TL],
     ),
     tool_def("send_message", "Send message to any agent by ID", all_roles),
+    tool_def(
+      "check_inbox", "Drain your pending inbox: returns all queued messages and marks them delivered. Call this whenever you see a 'choir: N messages pending' nudge in your terminal.",
+      all_roles,
+    ),
     tool_def(
       "reply", "Store a reply to a pending interaction request", all_roles,
     ),
@@ -238,18 +254,23 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     tool_def(
       "suspend",
       "Suspend a child agent: transitions Active → Suspended, pausing poll delivery and the idle watchdog for that agent until `resume` is called. Use when handing the worktree back to a human for manual intervention.",
-      [@types.Role::Root, @types.Role::TL],
+      [@types.Role::Root, @types.Role::TL, @types.Role::Operator],
     ),
     tool_def(
       "resume",
       "Resume a suspended child agent: transitions Suspended → Active, unblocking poll delivery for that agent.",
-      [@types.Role::Root, @types.Role::TL],
+      [@types.Role::Root, @types.Role::TL, @types.Role::Operator],
     ),
   ]
   for def in defs {
     tools.set(def.name, def)
   }
   { tools, }
+}
+
+///|
+pub fn ToolRegistry::tool_names(self : ToolRegistry) -> Array[String] {
+  self.tools.keys().collect()
 }
 
 ///|

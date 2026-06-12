@@ -38,6 +38,17 @@ async fn server_delivery_test_capture(
 }
 
 ///|
+async fn server_delivery_test_poller_capture(
+  cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  if cmd.program == "bd" {
+    return (1, "")
+  }
+  server_delivery_test_capture(cmd)
+}
+
+///|
 async fn server_delivery_test_hook_capture(
   _hook_path : String,
   _stdin_body : String,
@@ -132,7 +143,7 @@ async fn ServerState::process_poller_tick_with_test(
   hook_xdg_config_home : String?,
   hook_home : String,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = server_delivery_test_runner,
-  capture? : async (@workspace.Command) -> (Int, String) = server_delivery_test_capture,
+  capture? : async (@workspace.Command) -> (Int, String) = server_delivery_test_poller_capture,
   automerge_capture? : async (@workspace.Command) -> (Int, String) = server_delivery_test_capture,
   git_pull_capture? : async (@workspace.Command) -> (Int, String) = server_delivery_test_capture,
   hook_capture? : async (String, String, String?) -> (Int, String) = server_delivery_test_hook_capture,

@@ -177,6 +177,9 @@ pub fn should_fetch_unresolved_threads_for_pending_event(
 pub fn merge_execution_mode_for_request(
   req : @types.Request,
 ) -> @evidence.MergeExecutionMode {
+  if req.role == @types.Role::Operator {
+    return @evidence.MergeExecutionMode::OperatorTui
+  }
   if request_bool_arg(req, "automerge").unwrap_or(false) {
     return @evidence.MergeExecutionMode::ServerAutomerge
   }

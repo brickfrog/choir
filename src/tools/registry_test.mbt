@@ -1816,3 +1816,23 @@ test "tool registry fork_wave description mentions automerge" {
     def => assert_true(def.description.contains("automerge"))
   }
 }
+
+///|
+test "operator role allowlist is exactly merge_pr, suspend, resume, tui_snapshot, tui_events_since" {
+  let reg = @tools.ToolRegistry::new()
+  let allowed : Array[String] = []
+  for name in reg.tool_names() {
+    try reg.lookup(@types.Role::Operator, name) catch {
+      _ => ()
+    } noraise {
+      _ => allowed.push(name)
+    }
+  }
+  assert_eq(allowed.length(), 5)
+  for
+    name in [
+      "merge_pr", "suspend", "resume", "tui_snapshot", "tui_events_since",
+    ] {
+    assert_true(allowed.contains(name))
+  }
+}

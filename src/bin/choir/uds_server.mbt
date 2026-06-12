@@ -22,16 +22,15 @@ fn grow_connection_buffer(buf : FixedArray[Byte]) -> FixedArray[Byte] {
 
 ///|
 struct ServeUDSClient {
+  // Transport state only: the fd, its read buffer, and who the connection
+  // authenticated as. Domain facts about the agent (last request, uptime)
+  // live in the agent registry, keyed by agent_id — see 2c of the TUI spec.
   fd : Int
   mut buf : FixedArray[Byte]
   mut read_pos : Int
   mut connected_agent_id : String?
-  // Set on `register`; tracked so a disconnect log line names *which* agent
-  // dropped, what it last asked for, and how long it was connected — the
-  // contentless "UDS client disconnected written=N" told us nothing when the
-  // TL claude process died. See choir-u7v.
-  connected_at_sec : Int64
-  mut last_request_name : String?
+  /// Request-serialization flag (one in-flight request per connection) —
+  /// flow control, never liveness.
   mut busy : Bool
 }
 
@@ -42,8 +41,6 @@ fn ServeUDSClient::new(fd : Int) -> ServeUDSClient {
     buf: FixedArray::make(4096, (0 : Byte)),
     read_pos: 0,
     connected_agent_id: None,
-    connected_at_sec: @poller.now_sec(),
-    last_request_name: None,
     busy: false,
   }
 }
@@ -731,10 +728,6 @@ async fn serve_handle_uds_jsonrpc_request_line(
   line : String,
 ) -> Unit {
   let result = serve_handle_jsonrpc_request_line(state, line, true)
-  match result.request_name {
-    Some(name) => client.last_request_name = Some(name)
-    None => ()
-  }
   match result.response_line {
     Some(resp_str) => {
       @moontrace.trace("request", fields=[@moontrace.field("line", line)])
@@ -782,7 +775,6 @@ fn serve_handle_uds_connection(
       if client.buf[i] == (10 : Byte) {
         let line = serve_fixed_array_slice_to_string(client.buf, 0, i)
         if @transport.is_jsonrpc_request(line) {
-          client.last_request_name = Some("jsonrpc")
           client.busy = true
           spawn_request(async fn() {
             serve_handle_uds_jsonrpc_request_line(
@@ -793,7 +785,6 @@ fn serve_handle_uds_connection(
           let req_res = @transport.parse_request(line)
           match req_res {
             Ok(req) => {
-              client.last_request_name = Some(req.name)
               client.busy = true
               spawn_request(async fn() {
                 serve_handle_uds_request_line(
@@ -844,20 +835,26 @@ fn serve_close_uds_client(
       // a dropped session (e.g. the TL claude process dying) is identifiable
       // in the log instead of just "UDS client disconnected written=N".
       // One-shot CLI clients have no agent_id and stay silent here.
-      let connected_sec = @poller.now_sec() - client.connected_at_sec
+      // Domain facts come from the registry (2c): the connection only knows
+      // who it authenticated as.
+      let connected_sec = match state.registry.agent_connected_at(agent_id) {
+        Some(at_sec) => @poller.now_sec() - at_sec
+        None => 0L
+      }
+      let last_request_name = match state.registry.last_tool_call(agent_id) {
+        Some(record) => record.tool
+        None => "(none)"
+      }
       @moontrace.info("agent connection closed", fields=[
         @moontrace.field("agent", agent_id),
-        @moontrace.field(
-          "last_request",
-          client.last_request_name.unwrap_or("(none)"),
-        ),
+        @moontrace.field("last_request", last_request_name),
         @moontrace.field("connected_sec", connected_sec.to_string()),
       ])
       state.schedule_disconnect(
         agent_id,
         @poller.now_sec(),
         connected_sec=Some(connected_sec),
-        last_request_name=Some(client.last_request_name.unwrap_or("(none)")),
+        last_request_name=Some(last_request_name),
       )
     }
     None => ()
@@ -1369,6 +1366,7 @@ fn serve_run() -> Unit {
   }
   let provider = @server.make_recovery_provider()
   let state = @server.ServerState::new(config, provider)
+  state.install_tui_event_observers()
   @moontrace.set_global_field("service", "choir".to_json())
   @moontrace.set_global_field("run_id", state.run_id.to_json())
   @prompts.emit_prompt_drift_warnings(
