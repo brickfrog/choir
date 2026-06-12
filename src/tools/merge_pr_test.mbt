@@ -442,7 +442,7 @@ test "merge_pr_audit_receipt_validation distinguishes valid stale missing invali
 }
 
 ///|
-test "merge_pr audit validation requires receipt on default and feature parent branches" {
+test "merge_pr audit validation requires receipt only on default branch parent" {
   let tree = "9999999999999999999999999999999999999999"
   match merge_pr_audit_receipt_validation("master", "master", tree, None) {
     MergeAuditReceiptMissing(short_sha) =>
@@ -450,9 +450,8 @@ test "merge_pr audit validation requires receipt on default and feature parent b
     _ => fail("expected audit receipt requirement on master default branch")
   }
   match merge_pr_audit_receipt_validation("feature/x", "master", tree, None) {
-    MergeAuditReceiptMissing(short_sha) =>
-      assert_eq(short_sha, file_pr_short_sha(tree))
-    _ => fail("expected feature branch parent to require audit gate")
+    MergeAuditReceiptValid => ()
+    _ => fail("expected feature branch parent to skip audit receipt gate")
   }
 }
 

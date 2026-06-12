@@ -74,8 +74,9 @@ pub fn merge_pr_audit_receipt_validation(
   current_tree : String,
   receipt_body : String?,
 ) -> MergePrAuditReceiptValidation {
-  ignore(parent_branch)
-  ignore(default_branch)
+  if !file_pr_audit_receipt_required(parent_branch, default_branch) {
+    return MergeAuditReceiptValid
+  }
   merge_pr_required_audit_receipt_validation(current_tree, receipt_body)
 }
 
