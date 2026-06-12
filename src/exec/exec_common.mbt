@@ -18,17 +18,9 @@ pub fn read_agent_pgid(
   agent_id : String,
   read_file? : (String) -> String = @sys.read_file,
 ) -> Int? {
-  let raw = read_file(@workspace.agent_pid_file_path(project_dir, agent_id))
-    .trim()
-    .to_owned()
-  if raw == "" {
-    return None
-  }
-  let parsed = Some(@string.parse_int(raw)) catch { _ => None }
-  match parsed {
-    Some(pgid) => if pgid > 1 { Some(pgid) } else { None }
-    None => None
-  }
+  @workspace.parse_agent_pgid(
+    read_file(@workspace.agent_pid_file_path(project_dir, agent_id)),
+  )
 }
 
 ///|

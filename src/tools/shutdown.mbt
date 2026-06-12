@@ -138,12 +138,14 @@ pub async fn interpret_kill_agent(
     (0, "")
   },
   read_agent_pgid? : (String) -> Int? = fn(agent_id) {
-    @exec.read_agent_pgid(project_dir, agent_id)
+    @workspace.parse_agent_pgid(
+      @sys.read_file(@workspace.agent_pid_file_path(project_dir, agent_id)),
+    )
   },
   kill_pgid? : (Int) -> Unit = @sys.kill_pgid_sequence_best_effort,
   remove_pid_file? : (String) -> Unit = fn(agent_id) {
     ignore(
-      @exec.delete_file_sync(
+      @sys.delete_file_sync(
         @workspace.agent_pid_file_path(project_dir, agent_id),
       ),
     )
