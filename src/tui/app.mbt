@@ -68,6 +68,13 @@ fn effect_cmd(client : TuiClient, effect : TuiEffect) -> @pippa.Cmd[Msg] {
           Err(message) => Some(Msg::ActionOutcome(message))
         }
       })
+    SendResume(agent_id) =>
+      @pippa.Cmd::perform(fn() {
+        match client.send_resume(agent_id) {
+          Ok(message) => Some(Msg::ActionOutcome(message))
+          Err(message) => Some(Msg::ActionOutcome(message))
+        }
+      })
     FocusPane(target_raw) =>
       match focus_command(target_raw) {
         Some(process) =>
@@ -122,7 +129,10 @@ pub fn tui_run() -> Int {
   let config = match
     @config.parse_config(config_content, local_content=Some(local_content)) {
     Ok(cfg) => cfg
-    Err(_) => @types.Config::default()
+    Err(e) => {
+      @sys.write_stderr("choir tui: config parse error: " + e.message() + "\n")
+      return 1
+    }
   }
   let client = TuiClient::new(config.listen_uds)
   let program = @pippa.Program::new(

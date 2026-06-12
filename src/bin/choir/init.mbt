@@ -59,7 +59,7 @@ fn init_should_launch_server_tab(server_alive : Bool) -> Bool {
 /// Server tab launch script: daemon in the background of the same pane,
 /// TUI as the pane's visible process.
 fn init_server_tab_script() -> String {
-  "choir serve > /dev/null 2>&1 & exec choir tui"
+  "mkdir -p .choir; choir serve >> .choir/serve.log 2>&1 & server_pid=$!; trap 'kill \"$server_pid\" 2>/dev/null' EXIT INT TERM; choir tui; status=$?; kill \"$server_pid\" 2>/dev/null; wait \"$server_pid\" 2>/dev/null; exit \"$status\""
 }
 
 ///|
@@ -324,6 +324,12 @@ test "init server cleanup commands separate runtime restart from purge" {
   assert_true(@sys.pid_is_alive(@sys.get_pid()))
   assert_true(init_should_launch_server_tab(false))
   assert_false(init_should_launch_server_tab(true))
+  let server_script = init_server_tab_script()
+  assert_true(server_script.contains("choir serve >> .choir/serve.log 2>&1 &"))
+  assert_true(server_script.contains("server_pid=$!"))
+  assert_true(server_script.contains("trap 'kill \"$server_pid\""))
+  assert_true(server_script.contains("choir tui"))
+  assert_true(server_script.contains("exit \"$status\""))
   let rt = init_runtime_cleanup_paths()
   assert_true(rt.length() >= 11)
   for p in rt {

@@ -24,28 +24,63 @@ fn TuiJournalTestFs::read(self : TuiJournalTestFs) -> (String) -> String {
 }
 
 ///|
+fn TuiJournalTestFs::file_size(self : TuiJournalTestFs) -> (String) -> Int {
+  fn(path) { self.files.get(path).unwrap_or("").length() }
+}
+
+///|
+fn TuiJournalTestFs::rename(
+  self : TuiJournalTestFs,
+) -> (String, String) -> Bool {
+  fn(from_path, to_path) {
+    let content = self.files.get(from_path).unwrap_or("")
+    self.files.set(to_path, content)
+    ignore(self.files.remove(from_path))
+    true
+  }
+}
+
+///|
 fn tui_journal_test_open(
   fs : TuiJournalTestFs,
   ring_cap? : Int = @server.tui_journal_default_ring_cap,
+  rotate_cap_bytes? : Int = @server.server_log_rotate_cap_bytes,
 ) -> @server.TuiJournal {
   @server.TuiJournal::open(
     "/proj",
     append_file=fs.append(),
     read_file=fs.read(),
-    file_size=fn(_path) { 0 },
-    rename_file=fn(_from, _to) { false },
+    file_size=fs.file_size(),
+    rename_file=fs.rename(),
     ring_cap~,
+    rotate_cap_bytes~,
   )
 }
 
 ///|
 fn tui_journal_test_event(n : Int) -> @types.TuiEvent {
-  @types.TuiEvent::LogLine(
-    level=@types.TuiLogLevel::TuiInfo,
+  @types.TuiEvent::ToolCallCompleted(
     agent_id="agent-" + n.to_string(),
-    tool="",
-    message="event " + n.to_string(),
+    tool="test_tool",
+    ok=true,
+    duration_ms=n.to_int64(),
   )
+}
+
+///|
+fn tui_journal_test_seqs(content : String) -> Array[Int64] {
+  let seqs : Array[Int64] = []
+  for raw_line in content.split("\n") {
+    let line = raw_line.to_owned()
+    if line.trim() == "" {
+      continue
+    }
+    match @types.parse_tui_event_envelope_line(line) {
+      Ok(envelope) => seqs.push(envelope.seq)
+      Err(_) => ()
+    }
+  }
+  seqs
 }
 
 ///|
@@ -189,6 +224,36 @@ test "last_event_age_sec is unknown until an event exists" {
   @debug.assert_eq(journal.last_event_age_sec(14_000L), Some(4L))
   // Clock skew never reports negative age.
   @debug.assert_eq(journal.last_event_age_sec(8_000L), Some(0L))
+}
+
+///|
+test "journal rotates during a long daemon run before appending past cap" {
+  let fs = TuiJournalTestFs::new()
+  let probe : @types.TuiEventEnvelope = {
+    seq: 1L,
+    ts_ms: 100L,
+    event: tui_journal_test_event(1),
+  }
+  let cap = probe.to_jsonl_line().length() * 2 + 1
+  let journal = tui_journal_test_open(fs, ring_cap=1, rotate_cap_bytes=cap)
+  for i = 1; i <= 4; i = i + 1 {
+    ignore(journal.emit(tui_journal_test_event(i), i.to_int64() * 100L))
+  }
+  let active = fs.files.get("/proj/.choir/events.journal.jsonl").unwrap_or("")
+  let rotated = fs.files
+    .get("/proj/.choir/events.journal.jsonl.1")
+    .unwrap_or("")
+  @debug.assert_eq(tui_journal_test_seqs(rotated), [1L, 2L])
+  @debug.assert_eq(tui_journal_test_seqs(active), [3L, 4L])
+  assert_eq(journal.latest_seq(), 4L)
+  match journal.events_since(0L, max=10) {
+    @server.TuiEventsSinceResult::Events(events) => {
+      assert_eq(events.length(), 4)
+      assert_eq(events[0].seq, 1L)
+      assert_eq(events[3].seq, 4L)
+    }
+    _ => fail("expected rotated and active journal files to replay")
+  }
 }
 
 ///|

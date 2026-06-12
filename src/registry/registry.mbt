@@ -290,6 +290,7 @@ pub fn AgentRegistry::clear(self : AgentRegistry) -> Unit {
     self.alive.remove(id)
     self.last_tool_calls.remove(id)
     self.connected_at.remove(id)
+    self.notify(@types.TuiEvent::AgentRemoved(agent_id=id))
   }
 }
 

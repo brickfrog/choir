@@ -2068,6 +2068,7 @@ test "run_native_leaf_helpers_command installs leaf bin shims alongside leaf-too
   assert_true(@sys.path_exists(bin_dir + "/file_pr"))
   assert_true(@sys.path_exists(bin_dir + "/resolve_my_review_threads"))
   assert_true(@sys.path_exists(bin_dir + "/request_review"))
+  assert_true(@sys.path_exists(bin_dir + "/check_inbox"))
   assert_true(@sys.path_exists(bin_dir + "/choir-leaf-tool"))
   ignore(@sys.rm_rf(dir))
 }

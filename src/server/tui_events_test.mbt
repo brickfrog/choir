@@ -95,6 +95,26 @@ test "plan_tui_dispatch_events ignores non tool calls" {
 }
 
 ///|
+test "plan_tui_dispatch_events ignores dashboard polling tools" {
+  let snapshot_req = {
+    ..tui_events_test_request("tui_snapshot", {}),
+    role: @types.Role::Operator,
+  }
+  assert_eq(
+    @server.plan_tui_dispatch_events(snapshot_req, @types.Response::ok({}), 7L).length(),
+    0,
+  )
+  let events_req = {
+    ..tui_events_test_request("tui_events_since", { "seq": "123".to_json() }),
+    role: @types.Role::Operator,
+  }
+  assert_eq(
+    @server.plan_tui_dispatch_events(events_req, @types.Response::ok({}), 8L).length(),
+    0,
+  )
+}
+
+///|
 test "tui_event_from_poll_event maps merge and status kinds" {
   let poller_state = @poller.PollerState::new()
   poller_state.track(

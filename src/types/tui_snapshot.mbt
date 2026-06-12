@@ -31,70 +31,137 @@ pub(all) struct TuiSnapshotWave {
 } derive(Debug, Eq)
 
 ///|
-/// Per-agent status fields shared by every status read model (status bar,
-/// status dump, TUI). Derived once at assembly from the same core
-/// (`derive_agent_status`), never re-computed per surface.
-/// `unresolved_threads` tri-state: `pr_number is None` means no PR;
-/// `Some(pr)` with `unresolved_threads is None` means unknown.
-pub(all) struct TuiAgentStatusFields {
-  lifecycle_wire : String
-  pr_number : Int?
-  unresolved_threads : Int?
-  ci_rollup : String?
-  attention : String
-  fixes_pushed_at : Int64
-  last_activity_unix : Int64
+pub(all) enum TuiReviewState {
+  ReviewNone
+  ReviewApproved
+  ReviewChangesRequested
+  ReviewCommented
 } derive(Debug, Eq)
 
 ///|
-pub impl ToJson for TuiAgentStatusFields with fn to_json(self) -> Json {
-  {
-    "lifecycle_wire": self.lifecycle_wire.to_json(),
-    "pr_number": match self.pr_number {
-      Some(v) => v.to_json()
-      None => null
-    },
-    "unresolved_threads": match self.unresolved_threads {
-      Some(v) => v.to_json()
-      None => null
-    },
-    "ci_rollup": tui_optional_string_json(self.ci_rollup),
-    "attention": self.attention.to_json(),
-    "fixes_pushed_at": self.fixes_pushed_at.to_json(),
-    "last_activity_unix": self.last_activity_unix.to_json(),
-  }.to_json()
-}
-
-///|
-pub fn parse_tui_agent_status_fields_json(
-  json : Json,
-) -> Result[TuiAgentStatusFields, ChoirError] {
-  guard json is Object(obj) else {
-    return Err(tui_snapshot_parse_error("status fields: expected object"))
+pub fn TuiReviewState::to_wire_string(self : TuiReviewState) -> String {
+  match self {
+    ReviewNone => "none"
+    ReviewApproved => "approved"
+    ReviewChangesRequested => "changes_requested"
+    ReviewCommented => "commented"
   }
-  Ok({
-    lifecycle_wire: json_field_string(obj, "lifecycle_wire").unwrap_or(""),
-    pr_number: json_field_int(obj, "pr_number"),
-    unresolved_threads: json_field_int(obj, "unresolved_threads"),
-    ci_rollup: json_field_string(obj, "ci_rollup"),
-    attention: json_field_string(obj, "attention").unwrap_or("unknown"),
-    fixes_pushed_at: json_field_int64(obj, "fixes_pushed_at").unwrap_or(0L),
-    last_activity_unix: json_field_int64(obj, "last_activity_unix").unwrap_or(
-      0L,
-    ),
-  })
 }
 
 ///|
-pub fn TuiAgentStatusFields::empty() -> TuiAgentStatusFields {
-  {
-    lifecycle_wire: "",
-    pr_number: None,
-    unresolved_threads: None,
-    ci_rollup: None,
-    attention: "unknown",
-    fixes_pushed_at: 0L,
-    last_activity_unix: 0L,
+pub fn TuiReviewState::try_parse_wire(
+  raw : String,
+) -> Result[TuiReviewState, ChoirError] {
+  match raw {
+    "none" => Ok(ReviewNone)
+    "approved" => Ok(ReviewApproved)
+    "changes_requested" => Ok(ReviewChangesRequested)
+    "commented" => Ok(ReviewCommented)
+    _ => Err(tui_snapshot_parse_error("unknown review state: " + raw))
+  }
+}
+
+///|
+pub(all) enum TuiCiRollup {
+  CiUnknown
+  CiNoChecks
+  CiInProgress
+  CiSuccess
+  CiFailure
+} derive(Debug, Eq)
+
+///|
+pub fn TuiCiRollup::to_wire_string(self : TuiCiRollup) -> String {
+  match self {
+    CiUnknown => "unknown"
+    CiNoChecks => "no_checks"
+    CiInProgress => "in_progress"
+    CiSuccess => "success"
+    CiFailure => "failure"
+  }
+}
+
+///|
+pub fn TuiCiRollup::try_parse_wire(
+  raw : String,
+) -> Result[TuiCiRollup, ChoirError] {
+  match raw {
+    "unknown" => Ok(CiUnknown)
+    "no_checks" => Ok(CiNoChecks)
+    "in_progress" => Ok(CiInProgress)
+    "success" => Ok(CiSuccess)
+    "failure" => Ok(CiFailure)
+    _ => Err(tui_snapshot_parse_error("unknown ci rollup: " + raw))
+  }
+}
+
+///|
+pub(all) enum TuiMergeable {
+  TuiMergeable
+  TuiConflicting
+  TuiMergeableUnknown
+} derive(Debug, Eq)
+
+///|
+pub fn TuiMergeable::to_wire_string(self : TuiMergeable) -> String {
+  match self {
+    TuiMergeable => "mergeable"
+    TuiConflicting => "conflicting"
+    TuiMergeableUnknown => "unknown"
+  }
+}
+
+///|
+pub fn TuiMergeable::try_parse_wire(
+  raw : String,
+) -> Result[TuiMergeable, ChoirError] {
+  match raw {
+    "mergeable" => Ok(TuiMergeable)
+    "conflicting" => Ok(TuiConflicting)
+    "unknown" => Ok(TuiMergeableUnknown)
+    _ => Err(tui_snapshot_parse_error("unknown mergeable state: " + raw))
+  }
+}
+
+///|
+pub(all) enum TuiMergeStateStatus {
+  MergeStateClean
+  MergeStateUnstable
+  MergeStateBlocked
+  MergeStateHasHooks
+  MergeStateBehind
+  MergeStateUnknown
+  MergeStateDirty
+} derive(Debug, Eq)
+
+///|
+pub fn TuiMergeStateStatus::to_wire_string(
+  self : TuiMergeStateStatus,
+) -> String {
+  match self {
+    MergeStateClean => "clean"
+    MergeStateUnstable => "unstable"
+    MergeStateBlocked => "blocked"
+    MergeStateHasHooks => "has_hooks"
+    MergeStateBehind => "behind"
+    MergeStateUnknown => "unknown"
+    MergeStateDirty => "dirty"
+  }
+}
+
+///|
+pub fn TuiMergeStateStatus::try_parse_wire(
+  raw : String,
+) -> Result[TuiMergeStateStatus, ChoirError] {
+  match raw {
+    "clean" => Ok(MergeStateClean)
+    "unstable" => Ok(MergeStateUnstable)
+    "blocked" => Ok(MergeStateBlocked)
+    "has_hooks" => Ok(MergeStateHasHooks)
+    "behind" => Ok(MergeStateBehind)
+    "unknown" => Ok(MergeStateUnknown)
+    "dirty" => Ok(MergeStateDirty)
+    _ => Err(tui_snapshot_parse_error("unknown merge state status: " + raw))
   }
 }
 
@@ -115,7 +182,6 @@ pub(all) struct TuiSnapshotAgent {
   tdd_phase : LeafTddPhase?
   last_tool_call : ToolCallRecord?
   beads_issue_id : String?
-  status : TuiAgentStatusFields
 } derive(Debug, Eq)
 
 ///|
@@ -125,10 +191,10 @@ pub(all) struct TuiSnapshotPr {
   branch : String
   parent_branch : String
   pr_url : String
-  review_state : String
-  ci_rollup : String
-  mergeable : String
-  merge_state_status : String
+  review_state : TuiReviewState
+  ci_rollup : TuiCiRollup
+  mergeable : TuiMergeable
+  merge_state_status : TuiMergeStateStatus
   unresolved_threads : Int?
   merged_at_unix : Int64?
   copilot_issue_comment_seen : Bool
@@ -145,17 +211,7 @@ pub(all) struct TuiBeadSummary {
   status : String
   title : String
   assignee : String
-  blocks : Array[String]
 } derive(Debug, Eq)
-
-///|
-fn tui_string_array_json(values : Array[String]) -> Json {
-  let out : Array[Json] = []
-  for value in values {
-    out.push(value.to_json())
-  }
-  out.to_json()
-}
 
 ///|
 pub impl ToJson for TuiSnapshotWave with fn to_json(self) -> Json {
@@ -197,7 +253,6 @@ pub impl ToJson for TuiSnapshotAgent with fn to_json(self) -> Json {
       None => null
     },
     "beads_issue_id": tui_optional_string_json(self.beads_issue_id),
-    "status": self.status.to_json(),
   }.to_json()
 }
 
@@ -209,10 +264,10 @@ pub impl ToJson for TuiSnapshotPr with fn to_json(self) -> Json {
     "branch": self.branch.to_json(),
     "parent_branch": self.parent_branch.to_json(),
     "pr_url": self.pr_url.to_json(),
-    "review_state": self.review_state.to_json(),
-    "ci_rollup": self.ci_rollup.to_json(),
-    "mergeable": self.mergeable.to_json(),
-    "merge_state_status": self.merge_state_status.to_json(),
+    "review_state": self.review_state.to_wire_string().to_json(),
+    "ci_rollup": self.ci_rollup.to_wire_string().to_json(),
+    "mergeable": self.mergeable.to_wire_string().to_json(),
+    "merge_state_status": self.merge_state_status.to_wire_string().to_json(),
     "unresolved_threads": match self.unresolved_threads {
       Some(v) => v.to_json()
       None => null
@@ -236,7 +291,6 @@ pub impl ToJson for TuiBeadSummary with fn to_json(self) -> Json {
     "status": self.status.to_json(),
     "title": self.title.to_json(),
     "assignee": self.assignee.to_json(),
-    "blocks": tui_string_array_json(self.blocks),
   }.to_json()
 }
 
@@ -363,14 +417,6 @@ pub fn parse_tui_snapshot_agent_json(
     tdd_phase,
     last_tool_call,
     beads_issue_id: json_field_string(obj, "beads_issue_id"),
-    status: match obj.get("status") {
-      Some(value) =>
-        match parse_tui_agent_status_fields_json(value) {
-          Ok(v) => v
-          Err(e) => return Err(e)
-        }
-      None => TuiAgentStatusFields::empty()
-    },
   })
 }
 
@@ -391,12 +437,38 @@ pub fn parse_tui_snapshot_pr_json(
     branch: json_field_string(obj, "branch").unwrap_or(""),
     parent_branch: json_field_string(obj, "parent_branch").unwrap_or(""),
     pr_url: json_field_string(obj, "pr_url").unwrap_or(""),
-    review_state: json_field_string(obj, "review_state").unwrap_or(""),
-    ci_rollup: json_field_string(obj, "ci_rollup").unwrap_or(""),
-    mergeable: json_field_string(obj, "mergeable").unwrap_or(""),
-    merge_state_status: json_field_string(obj, "merge_state_status").unwrap_or(
-      "",
-    ),
+    review_state: match json_field_string(obj, "review_state") {
+      Some(raw) =>
+        match TuiReviewState::try_parse_wire(raw) {
+          Ok(v) => v
+          Err(e) => return Err(e)
+        }
+      None => TuiReviewState::ReviewNone
+    },
+    ci_rollup: match json_field_string(obj, "ci_rollup") {
+      Some(raw) =>
+        match TuiCiRollup::try_parse_wire(raw) {
+          Ok(v) => v
+          Err(e) => return Err(e)
+        }
+      None => TuiCiRollup::CiUnknown
+    },
+    mergeable: match json_field_string(obj, "mergeable") {
+      Some(raw) =>
+        match TuiMergeable::try_parse_wire(raw) {
+          Ok(v) => v
+          Err(e) => return Err(e)
+        }
+      None => TuiMergeable::TuiMergeableUnknown
+    },
+    merge_state_status: match json_field_string(obj, "merge_state_status") {
+      Some(raw) =>
+        match TuiMergeStateStatus::try_parse_wire(raw) {
+          Ok(v) => v
+          Err(e) => return Err(e)
+        }
+      None => TuiMergeStateStatus::MergeStateUnknown
+    },
     unresolved_threads: json_field_int(obj, "unresolved_threads"),
     merged_at_unix: json_field_int64(obj, "merged_at_unix"),
     copilot_issue_comment_seen: json_field_bool(
@@ -423,23 +495,11 @@ pub fn parse_tui_bead_summary_json(
     Some(v) => v
     None => return Err(tui_snapshot_parse_error("bead: issue_id"))
   }
-  let blocks : Array[String] = []
-  match obj.get("blocks") {
-    Some(Array(items)) =>
-      for item in items {
-        match item {
-          String(s) => blocks.push(s)
-          _ => ()
-        }
-      }
-    _ => ()
-  }
   Ok({
     issue_id,
     status: json_field_string(obj, "status").unwrap_or(""),
     title: json_field_string(obj, "title").unwrap_or(""),
     assignee: json_field_string(obj, "assignee").unwrap_or(""),
-    blocks,
   })
 }
 

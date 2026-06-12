@@ -48,13 +48,14 @@ test "tui event envelope roundtrips every variant" {
     ),
   )
   tui_event_roundtrip(@types.TuiEvent::AgentRemoved(agent_id="main.leaf-a"))
-  tui_event_roundtrip(@types.TuiEvent::AgentHeartbeat(agent_id="main.leaf-a"))
   tui_event_roundtrip(
     @types.TuiEvent::LifecycleChanged(
       agent_id="main.leaf-a",
-      from_lifecycle="working",
-      to_lifecycle="review_owned",
-      trigger="own_pr_filed",
+      from=@types.TuiLifecycleKind::DevWorking,
+      to=@types.TuiLifecycleKind::DevReviewOwned,
+      from_label="dev:working",
+      to_label="dev:review_owned#561",
+      trigger=@types.LifecycleTrigger::PRCreated,
     ),
   )
   tui_event_roundtrip(
@@ -132,14 +133,7 @@ test "tui event envelope roundtrips every variant" {
       title="reviewer policy",
     ),
   )
-  tui_event_roundtrip(
-    @types.TuiEvent::LogLine(
-      level=@types.TuiLogLevel::TuiWarn,
-      agent_id="main.leaf-a",
-      tool="merge_pr",
-      message="policy blocked",
-    ),
-  )
+  tui_event_roundtrip(@types.TuiEvent::BeadRemoved(issue_id="ch-101"))
   tui_event_roundtrip(@types.TuiEvent::DaemonShutdown(reason="exit_requested"))
 }
 

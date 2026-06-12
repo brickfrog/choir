@@ -5,11 +5,12 @@
 pub(all) struct TuiBeadsCache {
   mut taken_at_ms : Int64?
   mut summaries : Array[@types.TuiBeadSummary]
+  mut refresh_in_flight : Bool
 }
 
 ///|
 pub fn TuiBeadsCache::new() -> TuiBeadsCache {
-  { taken_at_ms: None, summaries: [] }
+  { taken_at_ms: None, summaries: [], refresh_in_flight: false }
 }
 
 ///|
@@ -116,6 +117,59 @@ fn tui_copilot_skipped_reason(
 }
 
 ///|
+fn tui_review_state(state : @poller.ReviewState) -> @types.TuiReviewState {
+  match state {
+    @poller.ReviewState::None_ => @types.TuiReviewState::ReviewNone
+    @poller.ReviewState::Approved => @types.TuiReviewState::ReviewApproved
+    @poller.ReviewState::ChangesRequested =>
+      @types.TuiReviewState::ReviewChangesRequested
+    @poller.ReviewState::Commented => @types.TuiReviewState::ReviewCommented
+  }
+}
+
+///|
+fn tui_ci_rollup(rollup : @poller.CiRollupStatus) -> @types.TuiCiRollup {
+  match rollup {
+    @poller.CiRollupStatus::Unknown => @types.TuiCiRollup::CiUnknown
+    @poller.CiRollupStatus::NoChecks => @types.TuiCiRollup::CiNoChecks
+    @poller.CiRollupStatus::InProgress => @types.TuiCiRollup::CiInProgress
+    @poller.CiRollupStatus::Success => @types.TuiCiRollup::CiSuccess
+    @poller.CiRollupStatus::Failure => @types.TuiCiRollup::CiFailure
+  }
+}
+
+///|
+fn tui_mergeable(mergeable : @poller.Mergeable) -> @types.TuiMergeable {
+  match mergeable {
+    @poller.Mergeable::Mergeable => @types.TuiMergeable::TuiMergeable
+    @poller.Mergeable::Conflicting => @types.TuiMergeable::TuiConflicting
+    @poller.Mergeable::Unknown => @types.TuiMergeable::TuiMergeableUnknown
+  }
+}
+
+///|
+fn tui_merge_state_status(
+  status : @poller.MergeStateStatus,
+) -> @types.TuiMergeStateStatus {
+  match status {
+    @poller.MergeStateStatus::Clean =>
+      @types.TuiMergeStateStatus::MergeStateClean
+    @poller.MergeStateStatus::Unstable =>
+      @types.TuiMergeStateStatus::MergeStateUnstable
+    @poller.MergeStateStatus::Blocked =>
+      @types.TuiMergeStateStatus::MergeStateBlocked
+    @poller.MergeStateStatus::HasHooks =>
+      @types.TuiMergeStateStatus::MergeStateHasHooks
+    @poller.MergeStateStatus::Behind =>
+      @types.TuiMergeStateStatus::MergeStateBehind
+    @poller.MergeStateStatus::Unknown =>
+      @types.TuiMergeStateStatus::MergeStateUnknown
+    @poller.MergeStateStatus::Dirty =>
+      @types.TuiMergeStateStatus::MergeStateDirty
+  }
+}
+
+///|
 fn ServerState::tui_snapshot_pr(
   self : ServerState,
   tracked : @poller.TrackedPR,
@@ -172,10 +226,10 @@ fn ServerState::tui_snapshot_pr(
     branch: tracked.branch,
     parent_branch: tracked.parent_branch,
     pr_url: tracked.pr_url,
-    review_state: tracked.last_review_state.to_wire_string(),
-    ci_rollup: @tools.ci_rollup_to_wire_string(tracked.last_ci_rollup),
-    mergeable: tracked.mergeable.to_wire_string(),
-    merge_state_status: tracked.merge_state_status.to_wire_string(),
+    review_state: tui_review_state(tracked.last_review_state),
+    ci_rollup: tui_ci_rollup(tracked.last_ci_rollup),
+    mergeable: tui_mergeable(tracked.mergeable),
+    merge_state_status: tui_merge_state_status(tracked.merge_state_status),
     unresolved_threads,
     merged_at_unix: tracked.merged_at_unix,
     copilot_issue_comment_seen: tracked.copilot_issue_comment_seen,
@@ -211,9 +265,6 @@ pub fn ServerState::build_tui_snapshot(
       fn(agent_id : String) { @phase.read_lifecycle(project_dir, agent_id) }
   }
   let agents : Array[@types.TuiSnapshotAgent] = []
-  let status_tracked_by_agent = @tools.status_tracked_by_agent(
-    self.poller.tracked,
-  )
   for agent in self.registry.list() {
     let agent_id = agent.agent_id.to_string()
     let lifecycle = read_lifecycle(agent_id)
@@ -229,21 +280,6 @@ pub fn ServerState::build_tui_snapshot(
       Some(contract) => contract.beads_issue_id
       None => @workspace.beads_issue_id_for_agent(project_dir, agent)
     }
-    // Shared status core: same derivation as status_bar_state/status_dump.
-    let effective_lifecycle = match lifecycle {
-      Some(lc) => lc
-      None => @phase.lifecycle_for_agent(agent)
-    }
-    let derived = @tools.derive_agent_status(
-      agent_id,
-      effective_lifecycle.workflow,
-      self.poller.tracked,
-      status_tracked_by_agent,
-    )
-    let status = derived.to_tui_fields(
-      @tools.lifecycle_to_wire_string(effective_lifecycle.workflow),
-      @types.non_negative_i64(effective_lifecycle.last_updated_unix_sec),
-    )
     agents.push({
       agent_id,
       role: agent.role,
@@ -263,7 +299,6 @@ pub fn ServerState::build_tui_snapshot(
       tdd_phase: self.leaf_tdd_phase_for_agent(agent_id),
       last_tool_call: self.registry.last_tool_call(agent_id),
       beads_issue_id,
-      status,
     })
   }
   let supervisor = tui_supervisor_agent(self.registry)
@@ -340,6 +375,10 @@ pub async fn ServerState::refresh_tui_beads_cache_if_stale(
     Some(taken) if now_ms - taken < tui_beads_cache_ttl_ms => return
     _ => ()
   }
+  if self.tui_beads_cache.refresh_in_flight {
+    return
+  }
+  self.tui_beads_cache.refresh_in_flight = true
   let summaries : Array[@types.TuiBeadSummary] = []
   let seen : Map[String, Bool] = {}
   for command in tui_beads_list_commands(self.config.project_dir) {
@@ -359,7 +398,6 @@ pub async fn ServerState::refresh_tui_beads_cache_if_stale(
             status: issue.status,
             title: issue.title,
             assignee: issue.assignee,
-            blocks: [],
           })
         }
       Err(_) => ()
@@ -384,8 +422,15 @@ pub async fn ServerState::refresh_tui_beads_cache_if_stale(
       )
     }
   }
+  for entry in previous {
+    let (issue_id, _) = entry
+    if !seen.contains(issue_id) {
+      self.emit_tui_event(@types.TuiEvent::BeadRemoved(issue_id~))
+    }
+  }
   self.tui_beads_cache.summaries = summaries
   self.tui_beads_cache.taken_at_ms = Some(now_ms)
+  self.tui_beads_cache.refresh_in_flight = false
 }
 
 ///|
@@ -395,17 +440,16 @@ pub async fn ServerState::tui_default_branch_cached(
   self : ServerState,
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
 ) -> String {
+  if !self.config.pr_policy.skip_copilot_on_feature_branch {
+    return ""
+  }
   match self.tui_default_branch {
-    Some(value) => value
-    None => {
-      let value = if self.config.pr_policy.skip_copilot_on_feature_branch {
-        @tools.detect_default_branch_with_capture(
-          self.config.project_dir,
-          capture,
-        )
-      } else {
-        ""
-      }
+    Some(value) if value != "" => value
+    Some(_) | None => {
+      let value = @tools.detect_default_branch_with_capture(
+        self.config.project_dir,
+        capture,
+      )
       self.tui_default_branch = Some(value)
       value
     }

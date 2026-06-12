@@ -18,6 +18,9 @@ pub let tui_reconnect_backoff_max_ms : Int = 5000
 pub let tui_events_batch_limit : Int = 500
 
 ///|
+pub let tui_snapshot_refresh_interval_ms : Int64 = 30_000L
+
+///|
 pub(all) enum Tab {
   Overview
   Beads
@@ -71,6 +74,7 @@ pub(all) enum ConnState {
 pub(all) enum PendingAction {
   ConfirmMerge(Int)
   ConfirmSuspend(String)
+  ConfirmResume(String)
 } derive(Debug, Eq)
 
 ///|
@@ -84,6 +88,7 @@ pub(all) enum TuiEffect {
   FetchEvents(Int64)
   SendMerge(Int)
   SendSuspend(String)
+  SendResume(String)
   FocusPane(String)
   OpenDiff(Int)
   QuitApp
@@ -150,6 +155,7 @@ pub(all) struct Model {
   prs_as_of_ms : Int64
   log_ring : Array[@types.TuiEventEnvelope]
   cursor : Int64
+  last_snapshot_ms : Int64
   last_event_ts_ms : Int64?
   conn : ConnState
   backoff_ms : Int
@@ -180,6 +186,7 @@ pub fn Model::initial() -> Model {
     prs_as_of_ms: 0L,
     log_ring: [],
     cursor: 0L,
+    last_snapshot_ms: 0L,
     last_event_ts_ms: None,
     conn: Connecting,
     backoff_ms: tui_reconnect_backoff_min_ms,
@@ -207,8 +214,77 @@ pub(all) enum Msg {
 } derive(Debug)
 
 ///|
+fn copy_string_array(values : Array[String]) -> Array[String] {
+  let out : Array[String] = []
+  for value in values {
+    out.push(value)
+  }
+  out
+}
+
+///|
+fn copy_int_array(values : Array[Int]) -> Array[Int] {
+  let out : Array[Int] = []
+  for value in values {
+    out.push(value)
+  }
+  out
+}
+
+///|
+fn copy_event_array(
+  values : Array[@types.TuiEventEnvelope],
+) -> Array[@types.TuiEventEnvelope] {
+  let out : Array[@types.TuiEventEnvelope] = []
+  for value in values {
+    out.push(value)
+  }
+  out
+}
+
+///|
+fn copy_bead_summary(bead : @types.TuiBeadSummary) -> @types.TuiBeadSummary {
+  bead
+}
+
+///|
+fn copy_bead_array(
+  values : Array[@types.TuiBeadSummary],
+) -> Array[@types.TuiBeadSummary] {
+  let out : Array[@types.TuiBeadSummary] = []
+  for value in values {
+    out.push(copy_bead_summary(value))
+  }
+  out
+}
+
+///|
+fn copy_agent_map(
+  values : Map[String, @types.TuiSnapshotAgent],
+) -> Map[String, @types.TuiSnapshotAgent] {
+  let out : Map[String, @types.TuiSnapshotAgent] = {}
+  for entry in values {
+    let (agent_id, agent) = entry
+    out.set(agent_id, agent)
+  }
+  out
+}
+
+///|
+fn copy_pr_map(
+  values : Map[Int, @types.TuiSnapshotPr],
+) -> Map[Int, @types.TuiSnapshotPr] {
+  let out : Map[Int, @types.TuiSnapshotPr] = {}
+  for entry in values {
+    let (pr_number, pr) = entry
+    out.set(pr_number, pr)
+  }
+  out
+}
+
+///|
 fn push_alarm(model : Model, alarm : String) -> Model {
-  let alarms = model.alarms
+  let alarms = copy_string_array(model.alarms)
   alarms.push(alarm)
   while alarms.length() > 6 {
     ignore(alarms.remove(0))
@@ -217,27 +293,80 @@ fn push_alarm(model : Model, alarm : String) -> Model {
 }
 
 ///|
-fn push_log(model : Model, envelope : @types.TuiEventEnvelope) -> Unit {
-  model.log_ring.push(envelope)
-  while model.log_ring.length() > tui_log_ring_cap {
-    ignore(model.log_ring.remove(0))
+fn push_log(model : Model, envelope : @types.TuiEventEnvelope) -> Model {
+  let log_ring = copy_event_array(model.log_ring)
+  log_ring.push(envelope)
+  while log_ring.length() > tui_log_ring_cap {
+    ignore(log_ring.remove(0))
   }
+  { ..model, log_ring, }
 }
 
 ///|
-fn agent_upsert(model : Model, agent : @types.TuiSnapshotAgent) -> Unit {
-  if !model.agents.contains(agent.agent_id) {
-    model.agent_order.push(agent.agent_id)
+fn agent_upsert(model : Model, agent : @types.TuiSnapshotAgent) -> Model {
+  let agents = copy_agent_map(model.agents)
+  let agent_order = copy_string_array(model.agent_order)
+  if !agents.contains(agent.agent_id) {
+    agent_order.push(agent.agent_id)
   }
-  model.agents.set(agent.agent_id, agent)
+  agents.set(agent.agent_id, agent)
+  { ..model, agents, agent_order }
 }
 
 ///|
-fn pr_upsert(model : Model, pr : @types.TuiSnapshotPr) -> Unit {
-  if !model.prs.contains(pr.pr_number) {
-    model.pr_order.push(pr.pr_number)
+fn agent_remove(model : Model, agent_id : String) -> Model {
+  let agents = copy_agent_map(model.agents)
+  ignore(agents.remove(agent_id))
+  let agent_order : Array[String] = []
+  for id in model.agent_order {
+    if id != agent_id {
+      agent_order.push(id)
+    }
   }
-  model.prs.set(pr.pr_number, pr)
+  { ..model, agents, agent_order }
+}
+
+///|
+fn pr_upsert(model : Model, pr : @types.TuiSnapshotPr) -> Model {
+  let prs = copy_pr_map(model.prs)
+  let pr_order = copy_int_array(model.pr_order)
+  if !prs.contains(pr.pr_number) {
+    pr_order.push(pr.pr_number)
+  }
+  prs.set(pr.pr_number, pr)
+  { ..model, prs, pr_order }
+}
+
+///|
+fn bead_upsert(
+  model : Model,
+  issue_id : String,
+  status : String,
+  title : String,
+) -> Model {
+  let beads = copy_bead_array(model.beads)
+  let mut found = false
+  for i = 0; i < beads.length(); i = i + 1 {
+    if beads[i].issue_id == issue_id {
+      beads[i] = { ..beads[i], status, title }
+      found = true
+    }
+  }
+  if !found {
+    beads.push({ issue_id, status, title, assignee: "" })
+  }
+  { ..model, beads, }
+}
+
+///|
+fn bead_remove(model : Model, issue_id : String) -> Model {
+  let beads : Array[@types.TuiBeadSummary] = []
+  for bead in model.beads {
+    if bead.issue_id != issue_id {
+      beads.push(bead)
+    }
+  }
+  { ..model, beads, }
 }
 
 ///|
@@ -293,12 +422,13 @@ fn load_snapshot(model : Model, snapshot : @types.TuiSnapshot) -> Model {
     agent_order,
     prs,
     pr_order,
-    beads: snapshot.beads,
+    beads: copy_bead_array(snapshot.beads),
     beads_as_of_ms: snapshot.beads_as_of_ms,
     poller: snapshot.poller,
     prs_as_of_ms: snapshot.prs_as_of_ms,
     log_ring,
     cursor: snapshot.journal_seq,
+    last_snapshot_ms: model.now_ms,
     last_event_ts_ms: last_event_ts,
     conn: Connected,
     backoff_ms: tui_reconnect_backoff_min_ms,
@@ -313,7 +443,7 @@ fn load_snapshot(model : Model, snapshot : @types.TuiSnapshot) -> Model {
     }
   }
   for pr in snapshot.prs {
-    if pr.ci_rollup == "failure" {
+    if pr.ci_rollup == @types.TuiCiRollup::CiFailure {
       swept = push_alarm(
         swept,
         "ci red: PR #" + pr.pr_number.to_string() + " (" + pr.agent_id + ")",
@@ -329,9 +459,8 @@ fn apply_event(model : Model, envelope : @types.TuiEventEnvelope) -> Model {
   if envelope.seq <= model.cursor {
     return model
   }
-  push_log(model, envelope)
   let mut next : Model = {
-    ..model,
+    ..push_log(model, envelope),
     cursor: envelope.seq,
     last_event_ts_ms: Some(envelope.ts_ms),
   }
@@ -348,7 +477,7 @@ fn apply_event(model : Model, envelope : @types.TuiEventEnvelope) -> Model {
       spawn_depth~
     ) => {
       let existing = next.agents.get(agent_id)
-      agent_upsert(next, {
+      next = agent_upsert(next, {
         agent_id,
         role,
         agent_type,
@@ -379,15 +508,11 @@ fn apply_event(model : Model, envelope : @types.TuiEventEnvelope) -> Model {
           Some(prior) => prior.beads_issue_id
           None => None
         },
-        status: match existing {
-          Some(prior) => prior.status
-          None => @types.TuiAgentStatusFields::empty()
-        },
       })
     }
     @types.TuiEvent::AgentStateChanged(agent_id~, state~) => {
       match next.agents.get(agent_id) {
-        Some(agent) => next.agents.set(agent_id, { ..agent, state, })
+        Some(agent) => next = agent_upsert(next, { ..agent, state, })
         None => ()
       }
       if state == @types.AgentState::Failed {
@@ -395,26 +520,17 @@ fn apply_event(model : Model, envelope : @types.TuiEventEnvelope) -> Model {
         next = { ..next, ui: { ..next.ui, badge_agents: true } }
       }
     }
-    @types.TuiEvent::AgentRemoved(agent_id~) => {
-      ignore(next.agents.remove(agent_id))
-      let order : Array[String] = []
-      for id in next.agent_order {
-        if id != agent_id {
-          order.push(id)
-        }
-      }
-      next = { ..next, agent_order: order }
-    }
-    @types.TuiEvent::AgentHeartbeat(_) => ()
-    @types.TuiEvent::LifecycleChanged(agent_id~, to_lifecycle~, ..) =>
+    @types.TuiEvent::AgentRemoved(agent_id~) =>
+      next = agent_remove(next, agent_id)
+    @types.TuiEvent::LifecycleChanged(agent_id~, to~, to_label~, ..) =>
       match next.agents.get(agent_id) {
         Some(agent) => {
-          next.agents.set(agent_id, {
+          next = agent_upsert(next, {
             ..agent,
-            lifecycle: to_lifecycle,
+            lifecycle: to_label,
             lifecycle_updated_unix: Some(envelope.ts_ms / 1000L),
           })
-          if to_lifecycle.has_suffix(":failed") {
+          if to.is_failed() {
             next = push_alarm(next, "lifecycle failed: " + agent_id)
             next = { ..next, ui: { ..next.ui, badge_agents: true } }
           }
@@ -424,7 +540,7 @@ fn apply_event(model : Model, envelope : @types.TuiEventEnvelope) -> Model {
     @types.TuiEvent::TddPhaseChanged(agent_id~, phase~) =>
       match next.agents.get(agent_id) {
         Some(agent) =>
-          next.agents.set(agent_id, { ..agent, tdd_phase: Some(phase) })
+          next = agent_upsert(next, { ..agent, tdd_phase: Some(phase) })
         None => ()
       }
     @types.TuiEvent::TddGateViolation(agent_id~, tool~, ..) => {
@@ -434,7 +550,7 @@ fn apply_event(model : Model, envelope : @types.TuiEventEnvelope) -> Model {
     @types.TuiEvent::ToolCallCompleted(agent_id~, tool~, ok~, duration_ms~) =>
       match next.agents.get(agent_id) {
         Some(agent) =>
-          next.agents.set(agent_id, {
+          next = agent_upsert(next, {
             ..agent,
             last_tool_call: Some({
               tool,
@@ -447,16 +563,16 @@ fn apply_event(model : Model, envelope : @types.TuiEventEnvelope) -> Model {
       }
     @types.TuiEvent::PrTracked(pr_number~, agent_id~, branch~) =>
       if !next.prs.contains(pr_number) {
-        pr_upsert(next, {
+        next = pr_upsert(next, {
           pr_number,
           agent_id,
           branch,
           parent_branch: "",
           pr_url: "",
-          review_state: "none",
-          ci_rollup: "unknown",
-          mergeable: "unknown",
-          merge_state_status: "unknown",
+          review_state: @types.TuiReviewState::ReviewNone,
+          ci_rollup: @types.TuiCiRollup::CiUnknown,
+          mergeable: @types.TuiMergeable::TuiMergeableUnknown,
+          merge_state_status: @types.TuiMergeStateStatus::MergeStateUnknown,
           unresolved_threads: None,
           merged_at_unix: None,
           copilot_issue_comment_seen: false,
@@ -471,19 +587,49 @@ fn apply_event(model : Model, envelope : @types.TuiEventEnvelope) -> Model {
       match next.prs.get(pr_number) {
         Some(pr) => {
           let updated = match kind {
-            @types.PrEventKind::CiFailed => { ..pr, ci_rollup: "failure" }
-            @types.PrEventKind::CiFailureCleared
-            | @types.PrEventKind::CiSucceeded => { ..pr, ci_rollup: "success" }
+            @types.PrEventKind::CiFailed =>
+              {
+                ..pr,
+                ci_rollup: @types.TuiCiRollup::CiFailure,
+                merge_gate_ready: false,
+              }
+            @types.PrEventKind::CiFailureCleared =>
+              {
+                ..pr,
+                ci_rollup: @types.TuiCiRollup::CiUnknown,
+                merge_gate_ready: false,
+              }
+            @types.PrEventKind::CiSucceeded =>
+              { ..pr, ci_rollup: @types.TuiCiRollup::CiSuccess }
+            @types.PrEventKind::PrReady =>
+              { ..pr, review_state: @types.TuiReviewState::ReviewApproved }
             @types.PrEventKind::ReviewReceived =>
-              { ..pr, review_state: "changes_requested" }
+              {
+                ..pr,
+                review_state: @types.TuiReviewState::ReviewChangesRequested,
+                merge_gate_ready: false,
+              }
+            @types.PrEventKind::ReviewCommented =>
+              {
+                ..pr,
+                review_state: @types.TuiReviewState::ReviewCommented,
+                merge_gate_ready: false,
+              }
             @types.PrEventKind::ReviewThreadsResolved =>
               { ..pr, unresolved_threads: Some(0) }
             @types.PrEventKind::MergeReady => { ..pr, merge_gate_ready: true }
             @types.PrEventKind::FixesPushed =>
-              { ..pr, fixes_pushed_at: envelope.ts_ms / 1000L }
-            _ => pr
+              {
+                ..pr,
+                ci_rollup: @types.TuiCiRollup::CiUnknown,
+                merge_gate_ready: false,
+                fixes_pushed_at: envelope.ts_ms / 1000L,
+              }
+            @types.PrEventKind::ReviewTimeout => pr
+            @types.PrEventKind::CopilotIssueCommentSeen =>
+              { ..pr, copilot_issue_comment_seen: true }
           }
-          next.prs.set(pr_number, updated)
+          next = pr_upsert(next, updated)
           if kind == @types.PrEventKind::CiFailed {
             next = push_alarm(
               next,
@@ -497,7 +643,7 @@ fn apply_event(model : Model, envelope : @types.TuiEventEnvelope) -> Model {
     @types.TuiEvent::PrMerged(pr_number~, merged_at_unix~, ..) =>
       match next.prs.get(pr_number) {
         Some(pr) =>
-          next.prs.set(pr_number, {
+          next = pr_upsert(next, {
             ..pr,
             merged_at_unix: match merged_at_unix {
               Some(ts) => Some(ts)
@@ -527,21 +673,12 @@ fn apply_event(model : Model, envelope : @types.TuiEventEnvelope) -> Model {
         next = { ..next, ui: { ..next.ui, badge_log: true } }
       }
     }
-    @types.TuiEvent::BeadSummaryChanged(issue_id~, status~, title~) => {
-      let mut found = false
-      for i = 0; i < next.beads.length(); i = i + 1 {
-        if next.beads[i].issue_id == issue_id {
-          next.beads[i] = { ..next.beads[i], status, title }
-          found = true
-        }
-      }
-      if !found {
-        next.beads.push({ issue_id, status, title, assignee: "", blocks: [] })
-      }
-    }
+    @types.TuiEvent::BeadSummaryChanged(issue_id~, status~, title~) =>
+      next = bead_upsert(next, issue_id, status, title)
+    @types.TuiEvent::BeadRemoved(issue_id~) =>
+      next = bead_remove(next, issue_id)
     @types.TuiEvent::MessageQueued(_, ..) => ()
     @types.TuiEvent::MessageDelivered(_, ..) => ()
-    @types.TuiEvent::LogLine(_, ..) => ()
     @types.TuiEvent::DaemonShutdown(_) =>
       next = push_alarm(next, "daemon shutdown announced")
   }
@@ -694,6 +831,17 @@ fn handle_pending_key(
             },
             [SendSuspend(agent_id)],
           )
+        ConfirmResume(agent_id) =>
+          (
+            {
+              ..cleared,
+              ui: {
+                ..cleared.ui,
+                status_line: "resume " + agent_id + " sent...",
+              },
+            },
+            [SendResume(agent_id)],
+          )
       }
     }
     @pippa.KeyMsg::Char('n') | @pippa.KeyMsg::Special("esc") =>
@@ -775,18 +923,29 @@ fn handle_key(model : Model, key : @pippa.KeyMsg) -> (Model, Array[TuiEffect]) {
       }
     @pippa.KeyMsg::Char('s') =>
       match selected_agent(model) {
-        Some(agent) =>
+        Some(agent) => {
+          let pending = if agent.state == @types.AgentState::Suspended {
+            PendingAction::ConfirmResume(agent.agent_id)
+          } else {
+            PendingAction::ConfirmSuspend(agent.agent_id)
+          }
+          let verb = if agent.state == @types.AgentState::Suspended {
+            "resume"
+          } else {
+            "suspend"
+          }
           (
             {
               ..model,
               ui: {
                 ..model.ui,
-                pending: Some(ConfirmSuspend(agent.agent_id)),
-                status_line: "suspend " + agent.agent_id + "? [y/n]",
+                pending: Some(pending),
+                status_line: verb + " " + agent.agent_id + "? [y/n]",
               },
             },
             [],
           )
+        }
         None => (model, [])
       }
     @pippa.KeyMsg::Char('f') =>
@@ -818,7 +977,12 @@ pub fn update_model(model : Model, msg : Msg) -> (Model, Array[TuiEffect]) {
       let next = { ..model, now_ms, }
       match next.conn {
         Connecting => (next, [FetchSnapshot])
-        Connected => (next, [FetchEvents(next.cursor)])
+        Connected =>
+          if now_ms - next.last_snapshot_ms >= tui_snapshot_refresh_interval_ms {
+            (next, [FetchSnapshot])
+          } else {
+            (next, [FetchEvents(next.cursor)])
+          }
         Disconnected(_) =>
           if now_ms >= next.retry_at_ms {
             ({ ..next, conn: Connecting }, [FetchSnapshot])
@@ -834,14 +998,10 @@ pub fn update_model(model : Model, msg : Msg) -> (Model, Array[TuiEffect]) {
         // reconstruct mid-stream state (no ghost leaves).
         return ({ ..model, conn: Connecting }, [FetchSnapshot])
       }
+      ignore(latest_seq)
       let mut next = model
       for envelope in events {
         next = apply_event(next, envelope)
-      }
-      if latest_seq > next.cursor && events.length() == 0 {
-        // Server says more events exist than we received (bounded batch
-        // raced rotation); keep the cursor and drain next tick.
-        ()
       }
       let effects : Array[TuiEffect] = if events.length() >=
         tui_events_batch_limit {

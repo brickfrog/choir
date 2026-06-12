@@ -224,6 +224,23 @@ pub fn ServerState::handle_check_inbox_request(
     Some(value) if value != "" => value
     _ => return @types.Response::Err("check_inbox requires caller_id")
   }
+  let caller = match self.registry.get_opt(caller_id) {
+    Some(agent) => agent
+    None =>
+      return @types.Response::Err(
+        "check_inbox caller is not registered: " + caller_id,
+      )
+  }
+  if caller.role != req.role {
+    return @types.Response::Err(
+      "check_inbox caller role mismatch: " +
+      caller_id +
+      " is " +
+      caller.role.to_wire_string() +
+      ", request role is " +
+      req.role.to_wire_string(),
+    )
+  }
   let drained = self.drain_inbox(caller_id)
   let items : Array[Json] = []
   for message in drained {

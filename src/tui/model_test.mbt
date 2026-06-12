@@ -25,7 +25,6 @@ fn test_snapshot_agent(
       ts_ms: 1779970000000L,
     }),
     beads_issue_id: Some("ch-1"),
-    status: @types.TuiAgentStatusFields::empty(),
   }
 }
 
@@ -60,10 +59,10 @@ fn test_snapshot() -> @types.TuiSnapshot {
         branch: "main.leaf-a",
         parent_branch: "main",
         pr_url: "https://example.invalid/pr/561",
-        review_state: "approved",
-        ci_rollup: "success",
-        mergeable: "mergeable",
-        merge_state_status: "clean",
+        review_state: @types.TuiReviewState::ReviewApproved,
+        ci_rollup: @types.TuiCiRollup::CiSuccess,
+        mergeable: @types.TuiMergeable::TuiMergeable,
+        merge_state_status: @types.TuiMergeStateStatus::MergeStateClean,
         unresolved_threads: Some(0),
         merged_at_unix: None,
         copilot_issue_comment_seen: true,
@@ -81,7 +80,6 @@ fn test_snapshot() -> @types.TuiSnapshot {
         status: "in_progress",
         title: "reviewer policy",
         assignee: "main.leaf-a",
-        blocks: ["ch-2"],
       },
     ],
     beads_as_of_ms: Some(1779970180000L),
@@ -201,13 +199,171 @@ test "events fold updates agents, prs, and alarms; old seqs are ignored" {
     None => fail("expected leaf in model")
   }
   match next.prs.get(561) {
-    Some(pr) => assert_eq(pr.ci_rollup, "failure")
+    Some(pr) => @debug.assert_eq(pr.ci_rollup, @types.TuiCiRollup::CiFailure)
     None => fail("expected pr in model")
   }
   // Alarms escalate to tab 0 and badge the owning tabs.
   assert_true(next.alarms.length() >= 2)
   assert_true(next.ui.badge_agents)
   assert_true(next.ui.badge_prs)
+}
+
+///|
+test "events fold keeps prior model immutable" {
+  let model = loaded_model()
+  let (next, _) = @tui.update_model(
+    model,
+    @tui.Msg::EventsBatch(
+      events=[
+        envelope(
+          11L,
+          @types.TuiEvent::ToolCallCompleted(
+            agent_id="main.leaf-a",
+            tool="notify_parent",
+            ok=false,
+            duration_ms=300L,
+          ),
+        ),
+        envelope(
+          12L,
+          @types.TuiEvent::PrStatusChanged(
+            pr_number=561,
+            agent_id="main.leaf-a",
+            kind=@types.PrEventKind::CiFailed,
+            detail="",
+          ),
+        ),
+        envelope(
+          13L,
+          @types.TuiEvent::BeadSummaryChanged(
+            issue_id="ch-1",
+            status="done",
+            title="reviewer policy shipped",
+          ),
+        ),
+      ],
+      latest_seq=13L,
+      stale=false,
+    ),
+  )
+  assert_eq(next.cursor, 13L)
+  assert_eq(model.cursor, 10L)
+  assert_eq(model.log_ring.length(), 1)
+  match model.agents.get("main.leaf-a") {
+    Some(agent) =>
+      match agent.last_tool_call {
+        Some(call) => assert_eq(call.tool, "file_pr")
+        None => fail("expected original last tool call")
+      }
+    None => fail("expected original agent")
+  }
+  match model.prs.get(561) {
+    Some(pr) => {
+      @debug.assert_eq(pr.ci_rollup, @types.TuiCiRollup::CiSuccess)
+      assert_true(pr.merge_gate_ready)
+    }
+    None => fail("expected original pr")
+  }
+  assert_eq(model.beads[0].status, "in_progress")
+  assert_eq(model.beads[0].title, "reviewer policy")
+}
+
+///|
+test "bead removed event drops closed bead from model" {
+  let model = loaded_model()
+  let (next, _) = @tui.update_model(
+    model,
+    @tui.Msg::EventsBatch(
+      events=[envelope(11L, @types.TuiEvent::BeadRemoved(issue_id="ch-1"))],
+      latest_seq=11L,
+      stale=false,
+    ),
+  )
+  assert_eq(model.beads.length(), 1)
+  assert_eq(next.beads.length(), 0)
+}
+
+///|
+test "pr status events maintain review ci and merge gate state" {
+  let model = loaded_model()
+  let (cleared, _) = @tui.update_model(
+    model,
+    @tui.Msg::EventsBatch(
+      events=[
+        envelope(
+          11L,
+          @types.TuiEvent::PrStatusChanged(
+            pr_number=561,
+            agent_id="main.leaf-a",
+            kind=@types.PrEventKind::CiFailed,
+            detail="",
+          ),
+        ),
+        envelope(
+          12L,
+          @types.TuiEvent::PrStatusChanged(
+            pr_number=561,
+            agent_id="main.leaf-a",
+            kind=@types.PrEventKind::PrReady,
+            detail="",
+          ),
+        ),
+        envelope(
+          13L,
+          @types.TuiEvent::PrStatusChanged(
+            pr_number=561,
+            agent_id="main.leaf-a",
+            kind=@types.PrEventKind::CiFailureCleared,
+            detail="",
+          ),
+        ),
+      ],
+      latest_seq=13L,
+      stale=false,
+    ),
+  )
+  match cleared.prs.get(561) {
+    Some(pr) => {
+      @debug.assert_eq(pr.review_state, @types.TuiReviewState::ReviewApproved)
+      @debug.assert_eq(pr.ci_rollup, @types.TuiCiRollup::CiUnknown)
+      assert_false(pr.merge_gate_ready)
+    }
+    None => fail("expected pr")
+  }
+  let (ready, _) = @tui.update_model(
+    cleared,
+    @tui.Msg::EventsBatch(
+      events=[
+        envelope(
+          14L,
+          @types.TuiEvent::PrStatusChanged(
+            pr_number=561,
+            agent_id="main.leaf-a",
+            kind=@types.PrEventKind::CiSucceeded,
+            detail="",
+          ),
+        ),
+        envelope(
+          15L,
+          @types.TuiEvent::PrStatusChanged(
+            pr_number=561,
+            agent_id="main.leaf-a",
+            kind=@types.PrEventKind::MergeReady,
+            detail="",
+          ),
+        ),
+      ],
+      latest_seq=15L,
+      stale=false,
+    ),
+  )
+  match ready.prs.get(561) {
+    Some(pr) => {
+      @debug.assert_eq(pr.ci_rollup, @types.TuiCiRollup::CiSuccess)
+      assert_true(pr.merge_gate_ready)
+    }
+    None => fail("expected pr")
+  }
 }
 
 ///|
@@ -222,6 +378,21 @@ test "stale cursor triggers re-snapshot" {
 }
 
 ///|
+test "connected poll periodically refreshes the full snapshot" {
+  let model = loaded_model()
+  let (_, events_effect) = @tui.update_model(
+    model,
+    @tui.Msg::PollTick(@tui.tui_snapshot_refresh_interval_ms - 1L),
+  )
+  @debug.assert_eq(events_effect, [@tui.TuiEffect::FetchEvents(10L)])
+  let (_, snapshot_effect) = @tui.update_model(
+    model,
+    @tui.Msg::PollTick(@tui.tui_snapshot_refresh_interval_ms),
+  )
+  @debug.assert_eq(snapshot_effect, [@tui.TuiEffect::FetchSnapshot])
+}
+
+///|
 test "full batch drains immediately" {
   let model = loaded_model()
   let events : Array[@types.TuiEventEnvelope] = []
@@ -229,7 +400,12 @@ test "full batch drains immediately" {
     events.push(
       envelope(
         11L + i.to_int64(),
-        @types.TuiEvent::AgentHeartbeat(agent_id="main.leaf-a"),
+        @types.TuiEvent::ToolCallCompleted(
+          agent_id="main.leaf-a",
+          tool="test_tool",
+          ok=true,
+          duration_ms=i.to_int64(),
+        ),
       ),
     )
   }
@@ -287,6 +463,51 @@ test "merge keybinding requires confirmation then sends the daemon command" {
   )
   assert_eq(none_effects.length(), 0)
   @debug.assert_eq(cancelled.ui.pending, None)
+}
+
+///|
+test "s keybinding suspends active agents and resumes suspended agents" {
+  let model = loaded_model()
+  let (suspend_armed, effects0) = @tui.update_model(
+    model,
+    @tui.Msg::KeyInput(@pippa.KeyMsg::Char('s')),
+  )
+  assert_eq(effects0.length(), 0)
+  @debug.assert_eq(
+    suspend_armed.ui.pending,
+    Some(@tui.PendingAction::ConfirmSuspend("root-tl")),
+  )
+  let (_, suspend_effects) = @tui.update_model(
+    suspend_armed,
+    @tui.Msg::KeyInput(@pippa.KeyMsg::Char('y')),
+  )
+  @debug.assert_eq(suspend_effects, [@tui.TuiEffect::SendSuspend("root-tl")])
+
+  let agents : Map[String, @types.TuiSnapshotAgent] = {}
+  for entry in model.agents {
+    let (agent_id, agent) = entry
+    agents.set(
+      agent_id,
+      if agent_id == "root-tl" {
+        { ..agent, state: @types.AgentState::Suspended }
+      } else {
+        agent
+      },
+    )
+  }
+  let (resume_armed, _) = @tui.update_model(
+    { ..model, agents, },
+    @tui.Msg::KeyInput(@pippa.KeyMsg::Char('s')),
+  )
+  @debug.assert_eq(
+    resume_armed.ui.pending,
+    Some(@tui.PendingAction::ConfirmResume("root-tl")),
+  )
+  let (_, resume_effects) = @tui.update_model(
+    resume_armed,
+    @tui.Msg::KeyInput(@pippa.KeyMsg::Char('y')),
+  )
+  @debug.assert_eq(resume_effects, [@tui.TuiEffect::SendResume("root-tl")])
 }
 
 ///|

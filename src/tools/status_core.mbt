@@ -1,8 +1,8 @@
 ///|
 /// Shared per-agent status derivation — the single assembly core behind the
-/// status read models (status_bar_state panes, server status_dump rows, and
-/// the canonical TUI snapshot). Read models project from this; they do not
-/// re-derive PR selection, thread tri-state, CI rollup, or attention.
+/// status read models (status_bar_state panes and server status_dump rows).
+/// Read models project from this; they do not re-derive PR selection, thread
+/// tri-state, CI rollup, or attention.
 pub(all) struct AgentStatusDerived {
   workflow_pr_number : Int?
   pr_number : Int?
@@ -58,29 +58,5 @@ pub fn derive_agent_status(
     attention: pane_needs_attention(
       workflow, fixes_pushed_at, unresolved_threads,
     ),
-  }
-}
-
-///|
-/// Wire conversion for the canonical snapshot's per-agent status fields.
-pub fn AgentStatusDerived::to_tui_fields(
-  self : AgentStatusDerived,
-  lifecycle_wire : String,
-  last_activity_unix : Int64,
-) -> @types.TuiAgentStatusFields {
-  {
-    lifecycle_wire,
-    pr_number: self.pr_number,
-    unresolved_threads: match self.unresolved_threads {
-      Count(n) => Some(n)
-      _ => None
-    },
-    ci_rollup: match self.ci_rollup {
-      Some(value) => Some(ci_rollup_to_wire_string(value))
-      None => None
-    },
-    attention: pane_attention_to_bool_string(self.attention),
-    fixes_pushed_at: self.fixes_pushed_at,
-    last_activity_unix,
   }
 }

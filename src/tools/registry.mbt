@@ -259,7 +259,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     tool_def(
       "resume",
       "Resume a suspended child agent: transitions Suspended → Active, unblocking poll delivery for that agent.",
-      [@types.Role::Root, @types.Role::TL],
+      [@types.Role::Root, @types.Role::TL, @types.Role::Operator],
     ),
   ]
   for def in defs {

@@ -24,8 +24,12 @@ pub(all) struct TuiJournal {
   mut ring : Array[@types.TuiEventEnvelope]
   append_file : (String, String) -> Bool
   read_file : (String) -> String
+  rename_file : (String, String) -> Bool
+  mut active_bytes : Int
+  rotate_cap_bytes : Int
   mut last_event_ts_ms : Int64?
   mut append_failure_warned : Bool
+  mut rotate_failure_warned : Bool
 }
 
 ///|
@@ -63,10 +67,15 @@ pub fn TuiJournal::open(
   file_size? : (String) -> Int = @sys.file_size,
   rename_file? : (String, String) -> Bool = @sys.rename_file_sync,
   ring_cap? : Int = tui_journal_default_ring_cap,
+  rotate_cap_bytes? : Int = server_log_rotate_cap_bytes,
 ) -> TuiJournal {
   ignore(
     serve_rotate_log_if_large(
-      project_dir, tui_journal_rel_path, file_size, rename_file,
+      project_dir,
+      tui_journal_rel_path,
+      file_size,
+      rename_file,
+      cap_bytes=rotate_cap_bytes,
     ),
   )
   let path = tui_journal_path(project_dir)
@@ -80,6 +89,8 @@ pub fn TuiJournal::open(
     Some(envelope) => (envelope.seq + 1L, Some(envelope.ts_ms))
     None => (1L, None)
   }
+  let active_size = file_size(path)
+  let active_bytes = if active_size < 0 { 0 } else { active_size }
   {
     path,
     ring_cap: if ring_cap <= 0 {
@@ -91,8 +102,16 @@ pub fn TuiJournal::open(
     ring: [],
     append_file,
     read_file,
+    rename_file,
+    active_bytes,
+    rotate_cap_bytes: if rotate_cap_bytes <= 0 {
+      server_log_rotate_cap_bytes
+    } else {
+      rotate_cap_bytes
+    },
     last_event_ts_ms,
     append_failure_warned: false,
+    rotate_failure_warned: false,
   }
 }
 
@@ -127,6 +146,28 @@ fn TuiJournal::enforce_ring_cap(self : TuiJournal) -> Unit {
 }
 
 ///|
+fn TuiJournal::rotate_before_append_if_needed(
+  self : TuiJournal,
+  next_line_bytes : Int,
+) -> Unit {
+  if !server_log_should_rotate(
+      self.active_bytes + next_line_bytes,
+      cap_bytes=self.rotate_cap_bytes,
+    ) {
+    return
+  }
+  if (self.rename_file)(self.path, self.path + ".1") {
+    self.active_bytes = 0
+  } else if !self.rotate_failure_warned {
+    self.rotate_failure_warned = true
+    @moontrace.warn("tui journal rotation failed; append will continue", fields=[
+      @moontrace.field("path", self.path),
+      @moontrace.field("active_bytes", self.active_bytes),
+    ])
+  }
+}
+
+///|
 /// Append one event: assigns the next sequence number, stamps the timestamp,
 /// pushes onto the hot ring, and appends a JSONL line to the journal file.
 /// A failed file append keeps the in-memory event (and warns once) so the
@@ -142,8 +183,11 @@ pub fn TuiJournal::emit(
   self.ring.push(envelope)
   self.enforce_ring_cap()
   self.last_event_ts_ms = Some(now_ms)
-  if !(self.append_file)(self.path, envelope.to_jsonl_line()) &&
-    !self.append_failure_warned {
+  let line = envelope.to_jsonl_line()
+  self.rotate_before_append_if_needed(line.length())
+  if (self.append_file)(self.path, line) {
+    self.active_bytes = self.active_bytes + line.length()
+  } else if !self.append_failure_warned {
     self.append_failure_warned = true
     @moontrace.warn("tui journal append failed; ring continues in-memory", fields=[
       @moontrace.field("path", self.path),

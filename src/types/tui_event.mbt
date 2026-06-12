@@ -166,33 +166,117 @@ pub fn PrEventKind::try_parse_wire(
 }
 
 ///|
-pub(all) enum TuiLogLevel {
-  TuiDebug
-  TuiInfo
-  TuiWarn
-  TuiError
+pub(all) enum TuiLifecycleKind {
+  SupervisorPlanning
+  SupervisorDispatching
+  SupervisorSupervising
+  SupervisorWaveComplete
+  SupervisorOwnPrFiled
+  SupervisorDone
+  SupervisorFailed
+  DevWorking
+  DevWaitingForRedGate
+  DevReviewOwned
+  DevChangesRequested
+  DevExitRequestedDeferred
+  DevExitable
+  DevDone
+  DevFailed
+  WorkerWorking
+  WorkerExitable
+  WorkerDone
+  WorkerFailed
 } derive(Debug, Eq)
 
 ///|
-pub fn TuiLogLevel::to_wire_string(self : TuiLogLevel) -> String {
+pub fn TuiLifecycleKind::to_wire_string(self : TuiLifecycleKind) -> String {
   match self {
-    TuiDebug => "debug"
-    TuiInfo => "info"
-    TuiWarn => "warn"
-    TuiError => "error"
+    SupervisorPlanning => "supervisor_planning"
+    SupervisorDispatching => "supervisor_dispatching"
+    SupervisorSupervising => "supervisor_supervising"
+    SupervisorWaveComplete => "supervisor_wave_complete"
+    SupervisorOwnPrFiled => "supervisor_own_pr_filed"
+    SupervisorDone => "supervisor_done"
+    SupervisorFailed => "supervisor_failed"
+    DevWorking => "dev_working"
+    DevWaitingForRedGate => "dev_waiting_for_red_gate"
+    DevReviewOwned => "dev_review_owned"
+    DevChangesRequested => "dev_changes_requested"
+    DevExitRequestedDeferred => "dev_exit_requested_deferred"
+    DevExitable => "dev_exitable"
+    DevDone => "dev_done"
+    DevFailed => "dev_failed"
+    WorkerWorking => "worker_working"
+    WorkerExitable => "worker_exitable"
+    WorkerDone => "worker_done"
+    WorkerFailed => "worker_failed"
   }
 }
 
 ///|
-pub fn TuiLogLevel::try_parse_wire(
+pub fn TuiLifecycleKind::try_parse_wire(
   s : String,
-) -> Result[TuiLogLevel, ChoirError] {
+) -> Result[TuiLifecycleKind, ChoirError] {
   match s {
-    "debug" => Ok(TuiDebug)
-    "info" => Ok(TuiInfo)
-    "warn" => Ok(TuiWarn)
-    "error" => Ok(TuiError)
-    _ => Err(ChoirError::validation_error("unknown tui log level: " + s))
+    "supervisor_planning" => Ok(SupervisorPlanning)
+    "supervisor_dispatching" => Ok(SupervisorDispatching)
+    "supervisor_supervising" => Ok(SupervisorSupervising)
+    "supervisor_wave_complete" => Ok(SupervisorWaveComplete)
+    "supervisor_own_pr_filed" => Ok(SupervisorOwnPrFiled)
+    "supervisor_done" => Ok(SupervisorDone)
+    "supervisor_failed" => Ok(SupervisorFailed)
+    "dev_working" => Ok(DevWorking)
+    "dev_waiting_for_red_gate" => Ok(DevWaitingForRedGate)
+    "dev_review_owned" => Ok(DevReviewOwned)
+    "dev_changes_requested" => Ok(DevChangesRequested)
+    "dev_exit_requested_deferred" => Ok(DevExitRequestedDeferred)
+    "dev_exitable" => Ok(DevExitable)
+    "dev_done" => Ok(DevDone)
+    "dev_failed" => Ok(DevFailed)
+    "worker_working" => Ok(WorkerWorking)
+    "worker_exitable" => Ok(WorkerExitable)
+    "worker_done" => Ok(WorkerDone)
+    "worker_failed" => Ok(WorkerFailed)
+    _ => Err(ChoirError::validation_error("unknown tui lifecycle kind: " + s))
+  }
+}
+
+///|
+pub fn TuiLifecycleKind::is_failed(self : TuiLifecycleKind) -> Bool {
+  match self {
+    SupervisorFailed | DevFailed | WorkerFailed => true
+    _ => false
+  }
+}
+
+///|
+pub fn LifecycleTrigger::try_parse_wire(
+  s : String,
+) -> Result[LifecycleTrigger, ChoirError] {
+  match s {
+    "ChildSpawned" => Ok(ChildSpawned)
+    "ChildCompleted" => Ok(ChildCompleted)
+    "ChildFailed" => Ok(ChildFailed)
+    "PRMerged" => Ok(PRMerged)
+    "AllChildrenDone" => Ok(AllChildrenDone)
+    "OwnPRFiled" => Ok(OwnPRFiled)
+    "PRCreated" => Ok(PRCreated)
+    "NotifyParentSuccess" => Ok(NotifyParentSuccess)
+    "NotifyParentFailure" => Ok(NotifyParentFailure)
+    "ExitRequested" => Ok(ExitRequested)
+    "MergeObserved" => Ok(MergeObserved)
+    "ReviewReceived" => Ok(ReviewReceived)
+    "ReviewApproved" => Ok(ReviewApproved)
+    "FixesPushed" => Ok(FixesPushed)
+    "ChildUpdated" => Ok(ChildUpdated)
+    "ChildRemoved" => Ok(ChildRemoved)
+    "TransportDisconnected" => Ok(TransportDisconnected)
+    "TransportReconnected" => Ok(TransportReconnected)
+    "ExitMerged" => Ok(ExitMerged)
+    "ExitDisconnected" => Ok(ExitDisconnected)
+    "ExitShutdown" => Ok(ExitShutdown)
+    "FinalizeComplete" => Ok(FinalizeComplete)
+    _ => Err(ChoirError::validation_error("unknown lifecycle trigger: " + s))
   }
 }
 
@@ -217,12 +301,13 @@ pub(all) enum TuiEvent {
   )
   AgentStateChanged(agent_id~ : String, state~ : AgentState)
   AgentRemoved(agent_id~ : String)
-  AgentHeartbeat(agent_id~ : String)
   LifecycleChanged(
     agent_id~ : String,
-    from_lifecycle~ : String,
-    to_lifecycle~ : String,
-    trigger~ : String
+    from~ : TuiLifecycleKind,
+    to~ : TuiLifecycleKind,
+    from_label~ : String,
+    to_label~ : String,
+    trigger~ : LifecycleTrigger
   )
   TddPhaseChanged(agent_id~ : String, phase~ : LeafTddPhase)
   TddGateViolation(agent_id~ : String, tool~ : String, detail~ : String)
@@ -253,12 +338,7 @@ pub(all) enum TuiEvent {
   )
   MessageDelivered(recipient_id~ : String, message_id~ : String)
   BeadSummaryChanged(issue_id~ : String, status~ : String, title~ : String)
-  LogLine(
-    level~ : TuiLogLevel,
-    agent_id~ : String,
-    tool~ : String,
-    message~ : String
-  )
+  BeadRemoved(issue_id~ : String)
   DaemonShutdown(reason~ : String)
 } derive(Debug, Eq)
 
@@ -284,7 +364,6 @@ pub fn TuiEvent::type_tag(self : TuiEvent) -> String {
     AgentRegistered(..) => "agent_registered"
     AgentStateChanged(..) => "agent_state_changed"
     AgentRemoved(..) => "agent_removed"
-    AgentHeartbeat(..) => "agent_heartbeat"
     LifecycleChanged(..) => "lifecycle_changed"
     TddPhaseChanged(..) => "tdd_phase_changed"
     TddGateViolation(..) => "tdd_gate_violation"
@@ -296,7 +375,7 @@ pub fn TuiEvent::type_tag(self : TuiEvent) -> String {
     MessageQueued(..) => "message_queued"
     MessageDelivered(..) => "message_delivered"
     BeadSummaryChanged(..) => "bead_summary_changed"
-    LogLine(..) => "log_line"
+    BeadRemoved(..) => "bead_removed"
     DaemonShutdown(..) => "daemon_shutdown"
   }
 }
@@ -332,13 +411,14 @@ fn TuiEvent::data_json(self : TuiEvent) -> Json {
         "state": state.to_wire_string().to_json(),
       }.to_json()
     AgentRemoved(agent_id~) => { "agent_id": agent_id.to_json() }.to_json()
-    AgentHeartbeat(agent_id~) => { "agent_id": agent_id.to_json() }.to_json()
-    LifecycleChanged(agent_id~, from_lifecycle~, to_lifecycle~, trigger~) =>
+    LifecycleChanged(agent_id~, from~, to~, from_label~, to_label~, trigger~) =>
       {
         "agent_id": agent_id.to_json(),
-        "from": from_lifecycle.to_json(),
-        "to": to_lifecycle.to_json(),
-        "trigger": trigger.to_json(),
+        "from": from.to_wire_string().to_json(),
+        "to": to.to_wire_string().to_json(),
+        "from_label": from_label.to_json(),
+        "to_label": to_label.to_json(),
+        "trigger": trigger.to_wire_string().to_json(),
       }.to_json()
     TddPhaseChanged(agent_id~, phase~) =>
       {
@@ -401,13 +481,7 @@ fn TuiEvent::data_json(self : TuiEvent) -> Json {
         "status": status.to_json(),
         "title": title.to_json(),
       }.to_json()
-    LogLine(level~, agent_id~, tool~, message~) =>
-      {
-        "level": level.to_wire_string().to_json(),
-        "agent_id": agent_id.to_json(),
-        "tool": tool.to_json(),
-        "message": message.to_json(),
-      }.to_json()
+    BeadRemoved(issue_id~) => { "issue_id": issue_id.to_json() }.to_json()
     DaemonShutdown(reason~) => { "reason": reason.to_json() }.to_json()
   }
 }
@@ -549,33 +623,50 @@ fn parse_tui_event_data(
         Ok(agent_id) => Ok(TuiEvent::AgentRemoved(agent_id~))
         Err(e) => Err(e)
       }
-    "agent_heartbeat" =>
-      match tui_required_string(obj, "agent_id") {
-        Ok(agent_id) => Ok(TuiEvent::AgentHeartbeat(agent_id~))
-        Err(e) => Err(e)
-      }
     "lifecycle_changed" => {
       let agent_id = match tui_required_string(obj, "agent_id") {
         Ok(v) => v
         Err(e) => return Err(e)
       }
-      let from_lifecycle = match tui_required_string(obj, "from") {
+      let from_raw = match tui_required_string(obj, "from") {
         Ok(v) => v
         Err(e) => return Err(e)
       }
-      let to_lifecycle = match tui_required_string(obj, "to") {
+      let from = match TuiLifecycleKind::try_parse_wire(from_raw) {
+        Ok(v) => v
+        Err(e) => return Err(e)
+      }
+      let to_raw = match tui_required_string(obj, "to") {
+        Ok(v) => v
+        Err(e) => return Err(e)
+      }
+      let to = match TuiLifecycleKind::try_parse_wire(to_raw) {
+        Ok(v) => v
+        Err(e) => return Err(e)
+      }
+      let from_label = match tui_required_string(obj, "from_label") {
+        Ok(v) => v
+        Err(e) => return Err(e)
+      }
+      let to_label = match tui_required_string(obj, "to_label") {
         Ok(v) => v
         Err(e) => return Err(e)
       }
       let trigger = match tui_required_string(obj, "trigger") {
-        Ok(v) => v
+        Ok(v) =>
+          match LifecycleTrigger::try_parse_wire(v) {
+            Ok(parsed) => parsed
+            Err(e) => return Err(e)
+          }
         Err(e) => return Err(e)
       }
       Ok(
         TuiEvent::LifecycleChanged(
           agent_id~,
-          from_lifecycle~,
-          to_lifecycle~,
+          from~,
+          to~,
+          from_label~,
+          to_label~,
           trigger~,
         ),
       )
@@ -739,29 +830,11 @@ fn parse_tui_event_data(
       }
       Ok(TuiEvent::BeadSummaryChanged(issue_id~, status~, title~))
     }
-    "log_line" => {
-      let level = match tui_required_string(obj, "level") {
-        Ok(v) =>
-          match TuiLogLevel::try_parse_wire(v) {
-            Ok(parsed) => parsed
-            Err(e) => return Err(e)
-          }
-        Err(e) => return Err(e)
+    "bead_removed" =>
+      match tui_required_string(obj, "issue_id") {
+        Ok(issue_id) => Ok(TuiEvent::BeadRemoved(issue_id~))
+        Err(e) => Err(e)
       }
-      let agent_id = match tui_required_string(obj, "agent_id") {
-        Ok(v) => v
-        Err(e) => return Err(e)
-      }
-      let tool = match tui_required_string(obj, "tool") {
-        Ok(v) => v
-        Err(e) => return Err(e)
-      }
-      let message = match tui_required_string(obj, "message") {
-        Ok(v) => v
-        Err(e) => return Err(e)
-      }
-      Ok(TuiEvent::LogLine(level~, agent_id~, tool~, message~))
-    }
     "daemon_shutdown" =>
       match tui_required_string(obj, "reason") {
         Ok(reason) => Ok(TuiEvent::DaemonShutdown(reason~))

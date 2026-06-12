@@ -248,15 +248,15 @@ fn pr_state_label(pr : @types.TuiSnapshotPr) -> String {
 ///|
 fn pr_row(pr : @types.TuiSnapshotPr, selected : Bool, width : Int) -> String {
   let ci = match pr.ci_rollup {
-    "success" => paint("✓ci", c_green())
-    "failure" => paint("✗ci", c_red())
-    "in_progress" => paint("~ci", c_yellow())
+    @types.TuiCiRollup::CiSuccess => paint("✓ci", c_green())
+    @types.TuiCiRollup::CiFailure => paint("✗ci", c_red())
+    @types.TuiCiRollup::CiInProgress => paint("~ci", c_yellow())
     _ => paint("?ci", c_dim())
   }
   let review = match pr.review_state {
-    "approved" => paint("✓rev", c_green())
-    "changes_requested" => paint("✗rev", c_red())
-    "commented" => paint("~rev", c_yellow())
+    @types.TuiReviewState::ReviewApproved => paint("✓rev", c_green())
+    @types.TuiReviewState::ReviewChangesRequested => paint("✗rev", c_red())
+    @types.TuiReviewState::ReviewCommented => paint("~rev", c_yellow())
     _ => paint("·rev", c_dim())
   }
   let threads = match pr.unresolved_threads {
@@ -328,7 +328,6 @@ fn event_agent(envelope : @types.TuiEventEnvelope) -> String {
     @types.TuiEvent::AgentRegistered(agent_id~, ..)
     | @types.TuiEvent::AgentStateChanged(agent_id~, ..)
     | @types.TuiEvent::AgentRemoved(agent_id~)
-    | @types.TuiEvent::AgentHeartbeat(agent_id~)
     | @types.TuiEvent::LifecycleChanged(agent_id~, ..)
     | @types.TuiEvent::TddPhaseChanged(agent_id~, ..)
     | @types.TuiEvent::TddGateViolation(agent_id~, ..)
@@ -336,7 +335,6 @@ fn event_agent(envelope : @types.TuiEventEnvelope) -> String {
     | @types.TuiEvent::PrTracked(agent_id~, ..)
     | @types.TuiEvent::PrStatusChanged(agent_id~, ..)
     | @types.TuiEvent::PrMerged(agent_id~, ..) => agent_id
-    @types.TuiEvent::LogLine(agent_id~, ..) => agent_id
     @types.TuiEvent::MessageQueued(recipient_id~, ..) => recipient_id
     @types.TuiEvent::MessageDelivered(recipient_id~, ..) => recipient_id
     _ => ""
@@ -351,9 +349,8 @@ fn event_line(envelope : @types.TuiEventEnvelope) -> String {
     @types.TuiEvent::AgentStateChanged(state~, ..) =>
       "state → " + state.to_wire_string()
     @types.TuiEvent::AgentRemoved(_) => "removed"
-    @types.TuiEvent::AgentHeartbeat(_) => paint("heartbeat", c_dim())
-    @types.TuiEvent::LifecycleChanged(from_lifecycle~, to_lifecycle~, ..) =>
-      from_lifecycle + " → " + to_lifecycle
+    @types.TuiEvent::LifecycleChanged(from_label~, to_label~, ..) =>
+      from_label + " → " + to_label
     @types.TuiEvent::TddPhaseChanged(phase~, ..) =>
       "tdd → " + phase.to_wire_string()
     @types.TuiEvent::TddGateViolation(tool~, detail~, ..) =>
@@ -390,15 +387,7 @@ fn event_line(envelope : @types.TuiEventEnvelope) -> String {
       "message delivered (" + message_id + ")"
     @types.TuiEvent::BeadSummaryChanged(issue_id~, status~, ..) =>
       "bead " + issue_id + " → " + status
-    @types.TuiEvent::LogLine(level~, message~, ..) =>
-      paint(
-        message,
-        match level {
-          @types.TuiLogLevel::TuiError => c_red()
-          @types.TuiLogLevel::TuiWarn => c_yellow()
-          _ => c_text()
-        },
-      )
+    @types.TuiEvent::BeadRemoved(issue_id~) => "bead " + issue_id + " removed"
     @types.TuiEvent::DaemonShutdown(reason~) =>
       paint("daemon shutdown: " + reason, c_red())
   }
@@ -424,14 +413,12 @@ fn event_matches_filter(
     let tool = match envelope.event {
       @types.TuiEvent::ToolCallCompleted(tool~, ..) => tool
       @types.TuiEvent::TddGateViolation(tool~, ..) => tool
-      @types.TuiEvent::LogLine(tool~, ..) => tool
       _ => ""
     }
     return tool.contains(filter[5:].to_owned())
   }
   if filter.has_prefix("level=") {
     let level = match envelope.event {
-      @types.TuiEvent::LogLine(level~, ..) => level.to_wire_string()
       @types.TuiEvent::TddGateViolation(..) => "error"
       _ => "info"
     }
@@ -626,13 +613,6 @@ fn view_overview(model : Model) -> String {
   }
   for i = 0; i < bead_limit; i = i + 1 {
     beads_body.push(bead_row(model.beads[i], false, width - 4))
-    if model.beads[i].blocks.length() > 0 {
-      let mut edge = "  └→ blocks "
-      for target in model.beads[i].blocks {
-        edge = edge + target + " "
-      }
-      beads_body.push(paint(edge, c_dim()))
-    }
   }
   if model.beads.length() == 0 {
     beads_body.push(paint("no bead summaries (bd cache empty)", c_dim()))
@@ -695,13 +675,6 @@ fn view_beads(model : Model) -> String {
     }
     if owning_leaf != "" {
       detail.push("leaf:  " + paint(owning_leaf, c_blue()))
-    }
-    if bead.blocks.length() > 0 {
-      let mut edge = "└→ blocks "
-      for target in bead.blocks {
-        edge = edge + target + " "
-      }
-      detail.push(paint(edge, c_yellow()))
     }
   } else {
     detail.push(paint("select a bead", c_dim()))
@@ -807,13 +780,13 @@ fn view_prs(model : Model) -> String {
       detail.push("agent:  " + pr.agent_id + " → " + pr.parent_branch)
       detail.push(
         "review: " +
-        pr.review_state +
+        pr.review_state.to_wire_string() +
         " · ci: " +
-        pr.ci_rollup +
+        pr.ci_rollup.to_wire_string() +
         " · mergeable: " +
-        pr.mergeable +
+        pr.mergeable.to_wire_string() +
         " · status: " +
-        pr.merge_state_status,
+        pr.merge_state_status.to_wire_string(),
       )
       detail.push(
         "threads: " +
@@ -916,7 +889,7 @@ fn view_help(model : Model) -> String {
       "j/k, \u{2191}/\u{2193}          move selection / scroll log",
       "enter             focus selected leaf's zellij pane",
       "m                 merge selected PR (confirm y/n)",
-      "s                 suspend selected leaf (confirm y/n)",
+      "s                 suspend/resume selected leaf (confirm y/n)",
       "d                 diff of selected PR in pager",
       "f                 toggle log follow",
       "/                 filter (agent=, tool=, level=, text)",

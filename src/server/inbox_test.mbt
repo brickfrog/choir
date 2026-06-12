@@ -17,6 +17,22 @@ fn inbox_test_state(label : String) -> @server.ServerState {
 }
 
 ///|
+fn inbox_test_agent(agent_id : String, role : @types.Role) -> @types.Agent {
+  {
+    agent_id,
+    role,
+    agent_type: @types.AgentType::Codex,
+    parent: None,
+    workspace: "/tmp/ws/" + agent_id,
+    branch: agent_id,
+    terminal_target: None,
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 1,
+  }
+}
+
+///|
 test "queue then drain delivers in order and acks via the pull" {
   let state = inbox_test_state("drain")
   assert_eq(
@@ -68,6 +84,12 @@ test "queue then drain delivers in order and acks via the pull" {
 test "check_inbox handler drains the caller's queue only" {
   let state = inbox_test_state("handler")
   ignore(
+    state.registry.upsert(inbox_test_agent("main.leaf-a", @types.Role::Dev)),
+  )
+  ignore(
+    state.registry.upsert(inbox_test_agent("main.leaf-b", @types.Role::Dev)),
+  )
+  ignore(
     state.queue_inbox_message(
       "main.leaf-a",
       "main.tl",
@@ -108,7 +130,17 @@ test "check_inbox handler drains the caller's queue only" {
   }
   assert_eq(state.pending_inbox_count("main.leaf-a"), 0)
   assert_eq(state.pending_inbox_count("main.leaf-b"), 1)
-  // Missing caller is rejected; Operator is not an agent and cannot drain.
+  let mismatched : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::TL,
+    name: "check_inbox",
+    args: @types.RequestArgs::from_values({
+      "caller_id": "main.leaf-b".to_json(),
+    }),
+  }
+  assert_true(!state.handle_check_inbox_request(mismatched).is_ok())
+  assert_eq(state.pending_inbox_count("main.leaf-b"), 1)
+  // Missing/unknown callers are rejected; Operator is not an agent and cannot drain.
   let missing : @types.Request = {
     req_method: "tools/call",
     role: @types.Role::Dev,
@@ -116,6 +148,13 @@ test "check_inbox handler drains the caller's queue only" {
     args: @types.RequestArgs::from_values({}),
   }
   assert_true(!state.handle_check_inbox_request(missing).is_ok())
+  let unknown : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::Dev,
+    name: "check_inbox",
+    args: @types.RequestArgs::from_values({ "caller_id": "main.nope".to_json() }),
+  }
+  assert_true(!state.handle_check_inbox_request(unknown).is_ok())
   let operator : @types.Request = {
     req_method: "tools/call",
     role: @types.Role::Operator,

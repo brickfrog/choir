@@ -180,6 +180,40 @@ pub(all) struct TuiEventsPage {
 } derive(Debug, Eq)
 
 ///|
+fn parse_tui_latest_seq(raw : String) -> Int64? {
+  let trimmed = raw.trim().to_owned()
+  if trimmed == "" {
+    return None
+  }
+  let mut value = 0L
+  let max_before_mul = 922337203685477580L
+  for c in trimmed {
+    if c < '0' || c > '9' {
+      return None
+    }
+    let digit = (c.to_int() - '0'.to_int()).to_int64()
+    if value > max_before_mul || (value == max_before_mul && digit > 7L) {
+      return None
+    }
+    value = value * 10L + digit
+  }
+  Some(value)
+}
+
+///|
+test "parse_tui_latest_seq rejects junk and overflow" {
+  @debug.assert_eq(parse_tui_latest_seq("123"), Some(123L))
+  @debug.assert_eq(parse_tui_latest_seq(" 7 "), Some(7L))
+  @debug.assert_eq(parse_tui_latest_seq("1a2"), None)
+  @debug.assert_eq(parse_tui_latest_seq(""), None)
+  @debug.assert_eq(
+    parse_tui_latest_seq("9223372036854775807"),
+    Some(9223372036854775807L),
+  )
+  @debug.assert_eq(parse_tui_latest_seq("9223372036854775808"), None)
+}
+
+///|
 pub fn TuiClient::fetch_events_since(
   self : TuiClient,
   cursor : Int64,
@@ -203,15 +237,7 @@ pub fn TuiClient::fetch_events_since(
             _ => return Err("events missing from response")
           }
           let latest_seq = match fields.get("latest_seq") {
-            Some(raw) => {
-              let mut value = 0L
-              for c in raw {
-                if c >= '0' && c <= '9' {
-                  value = value * 10L + (c.to_int() - '0'.to_int()).to_int64()
-                }
-              }
-              value
-            }
+            Some(raw) => parse_tui_latest_seq(raw).unwrap_or(cursor)
             None => cursor
           }
           let stale = fields.get_bool("stale").unwrap_or(false)
@@ -271,6 +297,33 @@ pub fn TuiClient::send_suspend(
       } else {
         Err(
           "suspend " +
+          agent_id +
+          ": " +
+          resp.error_message().unwrap_or("refused"),
+        )
+      }
+    Err(message) => Err(message)
+  }
+}
+
+///|
+pub fn TuiClient::send_resume(
+  self : TuiClient,
+  agent_id : String,
+) -> Result[String, String] {
+  match
+    self.request(
+      operator_request("resume", {
+        "agent_id": agent_id,
+        "caller_id": "operator-tui",
+      }),
+    ) {
+    Ok(resp) =>
+      if resp.is_ok() {
+        Ok("resume " + agent_id + ": ok")
+      } else {
+        Err(
+          "resume " +
           agent_id +
           ": " +
           resp.error_message().unwrap_or("refused"),

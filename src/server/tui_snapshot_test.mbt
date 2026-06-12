@@ -69,7 +69,14 @@ test "build_tui_snapshot assembles agents, wave, prs, vitals, and journal tail" 
     1779970000L,
   )
   // Journal some events so seq and the recent slice are non-trivial.
-  state.emit_tui_event(@types.TuiEvent::AgentHeartbeat(agent_id="main.leaf-a"))
+  state.emit_tui_event(
+    @types.TuiEvent::ToolCallCompleted(
+      agent_id="main.leaf-a",
+      tool="file_pr",
+      ok=true,
+      duration_ms=45100L,
+    ),
+  )
   state.emit_tui_event(
     @types.TuiEvent::PollerTick(duration_ms=100L, errors=0, tracked_prs=1),
   )
@@ -115,11 +122,6 @@ test "build_tui_snapshot assembles agents, wave, prs, vitals, and journal tail" 
         Some("zellij-pane:choir:main.leaf-a"),
       )
       assert_eq(agent.lifecycle, "dev:working")
-      // Shared status core: same derivation as status_bar_state/status_dump.
-      assert_eq(agent.status.lifecycle_wire, "working")
-      @debug.assert_eq(agent.status.pr_number, Some(561))
-      @debug.assert_eq(agent.status.unresolved_threads, None)
-      assert_eq(agent.status.attention, "false")
     }
     None => fail("expected leaf agent in snapshot")
   }
@@ -131,7 +133,7 @@ test "build_tui_snapshot assembles agents, wave, prs, vitals, and journal tail" 
   @debug.assert_eq(pr.unresolved_threads, None)
   // No task contract recorded: merge gate blocked for non-root.
   assert_eq(pr.merge_gate_ready, false)
-  // Journal: tdd event + heartbeat + poller tick + bead-free emissions.
+  // Journal: tool-call event + poller tick + bead-free emissions.
   assert_true(snapshot.journal_seq >= 2L)
   assert_true(snapshot.recent_events.length() >= 2)
   match snapshot.poller.last_evt_age_sec {
@@ -143,8 +145,8 @@ test "build_tui_snapshot assembles agents, wave, prs, vitals, and journal tail" 
 ///|
 test "tui_events_since handler serves cursored batches and rejects missing seq" {
   let state = tui_snapshot_test_state("events")
-  state.emit_tui_event(@types.TuiEvent::AgentHeartbeat(agent_id="a"))
-  state.emit_tui_event(@types.TuiEvent::AgentHeartbeat(agent_id="b"))
+  state.emit_tui_event(@types.TuiEvent::DaemonShutdown(reason="test-a"))
+  state.emit_tui_event(@types.TuiEvent::DaemonShutdown(reason="test-b"))
   let req : @types.Request = {
     req_method: "tools/call",
     role: @types.Role::Operator,
@@ -188,6 +190,40 @@ test "tui handlers enforce the operator allowlist via the tool registry" {
     Some(message) => assert_true(message.contains("cannot call"))
     None => fail("expected permission denial for dev role")
   }
+}
+
+///|
+async test "tui_default_branch_cached does not cache skip-disabled empty value" {
+  let project_dir = "/tmp/choir-tui-snapshot-default-branch-disabled-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let base_config = @types.Config::default()
+  let state = @server.ServerState::new(
+    {
+      ..base_config,
+      project_dir,
+      pr_policy: {
+        ..base_config.pr_policy,
+        skip_copilot_on_feature_branch: false,
+      },
+    },
+    @server.make_hermetic_recovery_provider(),
+    path_exists=fn(path) { path.has_suffix("/.choir/audit-gate.json") },
+    boot_read_file=fn(_path) { "" },
+    write_file_atomic=fn(_path, _content) { true },
+    now_unix_sec=fn() { 1779970000L },
+  )
+  let calls : Array[@workspace.Command] = []
+  let branch = state.tui_default_branch_cached(capture=fn(
+    cmd : @workspace.Command,
+  ) {
+    calls.push(cmd)
+    (0, "origin/main\n")
+  })
+  assert_eq(branch, "")
+  assert_eq(calls.length(), 0)
+  @debug.assert_eq(state.tui_default_branch, None)
 }
 
 ///|
@@ -243,4 +279,62 @@ async test "tui_snapshot handler refreshes bead cache and serves snapshot json" 
       }
     None => fail("expected ok payload")
   }
+}
+
+///|
+async test "bead cache refresh emits removals and skips when in flight" {
+  let state = tui_snapshot_test_state("bead-removal")
+  let calls : Array[String] = []
+  let bd_capture = async fn(cmd : @workspace.Command) {
+    @async.sleep(0)
+    if cmd.program != "bd" || cmd.args.length() == 0 {
+      return (1, "")
+    }
+    let second_refresh = calls.length() >= 2
+    calls.push(cmd.args[0])
+    if cmd.args[0] == "ready" {
+      return (
+        0, "[{\"id\":\"ch-1\",\"title\":\"reviewer policy\",\"status\":\"ready\"}]",
+      )
+    }
+    if cmd.args[0] == "list" {
+      if second_refresh {
+        return (0, "[]")
+      }
+      return (
+        0, "[{\"id\":\"ch-2\",\"title\":\"tui spike\",\"status\":\"in_progress\"}]",
+      )
+    }
+    (1, "")
+  }
+  state.refresh_tui_beads_cache_if_stale(1000L, bd_capture~)
+  assert_eq(state.tui_beads_cache.summaries.length(), 2)
+  state.refresh_tui_beads_cache_if_stale(
+    1000L + @server.tui_beads_cache_ttl_ms + 1L,
+    bd_capture~,
+  )
+  assert_eq(state.tui_beads_cache.summaries.length(), 1)
+  let mut saw_removed = false
+  match state.journal.events_since(0L) {
+    @server.TuiEventsSinceResult::Events(events) =>
+      for envelope in events {
+        match envelope.event {
+          @types.TuiEvent::BeadRemoved(issue_id~) =>
+            if issue_id == "ch-2" {
+              saw_removed = true
+            }
+          _ => ()
+        }
+      }
+    @server.TuiEventsSinceResult::StaleCursor => fail("expected events")
+  }
+  assert_true(saw_removed)
+
+  state.tui_beads_cache.refresh_in_flight = true
+  let before = calls.length()
+  state.refresh_tui_beads_cache_if_stale(
+    1000L + @server.tui_beads_cache_ttl_ms * 2L + 2L,
+    bd_capture~,
+  )
+  assert_eq(calls.length(), before)
 }

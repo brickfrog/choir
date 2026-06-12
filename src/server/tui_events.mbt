@@ -9,6 +9,56 @@ pub fn ServerState::emit_tui_event(
 }
 
 ///|
+fn tui_lifecycle_kind(
+  workflow : @phase.WorkflowState,
+) -> @types.TuiLifecycleKind {
+  match workflow {
+    @phase.WorkflowState::Supervisor(supervisor) =>
+      match supervisor {
+        @phase.SupervisorLifecycle::Planning =>
+          @types.TuiLifecycleKind::SupervisorPlanning
+        @phase.SupervisorLifecycle::Dispatching =>
+          @types.TuiLifecycleKind::SupervisorDispatching
+        @phase.SupervisorLifecycle::Supervising(..) =>
+          @types.TuiLifecycleKind::SupervisorSupervising
+        @phase.SupervisorLifecycle::WaveComplete(..) =>
+          @types.TuiLifecycleKind::SupervisorWaveComplete
+        @phase.SupervisorLifecycle::OwnPRFiled(..) =>
+          @types.TuiLifecycleKind::SupervisorOwnPrFiled
+        @phase.SupervisorLifecycle::Done =>
+          @types.TuiLifecycleKind::SupervisorDone
+        @phase.SupervisorLifecycle::Failed(..) =>
+          @types.TuiLifecycleKind::SupervisorFailed
+      }
+    @phase.WorkflowState::Dev(dev) =>
+      match dev {
+        @phase.DevLifecycle::Working => @types.TuiLifecycleKind::DevWorking
+        @phase.DevLifecycle::WaitingForRedGate =>
+          @types.TuiLifecycleKind::DevWaitingForRedGate
+        @phase.DevLifecycle::ReviewOwned(..) =>
+          @types.TuiLifecycleKind::DevReviewOwned
+        @phase.DevLifecycle::ChangesRequested(..) =>
+          @types.TuiLifecycleKind::DevChangesRequested
+        @phase.DevLifecycle::ExitRequestedDeferred(..) =>
+          @types.TuiLifecycleKind::DevExitRequestedDeferred
+        @phase.DevLifecycle::Exitable => @types.TuiLifecycleKind::DevExitable
+        @phase.DevLifecycle::Done(..) => @types.TuiLifecycleKind::DevDone
+        @phase.DevLifecycle::Failed(..) => @types.TuiLifecycleKind::DevFailed
+      }
+    @phase.WorkflowState::Worker(worker) =>
+      match worker {
+        @phase.WorkerLifecycle::Working =>
+          @types.TuiLifecycleKind::WorkerWorking
+        @phase.WorkerLifecycle::Exitable =>
+          @types.TuiLifecycleKind::WorkerExitable
+        @phase.WorkerLifecycle::Done(..) => @types.TuiLifecycleKind::WorkerDone
+        @phase.WorkerLifecycle::Failed(..) =>
+          @types.TuiLifecycleKind::WorkerFailed
+      }
+  }
+}
+
+///|
 /// Install the TUI journal observers for two of the four emission choke
 /// points: registry mutations and lifecycle store transitions. (The other
 /// two — tool dispatch completion and the poller — are wired directly in
@@ -25,9 +75,11 @@ pub fn ServerState::install_tui_event_observers(self : ServerState) -> Unit {
     self.emit_tui_event(
       @types.TuiEvent::LifecycleChanged(
         agent_id~,
-        from_lifecycle=from_lc.workflow_label(),
-        to_lifecycle=to_lc.workflow_label(),
-        trigger=trigger.to_wire_string(),
+        from=tui_lifecycle_kind(from_lc.workflow),
+        to=tui_lifecycle_kind(to_lc.workflow),
+        from_label=from_lc.workflow_label(),
+        to_label=to_lc.workflow_label(),
+        trigger~,
       ),
     )
   })
@@ -36,16 +88,39 @@ pub fn ServerState::install_tui_event_observers(self : ServerState) -> Unit {
 ///|
 fn tui_truncate(text : String, max : Int) -> String {
   let trimmed = text.trim().to_owned()
-  if trimmed.length() <= max {
+  let mut char_count = 0
+  for _ in trimmed {
+    char_count = char_count + 1
+  }
+  if char_count <= max {
     trimmed
   } else {
-    trimmed[:max].to_owned() + "..."
+    let out = StringBuilder::new()
+    let mut written = 0
+    for c in trimmed {
+      if written >= max {
+        break
+      }
+      out.write_char(c)
+      written = written + 1
+    }
+    out.to_string() + "..."
   }
+}
+
+///|
+test "tui_truncate does not split non bmp characters" {
+  assert_eq(tui_truncate("a\u{1f642}b", 2), "a\u{1f642}...")
 }
 
 ///|
 fn tui_request_is_tdd_gate(name : String) -> Bool {
   name == "tdd_intent" || name == "tdd_red_check" || name == "tdd_green_check"
+}
+
+///|
+fn tui_request_is_dashboard_poll(name : String) -> Bool {
+  name == "tui_snapshot" || name == "tui_events_since"
 }
 
 ///|
@@ -57,6 +132,9 @@ pub fn plan_tui_dispatch_events(
   duration_ms : Int64,
 ) -> Array[@types.TuiEvent] {
   if req.req_method != "tools/call" {
+    return []
+  }
+  if tui_request_is_dashboard_poll(req.name) {
     return []
   }
   let events : Array[@types.TuiEvent] = []
