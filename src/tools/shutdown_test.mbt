@@ -660,6 +660,199 @@ async test "interpret_kill_agent pane-close warning reflects kill outcome" {
 }
 
 ///|
+async test "interpret_kill_agent kills recorded pgroup and deletes pidfile after pane close and worktree remove" {
+  let t = match @types.LocalTarget::parse("zellij-tab:choir:leaf") {
+    Some(v) => v
+    None => fail("expected parse")
+  }
+  let reg = @registry.AgentRegistry::new()
+  let workspace = "/proj/.choir/worktrees/slug-0"
+  let agent = kill_agent_test_agent(Some(t), workspace)
+  ignore(reg.upsert(agent))
+  let events : Array[String] = []
+  let spy_runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      let program = cmd.program
+      let first_arg = if cmd.args.length() > 0 { cmd.args[0] } else { "" }
+      events.push("run:" + program + " " + first_arg)
+      statuses.push(0)
+    }
+    statuses
+  }
+  let args : KillAgentArgs = { agent_id: "main.leaf", reason: "cleanup" }
+  let got = interpret_kill_agent(
+    args,
+    Some(reg),
+    spy_runner,
+    project_dir="/proj",
+    read_agent_pgid=fn(agent_id) {
+      events.push("read_pgid:" + agent_id)
+      Some(52100)
+    },
+    kill_pgid=fn(pgid) { events.push("kill_pgid:" + pgid.to_string()) },
+    remove_pid_file=fn(agent_id) { events.push("remove_pidfile:" + agent_id) },
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    _ => fail("expected ok")
+  }
+  // Ordering: pane close → worktree remove → pgroup kill → pidfile delete.
+  assert_eq(events.length(), 5)
+  assert_true(events[0].has_prefix("run:"))
+  assert_true(events[0].contains("zellij-action"))
+  assert_eq(events[1], "run:git worktree")
+  assert_eq(events[2], "read_pgid:main.leaf")
+  assert_eq(events[3], "kill_pgid:52100")
+  assert_eq(events[4], "remove_pidfile:main.leaf")
+}
+
+///|
+async test "interpret_kill_agent kills recorded pgroup for non-worktree workspaces" {
+  // Agents that registered with an arbitrary workspace (inline workers in the
+  // project root, bare `register` joins) are killable via their recorded
+  // pgid: the pidfile is keyed by agent id, not by workspace layout.
+  for workspace in ["", "/proj", "/home/user/elsewhere"] {
+    let reg = @registry.AgentRegistry::new()
+    let agent = kill_agent_test_agent(None, workspace)
+    ignore(reg.upsert(agent))
+    let killed : Array[Int] = []
+    let removed : Array[String] = []
+    let got = interpret_kill_agent(
+      { agent_id: "main.leaf", reason: "cleanup" },
+      Some(reg),
+      mock_runner_all_ok,
+      project_dir="/proj",
+      read_agent_pgid=fn(_) { Some(61001) },
+      kill_pgid=fn(pgid) { killed.push(pgid) },
+      remove_pid_file=fn(agent_id) { removed.push(agent_id) },
+    )
+    match got {
+      @types.Response::Ok(_) => ()
+      _ => fail("expected ok for workspace=" + workspace)
+    }
+    @debug.assert_eq(killed, [61001])
+    @debug.assert_eq(removed, ["main.leaf"])
+  }
+}
+
+///|
+async test "interpret_kill_agent default handle wiring reads and deletes the pidfile" {
+  let project_dir = "/tmp/choir-kill-agent-pidfile-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/pids"))
+  let pid_file = project_dir + "/.choir/pids/main.leaf"
+  assert_true(@sys.write_file_sync(pid_file, "54321"))
+  let reg = @registry.AgentRegistry::new()
+  let agent = kill_agent_test_agent(
+    None,
+    project_dir + "/.choir/worktrees/slug-0",
+  )
+  ignore(reg.upsert(agent))
+  let killed : Array[Int] = []
+  let got = interpret_kill_agent(
+    { agent_id: "main.leaf", reason: "cleanup" },
+    Some(reg),
+    mock_runner_all_ok,
+    project_dir~,
+    kill_pgid=fn(pgid) { killed.push(pgid) },
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    _ => fail("expected ok")
+  }
+  @debug.assert_eq(killed, [54321])
+  assert_false(@sys.path_entry_exists(pid_file))
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_kill_agent pane-close warning reflects pgroup handle outcome" {
+  let t = match @types.LocalTarget::parse("zellij-tab:choir:leaf") {
+    Some(v) => v
+    None => fail("expected parse")
+  }
+  let pane_close_fails = async fn(
+    cmds : Array[@workspace.Command],
+  ) -> Array[Int] {
+    @async.sleep(0)
+    let statuses = []
+    for _ in cmds {
+      statuses.push(1)
+    }
+    statuses
+  }
+  let args : KillAgentArgs = { agent_id: "main.leaf", reason: "r" }
+  // Case A: pane close failed and no pidfile exists → nothing is signaled,
+  // nothing is removed, and the warning says the process may survive.
+  let reg_a = @registry.AgentRegistry::new()
+  let agent_a = kill_agent_test_agent(Some(t), "/proj/.choir/worktrees/slug-0")
+  ignore(reg_a.upsert(agent_a))
+  let killed_a : Array[Int] = []
+  let removed_a : Array[String] = []
+  let got_a = interpret_kill_agent(
+    args,
+    Some(reg_a),
+    pane_close_fails,
+    project_dir="/proj",
+    read_agent_pgid=fn(_) { None },
+    kill_pgid=fn(pgid) { killed_a.push(pgid) },
+    remove_pid_file=fn(agent_id) { removed_a.push(agent_id) },
+  )
+  match got_a {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      match map.get("warning") {
+        Some(w) =>
+          @debug.assert_eq(
+            w,
+            String::to_json(
+              "pane close failed — no process handle found; the agent process may survive",
+            ),
+          )
+        None => fail("expected warning on failed pane close")
+      }
+    }
+    _ => fail("expected ok")
+  }
+  @debug.assert_eq(killed_a, [])
+  @debug.assert_eq(removed_a, [])
+  // Case B: pane close failed but the recorded pgroup was killed.
+  let reg_b = @registry.AgentRegistry::new()
+  let agent_b = kill_agent_test_agent(Some(t), "/proj/.choir/worktrees/slug-1")
+  ignore(reg_b.upsert(agent_b))
+  let got_b = interpret_kill_agent(
+    args,
+    Some(reg_b),
+    pane_close_fails,
+    project_dir="/proj",
+    read_agent_pgid=fn(_) { Some(1234) },
+    kill_pgid=fn(_) {  },
+    remove_pid_file=fn(_) {  },
+  )
+  match got_b {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      match map.get("warning") {
+        Some(w) =>
+          @debug.assert_eq(
+            w,
+            String::to_json(
+              "pane close failed — zellij tab/pane may still linger, but the agent process group was killed",
+            ),
+          )
+        None => fail("expected warning when pane close failed")
+      }
+    }
+    _ => fail("expected ok")
+  }
+}
+
+///|
 test "shutdown_exit_plan blocked dev changes requested" {
   let lifecycle : @phase.AgentLifecycle = {
     agent_id: "main.l",

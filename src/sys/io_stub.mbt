@@ -267,6 +267,16 @@ pub fn kill_server_pid_sequence_best_effort(_pid : Int) -> Unit {
 }
 
 ///|
+pub fn kill_pgid_sequence_best_effort(_pgid : Int) -> Unit {
+
+}
+
+///|
+pub fn wait_pid_reap_for_test(_pid : Int) -> Int {
+  -1
+}
+
+///|
 pub fn pid_is_alive(_pid : Int) -> Bool {
   false
 }

@@ -17,6 +17,34 @@ pub fn list_pids_with_cwd_prefix(
 }
 
 ///|
+/// Parse the recorded process-group id from `.choir/pids/<sanitized-agent-id>`
+/// under `project_dir` (written at spawn by the setsid wrapper). Returns
+/// `None` when the pidfile is missing, empty, non-numeric, or records an
+/// unsafe group (<= 1).
+pub fn read_agent_pgid(
+  project_dir : String,
+  agent_id : String,
+  read_file? : (String) -> String = @sys.read_file,
+) -> Int? {
+  ignore(read_file(@workspace.agent_pid_file_path(project_dir, agent_id)))
+  None
+}
+
+///|
+/// Owned-handle liveness: true when the recorded pgid exists and
+/// `kill(pgid, 0)` succeeds for it.
+pub fn agent_recorded_process_alive(
+  project_dir : String,
+  agent_id : String,
+  read_file? : (String) -> String = @sys.read_file,
+  alive? : (Int) -> Bool = @sys.pid_is_alive,
+) -> Bool {
+  ignore(read_agent_pgid(project_dir, agent_id, read_file~))
+  ignore(alive)
+  false
+}
+
+///|
 fn normalize_scan_path(path : String) -> String {
   let trimmed = path.trim().to_owned()
   if trimmed == "" {

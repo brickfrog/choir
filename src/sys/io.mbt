@@ -311,6 +311,24 @@ pub fn kill_server_pid_sequence_best_effort(pid : Int) -> Unit {
 }
 
 ///|
+/// `SIGTERM` the process group, ~300ms pause, then `SIGKILL` it (best-effort).
+/// Groups `<= 1` are rejected as no-op for the same reason as
+/// `kill_pgid_best_effort`: 0 is the caller's own group and 1 triggers the
+/// broadcast form, both wider than the bounded-pgroup-cleanup intent.
+pub fn kill_pgid_sequence_best_effort(pgid : Int) -> Unit {
+  ignore(pgid)
+}
+
+///|
+/// Test-only: reap a direct child via `waitpid(2)` so a follow-up
+/// `pid_is_alive` probe does not see a zombie. Returns the reaped pid, or a
+/// negative value on failure.
+pub fn wait_pid_reap_for_test(pid : Int) -> Int {
+  ignore(pid)
+  -1
+}
+
+///|
 /// True when `kill(pid, 0)` succeeds (process exists for signaling).
 pub fn pid_is_alive(pid : Int) -> Bool {
   c_pid_is_alive(pid) != 0

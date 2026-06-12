@@ -191,6 +191,57 @@ async test "real exec integration: capture_plugin_shell_command pipes stdin" {
 }
 
 ///|
+test "read_agent_pgid parses the recorded pidfile and rejects unsafe values" {
+  let seen : Array[String] = []
+  let got = read_agent_pgid("/proj", "main.leaf/x", read_file=fn(path) {
+    seen.push(path)
+    "12345"
+  })
+  @debug.assert_eq(got, Some(12345))
+  @debug.assert_eq(seen, ["/proj/.choir/pids/main.leaf_x"])
+  @debug.assert_eq(
+    read_agent_pgid("/proj", "main.leaf", read_file=fn(_) { " 777\n" }),
+    Some(777),
+  )
+  // Missing, garbage, and unsafe (<= 1) values must all read as no-handle.
+  for raw in ["", "not-a-pid", "0", "1", "-5"] {
+    @debug.assert_eq(
+      read_agent_pgid("/proj", "main.leaf", read_file=fn(_) { raw }),
+      None,
+    )
+  }
+}
+
+///|
+test "agent_recorded_process_alive probes the recorded pgid" {
+  let probed : Array[Int] = []
+  assert_true(
+    agent_recorded_process_alive(
+      "/proj",
+      "main.leaf",
+      read_file=fn(_) { "4242" },
+      alive=fn(pgid) {
+        probed.push(pgid)
+        true
+      },
+    ),
+  )
+  @debug.assert_eq(probed, [4242])
+  assert_false(
+    agent_recorded_process_alive(
+      "/proj",
+      "main.leaf",
+      read_file=fn(_) { "" },
+      alive=fn(pgid) {
+        probed.push(pgid)
+        true
+      },
+    ),
+  )
+  @debug.assert_eq(probed, [4242])
+}
+
+///|
 test "process liveness scan resolves dot project and relative workspace" {
   let seen : Array[String] = []
   let alive = agent_process_alive_for_workspace(

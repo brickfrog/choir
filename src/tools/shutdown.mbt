@@ -140,8 +140,22 @@ pub async fn interpret_kill_agent(
     @sys.list_choir_mcp_stdio_pids_for_agent(agent_id)
   },
   kill_pid? : (Int) -> Unit = @sys.kill_server_pid_sequence_best_effort,
+  read_agent_pgid? : (String) -> Int? = fn(agent_id) {
+    @exec.read_agent_pgid(project_dir, agent_id)
+  },
+  kill_pgid? : (Int) -> Unit = @sys.kill_pgid_sequence_best_effort,
+  remove_pid_file? : (String) -> Unit = fn(agent_id) {
+    ignore(
+      @exec.delete_file_sync(
+        @workspace.agent_pid_file_path(project_dir, agent_id),
+      ),
+    )
+  },
   read_lifecycle? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
 ) -> @types.Response {
+  ignore(read_agent_pgid)
+  ignore(kill_pgid)
+  ignore(remove_pid_file)
   // File existence is the source of truth for "is this id a pending wave"
   // — delete the entry whether or not its JSON parses. A partial/corrupt
   // file would otherwise fall through to the registry-kill path and orphan

@@ -89,7 +89,6 @@ async test "discover_recovery_input with mock provider" {
 ///|
 async test "discover_recovery_input keeps process-live agent alive without zellij target" {
   let project_dir = "/tmp/choir-recovery-process-live"
-  let workspace = project_dir + "/.choir/worktrees/slug1"
   let mock_provider : @runtime.RecoveryProvider = {
     ..make_hermetic_recovery_provider(),
     list_agent_containers: fn(_dir) { ["worktrees"] },
@@ -112,7 +111,9 @@ async test "discover_recovery_input keeps process-live agent alive without zelli
     get_agent_relative_workspace: fn(container, slug) {
       ".choir/" + container + "/" + slug
     },
-    agent_process_alive: fn(_dir, candidate) { candidate == workspace },
+    // Owned-handle liveness is keyed by agent id (pidfile name), not by
+    // workspace path.
+    agent_process_alive: fn(_dir, candidate) { candidate == "slug1" },
   }
 
   let input = @runtime.discover_recovery_input(
