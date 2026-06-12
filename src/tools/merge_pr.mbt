@@ -796,6 +796,9 @@ pub async fn merge_pr_require_audit_receipt(
   capture : async (@workspace.Command) -> (Int, String),
   append_file? : (String, String) -> Bool = fn(_, _) { false },
 ) -> Result[Unit, @types.ChoirError] {
+  if !file_pr_audit_receipt_required(parent_branch, default_branch) {
+    return Ok(())
+  }
   if !merge_pr_audit_gate_required(gate_state, pr_first_seen_unix) {
     return Ok(())
   }
@@ -2226,44 +2229,39 @@ pub async fn interpret_merge_pr(
         _ => merge_args.parent_branch
       }
       let mut merge_match_head_sha : String? = None
-      match tracked_for_merge {
-        Some(tracked) => {
-          let gate_state = match
-            load_gate_state(project_dir, read_file, path_exists~) {
-            Ok(state) => state
-            Err(e) => return @types.Response::Err(e.message())
-          }
-          match
-            merge_pr_require_audit_receipt(
-              effective_parent_branch,
-              default_branch,
-              project_dir,
-              merge_args.pr_number,
-              tracked.last_sha,
-              gate_state,
-              tracked.first_seen,
-              capture,
-              append_file~,
-            ) {
-            Err(e) => return @types.Response::Err(e.message())
-            Ok(_) => merge_match_head_sha = Some(tracked.last_sha)
-          }
+      if file_pr_audit_receipt_required(effective_parent_branch, default_branch) {
+        let gate_state = match
+          load_gate_state(project_dir, read_file, path_exists~) {
+          Ok(state) => state
+          Err(e) => return @types.Response::Err(e.message())
         }
-        None =>
-          if path_exists(merge_pr_audit_gate_state_path(project_dir)) {
-            match load_gate_state(project_dir, read_file, path_exists~) {
-              Ok(_) =>
-                return @types.Response::Err(
-                  merge_pr_audit_block_error(
-                    project_dir,
-                    merge_args.pr_number,
-                    MergeAuditGateHeadUnavailable,
-                    append_file,
-                  ).message(),
-                )
+        match tracked_for_merge {
+          Some(tracked) =>
+            match
+              merge_pr_require_audit_receipt(
+                effective_parent_branch,
+                default_branch,
+                project_dir,
+                merge_args.pr_number,
+                tracked.last_sha,
+                gate_state,
+                tracked.first_seen,
+                capture,
+                append_file~,
+              ) {
               Err(e) => return @types.Response::Err(e.message())
+              Ok(_) => merge_match_head_sha = Some(tracked.last_sha)
             }
-          }
+          None =>
+            return @types.Response::Err(
+              merge_pr_audit_block_error(
+                project_dir,
+                merge_args.pr_number,
+                MergeAuditGateHeadUnavailable,
+                append_file,
+              ).message(),
+            )
+        }
       }
       match
         interpret_merge_pr_merge_host(
