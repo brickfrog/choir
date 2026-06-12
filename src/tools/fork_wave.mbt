@@ -888,7 +888,10 @@ pub async fn interpret_fork_wave_post_spawn(
     let tl_effects = @phase.plan_tl_event_for_scope(
       project_dir,
       fork_wave_args.caller_id,
-      @phase.TLEvent::ChildSpawned(child_id=slug),
+      @phase.TLEvent::ChildSpawned(
+        child_id=agent_id,
+        agent_type=fork_wave_args.agent_type,
+      ),
       registry~,
     )
     @phase.interpret_lifecycle_effects(project_dir, tl_effects, registry~)

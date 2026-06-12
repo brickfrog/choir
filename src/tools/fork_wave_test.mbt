@@ -1039,6 +1039,51 @@ fn fork_wave_single_leaf_args(slug_prefix : String) -> ForkWaveArgs {
 }
 
 ///|
+async test "fork_wave post-spawn registers TL children by full spawn agent ids" {
+  let project_dir = "/tmp/choir-fork-wave-full-id-child-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let session = "choir-full-id-child-test"
+  let args = {
+    ..fork_wave_single_leaf_args("full-id"),
+    agent_type: @types.AgentType::Codex,
+  }
+  let plan = fork_wave_spawn_plan(args, 0, None, project_dir, session)
+  assert_eq(plan.agent_ids, "main.full-id-0")
+  let reg = @registry.AgentRegistry::new()
+  interpret_fork_wave_post_spawn(args, plan, project_dir, session, Some(reg), capture=async fn(
+    cmd,
+  ) {
+    @async.sleep(0)
+    if cmd.program == "zellij" {
+      (0, "[{\"id\":7,\"tab_name\":\"full-id-0\",\"is_plugin\":false}]")
+    } else {
+      (0, "")
+    }
+  })
+  match @phase.read_lifecycle(project_dir, "main.tl") {
+    Some(lifecycle) =>
+      match lifecycle.workflow {
+        @phase.WorkflowState::Supervisor(
+          @phase.SupervisorLifecycle::Supervising(children~, wave=1)
+        ) => {
+          assert_eq(children.length(), 1)
+          assert_eq(children[0].child_id, "main.full-id-0")
+          assert_eq(children[0].slug, "full-id-0")
+          assert_eq(children[0].branch, "main.full-id-0")
+          assert_eq(children[0].agent_type, @types.AgentType::Codex)
+          assert_eq(children[0].summary, @phase.ChildLifecycleSummary::Working)
+        }
+        other =>
+          fail("expected supervising lifecycle, got " + other.to_string())
+      }
+    None => fail("expected parent lifecycle")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "fork_wave post-spawn warns only when spawned tab has no resolvable pane" {
   let project_dir = "/tmp/choir-fork-wave-missing-pane-" +
     @sys.get_pid().to_string()
