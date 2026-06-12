@@ -29,7 +29,7 @@ pipeline discipline). Do not duplicate its content here.
 Use `wave_state` for all steady-state orchestration reads:
 
 - merge readiness (`mergeable`, `merge_state_status`, `merge_gate_ready`)
-- review state (`review_state`, `copilot_issue_comment_seen`, `unresolved_threads`)
+- review state (if a reviewer is configured: `review_state`, `copilot_issue_comment_seen`, `unresolved_threads`)
 - CI rollup (`ci_rollup`)
 - merge confirmation (`merged_at_unix`)
 - branch state (`last_sha`, `fixes_pushed_at`)
@@ -216,7 +216,7 @@ Example:
 
 After all PRs in a wave merge (WaveComplete):
 - **Integration test**: spawn a worker to run the full test suite on your branch. Leaves test in isolation — you need to verify the combined result.
-- **Cross-leaf review**: for large waves (3+ leaves), spawn a worker to review the combined diff for inconsistencies — duplicate imports, naming conflicts, dead code, style drift. Copilot only reviewed each PR individually.
+- **Cross-leaf review**: for large waves (3+ leaves), spawn a worker to review the combined diff for inconsistencies — duplicate imports, naming conflicts, dead code, style drift. PR reviewers only see individual PRs; the TL owns combined-diff review.
 
 ### Completion Hooks
 
@@ -352,10 +352,10 @@ When a leaf sends `[RED GATE]`:
 
 ### Phase 2 — GitHub PR Review Gate
 
-After Copilot's GitHub PR review approval is recorded and all feedback is addressed, you may proceed with merging.
+If a reviewer is configured for this project, wait for its GitHub PR review and address all feedback before merging.
 
-**Nothing merges to main until the PR is approved by Copilot.**
-Automerge onto the feature branch is fine; the feature→main PR is where Copilot's review (or its absence on MoonBit-heavy diffs) feeds into human judgment.
+If no reviewer is configured, PR readiness is CI green + zero unresolved threads + the TL-run audit receipt.
+Automerge onto the feature branch is fine; the feature→main PR is where the configured reviewer policy, CI, unresolved threads, and the TL-run audit receipt feed into merge judgment.
 
 ### Convergence
 
