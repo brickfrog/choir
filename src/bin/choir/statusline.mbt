@@ -472,6 +472,35 @@ test "statusline_pr_summary distinguishes manual and automerge merge-ready PRs" 
 }
 
 ///|
+test "statusline_pr_summary treats reviewer none PR as merge-ready without review" {
+  let project_dir = "/tmp/choir-statusline-pr-reviewer-none-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let config_toml =
+    #|automerge = false
+    #|
+    #|[pr_policy]
+    #|reviewer = "none"
+  ignore(@sys.write_file_sync(project_dir + "/.choir/config.toml", config_toml))
+  let tracked = {
+    ..statusline_test_tracked_pr(83, "main.leaf-reviewer-none"),
+    last_review_state: @poller.ReviewState::None_,
+    copilot_issue_comment_seen: false,
+  }
+  ignore(
+    @sys.write_file_sync(
+      project_dir + "/.choir/poller_state.json",
+      "[" + tracked.to_json() + "]",
+    ),
+  )
+  let summary = statusline_pr_summary(project_dir)
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(summary.body.contains("#83M"))
+}
+
+///|
 fn statusline_global_config(project_dir : String) -> @types.Config {
   let config_content = @sys.read_file(project_dir + "/.choir/config.toml")
   let local_content = @sys.read_file(project_dir + "/.choir/config.local.toml")
@@ -523,6 +552,7 @@ fn statusline_effective_merge_mode(
 ///|
 fn statusline_pr_token(
   project_dir : String,
+  config : @types.Config,
   tracked : @poller.TrackedPR,
   merge_mode : @poller.MergeOperatorMode,
   task_contract : @types.TaskContract?,
@@ -530,10 +560,15 @@ fn statusline_pr_token(
   ignore(project_dir)
   ignore(task_contract)
   let n = tracked.pr_number.to_string()
+  let review_required = match config.pr_policy.reviewer {
+    @types.Reviewer::None => false
+    @types.Reviewer::Copilot | @types.Reviewer::Named(_) => true
+  }
   if @poller.tl_tracked_pr_merge_gate_snapshot_ready(
       tracked,
       Some(0),
       review_mode=tracked.review_mode,
+      review_required~,
     ) {
     return match merge_mode {
       @poller.MergeOperatorMode::Manual => "\u001b[32m#\{n}M\u001b[0m"
@@ -584,7 +619,9 @@ fn statusline_pr_summary(project_dir : String) -> StatuslinePrSummary {
     }
     first = false
     parts.write_string(
-      statusline_pr_token(project_dir, tracked, merge_mode, task_contract),
+      statusline_pr_token(
+        project_dir, config, tracked, merge_mode, task_contract,
+      ),
     )
   }
   { body: parts.to_string(), has_automerge }

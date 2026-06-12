@@ -1385,6 +1385,7 @@ fn blocked_gh_automerge_fixture(
   review_mode? : @types.ReviewMode = @types.ReviewMode::SinglePass,
   automerge? : Bool = true,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
+  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
 ) -> (ServerState, String, String) raise {
   let project_dir = "/tmp/choir-blocked-gh-automerge-" +
     label +
@@ -1401,6 +1402,7 @@ fn blocked_gh_automerge_fixture(
     automerge,
     review_mode,
     moon_verify_target,
+    pr_policy: { ..@types.PrPolicy::default(), reviewer, },
   }
   let state = ServerState::new(config, make_hermetic_recovery_provider())
   let parent_id = "main.tl-" + label
@@ -1661,6 +1663,95 @@ async test "quiet poller tick automerge sweep records attempted head on success"
   )
   assert_true(merge_seen)
   assert_true(state.poller.get(pr_number) == None)
+}
+
+///|
+async test "quiet poller tick automerge sweep retries reviewerless ready PR" {
+  let pr_number = 98
+  let (state, child_id, project_dir) = blocked_gh_automerge_fixture(
+    "sweep-reviewer-none",
+    pr_number,
+    review_mode=@types.ReviewMode::Iterative,
+    reviewer=@types.Reviewer::None,
+  )
+  match state.poller.get(pr_number) {
+    Some(tracked) =>
+      state.poller.restore({
+        ..tracked,
+        last_review_state: @poller.ReviewState::None_,
+        copilot_issue_comment_seen: false,
+        unresolved_thread_ids: [],
+        unresolved_thread_ids_fetched: true,
+      })
+    None => fail("expected tracked PR")
+  }
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for _cmd in cmds {
+      statuses.push(0)
+    }
+    statuses
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    let repo_view_json =
+      #|{"owner":{"login":"brickfrog"},"name":"choir"}
+    if (
+        cmd.program == "gh" &&
+        cmd.args == ["repo", "view", "--json", "owner,name"]
+      ) ||
+      (
+        cmd.program == "timeout" &&
+        cmd.args == ["30s", "gh", "repo", "view", "--json", "owner,name"]
+      ) {
+      return (0, repo_view_json)
+    }
+    if cmd.args.contains("graphql") {
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
+    (0, "")
+  }
+  state.process_poller_tick_with_test(
+    500L,
+    900L,
+    async fn(_pr_number, _skip_issue_comment_fetch) {
+      @async.sleep(0)
+      (
+        true,
+        @poller.ReviewState::None_,
+        "sha-sweep-reviewer-none",
+        @poller.CiRollupStatus::Success,
+        "",
+        true,
+        false,
+        @poller.Mergeable::Unknown,
+        @poller.MergeStateStatus::Unknown,
+        None,
+      )
+    },
+    None,
+    "",
+    runner~,
+    capture~,
+    automerge_capture=capture,
+  )
+  let delivery_log = @sys.read_file(project_dir + "/.choir/delivery.log")
+  assert_true(
+    delivery_log.contains(
+      "automerge sweep attempt pr=98 sha=sha-sweep-reviewer-none",
+    ),
+  )
+  assert_true(
+    delivery_log.contains("automerge attempt pr=98 agent=" + child_id),
+  )
+  match state.poller.get(pr_number) {
+    Some(current) =>
+      assert_eq(current.last_automerge_attempt_sha, "sha-sweep-reviewer-none")
+    None => ()
+  }
 }
 
 ///|

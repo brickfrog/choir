@@ -80,6 +80,9 @@ fn blocked_gh_poll_snapshot_ready(
   project_dir : String,
   tracked : @poller.TrackedPR,
   review_mode : @types.ReviewMode,
+  reviewer : @types.Reviewer,
+  skip_copilot_on_feature_branch : Bool,
+  default_branch : String,
 ) -> Bool {
   let bundle = blocked_gh_latest_evidence_bundle(project_dir, tracked.agent_id)
   let threads = @types.evaluation_latest_threads(bundle.signals)
@@ -90,12 +93,19 @@ fn blocked_gh_poll_snapshot_ready(
   let tracked_ci_clear = tracked.last_ci_rollup ==
     @poller.CiRollupStatus::Success ||
     tracked.last_ci_rollup == @poller.CiRollupStatus::NoChecks
+  let review_required = @policy.review_required_for_branch(
+    reviewer,
+    skip_copilot_on_feature_branch,
+    tracked.parent_branch,
+    default_branch,
+  )
   evidence_ci_clear &&
   tracked_ci_clear &&
   @poller.tl_tracked_pr_merge_gate_snapshot_ready(
     tracked,
     threads,
     review_mode~,
+    review_required~,
   )
 }
 
@@ -182,6 +192,9 @@ async fn ServerState::maybe_trigger_automerge_for_blocked_gh_notify(
       self.config.project_dir,
       tracked,
       review_mode,
+      self.config.pr_policy.reviewer,
+      self.config.pr_policy.skip_copilot_on_feature_branch,
+      "",
     ) {
     return false
   }
