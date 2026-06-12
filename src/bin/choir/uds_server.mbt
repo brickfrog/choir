@@ -1369,6 +1369,7 @@ fn serve_run() -> Unit {
   }
   let provider = @server.make_recovery_provider()
   let state = @server.ServerState::new(config, provider)
+  state.install_tui_event_observers()
   @moontrace.set_global_field("service", "choir".to_json())
   @moontrace.set_global_field("run_id", state.run_id.to_json())
   @prompts.emit_prompt_drift_warnings(

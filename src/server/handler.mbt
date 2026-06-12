@@ -453,6 +453,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
 
   let end_ms = @env.now()
   emit_span(self, req, start_ms, end_ms, resp)
+  self.record_tui_dispatch_completion(effective_req, resp, start_ms, end_ms)
   match merged_pr_context {
     Some(ctx) =>
       append_merge_pr_evidence_if_needed(

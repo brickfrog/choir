@@ -315,6 +315,8 @@ pub struct ServerState {
   pane_watcher : @runtime.PaneWatcher
   recovery_provider : @runtime.RecoveryProvider
   otlp_exporter : OtlpSpanExporter?
+  journal : TuiJournal
+  mut poller_vitals : @types.PollerVitals
   append_file : (String, String) -> Bool
   read_file : (String) -> String
   write_file_atomic : (String, String) -> Bool
@@ -443,6 +445,8 @@ pub fn ServerState::new(
       config,
       factory=otlp_exporter_factory,
     ),
+    journal: TuiJournal::open(config.project_dir, read_file=boot_read_file),
+    poller_vitals: @types.PollerVitals::initial(),
     append_file: default_append_file_sync,
     read_file: default_read_file,
     write_file_atomic: default_write_file_atomic,
@@ -503,16 +507,20 @@ pub fn ServerState::record_leaf_tdd_state(
   agent_id : String,
   state : @types.LeafTddState,
 ) -> Unit {
+  let mut changed = true
   match self.leaf_tdd_phases.get(agent_id) {
     Some(existing) =>
       if existing == state.phase {
-        ()
+        changed = false
       } else {
         self.clear_leaf_no_handoff_watchdog_state(agent_id)
       }
     None => self.clear_leaf_no_handoff_watchdog_state(agent_id)
   }
   self.leaf_tdd_phases.set(agent_id, state.phase)
+  if changed {
+    self.emit_tui_tdd_phase_changed(agent_id, state.phase)
+  }
 }
 
 ///|

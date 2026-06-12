@@ -3378,6 +3378,12 @@ pub async fn ServerState::process_poller_tick_with(
     @env.now().reinterpret_as_int64(),
     now,
   )
+  self.record_tui_poller_tick(
+    pending_events,
+    pending_agent_ids,
+    tick_summary,
+    @env.now().reinterpret_as_int64(),
+  )
   deliver_poller_stall_notifications(self, now, runner, sleep_fn~)
   self.sweep_spawn_registration_timeouts(now, runner)
   self.sweep_outbox(now)
@@ -3458,6 +3464,12 @@ pub async fn ServerState::process_poller_tick(
     tick_summary,
     @env.now().reinterpret_as_int64(),
     now,
+  )
+  self.record_tui_poller_tick(
+    pending_events,
+    pending_agent_ids,
+    tick_summary,
+    @env.now().reinterpret_as_int64(),
   )
   deliver_poller_stall_notifications(self, now, runner, sleep_fn~)
   self.sweep_spawn_registration_timeouts(now, runner)

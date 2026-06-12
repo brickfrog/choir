@@ -3,12 +3,52 @@
 pub(all) struct AgentRegistry {
   agents : Map[String, @types.Agent]
   alive : Map[String, Bool]
+  /// Last tool call per agent, recorded at the dispatch layer. Lives here
+  /// (not on the connection) so it survives reconnects and is snapshot-able.
+  last_tool_calls : Map[String, @types.ToolCallRecord]
+  /// TUI journal choke point for registry mutations; installed by the server
+  /// at boot, never required for correctness.
+  mut on_event : ((@types.TuiEvent) -> Unit)?
 }
 
 ///|
 /// Create a new empty registry.
 pub fn AgentRegistry::new() -> AgentRegistry {
-  { agents: {}, alive: {} }
+  { agents: {}, alive: {}, last_tool_calls: {}, on_event: None }
+}
+
+///|
+pub fn AgentRegistry::set_observer(
+  self : AgentRegistry,
+  observer : (@types.TuiEvent) -> Unit,
+) -> Unit {
+  self.on_event = Some(observer)
+}
+
+///|
+fn AgentRegistry::notify(self : AgentRegistry, event : @types.TuiEvent) -> Unit {
+  match self.on_event {
+    Some(f) => f(event)
+    None => ()
+  }
+}
+
+///|
+fn agent_registered_event(agent : @types.Agent) -> @types.TuiEvent {
+  @types.TuiEvent::AgentRegistered(
+    agent_id=agent.agent_id.to_string(),
+    role=agent.role,
+    agent_type=agent.agent_type,
+    parent=agent.parent,
+    workspace=agent.workspace,
+    branch=agent.branch,
+    terminal_target=match agent.terminal_target {
+      Some(target) => Some(target.to_string())
+      None => None
+    },
+    state=agent.state,
+    spawn_depth=agent.spawn_depth,
+  )
 }
 
 ///|
@@ -23,6 +63,7 @@ pub fn AgentRegistry::insert(
   } else {
     self.agents.set(id, agent)
     self.alive.set(id, true)
+    self.notify(agent_registered_event(agent))
   }
 }
 
@@ -36,7 +77,27 @@ pub fn AgentRegistry::upsert(
   let existed = self.agents.contains(id)
   self.agents.set(id, agent)
   self.alive.set(id, true)
+  self.notify(agent_registered_event(agent))
   existed
+}
+
+///|
+/// Record the most recent tool call for an agent. Dispatch-layer choke
+/// point: the server calls this once per completed tool call.
+pub fn AgentRegistry::record_last_tool_call(
+  self : AgentRegistry,
+  agent_id : String,
+  record : @types.ToolCallRecord,
+) -> Unit {
+  self.last_tool_calls.set(agent_id, record)
+}
+
+///|
+pub fn AgentRegistry::last_tool_call(
+  self : AgentRegistry,
+  agent_id : String,
+) -> @types.ToolCallRecord? {
+  self.last_tool_calls.get(agent_id)
 }
 
 ///|
@@ -84,6 +145,8 @@ pub fn AgentRegistry::remove(
     Some(agent) => {
       self.agents.remove(agent_id)
       self.alive.remove(agent_id)
+      self.last_tool_calls.remove(agent_id)
+      self.notify(@types.TuiEvent::AgentRemoved(agent_id~))
       agent
     }
     None => raise @types.ChoirError::agent_not_found(agent_id)
@@ -130,6 +193,9 @@ pub fn AgentRegistry::set_state(
       if valid {
         let updated_agent = { ..agent, state: new_state }
         self.agents.set(agent_id, updated_agent)
+        self.notify(
+          @types.TuiEvent::AgentStateChanged(agent_id~, state=new_state),
+        )
       } else {
         raise @types.ChoirError::validation_error(
           "invalid state transition: " +
@@ -194,6 +260,7 @@ pub fn AgentRegistry::clear(self : AgentRegistry) -> Unit {
   for id in ids {
     self.agents.remove(id)
     self.alive.remove(id)
+    self.last_tool_calls.remove(id)
   }
 }
 
