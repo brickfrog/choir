@@ -127,7 +127,6 @@ test "config schema nested keys match parser-accepted TOML shape" {
 ///|
 test "parse_config silently ignores removed pr_review key" {
   let content =
-    #|[pr_policy]
     #|pr_review = true
 
   let cfg = parse_config(content).unwrap()

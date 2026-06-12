@@ -179,11 +179,6 @@ pub fn file_pr_auto_notify_delivery_failed_log_append(
 pub let file_pr_copilot_reviewer_handle : String = "@copilot"
 
 ///|
-/// Prefix for the PR issue comment that nudges Copilot review with caller-supplied context.
-pub let file_pr_copilot_review_comment_prefix : String = file_pr_copilot_reviewer_handle +
-  " review: "
-
-///|
 pub fn file_pr_reviewer_review_comment_mention(
   reviewer_handle : String,
 ) -> String {
@@ -228,17 +223,6 @@ pub fn file_pr_reviewer_review_comment_gh_command(
       reviewer_handle, review_context_trimmed,
     ),
     gh_workdir,
-  )
-}
-
-///|
-pub fn file_pr_copilot_review_comment_gh_command(
-  pr_number : Int,
-  review_context_trimmed : String,
-  gh_workdir : String,
-) -> @workspace.Command {
-  file_pr_reviewer_review_comment_gh_command(
-    pr_number, file_pr_copilot_reviewer_handle, review_context_trimmed, gh_workdir,
   )
 }
 
@@ -398,7 +382,7 @@ pub fn file_pr_should_request_reviewer(
 ///|
 /// Post-`ensure_pull_request` host path: poller ensure/write, dev lifecycle
 /// event, optional parent auto-notify (delivery log + `execute_delivery` +
-/// moontrace), optional Copilot context comment, optional best-effort reviewer
+/// moontrace), optional reviewer context comment, optional best-effort reviewer
 /// request, then the
 /// planned tool response. Preserves `ToolRequest::FilePr` ordering and strings
 /// from the prior dispatch arm.
@@ -415,7 +399,7 @@ pub async fn interpret_file_pr_post_success(
   registry : @registry.AgentRegistry?,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   append_file? : (String, String) -> Bool = @sys.append_file_sync,
-  request_copilot_reviewer? : Bool = true,
+  request_reviewer? : Bool = true,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
   // Clock for delivery-log line timestamps. Called fresh at each append site —
   // not captured once — so writes that happen after slow `gh`/delivery commands
@@ -522,16 +506,18 @@ pub async fn interpret_file_pr_post_success(
               Some(err) =>
                 [
                   @moontrace.field("pr_number", pr_number),
+                  @moontrace.field("reviewer", handle),
                   @moontrace.field("exit", exit_json_c),
                   @moontrace.field("error", err),
                 ]
               None =>
                 [
                   @moontrace.field("pr_number", pr_number),
+                  @moontrace.field("reviewer", handle),
                   @moontrace.field("exit", exit_json_c),
                 ]
             }
-            @moontrace.warn("file_pr copilot review comment failed", fields~)
+            @moontrace.warn("file_pr review comment failed", fields~)
             let err_part_c = match spawn_err_comment {
               Some(err) => " error=" + err
               None => ""
@@ -540,8 +526,10 @@ pub async fn interpret_file_pr_post_success(
               @sys.append_file_sync(
                 delivery_log_path,
                 @poller.delivery_log_line(
-                  "[file_pr] copilot_review_comment failed pr=" +
+                  "[file_pr] review_comment failed pr=" +
                   pr_number.to_string() +
+                  " reviewer=" +
+                  handle +
                   err_part_c,
                   now_ms=now_ms_fn(),
                 ),
@@ -553,7 +541,7 @@ pub async fn interpret_file_pr_post_success(
       }
     None => ()
   }
-  if request_copilot_reviewer {
+  if request_reviewer {
     match reviewer_handle {
       Some(handle) => {
         let ok = file_pr_request_reviewer(
@@ -1276,7 +1264,7 @@ pub async fn interpret_file_pr(
         registry,
         runner,
         append_file~,
-        request_copilot_reviewer=request_review,
+        request_reviewer=request_review,
         sleep_fn~,
       )
       if resp.is_ok() {

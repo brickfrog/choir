@@ -177,7 +177,7 @@ async test "interpret_file_pr_post_success posts copilot review comment then req
 }
 
 ///|
-async test "interpret_file_pr_post_success copilot review comment failure is best-effort" {
+async test "interpret_file_pr_post_success reviewer comment failure is best-effort" {
   let file_pr_copilot_runner_seq : Array[Int] = [0]
   let project_dir = "/tmp/rc-fpr-comment-fail"
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
@@ -233,8 +233,10 @@ async test "interpret_file_pr_post_success copilot review comment failure is bes
   }
   assert_eq(file_pr_copilot_runner_seq[0], 2)
   let log = @sys.read_file(log_path)
-  assert_true(log.contains("copilot_review_comment failed"))
+  assert_true(log.contains("review_comment failed"))
   assert_true(log.contains("pr=55"))
+  assert_true(log.contains("reviewer=@copilot"))
+  assert_false(log.contains("copilot_review_comment"))
 }
 
 ///|

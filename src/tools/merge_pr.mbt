@@ -862,10 +862,17 @@ pub fn format_tl_pr_recheck_summary(
     Some(n) => "Unresolved inline review threads (GraphQL): " + n.to_string()
     None => "Unresolved inline review threads (GraphQL): not fetched"
   }
-  let copilot_line = if tracked.copilot_issue_comment_seen {
-    "GitHub Copilot issue comment (REST): seen"
+  let issue_comment_state = if tracked.copilot_issue_comment_seen {
+    "seen"
   } else {
-    "GitHub Copilot issue comment (REST): not seen"
+    "not seen"
+  }
+  let issue_comment_line = match reviewer {
+    @types.Reviewer::None => None
+    @types.Reviewer::Copilot =>
+      Some("GitHub Copilot issue comment (REST): " + issue_comment_state)
+    @types.Reviewer::Named(handle) =>
+      Some("GitHub " + handle + " issue comment (REST): " + issue_comment_state)
   }
   let review_required = @policy.review_required_for_branch(
     reviewer,
@@ -876,6 +883,7 @@ pub fn format_tl_pr_recheck_summary(
   let gate = @poller.tl_tracked_pr_recheck_gate_line(
     tracked,
     unresolved_thread_count,
+    reviewer~,
     review_required~,
   )
 
@@ -915,9 +923,10 @@ pub fn format_tl_pr_recheck_summary(
   "- " +
   threads_line +
   "\n" +
-  "- " +
-  copilot_line +
-  "\n" +
+  (match issue_comment_line {
+    Some(line) => "- " + line + "\n"
+    None => ""
+  }) +
   "- Latest head CI rollup: " +
   ci +
   "\n" +

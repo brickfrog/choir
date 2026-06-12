@@ -483,8 +483,8 @@ async test "interpret_file_pr_post_success reads the clock fresh for each delive
     state: "OPEN",
   }
   let plan = file_pr_plan(args, "main", pr, false)
-  // No registry -> no auto-notify append; reviewer=copilot + a runner that fails
-  // both copilot commands → exactly two delivery-log appends.
+  // No registry -> no auto-notify append; configured reviewer + a runner that
+  // fails both reviewer commands -> exactly two delivery-log appends.
   let effects = file_pr_post_success_effects(plan, false, false)
   let base = 1_700_000_000_000L
   let clock_calls : Array[Int] = [0]
@@ -496,7 +496,7 @@ async test "interpret_file_pr_post_success reads the clock fresh for each delive
     args.tracked_agent_id,
     project_dir,
     pr.number,
-    @types.Reviewer::Copilot,
+    @types.Reviewer::Named("alice"),
     effects,
     None,
     None,
@@ -513,7 +513,7 @@ async test "interpret_file_pr_post_success reads the clock fresh for each delive
   )
   match got {
     @types.Response::Ok(_) => ()
-    _ => fail("expected ok despite copilot failures")
+    _ => fail("expected ok despite reviewer failures")
   }
   assert_eq(runner_calls[0], 2)
   assert_eq(clock_calls[0], 2)
@@ -523,15 +523,16 @@ async test "interpret_file_pr_post_success reads the clock fresh for each delive
   assert_true(
     log.contains(
       @poller.delivery_log_line(
-        "[file_pr] copilot_review_comment failed pr=55",
+        "[file_pr] review_comment failed pr=55 reviewer=alice",
         now_ms=base + 1000L,
       ),
     ),
   )
+  assert_false(log.contains("copilot_review_comment"))
   assert_true(
     log.contains(
       @poller.delivery_log_line(
-        "[file_pr] reviewer_request failed pr=55 reviewer=@copilot",
+        "[file_pr] reviewer_request failed pr=55 reviewer=alice",
         now_ms=base + 2000L,
       ),
     ),
