@@ -34,6 +34,10 @@ Use `wave_state` for all steady-state orchestration reads:
 - merge confirmation (`merged_at_unix`)
 - branch state (`last_sha`, `fixes_pushed_at`)
 
+Reviewer policy is literal. A configured Named reviewer is waited on like
+Copilot: a non-responsive reviewer stalls merge until the TL intervenes or the
+config changes. Chosen reviewer = chosen wait.
+
 Drop to direct `gh`/`git` ONLY for:
 
 - Resolving review threads from the parent path (`gh api graphql resolveReviewThread` mutation)

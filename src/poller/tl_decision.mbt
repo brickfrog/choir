@@ -55,6 +55,7 @@ pub(all) enum NextAction {
   /// Parent escalates (e.g., re-add the reviewer). Distinct from `Wait`
   /// because the prose tells the parent to act, not sit idle.
   EscalateReview
+  EscalateConfiguredReview(reviewer~ : @types.Reviewer)
   /// Fixes and green CI are present, but unresolved review threads still gate merge.
   ResolveThreadsNow
 } derive(Debug, Eq)
@@ -74,6 +75,7 @@ pub fn NextAction::to_wire_string(self : NextAction) -> String {
     CrossCheckThreads => "cross_check_threads"
     CrossCheckMergeMode => "cross_check_merge_mode"
     EscalateReview => "escalate_review"
+    EscalateConfiguredReview(_) => "escalate_review"
     ResolveThreadsNow => "resolve_threads_now"
   }
 }
@@ -136,6 +138,24 @@ pub fn merge_ready_next_action(
 }
 
 ///|
+fn reviewer_text_label(reviewer : @types.Reviewer) -> String {
+  match reviewer {
+    @types.Reviewer::None => "reviewer"
+    @types.Reviewer::Copilot => "Copilot"
+    @types.Reviewer::Named(handle) => handle
+  }
+}
+
+///|
+fn reviewer_request_handle(reviewer : @types.Reviewer) -> String {
+  match reviewer {
+    @types.Reviewer::None => "reviewer"
+    @types.Reviewer::Copilot => "@copilot"
+    @types.Reviewer::Named(handle) => handle
+  }
+}
+
+///|
 pub fn next_action_detail_line(
   action : NextAction,
   pr_number : Int,
@@ -185,6 +205,14 @@ pub fn next_action_detail_line(
       "Next action: `request_review(pr_number: \"" +
       pr_number.to_string() +
       "\", reviewer: \"@copilot\")` (Copilot has not reviewed within the timeout window)."
+    EscalateConfiguredReview(reviewer~) =>
+      "Next action: `request_review(pr_number: \"" +
+      pr_number.to_string() +
+      "\", reviewer: \"" +
+      reviewer_request_handle(reviewer) +
+      "\")` (" +
+      reviewer_text_label(reviewer) +
+      " has not reviewed within the timeout window)."
     ResolveThreadsNow =>
       "Next action: RESOLVE THREADS NOW from the parent path with the server-side `resolve_my_review_threads` tool, then wait for the refreshed poller snapshot."
   }
@@ -668,9 +696,25 @@ pub fn advisory_evaluation_result_for_tracked_pr(
 fn advisory_summary_for_review_requirement(
   result : @types.EvaluationResult,
   review_required : Bool,
+  reviewer : @types.Reviewer,
 ) -> String {
   if !review_required && result.verdict == @types.EvaluationVerdict::Ready {
     "ready: review skipped by policy; no tracked blockers"
+  } else if reviewer != @types.Reviewer::Copilot &&
+    result.summary == "waiting for Copilot comments" {
+    "waiting for " + reviewer_text_label(reviewer) + " comments"
+  } else if reviewer != @types.Reviewer::Copilot &&
+    result.summary ==
+    "ready: no tracked blockers; Copilot issue comment observed" {
+    "ready: no tracked blockers; " +
+    reviewer_text_label(reviewer) +
+    " issue comment observed"
+  } else if reviewer != @types.Reviewer::Copilot &&
+    result.summary ==
+    "ready: no tracked blockers; Copilot issue comment not observed" {
+    "ready: no tracked blockers; " +
+    reviewer_text_label(reviewer) +
+    " issue comment not observed"
   } else {
     result.summary
   }
@@ -703,7 +747,7 @@ pub fn advisory_evaluation_summary_line(
   "Advisory evaluation verdict: " +
   result.verdict.label() +
   " (" +
-  advisory_summary_for_review_requirement(result, review_required) +
+  advisory_summary_for_review_requirement(result, review_required, reviewer) +
   ")."
 }
 
@@ -814,6 +858,7 @@ pub(all) struct PrStateNotificationDecision {
   next_action : NextAction
   policy_decision : @policy.MergeDecision
   category : TlTrackedPrWorkflowCategory
+  reviewer : @types.Reviewer
 } derive(Debug, Eq)
 
 ///|
@@ -890,6 +935,7 @@ pub fn next_action_for_pr_state_notification(
   tracked : TrackedPR,
   unresolved_threads : Int?,
   mode : MergeOperatorMode,
+  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
 ) -> NextAction {
   if decision is @policy.MergeDecision::ThreadsUnresolvedButFixed(..) {
     return ResolveThreadsNow
@@ -903,7 +949,11 @@ pub fn next_action_for_pr_state_notification(
     | CopilotIssueCommentSeenRecheckRemainingGates =>
       recheck_next_action(decision, tracked, unresolved_threads, mode)
     OrphanedPRNeedsManualAction => CrossCheckThreads
-    AttentionRequiredCopilotSilentAfterTimeout => EscalateReview
+    AttentionRequiredCopilotSilentAfterTimeout =>
+      match reviewer {
+        @types.Reviewer::Named(_) => EscalateConfiguredReview(reviewer~)
+        _ => EscalateReview
+      }
     WaitingOnReviewOrCI
     | WaitingOnCopilotIssueComment
     | AttentionRequiredCIFailed
@@ -945,9 +995,14 @@ pub fn pr_state_notification_decision_for_tracked_pr(
     default_branch~,
   )
   let next_action = next_action_for_pr_state_notification(
-    category, policy_decision, tracked, unresolved_threads, merge_mode,
+    category,
+    policy_decision,
+    tracked,
+    unresolved_threads,
+    merge_mode,
+    reviewer~,
   )
-  { next_action, policy_decision, category }
+  { next_action, policy_decision, category, reviewer }
 }
 
 ///|
@@ -977,14 +1032,21 @@ pub fn tl_pr_state_notification_sentence(
           if merge_mode == Automerge {
             tl_merge_gate_sentence_for_reason(Automerge, reason)
           } else {
-            tl_tracked_pr_workflow_category_sentence(decision.category)
+            tl_tracked_pr_workflow_category_sentence(
+              decision.category,
+              reviewer=decision.reviewer,
+            )
           }
         MergeNow => tl_merge_gate_sentence_for_reason(merge_mode, reason)
         // Mixed-mode merge gate: render the Mixed sentence directly so the
         // category fall-through doesn't drop us back onto the hardcoded
         // Manual "MERGE NOW: ... Run merge_pr." prose.
         CrossCheckMergeMode => tl_merge_gate_sentence_for_reason(Mixed, reason)
-        _ => tl_tracked_pr_workflow_category_sentence(decision.category)
+        _ =>
+          tl_tracked_pr_workflow_category_sentence(
+            decision.category,
+            reviewer=decision.reviewer,
+          )
       }
     NeedsHuman(reason~) =>
       match decision.next_action {
@@ -992,15 +1054,26 @@ pub fn tl_pr_state_notification_sentence(
           "HUMAN OVERRIDE: merge policy requires human confirmation (" +
           reason +
           "). Address the block or surface it to the user. Raw `gh pr merge` is banned by the shim; fix the gate, do not route around it."
-        _ => tl_tracked_pr_workflow_category_sentence(decision.category)
+        _ =>
+          tl_tracked_pr_workflow_category_sentence(
+            decision.category,
+            reviewer=decision.reviewer,
+          )
       }
     Blocked(reason~) =>
       if decision.category == BlockedOnChanges {
-        tl_tracked_pr_workflow_category_sentence(decision.category)
+        tl_tracked_pr_workflow_category_sentence(
+          decision.category,
+          reviewer=decision.reviewer,
+        )
       } else {
         blocked_tl_sentence(reason, decision.next_action)
       }
-    Wait(_) => tl_tracked_pr_workflow_category_sentence(decision.category)
+    Wait(_) =>
+      tl_tracked_pr_workflow_category_sentence(
+        decision.category,
+        reviewer=decision.reviewer,
+      )
   }
 }
 
@@ -1052,20 +1125,31 @@ pub fn tl_classify_tracked_pr_workflow(
 /// One stable sentence per category for parent-facing notifications (`TLDecision:` line).
 pub fn tl_tracked_pr_workflow_category_sentence(
   cat : TlTrackedPrWorkflowCategory,
+  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
 ) -> String {
+  let reviewer_label = reviewer_text_label(reviewer)
+  let reviewer_handle = reviewer_request_handle(reviewer)
   match cat {
     BlockedOnChanges =>
       "BLOCKED: review requested changes. Wait for leaf to push fixes."
     AttentionRequiredCopilotSilentAfterTimeout =>
-      "ACTION REQUIRED: no review appeared after timeout. Run request_review(pr_number: \"<pr_number>\", reviewer: \"@copilot\")."
+      "ACTION REQUIRED: no review appeared after timeout. Run request_review(pr_number: \"<pr_number>\", reviewer: \"" +
+      reviewer_handle +
+      "\")."
     AttentionRequiredCIFailed => "BLOCKED: CI failing. Do not merge."
     WaitingOnReviewOrCI => "Waiting on review or CI. No action needed yet."
     FixesPushedAwaitingGates =>
-      "FIXES PUSHED: Copilot does not re-review. Only remaining gates are thread resolution and CI on the new head. Verify threads via GraphQL (resolve them yourself if the leaf hasn't) and wait for CI green, then merge_pr. Do NOT wait for a second Copilot review."
+      if reviewer == @types.Reviewer::Copilot {
+        "FIXES PUSHED: Copilot does not re-review. Only remaining gates are thread resolution and CI on the new head. Verify threads via GraphQL (resolve them yourself if the leaf hasn't) and wait for CI green, then merge_pr. Do NOT wait for a second Copilot review."
+      } else {
+        "FIXES PUSHED: wait for " +
+        reviewer_label +
+        " review state, thread resolution, and CI on the new head. Verify threads via GraphQL (resolve them yourself if the leaf hasn't) and wait for CI green, then merge_pr."
+      }
     WaitingOnCopilotIssueComment =>
-      "Waiting on Copilot review. No action needed yet."
+      "Waiting on " + reviewer_label + " review. No action needed yet."
     CopilotIssueCommentSeenRecheckRemainingGates =>
-      "Copilot reviewed. Check threads/CI, then merge_pr if clear."
+      reviewer_label + " reviewed. Check threads/CI, then merge_pr if clear."
     ReadyForTLRecheck =>
       "CI/review changed. Check threads/CI, then merge_pr if clear."
     MergeGateOpenPendingPolicyConfirmation =>

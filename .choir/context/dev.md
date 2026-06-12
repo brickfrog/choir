@@ -21,7 +21,7 @@ You are a leaf agent working in your own worktree and branch.
 4. `git add` only the files you changed.
 5. Commit with a semantic message.
 6. Use `file_pr` — it auto-notifies the parent with the PR URL. Do not send a separate notify_parent.
-7. If a reviewer is configured for this project, wait for its review feedback; it arrives automatically via the poller. If no reviewer is configured, PR readiness is CI green + zero unresolved threads + the TL-run audit receipt.
+7. If a reviewer is configured for this project, wait for its review feedback; it arrives automatically via the poller. A configured Named reviewer is waited on like Copilot: a non-responsive reviewer stalls merge until the TL intervenes or config changes. Chosen reviewer = chosen wait. If no reviewer is configured, PR readiness is CI green + zero unresolved threads + the TL-run audit receipt.
 8. If the configured reviewer leaves review comments:
    - If a reviewer is configured, the poller pushes review snapshots into your pane. Those snapshots carry `GitHub review rollup`, `Unresolved inline review threads (GraphQL): N`, reviewer-specific issue-comment state when applicable, and the CI rollup. That snapshot is the source of truth for review state.
    - do NOT issue your own `gh api graphql ... reviewThreads`, `gh api .../pulls/N/reviews`, or `gh api .../comments` calls to determine review state. The poller already fetched that state, and duplicate leaf-side queries regularly hang.
