@@ -2018,7 +2018,9 @@ async test "interpret_file_pr keeps copilot context comment when feature branch 
     Some("trace context"),
   )
   assert_false(observed.requested_reviewers.contains("@copilot"))
-  let expected_comment = file_pr_copilot_review_comment_body("trace context")
+  let expected_comment = file_pr_reviewer_review_comment_body(
+    file_pr_copilot_reviewer_handle, "trace context",
+  )
   if !observed.review_comments.contains(expected_comment) {
     fail(
       "expected copilot context comment, saw: " +
@@ -2028,9 +2030,11 @@ async test "interpret_file_pr keeps copilot context comment when feature branch 
 }
 
 ///|
-test "file_pr_copilot_review_comment_body uses @copilot review prefix" {
+test "file_pr_reviewer_review_comment_body uses @copilot review prefix" {
   assert_eq(
-    file_pr_copilot_review_comment_body("plan vs interpret"),
+    file_pr_reviewer_review_comment_body(
+      file_pr_copilot_reviewer_handle, "plan vs interpret",
+    ),
     "@copilot review: plan vs interpret",
   )
 }

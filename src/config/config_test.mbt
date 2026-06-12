@@ -410,7 +410,15 @@ test "parse_config pr_policy reviewer empty is error" {
   )
   match r {
     Ok(_) => fail("expected invalid pr_policy.reviewer")
-    Err(e) => assert_true(e.message().contains("pr_policy.reviewer"))
+    Err(e) => {
+      assert_eq(
+        e.message(),
+        "config error: pr_policy.reviewer: reviewer must be non-empty",
+      )
+      assert_false(
+        e.message().contains("config error: pr_policy.reviewer: config error:"),
+      )
+    }
   }
 }
 

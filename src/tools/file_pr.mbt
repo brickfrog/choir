@@ -200,15 +200,6 @@ pub fn file_pr_reviewer_review_comment_body(
 }
 
 ///|
-pub fn file_pr_copilot_review_comment_body(
-  review_context_trimmed : String,
-) -> String {
-  file_pr_reviewer_review_comment_body(
-    file_pr_copilot_reviewer_handle, review_context_trimmed,
-  )
-}
-
-///|
 /// `gh pr comment` body for review context ([`interpret_file_pr_post_success`] when
 /// a reviewer is configured and [`FilePrPostSuccessEffects::review_context`] is non-empty).
 pub fn file_pr_reviewer_review_comment_gh_command(

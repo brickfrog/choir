@@ -153,7 +153,9 @@ async test "interpret_file_pr_post_success posts copilot review comment then req
         assert_eq(cmds[0].args[3], "--body")
         assert_eq(
           cmds[0].args[4],
-          file_pr_copilot_review_comment_body("plan/interpret split"),
+          file_pr_reviewer_review_comment_body(
+            file_pr_copilot_reviewer_handle, "plan/interpret split",
+          ),
         )
         @debug.assert_eq(cmds[0].workdir, Some(project_dir))
       } else if n == 1 {
