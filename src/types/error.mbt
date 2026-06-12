@@ -96,6 +96,14 @@ pub fn ChoirError::validation_detail_or_message(self : ChoirError) -> String {
 }
 
 ///|
+pub fn ChoirError::config_detail(self : ChoirError) -> String? {
+  match self {
+    ConfigError(msg) => Some(msg)
+    _ => None
+  }
+}
+
+///|
 pub fn ChoirError::workspace_error(msg : String) -> ChoirError {
   WorkspaceError(msg)
 }

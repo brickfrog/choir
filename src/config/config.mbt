@@ -197,14 +197,14 @@ fn parse_reviewer_config_value(
   } else {
     stripped
   }
-  if value.trim() == "" {
-    return Err(
-      @types.ChoirError::config_error(key + ": reviewer must be non-empty"),
-    )
-  }
   match @types.Reviewer::try_parse_wire(value) {
     Ok(reviewer) => Ok(reviewer)
-    Err(e) => Err(e)
+    Err(e) =>
+      match e.config_detail() {
+        Some(detail) =>
+          Err(@types.ChoirError::config_error(key + ": " + detail))
+        None => Err(@types.ChoirError::config_error(key + ": invalid reviewer"))
+      }
   }
 }
 

@@ -420,6 +420,11 @@ test "parse_config pr_policy reviewer empty is error" {
       )
     }
   }
+  match @types.Reviewer::try_parse_wire("") {
+    Err(e) =>
+      @debug.assert_eq(e.config_detail(), Some("reviewer must be non-empty"))
+    Ok(_) => fail("expected empty reviewer to be rejected")
+  }
 }
 
 ///|
