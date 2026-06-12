@@ -312,6 +312,28 @@ async fn ServerState::durable_dispatch_planned(
   runner : async (Array[@workspace.Command]) -> Array[Int],
   sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Result[Unit, @types.ChoirError] {
+  // Inbox routing (Phase 2a): message content never travels via send-keys.
+  // Terminal-bound deliveries queue the body into the daemon-side inbox and
+  // shrink the typed payload to the fixed nudge; the agent drains content
+  // via check_inbox. Non-terminal channels are unchanged.
+  let planned = match planned.delivery {
+    @message.DeliveryMethod::LocalTerminalInput(target, _) => {
+      let pending = self.queue_inbox_message(
+        planned.recipient_id,
+        planned.sender_id,
+        planned.body,
+        planned.status,
+      )
+      {
+        ..planned,
+        delivery: @message.DeliveryMethod::LocalTerminalInput(
+          target,
+          @message.format_inbox_nudge(pending),
+        ),
+      }
+    }
+    _ => planned
+  }
   let created_at = @poller.now_sec()
   let initial = @outbox.OutboxMessage::new(
     durable_delivery_message_id(

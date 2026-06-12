@@ -610,9 +610,20 @@ pub async fn ServerState::interpret_teardown_effects(
               Some(target) => {
                 let reason_str = reason.to_wire_string()
                 let msg = @message.format_failure(agent_id, reason_str)
+                // Inbox routing: content is queued daemon-side; the pane
+                // only receives the fixed nudge.
+                let pending = self.queue_inbox_message(
+                  p.agent_id.to_string(),
+                  agent_id,
+                  msg,
+                  @types.Status::Failure,
+                )
                 ignore(
                   @tools.execute_delivery(
-                    @message.DeliveryMethod::LocalTerminalInput(target, msg),
+                    @message.DeliveryMethod::LocalTerminalInput(
+                      target,
+                      @message.format_inbox_nudge(pending),
+                    ),
                     runner,
                   ) catch {
                     _ => Ok(())
@@ -1758,12 +1769,23 @@ async test "unexpected disconnect closes terminal and preserves failure teardown
     if cmd.program == "choir" &&
       cmd.args.contains("zellij-action") &&
       cmd.args.contains("send") &&
-      cmd.args[cmd.args.length() - 1].contains("[FAILED: " + agent_id + "]") {
+      cmd.args[cmd.args.length() - 1].contains("call check_inbox") {
       saw_parent_failure = true
     }
   }
   assert_true(saw_close)
   assert_true(saw_parent_failure)
+  // Content travels via the inbox, not send-keys.
+  let mut inbox_has_failure = false
+  for entry in state.inboxes {
+    let (_, messages) = entry
+    for message in messages {
+      if message.body.contains("[FAILED: " + agent_id + "]") {
+        inbox_has_failure = true
+      }
+    }
+  }
+  assert_true(inbox_has_failure)
   match @phase.read_lifecycle(project_dir, agent_id) {
     Some(
       { process: @phase.ProcessState::Failed(reason=UnexpectedDisconnect), .. }

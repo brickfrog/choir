@@ -658,6 +658,7 @@ fn notify_parent_blocked_parent_warn_send_plan(
   caller_id : String,
   pr_number : Int,
   gh_thread_fetch_failed : Bool,
+  plan_delivery_fn? : (@types.Agent, String, String, @types.Status) -> @message.DeliveryMethod = @message.plan_delivery,
 ) -> SendMessagePlan raise @types.ChoirError {
   let parent = resolve_parent_for_notify(project_dir, session, reg, caller_id)
   let body = if gh_thread_fetch_failed {
@@ -679,6 +680,7 @@ fn notify_parent_blocked_parent_warn_send_plan(
     body,
     @types.Status::Info,
     Some(Ok(parent)),
+    plan_delivery_fn~,
   )
 }
 
@@ -893,7 +895,23 @@ pub async fn dispatch(
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
   agy_migration_incomplete? : Bool = false,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
+  inbox_queue? : (String, String, String, @types.Status) -> Int? = fn(
+    _recipient,
+    _sender,
+    _body,
+    _status
+  ) {
+    None
+  },
 ) -> @types.Response {
+  let plan_delivery_fn = fn(
+    agent : @types.Agent,
+    sender : String,
+    content : String,
+    status : @types.Status,
+  ) -> @message.DeliveryMethod {
+    @message.plan_delivery_via_inbox(agent, sender, content, status, inbox_queue)
+  }
   let ensure_branch_ready = match ensure_branch_ready {
     Some(f) => f
     None =>
@@ -1227,6 +1245,7 @@ pub async fn dispatch(
         moon_verify_target~,
         skip_copilot_on_feature_branch~,
         sleep_fn~,
+        plan_delivery_fn~,
       )
     ToolRequest::TddIntent(args) =>
       interpret_tdd_intent(
@@ -1339,6 +1358,7 @@ pub async fn dispatch(
                     notify_args.caller_id,
                     pr_number,
                     gh_failed,
+                    plan_delivery_fn~,
                   )
                   ignore(
                     interpret_send_message(
@@ -1410,7 +1430,7 @@ pub async fn dispatch(
           )
         None => None
       }
-      match notify_parent_plan(notify_args, parent_resolution) {
+      match notify_parent_plan(notify_args, parent_resolution, plan_delivery_fn~) {
         NotifyParentPlan::NoRegistry(dev_event~, response~) => {
           apply_dev_event(
             project_dir,
@@ -1527,6 +1547,7 @@ pub async fn dispatch(
           send_args.message,
           send_args.status,
           registry_lookup,
+          plan_delivery_fn~,
         ),
         project_dir,
         runner,
@@ -2066,6 +2087,14 @@ pub async fn handle_request(
   create_dir_all? : (String) -> Bool = @sys.create_dir_all,
   agy_migration_incomplete? : Bool = false,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
+  inbox_queue? : (String, String, String, @types.Status) -> Int? = fn(
+    _recipient,
+    _sender,
+    _body,
+    _status
+  ) {
+    None
+  },
 ) -> @types.Response {
   let tool_args = tool_args_from_request_args(req.args)
   let mut ran_builtin_dispatch = false
@@ -2192,6 +2221,7 @@ pub async fn handle_request(
                   record_handoff_delivered~,
                   agy_migration_incomplete~,
                   sleep_fn~,
+                  inbox_queue~,
                 )
                 ran_builtin_dispatch = true
                 out

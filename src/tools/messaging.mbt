@@ -23,6 +23,7 @@ pub impl Show for NotifyParentPlan with fn output(self, logger) -> Unit {
 pub fn notify_parent_plan(
   args : CallerMessageArgs,
   parent_resolution : Result[@types.Agent, @types.ChoirError]?,
+  plan_delivery_fn? : (@types.Agent, String, String, @types.Status) -> @message.DeliveryMethod = @message.plan_delivery,
 ) -> NotifyParentPlan {
   match parent_resolution {
     None => {
@@ -36,7 +37,7 @@ pub fn notify_parent_plan(
     }
     Some(Err(e)) => ParentResolveFailed(error_message=e.message())
     Some(Ok(parent)) => {
-      let delivery = @message.plan_delivery(
+      let delivery = plan_delivery_fn(
         parent,
         args.caller_id,
         args.message,
@@ -141,6 +142,7 @@ pub fn send_message_plan(
   status : @types.Status,
   registry_lookup : Result[@types.Agent, @types.ChoirError]?,
   now_ms? : Int64 = @env.now().reinterpret_as_int64(),
+  plan_delivery_fn? : (@types.Agent, String, String, @types.Status) -> @message.DeliveryMethod = @message.plan_delivery,
 ) -> SendMessagePlan {
   match registry_lookup {
     None =>
@@ -172,7 +174,7 @@ pub fn send_message_plan(
         }
         _ => ()
       }
-      let delivery = @message.plan_delivery(agent, sender_id, message, status)
+      let delivery = plan_delivery_fn(agent, sender_id, message, status)
       let delivery_log_append = send_message_delivery_log_append(
         target_id,
         agent,

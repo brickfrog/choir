@@ -73,6 +73,42 @@ pub fn teams_inbox_path(agent_name : String) -> String {
 }
 
 ///|
+/// Fixed short nudge typed into an agent pane when inbox messages are
+/// pending. Deliberately content-free: one tiny send-keys injection causes
+/// the agent to drain N queued messages in a single turn via `check_inbox`.
+pub fn format_inbox_nudge(pending : Int) -> String {
+  "choir: " +
+  pending.to_string() +
+  " message" +
+  (if pending == 1 { "" } else { "s" }) +
+  " pending — call check_inbox"
+}
+
+///|
+/// Inbox-routed planning: message content goes to the daemon-side per-agent
+/// inbox (via the injected `queue` capability, which returns the pending
+/// count) and the terminal payload shrinks to the fixed nudge. When no
+/// inbox capability is wired (`queue` returns None) the legacy full-content
+/// plan is used unchanged.
+pub fn plan_delivery_via_inbox(
+  agent : @types.Agent,
+  sender_id : String,
+  content : String,
+  status : @types.Status,
+  queue : (String, String, String, @types.Status) -> Int?,
+) -> DeliveryMethod {
+  let planned = plan_delivery(agent, sender_id, content, status)
+  match planned {
+    LocalTerminalInput(target, _) =>
+      match queue(agent.agent_id.to_string(), sender_id, content, status) {
+        Some(pending) => LocalTerminalInput(target, format_inbox_nudge(pending))
+        None => planned
+      }
+    other => other
+  }
+}
+
+///|
 pub fn plan_delivery(
   agent : @types.Agent,
   sender_id : String,

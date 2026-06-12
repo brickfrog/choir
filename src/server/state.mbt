@@ -319,6 +319,7 @@ pub struct ServerState {
   mut poller_vitals : @types.PollerVitals
   tui_beads_cache : TuiBeadsCache
   mut tui_default_branch : String?
+  inboxes : Map[String, Array[@types.InboxMessage]]
   append_file : (String, String) -> Bool
   read_file : (String) -> String
   write_file_atomic : (String, String) -> Bool
@@ -451,6 +452,13 @@ pub fn ServerState::new(
     poller_vitals: @types.PollerVitals::initial(),
     tui_beads_cache: TuiBeadsCache::new(),
     tui_default_branch: None,
+    inboxes: load_inboxes_for_boot(
+      config.project_dir,
+      path_exists,
+      boot_read_file,
+      write_file_atomic,
+      now_unix_sec,
+    ),
     append_file: default_append_file_sync,
     read_file: default_read_file,
     write_file_atomic: default_write_file_atomic,

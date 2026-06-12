@@ -158,7 +158,7 @@ test "tui_events_since handler serves cursored batches and rejects missing seq" 
         _ => fail("expected events array")
       }
       // Int64 serializes as a JSON string on the wire.
-      assert_eq(fields.get("latest_seq"), Some("2"))
+      @debug.assert_eq(fields.get("latest_seq"), Some("2"))
     }
     None => fail("expected ok payload")
   }

@@ -427,6 +427,7 @@ const DISPATCH_LEAF_DEFAULT : String =
   #|## After spawn
   #|
   #|- Wait for the leaf's `notify_parent` to deliver via the poller. Do NOT sleep-poll. Goal-mode autonomous runs that lack notification flow are the only exception — see TL operating notes.
+  #|- Leaf/poller messages reach you through the daemon inbox: a `choir: N messages pending — call check_inbox` nudge appears in your pane, and `check_inbox` drains all pending content in one call. Drain it whenever you see the nudge.
   #|- Check `/proc/<pid>/cwd` if leaf goes silent >15min — likely cd'd out.
   #|
   #|## When NOT to use a leaf
@@ -476,6 +477,12 @@ const LEAF_PROFILE_DEFAULT : String =
   #|   - Do not call `gh` to resolve threads as part of the normal review cycle. Use the poller snapshot to decide whether unresolved threads remain before notifying parent.
   #|8. Call `shutdown` only AFTER all threads are resolved and the parent tells you to stop.
   #|9. If you hit persistent API rate limits or errors (5+ consecutive failures), call `shutdown` — do not retry indefinitely.
+  #|
+  #|### Inbox (message delivery)
+  #|
+  #|- Choir delivers message content through a daemon-side inbox, not by typing it into your pane. When you see `choir: N messages pending — call check_inbox` in your terminal, call the `check_inbox` tool immediately: it returns ALL pending messages (review feedback, parent steering, poller events) in one call and marks them delivered.
+  #|- One nudge may cover several queued messages — drain once, then act on everything you received. Do not wait for additional nudges per message.
+  #|- Direct steering text from the TL can still appear in your pane verbatim; treat it as an instruction as before.
   #|
   #|Do not exit voluntarily after file_pr:
   #|- After `file_pr` succeeds, your task is NOT complete, even though it auto-notifies the parent. If a reviewer is configured for this project, its inline review can take time to arrive. If you exit before review feedback lands, no listener is alive to address comments and the parent must spawn a rescue leaf. If no reviewer is configured, remain available until CI/thread snapshots and the TL-owned audit gate are handled.

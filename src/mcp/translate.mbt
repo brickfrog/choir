@@ -485,6 +485,12 @@ fn tool_defs() -> Array[CatalogTool] {
       required: ["target_id", "message"],
     },
     {
+      name: "check_inbox",
+      description: "Drain your pending inbox: returns all queued messages and marks them delivered. Call whenever you see a 'choir: N messages pending' nudge in your terminal — one call flushes every queued message.",
+      props: [{ name: "caller_id", desc: "ID of the calling agent" }],
+      required: ["caller_id"],
+    },
+    {
       name: "kv_get",
       description: "Read one value from shared KV storage (flat key, no '/')",
       props: [

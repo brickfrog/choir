@@ -311,6 +311,9 @@ pub async fn ServerState::handle_with_runner_and_capture(
   } else if effective_req.req_method == "tools/call" &&
     effective_req.name == "tui_events_since" {
     self.handle_tui_events_since_request(effective_req)
+  } else if effective_req.req_method == "tools/call" &&
+    effective_req.name == "check_inbox" {
+    self.handle_check_inbox_request(effective_req)
   } else {
     @tools.handle_request(
       self.tool_registry,
@@ -367,6 +370,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
       record_handoff_delivered=fn(agent_id) {
         self.mark_handoff_delivered(agent_id)
       },
+      inbox_queue=self.inbox_queue_capability(),
       on_resolve_review_thread=async fn(pr_numbers : Array[Int]) {
         if pr_numbers.length() > 0 {
           self.sweep_tracked_prs_for_automerge(runner, sleep_fn~) catch {
