@@ -76,30 +76,38 @@ choir-bcny, out of scope here.
 ## Design
 Integration branch `feature/reviewer-policy`, three sequential leaves.
 
-### Leaf 1 — core: enum, config, policy, merge gate
+### Leaf 1 — core type change + mechanical threading (must compile green alone)
 Files: `src/types/config.mbt` (PrPolicy + new `Reviewer` enum + delete
 `pr_review` from `Config`), `src/types/config_schema.mbt`(+test),
 `src/config/config.mbt` (parse `pr_policy.reviewer`, delete `pr_review`
 parse), `src/policy/policy.mbt` (`review_required_for_branch` takes the
 reviewer; `ready_reason` audit wording), `src/tools/merge_pr.mbt`
 (`merge_pr_audit_receipt_validation` unconditional; delete
-`file_pr_audit_receipt_required` and its call sites), `src/tools/file_pr.mbt`
-(only the `file_pr_audit_receipt_required` definition lives here — move/delete).
-Blackbox tests: enum round-trip, config default `None`, parse of all three
-forms, `review_required_for_branch` matrix, receipt-required-on-feature-branch
-regression (RED: today feature-branch merges skip receipt validation).
+`file_pr_audit_receipt_required` and its call sites; mechanical
+review_required call-site update), `src/tools/file_pr.mbt` (reviewer enum
+replaces `pr_review` bool params; request reviewer only for `Copilot`/
+`Named(h)`, handle plumbed to `--add-reviewer`), `src/server/handler.mbt`
+and `src/server/handler_poll_delivery.mbt`, `src/poller/tl_decision.mbt`
+(mechanical: thread `config.pr_policy.reviewer` through the existing
+`review_required_for_branch` call sites — no prose/behavior changes beyond
+what the signature forces). Deleting `Config.pr_review` ripples into these
+consumers, so the mechanical threading belongs to this leaf: it must leave
+the tree compiling with `reviewer = copilot` behavior identical to today's
+`pr_review = true`. Blackbox tests: enum round-trip, config default `None`,
+parse of all three forms, `review_required_for_branch` matrix,
+receipt-required-on-feature-branch regression (RED: today feature-branch
+merges skip receipt validation), file_pr command construction for all three
+reviewer values.
 
-### Leaf 2 — consumers: file_pr request, server threading, poller prose, evidence
-Files: `src/tools/file_pr.mbt` (reviewer request path replaces `pr_review`
-bool params; `Named` handle plumbed to `--add-reviewer`),
-`src/server/handler.mbt:348` and `src/server/handler_poll_delivery.mbt`
-(thread `config.pr_policy.reviewer`), `src/poller/tl_decision.mbt`
-(review_required_for_tracked_pr + TLDecision prose: when reviewer is `None`,
-decision text goes straight to CI/threads/receipt and never says "wait for
-Copilot"), `src/evidence/evidence.mbt` (advisory verdict does not gate on
-Copilot comment when reviewer is `None`). Tests: file_pr command construction
-for all three reviewer values; tl_decision snapshot with reviewer `None`
-(no waiting-for-review verdict when CI green + threads zero).
+### Leaf 2 — behavioral conditioning: poller prose, evidence advisory
+Files: `src/poller/tl_decision.mbt` (TLDecision prose: when reviewer is
+`None`, decision text goes straight to CI/threads/receipt and never says
+"wait for Copilot" / "Copilot reviewed"), `src/evidence/evidence.mbt`
+(advisory verdict does not gate on Copilot comment when reviewer is `None`),
+`src/server/handler_poll_delivery.mbt` (decision/message selection only).
+Depends on leaf 1 (reviewer already threaded). Tests: tl_decision snapshot
+with reviewer `None` (no waiting-for-review verdict when CI green + threads
+zero; no Copilot wording in emitted decisions).
 
 ### Leaf 3 — prompts and docs
 Files: `src/prompts/loader.mbt` / prompt assets with Copilot wording (leaf
