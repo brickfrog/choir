@@ -511,7 +511,7 @@ pub async fn interpret_merge_pr_preflight(
   task_contract_reader? : (String) -> @types.TaskContract? = fn(_) { None },
   review_mode? : @types.ReviewMode = @types.ReviewMode::SinglePass,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
-  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
+  reviewer? : @types.Reviewer = @types.Reviewer::None,
   skip_copilot_on_feature_branch? : Bool = @types.Config::default().pr_policy.skip_copilot_on_feature_branch,
   default_branch? : String = "",
 ) -> Result[Unit, @types.ChoirError] {
@@ -841,7 +841,7 @@ pub fn format_tl_pr_recheck_summary(
   task_contract? : @types.TaskContract? = None,
   verify_results? : Array[@types.VerifyCheckResult] = [],
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
-  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
+  reviewer? : @types.Reviewer = @types.Reviewer::None,
   skip_copilot_on_feature_branch? : Bool = false,
   default_branch? : String = "",
 ) -> String {
@@ -2167,7 +2167,7 @@ pub async fn interpret_merge_pr(
   merge_strategy? : @types.MergeStrategy = @types.Config::default().merge_strategy,
   task_contract_reader? : (String) -> @types.TaskContract? = fn(_) { None },
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
-  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
+  reviewer? : @types.Reviewer = @types.Reviewer::None,
   skip_copilot_on_feature_branch? : Bool = @types.Config::default().pr_policy.skip_copilot_on_feature_branch,
   require_integration_audit? : Bool = @types.Config::default().pr_policy.require_integration_audit,
   hook_capture? : async (String, String, String?) -> (Int, String) = async fn(

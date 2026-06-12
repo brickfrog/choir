@@ -2434,11 +2434,31 @@ test "format_tl_pr_recheck_summary ready snapshot when approved success zero thr
     merge_state_status: @poller.MergeStateStatus::Unknown,
     merged_at_unix: None,
   }
-  let s = format_tl_pr_recheck_summary(t, "/repo", Some(0))
+  let s = format_tl_pr_recheck_summary(
+    t,
+    "/repo",
+    Some(0),
+    reviewer=@types.Reviewer::Copilot,
+  )
   assert_true(s.contains("no tracked blockers"))
   assert_true(s.contains("Does not merge"))
   assert_true(s.contains("success"))
   assert_true(s.contains("GitHub Copilot issue comment (REST): not seen"))
+  assert_true(s.contains("Advisory evaluation verdict: ready"))
+  assert_true(s.contains("Merge policy decision: merge_now"))
+}
+
+///|
+test "format_tl_pr_recheck_summary default reviewer matches config default" {
+  let t : @poller.TrackedPR = {
+    ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
+  }
+  let s = format_tl_pr_recheck_summary(t, "/repo", Some(0))
+  assert_false(s.contains("GitHub Copilot issue comment (REST)"))
   assert_true(s.contains("Advisory evaluation verdict: ready"))
   assert_true(s.contains("Merge policy decision: merge_now"))
 }
@@ -2457,6 +2477,7 @@ test "format_tl_pr_recheck_summary applies skipped review policy for feature bra
     t,
     "/repo",
     Some(0),
+    reviewer=@types.Reviewer::Copilot,
     skip_copilot_on_feature_branch=true,
     default_branch="main",
   )
@@ -2495,7 +2516,12 @@ test "format_tl_pr_recheck_summary uses tracked SinglePass mode consistently aft
     last_sha: "fixed-sha",
     review_mode: @types.ReviewMode::SinglePass,
   }
-  let s = format_tl_pr_recheck_summary(t, "/repo", Some(0))
+  let s = format_tl_pr_recheck_summary(
+    t,
+    "/repo",
+    Some(0),
+    reviewer=@types.Reviewer::Copilot,
+  )
   assert_true(s.contains("no tracked blockers"))
   assert_true(s.contains("Advisory evaluation verdict: ready"))
   assert_true(s.contains("Merge policy decision: merge_now"))
@@ -2529,7 +2555,12 @@ test "format_tl_pr_recheck_summary notes Copilot issue comment when seen on merg
     merged_at_unix: None,
     copilot_issue_comment_seen: true,
   }
-  let s = format_tl_pr_recheck_summary(t, "/repo", Some(0))
+  let s = format_tl_pr_recheck_summary(
+    t,
+    "/repo",
+    Some(0),
+    reviewer=@types.Reviewer::Copilot,
+  )
   assert_true(s.contains("GitHub Copilot issue comment (REST): seen"))
   assert_true(s.contains("Copilot issue comment observed"))
   assert_true(s.contains("Advisory evaluation verdict: ready"))

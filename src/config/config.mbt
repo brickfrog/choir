@@ -197,15 +197,9 @@ fn parse_reviewer_config_value(
   } else {
     stripped
   }
-  let trimmed = value.trim().to_owned()
-  if trimmed == "" {
-    Err(@types.ChoirError::config_error(key + ": reviewer must be non-empty"))
-  } else {
-    match trimmed.to_lower() {
-      "none" => Ok(@types.Reviewer::None)
-      "copilot" => Ok(@types.Reviewer::Copilot)
-      _ => Ok(@types.Reviewer::Named(trimmed))
-    }
+  match @types.Reviewer::try_parse_wire(value) {
+    Ok(reviewer) => Ok(reviewer)
+    Err(e) => Err(@types.ChoirError::config_error(key + ": " + e.message()))
   }
 }
 
