@@ -740,6 +740,137 @@ test "supervisor ChildUpdated with agent_type replaces placeholder" {
 }
 
 ///|
+test "supervisor full-id child update reaches WaveComplete from spawned row" {
+  let lifecycle : AgentLifecycle = {
+    agent_id: "main.tl",
+    role: @types.Role::TL,
+    process: Connected,
+    workflow: Supervisor(Planning),
+    last_updated_unix_sec: 0L,
+  }
+  let effects = plan_tl_lifecycle_effects(
+    lifecycle,
+    TLEvent::ChildSpawned(
+      child_id="main.leaf-x",
+      agent_type=@types.AgentType::Codex,
+    ),
+  )
+  let supervisor = match effects[0] {
+    PersistLifecycle(lifecycle=lc) =>
+      match lc.workflow {
+        Supervisor(next) => next
+        _ => {
+          fail("expected supervisor lifecycle")
+          Planning
+        }
+      }
+    _ => {
+      fail("expected PersistLifecycle")
+      Planning
+    }
+  }
+  match
+    supervisor_transition(
+      supervisor,
+      SupervisorEvent::ChildUpdated(
+        child_id="main.leaf-x",
+        summary=ChildLifecycleSummary::Done,
+        agent_type=Some(@types.AgentType::Codex),
+      ),
+    ) {
+    Transitioned(WaveComplete(wave=1, children~)) => {
+      assert_eq(children.length(), 1)
+      assert_eq(children[0].child_id, "main.leaf-x")
+      assert_eq(children[0].summary, ChildLifecycleSummary::Done)
+    }
+    Transitioned(_) => fail("expected WaveComplete after full-id update")
+    InvalidTransition(reason) =>
+      fail("expected WaveComplete after full-id update, got invalid: " + reason)
+  }
+}
+
+///|
+test "supervisor ChildSpawned heals legacy slug-only phantom row" {
+  let phantom : ChildLifecycle = {
+    child_id: "leaf-x",
+    slug: "leaf-x",
+    branch: "leaf-x",
+    agent_type: @types.AgentType::Unknown,
+    summary: ChildLifecycleSummary::Working,
+  }
+  let real : ChildLifecycle = {
+    child_id: "main.leaf-x",
+    slug: "leaf-x",
+    branch: "main.leaf-x",
+    agent_type: @types.AgentType::Codex,
+    summary: ChildLifecycleSummary::Working,
+  }
+  match
+    supervisor_transition(
+      SupervisorLifecycle::Supervising(children=[phantom], wave=1),
+      SupervisorEvent::ChildSpawned(child=real),
+    ) {
+    Transitioned(Supervising(children~, wave=1)) => {
+      assert_eq(children.length(), 1)
+      assert_eq(children[0].child_id, "main.leaf-x")
+      assert_eq(children[0].slug, "leaf-x")
+      assert_eq(children[0].branch, "main.leaf-x")
+      assert_eq(children[0].agent_type, @types.AgentType::Codex)
+      assert_eq(children[0].summary, ChildLifecycleSummary::Working)
+    }
+    Transitioned(_) => fail("expected healed Supervising row")
+    InvalidTransition(reason) =>
+      fail("expected healed Supervising row, got invalid: " + reason)
+  }
+}
+
+///|
+test "supervisor ChildSpawned after WaveComplete starts next wave with only new child" {
+  let prior_done : ChildLifecycle = {
+    child_id: "main.leaf-x",
+    slug: "leaf-x",
+    branch: "main.leaf-x",
+    agent_type: @types.AgentType::Codex,
+    summary: ChildLifecycleSummary::Done,
+  }
+  let prior_failed : ChildLifecycle = {
+    child_id: "main.leaf-y",
+    slug: "leaf-y",
+    branch: "main.leaf-y",
+    agent_type: @types.AgentType::Codex,
+    summary: ChildLifecycleSummary::Failed(reason=RecoveredFailed),
+  }
+  let next_child : ChildLifecycle = {
+    child_id: "main.leaf-z",
+    slug: "leaf-z",
+    branch: "main.leaf-z",
+    agent_type: @types.AgentType::Codex,
+    summary: ChildLifecycleSummary::Working,
+  }
+  match
+    supervisor_transition(
+      SupervisorLifecycle::WaveComplete(wave=1, children=[
+        prior_done, prior_failed,
+      ]),
+      SupervisorEvent::ChildSpawned(child=next_child),
+    ) {
+    Transitioned(Supervising(children~, wave=2)) => {
+      assert_eq(children.length(), 1)
+      assert_eq(children[0].child_id, next_child.child_id)
+      assert_eq(children[0].slug, next_child.slug)
+      assert_eq(children[0].branch, next_child.branch)
+      assert_eq(children[0].agent_type, next_child.agent_type)
+      assert_eq(children[0].summary, next_child.summary)
+    }
+    Transitioned(_) => fail("expected next wave to contain only new child")
+    InvalidTransition(reason) =>
+      fail(
+        "expected next wave to contain only new child, got invalid: " + reason,
+      )
+  }
+}
+
+///|
 test "resolve_agent_with_fallback - in registry" {
   let project_dir = "test_project"
   let session = "test_session"
@@ -881,14 +1012,23 @@ test "plan_tl_lifecycle_effects ChildSpawned emits persist then append" {
   }
   let effects = plan_tl_lifecycle_effects(
     lifecycle,
-    TLEvent::ChildSpawned(child_id="main.leaf"),
+    TLEvent::ChildSpawned(
+      child_id="main.leaf",
+      agent_type=@types.AgentType::Codex,
+    ),
   )
   assert_eq(effects.length(), 2)
   match effects[0] {
     PersistLifecycle(lifecycle=lc) =>
       match lc.workflow {
-        Supervisor(Supervising(children~, wave=1)) =>
+        Supervisor(Supervising(children~, wave=1)) => {
           assert_eq(children.length(), 1)
+          assert_eq(children[0].child_id, "main.leaf")
+          assert_eq(children[0].slug, "leaf")
+          assert_eq(children[0].branch, "main.leaf")
+          assert_eq(children[0].agent_type, @types.AgentType::Codex)
+          assert_eq(children[0].summary, ChildLifecycleSummary::Working)
+        }
         _ => fail("expected Supervising wave 1")
       }
     _ => fail("expected PersistLifecycle first")

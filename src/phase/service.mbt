@@ -116,7 +116,7 @@ fn dev_phase_from_lifecycle(lifecycle : DevLifecycle) -> DevPhase {
 ///|
 fn tl_event_trigger(event : TLEvent) -> @types.LifecycleTrigger {
   match event {
-    TLEvent::ChildSpawned(_) => @types.LifecycleTrigger::ChildSpawned
+    TLEvent::ChildSpawned(..) => @types.LifecycleTrigger::ChildSpawned
     TLEvent::ChildCompleted(_) => @types.LifecycleTrigger::ChildCompleted
     TLEvent::ChildFailed(_, ..) => @types.LifecycleTrigger::ChildFailed
     TLEvent::PRMerged(..) => @types.LifecycleTrigger::PRMerged
@@ -153,14 +153,14 @@ pub fn plan_tl_lifecycle_effects(
     _ => SupervisorLifecycle::Planning
   }
   let transitioned = match event {
-    TLEvent::ChildSpawned(child_id~) =>
+    TLEvent::ChildSpawned(child_id~, agent_type~) =>
       supervisor_transition(
         supervisor,
         SupervisorEvent::ChildSpawned(child={
           child_id,
-          slug: child_id,
+          slug: extract_slug(child_id),
           branch: child_id,
-          agent_type: @types.AgentType::Unknown,
+          agent_type,
           summary: ChildLifecycleSummary::Working,
         }),
       )

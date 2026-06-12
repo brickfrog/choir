@@ -713,6 +713,20 @@ fn remove_child(
 }
 
 ///|
+fn children_without_spawn_duplicate(
+  children : Array[ChildLifecycle],
+  child : ChildLifecycle,
+) -> Array[ChildLifecycle] {
+  let updated = []
+  for existing in children {
+    if existing.child_id != child.child_id && existing.child_id != child.slug {
+      updated.push(existing)
+    }
+  }
+  updated
+}
+
+///|
 fn children_all_terminal(children : Array[ChildLifecycle]) -> Bool {
   let mut all_terminal = true
   for child in children {
@@ -735,7 +749,7 @@ pub fn supervisor_transition(
     (Dispatching, ChildSpawned(child~)) =>
       Transitioned(Supervising(children=[child], wave=1))
     (Supervising(children~, wave~), ChildSpawned(child~)) => {
-      let next = children.copy()
+      let next = children_without_spawn_duplicate(children, child)
       next.push(child)
       Transitioned(Supervising(children=next, wave~))
     }

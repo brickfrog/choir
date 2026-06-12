@@ -1,6 +1,6 @@
 ///|
 pub(all) enum TLEvent {
-  ChildSpawned(child_id~ : String)
+  ChildSpawned(child_id~ : String, agent_type~ : @types.AgentType)
   ChildCompleted(child_id~ : String)
   ChildFailed(child_id~ : String, reason~ : String)
   PRMerged(number~ : Int, url~ : String)
