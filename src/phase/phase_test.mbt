@@ -825,6 +825,40 @@ test "supervisor ChildSpawned heals legacy slug-only phantom row" {
 }
 
 ///|
+test "supervisor ChildSpawned after WaveComplete starts next wave with only new child" {
+  let prior : ChildLifecycle = {
+    child_id: "main.leaf-x",
+    slug: "leaf-x",
+    branch: "main.leaf-x",
+    agent_type: @types.AgentType::Codex,
+    summary: ChildLifecycleSummary::Done,
+  }
+  let next_child : ChildLifecycle = {
+    child_id: "main.leaf-y",
+    slug: "leaf-y",
+    branch: "main.leaf-y",
+    agent_type: @types.AgentType::Codex,
+    summary: ChildLifecycleSummary::Working,
+  }
+  match
+    supervisor_transition(
+      SupervisorLifecycle::WaveComplete(wave=1, children=[prior]),
+      SupervisorEvent::ChildSpawned(child=next_child),
+    ) {
+    Transitioned(Supervising(children~, wave=2)) => {
+      assert_eq(children.length(), 1)
+      assert_eq(children[0].child_id, "main.leaf-y")
+      assert_eq(children[0].summary, ChildLifecycleSummary::Working)
+    }
+    Transitioned(_) => fail("expected next wave to contain only new child")
+    InvalidTransition(reason) =>
+      fail(
+        "expected next wave to contain only new child, got invalid: " + reason,
+      )
+  }
+}
+
+///|
 test "resolve_agent_with_fallback - in registry" {
   let project_dir = "test_project"
   let session = "test_session"

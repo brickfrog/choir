@@ -753,11 +753,8 @@ pub fn supervisor_transition(
       next.push(child)
       Transitioned(Supervising(children=next, wave~))
     }
-    (WaveComplete(wave~, children~), ChildSpawned(child~)) => {
-      let next = children_without_spawn_duplicate(children, child)
-      next.push(child)
-      Transitioned(Supervising(children=next, wave=wave + 1))
-    }
+    (WaveComplete(wave~, ..), ChildSpawned(child~)) =>
+      Transitioned(Supervising(children=[child], wave=wave + 1))
     // OwnPRFiled is only valid at Convergence (Supervising or WaveComplete).
     // Planning/Dispatching cannot file a PR before any children are spawned.
     (Supervising(..), OwnPRFiled(number~, url~)) =>
