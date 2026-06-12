@@ -123,24 +123,6 @@ fn init_cleanup_kv_prefixes(prefixes : Array[String]) -> Unit {
 }
 
 ///|
-fn init_reap_orphan_mcp_stdio_bridges(
-  list_orphans? : () -> Array[Int] = fn() {
-    @sys.list_orphan_choir_mcp_stdio_pids()
-  },
-  kill_pid? : (Int) -> Unit = fn(pid) { @sys.kill_pid_best_effort(pid) },
-) -> Unit {
-  let orphans = list_orphans()
-  for pid in orphans {
-    kill_pid(pid)
-  }
-  if orphans.length() > 0 {
-    @moontrace.info("reaped orphan mcp-stdio bridges", fields=[
-      @moontrace.field("count", orphans.length()),
-    ])
-  }
-}
-
-///|
 /// Restricted to the literal supervisor tab names choir always creates
 /// (Server, TL). Leaf-branch tabs are NOT matched here because any
 /// heuristic "has a dot + safe chars" matcher false-positives on common
@@ -194,7 +176,6 @@ async fn init_reap_stale_zellij_tabs(
 
 ///|
 fn init_cleanup_recreate_artifacts(
-  reap_orphans? : () -> Unit = fn() { init_reap_orphan_mcp_stdio_bridges() },
   cleanup_runtime? : () -> Unit = fn() {
     @sys.init_cleanup_runtime_artifacts_native()
   },
@@ -203,7 +184,6 @@ fn init_cleanup_recreate_artifacts(
   },
   rm_rf? : (String) -> Bool = fn(path) { @sys.rm_rf(path) },
 ) -> Unit {
-  reap_orphans()
   cleanup_runtime()
   cleanup_kv_prefixes(init_runtime_cleanup_kv_prefixes())
   for dir in init_runtime_cleanup_recursive_dirs() {
@@ -334,18 +314,9 @@ test "init server cleanup commands separate runtime restart from purge" {
 }
 
 ///|
-test "init orphan mcp-stdio reaper kills listed pids and cleanup invokes once" {
-  let killed : Array[Int] = []
-  init_reap_orphan_mcp_stdio_bridges(list_orphans=fn() { [301, 302, 303] }, kill_pid=fn(
-    pid,
-  ) {
-    killed.push(pid)
-  })
-  @debug.assert_eq(killed, [301, 302, 303])
-
+test "init recreate cleanup covers runtime, kv prefixes, and recursive dirs" {
   let events : Array[String] = []
   init_cleanup_recreate_artifacts(
-    reap_orphans=fn() { events.push("reap") },
     cleanup_runtime=fn() { events.push("runtime") },
     cleanup_kv_prefixes=fn(prefixes) {
       events.push("kv:" + prefixes.length().to_string())
@@ -355,13 +326,6 @@ test "init orphan mcp-stdio reaper kills listed pids and cleanup invokes once" {
       true
     },
   )
-  let mut reap_count = 0
-  for event in events {
-    if event == "reap" {
-      reap_count = reap_count + 1
-    }
-  }
-  assert_eq(reap_count, 1)
   assert_true(events.contains("runtime"))
   assert_true(events.any(fn(event) { event.has_prefix("kv:") }))
   assert_true(events.contains("rm:.choir/outbox"))
@@ -1239,10 +1203,6 @@ fn init_run() -> Unit {
       }
       let session = config.terminal_session
 
-      if !recreate {
-        init_reap_orphan_mcp_stdio_bridges()
-      }
-
       if recreate {
         let pid_str = @sys.read_file(".choir/server.pid")
         if pid_str != "" {
@@ -1250,7 +1210,6 @@ fn init_run() -> Unit {
           init_kill_server_pid_string(pid_str)
         }
         if purge {
-          init_reap_orphan_mcp_stdio_bridges()
           @sys.init_cleanup_purge_artifacts_native()
         } else {
           init_cleanup_recreate_artifacts()

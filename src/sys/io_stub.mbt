@@ -267,6 +267,16 @@ pub fn kill_server_pid_sequence_best_effort(_pid : Int) -> Unit {
 }
 
 ///|
+pub fn kill_pgid_sequence_best_effort(_pgid : Int) -> Unit {
+
+}
+
+///|
+pub fn wait_pid_reap_for_test(_pid : Int) -> Int {
+  -1
+}
+
+///|
 pub fn pid_is_alive(_pid : Int) -> Bool {
   false
 }
@@ -274,32 +284,6 @@ pub fn pid_is_alive(_pid : Int) -> Bool {
 ///|
 pub fn set_parent_death_signal_term() -> Bool {
   false
-}
-
-///|
-pub fn list_orphan_choir_mcp_stdio_pids(
-  list_processes? : () -> Array[ProcessTableEntry] = fn() { [] },
-) -> Array[Int] {
-  ignore(list_processes)
-  []
-}
-
-///|
-pub fn list_choir_mcp_stdio_pids_for_agent(
-  _agent_id : String,
-  list_processes? : () -> Array[ProcessTableEntry] = fn() { [] },
-) -> Array[Int] {
-  ignore(list_processes)
-  []
-}
-
-///|
-pub fn list_pids_with_cwd_prefix(
-  _prefix : String,
-  max? : Int = 64,
-) -> Array[Int] {
-  ignore(max)
-  []
 }
 
 ///|

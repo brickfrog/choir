@@ -63,13 +63,15 @@ pub fn kill_agent_ok_response(agent_id : String) -> @types.Response {
 
 ///|
 /// Adapter-side ordering for `kill_agent`: pane close attempt, then worktree
-/// remove attempt, then /proc-based process-kill fallback (each may be skipped
-/// when the corresponding input is absent; the fallback always runs once the
-/// agent has been resolved).
+/// remove attempt, then the owned process-group kill (recorded pgid from
+/// `.choir/pids/<sanitized-agent-id>`), then pidfile removal. Pane close and
+/// worktree remove may be skipped when the corresponding input is absent;
+/// pgroup kill and pidfile removal are skipped when no pidfile exists.
 pub(all) enum KillAgentAdapterHostStep {
   PaneClose
   WorktreeRemove
-  ProcessKillFallback
+  PgroupKill
+  PidFileRemove
 } derive(Debug, Eq)
 
 ///|
@@ -82,7 +84,8 @@ pub fn kill_agent_adapter_host_steps() -> Array[KillAgentAdapterHostStep] {
   [
     KillAgentAdapterHostStep::PaneClose,
     KillAgentAdapterHostStep::WorktreeRemove,
-    KillAgentAdapterHostStep::ProcessKillFallback,
+    KillAgentAdapterHostStep::PgroupKill,
+    KillAgentAdapterHostStep::PidFileRemove,
   ]
 }
 
@@ -114,8 +117,9 @@ fn kill_agent_target_agent(
 
 ///|
 /// Effectful `kill_agent` adapter: optional pane close, optional worktree remove,
-/// registry failed state, warning log, success response. Preserves historical
-/// `ToolRequest::KillAgent` control flow while keeping `dispatch` as a thin caller.
+/// owned process-group kill + pidfile removal, registry failed state, warning
+/// log, success response. Preserves historical `ToolRequest::KillAgent` control
+/// flow while keeping `dispatch` as a thin caller.
 ///
 /// Pending-wave handling (Feature 1):
 /// 1. If `args.agent_id` matches a `pending-wave--<id>` KV entry, delete it
@@ -133,13 +137,19 @@ pub async fn interpret_kill_agent(
     @async.sleep(0)
     (0, "")
   },
-  list_pids? : (String) -> Array[Int] = fn(p) {
-    @sys.list_pids_with_cwd_prefix(p)
+  read_agent_pgid? : (String) -> Int? = fn(agent_id) {
+    @workspace.parse_agent_pgid(
+      @sys.read_file(@workspace.agent_pid_file_path(project_dir, agent_id)),
+    )
   },
-  list_mcp_stdio_pids? : (String) -> Array[Int] = fn(agent_id) {
-    @sys.list_choir_mcp_stdio_pids_for_agent(agent_id)
+  kill_pgid? : (Int) -> Unit = @sys.kill_pgid_sequence_best_effort,
+  remove_pid_file? : (String) -> Unit = fn(agent_id) {
+    ignore(
+      @sys.delete_file_sync(
+        @workspace.agent_pid_file_path(project_dir, agent_id),
+      ),
+    )
   },
-  kill_pid? : (Int) -> Unit = @sys.kill_server_pid_sequence_best_effort,
   read_lifecycle? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
 ) -> @types.Response {
   // File existence is the source of truth for "is this id a pending wave"
@@ -209,45 +219,23 @@ pub async fn interpret_kill_agent(
         }
         None => ()
       }
-      // Belt-and-suspenders process kill: zellij's close-tab + SIGHUP chain
-      // through `sh -lc` does not reliably terminate the grandchild CLI
-      // runtime (e.g., `moon_pilot`, `node/claude`). Scan `/proc/*/cwd` for
-      // any live process whose cwd resolves under the agent's workspace —
-      // including the "(deleted)" variant left behind once `git worktree
-      // remove` unlinks the directory — and SIGTERM/SIGKILL each one.
-      //
-      // Gate the scan on the same "choir-managed worktree" predicate used to
-      // decide whether to `git worktree remove` just above. `register` lets
-      // an agent join with an arbitrary or empty `workspace`, and running
-      // `list_pids_with_cwd_prefix` on "" or "/" would match essentially
-      // every process on the host — which then all get SIGKILLed. Skipping
-      // the fallback for non-choir paths keeps `kill_agent` scoped to the
-      // worktree layout we actually own.
-      let cwd_victims = if shutdown_safe_choir_worktree_path(
-          project_dir,
-          target_agent.workspace,
-        ) {
-        list_pids(target_agent.workspace)
-      } else {
-        []
-      }
-      let victims : Array[Int] = []
-      for pid in cwd_victims {
-        if !victims.contains(pid) {
-          victims.push(pid)
+      // Owned-handle kill: the spawn wrapper records the setsid process-group
+      // id in `.choir/pids/<sanitized-agent-id>` (launch.mbt), so signaling
+      // that group covers the whole agent tree — including the mcp-stdio shim,
+      // which additionally sets PR_SET_PDEATHSIG. Agents without a pidfile
+      // (bare `register` joins, never spawned by us) own no process we may
+      // kill; the response warning records that below.
+      let killed_pgid = read_agent_pgid(args.agent_id)
+      match killed_pgid {
+        Some(pgid) => {
+          kill_pgid(pgid)
+          remove_pid_file(args.agent_id)
         }
+        None => ()
       }
-      for pid in list_mcp_stdio_pids(args.agent_id) {
-        if !victims.contains(pid) {
-          victims.push(pid)
-        }
-      }
-      for pid in victims {
-        kill_pid(pid)
-      }
-      @moontrace.warn("kill_agent process-kill fallback", fields=[
+      @moontrace.warn("kill_agent pgroup kill", fields=[
         @moontrace.field("agent_id", args.agent_id),
-        @moontrace.field("victims", victims.length()),
+        @moontrace.field("pgid", killed_pgid.unwrap_or(0)),
       ])
       ignore(reg.set_state(args.agent_id, @types.AgentState::Failed)) catch {
         _ => ()
@@ -270,10 +258,11 @@ pub async fn interpret_kill_agent(
       ])
       let response = kill_agent_ok_response(args.agent_id)
       if pane_close_failed {
-        let warning = if victims.length() > 0 {
-          "pane close failed — zellij tab/pane may still linger, but the agent process was killed"
-        } else {
-          "pane close failed — zellij tab/pane may still be open"
+        let warning = match killed_pgid {
+          Some(_) =>
+            "pane close failed — zellij tab/pane may still linger, but the agent process group was killed"
+          None =>
+            "pane close failed — no process handle found; the agent process may survive"
         }
         response.with_warning(warning)
       } else {

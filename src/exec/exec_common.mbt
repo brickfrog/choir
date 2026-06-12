@@ -9,102 +9,33 @@ pub fn delete_file_sync(path : String) -> Bool {
 }
 
 ///|
-pub fn list_pids_with_cwd_prefix(
-  prefix : String,
-  max? : Int = 64,
-) -> Array[Int] {
-  @sys.list_pids_with_cwd_prefix(prefix, max~)
-}
-
-///|
-fn normalize_scan_path(path : String) -> String {
-  let trimmed = path.trim().to_owned()
-  if trimmed == "" {
-    return ""
-  }
-  let absolute = trimmed.has_prefix("/")
-  let out : Array[String] = []
-  for raw_seg in trimmed.split("/") {
-    let seg = raw_seg.to_owned()
-    if seg == "" || seg == "." {
-      continue
-    }
-    if seg == ".." {
-      if out.length() > 0 && out[out.length() - 1] != ".." {
-        ignore(out.pop())
-      } else if !absolute {
-        out.push("..")
-      }
-      continue
-    }
-    out.push(seg)
-  }
-  if absolute && out.length() == 0 {
-    return "/"
-  }
-  let mut result = if absolute { "/" } else { "" }
-  for i = 0; i < out.length(); i = i + 1 {
-    if i > 0 {
-      result = result + "/"
-    }
-    result = result + out[i]
-  }
-  result
-}
-
-///|
-fn join_scan_path(base : String, child : String) -> String {
-  if base == "" {
-    child
-  } else if base.has_suffix("/") {
-    base + child
-  } else {
-    base + "/" + child
-  }
-}
-
-///|
-pub fn process_liveness_scan_prefix(
+/// Parse the recorded process-group id from `.choir/pids/<sanitized-agent-id>`
+/// under `project_dir` (written at spawn by the setsid wrapper). Returns
+/// `None` when the pidfile is missing, empty, non-numeric, or records an
+/// unsafe group (<= 1).
+pub fn read_agent_pgid(
   project_dir : String,
-  workspace : String,
-  current_dir? : () -> String = fn() { @env.current_dir().unwrap_or(".") },
-  realpath? : (String) -> String? = @sys.realpath_native,
-) -> String {
-  let raw = if workspace.has_prefix("/") {
-    workspace
-  } else {
-    let project_abs = if project_dir.has_prefix("/") {
-      project_dir
-    } else {
-      join_scan_path(current_dir(), project_dir)
-    }
-    join_scan_path(project_abs, workspace)
-  }
-  let normalized = normalize_scan_path(raw)
-  match realpath(normalized) {
-    Some(resolved) => resolved
-    None => normalized
-  }
-}
-
-///|
-pub fn agent_process_alive_for_workspace(
-  project_dir : String,
-  workspace : String,
-  max? : Int = 16,
-  current_dir? : () -> String = fn() { @env.current_dir().unwrap_or(".") },
-  realpath? : (String) -> String? = @sys.realpath_native,
-  list_pids? : (String, Int) -> Array[Int] = fn(prefix, cap) {
-    list_pids_with_cwd_prefix(prefix, max=cap)
-  },
-) -> Bool {
-  let prefix = process_liveness_scan_prefix(
-    project_dir,
-    workspace,
-    current_dir~,
-    realpath~,
+  agent_id : String,
+  read_file? : (String) -> String = @sys.read_file,
+) -> Int? {
+  @workspace.parse_agent_pgid(
+    read_file(@workspace.agent_pid_file_path(project_dir, agent_id)),
   )
-  list_pids(prefix, max).length() > 0
+}
+
+///|
+/// Owned-handle liveness: true when the recorded pgid exists and
+/// `kill(pgid, 0)` succeeds for it.
+pub fn agent_recorded_process_alive(
+  project_dir : String,
+  agent_id : String,
+  read_file? : (String) -> String = @sys.read_file,
+  alive? : (Int) -> Bool = @sys.pid_is_alive,
+) -> Bool {
+  match read_agent_pgid(project_dir, agent_id, read_file~) {
+    Some(pgid) => alive(pgid)
+    None => false
+  }
 }
 
 ///|

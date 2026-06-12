@@ -113,8 +113,8 @@ async test "interpret_teardown_effects reaps tracked pgroup on ClearRuntimeTrack
 }
 
 ///|
-async test "interpret_teardown_effects reaps cwd process tree on RemoveWorktree" {
-  let project_dir = "/tmp/choir-rmwt-reap-" +
+async test "interpret_teardown_effects removes managed worktrees and refuses unsafe paths" {
+  let project_dir = "/tmp/choir-rmwt-" +
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
@@ -127,36 +127,41 @@ async test "interpret_teardown_effects reaps cwd process tree on RemoveWorktree"
     },
     make_hermetic_recovery_provider(),
   )
-  // Managed worktree: the pid-sidecar pgroup reap can miss the full tree
-  // (bash -> node -> codex + helpers, never-registered/partial spawns), so
-  // RemoveWorktree must SIGKILL every process whose cwd resolves under it.
-  let killed : Array[Int] = []
+  let ran : Array[@workspace.Command] = []
   let wt = project_dir + "/.choir/worktrees/leaf-x"
   state.interpret_teardown_effects(
     [RemoveWorktree(wt)],
-    async fn(_cmds) {
+    async fn(cmds) {
       @async.sleep(0)
-      []
+      for cmd in cmds {
+        ran.push(cmd)
+      }
+      [0]
     },
-    is_git_worktree=fn(_p) { false },
-    list_workspace_pids=fn(p) { if p == wt { [4111, 4222] } else { [] } },
-    kill_pid=fn(pid) { killed.push(pid) },
+    is_git_worktree=fn(_p) { true },
   )
-  @debug.assert_eq(killed, [4111, 4222])
+  assert_true(
+    ran
+    .iter()
+    .any(fn(cmd) {
+      cmd.program == "git" && cmd.args == ["worktree", "remove", "--force", wt]
+    }),
+  )
 
-  // Unsafe (non-worktree) path: refused — no scan, no kill, no host-wide reap.
-  let killed_unsafe : Array[Int] = []
+  // Unsafe (non-worktree) path: refused — no removal command runs.
+  let ran_unsafe : Array[@workspace.Command] = []
   state.interpret_teardown_effects(
     [RemoveWorktree(project_dir + "/src")],
-    async fn(_cmds) {
+    async fn(cmds) {
       @async.sleep(0)
-      []
+      for cmd in cmds {
+        ran_unsafe.push(cmd)
+      }
+      [0]
     },
-    is_git_worktree=fn(_p) { false },
-    list_workspace_pids=fn(_p) { [9999] },
-    kill_pid=fn(pid) { killed_unsafe.push(pid) },
+    is_git_worktree=fn(_p) { true },
   )
-  @debug.assert_eq(killed_unsafe, [])
+  @debug.assert_eq(ran_unsafe, [])
 
   ignore(@sys.rm_rf(project_dir))
 }

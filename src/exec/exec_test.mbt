@@ -191,48 +191,51 @@ async test "real exec integration: capture_plugin_shell_command pipes stdin" {
 }
 
 ///|
-test "process liveness scan resolves dot project and relative workspace" {
+test "read_agent_pgid parses the recorded pidfile and rejects unsafe values" {
   let seen : Array[String] = []
-  let alive = agent_process_alive_for_workspace(
-    ".",
-    ".choir/worktrees/leaf",
-    current_dir=fn() { "/repo" },
-    realpath=fn(path) {
-      seen.push("realpath:" + path)
-      None
-    },
-    list_pids=fn(prefix, cap) {
-      seen.push("scan:" + prefix + ":" + cap.to_string())
-      if prefix == "/repo/.choir/worktrees/leaf" {
-        [42]
-      } else {
-        []
-      }
-    },
+  let got = read_agent_pgid("/proj", "main.leaf/x", read_file=fn(path) {
+    seen.push(path)
+    "12345"
+  })
+  @debug.assert_eq(got, Some(12345))
+  @debug.assert_eq(seen, ["/proj/.choir/pids/main.leaf_x"])
+  @debug.assert_eq(
+    read_agent_pgid("/proj", "main.leaf", read_file=fn(_) { " 777\n" }),
+    Some(777),
   )
-  assert_true(alive)
-  @debug.assert_eq(seen, [
-    "realpath:/repo/.choir/worktrees/leaf", "scan:/repo/.choir/worktrees/leaf:16",
-  ])
+  // Missing, garbage, and unsafe (<= 1) values must all read as no-handle.
+  for raw in ["", "not-a-pid", "0", "1", "-5"] {
+    @debug.assert_eq(
+      read_agent_pgid("/proj", "main.leaf", read_file=fn(_) { raw }),
+      None,
+    )
+  }
 }
 
 ///|
-test "process liveness scan prefers realpath when available" {
-  @debug.assert_eq(
-    process_liveness_scan_prefix(
-      "/repo",
-      ".choir/worktrees/leaf",
-      current_dir=fn() { "/ignored" },
-      realpath=fn(path) {
-        if path == "/repo/.choir/worktrees/leaf" {
-          Some("/real/repo/.choir/worktrees/leaf")
-        } else {
-          None
-        }
+test "agent_recorded_process_alive probes the recorded pgid" {
+  let probed : Array[Int] = []
+  assert_true(
+    agent_recorded_process_alive(
+      "/proj",
+      "main.leaf",
+      read_file=fn(_) { "4242" },
+      alive=fn(pgid) {
+        probed.push(pgid)
+        true
       },
     ),
-    "/real/repo/.choir/worktrees/leaf",
   )
+  @debug.assert_eq(probed, [4242])
+  assert_false(
+    agent_recorded_process_alive("/proj", "main.leaf", read_file=fn(_) { "" }, alive=fn(
+      pgid,
+    ) {
+      probed.push(pgid)
+      true
+    }),
+  )
+  @debug.assert_eq(probed, [4242])
 }
 
 ///|
