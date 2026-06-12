@@ -345,7 +345,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
       },
       list_panes_cache=Some(self.list_panes_cache),
       plugins_json=self.config.plugins_json,
-      pr_review=self.config.pr_review,
+      reviewer=self.config.pr_policy.reviewer,
       skip_copilot_on_feature_branch=self.config.pr_policy.skip_copilot_on_feature_branch,
       global_review_mode=self.config.review_mode,
       merge_strategy=self.config.merge_strategy,

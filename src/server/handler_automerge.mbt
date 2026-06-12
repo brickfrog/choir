@@ -381,6 +381,7 @@ pub async fn maybe_trigger_automerge_for_pending_event(
     task_contract~,
     review_mode~,
     verify_results~,
+    reviewer=state.config.pr_policy.reviewer,
     skip_copilot_on_feature_branch=state.config.pr_policy.skip_copilot_on_feature_branch,
     default_branch~,
   )

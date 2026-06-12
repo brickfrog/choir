@@ -525,7 +525,7 @@ pub fn Goal::from_json_string(raw : String) -> Result[Goal, ChoirError] {
     // re-persists it with this nonce, upgrading the file in place.
     None => "legacy"
   }
-  let last_eval = match obj.get("last_eval") {
+  let last_eval : GoalEvalResult? = match obj.get("last_eval") {
     None | Some(Null) => None
     Some(value) =>
       match GoalEvalResult::from_goal_json(value) {

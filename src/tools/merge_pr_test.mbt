@@ -283,6 +283,20 @@ fn merge_pr_test_gate_state_reader(
 }
 
 ///|
+fn merge_pr_test_seed_gate_state(
+  project_dir : String,
+  enabled_at_unix : Int64,
+) -> Unit raise {
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  assert_true(
+    @sys.write_file_sync(
+      merge_pr_audit_gate_state_path(project_dir),
+      "{\"enabled_at_unix\":" + enabled_at_unix.to_string() + "}\n",
+    ),
+  )
+}
+
+///|
 test "merge_pr_audit_gate_required grandfathers PRs first seen before gate timestamp" {
   let state : MergeGateState = { enabled_at_unix: 100L }
   assert_false(merge_pr_audit_gate_required(state, 99L))
@@ -428,7 +442,7 @@ test "merge_pr_audit_receipt_validation distinguishes valid stale missing invali
 }
 
 ///|
-test "merge_pr audit validation applies to resolved default branch" {
+test "merge_pr audit validation requires receipt on default and feature parent branches" {
   let tree = "9999999999999999999999999999999999999999"
   match merge_pr_audit_receipt_validation("master", "master", tree, None) {
     MergeAuditReceiptMissing(short_sha) =>
@@ -436,9 +450,99 @@ test "merge_pr audit validation applies to resolved default branch" {
     _ => fail("expected audit receipt requirement on master default branch")
   }
   match merge_pr_audit_receipt_validation("feature/x", "master", tree, None) {
-    MergeAuditReceiptValid => ()
-    _ => fail("expected feature branch parent to skip audit gate")
+    MergeAuditReceiptMissing(short_sha) =>
+      assert_eq(short_sha, file_pr_short_sha(tree))
+    _ => fail("expected feature branch parent to require audit gate")
   }
+}
+
+///|
+test "review_required_for_branch honors reviewer policy and feature-branch skip" {
+  assert_false(
+    @policy.review_required_for_branch(
+      @types.Reviewer::None,
+      true,
+      "main",
+      "main",
+    ),
+  )
+  assert_false(
+    @policy.review_required_for_branch(
+      @types.Reviewer::None,
+      false,
+      "feature/x",
+      "main",
+    ),
+  )
+  assert_true(
+    @policy.review_required_for_branch(
+      @types.Reviewer::Copilot,
+      true,
+      "main",
+      "main",
+    ),
+  )
+  assert_false(
+    @policy.review_required_for_branch(
+      @types.Reviewer::Copilot,
+      true,
+      "feature/x",
+      "main",
+    ),
+  )
+  assert_true(
+    @policy.review_required_for_branch(
+      @types.Reviewer::Copilot,
+      false,
+      "feature/x",
+      "main",
+    ),
+  )
+  assert_true(
+    @policy.review_required_for_branch(
+      @types.Reviewer::Named("octocat"),
+      true,
+      "main",
+      "main",
+    ),
+  )
+  assert_false(
+    @policy.review_required_for_branch(
+      @types.Reviewer::Named("octocat"),
+      true,
+      "feature/x",
+      "main",
+    ),
+  )
+  assert_true(
+    @policy.review_required_for_branch(
+      @types.Reviewer::Named("octocat"),
+      false,
+      "feature/x",
+      "main",
+    ),
+  )
+}
+
+///|
+test "merge policy no-review ready reason names audit receipt as gate" {
+  let decision = @policy.decide_merge(
+    None,
+    {
+      task_contract: None,
+      signals: [
+        @types.EvaluationSignal::Ci(status=@types.EvaluationCiRollup::Success),
+        @types.EvaluationSignal::ThreadsObserved(count=0),
+      ],
+    },
+    review_required=false,
+  )
+  assert_eq(decision.label(), "merge_now")
+  assert_true(
+    decision
+    .reason()
+    .contains("review skipped by policy (audit receipt gates merge)"),
+  )
 }
 
 ///|
@@ -3203,6 +3307,7 @@ async test "interpret_merge_pr falls through to global merge_strategy when local
   let project_dir = "/tmp/choir-mpr-absent-strategy-" +
     @sys.get_pid().to_string()
   ignore(@sys.rm_rf(project_dir))
+  merge_pr_test_seed_gate_state(project_dir, 300L)
   let ps = @poller.PollerState::new()
   ps.track_recovered(
     81,
@@ -3251,7 +3356,11 @@ async test "interpret_merge_pr falls through to global merge_strategy when local
   }
   let mut saw_rebase_merge = false
   for cmd in seen {
-    if cmd.program == "gh" && cmd.args == ["pr", "merge", "81", "--rebase"] {
+    if cmd.program == "gh" &&
+      cmd.args ==
+      [
+        "pr", "merge", "81", "--rebase", "--match-head-commit", "abcdef1234567890abcdef1234567890abcdef12",
+      ] {
       saw_rebase_merge = true
     }
   }
@@ -3264,6 +3373,7 @@ async test "interpret_merge_pr reads tracked agent merge_strategy from local con
   let project_dir = "/tmp/choir-mpr-squash-strategy-" +
     @sys.get_pid().to_string()
   ignore(@sys.rm_rf(project_dir))
+  merge_pr_test_seed_gate_state(project_dir, 300L)
   let worktree = project_dir + "/.choir/worktrees/leaf"
   assert_true(@sys.create_dir_all(worktree + "/.choir"))
   assert_true(
@@ -3319,7 +3429,11 @@ async test "interpret_merge_pr reads tracked agent merge_strategy from local con
   }
   let mut saw_squash_merge = false
   for cmd in seen {
-    if cmd.program == "gh" && cmd.args == ["pr", "merge", "78", "--squash"] {
+    if cmd.program == "gh" &&
+      cmd.args ==
+      [
+        "pr", "merge", "78", "--squash", "--match-head-commit", "abcdef1234567890abcdef1234567890abcdef12",
+      ] {
       saw_squash_merge = true
     }
   }
@@ -3655,6 +3769,7 @@ async test "interpret_merge_pr feature main with no issue ids does not call bd c
 async test "interpret_merge_pr leaf merge removes worktree and deletes local branch" {
   let project_dir = "/tmp/choir-mpr-leaf-cleanup-" + @sys.get_pid().to_string()
   ignore(@sys.rm_rf(project_dir))
+  merge_pr_test_seed_gate_state(project_dir, 1L)
   let feature_branch = "feature/demo"
   let leaf_branch = feature_branch + ".leaf-a"
   let leaf = merge_pr_test_write_beads_contract(
@@ -3720,7 +3835,8 @@ async test "interpret_merge_pr leaf merge removes worktree and deletes local bra
     runner,
     capture,
     fn(_path, _content) { true },
-    fn(path) { path == leaf },
+    fn(path) { path == leaf || path.has_suffix("/.choir/audit-gate.json") },
+    read_file=@sys.read_file,
     task_contract_reader=merge_pr_test_empty_contract_reader,
   )
   match got {
@@ -3752,6 +3868,7 @@ async test "dispatch merge_pr routes injected append_file and path_exists" {
   let project_dir = "/tmp/choir-mpr-dispatch-inject-" +
     @sys.get_pid().to_string()
   ignore(@sys.rm_rf(project_dir))
+  merge_pr_test_seed_gate_state(project_dir, 1L)
   let feature_branch = "feature/dispatch-cleanup"
   let leaf_branch = feature_branch + ".leaf-a"
   let leaf = merge_pr_test_write_beads_contract(
@@ -3815,7 +3932,7 @@ async test "dispatch merge_pr routes injected append_file and path_exists" {
     },
     path_exists=fn(path) {
       path_checks.push(path)
-      path == leaf
+      path == leaf || path.has_suffix("/.choir/audit-gate.json")
     },
     task_contract_reader=merge_pr_test_empty_contract_reader,
   )
@@ -3834,6 +3951,7 @@ async test "interpret_merge_pr leaf merge skips missing worktree and still delet
   let project_dir = "/tmp/choir-mpr-leaf-no-worktree-" +
     @sys.get_pid().to_string()
   ignore(@sys.rm_rf(project_dir))
+  merge_pr_test_seed_gate_state(project_dir, 1L)
   let feature_branch = "feature/no-worktree"
   let leaf_branch = feature_branch + ".leaf-a"
   let ps = @poller.PollerState::new()
@@ -3887,7 +4005,8 @@ async test "interpret_merge_pr leaf merge skips missing worktree and still delet
     runner,
     capture,
     fn(_path, _content) { true },
-    fn(_path) { false },
+    fn(path) { path.has_suffix("/.choir/audit-gate.json") },
+    read_file=@sys.read_file,
     task_contract_reader=merge_pr_test_empty_contract_reader,
   )
   match got {
@@ -3921,6 +4040,7 @@ async test "interpret_merge_pr leaf cleanup refuses supervisor tracked agent" {
   let project_dir = "/tmp/choir-mpr-supervisor-cleanup-" +
     @sys.get_pid().to_string()
   ignore(@sys.rm_rf(project_dir))
+  merge_pr_test_seed_gate_state(project_dir, 1L)
   let feature_branch = "feature/supervisor-cleanup"
   let leaf_branch = feature_branch + ".root"
   let reg = @registry.AgentRegistry::new()
@@ -3996,7 +4116,10 @@ async test "interpret_merge_pr leaf cleanup refuses supervisor tracked agent" {
       logs.push(content)
       true
     },
-    fn(path) { path == project_dir },
+    fn(path) {
+      path == project_dir || path.has_suffix("/.choir/audit-gate.json")
+    },
+    read_file=@sys.read_file,
     task_contract_reader=merge_pr_test_empty_contract_reader,
   )
   match got {
@@ -4034,6 +4157,7 @@ async test "interpret_merge_pr leaf cleanup trusts dev lifecycle over stale supe
   let project_dir = "/tmp/choir-mpr-stale-role-cleanup-" +
     @sys.get_pid().to_string()
   ignore(@sys.rm_rf(project_dir))
+  merge_pr_test_seed_gate_state(project_dir, 1L)
   assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let feature_branch = "feature/stale-role-cleanup"
   let leaf_branch = feature_branch + ".leaf"
@@ -4120,7 +4244,10 @@ async test "interpret_merge_pr leaf cleanup trusts dev lifecycle over stale supe
       logs.push(content)
       true
     },
-    fn(path) { path == leaf_worktree },
+    fn(path) {
+      path == leaf_worktree || path.has_suffix("/.choir/audit-gate.json")
+    },
+    read_file=@sys.read_file,
     read_lifecycle=fn(_project_dir, agent_id) {
       if agent_id == leaf_id {
         Some(lifecycle)

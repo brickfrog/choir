@@ -191,7 +191,7 @@ pub fn file_pr_copilot_review_comment_body(
 
 ///|
 /// `gh pr comment` body for Copilot review context ([`interpret_file_pr_post_success`] when
-/// `pr_review` and non-empty [`FilePrPostSuccessEffects::review_context`]).
+/// a reviewer is configured and [`FilePrPostSuccessEffects::review_context`] is non-empty).
 pub fn file_pr_copilot_review_comment_gh_command(
   pr_number : Int,
   review_context_trimmed : String,
@@ -249,8 +249,7 @@ pub async fn interpret_request_review(
 }
 
 ///|
-/// `gh pr edit --add-reviewer @copilot` when [`interpret_file_pr_post_success`] runs with
-/// `pr_review` true. `gh_workdir` matches other `file_pr` git/gh operations ([`file_pr_workdir`]).
+/// `gh pr edit --add-reviewer @copilot` for the Copilot reviewer.
 pub fn file_pr_copilot_reviewer_gh_command(
   pr_number : Int,
   gh_workdir : String,
@@ -261,29 +260,53 @@ pub fn file_pr_copilot_reviewer_gh_command(
 }
 
 ///|
-fn file_pr_copilot_reviewer_request_failed_log_append(
+pub fn file_pr_reviewer_handle(reviewer : @types.Reviewer) -> String? {
+  match reviewer {
+    @types.Reviewer::None => None
+    @types.Reviewer::Copilot => Some(file_pr_copilot_reviewer_handle)
+    @types.Reviewer::Named(handle) => Some(handle)
+  }
+}
+
+///|
+pub fn file_pr_reviewer_gh_command(
   pr_number : Int,
+  reviewer_handle : String,
+  gh_workdir : String,
+) -> @workspace.Command {
+  @workspace.gh_pr_add_reviewer(pr_number, reviewer_handle, gh_workdir)
+}
+
+///|
+fn file_pr_reviewer_request_failed_log_append(
+  pr_number : Int,
+  reviewer_handle : String,
   err_part : String,
   now_ms : Int64,
 ) -> String {
   @poller.delivery_log_line(
-    "[file_pr] copilot_reviewer_request failed pr=" +
+    "[file_pr] reviewer_request failed pr=" +
     pr_number.to_string() +
+    " reviewer=" +
+    reviewer_handle +
     err_part,
     now_ms~,
   )
 }
 
 ///|
-pub async fn file_pr_request_copilot_reviewer(
+pub async fn file_pr_request_reviewer(
   pr_number : Int,
+  reviewer_handle : String,
   file_pr_workdir : String,
   delivery_log_path : String,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   append_file : (String, String) -> Bool,
   now_ms_fn : () -> Int64,
 ) -> Bool {
-  let cmd = file_pr_copilot_reviewer_gh_command(pr_number, file_pr_workdir)
+  let cmd = file_pr_reviewer_gh_command(
+    pr_number, reviewer_handle, file_pr_workdir,
+  )
   let mut spawn_err : String? = None
   let codes = runner([cmd]) catch {
     e => {
@@ -311,7 +334,7 @@ pub async fn file_pr_request_copilot_reviewer(
           @moontrace.field("exit", exit_json),
         ]
     }
-    @moontrace.warn("file_pr copilot reviewer request failed", fields~)
+    @moontrace.warn("file_pr reviewer request failed", fields~)
     let err_part = match spawn_err {
       Some(err) => " error=" + err
       None => ""
@@ -319,8 +342,9 @@ pub async fn file_pr_request_copilot_reviewer(
     ignore(
       append_file(
         delivery_log_path,
-        file_pr_copilot_reviewer_request_failed_log_append(
+        file_pr_reviewer_request_failed_log_append(
           pr_number,
+          reviewer_handle,
           err_part,
           now_ms_fn(),
         ),
@@ -331,21 +355,24 @@ pub async fn file_pr_request_copilot_reviewer(
 }
 
 ///|
-pub fn file_pr_should_request_copilot_review(
-  pr_review : Bool,
+pub fn file_pr_should_request_reviewer(
+  reviewer : @types.Reviewer,
   parent_branch : String,
   default_branch : String,
   skip_copilot_on_feature_branch : Bool,
 ) -> Bool {
-  pr_review &&
-  !(skip_copilot_on_feature_branch && parent_branch != default_branch)
+  match reviewer {
+    @types.Reviewer::None => false
+    @types.Reviewer::Copilot | @types.Reviewer::Named(_) =>
+      !(skip_copilot_on_feature_branch && parent_branch != default_branch)
+  }
 }
 
 ///|
 /// Post-`ensure_pull_request` host path: poller ensure/write, dev lifecycle
 /// event, optional parent auto-notify (delivery log + `execute_delivery` +
-/// moontrace), optional Copilot context comment (`pr_review`), optional
-/// best-effort Copilot reviewer request (`request_copilot_reviewer`), then the
+/// moontrace), optional Copilot context comment, optional best-effort reviewer
+/// request, then the
 /// planned tool response. Preserves `ToolRequest::FilePr` ordering and strings
 /// from the prior dispatch arm.
 pub async fn interpret_file_pr_post_success(
@@ -355,7 +382,7 @@ pub async fn interpret_file_pr_post_success(
   tracked_agent_id : String,
   file_pr_workdir : String,
   pr_number : Int,
-  pr_review : Bool,
+  reviewer : @types.Reviewer,
   effects : FilePrPostSuccessEffects,
   poller_state : @poller.PollerState?,
   registry : @registry.AgentRegistry?,
@@ -368,6 +395,7 @@ pub async fn interpret_file_pr_post_success(
   // record their real wall-clock time rather than a stale snapshot.
   now_ms_fn? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() },
 ) -> @types.Response {
+  let reviewer_handle = file_pr_reviewer_handle(reviewer)
   match effects.poller_track {
     Some(tracked_pr) =>
       match poller_state {
@@ -440,7 +468,7 @@ pub async fn interpret_file_pr_post_success(
     _ => ()
   }
   let mut review_request_failed = false
-  if pr_review {
+  if reviewer_handle is Some(_) {
     match effects.review_context {
       Some(ctx) => {
         let comment_cmd = file_pr_copilot_review_comment_gh_command(
@@ -496,19 +524,30 @@ pub async fn interpret_file_pr_post_success(
       None => ()
     }
   }
-  if pr_review && request_copilot_reviewer {
-    let ok = file_pr_request_copilot_reviewer(
-      pr_number, file_pr_workdir, delivery_log_path, runner, append_file, now_ms_fn,
-    )
-    if !ok {
-      review_request_failed = true
+  if request_copilot_reviewer {
+    match reviewer_handle {
+      Some(handle) => {
+        let ok = file_pr_request_reviewer(
+          pr_number, handle, file_pr_workdir, delivery_log_path, runner, append_file,
+          now_ms_fn,
+        )
+        if !ok {
+          review_request_failed = true
+        }
+      }
+      None => ()
     }
   }
   if review_request_failed {
+    let handle = reviewer_handle.unwrap_or(file_pr_copilot_reviewer_handle)
     effects.response.with_warning(
-      "copilot_review_request_failed: reviewer request for @copilot failed — use request_review(pr_number: \"" +
+      "review_request_failed: reviewer request for " +
+      handle +
+      " failed — use request_review(pr_number: \"" +
       pr_number.to_string() +
-      "\", reviewer: \"@copilot\") from the parent/server path",
+      "\", reviewer: \"" +
+      handle +
+      "\") from the parent/server path",
     )
   } else {
     effects.response
@@ -668,14 +707,6 @@ async fn file_pr_current_head_sha(
   } else {
     None
   }
-}
-
-///|
-pub fn file_pr_audit_receipt_required(
-  parent_branch : String,
-  default_branch : String,
-) -> Bool {
-  parent_branch == default_branch
 }
 
 ///|
@@ -1066,7 +1097,7 @@ pub async fn interpret_file_pr(
   session : String,
   poller_state : @poller.PollerState?,
   registry : @registry.AgentRegistry?,
-  pr_review : Bool,
+  reviewer : @types.Reviewer,
   ensure_branch_ready : async (String, String, String) -> Result[
     Unit,
     @types.ChoirError,
@@ -1178,10 +1209,10 @@ pub async fn interpret_file_pr(
         poller_state is Some(_),
         registry is Some(_),
       )
-      let request_copilot_review = file_pr_should_request_copilot_review(
-        pr_review, parent_branch, default_branch, skip_copilot_on_feature_branch,
+      let request_review = file_pr_should_request_reviewer(
+        reviewer, parent_branch, default_branch, skip_copilot_on_feature_branch,
       )
-      if pr_review && !request_copilot_review {
+      if reviewer != @types.Reviewer::None && !request_review {
         @moontrace.info("copilot_skipped_for_feature_branch", fields=[
           @moontrace.field("pr_number", pr.number),
           @moontrace.field("parent_branch", parent_branch),
@@ -1194,13 +1225,13 @@ pub async fn interpret_file_pr(
         tracked_agent_id,
         file_pr_dir,
         pr.number,
-        pr_review,
+        reviewer,
         effects,
         poller_state,
         registry,
         runner,
         append_file~,
-        request_copilot_reviewer=request_copilot_review,
+        request_copilot_reviewer=request_review,
         sleep_fn~,
       )
       if resp.is_ok() {
