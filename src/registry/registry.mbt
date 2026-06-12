@@ -6,6 +6,10 @@ pub(all) struct AgentRegistry {
   /// Last tool call per agent, recorded at the dispatch layer. Lives here
   /// (not on the connection) so it survives reconnects and is snapshot-able.
   last_tool_calls : Map[String, @types.ToolCallRecord]
+  /// Unix second at which the agent's current session connection
+  /// authenticated (registered). A connection knows only its fd and who it
+  /// authenticated as; uptime is a fact about the agent.
+  connected_at : Map[String, Int64]
   /// TUI journal choke point for registry mutations; installed by the server
   /// at boot, never required for correctness.
   mut on_event : ((@types.TuiEvent) -> Unit)?
@@ -14,7 +18,30 @@ pub(all) struct AgentRegistry {
 ///|
 /// Create a new empty registry.
 pub fn AgentRegistry::new() -> AgentRegistry {
-  { agents: {}, alive: {}, last_tool_calls: {}, on_event: None }
+  {
+    agents: {},
+    alive: {},
+    last_tool_calls: {},
+    connected_at: {},
+    on_event: None,
+  }
+}
+
+///|
+pub fn AgentRegistry::record_agent_connected(
+  self : AgentRegistry,
+  agent_id : String,
+  at_sec : Int64,
+) -> Unit {
+  self.connected_at.set(agent_id, at_sec)
+}
+
+///|
+pub fn AgentRegistry::agent_connected_at(
+  self : AgentRegistry,
+  agent_id : String,
+) -> Int64? {
+  self.connected_at.get(agent_id)
 }
 
 ///|
@@ -146,6 +173,7 @@ pub fn AgentRegistry::remove(
       self.agents.remove(agent_id)
       self.alive.remove(agent_id)
       self.last_tool_calls.remove(agent_id)
+      self.connected_at.remove(agent_id)
       self.notify(@types.TuiEvent::AgentRemoved(agent_id~))
       agent
     }
@@ -261,6 +289,7 @@ pub fn AgentRegistry::clear(self : AgentRegistry) -> Unit {
     self.agents.remove(id)
     self.alive.remove(id)
     self.last_tool_calls.remove(id)
+    self.connected_at.remove(id)
   }
 }
 

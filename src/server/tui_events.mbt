@@ -20,7 +20,7 @@ pub fn ServerState::install_tui_event_observers(self : ServerState) -> Unit {
     agent_id,
     from_lc,
     to_lc,
-    trigger
+    trigger,
   ) {
     self.emit_tui_event(
       @types.TuiEvent::LifecycleChanged(
@@ -125,6 +125,29 @@ pub fn ServerState::record_tui_dispatch_completion(
   start_ms : UInt64,
   end_ms : UInt64,
 ) -> Unit {
+  // `register` marks the start of an agent's session: stamp the connection
+  // epoch and last-call record so liveness/uptime never depend on the
+  // transport connection's lifetime.
+  if req.req_method == "register" {
+    match request_agent_id(req) {
+      Some(agent_id) if agent_id != "" => {
+        if resp.is_ok() {
+          self.registry.record_agent_connected(
+            agent_id,
+            end_ms.reinterpret_as_int64() / 1000L,
+          )
+        }
+        self.registry.record_last_tool_call(agent_id, {
+          tool: "register",
+          ok: resp.is_ok(),
+          duration_ms: (end_ms - start_ms).reinterpret_as_int64(),
+          ts_ms: end_ms.reinterpret_as_int64(),
+        })
+      }
+      _ => ()
+    }
+    return
+  }
   if req.req_method != "tools/call" {
     return
   }
