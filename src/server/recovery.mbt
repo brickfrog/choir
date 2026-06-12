@@ -2,13 +2,10 @@
 pub fn make_recovery_provider() -> @runtime.RecoveryProvider {
   @runtime.make_shell_recovery_provider(@exec.capture_stdout_with_cwd, agent_process_alive=async fn(
     project_dir,
-    workspace,
+    agent_id,
   ) {
     @async.sleep(0)
-    if !@types.is_choir_managed_worktree_path(project_dir, workspace) {
-      return false
-    }
-    @exec.agent_process_alive_for_workspace(project_dir, workspace, max=16)
+    @exec.agent_recorded_process_alive(project_dir, agent_id)
   })
 }
 

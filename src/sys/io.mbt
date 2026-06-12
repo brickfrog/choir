@@ -57,18 +57,16 @@ extern "C" fn c_kill_pgid(pgid : Int) -> Int = "choir_kill_pgid"
 extern "C" fn c_init_kill_server_pid_sequence(pid : Int) = "choir_init_kill_server_pid_sequence"
 
 ///|
+extern "C" fn c_kill_pgid_sequence(pgid : Int) = "choir_kill_pgid_sequence"
+
+///|
+extern "C" fn c_wait_pid_reap_for_test(pid : Int) -> Int = "choir_wait_pid_reap_for_test"
+
+///|
 extern "C" fn c_pid_is_alive(pid : Int) -> Int = "choir_pid_is_alive"
 
 ///|
 extern "C" fn c_set_parent_death_signal_term() -> Int = "choir_set_parent_death_signal_term"
-
-///|
-#borrow(prefix, buf)
-extern "C" fn c_list_pids_with_cwd_prefix(
-  prefix : Bytes,
-  buf : Bytes,
-  max_size : Int,
-) -> Int = "choir_list_pids_with_cwd_prefix"
 
 ///|
 #borrow(exe)
@@ -316,7 +314,7 @@ pub fn kill_server_pid_sequence_best_effort(pid : Int) -> Unit {
 /// `kill_pgid_best_effort`: 0 is the caller's own group and 1 triggers the
 /// broadcast form, both wider than the bounded-pgroup-cleanup intent.
 pub fn kill_pgid_sequence_best_effort(pgid : Int) -> Unit {
-  ignore(pgid)
+  c_kill_pgid_sequence(pgid)
 }
 
 ///|
@@ -324,8 +322,7 @@ pub fn kill_pgid_sequence_best_effort(pgid : Int) -> Unit {
 /// `pid_is_alive` probe does not see a zombie. Returns the reaped pid, or a
 /// negative value on failure.
 pub fn wait_pid_reap_for_test(pid : Int) -> Int {
-  ignore(pid)
-  -1
+  c_wait_pid_reap_for_test(pid)
 }
 
 ///|
@@ -337,123 +334,6 @@ pub fn pid_is_alive(pid : Int) -> Bool {
 ///|
 pub fn set_parent_death_signal_term() -> Bool {
   c_set_parent_death_signal_term() == 0
-}
-
-///|
-fn proc_name_pid(name : String) -> Int? {
-  if name == "" {
-    return None
-  }
-  for c in name {
-    if c < '0' || c > '9' {
-      return None
-    }
-  }
-  Some(@string.parse_int(name)) catch {
-    _ => None
-  }
-}
-
-///|
-fn read_proc_process_table_entries(
-  list_dir_fn? : (String) -> Array[String] = fn(path) { list_dir(path) },
-  read_file_fn? : (String) -> String = fn(path) { read_file(path) },
-) -> Array[ProcessTableEntry] {
-  let entries : Array[ProcessTableEntry] = []
-  for name in list_dir_fn("/proc") {
-    let pid = match proc_name_pid(name) {
-      Some(n) => n
-      None => continue
-    }
-    let base = "/proc/" + name
-    let ppid = match
-      process_table_ppid_from_proc_stat(read_file_fn(base + "/stat")) {
-      Some(n) => n
-      None => continue
-    }
-    let cmdline = read_file_fn(base + "/cmdline")
-    if cmdline == "" {
-      continue
-    }
-    entries.push({ pid, ppid, cmdline })
-  }
-  entries
-}
-
-///|
-pub fn list_orphan_choir_mcp_stdio_pids(
-  list_processes? : () -> Array[ProcessTableEntry] = fn() {
-    read_proc_process_table_entries()
-  },
-) -> Array[Int] {
-  orphan_choir_mcp_stdio_pids_from_processes(list_processes())
-}
-
-///|
-pub fn list_choir_mcp_stdio_pids_for_agent(
-  agent_id : String,
-  list_processes? : () -> Array[ProcessTableEntry] = fn() {
-    read_proc_process_table_entries()
-  },
-) -> Array[Int] {
-  choir_mcp_stdio_pids_for_agent_from_processes(list_processes(), agent_id)
-}
-
-///|
-/// Upper bound on the per-call PID-scan cap. 1024 matching processes is far
-/// beyond anything a real kill_agent invocation could produce and keeps the
-/// internal buffer allocation to 16 KiB.
-const LIST_PIDS_WITH_CWD_PREFIX_HARD_CAP : Int = 1024
-
-///|
-/// Linux-only: PIDs of live processes whose `/proc/{pid}/cwd` symlink resolves
-/// under `prefix`. Matches exact, `prefix + "/..."`, and the `" (deleted)"`
-/// variants of both (the kernel appends `" (deleted)"` when the inode has been
-/// unlinked — e.g., after `git worktree remove`). Self-PID is always skipped,
-/// and an empty `prefix` is rejected (returning `[]`) since it would otherwise
-/// match nearly every cwd on the system.
-///
-/// The returned array is capped at `min(max, 1024)` entries — the C helper
-/// writes decimal PIDs into a 16-byte-per-entry buffer, and this wrapper
-/// additionally stops parsing once the cap is reached so short PIDs (e.g.
-/// "1\n") cannot exceed it. Returns an empty array when `/proc` cannot be
-/// opened (non-Linux host, chroot without /proc, etc.).
-pub fn list_pids_with_cwd_prefix(
-  prefix : String,
-  max? : Int = 64,
-) -> Array[Int] {
-  if max <= 0 || prefix == "" {
-    return []
-  }
-  let effective_max = if max > LIST_PIDS_WITH_CWD_PREFIX_HARD_CAP {
-    LIST_PIDS_WITH_CWD_PREFIX_HARD_CAP
-  } else {
-    max
-  }
-  let prefix_bytes = string_to_null_terminated_bytes(prefix)
-  let buf_size = effective_max * 16
-  let buf = Bytes::new(buf_size)
-  let n = c_list_pids_with_cwd_prefix(prefix_bytes, buf, buf_size)
-  if n <= 0 {
-    return []
-  }
-  let content = @utf8.decode_lossy(buf[:n])
-  let pids : Array[Int] = []
-  for raw in content.split("\n") {
-    if pids.length() >= effective_max {
-      break
-    }
-    let trimmed = raw.trim().to_owned()
-    if trimmed == "" {
-      continue
-    }
-    let parsed = Some(@string.parse_int(trimmed)) catch { _ => None }
-    match parsed {
-      Some(v) => pids.push(v)
-      None => ()
-    }
-  }
-  pids
 }
 
 ///|
@@ -986,12 +866,4 @@ pub fn shell_quote(s : String) -> String {
   }
   buf.write_char('\'')
   buf.to_string()
-}
-
-///|
-/// Empty-prefix guard: the C helper bails out before touching `/proc`, and
-/// the MoonBit wrapper rejects the empty string up front. A buggy caller
-/// that leaks a blank workspace must never trigger a system-wide scan.
-test "list_pids_with_cwd_prefix rejects empty prefix" {
-  @debug.assert_eq(list_pids_with_cwd_prefix(""), [])
 }

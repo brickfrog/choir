@@ -139,6 +139,7 @@ pub(all) struct RecoveryPlan {
 ///|
 pub(all) struct RecoveryProvider {
   zellij_live : async (String, String) -> ZellijLiveTargets
+  // (project_dir, agent_id) — owned-handle liveness via the recorded pgid.
   agent_process_alive : async (String, String) -> Bool
   open_prs : async (String) -> Array[OpenPR]
   find_prs_by_head : async (String, String) -> Array[OpenPR]
@@ -1196,7 +1197,7 @@ pub async fn discover_recovery_input(
       let process_alive = match agent {
         Some(a) =>
           if @types.is_choir_managed_worktree_path(project_dir, a.workspace) {
-            (provider.agent_process_alive)(project_dir, a.workspace)
+            (provider.agent_process_alive)(project_dir, a.agent_id.to_string())
           } else {
             false
           }
