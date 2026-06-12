@@ -27,6 +27,7 @@ test "parse_config - full" {
     #|[pr_policy]
     #|require_integration_audit = false
     #|skip_copilot_on_feature_branch = false
+    #|reviewer = "octocat"
 
   let cfg = parse_config(content).unwrap()
   assert_eq(cfg.default_role, @types.Role::Dev)
@@ -66,6 +67,7 @@ test "parse_config - full" {
   @debug.assert_eq(cfg.project.verify_cmd, Some("cargo test"))
   assert_eq(cfg.pr_policy.require_integration_audit, false)
   assert_eq(cfg.pr_policy.skip_copilot_on_feature_branch, false)
+  @debug.assert_eq(cfg.pr_policy.reviewer, @types.Reviewer::Named("octocat"))
   assert_eq(cfg.auto_rebuild_after_pull, true)
   assert_eq(cfg.auto_reload_after_rebuild, true)
 }
@@ -89,6 +91,7 @@ test "config schema nested keys match parser-accepted TOML shape" {
   assert_true(
     config_schema_key_present(file, "pr_policy.skip_copilot_on_feature_branch"),
   )
+  assert_true(config_schema_key_present(file, "pr_policy.reviewer"))
   assert_false(config_schema_key_present(file, "pr_policy"))
   assert_true(config_schema_key_present(file, "project.verify_cmd"))
   assert_false(config_schema_key_present(file, "project"))
@@ -102,6 +105,7 @@ test "config schema nested keys match parser-accepted TOML shape" {
       #|[pr_policy]
       #|require_integration_audit = false
       #|skip_copilot_on_feature_branch = false
+      #|reviewer = "copilot"
       #|
       #|[pricing.codex]
       #|rate_in = 0.01
@@ -110,6 +114,7 @@ test "config schema nested keys match parser-accepted TOML shape" {
   ).unwrap()
   assert_eq(cfg.pr_policy.require_integration_audit, false)
   assert_eq(cfg.pr_policy.skip_copilot_on_feature_branch, false)
+  assert_eq(cfg.pr_policy.reviewer, @types.Reviewer::Copilot)
   match cfg.pricing.get("codex") {
     Some(rate) => {
       assert_eq(rate.rate_in, 0.01)
@@ -117,6 +122,15 @@ test "config schema nested keys match parser-accepted TOML shape" {
     }
     None => fail("expected pricing.codex to parse")
   }
+}
+
+///|
+test "parse_config silently ignores removed pr_review key" {
+  let content =
+    #|pr_review = true
+
+  let cfg = parse_config(content).unwrap()
+  @debug.assert_eq(cfg.pr_policy.reviewer, @types.Reviewer::None)
 }
 
 ///|
@@ -132,7 +146,6 @@ test "parse_config - minimal" {
   assert_eq(cfg.project_dir, ".")
   @debug.assert_eq(cfg.shell_command, None)
   assert_eq(cfg.terminal_session, "choir")
-  assert_eq(cfg.pr_review, true)
   assert_eq(cfg.automerge, false)
   assert_eq(cfg.review_mode, @types.ReviewMode::SinglePass)
   assert_eq(cfg.merge_strategy, @types.MergeStrategy::Merge)
@@ -145,6 +158,7 @@ test "parse_config - minimal" {
   assert_eq(cfg.auto_pull_after_integration, true)
   assert_eq(cfg.pr_policy.require_integration_audit, true)
   assert_eq(cfg.pr_policy.skip_copilot_on_feature_branch, true)
+  assert_eq(cfg.pr_policy.reviewer, @types.Reviewer::None)
   @debug.assert_eq(cfg.project.verify_cmd, None)
   assert_eq(cfg.auto_rebuild_after_pull, false)
   assert_eq(cfg.auto_reload_after_rebuild, false)
@@ -296,19 +310,29 @@ test "parse_config - agent_id defaults to None" {
   @debug.assert_eq(cfg.extra_mcp_servers_json, None)
   @debug.assert_eq(cfg.companions_json, None)
   @debug.assert_eq(cfg.plugins_json, None)
-  assert_eq(cfg.pr_review, true)
+  assert_eq(cfg.pr_policy.reviewer, @types.Reviewer::None)
 }
 
 ///|
-test "parse_config pr_review explicit false" {
-  let cfg = parse_config("pr_review = false").unwrap()
-  assert_eq(cfg.pr_review, false)
+test "parse_config pr_policy reviewer explicit none" {
+  let cfg = parse_config(
+    (
+      #|[pr_policy]
+      #|reviewer = "none"
+    ),
+  ).unwrap()
+  assert_eq(cfg.pr_policy.reviewer, @types.Reviewer::None)
 }
 
 ///|
-test "parse_config pr_review explicit true" {
-  let cfg = parse_config("pr_review = true").unwrap()
-  assert_eq(cfg.pr_review, true)
+test "parse_config pr_policy reviewer explicit copilot" {
+  let cfg = parse_config(
+    (
+      #|[pr_policy]
+      #|reviewer = "copilot"
+    ),
+  ).unwrap()
+  assert_eq(cfg.pr_policy.reviewer, @types.Reviewer::Copilot)
 }
 
 ///|
@@ -366,21 +390,41 @@ test "parse_config poller heartbeat knob rejects invalid values" {
 }
 
 ///|
-test "parse_config pr_review false with inline comment" {
-  let cfg = parse_config("pr_review = false # disable copilot review").unwrap()
-  assert_eq(cfg.pr_review, false)
+test "parse_config pr_policy reviewer named handle with inline comment" {
+  let cfg = parse_config(
+    (
+      #|[pr_policy]
+      #|reviewer = "octocat" # request this reviewer
+    ),
+  ).unwrap()
+  @debug.assert_eq(cfg.pr_policy.reviewer, @types.Reviewer::Named("octocat"))
 }
 
 ///|
-test "parse_config pr_review true with inline comment" {
-  let cfg = parse_config("pr_review = true # keep reviews").unwrap()
-  assert_eq(cfg.pr_review, true)
-}
-
-///|
-test "parse_config pr_review invalid is error" {
-  let r = parse_config("pr_review = maybe")
-  assert_true(r is Err(_))
+test "parse_config pr_policy reviewer empty is error" {
+  let r = parse_config(
+    (
+      #|[pr_policy]
+      #|reviewer = ""
+    ),
+  )
+  match r {
+    Ok(_) => fail("expected invalid pr_policy.reviewer")
+    Err(e) => {
+      assert_eq(
+        e.message(),
+        "config error: pr_policy.reviewer: reviewer must be non-empty",
+      )
+      assert_false(
+        e.message().contains("config error: pr_policy.reviewer: config error:"),
+      )
+    }
+  }
+  match @types.Reviewer::try_parse_wire("") {
+    Err(e) =>
+      @debug.assert_eq(e.config_detail(), Some("reviewer must be non-empty"))
+    Ok(_) => fail("expected empty reviewer to be rejected")
+  }
 }
 
 ///|

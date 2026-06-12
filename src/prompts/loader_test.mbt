@@ -428,6 +428,27 @@ test "leaf profile default prompt uses poller snapshots for review state" {
 }
 
 ///|
+test "default prompts describe reviewer agnostic PR readiness" {
+  let leaf = default_prompt(PromptName::LeafProfile)
+  let ship = default_prompt(PromptName::ShipPr)
+  assert_true(leaf.contains("If a reviewer is configured for this project"))
+  assert_true(
+    leaf.contains(
+      "If no reviewer is configured, PR readiness is CI green + zero unresolved threads + the TL-run audit receipt",
+    ),
+  )
+  assert_true(ship.contains("If a reviewer is configured for this project"))
+  assert_true(
+    ship.contains(
+      "If no reviewer is configured, PR readiness is CI green + zero unresolved threads + the TL-run audit receipt",
+    ),
+  )
+  assert_false(leaf.contains("Wait for Copilot review feedback"))
+  assert_false(leaf.contains("When Copilot comments arrive"))
+  assert_false(ship.contains("Copilot threads:"))
+}
+
+///|
 test "ship pr default prompt keeps pre-commit guidance repo generic" {
   let body = default_prompt(PromptName::ShipPr)
   assert_true(body.contains("Respect the repo's pre-commit hook"))

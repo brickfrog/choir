@@ -179,27 +179,40 @@ pub fn file_pr_auto_notify_delivery_failed_log_append(
 pub let file_pr_copilot_reviewer_handle : String = "@copilot"
 
 ///|
-/// Prefix for the PR issue comment that nudges Copilot review with caller-supplied context.
-pub let file_pr_copilot_review_comment_prefix : String = "@copilot review: "
-
-///|
-pub fn file_pr_copilot_review_comment_body(
-  review_context_trimmed : String,
+pub fn file_pr_reviewer_review_comment_mention(
+  reviewer_handle : String,
 ) -> String {
-  file_pr_copilot_review_comment_prefix + review_context_trimmed
+  if reviewer_handle.has_prefix("@") {
+    reviewer_handle
+  } else {
+    "@" + reviewer_handle
+  }
 }
 
 ///|
-/// `gh pr comment` body for Copilot review context ([`interpret_file_pr_post_success`] when
-/// `pr_review` and non-empty [`FilePrPostSuccessEffects::review_context`]).
-pub fn file_pr_copilot_review_comment_gh_command(
+pub fn file_pr_reviewer_review_comment_body(
+  reviewer_handle : String,
+  review_context_trimmed : String,
+) -> String {
+  file_pr_reviewer_review_comment_mention(reviewer_handle) +
+  " review: " +
+  review_context_trimmed
+}
+
+///|
+/// `gh pr comment` body for review context ([`interpret_file_pr_post_success`] when
+/// a reviewer is configured and [`FilePrPostSuccessEffects::review_context`] is non-empty).
+pub fn file_pr_reviewer_review_comment_gh_command(
   pr_number : Int,
+  reviewer_handle : String,
   review_context_trimmed : String,
   gh_workdir : String,
 ) -> @workspace.Command {
   @workspace.gh_pr_comment(
     pr_number,
-    file_pr_copilot_review_comment_body(review_context_trimmed),
+    file_pr_reviewer_review_comment_body(
+      reviewer_handle, review_context_trimmed,
+    ),
     gh_workdir,
   )
 }
@@ -249,41 +262,53 @@ pub async fn interpret_request_review(
 }
 
 ///|
-/// `gh pr edit --add-reviewer @copilot` when [`interpret_file_pr_post_success`] runs with
-/// `pr_review` true. `gh_workdir` matches other `file_pr` git/gh operations ([`file_pr_workdir`]).
-pub fn file_pr_copilot_reviewer_gh_command(
-  pr_number : Int,
-  gh_workdir : String,
-) -> @workspace.Command {
-  @workspace.gh_pr_add_reviewer(
-    pr_number, file_pr_copilot_reviewer_handle, gh_workdir,
-  )
+pub fn file_pr_reviewer_handle(reviewer : @types.Reviewer) -> String? {
+  match reviewer {
+    @types.Reviewer::None => None
+    @types.Reviewer::Copilot => Some(file_pr_copilot_reviewer_handle)
+    @types.Reviewer::Named(handle) => Some(handle)
+  }
 }
 
 ///|
-fn file_pr_copilot_reviewer_request_failed_log_append(
+pub fn file_pr_reviewer_gh_command(
   pr_number : Int,
+  reviewer_handle : String,
+  gh_workdir : String,
+) -> @workspace.Command {
+  @workspace.gh_pr_add_reviewer(pr_number, reviewer_handle, gh_workdir)
+}
+
+///|
+fn file_pr_reviewer_request_failed_log_append(
+  pr_number : Int,
+  reviewer_handle : String,
   err_part : String,
   now_ms : Int64,
 ) -> String {
   @poller.delivery_log_line(
-    "[file_pr] copilot_reviewer_request failed pr=" +
+    "[file_pr] reviewer_request failed pr=" +
     pr_number.to_string() +
+    " reviewer=" +
+    reviewer_handle +
     err_part,
     now_ms~,
   )
 }
 
 ///|
-pub async fn file_pr_request_copilot_reviewer(
+pub async fn file_pr_request_reviewer(
   pr_number : Int,
+  reviewer_handle : String,
   file_pr_workdir : String,
   delivery_log_path : String,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   append_file : (String, String) -> Bool,
   now_ms_fn : () -> Int64,
 ) -> Bool {
-  let cmd = file_pr_copilot_reviewer_gh_command(pr_number, file_pr_workdir)
+  let cmd = file_pr_reviewer_gh_command(
+    pr_number, reviewer_handle, file_pr_workdir,
+  )
   let mut spawn_err : String? = None
   let codes = runner([cmd]) catch {
     e => {
@@ -311,7 +336,7 @@ pub async fn file_pr_request_copilot_reviewer(
           @moontrace.field("exit", exit_json),
         ]
     }
-    @moontrace.warn("file_pr copilot reviewer request failed", fields~)
+    @moontrace.warn("file_pr reviewer request failed", fields~)
     let err_part = match spawn_err {
       Some(err) => " error=" + err
       None => ""
@@ -319,8 +344,9 @@ pub async fn file_pr_request_copilot_reviewer(
     ignore(
       append_file(
         delivery_log_path,
-        file_pr_copilot_reviewer_request_failed_log_append(
+        file_pr_reviewer_request_failed_log_append(
           pr_number,
+          reviewer_handle,
           err_part,
           now_ms_fn(),
         ),
@@ -331,21 +357,24 @@ pub async fn file_pr_request_copilot_reviewer(
 }
 
 ///|
-pub fn file_pr_should_request_copilot_review(
-  pr_review : Bool,
+pub fn file_pr_should_request_reviewer(
+  reviewer : @types.Reviewer,
   parent_branch : String,
   default_branch : String,
   skip_copilot_on_feature_branch : Bool,
 ) -> Bool {
-  pr_review &&
-  !(skip_copilot_on_feature_branch && parent_branch != default_branch)
+  match reviewer {
+    @types.Reviewer::None => false
+    @types.Reviewer::Copilot | @types.Reviewer::Named(_) =>
+      !(skip_copilot_on_feature_branch && parent_branch != default_branch)
+  }
 }
 
 ///|
 /// Post-`ensure_pull_request` host path: poller ensure/write, dev lifecycle
 /// event, optional parent auto-notify (delivery log + `execute_delivery` +
-/// moontrace), optional Copilot context comment (`pr_review`), optional
-/// best-effort Copilot reviewer request (`request_copilot_reviewer`), then the
+/// moontrace), optional reviewer context comment, optional best-effort reviewer
+/// request, then the
 /// planned tool response. Preserves `ToolRequest::FilePr` ordering and strings
 /// from the prior dispatch arm.
 pub async fn interpret_file_pr_post_success(
@@ -355,19 +384,20 @@ pub async fn interpret_file_pr_post_success(
   tracked_agent_id : String,
   file_pr_workdir : String,
   pr_number : Int,
-  pr_review : Bool,
+  reviewer : @types.Reviewer,
   effects : FilePrPostSuccessEffects,
   poller_state : @poller.PollerState?,
   registry : @registry.AgentRegistry?,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   append_file? : (String, String) -> Bool = @sys.append_file_sync,
-  request_copilot_reviewer? : Bool = true,
+  request_reviewer? : Bool = true,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
   // Clock for delivery-log line timestamps. Called fresh at each append site —
   // not captured once — so writes that happen after slow `gh`/delivery commands
   // record their real wall-clock time rather than a stale snapshot.
   now_ms_fn? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() },
 ) -> @types.Response {
+  let reviewer_handle = file_pr_reviewer_handle(reviewer)
   match effects.poller_track {
     Some(tracked_pr) =>
       match poller_state {
@@ -440,76 +470,96 @@ pub async fn interpret_file_pr_post_success(
     _ => ()
   }
   let mut review_request_failed = false
-  if pr_review {
-    match effects.review_context {
-      Some(ctx) => {
-        let comment_cmd = file_pr_copilot_review_comment_gh_command(
-          pr_number, ctx, file_pr_workdir,
-        )
-        let mut spawn_err_comment : String? = None
-        let codes_comment = runner([comment_cmd]) catch {
-          e => {
-            spawn_err_comment = Some(e.to_string())
-            []
+  match reviewer_handle {
+    Some(handle) =>
+      match effects.review_context {
+        Some(ctx) => {
+          let comment_cmd = file_pr_reviewer_review_comment_gh_command(
+            pr_number, handle, ctx, file_pr_workdir,
+          )
+          let mut spawn_err_comment : String? = None
+          let codes_comment = runner([comment_cmd]) catch {
+            e => {
+              spawn_err_comment = Some(e.to_string())
+              []
+            }
+          }
+          let ok_comment = spawn_err_comment is None &&
+            codes_comment.length() > 0 &&
+            codes_comment[0] == 0
+          if !ok_comment {
+            let exit_json_c = if codes_comment.length() > 0 {
+              codes_comment[0].to_json()
+            } else {
+              "none".to_json()
+            }
+            let fields = match spawn_err_comment {
+              Some(err) =>
+                [
+                  @moontrace.field("pr_number", pr_number),
+                  @moontrace.field("reviewer", handle),
+                  @moontrace.field("exit", exit_json_c),
+                  @moontrace.field("error", err),
+                ]
+              None =>
+                [
+                  @moontrace.field("pr_number", pr_number),
+                  @moontrace.field("reviewer", handle),
+                  @moontrace.field("exit", exit_json_c),
+                ]
+            }
+            @moontrace.warn("file_pr review comment failed", fields~)
+            let err_part_c = match spawn_err_comment {
+              Some(err) => " error=" + err
+              None => ""
+            }
+            ignore(
+              @sys.append_file_sync(
+                delivery_log_path,
+                @poller.delivery_log_line(
+                  "[file_pr] review_comment failed pr=" +
+                  pr_number.to_string() +
+                  " reviewer=" +
+                  handle +
+                  err_part_c,
+                  now_ms=now_ms_fn(),
+                ),
+              ),
+            )
           }
         }
-        let ok_comment = spawn_err_comment is None &&
-          codes_comment.length() > 0 &&
-          codes_comment[0] == 0
-        if !ok_comment {
-          let exit_json_c = if codes_comment.length() > 0 {
-            codes_comment[0].to_json()
-          } else {
-            "none".to_json()
-          }
-          let fields = match spawn_err_comment {
-            Some(err) =>
-              [
-                @moontrace.field("pr_number", pr_number),
-                @moontrace.field("exit", exit_json_c),
-                @moontrace.field("error", err),
-              ]
-            None =>
-              [
-                @moontrace.field("pr_number", pr_number),
-                @moontrace.field("exit", exit_json_c),
-              ]
-          }
-          @moontrace.warn("file_pr copilot review comment failed", fields~)
-          let err_part_c = match spawn_err_comment {
-            Some(err) => " error=" + err
-            None => ""
-          }
-          ignore(
-            @sys.append_file_sync(
-              delivery_log_path,
-              @poller.delivery_log_line(
-                "[file_pr] copilot_review_comment failed pr=" +
-                pr_number.to_string() +
-                err_part_c,
-                now_ms=now_ms_fn(),
-              ),
-            ),
-          )
+        None => ()
+      }
+    None => ()
+  }
+  if request_reviewer {
+    match reviewer_handle {
+      Some(handle) => {
+        let ok = file_pr_request_reviewer(
+          pr_number, handle, file_pr_workdir, delivery_log_path, runner, append_file,
+          now_ms_fn,
+        )
+        if !ok {
+          review_request_failed = true
         }
       }
       None => ()
     }
   }
-  if pr_review && request_copilot_reviewer {
-    let ok = file_pr_request_copilot_reviewer(
-      pr_number, file_pr_workdir, delivery_log_path, runner, append_file, now_ms_fn,
-    )
-    if !ok {
-      review_request_failed = true
-    }
-  }
   if review_request_failed {
-    effects.response.with_warning(
-      "copilot_review_request_failed: reviewer request for @copilot failed — use request_review(pr_number: \"" +
-      pr_number.to_string() +
-      "\", reviewer: \"@copilot\") from the parent/server path",
-    )
+    match reviewer_handle {
+      Some(handle) =>
+        effects.response.with_warning(
+          "review_request_failed: reviewer request for " +
+          handle +
+          " failed — use request_review(pr_number: \"" +
+          pr_number.to_string() +
+          "\", reviewer: \"" +
+          handle +
+          "\") from the parent/server path",
+        )
+      None => effects.response
+    }
   } else {
     effects.response
   }
@@ -671,14 +721,6 @@ async fn file_pr_current_head_sha(
 }
 
 ///|
-pub fn file_pr_audit_receipt_required(
-  parent_branch : String,
-  default_branch : String,
-) -> Bool {
-  parent_branch == default_branch
-}
-
-///|
 pub fn file_pr_short_sha(sha : String) -> String {
   if sha.length() <= 12 {
     sha
@@ -690,6 +732,14 @@ pub fn file_pr_short_sha(sha : String) -> String {
 ///|
 pub fn file_pr_audit_receipt_path_for_head(sha : String) -> String {
   ".choir/audit-receipts/" + file_pr_short_sha(sha) + ".json"
+}
+
+///|
+pub fn file_pr_audit_receipt_required(
+  parent_branch : String,
+  default_branch : String,
+) -> Bool {
+  parent_branch == default_branch
 }
 
 ///|
@@ -1066,7 +1116,7 @@ pub async fn interpret_file_pr(
   session : String,
   poller_state : @poller.PollerState?,
   registry : @registry.AgentRegistry?,
-  pr_review : Bool,
+  reviewer : @types.Reviewer,
   ensure_branch_ready : async (String, String, String) -> Result[
     Unit,
     @types.ChoirError,
@@ -1178,14 +1228,19 @@ pub async fn interpret_file_pr(
         poller_state is Some(_),
         registry is Some(_),
       )
-      let request_copilot_review = file_pr_should_request_copilot_review(
-        pr_review, parent_branch, default_branch, skip_copilot_on_feature_branch,
+      let request_review = file_pr_should_request_reviewer(
+        reviewer, parent_branch, default_branch, skip_copilot_on_feature_branch,
       )
-      if pr_review && !request_copilot_review {
-        @moontrace.info("copilot_skipped_for_feature_branch", fields=[
-          @moontrace.field("pr_number", pr.number),
-          @moontrace.field("parent_branch", parent_branch),
-        ])
+      if reviewer != @types.Reviewer::None && !request_review {
+        match file_pr_reviewer_handle(reviewer) {
+          Some(handle) =>
+            @moontrace.info("reviewer_skipped_for_feature_branch", fields=[
+              @moontrace.field("pr_number", pr.number),
+              @moontrace.field("parent_branch", parent_branch),
+              @moontrace.field("reviewer", handle),
+            ])
+          None => ()
+        }
       }
       let resp = interpret_file_pr_post_success(
         project_dir,
@@ -1194,13 +1249,13 @@ pub async fn interpret_file_pr(
         tracked_agent_id,
         file_pr_dir,
         pr.number,
-        pr_review,
+        reviewer,
         effects,
         poller_state,
         registry,
         runner,
         append_file~,
-        request_copilot_reviewer=request_copilot_review,
+        request_reviewer=request_review,
         sleep_fn~,
       )
       if resp.is_ok() {

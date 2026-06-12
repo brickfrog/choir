@@ -647,10 +647,17 @@ fn ServerState::leaf_merge_gate_ready_for_agent(
   for tracked in self.poller.tracked.values() {
     if tracked.agent_id == agent_id {
       let unresolved_threads = tracked_unresolved_thread_count_for_gate(tracked)
+      let review_required = @policy.review_required_for_branch(
+        self.config.pr_policy.reviewer,
+        self.config.pr_policy.skip_copilot_on_feature_branch,
+        tracked.parent_branch,
+        "",
+      )
       if @poller.tl_tracked_pr_merge_gate_snapshot_ready(
           tracked,
           unresolved_threads,
           review_mode=tracked.review_mode,
+          review_required~,
         ) {
         return true
       }

@@ -64,13 +64,15 @@ async fn mock_runner_expect_copilot_reviewer_only(
   assert_eq(cmds[0].program, "gh")
   assert_eq(
     cmds[0],
-    file_pr_copilot_reviewer_gh_command(21, "/tmp/copilot-fpr"),
+    file_pr_reviewer_gh_command(
+      21, file_pr_copilot_reviewer_handle, "/tmp/copilot-fpr",
+    ),
   )
   [0]
 }
 
 ///|
-async test "interpret_file_pr_post_success requests copilot reviewer when pr_review" {
+async test "interpret_file_pr_post_success requests copilot reviewer when reviewer copilot" {
   let project_dir = "/tmp/copilot-fpr"
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
   let args : FilePrArgs = {
@@ -95,7 +97,7 @@ async test "interpret_file_pr_post_success requests copilot reviewer when pr_rev
     args.tracked_agent_id,
     project_dir,
     pr.number,
-    true,
+    @types.Reviewer::Copilot,
     effects,
     None,
     None,
@@ -134,7 +136,7 @@ async test "interpret_file_pr_post_success posts copilot review comment then req
     args.tracked_agent_id,
     project_dir,
     pr.number,
-    true,
+    @types.Reviewer::Copilot,
     effects,
     None,
     None,
@@ -151,11 +153,18 @@ async test "interpret_file_pr_post_success posts copilot review comment then req
         assert_eq(cmds[0].args[3], "--body")
         assert_eq(
           cmds[0].args[4],
-          file_pr_copilot_review_comment_body("plan/interpret split"),
+          file_pr_reviewer_review_comment_body(
+            file_pr_copilot_reviewer_handle, "plan/interpret split",
+          ),
         )
         @debug.assert_eq(cmds[0].workdir, Some(project_dir))
       } else if n == 1 {
-        assert_eq(cmds[0], file_pr_copilot_reviewer_gh_command(55, project_dir))
+        assert_eq(
+          cmds[0],
+          file_pr_reviewer_gh_command(
+            55, file_pr_copilot_reviewer_handle, project_dir,
+          ),
+        )
       } else {
         fail("unexpected extra runner invocation for file_pr copilot")
       }
@@ -170,7 +179,7 @@ async test "interpret_file_pr_post_success posts copilot review comment then req
 }
 
 ///|
-async test "interpret_file_pr_post_success copilot review comment failure is best-effort" {
+async test "interpret_file_pr_post_success reviewer comment failure is best-effort" {
   let file_pr_copilot_runner_seq : Array[Int] = [0]
   let project_dir = "/tmp/rc-fpr-comment-fail"
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
@@ -198,7 +207,7 @@ async test "interpret_file_pr_post_success copilot review comment failure is bes
     args.tracked_agent_id,
     project_dir,
     pr.number,
-    true,
+    @types.Reviewer::Copilot,
     effects,
     None,
     None,
@@ -226,8 +235,10 @@ async test "interpret_file_pr_post_success copilot review comment failure is bes
   }
   assert_eq(file_pr_copilot_runner_seq[0], 2)
   let log = @sys.read_file(log_path)
-  assert_true(log.contains("copilot_review_comment failed"))
+  assert_true(log.contains("review_comment failed"))
   assert_true(log.contains("pr=55"))
+  assert_true(log.contains("reviewer=@copilot"))
+  assert_false(log.contains("copilot_review_comment"))
 }
 
 ///|
@@ -237,7 +248,10 @@ async fn mock_runner_copilot_uses_worktree_path(
   @async.sleep(0)
   let wt = "/tmp/pr-split-test/.choir/worktrees/agent"
   assert_eq(cmds.length(), 1)
-  assert_eq(cmds[0], file_pr_copilot_reviewer_gh_command(99, wt))
+  assert_eq(
+    cmds[0],
+    file_pr_reviewer_gh_command(99, file_pr_copilot_reviewer_handle, wt),
+  )
   [0]
 }
 
@@ -268,7 +282,7 @@ async test "interpret_file_pr_post_success copilot gh uses file_pr_workdir" {
     args.tracked_agent_id,
     worktree,
     pr.number,
-    true,
+    @types.Reviewer::Copilot,
     effects,
     None,
     None,
@@ -285,7 +299,7 @@ async fn mock_runner_reject_gh(cmds : Array[@workspace.Command]) -> Array[Int] {
   @async.sleep(0)
   for cmd in cmds {
     if cmd.program == "gh" {
-      fail("unexpected gh when pr_review disabled")
+      fail("unexpected gh when reviewer disabled")
     }
   }
   let statuses = []
@@ -296,7 +310,7 @@ async fn mock_runner_reject_gh(cmds : Array[@workspace.Command]) -> Array[Int] {
 }
 
 ///|
-async test "interpret_file_pr_post_success skips copilot when pr_review false" {
+async test "interpret_file_pr_post_success skips copilot when reviewer none" {
   let project_dir = "/tmp/no-copilot-fpr"
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
   let args : FilePrArgs = {
@@ -321,7 +335,7 @@ async test "interpret_file_pr_post_success skips copilot when pr_review false" {
     args.tracked_agent_id,
     project_dir,
     pr.number,
-    false,
+    @types.Reviewer::None,
     effects,
     None,
     None,
@@ -371,7 +385,7 @@ async test "interpret_file_pr_post_success copilot reviewer failure is best-effo
     args.tracked_agent_id,
     project_dir,
     pr.number,
-    true,
+    @types.Reviewer::Copilot,
     effects,
     None,
     None,
@@ -382,7 +396,8 @@ async test "interpret_file_pr_post_success copilot reviewer failure is best-effo
     _ => fail("expected ok despite gh failure")
   }
   let log = @sys.read_file(log_path)
-  assert_true(log.contains("copilot_reviewer_request failed"))
+  assert_true(log.contains("reviewer_request failed"))
+  assert_true(log.contains("reviewer=@copilot"))
   assert_true(log.contains("pr=33"))
 }
 

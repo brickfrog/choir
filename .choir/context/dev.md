@@ -21,11 +21,11 @@ You are a leaf agent working in your own worktree and branch.
 4. `git add` only the files you changed.
 5. Commit with a semantic message.
 6. Use `file_pr` — it auto-notifies the parent with the PR URL. Do not send a separate notify_parent.
-7. Wait for Copilot review feedback — it arrives automatically via the poller.
-8. If Copilot leaves review comments:
-   - The poller pushes review snapshots into your pane: `[REVIEW]`, `[CI LATEST HEAD]`, `[COPILOT ISSUE COMMENT]`, `[FIXES PUSHED]`, and `[MERGE READY]`. Those snapshots carry `GitHub review rollup`, `Unresolved inline review threads (GraphQL): N`, `GitHub Copilot issue comment (REST)`, and the CI rollup. That snapshot is the source of truth for review state.
+7. If a reviewer is configured for this project, wait for its review feedback; it arrives automatically via the poller. A configured Named reviewer is waited on like Copilot: a non-responsive reviewer stalls merge until the TL intervenes or config changes. Chosen reviewer = chosen wait. If no reviewer is configured, PR readiness is CI green + zero unresolved threads + the TL-run audit receipt.
+8. If the configured reviewer leaves review comments:
+   - If a reviewer is configured, the poller pushes review snapshots into your pane. Those snapshots carry `GitHub review rollup`, `Unresolved inline review threads (GraphQL): N`, reviewer-specific issue-comment state when applicable, and the CI rollup. That snapshot is the source of truth for review state.
    - do NOT issue your own `gh api graphql ... reviewThreads`, `gh api .../pulls/N/reviews`, or `gh api .../comments` calls to determine review state. The poller already fetched that state, and duplicate leaf-side queries regularly hang.
-   - Copilot reviews once — it does NOT re-review after fixes are pushed. Address every comment, `git push`, then stop and wait for the next poller snapshot.
+   - If a reviewer is configured as Copilot, it reviews once and does NOT re-review after fixes are pushed. Address every comment, `git push`, then stop and wait for the next poller snapshot.
    - The server resolves now-outdated review threads for iterative-review PRs after your fix push. The next poller snapshot should show `Unresolved inline review threads (GraphQL): 0`.
    - A `gh` timeout is not a blocker. Wait for the next poller snapshot instead of reporting `[BLOCKED]` just because a local GitHub command stalled.
    - Report `[BLOCKED]` with `notify_parent` only when the poller snapshot itself shows persistent unresolved threads that are not clearing after your fix push.

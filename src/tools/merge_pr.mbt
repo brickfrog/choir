@@ -511,6 +511,7 @@ pub async fn interpret_merge_pr_preflight(
   task_contract_reader? : (String) -> @types.TaskContract? = fn(_) { None },
   review_mode? : @types.ReviewMode = @types.ReviewMode::SinglePass,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
+  reviewer? : @types.Reviewer = @types.Reviewer::None,
   skip_copilot_on_feature_branch? : Bool = @types.Config::default().pr_policy.skip_copilot_on_feature_branch,
   default_branch? : String = "",
 ) -> Result[Unit, @types.ChoirError] {
@@ -555,6 +556,7 @@ pub async fn interpret_merge_pr_preflight(
           task_contract~,
           review_mode~,
           verify_results~,
+          reviewer~,
           skip_copilot_on_feature_branch~,
           default_branch~,
         ),
@@ -839,6 +841,7 @@ pub fn format_tl_pr_recheck_summary(
   task_contract? : @types.TaskContract? = None,
   verify_results? : Array[@types.VerifyCheckResult] = [],
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
+  reviewer? : @types.Reviewer = @types.Reviewer::None,
   skip_copilot_on_feature_branch? : Bool = false,
   default_branch? : String = "",
 ) -> String {
@@ -859,12 +862,20 @@ pub fn format_tl_pr_recheck_summary(
     Some(n) => "Unresolved inline review threads (GraphQL): " + n.to_string()
     None => "Unresolved inline review threads (GraphQL): not fetched"
   }
-  let copilot_line = if tracked.copilot_issue_comment_seen {
-    "GitHub Copilot issue comment (REST): seen"
+  let issue_comment_state = if tracked.copilot_issue_comment_seen {
+    "seen"
   } else {
-    "GitHub Copilot issue comment (REST): not seen"
+    "not seen"
+  }
+  let issue_comment_line = match reviewer {
+    @types.Reviewer::None => None
+    @types.Reviewer::Copilot =>
+      Some("GitHub Copilot issue comment (REST): " + issue_comment_state)
+    @types.Reviewer::Named(handle) =>
+      Some("GitHub " + handle + " issue comment (REST): " + issue_comment_state)
   }
   let review_required = @policy.review_required_for_branch(
+    reviewer,
     skip_copilot_on_feature_branch,
     tracked.parent_branch,
     default_branch,
@@ -872,6 +883,7 @@ pub fn format_tl_pr_recheck_summary(
   let gate = @poller.tl_tracked_pr_recheck_gate_line(
     tracked,
     unresolved_thread_count,
+    reviewer~,
     review_required~,
   )
 
@@ -889,6 +901,7 @@ pub fn format_tl_pr_recheck_summary(
     task_contract~,
     review_mode=tracked.review_mode,
     verify_results~,
+    reviewer~,
     skip_copilot_on_feature_branch~,
     default_branch~,
   )
@@ -898,6 +911,7 @@ pub fn format_tl_pr_recheck_summary(
     task_contract~,
     review_mode=tracked.review_mode,
     verify_results~,
+    reviewer~,
     skip_copilot_on_feature_branch~,
     default_branch~,
   )
@@ -909,9 +923,10 @@ pub fn format_tl_pr_recheck_summary(
   "- " +
   threads_line +
   "\n" +
-  "- " +
-  copilot_line +
-  "\n" +
+  (match issue_comment_line {
+    Some(line) => "- " + line + "\n"
+    None => ""
+  }) +
   "- Latest head CI rollup: " +
   ci +
   "\n" +
@@ -2152,6 +2167,7 @@ pub async fn interpret_merge_pr(
   merge_strategy? : @types.MergeStrategy = @types.Config::default().merge_strategy,
   task_contract_reader? : (String) -> @types.TaskContract? = fn(_) { None },
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
+  reviewer? : @types.Reviewer = @types.Reviewer::None,
   skip_copilot_on_feature_branch? : Bool = @types.Config::default().pr_policy.skip_copilot_on_feature_branch,
   require_integration_audit? : Bool = @types.Config::default().pr_policy.require_integration_audit,
   hook_capture? : async (String, String, String?) -> (Int, String) = async fn(
@@ -2179,6 +2195,7 @@ pub async fn interpret_merge_pr(
         @types.ReviewMode::SinglePass,
       ),
       moon_verify_target~,
+      reviewer~,
       skip_copilot_on_feature_branch~,
       default_branch~,
     ) {

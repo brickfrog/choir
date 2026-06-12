@@ -2,14 +2,53 @@
 pub let heartbeat_sec_max : Int = 2_147_483
 
 ///|
+pub(all) enum Reviewer {
+  None
+  Copilot
+  Named(String)
+} derive(Debug, Eq)
+
+///|
+pub fn Reviewer::to_wire_string(self : Reviewer) -> String {
+  match self {
+    None => "none"
+    Copilot => "copilot"
+    Named(handle) => handle
+  }
+}
+
+///|
+pub impl Show for Reviewer with fn output(self, logger) -> Unit {
+  logger.write_string(self.to_wire_string())
+}
+
+///|
+pub fn Reviewer::try_parse_wire(raw : String) -> Result[Reviewer, ChoirError] {
+  let trimmed = raw.trim().to_owned()
+  if trimmed == "" {
+    return Err(ChoirError::config_error("reviewer must be non-empty"))
+  }
+  match trimmed.to_lower() {
+    "none" => Ok(Reviewer::None)
+    "copilot" => Ok(Reviewer::Copilot)
+    _ => Ok(Reviewer::Named(trimmed))
+  }
+}
+
+///|
 pub(all) struct PrPolicy {
   require_integration_audit : Bool
   skip_copilot_on_feature_branch : Bool
+  reviewer : Reviewer
 } derive(Debug, Eq)
 
 ///|
 pub fn PrPolicy::default() -> PrPolicy {
-  { require_integration_audit: true, skip_copilot_on_feature_branch: true }
+  {
+    require_integration_audit: true,
+    skip_copilot_on_feature_branch: true,
+    reviewer: Reviewer::None,
+  }
 }
 
 ///|
@@ -49,8 +88,6 @@ pub(all) struct Config {
   plugins_json : String?
   /// Zellij session name used for local terminal targets.
   terminal_session : String
-  /// When true, `file_pr` requests `@copilot` as a reviewer via `gh pr edit --add-reviewer` (best-effort).
-  pr_review : Bool
   /// Global default for server-triggered automerge after policy reaches `MergeNow`.
   automerge : Bool
   /// Review loop behavior after fixes are pushed for review comments.
@@ -153,7 +190,6 @@ pub fn Config::default() -> Config {
     companions_json: None,
     plugins_json: None,
     terminal_session: "choir",
-    pr_review: true,
     automerge: false,
     review_mode: SinglePass,
     merge_strategy: Merge,

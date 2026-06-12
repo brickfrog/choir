@@ -377,8 +377,8 @@ const SHIP_PR_DEFAULT : String =
   #|## Path A — leaf-flow (leaf has task contract)
   #|
   #|1. `mcp__choir__file_pr` from the leaf. It files the PR immediately and tracks it server-side; audit does not run during file_pr.
-  #|2. Wait for `[PR READY]`, then `[REVIEW]` + `[CI LATEST HEAD] success`.
-  #|3. Copilot threads: have the leaf push fixes, then wait for the poller snapshot to show zero unresolved threads; use `mcp__choir__resolve_my_review_threads` only if they persist.
+  #|2. Wait for `[PR READY]`, then `[CI LATEST HEAD]` success. If a reviewer is configured for this project, wait for its `[REVIEW]` snapshot. If no reviewer is configured, PR readiness is CI green + zero unresolved threads + the TL-run audit receipt.
+  #|3. Review threads: if a reviewer leaves comments, have the leaf address every inline thread and push fixes, then wait for the poller snapshot to show zero unresolved threads; use `mcp__choir__resolve_my_review_threads` only if they persist.
   #|4. Once review threads are clear and CI is green, the TL runs `/audit` until the receipt has `findings_count=0`. Audit must run AFTER fixes are pushed; running it earlier just mints a receipt for a HEAD that subsequent commits will invalidate.
   #|5. `mcp__choir__merge_pr`. If the audit receipt is missing, stale, or has findings, merge_pr returns a policy block; re-run `/audit` on the current HEAD tree and retry.
   #|
@@ -389,7 +389,7 @@ const SHIP_PR_DEFAULT : String =
   #|1. `git push -u origin <branch>` from where the work lives.
   #|2. `gh pr create --base main --head <branch> --title ... --body ...` via HEREDOC. Escape `@`-prefixed strings in the body (`@debug` etc. become GitHub mentions — use backticks or rewrite).
   #|3. `mcp__choir__track_pr pr_number=<n> agent_id=root branch=<branch> parent_branch=main pr_url=...`
-  #|4. `mcp__choir__request_review pr_number=<n> reviewer=@copilot`. Address Copilot findings; push fixes; wait for the poller snapshot to show zero unresolved threads.
+  #|4. If a reviewer is configured for this project, request that reviewer (for Copilot: `mcp__choir__request_review pr_number=<n> reviewer=@copilot`). Address reviewer findings; push fixes; wait for the poller snapshot to show zero unresolved threads. If no reviewer is configured, skip reviewer request and rely on CI green + zero unresolved threads + the TL-run audit receipt.
   #|5. Once review threads are clear and CI is green, run `/audit` until the receipt has `findings_count=0`. The skill spawns Sarcasmotron, parses the worker's findings, and writes the receipt itself — never hand-write a receipt with `findings_count=0` to bypass the gate.
   #|6. `mcp__choir__merge_pr`. If it fails with the choir-v9gi task-contract error, **stop and surface that to the user**. The skill body intentionally does not document an admin-merge incantation; embedding the bypass command here is the same banned antipattern this PR codified in CLAUDE.md. Fix choir-v9gi.
   #|
@@ -469,23 +469,23 @@ const LEAF_PROFILE_DEFAULT : String =
   #|   - `notify_parent` and `shutdown` are also available as shell commands on PATH.
   #|   - Shell form: `notify_parent [--status <success|failure|info>] <message>`.
   #|   - If `notify_parent` fails, stop after one concise failure report. Do not try to repair registry/session state from inside the leaf.
-  #|6. Wait for review feedback — it arrives automatically via the poller.
+  #|6. Wait for review feedback if a reviewer is configured for this project; it arrives automatically via the poller. If no reviewer is configured, PR readiness is CI green + zero unresolved threads + the TL-run audit receipt.
   #|7. If review feedback arrives, address every comment and push fixes.
-  #|   - Copilot reviews once — it does NOT re-review after fixes are pushed. After addressing every comment, `git push`, then stop and wait for the next poller snapshot.
+  #|   - If a reviewer is configured as Copilot, it reviews once and does NOT re-review after fixes are pushed. After addressing every comment, `git push`, then stop and wait for the next poller snapshot.
   #|   - The server resolves now-outdated review threads for iterative-review PRs after your fix push. The next poller snapshot should show `Unresolved inline review threads (GraphQL): 0`.
   #|   - Do not call `gh` to resolve threads as part of the normal review cycle. Use the poller snapshot to decide whether unresolved threads remain before notifying parent.
   #|8. Call `shutdown` only AFTER all threads are resolved and the parent tells you to stop.
   #|9. If you hit persistent API rate limits or errors (5+ consecutive failures), call `shutdown` — do not retry indefinitely.
   #|
   #|Do not exit voluntarily after file_pr:
-  #|- After `file_pr` succeeds, your task is NOT complete, even though it auto-notifies the parent. Copilot's inline review can take 30s-3min to arrive. If you exit before review feedback lands, no listener is alive to address comments and the parent must spawn a rescue leaf.
+  #|- After `file_pr` succeeds, your task is NOT complete, even though it auto-notifies the parent. If a reviewer is configured for this project, its inline review can take time to arrive. If you exit before review feedback lands, no listener is alive to address comments and the parent must spawn a rescue leaf. If no reviewer is configured, remain available until CI/thread snapshots and the TL-owned audit gate are handled.
   #|- Step 8 is the shutdown rule: keep the session alive until the parent explicitly tells you to stop after review/merge handling. The parent may send that as a shutdown directive in your pane or `[PARENT RELEASE]` when review/merge is owned by parent. `[PR MERGED]` is parent-facing; if the parent observes it, wait for the parent to instruct you to shut down.
   #|- The only non-parent exception is the persistent-error path in step 9.
   #|- Any other voluntary exit is a leaf failure. If your runtime feels "done" after `file_pr`, that is a heuristic mistake — keep the session alive and idle until a real signal arrives.
   #|
   #|### Post-fix-push terminal handoff
   #|
-  #|- After you address Copilot comments and `git push`, the moment the next poller snapshot shows `Unresolved inline review threads (GraphQL): 0` and CI green for your fix-push HEAD, your job is done. Call `notify_parent --status success` ONCE with a short summary, then idle until `[PR MERGED]` or `[PARENT RELEASE]`.
+  #|- After you address reviewer comments and `git push`, the moment the next poller snapshot shows `Unresolved inline review threads (GraphQL): 0` and CI green for your fix-push HEAD, your job is done. Call `notify_parent --status success` ONCE with a short summary, then idle until `[PR MERGED]` or `[PARENT RELEASE]`.
   #|- Do not enter sleep loops waiting for additional events. Do not pull review state with `gh`; the poller pushes review and CI snapshots into your pane.
   #|- A leaf that idles for minutes after a successful fix-push without sending that required `notify_parent` handoff has failed its task.
   #|
@@ -495,11 +495,11 @@ const LEAF_PROFILE_DEFAULT : String =
   #|
   #|gh discipline:
   #|- Always bound `gh api` and `gh pr view` calls with `timeout 30s` (or use the `gh-bounded` wrapper provided in your worktree). `gh api graphql` and `gh pr view --json` are known to hang indefinitely without a timeout — they have stalled wave progress for minutes per failure.
-  #|- The choir poller pushes review snapshots into your pane: `[REVIEW]`, `[CI LATEST HEAD]`, `[COPILOT ISSUE COMMENT]`, `[FIXES PUSHED]`, and `[MERGE READY]`. Those snapshots carry `GitHub review rollup`, `Unresolved inline review threads (GraphQL): N`, `GitHub Copilot issue comment (REST)`, and the CI rollup. That snapshot is the source of truth for review state.
+  #|- The choir poller pushes review snapshots into your pane. Those snapshots carry `GitHub review rollup`, `Unresolved inline review threads (GraphQL): N`, reviewer-specific issue-comment state when applicable, and the CI rollup. That snapshot is the source of truth for review state.
   #|- do NOT issue your own `gh api graphql ... reviewThreads`, `gh api .../pulls/N/reviews`, or `gh api .../comments` calls to determine review state. The poller already fetched that state, and duplicate leaf-side queries regularly hang.
-  #|- After `file_pr`, do NOT proactively poll review state with `gh api` / `gh pr view` / `sleep` loops. The choir poller pushes [REVIEW], [COPILOT ISSUE COMMENT], [FIXES PUSHED], [MERGE READY], [PR MERGED] events into your pane automatically after file_pr; sit idle and let those push events drive your next action. Pulling burns context for no signal and doubles GitHub API hits.
+  #|- After `file_pr`, do NOT proactively poll review state with `gh api` / `gh pr view` / `sleep` loops. The choir poller pushes review, CI, fixes-pushed, merge-ready, and merge-complete events into your pane automatically after file_pr; sit idle and let those push events drive your next action. Pulling burns context for no signal and doubles GitHub API hits.
   #|- A `gh` timeout is not a blocker. Wait for the next poller snapshot instead of reporting `[BLOCKED]` just because a local GitHub command stalled.
-  #|- When Copilot comments arrive, address every comment, push, then stop. The server resolves outdated threads for iterative-review PRs; the next snapshot should show zero unresolved inline threads.
+  #|- When reviewer comments arrive, address every comment, push, then stop. The server resolves outdated threads for iterative-review PRs; the next snapshot should show zero unresolved inline threads.
   #|- Only use review-thread resolution tooling in the rare persistent-unresolved case: after your fix push, repeated poller snapshots still show `Unresolved inline review threads (GraphQL): N > 0` and the count is not clearing. Prefer the server-side `resolve_my_review_threads` MCP tool; use `resolve_review_thread` only when a specific thread ID is available. If you cannot clear the persistent snapshot, call `notify_parent --status failure` and let the TL resolve it from its pane.
   #|- Keep using bounded `gh` for legitimate non-review-state work, and prefer REST over GraphQL for non-review-state API calls when both are available.
   #|- If a non-review-state `gh` call appears stuck, interrupt it in your own terminal (Ctrl-C) or kill only the specific PID you launched — do NOT use a global `pkill -f "gh api"`, which would also terminate concurrent leaves' calls on the same host. Then report state to the parent rather than waiting indefinitely.

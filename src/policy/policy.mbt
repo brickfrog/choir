@@ -26,7 +26,7 @@ fn ready_reason(
   let review_text = if review_required {
     "review received"
   } else {
-    "review skipped by policy"
+    "review skipped by policy (audit receipt gates merge)"
   }
   if required_verify.length() > 0 {
     "ready: " +
@@ -39,10 +39,15 @@ fn ready_reason(
 
 ///|
 pub fn review_required_for_branch(
+  reviewer : @types.Reviewer,
   skip_copilot_on_feature_branch : Bool,
   parent_branch : String,
   default_branch : String,
 ) -> Bool {
+  match reviewer {
+    @types.Reviewer::None => return false
+    @types.Reviewer::Copilot | @types.Reviewer::Named(_) => ()
+  }
   let parent = parent_branch.trim().to_owned()
   let default = default_branch.trim().to_owned()
   if !skip_copilot_on_feature_branch || parent == "" || default == "" {

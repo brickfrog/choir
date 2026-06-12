@@ -63,6 +63,7 @@ fn parent_pr_state_notification_decision(
   merge_mode? : @poller.MergeOperatorMode = @poller.MergeOperatorMode::Manual,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
+  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
   skip_copilot_on_feature_branch? : Bool = false,
   default_branch? : String = "",
 ) -> @poller.PrStateNotificationDecision {
@@ -91,6 +92,7 @@ fn parent_pr_state_notification_decision(
     review_mode~,
     verify_results~,
     merge_mode~,
+    reviewer~,
     skip_copilot_on_feature_branch~,
     default_branch~,
   )
@@ -123,6 +125,138 @@ fn parent_thread_recheck_line(unresolved_threads_for_recheck : Int?) -> String {
 }
 
 ///|
+fn parent_recheck_review_label(review : @poller.ReviewState) -> String {
+  match review {
+    None_ => "none"
+    Commented => "commented"
+    Approved => "approved"
+    ChangesRequested => "changes_requested"
+  }
+}
+
+///|
+fn parent_recheck_ci_label(ci : @poller.CiRollupStatus) -> String {
+  match ci {
+    Unknown => "unknown"
+    NoChecks => "no_checks"
+    InProgress => "in_progress"
+    Success => "success"
+    Failure => "failure"
+  }
+}
+
+///|
+fn parent_reviewerless_recheck_summary(
+  tracked : @poller.TrackedPR,
+  project_dir : String,
+  unresolved_threads_for_recheck : Int?,
+  task_contract : @types.TaskContract?,
+  moon_verify_target : @types.MoonVerifyTarget,
+  reviewer : @types.Reviewer,
+  skip_copilot_on_feature_branch : Bool,
+  default_branch : String,
+) -> String {
+  let task_contract = @types.task_contract_with_normalized_verify(
+    task_contract, moon_verify_target,
+  )
+  let verify_results = match task_contract {
+    Some(contract) =>
+      @evidence.verify_results_for_required_at_head_with_ci(
+        project_dir,
+        tracked.agent_id,
+        contract.verify,
+        tracked.last_sha,
+        @types.task_contract_verify_satisfied_by_ci(contract),
+        ci_rollup=@poller.evaluation_ci_rollup_from_snapshot(
+          tracked.last_ci_rollup,
+        ),
+      )
+    None => []
+  }
+  let threads_line = match unresolved_threads_for_recheck {
+    Some(count) =>
+      "Unresolved inline review threads (GraphQL): " + count.to_string()
+    None => "Unresolved inline review threads (GraphQL): not fetched"
+  }
+  let gate = @poller.tl_tracked_pr_recheck_gate_line(
+    tracked,
+    unresolved_threads_for_recheck,
+    reviewer~,
+    review_required=false,
+  )
+  let advisory = @poller.advisory_evaluation_summary_line(
+    tracked,
+    unresolved_threads_for_recheck,
+    task_contract~,
+    review_mode=tracked.review_mode,
+    verify_results~,
+    reviewer~,
+    skip_copilot_on_feature_branch~,
+    default_branch~,
+  )
+  let policy = @poller.merge_policy_summary_line(
+    tracked,
+    unresolved_threads_for_recheck,
+    task_contract~,
+    review_mode=tracked.review_mode,
+    verify_results~,
+    reviewer~,
+    skip_copilot_on_feature_branch~,
+    default_branch~,
+  )
+  "PR re-check summary (Choir snapshot; not merge approval):\n" +
+  "- GitHub review rollup: " +
+  parent_recheck_review_label(tracked.last_review_state) +
+  "\n" +
+  "- " +
+  threads_line +
+  "\n" +
+  "- Review requirement: skipped by policy\n" +
+  "- Latest head CI rollup: " +
+  parent_recheck_ci_label(tracked.last_ci_rollup) +
+  "\n" +
+  "- " +
+  gate +
+  "\n" +
+  "- " +
+  advisory +
+  "\n" +
+  "- " +
+  policy
+}
+
+///|
+fn parent_poll_recheck_summary(
+  tracked : @poller.TrackedPR,
+  project_dir : String,
+  unresolved_threads_for_recheck : Int?,
+  task_contract : @types.TaskContract?,
+  moon_verify_target : @types.MoonVerifyTarget,
+  reviewer : @types.Reviewer,
+  skip_copilot_on_feature_branch : Bool,
+  default_branch : String,
+  review_required : Bool,
+) -> String {
+  if review_required {
+    @tools.format_tl_pr_recheck_summary(
+      tracked,
+      project_dir,
+      unresolved_threads_for_recheck,
+      task_contract~,
+      moon_verify_target~,
+      reviewer~,
+      skip_copilot_on_feature_branch~,
+      default_branch~,
+    )
+  } else {
+    parent_reviewerless_recheck_summary(
+      tracked, project_dir, unresolved_threads_for_recheck, task_contract, moon_verify_target,
+      reviewer, skip_copilot_on_feature_branch, default_branch,
+    )
+  }
+}
+
+///|
 pub fn parent_poll_event_message(
   tracked : @poller.TrackedPR,
   project_dir : String,
@@ -133,6 +267,7 @@ pub fn parent_poll_event_message(
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
   precomputed_decision? : @poller.PrStateNotificationDecision? = None,
+  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
   skip_copilot_on_feature_branch? : Bool = false,
   default_branch? : String = "",
 ) -> (String, @types.Status)? {
@@ -164,11 +299,13 @@ pub fn parent_poll_event_message(
         merge_mode~,
         review_mode~,
         moon_verify_target~,
+        reviewer~,
         skip_copilot_on_feature_branch~,
         default_branch~,
       )
   }
   let review_required = @policy.review_required_for_branch(
+    reviewer,
     skip_copilot_on_feature_branch,
     tracked.parent_branch,
     default_branch,
@@ -317,16 +454,15 @@ pub fn parent_poll_event_message(
         ),
       )
     CIFailureCleared(n) => {
-      let summary = @tools.format_tl_pr_recheck_summary(
-        tracked,
-        project_dir,
-        unresolved_threads_for_recheck,
-        task_contract~,
-        moon_verify_target~,
-        skip_copilot_on_feature_branch~,
-        default_branch~,
+      let summary = parent_poll_recheck_summary(
+        tracked, project_dir, unresolved_threads_for_recheck, task_contract, moon_verify_target,
+        reviewer, skip_copilot_on_feature_branch, default_branch, review_required,
       )
-      let prefix = parent_poll_ci_escalation_prefix(tracked, review_required~)
+      let prefix = parent_poll_ci_escalation_prefix(
+        tracked,
+        reviewer~,
+        review_required~,
+      )
       Some(
         (
           "[CI FAILURE CLEARED] " +
@@ -353,16 +489,15 @@ pub fn parent_poll_event_message(
       )
     }
     CILatestHeadRollupSucceeded(n) => {
-      let summary = @tools.format_tl_pr_recheck_summary(
-        tracked,
-        project_dir,
-        unresolved_threads_for_recheck,
-        task_contract~,
-        moon_verify_target~,
-        skip_copilot_on_feature_branch~,
-        default_branch~,
+      let summary = parent_poll_recheck_summary(
+        tracked, project_dir, unresolved_threads_for_recheck, task_contract, moon_verify_target,
+        reviewer, skip_copilot_on_feature_branch, default_branch, review_required,
       )
-      let prefix = parent_poll_ci_escalation_prefix(tracked, review_required~)
+      let prefix = parent_poll_ci_escalation_prefix(
+        tracked,
+        reviewer~,
+        review_required~,
+      )
       Some(
         (
           "[CI LATEST HEAD] " +
@@ -389,14 +524,9 @@ pub fn parent_poll_event_message(
       )
     }
     CopilotIssueCommentSeen(n) => {
-      let summary = @tools.format_tl_pr_recheck_summary(
-        tracked,
-        project_dir,
-        unresolved_threads_for_recheck,
-        task_contract~,
-        moon_verify_target~,
-        skip_copilot_on_feature_branch~,
-        default_branch~,
+      let summary = parent_poll_recheck_summary(
+        tracked, project_dir, unresolved_threads_for_recheck, task_contract, moon_verify_target,
+        reviewer, skip_copilot_on_feature_branch, default_branch, review_required,
       )
       Some(
         (
@@ -455,14 +585,9 @@ pub fn parent_poll_event_message(
       Some((message, @poller.merge_ready_status(merge_mode)))
     }
     ReviewThreadsResolved(n) => {
-      let summary = @tools.format_tl_pr_recheck_summary(
-        tracked,
-        project_dir,
-        unresolved_threads_for_recheck,
-        task_contract~,
-        moon_verify_target~,
-        skip_copilot_on_feature_branch~,
-        default_branch~,
+      let summary = parent_poll_recheck_summary(
+        tracked, project_dir, unresolved_threads_for_recheck, task_contract, moon_verify_target,
+        reviewer, skip_copilot_on_feature_branch, default_branch, review_required,
       )
       let message = "[THREADS RESOLVED] " +
         agent_id +
@@ -1255,6 +1380,7 @@ pub fn clamp_review_summary_for_pane(body : String) -> String {
 pub fn leaf_poll_review_injection_message(
   event : @poller.PollEvent,
   tracked : @poller.TrackedPR?,
+  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
   review_required? : Bool = true,
 ) -> (String, @types.Status)? {
   match event {
@@ -1303,11 +1429,14 @@ pub fn leaf_poll_review_injection_message(
               pr,
               review_required~,
             ) {
+            let reviewer_handle = parent_poll_request_review_handle(reviewer)
             "[REVIEW] PR #" +
             n.to_string() +
             ": CI cleared but still no review. Run request_review(pr_number: \"" +
             n.to_string() +
-            "\", reviewer: \"@copilot\")"
+            "\", reviewer: \"" +
+            reviewer_handle +
+            "\")"
           } else {
             base
           }
@@ -1325,11 +1454,14 @@ pub fn leaf_poll_review_injection_message(
               pr,
               review_required~,
             ) {
+            let reviewer_handle = parent_poll_request_review_handle(reviewer)
             "[REVIEW] PR #" +
             n.to_string() +
             ": CI green but still no review. Run request_review(pr_number: \"" +
             n.to_string() +
-            "\", reviewer: \"@copilot\")"
+            "\", reviewer: \"" +
+            reviewer_handle +
+            "\")"
           } else {
             base
           }
@@ -1638,6 +1770,7 @@ pub fn ServerState::plan_poll_event_deliveries(
           merge_mode~,
           review_mode~,
           moon_verify_target=self.config.moon_verify_target,
+          reviewer=self.config.pr_policy.reviewer,
           skip_copilot_on_feature_branch=self.config.pr_policy.skip_copilot_on_feature_branch,
           default_branch~,
         )
@@ -1651,6 +1784,7 @@ pub fn ServerState::plan_poll_event_deliveries(
             review_mode~,
             moon_verify_target=self.config.moon_verify_target,
             precomputed_decision=Some(notification_decision),
+            reviewer=self.config.pr_policy.reviewer,
             skip_copilot_on_feature_branch=self.config.pr_policy.skip_copilot_on_feature_branch,
             default_branch~,
           ) {
@@ -1709,6 +1843,7 @@ pub fn ServerState::plan_poll_event_deliveries(
   let leaf_review_required = match tracked {
     Some(pr) =>
       @policy.review_required_for_branch(
+        self.config.pr_policy.reviewer,
         self.config.pr_policy.skip_copilot_on_feature_branch,
         pr.parent_branch,
         default_branch,
@@ -1723,6 +1858,7 @@ pub fn ServerState::plan_poll_event_deliveries(
             leaf_poll_review_injection_message(
               event,
               tracked,
+              reviewer=self.config.pr_policy.reviewer,
               review_required=leaf_review_required,
             ) {
             Some((message, status)) =>
@@ -2378,6 +2514,7 @@ async fn deliver_pending_poll_events(
           merge_mode~,
           review_mode~,
           moon_verify_target=state.config.moon_verify_target,
+          reviewer=state.config.pr_policy.reviewer,
           skip_copilot_on_feature_branch=state.config.pr_policy.skip_copilot_on_feature_branch,
           default_branch~,
         )
@@ -2392,6 +2529,7 @@ async fn deliver_pending_poll_events(
             review_mode~,
             moon_verify_target=state.config.moon_verify_target,
             precomputed_decision=Some(notification_decision),
+            reviewer=state.config.pr_policy.reviewer,
             skip_copilot_on_feature_branch=state.config.pr_policy.skip_copilot_on_feature_branch,
             default_branch~,
           ) {
@@ -2561,10 +2699,17 @@ async fn ServerState::sweep_tracked_prs_for_automerge(
     )
     let automerge_enabled = automerge_enabled_for_agent(self.config, local_cfg)
     let unresolved_threads = tracked_unresolved_thread_count_for_gate(current)
+    let review_required = @policy.review_required_for_branch(
+      self.config.pr_policy.reviewer,
+      self.config.pr_policy.skip_copilot_on_feature_branch,
+      current.parent_branch,
+      "",
+    )
     let gate_ready = @poller.tl_tracked_pr_merge_gate_snapshot_ready(
       current,
       unresolved_threads,
       review_mode=current.review_mode,
+      review_required~,
     )
     if !pr_needs_automerge_sweep_attempt(current, gate_ready, automerge_enabled) {
       continue

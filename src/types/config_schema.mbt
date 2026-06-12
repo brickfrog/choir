@@ -138,13 +138,6 @@ pub fn config_schema_entries() -> Array[ConfigSchemaEntry] {
     ),
     schema_entry(
       ConfigToml,
-      "pr_review",
-      "Bool",
-      "true",
-      "When true, `file_pr` requests `@copilot` as a reviewer via `gh pr edit --add-reviewer` (best-effort).",
-    ),
-    schema_entry(
-      ConfigToml,
       "automerge",
       "Bool",
       "false",
@@ -233,6 +226,13 @@ pub fn config_schema_entries() -> Array[ConfigSchemaEntry] {
       "Bool",
       "true",
       "When true, `file_pr` skips Copilot reviewer requests for PRs targeting non-default parent branches.",
+    ),
+    schema_entry(
+      ConfigToml,
+      "pr_policy.reviewer",
+      "Reviewer { none | copilot | <handle> }",
+      "\"none\"",
+      "Reviewer requested by `file_pr`; `none` disables external reviewer requests. A configured Named reviewer is waited on like Copilot: a non-responsive reviewer stalls merge until the TL intervenes or config changes. Chosen reviewer = chosen wait.",
     ),
     schema_entry(
       ConfigToml,

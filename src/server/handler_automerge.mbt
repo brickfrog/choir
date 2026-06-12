@@ -21,18 +21,30 @@ fn ServerState::request_with_review_mode_default(
 }
 
 ///|
+fn parent_poll_request_review_handle(reviewer : @types.Reviewer) -> String {
+  match @tools.file_pr_reviewer_handle(reviewer) {
+    Some(handle) => handle
+    None => "reviewer"
+  }
+}
+
+///|
 /// When review-wait already timed out with no review in snapshot, CI-only parent lines must not read like ordinary progress.
 fn parent_poll_ci_escalation_prefix(
   tracked : @poller.TrackedPR,
+  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
   review_required? : Bool = true,
 ) -> String {
   if @poller.tl_tracked_pr_copilot_review_silent_escalation_active(
       tracked,
       review_required~,
     ) {
+    let reviewer_handle = parent_poll_request_review_handle(reviewer)
     "Review timeout already fired — no review in snapshot. Run request_review(pr_number: \"" +
     tracked.pr_number.to_string() +
-    "\", reviewer: \"@copilot\").\n\n"
+    "\", reviewer: \"" +
+    reviewer_handle +
+    "\").\n\n"
   } else {
     ""
   }
@@ -381,6 +393,7 @@ pub async fn maybe_trigger_automerge_for_pending_event(
     task_contract~,
     review_mode~,
     verify_results~,
+    reviewer=state.config.pr_policy.reviewer,
     skip_copilot_on_feature_branch=state.config.pr_policy.skip_copilot_on_feature_branch,
     default_branch~,
   )

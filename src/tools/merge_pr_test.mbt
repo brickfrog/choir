@@ -428,7 +428,7 @@ test "merge_pr_audit_receipt_validation distinguishes valid stale missing invali
 }
 
 ///|
-test "merge_pr audit validation applies to resolved default branch" {
+test "merge_pr audit validation requires receipt only on default branch parent" {
   let tree = "9999999999999999999999999999999999999999"
   match merge_pr_audit_receipt_validation("master", "master", tree, None) {
     MergeAuditReceiptMissing(short_sha) =>
@@ -437,8 +437,126 @@ test "merge_pr audit validation applies to resolved default branch" {
   }
   match merge_pr_audit_receipt_validation("feature/x", "master", tree, None) {
     MergeAuditReceiptValid => ()
-    _ => fail("expected feature branch parent to skip audit gate")
+    _ => fail("expected feature branch parent to skip audit receipt gate")
   }
+}
+
+///|
+async test "merge_pr_require_audit_receipt skips receipt lookup for feature branch parent" {
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let gate_state : MergeGateState = { enabled_at_unix: 1L }
+  let receipt_captures : Array[@workspace.Command] = []
+  let got = merge_pr_require_audit_receipt(
+    "feature/base",
+    "main",
+    "/repo",
+    84,
+    head,
+    gate_state,
+    2L,
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      receipt_captures.push(cmd)
+      (1, "")
+    },
+  )
+  match got {
+    Ok(_) => ()
+    Err(e) =>
+      fail(
+        "feature branch parent must skip audit receipt lookup: " + e.message(),
+      )
+  }
+  assert_eq(receipt_captures.length(), 0)
+}
+
+///|
+test "review_required_for_branch honors reviewer policy and feature-branch skip" {
+  assert_false(
+    @policy.review_required_for_branch(
+      @types.Reviewer::None,
+      true,
+      "main",
+      "main",
+    ),
+  )
+  assert_false(
+    @policy.review_required_for_branch(
+      @types.Reviewer::None,
+      false,
+      "feature/x",
+      "main",
+    ),
+  )
+  assert_true(
+    @policy.review_required_for_branch(
+      @types.Reviewer::Copilot,
+      true,
+      "main",
+      "main",
+    ),
+  )
+  assert_false(
+    @policy.review_required_for_branch(
+      @types.Reviewer::Copilot,
+      true,
+      "feature/x",
+      "main",
+    ),
+  )
+  assert_true(
+    @policy.review_required_for_branch(
+      @types.Reviewer::Copilot,
+      false,
+      "feature/x",
+      "main",
+    ),
+  )
+  assert_true(
+    @policy.review_required_for_branch(
+      @types.Reviewer::Named("octocat"),
+      true,
+      "main",
+      "main",
+    ),
+  )
+  assert_false(
+    @policy.review_required_for_branch(
+      @types.Reviewer::Named("octocat"),
+      true,
+      "feature/x",
+      "main",
+    ),
+  )
+  assert_true(
+    @policy.review_required_for_branch(
+      @types.Reviewer::Named("octocat"),
+      false,
+      "feature/x",
+      "main",
+    ),
+  )
+}
+
+///|
+test "merge policy no-review ready reason names audit receipt as gate" {
+  let decision = @policy.decide_merge(
+    None,
+    {
+      task_contract: None,
+      signals: [
+        @types.EvaluationSignal::Ci(status=@types.EvaluationCiRollup::Success),
+        @types.EvaluationSignal::ThreadsObserved(count=0),
+      ],
+    },
+    review_required=false,
+  )
+  assert_eq(decision.label(), "merge_now")
+  assert_true(
+    decision
+    .reason()
+    .contains("review skipped by policy (audit receipt gates merge)"),
+  )
 }
 
 ///|
@@ -2316,11 +2434,31 @@ test "format_tl_pr_recheck_summary ready snapshot when approved success zero thr
     merge_state_status: @poller.MergeStateStatus::Unknown,
     merged_at_unix: None,
   }
-  let s = format_tl_pr_recheck_summary(t, "/repo", Some(0))
+  let s = format_tl_pr_recheck_summary(
+    t,
+    "/repo",
+    Some(0),
+    reviewer=@types.Reviewer::Copilot,
+  )
   assert_true(s.contains("no tracked blockers"))
   assert_true(s.contains("Does not merge"))
   assert_true(s.contains("success"))
   assert_true(s.contains("GitHub Copilot issue comment (REST): not seen"))
+  assert_true(s.contains("Advisory evaluation verdict: ready"))
+  assert_true(s.contains("Merge policy decision: merge_now"))
+}
+
+///|
+test "format_tl_pr_recheck_summary default reviewer matches config default" {
+  let t : @poller.TrackedPR = {
+    ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
+  }
+  let s = format_tl_pr_recheck_summary(t, "/repo", Some(0))
+  assert_false(s.contains("GitHub Copilot issue comment (REST)"))
   assert_true(s.contains("Advisory evaluation verdict: ready"))
   assert_true(s.contains("Merge policy decision: merge_now"))
 }
@@ -2339,6 +2477,7 @@ test "format_tl_pr_recheck_summary applies skipped review policy for feature bra
     t,
     "/repo",
     Some(0),
+    reviewer=@types.Reviewer::Copilot,
     skip_copilot_on_feature_branch=true,
     default_branch="main",
   )
@@ -2377,7 +2516,12 @@ test "format_tl_pr_recheck_summary uses tracked SinglePass mode consistently aft
     last_sha: "fixed-sha",
     review_mode: @types.ReviewMode::SinglePass,
   }
-  let s = format_tl_pr_recheck_summary(t, "/repo", Some(0))
+  let s = format_tl_pr_recheck_summary(
+    t,
+    "/repo",
+    Some(0),
+    reviewer=@types.Reviewer::Copilot,
+  )
   assert_true(s.contains("no tracked blockers"))
   assert_true(s.contains("Advisory evaluation verdict: ready"))
   assert_true(s.contains("Merge policy decision: merge_now"))
@@ -2411,11 +2555,36 @@ test "format_tl_pr_recheck_summary notes Copilot issue comment when seen on merg
     merged_at_unix: None,
     copilot_issue_comment_seen: true,
   }
-  let s = format_tl_pr_recheck_summary(t, "/repo", Some(0))
+  let s = format_tl_pr_recheck_summary(
+    t,
+    "/repo",
+    Some(0),
+    reviewer=@types.Reviewer::Copilot,
+  )
   assert_true(s.contains("GitHub Copilot issue comment (REST): seen"))
   assert_true(s.contains("Copilot issue comment observed"))
   assert_true(s.contains("Advisory evaluation verdict: ready"))
   assert_true(s.contains("Merge policy decision: merge_now"))
+}
+
+///|
+test "format_tl_pr_recheck_summary names configured reviewer without Copilot prose" {
+  let t : @poller.TrackedPR = {
+    ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
+  }
+  let s = format_tl_pr_recheck_summary(
+    t,
+    "/repo",
+    Some(0),
+    reviewer=@types.Reviewer::Named("alice"),
+  )
+  assert_true(s.contains("alice"))
+  assert_false(s.contains("Copilot"))
+  assert_false(s.contains("@copilot"))
 }
 
 ///|
@@ -3087,6 +3256,152 @@ async test "interpret_merge_pr ok response matches merged envelope" {
     }
     _ => fail("expected ok merged")
   }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_merge_pr tracked feature merge skips audit gate file and receipt plumbing" {
+  let project_dir = "/tmp/choir-mpr-feature-no-gate-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    84,
+    "feature/base.leaf-a",
+    "feature/base.leaf-a",
+    "feature/base",
+    "https://github.com/o/r/pull/84",
+    2L,
+    @poller.ReviewState::Approved,
+    "",
+    head,
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  let ran : Array[@workspace.Command] = []
+  let mut gate_path_checks = 0
+  let mut gate_reads = 0
+  let mut receipt_captures = 0
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args.length() == 2 &&
+      cmd.args[0] == "rev-parse" &&
+      cmd.args[1].contains("^{tree}") {
+      receipt_captures = receipt_captures + 1
+      return (1, "")
+    }
+    if cmd.program == "cat" &&
+      cmd.args.length() == 1 &&
+      cmd.args[0].has_prefix(".choir/audit-receipts/") {
+      receipt_captures = receipt_captures + 1
+      return (1, "")
+    }
+    mock_preflight_capture_no_unresolved_threads(cmd)
+  }
+  let got = interpret_merge_pr(
+    {
+      pr_number: 84,
+      parent_branch: "feature/base",
+      caller_id: "main.tl",
+      review_mode: Some(@types.ReviewMode::SinglePass),
+    },
+    project_dir,
+    Some(ps),
+    None,
+    None,
+    async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      for cmd in cmds {
+        ran.push(cmd)
+      }
+      [0, 0]
+    },
+    capture,
+    @sys.append_file_sync,
+    fn(path) {
+      if path.has_suffix("/.choir/audit-gate.json") {
+        gate_path_checks = gate_path_checks + 1
+      }
+      false
+    },
+    read_file=fn(path) {
+      if path.has_suffix("/.choir/audit-gate.json") {
+        gate_reads = gate_reads + 1
+      }
+      ""
+    },
+    task_contract_reader=merge_pr_test_empty_contract_reader,
+    persist=fn(_, _) { true },
+  )
+  match got {
+    @types.Response::Ok(fields) =>
+      assert_eq(fields.get("status").unwrap_or(""), "merged")
+    @types.Response::Err(msg) => fail("expected feature merge success: " + msg)
+  }
+  assert_eq(gate_path_checks, 0)
+  assert_eq(gate_reads, 0)
+  assert_eq(receipt_captures, 0)
+  assert_true(
+    ran
+    .iter()
+    .any(fn(cmd) {
+      cmd.program == "gh" && cmd.args == ["pr", "merge", "84", "--merge"]
+    }),
+  )
+  assert_false(
+    ran.iter().any(fn(cmd) { cmd.args.contains("--match-head-commit") }),
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_merge_pr untracked feature merge ignores present audit gate file" {
+  let project_dir = "/tmp/choir-mpr-untracked-feature-gate-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  let ran : Array[@workspace.Command] = []
+  let got = interpret_merge_pr(
+    {
+      pr_number: 85,
+      parent_branch: "feature/base",
+      caller_id: "main.tl",
+      review_mode: Some(@types.ReviewMode::SinglePass),
+    },
+    project_dir,
+    None,
+    None,
+    None,
+    async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      for cmd in cmds {
+        ran.push(cmd)
+      }
+      [0, 0]
+    },
+    mock_preflight_capture_no_unresolved_threads,
+    @sys.append_file_sync,
+    fn(path) { path.has_suffix("/.choir/audit-gate.json") },
+    read_file=merge_pr_test_gate_state_reader(1L),
+    persist=fn(_, _) { true },
+  )
+  match got {
+    @types.Response::Ok(fields) =>
+      assert_eq(fields.get("status").unwrap_or(""), "merged")
+    @types.Response::Err(msg) =>
+      fail("expected untracked feature merge success: " + msg)
+  }
+  assert_true(
+    ran
+    .iter()
+    .any(fn(cmd) {
+      cmd.program == "gh" && cmd.args == ["pr", "merge", "85", "--merge"]
+    }),
+  )
+  assert_false(
+    ran.iter().any(fn(cmd) { cmd.args.contains("--match-head-commit") }),
+  )
   ignore(@sys.rm_rf(project_dir))
 }
 

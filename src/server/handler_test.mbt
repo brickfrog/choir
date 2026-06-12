@@ -1037,6 +1037,7 @@ async test "refresh_pr_with pending events fires automerge after fixes and CI cl
     pr_policy: {
       require_integration_audit: false,
       skip_copilot_on_feature_branch: true,
+      reviewer: @types.Reviewer::Copilot,
     },
   }
   let state = ServerState::new(config, make_hermetic_recovery_provider())
@@ -1384,6 +1385,7 @@ fn blocked_gh_automerge_fixture(
   review_mode? : @types.ReviewMode = @types.ReviewMode::SinglePass,
   automerge? : Bool = true,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
+  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
 ) -> (ServerState, String, String) raise {
   let project_dir = "/tmp/choir-blocked-gh-automerge-" +
     label +
@@ -1400,6 +1402,7 @@ fn blocked_gh_automerge_fixture(
     automerge,
     review_mode,
     moon_verify_target,
+    pr_policy: { ..@types.PrPolicy::default(), reviewer, },
   }
   let state = ServerState::new(config, make_hermetic_recovery_provider())
   let parent_id = "main.tl-" + label
@@ -1660,6 +1663,95 @@ async test "quiet poller tick automerge sweep records attempted head on success"
   )
   assert_true(merge_seen)
   assert_true(state.poller.get(pr_number) == None)
+}
+
+///|
+async test "quiet poller tick automerge sweep retries reviewerless ready PR" {
+  let pr_number = 98
+  let (state, child_id, project_dir) = blocked_gh_automerge_fixture(
+    "sweep-reviewer-none",
+    pr_number,
+    review_mode=@types.ReviewMode::Iterative,
+    reviewer=@types.Reviewer::None,
+  )
+  match state.poller.get(pr_number) {
+    Some(tracked) =>
+      state.poller.restore({
+        ..tracked,
+        last_review_state: @poller.ReviewState::None_,
+        copilot_issue_comment_seen: false,
+        unresolved_thread_ids: [],
+        unresolved_thread_ids_fetched: true,
+      })
+    None => fail("expected tracked PR")
+  }
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for _cmd in cmds {
+      statuses.push(0)
+    }
+    statuses
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    let repo_view_json =
+      #|{"owner":{"login":"brickfrog"},"name":"choir"}
+    if (
+        cmd.program == "gh" &&
+        cmd.args == ["repo", "view", "--json", "owner,name"]
+      ) ||
+      (
+        cmd.program == "timeout" &&
+        cmd.args == ["30s", "gh", "repo", "view", "--json", "owner,name"]
+      ) {
+      return (0, repo_view_json)
+    }
+    if cmd.args.contains("graphql") {
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
+    (0, "")
+  }
+  state.process_poller_tick_with_test(
+    500L,
+    900L,
+    async fn(_pr_number, _skip_issue_comment_fetch) {
+      @async.sleep(0)
+      (
+        true,
+        @poller.ReviewState::None_,
+        "sha-sweep-reviewer-none",
+        @poller.CiRollupStatus::Success,
+        "",
+        true,
+        false,
+        @poller.Mergeable::Unknown,
+        @poller.MergeStateStatus::Unknown,
+        None,
+      )
+    },
+    None,
+    "",
+    runner~,
+    capture~,
+    automerge_capture=capture,
+  )
+  let delivery_log = @sys.read_file(project_dir + "/.choir/delivery.log")
+  assert_true(
+    delivery_log.contains(
+      "automerge sweep attempt pr=98 sha=sha-sweep-reviewer-none",
+    ),
+  )
+  assert_true(
+    delivery_log.contains("automerge attempt pr=98 agent=" + child_id),
+  )
+  match state.poller.get(pr_number) {
+    Some(current) =>
+      assert_eq(current.last_automerge_attempt_sha, "sha-sweep-reviewer-none")
+    None => ()
+  }
 }
 
 ///|
@@ -3076,6 +3168,7 @@ async test "deliver_pending_poll_events fires PRMerged hook whether tracked or s
         pr_policy: {
           require_integration_audit: false,
           skip_copilot_on_feature_branch: true,
+          reviewer: @types.Reviewer::Copilot,
         },
       },
       make_hermetic_recovery_provider(),
@@ -3227,6 +3320,7 @@ async test "deliver_pending_poll_events uses injected global hook config home" {
       pr_policy: {
         require_integration_audit: false,
         skip_copilot_on_feature_branch: true,
+        reviewer: @types.Reviewer::Copilot,
       },
     },
     make_hermetic_recovery_provider(),
@@ -3353,6 +3447,7 @@ async test "deliver_pending_poll_events ignores absent injected global hook fall
       pr_policy: {
         require_integration_audit: false,
         skip_copilot_on_feature_branch: true,
+        reviewer: @types.Reviewer::Copilot,
       },
     },
     make_hermetic_recovery_provider(),
@@ -3476,6 +3571,7 @@ async test "refresh_pr_with_test uses injected hook capture when project hook re
       pr_policy: {
         require_integration_audit: false,
         skip_copilot_on_feature_branch: true,
+        reviewer: @types.Reviewer::Copilot,
       },
     },
     make_hermetic_recovery_provider(),
@@ -4680,6 +4776,7 @@ async test "tracked PRMerged with missing head sha warns when integration audit 
       pr_policy: {
         require_integration_audit: false,
         skip_copilot_on_feature_branch: true,
+        reviewer: @types.Reviewer::Copilot,
       },
     },
     make_hermetic_recovery_provider(),
@@ -6077,7 +6174,7 @@ test "parent_poll_event_message MergeReady on Mixed mode says MERGE READY (not M
 }
 
 ///|
-test "parent_poll_event_message ReviewTimeout emits EscalateReview next_action with reviewer-add detail" {
+test "parent_poll_event_message ReviewTimeout emits EscalateConfiguredReview next_action with reviewer-add detail" {
   let tracked = parent_poll_test_ready_tracked(77)
   match
     parent_poll_event_message(
@@ -6088,7 +6185,12 @@ test "parent_poll_event_message ReviewTimeout emits EscalateReview next_action w
       merge_mode=@poller.MergeOperatorMode::Manual,
     ) {
     Some((message, _)) => {
-      assert_next_action_line(message, @poller.NextAction::EscalateReview)
+      assert_next_action_line(
+        message,
+        @poller.NextAction::EscalateConfiguredReview(
+          reviewer=@types.Reviewer::Copilot,
+        ),
+      )
       assert_true(message.contains("request_review"))
       assert_true(message.contains("@copilot"))
     }
@@ -6394,6 +6496,38 @@ test "parent_poll_event_message applies skipped review policy for feature branch
 }
 
 ///|
+test "parent_poll_event_message reviewer none latest-head message has no Copilot review wait" {
+  let tracked : @poller.TrackedPR = {
+    ..parent_poll_event_test_tracked(173, "main.dev-none", "work/none", "abc"),
+    last_review_state: @poller.ReviewState::None_,
+    last_timeout_at: 999L,
+    copilot_issue_comment_seen: false,
+  }
+  match
+    parent_poll_event_message(
+      tracked,
+      "/repo",
+      @poller.PollEvent::CILatestHeadRollupSucceeded(173),
+      Some(0),
+      reviewer=@types.Reviewer::None,
+    ) {
+    Some((message, status)) => {
+      assert_eq(status, @types.Status::Info)
+      assert_true(message.contains("review skipped by policy"))
+      assert_true(message.contains("Advisory evaluation verdict: ready"))
+      assert_true(message.contains("Merge policy decision: merge_now"))
+      assert_true(message.contains("MERGE NOW"))
+      assert_next_action_line(message, @poller.NextAction::MergeNow)
+      assert_false(message.contains("Copilot"))
+      assert_false(message.contains("waiting for review"))
+      assert_false(message.contains("@copilot"))
+      assert_false(message.contains("request_review"))
+    }
+    None => fail("expected CILatestHeadRollupSucceeded message")
+  }
+}
+
+///|
 test "leaf_poll_review_injection_message CILatestHeadRollupSucceeded is scoped" {
   match
     leaf_poll_review_injection_message(
@@ -6452,6 +6586,34 @@ test "leaf_poll_review_injection_message CILatestHeadRollupSucceeded escalates w
       assert_true(message.contains("request_review"))
       assert_true(message.contains("@copilot"))
       assert_false(message.contains("re-check review thread and policy"))
+    }
+    None => fail("expected leaf CI escalation injection")
+  }
+}
+
+///|
+test "leaf_poll_review_injection_message CILatestHeadRollupSucceeded names configured reviewer in escalation" {
+  let tracked = {
+    ..parent_poll_test_ready_tracked(180),
+    agent_id: "main.dev-leaf",
+    branch: "work/leaf",
+    last_review_state: @poller.ReviewState::None_,
+    last_timeout_at: 100L,
+    copilot_issue_comment_seen: false,
+  }
+  match
+    leaf_poll_review_injection_message(
+      @poller.PollEvent::CILatestHeadRollupSucceeded(180),
+      Some(tracked),
+      reviewer=@types.Reviewer::Named("alice"),
+    ) {
+    Some((message, status)) => {
+      assert_eq(status, @types.Status::Info)
+      assert_true(message.contains("no review"))
+      assert_true(message.contains("request_review"))
+      assert_true(message.contains("reviewer: \"alice\""))
+      assert_false(message.contains("@copilot"))
+      assert_false(message.contains("Copilot"))
     }
     None => fail("expected leaf CI escalation injection")
   }
@@ -7931,6 +8093,38 @@ test "parent_poll_event_message CI LATEST HEAD adds escalation when review timeo
       assert_true(message.contains("Review timeout already fired"))
       assert_true(message.contains("TLDecision:"))
       assert_true(message.contains("ACTION REQUIRED: no review"))
+    }
+    None => fail("expected CILatestHeadRollupSucceeded escalation message")
+  }
+}
+
+///|
+test "parent_poll_event_message CI LATEST HEAD names configured reviewer in escalation" {
+  let tracked = {
+    ..parent_poll_test_ready_tracked(172),
+    last_review_state: @poller.ReviewState::None_,
+    last_timeout_at: 999L,
+    copilot_issue_comment_seen: false,
+  }
+  match
+    parent_poll_event_message(
+      tracked,
+      "/repo",
+      @poller.PollEvent::CILatestHeadRollupSucceeded(172),
+      Some(0),
+      reviewer=@types.Reviewer::Named("alice"),
+    ) {
+    Some((message, status)) => {
+      assert_eq(status, @types.Status::Info)
+      assert_true(message.contains("Review timeout already fired"))
+      assert_true(
+        message.contains(
+          "request_review(pr_number: \"172\", reviewer: \"alice\")",
+        ),
+      )
+      assert_true(message.contains("alice"))
+      assert_false(message.contains("@copilot"))
+      assert_false(message.contains("Copilot"))
     }
     None => fail("expected CILatestHeadRollupSucceeded escalation message")
   }

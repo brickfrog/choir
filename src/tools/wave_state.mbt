@@ -97,6 +97,7 @@ fn wave_state_pr_from_tracked(
   task_contract : @types.TaskContract?,
   verify_results : Array[@types.VerifyCheckResult],
   missing_task_contract_blocks : Bool,
+  reviewer : @types.Reviewer,
   skip_copilot_on_feature_branch : Bool,
   default_branch : String,
 ) -> WaveStatePR {
@@ -112,6 +113,7 @@ fn wave_state_pr_from_tracked(
         task_contract~,
         review_mode=tracked.review_mode,
         verify_results~,
+        reviewer~,
         skip_copilot_on_feature_branch~,
         default_branch~,
       ) {
@@ -329,6 +331,7 @@ pub fn plan_wave_state(
     @types.VerifyCheckResult,
   ] = wave_state_default_verify_results_reader,
   missing_task_contract_blocks? : Bool = false,
+  reviewer? : @types.Reviewer = @types.Config::default().pr_policy.reviewer,
   skip_copilot_on_feature_branch? : Bool = false,
   default_branch? : String = "",
 ) -> Result[WaveStateSnapshot, @types.ChoirError] {
@@ -363,7 +366,7 @@ pub fn plan_wave_state(
               Some(
                 wave_state_pr_from_tracked(
                   tracked, threads, err, task_contract, verify_results, missing_task_contract_blocks,
-                  skip_copilot_on_feature_branch, default_branch,
+                  reviewer, skip_copilot_on_feature_branch, default_branch,
                 ),
               )
             }
@@ -397,7 +400,7 @@ pub fn plan_wave_state(
         Some(
           wave_state_pr_from_tracked(
             tracked, threads, err, task_contract, verify_results, missing_task_contract_blocks,
-            skip_copilot_on_feature_branch, default_branch,
+            reviewer, skip_copilot_on_feature_branch, default_branch,
           ),
         )
       }
@@ -453,6 +456,7 @@ pub async fn interpret_wave_state(
   tdd_phase_reader? : (String) -> @types.LeafTddPhase? = wave_state_default_tdd_phase,
   task_contract_reader? : (String) -> @types.TaskContract? = wave_state_default_task_contract_reader,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
+  reviewer? : @types.Reviewer = @types.Config::default().pr_policy.reviewer,
   skip_copilot_on_feature_branch? : Bool = @types.Config::default().pr_policy.skip_copilot_on_feature_branch,
 ) -> @types.Response {
   let reg = match registry {
@@ -594,6 +598,7 @@ pub async fn interpret_wave_state(
       task_contract_reader=normalized_task_contract_reader,
       verify_results_reader~,
       missing_task_contract_blocks=true,
+      reviewer~,
       skip_copilot_on_feature_branch~,
       default_branch~,
     ) {
