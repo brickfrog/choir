@@ -455,3 +455,15 @@ pub async fn ServerState::tui_default_branch_cached(
     }
   }
 }
+
+///|
+/// Poller-owned refresh for TUI caches that require process capture. Snapshot
+/// requests read these fields without running commands.
+pub async fn ServerState::refresh_tui_snapshot_caches_for_poller_tick(
+  self : ServerState,
+  now_sec : Int64,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Unit {
+  ignore(self.tui_default_branch_cached(capture))
+  self.refresh_tui_beads_cache_if_stale(now_sec * 1000L, capture)
+}
