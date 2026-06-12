@@ -1822,9 +1822,10 @@ test "operator role allowlist is exactly merge_pr, suspend, tui_snapshot, tui_ev
   let reg = @tools.ToolRegistry::new()
   let allowed : Array[String] = []
   for name in reg.tool_names() {
-    match (try? reg.lookup(@types.Role::Operator, name)) {
-      Ok(_) => allowed.push(name)
-      Err(_) => ()
+    try reg.lookup(@types.Role::Operator, name) catch {
+      _ => ()
+    } noraise {
+      _ => allowed.push(name)
     }
   }
   assert_eq(allowed.length(), 4)
