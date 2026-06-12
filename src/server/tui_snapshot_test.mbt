@@ -225,14 +225,6 @@ async test "tui_default_branch_cached does not cache skip-disabled empty value" 
 }
 
 ///|
-async fn tui_snapshot_fail_if_called_capture(
-  cmd : @workspace.Command,
-) -> (Int, String) {
-  @async.sleep(0)
-  abort("tui_snapshot must not execute command: " + cmd.program)
-}
-
-///|
 async test "tui_snapshot handler serves cached beads without process capture" {
   let state = tui_snapshot_test_state("handler-cache")
   state.tui_beads_cache.summaries = [
@@ -250,9 +242,7 @@ async test "tui_snapshot handler serves cached beads without process capture" {
     name: "tui_snapshot",
     args: @types.RequestArgs::from_values({}),
   }
-  let resp = state.handle_tui_snapshot_request(
-    req, tui_snapshot_fail_if_called_capture, tui_snapshot_fail_if_called_capture,
-  )
+  let resp = state.handle_tui_snapshot_request(req)
   assert_true(resp.is_ok())
   match resp.ok_payload() {
     Some(fields) =>
@@ -270,6 +260,46 @@ async test "tui_snapshot handler serves cached beads without process capture" {
         None => fail("expected snapshot json")
       }
     None => fail("expected ok payload")
+  }
+}
+
+///|
+async test "bead cache refresh no-ops when every bd capture fails" {
+  let state = tui_snapshot_test_state("bead-all-fail")
+  state.tui_beads_cache.summaries = [
+    {
+      issue_id: "ch-cached",
+      title: "cached bead",
+      status: "ready",
+      assignee: "main.leaf-a",
+    },
+  ]
+  state.tui_beads_cache.taken_at_ms = Some(1000L)
+  let calls : Array[String] = []
+  state.refresh_tui_beads_cache_if_stale(
+    1000L + @server.tui_beads_cache_ttl_ms + 1L,
+    async fn(cmd : @workspace.Command) {
+      @async.sleep(0)
+      if cmd.args.length() > 0 {
+        calls.push(cmd.args[0])
+      }
+      (1, "bd unavailable")
+    },
+  )
+  assert_eq(calls.length(), 2)
+  assert_eq(state.tui_beads_cache.summaries.length(), 1)
+  assert_eq(state.tui_beads_cache.summaries[0].issue_id, "ch-cached")
+  @debug.assert_eq(state.tui_beads_cache.taken_at_ms, Some(1000L))
+  match state.journal.events_since(0L) {
+    @server.TuiEventsSinceResult::Events(events) =>
+      for envelope in events {
+        match envelope.event {
+          @types.TuiEvent::BeadRemoved(_) =>
+            fail("all-failed bd refresh must not emit BeadRemoved")
+          _ => ()
+        }
+      }
+    @server.TuiEventsSinceResult::StaleCursor => fail("expected events")
   }
 }
 

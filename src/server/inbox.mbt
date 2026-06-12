@@ -16,6 +16,19 @@ pub let inbox_renudge_after_sec : Int64 = 120L
 pub let inbox_nudge_attempt_cap : Int = 5
 
 ///|
+let inbox_message_counter : @ref.Ref[Int64] = @ref.new(0L)
+
+///|
+fn next_inbox_message_id(run_id : String) -> String {
+  inbox_message_counter.val = inbox_message_counter.val + 1L
+  run_id +
+  "-inbox-" +
+  @env.now().reinterpret_as_int64().to_string() +
+  "-" +
+  inbox_message_counter.val.to_string()
+}
+
+///|
 fn inbox_state_json(inboxes : Map[String, Array[@types.InboxMessage]]) -> Json {
   let entries : Map[String, Json] = {}
   for entry in inboxes {
@@ -153,11 +166,7 @@ fn ServerState::enqueue_inbox_message(
   status : @types.Status,
   queued_at_unix? : Int64 = @env.now().reinterpret_as_int64() / 1000L,
 ) -> (@types.InboxMessage, Int) {
-  let message_id = self.run_id +
-    "-inbox-" +
-    queued_at_unix.to_string() +
-    "-" +
-    @runtime.simple_hash(recipient_id + "|" + sender_id + "|" + body).to_string()
+  let message_id = next_inbox_message_id(self.run_id)
   let message : @types.InboxMessage = {
     message_id,
     sender_id,
@@ -186,32 +195,33 @@ fn ServerState::enqueue_inbox_message(
 }
 
 ///|
-/// Queue one message for an agent; returns the pending count afterwards.
-/// Emits the message-queued journal event and checkpoints the inbox.
-pub fn ServerState::queue_inbox_message(
-  self : ServerState,
-  recipient_id : String,
-  sender_id : String,
-  body : String,
-  status : @types.Status,
-  queued_at_unix? : Int64 = @env.now().reinterpret_as_int64() / 1000L,
-) -> Int {
-  let (_, pending) = self.enqueue_inbox_message(
-    recipient_id,
-    sender_id,
-    body,
-    status,
-    queued_at_unix~,
-  )
-  pending
+fn inbox_body_inline_eligible(body : String) -> Bool {
+  let trimmed = body.trim()
+  if trimmed.length() > inbox_inline_body_limit {
+    return false
+  }
+  for c in trimmed {
+    let code = c.to_int()
+    if code < 0x20 || code == 0x7F {
+      return false
+    }
+  }
+  true
 }
 
 ///|
-fn inbox_body_inline_eligible(body : String) -> Bool {
+fn inbox_body_has_system_tag(body : String) -> Bool {
   let trimmed = body.trim()
-  trimmed.length() <= inbox_inline_body_limit &&
-  !trimmed.contains("\n") &&
-  !trimmed.contains("\r")
+  trimmed.has_prefix("[from: ") ||
+  trimmed.has_prefix("[FAILED: ") ||
+  trimmed.has_prefix("[PR READY") ||
+  trimmed.has_prefix("[FIXES PUSHED") ||
+  trimmed.has_prefix("[REVIEW TIMEOUT") ||
+  trimmed.has_prefix("[REVIEW") ||
+  trimmed.has_prefix("[MERGE READY") ||
+  trimmed.has_prefix("[PR MERGED") ||
+  trimmed.has_prefix("[PARENT RELEASE") ||
+  trimmed.has_prefix("[BLOCKED")
 }
 
 ///|
@@ -220,7 +230,12 @@ fn inbox_terminal_payload(
   pending : Int,
 ) -> String {
   if inbox_body_inline_eligible(message.body) {
-    @message.format_message(message.sender_id, message.body.trim().to_owned())
+    let trimmed = message.body.trim().to_owned()
+    if inbox_body_has_system_tag(trimmed) {
+      trimmed
+    } else {
+      @message.format_message(message.sender_id, trimmed)
+    }
   } else {
     @message.format_inbox_nudge(pending)
   }
@@ -281,14 +296,31 @@ fn ServerState::mark_inbox_delivered_inline(
   recipient_id : String,
   message_id : String,
 ) -> Unit {
-  match
-    self.replace_inbox_message(recipient_id, message_id, fn(message) {
-      { ..message, delivery_state: @types.InboxDeliveryState::DeliveredInline }
-    }) {
-    Some(_) =>
+  match self.inboxes.get(recipient_id) {
+    Some(messages) => {
+      let updated : Array[@types.InboxMessage] = []
+      let mut changed = false
+      for message in messages {
+        if message.message_id == message_id &&
+          message.delivery_state == @types.InboxDeliveryState::Pending {
+          updated.push({
+            ..message,
+            delivery_state: @types.InboxDeliveryState::DeliveredInline,
+          })
+          changed = true
+        } else {
+          updated.push(message)
+        }
+      }
+      if !changed {
+        return
+      }
+      self.inboxes.set(recipient_id, updated)
+      self.persist_inboxes()
       self.emit_tui_event(
         @types.TuiEvent::MessageDelivered(recipient_id~, message_id~),
       )
+    }
     None => ()
   }
 }
@@ -340,6 +372,7 @@ pub async fn ServerState::deliver_inbox_terminal_message(
     runner,
     project_dir=self.config.project_dir,
     sleep_fn~,
+    retry_local_terminal=false,
   )
   let attempted = self.record_inbox_nudge_attempt(
     recipient_id,
@@ -357,7 +390,19 @@ pub async fn ServerState::deliver_inbox_terminal_message(
     }
     Err(e) => {
       warn_if_inbox_nudge_exhausted(attempted)
-      Err(e)
+      @moontrace.warn(
+        "inbox terminal delivery failed; message remains queued",
+        fields=[
+          @moontrace.field(
+            "event", "inbox_terminal_delivery_queued_after_failure",
+          ),
+          @moontrace.field("recipient_id", recipient_id),
+          @moontrace.field("sender_id", sender_id),
+          @moontrace.field("message_id", message.message_id),
+          @moontrace.field("error", e.message()),
+        ],
+      )
+      Ok(())
     }
   }
 }
@@ -412,6 +457,7 @@ async fn ServerState::renudge_inbox_message(
     runner,
     project_dir=self.config.project_dir,
     sleep_fn~,
+    retry_local_terminal=false,
   )
   let attempted = self.record_inbox_nudge_attempt(
     message.recipient_id,

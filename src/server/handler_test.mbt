@@ -136,7 +136,7 @@ test "poller parent planner does not commit dedup state before delivery" {
 }
 
 ///|
-async test "deliver_pending_poll_events commits dedup only after durable parent delivery succeeds" {
+async test "deliver_pending_poll_events commits dedup after durable parent delivery queues" {
   let pr_number = 1702
   let label = "dedup-parent-durable"
   let (state, _, project_dir) = blocked_gh_automerge_fixture(
@@ -236,17 +236,17 @@ async test "deliver_pending_poll_events commits dedup only after durable parent 
     )
   }
   refresh_ci_success(100L)
-  assert_eq(parent_messages.length(), 4)
+  assert_eq(parent_messages.length(), 1)
   fail_parent_delivery = false
   refresh_ci_success(120L)
-  assert_eq(parent_messages.length(), 5)
+  assert_eq(parent_messages.length(), 1)
   refresh_ci_success(121L)
-  assert_eq(parent_messages.length(), 5)
+  assert_eq(parent_messages.length(), 1)
   unresolved_threads = 1
   refresh_ci_success(130L)
-  assert_eq(parent_messages.length(), 6)
+  assert_eq(parent_messages.length(), 2)
   refresh_ci_success(491L)
-  assert_eq(parent_messages.length(), 7)
+  assert_eq(parent_messages.length(), 3)
   ignore(@sys.rm_rf(project_dir))
 }
 

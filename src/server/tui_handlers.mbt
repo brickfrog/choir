@@ -30,11 +30,9 @@ fn request_int64_arg(req : @types.Request, key : String) -> Int64? {
 /// `tui_snapshot`: the canonical full-state read model plus the current
 /// journal sequence number. Pure in-memory read: poller ticks refresh the
 /// bead/default-branch caches that this request serves as-is.
-pub async fn ServerState::handle_tui_snapshot_request(
+pub fn ServerState::handle_tui_snapshot_request(
   self : ServerState,
   req : @types.Request,
-  capture : async (@workspace.Command) -> (Int, String),
-  bd_capture : async (@workspace.Command) -> (Int, String),
 ) -> @types.Response {
   ignore(self.tool_registry.lookup(req.role, req.name)) catch {
     e => return @tools.tool_response_err_from_caught(e)
