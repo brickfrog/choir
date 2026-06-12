@@ -32,6 +32,17 @@ policy cascade ("review skipped by policy" → "audit receipt verified").
 A: TL-triggered, as today. Auto-trigger at PR quiescence stays bead
 choir-bcny, out of scope here.
 
+**Q: (Amendment, post-review) The universal receipt gate contradicts server
+automerge — every automerged leaf PR would block on a receipt only the TL can
+produce, and HEAD-matching means any post-audit push re-invalidates it. Keep
+it in this wave?**
+A: No — demoted. Receipt scope stays exactly as today (required only when
+`parent_branch == default_branch`). The universal gate lands later in ONE
+bead together with choir-bcny's quiescence-triggered auto-audit, so the gate
+and its receipt producer ship together. Interim safety is unchanged from
+today: feature-leg PRs are CI+threads gated and `require_integration_audit`
+still gates integration→main.
+
 ## Goals
 - `Reviewer` enum (`None | Copilot | Named(String)`) in `src/types`, with
   wire-string round-trip, parsed from `pr_policy.reviewer` in config.toml
@@ -45,11 +56,19 @@ choir-bcny, out of scope here.
   `handler_poll_delivery.mbt:171,1711`, `tl_decision.mbt:592`) become
   reviewer-aware: `Reviewer::None` → review never required;
   `Copilot`/`Named` → current `skip_copilot_on_feature_branch` semantics.
-- Audit receipt required on every `merge_pr`: the
-  `file_pr_audit_receipt_required(parent_branch, default_branch)` conditional
-  is deleted and `merge_pr_audit_receipt_validation` always runs the required
-  validation. Policy ready-reason names the audit
-  ("audit receipt verified" instead of "review skipped by policy").
+- ~~Audit receipt required on every `merge_pr`~~ — DEMOTED by amendment (see
+  Clarifications): receipt scope unchanged in this wave
+  (`parent_branch == default_branch` only); the universal gate ships with
+  choir-bcny. Policy ready-reason for the no-review path still names the
+  audit ("review skipped by policy (audit receipt gates merge)").
+- Migration note in leaf 1's PR body / commit:
+  "BREAKING(config): pr_review removed; reviewer config is now
+  pr_policy.reviewer (none|copilot|<handle>), default none — existing
+  pr_review=true configs silently become reviewer=none."
+- Docs state Named(handle) semantics explicitly: a configured Named reviewer
+  is waited on like Copilot; a non-responsive human reviewer stalls the merge
+  until the TL intervenes or the config changes. Chosen reviewer = chosen
+  wait.
 - Poller TL-decision prose and advisory evaluation no longer instruct waiting
   for Copilot when `reviewer = None` (no "waiting for review" wait states,
   no Copilot-comment gating in the advisory verdict).
@@ -82,9 +101,8 @@ Files: `src/types/config.mbt` (PrPolicy + new `Reviewer` enum + delete
 `src/config/config.mbt` (parse `pr_policy.reviewer`, delete `pr_review`
 parse), `src/policy/policy.mbt` (`review_required_for_branch` takes the
 reviewer; `ready_reason` audit wording), `src/tools/merge_pr.mbt`
-(`merge_pr_audit_receipt_validation` unconditional; delete
-`file_pr_audit_receipt_required` and its call sites; mechanical
-review_required call-site update), `src/tools/file_pr.mbt` (reviewer enum
+(mechanical review_required call-site update ONLY — receipt validation scope
+is untouched per the amendment), `src/tools/file_pr.mbt` (reviewer enum
 replaces `pr_review` bool params; request reviewer only for `Copilot`/
 `Named(h)`, handle plumbed to `--add-reviewer`), `src/server/handler.mbt`
 and `src/server/handler_poll_delivery.mbt`, `src/poller/tl_decision.mbt`
@@ -94,10 +112,8 @@ what the signature forces). Deleting `Config.pr_review` ripples into these
 consumers, so the mechanical threading belongs to this leaf: it must leave
 the tree compiling with `reviewer = copilot` behavior identical to today's
 `pr_review = true`. Blackbox tests: enum round-trip, config default `None`,
-parse of all three forms, `review_required_for_branch` matrix,
-receipt-required-on-feature-branch regression (RED: today feature-branch
-merges skip receipt validation), file_pr command construction for all three
-reviewer values.
+parse of all three forms, `review_required_for_branch` matrix, file_pr
+command construction for all three reviewer values.
 
 ### Leaf 2 — behavioral conditioning: poller prose, evidence advisory
 Files: `src/poller/tl_decision.mbt` (TLDecision prose: when reviewer is
@@ -118,12 +134,11 @@ otherwise PR readiness is CI + threads + TL audit." No behavior changes.
 
 ## Verify
 - `moon test --target native`
-- `grep -rn "pr_review" src/ | wc -l` → `0` (field fully deleted, no shim)
+- `grep -rnE '\bpr_review\b' src/ | wc -l` → `0` (field fully deleted, no
+  shim; word-boundary so pre-existing `merge_pr_review_*` / `parse_pr_review_*`
+  symbols, which merely contain the substring, are out of scope)
 - `grep -n "reviewer" src/types/config_schema.mbt` → schema documents
   `pr_policy.reviewer` with `none|copilot|<handle>`
-- Leaf 1 regression test name proves the new gate:
-  `moon test --target native -p src/tools` includes a test asserting
-  merge receipt validation runs when `parent_branch != default_branch`
 
 ## Boundary (do not)
 - merge_pr must never spawn/inline an audit to satisfy its own receipt gate;
@@ -138,8 +153,11 @@ otherwise PR readiness is CI + threads + TL audit." No behavior changes.
   current default-on tests are repointed, not deleted.
 
 ## Follow-Ups
-- choir-bcny: server-triggered audit at PR quiescence (CI green + threads
-  clear), building on the now-formal receipt gate.
+- choir-bcny (PROMOTED to fast-follow, expanded): server-triggered audit at
+  PR quiescence (CI green + threads clear) AND the universal merge_pr receipt
+  gate, landing together as one bead — the gate must ship with its receipt
+  producer or automerge stalls on ready-but-receiptless PRs and HEAD-matching
+  receipts churn on every post-audit push.
 - choir-ee4 remainder: reviewer teams, multiple reviewers, required_approval
   mode.
 - choir-yd7 / choir-ovh / choir-6l1: rest of the PR-policy profile epic
