@@ -207,6 +207,9 @@ pub fn ServerState::build_tui_snapshot(
     None => fn(agent_id : String) { @phase.read_lifecycle(project_dir, agent_id) }
   }
   let agents : Array[@types.TuiSnapshotAgent] = []
+  let status_tracked_by_agent = @tools.status_tracked_by_agent(
+    self.poller.tracked,
+  )
   for agent in self.registry.list() {
     let agent_id = agent.agent_id.to_string()
     let lifecycle = read_lifecycle(agent_id)
@@ -222,6 +225,21 @@ pub fn ServerState::build_tui_snapshot(
       Some(contract) => contract.beads_issue_id
       None => @workspace.beads_issue_id_for_agent(project_dir, agent)
     }
+    // Shared status core: same derivation as status_bar_state/status_dump.
+    let effective_lifecycle = match lifecycle {
+      Some(lc) => lc
+      None => @phase.lifecycle_for_agent(agent)
+    }
+    let derived = @tools.derive_agent_status(
+      agent_id,
+      effective_lifecycle.workflow,
+      self.poller.tracked,
+      status_tracked_by_agent,
+    )
+    let status = derived.to_tui_fields(
+      @tools.lifecycle_to_wire_string(effective_lifecycle.workflow),
+      @types.non_negative_i64(effective_lifecycle.last_updated_unix_sec),
+    )
     agents.push({
       agent_id,
       role: agent.role,
@@ -241,6 +259,7 @@ pub fn ServerState::build_tui_snapshot(
       tdd_phase: self.leaf_tdd_phase_for_agent(agent_id),
       last_tool_call: self.registry.last_tool_call(agent_id),
       beads_issue_id,
+      status,
     })
   }
   let supervisor = tui_supervisor_agent(self.registry)

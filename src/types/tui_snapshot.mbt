@@ -31,6 +31,74 @@ pub(all) struct TuiSnapshotWave {
 } derive(Debug, Eq)
 
 ///|
+/// Per-agent status fields shared by every status read model (status bar,
+/// status dump, TUI). Derived once at assembly from the same core
+/// (`derive_agent_status`), never re-computed per surface.
+/// `unresolved_threads` tri-state: `pr_number is None` means no PR;
+/// `Some(pr)` with `unresolved_threads is None` means unknown.
+pub(all) struct TuiAgentStatusFields {
+  lifecycle_wire : String
+  pr_number : Int?
+  unresolved_threads : Int?
+  ci_rollup : String?
+  attention : String
+  fixes_pushed_at : Int64
+  last_activity_unix : Int64
+} derive(Debug, Eq)
+
+///|
+pub impl ToJson for TuiAgentStatusFields with fn to_json(self) -> Json {
+  {
+    "lifecycle_wire": self.lifecycle_wire.to_json(),
+    "pr_number": match self.pr_number {
+      Some(v) => v.to_json()
+      None => null
+    },
+    "unresolved_threads": match self.unresolved_threads {
+      Some(v) => v.to_json()
+      None => null
+    },
+    "ci_rollup": tui_optional_string_json(self.ci_rollup),
+    "attention": self.attention.to_json(),
+    "fixes_pushed_at": self.fixes_pushed_at.to_json(),
+    "last_activity_unix": self.last_activity_unix.to_json(),
+  }.to_json()
+}
+
+///|
+pub fn parse_tui_agent_status_fields_json(
+  json : Json,
+) -> Result[TuiAgentStatusFields, ChoirError] {
+  guard json is Object(obj) else {
+    return Err(tui_snapshot_parse_error("status fields: expected object"))
+  }
+  Ok({
+    lifecycle_wire: json_field_string(obj, "lifecycle_wire").unwrap_or(""),
+    pr_number: json_field_int(obj, "pr_number"),
+    unresolved_threads: json_field_int(obj, "unresolved_threads"),
+    ci_rollup: json_field_string(obj, "ci_rollup"),
+    attention: json_field_string(obj, "attention").unwrap_or("unknown"),
+    fixes_pushed_at: json_field_int64(obj, "fixes_pushed_at").unwrap_or(0L),
+    last_activity_unix: json_field_int64(obj, "last_activity_unix").unwrap_or(
+      0L,
+    ),
+  })
+}
+
+///|
+pub fn TuiAgentStatusFields::empty() -> TuiAgentStatusFields {
+  {
+    lifecycle_wire: "",
+    pr_number: None,
+    unresolved_threads: None,
+    ci_rollup: None,
+    attention: "unknown",
+    fixes_pushed_at: 0L,
+    last_activity_unix: 0L,
+  }
+}
+
+///|
 pub(all) struct TuiSnapshotAgent {
   agent_id : String
   role : Role
@@ -47,6 +115,7 @@ pub(all) struct TuiSnapshotAgent {
   tdd_phase : LeafTddPhase?
   last_tool_call : ToolCallRecord?
   beads_issue_id : String?
+  status : TuiAgentStatusFields
 } derive(Debug, Eq)
 
 ///|
@@ -128,6 +197,7 @@ pub impl ToJson for TuiSnapshotAgent with fn to_json(self) -> Json {
       None => null
     },
     "beads_issue_id": tui_optional_string_json(self.beads_issue_id),
+    "status": self.status.to_json(),
   }.to_json()
 }
 
@@ -293,6 +363,14 @@ pub fn parse_tui_snapshot_agent_json(
     tdd_phase,
     last_tool_call,
     beads_issue_id: json_field_string(obj, "beads_issue_id"),
+    status: match obj.get("status") {
+      Some(value) =>
+        match parse_tui_agent_status_fields_json(value) {
+          Ok(v) => v
+          Err(e) => return Err(e)
+        }
+      None => TuiAgentStatusFields::empty()
+    },
   })
 }
 

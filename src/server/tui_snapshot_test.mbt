@@ -117,6 +117,11 @@ test "build_tui_snapshot assembles agents, wave, prs, vitals, and journal tail" 
         Some("zellij-pane:choir:main.leaf-a"),
       )
       assert_eq(agent.lifecycle, "dev:working")
+      // Shared status core: same derivation as status_bar_state/status_dump.
+      assert_eq(agent.status.lifecycle_wire, "working")
+      @debug.assert_eq(agent.status.pr_number, Some(561))
+      @debug.assert_eq(agent.status.unresolved_threads, None)
+      assert_eq(agent.status.attention, "false")
     }
     None => fail("expected leaf agent in snapshot")
   }

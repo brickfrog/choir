@@ -25,6 +25,7 @@ fn test_snapshot_agent(
       ts_ms: 1779970000000L,
     }),
     beads_issue_id: Some("ch-1"),
+    status: @types.TuiAgentStatusFields::empty(),
   }
 }
 

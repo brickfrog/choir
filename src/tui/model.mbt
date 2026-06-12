@@ -382,6 +382,10 @@ fn apply_event(model : Model, envelope : @types.TuiEventEnvelope) -> Model {
           Some(prior) => prior.beads_issue_id
           None => None
         },
+        status: match existing {
+          Some(prior) => prior.status
+          None => @types.TuiAgentStatusFields::empty()
+        },
       })
     }
     @types.TuiEvent::AgentStateChanged(agent_id~, state~) => {
