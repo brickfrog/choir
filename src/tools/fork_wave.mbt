@@ -874,8 +874,9 @@ pub async fn interpret_fork_wave_post_spawn(
       }
     None => ()
   }
-  for slug in spawn_plan.spawned_slugs {
-    let agent_id = @workspace.branch_name(fork_wave_args.parent_branch, slug)
+  for spec in spawn_plan.spawned_specs {
+    let agent_id = @workspace.canonical_agent_id(spec)
+    let slug = spec.slug
     match live_collision_ids.get(agent_id) {
       Some(true) => continue
       _ => ()
