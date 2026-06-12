@@ -85,27 +85,15 @@ pub fn format_inbox_nudge(pending : Int) -> String {
 }
 
 ///|
-/// Inbox-routed planning: message content goes to the daemon-side per-agent
-/// inbox (via the injected `queue` capability, which returns the pending
-/// count) and the terminal payload shrinks to the fixed nudge. When no
-/// inbox capability is wired (`queue` returns None) the legacy full-content
-/// plan is used unchanged.
+/// Inbox-aware planning stays pure: enqueueing and terminal nudge selection
+/// happen in the server interpreter at delivery time.
 pub fn plan_delivery_via_inbox(
   agent : @types.Agent,
   sender_id : String,
   content : String,
   status : @types.Status,
-  queue : (String, String, String, @types.Status) -> Int?,
 ) -> DeliveryMethod {
-  let planned = plan_delivery(agent, sender_id, content, status)
-  match planned {
-    LocalTerminalInput(target, _) =>
-      match queue(agent.agent_id.to_string(), sender_id, content, status) {
-        Some(pending) => LocalTerminalInput(target, format_inbox_nudge(pending))
-        None => planned
-      }
-    other => other
-  }
+  plan_delivery(agent, sender_id, content, status)
 }
 
 ///|

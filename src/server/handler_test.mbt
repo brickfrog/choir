@@ -2781,7 +2781,7 @@ async test "kill_agent auto-closes tracked stale PR and untracks it" {
         cmd.args.contains("zellij-action") &&
         cmd.args.contains("send") {
         let text = cmd.args[cmd.args.length() - 1]
-        if text.contains("call check_inbox") {
+        if text.contains("[STALE PR CLOSED]") {
           stale_closed_delivered = true
         }
       }
@@ -2833,7 +2833,7 @@ async test "kill_agent close failure sends one explicit stale PR failure and sup
         cmd.args.contains("zellij-action") &&
         cmd.args.contains("send") {
         let text = cmd.args[cmd.args.length() - 1]
-        if text.contains("call check_inbox") {
+        if text.contains("[STALE PR CLOSE FAILED]") {
           stale_failed_delivered = true
         }
       }
@@ -7925,7 +7925,7 @@ async test "fail_agent_with_runner injects failure to parent terminal" {
         cmd.args.contains("zellij-action") &&
         cmd.args.contains("send") {
         let text = cmd.args[cmd.args.length() - 1]
-        if text.contains("call check_inbox") {
+        if text.contains("watchdog timeout") {
           injected_failure_msg = true
         }
       }
@@ -10081,6 +10081,8 @@ async test "notify_parent marks handoff delivered and suppresses worker prod" {
   })
   assert_true(resp.is_ok())
   assert_true(state.handoff_delivered.contains(worker_id))
+  assert_true(inbox_count_containing(state, "review complete") >= 1)
+  assert_eq(state.pending_inbox_count(parent_id), 0)
 
   let start = @poller.now_sec()
   state.check_idle_agents(

@@ -828,6 +828,20 @@ async fn resolve_my_review_threads_self_resolve_error(
 }
 
 ///|
+async fn default_interpret_planned_delivery(
+  _recipient : @types.Agent,
+  _sender_id : String,
+  _body : String,
+  _status : @types.Status,
+  delivery : @message.DeliveryMethod,
+  project_dir : String,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  sleep_fn : async (Int) -> Unit,
+) -> Result[Unit, @types.ChoirError] {
+  execute_delivery(delivery, runner, project_dir~, sleep_fn~)
+}
+
+///|
 /// Server tool dispatch.
 pub async fn dispatch(
   req : ToolRequest,
@@ -895,14 +909,16 @@ pub async fn dispatch(
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
   agy_migration_incomplete? : Bool = false,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
-  inbox_queue? : (String, String, String, @types.Status) -> Int? = fn(
-    _recipient,
-    _sender,
-    _body,
-    _status,
-  ) {
-    None
-  },
+  interpret_planned_delivery? : async (
+    @types.Agent,
+    String,
+    String,
+    @types.Status,
+    @message.DeliveryMethod,
+    String,
+    async (Array[@workspace.Command]) -> Array[Int],
+    async (Int) -> Unit,
+  ) -> Result[Unit, @types.ChoirError] = default_interpret_planned_delivery,
 ) -> @types.Response {
   let plan_delivery_fn = fn(
     agent : @types.Agent,
@@ -910,9 +926,7 @@ pub async fn dispatch(
     content : String,
     status : @types.Status,
   ) -> @message.DeliveryMethod {
-    @message.plan_delivery_via_inbox(
-      agent, sender, content, status, inbox_queue,
-    )
+    @message.plan_delivery_via_inbox(agent, sender, content, status)
   }
   let ensure_branch_ready = match ensure_branch_ready {
     Some(f) => f
@@ -1451,28 +1465,45 @@ pub async fn dispatch(
           dev_event_on_success~,
           response_ok~
         ) =>
-          match execute_delivery(delivery, runner, project_dir~, sleep_fn~) {
-            Ok(_) => {
-              apply_dev_event(
-                project_dir,
-                notify_args.caller_id,
-                dev_event_on_success,
-                registry~,
-              )
-              record_handoff_delivered(notify_args.caller_id)
-              ignore(
-                mirror_beads_note_for_agent(
-                  project_dir,
-                  registry,
+          match parent_resolution {
+            Some(Ok(parent)) =>
+              match
+                interpret_planned_delivery(
+                  parent,
                   notify_args.caller_id,
-                  "Choir notify_parent: " + notify_args.message,
-                  "notify_parent",
-                  capture,
-                ),
+                  notify_args.message,
+                  notify_args.status,
+                  delivery,
+                  project_dir,
+                  runner,
+                  sleep_fn,
+                ) {
+                Ok(_) => {
+                  apply_dev_event(
+                    project_dir,
+                    notify_args.caller_id,
+                    dev_event_on_success,
+                    registry~,
+                  )
+                  record_handoff_delivered(notify_args.caller_id)
+                  ignore(
+                    mirror_beads_note_for_agent(
+                      project_dir,
+                      registry,
+                      notify_args.caller_id,
+                      "Choir notify_parent: " + notify_args.message,
+                      "notify_parent",
+                      capture,
+                    ),
+                  )
+                  response_ok
+                }
+                Err(e) => @types.Response::Err(e.message())
+              }
+            _ =>
+              @types.Response::Err(
+                "notify_parent parent resolution unavailable",
               )
-              response_ok
-            }
-            Err(e) => @types.Response::Err(e.message())
           }
       }
     }
@@ -1543,19 +1574,56 @@ pub async fn dispatch(
           )
         None => None
       }
-      interpret_send_message(
-        send_message_plan(
-          send_args.target_id,
-          send_args.sender_id,
-          send_args.message,
-          send_args.status,
-          registry_lookup,
-          plan_delivery_fn~,
-        ),
-        project_dir,
-        runner,
-        append_file,
+      let plan = send_message_plan(
+        send_args.target_id,
+        send_args.sender_id,
+        send_args.message,
+        send_args.status,
+        registry_lookup,
+        plan_delivery_fn~,
       )
+      match plan {
+        SendMessagePlan::Deliver(delivery~, delivery_log_append~, response_ok~) => {
+          ignore(
+            append_file(
+              project_dir + "/.choir/delivery.log",
+              delivery_log_append,
+            ),
+          )
+          match registry_lookup {
+            Some(Ok(agent)) =>
+              match
+                interpret_planned_delivery(
+                  agent,
+                  send_args.sender_id,
+                  send_args.message,
+                  send_args.status,
+                  delivery,
+                  project_dir,
+                  runner,
+                  sleep_fn,
+                ) {
+                Ok(_) => response_ok
+                Err(e) => {
+                  @moontrace.error("send_message delivery failed", fields=[
+                    @moontrace.field("error", e.message()),
+                  ])
+                  @types.Response::Err(e.message())
+                }
+              }
+            _ =>
+              @types.Response::Err("send_message target resolution unavailable")
+          }
+        }
+        _ =>
+          interpret_send_message(
+            plan,
+            project_dir,
+            runner,
+            append_file,
+            sleep_fn~,
+          )
+      }
     }
     ToolRequest::Shutdown(shutdown_args) =>
       interpret_shutdown(
@@ -2090,14 +2158,16 @@ pub async fn handle_request(
   create_dir_all? : (String) -> Bool = @sys.create_dir_all,
   agy_migration_incomplete? : Bool = false,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
-  inbox_queue? : (String, String, String, @types.Status) -> Int? = fn(
-    _recipient,
-    _sender,
-    _body,
-    _status,
-  ) {
-    None
-  },
+  interpret_planned_delivery? : async (
+    @types.Agent,
+    String,
+    String,
+    @types.Status,
+    @message.DeliveryMethod,
+    String,
+    async (Array[@workspace.Command]) -> Array[Int],
+    async (Int) -> Unit,
+  ) -> Result[Unit, @types.ChoirError] = default_interpret_planned_delivery,
 ) -> @types.Response {
   let tool_args = tool_args_from_request_args(req.args)
   let mut ran_builtin_dispatch = false
@@ -2224,7 +2294,7 @@ pub async fn handle_request(
                   record_handoff_delivered~,
                   agy_migration_incomplete~,
                   sleep_fn~,
-                  inbox_queue~,
+                  interpret_planned_delivery~,
                 )
                 ran_builtin_dispatch = true
                 out

@@ -33,7 +33,62 @@ fn inbox_test_agent(agent_id : String, role : @types.Role) -> @types.Agent {
 }
 
 ///|
-test "queue then drain delivers in order and acks via the pull" {
+fn inbox_test_target() -> @types.LocalTarget {
+  match @types.LocalTarget::parse("zellij-tab:choir:tl") {
+    Some(value) => value
+    None => abort("expected parseable target")
+  }
+}
+
+///|
+async fn inbox_test_sleep(_ms : Int) -> Unit {
+  @async.sleep(0)
+}
+
+///|
+fn inbox_test_sent_runner(
+  sent : Array[String],
+  status : Int,
+) -> async (Array[@workspace.Command]) -> Array[Int] {
+  async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    let statuses : Array[Int] = []
+    for cmd in cmds {
+      if cmd.program == "choir" &&
+        cmd.args.length() >= 4 &&
+        cmd.args[0] == "zellij-action" &&
+        cmd.args[1] == "send" {
+        sent.push(cmd.args[3])
+      }
+      statuses.push(status)
+    }
+    statuses
+  }
+}
+
+///|
+fn inbox_test_pending_message(
+  message_id : String,
+  body : String,
+  state : @types.InboxDeliveryState,
+  queued_at_unix : Int64,
+  nudge_attempts : Int,
+) -> @types.InboxMessage {
+  {
+    message_id,
+    sender_id: "main.leaf",
+    recipient_id: "main.tl",
+    body,
+    status: @types.Status::Info,
+    queued_at_unix,
+    delivery_state: state,
+    nudge_attempts,
+    last_nudged_at_unix: None,
+  }
+}
+
+///|
+test "queue then drain delivers pending rows in order and acks via state" {
   let state = inbox_test_state("drain")
   assert_eq(
     state.queue_inbox_message(
@@ -61,6 +116,14 @@ test "queue then drain delivers in order and acks via the pull" {
   assert_eq(drained[1].sender_id, "poller")
   assert_eq(state.pending_inbox_count("main.tl"), 0)
   assert_eq(state.drain_inbox("main.tl").length(), 0)
+  match state.inboxes.get("main.tl") {
+    Some(messages) => {
+      assert_eq(messages.length(), 2)
+      assert_eq(messages[0].delivery_state, @types.InboxDeliveryState::Drained)
+      assert_eq(messages[1].delivery_state, @types.InboxDeliveryState::Drained)
+    }
+    None => fail("expected durable inbox audit rows")
+  }
   // Journal observability: queued and delivered events exist for each.
   match @server.TuiJournal::events_since(state.journal, 0L) {
     @server.TuiEventsSinceResult::Events(events) => {
@@ -130,6 +193,13 @@ test "check_inbox handler drains the caller's queue only" {
   }
   assert_eq(state.pending_inbox_count("main.leaf-a"), 0)
   assert_eq(state.pending_inbox_count("main.leaf-b"), 1)
+  match state.inboxes.get("main.leaf-a") {
+    Some(messages) => {
+      assert_eq(messages.length(), 1)
+      assert_eq(messages[0].delivery_state, @types.InboxDeliveryState::Drained)
+    }
+    None => fail("expected durable drained audit row")
+  }
   let mismatched : @types.Request = {
     req_method: "tools/call",
     role: @types.Role::TL,
@@ -196,11 +266,17 @@ test "inbox persists via checkpoint writes and survives boot" {
   assert_eq(reborn.pending_inbox_count("main.tl"), 1)
   let drained = reborn.drain_inbox("main.tl")
   assert_eq(drained[0].body, "hello")
+  match reborn.inboxes.get("main.tl") {
+    Some(messages) =>
+      assert_eq(messages[0].delivery_state, @types.InboxDeliveryState::Drained)
+    None => fail("expected durable inbox audit rows after drain")
+  }
   ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
-test "plan_delivery_via_inbox shrinks terminal payload to the fixed nudge" {
+test "plan_delivery_via_inbox is pure and queues nothing while planning" {
+  let state = inbox_test_state("plan-pure")
   let target = match @types.LocalTarget::parse("zellij-tab:choir:tl") {
     Some(value) => value
     None => {
@@ -220,37 +296,231 @@ test "plan_delivery_via_inbox shrinks terminal payload to the fixed nudge" {
     state: @types.AgentState::Active,
     spawn_depth: 0,
   }
-  let queued : Array[(String, String, String)] = []
-  let planned = @message.plan_delivery_via_inbox(
+  let first = @message.plan_delivery_via_inbox(
     agent,
     "main.leaf-a",
     "long review feedback body",
     @types.Status::Info,
-    fn(recipient, sender, body, _status) {
-      queued.push((recipient, sender, body))
-      Some(3)
-    },
   )
-  assert_eq(queued.length(), 1)
-  assert_eq(queued[0].2, "long review feedback body")
-  match planned {
-    @message.DeliveryMethod::LocalTerminalInput(_, text) => {
-      assert_eq(text, "choir: 3 messages pending — call check_inbox")
-      assert_false(text.contains("review feedback"))
-    }
-    _ => fail("expected terminal nudge delivery")
-  }
-  // No inbox capability: legacy full-content plan unchanged.
-  match
-    @message.plan_delivery_via_inbox(
-      agent,
-      "main.leaf-a",
-      "content",
-      @types.Status::Info,
-      fn(_r, _s, _b, _st) { None },
-    ) {
+  let second = @message.plan_delivery_via_inbox(
+    agent,
+    "main.leaf-a",
+    "long review feedback body",
+    @types.Status::Info,
+  )
+  assert_eq(state.pending_inbox_count("main.tl"), 0)
+  assert_eq(first, second)
+  match first {
     @message.DeliveryMethod::LocalTerminalInput(_, text) =>
-      assert_true(text.contains("content"))
+      assert_eq(text, "[from: main.leaf-a] long review feedback body")
     _ => fail("expected terminal delivery")
   }
+}
+
+///|
+async test "inline delivery sends single-line trimmed bodies up to 200 chars and marks delivered" {
+  let state = inbox_test_state("inline-200")
+  let sent : Array[String] = []
+  let body = "x".repeat(200)
+  match
+    state.deliver_inbox_terminal_message(
+      "main.tl",
+      inbox_test_target(),
+      "main.leaf",
+      body,
+      @types.Status::Info,
+      inbox_test_sent_runner(sent, 0),
+      now_unix_sec=1000L,
+      sleep_fn=inbox_test_sleep,
+    ) {
+    Ok(_) => ()
+    Err(e) => fail("expected inline delivery success: " + e.message())
+  }
+  assert_eq(sent.length(), 1)
+  assert_eq(sent[0], "[from: main.leaf] " + body)
+  assert_eq(state.pending_inbox_count("main.tl"), 0)
+  match state.inboxes.get("main.tl") {
+    Some(messages) => {
+      assert_eq(messages.length(), 1)
+      assert_eq(
+        messages[0].delivery_state,
+        @types.InboxDeliveryState::DeliveredInline,
+      )
+      assert_eq(messages[0].nudge_attempts, 1)
+    }
+    None => fail("expected durable inline audit row")
+  }
+}
+
+///|
+async test "embedded newlines route through overflow nudge and stay pending for drain" {
+  let state = inbox_test_state("newline-overflow")
+  let sent : Array[String] = []
+  match
+    state.deliver_inbox_terminal_message(
+      "main.tl",
+      inbox_test_target(),
+      "main.leaf",
+      "line one\nline two",
+      @types.Status::Info,
+      inbox_test_sent_runner(sent, 0),
+      now_unix_sec=1000L,
+      sleep_fn=inbox_test_sleep,
+    ) {
+    Ok(_) => ()
+    Err(e) => fail("expected overflow nudge success: " + e.message())
+  }
+  assert_eq(sent.length(), 1)
+  assert_eq(sent[0], "choir: 1 message pending — call check_inbox")
+  assert_eq(state.pending_inbox_count("main.tl"), 1)
+  let drained = state.drain_inbox("main.tl")
+  assert_eq(drained.length(), 1)
+  assert_eq(drained[0].body, "line one\nline two")
+  match state.inboxes.get("main.tl") {
+    Some(messages) =>
+      assert_eq(messages[0].delivery_state, @types.InboxDeliveryState::Drained)
+    None => fail("expected durable drained audit row")
+  }
+}
+
+///|
+async test "send-keys failure leaves inline-eligible inbox rows pending" {
+  let state = inbox_test_state("inline-fail")
+  let sent : Array[String] = []
+  match
+    state.deliver_inbox_terminal_message(
+      "main.tl",
+      inbox_test_target(),
+      "main.leaf",
+      "small body",
+      @types.Status::Info,
+      inbox_test_sent_runner(sent, 1),
+      now_unix_sec=1000L,
+      sleep_fn=inbox_test_sleep,
+    ) {
+    Ok(_) => fail("expected delivery failure")
+    Err(_) => ()
+  }
+  assert_true(sent.length() > 0)
+  assert_eq(sent[0], "[from: main.leaf] small body")
+  assert_eq(state.pending_inbox_count("main.tl"), 1)
+  match state.inboxes.get("main.tl") {
+    Some(messages) => {
+      assert_eq(messages.length(), 1)
+      assert_eq(messages[0].delivery_state, @types.InboxDeliveryState::Pending)
+      assert_eq(messages[0].nudge_attempts, 1)
+    }
+    None => fail("expected durable pending row")
+  }
+}
+
+///|
+async test "sweep re-nudges only stale pending rows and skips delivered rows" {
+  let state = inbox_test_state("sweep-stale")
+  ignore(
+    state.registry.upsert({
+      ..inbox_test_agent("main.tl", @types.Role::TL),
+      terminal_target: Some(inbox_test_target()),
+    }),
+  )
+  state.inboxes.set("main.tl", [
+    inbox_test_pending_message(
+      "stale",
+      "stale body",
+      @types.InboxDeliveryState::Pending,
+      100L,
+      0,
+    ),
+    inbox_test_pending_message(
+      "fresh",
+      "fresh body",
+      @types.InboxDeliveryState::Pending,
+      250L,
+      0,
+    ),
+    inbox_test_pending_message(
+      "delivered",
+      "delivered body",
+      @types.InboxDeliveryState::DeliveredInline,
+      100L,
+      0,
+    ),
+  ])
+  let sent : Array[String] = []
+  state.sweep_stale_inbox_nudges(
+    300L,
+    inbox_test_sent_runner(sent, 0),
+    sleep_fn=inbox_test_sleep,
+  )
+  assert_eq(sent.length(), 1)
+  assert_eq(sent[0], "[from: main.leaf] stale body")
+  match state.inboxes.get("main.tl") {
+    Some(messages) => {
+      assert_eq(
+        messages[0].delivery_state,
+        @types.InboxDeliveryState::DeliveredInline,
+      )
+      assert_eq(messages[0].nudge_attempts, 1)
+      assert_eq(messages[1].delivery_state, @types.InboxDeliveryState::Pending)
+      assert_eq(messages[1].nudge_attempts, 0)
+      assert_eq(
+        messages[2].delivery_state,
+        @types.InboxDeliveryState::DeliveredInline,
+      )
+      assert_eq(messages[2].nudge_attempts, 0)
+    }
+    None => fail("expected inbox rows")
+  }
+}
+
+///|
+async test "sweep respects the five-attempt nudge cap" {
+  let state = inbox_test_state("sweep-cap")
+  ignore(
+    state.registry.upsert({
+      ..inbox_test_agent("main.tl", @types.Role::TL),
+      terminal_target: Some(inbox_test_target()),
+    }),
+  )
+  state.inboxes.set("main.tl", [
+    inbox_test_pending_message(
+      "capped",
+      "capped body",
+      @types.InboxDeliveryState::Pending,
+      100L,
+      5,
+    ),
+  ])
+  let sent : Array[String] = []
+  state.sweep_stale_inbox_nudges(
+    300L,
+    inbox_test_sent_runner(sent, 0),
+    sleep_fn=inbox_test_sleep,
+  )
+  assert_eq(sent.length(), 0)
+  assert_eq(state.pending_inbox_count("main.tl"), 1)
+}
+
+///|
+fn inbox_count_needle(content : String, needle : String) -> Int {
+  content.split(needle).length() - 1
+}
+
+///|
+test "old production queue and nudge sites are not enqueue sites" {
+  let request_src = @sys.read_file("src/server/handler_request.mbt")
+  let disconnect_src = @sys.read_file("src/server/handler_disconnect.mbt")
+  let message_src = @sys.read_file("src/message/message.mbt")
+  assert_eq(inbox_count_needle(request_src, "queue_inbox_message("), 0)
+  assert_eq(inbox_count_needle(disconnect_src, "queue_inbox_message("), 0)
+  assert_false(message_src.contains("queue(agent.agent_id"))
+}
+
+///|
+test "inbox enqueue is centralized in one production constructor" {
+  let inbox_src = @sys.read_file("src/server/inbox.mbt")
+  assert_eq(
+    inbox_count_needle(inbox_src, "let message : @types.InboxMessage ="),
+    1,
+  )
 }
