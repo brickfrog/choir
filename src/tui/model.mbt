@@ -717,17 +717,12 @@ fn handle_key(model : Model, key : @pippa.KeyMsg) -> (Model, Array[TuiEffect]) {
   match key {
     @pippa.KeyMsg::Char('q') | @pippa.KeyMsg::Modified("ctrl", "c") =>
       ({ ..model, quit: true }, [QuitApp])
-    @pippa.KeyMsg::Char('1') => (set_tab(model, Overview), [])
-    @pippa.KeyMsg::Char('2') => (set_tab(model, Beads), [])
-    @pippa.KeyMsg::Char('3') => (set_tab(model, Agents), [])
-    @pippa.KeyMsg::Char('4') => (set_tab(model, Prs), [])
-    @pippa.KeyMsg::Char('5') => (set_tab(model, Log), [])
-    @pippa.KeyMsg::Char('[') => {
-      let index = (model.ui.active_tab.index() + 4) % 5
+    @pippa.KeyMsg::Special("tab") | @pippa.KeyMsg::Char(']') => {
+      let index = (model.ui.active_tab.index() + 1) % 5
       (set_tab(model, Tab::from_index(index).unwrap_or(Overview)), [])
     }
-    @pippa.KeyMsg::Char(']') => {
-      let index = (model.ui.active_tab.index() + 1) % 5
+    @pippa.KeyMsg::Modified("shift", "tab") | @pippa.KeyMsg::Char('[') => {
+      let index = (model.ui.active_tab.index() + 4) % 5
       (set_tab(model, Tab::from_index(index).unwrap_or(Overview)), [])
     }
     @pippa.KeyMsg::Char('j') | @pippa.KeyMsg::Special("down") =>

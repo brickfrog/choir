@@ -525,14 +525,14 @@ fn tab_bar(model : Model) -> String {
       Log => model.ui.badge_log
       Overview => false
     }
-    let label = (i + 1).to_string() +
-      ":" +
-      tab.title() +
-      (if badge { paint("●", c_red()) } else { "" })
+    let label = tab.title() + (if badge { paint("●", c_red()) } else { "" })
     if tab == model.ui.active_tab {
       parts.push(@pippa.style().reverse().bold().render(" " + label + " "))
     } else {
       parts.push(paint(" " + label + " ", c_dim()))
+    }
+    if i < 4 {
+      parts.push(paint("·", c_dim()))
     }
   }
   @pippa.row(parts)
@@ -584,10 +584,7 @@ fn footer_line(model : Model) -> String {
   if model.ui.status_line != "" {
     return paint(model.ui.status_line, c_yellow())
   }
-  paint(
-    "[1-5] tabs · [j/k] move · [enter] focus · [m]erge · [s]uspend · [d]iff · [f]ollow · [/] filter · [L]og · [?] help · [q]uit",
-    c_dim(),
-  )
+  paint("? help · q quit", c_dim())
 }
 
 ///|
@@ -910,30 +907,51 @@ fn view_log(model : Model) -> String {
 
 ///|
 fn view_help(model : Model) -> String {
-  let width = model.ui.width
-  panel(
-    "help",
+  // Pop-out modal: a centered floating panel over the content area.
+  let modal_width = if model.ui.width < 64 { model.ui.width } else { 64 }
+  let modal = panel(
+    "keys",
     [
-      "1-5        switch tab ([ and ] cycle)", "j/k, ↑/↓   move selection / scroll log",
-      "enter      focus selected leaf's zellij pane", "m          merge selected PR (daemon merge_pr; confirm y/n)",
-      "s          suspend selected leaf (daemon suspend; confirm y/n)", "d          diff of selected PR in pager (gh pr diff)",
-      "f          toggle log follow", "/          filter (agent=, tool=, level=, or substring)",
-      "L          jump to log tab", "?          this help (any key closes)", "q, ctrl+c  quit",
-      "", "the TUI is a remote control: every action is a daemon command;", "zellij is still the TV.",
+      "tab / shift-tab   switch tab ([ and ] also cycle)",
+      "j/k, \u{2191}/\u{2193}          move selection / scroll log",
+      "enter             focus selected leaf's zellij pane",
+      "m                 merge selected PR (confirm y/n)",
+      "s                 suspend selected leaf (confirm y/n)",
+      "d                 diff of selected PR in pager",
+      "f                 toggle log follow",
+      "/                 filter (agent=, tool=, level=, text)",
+      "L                 jump to log tab",
+      "q, ctrl+c         quit",
+      "",
+      paint("any key closes this panel", c_dim()),
     ],
-    width,
+    modal_width,
+  )
+  let content_height = if model.ui.height > 6 {
+    model.ui.height - 4
+  } else {
+    16
+  }
+  @pippa.place(
+    model.ui.width,
+    content_height,
+    modal,
+    align=@pippa.Align::Center,
+    valign=@pippa.VerticalAlign::Middle,
   )
 }
 
 ///|
 /// The pure top-level view.
 pub fn view_model(model : Model) -> String {
+  let width = model.ui.width
+  let clip = fn(line : String) -> String { @pippa.truncate(line, width) }
   if model.ui.show_help {
     return @pippa.lines([
-      header_line(model),
-      tab_bar(model),
+      clip(header_line(model)),
+      clip(tab_bar(model)),
       view_help(model),
-      footer_line(model),
+      clip(footer_line(model)),
     ])
   }
   let tab_view = match model.ui.active_tab {
@@ -944,9 +962,9 @@ pub fn view_model(model : Model) -> String {
     Log => view_log(model)
   }
   @pippa.lines([
-    header_line(model),
-    tab_bar(model),
+    clip(header_line(model)),
+    clip(tab_bar(model)),
     tab_view,
-    footer_line(model),
+    clip(footer_line(model)),
   ])
 }

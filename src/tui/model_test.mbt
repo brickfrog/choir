@@ -307,20 +307,26 @@ test "enter focuses the selected leaf's zellij pane" {
 }
 
 ///|
-test "tab keys switch tabs and clear badges" {
+test "tab key cycles tabs and clears badges" {
   let model = loaded_model()
-  let badged = { ..model, ui: { ..model.ui, badge_prs: true } }
-  let (on_prs, _) = @tui.update_model(
+  let badged = { ..model, ui: { ..model.ui, badge_beads: true } }
+  // Tab → next tab (beads), clearing its badge; shift-tab → back.
+  let (on_beads, _) = @tui.update_model(
     badged,
-    @tui.Msg::KeyInput(@pippa.KeyMsg::Char('4')),
+    @tui.Msg::KeyInput(@pippa.KeyMsg::Special("tab")),
   )
-  @debug.assert_eq(on_prs.ui.active_tab, @tui.Tab::Prs)
-  assert_eq(on_prs.ui.badge_prs, false)
+  @debug.assert_eq(on_beads.ui.active_tab, @tui.Tab::Beads)
+  assert_eq(on_beads.ui.badge_beads, false)
+  let (back, _) = @tui.update_model(
+    on_beads,
+    @tui.Msg::KeyInput(@pippa.KeyMsg::Modified("shift", "tab")),
+  )
+  @debug.assert_eq(back.ui.active_tab, @tui.Tab::Overview)
   let (cycled, _) = @tui.update_model(
-    on_prs,
+    on_beads,
     @tui.Msg::KeyInput(@pippa.KeyMsg::Char(']')),
   )
-  @debug.assert_eq(cycled.ui.active_tab, @tui.Tab::Log)
+  @debug.assert_eq(cycled.ui.active_tab, @tui.Tab::Agents)
   let (quit_model, quit_effects) = @tui.update_model(
     cycled,
     @tui.Msg::KeyInput(@pippa.KeyMsg::Char('q')),
@@ -346,7 +352,7 @@ test "overview render shows mockup landmarks at fixed width" {
   assert_true(rendered.contains("active 2"))
   assert_true(rendered.contains("tracked_prs 1"))
   assert_true(rendered.contains("uds: connected"))
-  assert_true(rendered.contains("[q]uit"))
+  assert_true(rendered.contains("? help"))
 }
 
 ///|
