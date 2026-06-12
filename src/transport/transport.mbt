@@ -13,6 +13,7 @@ pub fn parse_request(data : String) -> Result[@types.Request, String] {
     Some(String("tl")) => @types.Role::TL
     Some(String("dev")) => @types.Role::Dev
     Some(String("worker")) => @types.Role::Worker
+    Some(String("operator")) => @types.Role::Operator
     Some(String(r)) => return Err("invalid role: \{r}")
     _ => return Err("missing field: role")
   }

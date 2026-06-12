@@ -75,6 +75,10 @@ fn parse_evidence_review_state(s : String) -> EvidenceReviewState? {
 pub(all) enum MergeExecutionMode {
   Manual
   ServerAutomerge
+  /// Merge initiated by the human operator through the TUI remote control
+  /// (Operator role over the wire). Extends the existing operator-mode
+  /// stamping rather than forking a parallel mechanism.
+  OperatorTui
 } derive(Debug, Eq)
 
 ///|
@@ -82,6 +86,7 @@ pub fn MergeExecutionMode::to_wire_string(self : MergeExecutionMode) -> String {
   match self {
     Manual => "manual"
     ServerAutomerge => "server_automerge"
+    OperatorTui => "operator"
   }
 }
 
@@ -95,6 +100,7 @@ fn parse_merge_execution_mode(s : String) -> MergeExecutionMode? {
   match s {
     "manual" => Some(Manual)
     "server_automerge" => Some(ServerAutomerge)
+    "operator" => Some(OperatorTui)
     _ => None
   }
 }

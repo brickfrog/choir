@@ -73,12 +73,7 @@ pub fn HookEvent::from_wire_name(name : String) -> HookEvent? {
 
 ///|
 fn role_wire_name(r : @types.Role) -> String {
-  match r {
-    Root => "root"
-    TL => "tl"
-    Dev => "dev"
-    Worker => "worker"
-  }
+  r.to_wire_string()
 }
 
 ///|

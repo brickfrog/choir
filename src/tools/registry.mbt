@@ -79,7 +79,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     tool_def(
       "merge_pr",
       "Merge a child's PR; optional args: parent_branch (defaults to main), caller_id",
-      [@types.Role::Root, @types.Role::TL],
+      [@types.Role::Root, @types.Role::TL, @types.Role::Operator],
     ),
     tool_def(
       "track_pr",
@@ -106,6 +106,18 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       "status_bar_state",
       "Read schema-versioned per-pane status-bar snapshot for zjbar polling",
       all_roles,
+      read_only=true,
+    ),
+    tool_def(
+      "tui_snapshot",
+      "Read the canonical full-state TUI snapshot (agents, tracked PRs, poller vitals, journal seq, recent events). Zero network I/O.",
+      [@types.Role::Root, @types.Role::TL, @types.Role::Operator],
+      read_only=true,
+    ),
+    tool_def(
+      "tui_events_since",
+      "Read journal events with seq > cursor (bounded batch) plus the latest seq; reports a stale cursor when rotation discarded the gap.",
+      [@types.Role::Root, @types.Role::TL, @types.Role::Operator],
       read_only=true,
     ),
     tool_def(
@@ -238,7 +250,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     tool_def(
       "suspend",
       "Suspend a child agent: transitions Active → Suspended, pausing poll delivery and the idle watchdog for that agent until `resume` is called. Use when handing the worktree back to a human for manual intervention.",
-      [@types.Role::Root, @types.Role::TL],
+      [@types.Role::Root, @types.Role::TL, @types.Role::Operator],
     ),
     tool_def(
       "resume",
@@ -250,6 +262,11 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     tools.set(def.name, def)
   }
   { tools, }
+}
+
+///|
+pub fn ToolRegistry::tool_names(self : ToolRegistry) -> Array[String] {
+  self.tools.keys().collect()
 }
 
 ///|

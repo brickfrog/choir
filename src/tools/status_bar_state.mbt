@@ -688,12 +688,7 @@ pub fn resolve_zellij_pane_id(
 
 ///|
 pub fn role_to_wire_string(role : @types.Role) -> String {
-  match role {
-    @types.Role::Root => "root"
-    @types.Role::TL => "tl"
-    @types.Role::Dev => "dev"
-    @types.Role::Worker => "worker"
-  }
+  role.to_wire_string()
 }
 
 ///|
