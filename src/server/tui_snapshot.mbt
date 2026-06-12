@@ -369,7 +369,7 @@ fn tui_beads_list_commands(project_dir : String) -> Array[@workspace.Command] {
 pub async fn ServerState::refresh_tui_beads_cache_if_stale(
   self : ServerState,
   now_ms : Int64,
-  bd_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout_with_stderr_on_error,
+  bd_capture : async (@workspace.Command) -> (Int, String),
 ) -> Unit {
   match self.tui_beads_cache.taken_at_ms {
     Some(taken) if now_ms - taken < tui_beads_cache_ttl_ms => return
@@ -438,7 +438,7 @@ pub async fn ServerState::refresh_tui_beads_cache_if_stale(
 /// resolved once per server process via local git metadata (no network).
 pub async fn ServerState::tui_default_branch_cached(
   self : ServerState,
-  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+  capture : async (@workspace.Command) -> (Int, String),
 ) -> String {
   if !self.config.pr_policy.skip_copilot_on_feature_branch {
     return ""
