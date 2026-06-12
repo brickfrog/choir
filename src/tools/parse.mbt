@@ -1580,8 +1580,6 @@ fn parse_register_args(
         @types.Role::TL => @types.AgentType::Claude
         @types.Role::Dev => @types.AgentType::Codex
         @types.Role::Worker => @types.AgentType::Codex
-        // Operator never registers; total-match fallback only.
-        @types.Role::Operator => @types.AgentType::Unknown
       }
   }
   let spawn_depth = match tool_args_get(args, "spawn_depth") {

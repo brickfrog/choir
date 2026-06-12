@@ -688,7 +688,12 @@ pub fn resolve_zellij_pane_id(
 
 ///|
 pub fn role_to_wire_string(role : @types.Role) -> String {
-  role.to_wire_string()
+  match role {
+    @types.Role::Root => "root"
+    @types.Role::TL => "tl"
+    @types.Role::Dev => "dev"
+    @types.Role::Worker => "worker"
+  }
 }
 
 ///|
@@ -875,23 +880,39 @@ fn status_bar_pane_from_entry(
     return None
   }
   let workflow = entry.lifecycle.workflow
-  // Projection of the shared status core — see status_core.mbt.
-  let derived = derive_agent_status(
-    agent_id, workflow, poller_tracked, tracked_by_agent,
+  let workflow_pr_number = status_bar_workflow_pr_number(workflow)
+  let tracked = status_bar_tracked_for_workflow(
+    poller_tracked, agent_id, workflow_pr_number, tracked_by_agent,
   )
+  let pr_number = match workflow_pr_number {
+    Some(value) => Some(value)
+    None =>
+      match tracked {
+        Some(value) => status_bar_positive_pr_number(value.pr_number)
+        None => None
+      }
+  }
+  let unresolved_threads = status_bar_thread_count(pr_number, tracked)
+  let ci_rollup = match tracked {
+    Some(value) => ci_rollup_to_wire_string(value.last_ci_rollup)
+    None => "unknown"
+  }
+  let fixes_pushed_at = match tracked {
+    Some(value) => value.fixes_pushed_at
+    None => 0L
+  }
   Some({
     zellij_pane_id,
     agent_id,
     role: role_to_wire_string(entry.agent.role),
     agent_type,
     lifecycle: lifecycle_to_wire_string(workflow),
-    pr_number: derived.pr_number,
-    unresolved_threads: derived.unresolved_threads,
-    ci_rollup: match derived.ci_rollup {
-      Some(value) => ci_rollup_to_wire_string(value)
-      None => "unknown"
-    },
-    attention_needed: derived.attention,
+    pr_number,
+    unresolved_threads,
+    ci_rollup,
+    attention_needed: pane_needs_attention(
+      workflow, fixes_pushed_at, unresolved_threads,
+    ),
     parent_agent_id: status_bar_parent_agent_id(entry.agent.parent),
     last_activity_unix: @types.non_negative_i64(
       entry.lifecycle.last_updated_unix_sec,

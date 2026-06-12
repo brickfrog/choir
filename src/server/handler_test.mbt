@@ -136,7 +136,7 @@ test "poller parent planner does not commit dedup state before delivery" {
 }
 
 ///|
-async test "deliver_pending_poll_events commits dedup after durable parent delivery queues" {
+async test "deliver_pending_poll_events commits dedup only after durable parent delivery succeeds" {
   let pr_number = 1702
   let label = "dedup-parent-durable"
   let (state, _, project_dir) = blocked_gh_automerge_fixture(
@@ -236,17 +236,17 @@ async test "deliver_pending_poll_events commits dedup after durable parent deliv
     )
   }
   refresh_ci_success(100L)
-  assert_eq(parent_messages.length(), 1)
+  assert_eq(parent_messages.length(), 4)
   fail_parent_delivery = false
   refresh_ci_success(120L)
-  assert_eq(parent_messages.length(), 1)
+  assert_eq(parent_messages.length(), 5)
   refresh_ci_success(121L)
-  assert_eq(parent_messages.length(), 1)
+  assert_eq(parent_messages.length(), 5)
   unresolved_threads = 1
   refresh_ci_success(130L)
-  assert_eq(parent_messages.length(), 2)
+  assert_eq(parent_messages.length(), 6)
   refresh_ci_success(491L)
-  assert_eq(parent_messages.length(), 3)
+  assert_eq(parent_messages.length(), 7)
   ignore(@sys.rm_rf(project_dir))
 }
 
@@ -1235,8 +1235,8 @@ async test "refresh_pr_with pending events fires automerge after fixes and CI cl
   assert_eq(merge_seen_count, 0)
   assert_eq(graphql_calls, 1)
   assert_eq(parent_messages.length(), 1)
-  assert_true(inbox_bodies(state)[0].contains("[MERGE READY]"))
-  assert_true(inbox_bodies(state)[0].contains("Merge policy decision: blocked"))
+  assert_true(parent_messages[0].contains("[MERGE READY]"))
+  assert_true(parent_messages[0].contains("Merge policy decision: blocked"))
 
   state.refresh_pr_with_test(
     pr_number,
@@ -1266,7 +1266,7 @@ async test "refresh_pr_with pending events fires automerge after fixes and CI cl
   assert_eq(merge_seen_count, 0)
   assert_eq(graphql_calls, 2)
   assert_eq(parent_messages.length(), 2)
-  assert_true(inbox_bodies(state)[1].contains("[FIXES PUSHED]"))
+  assert_true(parent_messages[1].contains("[FIXES PUSHED]"))
 
   state.refresh_pr_with_test(
     pr_number,
@@ -1302,8 +1302,8 @@ async test "refresh_pr_with pending events fires automerge after fixes and CI cl
   assert_true(graphql_calls > 2)
   assert_true(review_gate_calls > 0)
   assert_eq(parent_messages.length(), 3)
-  assert_true(inbox_bodies(state)[2].contains("[PR MERGED]"))
-  assert_false(inbox_bodies(state).join("\n").contains("[CI LATEST HEAD]"))
+  assert_true(parent_messages[2].contains("[PR MERGED]"))
+  assert_false(parent_messages.join("\n").contains("[CI LATEST HEAD]"))
   assert_true(state.poller.get(pr_number) == None)
   match @phase.read_lifecycle(project_dir, child_id) {
     Some(lifecycle) =>
@@ -1882,7 +1882,7 @@ async test "quiet poller tick automerge sweep finalizes stale-role tracked leaf 
   assert_true(merge_seen)
   assert_true(close_seen)
   let mut delivered_merged = false
-  for message in inbox_bodies(state) {
+  for message in parent_messages {
     if message.contains(
         "[PR MERGED] " +
         child_id +
@@ -2204,7 +2204,7 @@ async test "automerge audit policy block is visible and retryable for same head"
   assert_true(
     delivery_log.contains("automerge audit policy block pr=100 retryable=true"),
   )
-  let parent_text = inbox_bodies(state).join("\n")
+  let parent_text = parent_messages.join("\n")
   assert_true(parent_text.contains("[AUTOMERGE BLOCKED] PR #100"))
   assert_true(parent_text.contains("Run `/audit` until findings_count == 0"))
 }
@@ -2431,9 +2431,9 @@ async test "automerge sweep runs after queued parent rows are delivered" {
     automerge_capture=capture,
   )
   assert_eq(parent_messages.length(), 3)
-  assert_true(inbox_bodies(state)[0].contains("[CI LATEST HEAD]"))
-  assert_true(inbox_bodies(state)[1].contains("[COPILOT ISSUE COMMENT]"))
-  assert_true(inbox_bodies(state)[2].contains("[PR MERGED]"))
+  assert_true(parent_messages[0].contains("[CI LATEST HEAD]"))
+  assert_true(parent_messages[1].contains("[COPILOT ISSUE COMMENT]"))
+  assert_true(parent_messages[2].contains("[PR MERGED]"))
   assert_true(state.poller.get(pr_number) == None)
 }
 
@@ -2781,7 +2781,8 @@ async test "kill_agent auto-closes tracked stale PR and untracks it" {
         cmd.args.contains("zellij-action") &&
         cmd.args.contains("send") {
         let text = cmd.args[cmd.args.length() - 1]
-        if text.contains("[STALE PR CLOSED]") {
+        if text.contains("[STALE PR CLOSED]") &&
+          text.contains("PR #" + pr_number.to_string()) {
           stale_closed_delivered = true
         }
       }
@@ -2814,7 +2815,6 @@ async test "kill_agent auto-closes tracked stale PR and untracks it" {
   assert_true(resp.is_ok())
   assert_true(close_seen)
   assert_true(stale_closed_delivered)
-  assert_true(inbox_count_containing(state, "[STALE PR CLOSED]") >= 1)
   assert_true(state.poller.get(pr_number) == None)
 }
 
@@ -2833,7 +2833,8 @@ async test "kill_agent close failure sends one explicit stale PR failure and sup
         cmd.args.contains("zellij-action") &&
         cmd.args.contains("send") {
         let text = cmd.args[cmd.args.length() - 1]
-        if text.contains("[STALE PR CLOSE FAILED]") {
+        if text.contains("[STALE PR CLOSE FAILED]") &&
+          text.contains("PR #" + pr_number.to_string()) {
           stale_failed_delivered = true
         }
       }
@@ -2864,7 +2865,6 @@ async test "kill_agent close failure sends one explicit stale PR failure and sup
   let resp = state.handle_with_runner_and_capture(req, runner~, capture~)
   assert_true(resp.is_ok())
   assert_true(stale_failed_delivered)
-  assert_true(inbox_count_containing(state, "[STALE PR CLOSE FAILED]") >= 1)
   match state.poller.get(pr_number) {
     Some(tracked) => {
       assert_true(tracked.orphan_notified)
@@ -5293,7 +5293,7 @@ async test "quiet poller tick successful auto resolve retry re-enters automerge 
   assert_eq(resolve_calls, 1)
   assert_true(thread_fetches >= 2)
   assert_true(review_gate_calls > 0)
-  let parent_text = inbox_bodies(state).join("\n")
+  let parent_text = parent_messages.join("\n")
   assert_true(
     state.poller.get(pr_number) == None ||
     parent_text.contains("[THREADS RESOLVED]"),
@@ -5425,7 +5425,7 @@ async test "quiet poller tick refetch count drop re-enters review-thread pipelin
       "automerge gate recheck pr=706 event=review_threads_resolved",
     ),
   )
-  let parent_text = inbox_bodies(state).join("\n")
+  let parent_text = parent_messages.join("\n")
   assert_true(parent_text.contains("[THREADS RESOLVED]"))
   assert_true(
     parent_text.contains("Unresolved inline review threads (GraphQL): 2"),
@@ -5554,7 +5554,7 @@ async test "quiet poller tick never-fetched retry clear re-enters automerge pipe
   assert_true(thread_fetches >= 3)
   assert_true(review_gate_calls > 0)
   assert_true(merge_seen)
-  let parent_text = inbox_bodies(state).join("\n")
+  let parent_text = parent_messages.join("\n")
   assert_false(parent_text.contains("[THREADS RESOLVED]"))
   match state.poller.get(pr_number) {
     Some(tracked) => {
@@ -5646,7 +5646,7 @@ async test "fresh PR first thread refs fetch failure leaves merge gate unknown" 
   )
   assert_eq(graphql_calls, 1)
   assert_false(merge_seen)
-  let parent_text = inbox_bodies(state).join("\n")
+  let parent_text = parent_messages.join("\n")
   assert_true(parent_text.contains("[MERGE READY]"))
   let records = @evidence.load_agent_evidence_records(project_dir, child_id)
   let mut saw_threads_unobserved = false
@@ -6922,7 +6922,7 @@ async test "transport disconnect with live pane re-registers as active lifecycle
   )
   assert_true(register_resp.is_ok())
 
-  assert_eq(inbox_count_containing(state, "[FAILED: " + agent_id + "]"), 0)
+  assert_eq(worker_handoff_count_sent(sent, "[FAILED: " + agent_id + "]"), 0)
   assert_eq(state.registry.get(agent_id).state, @types.AgentState::Active)
   match @phase.read_lifecycle(project_dir, agent_id) {
     Some(
@@ -6988,7 +6988,7 @@ async test "pending transport disconnect with live process does not fail idle MC
     worker_handoff_capture_runner(sent, cmds)
   })
 
-  assert_eq(inbox_count_containing(state, "[FAILED: " + agent_id + "]"), 0)
+  assert_eq(worker_handoff_count_sent(sent, "[FAILED: " + agent_id + "]"), 0)
   assert_eq(state.registry.get(agent_id).state, @types.AgentState::Active)
   @debug.assert_eq(state.registry.is_alive(agent_id), Some(true))
   assert_true(state.pending_disconnects.contains(agent_id))
@@ -7047,7 +7047,7 @@ async test "pending transport disconnect with dead process still fails" {
     worker_handoff_capture_runner(sent, cmds)
   })
 
-  assert_eq(inbox_count_containing(state, "[FAILED: " + agent_id + "]"), 1)
+  assert_eq(worker_handoff_count_sent(sent, "[FAILED: " + agent_id + "]"), 1)
   assert_eq(state.registry.get(agent_id).state, @types.AgentState::Failed)
   @debug.assert_eq(state.registry.is_alive(agent_id), Some(false))
   assert_false(state.pending_disconnects.contains(agent_id))
@@ -7118,7 +7118,7 @@ async test "transport disconnect preserves suspended registry state" {
     worker_handoff_capture_runner(sent, cmds)
   })
 
-  assert_eq(inbox_count_containing(state, "[FAILED: " + agent_id + "]"), 0)
+  assert_eq(worker_handoff_count_sent(sent, "[FAILED: " + agent_id + "]"), 0)
   assert_eq(state.registry.get(agent_id).state, @types.AgentState::Suspended)
   @debug.assert_eq(state.registry.is_alive(agent_id), Some(true))
   match @phase.read_lifecycle(project_dir, agent_id) {
@@ -7320,7 +7320,7 @@ async test "register reconnect preserves suspended registry state" {
     runner=async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
   )
   assert_true(register_resp.is_ok())
-  assert_eq(inbox_count_containing(state, "[FAILED: " + agent_id + "]"), 0)
+  assert_eq(worker_handoff_count_sent(sent, "[FAILED: " + agent_id + "]"), 0)
   assert_eq(state.registry.get(agent_id).state, @types.AgentState::Suspended)
   match @phase.read_lifecycle(project_dir, agent_id) {
     Some({ process: @phase.ProcessState::Connected, .. }) => ()
@@ -7729,7 +7729,7 @@ async test "soft transport disconnect still escalates when idle watchdog expires
   ) {
     worker_handoff_capture_runner(sent, cmds)
   })
-  assert_eq(inbox_count_containing(state, "[FAILED: " + agent_id + "]"), 0)
+  assert_eq(worker_handoff_count_sent(sent, "[FAILED: " + agent_id + "]"), 0)
   match @phase.read_lifecycle(project_dir, agent_id) {
     Some({ process: @phase.ProcessState::Disconnected(..), .. }) => ()
     Some(lifecycle) =>
@@ -7925,7 +7925,8 @@ async test "fail_agent_with_runner injects failure to parent terminal" {
         cmd.args.contains("zellij-action") &&
         cmd.args.contains("send") {
         let text = cmd.args[cmd.args.length() - 1]
-        if text.contains("watchdog timeout") {
+        if text.contains("[from: " + caller_id + "]") &&
+          text.contains("watchdog timeout") {
           injected_failure_msg = true
         }
       }
@@ -7942,7 +7943,6 @@ async test "fail_agent_with_runner injects failure to parent terminal" {
   )
 
   assert_true(injected_failure_msg)
-  assert_true(inbox_count_containing(state, "watchdog timeout") >= 1)
 }
 
 ///|
@@ -8758,35 +8758,6 @@ fn worker_handoff_count_sent(sent : Array[String], needle : String) -> Int {
 }
 
 ///|
-/// Inbox-era assertion: message content no longer travels via send-keys
-/// (panes only receive the fixed check_inbox nudge), so content assertions
-/// look in the daemon-side inbox instead.
-fn inbox_bodies(state : ServerState) -> Array[String] {
-  let out : Array[String] = []
-  for entry in state.inboxes {
-    let (_, messages) = entry
-    for message in messages {
-      out.push(message.body)
-    }
-  }
-  out
-}
-
-///|
-fn inbox_count_containing(state : ServerState, needle : String) -> Int {
-  let mut count = 0
-  for entry in state.inboxes {
-    let (_, messages) = entry
-    for message in messages {
-      if message.body.contains(needle) {
-        count = count + 1
-      }
-    }
-  }
-  count
-}
-
-///|
 test "spawn registration reap predicate only reaps never-registered spawning agents past deadline" {
   assert_true(
     spawn_registration_reap_due(
@@ -9122,11 +9093,11 @@ async test "poller reaps never-registered spawning agent after first-observed de
       )
     None => fail("expected failed lifecycle")
   }
-  assert_eq(inbox_count_containing(state, "[SPAWN REGISTRATION TIMEOUT]"), 1)
-  assert_true(inbox_bodies(state).join("\n").contains(child_id))
-  assert_true(inbox_bodies(state).join("\n").contains("never registered"))
-  assert_true(inbox_bodies(state).join("\n").contains("first_observed=100"))
-  assert_false(inbox_bodies(state).join("\n").contains("first_seen="))
+  assert_eq(worker_handoff_count_sent(sent, "[SPAWN REGISTRATION TIMEOUT]"), 1)
+  assert_true(sent[0].contains(child_id))
+  assert_true(sent[0].contains("never registered"))
+  assert_true(sent[0].contains("first_observed=100"))
+  assert_false(sent[0].contains("first_seen="))
   assert_eq(closed.length(), 1)
   state.process_poller_tick_with_test(
     500L,
@@ -9139,7 +9110,7 @@ async test "poller reaps never-registered spawning agent after first-observed de
     },
     capture=spawn_registration_capture,
   )
-  assert_eq(inbox_count_containing(state, "[SPAWN REGISTRATION TIMEOUT]"), 1)
+  assert_eq(worker_handoff_count_sent(sent, "[SPAWN REGISTRATION TIMEOUT]"), 1)
   assert_eq(closed.length(), 1)
   ignore(@sys.rm_rf(state.config.project_dir))
 }
@@ -9221,17 +9192,13 @@ async test "spawn command failure diagnostic travels dispatch to NeverRegistered
     },
     capture=spawn_registration_capture,
   )
-  assert_eq(inbox_count_containing(state, "[SPAWN REGISTRATION TIMEOUT]"), 1)
-  assert_true(
-    inbox_bodies(state).join("\n").contains("spawn_class=spawn-command-failed"),
-  )
-  assert_true(inbox_bodies(state).join("\n").contains("exit=27"))
-  assert_true(
-    inbox_bodies(state).join("\n").contains("tcp_auth_token=[REDACTED]"),
-  )
-  assert_true(inbox_bodies(state).join("\n").contains("Bearer [REDACTED]"))
-  assert_false(inbox_bodies(state).join("\n").contains("stderr-secret"))
-  assert_false(inbox_bodies(state).join("\n").contains("bearer-secret"))
+  assert_eq(worker_handoff_count_sent(sent, "[SPAWN REGISTRATION TIMEOUT]"), 1)
+  assert_true(sent[0].contains("spawn_class=spawn-command-failed"))
+  assert_true(sent[0].contains("exit=27"))
+  assert_true(sent[0].contains("tcp_auth_token=[REDACTED]"))
+  assert_true(sent[0].contains("Bearer [REDACTED]"))
+  assert_false(sent[0].contains("stderr-secret"))
+  assert_false(sent[0].contains("bearer-secret"))
   assert_eq(closed.length(), 1)
   ignore(@sys.rm_rf(state.config.project_dir))
 }
@@ -9323,18 +9290,14 @@ async test "successful spawn launch diagnostic travels dispatch to launched time
     },
     capture=spawn_registration_capture,
   )
-  assert_eq(inbox_count_containing(state, "[SPAWN REGISTRATION TIMEOUT]"), 1)
+  assert_eq(worker_handoff_count_sent(sent, "[SPAWN REGISTRATION TIMEOUT]"), 1)
+  assert_true(sent[0].contains("spawn_class=launched-but-never-registered"))
   assert_true(
-    inbox_bodies(state)
-    .join("\n")
-    .contains("spawn_class=launched-but-never-registered"),
+    sent[0].contains(
+      "spawn commands succeeded but agent never registered within 180s",
+    ),
   )
-  assert_true(
-    inbox_bodies(state)
-    .join("\n")
-    .contains("spawn commands succeeded but agent never registered within 180s"),
-  )
-  assert_false(inbox_bodies(state).join("\n").contains("spawn-command-failed"))
+  assert_false(sent[0].contains("spawn-command-failed"))
   assert_eq(closed.length(), 1)
   ignore(@sys.rm_rf(state.config.project_dir))
 }
@@ -9375,19 +9338,13 @@ async test "spawn registration timeout reports captured spawn command failure ca
     capture=spawn_registration_capture,
   )
 
-  assert_eq(inbox_count_containing(state, "[SPAWN REGISTRATION TIMEOUT]"), 1)
-  assert_true(
-    inbox_bodies(state).join("\n").contains("spawn_class=spawn-command-failed"),
-  )
-  assert_true(inbox_bodies(state).join("\n").contains("command_index=7"))
-  assert_true(inbox_bodies(state).join("\n").contains("exit=27"))
-  assert_true(inbox_bodies(state).join("\n").contains("zellij action new-tab"))
-  assert_true(
-    inbox_bodies(state).join("\n").contains("zellij stderr: tab failed"),
-  )
-  assert_false(
-    inbox_bodies(state).join("\n").contains("launched-but-never-registered"),
-  )
+  assert_eq(worker_handoff_count_sent(sent, "[SPAWN REGISTRATION TIMEOUT]"), 1)
+  assert_true(sent[0].contains("spawn_class=spawn-command-failed"))
+  assert_true(sent[0].contains("command_index=7"))
+  assert_true(sent[0].contains("exit=27"))
+  assert_true(sent[0].contains("zellij action new-tab"))
+  assert_true(sent[0].contains("zellij stderr: tab failed"))
+  assert_false(sent[0].contains("launched-but-never-registered"))
   assert_eq(closed.length(), 1)
   ignore(@sys.rm_rf(state.config.project_dir))
 }
@@ -9427,18 +9384,14 @@ async test "spawn registration timeout reports launched but never registered cau
     capture=spawn_registration_capture,
   )
 
-  assert_eq(inbox_count_containing(state, "[SPAWN REGISTRATION TIMEOUT]"), 1)
+  assert_eq(worker_handoff_count_sent(sent, "[SPAWN REGISTRATION TIMEOUT]"), 1)
+  assert_true(sent[0].contains("spawn_class=launched-but-never-registered"))
   assert_true(
-    inbox_bodies(state)
-    .join("\n")
-    .contains("spawn_class=launched-but-never-registered"),
+    sent[0].contains(
+      "spawn commands succeeded but agent never registered within 180s",
+    ),
   )
-  assert_true(
-    inbox_bodies(state)
-    .join("\n")
-    .contains("spawn commands succeeded but agent never registered within 180s"),
-  )
-  assert_false(inbox_bodies(state).join("\n").contains("spawn-command-failed"))
+  assert_false(sent[0].contains("spawn-command-failed"))
   assert_eq(closed.length(), 1)
   ignore(@sys.rm_rf(state.config.project_dir))
 }
@@ -9562,7 +9515,7 @@ async test "check_idle_agents emits stalled parent event for merge-ready ReviewO
     worker_no_handoff_escalate_sec=120L,
   )
   assert_eq(
-    inbox_count_containing(state, "[LEAF STALLED AFTER FIX-PUSH] dev-ready"),
+    worker_handoff_count_sent(sent, "[LEAF STALLED AFTER FIX-PUSH] dev-ready"),
     0,
   )
   state.check_idle_agents(
@@ -9573,14 +9526,14 @@ async test "check_idle_agents emits stalled parent event for merge-ready ReviewO
     worker_no_handoff_escalate_sec=120L,
   )
   assert_eq(
-    inbox_count_containing(state, "[LEAF POST-FIX-PUSH HANDOFF] dev-ready"),
+    worker_handoff_count_sent(sent, "[LEAF POST-FIX-PUSH HANDOFF] dev-ready"),
     1,
   )
   assert_eq(
-    inbox_count_containing(state, "[LEAF STALLED AFTER FIX-PUSH] dev-ready"),
+    worker_handoff_count_sent(sent, "[LEAF STALLED AFTER FIX-PUSH] dev-ready"),
     1,
   )
-  assert_eq(inbox_count_containing(state, "[WATCHDOG] agent"), 0)
+  assert_eq(worker_handoff_count_sent(sent, "[WATCHDOG] agent"), 0)
 }
 
 ///|
@@ -9651,7 +9604,7 @@ async test "watchdog kill records merge-ready dev leaf without notify as failure
       fail("expected failed lifecycle, got: " + other.to_json().stringify())
     None => fail("expected lifecycle")
   }
-  assert_eq(inbox_count_containing(state, "[WATCHDOG] agent " + leaf_id), 1)
+  assert_eq(worker_handoff_count_sent(sent, "[WATCHDOG] agent " + leaf_id), 1)
   assert_eq(state.handoff_delivered.contains(leaf_id), false)
 }
 
@@ -9728,11 +9681,11 @@ async test "check_idle_agents does not stall prodded leaf after fresh pane outpu
     worker_no_handoff_escalate_sec=120L,
   )
   assert_eq(
-    inbox_count_containing(state, "[LEAF POST-FIX-PUSH HANDOFF] dev-active"),
+    worker_handoff_count_sent(sent, "[LEAF POST-FIX-PUSH HANDOFF] dev-active"),
     1,
   )
   assert_eq(
-    inbox_count_containing(state, "[LEAF STALLED AFTER FIX-PUSH] dev-active"),
+    worker_handoff_count_sent(sent, "[LEAF STALLED AFTER FIX-PUSH] dev-active"),
     0,
   )
 }
@@ -9773,8 +9726,8 @@ async test "check_idle_agents does not prod non-ReviewOwned dev leaf" {
     worker_no_handoff_prod_sec=120L,
     worker_no_handoff_escalate_sec=120L,
   )
-  assert_eq(inbox_count_containing(state, "[LEAF POST-FIX-PUSH HANDOFF]"), 0)
-  assert_eq(inbox_count_containing(state, "[LEAF STALLED AFTER FIX-PUSH]"), 0)
+  assert_eq(worker_handoff_count_sent(sent, "[LEAF POST-FIX-PUSH HANDOFF]"), 0)
+  assert_eq(worker_handoff_count_sent(sent, "[LEAF STALLED AFTER FIX-PUSH]"), 0)
 }
 
 ///|
@@ -9820,7 +9773,7 @@ async test "check_idle_agents prods working dev leaf before TDD handoff then not
     worker_no_handoff_prod_sec=120L,
     worker_no_handoff_escalate_sec=120L,
   )
-  assert_eq(inbox_count_containing(state, "tdd_intent"), 1)
+  assert_eq(worker_handoff_count_sent(sent, "tdd_intent"), 1)
   assert_true(
     state.worker_no_handoff_prodded_at.contains("leaf-pre-tdd-stall:" + leaf_id),
   )
@@ -9833,12 +9786,12 @@ async test "check_idle_agents prods working dev leaf before TDD handoff then not
     worker_no_handoff_escalate_sec=120L,
   )
   assert_eq(
-    inbox_count_containing(
-      state, "[LEAF STALLED BEFORE TDD/file_pr] dev-pre-tdd",
+    worker_handoff_count_sent(
+      sent, "[LEAF STALLED BEFORE TDD/file_pr] dev-pre-tdd",
     ),
     1,
   )
-  assert_eq(inbox_count_containing(state, "[WATCHDOG] agent"), 0)
+  assert_eq(worker_handoff_count_sent(sent, "[WATCHDOG] agent"), 0)
 }
 
 ///|
@@ -9884,7 +9837,7 @@ async test "check_idle_agents keeps pre-TDD and post-fix leaf watchdog state sep
     worker_no_handoff_prod_sec=120L,
     worker_no_handoff_escalate_sec=120L,
   )
-  assert_eq(inbox_count_containing(state, "tdd_intent"), 1)
+  assert_eq(worker_handoff_count_sent(sent, "tdd_intent"), 1)
   assert_true(
     state.worker_no_handoff_prodded_at.contains("leaf-pre-tdd-stall:" + leaf_id),
   )
@@ -9921,11 +9874,11 @@ async test "check_idle_agents keeps pre-TDD and post-fix leaf watchdog state sep
     worker_no_handoff_escalate_sec=120L,
   )
   assert_eq(
-    inbox_count_containing(state, "[LEAF POST-FIX-PUSH HANDOFF] dev-split"),
+    worker_handoff_count_sent(sent, "[LEAF POST-FIX-PUSH HANDOFF] dev-split"),
     1,
   )
   assert_eq(
-    inbox_count_containing(state, "[LEAF STALLED AFTER FIX-PUSH] dev-split"),
+    worker_handoff_count_sent(sent, "[LEAF STALLED AFTER FIX-PUSH] dev-split"),
     0,
   )
   assert_true(
@@ -9942,7 +9895,7 @@ async test "check_idle_agents keeps pre-TDD and post-fix leaf watchdog state sep
     worker_no_handoff_escalate_sec=120L,
   )
   assert_eq(
-    inbox_count_containing(state, "[LEAF STALLED AFTER FIX-PUSH] dev-split"),
+    worker_handoff_count_sent(sent, "[LEAF STALLED AFTER FIX-PUSH] dev-split"),
     1,
   )
 }
@@ -9977,8 +9930,6 @@ async test "check_idle_agents prods worker then emits one stalled no-handoff eve
     worker_no_handoff_prod_sec=120L,
     worker_no_handoff_escalate_sec=120L,
   )
-  // Direct steering prod (channel (a)): typed into the worker pane, not
-  // routed through the inbox.
   assert_eq(
     worker_handoff_count_sent(sent, "printed output is not the handoff"),
     1,
@@ -10004,8 +9955,8 @@ async test "check_idle_agents prods worker then emits one stalled no-handoff eve
     worker_no_handoff_escalate_sec=120L,
   )
   assert_eq(
-    inbox_count_containing(
-      state, "[WORKER STALLED — no handoff] sarcasmotron",
+    worker_handoff_count_sent(
+      sent, "[WORKER STALLED — no handoff] sarcasmotron",
     ),
     1,
   )
@@ -10081,8 +10032,6 @@ async test "notify_parent marks handoff delivered and suppresses worker prod" {
   })
   assert_true(resp.is_ok())
   assert_true(state.handoff_delivered.contains(worker_id))
-  assert_true(inbox_count_containing(state, "review complete") >= 1)
-  assert_eq(state.pending_inbox_count(parent_id), 0)
 
   let start = @poller.now_sec()
   state.check_idle_agents(
@@ -10100,7 +10049,7 @@ async test "notify_parent marks handoff delivered and suppresses worker prod" {
     worker_no_handoff_escalate_sec=120L,
   )
   assert_eq(
-    inbox_count_containing(state, "printed output is not the handoff"),
+    worker_handoff_count_sent(sent, "printed output is not the handoff"),
     0,
   )
 }
@@ -10136,7 +10085,7 @@ async test "watchdog kill emits worker exited without notify only before handoff
     worker_no_handoff_escalate_sec=0L,
   )
   assert_eq(
-    inbox_count_containing(state, "[WORKER EXITED WITHOUT NOTIFY] worker-a"),
+    worker_handoff_count_sent(sent, "[WORKER EXITED WITHOUT NOTIFY] worker-a"),
     1,
   )
 
@@ -10171,7 +10120,7 @@ async test "watchdog kill emits worker exited without notify only before handoff
     worker_no_handoff_escalate_sec=0L,
   )
   assert_eq(
-    inbox_count_containing(delivered, "[WORKER EXITED WITHOUT NOTIFY]"),
+    worker_handoff_count_sent(delivered_sent, "[WORKER EXITED WITHOUT NOTIFY]"),
     0,
   )
 }
@@ -10197,8 +10146,8 @@ async test "disconnect completing worker emits exited without notify once" {
     worker_handoff_capture_runner(sent, cmds)
   })
   assert_eq(
-    inbox_count_containing(
-      state, "[WORKER EXITED WITHOUT NOTIFY] worker-disconnect",
+    worker_handoff_count_sent(
+      sent, "[WORKER EXITED WITHOUT NOTIFY] worker-disconnect",
     ),
     1,
   )
@@ -10225,7 +10174,7 @@ async test "disconnect completing worker emits exited without notify once" {
     worker_handoff_capture_runner(delivered_sent, cmds)
   })
   assert_eq(
-    inbox_count_containing(delivered, "[WORKER EXITED WITHOUT NOTIFY]"),
+    worker_handoff_count_sent(delivered_sent, "[WORKER EXITED WITHOUT NOTIFY]"),
     0,
   )
 }

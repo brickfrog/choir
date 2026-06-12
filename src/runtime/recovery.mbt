@@ -370,8 +370,6 @@ pub fn default_agent_type(role : @types.Role) -> @types.AgentType {
     @types.Role::TL => @types.AgentType::Claude
     @types.Role::Dev => @types.AgentType::Codex
     @types.Role::Worker => @types.AgentType::Codex
-    // Operator is a human at the TUI, not a model-backed agent.
-    @types.Role::Operator => @types.AgentType::Unknown
   }
 }
 

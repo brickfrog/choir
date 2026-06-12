@@ -315,11 +315,6 @@ pub struct ServerState {
   pane_watcher : @runtime.PaneWatcher
   recovery_provider : @runtime.RecoveryProvider
   otlp_exporter : OtlpSpanExporter?
-  journal : TuiJournal
-  mut poller_vitals : @types.PollerVitals
-  tui_beads_cache : TuiBeadsCache
-  mut tui_default_branch : String?
-  inboxes : Map[String, Array[@types.InboxMessage]]
   append_file : (String, String) -> Bool
   read_file : (String) -> String
   write_file_atomic : (String, String) -> Bool
@@ -448,17 +443,6 @@ pub fn ServerState::new(
       config,
       factory=otlp_exporter_factory,
     ),
-    journal: TuiJournal::open(config.project_dir, read_file=boot_read_file),
-    poller_vitals: @types.PollerVitals::initial(),
-    tui_beads_cache: TuiBeadsCache::new(),
-    tui_default_branch: None,
-    inboxes: load_inboxes_for_boot(
-      config.project_dir,
-      path_exists,
-      boot_read_file,
-      write_file_atomic,
-      now_unix_sec,
-    ),
     append_file: default_append_file_sync,
     read_file: default_read_file,
     write_file_atomic: default_write_file_atomic,
@@ -519,20 +503,16 @@ pub fn ServerState::record_leaf_tdd_state(
   agent_id : String,
   state : @types.LeafTddState,
 ) -> Unit {
-  let mut changed = true
   match self.leaf_tdd_phases.get(agent_id) {
     Some(existing) =>
       if existing == state.phase {
-        changed = false
+        ()
       } else {
         self.clear_leaf_no_handoff_watchdog_state(agent_id)
       }
     None => self.clear_leaf_no_handoff_watchdog_state(agent_id)
   }
   self.leaf_tdd_phases.set(agent_id, state.phase)
-  if changed {
-    self.emit_tui_tdd_phase_changed(agent_id, state.phase)
-  }
 }
 
 ///|

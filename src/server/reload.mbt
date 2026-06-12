@@ -601,13 +601,7 @@ pub fn ServerState::handle_server_reload_request(
   // version's build identity). Reflect this honestly in the status so a
   // success response is not read as "the new binary is now running".
   match self.persist_reload_snapshot(binary_path) {
-    Ok(_) => {
-      // Journal the graceful shutdown before the response is written; the
-      // re-exec'd server recovers the seq from the journal tail, so TUI
-      // cursors survive the reload.
-      self.emit_tui_event(
-        @types.TuiEvent::DaemonShutdown(reason="server_reload"),
-      )
+    Ok(_) =>
       @types.Response::ok_values({
         "status": ServerReloadStatus::ReloadScheduled.to_wire_string().to_json(),
         "binary_path": binary_path.to_json(),
@@ -621,7 +615,6 @@ pub fn ServerState::handle_server_reload_request(
           "in_flight_tool_calls_may_be_dropped_retry_after_reload", "verify_reload_landed_via_followup_probe",
         ].to_json(),
       })
-    }
     Err(e) => @types.Response::Err(e.message())
   }
 }

@@ -379,19 +379,12 @@ pub async fn execute_delivery(
   runner : async (Array[@workspace.Command]) -> Array[Int],
   project_dir? : String = ".",
   sleep_fn? : async (Int) -> Unit = @async.sleep,
-  retry_local_terminal? : Bool = true,
 ) -> Result[Unit, @types.ChoirError] {
   fn ensure_success(
     statuses : Array[Int],
     cmd : @workspace.Command,
   ) -> Result[Unit, @types.ChoirError] {
-    if statuses.length() == 0 {
-      Err(
-        @types.ChoirError::transport_error(
-          "delivery command failed (no status returned): " + cmd.to_string(),
-        ),
-      )
-    } else if statuses[0] == 0 {
+    if statuses.length() == 0 || statuses[0] == 0 {
       Ok(())
     } else {
       Err(
@@ -510,28 +503,6 @@ pub async fn execute_delivery(
     log_delivery_failure(target, last_error.message())
     Err(last_error)
   }
-  async fn run_once(
-    cmd : @workspace.Command,
-    target : String,
-  ) -> Result[Unit, @types.ChoirError] {
-    let statuses = runner([cmd]) catch {
-      e => {
-        let err = @types.ChoirError::transport_error(e.to_string())
-        log_delivery_failure(target, err.message())
-        return Err(err)
-      }
-    }
-    match ensure_success(statuses, cmd) {
-      Ok(_) => {
-        log_delivery_success(target)
-        Ok(())
-      }
-      Err(e) => {
-        log_delivery_failure(target, e.message())
-        Err(e)
-      }
-    }
-  }
   match delivery {
     @message.DeliveryMethod::TeamsInbox(path, json, fallback_target~) =>
       match teams_inbox_write(path, json) {
@@ -567,22 +538,11 @@ pub async fn execute_delivery(
         @sys.append_file_sync(
           log_path,
           @poller.delivery_log_line(
-            "[delivery] " +
-            (if retry_local_terminal {
-              "dispatch-with-retry"
-            } else {
-              "dispatch-single-attempt"
-            }) +
-            " target=" +
-            target.to_string(),
+            "[delivery] dispatch-with-retry target=" + target.to_string(),
           ),
         ),
       )
-      if retry_local_terminal {
-        run_with_retries(cmd, target.to_string())
-      } else {
-        run_once(cmd, target.to_string())
-      }
+      run_with_retries(cmd, target.to_string())
     }
     @message.DeliveryMethod::TcpPush(_, _) => Ok(()) // Phase 2
     @message.DeliveryMethod::UdsHttp(sock_path, body) => {

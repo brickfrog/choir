@@ -6,7 +6,6 @@ pub fn Role::to_wire_string(self : Role) -> String {
     TL => "tl"
     Dev => "dev"
     Worker => "worker"
-    Operator => "operator"
   }
 }
 
@@ -17,7 +16,6 @@ pub fn Role::try_parse_wire(s : String) -> Result[Role, ChoirError] {
     "tl" => Ok(TL)
     "dev" => Ok(Dev)
     "worker" => Ok(Worker)
-    "operator" => Ok(Operator)
     _ => Err(ChoirError::config_error("unknown role: " + s))
   }
 }

@@ -284,47 +284,6 @@ test "registry set alive" {
 }
 
 ///|
-test "registry clear emits AgentRemoved for every registered agent" {
-  let reg = @registry.AgentRegistry::new()
-  let removed : Array[String] = []
-  reg.set_observer(fn(event) {
-    match event {
-      @types.TuiEvent::AgentRemoved(agent_id~) => removed.push(agent_id)
-      _ => ()
-    }
-  })
-  let first : @types.Agent = {
-    agent_id: "main.clear-a",
-    role: @types.Role::Dev,
-    agent_type: @types.AgentType::Claude,
-    parent: None,
-    workspace: ".choir/worktrees/clear-a",
-    branch: "main.clear-a",
-    terminal_target: None,
-    host: @types.Host::Local,
-    spawn_depth: 0,
-    state: @types.AgentState::Active,
-  }
-  let second : @types.Agent = {
-    ..first,
-    agent_id: "main.clear-b",
-    workspace: ".choir/worktrees/clear-b",
-    branch: "main.clear-b",
-  }
-  registry_test_ignore(() => reg.insert(first))
-  registry_test_ignore(() => reg.insert(second))
-  reg.clear()
-  assert_eq(reg.list().length(), 0)
-  assert_eq(removed.length(), 2)
-  let seen : Map[String, Bool] = {}
-  for agent_id in removed {
-    seen.set(agent_id, true)
-  }
-  assert_true(seen.contains("main.clear-a"))
-  assert_true(seen.contains("main.clear-b"))
-}
-
-///|
 test "registry snapshot write read round trip" {
   let project_dir = "/tmp/choir-registry-snapshot-" +
     @sys.get_pid().to_string() +

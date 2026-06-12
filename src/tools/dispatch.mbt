@@ -658,7 +658,6 @@ fn notify_parent_blocked_parent_warn_send_plan(
   caller_id : String,
   pr_number : Int,
   gh_thread_fetch_failed : Bool,
-  plan_delivery_fn? : (@types.Agent, String, String, @types.Status) -> @message.DeliveryMethod = @message.plan_delivery,
 ) -> SendMessagePlan raise @types.ChoirError {
   let parent = resolve_parent_for_notify(project_dir, session, reg, caller_id)
   let body = if gh_thread_fetch_failed {
@@ -680,7 +679,6 @@ fn notify_parent_blocked_parent_warn_send_plan(
     body,
     @types.Status::Info,
     Some(Ok(parent)),
-    plan_delivery_fn~,
   )
 }
 
@@ -828,20 +826,6 @@ async fn resolve_my_review_threads_self_resolve_error(
 }
 
 ///|
-async fn default_interpret_planned_delivery(
-  _recipient : @types.Agent,
-  _sender_id : String,
-  _body : String,
-  _status : @types.Status,
-  delivery : @message.DeliveryMethod,
-  project_dir : String,
-  runner : async (Array[@workspace.Command]) -> Array[Int],
-  sleep_fn : async (Int) -> Unit,
-) -> Result[Unit, @types.ChoirError] {
-  execute_delivery(delivery, runner, project_dir~, sleep_fn~)
-}
-
-///|
 /// Server tool dispatch.
 pub async fn dispatch(
   req : ToolRequest,
@@ -850,7 +834,7 @@ pub async fn dispatch(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   git_capture? : async (String, Array[String]) -> String = @exec.capture_stdout,
   capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
-  bd_capture? : async (@workspace.Command) -> (Int, String) = capture,
+  bd_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout_with_stderr_on_error,
   hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
   append_file? : (String, String) -> Bool = @sys.append_file_sync,
   read_file? : (String) -> String = @sys.read_file,
@@ -909,16 +893,6 @@ pub async fn dispatch(
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
   agy_migration_incomplete? : Bool = false,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
-  interpret_planned_delivery? : async (
-    @types.Agent,
-    String,
-    String,
-    @types.Status,
-    @message.DeliveryMethod,
-    String,
-    async (Array[@workspace.Command]) -> Array[Int],
-    async (Int) -> Unit,
-  ) -> Result[Unit, @types.ChoirError] = default_interpret_planned_delivery,
 ) -> @types.Response {
   let ensure_branch_ready = match ensure_branch_ready {
     Some(f) => f
@@ -1454,45 +1428,28 @@ pub async fn dispatch(
           dev_event_on_success~,
           response_ok~
         ) =>
-          match parent_resolution {
-            Some(Ok(parent)) =>
-              match
-                interpret_planned_delivery(
-                  parent,
-                  notify_args.caller_id,
-                  notify_args.message,
-                  notify_args.status,
-                  delivery,
-                  project_dir,
-                  runner,
-                  sleep_fn,
-                ) {
-                Ok(_) => {
-                  apply_dev_event(
-                    project_dir,
-                    notify_args.caller_id,
-                    dev_event_on_success,
-                    registry~,
-                  )
-                  record_handoff_delivered(notify_args.caller_id)
-                  ignore(
-                    mirror_beads_note_for_agent(
-                      project_dir,
-                      registry,
-                      notify_args.caller_id,
-                      "Choir notify_parent: " + notify_args.message,
-                      "notify_parent",
-                      capture,
-                    ),
-                  )
-                  response_ok
-                }
-                Err(e) => @types.Response::Err(e.message())
-              }
-            _ =>
-              @types.Response::Err(
-                "notify_parent parent resolution unavailable",
+          match execute_delivery(delivery, runner, project_dir~, sleep_fn~) {
+            Ok(_) => {
+              apply_dev_event(
+                project_dir,
+                notify_args.caller_id,
+                dev_event_on_success,
+                registry~,
               )
+              record_handoff_delivered(notify_args.caller_id)
+              ignore(
+                mirror_beads_note_for_agent(
+                  project_dir,
+                  registry,
+                  notify_args.caller_id,
+                  "Choir notify_parent: " + notify_args.message,
+                  "notify_parent",
+                  capture,
+                ),
+              )
+              response_ok
+            }
+            Err(e) => @types.Response::Err(e.message())
           }
       }
     }
@@ -1563,55 +1520,18 @@ pub async fn dispatch(
           )
         None => None
       }
-      let plan = send_message_plan(
-        send_args.target_id,
-        send_args.sender_id,
-        send_args.message,
-        send_args.status,
-        registry_lookup,
+      interpret_send_message(
+        send_message_plan(
+          send_args.target_id,
+          send_args.sender_id,
+          send_args.message,
+          send_args.status,
+          registry_lookup,
+        ),
+        project_dir,
+        runner,
+        append_file,
       )
-      match plan {
-        SendMessagePlan::Deliver(delivery~, delivery_log_append~, response_ok~) => {
-          ignore(
-            append_file(
-              project_dir + "/.choir/delivery.log",
-              delivery_log_append,
-            ),
-          )
-          match registry_lookup {
-            Some(Ok(agent)) =>
-              match
-                interpret_planned_delivery(
-                  agent,
-                  send_args.sender_id,
-                  send_args.message,
-                  send_args.status,
-                  delivery,
-                  project_dir,
-                  runner,
-                  sleep_fn,
-                ) {
-                Ok(_) => response_ok
-                Err(e) => {
-                  @moontrace.error("send_message delivery failed", fields=[
-                    @moontrace.field("error", e.message()),
-                  ])
-                  @types.Response::Err(e.message())
-                }
-              }
-            _ =>
-              @types.Response::Err("send_message target resolution unavailable")
-          }
-        }
-        _ =>
-          interpret_send_message(
-            plan,
-            project_dir,
-            runner,
-            append_file,
-            sleep_fn~,
-          )
-      }
     }
     ToolRequest::Shutdown(shutdown_args) =>
       interpret_shutdown(
@@ -2084,7 +2004,6 @@ pub async fn handle_request(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   git_capture? : async (String, Array[String]) -> String = @exec.capture_stdout,
   capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
-  bd_capture? : async (@workspace.Command) -> (Int, String) = capture,
   hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
   ensure_branch_ready? : (async (String, String, String) -> Result[
     Unit,
@@ -2147,16 +2066,6 @@ pub async fn handle_request(
   create_dir_all? : (String) -> Bool = @sys.create_dir_all,
   agy_migration_incomplete? : Bool = false,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
-  interpret_planned_delivery? : async (
-    @types.Agent,
-    String,
-    String,
-    @types.Status,
-    @message.DeliveryMethod,
-    String,
-    async (Array[@workspace.Command]) -> Array[Int],
-    async (Int) -> Unit,
-  ) -> Result[Unit, @types.ChoirError] = default_interpret_planned_delivery,
 ) -> @types.Response {
   let tool_args = tool_args_from_request_args(req.args)
   let mut ran_builtin_dispatch = false
@@ -2242,7 +2151,6 @@ pub async fn handle_request(
                   runner~,
                   git_capture~,
                   capture~,
-                  bd_capture~,
                   hook_capture~,
                   ensure_branch_ready~,
                   ensure_pr~,
@@ -2284,7 +2192,6 @@ pub async fn handle_request(
                   record_handoff_delivered~,
                   agy_migration_incomplete~,
                   sleep_fn~,
-                  interpret_planned_delivery~,
                 )
                 ran_builtin_dispatch = true
                 out

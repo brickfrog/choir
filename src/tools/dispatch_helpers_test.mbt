@@ -88,12 +88,6 @@ async fn runner_always_succeed(cmds : Array[@workspace.Command]) -> Array[Int] {
 }
 
 ///|
-async fn runner_empty_statuses(_cmds : Array[@workspace.Command]) -> Array[Int] {
-  @async.sleep(0)
-  []
-}
-
-///|
 async fn record_sleep_failure(ms : Int) -> Unit {
   ignore(
     @sys.append_file_sync(test_sleep_path("failure"), ms.to_string() + "\n"),
@@ -198,19 +192,6 @@ async test "execute_delivery logs successful teams inbox delivery" {
   let log = @sys.read_file(project_dir + "/.choir/delivery.log")
   assert_true(log.contains("[delivery-success]"))
   assert_true(log.contains("target=teams:" + inbox_path))
-}
-
-///|
-async test "execute_delivery treats empty local terminal status array as failure" {
-  let result = execute_delivery(
-    sample_delivery("hello empty status"),
-    runner_empty_statuses,
-    sleep_fn=no_op_sleep,
-  )
-  match result {
-    Ok(_) => fail("expected empty status array to fail delivery")
-    Err(e) => assert_true(e.message().contains("delivery command failed"))
-  }
 }
 
 ///|

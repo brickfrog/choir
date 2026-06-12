@@ -68,9 +68,6 @@ pub fn append_lifecycle_event(
   to_lc : AgentLifecycle,
   trigger : @types.LifecycleTrigger,
 ) -> Bool {
-  // TUI journal choke point: every lifecycle transition flows through this
-  // funnel regardless of which store/service path produced it.
-  notify_lifecycle_transition_observer(agent_id, from_lc, to_lc, trigger)
   let sanitized_id = @types.sanitize_agent_id(agent_id)
   let events_dir = project_dir + "/.choir/events/"
   if !@sys.create_dir_all(events_dir) {

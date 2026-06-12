@@ -418,7 +418,12 @@ pub fn mcp_json_content(
   extra_mcp_servers_json? : String? = None,
   semble_pilot? : Bool = false,
 ) -> String {
-  let role_str = role.to_wire_string()
+  let role_str = match role {
+    @types.Role::Root => "root"
+    @types.Role::TL => "tl"
+    @types.Role::Dev => "dev"
+    @types.Role::Worker => "worker"
+  }
   // `alwaysLoad: true` is Claude-Code-specific. Cursor / Gemini / Codex ignore
   // unknown MCP-entry keys, so it's safe to ship in the shared `.mcp.json` —
   // claude leaves get their orchestration tools resolved up-front, others are

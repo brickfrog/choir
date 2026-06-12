@@ -56,13 +56,6 @@ fn init_should_launch_server_tab(server_alive : Bool) -> Bool {
 }
 
 ///|
-/// Server tab launch script: daemon in the background of the same pane,
-/// TUI as the pane's visible process.
-fn init_server_tab_script() -> String {
-  "mkdir -p .choir; choir serve >> .choir/serve.log 2>&1 & server_pid=$!; trap 'kill \"$server_pid\" 2>/dev/null' EXIT INT TERM; choir tui; status=$?; kill \"$server_pid\" 2>/dev/null; wait \"$server_pid\" 2>/dev/null; exit \"$status\""
-}
-
-///|
 fn init_server_socket_wait_tries() -> Int {
   // `choir init` is a foreground flow with the user watching the terminal, so
   // keep the pre-TL socket wait to about 20s and warn before launching anyway.
@@ -324,12 +317,6 @@ test "init server cleanup commands separate runtime restart from purge" {
   assert_true(@sys.pid_is_alive(@sys.get_pid()))
   assert_true(init_should_launch_server_tab(false))
   assert_false(init_should_launch_server_tab(true))
-  let server_script = init_server_tab_script()
-  assert_true(server_script.contains("choir serve >> .choir/serve.log 2>&1 &"))
-  assert_true(server_script.contains("server_pid=$!"))
-  assert_true(server_script.contains("trap 'kill \"$server_pid\""))
-  assert_true(server_script.contains("choir tui"))
-  assert_true(server_script.contains("exit \"$status\""))
   let rt = init_runtime_cleanup_paths()
   assert_true(rt.length() >= 11)
   for p in rt {
@@ -1337,24 +1324,17 @@ fn init_run() -> Unit {
         _ => false
       }
       if !server_tab_exists {
-        // The Server tab's visible process is the TUI dashboard; the daemon
-        // runs behind it in the same pane, stdout silenced so it cannot
-        // corrupt the alt screen (.choir/serve.log keeps the full log — the
-        // TUI's log tab replaces tailing the server pane). When a server
-        // process is already running, the tab hosts just the TUI.
-        let script = if init_should_launch_server_tab(server_alive == 0) {
-          init_server_tab_script()
-        } else {
-          @sys.write_stdout(
-            "Reusing existing server process; Server tab runs the TUI.\n",
+        if init_should_launch_server_tab(server_alive == 0) {
+          init_run_or_exit(
+            @workspace.zellij_new_tab(session, "Server", project_dir, [], {
+              program: "choir",
+              args: ["serve"],
+              workdir: None,
+            }),
           )
-          "exec choir tui"
+        } else {
+          @sys.write_stdout("Reusing existing server process.\n")
         }
-        init_run_or_exit(
-          @workspace.zellij_new_tab_shell(
-            session, "Server", project_dir, script,
-          ),
-        )
       } else {
         @sys.write_stdout("Reusing existing Server tab.\n")
       }

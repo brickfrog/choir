@@ -73,18 +73,6 @@ pub fn teams_inbox_path(agent_name : String) -> String {
 }
 
 ///|
-/// Fixed short nudge typed into an agent pane when inbox messages are
-/// pending. Deliberately content-free: one tiny send-keys injection causes
-/// the agent to drain N queued messages in a single turn via `check_inbox`.
-pub fn format_inbox_nudge(pending : Int) -> String {
-  "choir: " +
-  pending.to_string() +
-  " message" +
-  (if pending == 1 { "" } else { "s" }) +
-  " pending — call check_inbox"
-}
-
-///|
 pub fn plan_delivery(
   agent : @types.Agent,
   sender_id : String,

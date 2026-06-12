@@ -312,19 +312,6 @@ async fn ServerState::durable_dispatch_planned(
   runner : async (Array[@workspace.Command]) -> Array[Int],
   sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Result[Unit, @types.ChoirError] {
-  match planned.delivery {
-    @message.DeliveryMethod::LocalTerminalInput(target, _) =>
-      return self.deliver_inbox_terminal_message(
-        planned.recipient_id,
-        target,
-        planned.sender_id,
-        planned.body,
-        planned.status,
-        runner,
-        sleep_fn~,
-      )
-    _ => ()
-  }
   let created_at = @poller.now_sec()
   let initial = @outbox.OutboxMessage::new(
     durable_delivery_message_id(

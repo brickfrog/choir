@@ -2,7 +2,7 @@
 /// Suspend an agent: transitions Active → Suspended and fires the
 /// AgentSuspended hook so operators can page themselves.
 ///
-/// Only TLs and Operators may call this; enforcement is in the tool registry
+/// Only the TL role may call this; enforcement is in the tool registry
 /// allowlist (see `registry.mbt`). Leaves must not be able to self-suspend
 /// as that would be a trivial denial-of-service.
 pub async fn interpret_suspend(

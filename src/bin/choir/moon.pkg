@@ -1,6 +1,5 @@
 import {
   "choir/src/bin/choir_commands",
-  "choir/src/tui",
   "choir/src/types",
   "choir/src/config",
   "choir/src/server",

@@ -7,7 +7,6 @@ import {
   "moonbitlang/parser@0.2.5",
   "brickfrog/moontrace@0.13.0",
   "brickfrog/tempo@0.8.0",
-  "brickfrog/pippa@0.1.0",
 }
 
 readme = "README.md"

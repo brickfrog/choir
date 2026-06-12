@@ -606,7 +606,6 @@ fn is_valid_dep_role(role : @types.Role) -> Bool {
     @types.Role::Worker => false
     @types.Role::TL => false
     @types.Role::Root => false
-    @types.Role::Operator => false
   }
 }
 

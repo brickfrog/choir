@@ -336,9 +336,6 @@ pub fn default_workflow_state(role : @types.Role) -> WorkflowState {
     @types.Role::TL => Supervisor(Planning)
     @types.Role::Dev => Dev(Working)
     @types.Role::Worker => Worker(Working)
-    // Operator is the TUI remote control: never registered as an agent, so
-    // it never owns a lifecycle. Total-match fallback only.
-    @types.Role::Operator => Supervisor(Planning)
   }
 }
 
