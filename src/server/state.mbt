@@ -317,6 +317,8 @@ pub struct ServerState {
   otlp_exporter : OtlpSpanExporter?
   journal : TuiJournal
   mut poller_vitals : @types.PollerVitals
+  tui_beads_cache : TuiBeadsCache
+  mut tui_default_branch : String?
   append_file : (String, String) -> Bool
   read_file : (String) -> String
   write_file_atomic : (String, String) -> Bool
@@ -447,6 +449,8 @@ pub fn ServerState::new(
     ),
     journal: TuiJournal::open(config.project_dir, read_file=boot_read_file),
     poller_vitals: @types.PollerVitals::initial(),
+    tui_beads_cache: TuiBeadsCache::new(),
+    tui_default_branch: None,
     append_file: default_append_file_sync,
     read_file: default_read_file,
     write_file_atomic: default_write_file_atomic,

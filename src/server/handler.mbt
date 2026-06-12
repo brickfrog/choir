@@ -305,6 +305,12 @@ pub async fn ServerState::handle_with_runner_and_capture(
   let resp = if effective_req.req_method == "tools/call" &&
     effective_req.name == "server_reload" {
     self.handle_server_reload_request(effective_req)
+  } else if effective_req.req_method == "tools/call" &&
+    effective_req.name == "tui_snapshot" {
+    self.handle_tui_snapshot_request(effective_req, capture~)
+  } else if effective_req.req_method == "tools/call" &&
+    effective_req.name == "tui_events_since" {
+    self.handle_tui_events_since_request(effective_req)
   } else {
     @tools.handle_request(
       self.tool_registry,

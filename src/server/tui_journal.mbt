@@ -157,6 +157,21 @@ pub fn TuiJournal::emit(
 }
 
 ///|
+/// Most recent events from the hot ring, oldest first (snapshot's
+/// `recent_events` slice).
+pub fn TuiJournal::recent(
+  self : TuiJournal,
+  max? : Int = 100,
+) -> Array[@types.TuiEventEnvelope] {
+  let start = if self.ring.length() > max { self.ring.length() - max } else { 0 }
+  let out : Array[@types.TuiEventEnvelope] = []
+  for i = start; i < self.ring.length(); i = i + 1 {
+    out.push(self.ring[i])
+  }
+  out
+}
+
+///|
 /// Result of a cursored read. `StaleCursor` means the cursor predates the
 /// retained journal (rotation discarded the gap); the client must
 /// re-snapshot.
