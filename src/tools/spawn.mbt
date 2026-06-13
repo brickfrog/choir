@@ -588,10 +588,6 @@ pub async fn interpret_spawn_worker(
       capture~,
       spawn_launch_bindings~,
       record_spawn_launch_diagnostic~,
-      capture_pane_id=true,
-      record_spawn_pane_id=async fn(agent_id, pane_id) {
-        record_spawn_pane_id_sidecar(project_dir, runner, agent_id, pane_id)
-      },
     ) {
     Ok(_) => {
       match registry {
@@ -840,10 +836,6 @@ pub async fn interpret_spawn_gemini(
       capture~,
       spawn_launch_bindings~,
       record_spawn_launch_diagnostic~,
-      capture_pane_id=true,
-      record_spawn_pane_id=async fn(agent_id, pane_id) {
-        record_spawn_pane_id_sidecar(project_dir, runner, agent_id, pane_id)
-      },
     ) {
     Ok(_) =>
       match seed_warning {
