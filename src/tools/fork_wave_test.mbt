@@ -1395,6 +1395,9 @@ async fn mock_capture_fork_wave_must_not_run(
   cmd : @workspace.Command,
 ) -> (Int, String) {
   @async.sleep(0)
+  if cmd.program == "env" && cmd.args.contains("list-panes") {
+    return (0, "PANE_ID TYPE TITLE\nterminal_1 terminal root\n")
+  }
   if cmd.program == "zellij" &&
     (cmd.args.contains("new-tab") || cmd.args.contains("run")) {
     return (0, "")
@@ -1652,6 +1655,9 @@ async test "interpret_fork_wave_spawn_effect_phase seeds agy shared cache once b
       (cmd.args.contains("new-tab") || cmd.args.contains("run")) {
       return (0, "")
     }
+    if cmd.program == "env" && cmd.args.contains("list-panes") {
+      return (0, "PANE_ID TYPE TITLE\nterminal_1 terminal root\n")
+    }
     fail("unexpected capture: " + cmd.to_string())
     (0, "")
   }
@@ -1744,6 +1750,9 @@ async test "interpret_fork_wave_spawn_effect_phase warns and spawns when agy see
     if cmd.program == "zellij" &&
       (cmd.args.contains("new-tab") || cmd.args.contains("run")) {
       return (0, "")
+    }
+    if cmd.program == "env" && cmd.args.contains("list-panes") {
+      return (0, "PANE_ID TYPE TITLE\nterminal_1 terminal root\n")
     }
     fail("unexpected capture: " + cmd.to_string())
     (0, "")

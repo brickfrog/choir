@@ -1785,10 +1785,6 @@ async test "quiet poller tick automerge sweep finalizes stale-role tracked leaf 
     child => ignore(state.registry.upsert({ ..child, role: @types.Role::TL }))
   }
   state.pending_disconnects.set(child_id, 1L)
-  state.worker_no_handoff_prodded_at.set(
-    "leaf-post-fix-no-handoff:" + child_id,
-    2L,
-  )
   let parent_target = @workspace.local_target_for(
     "test-session",
     "TL",
@@ -1903,12 +1899,6 @@ async test "quiet poller tick automerge sweep finalizes stale-role tracked leaf 
   assert_true(delivered_merged)
   assert_true(state.poller.get(pr_number) == None)
   @debug.assert_eq(state.pending_disconnects.get(child_id), None)
-  @debug.assert_eq(
-    state.worker_no_handoff_prodded_at.get(
-      "leaf-post-fix-no-handoff:" + child_id,
-    ),
-    None,
-  )
   match @phase.read_lifecycle(project_dir, child_id) {
     Some(lifecycle) => {
       assert_eq(
@@ -7683,21 +7673,27 @@ async test "soft transport disconnect still escalates when idle watchdog expires
   let parent_id = "main.tl"
   let agent_id = "main.watchdog-leaf"
   let pane_name = "watchdog-leaf-pane"
-  let snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"still thinking\"]}"
   let host : @runtime.PaneWatchHost = {
-    spawn_zellij_pane_viewport_subscribe: fn(_session, _name, _path) { 101 },
-    kill_pid_best_effort: fn(_pid) {  },
-    delete_file_sync: fn(_path) {  },
-    read_file: fn(_path) { snapshot },
+    dump_pane_screen: async fn(_session, _pane_id) {
+      @async.sleep(0)
+      "still thinking"
+    },
   }
   let state = ServerState::new(
-    {
-      ..@types.Config::default(),
-      project_dir,
-      terminal_session: "test-session",
-    },
-    disconnect_confirmation_provider([], [pane_name]),
-  ).with_pane_watcher(@runtime.PaneWatcher::with_host(host))
+      {
+        ..@types.Config::default(),
+        project_dir,
+        terminal_session: "test-session",
+      },
+      disconnect_confirmation_provider([], [pane_name]),
+    )
+    .with_pane_watcher(@runtime.PaneWatcher::with_host(host))
+    .with_list_panes_snapshot_capture(async fn(_session : String) {
+      @async.sleep(0)
+      @tools.parse_zellij_list_panes_json(
+        "[{\"id\":4,\"tab_name\":\"watchdog-leaf-pane\",\"pane_name\":\"watchdog-leaf-pane\"}]",
+      )
+    })
   ignore(state.register_agent(disconnect_confirmation_parent(parent_id)))
   ignore(
     state.register_agent({
@@ -7720,8 +7716,7 @@ async test "soft transport disconnect still escalates when idle watchdog expires
     start,
     100L,
     async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=0L,
-    worker_no_handoff_escalate_sec=0L,
+    worker_no_handoff_idle_sec=0L,
   )
   state.schedule_disconnect(agent_id, start)
   state.process_pending_disconnects_with_runner(start + 61L, 60L, runner=async fn(
@@ -7744,8 +7739,7 @@ async test "soft transport disconnect still escalates when idle watchdog expires
     start + 101L,
     100L,
     async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=0L,
-    worker_no_handoff_escalate_sec=0L,
+    worker_no_handoff_idle_sec=0L,
   )
 
   assert_eq(state.registry.get(agent_id).state, @types.AgentState::Failed)
@@ -8627,20 +8621,25 @@ fn worker_handoff_test_state(label : String, snapshot : String) -> ServerState {
 ///|
 fn worker_handoff_test_state_with_read_log(
   label : String,
-  snapshot : String,
+  screen : String,
   reads : Array[String],
 ) -> ServerState {
   let base = handler_auto_close_test_state(label)
   let host : @runtime.PaneWatchHost = {
-    spawn_zellij_pane_viewport_subscribe: fn(_session, _name, _path) { 101 },
-    kill_pid_best_effort: fn(_pid) {  },
-    delete_file_sync: fn(_path) {  },
-    read_file: fn(path) {
-      reads.push(path)
-      snapshot
+    dump_pane_screen: async fn(_session, _pane_id) {
+      @async.sleep(0)
+      reads.push(_session + ":" + _pane_id)
+      screen
     },
   }
-  base.with_pane_watcher(@runtime.PaneWatcher::with_host(host))
+  base
+  .with_pane_watcher(@runtime.PaneWatcher::with_host(host))
+  .with_list_panes_snapshot_capture(async fn(_session : String) {
+    @async.sleep(0)
+    @tools.parse_zellij_list_panes_json(
+      "[{\"id\":41,\"tab_name\":\"worker-pane\",\"pane_name\":\"worker-pane\"},{\"id\":42,\"tab_name\":\"leaf-pane\",\"pane_name\":\"leaf-pane\"}]",
+    )
+  })
 }
 
 ///|
@@ -8651,10 +8650,8 @@ fn worker_handoff_test_state_with_snapshots(
   let base = handler_auto_close_test_state(label)
   let mut read_count = 0
   let host : @runtime.PaneWatchHost = {
-    spawn_zellij_pane_viewport_subscribe: fn(_session, _name, _path) { 101 },
-    kill_pid_best_effort: fn(_pid) {  },
-    delete_file_sync: fn(_path) {  },
-    read_file: fn(_path) {
+    dump_pane_screen: async fn(_session, _pane_id) {
+      @async.sleep(0)
       if snapshots.length() == 0 {
         ""
       } else {
@@ -8668,7 +8665,14 @@ fn worker_handoff_test_state_with_snapshots(
       }
     },
   }
-  base.with_pane_watcher(@runtime.PaneWatcher::with_host(host))
+  base
+  .with_pane_watcher(@runtime.PaneWatcher::with_host(host))
+  .with_list_panes_snapshot_capture(async fn(_session : String) {
+    @async.sleep(0)
+    @tools.parse_zellij_list_panes_json(
+      "[{\"id\":41,\"tab_name\":\"worker-pane\",\"pane_name\":\"worker-pane\"},{\"id\":42,\"tab_name\":\"leaf-pane\",\"pane_name\":\"leaf-pane\"}]",
+    )
+  })
 }
 
 ///|
@@ -8728,8 +8732,187 @@ fn worker_handoff_dev(
 }
 
 ///|
+async test "ServerState::watch_pane resolves pane id from list-panes snapshot" {
+  let base = handler_auto_close_test_state("watch-pane-resolve")
+  let dumps : Array[String] = []
+  let list_calls : Array[String] = []
+  let host : @runtime.PaneWatchHost = {
+    dump_pane_screen: async fn(session, pane_id) {
+      @async.sleep(0)
+      dumps.push(session + ":" + pane_id)
+      "resolved screen"
+    },
+  }
+  let state = base
+    .with_pane_watcher(@runtime.PaneWatcher::with_host(host))
+    .with_list_panes_snapshot_capture(async fn(session : String) {
+      @async.sleep(0)
+      list_calls.push(session)
+      @tools.parse_zellij_list_panes_json(
+        "[{\"id\":77,\"tab_name\":\"worker-pane\",\"pane_name\":\"worker-pane\"}]",
+      )
+    })
+  let parent_id = "main.parent"
+  let worker_id = "main.resolve-worker"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      worker_handoff_worker(worker_id, parent_id, @types.AgentState::Active),
+    ),
+  )
+
+  state.watch_pane(worker_id)
+  let sent : Array[String] = []
+  let start = @poller.now_sec()
+  state.check_idle_agents(
+    start,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_idle_sec=120L,
+  )
+
+  @debug.assert_eq(list_calls, ["test-session"])
+  @debug.assert_eq(dumps, ["test-session:terminal_77"])
+  assert_eq(
+    worker_handoff_count_sent(sent, "[WORKER STALLED — no handoff]"),
+    0,
+  )
+  ignore(@sys.rm_rf(state.config.project_dir))
+}
+
+///|
+async test "ServerState::apply_recovered_agent re-watches alive terminal agent" {
+  let base = handler_auto_close_test_state("watch-pane-recovered")
+  let list_calls : Array[String] = []
+  let host : @runtime.PaneWatchHost = {
+    dump_pane_screen: async fn(_session, _pane_id) {
+      @async.sleep(0)
+      "recovered screen"
+    },
+  }
+  let state = base
+    .with_pane_watcher(@runtime.PaneWatcher::with_host(host))
+    .with_list_panes_snapshot_capture(async fn(session : String) {
+      @async.sleep(0)
+      list_calls.push(session)
+      @tools.parse_zellij_list_panes_json(
+        "[{\"id\":77,\"tab_name\":\"worker-pane\",\"pane_name\":\"worker-pane\"}]",
+      )
+    })
+  let parent_id = "main.parent"
+  let worker_id = "main.recovered-worker"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+
+  state.apply_recovered_agent(
+    worker_handoff_worker(worker_id, parent_id, @types.AgentState::Active),
+    true,
+  )
+
+  @debug.assert_eq(list_calls, ["test-session"])
+  @debug.assert_eq(state.pane_watcher.watched_agents(), [worker_id])
+  @debug.assert_eq(
+    state.pane_watcher.pane_id_for_agent(worker_id),
+    Some("terminal_77"),
+  )
+  ignore(@sys.rm_rf(state.config.project_dir))
+}
+
+///|
+async test "check_idle_agents retries unresolved pane id before observing idle" {
+  let base = handler_auto_close_test_state("watch-pane-lazy-retry")
+  let dumps : Array[String] = []
+  let list_calls : Array[String] = []
+  let snapshots = [
+    "[]", "[]", "[{\"id\":88,\"tab_name\":\"worker-pane\",\"pane_name\":\"worker-pane\"}]",
+  ]
+  let mut snapshot_index = 0
+  let host : @runtime.PaneWatchHost = {
+    dump_pane_screen: async fn(session, pane_id) {
+      @async.sleep(0)
+      dumps.push(session + ":" + pane_id)
+      "lazy retry screen"
+    },
+  }
+  let state = base
+    .with_pane_watcher(@runtime.PaneWatcher::with_host(host))
+    .with_list_panes_snapshot_capture(async fn(session : String) {
+      @async.sleep(0)
+      list_calls.push(session)
+      let idx = if snapshot_index < snapshots.length() {
+        snapshot_index
+      } else {
+        snapshots.length() - 1
+      }
+      snapshot_index = snapshot_index + 1
+      @tools.parse_zellij_list_panes_json(snapshots[idx])
+    })
+  let parent_id = "main.parent"
+  let worker_id = "main.lazy-worker"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      worker_handoff_worker(worker_id, parent_id, @types.AgentState::Active),
+    ),
+  )
+
+  state.watch_pane(worker_id)
+  let sent : Array[String] = []
+  let start = @poller.now_sec()
+  state.check_idle_agents(
+    start + 121L,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_idle_sec=120L,
+  )
+  @debug.assert_eq(dumps, [])
+  assert_eq(
+    worker_handoff_count_sent(sent, "[WORKER STALLED — no handoff]"),
+    0,
+  )
+
+  state.check_idle_agents(
+    start + 242L,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_idle_sec=120L,
+  )
+  @debug.assert_eq(dumps, ["test-session:terminal_88"])
+  assert_eq(
+    worker_handoff_count_sent(sent, "[WORKER STALLED — no handoff]"),
+    0,
+  )
+
+  state.check_idle_agents(
+    start + 363L,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_idle_sec=120L,
+  )
+  @debug.assert_eq(list_calls, ["test-session", "test-session", "test-session"])
+  @debug.assert_eq(dumps, [
+    "test-session:terminal_88", "test-session:terminal_88",
+  ])
+  assert_eq(
+    worker_handoff_count_sent(
+      sent, "[WORKER STALLED — no handoff] lazy-worker",
+    ),
+    1,
+  )
+  ignore(@sys.rm_rf(state.config.project_dir))
+}
+
+///|
 async fn worker_handoff_capture_runner(
   sent : Array[String],
+  cmds : Array[@workspace.Command],
+) -> Array[Int] {
+  worker_handoff_capture_targeted_runner(sent, [], cmds)
+}
+
+///|
+async fn worker_handoff_capture_targeted_runner(
+  sent : Array[String],
+  targets : Array[String],
   cmds : Array[@workspace.Command],
 ) -> Array[Int] {
   @async.sleep(0)
@@ -8739,11 +8922,23 @@ async fn worker_handoff_capture_runner(
       cmd.args.length() >= 4 &&
       cmd.args[0] == "zellij-action" &&
       cmd.args[1] == "send" {
+      targets.push(cmd.args[2])
       sent.push(cmd.args[3])
     }
     statuses.push(0)
   }
   statuses
+}
+
+///|
+fn worker_handoff_count_target(targets : Array[String], target : String) -> Int {
+  let mut count = 0
+  for value in targets {
+    if value == target {
+      count = count + 1
+    }
+  }
+  count
 }
 
 ///|
@@ -9430,22 +9625,19 @@ async test "check_idle_agents warns once at seventy percent before idle kill" {
       start,
       100L,
       async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-      worker_no_handoff_prod_sec=0L,
-      worker_no_handoff_escalate_sec=0L,
+      worker_no_handoff_idle_sec=0L,
     )
     state.check_idle_agents(
       start + 70L,
       100L,
       async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-      worker_no_handoff_prod_sec=0L,
-      worker_no_handoff_escalate_sec=0L,
+      worker_no_handoff_idle_sec=0L,
     )
     state.check_idle_agents(
       start + 80L,
       100L,
       async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-      worker_no_handoff_prod_sec=0L,
-      worker_no_handoff_escalate_sec=0L,
+      worker_no_handoff_idle_sec=0L,
     )
   })
   assert_eq(handler_idle_warning_count(captured), 1)
@@ -9497,37 +9689,33 @@ async test "check_idle_agents emits stalled parent event for merge-ready ReviewO
     start,
     180L,
     async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=120L,
-    worker_no_handoff_escalate_sec=120L,
+    worker_no_handoff_idle_sec=120L,
   )
   state.check_idle_agents(
     start + 120L,
     180L,
     async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=120L,
-    worker_no_handoff_escalate_sec=120L,
+    worker_no_handoff_idle_sec=120L,
   )
   state.check_idle_agents(
     start + 121L,
     180L,
     async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=120L,
-    worker_no_handoff_escalate_sec=120L,
+    worker_no_handoff_idle_sec=120L,
   )
   assert_eq(
     worker_handoff_count_sent(sent, "[LEAF STALLED AFTER FIX-PUSH] dev-ready"),
-    0,
+    1,
   )
   state.check_idle_agents(
     start + 240L,
     999L,
     async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=120L,
-    worker_no_handoff_escalate_sec=120L,
+    worker_no_handoff_idle_sec=120L,
   )
   assert_eq(
     worker_handoff_count_sent(sent, "[LEAF POST-FIX-PUSH HANDOFF] dev-ready"),
-    1,
+    0,
   )
   assert_eq(
     worker_handoff_count_sent(sent, "[LEAF STALLED AFTER FIX-PUSH] dev-ready"),
@@ -9580,15 +9768,13 @@ async test "watchdog kill records merge-ready dev leaf without notify as failure
     start,
     180L,
     async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=120L,
-    worker_no_handoff_escalate_sec=120L,
+    worker_no_handoff_idle_sec=120L,
   )
   state.check_idle_agents(
     start + 181L,
     180L,
     async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=120L,
-    worker_no_handoff_escalate_sec=120L,
+    worker_no_handoff_idle_sec=120L,
   )
   let lifecycle = @phase.read_lifecycle(state.config.project_dir, leaf_id)
   match lifecycle {
@@ -9609,11 +9795,11 @@ async test "watchdog kill records merge-ready dev leaf without notify as failure
 }
 
 ///|
-async test "check_idle_agents does not stall prodded leaf after fresh pane output" {
+async test "check_idle_agents does not stall leaf after fresh pane output" {
   let idle_snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"fixes pushed\",\"waiting\"]}"
-  let active_snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"fixes pushed\",\"working after prod\"]}"
+  let active_snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"fixes pushed\",\"working again\"]}"
   let state = worker_handoff_test_state_with_snapshots(
-    "leaf-no-handoff-active-after-prod",
+    "leaf-no-handoff-active-after-change",
     [idle_snapshot, idle_snapshot, active_snapshot, active_snapshot],
   )
   let parent_id = "main.parent"
@@ -9656,42 +9842,38 @@ async test "check_idle_agents does not stall prodded leaf after fresh pane outpu
     start,
     999L,
     async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=120L,
-    worker_no_handoff_escalate_sec=120L,
+    worker_no_handoff_idle_sec=120L,
   )
   state.check_idle_agents(
     start + 120L,
     999L,
     async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=120L,
-    worker_no_handoff_escalate_sec=120L,
+    worker_no_handoff_idle_sec=120L,
   )
   state.check_idle_agents(
     start + 230L,
     999L,
     async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=120L,
-    worker_no_handoff_escalate_sec=120L,
+    worker_no_handoff_idle_sec=120L,
   )
   state.check_idle_agents(
     start + 241L,
     999L,
     async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=120L,
-    worker_no_handoff_escalate_sec=120L,
+    worker_no_handoff_idle_sec=120L,
   )
   assert_eq(
     worker_handoff_count_sent(sent, "[LEAF POST-FIX-PUSH HANDOFF] dev-active"),
-    1,
+    0,
   )
   assert_eq(
     worker_handoff_count_sent(sent, "[LEAF STALLED AFTER FIX-PUSH] dev-active"),
-    0,
+    1,
   )
 }
 
 ///|
-async test "check_idle_agents does not prod non-ReviewOwned dev leaf" {
+async test "check_idle_agents does not stall non-ReviewOwned dev leaf" {
   let snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"still implementing\"]}"
   let state = worker_handoff_test_state("leaf-no-handoff-working", snapshot)
   let parent_id = "main.parent"
@@ -9716,22 +9898,20 @@ async test "check_idle_agents does not prod non-ReviewOwned dev leaf" {
     start,
     999L,
     async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=120L,
-    worker_no_handoff_escalate_sec=120L,
+    worker_no_handoff_idle_sec=120L,
   )
   state.check_idle_agents(
     start + 240L,
     999L,
     async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=120L,
-    worker_no_handoff_escalate_sec=120L,
+    worker_no_handoff_idle_sec=120L,
   )
   assert_eq(worker_handoff_count_sent(sent, "[LEAF POST-FIX-PUSH HANDOFF]"), 0)
   assert_eq(worker_handoff_count_sent(sent, "[LEAF STALLED AFTER FIX-PUSH]"), 0)
 }
 
 ///|
-async test "check_idle_agents prods working dev leaf before TDD handoff then notifies parent" {
+async test "check_idle_agents escalates working dev leaf before TDD handoff without prod" {
   let snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"committed changes\",\"moon test passed\"]}"
   let state = worker_handoff_test_state("leaf-pre-tdd-stall", snapshot)
   let parent_id = "main.parent"
@@ -9758,33 +9938,32 @@ async test "check_idle_agents prods working dev leaf before TDD handoff then not
   state.watch_pane(leaf_id)
 
   let sent : Array[String] = []
+  let targets : Array[String] = []
   let start = @poller.now_sec()
   state.check_idle_agents(
     start,
     999L,
-    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=120L,
-    worker_no_handoff_escalate_sec=120L,
+    async fn(cmds) {
+      worker_handoff_capture_targeted_runner(sent, targets, cmds)
+    },
+    worker_no_handoff_idle_sec=120L,
   )
   state.check_idle_agents(
     start + 120L,
     999L,
-    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=120L,
-    worker_no_handoff_escalate_sec=120L,
+    async fn(cmds) {
+      worker_handoff_capture_targeted_runner(sent, targets, cmds)
+    },
+    worker_no_handoff_idle_sec=120L,
   )
-  assert_eq(worker_handoff_count_sent(sent, "tdd_intent"), 1)
-  assert_true(
-    state.worker_no_handoff_prodded_at.contains("leaf-pre-tdd-stall:" + leaf_id),
+  assert_eq(
+    worker_handoff_count_target(
+      targets,
+      handler_auto_close_target("leaf-pane").to_string(),
+    ),
+    0,
   )
-
-  state.check_idle_agents(
-    start + 240L,
-    999L,
-    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=120L,
-    worker_no_handoff_escalate_sec=120L,
-  )
+  assert_eq(worker_handoff_count_sent(sent, "Do not park silently"), 0)
   assert_eq(
     worker_handoff_count_sent(
       sent, "[LEAF STALLED BEFORE TDD/file_pr] dev-pre-tdd",
@@ -9822,24 +10001,37 @@ async test "check_idle_agents keeps pre-TDD and post-fix leaf watchdog state sep
   state.watch_pane(leaf_id)
 
   let sent : Array[String] = []
+  let targets : Array[String] = []
   let start = @poller.now_sec()
   state.check_idle_agents(
     start,
     999L,
-    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=120L,
-    worker_no_handoff_escalate_sec=120L,
+    async fn(cmds) {
+      worker_handoff_capture_targeted_runner(sent, targets, cmds)
+    },
+    worker_no_handoff_idle_sec=120L,
   )
   state.check_idle_agents(
     start + 120L,
     999L,
-    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=120L,
-    worker_no_handoff_escalate_sec=120L,
+    async fn(cmds) {
+      worker_handoff_capture_targeted_runner(sent, targets, cmds)
+    },
+    worker_no_handoff_idle_sec=120L,
   )
-  assert_eq(worker_handoff_count_sent(sent, "tdd_intent"), 1)
-  assert_true(
-    state.worker_no_handoff_prodded_at.contains("leaf-pre-tdd-stall:" + leaf_id),
+  assert_eq(
+    worker_handoff_count_target(
+      targets,
+      handler_auto_close_target("leaf-pane").to_string(),
+    ),
+    0,
+  )
+  assert_eq(worker_handoff_count_sent(sent, "Do not park silently"), 0)
+  assert_eq(
+    worker_handoff_count_sent(
+      sent, "[LEAF STALLED BEFORE TDD/file_pr] dev-split",
+    ),
+    1,
   )
 
   ignore(
@@ -9869,30 +10061,27 @@ async test "check_idle_agents keeps pre-TDD and post-fix leaf watchdog state sep
   state.check_idle_agents(
     start + 240L,
     999L,
-    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=120L,
-    worker_no_handoff_escalate_sec=120L,
+    async fn(cmds) {
+      worker_handoff_capture_targeted_runner(sent, targets, cmds)
+    },
+    worker_no_handoff_idle_sec=120L,
   )
   assert_eq(
     worker_handoff_count_sent(sent, "[LEAF POST-FIX-PUSH HANDOFF] dev-split"),
-    1,
+    0,
   )
   assert_eq(
     worker_handoff_count_sent(sent, "[LEAF STALLED AFTER FIX-PUSH] dev-split"),
-    0,
-  )
-  assert_true(
-    state.worker_no_handoff_prodded_at.contains(
-      "leaf-post-fix-no-handoff:" + leaf_id,
-    ),
+    1,
   )
 
   state.check_idle_agents(
     start + 360L,
     999L,
-    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=120L,
-    worker_no_handoff_escalate_sec=120L,
+    async fn(cmds) {
+      worker_handoff_capture_targeted_runner(sent, targets, cmds)
+    },
+    worker_no_handoff_idle_sec=120L,
   )
   assert_eq(
     worker_handoff_count_sent(sent, "[LEAF STALLED AFTER FIX-PUSH] dev-split"),
@@ -9901,7 +10090,7 @@ async test "check_idle_agents keeps pre-TDD and post-fix leaf watchdog state sep
 }
 
 ///|
-async test "check_idle_agents prods worker then emits one stalled no-handoff event" {
+async test "check_idle_agents emits worker stalled directly without terminal prod" {
   let snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"audit complete\",\"Finding 1\"]}"
   let state = worker_handoff_test_state("worker-no-handoff-stall", snapshot)
   let parent_id = "main.parent"
@@ -9920,39 +10109,36 @@ async test "check_idle_agents prods worker then emits one stalled no-handoff eve
     start,
     300L,
     async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=120L,
-    worker_no_handoff_escalate_sec=120L,
+    worker_no_handoff_idle_sec=120L,
   )
   state.check_idle_agents(
     start + 121L,
     300L,
     async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=120L,
-    worker_no_handoff_escalate_sec=120L,
+    worker_no_handoff_idle_sec=120L,
   )
   assert_eq(
     worker_handoff_count_sent(sent, "printed output is not the handoff"),
-    1,
+    0,
   )
-  assert_true(
-    state.worker_no_handoff_prodded_at.contains(
-      "worker-no-handoff:" + worker_id,
+  assert_eq(
+    worker_handoff_count_sent(
+      sent, "[WORKER STALLED — no handoff] sarcasmotron",
     ),
+    1,
   )
 
   state.check_idle_agents(
     start + 242L,
     300L,
     async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=120L,
-    worker_no_handoff_escalate_sec=120L,
+    worker_no_handoff_idle_sec=120L,
   )
   state.check_idle_agents(
     start + 250L,
     300L,
     async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=120L,
-    worker_no_handoff_escalate_sec=120L,
+    worker_no_handoff_idle_sec=120L,
   )
   assert_eq(
     worker_handoff_count_sent(
@@ -9963,11 +10149,75 @@ async test "check_idle_agents prods worker then emits one stalled no-handoff eve
 }
 
 ///|
-async test "check_idle_agents reuses one pane snapshot for handoff and watchdog checks" {
-  let snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"done\",\"tail\"]}"
+async test "check_idle_agents resets worker no-handoff idle when pane changes" {
+  let state = worker_handoff_test_state_with_snapshots(
+    "worker-no-handoff-change-reset",
+    [
+      "{\"event\":\"pane_update\",\"viewport\":[\"first tail\"]}", "{\"event\":\"pane_update\",\"viewport\":[\"changed tail\"]}",
+      "{\"event\":\"pane_update\",\"viewport\":[\"changed tail\"]}", "{\"event\":\"pane_update\",\"viewport\":[\"changed tail\"]}",
+    ],
+  )
+  let parent_id = "main.parent"
+  let worker_id = "main.reset-worker"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      worker_handoff_worker(worker_id, parent_id, @types.AgentState::Active),
+    ),
+  )
+  state.watch_pane(worker_id)
+
+  let sent : Array[String] = []
+  let start = @poller.now_sec()
+  state.check_idle_agents(
+    start,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_idle_sec=120L,
+  )
+  state.check_idle_agents(
+    start + 121L,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_idle_sec=120L,
+  )
+  assert_eq(
+    worker_handoff_count_sent(
+      sent, "[WORKER STALLED — no handoff] reset-worker",
+    ),
+    0,
+  )
+
+  state.check_idle_agents(
+    start + 242L,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_idle_sec=120L,
+  )
+  state.check_idle_agents(
+    start + 250L,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_idle_sec=120L,
+  )
+  assert_eq(
+    worker_handoff_count_sent(sent, "printed output is not the handoff"),
+    0,
+  )
+  assert_eq(
+    worker_handoff_count_sent(
+      sent, "[WORKER STALLED — no handoff] reset-worker",
+    ),
+    1,
+  )
+}
+
+///|
+async test "check_idle_agents reuses one pane dump for handoff and watchdog checks" {
+  let screen = "done\ntail"
   let reads : Array[String] = []
   let state = worker_handoff_test_state_with_read_log(
-    "worker-handoff-single-read", snapshot, reads,
+    "worker-handoff-single-read", screen, reads,
   )
   let parent_id = "main.parent"
   let worker_id = "main.single-read"
@@ -9985,20 +10235,17 @@ async test "check_idle_agents reuses one pane snapshot for handoff and watchdog 
     start,
     300L,
     async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=120L,
-    worker_no_handoff_escalate_sec=120L,
+    worker_no_handoff_idle_sec=120L,
   )
   state.check_idle_agents(
     start + 301L,
     300L,
     async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=120L,
-    worker_no_handoff_escalate_sec=120L,
+    worker_no_handoff_idle_sec=120L,
   )
 
   @debug.assert_eq(reads, [
-    @runtime.pane_snapshot_path(worker_id),
-    @runtime.pane_snapshot_path(worker_id),
+    "test-session:terminal_41", "test-session:terminal_41",
   ])
 }
 
@@ -10038,15 +10285,13 @@ async test "notify_parent marks handoff delivered and suppresses worker prod" {
     start,
     300L,
     async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=120L,
-    worker_no_handoff_escalate_sec=120L,
+    worker_no_handoff_idle_sec=120L,
   )
   state.check_idle_agents(
     start + 121L,
     300L,
     async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=120L,
-    worker_no_handoff_escalate_sec=120L,
+    worker_no_handoff_idle_sec=120L,
   )
   assert_eq(
     worker_handoff_count_sent(sent, "printed output is not the handoff"),
@@ -10074,15 +10319,13 @@ async test "watchdog kill emits worker exited without notify only before handoff
     start,
     300L,
     async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=0L,
-    worker_no_handoff_escalate_sec=0L,
+    worker_no_handoff_idle_sec=0L,
   )
   state.check_idle_agents(
     start + 301L,
     300L,
     async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
-    worker_no_handoff_prod_sec=0L,
-    worker_no_handoff_escalate_sec=0L,
+    worker_no_handoff_idle_sec=0L,
   )
   assert_eq(
     worker_handoff_count_sent(sent, "[WORKER EXITED WITHOUT NOTIFY] worker-a"),
@@ -10109,15 +10352,13 @@ async test "watchdog kill emits worker exited without notify only before handoff
     delivered_start,
     300L,
     async fn(cmds) { worker_handoff_capture_runner(delivered_sent, cmds) },
-    worker_no_handoff_prod_sec=0L,
-    worker_no_handoff_escalate_sec=0L,
+    worker_no_handoff_idle_sec=0L,
   )
   delivered.check_idle_agents(
     delivered_start + 301L,
     300L,
     async fn(cmds) { worker_handoff_capture_runner(delivered_sent, cmds) },
-    worker_no_handoff_prod_sec=0L,
-    worker_no_handoff_escalate_sec=0L,
+    worker_no_handoff_idle_sec=0L,
   )
   assert_eq(
     worker_handoff_count_sent(delivered_sent, "[WORKER EXITED WITHOUT NOTIFY]"),

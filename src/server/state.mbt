@@ -9,6 +9,13 @@ fn default_read_file(path : String) -> String {
 }
 
 ///|
+async fn default_list_panes_snapshot_capture(
+  session : String,
+) -> @tools.ZellijListPanesSnapshot {
+  @tools.capture_zellij_list_panes_snapshot(session)
+}
+
+///|
 fn default_write_file_atomic(path : String, content : String) -> Bool {
   @sys.write_file_atomic(path, content)
 }
@@ -251,7 +258,6 @@ fn ServerState::clear_no_handoff_watchdog_state(
   kind : NoHandoffWatchdogKind,
 ) -> Unit {
   let key = no_handoff_watchdog_state_key(agent_id, kind)
-  self.worker_no_handoff_prodded_at.remove(key)
   self.worker_no_handoff_stalled_emitted.remove(key)
 }
 
@@ -303,7 +309,6 @@ pub struct ServerState {
   handoff_delivered : Map[String, Bool]
   agent_task_contracts : Map[String, @types.TaskContract]
   leaf_tdd_phases : Map[String, @types.LeafTddPhase]
-  worker_no_handoff_prodded_at : Map[String, Int64]
   worker_no_handoff_stalled_emitted : Map[String, Bool]
   worker_no_handoff_exit_emitted : Map[String, Bool]
   spawn_registration_first_unseen : Map[String, Int64]
@@ -313,6 +318,7 @@ pub struct ServerState {
   recent_poller_event_emissions : Map[String, Map[String, RecentEmission]]
   goal_judge : GoalJudgeState
   pane_watcher : @runtime.PaneWatcher
+  list_panes_snapshot_capture : async (String) -> @tools.ZellijListPanesSnapshot
   recovery_provider : @runtime.RecoveryProvider
   otlp_exporter : OtlpSpanExporter?
   append_file : (String, String) -> Bool
@@ -428,7 +434,6 @@ pub fn ServerState::new(
     handoff_delivered: {},
     agent_task_contracts: persisted_agent_task_contracts,
     leaf_tdd_phases: {},
-    worker_no_handoff_prodded_at: {},
     worker_no_handoff_stalled_emitted: {},
     worker_no_handoff_exit_emitted: {},
     spawn_registration_first_unseen: {},
@@ -438,6 +443,7 @@ pub fn ServerState::new(
     recent_poller_event_emissions: {},
     goal_judge: GoalJudgeState::new(),
     pane_watcher: @runtime.PaneWatcher::new(),
+    list_panes_snapshot_capture: default_list_panes_snapshot_capture,
     recovery_provider,
     otlp_exporter: otlp_span_exporter_for_config(
       config,
@@ -643,6 +649,22 @@ pub fn ServerState::with_pane_watcher(
   pane_watcher : @runtime.PaneWatcher,
 ) -> ServerState {
   { ..self, pane_watcher, }
+}
+
+///|
+pub fn ServerState::with_list_panes_snapshot_capture(
+  self : ServerState,
+  list_panes_snapshot_capture : async (String) -> @tools.ZellijListPanesSnapshot,
+) -> ServerState {
+  { ..self, list_panes_snapshot_capture, }
+}
+
+///|
+pub fn ServerState::with_read_file(
+  self : ServerState,
+  read_file : (String) -> String,
+) -> ServerState {
+  { ..self, read_file, }
 }
 
 ///|

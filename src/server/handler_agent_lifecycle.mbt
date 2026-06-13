@@ -48,13 +48,16 @@ pub fn ServerState::register_agent(
 }
 
 ///|
-pub fn ServerState::apply_recovered_agent(
+pub async fn ServerState::apply_recovered_agent(
   self : ServerState,
   agent : @types.Agent,
   alive : Bool,
 ) -> Unit {
   try {
     self.register_agent(agent)
+    if alive && agent.terminal_target is Some(_) {
+      self.watch_pane(agent.agent_id.to_string())
+    }
     if !alive {
       ignore(self.registry.set_alive(agent.agent_id.to_string(), false))
     }

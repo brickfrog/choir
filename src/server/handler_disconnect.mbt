@@ -1,20 +1,43 @@
 ///|
 /// Register a pane for idle watchdog monitoring.
-/// Starts a `zellij subscribe` process that streams pane viewport updates
-/// to a snapshot file, replacing the old dump-screen polling approach.
-pub fn ServerState::watch_pane(self : ServerState, agent_id : String) -> Unit {
+/// Resolves the agent's live zellij pane id from the current list-panes
+/// snapshot and records it for dump-screen polling. Missing tabs remain
+/// tracked with no pane id so later poller ticks can retry resolution.
+pub async fn ServerState::watch_pane(
+  self : ServerState,
+  agent_id : String,
+) -> Unit {
   let agent = self.registry.get(agent_id) catch { _ => return }
   let target = match agent.terminal_target {
     Some(t) => t
     None => return
   }
-  self.pane_watcher.watch_pane(agent_id, target, @poller.now_sec())
+  let snapshot = (self.list_panes_snapshot_capture)(target.session)
+  let pane_id = match @tools.resolve_zellij_pane_id(target, snapshot) {
+    Some(value) => Some("terminal_" + value.to_string())
+    None => None
+  }
+  self.pane_watcher.watch_pane(agent_id, target, @poller.now_sec(), pane_id~)
 }
 
 ///|
-/// Stop the zellij subscribe process for an agent and clean up state.
-fn ServerState::stop_subscribe(self : ServerState, agent_id : String) -> Unit {
-  self.pane_watcher.stop_subscribe(agent_id)
+async fn ServerState::ensure_watched_pane_resolved(
+  self : ServerState,
+  agent_id : String,
+) -> Bool {
+  match self.pane_watcher.pane_id_for_agent(agent_id) {
+    Some(_) => true
+    None => {
+      self.watch_pane(agent_id)
+      self.pane_watcher.pane_id_for_agent(agent_id) is Some(_)
+    }
+  }
+}
+
+///|
+/// Drop pane watchdog state for an agent.
+fn ServerState::stop_watching(self : ServerState, agent_id : String) -> Unit {
+  self.pane_watcher.stop_watching(agent_id)
 }
 
 ///|
@@ -114,7 +137,7 @@ fn ServerState::clear_agent_runtime_tracking(
   self : ServerState,
   agent_id : String,
 ) -> Unit {
-  self.stop_subscribe(agent_id)
+  self.stop_watching(agent_id)
   self.pending_disconnects.remove(agent_id)
   self.agent_pids.remove(agent_id)
   self.disconnect_contexts.remove(agent_id)
@@ -769,60 +792,6 @@ fn ServerState::mark_transport_reconnected(
 }
 
 ///|
-async fn ServerState::prod_leaf_no_handoff(
-  self : ServerState,
-  agent : @types.Agent,
-  now : Int64,
-  runner : async (Array[@workspace.Command]) -> Array[Int],
-) -> Unit {
-  let agent_id = agent.agent_id.to_string()
-  let state_key = no_handoff_watchdog_state_key(agent_id, LeafPostFixNoHandoff)
-  if self.worker_no_handoff_prodded_at.contains(state_key) ||
-    self.handoff_was_delivered(agent_id) {
-    return
-  }
-  self.worker_no_handoff_prodded_at.set(state_key, now)
-  ignore(
-    self.durable_deliver_to_agent(
-      agent,
-      "watchdog",
-      leaf_stalled_no_handoff_prod_message(@phase.extract_slug(agent_id)),
-      @types.Status::Info,
-      runner,
-    ),
-  ) catch {
-    _ => ()
-  }
-}
-
-///|
-async fn ServerState::prod_leaf_pre_tdd_stall(
-  self : ServerState,
-  agent : @types.Agent,
-  now : Int64,
-  runner : async (Array[@workspace.Command]) -> Array[Int],
-) -> Unit {
-  let agent_id = agent.agent_id.to_string()
-  let state_key = no_handoff_watchdog_state_key(agent_id, LeafPreTddStall)
-  if self.worker_no_handoff_prodded_at.contains(state_key) ||
-    self.handoff_was_delivered(agent_id) {
-    return
-  }
-  self.worker_no_handoff_prodded_at.set(state_key, now)
-  ignore(
-    self.durable_deliver_to_agent(
-      agent,
-      "watchdog",
-      leaf_pre_tdd_stall_prod_text,
-      @types.Status::Info,
-      runner,
-    ),
-  ) catch {
-    _ => ()
-  }
-}
-
-///|
 async fn ServerState::emit_leaf_pre_tdd_stalled(
   self : ServerState,
   agent : @types.Agent,
@@ -889,37 +858,6 @@ async fn ServerState::emit_leaf_stalled_no_handoff(
 }
 
 ///|
-async fn ServerState::prod_worker_no_handoff(
-  self : ServerState,
-  agent : @types.Agent,
-  now : Int64,
-  runner : async (Array[@workspace.Command]) -> Array[Int],
-) -> Unit {
-  let agent_id = agent.agent_id.to_string()
-  let state_key = no_handoff_watchdog_state_key(agent_id, WorkerNoHandoff)
-  if self.worker_no_handoff_prodded_at.contains(state_key) ||
-    self.handoff_was_delivered(agent_id) {
-    return
-  }
-  let target = match agent.terminal_target {
-    Some(t) => t
-    None => return
-  }
-  self.worker_no_handoff_prodded_at.set(state_key, now)
-  ignore(
-    @tools.execute_delivery(
-      @message.DeliveryMethod::LocalTerminalInput(
-        target, worker_no_handoff_prod_text,
-      ),
-      runner,
-      project_dir=self.config.project_dir,
-    ),
-  ) catch {
-    _ => ()
-  }
-}
-
-///|
 async fn ServerState::emit_worker_stalled_no_handoff(
   self : ServerState,
   agent : @types.Agent,
@@ -970,7 +908,10 @@ async fn ServerState::emit_worker_exited_without_notify_if_needed(
   let screen_text = match screen {
     Some(s) => s
     None =>
-      @runtime.extract_viewport_text(self.pane_watcher.read_viewport(agent_id))
+      match self.pane_watcher.current_screen(agent_id) {
+        Some(s) => s
+        None => ""
+      }
   }
   let message = worker_exited_without_notify_message(
     @phase.extract_slug(agent_id),
@@ -993,78 +934,34 @@ async fn ServerState::check_leaf_no_handoff(
   self : ServerState,
   agent : @types.Agent,
   lifecycle : @phase.WorkflowState,
-  now : Int64,
   observation : @runtime.PaneIdleObservation,
-  prod_sec : Int64,
-  escalate_sec : Int64,
+  idle_threshold_sec : Int64,
   runner : async (Array[@workspace.Command]) -> Array[Int],
 ) -> Unit {
   let agent_id = agent.agent_id.to_string()
   if agent.role != @types.Role::Dev ||
     self.handoff_was_delivered(agent_id) ||
-    prod_sec <= 0L {
+    idle_threshold_sec <= 0L {
     return
   }
   let gate_ready = self.leaf_merge_gate_ready_for_agent(agent_id)
   let pre_tdd_key = no_handoff_watchdog_state_key(agent_id, LeafPreTddStall)
-  let pre_tdd_prodded_at = self.worker_no_handoff_prodded_at.get(pre_tdd_key)
-  let pre_tdd_prodded = pre_tdd_prodded_at != None
-  let pre_tdd_idle_timeout = if pre_tdd_prodded {
-    escalate_sec
-  } else {
-    prod_sec
-  }
-  let pre_tdd_decision_idle_sec = match pre_tdd_prodded_at {
-    Some(t) => {
-      let elapsed_since_prod = nonnegative_elapsed(now, t)
-      let post_prod_idle_sec = if observation.idle_sec < elapsed_since_prod {
-        observation.idle_sec
-      } else {
-        elapsed_since_prod
-      }
-      prod_sec + post_prod_idle_sec
-    }
-    None => observation.idle_sec
-  }
   let post_fix_key = no_handoff_watchdog_state_key(
     agent_id,
     LeafPostFixNoHandoff,
   )
-  let post_fix_prodded_at = self.worker_no_handoff_prodded_at.get(post_fix_key)
-  let post_fix_prodded = post_fix_prodded_at != None
-  let post_fix_idle_timeout = if post_fix_prodded {
-    escalate_sec
-  } else {
-    prod_sec
-  }
-  let post_fix_decision_idle_sec = match post_fix_prodded_at {
-    Some(t) => {
-      let elapsed_since_prod = nonnegative_elapsed(now, t)
-      let post_prod_idle_sec = if observation.idle_sec < elapsed_since_prod {
-        observation.idle_sec
-      } else {
-        elapsed_since_prod
-      }
-      prod_sec + post_prod_idle_sec
-    }
-    None => observation.idle_sec
-  }
   let tdd_phase = self.leaf_tdd_phase_for_agent(agent_id)
-  if pre_tdd_idle_timeout > 0L && observation.idle_sec >= pre_tdd_idle_timeout {
+  if observation.idle_sec >= idle_threshold_sec {
     match
       leaf_pre_tdd_stall_decision(
         agent.role,
         lifecycle,
         tdd_phase,
-        pre_tdd_decision_idle_sec,
+        observation.idle_sec,
         self.handoff_was_delivered(agent_id),
-        pre_tdd_prodded,
         self.worker_no_handoff_stalled_emitted.contains(pre_tdd_key),
-        prod_sec,
-        escalate_sec,
+        idle_threshold_sec,
       ) {
-      WorkerNoHandoffDecision::Prod =>
-        self.prod_leaf_pre_tdd_stall(agent, now, runner)
       WorkerNoHandoffDecision::EmitStalled =>
         self.emit_leaf_pre_tdd_stalled(
           agent,
@@ -1076,21 +973,17 @@ async fn ServerState::check_leaf_no_handoff(
       WorkerNoHandoffDecision::DoNothing => ()
     }
   }
-  if post_fix_idle_timeout > 0L && observation.idle_sec >= post_fix_idle_timeout {
+  if observation.idle_sec >= idle_threshold_sec {
     match
       leaf_no_handoff_decision(
         agent.role,
         lifecycle,
         gate_ready,
-        post_fix_decision_idle_sec,
+        observation.idle_sec,
         self.handoff_was_delivered(agent_id),
-        post_fix_prodded,
         self.worker_no_handoff_stalled_emitted.contains(post_fix_key),
-        prod_sec,
-        escalate_sec,
+        idle_threshold_sec,
       ) {
-      WorkerNoHandoffDecision::Prod =>
-        self.prod_leaf_no_handoff(agent, now, runner)
       WorkerNoHandoffDecision::EmitStalled =>
         self.emit_leaf_stalled_no_handoff(
           agent,
@@ -1107,44 +1000,28 @@ async fn ServerState::check_leaf_no_handoff(
 async fn ServerState::check_worker_no_handoff(
   self : ServerState,
   agent : @types.Agent,
-  now : Int64,
   observation : @runtime.PaneIdleObservation,
-  prod_sec : Int64,
-  escalate_sec : Int64,
+  idle_sec : Int64,
   runner : async (Array[@workspace.Command]) -> Array[Int],
 ) -> Unit {
   let agent_id = agent.agent_id.to_string()
   if agent.role != @types.Role::Worker ||
     self.handoff_was_delivered(agent_id) ||
-    prod_sec <= 0L {
+    idle_sec <= 0L {
     return
   }
   let state_key = no_handoff_watchdog_state_key(agent_id, WorkerNoHandoff)
-  let prodded_at = self.worker_no_handoff_prodded_at.get(state_key)
-  let prodded = prodded_at != None
-  let idle_timeout = if prodded { escalate_sec } else { prod_sec }
-  if idle_timeout <= 0L {
+  if observation.idle_sec < idle_sec {
     return
-  }
-  if observation.idle_sec < idle_timeout {
-    return
-  }
-  let decision_idle_sec = match prodded_at {
-    Some(t) => nonnegative_elapsed(now, t)
-    None => observation.idle_sec
   }
   match
     worker_no_handoff_decision(
       agent.role,
-      decision_idle_sec,
+      observation.idle_sec,
       self.handoff_was_delivered(agent_id),
-      prodded,
       self.worker_no_handoff_stalled_emitted.contains(state_key),
-      prod_sec,
-      escalate_sec,
+      idle_sec,
     ) {
-    WorkerNoHandoffDecision::Prod =>
-      self.prod_worker_no_handoff(agent, now, runner)
     WorkerNoHandoffDecision::EmitStalled =>
       self.emit_worker_stalled_no_handoff(
         agent,
@@ -1164,21 +1041,20 @@ pub async fn ServerState::check_idle_agents(
   now : Int64,
   timeout : Int64,
   runner : async (Array[@workspace.Command]) -> Array[Int],
-  worker_no_handoff_prod_sec? : Int64 = 120L,
-  worker_no_handoff_escalate_sec? : Int64 = 120L,
+  worker_no_handoff_idle_sec? : Int64 = 120L,
 ) -> Unit {
   let agent_ids = self.pane_watcher.watched_agents()
   for agent_id in agent_ids {
     let agent = try self.registry.get(agent_id) catch {
       _ => {
-        self.stop_subscribe(agent_id)
+        self.stop_watching(agent_id)
         continue
       }
     } noraise {
       a => a
     }
     if agent.state != @types.AgentState::Active {
-      self.stop_subscribe(agent_id)
+      self.stop_watching(agent_id)
       continue
     }
     if @types.is_supervisor_role(agent.role) {
@@ -1196,21 +1072,21 @@ pub async fn ServerState::check_idle_agents(
       Some(_) => ()
       None => continue
     }
+    if !self.ensure_watched_pane_resolved(agent_id) {
+      continue
+    }
 
     // Read and parse the pane snapshot once for all idle decisions this tick.
     match self.pane_watcher.observe_idle(agent_id, now) {
       Some(observation) => {
         self.check_worker_no_handoff(
-          agent, now, observation, worker_no_handoff_prod_sec, worker_no_handoff_escalate_sec,
-          runner,
+          agent, observation, worker_no_handoff_idle_sec, runner,
         )
         self.check_leaf_no_handoff(
           agent,
           lifecycle.workflow,
-          now,
           observation,
-          worker_no_handoff_prod_sec,
-          worker_no_handoff_escalate_sec,
+          worker_no_handoff_idle_sec,
           runner,
         )
         if watchdog_exempt {
@@ -1269,18 +1145,11 @@ async test "check_idle_agents skips supervisor roles before reading panes" {
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let reads : Array[String] = []
-  let spawned : Array[String] = []
-  let killed : Array[Int] = []
   let host : @runtime.PaneWatchHost = {
-    spawn_zellij_pane_viewport_subscribe: fn(_session, name, _snapshot_path) {
-      spawned.push(name)
-      100
-    },
-    kill_pid_best_effort: fn(pid) { killed.push(pid) },
-    delete_file_sync: fn(_path) {  },
-    read_file: fn(path) {
-      reads.push(path)
-      "{\"event\":\"pane_update\",\"viewport\":[\"idle\"]}"
+    dump_pane_screen: async fn(_session, _pane_id) {
+      @async.sleep(0)
+      reads.push(_session + ":" + _pane_id)
+      "idle"
     },
   }
   let state = {
@@ -1296,6 +1165,11 @@ async test "check_idle_agents skips supervisor roles before reading panes" {
       @types.Role::TL => "main.tl"
       _ => "main.supervisor"
     }
+    let target : @types.LocalTarget = {
+      kind: @types.TargetKind::ZellijPane,
+      session: "s",
+      name: agent_id,
+    }
     ignore(
       state.register_agent({
         agent_id: @types.AgentId(agent_id),
@@ -1304,17 +1178,18 @@ async test "check_idle_agents skips supervisor roles before reading panes" {
         parent: None,
         workspace: project_dir,
         branch: "main",
-        terminal_target: Some({
-          kind: @types.TargetKind::ZellijPane,
-          session: "s",
-          name: agent_id,
-        }),
+        terminal_target: Some(target),
         host: @types.Host::Local,
         spawn_depth: 0,
         state: @types.AgentState::Active,
       }),
     )
-    state.watch_pane(agent_id)
+    state.pane_watcher.watch_pane(
+      agent_id,
+      target,
+      0L,
+      pane_id=Some("terminal_" + agent_id.length().to_string()),
+    )
   }
   let calls : Array[@workspace.Command] = []
   state.check_idle_agents(1000L, 0L, async fn(cmds) {
@@ -1324,9 +1199,7 @@ async test "check_idle_agents skips supervisor roles before reading panes" {
     }
     [0]
   })
-  assert_eq(spawned.length(), 2)
   @debug.assert_eq(reads, [])
-  @debug.assert_eq(killed, [])
   @debug.assert_eq(calls, [])
   assert_eq(state.registry.get("root").state, @types.AgentState::Active)
   assert_eq(state.registry.get("main.tl").state, @types.AgentState::Active)
@@ -1769,20 +1642,14 @@ test "clear_agent_runtime_tracking clears worker no-handoff maps" {
     last_request_name: Some("register"),
   })
   state.handoff_delivered.set(agent_id, true)
-  state.worker_no_handoff_prodded_at.set("worker-no-handoff:" + agent_id, 2L)
   state.worker_no_handoff_stalled_emitted.set(
     "worker-no-handoff:" + agent_id,
     true,
   )
-  state.worker_no_handoff_prodded_at.set(
-    "leaf-post-fix-no-handoff:" + agent_id,
-    3L,
-  )
   state.worker_no_handoff_stalled_emitted.set(
     "leaf-post-fix-no-handoff:" + agent_id,
     true,
   )
-  state.worker_no_handoff_prodded_at.set("leaf-pre-tdd-stall:" + agent_id, 4L)
   state.worker_no_handoff_stalled_emitted.set(
     "leaf-pre-tdd-stall:" + agent_id,
     true,
@@ -1800,30 +1667,14 @@ test "clear_agent_runtime_tracking clears worker no-handoff maps" {
   assert_eq(state.disconnect_contexts.contains(agent_id), false)
   assert_eq(state.handoff_delivered.contains(agent_id), false)
   assert_eq(
-    state.worker_no_handoff_prodded_at.contains("worker-no-handoff:" + agent_id),
-    false,
-  )
-  assert_eq(
     state.worker_no_handoff_stalled_emitted.contains(
       "worker-no-handoff:" + agent_id,
     ),
     false,
   )
   assert_eq(
-    state.worker_no_handoff_prodded_at.contains(
-      "leaf-post-fix-no-handoff:" + agent_id,
-    ),
-    false,
-  )
-  assert_eq(
     state.worker_no_handoff_stalled_emitted.contains(
       "leaf-post-fix-no-handoff:" + agent_id,
-    ),
-    false,
-  )
-  assert_eq(
-    state.worker_no_handoff_prodded_at.contains(
-      "leaf-pre-tdd-stall:" + agent_id,
     ),
     false,
   )
@@ -2066,8 +1917,10 @@ async fn ServerState::handle_disconnect_confirming_with_runner(
                 None,
                 runner,
               )
-              let snapshot = self.pane_watcher.read_viewport(agent_id)
-              let screen = @runtime.extract_viewport_text(snapshot)
+              let screen = match self.pane_watcher.current_screen(agent_id) {
+                Some(s) => s
+                None => ""
+              }
               let (reason, msg) = if screen != "" {
                 let classified = @phase.classify_failure(screen)
                 match classified {

@@ -153,6 +153,20 @@ pub fn zellij_list_panes_json_command(session : String) -> Command {
 }
 
 ///|
+pub fn zellij_dump_screen_command(
+  session : String,
+  pane_id : String,
+) -> Command {
+  {
+    program: "zellij",
+    args: [
+      "--session", session, "action", "dump-screen", "--pane-id", pane_id, "--full",
+    ],
+    workdir: None,
+  }
+}
+
+///|
 /// Layout loaded into choir-managed zellij sessions. Opt-in: only loads when
 /// the layout file is present under the user's zellij config dir
 /// (`~/.config/zellij/layouts/<name>.kdl`). Zellij sessions started outside

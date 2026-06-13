@@ -21,6 +21,23 @@ fn grow_connection_buffer(buf : FixedArray[Byte]) -> FixedArray[Byte] {
 }
 
 ///|
+async fn serve_dump_pane_screen(session : String, pane_id : String) -> String {
+  let (status, output) = @exec.capture_command_stdout(
+    @workspace.zellij_dump_screen_command(session, pane_id),
+  )
+  if status == 0 {
+    output
+  } else {
+    ""
+  }
+}
+
+///|
+fn serve_pane_watcher() -> @runtime.PaneWatcher {
+  @runtime.PaneWatcher::with_host({ dump_pane_screen: serve_dump_pane_screen })
+}
+
+///|
 struct ServeUDSClient {
   fd : Int
   mut buf : FixedArray[Byte]
@@ -1368,7 +1385,9 @@ fn serve_run() -> Unit {
     }
   }
   let provider = @server.make_recovery_provider()
-  let state = @server.ServerState::new(config, provider)
+  let state = @server.ServerState::new(config, provider).with_pane_watcher(
+    serve_pane_watcher(),
+  )
   @moontrace.set_global_field("service", "choir".to_json())
   @moontrace.set_global_field("run_id", state.run_id.to_json())
   @prompts.emit_prompt_drift_warnings(
@@ -1433,8 +1452,7 @@ fn serve_run() -> Unit {
               now,
               300L,
               @exec.run_sequence,
-              worker_no_handoff_prod_sec=config.worker_no_handoff_prod_sec,
-              worker_no_handoff_escalate_sec=config.worker_no_handoff_escalate_sec,
+              worker_no_handoff_idle_sec=config.worker_no_handoff_idle_sec,
             )
           } catch {
             e =>
