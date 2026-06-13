@@ -682,6 +682,135 @@ pub fn parse_config(
 }
 
 ///|
+fn config_string_array_equal(
+  left : Array[String],
+  right : Array[String],
+) -> Bool {
+  if left.length() != right.length() {
+    return false
+  }
+  for i = 0; i < left.length(); i = i + 1 {
+    if left[i] != right[i] {
+      return false
+    }
+  }
+  true
+}
+
+///|
+fn config_pricing_equal(
+  left : Map[String, @types.PricingRate],
+  right : Map[String, @types.PricingRate],
+) -> Bool {
+  if left.length() != right.length() {
+    return false
+  }
+  for key, rate in left {
+    match right.get(key) {
+      Some(other) =>
+        if rate.rate_in != other.rate_in || rate.rate_out != other.rate_out {
+          return false
+        }
+      None => return false
+    }
+  }
+  true
+}
+
+///|
+pub fn config_divergence(
+  loaded : @types.Config,
+  on_disk : @types.Config,
+) -> Array[String] {
+  let fields : Array[String] = []
+  if loaded.default_role != on_disk.default_role {
+    fields.push("default_role")
+  }
+  if loaded.project_dir != on_disk.project_dir {
+    fields.push("project_dir")
+  }
+  if loaded.shell_command != on_disk.shell_command {
+    fields.push("shell_command")
+  }
+  if loaded.listen_uds != on_disk.listen_uds {
+    fields.push("listen_uds")
+  }
+  if loaded.listen_tcp != on_disk.listen_tcp {
+    fields.push("listen_tcp")
+  }
+  if loaded.tcp_auth_token != on_disk.tcp_auth_token {
+    fields.push("tcp_auth_token")
+  }
+  if loaded.otlp_endpoint != on_disk.otlp_endpoint {
+    fields.push("otlp_endpoint")
+  }
+  if loaded.agent_id != on_disk.agent_id {
+    fields.push("agent_id")
+  }
+  if loaded.extra_mcp_servers_json != on_disk.extra_mcp_servers_json {
+    fields.push("extra_mcp_servers_json")
+  }
+  if loaded.companions_json != on_disk.companions_json {
+    fields.push("companions_json")
+  }
+  if loaded.plugins_json != on_disk.plugins_json {
+    fields.push("plugins_json")
+  }
+  if loaded.terminal_session != on_disk.terminal_session {
+    fields.push("terminal_session")
+  }
+  if loaded.automerge != on_disk.automerge {
+    fields.push("automerge")
+  }
+  if loaded.review_mode != on_disk.review_mode {
+    fields.push("review_mode")
+  }
+  if loaded.merge_strategy != on_disk.merge_strategy {
+    fields.push("merge_strategy")
+  }
+  if loaded.moon_verify_target != on_disk.moon_verify_target {
+    fields.push("moon_verify_target")
+  }
+  if loaded.agy_migration_incomplete != on_disk.agy_migration_incomplete {
+    fields.push("agy_migration_incomplete")
+  }
+  if loaded.hooks_enforcement != on_disk.hooks_enforcement {
+    fields.push("hooks_enforcement")
+  }
+  if loaded.worker_no_handoff_idle_sec != on_disk.worker_no_handoff_idle_sec {
+    fields.push("worker_no_handoff_idle_sec")
+  }
+  if loaded.poller_heartbeat_tick_sec != on_disk.poller_heartbeat_tick_sec {
+    fields.push("poller_heartbeat_tick_sec")
+  }
+  if !config_string_array_equal(
+      loaded.prenotify_checks,
+      on_disk.prenotify_checks,
+    ) {
+    fields.push("prenotify_checks")
+  }
+  if loaded.auto_pull_after_integration != on_disk.auto_pull_after_integration {
+    fields.push("auto_pull_after_integration")
+  }
+  if loaded.project != on_disk.project {
+    fields.push("project")
+  }
+  if loaded.pr_policy != on_disk.pr_policy {
+    fields.push("pr_policy")
+  }
+  if loaded.auto_rebuild_after_pull != on_disk.auto_rebuild_after_pull {
+    fields.push("auto_rebuild_after_pull")
+  }
+  if loaded.auto_reload_after_rebuild != on_disk.auto_reload_after_rebuild {
+    fields.push("auto_reload_after_rebuild")
+  }
+  if !config_pricing_equal(loaded.pricing, on_disk.pricing) {
+    fields.push("pricing")
+  }
+  fields
+}
+
+///|
 fn parse_spawn_depth_value(raw : String) -> Result[Int, @types.ChoirError] {
   let s = raw.trim().to_owned()
   let n_opt = Some(@string.parse_int(s)) catch { _ => None }

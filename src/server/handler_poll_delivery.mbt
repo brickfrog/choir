@@ -3280,6 +3280,197 @@ fn log_poller_pr_tick(
 }
 
 ///|
+fn config_optional_value(value : String?) -> String {
+  match value {
+    Some(v) => v
+    None => "<unset>"
+  }
+}
+
+///|
+fn config_sensitive_optional_value(value : String?) -> String {
+  match value {
+    Some(_) => "[redacted]"
+    None => "<unset>"
+  }
+}
+
+///|
+fn config_project_value(project : @types.Project) -> String {
+  "verify_cmd=" + config_optional_value(project.verify_cmd)
+}
+
+///|
+fn config_pr_policy_value(policy : @types.PrPolicy) -> String {
+  "require_integration_audit=" +
+  policy.require_integration_audit.to_string() +
+  ",skip_copilot_on_feature_branch=" +
+  policy.skip_copilot_on_feature_branch.to_string() +
+  ",reviewer=" +
+  policy.reviewer.to_wire_string()
+}
+
+///|
+fn config_pricing_value(pricing : Map[String, @types.PricingRate]) -> String {
+  let parts : Array[String] = []
+  for key, rate in pricing {
+    parts.push(
+      key + ":" + rate.rate_in.to_string() + "/" + rate.rate_out.to_string(),
+    )
+  }
+  parts.sort()
+  parts.join(",")
+}
+
+///|
+fn config_field_value(config : @types.Config, field : String) -> String {
+  match field {
+    "default_role" => config.default_role.to_wire_string()
+    "project_dir" => config.project_dir
+    "shell_command" => config_optional_value(config.shell_command)
+    "listen_uds" => config.listen_uds
+    "listen_tcp" => config_optional_value(config.listen_tcp)
+    "tcp_auth_token" => config_sensitive_optional_value(config.tcp_auth_token)
+    "otlp_endpoint" => config_optional_value(config.otlp_endpoint)
+    "agent_id" => config_optional_value(config.agent_id)
+    "extra_mcp_servers_json" =>
+      config_optional_value(config.extra_mcp_servers_json)
+    "companions_json" => config_optional_value(config.companions_json)
+    "plugins_json" => config_optional_value(config.plugins_json)
+    "terminal_session" => config.terminal_session
+    "automerge" => config.automerge.to_string()
+    "review_mode" => config.review_mode.to_wire_string()
+    "merge_strategy" => config.merge_strategy.to_wire_string()
+    "moon_verify_target" => config.moon_verify_target.to_wire_string()
+    "agy_migration_incomplete" => config.agy_migration_incomplete.to_string()
+    "hooks_enforcement" => config.hooks_enforcement.to_string()
+    "worker_no_handoff_idle_sec" =>
+      config.worker_no_handoff_idle_sec.to_string()
+    "poller_heartbeat_tick_sec" => config.poller_heartbeat_tick_sec.to_string()
+    "prenotify_checks" => config.prenotify_checks.join("|")
+    "auto_pull_after_integration" =>
+      config.auto_pull_after_integration.to_string()
+    "project" => config_project_value(config.project)
+    "pr_policy" => config_pr_policy_value(config.pr_policy)
+    "auto_rebuild_after_pull" => config.auto_rebuild_after_pull.to_string()
+    "auto_reload_after_rebuild" => config.auto_reload_after_rebuild.to_string()
+    "pricing" => config_pricing_value(config.pricing)
+    _ => "<unknown>"
+  }
+}
+
+///|
+fn config_divergence_details(
+  loaded : @types.Config,
+  on_disk : @types.Config,
+  fields : Array[String],
+) -> Array[String] {
+  let details : Array[String] = []
+  for field in fields {
+    details.push(
+      field +
+      ": loaded=" +
+      config_field_value(loaded, field) +
+      " disk=" +
+      config_field_value(on_disk, field),
+    )
+  }
+  details
+}
+
+///|
+fn ServerState::warn_on_disk_config_divergence(self : ServerState) -> Unit {
+  let config_path = self.config.project_dir + "/.choir/config.toml"
+  let local_path = self.config.project_dir + "/.choir/config.local.toml"
+  let config_content = (self.read_file)(config_path)
+  if config_content.trim() == "" {
+    return
+  }
+  let local_content = (self.read_file)(local_path)
+  let on_disk = match
+    @config.parse_config(config_content, local_content=Some(local_content)) {
+    Ok(cfg) => cfg
+    Err(_) => return
+  }
+  self.warn_on_parsed_config_divergence(on_disk, config_path, local_path)
+}
+
+///|
+fn ServerState::warn_on_parsed_config_divergence(
+  self : ServerState,
+  on_disk : @types.Config,
+  config_path : String,
+  local_path : String,
+) -> Unit {
+  let fields = @config.config_divergence(self.config, on_disk)
+  if fields.length() == 0 {
+    self.last_config_divergence_signature = None
+    return
+  }
+  let details = config_divergence_details(self.config, on_disk, fields)
+  let signature = details.join("|")
+  match self.last_config_divergence_signature {
+    Some(previous) if previous == signature => return
+    _ => ()
+  }
+  self.last_config_divergence_signature = Some(signature)
+  @moontrace.warn(
+    "config changed on disk after boot (" +
+    details.join("; ") +
+    "); restart `choir serve` to apply.",
+    fields=[
+      @moontrace.field("event", "config_divergence_after_boot"),
+      @moontrace.field("fields", fields.join(",")),
+      @moontrace.field("signature", signature),
+      @moontrace.field("config_path", config_path),
+      @moontrace.field("local_config_path", local_path),
+    ],
+  )
+}
+
+///|
+test "warn_on_parsed_config_divergence rate limits by signature and resets" {
+  let project_dir = "/tmp/choir-config-divergence-rate-limit-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      terminal_session: "test-session",
+      merge_strategy: @types.MergeStrategy::Merge,
+      automerge: false,
+    },
+    make_hermetic_recovery_provider(),
+  )
+  let config_path = project_dir + "/.choir/config.toml"
+  let local_path = project_dir + "/.choir/config.local.toml"
+  let squash = { ..state.config, merge_strategy: @types.MergeStrategy::Squash }
+  let squash_automerge = { ..squash, automerge: true }
+  let captured : Array[@moontrace.Event] = []
+  @moontrace.set_subscriber(fn(event) { captured.push(event) })
+  state.warn_on_parsed_config_divergence(squash, config_path, local_path)
+  state.warn_on_parsed_config_divergence(squash, config_path, local_path)
+  state.warn_on_parsed_config_divergence(
+    squash_automerge, config_path, local_path,
+  )
+  state.warn_on_parsed_config_divergence(state.config, config_path, local_path)
+  state.warn_on_parsed_config_divergence(squash, config_path, local_path)
+  @moontrace.clear_subscriber()
+  let mut warn_count = 0
+  for event in captured {
+    if event.level == @moontrace.Level::Warn &&
+      event.message.has_prefix("config changed on disk after boot") {
+      warn_count = warn_count + 1
+    }
+  }
+  assert_eq(warn_count, 3)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 pub async fn ServerState::process_poller_tick_with(
   self : ServerState,
   now : Int64,
@@ -3314,6 +3505,7 @@ pub async fn ServerState::process_poller_tick_with(
   sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Unit {
   self.mutex_registry.expire(now)
+  self.warn_on_disk_config_divergence()
   let pending_events = []
   let pending_agent_ids = []
   let tick_summary = @poller.TickSummary::new(@env.now().reinterpret_as_int64())
@@ -3397,6 +3589,7 @@ pub async fn ServerState::process_poller_tick(
   sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Unit {
   self.mutex_registry.expire(now)
+  self.warn_on_disk_config_divergence()
   let pending_events = []
   let pending_agent_ids = []
   let project_dir = self.config.project_dir

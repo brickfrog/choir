@@ -71,6 +71,35 @@ test "parse_config - full" {
 }
 
 ///|
+test "config_divergence returns empty for identical config" {
+  let cfg = @types.Config::default()
+  @debug.assert_eq(config_divergence(cfg, cfg), [])
+}
+
+///|
+test "config_divergence names a single changed field" {
+  let loaded = @types.Config::default()
+  let on_disk = { ..loaded, merge_strategy: @types.MergeStrategy::Squash }
+  @debug.assert_eq(config_divergence(loaded, on_disk), ["merge_strategy"])
+}
+
+///|
+test "config_divergence names every changed top-level field" {
+  let loaded = @types.Config::default()
+  let on_disk = {
+    ..loaded,
+    automerge: true,
+    terminal_session: "other-session",
+    pr_policy: { ..loaded.pr_policy, reviewer: @types.Reviewer::Copilot },
+  }
+  let fields = config_divergence(loaded, on_disk)
+  assert_eq(fields.length(), 3)
+  assert_true(fields.contains("automerge"))
+  assert_true(fields.contains("terminal_session"))
+  assert_true(fields.contains("pr_policy"))
+}
+
+///|
 fn config_schema_key_present(file : @types.ConfigFile, key : String) -> Bool {
   for entry in @types.config_schema_entries() {
     if entry.file == file && entry.key == key {

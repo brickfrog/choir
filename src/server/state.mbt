@@ -314,6 +314,7 @@ pub struct ServerState {
   spawn_registration_first_unseen : Map[String, Int64]
   spawn_launch_diagnostics : Map[String, @tools.SpawnLaunchDiagnostic]
   idle_agent_warned_at_70 : Map[String, Bool]
+  mut last_config_divergence_signature : String?
   list_panes_cache : Map[String, @tools.CachedListPanesSnapshot]
   recent_poller_event_emissions : Map[String, Map[String, RecentEmission]]
   goal_judge : GoalJudgeState
@@ -439,6 +440,7 @@ pub fn ServerState::new(
     spawn_registration_first_unseen: {},
     spawn_launch_diagnostics: {},
     idle_agent_warned_at_70: {},
+    last_config_divergence_signature: None,
     list_panes_cache: {},
     recent_poller_event_emissions: {},
     goal_judge: GoalJudgeState::new(),
