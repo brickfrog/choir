@@ -9,6 +9,13 @@ fn default_read_file(path : String) -> String {
 }
 
 ///|
+async fn default_list_panes_snapshot_capture(
+  session : String,
+) -> @tools.ZellijListPanesSnapshot {
+  @tools.capture_zellij_list_panes_snapshot(session)
+}
+
+///|
 fn default_write_file_atomic(path : String, content : String) -> Bool {
   @sys.write_file_atomic(path, content)
 }
@@ -313,6 +320,7 @@ pub struct ServerState {
   recent_poller_event_emissions : Map[String, Map[String, RecentEmission]]
   goal_judge : GoalJudgeState
   pane_watcher : @runtime.PaneWatcher
+  list_panes_snapshot_capture : async (String) -> @tools.ZellijListPanesSnapshot
   recovery_provider : @runtime.RecoveryProvider
   otlp_exporter : OtlpSpanExporter?
   append_file : (String, String) -> Bool
@@ -438,6 +446,7 @@ pub fn ServerState::new(
     recent_poller_event_emissions: {},
     goal_judge: GoalJudgeState::new(),
     pane_watcher: @runtime.PaneWatcher::new(),
+    list_panes_snapshot_capture: default_list_panes_snapshot_capture,
     recovery_provider,
     otlp_exporter: otlp_span_exporter_for_config(
       config,
@@ -643,6 +652,14 @@ pub fn ServerState::with_pane_watcher(
   pane_watcher : @runtime.PaneWatcher,
 ) -> ServerState {
   { ..self, pane_watcher, }
+}
+
+///|
+pub fn ServerState::with_list_panes_snapshot_capture(
+  self : ServerState,
+  list_panes_snapshot_capture : async (String) -> @tools.ZellijListPanesSnapshot,
+) -> ServerState {
+  { ..self, list_panes_snapshot_capture, }
 }
 
 ///|

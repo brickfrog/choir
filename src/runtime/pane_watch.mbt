@@ -4,12 +4,15 @@ pub(all) struct PaneWatchHost {
 }
 
 ///|
-async fn native_dump_pane_screen(
-  _session : String,
-  _pane_id : String,
-) -> String {
-  @async.sleep(0)
-  ""
+async fn native_dump_pane_screen(session : String, pane_id : String) -> String {
+  let (status, output) = @exec.capture_command_stdout(
+    @workspace.zellij_dump_screen_command(session, pane_id),
+  )
+  if status == 0 {
+    output
+  } else {
+    ""
+  }
 }
 
 ///|
@@ -29,7 +32,7 @@ pub(all) struct WatchObservation {
 ///|
 pub(all) struct WatchState {
   session : String
-  pane_id : String
+  pane_id : String?
   mut observation : WatchObservation
 }
 
@@ -61,17 +64,35 @@ pub fn PaneWatcher::watch_pane(
   agent_id : String,
   target : @types.LocalTarget,
   now : Int64,
-  pane_id? : String = "",
+  pane_id? : String? = None,
 ) -> Unit {
-  let resolved = pane_id.trim().to_owned()
-  if resolved == "" {
-    return
+  let resolved = match pane_id {
+    Some(value) => {
+      let trimmed = value.trim().to_owned()
+      if trimmed == "" {
+        None
+      } else {
+        Some(trimmed)
+      }
+    }
+    None => None
   }
   self.watches.set(agent_id, {
     session: target.session,
     pane_id: resolved,
     observation: { last_change_at: now, last_hash: 0, last_len: 0 },
   })
+}
+
+///|
+pub fn PaneWatcher::pane_id_for_agent(
+  self : PaneWatcher,
+  agent_id : String,
+) -> String? {
+  match self.watches.get(agent_id) {
+    Some(watch) => watch.pane_id
+    None => None
+  }
 }
 
 ///|
@@ -91,7 +112,11 @@ pub async fn PaneWatcher::current_screen(
     Some(watch) => watch
     None => return None
   }
-  let screen = (self.host.dump_pane_screen)(watch.session, watch.pane_id)
+  let pane_id = match watch.pane_id {
+    Some(value) => value
+    None => return None
+  }
+  let screen = (self.host.dump_pane_screen)(watch.session, pane_id)
   if screen.trim().to_owned() == "" {
     None
   } else {
@@ -143,7 +168,11 @@ pub async fn PaneWatcher::observe_idle(
     Some(watch) => watch
     None => return None
   }
-  let screen = (self.host.dump_pane_screen)(watch.session, watch.pane_id)
+  let pane_id = match watch.pane_id {
+    Some(value) => value
+    None => return None
+  }
+  let screen = (self.host.dump_pane_screen)(watch.session, pane_id)
   if screen.trim().to_owned() == "" {
     return None
   }

@@ -690,10 +690,6 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
       runner,
       capture,
       record_spawn_launch_diagnostic,
-      capture_pane_id=true,
-      record_spawn_pane_id=async fn(agent_id, pane_id) {
-        record_spawn_pane_id_sidecar(project_dir, runner, agent_id, pane_id)
-      },
     )
     for index, output in captured_outputs {
       spawn_launch_captured_outputs.set(index, output)

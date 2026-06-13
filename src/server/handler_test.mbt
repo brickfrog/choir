@@ -7690,20 +7690,20 @@ async test "soft transport disconnect still escalates when idle watchdog expires
     },
   }
   let state = ServerState::new(
-    {
-      ..@types.Config::default(),
-      project_dir,
-      terminal_session: "test-session",
-    },
-    disconnect_confirmation_provider([], [pane_name]),
-  ).with_pane_watcher(@runtime.PaneWatcher::with_host(host))
-  ignore(@sys.create_dir_all(project_dir + "/.choir/pane-ids"))
-  ignore(
-    @sys.write_file_sync(
-      @workspace.agent_pane_id_file_path(project_dir, agent_id),
-      "terminal_4",
-    ),
-  )
+      {
+        ..@types.Config::default(),
+        project_dir,
+        terminal_session: "test-session",
+      },
+      disconnect_confirmation_provider([], [pane_name]),
+    )
+    .with_pane_watcher(@runtime.PaneWatcher::with_host(host))
+    .with_list_panes_snapshot_capture(async fn(_session : String) {
+      @async.sleep(0)
+      @tools.parse_zellij_list_panes_json(
+        "[{\"id\":4,\"tab_name\":\"watchdog-leaf-pane\",\"pane_name\":\"watchdog-leaf-pane\"}]",
+      )
+    })
   ignore(state.register_agent(disconnect_confirmation_parent(parent_id)))
   ignore(
     state.register_agent({
@@ -8644,12 +8644,11 @@ fn worker_handoff_test_state_with_read_log(
   }
   base
   .with_pane_watcher(@runtime.PaneWatcher::with_host(host))
-  .with_read_file(fn(path : String) {
-    if path.contains("/.choir/pane-ids/") {
-      "terminal_test"
-    } else {
-      @sys.read_file(path)
-    }
+  .with_list_panes_snapshot_capture(async fn(_session : String) {
+    @async.sleep(0)
+    @tools.parse_zellij_list_panes_json(
+      "[{\"id\":41,\"tab_name\":\"worker-pane\",\"pane_name\":\"worker-pane\"},{\"id\":42,\"tab_name\":\"leaf-pane\",\"pane_name\":\"leaf-pane\"}]",
+    )
   })
 }
 
@@ -8678,12 +8677,11 @@ fn worker_handoff_test_state_with_snapshots(
   }
   base
   .with_pane_watcher(@runtime.PaneWatcher::with_host(host))
-  .with_read_file(fn(path : String) {
-    if path.contains("/.choir/pane-ids/") {
-      "terminal_test"
-    } else {
-      @sys.read_file(path)
-    }
+  .with_list_panes_snapshot_capture(async fn(_session : String) {
+    @async.sleep(0)
+    @tools.parse_zellij_list_panes_json(
+      "[{\"id\":41,\"tab_name\":\"worker-pane\",\"pane_name\":\"worker-pane\"},{\"id\":42,\"tab_name\":\"leaf-pane\",\"pane_name\":\"leaf-pane\"}]",
+    )
   })
 }
 
@@ -8741,6 +8739,139 @@ fn worker_handoff_dev(
     spawn_depth: 1,
     state,
   }
+}
+
+///|
+async test "ServerState::watch_pane resolves pane id from list-panes snapshot" {
+  let base = handler_auto_close_test_state("watch-pane-resolve")
+  let dumps : Array[String] = []
+  let list_calls : Array[String] = []
+  let host : @runtime.PaneWatchHost = {
+    dump_pane_screen: async fn(session, pane_id) {
+      @async.sleep(0)
+      dumps.push(session + ":" + pane_id)
+      "resolved screen"
+    },
+  }
+  let state = base
+    .with_pane_watcher(@runtime.PaneWatcher::with_host(host))
+    .with_list_panes_snapshot_capture(async fn(session : String) {
+      @async.sleep(0)
+      list_calls.push(session)
+      @tools.parse_zellij_list_panes_json(
+        "[{\"id\":77,\"tab_name\":\"worker-pane\",\"pane_name\":\"worker-pane\"}]",
+      )
+    })
+  let parent_id = "main.parent"
+  let worker_id = "main.resolve-worker"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      worker_handoff_worker(worker_id, parent_id, @types.AgentState::Active),
+    ),
+  )
+
+  state.watch_pane(worker_id)
+  let sent : Array[String] = []
+  let start = @poller.now_sec()
+  state.check_idle_agents(
+    start,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_idle_sec=120L,
+  )
+
+  @debug.assert_eq(list_calls, ["test-session"])
+  @debug.assert_eq(dumps, ["test-session:terminal_77"])
+  assert_eq(
+    worker_handoff_count_sent(sent, "[WORKER STALLED — no handoff]"),
+    0,
+  )
+  ignore(@sys.rm_rf(state.config.project_dir))
+}
+
+///|
+async test "check_idle_agents retries unresolved pane id before observing idle" {
+  let base = handler_auto_close_test_state("watch-pane-lazy-retry")
+  let dumps : Array[String] = []
+  let list_calls : Array[String] = []
+  let snapshots = [
+    "[]", "[]", "[{\"id\":88,\"tab_name\":\"worker-pane\",\"pane_name\":\"worker-pane\"}]",
+  ]
+  let mut snapshot_index = 0
+  let host : @runtime.PaneWatchHost = {
+    dump_pane_screen: async fn(session, pane_id) {
+      @async.sleep(0)
+      dumps.push(session + ":" + pane_id)
+      "lazy retry screen"
+    },
+  }
+  let state = base
+    .with_pane_watcher(@runtime.PaneWatcher::with_host(host))
+    .with_list_panes_snapshot_capture(async fn(session : String) {
+      @async.sleep(0)
+      list_calls.push(session)
+      let idx = if snapshot_index < snapshots.length() {
+        snapshot_index
+      } else {
+        snapshots.length() - 1
+      }
+      snapshot_index = snapshot_index + 1
+      @tools.parse_zellij_list_panes_json(snapshots[idx])
+    })
+  let parent_id = "main.parent"
+  let worker_id = "main.lazy-worker"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      worker_handoff_worker(worker_id, parent_id, @types.AgentState::Active),
+    ),
+  )
+
+  state.watch_pane(worker_id)
+  let sent : Array[String] = []
+  let start = @poller.now_sec()
+  state.check_idle_agents(
+    start + 121L,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_idle_sec=120L,
+  )
+  @debug.assert_eq(dumps, [])
+  assert_eq(
+    worker_handoff_count_sent(sent, "[WORKER STALLED — no handoff]"),
+    0,
+  )
+
+  state.check_idle_agents(
+    start + 242L,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_idle_sec=120L,
+  )
+  @debug.assert_eq(dumps, ["test-session:terminal_88"])
+  assert_eq(
+    worker_handoff_count_sent(sent, "[WORKER STALLED — no handoff]"),
+    0,
+  )
+
+  state.check_idle_agents(
+    start + 363L,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_idle_sec=120L,
+  )
+  @debug.assert_eq(list_calls, ["test-session", "test-session", "test-session"])
+  @debug.assert_eq(dumps, [
+    "test-session:terminal_88", "test-session:terminal_88",
+  ])
+  assert_eq(
+    worker_handoff_count_sent(
+      sent, "[WORKER STALLED — no handoff] lazy-worker",
+    ),
+    1,
+  )
+  ignore(@sys.rm_rf(state.config.project_dir))
 }
 
 ///|
@@ -10050,7 +10181,7 @@ async test "check_idle_agents reuses one pane dump for handoff and watchdog chec
   )
 
   @debug.assert_eq(reads, [
-    "test-session:terminal_test", "test-session:terminal_test",
+    "test-session:terminal_41", "test-session:terminal_41",
   ])
 }
 

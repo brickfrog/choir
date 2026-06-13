@@ -1,19 +1,37 @@
 ///|
 /// Register a pane for idle watchdog monitoring.
-/// Reads the agent's persisted zellij pane id and records it for dump-screen
-/// polling. Missing sidecars leave the agent unwatched.
-pub fn ServerState::watch_pane(self : ServerState, agent_id : String) -> Unit {
+/// Resolves the agent's live zellij pane id from the current list-panes
+/// snapshot and records it for dump-screen polling. Missing tabs remain
+/// tracked with no pane id so later poller ticks can retry resolution.
+pub async fn ServerState::watch_pane(
+  self : ServerState,
+  agent_id : String,
+) -> Unit {
   let agent = self.registry.get(agent_id) catch { _ => return }
   let target = match agent.terminal_target {
     Some(t) => t
     None => return
   }
-  let pane_id = (self.read_file)(
-      @workspace.agent_pane_id_file_path(self.config.project_dir, agent_id),
-    )
-    .trim()
-    .to_owned()
+  let snapshot = (self.list_panes_snapshot_capture)(target.session)
+  let pane_id = match @tools.resolve_zellij_pane_id(target, snapshot) {
+    Some(value) => Some("terminal_" + value.to_string())
+    None => None
+  }
   self.pane_watcher.watch_pane(agent_id, target, @poller.now_sec(), pane_id~)
+}
+
+///|
+async fn ServerState::ensure_watched_pane_resolved(
+  self : ServerState,
+  agent_id : String,
+) -> Bool {
+  match self.pane_watcher.pane_id_for_agent(agent_id) {
+    Some(_) => true
+    None => {
+      self.watch_pane(agent_id)
+      self.pane_watcher.pane_id_for_agent(agent_id) is Some(_)
+    }
+  }
 }
 
 ///|
@@ -120,11 +138,6 @@ fn ServerState::clear_agent_runtime_tracking(
   agent_id : String,
 ) -> Unit {
   self.stop_subscribe(agent_id)
-  ignore(
-    (self.delete_file)(
-      @workspace.agent_pane_id_file_path(self.config.project_dir, agent_id),
-    ),
-  )
   self.pending_disconnects.remove(agent_id)
   self.agent_pids.remove(agent_id)
   self.disconnect_contexts.remove(agent_id)
@@ -1117,6 +1130,9 @@ pub async fn ServerState::check_idle_agents(
       Some(_) => ()
       None => continue
     }
+    if !self.ensure_watched_pane_resolved(agent_id) {
+      continue
+    }
 
     // Read and parse the pane snapshot once for all idle decisions this tick.
     match self.pane_watcher.observe_idle(agent_id, now) {
@@ -1188,7 +1204,6 @@ async test "check_idle_agents skips supervisor roles before reading panes" {
     "-" +
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
-  ignore(@sys.create_dir_all(project_dir + "/.choir/pane-ids"))
   let reads : Array[String] = []
   let host : @runtime.PaneWatchHost = {
     dump_pane_screen: async fn(_session, _pane_id) {
@@ -1210,6 +1225,11 @@ async test "check_idle_agents skips supervisor roles before reading panes" {
       @types.Role::TL => "main.tl"
       _ => "main.supervisor"
     }
+    let target : @types.LocalTarget = {
+      kind: @types.TargetKind::ZellijPane,
+      session: "s",
+      name: agent_id,
+    }
     ignore(
       state.register_agent({
         agent_id: @types.AgentId(agent_id),
@@ -1218,23 +1238,18 @@ async test "check_idle_agents skips supervisor roles before reading panes" {
         parent: None,
         workspace: project_dir,
         branch: "main",
-        terminal_target: Some({
-          kind: @types.TargetKind::ZellijPane,
-          session: "s",
-          name: agent_id,
-        }),
+        terminal_target: Some(target),
         host: @types.Host::Local,
         spawn_depth: 0,
         state: @types.AgentState::Active,
       }),
     )
-    ignore(
-      @sys.write_file_sync(
-        @workspace.agent_pane_id_file_path(project_dir, agent_id),
-        "terminal_" + agent_id.length().to_string(),
-      ),
+    state.pane_watcher.watch_pane(
+      agent_id,
+      target,
+      0L,
+      pane_id=Some("terminal_" + agent_id.length().to_string()),
     )
-    state.watch_pane(agent_id)
   }
   let calls : Array[@workspace.Command] = []
   state.check_idle_agents(1000L, 0L, async fn(cmds) {

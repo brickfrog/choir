@@ -46,7 +46,7 @@ async test "PaneWatcher::observe_idle dumps the resolved pane id through host sp
     pane_watch_dump_host(["worker ready"], dump_args),
   )
 
-  pw.watch_pane("agent-x", pane_watch_target(), 0L, pane_id="terminal_4")
+  pw.watch_pane("agent-x", pane_watch_target(), 0L, pane_id=Some("terminal_4"))
 
   assert_true(pw.observe_idle("agent-x", 10L) is None)
   @debug.assert_eq(dump_args, ["sess", "terminal_4"])
@@ -62,7 +62,12 @@ async test "PaneWatcher::observe_idle reports unchanged dump-screen idle and res
     ),
   )
 
-  pw.watch_pane("agent-idle", pane_watch_target(), 100L, pane_id="terminal_9")
+  pw.watch_pane(
+    "agent-idle",
+    pane_watch_target(),
+    100L,
+    pane_id=Some("terminal_9"),
+  )
 
   assert_true(pw.observe_idle("agent-idle", 110L) is None)
   match pw.observe_idle("agent-idle", 230L) {
@@ -86,15 +91,16 @@ async test "PaneWatcher::observe_idle reports unchanged dump-screen idle and res
 }
 
 ///|
-async test "PaneWatcher::watch_pane skips unresolved pane ids" {
+async test "PaneWatcher::observe_idle skips unresolved pane ids" {
   let dump_args : Array[String] = []
   let pw = PaneWatcher::with_host(
     pane_watch_dump_host(["should not be read"], dump_args),
   )
 
-  pw.watch_pane("agent-missing", pane_watch_target(), 0L, pane_id="")
+  pw.watch_pane("agent-missing", pane_watch_target(), 0L, pane_id=None)
 
-  @debug.assert_eq(pw.watched_agents(), [])
+  @debug.assert_eq(pw.watched_agents(), ["agent-missing"])
+  @debug.assert_eq(pw.pane_id_for_agent("agent-missing"), None)
   assert_true(pw.observe_idle("agent-missing", 999L) is None)
   @debug.assert_eq(dump_args, [])
 }

@@ -46,19 +46,9 @@ pub async fn run_strict(
   record_spawn_launch_diagnostic? : (SpawnLaunchDiagnostic) -> Unit = fn(_) {
     ()
   },
-  capture_pane_id? : Bool = false,
-  record_spawn_pane_id? : async (String, String) -> Unit = async fn(_, _) {
-    @async.sleep(0)
-  },
 ) -> Result[Unit, @types.ChoirError] {
   let (statuses, spawn_launch_captured_outputs) = run_commands_with_spawn_launch_capture(
-    spawn_launch_bindings,
-    cmds,
-    runner,
-    capture,
-    record_spawn_launch_diagnostic,
-    capture_pane_id~,
-    record_spawn_pane_id~,
+    spawn_launch_bindings, cmds, runner, capture, record_spawn_launch_diagnostic,
   ) catch {
     e => return Err(@types.ChoirError::transport_error(e.to_string()))
   }
