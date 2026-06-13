@@ -1,32 +1,32 @@
 ///|
-test "worker_no_handoff_decision prods worker after threshold" {
+test "worker_no_handoff_decision emits stalled directly after threshold" {
   assert_eq(
     worker_no_handoff_decision(
       @types.Role::Worker,
       120L,
       false,
       false,
-      false,
-      120L,
-      120L,
-    ),
-    WorkerNoHandoffDecision::Prod,
-  )
-}
-
-///|
-test "worker_no_handoff_decision emits stalled after prod grace" {
-  assert_eq(
-    worker_no_handoff_decision(
-      @types.Role::Worker,
-      121L,
-      false,
-      true,
       false,
       120L,
       120L,
     ),
     WorkerNoHandoffDecision::EmitStalled,
+  )
+}
+
+///|
+test "worker_no_handoff_decision skips once stalled was emitted" {
+  assert_eq(
+    worker_no_handoff_decision(
+      @types.Role::Worker,
+      121L,
+      false,
+      false,
+      true,
+      120L,
+      120L,
+    ),
+    WorkerNoHandoffDecision::DoNothing,
   )
 }
 
@@ -57,7 +57,7 @@ test "worker_no_handoff_decision skips non-worker roles" {
 }
 
 ///|
-test "worker_no_handoff_decision prod zero disables path" {
+test "worker_no_handoff_decision idle threshold zero disables path" {
   assert_eq(
     worker_no_handoff_decision(
       @types.Role::Worker,
@@ -85,18 +85,18 @@ test "worker_no_handoff_decision prod zero disables path" {
 }
 
 ///|
-test "worker_no_handoff_decision escalate zero disables stalled event" {
+test "worker_no_handoff_decision ignores removed escalate threshold" {
   assert_eq(
     worker_no_handoff_decision(
       @types.Role::Worker,
       999L,
       false,
-      true,
+      false,
       false,
       120L,
       0L,
     ),
-    WorkerNoHandoffDecision::DoNothing,
+    WorkerNoHandoffDecision::EmitStalled,
   )
 }
 
@@ -286,7 +286,7 @@ test "leaf_no_handoff_decision truth table" {
       120L,
       120L,
     ),
-    WorkerNoHandoffDecision::Prod,
+    WorkerNoHandoffDecision::EmitStalled,
   )
   assert_eq(
     leaf_no_handoff_decision(
@@ -300,7 +300,7 @@ test "leaf_no_handoff_decision truth table" {
       120L,
       120L,
     ),
-    WorkerNoHandoffDecision::DoNothing,
+    WorkerNoHandoffDecision::EmitStalled,
   )
   assert_eq(
     leaf_no_handoff_decision(
@@ -328,7 +328,7 @@ test "leaf_no_handoff_decision truth table" {
       120L,
       0L,
     ),
-    WorkerNoHandoffDecision::DoNothing,
+    WorkerNoHandoffDecision::EmitStalled,
   )
   assert_eq(
     leaf_no_handoff_decision(

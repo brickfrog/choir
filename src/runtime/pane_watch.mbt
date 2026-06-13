@@ -11,6 +11,7 @@ pub(all) struct PaneWatchHost {
   kill_pid_best_effort : (Int) -> Unit
   delete_file_sync : (String) -> Unit
   read_file : (String) -> String
+  dump_pane_screen : (String, String) -> String
 }
 
 ///|
@@ -20,6 +21,7 @@ pub fn PaneWatchHost::native() -> PaneWatchHost {
     kill_pid_best_effort: @sys.kill_pid_best_effort,
     delete_file_sync: fn(path) { ignore(@sys.delete_file_sync(path)) },
     read_file: @sys.read_file,
+    dump_pane_screen: fn(_, _) { "" },
   }
 }
 
@@ -66,7 +68,9 @@ pub fn PaneWatcher::watch_pane(
   agent_id : String,
   target : @types.LocalTarget,
   now : Int64,
+  pane_id? : String = "",
 ) -> Unit {
+  ignore(pane_id)
   let snapshot_path = pane_snapshot_path(agent_id)
   let pid = (self.host.spawn_zellij_pane_viewport_subscribe)(
     target.session,

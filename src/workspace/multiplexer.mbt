@@ -153,6 +153,14 @@ pub fn zellij_list_panes_json_command(session : String) -> Command {
 }
 
 ///|
+pub fn pane_id_from_list_panes_diff(
+  _before : String,
+  _after : String,
+) -> String? {
+  None
+}
+
+///|
 /// Layout loaded into choir-managed zellij sessions. Opt-in: only loads when
 /// the layout file is present under the user's zellij config dir
 /// (`~/.config/zellij/layouts/<name>.kdl`). Zellij sessions started outside

@@ -677,6 +677,7 @@ pub fn parse_config(
     moon_verify_target,
     agy_migration_incomplete,
     hooks_enforcement,
+    worker_no_handoff_idle_sec: default_cfg.worker_no_handoff_idle_sec,
     worker_no_handoff_prod_sec,
     worker_no_handoff_escalate_sec,
     poller_heartbeat_tick_sec,

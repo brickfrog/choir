@@ -7689,6 +7689,7 @@ async test "soft transport disconnect still escalates when idle watchdog expires
     kill_pid_best_effort: fn(_pid) {  },
     delete_file_sync: fn(_path) {  },
     read_file: fn(_path) { snapshot },
+    dump_pane_screen: fn(_session, _pane_id) { "still thinking" },
   }
   let state = ServerState::new(
     {
@@ -8639,6 +8640,10 @@ fn worker_handoff_test_state_with_read_log(
       reads.push(path)
       snapshot
     },
+    dump_pane_screen: fn(_session, _pane_id) {
+      reads.push(_session + ":" + _pane_id)
+      snapshot
+    },
   }
   base.with_pane_watcher(@runtime.PaneWatcher::with_host(host))
 }
@@ -8655,6 +8660,19 @@ fn worker_handoff_test_state_with_snapshots(
     kill_pid_best_effort: fn(_pid) {  },
     delete_file_sync: fn(_path) {  },
     read_file: fn(_path) {
+      if snapshots.length() == 0 {
+        ""
+      } else {
+        let idx = if read_count < snapshots.length() {
+          read_count
+        } else {
+          snapshots.length() - 1
+        }
+        read_count = read_count + 1
+        snapshots[idx]
+      }
+    },
+    dump_pane_screen: fn(_session, _pane_id) {
       if snapshots.length() == 0 {
         ""
       } else {
@@ -9901,7 +9919,7 @@ async test "check_idle_agents keeps pre-TDD and post-fix leaf watchdog state sep
 }
 
 ///|
-async test "check_idle_agents prods worker then emits one stalled no-handoff event" {
+async test "check_idle_agents emits worker stalled directly without terminal prod" {
   let snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"audit complete\",\"Finding 1\"]}"
   let state = worker_handoff_test_state("worker-no-handoff-stall", snapshot)
   let parent_id = "main.parent"
@@ -9932,12 +9950,13 @@ async test "check_idle_agents prods worker then emits one stalled no-handoff eve
   )
   assert_eq(
     worker_handoff_count_sent(sent, "printed output is not the handoff"),
-    1,
+    0,
   )
-  assert_true(
-    state.worker_no_handoff_prodded_at.contains(
-      "worker-no-handoff:" + worker_id,
+  assert_eq(
+    worker_handoff_count_sent(
+      sent, "[WORKER STALLED — no handoff] sarcasmotron",
     ),
+    1,
   )
 
   state.check_idle_agents(
@@ -9957,6 +9976,76 @@ async test "check_idle_agents prods worker then emits one stalled no-handoff eve
   assert_eq(
     worker_handoff_count_sent(
       sent, "[WORKER STALLED — no handoff] sarcasmotron",
+    ),
+    1,
+  )
+}
+
+///|
+async test "check_idle_agents resets worker no-handoff idle when pane changes" {
+  let state = worker_handoff_test_state_with_snapshots(
+    "worker-no-handoff-change-reset",
+    [
+      "{\"event\":\"pane_update\",\"viewport\":[\"first tail\"]}",
+      "{\"event\":\"pane_update\",\"viewport\":[\"changed tail\"]}",
+      "{\"event\":\"pane_update\",\"viewport\":[\"changed tail\"]}",
+      "{\"event\":\"pane_update\",\"viewport\":[\"changed tail\"]}",
+    ],
+  )
+  let parent_id = "main.parent"
+  let worker_id = "main.reset-worker"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      worker_handoff_worker(worker_id, parent_id, @types.AgentState::Active),
+    ),
+  )
+  state.watch_pane(worker_id)
+
+  let sent : Array[String] = []
+  let start = @poller.now_sec()
+  state.check_idle_agents(
+    start,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  state.check_idle_agents(
+    start + 121L,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  assert_eq(
+    worker_handoff_count_sent(
+      sent, "[WORKER STALLED — no handoff] reset-worker",
+    ),
+    0,
+  )
+
+  state.check_idle_agents(
+    start + 242L,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  state.check_idle_agents(
+    start + 250L,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  assert_eq(
+    worker_handoff_count_sent(sent, "printed output is not the handoff"),
+    0,
+  )
+  assert_eq(
+    worker_handoff_count_sent(
+      sent, "[WORKER STALLED — no handoff] reset-worker",
     ),
     1,
   )

@@ -1282,6 +1282,10 @@ async test "check_idle_agents skips supervisor roles before reading panes" {
       reads.push(path)
       "{\"event\":\"pane_update\",\"viewport\":[\"idle\"]}"
     },
+    dump_pane_screen: fn(_session, _pane_id) {
+      reads.push(_session + ":" + _pane_id)
+      "idle"
+    },
   }
   let state = {
     ..ServerState::new(

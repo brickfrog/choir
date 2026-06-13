@@ -58,6 +58,14 @@ pub fn agent_pid_file_path(project_dir : String, agent_id : String) -> String {
 }
 
 ///|
+pub fn agent_pane_id_file_path(
+  _project_dir : String,
+  _agent_id : String,
+) -> String {
+  ""
+}
+
+///|
 /// Pure parse of an agent pidfile body (see [`agent_pid_file_path`]): the
 /// recorded setsid process-group id. Returns `None` for missing/empty,
 /// non-numeric, or unsafe (<= 1) values so callers never signal pgid 0/1 or

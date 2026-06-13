@@ -426,6 +426,49 @@ test "agent_pid_file_path sanitizes agent ids as flat filenames" {
 }
 
 ///|
+test "agent_pane_id_file_path mirrors pid sidecar sanitization" {
+  assert_eq(
+    @workspace.agent_pane_id_file_path(
+      "/project", "../../evil\\agent\u0000pane",
+    ),
+    "/project/.choir/pane-ids/.._.._evil_agent_pane",
+  )
+}
+
+///|
+test "pane_id_from_list_panes_diff returns single new terminal pane id" {
+  let before = "PANE_ID TYPE TITLE\nterminal_1 terminal root\nplugin_2 plugin status\n"
+  let after = before + "terminal_4 terminal worker-a\n"
+
+  @debug.assert_eq(
+    @workspace.pane_id_from_list_panes_diff(before, after),
+    Some("terminal_4"),
+  )
+}
+
+///|
+test "pane_id_from_list_panes_diff rejects zero ambiguous and non-terminal diffs" {
+  let before = "PANE_ID TYPE TITLE\nterminal_1 terminal root\n"
+  let ambiguous_after = before +
+    "terminal_2 terminal a\nterminal_3 terminal b\n"
+  let non_terminal_after = before +
+    "plugin_4 plugin status\npane_5 terminal malformed\n"
+
+  @debug.assert_eq(
+    @workspace.pane_id_from_list_panes_diff(before, before),
+    None,
+  )
+  @debug.assert_eq(
+    @workspace.pane_id_from_list_panes_diff(before, ambiguous_after),
+    None,
+  )
+  @debug.assert_eq(
+    @workspace.pane_id_from_list_panes_diff(before, non_terminal_after),
+    None,
+  )
+}
+
+///|
 test "agy_stderr_log_path sanitizes agent ids as flat filenames" {
   assert_eq(
     @workspace.agy_stderr_log_relpath("../../evil\\agent\u0000pid"),
