@@ -4,20 +4,14 @@ pub(all) struct PaneWatchHost {
 }
 
 ///|
-async fn native_dump_pane_screen(session : String, pane_id : String) -> String {
-  let (status, output) = @exec.capture_command_stdout(
-    @workspace.zellij_dump_screen_command(session, pane_id),
-  )
-  if status == 0 {
-    output
-  } else {
-    ""
-  }
+async fn empty_dump_pane_screen(_session : String, _pane_id : String) -> String {
+  @async.sleep(0)
+  ""
 }
 
 ///|
-pub fn PaneWatchHost::native() -> PaneWatchHost {
-  { dump_pane_screen: native_dump_pane_screen }
+pub fn PaneWatchHost::empty() -> PaneWatchHost {
+  { dump_pane_screen: empty_dump_pane_screen }
 }
 
 ///|
@@ -50,7 +44,7 @@ pub struct PaneWatcher {
 
 ///|
 pub fn PaneWatcher::new() -> PaneWatcher {
-  PaneWatcher::with_host(PaneWatchHost::native())
+  PaneWatcher::with_host(PaneWatchHost::empty())
 }
 
 ///|
@@ -96,7 +90,7 @@ pub fn PaneWatcher::pane_id_for_agent(
 }
 
 ///|
-pub fn PaneWatcher::stop_subscribe(
+pub fn PaneWatcher::stop_watching(
   self : PaneWatcher,
   agent_id : String,
 ) -> Unit {
