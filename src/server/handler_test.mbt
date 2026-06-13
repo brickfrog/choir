@@ -8507,6 +8507,38 @@ fn handler_moontrace_int_field(
 }
 
 ///|
+fn handler_moontrace_string_field(
+  fields : Array[@moontrace.Field],
+  key : String,
+) -> String? {
+  for field in fields {
+    if field.key == key {
+      match field.value {
+        Json::String(value) => return Some(value)
+        _ => return None
+      }
+    }
+  }
+  None
+}
+
+///|
+fn handler_config_divergence_warn_events(
+  events : Array[@moontrace.Event],
+) -> Array[@moontrace.Event] {
+  let warnings : Array[@moontrace.Event] = []
+  for event in events {
+    if event.level == @moontrace.Level::Warn {
+      match handler_moontrace_string_field(event.fields, "event") {
+        Some("config_divergence_after_boot") => warnings.push(event)
+        _ => ()
+      }
+    }
+  }
+  warnings
+}
+
+///|
 fn handler_auto_close_test_state(label : String) -> ServerState {
   let project_dir = "/tmp/choir-handler-auto-close-" +
     label +
@@ -8522,6 +8554,117 @@ fn handler_auto_close_test_state(label : String) -> ServerState {
     prenotify_checks: [],
   }
   ServerState::new(config, make_hermetic_recovery_provider())
+}
+
+///|
+fn handler_config_divergence_test_state(label : String) -> ServerState {
+  let project_dir = "/tmp/choir-config-divergence-" +
+    label +
+    "-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let config = {
+    ..@types.Config::default(),
+    project_dir,
+    terminal_session: "test-session",
+    merge_strategy: @types.MergeStrategy::Merge,
+    automerge: false,
+  }
+  ServerState::new(config, make_hermetic_recovery_provider())
+}
+
+///|
+fn handler_config_divergence_toml(
+  project_dir : String,
+  merge_strategy : String,
+  automerge : Bool,
+) -> String {
+  "project_dir = \"" +
+  project_dir +
+  "\"\nterminal_session = \"test-session\"\nmerge_strategy = \"" +
+  merge_strategy +
+  "\"\nautomerge = " +
+  automerge.to_string() +
+  "\n"
+}
+
+///|
+async fn handler_config_divergence_tick(
+  state : ServerState,
+  now : Int64,
+) -> Unit {
+  state.process_poller_tick_with_test(
+    now,
+    900L,
+    spawn_registration_noop_poll,
+    None,
+    "",
+    runner=async fn(cmds) {
+      @async.sleep(0)
+      let statuses : Array[Int] = []
+      for _ in cmds {
+        statuses.push(0)
+      }
+      statuses
+    },
+    capture=spawn_registration_capture,
+  )
+}
+
+///|
+async test "process_poller_tick warns on config divergence read through injected file capability" {
+  let base_state = handler_config_divergence_test_state("rate-limit")
+  let project_dir = base_state.config.project_dir
+  let state = base_state.with_read_file(fn(path) {
+    if path.has_suffix("/.choir/config.toml") || path == ".choir/config.toml" {
+      handler_config_divergence_toml(project_dir, "squash", false)
+    } else {
+      ""
+    }
+  })
+  let captured : Array[@moontrace.Event] = []
+  handler_with_moontrace_capture(captured, async fn() {
+    handler_config_divergence_tick(state, 100L)
+  })
+  let warnings = handler_config_divergence_warn_events(captured)
+  assert_eq(warnings.length(), 1)
+  assert_true(
+    warnings[0].message.contains("merge_strategy: loaded=merge disk=squash"),
+  )
+  @debug.assert_eq(
+    handler_moontrace_string_field(warnings[0].fields, "fields"),
+    Some("merge_strategy"),
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "process_poller_tick skips config divergence when disk config is missing or invalid" {
+  let missing_state = handler_config_divergence_test_state("missing").with_read_file(fn(
+      _,
+    ) {
+      ""
+    },
+  )
+  let invalid_base = handler_config_divergence_test_state("invalid")
+  let invalid_project_dir = invalid_base.config.project_dir
+  let invalid_state = invalid_base.with_read_file(fn(path) {
+    if path.has_suffix("/.choir/config.toml") || path == ".choir/config.toml" {
+      handler_config_divergence_toml(invalid_project_dir, "explode", false)
+    } else {
+      ""
+    }
+  })
+  let captured : Array[@moontrace.Event] = []
+  handler_with_moontrace_capture(captured, async fn() {
+    handler_config_divergence_tick(missing_state, 100L)
+    handler_config_divergence_tick(invalid_state, 100L)
+  })
+  assert_eq(handler_config_divergence_warn_events(captured).length(), 0)
+  ignore(@sys.rm_rf(missing_state.config.project_dir))
+  ignore(@sys.rm_rf(invalid_project_dir))
 }
 
 ///|

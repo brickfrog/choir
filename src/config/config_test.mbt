@@ -71,6 +71,109 @@ test "parse_config - full" {
 }
 
 ///|
+test "config_divergence returns empty for identical config" {
+  let cfg = @types.Config::default()
+  @debug.assert_eq(config_divergence(cfg, cfg), [])
+}
+
+///|
+test "config_divergence names a single changed field" {
+  let loaded = @types.Config::default()
+  let on_disk = { ..loaded, merge_strategy: @types.MergeStrategy::Squash }
+  @debug.assert_eq(config_divergence(loaded, on_disk), ["merge_strategy"])
+}
+
+///|
+fn config_test_pricing(
+  key : String,
+  rate_in : Double,
+  rate_out : Double,
+) -> Map[String, @types.PricingRate] {
+  let pricing : Map[String, @types.PricingRate] = {}
+  pricing.set(key, { rate_in, rate_out })
+  pricing
+}
+
+///|
+test "config_divergence names every changed top-level field" {
+  let loaded : @types.Config = {
+    default_role: @types.Role::TL,
+    project_dir: "loaded-project",
+    shell_command: None,
+    listen_uds: "loaded.sock",
+    listen_tcp: None,
+    tcp_auth_token: None,
+    otlp_endpoint: None,
+    agent_id: None,
+    extra_mcp_servers_json: None,
+    companions_json: None,
+    plugins_json: None,
+    terminal_session: "loaded-session",
+    automerge: false,
+    review_mode: @types.ReviewMode::SinglePass,
+    merge_strategy: @types.MergeStrategy::Merge,
+    moon_verify_target: @types.MoonVerifyTarget::Native,
+    agy_migration_incomplete: false,
+    hooks_enforcement: false,
+    worker_no_handoff_idle_sec: 10L,
+    poller_heartbeat_tick_sec: 20,
+    prenotify_checks: ["loaded-check"],
+    auto_pull_after_integration: true,
+    project: { verify_cmd: None },
+    pr_policy: {
+      require_integration_audit: true,
+      skip_copilot_on_feature_branch: true,
+      reviewer: @types.Reviewer::None,
+    },
+    auto_rebuild_after_pull: false,
+    auto_reload_after_rebuild: false,
+    pricing: config_test_pricing("codex", 0.01, 0.02),
+  }
+  let on_disk : @types.Config = {
+    default_role: @types.Role::Dev,
+    project_dir: "disk-project",
+    shell_command: Some("bash"),
+    listen_uds: "disk.sock",
+    listen_tcp: Some("127.0.0.1:9000"),
+    tcp_auth_token: Some("token"),
+    otlp_endpoint: Some("http://localhost:4318"),
+    agent_id: Some("agent"),
+    extra_mcp_servers_json: Some("{\"mcp\":true}"),
+    companions_json: Some("[]"),
+    plugins_json: Some("{}"),
+    terminal_session: "disk-session",
+    automerge: true,
+    review_mode: @types.ReviewMode::Iterative,
+    merge_strategy: @types.MergeStrategy::Squash,
+    moon_verify_target: @types.MoonVerifyTarget::Js,
+    agy_migration_incomplete: true,
+    hooks_enforcement: true,
+    worker_no_handoff_idle_sec: 30L,
+    poller_heartbeat_tick_sec: 40,
+    prenotify_checks: ["disk-check"],
+    auto_pull_after_integration: false,
+    project: { verify_cmd: Some("moon test --target native") },
+    pr_policy: {
+      require_integration_audit: false,
+      skip_copilot_on_feature_branch: false,
+      reviewer: @types.Reviewer::Copilot,
+    },
+    auto_rebuild_after_pull: true,
+    auto_reload_after_rebuild: true,
+    pricing: config_test_pricing("claude", 0.03, 0.04),
+  }
+  @debug.assert_eq(config_divergence(loaded, on_disk), [
+    "default_role", "project_dir", "shell_command", "listen_uds", "listen_tcp", "tcp_auth_token",
+    "otlp_endpoint", "agent_id", "extra_mcp_servers_json", "companions_json", "plugins_json",
+    "terminal_session", "automerge", "review_mode", "merge_strategy", "moon_verify_target",
+    "agy_migration_incomplete", "hooks_enforcement", "worker_no_handoff_idle_sec",
+    "poller_heartbeat_tick_sec", "prenotify_checks", "auto_pull_after_integration",
+    "project", "pr_policy", "auto_rebuild_after_pull", "auto_reload_after_rebuild",
+    "pricing",
+  ])
+}
+
+///|
 fn config_schema_key_present(file : @types.ConfigFile, key : String) -> Bool {
   for entry in @types.config_schema_entries() {
     if entry.file == file && entry.key == key {
