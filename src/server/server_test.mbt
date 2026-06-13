@@ -408,7 +408,6 @@ test "reload snapshot restores registry pending state and mutexes" {
   state.pending_disconnects.set("root.leaf", 1234L)
   state.delivery_failures.set("root.leaf", 2)
   state.handoff_delivered.set("root.leaf", true)
-  state.worker_no_handoff_prodded_at.set("worker-no-handoff:root.worker", 2222L)
   state.worker_no_handoff_stalled_emitted.set(
     "worker-no-handoff:root.worker", true,
   )
@@ -448,12 +447,6 @@ test "reload snapshot restores registry pending state and mutexes" {
       )
       @debug.assert_eq(restored.delivery_failures.get("root.leaf"), Some(2))
       @debug.assert_eq(restored.handoff_delivered.get("root.leaf"), Some(true))
-      @debug.assert_eq(
-        restored.worker_no_handoff_prodded_at.get(
-          "worker-no-handoff:root.worker",
-        ),
-        Some(2222L),
-      )
       @debug.assert_eq(
         restored.worker_no_handoff_stalled_emitted.get(
           "worker-no-handoff:root.worker",
@@ -507,14 +500,10 @@ test "record_leaf_tdd_state clears pre-tdd stall tracking on progress" {
   let agent_id = "root.leaf"
   let pre_tdd_key = "leaf-pre-tdd-stall:" + agent_id
   let post_fix_key = "leaf-post-fix-no-handoff:" + agent_id
-  state.worker_no_handoff_prodded_at.set(pre_tdd_key, 12L)
   state.worker_no_handoff_stalled_emitted.set(pre_tdd_key, true)
-  state.worker_no_handoff_prodded_at.set(post_fix_key, 34L)
   state.worker_no_handoff_stalled_emitted.set(post_fix_key, true)
   state.record_leaf_tdd_state(agent_id, { phase: @types.LeafTddPhase::Intent })
-  assert_false(state.worker_no_handoff_prodded_at.contains(pre_tdd_key))
   assert_false(state.worker_no_handoff_stalled_emitted.contains(pre_tdd_key))
-  assert_false(state.worker_no_handoff_prodded_at.contains(post_fix_key))
   assert_false(state.worker_no_handoff_stalled_emitted.contains(post_fix_key))
   @debug.assert_eq(
     state.leaf_tdd_phase_for_agent(agent_id),
@@ -546,7 +535,7 @@ test "reload snapshot fails closed when authoritative contracts are missing" {
     Err(e) => fail(e.message())
   }
   let old_runtime_snapshot =
-    #|{"version":1,"run_id":"old","binary_path":null,"pending_disconnects":[],"delivery_failures":[],"handoff_delivered":[],"worker_no_handoff_prodded_at":[],"worker_no_handoff_stalled_emitted":[],"worker_no_handoff_exit_emitted":[],"idle_agent_warned_at_70":[],"leaf_tdd_phases":[],"mutex_registry":{"version":1,"locks":[]}}
+    #|{"version":1,"run_id":"old","binary_path":null,"pending_disconnects":[],"delivery_failures":[],"handoff_delivered":[],"worker_no_handoff_stalled_emitted":[],"worker_no_handoff_exit_emitted":[],"idle_agent_warned_at_70":[],"leaf_tdd_phases":[],"mutex_registry":{"version":1,"locks":[]}}
   assert_true(
     @sys.write_file_sync(
       server_reload_runtime_snapshot_path(project_dir),
@@ -587,7 +576,7 @@ test "reload snapshot fails closed when version two omits contracts field" {
     Err(e) => fail(e.message())
   }
   let runtime_snapshot =
-    #|{"version":2,"run_id":"v2-missing-contracts","binary_path":null,"pending_disconnects":[],"delivery_failures":[],"handoff_delivered":[],"worker_no_handoff_prodded_at":[],"worker_no_handoff_stalled_emitted":[],"worker_no_handoff_exit_emitted":[],"idle_agent_warned_at_70":[],"leaf_tdd_phases":[],"mutex_registry":{"version":1,"locks":[]}}
+    #|{"version":2,"run_id":"v2-missing-contracts","binary_path":null,"pending_disconnects":[],"delivery_failures":[],"handoff_delivered":[],"worker_no_handoff_stalled_emitted":[],"worker_no_handoff_exit_emitted":[],"idle_agent_warned_at_70":[],"leaf_tdd_phases":[],"mutex_registry":{"version":1,"locks":[]}}
   assert_true(
     @sys.write_file_sync(
       server_reload_runtime_snapshot_path(project_dir),

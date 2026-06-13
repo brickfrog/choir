@@ -1,15 +1,7 @@
 ///|
 test "worker_no_handoff_decision emits stalled directly after threshold" {
   assert_eq(
-    worker_no_handoff_decision(
-      @types.Role::Worker,
-      120L,
-      false,
-      false,
-      false,
-      120L,
-      120L,
-    ),
+    worker_no_handoff_decision(@types.Role::Worker, 120L, false, false, 120L),
     WorkerNoHandoffDecision::EmitStalled,
   )
 }
@@ -17,15 +9,7 @@ test "worker_no_handoff_decision emits stalled directly after threshold" {
 ///|
 test "worker_no_handoff_decision skips once stalled was emitted" {
   assert_eq(
-    worker_no_handoff_decision(
-      @types.Role::Worker,
-      121L,
-      false,
-      false,
-      true,
-      120L,
-      120L,
-    ),
+    worker_no_handoff_decision(@types.Role::Worker, 121L, false, true, 120L),
     WorkerNoHandoffDecision::DoNothing,
   )
 }
@@ -33,15 +17,7 @@ test "worker_no_handoff_decision skips once stalled was emitted" {
 ///|
 test "worker_no_handoff_decision skips delivered workers" {
   assert_eq(
-    worker_no_handoff_decision(
-      @types.Role::Worker,
-      999L,
-      true,
-      false,
-      false,
-      120L,
-      120L,
-    ),
+    worker_no_handoff_decision(@types.Role::Worker, 999L, true, false, 120L),
     WorkerNoHandoffDecision::DoNothing,
   )
 }
@@ -50,7 +26,7 @@ test "worker_no_handoff_decision skips delivered workers" {
 test "worker_no_handoff_decision skips non-worker roles" {
   for role in [@types.Role::Root, @types.Role::TL, @types.Role::Dev] {
     assert_eq(
-      worker_no_handoff_decision(role, 999L, false, false, false, 120L, 120L),
+      worker_no_handoff_decision(role, 999L, false, false, 120L),
       WorkerNoHandoffDecision::DoNothing,
     )
   }
@@ -59,44 +35,8 @@ test "worker_no_handoff_decision skips non-worker roles" {
 ///|
 test "worker_no_handoff_decision idle threshold zero disables path" {
   assert_eq(
-    worker_no_handoff_decision(
-      @types.Role::Worker,
-      999L,
-      false,
-      false,
-      false,
-      0L,
-      120L,
-    ),
+    worker_no_handoff_decision(@types.Role::Worker, 999L, false, false, 0L),
     WorkerNoHandoffDecision::DoNothing,
-  )
-  assert_eq(
-    worker_no_handoff_decision(
-      @types.Role::Worker,
-      999L,
-      false,
-      true,
-      false,
-      0L,
-      120L,
-    ),
-    WorkerNoHandoffDecision::DoNothing,
-  )
-}
-
-///|
-test "worker_no_handoff_decision ignores removed escalate threshold" {
-  assert_eq(
-    worker_no_handoff_decision(
-      @types.Role::Worker,
-      999L,
-      false,
-      false,
-      false,
-      120L,
-      0L,
-    ),
-    WorkerNoHandoffDecision::EmitStalled,
   )
 }
 
@@ -117,8 +57,6 @@ test "leaf_pre_tdd_stall_decision truth table" {
       999L,
       false,
       false,
-      false,
-      120L,
       120L,
     ),
     WorkerNoHandoffDecision::DoNothing,
@@ -131,8 +69,6 @@ test "leaf_pre_tdd_stall_decision truth table" {
       999L,
       false,
       false,
-      false,
-      120L,
       120L,
     ),
     WorkerNoHandoffDecision::DoNothing,
@@ -145,8 +81,6 @@ test "leaf_pre_tdd_stall_decision truth table" {
       999L,
       false,
       false,
-      false,
-      120L,
       120L,
     ),
     WorkerNoHandoffDecision::DoNothing,
@@ -159,8 +93,6 @@ test "leaf_pre_tdd_stall_decision truth table" {
       119L,
       false,
       false,
-      false,
-      120L,
       120L,
     ),
     WorkerNoHandoffDecision::DoNothing,
@@ -173,11 +105,9 @@ test "leaf_pre_tdd_stall_decision truth table" {
       120L,
       false,
       false,
-      false,
-      120L,
       120L,
     ),
-    WorkerNoHandoffDecision::Prod,
+    WorkerNoHandoffDecision::EmitStalled,
   )
   assert_eq(
     leaf_pre_tdd_stall_decision(
@@ -186,9 +116,7 @@ test "leaf_pre_tdd_stall_decision truth table" {
       Some(@types.LeafTddPhase::Green),
       240L,
       false,
-      true,
       false,
-      120L,
       120L,
     ),
     WorkerNoHandoffDecision::EmitStalled,
@@ -201,8 +129,6 @@ test "leaf_pre_tdd_stall_decision truth table" {
       240L,
       false,
       true,
-      true,
-      120L,
       120L,
     ),
     WorkerNoHandoffDecision::DoNothing,
@@ -226,8 +152,6 @@ test "leaf_no_handoff_decision truth table" {
       999L,
       false,
       false,
-      false,
-      120L,
       120L,
     ),
     WorkerNoHandoffDecision::DoNothing,
@@ -240,8 +164,6 @@ test "leaf_no_handoff_decision truth table" {
       999L,
       false,
       false,
-      false,
-      120L,
       120L,
     ),
     WorkerNoHandoffDecision::DoNothing,
@@ -254,8 +176,6 @@ test "leaf_no_handoff_decision truth table" {
       999L,
       false,
       false,
-      false,
-      120L,
       120L,
     ),
     WorkerNoHandoffDecision::DoNothing,
@@ -268,8 +188,6 @@ test "leaf_no_handoff_decision truth table" {
       119L,
       false,
       false,
-      false,
-      120L,
       120L,
     ),
     WorkerNoHandoffDecision::DoNothing,
@@ -282,22 +200,6 @@ test "leaf_no_handoff_decision truth table" {
       120L,
       false,
       false,
-      false,
-      120L,
-      120L,
-    ),
-    WorkerNoHandoffDecision::EmitStalled,
-  )
-  assert_eq(
-    leaf_no_handoff_decision(
-      @types.Role::Dev,
-      review_owned,
-      true,
-      239L,
-      false,
-      true,
-      false,
-      120L,
       120L,
     ),
     WorkerNoHandoffDecision::EmitStalled,
@@ -308,38 +210,8 @@ test "leaf_no_handoff_decision truth table" {
       review_owned,
       true,
       240L,
-      false,
       true,
       false,
-      120L,
-      120L,
-    ),
-    WorkerNoHandoffDecision::EmitStalled,
-  )
-  assert_eq(
-    leaf_no_handoff_decision(
-      @types.Role::Dev,
-      review_owned,
-      true,
-      240L,
-      false,
-      true,
-      false,
-      120L,
-      0L,
-    ),
-    WorkerNoHandoffDecision::EmitStalled,
-  )
-  assert_eq(
-    leaf_no_handoff_decision(
-      @types.Role::Dev,
-      review_owned,
-      true,
-      240L,
-      true,
-      false,
-      false,
-      120L,
       120L,
     ),
     WorkerNoHandoffDecision::DoNothing,
@@ -352,9 +224,7 @@ test "leaf_no_handoff_decision truth table" {
       999L,
       false,
       false,
-      false,
       0L,
-      120L,
     ),
     WorkerNoHandoffDecision::DoNothing,
   )
@@ -366,8 +236,6 @@ test "leaf_no_handoff_decision truth table" {
       240L,
       false,
       true,
-      true,
-      120L,
       120L,
     ),
     WorkerNoHandoffDecision::DoNothing,
@@ -376,11 +244,6 @@ test "leaf_no_handoff_decision truth table" {
 
 ///|
 test "leaf no-handoff messages include fix-push headers and pane tail" {
-  let pre_tdd_prod = leaf_pre_tdd_stall_prod_text
-  assert_true(pre_tdd_prod.contains("tdd_intent"))
-  assert_true(pre_tdd_prod.contains("file_pr"))
-  assert_true(pre_tdd_prod.contains("notify_parent --status failure"))
-
   let pre_tdd_stalled = leaf_pre_tdd_stalled_parent_message(
     "leaf-a",
     240L,
