@@ -258,7 +258,6 @@ fn ServerState::clear_no_handoff_watchdog_state(
   kind : NoHandoffWatchdogKind,
 ) -> Unit {
   let key = no_handoff_watchdog_state_key(agent_id, kind)
-  self.worker_no_handoff_prodded_at.remove(key)
   self.worker_no_handoff_stalled_emitted.remove(key)
 }
 
@@ -310,7 +309,6 @@ pub struct ServerState {
   handoff_delivered : Map[String, Bool]
   agent_task_contracts : Map[String, @types.TaskContract]
   leaf_tdd_phases : Map[String, @types.LeafTddPhase]
-  worker_no_handoff_prodded_at : Map[String, Int64]
   worker_no_handoff_stalled_emitted : Map[String, Bool]
   worker_no_handoff_exit_emitted : Map[String, Bool]
   spawn_registration_first_unseen : Map[String, Int64]
@@ -436,7 +434,6 @@ pub fn ServerState::new(
     handoff_delivered: {},
     agent_task_contracts: persisted_agent_task_contracts,
     leaf_tdd_phases: {},
-    worker_no_handoff_prodded_at: {},
     worker_no_handoff_stalled_emitted: {},
     worker_no_handoff_exit_emitted: {},
     spawn_registration_first_unseen: {},

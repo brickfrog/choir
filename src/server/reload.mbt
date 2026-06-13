@@ -86,9 +86,6 @@ fn ServerState::reload_runtime_snapshot_json(
     ),
     "delivery_failures": server_reload_int_entries_json(self.delivery_failures),
     "handoff_delivered": server_reload_bool_entries_json(self.handoff_delivered),
-    "worker_no_handoff_prodded_at": server_reload_int64_entries_json(
-      self.worker_no_handoff_prodded_at,
-    ),
     "worker_no_handoff_stalled_emitted": server_reload_bool_entries_json(
       self.worker_no_handoff_stalled_emitted,
     ),
@@ -462,13 +459,6 @@ pub fn ServerState::restore_reload_snapshot(
     Ok(v) => v
     Err(e) => return Err(e)
   }
-  let parsed_worker_no_handoff_prodded_at = match
-    server_reload_parse_int64_map_or_empty(
-      root.get("worker_no_handoff_prodded_at"),
-    ) {
-    Ok(v) => v
-    Err(e) => return Err(e)
-  }
   let parsed_worker_no_handoff_stalled_emitted = match
     server_reload_parse_bool_map_or_empty(
       root.get("worker_no_handoff_stalled_emitted"),
@@ -523,10 +513,6 @@ pub fn ServerState::restore_reload_snapshot(
   server_reload_replace_map_contents(
     self.handoff_delivered,
     parsed_handoff_delivered,
-  )
-  server_reload_replace_map_contents(
-    self.worker_no_handoff_prodded_at,
-    parsed_worker_no_handoff_prodded_at,
   )
   server_reload_replace_map_contents(
     self.worker_no_handoff_stalled_emitted,
