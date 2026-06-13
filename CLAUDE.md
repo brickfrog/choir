@@ -44,18 +44,18 @@ The former known gaps (typed lifecycle triggers, typed lifecycle snapshots in ev
 - If something exists only to support an old on-disk format, an old API shape, or a removed feature: delete it. The next restart wipes state. There is no "someone might need this later."
 - If you add a function named `legacy_*`, `compat_*`, or `*_old`: that is a red flag. Either the old thing is gone and so should this be, or rename it to reflect what it actually does now.
 
-## Commits
+## Commit & PR Style
 
-- Semantic commits only
+Applies to every commit and PR opened by any agent (TL or leaf). No exceptions, no AI-attribution footers.
 
-## TL Workflow
+- **Commits:** semantic prefix (`feat:`/`fix:`/`refactor:`/`test:`/`docs:`/`chore:`), imperative subject ≤72 chars, no body unless it adds non-obvious context. Never add `Generated with` / `Co-Authored-By: Claude` / robot-emoji footers.
+- **PR title:** same semantic prefix + one-line description.
+- **PR body — scale to the change:**
+  - Trivial/single-leaf PR: 1–3 lines. Just what changed and the verify command result.
+  - Substantial PR (feature→main, multi-leaf): `## Summary` (2–4 sentences), `## What changed` (bullets), `## Verification` (commands + results). Add `## Follow-ups` only if real ones exist.
+  - Do not narrate the development process, list every leaf, or recount review history unless it materially affects the reviewer's decision.
+- Never paste this guideline, tool output, or process commentary into a PR/commit that doesn't need it.
 
-When a user brings a feature request, follow the VSDD pipeline in `.choir/context/tl.md`:
-**Spec Crystallization → TDD Leaves (Red Gate) → Code Review Gate → Convergence.**
+## Orchestrator Role
 
-## Leaf Agent Rules
-
-- **Always verify with `moon test --target native`**, not bare `moon test`. Bare `moon test` includes wasm-gc/js targets that have pre-existing failures unrelated to any leaf's changes. CI runs `moon test --target native`; that is the only verification that matters.
-- Leaves never call /audit. The TL runs /audit on the integration branch when audit findings need to gate a merge. file_pr files the PR immediately; merge_pr returns a policy block if the receipt is missing — the TL handles it.
-- **Do not call `notify_parent` until all review threads are resolved.** Filing a PR and immediately reporting it as ready is incorrect if unresolved inline threads remain. If a reviewer is configured for this project, wait for its review, address every inline thread, push fixes, and confirm a poller snapshot reports zero unresolved threads before notifying the parent. If no reviewer is configured, PR readiness is CI green + zero unresolved threads + the TL-run audit receipt.
-- **Configured reviewer comments are handled through the poller.** If a reviewer is configured as Copilot, it reviews once and does not re-review after fixes are pushed. After addressing review comments, the leaf pushes fixes and waits for the next poller snapshot; the server resolves now-outdated review threads for iterative-review PRs. Do not call `gh` to resolve threads as part of the normal review cycle.
+The above are repo-editing invariants — they apply to anyone editing this source. Operating *as* the Choir TL is a different surface: your guide is `.choir/context/tl.md` plus the `tl-stance` skill, and procedure lives in skills (`/crystallize`, `/decompose`, `/dispatch-leaf`, `/ship-pr`, `/audit`, `/onboard`). Leaf and worker lifecycle live in their role profiles. None of that belongs here.

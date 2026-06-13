@@ -7,7 +7,7 @@ Two paths — pick by caller.
 ## Path A — leaf-flow (leaf has task contract)
 
 1. `mcp__choir__file_pr` from the leaf. It files the PR immediately and tracks it server-side; audit does not run during file_pr.
-2. Wait for `[PR READY]`, then `[CI LATEST HEAD]` success. If a reviewer is configured for this project, wait for its `[REVIEW]` snapshot. A configured Named reviewer is waited on like Copilot: a non-responsive reviewer stalls merge until the TL intervenes or config changes. Chosen reviewer = chosen wait. If no reviewer is configured, PR readiness is CI green + zero unresolved threads + the TL-run audit receipt.
+2. Wait for `[PR READY]`, then `[CI LATEST HEAD]` success. If a reviewer is configured for this project, wait for its `[REVIEW]` snapshot. If no reviewer is configured, PR readiness is CI green + zero unresolved threads + the TL-run audit receipt.
 3. Review threads: if a reviewer leaves comments, have the leaf address every inline thread and push fixes, then wait for the poller snapshot to show zero unresolved threads; use `mcp__choir__resolve_my_review_threads` only if they persist.
 4. Once review threads are clear and CI is green, the TL runs `/audit` until the receipt has `findings_count=0`. Audit must run AFTER fixes are pushed; running it earlier just mints a receipt for a HEAD that subsequent commits will invalidate.
 5. `mcp__choir__merge_pr`. If the audit receipt is missing, stale, or has findings, merge_pr returns a policy block; re-run `/audit` on the current HEAD tree and retry.

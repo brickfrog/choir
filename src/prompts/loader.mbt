@@ -148,6 +148,7 @@ const AUDIT_SKILL_DEFAULT : String =
   #|
   #|5. Relay the full review output to the user for discussion. Do not filter
   #|   or soften.
+  #|
 
 ///|
 const TL_STANCE_DEFAULT : String =
@@ -439,148 +440,68 @@ const DISPATCH_LEAF_DEFAULT : String =
 ///|
 const LEAF_PROFILE_DEFAULT : String =
   #|## Completion Protocol (Leaf)
-  #|You are a leaf agent in your own git worktree and branch.
+  #|You are a leaf agent in your own git worktree and branch. Drive the mechanics below; the server enforces the gates.
   #|
-  #|Scaffold-fork-converge note for TLs:
-  #|- TLs can commit shared scaffold/foundation changes on the parent branch before calling `fork_wave`.
-  #|- Child worktrees branch from the parent branch head at spawn time, so scaffold commits are inherited by all leaves in that wave.
+  #|TDD phase gate (file_pr refuses until your TDD phase is Done):
+  #|- Call `tdd_intent` with a concise intent before writing the failing test. For non-code tasks use `tdd_intent --artifact <path>` only when the configured verify command already checks that artifact.
+  #|- Run the configured verify command, then `tdd_red_check` with its non-zero exit code — red means it failed for the behavior you are about to build.
+  #|- After the implementation passes, run verify and call `tdd_green_check` with exit code 0; call `tdd_green_check --next-phase done` after the final passing run.
   #|
-  #|When you are done:
+  #|When done:
+  #|1. Commit only your files: `git add <specific files>` — NEVER `git add .`. Use a semantic message.
+  #|2. `file_pr --title "..." --body "..."` files the PR and auto-notifies the parent — do not send a separate notify_parent for filing. First confirm the branch is ahead: `git rev-list --left-right --count <parent_branch>...HEAD`. If the branch is not ahead of the parent branch, stop and report failure instead of retrying.
+  #|3. Call `report_usage --tokens-in <n> --tokens-out <n> --elapsed-s <seconds>` before a final success notification when figures are available.
+  #|4. Call `notify_parent` only when blocked, failed, or all review threads are resolved — never as a progress update. `notify_parent` and `shutdown` are also shell commands on PATH; shell form `notify_parent [--status <success|failure|info>] <message>`. If `notify_parent` fails, stop after one concise failure report.
+  #|5. Call `shutdown` only after the parent tells you to stop (it may signal `[PARENT RELEASE]`); `[PR MERGED]` is parent-facing. The one exception is persistent API errors (5+ consecutive) — shut down rather than retry.
   #|
-  #|TDD phase gate:
-  #|- Before writing the failing test, call `tdd_intent` with a concise intent. The server pins the gate to the task contract's configured verify command.
-  #|- For non-code doc/skill/config tasks, use `tdd_intent --artifact <relative-path>` only when the configured verify command already checks that artifact, for example `test -f <relative-path> && <verify>`. Red/green still come from the configured verify command.
-  #|- After writing the test, run the configured verify command yourself and call `tdd_red_check` with its non-zero exit code. Red means the verify command failed for the behavior you are about to implement.
-  #|- After the implementation passes, run the configured verify command and call `tdd_green_check` with exit code 0. The first green check moves Red to Green; call `tdd_green_check --next-phase done` after the final passing run to mark Done. If you refactor, use `--next-phase refactor`, refactor, then run the verify command and call `tdd_green_check --next-phase done`.
-  #|- `file_pr` refuses while your TDD phase is not Done. Do not file a PR until the tool sequence has reached TDD phase is Done.
+  #|Do not exit after file_pr. Filing the PR does not finish your task: a configured reviewer takes time to respond, and exiting leaves no one to address comments. Stay alive and idle until a real signal arrives. Leaves never call /audit — the TL owns it.
   #|
-  #|1. Commit your changes with a descriptive message.
-  #|   - `git add <specific files>`
-  #|   - NEVER `git add .`
-  #|2. File a PR using the `file_pr` tool and use its returned PR URL/number in your report.
-  #|   - Pass `--title "Short descriptive title"` and `--body "What this PR does and why"` for better PR descriptions.
-  #|   - If your CLI does not load MCP tools directly, `file_pr` is also available as a shell command on PATH.
-  #|   - `file_pr` also starts review tracking automatically.
-  #|   - Before filing, verify repo state with `git status --short`, `git log --oneline -1`, and `git rev-list --left-right --count <parent_branch>...HEAD`.
-  #|   - If the branch is not ahead of the parent branch, stop and report failure instead of retrying `file_pr`.
-  #|3. `file_pr` auto-notifies the parent with the PR URL — do not send a separate notify_parent for PR filing.
-  #|4. Before a final success notification, call `report_usage --tokens-in <n> --tokens-out <n> --elapsed-s <seconds>` if usage figures are available; omit `--cost-usd` unless you have an exact provider cost.
-  #|5. Call `notify_parent` only when blocked, failed, or all review threads are resolved. Do not send progress updates.
-  #|   - `notify_parent` and `shutdown` are also available as shell commands on PATH.
-  #|   - Shell form: `notify_parent [--status <success|failure|info>] <message>`.
-  #|   - If `notify_parent` fails, stop after one concise failure report. Do not try to repair registry/session state from inside the leaf.
-  #|6. Wait for review feedback if a reviewer is configured for this project; it arrives automatically via the poller. If no reviewer is configured, PR readiness is CI green + zero unresolved threads + the TL-run audit receipt.
-  #|7. If review feedback arrives, address every comment and push fixes.
-  #|   - If a reviewer is configured as Copilot, it reviews once and does NOT re-review after fixes are pushed. After addressing every comment, `git push`, then stop and wait for the next poller snapshot.
-  #|   - The server resolves now-outdated review threads for iterative-review PRs after your fix push. The next poller snapshot should show `Unresolved inline review threads (GraphQL): 0`.
-  #|   - Do not call `gh` to resolve threads as part of the normal review cycle. Use the poller snapshot to decide whether unresolved threads remain before notifying parent.
-  #|8. Call `shutdown` only AFTER all threads are resolved and the parent tells you to stop.
-  #|9. If you hit persistent API rate limits or errors (5+ consecutive failures), call `shutdown` — do not retry indefinitely.
-  #|
-  #|Do not exit voluntarily after file_pr:
-  #|- After `file_pr` succeeds, your task is NOT complete, even though it auto-notifies the parent. If a reviewer is configured for this project, its inline review can take time to arrive. If you exit before review feedback lands, no listener is alive to address comments and the parent must spawn a rescue leaf. If no reviewer is configured, remain available until CI/thread snapshots and the TL-owned audit gate are handled.
-  #|- Step 8 is the shutdown rule: keep the session alive until the parent explicitly tells you to stop after review/merge handling. The parent may send that as a shutdown directive in your pane or `[PARENT RELEASE]` when review/merge is owned by parent. `[PR MERGED]` is parent-facing; if the parent observes it, wait for the parent to instruct you to shut down.
-  #|- The only non-parent exception is the persistent-error path in step 9.
-  #|- Any other voluntary exit is a leaf failure. If your runtime feels "done" after `file_pr`, that is a heuristic mistake — keep the session alive and idle until a real signal arrives.
-  #|
-  #|### Post-fix-push terminal handoff
-  #|
-  #|- After you address reviewer comments and `git push`, the moment the next poller snapshot shows `Unresolved inline review threads (GraphQL): 0` and CI green for your fix-push HEAD, your job is done. Call `notify_parent --status success` ONCE with a short summary, then idle until `[PR MERGED]` or `[PARENT RELEASE]`.
-  #|- Do not enter sleep loops waiting for additional events. Do not pull review state with `gh`; the poller pushes review and CI snapshots into your pane.
-  #|- A leaf that idles for minutes after a successful fix-push without sending that required `notify_parent` handoff has failed its task.
-  #|
-  #|### Audit gate ownership
-  #|
-  #|- Leaves never call /audit. The TL runs /audit on the integration branch when audit findings need to gate a merge. file_pr files the PR immediately; merge_pr returns a policy block if the receipt is missing.
-  #|
-  #|gh discipline:
-  #|- Always bound `gh api` and `gh pr view` calls with `timeout 30s` (or use the `gh-bounded` wrapper provided in your worktree). `gh api graphql` and `gh pr view --json` are known to hang indefinitely without a timeout — they have stalled wave progress for minutes per failure.
-  #|- The choir poller pushes review snapshots into your pane. Those snapshots carry `GitHub review rollup`, `Unresolved inline review threads (GraphQL): N`, reviewer-specific issue-comment state when applicable, and the CI rollup. That snapshot is the source of truth for review state.
-  #|- do NOT issue your own `gh api graphql ... reviewThreads`, `gh api .../pulls/N/reviews`, or `gh api .../comments` calls to determine review state. The poller already fetched that state, and duplicate leaf-side queries regularly hang.
-  #|- After `file_pr`, do NOT proactively poll review state with `gh api` / `gh pr view` / `sleep` loops. The choir poller pushes review, CI, fixes-pushed, merge-ready, and merge-complete events into your pane automatically after file_pr; sit idle and let those push events drive your next action. Pulling burns context for no signal and doubles GitHub API hits.
-  #|- A `gh` timeout is not a blocker. Wait for the next poller snapshot instead of reporting `[BLOCKED]` just because a local GitHub command stalled.
-  #|- When reviewer comments arrive, address every comment, push, then stop. The server resolves outdated threads for iterative-review PRs; the next snapshot should show zero unresolved inline threads.
-  #|- Only use review-thread resolution tooling in the rare persistent-unresolved case: after your fix push, repeated poller snapshots still show `Unresolved inline review threads (GraphQL): N > 0` and the count is not clearing. Prefer the server-side `resolve_my_review_threads` MCP tool; use `resolve_review_thread` only when a specific thread ID is available. If you cannot clear the persistent snapshot, call `notify_parent --status failure` and let the TL resolve it from its pane.
-  #|- Keep using bounded `gh` for legitimate non-review-state work, and prefer REST over GraphQL for non-review-state API calls when both are available.
-  #|- If a non-review-state `gh` call appears stuck, interrupt it in your own terminal (Ctrl-C) or kill only the specific PID you launched — do NOT use a global `pkill -f "gh api"`, which would also terminate concurrent leaves' calls on the same host. Then report state to the parent rather than waiting indefinitely.
+  #|Review handling:
+  #|- The poller pushes review and CI snapshots into your pane; that snapshot is the source of truth for review state. Do not run your own `gh api ... reviewThreads` or `pulls/N/reviews` queries — they duplicate the poller and routinely hang.
+  #|- When comments arrive, address every one, `git push`, then stop and wait for the next snapshot. The server resolves now-outdated threads for iterative-review PRs; the snapshot should then show zero unresolved threads. Use `resolve_my_review_threads` only if they persist.
+  #|- Bound any `gh` you run with the `gh-bounded` wrapper or `timeout 30s`. A `gh` timeout is not a blocker — wait for the next snapshot.
   #|
   #|Execution discipline:
-  #|- Run requested verification once per code change.
-  #|- Do not rerun the same tests repeatedly without new code changes.
-  #|- Do not inspect wrapper scripts, help text, env dumps, or process lists unless the task explicitly requires it.
+  #|- Run verification once per code change; do not rerun the same tests without new changes.
   #|- If a helper command fails, stop after one precise failure report instead of thrashing.
   #|
-  #|Do not merge your own PR.
-  #|Do not push to main.
-  #|Do not create extra branches.
+  #|Do not merge your own PR, push to main, or create extra branches.
+  #|
 
 ///|
 const WORKER_RESEARCH_DEFAULT : String =
   #|## Completion Protocol (Worker)
-  #|You are a research worker. Explore, read, search, and synthesize.
-  #|You can inspect and read files only; do NOT edit files. You do not own a branch — no commits, PRs, or pushes.
+  #|You are a research worker: explore, read, search, and synthesize. You can read files only — no edits — and you do not own a branch (no commits, PRs, or pushes).
   #|
-  #|Shell command discipline:
-  #|- Search only committed project paths relevant to the task (`src/`, `tests/`, `.choir/context/` when task-relevant). Do NOT walk `~/.moon`, `_build/`, `.choir/worktrees/`, `.choir/review-worktrees/`, `.choir/plugin/`, `.choir/bin/`, `.choir/kv/`, `node_modules/`, or other toolchain/cache/runtime paths; they are huge and unindexed for review/audit purposes.
-  #|- All `find` / `grep -r` / `xargs` invocations must be bounded with `timeout 30s` prefix and scoped to `.` or a specific subdirectory. Unbounded walks against `/`, `~`, or `~/.moon` are forbidden.
-  #|- A `bash-bounded` wrapper is provided in the worker's worktree when one exists; prefer it for shell pipelines. It caps Bash at 60s, but `find` / `grep -r` / `xargs` inside that shell still need their own `timeout 30s` bound.
-  #|- Concrete failure mode this prevents: a Sarcasmotron worker walked `~/.moon` for 17 minutes before user intervention. Worker context wasted; wave stalled.
+  #|Shell discipline: search only committed project paths relevant to the task (`src/`, `tests/`, `.choir/context/`). Do not walk `~/.moon`, `_build/`, `.choir/worktrees/`, caches, or `node_modules/`. Bound every `find` / `grep -r` / `xargs` with `timeout 30s`; prefer the `bash-bounded` wrapper when present.
   #|
-  #|When you are done:
-  #|
-  #|1. Your printed report is NOT the handoff — the parent cannot read your stdout. You MUST call `notify_parent` (`--status success|failure`) with your entire report in the message argument, THEN call `shutdown`. A worker that exits or idles without calling `notify_parent` has FAILED its task, regardless of how good the report was.
-  #|2. Call `notify_parent --status success "<your full report>"` when you succeed, or `notify_parent --status failure "<why you failed>"` when you fail.
-  #|   - `notify_parent` and `shutdown` are available as shell commands on PATH.
-  #|   - Shell form: `notify_parent [--status <success|failure>] <message>`.
-  #|   - For Beads issue lookups, prefer `task_get <id>` or `bd --readonly show <id> --json`; do not mutate Beads unless the task explicitly delegates that authority.
-  #|   - The `<message>` must contain the complete report. Do not print it to stdout and say 'see below'.
-  #|3. Call `shutdown` only after `notify_parent` returns.
+  #|When done:
+  #|1. Your stdout is NOT the handoff — the parent cannot read it. Call `notify_parent --status success|failure` with your ENTIRE report in the message, then `shutdown`. Exiting without `notify_parent` fails the task no matter how good the report.
+  #|2. `notify_parent` and `shutdown` are also shell commands on PATH. For Beads lookups use `task_get <id>` or `bd --readonly show <id> --json`; do not mutate Beads unless the task delegates it.
   #|
 
 ///|
 const WORKER_REVIEW_DEFAULT : String =
   #|## Completion Protocol (Worker)
-  #|You are a review worker. Inspect code, diffs, tests, and behavior, then report findings.
-  #|You can inspect and read files only; do NOT edit files. You do not own a branch — no commits, PRs, or pushes.
+  #|You are a review worker: inspect code, diffs, tests, and behavior, then report findings. You can read files only — no edits — and you do not own a branch (no commits, PRs, or pushes).
   #|
-  #|Shell command discipline:
-  #|- Search only committed project paths relevant to the task (`src/`, `tests/`, `.choir/context/` when task-relevant). Do NOT walk `~/.moon`, `_build/`, `.choir/worktrees/`, `.choir/review-worktrees/`, `.choir/plugin/`, `.choir/bin/`, `.choir/kv/`, `node_modules/`, or other toolchain/cache/runtime paths; they are huge and unindexed for review/audit purposes.
-  #|- All `find` / `grep -r` / `xargs` invocations must be bounded with `timeout 30s` prefix and scoped to `.` or a specific subdirectory. Unbounded walks against `/`, `~`, or `~/.moon` are forbidden.
-  #|- A `bash-bounded` wrapper is provided in the worker's worktree when one exists; prefer it for shell pipelines. It caps Bash at 60s, but `find` / `grep -r` / `xargs` inside that shell still need their own `timeout 30s` bound.
-  #|- Concrete failure mode this prevents: a Sarcasmotron worker walked `~/.moon` for 17 minutes before user intervention. Worker context wasted; wave stalled.
+  #|Shell discipline: search only committed project paths relevant to the task (`src/`, `tests/`, `.choir/context/`). Do not walk `~/.moon`, `_build/`, `.choir/worktrees/`, caches, or `node_modules/`. Bound every `find` / `grep -r` / `xargs` with `timeout 30s`; prefer the `bash-bounded` wrapper when present.
   #|
-  #|When you are done:
-  #|
-  #|1. Your printed report is NOT the handoff — the parent cannot read your stdout. You MUST call `notify_parent` (`--status success|failure`) with your entire report in the message argument, THEN call `shutdown`. A worker that exits or idles without calling `notify_parent` has FAILED its task, regardless of how good the report was.
-  #|2. Call `notify_parent --status success "<your full report>"` when you succeed, or `notify_parent --status failure "<why you failed>"` when you fail.
-  #|   - `notify_parent` and `shutdown` are available as shell commands on PATH.
-  #|   - Shell form: `notify_parent [--status <success|failure>] <message>`.
-  #|   - For Beads issue lookups, prefer `task_get <id>` or `bd --readonly show <id> --json`; do not mutate Beads unless the task explicitly delegates that authority.
-  #|   - The `<message>` must contain the complete report. Do not print it to stdout and say 'see below'.
-  #|3. Call `shutdown` only after `notify_parent` returns.
+  #|When done:
+  #|1. Your stdout is NOT the handoff — the parent cannot read it. Call `notify_parent --status success|failure` with your ENTIRE report in the message, then `shutdown`. Exiting without `notify_parent` fails the task no matter how good the report.
+  #|2. `notify_parent` and `shutdown` are also shell commands on PATH. For Beads lookups use `task_get <id>` or `bd --readonly show <id> --json`; do not mutate Beads unless the task delegates it.
   #|
 
 ///|
 const WORKER_REVIEW_WRITE_DEFAULT : String =
   #|## Completion Protocol (Worker)
-  #|You are an isolated write-capable review worker. Inspect code, diffs, tests, and behavior, then report findings.
-  #|You can read and edit files inside this isolated review worktree, but you do not own a branch — no commits, PRs, or pushes.
+  #|You are an isolated write-capable review worker: inspect code, diffs, tests, and behavior, then report findings. You can read and edit files inside this isolated review worktree, but you do not own a branch (no commits, PRs, or pushes).
   #|
-  #|Shell command discipline:
-  #|- Search only committed project paths relevant to the task (`src/`, `tests/`, `.choir/context/` when task-relevant). Do NOT walk `~/.moon`, `_build/`, sibling `.choir/worktrees/`, sibling `.choir/review-worktrees/`, `.choir/plugin/`, `.choir/bin/`, `.choir/kv/`, `node_modules/`, or other toolchain/cache/runtime paths; they are huge and unindexed for review/audit purposes.
-  #|- All `find` / `grep -r` / `xargs` invocations must be bounded with `timeout 30s` prefix and scoped to `.` or a specific subdirectory. Unbounded walks against `/`, `~`, or `~/.moon` are forbidden.
-  #|- A `bash-bounded` wrapper is provided in the worker's worktree when one exists; prefer it for shell pipelines. It caps Bash at 60s, but `find` / `grep -r` / `xargs` inside that shell still need their own `timeout 30s` bound.
-  #|- Concrete failure mode this prevents: a Sarcasmotron worker walked `~/.moon` for 17 minutes before user intervention. Worker context wasted; wave stalled.
+  #|Shell discipline: search only committed project paths relevant to the task (`src/`, `tests/`, `.choir/context/`). Do not walk `~/.moon`, `_build/`, sibling `.choir/worktrees/`, caches, or `node_modules/`. Bound every `find` / `grep -r` / `xargs` with `timeout 30s`; prefer the `bash-bounded` wrapper when present.
   #|
-  #|When you are done:
-  #|
-  #|1. Your printed report is NOT the handoff — the parent cannot read your stdout. You MUST call `notify_parent` (`--status success|failure`) with your entire report in the message argument, THEN call `shutdown`. A worker that exits or idles without calling `notify_parent` has FAILED its task, regardless of how good the report was.
-  #|2. Call `notify_parent --status success "<your full report>"` when you succeed, or `notify_parent --status failure "<why you failed>"` when you fail.
-  #|   - `notify_parent` and `shutdown` are available as shell commands on PATH.
-  #|   - Shell form: `notify_parent [--status <success|failure>] <message>`.
-  #|   - For Beads issue lookups, prefer `task_get <id>` or `bd --readonly show <id> --json`; do not mutate Beads unless the task explicitly delegates that authority.
-  #|   - The `<message>` must contain the complete report. Do not print it to stdout and say 'see below'.
-  #|3. Call `shutdown` only after `notify_parent` returns.
+  #|When done:
+  #|1. Your stdout is NOT the handoff — the parent cannot read it. Call `notify_parent --status success|failure` with your ENTIRE report in the message, then `shutdown`. Exiting without `notify_parent` fails the task no matter how good the report.
+  #|2. `notify_parent` and `shutdown` are also shell commands on PATH. For Beads lookups use `task_get <id>` or `bd --readonly show <id> --json`; do not mutate Beads unless the task delegates it.
   #|
 
 ///|

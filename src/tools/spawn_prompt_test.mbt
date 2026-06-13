@@ -28,14 +28,14 @@ test "render_leaf_spawn_prompt builds structured sections and completion protoco
   assert_true(prompt.contains("1. Add routing metadata"))
   assert_true(prompt.contains("- `moon test --target native`"))
   assert_true(prompt.contains("Key decisions:"))
-  assert_true(prompt.contains("Do not merge your own PR."))
-  assert_true(prompt.contains("`file_pr`"))
+  assert_true(prompt.contains("Do not merge your own PR"))
+  assert_true(prompt.contains("file_pr"))
   assert_true(prompt.contains("tdd_intent"))
   assert_true(prompt.contains("tdd_red_check"))
   assert_true(prompt.contains("tdd_green_check"))
   assert_true(prompt.contains("TDD phase is Done"))
   assert_true(prompt.contains("`notify_parent`"))
-  assert_true(prompt.contains("shell command on PATH"))
+  assert_true(prompt.contains("shell commands on PATH"))
   assert_true(
     prompt.contains("notify_parent [--status <success|failure|info>] <message>"),
   )
@@ -44,11 +44,9 @@ test "render_leaf_spawn_prompt builds structured sections and completion protoco
   assert_true(prompt.contains("git rev-list --left-right --count"))
   assert_true(prompt.contains("branch is not ahead of the parent branch"))
   assert_true(prompt.contains("Call `shutdown`"))
-  assert_true(prompt.contains("Wait for review feedback"))
-  assert_true(
-    prompt.contains("Run requested verification once per code change"),
-  )
-  assert_true(prompt.contains("Do not rerun the same tests repeatedly"))
+  assert_true(prompt.contains("source of truth for review state"))
+  assert_true(prompt.contains("Run verification once per code change"))
+  assert_true(prompt.contains("do not rerun the same tests"))
 }
 
 ///|
@@ -82,58 +80,32 @@ test "render spawn prompts keep stable profile before volatile task body" {
 }
 
 ///|
-test "render_leaf_spawn_prompt includes gh discipline and bounded wrapper" {
+test "render_leaf_spawn_prompt includes review handling and bounded gh" {
   let prompt = render_leaf_spawn_prompt(
     PromptSpec::from_map({ "task": "Fix review feedback" }),
   )
-  assert_true(prompt.contains("gh discipline:"))
-  assert_true(
-    prompt.contains(
-      "Always bound `gh api` and `gh pr view` calls with `timeout 30s`",
-    ),
-  )
-  assert_true(prompt.contains("`gh-bounded` wrapper"))
+  assert_true(prompt.contains("Review handling:"))
   assert_true(prompt.contains("source of truth for review state"))
-  assert_true(
-    prompt.contains("do NOT issue your own `gh api graphql ... reviewThreads`"),
-  )
+  assert_true(prompt.contains("Do not run your own `gh api ... reviewThreads`"))
+  assert_true(prompt.contains("`gh-bounded` wrapper"))
   assert_true(prompt.contains("A `gh` timeout is not a blocker"))
-  assert_true(
-    prompt.contains(
-      "After `file_pr`, do NOT proactively poll review state with `gh api` / `gh pr view` / `sleep` loops",
-    ),
-  )
-  assert_true(
-    prompt.contains(
-      "The choir poller pushes review, CI, fixes-pushed, merge-ready, and merge-complete events into your pane automatically after file_pr",
-    ),
-  )
-  assert_true(
-    prompt.contains("sit idle and let those push events drive your next action"),
-  )
-  assert_true(prompt.contains("doubles GitHub API hits"))
-  assert_true(prompt.contains("resolve_my_review_threads` MCP tool"))
-  assert_true(prompt.contains("resolve_review_thread` only when"))
-  assert_false(prompt.contains("per step 7 above"))
+  assert_true(prompt.contains("resolve_my_review_threads"))
   assert_false(prompt.contains("resolveReviewThread"))
-  assert_true(prompt.contains("do NOT use a global `pkill -f \"gh api\"`"))
-  assert_true(prompt.contains("kill only the specific PID you launched"))
 
-  let file_pr_exit = match
-    prompt.find("Do not exit voluntarily after file_pr:") {
+  let file_pr_exit = match prompt.find("Do not exit after file_pr") {
     Some(i) => i
     None => fail("missing file_pr exit block")
   }
-  let gh_discipline = match prompt.find("gh discipline:") {
+  let review_handling = match prompt.find("Review handling:") {
     Some(i) => i
-    None => fail("missing gh discipline block")
+    None => fail("missing review handling block")
   }
   let execution_discipline = match prompt.find("Execution discipline:") {
     Some(i) => i
     None => fail("missing execution discipline block")
   }
-  assert_true(file_pr_exit < gh_discipline)
-  assert_true(gh_discipline < execution_discipline)
+  assert_true(file_pr_exit < review_handling)
+  assert_true(review_handling < execution_discipline)
 }
 
 ///|
@@ -216,7 +188,7 @@ test "render_worker_spawn_prompt uses research profile" {
   assert_true(prompt.contains("## TASK\nInvestigate flaky tests"))
   assert_true(prompt.contains("## Completion Protocol (Worker)"))
   assert_true(prompt.contains("research worker"))
-  assert_true(prompt.contains("inspect and read files only; do NOT edit files"))
+  assert_true(prompt.contains("read files only"))
   assert_true(prompt.contains("do not own a branch"))
   assert_true(prompt.contains("notify_parent"))
 }
@@ -253,7 +225,7 @@ test "render_worker_spawn_prompt uses read-only review profile by default" {
     PromptSpec::from_map({ "task": "Review command wrappers", "type": "review" }),
   )
   assert_true(prompt.contains("review worker"))
-  assert_true(prompt.contains("inspect and read files only; do NOT edit files"))
+  assert_true(prompt.contains("read files only"))
   assert_false(prompt.contains("isolated write-capable review worker"))
   assert_false(prompt.contains("read and edit files inside this isolated"))
 }
@@ -266,47 +238,20 @@ test "render_worker_spawn_prompt uses write-capable review profile for worktree 
   )
   assert_true(prompt.contains("isolated write-capable review worker"))
   assert_true(prompt.contains("read and edit files inside this isolated"))
-  assert_false(
-    prompt.contains("inspect and read files only; do NOT edit files"),
-  )
+  assert_false(prompt.contains("read files only"))
 }
 
 ///|
-test "render_worker_spawn_prompt includes shell command discipline" {
+test "render_worker_spawn_prompt includes shell discipline" {
   let prompt = render_worker_spawn_prompt(
     PromptSpec::from_map({ "task": "Review command wrappers", "type": "review" }),
   )
-  assert_true(prompt.contains("Shell command discipline:"))
-  assert_true(prompt.contains("Search only committed project paths"))
-  assert_true(
-    prompt.contains("`src/`, `tests/`, `.choir/context/` when task-relevant"),
-  )
-  assert_true(
-    prompt.contains("Do NOT walk `~/.moon`, `_build/`, `.choir/worktrees/`"),
-  )
-  assert_true(prompt.contains("`.choir/review-worktrees/`"))
-  assert_true(prompt.contains("`.choir/plugin/`"))
-  assert_true(prompt.contains("`.choir/bin/`"))
-  assert_true(prompt.contains("`.choir/kv/`"))
+  assert_true(prompt.contains("Shell discipline:"))
+  assert_true(prompt.contains("committed project paths"))
+  assert_true(prompt.contains("Do not walk `~/.moon`"))
   assert_true(prompt.contains("`node_modules/`"))
-  assert_true(
-    prompt.contains(
-      "All `find` / `grep -r` / `xargs` invocations must be bounded with `timeout 30s`",
-    ),
-  )
-  assert_true(prompt.contains("scoped to `.` or a specific subdirectory"))
-  assert_true(
-    prompt.contains(
-      "Unbounded walks against `/`, `~`, or `~/.moon` are forbidden",
-    ),
-  )
+  assert_true(prompt.contains("`timeout 30s`"))
   assert_true(prompt.contains("`bash-bounded` wrapper"))
-  assert_true(prompt.contains("caps Bash at 60s"))
-  assert_true(prompt.contains("still need their own `timeout 30s` bound"))
-  assert_true(
-    prompt.contains("Sarcasmotron worker walked `~/.moon` for 17 minutes"),
-  )
-  assert_true(prompt.contains("Worker context wasted; wave stalled."))
   assert_false(prompt.contains("## Shell command discipline"))
 }
 

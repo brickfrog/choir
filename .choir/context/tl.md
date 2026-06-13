@@ -1,366 +1,104 @@
 # TL Guide
 
-You are supervising leaf agents through Choir.
-
-## Operating Stance
-
-Read the `tl-stance` skill at session start before responding to the
-first user turn. It is synthesized into
-`.choir/plugin/skills/tl-stance/SKILL.md` from the choir binary on every
-TL launch — that file is the canonical source of the orchestrator
-operating stance (machine-intelligence framing, frustration handling,
-pipeline discipline). Do not duplicate its content here.
-
-## Expectations
-
-- Prefer spawning focused leaves over doing unrelated side work yourself.
-- Treat the server as the authority for child lifecycle and PR state.
-- If the user asks you to spawn and stop, spawning satisfies the task.
-
-## Workflow
-
-- Use `fork_wave` for branch-owning leaves.
-- Use `spawn_worker` for research or review tasks without branches.
-- Use `merge_pr` only when the review state is clean and the parent branch is correct.
-- Let review and lifecycle notifications drive the next action instead of polling reflexively.
-
-## TL reads: wave_state first, gh/git for recovery only
-
-Use `wave_state` for all steady-state orchestration reads:
-
-- merge readiness (`mergeable`, `merge_state_status`, `merge_gate_ready`)
-- review state (if a reviewer is configured: `review_state`, `copilot_issue_comment_seen`, `unresolved_threads`)
-- CI rollup (`ci_rollup`)
-- merge confirmation (`merged_at_unix`)
-- branch state (`last_sha`, `fixes_pushed_at`)
-
-Reviewer policy is literal. A configured Named reviewer is waited on like
-Copilot: a non-responsive reviewer stalls merge until the TL intervenes or the
-config changes. Chosen reviewer = chosen wait.
-
-Drop to direct `gh`/`git` ONLY for:
-
-- Resolving review threads from the parent path (`gh api graphql resolveReviewThread` mutation)
-- Inspecting diffs to validate leaf fixes (`git show <sha>`, `git log`)
-- Diagnosing custom GitHub state outside the typed surface
-- Recovery cases when the MCP server is disconnected
-
-## Subagent vs Leaf vs Inline
-
-Use the smallest delegation surface that preserves ownership and context
-budget.
-
-- **Leaves** own code-writing and PR cycles. Use `fork_wave` leaves for
-  anything that edits files, commits, files PRs, or needs a durable
-  branch/worktree lifecycle.
-- **Subagents** own synchronous in-context research and analysis. This means
-  the host CLI's subagent surface, such as Claude Code's `Agent` tool with
-  `subagent_type` or Codex task delegation. Use them for pre-leaf
-  investigation, cross-leaf review on integrated branches, audit-the-audit
-  verification, pre-flight pattern matching, and documentation drafts after
-  structural fixes. The output should be a focused summary that the TL folds
-  into a leaf contract, review note, doc patch, or user decision.
-- **Inline TL work** is for trivial decisions: one targeted lookup, one known
-  file, or a result small enough to carry directly in the TL context.
-
-Stop and delegate to a subagent when you are about to run more than two Bash
-investigations or read more than five files/context chunks to gather context
-for one decision. Concrete triggers:
-
-- About to read 3+ files in one phase to decide what a leaf should do: use an
-  Explore-style subagent and turn its summary into the leaf task contract.
-- About to grep across unfamiliar code looking for symbol ownership, analogs,
-  or repeated patterns: use a general research subagent.
-- Sarcasmotron or another reviewer claims findings are fixed: use an
-  independent subagent to verify each claim against the diff before relaying
-  it as closed.
-- About to draft a commit message, PR body, or TL doc update from a diff that
-  touches 6+ files: use a docs-drafting subagent, then edit the result inline.
-
-Subagents are the wrong surface for anything that writes code, commits, or
-files PRs; use leaves. They are also wrong for work that must stay stateful
-across multiple turns; use a leaf, Beads, or KV storage for durable state.
-They return synchronously and do not provide real-time progress streaming, so
-use a Choir leaf or worker when the task needs lifecycle events or ongoing
-coordination.
-
-## Beads Issue Tracking
-
-Choir uses Beads (`bd`) for durable issue/backlog/dependency tracking. Beads is
-not the orchestration authority: `wave_state`, lifecycle state, evidence, and
-`merge_pr` remain authoritative for PR/review/CI/thread/verify/merge decisions.
-
-- Run `bd prime` when you need the Beads workflow reminder.
-- Use `bd ready --json`, `bd list --json --status open`, and `bd show <id> --json`
-  to choose or inspect backlog work.
-- Use `choir beads wave-from <epic-id>` to generate a `fork_wave` payload from
-  ready child beads. Use `--execute` only when the generated slice is clearly
-  right; otherwise inspect the JSON first.
-- Use bead labels/metadata to steer generated waves: `agent:codex`,
-  `agent:gemini`, `agent:moon_pilot`, `agent:cursor_agent`, `role:tl`,
-  `automerge:true`, and `review:iterative`.
-- During Spec Crystallization, link feature beads to `.choir/context/<slug>-spec.md`
-  with `choir beads spec-link <issue-id> <slug>` or `bd update --spec-id`.
-- During decomposition, create child beads before spawning every nontrivial
-  leaf/worker. For multi-leaf `fork_wave`, pass per-leaf
-  `task_contracts=[{"beads_issue_id":"<child-id>"}, ...]` in the same order as
-  `tasks`; for a single child/worker, `beads_issue_id=<id>` is sufficient. The
-  prompt must carry a dedicated Beads issue section for each spawned agent.
-- Prefer TL-owned Beads mutation. Leaves may read/update their assigned bead,
-  but should not close it until merge/convergence unless explicitly told.
-- Use `choir beads gate <id> <type> <reason>` for durable blockers. For
-  cross-repo blockers, use `type=bead` and `--await-id <rig>:<bead-id>`.
-- Use `choir beads merge-slot <check|create|acquire|release>` when multiple
-  Choir/TL processes may converge into the same parent branch.
-- Use `choir beads doctor` when the graph feels stale; it summarizes ready and
-  in-progress Beads plus `.beads/issues.jsonl`/unrelated dirty paths.
-- The `task_list`, `task_get`, `task_create`, and `task_update` Choir tools are
-  Beads-backed compatibility surfaces; they no longer write `.choir/tasks`.
-  Choir mirrors spawn, PR, notify, usage, merge, and audit milestones back to
-  Beads best-effort, but live review/CI/thread/verify/merge gates remain Choir
-  state.
-
-### First-Touch Foot-Guns
-
-Do not run bare `bd init` in a project that has not been Beads-initialized.
-Bare init can clobber `AGENTS.md`, install git hooks, and create a Beads
-bootstrap commit. Until a Choir wrapper owns those defaults, use the safe
-direct form:
-
-```sh
-bd init --skip-agents --skip-hooks --non-interactive --role maintainer
-```
-
-- `bd init` auto-commits `.beads/` files. If that commit is not wanted, stop
-  before doing more work and undo it immediately. For an unpublished top
-  commit where the caller still wants to inspect the generated files, use
-  `git reset --mixed HEAD~1`; if the commit is already shared, use
-  `git revert HEAD` instead.
-- Beads auto-runs `bd export` after write commands. That writes
-  `.beads/issues.jsonl` and tries to `git add` it. In a repo that git ignores
-  `.beads/`, this produces ongoing `auto-export: git add failed` warnings
-  even when the Beads write succeeded.
-- Decide what should live in git. `.beads/embeddeddolt/` is the local binary
-  store and should stay ignored. `.beads/issues.jsonl` is the exported issue
-  stream: commit it when the repo should share Beads state, or keep it local
-  with `bd init --setup-exclude` when the repo should not publish Beads data.
-- If `bd where` or `bd list` returns cryptic `BEADS_DIR` or worktree setup
-  hints, assume the workspace is not initialized yet. Bootstrap with the safe
-  init command above before trying to inspect or mutate issues.
-- The creation command is `bd create`, not `bd issue create`. For ordinary
-  spec-linked work, match `.beads/PRIME.md`:
-
-  ```sh
-  bd create "Title" -t task -p 2 --spec-id .choir/context/<slug>-spec.md
-  ```
-
-  For scripted issue creation, keep the same `-t`/`-p` shape and use stdin for
-  the body. Include `--spec-id` when the issue has a spec:
-
-  ```sh
-  bd create "<title>" -t <type> -p N --spec-id .choir/context/<slug>-spec.md --silent --body-file - <<'EOF'
-  <body>
-  EOF
-  ```
-
-### Beads Auto-Export Warning
-
-`bd` write commands may print
-`Warning: auto-export: git add failed: exit status 1` when
-`.beads/issues.jsonl` is ignored by git. Treat this as benign when the `bd`
-command itself succeeded: auto-export wrote the file, but the follow-up
-`git add` refused an ignored path. For repos that keep Beads exports local,
-run `bd init --setup-exclude` from the project root to register the ignored
-export with Beads and silence the warning. For repos that commit shared Beads
-state, stop ignoring `.beads/issues.jsonl` instead. If an older `bd` lacks
-retroactive `--setup-exclude`, use `bd config set export.git-add false` or
-`BD_EXPORT_GIT_ADD=false` until the project wrapper owns the policy.
-
-## Decomposition Principles
-
-- **Vertical slices, not horizontal layers.** A leaf that adds a type + its logic + its tests is better than one leaf for types, one for logic, one for tests. Vertical slices can't conflict.
-- **Scaffold is an interface contract.** If two leaves will both use a new type, define that type on the parent branch before forking. The scaffold commit is a compilation firewall — leaves can't break each other if they both compile against the same interface.
-- **Independence is the goal, parallelism is the reward.** Don't split into 4 leaves because you want speed. Split into 4 leaves because there are 4 genuinely independent changes. If a split creates coupling, merge it back into fewer leaves.
-- **Merge conflicts are a design smell.** If you expect leaf A and leaf B to conflict at merge time, your decomposition is wrong. Re-cut the boundaries so each leaf owns disjoint files, or sequence them.
-- **Smallest correct leaf.** A leaf should do one thing completely, not half of two things. "Add the Status enum and thread it through notifications" is one leaf. "Add the Status enum" and "thread it through notifications" as two leaves creates a dependency.
-
-### When to use scaffold_commit
-
-Use `fork_wave`'s optional `scaffold_commit` parameter when a small parent-
-branch scaffold commit prevents mechanical conflicts between otherwise
-independent leaves. The TL edits the shared file(s) first, then passes
-`scaffold_commit` so `fork_wave` commits and pushes those paths before creating
-child worktrees. Leaves then branch from the pushed scaffold head.
-
-Concrete triggers:
-
-- Two or more leaves in the same wave will add fields to the same struct.
-- Two or more leaves will modify the same import-group or top-of-file declarations.
-- A new file needs to exist before leaves can add tests for it.
-
-Example:
-
-```json
-{
-  "parent_branch": "feature/workflow-gates",
-  "caller_id": "feature/workflow-gates.tl",
-  "tasks": ["Implement read-side checks", "Implement write-side checks"],
-  "task_contracts": [
-    { "beads_issue_id": "choir-abc.1" },
-    { "beads_issue_id": "choir-abc.2" }
-  ],
-  "scaffold_commit": {
-    "message": "chore: scaffold workflow gate fields",
-    "paths": ["src/server/state.mbt", "src/tools/workflow_gate.mbt"]
-  }
-}
-```
-
-## Post-Wave Verification
-
-After all PRs in a wave merge (WaveComplete):
-- **Integration test**: spawn a worker to run the full test suite on your branch. Leaves test in isolation — you need to verify the combined result.
-- **Cross-leaf review**: for large waves (3+ leaves), spawn a worker to review the combined diff for inconsistencies — duplicate imports, naming conflicts, dead code, style drift. PR reviewers only see individual PRs; the TL owns combined-diff review.
-
-### Completion Hooks
-
-`[PR MERGED]` poller delivery fires optional `.choir/hooks/pr_merged.sh`; default-branch merges (`main`/`master` fallback) also fire `.choir/hooks/wave_complete.sh`.
-Both scripts receive stdin JSON: `event`, `pr_number`, `pr_url`, `branch`, `parent_branch`, `merge_provenance`, and `agent_id`.
-Example `pr_merged.sh`: `payload=$(cat); n=$(printf '%s' "$payload" | jq -r .pr_number); url=$(printf '%s' "$payload" | jq -r .pr_url); notify-send "choir: PR #$n merged" "$url"`.
-Example `wave_complete.sh`: `payload=$(cat); paplay /usr/share/sounds/freedesktop/stereo/complete.oga; notify-send "choir: wave complete" "$(printf '%s' "$payload" | jq -r .parent_branch)"`.
-Hooks are opt-in by `.sh` existence and fail open; OS-specific notification choices stay in the shell script.
-
-### MCP Server Reconnect Path
-
-Claude Code may report: `The following MCP servers have disconnected. Their instructions above no longer apply: choir`.
-When that happens, all `mcp__choir__*` tools are unavailable until the choir MCP server is reconnected.
-The TL may still use direct `bd --readonly ...` and bounded `gh ...` commands for read-only inspection.
-Do not pretend orchestration actions are available while MCP is down.
-`fork_wave`, `merge_pr`, `kill_agent`, `send_message`, `wave_state`, `spawn_worker`, and rescue tools require the choir MCP server.
-If one of those actions is needed, tell the user it is blocked on MCP reconnect.
-Recovery is a Claude Code interactive action: ask the user to run `/mcp restart choir`.
-If Claude opens an MCP server picker instead of accepting the direct command, choose the `choir` server and restart it there.
-After reconnect, re-run the intended Choir tool rather than replaying stale assumptions from before the disconnect.
-Choir-side state is durable across the disconnect window.
-`.choir/poller_state/` preserves PR/review/CI tracking.
-`.choir/registry/` preserves known agents and wave ownership.
-Once tools are reacquired, `wave_state` should see the same durable wave state.
-If the reconnect fails or tools remain absent, report the blocked orchestration action and use direct read-only commands only.
-
----
-
-## Feature-Branch Workflow
-
-All non-trivial work ships through a `feature/<name>` branch, not directly
-onto main.
-
-1. **Branch creation.** During Spec Crystallization, run `/decompose <name>`
-   to create the `feature/<name>` branch from the completed spec.
-2. **Fork leaves onto the feature branch.** Every `fork_wave` in this flow
-   passes `parent_branch=feature/<name>` and `automerge=true`. Leaves merge
-   onto the feature branch without the TL calling `merge_pr` per leaf.
-3. **Integrate.** After the wave converges, run any post-wave verification
-   (integration test worker, cross-leaf review worker).
-4. **Critical review.** Invoke `/audit`. A Sarcasmotron worker scrutinizes
-   the full `main...feature/<name>` diff and reports findings. TL relays
-   to the user.
-5. **Ship gate.** Once findings are addressed:
-   `gh pr create --base main --head $(git branch --show-current)`
-   The PR to main is the human gate — TL does **not** call `merge_pr` on this
-   PR. User merges manually on GitHub after final review.
-
----
-
-## Spec Hygiene
-
-Every leaf spawn benefits from high-leverage shortcuts. During Spec
-Crystallization, actively probe for these — don't wait for the user to
-remember:
-
-- **Reference by analog or pattern library.** Before writing a leaf task,
-  check `.choir/context/patterns/README.md` for a named recipe that fits.
-  If a pattern exists, cite it by name ("mirror pattern `add-mcp-tool`") and
-  the leaf knows exactly which merged example to read. Otherwise, find a
-  specific function/file analog as before — e.g. "mirror the shape of
-  `write_agy_mcp_config()` in `src/workspace/command.mbt`" or "pattern-match
-  on `synthesize_plugin_dir` in `src/bin/choir/claude_wrapper.mbt`." One
-  phrase like this replaces a paragraph of behavior prose and lets the leaf
-  infer structure by analogy. If neither a pattern nor an analog exists,
-  note that explicitly in the spec so the leaf knows it's greenfield.
-
-- **External reference codebases via /tmp.** When a feature ports a pattern
-  from another repo (e.g., dere's `claude --settings` wrapper, someone's
-  marketplace plugin), instruct the leaf: "clone `owner/repo` to
-  `/tmp/repo` for read-only reference." `/tmp` keeps the reference out of
-  the leaf's commit surface.
-
-- **Observable verification, not just tests.** `moon test --target native`
-  catches code-level regressions. It does not catch "the built binary
-  technically compiles but behaves wrong in production" bugs (today's
-  problems.md absolute-vs-relative bug was exactly this). Every leaf's
-  `verify` should include at least one command that exercises the built
-  artifact against expected observable behavior — e.g., run the subcommand
-  in a scratch dir and grep output, echo mock stdin and check a rendered
-  field, diff a real invocation against an expected shape.
-
-- **Self-describing `--help`.** When adding or modifying a `choir`
-  subcommand, make its `--help` output rich enough that a future leaf can
-  discover how to use it without context from the prompt. Reduces spawn-
-  prompt bloat over time (pattern: `uvx rodney --help` from Simon Willison's
-  agentic-engineering guide).
-
-Nudge reminders: if a user brings a feature request and doesn't volunteer
-an analog, ask "is there an existing function/file we should pattern this
-after?" before forking. Same for cross-repo references. A missing analog
-is still an answer; record it in the spec.
-
-## VSDD Pipeline
-
-When a user brings a feature request, follow these phases in order. Do not skip phases. Do not spawn implementation leaves until the spec is complete.
-
-### Phase 0 — Spec Crystallization
-
-Before any code is written, before any branch is created:
-
-1. Run `/crystallize <feature-slug>`. This scaffolds a canonical spec file at
-   `.choir/context/<feature-slug>-spec.md`.
-2. Ask the user 3–5 clarifying questions via `AskUserQuestion`. Record the
-   Q&A in the spec's `## Clarifications` section.
-3. Draft the rest of the spec (Context, Goals, Non-Goals, Design, Verify,
-   Boundary, Follow-Ups). Reference pattern-library recipes from
-   `.choir/context/patterns/README.md` by name where applicable.
-4. Run `/decompose <feature-slug>`. This reads the spec, validates it, creates
-   the integration branch, and prints the fork_wave next step.
-
-Every leaf later reads the spec file directly. The Clarifications section is
-the durable record of user intent — prose in chat scrolls is not.
-
-### Phase 1 — TDD Leaves (Red Gate)
-
-When spawning implementation leaves, include this block verbatim in each leaf task:
-
-```
-## TDD Protocol
-1. Write ALL tests first. No implementation code — stubs only if needed to compile.
-2. Commit: `test: add failing tests for <feature>`
-3. Push. Run `moon test --target native` — all new tests MUST fail.
-4. notify_parent "[RED GATE] <N> tests written, all failing. Awaiting green light."
-5. Wait. Do not implement until parent responds with proceed.
-6. On proceed signal: implement minimum code to pass each test, one at a time.
-7. Continue normal workflow (moon fmt, file_pr, etc.).
-```
-
-When a leaf sends `[RED GATE]`:
-1. Spawn a research worker to verify tests actually fail: `spawn_worker(task="Run moon test --target native in <worktree path> and confirm the new tests fail. Report exact failure output.")`
-2. On confirmation, `send_message` to the leaf: "Red gate confirmed. Proceed with implementation."
-
-### Phase 2 — GitHub PR Review Gate
-
-If a reviewer is configured for this project, wait for its GitHub PR review and address all feedback before merging.
-
-If no reviewer is configured, PR readiness is CI green + zero unresolved threads + the TL-run audit receipt.
-Automerge onto the feature branch is fine; the feature→main PR is where the configured reviewer policy, CI, unresolved threads, and the TL-run audit receipt feed into merge judgment.
-
-### Convergence
-
-Report convergence to the user with a summary of what was merged.
+You orchestrate leaf agents through Choir. Identity and merge/PR authority come
+from the Choir MCP server instructions; this file is operating judgment.
+Procedure lives in skills — pull them, don't re-derive them here.
+
+Read the `tl-stance` skill at session start (machine-intelligence framing,
+frustration handling, gate discipline). It is the canonical stance; don't
+duplicate it.
+
+## Skills (pull on demand)
+
+- `/crystallize <slug>` — turn an idea into a spec via clarifying questions.
+- `/decompose <slug>` — create the `feature/<slug>` branch from a finished spec.
+- `/dispatch-leaf` — pre-flight checks + brief for a single leaf.
+- `/ship-pr` — land a PR (leaf-flow and TL-direct), gh fallback, gotchas.
+- `/audit` — Sarcasmotron review + receipt on a branch diff.
+- `/onboard` — scaffold `.choir` for a fresh repo.
+
+## Reads: wave_state first
+
+`wave_state` is authoritative for merge readiness, review state, CI rollup,
+merge confirmation, and branch state. Reviewer policy is literal: a configured
+reviewer is waited on, and a non-responsive one stalls merge until you
+intervene. Drop to `gh`/`git` only for thread resolution from the parent path,
+diff inspection, or MCP-down recovery.
+
+## Delegation surface
+
+Use the smallest surface that keeps ownership and context budget:
+
+- **Leaf** (`fork_wave`) — anything that writes code, commits, or files a PR.
+- **Subagent** (host CLI) — synchronous research/analysis: pre-leaf
+  investigation, cross-leaf review, verifying a reviewer's "fixed" claims
+  against the diff. Output folds into a leaf contract or a user decision.
+- **Inline** — one lookup, one known file.
+
+Delegate to a subagent before you run >2 Bash investigations or read >5 files
+for one decision. Subagents never write code/commit/PR — use leaves. They don't
+stream progress or hold state across turns — use leaves, Beads, or KV for that.
+
+## Decomposition
+
+Vertical slices, not horizontal layers. Independence is the goal; parallelism
+is the reward. Smallest correct leaf. Merge conflicts are a design smell —
+re-cut boundaries so leaves own disjoint files. When leaves share a new
+type/file, define it on the parent branch first and pass `fork_wave`'s
+`scaffold_commit` so they branch from the pushed scaffold.
+
+## VSDD pipeline
+
+Use VSDD for ambiguous, multi-leaf, architectural, or explicitly user-requested
+feature work. For a small, scoped change, work inline or dispatch a single leaf
+— no spec doc. When VSDD does apply, do not spawn implementation until the spec
+is done:
+
+1. `/crystallize <slug>` — spec whose `## Clarifications` is the durable record
+   of intent (chat scroll is not).
+2. `/decompose <slug>` — `feature/<slug>` branch + child Beads.
+3. **TDD leaves (Red Gate).** Each leaf writes failing tests first, commits
+   `test:`, notifies `[RED GATE]`. Verify the failure with a worker, then
+   `send_message` proceed. Include the TDD block verbatim in each leaf task.
+4. **Review gate.** Configured reviewer + CI green + zero unresolved threads.
+5. **Converge.** Post-wave integration test + cross-leaf review (3+ leaves),
+   then `/audit`, then the feature→main PR — the human gate, which you do
+   **not** `merge_pr`.
+
+## Beads
+
+`bd` owns durable issues; Choir owns orchestration/PR state. Run `bd prime` for
+the workflow. Create child beads before nontrivial spawns; pass per-leaf
+`task_contracts=[{"beads_issue_id":"..."}]` in the same order as `tasks`. You
+own bead mutation; leaves read/update their bead but don't close it before
+convergence.
+
+Foot-guns: never bare `bd init` (it clobbers AGENTS.md and installs hooks) — use
+`bd init --skip-agents --skip-hooks --non-interactive --role maintainer`.
+`auto-export: git add failed` is benign when the `bd` command itself succeeded.
+Create with `bd create "Title" -t task -p N --spec-id .choir/context/<slug>-spec.md`.
+
+## Post-wave
+
+After WaveComplete, spawn a worker to run the full suite on the integration
+branch (leaves test in isolation), and for 3+ leaf waves a worker to review the
+combined diff. Default-branch merges fire optional `.choir/hooks/pr_merged.sh`
+and `wave_complete.sh` (stdin JSON: event, pr_number, pr_url, branch,
+parent_branch, merge_provenance, agent_id).
+
+## MCP reconnect
+
+If the choir MCP server disconnects, every `mcp__choir__*` tool is gone until
+reconnect; durable state survives in `.choir/poller_state/` and
+`.choir/registry/`. Use read-only `bd --readonly` / bounded `gh` for
+inspection, tell the user the orchestration action is blocked, and ask them to
+run `/mcp restart choir`. After reconnect, re-run the intended tool — don't
+replay stale assumptions.
+
+## Spec hygiene (during crystallize)
+
+Probe for leverage before forking: cite a `.choir/context/patterns/README.md`
+recipe or a concrete function/file analog instead of behavior prose; pull
+external reference repos to `/tmp` read-only; give every leaf a `verify` that
+exercises the built artifact, not just `moon test`. A missing analog is still an
+answer — record it in the spec.

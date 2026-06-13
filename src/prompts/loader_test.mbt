@@ -399,28 +399,17 @@ test "audit default prompt defers repo conventions to agent docs" {
 test "leaf profile default prompt uses poller snapshots for review state" {
   let body = default_prompt(PromptName::LeafProfile)
   assert_true(body.contains("source of truth for review state"))
-  assert_true(
-    body.contains("do NOT issue your own `gh api graphql ... reviewThreads`"),
-  )
+  assert_true(body.contains("Do not run your own `gh api ... reviewThreads`"))
   assert_true(body.contains("A `gh` timeout is not a blocker"))
-  assert_true(body.contains("Post-fix-push terminal handoff"))
-  assert_true(body.contains("the moment the next poller snapshot shows"))
-  assert_true(body.contains("notify_parent --status success"))
-  assert_true(body.contains("Do not enter sleep loops"))
-  assert_true(body.contains("Audit gate ownership"))
+  assert_true(body.contains("Do not exit after file_pr"))
+  assert_true(body.contains("resolve_my_review_threads"))
   assert_true(body.contains("Leaves never call /audit"))
-  assert_true(body.contains("merge_pr returns a policy block"))
   assert_true(body.contains("tdd_intent"))
-  assert_true(body.contains("tdd_intent --artifact <relative-path>"))
+  assert_true(body.contains("tdd_intent --artifact <path>"))
   assert_true(body.contains("tdd_red_check"))
   assert_true(body.contains("tdd_green_check"))
-  assert_true(body.contains("refuses while your TDD phase is not Done"))
+  assert_true(body.contains("refuses until your TDD phase is Done"))
   assert_false(body.contains("## Codebase exploration"))
-  assert_true(
-    body.contains(
-      "without sending that required `notify_parent` handoff has failed",
-    ),
-  )
   assert_false(
     body.contains("you (the leaf) must resolve" + " each thread yourself"),
   )
@@ -431,12 +420,6 @@ test "leaf profile default prompt uses poller snapshots for review state" {
 test "default prompts describe reviewer agnostic PR readiness" {
   let leaf = default_prompt(PromptName::LeafProfile)
   let ship = default_prompt(PromptName::ShipPr)
-  assert_true(leaf.contains("If a reviewer is configured for this project"))
-  assert_true(
-    leaf.contains(
-      "If no reviewer is configured, PR readiness is CI green + zero unresolved threads + the TL-run audit receipt",
-    ),
-  )
   assert_true(ship.contains("If a reviewer is configured for this project"))
   assert_true(
     ship.contains(
@@ -543,18 +526,14 @@ test "ship pr default prompt does not embed gh pr merge --admin bypass command" 
 ///|
 test "worker review default prompt leads done section with mandatory handoff" {
   let body = default_prompt(PromptName::WorkerReview)
-  assert_true(body.contains("inspect and read files only; do NOT edit files"))
-  let done = match body.find("When you are done:") {
+  assert_true(body.contains("read files only"))
+  let done = match body.find("When done:") {
     Some(i) => body[i:].to_owned()
     None => fail("missing done section")
   }
-  assert_true(
-    done.has_prefix(
-      "When you are done:\n\n1. Your printed report is NOT the handoff",
-    ),
-  )
-  assert_true(done.contains("MUST call `notify_parent`"))
-  assert_true(done.contains("FAILED its task"))
+  assert_true(done.has_prefix("When done:\n1. Your stdout is NOT the handoff"))
+  assert_true(done.contains("`notify_parent`"))
+  assert_true(done.contains("fails the task"))
 }
 
 ///|

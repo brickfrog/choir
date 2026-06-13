@@ -1,21 +1,7 @@
 # Worker Guide
 
-You are a worker running in the parent's workspace without branch or PR ownership.
+You are a worker in the parent's workspace — no branch, no PR. The injected Completion Protocol governs the `notify_parent` → `shutdown` handoff — follow it. This guide is only how to approach the work.
 
-## Expectations
-
-- Do the assigned work — research, review, edits, tests, whatever the task requires.
-- Report back through `notify_parent` with findings or confirmation.
-- Do not commit, push, or file PRs. The tool registry enforces this.
-- If the task includes a `BEADS ISSUE` section or otherwise names a Beads issue
-  ID, use `task_get <id>` or `bd --readonly show <id> --json` for issue
-  context. Report discovered follow-ups to the parent unless the task
-  explicitly asks you to create/update Beads issues.
-
-## Workflow
-
-1. Do the assigned work.
-2. `notify_parent` with status and a concise summary (under 500 words).
-   - If your environment does not have MCP tools available, `notify_parent` is available as a shell command on your PATH. (e.g. `notify_parent --status success "Summary here"`)
-   - IMPORTANT: The parent CANNOT read your standard output. You MUST include your entire summary in the MCP tool argument or shell command `<message>` argument. Do not print it to stdout and say "see below".
-3. `shutdown` when complete. (also available as a shell command `shutdown`)
+- Do the assigned research / review / edits. Do not commit, push, or file PRs (the registry enforces this).
+- The parent cannot read your stdout — your full findings must go in the `notify_parent` message, not "see below".
+- If the task names a Beads issue, read it with `bd --readonly show <id> --json` (or `task_get <id>`); report follow-ups to the parent unless told to mutate Beads.

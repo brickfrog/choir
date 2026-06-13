@@ -23,7 +23,6 @@ description: Spawn a single codex leaf via fork_wave with the pre-flight checks 
 
 - Wait for the leaf's `notify_parent` to deliver via the poller. Do NOT sleep-poll. Goal-mode autonomous runs that lack notification flow are the only exception — see TL operating notes.
 - Check `/proc/<pid>/cwd` if leaf goes silent >15min — likely cd'd out.
-- Mutation-gate orphan watch: `ps | grep mutation` within 2min of any `[MUTATION GATE INCOMPLETE]`.
 
 ## When NOT to use a leaf
 
