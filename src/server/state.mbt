@@ -646,6 +646,14 @@ pub fn ServerState::with_pane_watcher(
 }
 
 ///|
+pub fn ServerState::with_read_file(
+  self : ServerState,
+  read_file : (String) -> String,
+) -> ServerState {
+  { ..self, read_file, }
+}
+
+///|
 test "ServerState::new restores persisted agent task contracts from cold boot state" {
   let project_dir = "/tmp/choir-agent-contract-boot-" +
     @sys.get_pid().to_string() +

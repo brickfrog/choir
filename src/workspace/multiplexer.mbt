@@ -153,6 +153,99 @@ pub fn zellij_list_panes_json_command(session : String) -> Command {
 }
 
 ///|
+pub fn zellij_list_panes_command(session : String) -> Command {
+  {
+    program: "env",
+    args: ["NO_COLOR=1", "zellij", "--session", session, "action", "list-panes"],
+    workdir: None,
+  }
+}
+
+///|
+pub fn zellij_dump_screen_command(
+  session : String,
+  pane_id : String,
+) -> Command {
+  {
+    program: "zellij",
+    args: [
+      "--session", session, "action", "dump-screen", "--pane-id", pane_id, "--full",
+    ],
+    workdir: None,
+  }
+}
+
+///|
+pub fn write_agent_pane_id_command(
+  project_dir : String,
+  agent_id : String,
+  pane_id : String,
+) -> Command {
+  {
+    program: "sh",
+    args: [
+      "-c",
+      "mkdir -p \"$1\" && printf '%s' \"$2\" > \"$3\"",
+      "choir-write-pane-id",
+      project_dir + "/.choir/pane-ids",
+      pane_id,
+      agent_pane_id_file_path(project_dir, agent_id),
+    ],
+    workdir: None,
+  }
+}
+
+///|
+fn list_panes_whitespace_fields(line : String) -> Array[String] {
+  let fields : Array[String] = []
+  let trimmed = line.trim().to_owned()
+  let mut start = 0
+  let mut i = 0
+  while i <= trimmed.length() {
+    if i == trimmed.length() || trimmed[i] == ' ' || trimmed[i] == '\t' {
+      if i > start {
+        fields.push(trimmed[start:i].to_owned())
+      }
+      start = i + 1
+    }
+    i = i + 1
+  }
+  fields
+}
+
+///|
+fn terminal_pane_ids_from_list_panes(output : String) -> Map[String, Bool] {
+  let ids : Map[String, Bool] = {}
+  let text = strip_ansi_csi_sgr(output)
+  for raw in text.split("\n") {
+    let fields = list_panes_whitespace_fields(raw.to_owned())
+    if fields.length() >= 2 &&
+      fields[0].has_prefix("terminal_") &&
+      fields[1] == "terminal" {
+      ids.set(fields[0], true)
+    }
+  }
+  ids
+}
+
+///|
+pub fn pane_id_from_list_panes_diff(before : String, after : String) -> String? {
+  let before_ids = terminal_pane_ids_from_list_panes(before)
+  let after_ids = terminal_pane_ids_from_list_panes(after)
+  let diff : Array[String] = []
+  for id, _ in after_ids {
+    if !before_ids.contains(id) {
+      diff.push(id)
+    }
+  }
+  if diff.length() == 1 {
+    Some(diff[0])
+  } else {
+    None
+  }
+}
+
+///|
 /// Layout loaded into choir-managed zellij sessions. Opt-in: only loads when
 /// the layout file is present under the user's zellij config dir
 /// (`~/.config/zellij/layouts/<name>.kdl`). Zellij sessions started outside

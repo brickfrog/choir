@@ -554,23 +554,11 @@ pub fn parse_config(
     Ok(v) => v
     Err(e) => return Err(e)
   }
-  let worker_no_handoff_prod_sec = match doc.get("worker_no_handoff_prod_sec") {
-    None => default_cfg.worker_no_handoff_prod_sec
+  let worker_no_handoff_idle_sec = match doc.get("worker_no_handoff_idle_sec") {
+    None => default_cfg.worker_no_handoff_idle_sec
     Some(raw) =>
       match
-        parse_nonnegative_int64_config_value("worker_no_handoff_prod_sec", raw) {
-        Ok(v) => v
-        Err(e) => return Err(e)
-      }
-  }
-  let worker_no_handoff_escalate_sec = match
-    doc.get("worker_no_handoff_escalate_sec") {
-    None => default_cfg.worker_no_handoff_escalate_sec
-    Some(raw) =>
-      match
-        parse_nonnegative_int64_config_value(
-          "worker_no_handoff_escalate_sec", raw,
-        ) {
+        parse_nonnegative_int64_config_value("worker_no_handoff_idle_sec", raw) {
         Ok(v) => v
         Err(e) => return Err(e)
       }
@@ -677,8 +665,7 @@ pub fn parse_config(
     moon_verify_target,
     agy_migration_incomplete,
     hooks_enforcement,
-    worker_no_handoff_prod_sec,
-    worker_no_handoff_escalate_sec,
+    worker_no_handoff_idle_sec,
     poller_heartbeat_tick_sec,
     prenotify_checks,
     auto_pull_after_integration,

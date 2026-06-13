@@ -1,26 +1,20 @@
 ///|
-/// Path for the zellij pane-viewport JSON snapshot for `agent_id` (under `/tmp`).
-pub fn pane_snapshot_path(agent_id : String) -> String {
-  "/tmp/choir-viewport-" + agent_id + ".json"
+pub(all) struct PaneWatchHost {
+  dump_pane_screen : async (String, String) -> String
 }
 
 ///|
-/// Host I/O for pane viewport subscribe: zellij child processes, pid cleanup, and snapshot files.
-pub(all) struct PaneWatchHost {
-  spawn_zellij_pane_viewport_subscribe : (String, String, String) -> Int
-  kill_pid_best_effort : (Int) -> Unit
-  delete_file_sync : (String) -> Unit
-  read_file : (String) -> String
+async fn native_dump_pane_screen(
+  _session : String,
+  _pane_id : String,
+) -> String {
+  @async.sleep(0)
+  ""
 }
 
 ///|
 pub fn PaneWatchHost::native() -> PaneWatchHost {
-  {
-    spawn_zellij_pane_viewport_subscribe: @sys.spawn_zellij_pane_viewport_subscribe,
-    kill_pid_best_effort: @sys.kill_pid_best_effort,
-    delete_file_sync: fn(path) { ignore(@sys.delete_file_sync(path)) },
-    read_file: @sys.read_file,
-  }
+  { dump_pane_screen: native_dump_pane_screen }
 }
 
 ///|
@@ -34,7 +28,8 @@ pub(all) struct WatchObservation {
 
 ///|
 pub(all) struct WatchState {
-  pid : Int
+  session : String
+  pane_id : String
   mut observation : WatchObservation
 }
 
@@ -66,19 +61,17 @@ pub fn PaneWatcher::watch_pane(
   agent_id : String,
   target : @types.LocalTarget,
   now : Int64,
+  pane_id? : String = "",
 ) -> Unit {
-  let snapshot_path = pane_snapshot_path(agent_id)
-  let pid = (self.host.spawn_zellij_pane_viewport_subscribe)(
-    target.session,
-    target.name,
-    snapshot_path,
-  )
-  if pid > 0 {
-    self.watches.set(agent_id, {
-      pid,
-      observation: { last_change_at: now, last_hash: 0, last_len: 0 },
-    })
+  let resolved = pane_id.trim().to_owned()
+  if resolved == "" {
+    return
   }
+  self.watches.set(agent_id, {
+    session: target.session,
+    pane_id: resolved,
+    observation: { last_change_at: now, last_hash: 0, last_len: 0 },
+  })
 }
 
 ///|
@@ -86,64 +79,23 @@ pub fn PaneWatcher::stop_subscribe(
   self : PaneWatcher,
   agent_id : String,
 ) -> Unit {
-  match self.watches.get(agent_id) {
-    Some(watch) => {
-      self.watches.remove(agent_id)
-      (self.host.kill_pid_best_effort)(watch.pid)
-    }
-    None => ()
-  }
-  (self.host.delete_file_sync)(pane_snapshot_path(agent_id))
+  self.watches.remove(agent_id)
 }
 
 ///|
-pub fn PaneWatcher::read_viewport(
+pub async fn PaneWatcher::current_screen(
   self : PaneWatcher,
   agent_id : String,
-) -> String {
-  let snapshot_path = pane_snapshot_path(agent_id)
-  (self.host.read_file)(snapshot_path)
-}
-
-///|
-pub fn parse_int_simple(s : String) -> Int {
-  let mut result = 0
-  for c in s {
-    let d = c.to_int() - '0'.to_int()
-    if d >= 0 && d <= 9 {
-      result = result * 10 + d
-    }
+) -> String? {
+  let watch = match self.watches.get(agent_id) {
+    Some(watch) => watch
+    None => return None
   }
-  result
-}
-
-///|
-/// Extract viewport text from a zellij subscribe JSON snapshot.
-/// Format: {"event":"pane_update","viewport":["line1","line2",...]}
-pub fn extract_viewport_text(json_str : String) -> String {
-  if json_str == "" {
-    return ""
-  }
-  let parsed : Json = @json.parse(json_str) catch { _ => return json_str }
-  match parsed {
-    Object(obj) =>
-      match obj.get("viewport") {
-        Some(Array(lines)) => {
-          let buf = StringBuilder::new()
-          for line in lines {
-            match line {
-              String(s) => {
-                buf.write_string(s)
-                buf.write_char('\n')
-              }
-              _ => ()
-            }
-          }
-          buf.to_string()
-        }
-        _ => json_str
-      }
-    _ => json_str
+  let screen = (self.host.dump_pane_screen)(watch.session, watch.pane_id)
+  if screen.trim().to_owned() == "" {
+    None
+  } else {
+    Some(screen)
   }
 }
 
@@ -182,7 +134,7 @@ fn PaneWatcher::record_observation(
 /// Checks if the agent's pane has been idle. Returns `Some(screen_text)` if idle, `None` if not idle or not being watched.
 /// This is the pane-watch idle/no-heartbeat proxy signal; it emits no hard
 /// disconnect notification by itself.
-pub fn PaneWatcher::observe_idle(
+pub async fn PaneWatcher::observe_idle(
   self : PaneWatcher,
   agent_id : String,
   now : Int64,
@@ -191,11 +143,10 @@ pub fn PaneWatcher::observe_idle(
     Some(watch) => watch
     None => return None
   }
-  let snapshot = self.read_viewport(agent_id)
-  if snapshot.trim().to_owned() == "" {
+  let screen = (self.host.dump_pane_screen)(watch.session, watch.pane_id)
+  if screen.trim().to_owned() == "" {
     return None
   }
-  let screen = extract_viewport_text(snapshot)
   let hash = simple_hash(screen)
   let len = screen.length()
   let observation = watch.observation
@@ -213,7 +164,7 @@ pub fn PaneWatcher::observe_idle(
 /// Checks if the agent's pane has been idle. Returns `Some(screen_text)` if idle, `None` if not idle or not being watched.
 /// This is the pane-watch idle/no-heartbeat proxy signal; it emits no hard
 /// disconnect notification by itself.
-pub fn PaneWatcher::check_idle(
+pub async fn PaneWatcher::check_idle(
   self : PaneWatcher,
   agent_id : String,
   now : Int64,

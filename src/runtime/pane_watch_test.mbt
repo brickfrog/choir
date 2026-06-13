@@ -1,13 +1,36 @@
 ///|
-test "pane_snapshot_path" {
-  assert_eq(pane_snapshot_path("abc"), "/tmp/choir-viewport-abc.json")
+fn pane_watch_target() -> @types.LocalTarget {
+  @types.LocalTarget::{
+    kind: @types.TargetKind::ZellijTab,
+    session: "sess",
+    name: "tab1",
+  }
 }
 
 ///|
-test "parse_int_simple" {
-  assert_eq(parse_int_simple("123"), 123)
-  assert_eq(parse_int_simple("0"), 0)
-  assert_eq(parse_int_simple("abc123def456"), 123456)
+fn pane_watch_dump_host(
+  screens : Array[String],
+  dump_args : Array[String],
+) -> PaneWatchHost {
+  let mut dump_count = 0
+  {
+    dump_pane_screen: async fn(session, pane_id) {
+      @async.sleep(0)
+      dump_args.push(session)
+      dump_args.push(pane_id)
+      if screens.length() == 0 {
+        ""
+      } else {
+        let idx = if dump_count < screens.length() {
+          dump_count
+        } else {
+          screens.length() - 1
+        }
+        dump_count = dump_count + 1
+        screens[idx]
+      }
+    },
+  }
 }
 
 ///|
@@ -17,112 +40,61 @@ test "PaneWatcher::new" {
 }
 
 ///|
-test "PaneWatcher::with_host routes subscribe and cleanup through injected host (spies)" {
-  let spawn_args : Array[String] = []
-  let killed_pids : Array[Int] = []
-  let deleted_paths : Array[String] = []
-  let read_paths : Array[String] = []
-  let host : PaneWatchHost = {
-    spawn_zellij_pane_viewport_subscribe: fn(session, name, path) {
-      spawn_args.push(session)
-      spawn_args.push(name)
-      spawn_args.push(path)
-      99
-    },
-    kill_pid_best_effort: fn(pid) { killed_pids.push(pid) },
-    delete_file_sync: fn(path) { deleted_paths.push(path) },
-    read_file: fn(path) {
-      read_paths.push(path)
-      "{\"event\":\"pane_update\",\"viewport\":[\"hi\"]}"
-    },
-  }
-  let pw = PaneWatcher::with_host(host)
-  let target = @types.LocalTarget::{
-    kind: @types.TargetKind::ZellijTab,
-    session: "sess",
-    name: "tab1",
-  }
-  let snap = pane_snapshot_path("agent-x")
-  pw.watch_pane("agent-x", target, 0L)
-  @debug.assert_eq(pw.watches.get("agent-x").map(fn(w) { w.pid }), Some(99))
-  @debug.assert_eq(spawn_args, ["sess", "tab1", snap])
-  assert_eq(
-    pw.read_viewport("agent-x"),
-    "{\"event\":\"pane_update\",\"viewport\":[\"hi\"]}",
+async test "PaneWatcher::observe_idle dumps the resolved pane id through host spy" {
+  let dump_args : Array[String] = []
+  let pw = PaneWatcher::with_host(
+    pane_watch_dump_host(["worker ready"], dump_args),
   )
-  @debug.assert_eq(read_paths, [snap])
-  pw.stop_subscribe("agent-x")
-  @debug.assert_eq(pw.watches.get("agent-x").map(fn(w) { w.pid }), None)
-  @debug.assert_eq(killed_pids, [99])
-  @debug.assert_eq(deleted_paths, [snap])
+
+  pw.watch_pane("agent-x", pane_watch_target(), 0L, pane_id="terminal_4")
+
+  assert_true(pw.observe_idle("agent-x", 10L) is None)
+  @debug.assert_eq(dump_args, ["sess", "terminal_4"])
 }
 
 ///|
-test "PaneWatcher::stop_subscribe followed by check_idle does not double-kill or false-idle" {
-  let killed_pids : Array[Int] = []
-  let deleted_paths : Array[String] = []
-  let read_paths : Array[String] = []
-  let host : PaneWatchHost = {
-    spawn_zellij_pane_viewport_subscribe: fn(_, _, _) { 123 },
-    kill_pid_best_effort: fn(pid) { killed_pids.push(pid) },
-    delete_file_sync: fn(path) { deleted_paths.push(path) },
-    read_file: fn(path) {
-      read_paths.push(path)
-      "{\"event\":\"pane_update\",\"viewport\":[\"stale\"]}"
-    },
-  }
-  let pw = PaneWatcher::with_host(host)
-  let target = @types.LocalTarget::{
-    kind: @types.TargetKind::ZellijTab,
-    session: "sess",
-    name: "tab1",
-  }
-  pw.watch_pane("agent-stop", target, 0L)
-  pw.stop_subscribe("agent-stop")
+async test "PaneWatcher::observe_idle reports unchanged dump-screen idle and resets on change" {
+  let dump_args : Array[String] = []
+  let pw = PaneWatcher::with_host(
+    pane_watch_dump_host(
+      ["same screen", "same screen", "new screen", "new screen"],
+      dump_args,
+    ),
+  )
 
-  @debug.assert_eq(pw.check_idle("agent-stop", 999L, 0L), None)
-  @debug.assert_eq(pw.watches.get("agent-stop").map(fn(w) { w.pid }), None)
-  @debug.assert_eq(killed_pids, [123])
-  @debug.assert_eq(deleted_paths, [pane_snapshot_path("agent-stop")])
-  @debug.assert_eq(read_paths, [])
+  pw.watch_pane("agent-idle", pane_watch_target(), 100L, pane_id="terminal_9")
+
+  assert_true(pw.observe_idle("agent-idle", 110L) is None)
+  match pw.observe_idle("agent-idle", 230L) {
+    Some(obs) => {
+      assert_eq(obs.screen, "same screen")
+      assert_eq(obs.idle_sec, 120L)
+    }
+    None => fail("expected unchanged dump-screen to report idle")
+  }
+  assert_true(pw.observe_idle("agent-idle", 240L) is None)
+  match pw.observe_idle("agent-idle", 360L) {
+    Some(obs) => {
+      assert_eq(obs.screen, "new screen")
+      assert_eq(obs.idle_sec, 120L)
+    }
+    None => fail("expected unchanged new dump-screen to report idle")
+  }
+  @debug.assert_eq(dump_args, [
+    "sess", "terminal_9", "sess", "terminal_9", "sess", "terminal_9", "sess", "terminal_9",
+  ])
 }
 
 ///|
-test "PaneWatcher::record_observation updates all fields atomically" {
-  let read_paths : Array[String] = []
-  let host : PaneWatchHost = {
-    spawn_zellij_pane_viewport_subscribe: fn(_, _, _) { 456 },
-    kill_pid_best_effort: fn(_) { () },
-    delete_file_sync: fn(_) { () },
-    read_file: fn(path) {
-      read_paths.push(path)
-      "{\"event\":\"pane_update\",\"viewport\":[\"ready\"]}"
-    },
-  }
-  let pw = PaneWatcher::with_host(host)
-  let target = @types.LocalTarget::{
-    kind: @types.TargetKind::ZellijTab,
-    session: "sess",
-    name: "tab1",
-  }
-  pw.watch_pane("agent-observe", target, 10L)
+async test "PaneWatcher::watch_pane skips unresolved pane ids" {
+  let dump_args : Array[String] = []
+  let pw = PaneWatcher::with_host(
+    pane_watch_dump_host(["should not be read"], dump_args),
+  )
 
-  @debug.assert_eq(pw.check_idle("agent-observe", 42L, 300L), None)
+  pw.watch_pane("agent-missing", pane_watch_target(), 0L, pane_id="")
 
-  let screen = "ready\n"
-  let watch = match pw.watches.get("agent-observe") {
-    Some(watch) => watch
-    None => fail("expected pane watch")
-  }
-  let observation = watch.observation
-  assert_eq(observation.last_change_at, 42L)
-  assert_eq(observation.last_hash, simple_hash(screen))
-  assert_eq(observation.last_len, screen.length())
-  @debug.assert_eq(read_paths, [pane_snapshot_path("agent-observe")])
-}
-
-///|
-test "extract_viewport_text parses viewport array" {
-  let j = "{\"event\":\"pane_update\",\"viewport\":[\"line one\",\"line two\"]}"
-  assert_eq(extract_viewport_text(j), "line one\nline two\n")
+  @debug.assert_eq(pw.watched_agents(), [])
+  assert_true(pw.observe_idle("agent-missing", 999L) is None)
+  @debug.assert_eq(dump_args, [])
 }

@@ -13,8 +13,7 @@ test "parse_config - full" {
     #|companions_json = '[{"name":"monitor","role":"worker","command":"claude","task":"Monitor the build"}]'
     #|plugins_json = '[{"name":"plugin","command":"./plugin","tools":"search"}]'
     #|hooks_enforcement = true
-    #|worker_no_handoff_prod_sec = 90
-    #|worker_no_handoff_escalate_sec = 45
+    #|worker_no_handoff_idle_sec = 90
     #|poller_heartbeat_tick_sec = 10
     #|prenotify_checks = ["moon check --target native", "CHOIR_TEST_NO_EXEC=1 moon test --target native", "CHOIR_TEST_REAL_EXEC=1 moon test --target native src/exec", "moon run src/bin/choir_lint --target native"]
     #|moon_verify_target = "js"
@@ -53,8 +52,7 @@ test "parse_config - full" {
       "[{\"name\":\"plugin\",\"command\":\"./plugin\",\"tools\":\"search\"}]",
     ),
   )
-  assert_eq(cfg.worker_no_handoff_prod_sec, 90L)
-  assert_eq(cfg.worker_no_handoff_escalate_sec, 45L)
+  assert_eq(cfg.worker_no_handoff_idle_sec, 90L)
   assert_eq(cfg.hooks_enforcement, true)
   assert_eq(cfg.poller_heartbeat_tick_sec, 10)
   @debug.assert_eq(cfg.prenotify_checks, [
@@ -149,8 +147,7 @@ test "parse_config - minimal" {
   assert_eq(cfg.automerge, false)
   assert_eq(cfg.review_mode, @types.ReviewMode::SinglePass)
   assert_eq(cfg.merge_strategy, @types.MergeStrategy::Merge)
-  assert_eq(cfg.worker_no_handoff_prod_sec, 120L)
-  assert_eq(cfg.worker_no_handoff_escalate_sec, 120L)
+  assert_eq(cfg.worker_no_handoff_idle_sec, 120L)
   assert_eq(cfg.hooks_enforcement, false)
   assert_eq(cfg.poller_heartbeat_tick_sec, 60)
   @debug.assert_eq(cfg.prenotify_checks, [])
@@ -336,32 +333,30 @@ test "parse_config pr_policy reviewer explicit copilot" {
 }
 
 ///|
-test "parse_config worker no-handoff knobs accept zero disable" {
+test "parse_config worker no-handoff idle knob accepts zero disable" {
   let cfg = parse_config(
     (
-      #|worker_no_handoff_prod_sec = 0
-      #|worker_no_handoff_escalate_sec = 0
+      #|worker_no_handoff_idle_sec = 0
       #|poller_heartbeat_tick_sec = 0
     ),
   ).unwrap()
-  assert_eq(cfg.worker_no_handoff_prod_sec, 0L)
-  assert_eq(cfg.worker_no_handoff_escalate_sec, 0L)
+  assert_eq(cfg.worker_no_handoff_idle_sec, 0L)
   assert_eq(cfg.poller_heartbeat_tick_sec, 0)
 }
 
 ///|
-test "parse_config worker no-handoff knobs reject negatives" {
-  match parse_config("worker_no_handoff_prod_sec = -1") {
+test "parse_config worker no-handoff idle knob rejects negatives" {
+  match parse_config("worker_no_handoff_idle_sec = -1") {
     Err(e) => assert_true(e.message().contains("expected >= 0"))
-    Ok(_) => fail("expected negative prod config to fail")
+    Ok(_) => fail("expected negative idle config to fail")
   }
 }
 
 ///|
-test "parse_config worker no-handoff knobs reject fractional values" {
-  match parse_config("worker_no_handoff_escalate_sec = 1.5") {
+test "parse_config worker no-handoff idle knob rejects fractional values" {
+  match parse_config("worker_no_handoff_idle_sec = 1.5") {
     Err(e) => assert_true(e.message().contains("expected integer"))
-    Ok(_) => fail("expected fractional escalate config to fail")
+    Ok(_) => fail("expected fractional idle config to fail")
   }
 }
 
