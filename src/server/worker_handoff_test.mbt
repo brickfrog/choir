@@ -393,11 +393,6 @@ test "leaf no-handoff messages include fix-push headers and pane tail" {
   assert_true(pre_tdd_stalled.contains("TDD phase is green"))
   assert_true(pre_tdd_stalled.contains("Pane tail:\nline 1\nline 2"))
 
-  let prod = leaf_stalled_no_handoff_prod_message("leaf-a")
-  assert_true(prod.contains("[LEAF POST-FIX-PUSH HANDOFF] leaf-a"))
-  assert_true(prod.contains("notify_parent --status success"))
-  assert_true(prod.contains("Do not idle waiting for more events"))
-
   let stalled = leaf_stalled_no_handoff_parent_message(
     "leaf-a", 240L, "line 1\nline 2",
   )

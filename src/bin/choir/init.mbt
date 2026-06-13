@@ -471,8 +471,7 @@ fn init_default_terminal_session(project_dir : String) -> String {
 
 ///|
 fn init_config_toml_content() -> String {
-  "worker_no_handoff_prod_sec = 120\n" +
-  "worker_no_handoff_escalate_sec = 120\n" +
+  "worker_no_handoff_idle_sec = 120\n" +
   "auto_pull_after_integration = true\n" +
   "auto_rebuild_after_pull = false\n" +
   "auto_reload_after_rebuild = false\n" +
@@ -492,7 +491,7 @@ test "init config.toml scaffold omits machine local fields" {
   assert_false(content.contains("project_dir"))
   assert_false(content.contains("listen_uds"))
   assert_false(content.contains("terminal_session"))
-  assert_true(content.contains("worker_no_handoff_prod_sec = 120"))
+  assert_true(content.contains("worker_no_handoff_idle_sec = 120"))
   assert_true(content.contains("[pr_policy]"))
 }
 

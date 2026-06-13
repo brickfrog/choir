@@ -59,10 +59,10 @@ pub fn agent_pid_file_path(project_dir : String, agent_id : String) -> String {
 
 ///|
 pub fn agent_pane_id_file_path(
-  _project_dir : String,
-  _agent_id : String,
+  project_dir : String,
+  agent_id : String,
 ) -> String {
-  ""
+  project_dir + "/.choir/pane-ids/" + @types.sanitize_agent_id(agent_id)
 }
 
 ///|

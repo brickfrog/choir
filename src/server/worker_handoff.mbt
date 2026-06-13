@@ -1,7 +1,4 @@
 ///|
-pub let worker_no_handoff_prod_text : String = "You appear finished but have not called `notify_parent` — your printed output is not the handoff. Call `notify_parent --status success|failure '<your full report>'` now, then `shutdown`."
-
-///|
 pub let leaf_pre_tdd_stall_prod_text : String = "You are idle before completing the TDD/file_pr handoff. If implementation is complete, drive the gate now: call `tdd_intent`, `tdd_red_check`, and `tdd_green_check` until the phase is `done`, then call `file_pr`. If you are blocked, call `notify_parent --status failure '<blocker>'`. Do not park silently."
 
 ///|
@@ -37,16 +34,15 @@ pub fn worker_no_handoff_decision(
   prod_sec : Int64,
   escalate_sec : Int64,
 ) -> WorkerNoHandoffDecision {
-  if role != @types.Role::Worker || handoff_delivered || prod_sec <= 0L {
+  if role != @types.Role::Worker ||
+    handoff_delivered ||
+    stalled_emitted ||
+    prod_sec <= 0L {
     return DoNothing
   }
-  if !prodded {
-    if idle_sec >= prod_sec {
-      Prod
-    } else {
-      DoNothing
-    }
-  } else if escalate_sec > 0L && !stalled_emitted && idle_sec >= escalate_sec {
+  ignore(prodded)
+  ignore(escalate_sec)
+  if idle_sec >= prod_sec {
     EmitStalled
   } else {
     DoNothing
@@ -128,11 +124,9 @@ pub fn leaf_no_handoff_decision(
     idle_sec < prod_sec {
     return DoNothing
   }
-  if !prodded {
-    Prod
-  } else if escalate_sec > 0L &&
-    !stalled_emitted &&
-    idle_sec >= prod_sec + escalate_sec {
+  ignore(prodded)
+  ignore(escalate_sec)
+  if !stalled_emitted {
     EmitStalled
   } else {
     DoNothing
@@ -195,13 +189,6 @@ pub fn leaf_pre_tdd_stalled_parent_message(
   leaf_tdd_phase_label(tdd_phase) +
   ". Leaf must drive `tdd_intent` -> `tdd_red_check` -> `tdd_green_check` -> `file_pr`, or report a blocker with `notify_parent`. Pane tail:\n" +
   worker_no_handoff_tail_or_placeholder(pane_tail)
-}
-
-///|
-pub fn leaf_stalled_no_handoff_prod_message(slug : String) -> String {
-  "[LEAF POST-FIX-PUSH HANDOFF] " +
-  slug +
-  ": You pushed fixes and the merge gate is ready. Call `notify_parent --status success` once with a short summary, then stand down. Do not idle waiting for more events."
 }
 
 ///|

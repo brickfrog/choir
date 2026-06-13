@@ -180,17 +180,10 @@ pub fn config_schema_entries() -> Array[ConfigSchemaEntry] {
     ),
     schema_entry(
       ConfigToml,
-      "worker_no_handoff_prod_sec",
+      "worker_no_handoff_idle_sec",
       "Int64",
       "120",
-      "Worker-only no-handoff prod threshold in seconds; 0 disables prod/stall.",
-    ),
-    schema_entry(
-      ConfigToml,
-      "worker_no_handoff_escalate_sec",
-      "Int64",
-      "120",
-      "Worker-only no-handoff stalled-event grace after prod in seconds; 0 disables stalled event.",
+      "Worker/leaf no-handoff idle threshold in seconds; 0 disables stalled event.",
     ),
     schema_entry(
       ConfigToml,

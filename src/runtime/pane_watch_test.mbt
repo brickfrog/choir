@@ -14,11 +14,8 @@ fn pane_watch_dump_host(
 ) -> PaneWatchHost {
   let mut dump_count = 0
   {
-    spawn_zellij_pane_viewport_subscribe: fn(_, _, _) { 101 },
-    kill_pid_best_effort: fn(_) { () },
-    delete_file_sync: fn(_) { () },
-    read_file: fn(_) { "" },
-    dump_pane_screen: fn(session, pane_id) {
+    dump_pane_screen: async fn(session, pane_id) {
+      @async.sleep(0)
       dump_args.push(session)
       dump_args.push(pane_id)
       if screens.length() == 0 {
@@ -43,7 +40,7 @@ test "PaneWatcher::new" {
 }
 
 ///|
-test "PaneWatcher::observe_idle dumps the resolved pane id through host spy" {
+async test "PaneWatcher::observe_idle dumps the resolved pane id through host spy" {
   let dump_args : Array[String] = []
   let pw = PaneWatcher::with_host(
     pane_watch_dump_host(["worker ready"], dump_args),
@@ -56,7 +53,7 @@ test "PaneWatcher::observe_idle dumps the resolved pane id through host spy" {
 }
 
 ///|
-test "PaneWatcher::observe_idle reports unchanged dump-screen idle and resets on change" {
+async test "PaneWatcher::observe_idle reports unchanged dump-screen idle and resets on change" {
   let dump_args : Array[String] = []
   let pw = PaneWatcher::with_host(
     pane_watch_dump_host(
@@ -84,13 +81,12 @@ test "PaneWatcher::observe_idle reports unchanged dump-screen idle and resets on
     None => fail("expected unchanged new dump-screen to report idle")
   }
   @debug.assert_eq(dump_args, [
-    "sess", "terminal_9", "sess", "terminal_9", "sess", "terminal_9", "sess",
-    "terminal_9",
+    "sess", "terminal_9", "sess", "terminal_9", "sess", "terminal_9", "sess", "terminal_9",
   ])
 }
 
 ///|
-test "PaneWatcher::watch_pane skips unresolved pane ids" {
+async test "PaneWatcher::watch_pane skips unresolved pane ids" {
   let dump_args : Array[String] = []
   let pw = PaneWatcher::with_host(
     pane_watch_dump_host(["should not be read"], dump_args),

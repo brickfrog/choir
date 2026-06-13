@@ -20,6 +20,30 @@ pub(all) enum SpawnLaunchDiagnostic {
 } derive(Debug, Eq)
 
 ///|
+async fn noop_record_spawn_pane_id(
+  _agent_id : String,
+  _pane_id : String,
+) -> Unit {
+  @async.sleep(0)
+}
+
+///|
+pub async fn record_spawn_pane_id_sidecar(
+  project_dir : String,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  agent_id : String,
+  pane_id : String,
+) -> Unit {
+  ignore(
+    runner([
+      @workspace.write_agent_pane_id_command(project_dir, agent_id, pane_id),
+    ]) catch {
+      _ => []
+    },
+  )
+}
+
+///|
 fn spawn_diag_command_arg_value(args : Array[String], flag : String) -> String? {
   for i = 0; i + 1 < args.length(); i = i + 1 {
     if args[i] == flag {
@@ -265,6 +289,8 @@ pub async fn run_commands_with_spawn_launch_capture(
   runner : async (Array[@workspace.Command]) -> Array[Int],
   capture : async (@workspace.Command) -> (Int, String),
   record : (SpawnLaunchDiagnostic) -> Unit,
+  capture_pane_id? : Bool = false,
+  record_spawn_pane_id? : async (String, String) -> Unit = noop_record_spawn_pane_id,
 ) -> (Array[Int], Map[Int, String]) {
   if bindings.length() == 0 {
     return (runner(cmds), {})
@@ -292,11 +318,46 @@ pub async fn run_commands_with_spawn_launch_capture(
             return (statuses, captured_outputs)
           }
         }
+        let before_list_panes = match
+          (
+            capture_pane_id,
+            spawn_diag_command_arg_value(cmds[i].args, "--session"),
+          ) {
+          (true, Some(session)) => {
+            let (before_status, before_output) = capture(
+              @workspace.zellij_list_panes_command(session),
+            )
+            if before_status == 0 {
+              Some((session, before_output))
+            } else {
+              None
+            }
+          }
+          _ => None
+        }
         let (status, output) = capture(cmds[i])
         statuses.push(status)
         let redacted_output = spawn_launch_sanitized_stderr_tail(output)
         captured_outputs.set(i, redacted_output)
         if status == 0 {
+          match before_list_panes {
+            Some((session, before_output)) => {
+              let (after_status, after_output) = capture(
+                @workspace.zellij_list_panes_command(session),
+              )
+              if after_status == 0 {
+                match
+                  @workspace.pane_id_from_list_panes_diff(
+                    before_output, after_output,
+                  ) {
+                  Some(pane_id) =>
+                    record_spawn_pane_id(binding.agent_id, pane_id)
+                  None => ()
+                }
+              }
+            }
+            None => ()
+          }
           success_counts.set(
             binding.agent_id,
             success_counts.get(binding.agent_id).unwrap_or(0) + 1,
