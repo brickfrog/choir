@@ -377,7 +377,6 @@ test "should_fetch_unresolved_threads_for_pending_event widens for automerge" {
   let manual_fetch_events = [
     @poller.PollEvent::ReviewTimeout(7),
     @poller.PollEvent::ReviewReceived(7, ""),
-    @poller.PollEvent::ReviewCommented(7, "inline"),
     @poller.PollEvent::PRReady(7),
     @poller.PollEvent::CopilotIssueCommentSeen(7),
     @poller.PollEvent::MergeReady(7),
@@ -400,6 +399,12 @@ test "should_fetch_unresolved_threads_for_pending_event widens for automerge" {
   assert_true(
     should_fetch_unresolved_threads_for_pending_event(
       @poller.PollEvent::FixesPushed(7),
+      false,
+    ),
+  )
+  assert_false(
+    should_fetch_unresolved_threads_for_pending_event(
+      @poller.PollEvent::ReviewCommented(7, "inline"),
       false,
     ),
   )

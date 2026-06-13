@@ -160,7 +160,6 @@ fn automerge_candidate_event_for_review_mode(
 fn manual_thread_snapshot_event(event : @poller.PollEvent) -> Bool {
   match event {
     @poller.PollEvent::ReviewReceived(_, _)
-    | @poller.PollEvent::ReviewCommented(_, _)
     | @poller.PollEvent::ReviewTimeout(_)
     | @poller.PollEvent::PRReady(_)
     | @poller.PollEvent::CopilotIssueCommentSeen(_)
