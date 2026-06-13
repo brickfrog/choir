@@ -25,12 +25,12 @@ pub fn read_agent_pgid(
 
 ///|
 /// Owned-handle liveness: true when the recorded pgid exists and
-/// `kill(pgid, 0)` succeeds for it.
+/// `kill(-pgid, 0)` proves the process group still has a live member.
 pub fn agent_recorded_process_alive(
   project_dir : String,
   agent_id : String,
   read_file? : (String) -> String = @sys.read_file,
-  alive? : (Int) -> Bool = @sys.pid_is_alive,
+  alive? : (Int) -> Bool = @sys.pgid_is_alive,
 ) -> Bool {
   match read_agent_pgid(project_dir, agent_id, read_file~) {
     Some(pgid) => alive(pgid)

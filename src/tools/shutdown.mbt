@@ -142,14 +142,9 @@ pub async fn interpret_kill_agent(
       @sys.read_file(@workspace.agent_pid_file_path(project_dir, agent_id)),
     )
   },
-  kill_pgid? : (Int) -> Unit = @sys.kill_pgid_sequence_best_effort,
-  remove_pid_file? : (String) -> Unit = fn(agent_id) {
-    ignore(
-      @sys.delete_file_sync(
-        @workspace.agent_pid_file_path(project_dir, agent_id),
-      ),
-    )
-  },
+  // Dispatch supplies production host effects; direct interpreter tests stay pure.
+  kill_pgid? : (Int) -> Unit = fn(_) { () },
+  remove_pid_file? : (String) -> Unit = fn(_) { () },
   read_lifecycle? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
 ) -> @types.Response {
   // File existence is the source of truth for "is this id a pending wave"

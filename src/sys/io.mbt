@@ -66,6 +66,9 @@ extern "C" fn c_wait_pid_reap_for_test(pid : Int) -> Int = "choir_wait_pid_reap_
 extern "C" fn c_pid_is_alive(pid : Int) -> Int = "choir_pid_is_alive"
 
 ///|
+extern "C" fn c_pgid_is_alive(pgid : Int) -> Int = "choir_pgid_is_alive"
+
+///|
 extern "C" fn c_set_parent_death_signal_term() -> Int = "choir_set_parent_death_signal_term"
 
 ///|
@@ -332,10 +335,10 @@ pub fn pid_is_alive(pid : Int) -> Bool {
 }
 
 ///|
-/// Stubbed by the red test: this currently repeats the leader-pid probe so the
-/// leader-exited process-group regression fails until the native helper lands.
+/// True when `kill(-pgid, 0)` succeeds for the process group. Treats EPERM as
+/// alive in the native helper and rejects groups <= 1.
 pub fn pgid_is_alive(pgid : Int) -> Bool {
-  pid_is_alive(pgid)
+  c_pgid_is_alive(pgid) != 0
 }
 
 ///|

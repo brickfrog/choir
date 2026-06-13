@@ -666,6 +666,21 @@ int choir_pid_is_alive(int pid) {
     return kill((pid_t)pid, 0) == 0 ? 1 : 0;
 }
 
+/**
+ * Returns 1 if `kill(-pgid, 0)` proves at least one process is still in the
+ * group. EPERM still proves liveness: the group exists but is not signalable by
+ * this process.
+ */
+int choir_pgid_is_alive(int pgid) {
+    if (pgid <= 1) {
+        return 0;
+    }
+    if (kill(-(pid_t)pgid, 0) == 0) {
+        return 1;
+    }
+    return errno == EPERM ? 1 : 0;
+}
+
 int choir_set_parent_death_signal_term(void) {
 #ifdef __linux__
     int rc = prctl(PR_SET_PDEATHSIG, SIGTERM, 0, 0, 0);
