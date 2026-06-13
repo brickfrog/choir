@@ -66,6 +66,9 @@ extern "C" fn c_wait_pid_reap_for_test(pid : Int) -> Int = "choir_wait_pid_reap_
 extern "C" fn c_pid_is_alive(pid : Int) -> Int = "choir_pid_is_alive"
 
 ///|
+extern "C" fn c_pgid_is_alive(pgid : Int) -> Int = "choir_pgid_is_alive"
+
+///|
 extern "C" fn c_set_parent_death_signal_term() -> Int = "choir_set_parent_death_signal_term"
 
 ///|
@@ -329,6 +332,13 @@ pub fn wait_pid_reap_for_test(pid : Int) -> Int {
 /// True when `kill(pid, 0)` succeeds (process exists for signaling).
 pub fn pid_is_alive(pid : Int) -> Bool {
   c_pid_is_alive(pid) != 0
+}
+
+///|
+/// True when `kill(-pgid, 0)` succeeds for the process group. Treats EPERM as
+/// alive in the native helper and rejects groups <= 1.
+pub fn pgid_is_alive(pgid : Int) -> Bool {
+  c_pgid_is_alive(pgid) != 0
 }
 
 ///|
@@ -640,6 +650,14 @@ extern "C" fn c_spawn_sigterm_unblocked_pgroup_for_test(
 ) -> Int = "choir_spawn_sigterm_unblocked_pgroup_for_test"
 
 ///|
+#borrow(pgid_path, child_path, sentinel_path)
+extern "C" fn c_spawn_leader_exited_pgroup_for_test(
+  pgid_path : Bytes,
+  child_path : Bytes,
+  sentinel_path : Bytes,
+) -> Int = "choir_spawn_leader_exited_pgroup_for_test"
+
+///|
 extern "C" fn c_ignore_sigpipe() -> Int = "choir_ignore_sigpipe"
 
 ///|
@@ -779,6 +797,19 @@ pub fn spawn_sigterm_unblocked_pgroup_for_test(
   c_spawn_sigterm_unblocked_pgroup_for_test(
     string_to_null_terminated_bytes(pid_path),
     string_to_null_terminated_bytes(sidecar_path),
+    string_to_null_terminated_bytes(sentinel_path),
+  )
+}
+
+///|
+pub fn spawn_leader_exited_pgroup_for_test(
+  pgid_path : String,
+  child_path : String,
+  sentinel_path : String,
+) -> Int {
+  c_spawn_leader_exited_pgroup_for_test(
+    string_to_null_terminated_bytes(pgid_path),
+    string_to_null_terminated_bytes(child_path),
     string_to_null_terminated_bytes(sentinel_path),
   )
 }

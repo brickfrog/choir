@@ -313,6 +313,42 @@ int choir_spawn_sigterm_unblocked_pgroup_for_test(
     return (int)pid;
 }
 
+int choir_spawn_leader_exited_pgroup_for_test(
+    const char *pgid_path,
+    const char *child_path,
+    const char *sentinel_path) {
+    pid_t leader = fork();
+    if (leader < 0) {
+        return -1;
+    }
+    if (leader == 0) {
+        if (setsid() < 0) {
+            _exit(127);
+        }
+        (void)choir_unblock_signal_for_test(SIGTERM);
+        pid_t self = getpid();
+        if (choir_write_pid_file_for_test(pgid_path, self) != 0) {
+            _exit(127);
+        }
+        pid_t child = fork();
+        if (child < 0) {
+            _exit(127);
+        }
+        if (child == 0) {
+            (void)choir_unblock_signal_for_test(SIGTERM);
+            pid_t child_self = getpid();
+            if (choir_write_pid_file_for_test(child_path, child_self) != 0) {
+                _exit(127);
+            }
+            sleep(30);
+            choir_touch_file_for_test(sentinel_path);
+            _exit(0);
+        }
+        _exit(0);
+    }
+    return (int)leader;
+}
+
 int choir_ignore_sigpipe(void) {
     return signal(SIGPIPE, SIG_IGN) == SIG_ERR ? -1 : 0;
 }
@@ -628,6 +664,21 @@ int choir_pid_is_alive(int pid) {
         return 0;
     }
     return kill((pid_t)pid, 0) == 0 ? 1 : 0;
+}
+
+/**
+ * Returns 1 if `kill(-pgid, 0)` proves at least one process is still in the
+ * group. EPERM still proves liveness: the group exists but is not signalable by
+ * this process.
+ */
+int choir_pgid_is_alive(int pgid) {
+    if (pgid <= 1) {
+        return 0;
+    }
+    if (kill(-(pid_t)pgid, 0) == 0) {
+        return 1;
+    }
+    return errno == EPERM ? 1 : 0;
 }
 
 int choir_set_parent_death_signal_term(void) {
