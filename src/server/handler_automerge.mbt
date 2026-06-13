@@ -157,6 +157,18 @@ fn automerge_candidate_event_for_review_mode(
 }
 
 ///|
+fn manual_thread_snapshot_event(event : @poller.PollEvent) -> Bool {
+  match event {
+    @poller.PollEvent::ReviewReceived(_, _)
+    | @poller.PollEvent::ReviewTimeout(_)
+    | @poller.PollEvent::PRReady(_)
+    | @poller.PollEvent::CopilotIssueCommentSeen(_)
+    | @poller.PollEvent::MergeReady(_) => true
+    _ => false
+  }
+}
+
+///|
 pub fn should_fetch_unresolved_threads_for_pending_event(
   event : @poller.PollEvent,
   automerge_enabled : Bool,
@@ -168,8 +180,11 @@ pub fn should_fetch_unresolved_threads_for_pending_event(
     | @poller.PollEvent::ReviewThreadsResolved(_)
     | @poller.PollEvent::FixesPushed(_) => true
     _ =>
-      automerge_enabled &&
-      automerge_candidate_event_for_review_mode(event, review_mode)
+      manual_thread_snapshot_event(event) ||
+      (
+        automerge_enabled &&
+        automerge_candidate_event_for_review_mode(event, review_mode)
+      )
   }
 }
 

@@ -374,12 +374,16 @@ test "merge_execution_mode_for_request distinguishes manual and automerge" {
 
 ///|
 test "should_fetch_unresolved_threads_for_pending_event widens for automerge" {
-  assert_false(
-    should_fetch_unresolved_threads_for_pending_event(
-      @poller.PollEvent::MergeReady(7),
-      false,
-    ),
-  )
+  let manual_fetch_events = [
+    @poller.PollEvent::ReviewTimeout(7),
+    @poller.PollEvent::ReviewReceived(7, ""),
+    @poller.PollEvent::PRReady(7),
+    @poller.PollEvent::CopilotIssueCommentSeen(7),
+    @poller.PollEvent::MergeReady(7),
+  ]
+  for event in manual_fetch_events {
+    assert_true(should_fetch_unresolved_threads_for_pending_event(event, false))
+  }
   assert_true(
     should_fetch_unresolved_threads_for_pending_event(
       @poller.PollEvent::MergeReady(7),
@@ -398,6 +402,120 @@ test "should_fetch_unresolved_threads_for_pending_event widens for automerge" {
       false,
     ),
   )
+  assert_false(
+    should_fetch_unresolved_threads_for_pending_event(
+      @poller.PollEvent::ReviewCommented(7, "inline"),
+      false,
+    ),
+  )
+  assert_false(
+    should_fetch_unresolved_threads_for_pending_event(
+      @poller.PollEvent::PRMerged(parent_poll_test_ready_tracked(7)),
+      false,
+    ),
+  )
+}
+
+///|
+async test "deliver_pending_poll_events fetches threads for TL recheck wake without automerge" {
+  let pr_number = 1703
+  let label = "manual-thread-fetch"
+  let (state, _, project_dir) = blocked_gh_automerge_fixture(
+    label,
+    pr_number,
+    review_mode=@types.ReviewMode::Iterative,
+    automerge=false,
+  )
+  let parent_target = @workspace.local_target_for(
+    "test-session",
+    "TL",
+    @types.IsolationMode::Worktree,
+  ).to_string()
+  let parent_messages : Array[String] = []
+  let mut thread_fetches = 0
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "choir" &&
+        cmd.args.length() >= 4 &&
+        cmd.args[0] == "zellij-action" &&
+        cmd.args[1] == "send" &&
+        cmd.args[2] == parent_target {
+        parent_messages.push(cmd.args[3])
+      }
+      statuses.push(0)
+    }
+    statuses
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main")
+    }
+    if cmd.args.contains("repo") && cmd.args.contains("view") {
+      return (0, "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}")
+    }
+    if cmd.args.contains("graphql") {
+      thread_fetches = thread_fetches + 1
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[{\"id\":\"PRRT_one\",\"isResolved\":false,\"isOutdated\":false,\"comments\":{\"nodes\":[{\"author\":{\"login\":\"copilot-pull-request-reviewer[bot]\"}}]}}]}}}}}",
+      )
+    }
+    (0, "")
+  }
+  match state.poller.get(pr_number) {
+    Some(tracked) =>
+      state.poller.restore({
+        ..tracked,
+        copilot_issue_comment_seen: false,
+        unresolved_thread_ids: [],
+        unresolved_thread_ids_fetched: false,
+      })
+    None => fail("expected tracked PR")
+  }
+
+  state.process_poller_tick_with_test(
+    1000L,
+    900L,
+    async fn(_pr_number, _skip_issue_comment_fetch) {
+      @async.sleep(0)
+      (
+        true,
+        @poller.ReviewState::Approved,
+        "sha-" + label,
+        @poller.CiRollupStatus::Success,
+        "looks good",
+        true,
+        true,
+        @poller.Mergeable::Unknown,
+        @poller.MergeStateStatus::Unknown,
+        None,
+      )
+    },
+    None,
+    "",
+    runner~,
+    capture~,
+    automerge_capture=capture,
+  )
+
+  assert_eq(thread_fetches, 1)
+  let parent_text = parent_messages.join("\n")
+  assert_true(parent_text.contains("[COPILOT ISSUE COMMENT]"))
+  assert_true(
+    parent_text.contains("Unresolved inline review threads (GraphQL): 1"),
+  )
+  assert_false(parent_text.contains("not fetched"))
+  match state.poller.get(pr_number) {
+    Some(tracked) => {
+      assert_true(tracked.unresolved_thread_ids_fetched)
+      assert_eq(tracked.unresolved_thread_ids.length(), 1)
+    }
+    None => fail("expected tracked PR")
+  }
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
