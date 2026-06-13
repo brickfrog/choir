@@ -9,5 +9,6 @@ options(
   targets: {
     "io.mbt": [ "native" ],
     "io_stub.mbt": [ "js", "wasm", "wasm-gc" ],
+    "pgroup_kill_test.mbt": [ "native" ],
   },
 )

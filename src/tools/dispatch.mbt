@@ -1549,6 +1549,15 @@ pub async fn dispatch(
         runner,
         project_dir~,
         capture=bd_capture,
+        read_agent_pgid=fn(agent_id) {
+          @exec.read_agent_pgid(project_dir, agent_id, read_file~)
+        },
+        kill_pgid=fn(pgid) { @sys.kill_pgid_sequence_best_effort(pgid) },
+        remove_pid_file=fn(agent_id) {
+          ignore(
+            delete_file(@workspace.agent_pid_file_path(project_dir, agent_id)),
+          )
+        },
       )
     ToolRequest::Suspend(suspend_args) =>
       interpret_suspend(suspend_args, registry, project_dir, hook_capture~)

@@ -133,16 +133,6 @@ fn default_kill_pgid_best_effort(pgid : Int) -> Unit {
 }
 
 ///|
-fn default_list_workspace_pids(workspace : String) -> Array[Int] {
-  @sys.list_pids_with_cwd_prefix(workspace)
-}
-
-///|
-fn default_kill_pid_best_effort(pid : Int) -> Unit {
-  @sys.kill_pid_best_effort(pid)
-}
-
-///|
 /// Default predicate for `safe_remove_git_worktree`: a path is a git
 /// worktree iff it contains a `.git` entry (file or directory). Indirection
 /// keeps `@exec.*` out of the optional-default position; the lint's exec
@@ -398,8 +388,6 @@ pub async fn ServerState::interpret_teardown_effects(
   sleep_fn? : async (Int) -> Unit = @async.sleep,
   is_git_worktree? : (String) -> Bool = default_path_is_git_worktree,
   kill_pgid? : (Int) -> Unit = default_kill_pgid_best_effort,
-  list_workspace_pids? : (String) -> Array[Int] = default_list_workspace_pids,
-  kill_pid? : (Int) -> Unit = default_kill_pid_best_effort,
 ) -> Unit {
   for effect in effects {
     match effect {
@@ -470,16 +458,6 @@ pub async fn ServerState::interpret_teardown_effects(
         )
       RemoveWorktree(path) =>
         if @types.is_choir_managed_worktree_path(self.config.project_dir, path) {
-          // Belt-and-suspenders reap, mirroring kill_agent: the pid-sidecar
-          // pgroup reap misses never-registered / partial-spawn leaves and
-          // double-forked process trees (bash -> node -> codex + helpers), so
-          // on every finalize that tears down a worktree, SIGKILL any live
-          // process whose cwd resolves under it before unlinking the dir.
-          // Gated on the same choir-managed-path predicate as the removal so
-          // an empty/"/" workspace can never match (and reap) the whole host.
-          for pid in list_workspace_pids(path) {
-            kill_pid(pid)
-          }
           safe_remove_git_worktree(path, runner, is_git_worktree)
         } else {
           @moontrace.warn("RemoveWorktree refused: unsafe path", fields=[
@@ -2228,7 +2206,7 @@ async fn ServerState::pending_disconnect_target_still_alive(
   }
   (self.recovery_provider.agent_process_alive)(
     self.config.project_dir,
-    agent.workspace,
+    agent_id,
   )
 }
 

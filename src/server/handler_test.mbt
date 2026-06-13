@@ -6953,8 +6953,8 @@ async test "pending transport disconnect with live process does not fail idle MC
   let parent_id = "main.tl"
   let agent_id = "main.process-live-leaf"
   let workspace = project_dir + "/.choir/worktrees/process-live-leaf"
-  let provider = disconnect_confirmation_provider([], [], live_workspaces=[
-    workspace,
+  let provider = disconnect_confirmation_provider([], [], live_agent_ids=[
+    agent_id,
   ])
   let state = ServerState::new(
     {
@@ -10333,7 +10333,7 @@ async test "test_disconnect_completing_agent_no_close" {
 fn disconnect_confirmation_provider(
   live_tabs : Array[String],
   live_panes : Array[String],
-  live_workspaces? : Array[String] = [],
+  live_agent_ids? : Array[String] = [],
 ) -> @runtime.RecoveryProvider {
   {
     ..make_hermetic_recovery_provider(),
@@ -10341,9 +10341,9 @@ fn disconnect_confirmation_provider(
       @async.sleep(0)
       { tabs: live_tabs, panes: live_panes }
     },
-    agent_process_alive: async fn(_dir, workspace) {
+    agent_process_alive: async fn(_dir, agent_id) {
       @async.sleep(0)
-      live_workspaces.contains(workspace)
+      live_agent_ids.contains(agent_id)
     },
     find_prs_by_head: async fn(_, _) {
       @async.sleep(0)

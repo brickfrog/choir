@@ -58,6 +58,23 @@ pub fn agent_pid_file_path(project_dir : String, agent_id : String) -> String {
 }
 
 ///|
+/// Pure parse of an agent pidfile body (see [`agent_pid_file_path`]): the
+/// recorded setsid process-group id. Returns `None` for missing/empty,
+/// non-numeric, or unsafe (<= 1) values so callers never signal pgid 0/1 or
+/// a negative group.
+pub fn parse_agent_pgid(content : String) -> Int? {
+  let raw = content.trim().to_owned()
+  if raw == "" {
+    return None
+  }
+  let parsed = Some(@string.parse_int(raw)) catch { _ => None }
+  match parsed {
+    Some(pgid) => if pgid > 1 { Some(pgid) } else { None }
+    None => None
+  }
+}
+
+///|
 /// Wrap a command so its stderr is REDIRECTED (truncate-on-open `2>`, not
 /// append `2>>`) to `stderr_path`. Truncate-on-open bounds the on-disk
 /// stderr to a single run's output, so the disconnect-warning tail reader

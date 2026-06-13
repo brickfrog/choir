@@ -124,12 +124,13 @@ test "kill_agent_ok_response matches killed envelope" {
 }
 
 ///|
-test "kill_agent_adapter_host_steps is pane close, worktree remove, process-kill fallback" {
+test "kill_agent_adapter_host_steps is pane close, worktree remove, pgroup kill, pidfile remove" {
   let steps = kill_agent_adapter_host_steps()
-  assert_eq(steps.length(), 3)
+  assert_eq(steps.length(), 4)
   assert_eq(steps[0], KillAgentAdapterHostStep::PaneClose)
   assert_eq(steps[1], KillAgentAdapterHostStep::WorktreeRemove)
-  assert_eq(steps[2], KillAgentAdapterHostStep::ProcessKillFallback)
+  assert_eq(steps[2], KillAgentAdapterHostStep::PgroupKill)
+  assert_eq(steps[3], KillAgentAdapterHostStep::PidFileRemove)
 }
 
 ///|
@@ -163,7 +164,11 @@ async test "interpret_kill_agent closes pane, removes worktree, marks failed, re
   let agent = kill_agent_test_agent(Some(t), "/proj/.choir/worktrees/slug-0")
   ignore(reg.upsert(agent))
   let args : KillAgentArgs = { agent_id: "main.leaf", reason: "cleanup" }
-  let got = interpret_kill_agent(args, Some(reg), mock_runner_all_ok)
+  let got = interpret_kill_agent(args, Some(reg), mock_runner_all_ok, read_agent_pgid=fn(
+    _,
+  ) {
+    None
+  })
   match got {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
@@ -200,8 +205,9 @@ async test "interpret_kill_agent refuses supervisor roles without side effects" 
     )
     ignore(reg.upsert(agent))
     let ran : Array[@workspace.Command] = []
-    let scanned : Array[String] = []
+    let pgid_reads : Array[String] = []
     let killed : Array[Int] = []
+    let removed : Array[String] = []
     let spy_runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
       @async.sleep(0)
       for cmd in cmds {
@@ -209,18 +215,17 @@ async test "interpret_kill_agent refuses supervisor roles without side effects" 
       }
       [0]
     }
-    let spy_list_pids = fn(prefix : String) -> Array[Int] {
-      scanned.push(prefix)
-      [99]
-    }
-    let spy_kill_pid = fn(pid : Int) -> Unit { killed.push(pid) }
     let got = interpret_kill_agent(
       { agent_id, reason: "cleanup" },
       Some(reg),
       spy_runner,
       project_dir="/proj",
-      list_pids=spy_list_pids,
-      kill_pid=spy_kill_pid,
+      read_agent_pgid=fn(agent_id) {
+        pgid_reads.push(agent_id)
+        Some(99)
+      },
+      kill_pgid=fn(pgid) { killed.push(pgid) },
+      remove_pid_file=fn(agent_id) { removed.push(agent_id) },
     )
     match got {
       @types.Response::Err(msg) =>
@@ -228,8 +233,9 @@ async test "interpret_kill_agent refuses supervisor roles without side effects" 
       _ => fail("expected supervisor refusal")
     }
     @debug.assert_eq(ran, [])
-    @debug.assert_eq(scanned, [])
+    @debug.assert_eq(pgid_reads, [])
     @debug.assert_eq(killed, [])
+    @debug.assert_eq(removed, [])
     match reg.get(agent_id) {
       a => assert_eq(a.state, @types.AgentState::Active)
     }
@@ -298,7 +304,7 @@ async test "interpret_kill_agent permits dev and worker targets in lifecycle sta
       }),
     )
     let ran : Array[@workspace.Command] = []
-    let scanned : Array[String] = []
+    let pgid_reads : Array[String] = []
     let spy_runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
       @async.sleep(0)
       for cmd in cmds {
@@ -311,11 +317,11 @@ async test "interpret_kill_agent permits dev and worker targets in lifecycle sta
       Some(reg),
       spy_runner,
       project_dir~,
-      list_pids=fn(path) {
-        scanned.push(path)
-        []
+      read_agent_pgid=fn(id) {
+        pgid_reads.push(id)
+        None
       },
-      kill_pid=fn(_) {  },
+      kill_pgid=fn(_) {  },
     )
     match got {
       @types.Response::Ok(fields) => {
@@ -346,66 +352,11 @@ async test "interpret_kill_agent permits dev and worker targets in lifecycle sta
           cmd.args == ["worktree", "remove", "--force", fallback_workspace]
         }),
       )
-      @debug.assert_eq(scanned, [fallback_workspace])
     }
+    @debug.assert_eq(pgid_reads, [agent_id])
     assert_true(ran.length() <= 1)
   }
   ignore(@sys.rm_rf(project_dir))
-}
-
-///|
-async test "interpret_kill_agent runs process-kill fallback after pane close and worktree remove" {
-  let t = match @types.LocalTarget::parse("zellij-tab:choir:leaf") {
-    Some(v) => v
-    None => fail("expected parse")
-  }
-  let reg = @registry.AgentRegistry::new()
-  let workspace = "/proj/.choir/worktrees/slug-0"
-  let agent = kill_agent_test_agent(Some(t), workspace)
-  ignore(reg.upsert(agent))
-  let events : Array[String] = []
-  let spy_runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
-    @async.sleep(0)
-    let statuses = []
-    for cmd in cmds {
-      let program = cmd.program
-      let first_arg = if cmd.args.length() > 0 { cmd.args[0] } else { "" }
-      events.push("run:" + program + " " + first_arg)
-      statuses.push(0)
-    }
-    statuses
-  }
-  let spy_list_pids = fn(prefix : String) -> Array[Int] {
-    events.push("list_pids:" + prefix)
-    [4242, 4243]
-  }
-  let spy_kill_pid = fn(pid : Int) -> Unit {
-    events.push("kill_pid:" + pid.to_string())
-  }
-  let args : KillAgentArgs = { agent_id: "main.leaf", reason: "cleanup" }
-  let got = interpret_kill_agent(
-    args,
-    Some(reg),
-    spy_runner,
-    list_pids=spy_list_pids,
-    kill_pid=spy_kill_pid,
-  )
-  match got {
-    @types.Response::Ok(_) => ()
-    _ => fail("expected ok")
-  }
-  // Expected sequence: close-target pane → git worktree remove → /proc scan → kill each victim.
-  assert_eq(events.length(), 5)
-  // Step 1: pane close (program is the choir exe, first arg is "zellij-action").
-  assert_true(events[0].has_prefix("run:"))
-  assert_true(events[0].contains("zellij-action"))
-  // Step 2: git worktree remove.
-  assert_eq(events[1], "run:git worktree")
-  // Step 3: /proc scan with the agent's workspace.
-  assert_eq(events[2], "list_pids:" + workspace)
-  // Step 4/5: SIGTERM-SIGKILL sequence per PID, in scan order.
-  assert_eq(events[3], "kill_pid:4242")
-  assert_eq(events[4], "kill_pid:4243")
 }
 
 ///|
@@ -434,8 +385,7 @@ async test "interpret_kill_agent removes isolated review worker worktree" {
     Some(reg),
     runner,
     project_dir="/proj",
-    list_pids=fn(_) { [] },
-    kill_pid=fn(_) { () },
+    read_agent_pgid=fn(_) { None },
   )
   match got {
     @types.Response::Ok(_) => ()
@@ -452,139 +402,118 @@ async test "interpret_kill_agent removes isolated review worker worktree" {
 }
 
 ///|
-async test "interpret_kill_agent skips /proc scan for non-choir workspaces" {
-  // An agent that `register`ed with an arbitrary workspace (including `""`)
-  // must not trigger a system-wide /proc scan — that would match nearly
-  // every process and SIGKILL them. The fallback is gated on the same
-  // choir-worktree predicate we use for `git worktree remove`.
-  for workspace in ["", "/", "/home/user/proj", "/proj/not-a-choir-worktree"] {
-    let reg = @registry.AgentRegistry::new()
-    let agent = kill_agent_test_agent(None, workspace)
-    ignore(reg.upsert(agent))
-    let scanned : Array[String] = []
-    let killed : Array[Int] = []
-    let spy_list_pids = fn(prefix : String) -> Array[Int] {
-      scanned.push(prefix)
-      [99]
-    }
-    let spy_kill_pid = fn(pid : Int) -> Unit { killed.push(pid) }
-    let args : KillAgentArgs = { agent_id: "main.leaf", reason: "cleanup" }
-    let got = interpret_kill_agent(
-      args,
-      Some(reg),
-      mock_runner_all_ok,
-      list_pids=spy_list_pids,
-      kill_pid=spy_kill_pid,
-    )
-    match got {
-      @types.Response::Ok(_) => ()
-      _ => fail("expected ok for workspace=" + workspace)
-    }
-    @debug.assert_eq(scanned, [])
-    @debug.assert_eq(killed, [])
+async test "interpret_kill_agent kills recorded pgroup and deletes pidfile after pane close and worktree remove" {
+  let t = match @types.LocalTarget::parse("zellij-tab:choir:leaf") {
+    Some(v) => v
+    None => fail("expected parse")
   }
-}
-
-///|
-async test "interpret_kill_agent skips /proc scan for project-root workspaces" {
-  for workspace in ["", ".", "/proj", "/"] {
-    let reg = @registry.AgentRegistry::new()
-    let agent = kill_agent_test_agent(None, workspace)
-    ignore(reg.upsert(agent))
-    let scanned : Array[String] = []
-    let killed : Array[Int] = []
-    let spy_list_pids = fn(prefix : String) -> Array[Int] {
-      scanned.push(prefix)
-      [99]
-    }
-    let spy_kill_pid = fn(pid : Int) -> Unit { killed.push(pid) }
-    let args : KillAgentArgs = { agent_id: "main.leaf", reason: "cleanup" }
-    let got = interpret_kill_agent(
-      args,
-      Some(reg),
-      mock_runner_all_ok,
-      project_dir="/proj",
-      list_pids=spy_list_pids,
-      kill_pid=spy_kill_pid,
-    )
-    match got {
-      @types.Response::Ok(_) => ()
-      _ => fail("expected ok for workspace=" + workspace)
-    }
-    @debug.assert_eq(scanned, [])
-    @debug.assert_eq(killed, [])
-  }
-}
-
-///|
-async test "interpret_kill_agent kills named mcp-stdio process for inline worker" {
-  let reg = @registry.AgentRegistry::new()
-  let agent_id = "main.worker-abcdef123456-1779000000"
-  let agent = kill_agent_test_agent(
-    None,
-    "/proj",
-    role=@types.Role::Worker,
-    agent_id~,
-  )
-  ignore(reg.upsert(agent))
-  let cwd_scans : Array[String] = []
-  let mcp_scans : Array[String] = []
-  let killed : Array[Int] = []
-  let got = interpret_kill_agent(
-    { agent_id, reason: "audit timeout" },
-    Some(reg),
-    mock_runner_all_ok,
-    project_dir="/proj",
-    list_pids=fn(prefix) {
-      cwd_scans.push(prefix)
-      [99]
-    },
-    list_mcp_stdio_pids=fn(id) {
-      mcp_scans.push(id)
-      [77]
-    },
-    kill_pid=fn(pid) { killed.push(pid) },
-  )
-  match got {
-    @types.Response::Ok(_) => ()
-    _ => fail("expected ok")
-  }
-  @debug.assert_eq(cwd_scans, [])
-  @debug.assert_eq(mcp_scans, [agent_id])
-  @debug.assert_eq(killed, [77])
-}
-
-///|
-async test "interpret_kill_agent runs /proc scan when workspace is a choir worktree" {
   let reg = @registry.AgentRegistry::new()
   let workspace = "/proj/.choir/worktrees/slug-0"
-  let agent = kill_agent_test_agent(None, workspace)
+  let agent = kill_agent_test_agent(Some(t), workspace)
   ignore(reg.upsert(agent))
-  let scanned : Array[String] = []
-  let killed : Array[Int] = []
-  let spy_list_pids = fn(prefix : String) -> Array[Int] {
-    scanned.push(prefix)
-    [7]
+  let events : Array[String] = []
+  let spy_runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      let program = cmd.program
+      let first_arg = if cmd.args.length() > 0 { cmd.args[0] } else { "" }
+      events.push("run:" + program + " " + first_arg)
+      statuses.push(0)
+    }
+    statuses
   }
-  let spy_kill_pid = fn(pid : Int) -> Unit { killed.push(pid) }
   let args : KillAgentArgs = { agent_id: "main.leaf", reason: "cleanup" }
   let got = interpret_kill_agent(
     args,
     Some(reg),
-    mock_runner_all_ok,
-    list_pids=spy_list_pids,
-    kill_pid=spy_kill_pid,
+    spy_runner,
+    project_dir="/proj",
+    read_agent_pgid=fn(agent_id) {
+      events.push("read_pgid:" + agent_id)
+      Some(52100)
+    },
+    kill_pgid=fn(pgid) { events.push("kill_pgid:" + pgid.to_string()) },
+    remove_pid_file=fn(agent_id) { events.push("remove_pidfile:" + agent_id) },
   )
   match got {
     @types.Response::Ok(_) => ()
     _ => fail("expected ok")
   }
-  @debug.assert_eq(scanned, [workspace])
-  @debug.assert_eq(killed, [7])
+  // Ordering: pane close → worktree remove → pgroup kill → pidfile delete.
+  assert_eq(events.length(), 5)
+  assert_true(events[0].has_prefix("run:"))
+  assert_true(events[0].contains("zellij-action"))
+  assert_eq(events[1], "run:git worktree")
+  assert_eq(events[2], "read_pgid:main.leaf")
+  assert_eq(events[3], "kill_pgid:52100")
+  assert_eq(events[4], "remove_pidfile:main.leaf")
 }
 
 ///|
-async test "interpret_kill_agent pane-close warning reflects kill outcome" {
+async test "interpret_kill_agent kills recorded pgroup for non-worktree workspaces" {
+  // Agents that registered with an arbitrary workspace (inline workers in the
+  // project root, bare `register` joins) are killable via their recorded
+  // pgid: the pidfile is keyed by agent id, not by workspace layout.
+  for workspace in ["", "/proj", "/home/user/elsewhere"] {
+    let reg = @registry.AgentRegistry::new()
+    let agent = kill_agent_test_agent(None, workspace)
+    ignore(reg.upsert(agent))
+    let killed : Array[Int] = []
+    let removed : Array[String] = []
+    let got = interpret_kill_agent(
+      { agent_id: "main.leaf", reason: "cleanup" },
+      Some(reg),
+      mock_runner_all_ok,
+      project_dir="/proj",
+      read_agent_pgid=fn(_) { Some(61001) },
+      kill_pgid=fn(pgid) { killed.push(pgid) },
+      remove_pid_file=fn(agent_id) { removed.push(agent_id) },
+    )
+    match got {
+      @types.Response::Ok(_) => ()
+      _ => fail("expected ok for workspace=" + workspace)
+    }
+    @debug.assert_eq(killed, [61001])
+    @debug.assert_eq(removed, ["main.leaf"])
+  }
+}
+
+///|
+async test "interpret_kill_agent default pidfile removal is inert without dispatch injection" {
+  let project_dir = "/tmp/choir-kill-agent-pidfile-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/pids"))
+  let pid_file = project_dir + "/.choir/pids/main.leaf"
+  assert_true(@sys.write_file_sync(pid_file, "54321"))
+  let reg = @registry.AgentRegistry::new()
+  let agent = kill_agent_test_agent(
+    None,
+    project_dir + "/.choir/worktrees/slug-0",
+  )
+  ignore(reg.upsert(agent))
+  let killed : Array[Int] = []
+  let got = interpret_kill_agent(
+    { agent_id: "main.leaf", reason: "cleanup" },
+    Some(reg),
+    mock_runner_all_ok,
+    project_dir~,
+    kill_pgid=fn(pgid) { killed.push(pgid) },
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    _ => fail("expected ok")
+  }
+  @debug.assert_eq(killed, [54321])
+  assert_true(@sys.path_entry_exists(pid_file))
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_kill_agent pane-close warning reflects pgroup handle outcome" {
   let t = match @types.LocalTarget::parse("zellij-tab:choir:leaf") {
     Some(v) => v
     None => fail("expected parse")
@@ -599,19 +528,22 @@ async test "interpret_kill_agent pane-close warning reflects kill outcome" {
     }
     statuses
   }
-  // Case A: pane close failed, no victims found → legacy warning.
+  let args : KillAgentArgs = { agent_id: "main.leaf", reason: "r" }
+  // Case A: pane close failed and no pidfile exists → nothing is signaled,
+  // nothing is removed, and the warning says the process may survive.
   let reg_a = @registry.AgentRegistry::new()
   let agent_a = kill_agent_test_agent(Some(t), "/proj/.choir/worktrees/slug-0")
   ignore(reg_a.upsert(agent_a))
-  let no_pids = fn(_p : String) -> Array[Int] { [] }
-  let noop_kill = fn(_pid : Int) -> Unit {  }
-  let args : KillAgentArgs = { agent_id: "main.leaf", reason: "r" }
+  let killed_a : Array[Int] = []
+  let removed_a : Array[String] = []
   let got_a = interpret_kill_agent(
     args,
     Some(reg_a),
     pane_close_fails,
-    list_pids=no_pids,
-    kill_pid=noop_kill,
+    project_dir="/proj",
+    read_agent_pgid=fn(_) { None },
+    kill_pgid=fn(pgid) { killed_a.push(pgid) },
+    remove_pid_file=fn(agent_id) { removed_a.push(agent_id) },
   )
   match got_a {
     @types.Response::Ok(fields) => {
@@ -621,7 +553,7 @@ async test "interpret_kill_agent pane-close warning reflects kill outcome" {
           @debug.assert_eq(
             w,
             String::to_json(
-              "pane close failed — zellij tab/pane may still be open",
+              "pane close failed — no process handle found; the agent process may survive",
             ),
           )
         None => fail("expected warning on failed pane close")
@@ -629,17 +561,20 @@ async test "interpret_kill_agent pane-close warning reflects kill outcome" {
     }
     _ => fail("expected ok")
   }
-  // Case B: pane close failed, but /proc fallback killed the process.
+  @debug.assert_eq(killed_a, [])
+  @debug.assert_eq(removed_a, [])
+  // Case B: pane close failed but the recorded pgroup was killed.
   let reg_b = @registry.AgentRegistry::new()
   let agent_b = kill_agent_test_agent(Some(t), "/proj/.choir/worktrees/slug-1")
   ignore(reg_b.upsert(agent_b))
-  let some_pids = fn(_p : String) -> Array[Int] { [1234] }
   let got_b = interpret_kill_agent(
     args,
     Some(reg_b),
     pane_close_fails,
-    list_pids=some_pids,
-    kill_pid=noop_kill,
+    project_dir="/proj",
+    read_agent_pgid=fn(_) { Some(1234) },
+    kill_pgid=fn(_) {  },
+    remove_pid_file=fn(_) {  },
   )
   match got_b {
     @types.Response::Ok(fields) => {
@@ -649,7 +584,7 @@ async test "interpret_kill_agent pane-close warning reflects kill outcome" {
           @debug.assert_eq(
             w,
             String::to_json(
-              "pane close failed — zellij tab/pane may still linger, but the agent process was killed",
+              "pane close failed — zellij tab/pane may still linger, but the agent process group was killed",
             ),
           )
         None => fail("expected warning when pane close failed")
@@ -1506,6 +1441,51 @@ async test "dispatch kill_agent mirrors Beads state through bd_capture" {
       "bd audit record --kind tool_call --tool-name kill_agent --response Choir kill_agent: cleanup --issue-id choir-shutdown",
     ),
   )
+  ignore(@sys.rm_rf(tmp))
+}
+
+///|
+async test "dispatch kill_agent removes pidfile through injected delete_file capability" {
+  let tmp = "/tmp/choir-kill-agent-delete-dispatch-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let workspace = tmp + "/worker"
+  ignore(@sys.rm_rf(tmp))
+  assert_true(@sys.create_dir_all(tmp + "/.choir/pids"))
+  let pid_file = tmp + "/.choir/pids/main.leaf"
+  assert_true(@sys.write_file_sync(pid_file, "999999937"))
+  let reg = shutdown_beads_registry_fixture(workspace, @types.Role::Worker)
+  let deleted : Array[String] = []
+  let resp = dispatch(
+    ToolRequest::KillAgent({ agent_id: "main.leaf", reason: "cleanup" }),
+    project_dir=tmp,
+    registry=Some(reg),
+    runner=mock_shutdown_runner_record_worktree,
+    capture=async fn(_cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      fail("kill_agent Beads mirror must use bd_capture, not generic capture")
+      (-1, "")
+    },
+    bd_capture=async fn(_cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      (0, "")
+    },
+    delete_file=fn(path) {
+      deleted.push(path)
+      @sys.delete_file_sync(path)
+    },
+  )
+  match resp {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      @debug.assert_eq(map.get("status"), Some(String::to_json("killed")))
+      @debug.assert_eq(map.get("agent_id"), Some(String::to_json("main.leaf")))
+    }
+    _ => fail("expected kill_agent ok")
+  }
+  @debug.assert_eq(deleted, [pid_file])
+  assert_false(@sys.path_entry_exists(pid_file))
   ignore(@sys.rm_rf(tmp))
 }
 

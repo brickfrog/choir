@@ -313,6 +313,42 @@ int choir_spawn_sigterm_unblocked_pgroup_for_test(
     return (int)pid;
 }
 
+int choir_spawn_leader_exited_pgroup_for_test(
+    const char *pgid_path,
+    const char *child_path,
+    const char *sentinel_path) {
+    pid_t leader = fork();
+    if (leader < 0) {
+        return -1;
+    }
+    if (leader == 0) {
+        if (setsid() < 0) {
+            _exit(127);
+        }
+        (void)choir_unblock_signal_for_test(SIGTERM);
+        pid_t self = getpid();
+        if (choir_write_pid_file_for_test(pgid_path, self) != 0) {
+            _exit(127);
+        }
+        pid_t child = fork();
+        if (child < 0) {
+            _exit(127);
+        }
+        if (child == 0) {
+            (void)choir_unblock_signal_for_test(SIGTERM);
+            pid_t child_self = getpid();
+            if (choir_write_pid_file_for_test(child_path, child_self) != 0) {
+                _exit(127);
+            }
+            sleep(30);
+            choir_touch_file_for_test(sentinel_path);
+            _exit(0);
+        }
+        _exit(0);
+    }
+    return (int)leader;
+}
+
 int choir_ignore_sigpipe(void) {
     return signal(SIGPIPE, SIG_IGN) == SIG_ERR ? -1 : 0;
 }
@@ -586,6 +622,41 @@ void choir_init_kill_server_pid_sequence(int pid) {
 }
 
 /**
+ * Owned-pgroup teardown: SIGTERM the process group, brief delay, then SIGKILL.
+ * Groups <= 1 are rejected as no-op: 0 is the caller's own group and 1
+ * triggers the broadcast form (and is init's pgrp in container PID
+ * namespaces), both wider than the bounded-pgroup-cleanup intent. Ignores
+ * ESRCH (best-effort).
+ */
+void choir_kill_pgid_sequence(int pgid) {
+    if (pgid <= 1) {
+        return;
+    }
+    if (kill(-(pid_t)pgid, SIGTERM) < 0 && errno != ESRCH) {
+        /* best-effort */
+    }
+    usleep(300000);
+    if (kill(-(pid_t)pgid, SIGKILL) < 0 && errno != ESRCH) {
+        /* best-effort */
+    }
+}
+
+/**
+ * Test-only: reap a direct child with waitpid(2) so a follow-up
+ * `kill(pid, 0)` probe does not see a zombie. Returns the pid on success,
+ * -1 on failure.
+ */
+int choir_wait_pid_reap_for_test(int pid) {
+    if (pid <= 0) {
+        return -1;
+    }
+    if (waitpid((pid_t)pid, NULL, 0) < 0) {
+        return -1;
+    }
+    return pid;
+}
+
+/**
  * Returns 1 if `kill(pid, 0)` succeeds (process exists and we can signal it), else 0.
  */
 int choir_pid_is_alive(int pid) {
@@ -593,6 +664,21 @@ int choir_pid_is_alive(int pid) {
         return 0;
     }
     return kill((pid_t)pid, 0) == 0 ? 1 : 0;
+}
+
+/**
+ * Returns 1 if `kill(-pgid, 0)` proves at least one process is still in the
+ * group. EPERM still proves liveness: the group exists but is not signalable by
+ * this process.
+ */
+int choir_pgid_is_alive(int pgid) {
+    if (pgid <= 1) {
+        return 0;
+    }
+    if (kill(-(pid_t)pgid, 0) == 0) {
+        return 1;
+    }
+    return errno == EPERM ? 1 : 0;
 }
 
 int choir_set_parent_death_signal_term(void) {
@@ -606,102 +692,6 @@ int choir_set_parent_death_signal_term(void) {
 #else
     return 0;
 #endif
-}
-
-/**
- * Linux-only: walk `/proc/{pid}/cwd` symlinks and write decimal PIDs for every
- * process whose cwd matches `prefix` as newline-separated text into `buf`.
- *
- * A match requires `readlink(target)` to satisfy one of:
- *   - target == prefix                  (cwd is the workspace itself)
- *   - target == prefix + " (deleted)"   (workspace removed, cwd inode gone)
- *   - target starts with prefix + "/"   (cwd is nested inside the workspace)
- *   - target starts with prefix + "/"   and has the " (deleted)" suffix
- *
- * Skips the caller's own PID so choir never kills itself. Entries whose cwd
- * readlink fails (EACCES, ESRCH race, etc.) are silently ignored. Returns the
- * bytes written, capped at `max_size`; returns -1 if `/proc` cannot be opened.
- */
-int choir_list_pids_with_cwd_prefix(const char *prefix, char *buf, int max_size) {
-    /* An empty prefix would match via the vacuous `memcmp(_, _, 0) == 0`
-     * branch and `target[0] == '/'` for almost every cwd on the system,
-     * turning the helper into an enumerate-everything primitive. Reject
-     * it at the FFI boundary (with a graceful zero-match) so MoonBit
-     * callers that pass a stale or default-constructed workspace cannot
-     * trigger a system-wide kill sweep. */
-    if (!prefix || prefix[0] == '\0') {
-        return 0;
-    }
-    if (!buf || max_size <= 0) {
-        return -1;
-    }
-    DIR *d = opendir("/proc");
-    if (!d) {
-        return -1;
-    }
-    size_t plen = strlen(prefix);
-    pid_t self_pid = getpid();
-    struct dirent *ent;
-    int total = 0;
-    char link_path[64];
-    char target[4096];
-    static const char DELETED[] = " (deleted)";
-    size_t del_len = sizeof(DELETED) - 1;
-    while ((ent = readdir(d)) != NULL) {
-        const char *name = ent->d_name;
-        if (name[0] == '\0') {
-            continue;
-        }
-        int is_num = 1;
-        for (const char *p = name; *p; p++) {
-            if (*p < '0' || *p > '9') { is_num = 0; break; }
-        }
-        if (!is_num) {
-            continue;
-        }
-        pid_t pid = (pid_t)atoi(name);
-        if (pid <= 0 || pid == self_pid) {
-            continue;
-        }
-        int n = snprintf(link_path, sizeof(link_path), "/proc/%s/cwd", name);
-        if (n < 0 || (size_t)n >= sizeof(link_path)) {
-            continue;
-        }
-        ssize_t tlen = readlink(link_path, target, sizeof(target) - 1);
-        if (tlen <= 0) {
-            continue;
-        }
-        target[tlen] = '\0';
-        size_t tlen_eff = (size_t)tlen;
-        if (tlen_eff >= del_len &&
-            memcmp(target + tlen_eff - del_len, DELETED, del_len) == 0) {
-            tlen_eff -= del_len;
-            target[tlen_eff] = '\0';
-        }
-        int match = 0;
-        if (tlen_eff == plen && memcmp(target, prefix, plen) == 0) {
-            match = 1;
-        } else if (tlen_eff > plen &&
-                   memcmp(target, prefix, plen) == 0 &&
-                   target[plen] == '/') {
-            match = 1;
-        }
-        if (!match) {
-            continue;
-        }
-        char pidbuf[16];
-        int pnlen = snprintf(pidbuf, sizeof(pidbuf), "%d\n", (int)pid);
-        if (pnlen < 0) {
-            continue;
-        }
-        if (total + pnlen > max_size) {
-            break;
-        }
-        memcpy(buf + total, pidbuf, (size_t)pnlen);
-        total += pnlen;
-    }
-    closedir(d);
-    return total;
 }
 
 int choir_spawn_serve(const char* exe, int exe_len) {

@@ -197,6 +197,15 @@ pub fn spawn_sigterm_unblocked_pgroup_for_test(
 }
 
 ///|
+pub fn spawn_leader_exited_pgroup_for_test(
+  _pgid_path : String,
+  _child_path : String,
+  _sentinel_path : String,
+) -> Int {
+  -1
+}
+
+///|
 pub fn ignore_sigpipe() -> Bool {
   false
 }
@@ -267,39 +276,28 @@ pub fn kill_server_pid_sequence_best_effort(_pid : Int) -> Unit {
 }
 
 ///|
+pub fn kill_pgid_sequence_best_effort(_pgid : Int) -> Unit {
+
+}
+
+///|
+pub fn wait_pid_reap_for_test(_pid : Int) -> Int {
+  -1
+}
+
+///|
 pub fn pid_is_alive(_pid : Int) -> Bool {
+  false
+}
+
+///|
+pub fn pgid_is_alive(_pgid : Int) -> Bool {
   false
 }
 
 ///|
 pub fn set_parent_death_signal_term() -> Bool {
   false
-}
-
-///|
-pub fn list_orphan_choir_mcp_stdio_pids(
-  list_processes? : () -> Array[ProcessTableEntry] = fn() { [] },
-) -> Array[Int] {
-  ignore(list_processes)
-  []
-}
-
-///|
-pub fn list_choir_mcp_stdio_pids_for_agent(
-  _agent_id : String,
-  list_processes? : () -> Array[ProcessTableEntry] = fn() { [] },
-) -> Array[Int] {
-  ignore(list_processes)
-  []
-}
-
-///|
-pub fn list_pids_with_cwd_prefix(
-  _prefix : String,
-  max? : Int = 64,
-) -> Array[Int] {
-  ignore(max)
-  []
 }
 
 ///|
