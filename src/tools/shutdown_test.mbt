@@ -480,7 +480,7 @@ async test "interpret_kill_agent kills recorded pgroup for non-worktree workspac
 }
 
 ///|
-async test "interpret_kill_agent default handle wiring reads and deletes the pidfile" {
+async test "interpret_kill_agent default pidfile removal is inert without dispatch injection" {
   let project_dir = "/tmp/choir-kill-agent-pidfile-" +
     @sys.get_pid().to_string() +
     "-" +
@@ -508,7 +508,7 @@ async test "interpret_kill_agent default handle wiring reads and deletes the pid
     _ => fail("expected ok")
   }
   @debug.assert_eq(killed, [54321])
-  assert_false(@sys.path_entry_exists(pid_file))
+  assert_true(@sys.path_entry_exists(pid_file))
   ignore(@sys.rm_rf(project_dir))
 }
 
@@ -1441,6 +1441,51 @@ async test "dispatch kill_agent mirrors Beads state through bd_capture" {
       "bd audit record --kind tool_call --tool-name kill_agent --response Choir kill_agent: cleanup --issue-id choir-shutdown",
     ),
   )
+  ignore(@sys.rm_rf(tmp))
+}
+
+///|
+async test "dispatch kill_agent removes pidfile through injected delete_file capability" {
+  let tmp = "/tmp/choir-kill-agent-delete-dispatch-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let workspace = tmp + "/worker"
+  ignore(@sys.rm_rf(tmp))
+  assert_true(@sys.create_dir_all(tmp + "/.choir/pids"))
+  let pid_file = tmp + "/.choir/pids/main.leaf"
+  assert_true(@sys.write_file_sync(pid_file, "999999937"))
+  let reg = shutdown_beads_registry_fixture(workspace, @types.Role::Worker)
+  let deleted : Array[String] = []
+  let resp = dispatch(
+    ToolRequest::KillAgent({ agent_id: "main.leaf", reason: "cleanup" }),
+    project_dir=tmp,
+    registry=Some(reg),
+    runner=mock_shutdown_runner_record_worktree,
+    capture=async fn(_cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      fail("kill_agent Beads mirror must use bd_capture, not generic capture")
+      (-1, "")
+    },
+    bd_capture=async fn(_cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      (0, "")
+    },
+    delete_file=fn(path) {
+      deleted.push(path)
+      @sys.delete_file_sync(path)
+    },
+  )
+  match resp {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      @debug.assert_eq(map.get("status"), Some(String::to_json("killed")))
+      @debug.assert_eq(map.get("agent_id"), Some(String::to_json("main.leaf")))
+    }
+    _ => fail("expected kill_agent ok")
+  }
+  @debug.assert_eq(deleted, [pid_file])
+  assert_false(@sys.path_entry_exists(pid_file))
   ignore(@sys.rm_rf(tmp))
 }
 

@@ -332,6 +332,13 @@ pub fn pid_is_alive(pid : Int) -> Bool {
 }
 
 ///|
+/// Stubbed by the red test: this currently repeats the leader-pid probe so the
+/// leader-exited process-group regression fails until the native helper lands.
+pub fn pgid_is_alive(pgid : Int) -> Bool {
+  pid_is_alive(pgid)
+}
+
+///|
 pub fn set_parent_death_signal_term() -> Bool {
   c_set_parent_death_signal_term() == 0
 }
@@ -640,6 +647,14 @@ extern "C" fn c_spawn_sigterm_unblocked_pgroup_for_test(
 ) -> Int = "choir_spawn_sigterm_unblocked_pgroup_for_test"
 
 ///|
+#borrow(pgid_path, child_path, sentinel_path)
+extern "C" fn c_spawn_leader_exited_pgroup_for_test(
+  pgid_path : Bytes,
+  child_path : Bytes,
+  sentinel_path : Bytes,
+) -> Int = "choir_spawn_leader_exited_pgroup_for_test"
+
+///|
 extern "C" fn c_ignore_sigpipe() -> Int = "choir_ignore_sigpipe"
 
 ///|
@@ -779,6 +794,19 @@ pub fn spawn_sigterm_unblocked_pgroup_for_test(
   c_spawn_sigterm_unblocked_pgroup_for_test(
     string_to_null_terminated_bytes(pid_path),
     string_to_null_terminated_bytes(sidecar_path),
+    string_to_null_terminated_bytes(sentinel_path),
+  )
+}
+
+///|
+pub fn spawn_leader_exited_pgroup_for_test(
+  pgid_path : String,
+  child_path : String,
+  sentinel_path : String,
+) -> Int {
+  c_spawn_leader_exited_pgroup_for_test(
+    string_to_null_terminated_bytes(pgid_path),
+    string_to_null_terminated_bytes(child_path),
     string_to_null_terminated_bytes(sentinel_path),
   )
 }
