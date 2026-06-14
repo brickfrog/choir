@@ -73,6 +73,13 @@ the workflow. Create child beads before nontrivial spawns; pass per-leaf
 own bead mutation; leaves read/update their bead but don't close it before
 convergence.
 
+**Denied ideas get a `wontfix` label, not just a close.** When the user
+rejects a proposal — or you kill one of your own bad ideas — close it *and*
+`bd update <id> --add-label wontfix`. Before proposing next work or filing a
+new bead, scan `bd list --label wontfix --all`: never re-suggest a `wontfix`
+idea or re-file a near-duplicate of one. A close alone doesn't stop the idea
+from coming back around; the label is the memory.
+
 Foot-guns: never bare `bd init` (it clobbers AGENTS.md and installs hooks) — use
 `bd init --skip-agents --skip-hooks --non-interactive --role maintainer`.
 `auto-export: git add failed` is benign when the `bd` command itself succeeded.
