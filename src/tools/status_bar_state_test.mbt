@@ -671,7 +671,7 @@ test "status_bar_state pane_needs_attention truth table" {
       0L,
       StatusBarThreadCount::Count(0),
     ),
-    PaneAttention::Needed,
+    PaneAttention::Clear,
   )
   @debug.assert_eq(
     pane_needs_attention(
@@ -683,7 +683,7 @@ test "status_bar_state pane_needs_attention truth table" {
       0L,
       StatusBarThreadCount::Count(0),
     ),
-    PaneAttention::Needed,
+    PaneAttention::Clear,
   )
   @debug.assert_eq(
     pane_needs_attention(
@@ -695,7 +695,7 @@ test "status_bar_state pane_needs_attention truth table" {
       0L,
       StatusBarThreadCount::Unknown,
     ),
-    PaneAttention::Needed,
+    PaneAttention::Clear,
   )
   @debug.assert_eq(
     pane_needs_attention(

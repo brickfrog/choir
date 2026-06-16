@@ -171,7 +171,7 @@ test "server status snapshot write uses injected lifecycle reader and lifecycle 
 }
 
 ///|
-test "server status snapshot keeps thread-independent failed attention explicit" {
+test "server status snapshot clears attention for terminal failed panes" {
   let registry = @registry.AgentRegistry::new()
   ignore(
     registry.upsert(
@@ -215,11 +215,11 @@ test "server status snapshot keeps thread-independent failed attention explicit"
     rows[0].unresolved_threads,
     @tools.StatusBarThreadCount::Unknown,
   )
-  @debug.assert_eq(rows[0].attention_needed, @tools.PaneAttention::Needed)
+  @debug.assert_eq(rows[0].attention_needed, @tools.PaneAttention::Clear)
   let text = format_server_status_snapshot(rows, 100L)
   assert_true(
     text.contains(
-      "agent_id=root.leaf role=dev agent_type=codex lifecycle=failed terminal_target=zellij-pane:s:leaf parent_agent_id=root last_activity_unix=90 last_request_age_sec=10 pr_number=55 unresolved_threads=unknown ci_rollup=unknown attention_needed=true\n",
+      "agent_id=root.leaf role=dev agent_type=codex lifecycle=failed terminal_target=zellij-pane:s:leaf parent_agent_id=root last_activity_unix=90 last_request_age_sec=10 pr_number=55 unresolved_threads=unknown ci_rollup=unknown attention_needed=false\n",
     ),
   )
 }
