@@ -760,10 +760,6 @@ pub fn pane_needs_attention(
   unresolved_threads : StatusBarThreadCount,
 ) -> PaneAttention {
   match workflow {
-    @phase.WorkflowState::Dev(@phase.DevLifecycle::Failed(..))
-    | @phase.WorkflowState::Worker(@phase.WorkerLifecycle::Failed(..))
-    | @phase.WorkflowState::Supervisor(@phase.SupervisorLifecycle::Failed(..)) =>
-      PaneAttention::Needed
     @phase.WorkflowState::Dev(@phase.DevLifecycle::ChangesRequested(..)) =>
       if fixes_pushed_at <= 0L {
         PaneAttention::Clear
