@@ -2,6 +2,15 @@
 test "goal parser detects generated bead ids without swallowing freeform slugs" {
   assert_true(goal_input_is_bead_id("choir-kqv"))
   assert_true(goal_input_is_bead_id("choir-7uc.1"))
+  assert_true(goal_input_is_bead_id("choir-kqv.7.4"))
+  assert_true(goal_input_is_bead_id("moontrace-cg9.7.1"))
+  assert_false(goal_input_is_bead_id("choir-kqv..7"))
+  assert_false(goal_input_is_bead_id("choir-kqv.7."))
+  assert_false(goal_input_is_bead_id(".choir-kqv.7"))
+  assert_false(goal_input_is_bead_id("-choir-kqv.7"))
+  assert_false(goal_input_is_bead_id("choir-kqv.7-"))
+  assert_false(goal_input_is_bead_id("choir-kqv.7 x"))
+  assert_false(goal_input_is_bead_id("choir-kqv.7.x"))
   assert_false(goal_input_is_bead_id("always-true"))
   assert_false(goal_input_is_bead_id("ship the dashboard"))
   match GoalSource::from_input("choir-kqv") {

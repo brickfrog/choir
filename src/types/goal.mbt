@@ -216,8 +216,18 @@ pub fn goal_input_is_bead_id(raw : String) -> Bool {
   }
   match trimmed.split_once(".") {
     Some((base, child)) =>
-      goal_generated_bead_base(base.to_owned()) &&
-      goal_all_digits(child.to_owned())
+      if !goal_generated_bead_base(base.to_owned()) {
+        false
+      } else {
+        let mut all_child_segments_numeric = true
+        for raw_segment in child.to_owned().split(".") {
+          let segment = raw_segment.to_owned()
+          if segment == "" || !goal_all_digits(segment) {
+            all_child_segments_numeric = false
+          }
+        }
+        all_child_segments_numeric
+      }
     None => goal_generated_bead_base(trimmed)
   }
 }
