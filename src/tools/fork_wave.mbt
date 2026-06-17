@@ -58,23 +58,79 @@ fn fork_wave_verify_has_nonempty_command(commands : Array[String]) -> Bool {
 }
 
 ///|
+pub let fork_wave_choir_lint_verify_command : String = "moon run src/bin/choir_lint --target native"
+
+///|
+fn fork_wave_segment_starts_choir_lint_run(segment : String) -> Bool {
+  let prefix = "moon run src/bin/choir_lint"
+  let trimmed = segment.trim().to_owned()
+  trimmed == prefix || trimmed.has_prefix(prefix + " ")
+}
+
+///|
+fn fork_wave_verify_has_choir_lint_command(commands : Array[String]) -> Bool {
+  for command in commands {
+    let tokens = tdd_command_tokens(command)
+    let mut segment = ""
+    for token in tokens {
+      if tdd_token_is_shell_separator(token) {
+        if fork_wave_segment_starts_choir_lint_run(segment) {
+          return true
+        }
+        segment = ""
+      } else {
+        segment = if segment == "" { token } else { segment + " " + token }
+      }
+    }
+    if fork_wave_segment_starts_choir_lint_run(segment) {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn fork_wave_verify_with_choir_lint(commands : Array[String]) -> Array[String] {
+  let verify : Array[String] = []
+  for command in commands {
+    verify.push(command)
+  }
+  verify.push(fork_wave_choir_lint_verify_command)
+  verify
+}
+
+///|
 pub fn fork_wave_task_contract_with_verify_default(
   task_contract : @types.TaskContract,
   project_verify_cmd? : String? = None,
+  choir_lint_available? : Bool = false,
 ) -> @types.TaskContract {
-  if fork_wave_verify_has_nonempty_command(task_contract.verify) {
-    return task_contract
-  }
-  match project_verify_cmd {
-    Some(command) => {
-      let trimmed = command.trim().to_owned()
-      if trimmed == "" {
-        task_contract
-      } else {
-        { ..task_contract, verify: [trimmed] }
+  let with_project_verify = if fork_wave_verify_has_nonempty_command(
+      task_contract.verify,
+    ) {
+    task_contract
+  } else {
+    match project_verify_cmd {
+      Some(command) => {
+        let trimmed = command.trim().to_owned()
+        if trimmed == "" {
+          task_contract
+        } else {
+          { ..task_contract, verify: [trimmed] }
+        }
       }
+      None => task_contract
     }
-    None => task_contract
+  }
+  if !choir_lint_available ||
+    !fork_wave_verify_has_nonempty_command(with_project_verify.verify) ||
+    fork_wave_verify_has_choir_lint_command(with_project_verify.verify) {
+    with_project_verify
+  } else {
+    {
+      ..with_project_verify,
+      verify: fork_wave_verify_with_choir_lint(with_project_verify.verify),
+    }
   }
 }
 
