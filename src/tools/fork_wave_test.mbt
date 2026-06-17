@@ -1391,10 +1391,23 @@ test "fork_wave_caller_spawn_depth_from_registry matches dispatch lookup" {
 }
 
 ///|
+fn fork_wave_test_agent_token_output() -> String {
+  "00 11 22 33 44 55 66 77 88 99 aa bb cc dd ee ff 10 21 32 43 54 65 76 87 98 a9 ba cb dc ed fe 0f\n"
+}
+
+///|
+fn fork_wave_test_is_agent_token_command(cmd : @workspace.Command) -> Bool {
+  cmd.program == "od" && cmd.args == ["-An", "-tx1", "-N32", "/dev/urandom"]
+}
+
+///|
 async fn mock_capture_fork_wave_must_not_run(
   cmd : @workspace.Command,
 ) -> (Int, String) {
   @async.sleep(0)
+  if fork_wave_test_is_agent_token_command(cmd) {
+    return (0, fork_wave_test_agent_token_output())
+  }
   if cmd.program == "env" && cmd.args.contains("list-panes") {
     return (0, "PANE_ID TYPE TITLE\nterminal_1 terminal root\n")
   }
@@ -1418,8 +1431,11 @@ async test "fork_wave_resolve_args_parent_branch skips detection when not main" 
 }
 
 ///|
-async fn mock_capture_origin_topic(_cmd : @workspace.Command) -> (Int, String) {
+async fn mock_capture_origin_topic(cmd : @workspace.Command) -> (Int, String) {
   @async.sleep(0)
+  if fork_wave_test_is_agent_token_command(cmd) {
+    return (0, fork_wave_test_agent_token_output())
+  }
   (0, "origin/topic\n")
 }
 
@@ -1721,6 +1737,9 @@ async test "interpret_fork_wave_spawn_effect_phase seeds agy shared cache once b
   }
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if fork_wave_test_is_agent_token_command(cmd) {
+      return (0, fork_wave_test_agent_token_output())
+    }
     if cmd.program == "agy" && cmd.args == ["--help"] {
       return (0, "agy help")
     }
@@ -1818,6 +1837,9 @@ async test "interpret_fork_wave_spawn_effect_phase warns and spawns when agy see
   }
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if fork_wave_test_is_agent_token_command(cmd) {
+      return (0, fork_wave_test_agent_token_output())
+    }
     if cmd.program == "agy" && cmd.args == ["--help"] {
       return (0, "agy help")
     }
@@ -1873,6 +1895,9 @@ async test "interpret_fork_wave_spawn_effect_phase fails loudly when agy is unav
   }
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if fork_wave_test_is_agent_token_command(cmd) {
+      return (0, fork_wave_test_agent_token_output())
+    }
     if cmd.program == "agy" && cmd.args == ["--help"] {
       return (-1, "")
     }
@@ -2044,6 +2069,9 @@ async test "interpret_fork_wave_spawn_effect_phase fails loudly when scaffold co
   }
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if fork_wave_test_is_agent_token_command(cmd) {
+      return (0, fork_wave_test_agent_token_output())
+    }
     if cmd.program == "git" && cmd.args.contains("commit") {
       return (1, "nothing to commit\n")
     }
