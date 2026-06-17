@@ -14,7 +14,6 @@ fn tdd_transition_error(message : String) -> @types.ChoirError {
 ///|
 enum TddExitExpectation {
   RedFailure
-  GreenSuccess
 } derive(Eq)
 
 ///|
@@ -369,6 +368,71 @@ fn tdd_exit_verification_context(command : String, output : String) -> String {
 }
 
 ///|
+fn tdd_baseline_advisory_message(
+  command : String,
+  baseline_sha : String,
+) -> String {
+  "verify: " +
+  command +
+  " failed but already red at baseline " +
+  baseline_sha +
+  " -> advisory, not blocking"
+}
+
+///|
+fn tdd_join_command_outputs(outputs : Array[String]) -> String {
+  let chunks : Array[String] = []
+  for output in outputs {
+    let trimmed = output.trim().to_owned()
+    if trimmed != "" {
+      chunks.push(trimmed)
+    }
+  }
+  chunks.join("\n")
+}
+
+///|
+async fn tdd_failed_verify_advisory(
+  caller_id : String,
+  project_dir : String,
+  command : String,
+  baseline_sha_for_agent : (String) -> String?,
+  baseline_git_capture : async (@workspace.Command) -> (Int, String),
+  capture : async (@workspace.Command) -> (Int, String),
+  baseline_verify : async (
+    String,
+    String,
+    String,
+    async (@workspace.Command) -> (Int, String),
+    async (@workspace.Command) -> (Int, String),
+  ) -> BaselineOutcome,
+) -> String? {
+  let baseline_sha = match baseline_sha_for_agent(caller_id) {
+    Some(value) => value.trim().to_owned()
+    None => return None
+  }
+  if baseline_sha == "" {
+    return None
+  }
+  match
+    baseline_verify(
+      baseline_sha, command, project_dir, baseline_git_capture, capture,
+    ) {
+    BaselineOutcome::AlreadyRed => {
+      let message = tdd_baseline_advisory_message(command, baseline_sha)
+      @moontrace.warn(message, fields=[
+        @moontrace.field("event", "verify_baseline_advisory"),
+        @moontrace.field("context", "tdd_green_check"),
+        @moontrace.field("command", command),
+        @moontrace.field("baseline_sha", baseline_sha),
+      ])
+      Some(message)
+    }
+    BaselineOutcome::GreenAtBaseline | BaselineOutcome::Unknown => None
+  }
+}
+
+///|
 async fn verify_tdd_command_outcome(
   project_dir : String,
   command : String,
@@ -377,7 +441,6 @@ async fn verify_tdd_command_outcome(
 ) -> Result[String, @types.ChoirError] {
   let expectation_detail = match expectation {
     RedFailure => "red check expected exit code to be non-zero"
-    GreenSuccess => "green check expected exit code 0"
   }
   let (actual_exit_code, actual_output) = capture(
     tdd_check_command(project_dir, command),
@@ -393,7 +456,6 @@ async fn verify_tdd_command_outcome(
   }
   let ok = match expectation {
     RedFailure => actual_exit_code != 0
-    GreenSuccess => actual_exit_code == 0
   }
   if !ok {
     Err(
@@ -408,6 +470,65 @@ async fn verify_tdd_command_outcome(
   } else {
     Ok(actual_output)
   }
+}
+
+///|
+async fn verify_tdd_green_commands_outcome(
+  project_dir : String,
+  caller_id : String,
+  commands : Array[String],
+  capture : async (@workspace.Command) -> (Int, String),
+  baseline_sha_for_agent : (String) -> String?,
+  baseline_git_capture : async (@workspace.Command) -> (Int, String),
+  baseline_verify : async (
+    String,
+    String,
+    String,
+    async (@workspace.Command) -> (Int, String),
+    async (@workspace.Command) -> (Int, String),
+  ) -> BaselineOutcome,
+) -> Result[String, @types.ChoirError] {
+  let outputs : Array[String] = []
+  for command in commands {
+    let (actual_exit_code, actual_output) = capture(
+      tdd_check_command(project_dir, command),
+    )
+    if actual_exit_code < 0 {
+      return Err(
+        tdd_transition_error(
+          "configured verify command could not be executed; actual exit code " +
+          actual_exit_code.to_string() +
+          tdd_exit_verification_context(command, actual_output),
+        ),
+      )
+    }
+    if actual_exit_code == 0 {
+      outputs.push(actual_output)
+    } else {
+      let advisory = tdd_failed_verify_advisory(
+        caller_id, project_dir, command, baseline_sha_for_agent, baseline_git_capture,
+        capture, baseline_verify,
+      )
+      match advisory {
+        Some(message) =>
+          if actual_output.trim() == "" {
+            outputs.push(message)
+          } else {
+            outputs.push(message + "\n" + actual_output)
+          }
+        None =>
+          return Err(
+            tdd_transition_error(
+              "configured verify command actual exit code " +
+              actual_exit_code.to_string() +
+              " did not satisfy green check expected exit code 0" +
+              tdd_exit_verification_context(command, actual_output),
+            ),
+          )
+      }
+    }
+  }
+  Ok(tdd_join_command_outputs(outputs))
 }
 
 ///|
@@ -666,6 +787,25 @@ pub async fn interpret_tdd_green_check(
   registry? : @registry.AgentRegistry? = None,
   task_contract_reader? : (String) -> @types.TaskContract? = fn(_) { None },
   capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
+  baseline_sha_for_agent? : (String) -> String? = fn(_) { None },
+  baseline_git_capture? : async (@workspace.Command) -> (Int, String) = capture,
+  baseline_verify? : async (
+    String,
+    String,
+    String,
+    async (@workspace.Command) -> (Int, String),
+    async (@workspace.Command) -> (Int, String),
+  ) -> BaselineOutcome = async fn(
+    baseline_sha,
+    command,
+    project_dir,
+    git_capture,
+    capture,
+  ) {
+    baseline_verify_command_outcome(
+      baseline_sha, command, project_dir, git_capture, capture,
+    )
+  },
 ) -> @types.Response {
   let current_state = tdd_state_reader(args.caller_id)
   let next = match
@@ -683,11 +823,14 @@ pub async fn interpret_tdd_green_check(
     Err(e) => return @types.Response::Err(e.message())
   }
   let actual_output = match
-    verify_tdd_command_outcome(
+    verify_tdd_green_commands_outcome(
       configured.workdir,
-      configured.command,
-      TddExitExpectation::GreenSuccess,
+      args.caller_id,
+      configured.commands,
       capture,
+      baseline_sha_for_agent,
+      baseline_git_capture,
+      baseline_verify,
     ) {
     Ok(output) => output
     Err(e) => return @types.Response::Err(e.message())

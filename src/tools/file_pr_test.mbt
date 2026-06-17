@@ -789,15 +789,20 @@ fn file_pr_test_record_verify_outcome(
       Some(sha) => "\nhead: " + sha
       None => ""
     }
+    let advisory_line = match outcome.advisory {
+      Some(message) => "\n" + message
+      None => ""
+    }
     record_event(
       agent_id,
       @evidence.EvidenceEvent::VerifyResultObserved(
         name=outcome.command,
-        ok=outcome.exit_code == 0,
+        ok=outcome.exit_code == 0 || outcome.advisory is Some(_),
         details=Some(
           "exit: " +
           outcome.exit_code.to_string() +
           head_line +
+          advisory_line +
           "\n" +
           outcome.output_tail,
         ),
@@ -979,6 +984,206 @@ async test "file_pr_run_required_verify stops on failed command" {
 }
 
 ///|
+async test "file_pr_run_required_verify treats baseline-red failure as advisory" {
+  let project_dir = "/tmp/choir-fpr-verify-advisory-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir))
+  let mut baseline_lookup_calls = 0
+  let mut baseline_verify_calls = 0
+  let got = file_pr_run_required_verify(
+    "/tmp/leaf-wt",
+    ["npm run typecheck", "npm run test"],
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "git" {
+        (0, "sha-advisory\n")
+      } else if cmd.args[1] == "npm run typecheck" {
+        (2, "src/index.ts(10,3): error TS2322\n")
+      } else if cmd.args[1] == "npm run test" {
+        (0, "tests ok\n")
+      } else {
+        fail("unexpected verify command: " + cmd.args.join(" "))
+      }
+    },
+    record_verify_outcome=file_pr_test_record_verify_outcome(
+      project_dir, "main.leaf", "/tmp/leaf-wt",
+    ),
+    agent_id=Some("main.leaf"),
+    baseline_sha_for_agent=fn(agent_id : String) -> String? {
+      baseline_lookup_calls = baseline_lookup_calls + 1
+      if agent_id == "main.leaf" {
+        Some("baseline-sha")
+      } else {
+        None
+      }
+    },
+    baseline_verify=async fn(
+      sha : String,
+      command : String,
+      baseline_project_dir : String,
+      _git_capture : async (@workspace.Command) -> (Int, String),
+      _capture : async (@workspace.Command) -> (Int, String),
+    ) -> BaselineOutcome {
+      @async.sleep(0)
+      baseline_verify_calls = baseline_verify_calls + 1
+      assert_eq(sha, "baseline-sha")
+      assert_eq(command, "npm run typecheck")
+      assert_eq(baseline_project_dir, "/tmp/leaf-wt")
+      BaselineOutcome::AlreadyRed
+    },
+  )
+  match got {
+    Ok(outcomes) => {
+      assert_eq(outcomes.length(), 2)
+      assert_eq(outcomes[0].exit_code, 2)
+      assert_true(
+        outcomes[0].advisory
+        .unwrap_or("")
+        .contains("already red at baseline baseline-sha"),
+      )
+      assert_eq(outcomes[1].exit_code, 0)
+      @debug.assert_eq(outcomes[1].advisory, None)
+    }
+    Err(e) => fail("expected advisory verify success: " + e.message())
+  }
+  assert_eq(baseline_lookup_calls, 1)
+  assert_eq(baseline_verify_calls, 1)
+  let records = @evidence.load_agent_evidence_records(project_dir, "main.leaf")
+  assert_eq(records.length(), 2)
+  match records[0].event {
+    @evidence.EvidenceEvent::VerifyResultObserved(name~, ok~, details~) => {
+      assert_eq(name, "npm run typecheck")
+      assert_true(ok)
+      let detail = details.unwrap_or("")
+      assert_true(detail.contains("exit: 2"))
+      assert_true(detail.contains("advisory, not blocking"))
+    }
+    _ => fail("expected advisory VerifyResultObserved")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "file_pr_run_required_verify blocks regression from green baseline" {
+  let mut baseline_verify_calls = 0
+  let got = file_pr_run_required_verify(
+    "/tmp/leaf-wt",
+    ["npm run typecheck"],
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "git" {
+        (0, "sha-regression\n")
+      } else {
+        (2, "src/index.ts(10,3): error TS2322\n")
+      }
+    },
+    agent_id=Some("main.leaf"),
+    baseline_sha_for_agent=fn(_agent_id : String) -> String? {
+      Some("baseline-sha")
+    },
+    baseline_verify=async fn(
+      _sha : String,
+      command : String,
+      _baseline_project_dir : String,
+      _git_capture : async (@workspace.Command) -> (Int, String),
+      _capture : async (@workspace.Command) -> (Int, String),
+    ) -> BaselineOutcome {
+      @async.sleep(0)
+      baseline_verify_calls = baseline_verify_calls + 1
+      assert_eq(command, "npm run typecheck")
+      BaselineOutcome::GreenAtBaseline
+    },
+  )
+  match got {
+    Err(e) => {
+      let msg = e.message()
+      assert_true(msg.contains("npm run typecheck"))
+      assert_true(msg.contains("TS2322"))
+    }
+    Ok(_) => fail("expected regression failure")
+  }
+  assert_eq(baseline_verify_calls, 1)
+}
+
+///|
+async test "file_pr_run_required_verify blocks unknown baseline outcome" {
+  let got = file_pr_run_required_verify(
+    "/tmp/leaf-wt",
+    ["npm run typecheck"],
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "git" {
+        (0, "sha-unknown\n")
+      } else {
+        (2, "src/index.ts(10,3): error TS2322\n")
+      }
+    },
+    agent_id=Some("main.leaf"),
+    baseline_sha_for_agent=fn(_agent_id : String) -> String? {
+      Some("baseline-sha")
+    },
+    baseline_verify=async fn(
+      _sha : String,
+      _command : String,
+      _baseline_project_dir : String,
+      _git_capture : async (@workspace.Command) -> (Int, String),
+      _capture : async (@workspace.Command) -> (Int, String),
+    ) -> BaselineOutcome {
+      @async.sleep(0)
+      BaselineOutcome::Unknown
+    },
+  )
+  match got {
+    Err(e) => assert_true(e.message().contains("npm run typecheck"))
+    Ok(_) => fail("expected unknown baseline to block")
+  }
+}
+
+///|
+async test "file_pr_run_required_verify skips baseline lookup for passing command" {
+  let mut baseline_lookup_calls = 0
+  let mut baseline_verify_calls = 0
+  let got = file_pr_run_required_verify(
+    "/tmp/leaf-wt",
+    ["npm run typecheck"],
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "git" {
+        (0, "sha-pass\n")
+      } else {
+        (0, "typecheck ok\n")
+      }
+    },
+    agent_id=Some("main.leaf"),
+    baseline_sha_for_agent=fn(_agent_id : String) -> String? {
+      baseline_lookup_calls = baseline_lookup_calls + 1
+      Some("baseline-sha")
+    },
+    baseline_verify=async fn(
+      _sha : String,
+      _command : String,
+      _baseline_project_dir : String,
+      _git_capture : async (@workspace.Command) -> (Int, String),
+      _capture : async (@workspace.Command) -> (Int, String),
+    ) -> BaselineOutcome {
+      @async.sleep(0)
+      baseline_verify_calls = baseline_verify_calls + 1
+      fail("baseline verify should not run for passing commands")
+    },
+  )
+  match got {
+    Ok(outcomes) => {
+      assert_eq(outcomes.length(), 1)
+      assert_eq(outcomes[0].exit_code, 0)
+    }
+    Err(e) => fail("expected verify success: " + e.message())
+  }
+  assert_eq(baseline_lookup_calls, 0)
+  assert_eq(baseline_verify_calls, 0)
+}
+
+///|
 test "file_pr_body_with_verify_summary appends compact generated section" {
   let body = file_pr_body_with_verify_summary(Some("Changes schema wiring."), [
     {
@@ -986,6 +1191,7 @@ test "file_pr_body_with_verify_summary appends compact generated section" {
       exit_code: 0,
       output_tail: "typecheck ok",
       head_sha: Some("sha-pr"),
+      advisory: None,
     },
   ]).unwrap()
   assert_true(body.contains("Changes schema wiring."))
