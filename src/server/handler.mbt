@@ -237,11 +237,13 @@ fn ServerState::register_agent_pid_from_sidecar(
 pub async fn ServerState::handle(
   self : ServerState,
   req : @types.Request,
+  authenticated_agent_id? : String? = None,
 ) -> @types.Response {
   self.handle_with_runner_and_capture(
     req,
     runner=@exec.run_sequence,
     capture=@exec.capture_command_merged,
+    authenticated_agent_id~,
   )
 }
 
@@ -250,11 +252,13 @@ pub async fn ServerState::handle_with_runner(
   self : ServerState,
   req : @types.Request,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  authenticated_agent_id? : String? = None,
 ) -> @types.Response {
   self.handle_with_runner_and_capture(
     req,
     runner~,
     capture=@exec.capture_command_merged,
+    authenticated_agent_id~,
   )
 }
 
@@ -268,6 +272,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
   path_exists? : (String) -> Bool = @exec.path_entry_exists,
   hook_path_exists? : (String) -> Bool = path_exists,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
+  authenticated_agent_id? : String? = None,
 ) -> @types.Response {
   let start_ms = @env.now()
   let effective_req = self.request_with_review_mode_default(req)
@@ -357,6 +362,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
       prenotify_checks=self.config.prenotify_checks,
       project_verify_cmd=self.config.project.verify_cmd,
       agy_migration_incomplete=self.config.agy_migration_incomplete,
+      authenticated_agent_id~,
       goal_deliver=async fn(message, status) {
         self.deliver_goal_judge_message(message, status, runner)
       },
