@@ -57,6 +57,10 @@ fn live_zellij_close_tab_id_command(
 
 ///|
 async test "real exec integration: live zellij dump-screen by pane-id is non-empty and focus-free" {
+  match @sys.getenv("CHOIR_TEST_NO_EXEC") {
+    Some(value) if value != "" => return
+    _ => ()
+  }
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @exec.capture_command_merged(cmd) catch {
       _ => (-1, "")
