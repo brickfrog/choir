@@ -920,7 +920,7 @@ pub async fn file_pr_run_required_verify(
     let (exit_code, output) = capture(
       file_pr_verify_command(command, file_pr_dir),
     )
-    let advisory = if exit_code == 0 {
+    let advisory = if exit_code <= 0 {
       None
     } else {
       file_pr_failed_verify_advisory(

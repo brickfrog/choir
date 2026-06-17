@@ -1065,6 +1065,51 @@ async test "file_pr_run_required_verify treats baseline-red failure as advisory"
 }
 
 ///|
+async test "file_pr_run_required_verify blocks negative head exit without baseline" {
+  let mut baseline_lookup_calls = 0
+  let mut baseline_verify_calls = 0
+  let got = file_pr_run_required_verify(
+    "/tmp/leaf-wt",
+    ["npm run typecheck"],
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "git" {
+        (0, "sha-negative\n")
+      } else {
+        (-1, "spawn failed\n")
+      }
+    },
+    agent_id=Some("main.leaf"),
+    baseline_sha_for_agent=fn(_agent_id : String) -> String? {
+      baseline_lookup_calls = baseline_lookup_calls + 1
+      Some("baseline-sha")
+    },
+    baseline_verify=async fn(
+      _sha : String,
+      _command : String,
+      _baseline_project_dir : String,
+      _git_capture : async (@workspace.Command) -> (Int, String),
+      _capture : async (@workspace.Command) -> (Int, String),
+    ) -> BaselineOutcome {
+      @async.sleep(0)
+      baseline_verify_calls = baseline_verify_calls + 1
+      BaselineOutcome::AlreadyRed
+    },
+  )
+  match got {
+    Err(e) => {
+      let msg = e.message()
+      assert_true(msg.contains("npm run typecheck"))
+      assert_true(msg.contains("exit: -1"))
+      assert_true(msg.contains("spawn failed"))
+    }
+    Ok(_) => fail("expected negative head exit to block")
+  }
+  assert_eq(baseline_lookup_calls, 0)
+  assert_eq(baseline_verify_calls, 0)
+}
+
+///|
 async test "file_pr_run_required_verify blocks later regression after advisory" {
   let recorded : Array[FilePrVerifyOutcome] = []
   let baseline_commands : Array[String] = []
