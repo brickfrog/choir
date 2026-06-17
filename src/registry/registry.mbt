@@ -1,14 +1,22 @@
 ///|
+/// Authoritative credential minted by the server when it spawns an agent.
+pub(all) struct AgentCredential {
+  role : @types.Role
+  token : String
+} derive(Debug, Eq)
+
+///|
 /// In-memory agent registry.
 pub(all) struct AgentRegistry {
   agents : Map[String, @types.Agent]
   alive : Map[String, Bool]
+  spawn_credentials : Map[String, AgentCredential]
 }
 
 ///|
 /// Create a new empty registry.
 pub fn AgentRegistry::new() -> AgentRegistry {
-  { agents: {}, alive: {} }
+  { agents: {}, alive: {}, spawn_credentials: {} }
 }
 
 ///|
@@ -61,6 +69,23 @@ pub fn AgentRegistry::get_opt(
 }
 
 ///|
+pub fn AgentRegistry::record_spawn_credential(
+  self : AgentRegistry,
+  agent_id : String,
+  credential : AgentCredential,
+) -> Unit {
+  self.spawn_credentials.set(agent_id, credential)
+}
+
+///|
+pub fn AgentRegistry::credential_for_agent(
+  self : AgentRegistry,
+  agent_id : String,
+) -> AgentCredential? {
+  self.spawn_credentials.get(agent_id)
+}
+
+///|
 /// Get the parent agent for a given agent ID.
 pub fn AgentRegistry::get_parent(
   self : AgentRegistry,
@@ -84,6 +109,7 @@ pub fn AgentRegistry::remove(
     Some(agent) => {
       self.agents.remove(agent_id)
       self.alive.remove(agent_id)
+      self.spawn_credentials.remove(agent_id)
       agent
     }
     None => raise @types.ChoirError::agent_not_found(agent_id)
@@ -195,6 +221,7 @@ pub fn AgentRegistry::clear(self : AgentRegistry) -> Unit {
     self.agents.remove(id)
     self.alive.remove(id)
   }
+  self.spawn_credentials.clear()
 }
 
 ///|
@@ -529,4 +556,22 @@ pub fn read_registry_snapshot_file(
     Ok(_) => Ok(registry)
     Err(e) => Err(e)
   }
+}
+
+///|
+test "agent registry records authoritative spawn credentials" {
+  let reg = AgentRegistry::new()
+  reg.record_spawn_credential("main.leaf-a", AgentCredential::{
+    role: @types.Role::Dev,
+    token: "token-a",
+  })
+  match reg.credential_for_agent("main.leaf-a") {
+    Some(credential) => {
+      assert_eq(credential.role, @types.Role::Dev)
+      assert_eq(credential.token, "token-a")
+    }
+    None => fail("expected recorded credential")
+  }
+  @debug.assert_eq(reg.credential_for_agent("main.unknown"), None)
+  assert_true(reg.spawn_credentials.contains("main.leaf-a"))
 }

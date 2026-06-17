@@ -50,6 +50,236 @@ pub fn read_project_config_toml(
 }
 
 ///|
+fn spawn_agent_token_hex_char(ch : Char) -> Bool {
+  (ch >= '0' && ch <= '9') ||
+  (ch >= 'a' && ch <= 'f') ||
+  (ch >= 'A' && ch <= 'F')
+}
+
+///|
+fn normalize_spawn_agent_token_output(output : String) -> String {
+  let buf = StringBuilder::new()
+  for ch in output {
+    if spawn_agent_token_hex_char(ch) {
+      buf.write_char(ch)
+    }
+  }
+  buf.to_string()
+}
+
+///|
+fn spawn_agent_token_command() -> @workspace.Command {
+  {
+    program: "od",
+    args: ["-An", "-tx1", "-N32", "/dev/urandom"],
+    workdir: None,
+  }
+}
+
+///|
+async fn mint_spawn_agent_token_with_capture(
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Result[String, @types.ChoirError] {
+  let (code, output) = capture(spawn_agent_token_command())
+  let token = normalize_spawn_agent_token_output(output)
+  if code == 0 && token.length() >= 64 {
+    Ok(token[:64].to_owned())
+  } else {
+    Err(
+      @types.ChoirError::workspace_error(
+        "failed to mint spawn agent credential",
+      ),
+    )
+  }
+}
+
+///|
+async fn default_mint_spawn_agent_token() -> Result[String, @types.ChoirError] {
+  mint_spawn_agent_token_with_capture(@exec.capture_command_stdout)
+}
+
+///|
+fn record_spawn_credential_for_agent(
+  registry : @registry.AgentRegistry?,
+  agent_id : String,
+  role : @types.Role,
+  token : String,
+) -> Unit {
+  match registry {
+    Some(reg) =>
+      reg.record_spawn_credential(agent_id, @registry.AgentCredential::{
+        role,
+        token,
+      })
+    None => ()
+  }
+}
+
+///|
+fn spawn_test_token_is_hex(token : String) -> Bool {
+  if token.length() < 64 {
+    return false
+  }
+  for ch in token {
+    if !((ch >= '0' && ch <= '9') ||
+      (ch >= 'a' && ch <= 'f') ||
+      (ch >= 'A' && ch <= 'F')) {
+      return false
+    }
+  }
+  true
+}
+
+///|
+async test "spawn agent token source uses urandom and preserves uniqueness" {
+  let entropy_command = spawn_agent_token_command()
+  assert_eq(entropy_command.program, "od")
+  assert_true(entropy_command.args.contains("-N32"))
+  assert_true(entropy_command.args.contains("/dev/urandom"))
+  let mut calls = 0
+  let capture = async fn(_cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    calls = calls + 1
+    if calls == 1 {
+      (
+        0, "00 11 22 33 44 55 66 77 88 99 aa bb cc dd ee ff 10 21 32 43 54 65 76 87 98 a9 ba cb dc ed fe 0f\n",
+      )
+    } else {
+      (
+        0, "ff ee dd cc bb aa 99 88 77 66 55 44 33 22 11 00 0f fe ed dc cb ba a9 98 87 76 65 54 43 32 21 10\n",
+      )
+    }
+  }
+  let first = mint_spawn_agent_token_with_capture(capture)
+  let second = mint_spawn_agent_token_with_capture(capture)
+  match (first, second) {
+    (Ok(a), Ok(b)) => {
+      assert_true(spawn_test_token_is_hex(a))
+      assert_true(spawn_test_token_is_hex(b))
+      assert_true(a != b)
+    }
+    (Err(e), _) => fail("first token mint failed: " + e.message())
+    (_, Err(e)) => fail("second token mint failed: " + e.message())
+  }
+}
+
+///|
+test "spawn credential helper records plan role and token" {
+  let reg = @registry.AgentRegistry::new()
+  let worker_args : WorkerSpawnArgs = {
+    task: "t",
+    task_contract: { ..@types.TaskContract::empty(), goal: "t" },
+    caller_id: "main.tl",
+    slug: "worker-a",
+    agent_type: @types.AgentType::Codex,
+    worker_kind: WorkerKind::Research,
+    parent_branch: Some("main"),
+    isolation: None,
+  }
+  let plan = spawn_worker_plan(worker_args, "main", "sess", "/repo")
+  record_spawn_credential_for_agent(
+    Some(reg),
+    plan.agent_id,
+    plan.registry_agent.role,
+    "worker-token-a",
+  )
+  match reg.credential_for_agent(plan.agent_id) {
+    Some(credential) => {
+      assert_eq(credential.role, @types.Role::Worker)
+      assert_eq(credential.token, "worker-token-a")
+    }
+    None => fail("expected worker spawn credential")
+  }
+}
+
+///|
+fn spawn_test_commands_contain(
+  cmds : Array[@workspace.Command],
+  needle : String,
+) -> Bool {
+  for cmd in cmds {
+    for arg in cmd.args {
+      if arg.contains(needle) {
+        return true
+      }
+    }
+  }
+  false
+}
+
+///|
+async test "interpret_spawn_worker records credential and exports token" {
+  let reg = @registry.AgentRegistry::new()
+  let seen_cmds : Array[@workspace.Command] = []
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    let statuses : Array[Int] = []
+    for cmd in cmds {
+      seen_cmds.push(cmd)
+      statuses.push(0)
+    }
+    statuses
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    seen_cmds.push(cmd)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      (0, "origin/main\n")
+    } else {
+      (0, "")
+    }
+  }
+  let mint_agent_token = async fn() -> Result[String, @types.ChoirError] {
+    @async.sleep(0)
+    Ok("worker-token-a")
+  }
+  let worker_args : WorkerSpawnArgs = {
+    task: "t",
+    task_contract: { ..@types.TaskContract::empty(), goal: "t" },
+    caller_id: "main.tl",
+    slug: "worker-a",
+    agent_type: @types.AgentType::Codex,
+    worker_kind: WorkerKind::Research,
+    parent_branch: Some("main"),
+    isolation: None,
+  }
+  let resp = interpret_spawn_worker(
+    worker_args,
+    "/repo",
+    "sess",
+    runner,
+    capture,
+    Some(reg),
+    mint_agent_token~,
+    read_file=fn(_) { "" },
+  )
+  match resp {
+    @types.Response::Ok(_) => ()
+    @types.Response::Err(msg) => fail("spawn_worker failed: " + msg)
+  }
+  match reg.credential_for_agent("main.worker-a") {
+    Some(credential) => {
+      assert_eq(credential.role, @types.Role::Worker)
+      assert_eq(credential.token, "worker-token-a")
+    }
+    None => fail("expected recorded spawn credential")
+  }
+  assert_true(
+    spawn_test_commands_contain(seen_cmds, "CHOIR_AGENT_TOKEN=worker-token-a"),
+  )
+}
+
+///|
+test "spawn diagnostics redact agent token log lines" {
+  let redacted = spawn_launch_sanitized_stderr_tail(
+    "launch failed CHOIR_AGENT_TOKEN=secret-token-value",
+  )
+  assert_true(redacted.contains("CHOIR_AGENT_TOKEN=[REDACTED]"))
+  assert_false(redacted.contains("secret-token-value"))
+}
+
+///|
 fn spawn_agent_state_is_terminal(state : @types.AgentState) -> Bool {
   state == @types.AgentState::Done || state == @types.AgentState::Failed
 }
@@ -520,6 +750,7 @@ pub async fn interpret_spawn_worker(
   ) {
     ()
   },
+  mint_agent_token? : async () -> Result[String, @types.ChoirError] = default_mint_spawn_agent_token,
   record_spawn_launch_diagnostic? : (SpawnLaunchDiagnostic) -> Unit = fn(_) {
     ()
   },
@@ -564,6 +795,16 @@ pub async fn interpret_spawn_worker(
     runner,
     capture,
   )
+  let agent_token = match mint_agent_token() {
+    Ok(token) => token
+    Err(e) => return @types.Response::Err(e.message())
+  }
+  record_spawn_credential_for_agent(
+    registry,
+    plan.agent_id,
+    plan.registry_agent.role,
+    agent_token,
+  )
   let cmds = @workspace.spawn_commands(
     plan.spec,
     project_dir,
@@ -574,6 +815,7 @@ pub async fn interpret_spawn_worker(
     listen_uds~,
     listen_tcp~,
     tcp_auth_token~,
+    agent_token=Some(agent_token),
     project_config_content=read_project_config_toml(project_dir, read_file~),
   )
   let spawn_launch_bindings = spawn_launch_command_bindings_for_agent(
@@ -667,6 +909,7 @@ pub async fn interpret_spawn_remote(
   capture : async (@workspace.Command) -> (Int, String),
   registry? : @registry.AgentRegistry? = None,
   extra_mcp_servers_json? : String? = None,
+  mint_agent_token? : async () -> Result[String, @types.ChoirError] = default_mint_spawn_agent_token,
   record_spawn_launch_diagnostic? : (SpawnLaunchDiagnostic) -> Unit = fn(_) {
     ()
   },
@@ -681,6 +924,16 @@ pub async fn interpret_spawn_remote(
     Ok(_) => ()
     Err(e) => return @types.Response::Err(e.message())
   }
+  let agent_token = match mint_agent_token() {
+    Ok(token) => token
+    Err(e) => return @types.Response::Err(e.message())
+  }
+  record_spawn_credential_for_agent(
+    registry,
+    @workspace.canonical_agent_id(plan.spec),
+    plan.spec.role,
+    agent_token,
+  )
   let cmds = @workspace.remote_spawn_commands(
     plan.spec,
     spawn_args.ssh_target,
@@ -688,6 +941,7 @@ pub async fn interpret_spawn_remote(
     spawn_args.tcp_addr,
     parent_session_id=spawn_args.parent_session_id,
     extra_mcp_servers_json~,
+    agent_token=Some(agent_token),
   )
   let spawn_launch_bindings = if cmds.length() == 0 {
     []
@@ -788,6 +1042,7 @@ pub async fn interpret_spawn_gemini(
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
   read_file? : (String) -> String = @sys.read_file,
+  mint_agent_token? : async () -> Result[String, @types.ChoirError] = default_mint_spawn_agent_token,
   record_spawn_launch_diagnostic? : (SpawnLaunchDiagnostic) -> Unit = fn(_) {
     ()
   },
@@ -812,6 +1067,16 @@ pub async fn interpret_spawn_gemini(
     runner,
     capture,
   )
+  let agent_token = match mint_agent_token() {
+    Ok(token) => token
+    Err(e) => return @types.Response::Err(e.message())
+  }
+  record_spawn_credential_for_agent(
+    registry,
+    @workspace.canonical_agent_id(plan.spec),
+    plan.spec.role,
+    agent_token,
+  )
   let cmds = @workspace.spawn_commands(
     plan.spec,
     project_dir,
@@ -822,6 +1087,7 @@ pub async fn interpret_spawn_gemini(
     listen_uds~,
     listen_tcp~,
     tcp_auth_token~,
+    agent_token=Some(agent_token),
     project_config_content=read_project_config_toml(project_dir, read_file~),
   )
   let spawn_launch_bindings = spawn_launch_command_bindings_for_agent(
