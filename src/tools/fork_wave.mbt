@@ -63,8 +63,19 @@ pub let fork_wave_choir_lint_verify_command : String = "moon run src/bin/choir_l
 ///|
 fn fork_wave_verify_has_choir_lint_command(commands : Array[String]) -> Bool {
   for command in commands {
-    if command.contains("choir_lint") {
-      return true
+    let tokens = tdd_command_tokens(command)
+    let mut i = 0
+    while i + 1 < tokens.length() {
+      if tokens[i] == "moon" && tokens[i + 1] == "run" {
+        let mut j = i + 2
+        while j < tokens.length() && !tdd_token_is_shell_separator(tokens[j]) {
+          if tokens[j] == "src/bin/choir_lint" {
+            return true
+          }
+          j = j + 1
+        }
+      }
+      i = i + 1
     }
   }
   false
@@ -104,6 +115,7 @@ pub fn fork_wave_task_contract_with_verify_default(
     }
   }
   if !choir_lint_available ||
+    !fork_wave_verify_has_nonempty_command(with_project_verify.verify) ||
     fork_wave_verify_has_choir_lint_command(with_project_verify.verify) {
     with_project_verify
   } else {
