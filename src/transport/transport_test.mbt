@@ -219,6 +219,21 @@ test "format_registration_request can mark one-shot clients" {
 }
 
 ///|
+test "format_registration_request includes and parses agent token" {
+  let output = format_registration_request(
+    @types.Role::Dev,
+    "leaf-1",
+    @types.LocalConfig::default(),
+    agent_token=Some("agent-token-1"),
+  )
+  assert_true(output.contains("\"token\":\"agent-token-1\""))
+  match parse_request(output) {
+    Ok(req) => @debug.assert_eq(req.registration_token(), Some("agent-token-1"))
+    Err(e) => fail("registration request should parse: " + e)
+  }
+}
+
+///|
 test "parse_connection_lifetime recognizes wire values" {
   @debug.assert_eq(
     parse_connection_lifetime("session"),

@@ -81,10 +81,15 @@ pub fn format_registration_request(
   agent_id : String,
   local_cfg : @types.LocalConfig,
   connection_lifetime? : ConnectionLifetime = Session,
+  agent_token? : String? = @sys.getenv("CHOIR_AGENT_TOKEN"),
 ) -> String {
   let args : Map[String, String] = {
     "agent_id": agent_id,
     "connection_lifetime": connection_lifetime.to_wire_string(),
+  }
+  match agent_token {
+    Some(v) => args.set(@types.registration_token_arg, v)
+    None => ()
   }
   match local_cfg.parent_id {
     Some(v) => args.set("parent_id", v)
