@@ -281,14 +281,45 @@ fn connected_agent_id_after_request(
 async fn serve_handle_internal_request(
   state : @server.ServerState,
   req : @types.Request,
+  authenticated_agent_id? : String? = None,
 ) -> @types.Response {
-  state.handle(req) catch {
+  state.handle(req, authenticated_agent_id~) catch {
     e => {
       @moontrace.error("handler error", fields=[
         @moontrace.field("request", req.name),
         @moontrace.field("error", e.to_string()),
       ])
       @types.Response::Err("internal error: " + e.to_string())
+    }
+  }
+}
+
+///|
+fn serve_custom_unauthenticated_request(req : @types.Request) -> @types.Request {
+  let args : Map[String, Json] = {}
+  req.args.each_json(fn(k, v) {
+    if k != "caller_id" && k != "agent_id" {
+      args.set(k, v)
+    }
+  })
+  {
+    ..req,
+    role: @types.Role::Worker,
+    args: @types.RequestArgs::from_values(args),
+  }
+}
+
+///|
+fn serve_custom_request_for_connection(
+  req : @types.Request,
+  authenticated_agent_id : String?,
+) -> @types.Request {
+  if req.req_method == "register" {
+    req
+  } else {
+    match authenticated_agent_id {
+      Some(_) => req
+      None => serve_custom_unauthenticated_request(req)
     }
   }
 }
@@ -423,37 +454,50 @@ async fn serve_handle_parsed_custom_request(
   state : @server.ServerState,
   req : @types.Request,
   allow_reload : Bool,
+  authenticated_agent_id? : String? = None,
 ) -> ServeRequestLineResult {
   let saw_register = req.req_method == "register"
-  if !allow_reload && serve_is_reload_request(req) {
+  let effective_req = serve_custom_request_for_connection(
+    req, authenticated_agent_id,
+  )
+  if !allow_reload && serve_is_reload_request(effective_req) {
     let resp = @types.Response::Err("server_reload requires the UDS transport")
     return {
       response_line: Some(@transport.format_response(resp) + "\n"),
-      request_name: Some(req.name),
+      request_name: Some(effective_req.name),
       saw_register,
       connected_agent_id: None,
       drop_connection: false,
       reload_request: None,
     }
   }
-  match serve_authenticate_register_request(state, req) {
+  match serve_authenticate_register_request(state, effective_req) {
     ServeRegisterAuth::Rejected(resp) =>
       {
         response_line: Some(@transport.format_response(resp) + "\n"),
-        request_name: Some(req.name),
+        request_name: Some(effective_req.name),
         saw_register,
         connected_agent_id: None,
         drop_connection: true,
         reload_request: None,
       }
-    ServeRegisterAuth::Authorized(effective_req, authenticated_agent_id) => {
-      let resp = serve_handle_internal_request(state, effective_req)
+    ServeRegisterAuth::Authorized(effective_req, registered_agent_id) => {
+      let request_authenticated_agent_id = if saw_register {
+        None
+      } else {
+        authenticated_agent_id
+      }
+      let resp = serve_handle_internal_request(
+        state,
+        effective_req,
+        authenticated_agent_id=request_authenticated_agent_id,
+      )
       {
         response_line: Some(@transport.format_response(resp) + "\n"),
         request_name: Some(effective_req.name),
         saw_register,
         connected_agent_id: register_connection_agent_id_after_response(
-          effective_req, resp, authenticated_agent_id,
+          effective_req, resp, registered_agent_id,
         ),
         drop_connection: false,
         reload_request: if allow_reload &&
@@ -473,9 +517,16 @@ async fn serve_handle_custom_request_line(
   state : @server.ServerState,
   line : String,
   allow_reload : Bool,
+  authenticated_agent_id? : String? = None,
 ) -> ServeRequestLineResult {
   match @transport.parse_request(line) {
-    Ok(req) => serve_handle_parsed_custom_request(state, req, allow_reload)
+    Ok(req) =>
+      serve_handle_parsed_custom_request(
+        state,
+        req,
+        allow_reload,
+        authenticated_agent_id~,
+      )
     Err(err) => {
       @moontrace.warn("parse error", fields=[@moontrace.field("error", err)])
       let resp = @types.Response::Err("parse error: " + err)
@@ -496,11 +547,17 @@ async fn serve_handle_request_line(
   state : @server.ServerState,
   line : String,
   allow_reload : Bool,
+  authenticated_agent_id? : String? = None,
 ) -> ServeRequestLineResult {
   if @transport.is_jsonrpc_request(line) {
     serve_handle_jsonrpc_request_line(state, line, allow_reload)
   } else {
-    serve_handle_custom_request_line(state, line, allow_reload)
+    serve_handle_custom_request_line(
+      state,
+      line,
+      allow_reload,
+      authenticated_agent_id~,
+    )
   }
 }
 
@@ -903,6 +960,217 @@ async test "serve UDS custom envelope still parses and dispatches" {
 }
 
 ///|
+async test "serve custom requests use authenticated connection identity" {
+  let (state, project_dir) = serve_test_state_with_root("bound-custom")
+  let agent_id = "main.bound-custom.dev"
+  serve_test_upsert_agent(state, agent_id, @types.Role::Dev, project_dir)
+  serve_test_record_credential(
+    state,
+    agent_id,
+    @types.Role::Dev,
+    "bound-custom-token",
+  )
+  state.record_agent_task_contract(
+    agent_id,
+    Some({
+      ..@types.TaskContract::empty(),
+      goal: "exercise bound custom identity",
+      verify: ["moon test --target native"],
+    }),
+  )
+  let register_result = serve_handle_request_line(
+    state,
+    serve_test_register_line(agent_id, "dev", "bound-custom-token", project_dir),
+    true,
+  )
+  serve_assert_register_ok(state, register_result, agent_id, @types.Role::Dev)
+  let owner = connected_agent_id_after_request(None, register_result)
+
+  let gated_result = serve_handle_request_line(
+    state,
+    "{\"method\":\"tools/call\",\"role\":\"dev\",\"name\":\"goal_set\",\"args\":{}}",
+    true,
+    authenticated_agent_id=owner,
+  )
+  match gated_result.response_line {
+    Some(resp_line) =>
+      match @transport.parse_response(resp_line.trim().to_owned()) {
+        Ok(resp) =>
+          match resp.error_message() {
+            Some(msg) =>
+              assert_true(msg.contains("role dev cannot call goal_set"))
+            None => fail("expected Dev caller to be refused goal_set")
+          }
+        Err(e) => fail("expected gated response to parse: " + e)
+      }
+    None => fail("expected gated request response")
+  }
+
+  let spoofed_result = serve_handle_request_line(
+    state,
+    "{\"method\":\"tools/call\",\"role\":\"root\",\"name\":\"goal_status\",\"args\":{\"caller_id\":\"root\",\"agent_id\":\"root\"}}",
+    true,
+    authenticated_agent_id=owner,
+  )
+  match spoofed_result.response_line {
+    Some(resp_line) =>
+      match @transport.parse_response(resp_line.trim().to_owned()) {
+        Ok(resp) => assert_false(resp.is_ok())
+        Err(e) => fail("expected spoofed response to parse: " + e)
+      }
+    None => fail("expected spoofed request response")
+  }
+
+  let legit_result = serve_handle_request_line(
+    state,
+    "{\"method\":\"tools/call\",\"role\":\"dev\",\"name\":\"tdd_intent\",\"args\":{\"intent\":\"write the red test\"}}",
+    true,
+    authenticated_agent_id=owner,
+  )
+  match legit_result.response_line {
+    Some(resp_line) =>
+      match @transport.parse_response(resp_line.trim().to_owned()) {
+        Ok(resp) => {
+          assert_true(resp.is_ok())
+          @debug.assert_eq(resp.ok_field("agent_id"), Some(agent_id))
+        }
+        Err(e) => fail("expected legit response to parse: " + e)
+      }
+    None => fail("expected legit request response")
+  }
+  @debug.assert_eq(
+    state.leaf_tdd_phase_for_agent(agent_id),
+    Some(@types.LeafTddPhase::Intent),
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "serve unbound custom requests do not trust privileged wire role" {
+  let (state, project_dir) = serve_test_state_with_root("unbound-custom")
+  let result = serve_handle_request_line(
+    state, "{\"method\":\"tools/call\",\"role\":\"root\",\"name\":\"goal_set\",\"args\":{\"caller_id\":\"root\"}}",
+    true,
+  )
+  match result.response_line {
+    Some(resp_line) =>
+      match @transport.parse_response(resp_line.trim().to_owned()) {
+        Ok(resp) =>
+          match resp.error_message() {
+            Some(msg) =>
+              assert_true(msg.contains("role worker cannot call goal_set"))
+            None => fail("expected unbound custom request to be refused")
+          }
+        Err(e) => fail("expected unbound response to parse: " + e)
+      }
+    None => fail("expected unbound request response")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "serve custom server_reload uses authenticated identity" {
+  let (state, project_dir) = serve_test_state_with_root("server-reload-auth")
+  let dev_id = "main.server-reload.dev"
+  serve_test_upsert_agent(state, dev_id, @types.Role::Dev, project_dir)
+  serve_test_record_credential(
+    state,
+    dev_id,
+    @types.Role::Dev,
+    "server-reload-dev-token",
+  )
+  let dev_register_result = serve_handle_request_line(
+    state,
+    serve_test_register_line(
+      dev_id, "dev", "server-reload-dev-token", project_dir,
+    ),
+    true,
+  )
+  serve_assert_register_ok(state, dev_register_result, dev_id, @types.Role::Dev)
+  let dev_owner = connected_agent_id_after_request(None, dev_register_result)
+
+  let dev_spoof_result = serve_handle_request_line(
+    state,
+    "{\"method\":\"tools/call\",\"role\":\"root\",\"name\":\"server_reload\",\"args\":{\"caller_id\":\"root\",\"binary_path\":\"/bin/sh\"}}",
+    true,
+    authenticated_agent_id=dev_owner,
+  )
+  assert_true(dev_spoof_result.reload_request is None)
+  match dev_spoof_result.response_line {
+    Some(resp_line) =>
+      match @transport.parse_response(resp_line.trim().to_owned()) {
+        Ok(resp) => {
+          assert_false(resp.is_ok())
+          @debug.assert_eq(
+            resp.error_message(),
+            Some("validation error: authenticated identity mismatch"),
+          )
+        }
+        Err(e) => fail("expected Dev spoof response to parse: " + e)
+      }
+    None => fail("expected Dev spoof response")
+  }
+
+  let dev_denied_result = serve_handle_request_line(
+    state,
+    "{\"method\":\"tools/call\",\"role\":\"dev\",\"name\":\"server_reload\",\"args\":{\"binary_path\":\"/bin/sh\"}}",
+    true,
+    authenticated_agent_id=dev_owner,
+  )
+  assert_true(dev_denied_result.reload_request is None)
+  match dev_denied_result.response_line {
+    Some(resp_line) =>
+      match @transport.parse_response(resp_line.trim().to_owned()) {
+        Ok(resp) =>
+          match resp.error_message() {
+            Some(msg) =>
+              assert_true(msg.contains("role dev cannot call server_reload"))
+            None => fail("expected Dev server_reload to be refused")
+          }
+        Err(e) => fail("expected Dev denied response to parse: " + e)
+      }
+    None => fail("expected Dev denied response")
+  }
+
+  serve_test_record_credential(
+    state,
+    "root",
+    @types.Role::Root,
+    "server-reload-root-token",
+  )
+  let root_register_result = serve_handle_request_line(
+    state,
+    serve_test_register_line(
+      "root", "root", "server-reload-root-token", project_dir,
+    ),
+    true,
+  )
+  serve_assert_register_ok(
+    state,
+    root_register_result,
+    "root",
+    @types.Role::Root,
+  )
+  let root_owner = connected_agent_id_after_request(None, root_register_result)
+  let root_reload_result = serve_handle_request_line(
+    state,
+    "{\"method\":\"tools/call\",\"role\":\"root\",\"name\":\"server_reload\",\"args\":{\"binary_path\":\"/bin/sh\"}}",
+    true,
+    authenticated_agent_id=root_owner,
+  )
+  assert_true(root_reload_result.reload_request is Some(_))
+  match root_reload_result.response_line {
+    Some(resp_line) =>
+      match @transport.parse_response(resp_line.trim().to_owned()) {
+        Ok(resp) => assert_true(resp.is_ok())
+        Err(e) => fail("expected Root reload response to parse: " + e)
+      }
+    None => fail("expected Root reload response")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "serve rejected register refresh keeps existing disconnect owner" {
   let (state, project_dir) = serve_test_state_with_root("rejected-register")
   let agent_id = "main.good-register"
@@ -1010,7 +1278,12 @@ async fn serve_handle_connection(
           }
           continue
         }
-        let result = serve_handle_request_line(state, line, false)
+        let result = serve_handle_request_line(
+          state,
+          line,
+          false,
+          authenticated_agent_id=connected_agent_id,
+        )
         connected_agent_id = connected_agent_id_after_request(
           connected_agent_id, result,
         )
@@ -1076,7 +1349,12 @@ async fn serve_handle_uds_request_line(
   _line : String,
   req : @types.Request,
 ) -> Unit {
-  let result = serve_handle_parsed_custom_request(state, req, true)
+  let result = serve_handle_parsed_custom_request(
+    state,
+    req,
+    true,
+    authenticated_agent_id=client.connected_agent_id,
+  )
   client.connected_agent_id = connected_agent_id_after_request(
     client.connected_agent_id,
     result,
