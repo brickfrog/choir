@@ -176,9 +176,12 @@ pub fn parse_wave_index_json(
   }
   let baseline_sha = match obj.get("baseline_sha") {
     Some(String(s)) => s
+    None => ""
     _ =>
       return Err(
-        @types.ChoirError::config_error("wave index missing 'baseline_sha'"),
+        @types.ChoirError::config_error(
+          "wave index 'baseline_sha' must be a string",
+        ),
       )
   }
   let fork_ts_ms = match obj.get("fork_ts_ms") {
