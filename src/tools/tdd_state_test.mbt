@@ -537,7 +537,7 @@ async test "leaf TDD green check treats baseline-red command as advisory" {
   let mut baseline_lookup_calls = 0
   let mut baseline_verify_calls = 0
   let green = interpret_tdd_green_check(
-    { caller_id: "main.leaf", exit_code: 0, next_phase: None },
+    { caller_id: "main.leaf", exit_code: 7, next_phase: None },
     reader,
     writer,
     registry=Some(reg),
@@ -599,7 +599,7 @@ async test "leaf TDD green check blocks command red from green baseline" {
     writer_called = true
   }
   let green = interpret_tdd_green_check(
-    { caller_id: "main.leaf", exit_code: 0, next_phase: None },
+    { caller_id: "main.leaf", exit_code: 7, next_phase: None },
     reader,
     writer,
     registry=Some(reg),
@@ -631,6 +631,76 @@ async test "leaf TDD green check blocks command red from green baseline" {
     @types.Response::Ok(_) =>
       fail("expected green baseline regression to block")
   }
+  assert_false(writer_called)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "leaf TDD green check blocks after advisory when later command regresses" {
+  let project_dir = "/tmp/choir-tdd-green-advisory-regression-" +
+    @sys.get_pid().to_string()
+  let leaf_worktree = project_dir + "/.choir/worktrees/leaf"
+  ignore(@sys.rm_rf(project_dir))
+  let contract = tdd_test_verify_contract(["cmd-a", "cmd-b"])
+  tdd_test_write_verify_config(leaf_worktree, contract.verify)
+  let reg = tdd_test_registry(leaf_worktree)
+  let stored : @types.LeafTddState? = Some({ phase: @types.LeafTddPhase::Red })
+  let mut writer_called = false
+  let reader = fn(_agent_id : String) -> @types.LeafTddState? { stored }
+  let writer = fn(_agent_id : String, _state : @types.LeafTddState) -> Unit {
+    writer_called = true
+  }
+  let seen_commands : Array[String] = []
+  let baseline_commands : Array[String] = []
+  let green = interpret_tdd_green_check(
+    { caller_id: "main.leaf", exit_code: 7, next_phase: None },
+    reader,
+    writer,
+    registry=Some(reg),
+    task_contract_reader=tdd_test_contract_reader(contract),
+    capture=async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      let command = cmd.args[1]
+      seen_commands.push(command)
+      if command == "cmd-a" {
+        (7, "cmd-a failed\n")
+      } else if command == "cmd-b" {
+        (9, "cmd-b failed\n")
+      } else {
+        fail("unexpected TDD command: " + command)
+      }
+    },
+    baseline_sha_for_agent=fn(_agent_id : String) -> String? {
+      Some("baseline-sha")
+    },
+    baseline_verify=async fn(
+      _sha : String,
+      command : String,
+      _baseline_project_dir : String,
+      _git_capture : async (@workspace.Command) -> (Int, String),
+      _capture : async (@workspace.Command) -> (Int, String),
+    ) -> BaselineOutcome {
+      @async.sleep(0)
+      baseline_commands.push(command)
+      if command == "cmd-a" {
+        BaselineOutcome::AlreadyRed
+      } else if command == "cmd-b" {
+        BaselineOutcome::GreenAtBaseline
+      } else {
+        BaselineOutcome::Unknown
+      }
+    },
+  )
+  match green {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("command: cmd-b"))
+      assert_true(msg.contains("cmd-b failed"))
+    }
+    @types.Response::Ok(_) =>
+      fail("expected later green-baseline regression to block")
+  }
+  @debug.assert_eq(seen_commands, ["cmd-a", "cmd-b"])
+  @debug.assert_eq(baseline_commands, ["cmd-a", "cmd-b"])
   assert_false(writer_called)
   ignore(@sys.rm_rf(project_dir))
 }

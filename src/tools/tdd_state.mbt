@@ -808,15 +808,6 @@ pub async fn interpret_tdd_green_check(
   },
 ) -> @types.Response {
   let current_state = tdd_state_reader(args.caller_id)
-  let next = match
-    plan_tdd_green_check_transition(
-      tdd_state_phase(current_state),
-      args.exit_code,
-      args.next_phase,
-    ) {
-    Ok(phase) => phase
-    Err(e) => return @types.Response::Err(e.message())
-  }
   let configured = match
     tdd_configured_verify(registry, args.caller_id, task_contract_reader) {
     Ok(value) => value
@@ -833,6 +824,16 @@ pub async fn interpret_tdd_green_check(
       baseline_verify,
     ) {
     Ok(output) => output
+    Err(e) => return @types.Response::Err(e.message())
+  }
+  let effective_exit_code = 0
+  let next = match
+    plan_tdd_green_check_transition(
+      tdd_state_phase(current_state),
+      effective_exit_code,
+      args.next_phase,
+    ) {
+    Ok(phase) => phase
     Err(e) => return @types.Response::Err(e.message())
   }
   tdd_state_writer(args.caller_id, { phase: next })

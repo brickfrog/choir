@@ -1065,6 +1065,64 @@ async test "file_pr_run_required_verify treats baseline-red failure as advisory"
 }
 
 ///|
+async test "file_pr_run_required_verify blocks later regression after advisory" {
+  let recorded : Array[FilePrVerifyOutcome] = []
+  let baseline_commands : Array[String] = []
+  let got = file_pr_run_required_verify(
+    "/tmp/leaf-wt",
+    ["cmd-a", "cmd-b"],
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "git" {
+        (0, "sha-aggregate\n")
+      } else if cmd.args[1] == "cmd-a" {
+        (7, "cmd-a failed\n")
+      } else if cmd.args[1] == "cmd-b" {
+        (9, "cmd-b failed\n")
+      } else {
+        fail("unexpected verify command: " + cmd.args.join(" "))
+      }
+    },
+    record_verify_outcome=fn(outcome : FilePrVerifyOutcome) {
+      recorded.push(outcome)
+    },
+    agent_id=Some("main.leaf"),
+    baseline_sha_for_agent=fn(_agent_id : String) -> String? {
+      Some("baseline-sha")
+    },
+    baseline_verify=async fn(
+      _sha : String,
+      command : String,
+      _baseline_project_dir : String,
+      _git_capture : async (@workspace.Command) -> (Int, String),
+      _capture : async (@workspace.Command) -> (Int, String),
+    ) -> BaselineOutcome {
+      @async.sleep(0)
+      baseline_commands.push(command)
+      if command == "cmd-a" {
+        BaselineOutcome::AlreadyRed
+      } else if command == "cmd-b" {
+        BaselineOutcome::GreenAtBaseline
+      } else {
+        BaselineOutcome::Unknown
+      }
+    },
+  )
+  match got {
+    Err(e) => {
+      let msg = e.message()
+      assert_true(msg.contains("cmd-b"))
+      assert_true(msg.contains("cmd-b failed"))
+    }
+    Ok(_) => fail("expected later green-baseline regression to block")
+  }
+  @debug.assert_eq(baseline_commands, ["cmd-a", "cmd-b"])
+  assert_eq(recorded.length(), 2)
+  assert_true(recorded[0].advisory is Some(_))
+  @debug.assert_eq(recorded[1].advisory, None)
+}
+
+///|
 async test "file_pr_run_required_verify blocks regression from green baseline" {
   let mut baseline_verify_calls = 0
   let got = file_pr_run_required_verify(
