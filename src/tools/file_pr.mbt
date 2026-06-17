@@ -637,6 +637,7 @@ pub(all) struct FilePrVerifyOutcome {
   exit_code : Int
   output_tail : String
   head_sha : String?
+  advisory : String?
 } derive(Debug, Eq)
 
 ///|
@@ -667,11 +668,16 @@ fn file_pr_verify_details(
     Some(sha) => "\nhead: " + sha
     None => ""
   }
+  let advisory_line = match outcome.advisory {
+    Some(message) => "\n" + message
+    None => ""
+  }
   let base = "cwd: " +
     file_pr_dir +
     "\nexit: " +
     outcome.exit_code.to_string() +
-    head_line
+    head_line +
+    advisory_line
   if outcome.output_tail == "" {
     base
   } else {
@@ -684,9 +690,17 @@ fn file_pr_verify_evidence_event(
   file_pr_dir : String,
   outcome : FilePrVerifyOutcome,
 ) -> @evidence.EvidenceEvent {
+  let ok = if outcome.exit_code == 0 {
+    true
+  } else {
+    match outcome.advisory {
+      Some(_) => true
+      None => false
+    }
+  }
   @evidence.EvidenceEvent::VerifyResultObserved(
     name=outcome.command,
-    ok=outcome.exit_code == 0,
+    ok~,
     details=Some(file_pr_verify_details(file_pr_dir, outcome)),
   )
 }
@@ -717,6 +731,63 @@ async fn file_pr_current_head_sha(
     Some(sha)
   } else {
     None
+  }
+}
+
+///|
+fn file_pr_baseline_advisory_message(
+  command : String,
+  baseline_sha : String,
+) -> String {
+  "verify: " +
+  command +
+  " failed but already red at baseline " +
+  baseline_sha +
+  " -> advisory, not blocking"
+}
+
+///|
+async fn file_pr_failed_verify_advisory(
+  agent_id : String?,
+  file_pr_dir : String,
+  command : String,
+  baseline_sha_for_agent : (String) -> String?,
+  baseline_git_capture : async (@workspace.Command) -> (Int, String),
+  capture : async (@workspace.Command) -> (Int, String),
+  baseline_verify : async (
+    String,
+    String,
+    String,
+    async (@workspace.Command) -> (Int, String),
+    async (@workspace.Command) -> (Int, String),
+  ) -> BaselineOutcome,
+) -> String? {
+  let id = match agent_id {
+    Some(value) => value
+    None => return None
+  }
+  let baseline_sha = match baseline_sha_for_agent(id) {
+    Some(value) => value.trim().to_owned()
+    None => return None
+  }
+  if baseline_sha == "" {
+    return None
+  }
+  match
+    baseline_verify(
+      baseline_sha, command, file_pr_dir, baseline_git_capture, capture,
+    ) {
+    BaselineOutcome::AlreadyRed => {
+      let message = file_pr_baseline_advisory_message(command, baseline_sha)
+      @moontrace.warn(message, fields=[
+        @moontrace.field("event", "verify_baseline_advisory"),
+        @moontrace.field("context", "file_pr_verify"),
+        @moontrace.field("command", command),
+        @moontrace.field("baseline_sha", baseline_sha),
+      ])
+      Some(message)
+    }
+    BaselineOutcome::GreenAtBaseline | BaselineOutcome::Unknown => None
   }
 }
 
@@ -803,6 +874,26 @@ pub async fn file_pr_run_required_verify(
   capture : async (@workspace.Command) -> (Int, String),
   record_verify_outcome? : (FilePrVerifyOutcome) -> Unit = fn(_outcome) { () },
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
+  agent_id? : String? = None,
+  baseline_sha_for_agent? : (String) -> String? = fn(_) { None },
+  baseline_git_capture? : async (@workspace.Command) -> (Int, String) = capture,
+  baseline_verify? : async (
+    String,
+    String,
+    String,
+    async (@workspace.Command) -> (Int, String),
+    async (@workspace.Command) -> (Int, String),
+  ) -> BaselineOutcome = async fn(
+    baseline_sha,
+    command,
+    project_dir,
+    git_capture,
+    capture,
+  ) {
+    baseline_verify_command_outcome(
+      baseline_sha, command, project_dir, git_capture, capture,
+    )
+  },
 ) -> Result[Array[FilePrVerifyOutcome], @types.ChoirError] {
   let outcomes : Array[FilePrVerifyOutcome] = []
   let head_sha = file_pr_current_head_sha(file_pr_dir, capture)
@@ -829,15 +920,24 @@ pub async fn file_pr_run_required_verify(
     let (exit_code, output) = capture(
       file_pr_verify_command(command, file_pr_dir),
     )
+    let advisory = if exit_code <= 0 {
+      None
+    } else {
+      file_pr_failed_verify_advisory(
+        agent_id, file_pr_dir, command, baseline_sha_for_agent, baseline_git_capture,
+        capture, baseline_verify,
+      )
+    }
     let outcome : FilePrVerifyOutcome = {
       command,
       exit_code,
       output_tail: file_pr_verify_output_tail(output),
       head_sha,
+      advisory,
     }
     outcomes.push(outcome)
     record_verify_outcome(outcome)
-    if exit_code != 0 {
+    if exit_code != 0 && advisory is None {
       return Err(file_pr_verify_failure_error(file_pr_dir, outcome))
     }
   }
@@ -857,6 +957,10 @@ fn file_pr_verify_pr_body_section(
     lines.push("  - exit: " + outcome.exit_code.to_string())
     match outcome.head_sha {
       Some(sha) => lines.push("  - head: " + sha)
+      None => ()
+    }
+    match outcome.advisory {
+      Some(message) => lines.push("  - " + message)
       None => ()
     }
     if outcome.output_tail != "" {
@@ -1139,6 +1243,25 @@ pub async fn interpret_file_pr(
   task_contract_reader? : (String) -> @types.TaskContract? = fn(_) { None },
   tdd_phase_reader? : (String) -> @types.LeafTddPhase? = fn(_) { None },
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
+  baseline_sha_for_agent? : (String) -> String? = fn(_) { None },
+  baseline_git_capture? : async (@workspace.Command) -> (Int, String) = capture,
+  baseline_verify? : async (
+    String,
+    String,
+    String,
+    async (@workspace.Command) -> (Int, String),
+    async (@workspace.Command) -> (Int, String),
+  ) -> BaselineOutcome = async fn(
+    baseline_sha,
+    command,
+    project_dir,
+    git_capture,
+    capture,
+  ) {
+    baseline_verify_command_outcome(
+      baseline_sha, command, project_dir, git_capture, capture,
+    )
+  },
   skip_copilot_on_feature_branch? : Bool = @types.Config::default().pr_policy.skip_copilot_on_feature_branch,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> @types.Response {
@@ -1195,6 +1318,10 @@ pub async fn interpret_file_pr(
             )
           },
           moon_verify_target~,
+          agent_id=Some(tracked_agent_id),
+          baseline_sha_for_agent~,
+          baseline_git_capture~,
+          baseline_verify~,
         ) {
         Ok(outcomes) => outcomes
         Err(e) => return @types.Response::Err(e.message())

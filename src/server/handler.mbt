@@ -343,6 +343,9 @@ pub async fn ServerState::handle_with_runner_and_capture(
       tdd_state_writer=fn(agent_id, state) {
         self.record_leaf_tdd_state(agent_id, state)
       },
+      baseline_sha_for_agent=fn(agent_id) {
+        self.baseline_sha_for_agent(agent_id)
+      },
       list_panes_cache=Some(self.list_panes_cache),
       plugins_json=self.config.plugins_json,
       reviewer=self.config.pr_policy.reviewer,

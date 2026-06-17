@@ -872,6 +872,25 @@ pub async fn dispatch(
   tdd_phase_reader? : (String) -> @types.LeafTddPhase? = fn(_) { None },
   tdd_state_reader? : (String) -> @types.LeafTddState? = fn(_) { None },
   tdd_state_writer? : (String, @types.LeafTddState) -> Unit = fn(_, _) { () },
+  baseline_sha_for_agent? : (String) -> String? = fn(_) { None },
+  baseline_git_capture? : async (@workspace.Command) -> (Int, String) = capture,
+  baseline_verify? : async (
+    String,
+    String,
+    String,
+    async (@workspace.Command) -> (Int, String),
+    async (@workspace.Command) -> (Int, String),
+  ) -> BaselineOutcome = async fn(
+    baseline_sha,
+    command,
+    project_dir,
+    git_capture,
+    capture,
+  ) {
+    baseline_verify_command_outcome(
+      baseline_sha, command, project_dir, git_capture, capture,
+    )
+  },
   list_panes_cache? : Map[String, CachedListPanesSnapshot]? = None,
   caller_id? : String? = None,
   caller_role? : @types.Role = @types.Role::TL,
@@ -1225,6 +1244,9 @@ pub async fn dispatch(
         task_contract_reader~,
         tdd_phase_reader~,
         moon_verify_target~,
+        baseline_sha_for_agent~,
+        baseline_git_capture~,
+        baseline_verify~,
         skip_copilot_on_feature_branch~,
         sleep_fn~,
       )
@@ -1253,6 +1275,9 @@ pub async fn dispatch(
         registry~,
         task_contract_reader~,
         capture~,
+        baseline_sha_for_agent~,
+        baseline_git_capture~,
+        baseline_verify~,
       )
     ToolRequest::MergePr(merge_args) => {
       let resp = interpret_merge_pr(
@@ -2043,6 +2068,25 @@ pub async fn handle_request(
   tdd_phase_reader? : (String) -> @types.LeafTddPhase? = fn(_) { None },
   tdd_state_reader? : (String) -> @types.LeafTddState? = fn(_) { None },
   tdd_state_writer? : (String, @types.LeafTddState) -> Unit = fn(_, _) { () },
+  baseline_sha_for_agent? : (String) -> String? = fn(_) { None },
+  baseline_git_capture? : async (@workspace.Command) -> (Int, String) = capture,
+  baseline_verify? : async (
+    String,
+    String,
+    String,
+    async (@workspace.Command) -> (Int, String),
+    async (@workspace.Command) -> (Int, String),
+  ) -> BaselineOutcome = async fn(
+    baseline_sha,
+    command,
+    project_dir,
+    git_capture,
+    capture,
+  ) {
+    baseline_verify_command_outcome(
+      baseline_sha, command, project_dir, git_capture, capture,
+    )
+  },
   list_panes_cache? : Map[String, CachedListPanesSnapshot]? = None,
   plugins_json? : String? = None,
   reviewer? : @types.Reviewer = @types.Config::default().pr_policy.reviewer,
@@ -2181,6 +2225,9 @@ pub async fn handle_request(
                   tdd_phase_reader~,
                   tdd_state_reader~,
                   tdd_state_writer~,
+                  baseline_sha_for_agent~,
+                  baseline_git_capture~,
+                  baseline_verify~,
                   list_panes_cache~,
                   caller_id=tool_args_get(tool_args, "caller_id"),
                   caller_role=req.role,
