@@ -72,6 +72,23 @@ fn record_fork_wave_spawn_credentials(
 }
 
 ///|
+fn remove_fork_wave_spawn_credentials(
+  registry : @registry.AgentRegistry?,
+  spawned_specs : Array[@types.SpawnSpec],
+) -> Unit {
+  match registry {
+    Some(_) =>
+      for spec in spawned_specs {
+        remove_spawn_credential_for_agent(
+          registry,
+          @workspace.canonical_agent_id(spec),
+        )
+      }
+    None => ()
+  }
+}
+
+///|
 fn fork_wave_test_args(child_role : @types.Role) -> ForkWaveArgs {
   {
     count: 1,
@@ -134,6 +151,56 @@ test "fork_wave spawn plan exports and records authoritative credential role" {
     }
     None => fail("expected fork_wave spawn credential")
   }
+}
+
+///|
+async test "fork_wave spawn failure removes recorded credentials" {
+  let reg = @registry.AgentRegistry::new()
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    let statuses : Array[Int] = []
+    for _ in cmds {
+      statuses.push(1)
+    }
+    statuses
+  }
+  let capture = async fn(_cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    (0, "spawn failed")
+  }
+  let git_capture = async fn(
+    _program : String,
+    _args : Array[String],
+  ) -> String {
+    @async.sleep(0)
+    ""
+  }
+  let mint_agent_token = async fn() -> Result[String, @types.ChoirError] {
+    @async.sleep(0)
+    Ok("fork-token-fail")
+  }
+  let (resp, _, spawn_plan) = interpret_fork_wave_spawn_effect_phase(
+    { ..fork_wave_test_args(@types.Role::Dev), parent_branch: "feature/parent" },
+    "/repo",
+    "sess",
+    Some(reg),
+    capture,
+    git_capture,
+    runner,
+    mint_agent_token=Some(mint_agent_token),
+    read_file=fn(_) { "" },
+  )
+  match resp {
+    @types.Response::Err(_) => ()
+    @types.Response::Ok(_) => fail("expected fork_wave spawn failure")
+  }
+  assert_eq(spawn_plan.spawned_count, 1)
+  @debug.assert_eq(
+    reg.credential_for_agent(
+      @workspace.canonical_agent_id(spawn_plan.spawned_specs[0]),
+    ),
+    None,
+  )
 }
 
 ///|
@@ -748,7 +815,7 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
   tcp_auth_token? : String? = None,
   wave_id? : String? = None,
   read_file? : (String) -> String = @sys.read_file,
-  mint_agent_token? : async () -> Result[String, @types.ChoirError] = default_mint_spawn_agent_token,
+  mint_agent_token? : (async () -> Result[String, @types.ChoirError])? = None,
   record_spawn_launch_diagnostic? : (SpawnLaunchDiagnostic) -> Unit = fn(_) {
     ()
   },
@@ -789,7 +856,7 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
   }
   let agent_tokens : Array[String] = []
   for _i = 0; _i < fork_wave_args.count; _i = _i + 1 {
-    match mint_agent_token() {
+    match mint_spawn_agent_token(capture, mint_agent_token) {
       Ok(token) => agent_tokens.push(token)
       Err(e) =>
         return (
@@ -874,6 +941,9 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
     cmds=spawn_plan.cmds,
     captured_outputs=spawn_launch_captured_outputs,
   )
+  if !resp.is_ok() {
+    remove_fork_wave_spawn_credentials(registry, spawn_plan.spawned_specs)
+  }
   match wave_id {
     Some(id) =>
       if resp.is_ok() && spawn_plan.spawned_count > 0 {

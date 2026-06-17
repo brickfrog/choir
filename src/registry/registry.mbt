@@ -78,6 +78,14 @@ pub fn AgentRegistry::record_spawn_credential(
 }
 
 ///|
+pub fn AgentRegistry::remove_spawn_credential(
+  self : AgentRegistry,
+  agent_id : String,
+) -> Unit {
+  self.spawn_credentials.remove(agent_id)
+}
+
+///|
 pub fn AgentRegistry::credential_for_agent(
   self : AgentRegistry,
   agent_id : String,
@@ -574,4 +582,6 @@ test "agent registry records authoritative spawn credentials" {
   }
   @debug.assert_eq(reg.credential_for_agent("main.unknown"), None)
   assert_true(reg.spawn_credentials.contains("main.leaf-a"))
+  reg.remove_spawn_credential("main.leaf-a")
+  @debug.assert_eq(reg.credential_for_agent("main.leaf-a"), None)
 }

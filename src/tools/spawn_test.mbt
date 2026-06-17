@@ -293,8 +293,27 @@ test "launch_commands inline dedicated tab uses zellij new-tab" {
 }
 
 ///|
-async fn mock_capture_origin_main(_cmd : @workspace.Command) -> (Int, String) {
+fn spawn_test_agent_token_output() -> String {
+  "00 11 22 33 44 55 66 77 88 99 aa bb cc dd ee ff 10 21 32 43 54 65 76 87 98 a9 ba cb dc ed fe 0f\n"
+}
+
+///|
+fn spawn_test_is_agent_token_command(cmd : @workspace.Command) -> Bool {
+  cmd.program == "od" && cmd.args == ["-An", "-tx1", "-N32", "/dev/urandom"]
+}
+
+///|
+async fn spawn_test_mint_agent_token() -> Result[String, @types.ChoirError] {
   @async.sleep(0)
+  Ok("spawn-test-token")
+}
+
+///|
+async fn mock_capture_origin_main(cmd : @workspace.Command) -> (Int, String) {
+  @async.sleep(0)
+  if spawn_test_is_agent_token_command(cmd) {
+    return (0, spawn_test_agent_token_output())
+  }
   (0, "origin/main\n")
 }
 
@@ -525,6 +544,9 @@ async test "interpret_spawn_worker isolated review targets explicit parent branc
   let saw_default_branch : Array[Bool] = [false]
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if spawn_test_is_agent_token_command(cmd) {
+      return (0, spawn_test_agent_token_output())
+    }
     if cmd.program == "git" && cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
       saw_current_branch[0] = true
       return (0, "main\n")
@@ -654,6 +676,9 @@ async test "interpret_spawn_worker gemini seeds agy shared cache before default 
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
     capture_seen.push(cmd.program + " " + cmd.args.join(" "))
+    if spawn_test_is_agent_token_command(cmd) {
+      return (0, spawn_test_agent_token_output())
+    }
     if cmd.program == "agy" && cmd.args == ["--help"] {
       return (0, "")
     }
@@ -776,6 +801,9 @@ async test "interpret_spawn_worker gemini warns and proceeds after revalidate se
   }
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if spawn_test_is_agent_token_command(cmd) {
+      return (0, spawn_test_agent_token_output())
+    }
     if cmd.program == "agy" && cmd.args == ["--help"] {
       return (0, "")
     }
@@ -881,6 +909,9 @@ async test "interpret_spawn_worker gemini warns with bootstrap stderr without re
   let bootstrap_captures : Array[Int] = [0]
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if spawn_test_is_agent_token_command(cmd) {
+      return (0, spawn_test_agent_token_output())
+    }
     if cmd.program == "agy" && cmd.args == ["--help"] {
       return (0, "")
     }
@@ -1211,6 +1242,9 @@ async test "interpret_spawn_worker mirrors assigned beads on success" {
     mock_runner_all_ok,
     async fn(cmd : @workspace.Command) -> (Int, String) {
       @async.sleep(0)
+      if spawn_test_is_agent_token_command(cmd) {
+        return (0, spawn_test_agent_token_output())
+      }
       if cmd.program == "bd" {
         seen.push(cmd.args.join(" "))
       }
@@ -1292,7 +1326,10 @@ async test "interpret_spawn_remote returns plan ok when runner succeeds" {
     parent_session_id: None,
   }
   let got = interpret_spawn_remote(
-    spawn_args, mock_runner_all_ok, mock_capture_empty,
+    spawn_args,
+    mock_runner_all_ok,
+    mock_capture_empty,
+    mint_agent_token=Some(spawn_test_mint_agent_token),
   )
   match got {
     @types.Response::Ok(fields) => {
@@ -1320,7 +1357,10 @@ async test "interpret_spawn_remote returns err when run_strict fails" {
     parent_session_id: None,
   }
   let got = interpret_spawn_remote(
-    spawn_args, mock_runner_first_fails, mock_capture_empty,
+    spawn_args,
+    mock_runner_first_fails,
+    mock_capture_empty,
+    mint_agent_token=Some(spawn_test_mint_agent_token),
   )
   match got {
     @types.Response::Err(msg) =>
@@ -1413,7 +1453,12 @@ async test "interpret_spawn_gemini returns plan ok when runner succeeds" {
     parent_session_id: None,
   }
   let got = interpret_spawn_gemini(
-    spawn_args, "/tmp/p", "choir", mock_runner_all_ok, mock_capture_empty,
+    spawn_args,
+    "/tmp/p",
+    "choir",
+    mock_runner_all_ok,
+    mock_capture_empty,
+    mint_agent_token=Some(spawn_test_mint_agent_token),
   )
   match got {
     @types.Response::Ok(fields) => {
@@ -1437,7 +1482,12 @@ async test "interpret_spawn_gemini returns err when run_strict fails" {
     parent_session_id: None,
   }
   let got = interpret_spawn_gemini(
-    spawn_args, "/tmp/p", "choir", mock_runner_first_fails, mock_capture_empty,
+    spawn_args,
+    "/tmp/p",
+    "choir",
+    mock_runner_first_fails,
+    mock_capture_empty,
+    mint_agent_token=Some(spawn_test_mint_agent_token),
   )
   match got {
     @types.Response::Err(msg) =>

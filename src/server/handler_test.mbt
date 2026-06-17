@@ -9329,8 +9329,21 @@ async fn spawn_registration_capture_runner(
 }
 
 ///|
+fn spawn_registration_agent_token_output() -> String {
+  "00 11 22 33 44 55 66 77 88 99 aa bb cc dd ee ff 10 21 32 43 54 65 76 87 98 a9 ba cb dc ed fe 0f\n"
+}
+
+///|
+fn spawn_registration_is_agent_token_command(cmd : @workspace.Command) -> Bool {
+  cmd.program == "od" && cmd.args == ["-An", "-tx1", "-N32", "/dev/urandom"]
+}
+
+///|
 async fn spawn_registration_capture(cmd : @workspace.Command) -> (Int, String) {
   @async.sleep(0)
+  if spawn_registration_is_agent_token_command(cmd) {
+    return (0, spawn_registration_agent_token_output())
+  }
   if cmd.program == "git" &&
     cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
     return (0, "origin/main\n")
@@ -9595,6 +9608,9 @@ async test "spawn command failure diagnostic travels dispatch to NeverRegistered
   }
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if spawn_registration_is_agent_token_command(cmd) {
+      return (0, spawn_registration_agent_token_output())
+    }
     if cmd.program == "zellij" && cmd.args.contains("new-tab") {
       zellij_launch_captures[0] = zellij_launch_captures[0] + 1
       return (
@@ -9683,6 +9699,9 @@ async test "successful spawn launch diagnostic travels dispatch to launched time
   }
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if spawn_registration_is_agent_token_command(cmd) {
+      return (0, spawn_registration_agent_token_output())
+    }
     if cmd.program == "zellij" && cmd.args.contains("new-tab") {
       zellij_launch_captures[0] = zellij_launch_captures[0] + 1
       return (0, "")
