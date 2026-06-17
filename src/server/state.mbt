@@ -614,6 +614,60 @@ pub fn ServerState::task_contract_for_agent(
 }
 
 ///|
+fn ServerState::wave_id_for_agent(
+  self : ServerState,
+  agent_id : String,
+) -> String? {
+  let workspace = try self.registry.get(agent_id).workspace catch {
+    _ => return None
+  } noraise {
+    value => value
+  }
+  let content = (self.read_file)(workspace + "/.choir/config.local.toml")
+  if content.trim() == "" {
+    return None
+  }
+  match @config.parse_local_config(content) {
+    Ok(local_cfg) => local_cfg.wave_id
+    Err(_) => None
+  }
+}
+
+///|
+pub fn ServerState::baseline_sha_for_agent(
+  self : ServerState,
+  agent_id : String,
+) -> String? {
+  let wave_id = match self.wave_id_for_agent(agent_id) {
+    Some(id) => id
+    None => return None
+  }
+  let content = (self.read_file)(
+    @tools.wave_index_path(self.config.project_dir, wave_id),
+  )
+  if content.trim() == "" {
+    return None
+  }
+  match @tools.parse_wave_index_json(content) {
+    Ok(idx) => {
+      let mut contains_agent = false
+      for existing in idx.agent_ids {
+        if existing == agent_id {
+          contains_agent = true
+          break
+        }
+      }
+      if !contains_agent || idx.baseline_sha.trim() == "" {
+        None
+      } else {
+        Some(idx.baseline_sha.trim().to_owned())
+      }
+    }
+    Err(_) => None
+  }
+}
+
+///|
 pub fn ServerState::repair_task_contract_for_agent(
   self : ServerState,
   agent_id : String,
@@ -667,6 +721,58 @@ pub fn ServerState::with_read_file(
   read_file : (String) -> String,
 ) -> ServerState {
   { ..self, read_file, }
+}
+
+///|
+test "baseline_sha_for_agent reads agent wave baseline" {
+  let project_dir = "/tmp/choir-agent-wave-baseline-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let agent_id = "feature-base.leaf-0"
+  let workspace = project_dir + "/.choir/worktrees/leaf-0"
+  let wave_path = @tools.wave_index_path(project_dir, "wv-baseline")
+  let idx = @tools.WaveIndex::new(
+    "wv-baseline",
+    "feature-base",
+    1776000000000L,
+    [agent_id],
+    baseline_sha="abc123baseline",
+  )
+  let state = ServerState::new(
+    { ..@types.Config::default(), project_dir, },
+    make_hermetic_recovery_provider(),
+    write_file_atomic=fn(_path, _content) { true },
+  ).with_read_file(fn(path) {
+    if path == workspace + "/.choir/config.local.toml" {
+      "wave_id = \"wv-baseline\"\n"
+    } else if path == wave_path {
+      @tools.render_wave_index_json(idx)
+    } else {
+      ""
+    }
+  })
+  ignore(
+    state.registry.insert({
+      agent_id: @types.AgentId(agent_id),
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some("feature-base"),
+      workspace,
+      branch: agent_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      state: @types.AgentState::Active,
+      spawn_depth: 0,
+    }),
+  )
+
+  @debug.assert_eq(
+    state.baseline_sha_for_agent(agent_id),
+    Some("abc123baseline"),
+  )
+  @debug.assert_eq(state.baseline_sha_for_agent("missing-agent"), None)
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
