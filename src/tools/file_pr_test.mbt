@@ -1377,6 +1377,57 @@ async test "interpret_file_pr skips required verify when branch preflight fails"
 }
 
 ///|
+async test "interpret_file_pr accepts root tracked PR without contract" {
+  let project_dir = "/tmp/choir-fpr-root-missing-contract-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  let mut ensure_pr_called = false
+  let mut verify_capture_called = false
+  let got = interpret_file_pr(
+    {
+      branch: "feature/root-pr",
+      parent_branch: Some("main"),
+      tracked_agent_id: "root",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    None,
+    @types.Reviewer::None,
+    mock_preflight_ok,
+    mock_runner_all_ok,
+    fn(cmd : @workspace.Command) -> (Int, String) {
+      if cmd.program == "sh" {
+        verify_capture_called = true
+      }
+      (0, "")
+    },
+    fn(
+      _branch : String,
+      _parent_branch : String,
+      _dir : String,
+      _title : String?,
+      _body : String?,
+    ) -> Result[PullRequestInfo, @types.ChoirError] {
+      ensure_pr_called = true
+      Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
+    },
+    sleep_fn=file_pr_test_no_sleep,
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    @types.Response::Err(msg) =>
+      fail("expected root PR without contract to pass: " + msg)
+  }
+  assert_false(verify_capture_called)
+  assert_true(ensure_pr_called)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "interpret_file_pr fails closed when server task contract is missing" {
   let project_dir = "/tmp/choir-fpr-missing-contract-" +
     @sys.get_pid().to_string()
