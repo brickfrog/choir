@@ -1433,6 +1433,83 @@ async fn mock_git_capture_fork_wave_clean(
 }
 
 ///|
+async test "interpret_fork_wave_spawn_effect_phase records origin parent branch baseline" {
+  let project_dir = "/tmp/choir-fork-wave-baseline-origin-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let wave_id = "wv-origin-baseline"
+  ignore(@sys.rm_rf(project_dir))
+  match
+    save_wave_index(
+      project_dir,
+      WaveIndex::new(wave_id, "feature/parent", 1776000000000L, []),
+    ) {
+    Ok(_) => ()
+    Err(e) => {
+      ignore(@sys.rm_rf(project_dir))
+      fail(e.message())
+      return
+    }
+  }
+  let git_calls : Array[String] = []
+  let git_capture = async fn(program : String, args : Array[String]) -> String {
+    @async.sleep(0)
+    assert_eq(program, "git")
+    git_calls.push(args.join(" "))
+    if args == ["-C", project_dir, "status", "--porcelain"] {
+      return ""
+    }
+    if args == ["-C", project_dir, "log", "--oneline", "@{u}..HEAD"] {
+      return ""
+    }
+    if args == ["-C", project_dir, "rev-parse", "origin/feature/parent"] {
+      return "origin-parent-sha\n"
+    }
+    if args == ["-C", project_dir, "rev-parse", "HEAD"] {
+      return "server-head-sha\n"
+    }
+    fail("unexpected git args: " + args.join(" "))
+    ""
+  }
+  let args = {
+    ..fork_wave_args_base(),
+    count: 1,
+    tasks: ["shared task"],
+    task_contracts: [
+      { ..@types.TaskContract::empty(), goal: "shared task", verify: ["true"] },
+    ],
+    parent_branch: "feature/parent",
+  }
+  let (resp, _, spawn_plan) = interpret_fork_wave_spawn_effect_phase(
+    args,
+    project_dir,
+    "choir",
+    None,
+    mock_capture_fork_wave_must_not_run,
+    git_capture,
+    mock_runner_all_ok,
+    wave_id=Some(wave_id),
+  )
+  assert_eq(spawn_plan.spawned_count, 1)
+  match resp {
+    @types.Response::Ok(fields) =>
+      @debug.assert_eq(fields.get("status"), Some("spawned"))
+    @types.Response::Err(msg) => {
+      ignore(@sys.rm_rf(project_dir))
+      fail("unexpected err: " + msg)
+      return
+    }
+  }
+  match load_wave_index(project_dir, wave_id) {
+    Ok(idx) => assert_eq(idx.baseline_sha, "origin-parent-sha")
+    Err(e) => fail(e.message())
+  }
+  assert_false(git_calls.contains("-C " + project_dir + " rev-parse HEAD"))
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async fn mock_git_capture_fork_wave_scaffold_changed(
   program : String,
   args : Array[String],
