@@ -50,6 +50,7 @@ struct ServeUDSClient {
   connected_at_sec : Int64
   mut last_request_name : String?
   mut busy : Bool
+  mut close_after_response : Bool
 }
 
 ///|
@@ -62,6 +63,7 @@ fn ServeUDSClient::new(fd : Int) -> ServeUDSClient {
     connected_at_sec: @poller.now_sec(),
     last_request_name: None,
     busy: false,
+    close_after_response: false,
   }
 }
 
@@ -129,7 +131,10 @@ fn serve_replace_self_after_reload_ack(
 }
 
 ///|
-fn lifecycle_agent_id_for_register(req : @types.Request) -> String? {
+fn lifecycle_agent_id_for_register(
+  req : @types.Request,
+  authenticated_agent_id : String,
+) -> String? {
   if req.req_method != "register" {
     return None
   }
@@ -142,19 +147,104 @@ fn lifecycle_agent_id_for_register(req : @types.Request) -> String? {
       }
     None => ()
   }
-  req.args.get("agent_id")
+  Some(authenticated_agent_id)
 }
 
 ///|
 fn register_connection_agent_id_after_response(
   req : @types.Request,
   resp : @types.Response,
+  authenticated_agent_id : String?,
 ) -> String? {
   if req.req_method == "register" && resp.is_ok() {
-    lifecycle_agent_id_for_register(req)
+    match authenticated_agent_id {
+      Some(agent_id) => lifecycle_agent_id_for_register(req, agent_id)
+      None => None
+    }
   } else {
     None
   }
+}
+
+///|
+priv enum ServeRegisterAuth {
+  Authorized(@types.Request, String?)
+  Rejected(@types.Response)
+}
+
+///|
+fn serve_registration_auth_failed_response() -> @types.Response {
+  @types.Response::Err("registration authentication failed")
+}
+
+///|
+fn serve_constant_timeish_string_equal(a : String, b : String) -> Bool {
+  let len_a = a.length()
+  let len_b = b.length()
+  let max_len = if len_a > len_b { len_a } else { len_b }
+  let mut equal = len_a == len_b
+  for i = 0; i < max_len; i = i + 1 {
+    let a_unit = if i < len_a { a.code_unit_at(i) } else { 0 }
+    let b_unit = if i < len_b { b.code_unit_at(i) } else { 0 }
+    if a_unit != b_unit {
+      equal = false
+    }
+  }
+  equal
+}
+
+///|
+fn serve_authenticate_register_request(
+  state : @server.ServerState,
+  req : @types.Request,
+) -> ServeRegisterAuth {
+  if req.req_method != "register" {
+    return ServeRegisterAuth::Authorized(req, None)
+  }
+  let claimed_agent_id = match req.args.get("agent_id") {
+    Some(v) =>
+      if v == "" {
+        return ServeRegisterAuth::Rejected(
+          serve_registration_auth_failed_response(),
+        )
+      } else {
+        v
+      }
+    None =>
+      return ServeRegisterAuth::Rejected(
+        serve_registration_auth_failed_response(),
+      )
+  }
+  let presented_token = match req.registration_token() {
+    Some(v) => v
+    None =>
+      return ServeRegisterAuth::Rejected(
+        serve_registration_auth_failed_response(),
+      )
+  }
+  if presented_token == "" {
+    return ServeRegisterAuth::Rejected(
+      serve_registration_auth_failed_response(),
+    )
+  }
+  let credential = match state.registry.credential_for_agent(claimed_agent_id) {
+    Some(value) => value
+    None =>
+      return ServeRegisterAuth::Rejected(
+        serve_registration_auth_failed_response(),
+      )
+  }
+  if credential.token == "" ||
+    !serve_constant_timeish_string_equal(presented_token, credential.token) {
+    return ServeRegisterAuth::Rejected(
+      serve_registration_auth_failed_response(),
+    )
+  }
+  let effective_req = { ..req, role: credential.role }
+  ServeRegisterAuth::Authorized(
+    effective_req,
+    lifecycle_agent_id_for_register(effective_req, claimed_agent_id),
+  )
 }
 
 ///|
@@ -163,6 +253,7 @@ struct ServeRequestLineResult {
   request_name : String?
   saw_register : Bool
   connected_agent_id : String?
+  drop_connection : Bool
   reload_request : @types.Request?
 }
 
@@ -218,6 +309,7 @@ async fn serve_handle_jsonrpc_request_line(
             request_name: Some(rpc.req_method),
             saw_register: false,
             connected_agent_id: None,
+            drop_connection: false,
             reload_request: None,
           }
       }
@@ -229,6 +321,7 @@ async fn serve_handle_jsonrpc_request_line(
           request_name: Some(rpc.req_method),
           saw_register: false,
           connected_agent_id: None,
+          drop_connection: false,
           reload_request: None,
         }
       }
@@ -242,6 +335,7 @@ async fn serve_handle_jsonrpc_request_line(
           request_name: Some(rpc.req_method),
           saw_register: false,
           connected_agent_id: None,
+          drop_connection: false,
           reload_request: None,
         }
       }
@@ -262,6 +356,7 @@ async fn serve_handle_jsonrpc_request_line(
               request_name: Some(req.name),
               saw_register: false,
               connected_agent_id: None,
+              drop_connection: false,
               reload_request: None,
             }
           }
@@ -273,6 +368,7 @@ async fn serve_handle_jsonrpc_request_line(
             request_name: Some(req.name),
             saw_register: false,
             connected_agent_id: None,
+            drop_connection: false,
             reload_request: if allow_reload &&
               serve_is_reload_request(req) &&
               resp.is_ok() {
@@ -292,13 +388,13 @@ async fn serve_handle_jsonrpc_request_line(
             request_name: Some(rpc.req_method),
             saw_register: false,
             connected_agent_id: None,
+            drop_connection: false,
             reload_request: None,
           }
       }
     }
     Err(e) => {
       @moontrace.warn("jsonrpc parse error", fields=[
-        @moontrace.field("line", line),
         @moontrace.field("error", e.message),
       ])
       {
@@ -310,7 +406,58 @@ async fn serve_handle_jsonrpc_request_line(
         request_name: None,
         saw_register: false,
         connected_agent_id: None,
+        drop_connection: false,
         reload_request: None,
+      }
+    }
+  }
+}
+
+///|
+async fn serve_handle_parsed_custom_request(
+  state : @server.ServerState,
+  req : @types.Request,
+  allow_reload : Bool,
+) -> ServeRequestLineResult {
+  let saw_register = req.req_method == "register"
+  if !allow_reload && serve_is_reload_request(req) {
+    let resp = @types.Response::Err("server_reload requires the UDS transport")
+    return {
+      response_line: Some(@transport.format_response(resp) + "\n"),
+      request_name: Some(req.name),
+      saw_register,
+      connected_agent_id: None,
+      drop_connection: false,
+      reload_request: None,
+    }
+  }
+  match serve_authenticate_register_request(state, req) {
+    ServeRegisterAuth::Rejected(resp) =>
+      {
+        response_line: Some(@transport.format_response(resp) + "\n"),
+        request_name: Some(req.name),
+        saw_register,
+        connected_agent_id: None,
+        drop_connection: true,
+        reload_request: None,
+      }
+    ServeRegisterAuth::Authorized(effective_req, authenticated_agent_id) => {
+      let resp = serve_handle_internal_request(state, effective_req)
+      {
+        response_line: Some(@transport.format_response(resp) + "\n"),
+        request_name: Some(effective_req.name),
+        saw_register,
+        connected_agent_id: register_connection_agent_id_after_response(
+          effective_req, resp, authenticated_agent_id,
+        ),
+        drop_connection: false,
+        reload_request: if allow_reload &&
+          serve_is_reload_request(effective_req) &&
+          resp.is_ok() {
+          Some(effective_req)
+        } else {
+          None
+        },
       }
     }
   }
@@ -323,45 +470,16 @@ async fn serve_handle_custom_request_line(
   allow_reload : Bool,
 ) -> ServeRequestLineResult {
   match @transport.parse_request(line) {
-    Ok(req) => {
-      let saw_register = req.req_method == "register"
-      if !allow_reload && serve_is_reload_request(req) {
-        let resp = @types.Response::Err(
-          "server_reload requires the UDS transport",
-        )
-        return {
-          response_line: Some(@transport.format_response(resp) + "\n"),
-          request_name: Some(req.name),
-          saw_register,
-          connected_agent_id: None,
-          reload_request: None,
-        }
-      }
-      let resp = serve_handle_internal_request(state, req)
-      {
-        response_line: Some(@transport.format_response(resp) + "\n"),
-        request_name: Some(req.name),
-        saw_register,
-        connected_agent_id: register_connection_agent_id_after_response(
-          req, resp,
-        ),
-        reload_request: if allow_reload &&
-          serve_is_reload_request(req) &&
-          resp.is_ok() {
-          Some(req)
-        } else {
-          None
-        },
-      }
-    }
+    Ok(req) => serve_handle_parsed_custom_request(state, req, allow_reload)
     Err(err) => {
-      @moontrace.warn("parse error", fields=[@moontrace.field("line", line)])
+      @moontrace.warn("parse error", fields=[@moontrace.field("error", err)])
       let resp = @types.Response::Err("parse error: " + err)
       {
         response_line: Some(@transport.format_response(resp) + "\n"),
         request_name: None,
         saw_register: false,
         connected_agent_id: None,
+        drop_connection: false,
         reload_request: None,
       }
     }
@@ -392,7 +510,7 @@ test "lifecycle_agent_id_for_register ignores one-shot clients" {
       "connection_lifetime": "oneshot",
     }),
   }
-  @debug.assert_eq(lifecycle_agent_id_for_register(req), None)
+  @debug.assert_eq(lifecycle_agent_id_for_register(req, "main.leaf"), None)
 }
 
 ///|
@@ -406,7 +524,10 @@ test "lifecycle_agent_id_for_register keeps session clients" {
       "connection_lifetime": "session",
     }),
   }
-  @debug.assert_eq(lifecycle_agent_id_for_register(req), Some("main.leaf"))
+  @debug.assert_eq(
+    lifecycle_agent_id_for_register(req, "main.leaf"),
+    Some("main.leaf"),
+  )
 }
 
 ///|
@@ -449,6 +570,179 @@ fn serve_test_state_with_root(label : String) -> (@server.ServerState, String) {
     expires_at_unix_ms: 9_999_999_999_999L,
   })
   (state, project_dir)
+}
+
+///|
+fn serve_test_upsert_agent(
+  state : @server.ServerState,
+  agent_id : String,
+  role : @types.Role,
+  project_dir : String,
+) -> Unit {
+  ignore(
+    state.registry.upsert({
+      agent_id,
+      role,
+      agent_type: @types.AgentType::Codex,
+      parent: Some("root"),
+      workspace: project_dir,
+      branch: agent_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+}
+
+///|
+fn serve_test_record_credential(
+  state : @server.ServerState,
+  agent_id : String,
+  role : @types.Role,
+  token : String,
+) -> Unit {
+  state.registry.record_spawn_credential(agent_id, { role, token })
+}
+
+///|
+fn serve_test_register_line(
+  agent_id : String,
+  wire_role : String,
+  token : String,
+  project_dir : String,
+) -> String {
+  "{\"method\":\"register\",\"role\":\"" +
+  wire_role +
+  "\",\"name\":\"register\",\"args\":{\"agent_id\":\"" +
+  agent_id +
+  "\",\"agent_type\":\"codex\",\"branch\":\"" +
+  agent_id +
+  "\",\"workspace\":\"" +
+  project_dir +
+  "\",\"token\":\"" +
+  token +
+  "\"}}"
+}
+
+///|
+fn serve_assert_register_ok(
+  state : @server.ServerState,
+  result : ServeRequestLineResult,
+  agent_id : String,
+  expected_role : @types.Role,
+) -> Unit raise {
+  assert_true(result.saw_register)
+  @debug.assert_eq(result.connected_agent_id, Some(agent_id))
+  assert_false(result.drop_connection)
+  match result.response_line {
+    Some(resp_line) =>
+      match @transport.parse_response(resp_line.trim().to_owned()) {
+        Ok(resp) => assert_true(resp.is_ok())
+        Err(e) => fail("expected parseable response: " + e)
+      }
+    None => fail("expected register response")
+  }
+  assert_eq(state.registry.get(agent_id).role, expected_role)
+}
+
+///|
+fn serve_assert_register_rejected(
+  result : ServeRequestLineResult,
+  secret : String,
+) -> Unit raise {
+  assert_true(result.saw_register)
+  @debug.assert_eq(result.connected_agent_id, None)
+  assert_true(result.drop_connection)
+  match result.response_line {
+    Some(resp_line) => {
+      assert_false(resp_line.contains(secret))
+      match @transport.parse_response(resp_line.trim().to_owned()) {
+        Ok(resp) => {
+          assert_false(resp.is_ok())
+          match resp.error_message() {
+            Some(msg) => assert_false(msg.contains(secret))
+            None => fail("expected rejected register error")
+          }
+        }
+        Err(e) => fail("expected parseable response: " + e)
+      }
+    }
+    None => fail("expected rejected register response")
+  }
+}
+
+///|
+async fn serve_assert_register_token_validation_mode(
+  label : String,
+  allow_reload : Bool,
+) -> Unit {
+  let (state, project_dir) = serve_test_state_with_root(label)
+  let ok_agent = "main." + label + ".ok"
+  serve_test_upsert_agent(state, ok_agent, @types.Role::Worker, project_dir)
+  serve_test_record_credential(
+    state,
+    ok_agent,
+    @types.Role::Worker,
+    "expected-token",
+  )
+  let ok_result = serve_handle_request_line(
+    state,
+    serve_test_register_line(ok_agent, "dev", "expected-token", project_dir),
+    allow_reload,
+  )
+  serve_assert_register_ok(state, ok_result, ok_agent, @types.Role::Worker)
+
+  let wrong_agent = "main." + label + ".wrong"
+  serve_test_upsert_agent(state, wrong_agent, @types.Role::Dev, project_dir)
+  serve_test_record_credential(
+    state,
+    wrong_agent,
+    @types.Role::Dev,
+    "right-token",
+  )
+  let wrong_result = serve_handle_request_line(
+    state,
+    serve_test_register_line(wrong_agent, "dev", "wrong-token", project_dir),
+    allow_reload,
+  )
+  serve_assert_register_rejected(wrong_result, "wrong-token")
+  @debug.assert_eq(state.registry.get(wrong_agent).role, @types.Role::Dev)
+
+  let empty_agent = "main." + label + ".empty"
+  serve_test_upsert_agent(state, empty_agent, @types.Role::Dev, project_dir)
+  serve_test_record_credential(
+    state,
+    empty_agent,
+    @types.Role::Dev,
+    "empty-token",
+  )
+  let empty_result = serve_handle_request_line(
+    state,
+    serve_test_register_line(empty_agent, "dev", "", project_dir),
+    allow_reload,
+  )
+  serve_assert_register_rejected(empty_result, "empty-token")
+
+  let absent_agent = "main." + label + ".absent"
+  serve_test_upsert_agent(state, absent_agent, @types.Role::Dev, project_dir)
+  let absent_result = serve_handle_request_line(
+    state,
+    serve_test_register_line(absent_agent, "dev", "orphan-token", project_dir),
+    allow_reload,
+  )
+  serve_assert_register_rejected(absent_result, "orphan-token")
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "serve UDS register validates spawn credential token" {
+  serve_assert_register_token_validation_mode("uds-token", true)
+}
+
+///|
+async test "serve TCP register validates spawn credential token" {
+  serve_assert_register_token_validation_mode("tcp-token", false)
 }
 
 ///|
@@ -576,12 +870,25 @@ async test "serve rejected register refresh keeps existing disconnect owner" {
   let (state, project_dir) = serve_test_state_with_root("rejected-register")
   let agent_id = "main.good-register"
   let bad_agent_id = "main.bad-register"
+  serve_test_record_credential(
+    state,
+    agent_id,
+    @types.Role::Dev,
+    "good-register-token",
+  )
+  serve_test_record_credential(
+    state,
+    bad_agent_id,
+    @types.Role::Dev,
+    "bad-register-token",
+  )
   let ok_line = "{\"method\":\"register\",\"role\":\"dev\",\"name\":\"register\",\"args\":{\"agent_id\":\"" +
     agent_id +
     "\",\"agent_type\":\"codex\",\"branch\":\"" +
     agent_id +
     "\",\"workspace\":\"" +
     project_dir +
+    "\",\"token\":\"good-register-token" +
     "\"}}"
   let ok_result = serve_handle_request_line(state, ok_line, true)
   assert_true(ok_result.saw_register)
@@ -594,6 +901,7 @@ async test "serve rejected register refresh keeps existing disconnect owner" {
     bad_agent_id +
     "\",\"workspace\":\"" +
     project_dir +
+    "\",\"token\":\"bad-register-token" +
     "\"}}"
   let bad_result = serve_handle_request_line(state, bad_line, true)
   assert_true(bad_result.saw_register)
@@ -673,6 +981,14 @@ async fn serve_handle_connection(
           Some(resp_str) => conn.write(@utf8.encode(resp_str))
           None => ()
         }
+        if result.drop_connection {
+          match connected_agent_id {
+            Some(agent_id) =>
+              state.schedule_disconnect(agent_id, @poller.now_sec())
+            None => ()
+          }
+          return
+        }
       } else {
         i = i + 1
       }
@@ -720,23 +1036,28 @@ async fn serve_handle_uds_request_line(
   client : ServeUDSClient,
   state : @server.ServerState,
   server_fd : Int,
-  line : String,
+  _line : String,
   req : @types.Request,
 ) -> Unit {
-  let resp = serve_handle_internal_request(state, req)
-  if req.req_method == "register" {
-    match register_connection_agent_id_after_response(req, resp) {
-      Some(agent_id) => client.connected_agent_id = Some(agent_id)
-      None => ()
-    }
-  }
-  let resp_str = @transport.format_response(resp) + "\n"
-  @moontrace.trace("request", fields=[@moontrace.field("line", line)])
+  let result = serve_handle_parsed_custom_request(state, req, true)
+  client.connected_agent_id = connected_agent_id_after_request(
+    client.connected_agent_id,
+    result,
+  )
+  let resp_str = result.response_line.unwrap_or("")
+  @moontrace.trace("request", fields=[
+    @moontrace.field("request", result.request_name.unwrap_or("(unknown)")),
+  ])
   @moontrace.trace("response", fields=[@moontrace.field("body", resp_str)])
   serve_write_all_uds(client.fd, @utf8.encode(resp_str))
   client.busy = false
-  if serve_is_reload_request(req) && resp.is_ok() {
-    serve_replace_self_after_reload_ack(server_fd, req)
+  if result.drop_connection {
+    client.close_after_response = true
+  }
+  match result.reload_request {
+    Some(reload_req) =>
+      serve_replace_self_after_reload_ack(server_fd, reload_req)
+    None => ()
   }
 }
 
@@ -754,7 +1075,9 @@ async fn serve_handle_uds_jsonrpc_request_line(
   }
   match result.response_line {
     Some(resp_str) => {
-      @moontrace.trace("request", fields=[@moontrace.field("line", line)])
+      @moontrace.trace("request", fields=[
+        @moontrace.field("request", result.request_name.unwrap_or("jsonrpc")),
+      ])
       @moontrace.trace("response", fields=[@moontrace.field("body", resp_str)])
       serve_write_all_uds(client.fd, @utf8.encode(resp_str))
     }
@@ -774,6 +1097,9 @@ fn serve_handle_uds_connection(
   server_fd : Int,
   spawn_request : (async () -> Unit) -> Unit,
 ) -> Bool {
+  if client.close_after_response {
+    return false
+  }
   if client.busy {
     return true
   }
@@ -820,7 +1146,7 @@ fn serve_handle_uds_connection(
             }
             Err(err) => {
               @moontrace.warn("parse error", fields=[
-                @moontrace.field("line", line),
+                @moontrace.field("error", err),
               ])
               let resp = @types.Response::Err("parse error: " + err)
               serve_write_all_uds(
