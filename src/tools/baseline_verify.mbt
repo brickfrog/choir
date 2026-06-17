@@ -168,8 +168,10 @@ pub async fn baseline_verify_command_outcome(
   }
   let outcome = if verify_exit == 0 {
     BaselineOutcome::GreenAtBaseline
-  } else {
+  } else if verify_exit > 0 {
     BaselineOutcome::AlreadyRed
+  } else {
+    BaselineOutcome::Unknown
   }
   if created {
     baseline_verify_remove_worktree_best_effort(project_dir, temp, git_capture)

@@ -33,6 +33,36 @@ async test "baseline verify classifies non-zero command as AlreadyRed" {
 }
 
 ///|
+async test "baseline verify classifies negative command exit as Unknown" {
+  let git_cmds : Array[@workspace.Command] = []
+  let verify_cmds : Array[@workspace.Command] = []
+  let temp = "/repo/.choir/tmp/baseline-case-negative"
+  let got = baseline_verify_command_outcome(
+    "abc123",
+    "moon test --target native",
+    "/repo",
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      git_cmds.push(cmd)
+      (0, "")
+    },
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      verify_cmds.push(cmd)
+      (-1, "spawn failed")
+    },
+    temp_worktree=Some(temp),
+  )
+
+  assert_true(got == BaselineOutcome::Unknown)
+  assert_eq(git_cmds.length(), 2)
+  @debug.assert_eq(git_cmds[0].args, ["worktree", "add", temp, "abc123"])
+  @debug.assert_eq(git_cmds[1].args, ["worktree", "remove", "--force", temp])
+  assert_eq(verify_cmds.length(), 1)
+  @debug.assert_eq(verify_cmds[0].workdir, Some(temp))
+}
+
+///|
 async test "baseline verify classifies zero command as GreenAtBaseline" {
   let git_cmds : Array[@workspace.Command] = []
   let temp = "/repo/.choir/tmp/baseline-case-green"
