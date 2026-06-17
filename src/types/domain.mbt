@@ -351,6 +351,7 @@ priv struct MoonVerifyShellPart {
 ///|
 priv struct MoonVerifyInvocation {
   has_explicit_target : Bool
+  module_scoped : Bool
 }
 
 ///|
@@ -609,6 +610,14 @@ fn moon_verify_has_explicit_target(tokens : Array[String]) -> Bool {
 }
 
 ///|
+fn moon_verify_directory_flag(flag : String) -> Bool {
+  flag == "-C" ||
+  flag == "--directory" ||
+  flag.has_prefix("-C=") ||
+  flag.has_prefix("--directory=")
+}
+
+///|
 fn moon_verify_probe_segment(segment : String) -> MoonVerifyInvocation? {
   let tokens = moon_verify_segment_tokens(segment)
   let mut i = 0
@@ -619,8 +628,12 @@ fn moon_verify_probe_segment(segment : String) -> MoonVerifyInvocation? {
     return None
   }
   i = i + 1
+  let mut module_scoped = false
   while i < tokens.length() && tokens[i].has_prefix("-") {
     let flag = tokens[i]
+    if moon_verify_directory_flag(flag) {
+      module_scoped = true
+    }
     i = i + 1
     if moon_verify_global_flag_takes_value(flag) &&
       !flag.contains("=") &&
@@ -631,7 +644,10 @@ fn moon_verify_probe_segment(segment : String) -> MoonVerifyInvocation? {
   if i >= tokens.length() || (tokens[i] != "check" && tokens[i] != "test") {
     return None
   }
-  Some({ has_explicit_target: moon_verify_has_explicit_target(tokens) })
+  Some({
+    has_explicit_target: moon_verify_has_explicit_target(tokens),
+    module_scoped,
+  })
 }
 
 ///|
@@ -652,7 +668,7 @@ fn moon_verify_normalize_segment(
   let trailing = segment[end:].to_owned()
   match moon_verify_probe_segment(body) {
     Some(invocation) =>
-      if !invocation.has_explicit_target {
+      if !invocation.has_explicit_target && !invocation.module_scoped {
         return leading +
           moon_verify_append_suffix_before_comment(
             body,
