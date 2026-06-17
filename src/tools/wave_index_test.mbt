@@ -18,9 +18,13 @@ fn codex_usage(
 
 ///|
 test "render_wave_index_json + parse_wave_index_json round-trips" {
-  let idx = @tools.WaveIndex::new("wv-demo", "feature-x", 1776000000000L, [
-    "feature-x.leaf-0", "feature-x.leaf-1",
-  ])
+  let idx = @tools.WaveIndex::new(
+    "wv-demo",
+    "feature-x",
+    1776000000000L,
+    ["feature-x.leaf-0", "feature-x.leaf-1"],
+    baseline_sha="abc123baseline",
+  )
   idx.usage.set(
     "feature-x.leaf-0",
     codex_usage(100, 50, 60, Some(0.12), 1776000120000L),
@@ -36,6 +40,7 @@ test "render_wave_index_json + parse_wave_index_json round-trips" {
   }
   assert_eq(parsed.wave_id, "wv-demo")
   assert_eq(parsed.parent_branch, "feature-x")
+  assert_eq(parsed.baseline_sha, "abc123baseline")
   assert_eq(parsed.fork_ts_ms, 1776000000000L)
   assert_eq(parsed.agent_ids.length(), 2)
   assert_eq(parsed.agent_ids[0], "feature-x.leaf-0")
@@ -73,7 +78,7 @@ test "parse_wave_index_json rejects missing required fields" {
   match
     @tools.parse_wave_index_json(
       (
-        #|{"wave_id":"wv","parent_branch":"p","fork_ts_ms":1,"agent_ids":["p.a"],"rescued":{},"usage":{"p.a":{"agent_type":"codex","tokens_in":1,"tokens_out":1,"elapsed_s":1}}}
+        #|{"wave_id":"wv","parent_branch":"p","baseline_sha":"abc123","fork_ts_ms":1,"agent_ids":["p.a"],"rescued":{},"usage":{"p.a":{"agent_type":"codex","tokens_in":1,"tokens_out":1,"elapsed_s":1}}}
       ),
     ) {
     Ok(_) => fail("missing reported_at_ms should fail")

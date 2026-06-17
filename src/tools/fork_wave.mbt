@@ -759,6 +759,18 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
     cmds=spawn_plan.cmds,
     captured_outputs=spawn_launch_captured_outputs,
   )
+  match wave_id {
+    Some(id) =>
+      if resp.is_ok() && spawn_plan.spawned_count > 0 {
+        let baseline_sha = fork_wave_capture_baseline_sha(
+          project_dir, git_capture,
+        )
+        if baseline_sha != "" {
+          ignore(record_wave_baseline_sha(project_dir, id, baseline_sha))
+        }
+      }
+    None => ()
+  }
   let resp = fork_wave_response_with_beads_policy_warning(
     fork_wave_response_with_spawn_metadata(resp, spawn_plan.spawned_specs),
     fork_wave_args,

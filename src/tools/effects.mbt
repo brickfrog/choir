@@ -330,6 +330,17 @@ fn fork_wave_spawn_commands_phase(
 }
 
 ///|
+pub async fn fork_wave_capture_baseline_sha(
+  project_dir : String,
+  git_capture : async (String, Array[String]) -> String,
+) -> String {
+  let out = git_capture("git", ["-C", project_dir, "rev-parse", "HEAD"]) catch {
+    _ => ""
+  }
+  out.trim().to_owned()
+}
+
+///|
 fn git_status_paths_in_status_line(line : String) -> Array[String] {
   if line.length() < 4 {
     return []

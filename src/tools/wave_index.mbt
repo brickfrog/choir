@@ -6,6 +6,7 @@
 pub(all) struct WaveIndex {
   wave_id : String
   parent_branch : String
+  baseline_sha : String
   fork_ts_ms : Int64
   agent_ids : Array[String]
   rescued : Map[String, String]
@@ -28,8 +29,17 @@ pub fn WaveIndex::new(
   parent_branch : String,
   fork_ts_ms : Int64,
   agent_ids : Array[String],
+  baseline_sha? : String = "",
 ) -> WaveIndex {
-  { wave_id, parent_branch, fork_ts_ms, agent_ids, rescued: {}, usage: {} }
+  {
+    wave_id,
+    parent_branch,
+    baseline_sha,
+    fork_ts_ms,
+    agent_ids,
+    rescued: {},
+    usage: {},
+  }
 }
 
 ///|
@@ -71,6 +81,7 @@ pub fn render_wave_index_json(idx : WaveIndex) -> String {
   let root : Map[String, Json] = {
     "wave_id": idx.wave_id.to_json(),
     "parent_branch": idx.parent_branch.to_json(),
+    "baseline_sha": idx.baseline_sha.to_json(),
     "fork_ts_ms": Json::number(idx.fork_ts_ms.to_double()),
     "agent_ids": idx.agent_ids.to_json(),
     "rescued": rescued_obj.to_json(),
@@ -163,6 +174,13 @@ pub fn parse_wave_index_json(
         @types.ChoirError::config_error("wave index missing 'parent_branch'"),
       )
   }
+  let baseline_sha = match obj.get("baseline_sha") {
+    Some(String(s)) => s
+    _ =>
+      return Err(
+        @types.ChoirError::config_error("wave index missing 'baseline_sha'"),
+      )
+  }
   let fork_ts_ms = match obj.get("fork_ts_ms") {
     Some(Number(n, ..)) => n.to_int64()
     _ =>
@@ -226,7 +244,15 @@ pub fn parse_wave_index_json(
         @types.ChoirError::config_error("wave index 'usage' must be an object"),
       )
   }
-  Ok({ wave_id, parent_branch, fork_ts_ms, agent_ids, rescued, usage })
+  Ok({
+    wave_id,
+    parent_branch,
+    baseline_sha,
+    fork_ts_ms,
+    agent_ids,
+    rescued,
+    usage,
+  })
 }
 
 ///|
@@ -309,6 +335,27 @@ pub fn append_agent_id(
       }
       idx.agent_ids.push(agent_id)
       save_wave_index(project_dir, idx)
+    }
+    Err(e) => Err(e)
+  }
+}
+
+///|
+pub fn record_wave_baseline_sha(
+  project_dir : String,
+  wave_id : String,
+  baseline_sha : String,
+) -> Result[Unit, @types.ChoirError] {
+  let trimmed = baseline_sha.trim().to_owned()
+  if trimmed == "" {
+    return Ok(())
+  }
+  match load_wave_index(project_dir, wave_id) {
+    Ok(idx) => {
+      if idx.baseline_sha == trimmed {
+        return Ok(())
+      }
+      save_wave_index(project_dir, { ..idx, baseline_sha: trimmed })
     }
     Err(e) => Err(e)
   }
