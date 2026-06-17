@@ -234,6 +234,63 @@ fn ServerState::register_agent_pid_from_sidecar(
 }
 
 ///|
+fn authenticated_identity_unavailable_error() -> @types.ChoirError {
+  @types.ChoirError::validation_error("authenticated identity unavailable")
+}
+
+///|
+fn authenticated_identity_mismatch_error() -> @types.ChoirError {
+  @types.ChoirError::validation_error("authenticated identity mismatch")
+}
+
+///|
+fn request_identity_arg_matches(
+  req : @types.Request,
+  key : String,
+  authenticated_agent_id : String,
+) -> Bool {
+  match req.args.get(key) {
+    Some(value) => value == authenticated_agent_id
+    None => true
+  }
+}
+
+///|
+fn request_with_verified_caller(
+  req : @types.Request,
+  authenticated_agent_id : String,
+  verified_role : @types.Role,
+) -> @types.Request {
+  let args : Map[String, Json] = {}
+  req.args.each_json(fn(k, v) { args.set(k, v) })
+  args.set("caller_id", authenticated_agent_id.to_json())
+  { ..req, role: verified_role, args: @types.RequestArgs::from_values(args) }
+}
+
+///|
+fn ServerState::request_with_authenticated_identity(
+  self : ServerState,
+  req : @types.Request,
+  authenticated_agent_id : String?,
+) -> Result[@types.Request, @types.ChoirError] {
+  match authenticated_agent_id {
+    None => Ok(req)
+    Some(agent_id) => {
+      let agent = match self.registry.get_opt(agent_id) {
+        Some(agent) => agent
+        None => return Err(authenticated_identity_unavailable_error())
+      }
+      if req.role != agent.role ||
+        !request_identity_arg_matches(req, "agent_id", agent_id) ||
+        !request_identity_arg_matches(req, "caller_id", agent_id) {
+        return Err(authenticated_identity_mismatch_error())
+      }
+      Ok(request_with_verified_caller(req, agent_id, agent.role))
+    }
+  }
+}
+
+///|
 pub async fn ServerState::handle(
   self : ServerState,
   req : @types.Request,
@@ -275,7 +332,19 @@ pub async fn ServerState::handle_with_runner_and_capture(
   authenticated_agent_id? : String? = None,
 ) -> @types.Response {
   let start_ms = @env.now()
-  let effective_req = self.request_with_review_mode_default(req)
+  let requested_req = self.request_with_review_mode_default(req)
+  let effective_req = match
+    self.request_with_authenticated_identity(
+      requested_req, authenticated_agent_id,
+    ) {
+    Ok(value) => value
+    Err(e) => {
+      let resp = @types.Response::Err(e.message())
+      let end_ms = @env.now()
+      emit_span(self, requested_req, start_ms, end_ms, resp)
+      return resp
+    }
+  }
   let merged_pr_context : MergedPrContext? = if effective_req.name == "merge_pr" {
     match request_int_arg(effective_req, "pr_number") {
       Some(pr_number) =>
@@ -362,7 +431,6 @@ pub async fn ServerState::handle_with_runner_and_capture(
       prenotify_checks=self.config.prenotify_checks,
       project_verify_cmd=self.config.project.verify_cmd,
       agy_migration_incomplete=self.config.agy_migration_incomplete,
-      authenticated_agent_id~,
       goal_deliver=async fn(message, status) {
         self.deliver_goal_judge_message(message, status, runner)
       },
@@ -420,29 +488,29 @@ pub async fn ServerState::handle_with_runner_and_capture(
   )
   // Yield like the legacy `fail_agent_with_runner` path so other fibers can observe registry
   // updates before teardown side effects run (kill_agent is entirely effect-driven now).
-  if req.name == "kill_agent" {
+  if effective_req.name == "kill_agent" {
     @async.sleep(0)
   }
   // Reap pgroup early for kill_agent; interpret_teardown_effects also reaps
   // idempotently on ClearRuntimeTracking for every finalize path.
-  if req.name == "kill_agent" && resp.is_ok() {
-    match req.args.get("agent_id") {
+  if effective_req.name == "kill_agent" && resp.is_ok() {
+    match effective_req.args.get("agent_id") {
       Some(agent_id) =>
         self.kill_tracked_agent_pgroup(agent_id, default_kill_pgid_best_effort)
       None => ()
     }
   }
   self.interpret_teardown_effects(effects, runner, sleep_fn~)
-  if req.name == "kill_agent" && resp.is_ok() {
-    let caller_id = req.args
+  if effective_req.name == "kill_agent" && resp.is_ok() {
+    let caller_id = effective_req.args
       .get("caller_id")
-      .unwrap_or(request_agent_id(req).unwrap_or(""))
+      .unwrap_or(request_agent_id(effective_req).unwrap_or(""))
     // Empty caller_id → cannot resolve a caller branch; the downstream
     // guard in `reconcile_killed_agent_tracked_prs` short-circuits when
     // caller_branch is empty and would then match every tracked PR.
     // Enforce the precondition at the boundary.
     if caller_id != "" {
-      match req.args.get("agent_id") {
+      match effective_req.args.get("agent_id") {
         Some(agent_id) =>
           reconcile_killed_agent_tracked_prs(
             self, agent_id, caller_id, runner, capture,
@@ -461,17 +529,18 @@ pub async fn ServerState::handle_with_runner_and_capture(
   }
 
   let end_ms = @env.now()
-  emit_span(self, req, start_ms, end_ms, resp)
+  emit_span(self, effective_req, start_ms, end_ms, resp)
   match merged_pr_context {
     Some(ctx) =>
       append_merge_pr_evidence_if_needed(
         self,
-        req,
+        effective_req,
         resp,
         Some(ctx.agent_id),
         evidence_optional_string(ctx.url),
       )
-    None => append_merge_pr_evidence_if_needed(self, req, resp, None, None)
+    None =>
+      append_merge_pr_evidence_if_needed(self, effective_req, resp, None, None)
   }
   resp
 }

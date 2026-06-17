@@ -2030,67 +2030,6 @@ pub fn tool_response_err_from_caught(e : Error) -> @types.Response {
 }
 
 ///|
-fn authenticated_identity_unavailable_error() -> @types.ChoirError {
-  @types.ChoirError::validation_error("authenticated identity unavailable")
-}
-
-///|
-fn authenticated_identity_mismatch_error() -> @types.ChoirError {
-  @types.ChoirError::validation_error("authenticated identity mismatch")
-}
-
-///|
-fn request_identity_arg_matches(
-  req : @types.Request,
-  key : String,
-  authenticated_agent_id : String,
-) -> Bool {
-  match req.args.get(key) {
-    Some(value) => value == authenticated_agent_id
-    None => true
-  }
-}
-
-///|
-fn request_with_verified_caller(
-  req : @types.Request,
-  authenticated_agent_id : String,
-  verified_role : @types.Role,
-) -> @types.Request {
-  let args : Map[String, Json] = {}
-  req.args.each_json(fn(k, v) { args.set(k, v) })
-  args.set("caller_id", authenticated_agent_id.to_json())
-  { ..req, role: verified_role, args: @types.RequestArgs::from_values(args) }
-}
-
-///|
-fn request_with_authenticated_identity(
-  req : @types.Request,
-  authenticated_agent_id : String?,
-  agent_registry : @registry.AgentRegistry?,
-) -> Result[@types.Request, @types.ChoirError] {
-  match authenticated_agent_id {
-    None => Ok(req)
-    Some(agent_id) => {
-      let agent = match agent_registry {
-        Some(reg) =>
-          match reg.get_opt(agent_id) {
-            Some(agent) => agent
-            None => return Err(authenticated_identity_unavailable_error())
-          }
-        None => return Err(authenticated_identity_unavailable_error())
-      }
-      if req.role != agent.role ||
-        !request_identity_arg_matches(req, "agent_id", agent_id) ||
-        !request_identity_arg_matches(req, "caller_id", agent_id) {
-        return Err(authenticated_identity_mismatch_error())
-      }
-      Ok(request_with_verified_caller(req, agent_id, agent.role))
-    }
-  }
-}
-
-///|
 pub async fn handle_request(
   registry : ToolRegistry,
   req : @types.Request,
@@ -2180,21 +2119,13 @@ pub async fn handle_request(
   create_dir_all? : (String) -> Bool = @sys.create_dir_all,
   agy_migration_incomplete? : Bool = false,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
-  authenticated_agent_id? : String? = None,
 ) -> @types.Response {
-  let effective_req = match
-    request_with_authenticated_identity(
-      req, authenticated_agent_id, agent_registry,
-    ) {
-    Ok(value) => value
-    Err(e) => return @types.Response::Err(e.message())
-  }
-  let tool_args = tool_args_from_request_args(effective_req.args)
+  let tool_args = tool_args_from_request_args(req.args)
   let mut ran_builtin_dispatch = false
   let resp = try {
     match
       parent_branch_policy_gate_response(
-        effective_req,
+        req,
         project_dir,
         capture,
         policy_enforcement_mode~,
@@ -2202,7 +2133,7 @@ pub async fn handle_request(
       ) {
       Some(blocked) => blocked
       None => {
-        ignore(registry.lookup(effective_req.role, effective_req.name))
+        ignore(registry.lookup(req.role, req.name))
         let mut hook_early : @types.Response? = None
         match
           @hooks.resolve_hook_script_path(
@@ -2222,8 +2153,8 @@ pub async fn handle_request(
               branch: None,
               parent_branch: None,
               merge_provenance: None,
-              role: Some(effective_req.role),
-              tool_name: Some(effective_req.name),
+              role: Some(req.role),
+              tool_name: Some(req.name),
               tool_args: Some(tool_args_to_map(tool_args)),
               tool_result_status: None,
               exit_reason: None,
@@ -2261,8 +2192,8 @@ pub async fn handle_request(
             )
             match
               parse_tool_request(
-                effective_req.name,
-                effective_req.role,
+                req.name,
+                req.role,
                 project_dir,
                 tool_args,
                 project_verify_cmd~,
@@ -2299,7 +2230,7 @@ pub async fn handle_request(
                   baseline_verify~,
                   list_panes_cache~,
                   caller_id=tool_args_get(tool_args, "caller_id"),
-                  caller_role=effective_req.role,
+                  caller_role=req.role,
                   on_resolve_review_thread~,
                   reviewer~,
                   skip_copilot_on_feature_branch~,
@@ -2333,7 +2264,7 @@ pub async fn handle_request(
   } catch {
     e =>
       if @types.caught_error_is_tool_not_found(e) {
-        dispatch_to_plugin(effective_req, plugins_json)
+        dispatch_to_plugin(req, plugins_json)
       } else {
         tool_response_err_from_caught(e)
       }
@@ -2351,8 +2282,8 @@ pub async fn handle_request(
         branch: None,
         parent_branch: None,
         merge_provenance: None,
-        role: Some(effective_req.role),
-        tool_name: Some(effective_req.name),
+        role: Some(req.role),
+        tool_name: Some(req.name),
         tool_args: None,
         tool_result_status: Some(status_tag),
         exit_reason: None,

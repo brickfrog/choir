@@ -1069,6 +1069,108 @@ async test "serve unbound custom requests do not trust privileged wire role" {
 }
 
 ///|
+async test "serve custom server_reload uses authenticated identity" {
+  let (state, project_dir) = serve_test_state_with_root("server-reload-auth")
+  let dev_id = "main.server-reload.dev"
+  serve_test_upsert_agent(state, dev_id, @types.Role::Dev, project_dir)
+  serve_test_record_credential(
+    state,
+    dev_id,
+    @types.Role::Dev,
+    "server-reload-dev-token",
+  )
+  let dev_register_result = serve_handle_request_line(
+    state,
+    serve_test_register_line(
+      dev_id, "dev", "server-reload-dev-token", project_dir,
+    ),
+    true,
+  )
+  serve_assert_register_ok(state, dev_register_result, dev_id, @types.Role::Dev)
+  let dev_owner = connected_agent_id_after_request(None, dev_register_result)
+
+  let dev_spoof_result = serve_handle_request_line(
+    state,
+    "{\"method\":\"tools/call\",\"role\":\"root\",\"name\":\"server_reload\",\"args\":{\"caller_id\":\"root\",\"binary_path\":\"/bin/sh\"}}",
+    true,
+    authenticated_agent_id=dev_owner,
+  )
+  assert_true(dev_spoof_result.reload_request is None)
+  match dev_spoof_result.response_line {
+    Some(resp_line) =>
+      match @transport.parse_response(resp_line.trim().to_owned()) {
+        Ok(resp) => {
+          assert_false(resp.is_ok())
+          @debug.assert_eq(
+            resp.error_message(),
+            Some("validation error: authenticated identity mismatch"),
+          )
+        }
+        Err(e) => fail("expected Dev spoof response to parse: " + e)
+      }
+    None => fail("expected Dev spoof response")
+  }
+
+  let dev_denied_result = serve_handle_request_line(
+    state,
+    "{\"method\":\"tools/call\",\"role\":\"dev\",\"name\":\"server_reload\",\"args\":{\"binary_path\":\"/bin/sh\"}}",
+    true,
+    authenticated_agent_id=dev_owner,
+  )
+  assert_true(dev_denied_result.reload_request is None)
+  match dev_denied_result.response_line {
+    Some(resp_line) =>
+      match @transport.parse_response(resp_line.trim().to_owned()) {
+        Ok(resp) =>
+          match resp.error_message() {
+            Some(msg) =>
+              assert_true(msg.contains("role dev cannot call server_reload"))
+            None => fail("expected Dev server_reload to be refused")
+          }
+        Err(e) => fail("expected Dev denied response to parse: " + e)
+      }
+    None => fail("expected Dev denied response")
+  }
+
+  serve_test_record_credential(
+    state,
+    "root",
+    @types.Role::Root,
+    "server-reload-root-token",
+  )
+  let root_register_result = serve_handle_request_line(
+    state,
+    serve_test_register_line(
+      "root", "root", "server-reload-root-token", project_dir,
+    ),
+    true,
+  )
+  serve_assert_register_ok(
+    state,
+    root_register_result,
+    "root",
+    @types.Role::Root,
+  )
+  let root_owner = connected_agent_id_after_request(None, root_register_result)
+  let root_reload_result = serve_handle_request_line(
+    state,
+    "{\"method\":\"tools/call\",\"role\":\"root\",\"name\":\"server_reload\",\"args\":{\"binary_path\":\"/bin/sh\"}}",
+    true,
+    authenticated_agent_id=root_owner,
+  )
+  assert_true(root_reload_result.reload_request is Some(_))
+  match root_reload_result.response_line {
+    Some(resp_line) =>
+      match @transport.parse_response(resp_line.trim().to_owned()) {
+        Ok(resp) => assert_true(resp.is_ok())
+        Err(e) => fail("expected Root reload response to parse: " + e)
+      }
+    None => fail("expected Root reload response")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "serve rejected register refresh keeps existing disconnect owner" {
   let (state, project_dir) = serve_test_state_with_root("rejected-register")
   let agent_id = "main.good-register"
