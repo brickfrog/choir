@@ -62,6 +62,22 @@ test "render_wave_index_json + parse_wave_index_json round-trips" {
 }
 
 ///|
+test "parse_wave_index_json defaults missing baseline_sha to empty" {
+  let body =
+    #|{"wave_id":"wv-legacy","parent_branch":"feature-old","fork_ts_ms":1,"agent_ids":["feature-old.a"],"rescued":{},"usage":{}}
+  let parsed = match @tools.parse_wave_index_json(body) {
+    Ok(p) => p
+    Err(e) => {
+      fail("legacy wave index parse failed: " + e.message())
+      return
+    }
+  }
+  assert_eq(parsed.wave_id, "wv-legacy")
+  assert_eq(parsed.parent_branch, "feature-old")
+  assert_eq(parsed.baseline_sha, "")
+}
+
+///|
 test "parse_wave_index_json rejects missing required fields" {
   match @tools.parse_wave_index_json("{}") {
     Ok(_) => fail("empty object should fail")
@@ -78,7 +94,7 @@ test "parse_wave_index_json rejects missing required fields" {
   match
     @tools.parse_wave_index_json(
       (
-        #|{"wave_id":"wv","parent_branch":"p","baseline_sha":"abc123","fork_ts_ms":1,"agent_ids":["p.a"],"rescued":{},"usage":{"p.a":{"agent_type":"codex","tokens_in":1,"tokens_out":1,"elapsed_s":1}}}
+        #|{"wave_id":"wv","parent_branch":"p","fork_ts_ms":1,"agent_ids":["p.a"],"rescued":{},"usage":{"p.a":{"agent_type":"codex","tokens_in":1,"tokens_out":1,"elapsed_s":1}}}
       ),
     ) {
     Ok(_) => fail("missing reported_at_ms should fail")
