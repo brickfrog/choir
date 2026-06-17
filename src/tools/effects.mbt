@@ -332,9 +332,19 @@ fn fork_wave_spawn_commands_phase(
 ///|
 pub async fn fork_wave_capture_baseline_sha(
   project_dir : String,
+  parent_branch : String,
   git_capture : async (String, Array[String]) -> String,
 ) -> String {
-  let out = git_capture("git", ["-C", project_dir, "rev-parse", "HEAD"]) catch {
+  let parent = parent_branch.trim().to_owned()
+  if parent == "" {
+    return ""
+  }
+  let out = git_capture("git", [
+    "-C",
+    project_dir,
+    "rev-parse",
+    "origin/" + parent,
+  ]) catch {
     _ => ""
   }
   out.trim().to_owned()

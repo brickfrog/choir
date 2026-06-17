@@ -763,7 +763,9 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
     Some(id) =>
       if resp.is_ok() && spawn_plan.spawned_count > 0 {
         let baseline_sha = fork_wave_capture_baseline_sha(
-          project_dir, git_capture,
+          project_dir,
+          fork_wave_args.parent_branch,
+          git_capture,
         )
         if baseline_sha != "" {
           ignore(record_wave_baseline_sha(project_dir, id, baseline_sha))

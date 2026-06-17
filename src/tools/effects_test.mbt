@@ -258,6 +258,51 @@ test "all skipped with scaffold_commit still short-circuits without running scaf
 }
 
 ///|
+async test "fork_wave_capture_baseline_sha reads origin parent branch not head" {
+  let calls : Array[String] = []
+  let got = @tools.fork_wave_capture_baseline_sha("/repo", "feature/parent", async fn(
+    program : String,
+    args : Array[String],
+  ) -> String {
+    @async.sleep(0)
+    assert_eq(program, "git")
+    calls.push(args.join(" "))
+    if args == ["-C", "/repo", "rev-parse", "origin/feature/parent"] {
+      return "origin-parent-sha\n"
+    }
+    if args == ["-C", "/repo", "rev-parse", "HEAD"] {
+      return "server-head-sha\n"
+    }
+    fail("unexpected git args: " + args.join(" "))
+    ""
+  })
+  assert_eq(got, "origin-parent-sha")
+  assert_eq(calls.length(), 1)
+  assert_eq(calls[0], "-C /repo rev-parse origin/feature/parent")
+}
+
+///|
+async test "fork_wave_capture_baseline_sha returns empty when origin parent branch is missing" {
+  let calls : Array[String] = []
+  let got = @tools.fork_wave_capture_baseline_sha("/repo", "feature/missing", async fn(
+    program : String,
+    args : Array[String],
+  ) -> String {
+    @async.sleep(0)
+    assert_eq(program, "git")
+    calls.push(args.join(" "))
+    if args == ["-C", "/repo", "rev-parse", "origin/feature/missing"] {
+      raise @types.ChoirError::git_error("synthetic missing origin ref")
+    }
+    fail("unexpected git args: " + args.join(" "))
+    ""
+  })
+  assert_eq(got, "")
+  assert_eq(calls.length(), 1)
+  assert_eq(calls[0], "-C /repo rev-parse origin/feature/missing")
+}
+
+///|
 test "clean tree with commands reaches RunCommands" {
   let echo_cmd = @workspace.Command::{
     program: "echo",
