@@ -2142,7 +2142,10 @@ pub async fn handle_request(
         }
         match hook_early {
           Some(r) => r
-          None =>
+          None => {
+            let choir_lint_available = choir_lint_available_for_project(
+              project_dir, path_exists,
+            )
             match
               parse_tool_request(
                 req.name,
@@ -2150,6 +2153,7 @@ pub async fn handle_request(
                 project_dir,
                 tool_args,
                 project_verify_cmd~,
+                choir_lint_available~,
               ) {
               Err(e) => @types.Response::Err(e.message())
               Ok(tool_req) => {
@@ -2206,6 +2210,7 @@ pub async fn handle_request(
                 out
               }
             }
+          }
         }
       }
     }
@@ -2381,7 +2386,10 @@ pub async fn dispatch_call(
       None =>
         match dispatch_call_goal_gate_response(call.role, call.name) {
           Some(blocked) => blocked
-          None =>
+          None => {
+            let choir_lint_available = choir_lint_available_for_project(
+              project_dir, path_exists,
+            )
             match
               parse_tool_request(
                 call.name,
@@ -2389,6 +2397,7 @@ pub async fn dispatch_call(
                 project_dir,
                 tool_args,
                 project_verify_cmd~,
+                choir_lint_available~,
               ) {
               Err(e) => @types.Response::Err(e.message())
               Ok(tool_req) =>
@@ -2439,6 +2448,7 @@ pub async fn dispatch_call(
                   sleep_fn~,
                 )
             }
+          }
         }
     }
   } catch {

@@ -651,11 +651,47 @@ fn prompt_spec_with_task(spec : PromptSpec, task : String) -> PromptSpec {
 }
 
 ///|
+fn project_child_path(project_dir : String, child : String) -> String {
+  if project_dir.has_suffix("/") {
+    project_dir + child
+  } else {
+    project_dir + "/" + child
+  }
+}
+
+///|
+fn choir_lint_available_for_project(
+  project_dir : String,
+  path_exists : (String) -> Bool,
+) -> Bool {
+  path_exists(project_child_path(project_dir, "src/bin/choir_lint/moon.pkg")) ||
+  path_exists(project_child_path(project_dir, "src/bin/choir_lint"))
+}
+
+///|
+fn prompt_spec_with_leaf_verify_defaults(
+  spec : PromptSpec,
+  project_verify_cmd? : String? = None,
+  choir_lint_available? : Bool = false,
+) -> PromptSpec {
+  let task_contract = fork_wave_task_contract_with_verify_default(
+    spec.task_contract,
+    project_verify_cmd~,
+    choir_lint_available~,
+  )
+  { ..spec, task_contract, verify: task_contract.verify }
+}
+
+///|
 fn parse_spawn_gemini_args(
   project_dir : String,
   args : ToolArgs,
+  choir_lint_available? : Bool = false,
 ) -> Result[SpawnGeminiArgs, ParseError] {
-  let prompt_spec = prompt_spec_from_tool_args(args)
+  let prompt_spec = prompt_spec_with_leaf_verify_defaults(
+    prompt_spec_from_tool_args(args),
+    choir_lint_available~,
+  )
   let task = prompt_spec.task
   if task == "" {
     return Err(ParseError::MissingField(field="task"))
@@ -1055,6 +1091,7 @@ pub fn parse_fork_wave_args(
   project_dir : String,
   args : ToolArgs,
   project_verify_cmd? : String? = None,
+  choir_lint_available? : Bool = false,
 ) -> Result[ForkWaveArgs, ParseError] {
   // Determine tasks: either per-leaf "tasks" array or shared "task" string
   let tasks_raw = tool_args_get(args, "tasks").unwrap_or("")
@@ -1116,6 +1153,7 @@ pub fn parse_fork_wave_args(
       let task_contract = fork_wave_task_contract_with_verify_default(
         task_contract,
         project_verify_cmd~,
+        choir_lint_available~,
       )
       let spec = { ..base_leaf_spec, task_contract, }
       rendered.push(
@@ -1144,6 +1182,7 @@ pub fn parse_fork_wave_args(
       let task_contract = fork_wave_task_contract_with_verify_default(
         task_contract,
         project_verify_cmd~,
+        choir_lint_available~,
       )
       let spec = { ..base_spec, task_contract, }
       arr.push(
@@ -1301,8 +1340,12 @@ fn parse_leaf_spawn_args(
   project_dir : String,
   args : ToolArgs,
   default_slug : String,
+  choir_lint_available? : Bool = false,
 ) -> Result[LeafSpawnArgs, ParseError] {
-  let prompt_spec = prompt_spec_from_tool_args(args)
+  let prompt_spec = prompt_spec_with_leaf_verify_defaults(
+    prompt_spec_from_tool_args(args),
+    choir_lint_available~,
+  )
   let slug = get_arg_or_alias(args, "slug", "branch", default_slug)
   let parent_branch = get_arg_or_alias(
     args, "parent_branch", "base_branch", "main",
@@ -1462,9 +1505,15 @@ fn parse_worker_spawn_args(
 fn parse_remote_spawn_args(
   project_dir : String,
   args : ToolArgs,
+  choir_lint_available? : Bool = false,
 ) -> Result[RemoteSpawnArgs, ParseError] {
   let leaf_args = match
-    parse_leaf_spawn_args(project_dir, args, "remote-leaf") {
+    parse_leaf_spawn_args(
+      project_dir,
+      args,
+      "remote-leaf",
+      choir_lint_available~,
+    ) {
     Ok(value) => value
     Err(e) => return Err(e)
   }
@@ -2174,18 +2223,24 @@ fn parse_tool_request(
   _project_dir : String,
   args : ToolArgs,
   project_verify_cmd? : String? = None,
+  choir_lint_available? : Bool = false,
 ) -> Result[ToolRequest, ParseError] {
   match name {
     "register" =>
       parse_register_args(_role, args).map(fn(a) { ToolRequest::Register(a) })
     "spawn_gemini" =>
-      parse_spawn_gemini_args(_project_dir, args).map(fn(a) {
+      parse_spawn_gemini_args(_project_dir, args, choir_lint_available~).map(fn(
+        a,
+      ) {
         ToolRequest::SpawnGemini(a)
       })
     "fork_wave" =>
-      parse_fork_wave_args(_project_dir, args, project_verify_cmd~).map(fn(a) {
-        ToolRequest::ForkWave(a)
-      })
+      parse_fork_wave_args(
+        _project_dir,
+        args,
+        project_verify_cmd~,
+        choir_lint_available~,
+      ).map(fn(a) { ToolRequest::ForkWave(a) })
     "fork_session" =>
       parse_session_name_args(args).map(fn(a) { ToolRequest::ForkSession(a) })
     "file_pr" => parse_file_pr_args(args).map(fn(a) { ToolRequest::FilePr(a) })
@@ -2245,7 +2300,9 @@ fn parse_tool_request(
     "task_update" =>
       parse_task_update_args(args).map(fn(a) { ToolRequest::TaskUpdate(a) })
     "spawn_remote" =>
-      parse_remote_spawn_args(_project_dir, args).map(fn(a) {
+      parse_remote_spawn_args(_project_dir, args, choir_lint_available~).map(fn(
+        a,
+      ) {
         ToolRequest::SpawnRemote(a)
       })
     "spawn_worker" =>
