@@ -611,9 +611,8 @@ fn moon_verify_has_explicit_target(tokens : Array[String]) -> Bool {
 
 ///|
 fn moon_verify_directory_flag(flag : String) -> Bool {
-  flag == "-C" ||
+  flag.has_prefix("-C") ||
   flag == "--directory" ||
-  flag.has_prefix("-C=") ||
   flag.has_prefix("--directory=")
 }
 
