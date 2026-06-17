@@ -1356,10 +1356,12 @@ async test "interpret_spawn_remote returns err when run_strict fails" {
     tcp_addr: "a",
     parent_session_id: None,
   }
+  let reg = @registry.AgentRegistry::new()
   let got = interpret_spawn_remote(
     spawn_args,
     mock_runner_first_fails,
     mock_capture_empty,
+    registry=Some(reg),
     mint_agent_token=Some(spawn_test_mint_agent_token),
   )
   match got {
@@ -1367,6 +1369,7 @@ async test "interpret_spawn_remote returns err when run_strict fails" {
       assert_true(msg.contains("failed") || msg.contains("status"))
     _ => fail("expected err from run_strict")
   }
+  @debug.assert_eq(reg.credential_for_agent("main.y"), None)
 }
 
 ///|
@@ -1481,12 +1484,14 @@ async test "interpret_spawn_gemini returns err when run_strict fails" {
     parent_branch: "main",
     parent_session_id: None,
   }
+  let reg = @registry.AgentRegistry::new()
   let got = interpret_spawn_gemini(
     spawn_args,
     "/tmp/p",
     "choir",
     mock_runner_first_fails,
     mock_capture_empty,
+    registry=Some(reg),
     mint_agent_token=Some(spawn_test_mint_agent_token),
   )
   match got {
@@ -1494,6 +1499,7 @@ async test "interpret_spawn_gemini returns err when run_strict fails" {
       assert_true(msg.contains("failed") || msg.contains("status"))
     _ => fail("expected err from run_strict")
   }
+  @debug.assert_eq(reg.credential_for_agent("main.y"), None)
 }
 
 ///|
