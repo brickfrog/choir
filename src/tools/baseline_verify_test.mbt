@@ -79,15 +79,12 @@ async test "baseline verify returns Unknown for missing baseline sha" {
   )
 
   assert_true(got == BaselineOutcome::Unknown)
-  assert_eq(git_cmds.length(), 1)
-  @debug.assert_eq(git_cmds[0].args, [
-    "worktree", "remove", "--force", "/repo/.choir/tmp/baseline-missing",
-  ])
+  assert_eq(git_cmds.length(), 0)
   assert_eq(verify_cmds.length(), 0)
 }
 
 ///|
-async test "baseline verify removes temp worktree when add fails" {
+async test "baseline verify does not remove temp worktree when add fails" {
   let git_cmds : Array[@workspace.Command] = []
   let verify_cmds : Array[@workspace.Command] = []
   let temp = "/repo/.choir/tmp/baseline-add-fails"
@@ -113,8 +110,65 @@ async test "baseline verify removes temp worktree when add fails" {
   )
 
   assert_true(got == BaselineOutcome::Unknown)
-  assert_eq(git_cmds.length(), 2)
+  assert_eq(git_cmds.length(), 1)
   @debug.assert_eq(git_cmds[0].args, ["worktree", "add", temp, "not-a-sha"])
-  @debug.assert_eq(git_cmds[1].args, ["worktree", "remove", "--force", temp])
   assert_eq(verify_cmds.length(), 0)
+}
+
+///|
+async test "baseline verify does not remove temp worktree when add throws" {
+  let git_cmds : Array[@workspace.Command] = []
+  let verify_cmds : Array[@workspace.Command] = []
+  let temp = "/repo/.choir/tmp/baseline-add-throws"
+  let got = baseline_verify_command_outcome(
+    "abc123",
+    "moon test --target native",
+    "/repo",
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      git_cmds.push(cmd)
+      raise @types.ChoirError::git_error("synthetic add failure")
+    },
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      verify_cmds.push(cmd)
+      (0, "")
+    },
+    temp_worktree=Some(temp),
+  )
+
+  assert_true(got == BaselineOutcome::Unknown)
+  assert_eq(git_cmds.length(), 1)
+  @debug.assert_eq(git_cmds[0].args, ["worktree", "add", temp, "abc123"])
+  assert_eq(verify_cmds.length(), 0)
+}
+
+///|
+async test "baseline verify removes temp worktree when verify throws after add" {
+  let git_cmds : Array[@workspace.Command] = []
+  let verify_cmds : Array[@workspace.Command] = []
+  let temp = "/repo/.choir/tmp/baseline-verify-throws"
+  let got = baseline_verify_command_outcome(
+    "abc123",
+    "moon test --target native",
+    "/repo",
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      git_cmds.push(cmd)
+      (0, "")
+    },
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      verify_cmds.push(cmd)
+      raise @types.ChoirError::transport_error("synthetic verify failure")
+    },
+    temp_worktree=Some(temp),
+  )
+
+  assert_true(got == BaselineOutcome::Unknown)
+  assert_eq(git_cmds.length(), 2)
+  @debug.assert_eq(git_cmds[0].args, ["worktree", "add", temp, "abc123"])
+  @debug.assert_eq(git_cmds[1].args, ["worktree", "remove", "--force", temp])
+  assert_eq(verify_cmds.length(), 1)
+  @debug.assert_eq(verify_cmds[0].workdir, Some(temp))
 }
