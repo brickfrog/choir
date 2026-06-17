@@ -178,19 +178,24 @@ fn serve_registration_auth_failed_response() -> @types.Response {
 }
 
 ///|
-fn serve_constant_timeish_string_equal(a : String, b : String) -> Bool {
-  let len_a = a.length()
-  let len_b = b.length()
-  let max_len = if len_a > len_b { len_a } else { len_b }
-  let mut equal = len_a == len_b
-  for i = 0; i < max_len; i = i + 1 {
-    let a_unit = if i < len_a { a.code_unit_at(i) } else { 0 }
-    let b_unit = if i < len_b { b.code_unit_at(i) } else { 0 }
-    if a_unit != b_unit {
-      equal = false
+fn serve_constant_timeish_string_equal(
+  presented : String,
+  stored : String,
+) -> Bool {
+  let presented_len = presented.length()
+  let stored_len = stored.length()
+  let mut diff = if presented_len == stored_len { 0 } else { 1 }
+  for i = 0; i < stored_len; i = i + 1 {
+    let presented_unit = if i < presented_len {
+      presented.code_unit_at(i)
+    } else {
+      0
+    }
+    if presented_unit != stored.code_unit_at(i) {
+      diff = 1
     }
   }
-  equal
+  diff == 0
 }
 
 ///|
@@ -708,6 +713,38 @@ async fn serve_assert_register_token_validation_mode(
   )
   serve_assert_register_rejected(wrong_result, "wrong-token")
   @debug.assert_eq(state.registry.get(wrong_agent).role, @types.Role::Dev)
+
+  let short_agent = "main." + label + ".short"
+  serve_test_upsert_agent(state, short_agent, @types.Role::Dev, project_dir)
+  serve_test_record_credential(
+    state,
+    short_agent,
+    @types.Role::Dev,
+    "short-token-stored",
+  )
+  let short_result = serve_handle_request_line(
+    state,
+    serve_test_register_line(short_agent, "dev", "short", project_dir),
+    allow_reload,
+  )
+  serve_assert_register_rejected(short_result, "short")
+
+  let long_agent = "main." + label + ".long"
+  serve_test_upsert_agent(state, long_agent, @types.Role::Dev, project_dir)
+  serve_test_record_credential(
+    state,
+    long_agent,
+    @types.Role::Dev,
+    "prefix-token",
+  )
+  let long_result = serve_handle_request_line(
+    state,
+    serve_test_register_line(
+      long_agent, "dev", "prefix-token-extra", project_dir,
+    ),
+    allow_reload,
+  )
+  serve_assert_register_rejected(long_result, "prefix-token-extra")
 
   let empty_agent = "main." + label + ".empty"
   serve_test_upsert_agent(state, empty_agent, @types.Role::Dev, project_dir)
