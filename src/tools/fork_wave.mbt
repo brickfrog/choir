@@ -61,19 +61,123 @@ fn fork_wave_verify_has_nonempty_command(commands : Array[String]) -> Bool {
 pub let fork_wave_choir_lint_verify_command : String = "moon run src/bin/choir_lint --target native"
 
 ///|
+fn fork_wave_ascii_upper(c : UInt16) -> Bool {
+  c >= 'A' && c <= 'Z'
+}
+
+///|
+fn fork_wave_ascii_lower(c : UInt16) -> Bool {
+  c >= 'a' && c <= 'z'
+}
+
+///|
+fn fork_wave_ascii_digit(c : UInt16) -> Bool {
+  c >= '0' && c <= '9'
+}
+
+///|
+fn fork_wave_env_name_start(c : UInt16) -> Bool {
+  fork_wave_ascii_upper(c) || fork_wave_ascii_lower(c) || c == '_'
+}
+
+///|
+fn fork_wave_env_name_part(c : UInt16) -> Bool {
+  fork_wave_env_name_start(c) || fork_wave_ascii_digit(c)
+}
+
+///|
+fn fork_wave_env_assignment_token(token : String) -> Bool {
+  if token.length() < 2 || !fork_wave_env_name_start(token[0]) {
+    return false
+  }
+  let mut i = 1
+  while i < token.length() {
+    let c = token[i]
+    if c == '=' {
+      return true
+    }
+    if !fork_wave_env_name_part(c) {
+      return false
+    }
+    i = i + 1
+  }
+  false
+}
+
+///|
+fn fork_wave_moon_global_flag_takes_value(flag : String) -> Bool {
+  flag == "-C" ||
+  flag == "--directory" ||
+  flag == "--target" ||
+  flag == "--source-dir" ||
+  flag == "--target-dir" ||
+  flag == "--build-dir" ||
+  flag == "--config"
+}
+
+///|
+fn fork_wave_skip_moon_flags(tokens : Array[String], index : Int) -> Int {
+  let mut i = index
+  while i < tokens.length() &&
+        !tdd_token_is_shell_separator(tokens[i]) &&
+        tokens[i].has_prefix("-") {
+    let flag = tokens[i]
+    i = i + 1
+    if fork_wave_moon_global_flag_takes_value(flag) &&
+      !flag.contains("=") &&
+      i < tokens.length() &&
+      !tdd_token_is_shell_separator(tokens[i]) {
+      i = i + 1
+    }
+  }
+  i
+}
+
+///|
+fn fork_wave_moon_run_target(tokens : Array[String], index : Int) -> String? {
+  let i = fork_wave_skip_moon_flags(tokens, index)
+  if i < tokens.length() && !tdd_token_is_shell_separator(tokens[i]) {
+    Some(tokens[i])
+  } else {
+    None
+  }
+}
+
+///|
+fn fork_wave_skip_shell_segment(tokens : Array[String], index : Int) -> Int {
+  let mut i = index
+  while i < tokens.length() && !tdd_token_is_shell_separator(tokens[i]) {
+    i = i + 1
+  }
+  i
+}
+
+///|
 fn fork_wave_verify_has_choir_lint_command(commands : Array[String]) -> Bool {
   for command in commands {
     let tokens = tdd_command_tokens(command)
     let mut i = 0
-    while i + 1 < tokens.length() {
-      if tokens[i] == "moon" && tokens[i + 1] == "run" {
-        let mut j = i + 2
-        while j < tokens.length() && !tdd_token_is_shell_separator(tokens[j]) {
-          if tokens[j] == "src/bin/choir_lint" {
-            return true
+    while i < tokens.length() {
+      while i < tokens.length() && tdd_token_is_shell_separator(tokens[i]) {
+        i = i + 1
+      }
+      while i < tokens.length() && fork_wave_env_assignment_token(tokens[i]) {
+        i = i + 1
+      }
+      if i >= tokens.length() {
+        break
+      }
+      if tokens[i] != "moon" {
+        i = fork_wave_skip_shell_segment(tokens, i)
+      } else {
+        i = fork_wave_skip_moon_flags(tokens, i + 1)
+        if i < tokens.length() && tokens[i] == "run" {
+          match fork_wave_moon_run_target(tokens, i + 1) {
+            Some(target) if target == "src/bin/choir_lint" => return true
+            _ => ()
           }
-          j = j + 1
         }
+        i = fork_wave_skip_shell_segment(tokens, i)
       }
       i = i + 1
     }

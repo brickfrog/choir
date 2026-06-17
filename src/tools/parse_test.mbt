@@ -138,3 +138,23 @@ test "parse_fork_wave_args appends choir lint after non-run mention" {
     Err(e) => fail("parse_fork_wave_args lint mention: " + e.message())
   }
 }
+
+///|
+test "parse_fork_wave_args appends choir lint after non-target run arg" {
+  match
+    @tools.parse_fork_wave_args(
+      ".",
+      @tools.tool_args_from_map(
+        fork_wave_verify_test_map(
+          verify=Some("moon run src/bin/some_tool -- src/bin/choir_lint"),
+        ),
+      ),
+      choir_lint_available=true,
+    ) {
+    Ok(fork) =>
+      @debug.assert_eq(fork.task_contracts[0].verify, [
+        "moon run src/bin/some_tool -- src/bin/choir_lint", "moon run src/bin/choir_lint --target native",
+      ])
+    Err(e) => fail("parse_fork_wave_args lint run arg: " + e.message())
+  }
+}
