@@ -43,6 +43,10 @@ struct ServeUDSClient {
   mut buf : FixedArray[Byte]
   mut read_pos : Int
   mut connected_agent_id : String?
+  // Verified identity bound on any successful register (Session OR OneShot),
+  // used to authenticate this connection's subsequent requests. Separate from
+  // connected_agent_id, which is Session-only for disconnect tracking.
+  mut authenticated_agent_id : String?
   // Set on `register`; tracked so a disconnect log line names *which* agent
   // dropped, what it last asked for, and how long it was connected — the
   // contentless "UDS client disconnected written=N" told us nothing when the
@@ -60,6 +64,7 @@ fn ServeUDSClient::new(fd : Int) -> ServeUDSClient {
     buf: FixedArray::make(4096, (0 : Byte)),
     read_pos: 0,
     connected_agent_id: None,
+    authenticated_agent_id: None,
     connected_at_sec: @poller.now_sec(),
     last_request_name: None,
     busy: false,
@@ -343,10 +348,11 @@ fn serve_authenticate_register_request(
     )
   }
   let effective_req = { ..req, role: credential.role }
-  ServeRegisterAuth::Authorized(
-    effective_req,
-    lifecycle_agent_id_for_register(effective_req, claimed_agent_id),
-  )
+  // Return the UNFILTERED authenticated id. Each downstream consumer applies
+  // its own policy: register_connection_agent_id_after_response drops OneShot
+  // for the lifecycle/disconnect binding, while register_auth_agent_id_after_
+  // response keeps it so the one-shot follow-up call authenticates.
+  ServeRegisterAuth::Authorized(effective_req, Some(claimed_agent_id))
 }
 
 ///|
@@ -354,7 +360,16 @@ struct ServeRequestLineResult {
   response_line : String?
   request_name : String?
   saw_register : Bool
+  // Lifecycle/disconnect binding: only Session registers set this (a OneShot
+  // register leaves it None) so transient one-shot calls do not schedule a
+  // spurious disconnect for the agent.
   connected_agent_id : String?
+  // Authentication binding: set on ANY successful register (Session OR OneShot)
+  // so the agent's follow-up request on the same connection (the leaf-tool CLI
+  // registers + calls on one OneShot socket) is verified as that agent rather
+  // than downgraded to an unauthenticated Worker. Distinct from
+  // connected_agent_id, which exists for disconnect tracking only.
+  auth_agent_id : String?
   drop_connection : Bool
   reload_request : @types.Request?
 }
@@ -372,6 +387,78 @@ fn connected_agent_id_after_request(
   } else {
     current
   }
+}
+
+///|
+fn authenticated_agent_id_after_request(
+  current : String?,
+  result : ServeRequestLineResult,
+) -> String? {
+  match result.auth_agent_id {
+    Some(agent_id) => Some(agent_id)
+    None => current
+  }
+}
+
+///|
+fn register_auth_agent_id_after_response(
+  req : @types.Request,
+  resp : @types.Response,
+  authenticated_agent_id : String?,
+) -> String? {
+  // The authenticated identity binds for ANY successful register regardless of
+  // connection_lifetime; unlike register_connection_agent_id_after_response it
+  // does NOT drop OneShot, because the auth binding must cover the one-shot
+  // call that follows the register on the same socket.
+  if req.req_method == "register" && resp.is_ok() {
+    authenticated_agent_id
+  } else {
+    None
+  }
+}
+
+///|
+async test "OneShot register binds auth identity for the follow-up call (leaf-tool CLI)" {
+  let (state, project_dir) = serve_test_state_with_root("oneshot-auth-bind")
+  let leaf_id = "main.leaf-oneshot.dev"
+  let token = "leaf-oneshot-token"
+  serve_test_record_credential(state, leaf_id, @types.Role::Dev, token)
+  // A OneShot register (the leaf-tool CLI pattern: register + call on one
+  // socket) must bind the AUTH identity but NOT the lifecycle/disconnect id.
+  let oneshot_register = "{\"method\":\"register\",\"role\":\"dev\",\"name\":\"register\",\"args\":{\"agent_id\":\"" +
+    leaf_id +
+    "\",\"agent_type\":\"codex\",\"branch\":\"" +
+    leaf_id +
+    "\",\"workspace\":\"" +
+    project_dir +
+    "\",\"token\":\"" +
+    token +
+    "\",\"connection_lifetime\":\"oneshot\"}}"
+  let reg = serve_handle_request_line(state, oneshot_register, true)
+  @debug.assert_eq(reg.auth_agent_id, Some(leaf_id))
+  @debug.assert_eq(reg.connected_agent_id, None)
+  let auth = authenticated_agent_id_after_request(None, reg)
+  @debug.assert_eq(auth, Some(leaf_id))
+  let tdd_call = "{\"method\":\"tools/call\",\"role\":\"dev\",\"name\":\"tdd_intent\",\"args\":{\"intent\":\"write the red test\"}}"
+  // Bound (auth carried from the OneShot register): NOT downgraded to Worker.
+  let bound = serve_handle_request_line(
+    state,
+    tdd_call,
+    true,
+    authenticated_agent_id=auth,
+  )
+  match bound.response_line {
+    Some(line) => assert_false(line.contains("role worker cannot call"))
+    None => fail("expected tdd_intent response")
+  }
+  // Unbound (no auth binding): downgraded to Worker and rejected.
+  let unbound = serve_handle_request_line(state, tdd_call, true)
+  match unbound.response_line {
+    Some(line) =>
+      assert_true(line.contains("role worker cannot call tdd_intent"))
+    None => fail("expected tdd_intent response")
+  }
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
@@ -469,6 +556,7 @@ async fn serve_handle_jsonrpc_request_line(
             request_name: Some(rpc.req_method),
             saw_register: false,
             connected_agent_id: None,
+            auth_agent_id: None,
             drop_connection: false,
             reload_request: None,
           }
@@ -484,6 +572,7 @@ async fn serve_handle_jsonrpc_request_line(
           request_name: Some(rpc.req_method),
           saw_register: false,
           connected_agent_id: None,
+          auth_agent_id: None,
           drop_connection: false,
           reload_request: None,
         }
@@ -498,6 +587,7 @@ async fn serve_handle_jsonrpc_request_line(
           request_name: Some(rpc.req_method),
           saw_register: false,
           connected_agent_id: None,
+          auth_agent_id: None,
           drop_connection: false,
           reload_request: None,
         }
@@ -522,6 +612,7 @@ async fn serve_handle_jsonrpc_request_line(
               request_name: Some(effective_req.name),
               saw_register: false,
               connected_agent_id: None,
+              auth_agent_id: None,
               drop_connection: false,
               reload_request: None,
             }
@@ -538,6 +629,7 @@ async fn serve_handle_jsonrpc_request_line(
             request_name: Some(effective_req.name),
             saw_register: false,
             connected_agent_id: None,
+            auth_agent_id: None,
             drop_connection: false,
             reload_request: if allow_reload &&
               serve_is_reload_request(effective_req) &&
@@ -558,6 +650,7 @@ async fn serve_handle_jsonrpc_request_line(
             request_name: Some(rpc.req_method),
             saw_register: false,
             connected_agent_id: None,
+            auth_agent_id: None,
             drop_connection: false,
             reload_request: None,
           }
@@ -576,6 +669,7 @@ async fn serve_handle_jsonrpc_request_line(
         request_name: None,
         saw_register: false,
         connected_agent_id: None,
+        auth_agent_id: None,
         drop_connection: false,
         reload_request: None,
       }
@@ -601,6 +695,7 @@ async fn serve_handle_parsed_custom_request(
       request_name: Some(effective_req.name),
       saw_register,
       connected_agent_id: None,
+      auth_agent_id: None,
       drop_connection: false,
       reload_request: None,
     }
@@ -612,6 +707,7 @@ async fn serve_handle_parsed_custom_request(
         request_name: Some(effective_req.name),
         saw_register,
         connected_agent_id: None,
+        auth_agent_id: None,
         drop_connection: true,
         reload_request: None,
       }
@@ -631,6 +727,9 @@ async fn serve_handle_parsed_custom_request(
         request_name: Some(effective_req.name),
         saw_register,
         connected_agent_id: register_connection_agent_id_after_response(
+          effective_req, resp, registered_agent_id,
+        ),
+        auth_agent_id: register_auth_agent_id_after_response(
           effective_req, resp, registered_agent_id,
         ),
         drop_connection: false,
@@ -669,6 +768,7 @@ async fn serve_handle_custom_request_line(
         request_name: None,
         saw_register: false,
         connected_agent_id: None,
+        auth_agent_id: None,
         drop_connection: false,
         reload_request: None,
       }
@@ -1833,6 +1933,7 @@ async fn serve_handle_connection(
     Some(_) => false
   }
   let mut connected_agent_id : String? = None
+  let mut authenticated_agent_id : String? = None
   for ;; {
     if read_pos == buf.length() {
       buf = grow_connection_buffer(buf)
@@ -1870,10 +1971,13 @@ async fn serve_handle_connection(
           state,
           line,
           false,
-          authenticated_agent_id=connected_agent_id,
+          authenticated_agent_id~,
         )
         connected_agent_id = connected_agent_id_after_request(
           connected_agent_id, result,
+        )
+        authenticated_agent_id = authenticated_agent_id_after_request(
+          authenticated_agent_id, result,
         )
         match result.response_line {
           Some(resp_str) => conn.write(@utf8.encode(resp_str))
@@ -1941,10 +2045,14 @@ async fn serve_handle_uds_request_line(
     state,
     req,
     true,
-    authenticated_agent_id=client.connected_agent_id,
+    authenticated_agent_id=client.authenticated_agent_id,
   )
   client.connected_agent_id = connected_agent_id_after_request(
     client.connected_agent_id,
+    result,
+  )
+  client.authenticated_agent_id = authenticated_agent_id_after_request(
+    client.authenticated_agent_id,
     result,
   )
   let resp_str = result.response_line.unwrap_or("")
@@ -1975,10 +2083,14 @@ async fn serve_handle_uds_jsonrpc_request_line(
     state,
     line,
     true,
-    authenticated_agent_id=client.connected_agent_id,
+    authenticated_agent_id=client.authenticated_agent_id,
   )
   client.connected_agent_id = connected_agent_id_after_request(
     client.connected_agent_id,
+    result,
+  )
+  client.authenticated_agent_id = authenticated_agent_id_after_request(
+    client.authenticated_agent_id,
     result,
   )
   match result.request_name {
