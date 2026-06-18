@@ -446,7 +446,12 @@ fn synthesize_config_from_env(
 ///|
 /// Resolve the leaf agent's `LocalConfig`: read
 /// `.choir/config.local.toml` when present, otherwise synthesize from
-/// `CHOIR_*` env vars. Env fallback never overrides an existing config file.
+/// `CHOIR_*` env vars. When the file is present but carries NO registration
+/// identity (e.g. the root checkout's config.local.toml that only has
+/// default_role/listen_uds), fall back to the spawned-agent `CHOIR_*` env
+/// identity — mirroring the generic `choir tool` path. Without this a worker
+/// running in the root checkout resolves itself as root/TL and registers its
+/// own (Worker) token against the root credential, which the server rejects.
 fn resolve_leaf_local_cfg(
   path_exists_fn : (String) -> Bool,
   read_file_fn : (String) -> String,
@@ -454,7 +459,24 @@ fn resolve_leaf_local_cfg(
 ) -> Result[@types.LocalConfig, @types.ChoirError] {
   if path_exists_fn(".choir/config.local.toml") {
     let content = read_file_fn(".choir/config.local.toml")
-    @config.parse_local_config(content)
+    let parsed = match @config.parse_local_config(content) {
+      Ok(cfg) => cfg
+      Err(e) => return Err(e)
+    }
+    if local_cfg_has_registration_identity(parsed) {
+      Ok(parsed)
+    } else {
+      match synthesize_config_from_env(env_get) {
+        Some(env_cfg) => {
+          @moontrace.info(
+            "leaf_tool config.local lacks identity; using env identity",
+            fields=[@moontrace.field("agent_id", env_cfg.agent_id.unwrap_or(""))],
+          )
+          Ok(env_cfg)
+        }
+        None => Ok(parsed)
+      }
+    }
   } else {
     match synthesize_config_from_env(env_get) {
       Some(cfg) => {
@@ -470,6 +492,34 @@ fn resolve_leaf_local_cfg(
           ),
         )
     }
+  }
+}
+
+///|
+test "resolve_leaf_local_cfg uses env identity when config.local lacks it" {
+  let file_exists = fn(p : String) -> Bool { p == ".choir/config.local.toml" }
+  // Root-checkout shape: default_role only, no agent_id/role/parent/branch.
+  let read_no_identity = fn(_p : String) -> String {
+    "default_role = \"tl\"\nlisten_uds = \".choir/server.sock\"\n"
+  }
+  let worker_env = fn(key : String) -> String? {
+    match key {
+      "CHOIR_AGENT_ID" => Some("main.svcr-audit.worker")
+      "CHOIR_ROLE" => Some("worker")
+      _ => None
+    }
+  }
+  match resolve_leaf_local_cfg(file_exists, read_no_identity, worker_env) {
+    Ok(cfg) => @debug.assert_eq(cfg.agent_id, Some("main.svcr-audit.worker"))
+    Err(e) => fail("env identity fallback expected: " + e.message())
+  }
+  // When the file DOES carry identity, it wins (env must not override it).
+  let read_with_identity = fn(_p : String) -> String {
+    "role = \"dev\"\nagent_id = \"main.leaf.z\"\n"
+  }
+  match resolve_leaf_local_cfg(file_exists, read_with_identity, worker_env) {
+    Ok(cfg) => @debug.assert_eq(cfg.agent_id, Some("main.leaf.z"))
+    Err(e) => fail("file identity expected: " + e.message())
   }
 }
 
