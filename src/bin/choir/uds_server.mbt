@@ -1133,6 +1133,86 @@ async test "serve JSON-RPC tools call uses authenticated connection identity" {
 }
 
 ///|
+async test "serve supervisor-bound JSON-RPC reaches supervisor allow-list" {
+  let (state, project_dir) = serve_test_state_with_root("bound-jsonrpc-root")
+  serve_test_record_credential(
+    state,
+    "root",
+    @types.Role::Root,
+    "bound-jsonrpc-root-token",
+  )
+  let register_result = serve_handle_request_line(
+    state,
+    serve_test_register_line(
+      "root", "root", "bound-jsonrpc-root-token", project_dir,
+    ),
+    true,
+  )
+  serve_assert_register_ok(state, register_result, "root", @types.Role::Root)
+  let owner = connected_agent_id_after_request(None, register_result)
+
+  let bound_result = serve_handle_request_line(
+    state,
+    "{\"jsonrpc\":\"2.0\",\"id\":12,\"method\":\"tools/call\",\"params\":{\"name\":\"goal_status\",\"arguments\":{}}}",
+    true,
+    authenticated_agent_id=owner,
+  )
+  @debug.assert_eq(bound_result.request_name, Some("goal_status"))
+  match bound_result.response_line {
+    Some(line) => {
+      let obj = match serve_test_json_object(line) {
+        Ok(obj) => obj
+        Err(e) => {
+          fail(e)
+          return
+        }
+      }
+      guard obj.get("result") is Some(Object(result_obj)) else {
+        fail("expected bound goal_status result")
+      }
+      @debug.assert_eq(result_obj.get("isError"), Some(false.to_json()))
+      guard result_obj.get("structuredContent") is Some(Object(payload)) else {
+        fail("expected bound structuredContent object")
+      }
+      @debug.assert_eq(payload.get("status"), Some("none".to_json()))
+      @debug.assert_eq(payload.get("active"), Some(false.to_json()))
+    }
+    None => fail("expected bound goal_status response")
+  }
+
+  let unbound_result = serve_handle_request_line(
+    state, "{\"jsonrpc\":\"2.0\",\"id\":13,\"method\":\"tools/call\",\"params\":{\"name\":\"goal_status\",\"arguments\":{\"caller_id\":\"root\",\"agent_id\":\"root\"}}}",
+    true,
+  )
+  @debug.assert_eq(unbound_result.request_name, Some("goal_status"))
+  match unbound_result.response_line {
+    Some(line) => {
+      let obj = match serve_test_json_object(line) {
+        Ok(obj) => obj
+        Err(e) => {
+          fail(e)
+          return
+        }
+      }
+      guard obj.get("result") is Some(Object(result_obj)) else {
+        fail("expected unbound goal_status result")
+      }
+      @debug.assert_eq(result_obj.get("isError"), Some(true.to_json()))
+      guard result_obj.get("structuredContent") is Some(Object(structured)) else {
+        fail("expected unbound structuredContent object")
+      }
+      match structured.get("error") {
+        Some(String(msg)) =>
+          assert_true(msg.contains("role worker cannot call goal_status"))
+        _ => fail("expected worker permission error")
+      }
+    }
+    None => fail("expected unbound goal_status response")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "serve UDS custom envelope still parses and dispatches" {
   let (state, project_dir) = serve_test_state_with_root("custom-envelope")
   let result = serve_handle_request_line(
