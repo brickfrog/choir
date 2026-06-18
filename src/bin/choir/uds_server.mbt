@@ -330,10 +330,37 @@ fn serve_jsonrpc_response_line(resp : @mcp.JsonRpcResponse) -> String {
 }
 
 ///|
+fn serve_jsonrpc_role_for_connection(
+  state : @server.ServerState,
+  authenticated_agent_id : String?,
+) -> @types.Role {
+  match authenticated_agent_id {
+    Some(agent_id) =>
+      match state.registry.get_opt(agent_id) {
+        Some(agent) => agent.role
+        None => @types.Role::Worker
+      }
+    None => @types.Role::Worker
+  }
+}
+
+///|
+fn serve_jsonrpc_request_for_connection(
+  req : @types.Request,
+  authenticated_agent_id : String?,
+) -> @types.Request {
+  match authenticated_agent_id {
+    Some(_) => req
+    None => serve_custom_unauthenticated_request(req)
+  }
+}
+
+///|
 async fn serve_handle_jsonrpc_request_line(
   state : @server.ServerState,
   line : String,
   allow_reload : Bool,
+  authenticated_agent_id? : String? = None,
 ) -> ServeRequestLineResult {
   match @mcp.parse_jsonrpc_request(line) {
     Ok(rpc) => {
@@ -349,6 +376,9 @@ async fn serve_handle_jsonrpc_request_line(
             reload_request: None,
           }
       }
+      let effective_role = serve_jsonrpc_role_for_connection(
+        state, authenticated_agent_id,
+      )
       if rpc.req_method == @mcp.method_initialize {
         return {
           response_line: Some(
@@ -365,7 +395,7 @@ async fn serve_handle_jsonrpc_request_line(
         return {
           response_line: Some(
             serve_jsonrpc_response_line(
-              @mcp.tools_list_response(id, @types.Role::Root),
+              @mcp.tools_list_response(id, effective_role),
             ),
           ),
           request_name: Some(rpc.req_method),
@@ -375,9 +405,12 @@ async fn serve_handle_jsonrpc_request_line(
           reload_request: None,
         }
       }
-      match @mcp.to_internal_request(rpc, @types.Role::Root) {
+      match @mcp.to_internal_request(rpc, effective_role) {
         Ok(req) => {
-          if !allow_reload && serve_is_reload_request(req) {
+          let effective_req = serve_jsonrpc_request_for_connection(
+            req, authenticated_agent_id,
+          )
+          if !allow_reload && serve_is_reload_request(effective_req) {
             return {
               response_line: Some(
                 serve_jsonrpc_response_line(
@@ -389,26 +422,30 @@ async fn serve_handle_jsonrpc_request_line(
                   ),
                 ),
               ),
-              request_name: Some(req.name),
+              request_name: Some(effective_req.name),
               saw_register: false,
               connected_agent_id: None,
               drop_connection: false,
               reload_request: None,
             }
           }
-          let resp = serve_handle_internal_request(state, req)
+          let resp = serve_handle_internal_request(
+            state,
+            effective_req,
+            authenticated_agent_id~,
+          )
           {
             response_line: Some(
               serve_jsonrpc_response_line(@mcp.from_internal_response(id, resp)),
             ),
-            request_name: Some(req.name),
+            request_name: Some(effective_req.name),
             saw_register: false,
             connected_agent_id: None,
             drop_connection: false,
             reload_request: if allow_reload &&
-              serve_is_reload_request(req) &&
+              serve_is_reload_request(effective_req) &&
               resp.is_ok() {
-              Some(req)
+              Some(effective_req)
             } else {
               None
             },
@@ -550,7 +587,12 @@ async fn serve_handle_request_line(
   authenticated_agent_id? : String? = None,
 ) -> ServeRequestLineResult {
   if @transport.is_jsonrpc_request(line) {
-    serve_handle_jsonrpc_request_line(state, line, allow_reload)
+    serve_handle_jsonrpc_request_line(
+      state,
+      line,
+      allow_reload,
+      authenticated_agent_id~,
+    )
   } else {
     serve_handle_custom_request_line(
       state,
@@ -923,6 +965,249 @@ async test "serve UDS JSON-RPC tools call returns status bar structured content"
       @debug.assert_eq(pane.get("role"), Some("root".to_json()))
     }
     None => fail("expected status_bar_state response")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "serve unbound JSON-RPC tools call uses Worker allow-list" {
+  let (state, project_dir) = serve_test_state_with_root("unbound-jsonrpc-call")
+  let denied_result = serve_handle_request_line(
+    state, "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"tools/call\",\"params\":{\"name\":\"goal_clear\",\"arguments\":{\"caller_id\":\"root\",\"agent_id\":\"root\"}}}",
+    true,
+  )
+  @debug.assert_eq(denied_result.request_name, Some("goal_clear"))
+  @debug.assert_eq(denied_result.connected_agent_id, None)
+  match denied_result.response_line {
+    Some(line) => {
+      let obj = match serve_test_json_object(line) {
+        Ok(obj) => obj
+        Err(e) => {
+          fail(e)
+          return
+        }
+      }
+      guard obj.get("result") is Some(Object(result_obj)) else {
+        fail("expected tools/call result")
+      }
+      @debug.assert_eq(result_obj.get("isError"), Some(true.to_json()))
+      guard result_obj.get("structuredContent") is Some(Object(structured)) else {
+        fail("expected structuredContent object")
+      }
+      match structured.get("error") {
+        Some(String(msg)) =>
+          assert_true(msg.contains("role worker cannot call goal_clear"))
+        _ => fail("expected worker permission error")
+      }
+    }
+    None => fail("expected goal_clear response")
+  }
+
+  let ok_result = serve_handle_request_line(
+    state, "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"tools/call\",\"params\":{\"name\":\"status_bar_state\",\"arguments\":{}}}",
+    true,
+  )
+  @debug.assert_eq(ok_result.request_name, Some("status_bar_state"))
+  match ok_result.response_line {
+    Some(line) => {
+      let obj = match serve_test_json_object(line) {
+        Ok(obj) => obj
+        Err(e) => {
+          fail(e)
+          return
+        }
+      }
+      guard obj.get("result") is Some(Object(result_obj)) else {
+        fail("expected status_bar_state result")
+      }
+      @debug.assert_eq(result_obj.get("isError"), Some(false.to_json()))
+      guard result_obj.get("structuredContent") is Some(Object(snapshot)) else {
+        fail("expected structuredContent object")
+      }
+      @debug.assert_eq(snapshot.get("schema_version"), Some((2).to_json()))
+    }
+    None => fail("expected status_bar_state response")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "serve unbound JSON-RPC tools list hides supervisor tools" {
+  let (state, project_dir) = serve_test_state_with_root("unbound-jsonrpc-list")
+  let result = serve_handle_request_line(
+    state, "{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"tools/list\"}", true,
+  )
+  match result.response_line {
+    Some(line) => {
+      let obj = match serve_test_json_object(line) {
+        Ok(obj) => obj
+        Err(e) => {
+          fail(e)
+          return
+        }
+      }
+      guard obj.get("result") is Some(Object(result_obj)) else {
+        fail("expected tools/list result")
+      }
+      guard result_obj.get("tools") is Some(Array(tools)) else {
+        fail("expected tools array")
+      }
+      let mut saw_status_bar_state = false
+      let mut saw_goal_clear = false
+      for tool in tools {
+        guard tool is Object(tool_obj) else { continue }
+        match tool_obj.get("name") {
+          Some(String("status_bar_state")) => saw_status_bar_state = true
+          Some(String("goal_clear")) => saw_goal_clear = true
+          _ => ()
+        }
+      }
+      assert_true(saw_status_bar_state)
+      assert_false(saw_goal_clear)
+    }
+    None => fail("expected tools/list response")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "serve JSON-RPC tools call uses authenticated connection identity" {
+  let (state, project_dir) = serve_test_state_with_root("bound-jsonrpc")
+  let agent_id = "main.bound-jsonrpc.dev"
+  serve_test_upsert_agent(state, agent_id, @types.Role::Dev, project_dir)
+  serve_test_record_credential(
+    state,
+    agent_id,
+    @types.Role::Dev,
+    "bound-jsonrpc-token",
+  )
+  state.record_agent_task_contract(
+    agent_id,
+    Some({
+      ..@types.TaskContract::empty(),
+      goal: "exercise bound jsonrpc identity",
+      verify: ["moon test --target native"],
+    }),
+  )
+  let register_result = serve_handle_request_line(
+    state,
+    serve_test_register_line(
+      agent_id, "dev", "bound-jsonrpc-token", project_dir,
+    ),
+    true,
+  )
+  serve_assert_register_ok(state, register_result, agent_id, @types.Role::Dev)
+  let owner = connected_agent_id_after_request(None, register_result)
+  let result = serve_handle_request_line(
+    state,
+    "{\"jsonrpc\":\"2.0\",\"id\":11,\"method\":\"tools/call\",\"params\":{\"name\":\"tdd_intent\",\"arguments\":{\"intent\":\"write the red test\"}}}",
+    true,
+    authenticated_agent_id=owner,
+  )
+  @debug.assert_eq(result.request_name, Some("tdd_intent"))
+  match result.response_line {
+    Some(line) => {
+      let obj = match serve_test_json_object(line) {
+        Ok(obj) => obj
+        Err(e) => {
+          fail(e)
+          return
+        }
+      }
+      guard obj.get("result") is Some(Object(result_obj)) else {
+        fail("expected tools/call result")
+      }
+      @debug.assert_eq(result_obj.get("isError"), Some(false.to_json()))
+      guard result_obj.get("structuredContent") is Some(Object(payload)) else {
+        fail("expected structuredContent object")
+      }
+      @debug.assert_eq(payload.get("agent_id"), Some(agent_id.to_json()))
+    }
+    None => fail("expected tdd_intent response")
+  }
+  @debug.assert_eq(
+    state.leaf_tdd_phase_for_agent(agent_id),
+    Some(@types.LeafTddPhase::Intent),
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "serve supervisor-bound JSON-RPC reaches supervisor allow-list" {
+  let (state, project_dir) = serve_test_state_with_root("bound-jsonrpc-root")
+  serve_test_record_credential(
+    state,
+    "root",
+    @types.Role::Root,
+    "bound-jsonrpc-root-token",
+  )
+  let register_result = serve_handle_request_line(
+    state,
+    serve_test_register_line(
+      "root", "root", "bound-jsonrpc-root-token", project_dir,
+    ),
+    true,
+  )
+  serve_assert_register_ok(state, register_result, "root", @types.Role::Root)
+  let owner = connected_agent_id_after_request(None, register_result)
+
+  let bound_result = serve_handle_request_line(
+    state,
+    "{\"jsonrpc\":\"2.0\",\"id\":12,\"method\":\"tools/call\",\"params\":{\"name\":\"goal_status\",\"arguments\":{}}}",
+    true,
+    authenticated_agent_id=owner,
+  )
+  @debug.assert_eq(bound_result.request_name, Some("goal_status"))
+  match bound_result.response_line {
+    Some(line) => {
+      let obj = match serve_test_json_object(line) {
+        Ok(obj) => obj
+        Err(e) => {
+          fail(e)
+          return
+        }
+      }
+      guard obj.get("result") is Some(Object(result_obj)) else {
+        fail("expected bound goal_status result")
+      }
+      @debug.assert_eq(result_obj.get("isError"), Some(false.to_json()))
+      guard result_obj.get("structuredContent") is Some(Object(payload)) else {
+        fail("expected bound structuredContent object")
+      }
+      @debug.assert_eq(payload.get("status"), Some("none".to_json()))
+      @debug.assert_eq(payload.get("active"), Some(false.to_json()))
+    }
+    None => fail("expected bound goal_status response")
+  }
+
+  let unbound_result = serve_handle_request_line(
+    state, "{\"jsonrpc\":\"2.0\",\"id\":13,\"method\":\"tools/call\",\"params\":{\"name\":\"goal_status\",\"arguments\":{\"caller_id\":\"root\",\"agent_id\":\"root\"}}}",
+    true,
+  )
+  @debug.assert_eq(unbound_result.request_name, Some("goal_status"))
+  match unbound_result.response_line {
+    Some(line) => {
+      let obj = match serve_test_json_object(line) {
+        Ok(obj) => obj
+        Err(e) => {
+          fail(e)
+          return
+        }
+      }
+      guard obj.get("result") is Some(Object(result_obj)) else {
+        fail("expected unbound goal_status result")
+      }
+      @debug.assert_eq(result_obj.get("isError"), Some(true.to_json()))
+      guard result_obj.get("structuredContent") is Some(Object(structured)) else {
+        fail("expected unbound structuredContent object")
+      }
+      match structured.get("error") {
+        Some(String(msg)) =>
+          assert_true(msg.contains("role worker cannot call goal_status"))
+        _ => fail("expected worker permission error")
+      }
+    }
+    None => fail("expected unbound goal_status response")
   }
   ignore(@sys.rm_rf(project_dir))
 }
@@ -1383,7 +1668,16 @@ async fn serve_handle_uds_jsonrpc_request_line(
   server_fd : Int,
   line : String,
 ) -> Unit {
-  let result = serve_handle_jsonrpc_request_line(state, line, true)
+  let result = serve_handle_jsonrpc_request_line(
+    state,
+    line,
+    true,
+    authenticated_agent_id=client.connected_agent_id,
+  )
+  client.connected_agent_id = connected_agent_id_after_request(
+    client.connected_agent_id,
+    result,
+  )
   match result.request_name {
     Some(name) => client.last_request_name = Some(name)
     None => ()
@@ -1399,6 +1693,9 @@ async fn serve_handle_uds_jsonrpc_request_line(
     None => ()
   }
   client.busy = false
+  if result.drop_connection {
+    client.close_after_response = true
+  }
   match result.reload_request {
     Some(req) => serve_replace_self_after_reload_ack(server_fd, req)
     None => ()
