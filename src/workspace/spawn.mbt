@@ -104,6 +104,7 @@ fn shared_env_pairs(
   workspace : String,
   terminal_target : @types.LocalTarget,
   listen_uds_env? : String? = None,
+  agent_token? : String? = None,
 ) -> Array[(String, String)] {
   let role = @config.role_to_string(spec.role)
   let agent_id = canonical_agent_id(spec)
@@ -122,6 +123,10 @@ fn shared_env_pairs(
     ("CHOIR_SESSION_ID", agent_id),
     ("CHOIR_PARENT_AGENT", spec.parent_id),
   ]
+  match agent_token {
+    Some(token) => if token != "" { pairs.push(("CHOIR_AGENT_TOKEN", token)) }
+    None => ()
+  }
   match listen_uds_env {
     Some(value) => pairs.push(("CHOIR_LISTEN_UDS", value))
     None => ()
@@ -144,6 +149,7 @@ pub fn launch_env_prefix(
   workspace : String,
   terminal_target : @types.LocalTarget,
   listen_uds_env? : String? = None,
+  agent_token? : String? = None,
 ) -> String {
   let buf = StringBuilder::new()
   buf.write_string(path_assignment(workspace + "/.choir/bin"))
@@ -154,6 +160,7 @@ pub fn launch_env_prefix(
       workspace,
       terminal_target,
       listen_uds_env~,
+      agent_token~,
     ) {
     let (k, v) = pair
     buf.write_char(' ')
@@ -170,6 +177,7 @@ fn launch_env_exports(
   workspace : String,
   terminal_target : @types.LocalTarget,
   listen_uds_env? : String? = None,
+  agent_token? : String? = None,
 ) -> String {
   let buf = StringBuilder::new()
   buf.write_string(export_path_assignment(workspace + "/.choir/bin"))
@@ -180,6 +188,7 @@ fn launch_env_exports(
       workspace,
       terminal_target,
       listen_uds_env~,
+      agent_token~,
     ) {
     let (k, v) = pair
     buf.write_string(export_assignment(k, v))
@@ -196,6 +205,7 @@ pub fn launch_env_assignments(
   workspace : String,
   terminal_target : @types.LocalTarget,
   listen_uds_env? : String? = None,
+  agent_token? : String? = None,
 ) -> Array[String] {
   let result : Array[String] = [
     path_env_merged_for_argv(workspace + "/.choir/bin"),
@@ -207,6 +217,7 @@ pub fn launch_env_assignments(
       workspace,
       terminal_target,
       listen_uds_env~,
+      agent_token~,
     ) {
     let (k, v) = pair
     result.push(env_pair_raw(k, v))
@@ -327,6 +338,57 @@ test "launch env serializers agree on the non-PATH key set" {
     }
   }
   @debug.assert_eq(argv_keys, expected_keys)
+}
+
+///|
+test "shared env pairs include spawned agent token when provided" {
+  let spec : @types.SpawnSpec = {
+    slug: "leaf-token",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Codex,
+    task: "t",
+    task_contract: None,
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "root",
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+    automerge: None,
+    review_mode: None,
+    merge_strategy: None,
+    wave_id: None,
+  }
+  let target = @types.LocalTarget::{
+    kind: @types.TargetKind::ZellijTab,
+    session: "sess",
+    name: "leaf-token",
+  }
+  let pairs = shared_env_pairs(
+    spec,
+    "sess",
+    "/ws",
+    target,
+    agent_token=Some("spawn-token-a"),
+  )
+  let mut saw_pair = false
+  for pair in pairs {
+    let (key, value) = pair
+    if key == "CHOIR_AGENT_TOKEN" && value == "spawn-token-a" {
+      saw_pair = true
+    }
+  }
+  assert_true(saw_pair)
+  assert_true(
+    launch_env_assignments(
+      spec,
+      "sess",
+      "/ws",
+      target,
+      agent_token=Some("spawn-token-a"),
+    ).contains("CHOIR_AGENT_TOKEN=spawn-token-a"),
+  )
 }
 
 ///|
@@ -547,6 +609,7 @@ pub fn spawn_commands(
   listen_uds? : String = ".choir/server.sock",
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
+  agent_token? : String? = None,
   project_config_content? : String = "",
   read_file? : (String) -> String = @sys.read_file,
   extism_on_path? : () -> Bool = extism_on_path_default,
@@ -598,6 +661,7 @@ pub fn spawn_commands(
     workspace,
     terminal_target,
     listen_uds_env=Some(listen_uds_env),
+    agent_token~,
   )
   let provider_cmds = provider_materialization_commands(
     spec.agent_type,
@@ -661,6 +725,7 @@ pub fn spawn_commands(
                 workspace,
                 terminal_target,
                 listen_uds_env=Some(listen_uds_env),
+                agent_token~,
               ),
               launch_cmd,
               " exit \"$status\"",
@@ -715,6 +780,7 @@ pub fn spawn_commands(
                 workspace,
                 terminal_target,
                 listen_uds_env=Some(listen_uds_env),
+                agent_token~,
               ),
               launch_cmd,
               " exit \"$status\"",
@@ -771,6 +837,7 @@ pub fn spawn_commands(
                 workspace,
                 terminal_target,
                 listen_uds_env=Some(listen_uds_env),
+                agent_token~,
               ),
               launch_cmd,
               " exit \"$status\"",
@@ -859,8 +926,9 @@ fn remote_ssh_agent_cmd_line(
   workspace : String,
   terminal_target : @types.LocalTarget,
   launch_cmd : Command,
+  agent_token? : String? = None,
 ) -> String {
-  launch_env_prefix(spec, "remote", workspace, terminal_target) +
+  launch_env_prefix(spec, "remote", workspace, terminal_target, agent_token~) +
   command_text_for_launch(launch_cmd)
 }
 
@@ -874,6 +942,7 @@ pub fn remote_spawn_commands(
   tcp_addr : String,
   parent_session_id? : String? = None,
   extra_mcp_servers_json? : String? = None,
+  agent_token? : String? = None,
 ) -> Array[Command] {
   let branch = canonical_agent_id(spec)
   let workspace = "$HOME/exo-workspaces/" + branch
@@ -905,7 +974,11 @@ pub fn remote_spawn_commands(
     extra_mcp_servers_json~,
   )
   let agent_cmd = remote_ssh_agent_cmd_line(
-    spec, workspace, terminal_target, launch_cmd,
+    spec,
+    workspace,
+    terminal_target,
+    launch_cmd,
+    agent_token~,
   )
   [
     ssh_cmd(
@@ -952,6 +1025,7 @@ pub fn init_tl_zellij_tab_command(
   tl_type : String,
   branch : String,
   lean? : Bool = false,
+  root_agent_token? : String? = None,
 ) -> Command {
   let tl_agent_type = tl_type_agent_type(tl_type)
   let inner = zellij_launch_inner_command(
@@ -962,12 +1036,22 @@ pub fn init_tl_zellij_tab_command(
   } else {
     ""
   }
+  let root_token_export = match root_agent_token {
+    Some(token) =>
+      if token != "" {
+        export_assignment("CHOIR_AGENT_TOKEN", token)
+      } else {
+        ""
+      }
+    None => ""
+  }
   let env_exports = export_assignment("CHOIR_AGENT_ID", "root") +
     export_assignment("CHOIR_BRANCH", branch) +
     export_assignment("CHOIR_PARENT_BRANCH", branch) +
     export_assignment("CHOIR_ROLE", "tl") +
     export_assignment("CHOIR_WORKSPACE", project_dir) +
     tl_home_export +
+    root_token_export +
     export_assignment(
       "CHOIR_TERMINAL_TARGET",
       local_target_for(session, "TL", @types.IsolationMode::Worktree).to_string(),

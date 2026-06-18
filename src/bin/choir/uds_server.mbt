@@ -50,6 +50,7 @@ struct ServeUDSClient {
   connected_at_sec : Int64
   mut last_request_name : String?
   mut busy : Bool
+  mut close_after_response : Bool
 }
 
 ///|
@@ -62,6 +63,7 @@ fn ServeUDSClient::new(fd : Int) -> ServeUDSClient {
     connected_at_sec: @poller.now_sec(),
     last_request_name: None,
     busy: false,
+    close_after_response: false,
   }
 }
 
@@ -97,6 +99,7 @@ fn serve_reload_binary_path_for_request(
 
 ///|
 fn serve_replace_self_after_reload_ack(
+  state : @server.ServerState,
   server_fd : Int,
   req : @types.Request,
 ) -> Unit {
@@ -116,9 +119,17 @@ fn serve_replace_self_after_reload_ack(
       return
     }
   }
+  if !serve_prepare_reload_credentials_env(state) {
+    @moontrace.error("server reload failed to prepare credential environment", fields=[])
+    @sys.write_stderr(
+      "[server_reload] exec failed: failed to prepare credential environment\n",
+    )
+    return
+  }
   match @exec.replace_self(binary_path, server_fd) {
     Ok(_) => ()
     Err(e) => {
+      ignore(serve_clear_reload_credentials_env())
       @moontrace.error("server reload exec failed", fields=[
         @moontrace.field("binary_path", binary_path),
         @moontrace.field("error", e.message()),
@@ -129,7 +140,10 @@ fn serve_replace_self_after_reload_ack(
 }
 
 ///|
-fn lifecycle_agent_id_for_register(req : @types.Request) -> String? {
+fn lifecycle_agent_id_for_register(
+  req : @types.Request,
+  authenticated_agent_id : String,
+) -> String? {
   if req.req_method != "register" {
     return None
   }
@@ -142,19 +156,197 @@ fn lifecycle_agent_id_for_register(req : @types.Request) -> String? {
       }
     None => ()
   }
-  req.args.get("agent_id")
+  Some(authenticated_agent_id)
 }
 
 ///|
 fn register_connection_agent_id_after_response(
   req : @types.Request,
   resp : @types.Response,
+  authenticated_agent_id : String?,
 ) -> String? {
   if req.req_method == "register" && resp.is_ok() {
-    lifecycle_agent_id_for_register(req)
+    match authenticated_agent_id {
+      Some(agent_id) => lifecycle_agent_id_for_register(req, agent_id)
+      None => None
+    }
   } else {
     None
   }
+}
+
+///|
+priv enum ServeRegisterAuth {
+  Authorized(@types.Request, String?)
+  Rejected(@types.Response)
+}
+
+///|
+fn serve_registration_auth_failed_response() -> @types.Response {
+  @types.Response::Err("registration authentication failed")
+}
+
+///|
+let serve_root_agent_id : String = "root"
+
+///|
+let serve_root_boot_token_env : String = "CHOIR_ROOT_AGENT_TOKEN"
+
+///|
+let serve_reload_credentials_env : String = "CHOIR_RELOAD_CREDENTIALS"
+
+///|
+fn serve_root_credential_not_provisioned_response() -> @types.Response {
+  @types.Response::Err(
+    "root credential not provisioned; re-run `choir init --recreate` to mint and wire a fresh root credential",
+  )
+}
+
+///|
+fn serve_record_boot_root_credential(
+  state : @server.ServerState,
+  token : String,
+) -> Unit {
+  if token != "" {
+    state.registry.record_spawn_credential(serve_root_agent_id, {
+      role: @types.Role::Root,
+      token,
+    })
+  }
+}
+
+///|
+fn serve_boot_root_token_from_env(
+  getenv? : (String) -> String? = fn(key) { @sys.getenv(key) },
+) -> String? {
+  match getenv(serve_root_boot_token_env) {
+    Some(token) => if token == "" { None } else { Some(token) }
+    None => None
+  }
+}
+
+///|
+fn serve_prepare_reload_credentials_env(
+  state : @server.ServerState,
+  setenv? : (String, String) -> Bool = @sys.setenv,
+  unsetenv? : (String) -> Bool = @sys.unsetenv,
+) -> Bool {
+  let payload = state.registry.to_reload_credentials_env_string()
+  if payload == "" {
+    unsetenv(serve_reload_credentials_env)
+  } else {
+    setenv(serve_reload_credentials_env, payload)
+  }
+}
+
+///|
+fn serve_clear_reload_credentials_env(
+  unsetenv? : (String) -> Bool = @sys.unsetenv,
+) -> Bool {
+  unsetenv(serve_reload_credentials_env)
+}
+
+///|
+fn serve_restore_reload_credentials_from_env(
+  state : @server.ServerState,
+  getenv? : (String) -> String? = fn(key) { @sys.getenv(key) },
+  unsetenv? : (String) -> Bool = @sys.unsetenv,
+) -> Int {
+  let restored = match getenv(serve_reload_credentials_env) {
+    Some(payload) =>
+      if payload == "" {
+        0
+      } else {
+        match state.registry.restore_reload_credentials_env_string(payload) {
+          Ok(count) => count
+          Err(_) => 0
+        }
+      }
+    None => 0
+  }
+  ignore(unsetenv(serve_reload_credentials_env))
+  restored
+}
+
+///|
+fn serve_constant_timeish_string_equal(
+  presented : String,
+  stored : String,
+) -> Bool {
+  let presented_len = presented.length()
+  let stored_len = stored.length()
+  let mut diff = if presented_len == stored_len { 0 } else { 1 }
+  for i = 0; i < stored_len; i = i + 1 {
+    let presented_unit = if i < presented_len {
+      presented.code_unit_at(i)
+    } else {
+      0
+    }
+    if presented_unit != stored.code_unit_at(i) {
+      diff = 1
+    }
+  }
+  diff == 0
+}
+
+///|
+fn serve_authenticate_register_request(
+  state : @server.ServerState,
+  req : @types.Request,
+) -> ServeRegisterAuth {
+  if req.req_method != "register" {
+    return ServeRegisterAuth::Authorized(req, None)
+  }
+  let claimed_agent_id = match req.args.get("agent_id") {
+    Some(v) =>
+      if v == "" {
+        return ServeRegisterAuth::Rejected(
+          serve_registration_auth_failed_response(),
+        )
+      } else {
+        v
+      }
+    None =>
+      return ServeRegisterAuth::Rejected(
+        serve_registration_auth_failed_response(),
+      )
+  }
+  let presented_token = match req.registration_token() {
+    Some(v) => v
+    None =>
+      return ServeRegisterAuth::Rejected(
+        serve_registration_auth_failed_response(),
+      )
+  }
+  if presented_token == "" {
+    return ServeRegisterAuth::Rejected(
+      serve_registration_auth_failed_response(),
+    )
+  }
+  if claimed_agent_id == serve_root_agent_id &&
+    state.registry.credential_for_agent(serve_root_agent_id) is None {
+    return ServeRegisterAuth::Rejected(
+      serve_root_credential_not_provisioned_response(),
+    )
+  }
+  let credential = match state.registry.credential_for_agent(claimed_agent_id) {
+    Some(value) => value
+    None =>
+      return ServeRegisterAuth::Rejected(
+        serve_registration_auth_failed_response(),
+      )
+  }
+  if credential.token == "" ||
+    !serve_constant_timeish_string_equal(presented_token, credential.token) {
+    return ServeRegisterAuth::Rejected(
+      serve_registration_auth_failed_response(),
+    )
+  }
+  let effective_req = { ..req, role: credential.role }
+  ServeRegisterAuth::Authorized(
+    effective_req,
+    lifecycle_agent_id_for_register(effective_req, claimed_agent_id),
+  )
 }
 
 ///|
@@ -163,6 +355,7 @@ struct ServeRequestLineResult {
   request_name : String?
   saw_register : Bool
   connected_agent_id : String?
+  drop_connection : Bool
   reload_request : @types.Request?
 }
 
@@ -185,8 +378,9 @@ fn connected_agent_id_after_request(
 async fn serve_handle_internal_request(
   state : @server.ServerState,
   req : @types.Request,
+  authenticated_agent_id? : String? = None,
 ) -> @types.Response {
-  state.handle(req) catch {
+  state.handle(req, authenticated_agent_id~) catch {
     e => {
       @moontrace.error("handler error", fields=[
         @moontrace.field("request", req.name),
@@ -198,8 +392,64 @@ async fn serve_handle_internal_request(
 }
 
 ///|
+fn serve_custom_unauthenticated_request(req : @types.Request) -> @types.Request {
+  let args : Map[String, Json] = {}
+  req.args.each_json(fn(k, v) {
+    if k != "caller_id" && k != "agent_id" {
+      args.set(k, v)
+    }
+  })
+  {
+    ..req,
+    role: @types.Role::Worker,
+    args: @types.RequestArgs::from_values(args),
+  }
+}
+
+///|
+fn serve_custom_request_for_connection(
+  req : @types.Request,
+  authenticated_agent_id : String?,
+) -> @types.Request {
+  if req.req_method == "register" {
+    req
+  } else {
+    match authenticated_agent_id {
+      Some(_) => req
+      None => serve_custom_unauthenticated_request(req)
+    }
+  }
+}
+
+///|
 fn serve_jsonrpc_response_line(resp : @mcp.JsonRpcResponse) -> String {
   resp.to_json_string() + "\n"
+}
+
+///|
+fn serve_jsonrpc_role_for_connection(
+  state : @server.ServerState,
+  authenticated_agent_id : String?,
+) -> @types.Role {
+  match authenticated_agent_id {
+    Some(agent_id) =>
+      match state.registry.get_opt(agent_id) {
+        Some(agent) => agent.role
+        None => @types.Role::Worker
+      }
+    None => @types.Role::Worker
+  }
+}
+
+///|
+fn serve_jsonrpc_request_for_connection(
+  req : @types.Request,
+  authenticated_agent_id : String?,
+) -> @types.Request {
+  match authenticated_agent_id {
+    Some(_) => req
+    None => serve_custom_unauthenticated_request(req)
+  }
 }
 
 ///|
@@ -207,6 +457,7 @@ async fn serve_handle_jsonrpc_request_line(
   state : @server.ServerState,
   line : String,
   allow_reload : Bool,
+  authenticated_agent_id? : String? = None,
 ) -> ServeRequestLineResult {
   match @mcp.parse_jsonrpc_request(line) {
     Ok(rpc) => {
@@ -218,9 +469,13 @@ async fn serve_handle_jsonrpc_request_line(
             request_name: Some(rpc.req_method),
             saw_register: false,
             connected_agent_id: None,
+            drop_connection: false,
             reload_request: None,
           }
       }
+      let effective_role = serve_jsonrpc_role_for_connection(
+        state, authenticated_agent_id,
+      )
       if rpc.req_method == @mcp.method_initialize {
         return {
           response_line: Some(
@@ -229,6 +484,7 @@ async fn serve_handle_jsonrpc_request_line(
           request_name: Some(rpc.req_method),
           saw_register: false,
           connected_agent_id: None,
+          drop_connection: false,
           reload_request: None,
         }
       }
@@ -236,18 +492,22 @@ async fn serve_handle_jsonrpc_request_line(
         return {
           response_line: Some(
             serve_jsonrpc_response_line(
-              @mcp.tools_list_response(id, @types.Role::Root),
+              @mcp.tools_list_response(id, effective_role),
             ),
           ),
           request_name: Some(rpc.req_method),
           saw_register: false,
           connected_agent_id: None,
+          drop_connection: false,
           reload_request: None,
         }
       }
-      match @mcp.to_internal_request(rpc, @types.Role::Root) {
+      match @mcp.to_internal_request(rpc, effective_role) {
         Ok(req) => {
-          if !allow_reload && serve_is_reload_request(req) {
+          let effective_req = serve_jsonrpc_request_for_connection(
+            req, authenticated_agent_id,
+          )
+          if !allow_reload && serve_is_reload_request(effective_req) {
             return {
               response_line: Some(
                 serve_jsonrpc_response_line(
@@ -259,24 +519,30 @@ async fn serve_handle_jsonrpc_request_line(
                   ),
                 ),
               ),
-              request_name: Some(req.name),
+              request_name: Some(effective_req.name),
               saw_register: false,
               connected_agent_id: None,
+              drop_connection: false,
               reload_request: None,
             }
           }
-          let resp = serve_handle_internal_request(state, req)
+          let resp = serve_handle_internal_request(
+            state,
+            effective_req,
+            authenticated_agent_id~,
+          )
           {
             response_line: Some(
               serve_jsonrpc_response_line(@mcp.from_internal_response(id, resp)),
             ),
-            request_name: Some(req.name),
+            request_name: Some(effective_req.name),
             saw_register: false,
             connected_agent_id: None,
+            drop_connection: false,
             reload_request: if allow_reload &&
-              serve_is_reload_request(req) &&
+              serve_is_reload_request(effective_req) &&
               resp.is_ok() {
-              Some(req)
+              Some(effective_req)
             } else {
               None
             },
@@ -292,13 +558,13 @@ async fn serve_handle_jsonrpc_request_line(
             request_name: Some(rpc.req_method),
             saw_register: false,
             connected_agent_id: None,
+            drop_connection: false,
             reload_request: None,
           }
       }
     }
     Err(e) => {
       @moontrace.warn("jsonrpc parse error", fields=[
-        @moontrace.field("line", line),
         @moontrace.field("error", e.message),
       ])
       {
@@ -310,7 +576,71 @@ async fn serve_handle_jsonrpc_request_line(
         request_name: None,
         saw_register: false,
         connected_agent_id: None,
+        drop_connection: false,
         reload_request: None,
+      }
+    }
+  }
+}
+
+///|
+async fn serve_handle_parsed_custom_request(
+  state : @server.ServerState,
+  req : @types.Request,
+  allow_reload : Bool,
+  authenticated_agent_id? : String? = None,
+) -> ServeRequestLineResult {
+  let saw_register = req.req_method == "register"
+  let effective_req = serve_custom_request_for_connection(
+    req, authenticated_agent_id,
+  )
+  if !allow_reload && serve_is_reload_request(effective_req) {
+    let resp = @types.Response::Err("server_reload requires the UDS transport")
+    return {
+      response_line: Some(@transport.format_response(resp) + "\n"),
+      request_name: Some(effective_req.name),
+      saw_register,
+      connected_agent_id: None,
+      drop_connection: false,
+      reload_request: None,
+    }
+  }
+  match serve_authenticate_register_request(state, effective_req) {
+    ServeRegisterAuth::Rejected(resp) =>
+      {
+        response_line: Some(@transport.format_response(resp) + "\n"),
+        request_name: Some(effective_req.name),
+        saw_register,
+        connected_agent_id: None,
+        drop_connection: true,
+        reload_request: None,
+      }
+    ServeRegisterAuth::Authorized(effective_req, registered_agent_id) => {
+      let request_authenticated_agent_id = if saw_register {
+        None
+      } else {
+        authenticated_agent_id
+      }
+      let resp = serve_handle_internal_request(
+        state,
+        effective_req,
+        authenticated_agent_id=request_authenticated_agent_id,
+      )
+      {
+        response_line: Some(@transport.format_response(resp) + "\n"),
+        request_name: Some(effective_req.name),
+        saw_register,
+        connected_agent_id: register_connection_agent_id_after_response(
+          effective_req, resp, registered_agent_id,
+        ),
+        drop_connection: false,
+        reload_request: if allow_reload &&
+          serve_is_reload_request(effective_req) &&
+          resp.is_ok() {
+          Some(effective_req)
+        } else {
+          None
+        },
       }
     }
   }
@@ -321,47 +651,25 @@ async fn serve_handle_custom_request_line(
   state : @server.ServerState,
   line : String,
   allow_reload : Bool,
+  authenticated_agent_id? : String? = None,
 ) -> ServeRequestLineResult {
   match @transport.parse_request(line) {
-    Ok(req) => {
-      let saw_register = req.req_method == "register"
-      if !allow_reload && serve_is_reload_request(req) {
-        let resp = @types.Response::Err(
-          "server_reload requires the UDS transport",
-        )
-        return {
-          response_line: Some(@transport.format_response(resp) + "\n"),
-          request_name: Some(req.name),
-          saw_register,
-          connected_agent_id: None,
-          reload_request: None,
-        }
-      }
-      let resp = serve_handle_internal_request(state, req)
-      {
-        response_line: Some(@transport.format_response(resp) + "\n"),
-        request_name: Some(req.name),
-        saw_register,
-        connected_agent_id: register_connection_agent_id_after_response(
-          req, resp,
-        ),
-        reload_request: if allow_reload &&
-          serve_is_reload_request(req) &&
-          resp.is_ok() {
-          Some(req)
-        } else {
-          None
-        },
-      }
-    }
+    Ok(req) =>
+      serve_handle_parsed_custom_request(
+        state,
+        req,
+        allow_reload,
+        authenticated_agent_id~,
+      )
     Err(err) => {
-      @moontrace.warn("parse error", fields=[@moontrace.field("line", line)])
+      @moontrace.warn("parse error", fields=[@moontrace.field("error", err)])
       let resp = @types.Response::Err("parse error: " + err)
       {
         response_line: Some(@transport.format_response(resp) + "\n"),
         request_name: None,
         saw_register: false,
         connected_agent_id: None,
+        drop_connection: false,
         reload_request: None,
       }
     }
@@ -373,11 +681,22 @@ async fn serve_handle_request_line(
   state : @server.ServerState,
   line : String,
   allow_reload : Bool,
+  authenticated_agent_id? : String? = None,
 ) -> ServeRequestLineResult {
   if @transport.is_jsonrpc_request(line) {
-    serve_handle_jsonrpc_request_line(state, line, allow_reload)
+    serve_handle_jsonrpc_request_line(
+      state,
+      line,
+      allow_reload,
+      authenticated_agent_id~,
+    )
   } else {
-    serve_handle_custom_request_line(state, line, allow_reload)
+    serve_handle_custom_request_line(
+      state,
+      line,
+      allow_reload,
+      authenticated_agent_id~,
+    )
   }
 }
 
@@ -392,7 +711,7 @@ test "lifecycle_agent_id_for_register ignores one-shot clients" {
       "connection_lifetime": "oneshot",
     }),
   }
-  @debug.assert_eq(lifecycle_agent_id_for_register(req), None)
+  @debug.assert_eq(lifecycle_agent_id_for_register(req, "main.leaf"), None)
 }
 
 ///|
@@ -406,7 +725,10 @@ test "lifecycle_agent_id_for_register keeps session clients" {
       "connection_lifetime": "session",
     }),
   }
-  @debug.assert_eq(lifecycle_agent_id_for_register(req), Some("main.leaf"))
+  @debug.assert_eq(
+    lifecycle_agent_id_for_register(req, "main.leaf"),
+    Some("main.leaf"),
+  )
 }
 
 ///|
@@ -449,6 +771,417 @@ fn serve_test_state_with_root(label : String) -> (@server.ServerState, String) {
     expires_at_unix_ms: 9_999_999_999_999L,
   })
   (state, project_dir)
+}
+
+///|
+fn serve_test_upsert_agent(
+  state : @server.ServerState,
+  agent_id : String,
+  role : @types.Role,
+  project_dir : String,
+) -> Unit {
+  ignore(
+    state.registry.upsert({
+      agent_id,
+      role,
+      agent_type: @types.AgentType::Codex,
+      parent: Some("root"),
+      workspace: project_dir,
+      branch: agent_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+}
+
+///|
+fn serve_test_record_credential(
+  state : @server.ServerState,
+  agent_id : String,
+  role : @types.Role,
+  token : String,
+) -> Unit {
+  state.registry.record_spawn_credential(agent_id, { role, token })
+}
+
+///|
+fn serve_test_register_line(
+  agent_id : String,
+  wire_role : String,
+  token : String,
+  project_dir : String,
+) -> String {
+  "{\"method\":\"register\",\"role\":\"" +
+  wire_role +
+  "\",\"name\":\"register\",\"args\":{\"agent_id\":\"" +
+  agent_id +
+  "\",\"agent_type\":\"codex\",\"branch\":\"" +
+  agent_id +
+  "\",\"workspace\":\"" +
+  project_dir +
+  "\",\"token\":\"" +
+  token +
+  "\"}}"
+}
+
+///|
+fn serve_assert_register_ok(
+  state : @server.ServerState,
+  result : ServeRequestLineResult,
+  agent_id : String,
+  expected_role : @types.Role,
+) -> Unit raise {
+  assert_true(result.saw_register)
+  @debug.assert_eq(result.connected_agent_id, Some(agent_id))
+  assert_false(result.drop_connection)
+  match result.response_line {
+    Some(resp_line) =>
+      match @transport.parse_response(resp_line.trim().to_owned()) {
+        Ok(resp) => assert_true(resp.is_ok())
+        Err(e) => fail("expected parseable response: " + e)
+      }
+    None => fail("expected register response")
+  }
+  assert_eq(state.registry.get(agent_id).role, expected_role)
+}
+
+///|
+fn serve_assert_register_rejected(
+  result : ServeRequestLineResult,
+  secret : String,
+) -> Unit raise {
+  assert_true(result.saw_register)
+  @debug.assert_eq(result.connected_agent_id, None)
+  assert_true(result.drop_connection)
+  match result.response_line {
+    Some(resp_line) => {
+      assert_false(resp_line.contains(secret))
+      match @transport.parse_response(resp_line.trim().to_owned()) {
+        Ok(resp) => {
+          assert_false(resp.is_ok())
+          match resp.error_message() {
+            Some(msg) => assert_false(msg.contains(secret))
+            None => fail("expected rejected register error")
+          }
+        }
+        Err(e) => fail("expected parseable response: " + e)
+      }
+    }
+    None => fail("expected rejected register response")
+  }
+}
+
+///|
+async fn serve_assert_register_token_validation_mode(
+  label : String,
+  allow_reload : Bool,
+) -> Unit {
+  let (state, project_dir) = serve_test_state_with_root(label)
+  let ok_agent = "main." + label + ".ok"
+  serve_test_upsert_agent(state, ok_agent, @types.Role::Worker, project_dir)
+  serve_test_record_credential(
+    state,
+    ok_agent,
+    @types.Role::Worker,
+    "expected-token",
+  )
+  let ok_result = serve_handle_request_line(
+    state,
+    serve_test_register_line(ok_agent, "dev", "expected-token", project_dir),
+    allow_reload,
+  )
+  serve_assert_register_ok(state, ok_result, ok_agent, @types.Role::Worker)
+
+  let wrong_agent = "main." + label + ".wrong"
+  serve_test_upsert_agent(state, wrong_agent, @types.Role::Dev, project_dir)
+  serve_test_record_credential(
+    state,
+    wrong_agent,
+    @types.Role::Dev,
+    "right-token",
+  )
+  let wrong_result = serve_handle_request_line(
+    state,
+    serve_test_register_line(wrong_agent, "dev", "wrong-token", project_dir),
+    allow_reload,
+  )
+  serve_assert_register_rejected(wrong_result, "wrong-token")
+  @debug.assert_eq(state.registry.get(wrong_agent).role, @types.Role::Dev)
+
+  let short_agent = "main." + label + ".short"
+  serve_test_upsert_agent(state, short_agent, @types.Role::Dev, project_dir)
+  serve_test_record_credential(
+    state,
+    short_agent,
+    @types.Role::Dev,
+    "short-token-stored",
+  )
+  let short_result = serve_handle_request_line(
+    state,
+    serve_test_register_line(short_agent, "dev", "short", project_dir),
+    allow_reload,
+  )
+  serve_assert_register_rejected(short_result, "short")
+
+  let long_agent = "main." + label + ".long"
+  serve_test_upsert_agent(state, long_agent, @types.Role::Dev, project_dir)
+  serve_test_record_credential(
+    state,
+    long_agent,
+    @types.Role::Dev,
+    "prefix-token",
+  )
+  let long_result = serve_handle_request_line(
+    state,
+    serve_test_register_line(
+      long_agent, "dev", "prefix-token-extra", project_dir,
+    ),
+    allow_reload,
+  )
+  serve_assert_register_rejected(long_result, "prefix-token-extra")
+
+  let empty_agent = "main." + label + ".empty"
+  serve_test_upsert_agent(state, empty_agent, @types.Role::Dev, project_dir)
+  serve_test_record_credential(
+    state,
+    empty_agent,
+    @types.Role::Dev,
+    "empty-token",
+  )
+  let empty_result = serve_handle_request_line(
+    state,
+    serve_test_register_line(empty_agent, "dev", "", project_dir),
+    allow_reload,
+  )
+  serve_assert_register_rejected(empty_result, "empty-token")
+
+  let absent_agent = "main." + label + ".absent"
+  serve_test_upsert_agent(state, absent_agent, @types.Role::Dev, project_dir)
+  let absent_result = serve_handle_request_line(
+    state,
+    serve_test_register_line(absent_agent, "dev", "orphan-token", project_dir),
+    allow_reload,
+  )
+  serve_assert_register_rejected(absent_result, "orphan-token")
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "serve UDS register validates spawn credential token" {
+  serve_assert_register_token_validation_mode("uds-token", true)
+}
+
+///|
+async test "serve TCP register validates spawn credential token" {
+  serve_assert_register_token_validation_mode("tcp-token", false)
+}
+
+///|
+async test "serve root register without boot credential gives init recreate guidance without leaking token" {
+  let (state, project_dir) = serve_test_state_with_root(
+    "missing-root-credential",
+  )
+  let presented_secret = "missing-root-presented-token"
+  let result = serve_handle_request_line(
+    state,
+    serve_test_register_line("root", "root", presented_secret, project_dir),
+    true,
+  )
+  serve_assert_register_rejected(result, presented_secret)
+  match result.response_line {
+    Some(resp_line) =>
+      match @transport.parse_response(resp_line.trim().to_owned()) {
+        Ok(resp) =>
+          match resp.error_message() {
+            Some(msg) => {
+              assert_true(msg.contains("root credential not provisioned"))
+              assert_true(msg.contains("choir init --recreate"))
+              assert_false(msg.contains("choir claude"))
+              assert_false(msg.contains(presented_secret))
+            }
+            None => fail("expected root recovery error")
+          }
+        Err(e) => fail("expected parseable response: " + e)
+      }
+    None => fail("expected rejected register response")
+  }
+  @debug.assert_eq(state.registry.credential_for_agent("root"), None)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "serve root register succeeds with boot credential and rejects mismatch" {
+  let (state, project_dir) = serve_test_state_with_root("root-boot-credential")
+  let root_token = "root-boot-token"
+  serve_record_boot_root_credential(state, root_token)
+
+  let ok_result = serve_handle_request_line(
+    state,
+    serve_test_register_line("root", "root", root_token, project_dir),
+    true,
+  )
+  serve_assert_register_ok(state, ok_result, "root", @types.Role::Root)
+
+  let wrong_secret = "wrong-root-token"
+  let wrong_result = serve_handle_request_line(
+    state,
+    serve_test_register_line("root", "root", wrong_secret, project_dir),
+    true,
+  )
+  serve_assert_register_rejected(wrong_result, wrong_secret)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+test "serve boot root token env ignores missing and empty values" {
+  @debug.assert_eq(serve_boot_root_token_from_env(getenv=fn(_) { None }), None)
+  @debug.assert_eq(
+    serve_boot_root_token_from_env(getenv=fn(_) { Some("") }),
+    None,
+  )
+  @debug.assert_eq(
+    serve_boot_root_token_from_env(getenv=fn(key) {
+      if key == "CHOIR_ROOT_AGENT_TOKEN" {
+        Some("root-env-token")
+      } else {
+        None
+      }
+    }),
+    Some("root-env-token"),
+  )
+}
+
+///|
+async test "serve restores reload credentials before non-root reconnect register" {
+  let (state, project_dir) = serve_test_state_with_root("reload-creds")
+  let agent_id = "main.reload-creds.dev"
+  let token = "reload-original-token"
+  serve_test_upsert_agent(state, agent_id, @types.Role::Dev, project_dir)
+
+  let before_restore = serve_handle_request_line(
+    state,
+    serve_test_register_line(agent_id, "dev", token, project_dir),
+    true,
+  )
+  serve_assert_register_rejected(before_restore, token)
+
+  let payload =
+    #|{"version":1,"credentials":[{"agent_id":"main.reload-creds.dev","role":"dev","token":"reload-original-token"}]}
+  let unset_keys : Array[String] = []
+  let restored = serve_restore_reload_credentials_from_env(
+    state,
+    getenv=fn(key) {
+      if key == serve_reload_credentials_env {
+        Some(payload)
+      } else {
+        None
+      }
+    },
+    unsetenv=fn(key) {
+      unset_keys.push(key)
+      true
+    },
+  )
+  assert_eq(restored, 1)
+  @debug.assert_eq(unset_keys, [serve_reload_credentials_env])
+
+  let after_restore = serve_handle_request_line(
+    state,
+    serve_test_register_line(agent_id, "root", token, project_dir),
+    true,
+  )
+  serve_assert_register_ok(state, after_restore, agent_id, @types.Role::Dev)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "serve reload credential env missing empty or malformed stays fail closed" {
+  let empty_token_payload =
+    #|{"version":1,"credentials":[{"agent_id":"main.reload-negative.dev","role":"dev","token":""}]}
+  let cases : Array[(String, String?)] = [
+    ("missing", None),
+    ("empty", Some("")),
+    ("malformed", Some("not-json")),
+    ("empty-token", Some(empty_token_payload)),
+  ]
+  for item in cases {
+    let (label, env_value) = item
+    let (state, project_dir) = serve_test_state_with_root(
+      "reload-creds-" + label,
+    )
+    let agent_id = "main.reload-negative.dev"
+    let token = "reload-negative-secret"
+    serve_test_upsert_agent(state, agent_id, @types.Role::Dev, project_dir)
+    let unset_keys : Array[String] = []
+    let restored = serve_restore_reload_credentials_from_env(
+      state,
+      getenv=fn(key) {
+        if key == serve_reload_credentials_env {
+          env_value
+        } else {
+          None
+        }
+      },
+      unsetenv=fn(key) {
+        unset_keys.push(key)
+        true
+      },
+    )
+    assert_eq(restored, 0)
+    @debug.assert_eq(unset_keys, [serve_reload_credentials_env])
+    @debug.assert_eq(state.registry.credential_for_agent(agent_id), None)
+    let result = serve_handle_request_line(
+      state,
+      serve_test_register_line(agent_id, "dev", token, project_dir),
+      true,
+    )
+    serve_assert_register_rejected(result, token)
+    ignore(@sys.rm_rf(project_dir))
+  }
+}
+
+///|
+test "serve prepares reload credentials env without root token or logs" {
+  let (state, project_dir) = serve_test_state_with_root("reload-env-prepare")
+  let leaf_token = "reload-env-leaf-token"
+  let root_token = "reload-env-root-token"
+  serve_test_record_credential(
+    state,
+    "main.reload-env.leaf",
+    @types.Role::Dev,
+    leaf_token,
+  )
+  serve_test_record_credential(state, "root", @types.Role::Root, root_token)
+  let captured_events : Array[@moontrace.Event] = []
+  let set_values : Array[String] = []
+  let unset_keys : Array[String] = []
+  @moontrace.set_subscriber(fn(event) { captured_events.push(event) })
+  let prepared = serve_prepare_reload_credentials_env(
+    state,
+    setenv=fn(key, value) {
+      if key == serve_reload_credentials_env {
+        set_values.push(value)
+      }
+      true
+    },
+    unsetenv=fn(key) {
+      unset_keys.push(key)
+      true
+    },
+  )
+  @moontrace.clear_subscriber()
+  assert_true(prepared)
+  assert_eq(set_values.length(), 1)
+  assert_true(set_values[0].contains(leaf_token))
+  assert_false(set_values[0].contains(root_token))
+  @debug.assert_eq(unset_keys, [])
+  for event in captured_events {
+    assert_false(event.format(color=false).contains(leaf_token))
+    assert_false(event.format(color=false).contains(root_token))
+  }
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
@@ -540,6 +1273,249 @@ async test "serve UDS JSON-RPC tools call returns status bar structured content"
 }
 
 ///|
+async test "serve unbound JSON-RPC tools call uses Worker allow-list" {
+  let (state, project_dir) = serve_test_state_with_root("unbound-jsonrpc-call")
+  let denied_result = serve_handle_request_line(
+    state, "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"tools/call\",\"params\":{\"name\":\"goal_clear\",\"arguments\":{\"caller_id\":\"root\",\"agent_id\":\"root\"}}}",
+    true,
+  )
+  @debug.assert_eq(denied_result.request_name, Some("goal_clear"))
+  @debug.assert_eq(denied_result.connected_agent_id, None)
+  match denied_result.response_line {
+    Some(line) => {
+      let obj = match serve_test_json_object(line) {
+        Ok(obj) => obj
+        Err(e) => {
+          fail(e)
+          return
+        }
+      }
+      guard obj.get("result") is Some(Object(result_obj)) else {
+        fail("expected tools/call result")
+      }
+      @debug.assert_eq(result_obj.get("isError"), Some(true.to_json()))
+      guard result_obj.get("structuredContent") is Some(Object(structured)) else {
+        fail("expected structuredContent object")
+      }
+      match structured.get("error") {
+        Some(String(msg)) =>
+          assert_true(msg.contains("role worker cannot call goal_clear"))
+        _ => fail("expected worker permission error")
+      }
+    }
+    None => fail("expected goal_clear response")
+  }
+
+  let ok_result = serve_handle_request_line(
+    state, "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"tools/call\",\"params\":{\"name\":\"status_bar_state\",\"arguments\":{}}}",
+    true,
+  )
+  @debug.assert_eq(ok_result.request_name, Some("status_bar_state"))
+  match ok_result.response_line {
+    Some(line) => {
+      let obj = match serve_test_json_object(line) {
+        Ok(obj) => obj
+        Err(e) => {
+          fail(e)
+          return
+        }
+      }
+      guard obj.get("result") is Some(Object(result_obj)) else {
+        fail("expected status_bar_state result")
+      }
+      @debug.assert_eq(result_obj.get("isError"), Some(false.to_json()))
+      guard result_obj.get("structuredContent") is Some(Object(snapshot)) else {
+        fail("expected structuredContent object")
+      }
+      @debug.assert_eq(snapshot.get("schema_version"), Some((2).to_json()))
+    }
+    None => fail("expected status_bar_state response")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "serve unbound JSON-RPC tools list hides supervisor tools" {
+  let (state, project_dir) = serve_test_state_with_root("unbound-jsonrpc-list")
+  let result = serve_handle_request_line(
+    state, "{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"tools/list\"}", true,
+  )
+  match result.response_line {
+    Some(line) => {
+      let obj = match serve_test_json_object(line) {
+        Ok(obj) => obj
+        Err(e) => {
+          fail(e)
+          return
+        }
+      }
+      guard obj.get("result") is Some(Object(result_obj)) else {
+        fail("expected tools/list result")
+      }
+      guard result_obj.get("tools") is Some(Array(tools)) else {
+        fail("expected tools array")
+      }
+      let mut saw_status_bar_state = false
+      let mut saw_goal_clear = false
+      for tool in tools {
+        guard tool is Object(tool_obj) else { continue }
+        match tool_obj.get("name") {
+          Some(String("status_bar_state")) => saw_status_bar_state = true
+          Some(String("goal_clear")) => saw_goal_clear = true
+          _ => ()
+        }
+      }
+      assert_true(saw_status_bar_state)
+      assert_false(saw_goal_clear)
+    }
+    None => fail("expected tools/list response")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "serve JSON-RPC tools call uses authenticated connection identity" {
+  let (state, project_dir) = serve_test_state_with_root("bound-jsonrpc")
+  let agent_id = "main.bound-jsonrpc.dev"
+  serve_test_upsert_agent(state, agent_id, @types.Role::Dev, project_dir)
+  serve_test_record_credential(
+    state,
+    agent_id,
+    @types.Role::Dev,
+    "bound-jsonrpc-token",
+  )
+  state.record_agent_task_contract(
+    agent_id,
+    Some({
+      ..@types.TaskContract::empty(),
+      goal: "exercise bound jsonrpc identity",
+      verify: ["moon test --target native"],
+    }),
+  )
+  let register_result = serve_handle_request_line(
+    state,
+    serve_test_register_line(
+      agent_id, "dev", "bound-jsonrpc-token", project_dir,
+    ),
+    true,
+  )
+  serve_assert_register_ok(state, register_result, agent_id, @types.Role::Dev)
+  let owner = connected_agent_id_after_request(None, register_result)
+  let result = serve_handle_request_line(
+    state,
+    "{\"jsonrpc\":\"2.0\",\"id\":11,\"method\":\"tools/call\",\"params\":{\"name\":\"tdd_intent\",\"arguments\":{\"intent\":\"write the red test\"}}}",
+    true,
+    authenticated_agent_id=owner,
+  )
+  @debug.assert_eq(result.request_name, Some("tdd_intent"))
+  match result.response_line {
+    Some(line) => {
+      let obj = match serve_test_json_object(line) {
+        Ok(obj) => obj
+        Err(e) => {
+          fail(e)
+          return
+        }
+      }
+      guard obj.get("result") is Some(Object(result_obj)) else {
+        fail("expected tools/call result")
+      }
+      @debug.assert_eq(result_obj.get("isError"), Some(false.to_json()))
+      guard result_obj.get("structuredContent") is Some(Object(payload)) else {
+        fail("expected structuredContent object")
+      }
+      @debug.assert_eq(payload.get("agent_id"), Some(agent_id.to_json()))
+    }
+    None => fail("expected tdd_intent response")
+  }
+  @debug.assert_eq(
+    state.leaf_tdd_phase_for_agent(agent_id),
+    Some(@types.LeafTddPhase::Intent),
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "serve supervisor-bound JSON-RPC reaches supervisor allow-list" {
+  let (state, project_dir) = serve_test_state_with_root("bound-jsonrpc-root")
+  serve_test_record_credential(
+    state,
+    "root",
+    @types.Role::Root,
+    "bound-jsonrpc-root-token",
+  )
+  let register_result = serve_handle_request_line(
+    state,
+    serve_test_register_line(
+      "root", "root", "bound-jsonrpc-root-token", project_dir,
+    ),
+    true,
+  )
+  serve_assert_register_ok(state, register_result, "root", @types.Role::Root)
+  let owner = connected_agent_id_after_request(None, register_result)
+
+  let bound_result = serve_handle_request_line(
+    state,
+    "{\"jsonrpc\":\"2.0\",\"id\":12,\"method\":\"tools/call\",\"params\":{\"name\":\"goal_status\",\"arguments\":{}}}",
+    true,
+    authenticated_agent_id=owner,
+  )
+  @debug.assert_eq(bound_result.request_name, Some("goal_status"))
+  match bound_result.response_line {
+    Some(line) => {
+      let obj = match serve_test_json_object(line) {
+        Ok(obj) => obj
+        Err(e) => {
+          fail(e)
+          return
+        }
+      }
+      guard obj.get("result") is Some(Object(result_obj)) else {
+        fail("expected bound goal_status result")
+      }
+      @debug.assert_eq(result_obj.get("isError"), Some(false.to_json()))
+      guard result_obj.get("structuredContent") is Some(Object(payload)) else {
+        fail("expected bound structuredContent object")
+      }
+      @debug.assert_eq(payload.get("status"), Some("none".to_json()))
+      @debug.assert_eq(payload.get("active"), Some(false.to_json()))
+    }
+    None => fail("expected bound goal_status response")
+  }
+
+  let unbound_result = serve_handle_request_line(
+    state, "{\"jsonrpc\":\"2.0\",\"id\":13,\"method\":\"tools/call\",\"params\":{\"name\":\"goal_status\",\"arguments\":{\"caller_id\":\"root\",\"agent_id\":\"root\"}}}",
+    true,
+  )
+  @debug.assert_eq(unbound_result.request_name, Some("goal_status"))
+  match unbound_result.response_line {
+    Some(line) => {
+      let obj = match serve_test_json_object(line) {
+        Ok(obj) => obj
+        Err(e) => {
+          fail(e)
+          return
+        }
+      }
+      guard obj.get("result") is Some(Object(result_obj)) else {
+        fail("expected unbound goal_status result")
+      }
+      @debug.assert_eq(result_obj.get("isError"), Some(true.to_json()))
+      guard result_obj.get("structuredContent") is Some(Object(structured)) else {
+        fail("expected unbound structuredContent object")
+      }
+      match structured.get("error") {
+        Some(String(msg)) =>
+          assert_true(msg.contains("role worker cannot call goal_status"))
+        _ => fail("expected worker permission error")
+      }
+    }
+    None => fail("expected unbound goal_status response")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "serve UDS custom envelope still parses and dispatches" {
   let (state, project_dir) = serve_test_state_with_root("custom-envelope")
   let result = serve_handle_request_line(
@@ -572,16 +1548,240 @@ async test "serve UDS custom envelope still parses and dispatches" {
 }
 
 ///|
+async test "serve custom requests use authenticated connection identity" {
+  let (state, project_dir) = serve_test_state_with_root("bound-custom")
+  let agent_id = "main.bound-custom.dev"
+  serve_test_upsert_agent(state, agent_id, @types.Role::Dev, project_dir)
+  serve_test_record_credential(
+    state,
+    agent_id,
+    @types.Role::Dev,
+    "bound-custom-token",
+  )
+  state.record_agent_task_contract(
+    agent_id,
+    Some({
+      ..@types.TaskContract::empty(),
+      goal: "exercise bound custom identity",
+      verify: ["moon test --target native"],
+    }),
+  )
+  let register_result = serve_handle_request_line(
+    state,
+    serve_test_register_line(agent_id, "dev", "bound-custom-token", project_dir),
+    true,
+  )
+  serve_assert_register_ok(state, register_result, agent_id, @types.Role::Dev)
+  let owner = connected_agent_id_after_request(None, register_result)
+
+  let gated_result = serve_handle_request_line(
+    state,
+    "{\"method\":\"tools/call\",\"role\":\"dev\",\"name\":\"goal_set\",\"args\":{}}",
+    true,
+    authenticated_agent_id=owner,
+  )
+  match gated_result.response_line {
+    Some(resp_line) =>
+      match @transport.parse_response(resp_line.trim().to_owned()) {
+        Ok(resp) =>
+          match resp.error_message() {
+            Some(msg) =>
+              assert_true(msg.contains("role dev cannot call goal_set"))
+            None => fail("expected Dev caller to be refused goal_set")
+          }
+        Err(e) => fail("expected gated response to parse: " + e)
+      }
+    None => fail("expected gated request response")
+  }
+
+  let spoofed_result = serve_handle_request_line(
+    state,
+    "{\"method\":\"tools/call\",\"role\":\"root\",\"name\":\"goal_status\",\"args\":{\"caller_id\":\"root\",\"agent_id\":\"root\"}}",
+    true,
+    authenticated_agent_id=owner,
+  )
+  match spoofed_result.response_line {
+    Some(resp_line) =>
+      match @transport.parse_response(resp_line.trim().to_owned()) {
+        Ok(resp) => assert_false(resp.is_ok())
+        Err(e) => fail("expected spoofed response to parse: " + e)
+      }
+    None => fail("expected spoofed request response")
+  }
+
+  let legit_result = serve_handle_request_line(
+    state,
+    "{\"method\":\"tools/call\",\"role\":\"dev\",\"name\":\"tdd_intent\",\"args\":{\"intent\":\"write the red test\"}}",
+    true,
+    authenticated_agent_id=owner,
+  )
+  match legit_result.response_line {
+    Some(resp_line) =>
+      match @transport.parse_response(resp_line.trim().to_owned()) {
+        Ok(resp) => {
+          assert_true(resp.is_ok())
+          @debug.assert_eq(resp.ok_field("agent_id"), Some(agent_id))
+        }
+        Err(e) => fail("expected legit response to parse: " + e)
+      }
+    None => fail("expected legit request response")
+  }
+  @debug.assert_eq(
+    state.leaf_tdd_phase_for_agent(agent_id),
+    Some(@types.LeafTddPhase::Intent),
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "serve unbound custom requests do not trust privileged wire role" {
+  let (state, project_dir) = serve_test_state_with_root("unbound-custom")
+  let result = serve_handle_request_line(
+    state, "{\"method\":\"tools/call\",\"role\":\"root\",\"name\":\"goal_set\",\"args\":{\"caller_id\":\"root\"}}",
+    true,
+  )
+  match result.response_line {
+    Some(resp_line) =>
+      match @transport.parse_response(resp_line.trim().to_owned()) {
+        Ok(resp) =>
+          match resp.error_message() {
+            Some(msg) =>
+              assert_true(msg.contains("role worker cannot call goal_set"))
+            None => fail("expected unbound custom request to be refused")
+          }
+        Err(e) => fail("expected unbound response to parse: " + e)
+      }
+    None => fail("expected unbound request response")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "serve custom server_reload uses authenticated identity" {
+  let (state, project_dir) = serve_test_state_with_root("server-reload-auth")
+  let dev_id = "main.server-reload.dev"
+  serve_test_upsert_agent(state, dev_id, @types.Role::Dev, project_dir)
+  serve_test_record_credential(
+    state,
+    dev_id,
+    @types.Role::Dev,
+    "server-reload-dev-token",
+  )
+  let dev_register_result = serve_handle_request_line(
+    state,
+    serve_test_register_line(
+      dev_id, "dev", "server-reload-dev-token", project_dir,
+    ),
+    true,
+  )
+  serve_assert_register_ok(state, dev_register_result, dev_id, @types.Role::Dev)
+  let dev_owner = connected_agent_id_after_request(None, dev_register_result)
+
+  let dev_spoof_result = serve_handle_request_line(
+    state,
+    "{\"method\":\"tools/call\",\"role\":\"root\",\"name\":\"server_reload\",\"args\":{\"caller_id\":\"root\",\"binary_path\":\"/bin/sh\"}}",
+    true,
+    authenticated_agent_id=dev_owner,
+  )
+  assert_true(dev_spoof_result.reload_request is None)
+  match dev_spoof_result.response_line {
+    Some(resp_line) =>
+      match @transport.parse_response(resp_line.trim().to_owned()) {
+        Ok(resp) => {
+          assert_false(resp.is_ok())
+          @debug.assert_eq(
+            resp.error_message(),
+            Some("validation error: authenticated identity mismatch"),
+          )
+        }
+        Err(e) => fail("expected Dev spoof response to parse: " + e)
+      }
+    None => fail("expected Dev spoof response")
+  }
+
+  let dev_denied_result = serve_handle_request_line(
+    state,
+    "{\"method\":\"tools/call\",\"role\":\"dev\",\"name\":\"server_reload\",\"args\":{\"binary_path\":\"/bin/sh\"}}",
+    true,
+    authenticated_agent_id=dev_owner,
+  )
+  assert_true(dev_denied_result.reload_request is None)
+  match dev_denied_result.response_line {
+    Some(resp_line) =>
+      match @transport.parse_response(resp_line.trim().to_owned()) {
+        Ok(resp) =>
+          match resp.error_message() {
+            Some(msg) =>
+              assert_true(msg.contains("role dev cannot call server_reload"))
+            None => fail("expected Dev server_reload to be refused")
+          }
+        Err(e) => fail("expected Dev denied response to parse: " + e)
+      }
+    None => fail("expected Dev denied response")
+  }
+
+  serve_test_record_credential(
+    state,
+    "root",
+    @types.Role::Root,
+    "server-reload-root-token",
+  )
+  let root_register_result = serve_handle_request_line(
+    state,
+    serve_test_register_line(
+      "root", "root", "server-reload-root-token", project_dir,
+    ),
+    true,
+  )
+  serve_assert_register_ok(
+    state,
+    root_register_result,
+    "root",
+    @types.Role::Root,
+  )
+  let root_owner = connected_agent_id_after_request(None, root_register_result)
+  let root_reload_result = serve_handle_request_line(
+    state,
+    "{\"method\":\"tools/call\",\"role\":\"root\",\"name\":\"server_reload\",\"args\":{\"binary_path\":\"/bin/sh\"}}",
+    true,
+    authenticated_agent_id=root_owner,
+  )
+  assert_true(root_reload_result.reload_request is Some(_))
+  match root_reload_result.response_line {
+    Some(resp_line) =>
+      match @transport.parse_response(resp_line.trim().to_owned()) {
+        Ok(resp) => assert_true(resp.is_ok())
+        Err(e) => fail("expected Root reload response to parse: " + e)
+      }
+    None => fail("expected Root reload response")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "serve rejected register refresh keeps existing disconnect owner" {
   let (state, project_dir) = serve_test_state_with_root("rejected-register")
   let agent_id = "main.good-register"
   let bad_agent_id = "main.bad-register"
+  serve_test_record_credential(
+    state,
+    agent_id,
+    @types.Role::Dev,
+    "good-register-token",
+  )
+  serve_test_record_credential(
+    state,
+    bad_agent_id,
+    @types.Role::Dev,
+    "bad-register-token",
+  )
   let ok_line = "{\"method\":\"register\",\"role\":\"dev\",\"name\":\"register\",\"args\":{\"agent_id\":\"" +
     agent_id +
     "\",\"agent_type\":\"codex\",\"branch\":\"" +
     agent_id +
     "\",\"workspace\":\"" +
     project_dir +
+    "\",\"token\":\"good-register-token" +
     "\"}}"
   let ok_result = serve_handle_request_line(state, ok_line, true)
   assert_true(ok_result.saw_register)
@@ -594,6 +1794,7 @@ async test "serve rejected register refresh keeps existing disconnect owner" {
     bad_agent_id +
     "\",\"workspace\":\"" +
     project_dir +
+    "\",\"token\":\"bad-register-token" +
     "\"}}"
   let bad_result = serve_handle_request_line(state, bad_line, true)
   assert_true(bad_result.saw_register)
@@ -665,13 +1866,26 @@ async fn serve_handle_connection(
           }
           continue
         }
-        let result = serve_handle_request_line(state, line, false)
+        let result = serve_handle_request_line(
+          state,
+          line,
+          false,
+          authenticated_agent_id=connected_agent_id,
+        )
         connected_agent_id = connected_agent_id_after_request(
           connected_agent_id, result,
         )
         match result.response_line {
           Some(resp_str) => conn.write(@utf8.encode(resp_str))
           None => ()
+        }
+        if result.drop_connection {
+          match connected_agent_id {
+            Some(agent_id) =>
+              state.schedule_disconnect(agent_id, @poller.now_sec())
+            None => ()
+          }
+          return
         }
       } else {
         i = i + 1
@@ -720,23 +1934,33 @@ async fn serve_handle_uds_request_line(
   client : ServeUDSClient,
   state : @server.ServerState,
   server_fd : Int,
-  line : String,
+  _line : String,
   req : @types.Request,
 ) -> Unit {
-  let resp = serve_handle_internal_request(state, req)
-  if req.req_method == "register" {
-    match register_connection_agent_id_after_response(req, resp) {
-      Some(agent_id) => client.connected_agent_id = Some(agent_id)
-      None => ()
-    }
-  }
-  let resp_str = @transport.format_response(resp) + "\n"
-  @moontrace.trace("request", fields=[@moontrace.field("line", line)])
+  let result = serve_handle_parsed_custom_request(
+    state,
+    req,
+    true,
+    authenticated_agent_id=client.connected_agent_id,
+  )
+  client.connected_agent_id = connected_agent_id_after_request(
+    client.connected_agent_id,
+    result,
+  )
+  let resp_str = result.response_line.unwrap_or("")
+  @moontrace.trace("request", fields=[
+    @moontrace.field("request", result.request_name.unwrap_or("(unknown)")),
+  ])
   @moontrace.trace("response", fields=[@moontrace.field("body", resp_str)])
   serve_write_all_uds(client.fd, @utf8.encode(resp_str))
   client.busy = false
-  if serve_is_reload_request(req) && resp.is_ok() {
-    serve_replace_self_after_reload_ack(server_fd, req)
+  if result.drop_connection {
+    client.close_after_response = true
+  }
+  match result.reload_request {
+    Some(reload_req) =>
+      serve_replace_self_after_reload_ack(state, server_fd, reload_req)
+    None => ()
   }
 }
 
@@ -747,22 +1971,36 @@ async fn serve_handle_uds_jsonrpc_request_line(
   server_fd : Int,
   line : String,
 ) -> Unit {
-  let result = serve_handle_jsonrpc_request_line(state, line, true)
+  let result = serve_handle_jsonrpc_request_line(
+    state,
+    line,
+    true,
+    authenticated_agent_id=client.connected_agent_id,
+  )
+  client.connected_agent_id = connected_agent_id_after_request(
+    client.connected_agent_id,
+    result,
+  )
   match result.request_name {
     Some(name) => client.last_request_name = Some(name)
     None => ()
   }
   match result.response_line {
     Some(resp_str) => {
-      @moontrace.trace("request", fields=[@moontrace.field("line", line)])
+      @moontrace.trace("request", fields=[
+        @moontrace.field("request", result.request_name.unwrap_or("jsonrpc")),
+      ])
       @moontrace.trace("response", fields=[@moontrace.field("body", resp_str)])
       serve_write_all_uds(client.fd, @utf8.encode(resp_str))
     }
     None => ()
   }
   client.busy = false
+  if result.drop_connection {
+    client.close_after_response = true
+  }
   match result.reload_request {
-    Some(req) => serve_replace_self_after_reload_ack(server_fd, req)
+    Some(req) => serve_replace_self_after_reload_ack(state, server_fd, req)
     None => ()
   }
 }
@@ -774,6 +2012,9 @@ fn serve_handle_uds_connection(
   server_fd : Int,
   spawn_request : (async () -> Unit) -> Unit,
 ) -> Bool {
+  if client.close_after_response {
+    return false
+  }
   if client.busy {
     return true
   }
@@ -820,7 +2061,7 @@ fn serve_handle_uds_connection(
             }
             Err(err) => {
               @moontrace.warn("parse error", fields=[
-                @moontrace.field("line", line),
+                @moontrace.field("error", err),
               ])
               let resp = @types.Response::Err("parse error: " + err)
               serve_write_all_uds(
@@ -1403,10 +2644,12 @@ fn serve_run() -> Unit {
         config.terminal_session,
       )
       @server.recover_state(state, config.terminal_session, recovery_input)
+      let mut reload_snapshot_restored = false
       match inherited_uds_fd {
         Some(fd) =>
           match state.restore_reload_snapshot() {
             Ok(_) => {
+              reload_snapshot_restored = true
               let line = "[server_reload] resumed run_id=" + state.run_id
               @moontrace.info(line, fields=[@moontrace.field("fd", fd)])
               @sys.write_stdout(line + "\n")
@@ -1415,6 +2658,19 @@ fn serve_run() -> Unit {
               @moontrace.error("server reload resume failed", fields=[
                 @moontrace.field("error", e.message()),
               ])
+          }
+        None => ignore(serve_clear_reload_credentials_env())
+      }
+      match serve_boot_root_token_from_env() {
+        Some(token) => serve_record_boot_root_credential(state, token)
+        None => ()
+      }
+      match inherited_uds_fd {
+        Some(_) =>
+          if reload_snapshot_restored {
+            ignore(serve_restore_reload_credentials_from_env(state))
+          } else {
+            ignore(serve_clear_reload_credentials_env())
           }
         None => ()
       }

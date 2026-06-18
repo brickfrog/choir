@@ -217,6 +217,13 @@ fn build_claude_settings_json(
   user_mcp_path? : String? = None,
 ) -> String {
   let role_str = @config.role_to_string(role)
+  let choir_mcp_args = match role {
+    @types.Role::TL | @types.Role::Root =>
+      [
+        "mcp-stdio", "--name", "root", "--stderr-append-log", ".choir/mcp-stdio.stderr.log",
+      ]
+    _ => ["mcp-stdio", "--role", role_str, "--name", session_name]
+  }
   // `alwaysLoad: true` opts out of Claude Code's tool-search deferral so the
   // TL has fork_wave / file_pr / merge_pr / wave_state / send_message / kv_*
   // / mutex_* etc. resolved up-front instead of paying a ToolSearch round-trip
@@ -226,7 +233,7 @@ fn build_claude_settings_json(
     "choir": {
       "type": "stdio".to_json(),
       "command": "choir".to_json(),
-      "args": ["mcp-stdio", "--role", role_str, "--name", session_name].to_json(),
+      "args": choir_mcp_args.to_json(),
       "alwaysLoad": true.to_json(),
     }.to_json(),
     "semble": {
@@ -803,10 +810,10 @@ test "build_claude_settings_json emits statusline and choir MCP stdio entry" {
   }
   assert_eq(args_json.length(), 5)
   @debug.assert_eq(args_json[0], "mcp-stdio".to_json())
-  @debug.assert_eq(args_json[1], "--role".to_json())
-  @debug.assert_eq(args_json[2], "tl".to_json())
-  @debug.assert_eq(args_json[3], "--name".to_json())
-  @debug.assert_eq(args_json[4], "user-123-456".to_json())
+  @debug.assert_eq(args_json[1], "--name".to_json())
+  @debug.assert_eq(args_json[2], "root".to_json())
+  @debug.assert_eq(args_json[3], "--stderr-append-log".to_json())
+  @debug.assert_eq(args_json[4], ".choir/mcp-stdio.stderr.log".to_json())
   // Claude Code's tool-search deferral is opt-out via `alwaysLoad: true`. The
   // TL hits choir's orchestration tools constantly; deferring them costs more
   // than it saves.

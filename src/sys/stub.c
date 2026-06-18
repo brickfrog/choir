@@ -957,11 +957,26 @@ int choir_getenv(const char* name, char* out, int out_size) {
     }
     int len = (int)strlen(value);
     if (len >= out_size) {
-        len = out_size - 1;
+        int copy_len = out_size - 1;
+        memcpy(out, value, (size_t)copy_len);
+        out[copy_len] = '\0';
+        return len;
     }
     memcpy(out, value, (size_t)len);
     out[len] = '\0';
     return len;
+}
+
+int choir_setenv(const char* name, const char* value) {
+    if (!name || !value) return -EINVAL;
+    if (setenv(name, value, 1) != 0) return -errno;
+    return 0;
+}
+
+int choir_unsetenv(const char* name) {
+    if (!name) return -EINVAL;
+    if (unsetenv(name) != 0) return -errno;
+    return 0;
 }
 
 void choir_write_pid_file(const char* path) {

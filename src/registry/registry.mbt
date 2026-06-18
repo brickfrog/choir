@@ -1,14 +1,22 @@
 ///|
+/// Authoritative credential minted by the server when it spawns an agent.
+pub(all) struct AgentCredential {
+  role : @types.Role
+  token : String
+} derive(Debug, Eq)
+
+///|
 /// In-memory agent registry.
 pub(all) struct AgentRegistry {
   agents : Map[String, @types.Agent]
   alive : Map[String, Bool]
+  spawn_credentials : Map[String, AgentCredential]
 }
 
 ///|
 /// Create a new empty registry.
 pub fn AgentRegistry::new() -> AgentRegistry {
-  { agents: {}, alive: {} }
+  { agents: {}, alive: {}, spawn_credentials: {} }
 }
 
 ///|
@@ -61,6 +69,31 @@ pub fn AgentRegistry::get_opt(
 }
 
 ///|
+pub fn AgentRegistry::record_spawn_credential(
+  self : AgentRegistry,
+  agent_id : String,
+  credential : AgentCredential,
+) -> Unit {
+  self.spawn_credentials.set(agent_id, credential)
+}
+
+///|
+pub fn AgentRegistry::remove_spawn_credential(
+  self : AgentRegistry,
+  agent_id : String,
+) -> Unit {
+  self.spawn_credentials.remove(agent_id)
+}
+
+///|
+pub fn AgentRegistry::credential_for_agent(
+  self : AgentRegistry,
+  agent_id : String,
+) -> AgentCredential? {
+  self.spawn_credentials.get(agent_id)
+}
+
+///|
 /// Get the parent agent for a given agent ID.
 pub fn AgentRegistry::get_parent(
   self : AgentRegistry,
@@ -84,6 +117,7 @@ pub fn AgentRegistry::remove(
     Some(agent) => {
       self.agents.remove(agent_id)
       self.alive.remove(agent_id)
+      self.spawn_credentials.remove(agent_id)
       agent
     }
     None => raise @types.ChoirError::agent_not_found(agent_id)
@@ -195,6 +229,7 @@ pub fn AgentRegistry::clear(self : AgentRegistry) -> Unit {
     self.agents.remove(id)
     self.alive.remove(id)
   }
+  self.spawn_credentials.clear()
 }
 
 ///|
@@ -266,6 +301,198 @@ pub fn AgentRegistry::to_snapshot_json(self : AgentRegistry) -> Json {
 ///|
 pub fn AgentRegistry::to_snapshot_string(self : AgentRegistry) -> String {
   self.to_snapshot_json().stringify(indent=2)
+}
+
+///|
+let registry_reload_credentials_version : Int = 1
+
+///|
+let registry_reload_credentials_root_agent_id : String = "root"
+
+///|
+pub(all) struct RegistryReloadCredentialEntry {
+  agent_id : String
+  credential : AgentCredential
+} derive(Debug, Eq)
+
+///|
+pub(all) struct RegistryReloadCredentials {
+  entries : Array[RegistryReloadCredentialEntry]
+} derive(Debug, Eq)
+
+///|
+fn registry_reload_credential_entry_json(
+  agent_id : String,
+  credential : AgentCredential,
+) -> Json {
+  {
+    "agent_id": agent_id.to_json(),
+    "role": credential.role.to_wire_string().to_json(),
+    "token": credential.token.to_json(),
+  }.to_json()
+}
+
+///|
+pub fn AgentRegistry::to_reload_credentials_env_json(
+  self : AgentRegistry,
+) -> Json {
+  let credentials : Array[Json] = []
+  for agent_id, credential in self.spawn_credentials {
+    if agent_id != registry_reload_credentials_root_agent_id &&
+      agent_id != "" &&
+      credential.token != "" {
+      credentials.push(
+        registry_reload_credential_entry_json(agent_id, credential),
+      )
+    }
+  }
+  {
+    "version": registry_reload_credentials_version.to_json(),
+    "credentials": credentials.to_json(),
+  }.to_json()
+}
+
+///|
+pub fn AgentRegistry::to_reload_credentials_env_string(
+  self : AgentRegistry,
+) -> String {
+  self.to_reload_credentials_env_json().stringify()
+}
+
+///|
+fn registry_reload_credentials_parse_error(
+  message : String,
+) -> @types.ChoirError {
+  @types.ChoirError::validation_error(
+    "registry reload credentials parse error: " + message,
+  )
+}
+
+///|
+fn registry_reload_credentials_string_field(
+  obj : Map[String, Json],
+  key : String,
+) -> Result[String, @types.ChoirError] {
+  match obj.get(key) {
+    Some(String(value)) => Ok(value)
+    _ =>
+      Err(
+        registry_reload_credentials_parse_error("missing string field: " + key),
+      )
+  }
+}
+
+///|
+fn registry_reload_credentials_int_field(
+  obj : Map[String, Json],
+  key : String,
+) -> Result[Int, @types.ChoirError] {
+  match obj.get(key) {
+    Some(Number(value, ..)) => Ok(value.to_int())
+    _ =>
+      Err(
+        registry_reload_credentials_parse_error("missing numeric field: " + key),
+      )
+  }
+}
+
+///|
+pub fn parse_reload_credentials_env_string(
+  content : String,
+) -> Result[RegistryReloadCredentials, @types.ChoirError] {
+  if content.trim() == "" {
+    return Err(registry_reload_credentials_parse_error("empty payload"))
+  }
+  let json = @json.parse(content) catch {
+    _ => return Err(registry_reload_credentials_parse_error("invalid JSON"))
+  }
+  guard json is Object(root) else {
+    return Err(registry_reload_credentials_parse_error("expected object"))
+  }
+  let version = match registry_reload_credentials_int_field(root, "version") {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  if version != registry_reload_credentials_version {
+    return Err(
+      registry_reload_credentials_parse_error(
+        "unsupported version " + version.to_string(),
+      ),
+    )
+  }
+  guard root.get("credentials") is Some(Array(items)) else {
+    return Err(
+      registry_reload_credentials_parse_error("missing credentials array"),
+    )
+  }
+  let entries : Array[RegistryReloadCredentialEntry] = []
+  let seen : Map[String, Bool] = {}
+  for item in items {
+    guard item is Object(obj) else {
+      return Err(
+        registry_reload_credentials_parse_error(
+          "credential entry is not an object",
+        ),
+      )
+    }
+    let agent_id = match
+      registry_reload_credentials_string_field(obj, "agent_id") {
+      Ok(v) => v
+      Err(e) => return Err(e)
+    }
+    if agent_id == "" {
+      return Err(
+        registry_reload_credentials_parse_error("empty credential agent_id"),
+      )
+    }
+    if agent_id == registry_reload_credentials_root_agent_id {
+      return Err(
+        registry_reload_credentials_parse_error(
+          "root credential is not restored from reload env",
+        ),
+      )
+    }
+    if seen.contains(agent_id) {
+      return Err(
+        registry_reload_credentials_parse_error("duplicate credential agent_id"),
+      )
+    }
+    let role_raw = match registry_reload_credentials_string_field(obj, "role") {
+      Ok(v) => v
+      Err(e) => return Err(e)
+    }
+    let role = match @types.Role::try_parse_wire(role_raw) {
+      Ok(v) => v
+      Err(e) => return Err(e)
+    }
+    let token = match registry_reload_credentials_string_field(obj, "token") {
+      Ok(v) => v
+      Err(e) => return Err(e)
+    }
+    if token == "" {
+      return Err(
+        registry_reload_credentials_parse_error("empty credential token"),
+      )
+    }
+    seen.set(agent_id, true)
+    entries.push({ agent_id, credential: { role, token } })
+  }
+  Ok({ entries, })
+}
+
+///|
+pub fn AgentRegistry::restore_reload_credentials_env_string(
+  self : AgentRegistry,
+  content : String,
+) -> Result[Int, @types.ChoirError] {
+  let parsed = match parse_reload_credentials_env_string(content) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  for entry in parsed.entries {
+    self.record_spawn_credential(entry.agent_id, entry.credential)
+  }
+  Ok(parsed.entries.length())
 }
 
 ///|
@@ -528,5 +755,93 @@ pub fn read_registry_snapshot_file(
   match registry.restore_snapshot_json(content) {
     Ok(_) => Ok(registry)
     Err(e) => Err(e)
+  }
+}
+
+///|
+test "agent registry records authoritative spawn credentials" {
+  let reg = AgentRegistry::new()
+  reg.record_spawn_credential("main.leaf-a", AgentCredential::{
+    role: @types.Role::Dev,
+    token: "token-a",
+  })
+  match reg.credential_for_agent("main.leaf-a") {
+    Some(credential) => {
+      assert_eq(credential.role, @types.Role::Dev)
+      assert_eq(credential.token, "token-a")
+    }
+    None => fail("expected recorded credential")
+  }
+  @debug.assert_eq(reg.credential_for_agent("main.unknown"), None)
+  assert_true(reg.spawn_credentials.contains("main.leaf-a"))
+  reg.remove_spawn_credential("main.leaf-a")
+  @debug.assert_eq(reg.credential_for_agent("main.leaf-a"), None)
+}
+
+///|
+test "agent registry reload credentials round trip without disk snapshot tokens" {
+  let source = AgentRegistry::new()
+  source.record_spawn_credential("root", AgentCredential::{
+    role: @types.Role::Root,
+    token: "root-token-unchanged",
+  })
+  source.record_spawn_credential("root.leaf", AgentCredential::{
+    role: @types.Role::Dev,
+    token: "leaf-reload-token",
+  })
+  source.record_spawn_credential("root.worker", AgentCredential::{
+    role: @types.Role::Worker,
+    token: "worker-reload-token",
+  })
+  let payload = source.to_reload_credentials_env_string()
+  assert_true(payload.contains("leaf-reload-token"))
+  assert_true(payload.contains("worker-reload-token"))
+  assert_false(payload.contains("root-token-unchanged"))
+
+  let snapshot = source.to_snapshot_string()
+  assert_false(snapshot.contains("leaf-reload-token"))
+  assert_false(snapshot.contains("worker-reload-token"))
+  assert_false(snapshot.contains("root-token-unchanged"))
+
+  let restored = AgentRegistry::new()
+  match restored.restore_reload_credentials_env_string(payload) {
+    Ok(count) => assert_eq(count, 2)
+    Err(e) => fail(e.message())
+  }
+  match restored.credential_for_agent("root.leaf") {
+    Some(credential) => {
+      assert_eq(credential.role, @types.Role::Dev)
+      assert_eq(credential.token, "leaf-reload-token")
+    }
+    None => fail("expected restored leaf credential")
+  }
+  match restored.credential_for_agent("root.worker") {
+    Some(credential) => {
+      assert_eq(credential.role, @types.Role::Worker)
+      assert_eq(credential.token, "worker-reload-token")
+    }
+    None => fail("expected restored worker credential")
+  }
+  @debug.assert_eq(restored.credential_for_agent("root"), None)
+}
+
+///|
+test "agent registry reload credential restore fails closed on malformed or empty tokens" {
+  let empty_token_payload =
+    #|{"version":1,"credentials":[{"agent_id":"root.leaf","role":"dev","token":""}]}|
+  let empty_agent_payload =
+    #|{"version":1,"credentials":[{"agent_id":"","role":"dev","token":"secret"}]}|
+  let invalid_role_payload =
+    #|{"version":1,"credentials":[{"agent_id":"root.leaf","role":"definitely-not-a-role","token":"secret"}]}|
+  let malformed_payloads = [
+    "", "not-json", empty_token_payload, empty_agent_payload, invalid_role_payload,
+  ]
+  for payload in malformed_payloads {
+    let restored = AgentRegistry::new()
+    match restored.restore_reload_credentials_env_string(payload) {
+      Err(_) => ()
+      Ok(_) => fail("expected reload credential restore to reject payload")
+    }
+    @debug.assert_eq(restored.credential_for_agent("root.leaf"), None)
   }
 }
