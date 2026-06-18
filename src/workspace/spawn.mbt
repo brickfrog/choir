@@ -1025,6 +1025,7 @@ pub fn init_tl_zellij_tab_command(
   tl_type : String,
   branch : String,
   lean? : Bool = false,
+  root_agent_token? : String? = None,
 ) -> Command {
   let tl_agent_type = tl_type_agent_type(tl_type)
   let inner = zellij_launch_inner_command(
@@ -1035,12 +1036,22 @@ pub fn init_tl_zellij_tab_command(
   } else {
     ""
   }
+  let root_token_export = match root_agent_token {
+    Some(token) =>
+      if token != "" {
+        export_assignment("CHOIR_AGENT_TOKEN", token)
+      } else {
+        ""
+      }
+    None => ""
+  }
   let env_exports = export_assignment("CHOIR_AGENT_ID", "root") +
     export_assignment("CHOIR_BRANCH", branch) +
     export_assignment("CHOIR_PARENT_BRANCH", branch) +
     export_assignment("CHOIR_ROLE", "tl") +
     export_assignment("CHOIR_WORKSPACE", project_dir) +
     tl_home_export +
+    root_token_export +
     export_assignment(
       "CHOIR_TERMINAL_TARGET",
       local_target_for(session, "TL", @types.IsolationMode::Worktree).to_string(),

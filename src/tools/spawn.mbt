@@ -77,7 +77,7 @@ fn parse_spawn_agent_token_output(output : String) -> String? {
 }
 
 ///|
-fn spawn_agent_token_command() -> @workspace.Command {
+pub fn spawn_agent_token_command() -> @workspace.Command {
   {
     program: "od",
     args: ["-An", "-tx1", "-N32", "/dev/urandom"],
@@ -102,7 +102,7 @@ async fn mint_spawn_agent_token_with_capture(
 }
 
 ///|
-async fn mint_spawn_agent_token(
+pub async fn mint_spawn_agent_token(
   capture : async (@workspace.Command) -> (Int, String),
   override_mint : (async () -> Result[String, @types.ChoirError])?,
 ) -> Result[String, @types.ChoirError] {

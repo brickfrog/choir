@@ -56,6 +56,77 @@ fn init_should_launch_server_tab(server_alive : Bool) -> Bool {
 }
 
 ///|
+fn init_server_tab_command(
+  session : String,
+  project_dir : String,
+  server_env_assignment : String,
+) -> @workspace.Command {
+  @workspace.zellij_new_tab(
+    session,
+    "Server",
+    project_dir,
+    [server_env_assignment],
+    { program: "choir", args: ["serve"], workdir: None },
+  )
+}
+
+///|
+fn init_server_tab_launch_plan(
+  session : String,
+  project_dir : String,
+  recreate : Bool,
+  server_tab_exists : Bool,
+  server_alive : Bool,
+  server_env_assignment : String,
+) -> Array[@workspace.Command] {
+  let cmds : Array[@workspace.Command] = []
+  if recreate {
+    if server_tab_exists {
+      cmds.push(
+        @workspace.local_close_target(
+          @workspace.zellij_tab_target(session, "Server"),
+        ),
+      )
+    }
+    cmds.push(
+      init_server_tab_command(session, project_dir, server_env_assignment),
+    )
+    return cmds
+  }
+  if !server_tab_exists && init_should_launch_server_tab(server_alive) {
+    cmds.push(
+      init_server_tab_command(session, project_dir, server_env_assignment),
+    )
+  }
+  cmds
+}
+
+///|
+priv enum InitRootLaunchGuard {
+  Proceed
+  Abort(String)
+} derive(Debug, Eq)
+
+///|
+fn init_stale_server_without_tab_message() -> String {
+  "choir init: a server process is running without a managed Server tab; run `choir init --recreate` to restart the server and TL with a matching root credential."
+}
+
+///|
+fn init_root_launch_guard(
+  recreate : Bool,
+  server_tab_exists : Bool,
+  server_alive : Bool,
+  tl_tab_exists : Bool,
+) -> InitRootLaunchGuard {
+  if !recreate && !server_tab_exists && server_alive && !tl_tab_exists {
+    InitRootLaunchGuard::Abort(init_stale_server_without_tab_message())
+  } else {
+    InitRootLaunchGuard::Proceed
+  }
+}
+
+///|
 fn init_server_socket_wait_tries() -> Int {
   // `choir init` is a foreground flow with the user watching the terminal, so
   // keep the pre-TL socket wait to about 20s and warn before launching anyway.
@@ -89,37 +160,7 @@ fn init_wait_for_server_socket_before_tl(
 ///|
 /// Relative paths and prefixes removed by `choir init --recreate`.
 fn init_runtime_cleanup_paths() -> Array[String] {
-  [
-    ".choir/server.pid", ".choir/server.sock", ".choir/run_id", ".choir/kv/lifecycle--",
-    ".choir/kv/children--", ".choir/kv/phase-dev--", ".choir/kv/phase-tl--", ".choir/kv/pending-wave--",
-    ".choir/outbox/", ".choir/waves/", ".choir/inline/",
-  ]
-}
-
-///|
-fn init_runtime_cleanup_kv_prefixes() -> Array[String] {
-  ["lifecycle--", "children--", "phase-dev--", "phase-tl--", "pending-wave--"]
-}
-
-///|
-fn init_runtime_cleanup_recursive_dirs() -> Array[String] {
-  [".choir/outbox", ".choir/waves", ".choir/inline"]
-}
-
-///|
-fn init_cleanup_kv_prefixes(prefixes : Array[String]) -> Unit {
-  let kv_dir = ".choir/kv"
-  for name in @sys.list_dir(kv_dir) {
-    let mut should_delete = false
-    for prefix in prefixes {
-      if name.has_prefix(prefix) {
-        should_delete = true
-      }
-    }
-    if should_delete {
-      ignore(@sys.delete_file_sync(kv_dir + "/" + name))
-    }
-  }
+  [".choir/server.pid", ".choir/server.sock", ".choir/run_id"]
 }
 
 ///|
@@ -179,16 +220,12 @@ fn init_cleanup_recreate_artifacts(
   cleanup_runtime? : () -> Unit = fn() {
     @sys.init_cleanup_runtime_artifacts_native()
   },
-  cleanup_kv_prefixes? : (Array[String]) -> Unit = fn(prefixes) {
-    init_cleanup_kv_prefixes(prefixes)
-  },
-  rm_rf? : (String) -> Bool = fn(path) { @sys.rm_rf(path) },
+  cleanup_kv_prefixes? : (Array[String]) -> Unit = fn(_prefixes) { () },
+  rm_rf? : (String) -> Bool = fn(_path) { true },
 ) -> Unit {
+  ignore(cleanup_kv_prefixes)
+  ignore(rm_rf)
   cleanup_runtime()
-  cleanup_kv_prefixes(init_runtime_cleanup_kv_prefixes())
-  for dir in init_runtime_cleanup_recursive_dirs() {
-    ignore(rm_rf(dir))
-  }
 }
 
 ///|
@@ -219,19 +256,21 @@ test "init session lifecycle commands use zellij" {
 ///|
 test "cleanup paths separate runtime restart from purge" {
   let rt = init_runtime_cleanup_paths()
-  assert_true(rt.length() >= 11)
+  @debug.assert_eq(rt, [
+    ".choir/server.pid", ".choir/server.sock", ".choir/run_id",
+  ])
   for p in rt {
     assert_false(p.contains("worktrees"))
     assert_false(p.contains("poller"))
+    assert_false(p.contains("lifecycle--"))
+    assert_false(p.contains("children--"))
+    assert_false(p.contains("phase-dev--"))
+    assert_false(p.contains("phase-tl--"))
+    assert_false(p.contains("pending-wave--"))
+    assert_false(p.contains("outbox"))
+    assert_false(p.contains("waves"))
+    assert_false(p.contains("inline"))
   }
-  assert_true(rt.contains(".choir/kv/lifecycle--"))
-  assert_true(rt.contains(".choir/kv/children--"))
-  assert_true(rt.contains(".choir/kv/phase-dev--"))
-  assert_true(rt.contains(".choir/kv/phase-tl--"))
-  assert_true(rt.contains(".choir/kv/pending-wave--"))
-  assert_true(rt.contains(".choir/outbox/"))
-  assert_true(rt.contains(".choir/waves/"))
-  assert_true(rt.contains(".choir/inline/"))
   let purge = init_purge_cleanup_marker_substrings()
   assert_true(purge.length() >= 4)
   let mut has_wt = false
@@ -246,6 +285,32 @@ test "cleanup paths separate runtime restart from purge" {
   }
   assert_true(has_wt)
   assert_true(has_poller)
+}
+
+///|
+test "recreate cleanup preserves recovery state while purge markers remain destructive" {
+  let rt = init_runtime_cleanup_paths()
+  assert_true(rt.contains(".choir/server.pid"))
+  assert_true(rt.contains(".choir/server.sock"))
+  assert_true(rt.contains(".choir/run_id"))
+  assert_false(rt.contains(".choir/kv/lifecycle--"))
+  assert_false(rt.contains(".choir/kv/children--"))
+  assert_false(rt.contains(".choir/kv/phase-dev--"))
+  assert_false(rt.contains(".choir/kv/phase-tl--"))
+  assert_false(rt.contains(".choir/kv/pending-wave--"))
+  assert_false(rt.contains(".choir/outbox/"))
+  assert_false(rt.contains(".choir/waves/"))
+  assert_false(rt.contains(".choir/inline/"))
+
+  let purge = init_purge_cleanup_marker_substrings()
+  assert_true(purge.contains(".choir/inline"))
+  assert_true(purge.contains(".choir/outbox"))
+  assert_true(purge.contains(".choir/waves"))
+  assert_true(purge.contains("lifecycle--"))
+  assert_true(purge.contains("children--"))
+  assert_true(purge.contains("phase-dev--"))
+  assert_true(purge.contains("phase-tl--"))
+  assert_true(purge.contains("pending-wave--"))
 }
 
 ///|
@@ -298,10 +363,14 @@ test "init server cleanup commands separate runtime restart from purge" {
   assert_true(init_should_launch_server_tab(false))
   assert_false(init_should_launch_server_tab(true))
   let rt = init_runtime_cleanup_paths()
-  assert_true(rt.length() >= 11)
+  @debug.assert_eq(rt, [
+    ".choir/server.pid", ".choir/server.sock", ".choir/run_id",
+  ])
   for p in rt {
     assert_false(p.contains("worktrees"))
     assert_false(p.contains("poller"))
+    assert_false(p.contains("lifecycle--"))
+    assert_false(p.contains("pending-wave--"))
   }
   let purge = init_purge_cleanup_marker_substrings()
   let mut has_inline = false
@@ -314,7 +383,7 @@ test "init server cleanup commands separate runtime restart from purge" {
 }
 
 ///|
-test "init recreate cleanup covers runtime, kv prefixes, and recursive dirs" {
+test "init recreate cleanup covers only runtime markers" {
   let events : Array[String] = []
   init_cleanup_recreate_artifacts(
     cleanup_runtime=fn() { events.push("runtime") },
@@ -326,11 +395,35 @@ test "init recreate cleanup covers runtime, kv prefixes, and recursive dirs" {
       true
     },
   )
-  assert_true(events.contains("runtime"))
-  assert_true(events.any(fn(event) { event.has_prefix("kv:") }))
-  assert_true(events.contains("rm:.choir/outbox"))
-  assert_true(events.contains("rm:.choir/waves"))
-  assert_true(events.contains("rm:.choir/inline"))
+  @debug.assert_eq(events, ["runtime"])
+}
+
+///|
+test "init stale server process without Server tab aborts before fresh TL launch" {
+  let decision = init_root_launch_guard(false, false, true, false)
+  match decision {
+    InitRootLaunchGuard::Abort(message) => {
+      assert_true(message.contains("server process is running"))
+      assert_true(message.contains("managed Server tab"))
+      assert_true(message.contains("choir init --recreate"))
+      assert_false(message.contains("CHOIR_AGENT_TOKEN"))
+      assert_false(message.contains("CHOIR_ROOT_AGENT_TOKEN"))
+    }
+    InitRootLaunchGuard::Proceed =>
+      fail("expected stale server process to abort before TL launch")
+  }
+  @debug.assert_eq(
+    init_root_launch_guard(false, false, false, false),
+    InitRootLaunchGuard::Proceed,
+  )
+  @debug.assert_eq(
+    init_root_launch_guard(true, false, true, false),
+    InitRootLaunchGuard::Proceed,
+  )
+  @debug.assert_eq(
+    init_root_launch_guard(false, false, true, true),
+    InitRootLaunchGuard::Proceed,
+  )
 }
 
 ///|
@@ -646,6 +739,28 @@ fn init_parse_tl_type(args : Array[String]) -> String {
 }
 
 ///|
+struct InitRootConnectionAuth {
+  server_boot_token : String
+  server_env_assignment : String
+  tl_agent_token : String
+} derive(Debug, Eq)
+
+///|
+async fn init_mint_root_connection_auth(
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Result[InitRootConnectionAuth, @types.ChoirError] {
+  let token = match @tools.mint_spawn_agent_token(capture, None) {
+    Ok(value) => value
+    Err(e) => return Err(e)
+  }
+  Ok({
+    server_boot_token: token,
+    server_env_assignment: "CHOIR_ROOT_AGENT_TOKEN=" + token,
+    tl_agent_token: token,
+  })
+}
+
+///|
 test "init TL launch command defaults to claude" {
   let cmd = @workspace.init_tl_agent_command("claude", ".")
   let s = cmd.to_string()
@@ -730,6 +845,117 @@ test "init TL launch command ignores lean for non-claude agents" {
   assert_false(cmd_codex.to_string().contains("--system-prompt"))
   let cmd_gemini = @workspace.init_tl_agent_command("gemini", ".", lean=true)
   assert_false(cmd_gemini.to_string().contains("--system-prompt"))
+}
+
+///|
+async test "init root auth mints once and threads same token to server record and TL env" {
+  let root_token = "00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f"
+  let captured : Array[@workspace.Command] = []
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    captured.push(cmd)
+    (0, root_token + "\n")
+  }
+  let auth = match init_mint_root_connection_auth(capture) {
+    Ok(value) => value
+    Err(e) => {
+      fail("expected root auth mint: " + e.message())
+      return
+    }
+  }
+  @debug.assert_eq(captured, [@tools.spawn_agent_token_command()])
+  assert_eq(auth.server_boot_token, root_token)
+  assert_eq(auth.server_env_assignment, "CHOIR_ROOT_AGENT_TOKEN=" + root_token)
+  assert_eq(auth.tl_agent_token, root_token)
+
+  let project_dir = serve_test_project_dir("init-root-auth")
+  ignore(@sys.rm_rf(project_dir))
+  ignore(@sys.create_dir_all(project_dir))
+  let state = @server.ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      terminal_session: "init-root-auth",
+    },
+    @server.make_hermetic_recovery_provider(),
+  )
+  serve_record_boot_root_credential(state, auth.server_boot_token)
+  match state.registry.credential_for_agent("root") {
+    Some(credential) => {
+      assert_eq(credential.role, @types.Role::Root)
+      assert_eq(credential.token, auth.tl_agent_token)
+    }
+    None => fail("expected root boot credential")
+  }
+
+  let tl_cmd = @workspace.init_tl_zellij_tab_command(
+    "init-root-auth",
+    project_dir,
+    "claude",
+    "main",
+    root_agent_token=Some(auth.tl_agent_token),
+  )
+  assert_true(
+    tl_cmd.args[11].contains("CHOIR_AGENT_TOKEN='" + root_token + "'"),
+  )
+  assert_false(tl_cmd.to_string().contains("root credential not provisioned"))
+  let register_result = serve_handle_request_line(
+    state,
+    serve_test_register_line("root", "root", root_token, project_dir),
+    true,
+  )
+  serve_assert_register_ok(state, register_result, "root", @types.Role::Root)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+test "init recreate replaces Server tab with same root token carried to TL" {
+  let root_token = "recreate-root-token"
+  let auth = InitRootConnectionAuth::{
+    server_boot_token: root_token,
+    server_env_assignment: "CHOIR_ROOT_AGENT_TOKEN=" + root_token,
+    tl_agent_token: root_token,
+  }
+  let commands = init_server_tab_launch_plan(
+    "howdy",
+    "/proj",
+    true,
+    true,
+    true,
+    auth.server_env_assignment,
+  )
+  assert_eq(commands.length(), 2)
+  assert_true(commands[0].to_string().contains("Server"))
+  assert_true(commands[0].to_string().contains("close"))
+  assert_eq(commands[1].program, "zellij")
+  @debug.assert_eq(commands[1].args[0:9], [
+    "--session", "howdy", "action", "new-tab", "--name", "Server", "--cwd", "/proj",
+    "--",
+  ])
+  assert_true(commands[1].args.contains("env"))
+  assert_true(commands[1].args.contains("CHOIR_ROOT_AGENT_TOKEN=" + root_token))
+  assert_true(commands[1].args.contains("choir"))
+  assert_true(commands[1].args.contains("serve"))
+
+  let tl_cmd = @workspace.init_tl_zellij_tab_command(
+    "howdy",
+    "/proj",
+    "claude",
+    "main",
+    root_agent_token=Some(auth.tl_agent_token),
+  )
+  assert_true(
+    tl_cmd.args[11].contains("CHOIR_AGENT_TOKEN='" + root_token + "'"),
+  )
+  assert_false(tl_cmd.to_string().contains("CHOIR_ROOT_AGENT_TOKEN"))
+}
+
+///|
+test "init non-recreate still reuses existing Server tab" {
+  let commands = init_server_tab_launch_plan(
+    "howdy", "/proj", false, true, true, "CHOIR_ROOT_AGENT_TOKEN=plain-init-token",
+  )
+  @debug.assert_eq(commands, [])
 }
 
 ///|
@@ -1234,7 +1460,7 @@ fn init_run() -> Unit {
         _ => 1
       }
       let server_alive = init_server_running_exit_code()
-      if session_alive == 0 {
+      if session_alive == 0 && !recreate {
         if no_attach {
           @sys.write_stdout("Session \{session} already exists.\n")
         } else {
@@ -1248,6 +1474,27 @@ fn init_run() -> Unit {
         return
       }
 
+      if session_alive != 0 && !recreate && server_alive == 0 {
+        match init_root_launch_guard(recreate, false, true, false) {
+          InitRootLaunchGuard::Abort(message) => {
+            @sys.write_stderr(message + "\n")
+            @sys.exit(1)
+            return
+          }
+          InitRootLaunchGuard::Proceed => ()
+        }
+      }
+
+      let root_auth = match
+        init_mint_root_connection_auth(@exec.capture_command_merged) {
+        Ok(value) => value
+        Err(_) => {
+          @sys.write_stderr("choir init: failed to mint root credential\n")
+          @sys.exit(1)
+          return
+        }
+      }
+
       let birth_branch_stdout = @exec.capture_stdout("git", [
         "branch", "--show-current",
       ])
@@ -1255,50 +1502,76 @@ fn init_run() -> Unit {
         project_dir, birth_branch_stdout,
       )
 
-      @sys.write_stdout("Creating session \{session}...\n")
-      init_run_or_exit(@workspace.zellij_create_background_session(session))
-      if !recreate {
-        // AUDIT: control reaches here only when the session was ABSENT
-        // from `zellij list-sessions` (the `session_alive != 0` branch
-        // above; the `session_alive == 0` branch above ends with
-        // `return` after `zellij_attach_session` and never runs this
-        // reap). The just-issued
-        // `zellij_create_background_session` either creates a fresh
-        // empty session or — when zellij's resurrection cache still
-        // holds a stored session of this name — resurrects it with its
-        // old Server/TL tabs. The reap catches that second case. With
-        // resurrection disabled (or no cached session of this name) the
-        // tab list comes back empty and the reap is a defensive no-op.
-        // Cheap to run unconditionally. End-to-end "resurrection + reap"
-        // verification is operator-driven: after `choir init`,
-        // `zellij --session <session> action query-tab-names` should NOT
-        // list `Server` or `TL` from the prior boot (a fresh init creates
-        // them as new tabs, which is expected). The reap runs inside
-        // `choir init`, not `choir serve`, so `.choir/serve.log` is not
-        // the right observable for this leaf.
-        init_reap_stale_zellij_tabs(session)
+      let created_session = session_alive != 0
+      if created_session {
+        @sys.write_stdout("Creating session \{session}...\n")
+        init_run_or_exit(@workspace.zellij_create_background_session(session))
+        if !recreate {
+          // AUDIT: control reaches here only when the session was ABSENT
+          // from `zellij list-sessions` (the `session_alive != 0` branch
+          // above; the `session_alive == 0` branch above ends with
+          // `return` after `zellij_attach_session` and never runs this
+          // reap). The just-issued
+          // `zellij_create_background_session` either creates a fresh
+          // empty session or — when zellij's resurrection cache still
+          // holds a stored session of this name — resurrects it with its
+          // old Server/TL tabs. The reap catches that second case. With
+          // resurrection disabled (or no cached session of this name) the
+          // tab list comes back empty and the reap is a defensive no-op.
+          // Cheap to run unconditionally. End-to-end "resurrection + reap"
+          // verification is operator-driven: after `choir init`,
+          // `zellij --session <session> action query-tab-names` should NOT
+          // list `Server` or `TL` from the prior boot (a fresh init creates
+          // them as new tabs, which is expected). The reap runs inside
+          // `choir init`, not `choir serve`, so `.choir/serve.log` is not
+          // the right observable for this leaf.
+          init_reap_stale_zellij_tabs(session)
+        }
       }
       let server_tab_exists = init_tab_exists(session, "Server") catch {
         _ => false
       }
-      if !server_tab_exists {
-        if init_should_launch_server_tab(server_alive == 0) {
-          init_run_or_exit(
-            @workspace.zellij_new_tab(session, "Server", project_dir, [], {
-              program: "choir",
-              args: ["serve"],
-              workdir: None,
-            }),
-          )
-        } else {
-          @sys.write_stdout("Reusing existing server process.\n")
+      let tl_tab_exists = init_tab_exists(session, "TL") catch { _ => false }
+      match
+        init_root_launch_guard(
+          recreate,
+          server_tab_exists,
+          server_alive == 0,
+          tl_tab_exists,
+        ) {
+        InitRootLaunchGuard::Abort(message) => {
+          @sys.write_stderr(message + "\n")
+          @sys.exit(1)
+          return
         }
+        InitRootLaunchGuard::Proceed => ()
+      }
+      let server_launch_plan = init_server_tab_launch_plan(
+        session,
+        project_dir,
+        recreate,
+        server_tab_exists,
+        server_alive == 0,
+        root_auth.server_env_assignment,
+      )
+      if server_launch_plan.length() > 0 {
+        for cmd in server_launch_plan {
+          init_run_or_exit(cmd)
+        }
+      } else if !server_tab_exists {
+        @sys.write_stdout("Reusing existing server process.\n")
       } else {
         @sys.write_stdout("Reusing existing Server tab.\n")
       }
       init_wait_for_server_socket_before_tl(config.listen_uds)
-      let tl_tab_exists = init_tab_exists(session, "TL") catch { _ => false }
-      if !tl_tab_exists {
+      if recreate && tl_tab_exists {
+        init_run_or_exit(
+          @workspace.local_close_target(
+            @workspace.zellij_tab_target(session, "TL"),
+          ),
+        )
+      }
+      if recreate || !tl_tab_exists {
         let tl_agent_type = @workspace.tl_type_agent_type(tl_type)
         let tl_materialization = @workspace.provider_materialization_commands(
           tl_agent_type,
@@ -1317,26 +1590,29 @@ fn init_run() -> Unit {
             tl_type,
             current_branch,
             lean~,
+            root_agent_token=Some(root_auth.tl_agent_token),
           ),
         )
       } else {
         @sys.write_stdout("Reusing existing TL tab.\n")
       }
-      // Drop the empty default tab (id 0) that `zellij_create_background_session`
-      // creates before we add the named "Server"/"TL" tabs. This is reached only
-      // after a *fresh* session creation — the `session_alive == 0` branch above
-      // returns early — so tab 0 is always that empty default here, never a live
-      // TL/Server tab. (Do not remove again under a "don't close TL tab" guard:
-      // see choir-eek — that guard applies to teardown paths, not this one.)
-      ignore(
-        @exec.run({
-          program: "zellij",
-          args: ["--session", session, "action", "close-tab-by-id", "0"],
-          workdir: None,
-        }) catch {
-          _ => 0
-        },
-      )
+      // Drop the empty default tab (id 0) only when this invocation created a
+      // fresh background session before adding the named "Server"/"TL" tabs. If
+      // `--recreate` is still looking at an already-live session after cleanup,
+      // `created_session` is false and tab 0 is not assumed to be disposable.
+      // (Do not remove again under a "don't close TL tab" guard: see choir-eek
+      // — that guard applies to teardown paths, not this one.)
+      if created_session {
+        ignore(
+          @exec.run({
+            program: "zellij",
+            args: ["--session", session, "action", "close-tab-by-id", "0"],
+            workdir: None,
+          }) catch {
+            _ => 0
+          },
+        )
+      }
       ignore(
         @exec.run({
           program: "zellij",
