@@ -64,6 +64,16 @@ pub fn getenv(_name : String) -> String? {
 }
 
 ///|
+pub fn setenv(_name : String, _value : String) -> Bool {
+  false
+}
+
+///|
+pub fn unsetenv(_name : String) -> Bool {
+  false
+}
+
+///|
 pub fn system(_cmd : String) -> Int {
   -1
 }

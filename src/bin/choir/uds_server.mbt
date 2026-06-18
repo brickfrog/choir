@@ -99,6 +99,7 @@ fn serve_reload_binary_path_for_request(
 
 ///|
 fn serve_replace_self_after_reload_ack(
+  state : @server.ServerState,
   server_fd : Int,
   req : @types.Request,
 ) -> Unit {
@@ -118,9 +119,17 @@ fn serve_replace_self_after_reload_ack(
       return
     }
   }
+  if !serve_prepare_reload_credentials_env(state) {
+    @moontrace.error("server reload failed to prepare credential environment", fields=[])
+    @sys.write_stderr(
+      "[server_reload] exec failed: failed to prepare credential environment\n",
+    )
+    return
+  }
   match @exec.replace_self(binary_path, server_fd) {
     Ok(_) => ()
     Err(e) => {
+      ignore(serve_clear_reload_credentials_env())
       @moontrace.error("server reload exec failed", fields=[
         @moontrace.field("binary_path", binary_path),
         @moontrace.field("error", e.message()),
@@ -184,6 +193,9 @@ let serve_root_agent_id : String = "root"
 let serve_root_boot_token_env : String = "CHOIR_ROOT_AGENT_TOKEN"
 
 ///|
+let serve_reload_credentials_env : String = "CHOIR_RELOAD_CREDENTIALS"
+
+///|
 fn serve_root_credential_not_provisioned_response() -> @types.Response {
   @types.Response::Err(
     "root credential not provisioned; re-run `choir init --recreate` to mint and wire a fresh root credential",
@@ -211,6 +223,49 @@ fn serve_boot_root_token_from_env(
     Some(token) => if token == "" { None } else { Some(token) }
     None => None
   }
+}
+
+///|
+fn serve_prepare_reload_credentials_env(
+  state : @server.ServerState,
+  setenv? : (String, String) -> Bool = @sys.setenv,
+  unsetenv? : (String) -> Bool = @sys.unsetenv,
+) -> Bool {
+  let payload = state.registry.to_reload_credentials_env_string()
+  if payload == "" {
+    unsetenv(serve_reload_credentials_env)
+  } else {
+    setenv(serve_reload_credentials_env, payload)
+  }
+}
+
+///|
+fn serve_clear_reload_credentials_env(
+  unsetenv? : (String) -> Bool = @sys.unsetenv,
+) -> Bool {
+  unsetenv(serve_reload_credentials_env)
+}
+
+///|
+fn serve_restore_reload_credentials_from_env(
+  state : @server.ServerState,
+  getenv? : (String) -> String? = fn(key) { @sys.getenv(key) },
+  unsetenv? : (String) -> Bool = @sys.unsetenv,
+) -> Int {
+  let restored = match getenv(serve_reload_credentials_env) {
+    Some(payload) =>
+      if payload == "" {
+        0
+      } else {
+        match state.registry.restore_reload_credentials_env_string(payload) {
+          Ok(count) => count
+          Err(_) => 0
+        }
+      }
+    None => 0
+  }
+  ignore(unsetenv(serve_reload_credentials_env))
+  restored
 }
 
 ///|
@@ -999,6 +1054,137 @@ test "serve boot root token env ignores missing and empty values" {
 }
 
 ///|
+async test "serve restores reload credentials before non-root reconnect register" {
+  let (state, project_dir) = serve_test_state_with_root("reload-creds")
+  let agent_id = "main.reload-creds.dev"
+  let token = "reload-original-token"
+  serve_test_upsert_agent(state, agent_id, @types.Role::Dev, project_dir)
+
+  let before_restore = serve_handle_request_line(
+    state,
+    serve_test_register_line(agent_id, "dev", token, project_dir),
+    true,
+  )
+  serve_assert_register_rejected(before_restore, token)
+
+  let payload =
+    #|{"version":1,"credentials":[{"agent_id":"main.reload-creds.dev","role":"dev","token":"reload-original-token"}]}
+  let unset_keys : Array[String] = []
+  let restored = serve_restore_reload_credentials_from_env(
+    state,
+    getenv=fn(key) {
+      if key == serve_reload_credentials_env {
+        Some(payload)
+      } else {
+        None
+      }
+    },
+    unsetenv=fn(key) {
+      unset_keys.push(key)
+      true
+    },
+  )
+  assert_eq(restored, 1)
+  @debug.assert_eq(unset_keys, [serve_reload_credentials_env])
+
+  let after_restore = serve_handle_request_line(
+    state,
+    serve_test_register_line(agent_id, "root", token, project_dir),
+    true,
+  )
+  serve_assert_register_ok(state, after_restore, agent_id, @types.Role::Dev)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "serve reload credential env missing empty or malformed stays fail closed" {
+  let empty_token_payload =
+    #|{"version":1,"credentials":[{"agent_id":"main.reload-negative.dev","role":"dev","token":""}]}
+  let cases : Array[(String, String?)] = [
+    ("missing", None),
+    ("empty", Some("")),
+    ("malformed", Some("not-json")),
+    ("empty-token", Some(empty_token_payload)),
+  ]
+  for item in cases {
+    let (label, env_value) = item
+    let (state, project_dir) = serve_test_state_with_root(
+      "reload-creds-" + label,
+    )
+    let agent_id = "main.reload-negative.dev"
+    let token = "reload-negative-secret"
+    serve_test_upsert_agent(state, agent_id, @types.Role::Dev, project_dir)
+    let unset_keys : Array[String] = []
+    let restored = serve_restore_reload_credentials_from_env(
+      state,
+      getenv=fn(key) {
+        if key == serve_reload_credentials_env {
+          env_value
+        } else {
+          None
+        }
+      },
+      unsetenv=fn(key) {
+        unset_keys.push(key)
+        true
+      },
+    )
+    assert_eq(restored, 0)
+    @debug.assert_eq(unset_keys, [serve_reload_credentials_env])
+    @debug.assert_eq(state.registry.credential_for_agent(agent_id), None)
+    let result = serve_handle_request_line(
+      state,
+      serve_test_register_line(agent_id, "dev", token, project_dir),
+      true,
+    )
+    serve_assert_register_rejected(result, token)
+    ignore(@sys.rm_rf(project_dir))
+  }
+}
+
+///|
+test "serve prepares reload credentials env without root token or logs" {
+  let (state, project_dir) = serve_test_state_with_root("reload-env-prepare")
+  let leaf_token = "reload-env-leaf-token"
+  let root_token = "reload-env-root-token"
+  serve_test_record_credential(
+    state,
+    "main.reload-env.leaf",
+    @types.Role::Dev,
+    leaf_token,
+  )
+  serve_test_record_credential(state, "root", @types.Role::Root, root_token)
+  let captured_events : Array[@moontrace.Event] = []
+  let set_values : Array[String] = []
+  let unset_keys : Array[String] = []
+  @moontrace.set_subscriber(fn(event) { captured_events.push(event) })
+  let prepared = serve_prepare_reload_credentials_env(
+    state,
+    setenv=fn(key, value) {
+      if key == serve_reload_credentials_env {
+        set_values.push(value)
+      }
+      true
+    },
+    unsetenv=fn(key) {
+      unset_keys.push(key)
+      true
+    },
+  )
+  @moontrace.clear_subscriber()
+  assert_true(prepared)
+  assert_eq(set_values.length(), 1)
+  assert_true(set_values[0].contains(leaf_token))
+  assert_false(set_values[0].contains(root_token))
+  @debug.assert_eq(unset_keys, [])
+  for event in captured_events {
+    assert_false(event.format(color=false).contains(leaf_token))
+    assert_false(event.format(color=false).contains(root_token))
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 fn serve_test_json_object(line : String) -> Result[Map[String, Json], String] {
   let parsed = @json.parse(line.trim().to_owned()) catch {
     _ => return Err("expected JSON response")
@@ -1773,7 +1959,7 @@ async fn serve_handle_uds_request_line(
   }
   match result.reload_request {
     Some(reload_req) =>
-      serve_replace_self_after_reload_ack(server_fd, reload_req)
+      serve_replace_self_after_reload_ack(state, server_fd, reload_req)
     None => ()
   }
 }
@@ -1814,7 +2000,7 @@ async fn serve_handle_uds_jsonrpc_request_line(
     client.close_after_response = true
   }
   match result.reload_request {
-    Some(req) => serve_replace_self_after_reload_ack(server_fd, req)
+    Some(req) => serve_replace_self_after_reload_ack(state, server_fd, req)
     None => ()
   }
 }
@@ -2443,10 +2629,6 @@ fn serve_run() -> Unit {
   let state = @server.ServerState::new(config, provider).with_pane_watcher(
     serve_pane_watcher(),
   )
-  match serve_boot_root_token_from_env() {
-    Some(token) => serve_record_boot_root_credential(state, token)
-    None => ()
-  }
   @moontrace.set_global_field("service", "choir".to_json())
   @moontrace.set_global_field("run_id", state.run_id.to_json())
   @prompts.emit_prompt_drift_warnings(
@@ -2462,10 +2644,12 @@ fn serve_run() -> Unit {
         config.terminal_session,
       )
       @server.recover_state(state, config.terminal_session, recovery_input)
+      let mut reload_snapshot_restored = false
       match inherited_uds_fd {
         Some(fd) =>
           match state.restore_reload_snapshot() {
             Ok(_) => {
+              reload_snapshot_restored = true
               let line = "[server_reload] resumed run_id=" + state.run_id
               @moontrace.info(line, fields=[@moontrace.field("fd", fd)])
               @sys.write_stdout(line + "\n")
@@ -2474,6 +2658,19 @@ fn serve_run() -> Unit {
               @moontrace.error("server reload resume failed", fields=[
                 @moontrace.field("error", e.message()),
               ])
+          }
+        None => ignore(serve_clear_reload_credentials_env())
+      }
+      match serve_boot_root_token_from_env() {
+        Some(token) => serve_record_boot_root_credential(state, token)
+        None => ()
+      }
+      match inherited_uds_fd {
+        Some(_) =>
+          if reload_snapshot_restored {
+            ignore(serve_restore_reload_credentials_from_env(state))
+          } else {
+            ignore(serve_clear_reload_credentials_env())
           }
         None => ()
       }

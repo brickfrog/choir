@@ -99,6 +99,14 @@ extern "C" fn c_write_pid_file(path : Bytes) -> Unit = "choir_write_pid_file"
 extern "C" fn c_getenv(name : Bytes, out : Bytes, out_size : Int) -> Int = "choir_getenv"
 
 ///|
+#borrow(name, value)
+extern "C" fn c_setenv(name : Bytes, value : Bytes) -> Int = "choir_setenv"
+
+///|
+#borrow(name)
+extern "C" fn c_unsetenv(name : Bytes) -> Int = "choir_unsetenv"
+
+///|
 fn string_to_null_terminated_bytes(s : String) -> Bytes {
   let b = @utf8.encode(s)
   let len = b.length()
@@ -360,7 +368,30 @@ pub fn getenv(name : String) -> String? {
   if len <= 0 {
     return None
   }
-  Some(@utf8.decode_lossy(buf[:len]))
+  if len < 4096 {
+    return Some(@utf8.decode_lossy(buf[:len]))
+  }
+  let large_buf = Bytes::new(len + 1)
+  let large_len = c_getenv(name_bytes, large_buf, len + 1)
+  if large_len <= 0 {
+    None
+  } else {
+    let copy_len = if large_len < len + 1 { large_len } else { len }
+    Some(@utf8.decode_lossy(large_buf[:copy_len]))
+  }
+}
+
+///|
+pub fn setenv(name : String, value : String) -> Bool {
+  let name_bytes = string_to_null_terminated_bytes(name)
+  let value_bytes = string_to_null_terminated_bytes(value)
+  c_setenv(name_bytes, value_bytes) == 0
+}
+
+///|
+pub fn unsetenv(name : String) -> Bool {
+  let name_bytes = string_to_null_terminated_bytes(name)
+  c_unsetenv(name_bytes) == 0
 }
 
 ///|
