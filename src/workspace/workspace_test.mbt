@@ -2028,10 +2028,16 @@ test "bash_bounded_script_body wraps bash in a timeout" {
 }
 
 ///|
-test "choir_lint_wrapper_script_body delegates to native lint command" {
+test "choir_lint_wrapper_script_body delegates or skips based on package presence" {
   let body = @workspace.choir_lint_wrapper_script_body()
   assert_true(body.has_prefix("#!/bin/sh"))
   assert_true(body.contains("cd \"$project_dir\""))
+  assert_true(body.contains("[ ! -f src/bin/choir_lint/moon.pkg ]"))
+  assert_true(body.contains("[ ! -d src/bin/choir_lint ]"))
+  assert_true(
+    body.contains("choir_lint: skipping; src/bin/choir_lint is not present"),
+  )
+  assert_true(body.contains("exit 0"))
   assert_true(
     body.contains("exec moon run src/bin/choir_lint --target native -- \"$@\""),
   )

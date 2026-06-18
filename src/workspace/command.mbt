@@ -272,6 +272,10 @@ pub fn choir_lint_wrapper_script_body() -> String {
     #|script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd) || exit 1
     #|project_dir=$(CDPATH= cd -- "$script_dir/../.." 2>/dev/null && pwd) || exit 1
     #|cd "$project_dir" || exit 1
+    #|if [ ! -f src/bin/choir_lint/moon.pkg ] && [ ! -d src/bin/choir_lint ]; then
+    #|  printf '%s\n' 'choir_lint: skipping; src/bin/choir_lint is not present in this repo' >&2
+    #|  exit 0
+    #|fi
     #|exec moon run src/bin/choir_lint --target native -- "$@"
   )
 }
