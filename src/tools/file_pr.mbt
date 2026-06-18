@@ -996,11 +996,20 @@ pub fn file_pr_body_with_verify_summary(
 }
 
 ///|
-fn file_pr_task_contract_for_agent(
+fn file_pr_effective_task_contract(
   tracked_agent_id : String,
+  caller_role : @types.Role,
   task_contract_reader : (String) -> @types.TaskContract?,
 ) -> @types.TaskContract? {
-  task_contract_reader(tracked_agent_id)
+  match task_contract_reader(tracked_agent_id) {
+    Some(contract) => Some(contract)
+    None =>
+      if tracked_agent_id == "root" && @types.is_supervisor_role(caller_role) {
+        Some(@types.TaskContract::empty())
+      } else {
+        None
+      }
+  }
 }
 
 ///|
@@ -1018,12 +1027,15 @@ fn file_pr_missing_task_contract_error(
 async fn file_pr_mirror_beads_created(
   project_dir : String,
   tracked_agent_id : String,
+  caller_role : @types.Role,
   pr_number : Int,
   capture : async (@workspace.Command) -> (Int, String),
   task_contract_reader : (String) -> @types.TaskContract?,
 ) -> Unit {
   let issue_id = match
-    file_pr_task_contract_for_agent(tracked_agent_id, task_contract_reader) {
+    file_pr_effective_task_contract(
+      tracked_agent_id, caller_role, task_contract_reader,
+    ) {
     Some(contract) =>
       match contract.beads_issue_id {
         Some(id) => id
@@ -1296,8 +1308,8 @@ pub async fn interpret_file_pr(
     Err(e) => return @types.Response::Err(e.message())
     Ok(_) => ()
   }
-  let task_contract = file_pr_task_contract_for_agent(
-    tracked_agent_id, task_contract_reader,
+  let task_contract = file_pr_effective_task_contract(
+    tracked_agent_id, caller_role, task_contract_reader,
   )
   if task_contract is None {
     return @types.Response::Err(
@@ -1389,6 +1401,7 @@ pub async fn interpret_file_pr(
         file_pr_mirror_beads_created(
           project_dir,
           tracked_agent_id,
+          caller_role,
           pr.number,
           capture,
           task_contract_reader,

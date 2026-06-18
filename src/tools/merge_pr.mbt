@@ -460,12 +460,13 @@ fn merge_pr_missing_task_contract_error(
 ///|
 fn merge_pr_effective_task_contract(
   agent_id : String,
+  caller_role : @types.Role,
   reader : (String) -> @types.TaskContract?,
 ) -> @types.TaskContract? {
   match reader(agent_id) {
     Some(contract) => Some(contract)
     None =>
-      if agent_id == "root" {
+      if agent_id == "root" && @types.is_supervisor_role(caller_role) {
         Some(@types.TaskContract::empty())
       } else {
         None
@@ -508,6 +509,7 @@ pub async fn interpret_merge_pr_preflight(
   project_dir : String,
   caller_id : String,
   capture : async (@workspace.Command) -> (Int, String),
+  caller_role? : @types.Role = @types.Role::TL,
   task_contract_reader? : (String) -> @types.TaskContract? = fn(_) { None },
   review_mode? : @types.ReviewMode = @types.ReviewMode::SinglePass,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
@@ -533,7 +535,11 @@ pub async fn interpret_merge_pr_preflight(
   let policy_decision = match poller_tracked {
     Some(tracked) => {
       let task_contract_raw = match
-        merge_pr_effective_task_contract(tracked.agent_id, task_contract_reader) {
+        merge_pr_effective_task_contract(
+          tracked.agent_id,
+          caller_role,
+          task_contract_reader,
+        ) {
         Some(contract) => Some(contract)
         None =>
           return Err(
@@ -2165,6 +2171,7 @@ pub async fn interpret_merge_pr(
   read_lifecycle? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
   read_file? : (String) -> String = fn(_) { "" },
   merge_strategy? : @types.MergeStrategy = @types.Config::default().merge_strategy,
+  caller_role? : @types.Role = @types.Role::TL,
   task_contract_reader? : (String) -> @types.TaskContract? = fn(_) { None },
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
   reviewer? : @types.Reviewer = @types.Reviewer::None,
@@ -2190,6 +2197,7 @@ pub async fn interpret_merge_pr(
       project_dir,
       merge_args.caller_id,
       capture,
+      caller_role~,
       task_contract_reader~,
       review_mode=merge_args.review_mode.unwrap_or(
         @types.ReviewMode::SinglePass,

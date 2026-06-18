@@ -1377,6 +1377,58 @@ async test "interpret_file_pr skips required verify when branch preflight fails"
 }
 
 ///|
+async test "interpret_file_pr accepts root tracked PR without contract for supervisor caller" {
+  let project_dir = "/tmp/choir-fpr-root-missing-contract-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  let mut ensure_pr_called = false
+  let mut verify_capture_called = false
+  let got = interpret_file_pr(
+    {
+      branch: "feature/root-pr",
+      parent_branch: Some("main"),
+      tracked_agent_id: "root",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    None,
+    @types.Reviewer::None,
+    mock_preflight_ok,
+    mock_runner_all_ok,
+    fn(cmd : @workspace.Command) -> (Int, String) {
+      if cmd.program == "sh" {
+        verify_capture_called = true
+      }
+      (0, "")
+    },
+    fn(
+      _branch : String,
+      _parent_branch : String,
+      _dir : String,
+      _title : String?,
+      _body : String?,
+    ) -> Result[PullRequestInfo, @types.ChoirError] {
+      ensure_pr_called = true
+      Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
+    },
+    caller_role=@types.Role::Root,
+    sleep_fn=file_pr_test_no_sleep,
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    @types.Response::Err(msg) =>
+      fail("expected supervisor root PR without contract to pass: " + msg)
+  }
+  assert_false(verify_capture_called)
+  assert_true(ensure_pr_called)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "interpret_file_pr fails closed when server task contract is missing" {
   let project_dir = "/tmp/choir-fpr-missing-contract-" +
     @sys.get_pid().to_string()
@@ -1742,6 +1794,77 @@ async test "dispatch file_pr records verify evidence through injected append_fil
   assert_true(path.contains("/.choir/events/main.leaf.jsonl"))
   assert_true(content.contains("npm run typecheck"))
   assert_true(content.contains("sha-dispatch-verify"))
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "dispatch_call file_pr rejects dev spoofing root tracked agent without contract" {
+  let project_dir = "/tmp/choir-fpr-dev-spoof-root-contract-" +
+    @sys.get_pid().to_string()
+  let file_pr_dir = project_dir + "/.choir/worktrees/leaf"
+  ignore(@sys.rm_rf(project_dir))
+  let reg = file_pr_test_registry(file_pr_dir)
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId("root"),
+      role: @types.Role::Root,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: project_dir,
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let mut ensure_pr_called = false
+  let resp = dispatch_call(
+    ToolCall::{
+      role: @types.Role::Dev,
+      name: "file_pr",
+      args: {
+        "branch": "feature/spoof-root",
+        "parent_branch": "main",
+        "caller_id": "main.leaf",
+        "agent_id": "root",
+      },
+    },
+    project_dir~,
+    session="choir",
+    registry=Some(reg),
+    reviewer=@types.Reviewer::None,
+    ensure_branch_ready=Some(mock_preflight_ok),
+    runner=mock_runner_all_ok,
+    capture=async fn(_cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      (0, "")
+    },
+    ensure_pr=Some(async fn(
+      _branch : String,
+      _parent_branch : String,
+      _dir : String,
+      _title : String?,
+      _body : String?,
+    ) -> Result[PullRequestInfo, @types.ChoirError] {
+      @async.sleep(0)
+      ensure_pr_called = true
+      Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
+    }),
+    task_contract_reader=fn(_agent_id : String) { None },
+    tdd_phase_reader=file_pr_test_tdd_done,
+    sleep_fn=file_pr_test_no_sleep,
+  )
+  match resp {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("server task contract unavailable"))
+      assert_true(msg.contains("root"))
+      assert_true(msg.contains("refusing to skip required verify"))
+    }
+    @types.Response::Ok(_) =>
+      fail("expected dev caller spoofing root to fail missing contract")
+  }
+  assert_false(ensure_pr_called)
   ignore(@sys.rm_rf(project_dir))
 }
 
