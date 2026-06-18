@@ -92,6 +92,12 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       @types.Role::Worker,
     ]),
     tool_def(
+      "handoff_status",
+      "Read whether an agent has called notify_parent since its current spawn",
+      all_roles,
+      read_only=true,
+    ),
+    tool_def(
       "report_usage",
       "Self-report usage for wave telemetry; no-op when caller has no wave_id",
       [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],

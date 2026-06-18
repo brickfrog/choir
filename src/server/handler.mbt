@@ -58,6 +58,24 @@ fn request_repairs_task_contract(req : @types.Request) -> Bool {
 }
 
 ///|
+fn request_is_one_shot_register(req : @types.Request) -> Bool {
+  if req.req_method != "register" {
+    return false
+  }
+  match req.args.get("connection_lifetime") {
+    Some(raw) => {
+      let lifetime = raw.trim().to_lower().to_owned()
+      lifetime == "oneshot" ||
+      lifetime == "one_shot" ||
+      lifetime == "one-shot" ||
+      lifetime == "tool_call" ||
+      lifetime == "tool-call"
+    }
+    None => false
+  }
+}
+
+///|
 fn emit_span(
   state : ServerState,
   req : @types.Request,
@@ -603,6 +621,9 @@ pub async fn ServerState::handle_with_runner_and_capture(
       record_handoff_delivered=fn(agent_id) {
         self.mark_handoff_delivered(agent_id)
       },
+      handoff_status_reader=fn(agent_id) {
+        self.handoff_was_delivered(agent_id)
+      },
       on_resolve_review_thread=async fn(pr_numbers : Array[Int]) {
         if pr_numbers.length() > 0 {
           self.sweep_tracked_prs_for_automerge(runner, sleep_fn~) catch {
@@ -630,7 +651,10 @@ pub async fn ServerState::handle_with_runner_and_capture(
           _ => ()
         } noraise {
           agent => {
-            self.register_agent(agent)
+            self.register_agent(
+              agent,
+              reset_handoff=!request_is_one_shot_register(effective_req),
+            )
             self.register_agent_pid_from_sidecar(agent)
           }
         }

@@ -10646,6 +10646,125 @@ async test "notify_parent marks handoff delivered and suppresses worker prod" {
 }
 
 ///|
+async test "handoff_status reports notify_parent handoff bit" {
+  let state = handler_auto_close_test_state("handoff-status")
+  let parent_id = "main.parent"
+  let worker_id = "main.status-worker"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      worker_handoff_worker(worker_id, parent_id, @types.AgentState::Active),
+    ),
+  )
+
+  let status_req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::Worker,
+    name: "handoff_status",
+    args: @types.RequestArgs::new({ "agent_id": worker_id }),
+  }
+  let before = state.handle_with_runner(status_req, runner=async fn(_cmds) {
+    @async.sleep(0)
+    []
+  })
+  assert_true(before.is_ok())
+  assert_eq(before.ok_field("handed_off"), Some("false"))
+
+  let sent : Array[String] = []
+  let notify_req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::Worker,
+    name: "notify_parent",
+    args: @types.RequestArgs::new({
+      "caller_id": worker_id,
+      "message": "review complete",
+      "status": "success",
+    }),
+  }
+  let notify_resp = state.handle_with_runner(notify_req, runner=async fn(cmds) {
+    worker_handoff_capture_runner(sent, cmds)
+  })
+  assert_true(notify_resp.is_ok())
+
+  let after = state.handle_with_runner(status_req, runner=async fn(_cmds) {
+    @async.sleep(0)
+    []
+  })
+  assert_true(after.is_ok())
+  assert_eq(after.ok_field("handed_off"), Some("true"))
+}
+
+///|
+async test "register resets handoff delivered for current spawn" {
+  let state = handler_auto_close_test_state("handoff-register-reset")
+  let parent_id = "main.parent"
+  let worker_id = "main.reset-status-worker"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      worker_handoff_worker(worker_id, parent_id, @types.AgentState::Active),
+    ),
+  )
+  state.mark_handoff_delivered(worker_id)
+  assert_true(state.handoff_delivered.contains(worker_id))
+
+  ignore(
+    state.register_agent(
+      worker_handoff_worker(worker_id, parent_id, @types.AgentState::Active),
+    ),
+  )
+  assert_false(state.handoff_delivered.contains(worker_id))
+}
+
+///|
+async test "one-shot register does not reset handoff delivered" {
+  let state = handler_auto_close_test_state("handoff-oneshot-register")
+  let parent_id = "main.parent"
+  let worker_id = "main.oneshot-status-worker"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      worker_handoff_worker(worker_id, parent_id, @types.AgentState::Active),
+    ),
+  )
+  state.mark_handoff_delivered(worker_id)
+  assert_true(state.handoff_delivered.contains(worker_id))
+
+  let register_req : @types.Request = {
+    req_method: "register",
+    role: @types.Role::Worker,
+    name: "register",
+    args: @types.RequestArgs::new({
+      "agent_id": worker_id,
+      "parent_id": parent_id,
+      "workspace": state.config.project_dir,
+      "branch": worker_id,
+      "connection_lifetime": "oneshot",
+    }),
+  }
+  let resp = state.handle_with_runner(register_req, runner=async fn(_cmds) {
+    @async.sleep(0)
+    []
+  })
+  assert_true(resp.is_ok())
+  assert_true(state.handoff_delivered.contains(worker_id))
+  let status_resp = state.handle_with_runner(
+    {
+      req_method: "tools/call",
+      role: @types.Role::Worker,
+      name: "handoff_status",
+      args: @types.RequestArgs::new({ "agent_id": worker_id }),
+    },
+    runner=async fn(_cmds) {
+      @async.sleep(0)
+      []
+    },
+  )
+  assert_true(status_resp.is_ok())
+  assert_eq(status_resp.ok_field("handed_off"), Some("true"))
+}
+
+///|
 async test "watchdog kill emits worker exited without notify only before handoff" {
   let snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"full report\",\"last line\"]}"
   let parent_id = "main.parent"
