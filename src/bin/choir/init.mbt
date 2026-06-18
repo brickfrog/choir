@@ -102,6 +102,31 @@ fn init_server_tab_launch_plan(
 }
 
 ///|
+priv enum InitRootLaunchGuard {
+  Proceed
+  Abort(String)
+} derive(Debug, Eq)
+
+///|
+fn init_stale_server_without_tab_message() -> String {
+  "choir init: a server process is running without a managed Server tab; run `choir init --recreate` to restart the server and TL with a matching root credential."
+}
+
+///|
+fn init_root_launch_guard(
+  recreate : Bool,
+  server_tab_exists : Bool,
+  server_alive : Bool,
+  tl_tab_exists : Bool,
+) -> InitRootLaunchGuard {
+  if !recreate && !server_tab_exists && server_alive && !tl_tab_exists {
+    InitRootLaunchGuard::Abort(init_stale_server_without_tab_message())
+  } else {
+    InitRootLaunchGuard::Proceed
+  }
+}
+
+///|
 fn init_server_socket_wait_tries() -> Int {
   // `choir init` is a foreground flow with the user watching the terminal, so
   // keep the pre-TL socket wait to about 20s and warn before launching anyway.
@@ -135,37 +160,7 @@ fn init_wait_for_server_socket_before_tl(
 ///|
 /// Relative paths and prefixes removed by `choir init --recreate`.
 fn init_runtime_cleanup_paths() -> Array[String] {
-  [
-    ".choir/server.pid", ".choir/server.sock", ".choir/run_id", ".choir/kv/lifecycle--",
-    ".choir/kv/children--", ".choir/kv/phase-dev--", ".choir/kv/phase-tl--", ".choir/kv/pending-wave--",
-    ".choir/outbox/", ".choir/waves/", ".choir/inline/",
-  ]
-}
-
-///|
-fn init_runtime_cleanup_kv_prefixes() -> Array[String] {
-  ["lifecycle--", "children--", "phase-dev--", "phase-tl--", "pending-wave--"]
-}
-
-///|
-fn init_runtime_cleanup_recursive_dirs() -> Array[String] {
-  [".choir/outbox", ".choir/waves", ".choir/inline"]
-}
-
-///|
-fn init_cleanup_kv_prefixes(prefixes : Array[String]) -> Unit {
-  let kv_dir = ".choir/kv"
-  for name in @sys.list_dir(kv_dir) {
-    let mut should_delete = false
-    for prefix in prefixes {
-      if name.has_prefix(prefix) {
-        should_delete = true
-      }
-    }
-    if should_delete {
-      ignore(@sys.delete_file_sync(kv_dir + "/" + name))
-    }
-  }
+  [".choir/server.pid", ".choir/server.sock", ".choir/run_id"]
 }
 
 ///|
@@ -225,16 +220,12 @@ fn init_cleanup_recreate_artifacts(
   cleanup_runtime? : () -> Unit = fn() {
     @sys.init_cleanup_runtime_artifacts_native()
   },
-  cleanup_kv_prefixes? : (Array[String]) -> Unit = fn(prefixes) {
-    init_cleanup_kv_prefixes(prefixes)
-  },
-  rm_rf? : (String) -> Bool = fn(path) { @sys.rm_rf(path) },
+  cleanup_kv_prefixes? : (Array[String]) -> Unit = fn(_prefixes) { () },
+  rm_rf? : (String) -> Bool = fn(_path) { true },
 ) -> Unit {
+  ignore(cleanup_kv_prefixes)
+  ignore(rm_rf)
   cleanup_runtime()
-  cleanup_kv_prefixes(init_runtime_cleanup_kv_prefixes())
-  for dir in init_runtime_cleanup_recursive_dirs() {
-    ignore(rm_rf(dir))
-  }
 }
 
 ///|
@@ -265,19 +256,21 @@ test "init session lifecycle commands use zellij" {
 ///|
 test "cleanup paths separate runtime restart from purge" {
   let rt = init_runtime_cleanup_paths()
-  assert_true(rt.length() >= 11)
+  @debug.assert_eq(rt, [
+    ".choir/server.pid", ".choir/server.sock", ".choir/run_id",
+  ])
   for p in rt {
     assert_false(p.contains("worktrees"))
     assert_false(p.contains("poller"))
+    assert_false(p.contains("lifecycle--"))
+    assert_false(p.contains("children--"))
+    assert_false(p.contains("phase-dev--"))
+    assert_false(p.contains("phase-tl--"))
+    assert_false(p.contains("pending-wave--"))
+    assert_false(p.contains("outbox"))
+    assert_false(p.contains("waves"))
+    assert_false(p.contains("inline"))
   }
-  assert_true(rt.contains(".choir/kv/lifecycle--"))
-  assert_true(rt.contains(".choir/kv/children--"))
-  assert_true(rt.contains(".choir/kv/phase-dev--"))
-  assert_true(rt.contains(".choir/kv/phase-tl--"))
-  assert_true(rt.contains(".choir/kv/pending-wave--"))
-  assert_true(rt.contains(".choir/outbox/"))
-  assert_true(rt.contains(".choir/waves/"))
-  assert_true(rt.contains(".choir/inline/"))
   let purge = init_purge_cleanup_marker_substrings()
   assert_true(purge.length() >= 4)
   let mut has_wt = false
@@ -292,6 +285,32 @@ test "cleanup paths separate runtime restart from purge" {
   }
   assert_true(has_wt)
   assert_true(has_poller)
+}
+
+///|
+test "recreate cleanup preserves recovery state while purge markers remain destructive" {
+  let rt = init_runtime_cleanup_paths()
+  assert_true(rt.contains(".choir/server.pid"))
+  assert_true(rt.contains(".choir/server.sock"))
+  assert_true(rt.contains(".choir/run_id"))
+  assert_false(rt.contains(".choir/kv/lifecycle--"))
+  assert_false(rt.contains(".choir/kv/children--"))
+  assert_false(rt.contains(".choir/kv/phase-dev--"))
+  assert_false(rt.contains(".choir/kv/phase-tl--"))
+  assert_false(rt.contains(".choir/kv/pending-wave--"))
+  assert_false(rt.contains(".choir/outbox/"))
+  assert_false(rt.contains(".choir/waves/"))
+  assert_false(rt.contains(".choir/inline/"))
+
+  let purge = init_purge_cleanup_marker_substrings()
+  assert_true(purge.contains(".choir/inline"))
+  assert_true(purge.contains(".choir/outbox"))
+  assert_true(purge.contains(".choir/waves"))
+  assert_true(purge.contains("lifecycle--"))
+  assert_true(purge.contains("children--"))
+  assert_true(purge.contains("phase-dev--"))
+  assert_true(purge.contains("phase-tl--"))
+  assert_true(purge.contains("pending-wave--"))
 }
 
 ///|
@@ -344,10 +363,14 @@ test "init server cleanup commands separate runtime restart from purge" {
   assert_true(init_should_launch_server_tab(false))
   assert_false(init_should_launch_server_tab(true))
   let rt = init_runtime_cleanup_paths()
-  assert_true(rt.length() >= 11)
+  @debug.assert_eq(rt, [
+    ".choir/server.pid", ".choir/server.sock", ".choir/run_id",
+  ])
   for p in rt {
     assert_false(p.contains("worktrees"))
     assert_false(p.contains("poller"))
+    assert_false(p.contains("lifecycle--"))
+    assert_false(p.contains("pending-wave--"))
   }
   let purge = init_purge_cleanup_marker_substrings()
   let mut has_inline = false
@@ -360,7 +383,7 @@ test "init server cleanup commands separate runtime restart from purge" {
 }
 
 ///|
-test "init recreate cleanup covers runtime, kv prefixes, and recursive dirs" {
+test "init recreate cleanup covers only runtime markers" {
   let events : Array[String] = []
   init_cleanup_recreate_artifacts(
     cleanup_runtime=fn() { events.push("runtime") },
@@ -372,11 +395,35 @@ test "init recreate cleanup covers runtime, kv prefixes, and recursive dirs" {
       true
     },
   )
-  assert_true(events.contains("runtime"))
-  assert_true(events.any(fn(event) { event.has_prefix("kv:") }))
-  assert_true(events.contains("rm:.choir/outbox"))
-  assert_true(events.contains("rm:.choir/waves"))
-  assert_true(events.contains("rm:.choir/inline"))
+  @debug.assert_eq(events, ["runtime"])
+}
+
+///|
+test "init stale server process without Server tab aborts before fresh TL launch" {
+  let decision = init_root_launch_guard(false, false, true, false)
+  match decision {
+    InitRootLaunchGuard::Abort(message) => {
+      assert_true(message.contains("server process is running"))
+      assert_true(message.contains("managed Server tab"))
+      assert_true(message.contains("choir init --recreate"))
+      assert_false(message.contains("CHOIR_AGENT_TOKEN"))
+      assert_false(message.contains("CHOIR_ROOT_AGENT_TOKEN"))
+    }
+    InitRootLaunchGuard::Proceed =>
+      fail("expected stale server process to abort before TL launch")
+  }
+  @debug.assert_eq(
+    init_root_launch_guard(false, false, false, false),
+    InitRootLaunchGuard::Proceed,
+  )
+  @debug.assert_eq(
+    init_root_launch_guard(true, false, true, false),
+    InitRootLaunchGuard::Proceed,
+  )
+  @debug.assert_eq(
+    init_root_launch_guard(false, false, true, true),
+    InitRootLaunchGuard::Proceed,
+  )
 }
 
 ///|
@@ -1427,6 +1474,17 @@ fn init_run() -> Unit {
         return
       }
 
+      if session_alive != 0 && !recreate && server_alive == 0 {
+        match init_root_launch_guard(recreate, false, true, false) {
+          InitRootLaunchGuard::Abort(message) => {
+            @sys.write_stderr(message + "\n")
+            @sys.exit(1)
+            return
+          }
+          InitRootLaunchGuard::Proceed => ()
+        }
+      }
+
       let root_auth = match
         init_mint_root_connection_auth(@exec.capture_command_merged) {
         Ok(value) => value
@@ -1473,6 +1531,21 @@ fn init_run() -> Unit {
       let server_tab_exists = init_tab_exists(session, "Server") catch {
         _ => false
       }
+      let tl_tab_exists = init_tab_exists(session, "TL") catch { _ => false }
+      match
+        init_root_launch_guard(
+          recreate,
+          server_tab_exists,
+          server_alive == 0,
+          tl_tab_exists,
+        ) {
+        InitRootLaunchGuard::Abort(message) => {
+          @sys.write_stderr(message + "\n")
+          @sys.exit(1)
+          return
+        }
+        InitRootLaunchGuard::Proceed => ()
+      }
       let server_launch_plan = init_server_tab_launch_plan(
         session,
         project_dir,
@@ -1491,7 +1564,6 @@ fn init_run() -> Unit {
         @sys.write_stdout("Reusing existing Server tab.\n")
       }
       init_wait_for_server_socket_before_tl(config.listen_uds)
-      let tl_tab_exists = init_tab_exists(session, "TL") catch { _ => false }
       if recreate && tl_tab_exists {
         init_run_or_exit(
           @workspace.local_close_target(
