@@ -288,16 +288,20 @@ fn ServerState::request_with_authenticated_identity(
       // request's role is normalized to the verified role below regardless, so a
       // supervisor<->supervisor label difference is not an escalation and must
       // not lock out the TL's own connection. A non-supervisor claiming a
-      // supervisor role (or any agent_id/caller_id contradiction) is still
-      // rejected as a spoof.
+      // supervisor role is still rejected as an escalation.
       let role_ok = req.role == agent.role ||
         (
           @types.is_supervisor_role(req.role) &&
           @types.is_supervisor_role(agent.role)
         )
-      if !role_ok ||
-        !request_identity_arg_matches(req, "agent_id", agent_id) ||
-        !request_identity_arg_matches(req, "caller_id", agent_id) {
+      // Only `caller_id` is the caller's identity claim and is verified against
+      // the bound identity. `agent_id` in the args is a DATA/target field for
+      // many tools (kill_agent's victim, suspend_resume's target, track_pr's PR
+      // owner), NOT the caller — comparing it against the bound caller wrongly
+      // rejects every such call. The caller's identity is set authoritatively
+      // from the connection binding by request_with_verified_caller below, so a
+      // spoofed agent_id arg gains nothing.
+      if !role_ok || !request_identity_arg_matches(req, "caller_id", agent_id) {
         return Err(authenticated_identity_mismatch_error())
       }
       Ok(request_with_verified_caller(req, agent_id, agent.role))
@@ -370,6 +374,40 @@ test "request_with_authenticated_identity tolerates supervisor role-label flex b
       Some("main.leaf.dev"),
     ) {
     Ok(_) => fail("Dev connection claiming a supervisor role must be rejected")
+    Err(_) => ()
+  }
+  // A tool arg named agent_id is a TARGET (kill_agent's victim, suspend_resume's
+  // target, track_pr's PR owner), NOT the caller's identity. A root-bound caller
+  // passing agent_id=<other> must be accepted, the arg preserved, caller_id
+  // normalized to the verified id.
+  let kill_target = @types.Request::{
+    req_method: "tools/call",
+    role: @types.Role::TL,
+    name: "kill_agent",
+    args: @types.RequestArgs::from_values({
+      "agent_id": "main.leaf.dev".to_json(),
+    }),
+  }
+  match state.request_with_authenticated_identity(kill_target, Some("root")) {
+    Ok(verified) => {
+      @debug.assert_eq(verified.role, @types.Role::Root)
+      @debug.assert_eq(verified.args.get("agent_id"), Some("main.leaf.dev"))
+    }
+    Err(e) =>
+      fail("agent_id tool-arg target must not be rejected: " + e.message())
+  }
+  // The actual identity claim (caller_id) contradicting the binding is still
+  // rejected as a spoof.
+  let caller_spoof = @types.Request::{
+    req_method: "tools/call",
+    role: @types.Role::TL,
+    name: "kill_agent",
+    args: @types.RequestArgs::from_values({
+      "caller_id": "main.leaf.dev".to_json(),
+    }),
+  }
+  match state.request_with_authenticated_identity(caller_spoof, Some("root")) {
+    Ok(_) => fail("contradicting caller_id must be rejected")
     Err(_) => ()
   }
   ignore(@sys.rm_rf(project_dir))
