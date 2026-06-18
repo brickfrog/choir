@@ -1294,6 +1294,7 @@ pub async fn dispatch(
         read_file~,
         hook_capture~,
         merge_strategy~,
+        caller_role~,
         task_contract_reader~,
         moon_verify_target~,
         reviewer~,
