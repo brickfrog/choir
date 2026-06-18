@@ -22,6 +22,69 @@ test "HookResponse::fail_open equals allow" {
 }
 
 ///|
+test "completion_hook_decision allows stop after handoff" {
+  assert_eq(
+    completion_hook_decision(HookProvider::Codex, true, 0, 3),
+    CompletionHookDecision::AllowStop,
+  )
+}
+
+///|
+test "completion_hook_decision blocks before max attempts without handoff" {
+  assert_eq(
+    completion_hook_decision(HookProvider::Claude, false, 1, 3),
+    CompletionHookDecision::BlockWithInstruction(
+      "You have not called notify_parent -- call it now with your final report, then shutdown",
+    ),
+  )
+}
+
+///|
+test "completion_hook_decision allows stop at max attempts" {
+  assert_eq(
+    completion_hook_decision(HookProvider::Codex, false, 3, 3),
+    CompletionHookDecision::AllowStop,
+  )
+}
+
+///|
+test "completion_hook_decision allows stop above max attempts" {
+  assert_eq(
+    completion_hook_decision(HookProvider::Claude, false, 4, 3),
+    CompletionHookDecision::AllowStop,
+  )
+}
+
+///|
+test "completion hook codex Stop emission shapes" {
+  let block = CompletionHookDecision::BlockWithInstruction(
+    "You have not called notify_parent -- call it now with your final report, then shutdown",
+  )
+  assert_eq(
+    block.to_codex_stop_json_string(),
+    "{\"decision\":\"block\",\"reason\":\"You have not called notify_parent -- call it now with your final report, then shutdown\"}",
+  )
+  assert_eq(
+    CompletionHookDecision::AllowStop.to_codex_stop_json_string(),
+    "{\"continue\":false}",
+  )
+}
+
+///|
+test "completion hook claude SubagentStop emission shapes" {
+  let text = "You have not called notify_parent -- call it now with your final report, then shutdown"
+  let block = CompletionHookDecision::BlockWithInstruction(text)
+  assert_eq(block.to_claude_subagent_stop_emission(), ClaudeSubagentStopEmission::{
+    exit_code: 2,
+    stderr: text,
+  })
+  assert_eq(
+    CompletionHookDecision::AllowStop.to_claude_subagent_stop_emission(),
+    ClaudeSubagentStopEmission::{ exit_code: 0, stderr: "" },
+  )
+}
+
+///|
 test "HookInput::from_json_string parses valid SessionStart" {
   let json = "{\"event\":\"SessionStart\",\"session_id\":\"sess-1\",\"agent_id\":\"agent-123\",\"role\":\"dev\"}"
   match HookInput::from_json_string(json) {
