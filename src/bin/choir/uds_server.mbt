@@ -173,8 +173,44 @@ priv enum ServeRegisterAuth {
 }
 
 ///|
+let serve_root_agent_id : String = "root"
+
+///|
+let serve_root_boot_token_env : String = "CHOIR_ROOT_AGENT_TOKEN"
+
+///|
 fn serve_registration_auth_failed_response() -> @types.Response {
   @types.Response::Err("registration authentication failed")
+}
+
+///|
+fn serve_root_credential_not_provisioned_response() -> @types.Response {
+  @types.Response::Err(
+    "root credential not provisioned; re-run `choir claude` to mint and wire a fresh root credential",
+  )
+}
+
+///|
+fn serve_record_boot_root_credential(
+  state : @server.ServerState,
+  token : String,
+) -> Unit {
+  if token != "" {
+    state.registry.record_spawn_credential(serve_root_agent_id, {
+      role: @types.Role::Root,
+      token,
+    })
+  }
+}
+
+///|
+fn serve_boot_root_token_from_env(
+  getenv? : (String) -> String? = fn(key) { @sys.getenv(key) },
+) -> String? {
+  match getenv(serve_root_boot_token_env) {
+    Some(token) => if token == "" { None } else { Some(token) }
+    None => None
+  }
 }
 
 ///|
@@ -219,6 +255,12 @@ fn serve_authenticate_register_request(
       return ServeRegisterAuth::Rejected(
         serve_registration_auth_failed_response(),
       )
+  }
+  if claimed_agent_id == serve_root_agent_id &&
+    state.registry.credential_for_agent(serve_root_agent_id) is None {
+    return ServeRegisterAuth::Rejected(
+      serve_root_credential_not_provisioned_response(),
+    )
   }
   let presented_token = match req.registration_token() {
     Some(v) => v
@@ -837,6 +879,38 @@ async test "serve UDS register validates spawn credential token" {
 ///|
 async test "serve TCP register validates spawn credential token" {
   serve_assert_register_token_validation_mode("tcp-token", false)
+}
+
+///|
+async test "serve root register without boot credential gives recovery guidance without leaking token" {
+  let (state, project_dir) = serve_test_state_with_root(
+    "missing-root-credential",
+  )
+  let presented_secret = "missing-root-presented-token"
+  let result = serve_handle_request_line(
+    state,
+    serve_test_register_line("root", "root", presented_secret, project_dir),
+    true,
+  )
+  serve_assert_register_rejected(result, presented_secret)
+  match result.response_line {
+    Some(resp_line) =>
+      match @transport.parse_response(resp_line.trim().to_owned()) {
+        Ok(resp) =>
+          match resp.error_message() {
+            Some(msg) => {
+              assert_true(msg.contains("root credential not provisioned"))
+              assert_true(msg.contains("re-run `choir claude`"))
+              assert_false(msg.contains(presented_secret))
+            }
+            None => fail("expected root recovery error")
+          }
+        Err(e) => fail("expected parseable response: " + e)
+      }
+    None => fail("expected rejected register response")
+  }
+  @debug.assert_eq(state.registry.credential_for_agent("root"), None)
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
@@ -2029,6 +2103,10 @@ fn serve_run() -> Unit {
   let state = @server.ServerState::new(config, provider).with_pane_watcher(
     serve_pane_watcher(),
   )
+  match serve_boot_root_token_from_env() {
+    Some(token) => serve_record_boot_root_credential(state, token)
+    None => ()
+  }
   @moontrace.set_global_field("service", "choir".to_json())
   @moontrace.set_global_field("run_id", state.run_id.to_json())
   @prompts.emit_prompt_drift_warnings(

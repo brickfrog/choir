@@ -646,6 +646,28 @@ fn init_parse_tl_type(args : Array[String]) -> String {
 }
 
 ///|
+struct InitRootConnectionAuth {
+  server_boot_token : String
+  server_env_assignment : String
+  tl_agent_token : String
+} derive(Debug, Eq)
+
+///|
+async fn init_mint_root_connection_auth(
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Result[InitRootConnectionAuth, @types.ChoirError] {
+  let token = match @tools.mint_spawn_agent_token(capture, None) {
+    Ok(value) => value
+    Err(e) => return Err(e)
+  }
+  Ok({
+    server_boot_token: token,
+    server_env_assignment: "CHOIR_ROOT_AGENT_TOKEN=" + token,
+    tl_agent_token: token,
+  })
+}
+
+///|
 test "init TL launch command defaults to claude" {
   let cmd = @workspace.init_tl_agent_command("claude", ".")
   let s = cmd.to_string()
@@ -730,6 +752,65 @@ test "init TL launch command ignores lean for non-claude agents" {
   assert_false(cmd_codex.to_string().contains("--system-prompt"))
   let cmd_gemini = @workspace.init_tl_agent_command("gemini", ".", lean=true)
   assert_false(cmd_gemini.to_string().contains("--system-prompt"))
+}
+
+///|
+async test "init root auth mints once and threads same token to server record and TL env" {
+  let root_token = "00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f"
+  let captured : Array[@workspace.Command] = []
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    captured.push(cmd)
+    (0, root_token + "\n")
+  }
+  let auth = match init_mint_root_connection_auth(capture) {
+    Ok(value) => value
+    Err(e) => {
+      fail("expected root auth mint: " + e.message())
+      return
+    }
+  }
+  @debug.assert_eq(captured, [@tools.spawn_agent_token_command()])
+  assert_eq(auth.server_env_assignment, "CHOIR_ROOT_AGENT_TOKEN=" + root_token)
+  assert_eq(auth.tl_agent_token, root_token)
+
+  let project_dir = serve_test_project_dir("init-root-auth")
+  ignore(@sys.rm_rf(project_dir))
+  ignore(@sys.create_dir_all(project_dir))
+  let state = @server.ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      terminal_session: "init-root-auth",
+    },
+    @server.make_hermetic_recovery_provider(),
+  )
+  serve_record_boot_root_credential(state, auth.server_boot_token)
+  match state.registry.credential_for_agent("root") {
+    Some(credential) => {
+      assert_eq(credential.role, @types.Role::Root)
+      assert_eq(credential.token, auth.tl_agent_token)
+    }
+    None => fail("expected root boot credential")
+  }
+
+  let tl_cmd = @workspace.init_tl_zellij_tab_command(
+    "init-root-auth",
+    project_dir,
+    "claude",
+    "main",
+    root_agent_token=Some(auth.tl_agent_token),
+  )
+  assert_true(
+    tl_cmd.args[11].contains("CHOIR_AGENT_TOKEN='" + root_token + "'"),
+  )
+  let register_result = serve_handle_request_line(
+    state,
+    serve_test_register_line("root", "root", root_token, project_dir),
+    true,
+  )
+  serve_assert_register_ok(state, register_result, "root", @types.Role::Root)
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
@@ -1248,6 +1329,15 @@ fn init_run() -> Unit {
         return
       }
 
+      let root_auth = match
+        init_mint_root_connection_auth(@exec.capture_command_merged) {
+        Ok(value) => value
+        Err(_) => {
+          @sys.write_stderr("choir init: failed to mint root credential\n")
+          @sys.exit(1)
+          return
+        }
+      }
       let birth_branch_stdout = @exec.capture_stdout("git", [
         "branch", "--show-current",
       ])
@@ -1284,11 +1374,13 @@ fn init_run() -> Unit {
       if !server_tab_exists {
         if init_should_launch_server_tab(server_alive == 0) {
           init_run_or_exit(
-            @workspace.zellij_new_tab(session, "Server", project_dir, [], {
-              program: "choir",
-              args: ["serve"],
-              workdir: None,
-            }),
+            @workspace.zellij_new_tab(
+              session,
+              "Server",
+              project_dir,
+              [root_auth.server_env_assignment],
+              { program: "choir", args: ["serve"], workdir: None },
+            ),
           )
         } else {
           @sys.write_stdout("Reusing existing server process.\n")
@@ -1317,6 +1409,7 @@ fn init_run() -> Unit {
             tl_type,
             current_branch,
             lean~,
+            root_agent_token=Some(root_auth.tl_agent_token),
           ),
         )
       } else {
