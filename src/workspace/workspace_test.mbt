@@ -169,6 +169,20 @@ test "init_tl_zellij_tab_command wraps TL with policy watcher shell" {
 }
 
 ///|
+test "init_tl_zellij_tab_command exports root agent token when provided" {
+  let cmd = @workspace.init_tl_zellij_tab_command(
+    "howdy",
+    "/proj",
+    "claude",
+    "main",
+    root_agent_token=Some("root-token-for-tl"),
+  )
+  let script = cmd.args[11]
+  assert_true(script.contains("CHOIR_AGENT_TOKEN='root-token-for-tl'"))
+  assert_false(script.contains("root credential not provisioned"))
+}
+
+///|
 test "init_tl_zellij_tab_command exports HOME only for gemini TL" {
   let gemini = @workspace.init_tl_zellij_tab_command(
     "howdy", "/proj", "gemini", "main",
