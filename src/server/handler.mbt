@@ -264,6 +264,13 @@ fn request_with_verified_caller(
   let args : Map[String, Json] = {}
   req.args.each_json(fn(k, v) { args.set(k, v) })
   args.set("caller_id", authenticated_agent_id.to_json())
+  // sender_id is message provenance (send_message's "from"); a caller must not
+  // forge it. Normalize a supplied sender_id to the verified identity. (Absent
+  // sender_id derives from the now-normalized caller_id downstream.)
+  match args.get("sender_id") {
+    Some(_) => args.set("sender_id", authenticated_agent_id.to_json())
+    None => ()
+  }
   { ..req, role: verified_role, args: @types.RequestArgs::from_values(args) }
 }
 
@@ -411,6 +418,41 @@ test "request_with_authenticated_identity tolerates supervisor role-label flex b
     Err(_) => ()
   }
   ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+test "request_with_verified_caller normalizes a forged sender_id" {
+  let req = @types.Request::{
+    req_method: "tools/call",
+    role: @types.Role::Dev,
+    name: "send_message",
+    args: @types.RequestArgs::from_values({
+      "target_id": "root".to_json(),
+      "sender_id": "root".to_json(),
+      "message": "hi".to_json(),
+    }),
+  }
+  let verified = request_with_verified_caller(
+    req,
+    "main.leaf.dev",
+    @types.Role::Dev,
+  )
+  // forged sender_id and caller_id are both rewritten to the verified identity
+  @debug.assert_eq(verified.args.get("sender_id"), Some("main.leaf.dev"))
+  @debug.assert_eq(verified.args.get("caller_id"), Some("main.leaf.dev"))
+  // a request without sender_id does not gain one
+  let no_sender = @types.Request::{
+    req_method: "tools/call",
+    role: @types.Role::Dev,
+    name: "fork_wave",
+    args: @types.RequestArgs::from_values({}),
+  }
+  let verified_no_sender = request_with_verified_caller(
+    no_sender,
+    "main.leaf.dev",
+    @types.Role::Dev,
+  )
+  @debug.assert_eq(verified_no_sender.args.get("sender_id"), None)
 }
 
 ///|

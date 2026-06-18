@@ -482,7 +482,10 @@ async fn serve_handle_internal_request(
 fn serve_custom_unauthenticated_request(req : @types.Request) -> @types.Request {
   let args : Map[String, Json] = {}
   req.args.each_json(fn(k, v) {
-    if k != "caller_id" && k != "agent_id" {
+    // Strip every identity/provenance-shaped field from an unbound request so a
+    // downgraded Worker cannot forge a caller (caller_id/agent_id) or a message
+    // sender (sender_id).
+    if k != "caller_id" && k != "agent_id" && k != "sender_id" {
       args.set(k, v)
     }
   })
