@@ -277,7 +277,15 @@ pub fn ServerState::mark_handoff_delivered(
 }
 
 ///|
-fn ServerState::handoff_was_delivered(
+pub fn ServerState::reset_handoff_delivered(
+  self : ServerState,
+  agent_id : String,
+) -> Unit {
+  self.handoff_delivered.remove(agent_id)
+}
+
+///|
+pub fn ServerState::handoff_was_delivered(
   self : ServerState,
   agent_id : String,
 ) -> Bool {

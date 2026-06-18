@@ -10,6 +10,7 @@ pub(all) enum ToolRequest {
   MergePr(MergePrArgs)
   TrackPr(TrackPrArgs)
   NotifyParent(CallerMessageArgs)
+  HandoffStatus(HandoffStatusArgs)
   ReportUsage(ReportUsageArgs)
   WaveState(WaveStateArgs)
   StatusBarState(StatusBarStateArgs)
@@ -58,6 +59,7 @@ pub fn ToolRequest::tool_name(self : ToolRequest) -> String {
     MergePr(_) => "merge_pr"
     TrackPr(_) => "track_pr"
     NotifyParent(_) => "notify_parent"
+    HandoffStatus(_) => "handoff_status"
     ReportUsage(_) => "report_usage"
     WaveState(_) => "wave_state"
     StatusBarState(_) => "status_bar_state"

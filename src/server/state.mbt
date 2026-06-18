@@ -289,6 +289,7 @@ pub fn ServerState::record_spawn_launch_diagnostic(
     @tools.SpawnLaunchDiagnostic::SpawnCommandsSucceeded(agent_id~, ..) =>
       agent_id
   }
+  self.reset_handoff_delivered(agent_id)
   self.spawn_launch_diagnostics.set(agent_id, diagnostic)
 }
 

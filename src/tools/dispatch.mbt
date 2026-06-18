@@ -910,6 +910,7 @@ pub async fn dispatch(
     @types.next_goal_nonce(@env.now().reinterpret_as_int64())
   },
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
+  handoff_status_reader? : (String) -> Bool = fn(_agent_id) { false },
   agy_migration_incomplete? : Bool = false,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> @types.Response {
@@ -1479,6 +1480,11 @@ pub async fn dispatch(
           }
       }
     }
+    ToolRequest::HandoffStatus(handoff_status_args) =>
+      @types.Response::ok_values({
+        "agent_id": handoff_status_args.agent_id.to_json(),
+        "handed_off": handoff_status_reader(handoff_status_args.agent_id).to_json(),
+      })
     ToolRequest::ReportUsage(report_args) => {
       let resp = interpret_report_usage(report_args, project_dir, registry)
       if resp.ok_field("recorded") == Some("true") {
@@ -2107,6 +2113,7 @@ pub async fn handle_request(
     @types.next_goal_nonce(@env.now().reinterpret_as_int64())
   },
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
+  handoff_status_reader? : (String) -> Bool = fn(_agent_id) { false },
   policy_enforcement_mode? : @policy.PolicyEnforcementMode = @policy.policy_enforcement_mode,
   parent_branch_lifecycle_reader? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
   append_file? : (String, String) -> Bool = @sys.append_file_sync,
@@ -2251,6 +2258,7 @@ pub async fn handle_request(
                   goal_request_tick~,
                   goal_nonce~,
                   record_handoff_delivered~,
+                  handoff_status_reader~,
                   agy_migration_incomplete~,
                   sleep_fn~,
                 )
@@ -2402,6 +2410,7 @@ pub async fn dispatch_call(
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
   goal_request_tick? : () -> Unit = goal_noop_request_tick,
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
+  handoff_status_reader? : (String) -> Bool = fn(_agent_id) { false },
   policy_enforcement_mode? : @policy.PolicyEnforcementMode = @policy.policy_enforcement_mode,
   parent_branch_lifecycle_reader? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
   append_file? : (String, String) -> Bool = @sys.append_file_sync,
@@ -2492,6 +2501,7 @@ pub async fn dispatch_call(
                   goal_deliver~,
                   goal_request_tick~,
                   record_handoff_delivered~,
+                  handoff_status_reader~,
                   agy_migration_incomplete~,
                   sleep_fn~,
                 )

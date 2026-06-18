@@ -245,6 +245,11 @@ pub(all) struct CallerMessageArgs {
 } derive(Debug, Eq)
 
 ///|
+pub(all) struct HandoffStatusArgs {
+  agent_id : String
+} derive(Debug, Eq)
+
+///|
 pub(all) struct ReportUsageArgs {
   caller_id : String
   tokens_in : Int
