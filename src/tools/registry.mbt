@@ -59,7 +59,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     tool_def(
       "file_pr",
       "Create or update PR for current branch; optional review_context posts an @copilot review comment when PR review is requested",
-      [@types.Role::TL, @types.Role::Dev],
+      [@types.Role::Root, @types.Role::TL, @types.Role::Dev],
     ),
     tool_def(
       "tdd_intent",
@@ -84,7 +84,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     tool_def(
       "track_pr",
       "Track a PR in the background poller with owning branch/base metadata",
-      [@types.Role::TL, @types.Role::Dev],
+      [@types.Role::Root, @types.Role::TL, @types.Role::Dev],
     ),
     tool_def("notify_parent", "Send message to parent agent", [
       @types.Role::TL,
