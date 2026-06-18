@@ -189,6 +189,104 @@ pub fn HookResponse::to_json_string(self : HookResponse) -> String {
 }
 
 ///|
+pub(all) enum HookProvider {
+  Codex
+  Claude
+} derive(Debug, Eq)
+
+///|
+pub impl Show for HookProvider with fn output(self, logger) -> Unit {
+  match self {
+    Codex => logger.write_string("Codex")
+    Claude => logger.write_string("Claude")
+  }
+}
+
+///|
+pub(all) enum CompletionHookDecision {
+  AllowStop
+  BlockWithInstruction(String)
+} derive(Debug, Eq)
+
+///|
+pub impl Show for CompletionHookDecision with fn output(self, logger) -> Unit {
+  match self {
+    AllowStop => logger.write_string("AllowStop")
+    BlockWithInstruction(text) => {
+      logger.write_string("BlockWithInstruction(")
+      logger.write_string(text)
+      logger.write_string(")")
+    }
+  }
+}
+
+///|
+pub(all) struct ClaudeSubagentStopEmission {
+  exit_code : Int
+  stderr : String
+} derive(Debug, Eq)
+
+///|
+pub impl Show for ClaudeSubagentStopEmission with fn output(self, logger) -> Unit {
+  logger.write_string("ClaudeSubagentStopEmission(exit_code=")
+  logger.write_string(self.exit_code.to_string())
+  logger.write_string(", stderr=")
+  logger.write_string(self.stderr)
+  logger.write_string(")")
+}
+
+///|
+pub let completion_handoff_instruction : String = "You have not called notify_parent -- call it now with your final report, then shutdown"
+
+///|
+pub fn completion_hook_decision(
+  provider : HookProvider,
+  handed_off : Bool,
+  attempts : Int,
+  max_attempts : Int,
+) -> CompletionHookDecision {
+  let instruction = match provider {
+    Codex => completion_handoff_instruction
+    Claude => completion_handoff_instruction
+  }
+  if handed_off {
+    AllowStop
+  } else if attempts < max_attempts {
+    BlockWithInstruction(instruction)
+  } else {
+    AllowStop
+  }
+}
+
+///|
+pub fn CompletionHookDecision::to_codex_stop_json(
+  self : CompletionHookDecision,
+) -> Json {
+  match self {
+    AllowStop => { "continue": false.to_json() }.to_json()
+    BlockWithInstruction(text) =>
+      { "decision": "block".to_json(), "reason": text.to_json() }.to_json()
+  }
+}
+
+///|
+pub fn CompletionHookDecision::to_codex_stop_json_string(
+  self : CompletionHookDecision,
+) -> String {
+  self.to_codex_stop_json().stringify()
+}
+
+///|
+pub fn CompletionHookDecision::to_claude_subagent_stop_emission(
+  self : CompletionHookDecision,
+) -> ClaudeSubagentStopEmission {
+  match self {
+    AllowStop => { exit_code: 0, stderr: "" }
+    BlockWithInstruction(text) => { exit_code: 2, stderr: text }
+  }
+}
+
+///|
 fn parse_json_object(line : String) -> Map[String, Json]? {
   let json = @json.parse(line) catch { _ => return None }
   guard json is Object(obj) else { return None }
