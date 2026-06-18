@@ -280,7 +280,22 @@ fn ServerState::request_with_authenticated_identity(
         Some(agent) => agent
         None => return Err(authenticated_identity_unavailable_error())
       }
-      if req.role != agent.role ||
+      // The TL's MCP bridge labels its requests Role::TL while the boot
+      // credential binds agent_id="root" as Role::Root (the two sides of choir's
+      // long-standing root/TL naming: CHOIR_ROLE=tl on the launch vs the
+      // boot-recorded Role::Root credential). Both are privilege-equivalent
+      // supervisor roles — every tool allow-list is [Root, TL] — and the
+      // request's role is normalized to the verified role below regardless, so a
+      // supervisor<->supervisor label difference is not an escalation and must
+      // not lock out the TL's own connection. A non-supervisor claiming a
+      // supervisor role (or any agent_id/caller_id contradiction) is still
+      // rejected as a spoof.
+      let role_ok = req.role == agent.role ||
+        (
+          @types.is_supervisor_role(req.role) &&
+          @types.is_supervisor_role(agent.role)
+        )
+      if !role_ok ||
         !request_identity_arg_matches(req, "agent_id", agent_id) ||
         !request_identity_arg_matches(req, "caller_id", agent_id) {
         return Err(authenticated_identity_mismatch_error())
@@ -288,6 +303,76 @@ fn ServerState::request_with_authenticated_identity(
       Ok(request_with_verified_caller(req, agent_id, agent.role))
     }
   }
+}
+
+///|
+test "request_with_authenticated_identity tolerates supervisor role-label flex but blocks escalation" {
+  let project_dir = "/tmp/choir-authid-superflex-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let state = ServerState::new(
+    { ..@types.Config::default(), project_dir, },
+    make_hermetic_recovery_provider(),
+  )
+  // Root TL: the registry binds agent_id="root" as Role::Root (boot credential),
+  // but the live MCP bridge labels each per-request envelope as Role::TL.
+  ignore(
+    state.registry.upsert(@types.Agent::{
+      agent_id: "root",
+      role: @types.Role::Root,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: project_dir,
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let tl_labeled = @types.Request::{
+    req_method: "tools/call",
+    role: @types.Role::TL,
+    name: "fork_wave",
+    args: @types.RequestArgs::from_values({}),
+  }
+  match state.request_with_authenticated_identity(tl_labeled, Some("root")) {
+    // accepted, and normalized to the verified (registry) role
+    Ok(verified) => @debug.assert_eq(verified.role, @types.Role::Root)
+    Err(e) =>
+      fail("supervisor role-label flex must be accepted: " + e.message())
+  }
+  // Adversarial: a Dev-bound connection labeling itself a supervisor role is
+  // still rejected as an escalation attempt.
+  ignore(
+    state.registry.upsert(@types.Agent::{
+      agent_id: "main.leaf.dev",
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: None,
+      workspace: project_dir,
+      branch: "main.leaf",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let dev_escalation = @types.Request::{
+    req_method: "tools/call",
+    role: @types.Role::TL,
+    name: "fork_wave",
+    args: @types.RequestArgs::from_values({}),
+  }
+  match
+    state.request_with_authenticated_identity(
+      dev_escalation,
+      Some("main.leaf.dev"),
+    ) {
+    Ok(_) => fail("Dev connection claiming a supervisor role must be rejected")
+    Err(_) => ()
+  }
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
