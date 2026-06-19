@@ -398,7 +398,7 @@ fn leaf_tool_usage(tool : String) -> String {
     "tdd_green_check" =>
       "usage: tdd_green_check --exit-code 0 [--next-phase <green|refactor|done>]"
     "resolve_my_review_threads" =>
-      "usage: resolve_my_review_threads [--caller-id <agent_id>] [--pr-number <number>]"
+      "usage: resolve_my_review_threads [--caller-id <agent_id>] [--pr-number <number>] [--target-agent-id <agent_id>]  # target-agent-id is supervisor-only; caller-id is identity, not target"
     "request_review" =>
       "usage: request_review --pr-number <number> --reviewer <login>"
     "shutdown" => "usage: shutdown [--caller-id <caller_id>]"
@@ -1063,9 +1063,12 @@ test "leaf tool usage includes file_pr args" {
 test "leaf tool parser supports PR plumbing tools" {
   let resolve = leaf_tool_request_args(
     "resolve_my_review_threads",
-    parse_leaf_cli_args(["427", "--caller-id", "main.leaf"]),
+    parse_leaf_cli_args([
+      "427", "--caller-id", "main.tl", "--target-agent-id", "main.leaf",
+    ]),
   ).unwrap()
-  @debug.assert_eq(resolve.get("caller_id"), Some("main.leaf"))
+  @debug.assert_eq(resolve.get("caller_id"), Some("main.tl"))
+  @debug.assert_eq(resolve.get("target_agent_id"), Some("main.leaf"))
   @debug.assert_eq(resolve.get("pr_number"), Some("427"))
 
   let review = leaf_tool_request_args(
@@ -1081,6 +1084,11 @@ test "leaf tool usage includes PR plumbing tools" {
   assert_true(
     leaf_tool_usage("resolve_my_review_threads").contains(
       "--pr-number <number>",
+    ),
+  )
+  assert_true(
+    leaf_tool_usage("resolve_my_review_threads").contains(
+      "--target-agent-id <agent_id>",
     ),
   )
   assert_true(

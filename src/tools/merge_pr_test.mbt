@@ -97,6 +97,7 @@ async test "dispatch resolve_my_review_threads skips pulse when final fetch fail
   let got = dispatch(
     ToolRequest::ResolveMyReviewThreads({
       caller_id: "main.leaf",
+      target_agent_id: None,
       pr_number: None,
     }),
     project_dir~,
@@ -5062,6 +5063,7 @@ async test "dispatch resolve_my_review_threads resolves every fetched caller thr
   let got = dispatch(
     ToolRequest::ResolveMyReviewThreads({
       caller_id: "main.leaf",
+      target_agent_id: None,
       pr_number: None,
     }),
     project_dir~,
@@ -5155,6 +5157,7 @@ async test "dispatch resolve_my_review_threads lets TL target leaf PR by pr_numb
   let got = dispatch(
     ToolRequest::ResolveMyReviewThreads({
       caller_id: "main.tl",
+      target_agent_id: None,
       pr_number: Some(446),
     }),
     project_dir~,
@@ -5251,6 +5254,7 @@ async test "dispatch resolve_my_review_threads refuses owning leaf without post-
   let got = dispatch(
     ToolRequest::ResolveMyReviewThreads({
       caller_id: "main.leaf",
+      target_agent_id: None,
       pr_number: Some(447),
     }),
     project_dir~,
@@ -5341,6 +5345,7 @@ async test "dispatch resolve_my_review_threads refuses same-second mixed timesta
   let got = dispatch(
     ToolRequest::ResolveMyReviewThreads({
       caller_id: "main.leaf",
+      target_agent_id: None,
       pr_number: Some(450),
     }),
     project_dir~,
@@ -5437,6 +5442,7 @@ async test "dispatch resolve_my_review_threads allows owning leaf after post-rev
   let got = dispatch(
     ToolRequest::ResolveMyReviewThreads({
       caller_id: "main.leaf",
+      target_agent_id: None,
       pr_number: Some(448),
     }),
     project_dir~,
@@ -5528,6 +5534,7 @@ async test "dispatch resolve_my_review_threads allows non owning caller without 
   let got = dispatch(
     ToolRequest::ResolveMyReviewThreads({
       caller_id: "main.tl",
+      target_agent_id: None,
       pr_number: Some(449),
     }),
     project_dir~,
