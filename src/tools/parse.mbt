@@ -1853,7 +1853,18 @@ fn parse_resolve_my_review_threads_args(
       }
     None => None
   }
-  Ok({ caller_id, pr_number })
+  let target_agent_id = match tool_args_get(args, "target_agent_id") {
+    Some(raw) => {
+      let target = raw.trim().to_owned()
+      if target == "" {
+        None
+      } else {
+        Some(target)
+      }
+    }
+    None => None
+  }
+  Ok({ caller_id, target_agent_id, pr_number })
 }
 
 ///|
@@ -2708,6 +2719,31 @@ test "parse_resolve_my_review_threads_args accepts caller_id and optional pr_num
       assert_eq(args.caller_id, "main.leaf")
       @debug.assert_eq(args.pr_number, Some(427))
     }
+    Err(e) => fail("unexpected error: " + e.message())
+  }
+}
+
+///|
+test "parse_resolve_my_review_threads_args trims optional target_agent_id" {
+  match
+    parse_resolve_my_review_threads_args(
+      tool_args_from_map({
+        "caller_id": " main.tl ",
+        "target_agent_id": " main.leaf ",
+      }),
+    ) {
+    Ok(args) => {
+      assert_eq(args.caller_id, "main.tl")
+      @debug.assert_eq(args.pr_number, None)
+      @debug.assert_eq(args.target_agent_id, Some("main.leaf"))
+    }
+    Err(e) => fail("unexpected error: " + e.message())
+  }
+  match
+    parse_resolve_my_review_threads_args(
+      tool_args_from_map({ "caller_id": "main.tl", "target_agent_id": "   " }),
+    ) {
+    Ok(args) => @debug.assert_eq(args.target_agent_id, None)
     Err(e) => fail("unexpected error: " + e.message())
   }
 }

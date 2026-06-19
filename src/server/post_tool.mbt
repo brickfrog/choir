@@ -482,6 +482,28 @@ fn resolve_parent_for_plan_fail(
 }
 
 ///|
+fn resolve_review_threads_refresh_agent_id(req : @types.Request) -> String? {
+  if req.name == "resolve_my_review_threads" {
+    let has_pr_number = match req.args.get("pr_number") {
+      Some(value) => value.trim() != ""
+      None => false
+    }
+    if !has_pr_number {
+      match req.args.get("target_agent_id") {
+        Some(target) => {
+          let trimmed = target.trim().to_owned()
+          if trimmed != "" {
+            return Some(trimmed)
+          }
+        }
+        None => ()
+      }
+    }
+  }
+  request_agent_id(req)
+}
+
+///|
 /// Returns effects from a consistent snapshot taken immediately before interpretation in
 /// `handle_with_runner` (same synchronous turn, no await between plan and interpret). Lifecycle
 /// rows come from disk via `read_or_default_lifecycle`; registry rows come from `registry.get`.
@@ -657,7 +679,7 @@ pub fn plan_post_tool_actions(
   // resolve_review_thread / resolve_my_review_threads
   if req.name == "resolve_review_thread" ||
     req.name == "resolve_my_review_threads" {
-    match request_agent_id(req) {
+    match resolve_review_threads_refresh_agent_id(req) {
       Some(agent_id) =>
         for pr in poller.tracked.values() {
           if pr.agent_id == agent_id {

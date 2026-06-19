@@ -413,6 +413,7 @@ test "request_with_verified_caller normalizes a forged sender_id" {
     args: @types.RequestArgs::from_values({
       "target_id": "root".to_json(),
       "sender_id": "root".to_json(),
+      "target_agent_id": "main.leaf".to_json(),
       "message": "hi".to_json(),
     }),
   }
@@ -424,6 +425,7 @@ test "request_with_verified_caller normalizes a forged sender_id" {
   // forged sender_id and caller_id are both rewritten to the verified identity
   @debug.assert_eq(verified.args.get("sender_id"), Some("main.leaf.dev"))
   @debug.assert_eq(verified.args.get("caller_id"), Some("main.leaf.dev"))
+  @debug.assert_eq(verified.args.get("target_agent_id"), Some("main.leaf"))
   // a request without sender_id does not gain one
   let no_sender = @types.Request::{
     req_method: "tools/call",

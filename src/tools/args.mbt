@@ -228,6 +228,7 @@ pub(all) struct ResolveReviewThreadArgs {
 ///|
 pub(all) struct ResolveMyReviewThreadsArgs {
   caller_id : String
+  target_agent_id : String?
   pr_number : Int?
 } derive(Debug, Eq)
 

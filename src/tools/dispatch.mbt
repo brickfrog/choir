@@ -710,13 +710,13 @@ fn resolve_review_thread_unresolved_counts(
 }
 
 ///|
-fn resolve_my_review_threads_for_caller(
+fn resolve_my_review_threads_for_target(
   poller_state : @poller.PollerState,
-  caller_id : String,
+  target_agent_id : String,
 ) -> Array[@poller.TrackedPR] {
   let tracked_prs : Array[@poller.TrackedPR] = []
   for tracked in poller_state.tracked.values() {
-    if tracked.agent_id == caller_id {
+    if tracked.agent_id == target_agent_id {
       tracked_prs.push(tracked)
     }
   }
@@ -729,6 +729,19 @@ fn resolve_my_review_threads_targets(
   args : ResolveMyReviewThreadsArgs,
   caller_role : @types.Role,
 ) -> Result[Array[@poller.TrackedPR], @types.ChoirError] {
+  let target_agent_id = match args.target_agent_id {
+    Some(target) => target
+    None => args.caller_id
+  }
+  if target_agent_id != args.caller_id &&
+    !@types.is_supervisor_role(caller_role) {
+    return Err(
+      @types.ChoirError::permission_denied(
+        caller_role.to_string(),
+        "resolve_my_review_threads",
+      ),
+    )
+  }
   match args.pr_number {
     Some(pr_number) =>
       match poller_state.get(pr_number) {
@@ -754,21 +767,172 @@ fn resolve_my_review_threads_targets(
           )
       }
     None => {
-      let tracked_prs = resolve_my_review_threads_for_caller(
-        poller_state,
-        args.caller_id,
+      let tracked_prs = resolve_my_review_threads_for_target(
+        poller_state, target_agent_id,
       )
       if tracked_prs.length() == 0 {
         Err(
           @types.ChoirError::validation_error(
-            "resolve_my_review_threads: no tracked PRs for caller " +
-            args.caller_id,
+            "resolve_my_review_threads: no tracked PRs for target " +
+            target_agent_id,
           ),
         )
       } else {
         Ok(tracked_prs)
       }
     }
+  }
+}
+
+///|
+test "resolve_my_review_threads_targets defaults to caller tracked prs" {
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    451,
+    "main.leaf",
+    "main.leaf",
+    "main",
+    "https://github.com/brickfrog/choir/pull/451",
+    0L,
+    @poller.ReviewState::ChangesRequested,
+    "fix this",
+    "sha-451",
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  ps.track_recovered(
+    452,
+    "other.leaf",
+    "other.leaf",
+    "main",
+    "https://github.com/brickfrog/choir/pull/452",
+    0L,
+    @poller.ReviewState::ChangesRequested,
+    "fix this",
+    "sha-452",
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  match
+    resolve_my_review_threads_targets(
+      ps,
+      { caller_id: "main.leaf", target_agent_id: None, pr_number: None },
+      @types.Role::Dev,
+    ) {
+    Ok(prs) => {
+      assert_eq(prs.length(), 1)
+      assert_eq(prs[0].pr_number, 451)
+    }
+    Err(e) => fail("expected caller PRs: " + e.message())
+  }
+}
+
+///|
+test "resolve_my_review_threads_targets lets supervisor bulk target another agent" {
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    453,
+    "main.leaf",
+    "main.leaf",
+    "main",
+    "https://github.com/brickfrog/choir/pull/453",
+    0L,
+    @poller.ReviewState::ChangesRequested,
+    "fix this",
+    "sha-453",
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  match
+    resolve_my_review_threads_targets(
+      ps,
+      {
+        caller_id: "main.tl",
+        target_agent_id: Some("main.leaf"),
+        pr_number: None,
+      },
+      @types.Role::TL,
+    ) {
+    Ok(prs) => {
+      assert_eq(prs.length(), 1)
+      assert_eq(prs[0].pr_number, 453)
+    }
+    Err(e) => fail("expected targeted PRs: " + e.message())
+  }
+}
+
+///|
+test "resolve_my_review_threads_targets rejects non supervisor target mismatch" {
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    454,
+    "main.leaf",
+    "main.leaf",
+    "main",
+    "https://github.com/brickfrog/choir/pull/454",
+    0L,
+    @poller.ReviewState::ChangesRequested,
+    "fix this",
+    "sha-454",
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  match
+    resolve_my_review_threads_targets(
+      ps,
+      {
+        caller_id: "other.leaf",
+        target_agent_id: Some("main.leaf"),
+        pr_number: None,
+      },
+      @types.Role::Dev,
+    ) {
+    Err(e) => @debug.assert_eq(e.to_wire_string(), "permission_denied")
+    Ok(_) => fail("expected permission denied")
+  }
+}
+
+///|
+test "resolve_my_review_threads_targets allows explicit self target and names missing target" {
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    455,
+    "main.leaf",
+    "main.leaf",
+    "main",
+    "https://github.com/brickfrog/choir/pull/455",
+    0L,
+    @poller.ReviewState::ChangesRequested,
+    "fix this",
+    "sha-455",
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  match
+    resolve_my_review_threads_targets(
+      ps,
+      {
+        caller_id: "main.leaf",
+        target_agent_id: Some("main.leaf"),
+        pr_number: None,
+      },
+      @types.Role::Dev,
+    ) {
+    Ok(prs) => assert_eq(prs[0].pr_number, 455)
+    Err(e) => fail("expected self target: " + e.message())
+  }
+  match
+    resolve_my_review_threads_targets(
+      ps,
+      {
+        caller_id: "main.tl",
+        target_agent_id: Some("main.missing"),
+        pr_number: None,
+      },
+      @types.Role::TL,
+    ) {
+    Err(e) => assert_true(e.message().contains("target main.missing"))
+    Ok(_) => fail("expected no tracked PRs for target")
   }
 }
 

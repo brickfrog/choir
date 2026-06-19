@@ -354,6 +354,103 @@ test "iso8601_to_epoch_seconds rejects invalid timestamps" {
 }
 
 ///|
+test "parse_pr_review_commit_timestamps_response reads review and commit timestamps" {
+  let json =
+    #|{"data":{"repository":{"pullRequest":{"latestReviews":{"nodes":[{"submittedAt":"2026-05-23T10:00:00Z"}]},"commits":{"nodes":[{"commit":{"pushedDate":"2026-05-23T10:00:01Z","committedDate":"2026-05-23T10:00:01Z"}}]}}}}}
+  match parse_pr_review_commit_timestamps_response(json) {
+    Some(timestamps) => {
+      @debug.assert_eq(
+        timestamps.latest_review_at,
+        Some("2026-05-23T10:00:00Z"),
+      )
+      @debug.assert_eq(
+        timestamps.latest_commit_at,
+        Some("2026-05-23T10:00:01Z"),
+      )
+    }
+    None => fail("expected timestamps")
+  }
+}
+
+///|
+test "parse_pr_review_commit_timestamps_response allows empty reviews" {
+  let json =
+    #|{"data":{"repository":{"pullRequest":{"latestReviews":{"nodes":[]},"commits":{"nodes":[{"commit":{"pushedDate":"2026-05-23T10:00:01Z","committedDate":"2026-05-23T10:00:01Z"}}]}}}}}
+  match parse_pr_review_commit_timestamps_response(json) {
+    Some(timestamps) => {
+      @debug.assert_eq(timestamps.latest_review_at, None)
+      @debug.assert_eq(
+        timestamps.latest_commit_at,
+        Some("2026-05-23T10:00:01Z"),
+      )
+    }
+    None => fail("expected timestamps with no latest review")
+  }
+}
+
+///|
+test "parse_pr_review_commit_timestamps_response falls back to committedDate" {
+  let json =
+    #|{"data":{"repository":{"pullRequest":{"latestReviews":{"nodes":[{"submittedAt":"2026-05-23T10:00:00Z"}]},"commits":{"nodes":[{"commit":{"pushedDate":null,"committedDate":"2026-05-23T10:00:02Z"}}]}}}}}
+  match parse_pr_review_commit_timestamps_response(json) {
+    Some(timestamps) =>
+      @debug.assert_eq(
+        timestamps.latest_commit_at,
+        Some("2026-05-23T10:00:02Z"),
+      )
+    None => fail("expected committedDate fallback")
+  }
+}
+
+///|
+test "parse_pr_review_commit_timestamps_response rejects graphql error bodies" {
+  let error_body =
+    #|{"errors":[{"type":"INVALID_GRAPHQL","message":"syntax error"}]}
+  match parse_pr_review_commit_timestamps_response(error_body) {
+    None => ()
+    Some(_) => fail("expected GraphQL errors body to fail parsing")
+  }
+  match parse_pr_review_commit_timestamps_response("{\"data\":null}") {
+    None => ()
+    Some(_) => fail("expected missing data body to fail parsing")
+  }
+}
+
+///|
+async test "fetch_pr_review_commit_timestamps_with_repo emits balanced graphql query" {
+  let expected_query = "query($owner: String!, $repo: String!, $pr: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $pr) { latestReviews(first: 1) { nodes { submittedAt } } commits(last: 1) { nodes { commit { pushedDate committedDate } } } } } }"
+  let seen : Array[@workspace.Command] = []
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    seen.push(cmd)
+    assert_eq(cmd.program, "timeout")
+    assert_true(cmd.args.contains("graphql"))
+    assert_true(cmd.args.contains("query=" + expected_query))
+    assert_true(cmd.args.contains("owner=brickfrog"))
+    assert_true(cmd.args.contains("repo=choir"))
+    assert_true(cmd.args.contains("pr=42"))
+    (
+      0,
+      (
+        #|{"data":{"repository":{"pullRequest":{"latestReviews":{"nodes":[{"submittedAt":"2026-05-23T10:00:00Z"}]},"commits":{"nodes":[{"commit":{"pushedDate":"2026-05-23T10:00:01Z","committedDate":"2026-05-23T10:00:01Z"}}]}}}}}
+      ),
+    )
+  }
+  match
+    fetch_pr_review_commit_timestamps_with_repo(
+      42, "brickfrog", "choir", "/tmp/repo", capture,
+    ) {
+    Some(timestamps) =>
+      @debug.assert_eq(
+        timestamps.latest_commit_at,
+        Some("2026-05-23T10:00:01Z"),
+      )
+    None => fail("expected timestamps")
+  }
+  assert_eq(seen.length(), 1)
+}
+
+///|
 test "iso8601_to_epoch_seconds treats zero fractional seconds as same instant" {
   @debug.assert_eq(
     iso8601_to_epoch_seconds("2026-05-27T12:05:27.000Z"),

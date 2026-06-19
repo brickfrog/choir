@@ -752,6 +752,10 @@ pub fn parse_pr_review_commit_timestamps_response(
 ) -> PrReviewCommitTimestamps? {
   let json = @json.parse(json_str) catch { _ => return None }
   guard json is Object(root) else { return None }
+  match root.get("errors") {
+    Some(_) => return None
+    None => ()
+  }
   let pr = match root.get("data") {
     Some(Object(data)) =>
       match data.get("repository") {
@@ -1141,7 +1145,7 @@ pub async fn fetch_pr_review_commit_timestamps_with_repo(
   project_dir : String,
   capture : async (@workspace.Command) -> (Int, String),
 ) -> PrReviewCommitTimestamps? {
-  let query = "query($owner: String!, $repo: String!, $pr: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $pr) { latestReviews(first: 1) { nodes { submittedAt } } commits(last: 1) { nodes { commit { pushedDate committedDate } } } } } } }"
+  let query = "query($owner: String!, $repo: String!, $pr: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $pr) { latestReviews(first: 1) { nodes { submittedAt } } commits(last: 1) { nodes { commit { pushedDate committedDate } } } } } }"
   let cmd = bounded_gh_command(project_dir, [
     "api",
     "graphql",
