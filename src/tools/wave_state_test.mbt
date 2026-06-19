@@ -466,14 +466,14 @@ test "plan_wave_state masks UnexpectedDisconnect on active root with unknown hea
   ignore(
     wave_state_test_ignore(() => {
       reg.insert(
-        make_agent("root", @types.Role::Root, None, @types.AgentType::Codex),
+        make_agent("root", @types.Role::TL, None, @types.AgentType::Codex),
       )
     }),
   )
   let lifecycles : Map[String, @phase.AgentLifecycle] = {}
   lifecycles.set("root", {
     agent_id: "root",
-    role: @types.Role::Root,
+    role: @types.Role::TL,
     process: @phase.ProcessState::Connected,
     workflow: @phase.WorkflowState::Supervisor(
       @phase.SupervisorLifecycle::Failed(
@@ -503,19 +503,19 @@ test "plan_wave_state masks UnexpectedDisconnect on active root with unknown hea
 ///|
 test "plan_wave_state preserves UnexpectedDisconnect on active root with stale heartbeat" {
   // A positive but very-old last_updated says the root really has gone
-  // silent — don't mask the disconnect just because role==Root.
+  // silent, so do not mask the disconnect just because this is the root id.
   let reg = @registry.AgentRegistry::new()
   ignore(
     wave_state_test_ignore(() => {
       reg.insert(
-        make_agent("root", @types.Role::Root, None, @types.AgentType::Codex),
+        make_agent("root", @types.Role::TL, None, @types.AgentType::Codex),
       )
     }),
   )
   let lifecycles : Map[String, @phase.AgentLifecycle] = {}
   lifecycles.set("root", {
     agent_id: "root",
-    role: @types.Role::Root,
+    role: @types.Role::TL,
     process: @phase.ProcessState::Connected,
     workflow: @phase.WorkflowState::Supervisor(
       @phase.SupervisorLifecycle::Failed(
@@ -1026,10 +1026,6 @@ test "wave_state registry denies Dev and Worker callers" {
     tools.lookup(@types.Role::TL, "wave_state")
   })
   assert_true(tl_lookup is Ok(_))
-  let root_lookup = wave_state_test_capture(() => {
-    tools.lookup(@types.Role::Root, "wave_state")
-  })
-  assert_true(root_lookup is Ok(_))
 }
 
 ///|

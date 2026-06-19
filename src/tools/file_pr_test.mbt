@@ -1415,7 +1415,7 @@ async test "interpret_file_pr accepts root tracked PR without contract for super
       ensure_pr_called = true
       Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
     },
-    caller_role=@types.Role::Root,
+    caller_role=@types.Role::TL,
     sleep_fn=file_pr_test_no_sleep,
   )
   match got {
@@ -1807,7 +1807,7 @@ async test "dispatch_call file_pr rejects dev spoofing root tracked agent withou
   ignore(
     reg.upsert({
       agent_id: @types.AgentId("root"),
-      role: @types.Role::Root,
+      role: @types.Role::TL,
       agent_type: @types.AgentType::Claude,
       parent: None,
       workspace: project_dir,

@@ -218,7 +218,7 @@ fn build_claude_settings_json(
 ) -> String {
   let role_str = @config.role_to_string(role)
   let choir_mcp_args = match role {
-    @types.Role::TL | @types.Role::Root =>
+    @types.Role::TL =>
       [
         "mcp-stdio", "--name", "root", "--stderr-append-log", ".choir/mcp-stdio.stderr.log",
       ]

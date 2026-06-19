@@ -127,7 +127,7 @@ test "cancel_wave_non_terminal_agents excludes supervisors" {
     }
   }
   let got = cancel_wave_non_terminal_agents([
-    mk("root", @types.Role::Root),
+    mk("root", @types.Role::TL),
     mk("main.tl", @types.Role::TL),
     mk("main.dev", @types.Role::Dev),
   ])

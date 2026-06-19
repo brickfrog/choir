@@ -365,9 +365,14 @@ fn push_unique(values : Array[String], value : String) -> Unit {
 }
 
 ///|
-pub fn default_agent_type(role : @types.Role) -> @types.AgentType {
+pub fn default_agent_type(
+  agent_id : String,
+  role : @types.Role,
+) -> @types.AgentType {
+  if agent_id == "root" {
+    return @types.AgentType::Claude
+  }
   match role {
-    @types.Role::Root => @types.AgentType::Claude
     @types.Role::TL => @types.AgentType::Claude
     @types.Role::Dev => @types.AgentType::Codex
     @types.Role::Worker => @types.AgentType::Codex
@@ -376,10 +381,22 @@ pub fn default_agent_type(role : @types.Role) -> @types.AgentType {
 
 ///|
 test "default_agent_type keeps TL on Claude and leaves on Codex" {
-  assert_eq(default_agent_type(@types.Role::Root), @types.AgentType::Claude)
-  assert_eq(default_agent_type(@types.Role::TL), @types.AgentType::Claude)
-  assert_eq(default_agent_type(@types.Role::Dev), @types.AgentType::Codex)
-  assert_eq(default_agent_type(@types.Role::Worker), @types.AgentType::Codex)
+  assert_eq(
+    default_agent_type("root", @types.Role::TL),
+    @types.AgentType::Claude,
+  )
+  assert_eq(
+    default_agent_type("main.tl", @types.Role::TL),
+    @types.AgentType::Claude,
+  )
+  assert_eq(
+    default_agent_type("main.dev", @types.Role::Dev),
+    @types.AgentType::Codex,
+  )
+  assert_eq(
+    default_agent_type("main.worker", @types.Role::Worker),
+    @types.AgentType::Codex,
+  )
 }
 
 ///|
@@ -402,7 +419,9 @@ pub fn parse_agent_from_config(
   Some({
     agent_id: @types.AgentId(agent_id),
     role,
-    agent_type: local_cfg.agent_type.unwrap_or(default_agent_type(role)),
+    agent_type: local_cfg.agent_type.unwrap_or(
+      default_agent_type(agent_id, role),
+    ),
     state: @types.AgentState::Active, // Initial assumption; caller reconciles with zellij
     parent: local_cfg.parent_id,
     terminal_target: local_cfg.terminal_target,

@@ -24,7 +24,7 @@ fn mcp_resolved_agent_id(
         Some(id) => id
         None =>
           match role {
-            @types.Role::Root | @types.Role::TL => "root"
+            @types.Role::TL => "root"
             _ =>
               "agent-" +
               @config.role_to_string(role) +
@@ -50,8 +50,7 @@ fn mcp_should_register_connection(
   local_cfg : @types.LocalConfig,
 ) -> Bool {
   match role {
-    @types.Role::Root | @types.Role::TL =>
-      mcp_connection_has_stable_agent_id(config, local_cfg)
+    @types.Role::TL => mcp_connection_has_stable_agent_id(config, local_cfg)
     _ => true
   }
 }
@@ -1013,9 +1012,6 @@ test "mcp no-identity TL uses root caller and skips registration" {
   let local_cfg = @types.LocalConfig::default()
   assert_eq(mcp_resolved_agent_id(@types.Role::TL, cfg, local_cfg), "root")
   assert_false(mcp_should_register_connection(@types.Role::TL, cfg, local_cfg))
-  assert_false(
-    mcp_should_register_connection(@types.Role::Root, cfg, local_cfg),
-  )
 }
 
 ///|
@@ -1048,7 +1044,7 @@ test "mcp_perform_registration_handshake skips writer for no-identity TL" {
 }
 
 ///|
-test "mcp_perform_registration_handshake writes register frame for identified Root" {
+test "mcp_perform_registration_handshake writes register frame for identified root TL" {
   // Mirror of the no-identity case: with an agent_id set, the handshake
   // must write exactly one registration frame and consume exactly one
   // response line.
@@ -1057,7 +1053,7 @@ test "mcp_perform_registration_handshake writes register frame for identified Ro
   let writes : Array[Bytes] = []
   let mut reads = 0
   let result = mcp_perform_registration_handshake(
-    @types.Role::Root,
+    @types.Role::TL,
     cfg,
     local_cfg,
     fn(bytes) {
@@ -1080,7 +1076,7 @@ test "mcp_perform_registration_handshake returns Reconnect when write fails" {
   let cfg = { ..@types.Config::default(), agent_id: Some("root") }
   let local_cfg = @types.LocalConfig::default()
   let result = mcp_perform_registration_handshake(
-    @types.Role::Root,
+    @types.Role::TL,
     cfg,
     local_cfg,
     fn(_bytes) { false },
@@ -1101,7 +1097,7 @@ test "mcp_perform_registration_handshake returns Reconnect when read is empty" {
   let writes : Array[Bytes] = []
   let mut reads = 0
   let result = mcp_perform_registration_handshake(
-    @types.Role::Root,
+    @types.Role::TL,
     cfg,
     local_cfg,
     fn(bytes) {

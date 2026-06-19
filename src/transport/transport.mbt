@@ -9,7 +9,7 @@ pub fn parse_request(data : String) -> Result[@types.Request, String] {
     _ => return Err("missing field: method")
   }
   let role = match obj.get("role") {
-    Some(String("root")) => @types.Role::Root
+    Some(String("root")) => @types.Role::TL
     Some(String("tl")) => @types.Role::TL
     Some(String("dev")) => @types.Role::Dev
     Some(String("worker")) => @types.Role::Worker

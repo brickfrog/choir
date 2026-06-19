@@ -24,7 +24,7 @@ test "worker_no_handoff_decision skips delivered workers" {
 
 ///|
 test "worker_no_handoff_decision skips non-worker roles" {
-  for role in [@types.Role::Root, @types.Role::TL, @types.Role::Dev] {
+  for role in [@types.Role::TL, @types.Role::Dev] {
     assert_eq(
       worker_no_handoff_decision(role, 999L, false, false, 120L),
       WorkerNoHandoffDecision::DoNothing,

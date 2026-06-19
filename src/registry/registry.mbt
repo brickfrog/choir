@@ -782,7 +782,7 @@ test "agent registry records authoritative spawn credentials" {
 test "agent registry reload credentials round trip without disk snapshot tokens" {
   let source = AgentRegistry::new()
   source.record_spawn_credential("root", AgentCredential::{
-    role: @types.Role::Root,
+    role: @types.Role::TL,
     token: "root-token-unchanged",
   })
   source.record_spawn_credential("root.leaf", AgentCredential::{

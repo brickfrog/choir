@@ -45,7 +45,7 @@ async test "status_bar_state server handler caches list-panes per session" {
   )
   let req : @types.Request = {
     req_method: "tools/call",
-    role: @types.Role::Root,
+    role: @types.Role::TL,
     name: "status_bar_state",
     args: @types.RequestArgs::from_values({}),
   }
@@ -390,7 +390,7 @@ test "reload snapshot restores registry pending state and mutexes" {
   }
   let root_agent : @types.Agent = {
     agent_id: "root",
-    role: @types.Role::Root,
+    role: @types.Role::TL,
     agent_type: @types.AgentType::Codex,
     parent: None,
     workspace: project_dir,

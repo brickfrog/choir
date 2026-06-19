@@ -2,7 +2,6 @@
 /// Wire/config string for `Role` (distinct from `Show`).
 pub fn Role::to_wire_string(self : Role) -> String {
   match self {
-    Root => "root"
     TL => "tl"
     Dev => "dev"
     Worker => "worker"
@@ -12,7 +11,7 @@ pub fn Role::to_wire_string(self : Role) -> String {
 ///|
 pub fn Role::try_parse_wire(s : String) -> Result[Role, ChoirError] {
   match s {
-    "root" => Ok(Root)
+    "root" => Ok(TL)
     "tl" => Ok(TL)
     "dev" => Ok(Dev)
     "worker" => Ok(Worker)

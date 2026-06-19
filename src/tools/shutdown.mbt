@@ -172,7 +172,7 @@ pub async fn interpret_kill_agent(
         agent, project_dir, read_lifecycle,
       )
       let guard_role = target_agent.role
-      // Role::Dev and Role::Worker are always killable; only Root/TL refused.
+      // Role::Dev and Role::Worker are always killable; only TL is refused.
       // The persisted lifecycle role can correct a stale registry refresh that
       // accidentally wrote supervisor metadata onto an existing leaf row.
       if @types.is_supervisor_role(guard_role) {
