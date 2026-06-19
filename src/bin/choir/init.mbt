@@ -108,6 +108,238 @@ priv enum InitRootLaunchGuard {
 } derive(Debug, Eq)
 
 ///|
+struct OrphanLeaf {
+  agent_id : String
+  branch : String
+} derive(Debug, Eq)
+
+///|
+priv enum InitRecreateEffect {
+  WriteStdout(String)
+  WriteStderr(String)
+  KillServerPidString(String)
+  CleanupRuntime
+  CleanupPurge
+  KillSession(String)
+}
+
+///|
+priv enum InitRecreatePlan {
+  Proceed(Array[InitRecreateEffect])
+  Refuse(Array[InitRecreateEffect], Int)
+}
+
+///|
+fn init_parse_force_flag(args : Array[String]) -> Bool {
+  args.contains("--force")
+}
+
+///|
+fn init_recreate_live_leaf_role(role : @types.Role) -> Bool {
+  role == @types.Role::Dev || role == @types.Role::Worker
+}
+
+///|
+fn init_recreate_live_leaf_state(state : @types.AgentState) -> Bool {
+  match state {
+    @types.AgentState::Done | @types.AgentState::Failed => false
+    _ => true
+  }
+}
+
+///|
+fn init_recreate_agent_has_tracked_pr(
+  agent : @types.Agent,
+  tracked_prs : Array[@poller.TrackedPR],
+) -> Bool {
+  let agent_id = agent.agent_id.to_string()
+  for tracked in tracked_prs {
+    if tracked.branch == agent.branch || tracked.agent_id == agent_id {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn init_recreate_orphan_candidates_from_state(
+  agents : Array[@types.Agent],
+  tracked_prs : Array[@poller.TrackedPR],
+) -> Array[OrphanLeaf] {
+  let candidates : Array[OrphanLeaf] = []
+  for agent in agents {
+    let agent_id = agent.agent_id.to_string()
+    if agent_id == "root" {
+      continue
+    }
+    if !init_recreate_live_leaf_role(agent.role) {
+      continue
+    }
+    if !init_recreate_live_leaf_state(agent.state) {
+      continue
+    }
+    if init_recreate_agent_has_tracked_pr(agent, tracked_prs) {
+      continue
+    }
+    candidates.push({ agent_id, branch: agent.branch })
+  }
+  candidates
+}
+
+///|
+async fn init_recreate_read_persisted_agents(
+  project_dir : String,
+) -> Array[@types.Agent] {
+  let provider = @server.make_recovery_provider()
+  let agents : Array[@types.Agent] = []
+  for container in (provider.list_agent_containers)(project_dir) {
+    for slug in (provider.list_agents_in_container)(project_dir, container) {
+      let content = (provider.read_agent_config)(project_dir, container, slug)
+      match
+        @runtime.parse_agent_from_config(
+          content,
+          (provider.get_agent_relative_workspace)(container, slug),
+          slug,
+        ) {
+        Some(agent) => agents.push(agent)
+        None => ()
+      }
+    }
+  }
+  agents
+}
+
+///|
+async fn init_recreate_read_persisted_tracked_prs(
+  project_dir : String,
+) -> Array[@poller.TrackedPR] {
+  @async.sleep(0)
+  @poller.read_state_file(project_dir)
+}
+
+///|
+async fn init_recreate_orphan_candidates(
+  project_dir : String,
+  read_agents? : async (String) -> Array[@types.Agent] = init_recreate_read_persisted_agents,
+  read_tracked_prs? : async (String) -> Array[@poller.TrackedPR] = init_recreate_read_persisted_tracked_prs,
+) -> Array[OrphanLeaf] {
+  init_recreate_orphan_candidates_from_state(
+    read_agents(project_dir),
+    read_tracked_prs(project_dir),
+  )
+}
+
+///|
+fn init_recreate_orphan_leaf_lines(candidates : Array[OrphanLeaf]) -> String {
+  let lines : Array[String] = []
+  for candidate in candidates {
+    lines.push(
+      "  - " + candidate.agent_id + " (branch: " + candidate.branch + ")",
+    )
+  }
+  lines.join("\n")
+}
+
+///|
+fn init_recreate_orphan_refusal_message(
+  candidates : Array[OrphanLeaf],
+) -> String {
+  "choir init --recreate refused: live working leaves would be orphaned by the fresh server restart:\n" +
+  init_recreate_orphan_leaf_lines(candidates) +
+  "\n\ndrain these leaves so they file PRs, or re-run with --force"
+}
+
+///|
+fn init_recreate_orphan_force_warning(candidates : Array[OrphanLeaf]) -> String {
+  "WARNING: choir init --recreate --force will orphan these live working leaves:\n" +
+  init_recreate_orphan_leaf_lines(candidates)
+}
+
+///|
+fn init_recreate_orphan_guard(
+  candidates : Array[OrphanLeaf],
+  force : Bool,
+) -> Result[Unit, @types.ChoirError] {
+  if candidates.length() > 0 && !force {
+    Err(
+      @types.ChoirError::validation_error(
+        init_recreate_orphan_refusal_message(candidates),
+      ),
+    )
+  } else {
+    Ok(())
+  }
+}
+
+///|
+fn init_recreate_effect_plan(
+  session : String,
+  pid_str : String,
+  purge : Bool,
+  candidates : Array[OrphanLeaf],
+  force : Bool,
+) -> InitRecreatePlan {
+  match init_recreate_orphan_guard(candidates, force) {
+    Err(e) =>
+      InitRecreatePlan::Refuse(
+        [
+          InitRecreateEffect::WriteStderr(
+            e.validation_detail_or_message() + "\n",
+          ),
+        ],
+        1,
+      )
+    Ok(_) => {
+      let effects : Array[InitRecreateEffect] = []
+      if candidates.length() > 0 && force {
+        effects.push(
+          InitRecreateEffect::WriteStderr(
+            init_recreate_orphan_force_warning(candidates) + "\n",
+          ),
+        )
+      }
+      if pid_str != "" {
+        effects.push(
+          InitRecreateEffect::WriteStdout(
+            "Stopping server (PID \{pid_str})...\n",
+          ),
+        )
+        effects.push(InitRecreateEffect::KillServerPidString(pid_str))
+      }
+      if purge {
+        effects.push(InitRecreateEffect::CleanupPurge)
+      } else {
+        effects.push(InitRecreateEffect::CleanupRuntime)
+      }
+      effects.push(
+        InitRecreateEffect::WriteStdout("Killing session \{session}...\n"),
+      )
+      effects.push(InitRecreateEffect::KillSession(session))
+      InitRecreatePlan::Proceed(effects)
+    }
+  }
+}
+
+///|
+async fn init_apply_recreate_effects(
+  effects : Array[InitRecreateEffect],
+) -> Unit {
+  for effect in effects {
+    match effect {
+      InitRecreateEffect::WriteStdout(msg) => @sys.write_stdout(msg)
+      InitRecreateEffect::WriteStderr(msg) => @sys.write_stderr(msg)
+      InitRecreateEffect::KillServerPidString(pid_str) =>
+        init_kill_server_pid_string(pid_str)
+      InitRecreateEffect::CleanupRuntime => init_cleanup_recreate_artifacts()
+      InitRecreateEffect::CleanupPurge =>
+        @sys.init_cleanup_purge_artifacts_native()
+      InitRecreateEffect::KillSession(session) =>
+        ignore(@exec.run(init_kill_session_command(session)) catch { _ => 0 })
+    }
+  }
+}
+
+///|
 fn init_stale_server_without_tab_message() -> String {
   "choir init: a server process is running without a managed Server tab; run `choir init --recreate` to restart the server and TL with a matching root credential."
 }
@@ -396,6 +628,230 @@ test "init recreate cleanup covers only runtime markers" {
     },
   )
   @debug.assert_eq(events, ["runtime"])
+}
+
+///|
+fn init_test_agent(
+  agent_id : String,
+  role : @types.Role,
+  state : @types.AgentState,
+  branch : String,
+) -> @types.Agent {
+  {
+    agent_id: @types.AgentId(agent_id),
+    role,
+    agent_type: @types.AgentType::Codex,
+    parent: Some("root"),
+    workspace: "/repo/.choir/worktrees/" + agent_id,
+    branch,
+    terminal_target: None,
+    host: @types.Host::Local,
+    state,
+    spawn_depth: 0,
+  }
+}
+
+///|
+fn init_test_tracked_pr(
+  pr_number : Int,
+  agent_id : String,
+  branch : String,
+) -> @poller.TrackedPR {
+  @poller.TrackedPR::{
+    pr_number,
+    agent_id,
+    branch,
+    parent_branch: "main",
+    pr_url: "https://gh.test/" + pr_number.to_string(),
+    first_seen: 1L,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::None_,
+    last_review_bodies: "",
+    last_sha: "",
+    last_automerge_attempt_sha: "",
+    notified_parent: false,
+    last_ci_rollup: @poller.CiRollupStatus::Unknown,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
+    last_timeout_at: 0L,
+    copilot_issue_comment_seen: false,
+    orphan_notified: false,
+    orphan_reconciling: false,
+    changes_requested_since: 0L,
+    stall_notified: false,
+    fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
+    unresolved_thread_ids_fetched: false,
+    auto_resolve_outdated_pending: false,
+  }
+}
+
+///|
+test "init recreate orphan guard refuses live leaves unless forced" {
+  let empty : Array[OrphanLeaf] = []
+  match init_recreate_orphan_guard(empty, false) {
+    Ok(_) => ()
+    Err(e) => fail("empty candidate set should pass: " + e.message())
+  }
+
+  let candidates = [
+    OrphanLeaf::{ agent_id: "main.leaf-a", branch: "main.leaf-a" },
+    OrphanLeaf::{ agent_id: "main.worker-b", branch: "main.worker-b" },
+  ]
+  match init_recreate_orphan_guard(candidates, false) {
+    Ok(_) => fail("live leaves without PRs must refuse recreate")
+    Err(e) => {
+      let msg = e.message()
+      assert_true(msg.contains("main.leaf-a"))
+      assert_true(msg.contains("main.worker-b"))
+      assert_true(msg.contains("main.worker-b"))
+      assert_true(msg.contains("drain these leaves"))
+      assert_true(msg.contains("file PRs"))
+      assert_true(msg.contains("--force"))
+    }
+  }
+
+  match init_recreate_orphan_guard(candidates, true) {
+    Ok(_) => ()
+    Err(e) => fail("--force should allow recreate: " + e.message())
+  }
+}
+
+///|
+async test "init recreate orphan candidates use injected persisted readers" {
+  let project_reads : Array[String] = []
+  let candidates = init_recreate_orphan_candidates(
+    "/repo",
+    read_agents=async fn(project_dir) {
+      @async.sleep(0)
+      project_reads.push("agents:" + project_dir)
+      [
+        init_test_agent(
+          "main.active-no-pr",
+          @types.Role::Dev,
+          @types.AgentState::Active,
+          "main.active-no-pr",
+        ),
+        init_test_agent(
+          "main.active-with-pr",
+          @types.Role::Dev,
+          @types.AgentState::Active,
+          "main.active-with-pr",
+        ),
+        init_test_agent(
+          "main.worker-no-pr",
+          @types.Role::Worker,
+          @types.AgentState::Completing,
+          "main.worker-no-pr",
+        ),
+        init_test_agent(
+          "main.done-no-pr",
+          @types.Role::Dev,
+          @types.AgentState::Done,
+          "main.done-no-pr",
+        ),
+        init_test_agent(
+          "main.failed-no-pr",
+          @types.Role::Worker,
+          @types.AgentState::Failed,
+          "main.failed-no-pr",
+        ),
+        init_test_agent(
+          "root",
+          @types.Role::TL,
+          @types.AgentState::Active,
+          "main",
+        ),
+        init_test_agent(
+          "main.tl",
+          @types.Role::TL,
+          @types.AgentState::Active,
+          "main.tl",
+        ),
+      ]
+    },
+    read_tracked_prs=async fn(project_dir) {
+      @async.sleep(0)
+      project_reads.push("prs:" + project_dir)
+      [init_test_tracked_pr(11, "main.active-with-pr", "main.active-with-pr")]
+    },
+  )
+
+  @debug.assert_eq(project_reads, ["agents:/repo", "prs:/repo"])
+  @debug.assert_eq(candidates, [
+    OrphanLeaf::{ agent_id: "main.active-no-pr", branch: "main.active-no-pr" },
+    OrphanLeaf::{ agent_id: "main.worker-no-pr", branch: "main.worker-no-pr" },
+  ])
+}
+
+///|
+test "init recreate force flag threads into pre-kill guard plan" {
+  assert_true(init_parse_force_flag(["choir", "init", "--recreate", "--force"]))
+  assert_false(init_parse_force_flag(["choir", "init", "--recreate"]))
+  let candidates = [
+    OrphanLeaf::{ agent_id: "main.live-leaf", branch: "main.live-leaf" },
+  ]
+
+  match init_recreate_effect_plan("choir", "123", false, candidates, false) {
+    InitRecreatePlan::Refuse(effects, code) => {
+      assert_eq(code, 1)
+      assert_eq(effects.length(), 1)
+      match effects[0] {
+        InitRecreateEffect::WriteStderr(msg) => {
+          assert_true(msg.contains("main.live-leaf"))
+          assert_true(msg.contains("drain these leaves"))
+          assert_true(msg.contains("--force"))
+        }
+        _ => fail("refusal should only print the guard message")
+      }
+      for effect in effects {
+        match effect {
+          InitRecreateEffect::KillServerPidString(_)
+          | InitRecreateEffect::CleanupRuntime
+          | InitRecreateEffect::CleanupPurge
+          | InitRecreateEffect::KillSession(_) =>
+            fail("refusal must not plan destructive recreate effects")
+          _ => ()
+        }
+      }
+    }
+    InitRecreatePlan::Proceed(_) => fail("expected recreate refusal")
+  }
+
+  match init_recreate_effect_plan("choir", "123", false, candidates, true) {
+    InitRecreatePlan::Proceed(effects) => {
+      let mut warned = false
+      let mut killed = false
+      let mut cleaned = false
+      let mut killed_session = false
+      for effect in effects {
+        match effect {
+          InitRecreateEffect::WriteStderr(msg) =>
+            if msg.contains("WARNING") && msg.contains("main.live-leaf") {
+              warned = true
+            }
+          InitRecreateEffect::KillServerPidString(pid) =>
+            if pid == "123" {
+              killed = true
+            }
+          InitRecreateEffect::CleanupRuntime => cleaned = true
+          InitRecreateEffect::KillSession(session) =>
+            if session == "choir" {
+              killed_session = true
+            }
+          _ => ()
+        }
+      }
+      assert_true(warned)
+      assert_true(killed)
+      assert_true(cleaned)
+      assert_true(killed_session)
+    }
+    InitRecreatePlan::Refuse(_, _) => fail("--force should proceed")
+  }
 }
 
 ///|
@@ -1347,6 +1803,7 @@ fn init_run() -> Unit {
       let args = @env.args()
       let recreate = args.contains("--recreate")
       let purge = args.contains("--purge")
+      let force = init_parse_force_flag(args)
       let no_attach = init_no_attach(args)
       let tl_type = init_parse_tl_type(args)
       let lean = init_parse_lean_flag(args)
@@ -1429,18 +1886,18 @@ fn init_run() -> Unit {
       let session = config.terminal_session
 
       if recreate {
+        let candidates = init_recreate_orphan_candidates(project_dir)
         let pid_str = @sys.read_file(".choir/server.pid")
-        if pid_str != "" {
-          @sys.write_stdout("Stopping server (PID \{pid_str})...\n")
-          init_kill_server_pid_string(pid_str)
+        match
+          init_recreate_effect_plan(session, pid_str, purge, candidates, force) {
+          InitRecreatePlan::Refuse(effects, code) => {
+            init_apply_recreate_effects(effects)
+            @sys.exit(code)
+            return
+          }
+          InitRecreatePlan::Proceed(effects) =>
+            init_apply_recreate_effects(effects)
         }
-        if purge {
-          @sys.init_cleanup_purge_artifacts_native()
-        } else {
-          init_cleanup_recreate_artifacts()
-        }
-        @sys.write_stdout("Killing session \{session}...\n")
-        ignore(@exec.run(init_kill_session_command(session)) catch { _ => 0 })
       }
 
       let session_alive = try {
