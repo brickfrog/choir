@@ -62,6 +62,9 @@ jobs:
       - name: Test hermetic suite
         run: CHOIR_TEST_NO_EXEC=1 moon test --target native
 
+      - name: Build choir binary for real exec tests
+        run: moon build src/bin/choir --target native
+
       - name: Test real exec adapters
         run: CHOIR_TEST_REAL_EXEC=1 moon test --target native src/exec src/bin/choir
 

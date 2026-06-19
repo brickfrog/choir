@@ -433,6 +433,20 @@ test "allows explicitly tagged real exec integration tests outside exec package"
 }
 
 ///|
+test "allows canonical real exec integration self-skip helper" {
+  let source =
+    #|async test "real exec integration: live UDS fixture" {
+    #|  if !@exec.real_exec_integration_enabled() {
+    #|    return
+    #|  }
+    #|}
+  match lint_source("src/bin/choir/uds_server.mbt", source) {
+    Ok(findings) => assert_eq(findings.length(), 0)
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
 test "flags shell backed recovery provider in tests" {
   let source =
     #|async test "bad" {
