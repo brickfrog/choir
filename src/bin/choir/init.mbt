@@ -162,6 +162,11 @@ fn init_recreate_agent_has_tracked_pr(
 }
 
 ///|
+fn init_recreate_agent_config_containers() -> Array[String] {
+  ["worktrees", "agents", "inline", "review-worktrees"]
+}
+
+///|
 fn init_recreate_orphan_candidates_from_state(
   agents : Array[@types.Agent],
   tracked_prs : Array[@poller.TrackedPR],
@@ -189,10 +194,12 @@ fn init_recreate_orphan_candidates_from_state(
 ///|
 async fn init_recreate_read_persisted_agents(
   project_dir : String,
+  terminal_session : String,
+  provider : @runtime.RecoveryProvider,
 ) -> Array[@types.Agent] {
-  let provider = @server.make_recovery_provider()
   let agents : Array[@types.Agent] = []
-  for container in (provider.list_agent_containers)(project_dir) {
+  let live = (provider.zellij_live)(project_dir, terminal_session)
+  for container in init_recreate_agent_config_containers() {
     for slug in (provider.list_agents_in_container)(project_dir, container) {
       let content = (provider.read_agent_config)(project_dir, container, slug)
       match
@@ -201,7 +208,34 @@ async fn init_recreate_read_persisted_agents(
           (provider.get_agent_relative_workspace)(container, slug),
           slug,
         ) {
-        Some(agent) => agents.push(agent)
+        Some(agent) => {
+          let process_alive = if @types.is_choir_managed_worktree_path(
+              project_dir,
+              agent.workspace,
+            ) {
+            (provider.agent_process_alive)(
+              project_dir,
+              agent.agent_id.to_string(),
+            )
+          } else {
+            false
+          }
+          let alive = process_alive ||
+            @runtime.is_local_target_alive(
+              agent.terminal_target,
+              terminal_session,
+              live,
+            )
+          if alive {
+            agents.push(agent)
+          } else {
+            agents.push({
+              ..agent,
+              state: @types.AgentState::Done,
+              terminal_target: None,
+            })
+          }
+        }
         None => ()
       }
     }
@@ -220,11 +254,15 @@ async fn init_recreate_read_persisted_tracked_prs(
 ///|
 async fn init_recreate_orphan_candidates(
   project_dir : String,
-  read_agents? : async (String) -> Array[@types.Agent] = init_recreate_read_persisted_agents,
+  terminal_session? : String = "",
+  provider? : @runtime.RecoveryProvider = @server.make_recovery_provider(),
+  read_agents? : async (String, String, @runtime.RecoveryProvider) -> Array[
+    @types.Agent,
+  ] = init_recreate_read_persisted_agents,
   read_tracked_prs? : async (String) -> Array[@poller.TrackedPR] = init_recreate_read_persisted_tracked_prs,
 ) -> Array[OrphanLeaf] {
   init_recreate_orphan_candidates_from_state(
-    read_agents(project_dir),
+    read_agents(project_dir, terminal_session, provider),
     read_tracked_prs(project_dir),
   )
 }
@@ -690,6 +728,27 @@ fn init_test_tracked_pr(
 }
 
 ///|
+fn init_test_local_agent_config(
+  role : String,
+  agent_id : String,
+  branch : String,
+  workspace : String,
+  terminal_target : String,
+) -> String {
+  "role = \"" +
+  role +
+  "\"\nagent_id = \"" +
+  agent_id +
+  "\"\nbranch = \"" +
+  branch +
+  "\"\nworkspace = \"" +
+  workspace +
+  "\"\nterminal_target = \"" +
+  terminal_target +
+  "\"\n"
+}
+
+///|
 test "init recreate orphan guard refuses live leaves unless forced" {
   let empty : Array[OrphanLeaf] = []
   match init_recreate_orphan_guard(empty, false) {
@@ -725,7 +784,7 @@ async test "init recreate orphan candidates use injected persisted readers" {
   let project_reads : Array[String] = []
   let candidates = init_recreate_orphan_candidates(
     "/repo",
-    read_agents=async fn(project_dir) {
+    read_agents=async fn(project_dir, _terminal_session, _provider) {
       @async.sleep(0)
       project_reads.push("agents:" + project_dir)
       [
@@ -785,6 +844,147 @@ async test "init recreate orphan candidates use injected persisted readers" {
     OrphanLeaf::{ agent_id: "main.active-no-pr", branch: "main.active-no-pr" },
     OrphanLeaf::{ agent_id: "main.worker-no-pr", branch: "main.worker-no-pr" },
   ])
+}
+
+///|
+async test "init recreate production reader sees live review-worktree worker" {
+  let project_dir = "/tmp/choir-init-recreate-review-worker"
+  let agent_id = "feature/review-target.audit-worker"
+  let slug = @types.sanitize_agent_id(agent_id)
+  let workspace = project_dir + "/.choir/review-worktrees/" + slug
+  let content = init_test_local_agent_config(
+    "worker", agent_id, agent_id, workspace, "zellij-tab:session:worker-tab",
+  )
+  let containers_seen : Array[String] = []
+  let provider = {
+    ..@server.make_hermetic_recovery_provider(),
+    list_agent_containers: async fn(_dir) {
+      @async.sleep(0)
+      ["worktrees", "agents", "inline"]
+    },
+    list_agents_in_container: async fn(_dir, container) {
+      @async.sleep(0)
+      containers_seen.push(container)
+      if container == "review-worktrees" {
+        [slug]
+      } else {
+        []
+      }
+    },
+    read_agent_config: async fn(_dir, container, candidate_slug) {
+      @async.sleep(0)
+      if container == "review-worktrees" && candidate_slug == slug {
+        content
+      } else {
+        ""
+      }
+    },
+    get_agent_relative_workspace: fn(container, candidate_slug) {
+      ".choir/" + container + "/" + candidate_slug
+    },
+    zellij_live: async fn(_dir, session) {
+      @async.sleep(0)
+      assert_eq(session, "session")
+      @runtime.ZellijLiveTargets::{ tabs: ["worker-tab"], panes: [] }
+    },
+    agent_process_alive: async fn(_dir, candidate_agent_id) {
+      @async.sleep(0)
+      assert_eq(candidate_agent_id, agent_id)
+      false
+    },
+  }
+
+  let candidates = init_recreate_orphan_candidates(
+    project_dir,
+    terminal_session="session",
+    provider~,
+    read_tracked_prs=async fn(_dir) {
+      @async.sleep(0)
+      []
+    },
+  )
+
+  assert_true(containers_seen.contains("review-worktrees"))
+  @debug.assert_eq(candidates, [OrphanLeaf::{ agent_id, branch: agent_id }])
+  match init_recreate_effect_plan("session", "123", false, candidates, false) {
+    InitRecreatePlan::Refuse(effects, code) => {
+      assert_eq(code, 1)
+      assert_eq(effects.length(), 1)
+      match effects[0] {
+        InitRecreateEffect::WriteStderr(msg) => {
+          assert_true(msg.contains(agent_id))
+          assert_true(msg.contains("--force"))
+        }
+        _ => fail("review-worker refusal should only print stderr")
+      }
+    }
+    InitRecreatePlan::Proceed(_) =>
+      fail("live review-worktree worker without PR must refuse recreate")
+  }
+}
+
+///|
+async test "init recreate production reader lets dead terminal leaf proceed" {
+  let project_dir = "/tmp/choir-init-recreate-dead-leaf"
+  let agent_id = "main.dead-leaf"
+  let slug = "dead-leaf"
+  let workspace = project_dir + "/.choir/worktrees/" + slug
+  let content = init_test_local_agent_config(
+    "dev", agent_id, agent_id, workspace, "zellij-tab:session:gone-tab",
+  )
+  let provider = {
+    ..@server.make_hermetic_recovery_provider(),
+    list_agent_containers: async fn(_dir) {
+      @async.sleep(0)
+      ["worktrees", "agents", "inline"]
+    },
+    list_agents_in_container: async fn(_dir, container) {
+      @async.sleep(0)
+      if container == "worktrees" {
+        [slug]
+      } else {
+        []
+      }
+    },
+    read_agent_config: async fn(_dir, container, candidate_slug) {
+      @async.sleep(0)
+      if container == "worktrees" && candidate_slug == slug {
+        content
+      } else {
+        ""
+      }
+    },
+    get_agent_relative_workspace: fn(container, candidate_slug) {
+      ".choir/" + container + "/" + candidate_slug
+    },
+    zellij_live: async fn(_dir, session) {
+      @async.sleep(0)
+      assert_eq(session, "session")
+      @runtime.ZellijLiveTargets::{ tabs: [], panes: [] }
+    },
+    agent_process_alive: async fn(_dir, candidate_agent_id) {
+      @async.sleep(0)
+      assert_eq(candidate_agent_id, agent_id)
+      false
+    },
+  }
+
+  let candidates = init_recreate_orphan_candidates(
+    project_dir,
+    terminal_session="session",
+    provider~,
+    read_tracked_prs=async fn(_dir) {
+      @async.sleep(0)
+      []
+    },
+  )
+
+  @debug.assert_eq(candidates, [])
+  match init_recreate_effect_plan("session", "123", false, candidates, false) {
+    InitRecreatePlan::Proceed(_) => ()
+    InitRecreatePlan::Refuse(_, _) =>
+      fail("dead lingering leaf config must not refuse recreate")
+  }
 }
 
 ///|
@@ -1886,7 +2086,10 @@ fn init_run() -> Unit {
       let session = config.terminal_session
 
       if recreate {
-        let candidates = init_recreate_orphan_candidates(project_dir)
+        let candidates = init_recreate_orphan_candidates(
+          project_dir,
+          terminal_session=session,
+        )
         let pid_str = @sys.read_file(".choir/server.pid")
         match
           init_recreate_effect_plan(session, pid_str, purge, candidates, force) {
