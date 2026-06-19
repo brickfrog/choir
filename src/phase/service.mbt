@@ -1,6 +1,6 @@
 ///|
 fn supervisor_role_for_scope(_scope : String) -> @types.Role {
-  // Default to TL; do not infer Root purely from scope == "root".
+  // Default to TL; do not infer the root identity purely from scope == "root".
   @types.Role::TL
 }
 
@@ -485,7 +485,7 @@ pub fn synthesized_parent_terminal_target(
   role : @types.Role,
 ) -> @types.LocalTarget {
   let slug = match role {
-    @types.Role::Root | @types.Role::TL => "TL"
+    @types.Role::TL => "TL"
     _ => extract_slug(parent_id)
   }
   @workspace.local_target_for(session, slug, @types.IsolationMode::Worktree)

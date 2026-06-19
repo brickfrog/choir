@@ -687,9 +687,11 @@ pub fn resolve_zellij_pane_id(
 }
 
 ///|
-pub fn role_to_wire_string(role : @types.Role) -> String {
+pub fn role_to_wire_string(agent_id : String, role : @types.Role) -> String {
+  if agent_id == "root" {
+    return "root"
+  }
   match role {
-    @types.Role::Root => "root"
     @types.Role::TL => "tl"
     @types.Role::Dev => "dev"
     @types.Role::Worker => "worker"
@@ -900,7 +902,7 @@ fn status_bar_pane_from_entry(
   Some({
     zellij_pane_id,
     agent_id,
-    role: role_to_wire_string(entry.agent.role),
+    role: role_to_wire_string(agent_id, entry.agent.role),
     agent_type,
     lifecycle: lifecycle_to_wire_string(workflow),
     pr_number,

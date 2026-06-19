@@ -190,12 +190,8 @@ async test "interpret_kill_agent refuses supervisor roles without side effects" 
     Some(v) => v
     None => fail("expected parse")
   }
-  for role in [@types.Role::Root, @types.Role::TL] {
-    let agent_id = match role {
-      @types.Role::Root => "root"
-      @types.Role::TL => "main.tl"
-      _ => "main.supervisor"
-    }
+  for agent_id in ["root", "main.tl"] {
+    let role = @types.Role::TL
     let reg = @registry.AgentRegistry::new()
     let agent = kill_agent_test_agent(
       Some(t),
@@ -912,14 +908,15 @@ async test "interpret_shutdown does not call pane close for supervisor roles" {
     Some(v) => v
     None => fail("expected parse")
   }
-  for role in [@types.Role::Root, @types.Role::TL] {
+  for agent_id in ["root", "main.tl"] {
+    let role = @types.Role::TL
     let workspace = "/tmp/choir-shutdown-paneclose-sup-" +
-      role.to_wire_string() +
+      agent_id +
       "-" +
       @sys.get_pid().to_string()
     ignore(@sys.rm_rf(workspace))
     let reg = @registry.AgentRegistry::new()
-    let agent = kill_agent_test_agent(Some(t), workspace, role~)
+    let agent = kill_agent_test_agent(Some(t), workspace, role~, agent_id~)
     ignore(reg.upsert(agent))
     let seen : Array[@workspace.Command] = []
     let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
@@ -930,7 +927,7 @@ async test "interpret_shutdown does not call pane close for supervisor roles" {
       [0]
     }
     let got = interpret_shutdown(
-      { caller_id: Some("main.leaf") },
+      { caller_id: Some(agent_id) },
       workspace,
       None,
       Some(reg),
@@ -956,7 +953,7 @@ async test "interpret_shutdown does not call pane close for supervisor roles" {
     )
     assert_true(
       try {
-        ignore(reg.get("main.leaf"))
+        ignore(reg.get(agent_id))
         true
       } catch {
         _ => false

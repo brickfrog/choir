@@ -214,7 +214,7 @@ fn serve_record_boot_root_credential(
 ) -> Unit {
   if token != "" {
     state.registry.record_spawn_credential(serve_root_agent_id, {
-      role: @types.Role::Root,
+      role: @types.Role::TL,
       token,
     })
   }
@@ -856,7 +856,7 @@ fn serve_test_state_with_root(label : String) -> (@server.ServerState, String) {
   ignore(
     state.registry.upsert({
       agent_id: "root",
-      role: @types.Role::Root,
+      role: @types.Role::TL,
       agent_type: @types.AgentType::Codex,
       parent: None,
       workspace: project_dir,
@@ -1125,7 +1125,7 @@ async test "serve root register succeeds with boot credential and rejects mismat
     serve_test_register_line("root", "root", root_token, project_dir),
     true,
   )
-  serve_assert_register_ok(state, ok_result, "root", @types.Role::Root)
+  serve_assert_register_ok(state, ok_result, "root", @types.Role::TL)
 
   let wrong_secret = "wrong-root-token"
   let wrong_result = serve_handle_request_line(
@@ -1256,7 +1256,7 @@ test "serve prepares reload credentials env without root token or logs" {
     @types.Role::Dev,
     leaf_token,
   )
-  serve_test_record_credential(state, "root", @types.Role::Root, root_token)
+  serve_test_record_credential(state, "root", @types.Role::TL, root_token)
   let captured_events : Array[@moontrace.Event] = []
   let set_values : Array[String] = []
   let unset_keys : Array[String] = []
@@ -1544,7 +1544,7 @@ async test "serve supervisor-bound JSON-RPC reaches supervisor allow-list" {
   serve_test_record_credential(
     state,
     "root",
-    @types.Role::Root,
+    @types.Role::TL,
     "bound-jsonrpc-root-token",
   )
   let register_result = serve_handle_request_line(
@@ -1554,7 +1554,7 @@ async test "serve supervisor-bound JSON-RPC reaches supervisor allow-list" {
     ),
     true,
   )
-  serve_assert_register_ok(state, register_result, "root", @types.Role::Root)
+  serve_assert_register_ok(state, register_result, "root", @types.Role::TL)
   let owner = connected_agent_id_after_request(None, register_result)
 
   let bound_result = serve_handle_request_line(
@@ -1826,7 +1826,7 @@ async test "serve custom server_reload uses authenticated identity" {
   serve_test_record_credential(
     state,
     "root",
-    @types.Role::Root,
+    @types.Role::TL,
     "server-reload-root-token",
   )
   let root_register_result = serve_handle_request_line(
@@ -1836,12 +1836,7 @@ async test "serve custom server_reload uses authenticated identity" {
     ),
     true,
   )
-  serve_assert_register_ok(
-    state,
-    root_register_result,
-    "root",
-    @types.Role::Root,
-  )
+  serve_assert_register_ok(state, root_register_result, "root", @types.Role::TL)
   let root_owner = connected_agent_id_after_request(None, root_register_result)
   let root_reload_result = serve_handle_request_line(
     state,
@@ -1854,9 +1849,9 @@ async test "serve custom server_reload uses authenticated identity" {
     Some(resp_line) =>
       match @transport.parse_response(resp_line.trim().to_owned()) {
         Ok(resp) => assert_true(resp.is_ok())
-        Err(e) => fail("expected Root reload response to parse: " + e)
+        Err(e) => fail("expected root reload response to parse: " + e)
       }
-    None => fail("expected Root reload response")
+    None => fail("expected root reload response")
   }
   ignore(@sys.rm_rf(project_dir))
 }

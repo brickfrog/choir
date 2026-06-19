@@ -337,13 +337,13 @@ test "validate_pending_wave_deps: rejects TL-id dep via lifecycle file" {
 }
 
 ///|
-test "validate_pending_wave_deps: rejects Root-id dep" {
+test "validate_pending_wave_deps: rejects root TL dep" {
   let project_dir = pending_wave_test_setup("validate-root")
   let reg = @registry.AgentRegistry::new()
   ignore(
     reg.upsert({
       agent_id: @types.AgentId("main"),
-      role: @types.Role::Root,
+      role: @types.Role::TL,
       agent_type: @types.AgentType::Claude,
       parent: None,
       workspace: "/w",

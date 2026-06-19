@@ -74,7 +74,6 @@ pub fn HookEvent::from_wire_name(name : String) -> HookEvent? {
 ///|
 fn role_wire_name(r : @types.Role) -> String {
   match r {
-    Root => "root"
     TL => "tl"
     Dev => "dev"
     Worker => "worker"
@@ -332,7 +331,7 @@ pub fn HookInput::from_json_string(line : String) -> HookInput? {
   let merge_provenance = json_opt_string(obj, "merge_provenance")
   let role_str = json_opt_string(obj, "role")
   let role = match role_str {
-    Some("root") => Some(@types.Role::Root)
+    Some("root") => Some(@types.Role::TL)
     Some("tl") => Some(@types.Role::TL)
     Some("dev") => Some(@types.Role::Dev)
     Some("worker") => Some(@types.Role::Worker)

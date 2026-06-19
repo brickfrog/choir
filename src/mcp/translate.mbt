@@ -435,7 +435,7 @@ fn tool_defs() -> Array[CatalogTool] {
     },
     {
       name: "wave_state",
-      description: "Return a typed per-child snapshot (supervisor + leaves + workers) with each tracked PR's review state, CI rollup, unresolved thread count, and server-computed merge_gate_ready. Use instead of inferring merge/review status from notification prose. Root/TL only.",
+      description: "Return a typed per-child snapshot (supervisor + leaves + workers) with each tracked PR's review state, CI rollup, unresolved thread count, and server-computed merge_gate_ready. Use instead of inferring merge/review status from notification prose. TL only.",
       props: [{ name: "caller_id", desc: "ID of the calling supervisor" }],
       required: ["caller_id"],
     },
@@ -668,7 +668,7 @@ fn tool_defs() -> Array[CatalogTool] {
         },
         {
           name: "pr_number",
-          desc: "Optional tracked pull request number; Root/TL callers may target any tracked PR",
+          desc: "Optional tracked pull request number; TL callers may target any tracked PR",
         },
       ],
       required: ["caller_id"],

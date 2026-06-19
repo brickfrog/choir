@@ -252,7 +252,7 @@ fn resolve_parent_for_notify(
 
 ///|
 fn parent_branch_policy_role_applies(role : @types.Role) -> Bool {
-  role == @types.Role::Root || role == @types.Role::TL
+  role == @types.Role::TL
 }
 
 ///|
@@ -957,7 +957,7 @@ pub async fn dispatch(
           // Re-register must not lose stable identity metadata when a child
           // refresh comes from the parent's cwd config. Missing fields keep the
           // prior row, including agent_type; an existing leaf row refreshed as
-          // Root/TL is treated as stale parent metadata. Otherwise explicit
+          // TL is treated as stale parent metadata. Otherwise explicit
           // register data can repair a stale registry row.
           let prior_agent : @types.Agent? = try
             reg.get(register_args.agent_id)
@@ -2349,7 +2349,7 @@ fn dispatch_call_goal_gate_response(
     } else {
       None
     }
-  } else if role == @types.Role::Root || role == @types.Role::TL {
+  } else if role == @types.Role::TL {
     None
   } else {
     Some(

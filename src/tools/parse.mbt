@@ -1624,11 +1624,14 @@ fn parse_register_args(
         Err(e) => return Err(e)
       }
     None =>
-      match role {
-        @types.Role::Root => @types.AgentType::Claude
-        @types.Role::TL => @types.AgentType::Claude
-        @types.Role::Dev => @types.AgentType::Codex
-        @types.Role::Worker => @types.AgentType::Codex
+      if agent_id == "root" {
+        @types.AgentType::Claude
+      } else {
+        match role {
+          @types.Role::TL => @types.AgentType::Claude
+          @types.Role::Dev => @types.AgentType::Codex
+          @types.Role::Worker => @types.AgentType::Codex
+        }
       }
   }
   let spawn_depth = match tool_args_get(args, "spawn_depth") {

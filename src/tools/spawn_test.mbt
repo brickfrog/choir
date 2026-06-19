@@ -319,7 +319,7 @@ async fn mock_capture_origin_main(cmd : @workspace.Command) -> (Int, String) {
 
 ///|
 fn upsert_spawn_test_root(reg : @registry.AgentRegistry) -> Unit {
-  upsert_spawn_test_parent_with_role(reg, "root", @types.Role::Root)
+  upsert_spawn_test_parent_with_role(reg, "root", @types.Role::TL)
 }
 
 ///|
@@ -1063,19 +1063,19 @@ async test "interpret_spawn_worker normalizes unregistered caller_id to register
 }
 
 ///|
-async test "interpret_spawn_worker prefers Role::Root over root name-match" {
+async test "interpret_spawn_worker prefers literal root agent id over another TL" {
   let worker_args : WorkerSpawnArgs = {
     task: "unit",
     task_contract: { ..@types.TaskContract::empty(), goal: "unit" },
     caller_id: "main",
-    slug: "w-role-root",
+    slug: "w-literal-root",
     agent_type: @types.AgentType::Claude,
     worker_kind: WorkerKind::Research,
     parent_branch: None,
     isolation: None,
   }
   let reg = @registry.AgentRegistry::new()
-  upsert_spawn_test_parent_with_role(reg, "primary", @types.Role::Root)
+  upsert_spawn_test_parent_with_role(reg, "primary", @types.Role::TL)
   upsert_spawn_test_parent_with_role(reg, "root", @types.Role::TL)
   let got = interpret_spawn_worker(
     worker_args,
@@ -1089,7 +1089,7 @@ async test "interpret_spawn_worker prefers Role::Root over root name-match" {
     @types.Response::Ok(_) => ()
     _ => fail("expected ok")
   }
-  assert_registry_parent(reg, "main.w-role-root", "primary")
+  assert_registry_parent(reg, "main.w-literal-root", "root")
 }
 
 ///|
@@ -1156,7 +1156,7 @@ async test "interpret_spawn_worker rejects ambiguous multi-TL with no root" {
 }
 
 ///|
-async test "interpret_spawn_worker rejects ambiguous multiple Role::Root agents" {
+async test "interpret_spawn_worker rejects ambiguous non-root TL agents with root-like names" {
   let worker_args : WorkerSpawnArgs = {
     task: "unit",
     task_contract: { ..@types.TaskContract::empty(), goal: "unit" },
@@ -1168,8 +1168,8 @@ async test "interpret_spawn_worker rejects ambiguous multiple Role::Root agents"
     isolation: None,
   }
   let reg = @registry.AgentRegistry::new()
-  upsert_spawn_test_parent_with_role(reg, "root-a", @types.Role::Root)
-  upsert_spawn_test_parent_with_role(reg, "root-b", @types.Role::Root)
+  upsert_spawn_test_parent_with_role(reg, "root-a", @types.Role::TL)
+  upsert_spawn_test_parent_with_role(reg, "root-b", @types.Role::TL)
   let got = interpret_spawn_worker(
     worker_args,
     "/tmp/p",

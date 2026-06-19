@@ -287,20 +287,6 @@ fn ServerState::request_with_authenticated_identity(
         Some(agent) => agent
         None => return Err(authenticated_identity_unavailable_error())
       }
-      // The TL's MCP bridge labels its requests Role::TL while the boot
-      // credential binds agent_id="root" as Role::Root (the two sides of choir's
-      // long-standing root/TL naming: CHOIR_ROLE=tl on the launch vs the
-      // boot-recorded Role::Root credential). Both are privilege-equivalent
-      // supervisor roles — every tool allow-list is [Root, TL] — and the
-      // request's role is normalized to the verified role below regardless, so a
-      // supervisor<->supervisor label difference is not an escalation and must
-      // not lock out the TL's own connection. A non-supervisor claiming a
-      // supervisor role is still rejected as an escalation.
-      let role_ok = req.role == agent.role ||
-        (
-          @types.is_supervisor_role(req.role) &&
-          @types.is_supervisor_role(agent.role)
-        )
       // Only `caller_id` is the caller's identity claim and is verified against
       // the bound identity. `agent_id` in the args is a DATA/target field for
       // many tools (kill_agent's victim, suspend_resume's target, track_pr's PR
@@ -308,7 +294,8 @@ fn ServerState::request_with_authenticated_identity(
       // rejects every such call. The caller's identity is set authoritatively
       // from the connection binding by request_with_verified_caller below, so a
       // spoofed agent_id arg gains nothing.
-      if !role_ok || !request_identity_arg_matches(req, "caller_id", agent_id) {
+      if req.role != agent.role ||
+        !request_identity_arg_matches(req, "caller_id", agent_id) {
         return Err(authenticated_identity_mismatch_error())
       }
       Ok(request_with_verified_caller(req, agent_id, agent.role))
@@ -317,20 +304,19 @@ fn ServerState::request_with_authenticated_identity(
 }
 
 ///|
-test "request_with_authenticated_identity tolerates supervisor role-label flex but blocks escalation" {
-  let project_dir = "/tmp/choir-authid-superflex-" +
+test "request_with_authenticated_identity requires exact role and preserves target agent_id" {
+  let project_dir = "/tmp/choir-authid-strict-role-" +
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let state = ServerState::new(
     { ..@types.Config::default(), project_dir, },
     make_hermetic_recovery_provider(),
   )
-  // Root TL: the registry binds agent_id="root" as Role::Root (boot credential),
-  // but the live MCP bridge labels each per-request envelope as Role::TL.
+  // Root TL is now bound as Role::TL, matching the MCP bridge's per-request role.
   ignore(
     state.registry.upsert(@types.Agent::{
       agent_id: "root",
-      role: @types.Role::Root,
+      role: @types.Role::TL,
       agent_type: @types.AgentType::Claude,
       parent: None,
       workspace: project_dir,
@@ -348,10 +334,8 @@ test "request_with_authenticated_identity tolerates supervisor role-label flex b
     args: @types.RequestArgs::from_values({}),
   }
   match state.request_with_authenticated_identity(tl_labeled, Some("root")) {
-    // accepted, and normalized to the verified (registry) role
-    Ok(verified) => @debug.assert_eq(verified.role, @types.Role::Root)
-    Err(e) =>
-      fail("supervisor role-label flex must be accepted: " + e.message())
+    Ok(verified) => @debug.assert_eq(verified.role, @types.Role::TL)
+    Err(e) => fail("exact TL role match must be accepted: " + e.message())
   }
   // Adversarial: a Dev-bound connection labeling itself a supervisor role is
   // still rejected as an escalation attempt.
@@ -397,7 +381,7 @@ test "request_with_authenticated_identity tolerates supervisor role-label flex b
   }
   match state.request_with_authenticated_identity(kill_target, Some("root")) {
     Ok(verified) => {
-      @debug.assert_eq(verified.role, @types.Role::Root)
+      @debug.assert_eq(verified.role, @types.Role::TL)
       @debug.assert_eq(verified.args.get("agent_id"), Some("main.leaf.dev"))
     }
     Err(e) =>

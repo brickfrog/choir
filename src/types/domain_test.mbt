@@ -41,7 +41,6 @@ test "Reviewer try_parse_wire maps non-empty custom handles to Named" {
 ///|
 test "Role try_parse_wire round-trips to_wire_string for all roles" {
   let roles : Array[@types.Role] = [
-    @types.Role::Root,
     @types.Role::TL,
     @types.Role::Dev,
     @types.Role::Worker,
@@ -51,6 +50,14 @@ test "Role try_parse_wire round-trips to_wire_string for all roles" {
       Ok(parsed) => assert_eq(parsed, r)
       Err(e) => fail(e.message())
     }
+  }
+}
+
+///|
+test "Role try_parse_wire accepts root as TL alias" {
+  match @types.Role::try_parse_wire("root") {
+    Ok(parsed) => assert_eq(parsed, @types.Role::TL)
+    Err(e) => fail(e.message())
   }
 }
 
@@ -97,8 +104,7 @@ test "Role parse_wire raises on unknown strings matching try_parse_wire error" {
 }
 
 ///|
-test "is_supervisor_role identifies only root and TL" {
-  assert_true(@types.is_supervisor_role(@types.Role::Root))
+test "is_supervisor_role identifies TL only" {
   assert_true(@types.is_supervisor_role(@types.Role::TL))
   assert_false(@types.is_supervisor_role(@types.Role::Dev))
   assert_false(@types.is_supervisor_role(@types.Role::Worker))

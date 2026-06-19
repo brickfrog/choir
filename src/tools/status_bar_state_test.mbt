@@ -158,14 +158,14 @@ fn status_bar_test_snapshot() -> StatusBarSnapshot {
     {
       agent: status_bar_test_agent(
         "root",
-        @types.Role::Root,
+        @types.Role::TL,
         None,
         @types.AgentType::Codex,
         Some(status_bar_test_pane_target("terminal_1")),
       ),
       lifecycle: status_bar_test_lifecycle(
         "root",
-        @types.Role::Root,
+        @types.Role::TL,
         @phase.WorkflowState::Supervisor(
           @phase.SupervisorLifecycle::Supervising(children=[], wave=1),
         ),
@@ -475,10 +475,10 @@ test "status_bar_state lifecycle_to_wire_string covers workflow variants" {
 
 ///|
 test "status_bar_state role mapping covers schema roles" {
-  assert_eq(role_to_wire_string(@types.Role::Root), "root")
-  assert_eq(role_to_wire_string(@types.Role::TL), "tl")
-  assert_eq(role_to_wire_string(@types.Role::Dev), "dev")
-  assert_eq(role_to_wire_string(@types.Role::Worker), "worker")
+  assert_eq(role_to_wire_string("root", @types.Role::TL), "root")
+  assert_eq(role_to_wire_string("main.tl", @types.Role::TL), "tl")
+  assert_eq(role_to_wire_string("main.dev", @types.Role::Dev), "dev")
+  assert_eq(role_to_wire_string("main.worker", @types.Role::Worker), "worker")
 }
 
 ///|
@@ -911,14 +911,14 @@ test "status_bar_state builds snapshot with all zellij target shapes" {
     {
       agent: status_bar_test_agent(
         "root",
-        @types.Role::Root,
+        @types.Role::TL,
         None,
         @types.AgentType::Codex,
         Some(status_bar_test_pane_target("terminal_1")),
       ),
       lifecycle: status_bar_test_lifecycle(
         "root",
-        @types.Role::Root,
+        @types.Role::TL,
         @phase.WorkflowState::Supervisor(@phase.SupervisorLifecycle::Planning),
         100L,
       ),
@@ -1047,7 +1047,7 @@ async test "interpret_status_bar_state returns direct structured payload" {
       reg.insert(
         status_bar_test_agent(
           "root",
-          @types.Role::Root,
+          @types.Role::TL,
           None,
           @types.AgentType::Codex,
           Some(status_bar_test_pane_target("terminal_1")),
@@ -1057,7 +1057,7 @@ async test "interpret_status_bar_state returns direct structured payload" {
   )
   let lifecycle = status_bar_test_lifecycle(
     "root",
-    @types.Role::Root,
+    @types.Role::TL,
     @phase.WorkflowState::Supervisor(@phase.SupervisorLifecycle::Planning),
     10L,
   )
@@ -1296,9 +1296,6 @@ async test "interpret_status_bar_state fails without registry" {
 ///|
 test "status_bar_state tool registry allows all roles" {
   let tools = @tools.ToolRegistry::new()
-  let root_lookup = status_bar_test_capture(() => {
-    tools.lookup(@types.Role::Root, "status_bar_state")
-  })
   let tl_lookup = status_bar_test_capture(() => {
     tools.lookup(@types.Role::TL, "status_bar_state")
   })
@@ -1308,7 +1305,6 @@ test "status_bar_state tool registry allows all roles" {
   let worker_lookup = status_bar_test_capture(() => {
     tools.lookup(@types.Role::Worker, "status_bar_state")
   })
-  assert_true(root_lookup is Ok(_))
   assert_true(tl_lookup is Ok(_))
   assert_true(dev_lookup is Ok(_))
   assert_true(worker_lookup is Ok(_))
@@ -1317,9 +1313,6 @@ test "status_bar_state tool registry allows all roles" {
 ///|
 test "handoff_status tool registry allows all roles read-only" {
   let tools = @tools.ToolRegistry::new()
-  let root_lookup = status_bar_test_capture(() => {
-    tools.lookup(@types.Role::Root, "handoff_status")
-  })
   let tl_lookup = status_bar_test_capture(() => {
     tools.lookup(@types.Role::TL, "handoff_status")
   })
@@ -1329,10 +1322,9 @@ test "handoff_status tool registry allows all roles read-only" {
   let worker_lookup = status_bar_test_capture(() => {
     tools.lookup(@types.Role::Worker, "handoff_status")
   })
-  assert_true(root_lookup is Ok(_))
   assert_true(tl_lookup is Ok(_))
   assert_true(dev_lookup is Ok(_))
   assert_true(worker_lookup is Ok(_))
-  guard root_lookup is Ok(def) else { return }
+  guard tl_lookup is Ok(def) else { return }
   assert_true(def.read_only)
 }

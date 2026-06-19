@@ -336,7 +336,7 @@ test "lifecycle_idle_watchdog_exempt logic" {
   assert_true(lifecycle_idle_watchdog_exempt(worker_failed))
 
   let tl = lifecycle_for_role("tl", @types.Role::TL)
-  // `Supervisor` is not exempt here; `check_idle_agents` skips TL/Root by role first.
+  // `Supervisor` is not exempt here; `check_idle_agents` skips TL by role first.
   assert_false(lifecycle_idle_watchdog_exempt(tl))
 
   // WaitingForRedGate must be exempt (leaf is following TDD protocol; spec says wait).

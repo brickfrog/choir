@@ -60,7 +60,7 @@ test "server status snapshot write uses injected lifecycle reader and lifecycle 
     state.registry.upsert(
       status_dump_test_agent(
         "root",
-        @types.Role::Root,
+        @types.Role::TL,
         None,
         Some("zellij-pane:s:root"),
       ),
@@ -115,7 +115,7 @@ test "server status snapshot write uses injected lifecycle reader and lifecycle 
     "root",
     status_dump_test_lifecycle(
       "root",
-      @types.Role::Root,
+      @types.Role::TL,
       @phase.WorkflowState::Supervisor(
         @phase.SupervisorLifecycle::Supervising(children=[], wave=1),
       ),
@@ -148,7 +148,7 @@ test "server status snapshot write uses injected lifecycle reader and lifecycle 
   assert_true(text.contains("agents=2\n"))
   assert_true(
     text.contains(
-      "agent_id=root role=root agent_type=codex lifecycle=working terminal_target=zellij-pane:s:root parent_agent_id=none last_activity_unix=0 last_request_age_sec=unknown pr_number=none unresolved_threads=none ci_rollup=unknown attention_needed=false\n",
+      "agent_id=root role=tl agent_type=codex lifecycle=working terminal_target=zellij-pane:s:root parent_agent_id=none last_activity_unix=0 last_request_age_sec=unknown pr_number=none unresolved_threads=none ci_rollup=unknown attention_needed=false\n",
     ),
   )
   assert_true(

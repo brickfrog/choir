@@ -295,7 +295,7 @@ test "registry snapshot write read round trip" {
   let reg = @registry.AgentRegistry::new()
   let root : @types.Agent = {
     agent_id: "root",
-    role: @types.Role::Root,
+    role: @types.Role::TL,
     agent_type: @types.AgentType::Codex,
     parent: None,
     workspace: ".",
@@ -335,7 +335,7 @@ test "registry snapshot write read round trip" {
   ignore(@sys.rm_rf(project_dir))
   match (restored_root, restored_worker) {
     (Ok(r), Ok(w)) => {
-      assert_eq(r.role, @types.Role::Root)
+      assert_eq(r.role, @types.Role::TL)
       assert_eq(r.agent_type, @types.AgentType::Codex)
       assert_eq(r.branch, "feature/hot-reload")
       @debug.assert_eq(

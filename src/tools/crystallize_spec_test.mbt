@@ -182,12 +182,4 @@ test "crystallize_spec registry denies Dev and Worker callers" {
     tool => Ok(tool)
   }
   assert_true(tl_lookup is Ok(_))
-  let root_lookup = try
-    reg.lookup(@types.Role::Root, "crystallize_spec")
-  catch {
-    e => Err(e)
-  } noraise {
-    tool => Ok(tool)
-  }
-  assert_true(root_lookup is Ok(_))
 }

@@ -122,7 +122,7 @@ fn reload_run() -> Unit {
   }
   let req : @types.Request = {
     req_method: "tools/call",
-    role: @types.Role::Root,
+    role: @types.Role::TL,
     name: "server_reload",
     args: @types.RequestArgs::from_values({
       "binary_path": binary_path.to_json(),
@@ -130,7 +130,7 @@ fn reload_run() -> Unit {
   }
   match
     client_call_uds(
-      @types.Role::Root,
+      @types.Role::TL,
       { ..config, agent_id: Some("root") },
       @types.LocalConfig::default(),
       req,
