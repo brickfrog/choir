@@ -63,7 +63,7 @@ jobs:
         run: CHOIR_TEST_NO_EXEC=1 moon test --target native
 
       - name: Test real exec adapters
-        run: CHOIR_TEST_REAL_EXEC=1 moon test --target native src/exec
+        run: CHOIR_TEST_REAL_EXEC=1 moon test --target native src/exec src/bin/choir
 
       - name: Build release binary
         run: moon build --target native --release
