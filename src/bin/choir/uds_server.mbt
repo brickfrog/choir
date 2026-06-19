@@ -2311,101 +2311,111 @@ async fn live_uds_run_real_leaf_tool_client(
     let mut authenticated_agent_id : String? = None
     let mut child_result : (Int, String)? = None
     let mut attempts = 0
-    while attempts < 2000 {
-      match child.try_wait() {
-        Some(result) => {
-          child_result = Some(result)
-          break
+    try {
+      while attempts < 2000 {
+        match child.try_wait() {
+          Some(result) => {
+            child_result = Some(result)
+            break
+          }
+          None => ()
         }
-        None => ()
-      }
-      for ;; {
-        let client_fd = @uds.accept_nonblocking(ctx.server_fd)
-        if client_fd == -2 {
-          break
+        for ;; {
+          let client_fd = @uds.accept_nonblocking(ctx.server_fd)
+          if client_fd == -2 {
+            break
+          }
+          if client_fd < 0 {
+            fail("live UDS real client accept_nonblocking failed")
+          }
+          ignore(@uds.set_nonblocking(client_fd))
+          clients.push(ServeUDSClient::new(client_fd))
+          accepted_clients = accepted_clients + 1
         }
-        if client_fd < 0 {
-          fail("live UDS real client accept_nonblocking failed")
+        let mut i = 0
+        while i < clients.length() {
+          let request_tasks : Array[async () -> Unit] = []
+          let alive = serve_handle_uds_connection(
+            clients[i],
+            ctx.state,
+            ctx.server_fd,
+            fn(task) { request_tasks.push(task) },
+          )
+          for task in request_tasks {
+            task()
+          }
+          connected_agent_id = clients[i].connected_agent_id
+          authenticated_agent_id = clients[i].authenticated_agent_id
+          if alive {
+            i = i + 1
+          } else {
+            let client = clients.remove(i)
+            connected_agent_id = client.connected_agent_id
+            authenticated_agent_id = client.authenticated_agent_id
+            serve_close_uds_client(client, ctx.state)
+          }
         }
-        ignore(@uds.set_nonblocking(client_fd))
-        clients.push(ServeUDSClient::new(client_fd))
-        accepted_clients = accepted_clients + 1
-      }
-      let mut i = 0
-      while i < clients.length() {
-        let request_tasks : Array[async () -> Unit] = []
-        let alive = serve_handle_uds_connection(
-          clients[i],
-          ctx.state,
-          ctx.server_fd,
-          fn(task) { request_tasks.push(task) },
-        )
-        for task in request_tasks {
-          task()
-        }
-        connected_agent_id = clients[i].connected_agent_id
-        authenticated_agent_id = clients[i].authenticated_agent_id
-        if alive {
-          i = i + 1
-        } else {
-          let client = clients.remove(i)
-          connected_agent_id = client.connected_agent_id
-          authenticated_agent_id = client.authenticated_agent_id
-          serve_close_uds_client(client, ctx.state)
-        }
-      }
-      attempts = attempts + 1
-      @async.sleep(1)
-    }
-    let (exit_code, output) = match child_result {
-      Some(result) => result
-      None => {
-        child.cancel()
-        fail("timed out waiting for real leaf-tool client")
-      }
-    }
-    let mut flush_attempts = 0
-    while clients.length() > 0 && flush_attempts < 100 {
-      let mut i = 0
-      while i < clients.length() {
-        let request_tasks : Array[async () -> Unit] = []
-        let alive = serve_handle_uds_connection(
-          clients[i],
-          ctx.state,
-          ctx.server_fd,
-          fn(task) { request_tasks.push(task) },
-        )
-        for task in request_tasks {
-          task()
-        }
-        connected_agent_id = clients[i].connected_agent_id
-        authenticated_agent_id = clients[i].authenticated_agent_id
-        if alive {
-          i = i + 1
-        } else {
-          let client = clients.remove(i)
-          connected_agent_id = client.connected_agent_id
-          authenticated_agent_id = client.authenticated_agent_id
-          serve_close_uds_client(client, ctx.state)
-        }
-      }
-      flush_attempts = flush_attempts + 1
-      if clients.length() > 0 {
+        attempts = attempts + 1
         @async.sleep(1)
       }
-    }
-    while clients.length() > 0 {
-      let client = clients.remove(0)
-      connected_agent_id = client.connected_agent_id
-      authenticated_agent_id = client.authenticated_agent_id
-      serve_close_uds_client(client, ctx.state)
-    }
-    {
-      exit_code,
-      output,
-      accepted_clients,
-      connected_agent_id,
-      authenticated_agent_id,
+      let (exit_code, output) = match child_result {
+        Some(result) => result
+        None => fail("timed out waiting for real leaf-tool client")
+      }
+      let mut flush_attempts = 0
+      while clients.length() > 0 && flush_attempts < 100 {
+        let mut i = 0
+        while i < clients.length() {
+          let request_tasks : Array[async () -> Unit] = []
+          let alive = serve_handle_uds_connection(
+            clients[i],
+            ctx.state,
+            ctx.server_fd,
+            fn(task) { request_tasks.push(task) },
+          )
+          for task in request_tasks {
+            task()
+          }
+          connected_agent_id = clients[i].connected_agent_id
+          authenticated_agent_id = clients[i].authenticated_agent_id
+          if alive {
+            i = i + 1
+          } else {
+            let client = clients.remove(i)
+            connected_agent_id = client.connected_agent_id
+            authenticated_agent_id = client.authenticated_agent_id
+            serve_close_uds_client(client, ctx.state)
+          }
+        }
+        flush_attempts = flush_attempts + 1
+        if clients.length() > 0 {
+          @async.sleep(1)
+        }
+      }
+      while clients.length() > 0 {
+        let client = clients.remove(0)
+        connected_agent_id = client.connected_agent_id
+        authenticated_agent_id = client.authenticated_agent_id
+        serve_close_uds_client(client, ctx.state)
+      }
+      {
+        exit_code,
+        output,
+        accepted_clients,
+        connected_agent_id,
+        authenticated_agent_id,
+      }
+    } catch {
+      err => {
+        while clients.length() > 0 {
+          let client = clients.remove(0)
+          serve_close_uds_client(client, ctx.state)
+        }
+        child.cancel()
+        raise err
+      }
+    } noraise {
+      result => result
     }
   })
 }
