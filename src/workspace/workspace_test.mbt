@@ -594,7 +594,7 @@ test "spawn_commands writes codex Stop completion handoff hook" {
 }
 
 ///|
-test "spawn_commands writes claude SubagentStop hook outside plugin" {
+test "spawn_commands writes claude Stop hook outside plugin" {
   let spec = @types.SpawnSpec::{
     slug: "claude-handoff",
     role: @types.Role::Dev,
@@ -615,7 +615,7 @@ test "spawn_commands writes claude SubagentStop hook outside plugin" {
   }
   let cmds = @workspace.spawn_commands(spec, "/project", "session")
   let script_index = workspace_rel_file_write_index(
-    cmds, ".choir/hooks/completion_handoff_subagent_stop.sh",
+    cmds, ".choir/hooks/completion_handoff_stop.sh",
   )
   assert_true(script_index >= 0)
   let script = cmds[script_index].args[2]
@@ -633,14 +633,10 @@ test "spawn_commands writes claude SubagentStop hook outside plugin" {
   guard settings.get("hooks") is Some(Object(hooks)) else {
     fail("hooks missing")
   }
-  guard hooks.get("SubagentStop") is Some(Array(subagent_stop)) else {
-    fail("SubagentStop missing")
-  }
-  guard subagent_stop[0] is Object(group) else {
-    fail("SubagentStop group missing")
-  }
+  guard hooks.get("Stop") is Some(Array(stop)) else { fail("Stop missing") }
+  guard stop[0] is Object(group) else { fail("Stop group missing") }
   guard group.get("hooks") is Some(Array(handlers)) else {
-    fail("SubagentStop handlers missing")
+    fail("Stop handlers missing")
   }
   guard handlers[0] is Object(handler) else { fail("handler missing") }
   guard handler.get("command") is Some(String(command)) else {
@@ -648,7 +644,7 @@ test "spawn_commands writes claude SubagentStop hook outside plugin" {
   }
   assert_true(
     command.contains(
-      "/project/.choir/worktrees/claude-handoff/.choir/hooks/completion_handoff_subagent_stop.sh",
+      "/project/.choir/worktrees/claude-handoff/.choir/hooks/completion_handoff_stop.sh",
     ),
   )
   assert_false(command.contains(".choir/plugin"))
