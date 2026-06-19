@@ -1920,6 +1920,761 @@ async test "serve rejected register refresh keeps existing disconnect owner" {
 }
 
 ///|
+struct LiveUDSTestContext {
+  state : @server.ServerState
+  project_dir : String
+  sock_path : String
+  server_fd : Int
+}
+
+///|
+struct LiveUDSTestSession {
+  client_fd : Int
+  server_client : ServeUDSClient
+}
+
+///|
+fn live_uds_cleanup(ctx : LiveUDSTestContext) -> Unit {
+  @uds.close(ctx.server_fd)
+  ignore(@sys.rm_rf(ctx.project_dir))
+}
+
+///|
+async fn live_uds_with_server(
+  label : String,
+  body : async (LiveUDSTestContext) -> Unit,
+) -> Unit {
+  let (state, project_dir) = serve_test_state_with_root("live-uds-" + label)
+  let sock_path = project_dir + "/server.sock"
+  let server_fd = @uds.server_create(sock_path)
+  if server_fd < 0 {
+    ignore(@sys.rm_rf(project_dir))
+    fail("live UDS server_create failed")
+  }
+  ignore(@uds.set_nonblocking(server_fd))
+  let ctx : LiveUDSTestContext = { state, project_dir, sock_path, server_fd }
+  try body(ctx) catch {
+    err => {
+      live_uds_cleanup(ctx)
+      raise err
+    }
+  } noraise {
+    _ => live_uds_cleanup(ctx)
+  }
+}
+
+///|
+fn live_uds_config(ctx : LiveUDSTestContext) -> @types.Config {
+  {
+    ..@types.Config::default(),
+    project_dir: ctx.project_dir,
+    listen_uds: ctx.sock_path,
+    terminal_session: "live-uds",
+  }
+}
+
+///|
+fn live_uds_local_cfg(
+  agent_id : String,
+  role : @types.Role,
+  ctx : LiveUDSTestContext,
+) -> @types.LocalConfig {
+  {
+    ..@types.LocalConfig::default(),
+    role: Some(role),
+    agent_id: Some(agent_id),
+    parent_id: if agent_id == "root" {
+      None
+    } else {
+      Some("root")
+    },
+    branch: Some(agent_id),
+    parent_branch: Some("main"),
+    workspace: Some(ctx.project_dir),
+    agent_type: Some(@types.AgentType::Codex),
+    spawn_depth: Some(0),
+  }
+}
+
+///|
+fn live_uds_register_message(
+  role : @types.Role,
+  agent_id : String,
+  local_cfg : @types.LocalConfig,
+  token : String,
+  connection_lifetime : @transport.ConnectionLifetime,
+) -> String {
+  @transport.format_registration_request(
+    role,
+    agent_id,
+    local_cfg,
+    connection_lifetime~,
+    agent_token=Some(token),
+  ) +
+  "\n"
+}
+
+///|
+async fn live_uds_pump_server_once(
+  ctx : LiveUDSTestContext,
+  session : LiveUDSTestSession,
+) -> Bool {
+  let tasks : Array[async () -> Unit] = []
+  let alive = serve_handle_uds_connection(
+    session.server_client,
+    ctx.state,
+    ctx.server_fd,
+    fn(task) { tasks.push(task) },
+  )
+  for task in tasks {
+    task()
+  }
+  alive
+}
+
+///|
+async fn live_uds_open_session(ctx : LiveUDSTestContext) -> LiveUDSTestSession {
+  let client_fd = @uds.client_connect(ctx.sock_path)
+  if client_fd < 0 {
+    fail("live UDS client_connect failed")
+  }
+  ignore(@uds.set_nonblocking(client_fd))
+  let mut accepted_fd = @uds.accept_nonblocking(ctx.server_fd)
+  let mut attempts = 0
+  while accepted_fd == -2 && attempts < 100 {
+    @async.sleep(1)
+    accepted_fd = @uds.accept_nonblocking(ctx.server_fd)
+    attempts = attempts + 1
+  }
+  if accepted_fd < 0 {
+    @uds.close(client_fd)
+    fail("live UDS accept_nonblocking failed")
+  }
+  ignore(@uds.set_nonblocking(accepted_fd))
+  { client_fd, server_client: ServeUDSClient::new(accepted_fd) }
+}
+
+///|
+async fn live_uds_close_session(
+  ctx : LiveUDSTestContext,
+  session : LiveUDSTestSession,
+) -> Unit {
+  @uds.close(session.client_fd)
+  let alive = live_uds_pump_server_once(ctx, session)
+  if !alive {
+    serve_close_uds_client(session.server_client, ctx.state)
+  } else {
+    @uds.close(session.server_client.fd)
+  }
+}
+
+///|
+async fn live_uds_with_session(
+  ctx : LiveUDSTestContext,
+  body : async (LiveUDSTestSession) -> Unit,
+) -> Unit {
+  let session = live_uds_open_session(ctx)
+  try body(session) catch {
+    err => {
+      live_uds_close_session(ctx, session)
+      raise err
+    }
+  } noraise {
+    _ => live_uds_close_session(ctx, session)
+  }
+}
+
+///|
+async fn live_uds_read_line_nonblocking(fd : Int) -> String {
+  let buf = FixedArray::make(8192, (0 : Byte))
+  let mut write_pos = 0
+  let mut attempts = 0
+  while attempts < 100 {
+    let n = @uds.read_bytes_nonblocking(
+      fd,
+      buf,
+      write_pos,
+      buf.length() - write_pos,
+    )
+    if n > 0 {
+      write_pos = write_pos + n
+      let bytes = buf.unsafe_reinterpret_as_bytes()
+      for i = 0; i < write_pos; i = i + 1 {
+        if bytes[i] == (10 : Byte) {
+          return @utf8.decode_lossy(bytes[0:i])
+        }
+      }
+    } else if n == 0 {
+      if write_pos > 0 {
+        return @utf8.decode_lossy(
+          buf.unsafe_reinterpret_as_bytes()[0:write_pos],
+        )
+      }
+      return ""
+    } else if n != -2 {
+      fail("live UDS read failed")
+    }
+    attempts = attempts + 1
+    @async.sleep(1)
+  }
+  fail("timed out waiting for live UDS response")
+}
+
+///|
+async fn live_uds_send_wire(
+  ctx : LiveUDSTestContext,
+  session : LiveUDSTestSession,
+  wire : String,
+) -> @types.Response {
+  if !mcp_write_all_uds(session.client_fd, @utf8.encode(wire)) {
+    fail("live UDS client write failed")
+  }
+  let alive = live_uds_pump_server_once(ctx, session)
+  if !alive {
+    fail("live UDS server closed before response")
+  }
+  let line = live_uds_read_line_nonblocking(session.client_fd)
+  if line == "" {
+    fail("live UDS empty response")
+  }
+  match @transport.parse_response(line) {
+    Ok(resp) => resp
+    Err(e) => fail("live UDS parse response failed: " + e)
+  }
+}
+
+///|
+async fn live_uds_register_session(
+  ctx : LiveUDSTestContext,
+  session : LiveUDSTestSession,
+  role : @types.Role,
+  agent_id : String,
+  token : String,
+) -> @types.Response {
+  live_uds_send_wire(
+    ctx,
+    session,
+    live_uds_register_message(
+      role,
+      agent_id,
+      live_uds_local_cfg(agent_id, role, ctx),
+      token,
+      @transport.ConnectionLifetime::Session,
+    ),
+  )
+}
+
+///|
+async fn live_uds_call(
+  ctx : LiveUDSTestContext,
+  session : LiveUDSTestSession,
+  role : @types.Role,
+  agent_id : String,
+  req : @types.Request,
+) -> @types.Response {
+  live_uds_send_wire(
+    ctx,
+    session,
+    mcp_build_wire_request(
+      req,
+      role,
+      live_uds_config(ctx),
+      live_uds_local_cfg(agent_id, role, ctx),
+    ),
+  )
+}
+
+///|
+fn live_uds_assert_ok(resp : @types.Response, label : String) -> Unit raise {
+  if !resp.is_ok() {
+    fail(label + " expected ok: " + resp.error_message().unwrap_or(""))
+  }
+}
+
+///|
+fn live_uds_assert_error_contains(
+  resp : @types.Response,
+  needle : String,
+  label : String,
+) -> Unit raise {
+  match resp.error_message() {
+    Some(msg) => assert_true(msg.contains(needle))
+    None => fail(label + " expected error containing " + needle)
+  }
+}
+
+///|
+fn live_uds_goal_status_req(role : @types.Role) -> @types.Request {
+  {
+    req_method: "tools/call",
+    role,
+    name: "goal_status",
+    args: @types.RequestArgs::from_values({}),
+  }
+}
+
+///|
+fn live_uds_note_pass(name : String) -> Unit {
+  @sys.write_stderr("PASS " + name + "\n")
+}
+
+///|
+async test "live UDS: strict role gate rejects supervisor spoof" {
+  live_uds_with_server("strict-role", async fn(ctx) {
+    let root_token = "live-root-token"
+    serve_record_boot_root_credential(ctx.state, root_token)
+    live_uds_with_session(ctx, async fn(session) {
+      live_uds_assert_ok(
+        live_uds_register_session(
+          ctx,
+          session,
+          @types.Role::TL,
+          "root",
+          root_token,
+        ),
+        "root register",
+      )
+      live_uds_assert_ok(
+        live_uds_call(
+          ctx,
+          session,
+          @types.Role::TL,
+          "root",
+          live_uds_goal_status_req(@types.Role::TL),
+        ),
+        "root TL gated call",
+      )
+      @debug.assert_eq(
+        session.server_client.authenticated_agent_id,
+        Some("root"),
+      )
+    })
+
+    let sub_tl_id = "main.live-uds.subtl"
+    let sub_tl_token = "live-subtl-token"
+    serve_test_upsert_agent(
+      ctx.state,
+      sub_tl_id,
+      @types.Role::TL,
+      ctx.project_dir,
+    )
+    serve_test_record_credential(
+      ctx.state,
+      sub_tl_id,
+      @types.Role::TL,
+      sub_tl_token,
+    )
+    live_uds_with_session(ctx, async fn(session) {
+      live_uds_assert_ok(
+        live_uds_register_session(
+          ctx,
+          session,
+          @types.Role::TL,
+          sub_tl_id,
+          sub_tl_token,
+        ),
+        "sub-TL register",
+      )
+      live_uds_assert_ok(
+        live_uds_call(
+          ctx,
+          session,
+          @types.Role::TL,
+          sub_tl_id,
+          live_uds_goal_status_req(@types.Role::TL),
+        ),
+        "sub-TL gated call",
+      )
+    })
+
+    let dev_id = "main.live-uds.dev"
+    let dev_token = "live-dev-token"
+    serve_test_upsert_agent(
+      ctx.state,
+      dev_id,
+      @types.Role::Dev,
+      ctx.project_dir,
+    )
+    serve_test_record_credential(ctx.state, dev_id, @types.Role::Dev, dev_token)
+    live_uds_with_session(ctx, async fn(session) {
+      live_uds_assert_ok(
+        live_uds_register_session(
+          ctx,
+          session,
+          @types.Role::Dev,
+          dev_id,
+          dev_token,
+        ),
+        "dev register",
+      )
+      live_uds_assert_error_contains(
+        live_uds_call(
+          ctx,
+          session,
+          @types.Role::Dev,
+          dev_id,
+          live_uds_goal_status_req(@types.Role::TL),
+        ),
+        "authenticated identity mismatch",
+        "dev supervisor spoof",
+      )
+    })
+
+    let worker_id = "main.live-uds.worker"
+    let worker_token = "live-worker-token"
+    serve_test_upsert_agent(
+      ctx.state,
+      worker_id,
+      @types.Role::Worker,
+      ctx.project_dir,
+    )
+    serve_test_record_credential(
+      ctx.state,
+      worker_id,
+      @types.Role::Worker,
+      worker_token,
+    )
+    live_uds_with_session(ctx, async fn(session) {
+      live_uds_assert_ok(
+        live_uds_register_session(
+          ctx,
+          session,
+          @types.Role::Worker,
+          worker_id,
+          worker_token,
+        ),
+        "worker register",
+      )
+      live_uds_assert_error_contains(
+        live_uds_call(
+          ctx,
+          session,
+          @types.Role::Worker,
+          worker_id,
+          live_uds_goal_status_req(@types.Role::TL),
+        ),
+        "authenticated identity mismatch",
+        "worker supervisor spoof",
+      )
+    })
+  })
+  live_uds_note_pass("live UDS: strict role gate rejects supervisor spoof")
+}
+
+///|
+async test "live UDS: sub-TL session binds branch id" {
+  live_uds_with_server("subtl-bind", async fn(ctx) {
+    let agent_id = "feature.live-uds.subtl"
+    let token = "live-subtl-bind-token"
+    serve_test_upsert_agent(
+      ctx.state,
+      agent_id,
+      @types.Role::TL,
+      ctx.project_dir,
+    )
+    serve_test_record_credential(ctx.state, agent_id, @types.Role::TL, token)
+    live_uds_with_session(ctx, async fn(session) {
+      live_uds_assert_ok(
+        live_uds_register_session(
+          ctx,
+          session,
+          @types.Role::TL,
+          agent_id,
+          token,
+        ),
+        "sub-TL register",
+      )
+      @debug.assert_eq(session.server_client.connected_agent_id, Some(agent_id))
+      @debug.assert_eq(
+        session.server_client.authenticated_agent_id,
+        Some(agent_id),
+      )
+      assert_false(session.server_client.authenticated_agent_id == Some("root"))
+      live_uds_assert_ok(
+        live_uds_call(
+          ctx,
+          session,
+          @types.Role::TL,
+          agent_id,
+          live_uds_goal_status_req(@types.Role::TL),
+        ),
+        "sub-TL goal_status",
+      )
+    })
+    assert_true(ctx.state.pending_disconnects.contains(agent_id))
+    assert_false(ctx.state.pending_disconnects.contains("root"))
+  })
+  live_uds_note_pass("live UDS: sub-TL session binds branch id")
+}
+
+///|
+async test "live UDS: OneShot env identity authenticates follow-up" {
+  live_uds_with_server("oneshot-env", async fn(ctx) {
+    let agent_id = "main.live-uds.env-dev"
+    let token = "live-env-dev-token"
+    let file_exists = fn(path : String) -> Bool {
+      path == ".choir/config.local.toml"
+    }
+    let read_file = fn(path : String) -> String {
+      match path {
+        ".choir/config.toml" =>
+          "project_dir = \"" +
+          ctx.project_dir +
+          "\"\nlisten_uds = \"" +
+          ctx.sock_path +
+          "\"\n"
+        ".choir/config.local.toml" =>
+          "default_role = \"tl\"\nlisten_uds = \"" + ctx.sock_path + "\"\n"
+        _ => ""
+      }
+    }
+    let env_get = fn(key : String) -> String? {
+      match key {
+        "CHOIR_AGENT_ID" => Some(agent_id)
+        "CHOIR_ROLE" => Some("dev")
+        "CHOIR_AGENT_TOKEN" => Some(token)
+        _ => None
+      }
+    }
+    match resolve_leaf_local_cfg(file_exists, read_file, env_get) {
+      Ok(cfg) => {
+        @debug.assert_eq(cfg.agent_id, Some(agent_id))
+        @debug.assert_eq(cfg.role, Some(@types.Role::Dev))
+      }
+      Err(e) =>
+        fail("resolve_leaf_local_cfg expected env identity: " + e.message())
+    }
+    let (role, config, local_cfg) = match
+      leaf_tool_load_config([], env_get~, path_exists=file_exists, read_file~) {
+      Ok(value) => value
+      Err(e) =>
+        fail("leaf_tool_load_config expected env identity: " + e.message())
+    }
+    assert_eq(role, @types.Role::Dev)
+    assert_eq(config.listen_uds, ctx.sock_path)
+    @debug.assert_eq(local_cfg.agent_id, Some(agent_id))
+    serve_test_upsert_agent(
+      ctx.state,
+      agent_id,
+      @types.Role::Dev,
+      ctx.project_dir,
+    )
+    serve_test_record_credential(ctx.state, agent_id, @types.Role::Dev, token)
+    live_uds_with_session(ctx, async fn(session) {
+      live_uds_assert_ok(
+        live_uds_send_wire(
+          ctx,
+          session,
+          live_uds_register_message(
+            role,
+            agent_id,
+            local_cfg,
+            env_get("CHOIR_AGENT_TOKEN").unwrap_or(""),
+            @transport.ConnectionLifetime::OneShot,
+          ),
+        ),
+        "OneShot register",
+      )
+      @debug.assert_eq(session.server_client.connected_agent_id, None)
+      @debug.assert_eq(
+        session.server_client.authenticated_agent_id,
+        Some(agent_id),
+      )
+      let resp = live_uds_send_wire(
+        ctx,
+        session,
+        mcp_build_wire_request(
+          {
+            req_method: "tools/call",
+            role: @types.Role::Dev,
+            name: "tdd_intent",
+            args: @types.RequestArgs::from_values({
+              "intent": "live UDS env identity follow-up".to_json(),
+            }),
+          },
+          role,
+          config,
+          local_cfg,
+        ),
+      )
+      match resp.error_message() {
+        Some(msg) => assert_false(msg.contains("role worker cannot call"))
+        None => ()
+      }
+      @debug.assert_eq(session.server_client.connected_agent_id, None)
+      @debug.assert_eq(
+        session.server_client.authenticated_agent_id,
+        Some(agent_id),
+      )
+    })
+    assert_false(ctx.state.pending_disconnects.contains(agent_id))
+  })
+  live_uds_note_pass("live UDS: OneShot env identity authenticates follow-up")
+}
+
+///|
+async test "live UDS: target agent_id is not caller identity" {
+  live_uds_with_server("target-agent-id", async fn(ctx) {
+    let root_token = "live-target-root-token"
+    serve_record_boot_root_credential(ctx.state, root_token)
+    let victim_id = "main.live-uds.victim"
+    serve_test_upsert_agent(
+      ctx.state,
+      victim_id,
+      @types.Role::Worker,
+      ctx.project_dir,
+    )
+    live_uds_with_session(ctx, async fn(session) {
+      live_uds_assert_ok(
+        live_uds_register_session(
+          ctx,
+          session,
+          @types.Role::TL,
+          "root",
+          root_token,
+        ),
+        "root register",
+      )
+      live_uds_assert_ok(
+        live_uds_call(ctx, session, @types.Role::TL, "root", {
+          req_method: "tools/call",
+          role: @types.Role::TL,
+          name: "suspend",
+          args: @types.RequestArgs::from_values({
+            "agent_id": victim_id.to_json(),
+            "reason": "live UDS target id regression".to_json(),
+          }),
+        }),
+        "root suspend target arg",
+      )
+    })
+
+    let dev_id = "main.live-uds.spoof-dev"
+    let dev_token = "live-target-dev-token"
+    serve_test_upsert_agent(
+      ctx.state,
+      dev_id,
+      @types.Role::Dev,
+      ctx.project_dir,
+    )
+    serve_test_record_credential(ctx.state, dev_id, @types.Role::Dev, dev_token)
+    live_uds_with_session(ctx, async fn(session) {
+      live_uds_assert_ok(
+        live_uds_register_session(
+          ctx,
+          session,
+          @types.Role::Dev,
+          dev_id,
+          dev_token,
+        ),
+        "dev register",
+      )
+      live_uds_assert_error_contains(
+        live_uds_call(ctx, session, @types.Role::Dev, dev_id, {
+          req_method: "tools/call",
+          role: @types.Role::Dev,
+          name: "agent_list",
+          args: @types.RequestArgs::from_values({
+            "caller_id": "root".to_json(),
+          }),
+        }),
+        "authenticated identity mismatch",
+        "dev caller spoof",
+      )
+    })
+  })
+  live_uds_note_pass("live UDS: target agent_id is not caller identity")
+}
+
+///|
+async test "live UDS: send_message provenance uses bound identity" {
+  live_uds_with_server("send-message-provenance", async fn(ctx) {
+    ignore(@sys.create_dir_all(ctx.project_dir + "/.choir"))
+    let target_id = "main.live-uds.done-target"
+    ignore(
+      ctx.state.registry.upsert({
+        agent_id: target_id,
+        role: @types.Role::Worker,
+        agent_type: @types.AgentType::Codex,
+        parent: Some("root"),
+        workspace: ctx.project_dir,
+        branch: target_id,
+        terminal_target: None,
+        host: @types.Host::Local,
+        spawn_depth: 0,
+        state: @types.AgentState::Done,
+      }),
+    )
+    let dev_id = "main.live-uds.sender-dev"
+    let dev_token = "live-sender-dev-token"
+    serve_test_upsert_agent(
+      ctx.state,
+      dev_id,
+      @types.Role::Dev,
+      ctx.project_dir,
+    )
+    serve_test_record_credential(ctx.state, dev_id, @types.Role::Dev, dev_token)
+    live_uds_with_session(ctx, async fn(session) {
+      live_uds_assert_ok(
+        live_uds_register_session(
+          ctx,
+          session,
+          @types.Role::Dev,
+          dev_id,
+          dev_token,
+        ),
+        "dev register",
+      )
+      live_uds_assert_ok(
+        live_uds_call(ctx, session, @types.Role::Dev, dev_id, {
+          req_method: "tools/call",
+          role: @types.Role::Dev,
+          name: "send_message",
+          args: @types.RequestArgs::from_values({
+            "target_id": target_id.to_json(),
+            "sender_id": "root".to_json(),
+            "message": "bound sender spoof".to_json(),
+          }),
+        }),
+        "bound send_message",
+      )
+    })
+    let log_after_bound = @sys.read_file(
+      ctx.project_dir + "/.choir/delivery.log",
+    )
+    assert_true(log_after_bound.contains("sender=" + dev_id))
+    assert_false(log_after_bound.contains("sender=root"))
+
+    live_uds_with_session(ctx, async fn(session) {
+      live_uds_assert_ok(
+        live_uds_send_wire(
+          ctx,
+          session,
+          @transport.format_request({
+            req_method: "tools/call",
+            role: @types.Role::Worker,
+            name: "send_message",
+            args: @types.RequestArgs::from_values({
+              "target_id": target_id.to_json(),
+              "sender_id": "root".to_json(),
+              "message": "unbound sender spoof".to_json(),
+            }),
+          }) +
+          "\n",
+        ),
+        "unbound send_message",
+      )
+    })
+    let log_after_unbound = @sys.read_file(
+      ctx.project_dir + "/.choir/delivery.log",
+    )
+    assert_false(log_after_unbound.contains("sender=root"))
+    assert_true(log_after_unbound.contains("sender=unknown"))
+  })
+  live_uds_note_pass("live UDS: send_message provenance uses bound identity")
+}
+
+///|
 async fn serve_handle_connection(
   conn : @socket.Tcp,
   state : @server.ServerState,
