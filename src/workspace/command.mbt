@@ -1387,7 +1387,7 @@ pub fn codex_completion_handoff_stop_hook_command() -> String {
 
 ///|
 pub fn claude_completion_handoff_hook_relative_path() -> String {
-  ".choir/hooks/completion_handoff_subagent_stop.sh"
+  ".choir/hooks/completion_handoff_stop.sh"
 }
 
 ///|
@@ -1396,9 +1396,7 @@ pub fn claude_completion_handoff_hook_path(worktree_path : String) -> String {
 }
 
 ///|
-pub fn claude_completion_handoff_subagent_stop_command(
-  worktree_path : String,
-) -> String {
+pub fn claude_completion_handoff_stop_command(worktree_path : String) -> String {
   "sh " + @sys.shell_quote(claude_completion_handoff_hook_path(worktree_path))
 }
 
@@ -1411,7 +1409,7 @@ pub fn claude_completion_handoff_hook_script_body() -> String {
 }
 
 ///|
-fn claude_subagent_stop_group(command : String) -> Json {
+fn claude_stop_group(command : String) -> Json {
   { "hooks": [contract_boundary_command_hook(command)].to_json() }.to_json()
 }
 
@@ -1439,12 +1437,8 @@ pub fn claude_spawn_settings_json(
   }
   if include_completion_handoff {
     hooks.set(
-      "SubagentStop",
-      [
-        claude_subagent_stop_group(
-          claude_completion_handoff_subagent_stop_command(worktree_path),
-        ),
-      ].to_json(),
+      "Stop",
+      [claude_stop_group(claude_completion_handoff_stop_command(worktree_path))].to_json(),
     )
   }
   let settings : Map[String, Json] = { "hooks": hooks.to_json() }
