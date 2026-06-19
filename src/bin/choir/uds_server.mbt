@@ -2219,16 +2219,200 @@ fn live_uds_note_pass(name : String) -> Unit {
 }
 
 ///|
-fn live_uds_real_exec_integration_enabled() -> Bool {
-  match @env.get_env_var("CHOIR_TEST_REAL_EXEC") {
-    Some(value) => value == "1"
-    None => false
+fn live_uds_built_choir_binary() -> String raise {
+  let root = @env.current_dir().unwrap_or(".")
+  let rel = "_build/native/debug/build/src/bin/choir/choir.exe"
+  let path = root + "/" + rel
+  match @sys.realpath_native(path) {
+    Some(real) =>
+      if @sys.path_executable(real) {
+        real
+      } else {
+        fail("live UDS choir binary is not executable: " + real)
+      }
+    None =>
+      fail(
+        "live UDS real client binary missing; run `moon build src/bin/choir --target native` before the REAL_EXEC lane",
+      )
   }
 }
 
 ///|
+fn live_uds_write_real_client_project(
+  ctx : LiveUDSTestContext,
+  agent_id : String,
+) -> Unit raise {
+  let choir_dir = ctx.project_dir + "/.choir"
+  assert_true(@sys.create_dir_all(choir_dir))
+  assert_true(
+    @sys.write_file_sync(
+      choir_dir + "/config.toml",
+      "default_role = \"tl\"\nproject_dir = \"" +
+      ctx.project_dir +
+      "\"\nlisten_uds = \"" +
+      ctx.sock_path +
+      "\"\nterminal_session = \"live-uds\"\n",
+    ),
+  )
+  assert_true(
+    @sys.write_file_sync(
+      choir_dir + "/config.local.toml",
+      "default_role = \"tl\"\nlisten_uds = \"" + ctx.sock_path + "\"\n",
+    ),
+  )
+  assert_false(
+    @sys.read_file(choir_dir + "/config.local.toml").contains(agent_id),
+  )
+}
+
+///|
+struct LiveUDSRealClientResult {
+  exit_code : Int
+  output : String
+  accepted_clients : Int
+  connected_agent_id : String?
+  authenticated_agent_id : String?
+}
+
+///|
+async fn live_uds_run_real_leaf_tool_client(
+  ctx : LiveUDSTestContext,
+  choir_binary : String,
+  agent_id : String,
+  role : @types.Role,
+  token : String,
+) -> LiveUDSRealClientResult {
+  @async.with_task_group(async fn(group) {
+    let child = group.spawn(async fn() {
+      @exec.capture_command_merged({
+        program: "/usr/bin/env",
+        args: [
+          "CHOIR_AGENT_ID=" + agent_id,
+          "CHOIR_ROLE=" + @config.role_to_string(role),
+          "CHOIR_AGENT_TOKEN=" + token,
+          "CHOIR_LISTEN_UDS=" + ctx.sock_path,
+          "CHOIR_PARENT_ID=root",
+          "CHOIR_BRANCH=" + agent_id,
+          "CHOIR_PARENT_BRANCH=main",
+          "CHOIR_WORKSPACE=" + ctx.project_dir,
+          "CHOIR_AGENT_TYPE=codex",
+          choir_binary,
+          "leaf-tool",
+          "handoff_status",
+          "--agent-id",
+          agent_id,
+        ],
+        workdir: Some(ctx.project_dir),
+      })
+    })
+    let clients : Array[ServeUDSClient] = []
+    let mut accepted_clients = 0
+    let mut connected_agent_id : String? = None
+    let mut authenticated_agent_id : String? = None
+    let mut child_result : (Int, String)? = None
+    let mut attempts = 0
+    while attempts < 2000 {
+      match child.try_wait() {
+        Some(result) => {
+          child_result = Some(result)
+          break
+        }
+        None => ()
+      }
+      for ;; {
+        let client_fd = @uds.accept_nonblocking(ctx.server_fd)
+        if client_fd == -2 {
+          break
+        }
+        if client_fd < 0 {
+          fail("live UDS real client accept_nonblocking failed")
+        }
+        ignore(@uds.set_nonblocking(client_fd))
+        clients.push(ServeUDSClient::new(client_fd))
+        accepted_clients = accepted_clients + 1
+      }
+      let mut i = 0
+      while i < clients.length() {
+        let request_tasks : Array[async () -> Unit] = []
+        let alive = serve_handle_uds_connection(
+          clients[i],
+          ctx.state,
+          ctx.server_fd,
+          fn(task) { request_tasks.push(task) },
+        )
+        for task in request_tasks {
+          task()
+        }
+        connected_agent_id = clients[i].connected_agent_id
+        authenticated_agent_id = clients[i].authenticated_agent_id
+        if alive {
+          i = i + 1
+        } else {
+          let client = clients.remove(i)
+          connected_agent_id = client.connected_agent_id
+          authenticated_agent_id = client.authenticated_agent_id
+          serve_close_uds_client(client, ctx.state)
+        }
+      }
+      attempts = attempts + 1
+      @async.sleep(1)
+    }
+    let (exit_code, output) = match child_result {
+      Some(result) => result
+      None => {
+        child.cancel()
+        fail("timed out waiting for real leaf-tool client")
+      }
+    }
+    let mut flush_attempts = 0
+    while clients.length() > 0 && flush_attempts < 100 {
+      let mut i = 0
+      while i < clients.length() {
+        let request_tasks : Array[async () -> Unit] = []
+        let alive = serve_handle_uds_connection(
+          clients[i],
+          ctx.state,
+          ctx.server_fd,
+          fn(task) { request_tasks.push(task) },
+        )
+        for task in request_tasks {
+          task()
+        }
+        connected_agent_id = clients[i].connected_agent_id
+        authenticated_agent_id = clients[i].authenticated_agent_id
+        if alive {
+          i = i + 1
+        } else {
+          let client = clients.remove(i)
+          connected_agent_id = client.connected_agent_id
+          authenticated_agent_id = client.authenticated_agent_id
+          serve_close_uds_client(client, ctx.state)
+        }
+      }
+      flush_attempts = flush_attempts + 1
+      if clients.length() > 0 {
+        @async.sleep(1)
+      }
+    }
+    while clients.length() > 0 {
+      let client = clients.remove(0)
+      connected_agent_id = client.connected_agent_id
+      authenticated_agent_id = client.authenticated_agent_id
+      serve_close_uds_client(client, ctx.state)
+    }
+    {
+      exit_code,
+      output,
+      accepted_clients,
+      connected_agent_id,
+      authenticated_agent_id,
+    }
+  })
+}
+
+///|
 async test "real exec integration: live UDS: strict role gate rejects supervisor spoof" {
-  if !live_uds_real_exec_integration_enabled() {
+  if !@exec.real_exec_integration_enabled() {
     return
   }
   live_uds_with_server("strict-role", async fn(ctx) {
@@ -2374,7 +2558,7 @@ async test "real exec integration: live UDS: strict role gate rejects supervisor
 
 ///|
 async test "real exec integration: live UDS: sub-TL session binds branch id" {
-  if !live_uds_real_exec_integration_enabled() {
+  if !@exec.real_exec_integration_enabled() {
     return
   }
   live_uds_with_server("subtl-bind", async fn(ctx) {
@@ -2423,7 +2607,7 @@ async test "real exec integration: live UDS: sub-TL session binds branch id" {
 
 ///|
 async test "real exec integration: live UDS: OneShot env identity authenticates follow-up" {
-  if !live_uds_real_exec_integration_enabled() {
+  if !@exec.real_exec_integration_enabled() {
     return
   }
   live_uds_with_server("oneshot-env", async fn(ctx) {
@@ -2530,8 +2714,47 @@ async test "real exec integration: live UDS: OneShot env identity authenticates 
 }
 
 ///|
+async test "real exec integration: live UDS: OneShot real client binary authenticates" {
+  if !@exec.real_exec_integration_enabled() {
+    return
+  }
+  live_uds_with_server("oneshot-real-client", async fn(ctx) {
+    let agent_id = "main.live-uds.real-client-dev"
+    let token = "live-real-client-dev-token"
+    let role = @types.Role::Dev
+    serve_test_upsert_agent(ctx.state, agent_id, role, ctx.project_dir)
+    serve_test_record_credential(ctx.state, agent_id, role, token)
+    live_uds_write_real_client_project(ctx, agent_id)
+    let result = live_uds_run_real_leaf_tool_client(
+      ctx,
+      live_uds_built_choir_binary(),
+      agent_id,
+      role,
+      token,
+    )
+    if result.exit_code != 0 {
+      fail(
+        "real leaf-tool expected exit 0, got " +
+        result.exit_code.to_string() +
+        ": " +
+        result.output,
+      )
+    }
+    assert_true(result.output.contains("\"ok\":true"))
+    assert_true(result.output.contains("\"agent_id\":\"" + agent_id + "\""))
+    assert_false(result.output.contains("role worker cannot call"))
+    assert_false(result.output.contains("authentication failed"))
+    assert_true(result.accepted_clients > 0)
+    @debug.assert_eq(result.connected_agent_id, None)
+    @debug.assert_eq(result.authenticated_agent_id, Some(agent_id))
+    assert_false(ctx.state.pending_disconnects.contains(agent_id))
+  })
+  live_uds_note_pass("live UDS: OneShot real client binary authenticates")
+}
+
+///|
 async test "real exec integration: live UDS: target agent_id is not caller identity" {
-  if !live_uds_real_exec_integration_enabled() {
+  if !@exec.real_exec_integration_enabled() {
     return
   }
   live_uds_with_server("target-agent-id", async fn(ctx) {
@@ -2608,7 +2831,7 @@ async test "real exec integration: live UDS: target agent_id is not caller ident
 
 ///|
 async test "real exec integration: live UDS: send_message provenance uses bound identity" {
-  if !live_uds_real_exec_integration_enabled() {
+  if !@exec.real_exec_integration_enabled() {
     return
   }
   live_uds_with_server("send-message-provenance", async fn(ctx) {
