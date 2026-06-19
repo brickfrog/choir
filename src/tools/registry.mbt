@@ -231,7 +231,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     ),
     tool_def(
       "resolve_my_review_threads",
-      "Resolve all currently tracked unresolved GitHub review threads for the caller's PR(s) using the server's GitHub credentials.",
+      "Resolve currently tracked unresolved GitHub review threads for the caller's PR(s), or for target_agent_id when called by a supervisor. caller_id is caller identity only, never a target.",
       [@types.Role::TL, @types.Role::Dev],
     ),
     tool_def(
