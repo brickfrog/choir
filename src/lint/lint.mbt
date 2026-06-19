@@ -433,6 +433,7 @@ fn is_allowed_test_exec_package_ref(
         match dotted_ident_name(expr) {
           Some(name) =>
             name == "hermetic_exec_violation_message" ||
+            name == "real_exec_integration_enabled" ||
             name == "strip_terminal_responses"
           None => false
         }
