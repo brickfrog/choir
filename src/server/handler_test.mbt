@@ -10668,7 +10668,7 @@ async test "handoff_status reports notify_parent handoff bit" {
     []
   })
   assert_true(before.is_ok())
-  assert_eq(before.ok_field("handed_off"), Some("false"))
+  @debug.assert_eq(before.ok_field("handed_off"), Some("false"))
 
   let sent : Array[String] = []
   let notify_req : @types.Request = {
@@ -10691,14 +10691,14 @@ async test "handoff_status reports notify_parent handoff bit" {
     []
   })
   assert_true(after.is_ok())
-  assert_eq(after.ok_field("handed_off"), Some("true"))
+  @debug.assert_eq(after.ok_field("handed_off"), Some("true"))
 }
 
 ///|
-async test "register resets handoff delivered for current spawn" {
-  let state = handler_auto_close_test_state("handoff-register-reset")
+async test "session register preserves handoff delivered for current spawn" {
+  let state = handler_auto_close_test_state("handoff-register-preserve")
   let parent_id = "main.parent"
-  let worker_id = "main.reset-status-worker"
+  let worker_id = "main.preserve-status-worker"
   ignore(state.register_agent(worker_handoff_parent(parent_id)))
   ignore(
     state.register_agent(
@@ -10711,6 +10711,29 @@ async test "register resets handoff delivered for current spawn" {
   ignore(
     state.register_agent(
       worker_handoff_worker(worker_id, parent_id, @types.AgentState::Active),
+    ),
+  )
+  assert_true(state.handoff_delivered.contains(worker_id))
+}
+
+///|
+async test "spawn launch diagnostic resets handoff delivered for current spawn" {
+  let state = handler_auto_close_test_state("handoff-spawn-reset")
+  let parent_id = "main.parent"
+  let worker_id = "main.spawn-reset-status-worker"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      worker_handoff_worker(worker_id, parent_id, @types.AgentState::Active),
+    ),
+  )
+  state.mark_handoff_delivered(worker_id)
+  assert_true(state.handoff_delivered.contains(worker_id))
+
+  state.record_spawn_launch_diagnostic(
+    @tools.SpawnLaunchDiagnostic::SpawnCommandsSucceeded(
+      agent_id=worker_id,
+      launch_count=1,
     ),
   )
   assert_false(state.handoff_delivered.contains(worker_id))
@@ -10761,7 +10784,7 @@ async test "one-shot register does not reset handoff delivered" {
     },
   )
   assert_true(status_resp.is_ok())
-  assert_eq(status_resp.ok_field("handed_off"), Some("true"))
+  @debug.assert_eq(status_resp.ok_field("handed_off"), Some("true"))
 }
 
 ///|
