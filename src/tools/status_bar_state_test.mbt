@@ -1313,3 +1313,26 @@ test "status_bar_state tool registry allows all roles" {
   assert_true(dev_lookup is Ok(_))
   assert_true(worker_lookup is Ok(_))
 }
+
+///|
+test "handoff_status tool registry allows all roles read-only" {
+  let tools = @tools.ToolRegistry::new()
+  let root_lookup = status_bar_test_capture(() => {
+    tools.lookup(@types.Role::Root, "handoff_status")
+  })
+  let tl_lookup = status_bar_test_capture(() => {
+    tools.lookup(@types.Role::TL, "handoff_status")
+  })
+  let dev_lookup = status_bar_test_capture(() => {
+    tools.lookup(@types.Role::Dev, "handoff_status")
+  })
+  let worker_lookup = status_bar_test_capture(() => {
+    tools.lookup(@types.Role::Worker, "handoff_status")
+  })
+  assert_true(root_lookup is Ok(_))
+  assert_true(tl_lookup is Ok(_))
+  assert_true(dev_lookup is Ok(_))
+  assert_true(worker_lookup is Ok(_))
+  guard root_lookup is Ok(def) else { return }
+  assert_true(def.read_only)
+}

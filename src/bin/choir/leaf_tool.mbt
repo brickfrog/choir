@@ -208,6 +208,27 @@ fn leaf_tool_request_args(
       }
       Ok(flags)
     }
+    "handoff_status" => {
+      if !flags.contains("agent_id") {
+        if positionals.length() > 0 && positionals[0].trim() != "" {
+          flags.set("agent_id", positionals[0].trim().to_owned())
+        } else {
+          match @sys.getenv("CHOIR_AGENT_ID") {
+            Some(id) => if id != "" { flags.set("agent_id", id) }
+            None => ()
+          }
+        }
+      }
+      match flags.get("agent_id") {
+        Some(agent_id) =>
+          if agent_id.trim() == "" {
+            Err("handoff_status requires agent_id")
+          } else {
+            Ok(flags)
+          }
+        None => Err("handoff_status requires agent_id")
+      }
+    }
     "tdd_intent" => {
       if !flags.contains("caller_id") {
         match @sys.getenv("CHOIR_AGENT_ID") {
@@ -369,6 +390,7 @@ fn leaf_tool_usage(tool : String) -> String {
       "usage: file_pr [--branch <branch>] [--parent-branch <parent_branch>]"
     "notify_parent" =>
       "usage: notify_parent [--status <success|failure|info>] <message>"
+    "handoff_status" => "usage: handoff_status [--agent-id <agent_id>]"
     "report_usage" =>
       "usage: report_usage --tokens-in <n> --tokens-out <n> --elapsed-s <seconds> [--cost-usd <usd>]"
     "tdd_intent" => "usage: tdd_intent --intent <intent> [--artifact <path>]"
@@ -470,7 +492,9 @@ fn resolve_leaf_local_cfg(
         Some(env_cfg) => {
           @moontrace.info(
             "leaf_tool config.local lacks identity; using env identity",
-            fields=[@moontrace.field("agent_id", env_cfg.agent_id.unwrap_or(""))],
+            fields=[
+              @moontrace.field("agent_id", env_cfg.agent_id.unwrap_or("")),
+            ],
           )
           Ok(env_cfg)
         }
@@ -992,6 +1016,15 @@ test "leaf tool parser supports notify_parent positional message and status" {
   ).unwrap()
   @debug.assert_eq(parsed.get("status"), Some("failure"))
   @debug.assert_eq(parsed.get("message"), Some("[BLOCKED] need help"))
+}
+
+///|
+test "leaf tool parser supports handoff_status positional agent" {
+  let parsed = leaf_tool_request_args(
+    "handoff_status",
+    parse_leaf_cli_args(["main.leaf"]),
+  ).unwrap()
+  @debug.assert_eq(parsed.get("agent_id"), Some("main.leaf"))
 }
 
 ///|

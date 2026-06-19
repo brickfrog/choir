@@ -603,6 +603,9 @@ pub async fn ServerState::handle_with_runner_and_capture(
       record_handoff_delivered=fn(agent_id) {
         self.mark_handoff_delivered(agent_id)
       },
+      handoff_status_reader=fn(agent_id) {
+        self.handoff_was_delivered(agent_id)
+      },
       on_resolve_review_thread=async fn(pr_numbers : Array[Int]) {
         if pr_numbers.length() > 0 {
           self.sweep_tracked_prs_for_automerge(runner, sleep_fn~) catch {

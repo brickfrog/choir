@@ -2063,6 +2063,17 @@ fn parse_wave_state_args(args : ToolArgs) -> Result[WaveStateArgs, ParseError] {
 }
 
 ///|
+fn parse_handoff_status_args(
+  args : ToolArgs,
+) -> Result[HandoffStatusArgs, ParseError] {
+  let agent_id = tool_args_get(args, "agent_id").unwrap_or("")
+  if agent_id == "" {
+    return Err(ParseError::MissingField(field="agent_id"))
+  }
+  Ok({ agent_id, })
+}
+
+///|
 fn parse_status_bar_state_args(
   _args : ToolArgs,
 ) -> Result[StatusBarStateArgs, ParseError] {
@@ -2258,6 +2269,10 @@ fn parse_tool_request(
       parse_track_pr_args(args).map(fn(a) { ToolRequest::TrackPr(a) })
     "notify_parent" =>
       parse_caller_message_args(args).map(fn(a) { ToolRequest::NotifyParent(a) })
+    "handoff_status" =>
+      parse_handoff_status_args(args).map(fn(a) {
+        ToolRequest::HandoffStatus(a)
+      })
     "report_usage" =>
       parse_report_usage_args(args).map(fn(a) { ToolRequest::ReportUsage(a) })
     "wave_state" =>

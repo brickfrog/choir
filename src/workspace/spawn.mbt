@@ -547,24 +547,36 @@ pub fn provider_materialization_commands(
 ) -> Array[Command] {
   let cmds : Array[Command] = []
   let role_str = @config.role_to_string(role)
-  match contract_boundary_wasm_hooks_path {
-    Some(path) =>
-      if contract_boundary_guard_paths.length() > 0 {
-        if agent_type == Codex {
-          cmds.push(
-            write_codex_hooks_config_toml(
-              workspace, path, contract_boundary_guard_paths,
-            ),
-          )
-        } else if agent_type == Claude {
-          cmds.push(
-            write_claude_settings_with_contract_boundary_hook(
-              workspace, path, contract_boundary_guard_paths,
-            ),
-          )
-        }
-      }
-    None => ()
+  let completion_handoff_enabled = role == @types.Role::Dev ||
+    role == @types.Role::Worker
+  let contract_boundary_enabled = contract_boundary_wasm_hooks_path is Some(_) &&
+    contract_boundary_guard_paths.length() > 0
+  if agent_type == Codex &&
+    (completion_handoff_enabled || contract_boundary_enabled) {
+    cmds.push(
+      write_codex_spawn_hooks_config_toml(
+        workspace,
+        include_completion_handoff=completion_handoff_enabled,
+        wasm_hooks_path=contract_boundary_wasm_hooks_path,
+        guard_paths=contract_boundary_guard_paths,
+      ),
+    )
+  } else if agent_type == Claude &&
+    (completion_handoff_enabled || contract_boundary_enabled) {
+    if completion_handoff_enabled {
+      cmds.push(write_claude_completion_handoff_hook(workspace))
+    }
+    cmds.push(
+      write_claude_spawn_settings(
+        workspace,
+        include_completion_handoff=completion_handoff_enabled,
+        wasm_hooks_path=contract_boundary_wasm_hooks_path,
+        guard_paths=contract_boundary_guard_paths,
+      ),
+    )
+  }
+  if completion_handoff_enabled && (agent_type == Codex || agent_type == Claude) {
+    cmds.push(write_completion_handoff_attempts_reset(workspace, agent_id))
   }
   if agent_type == Gemini || agent_type == Unknown {
     cmds.push(agy_cache_links(root_project, workspace))
@@ -632,7 +644,9 @@ pub fn spawn_commands(
   } else {
     { wasm_hooks_path: None, guard_paths: [], warning: None }
   }
-  let claude_settings_path = match boundary_hook_plan.wasm_hooks_path {
+  let completion_handoff_hooks_enabled = spec.role == @types.Role::Dev ||
+    spec.role == @types.Role::Worker
+  let boundary_claude_settings_path = match boundary_hook_plan.wasm_hooks_path {
     Some(_) =>
       if spec.agent_type == Claude &&
         boundary_hook_plan.guard_paths.length() > 0 {
@@ -641,6 +655,12 @@ pub fn spawn_commands(
         None
       }
     None => None
+  }
+  let claude_settings_path = if spec.agent_type == Claude &&
+    completion_handoff_hooks_enabled {
+    Some(workspace + "/.choir/claude-settings.json")
+  } else {
+    boundary_claude_settings_path
   }
   let launch_cmd = zellij_launch_inner_command(
     agent_launch_command(
@@ -651,7 +671,8 @@ pub fn spawn_commands(
       extra_mcp_servers_json~,
       project_dir=root_project,
       claude_settings_path~,
-      codex_bypass_hook_trust=boundary_hook_plan.wasm_hooks_path is Some(_),
+      codex_bypass_hook_trust=boundary_hook_plan.wasm_hooks_path is Some(_) ||
+        (spec.agent_type == Codex && completion_handoff_hooks_enabled),
     ),
   )
   let terminal_target = local_target_for(session, spec.slug, spec.isolation)
