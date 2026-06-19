@@ -31,10 +31,20 @@ path; drive the actual per-connection serve routine (`serve_handle_uds_connectio
 over a real accepted `server_fd`-side client fd) AND the real client path
 (`client_call_uds` → `client_register_if_needed` → write/read framing) from the
 same test process. This exercises accept + connection→agent_id bind + OneShot
-disconnect scheduling + framing. It is hermetic: `@uds.*` socket syscalls are NOT
-gated by the `CHOIR_TEST_NO_EXEC` tripwire (that guards process exec only), so the
-test runs under the hermetic suite. No subprocess of the built binary; no
+disconnect scheduling + framing. No subprocess of the built binary; no
 hand-rolled byte frames where the real client path exists.
+
+**Lane (corrected after the first CI run):** real-socket tests must follow the
+repo's real-exec-integration convention or the static `choir_lint`
+`test-exec-reference` rule rejects them. Each case is NAMED
+`test "real exec integration: live UDS: <case>"` (so `is_explicit_real_exec_integration_test`
+exempts it — `src/lint/lint.mbt:1223`) AND self-skips with
+`if !@exec.real_exec_integration_enabled() { return }` at the top (so the
+default/hermetic suite never opens real sockets — mirrors `src/exec/exec_test.mbt`).
+The cases run ONLY under `CHOIR_TEST_REAL_EXEC=1`, in a CI lane extended from
+`.github/workflows/ci.yml:66` (`... moon test --target native src/exec
+src/bin/choir`). The runtime `CHOIR_TEST_NO_EXEC` tripwire never sees them
+(they self-skip); the static lint exempts them by name.
 
 **Q: Drive the real identity-resolution path (config.local.toml + env), where
 #610 hid?**
@@ -154,16 +164,19 @@ to the env identity, not a Worker downgrade.
   `read_bytes_nonblocking`, `write_bytes`, `close`.
 
 ## Verify
-- `CHOIR_TEST_NO_EXEC=1 moon test --target native` — the new test RUNS under the
-  hermetic tripwire (real `@uds` sockets are not gated) and passes; confirms it is
-  hermetic (no real exec).
-- `moon test --target native` — full suite green, including the five new cases.
-- Observable per-case: each case is a named `test "live UDS: <case>"` that
-  asserts the socket round-trip result (e.g. run the suite filtered to the live
-  cases and confirm 5 pass):
-  `moon test --target native -p src/bin/choir 2>&1 | grep -i "live UDS"` shows the
-  case names passing.
-- `moon run src/bin/choir_lint --target native` — exit 0.
+- `CHOIR_TEST_REAL_EXEC=1 moon test --target native src/bin/choir` — the five
+  cases RUN (real sockets) and pass. Observable:
+  `CHOIR_TEST_REAL_EXEC=1 moon test --target native src/bin/choir 2>&1 | grep -i
+  "live UDS"` shows the five `real exec integration: live UDS: <case>` markers
+  passing.
+- `CHOIR_TEST_NO_EXEC=1 moon test --target native` — full suite green; the live
+  cases SELF-SKIP (suite stays hermetic, no real sockets).
+- `moon test --target native` — full suite green (cases self-skip in the default
+  lane too).
+- `moon run src/bin/choir_lint --target native` — exit 0 (the
+  `real exec integration:` naming clears `test-exec-reference`).
+- CI: `.github/workflows/ci.yml` real-exec lane extended to include
+  `src/bin/choir` so the cases actually execute in CI.
 - Negative-control sanity: temporarily reverting the 47vy strict check (or #608
   fix) in a scratch build makes Case A (or D) FAIL — i.e. the test actually
   catches the regression class it targets. (Documented manual check in the PR, not
@@ -183,6 +196,11 @@ to the env identity, not a Worker downgrade.
   exact gap being closed).
 - Whitebox/inline in `src/bin/choir` (private seams). Do not put these in a
   blackbox `_test.mbt` (won't compile against the private symbols).
+- Real-exec-integration lane is MANDATORY: name each case
+  `test "real exec integration: live UDS: <case>"` and self-skip via
+  `@exec.real_exec_integration_enabled()`. Do NOT let the live cases run real
+  sockets in the default/hermetic suite, and do NOT try to suppress the
+  `test-exec-reference` lint any other way (no inline-ignore hacks).
 - No new raw `@sys.*`/`@process.*` in the forbidden layers; `@uds.*` and the
   test-local `@sys.rm_rf`/temp-dir use stay at the bin/test seam.
 
