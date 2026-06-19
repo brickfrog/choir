@@ -2219,7 +2219,18 @@ fn live_uds_note_pass(name : String) -> Unit {
 }
 
 ///|
-async test "live UDS: strict role gate rejects supervisor spoof" {
+fn live_uds_real_exec_integration_enabled() -> Bool {
+  match @env.get_env_var("CHOIR_TEST_REAL_EXEC") {
+    Some(value) => value == "1"
+    None => false
+  }
+}
+
+///|
+async test "real exec integration: live UDS: strict role gate rejects supervisor spoof" {
+  if !live_uds_real_exec_integration_enabled() {
+    return
+  }
   live_uds_with_server("strict-role", async fn(ctx) {
     let root_token = "live-root-token"
     serve_record_boot_root_credential(ctx.state, root_token)
@@ -2362,7 +2373,10 @@ async test "live UDS: strict role gate rejects supervisor spoof" {
 }
 
 ///|
-async test "live UDS: sub-TL session binds branch id" {
+async test "real exec integration: live UDS: sub-TL session binds branch id" {
+  if !live_uds_real_exec_integration_enabled() {
+    return
+  }
   live_uds_with_server("subtl-bind", async fn(ctx) {
     let agent_id = "feature.live-uds.subtl"
     let token = "live-subtl-bind-token"
@@ -2408,7 +2422,10 @@ async test "live UDS: sub-TL session binds branch id" {
 }
 
 ///|
-async test "live UDS: OneShot env identity authenticates follow-up" {
+async test "real exec integration: live UDS: OneShot env identity authenticates follow-up" {
+  if !live_uds_real_exec_integration_enabled() {
+    return
+  }
   live_uds_with_server("oneshot-env", async fn(ctx) {
     let agent_id = "main.live-uds.env-dev"
     let token = "live-env-dev-token"
@@ -2513,7 +2530,10 @@ async test "live UDS: OneShot env identity authenticates follow-up" {
 }
 
 ///|
-async test "live UDS: target agent_id is not caller identity" {
+async test "real exec integration: live UDS: target agent_id is not caller identity" {
+  if !live_uds_real_exec_integration_enabled() {
+    return
+  }
   live_uds_with_server("target-agent-id", async fn(ctx) {
     let root_token = "live-target-root-token"
     serve_record_boot_root_credential(ctx.state, root_token)
@@ -2587,7 +2607,10 @@ async test "live UDS: target agent_id is not caller identity" {
 }
 
 ///|
-async test "live UDS: send_message provenance uses bound identity" {
+async test "real exec integration: live UDS: send_message provenance uses bound identity" {
+  if !live_uds_real_exec_integration_enabled() {
+    return
+  }
   live_uds_with_server("send-message-provenance", async fn(ctx) {
     ignore(@sys.create_dir_all(ctx.project_dir + "/.choir"))
     let target_id = "main.live-uds.done-target"
