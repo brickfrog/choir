@@ -101,6 +101,27 @@ fn completion_handoff_fail_open_result(
 }
 
 ///|
+fn completion_handoff_provider_parse_fail_open_result(
+  reason : String,
+) -> CompletionHandoffHookResult {
+  {
+    stdout: "",
+    stderr: "choir hook completion-handoff: fail-open: " + reason + "\n",
+    exit_code: 0,
+  }
+}
+
+///|
+fn completion_handoff_parse_provider_or_fail_open(
+  args : Array[String],
+) -> Result[@hooks.HookProvider, CompletionHandoffHookResult] {
+  match completion_handoff_parse_provider(args) {
+    Ok(provider) => Ok(provider)
+    Err(err) => Err(completion_handoff_provider_parse_fail_open_result(err))
+  }
+}
+
+///|
 fn completion_handoff_hook_result(
   provider : @hooks.HookProvider,
   agent_id : String,
@@ -208,16 +229,16 @@ fn query_handoff_status_via_leaf_tool_client(
 
 ///|
 fn completion_handoff_cli_run(args : Array[String]) -> Unit {
-  let provider = match completion_handoff_parse_provider(args) {
+  let provider = match completion_handoff_parse_provider_or_fail_open(args) {
     Ok(provider) => provider
-    Err(err) => {
-      @sys.write_stderr(
-        "usage: choir hook completion-handoff --provider <codex|claude>\n" +
-        "choir hook completion-handoff: " +
-        err +
-        "\n",
-      )
-      @sys.exit(1)
+    Err(result) => {
+      if result.stdout != "" {
+        @sys.write_stdout(result.stdout)
+      }
+      if result.stderr != "" {
+        @sys.write_stderr(result.stderr)
+      }
+      @sys.exit(result.exit_code)
       return
     }
   }
@@ -333,6 +354,37 @@ test "completion handoff hook fails open and honors loop cap" {
   assert_eq(capped.exit_code, 0)
   assert_eq(capped.stdout, "")
   assert_eq(capped.stderr, "")
+}
+
+///|
+test "completion handoff CLI provider parse failures fail open without block output" {
+  let missing = match
+    completion_handoff_parse_provider_or_fail_open([
+      "choir", "hook", "completion-handoff",
+    ]) {
+    Ok(_) => fail("missing provider should fail open")
+    Err(result) => result
+  }
+  assert_eq(missing.exit_code, 0)
+  assert_eq(missing.stdout, "")
+  assert_true(missing.stderr.contains("fail-open"))
+  assert_true(missing.stderr.contains("missing --provider"))
+  assert_false(missing.stderr.contains("\"decision\":\"block\""))
+  assert_false(missing.stdout.contains("block"))
+
+  let malformed = match
+    completion_handoff_parse_provider_or_fail_open([
+      "choir", "hook", "completion-handoff", "--provider", "gemini",
+    ]) {
+    Ok(_) => fail("malformed provider should fail open")
+    Err(result) => result
+  }
+  assert_eq(malformed.exit_code, 0)
+  assert_eq(malformed.stdout, "")
+  assert_true(malformed.stderr.contains("fail-open"))
+  assert_true(malformed.stderr.contains("--provider must be codex or claude"))
+  assert_false(malformed.stderr.contains("\"decision\":\"block\""))
+  assert_false(malformed.stdout.contains("block"))
 }
 
 ///|
