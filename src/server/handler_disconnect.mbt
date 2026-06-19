@@ -1146,12 +1146,8 @@ async test "check_idle_agents skips supervisor roles before reading panes" {
     ),
     pane_watcher: @runtime.PaneWatcher::with_host(host),
   }
-  for role in [@types.Role::Root, @types.Role::TL] {
-    let agent_id = match role {
-      @types.Role::Root => "root"
-      @types.Role::TL => "main.tl"
-      _ => "main.supervisor"
-    }
+  for agent_id in ["root", "main.tl"] {
+    let role = @types.Role::TL
     let target : @types.LocalTarget = {
       kind: @types.TargetKind::ZellijPane,
       session: "s",

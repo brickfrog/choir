@@ -19,7 +19,7 @@ test "parse_request accepts server_reload tool call shape" {
   match parse_request(input) {
     Ok(req) => {
       assert_eq(req.req_method, "tools/call")
-      assert_eq(req.role, @types.Role::Root)
+      assert_eq(req.role, @types.Role::TL)
       assert_eq(req.name, "server_reload")
       @debug.assert_eq(req.args.get("binary_path"), Some("/tmp/choir.exe"))
     }

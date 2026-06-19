@@ -1,7 +1,6 @@
 ///|
 /// Agent roles in the orchestration hierarchy.
 pub(all) enum Role {
-  Root
   TL
   Dev
   Worker
@@ -9,13 +8,12 @@ pub(all) enum Role {
 
 ///|
 pub fn is_supervisor_role(role : Role) -> Bool {
-  role == Role::Root || role == Role::TL
+  role == Role::TL
 }
 
 ///|
 pub impl Show for Role with fn output(self, logger) -> Unit {
   match self {
-    Root => logger.write_string("Root")
     TL => logger.write_string("TL")
     Dev => logger.write_string("Dev")
     Worker => logger.write_string("Worker")

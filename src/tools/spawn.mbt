@@ -431,7 +431,7 @@ fn registry_has_agent(reg : @registry.AgentRegistry, agent_id : String) -> Bool 
 ///|
 fn spawn_worker_parent_candidate(agent : @types.Agent) -> Bool {
   match agent.role {
-    @types.Role::Root | @types.Role::TL => true
+    @types.Role::TL => true
     _ => false
   }
 }
@@ -443,10 +443,10 @@ fn fallback_spawn_worker_parent_id(agents : Array[@types.Agent]) -> String? {
   for agent in agents {
     if spawn_worker_parent_candidate(agent) {
       let id = agent.agent_id.to_string()
-      match agent.role {
-        @types.Role::Root => roots.push(id)
-        @types.Role::TL => tls.push(id)
-        _ => ()
+      if id == "root" {
+        roots.push(id)
+      } else {
+        tls.push(id)
       }
     }
   }

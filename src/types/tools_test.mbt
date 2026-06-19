@@ -3,7 +3,7 @@ test "tool role check" {
   let tool : @types.ToolDef = {
     name: "fork_wave",
     description: "Spawn parallel agents",
-    allowed_roles: [@types.Role::Root, @types.Role::TL],
+    allowed_roles: [@types.Role::TL],
     read_only: false,
   }
   assert_true(tool.is_role_allowed(@types.Role::TL))

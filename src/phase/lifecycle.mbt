@@ -332,7 +332,6 @@ pub fn lifecycle_key(agent_id : String) -> String {
 ///|
 pub fn default_workflow_state(role : @types.Role) -> WorkflowState {
   match role {
-    @types.Role::Root => Supervisor(Planning)
     @types.Role::TL => Supervisor(Planning)
     @types.Role::Dev => Dev(Working)
     @types.Role::Worker => Worker(Working)
@@ -538,7 +537,7 @@ pub fn lifecycle_disconnect_policy(
 /// **MAINTENANCE NOTE:** For a [`DevLifecycle`] variant, update [`lifecycle_dev_disconnect_policy`];
 /// for a [`WorkerLifecycle`] variant, update [`worker_disconnect_policy`].
 ///
-/// Root/TL agents are skipped by role in [`check_idle_agents`] before this runs.
+/// TL agents are skipped by role in [`check_idle_agents`] before this runs.
 pub fn lifecycle_idle_watchdog_exempt(lifecycle : AgentLifecycle) -> Bool {
   match lifecycle.workflow {
     Dev(Done(..)) | Dev(Failed(..)) => true
@@ -1026,7 +1025,7 @@ pub fn mark_agent_rescued_superseded(
 }
 
 ///|
-/// Drop a child entry from a supervisor's persisted lifecycle (TL/Root).
+/// Drop a child entry from a supervisor's persisted lifecycle (TL).
 pub fn remove_child_from_supervisor_lifecycle(
   project_dir : String,
   parent_id : String,

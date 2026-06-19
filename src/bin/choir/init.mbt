@@ -882,7 +882,7 @@ async test "init root auth mints once and threads same token to server record an
   serve_record_boot_root_credential(state, auth.server_boot_token)
   match state.registry.credential_for_agent("root") {
     Some(credential) => {
-      assert_eq(credential.role, @types.Role::Root)
+      assert_eq(credential.role, @types.Role::TL)
       assert_eq(credential.token, auth.tl_agent_token)
     }
     None => fail("expected root boot credential")
@@ -904,7 +904,7 @@ async test "init root auth mints once and threads same token to server record an
     serve_test_register_line("root", "root", root_token, project_dir),
     true,
   )
-  serve_assert_register_ok(state, register_result, "root", @types.Role::Root)
+  serve_assert_register_ok(state, register_result, "root", @types.Role::TL)
   ignore(@sys.rm_rf(project_dir))
 }
 

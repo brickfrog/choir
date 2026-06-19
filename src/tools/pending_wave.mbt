@@ -596,7 +596,7 @@ pub fn lookup_dep_role(
 /// Only `Dev` leaves own branches and file PRs, so only their
 /// `Dev(Done(Merged))` signal can move a pending wave forward.
 /// `dep_status_for_lifecycle` pattern-matches exclusively on
-/// `WorkflowState::Dev(_)` — every other role (`TL`, `Root`, `Worker`) falls
+/// `WorkflowState::Dev(_)` — every other role (`TL`, `Worker`) falls
 /// through to `Pending` forever with no watchdog, no retry bound. Reject them
 /// all at validation time so the config error surfaces at `fork_wave` instead
 /// of silently stalling the wave.
@@ -605,13 +605,12 @@ fn is_valid_dep_role(role : @types.Role) -> Bool {
     @types.Role::Dev => true
     @types.Role::Worker => false
     @types.Role::TL => false
-    @types.Role::Root => false
   }
 }
 
 ///|
 /// Validate every entry in `depends_on` is an existing leaf agent id (per the
-/// spec). Rejects unknown ids, empty entries, and non-leaf roles (TL / Root)
+/// spec). Rejects unknown ids, empty entries, and non-leaf roles (TL)
 /// since those never transition to the `Merged` state the pending-wave
 /// dispatcher waits on. Returns a `ConfigError` naming the first offender.
 pub fn validate_pending_wave_deps(

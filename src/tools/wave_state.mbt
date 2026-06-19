@@ -180,11 +180,10 @@ fn supervisor_workflow_for_wave_state(
   match lifecycle {
     // Long-running root TL kept Active by the choir-serve process — the
     // Connected + UnexpectedDisconnect combination is the kqv.4 mislabel,
-    // not a real failure. Two refinements vs the previous unconditional
-    // fix: (a) match synthesized root TLs (Role::TL with a user-<pid>-<nanos>
-    // id) in addition to literal Role::Root, and (b) only mask the
-    // UnexpectedDisconnect when last_updated_unix_sec is recent or
-    // unknown — if the heartbeat is genuinely stale, the disconnect
+    // not a real failure. Match synthesized root TLs (Role::TL with a
+    // user-<pid>-<nanos> id), and only mask the UnexpectedDisconnect when
+    // last_updated_unix_sec is recent or unknown — if the heartbeat is stale,
+    // the disconnect
     // labelling is probably accurate and we should not suppress it.
     Some(
       {
@@ -199,14 +198,14 @@ fn supervisor_workflow_for_wave_state(
       }
     ) if agent.state == @types.AgentState::Active &&
       (
-        agent.role == @types.Role::Root ||
+        agent.agent_id.to_string() == "root" ||
         @phase.is_root_tl_shaped_agent_id(agent.agent_id.to_string())
       ) &&
       wave_state_root_tl_heartbeat_is_recent_or_unknown(last_updated, now_sec) =>
       @phase.SupervisorLifecycle::Planning
     Some({ workflow: @phase.WorkflowState::Supervisor(sl), .. }) => sl
     // No persisted lifecycle yet -> default to Planning; same fallback as
-    // read_or_default_lifecycle for a fresh Root/TL.
+    // read_or_default_lifecycle for a fresh TL.
     _ => @phase.SupervisorLifecycle::Planning
   }
 }
@@ -313,7 +312,7 @@ fn wave_state_default_verify_results_reader(
 /// registry children, so old Done/Failed rows do not dominate the snapshot.
 ///
 /// Rejects callers whose registry entry is missing and callers that are not a
-/// supervisor role (Root or TL); the registry guards role at the transport
+/// supervisor role (TL); the registry guards role at the transport
 /// layer, but the planner validates again so unit tests can exercise the
 /// rejection branch.
 pub fn plan_wave_state(
@@ -338,7 +337,7 @@ pub fn plan_wave_state(
   guard registry.get_opt(caller_id) is Some(agent) else {
     return Err(@types.ChoirError::agent_not_found(caller_id))
   }
-  guard agent.role == @types.Role::Root || agent.role == @types.Role::TL else {
+  guard agent.role == @types.Role::TL else {
     return Err(
       @types.ChoirError::permission_denied(
         agent.role.to_wire_string(),

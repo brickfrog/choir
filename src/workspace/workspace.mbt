@@ -419,8 +419,7 @@ pub fn mcp_json_content(
   semble_pilot? : Bool = false,
 ) -> String {
   let role_str = match role {
-    @types.Role::Root => "root"
-    @types.Role::TL => "tl"
+    @types.Role::TL => if agent_id == "root" { "root" } else { "tl" }
     @types.Role::Dev => "dev"
     @types.Role::Worker => "worker"
   }

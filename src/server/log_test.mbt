@@ -299,7 +299,7 @@ test "request_log_level maps read-only tools to trace" {
   let read_only : @types.ToolDef = {
     name: "status_bar_state",
     description: "read",
-    allowed_roles: [@types.Role::Root],
+    allowed_roles: [@types.Role::TL],
     read_only: true,
   }
   let mutating : @types.ToolDef = {
@@ -322,7 +322,7 @@ test "request_log_level_for_request uses registry read-only annotation" {
   )
   let req : @types.Request = {
     req_method: "tools/call",
-    role: @types.Role::Root,
+    role: @types.Role::TL,
     name: "status_bar_state",
     args: @types.RequestArgs::from_values({}),
   }
@@ -342,7 +342,7 @@ test "request_log_level_for_request keeps mutating tools at info" {
   )
   let req : @types.Request = {
     req_method: "tools/call",
-    role: @types.Role::Root,
+    role: @types.Role::TL,
     name: "kv_set",
     args: @types.RequestArgs::from_values({
       "key": "request-log".to_json(),
