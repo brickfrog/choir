@@ -554,6 +554,120 @@ test "codex_mcp_override_args includes semble server when pilot is enabled" {
 }
 
 ///|
+test "spawn_commands writes codex Stop completion handoff hook" {
+  let spec = @types.SpawnSpec::{
+    slug: "codex-handoff",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Codex,
+    task: "do guarded work",
+    task_contract: None,
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "root",
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+    automerge: None,
+    review_mode: None,
+    merge_strategy: None,
+    wave_id: None,
+  }
+  let cmds = @workspace.spawn_commands(spec, "/project", "session")
+  let config_index = workspace_rel_file_write_index(cmds, ".codex/config.toml")
+  assert_true(config_index >= 0)
+  let content = cmds[config_index].args[2]
+  assert_true(content.contains("[[hooks.Stop]]"))
+  assert_true(content.contains("[[hooks.Stop.hooks]]"))
+  assert_true(content.contains("type = \"command\""))
+  assert_true(
+    content.contains("choir hook completion-handoff --provider codex"),
+  )
+  let attempts_index = workspace_rel_file_write_index(
+    cmds,
+    @types.completion_handoff_attempts_relpath("main.codex-handoff"),
+  )
+  assert_true(attempts_index >= 0)
+  assert_eq(cmds[attempts_index].args[2], "0")
+  let launch_args = cmds[cmds.length() - 1].args.join("\n")
+  assert_true(launch_args.contains("--dangerously-bypass-hook-trust"))
+}
+
+///|
+test "spawn_commands writes claude SubagentStop hook outside plugin" {
+  let spec = @types.SpawnSpec::{
+    slug: "claude-handoff",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    task: "do guarded work",
+    task_contract: None,
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "root",
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+    automerge: None,
+    review_mode: None,
+    merge_strategy: None,
+    wave_id: None,
+  }
+  let cmds = @workspace.spawn_commands(spec, "/project", "session")
+  let script_index = workspace_rel_file_write_index(
+    cmds, ".choir/hooks/completion_handoff_subagent_stop.sh",
+  )
+  assert_true(script_index >= 0)
+  let script = cmds[script_index].args[2]
+  assert_true(
+    script.contains("choir hook completion-handoff --provider claude"),
+  )
+  let settings_index = workspace_rel_file_write_index(
+    cmds, ".choir/claude-settings.json",
+  )
+  assert_true(settings_index >= 0)
+  let parsed = @json.parse(cmds[settings_index].args[2]) catch {
+    _ => fail("invalid claude settings JSON")
+  }
+  guard parsed is Object(settings) else { fail("settings root missing object") }
+  guard settings.get("hooks") is Some(Object(hooks)) else {
+    fail("hooks missing")
+  }
+  guard hooks.get("SubagentStop") is Some(Array(subagent_stop)) else {
+    fail("SubagentStop missing")
+  }
+  guard subagent_stop[0] is Object(group) else {
+    fail("SubagentStop group missing")
+  }
+  guard group.get("hooks") is Some(Array(handlers)) else {
+    fail("SubagentStop handlers missing")
+  }
+  guard handlers[0] is Object(handler) else { fail("handler missing") }
+  guard handler.get("command") is Some(String(command)) else {
+    fail("command missing")
+  }
+  assert_true(
+    command.contains(
+      "/project/.choir/worktrees/claude-handoff/.choir/hooks/completion_handoff_subagent_stop.sh",
+    ),
+  )
+  assert_false(command.contains(".choir/plugin"))
+  let attempts_index = workspace_rel_file_write_index(
+    cmds,
+    @types.completion_handoff_attempts_relpath("main.claude-handoff"),
+  )
+  assert_true(attempts_index >= 0)
+  assert_eq(cmds[attempts_index].args[2], "0")
+  let launch_args = cmds[cmds.length() - 1].args.join("\n")
+  assert_true(launch_args.contains("--settings"))
+  assert_true(
+    launch_args.contains(
+      "/project/.choir/worktrees/claude-handoff/.choir/claude-settings.json",
+    ),
+  )
+}
+
+///|
 test "agent_launch_command supports command_override" {
   let spec = @types.SpawnSpec::{
     slug: "test-slug",
@@ -1053,8 +1167,9 @@ test "spawn_commands for worktree mode returns zellij tab" {
     wave_id: None,
   }
   let cmds = @workspace.spawn_commands(spec, "/project", "session")
-  // cleanup, fetch parent, git worktree add, seed info/exclude, config.toml, local config, helpers, zellij
-  assert_eq(cmds.length(), 8)
+  // cleanup, fetch parent, git worktree add, seed info/exclude, config.toml,
+  // local config, helpers, Claude completion hook materialization, zellij
+  assert_eq(cmds.length(), 11)
   assert_eq(
     cmds[0].program,
     @workspace.native_worktree_bootstrap_cleanup_program,
@@ -1084,8 +1199,9 @@ test "spawn_commands for worktree mode returns zellij tab" {
   assert_eq(cmds[5].args[1], "config.local.toml")
   assert_eq(cmds[6].program, @workspace.native_leaf_helpers_program)
   @debug.assert_eq(cmds[6].args, ["/project/.choir/worktrees/test-slug"])
-  assert_eq(cmds[7].program, "zellij")
-  assert_eq(cmds[7].args[3], "new-tab")
+  let launch = cmds[cmds.length() - 1]
+  assert_eq(launch.program, "zellij")
+  assert_eq(launch.args[3], "new-tab")
 }
 
 ///|
@@ -1109,7 +1225,7 @@ test "spawn_commands worktree config write content" {
     wave_id: None,
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
-  assert_eq(cmds.length(), 8)
+  assert_eq(cmds.length(), 11)
   assert_eq(cmds[4].program, @workspace.native_write_choir_file_program)
   assert_true(cmds[4].args[0].contains("feature-a"))
   assert_eq(cmds[4].args[1], "config.toml")
@@ -1129,7 +1245,7 @@ test "spawn_commands worktree config write content" {
     cmds[5].args[2].contains("terminal_target = \"zellij-tab:exo:feature-a\""),
   )
   assert_eq(cmds[6].program, @workspace.native_leaf_helpers_program)
-  assert_eq(cmds[7].program, "zellij")
+  assert_eq(cmds[cmds.length() - 1].program, "zellij")
 }
 
 ///|
@@ -1296,8 +1412,8 @@ test "spawn_commands standalone includes config writes" {
     wave_id: None,
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
-  // git init, config.local.toml, helpers, zellij new-tab
-  assert_eq(cmds.length(), 4)
+  // git init, config.local.toml, helpers, Claude completion hook materialization, zellij new-tab
+  assert_eq(cmds.length(), 7)
   assert_no_tracked_config_write(cmds)
   assert_eq(cmds[0].program, "git")
   assert_eq(cmds[1].program, @workspace.native_write_choir_file_program)
@@ -2495,9 +2611,17 @@ test "spawn_commands flag off emits no contract-boundary hook wiring" {
       }
     },
   )
-  assert_eq(workspace_rel_file_write_index(cmds, ".codex/config.toml"), -1)
+  let config_index = workspace_rel_file_write_index(cmds, ".codex/config.toml")
+  assert_true(config_index >= 0)
+  let content = cmds[config_index].args[2]
+  assert_true(content.contains("[[hooks.Stop]]"))
+  assert_true(
+    content.contains("choir hook completion-handoff --provider codex"),
+  )
+  assert_false(content.contains("[[hooks.PreToolUse]]"))
+  assert_false(content.contains("pre_tool_use --wasi"))
   let launch_args = cmds[cmds.length() - 1].args.join("\n")
-  assert_false(launch_args.contains("--dangerously-bypass-hook-trust"))
+  assert_true(launch_args.contains("--dangerously-bypass-hook-trust"))
   assert_eq(
     workspace_rel_file_write_index(cmds, ".choir/claude-settings.json"),
     -1,
@@ -2536,9 +2660,17 @@ test "spawn_commands enforcement warning is fail-open when prerequisites are mis
     extism_on_path=fn() { false },
     read_file=fn(_) { "" },
   )
-  assert_eq(workspace_rel_file_write_index(cmds, ".codex/config.toml"), -1)
+  let config_index = workspace_rel_file_write_index(cmds, ".codex/config.toml")
+  assert_true(config_index >= 0)
+  let content = cmds[config_index].args[2]
+  assert_true(content.contains("[[hooks.Stop]]"))
+  assert_true(
+    content.contains("choir hook completion-handoff --provider codex"),
+  )
+  assert_false(content.contains("[[hooks.PreToolUse]]"))
+  assert_false(content.contains("pre_tool_use --wasi"))
   let launch_args = cmds[cmds.length() - 1].args.join("\n")
-  assert_false(launch_args.contains("--dangerously-bypass-hook-trust"))
+  assert_true(launch_args.contains("--dangerously-bypass-hook-trust"))
   assert_eq(command_program_count(cmds, "sh"), 1)
   let warning_index = command_program_index(cmds, "sh")
   assert_true(cmds[warning_index].args[3].contains("hooks_enforcement"))

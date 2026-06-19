@@ -12,6 +12,16 @@ pub fn sanitize_agent_id(agent_id : String) -> String {
 }
 
 ///|
+pub fn completion_handoff_attempts_dir(agent_id : String) -> String {
+  ".choir/" + sanitize_agent_id(agent_id)
+}
+
+///|
+pub fn completion_handoff_attempts_relpath(agent_id : String) -> String {
+  completion_handoff_attempts_dir(agent_id) + "/handoff-attempts"
+}
+
+///|
 pub fn json_field_string(fields : Map[String, Json], key : String) -> String? {
   match fields.get(key) {
     Some(String(value)) => Some(value)

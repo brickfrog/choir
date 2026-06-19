@@ -1381,26 +1381,78 @@ fn contract_boundary_pre_tool_use_group(command : String) -> Json {
 }
 
 ///|
-pub fn claude_settings_json_with_contract_boundary_hook(
-  wasm_hooks_path : String,
-  guard_paths : Array[String],
-  workspace_root : String,
+pub fn codex_completion_handoff_stop_hook_command() -> String {
+  "choir hook completion-handoff --provider codex"
+}
+
+///|
+pub fn claude_completion_handoff_hook_relative_path() -> String {
+  ".choir/hooks/completion_handoff_subagent_stop.sh"
+}
+
+///|
+pub fn claude_completion_handoff_hook_path(worktree_path : String) -> String {
+  worktree_path + "/" + claude_completion_handoff_hook_relative_path()
+}
+
+///|
+pub fn claude_completion_handoff_subagent_stop_command(
+  worktree_path : String,
 ) -> String {
-  let hooks = {
-    "PreToolUse": [
-      contract_boundary_pre_tool_use_group(
-        contract_boundary_extism_command(
-          wasm_hooks_path, guard_paths, workspace_root,
+  "sh " + @sys.shell_quote(claude_completion_handoff_hook_path(worktree_path))
+}
+
+///|
+pub fn claude_completion_handoff_hook_script_body() -> String {
+  (
+    #|#!/bin/sh
+    #|exec choir hook completion-handoff --provider claude
+  )
+}
+
+///|
+fn claude_subagent_stop_group(command : String) -> Json {
+  { "hooks": [contract_boundary_command_hook(command)].to_json() }.to_json()
+}
+
+///|
+pub fn claude_spawn_settings_json(
+  worktree_path : String,
+  include_completion_handoff? : Bool = false,
+  wasm_hooks_path? : String? = None,
+  guard_paths? : Array[String] = [],
+) -> String {
+  let hooks : Map[String, Json] = {}
+  match wasm_hooks_path {
+    Some(path) =>
+      if guard_paths.length() > 0 {
+        hooks.set(
+          "PreToolUse",
+          [
+            contract_boundary_pre_tool_use_group(
+              contract_boundary_extism_command(path, guard_paths, worktree_path),
+            ),
+          ].to_json(),
+        )
+      }
+    None => ()
+  }
+  if include_completion_handoff {
+    hooks.set(
+      "SubagentStop",
+      [
+        claude_subagent_stop_group(
+          claude_completion_handoff_subagent_stop_command(worktree_path),
         ),
-      ),
-    ].to_json(),
+      ].to_json(),
+    )
   }
   let settings : Map[String, Json] = { "hooks": hooks.to_json() }
   settings.to_json().stringify(indent=2)
 }
 
 ///|
-pub fn codex_hooks_config_toml(
+fn codex_pre_tool_use_hook_config_toml(
   wasm_hooks_path : String,
   guard_paths : Array[String],
   workspace_root : String,
@@ -1418,6 +1470,40 @@ pub fn codex_hooks_config_toml(
   escape_toml_string(command) +
   "\"\n" +
   "timeout = 60\n"
+}
+
+///|
+fn codex_completion_handoff_stop_hook_config_toml() -> String {
+  "[[hooks.Stop]]\n\n" +
+  "[[hooks.Stop.hooks]]\n" +
+  "type = \"command\"\n" +
+  "command = \"" +
+  escape_toml_string(codex_completion_handoff_stop_hook_command()) +
+  "\"\n" +
+  "timeout = 60\n"
+}
+
+///|
+pub fn codex_spawn_hooks_config_toml(
+  workspace_root : String,
+  include_completion_handoff? : Bool = false,
+  wasm_hooks_path? : String? = None,
+  guard_paths? : Array[String] = [],
+) -> String {
+  let parts : Array[String] = []
+  if include_completion_handoff {
+    parts.push(codex_completion_handoff_stop_hook_config_toml())
+  }
+  match wasm_hooks_path {
+    Some(path) =>
+      if guard_paths.length() > 0 {
+        parts.push(
+          codex_pre_tool_use_hook_config_toml(path, guard_paths, workspace_root),
+        )
+      }
+    None => ()
+  }
+  parts.join("\n")
 }
 
 ///|
@@ -1508,30 +1594,63 @@ pub fn write_agy_hooks(
 }
 
 ///|
-pub fn write_claude_settings_with_contract_boundary_hook(
+pub fn write_claude_completion_handoff_hook(worktree_path : String) -> Command {
+  workspace_relative_file_command(
+    worktree_path,
+    claude_completion_handoff_hook_relative_path(),
+    claude_completion_handoff_hook_script_body(),
+  )
+}
+
+///|
+pub fn write_claude_spawn_settings(
   worktree_path : String,
-  wasm_hooks_path : String,
-  guard_paths : Array[String],
+  include_completion_handoff? : Bool = false,
+  wasm_hooks_path? : String? = None,
+  guard_paths? : Array[String] = [],
 ) -> Command {
   workspace_relative_file_command(
     worktree_path,
     ".choir/claude-settings.json",
-    claude_settings_json_with_contract_boundary_hook(
-      wasm_hooks_path, guard_paths, worktree_path,
+    claude_spawn_settings_json(
+      worktree_path,
+      include_completion_handoff~,
+      wasm_hooks_path~,
+      guard_paths~,
     ),
   )
 }
 
 ///|
-pub fn write_codex_hooks_config_toml(
+pub fn write_codex_spawn_hooks_config_toml(
   worktree_path : String,
-  wasm_hooks_path : String,
-  guard_paths : Array[String],
+  include_completion_handoff? : Bool = false,
+  wasm_hooks_path? : String? = None,
+  guard_paths? : Array[String] = [],
 ) -> Command {
   workspace_relative_file_command(
     worktree_path,
     ".codex/config.toml",
-    codex_hooks_config_toml(wasm_hooks_path, guard_paths, worktree_path),
+    codex_spawn_hooks_config_toml(
+      worktree_path,
+      include_completion_handoff~,
+      wasm_hooks_path~,
+      guard_paths~,
+    ),
+  )
+}
+
+///|
+pub fn write_completion_handoff_attempts_reset(
+  worktree_path : String,
+  agent_id : String,
+) -> Command {
+  // Provider stop hooks do not expose a shared loop counter, so spawn resets a
+  // per-agent file that the CLI hook increments before applying max_attempts.
+  workspace_relative_file_command(
+    worktree_path,
+    @types.completion_handoff_attempts_relpath(agent_id),
+    "0",
   )
 }
 
