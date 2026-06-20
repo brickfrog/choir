@@ -15,4 +15,4 @@ default = "gpt-5.5"
 # dev=low: coding leaves drop off the global xhigh (the quota saver). Audits/workers
 # unset -> inherit the global codex effort (xhigh), where the reasoning is worth it.
 [effort.codex]
-dev = "low"
+dev = "high"
