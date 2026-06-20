@@ -241,6 +241,50 @@ pub fn agy_binary_name() -> String {
 }
 
 ///|
+pub fn resolve_agent_model(
+  config : @types.Config,
+  agent_type : @types.AgentType,
+  role : @types.Role,
+  model_override : String?,
+) -> String? {
+  match model_override {
+    Some(model) => Some(model)
+    None =>
+      match config.model.get(agent_type.to_wire_string()) {
+        Some(entry) => {
+          let role_model = match role {
+            @types.Role::Dev => entry.dev
+            @types.Role::Worker => entry.worker
+            @types.Role::TL => entry.tl
+          }
+          match role_model {
+            Some(model) => Some(model)
+            None => entry.default
+          }
+        }
+        None => None
+      }
+  }
+}
+
+///|
+pub fn resolve_agent_model_from_config_content(
+  config_content : String,
+  agent_type : @types.AgentType,
+  role : @types.Role,
+  model_override : String?,
+) -> String? {
+  match model_override {
+    Some(model) => Some(model)
+    None =>
+      match @config.parse_config(config_content) {
+        Ok(config) => resolve_agent_model(config, agent_type, role, None)
+        Err(_) => None
+      }
+  }
+}
+
+///|
 fn provider_launch_command(
   agent_type : @types.AgentType,
   role : @types.Role,
@@ -256,6 +300,7 @@ fn provider_launch_command(
   project_dir? : String = workspace_path,
   claude_settings_path? : String? = None,
   codex_bypass_hook_trust? : Bool = false,
+  model? : String? = None,
 ) -> Command {
   let semble_for_role = role == @types.Role::Dev || role == @types.Role::Worker
   let claude_mcp = if tl_init_mode {
@@ -354,6 +399,10 @@ fn provider_launch_command(
       } else {
         []
       }
+      let model_args = match model {
+        Some(value) => ["--model", value]
+        None => []
+      }
       wrap_with_stderr_redirect(
         {
           program: cmd_program.unwrap_or("codex"),
@@ -361,6 +410,7 @@ fn provider_launch_command(
             ..cmd_extra_args,
             "--dangerously-bypass-approvals-and-sandbox",
             ..hook_trust_args,
+            ..model_args,
             "--no-alt-screen",
             ..codex_mcp_override_args(
               role,
@@ -410,6 +460,7 @@ pub fn agent_launch_command(
   project_dir? : String = workspace_path,
   claude_settings_path? : String? = None,
   codex_bypass_hook_trust? : Bool = false,
+  model? : String? = None,
 ) -> Command {
   let parts = match command_override {
     Some(cmd) => split_words(cmd)
@@ -438,6 +489,7 @@ pub fn agent_launch_command(
     project_dir~,
     claude_settings_path~,
     codex_bypass_hook_trust~,
+    model~,
   )
   match shell_command {
     Some(shell) => wrap_with_shell(cmd, shell)
