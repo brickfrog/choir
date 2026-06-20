@@ -1,4 +1,7 @@
 ///|
+pub let wave_state_schema_version : Int = 1
+
+///|
 /// Typed per-PR snapshot used by `wave_state`.
 ///
 /// `unresolved_threads` and `threads_fetch_error` are fail-loud: when the
@@ -29,6 +32,158 @@ fn wave_state_optional_int64_to_json(value : Int64?) -> Json {
 }
 
 ///|
+fn wave_state_int64_from_json(
+  value : Json,
+  path : @json.JsonPath,
+) -> Int64 raise @json.JsonDecodeError {
+  match value {
+    Number(n, ..) => {
+      let v = n.to_int64()
+      if v.to_double() == n {
+        v
+      } else {
+        raise @json.JsonDecodeError((path, "wave_state: expected integer"))
+      }
+    }
+    String(_) => @json.from_json(value, path~)
+    _ => raise @json.JsonDecodeError((path, "wave_state: expected integer"))
+  }
+}
+
+///|
+fn wave_state_optional_int64_from_json(
+  value : Json,
+  path : @json.JsonPath,
+) -> Int64? raise @json.JsonDecodeError {
+  match value {
+    Null => None
+    _ => Some(wave_state_int64_from_json(value, path))
+  }
+}
+
+///|
+fn wave_state_optional_int_from_json(
+  value : Json,
+  path : @json.JsonPath,
+) -> Int? raise @json.JsonDecodeError {
+  match value {
+    Null => None
+    _ => Some(@json.from_json(value, path~))
+  }
+}
+
+///|
+fn wave_state_optional_string_from_json(
+  value : Json,
+  path : @json.JsonPath,
+) -> String? raise @json.JsonDecodeError {
+  match value {
+    Null => None
+    _ => Some(@json.from_json(value, path~))
+  }
+}
+
+///|
+fn wave_state_review_state_from_json(
+  value : Json,
+  path : @json.JsonPath,
+) -> @poller.ReviewState raise @json.JsonDecodeError {
+  match value {
+    String("none") => @poller.ReviewState::None_
+    String("approved") => @poller.ReviewState::Approved
+    String("changes_requested") => @poller.ReviewState::ChangesRequested
+    String("commented") => @poller.ReviewState::Commented
+    _ =>
+      raise @json.JsonDecodeError(
+        (
+          path, "WaveStatePR::from_json: expected review_state none/approved/changes_requested/commented",
+        ),
+      )
+  }
+}
+
+///|
+fn wave_state_ci_rollup_from_json(
+  value : Json,
+  path : @json.JsonPath,
+) -> @poller.CiRollupStatus raise @json.JsonDecodeError {
+  match value {
+    String("unknown") => @poller.CiRollupStatus::Unknown
+    String("no_checks") => @poller.CiRollupStatus::NoChecks
+    String("in_progress") => @poller.CiRollupStatus::InProgress
+    String("success") => @poller.CiRollupStatus::Success
+    String("failure") => @poller.CiRollupStatus::Failure
+    _ =>
+      raise @json.JsonDecodeError(
+        (
+          path, "WaveStatePR::from_json: expected ci_rollup unknown/no_checks/in_progress/success/failure",
+        ),
+      )
+  }
+}
+
+///|
+fn wave_state_mergeable_from_json(
+  value : Json,
+  path : @json.JsonPath,
+) -> @poller.Mergeable raise @json.JsonDecodeError {
+  match value {
+    String("mergeable") => @poller.Mergeable::Mergeable
+    String("conflicting") => @poller.Mergeable::Conflicting
+    String("unknown") => @poller.Mergeable::Unknown
+    _ =>
+      raise @json.JsonDecodeError(
+        (
+          path, "WaveStatePR::from_json: expected mergeable mergeable/conflicting/unknown",
+        ),
+      )
+  }
+}
+
+///|
+fn wave_state_merge_state_status_from_json(
+  value : Json,
+  path : @json.JsonPath,
+) -> @poller.MergeStateStatus raise @json.JsonDecodeError {
+  match value {
+    String("clean") => @poller.MergeStateStatus::Clean
+    String("unstable") => @poller.MergeStateStatus::Unstable
+    String("blocked") => @poller.MergeStateStatus::Blocked
+    String("has_hooks") => @poller.MergeStateStatus::HasHooks
+    String("behind") => @poller.MergeStateStatus::Behind
+    String("unknown") => @poller.MergeStateStatus::Unknown
+    String("dirty") => @poller.MergeStateStatus::Dirty
+    _ =>
+      raise @json.JsonDecodeError(
+        (
+          path, "WaveStatePR::from_json: expected merge_state_status clean/unstable/blocked/has_hooks/behind/unknown/dirty",
+        ),
+      )
+  }
+}
+
+///|
+fn wave_state_agent_state_from_json(
+  value : Json,
+  path : @json.JsonPath,
+) -> @types.AgentState raise @json.JsonDecodeError {
+  match value {
+    String(s) =>
+      match @types.AgentState::try_parse_wire(s) {
+        Ok(state) => state
+        Err(e) =>
+          raise @json.JsonDecodeError(
+            (path, "WaveStateChild::from_json: " + e.message()),
+          )
+      }
+    _ =>
+      raise @json.JsonDecodeError(
+        (path, "WaveStateChild::from_json: expected agent_state string"),
+      )
+  }
+}
+
+///|
 pub impl ToJson for WaveStatePR with fn to_json(self) -> Json {
   let obj : Map[String, Json] = {
     "pr_number": self.pr_number.to_json(),
@@ -55,6 +210,174 @@ pub impl ToJson for WaveStatePR with fn to_json(self) -> Json {
 }
 
 ///|
+pub impl FromJson for WaveStatePR with fn from_json(json, path) {
+  match json {
+    Object(fields) => {
+      let pr_number : Int = match fields.get("pr_number") {
+        Some(value) => @json.from_json(value, path=path.add_key("pr_number"))
+        None =>
+          raise @json.JsonDecodeError(
+            (
+              path.add_key("pr_number"),
+              "WaveStatePR::from_json: missing field pr_number",
+            ),
+          )
+      }
+      let pr_url : String = match fields.get("pr_url") {
+        Some(value) => @json.from_json(value, path=path.add_key("pr_url"))
+        None =>
+          raise @json.JsonDecodeError(
+            (
+              path.add_key("pr_url"),
+              "WaveStatePR::from_json: missing field pr_url",
+            ),
+          )
+      }
+      let review_state : @poller.ReviewState = match
+        fields.get("review_state") {
+        Some(value) =>
+          wave_state_review_state_from_json(value, path.add_key("review_state"))
+        None =>
+          raise @json.JsonDecodeError(
+            (
+              path.add_key("review_state"),
+              "WaveStatePR::from_json: missing field review_state",
+            ),
+          )
+      }
+      let ci_rollup : @poller.CiRollupStatus = match fields.get("ci_rollup") {
+        Some(value) =>
+          wave_state_ci_rollup_from_json(value, path.add_key("ci_rollup"))
+        None =>
+          raise @json.JsonDecodeError(
+            (
+              path.add_key("ci_rollup"),
+              "WaveStatePR::from_json: missing field ci_rollup",
+            ),
+          )
+      }
+      let mergeable : @poller.Mergeable = match fields.get("mergeable") {
+        Some(value) =>
+          wave_state_mergeable_from_json(value, path.add_key("mergeable"))
+        None =>
+          raise @json.JsonDecodeError(
+            (
+              path.add_key("mergeable"),
+              "WaveStatePR::from_json: missing field mergeable",
+            ),
+          )
+      }
+      let merge_state_status : @poller.MergeStateStatus = match
+        fields.get("merge_state_status") {
+        Some(value) =>
+          wave_state_merge_state_status_from_json(
+            value,
+            path.add_key("merge_state_status"),
+          )
+        None =>
+          raise @json.JsonDecodeError(
+            (
+              path.add_key("merge_state_status"),
+              "WaveStatePR::from_json: missing field merge_state_status",
+            ),
+          )
+      }
+      let merged_at_unix : Int64? = match fields.get("merged_at_unix") {
+        Some(value) =>
+          wave_state_optional_int64_from_json(
+            value,
+            path.add_key("merged_at_unix"),
+          )
+        None => None
+      }
+      let unresolved_threads : Int? = match fields.get("unresolved_threads") {
+        Some(value) =>
+          wave_state_optional_int_from_json(
+            value,
+            path.add_key("unresolved_threads"),
+          )
+        None => None
+      }
+      let threads_fetch_error : String? = match
+        fields.get("threads_fetch_error") {
+        Some(value) =>
+          wave_state_optional_string_from_json(
+            value,
+            path.add_key("threads_fetch_error"),
+          )
+        None => None
+      }
+      let copilot_issue_comment_seen : Bool = match
+        fields.get("copilot_issue_comment_seen") {
+        Some(value) =>
+          @json.from_json(
+            value,
+            path=path.add_key("copilot_issue_comment_seen"),
+          )
+        None =>
+          raise @json.JsonDecodeError(
+            (
+              path.add_key("copilot_issue_comment_seen"),
+              "WaveStatePR::from_json: missing field copilot_issue_comment_seen",
+            ),
+          )
+      }
+      let fixes_pushed_at : Int64 = match fields.get("fixes_pushed_at") {
+        Some(value) =>
+          wave_state_int64_from_json(value, path.add_key("fixes_pushed_at"))
+        None =>
+          raise @json.JsonDecodeError(
+            (
+              path.add_key("fixes_pushed_at"),
+              "WaveStatePR::from_json: missing field fixes_pushed_at",
+            ),
+          )
+      }
+      let last_sha : String = match fields.get("last_sha") {
+        Some(value) => @json.from_json(value, path=path.add_key("last_sha"))
+        None =>
+          raise @json.JsonDecodeError(
+            (
+              path.add_key("last_sha"),
+              "WaveStatePR::from_json: missing field last_sha",
+            ),
+          )
+      }
+      let merge_gate_ready : Bool = match fields.get("merge_gate_ready") {
+        Some(value) =>
+          @json.from_json(value, path=path.add_key("merge_gate_ready"))
+        None =>
+          raise @json.JsonDecodeError(
+            (
+              path.add_key("merge_gate_ready"),
+              "WaveStatePR::from_json: missing field merge_gate_ready",
+            ),
+          )
+      }
+      {
+        pr_number,
+        pr_url,
+        review_state,
+        ci_rollup,
+        mergeable,
+        merge_state_status,
+        merged_at_unix,
+        unresolved_threads,
+        threads_fetch_error,
+        copilot_issue_comment_seen,
+        fixes_pushed_at,
+        last_sha,
+        merge_gate_ready,
+      }
+    }
+    _ =>
+      raise @json.JsonDecodeError(
+        (path, "WaveStatePR::from_json: expected object"),
+      )
+  }
+}
+
+///|
 /// Typed per-child snapshot used by `wave_state`. Covers both Dev leaves
 /// and Worker agents so silent-worker cases are observable.
 pub(all) struct WaveStateChild {
@@ -72,6 +395,129 @@ pub(all) struct WaveStateChild {
 } derive(Debug, Eq, ToJson)
 
 ///|
+pub impl FromJson for WaveStateChild with fn from_json(json, path) {
+  match json {
+    Object(fields) => {
+      let agent_id : String = match fields.get("agent_id") {
+        Some(value) => @json.from_json(value, path=path.add_key("agent_id"))
+        None =>
+          raise @json.JsonDecodeError(
+            (
+              path.add_key("agent_id"),
+              "WaveStateChild::from_json: missing field agent_id",
+            ),
+          )
+      }
+      let slug : String = match fields.get("slug") {
+        Some(value) => @json.from_json(value, path=path.add_key("slug"))
+        None =>
+          raise @json.JsonDecodeError(
+            (
+              path.add_key("slug"),
+              "WaveStateChild::from_json: missing field slug",
+            ),
+          )
+      }
+      let agent_type : @types.AgentType = match fields.get("agent_type") {
+        Some(value) => @json.from_json(value, path=path.add_key("agent_type"))
+        None =>
+          raise @json.JsonDecodeError(
+            (
+              path.add_key("agent_type"),
+              "WaveStateChild::from_json: missing field agent_type",
+            ),
+          )
+      }
+      let beads_issue_id : String? = match fields.get("beads_issue_id") {
+        Some(value) =>
+          wave_state_optional_string_from_json(
+            value,
+            path.add_key("beads_issue_id"),
+          )
+        None => None
+      }
+      let workspace : String = match fields.get("workspace") {
+        Some(value) => @json.from_json(value, path=path.add_key("workspace"))
+        None =>
+          raise @json.JsonDecodeError(
+            (
+              path.add_key("workspace"),
+              "WaveStateChild::from_json: missing field workspace",
+            ),
+          )
+      }
+      let branch : String = match fields.get("branch") {
+        Some(value) => @json.from_json(value, path=path.add_key("branch"))
+        None =>
+          raise @json.JsonDecodeError(
+            (
+              path.add_key("branch"),
+              "WaveStateChild::from_json: missing field branch",
+            ),
+          )
+      }
+      let workflow : @phase.WorkflowState = match fields.get("workflow") {
+        Some(value) => @json.from_json(value, path=path.add_key("workflow"))
+        None =>
+          raise @json.JsonDecodeError(
+            (
+              path.add_key("workflow"),
+              "WaveStateChild::from_json: missing field workflow",
+            ),
+          )
+      }
+      let agent_state : @types.AgentState = match fields.get("agent_state") {
+        Some(value) =>
+          wave_state_agent_state_from_json(value, path.add_key("agent_state"))
+        None =>
+          raise @json.JsonDecodeError(
+            (
+              path.add_key("agent_state"),
+              "WaveStateChild::from_json: missing field agent_state",
+            ),
+          )
+      }
+      let tdd_phase : @types.LeafTddPhase? = match fields.get("tdd_phase") {
+        Some(Null) => None
+        Some(value) =>
+          Some(@json.from_json(value, path=path.add_key("tdd_phase")))
+        None => None
+      }
+      let last_heartbeat_ms : Int64? = match fields.get("last_heartbeat_ms") {
+        Some(value) =>
+          wave_state_optional_int64_from_json(
+            value,
+            path.add_key("last_heartbeat_ms"),
+          )
+        None => None
+      }
+      let pr : WaveStatePR? = match fields.get("pr") {
+        Some(Null) => None
+        Some(value) => Some(@json.from_json(value, path=path.add_key("pr")))
+        None => None
+      }
+      {
+        agent_id,
+        slug,
+        agent_type,
+        beads_issue_id,
+        workspace,
+        branch,
+        workflow,
+        agent_state,
+        tdd_phase,
+        last_heartbeat_ms,
+        pr,
+      }
+    }
+    _ =>
+      raise @json.JsonDecodeError(
+        (path, "WaveStateChild::from_json: expected object"),
+      )
+  }
+}
+
+///|
 /// Typed per-supervisor snapshot used by `wave_state`.
 pub(all) struct WaveStateSupervisor {
   agent_id : String
@@ -82,12 +528,148 @@ pub(all) struct WaveStateSupervisor {
 } derive(Debug, Eq, ToJson)
 
 ///|
+pub impl FromJson for WaveStateSupervisor with fn from_json(json, path) {
+  match json {
+    Object(fields) => {
+      let agent_id : String = match fields.get("agent_id") {
+        Some(value) => @json.from_json(value, path=path.add_key("agent_id"))
+        None =>
+          raise @json.JsonDecodeError(
+            (
+              path.add_key("agent_id"),
+              "WaveStateSupervisor::from_json: missing field agent_id",
+            ),
+          )
+      }
+      let beads_issue_id : String? = match fields.get("beads_issue_id") {
+        Some(value) =>
+          wave_state_optional_string_from_json(
+            value,
+            path.add_key("beads_issue_id"),
+          )
+        None => None
+      }
+      let workflow : @phase.SupervisorLifecycle = match fields.get("workflow") {
+        Some(value) => @json.from_json(value, path=path.add_key("workflow"))
+        None =>
+          raise @json.JsonDecodeError(
+            (
+              path.add_key("workflow"),
+              "WaveStateSupervisor::from_json: missing field workflow",
+            ),
+          )
+      }
+      let own_pr : WaveStatePR? = match fields.get("own_pr") {
+        Some(Null) => None
+        Some(value) => Some(@json.from_json(value, path=path.add_key("own_pr")))
+        None => None
+      }
+      let wave : Int? = match fields.get("wave") {
+        Some(value) =>
+          wave_state_optional_int_from_json(value, path.add_key("wave"))
+        None => None
+      }
+      { agent_id, beads_issue_id, workflow, own_pr, wave }
+    }
+    _ =>
+      raise @json.JsonDecodeError(
+        (path, "WaveStateSupervisor::from_json: expected object"),
+      )
+  }
+}
+
+///|
 /// Authoritative typed snapshot of the caller's supervisor + relevant children.
 pub(all) struct WaveStateSnapshot {
+  schema_version : Int
   supervisor : WaveStateSupervisor
   children : Array[WaveStateChild]
   taken_at_ms : Int64
-} derive(Debug, Eq, ToJson)
+} derive(Debug, Eq)
+
+///|
+pub fn WaveStateSnapshot::to_json_map(
+  self : WaveStateSnapshot,
+) -> Map[String, Json] {
+  let children : Array[Json] = []
+  for child in self.children {
+    children.push(child.to_json())
+  }
+  {
+    "schema_version": self.schema_version.to_json(),
+    "supervisor": self.supervisor.to_json(),
+    "children": children.to_json(),
+    "taken_at_ms": self.taken_at_ms.to_json(),
+  }
+}
+
+///|
+pub impl ToJson for WaveStateSnapshot with fn to_json(self) -> Json {
+  self.to_json_map().to_json()
+}
+
+///|
+pub impl FromJson for WaveStateSnapshot with fn from_json(json, path) {
+  match json {
+    Object(fields) => {
+      let schema_version : Int = match fields.get("schema_version") {
+        Some(value) =>
+          @json.from_json(value, path=path.add_key("schema_version"))
+        None =>
+          raise @json.JsonDecodeError(
+            (
+              path.add_key("schema_version"),
+              "WaveStateSnapshot::from_json: missing field schema_version",
+            ),
+          )
+      }
+      if schema_version != wave_state_schema_version {
+        raise @json.JsonDecodeError(
+          (
+            path.add_key("schema_version"),
+            "WaveStateSnapshot::from_json: expected schema_version 1",
+          ),
+        )
+      }
+      let supervisor : WaveStateSupervisor = match fields.get("supervisor") {
+        Some(value) => @json.from_json(value, path=path.add_key("supervisor"))
+        None =>
+          raise @json.JsonDecodeError(
+            (
+              path.add_key("supervisor"),
+              "WaveStateSnapshot::from_json: missing field supervisor",
+            ),
+          )
+      }
+      let children : Array[WaveStateChild] = match fields.get("children") {
+        Some(value) => @json.from_json(value, path=path.add_key("children"))
+        None =>
+          raise @json.JsonDecodeError(
+            (
+              path.add_key("children"),
+              "WaveStateSnapshot::from_json: missing field children",
+            ),
+          )
+      }
+      let taken_at_ms : Int64 = match fields.get("taken_at_ms") {
+        Some(value) =>
+          wave_state_int64_from_json(value, path.add_key("taken_at_ms"))
+        None =>
+          raise @json.JsonDecodeError(
+            (
+              path.add_key("taken_at_ms"),
+              "WaveStateSnapshot::from_json: missing field taken_at_ms",
+            ),
+          )
+      }
+      { schema_version, supervisor, children, taken_at_ms }
+    }
+    _ =>
+      raise @json.JsonDecodeError(
+        (path, "WaveStateSnapshot::from_json: expected object"),
+      )
+  }
+}
 
 ///|
 fn wave_state_pr_from_tracked(
@@ -420,6 +1002,7 @@ pub fn plan_wave_state(
     })
   }
   Ok({
+    schema_version: wave_state_schema_version,
     supervisor: {
       agent_id: caller_id,
       beads_issue_id: beads_issue_reader(agent),

@@ -131,6 +131,86 @@ fn no_heartbeat(_agent_id : String) -> Int64? {
 }
 
 ///|
+fn wave_state_schema_test_snapshot() -> WaveStateSnapshot {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent("tl", @types.Role::TL, None, @types.AgentType::Codex),
+      )
+    }),
+  )
+  ignore(
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent(
+          "tl.leaf",
+          @types.Role::Dev,
+          Some("tl"),
+          @types.AgentType::Gemini,
+        ),
+      )
+    }),
+  )
+  let lifecycles : Map[String, @phase.AgentLifecycle] = {}
+  lifecycles.set(
+    "tl",
+    make_supervisor_lifecycle(
+      "tl",
+      @phase.SupervisorLifecycle::Supervising(children=[], wave=4),
+    ),
+  )
+  let ps = @poller.PollerState::new()
+  ps.tracked.set(
+    88,
+    tracked_pr_with(
+      88,
+      "tl.leaf",
+      @poller.ReviewState::Approved,
+      @poller.CiRollupStatus::Success,
+      true,
+      1_700_000_001L,
+      "roundtrip-sha",
+      mergeable=@poller.Mergeable::Mergeable,
+      merge_state_status=@poller.MergeStateStatus::Clean,
+      merged_at_unix=Some(1_700_000_002L),
+    ),
+  )
+  let tdd_phases : Map[String, @types.LeafTddPhase] = {}
+  tdd_phases.set("tl.leaf", @types.LeafTddPhase::Done)
+  let heartbeats : Map[String, Int64] = {}
+  heartbeats.set("tl.leaf", 1_700_000_003_000L)
+  let bead_ids : Map[String, String] = {}
+  bead_ids.set("tl", "choir-ptz")
+  bead_ids.set("tl.leaf", "choir-ptz")
+  plan_wave_state(
+    "tl",
+    reg,
+    lifecycle_map_reader(lifecycles),
+    Some(ps),
+    threads_zero_lookup,
+    heartbeat_map_reader(heartbeats),
+    1_700_000_004_000L,
+    beads_issue_reader=fn(agent) { bead_ids.get(agent.agent_id.to_string()) },
+    tdd_phase_reader=fn(agent_id) { tdd_phases.get(agent_id) },
+  ).unwrap()
+}
+
+///|
+fn wave_state_snapshot_decode_result(
+  json : Json,
+) -> Result[WaveStateSnapshot, @json.JsonDecodeError] {
+  try {
+    let parsed : WaveStateSnapshot = @json.from_json(json)
+    parsed
+  } catch {
+    err => Err(err)
+  } noraise {
+    value => Ok(value)
+  }
+}
+
+///|
 /// Build a TrackedPR in the state we want for a test branch.
 fn tracked_pr_with(
   pr_number : Int,
@@ -287,6 +367,67 @@ test "plan_wave_state assembles supervisor + dev + worker children" {
   match worker_row.workflow {
     @phase.Worker(@phase.WorkerLifecycle::Working) => ()
     _ => fail("expected worker Working")
+  }
+}
+
+///|
+test "wave_state snapshot json emits schema_version first" {
+  let snap = wave_state_schema_test_snapshot()
+  assert_eq(snap.schema_version, wave_state_schema_version)
+  let json_text = snap.to_json().stringify()
+  assert_true(json_text.has_prefix("{\"schema_version\":1"))
+  match snap.to_json() {
+    Object(root) =>
+      match root.get("schema_version") {
+        Some(Number(value, ..)) =>
+          assert_eq(value.to_int(), wave_state_schema_version)
+        _ => fail("expected schema_version number")
+      }
+    _ => fail("expected wave_state snapshot JSON object")
+  }
+}
+
+///|
+test "wave_state snapshot json round trips through from_json" {
+  let snap = wave_state_schema_test_snapshot()
+  let json = @json.parse(snap.to_json().stringify()) catch {
+    _ => fail("expected emitted wave_state json to parse")
+  }
+  let parsed : WaveStateSnapshot = @json.from_json(json)
+  @debug.assert_eq(parsed, snap)
+  let encoded_again = @json.parse(parsed.to_json().stringify()) catch {
+    _ => fail("expected re-encoded wave_state json to parse")
+  }
+  @debug.assert_eq(encoded_again, json)
+}
+
+///|
+test "wave_state snapshot from_json rejects missing or unsupported schema version" {
+  let snap = wave_state_schema_test_snapshot()
+  let wrong_version = match snap.to_json() {
+    Object(root) => {
+      root.set("schema_version", (wave_state_schema_version + 1).to_json())
+      root.to_json()
+    }
+    _ => fail("expected wave_state snapshot JSON object")
+  }
+  match wave_state_snapshot_decode_result(wrong_version) {
+    Err(err) =>
+      assert_true(err.to_string().contains("expected schema_version 1"))
+    Ok(_) => fail("expected unsupported schema_version to fail")
+  }
+
+  let missing_version = match snap.to_json() {
+    Object(root) => {
+      root.remove("schema_version")
+      root.to_json()
+    }
+    _ => fail("expected wave_state snapshot JSON object")
+  }
+  match wave_state_snapshot_decode_result(missing_version) {
+    Err(err) =>
+      assert_true(err.to_string().contains("missing field schema_version"))
+    Ok(_) => fail("expected missing schema_version to fail")
   }
 }
 
