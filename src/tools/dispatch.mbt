@@ -1803,6 +1803,15 @@ pub async fn dispatch(
         registry,
         runner,
         capture~,
+        read_agent_pgid=fn(agent_id) {
+          @exec.read_agent_pgid(project_dir, agent_id, read_file~)
+        },
+        kill_pgid=fn(pgid) { @sys.kill_pgid_sequence_best_effort(pgid) },
+        remove_pid_file=fn(agent_id) {
+          ignore(
+            delete_file(@workspace.agent_pid_file_path(project_dir, agent_id)),
+          )
+        },
       )
     // KvStore::get trims for internal gate comparisons; the kv_get MCP tool returns
     // raw bytes so agents see the exact stored value (see kv.mbt).

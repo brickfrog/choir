@@ -169,39 +169,64 @@ async test "recover_state ReapStaleLifecycle deletes the on-disk lifecycle" {
     ),
   }
   assert_true(@phase.write_lifecycle(project_dir, lifecycle))
+  let pid_path = @workspace.agent_pid_file_path(project_dir, agent_id)
+  ignore(@sys.create_dir_all(project_dir + "/.choir/pids"))
+  assert_true(@sys.write_file_sync(pid_path, "5151\n"))
+  let killed : Array[Int] = []
   let captured : Array[@moontrace.Event] = []
   @moontrace.set_subscriber(fn(event) { captured.push(event) })
   try
-    recover_state(state, terminal_session, {
-      panes: { live: { tabs: [], panes: [] } },
-      prs: { open_prs: [], polls: Map([], capacity=0), resolved_prs: [] },
-      files: { local_agents: [], persisted_tracked_prs: [] },
-      recovered_at: 200L,
-      prebuilt_agent_phase: Some({
-        recovered_agents: [],
-        agent_stage_actions: [
-          @runtime.RecoveryAction::ReapStaleLifecycle(agent_id~),
-        ],
-      }),
-    })
+    recover_state(
+      state,
+      terminal_session,
+      {
+        panes: { live: { tabs: [], panes: [] } },
+        prs: { open_prs: [], polls: Map([], capacity=0), resolved_prs: [] },
+        files: { local_agents: [], persisted_tracked_prs: [] },
+        recovered_at: 200L,
+        prebuilt_agent_phase: Some({
+          recovered_agents: [],
+          agent_stage_actions: [
+            @runtime.RecoveryAction::ReapStaleLifecycle(agent_id~),
+          ],
+        }),
+      },
+      runner=async fn(_cmds) {
+        @async.sleep(0)
+        []
+      },
+      kill_pgid=fn(pgid) { killed.push(pgid) },
+    )
   catch {
     e => {
       @moontrace.clear_subscriber()
+      ignore(@sys.rm_rf(project_dir))
       raise e
     }
   } noraise {
     _ => ()
   }
   @moontrace.clear_subscriber()
-  assert_true(@phase.read_lifecycle(project_dir, agent_id) is None)
-  let mut saw_reap_debug = false
-  for event in captured {
-    if event.level == @moontrace.Level::Debug &&
-      event.message == "reaped stale lifecycle" {
-      saw_reap_debug = true
+  try {
+    assert_true(@phase.read_lifecycle(project_dir, agent_id) is None)
+    @debug.assert_eq(killed, [5151])
+    assert_false(@sys.path_entry_exists(pid_path))
+    let mut saw_reap_debug = false
+    for event in captured {
+      if event.level == @moontrace.Level::Debug &&
+        event.message == "reaped stale lifecycle" {
+        saw_reap_debug = true
+      }
     }
+    assert_true(saw_reap_debug)
+  } catch {
+    e => {
+      ignore(@sys.rm_rf(project_dir))
+      raise e
+    }
+  } noraise {
+    _ => ignore(@sys.rm_rf(project_dir))
   }
-  assert_true(saw_reap_debug)
 }
 
 ///|

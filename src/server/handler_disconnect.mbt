@@ -260,7 +260,23 @@ fn ServerState::kill_tracked_agent_pgroup(
   agent_id : String,
   kill_pgid : (Int) -> Unit,
 ) -> Unit {
-  match self.forget_agent_pid(agent_id) {
+  let pgid = match self.forget_agent_pid(agent_id) {
+    Some(pid) => Some(pid)
+    None => {
+      let path = @workspace.agent_pid_file_path(
+        self.config.project_dir,
+        agent_id,
+      )
+      let raw = (self.read_file)(path)
+      let parsed = @workspace.parse_agent_pgid(raw)
+      match parsed {
+        Some(_) => ignore((self.delete_file)(path))
+        None => ()
+      }
+      parsed
+    }
+  }
+  match pgid {
     Some(pgid) => kill_pgid(pgid)
     None => ()
   }
