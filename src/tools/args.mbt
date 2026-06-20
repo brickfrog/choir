@@ -77,6 +77,8 @@ pub(all) struct ForkWaveArgs {
   merge_strategy : @types.MergeStrategy?
   /// Per-wave model override. `None` means "use the config model default".
   model : String?
+  /// Per-wave reasoning effort override. `None` means "use the effort config default".
+  effort : String?
   /// Agent IDs the wave depends on. When non-empty the wave is queued as a
   /// pending wave (`pending-wave--<id>`) and only spawned after every named
   /// dep reaches `Dev(Done(Merged))`. See `pending_wave.mbt`.
@@ -130,6 +132,8 @@ pub(all) struct WorkerSpawnArgs {
   isolation : @types.IsolationMode?
   /// Per-worker model override. `None` means "use the config model default".
   model : String?
+  /// Per-worker reasoning effort override. `None` means "use the effort config default".
+  effort : String?
 } derive(Debug, Eq)
 
 ///|
