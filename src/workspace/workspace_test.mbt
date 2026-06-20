@@ -452,6 +452,26 @@ fn workspace_config_with_model(
 }
 
 ///|
+fn workspace_effort_config(
+  default? : String? = None,
+  dev? : String? = None,
+  worker? : String? = None,
+  tl? : String? = None,
+) -> @types.AgentEffortConfig {
+  { default, dev, worker, tl }
+}
+
+///|
+fn workspace_config_with_effort(
+  agent_type : @types.AgentType,
+  effort : @types.AgentEffortConfig,
+) -> @types.Config {
+  let efforts : Map[String, @types.AgentEffortConfig] = {}
+  efforts.set(agent_type.to_wire_string(), effort)
+  { ..@types.Config::default(), effort: efforts }
+}
+
+///|
 test "resolve_agent_model follows override role default none cascade" {
   let cfg = workspace_config_with_model(
     @types.AgentType::Codex,
@@ -489,6 +509,53 @@ test "resolve_agent_model follows override role default none cascade" {
   )
   @debug.assert_eq(
     @workspace.resolve_agent_model(
+      @types.Config::default(),
+      @types.AgentType::Codex,
+      @types.Role::Worker,
+      None,
+    ),
+    None,
+  )
+}
+
+///|
+test "resolve_agent_effort follows override role default none cascade" {
+  let cfg = workspace_config_with_effort(
+    @types.AgentType::Codex,
+    workspace_effort_config(
+      default=Some("effort-default"),
+      worker=Some("effort-worker"),
+    ),
+  )
+  @debug.assert_eq(
+    @workspace.resolve_agent_effort(
+      cfg,
+      @types.AgentType::Codex,
+      @types.Role::Worker,
+      Some("spawn-effort-override"),
+    ),
+    Some("spawn-effort-override"),
+  )
+  @debug.assert_eq(
+    @workspace.resolve_agent_effort(
+      cfg,
+      @types.AgentType::Codex,
+      @types.Role::Worker,
+      None,
+    ),
+    Some("effort-worker"),
+  )
+  @debug.assert_eq(
+    @workspace.resolve_agent_effort(
+      cfg,
+      @types.AgentType::Codex,
+      @types.Role::Dev,
+      None,
+    ),
+    Some("effort-default"),
+  )
+  @debug.assert_eq(
+    @workspace.resolve_agent_effort(
       @types.Config::default(),
       @types.AgentType::Codex,
       @types.Role::Worker,
@@ -540,6 +607,104 @@ test "agent_launch_command emits codex model flag only for codex model option" {
   let claude_body = launch_cmd_body_contains_setsid(claude_with_model)
   assert_false(claude_body.contains("--model"))
   assert_false(claude_body.contains("codex-audit"))
+}
+
+///|
+test "agent_launch_command emits codex effort flag when effort is configured" {
+  let spec = @types.SpawnSpec::{
+    slug: "test-slug",
+    role: @types.Role::Worker,
+    agent_type: @types.AgentType::Codex,
+    task: "audit work",
+    task_contract: None,
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "main",
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+    automerge: None,
+    review_mode: None,
+    merge_strategy: None,
+    wave_id: None,
+  }
+  let with_effort = @workspace.agent_launch_command(
+    spec,
+    "/path",
+    effort=Some("high"),
+    model=Some("codex-audit"),
+  )
+  let with_effort_body = launch_cmd_body_contains_setsid(with_effort)
+  assert_true(with_effort_body.contains("-c"))
+  assert_true(with_effort_body.contains("model_reasoning_effort=high"))
+  assert_true(with_effort_body.contains("--model"))
+  assert_true(with_effort_body.contains("codex-audit"))
+
+  let with_model_only = @workspace.agent_launch_command(
+    spec,
+    "/path",
+    model=Some("codex-audit"),
+  )
+  let model_only_body = launch_cmd_body_contains_setsid(with_model_only)
+  assert_false(model_only_body.contains("model_reasoning_effort=low"))
+}
+
+///|
+test "agent_launch_command omits codex effort flag when unset" {
+  let spec = @types.SpawnSpec::{
+    slug: "test-slug",
+    role: @types.Role::Worker,
+    agent_type: @types.AgentType::Codex,
+    task: "audit work",
+    task_contract: None,
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "main",
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+    automerge: None,
+    review_mode: None,
+    merge_strategy: None,
+    wave_id: None,
+  }
+  let codex_without_effort = @workspace.agent_launch_command(spec, "/path")
+  let codex_default_body = launch_cmd_body_contains_setsid(codex_without_effort)
+  assert_false(codex_default_body.contains("model_reasoning_effort="))
+}
+
+///|
+test "agent_launch_command omits codex effort flag for non-codex providers" {
+  let spec = @types.SpawnSpec::{
+    slug: "test-slug",
+    role: @types.Role::Worker,
+    agent_type: @types.AgentType::Claude,
+    task: "audit work",
+    task_contract: None,
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "main",
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+    automerge: None,
+    review_mode: None,
+    merge_strategy: None,
+    wave_id: None,
+  }
+  let with_effort = @workspace.agent_launch_command(
+    spec,
+    "/path",
+    effort=Some("high"),
+    model=Some("codex-audit"),
+  )
+  let body = launch_cmd_body_contains_setsid(with_effort)
+  assert_false(body.contains("model_reasoning_effort=high"))
+  assert_false(body.contains("--model"))
+  assert_false(body.contains("codex-audit"))
 }
 
 ///|

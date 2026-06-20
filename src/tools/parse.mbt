@@ -1314,6 +1314,17 @@ pub fn parse_fork_wave_args(
     }
     None => None
   }
+  let effort = match tool_args_get(args, "effort") {
+    Some(v) => {
+      let t = v.trim().to_owned()
+      if t == "" {
+        None
+      } else {
+        Some(t)
+      }
+    }
+    None => None
+  }
   let caller_id = match tool_args_get(args, "caller_id") {
     Some(v) if v.trim() != "" => v
     _ => return Err(ParseError::MissingField(field="caller_id"))
@@ -1342,6 +1353,7 @@ pub fn parse_fork_wave_args(
     review_mode,
     merge_strategy,
     model,
+    effort,
     depends_on,
     scaffold_commit,
   })
@@ -1480,6 +1492,17 @@ fn parse_worker_spawn_args(
     }
     None => None
   }
+  let effort = match tool_args_get(args, "effort") {
+    Some(v) => {
+      let t = v.trim().to_owned()
+      if t == "" {
+        None
+      } else {
+        Some(t)
+      }
+    }
+    None => None
+  }
   match isolation {
     Some(@types.IsolationMode::Worktree) => {
       if worker_kind != WorkerKind::Review {
@@ -1522,6 +1545,7 @@ fn parse_worker_spawn_args(
     parent_branch,
     isolation,
     model,
+    effort,
   })
 }
 
@@ -2570,6 +2594,7 @@ test "parse_worker_spawn_args propagates beads issue and defaults codex" {
       @debug.assert_eq(worker.parent_branch, None)
       @debug.assert_eq(worker.isolation, None)
       @debug.assert_eq(worker.model, None)
+      @debug.assert_eq(worker.effort, None)
       @debug.assert_eq(
         worker.task_contract.beads_issue_id,
         Some("choir-standardized-error-context"),
@@ -2597,6 +2622,22 @@ test "parse_worker_spawn_args parses model override" {
   )
   match parsed {
     Ok(worker) => @debug.assert_eq(worker.model, Some("codex-audit"))
+    Err(e) => fail("unexpected parse error: " + e.message())
+  }
+}
+
+///|
+test "parse_worker_spawn_args parses effort override" {
+  let parsed = parse_worker_spawn_args(
+    ".",
+    tool_args_from_map({
+      "task": "Investigate issue",
+      "caller_id": "root",
+      "effort": " high ",
+    }),
+  )
+  match parsed {
+    Ok(worker) => @debug.assert_eq(worker.effort, Some("high"))
     Err(e) => fail("unexpected parse error: " + e.message())
   }
 }

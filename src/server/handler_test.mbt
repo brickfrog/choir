@@ -9397,6 +9397,7 @@ fn spawn_registration_fork_wave_args(
     review_mode: None,
     merge_strategy: None,
     model: None,
+    effort: None,
     depends_on: [],
     scaffold_commit: None,
   }

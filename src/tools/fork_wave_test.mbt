@@ -422,6 +422,7 @@ fn fork_wave_args_base() -> ForkWaveArgs {
     review_mode: None,
     merge_strategy: None,
     model: None,
+    effort: None,
     depends_on: [],
     scaffold_commit: None,
   }
@@ -620,6 +621,7 @@ test "fork_wave_spawn_plan resolves config model into codex launch command" {
     ..fork_wave_args_base(),
     agent_type: @types.AgentType::Codex,
     model: None,
+    effort: None,
   }
   let config_content =
     #|[model.codex]
@@ -634,6 +636,34 @@ test "fork_wave_spawn_plan resolves config model into codex launch command" {
   )
   assert_true(fork_wave_plan_commands_contain(plan.cmds, "--model"))
   assert_true(fork_wave_plan_commands_contain(plan.cmds, "codex-leaf"))
+}
+
+///|
+test "fork_wave_spawn_plan resolves config effort into codex launch command" {
+  let args = {
+    ..fork_wave_args_base(),
+    agent_type: @types.AgentType::Codex,
+    child_role: @types.Role::Worker,
+    model: None,
+    effort: None,
+  }
+  let config_content =
+    #|[effort.codex]
+    #|worker = "high"
+  let plan = fork_wave_spawn_plan(
+    args,
+    0,
+    None,
+    "/proj",
+    "choir",
+    project_config_content=config_content,
+  )
+  assert_true(
+    fork_wave_plan_commands_contain(plan.cmds, "model_reasoning_effort=high"),
+  )
+  assert_false(
+    fork_wave_plan_commands_contain(plan.cmds, "model_reasoning_effort=low"),
+  )
 }
 
 ///|
@@ -657,6 +687,7 @@ test "fork_wave_spawn_plan disambiguates duplicate raw slugs" {
     review_mode: None,
     merge_strategy: None,
     model: None,
+    effort: None,
     depends_on: [],
     scaffold_commit: None,
   }
@@ -692,6 +723,7 @@ test "fork_wave_spawn_plan disambiguates when a later raw slug matches an earlie
     review_mode: None,
     merge_strategy: None,
     model: None,
+    effort: None,
     depends_on: [],
     scaffold_commit: None,
   }
@@ -726,6 +758,7 @@ test "fork_wave_spawn_plan embeds wave_id discriminator in per-leaf task slugs" 
     review_mode: None,
     merge_strategy: None,
     model: None,
+    effort: None,
     depends_on: [],
     scaffold_commit: None,
   }
@@ -776,6 +809,7 @@ test "fork_wave_spawn_plan honors custom slug_prefix for per-leaf tasks" {
     review_mode: None,
     merge_strategy: None,
     model: None,
+    effort: None,
     depends_on: [],
     scaffold_commit: None,
   }
@@ -809,6 +843,7 @@ test "fork_wave_spawn_plan flattens slash in slug_prefix for child slugs" {
     review_mode: None,
     merge_strategy: None,
     model: None,
+    effort: None,
     depends_on: [],
     scaffold_commit: None,
   }

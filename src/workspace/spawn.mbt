@@ -626,6 +626,7 @@ pub fn spawn_commands(
   read_file? : (String) -> String = @sys.read_file,
   extism_on_path? : () -> Bool = extism_on_path_default,
   model? : String? = None,
+  effort? : String? = None,
 ) -> Array[Command] {
   ignore(listen_tcp)
   ignore(tcp_auth_token)
@@ -675,6 +676,7 @@ pub fn spawn_commands(
       codex_bypass_hook_trust=boundary_hook_plan.wasm_hooks_path is Some(_) ||
         (spec.agent_type == Codex && completion_handoff_hooks_enabled),
       model~,
+      effort~,
     ),
   )
   let terminal_target = local_target_for(session, spec.slug, spec.isolation)

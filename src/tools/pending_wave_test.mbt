@@ -30,6 +30,7 @@ fn pending_wave_test_args(
     review_mode: Some(@types.ReviewMode::SinglePass),
     merge_strategy: Some(@types.MergeStrategy::Squash),
     model: None,
+    effort: None,
     depends_on,
     scaffold_commit: None,
   }
@@ -65,6 +66,7 @@ test "pending_wave_to_json_string round-trip preserves args" {
   ])
   let args = {
     ..args,
+    effort: Some("high"),
     scaffold_commit: Some({
       message: "chore: scaffold shared wave surface",
       paths: ["src/shared.mbt"],
@@ -93,6 +95,7 @@ test "pending_wave_to_json_string round-trip preserves args" {
         round_tripped.args.merge_strategy,
         Some(@types.MergeStrategy::Squash),
       )
+      @debug.assert_eq(round_tripped.args.effort, Some("high"))
       @debug.assert_eq(round_tripped.args.depends_on, [
         "main.dep-a", "main.dep-b",
       ])
