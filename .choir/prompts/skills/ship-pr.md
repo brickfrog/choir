@@ -14,14 +14,12 @@ Two paths — pick by caller.
 
 ## Path B — TL-direct (root, no task contract)
 
-`mcp__choir__file_pr` and `mcp__choir__merge_pr` both fail for root-tracked feature→main PRs with `server task contract unavailable for tracked agent 'root'`. That is a real server bug, tracked as **choir-v9gi**. The right fix is the server fix; do not normalize a bypass into the skill. Until choir-v9gi lands:
+`mcp__choir__file_pr` and `mcp__choir__merge_pr` support root-tracked feature→main PRs with an empty task contract. No per-PR verify runs during file_pr; integration quality is enforced by CI/review plus the TL-run audit receipt and merge_pr's findings_count==0 gate.
 
-1. `git push -u origin <branch>` from where the work lives.
-2. `gh pr create --base main --head <branch> --title ... --body ...` via HEREDOC. Escape `@`-prefixed strings in the body (`@debug` etc. become GitHub mentions — use backticks or rewrite).
-3. `mcp__choir__track_pr pr_number=<n> agent_id=root branch=<branch> parent_branch=main pr_url=...`
-4. If a reviewer is configured for this project, request that reviewer (for Copilot: `mcp__choir__request_review pr_number=<n> reviewer=@copilot`). Address reviewer findings; push fixes; wait for the poller snapshot to show zero unresolved threads. If no reviewer is configured, skip reviewer request and rely on CI green + zero unresolved threads + the TL-run audit receipt.
-5. Once review threads are clear and CI is green, run `/audit` until the receipt has `findings_count=0`. The skill spawns Sarcasmotron, parses the worker's findings, and writes the receipt itself — never hand-write a receipt with `findings_count=0` to bypass the gate.
-6. `mcp__choir__merge_pr`. If it fails with the choir-v9gi task-contract error, **stop and surface that to the user**. The skill body intentionally does not document an admin-merge incantation; embedding the bypass command here is the same banned antipattern this PR codified in CLAUDE.md. Fix choir-v9gi.
+1. `mcp__choir__file_pr branch=<branch> parent_branch=main tracked_agent_id=root title=... body=...`.
+2. If a reviewer is configured for this project, request that reviewer (for Copilot: `mcp__choir__request_review pr_number=<n> reviewer=@copilot`). Address reviewer findings; push fixes; wait for the poller snapshot to show zero unresolved threads. If no reviewer is configured, skip reviewer request and rely on CI green + zero unresolved threads + the TL-run audit receipt.
+3. Once review threads are clear and CI is green, run `/audit` until the receipt has `findings_count=0`. The skill spawns Sarcasmotron, parses the worker's findings, and writes the receipt itself — never hand-write a receipt with `findings_count=0` to bypass the gate.
+4. `mcp__choir__merge_pr`. If the audit receipt is missing, stale, or has findings, merge_pr returns a policy block; re-run `/audit` on the current HEAD tree and retry. If merge_pr reports any other policy block or tool error, stop and surface that to the user.
 
 ## Gotchas
 
