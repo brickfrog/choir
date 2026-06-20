@@ -10,3 +10,9 @@ verify_cmd = "moon check --target native && moon test --target native"
 # quota lever — see choir-mn0l.
 [model.codex]
 default = "gpt-5.5"
+
+# Per-agent reasoning effort (choir-mn0l). Emits `-c model_reasoning_effort=<v>`.
+# dev=low: coding leaves drop off the global xhigh (the quota saver). Audits/workers
+# unset -> inherit the global codex effort (xhigh), where the reasoning is worth it.
+[effort.codex]
+dev = "low"
