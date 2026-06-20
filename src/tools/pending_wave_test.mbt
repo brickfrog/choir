@@ -29,6 +29,7 @@ fn pending_wave_test_args(
     automerge: Some(true),
     review_mode: Some(@types.ReviewMode::SinglePass),
     merge_strategy: Some(@types.MergeStrategy::Squash),
+    model: None,
     depends_on,
     scaffold_commit: None,
   }

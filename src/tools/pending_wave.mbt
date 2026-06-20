@@ -167,6 +167,7 @@ pub fn fork_wave_args_to_json(args : ForkWaveArgs) -> Json {
     "automerge": json_optional_bool(args.automerge),
     "review_mode": json_optional_review_mode(args.review_mode),
     "merge_strategy": json_optional_merge_strategy(args.merge_strategy),
+    "model": json_optional_string(args.model),
     "depends_on": args.depends_on.to_json(),
     "scaffold_commit": json_optional_scaffold_commit(args.scaffold_commit),
   }
@@ -306,6 +307,7 @@ fn parse_fork_wave_args_json(j : Json) -> ForkWaveArgs? {
       }
     None => None
   }
+  let model = parse_json_optional_string(obj.get("model"))
   let depends_on = parse_json_string_array(obj.get("depends_on"))
   let scaffold_commit = parse_json_scaffold_commit(obj.get("scaffold_commit"))
   Some({
@@ -323,6 +325,7 @@ fn parse_fork_wave_args_json(j : Json) -> ForkWaveArgs? {
     automerge,
     review_mode,
     merge_strategy,
+    model,
     depends_on,
     scaffold_commit,
   })

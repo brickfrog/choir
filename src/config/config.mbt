@@ -418,6 +418,54 @@ fn parse_pricing_config(
 }
 
 ///|
+fn parse_model_config(
+  doc : TomlDoc,
+) -> Result[Map[String, @types.AgentModelConfig], @types.ChoirError] {
+  let model : Map[String, @types.AgentModelConfig] = {}
+  for full_key, _ in doc.to_map() {
+    if full_key.has_prefix("model.") {
+      let rest = full_key["model.".length():].to_owned()
+      let agent_type_key = match rest.split_once(".") {
+        Some((agent_type, _)) => agent_type.to_owned()
+        None => rest
+      }
+      match @types.AgentType::try_parse_wire(agent_type_key) {
+        Ok(@types.AgentType::Unknown) | Err(_) =>
+          return Err(
+            @types.ChoirError::config_error(
+              "unknown model agent_type: " + agent_type_key,
+            ),
+          )
+        Ok(_) => ()
+      }
+    }
+  }
+  for
+    agent_type in [
+      @types.AgentType::Gemini,
+      @types.AgentType::Claude,
+      @types.AgentType::Codex,
+      @types.AgentType::MoonPilot,
+      @types.AgentType::CursorAgent,
+    ] {
+    let key = agent_type.to_wire_string()
+    let model_config : @types.AgentModelConfig = {
+      default: doc.get_optional_nonempty("model." + key + ".default"),
+      dev: doc.get_optional_nonempty("model." + key + ".dev"),
+      worker: doc.get_optional_nonempty("model." + key + ".worker"),
+      tl: doc.get_optional_nonempty("model." + key + ".tl"),
+    }
+    if model_config.default is Some(_) ||
+      model_config.dev is Some(_) ||
+      model_config.worker is Some(_) ||
+      model_config.tl is Some(_) {
+      model.set(key, model_config)
+    }
+  }
+  Ok(model)
+}
+
+///|
 /// Parses project config.toml
 pub fn parse_config(
   content : String,
@@ -645,6 +693,10 @@ pub fn parse_config(
     Ok(p) => p
     Err(e) => return Err(e)
   }
+  let model = match parse_model_config(doc) {
+    Ok(m) => m
+    Err(e) => return Err(e)
+  }
 
   Ok({
     default_role,
@@ -678,6 +730,7 @@ pub fn parse_config(
     auto_rebuild_after_pull,
     auto_reload_after_rebuild,
     pricing,
+    model,
   })
 }
 
@@ -711,6 +764,23 @@ fn config_pricing_equal(
         if rate.rate_in != other.rate_in || rate.rate_out != other.rate_out {
           return false
         }
+      None => return false
+    }
+  }
+  true
+}
+
+///|
+fn config_model_equal(
+  left : Map[String, @types.AgentModelConfig],
+  right : Map[String, @types.AgentModelConfig],
+) -> Bool {
+  if left.length() != right.length() {
+    return false
+  }
+  for key, model in left {
+    match right.get(key) {
+      Some(other) => if model != other { return false }
       None => return false
     }
   }
@@ -806,6 +876,9 @@ pub fn config_divergence(
   }
   if !config_pricing_equal(loaded.pricing, on_disk.pricing) {
     fields.push("pricing")
+  }
+  if !config_model_equal(loaded.model, on_disk.model) {
+    fields.push("model")
   }
   fields
 }

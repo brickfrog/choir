@@ -62,6 +62,14 @@ pub fn Project::default() -> Project {
 }
 
 ///|
+pub(all) struct AgentModelConfig {
+  default : String?
+  dev : String?
+  worker : String?
+  tl : String?
+} derive(Debug, Eq)
+
+///|
 /// Parsed server configuration.
 pub(all) struct Config {
   /// Default role used when local config does not override it.
@@ -118,6 +126,8 @@ pub(all) struct Config {
   auto_reload_after_rebuild : Bool
   /// Per-agent-type token pricing, keyed by canonical AgentType wire string.
   pricing : Map[String, PricingRate]
+  /// Per-agent-type model defaults, keyed by canonical AgentType wire string.
+  model : Map[String, AgentModelConfig]
 } derive(Debug)
 
 ///|
@@ -203,6 +213,7 @@ pub fn Config::default() -> Config {
     auto_rebuild_after_pull: false,
     auto_reload_after_rebuild: false,
     pricing: {},
+    model: {},
   }
 }
 

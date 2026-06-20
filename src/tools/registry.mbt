@@ -32,7 +32,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     ),
     tool_def(
       "fork_wave",
-      "Spawn one or more agents in worktrees. For nontrivial decomposition, create child Beads issues first and pass per-leaf task_contracts with beads_issue_id for each child; single-child waves may pass beads_issue_id directly. Optional agent_type (codex|claude|moon_pilot|gemini|cursor_agent, default codex); optional role (dev|tl, default dev) for sub-TL children; optional review_context appended to each leaf task for file_pr / Copilot review; optional automerge, review_mode, and merge_strategy override server defaults for that wave. Agents will automatically notify you of PR/completion via MCP events; do not poll or use side-channels.",
+      "Spawn one or more agents in worktrees. For nontrivial decomposition, create child Beads issues first and pass per-leaf task_contracts with beads_issue_id for each child; single-child waves may pass beads_issue_id directly. Optional agent_type (codex|claude|moon_pilot|gemini|cursor_agent, default codex); optional role (dev|tl, default dev) for sub-TL children; optional review_context appended to each leaf task for file_pr / Copilot review; optional automerge, review_mode, merge_strategy, and model override server defaults for that wave. Agents will automatically notify you of PR/completion via MCP events; do not poll or use side-channels.",
       [@types.Role::TL],
     ),
     tool_def(
@@ -52,7 +52,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     ),
     tool_def(
       "spawn_worker",
-      "Spawn a read-only research/review worker in the root checkout by default; create a worker Beads issue first for durable nontrivial work and pass beads_issue_id. Optional agent_type (codex|claude|moon_pilot|gemini|cursor_agent, default codex). For write-capable mutation-testing review only, pass type=review isolation=worktree parent_branch=<branch>; Choir creates an isolated review worktree. Workers do not own a branch or PR. The worker will automatically send you its final report via the `notify_parent` tool once it finishes; wait for this notification in your MCP event stream instead of polling or waiting on KV keys.",
+      "Spawn a read-only research/review worker in the root checkout by default; create a worker Beads issue first for durable nontrivial work and pass beads_issue_id. Optional agent_type (codex|claude|moon_pilot|gemini|cursor_agent, default codex); optional model overrides config defaults for that worker. For write-capable mutation-testing review only, pass type=review isolation=worktree parent_branch=<branch>; Choir creates an isolated review worktree. Workers do not own a branch or PR. The worker will automatically send you its final report via the `notify_parent` tool once it finishes; wait for this notification in your MCP event stream instead of polling or waiting on KV keys.",
       [@types.Role::TL],
     ),
     tool_def(

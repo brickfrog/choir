@@ -421,6 +421,7 @@ fn fork_wave_args_base() -> ForkWaveArgs {
     automerge: None,
     review_mode: None,
     merge_strategy: None,
+    model: None,
     depends_on: [],
     scaffold_commit: None,
   }
@@ -599,6 +600,43 @@ test "fork_wave_spawn_plan persists merge_strategy override to leaf local config
 }
 
 ///|
+fn fork_wave_plan_commands_contain(
+  cmds : Array[@workspace.Command],
+  needle : String,
+) -> Bool {
+  for cmd in cmds {
+    for arg in cmd.args {
+      if arg.contains(needle) {
+        return true
+      }
+    }
+  }
+  false
+}
+
+///|
+test "fork_wave_spawn_plan resolves config model into codex launch command" {
+  let args = {
+    ..fork_wave_args_base(),
+    agent_type: @types.AgentType::Codex,
+    model: None,
+  }
+  let config_content =
+    #|[model.codex]
+    #|dev = "codex-leaf"
+  let plan = fork_wave_spawn_plan(
+    args,
+    0,
+    None,
+    "/proj",
+    "choir",
+    project_config_content=config_content,
+  )
+  assert_true(fork_wave_plan_commands_contain(plan.cmds, "--model"))
+  assert_true(fork_wave_plan_commands_contain(plan.cmds, "codex-leaf"))
+}
+
+///|
 test "fork_wave_spawn_plan disambiguates duplicate raw slugs" {
   let args : ForkWaveArgs = {
     count: 2,
@@ -618,6 +656,7 @@ test "fork_wave_spawn_plan disambiguates duplicate raw slugs" {
     automerge: None,
     review_mode: None,
     merge_strategy: None,
+    model: None,
     depends_on: [],
     scaffold_commit: None,
   }
@@ -652,6 +691,7 @@ test "fork_wave_spawn_plan disambiguates when a later raw slug matches an earlie
     automerge: None,
     review_mode: None,
     merge_strategy: None,
+    model: None,
     depends_on: [],
     scaffold_commit: None,
   }
@@ -685,6 +725,7 @@ test "fork_wave_spawn_plan embeds wave_id discriminator in per-leaf task slugs" 
     automerge: None,
     review_mode: None,
     merge_strategy: None,
+    model: None,
     depends_on: [],
     scaffold_commit: None,
   }
@@ -734,6 +775,7 @@ test "fork_wave_spawn_plan honors custom slug_prefix for per-leaf tasks" {
     automerge: None,
     review_mode: None,
     merge_strategy: None,
+    model: None,
     depends_on: [],
     scaffold_commit: None,
   }
@@ -766,6 +808,7 @@ test "fork_wave_spawn_plan flattens slash in slug_prefix for child slugs" {
     automerge: None,
     review_mode: None,
     merge_strategy: None,
+    model: None,
     depends_on: [],
     scaffold_commit: None,
   }
