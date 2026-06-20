@@ -432,6 +432,117 @@ test "agent_launch_command for each AgentType" {
 }
 
 ///|
+fn workspace_model_config(
+  default? : String? = None,
+  dev? : String? = None,
+  worker? : String? = None,
+  tl? : String? = None,
+) -> @types.AgentModelConfig {
+  { default, dev, worker, tl }
+}
+
+///|
+fn workspace_config_with_model(
+  agent_type : @types.AgentType,
+  model : @types.AgentModelConfig,
+) -> @types.Config {
+  let models : Map[String, @types.AgentModelConfig] = {}
+  models.set(agent_type.to_wire_string(), model)
+  { ..@types.Config::default(), model: models }
+}
+
+///|
+test "resolve_agent_model follows override role default none cascade" {
+  let cfg = workspace_config_with_model(
+    @types.AgentType::Codex,
+    workspace_model_config(
+      default=Some("codex-default"),
+      worker=Some("codex-worker"),
+    ),
+  )
+  @debug.assert_eq(
+    @workspace.resolve_agent_model(
+      cfg,
+      @types.AgentType::Codex,
+      @types.Role::Worker,
+      Some("spawn-override"),
+    ),
+    Some("spawn-override"),
+  )
+  @debug.assert_eq(
+    @workspace.resolve_agent_model(
+      cfg,
+      @types.AgentType::Codex,
+      @types.Role::Worker,
+      None,
+    ),
+    Some("codex-worker"),
+  )
+  @debug.assert_eq(
+    @workspace.resolve_agent_model(
+      cfg,
+      @types.AgentType::Codex,
+      @types.Role::Dev,
+      None,
+    ),
+    Some("codex-default"),
+  )
+  @debug.assert_eq(
+    @workspace.resolve_agent_model(
+      @types.Config::default(),
+      @types.AgentType::Codex,
+      @types.Role::Worker,
+      None,
+    ),
+    None,
+  )
+}
+
+///|
+test "agent_launch_command emits codex model flag only for codex model option" {
+  let spec = @types.SpawnSpec::{
+    slug: "test-slug",
+    role: @types.Role::Worker,
+    agent_type: @types.AgentType::Codex,
+    task: "audit work",
+    task_contract: None,
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "main",
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+    automerge: None,
+    review_mode: None,
+    merge_strategy: None,
+    wave_id: None,
+  }
+  let codex_with_model = @workspace.agent_launch_command(
+    spec,
+    "/path",
+    model=Some("codex-audit"),
+  )
+  let codex_model_body = launch_cmd_body_contains_setsid(codex_with_model)
+  assert_true(codex_model_body.contains("--model"))
+  assert_true(codex_model_body.contains("codex-audit"))
+
+  let codex_without_model = @workspace.agent_launch_command(spec, "/path")
+  let codex_default_body = launch_cmd_body_contains_setsid(codex_without_model)
+  assert_false(codex_default_body.contains("--model"))
+  assert_false(codex_default_body.contains("codex-audit"))
+
+  let claude_with_model = @workspace.agent_launch_command(
+    { ..spec, agent_type: @types.AgentType::Claude },
+    "/path",
+    model=Some("codex-audit"),
+  )
+  let claude_body = launch_cmd_body_contains_setsid(claude_with_model)
+  assert_false(claude_body.contains("--model"))
+  assert_false(claude_body.contains("codex-audit"))
+}
+
+///|
 test "agent_pid_file_path sanitizes agent ids as flat filenames" {
   assert_eq(
     @workspace.agent_pid_file_path("/project", "../../evil\\agent\u0000pid"),

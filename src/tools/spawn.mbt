@@ -225,6 +225,7 @@ test "spawn credential helper records plan role and token" {
     worker_kind: WorkerKind::Research,
     parent_branch: Some("main"),
     isolation: None,
+    model: None,
   }
   let plan = spawn_worker_plan(worker_args, "main", "sess", "/repo")
   record_spawn_credential_for_agent(
@@ -293,6 +294,7 @@ async test "interpret_spawn_worker records credential and exports token" {
     worker_kind: WorkerKind::Research,
     parent_branch: Some("main"),
     isolation: None,
+    model: None,
   }
   let resp = interpret_spawn_worker(
     worker_args,
@@ -353,6 +355,7 @@ async test "interpret_spawn_worker removes credential when launch fails" {
     worker_kind: WorkerKind::Research,
     parent_branch: Some("main"),
     isolation: None,
+    model: None,
   }
   let resp = interpret_spawn_worker(
     worker_args,
@@ -906,6 +909,13 @@ pub async fn interpret_spawn_worker(
     plan.registry_agent.role,
     agent_token,
   )
+  let project_config_content = read_project_config_toml(project_dir, read_file~)
+  let model = @workspace.resolve_agent_model_from_config_content(
+    project_config_content,
+    plan.spec.agent_type,
+    plan.spec.role,
+    normalized_args.model,
+  )
   let cmds = @workspace.spawn_commands(
     plan.spec,
     project_dir,
@@ -917,7 +927,8 @@ pub async fn interpret_spawn_worker(
     listen_tcp~,
     tcp_auth_token~,
     agent_token=Some(agent_token),
-    project_config_content=read_project_config_toml(project_dir, read_file~),
+    project_config_content~,
+    model~,
   )
   let spawn_launch_bindings = spawn_launch_command_bindings_for_agent(
     plan.agent_id,

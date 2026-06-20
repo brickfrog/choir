@@ -3337,6 +3337,33 @@ fn config_pricing_value(pricing : Map[String, @types.PricingRate]) -> String {
 }
 
 ///|
+fn config_model_value(model : Map[String, @types.AgentModelConfig]) -> String {
+  let parts : Array[String] = []
+  for key, entry in model {
+    let fields : Array[String] = []
+    match entry.default {
+      Some(value) => fields.push("default=" + value)
+      None => ()
+    }
+    match entry.dev {
+      Some(value) => fields.push("dev=" + value)
+      None => ()
+    }
+    match entry.worker {
+      Some(value) => fields.push("worker=" + value)
+      None => ()
+    }
+    match entry.tl {
+      Some(value) => fields.push("tl=" + value)
+      None => ()
+    }
+    parts.push(key + ":{" + fields.join(",") + "}")
+  }
+  parts.sort()
+  parts.join(",")
+}
+
+///|
 fn config_field_value(config : @types.Config, field : String) -> String {
   match field {
     "default_role" => config.default_role.to_wire_string()
@@ -3369,6 +3396,7 @@ fn config_field_value(config : @types.Config, field : String) -> String {
     "auto_rebuild_after_pull" => config.auto_rebuild_after_pull.to_string()
     "auto_reload_after_rebuild" => config.auto_reload_after_rebuild.to_string()
     "pricing" => config_pricing_value(config.pricing)
+    "model" => config_model_value(config.model)
     _ => "<unknown>"
   }
 }

@@ -95,6 +95,39 @@ fn config_test_pricing(
 }
 
 ///|
+test "parse_config model tables are typed" {
+  let cfg = parse_config(
+    (
+      #|[model.codex]
+      #|default = "codex-default"
+      #|worker = "codex-audit"
+    ),
+  ).unwrap()
+  match cfg.model.get("codex") {
+    Some(model) => {
+      @debug.assert_eq(model.default, Some("codex-default"))
+      @debug.assert_eq(model.worker, Some("codex-audit"))
+      @debug.assert_eq(model.dev, None)
+      @debug.assert_eq(model.tl, None)
+    }
+    None => fail("missing codex model config")
+  }
+}
+
+///|
+fn config_test_model(
+  key : String,
+  default : String?,
+  dev : String?,
+  worker : String?,
+  tl : String?,
+) -> Map[String, @types.AgentModelConfig] {
+  let model : Map[String, @types.AgentModelConfig] = {}
+  model.set(key, { default, dev, worker, tl })
+  model
+}
+
+///|
 test "config_divergence names every changed top-level field" {
   let loaded : @types.Config = {
     default_role: @types.Role::TL,
@@ -128,6 +161,7 @@ test "config_divergence names every changed top-level field" {
     auto_rebuild_after_pull: false,
     auto_reload_after_rebuild: false,
     pricing: config_test_pricing("codex", 0.01, 0.02),
+    model: config_test_model("codex", Some("loaded-default"), None, None, None),
   }
   let on_disk : @types.Config = {
     default_role: @types.Role::Dev,
@@ -161,6 +195,7 @@ test "config_divergence names every changed top-level field" {
     auto_rebuild_after_pull: true,
     auto_reload_after_rebuild: true,
     pricing: config_test_pricing("claude", 0.03, 0.04),
+    model: config_test_model("codex", Some("disk-default"), None, None, None),
   }
   @debug.assert_eq(config_divergence(loaded, on_disk), [
     "default_role", "project_dir", "shell_command", "listen_uds", "listen_tcp", "tcp_auth_token",
@@ -169,7 +204,7 @@ test "config_divergence names every changed top-level field" {
     "agy_migration_incomplete", "hooks_enforcement", "worker_no_handoff_idle_sec",
     "poller_heartbeat_tick_sec", "prenotify_checks", "auto_pull_after_integration",
     "project", "pr_policy", "auto_rebuild_after_pull", "auto_reload_after_rebuild",
-    "pricing",
+    "pricing", "model",
   ])
 }
 
@@ -200,6 +235,11 @@ test "config schema nested keys match parser-accepted TOML shape" {
   assert_true(config_schema_key_present(file, "pricing.<agent_type>.rate_in"))
   assert_true(config_schema_key_present(file, "pricing.<agent_type>.rate_out"))
   assert_false(config_schema_key_present(file, "pricing"))
+  assert_true(config_schema_key_present(file, "model.<agent_type>.default"))
+  assert_true(config_schema_key_present(file, "model.<agent_type>.dev"))
+  assert_true(config_schema_key_present(file, "model.<agent_type>.worker"))
+  assert_true(config_schema_key_present(file, "model.<agent_type>.tl"))
+  assert_false(config_schema_key_present(file, "model"))
 
   let cfg = parse_config(
     (

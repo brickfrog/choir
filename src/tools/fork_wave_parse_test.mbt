@@ -112,6 +112,35 @@ test "parse_fork_wave_args defaults merge_strategy override to None" {
 }
 
 ///|
+test "parse_fork_wave_args defaults model override to None" {
+  let args = @tools.tool_args_from_map({
+    "count": "1",
+    "task": "work",
+    "parent_branch": "main",
+    "caller_id": "root",
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Ok(fork) => @debug.assert_eq(fork.model, None)
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}
+
+///|
+test "parse_fork_wave_args parses model override" {
+  let args = @tools.tool_args_from_map({
+    "count": "1",
+    "task": "work",
+    "parent_branch": "main",
+    "caller_id": "root",
+    "model": " codex-leaf ",
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Ok(fork) => @debug.assert_eq(fork.model, Some("codex-leaf"))
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}
+
+///|
 test "parse_fork_wave_args treats missing scaffold_commit as None" {
   let args = @tools.tool_args_from_map({
     "count": "1",

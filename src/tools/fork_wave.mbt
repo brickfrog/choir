@@ -128,6 +128,7 @@ fn fork_wave_test_args(child_role : @types.Role) -> ForkWaveArgs {
     automerge: None,
     review_mode: None,
     merge_strategy: None,
+    model: None,
     depends_on: [],
     scaffold_commit: None,
   }
@@ -501,6 +502,12 @@ pub fn fork_wave_spawn_plan(
   let spawned_slugs : Array[String] = []
   let mut spawned_count = 0
   let seen_slugs : Map[String, Int] = {}
+  let model = @workspace.resolve_agent_model_from_config_content(
+    project_config_content,
+    fork_wave_args.agent_type,
+    fork_wave_args.child_role,
+    fork_wave_args.model,
+  )
   for i = 0; i < fork_wave_args.count; i = i + 1 {
     let slug = fork_wave_slug_for_index(fork_wave_args, i, seen_slugs, wave_id)
     let agent_id = fork_wave_args.parent_branch + "." + slug
@@ -551,6 +558,7 @@ pub fn fork_wave_spawn_plan(
       tcp_auth_token~,
       agent_token~,
       project_config_content~,
+      model~,
     )
     for
       binding in spawn_launch_command_bindings_for_agent(

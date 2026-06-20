@@ -1303,6 +1303,17 @@ pub fn parse_fork_wave_args(
     }
     None => None
   }
+  let model = match tool_args_get(args, "model") {
+    Some(v) => {
+      let t = v.trim().to_owned()
+      if t == "" {
+        None
+      } else {
+        Some(t)
+      }
+    }
+    None => None
+  }
   let caller_id = match tool_args_get(args, "caller_id") {
     Some(v) if v.trim() != "" => v
     _ => return Err(ParseError::MissingField(field="caller_id"))
@@ -1330,6 +1341,7 @@ pub fn parse_fork_wave_args(
     automerge,
     review_mode,
     merge_strategy,
+    model,
     depends_on,
     scaffold_commit,
   })
@@ -1457,6 +1469,17 @@ fn parse_worker_spawn_args(
     Some(v) if v.trim() != "" => Some(v.trim().to_owned())
     _ => None
   }
+  let model = match tool_args_get(args, "model") {
+    Some(v) => {
+      let t = v.trim().to_owned()
+      if t == "" {
+        None
+      } else {
+        Some(t)
+      }
+    }
+    None => None
+  }
   match isolation {
     Some(@types.IsolationMode::Worktree) => {
       if worker_kind != WorkerKind::Review {
@@ -1498,6 +1521,7 @@ fn parse_worker_spawn_args(
     worker_kind,
     parent_branch,
     isolation,
+    model,
   })
 }
 
@@ -2545,6 +2569,7 @@ test "parse_worker_spawn_args propagates beads issue and defaults codex" {
       assert_eq(worker.worker_kind, WorkerKind::Research)
       @debug.assert_eq(worker.parent_branch, None)
       @debug.assert_eq(worker.isolation, None)
+      @debug.assert_eq(worker.model, None)
       @debug.assert_eq(
         worker.task_contract.beads_issue_id,
         Some("choir-standardized-error-context"),
@@ -2556,6 +2581,22 @@ test "parse_worker_spawn_args propagates beads issue and defaults codex" {
         ),
       )
     }
+    Err(e) => fail("unexpected parse error: " + e.message())
+  }
+}
+
+///|
+test "parse_worker_spawn_args parses model override" {
+  let parsed = parse_worker_spawn_args(
+    ".",
+    tool_args_from_map({
+      "task": "Investigate issue",
+      "caller_id": "root",
+      "model": " codex-audit ",
+    }),
+  )
+  match parsed {
+    Ok(worker) => @debug.assert_eq(worker.model, Some("codex-audit"))
     Err(e) => fail("unexpected parse error: " + e.message())
   }
 }
