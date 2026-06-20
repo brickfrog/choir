@@ -1423,6 +1423,7 @@ async test "replay_pending_outbox_with GC's stale pane lifecycle after repeated 
     state: @types.AgentState::Active,
   }
   ignore(state.register_agent(agent))
+  state.register_agent_pid(agent_id, 24680)
   assert_true(@phase.read_lifecycle(project_dir, agent_id) is Some(_))
   let pending = @outbox.OutboxMessage::new(
     "msg-stale-pane-gc",
@@ -1451,12 +1452,19 @@ async test "replay_pending_outbox_with GC's stale pane lifecycle after repeated 
     }
     statuses
   }
+  let killed : Array[Int] = []
   state.replay_pending_outbox_with_test(150L, runner=failing_runner)
   assert_true(@phase.read_lifecycle(project_dir, agent_id) is Some(_))
   state.replay_pending_outbox_with_test(151L, runner=failing_runner)
   assert_true(@phase.read_lifecycle(project_dir, agent_id) is Some(_))
-  state.replay_pending_outbox_with_test(152L, runner=failing_runner)
-  assert_eq(runner_calls, 12)
+  state.replay_pending_outbox_with_test(152L, runner=failing_runner, kill_pgid=fn(
+    pgid,
+  ) {
+    killed.push(pgid)
+  })
+  assert_eq(runner_calls, 13)
+  @debug.assert_eq(killed, [24680])
+  @debug.assert_eq(state.agent_pids.get(agent_id), None)
   assert_true(@phase.read_lifecycle(project_dir, agent_id) == None)
   let removed = try {
     ignore(state.registry.get(agent_id))
@@ -1540,7 +1548,7 @@ async test "replay_pending_outbox_with clears stale failure counter on exhausted
     []
   }
   state.replay_pending_outbox_with_test(150L, runner~)
-  assert_eq(runner_calls, 0)
+  assert_eq(runner_calls, 1)
   assert_true(@phase.read_lifecycle(project_dir, agent_id) == None)
   assert_true(state.delivery_failures.get(agent_id) == None)
   let messages = @outbox.load_recipient_outbox(

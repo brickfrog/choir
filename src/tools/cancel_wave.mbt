@@ -77,6 +77,8 @@ pub fn cancel_wave_ok_response(cancelled : Int) -> @types.Response {
 pub(all) enum CancelWavePerAgentHostStep {
   PaneClose
   WorktreeRemove
+  PgroupKill
+  PidFileRemove
   RegistryFailed
   PollerUntrack
 } derive(Debug, Eq)
@@ -91,6 +93,8 @@ pub fn cancel_wave_per_agent_host_steps() -> Array[CancelWavePerAgentHostStep] {
   [
     CancelWavePerAgentHostStep::PaneClose,
     CancelWavePerAgentHostStep::WorktreeRemove,
+    CancelWavePerAgentHostStep::PgroupKill,
+    CancelWavePerAgentHostStep::PidFileRemove,
     CancelWavePerAgentHostStep::RegistryFailed,
     CancelWavePerAgentHostStep::PollerUntrack,
   ]
@@ -108,6 +112,13 @@ pub async fn interpret_cancel_wave(
   registry : @registry.AgentRegistry?,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+  read_agent_pgid? : (String) -> Int? = fn(agent_id) {
+    @workspace.parse_agent_pgid(
+      @sys.read_file(@workspace.agent_pid_file_path(project_dir, agent_id)),
+    )
+  },
+  kill_pgid? : (Int) -> Unit = fn(_) { () },
+  remove_pid_file? : (String) -> Unit = fn(_) { () },
 ) -> @types.Response {
   match registry {
     None => @types.Response::Err("no agent registry available")
@@ -139,6 +150,13 @@ pub async fn interpret_cancel_wave(
         if @types.is_choir_managed_worktree_path(project_dir, agent.workspace) {
           let _ = runner([@workspace.git_worktree_remove(agent.workspace)])
           ()
+        }
+        match read_agent_pgid(agent_id_str) {
+          Some(pgid) => {
+            kill_pgid(pgid)
+            remove_pid_file(agent_id_str)
+          }
+          None => ()
         }
         let _ = reg.set_state(agent_id_str, @types.AgentState::Failed)
         ignore(
