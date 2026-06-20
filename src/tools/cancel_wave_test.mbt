@@ -438,11 +438,13 @@ test "cancel_wave_ok_response shape" {
 ///|
 test "cancel_wave_per_agent_host_steps ordering" {
   let steps = cancel_wave_per_agent_host_steps()
-  assert_eq(steps.length(), 4)
+  assert_eq(steps.length(), 6)
   assert_eq(steps[0], CancelWavePerAgentHostStep::PaneClose)
   assert_eq(steps[1], CancelWavePerAgentHostStep::WorktreeRemove)
-  assert_eq(steps[2], CancelWavePerAgentHostStep::RegistryFailed)
-  assert_eq(steps[3], CancelWavePerAgentHostStep::PollerUntrack)
+  assert_eq(steps[2], CancelWavePerAgentHostStep::PgroupKill)
+  assert_eq(steps[3], CancelWavePerAgentHostStep::PidFileRemove)
+  assert_eq(steps[4], CancelWavePerAgentHostStep::RegistryFailed)
+  assert_eq(steps[5], CancelWavePerAgentHostStep::PollerUntrack)
 }
 
 ///|
@@ -458,6 +460,55 @@ async test "interpret_cancel_wave err when no registry" {
   match got {
     @types.Response::Err(msg) => assert_eq(msg, "no agent registry available")
     _ => fail("expected no-registry err")
+  }
+}
+
+///|
+async test "interpret_cancel_wave kills recorded process group and removes pidfile" {
+  let reg = @registry.AgentRegistry::new()
+  let agent_id = "main.cancel-me"
+  let agent : @types.Agent = {
+    agent_id: @types.AgentId(agent_id),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Codex,
+    parent: Some("main"),
+    workspace: "/tmp/project/.choir/worktrees/main-cancel-me",
+    branch: "main.cancel-me",
+    terminal_target: None,
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  try reg.insert(agent) catch {
+    _ => ()
+  } noraise {
+    _ => ()
+  }
+
+  let killed : Array[Int] = []
+  let removed : Array[String] = []
+  let got = interpret_cancel_wave(
+    { force: true },
+    Some("main"),
+    "/tmp/project",
+    None,
+    Some(reg),
+    mock_runner_all_ok,
+    read_agent_pgid=fn(id) { if id == agent_id { Some(6262) } else { None } },
+    kill_pgid=fn(pgid) { killed.push(pgid) },
+    remove_pid_file=fn(id) { removed.push(id) },
+  )
+
+  match got {
+    @types.Response::Ok(_) => ()
+    _ => fail("expected ok")
+  }
+  @debug.assert_eq(killed, [6262])
+  @debug.assert_eq(removed, [agent_id])
+  try reg.get(agent_id) catch {
+    _ => fail("expected agent in registry")
+  } noraise {
+    a => assert_eq(a.state, @types.AgentState::Failed)
   }
 }
 

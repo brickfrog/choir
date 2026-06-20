@@ -200,23 +200,33 @@ async test "recover_state ReapStaleLifecycle deletes the on-disk lifecycle" {
   catch {
     e => {
       @moontrace.clear_subscriber()
+      ignore(@sys.rm_rf(project_dir))
       raise e
     }
   } noraise {
     _ => ()
   }
   @moontrace.clear_subscriber()
-  assert_true(@phase.read_lifecycle(project_dir, agent_id) is None)
-  @debug.assert_eq(killed, [5151])
-  assert_false(@sys.path_entry_exists(pid_path))
-  let mut saw_reap_debug = false
-  for event in captured {
-    if event.level == @moontrace.Level::Debug &&
-      event.message == "reaped stale lifecycle" {
-      saw_reap_debug = true
+  try {
+    assert_true(@phase.read_lifecycle(project_dir, agent_id) is None)
+    @debug.assert_eq(killed, [5151])
+    assert_false(@sys.path_entry_exists(pid_path))
+    let mut saw_reap_debug = false
+    for event in captured {
+      if event.level == @moontrace.Level::Debug &&
+        event.message == "reaped stale lifecycle" {
+        saw_reap_debug = true
+      }
     }
+    assert_true(saw_reap_debug)
+  } catch {
+    e => {
+      ignore(@sys.rm_rf(project_dir))
+      raise e
+    }
+  } noraise {
+    _ => ignore(@sys.rm_rf(project_dir))
   }
-  assert_true(saw_reap_debug)
 }
 
 ///|

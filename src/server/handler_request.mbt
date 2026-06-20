@@ -141,15 +141,30 @@ fn delivery_failure_log_error(error : String) -> String {
 }
 
 ///|
-fn ServerState::gc_dead_pane_delivery_recipient(
+async fn ServerState::gc_dead_pane_delivery_recipient(
   self : ServerState,
   recipient_id : String,
   error : String,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
+  kill_pgid? : (Int) -> Unit = default_kill_pgid_best_effort,
 ) -> Unit {
   @moontrace.warn("delivery recipient exceeded stale pane failure threshold", fields=[
     @moontrace.field("agent_id", recipient_id),
     @moontrace.field("error", error),
   ])
+  let effects : Array[TeardownEffect] = []
+  try self.registry.get(recipient_id) catch {
+    _ => ()
+  } noraise {
+    agent =>
+      match agent.terminal_target {
+        Some(target) => effects.push(CloseTerminal(target))
+        None => ()
+      }
+  }
+  effects.push(ClearRuntimeTracking(recipient_id))
+  self.interpret_teardown_effects(effects, runner, sleep_fn~, kill_pgid~)
   @phase.remove_parent_child_lifecycle(
     self.config.project_dir,
     self.registry,
@@ -160,10 +175,6 @@ fn ServerState::gc_dead_pane_delivery_recipient(
     _ => ()
   }
   self.delivery_failures.remove(recipient_id)
-  // Clear disconnect/no-handoff runtime state and stop watching the dead pane;
-  // otherwise a re-registered agent with the same id could inherit stale
-  // suppression flags or watcher state from this GC episode.
-  self.clear_agent_runtime_tracking(recipient_id)
   self.expire_pending_outbox_for_recipient(recipient_id)
   ignore(
     @poller.append_delivery_log_line(
@@ -216,9 +227,12 @@ fn ServerState::record_delivery_success(
 }
 
 ///|
-fn ServerState::record_delivery_failure(
+async fn ServerState::record_delivery_failure(
   self : ServerState,
   message : @outbox.OutboxMessage,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
+  kill_pgid? : (Int) -> Unit = default_kill_pgid_best_effort,
 ) -> Bool {
   if !delivery_targets_local_terminal(message.delivery_method) {
     return false
@@ -232,6 +246,9 @@ fn ServerState::record_delivery_failure(
     self.gc_dead_pane_delivery_recipient(
       recipient_id,
       message.last_error.unwrap_or("delivery failed"),
+      runner,
+      sleep_fn~,
+      kill_pgid~,
     )
     self.delivery_failures.remove(recipient_id)
     true
@@ -311,6 +328,7 @@ async fn ServerState::durable_dispatch_planned(
   planned : PlannedDelivery,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   sleep_fn? : async (Int) -> Unit = @async.sleep,
+  kill_pgid? : (Int) -> Unit = default_kill_pgid_best_effort,
 ) -> Result[Unit, @types.ChoirError] {
   let created_at = @poller.now_sec()
   let initial = @outbox.OutboxMessage::new(
@@ -351,7 +369,12 @@ async fn ServerState::durable_dispatch_planned(
     }
     Err(e) => {
       let failed = initial.record_failed_attempt(@poller.now_sec(), e.message())
-      let next = if self.record_delivery_failure(failed) {
+      let next = if self.record_delivery_failure(
+          failed,
+          runner,
+          sleep_fn~,
+          kill_pgid~,
+        ) {
         failed.mark_expired()
       } else {
         failed
@@ -373,6 +396,7 @@ async fn ServerState::durable_deliver_to_agent(
   status : @types.Status,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   sleep_fn? : async (Int) -> Unit = @async.sleep,
+  kill_pgid? : (Int) -> Unit = default_kill_pgid_best_effort,
 ) -> Result[Unit, @types.ChoirError] {
   let delivery = @message.plan_delivery(recipient, sender_id, body, status)
   self.durable_dispatch_planned(
@@ -385,6 +409,7 @@ async fn ServerState::durable_deliver_to_agent(
     },
     runner,
     sleep_fn~,
+    kill_pgid~,
   )
 }
 
@@ -581,6 +606,7 @@ pub async fn ServerState::replay_pending_outbox_with(
   now : Int64,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
+  kill_pgid? : (Int) -> Unit = default_kill_pgid_best_effort,
 ) -> Unit {
   for recipient_id in self.replay_outbox_recipient_ids() {
     let messages = @outbox.load_recipient_outbox(
@@ -604,6 +630,9 @@ pub async fn ServerState::replay_pending_outbox_with(
         self.gc_dead_pane_delivery_recipient(
           message.recipient_id,
           message.last_error.unwrap_or("delivery failed"),
+          runner,
+          sleep_fn~,
+          kill_pgid~,
         )
         recipient_gc = true
         message.mark_expired()
@@ -623,7 +652,12 @@ pub async fn ServerState::replay_pending_outbox_with(
           }
           Err(e) => {
             let failed = message.record_failed_attempt(now, e.message())
-            if self.record_delivery_failure(failed) {
+            if self.record_delivery_failure(
+                failed,
+                runner,
+                sleep_fn~,
+                kill_pgid~,
+              ) {
               recipient_gc = true
               failed.mark_expired()
             } else {
