@@ -70,6 +70,14 @@ pub(all) struct AgentModelConfig {
 } derive(Debug, Eq)
 
 ///|
+pub(all) struct AgentEffortConfig {
+  default : String?
+  dev : String?
+  worker : String?
+  tl : String?
+} derive(Debug, Eq)
+
+///|
 /// Parsed server configuration.
 pub(all) struct Config {
   /// Default role used when local config does not override it.
@@ -128,6 +136,8 @@ pub(all) struct Config {
   pricing : Map[String, PricingRate]
   /// Per-agent-type model defaults, keyed by canonical AgentType wire string.
   model : Map[String, AgentModelConfig]
+  /// Per-agent-type reasoning-effort defaults, keyed by canonical AgentType wire string.
+  effort : Map[String, AgentEffortConfig]
 } derive(Debug)
 
 ///|
@@ -214,6 +224,7 @@ pub fn Config::default() -> Config {
     auto_reload_after_rebuild: false,
     pricing: {},
     model: {},
+    effort: {},
   }
 }
 

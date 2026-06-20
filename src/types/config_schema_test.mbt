@@ -24,6 +24,8 @@ fn expected_config_schema_keys() -> Array[String] {
     "pr_policy.reviewer", "auto_rebuild_after_pull", "auto_reload_after_rebuild",
     "pricing.<agent_type>.rate_in", "pricing.<agent_type>.rate_out", "model.<agent_type>.default",
     "model.<agent_type>.dev", "model.<agent_type>.worker", "model.<agent_type>.tl",
+    "effort.<agent_type>.default", "effort.<agent_type>.dev", "effort.<agent_type>.worker",
+    "effort.<agent_type>.tl",
   ]
 }
 

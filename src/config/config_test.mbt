@@ -115,6 +115,26 @@ test "parse_config model tables are typed" {
 }
 
 ///|
+test "parse_config effort tables are typed" {
+  let cfg = parse_config(
+    (
+      #|[effort.codex]
+      #|default = "medium"
+      #|worker = "high"
+    ),
+  ).unwrap()
+  match cfg.effort.get("codex") {
+    Some(effort) => {
+      @debug.assert_eq(effort.default, Some("medium"))
+      @debug.assert_eq(effort.worker, Some("high"))
+      @debug.assert_eq(effort.dev, None)
+      @debug.assert_eq(effort.tl, None)
+    }
+    None => fail("missing codex effort config")
+  }
+}
+
+///|
 fn config_test_model(
   key : String,
   default : String?,
@@ -125,6 +145,19 @@ fn config_test_model(
   let model : Map[String, @types.AgentModelConfig] = {}
   model.set(key, { default, dev, worker, tl })
   model
+}
+
+///|
+fn config_test_effort(
+  key : String,
+  default : String?,
+  dev : String?,
+  worker : String?,
+  tl : String?,
+) -> Map[String, @types.AgentEffortConfig] {
+  let effort : Map[String, @types.AgentEffortConfig] = {}
+  effort.set(key, { default, dev, worker, tl })
+  effort
 }
 
 ///|
@@ -162,6 +195,7 @@ test "config_divergence names every changed top-level field" {
     auto_reload_after_rebuild: false,
     pricing: config_test_pricing("codex", 0.01, 0.02),
     model: config_test_model("codex", Some("loaded-default"), None, None, None),
+    effort: config_test_effort("codex", Some("on-disk-low"), None, None, None),
   }
   let on_disk : @types.Config = {
     default_role: @types.Role::Dev,
@@ -196,6 +230,7 @@ test "config_divergence names every changed top-level field" {
     auto_reload_after_rebuild: true,
     pricing: config_test_pricing("claude", 0.03, 0.04),
     model: config_test_model("codex", Some("disk-default"), None, None, None),
+    effort: config_test_effort("codex", Some("loaded-low"), None, None, None),
   }
   @debug.assert_eq(config_divergence(loaded, on_disk), [
     "default_role", "project_dir", "shell_command", "listen_uds", "listen_tcp", "tcp_auth_token",
@@ -204,7 +239,7 @@ test "config_divergence names every changed top-level field" {
     "agy_migration_incomplete", "hooks_enforcement", "worker_no_handoff_idle_sec",
     "poller_heartbeat_tick_sec", "prenotify_checks", "auto_pull_after_integration",
     "project", "pr_policy", "auto_rebuild_after_pull", "auto_reload_after_rebuild",
-    "pricing", "model",
+    "pricing", "model", "effort",
   ])
 }
 
@@ -239,7 +274,12 @@ test "config schema nested keys match parser-accepted TOML shape" {
   assert_true(config_schema_key_present(file, "model.<agent_type>.dev"))
   assert_true(config_schema_key_present(file, "model.<agent_type>.worker"))
   assert_true(config_schema_key_present(file, "model.<agent_type>.tl"))
+  assert_true(config_schema_key_present(file, "effort.<agent_type>.default"))
+  assert_true(config_schema_key_present(file, "effort.<agent_type>.dev"))
+  assert_true(config_schema_key_present(file, "effort.<agent_type>.worker"))
+  assert_true(config_schema_key_present(file, "effort.<agent_type>.tl"))
   assert_false(config_schema_key_present(file, "model"))
+  assert_false(config_schema_key_present(file, "effort"))
 
   let cfg = parse_config(
     (

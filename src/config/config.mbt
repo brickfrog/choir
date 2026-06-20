@@ -466,6 +466,54 @@ fn parse_model_config(
 }
 
 ///|
+fn parse_effort_config(
+  doc : TomlDoc,
+) -> Result[Map[String, @types.AgentEffortConfig], @types.ChoirError] {
+  let effort : Map[String, @types.AgentEffortConfig] = {}
+  for full_key, _ in doc.to_map() {
+    if full_key.has_prefix("effort.") {
+      let rest = full_key["effort.".length():].to_owned()
+      let agent_type_key = match rest.split_once(".") {
+        Some((agent_type, _)) => agent_type.to_owned()
+        None => rest
+      }
+      match @types.AgentType::try_parse_wire(agent_type_key) {
+        Ok(@types.AgentType::Unknown) | Err(_) =>
+          return Err(
+            @types.ChoirError::config_error(
+              "unknown effort agent_type: " + agent_type_key,
+            ),
+          )
+        Ok(_) => ()
+      }
+    }
+  }
+  for
+    agent_type in [
+      @types.AgentType::Gemini,
+      @types.AgentType::Claude,
+      @types.AgentType::Codex,
+      @types.AgentType::MoonPilot,
+      @types.AgentType::CursorAgent,
+    ] {
+    let key = agent_type.to_wire_string()
+    let effort_config : @types.AgentEffortConfig = {
+      default: doc.get_optional_nonempty("effort." + key + ".default"),
+      dev: doc.get_optional_nonempty("effort." + key + ".dev"),
+      worker: doc.get_optional_nonempty("effort." + key + ".worker"),
+      tl: doc.get_optional_nonempty("effort." + key + ".tl"),
+    }
+    if effort_config.default is Some(_) ||
+      effort_config.dev is Some(_) ||
+      effort_config.worker is Some(_) ||
+      effort_config.tl is Some(_) {
+      effort.set(key, effort_config)
+    }
+  }
+  Ok(effort)
+}
+
+///|
 /// Parses project config.toml
 pub fn parse_config(
   content : String,
@@ -697,6 +745,10 @@ pub fn parse_config(
     Ok(m) => m
     Err(e) => return Err(e)
   }
+  let effort = match parse_effort_config(doc) {
+    Ok(e) => e
+    Err(e) => return Err(e)
+  }
 
   Ok({
     default_role,
@@ -731,6 +783,7 @@ pub fn parse_config(
     auto_reload_after_rebuild,
     pricing,
     model,
+    effort,
   })
 }
 
@@ -781,6 +834,23 @@ fn config_model_equal(
   for key, model in left {
     match right.get(key) {
       Some(other) => if model != other { return false }
+      None => return false
+    }
+  }
+  true
+}
+
+///|
+fn config_effort_equal(
+  left : Map[String, @types.AgentEffortConfig],
+  right : Map[String, @types.AgentEffortConfig],
+) -> Bool {
+  if left.length() != right.length() {
+    return false
+  }
+  for key, effort in left {
+    match right.get(key) {
+      Some(other) => if effort != other { return false }
       None => return false
     }
   }
@@ -879,6 +949,9 @@ pub fn config_divergence(
   }
   if !config_model_equal(loaded.model, on_disk.model) {
     fields.push("model")
+  }
+  if !config_effort_equal(loaded.effort, on_disk.effort) {
+    fields.push("effort")
   }
   fields
 }
