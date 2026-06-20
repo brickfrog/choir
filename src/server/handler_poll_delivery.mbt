@@ -3672,6 +3672,7 @@ pub async fn ServerState::process_poller_tick_with(
   ) -> ParentWorktreeGitState? = capture_parent_worktree_git_state,
   git_pull_runner? : async (String, async (@workspace.Command) -> (Int, String)) -> Bool = run_parent_git_pull_ff_only,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
+  kill_pgid? : (Int) -> Unit = default_kill_pgid_best_effort,
 ) -> Unit {
   self.mutex_registry.expire(now)
   self.warn_on_disk_config_divergence()
@@ -3740,7 +3741,7 @@ pub async fn ServerState::process_poller_tick_with(
     now,
   )
   deliver_poller_stall_notifications(self, now, runner, sleep_fn~)
-  self.sweep_spawn_registration_timeouts(now, runner)
+  self.sweep_spawn_registration_timeouts(now, runner, kill_pgid~)
   self.sweep_outbox(now)
   ignore(self.poller.write_state_file(self.config.project_dir))
 }

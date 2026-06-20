@@ -9529,6 +9529,13 @@ async test "poller reaps never-registered spawning agent after first-observed de
     state.registry.get(child_id).state,
     @types.AgentState::Spawning,
   )
+  let pid_path = @workspace.agent_pid_file_path(
+    state.config.project_dir,
+    child_id,
+  )
+  ignore(@sys.create_dir_all(state.config.project_dir + "/.choir/pids"))
+  assert_true(@sys.write_file_sync(pid_path, "4242\n"))
+  let killed : Array[Int] = []
   state.process_poller_tick_with_test(
     280L,
     900L,
@@ -9539,6 +9546,7 @@ async test "poller reaps never-registered spawning agent after first-observed de
       spawn_registration_capture_runner(sent, closed, cmds)
     },
     capture=spawn_registration_capture,
+    kill_pgid=fn(pgid) { killed.push(pgid) },
   )
   @debug.assert_eq(state.spawn_registration_first_unseen.get(child_id), None)
   @debug.assert_eq(
@@ -9570,6 +9578,8 @@ async test "poller reaps never-registered spawning agent after first-observed de
   assert_true(sent[0].contains("first_observed=100"))
   assert_false(sent[0].contains("first_seen="))
   assert_eq(closed.length(), 1)
+  @debug.assert_eq(killed, [4242])
+  assert_false(@sys.path_entry_exists(pid_path))
   state.process_poller_tick_with_test(
     500L,
     900L,

@@ -91,6 +91,15 @@ pub async fn recover_state(
   state : ServerState,
   session : String,
   input : @runtime.RecoveryReconcileInput,
+  runner? : async (Array[@workspace.Command]) -> Array[Int] = async fn(cmds) {
+    @async.sleep(0)
+    let codes : Array[Int] = []
+    for _ in cmds {
+      codes.push(0)
+    }
+    codes
+  },
+  kill_pgid? : (Int) -> Unit = default_kill_pgid_best_effort,
 ) -> Unit {
   let plan = @runtime.plan_recovery(session, input)
 
@@ -137,7 +146,12 @@ pub async fn recover_state(
         )
       @runtime.RecoveryAction::FinalizeOfflineAgent(agent_id~) =>
         state.finalize_recovered_offline_agent(agent_id)
-      @runtime.RecoveryAction::ReapStaleLifecycle(agent_id~) =>
+      @runtime.RecoveryAction::ReapStaleLifecycle(agent_id~) => {
+        state.interpret_teardown_effects(
+          [ClearRuntimeTracking(agent_id)],
+          runner,
+          kill_pgid~,
+        )
         if @phase.delete_lifecycle(state.config.project_dir, agent_id) {
           @moontrace.debug("reaped stale lifecycle", fields=[
             @moontrace.field("agent_id", agent_id),
@@ -148,6 +162,7 @@ pub async fn recover_state(
             fields=[@moontrace.field("agent_id", agent_id)],
           )
         }
+      }
     }
   }
 
