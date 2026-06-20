@@ -383,13 +383,19 @@ test "audit default prompt writes receipt after successful worker" {
 }
 
 ///|
-test "audit default prompt defers repo conventions to agent docs" {
+test "audit default prompt layers baseline, codebase, and agent docs" {
   let body = default_prompt(PromptName::AuditSkill)
-  assert_true(body.contains("conventions this repo documents"))
-  assert_true(body.contains("CLAUDE.md / AGENTS.md"))
   assert_true(
-    body.contains("dead code, naming, test placement, error handling"),
+    body.contains("Apply an always-on universal engineering baseline"),
   )
+  assert_true(
+    body.contains("Infer repository conventions from the surrounding codebase"),
+  )
+  assert_true(
+    body.contains("If CLAUDE.md / AGENTS.md exists, treat it as additive"),
+  )
+  assert_true(body.contains("CLAUDE.md / AGENTS.md"))
+  assert_true(body.contains("correctness, security, dead code, test hygiene"))
   assert_true(body.contains("Verify with the configured verify command."))
   assert_false(body.contains("moon test"))
   assert_false(body.contains("ChoirError"))

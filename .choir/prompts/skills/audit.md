@@ -37,8 +37,15 @@ description: Spawn a Sarcasmotron worker to critically audit the current branch 
    (b) Context for the review:
    - Current branch name.
    - Review surface (the diff command from step 1).
-   - Apply the conventions this repo documents in its agent doc (CLAUDE.md / AGENTS.md):
-     dead code, naming, test placement, error handling, and any architecture rules it specifies.
+   - Apply an always-on universal engineering baseline regardless of whether
+     any agent doc exists: correctness, security, dead code, test hygiene,
+     effect/IO discipline, and obvious anti-patterns.
+   - Infer repository conventions from the surrounding codebase even when no
+     agent doc exists; match existing naming, style, test placement, error
+     handling, and architecture boundaries.
+   - If CLAUDE.md / AGENTS.md exists, treat it as additive repo-specific
+     rules on top of that baseline and codebase inference, including any
+     architecture, naming, or test-placement rules it specifies.
    - Verify with the configured verify command.
    - Any relevant spec file from `.choir/context/<name>-spec.md`.
 

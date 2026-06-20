@@ -63,8 +63,9 @@ pre-commit hook is not appropriate for arbitrary repos.
    - Check for `CLAUDE.md` and `AGENTS.md`.
    - Do NOT generate either file.
    - If neither file exists, include a recommendation in the final summary that
-     the human add one. Agents read these files for repo conventions, and the
-     generic Choir audit/TL prompts defer to those documented conventions.
+     the human add one. Agents read these files for repo-specific conventions;
+     adding one lets agents apply your specifics. The audit applies a
+     universal baseline and infers from the codebase either way.
 
 5. Write the minimal Choir project config.
    - Create `.choir/` if needed.
