@@ -156,6 +156,7 @@ async fn ServerState::process_poller_tick_with_test(
     @async.sleep(0)
     false
   },
+  kill_pgid? : (Int) -> Unit = fn(_) { () },
 ) -> Unit {
   self.process_poller_tick_with(
     now,
@@ -174,5 +175,6 @@ async fn ServerState::process_poller_tick_with_test(
     git_state_capture~,
     git_pull_runner~,
     sleep_fn=server_delivery_test_sleep,
+    kill_pgid~,
   )
 }
