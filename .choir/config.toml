@@ -3,7 +3,8 @@ prenotify_checks = ["moon check --target native", "CHOIR_TEST_NO_EXEC=1 moon tes
 [project]
 verify_cmd = "moon check --target native && moon test --target native"
 
-# Model selection intentionally unset: this ChatGPT-account codex only exposes
-# gpt-5.5 (spark/codex-mini variants 400), so a per-role model split adds nothing.
-# The quota lever here is reasoning EFFORT (global config is xhigh on everything);
-# per-role effort lands via choir-mn0l (e.g. effort.codex.dev = "low").
+# Per-agent model selection (choir-w5m7). Passthrough to `codex --model <value>`.
+# dev = coding leaves; default = everything else (audit/review workers, sub-TLs).
+[model.codex]
+default = "gpt-5.5"
+dev = "gpt-5.3-codex-spark"
