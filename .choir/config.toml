@@ -4,7 +4,9 @@ prenotify_checks = ["moon check --target native", "CHOIR_TEST_NO_EXEC=1 moon tes
 verify_cmd = "moon check --target native && moon test --target native"
 
 # Per-agent model selection (choir-w5m7). Passthrough to `codex --model <value>`.
-# dev = coding leaves; default = everything else (audit/review workers, sub-TLs).
+# dev (gpt-5.3-codex-spark) PARKED: spark could not drive the agentic TDD-leaf
+# protocol (mis-sequenced Red->Done, false verify-pass, exit-255 build) on first
+# trial. Coding leaves inherit gpt-5.5 until that's reliable. Effort is the real
+# quota lever — see choir-mn0l.
 [model.codex]
 default = "gpt-5.5"
-dev = "gpt-5.3-codex-spark"
