@@ -1,4 +1,19 @@
 ///|
+fn count_remove_worktree(
+  effects : Array[TeardownEffect],
+  path? : String = "",
+) -> Int {
+  let mut c = 0
+  for e in effects {
+    match e {
+      RemoveWorktree(p) => if path == "" || p == path { c = c + 1 }
+      _ => ()
+    }
+  }
+  c
+}
+
+///|
 test "plan_finalize - basic success" {
   let agent_id = "main.leaf"
   let agent : @types.Agent = {
@@ -139,14 +154,15 @@ test "plan_fail - basic failure" {
   )
 
   // 1. FireHook
-  // 2. CloseTerminal
-  // 3. PersistLifecycle (Failed)
-  // 4. SyncParentLifecycle
-  // 5. NotifyParent
-  // 6. ParentFailureTerminalEchoIfNeeded (no extra inject: primary delivery is terminal)
-  // 7. ClearRuntimeTracking
+  // 2. RemoveWorktree
+  // 3. CloseTerminal
+  // 4. PersistLifecycle (Failed)
+  // 5. SyncParentLifecycle
+  // 6. NotifyParent
+  // 7. ParentFailureTerminalEchoIfNeeded (no extra inject: primary delivery is terminal)
+  // 8. ClearRuntimeTracking
 
-  assert_eq(effects.length(), 7)
+  assert_eq(effects.length(), 8)
   match effects[0] {
     FireHook(
       agent_id="main.leaf",
@@ -156,10 +172,14 @@ test "plan_fail - basic failure" {
     _ => fail("expected FireHook")
   }
   match effects[1] {
+    RemoveWorktree("/tmp/.choir/worktrees/main.leaf") => ()
+    _ => fail("expected RemoveWorktree")
+  }
+  match effects[2] {
     CloseTerminal(_) => ()
     _ => fail("expected CloseTerminal")
   }
-  match effects[2] {
+  match effects[3] {
     PersistLifecycle(
       agent_id="main.leaf",
       trigger=@types.LifecycleTrigger::ExitDisconnected,
@@ -167,11 +187,11 @@ test "plan_fail - basic failure" {
     ) => ()
     _ => fail("expected PersistLifecycle(Failed)")
   }
-  match effects[3] {
+  match effects[4] {
     SyncParentLifecycle(agent_id="main.leaf", ..) => ()
     _ => fail("expected SyncParentLifecycle")
   }
-  match effects[4] {
+  match effects[5] {
     NotifyParent(
       parent_id="parent",
       agent_id="main.leaf",
@@ -180,7 +200,7 @@ test "plan_fail - basic failure" {
     ) => ()
     _ => fail("expected NotifyParent")
   }
-  match effects[5] {
+  match effects[6] {
     ParentFailureTerminalEchoIfNeeded(
       parent_id="parent",
       agent_id="main.leaf",
@@ -189,8 +209,109 @@ test "plan_fail - basic failure" {
     ) => ()
     _ => fail("expected ParentFailureTerminalEchoIfNeeded")
   }
-  match effects[6] {
+  match effects[7] {
     ClearRuntimeTracking("main.leaf") => ()
     _ => fail("expected ClearRuntimeTracking")
   }
+}
+
+///|
+test "plan_fail does not remove root checkout worker workspace" {
+  let agent : @types.Agent = {
+    agent_id: @types.AgentId("main.worker"),
+    role: @types.Role::Worker,
+    agent_type: @types.AgentType::Claude,
+    parent: Some("main.leaf"),
+    workspace: "/repo/.",
+    branch: "main",
+    terminal_target: Some({
+      kind: @types.TargetKind::ZellijPane,
+      session: "s",
+      name: "worker",
+    }),
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 1,
+  }
+  let lifecycle = @phase.lifecycle_for_agent(agent)
+  let effects = plan_fail(
+    agent,
+    lifecycle,
+    @phase.FailureReason::ParentKilled,
+    "parent killed",
+    @types.ExitReason::Disconnected,
+    None,
+    close_target=true,
+  )
+
+  assert_false(@types.is_choir_managed_worktree_path("/repo", agent.workspace))
+  assert_false(@types.is_choir_managed_worktree_path(".", agent.workspace))
+  assert_eq(count_remove_worktree(effects), 0)
+}
+
+///|
+test "plan_finalize failed early return removes managed worktree" {
+  let worktree = "/tmp/.choir/worktrees/main.failed-leaf"
+  let agent : @types.Agent = {
+    agent_id: @types.AgentId("main.failed-leaf"),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Gemini,
+    parent: Some("main.tl"),
+    workspace: worktree,
+    branch: "failed-branch",
+    terminal_target: None,
+    host: @types.Host::Local,
+    state: @types.AgentState::Failed,
+    spawn_depth: 0,
+  }
+  let lifecycle : @phase.AgentLifecycle = {
+    ..@phase.lifecycle_for_agent(agent),
+    process: @phase.ProcessState::Failed(
+      reason=@phase.FailureReason::NeverRegistered,
+    ),
+    workflow: @phase.WorkflowState::Dev(
+      @phase.DevLifecycle::Failed(reason=@phase.FailureReason::NeverRegistered),
+    ),
+  }
+  let effects = plan_finalize(
+    agent,
+    lifecycle,
+    @types.ExitReason::Disconnected,
+    notify_parent=false,
+    close_target=false,
+    remove_worktree=true,
+  )
+
+  @debug.assert_eq(effects, [
+    RemoveWorktree(worktree),
+    ClearRuntimeTracking("main.failed-leaf"),
+  ])
+}
+
+///|
+test "plan_finalize merge path emits one managed worktree removal" {
+  let worktree = "/tmp/.choir/worktrees/main.merged-leaf"
+  let agent : @types.Agent = {
+    agent_id: @types.AgentId("main.merged-leaf"),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Gemini,
+    parent: Some("main.tl"),
+    workspace: worktree,
+    branch: "merged-branch",
+    terminal_target: None,
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  let lifecycle = @phase.lifecycle_for_agent(agent)
+  let effects = plan_finalize(
+    agent,
+    lifecycle,
+    @types.ExitReason::Merged,
+    notify_parent=false,
+    close_target=false,
+    remove_worktree=true,
+  )
+
+  assert_eq(count_remove_worktree(effects, path=worktree), 1)
 }
