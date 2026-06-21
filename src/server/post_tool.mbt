@@ -102,6 +102,10 @@ pub fn plan_finalize(
 
   match lifecycle.process {
     @phase.ProcessState::Failed(..) => {
+      if remove_worktree &&
+        @types.is_choir_managed_worktree_path(".", agent.workspace) {
+        effects.push(RemoveWorktree(agent.workspace))
+      }
       effects.push(ClearRuntimeTracking(agent_id))
       return effects
     }
@@ -397,6 +401,9 @@ pub fn plan_fail(
   effects.push(FireHook(agent_id~, role=agent.role, exit_reason~))
 
   // Cleanup
+  if @types.is_choir_managed_worktree_path(".", agent.workspace) {
+    effects.push(RemoveWorktree(agent.workspace))
+  }
   if close_target {
     match agent.terminal_target {
       Some(target) => effects.push(CloseTerminal(target))
