@@ -795,7 +795,7 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
     }),
   )
   state.poller.track(
-    pr_number, child_id, child_id, "main", "https://github.com/brickfrog/choir/pull/90",
+    pr_number, child_id, "feature/base.auto-leaf", "feature/base", "https://github.com/brickfrog/choir/pull/90",
     100L,
   )
   match state.poller.get(pr_number) {
@@ -829,6 +829,7 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
     ),
   )
   let mut merge_seen = false
+  let mut remote_delete_seen = false
   let runner = async fn(cmds : Array[@workspace.Command]) {
     @async.sleep(0)
     let statuses = []
@@ -838,6 +839,10 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
         cmd.args[0] == "pr" &&
         cmd.args[1] == "merge" {
         merge_seen = true
+      }
+      if cmd.program == "git" &&
+        cmd.args == ["push", "origin", "--delete", "feature/base.auto-leaf"] {
+        remote_delete_seen = true
       }
       statuses.push(0)
     }
@@ -870,9 +875,15 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
     Some(0),
     runner,
     capture~,
+    hook_capture=async fn(_, _, _) {
+      @async.sleep(0)
+      (0, "")
+    },
+    hook_path_exists=fn(_) { false },
   )
   assert_true(merged)
   assert_true(merge_seen)
+  assert_true(remote_delete_seen)
   assert_true(state.poller.get(pr_number) == None)
   match @phase.read_lifecycle(project_dir, child_id) {
     Some(lifecycle) =>

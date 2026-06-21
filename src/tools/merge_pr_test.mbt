@@ -2812,11 +2812,20 @@ test "merge_pr_mutex_name prefixes branch" {
 }
 
 ///|
-test "merge_pr_host_step_sequence is gh merge then git fetch" {
+test "merge_pr_host_step_sequence starts with gh merge then git fetch" {
   let steps = merge_pr_host_step_sequence()
-  assert_eq(steps.length(), 2)
+  assert_true(steps.length() >= 2)
   @debug.assert_eq(steps[0], MergePrHostStep::GhPrMerge)
   @debug.assert_eq(steps[1], MergePrHostStep::GitFetch)
+}
+
+///|
+test "merge_pr_host_step_sequence includes best effort remote branch delete" {
+  let steps = merge_pr_host_step_sequence()
+  assert_eq(steps.length(), 3)
+  @debug.assert_eq(steps[0], MergePrHostStep::GhPrMerge)
+  @debug.assert_eq(steps[1], MergePrHostStep::GitFetch)
+  @debug.assert_eq(steps[2], MergePrHostStep::GitDeleteRemoteBranch)
 }
 
 ///|
@@ -3258,6 +3267,168 @@ async test "interpret_merge_pr ok response matches merged envelope" {
     _ => fail("expected ok merged")
   }
   ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_merge_pr deletes merged leaf remote branch best effort" {
+  let project_dir = "/tmp/choir-mpr-remote-delete-" + @sys.get_pid().to_string()
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    78,
+    "feature/base.leaf-a",
+    "feature/base.leaf-a",
+    "feature/base",
+    "https://github.com/o/r/pull/78",
+    2L,
+    @poller.ReviewState::Approved,
+    "",
+    "abcdef1234567890abcdef1234567890abcdef12",
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  let ran : Array[@workspace.Command] = []
+  let got = interpret_merge_pr(
+    {
+      pr_number: 78,
+      parent_branch: "feature/base",
+      caller_id: "main.tl",
+      review_mode: Some(@types.ReviewMode::SinglePass),
+    },
+    project_dir,
+    Some(ps),
+    None,
+    None,
+    async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      for cmd in cmds {
+        ran.push(cmd)
+      }
+      let statuses = []
+      for cmd in cmds {
+        statuses.push(
+          if cmd.program == "git" &&
+            cmd.args == ["push", "origin", "--delete", "feature/base.leaf-a"] {
+            1
+          } else {
+            0
+          },
+        )
+      }
+      statuses
+    },
+    mock_preflight_capture_no_unresolved_threads,
+    @sys.append_file_sync,
+    fn(_) { false },
+    task_contract_reader=merge_pr_test_empty_contract_reader,
+    persist=fn(_, _) { true },
+  )
+  match got {
+    @types.Response::Ok(fields) =>
+      assert_eq(fields.get("status").unwrap_or(""), "merged")
+    @types.Response::Err(msg) =>
+      fail("remote delete failure must not fail merge: " + msg)
+  }
+  assert_eq(ran.length(), 4)
+  @debug.assert_eq(ran[0].args, ["pr", "merge", "78", "--merge"])
+  @debug.assert_eq(ran[1].args, ["fetch"])
+  assert_eq(ran[2].program, "git")
+  @debug.assert_eq(ran[2].args, [
+    "push", "origin", "--delete", "feature/base.leaf-a",
+  ])
+  @debug.assert_eq(ran[2].workdir, Some(project_dir))
+  assert_eq(ran[3].program, "git")
+  @debug.assert_eq(ran[3].args, ["branch", "-D", "feature/base.leaf-a"])
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_merge_pr never deletes main default or parent remote branch" {
+  for head in ["main", "feature/base"] {
+    let project_dir = "/tmp/choir-mpr-remote-delete-safe-" +
+      head.replace(old="/", new="-") +
+      "-" +
+      @sys.get_pid().to_string()
+    let ps = @poller.PollerState::new()
+    ps.track_recovered(
+      79,
+      "main.leaf",
+      head,
+      "feature/base",
+      "https://github.com/o/r/pull/79",
+      2L,
+      @poller.ReviewState::Approved,
+      "",
+      "abcdef1234567890abcdef1234567890abcdef12",
+      @poller.CiRollupStatus::Success,
+      true,
+    )
+    let ran : Array[@workspace.Command] = []
+    let got = interpret_merge_pr(
+      {
+        pr_number: 79,
+        parent_branch: "feature/base",
+        caller_id: "main.tl",
+        review_mode: Some(@types.ReviewMode::SinglePass),
+      },
+      project_dir,
+      Some(ps),
+      None,
+      None,
+      async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+        @async.sleep(0)
+        for cmd in cmds {
+          ran.push(cmd)
+        }
+        let statuses = []
+        for _ in cmds {
+          statuses.push(0)
+        }
+        statuses
+      },
+      mock_preflight_capture_no_unresolved_threads,
+      @sys.append_file_sync,
+      fn(_) { false },
+      task_contract_reader=merge_pr_test_empty_contract_reader,
+      persist=fn(_, _) { true },
+    )
+    match got {
+      @types.Response::Ok(fields) =>
+        assert_eq(fields.get("status").unwrap_or(""), "merged")
+      @types.Response::Err(msg) => fail("expected merge success: " + msg)
+    }
+    assert_false(
+      ran
+      .iter()
+      .any(fn(cmd) {
+        cmd.program == "git" &&
+        cmd.args.length() == 4 &&
+        cmd.args[0] == "push" &&
+        cmd.args[1] == "origin" &&
+        cmd.args[2] == "--delete"
+      }),
+    )
+    ignore(@sys.rm_rf(project_dir))
+  }
+}
+
+///|
+test "merge_pr_remote_branch_delete_allowed excludes main default and parent" {
+  assert_false(
+    merge_pr_remote_branch_delete_allowed("main", "feature/base", "trunk"),
+  )
+  assert_false(
+    merge_pr_remote_branch_delete_allowed("trunk", "feature/base", "trunk"),
+  )
+  assert_false(
+    merge_pr_remote_branch_delete_allowed(
+      "feature/base", "feature/base", "trunk",
+    ),
+  )
+  assert_true(
+    merge_pr_remote_branch_delete_allowed(
+      "feature/base.leaf-a", "feature/base", "trunk",
+    ),
+  )
 }
 
 ///|
@@ -3847,6 +4018,15 @@ async test "interpret_merge_pr feature main closes wave and body beads then dele
     .any(fn(cmd) {
       cmd.program == "git" &&
       cmd.args == ["checkout", "main"] &&
+      cmd.workdir == Some(project_dir)
+    }),
+  )
+  assert_true(
+    ran
+    .iter()
+    .any(fn(cmd) {
+      cmd.program == "git" &&
+      cmd.args == ["push", "origin", "--delete", feature_branch] &&
       cmd.workdir == Some(project_dir)
     }),
   )
