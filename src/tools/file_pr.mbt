@@ -418,7 +418,7 @@ pub async fn interpret_file_pr_post_success(
     None => ()
   }
   @phase.apply_dev_event(project_dir, branch, effects.dev_event, registry~)
-  let delivery_log_path = project_dir + "/.choir/delivery.log"
+  let delivery_log_path = project_dir + "/.choir/logs/delivery.log"
   match (effects.notify_message_for_parent, registry) {
     (Some(notify_message), Some(reg)) => {
       let plan = file_pr_auto_notify_plan(

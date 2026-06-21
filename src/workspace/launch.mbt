@@ -34,7 +34,7 @@ fn shell_escape(raw : String) -> String {
 
 ///|
 pub fn codex_stderr_log_relpath(agent_id : String) -> String {
-  ".choir/codex-" + agent_id.replace(old="/", new="-") + ".stderr.log"
+  ".choir/logs/codex-" + agent_id.replace(old="/", new="-") + ".stderr.log"
 }
 
 ///|
@@ -44,7 +44,7 @@ pub fn codex_stderr_log_path(project_dir : String, agent_id : String) -> String 
 
 ///|
 pub fn agy_stderr_log_relpath(agent_id : String) -> String {
-  ".choir/agy-" + @types.sanitize_agent_id(agent_id) + ".stderr.log"
+  ".choir/logs/agy-" + @types.sanitize_agent_id(agent_id) + ".stderr.log"
 }
 
 ///|
@@ -87,7 +87,13 @@ fn wrap_with_stderr_redirect(cmd : Command, stderr_path : String) -> Command {
   for arg in cmd.args {
     quoted_args.push(shell_escape(arg))
   }
-  let wrapped = quoted_args.join(" ") + " 2>" + shell_escape(stderr_path)
+  let quoted_stderr = shell_escape(stderr_path)
+  let wrapped = "mkdir -p \"$(dirname " +
+    quoted_stderr +
+    ")\" && " +
+    quoted_args.join(" ") +
+    " 2>" +
+    quoted_stderr
   { program: "bash", args: ["-c", wrapped], workdir: cmd.workdir }
 }
 
@@ -131,7 +137,7 @@ pub fn codex_mcp_override_args(
     @types.Role::TL =>
       [
         "mcp-stdio", "--raw-stdio", "--name", agent_id, "--wait-socket-tries", codex_wait_socket_tries,
-        "--stderr-append-log", ".choir/mcp-stdio.stderr.log",
+        "--stderr-append-log", ".choir/logs/mcp-stdio.stderr.log",
       ]
     _ =>
       [
@@ -144,7 +150,7 @@ pub fn codex_mcp_override_args(
         "--wait-socket-tries",
         codex_wait_socket_tries,
         "--stderr-append-log",
-        ".choir/mcp-stdio.stderr.log",
+        ".choir/logs/mcp-stdio.stderr.log",
       ]
   }
   let args_lit = toml_string_array_literal(elems)
@@ -555,7 +561,7 @@ pub fn agent_launch_command(
 /// tool-search deferral so the TL doesn't pay a ToolSearch round-trip on first
 /// use of every fork_wave / file_pr / merge_pr / wave_state call.
 pub fn init_tl_claude_mcp_config_json() -> String {
-  "{\"mcpServers\":{\"choir\":{\"type\":\"stdio\",\"command\":\"choir\",\"args\":[\"mcp-stdio\",\"--name\",\"root\",\"--stderr-append-log\",\".choir/mcp-stdio.stderr.log\"],\"alwaysLoad\":true},\"semble\":{\"type\":\"stdio\",\"command\":\"uv\",\"args\":[\"tool\",\"run\",\"--from\",\"semble[mcp]\",\"semble\"]}}}"
+  "{\"mcpServers\":{\"choir\":{\"type\":\"stdio\",\"command\":\"choir\",\"args\":[\"mcp-stdio\",\"--name\",\"root\",\"--stderr-append-log\",\".choir/logs/mcp-stdio.stderr.log\"],\"alwaysLoad\":true},\"semble\":{\"type\":\"stdio\",\"command\":\"uv\",\"args\":[\"tool\",\"run\",\"--from\",\"semble[mcp]\",\"semble\"]}}}"
 }
 
 ///|

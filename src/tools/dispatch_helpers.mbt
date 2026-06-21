@@ -411,7 +411,7 @@ pub async fn execute_delivery(
     }
     buf.to_string()
   }
-  let log_path = project_dir + "/.choir/delivery.log"
+  let log_path = project_dir + "/.choir/logs/delivery.log"
   fn log_delivery_retry(
     target : String,
     attempt : Int,

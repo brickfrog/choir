@@ -296,7 +296,7 @@ test "completion handoff hook emits provider block and allow shapes" {
   assert_eq(block.stderr, "")
   @debug.assert_eq(query_agents, ["main.leaf"])
   @debug.assert_eq(read_paths, [attempts_path])
-  @debug.assert_eq(create_paths, [".choir/main.leaf"])
+  @debug.assert_eq(create_paths, [".choir/agents/main.leaf"])
   @debug.assert_eq(writes, [attempts_path + "=1"])
 
   let handed_off = completion_handoff_hook_result(

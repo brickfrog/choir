@@ -22,7 +22,7 @@ fn tl_lifecycle_shell_script(
   //    reason (clean exit, harness crash, caught signal).
   // CHOIR_WORKSPACE is exported by `env_exports`; `2>/dev/null` keeps a
   // missing log file/dir from disturbing the rest of the handling.
-  let exits_log = "\"$CHOIR_WORKSPACE/.choir/tl-exits.log\""
+  let exits_log = "\"$CHOIR_WORKSPACE/.choir/logs/tl-exits.log\""
   let signal_trap = "trap 'printf \"%s [TL wrapper caught signal]\\n\"" +
     " \"$(date -Is)\" >> " +
     exits_log +

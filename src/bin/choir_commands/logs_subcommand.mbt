@@ -565,12 +565,12 @@ fn read_source_lines(
     Merged =>
       Ok(
         merge_log_lines(
-          read_log_lines(project_dir, ".choir/serve.log"),
-          read_log_lines(project_dir, ".choir/delivery.log"),
+          read_log_lines(project_dir, ".choir/logs/serve.log"),
+          read_log_lines(project_dir, ".choir/logs/delivery.log"),
         ),
       )
-    Serve => Ok(read_log_lines(project_dir, ".choir/serve.log"))
-    Delivery => Ok(read_log_lines(project_dir, ".choir/delivery.log"))
+    Serve => Ok(read_log_lines(project_dir, ".choir/logs/serve.log"))
+    Delivery => Ok(read_log_lines(project_dir, ".choir/logs/delivery.log"))
     Events(agent_arg) => Ok(read_events_source_lines(project_dir, agent_arg))
     Wave(wave_id) => read_wave_source_lines(project_dir, wave_id)
   }
@@ -584,11 +584,11 @@ fn source_follow_paths(
   match source {
     Merged =>
       Ok([
-        logs_project_path(project_dir, ".choir/serve.log"),
-        logs_project_path(project_dir, ".choir/delivery.log"),
+        logs_project_path(project_dir, ".choir/logs/serve.log"),
+        logs_project_path(project_dir, ".choir/logs/delivery.log"),
       ])
-    Serve => Ok([logs_project_path(project_dir, ".choir/serve.log")])
-    Delivery => Ok([logs_project_path(project_dir, ".choir/delivery.log")])
+    Serve => Ok([logs_project_path(project_dir, ".choir/logs/serve.log")])
+    Delivery => Ok([logs_project_path(project_dir, ".choir/logs/delivery.log")])
     Events(agent_arg) =>
       match event_log_path(project_dir, agent_arg) {
         Some(path) => Ok([path])

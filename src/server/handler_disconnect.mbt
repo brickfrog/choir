@@ -1450,7 +1450,7 @@ async test "startup disconnect after register emits startup prompt-gap warning" 
   let agent_id = "main.gemini-leaf"
   ignore(
     @sys.write_file_sync(
-      project_dir + "/.choir/agy-main.gemini-leaf.stderr.log",
+      project_dir + "/.choir/logs/agy-main.gemini-leaf.stderr.log",
       "agy boot\nmcp bridge disconnected\n",
     ),
   )

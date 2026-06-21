@@ -1310,7 +1310,7 @@ pub fn agy_mcp_config_json(
       "command": "choir".to_json(),
       "args": [
         "mcp-stdio", "--role", role, "--name", agent_name, "--wait-socket-tries",
-        "300", "--stderr-append-log", ".choir/mcp-stdio.stderr.log",
+        "300", "--stderr-append-log", ".choir/logs/mcp-stdio.stderr.log",
       ].to_json(),
       "cwd": worktree_path.to_json(),
       "alwaysLoad": true.to_json(),

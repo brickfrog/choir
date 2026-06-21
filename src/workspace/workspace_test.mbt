@@ -167,11 +167,11 @@ test "init_tl_zellij_tab_command wraps TL with policy watcher shell" {
   assert_false(script.contains("child_pid=$!"))
   assert_true(script.contains("[TL exited]"))
   assert_true(script.contains("exec bash -l"))
-  // Every TL exit appends its timestamped exit code to .choir/tl-exits.log
+  // Every TL exit appends its timestamped exit code to .choir/logs/tl-exits.log
   // so a silent harness crash is still diagnosable (choir-eek); a HUP/TERM
   // trap keeps the outer shell alive past those signals so the exit code is
   // still recorded.
-  assert_true(script.contains(".choir/tl-exits.log"))
+  assert_true(script.contains(".choir/logs/tl-exits.log"))
   assert_true(script.contains("exit=%s"))
   assert_true(script.contains("trap "))
   assert_true(script.contains("HUP TERM"))
@@ -387,7 +387,7 @@ test "agent_launch_command for each AgentType" {
   assert_true(cmd_gemini_body.contains(" 2>"))
   assert_false(cmd_gemini_body.contains(" 2>>"))
   assert_true(
-    cmd_gemini_body.contains("/path/.choir/agy-main.test-slug.stderr.log"),
+    cmd_gemini_body.contains("/path/.choir/logs/agy-main.test-slug.stderr.log"),
   )
   @debug.assert_eq(cmd_gemini.workdir, Some("/path"))
 
@@ -412,7 +412,7 @@ test "agent_launch_command for each AgentType" {
   assert_true(cmd_codex_body.contains(" 2>"))
   assert_false(cmd_codex_body.contains(" 2>>"))
   assert_true(
-    cmd_codex_body.contains("/path/.choir/codex-main.test-slug.stderr.log"),
+    cmd_codex_body.contains("/path/.choir/logs/codex-main.test-slug.stderr.log"),
   )
   assert_true(cmd_codex_body.contains("mcp_servers.semble.command=\"uv\""))
   assert_true(cmd_codex_body.contains("mcp_servers.semble.cwd=\"/path\""))
@@ -729,11 +729,11 @@ test "agent_pid_file_path sanitizes agent ids as flat filenames" {
 test "agy_stderr_log_path sanitizes agent ids as flat filenames" {
   assert_eq(
     @workspace.agy_stderr_log_relpath("../../evil\\agent\u0000pid"),
-    ".choir/agy-.._.._evil_agent_pid.stderr.log",
+    ".choir/logs/agy-.._.._evil_agent_pid.stderr.log",
   )
   assert_eq(
     @workspace.agy_stderr_log_path("/project", "main.leaf"),
-    "/project/.choir/agy-main.leaf.stderr.log",
+    "/project/.choir/logs/agy-main.leaf.stderr.log",
   )
 }
 
@@ -3081,7 +3081,7 @@ test "init_tl_claude_mcp_config_json sets alwaysLoad on the choir MCP entry" {
   assert_true(json.contains("\"alwaysLoad\":true"))
   assert_true(json.contains("\"choir\""))
   assert_true(json.contains("\"--stderr-append-log\""))
-  assert_true(json.contains("\".choir/mcp-stdio.stderr.log\""))
+  assert_true(json.contains("\".choir/logs/mcp-stdio.stderr.log\""))
   // TL launched via `choir init` also gets semble (highest-volume reader).
   assert_true(json.contains("\"semble\""))
   assert_true(json.contains("\"uv\""))

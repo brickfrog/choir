@@ -183,7 +183,7 @@ async test "interpret_file_pr_post_success reviewer comment failure is best-effo
   let file_pr_copilot_runner_seq : Array[Int] = [0]
   let project_dir = "/tmp/rc-fpr-comment-fail"
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
-  let log_path = project_dir + "/.choir/delivery.log"
+  let log_path = project_dir + "/.choir/logs/delivery.log"
   ignore(@sys.delete_file_sync(log_path))
   let args : FilePrArgs = {
     branch: "main.leaf",
@@ -361,7 +361,7 @@ async fn mock_runner_copilot_reviewer_gh_nonzero(
 async test "interpret_file_pr_post_success copilot reviewer failure is best-effort" {
   let project_dir = "/tmp/copilot-fail-fpr"
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
-  let log_path = project_dir + "/.choir/delivery.log"
+  let log_path = project_dir + "/.choir/logs/delivery.log"
   ignore(@sys.delete_file_sync(log_path))
   let args : FilePrArgs = {
     branch: "main.leaf",

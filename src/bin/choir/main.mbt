@@ -1,4 +1,49 @@
 ///|
+/// Grouped, human-readable CLI help. Human commands are grouped by purpose;
+/// internal commands (invoked by choir/agents, not for direct use) are listed
+/// separately so `choir` and `choir help` are navigable at a glance.
+fn choir_usage() -> String {
+  (
+    #|choir — agent orchestration
+    #|
+    #|Usage: choir <command> [args]
+    #|
+    #|Setup
+    #|  init [--recreate] [--purge] [--tl <claude|codex|gemini|cursor_agent|agent>] [--lean]
+    #|                        scaffold .choir and start the server + TL
+    #|
+    #|Run
+    #|  serve                 run the orchestration server
+    #|  dev                   start a dev TL session
+    #|
+    #|Goals
+    #|  goal <bead-id|text> [--verify <cmd>]...   set the active TL goal
+    #|  goal-clear            clear the active goal
+    #|
+    #|Inspect
+    #|  logs [--source serve|delivery|events <agent>|wave <id>] [--tail N] [--follow|-f] [--grep PATTERN] [--level ...]
+    #|  log --wave <wave_id>  print a wave's log
+    #|  stats [--wave <id>|--agent-type <type>]   usage/cost stats
+    #|  watch                 live status watcher
+    #|
+    #|Configure
+    #|  config schema [--format=md|json]
+    #|  prompts <diff|sync>   inspect / sync prompt assets
+    #|  skill <add|list|remove>
+    #|  mcp <add|list|remove>
+    #|  beads <wave-from|gate|merge-slot|spec-link|doctor>
+    #|
+    #|Control
+    #|  stop [--purge]        stop the server (optionally purge runtime state)
+    #|
+    #|Internal (invoked by choir/agents, not for direct use):
+    #|  tool, leaf-tool, mcp-stdio, hook, zellij-action, claude, reply,
+    #|  statusline, reload, trust-gemini-folder, smoke
+    #|
+  )
+}
+
+///|
 fn main {
   let args = @env.args()
   let subcmd = if args.length() >= 2 { args[1] } else { "" }
@@ -32,10 +77,10 @@ fn main {
       "logs" => @choir_commands.logs_subcommand_run()
       "stats" => @choir_commands.stats_subcommand_run()
       "smoke" => @choir_commands.smoke_subcommand_run()
+      "help" | "-h" | "--help" | "" => @sys.write_stdout(choir_usage())
       _ => {
-        @sys.write_stdout(
-          "usage: choir <serve|dev|reload|tool <tool>|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|zellij-action <send|close>|hook|init [--recreate] [--purge] [--tl claude|codex|gemini|cursor_agent|agent] [--lean]|claude [--lean] [args...]|stop [--purge]|reply|watch|statusline|goal <bead-id|text> [--verify <cmd>]...|goal-clear|prompts <diff|sync>|skill <add|list|remove>|mcp <add|list|remove>|config schema [--format=md|json]|beads <wave-from|gate|merge-slot|spec-link|doctor>|log --wave <wave_id>|logs [--source serve|delivery|events <agent>|wave <id>] [--tail N] [--follow|-f] [--grep PATTERN] [--level trace|debug|info|warn|error]|stats [--wave <wave_id>|--agent-type <type>]|smoke beads-handoff>\n",
-        )
+        @sys.write_stdout("choir: unknown command '" + subcmd + "'\n\n")
+        @sys.write_stdout(choir_usage())
         @sys.exit(1)
       }
     }
