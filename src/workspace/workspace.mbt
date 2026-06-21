@@ -436,7 +436,7 @@ pub fn mcp_json_content(
     role_str +
     "\",\"--name\",\"" +
     agent_id +
-    "\",\"--stderr-append-log\",\".choir/mcp-stdio-" +
+    "\",\"--stderr-append-log\",\".choir/logs/mcp-stdio-" +
     @types.sanitize_agent_id(agent_id) +
     ".stderr.log" +
     "\"],\"alwaysLoad\":true}" +
