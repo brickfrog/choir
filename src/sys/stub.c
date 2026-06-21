@@ -498,7 +498,7 @@ int choir_rm_rf(const char *path) {
  * "..").  Returns bytes written, or -1 if the directory could not be opened.
  * If the buffer would overflow, stops before the entry that would not fit —
  * caller sees a partial list with no indicator (sufficient for our use: the
- * caller expects small directories like .choir/kv and .choir/worktrees). */
+ * caller expects small directories like .choir/state/kv and .choir/worktrees). */
 int choir_list_dir(const char *path, char *buf, int max_size) {
     DIR *d = opendir(path);
     if (!d) {

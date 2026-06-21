@@ -170,7 +170,7 @@ pub fn rm_rf(path : String) -> Bool {
 /// Entry names of `path`, skipping `.` and `..`. Returns empty array when the
 /// directory cannot be opened (non-existent, permission denied, not a dir).
 /// A 64 KiB buffer caps the read; directories with more entries than fit are
-/// silently truncated — callers here operate on `.choir/kv` and `.choir/worktrees`
+/// silently truncated — callers here operate on `.choir/state/kv` and `.choir/worktrees`
 /// which stay well under that.
 pub fn list_dir(path : String) -> Array[String] {
   let path_bytes = string_to_null_terminated_bytes(path)
