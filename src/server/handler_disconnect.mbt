@@ -25,11 +25,30 @@ async fn ServerState::ensure_watched_pane_resolved(
   self : ServerState,
   agent_id : String,
 ) -> Bool {
-  match self.pane_watcher.pane_id_for_agent(agent_id) {
-    Some(_) => true
-    None => {
-      self.watch_pane(agent_id)
-      self.pane_watcher.pane_id_for_agent(agent_id) is Some(_)
+  if !self.pane_watcher.is_watching_agent(agent_id) {
+    return false
+  }
+  let agent = self.registry.get(agent_id) catch { _ => return false }
+  let target = match agent.terminal_target {
+    Some(value) => value
+    None => return false
+  }
+  let cached = self.pane_watcher.pane_id_for_agent(agent_id)
+  let snapshot = (self.list_panes_snapshot_capture)(target.session)
+  let current = match @tools.resolve_zellij_pane_id(target, snapshot) {
+    Some(value) => Some("terminal_" + value.to_string())
+    None => None
+  }
+  match (cached, current) {
+    (Some(cached_id), Some(current_id)) if cached_id == current_id => true
+    _ => {
+      self.pane_watcher.watch_pane(
+        agent_id,
+        target,
+        @poller.now_sec(),
+        pane_id=current,
+      )
+      current is Some(_)
     }
   }
 }
@@ -912,11 +931,13 @@ async fn ServerState::emit_worker_exited_without_notify_if_needed(
   self.worker_no_handoff_exit_emitted.set(agent_id, true)
   let screen_text = match screen {
     Some(s) => s
-    None =>
+    None => {
+      ignore(self.ensure_watched_pane_resolved(agent_id))
       match self.pane_watcher.current_screen(agent_id) {
         Some(s) => s
         None => ""
       }
+    }
   }
   let message = worker_exited_without_notify_message(
     @phase.extract_slug(agent_id),
@@ -1914,6 +1935,7 @@ async fn ServerState::handle_disconnect_confirming_with_runner(
                 None,
                 runner,
               )
+              ignore(self.ensure_watched_pane_resolved(agent_id))
               let screen = match self.pane_watcher.current_screen(agent_id) {
                 Some(s) => s
                 None => ""

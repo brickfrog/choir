@@ -90,6 +90,14 @@ pub fn PaneWatcher::pane_id_for_agent(
 }
 
 ///|
+pub fn PaneWatcher::is_watching_agent(
+  self : PaneWatcher,
+  agent_id : String,
+) -> Bool {
+  self.watches.contains(agent_id)
+}
+
+///|
 pub fn PaneWatcher::stop_watching(
   self : PaneWatcher,
   agent_id : String,
