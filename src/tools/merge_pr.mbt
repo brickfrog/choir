@@ -1038,16 +1038,21 @@ pub fn merge_pr_serialization_busy_message_with_position(
 }
 
 ///|
-/// Ordered host steps for `merge_pr` after preflight: `gh pr merge` then
-/// `git fetch` (see `merge_pr_commands` in `pr.mbt`).
+/// Ordered host steps for `merge_pr` after preflight: `gh pr merge`,
+/// `git fetch`, then best-effort remote branch cleanup after merge success.
 pub(all) enum MergePrHostStep {
   GhPrMerge
   GitFetch
+  GitDeleteRemoteBranch
 } derive(Debug, Eq)
 
 ///|
 pub fn merge_pr_host_step_sequence() -> Array[MergePrHostStep] {
-  [MergePrHostStep::GhPrMerge, MergePrHostStep::GitFetch]
+  [
+    MergePrHostStep::GhPrMerge,
+    MergePrHostStep::GitFetch,
+    MergePrHostStep::GitDeleteRemoteBranch,
+  ]
 }
 
 ///|
@@ -1393,6 +1398,31 @@ pub fn merge_pr_git_delete_local_branch_command(
   branch : String,
 ) -> @workspace.Command {
   { program: "git", args: ["branch", "-D", branch], workdir: Some(project_dir) }
+}
+
+///|
+pub fn merge_pr_remote_branch_delete_command(
+  project_dir : String,
+  branch : String,
+) -> @workspace.Command {
+  @workspace.git_delete_remote_branch(project_dir, branch)
+}
+
+///|
+pub fn merge_pr_remote_branch_delete_allowed(
+  head_branch : String,
+  parent_branch : String,
+  default_branch : String,
+) -> Bool {
+  let head = head_branch.trim().to_lower()
+  let parent = parent_branch.trim().to_lower()
+  let default = default_branch.trim().to_lower()
+  let main = "main".to_lower()
+  head != "" &&
+  head != "head" &&
+  head != main &&
+  head != default &&
+  head != parent
 }
 
 ///|
@@ -1903,6 +1933,8 @@ test "merge_pr_leaf_cleanup_worktree_path never returns project root" {
 ///|
 async fn merge_pr_cleanup_leaf_success(
   project_dir : String,
+  parent_branch : String,
+  default_branch : String,
   tracked : @poller.TrackedPR?,
   registry : @registry.AgentRegistry?,
   runner : async (Array[@workspace.Command]) -> Array[Int],
@@ -1959,6 +1991,26 @@ async fn merge_pr_cleanup_leaf_success(
       " outcome=missing",
     )
   }
+  if merge_pr_remote_branch_delete_allowed(
+      branch, parent_branch, default_branch,
+    ) {
+    ignore(
+      merge_pr_run_cleanup_command(
+        project_dir,
+        "leaf_remote_branch branch=" + branch,
+        merge_pr_remote_branch_delete_command(project_dir, branch),
+        runner,
+        append_file,
+      ),
+    )
+  } else {
+    merge_pr_delivery_log_line(
+      append_file,
+      project_dir,
+      "merge_pr cleanup leaf_remote_branch skipped outcome=protected_branch branch=" +
+      branch,
+    )
+  }
   ignore(
     merge_pr_run_cleanup_command(
       project_dir,
@@ -1974,6 +2026,7 @@ async fn merge_pr_cleanup_leaf_success(
 async fn merge_pr_cleanup_feature_success(
   project_dir : String,
   feature_branch : String?,
+  default_branch : String,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   append_file : (String, String) -> Bool,
 ) -> Unit {
@@ -2005,6 +2058,24 @@ async fn merge_pr_cleanup_feature_success(
     )
     return
   }
+  if merge_pr_remote_branch_delete_allowed(branch, "main", default_branch) {
+    ignore(
+      merge_pr_run_cleanup_command(
+        project_dir,
+        "feature_remote_branch branch=" + branch,
+        merge_pr_remote_branch_delete_command(project_dir, branch),
+        runner,
+        append_file,
+      ),
+    )
+  } else {
+    merge_pr_delivery_log_line(
+      append_file,
+      project_dir,
+      "merge_pr cleanup feature_remote_branch skipped outcome=protected_branch branch=" +
+      branch,
+    )
+  }
   ignore(
     merge_pr_run_cleanup_command(
       project_dir,
@@ -2020,6 +2091,7 @@ async fn merge_pr_cleanup_feature_success(
 async fn interpret_merge_pr_post_success_side_effects(
   project_dir : String,
   parent_branch : String,
+  default_branch : String,
   pr_number : Int,
   tracked : @poller.TrackedPR?,
   registry : @registry.AgentRegistry?,
@@ -2049,7 +2121,7 @@ async fn interpret_merge_pr_post_success_side_effects(
         project_dir, pr_number, feature_branch, registry, capture, append_file, task_contract_reader,
       )
       merge_pr_cleanup_feature_success(
-        project_dir, feature_branch, runner, append_file,
+        project_dir, feature_branch, default_branch, runner, append_file,
       )
     } else {
       merge_pr_delivery_log_line(
@@ -2063,7 +2135,8 @@ async fn interpret_merge_pr_post_success_side_effects(
     }
   } else if parent_branch.has_prefix("feature/") {
     merge_pr_cleanup_leaf_success(
-      project_dir, tracked, registry, runner, append_file, path_exists, read_lifecycle,
+      project_dir, parent_branch, default_branch, tracked, registry, runner, append_file,
+      path_exists, read_lifecycle,
     )
   }
 }
@@ -2327,6 +2400,7 @@ pub async fn interpret_merge_pr(
             interpret_merge_pr_post_success_side_effects(
               project_dir,
               effective_parent_branch,
+              default_branch,
               merge_args.pr_number,
               tracked,
               registry,

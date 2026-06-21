@@ -93,6 +93,16 @@ test "git_fetch_origin_branch_best_effort runs fetch in project dir" {
 }
 
 ///|
+test "git_delete_remote_branch deletes origin branch in project dir" {
+  let cmd = @workspace.git_delete_remote_branch("/repo", "feature/base.leaf-a")
+  assert_eq(cmd.program, "git")
+  @debug.assert_eq(cmd.args, [
+    "push", "origin", "--delete", "feature/base.leaf-a",
+  ])
+  @debug.assert_eq(cmd.workdir, Some("/repo"))
+}
+
+///|
 test "parse_local_target supports zellij targets" {
   match @types.LocalTarget::parse("zellij-tab:howdy:leaf-a") {
     Some(target) => {

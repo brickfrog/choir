@@ -46,6 +46,18 @@ pub fn git_push(branch : String) -> Command {
 }
 
 ///|
+pub fn git_delete_remote_branch(
+  project_dir : String,
+  branch : String,
+) -> Command {
+  {
+    program: "git",
+    args: ["push", "origin", "--delete", branch],
+    workdir: Some(project_dir),
+  }
+}
+
+///|
 pub fn git_fetch() -> Command {
   { program: "git", args: ["fetch"], workdir: None }
 }
