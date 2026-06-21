@@ -3417,11 +3417,25 @@ test "merge_pr_remote_branch_delete_allowed excludes main default and parent" {
     merge_pr_remote_branch_delete_allowed("main", "feature/base", "trunk"),
   )
   assert_false(
+    merge_pr_remote_branch_delete_allowed(" Main ", "feature/base", "trunk"),
+  )
+  assert_false(
+    merge_pr_remote_branch_delete_allowed("MAIN", "feature/base", "trunk"),
+  )
+  assert_false(
     merge_pr_remote_branch_delete_allowed("trunk", "feature/base", "trunk"),
+  )
+  assert_false(
+    merge_pr_remote_branch_delete_allowed("Trunk", "feature/base", "trunk"),
   )
   assert_false(
     merge_pr_remote_branch_delete_allowed(
       "feature/base", "feature/base", "trunk",
+    ),
+  )
+  assert_false(
+    merge_pr_remote_branch_delete_allowed(
+      "Feature/Base", "feature/base", "trunk",
     ),
   )
   assert_true(
@@ -3429,6 +3443,25 @@ test "merge_pr_remote_branch_delete_allowed excludes main default and parent" {
       "feature/base.leaf-a", "feature/base", "trunk",
     ),
   )
+  assert_true(
+    merge_pr_remote_branch_delete_allowed(
+      "Feature/Base.Leaf-A", "feature/base", "trunk",
+    ),
+  )
+}
+
+///|
+test "merge_pr_remote_branch_delete_command preserves allowed branch spelling" {
+  let branch = "Feature/Base.Leaf-A"
+  assert_true(
+    merge_pr_remote_branch_delete_allowed(branch, "feature/base", "trunk"),
+  )
+  let cmd = merge_pr_remote_branch_delete_command("/repo", branch)
+  assert_eq(cmd.program, "git")
+  @debug.assert_eq(cmd.args, [
+    "push", "origin", "--delete", "Feature/Base.Leaf-A",
+  ])
+  @debug.assert_eq(cmd.workdir, Some("/repo"))
 }
 
 ///|

@@ -1414,12 +1414,13 @@ pub fn merge_pr_remote_branch_delete_allowed(
   parent_branch : String,
   default_branch : String,
 ) -> Bool {
-  let head = head_branch.trim().to_owned()
-  let parent = parent_branch.trim().to_owned()
-  let default = default_branch.trim().to_owned()
+  let head = head_branch.trim().to_lower()
+  let parent = parent_branch.trim().to_lower()
+  let default = default_branch.trim().to_lower()
+  let main = "main".to_lower()
   head != "" &&
-  head != "HEAD" &&
-  head != "main" &&
+  head != "head" &&
+  head != main &&
   head != default &&
   head != parent
 }
