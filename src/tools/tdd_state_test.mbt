@@ -501,6 +501,114 @@ async test "leaf TDD green check rejects forged passing report when command fail
 }
 
 ///|
+async test "leaf TDD green check prefers configured no-exec fast lane" {
+  let project_dir = "/tmp/choir-tdd-green-fast-lane-" +
+    @sys.get_pid().to_string()
+  let leaf_worktree = project_dir + "/.choir/worktrees/leaf"
+  ignore(@sys.rm_rf(project_dir))
+  let fast = "CHOIR_TEST_NO_EXEC=1 moon test --target native"
+  let slow = "moon test --target native"
+  let lint = "moon run src/bin/choir_lint --target native"
+  let contract = tdd_test_verify_contract([fast, slow, lint])
+  tdd_test_write_verify_config(leaf_worktree, contract.verify)
+  let reg = tdd_test_registry(leaf_worktree)
+  let mut stored : @types.LeafTddState? = Some({
+    phase: @types.LeafTddPhase::Red,
+  })
+  let reader = fn(_agent_id : String) -> @types.LeafTddState? { stored }
+  let writer = fn(_agent_id : String, state : @types.LeafTddState) -> Unit {
+    stored = Some(state)
+  }
+  let seen_commands : Array[String] = []
+  let green = interpret_tdd_green_check(
+    { caller_id: "main.leaf", exit_code: 0, next_phase: None },
+    reader,
+    writer,
+    registry=Some(reg),
+    task_contract_reader=tdd_test_contract_reader(contract),
+    capture=async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      assert_eq(cmd.program, "sh")
+      @debug.assert_eq(cmd.workdir, Some(leaf_worktree))
+      let command = cmd.args[1]
+      seen_commands.push(command)
+      if command == fast {
+        (0, "fast lane passed\n")
+      } else {
+        fail("green check should not run slow verify lane: " + command)
+      }
+    },
+  )
+  match green {
+    @types.Response::Ok(fields) => {
+      @debug.assert_eq(fields.get_json("phase"), Some("green".to_json()))
+      @debug.assert_eq(
+        fields.get_json("command"),
+        Some((fast + " && " + slow + " && " + lint).to_json()),
+      )
+      match fields.get_json("output_tail") {
+        Some(Json::String(value)) =>
+          assert_true(value.contains("fast lane passed"))
+        _ => fail("expected fast lane output tail")
+      }
+    }
+    @types.Response::Err(msg) =>
+      fail("expected fast lane green check to pass: " + msg)
+  }
+  @debug.assert_eq(seen_commands, [fast])
+  @debug.assert_eq(stored, Some({ phase: @types.LeafTddPhase::Green }))
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "leaf TDD green check blocks failing no-exec fast lane" {
+  let project_dir = "/tmp/choir-tdd-green-fast-lane-red-" +
+    @sys.get_pid().to_string()
+  let leaf_worktree = project_dir + "/.choir/worktrees/leaf"
+  ignore(@sys.rm_rf(project_dir))
+  let fast = "CHOIR_TEST_NO_EXEC=1 moon test --target native"
+  let slow = "moon test --target native"
+  let contract = tdd_test_verify_contract([fast, slow])
+  tdd_test_write_verify_config(leaf_worktree, contract.verify)
+  let reg = tdd_test_registry(leaf_worktree)
+  let stored : @types.LeafTddState? = Some({ phase: @types.LeafTddPhase::Red })
+  let mut writer_called = false
+  let reader = fn(_agent_id : String) -> @types.LeafTddState? { stored }
+  let writer = fn(_agent_id : String, _state : @types.LeafTddState) -> Unit {
+    writer_called = true
+  }
+  let seen_commands : Array[String] = []
+  let green = interpret_tdd_green_check(
+    { caller_id: "main.leaf", exit_code: 0, next_phase: None },
+    reader,
+    writer,
+    registry=Some(reg),
+    task_contract_reader=tdd_test_contract_reader(contract),
+    capture=async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      let command = cmd.args[1]
+      seen_commands.push(command)
+      if command == fast {
+        (9, "fast lane failed\n")
+      } else {
+        fail("green check should stop before slow verify lane: " + command)
+      }
+    },
+  )
+  match green {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("green check expected exit code 0"))
+      assert_true(msg.contains("command: " + fast))
+      assert_true(msg.contains("fast lane failed"))
+    }
+    @types.Response::Ok(_) => fail("expected failing fast lane to block")
+  }
+  @debug.assert_eq(seen_commands, [fast])
+  assert_false(writer_called)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "leaf TDD green check treats baseline-red command as advisory" {
   let project_dir = "/tmp/choir-tdd-green-advisory-" +
     @sys.get_pid().to_string()

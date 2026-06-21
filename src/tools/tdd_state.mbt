@@ -59,6 +59,66 @@ fn tdd_configured_command_script(commands : Array[String]) -> String {
 }
 
 ///|
+fn tdd_verify_token_is_env_assignment(token : String) -> Bool {
+  match token.split_once("=") {
+    Some((name, _)) => {
+      let name = name.to_owned()
+      if name == "" {
+        return false
+      }
+      let mut i = 0
+      while i < name.length() {
+        let c = name[i]
+        let alpha = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_'
+        let digit = c >= '0' && c <= '9'
+        if !(alpha || (i > 0 && digit)) {
+          return false
+        }
+        i = i + 1
+      }
+      true
+    }
+    None => false
+  }
+}
+
+///|
+fn tdd_verify_command_sets_env(
+  command : String,
+  key : String,
+  expected_value : String,
+) -> Bool {
+  let tokens = tdd_command_tokens(command)
+  let mut i = 0
+  while i < tokens.length() && tdd_verify_token_is_env_assignment(tokens[i]) {
+    match tokens[i].split_once("=") {
+      Some((name, value)) =>
+        if name.to_owned() == key && value.to_owned() == expected_value {
+          return true
+        }
+      None => ()
+    }
+    i = i + 1
+  }
+  false
+}
+
+///|
+fn tdd_green_verify_commands(commands : Array[String]) -> Array[String] {
+  let fast : Array[String] = []
+  for command in commands {
+    if tdd_verify_command_sets_env(command, @exec.hermetic_no_exec_env, "1") {
+      fast.push(command)
+    }
+  }
+  if fast.length() == 0 {
+    commands
+  } else {
+    fast
+  }
+}
+
+///|
 fn tdd_validate_leaf_declared_command(
   declared : String?,
   configured : TddConfiguredVerify,
@@ -817,7 +877,7 @@ pub async fn interpret_tdd_green_check(
     verify_tdd_green_commands_outcome(
       configured.workdir,
       args.caller_id,
-      configured.commands,
+      tdd_green_verify_commands(configured.commands),
       capture,
       baseline_sha_for_agent,
       baseline_git_capture,
