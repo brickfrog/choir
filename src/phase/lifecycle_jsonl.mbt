@@ -69,7 +69,7 @@ pub fn append_lifecycle_event(
   trigger : @types.LifecycleTrigger,
 ) -> Bool {
   let sanitized_id = @types.sanitize_agent_id(agent_id)
-  let events_dir = project_dir + "/.choir/events/"
+  let events_dir = project_dir + "/.choir/state/events/"
   if !@sys.create_dir_all(events_dir) {
     return false
   }

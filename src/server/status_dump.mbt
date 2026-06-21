@@ -16,7 +16,7 @@ pub(all) struct ServerStatusSnapshotRow {
 
 ///|
 pub fn server_status_path(project_dir : String) -> String {
-  project_dir + "/.choir/server-status.txt"
+  project_dir + "/.choir/run/server-status.txt"
 }
 
 ///|

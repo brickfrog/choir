@@ -40,10 +40,10 @@ fn init_kill_server_pid_string(pid_str : String) -> Unit {
 }
 
 ///|
-/// Exit code compatible with former `sh -c '...kill -0...'`: 0 when `.choir/server.pid` parses to a
+/// Exit code compatible with former `sh -c '...kill -0...'`: 0 when `.choir/run/server.pid` parses to a
 /// live PID, else non-zero.
 fn init_server_running_exit_code() -> Int {
-  let raw = @sys.read_file(".choir/server.pid")
+  let raw = @sys.read_file(".choir/run/server.pid")
   match init_parse_server_pid_line(raw) {
     Some(pid) => if @sys.pid_is_alive(pid) { 0 } else { 1 }
     None => 1
@@ -430,7 +430,7 @@ fn init_wait_for_server_socket_before_tl(
 ///|
 /// Relative paths and prefixes removed by `choir init --recreate`.
 fn init_runtime_cleanup_paths() -> Array[String] {
-  [".choir/server.pid", ".choir/server.sock", ".choir/run_id"]
+  [".choir/run/server.pid", ".choir/run/server.sock", ".choir/run/run_id"]
 }
 
 ///|
@@ -502,7 +502,7 @@ fn init_cleanup_recreate_artifacts(
 /// Markers for purge-only cleanup (mirrors native `choir_init_cleanup_purge_artifacts`).
 fn init_purge_cleanup_marker_substrings() -> Array[String] {
   [
-    ".choir/worktrees", ".choir/inline", ".choir/outbox", ".choir/waves", ".choir/poller_state.json",
+    ".choir/worktrees", ".choir/state/inline", ".choir/state/outbox", ".choir/state/waves", ".choir/state/poller_state.json",
     "lifecycle--", "children--", "phase-dev--", "phase-tl--", "pending-wave--",
   ]
 }
@@ -527,7 +527,7 @@ test "init session lifecycle commands use zellij" {
 test "cleanup paths separate runtime restart from purge" {
   let rt = init_runtime_cleanup_paths()
   @debug.assert_eq(rt, [
-    ".choir/server.pid", ".choir/server.sock", ".choir/run_id",
+    ".choir/run/server.pid", ".choir/run/server.sock", ".choir/run/run_id",
   ])
   for p in rt {
     assert_false(p.contains("worktrees"))
@@ -549,7 +549,7 @@ test "cleanup paths separate runtime restart from purge" {
     if m == ".choir/worktrees" {
       has_wt = true
     }
-    if m == ".choir/poller_state.json" {
+    if m == ".choir/state/poller_state.json" {
       has_poller = true
     }
   }
@@ -560,22 +560,22 @@ test "cleanup paths separate runtime restart from purge" {
 ///|
 test "recreate cleanup preserves recovery state while purge markers remain destructive" {
   let rt = init_runtime_cleanup_paths()
-  assert_true(rt.contains(".choir/server.pid"))
-  assert_true(rt.contains(".choir/server.sock"))
-  assert_true(rt.contains(".choir/run_id"))
-  assert_false(rt.contains(".choir/kv/lifecycle--"))
-  assert_false(rt.contains(".choir/kv/children--"))
-  assert_false(rt.contains(".choir/kv/phase-dev--"))
-  assert_false(rt.contains(".choir/kv/phase-tl--"))
-  assert_false(rt.contains(".choir/kv/pending-wave--"))
-  assert_false(rt.contains(".choir/outbox/"))
-  assert_false(rt.contains(".choir/waves/"))
-  assert_false(rt.contains(".choir/inline/"))
+  assert_true(rt.contains(".choir/run/server.pid"))
+  assert_true(rt.contains(".choir/run/server.sock"))
+  assert_true(rt.contains(".choir/run/run_id"))
+  assert_false(rt.contains(".choir/state/kv/lifecycle--"))
+  assert_false(rt.contains(".choir/state/kv/children--"))
+  assert_false(rt.contains(".choir/state/kv/phase-dev--"))
+  assert_false(rt.contains(".choir/state/kv/phase-tl--"))
+  assert_false(rt.contains(".choir/state/kv/pending-wave--"))
+  assert_false(rt.contains(".choir/state/outbox/"))
+  assert_false(rt.contains(".choir/state/waves/"))
+  assert_false(rt.contains(".choir/state/inline/"))
 
   let purge = init_purge_cleanup_marker_substrings()
-  assert_true(purge.contains(".choir/inline"))
-  assert_true(purge.contains(".choir/outbox"))
-  assert_true(purge.contains(".choir/waves"))
+  assert_true(purge.contains(".choir/state/inline"))
+  assert_true(purge.contains(".choir/state/outbox"))
+  assert_true(purge.contains(".choir/state/waves"))
   assert_true(purge.contains("lifecycle--"))
   assert_true(purge.contains("children--"))
   assert_true(purge.contains("phase-dev--"))
@@ -634,7 +634,7 @@ test "init server cleanup commands separate runtime restart from purge" {
   assert_false(init_should_launch_server_tab(true))
   let rt = init_runtime_cleanup_paths()
   @debug.assert_eq(rt, [
-    ".choir/server.pid", ".choir/server.sock", ".choir/run_id",
+    ".choir/run/server.pid", ".choir/run/server.sock", ".choir/run/run_id",
   ])
   for p in rt {
     assert_false(p.contains("worktrees"))
@@ -645,7 +645,7 @@ test "init server cleanup commands separate runtime restart from purge" {
   let purge = init_purge_cleanup_marker_substrings()
   let mut has_inline = false
   for m in purge {
-    if m == ".choir/inline" {
+    if m == ".choir/state/inline" {
       has_inline = true
     }
   }
@@ -1135,7 +1135,7 @@ test "init waits for server socket before TL launch" {
   let events : Array[String] = []
   events.push("server-tab")
   init_wait_for_server_socket_before_tl(
-    ".choir/server.sock",
+    ".choir/run/server.sock",
     wait_for_socket=fn(path, tries) {
       events.push("wait:" + path + ":" + tries.to_string())
       true
@@ -1144,7 +1144,7 @@ test "init waits for server socket before TL launch" {
   )
   events.push("tl-tab")
   @debug.assert_eq(events, [
-    "server-tab", "wait:.choir/server.sock:100", "tl-tab",
+    "server-tab", "wait:.choir/run/server.sock:100", "tl-tab",
   ])
 }
 
@@ -1154,7 +1154,7 @@ test "init_wait_timeout_warns_and_proceeds" {
   let output : Array[String] = []
   events.push("server-tab")
   init_wait_for_server_socket_before_tl(
-    ".choir/server.sock",
+    ".choir/run/server.sock",
     wait_for_socket=fn(path, tries) {
       events.push("wait:" + path + ":" + tries.to_string())
       false
@@ -1163,7 +1163,7 @@ test "init_wait_timeout_warns_and_proceeds" {
   )
   events.push("tl-tab")
   @debug.assert_eq(events, [
-    "server-tab", "wait:.choir/server.sock:100", "tl-tab",
+    "server-tab", "wait:.choir/run/server.sock:100", "tl-tab",
   ])
   @debug.assert_eq(output, [
     "Waiting for server socket...\n", "Warning: server socket not ready after 20s; launching TL anyway.\n",
@@ -1315,7 +1315,7 @@ fn init_ensure_local_terminal_session(
 ///|
 test "init persists terminal_session in local config without touching portable config" {
   let portable_config = "[project]\nverify_cmd = \"moon check --target native && moon test --target native\"\n"
-  let local_config = "default_role = \"dev\"\nproject_dir = \"/repo\"\nlisten_uds = \"/repo/.choir/server.sock\""
+  let local_config = "default_role = \"dev\"\nproject_dir = \"/repo\"\nlisten_uds = \"/repo/.choir/run/server.sock\""
   let reads : Array[String] = []
   let write_paths : Array[String] = []
   let write_bodies : Array[String] = []
@@ -1819,7 +1819,7 @@ test "init companion commands write connection metadata only to local config" {
   let local_cfg = @config.parse_local_config(local_bodies[0]).unwrap()
   @debug.assert_eq(local_cfg.default_role, Some(@types.Role::Worker))
   @debug.assert_eq(local_cfg.project_dir, Some("/proj"))
-  @debug.assert_eq(local_cfg.listen_uds, Some("/proj/.choir/server.sock"))
+  @debug.assert_eq(local_cfg.listen_uds, Some("/proj/.choir/run/server.sock"))
   @debug.assert_eq(local_cfg.terminal_session, Some("exo"))
 }
 
@@ -2061,7 +2061,7 @@ fn init_run() -> Unit {
       }
       ignore(
         @sys.write_file_sync(
-          ".choir/claude-settings.json",
+          ".choir/state/claude-settings.json",
           @workspace.init_tl_claude_settings_json(),
         ),
       )
@@ -2090,7 +2090,7 @@ fn init_run() -> Unit {
           project_dir,
           terminal_session=session,
         )
-        let pid_str = @sys.read_file(".choir/server.pid")
+        let pid_str = @sys.read_file(".choir/run/server.pid")
         match
           init_recreate_effect_plan(session, pid_str, purge, candidates, force) {
           InitRecreatePlan::Refuse(effects, code) => {

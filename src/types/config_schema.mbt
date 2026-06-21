@@ -77,7 +77,7 @@ pub fn config_schema_entries() -> Array[ConfigSchemaEntry] {
       ConfigToml,
       "listen_uds",
       "String",
-      "\".choir/server.sock\"",
+      "\".choir/run/server.sock\"",
       "Unix-domain socket path for the Choir server.",
     ),
     schema_entry(

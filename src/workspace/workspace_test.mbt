@@ -19,7 +19,7 @@ test "nested branch name" {
 ///|
 test "inline agent metadata dir sanitizes agent id" {
   let path = @workspace.inline_agent_metadata_dir("/repo", "feature/x.worker")
-  assert_eq(path, "/repo/.choir/inline/feature_x.worker")
+  assert_eq(path, "/repo/.choir/state/inline/feature_x.worker")
 }
 
 ///|
@@ -314,7 +314,9 @@ fn launch_cmd_body_contains_setsid(
   assert_eq(cmd.args[1], "-c")
   let body = cmd.args[2]
   assert_true(
-    body.contains("mkdir -p " + @sys.shell_quote(project_dir + "/.choir/pids")),
+    body.contains(
+      "mkdir -p " + @sys.shell_quote(project_dir + "/.choir/run/pids"),
+    ),
   )
   assert_true(
     body.contains(
@@ -721,7 +723,7 @@ test "agent_launch_command omits codex effort flag for non-codex providers" {
 test "agent_pid_file_path sanitizes agent ids as flat filenames" {
   assert_eq(
     @workspace.agent_pid_file_path("/project", "../../evil\\agent\u0000pid"),
-    "/project/.choir/pids/.._.._evil_agent_pid",
+    "/project/.choir/run/pids/.._.._evil_agent_pid",
   )
 }
 
@@ -909,7 +911,7 @@ test "spawn_commands writes claude Stop hook outside plugin" {
     script.contains("choir hook completion-handoff --provider claude"),
   )
   let settings_index = workspace_rel_file_write_index(
-    cmds, ".choir/claude-settings.json",
+    cmds, ".choir/state/claude-settings.json",
   )
   assert_true(settings_index >= 0)
   let parsed = @json.parse(cmds[settings_index].args[2]) catch {
@@ -944,7 +946,7 @@ test "spawn_commands writes claude Stop hook outside plugin" {
   assert_true(launch_args.contains("--settings"))
   assert_true(
     launch_args.contains(
-      "/project/.choir/worktrees/claude-handoff/.choir/claude-settings.json",
+      "/project/.choir/worktrees/claude-handoff/.choir/state/claude-settings.json",
     ),
   )
 }
@@ -1181,7 +1183,7 @@ test "config_local_content carries connection fallbacks parseably" {
     content,
     @types.Role::Dev,
     "/project/.choir/worktrees/feature-a",
-    "/project/.choir/worktrees/feature-a/.choir/server.sock",
+    "/project/.choir/worktrees/feature-a/.choir/run/server.sock",
     "choir-test",
   )
 }
@@ -1518,7 +1520,7 @@ test "spawn_commands worktree config write content" {
     cmds[5].args[2],
     @types.Role::Dev,
     "/proj",
-    "/proj/.choir/server.sock",
+    "/proj/.choir/run/server.sock",
     "exo",
   )
   assert_true(cmds[5].args[2].contains("agent_id = \"main.feature-a\""))
@@ -1590,7 +1592,7 @@ test "spawn_commands worktree materializes portable config before launch" {
     local_cmd.args[2],
     @types.Role::Dev,
     "/proj",
-    "/proj/.choir/server.sock",
+    "/proj/.choir/run/server.sock",
     "exo",
   )
 }
@@ -1704,7 +1706,7 @@ test "spawn_commands standalone includes config writes" {
     cmds[1].args[2],
     @types.Role::Dev,
     "/proj",
-    "/proj/.choir/server.sock",
+    "/proj/.choir/run/server.sock",
     "exo",
   )
   assert_true(
@@ -1816,7 +1818,9 @@ test "spawn_commands for inline mode writes metadata and uses zellij run" {
   let cmds = @workspace.spawn_commands(spec, "/project", "howdy")
   assert_eq(cmds.length(), 3)
   assert_eq(cmds[0].program, @workspace.native_write_choir_file_program)
-  assert_true(cmds[0].args[0].contains("/project/.choir/inline/main.worker-a"))
+  assert_true(
+    cmds[0].args[0].contains("/project/.choir/state/inline/main.worker-a"),
+  )
   assert_true(cmds[0].args[2].contains("agent_id = \"main.worker-a\""))
   assert_eq(cmds[1].program, @workspace.native_leaf_helpers_program)
   assert_eq(cmds[2].program, "zellij")
@@ -1869,7 +1873,7 @@ test "spawn_commands launch text contains env vars" {
   }
   assert_true(joined.contains("CHOIR_AGENT_ID=main.feature-a"))
   assert_true(joined.contains("CHOIR_TERMINAL_TARGET=zellij-tab:exo:feature-a"))
-  assert_true(joined.contains("CHOIR_LISTEN_UDS=/proj/.choir/server.sock"))
+  assert_true(joined.contains("CHOIR_LISTEN_UDS=/proj/.choir/run/server.sock"))
   assert_true(joined.contains("CHOIR_PARENT_AGENT=root"))
   assert_true(
     joined.contains("HOME=/proj/.choir/worktrees/feature-a/.choir/agy-home"),
@@ -2753,7 +2757,7 @@ test "spawn_commands writes claude settings hooks and launches with settings pat
     },
   )
   let settings_index = workspace_rel_file_write_index(
-    cmds, ".choir/claude-settings.json",
+    cmds, ".choir/state/claude-settings.json",
   )
   assert_true(settings_index >= 0)
   let parsed = @json.parse(cmds[settings_index].args[2]) catch {
@@ -2798,7 +2802,7 @@ test "spawn_commands writes claude settings hooks and launches with settings pat
   assert_true(launch_args.contains("--settings"))
   assert_true(
     launch_args.contains(
-      "/project/.choir/worktrees/claude-guarded/.choir/claude-settings.json",
+      "/project/.choir/worktrees/claude-guarded/.choir/state/claude-settings.json",
     ),
   )
   assert_eq(command_program_count(cmds, "sh"), 0)
@@ -3049,7 +3053,7 @@ test "mcp_json_content merges extra servers" {
   assert_true(json.contains("\"notebook\""))
   assert_true(json.contains("\"agent-a\""))
   assert_true(json.contains("\"--stderr-append-log\""))
-  assert_true(json.contains("\".choir/mcp-stdio-agent-a.stderr.log\""))
+  assert_true(json.contains("\".choir/logs/mcp-stdio-agent-a.stderr.log\""))
 }
 
 ///|
@@ -3070,7 +3074,7 @@ test "mcp_json_content uses a per-agent stderr append log" {
   assert_true(json.contains("\"--stderr-append-log\""))
   assert_true(
     json.contains(
-      "\".choir/mcp-stdio-feature_mcp-startup-race.leaf-a.stderr.log\"",
+      "\".choir/logs/mcp-stdio-feature_mcp-startup-race.leaf-a.stderr.log\"",
     ),
   )
 }

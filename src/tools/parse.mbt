@@ -125,7 +125,7 @@ fn lookup_parent_session_id(project_dir : String, args : ToolArgs) -> String? {
     Ok(_) => ()
   }
   let path = project_dir +
-    "/.choir/sessions/claude/" +
+    "/.choir/state/sessions/claude/" +
     caller_id +
     ".session_id"
   let session_id = @sys.read_file(path).trim().to_owned()
@@ -253,7 +253,7 @@ fn validate_branch(s : String) -> Result[Unit, @types.ChoirError] {
 ///|
 /// `kv_get` / `kv_set` / `kv_delete` keys must match [`@kv.validate_kv_storage_key`]
 /// (flat names only: **`/`** was intentionally removed; no nested paths under
-/// `.choir/kv/`).
+/// `.choir/state/kv/`).
 fn validate_kv_key(s : String) -> Result[Unit, @types.ChoirError] {
   @kv.validate_kv_storage_key(s)
 }
@@ -2469,7 +2469,7 @@ test "parse_leaf_spawn_args only injects existing context paths" {
 ///|
 /// Regression: lookup_parent_session_id concatenates caller_id into a
 /// filesystem path. Without validate_slug it would follow `../` segments
-/// out of `.choir/sessions/claude/`. Since the function must short-circuit
+/// out of `.choir/state/sessions/claude/`. Since the function must short-circuit
 /// to `None` on validation failure, no filesystem is required here.
 test "lookup_parent_session_id rejects traversal caller_id" {
   let traversal = lookup_parent_session_id(

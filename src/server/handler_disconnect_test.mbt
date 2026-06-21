@@ -23,7 +23,7 @@ async test "schedule_disconnect kills tracked agent process group" {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let state = ServerState::new(
     {
       ..@types.Config::default(),
@@ -74,7 +74,7 @@ async test "interpret_teardown_effects reaps tracked pgroup on ClearRuntimeTrack
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let state = ServerState::new(
     {
       ..@types.Config::default(),
@@ -118,7 +118,7 @@ async test "interpret_teardown_effects removes managed worktrees and refuses uns
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let state = ServerState::new(
     {
       ..@types.Config::default(),

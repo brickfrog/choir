@@ -26,7 +26,7 @@ pub fn inline_agent_metadata_dir(
   project_dir : String,
   agent_id : String,
 ) -> String {
-  project_dir + "/.choir/inline/" + @types.sanitize_agent_id(agent_id)
+  project_dir + "/.choir/state/inline/" + @types.sanitize_agent_id(agent_id)
 }
 
 ///|
@@ -225,7 +225,7 @@ pub fn config_local_content(
   let local_project_dir = project_dir.unwrap_or(workspace)
   let local_listen_uds = match listen_uds {
     Some(path) => resolve_child_path(local_project_dir, path)
-    None => resolve_child_path(local_project_dir, ".choir/server.sock")
+    None => resolve_child_path(local_project_dir, ".choir/run/server.sock")
   }
   let local_terminal_session = terminal_session.unwrap_or(
     terminal_target.session,
@@ -436,7 +436,7 @@ pub fn mcp_json_content(
     role_str +
     "\",\"--name\",\"" +
     agent_id +
-    "\",\"--stderr-append-log\",\".choir/mcp-stdio-" +
+    "\",\"--stderr-append-log\",\".choir/logs/mcp-stdio-" +
     @types.sanitize_agent_id(agent_id) +
     ".stderr.log" +
     "\"],\"alwaysLoad\":true}" +

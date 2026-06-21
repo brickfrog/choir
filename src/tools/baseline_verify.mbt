@@ -64,7 +64,7 @@ fn baseline_verify_default_temp_worktree(
   let suffix = baseline_verify_next_temp_worktree_suffix()
   baseline_verify_join_project_path(
     project_dir,
-    ".choir/baseline-verify-" +
+    ".choir/run/baseline-verify-" +
     baseline_verify_safe_component(baseline_sha) +
     "-" +
     stamp +
@@ -181,7 +181,7 @@ pub async fn baseline_verify_command_outcome(
 
 ///|
 test "baseline verify default temp worktree appends process-local counter" {
-  let prefix = "/repo/.choir/baseline-verify-same-sha-"
+  let prefix = "/repo/.choir/run/baseline-verify-same-sha-"
   let first = baseline_verify_default_temp_worktree("/repo", "same/sha")
   let second = baseline_verify_default_temp_worktree("/repo", "same/sha")
   assert_true(first.has_prefix(prefix))

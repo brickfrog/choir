@@ -586,7 +586,7 @@ async fn ServerState::replay_outbox_recipient_ids(
     if !filename.has_suffix(".jsonl") {
       continue
     }
-    let path = self.config.project_dir + "/.choir/outbox/" + filename
+    let path = self.config.project_dir + "/.choir/state/outbox/" + filename
     let messages = @outbox.load_recipient_outbox_from_content(
       (self.read_file)(path),
     )

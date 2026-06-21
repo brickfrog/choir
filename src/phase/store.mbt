@@ -1,6 +1,6 @@
 ///|
 fn lifecycle_path(project_dir : String, agent_id : String) -> String {
-  project_dir + "/.choir/kv/" + lifecycle_key(agent_id)
+  project_dir + "/.choir/state/kv/" + lifecycle_key(agent_id)
 }
 
 ///|

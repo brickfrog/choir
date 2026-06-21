@@ -13,7 +13,7 @@ test "plan_write_audit_receipt emits typed JSON payload" {
     },
     1770000000L,
   ).unwrap()
-  assert_eq(plan.path, ".choir/audit-receipts/999999999999.json")
+  assert_eq(plan.path, ".choir/state/audit-receipts/999999999999.json")
   let decoded : @types.AuditReceipt = @json.from_json(
     @json.parse(plan.content) catch {
       _ => {
@@ -46,7 +46,7 @@ test "plan_write_audit_receipt trims identity fields before writing" {
     },
     1770000000L,
   ).unwrap()
-  assert_eq(plan.path, ".choir/audit-receipts/999999999999.json")
+  assert_eq(plan.path, ".choir/state/audit-receipts/999999999999.json")
   assert_eq(plan.receipt.sha, "abcdef1234567890abcdef1234567890abcdef12")
   assert_eq(plan.receipt.tree_sha, "9999999999999999999999999999999999999999")
   assert_eq(plan.receipt.branch, "feature/workflow-gates")
@@ -83,7 +83,7 @@ test "interpret_write_audit_receipt writes typed receipt through injected fs" {
       @debug.assert_eq(map.get("status"), Some("ok".to_json()))
       @debug.assert_eq(
         map.get("path"),
-        Some(".choir/audit-receipts/111111111111.json".to_json()),
+        Some(".choir/state/audit-receipts/111111111111.json".to_json()),
       )
       @debug.assert_eq(
         map.get("tree_sha"),
@@ -93,10 +93,10 @@ test "interpret_write_audit_receipt writes typed receipt through injected fs" {
     }
     @types.Response::Err(msg) => fail("expected write response: " + msg)
   }
-  assert_eq(mkdir_path, "/repo/.choir/audit-receipts")
+  assert_eq(mkdir_path, "/repo/.choir/state/audit-receipts")
   assert_eq(writes.length(), 1)
   let (path, content) = writes[0]
-  assert_eq(path, "/repo/.choir/audit-receipts/111111111111.json")
+  assert_eq(path, "/repo/.choir/state/audit-receipts/111111111111.json")
   let decoded : @types.AuditReceipt = @json.from_json(
     @json.parse(content) catch {
       _ => {
@@ -144,10 +144,10 @@ async test "dispatch write_audit_receipt routes injected filesystem capabilities
     @types.Response::Ok(_) => ()
     @types.Response::Err(msg) => fail("expected dispatch success: " + msg)
   }
-  @debug.assert_eq(dirs, ["/repo/.choir/audit-receipts"])
+  @debug.assert_eq(dirs, ["/repo/.choir/state/audit-receipts"])
   assert_eq(writes.length(), 1)
   let (path, content) = writes[0]
-  assert_eq(path, "/repo/.choir/audit-receipts/999999999999.json")
+  assert_eq(path, "/repo/.choir/state/audit-receipts/999999999999.json")
   assert_true(
     content.contains(
       "\"tree_sha\":\"9999999999999999999999999999999999999999\"",

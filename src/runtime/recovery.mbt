@@ -693,12 +693,12 @@ pub fn make_shell_recovery_provider(
     },
     list_lifecycle_ids: async fn(project_dir) {
       @async.sleep(0)
-      if !@sys.path_entry_exists(project_dir + "/.choir/kv") {
+      if !@sys.path_entry_exists(project_dir + "/.choir/state/kv") {
         return []
       }
       let prefix = "lifecycle--"
       let ids = []
-      for name in @sys.list_dir(project_dir + "/.choir/kv") {
+      for name in @sys.list_dir(project_dir + "/.choir/state/kv") {
         if name.has_prefix(prefix) && name.length() > prefix.length() {
           ids.push(name[prefix.length():].to_owned())
         }
@@ -707,7 +707,7 @@ pub fn make_shell_recovery_provider(
     },
     read_lifecycle_content: async fn(project_dir, id) {
       @async.sleep(0)
-      let rel = ".choir/kv/lifecycle--" + id
+      let rel = ".choir/state/kv/lifecycle--" + id
       if !@sys.path_exists(project_dir + "/" + rel) {
         return ""
       }
@@ -715,10 +715,10 @@ pub fn make_shell_recovery_provider(
     },
     read_poller_state: async fn(project_dir) {
       @async.sleep(0)
-      if !@sys.path_exists(project_dir + "/.choir/poller_state.json") {
+      if !@sys.path_exists(project_dir + "/.choir/state/poller_state.json") {
         return []
       }
-      let content = @sys.read_file(project_dir + "/.choir/poller_state.json")
+      let content = @sys.read_file(project_dir + "/.choir/state/poller_state.json")
       if content == "" {
         return []
       }
@@ -728,11 +728,11 @@ pub fn make_shell_recovery_provider(
           // fall back to empty tracked-PR state. The daemon rebuilds
           // poller state from GitHub on the next tick.
           let quarantine = project_dir +
-            "/.choir/poller_state.json.corrupt-" +
+            "/.choir/state/poller_state.json.corrupt-" +
             @env.now().reinterpret_as_int64().to_string()
           ignore(@sys.write_file_atomic(quarantine, content))
           ignore(
-            @sys.delete_file_sync(project_dir + "/.choir/poller_state.json"),
+            @sys.delete_file_sync(project_dir + "/.choir/state/poller_state.json"),
           )
           write_stderr(
             "poller_state.json parse error (quarantined to " +
@@ -759,7 +759,7 @@ pub fn make_shell_recovery_provider(
       ignore(@sys.create_dir_all(project_dir + "/.choir"))
       ignore(
         @sys.write_file_atomic(
-          project_dir + "/.choir/poller_state.json",
+          project_dir + "/.choir/state/poller_state.json",
           content,
         ),
       )
@@ -1233,7 +1233,7 @@ pub async fn discover_recovery_input(
   let prebuilt = build_agent_recovery_actions(session, live, local_agents)
   let recovered_preview = prebuilt.0
   // AUDIT: N additional file reads on boot, where N is the count of
-  // .choir/kv/lifecycle--* files. Each read is sub-ms; total is bounded by
+  // .choir/state/kv/lifecycle--* files. Each read is sub-ms; total is bounded by
   // human-scale fork history; boot is infrequent. Skip-on-parse-failure
   // ensures the worktree-config read only fires for valid lifecycles.
   let lifecycle_snapshots = []

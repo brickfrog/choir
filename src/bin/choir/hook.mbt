@@ -14,7 +14,7 @@ fn persist_hook_session(input : @hooks.HookInput) -> Unit {
         (Some(session_id), Some(agent_id)) =>
           ignore(
             @sys.write_file_sync(
-              ".choir/sessions/claude/" + agent_id + ".session_id",
+              ".choir/state/sessions/claude/" + agent_id + ".session_id",
               session_id,
             ),
           )

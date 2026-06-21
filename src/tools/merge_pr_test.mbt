@@ -275,7 +275,7 @@ fn merge_pr_test_gate_state_reader(
   enabled_at_unix : Int64,
 ) -> (String) -> String {
   fn(path : String) -> String {
-    if path.has_suffix("/.choir/audit-gate.json") {
+    if path.has_suffix("/.choir/state/audit-gate.json") {
       "{\"enabled_at_unix\":" + enabled_at_unix.to_string() + "}\n"
     } else {
       ""
@@ -307,7 +307,7 @@ test "load_gate_state fails closed when gate file is missing" {
 test "load_gate_state fails closed when gate file is empty" {
   match
     load_gate_state("/repo", fn(_) { "" }, path_exists=fn(path) {
-      path.has_suffix("/.choir/audit-gate.json")
+      path.has_suffix("/.choir/state/audit-gate.json")
     }) {
     Err(e) => {
       assert_true(e.message().contains("audit receipt gate"))
@@ -640,14 +640,14 @@ async test "interpret_merge_pr missing audit receipt policy-blocks on master def
       logs.push(content)
       true
     },
-    fn(path) { path.has_suffix("/.choir/audit-gate.json") },
+    fn(path) { path.has_suffix("/.choir/state/audit-gate.json") },
     hook_capture=async fn(path : String, _input_json : String, _cwd : String?) {
       @async.sleep(0)
       hook_paths.push(path)
       (0, "")
     },
     read_file=fn(path) {
-      if path.has_suffix("/.choir/audit-gate.json") {
+      if path.has_suffix("/.choir/state/audit-gate.json") {
         "{\"enabled_at_unix\":100}\n"
       } else {
         ""
@@ -761,9 +761,9 @@ async test "interpret_merge_pr audit receipt remains valid when commit changes b
       (0, "")
     },
     fn(_, _) { true },
-    fn(path) { path.has_suffix("/.choir/audit-gate.json") },
+    fn(path) { path.has_suffix("/.choir/state/audit-gate.json") },
     read_file=fn(path) {
-      if path.has_suffix("/.choir/audit-gate.json") {
+      if path.has_suffix("/.choir/state/audit-gate.json") {
         "{\"enabled_at_unix\":100}\n"
       } else {
         ""
@@ -839,9 +839,9 @@ async test "interpret_merge_pr rejects caller parent branch mismatch before merg
       logs.push(content)
       true
     },
-    fn(path) { path.has_suffix("/.choir/audit-gate.json") },
+    fn(path) { path.has_suffix("/.choir/state/audit-gate.json") },
     read_file=fn(path) {
-      if path.has_suffix("/.choir/audit-gate.json") {
+      if path.has_suffix("/.choir/state/audit-gate.json") {
         "{\"enabled_at_unix\":100}\n"
       } else {
         ""
@@ -933,9 +933,9 @@ async test "interpret_merge_pr audit gate fails closed without poller state" {
       logs.push(content)
       true
     },
-    fn(path) { path.has_suffix("/.choir/audit-gate.json") },
+    fn(path) { path.has_suffix("/.choir/state/audit-gate.json") },
     read_file=fn(path) {
-      if path.has_suffix("/.choir/audit-gate.json") {
+      if path.has_suffix("/.choir/state/audit-gate.json") {
         "{\"enabled_at_unix\":100}\n"
       } else {
         ""
@@ -1009,9 +1009,9 @@ async test "interpret_merge_pr audit gate fails closed for untracked PR" {
       logs.push(content)
       true
     },
-    fn(path) { path.has_suffix("/.choir/audit-gate.json") },
+    fn(path) { path.has_suffix("/.choir/state/audit-gate.json") },
     read_file=fn(path) {
-      if path.has_suffix("/.choir/audit-gate.json") {
+      if path.has_suffix("/.choir/state/audit-gate.json") {
         "{\"enabled_at_unix\":100}\n"
       } else {
         ""
@@ -1106,9 +1106,9 @@ async test "interpret_merge_pr main audit gate merges only matching audited head
       (0, "")
     },
     fn(_, _) { true },
-    fn(path) { path.has_suffix("/.choir/audit-gate.json") },
+    fn(path) { path.has_suffix("/.choir/state/audit-gate.json") },
     read_file=fn(path) {
-      if path.has_suffix("/.choir/audit-gate.json") {
+      if path.has_suffix("/.choir/state/audit-gate.json") {
         "{\"enabled_at_unix\":100}\n"
       } else {
         ""
@@ -1203,10 +1203,10 @@ async test "interpret_merge_pr success fires pr_merged completion hooks" {
     },
     fn(_, _) { true },
     fn(path) {
-      path.has_suffix("/.choir/audit-gate.json") ||
+      path.has_suffix("/.choir/state/audit-gate.json") ||
       path.has_suffix("/.choir/hooks/pr_merged.sh") ||
       path.has_suffix("/.choir/hooks/wave_complete.sh") ||
-      path.has_suffix("/.choir/audit-receipts/abcdef123456.json")
+      path.has_suffix("/.choir/state/audit-receipts/abcdef123456.json")
     },
     hook_capture=async fn(
       path : String,
@@ -1225,9 +1225,9 @@ async test "interpret_merge_pr success fires pr_merged completion hooks" {
       (0, "hook stdout")
     },
     read_file=fn(path) {
-      if path.has_suffix("/.choir/audit-gate.json") {
+      if path.has_suffix("/.choir/state/audit-gate.json") {
         "{\"enabled_at_unix\":100}\n"
-      } else if path.has_suffix("/.choir/audit-receipts/abcdef123456.json") {
+      } else if path.has_suffix("/.choir/state/audit-receipts/abcdef123456.json") {
         merge_pr_test_audit_receipt(head)
       } else {
         ""
@@ -1334,10 +1334,10 @@ async test "interpret_merge_pr suppresses pr_merged hooks when poller persist fa
     },
     fn(_, _) { true },
     fn(path) {
-      path.has_suffix("/.choir/audit-gate.json") ||
+      path.has_suffix("/.choir/state/audit-gate.json") ||
       path.has_suffix("/.choir/hooks/pr_merged.sh") ||
       path.has_suffix("/.choir/hooks/wave_complete.sh") ||
-      path.has_suffix("/.choir/audit-receipts/abcdef123456.json")
+      path.has_suffix("/.choir/state/audit-receipts/abcdef123456.json")
     },
     hook_capture=async fn(
       path : String,
@@ -1349,9 +1349,9 @@ async test "interpret_merge_pr suppresses pr_merged hooks when poller persist fa
       (0, "")
     },
     read_file=fn(path) {
-      if path.has_suffix("/.choir/audit-gate.json") {
+      if path.has_suffix("/.choir/state/audit-gate.json") {
         "{\"enabled_at_unix\":100}\n"
-      } else if path.has_suffix("/.choir/audit-receipts/abcdef123456.json") {
+      } else if path.has_suffix("/.choir/state/audit-receipts/abcdef123456.json") {
         merge_pr_test_audit_receipt(head)
       } else {
         ""
@@ -3499,7 +3499,7 @@ async test "interpret_merge_pr tracked feature merge skips audit gate file and r
     }
     if cmd.program == "cat" &&
       cmd.args.length() == 1 &&
-      cmd.args[0].has_prefix(".choir/audit-receipts/") {
+      cmd.args[0].has_prefix(".choir/state/audit-receipts/") {
       receipt_captures = receipt_captures + 1
       return (1, "")
     }
@@ -3526,13 +3526,13 @@ async test "interpret_merge_pr tracked feature merge skips audit gate file and r
     capture,
     @sys.append_file_sync,
     fn(path) {
-      if path.has_suffix("/.choir/audit-gate.json") {
+      if path.has_suffix("/.choir/state/audit-gate.json") {
         gate_path_checks = gate_path_checks + 1
       }
       false
     },
     read_file=fn(path) {
-      if path.has_suffix("/.choir/audit-gate.json") {
+      if path.has_suffix("/.choir/state/audit-gate.json") {
         gate_reads = gate_reads + 1
       }
       ""
@@ -3587,7 +3587,7 @@ async test "interpret_merge_pr untracked feature merge ignores present audit gat
     },
     mock_preflight_capture_no_unresolved_threads,
     @sys.append_file_sync,
-    fn(path) { path.has_suffix("/.choir/audit-gate.json") },
+    fn(path) { path.has_suffix("/.choir/state/audit-gate.json") },
     read_file=merge_pr_test_gate_state_reader(1L),
     persist=fn(_, _) { true },
   )
@@ -4029,7 +4029,7 @@ async test "interpret_merge_pr feature main closes wave and body beads then dele
     runner,
     capture,
     append_file,
-    fn(path) { path.has_suffix("/.choir/audit-gate.json") },
+    fn(path) { path.has_suffix("/.choir/state/audit-gate.json") },
     read_file=merge_pr_test_gate_state_reader(1L),
     task_contract_reader=fn(agent_id) { task_contracts.get(agent_id) },
   )
@@ -4159,7 +4159,7 @@ async test "interpret_merge_pr feature main with no issue ids does not call bd c
     runner,
     capture,
     fn(_path, _content) { true },
-    fn(path) { path.has_suffix("/.choir/audit-gate.json") },
+    fn(path) { path.has_suffix("/.choir/state/audit-gate.json") },
     read_file=merge_pr_test_gate_state_reader(1L),
     task_contract_reader=merge_pr_test_empty_contract_reader,
   )
@@ -4563,7 +4563,7 @@ async test "interpret_merge_pr leaf cleanup trusts dev lifecycle over stale supe
   let project_dir = "/tmp/choir-mpr-stale-role-cleanup-" +
     @sys.get_pid().to_string()
   ignore(@sys.rm_rf(project_dir))
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let feature_branch = "feature/stale-role-cleanup"
   let leaf_branch = feature_branch + ".leaf"
   let leaf_id = "main.stale-role-leaf"

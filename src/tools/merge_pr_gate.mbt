@@ -5,7 +5,7 @@ pub(all) struct MergeGateState {
 
 ///|
 pub fn merge_pr_audit_gate_state_path(project_dir : String) -> String {
-  project_dir + "/.choir/audit-gate.json"
+  project_dir + "/.choir/state/audit-gate.json"
 }
 
 ///|
@@ -27,7 +27,7 @@ pub fn load_gate_state(
   if !path_exists(path) {
     return Err(
       @types.ChoirError::validation_error(
-        "merge blocked: audit receipt gate state at .choir/audit-gate.json is missing. Seed it explicitly with an `enabled_at_unix` value chosen by the operator (e.g. `printf '{\"enabled_at_unix\":%s}' \"$(date +%s)\" > .choir/audit-gate.json`); merge_pr refuses to invent the grandfather boundary itself.",
+        "merge blocked: audit receipt gate state at .choir/state/audit-gate.json is missing. Seed it explicitly with an `enabled_at_unix` value chosen by the operator (e.g. `printf '{\"enabled_at_unix\":%s}' \"$(date +%s)\" > .choir/state/audit-gate.json`); merge_pr refuses to invent the grandfather boundary itself.",
       ),
     )
   }
@@ -35,7 +35,7 @@ pub fn load_gate_state(
   if body == "" {
     return Err(
       @types.ChoirError::validation_error(
-        "merge blocked: audit receipt gate state at .choir/audit-gate.json is empty; fix or delete the file deliberately rather than silently resetting the grandfather boundary",
+        "merge blocked: audit receipt gate state at .choir/state/audit-gate.json is empty; fix or delete the file deliberately rather than silently resetting the grandfather boundary",
       ),
     )
   }
@@ -47,14 +47,14 @@ pub fn load_gate_state(
         None =>
           Err(
             @types.ChoirError::validation_error(
-              "merge blocked: audit receipt gate state at .choir/audit-gate.json is malformed (missing or non-positive enabled_at_unix); fix or delete the file deliberately rather than silently resetting the grandfather boundary",
+              "merge blocked: audit receipt gate state at .choir/state/audit-gate.json is malformed (missing or non-positive enabled_at_unix); fix or delete the file deliberately rather than silently resetting the grandfather boundary",
             ),
           )
       }
     None =>
       Err(
         @types.ChoirError::validation_error(
-          "merge blocked: audit receipt gate state at .choir/audit-gate.json is not valid JSON; fix or delete the file deliberately rather than silently resetting the grandfather boundary",
+          "merge blocked: audit receipt gate state at .choir/state/audit-gate.json is not valid JSON; fix or delete the file deliberately rather than silently resetting the grandfather boundary",
         ),
       )
   }

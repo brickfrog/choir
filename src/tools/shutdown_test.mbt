@@ -244,7 +244,7 @@ async test "interpret_kill_agent permits dev and worker targets in lifecycle sta
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let cases : Array[(@types.Role, @types.Role, String)] = [
     (@types.Role::TL, @types.Role::Dev, "main.review-owned-dev"),
     (@types.Role::Worker, @types.Role::Worker, "main.killable-worker"),
@@ -482,8 +482,8 @@ async test "interpret_kill_agent default pidfile removal is inert without dispat
     "-" +
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.rm_rf(project_dir))
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/pids"))
-  let pid_file = project_dir + "/.choir/pids/main.leaf"
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/run/pids"))
+  let pid_file = project_dir + "/.choir/run/pids/main.leaf"
   assert_true(@sys.write_file_sync(pid_file, "54321"))
   let reg = @registry.AgentRegistry::new()
   let agent = kill_agent_test_agent(
@@ -1449,8 +1449,8 @@ async test "dispatch kill_agent removes pidfile through injected delete_file cap
     @env.now().reinterpret_as_int64().to_string()
   let workspace = tmp + "/worker"
   ignore(@sys.rm_rf(tmp))
-  assert_true(@sys.create_dir_all(tmp + "/.choir/pids"))
-  let pid_file = tmp + "/.choir/pids/main.leaf"
+  assert_true(@sys.create_dir_all(tmp + "/.choir/run/pids"))
+  let pid_file = tmp + "/.choir/run/pids/main.leaf"
   assert_true(@sys.write_file_sync(pid_file, "999999937"))
   let reg = shutdown_beads_registry_fixture(workspace, @types.Role::Worker)
   let deleted : Array[String] = []
@@ -1491,7 +1491,7 @@ async test "interpret_shutdown skips Beads shutdown mirror when exit is deferred
   let tmp = "/tmp/choir-shutdown-beads-deferred-" + @sys.get_pid().to_string()
   let workspace = tmp + "/worker"
   ignore(@sys.rm_rf(tmp))
-  assert_true(@sys.create_dir_all(tmp + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(tmp + "/.choir/state/kv"))
   let reg = shutdown_beads_registry_fixture(workspace, @types.Role::Dev)
   ignore(
     @phase.write_lifecycle(tmp, {

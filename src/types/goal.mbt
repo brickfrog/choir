@@ -140,7 +140,7 @@ pub fn goal_kv_path(
   session : String,
 ) -> Result[String, ChoirError] {
   match goal_kv_key(session) {
-    Ok(key) => Ok(project_dir + "/.choir/kv/" + key)
+    Ok(key) => Ok(project_dir + "/.choir/state/kv/" + key)
     Err(e) => Err(e)
   }
 }

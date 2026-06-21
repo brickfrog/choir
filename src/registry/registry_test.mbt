@@ -310,7 +310,7 @@ test "registry snapshot write read round trip" {
     role: @types.Role::Worker,
     agent_type: @types.AgentType::Claude,
     parent: Some("root"),
-    workspace: ".choir/inline/root.worker",
+    workspace: ".choir/state/inline/root.worker",
     branch: "feature/hot-reload",
     terminal_target: @types.LocalTarget::parse("zellij-pane:choir:worker"),
     host: @types.Host::Remote("127.0.0.1"),
@@ -345,7 +345,7 @@ test "registry snapshot write read round trip" {
       assert_eq(w.role, @types.Role::Worker)
       assert_eq(w.agent_type, @types.AgentType::Claude)
       @debug.assert_eq(w.parent, Some("root"))
-      assert_eq(w.workspace, ".choir/inline/root.worker")
+      assert_eq(w.workspace, ".choir/state/inline/root.worker")
       assert_eq(w.host, @types.Host::Remote("127.0.0.1"))
       assert_eq(w.state, @types.AgentState::Suspended)
       assert_eq(w.spawn_depth, 1)

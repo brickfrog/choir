@@ -27,7 +27,7 @@ fn default_path_exists(path : String) -> Bool {
 
 ///|
 fn agent_task_contracts_path(project_dir : String) -> String {
-  project_dir + "/.choir/agent-task-contracts.json"
+  project_dir + "/.choir/state/agent-task-contracts.json"
 }
 
 ///|
@@ -331,10 +331,9 @@ pub struct ServerState {
 
 ///|
 fn persist_run_id(project_dir : String, run_id : String) -> Unit {
-  let choir_dir = project_dir + "/.choir"
-  let path = choir_dir + "/run_id"
-  ignore(@sys.create_dir_all(choir_dir))
-  ignore(@sys.write_file_sync(path, run_id))
+  let run_dir = project_dir + "/.choir/run"
+  ignore(@sys.create_dir_all(run_dir))
+  ignore(@sys.write_file_sync(run_dir + "/run_id", run_id))
 }
 
 ///|
@@ -349,7 +348,7 @@ fn normalize_run_id(content : String) -> String? {
 
 ///|
 fn init_run_id(project_dir : String) -> String {
-  let run_id_path = project_dir + "/.choir/run_id"
+  let run_id_path = project_dir + "/.choir/run/run_id"
   match normalize_run_id(@sys.read_file(run_id_path)) {
     Some(existing) => existing
     None => {
@@ -376,7 +375,7 @@ pub fn ServerState::new(
   otlp_exporter_factory? : (String) -> OtlpSpanExporter = make_otlp_span_exporter,
 ) -> ServerState {
   let run_id = init_run_id(config.project_dir)
-  // Seed `.choir/audit-gate.json` on server boot if absent. Operators who
+  // Seed `.choir/state/audit-gate.json` on server boot if absent. Operators who
   // want a different grandfather boundary should pre-seed the file before
   // starting the server. merge_pr's load_gate_state fails closed if the
   // file is missing/empty/malformed once the server is running; this init
@@ -808,7 +807,7 @@ test "ServerState::new restores persisted agent task contracts from cold boot st
     { ..@types.Config::default(), project_dir, },
     make_hermetic_recovery_provider(),
     path_exists=fn(path) {
-      path.has_suffix("/.choir/audit-gate.json") ||
+      path.has_suffix("/.choir/state/audit-gate.json") ||
       path == poller_path ||
       path == contracts_path
     },
@@ -858,7 +857,7 @@ test "record_agent_task_contract writes boot-readable full map envelope" {
       { ..@types.Config::default(), project_dir, },
       make_hermetic_recovery_provider(),
       path_exists=fn(path) {
-        path.has_suffix("/.choir/audit-gate.json") || path == poller_path
+        path.has_suffix("/.choir/state/audit-gate.json") || path == poller_path
       },
       boot_read_file=fn(path) {
         if path == poller_path {
@@ -939,7 +938,7 @@ test "record_agent_task_contract refuses to downgrade non-empty verify" {
       { ..@types.Config::default(), project_dir, },
       make_hermetic_recovery_provider(),
       path_exists=fn(path) {
-        path.has_suffix("/.choir/audit-gate.json") || path == poller_path
+        path.has_suffix("/.choir/state/audit-gate.json") || path == poller_path
       },
       boot_read_file=fn(path) {
         if path == poller_path {
@@ -997,7 +996,7 @@ fn state_test_local_config_with_contract(
     workspace,
     target,
     project_dir=Some("/tmp/project"),
-    listen_uds=Some("/tmp/project/.choir/server.sock"),
+    listen_uds=Some("/tmp/project/.choir/run/server.sock"),
     terminal_session=Some("choir"),
   )
 }
@@ -1134,7 +1133,7 @@ test "ServerState::new quarantines corrupt persisted agent task contracts" {
     { ..@types.Config::default(), project_dir, },
     make_hermetic_recovery_provider(),
     path_exists=fn(path) {
-      path.has_suffix("/.choir/audit-gate.json") ||
+      path.has_suffix("/.choir/state/audit-gate.json") ||
       path == poller_path ||
       path == contracts_path
     },

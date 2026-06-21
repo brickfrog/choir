@@ -4,7 +4,7 @@ test "register_agent_pid + forget_agent_pid" {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let state = ServerState::new(
     { ..@types.Config::default(), project_dir, },
     make_hermetic_recovery_provider(),
@@ -30,7 +30,7 @@ test "ServerState::new seeds untracked merge boundary on first boot" {
   let state = ServerState::new(
     { ..@types.Config::default(), project_dir, },
     make_hermetic_recovery_provider(),
-    path_exists=fn(path) { path.has_suffix("/.choir/audit-gate.json") },
+    path_exists=fn(path) { path.has_suffix("/.choir/state/audit-gate.json") },
     write_file_atomic=fn(path, content) {
       write_paths.push(path)
       write_contents.push(content)
@@ -66,7 +66,7 @@ test "ServerState::new seeds boundary without clobbering persisted tracked PRs" 
     { ..@types.Config::default(), project_dir, },
     make_hermetic_recovery_provider(),
     path_exists=fn(path) {
-      path.has_suffix("/.choir/audit-gate.json") || path == poller_path
+      path.has_suffix("/.choir/state/audit-gate.json") || path == poller_path
     },
     boot_read_file=fn(path) {
       if path == poller_path {
@@ -111,7 +111,7 @@ test "ServerState::new quarantines corrupt poller state before seeding" {
     { ..@types.Config::default(), project_dir, },
     make_hermetic_recovery_provider(),
     path_exists=fn(path) {
-      path.has_suffix("/.choir/audit-gate.json") || path == poller_path
+      path.has_suffix("/.choir/state/audit-gate.json") || path == poller_path
     },
     boot_read_file=fn(path) {
       if path == poller_path {

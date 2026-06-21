@@ -802,7 +802,7 @@ pub fn file_pr_short_sha(sha : String) -> String {
 
 ///|
 pub fn file_pr_audit_receipt_path_for_head(sha : String) -> String {
-  ".choir/audit-receipts/" + file_pr_short_sha(sha) + ".json"
+  ".choir/state/audit-receipts/" + file_pr_short_sha(sha) + ".json"
 }
 
 ///|

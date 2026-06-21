@@ -220,7 +220,7 @@ test "initialize_response instructions forbid parent branch implementation durin
             ),
           )
           assert_true(
-            instructions.contains("`.choir/audit-receipts/<sha>.json`"),
+            instructions.contains("`.choir/state/audit-receipts/<sha>.json`"),
           )
         }
         _ => fail("expected instructions string")

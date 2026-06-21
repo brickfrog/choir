@@ -447,7 +447,7 @@ fn read_log_lines(project_dir : String, rel : String) -> Array[String] {
 }
 
 ///|
-/// A caller-supplied `.jsonl` name is only safe to join under `.choir/events`
+/// A caller-supplied `.jsonl` name is only safe to join under `.choir/state/events`
 /// if it has no path separators or `..` segments — otherwise it could escape
 /// the events directory.
 fn safe_jsonl_filename(name : String) -> String? {
@@ -460,7 +460,7 @@ fn safe_jsonl_filename(name : String) -> String? {
 
 ///|
 fn event_log_path(project_dir : String, agent_arg : String) -> String? {
-  let events_dir = logs_project_path(project_dir, ".choir/events")
+  let events_dir = logs_project_path(project_dir, ".choir/state/events")
   let sanitized = @types.sanitize_agent_id(agent_arg)
   let candidates : Array[String] = []
   if agent_arg.has_suffix(".jsonl") {
@@ -499,7 +499,7 @@ fn event_follow_candidate_paths(
   project_dir : String,
   agent_arg : String,
 ) -> Array[String] {
-  let events_dir = logs_project_path(project_dir, ".choir/events")
+  let events_dir = logs_project_path(project_dir, ".choir/state/events")
   let sanitized = @types.sanitize_agent_id(agent_arg)
   let candidates : Array[String] = []
   if agent_arg.has_suffix(".jsonl") {

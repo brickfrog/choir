@@ -106,7 +106,7 @@ test "validate_kv_storage_key rejects leading_slash" {
 ///|
 test "KvStore_get returns none_for_missing_valid_key" {
   let project_dir = "/tmp/choir-kv-missing-" + @sys.get_pid().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let kv = KvStore::new(project_dir)
   @debug.assert_eq(kv.get("missing-key"), None)
 }
@@ -114,7 +114,7 @@ test "KvStore_get returns none_for_missing_valid_key" {
 ///|
 test "KvStore_get returns none_for_empty_file" {
   let project_dir = "/tmp/choir-kv-empty-file-" + @sys.get_pid().to_string()
-  let kv_dir = project_dir + "/.choir/kv"
+  let kv_dir = project_dir + "/.choir/state/kv"
   ignore(@sys.create_dir_all(kv_dir))
   ignore(@sys.write_file_sync(kv_dir + "/my-empty-key", ""))
   let kv = KvStore::new(project_dir)
@@ -124,7 +124,7 @@ test "KvStore_get returns none_for_empty_file" {
 ///|
 test "KvStore_get trims surrounding whitespace including newline" {
   let project_dir = "/tmp/choir-kv-trim-" + @sys.get_pid().to_string()
-  let kv_dir = project_dir + "/.choir/kv"
+  let kv_dir = project_dir + "/.choir/state/kv"
   ignore(@sys.create_dir_all(kv_dir))
   ignore(@sys.write_file_sync(kv_dir + "/review-state", "true\n"))
   let kv = KvStore::new(project_dir)
@@ -134,7 +134,7 @@ test "KvStore_get trims surrounding whitespace including newline" {
 ///|
 test "KvStore_delete removes_valid_key_file" {
   let project_dir = "/tmp/choir-kv-del-" + @sys.get_pid().to_string()
-  let kv_dir = project_dir + "/.choir/kv"
+  let kv_dir = project_dir + "/.choir/state/kv"
   ignore(@sys.create_dir_all(kv_dir))
   ignore(@sys.write_file_sync(kv_dir + "/my-key", "v"))
   let kv = KvStore::new(project_dir)

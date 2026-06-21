@@ -154,7 +154,7 @@ async test "recover_state ReapStaleLifecycle deletes the on-disk lifecycle" {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
   let state = ServerState::new(config, make_hermetic_recovery_provider())
@@ -170,7 +170,7 @@ async test "recover_state ReapStaleLifecycle deletes the on-disk lifecycle" {
   }
   assert_true(@phase.write_lifecycle(project_dir, lifecycle))
   let pid_path = @workspace.agent_pid_file_path(project_dir, agent_id)
-  ignore(@sys.create_dir_all(project_dir + "/.choir/pids"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/run/pids"))
   assert_true(@sys.write_file_sync(pid_path, "5151\n"))
   let killed : Array[Int] = []
   let captured : Array[@moontrace.Event] = []
@@ -241,7 +241,7 @@ async test "recover_state ReapStaleLifecycle warns when delete_lifecycle returns
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
   let state = ServerState::new(config, make_hermetic_recovery_provider())

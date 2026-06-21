@@ -917,7 +917,7 @@ test "resolve_agent_with_fallback - fallback to lifecycle" {
   let agent_id = "parent1"
 
   // Create lifecycle using the store/write_lifecycle
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let lifecycle = lifecycle_for_role(agent_id, @types.Role::TL)
   ignore(write_lifecycle(project_dir, lifecycle))
 
@@ -1132,7 +1132,7 @@ test "interpret_lifecycle_effects writes lifecycle and event log" {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let from_lc = lifecycle_for_role("leaf.z", @types.Role::Dev)
   let to_lc = {
     ..from_lc,
@@ -1161,7 +1161,7 @@ test "interpret_lifecycle_effects writes lifecycle and event log" {
     None => fail("expected persisted lifecycle")
   }
   let ev_path = project_dir +
-    "/.choir/events/" +
+    "/.choir/state/events/" +
     @types.sanitize_agent_id("leaf.z") +
     ".jsonl"
   let log = @sys.read_file(ev_path)
@@ -1177,7 +1177,7 @@ test "interpret_lifecycle_effects skips append when persist fails" {
     "-" +
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.create_dir_all(project_dir + "/.choir"))
-  ignore(@sys.write_file_sync(project_dir + "/.choir/kv", "not-a-directory"))
+  ignore(@sys.write_file_sync(project_dir + "/.choir/state/kv", "not-a-directory"))
   let lc = lifecycle_for_role("u1", @types.Role::Dev)
   let effects : Array[LifecycleEffect] = [
     PersistLifecycle(lifecycle=lc),
@@ -1190,7 +1190,7 @@ test "interpret_lifecycle_effects skips append when persist fails" {
   ]
   interpret_lifecycle_effects(project_dir, effects, registry=None)
   let ev_path = project_dir +
-    "/.choir/events/" +
+    "/.choir/state/events/" +
     @types.sanitize_agent_id("u1") +
     ".jsonl"
   assert_eq(@sys.read_file(ev_path), "")
@@ -1203,7 +1203,7 @@ test "interpret_lifecycle_effects updates registry after successful persist" {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let reg = @registry.AgentRegistry::new()
   let agent_id = "p.reg"
   ignore(
@@ -1241,7 +1241,7 @@ test "persist_lifecycle preserves suspended registry overlay for active lifecycl
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let reg = @registry.AgentRegistry::new()
   let agent_id = "p.suspended"
   ignore(reg.upsert(phase_test_agent(agent_id, None, state=Suspended)))
@@ -1261,7 +1261,7 @@ test "interpret_lifecycle_effects append ignored when last persist is another ag
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let lc_a = lifecycle_for_role("a.only", @types.Role::Dev)
   let lc_b = lifecycle_for_role("b.only", @types.Role::Dev)
   let effects : Array[LifecycleEffect] = [
@@ -1276,7 +1276,7 @@ test "interpret_lifecycle_effects append ignored when last persist is another ag
   ]
   interpret_lifecycle_effects(project_dir, effects, registry=None)
   let ev_path = project_dir +
-    "/.choir/events/" +
+    "/.choir/state/events/" +
     @types.sanitize_agent_id("a.only") +
     ".jsonl"
   assert_eq(@sys.read_file(ev_path), "")
@@ -1289,7 +1289,7 @@ test "interpret_lifecycle_effects second append without new persist is ignored" 
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let from_lc = lifecycle_for_role("leaf.2a", @types.Role::Dev)
   let to_lc = {
     ..from_lc,
@@ -1314,7 +1314,7 @@ test "interpret_lifecycle_effects second append without new persist is ignored" 
   ]
   interpret_lifecycle_effects(project_dir, effects, registry=None)
   let ev_path = project_dir +
-    "/.choir/events/" +
+    "/.choir/state/events/" +
     @types.sanitize_agent_id("leaf.2a") +
     ".jsonl"
   let log = @sys.read_file(ev_path)

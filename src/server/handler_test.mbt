@@ -256,7 +256,7 @@ async test "process_poller_tick_with emits tick summary when an event is produce
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let state = ServerState::new(
     { ..@types.Config::default(), project_dir, terminal_session: "s" },
     make_hermetic_recovery_provider(),
@@ -675,7 +675,7 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let terminal_session = "test-session"
   let config = {
     ..@types.Config::default(),
@@ -1155,7 +1155,7 @@ async test "refresh_pr_with pending events fires automerge after fixes and CI cl
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let terminal_session = "test-session"
   let config = {
     ..@types.Config::default(),
@@ -1522,7 +1522,7 @@ fn blocked_gh_automerge_fixture(
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let terminal_session = "test-session"
   let config = {
     ..@types.Config::default(),
@@ -2221,7 +2221,7 @@ async test "automerge audit policy block is visible and retryable for same head"
   )
   assert_true(
     @sys.write_file_sync(
-      project_dir + "/.choir/audit-gate.json",
+      project_dir + "/.choir/state/audit-gate.json",
       "{\"enabled_at_unix\":1}\n",
     ),
   )
@@ -2339,7 +2339,7 @@ async test "automerge findings audit block is not retried for same head" {
   )
   assert_true(
     @sys.write_file_sync(
-      project_dir + "/.choir/audit-gate.json",
+      project_dir + "/.choir/state/audit-gate.json",
       "{\"enabled_at_unix\":1}\n",
     ),
   )
@@ -2834,7 +2834,7 @@ fn kill_agent_reconciliation_fixture(
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
   let state = ServerState::new(config, make_hermetic_recovery_provider())
@@ -3273,7 +3273,7 @@ async test "deliver_pending_poll_events fires PRMerged hook whether tracked or s
       @env.now().reinterpret_as_int64().to_string()
     let config_home = project_dir + "/xdg-empty"
     let home_dir = project_dir + "/home-empty"
-    ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+    ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
     ignore(@sys.create_dir_all(project_dir + "/.choir/hooks"))
     ignore(@sys.create_dir_all(config_home))
     ignore(@sys.create_dir_all(home_dir))
@@ -3424,7 +3424,7 @@ async test "deliver_pending_poll_events uses injected global hook config home" {
   let project_dir = temp_root + "/project"
   let config_home = temp_root + "/xdg"
   let home_dir = temp_root + "/home"
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   ignore(@sys.create_dir_all(config_home + "/choir/hooks"))
   ignore(@sys.create_dir_all(home_dir))
   let pr_hook = config_home + "/choir/hooks/pr_merged.sh"
@@ -3552,7 +3552,7 @@ async test "deliver_pending_poll_events ignores absent injected global hook fall
   let project_dir = temp_root + "/project"
   let config_home = temp_root + "/xdg-empty"
   let home_dir = temp_root + "/home-empty"
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   ignore(@sys.create_dir_all(project_dir + "/.choir/hooks"))
   ignore(@sys.create_dir_all(config_home))
   ignore(@sys.create_dir_all(home_dir))
@@ -3674,7 +3674,7 @@ async test "refresh_pr_with_test uses injected hook capture when project hook re
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   ignore(@sys.create_dir_all(project_dir + "/.choir/hooks"))
   let config_home = project_dir + "/xdg-empty"
   let home_dir = project_dir + "/home-empty"
@@ -3818,7 +3818,7 @@ test "should_auto_pull_parent truth table" {
 
 ///|
 test "detect_unaudited_integration_merge returns typed outcome for each path" {
-  let receipt = "/repo/.choir/audit-receipts/abcdef123456.json"
+  let receipt = "/repo/.choir/state/audit-receipts/abcdef123456.json"
   let valid_receipt_exists = fn(path : String) -> Bool { path == receipt }
   @debug.assert_eq(
     @tools.detect_unaudited_integration_merge(
@@ -3844,7 +3844,7 @@ test "detect_unaudited_integration_merge returns typed outcome for each path" {
 test "valid_merge_audit_receipt_exists checks tree and findings independent of receipt branch" {
   let head = "abcdef1234567890abcdef1234567890abcdef12"
   let other_head = "0000000000000000000000000000000000000000"
-  let receipt_path = "/repo/.choir/audit-receipts/abcdef123456.json"
+  let receipt_path = "/repo/.choir/state/audit-receipts/abcdef123456.json"
   let mut body = handler_test_audit_receipt(head, "feature/t92", 0)
   let exists = fn(path : String) -> Bool { path == receipt_path }
   let read_paths : Array[String] = []
@@ -3953,7 +3953,7 @@ async test "untracked merge detection emits synthetic PRMerged and fires hooks" 
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let state = ServerState::new(
     {
       ..@types.Config::default(),
@@ -4020,7 +4020,7 @@ async test "untracked merge detection filters records at or before boundary" {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let state = ServerState::new(
     {
       ..@types.Config::default(),
@@ -4073,7 +4073,7 @@ async test "untracked merge detection advances and persists boundary at emission
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let state = ServerState::new(
     {
       ..@types.Config::default(),
@@ -4122,7 +4122,7 @@ async test "untracked merge detection does not re-emit after boundary advances" 
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let state = ServerState::new(
     {
       ..@types.Config::default(),
@@ -4167,7 +4167,7 @@ async test "untracked merge detection advances boundary for suppressed records" 
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let state = ServerState::new(
     {
       ..@types.Config::default(),
@@ -4221,7 +4221,7 @@ async test "untracked merge boundary persist failure is logged" {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let state = ServerState::new(
     {
       ..@types.Config::default(),
@@ -4284,7 +4284,7 @@ async test "A: unaudited PRMerged event does NOT fire completion hooks" {
       @sys.get_pid().to_string() +
       "-" +
       @env.now().reinterpret_as_int64().to_string()
-    ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+    ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
     ignore(@sys.create_dir_all(project_dir + "/.choir/hooks"))
     ignore(@sys.write_file_sync(project_dir + "/.choir/hooks/pr_merged.sh", ""))
     ignore(
@@ -4431,7 +4431,7 @@ async test "A: unaudited PRMerged event does NOT fire completion hooks" {
     assert_eq(checked_receipts.length(), 1)
     assert_true(checked_receipts[0].contains("abcdef123456"))
     @debug.assert_eq(checked_receipts, [
-      project_dir + "/.choir/audit-receipts/abcdef123456.json",
+      project_dir + "/.choir/state/audit-receipts/abcdef123456.json",
     ])
     assert_true(state.poller.merged_observed(pr_number))
     if expected_log_message != "" {
@@ -4564,7 +4564,7 @@ async test "B: audited PRMerged event DOES fire completion hooks (regression gua
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   ignore(@sys.create_dir_all(project_dir + "/.choir/hooks"))
   ignore(@sys.write_file_sync(project_dir + "/.choir/hooks/pr_merged.sh", ""))
   ignore(
@@ -4738,7 +4738,7 @@ async test "C: empty-head_sha unaudited PRMerged records observation" {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   ignore(@sys.create_dir_all(project_dir + "/.choir/hooks"))
   ignore(@sys.write_file_sync(project_dir + "/.choir/hooks/pr_merged.sh", ""))
   ignore(
@@ -4887,7 +4887,7 @@ async test "tracked PRMerged with missing head sha warns when integration audit 
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let state = ServerState::new(
     {
       ..@types.Config::default(),
@@ -5026,7 +5026,7 @@ async test "PRMerged into default branch triggers injected parent auto-pull" {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let state = ServerState::new(
     { ..@types.Config::default(), project_dir, },
     make_hermetic_recovery_provider(),
@@ -5081,7 +5081,7 @@ async test "PRMerged auto-pull skips dirty parent tree" {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let state = ServerState::new(
     { ..@types.Config::default(), project_dir, },
     make_hermetic_recovery_provider(),
@@ -6894,7 +6894,7 @@ async test "disconnect PR recovery uses inline review mode when tracking recover
     "-" +
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.rm_rf(project_dir))
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let parent_id = "main.tl"
   let agent_id = "main.inline-leaf"
   let pr_number = 812
@@ -6976,7 +6976,7 @@ async test "transport disconnect with live pane re-registers as active lifecycle
     "-" +
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.rm_rf(project_dir))
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let parent_id = "main.tl"
   let agent_id = "main.phantom-leaf"
   let pane_name = "phantom-leaf-pane"
@@ -7068,7 +7068,7 @@ async test "pending transport disconnect with live process does not fail idle MC
     "-" +
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.rm_rf(project_dir))
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let parent_id = "main.tl"
   let agent_id = "main.process-live-leaf"
   let workspace = project_dir + "/.choir/worktrees/process-live-leaf"
@@ -7130,7 +7130,7 @@ async test "pending transport disconnect with dead process still fails" {
     "-" +
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.rm_rf(project_dir))
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let parent_id = "main.tl"
   let agent_id = "main.process-dead-leaf"
   let workspace = project_dir + "/.choir/worktrees/process-dead-leaf"
@@ -7196,7 +7196,7 @@ async test "transport disconnect preserves suspended registry state" {
     "-" +
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.rm_rf(project_dir))
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let parent_id = "main.tl"
   let agent_id = "main.suspended-leaf"
   let pane_name = "suspended-leaf-pane"
@@ -7259,7 +7259,7 @@ async test "register reads pid sidecar into tracked agent pids" {
     "-" +
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.rm_rf(project_dir))
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/pids"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/run/pids"))
   let agent_id = "main.pid-sidecar-leaf"
   let pid_path = @workspace.agent_pid_file_path(project_dir, agent_id)
   assert_true(@sys.write_file_sync(pid_path, "4321\n"))
@@ -7388,7 +7388,7 @@ async test "register reconnect preserves suspended registry state" {
     "-" +
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.rm_rf(project_dir))
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let parent_id = "main.tl"
   let agent_id = "main.suspended-reconnect-leaf"
   let pane_name = "suspended-reconnect-leaf-pane"
@@ -7460,7 +7460,7 @@ test "direct register_agent preserves suspended registry state" {
     "-" +
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.rm_rf(project_dir))
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let parent_id = "main.tl"
   let agent_id = "main.suspended-direct-leaf"
   let state = ServerState::new(
@@ -7517,7 +7517,7 @@ async test "resume RPC clears suspended state after reconnect preservation" {
     "-" +
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.rm_rf(project_dir))
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let parent_id = "main.tl"
   let agent_id = "main.resume-clears-leaf"
   let state = ServerState::new(
@@ -7614,7 +7614,7 @@ async test "terminal unexpected disconnect failure stays failed on register" {
     "-" +
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.rm_rf(project_dir))
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let agent_id = "main.dead-leaf"
   let state = ServerState::new(
     {
@@ -7704,7 +7704,7 @@ async test "failed lifecycle register does not restore suspended registry state"
     "-" +
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.rm_rf(project_dir))
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let agent_id = "main.failed-suspended-leaf"
   let state = ServerState::new(
     {
@@ -7798,7 +7798,7 @@ async test "soft transport disconnect still escalates when idle watchdog expires
     "-" +
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.rm_rf(project_dir))
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let parent_id = "main.tl"
   let agent_id = "main.watchdog-leaf"
   let pane_name = "watchdog-leaf-pane"
@@ -7899,7 +7899,7 @@ async test "pending transport disconnect preserves completing finalization" {
     "-" +
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.rm_rf(project_dir))
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let agent_id = "main.finalizing-leaf"
   let state = ServerState::new(
     {
@@ -7987,7 +7987,7 @@ async test "fail_agent_with_runner injects failure to parent terminal" {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
 
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
@@ -8459,7 +8459,7 @@ async test "deliver_orphaned_pr_notification_for skips finalized merged lifecycl
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let config = {
     ..@types.Config::default(),
     project_dir,
@@ -8523,7 +8523,7 @@ async test "deliver_poller_stall_notification_for skips finalized merged lifecyc
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let config = {
     ..@types.Config::default(),
     project_dir,
@@ -8675,7 +8675,7 @@ fn handler_auto_close_test_state(label : String) -> ServerState {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let config = {
     ..@types.Config::default(),
     project_dir,
@@ -8693,7 +8693,7 @@ fn handler_config_divergence_test_state(label : String) -> ServerState {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let config = {
     ..@types.Config::default(),
     project_dir,
@@ -9544,7 +9544,7 @@ async test "poller reaps never-registered spawning agent after first-observed de
     state.config.project_dir,
     child_id,
   )
-  ignore(@sys.create_dir_all(state.config.project_dir + "/.choir/pids"))
+  ignore(@sys.create_dir_all(state.config.project_dir + "/.choir/run/pids"))
   assert_true(@sys.write_file_sync(pid_path, "4242\n"))
   let killed : Array[Int] = []
   state.process_poller_tick_with_test(

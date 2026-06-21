@@ -46,7 +46,7 @@ pub fn read_agent_events(
   agent_id : String,
 ) -> Array[Event] {
   let path = project_dir +
-    "/.choir/events/" +
+    "/.choir/state/events/" +
     @types.sanitize_agent_id(agent_id) +
     ".jsonl"
   let out : Array[Event] = []

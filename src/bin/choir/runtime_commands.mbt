@@ -11,7 +11,7 @@ fn stop_run() -> Unit {
       }
       let session = config.terminal_session
       let purge = @env.args().contains("--purge")
-      let pid_str = @sys.read_file(".choir/server.pid").trim().to_owned()
+      let pid_str = @sys.read_file(".choir/run/server.pid").trim().to_owned()
 
       if pid_str != "" {
         @sys.write_stdout("Stopping server (PID \{pid_str})...\n")

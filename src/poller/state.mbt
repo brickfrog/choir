@@ -703,7 +703,7 @@ pub fn parse_tracked_prs_json(content : String) -> Array[TrackedPR] raise {
 
 ///|
 pub fn poller_state_path(project_dir : String) -> String {
-  project_dir + "/.choir/poller_state.json"
+  project_dir + "/.choir/state/poller_state.json"
 }
 
 ///|

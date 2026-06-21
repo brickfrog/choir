@@ -1136,7 +1136,7 @@ async test "fork_wave post-spawn registers TL children by full spawn agent ids" 
   let project_dir = "/tmp/choir-fork-wave-full-id-child-" +
     @sys.get_pid().to_string()
   ignore(@sys.rm_rf(project_dir))
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let session = "choir-full-id-child-test"
   let args = {
     ..fork_wave_single_leaf_args("full-id"),

@@ -1,6 +1,6 @@
 ///|
 /// Persistent record for a `fork_wave` deferred until its `depends_on` agents
-/// merge. Stored at `.choir/kv/pending-wave--<wave_id>` until either the deps
+/// merge. Stored at `.choir/state/kv/pending-wave--<wave_id>` until either the deps
 /// resolve (spawn + delete) or one fails (delete + write `failed-wave--<id>`).
 pub(all) struct PendingWave {
   wave_id : String
@@ -24,12 +24,12 @@ pub fn failed_wave_kv_key(wave_id : String) -> String {
 
 ///|
 pub fn pending_wave_kv_path(project_dir : String, wave_id : String) -> String {
-  project_dir + "/.choir/kv/" + pending_wave_kv_key(wave_id)
+  project_dir + "/.choir/state/kv/" + pending_wave_kv_key(wave_id)
 }
 
 ///|
 pub fn failed_wave_kv_path(project_dir : String, wave_id : String) -> String {
-  project_dir + "/.choir/kv/" + failed_wave_kv_key(wave_id)
+  project_dir + "/.choir/state/kv/" + failed_wave_kv_key(wave_id)
 }
 
 ///|
@@ -37,7 +37,7 @@ pub fn failed_wave_kv_path(project_dir : String, wave_id : String) -> String {
 /// in slug_prefix so callers can pass hierarchical labels like
 /// `feature/foo`, but several downstream sinks concatenate the prefix
 /// into flat path keys without their own sanitization:
-/// `.choir/waves/<wave_id>.json`, `.choir/kv/pending-wave--<wave_id>`,
+/// `.choir/state/waves/<wave_id>.json`, `.choir/state/kv/pending-wave--<wave_id>`,
 /// `.choir/worktrees/<slug>/`. Replacing `/` with `-` here keeps the
 /// storage layout flat (no accidental nested dirs that no one
 /// `mkdir -p`s) while letting branch names — which go through
@@ -394,9 +394,9 @@ pub fn write_failed_wave_marker(
 }
 
 ///|
-/// Full paths of `.choir/kv/pending-wave--*` entries for `project_dir`.
+/// Full paths of `.choir/state/kv/pending-wave--*` entries for `project_dir`.
 pub fn list_pending_wave_paths(project_dir : String) -> Array[String] {
-  let kv_dir = project_dir + "/.choir/kv"
+  let kv_dir = project_dir + "/.choir/state/kv"
   if !@sys.path_entry_exists(kv_dir) {
     return []
   }
@@ -697,7 +697,7 @@ pub async fn mark_pending_wave_failed(
 }
 
 ///|
-/// Scan `.choir/kv/pending-wave--*` and dispatch each according to
+/// Scan `.choir/state/kv/pending-wave--*` and dispatch each according to
 /// `evaluate_pending_wave`:
 ///   - `ReadyToSpawn` → spawn via the standard fork_wave host pipeline and
 ///     delete the pending entry.
@@ -715,7 +715,7 @@ pub async fn try_dispatch_pending_waves(
   runner : async (Array[@workspace.Command]) -> Array[Int],
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
-  listen_uds? : String = ".choir/server.sock",
+  listen_uds? : String = ".choir/run/server.sock",
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
   read_file? : (String) -> String = @sys.read_file,

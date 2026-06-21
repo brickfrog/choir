@@ -54,7 +54,7 @@ pub fn agy_stderr_log_path(project_dir : String, agent_id : String) -> String {
 
 ///|
 pub fn agent_pid_file_path(project_dir : String, agent_id : String) -> String {
-  project_dir + "/.choir/pids/" + @types.sanitize_agent_id(agent_id)
+  project_dir + "/.choir/run/pids/" + @types.sanitize_agent_id(agent_id)
 }
 
 ///|
@@ -111,7 +111,7 @@ fn wrap_with_setsid_and_pgroup_cleanup(
     quoted_args.push(shell_escape(arg))
   }
   let pid_path = agent_pid_file_path(project_dir, agent_id)
-  let pid_dir = project_dir + "/.choir/pids"
+  let pid_dir = project_dir + "/.choir/run/pids"
   let wrapped = "mkdir -p " +
     shell_escape(pid_dir) +
     " && printf '%s' \"$$\" > " +
@@ -381,7 +381,7 @@ fn provider_launch_command(
       }
       if tl_init_mode {
         let plugin_dir = workspace_path + "/.choir/plugin"
-        let settings_path = workspace_path + "/.choir/claude-settings.json"
+        let settings_path = workspace_path + "/.choir/state/claude-settings.json"
         let lean_args : Array[String] = if lean {
           ["--system-prompt", "."]
         } else {

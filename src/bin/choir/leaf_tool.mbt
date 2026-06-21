@@ -524,7 +524,7 @@ test "resolve_leaf_local_cfg uses env identity when config.local lacks it" {
   let file_exists = fn(p : String) -> Bool { p == ".choir/config.local.toml" }
   // Root-checkout shape: default_role only, no agent_id/role/parent/branch.
   let read_no_identity = fn(_p : String) -> String {
-    "default_role = \"tl\"\nlisten_uds = \".choir/server.sock\"\n"
+    "default_role = \"tl\"\nlisten_uds = \".choir/run/server.sock\"\n"
   }
   let worker_env = fn(key : String) -> String? {
     match key {
@@ -1218,10 +1218,10 @@ test "tool local agent context keeps registration path" {
 test "tool effective config prefers env listen_uds over base config" {
   let local_cfg = {
     ..@types.LocalConfig::default(),
-    listen_uds: Some("/abs/.choir/server.sock"),
+    listen_uds: Some("/abs/.choir/run/server.sock"),
   }
   let config = tool_effective_config(@types.Config::default(), local_cfg)
-  assert_eq(config.listen_uds, "/abs/.choir/server.sock")
+  assert_eq(config.listen_uds, "/abs/.choir/run/server.sock")
 }
 
 ///|
@@ -1249,7 +1249,7 @@ test "tool env fallback synthesizes inline worker identity" {
     "CHOIR_BRANCH": "main.claude-worker",
     "CHOIR_PARENT_BRANCH": "main",
     "CHOIR_WORKSPACE": "/proj",
-    "CHOIR_LISTEN_UDS": "/abs/.choir/server.sock",
+    "CHOIR_LISTEN_UDS": "/abs/.choir/run/server.sock",
     "CHOIR_TERMINAL_TARGET": "zellij-pane:choir:claude-worker",
     "CHOIR_AGENT_TYPE": "claude",
   }
@@ -1260,7 +1260,7 @@ test "tool env fallback synthesizes inline worker identity" {
   @debug.assert_eq(local_cfg.branch, Some("main.claude-worker"))
   @debug.assert_eq(local_cfg.parent_branch, Some("main"))
   @debug.assert_eq(local_cfg.workspace, Some("/proj"))
-  @debug.assert_eq(local_cfg.listen_uds, Some("/abs/.choir/server.sock"))
+  @debug.assert_eq(local_cfg.listen_uds, Some("/abs/.choir/run/server.sock"))
   @debug.assert_eq(local_cfg.agent_type, Some(@types.AgentType::Claude))
   assert_true(tool_should_register(local_cfg))
 }
@@ -1380,11 +1380,11 @@ test "leaf_tool_load_config applies env listen_uds when config.local.toml is mis
   let env : Map[String, String] = {
     "CHOIR_ROLE": "worker",
     "CHOIR_AGENT_ID": "main.fallback-worker",
-    "CHOIR_LISTEN_UDS": "/abs/.choir/server.sock",
+    "CHOIR_LISTEN_UDS": "/abs/.choir/run/server.sock",
   }
   let stub_read = fn(path : String) -> String {
     if path == ".choir/config.toml" {
-      "default_role = \"worker\"\nlisten_uds = \".choir/server.sock\"\n"
+      "default_role = \"worker\"\nlisten_uds = \".choir/run/server.sock\"\n"
     } else {
       ""
     }
@@ -1398,8 +1398,8 @@ test "leaf_tool_load_config applies env listen_uds when config.local.toml is mis
     path_exists=stub_path_exists,
     read_file=stub_read,
   ).unwrap()
-  @debug.assert_eq(local_cfg.listen_uds, Some("/abs/.choir/server.sock"))
-  assert_eq(config.listen_uds, "/abs/.choir/server.sock")
+  @debug.assert_eq(local_cfg.listen_uds, Some("/abs/.choir/run/server.sock"))
+  assert_eq(config.listen_uds, "/abs/.choir/run/server.sock")
 }
 
 ///|

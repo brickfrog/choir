@@ -366,7 +366,7 @@ test "parse_config - project verify only keeps portable defaults" {
   let cfg = parse_config(content).unwrap()
   assert_eq(cfg.default_role, @types.Role::TL)
   assert_eq(cfg.project_dir, ".")
-  assert_eq(cfg.listen_uds, ".choir/server.sock")
+  assert_eq(cfg.listen_uds, ".choir/run/server.sock")
   assert_eq(cfg.terminal_session, "choir")
   @debug.assert_eq(
     cfg.project.verify_cmd,
@@ -407,11 +407,11 @@ test "parse_config uses config.local machine fields when config omits them" {
   let local_content =
     #|default_role = "worker"
     #|project_dir = "/repo"
-    #|listen_uds = "/repo/.choir/server.sock"
+    #|listen_uds = "/repo/.choir/run/server.sock"
   let cfg = parse_config("", local_content=Some(local_content)).unwrap()
   assert_eq(cfg.default_role, @types.Role::Worker)
   assert_eq(cfg.project_dir, "/repo")
-  assert_eq(cfg.listen_uds, "/repo/.choir/server.sock")
+  assert_eq(cfg.listen_uds, "/repo/.choir/run/server.sock")
 }
 
 ///|
@@ -772,7 +772,7 @@ test "parse_local_config - metadata" {
     #|role = "dev"
     #|default_role = "tl"
     #|project_dir = "/project"
-    #|listen_uds = "/project/.choir/server.sock"
+    #|listen_uds = "/project/.choir/run/server.sock"
     #|terminal_session = "choir-choir"
     #|agent_id = "main.child"
     #|parent_id = "main"
@@ -786,7 +786,7 @@ test "parse_local_config - metadata" {
   @debug.assert_eq(local_cfg.role, Some(@types.Role::Dev))
   @debug.assert_eq(local_cfg.default_role, Some(@types.Role::TL))
   @debug.assert_eq(local_cfg.project_dir, Some("/project"))
-  @debug.assert_eq(local_cfg.listen_uds, Some("/project/.choir/server.sock"))
+  @debug.assert_eq(local_cfg.listen_uds, Some("/project/.choir/run/server.sock"))
   @debug.assert_eq(local_cfg.terminal_session, Some("choir-choir"))
   @debug.assert_eq(local_cfg.agent_id, Some("main.child"))
   @debug.assert_eq(local_cfg.parent_id, Some("main"))

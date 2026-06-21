@@ -19,7 +19,7 @@ async test "real exec integration: kill_tracked_agent_pgroup kills real setsid p
   let sentinel_path = tmp + "/should_not_exist"
   let agent_id = "test-agent"
   ignore(@sys.rm_rf(tmp))
-  assert_true(@sys.create_dir_all(tmp + "/.choir/pids"))
+  assert_true(@sys.create_dir_all(tmp + "/.choir/run/pids"))
   let sidecar_path = @workspace.agent_pid_file_path(tmp, agent_id)
   let outer_pid = @sys.spawn_sigterm_unblocked_pgroup_for_test(
     pid_path, sidecar_path, sentinel_path,

@@ -1144,7 +1144,7 @@ async test "check_idle_agents skips supervisor roles before reading panes" {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let reads : Array[String] = []
   let host : @runtime.PaneWatchHost = {
     dump_pane_screen: async fn(_session, _pane_id) {
@@ -1442,7 +1442,7 @@ async test "startup disconnect after register emits startup prompt-gap warning" 
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   ignore(
     @sys.create_dir_all(project_dir + "/.choir/worktrees/main.gemini-leaf"),
   )
@@ -1544,7 +1544,7 @@ async test "unexpected disconnect closes terminal and preserves failure teardown
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let parent_id = "main.tl"
   let agent_id = "main.leaf"
   let target : @types.LocalTarget = {
@@ -1627,7 +1627,7 @@ test "clear_agent_runtime_tracking clears worker no-handoff maps" {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let state = ServerState::new(
     { ..@types.Config::default(), project_dir, terminal_session: "s" },
     make_hermetic_recovery_provider(),
@@ -1694,7 +1694,7 @@ async test "supervisor disconnect clears startup disconnect context" {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let state = ServerState::new(
     { ..@types.Config::default(), project_dir, terminal_session: "s" },
     make_hermetic_recovery_provider(),

@@ -12,7 +12,7 @@ pub(all) struct AuditReceiptWritePlan {
 /// (SHA-1) or 64 (SHA-256). This is a defense against path traversal in
 /// `file_pr_audit_receipt_path_for_head` which derives the on-disk file
 /// name from the hash; an unvalidated `../../etc/foo` would escape the
-/// `.choir/audit-receipts/` directory with a forced .json suffix.
+/// `.choir/state/audit-receipts/` directory with a forced .json suffix.
 fn audit_receipt_validate_sha_format(sha : String) -> Bool {
   if sha.length() != 40 && sha.length() != 64 {
     return false
@@ -104,10 +104,10 @@ pub fn interpret_write_audit_receipt(
     Ok(p) => p
     Err(e) => return @types.Response::Err(e.message())
   }
-  let receipts_dir = project_dir + "/.choir/audit-receipts"
+  let receipts_dir = project_dir + "/.choir/state/audit-receipts"
   if !create_dir_all(receipts_dir) {
     return @types.Response::Err(
-      "failed to create audit receipt directory: .choir/audit-receipts",
+      "failed to create audit receipt directory: .choir/state/audit-receipts",
     )
   }
   if !fs_writer(project_dir + "/" + plan.path, plan.content) {

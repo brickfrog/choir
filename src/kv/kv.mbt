@@ -9,7 +9,7 @@ pub fn KvStore::new(project_dir : String) -> KvStore {
 }
 
 ///|
-/// Flat single-segment keys for `.choir/kv/{key}` (no `/` — no subdirectories).
+/// Flat single-segment keys for `.choir/state/kv/{key}` (no `/` — no subdirectories).
 /// Rejects: empty string; bare `.`; leading `/`; any substring `..`; any
 /// character outside `[a-zA-Z0-9._-]`.
 pub fn validate_kv_storage_key(s : String) -> Result[Unit, @types.ChoirError] {
@@ -50,7 +50,7 @@ pub fn validate_kv_storage_key(s : String) -> Result[Unit, @types.ChoirError] {
 }
 
 ///|
-/// Reads `.choir/kv/{key}` after validation. Returns [`None`] when the file is
+/// Reads `.choir/state/kv/{key}` after validation. Returns [`None`] when the file is
 /// missing or the trimmed contents are empty.
 ///
 /// A key that fails [`validate_kv_storage_key`] is a **programmer error** for
@@ -70,7 +70,7 @@ pub fn KvStore::get(self : KvStore, key : String) -> String? {
       panic()
     }
     Ok(_) => {
-      let path = self.project_dir + "/.choir/kv/" + key
+      let path = self.project_dir + "/.choir/state/kv/" + key
       // @sys.read_file returns "" for missing/unreadable files (see sys/io.mbt); None is returned for empty result.
       // KvStore::get trims for internal gate comparisons; kv_get returns raw contents (see dispatch.mbt).
       let raw = @sys.read_file(path).trim().to_owned()
@@ -84,7 +84,7 @@ pub fn KvStore::get(self : KvStore, key : String) -> String? {
 }
 
 ///|
-/// Removes `.choir/kv/{key}` when the key passes [`validate_kv_storage_key`].
+/// Removes `.choir/state/kv/{key}` when the key passes [`validate_kv_storage_key`].
 ///
 /// **Asymmetry with [`KvStore::get`]:** `get` panics on an invalid key (programmer
 /// error — the caller asked for a stored value). **`delete` silently ignores invalid
@@ -95,7 +95,7 @@ pub fn KvStore::delete(self : KvStore, key : String) -> Unit {
   match validate_kv_storage_key(key) {
     Err(_) => ()
     Ok(_) => {
-      let path = self.project_dir + "/.choir/kv/" + key
+      let path = self.project_dir + "/.choir/state/kv/" + key
       ignore(@sys.delete_file_sync(path))
     }
   }
