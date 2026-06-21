@@ -1,4 +1,37 @@
 ///|
+fn watched_terminal_id_from_snapshot(
+  target : @types.LocalTarget,
+  snapshot : @tools.ZellijListPanesSnapshot,
+) -> String? {
+  for entry in snapshot.entries {
+    match target.kind {
+      @types.TargetKind::ZellijTab =>
+        if entry.tab_name == target.name {
+          return Some("terminal_" + entry.pane_id.to_string())
+        }
+      @types.TargetKind::ZellijPane =>
+        if entry.pane_name == target.name {
+          return Some("terminal_" + entry.pane_id.to_string())
+        }
+    }
+  }
+  None
+}
+
+///|
+fn ServerState::watch_pane_with_snapshot(
+  self : ServerState,
+  agent_id : String,
+  target : @types.LocalTarget,
+  snapshot : @tools.ZellijListPanesSnapshot,
+  now : Int64,
+) -> Bool {
+  let pane_id = watched_terminal_id_from_snapshot(target, snapshot)
+  self.pane_watcher.watch_pane(agent_id, target, now, pane_id~)
+  pane_id is Some(_)
+}
+
+///|
 /// Register a pane for idle watchdog monitoring.
 /// Resolves the agent's live zellij pane id from the current list-panes
 /// snapshot and records it for dump-screen polling. Missing tabs remain
@@ -13,11 +46,9 @@ pub async fn ServerState::watch_pane(
     None => return
   }
   let snapshot = (self.list_panes_snapshot_capture)(target.session)
-  let pane_id = match @tools.resolve_zellij_pane_id(target, snapshot) {
-    Some(value) => Some("terminal_" + value.to_string())
-    None => None
-  }
-  self.pane_watcher.watch_pane(agent_id, target, @poller.now_sec(), pane_id~)
+  ignore(
+    self.watch_pane_with_snapshot(agent_id, target, snapshot, @poller.now_sec()),
+  )
 }
 
 ///|
@@ -25,11 +56,32 @@ async fn ServerState::ensure_watched_pane_resolved(
   self : ServerState,
   agent_id : String,
 ) -> Bool {
-  match self.pane_watcher.pane_id_for_agent(agent_id) {
-    Some(_) => true
-    None => {
-      self.watch_pane(agent_id)
-      self.pane_watcher.pane_id_for_agent(agent_id) is Some(_)
+  let agent = self.registry.get(agent_id) catch { _ => return false }
+  let target = match agent.terminal_target {
+    Some(t) => t
+    None => return false
+  }
+  let snapshot = (self.list_panes_snapshot_capture)(target.session)
+  let current_pane_id = watched_terminal_id_from_snapshot(target, snapshot)
+  match (self.pane_watcher.pane_id_for_agent(agent_id), current_pane_id) {
+    (Some(cached), Some(current)) if cached == current => true
+    (_, Some(_)) =>
+      self.watch_pane_with_snapshot(
+        agent_id,
+        target,
+        snapshot,
+        @poller.now_sec(),
+      )
+    (_, None) => {
+      ignore(
+        self.watch_pane_with_snapshot(
+          agent_id,
+          target,
+          snapshot,
+          @poller.now_sec(),
+        ),
+      )
+      false
     }
   }
 }

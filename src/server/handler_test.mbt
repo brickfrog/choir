@@ -9043,7 +9043,7 @@ async test "ServerState::watch_pane resolves pane id from list-panes snapshot" {
     worker_no_handoff_idle_sec=120L,
   )
 
-  @debug.assert_eq(list_calls, ["test-session"])
+  @debug.assert_eq(list_calls, ["test-session", "test-session"])
   @debug.assert_eq(dumps, ["test-session:terminal_77"])
   assert_eq(
     worker_handoff_count_sent(sent, "[WORKER STALLED — no handoff]"),
@@ -9160,7 +9160,9 @@ async test "check_idle_agents retries unresolved pane id before observing idle" 
     async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
     worker_no_handoff_idle_sec=120L,
   )
-  @debug.assert_eq(list_calls, ["test-session", "test-session", "test-session"])
+  @debug.assert_eq(list_calls, [
+    "test-session", "test-session", "test-session", "test-session",
+  ])
   @debug.assert_eq(dumps, [
     "test-session:terminal_88", "test-session:terminal_88",
   ])
@@ -9169,6 +9171,125 @@ async test "check_idle_agents retries unresolved pane id before observing idle" 
       sent, "[WORKER STALLED — no handoff] lazy-worker",
     ),
     1,
+  )
+  ignore(@sys.rm_rf(state.config.project_dir))
+}
+
+///|
+async test "check_idle_agents refreshes recycled pane id before observing idle" {
+  let base = handler_auto_close_test_state("watch-pane-recycled-id")
+  let dumps : Array[String] = []
+  let list_calls : Array[String] = []
+  let snapshots = [
+    "[{\"id\":41,\"tab_name\":\"worker-pane\",\"pane_name\":\"worker-pane\"}]", "[{\"id\":41,\"tab_name\":\"other-pane\",\"pane_name\":\"other-pane\"},{\"id\":88,\"tab_name\":\"worker-pane\",\"pane_name\":\"worker-pane\"}]",
+  ]
+  let mut snapshot_index = 0
+  let host : @runtime.PaneWatchHost = {
+    dump_pane_screen: async fn(session, pane_id) {
+      @async.sleep(0)
+      dumps.push(session + ":" + pane_id)
+      "worker screen"
+    },
+  }
+  let state = base
+    .with_pane_watcher(@runtime.PaneWatcher::with_host(host))
+    .with_list_panes_snapshot_capture(async fn(session : String) {
+      @async.sleep(0)
+      list_calls.push(session)
+      let idx = if snapshot_index < snapshots.length() {
+        snapshot_index
+      } else {
+        snapshots.length() - 1
+      }
+      snapshot_index = snapshot_index + 1
+      @tools.parse_zellij_list_panes_json(snapshots[idx])
+    })
+  let parent_id = "main.parent"
+  let worker_id = "main.recycled-worker"
+  let worker_target : @types.LocalTarget = {
+    kind: @types.TargetKind::ZellijTab,
+    session: "test-session",
+    name: "worker-pane",
+  }
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent({
+      ..worker_handoff_worker(worker_id, parent_id, @types.AgentState::Active),
+      terminal_target: Some(worker_target),
+    }),
+  )
+
+  state.watch_pane(worker_id)
+  @debug.assert_eq(
+    state.pane_watcher.pane_id_for_agent(worker_id),
+    Some("terminal_41"),
+  )
+
+  state.check_idle_agents(
+    @poller.now_sec() + 121L,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner([], cmds) },
+    worker_no_handoff_idle_sec=120L,
+  )
+
+  @debug.assert_eq(list_calls, ["test-session", "test-session"])
+  @debug.assert_eq(dumps, ["test-session:terminal_88"])
+  @debug.assert_eq(
+    state.pane_watcher.pane_id_for_agent(worker_id),
+    Some("terminal_88"),
+  )
+  ignore(@sys.rm_rf(state.config.project_dir))
+}
+
+///|
+async test "check_idle_agents keeps valid cached pane id before observing idle" {
+  let base = handler_auto_close_test_state("watch-pane-valid-id")
+  let dumps : Array[String] = []
+  let list_calls : Array[String] = []
+  let host : @runtime.PaneWatchHost = {
+    dump_pane_screen: async fn(session, pane_id) {
+      @async.sleep(0)
+      dumps.push(session + ":" + pane_id)
+      "worker screen"
+    },
+  }
+  let state = base
+    .with_pane_watcher(@runtime.PaneWatcher::with_host(host))
+    .with_list_panes_snapshot_capture(async fn(session : String) {
+      @async.sleep(0)
+      list_calls.push(session)
+      @tools.parse_zellij_list_panes_json(
+        "[{\"id\":41,\"tab_name\":\"worker-pane\",\"pane_name\":\"worker-pane\"}]",
+      )
+    })
+  let parent_id = "main.parent"
+  let worker_id = "main.valid-worker"
+  let worker_target : @types.LocalTarget = {
+    kind: @types.TargetKind::ZellijTab,
+    session: "test-session",
+    name: "worker-pane",
+  }
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent({
+      ..worker_handoff_worker(worker_id, parent_id, @types.AgentState::Active),
+      terminal_target: Some(worker_target),
+    }),
+  )
+
+  state.watch_pane(worker_id)
+  state.check_idle_agents(
+    @poller.now_sec() + 121L,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner([], cmds) },
+    worker_no_handoff_idle_sec=120L,
+  )
+
+  @debug.assert_eq(list_calls, ["test-session", "test-session"])
+  @debug.assert_eq(dumps, ["test-session:terminal_41"])
+  @debug.assert_eq(
+    state.pane_watcher.pane_id_for_agent(worker_id),
+    Some("terminal_41"),
   )
   ignore(@sys.rm_rf(state.config.project_dir))
 }
