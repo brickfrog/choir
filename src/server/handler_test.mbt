@@ -9589,7 +9589,10 @@ async test "poller reaps never-registered spawning agent after first-observed de
   assert_true(sent[0].contains("first_observed=100"))
   assert_false(sent[0].contains("first_seen="))
   assert_eq(closed.length(), 1)
-  @debug.assert_eq(killed, [4242])
+  // A never-registered leaf has no in-memory pid; its spawn-time sidecar pid is
+  // stale/reusable, so the reaper must NOT kill it (PID reuse, choir-84zz) — it
+  // only cleans up the sidecar file.
+  @debug.assert_eq(killed, [])
   assert_false(@sys.path_entry_exists(pid_path))
   state.process_poller_tick_with_test(
     500L,

@@ -209,7 +209,10 @@ async test "recover_state ReapStaleLifecycle deletes the on-disk lifecycle" {
   @moontrace.clear_subscriber()
   try {
     assert_true(@phase.read_lifecycle(project_dir, agent_id) is None)
-    @debug.assert_eq(killed, [5151])
+    // ReapStaleLifecycle has no in-memory pid; the on-disk sidecar pid is
+    // stale/reusable, so the reaper must NOT kill it (PID reuse, choir-84zz) —
+    // it only cleans up the sidecar file.
+    @debug.assert_eq(killed, [])
     assert_false(@sys.path_entry_exists(pid_path))
     let mut saw_reap_debug = false
     for event in captured {
