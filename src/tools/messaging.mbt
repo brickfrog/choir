@@ -57,7 +57,7 @@ pub fn notify_parent_plan(
 }
 
 ///|
-/// Exact `.choir/delivery.log` line for `send_message`.
+/// Exact `.choir/logs/delivery.log` line for `send_message`.
 pub fn send_message_delivery_log_append(
   target_id : String,
   agent : @types.Agent,
@@ -208,7 +208,7 @@ pub async fn interpret_send_message(
   append_file : (String, String) -> Bool,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> @types.Response {
-  let delivery_log_path = project_dir + "/.choir/delivery.log"
+  let delivery_log_path = project_dir + "/.choir/logs/delivery.log"
   match plan {
     SendMessagePlan::NoRegistry(response~) => response
     SendMessagePlan::RegistryLookupFailed(error_message~) =>

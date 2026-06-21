@@ -2896,7 +2896,7 @@ async test "real exec integration: live UDS: send_message provenance uses bound 
       )
     })
     let log_after_bound = @sys.read_file(
-      ctx.project_dir + "/.choir/delivery.log",
+      ctx.project_dir + "/.choir/logs/delivery.log",
     )
     assert_true(log_after_bound.contains("sender=" + dev_id))
     assert_false(log_after_bound.contains("sender=root"))
@@ -2922,7 +2922,7 @@ async test "real exec integration: live UDS: send_message provenance uses bound 
       )
     })
     let log_after_unbound = @sys.read_file(
-      ctx.project_dir + "/.choir/delivery.log",
+      ctx.project_dir + "/.choir/logs/delivery.log",
     )
     assert_false(log_after_unbound.contains("sender=root"))
     assert_true(log_after_unbound.contains("sender=unknown"))
@@ -3687,10 +3687,13 @@ fn serve_run() -> Unit {
     Ok(cfg) => cfg
     Err(_) => @types.Config::default()
   }
+  // Ensure the categorized .choir subdirs exist before anything writes a log
+  // or a crash handler fires (logs are nested under .choir/logs).
+  ignore(@sys.create_dir_all(config.project_dir + "/.choir/logs"))
   let inherited_uds_fd = serve_inherited_uds_fd()
   let serve_log_path = serve_project_path(
     config.project_dir,
-    ".choir/serve.log",
+    ".choir/logs/serve.log",
   )
   match inherited_uds_fd {
     Some(_) => ()
@@ -3698,7 +3701,7 @@ fn serve_run() -> Unit {
       ignore(
         @server.serve_rotate_log_if_large(
           config.project_dir,
-          ".choir/delivery.log",
+          ".choir/logs/delivery.log",
           @sys.file_size,
           @sys.rename_file_sync,
         ),
@@ -3706,7 +3709,7 @@ fn serve_run() -> Unit {
       ignore(
         @server.serve_rotate_log_if_large(
           config.project_dir,
-          ".choir/serve.log",
+          ".choir/logs/serve.log",
           @sys.file_size,
           @sys.rename_file_sync,
         ),
@@ -3714,7 +3717,7 @@ fn serve_run() -> Unit {
       ignore(
         @server.serve_rotate_log_if_large(
           config.project_dir,
-          ".choir/server-exits.log",
+          ".choir/logs/server-exits.log",
           @sys.file_size,
           @sys.rename_file_sync,
         ),

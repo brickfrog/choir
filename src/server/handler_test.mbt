@@ -325,7 +325,7 @@ async test "process_poller_tick_with emits tick summary when an event is produce
       (0, "")
     },
   )
-  let delivery_log = @sys.read_file(project_dir + "/.choir/delivery.log")
+  let delivery_log = @sys.read_file(project_dir + "/.choir/logs/delivery.log")
   let mut summary_line = ""
   for line in delivery_log.split("\n") {
     if line.contains("[poller] tick poll=") {
@@ -1867,7 +1867,7 @@ async test "quiet poller tick automerge sweep retries reviewerless ready PR" {
     capture~,
     automerge_capture=capture,
   )
-  let delivery_log = @sys.read_file(project_dir + "/.choir/delivery.log")
+  let delivery_log = @sys.read_file(project_dir + "/.choir/logs/delivery.log")
   assert_true(
     delivery_log.contains(
       "automerge sweep attempt pr=98 sha=sha-sweep-reviewer-none",
@@ -2317,7 +2317,7 @@ async test "automerge audit policy block is visible and retryable for same head"
     Some(current) => assert_eq(current.last_automerge_attempt_sha, "")
     None => fail("audit-blocked automerge must remain tracked")
   }
-  let delivery_log = @sys.read_file(project_dir + "/.choir/delivery.log")
+  let delivery_log = @sys.read_file(project_dir + "/.choir/logs/delivery.log")
   assert_true(delivery_log.contains("automerge result pr=100 status=error"))
   assert_true(delivery_log.contains("Run `/audit` until findings_count == 0"))
   assert_true(
@@ -2436,7 +2436,7 @@ async test "automerge findings audit block is not retried for same head" {
       assert_eq(current.last_automerge_attempt_sha, "sha-" + label)
     None => fail("audit-blocked automerge must remain tracked")
   }
-  let delivery_log = @sys.read_file(project_dir + "/.choir/delivery.log")
+  let delivery_log = @sys.read_file(project_dir + "/.choir/logs/delivery.log")
   assert_true(delivery_log.contains("automerge result pr=101 status=error"))
   assert_true(delivery_log.contains("reports 2 finding(s)"))
   assert_false(
@@ -5183,7 +5183,7 @@ async test "auto_resolve_outdated_review_threads_for_event resolves only iterati
     },
   ])
   assert_false(updated.auto_resolve_outdated_pending)
-  let log = @sys.read_file(project_dir + "/.choir/delivery.log")
+  let log = @sys.read_file(project_dir + "/.choir/logs/delivery.log")
   assert_true(
     log.contains("poller auto-resolved 1 outdated review thread(s) pr=701"),
   )
@@ -5538,7 +5538,7 @@ async test "quiet poller tick refetch count drop re-enters review-thread pipelin
   )
   assert_eq(resolve_calls, 0)
   assert_eq(thread_fetches, 2)
-  let delivery_log = @sys.read_file(project_dir + "/.choir/delivery.log")
+  let delivery_log = @sys.read_file(project_dir + "/.choir/logs/delivery.log")
   assert_true(
     delivery_log.contains(
       "automerge gate recheck pr=706 event=review_threads_resolved",

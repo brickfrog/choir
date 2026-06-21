@@ -164,7 +164,7 @@ async test "execute_delivery logs successful local terminal delivery" {
     Ok(_) => ()
     Err(e) => fail("expected delivery success: " + e.message())
   }
-  let log = @sys.read_file(project_dir + "/.choir/delivery.log")
+  let log = @sys.read_file(project_dir + "/.choir/logs/delivery.log")
   assert_true(log.contains("[delivery-success]"))
   assert_true(log.contains("target=zellij-pane:test:terminal_1"))
 }
@@ -189,7 +189,7 @@ async test "execute_delivery logs successful teams inbox delivery" {
     Ok(_) => ()
     Err(e) => fail("expected teams delivery success: " + e.message())
   }
-  let log = @sys.read_file(project_dir + "/.choir/delivery.log")
+  let log = @sys.read_file(project_dir + "/.choir/logs/delivery.log")
   assert_true(log.contains("[delivery-success]"))
   assert_true(log.contains("target=teams:" + inbox_path))
 }

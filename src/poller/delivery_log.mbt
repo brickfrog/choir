@@ -39,7 +39,7 @@ pub fn append_delivery_log_line(
   now_ms? : Int64 = @env.now().reinterpret_as_int64(),
 ) -> Bool {
   append_file(
-    project_dir + "/.choir/delivery.log",
+    project_dir + "/.choir/logs/delivery.log",
     delivery_log_line(line, now_ms~),
   )
 }

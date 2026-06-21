@@ -473,7 +473,7 @@ async test "interpret_send_message deliver tcp success appends send_message log"
   let now_ms = 1776000000123L
   let project_dir = send_message_interpret_test_project_dir()
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
-  let log_path = project_dir + "/.choir/delivery.log"
+  let log_path = project_dir + "/.choir/logs/delivery.log"
   ignore(@sys.delete_file_sync(log_path))
   let agent : @types.Agent = {
     agent_id: @types.AgentId("main.rleaf"),
@@ -525,7 +525,7 @@ async test "interpret_send_message deliver local terminal failure returns err an
   let now_ms = 1776000000123L
   let project_dir = send_message_interpret_test_project_dir()
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
-  let log_path = project_dir + "/.choir/delivery.log"
+  let log_path = project_dir + "/.choir/logs/delivery.log"
   ignore(@sys.delete_file_sync(log_path))
   let agent : @types.Agent = {
     agent_id: @types.AgentId("main.leaf"),
@@ -578,7 +578,7 @@ async test "interpret_send_message deliver local terminal failure returns err an
 async test "interpret_send_message TargetFinalized branch logs and returns ok without invoking runner" {
   let project_dir = send_message_interpret_test_project_dir() + "-finalized"
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
-  let log_path = project_dir + "/.choir/delivery.log"
+  let log_path = project_dir + "/.choir/logs/delivery.log"
   ignore(@sys.delete_file_sync(log_path))
   let long_message = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopTAIL"
   let expected_preview = long_message[:80].to_owned()

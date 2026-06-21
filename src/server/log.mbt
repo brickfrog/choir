@@ -55,7 +55,7 @@ fn serve_rotate_resolved_log_if_large(
 
 ///|
 test "serve_rotate_resolved_log_if_large rotates oversized logs through injected adapters" {
-  let log_path = "/tmp/choir-project/.choir/serve.log"
+  let log_path = "/tmp/choir-project/.choir/logs/serve.log"
   let sized_paths : Array[String] = []
   let renamed_paths : Array[(String, String)] = []
   let rotated = serve_rotate_resolved_log_if_large(

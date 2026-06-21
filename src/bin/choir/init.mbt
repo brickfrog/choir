@@ -2183,7 +2183,7 @@ fn init_run() -> Unit {
           // `zellij --session <session> action query-tab-names` should NOT
           // list `Server` or `TL` from the prior boot (a fresh init creates
           // them as new tabs, which is expected). The reap runs inside
-          // `choir init`, not `choir serve`, so `.choir/serve.log` is not
+          // `choir init`, not `choir serve`, so `.choir/logs/serve.log` is not
           // the right observable for this leaf.
           init_reap_stale_zellij_tabs(session)
         }

@@ -842,7 +842,7 @@ test "ignore_sigpipe installs ignored SIGPIPE disposition" {
 }
 
 ///|
-/// Register crash-signal handlers that emit `.choir/server-exits.log` before default crash handling.
+/// Register crash-signal handlers that emit `.choir/logs/server-exits.log` before default crash handling.
 pub fn install_crash_handlers() -> Unit {
   c_install_crash_handlers()
 }

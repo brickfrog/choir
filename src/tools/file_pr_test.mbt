@@ -322,7 +322,7 @@ async test "interpret_file_pr_post_success auto-notify tcp appends delivery log"
   let now_ms = 1776000000123L
   let project_dir = file_pr_post_success_test_dir()
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
-  let log_path = project_dir + "/.choir/delivery.log"
+  let log_path = project_dir + "/.choir/logs/delivery.log"
   ignore(@sys.delete_file_sync(log_path))
   let parent : @types.Agent = {
     agent_id: @types.AgentId("main.tl"),
@@ -406,7 +406,7 @@ async test "interpret_file_pr_post_success auto-notify tcp appends delivery log"
 async test "interpret_file_pr_post_success parent missing appends resolve failure log" {
   let project_dir = file_pr_post_success_test_dir()
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
-  let log_path = project_dir + "/.choir/delivery.log"
+  let log_path = project_dir + "/.choir/logs/delivery.log"
   ignore(@sys.delete_file_sync(log_path))
   let leaf : @types.Agent = {
     agent_id: @types.AgentId("main.leaf"),
@@ -467,7 +467,7 @@ async test "interpret_file_pr_post_success parent missing appends resolve failur
 async test "interpret_file_pr_post_success reads the clock fresh for each delivery-log append" {
   let project_dir = file_pr_post_success_test_dir()
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
-  let log_path = project_dir + "/.choir/delivery.log"
+  let log_path = project_dir + "/.choir/logs/delivery.log"
   ignore(@sys.delete_file_sync(log_path))
   let args : FilePrArgs = {
     branch: "main.leaf",
