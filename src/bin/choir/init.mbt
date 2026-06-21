@@ -1427,7 +1427,7 @@ test "init TL launch command defaults to claude" {
   assert_true(s.contains("--name"))
   assert_true(s.contains("root"))
   assert_true(s.contains("--stderr-append-log"))
-  assert_true(s.contains(".choir/mcp-stdio.stderr.log"))
+  assert_true(s.contains(".choir/logs/mcp-stdio.stderr.log"))
 }
 
 ///|

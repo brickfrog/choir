@@ -3081,7 +3081,7 @@ test "init_tl_claude_mcp_config_json sets alwaysLoad on the choir MCP entry" {
   assert_true(json.contains("\"alwaysLoad\":true"))
   assert_true(json.contains("\"choir\""))
   assert_true(json.contains("\"--stderr-append-log\""))
-  assert_true(json.contains("\".choir/mcp-stdio.stderr.log\""))
+  assert_true(json.contains("\".choir/logs/mcp-stdio.stderr.log\""))
   // TL launched via `choir init` also gets semble (highest-volume reader).
   assert_true(json.contains("\"semble\""))
   assert_true(json.contains("\"uv\""))

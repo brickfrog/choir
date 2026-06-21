@@ -137,7 +137,7 @@ pub fn codex_mcp_override_args(
     @types.Role::TL =>
       [
         "mcp-stdio", "--raw-stdio", "--name", agent_id, "--wait-socket-tries", codex_wait_socket_tries,
-        "--stderr-append-log", ".choir/mcp-stdio.stderr.log",
+        "--stderr-append-log", ".choir/logs/mcp-stdio.stderr.log",
       ]
     _ =>
       [
@@ -150,7 +150,7 @@ pub fn codex_mcp_override_args(
         "--wait-socket-tries",
         codex_wait_socket_tries,
         "--stderr-append-log",
-        ".choir/mcp-stdio.stderr.log",
+        ".choir/logs/mcp-stdio.stderr.log",
       ]
   }
   let args_lit = toml_string_array_literal(elems)
@@ -561,7 +561,7 @@ pub fn agent_launch_command(
 /// tool-search deferral so the TL doesn't pay a ToolSearch round-trip on first
 /// use of every fork_wave / file_pr / merge_pr / wave_state call.
 pub fn init_tl_claude_mcp_config_json() -> String {
-  "{\"mcpServers\":{\"choir\":{\"type\":\"stdio\",\"command\":\"choir\",\"args\":[\"mcp-stdio\",\"--name\",\"root\",\"--stderr-append-log\",\".choir/mcp-stdio.stderr.log\"],\"alwaysLoad\":true},\"semble\":{\"type\":\"stdio\",\"command\":\"uv\",\"args\":[\"tool\",\"run\",\"--from\",\"semble[mcp]\",\"semble\"]}}}"
+  "{\"mcpServers\":{\"choir\":{\"type\":\"stdio\",\"command\":\"choir\",\"args\":[\"mcp-stdio\",\"--name\",\"root\",\"--stderr-append-log\",\".choir/logs/mcp-stdio.stderr.log\"],\"alwaysLoad\":true},\"semble\":{\"type\":\"stdio\",\"command\":\"uv\",\"args\":[\"tool\",\"run\",\"--from\",\"semble[mcp]\",\"semble\"]}}}"
 }
 
 ///|

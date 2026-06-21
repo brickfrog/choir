@@ -220,7 +220,7 @@ fn build_claude_settings_json(
   let choir_mcp_args = match role {
     @types.Role::TL =>
       [
-        "mcp-stdio", "--name", "root", "--stderr-append-log", ".choir/mcp-stdio.stderr.log",
+        "mcp-stdio", "--name", "root", "--stderr-append-log", ".choir/logs/mcp-stdio.stderr.log",
       ]
     _ => ["mcp-stdio", "--role", role_str, "--name", session_name]
   }
@@ -813,7 +813,7 @@ test "build_claude_settings_json emits statusline and choir MCP stdio entry" {
   @debug.assert_eq(args_json[1], "--name".to_json())
   @debug.assert_eq(args_json[2], "root".to_json())
   @debug.assert_eq(args_json[3], "--stderr-append-log".to_json())
-  @debug.assert_eq(args_json[4], ".choir/mcp-stdio.stderr.log".to_json())
+  @debug.assert_eq(args_json[4], ".choir/logs/mcp-stdio.stderr.log".to_json())
   // Claude Code's tool-search deferral is opt-out via `alwaysLoad: true`. The
   // TL hits choir's orchestration tools constantly; deferring them costs more
   // than it saves.

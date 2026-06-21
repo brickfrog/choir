@@ -439,6 +439,15 @@ extern "C" fn c_redirect_stderr_append(path : Bytes) -> Int = "choir_redirect_st
 /// terminal response escape sequences while preserving SGR color/style escapes.
 /// Used by the `mcp-stdio` Codex path.
 pub fn redirect_stderr_append(path : String) -> Bool {
+  // The redirect itself does not create the parent dir; ensure it exists so a
+  // log nested under .choir/logs/ can be opened on first write.
+  let last_slash = match path.rev_find("/") {
+    Some(i) => i
+    None => -1
+  }
+  if last_slash > 0 {
+    ignore(create_dir_all(path[0:last_slash].to_owned()))
+  }
   c_redirect_stderr_append(string_to_null_terminated_bytes(path)) == 0
 }
 
