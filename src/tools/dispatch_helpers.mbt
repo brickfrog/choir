@@ -1333,7 +1333,7 @@ fn task_to_json(task : TaskFile) -> Json {
 
 ///|
 fn kv_file_path(project_dir : String, key : String) -> String {
-  project_dir + "/.choir/kv/" + key
+  project_dir + "/.choir/state/kv/" + key
 }
 
 ///|
@@ -1560,7 +1560,7 @@ async fn handle_kv_list(
   project_dir : String,
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
 ) -> @types.Response {
-  let kv_dir = project_dir + "/.choir/kv"
+  let kv_dir = project_dir + "/.choir/state/kv"
   let test_cmd : @workspace.Command = {
     program: "test",
     args: ["-d", kv_dir],
@@ -1584,7 +1584,7 @@ async fn handle_kv_list(
       "command failed with status " + find_status.to_string(),
     )
   }
-  let prefix = project_dir + "/.choir/kv/"
+  let prefix = project_dir + "/.choir/state/kv/"
   let paths : Array[String] = []
   for line in output.split("\n") {
     let path = line.to_owned().trim().to_owned()
@@ -2045,12 +2045,12 @@ async test "handle_task_update maps done to Beads closed" {
 async fn mock_kv_list_capture(cmd : @workspace.Command) -> (Int, String) {
   @async.sleep(0)
   if cmd.program == "test" {
-    @debug.assert_eq(cmd.args, ["-d", "/p/.choir/kv"])
+    @debug.assert_eq(cmd.args, ["-d", "/p/.choir/state/kv"])
     return (0, "")
   }
   if cmd.program == "find" {
-    @debug.assert_eq(cmd.args, ["/p/.choir/kv", "-type", "f"])
-    return (0, "/p/.choir/kv/b\n/p/.choir/kv/a\n")
+    @debug.assert_eq(cmd.args, ["/p/.choir/state/kv", "-type", "f"])
+    return (0, "/p/.choir/state/kv/b\n/p/.choir/state/kv/a\n")
   }
   (-1, "")
 }

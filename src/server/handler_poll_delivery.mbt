@@ -3493,7 +3493,7 @@ test "warn_on_parsed_config_divergence rate limits by signature and resets" {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let state = ServerState::new(
     {
       ..@types.Config::default(),
@@ -3572,7 +3572,7 @@ fn poll_delivery_config_divergence_test_state(
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   ServerState::new(
     {
       ..config,

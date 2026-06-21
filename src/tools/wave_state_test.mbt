@@ -1387,7 +1387,7 @@ fn wave_state_test_project_dir(label : String) -> String {
     "-" +
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.rm_rf(dir))
-  ignore(@sys.create_dir_all(dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(dir + "/.choir/state/kv"))
   dir
 }
 

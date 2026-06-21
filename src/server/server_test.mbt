@@ -160,7 +160,7 @@ async test "wave_state server handler does not repair task contracts from local 
     @poller.CiRollupStatus::Success,
     false,
   )
-  let contracts_path = project_dir + "/.choir/agent-task-contracts.json"
+  let contracts_path = project_dir + "/.choir/state/agent-task-contracts.json"
   assert_false(@sys.path_entry_exists(contracts_path))
   let req : @types.Request = {
     req_method: "tools/call",
@@ -254,7 +254,7 @@ async test "tdd_intent server handler repairs missing task contract on write pat
   assert_true(resp.is_ok())
   @debug.assert_eq(state.task_contract_for_agent(child_id), Some(contract))
   assert_true(
-    @sys.path_entry_exists(project_dir + "/.choir/agent-task-contracts.json"),
+    @sys.path_entry_exists(project_dir + "/.choir/state/agent-task-contracts.json"),
   )
   ignore(@sys.rm_rf(project_dir))
 }
@@ -331,7 +331,7 @@ test "init_run_id reuses existing run_id file" {
     "-" +
     @env.now().reinterpret_as_int64().to_string()
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
-  let run_id_path = project_dir + "/.choir/run_id"
+  let run_id_path = project_dir + "/.choir/run/run_id"
   assert_true(@sys.write_file_sync(run_id_path, "stable-run-id\n"))
   let config = {
     ..@types.Config::default(),
@@ -355,7 +355,7 @@ test "init_run_id persists generated run_id via native write" {
     terminal_session: "s",
   }
   let state = ServerState::new(config, make_hermetic_recovery_provider())
-  let on_disk = @sys.read_file(project_dir + "/.choir/run_id")
+  let on_disk = @sys.read_file(project_dir + "/.choir/run/run_id")
   assert_eq(state.run_id, on_disk)
   assert_true(state.run_id.length() > 0)
 }
@@ -367,7 +367,7 @@ test "reload snapshot restores registry pending state and mutexes" {
     "-" +
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.rm_rf(project_dir))
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let config = {
     ..@types.Config::default(),
     project_dir,
@@ -603,7 +603,7 @@ test "reload snapshot releases mutex whose holder is not in restored registry" {
     "-" +
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.rm_rf(project_dir))
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let config = {
     ..@types.Config::default(),
     project_dir,
@@ -634,7 +634,7 @@ test "notify_parent falls back to persisted lifecycle when parent missing from r
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
 
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
@@ -691,7 +691,7 @@ test "notify_parent synthesizes user root TL parent when lifecycle is absent" {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
 
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
@@ -746,7 +746,7 @@ fn assert_notify_parent_does_not_synthesize_parent_id(
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
 
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
@@ -797,7 +797,7 @@ test "notify_parent returns clear error when parent cannot be resolved" {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
 
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
@@ -840,7 +840,7 @@ test "manual rescue transfers PR ownership and supervisor summary to replacement
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
   let state = ServerState::new(config, make_hermetic_recovery_provider())
@@ -994,7 +994,7 @@ async test "merge_pr after restart finalizes offline recovered owner and updates
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
   let state = ServerState::new(config, make_hermetic_recovery_provider())
@@ -1186,7 +1186,7 @@ test "manual rescue refuses unsalvageable cross-parent ownership transfer" {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let config = {
     ..@types.Config::default(),
     project_dir,
@@ -1269,7 +1269,7 @@ async test "replay_pending_outbox_with replays pending message and marks it deli
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
   let state = ServerState::new(config, make_hermetic_recovery_provider())
@@ -1400,7 +1400,7 @@ async test "replay_pending_outbox_with GC's stale pane lifecycle after repeated 
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
   let state = ServerState::new(config, make_hermetic_recovery_provider())
@@ -1490,7 +1490,7 @@ async test "replay_pending_outbox_with clears stale failure counter on exhausted
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
   let state = ServerState::new(config, make_hermetic_recovery_provider())
@@ -1565,7 +1565,7 @@ async test "sweep_outbox marks expired pending messages and compacts recipient f
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
   let state = ServerState::new(config, make_hermetic_recovery_provider())
@@ -1632,7 +1632,7 @@ async test "process_poller_tick_with finalizes externally merged leaf and notifi
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
   let state = ServerState::new(config, make_hermetic_recovery_provider())
@@ -1797,7 +1797,7 @@ async test "recover_state finalizes merged agent without startup parent notifica
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
   let state = ServerState::new(config, make_hermetic_recovery_provider())

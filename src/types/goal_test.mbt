@@ -71,7 +71,7 @@ test "goal JSON roundtrip preserves exact KV key shape, nonce, and last evaluati
   assert_eq(goal_kv_key("choir-choir").unwrap(), "tl-goal--choir-choir.json")
   assert_eq(
     goal_kv_path("/repo", "choir-choir").unwrap(),
-    "/repo/.choir/kv/tl-goal--choir-choir.json",
+    "/repo/.choir/state/kv/tl-goal--choir-choir.json",
   )
   let eval = GoalEvalResult::{
     passing: 1,

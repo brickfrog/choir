@@ -92,7 +92,7 @@ fn mcp_local_cfg_with_agent_metadata_fallback(
   match mcp_cli_override_agent_id(args) {
     Some(agent_id) =>
       if agent_id.contains(".") {
-        let metadata_path = ".choir/inline/" +
+        let metadata_path = ".choir/state/inline/" +
           @types.sanitize_agent_id(agent_id) +
           "/.choir/config.local.toml"
         match @config.parse_local_config(read_file(metadata_path)) {
@@ -843,7 +843,7 @@ test "mcp startup retries UDS connect until success" {
   let connect_paths : Array[String] = []
   let mut connect_calls = 0
   let result = mcp_connect_uds_startup(
-    ".choir/server.sock",
+    ".choir/run/server.sock",
     150,
     3,
     1000,
@@ -868,9 +868,9 @@ test "mcp startup retries UDS connect until success" {
   }
   assert_eq(connect_calls, 3)
   @debug.assert_eq(connect_paths, [
-    ".choir/server.sock", ".choir/server.sock", ".choir/server.sock",
+    ".choir/run/server.sock", ".choir/run/server.sock", ".choir/run/server.sock",
   ])
-  @debug.assert_eq(waits, [".choir/server.sock:150", ".choir/server.sock:150"])
+  @debug.assert_eq(waits, [".choir/run/server.sock:150", ".choir/run/server.sock:150"])
   @debug.assert_eq(sleeps, [1000, 2000])
   match mcp_startup_transport(result, None) {
     Uds(fd) => assert_eq(fd, 42)
@@ -886,7 +886,7 @@ test "wait_for_socket_returns_success_mid_attempt_breaks_outer_retry" {
   let connect_paths : Array[String] = []
   let mut connect_calls = 0
   let result = mcp_connect_uds_startup(
-    ".choir/server.sock",
+    ".choir/run/server.sock",
     150,
     3,
     1000,
@@ -911,8 +911,8 @@ test "wait_for_socket_returns_success_mid_attempt_breaks_outer_retry" {
       fail("expected startup connect to succeed after socket wait")
   }
   assert_eq(connect_calls, 2)
-  @debug.assert_eq(connect_paths, [".choir/server.sock", ".choir/server.sock"])
-  @debug.assert_eq(waits, [".choir/server.sock:150"])
+  @debug.assert_eq(connect_paths, [".choir/run/server.sock", ".choir/run/server.sock"])
+  @debug.assert_eq(waits, [".choir/run/server.sock:150"])
   @debug.assert_eq(sleeps, [])
   match mcp_startup_transport(result, None) {
     Uds(fd) => assert_eq(fd, 42)
@@ -927,7 +927,7 @@ test "mcp startup exits after exhausting UDS attempts with no TCP fallback" {
   let mut connect_calls = 0
   let mut wait_calls = 0
   let result = mcp_connect_uds_startup(
-    ".choir/server.sock",
+    ".choir/run/server.sock",
     150,
     3,
     250,
@@ -946,10 +946,10 @@ test "mcp startup exits after exhausting UDS attempts with no TCP fallback" {
     Exhausted(attempts) => {
       assert_eq(attempts, 3)
       let message = mcp_startup_exhausted_message(
-        ".choir/server.sock", attempts,
+        ".choir/run/server.sock", attempts,
       )
       assert_true(message.contains("failed to connect to UDS"))
-      assert_true(message.contains(".choir/server.sock"))
+      assert_true(message.contains(".choir/run/server.sock"))
       assert_true(message.contains("3 startup attempts"))
     }
   }
@@ -1149,7 +1149,7 @@ test "mcp local cfg falls back to inline worker metadata when env is stripped" {
     },
   )
   assert_eq(
-    requested_path, ".choir/inline/master.sarcasmotron-claim-schema/.choir/config.local.toml",
+    requested_path, ".choir/state/inline/master.sarcasmotron-claim-schema/.choir/config.local.toml",
   )
   @debug.assert_eq(cfg.role, Some(@types.Role::Worker))
   @debug.assert_eq(cfg.agent_id, Some("master.sarcasmotron-claim-schema"))
@@ -1162,7 +1162,7 @@ test "mcp local cfg falls back to inline worker metadata when env is stripped" {
 test "mcp local cfg prefers inline metadata over parent's cwd config for child --name" {
   // Inline worker layout: cwd `.choir/config.local.toml` is the parent TL's
   // file (no parent_id). The worker's own metadata at
-  // `.choir/inline/<sanitized>/.choir/config.local.toml` carries `parent_id`.
+  // `.choir/state/inline/<sanitized>/.choir/config.local.toml` carries `parent_id`.
   // Without the inline lookup the worker would register with `parent: None`,
   // which breaks notify_parent.
   let parent_cwd_cfg = {

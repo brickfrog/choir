@@ -234,7 +234,7 @@ pub fn AgentRegistry::clear(self : AgentRegistry) -> Unit {
 
 ///|
 pub fn registry_snapshot_path(project_dir : String) -> String {
-  project_dir + "/.choir/registry_snapshot.json"
+  project_dir + "/.choir/state/registry_snapshot.json"
 }
 
 ///|

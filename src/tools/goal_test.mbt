@@ -89,7 +89,7 @@ async test "goal_set writes one session KV file and evaluates shell check throug
   )
   assert_true(resp.is_ok())
   assert_eq(requested_ticks, 1)
-  @debug.assert_eq(dirs, ["/repo/.choir/kv"])
+  @debug.assert_eq(dirs, ["/repo/.choir/state/kv"])
   let path = @types.goal_kv_path("/repo", "sess").unwrap()
   assert_true(files.contains(path))
   assert_eq(commands.length(), 1)

@@ -501,7 +501,7 @@ async fn parent_branch_policy_status_paths(
 fn parent_branch_policy_marker_path(
   kind : @policy.ParentBranchWriteKind,
 ) -> String {
-  ".choir/policy/" + kind.to_wire_string()
+  ".choir/state/policy/" + kind.to_wire_string()
 }
 
 ///|
@@ -1017,7 +1017,7 @@ pub async fn dispatch(
   ])? = None,
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
-  listen_uds? : String = ".choir/server.sock",
+  listen_uds? : String = ".choir/run/server.sock",
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
   registry? : @registry.AgentRegistry? = None,
@@ -1371,7 +1371,7 @@ pub async fn dispatch(
       }
     }
     ToolRequest::ForkSession(session_args) => {
-      let session_dir = project_dir + "/.choir/sessions/" + session_args.name
+      let session_dir = project_dir + "/.choir/state/sessions/" + session_args.name
       let context_path = session_dir + "/context.json"
       let created_sec = @poller.now_sec()
       let context_json = {
@@ -2229,7 +2229,7 @@ pub async fn handle_request(
   ])? = None,
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
-  listen_uds? : String = ".choir/server.sock",
+  listen_uds? : String = ".choir/run/server.sock",
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
   agent_registry? : @registry.AgentRegistry? = None,
@@ -2553,7 +2553,7 @@ pub async fn dispatch_call(
   ])? = None,
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
-  listen_uds? : String = ".choir/server.sock",
+  listen_uds? : String = ".choir/run/server.sock",
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
   registry? : @registry.AgentRegistry? = None,

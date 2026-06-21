@@ -1791,7 +1791,7 @@ async test "dispatch file_pr records verify evidence through injected append_fil
   }
   assert_eq(appends.length(), 1)
   let (path, content) = appends[0]
-  assert_true(path.contains("/.choir/events/main.leaf.jsonl"))
+  assert_true(path.contains("/.choir/state/events/main.leaf.jsonl"))
   assert_true(content.contains("npm run typecheck"))
   assert_true(content.contains("sha-dispatch-verify"))
   ignore(@sys.rm_rf(project_dir))

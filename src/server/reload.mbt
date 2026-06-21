@@ -1,6 +1,6 @@
 ///|
 pub fn server_reload_runtime_snapshot_path(project_dir : String) -> String {
-  project_dir + "/.choir/server_reload_state.json"
+  project_dir + "/.choir/state/server_reload_state.json"
 }
 
 ///|

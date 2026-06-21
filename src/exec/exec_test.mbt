@@ -198,7 +198,7 @@ test "read_agent_pgid parses the recorded pidfile and rejects unsafe values" {
     "12345"
   })
   @debug.assert_eq(got, Some(12345))
-  @debug.assert_eq(seen, ["/proj/.choir/pids/main.leaf_x"])
+  @debug.assert_eq(seen, ["/proj/.choir/run/pids/main.leaf_x"])
   @debug.assert_eq(
     read_agent_pgid("/proj", "main.leaf", read_file=fn(_) { " 777\n" }),
     Some(777),

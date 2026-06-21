@@ -47,7 +47,7 @@ priv struct StatuslinePrSummary {
 }
 
 ///|
-/// Full paths of entries in `.choir/kv` whose basename starts with `prefix`.
+/// Full paths of entries in `.choir/state/kv` whose basename starts with `prefix`.
 /// Replaces the former `find -maxdepth 1 -type f -name <prefix>*` subprocess;
 /// both call sites (`lifecycle--`, `children--`) use prefix matching so the
 /// glob shape was already strictly `prefix*`.
@@ -55,7 +55,7 @@ fn statusline_kv_files_with_prefix(
   project_dir : String,
   prefix : String,
 ) -> Array[String] {
-  let kv_dir = project_dir + "/.choir/kv"
+  let kv_dir = project_dir + "/.choir/state/kv"
   if !@sys.path_entry_exists(kv_dir) {
     return []
   }
@@ -317,21 +317,21 @@ test "statusline_kv_files_with_prefix detects pending-wave entries" {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   ignore(
     @sys.write_file_sync(
-      project_dir + "/.choir/kv/pending-wave--w1",
+      project_dir + "/.choir/state/kv/pending-wave--w1",
       "{\"wave_id\":\"w1\"}",
     ),
   )
   ignore(
     @sys.write_file_sync(
-      project_dir + "/.choir/kv/pending-wave--w2",
+      project_dir + "/.choir/state/kv/pending-wave--w2",
       "{\"wave_id\":\"w2\"}",
     ),
   )
   ignore(
-    @sys.write_file_sync(project_dir + "/.choir/kv/lifecycle--main--leaf", "{}"),
+    @sys.write_file_sync(project_dir + "/.choir/state/kv/lifecycle--main--leaf", "{}"),
   )
   let paths = statusline_kv_files_with_prefix(project_dir, "pending-wave--")
   ignore(@sys.rm_rf(project_dir))
@@ -345,7 +345,7 @@ test "statusline_goal_segment renders active goal progress" {
     "-" +
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.rm_rf(project_dir))
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   ignore(
     @sys.write_file_sync(
       project_dir + "/.choir/config.toml",
@@ -377,16 +377,16 @@ test "statusline_count_agents matches child ids using lifecycle content agent_id
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   ignore(
     @sys.write_file_sync(
-      project_dir + "/.choir/kv/lifecycle--main--leaf",
+      project_dir + "/.choir/state/kv/lifecycle--main--leaf",
       "{\"agent_id\":\"main.leaf\",\"workflow\":{\"state\":{\"tag\":\"Working\"}}}",
     ),
   )
   ignore(
     @sys.write_file_sync(
-      project_dir + "/.choir/kv/children--root",
+      project_dir + "/.choir/state/kv/children--root",
       "[{\"id\":\"main.leaf\"}]",
     ),
   )
@@ -460,7 +460,7 @@ test "statusline_pr_summary distinguishes manual and automerge merge-ready PRs" 
   let auto = statusline_test_tracked_pr(82, "main.leaf-auto")
   ignore(
     @sys.write_file_sync(
-      project_dir + "/.choir/poller_state.json",
+      project_dir + "/.choir/state/poller_state.json",
       "[" + manual.to_json() + "," + auto.to_json() + "]",
     ),
   )
@@ -491,7 +491,7 @@ test "statusline_pr_summary treats reviewer none PR as merge-ready without revie
   }
   ignore(
     @sys.write_file_sync(
-      project_dir + "/.choir/poller_state.json",
+      project_dir + "/.choir/state/poller_state.json",
       "[" + tracked.to_json() + "]",
     ),
   )

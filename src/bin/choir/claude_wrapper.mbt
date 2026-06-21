@@ -449,7 +449,7 @@ fn claude_wrapper_run() -> Unit {
   }
 
   ignore(@sys.create_dir_all(".choir"))
-  ignore(@sys.symlink_force(settings_path, ".choir/last-claude-settings.json"))
+  ignore(@sys.symlink_force(settings_path, ".choir/state/last-claude-settings.json"))
 
   let plugin_dir = match @sys.realpath_native(".choir/plugin") {
     Some(path) => path

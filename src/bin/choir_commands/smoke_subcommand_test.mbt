@@ -141,10 +141,10 @@ async test "run_smoke_beads_handoff sequences tool calls and closes on pass" {
   let tmp = "/tmp/choir-smoke-beads-test-" +
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.rm_rf(tmp))
-  ignore(@sys.create_dir_all(tmp + "/.choir/events"))
+  ignore(@sys.create_dir_all(tmp + "/.choir/state/events"))
   ignore(
     @sys.write_file_sync(
-      tmp + "/.choir/events/main.beads-smoke.jsonl",
+      tmp + "/.choir/state/events/main.beads-smoke.jsonl",
       smoke_event_jsonl(),
     ),
   )

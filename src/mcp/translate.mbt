@@ -153,7 +153,7 @@ fn choir_mcp_instructions() -> String {
     #|5. Agent types — codex (default leaf), cursor_agent (refactor/file navigation), gemini (bulk implementation when explicitly requested), claude (complex reasoning/architecture), spawn_worker (no branch, runs in parent workspace).
     #|6. Scaffold — commit shared types, interfaces, or test infra to the parent branch before forking. Every leaf should inherit a compilable, complete interface contract.
     #|7. Integration branch — every wave forks off an integration branch named `feature/<wave-slug>`, NOT directly off main. Even 2-3 leaf waves. Create the branch first with `git checkout -b feature/<slug> main && git push -u origin feature/<slug>`, then pass `parent_branch="feature/<slug>"` to fork_wave. Leaves PR into the integration branch; the integration branch is what PRs into main as one merge commit. This is non-optional: a wave that lands as N separate merges on main is a regression. Skipping this for "small" waves is exactly how regressions ship.
-    #|8. Audit context — when a wave is closing audit findings (Sarcasmotron output or `.choir/audit-receipts/<sha>.json`), the task contract MUST include the receipt path and the specific finding text. Each leaf MUST cite the audit reference in the PR description body, not just the commit message. A PR titled "fix: signal handler async-signal-safe" with no audit citation is uncontextualized and a future reader cannot grep for why. Format: `Closes audit finding N from .choir/audit-receipts/<sha>.json (PR #<orig>): <one-line finding text>`. Verify the leaf's PR body contains this before merging — if missing, request changes and require the leaf to amend the PR body.
+    #|8. Audit context — when a wave is closing audit findings (Sarcasmotron output or `.choir/state/audit-receipts/<sha>.json`), the task contract MUST include the receipt path and the specific finding text. Each leaf MUST cite the audit reference in the PR description body, not just the commit message. A PR titled "fix: signal handler async-signal-safe" with no audit citation is uncontextualized and a future reader cannot grep for why. Format: `Closes audit finding N from .choir/state/audit-receipts/<sha>.json (PR #<orig>): <one-line finding text>`. Verify the leaf's PR body contains this before merging — if missing, request changes and require the leaf to amend the PR body.
     #|After merging all PRs in a wave (into the integration branch), spawn a worker to run the full test suite on your branch before opening the integration PR into main.
     #|Then state your plan in 2-4 lines and execute immediately. Do not ask for approval unless the task is genuinely ambiguous.
     #|
@@ -264,7 +264,7 @@ fn tool_defs() -> Array[CatalogTool] {
         { name: "count", desc: "Number of leaves when using shared task" },
         {
           name: "slug_prefix",
-          desc: "Slug prefix for spawned children. Accepts '/' so hierarchical names like 'feature/foo' are valid input, but '/' is flattened to '-' when deriving wave_id and filesystem-side keys (e.g. .choir/kv/pending-wave--<id>) — storage stays flat. Child branch names still use the raw form via parent_branch concatenation.",
+          desc: "Slug prefix for spawned children. Accepts '/' so hierarchical names like 'feature/foo' are valid input, but '/' is flattened to '-' when deriving wave_id and filesystem-side keys (e.g. .choir/state/kv/pending-wave--<id>) — storage stays flat. Child branch names still use the raw form via parent_branch concatenation.",
         },
         {
           name: "automerge",
@@ -490,7 +490,7 @@ fn tool_defs() -> Array[CatalogTool] {
       props: [
         {
           name: "key",
-          desc: "Flat storage key (no '/' — single segment under .choir/kv)",
+          desc: "Flat storage key (no '/' — single segment under .choir/state/kv)",
         },
       ],
       required: ["key"],
@@ -501,7 +501,7 @@ fn tool_defs() -> Array[CatalogTool] {
       props: [
         {
           name: "key",
-          desc: "Flat storage key (no '/' — single segment under .choir/kv)",
+          desc: "Flat storage key (no '/' — single segment under .choir/state/kv)",
         },
         { name: "value", desc: "Value to store" },
       ],
@@ -513,7 +513,7 @@ fn tool_defs() -> Array[CatalogTool] {
       props: [
         {
           name: "key",
-          desc: "Flat storage key (no '/' — single segment under .choir/kv)",
+          desc: "Flat storage key (no '/' — single segment under .choir/state/kv)",
         },
       ],
       required: ["key"],

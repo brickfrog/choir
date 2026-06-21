@@ -307,7 +307,7 @@ fn ServerState::request_with_authenticated_identity(
 test "request_with_authenticated_identity requires exact role and preserves target agent_id" {
   let project_dir = "/tmp/choir-authid-strict-role-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let state = ServerState::new(
     { ..@types.Config::default(), project_dir, },
     make_hermetic_recovery_provider(),

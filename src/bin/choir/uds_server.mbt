@@ -3258,7 +3258,7 @@ fn serve_cleanup_stale_goal_kv(
   list_dir? : (String) -> Array[String] = @sys.list_dir,
   delete_file? : (String) -> Bool = @sys.delete_file_sync,
 ) -> Int {
-  let kv_dir = serve_project_path(project_dir, ".choir/kv")
+  let kv_dir = serve_project_path(project_dir, ".choir/state/kv")
   let mut removed = 0
   for name in list_dir(kv_dir) {
     if name.has_prefix("tl-goal--") && name.has_suffix(".json") {
@@ -3450,10 +3450,10 @@ test "serve cleanup removes stale tl goal kv files only" {
       true
     },
   )
-  @debug.assert_eq(listed, [".choir/kv"])
+  @debug.assert_eq(listed, [".choir/state/kv"])
   assert_eq(removed, 2)
   @debug.assert_eq(deleted, [
-    ".choir/kv/tl-goal--old.json", ".choir/kv/tl-goal--other.json",
+    ".choir/state/kv/tl-goal--old.json", ".choir/state/kv/tl-goal--other.json",
   ])
 }
 
@@ -3687,9 +3687,13 @@ fn serve_run() -> Unit {
     Ok(cfg) => cfg
     Err(_) => @types.Config::default()
   }
-  // Ensure the categorized .choir subdirs exist before anything writes a log
-  // or a crash handler fires (logs are nested under .choir/logs).
+  // Ensure the categorized .choir subdirs exist before anything writes a log,
+  // binds the socket, or a crash handler fires: logs/ (all logs), run/
+  // (ephemeral runtime: socket, pids, run_id), state/ (durable server state).
   ignore(@sys.create_dir_all(config.project_dir + "/.choir/logs"))
+  ignore(@sys.create_dir_all(config.project_dir + "/.choir/run"))
+  ignore(@sys.create_dir_all(config.project_dir + "/.choir/run/pids"))
+  ignore(@sys.create_dir_all(config.project_dir + "/.choir/state"))
   let inherited_uds_fd = serve_inherited_uds_fd()
   let serve_log_path = serve_project_path(
     config.project_dir,
@@ -3734,7 +3738,7 @@ fn serve_run() -> Unit {
     )
   })
   @moontrace.set_min_level(@moontrace.Level::Debug)
-  @sys.write_pid_file(".choir/server.pid")
+  @sys.write_pid_file(".choir/run/server.pid")
   @sys.register_cleanup_runtime_artifacts()
   @sys.install_crash_handlers()
   if !@sys.install_sigusr1_handler() {

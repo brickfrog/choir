@@ -9,7 +9,7 @@ pub fn delete_file_sync(path : String) -> Bool {
 }
 
 ///|
-/// Parse the recorded process-group id from `.choir/pids/<sanitized-agent-id>`
+/// Parse the recorded process-group id from `.choir/run/pids/<sanitized-agent-id>`
 /// under `project_dir` (written at spawn by the setsid wrapper). Returns
 /// `None` when the pidfile is missing, empty, non-numeric, or records an
 /// unsafe group (<= 1).

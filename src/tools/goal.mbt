@@ -173,7 +173,7 @@ pub async fn interpret_goal_set(
   let eval = goal_evaluate_with_workspace_caps(
     goal, project_dir, runner, bd_capture, now_unix_sec,
   )
-  if !create_dir_all(project_dir + "/.choir/kv") {
+  if !create_dir_all(project_dir + "/.choir/state/kv") {
     return @types.Response::Err("failed to create goal kv directory")
   }
   let path = match @types.goal_kv_path(project_dir, session) {

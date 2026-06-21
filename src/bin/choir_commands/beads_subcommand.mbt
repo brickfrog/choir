@@ -759,7 +759,7 @@ fn active_agent_ids_from_lifecycle(
     @phase.read_lifecycle(dir, id)
   },
 ) -> Array[String]? {
-  if !kv_exists(project_relative_path(project_dir, ".choir/kv")) {
+  if !kv_exists(project_relative_path(project_dir, ".choir/state/kv")) {
     return None
   }
   let issues = match

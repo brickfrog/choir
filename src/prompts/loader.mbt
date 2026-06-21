@@ -342,7 +342,7 @@ const ONBOARD_SKILL_DEFAULT : String =
   #|
   #|6. Seed the audit gate state.
   #|   - Get the current Unix time in seconds.
-  #|   - Write `.choir/audit-gate.json` with the same shape the server seeds at
+  #|   - Write `.choir/state/audit-gate.json` with the same shape the server seeds at
   #|     boot:
   #|
   #|     ```json
@@ -368,7 +368,7 @@ const ONBOARD_SKILL_DEFAULT : String =
   #|       found, or "not detected / omitted".
   #|     - Whether `CLAUDE.md` or `AGENTS.md` was found, or that adding one is
   #|       recommended.
-  #|     - Files written, including `.choir/config.toml`, `.choir/audit-gate.json`,
+  #|     - Files written, including `.choir/config.toml`, `.choir/state/audit-gate.json`,
   #|       and any Beads files created by `bd init`.
   #|     - What was deliberately NOT done: NO commit, NO git hooks installed, and
   #|       NO git hooks modified.

@@ -123,7 +123,7 @@ pub(all) struct EvidenceRecord {
 ///|
 fn evidence_agent_path(project_dir : String, agent_id : String) -> String {
   project_dir +
-  "/.choir/events/" +
+  "/.choir/state/events/" +
   @types.sanitize_agent_id(agent_id) +
   ".jsonl"
 }
@@ -355,7 +355,7 @@ pub fn append_agent_jsonl_event(
   data : Json,
 ) -> Bool {
   let path = evidence_agent_path(project_dir, agent_id)
-  if !@sys.create_dir_all(project_dir + "/.choir/events/") {
+  if !@sys.create_dir_all(project_dir + "/.choir/state/events/") {
     return false
   }
   append_file(path, build_agent_jsonl_line(ts, agent_id, event_type, data))

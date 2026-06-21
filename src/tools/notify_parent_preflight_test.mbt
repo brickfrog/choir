@@ -135,7 +135,7 @@ fn write_notify_gate_leaf_changes_requested(
 async test "dispatch NotifyParent rejects success when prenotify check fails" {
   let project_dir = "/tmp/choir-test-notify-prenotify-fail-" +
     @sys.get_pid().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
 
   let agent_id = "leaf-prenotify-fail"
   let reg = @registry.AgentRegistry::new()
@@ -197,7 +197,7 @@ async test "dispatch NotifyParent rejects success when prenotify check fails" {
 async test "dispatch NotifyParent runs prenotify checks for TL caller on registered dev" {
   let project_dir = "/tmp/choir-test-notify-prenotify-tl-dev-" +
     @sys.get_pid().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let leaf_workspace = project_dir + "/leaf-worktree"
   ignore(@sys.create_dir_all(leaf_workspace))
 
@@ -268,7 +268,7 @@ async test "dispatch NotifyParent runs prenotify checks for TL caller on registe
 async test "dispatch NotifyParent allows success after prenotify checks pass" {
   let project_dir = "/tmp/choir-test-notify-prenotify-ok-" +
     @sys.get_pid().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let leaf_workspace = project_dir + "/leaf-worktree"
   ignore(@sys.create_dir_all(leaf_workspace))
 
@@ -331,7 +331,7 @@ async test "dispatch NotifyParent allows success after prenotify checks pass" {
 async test "dispatch NotifyParent rejects success when caller workspace is empty" {
   let project_dir = "/tmp/choir-test-notify-prenotify-empty-workspace-" +
     @sys.get_pid().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
 
   let agent_id = "leaf-prenotify-empty-workspace"
   let reg = @registry.AgentRegistry::new()
@@ -393,7 +393,7 @@ async test "dispatch NotifyParent rejects success when caller workspace is empty
 async test "dispatch NotifyParent blocked attempts local zellij send with NOTIFY BLOCKED" {
   let project_dir = "/tmp/choir-test-notify-blocked-send-" +
     @sys.get_pid().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let marker = project_dir + "/.choir/notify_blocked_delivery.marker"
   ignore(@sys.delete_file_sync(marker))
   let marker_ref = @ref.new(marker)
@@ -469,7 +469,7 @@ async test "dispatch NotifyParent blocked attempts local zellij send with NOTIFY
 ///|
 async test "dispatch NotifyParent blocks on unresolved threads" {
   let project_dir = "/tmp/choir-test-notify-gate-" + @sys.get_pid().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
 
   let agent_id = "leaf-1"
   let pr_number = 123
@@ -575,7 +575,7 @@ async test "dispatch NotifyParent blocks on unresolved threads" {
 async test "dispatch NotifyParent blocks ExitRequestedDeferred on unresolved threads" {
   let project_dir = "/tmp/choir-test-notify-gate-erd-" +
     @sys.get_pid().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
 
   let agent_id = "leaf-erd"
   let pr_number = 201
@@ -639,7 +639,7 @@ async test "dispatch NotifyParent blocks ExitRequestedDeferred on unresolved thr
 async test "dispatch NotifyParent blocks ChangesRequested on unresolved threads" {
   let project_dir = "/tmp/choir-test-notify-gate-cr-" +
     @sys.get_pid().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
 
   let agent_id = "leaf-cr"
   let pr_number = 202
@@ -700,7 +700,7 @@ async test "dispatch NotifyParent blocks ChangesRequested on unresolved threads"
 async test "dispatch NotifyParent gate is status-agnostic (Failure still blocked)" {
   let project_dir = "/tmp/choir-test-notify-gate-failure-" +
     @sys.get_pid().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
 
   let agent_id = "leaf-fail"
   let pr_number = 203

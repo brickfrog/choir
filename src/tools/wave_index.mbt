@@ -1,6 +1,6 @@
 ///|
 /// Persistent per-wave record for telemetry: replay (`choir log`) and usage
-/// rollups (`choir stats`). Lives at `.choir/waves/<wave_id>.json`, one file
+/// rollups (`choir stats`). Lives at `.choir/state/waves/<wave_id>.json`, one file
 /// per wave, written at fork time by `fork_wave`, updated as leaves report
 /// usage and as rescue/merge events happen.
 pub(all) struct WaveIndex {
@@ -44,7 +44,7 @@ pub fn WaveIndex::new(
 
 ///|
 pub fn wave_index_dir(project_dir : String) -> String {
-  project_dir + "/.choir/waves"
+  project_dir + "/.choir/state/waves"
 }
 
 ///|

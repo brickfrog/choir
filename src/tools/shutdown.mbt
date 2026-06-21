@@ -64,7 +64,7 @@ pub fn kill_agent_ok_response(agent_id : String) -> @types.Response {
 ///|
 /// Adapter-side ordering for `kill_agent`: pane close attempt, then worktree
 /// remove attempt, then the owned process-group kill (recorded pgid from
-/// `.choir/pids/<sanitized-agent-id>`), then pidfile removal. Pane close and
+/// `.choir/run/pids/<sanitized-agent-id>`), then pidfile removal. Pane close and
 /// worktree remove may be skipped when the corresponding input is absent;
 /// pgroup kill and pidfile removal are skipped when no pidfile exists.
 pub(all) enum KillAgentAdapterHostStep {
@@ -215,7 +215,7 @@ pub async fn interpret_kill_agent(
         None => ()
       }
       // Owned-handle kill: the spawn wrapper records the setsid process-group
-      // id in `.choir/pids/<sanitized-agent-id>` (launch.mbt), so signaling
+      // id in `.choir/run/pids/<sanitized-agent-id>` (launch.mbt), so signaling
       // that group covers the whole agent tree — including the mcp-stdio shim,
       // which additionally sets PR_SET_PDEATHSIG. Agents without a pidfile
       // (bare `register` joins, never spawned by us) own no process we may

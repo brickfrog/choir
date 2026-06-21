@@ -1605,7 +1605,7 @@ pub fn write_claude_spawn_settings(
 ) -> Command {
   workspace_relative_file_command(
     worktree_path,
-    ".choir/claude-settings.json",
+    ".choir/state/claude-settings.json",
     claude_spawn_settings_json(
       worktree_path,
       include_completion_handoff~,

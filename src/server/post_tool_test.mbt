@@ -160,7 +160,7 @@ test "plan_post_tool_actions - shutdown trusts leaf lifecycle over stale supervi
   let poller = @poller.PollerState::new()
   let registry = @registry.AgentRegistry::new()
   let project_dir = isolated_post_tool_project_dir("sd-stale-role")
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let terminal_session = "s"
   let agent_id = "main.leaf-stale-shutdown"
   let agent : @types.Agent = {
@@ -465,7 +465,7 @@ test "plan_post_tool_actions - stale supervisor metadata does not close parent t
   let poller = @poller.PollerState::new()
   let registry = @registry.AgentRegistry::new()
   let project_dir = isolated_post_tool_project_dir("merge-stale-metadata")
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let terminal_session = "s"
   let pr_number = 44
   let agent_id = "main.leaf-stale-metadata"
@@ -727,7 +727,7 @@ test "plan_post_tool_actions - kill_agent trusts leaf lifecycle over stale super
   let poller = @poller.PollerState::new()
   let registry = @registry.AgentRegistry::new()
   let project_dir = isolated_post_tool_project_dir("kill-stale-role")
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let terminal_session = "s"
   let parent_target : @types.LocalTarget = {
     kind: @types.TargetKind::ZellijPane,

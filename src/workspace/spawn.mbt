@@ -262,7 +262,7 @@ test "launch env serializers agree on the non-PATH key set" {
     session: "sess",
     name: "leaf-a",
   }
-  let listen_uds_env = "/repo/.choir/server.sock"
+  let listen_uds_env = "/repo/.choir/run/server.sock"
   let pairs = shared_env_pairs(
     spec,
     "sess",
@@ -618,7 +618,7 @@ pub fn spawn_commands(
   parent_session_id? : String? = None,
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
-  listen_uds? : String = ".choir/server.sock",
+  listen_uds? : String = ".choir/run/server.sock",
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
   agent_token? : String? = None,
@@ -652,7 +652,7 @@ pub fn spawn_commands(
     Some(_) =>
       if spec.agent_type == Claude &&
         boundary_hook_plan.guard_paths.length() > 0 {
-        Some(workspace + "/.choir/claude-settings.json")
+        Some(workspace + "/.choir/state/claude-settings.json")
       } else {
         None
       }
@@ -660,7 +660,7 @@ pub fn spawn_commands(
   }
   let claude_settings_path = if spec.agent_type == Claude &&
     completion_handoff_hooks_enabled {
-    Some(workspace + "/.choir/claude-settings.json")
+    Some(workspace + "/.choir/state/claude-settings.json")
   } else {
     boundary_claude_settings_path
   }
@@ -981,7 +981,7 @@ pub fn remote_spawn_commands(
     spec.role,
     "remote",
     workspace,
-    ".choir/server.sock",
+    ".choir/run/server.sock",
     listen_tcp=Some(tcp_addr),
   )
   let local_config_toml = config_local_content(
@@ -989,7 +989,7 @@ pub fn remote_spawn_commands(
     workspace,
     terminal_target,
     project_dir=Some(workspace),
-    listen_uds=Some(".choir/server.sock"),
+    listen_uds=Some(".choir/run/server.sock"),
     terminal_session=Some("remote"),
   )
   let launch_cmd = agent_launch_command(

@@ -515,7 +515,7 @@ async test "server consumes requested goal judge tick flag" {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
   let config = {
     ..@types.Config::default(),
     project_dir,

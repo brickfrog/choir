@@ -52,7 +52,7 @@ pub(all) struct OutboxMessage {
 
 ///|
 fn outbox_dir(project_dir : String) -> String {
-  project_dir + "/.choir/outbox"
+  project_dir + "/.choir/state/outbox"
 }
 
 ///|
