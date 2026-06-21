@@ -34,7 +34,7 @@ fn shell_escape(raw : String) -> String {
 
 ///|
 pub fn codex_stderr_log_relpath(agent_id : String) -> String {
-  ".choir/codex-" + agent_id.replace(old="/", new="-") + ".stderr.log"
+  ".choir/logs/codex-" + agent_id.replace(old="/", new="-") + ".stderr.log"
 }
 
 ///|
@@ -44,7 +44,7 @@ pub fn codex_stderr_log_path(project_dir : String, agent_id : String) -> String 
 
 ///|
 pub fn agy_stderr_log_relpath(agent_id : String) -> String {
-  ".choir/agy-" + @types.sanitize_agent_id(agent_id) + ".stderr.log"
+  ".choir/logs/agy-" + @types.sanitize_agent_id(agent_id) + ".stderr.log"
 }
 
 ///|
@@ -87,7 +87,13 @@ fn wrap_with_stderr_redirect(cmd : Command, stderr_path : String) -> Command {
   for arg in cmd.args {
     quoted_args.push(shell_escape(arg))
   }
-  let wrapped = quoted_args.join(" ") + " 2>" + shell_escape(stderr_path)
+  let quoted_stderr = shell_escape(stderr_path)
+  let wrapped = "mkdir -p \"$(dirname " +
+    quoted_stderr +
+    ")\" && " +
+    quoted_args.join(" ") +
+    " 2>" +
+    quoted_stderr
   { program: "bash", args: ["-c", wrapped], workdir: cmd.workdir }
 }
 

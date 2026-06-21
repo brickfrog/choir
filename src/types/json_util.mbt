@@ -13,7 +13,7 @@ pub fn sanitize_agent_id(agent_id : String) -> String {
 
 ///|
 pub fn completion_handoff_attempts_dir(agent_id : String) -> String {
-  ".choir/" + sanitize_agent_id(agent_id)
+  ".choir/agents/" + sanitize_agent_id(agent_id)
 }
 
 ///|

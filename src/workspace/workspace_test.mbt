@@ -387,7 +387,7 @@ test "agent_launch_command for each AgentType" {
   assert_true(cmd_gemini_body.contains(" 2>"))
   assert_false(cmd_gemini_body.contains(" 2>>"))
   assert_true(
-    cmd_gemini_body.contains("/path/.choir/agy-main.test-slug.stderr.log"),
+    cmd_gemini_body.contains("/path/.choir/logs/agy-main.test-slug.stderr.log"),
   )
   @debug.assert_eq(cmd_gemini.workdir, Some("/path"))
 
@@ -412,7 +412,7 @@ test "agent_launch_command for each AgentType" {
   assert_true(cmd_codex_body.contains(" 2>"))
   assert_false(cmd_codex_body.contains(" 2>>"))
   assert_true(
-    cmd_codex_body.contains("/path/.choir/codex-main.test-slug.stderr.log"),
+    cmd_codex_body.contains("/path/.choir/logs/codex-main.test-slug.stderr.log"),
   )
   assert_true(cmd_codex_body.contains("mcp_servers.semble.command=\"uv\""))
   assert_true(cmd_codex_body.contains("mcp_servers.semble.cwd=\"/path\""))
@@ -729,11 +729,11 @@ test "agent_pid_file_path sanitizes agent ids as flat filenames" {
 test "agy_stderr_log_path sanitizes agent ids as flat filenames" {
   assert_eq(
     @workspace.agy_stderr_log_relpath("../../evil\\agent\u0000pid"),
-    ".choir/agy-.._.._evil_agent_pid.stderr.log",
+    ".choir/logs/agy-.._.._evil_agent_pid.stderr.log",
   )
   assert_eq(
     @workspace.agy_stderr_log_path("/project", "main.leaf"),
-    "/project/.choir/agy-main.leaf.stderr.log",
+    "/project/.choir/logs/agy-main.leaf.stderr.log",
   )
 }
 
