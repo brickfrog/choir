@@ -165,9 +165,9 @@ int choir_append_server_exit_log_line(const char *path, int sig, int ts, int pid
 }
 
 static void choir_write_server_exit_log_line(int sig) {
-    /* .choir/server-exits.log records fatal serve signals that can bypass MoonBit logging. */
+    /* .choir/logs/server-exits.log records fatal serve signals that can bypass MoonBit logging. */
     (void)choir_append_server_exit_log_line_values(
-        ".choir/server-exits.log",
+        ".choir/logs/server-exits.log",
         sig,
         choir_signal_timestamp_sec(),
         (long long)getpid());
@@ -189,9 +189,9 @@ static long long choir_signal_timestamp_sec(void) {
 static void choir_sigterm_handler(int sig) {
     choir_write_server_exit_log_line(sig);
     if (choir_cleanup_runtime_native) {
-        unlink(".choir/server.pid");
-        unlink(".choir/server.sock");
-        unlink(".choir/run_id");
+        unlink(".choir/run/server.pid");
+        unlink(".choir/run/server.sock");
+        unlink(".choir/run/run_id");
     }
     if (choir_is_crash_signal(sig)) {
         kill(getpid(), sig);
@@ -421,9 +421,9 @@ void choir_reset_server_exit_signal_handlers(void) {
 }
 
 void choir_init_cleanup_runtime_artifacts(void) {
-    unlink(".choir/server.pid");
-    unlink(".choir/server.sock");
-    unlink(".choir/run_id");
+    unlink(".choir/run/server.pid");
+    unlink(".choir/run/server.sock");
+    unlink(".choir/run/run_id");
 }
 
 int choir_get_file_size(const char* path) {
@@ -711,7 +711,10 @@ int choir_spawn_serve(const char* exe, int exe_len) {
             _exit(0);
         }
         // Child 2
-        int fd = open(".choir/serve.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
+        /* logs/ may not exist yet: detached child opens the log before serve boots. */
+        mkdir(".choir", 0755);
+        mkdir(".choir/logs", 0755);
+        int fd = open(".choir/logs/serve.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
         if (fd >= 0) {
             dup2(fd, STDOUT_FILENO);
             dup2(fd, STDERR_FILENO);
@@ -1099,14 +1102,14 @@ void choir_init_cleanup_purge_artifacts(void) {
         closedir(wt);
     }
     choir_rm_rf_best_effort(".choir/worktrees");
-    choir_rm_rf_best_effort(".choir/inline");
-    choir_rm_rf_best_effort(".choir/outbox");
-    choir_rm_rf_best_effort(".choir/waves");
-    unlink(".choir/server.pid");
-    unlink(".choir/server.sock");
-    unlink(".choir/poller_state.json");
-    unlink(".choir/run_id");
-    DIR *kv = opendir(".choir/kv");
+    choir_rm_rf_best_effort(".choir/state/inline");
+    choir_rm_rf_best_effort(".choir/state/outbox");
+    choir_rm_rf_best_effort(".choir/state/waves");
+    unlink(".choir/run/server.pid");
+    unlink(".choir/run/server.sock");
+    unlink(".choir/state/poller_state.json");
+    unlink(".choir/run/run_id");
+    DIR *kv = opendir(".choir/state/kv");
     if (kv) {
         struct dirent *ent;
         char kp[4096];
@@ -1120,7 +1123,7 @@ void choir_init_cleanup_purge_artifacts(void) {
                 strncmp(n, "pending-wave--", 14) != 0) {
                 continue;
             }
-            snprintf(kp, sizeof(kp), ".choir/kv/%s", n);
+            snprintf(kp, sizeof(kp), ".choir/state/kv/%s", n);
             unlink(kp);
         }
         closedir(kv);
