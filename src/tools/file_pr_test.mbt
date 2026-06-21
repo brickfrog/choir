@@ -183,13 +183,64 @@ test "file_pr_auto_notify_plan delivers and formats delivery log append" {
 }
 
 ///|
-test "file_pr_auto_notify_plan logs only when parent resolution fails" {
+test "file_pr_auto_notify_plan skips quietly when caller has no parent" {
   let now_ms = 1776000000123L
+  let root : @types.Agent = {
+    agent_id: @types.AgentId("root"),
+    role: @types.Role::TL,
+    agent_type: @types.AgentType::Claude,
+    parent: None,
+    workspace: "/tmp",
+    branch: "main",
+    terminal_target: @types.LocalTarget::parse("zellij-tab:choir:tl"),
+    host: @types.Host::Local,
+    spawn_depth: 0,
+    state: @types.AgentState::Active,
+  }
+  let err = @types.ChoirError::agent_not_found("no parent for root")
+  let plan = file_pr_auto_notify_plan(
+    Err(err),
+    "root",
+    "[PR READY] PR #1 filed: https://ex/pr/1",
+    caller_agent=Some(root),
+    now_ms~,
+  )
+  match plan {
+    FilePrAutoNotifyPlan::NoParent(delivery_log_append~) =>
+      assert_eq(
+        delivery_log_append,
+        @poller.delivery_log_line(
+          "[auto-notify] caller=root has no parent; skipping parent notification",
+          now_ms~,
+        ),
+      )
+    FilePrAutoNotifyPlan::ParentResolutionFailed(..) =>
+      fail("expected NoParent, not error path")
+    _ => fail("expected NoParent")
+  }
+}
+
+///|
+test "file_pr_auto_notify_plan logs when non-root parent resolution fails" {
+  let now_ms = 1776000000123L
+  let child : @types.Agent = {
+    agent_id: @types.AgentId("main.leaf"),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    parent: Some("main.tl"),
+    workspace: "/tmp",
+    branch: "main.leaf",
+    terminal_target: @types.LocalTarget::parse("zellij-tab:choir:leaf"),
+    host: @types.Host::Local,
+    spawn_depth: 1,
+    state: @types.AgentState::Active,
+  }
   let err = @types.ChoirError::agent_not_found("main.tl")
   let plan = file_pr_auto_notify_plan(
     Err(err),
     "main.leaf",
     "[PR READY] PR #1 filed: https://ex/pr/1",
+    caller_agent=Some(child),
     now_ms~,
   )
   match plan {

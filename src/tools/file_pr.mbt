@@ -117,6 +117,7 @@ pub fn file_pr_plan(
 /// interprets this (append logs, `execute_delivery`, moontrace on failures).
 pub(all) enum FilePrAutoNotifyPlan {
   Deliver(delivery~ : @message.DeliveryMethod, delivery_log_append~ : String)
+  NoParent(delivery_log_append~ : String)
   ParentResolutionFailed(
     delivery_log_append~ : String,
     parent_resolve_error~ : String
@@ -128,6 +129,7 @@ pub fn file_pr_auto_notify_plan(
   parent_result : Result[@types.Agent, @types.ChoirError],
   tracked_agent_id : String,
   notify_message : String,
+  caller_agent? : @types.Agent? = None,
   now_ms? : Int64 = @env.now().reinterpret_as_int64(),
 ) -> FilePrAutoNotifyPlan {
   match parent_result {
@@ -151,13 +153,36 @@ pub fn file_pr_auto_notify_plan(
     }
     Err(e) => {
       let msg = e.message()
-      FilePrAutoNotifyPlan::ParentResolutionFailed(
-        delivery_log_append=@poller.delivery_log_line(
-          "[auto-notify] resolve_parent_for_notify failed error=" + msg,
-          now_ms~,
-        ),
-        parent_resolve_error=msg,
-      )
+      match caller_agent {
+        Some(agent) =>
+          match agent.parent {
+            None =>
+              FilePrAutoNotifyPlan::NoParent(
+                delivery_log_append=@poller.delivery_log_line(
+                  "[auto-notify] caller=" +
+                  tracked_agent_id +
+                  " has no parent; skipping parent notification",
+                  now_ms~,
+                ),
+              )
+            Some(_) =>
+              FilePrAutoNotifyPlan::ParentResolutionFailed(
+                delivery_log_append=@poller.delivery_log_line(
+                  "[auto-notify] resolve_parent_for_notify failed error=" + msg,
+                  now_ms~,
+                ),
+                parent_resolve_error=msg,
+              )
+          }
+        None =>
+          FilePrAutoNotifyPlan::ParentResolutionFailed(
+            delivery_log_append=@poller.delivery_log_line(
+              "[auto-notify] resolve_parent_for_notify failed error=" + msg,
+              now_ms~,
+            ),
+            parent_resolve_error=msg,
+          )
+      }
     }
   }
 }
@@ -421,6 +446,11 @@ pub async fn interpret_file_pr_post_success(
   let delivery_log_path = project_dir + "/.choir/logs/delivery.log"
   match (effects.notify_message_for_parent, registry) {
     (Some(notify_message), Some(reg)) => {
+      let caller_agent = try reg.get(tracked_agent_id) catch {
+        _ => None
+      } noraise {
+        agent => Some(agent)
+      }
       let plan = file_pr_auto_notify_plan(
         try
           @phase.resolve_parent_with_fallback(
@@ -433,6 +463,7 @@ pub async fn interpret_file_pr_post_success(
         },
         tracked_agent_id,
         notify_message,
+        caller_agent~,
         now_ms=now_ms_fn(),
       )
       match plan {
@@ -456,6 +487,8 @@ pub async fn interpret_file_pr_post_success(
             }
           }
         }
+        FilePrAutoNotifyPlan::NoParent(delivery_log_append~) =>
+          ignore(@sys.append_file_sync(delivery_log_path, delivery_log_append))
         FilePrAutoNotifyPlan::ParentResolutionFailed(
           delivery_log_append~,
           parent_resolve_error~
