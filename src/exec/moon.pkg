@@ -18,6 +18,7 @@ options(
   targets: {
     "exec_native.mbt": [ "native" ],
     "exec_stub.mbt": [ "js", "wasm", "wasm-gc" ],
+    "live_zellij_dump_screen_test.mbt": [ "native" ],
     "worktree_gitexclude_test.mbt": [ "native" ],
   },
 )
