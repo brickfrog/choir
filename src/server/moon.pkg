@@ -16,7 +16,6 @@ import {
   "choir/src/hooks",
   "choir/src/runtime",
   "moonbitlang/async",
-  "moonbitlang/async/process",
   "moonbitlang/core/env",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/json",
@@ -27,6 +26,10 @@ import {
   "brickfrog/moontrace/otlp/transport",
   "moonbitlang/core/debug",
 }
+
+import {
+  "moonbitlang/async/process",
+} for "wbtest"
 
 options(
   "is-main": false,
