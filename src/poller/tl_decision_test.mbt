@@ -766,6 +766,36 @@ test "iterative fixes pushed with green CI and unresolved threads emits resolve-
 }
 
 ///|
+test "ResolveThreadsNow emission suppressed while owning leaf is not released" {
+  let t = {
+    ..sample_tracked(ChangesRequested, Success, 911),
+    fixes_pushed_at: 123L,
+    last_sha: "head-after-fix",
+    copilot_issue_comment_seen: true,
+    review_mode: @types.ReviewMode::Iterative,
+  }
+  // Owner not released (live leaf still writing): the TL must not be handed the
+  // resolve action; it is suppressed to a wait.
+  let suppressed = pr_state_notification_decision_for_tracked_pr(
+    FixesPushed(911),
+    t,
+    Some(2),
+    review_mode=@types.ReviewMode::Iterative,
+    owner_released=false,
+  )
+  assert_false(suppressed.next_action is ResolveThreadsNow)
+  // Owner released (leaf finalized / TL-direct): the action is emitted.
+  let emitted = pr_state_notification_decision_for_tracked_pr(
+    FixesPushed(911),
+    t,
+    Some(2),
+    review_mode=@types.ReviewMode::Iterative,
+    owner_released=true,
+  )
+  assert_eq(emitted.next_action, ResolveThreadsNow)
+}
+
+///|
 test "resolve-now imperative skips active changes-requested review without fix push" {
   let t = {
     ..sample_tracked(ChangesRequested, Success, 902),
