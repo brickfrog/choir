@@ -17,7 +17,7 @@ Do not exit after file_pr. Filing the PR does not finish your task: a configured
 
 Review handling:
 - The poller pushes review and CI snapshots into your pane; that snapshot is the source of truth for review state. Do not run your own `gh api ... reviewThreads` or `pulls/N/reviews` queries — they duplicate the poller and routinely hang.
-- When comments arrive, address every one, `git push`, then stop and wait for the next snapshot. The server resolves now-outdated threads for iterative-review PRs; the snapshot should then show zero unresolved threads. Use `resolve_my_review_threads` only if they persist.
+- When comments arrive, address every one, `git push`, then stop and wait for the next snapshot. The server resolves now-outdated threads for iterative-review PRs; the snapshot should then show zero unresolved threads. Use `resolve_my_review_threads` only if they persist. While you are alive (non-terminal), the server boundary makes you the single writer of your PR's contested review threads — the TL cannot resolve them out from under you, and only inherits them by ending your process. This is enforced server-side, not a courtesy: this prose only describes the gate.
 - Bound any `gh` you run with the `gh-bounded` wrapper or `timeout 30s`. A `gh` timeout is not a blocker — wait for the next snapshot.
 
 Execution discipline:

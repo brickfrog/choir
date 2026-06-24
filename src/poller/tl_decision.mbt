@@ -872,14 +872,32 @@ fn policy_block_is_review_work(
 }
 
 ///|
+/// Cosmetic single-writer suppression (choir-3rp5): the TL is only ever handed
+/// the `ResolveThreadsNow` action once the owning leaf has released its threads
+/// (terminal/finalized, or a TL-direct PR). While a leaf still owns the
+/// contested threads the action is suppressed to `Wait` — the server boundary
+/// gate is the actual guarantee; this just avoids dangling an action the gate
+/// would reject. Reads the poller snapshot and waits for `Finalized` (not
+/// `Finalizing`), per F17/F18.
+fn resolve_threads_now_if_released(owner_released : Bool) -> NextAction {
+  if owner_released {
+    ResolveThreadsNow
+  } else {
+    Wait
+  }
+}
+
+///|
 fn merge_gate_next_action(
   decision : @policy.MergeDecision,
   tracked : TrackedPR,
   unresolved_threads : Int?,
   mode : MergeOperatorMode,
+  owner_released? : Bool = true,
 ) -> NextAction {
   match decision {
-    ThreadsUnresolvedButFixed(..) => ResolveThreadsNow
+    ThreadsUnresolvedButFixed(..) =>
+      resolve_threads_now_if_released(owner_released)
     MergeNow(_) =>
       match mode {
         Automerge => Wait
@@ -903,9 +921,11 @@ fn recheck_next_action(
   tracked : TrackedPR,
   unresolved_threads : Int?,
   mode : MergeOperatorMode,
+  owner_released? : Bool = true,
 ) -> NextAction {
   match decision {
-    ThreadsUnresolvedButFixed(..) => ResolveThreadsNow
+    ThreadsUnresolvedButFixed(..) =>
+      resolve_threads_now_if_released(owner_released)
     MergeNow(_) =>
       match mode {
         Automerge => Wait
@@ -930,18 +950,31 @@ pub fn next_action_for_pr_state_notification(
   unresolved_threads : Int?,
   mode : MergeOperatorMode,
   reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
+  owner_released? : Bool = true,
 ) -> NextAction {
   if decision is @policy.MergeDecision::ThreadsUnresolvedButFixed(..) {
-    return ResolveThreadsNow
+    return resolve_threads_now_if_released(owner_released)
   }
   match category {
     MergeGateOpenPendingPolicyConfirmation =>
-      merge_gate_next_action(decision, tracked, unresolved_threads, mode)
+      merge_gate_next_action(
+        decision,
+        tracked,
+        unresolved_threads,
+        mode,
+        owner_released~,
+      )
     BlockedOnChanges | StalledOnChangesRequested => AddressThreads
     FixesPushedAwaitingGates
     | ReadyForTLRecheck
     | CopilotIssueCommentSeenRecheckRemainingGates =>
-      recheck_next_action(decision, tracked, unresolved_threads, mode)
+      recheck_next_action(
+        decision,
+        tracked,
+        unresolved_threads,
+        mode,
+        owner_released~,
+      )
     OrphanedPRNeedsManualAction => CrossCheckThreads
     AttentionRequiredCopilotSilentAfterTimeout =>
       EscalateConfiguredReview(reviewer~)
@@ -964,6 +997,7 @@ pub fn pr_state_notification_decision_for_tracked_pr(
   reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
   skip_copilot_on_feature_branch? : Bool = false,
   default_branch? : String = "",
+  owner_released? : Bool = true,
 ) -> PrStateNotificationDecision {
   let review_required = review_required_for_tracked_pr(
     tracked, reviewer, skip_copilot_on_feature_branch, default_branch,
@@ -992,6 +1026,7 @@ pub fn pr_state_notification_decision_for_tracked_pr(
     unresolved_threads,
     merge_mode,
     reviewer~,
+    owner_released~,
   )
   { next_action, policy_decision, category, reviewer }
 }

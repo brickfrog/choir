@@ -315,6 +315,11 @@ pub struct ServerState {
   spawn_registration_first_unseen : Map[String, Int64]
   spawn_launch_diagnostics : Map[String, @tools.SpawnLaunchDiagnostic]
   idle_agent_warned_at_70 : Map[String, Bool]
+  // Per-PR progress snapshots for the long progress backstop (choir-3rp5, F1),
+  // keyed by pr_number. `since_unix` tracks when each PR last advanced (head SHA
+  // moved or unresolved-thread count dropped); the sweep prunes entries for PRs
+  // no longer tracked.
+  progress_backstop_state : Map[Int, PrProgressSnapshot]
   mut last_config_divergence_signature : String?
   list_panes_cache : Map[String, @tools.CachedListPanesSnapshot]
   recent_poller_event_emissions : Map[String, Map[String, RecentEmission]]
@@ -440,6 +445,7 @@ pub fn ServerState::new(
     spawn_registration_first_unseen: {},
     spawn_launch_diagnostics: {},
     idle_agent_warned_at_70: {},
+    progress_backstop_state: {},
     last_config_divergence_signature: None,
     list_panes_cache: {},
     recent_poller_event_emissions: {},

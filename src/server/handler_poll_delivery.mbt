@@ -95,7 +95,82 @@ fn parent_pr_state_notification_decision(
     reviewer~,
     skip_copilot_on_feature_branch~,
     default_branch~,
+    owner_released=poll_owner_released_for_threads(
+      project_dir,
+      tracked.agent_id,
+    ),
   )
+}
+
+///|
+/// Cosmetic single-writer suppression input (choir-3rp5): the TL is only handed
+/// `ResolveThreadsNow` once the owning leaf has released its contested threads —
+/// i.e. it is finalized (waits for `Finalized`/`Failed`, NOT `Finalizing`, per
+/// F17), or the PR is TL-direct (owner is a supervisor or has no lifecycle
+/// record, F8). Reads the request-time lifecycle snapshot; the server boundary
+/// gate remains the actual guarantee (F18).
+fn poll_owner_released_for_threads(
+  project_dir : String,
+  owner_id : String,
+) -> Bool {
+  owner_released_for_threads_from_lifecycle(
+    @phase.read_lifecycle(project_dir, owner_id),
+  )
+}
+
+///|
+/// Pure F17 release mapping (choir-3rp5), split from the lifecycle read so the
+/// mapping can be unit-tested without disk I/O. Released ⇔ no lifecycle record
+/// (TL-direct/unknown owner, F8), supervisor owner (TL-direct, F8), or the
+/// owning leaf is finalized (`Finalized`/`Failed`). `Finalizing` is the handoff
+/// instant — terminal for the boundary gate but NOT yet released here, so the
+/// cosmetic `ResolveThreadsNow` waits for `Finalized` and never acts while the
+/// leaf's last push is in flight.
+fn owner_released_for_threads_from_lifecycle(
+  lifecycle : @phase.AgentLifecycle?,
+) -> Bool {
+  match lifecycle {
+    None => true
+    Some(lc) =>
+      if @types.is_supervisor_role(lc.role) {
+        true
+      } else {
+        match lc.process {
+          @phase.ProcessState::Finalized(..)
+          | @phase.ProcessState::Failed(..) => true
+          _ => false
+        }
+      }
+  }
+}
+
+///|
+test "owner_released_for_threads_from_lifecycle follows the F17 release mapping" {
+  let leaf = "main.leaf"
+  // Finalizing is the handoff instant — NOT yet released (waits for Finalized).
+  let finalizing = {
+    ..@phase.lifecycle_for_role(leaf, @types.Role::Dev),
+    process: @phase.ProcessState::Finalizing(
+      reason=@phase.FinalizeReason::RecoveredDone,
+    ),
+  }
+  assert_false(owner_released_for_threads_from_lifecycle(Some(finalizing)))
+  // Finalized: the leaf has released its threads.
+  let finalized = {
+    ..@phase.lifecycle_for_role(leaf, @types.Role::Dev),
+    process: @phase.ProcessState::Finalized(
+      reason=@phase.FinalizeReason::RecoveredDone,
+    ),
+  }
+  assert_true(owner_released_for_threads_from_lifecycle(Some(finalized)))
+  // Supervisor owner: TL-direct PR, always released (F8).
+  let supervisor = {
+    ..@phase.lifecycle_for_role("main.tl", @types.Role::TL),
+    process: @phase.ProcessState::Connected,
+  }
+  assert_true(owner_released_for_threads_from_lifecycle(Some(supervisor)))
+  // No lifecycle record: TL-direct / unknown owner, always released (F8).
+  assert_true(owner_released_for_threads_from_lifecycle(None))
 }
 
 ///|

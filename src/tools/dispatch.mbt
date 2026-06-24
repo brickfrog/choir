@@ -724,10 +724,74 @@ fn resolve_my_review_threads_for_target(
 }
 
 ///|
+/// Single-writer gate for a PR's contested review threads (choir-3rp5). The
+/// authoritative axis is the owning leaf's `ProcessState::is_terminal` (F4):
+/// identity of the owner comes from `TrackedPR.agent_id`, terminal-ness from
+/// that agent's live lifecycle (NOT `DevLifecycle`, NOT a pr_number scan). A
+/// live (non-terminal, non-TL) leaf owner is the sole writer while it runs, so
+/// the TL is blocked (kill-to-take-over, no force-claim); once the leaf is
+/// terminal the TL inherits and the former owner is fenced. TL-direct PRs
+/// (owner is the TL, terminal, or absent) are TL-permitted (F8). When no
+/// lifecycle is known for the owner the gate is inert — it only acts on
+/// positive lifecycle evidence.
+fn resolve_my_review_threads_owner_gate(
+  tracked : @poller.TrackedPR,
+  caller_id : String,
+  caller_role : @types.Role,
+  owner_lifecycle_lookup : (String) -> @phase.AgentLifecycle?,
+) -> Result[Unit, @types.ChoirError] {
+  let owner_id = tracked.agent_id
+  match owner_lifecycle_lookup(owner_id) {
+    None => Ok(())
+    Some(owner_lc) =>
+      if @types.is_supervisor_role(owner_lc.role) {
+        // TL-direct PR: the owner is a supervisor, never a contesting leaf.
+        Ok(())
+      } else if owner_lc.process.is_terminal() {
+        // Terminal former-owner leaf: ownership has passed to the TL.
+        if caller_id == owner_id {
+          Err(
+            @types.ChoirError::validation_error(
+              "resolve_my_review_threads: leaf " +
+              owner_id +
+              " is terminal; its review-thread ownership has passed to the TL. A terminated leaf may not write review threads (fenced).",
+            ),
+          )
+        } else {
+          Ok(())
+        }
+      } else if caller_id == owner_id {
+        // The live owning leaf writes its own contested threads.
+        Ok(())
+      } else if @types.is_supervisor_role(caller_role) {
+        // TL contesting a live leaf's threads — blocked; no force-claim.
+        Err(
+          @types.ChoirError::validation_error(
+            "resolve_my_review_threads: PR #" +
+            tracked.pr_number.to_string() +
+            " is owned by live leaf " +
+            owner_id +
+            ", the single writer of its contested review threads while it runs. kill the owning leaf to take over — there is no force-claim.",
+          ),
+        )
+      } else {
+        // Any other caller is already rejected by the permission checks above.
+        Ok(())
+      }
+  }
+}
+
+///|
 fn resolve_my_review_threads_targets(
   poller_state : @poller.PollerState,
   args : ResolveMyReviewThreadsArgs,
   caller_role : @types.Role,
+  // Required, not optional (choir-3rp5): a single-writer correctness gate must
+  // never silently no-op. An inert default (`fn(_) { None }`) would disable the
+  // gate for any future call site that forgot to wire the lifecycle lookup.
+  // Every caller — production and test — passes one explicitly; tests inject a
+  // map-backed lookup (or `fn(_) { None }` to exercise the F8 inert arm).
+  owner_lifecycle_lookup~ : (String) -> @phase.AgentLifecycle?,
 ) -> Result[Array[@poller.TrackedPR], @types.ChoirError] {
   let target_agent_id = match args.target_agent_id {
     Some(target) => target
@@ -742,7 +806,7 @@ fn resolve_my_review_threads_targets(
       ),
     )
   }
-  match args.pr_number {
+  let tracked_prs = match args.pr_number {
     Some(pr_number) =>
       match poller_state.get(pr_number) {
         Some(tracked) => {
@@ -755,10 +819,10 @@ fn resolve_my_review_threads_targets(
               ),
             )
           }
-          Ok([tracked])
+          [tracked]
         }
         None =>
-          Err(
+          return Err(
             @types.ChoirError::validation_error(
               "resolve_my_review_threads: PR #" +
               pr_number.to_string() +
@@ -767,21 +831,35 @@ fn resolve_my_review_threads_targets(
           )
       }
     None => {
-      let tracked_prs = resolve_my_review_threads_for_target(
+      let prs = resolve_my_review_threads_for_target(
         poller_state, target_agent_id,
       )
-      if tracked_prs.length() == 0 {
-        Err(
+      if prs.length() == 0 {
+        return Err(
           @types.ChoirError::validation_error(
             "resolve_my_review_threads: no tracked PRs for target " +
             target_agent_id,
           ),
         )
-      } else {
-        Ok(tracked_prs)
       }
+      prs
     }
   }
+  // Single-writer gate (choir-3rp5): a non-terminal leaf owner blocks the TL;
+  // a terminal former-owner leaf is fenced; TL-direct PRs are permitted.
+  for tracked in tracked_prs {
+    match
+      resolve_my_review_threads_owner_gate(
+        tracked,
+        args.caller_id,
+        caller_role,
+        owner_lifecycle_lookup,
+      ) {
+      Ok(_) => ()
+      Err(e) => return Err(e)
+    }
+  }
+  Ok(tracked_prs)
 }
 
 ///|
@@ -818,6 +896,7 @@ test "resolve_my_review_threads_targets defaults to caller tracked prs" {
       ps,
       { caller_id: "main.leaf", target_agent_id: None, pr_number: None },
       @types.Role::Dev,
+      owner_lifecycle_lookup=fn(_) { None },
     ) {
     Ok(prs) => {
       assert_eq(prs.length(), 1)
@@ -852,6 +931,7 @@ test "resolve_my_review_threads_targets lets supervisor bulk target another agen
         pr_number: None,
       },
       @types.Role::TL,
+      owner_lifecycle_lookup=fn(_) { None },
     ) {
     Ok(prs) => {
       assert_eq(prs.length(), 1)
@@ -886,6 +966,7 @@ test "resolve_my_review_threads_targets rejects non supervisor target mismatch" 
         pr_number: None,
       },
       @types.Role::Dev,
+      owner_lifecycle_lookup=fn(_) { None },
     ) {
     Err(e) => @debug.assert_eq(e.to_wire_string(), "permission_denied")
     Ok(_) => fail("expected permission denied")
@@ -917,6 +998,7 @@ test "resolve_my_review_threads_targets allows explicit self target and names mi
         pr_number: None,
       },
       @types.Role::Dev,
+      owner_lifecycle_lookup=fn(_) { None },
     ) {
     Ok(prs) => assert_eq(prs[0].pr_number, 455)
     Err(e) => fail("expected self target: " + e.message())
@@ -930,9 +1012,242 @@ test "resolve_my_review_threads_targets allows explicit self target and names mi
         pr_number: None,
       },
       @types.Role::TL,
+      owner_lifecycle_lookup=fn(_) { None },
     ) {
     Err(e) => assert_true(e.message().contains("target main.missing"))
     Ok(_) => fail("expected no tracked PRs for target")
+  }
+}
+
+///|
+fn gate_test_track(
+  ps : @poller.PollerState,
+  pr : Int,
+  agent_id : String,
+) -> Unit {
+  ps.track_recovered(
+    pr,
+    agent_id,
+    agent_id,
+    "main",
+    "https://github.com/brickfrog/choir/pull/" + pr.to_string(),
+    0L,
+    @poller.ReviewState::ChangesRequested,
+    "fix this",
+    "sha-" + pr.to_string(),
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+}
+
+///|
+fn gate_test_lifecycle(
+  agent_id : String,
+  role : @types.Role,
+  process : @phase.ProcessState,
+) -> @phase.AgentLifecycle {
+  { ..@phase.lifecycle_for_role(agent_id, role), process, }
+}
+
+///|
+test "resolve gate blocks TL while non-terminal leaf owns the PR (kill-to-take-over)" {
+  let ps = @poller.PollerState::new()
+  gate_test_track(ps, 501, "main.leaf")
+  let entries : Map[String, @phase.AgentLifecycle] = {
+    "main.leaf": gate_test_lifecycle(
+      "main.leaf",
+      @types.Role::Dev,
+      @phase.ProcessState::Connected,
+    ),
+  }
+  match
+    resolve_my_review_threads_targets(
+      ps,
+      { caller_id: "main.tl", target_agent_id: None, pr_number: Some(501) },
+      @types.Role::TL,
+      owner_lifecycle_lookup=fn(aid) { entries.get(aid) },
+    ) {
+    Err(e) =>
+      assert_true(
+        e
+        .validation_detail_or_message()
+        .contains("kill the owning leaf to take over"),
+      )
+    Ok(_) => fail("expected TL blocked while a live leaf owns the PR")
+  }
+}
+
+///|
+test "resolve gate allows the owning leaf while it is non-terminal" {
+  let ps = @poller.PollerState::new()
+  gate_test_track(ps, 502, "main.leaf")
+  let entries : Map[String, @phase.AgentLifecycle] = {
+    "main.leaf": gate_test_lifecycle(
+      "main.leaf",
+      @types.Role::Dev,
+      @phase.ProcessState::Connected,
+    ),
+  }
+  match
+    resolve_my_review_threads_targets(
+      ps,
+      { caller_id: "main.leaf", target_agent_id: None, pr_number: Some(502) },
+      @types.Role::Dev,
+      owner_lifecycle_lookup=fn(aid) { entries.get(aid) },
+    ) {
+    Ok(prs) => assert_eq(prs[0].pr_number, 502)
+    Err(e) => fail("expected owning leaf permitted: " + e.message())
+  }
+}
+
+///|
+test "resolve gate fences a terminal former-owner leaf" {
+  let ps = @poller.PollerState::new()
+  gate_test_track(ps, 503, "main.leaf")
+  let entries : Map[String, @phase.AgentLifecycle] = {
+    "main.leaf": gate_test_lifecycle(
+      "main.leaf",
+      @types.Role::Dev,
+      @phase.ProcessState::Finalized(
+        reason=@phase.FinalizeReason::RecoveredDone,
+      ),
+    ),
+  }
+  match
+    resolve_my_review_threads_targets(
+      ps,
+      { caller_id: "main.leaf", target_agent_id: None, pr_number: Some(503) },
+      @types.Role::Dev,
+      owner_lifecycle_lookup=fn(aid) { entries.get(aid) },
+    ) {
+    Err(e) =>
+      assert_true(e.validation_detail_or_message().contains("is terminal"))
+    Ok(_) => fail("expected terminal former-owner leaf to be fenced")
+  }
+}
+
+///|
+test "resolve gate lets the TL inherit once the owning leaf is terminal" {
+  let ps = @poller.PollerState::new()
+  gate_test_track(ps, 504, "main.leaf")
+  let entries : Map[String, @phase.AgentLifecycle] = {
+    "main.leaf": gate_test_lifecycle(
+      "main.leaf",
+      @types.Role::Dev,
+      @phase.ProcessState::Finalized(
+        reason=@phase.FinalizeReason::RecoveredDone,
+      ),
+    ),
+  }
+  match
+    resolve_my_review_threads_targets(
+      ps,
+      {
+        caller_id: "main.tl",
+        target_agent_id: Some("main.leaf"),
+        pr_number: Some(504),
+      },
+      @types.Role::TL,
+      owner_lifecycle_lookup=fn(aid) { entries.get(aid) },
+    ) {
+    Ok(prs) => assert_eq(prs[0].pr_number, 504)
+    Err(e) => fail("expected TL inherit on terminal leaf: " + e.message())
+  }
+}
+
+///|
+test "resolve gate permits a TL-direct PR (owner is the TL, no leaf)" {
+  let ps = @poller.PollerState::new()
+  gate_test_track(ps, 505, "main.tl")
+  let entries : Map[String, @phase.AgentLifecycle] = {
+    "main.tl": gate_test_lifecycle(
+      "main.tl",
+      @types.Role::TL,
+      @phase.ProcessState::Connected,
+    ),
+  }
+  match
+    resolve_my_review_threads_targets(
+      ps,
+      { caller_id: "main.tl", target_agent_id: None, pr_number: Some(505) },
+      @types.Role::TL,
+      owner_lifecycle_lookup=fn(aid) { entries.get(aid) },
+    ) {
+    Ok(prs) => assert_eq(prs[0].pr_number, 505)
+    Err(e) => fail("expected TL permitted on its own PR: " + e.message())
+  }
+}
+
+///|
+/// F17 handoff instant: `Finalizing` is terminal for the boundary gate
+/// (`is_terminal` is true at `Finalizing`), so the former-owner leaf is already
+/// fenced and the TL is already permitted — even though the cosmetic
+/// next_action layer still waits for `Finalized`. The gate may permit the TL at
+/// `Finalizing`; both arms are asserted here.
+test "resolve gate fences a Finalizing former-owner leaf (F17 handoff instant)" {
+  let ps = @poller.PollerState::new()
+  gate_test_track(ps, 506, "main.leaf")
+  let entries : Map[String, @phase.AgentLifecycle] = {
+    "main.leaf": gate_test_lifecycle(
+      "main.leaf",
+      @types.Role::Dev,
+      @phase.ProcessState::Finalizing(
+        reason=@phase.FinalizeReason::RecoveredDone,
+      ),
+    ),
+  }
+  // Former-owner leaf calling at the handoff instant is fenced.
+  match
+    resolve_my_review_threads_targets(
+      ps,
+      { caller_id: "main.leaf", target_agent_id: None, pr_number: Some(506) },
+      @types.Role::Dev,
+      owner_lifecycle_lookup=fn(aid) { entries.get(aid) },
+    ) {
+    Err(e) =>
+      assert_true(e.validation_detail_or_message().contains("is terminal"))
+    Ok(_) => fail("expected Finalizing former-owner leaf to be fenced")
+  }
+  // TL is permitted at the handoff instant (Finalizing is terminal for the gate).
+  match
+    resolve_my_review_threads_targets(
+      ps,
+      {
+        caller_id: "main.tl",
+        target_agent_id: Some("main.leaf"),
+        pr_number: Some(506),
+      },
+      @types.Role::TL,
+      owner_lifecycle_lookup=fn(aid) { entries.get(aid) },
+    ) {
+    Ok(prs) => assert_eq(prs[0].pr_number, 506)
+    Err(e) =>
+      fail("expected TL permitted at Finalizing handoff: " + e.message())
+  }
+}
+
+///|
+/// F8 deadlock-avoidance: when the owner has no lifecycle record the gate is
+/// inert (the `None` arm at the lookup) and the TL is permitted — otherwise a
+/// TL-direct PR whose own agent is never terminal would deadlock on its own
+/// threads. This exercises the inert arm explicitly via a `None` lookup.
+test "resolve gate permits the TL when the owner has no lifecycle record (F8 inert arm)" {
+  let ps = @poller.PollerState::new()
+  gate_test_track(ps, 507, "main.leaf")
+  match
+    resolve_my_review_threads_targets(
+      ps,
+      {
+        caller_id: "main.tl",
+        target_agent_id: Some("main.leaf"),
+        pr_number: Some(507),
+      },
+      @types.Role::TL,
+      owner_lifecycle_lookup=fn(_) { None },
+    ) {
+    Ok(prs) => assert_eq(prs[0].pr_number, 507)
+    Err(e) =>
+      fail("expected TL permitted when owner has no lifecycle: " + e.message())
   }
 }
 
@@ -1371,7 +1686,9 @@ pub async fn dispatch(
       }
     }
     ToolRequest::ForkSession(session_args) => {
-      let session_dir = project_dir + "/.choir/state/sessions/" + session_args.name
+      let session_dir = project_dir +
+        "/.choir/state/sessions/" +
+        session_args.name
       let context_path = session_dir + "/context.json"
       let created_sec = @poller.now_sec()
       let context_json = {
@@ -2037,8 +2354,14 @@ pub async fn dispatch(
             "resolve_my_review_threads: poller unavailable",
           )
       }
+      // Owner terminal-ness is read from the live (request-time) lifecycle so
+      // the single-writer gate (choir-3rp5) keys on `ProcessState::is_terminal`.
       let tracked_prs = match
-        resolve_my_review_threads_targets(state, resolve_args, caller_role) {
+        resolve_my_review_threads_targets(state, resolve_args, caller_role, owner_lifecycle_lookup=fn(
+          owner_id,
+        ) {
+          @phase.read_lifecycle(project_dir, owner_id)
+        }) {
         Ok(value) => value
         Err(e) => return @types.Response::Err(e.validation_detail_or_message())
       }

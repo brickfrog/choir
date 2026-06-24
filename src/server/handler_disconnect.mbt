@@ -2105,11 +2105,70 @@ pub async fn ServerState::process_pending_disconnects_with_runner(
       _ => ()
     }
     self.handle_disconnect_confirming_with_runner(agent_id, runner, kill_pgid~)
+    self.reap_thread_owning_dead_leaf(agent_id, runner)
     ignore(self.registry.set_alive(agent_id, false)) catch {
       _ => ()
     }
     self.pending_disconnects.remove(agent_id)
   }
+}
+
+///|
+/// Dead-leaf reaper (choir-3rp5, Leaf 3 / F10/F13). Runs only for a leaf this
+/// poller tick has CONFIRMED dead past the disconnect grace (the
+/// `pending_disconnect_target_still_alive` liveness probe returned false above).
+///
+/// `handle_disconnect_confirming_with_runner` PRESERVES the thread-owning Dev
+/// states (`ReviewOwned`/`ChangesRequested`/`ExitRequestedDeferred`) across
+/// disconnect — by design, so a brief transport drop does not lose an in-flight
+/// review cycle. But this leaf is now confirmed gone: a dead leaf still owning a
+/// PR's contested review threads sits non-terminal forever, wedging Leaf 1's
+/// `is_terminal`-keyed gate so the TL can never take over. Finalizing it to Done
+/// drives the agent terminal — clearing its runtime tracking, recording the
+/// terminal status, and firing the exit hook. (Worktree removal is intentionally
+/// left off here, `remove_worktree=false`: this path reclaims lifecycle/tracking,
+/// not the on-disk worktree.) The preserve no longer applies.
+///
+/// JUSTIFICATION (F13): this is teardown that would exist even if no gate
+/// consumed the leaf's terminal-ness — a confirmed-dead agent's resources must
+/// be reclaimed regardless. The TL gate opening for that PR is a consequence,
+/// not the purpose. NEVER `transfer_leaf_ownership` (F2): it raises across
+/// role/parent and is leaf→leaf only; TL authority is purely the gate opening
+/// when the leaf is terminal, with no ownership mutation.
+async fn ServerState::reap_thread_owning_dead_leaf(
+  self : ServerState,
+  agent_id : String,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> Unit {
+  let agent = match self.registry.get_opt(agent_id) {
+    Some(a) => a
+    None => return
+  }
+  if @types.is_supervisor_role(agent.role) {
+    return
+  }
+  let lifecycle = self.current_lifecycle(agent_id)
+  // Keyed on ProcessState::is_terminal (F4): if confirming already drove the
+  // leaf terminal, the absorbing fence holds — do not re-finalize.
+  if lifecycle.process.is_terminal() {
+    return
+  }
+  // Selection: only a leaf still PRESERVED in a thread-owning Dev state would
+  // otherwise orphan its threads (F1 states named in lifecycle_thread_owning_dev).
+  if !@phase.lifecycle_thread_owning_dev(lifecycle.workflow) {
+    return
+  }
+  // Record the per-owned-PR health determinant before finalize (F6); terminal
+  // label is always Done (F3), Done/Fail quarantined from consumers.
+  self.record_pr_health_determinants_for_agent(agent_id, "dead_leaf_reaper")
+  self.finalize_agent_with_runner(
+    agent_id,
+    @types.ExitReason::Disconnected,
+    runner,
+    notify_parent=false,
+    close_target=false,
+    remove_worktree=false,
+  )
 }
 
 ///|

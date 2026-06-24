@@ -348,50 +348,47 @@ test "lifecycle_idle_watchdog_exempt logic" {
 }
 
 ///|
-test "progress_watchdog_applies includes Dev Working regardless of fixes" {
-  assert_true(progress_watchdog_applies(Dev(Working), 0L))
-  assert_true(progress_watchdog_applies(Dev(Working), 10L))
-}
-
-///|
-test "progress_watchdog_applies includes ChangesRequested only after fixes" {
-  let workflow : WorkflowState = Dev(
-    ChangesRequested(pr_number=1, next_round=2),
-  )
-  assert_false(progress_watchdog_applies(workflow, 0L))
-  assert_true(progress_watchdog_applies(workflow, 1L))
-}
-
-///|
-test "progress_watchdog_applies excludes parked Dev states" {
-  assert_false(
-    progress_watchdog_applies(
-      Dev(ReviewOwned(pr_number=1, state=ApprovedAwaitingMerge)),
-      1L,
+test "lifecycle_thread_owning_dev covers the three thread-owning Dev states by name" {
+  // The progress backstop and dead-leaf reaper (choir-3rp5, F1) must cover
+  // exactly the watchdog-exempt Dev states that own a PR's contested review
+  // threads — the states `lifecycle_idle_watchdog_exempt` skips that carry a
+  // `pr_number`: ReviewOwned, ChangesRequested, and ExitRequestedDeferred.
+  assert_true(
+    lifecycle_thread_owning_dev(
+      Dev(ReviewOwned(pr_number=7, state=OpenUnreviewed(url="u"))),
     ),
   )
-  assert_false(progress_watchdog_applies(Dev(Done(reason=Merged)), 1L))
-  assert_false(
-    progress_watchdog_applies(Dev(Failed(reason=UnexpectedDisconnect)), 1L),
-  )
-  assert_false(
-    progress_watchdog_applies(
-      Dev(ExitRequestedDeferred(pr_number=1, state=ApprovedAwaitingMerge)),
-      1L,
+  assert_true(
+    lifecycle_thread_owning_dev(
+      Dev(ReviewOwned(pr_number=7, state=ApprovedAwaitingMerge)),
     ),
   )
-  assert_false(progress_watchdog_applies(Dev(Exitable), 1L))
-  assert_false(progress_watchdog_applies(Dev(WaitingForRedGate), 1L))
+  assert_true(
+    lifecycle_thread_owning_dev(Dev(ChangesRequested(pr_number=7, next_round=2))),
+  )
+  // ExitRequestedDeferred owns a PR (carries pr_number + review state) and is
+  // idle-watchdog-exempt + non-terminal — an alive-wedged one orphans unless the
+  // backstop covers it (choir-3rp5.4 residual F1 gap).
+  assert_true(
+    lifecycle_thread_owning_dev(
+      Dev(ExitRequestedDeferred(pr_number=7, state=ApprovedAwaitingMerge)),
+    ),
+  )
 }
 
 ///|
-test "progress_watchdog_applies includes only working Worker state" {
-  assert_true(progress_watchdog_applies(Worker(Working), 0L))
-  assert_false(progress_watchdog_applies(Worker(Done(reason=Shutdown)), 1L))
+test "lifecycle_thread_owning_dev excludes non-thread-owning and non-Dev states" {
+  assert_false(lifecycle_thread_owning_dev(Dev(Working)))
+  // WaitingForRedGate is a pre-PR TDD wait: it owns no review threads and
+  // carries no pr_number, so the backstop/reaper exclude it (spec Q1/Leaf 2).
+  assert_false(lifecycle_thread_owning_dev(Dev(WaitingForRedGate)))
+  assert_false(lifecycle_thread_owning_dev(Dev(Exitable)))
+  assert_false(lifecycle_thread_owning_dev(Dev(Done(reason=Merged))))
   assert_false(
-    progress_watchdog_applies(Worker(Failed(reason=UnexpectedDisconnect)), 1L),
+    lifecycle_thread_owning_dev(Dev(Failed(reason=UnexpectedDisconnect))),
   )
-  assert_false(progress_watchdog_applies(Worker(Exitable), 1L))
+  assert_false(lifecycle_thread_owning_dev(Worker(Working)))
+  assert_false(lifecycle_thread_owning_dev(Supervisor(Planning)))
 }
 
 ///|
