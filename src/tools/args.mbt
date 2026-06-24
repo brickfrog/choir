@@ -313,6 +313,17 @@ pub(all) struct KillAgentArgs {
 } derive(Debug, Eq)
 
 ///|
+/// TL/root-only mid-flight task-contract update (choir-35qw). `verify` and
+/// `verify_satisfied_by_ci` are tri-state: `None` means "leave unchanged",
+/// `Some(...)` means "set to this value". At least one must be present.
+pub(all) struct UpdateTaskContractArgs {
+  caller_id : String
+  agent_id : String
+  verify : Array[String]?
+  verify_satisfied_by_ci : Bool?
+} derive(Debug, Eq)
+
+///|
 pub(all) struct AgentListArgs {
   parent_id : String?
   include_inactive : Bool

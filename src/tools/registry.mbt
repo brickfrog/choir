@@ -146,6 +146,11 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       [@types.Role::TL],
     ),
     tool_def(
+      "update_task_contract",
+      "Swap a live child leaf's verify command mid-flight: updates agent_id's task-contract verify and/or verify_satisfied_by_ci in place, preserving goal/beads_issue_id. A verify change resets the leaf's TDD phase to Intent and notifies it. Root may target any leaf; a TL only its own children.",
+      [@types.Role::TL],
+    ),
+    tool_def(
       "kv_get",
       "Read one value from shared KV storage (flat key: no '/' in key)",
       all_roles,

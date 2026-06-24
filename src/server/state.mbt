@@ -591,6 +591,35 @@ pub fn ServerState::record_agent_task_contract(
 }
 
 ///|
+/// Mid-flight task-contract mutator (choir-35qw). UNLIKE the write-once
+/// `record_agent_task_contract`, this UPDATES the contract in place and
+/// persists it. It is the dedicated, audited path used only by the
+/// TL/root-only `update_task_contract` tool to swap a live leaf's verify
+/// command; the spawn-time write-once immutability of
+/// `record_agent_task_contract` is deliberately left intact.
+pub fn ServerState::update_agent_task_contract(
+  self : ServerState,
+  agent_id : String,
+  contract : @types.TaskContract,
+) -> Unit {
+  self.agent_task_contracts.set(agent_id, contract)
+  if !self.persist_agent_task_contracts() {
+    @moontrace.error(
+      "agent task contract update persist failed; in-memory contract retained",
+      fields=[
+        @moontrace.field("event", "agent_task_contracts_update_persist_failed"),
+        @moontrace.field(
+          "path",
+          agent_task_contracts_path(self.config.project_dir),
+        ),
+        @moontrace.field("agent_id", agent_id),
+        @moontrace.field("contract_count", self.agent_task_contracts.length()),
+      ],
+    )
+  }
+}
+
+///|
 fn task_contract_has_nonempty_verify(contract : @types.TaskContract) -> Bool {
   for command in contract.verify {
     if command.trim() != "" {
@@ -1132,6 +1161,68 @@ test "repair_task_contract_for_agent replaces empty persisted contract from leaf
     Some(contract),
   )
   @debug.assert_eq(state.agent_task_contracts.get(agent_id), Some(contract))
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+test "update_agent_task_contract mutates in place while record_agent_task_contract is write-once" {
+  let project_dir = "/tmp/choir-agent-contract-update-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let poller_path = @poller.poller_state_path(project_dir)
+  let agent_id = "leaf-agent-contract-update"
+  let original = {
+    ..@types.TaskContract::empty(),
+    goal: "ship the bash hook fix",
+    beads_issue_id: Some("choir-35qw"),
+    scope: ["src/server/state.mbt"],
+    verify: ["moon test --target native"],
+    verify_satisfied_by_ci: false,
+  }
+  let swapped = {
+    ..original,
+    verify: ["test -f .githooks/pre-commit && bash .githooks/pre-commit"],
+    verify_satisfied_by_ci: true,
+  }
+  let empty_verify = { ..original, verify: [] }
+  let writes : Array[(String, String)] = []
+  let state = {
+    ..ServerState::new(
+      { ..@types.Config::default(), project_dir, },
+      make_hermetic_recovery_provider(),
+      path_exists=fn(path) {
+        path.has_suffix("/.choir/state/audit-gate.json") || path == poller_path
+      },
+      boot_read_file=fn(path) {
+        if path == poller_path {
+          "{\"untracked_merge_boundary_unix\":1779970300,\"tracked\":[]}"
+        } else {
+          ""
+        }
+      },
+      write_file_atomic=fn(_path, _content) { true },
+      now_unix_sec=fn() { 1779970300L },
+    ),
+    write_file_atomic: fn(path, content) {
+      writes.push((path, content))
+      true
+    },
+  }
+
+  state.record_agent_task_contract(agent_id, Some(original))
+  // record's write-once safety guard: it refuses to clobber a non-empty verify
+  // with an empty one, so this second record is a no-op.
+  state.record_agent_task_contract(agent_id, Some(empty_verify))
+  @debug.assert_eq(state.task_contract_for_agent(agent_id), Some(original))
+
+  // the dedicated mutator UPDATES in place (swapping to a different non-empty
+  // verify) and preserves goal/beads — distinct from the write-once record path.
+  state.update_agent_task_contract(agent_id, swapped)
+  @debug.assert_eq(state.task_contract_for_agent(agent_id), Some(swapped))
+  let after = state.task_contract_for_agent(agent_id).unwrap()
+  @debug.assert_eq(after.goal, "ship the bash hook fix")
+  @debug.assert_eq(after.beads_issue_id, Some("choir-35qw"))
   ignore(@sys.rm_rf(project_dir))
 }
 

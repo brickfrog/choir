@@ -1916,6 +1916,39 @@ fn parse_resolve_my_review_threads_args(
 }
 
 ///|
+fn parse_update_task_contract_args(
+  args : ToolArgs,
+) -> Result[UpdateTaskContractArgs, ParseError] {
+  let caller_id = match tool_args_get(args, "caller_id") {
+    Some(v) if v.trim() != "" => v.trim().to_owned()
+    _ => return Err(ParseError::MissingField(field="caller_id"))
+  }
+  let agent_id = match tool_args_get(args, "agent_id") {
+    Some(v) if v.trim() != "" => v.trim().to_owned()
+    _ => return Err(ParseError::MissingField(field="agent_id"))
+  }
+  // Tri-state: key absent -> None (leave unchanged); present -> Some(parsed).
+  let verify = match tool_args_get_json(args, "verify") {
+    Some(json) => Some(json_string_list(Some(json)))
+    None => None
+  }
+  let verify_satisfied_by_ci = match tool_args_get_json(
+      args, "verify_satisfied_by_ci",
+    ) {
+    Some(True) => Some(true)
+    Some(False) => Some(false)
+    Some(String(s)) =>
+      Some(parse_lenient_bool_flag("verify_satisfied_by_ci", s))
+    Some(_) => None
+    None => None
+  }
+  if verify is None && verify_satisfied_by_ci is None {
+    return Err(ParseError::MissingField(field="verify"))
+  }
+  Ok({ caller_id, agent_id, verify, verify_satisfied_by_ci })
+}
+
+///|
 fn reviewer_char_allowed(c : Char) -> Bool {
   (c >= 'a' && c <= 'z') ||
   (c >= 'A' && c <= 'Z') ||
@@ -2395,6 +2428,10 @@ fn parse_tool_request(
         Ok(ToolRequest::KillAgent({ agent_id, reason }))
       }
     }
+    "update_task_contract" =>
+      parse_update_task_contract_args(args).map(fn(a) {
+        ToolRequest::UpdateTaskContract(a)
+      })
     "agent_list" => {
       let parent_id = match tool_args_get(args, "parent_id") {
         Some(v) => if v.trim() == "" { None } else { Some(v.trim().to_owned()) }

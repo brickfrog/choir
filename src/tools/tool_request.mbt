@@ -37,6 +37,7 @@ pub(all) enum ToolRequest {
   SpawnRemote(RemoteSpawnArgs)
   SpawnWorker(WorkerSpawnArgs)
   KillAgent(KillAgentArgs)
+  UpdateTaskContract(UpdateTaskContractArgs)
   AgentList(AgentListArgs)
   CancelWave(CancelWaveArgs)
   ResolveReviewThread(ResolveReviewThreadArgs)
@@ -86,6 +87,7 @@ pub fn ToolRequest::tool_name(self : ToolRequest) -> String {
     SpawnRemote(_) => "spawn_remote"
     SpawnWorker(_) => "spawn_worker"
     KillAgent(_) => "kill_agent"
+    UpdateTaskContract(_) => "update_task_contract"
     AgentList(_) => "agent_list"
     CancelWave(_) => "cancel_wave"
     ResolveReviewThread(_) => "resolve_review_thread"
