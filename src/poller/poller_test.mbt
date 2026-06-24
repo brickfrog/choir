@@ -338,7 +338,7 @@ async test "tick_with closed PR suppresses already observed merge event" {
 }
 
 ///|
-async test "tick_with closed unmerged PR does not emit PRMerged" {
+async test "tick_with closed unmerged PR emits PRClosedUnmerged not PRMerged (choir-56ax)" {
   let ps = @poller.PollerState::new()
   ps.track(46, "agent-46", "branch-46", "main", "url-46", 1L)
   let events : Array[@poller.PollEvent] = []
@@ -351,9 +351,52 @@ async test "tick_with closed unmerged PR does not emit PRMerged" {
     fn(event, _agent_id) { events.push(event) },
     fn(log) { logs.push(log) },
   )
-  assert_eq(events.length(), 0)
+  // Exactly one PRClosedUnmerged event — NEVER PRMerged for a close.
+  assert_eq(events.length(), 1)
+  match events[0] {
+    @poller.PollEvent::PRClosedUnmerged(pr) => {
+      assert_eq(pr.pr_number, 46)
+      assert_true(pr.merged_at_unix is None)
+      assert_true(pr.closed_unmerged_notified)
+    }
+    _ => fail("expected PRClosedUnmerged event")
+  }
+  for e in events {
+    match e {
+      @poller.PollEvent::PRMerged(_) => fail("must NOT emit PRMerged for a close")
+      _ => ()
+    }
+  }
+  // Not a merge: never recorded in the merged-observed receipt cache.
   assert_false(ps.merged_observed(46))
+  // Untracked only AFTER the emit (the event carries the TrackedPR by value).
   assert_true(ps.get(46) is None)
+  assert_eq(logs.length(), 1)
+  assert_true(logs[0].untracked_closed)
+  assert_eq(logs[0].events.length(), 1)
+}
+
+///|
+async test "tick_with closed unmerged PR does not re-emit when already notified (choir-56ax AR-5)" {
+  let ps = @poller.PollerState::new()
+  ps.track(47, "agent-47", "branch-47", "main", "url-47", 1L)
+  // Simulate a re-detect of a PR already flagged as closed-unmerged-notified.
+  match ps.get(47) {
+    Some(t) => ps.restore({ ..t, closed_unmerged_notified: true })
+    None => fail("expected PR 47")
+  }
+  let events : Array[@poller.PollEvent] = []
+  let logs : Array[@poller.PollerPrTickLog] = []
+  ps.tick_pr_with(
+    47,
+    100L,
+    900L,
+    poller_test_poll_success_closed_unmerged,
+    fn(event, _agent_id) { events.push(event) },
+    fn(log) { logs.push(log) },
+  )
+  assert_eq(events.length(), 0)
+  assert_true(ps.get(47) is None)
   assert_eq(logs.length(), 1)
   assert_true(logs[0].untracked_closed)
   assert_eq(logs[0].events.length(), 0)

@@ -138,6 +138,7 @@ fn dev_event_trigger(event : DevEvent) -> @types.LifecycleTrigger {
     DevEvent::ReviewReceivedEv(..) => @types.LifecycleTrigger::ReviewReceived
     DevEvent::ReviewApprovedEv(_) => @types.LifecycleTrigger::ReviewApproved
     DevEvent::FixesPushedEv(..) => @types.LifecycleTrigger::FixesPushed
+    DevEvent::PrClosedUnmerged(_) => @types.LifecycleTrigger::PrClosedUnmerged
   }
 }
 
@@ -402,6 +403,8 @@ pub fn plan_dev_event_checked(
         DevEvent::ExitRequested => Some(DevLifecycleEvent::ExitRequested)
         DevEvent::MergeObserved(pr_number~) =>
           Some(DevLifecycleEvent::MergeObserved(pr_number~))
+        DevEvent::PrClosedUnmerged(pr_number~) =>
+          Some(DevLifecycleEvent::PrClosedUnmerged(pr_number~))
         _ => None
       }
       match lifecycle_event {
