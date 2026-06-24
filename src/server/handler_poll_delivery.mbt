@@ -113,7 +113,23 @@ fn poll_owner_released_for_threads(
   project_dir : String,
   owner_id : String,
 ) -> Bool {
-  match @phase.read_lifecycle(project_dir, owner_id) {
+  owner_released_for_threads_from_lifecycle(
+    @phase.read_lifecycle(project_dir, owner_id),
+  )
+}
+
+///|
+/// Pure F17 release mapping (choir-3rp5), split from the lifecycle read so the
+/// mapping can be unit-tested without disk I/O. Released ⇔ no lifecycle record
+/// (TL-direct/unknown owner, F8), supervisor owner (TL-direct, F8), or the
+/// owning leaf is finalized (`Finalized`/`Failed`). `Finalizing` is the handoff
+/// instant — terminal for the boundary gate but NOT yet released here, so the
+/// cosmetic `ResolveThreadsNow` waits for `Finalized` and never acts while the
+/// leaf's last push is in flight.
+fn owner_released_for_threads_from_lifecycle(
+  lifecycle : @phase.AgentLifecycle?,
+) -> Bool {
+  match lifecycle {
     None => true
     Some(lc) =>
       if @types.is_supervisor_role(lc.role) {
@@ -126,6 +142,35 @@ fn poll_owner_released_for_threads(
         }
       }
   }
+}
+
+///|
+test "owner_released_for_threads_from_lifecycle follows the F17 release mapping" {
+  let leaf = "main.leaf"
+  // Finalizing is the handoff instant — NOT yet released (waits for Finalized).
+  let finalizing = {
+    ..@phase.lifecycle_for_role(leaf, @types.Role::Dev),
+    process: @phase.ProcessState::Finalizing(
+      reason=@phase.FinalizeReason::RecoveredDone,
+    ),
+  }
+  assert_false(owner_released_for_threads_from_lifecycle(Some(finalizing)))
+  // Finalized: the leaf has released its threads.
+  let finalized = {
+    ..@phase.lifecycle_for_role(leaf, @types.Role::Dev),
+    process: @phase.ProcessState::Finalized(
+      reason=@phase.FinalizeReason::RecoveredDone,
+    ),
+  }
+  assert_true(owner_released_for_threads_from_lifecycle(Some(finalized)))
+  // Supervisor owner: TL-direct PR, always released (F8).
+  let supervisor = {
+    ..@phase.lifecycle_for_role("main.tl", @types.Role::TL),
+    process: @phase.ProcessState::Connected,
+  }
+  assert_true(owner_released_for_threads_from_lifecycle(Some(supervisor)))
+  // No lifecycle record: TL-direct / unknown owner, always released (F8).
+  assert_true(owner_released_for_threads_from_lifecycle(None))
 }
 
 ///|

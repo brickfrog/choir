@@ -786,7 +786,12 @@ fn resolve_my_review_threads_targets(
   poller_state : @poller.PollerState,
   args : ResolveMyReviewThreadsArgs,
   caller_role : @types.Role,
-  owner_lifecycle_lookup? : (String) -> @phase.AgentLifecycle? = fn(_) { None },
+  // Required, not optional (choir-3rp5): a single-writer correctness gate must
+  // never silently no-op. An inert default (`fn(_) { None }`) would disable the
+  // gate for any future call site that forgot to wire the lifecycle lookup.
+  // Every caller — production and test — passes one explicitly; tests inject a
+  // map-backed lookup (or `fn(_) { None }` to exercise the F8 inert arm).
+  owner_lifecycle_lookup~ : (String) -> @phase.AgentLifecycle?,
 ) -> Result[Array[@poller.TrackedPR], @types.ChoirError] {
   let target_agent_id = match args.target_agent_id {
     Some(target) => target
@@ -891,6 +896,7 @@ test "resolve_my_review_threads_targets defaults to caller tracked prs" {
       ps,
       { caller_id: "main.leaf", target_agent_id: None, pr_number: None },
       @types.Role::Dev,
+      owner_lifecycle_lookup=fn(_) { None },
     ) {
     Ok(prs) => {
       assert_eq(prs.length(), 1)
@@ -925,6 +931,7 @@ test "resolve_my_review_threads_targets lets supervisor bulk target another agen
         pr_number: None,
       },
       @types.Role::TL,
+      owner_lifecycle_lookup=fn(_) { None },
     ) {
     Ok(prs) => {
       assert_eq(prs.length(), 1)
@@ -959,6 +966,7 @@ test "resolve_my_review_threads_targets rejects non supervisor target mismatch" 
         pr_number: None,
       },
       @types.Role::Dev,
+      owner_lifecycle_lookup=fn(_) { None },
     ) {
     Err(e) => @debug.assert_eq(e.to_wire_string(), "permission_denied")
     Ok(_) => fail("expected permission denied")
@@ -990,6 +998,7 @@ test "resolve_my_review_threads_targets allows explicit self target and names mi
         pr_number: None,
       },
       @types.Role::Dev,
+      owner_lifecycle_lookup=fn(_) { None },
     ) {
     Ok(prs) => assert_eq(prs[0].pr_number, 455)
     Err(e) => fail("expected self target: " + e.message())
@@ -1003,6 +1012,7 @@ test "resolve_my_review_threads_targets allows explicit self target and names mi
         pr_number: None,
       },
       @types.Role::TL,
+      owner_lifecycle_lookup=fn(_) { None },
     ) {
     Err(e) => assert_true(e.message().contains("target main.missing"))
     Ok(_) => fail("expected no tracked PRs for target")
@@ -1165,6 +1175,79 @@ test "resolve gate permits a TL-direct PR (owner is the TL, no leaf)" {
     ) {
     Ok(prs) => assert_eq(prs[0].pr_number, 505)
     Err(e) => fail("expected TL permitted on its own PR: " + e.message())
+  }
+}
+
+///|
+/// F17 handoff instant: `Finalizing` is terminal for the boundary gate
+/// (`is_terminal` is true at `Finalizing`), so the former-owner leaf is already
+/// fenced and the TL is already permitted — even though the cosmetic
+/// next_action layer still waits for `Finalized`. The gate may permit the TL at
+/// `Finalizing`; both arms are asserted here.
+test "resolve gate fences a Finalizing former-owner leaf (F17 handoff instant)" {
+  let ps = @poller.PollerState::new()
+  gate_test_track(ps, 506, "main.leaf")
+  let entries : Map[String, @phase.AgentLifecycle] = {
+    "main.leaf": gate_test_lifecycle(
+      "main.leaf",
+      @types.Role::Dev,
+      @phase.ProcessState::Finalizing(
+        reason=@phase.FinalizeReason::RecoveredDone,
+      ),
+    ),
+  }
+  // Former-owner leaf calling at the handoff instant is fenced.
+  match
+    resolve_my_review_threads_targets(
+      ps,
+      { caller_id: "main.leaf", target_agent_id: None, pr_number: Some(506) },
+      @types.Role::Dev,
+      owner_lifecycle_lookup=fn(aid) { entries.get(aid) },
+    ) {
+    Err(e) =>
+      assert_true(e.validation_detail_or_message().contains("is terminal"))
+    Ok(_) => fail("expected Finalizing former-owner leaf to be fenced")
+  }
+  // TL is permitted at the handoff instant (Finalizing is terminal for the gate).
+  match
+    resolve_my_review_threads_targets(
+      ps,
+      {
+        caller_id: "main.tl",
+        target_agent_id: Some("main.leaf"),
+        pr_number: Some(506),
+      },
+      @types.Role::TL,
+      owner_lifecycle_lookup=fn(aid) { entries.get(aid) },
+    ) {
+    Ok(prs) => assert_eq(prs[0].pr_number, 506)
+    Err(e) =>
+      fail("expected TL permitted at Finalizing handoff: " + e.message())
+  }
+}
+
+///|
+/// F8 deadlock-avoidance: when the owner has no lifecycle record the gate is
+/// inert (the `None` arm at the lookup) and the TL is permitted — otherwise a
+/// TL-direct PR whose own agent is never terminal would deadlock on its own
+/// threads. This exercises the inert arm explicitly via a `None` lookup.
+test "resolve gate permits the TL when the owner has no lifecycle record (F8 inert arm)" {
+  let ps = @poller.PollerState::new()
+  gate_test_track(ps, 507, "main.leaf")
+  match
+    resolve_my_review_threads_targets(
+      ps,
+      {
+        caller_id: "main.tl",
+        target_agent_id: Some("main.leaf"),
+        pr_number: Some(507),
+      },
+      @types.Role::TL,
+      owner_lifecycle_lookup=fn(_) { None },
+    ) {
+    Ok(prs) => assert_eq(prs[0].pr_number, 507)
+    Err(e) =>
+      fail("expected TL permitted when owner has no lifecycle: " + e.message())
   }
 }
 
