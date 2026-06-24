@@ -141,6 +141,10 @@ pub(all) struct TrackedPR {
   /// GitHub Copilot bot login (REST `/issues/{n}/comments`), distinct from review objects.
   mut copilot_issue_comment_seen : Bool
   mut orphan_notified : Bool
+  /// True once the poller has emitted `PollEvent::PRClosedUnmerged` for this PR,
+  /// so a re-detect/re-track cannot re-emit the close (choir-56ax AR-5; cf.
+  /// `orphan_notified`).
+  mut closed_unmerged_notified : Bool
   /// True while the server is explicitly reconciling a stale PR for an inactive
   /// leaf, so generic orphan detection stays quiet during cleanup.
   mut orphan_reconciling : Bool
@@ -357,6 +361,11 @@ pub(all) enum PollEvent {
   /// First poll tick where a GitHub Copilot issue-thread comment was observed (REST); sticky state updated.
   CopilotIssueCommentSeen(Int)
   PRMerged(TrackedPR)
+  /// A tracked PR was closed on GitHub WITHOUT being merged. Carries the
+  /// `TrackedPR` by value so delivery (finalize/notify) is safe even after the
+  /// map entry is removed. DISTINCT from `PRMerged` — never reused for a merge,
+  /// never produces `MergeObserved` (choir-56ax).
+  PRClosedUnmerged(TrackedPR)
   MergeReady(Int)
   ReviewThreadsResolved(Int)
 } derive(Debug, Eq)
@@ -436,6 +445,11 @@ pub impl Show for PollEvent with fn output(self, logger) -> Unit {
     }
     PRMerged(pr) => {
       logger.write_string("PRMerged(")
+      logger.write_string(pr.pr_number.to_string())
+      logger.write_string(")")
+    }
+    PRClosedUnmerged(pr) => {
+      logger.write_string("PRClosedUnmerged(")
       logger.write_string(pr.pr_number.to_string())
       logger.write_string(")")
     }

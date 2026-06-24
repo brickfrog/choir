@@ -18,6 +18,10 @@ pub(all) enum TlTrackedPrWorkflowCategory {
   ReadyForTLRecheck
   MergeGateOpenPendingPolicyConfirmation
   ObservedMergedExternal
+  /// A tracked PR was closed on GitHub WITHOUT being merged; the owning leaf was
+  /// finalized (work preserved). The TL may re-dispatch if it was superseded, or
+  /// leave it abandoned (choir-56ax).
+  ClosedUnmergedLeafFinalized
   OrphanedPRNeedsManualAction
   StalledOnChangesRequested
 } derive(Debug, Eq)
@@ -385,6 +389,7 @@ fn tl_category_rollup_header_bucket(
     | CopilotIssueCommentSeenRecheckRemainingGates
     | ReadyForTLRecheck => "waiting or re-check"
     ObservedMergedExternal => "merged externally"
+    ClosedUnmergedLeafFinalized => "closed unmerged"
     OrphanedPRNeedsManualAction => "orphaned"
   }
 }
@@ -405,6 +410,7 @@ fn tl_category_rollup_pr_line(cat : TlTrackedPrWorkflowCategory) -> String {
     ReadyForTLRecheck => "Ready for TL re-check"
     MergeGateOpenPendingPolicyConfirmation => "Merge gate open"
     ObservedMergedExternal => "Merged externally"
+    ClosedUnmergedLeafFinalized => "Closed unmerged; leaf finalized"
     OrphanedPRNeedsManualAction => "Orphaned PR needs manual action"
     StalledOnChangesRequested => "Stalled on changes requested"
   }
@@ -981,6 +987,7 @@ pub fn next_action_for_pr_state_notification(
     WaitingOnReviewOrCI
     | WaitingOnCopilotIssueComment
     | AttentionRequiredCIFailed
+    | ClosedUnmergedLeafFinalized
     | ObservedMergedExternal => Wait
   }
 }
@@ -1182,6 +1189,8 @@ pub fn tl_tracked_pr_workflow_category_sentence(
       "MERGE NOW: reviewed, CI green, threads resolved. Run merge_pr."
     ObservedMergedExternal =>
       "PR already merged externally. Automatic reconciliation will finalize the leaf."
+    ClosedUnmergedLeafFinalized =>
+      "CLOSED WITHOUT MERGE: PR closed externally; leaf finalized and worktree preserved. Re-dispatch if superseded, or leave abandoned."
     OrphanedPRNeedsManualAction =>
       "ORPHANED: leaf is dead, PR still open. Run merge_pr or rescue_leaf."
     StalledOnChangesRequested =>
@@ -1208,6 +1217,7 @@ pub fn plan_tl_poll_event_parent(
   )
   match event {
     PRMerged(_) => ObservedMergedExternal
+    PRClosedUnmerged(_) => ClosedUnmergedLeafFinalized
     ReviewTimeout(_) =>
       if review_required {
         AttentionRequiredCopilotSilentAfterTimeout

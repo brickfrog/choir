@@ -25,6 +25,7 @@ fn sample_tracked(
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
+    closed_unmerged_notified: false,
     orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
@@ -142,6 +143,18 @@ test "plan_tl_poll_event_parent PRReady waits when snapshot is not merge-ready" 
   let t = sample_tracked(Approved, InProgress, 5)
   let cat = plan_tl_poll_event_parent(PRReady(5), t, None)
   assert_eq(cat, WaitingOnCopilotIssueComment)
+}
+
+///|
+test "plan_tl_poll_event_parent PRClosedUnmerged is closed-unmerged category, never merged (choir-56ax)" {
+  let t = sample_tracked(ChangesRequested, Success, 88)
+  let cat = plan_tl_poll_event_parent(PollEvent::PRClosedUnmerged(t), t, None)
+  assert_eq(cat, ClosedUnmergedLeafFinalized)
+  // Actionable sentence, and distinct from the merged-external category.
+  let sentence = tl_tracked_pr_workflow_category_sentence(cat)
+  assert_true(sentence.contains("CLOSED WITHOUT MERGE"))
+  assert_true(sentence.contains("Re-dispatch"))
+  assert_false(cat == ObservedMergedExternal)
 }
 
 ///|

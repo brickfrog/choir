@@ -172,6 +172,7 @@ pub fn TrackedPR::to_json(self : TrackedPR) -> String {
     "last_timeout_at": self.last_timeout_at.to_json(),
     "copilot_issue_comment_seen": self.copilot_issue_comment_seen.to_json(),
     "orphan_notified": self.orphan_notified.to_json(),
+    "closed_unmerged_notified": self.closed_unmerged_notified.to_json(),
     "orphan_reconciling": self.orphan_reconciling.to_json(),
     "changes_requested_since": self.changes_requested_since.to_json(),
     "stall_notified": self.stall_notified.to_json(),
@@ -289,6 +290,11 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     Some(value) => value
     None => false
   }
+  let closed_unmerged_notified = match
+    @types.json_field_bool(fields, "closed_unmerged_notified") {
+    Some(value) => value
+    None => false
+  }
   let orphan_reconciling = match
     @types.json_field_bool(fields, "orphan_reconciling") {
     Some(value) => value
@@ -352,6 +358,7 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     last_timeout_at,
     copilot_issue_comment_seen,
     orphan_notified,
+    closed_unmerged_notified,
     orphan_reconciling,
     changes_requested_since,
     stall_notified,
@@ -430,6 +437,7 @@ pub fn PollerState::track(
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
+    closed_unmerged_notified: false,
     orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
@@ -558,6 +566,7 @@ pub fn PollerState::track_recovered(
     last_timeout_at: 0L,
     copilot_issue_comment_seen,
     orphan_notified: false,
+    closed_unmerged_notified: false,
     orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
@@ -991,6 +1000,18 @@ pub async fn PollerState::tick_pr_with(
       { ..tracked_ok, last_sha: sha }
     }
     if closed_ok.merged_at_unix == None {
+      // Closed WITHOUT merge: emit PollEvent::PRClosedUnmerged (carrying the
+      // TrackedPR by value, so delivery is data-safe after the map entry is
+      // gone) guarded by `closed_unmerged_notified` so a re-detect can't
+      // re-emit, BEFORE remove_tracked. NEVER PRMerged for a close (choir-56ax).
+      let emitted_events : Array[PollEvent] = if closed_ok.closed_unmerged_notified {
+        []
+      } else {
+        let notified = { ..closed_ok, closed_unmerged_notified: true }
+        self.set_tracked(pr_number, notified)
+        on_event(PRClosedUnmerged(notified), notified.agent_id)
+        [PRClosedUnmerged(notified)]
+      }
       log_pr({
         pr_number,
         agent_id,
@@ -1001,7 +1022,7 @@ pub async fn PollerState::tick_pr_with(
         backoff_until: 0L,
         prior_review_state: prior_state,
         detected_review_state: review,
-        events: [],
+        events: emitted_events,
         consecutive_failures: 0,
         previous_consecutive_failures: prev_failures,
       })

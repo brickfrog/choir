@@ -363,6 +363,44 @@ async fn ServerState::reconcile_external_merge_with_runner(
 }
 
 ///|
+/// Reconcile a tracked PR that was closed on GitHub WITHOUT being merged
+/// (choir-56ax). Plans a per-PR-gated finalize to `Done(PrClosedUnmerged)` with
+/// the worktree preserved, then interprets it. If the leaf does not own this
+/// exact PR (supersede case) or is already terminal, the planner returns no
+/// effects and the leaf is left working.
+async fn ServerState::reconcile_closed_unmerged_with_runner(
+  self : ServerState,
+  agent_id : String,
+  pr_number : Int,
+  branch : String,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  notify_parent? : Bool = true,
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
+) -> Unit {
+  let agent = try self.registry.get(agent_id) catch {
+    _ =>
+      @phase.resolve_agent_with_fallback(
+        self.config.project_dir,
+        self.config.terminal_session,
+        self.registry,
+        agent_id,
+      )
+  } noraise {
+    resolved => resolved
+  }
+  let lifecycle = self.current_lifecycle(agent_id)
+  let effects = plan_closed_unmerged_finalization(
+    agent,
+    lifecycle,
+    pr_number,
+    branch,
+    self.config.project_dir,
+    notify_parent~,
+  )
+  self.interpret_teardown_effects(effects, runner, sleep_fn~)
+}
+
+///|
 async fn ServerState::finalize_agent_with_runner(
   self : ServerState,
   agent_id : String,

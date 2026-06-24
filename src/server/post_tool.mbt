@@ -78,6 +78,8 @@ fn finalize_reason_for_exit(
     @types.ExitReason::Disconnected =>
       @phase.FinalizeReason::DisconnectFinalized
     @types.ExitReason::Shutdown => @phase.FinalizeReason::Shutdown
+    @types.ExitReason::PrClosedUnmerged =>
+      @phase.FinalizeReason::PrClosedUnmerged
   }
 }
 
@@ -213,6 +215,113 @@ fn lifecycle_accepts_merge_observed(
     Ok(_) => true
     Err(_) => false
   }
+}
+
+///|
+/// Per-PR ownership gate for a closed-unmerged finalize (choir-56ax AR-2). True
+/// only when the leaf's lifecycle owns this EXACT PR in a coverable state
+/// (`ReviewOwned`/`ChangesRequested`/`ExitRequestedDeferred`). A superseded PR
+/// closing while the leaf works its replacement, or an already-terminal leaf,
+/// fails this gate — so the entire finalize (and parent notify) is skipped.
+fn lifecycle_accepts_pr_closed_unmerged(
+  lifecycle : @phase.AgentLifecycle,
+  pr_number : Int,
+) -> Bool {
+  match
+    @phase.plan_dev_event_checked(
+      lifecycle,
+      @phase.DevEvent::PrClosedUnmerged(pr_number~),
+    ) {
+    Ok(_) => true
+    Err(_) => false
+  }
+}
+
+///|
+/// Parent-facing notification when a tracked PR is closed without merge
+/// (choir-56ax). Not a failure: the leaf is finalized and its worktree is
+/// preserved for manual recovery.
+pub fn closed_unmerged_parent_message(
+  agent_id : String,
+  pr_number : Int,
+  branch : String,
+) -> String {
+  let branch_disp = if branch == "" { "<unknown>" } else { branch }
+  [
+    "[PR CLOSED] " +
+    agent_id +
+    " PR #" +
+    pr_number.to_string() +
+    " was closed on the remote WITHOUT being merged.",
+    "branch: " + branch_disp,
+    "The leaf is finalized (clean terminal, not a failure) and its worktree is preserved.",
+    "Next action: re-dispatch if this PR was superseded, or leave it abandoned. The branch + worktree survive for manual recovery.",
+  ].join("\n")
+}
+
+///|
+/// Plan the teardown for a closed-unmerged PR (choir-56ax AR-2, the headline).
+/// The ENTIRE finalize — lifecycle transition, parent notify, and teardown — is
+/// gated on per-PR ownership. If the leaf does not own this exact PR (supersede
+/// case) or is already terminal, NOTHING is planned: the stale PR was already
+/// untracked by the poller and the leaf is left working. When the gate passes,
+/// finalize with `ExitReason::PrClosedUnmerged` (NEVER `Merged`/`Shutdown`, so
+/// the honest `Done(PrClosedUnmerged)` label is reached) and
+/// `remove_worktree=false` (AR-9, preserve uncommitted work). NEVER emits
+/// `MergeObserved`/`DeliverToParentMerged` for a close.
+pub fn plan_closed_unmerged_finalization(
+  agent : @types.Agent,
+  lifecycle : @phase.AgentLifecycle,
+  pr_number : Int,
+  branch : String,
+  project_dir : String,
+  notify_parent? : Bool = true,
+) -> Array[TeardownEffect] {
+  let finalized_agent = @phase.agent_with_lifecycle_leaf_teardown_metadata(
+    agent, lifecycle, project_dir,
+  )
+  let agent_id = finalized_agent.agent_id.to_string()
+  if @types.is_supervisor_role(finalized_agent.role) {
+    return []
+  }
+  // AR-2 + AR-4: gate the ENTIRE finalize (and notify) on per-PR ownership.
+  // Already-terminal leaves (Done/Failed) also fail this gate, so there is no
+  // double-finalize and no duplicate parent notify.
+  if !lifecycle_accepts_pr_closed_unmerged(lifecycle, pr_number) {
+    return []
+  }
+  let effects : Array[TeardownEffect] = []
+  effects.push(
+    UpdateDevLifecycle(
+      agent_id~,
+      event=@phase.DevEvent::PrClosedUnmerged(pr_number~),
+    ),
+  )
+  if notify_parent {
+    match finalized_agent.parent {
+      Some(parent_id) =>
+        effects.push(
+          NotifyParent(
+            parent_id~,
+            agent_id~,
+            message=closed_unmerged_parent_message(agent_id, pr_number, branch),
+            status=@types.Status::Info,
+          ),
+        )
+      None => ()
+    }
+  }
+  for
+    effect in plan_finalize(
+      finalized_agent,
+      lifecycle,
+      @types.ExitReason::PrClosedUnmerged,
+      notify_parent=false,
+      remove_worktree=false,
+    ) {
+    effects.push(effect)
+  }
+  effects
 }
 
 ///|
