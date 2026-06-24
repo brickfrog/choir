@@ -750,8 +750,11 @@ fn resolve_my_review_threads_owner_gate(
       } else if owner_lc.process.is_terminal() {
         // Terminal former-owner leaf: ownership has passed to the TL.
         if caller_id == owner_id {
+          // Authority/ownership rejection: unified under the permission_denied
+          // taxonomy (choir-3rp5.5) to match the sibling unauthorized-caller
+          // rejections below; the informative fenced message is preserved.
           Err(
-            @types.ChoirError::validation_error(
+            @types.ChoirError::permission_denied_detail(
               "resolve_my_review_threads: leaf " +
               owner_id +
               " is terminal; its review-thread ownership has passed to the TL. A terminated leaf may not write review threads (fenced).",
@@ -765,8 +768,9 @@ fn resolve_my_review_threads_owner_gate(
         Ok(())
       } else if @types.is_supervisor_role(caller_role) {
         // TL contesting a live leaf's threads — blocked; no force-claim.
+        // permission_denied taxonomy (choir-3rp5.5), message preserved.
         Err(
-          @types.ChoirError::validation_error(
+          @types.ChoirError::permission_denied_detail(
             "resolve_my_review_threads: PR #" +
             tracked.pr_number.to_string() +
             " is owned by live leaf " +
@@ -1067,12 +1071,17 @@ test "resolve gate blocks TL while non-terminal leaf owns the PR (kill-to-take-o
       @types.Role::TL,
       owner_lifecycle_lookup=fn(aid) { entries.get(aid) },
     ) {
-    Err(e) =>
+    Err(e) => {
+      // Authority rejection unified under the permission_denied taxonomy
+      // (choir-3rp5.5), matching the sibling unauthorized-caller rejections;
+      // the informative kill-to-take-over message is preserved.
+      @debug.assert_eq(e.to_wire_string(), "permission_denied")
       assert_true(
         e
         .validation_detail_or_message()
         .contains("kill the owning leaf to take over"),
       )
+    }
     Ok(_) => fail("expected TL blocked while a live leaf owns the PR")
   }
 }
@@ -1120,8 +1129,12 @@ test "resolve gate fences a terminal former-owner leaf" {
       @types.Role::Dev,
       owner_lifecycle_lookup=fn(aid) { entries.get(aid) },
     ) {
-    Err(e) =>
+    Err(e) => {
+      // Terminal fence unified under the permission_denied taxonomy
+      // (choir-3rp5.5); the informative "is terminal … fenced" message stays.
+      @debug.assert_eq(e.to_wire_string(), "permission_denied")
       assert_true(e.validation_detail_or_message().contains("is terminal"))
+    }
     Ok(_) => fail("expected terminal former-owner leaf to be fenced")
   }
 }
@@ -1204,8 +1217,10 @@ test "resolve gate fences a Finalizing former-owner leaf (F17 handoff instant)" 
       @types.Role::Dev,
       owner_lifecycle_lookup=fn(aid) { entries.get(aid) },
     ) {
-    Err(e) =>
+    Err(e) => {
+      @debug.assert_eq(e.to_wire_string(), "permission_denied")
       assert_true(e.validation_detail_or_message().contains("is terminal"))
+    }
     Ok(_) => fail("expected Finalizing former-owner leaf to be fenced")
   }
   // TL is permitted at the handoff instant (Finalizing is terminal for the gate).

@@ -6,6 +6,11 @@ suberror ChoirError {
   AgentNotFound(String)
   ToolNotFound(String)
   PermissionDenied(String, String)
+  /// An authority rejection that reports as `permission_denied` but carries a
+  /// custom explanatory message (e.g. the single-writer gate's kill-to-take-over
+  /// / terminal-fence wording). Same taxonomy as `PermissionDenied`, with an
+  /// informative detail instead of the fixed `role X cannot call Y` rendering.
+  PermissionDeniedDetail(String)
   PolicyBlocked(String)
   ValidationError(String)
   Timeout(String)
@@ -21,6 +26,7 @@ pub fn ChoirError::to_wire_string(self : ChoirError) -> String {
     AgentNotFound(_) => "agent_not_found"
     ToolNotFound(_) => "tool_not_found"
     PermissionDenied(_, _) => "permission_denied"
+    PermissionDeniedDetail(_) => "permission_denied"
     PolicyBlocked(_) => "policy_blocked"
     ValidationError(_) => "validation_error"
     Timeout(_) => "timeout"
@@ -37,6 +43,7 @@ pub fn ChoirError::message(self : ChoirError) -> String {
     AgentNotFound(id) => "agent not found: " + id
     ToolNotFound(name) => "tool not found: " + name
     PermissionDenied(role, tool) => "role " + role + " cannot call " + tool
+    PermissionDeniedDetail(msg) => msg
     PolicyBlocked(msg) => "policy blocked: " + msg
     ValidationError(msg) => "validation error: " + msg
     Timeout(msg) => "timeout error: " + msg
@@ -72,6 +79,13 @@ pub fn ChoirError::permission_denied(
 }
 
 ///|
+/// Authority rejection reported as `permission_denied` but carrying a custom
+/// explanatory message (single-writer gate kill-to-take-over / terminal fence).
+pub fn ChoirError::permission_denied_detail(detail : String) -> ChoirError {
+  PermissionDeniedDetail(detail)
+}
+
+///|
 pub fn ChoirError::policy_blocked(msg : String) -> ChoirError {
   PolicyBlocked(msg)
 }
@@ -91,6 +105,7 @@ pub fn ChoirError::validation_detail_or_message(self : ChoirError) -> String {
   match self {
     ValidationError(msg) => msg
     Timeout(msg) => msg
+    PermissionDeniedDetail(msg) => msg
     _ => self.message()
   }
 }
@@ -147,6 +162,8 @@ pub fn choir_error_message_from_caught(e : Error) -> String {
     ToolNotFound(name) => ChoirError::tool_not_found(name).message()
     PermissionDenied(role, tool) =>
       ChoirError::permission_denied(role, tool).message()
+    PermissionDeniedDetail(msg) =>
+      ChoirError::permission_denied_detail(msg).message()
     PolicyBlocked(msg) => ChoirError::policy_blocked(msg).message()
     ValidationError(msg) => ChoirError::validation_error(msg).message()
     Timeout(msg) => ChoirError::timeout(msg).message()
@@ -165,6 +182,7 @@ pub fn caught_error_is_choir_error(e : Error) -> Bool {
     AgentNotFound(_)
     | ToolNotFound(_)
     | PermissionDenied(_, _)
+    | PermissionDeniedDetail(_)
     | PolicyBlocked(_)
     | ValidationError(_)
     | Timeout(_)

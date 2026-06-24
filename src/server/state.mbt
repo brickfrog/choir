@@ -319,6 +319,15 @@ pub struct ServerState {
   // keyed by pr_number. `since_unix` tracks when each PR last advanced (head SHA
   // moved or unresolved-thread count dropped); the sweep prunes entries for PRs
   // no longer tracked.
+  //
+  // IN-MEMORY ONLY — RESETS ON SERVER RESTART (choir-3rp5.5): this stall clock is
+  // not persisted, so a restart re-seeds every PR's `since_unix` to "first
+  // observation = now", restarting the 6h (21600s) accumulation from zero. That
+  // is by design: the threshold is a deliberately-long NET to reclaim a leaked
+  // alive-but-wedged leaf, not a hard latency guarantee. A worst-case wedge that
+  // straddles restarts can therefore outlive a single 6h window; re-keying the
+  // clock to survive restarts is explicitly out of scope (the dead-leaf reaper
+  // and idle watchdog remain the other liveness nets).
   progress_backstop_state : Map[Int, PrProgressSnapshot]
   mut last_config_divergence_signature : String?
   list_panes_cache : Map[String, @tools.CachedListPanesSnapshot]
