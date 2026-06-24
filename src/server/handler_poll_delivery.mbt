@@ -95,7 +95,37 @@ fn parent_pr_state_notification_decision(
     reviewer~,
     skip_copilot_on_feature_branch~,
     default_branch~,
+    owner_released=poll_owner_released_for_threads(
+      project_dir,
+      tracked.agent_id,
+    ),
   )
+}
+
+///|
+/// Cosmetic single-writer suppression input (choir-3rp5): the TL is only handed
+/// `ResolveThreadsNow` once the owning leaf has released its contested threads —
+/// i.e. it is finalized (waits for `Finalized`/`Failed`, NOT `Finalizing`, per
+/// F17), or the PR is TL-direct (owner is a supervisor or has no lifecycle
+/// record, F8). Reads the request-time lifecycle snapshot; the server boundary
+/// gate remains the actual guarantee (F18).
+fn poll_owner_released_for_threads(
+  project_dir : String,
+  owner_id : String,
+) -> Bool {
+  match @phase.read_lifecycle(project_dir, owner_id) {
+    None => true
+    Some(lc) =>
+      if @types.is_supervisor_role(lc.role) {
+        true
+      } else {
+        match lc.process {
+          @phase.ProcessState::Finalized(..)
+          | @phase.ProcessState::Failed(..) => true
+          _ => false
+        }
+      }
+  }
 }
 
 ///|

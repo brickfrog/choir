@@ -23,7 +23,7 @@ Two paths — pick by caller.
 
 ## Gotchas
 
-- Thread resolution: after the leaf pushes fixes, wait for the next poller snapshot; the server resolves now-outdated threads for iterative-review PRs. Use `mcp__choir__resolve_my_review_threads` only for persistent unresolved threads.
+- Thread resolution: after the leaf pushes fixes, wait for the next poller snapshot; the server resolves now-outdated threads for iterative-review PRs. Use `mcp__choir__resolve_my_review_threads` only for persistent unresolved threads. While the owning leaf is alive (non-terminal), the server boundary blocks the TL from resolving that PR's contested threads — the leaf is the single writer; the only way to take over is to end the leaf (`kill_agent`), there is no force-claim. The poller will not hand you `ResolveThreadsNow` until the leaf is finalized. This is server-enforced; the note is descriptive.
 - Pre-commit hook: Respect the repo's pre-commit hook; if it rewrites files unexpectedly, inspect with `git diff` before discarding.
 - Leaf cd'd out of worktree: leaf has no commits but main has unstaged edits matching its task — kill the leaf, finish TL-direct via Path B.
 - Audit receipt: receipts are keyed by HEAD tree; identical file trees reuse the same receipt across commits/branches. Full 40-char sha and tree_sha required. Findings_count must be 0 to pass merge_pr gate.

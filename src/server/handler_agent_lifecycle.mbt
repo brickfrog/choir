@@ -5,9 +5,60 @@ fn lifecycle_for_registered_agent(
   match existing.process {
     @phase.ProcessState::Disconnected(..) =>
       { ..existing, process: @phase.ProcessState::Connected }
+    // All terminal states are absorbing on fresh register (choir-3rp5, F5/RA-1):
+    // `is_terminal` includes `Finalizing`, the handoff instant, so a fresh
+    // register must not resurrect it to `Connected` or the single-writer gate
+    // would see a "live" leaf the TL already inherited. Mirrors the absorbing
+    // reconnect door in `lifecycle_transport_reconnect`.
+    @phase.ProcessState::Finalizing(..) => existing
     @phase.ProcessState::Finalized(..) => existing
     @phase.ProcessState::Failed(..) => existing
     _ => { ..existing, process: @phase.ProcessState::Connected }
+  }
+}
+
+///|
+test "register door keeps a Finalizing agent terminal (no resurrection)" {
+  let base = @phase.lifecycle_for_role("main.leaf", @types.Role::Dev)
+  let finalizing = {
+    ..base,
+    process: @phase.ProcessState::Finalizing(
+      reason=@phase.FinalizeReason::RecoveredDone,
+    ),
+  }
+  let after = lifecycle_for_registered_agent(finalizing)
+  assert_true(after.process.is_terminal())
+  match after.process {
+    @phase.ProcessState::Finalizing(..) => ()
+    other => fail("expected Finalizing preserved, got " + other.to_string())
+  }
+}
+
+///|
+test "register door preserves Finalized and Failed but reconnects others" {
+  let base = @phase.lifecycle_for_role("main.leaf", @types.Role::Dev)
+  let finalized = {
+    ..base,
+    process: @phase.ProcessState::Finalized(
+      reason=@phase.FinalizeReason::RecoveredDone,
+    ),
+  }
+  assert_true(lifecycle_for_registered_agent(finalized).process.is_terminal())
+  let failed = {
+    ..base,
+    process: @phase.ProcessState::Failed(
+      reason=@phase.FailureReason::RecoveredFailed,
+    ),
+  }
+  assert_true(lifecycle_for_registered_agent(failed).process.is_terminal())
+  let disconnected = {
+    ..base,
+    process: @phase.ProcessState::Disconnected(disconnected_at_unix_sec=0L),
+  }
+  match lifecycle_for_registered_agent(disconnected).process {
+    @phase.ProcessState::Connected => ()
+    other =>
+      fail("expected Disconnected to reconnect, got " + other.to_string())
   }
 }
 
