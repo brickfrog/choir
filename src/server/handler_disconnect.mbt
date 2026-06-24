@@ -2119,11 +2119,15 @@ pub async fn ServerState::process_pending_disconnects_with_runner(
 /// `pending_disconnect_target_still_alive` liveness probe returned false above).
 ///
 /// `handle_disconnect_confirming_with_runner` PRESERVES the thread-owning Dev
-/// states (`ReviewOwned`/`ChangesRequested`) across disconnect — by design, so a
-/// brief transport drop does not lose an in-flight review cycle. But this leaf
-/// is now confirmed gone: a dead leaf still owning a PR's contested review
-/// threads holds a worktree and orphaned threads with no reclamation path. The
-/// preserve no longer applies, so finalize it to Done.
+/// states (`ReviewOwned`/`ChangesRequested`/`ExitRequestedDeferred`) across
+/// disconnect — by design, so a brief transport drop does not lose an in-flight
+/// review cycle. But this leaf is now confirmed gone: a dead leaf still owning a
+/// PR's contested review threads sits non-terminal forever, wedging Leaf 1's
+/// `is_terminal`-keyed gate so the TL can never take over. Finalizing it to Done
+/// drives the agent terminal — clearing its runtime tracking, recording the
+/// terminal status, and firing the exit hook. (Worktree removal is intentionally
+/// left off here, `remove_worktree=false`: this path reclaims lifecycle/tracking,
+/// not the on-disk worktree.) The preserve no longer applies.
 ///
 /// JUSTIFICATION (F13): this is teardown that would exist even if no gate
 /// consumed the leaf's terminal-ness — a confirmed-dead agent's resources must
