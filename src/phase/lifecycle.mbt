@@ -551,32 +551,25 @@ pub fn lifecycle_idle_watchdog_exempt(lifecycle : AgentLifecycle) -> Bool {
 }
 
 ///|
-/// Selection predicate for the long progress backstop (choir-3rp5, F1): the
-/// watchdog-exempt Dev states that OWN a PR's contested review threads —
-/// `Dev(ReviewOwned)` and `Dev(ChangesRequested)`. These are exactly the states
-/// [`lifecycle_idle_watchdog_exempt`] skips, so a leaf wedged in one of them is
-/// reached by NEITHER the 300s idle watchdog (exempt) NOR the dead-leaf reaper
-/// (still process-alive) — an orphan-by-construction. The progress backstop is
-/// the only sweep covering them, so it names them here explicitly.
+/// Selection predicate for the long progress backstop AND the dead-leaf reaper
+/// (choir-3rp5, F1): the watchdog-exempt Dev states that OWN a PR's contested
+/// review threads — `Dev(ReviewOwned)`, `Dev(ChangesRequested)`, and
+/// `Dev(ExitRequestedDeferred)`. Each carries a `pr_number` and review state, so
+/// a leaf wedged in one of them is holding contested threads. These are exactly
+/// the states [`lifecycle_idle_watchdog_exempt`] skips, so an alive-but-wedged
+/// leaf in one of them is reached by NEITHER the 300s idle watchdog (exempt) NOR
+/// the dead-leaf reaper (still process-alive) — an orphan-by-construction, and a
+/// non-terminal owner that wedges Leaf 1's `is_terminal`-keyed gate. The progress
+/// backstop is the only sweep covering them, so it names them here explicitly.
 ///
-/// `Dev(ExitRequestedDeferred)` is intentionally excluded: that leaf has already
-/// requested exit and is handled by the disconnect/exit path, not the backstop.
+/// `Dev(WaitingForRedGate)` is intentionally EXCLUDED: it is a pre-PR TDD wait
+/// (the leaf sent `[RED GATE]` before filing any PR), so it owns NO review
+/// threads and carries no `pr_number` — it cannot orphan contested threads and
+/// is correctly left to the TDD red-gate handshake, not this backstop.
 pub fn lifecycle_thread_owning_dev(workflow : WorkflowState) -> Bool {
   match workflow {
     Dev(ReviewOwned(..)) | Dev(ChangesRequested(..)) => true
-    _ => false
-  }
-}
-
-///|
-pub fn progress_watchdog_applies(
-  workflow : WorkflowState,
-  fixes_pushed_at : Int64,
-) -> Bool {
-  match workflow {
-    Dev(Working) => true
-    Dev(ChangesRequested(..)) => fixes_pushed_at > 0L
-    Worker(Working) => true
+    Dev(ExitRequestedDeferred(..)) => true
     _ => false
   }
 }
