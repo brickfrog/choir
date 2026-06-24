@@ -392,6 +392,152 @@ test "lifecycle_thread_owning_dev excludes non-thread-owning and non-Dev states"
 }
 
 ///|
+/// Canonical structural shape of a `DevLifecycle`, collapsing unbounded numeric
+/// payloads (`pr_number`, `next_round`) so the BFS over `dev_lifecycle_transition`
+/// terminates while still distinguishing every variant that matters to the
+/// invariant. TOTAL match: a new `DevLifecycle` variant fails to compile here,
+/// forcing a maintainer to classify it before the invariant test can drift.
+fn dev_state_invariant_shape(state : DevLifecycle) -> String {
+  match state {
+    Working => "Working"
+    WaitingForRedGate => "WaitingForRedGate"
+    ReviewOwned(state~, ..) =>
+      "ReviewOwned:" + review_ownership_invariant_shape(state)
+    ChangesRequested(..) => "ChangesRequested"
+    ExitRequestedDeferred(state~, ..) =>
+      "ExitRequestedDeferred:" + review_ownership_invariant_shape(state)
+    Exitable => "Exitable"
+    Done(..) => "Done"
+    Failed(..) => "Failed"
+  }
+}
+
+///|
+fn review_ownership_invariant_shape(state : ReviewOwnership) -> String {
+  match state {
+    OpenUnreviewed(..) => "OpenUnreviewed"
+    FixesAwaitingReview(..) => "FixesAwaitingReview"
+    ApprovedAwaitingMerge => "ApprovedAwaitingMerge"
+  }
+}
+
+///|
+/// A `DevLifecycle` that corresponds to a terminal `ProcessState`: the leaf has
+/// finished (`Done`) or failed (`Failed`) and is finalized, so the single-writer
+/// gate's `is_terminal` axis has already released its threads to the TL. TOTAL
+/// match (anti-drift): a new variant must be explicitly classified.
+fn dev_state_process_terminal(state : DevLifecycle) -> Bool {
+  match state {
+    Done(..) | Failed(..) => true
+    Working
+    | WaitingForRedGate
+    | ReviewOwned(..)
+    | ChangesRequested(..)
+    | ExitRequestedDeferred(..)
+    | Exitable => false
+  }
+}
+
+///|
+/// One representative of every `DevLifecycleEvent` variant, targeting `pr`. The
+/// witness match below is the compile-time guard that keeps this alphabet in
+/// sync with the event enum, so the BFS can never silently omit a transition.
+fn dev_invariant_events(pr : Int) -> Array[DevLifecycleEvent] {
+  [
+    PRCreated(pr_number=pr, url="u"),
+    ReviewReceived(pr_number=pr, body="b"),
+    ReviewApproved(pr_number=pr),
+    FixesPushed(pr_number=pr, sha="s"),
+    ExitRequested,
+    MergeObserved(pr_number=pr),
+  ]
+}
+
+///|
+fn dev_event_invariant_witness(event : DevLifecycleEvent) -> Unit {
+  match event {
+    PRCreated(..)
+    | ReviewReceived(..)
+    | ReviewApproved(..)
+    | FixesPushed(..)
+    | ExitRequested
+    | MergeObserved(..) => ()
+  }
+}
+
+///|
+/// DEFENSIVE INVARIANT (choir-3rp5.5): the single-writer gate
+/// (`src/tools/dispatch.mbt`) blocks the TL for ANY non-terminal owner via
+/// `ProcessState::is_terminal`, but the liveness drivers (progress-backstop +
+/// dead-leaf reaper) only cover `lifecycle_thread_owning_dev`. Those two sets
+/// coincide today ONLY because the `DevLifecycle` transition table never routes a
+/// tracked-PR owner into a non-terminal, non-thread-owning state — nothing
+/// enforces it. This test PINS that coincidence: starting from the FSM's own
+/// entry into PR ownership and following the REAL `dev_lifecycle_transition`
+/// (both review modes), every reachable state must be either
+/// `ProcessState`-terminal OR in `lifecycle_thread_owning_dev`. A future
+/// transition that violates this — e.g. parking a PR-owner in `Exitable` while it
+/// still owns the tracked PR — would be reached by the BFS and fail here, before
+/// it can silently deadlock the TL gate (non-terminal owner, no driver to reap).
+test "every PR-owning-reachable DevLifecycle state is terminal or thread-owning (choir-3rp5.5 gate==driver invariant)" {
+  // Keep the event-alphabet exhaustiveness guard live.
+  for event in dev_invariant_events(1) {
+    dev_event_invariant_witness(event)
+  }
+  // Entry: the FSM's own transition into PR ownership, not a hand-written state.
+  let entry = match
+    dev_lifecycle_transition(Working, PRCreated(pr_number=1, url="u")) {
+    Transitioned(state) => state
+    InvalidTransition(msg) => {
+      fail("PRCreated must enter PR ownership: " + msg)
+      return
+    }
+  }
+  // BFS over the real transition function, both review modes, deduped by shape.
+  let visited : Map[String, DevLifecycle] = {}
+  let worklist : Array[DevLifecycle] = [entry]
+  visited.set(dev_state_invariant_shape(entry), entry)
+  let modes = [@types.ReviewMode::Iterative, @types.ReviewMode::SinglePass]
+  let mut i = 0
+  while i < worklist.length() {
+    let state = worklist[i]
+    i = i + 1
+    for mode in modes {
+      for event in dev_invariant_events(1) {
+        match dev_lifecycle_transition(state, event, review_mode=mode) {
+          Transitioned(next) => {
+            let key = dev_state_invariant_shape(next)
+            match visited.get(key) {
+              None => {
+                visited.set(key, next)
+                worklist.push(next)
+              }
+              Some(_) => ()
+            }
+          }
+          InvalidTransition(_) => ()
+        }
+      }
+    }
+  }
+  // The invariant: every reachable state is terminal or driver-covered.
+  for shape, state in visited {
+    let covered = dev_state_process_terminal(state) ||
+      lifecycle_thread_owning_dev(Dev(state))
+    if !covered {
+      fail(
+        "DevLifecycle state reachable while owning a tracked PR is neither ProcessState-terminal nor in lifecycle_thread_owning_dev: " +
+        shape +
+        " — a future transition would silently deadlock the TL single-writer gate (choir-3rp5.5).",
+      )
+    }
+  }
+  // Guard against a vacuous pass if the FSM entry ever stops reaching the
+  // PR-owning states (the three thread-owning states + the Done terminal).
+  assert_true(visited.length() >= 4)
+}
+
+///|
 test "WaitingForRedGate transitions identically to Working" {
   // PRCreated from WaitingForRedGate should work like from Working.
   match
