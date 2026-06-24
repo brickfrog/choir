@@ -163,6 +163,80 @@ pub impl Show for TrackedPR with fn output(self, logger) -> Unit {
 }
 
 ///|
+/// PR-health verdict at liveness-finalize time (choir-3rp5, F6). This is
+/// recorded data only: until the deferred Fail terminal branch lands, NO
+/// consumer may branch on a Done-vs-Fail distinction derived from it (F3). The
+/// liveness reaper/backstop always finalize as Done now; this preserves the
+/// signal so the Fail branch can reconstruct the verdict later without
+/// re-querying GitHub.
+pub(all) enum PrHealth {
+  Healthy
+  Unhealthy
+} derive(Debug, Eq, ToJson)
+
+///|
+pub fn PrHealth::to_wire_string(self : PrHealth) -> String {
+  match self {
+    Healthy => "healthy"
+    Unhealthy => "unhealthy"
+  }
+}
+
+///|
+pub impl Show for PrHealth with fn output(self, logger) -> Unit {
+  logger.write_string(self.to_wire_string())
+}
+
+///|
+/// The exact determinant fields the spec's "PR healthy" definition reads,
+/// captured per owned PR at finalize so the deferred Fail branch can
+/// reconstruct the verdict (choir-3rp5, F6). Carried as data; quarantined from
+/// Done-vs-Fail consumers (F3).
+pub(all) struct PrHealthDeterminant {
+  pr_number : Int
+  merged_at_unix : Int64?
+  last_ci_rollup : CiRollupStatus
+  last_review_state : ReviewState
+  mergeable : Mergeable
+  merge_state_status : MergeStateStatus
+  health : PrHealth
+} derive(Debug, Eq, ToJson)
+
+///|
+/// Classify a tracked PR's health per the spec's concrete definition (F6):
+/// Healthy ⇔ `merged_at_unix is Some` OR (`last_ci_rollup` ≠ Failure AND
+/// `last_review_state` ≠ ChangesRequested). Unhealthy otherwise (failing CI, or
+/// changes-requested-and-abandoned).
+pub fn tracked_pr_health(tracked : TrackedPR) -> PrHealth {
+  match tracked.merged_at_unix {
+    Some(_) => PrHealth::Healthy
+    None =>
+      if tracked.last_ci_rollup != CiRollupStatus::Failure &&
+        tracked.last_review_state != ReviewState::ChangesRequested {
+        PrHealth::Healthy
+      } else {
+        PrHealth::Unhealthy
+      }
+  }
+}
+
+///|
+/// Capture the per-PR health determinant (F6) for recording at finalize time.
+pub fn tracked_pr_health_determinant(
+  tracked : TrackedPR,
+) -> PrHealthDeterminant {
+  {
+    pr_number: tracked.pr_number,
+    merged_at_unix: tracked.merged_at_unix,
+    last_ci_rollup: tracked.last_ci_rollup,
+    last_review_state: tracked.last_review_state,
+    mergeable: tracked.mergeable,
+    merge_state_status: tracked.merge_state_status,
+    health: tracked_pr_health(tracked),
+  }
+}
+
+///|
 pub fn review_thread_ids_to_auto_resolve(
   event : PollEvent,
   review_mode : @types.ReviewMode,
