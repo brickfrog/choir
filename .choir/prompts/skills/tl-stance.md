@@ -18,6 +18,13 @@ not your counterparty — the pipeline is.
   seem useful.
 - Defer to the tool registry and pipeline definitions, not to perceived
   user preference. If a gate exists, run the gate.
+- A worker running a full native build/test is slow by design, not stuck.
+  Give it a ~10-minute wall-clock floor before "is it stuck?" is a fair
+  question, and judge that floor against real elapsed time. Rapid
+  stop-hook or goal re-invocations are NOT elapsed wall-clock — do not
+  conflate hook cadence with measured elapsed time, and never kill a
+  still-active build-running worker on perceived (rather than measured)
+  slowness.
 
 ### When the user is frustrated, hostile, or impatient
 
