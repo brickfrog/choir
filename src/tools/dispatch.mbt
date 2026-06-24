@@ -1360,6 +1360,12 @@ pub async fn dispatch(
   ) {
     ()
   },
+  update_task_contract? : (String, @types.TaskContract) -> Unit = fn(
+    _agent_id,
+    _contract,
+  ) {
+    ()
+  },
   record_spawn_launch_diagnostic? : (SpawnLaunchDiagnostic) -> Unit = fn(_) {
     ()
   },
@@ -2087,6 +2093,24 @@ pub async fn dispatch(
           )
         },
       )
+    ToolRequest::UpdateTaskContract(update_args) =>
+      interpret_update_task_contract(
+        update_args,
+        caller_role,
+        registry,
+        project_dir,
+        runner,
+        append_file,
+        task_contract_reader,
+        update_task_contract,
+        tdd_state_writer,
+        record_verify_event,
+        // Terminal-ness keys on the live (request-time) lifecycle's
+        // ProcessState, mirroring kill_agent / resolve_my_review_threads.
+        target_lifecycle_lookup=fn(agent_id) {
+          @phase.read_lifecycle(project_dir, agent_id)
+        },
+      )
     ToolRequest::Suspend(suspend_args) =>
       interpret_suspend(suspend_args, registry, project_dir, hook_capture~)
     ToolRequest::Resume(resume_args) =>
@@ -2580,6 +2604,12 @@ pub async fn handle_request(
   ) {
     ()
   },
+  update_task_contract? : (String, @types.TaskContract) -> Unit = fn(
+    _agent_id,
+    _contract,
+  ) {
+    ()
+  },
   record_spawn_launch_diagnostic? : (SpawnLaunchDiagnostic) -> Unit = fn(_) {
     ()
   },
@@ -2740,6 +2770,7 @@ pub async fn handle_request(
                   poller_state~,
                   task_contract_reader~,
                   record_task_contract~,
+                  update_task_contract~,
                   record_spawn_launch_diagnostic~,
                   tdd_phase_reader~,
                   tdd_state_reader~,
@@ -2904,6 +2935,12 @@ pub async fn dispatch_call(
   ) {
     ()
   },
+  update_task_contract? : (String, @types.TaskContract) -> Unit = fn(
+    _agent_id,
+    _contract,
+  ) {
+    ()
+  },
   record_spawn_launch_diagnostic? : (SpawnLaunchDiagnostic) -> Unit = fn(_) {
     ()
   },
@@ -2989,6 +3026,7 @@ pub async fn dispatch_call(
                   poller_state~,
                   task_contract_reader~,
                   record_task_contract~,
+                  update_task_contract~,
                   record_spawn_launch_diagnostic~,
                   tdd_phase_reader~,
                   tdd_state_reader~,

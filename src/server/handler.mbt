@@ -560,6 +560,9 @@ pub async fn ServerState::handle_with_runner_and_capture(
       record_task_contract=fn(agent_id, contract) {
         self.record_agent_task_contract(agent_id, contract)
       },
+      update_task_contract=fn(agent_id, contract) {
+        self.update_agent_task_contract(agent_id, contract)
+      },
       record_spawn_launch_diagnostic=fn(diagnostic) {
         self.record_spawn_launch_diagnostic(diagnostic)
       },

@@ -111,6 +111,17 @@ pub(all) enum EvidenceEvent {
   MergeExecutionRequested(mode~ : MergeExecutionMode)
   MergeObserved(pr_number~ : Int, pr_url~ : String?)
   ReviewThreadsResolved
+  /// Audit record of a TL/root mid-flight task-contract verify swap
+  /// (choir-35qw). `phase_reset` is true when the verify command actually
+  /// changed and the leaf's TDD phase was reset to Intent.
+  TaskContractVerifyUpdated(
+    caller~ : String,
+    old_verify~ : Array[String],
+    new_verify~ : Array[String],
+    old_verify_satisfied_by_ci~ : Bool,
+    new_verify_satisfied_by_ci~ : Bool,
+    phase_reset~ : Bool
+  )
 } derive(Debug, Eq)
 
 ///|
@@ -141,7 +152,24 @@ pub fn EvidenceEvent::type_name(self : EvidenceEvent) -> String {
     MergeExecutionRequested(..) => "evidence.merge_execution_requested"
     MergeObserved(..) => "evidence.merge_observed"
     ReviewThreadsResolved => "evidence.review_threads_resolved"
+    TaskContractVerifyUpdated(..) => "evidence.task_contract_verify_updated"
   }
+}
+
+///|
+fn evidence_json_string_array(value : Json?) -> Array[String] {
+  let out : Array[String] = []
+  match value {
+    Some(Array(items)) =>
+      for item in items {
+        match item {
+          String(s) => out.push(s)
+          _ => ()
+        }
+      }
+    _ => ()
+  }
+  out
 }
 
 ///|
@@ -189,6 +217,27 @@ fn evidence_event_data_json(event : EvidenceEvent) -> Json {
       }
     }
     ReviewThreadsResolved => ()
+    TaskContractVerifyUpdated(
+      caller~,
+      old_verify~,
+      new_verify~,
+      old_verify_satisfied_by_ci~,
+      new_verify_satisfied_by_ci~,
+      phase_reset~
+    ) => {
+      fields.set("caller", caller.to_json())
+      fields.set("old_verify", old_verify.to_json())
+      fields.set("new_verify", new_verify.to_json())
+      fields.set(
+        "old_verify_satisfied_by_ci",
+        old_verify_satisfied_by_ci.to_json(),
+      )
+      fields.set(
+        "new_verify_satisfied_by_ci",
+        new_verify_satisfied_by_ci.to_json(),
+      )
+      fields.set("phase_reset", phase_reset.to_json())
+    }
   }
   fields.to_json()
 }
@@ -285,6 +334,23 @@ fn evidence_event_from_fields(
     }
     "evidence.review_threads_resolved" =>
       Some(EvidenceEvent::ReviewThreadsResolved)
+    "evidence.task_contract_verify_updated" =>
+      Some(
+        EvidenceEvent::TaskContractVerifyUpdated(
+          caller=@types.json_field_string(fields, "caller").unwrap_or(""),
+          old_verify=evidence_json_string_array(fields.get("old_verify")),
+          new_verify=evidence_json_string_array(fields.get("new_verify")),
+          old_verify_satisfied_by_ci=@types.json_field_bool(
+            fields, "old_verify_satisfied_by_ci",
+          ).unwrap_or(true),
+          new_verify_satisfied_by_ci=@types.json_field_bool(
+            fields, "new_verify_satisfied_by_ci",
+          ).unwrap_or(true),
+          phase_reset=@types.json_field_bool(fields, "phase_reset").unwrap_or(
+            false,
+          ),
+        ),
+      )
     _ => None
   }
 }
