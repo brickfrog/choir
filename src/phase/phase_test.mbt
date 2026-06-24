@@ -395,6 +395,46 @@ test "progress_watchdog_applies includes only working Worker state" {
 }
 
 ///|
+test "lifecycle_thread_owning_dev covers ReviewOwned and ChangesRequested by name" {
+  // The progress backstop (choir-3rp5, F1) must cover exactly the
+  // watchdog-exempt thread-owning Dev states that own a PR's contested
+  // review threads — the states `lifecycle_idle_watchdog_exempt` skips.
+  assert_true(
+    lifecycle_thread_owning_dev(
+      Dev(ReviewOwned(pr_number=7, state=OpenUnreviewed(url="u"))),
+    ),
+  )
+  assert_true(
+    lifecycle_thread_owning_dev(
+      Dev(ReviewOwned(pr_number=7, state=ApprovedAwaitingMerge)),
+    ),
+  )
+  assert_true(
+    lifecycle_thread_owning_dev(Dev(ChangesRequested(pr_number=7, next_round=2))),
+  )
+}
+
+///|
+test "lifecycle_thread_owning_dev excludes non-thread-owning and non-Dev states" {
+  assert_false(lifecycle_thread_owning_dev(Dev(Working)))
+  assert_false(lifecycle_thread_owning_dev(Dev(WaitingForRedGate)))
+  assert_false(lifecycle_thread_owning_dev(Dev(Exitable)))
+  assert_false(lifecycle_thread_owning_dev(Dev(Done(reason=Merged))))
+  assert_false(
+    lifecycle_thread_owning_dev(Dev(Failed(reason=UnexpectedDisconnect))),
+  )
+  // ExitRequestedDeferred is a leaf that already requested exit; the backstop
+  // names only ReviewOwned/ChangesRequested (spec Leaf 2), so it is excluded.
+  assert_false(
+    lifecycle_thread_owning_dev(
+      Dev(ExitRequestedDeferred(pr_number=1, state=ApprovedAwaitingMerge)),
+    ),
+  )
+  assert_false(lifecycle_thread_owning_dev(Worker(Working)))
+  assert_false(lifecycle_thread_owning_dev(Supervisor(Planning)))
+}
+
+///|
 test "WaitingForRedGate transitions identically to Working" {
   // PRCreated from WaitingForRedGate should work like from Working.
   match

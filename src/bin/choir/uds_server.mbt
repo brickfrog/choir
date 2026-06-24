@@ -3815,6 +3815,11 @@ fn serve_run() -> Unit {
       root.spawn_bg(async fn() {
         let timeout_sec = 900L
         let disconnect_grace_sec = 60L
+        // Long progress-backstop net (choir-3rp5, F1): deliberately hours, far
+        // beyond any legitimate review round — a net, not a tuned SLA. Reclaims
+        // an alive-but-wedged thread-owning leaf the idle watchdog (exempt) and
+        // the dead-leaf reaper (still alive) both miss.
+        let progress_backstop_threshold_sec = 21600L
         let interval_ms = 30000
         for ;; {
           @async.sleep(interval_ms)
@@ -3838,6 +3843,7 @@ fn serve_run() -> Unit {
               @exec.run_sequence,
               worker_no_handoff_idle_sec=config.worker_no_handoff_idle_sec,
             )
+            state.progress_backstop_sweep(now, progress_backstop_threshold_sec)
           } catch {
             e =>
               @moontrace.error("poller tick error", fields=[
