@@ -36,6 +36,8 @@ pub(all) enum DevEvent {
   ReviewReceivedEv(pr_number~ : Int, body~ : String)
   ReviewApprovedEv(pr_number~ : Int)
   FixesPushedEv(pr_number~ : Int, sha~ : String)
+  /// The owning PR was closed on GitHub without being merged (choir-56ax).
+  PrClosedUnmerged(pr_number~ : Int)
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|

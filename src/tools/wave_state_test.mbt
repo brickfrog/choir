@@ -246,6 +246,7 @@ fn tracked_pr_with(
     last_timeout_at: 0L,
     copilot_issue_comment_seen: copilot_comment,
     orphan_notified: false,
+    closed_unmerged_notified: false,
     orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,

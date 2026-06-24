@@ -1236,3 +1236,144 @@ test "plan_post_tool_actions refreshes resolve_my_review_threads target_agent_id
   }
   @debug.assert_eq(refreshed, [456])
 }
+
+///|
+fn closed_unmerged_test_agent(
+  workflow : @phase.WorkflowState,
+) -> (@types.Agent, @phase.AgentLifecycle) {
+  let agent : @types.Agent = {
+    agent_id: @types.AgentId("main.leaf"),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Codex,
+    parent: Some("main.tl"),
+    workspace: "/tmp/choir-not-managed/dir",
+    branch: "feature/x.leaf",
+    terminal_target: None,
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  let lifecycle : @phase.AgentLifecycle = {
+    ..@phase.lifecycle_for_role("main.leaf", @types.Role::Dev),
+    workflow,
+  }
+  (agent, lifecycle)
+}
+
+///|
+test "plan_closed_unmerged_finalization finalizes owner to Done(PrClosedUnmerged), preserves worktree, never merges (choir-56ax)" {
+  let project_dir = "/repo"
+  let (agent, lifecycle) = closed_unmerged_test_agent(
+    @phase.WorkflowState::Dev(
+      @phase.DevLifecycle::ReviewOwned(
+        pr_number=42,
+        state=@phase.ReviewOwnership::OpenUnreviewed(url="u"),
+      ),
+    ),
+  )
+  let effects = plan_closed_unmerged_finalization(
+    agent, lifecycle, 42, "feature/x.leaf", project_dir,
+  )
+  // First effect: the PrClosedUnmerged dev transition (NOT MergeObserved).
+  match effects[0] {
+    UpdateDevLifecycle(
+      agent_id="main.leaf",
+      event=@phase.DevEvent::PrClosedUnmerged(pr_number=42)
+    ) => ()
+    _ => fail("expected PrClosedUnmerged dev update first")
+  }
+  // Finalize uses ExitReason::PrClosedUnmerged (so the honest label is reachable).
+  assert_true(
+    has_fire_hook_exit(
+      effects,
+      "main.leaf",
+      @types.ExitReason::PrClosedUnmerged,
+    ),
+  )
+  assert_eq(
+    count_persist_with_trigger(
+      effects,
+      @types.LifecycleTrigger::ExitPrClosedUnmerged,
+    ),
+    1,
+  )
+  assert_true(last_is_clear_runtime_for(effects, "main.leaf"))
+  let mut saw_finalized_done = false
+  let mut notify_info = false
+  for e in effects {
+    match e {
+      // remove_worktree=false (AR-9): NEVER tear down the worktree on a close.
+      RemoveWorktree(_) => fail("must NOT remove worktree on closed-unmerged")
+      // NEVER a merge at any layer.
+      DeliverToParentMerged(..) =>
+        fail("must NOT deliver merged for a close")
+      UpdateDevLifecycle(event=@phase.DevEvent::MergeObserved(..), ..) =>
+        fail("must NOT emit MergeObserved for a close")
+      NotifyParent(parent_id="main.tl", status=@types.Status::Info, ..) =>
+        notify_info = true
+      PersistLifecycle(lifecycle=lc, ..) =>
+        match lc.process {
+          @phase.ProcessState::Finalized(
+            reason=@phase.FinalizeReason::PrClosedUnmerged
+          ) =>
+            match lc.workflow {
+              @phase.WorkflowState::Dev(
+                @phase.DevLifecycle::Done(
+                  reason=@phase.FinalizeReason::PrClosedUnmerged
+                )
+              ) => saw_finalized_done = true
+              @phase.WorkflowState::Dev(
+                @phase.DevLifecycle::Done(reason=@phase.FinalizeReason::Merged)
+              ) => fail("persisted Done reason must NOT be Merged")
+              _ => ()
+            }
+          @phase.ProcessState::Finalized(reason=@phase.FinalizeReason::Merged) =>
+            fail("must NOT finalize as Merged for a close")
+          _ => ()
+        }
+      _ => ()
+    }
+  }
+  assert_true(saw_finalized_done)
+  assert_true(notify_info)
+}
+
+///|
+test "plan_closed_unmerged_finalization does NOT finalize a leaf owning a different PR (choir-56ax AR-2 per-PR gate)" {
+  let project_dir = "/repo"
+  // Leaf is actively working PR #200; its superseded #199 closes.
+  let (agent, lifecycle) = closed_unmerged_test_agent(
+    @phase.WorkflowState::Dev(
+      @phase.DevLifecycle::ReviewOwned(
+        pr_number=200,
+        state=@phase.ReviewOwnership::OpenUnreviewed(url="u"),
+      ),
+    ),
+  )
+  let effects = plan_closed_unmerged_finalization(
+    agent, lifecycle, 199, "feature/x.leaf", project_dir,
+  )
+  // The entire finalize (and parent notify) is gated: NOTHING is planned. The
+  // stale PR was already untracked by the poller; the leaf keeps working #200.
+  assert_eq(effects.length(), 0)
+}
+
+///|
+test "plan_closed_unmerged_finalization does not double-finalize or re-notify an already-terminal leaf (choir-56ax AR-4)" {
+  let project_dir = "/repo"
+  let (agent, lifecycle) = closed_unmerged_test_agent(
+    @phase.WorkflowState::Dev(
+      @phase.DevLifecycle::Done(reason=@phase.FinalizeReason::Merged),
+    ),
+  )
+  let terminal = {
+    ..lifecycle,
+    process: @phase.ProcessState::Finalized(
+      reason=@phase.FinalizeReason::Merged,
+    ),
+  }
+  let effects = plan_closed_unmerged_finalization(
+    agent, terminal, 42, "feature/x.leaf", project_dir,
+  )
+  assert_eq(effects.length(), 0)
+}

@@ -628,6 +628,7 @@ pub fn parent_poll_event_message(
       )
     }
     PRMerged(_) => None
+    PRClosedUnmerged(_) => None
     MergeReady(n) => {
       let readiness_summary = match notification_decision.policy_decision {
         @policy.MergeDecision::MergeNow(reason~) =>
@@ -700,6 +701,7 @@ fn poll_event_pr_number(event : @poller.PollEvent) -> Int {
     CILatestHeadRollupSucceeded(n) => n
     CopilotIssueCommentSeen(n) => n
     PRMerged(pr) => pr.pr_number
+    PRClosedUnmerged(pr) => pr.pr_number
     MergeReady(n) => n
     ReviewThreadsResolved(n) => n
   }
@@ -726,6 +728,7 @@ fn poll_event_tracked_snapshot(
 ) -> @poller.TrackedPR? {
   match event {
     PRMerged(pr) => Some(pr)
+    PRClosedUnmerged(pr) => Some(pr)
     _ => tracked
   }
 }
@@ -734,6 +737,14 @@ fn poll_event_tracked_snapshot(
 fn poll_event_is_external_merge(event : @poller.PollEvent) -> Bool {
   match event {
     PRMerged(_) => true
+    _ => false
+  }
+}
+
+///|
+fn poll_event_is_closed_unmerged(event : @poller.PollEvent) -> Bool {
+  match event {
+    PRClosedUnmerged(_) => true
     _ => false
   }
 }
@@ -1027,6 +1038,7 @@ fn synthetic_untracked_merged_pr(
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
+    closed_unmerged_notified: false,
     orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
@@ -1310,6 +1322,7 @@ fn poller_event_name(event : @poller.PollEvent) -> String {
     CILatestHeadRollupSucceeded(_) => "ci_latest_head_rollup_succeeded"
     CopilotIssueCommentSeen(_) => "copilot_issue_comment_seen"
     PRMerged(_) => "pr_merged"
+    PRClosedUnmerged(_) => "pr_closed_unmerged"
     MergeReady(_) => "merge_ready"
     ReviewThreadsResolved(_) => "review_threads_resolved"
   }
@@ -1565,6 +1578,7 @@ pub fn leaf_poll_review_injection_message(
     FixesPushed(_) => None
     ReviewTimeout(_) => None
     PRMerged(_) => None
+    PRClosedUnmerged(_) => None
     MergeReady(_) => None
     ReviewThreadsResolved(n) =>
       Some(
@@ -2071,6 +2085,16 @@ pub fn poll_event_beads_note_and_state(
           "merged",
         ),
       )
+    PRClosedUnmerged(pr) =>
+      Some(
+        (
+          "Choir poller: PR #" +
+          pr.pr_number.to_string() +
+          " closed without merge; leaf finalized",
+          "pr",
+          "closed_unmerged",
+        ),
+      )
   }
 }
 
@@ -2539,6 +2563,22 @@ async fn deliver_pending_poll_events(
           )
         }
       }
+      PRClosedUnmerged(pr) =>
+        // Closed without merge: finalize the OWNING leaf to Done(PrClosedUnmerged)
+        // and notify the TL — gated per-PR inside the planner (a superseded PR
+        // closing while the leaf works its replacement must NOT reap it). NEVER
+        // a merge at any layer (choir-56ax AR-2).
+        match tracked_for_delivery {
+          Some(_) =>
+            state.reconcile_closed_unmerged_with_runner(
+              pr.agent_id,
+              pr.pr_number,
+              pr.branch,
+              runner,
+              sleep_fn~,
+            )
+          None => ()
+        }
       _ =>
         for
           planned in state.plan_poll_event_deliveries(
@@ -2556,7 +2596,10 @@ async fn deliver_pending_poll_events(
       Some(pr) => {
         append_poll_snapshot_evidence(state, pr, event, unresolved_threads)
         mirror_poll_event_to_beads(state, pr, event, runner)
-        if poll_event_is_external_merge(event) {
+        if poll_event_is_external_merge(event) ||
+          poll_event_is_closed_unmerged(event) {
+          // Both terminal PR-close paths already finalized the leaf and notified
+          // the parent; skip automerge/parent-poll-notify (the close never merges).
           continue
         }
         if !automerge_attempted_prs.contains(pr.pr_number) {

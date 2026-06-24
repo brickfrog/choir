@@ -73,6 +73,7 @@ pub fn pr_comment_body(
       )
     PRMerged(_) => None
     MergeReady(_) => None
+    PRClosedUnmerged(_) => None
     ReviewThreadsResolved(n) =>
       Some(
         (

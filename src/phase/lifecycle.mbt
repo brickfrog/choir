@@ -8,6 +8,11 @@ pub(all) enum FinalizeReason {
   RescuedByReplacement
   /// Agent was in `Completing` state at server startup; original finalize reason unknown.
   Recovered
+  /// The owning PR was closed on GitHub without being merged. A clean terminal,
+  /// NOT a failure: the leaf did not malfunction, its PR was closed externally
+  /// (human or supersede). Distinct from `Merged` at the reason level so no
+  /// merge-privileged path treats it as a merge (choir-56ax AR-1/AR-6).
+  PrClosedUnmerged
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -281,6 +286,8 @@ pub(all) enum DevLifecycleEvent {
   FixesPushed(pr_number~ : Int, sha~ : String)
   ExitRequested
   MergeObserved(pr_number~ : Int)
+  /// The owning PR was closed on GitHub without being merged (choir-56ax).
+  PrClosedUnmerged(pr_number~ : Int)
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -667,6 +674,29 @@ pub fn dev_lifecycle_transition(
         InvalidTransition("merge count mismatch")
       }
     (Exitable, MergeObserved(_)) => Transitioned(Done(reason=Merged))
+    // Closed-unmerged: clean terminal Done(PrClosedUnmerged) for the leaf that
+    // owns this exact PR (per-PR gate, choir-56ax). ChangesRequested is a
+    // NET-NEW arm — MergeObserved has none (AR-3). Exitable is EXCLUDED: it is
+    // pr-blind and a pr-blind finalize there would mislabel a leaf that exited
+    // Working-with-no-PR (AR-3b).
+    (ReviewOwned(pr_number=n, ..), PrClosedUnmerged(pr_number=c)) =>
+      if c == n {
+        Transitioned(Done(reason=PrClosedUnmerged))
+      } else {
+        InvalidTransition("closed-unmerged count mismatch")
+      }
+    (ChangesRequested(pr_number=n, ..), PrClosedUnmerged(pr_number=c)) =>
+      if c == n {
+        Transitioned(Done(reason=PrClosedUnmerged))
+      } else {
+        InvalidTransition("closed-unmerged count mismatch")
+      }
+    (ExitRequestedDeferred(pr_number=n, ..), PrClosedUnmerged(pr_number=c)) =>
+      if c == n {
+        Transitioned(Done(reason=PrClosedUnmerged))
+      } else {
+        InvalidTransition("closed-unmerged count mismatch")
+      }
     (_, _) => InvalidTransition("invalid transition for DevLifecycle")
   }
 }

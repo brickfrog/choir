@@ -450,6 +450,7 @@ fn dev_invariant_events(pr : Int) -> Array[DevLifecycleEvent] {
     FixesPushed(pr_number=pr, sha="s"),
     ExitRequested,
     MergeObserved(pr_number=pr),
+    PrClosedUnmerged(pr_number=pr),
   ]
 }
 
@@ -461,7 +462,8 @@ fn dev_event_invariant_witness(event : DevLifecycleEvent) -> Unit {
     | ReviewApproved(..)
     | FixesPushed(..)
     | ExitRequested
-    | MergeObserved(..) => ()
+    | MergeObserved(..)
+    | PrClosedUnmerged(..) => ()
   }
 }
 
@@ -1471,4 +1473,51 @@ test "sanitize_branch escapes dots and path separators" {
   assert_eq(sanitize_branch("main.leaf"), "main--leaf")
   assert_eq(sanitize_branch("feature/x.leaf"), "feature_x--leaf")
   assert_eq(sanitize_branch("feature\\x.leaf"), "feature_x--leaf")
+}
+
+///|
+test "dev_lifecycle_transition closes ReviewOwned/ChangesRequested/ExitRequestedDeferred to Done(PrClosedUnmerged) on matching PR (choir-56ax)" {
+  // ReviewOwned -> Done(PrClosedUnmerged)
+  match
+    dev_lifecycle_transition(
+      ReviewOwned(pr_number=200, state=OpenUnreviewed(url="u")),
+      PrClosedUnmerged(pr_number=200),
+    ) {
+    Transitioned(Done(reason=PrClosedUnmerged)) => ()
+    _ => fail("expected Done(PrClosedUnmerged) from ReviewOwned")
+  }
+  // ChangesRequested (NET-NEW arm — MergeObserved has none) -> Done(PrClosedUnmerged)
+  match
+    dev_lifecycle_transition(
+      ChangesRequested(pr_number=200, next_round=2),
+      PrClosedUnmerged(pr_number=200),
+    ) {
+    Transitioned(Done(reason=PrClosedUnmerged)) => ()
+    _ =>
+      fail("expected Done(PrClosedUnmerged) from ChangesRequested")
+  }
+  // ExitRequestedDeferred -> Done(PrClosedUnmerged)
+  match
+    dev_lifecycle_transition(
+      ExitRequestedDeferred(pr_number=200, state=ApprovedAwaitingMerge),
+      PrClosedUnmerged(pr_number=200),
+    ) {
+    Transitioned(Done(reason=PrClosedUnmerged)) => ()
+    _ =>
+      fail("expected Done(PrClosedUnmerged) from ExitRequestedDeferred")
+  }
+  // PER-PR gate: a stale PR closing must NOT finalize a leaf owning a different PR.
+  match
+    dev_lifecycle_transition(
+      ReviewOwned(pr_number=200, state=OpenUnreviewed(url="u")),
+      PrClosedUnmerged(pr_number=199),
+    ) {
+    InvalidTransition(_) => ()
+    _ => fail("expected InvalidTransition for stale PR close")
+  }
+  // Exitable is EXCLUDED (pr-blind, AR-3b).
+  match dev_lifecycle_transition(Exitable, PrClosedUnmerged(pr_number=200)) {
+    InvalidTransition(_) => ()
+    _ => fail("expected InvalidTransition for Exitable close")
+  }
 }

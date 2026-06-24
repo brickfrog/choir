@@ -221,6 +221,10 @@ pub(all) enum LifecycleTrigger {
   ExitDisconnected
   ExitShutdown
   FinalizeComplete
+  /// DevLifecycle transition: a tracked PR was closed unmerged (choir-56ax).
+  PrClosedUnmerged
+  /// Finalize exit because a tracked PR was closed unmerged (choir-56ax).
+  ExitPrClosedUnmerged
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -835,6 +839,8 @@ pub fn LifecycleTrigger::to_wire_string(self : LifecycleTrigger) -> String {
     ExitDisconnected => "ExitDisconnected"
     ExitShutdown => "ExitShutdown"
     FinalizeComplete => "FinalizeComplete"
+    PrClosedUnmerged => "PrClosedUnmerged"
+    ExitPrClosedUnmerged => "ExitPrClosedUnmerged"
   }
 }
 
@@ -843,6 +849,11 @@ pub(all) enum ExitReason {
   Merged
   Disconnected
   Shutdown
+  /// A tracked PR was closed on GitHub WITHOUT being merged. A clean terminal
+  /// (the leaf did not malfunction); distinct from `Merged` so merge-privileged
+  /// paths never treat the close as a merge, and so the honest `Done` label is
+  /// reachable instead of being overwritten to Merged/Shutdown (choir-56ax AR-1).
+  PrClosedUnmerged
 } derive(Debug, Eq)
 
 ///|
@@ -851,6 +862,7 @@ pub impl Show for ExitReason with fn output(self, logger) -> Unit {
     Merged => logger.write_string("Merged")
     Disconnected => logger.write_string("Disconnected")
     Shutdown => logger.write_string("Shutdown")
+    PrClosedUnmerged => logger.write_string("PrClosedUnmerged")
   }
 }
 
@@ -860,6 +872,7 @@ pub fn ExitReason::lifecycle_trigger(self : ExitReason) -> LifecycleTrigger {
     Merged => ExitMerged
     Disconnected => ExitDisconnected
     Shutdown => ExitShutdown
+    PrClosedUnmerged => ExitPrClosedUnmerged
   }
 }
 
