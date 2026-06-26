@@ -1370,6 +1370,7 @@ pub async fn dispatch(
     ()
   },
   tdd_phase_reader? : (String) -> @types.LeafTddPhase? = fn(_) { None },
+  transcript_idle_reader? : (@types.Agent) -> Int64? = fn(_) { None },
   tdd_state_reader? : (String) -> @types.LeafTddState? = fn(_) { None },
   tdd_state_writer? : (String, @types.LeafTddState) -> Unit = fn(_, _) { () },
   baseline_sha_for_agent? : (String) -> String? = fn(_) { None },
@@ -2017,6 +2018,7 @@ pub async fn dispatch(
         poller_state,
         capture~,
         tdd_phase_reader~,
+        transcript_idle_reader~,
         task_contract_reader~,
         moon_verify_target~,
         reviewer~,
@@ -2614,6 +2616,7 @@ pub async fn handle_request(
     ()
   },
   tdd_phase_reader? : (String) -> @types.LeafTddPhase? = fn(_) { None },
+  transcript_idle_reader? : (@types.Agent) -> Int64? = fn(_) { None },
   tdd_state_reader? : (String) -> @types.LeafTddState? = fn(_) { None },
   tdd_state_writer? : (String, @types.LeafTddState) -> Unit = fn(_, _) { () },
   baseline_sha_for_agent? : (String) -> String? = fn(_) { None },
@@ -2773,6 +2776,7 @@ pub async fn handle_request(
                   update_task_contract~,
                   record_spawn_launch_diagnostic~,
                   tdd_phase_reader~,
+                  transcript_idle_reader~,
                   tdd_state_reader~,
                   tdd_state_writer~,
                   baseline_sha_for_agent~,
@@ -2945,6 +2949,7 @@ pub async fn dispatch_call(
     ()
   },
   tdd_phase_reader? : (String) -> @types.LeafTddPhase? = fn(_) { None },
+  transcript_idle_reader? : (@types.Agent) -> Int64? = fn(_) { None },
   tdd_state_reader? : (String) -> @types.LeafTddState? = fn(_) { None },
   tdd_state_writer? : (String, @types.LeafTddState) -> Unit = fn(_, _) { () },
   list_panes_cache? : Map[String, CachedListPanesSnapshot]? = None,
@@ -3029,6 +3034,7 @@ pub async fn dispatch_call(
                   update_task_contract~,
                   record_spawn_launch_diagnostic~,
                   tdd_phase_reader~,
+                  transcript_idle_reader~,
                   tdd_state_reader~,
                   tdd_state_writer~,
                   list_panes_cache~,

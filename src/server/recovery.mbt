@@ -26,6 +26,7 @@ pub fn make_hermetic_recovery_provider() -> @runtime.RecoveryProvider {
       @async.sleep(0)
       false
     },
+    leaf_transcript_idle_sec: fn(_dir, _workspace, _agent_type) { None },
     open_prs: async fn(_dir) {
       @async.sleep(0)
       []

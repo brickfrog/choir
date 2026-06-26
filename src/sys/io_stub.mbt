@@ -252,6 +252,11 @@ pub fn file_size(_path : String) -> Int {
 }
 
 ///|
+pub fn file_mtime_sec(_path : String) -> Int64? {
+  None
+}
+
+///|
 pub fn path_entry_exists(_path : String) -> Bool {
   false
 }

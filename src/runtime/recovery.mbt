@@ -137,10 +137,91 @@ pub(all) struct RecoveryPlan {
 } derive(Debug)
 
 ///|
+pub fn claude_transcript_dir_for_workspace(
+  claude_home : String,
+  workspace : String,
+) -> String {
+  let mangled = StringBuilder::new()
+  for c in workspace {
+    match c {
+      '/' | '.' => mangled.write_char('-')
+      _ => mangled.write_char(c)
+    }
+  }
+  claude_home + "/projects/" + mangled.to_string()
+}
+
+///|
+pub fn default_claude_home(
+  getenv? : (String) -> String? = @sys.getenv,
+) -> String? {
+  match getenv("CLAUDE_CONFIG_DIR") {
+    Some(value) if value.trim() != "" => Some(value)
+    _ =>
+      match getenv("HOME") {
+        Some(home) if home.trim() != "" => Some(home + "/.claude")
+        _ => None
+      }
+  }
+}
+
+///|
+fn seconds_since_mtime(now_sec : Int64, mtime_sec : Int64) -> Int64 {
+  if mtime_sec > now_sec {
+    0L
+  } else {
+    now_sec - mtime_sec
+  }
+}
+
+///|
+pub fn leaf_transcript_idle_sec_with_io(
+  project_dir : String,
+  workspace : String,
+  agent_type : @types.AgentType,
+  claude_home : String?,
+  now_sec? : Int64 = @poller.now_sec(),
+  list_dir? : (String) -> Array[String] = @sys.list_dir,
+  file_mtime_sec? : (String) -> Int64? = @sys.file_mtime_sec,
+) -> Int64? {
+  if agent_type != @types.AgentType::Claude {
+    return None
+  }
+  if !@types.is_choir_managed_worktree_path(project_dir, workspace) {
+    return None
+  }
+  let home = match claude_home {
+    Some(value) if value.trim() != "" => value
+    _ => return None
+  }
+  let transcript_dir = claude_transcript_dir_for_workspace(home, workspace)
+  let mut newest : Int64? = None
+  for entry in list_dir(transcript_dir) {
+    if !entry.has_suffix(".jsonl") {
+      continue
+    }
+    match file_mtime_sec(transcript_dir + "/" + entry) {
+      Some(mtime) =>
+        match newest {
+          Some(existing) if existing >= mtime => ()
+          _ => newest = Some(mtime)
+        }
+      None => ()
+    }
+  }
+  match newest {
+    Some(mtime) => Some(seconds_since_mtime(now_sec, mtime))
+    None => None
+  }
+}
+
+///|
 pub(all) struct RecoveryProvider {
   zellij_live : async (String, String) -> ZellijLiveTargets
   // (project_dir, agent_id) — owned-handle liveness via the recorded pgid.
   agent_process_alive : async (String, String) -> Bool
+  // (project_dir, workspace, agent_type) — seconds since newest leaf transcript.
+  leaf_transcript_idle_sec : (String, String, @types.AgentType) -> Int64?
   open_prs : async (String) -> Array[OpenPR]
   find_prs_by_head : async (String, String) -> Array[OpenPR]
   find_prs_by_head_any : async (String, String) -> Array[KnownPR]
@@ -570,6 +651,7 @@ pub fn make_shell_recovery_provider(
     @async.sleep(0)
     false
   },
+  claude_home? : () -> String? = fn() { default_claude_home() },
 ) -> RecoveryProvider {
   {
     zellij_live: async fn(project_dir, session) {
@@ -584,6 +666,14 @@ pub fn make_shell_recovery_provider(
       )
     },
     agent_process_alive,
+    leaf_transcript_idle_sec: fn(project_dir, workspace, agent_type) {
+      leaf_transcript_idle_sec_with_io(
+        project_dir,
+        workspace,
+        agent_type,
+        claude_home(),
+      )
+    },
     open_prs: async fn(project_dir) {
       let open_pr_output = capture(
         "gh",
@@ -718,7 +808,9 @@ pub fn make_shell_recovery_provider(
       if !@sys.path_exists(project_dir + "/.choir/state/poller_state.json") {
         return []
       }
-      let content = @sys.read_file(project_dir + "/.choir/state/poller_state.json")
+      let content = @sys.read_file(
+        project_dir + "/.choir/state/poller_state.json",
+      )
       if content == "" {
         return []
       }
@@ -732,7 +824,9 @@ pub fn make_shell_recovery_provider(
             @env.now().reinterpret_as_int64().to_string()
           ignore(@sys.write_file_atomic(quarantine, content))
           ignore(
-            @sys.delete_file_sync(project_dir + "/.choir/state/poller_state.json"),
+            @sys.delete_file_sync(
+              project_dir + "/.choir/state/poller_state.json",
+            ),
           )
           write_stderr(
             "poller_state.json parse error (quarantined to " +

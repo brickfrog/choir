@@ -5,6 +5,7 @@ async test "discover_recovery_input with mock provider" {
       @runtime.ZellijLiveTargets::{ tabs: ["tab1"], panes: ["pane1"] }
     },
     agent_process_alive: fn(_dir, _workspace) { false },
+    leaf_transcript_idle_sec: fn(_dir, _workspace, _agent_type) { None },
     open_prs: fn(_dir) {
       [
         @runtime.OpenPR::{

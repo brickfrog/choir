@@ -391,6 +391,7 @@ pub(all) struct WaveStateChild {
   agent_state : @types.AgentState
   tdd_phase : @types.LeafTddPhase?
   last_heartbeat_ms : Int64?
+  transcript_idle_sec : Int64?
   pr : WaveStatePR?
 } derive(Debug, Eq, ToJson)
 
@@ -491,6 +492,15 @@ pub impl FromJson for WaveStateChild with fn from_json(json, path) {
           )
         None => None
       }
+      let transcript_idle_sec : Int64? = match
+        fields.get("transcript_idle_sec") {
+        Some(value) =>
+          wave_state_optional_int64_from_json(
+            value,
+            path.add_key("transcript_idle_sec"),
+          )
+        None => None
+      }
       let pr : WaveStatePR? = match fields.get("pr") {
         Some(Null) => None
         Some(value) => Some(@json.from_json(value, path=path.add_key("pr")))
@@ -507,6 +517,7 @@ pub impl FromJson for WaveStateChild with fn from_json(json, path) {
         agent_state,
         tdd_phase,
         last_heartbeat_ms,
+        transcript_idle_sec,
         pr,
       }
     }
@@ -907,6 +918,7 @@ pub fn plan_wave_state(
   now_ms : Int64,
   beads_issue_reader? : (@types.Agent) -> String? = wave_state_default_beads_issue_reader,
   tdd_phase_reader? : (String) -> @types.LeafTddPhase? = wave_state_default_tdd_phase,
+  transcript_idle_reader? : (@types.Agent) -> Int64? = wave_state_default_transcript_idle,
   task_contract_reader? : (String) -> @types.TaskContract? = wave_state_default_task_contract_reader,
   verify_results_reader? : (@poller.TrackedPR, @types.TaskContract) -> Array[
     @types.VerifyCheckResult,
@@ -998,6 +1010,7 @@ pub fn plan_wave_state(
       agent_state: child.state,
       tdd_phase: tdd_phase_reader(child_id),
       last_heartbeat_ms: heartbeat_reader(child_id),
+      transcript_idle_sec: transcript_idle_reader(child),
       pr,
     })
   }
@@ -1024,6 +1037,11 @@ fn wave_state_default_heartbeat(_agent_id : String) -> Int64? {
 }
 
 ///|
+fn wave_state_default_transcript_idle(_agent : @types.Agent) -> Int64? {
+  None
+}
+
+///|
 /// Effect layer for `wave_state`. Fetches unresolved review threads per
 /// tracked PR via `fetch_unresolved_review_threads`, assembles a typed
 /// snapshot, and returns a JSON response. Thread-fetch errors are reported
@@ -1036,6 +1054,7 @@ pub async fn interpret_wave_state(
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
   heartbeat_reader? : (String) -> Int64? = wave_state_default_heartbeat,
   tdd_phase_reader? : (String) -> @types.LeafTddPhase? = wave_state_default_tdd_phase,
+  transcript_idle_reader? : (@types.Agent) -> Int64? = wave_state_default_transcript_idle,
   task_contract_reader? : (String) -> @types.TaskContract? = wave_state_default_task_contract_reader,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
   reviewer? : @types.Reviewer = @types.Config::default().pr_policy.reviewer,
@@ -1177,6 +1196,7 @@ pub async fn interpret_wave_state(
       @env.now().reinterpret_as_int64(),
       beads_issue_reader~,
       tdd_phase_reader~,
+      transcript_idle_reader~,
       task_contract_reader=normalized_task_contract_reader,
       verify_results_reader~,
       missing_task_contract_blocks=true,

@@ -1106,6 +1106,7 @@ pub async fn ServerState::check_idle_agents(
   timeout : Int64,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   worker_no_handoff_idle_sec? : Int64 = 120L,
+  transcript_progress_window_sec? : Int64 = 90L,
 ) -> Unit {
   let agent_ids = self.pane_watcher.watched_agents()
   for agent_id in agent_ids {
@@ -1178,11 +1179,7 @@ pub async fn ServerState::check_idle_agents(
         // has no owned handle, so the fast path stays disabled and the
         // threshold reap is the only signal.
         let idle_expired = observation.idle_sec >= timeout
-        let process_dead = if idle_expired {
-          // Already reaping via the idle threshold; the liveness probe would
-          // only change observability, so skip the subprocess call.
-          false
-        } else if @types.is_choir_managed_worktree_path(
+        let process_dead = if @types.is_choir_managed_worktree_path(
             self.config.project_dir,
             agent.workspace,
           ) {
@@ -1193,7 +1190,37 @@ pub async fn ServerState::check_idle_agents(
         } else {
           false
         }
-        if !idle_expired && !process_dead {
+        if process_dead {
+          ()
+        } else if idle_expired && agent.agent_type == @types.AgentType::Claude {
+          let transcript_idle_sec = (self.recovery_provider.leaf_transcript_idle_sec)(
+            self.config.project_dir,
+            agent.workspace,
+            agent.agent_type,
+          )
+          let progressing = match transcript_idle_sec {
+            Some(seconds) => seconds < transcript_progress_window_sec
+            None => false
+          }
+          if progressing {
+            @moontrace.warn(
+              "watchdog idle reap suppressed by transcript progress",
+              fields=[
+                @moontrace.field("agent", agent_id),
+                @moontrace.field("idle_sec", observation.idle_sec),
+                @moontrace.field(
+                  "transcript_idle_sec",
+                  transcript_idle_sec.unwrap_or(-1L),
+                ),
+                @moontrace.field("threshold", timeout),
+                @moontrace.field(
+                  "transcript_progress_window_sec", transcript_progress_window_sec,
+                ),
+              ],
+            )
+            continue
+          }
+        } else if !idle_expired {
           continue
         }
         self.emit_worker_exited_without_notify_if_needed(
@@ -1206,7 +1233,11 @@ pub async fn ServerState::check_idle_agents(
           @moontrace.field("agent", agent_id),
           @moontrace.field(
             "idle_sec",
-            if idle_expired { timeout } else { observation.idle_sec },
+            if idle_expired {
+              timeout
+            } else {
+              observation.idle_sec
+            },
           ),
           @moontrace.field("process_dead", process_dead),
         ])

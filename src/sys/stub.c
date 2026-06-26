@@ -435,6 +435,14 @@ int choir_get_file_size(const char* path) {
     return (int)size;
 }
 
+long long choir_file_mtime_sec(const char* path) {
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        return -1;
+    }
+    return (long long)st.st_mtime;
+}
+
 int choir_system(const char* cmd) {
     return system(cmd);
 }

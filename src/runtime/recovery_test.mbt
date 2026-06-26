@@ -32,6 +32,22 @@ test "parse_zellij_live_targets collects live tab and pane names" {
 }
 
 ///|
+test "claude transcript dir mangles workspace path exactly" {
+  assert_eq(
+    claude_transcript_dir_for_workspace(
+      "/home/justin/.claude", "/mnt/data/Code/choir",
+    ),
+    "/home/justin/.claude/projects/-mnt-data-Code-choir",
+  )
+  assert_eq(
+    claude_transcript_dir_for_workspace(
+      "/home/justin/.claude", "/mnt/data/Code/choir/.choir/worktrees/X",
+    ),
+    "/home/justin/.claude/projects/-mnt-data-Code-choir--choir-worktrees-X",
+  )
+}
+
+///|
 test "parse_open_prs ignores malformed entries" {
   let prs = parse_open_prs(
     "[{\"number\":12,\"headRefName\":\"main.leaf-a\",\"baseRefName\":\"main\"},{\"number\":\"oops\",\"headRefName\":\"main.leaf-b\",\"baseRefName\":\"main\",\"url\":\"https://example.test/pr/13\"}]",
@@ -79,6 +95,7 @@ async test "find_agent_for_pr_in_lifecycle finds agent ID by PR number" {
   let mock_provider : RecoveryProvider = {
     zellij_live: fn(_dir, _session) { { tabs: [], panes: [] } },
     agent_process_alive: fn(_dir, _workspace) { false },
+    leaf_transcript_idle_sec: fn(_dir, _workspace, _agent_type) { None },
     open_prs: fn(_dir) { [] },
     find_prs_by_head: fn(_dir, _branch) { [] },
     find_prs_by_head_any: fn(_dir, _branch) { [] },
@@ -123,6 +140,7 @@ async test "find_pr_for_branch_in_provider finds PR by head branch" {
   let mock_provider : RecoveryProvider = {
     zellij_live: fn(_dir, _session) { { tabs: [], panes: [] } },
     agent_process_alive: fn(_dir, _workspace) { false },
+    leaf_transcript_idle_sec: fn(_dir, _workspace, _agent_type) { None },
     open_prs: fn(_dir) { [] },
     find_prs_by_head: fn(_dir, branch) {
       if branch == "feat/x" {
