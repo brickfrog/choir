@@ -131,6 +131,17 @@ fn completion_handoff_hook_result(
   create_dir_all? : (String) -> Bool = @sys.create_dir_all,
   write_file? : (String, String) -> Bool = @sys.write_file_sync,
 ) -> CompletionHandoffHookResult {
+  // A root/parentless agent has no parent to hand off to (notify_parent/handoff
+  // reports "no parent for root"), so handed_off can never become true and an
+  // untracked root never advances the attempt counter past max_attempts -- the
+  // gate would block forever. A root has nothing to hand off, so short-circuit
+  // to AllowStop before consulting handoff status or touching the counter.
+  if @phase.is_root_tl_shaped_agent_id(agent_id) {
+    return completion_handoff_provider_result(
+      provider,
+      @hooks.CompletionHookDecision::AllowStop,
+    )
+  }
   let attempts_path = @types.completion_handoff_attempts_relpath(agent_id)
   let attempts_dir = @types.completion_handoff_attempts_dir(agent_id)
   let attempts = parse_completion_handoff_attempts(read_file(attempts_path))
@@ -324,6 +335,46 @@ test "completion handoff hook emits provider block and allow shapes" {
   assert_eq(claude_block.exit_code, 2)
   assert_eq(claude_block.stdout, "")
   assert_true(claude_block.stderr.contains("notify_parent"))
+}
+
+///|
+test "completion handoff hook allows stop for root parentless agent" {
+  let query_agents : Array[String] = []
+  let writes : Array[String] = []
+  let root = completion_handoff_hook_result(
+    @hooks.HookProvider::Codex,
+    "user-12345-67890",
+    fn(agent_id) {
+      query_agents.push(agent_id)
+      Ok(false)
+    },
+    max_attempts=3,
+    read_file=fn(_) { "0" },
+    create_dir_all=fn(_) { true },
+    write_file=fn(path, content) {
+      writes.push(path + "=" + content)
+      true
+    },
+  )
+  assert_eq(root.exit_code, 0)
+  assert_eq(root.stdout, "{\"continue\":false}\n")
+  assert_eq(root.stderr, "")
+  // A root has nothing to hand off: short-circuit before consulting handoff
+  // status or touching the attempt counter.
+  @debug.assert_eq(query_agents, [])
+  @debug.assert_eq(writes, [])
+  let claude_root = completion_handoff_hook_result(
+    @hooks.HookProvider::Claude,
+    "user-12345-67890",
+    fn(_) { Ok(false) },
+    max_attempts=3,
+    read_file=fn(_) { "0" },
+    create_dir_all=fn(_) { true },
+    write_file=fn(_, _) { true },
+  )
+  assert_eq(claude_root.exit_code, 0)
+  assert_eq(claude_root.stdout, "")
+  assert_eq(claude_root.stderr, "")
 }
 
 ///|
