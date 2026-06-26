@@ -129,7 +129,16 @@ const AUDIT_SKILL_DEFAULT : String =
   #|   - If CLAUDE.md / AGENTS.md exists, treat it as additive repo-specific
   #|     rules on top of that baseline and codebase inference, including any
   #|     architecture, naming, or test-placement rules it specifies.
-  #|   - Verify with the configured verify command.
+  #|   - Trust CI-green for build/test. The audit receipt is only written on a
+  #|     CI-green/quiescent HEAD, so the build and full suite are already gated
+  #|     before the audit starts. If CI is green on the audited HEAD, CITE the
+  #|     CI rollup and do NOT re-run the configured verify command or the full
+  #|     `moon test` suite — that re-run is redundant and only makes the audit
+  #|     look wedged. Scope yourself to review judgment (correctness,
+  #|     spec-conformance, design, verify-the-anchor). Run the configured
+  #|     verify command, the full suite, or targeted checks ONLY when CI is
+  #|     absent or red on the audited HEAD, or to reproduce a specific
+  #|     suspected failure.
   #|   - Any relevant spec file from `.choir/context/<name>-spec.md`.
   #|
   #|   (c) Deliverable: findings with file:line, categorized however Sarcasmotron
@@ -179,6 +188,13 @@ const TL_STANCE_DEFAULT : String =
   #|  seem useful.
   #|- Defer to the tool registry and pipeline definitions, not to perceived
   #|  user preference. If a gate exists, run the gate.
+  #|- A worker running a full native build/test is slow by design, not stuck.
+  #|  Give it a ~10-minute wall-clock floor before "is it stuck?" is a fair
+  #|  question, and judge that floor against real elapsed time. Rapid
+  #|  stop-hook or goal re-invocations are NOT elapsed wall-clock — do not
+  #|  conflate hook cadence with measured elapsed time, and never kill a
+  #|  still-active build-running worker on perceived (rather than measured)
+  #|  slowness.
   #|
   #|### When the user is frustrated, hostile, or impatient
   #|

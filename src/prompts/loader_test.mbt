@@ -396,9 +396,37 @@ test "audit default prompt layers baseline, codebase, and agent docs" {
   )
   assert_true(body.contains("CLAUDE.md / AGENTS.md"))
   assert_true(body.contains("correctness, security, dead code, test hygiene"))
-  assert_true(body.contains("Verify with the configured verify command."))
-  assert_false(body.contains("moon test"))
   assert_false(body.contains("ChoirError"))
+}
+
+///|
+/// Anti-drift guard: the baked AuditSkill default must carry the
+/// trust-CI-green policy and the baked TlStance default must carry the
+/// build-worker time-floor note, matching their override .md content
+/// (.choir/prompts/skills/{audit,tl-stance}.md). PR #665 edited only the
+/// override layer; this guard fails if the baked defaults silently drift
+/// back to the pre-policy wording.
+test "baked audit default carries trust-CI-green policy" {
+  let body = default_prompt(PromptName::AuditSkill)
+  assert_true(body.contains("Trust CI-green for build/test."))
+  assert_true(
+    body.contains("do NOT re-run the configured verify command or the full"),
+  )
+  assert_true(body.contains("Scope yourself to review judgment"))
+  assert_true(body.contains("targeted checks ONLY when CI is"))
+  // The stale pre-#665 wording must be gone.
+  assert_false(body.contains("Verify with the configured verify command."))
+}
+
+///|
+test "baked tl-stance default carries build-worker time-floor note" {
+  let body = default_prompt(PromptName::TlStance)
+  assert_true(
+    body.contains("A worker running a full native build/test is slow by design"),
+  )
+  assert_true(body.contains("10-minute wall-clock"))
+  assert_true(body.contains("are NOT elapsed wall-clock"))
+  assert_true(body.contains("still-active build-running worker"))
 }
 
 ///|
