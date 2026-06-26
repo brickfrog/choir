@@ -434,15 +434,46 @@ fn init_runtime_cleanup_paths() -> Array[String] {
 }
 
 ///|
-/// Restricted to the literal supervisor tab names choir always creates
-/// (Server, TL). Leaf-branch tabs are NOT matched here because any
-/// heuristic "has a dot + safe chars" matcher false-positives on common
-/// user tabs (v1.0.0, package.json, notes.md, my.feature.branch) and any
-/// "-N suffix" matcher also misses real choir tabs whose slugs end in
-/// arbitrary text (auto-rescue-pr-400-w2fix). Proper leaf-branch
-/// tracking is via a persistent registry — tracked in a follow-up bead.
-fn init_is_choir_managed_zellij_tab_name(name : String) -> Bool {
+/// Reserved supervisor tab names choir always creates (Server, TL). These run in
+/// the root checkout (no worktree) and are created in init/serve OUTSIDE the
+/// worktree-spawn registry, so the registry-based reap planner never sees them.
+/// Closing them by their reserved literal names is the documented narrow
+/// fallback — choir owns these exact names. No name-shape heuristic is applied to
+/// any other tab: leaf-branch / worker tabs are reaped only via the persistent
+/// registry ([`init_reap_stale_zellij_tabs`]), which never touches a user tab
+/// (v1.0.0, package.json, my.feature.branch) because such tabs are absent from
+/// the registry.
+fn init_is_reserved_supervisor_zellij_tab_name(name : String) -> Bool {
   name == "Server" || name == "TL"
+}
+
+///|
+/// Load all persisted agent lifecycles for the registry-based zellij tab reap.
+/// Reads `.choir/state/kv/lifecycle--*` (the same files recovery consumes) and
+/// parses each into an `AgentLifecycle`; empty / malformed files are skipped.
+fn init_load_agent_lifecycles(
+  project_dir : String,
+) -> Array[@phase.AgentLifecycle] {
+  let out : Array[@phase.AgentLifecycle] = []
+  let dir = project_dir + "/.choir/state/kv"
+  if !@sys.path_entry_exists(dir) {
+    return out
+  }
+  let prefix = "lifecycle--"
+  for name in @sys.list_dir(dir) {
+    if !(name.has_prefix(prefix) && name.length() > prefix.length()) {
+      continue
+    }
+    let content = @sys.read_file(dir + "/" + name)
+    if content == "" {
+      continue
+    }
+    match @phase.lifecycle_from_json(content) {
+      Some(lifecycle) => out.push(lifecycle)
+      None => ()
+    }
+  }
+  out
 }
 
 ///|
@@ -473,14 +504,55 @@ async fn init_close_zellij_tab(session : String, tab : String) -> Unit {
 }
 
 ///|
+/// Close stale choir-created zellij tabs left over from a prior boot (e.g. a
+/// resurrected session). Two disjoint, independently-safe sources:
+///
+///   1. Reserved supervisor tabs (`Server`, `TL`) — closed by reserved literal
+///      name. They have no worktree and are created outside the registry.
+///   2. Worktree-backed leaf / sub-TL / worker tabs recorded in the persistent
+///      registry. `plan_zellij_tab_reaps` closes one ONLY when its owning agent
+///      is terminal, not recovered, and its worktree is gone. A tab absent from
+///      the registry (a user's own tab) is therefore never closed.
+///
+/// `recovered_agents` is empty here: a freshly (re)created session has no live
+/// agents, so the terminal + worktree-gone checks are the real guard.
 async fn init_reap_stale_zellij_tabs(
   session : String,
+  project_dir? : String = ".",
   list_tabs? : async (String) -> Array[String] = init_list_zellij_tabs,
   close_tab? : async (String, String) -> Unit = init_close_zellij_tab,
+  load_registry? : (String) -> @tools.ZellijTabRegistry = @tools.load_zellij_tab_registry,
+  load_lifecycles? : (String) -> Array[@phase.AgentLifecycle] = init_load_agent_lifecycles,
+  worktree_exists? : (String) -> Bool = fn(path) { @sys.path_exists(path) },
 ) -> Unit {
-  for tab in list_tabs(session) {
-    if init_is_choir_managed_zellij_tab_name(tab) {
+  let listed = list_tabs(session)
+  // (1) reserved supervisor tabs.
+  let listed_set : Map[String, Unit] = {}
+  for tab in listed {
+    listed_set.set(tab, ())
+    if init_is_reserved_supervisor_zellij_tab_name(tab) {
       close_tab(session, tab)
+    }
+  }
+  // (2) registry-tracked worktree tabs whose owning agent is gone.
+  let registry = load_registry(project_dir)
+  let entries : Array[@tools.ZellijTabEntry] = []
+  for _agent_id, entry in registry.tabs {
+    if entry.session == session {
+      entries.push(entry)
+    }
+  }
+  let planned = @tools.plan_zellij_tab_reaps(
+    entries,
+    [],
+    load_lifecycles(project_dir),
+    project_dir,
+    worktree_exists,
+  )
+  for entry in planned {
+    // Only close a planned tab that is actually present in the session.
+    if listed_set.contains(entry.tab_name) {
+      close_tab(session, entry.tab_name)
     }
   }
 }
@@ -1092,11 +1164,10 @@ async test "init reaps stale choir Server/TL tabs and leaves everything else alo
     list_tabs=async fn(session) {
       @async.sleep(0)
       listed.push(session)
-      // Mix of (a) literal choir tabs that must be reaped, (b) common user
-      // tab names that the previous heuristic matcher false-positived on
-      // (v1.0.0, package.json, my.feature.branch, README.md, notes.md),
-      // and (c) leaf-branch slugs which are explicitly NOT reaped under
-      // the literal-only matcher pending the registry-based follow-up.
+      // Mix of (a) reserved supervisor tabs that must be reaped, (b) common user
+      // tab names that the prior heuristic matcher false-positived on
+      // (v1.0.0, package.json, my.feature.branch, README.md, notes.md), and
+      // (c) leaf-branch slugs which are NOT in the (empty) registry here.
       [
         "Server", "TL", "v1.0.0", "package.json", "my.feature.branch", "README.md",
         "notes.md", "feature-x.leaf-0", "auto-rescue-pr-400-w2fix", "unrelated-user-tab",
@@ -1106,29 +1177,96 @@ async test "init reaps stale choir Server/TL tabs and leaves everything else alo
       @async.sleep(0)
       closed.push(session + ":" + tab)
     },
+    // Hermetic: empty registry + no lifecycles, so only the reserved
+    // supervisor tabs are reaped and nothing touches the real filesystem.
+    load_registry=fn(_project_dir) { @tools.ZellijTabRegistry::new() },
+    load_lifecycles=fn(_project_dir) { [] },
+    worktree_exists=fn(_path) { false },
   )
   @debug.assert_eq(listed, ["choir"])
   @debug.assert_eq(closed, ["choir:Server", "choir:TL"])
 }
 
 ///|
-test "init choir zellij tab matcher only matches literal Server and TL" {
-  assert_true(init_is_choir_managed_zellij_tab_name("Server"))
-  assert_true(init_is_choir_managed_zellij_tab_name("TL"))
+test "init reserved supervisor matcher only matches literal Server and TL" {
+  assert_true(init_is_reserved_supervisor_zellij_tab_name("Server"))
+  assert_true(init_is_reserved_supervisor_zellij_tab_name("TL"))
   // Common user tab names that the prior dotted-slug heuristic accepted —
   // all must be rejected to prevent close-tab from firing against them.
-  assert_false(init_is_choir_managed_zellij_tab_name("v1.0.0"))
-  assert_false(init_is_choir_managed_zellij_tab_name("package.json"))
-  assert_false(init_is_choir_managed_zellij_tab_name("my.feature.branch"))
-  assert_false(init_is_choir_managed_zellij_tab_name("README.md"))
-  assert_false(init_is_choir_managed_zellij_tab_name("notes.md"))
-  // Leaf-branch slug shapes — explicitly NOT closed under the literal-only
-  // matcher; tracked via persistent registry in a follow-up bead.
-  assert_false(init_is_choir_managed_zellij_tab_name("feature-x.leaf-0"))
+  assert_false(init_is_reserved_supervisor_zellij_tab_name("v1.0.0"))
+  assert_false(init_is_reserved_supervisor_zellij_tab_name("package.json"))
+  assert_false(init_is_reserved_supervisor_zellij_tab_name("my.feature.branch"))
+  assert_false(init_is_reserved_supervisor_zellij_tab_name("README.md"))
+  assert_false(init_is_reserved_supervisor_zellij_tab_name("notes.md"))
+  // Leaf-branch slug shapes — never matched by reserved name; reaped only via
+  // the persistent registry when their owning agent is terminal + worktree-gone.
+  assert_false(init_is_reserved_supervisor_zellij_tab_name("feature-x.leaf-0"))
   assert_false(
-    init_is_choir_managed_zellij_tab_name("auto-rescue-pr-400-w2fix"),
+    init_is_reserved_supervisor_zellij_tab_name("auto-rescue-pr-400-w2fix"),
   )
-  assert_false(init_is_choir_managed_zellij_tab_name("unrelated-user-tab"))
+  assert_false(init_is_reserved_supervisor_zellij_tab_name("unrelated-user-tab"))
+}
+
+///|
+async test "init registry reap closes only terminal+gone leaf tabs, never user or live tabs" {
+  let closed : Array[String] = []
+  let project_dir = "/repo"
+  fn entry(agent_id : String) -> @tools.ZellijTabEntry {
+    {
+      agent_id,
+      session: "choir",
+      tab_name: agent_id,
+      workspace: project_dir + "/.choir/worktrees/" + agent_id,
+      created_ts: 0L,
+    }
+  }
+
+  fn lifecycle(
+    agent_id : String,
+    process : @phase.ProcessState,
+  ) -> @phase.AgentLifecycle {
+    {
+      agent_id,
+      role: @types.Role::Dev,
+      process,
+      workflow: @phase.WorkflowState::Dev(@phase.DevLifecycle::Working),
+      last_updated_unix_sec: 0L,
+    }
+  }
+
+  let registry = @tools.ZellijTabRegistry::new()
+  registry.tabs.set("dead-leaf", entry("dead-leaf")) // terminal + gone -> CLOSE
+  registry.tabs.set("live-leaf", entry("live-leaf")) // connected -> KEEP
+  init_reap_stale_zellij_tabs(
+    "choir",
+    project_dir~,
+    list_tabs=async fn(_session) {
+      @async.sleep(0)
+      // A user's own tabs sit alongside the registered leaf tabs in the session.
+      ["v1.0.0", "package.json", "my.feature.branch", "dead-leaf", "live-leaf"]
+    },
+    close_tab=async fn(_session, tab) {
+      @async.sleep(0)
+      closed.push(tab)
+    },
+    load_registry=fn(_project_dir) { registry },
+    load_lifecycles=fn(_project_dir) {
+      [
+        lifecycle(
+          "dead-leaf",
+          @phase.ProcessState::Finalized(
+            reason=@phase.FinalizeReason::RecoveredDone,
+          ),
+        ),
+        lifecycle("live-leaf", @phase.ProcessState::Connected),
+      ]
+    },
+    // Both worktrees are gone; liveness is decided purely by lifecycle state.
+    worktree_exists=fn(_path) { false },
+  )
+  // Only the terminal leaf whose worktree is gone is closed. User tabs (absent
+  // from the registry) and the live leaf are untouched.
+  @debug.assert_eq(closed, ["dead-leaf"])
 }
 
 ///|
@@ -2186,7 +2324,7 @@ fn init_run() -> Unit {
           // them as new tabs, which is expected). The reap runs inside
           // `choir init`, not `choir serve`, so `.choir/logs/serve.log` is not
           // the right observable for this leaf.
-          init_reap_stale_zellij_tabs(session)
+          init_reap_stale_zellij_tabs(session, project_dir~)
         }
       }
       let server_tab_exists = init_tab_exists(session, "Server") catch {
