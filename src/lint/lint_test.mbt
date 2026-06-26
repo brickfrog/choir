@@ -676,6 +676,73 @@ test "flags inline tests in source files" {
 }
 
 ///|
+test "flags hazardous native ffi call outside sanctioned seam" {
+  let source =
+    #|fn leak() {
+    #|  @sys.git_fetch_origin_branch_best_effort_native(".", "main")
+    #|}
+  assert_single_rule_for_file(
+    source, "src/tools/fork_wave.mbt", "native-ffi-bypass",
+  )
+}
+
+///|
+test "flags hazardous native ffi wrapper through package alias" {
+  let source =
+    #|fn leak() {
+    #|  @ws.run_native_worktree_bootstrap_cleanup_command(".", ".", "main")
+    #|}
+  let manifest =
+    #|import {
+    #|  "choir/src/workspace" as ws,
+    #|}
+  match
+    lint_source(
+      "src/runtime/native_alias.mbt",
+      source,
+      read_file=fn(path) {
+        if path == "src/runtime/moon.pkg" {
+          manifest
+        } else {
+          ""
+        }
+      },
+      path_exists=fn(path) { path == "src/runtime/moon.pkg" },
+      package_alias_cache=@ref.new({}),
+    ) {
+    Ok(findings) => {
+      assert_eq(findings.length(), 1)
+      assert_eq(findings[0].rule_id, "native-ffi-bypass")
+    }
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
+test "allows hazardous native ffi call from sanctioned seam" {
+  let source =
+    #|fn run_native_git_fetch_origin_branch_best_effort_command(
+    #|  project_dir : String,
+    #|  branch : String,
+    #|) -> Unit {
+    #|  @sys.git_fetch_origin_branch_best_effort_native(project_dir, branch)
+    #|}
+  match lint_source("src/workspace/command.mbt", source) {
+    Ok(findings) => assert_eq(findings.length(), 0)
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
+test "flags hazardous native ffi call from inline test inside sanctioned seam" {
+  let source =
+    #|test "bad" {
+    #|  @sys.worktree_bootstrap_cleanup_native(".", ".", "main")
+    #|}
+  assert_single_rule_for_file(source, "src/sys/io.mbt", "native-ffi-bypass")
+}
+
+///|
 test "does not flag git text without execution" {
   let source =
     #|test "ok" {

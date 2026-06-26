@@ -409,6 +409,106 @@ fn is_exec_capture_ref_for_file_with_package_aliases(
 }
 
 ///|
+fn is_hazardous_sys_native_ref(
+  package_aliases : Array[(String, String)],
+  expr : @syntax.Expr,
+) -> Bool {
+  match dotted_ident_name(expr) {
+    Some(name) =>
+      expr_package_matches(package_aliases, expr, "sys") &&
+      (
+        name == "git_fetch_origin_branch_best_effort_native" ||
+        name == "worktree_bootstrap_cleanup_native" ||
+        name == "worktree_seed_agent_runtime_gitexclude_native" ||
+        name == "init_cleanup_runtime_artifacts_native" ||
+        name == "init_cleanup_purge_artifacts_native"
+      )
+    None => false
+  }
+}
+
+///|
+fn is_hazardous_workspace_native_wrapper_ref(
+  package_aliases : Array[(String, String)],
+  expr : @syntax.Expr,
+) -> Bool {
+  match dotted_ident_name(expr) {
+    Some(name) =>
+      expr_package_matches(package_aliases, expr, "workspace") &&
+      (
+        name == "run_native_git_fetch_origin_branch_best_effort_command" ||
+        name == "run_native_worktree_bootstrap_cleanup_command" ||
+        name == "run_native_worktree_seed_agent_runtime_gitexclude_command"
+      )
+    None => false
+  }
+}
+
+///|
+fn is_hazardous_native_ffi_ref(
+  package_aliases : Array[(String, String)],
+  expr : @syntax.Expr,
+) -> Bool {
+  match expr {
+    Group(expr~, ..) => is_hazardous_native_ffi_ref(package_aliases, expr)
+    _ =>
+      is_hazardous_sys_native_ref(package_aliases, expr) ||
+      is_hazardous_workspace_native_wrapper_ref(package_aliases, expr)
+  }
+}
+
+///|
+fn is_native_ffi_sanctioned_seam_file(file : String) -> Bool {
+  let file = canonical_file(file)
+  file.has_prefix("src/sys/") ||
+  file == "src/workspace/command.mbt" ||
+  file.has_prefix("src/exec/") ||
+  file.has_prefix("src/bin/")
+}
+
+///|
+fn native_ffi_bypass_rule_enabled(env : LintEnv) -> Bool {
+  env.test_rules_enabled || !is_native_ffi_sanctioned_seam_file(env.file)
+}
+
+///|
+fn check_native_ffi_bypass(
+  env : LintEnv,
+  expr : @syntax.Expr,
+  loc : @basic.Location,
+) -> Unit {
+  if native_ffi_bypass_rule_enabled(env) &&
+    is_hazardous_native_ffi_ref(env.package_aliases, expr) {
+    emit(
+      env, "native-ffi-bypass", "native FFI call does real network/FS I/O that bypasses the CHOIR_TEST_NO_EXEC tripwire; route through exec.run or the sanctioned run_native_* wrapper instead",
+      loc,
+    )
+  }
+}
+
+///|
+fn check_native_ffi_bypass_args(
+  env : LintEnv,
+  args : @list.List[@syntax.Argument],
+  loc : @basic.Location,
+) -> Unit {
+  for arg in args {
+    check_native_ffi_bypass(env, arg.value, loc)
+  }
+}
+
+///|
+fn check_native_ffi_bypass_record_fields(
+  env : LintEnv,
+  fields : @list.List[@syntax.FieldDef],
+  loc : @basic.Location,
+) -> Unit {
+  for field in fields {
+    check_native_ffi_bypass(env, field.expr, loc)
+  }
+}
+
+///|
 fn is_exec_package_ref(
   package_aliases : Array[(String, String)],
   expr : @syntax.Expr,
@@ -1510,6 +1610,8 @@ impl @syntax.IterVisitor for LintEnv with fn visit_Impl_TopImpl(
 impl @syntax.IterVisitor for LintEnv with fn visit_Expr(env, expr) {
   match expr {
     Apply(func~, args~, loc~, ..) => {
+      check_native_ffi_bypass(env, func, loc)
+      check_native_ffi_bypass_args(env, args, loc)
       check_test_apply(env, func, args, loc)
       if env.test_rules_enabled &&
         current_decl_name(env).has_prefix("test:") &&
@@ -1535,8 +1637,12 @@ impl @syntax.IterVisitor for LintEnv with fn visit_Expr(env, expr) {
     }
     DotApply(method_name~, args~, loc~, ..) =>
       check_test_method_apply(env, method_name.name, args, loc)
-    Record(fields~, loc~, ..) => check_test_record_fields(env, fields, loc)
-    Let(pattern~, expr=value, loc~, ..) =>
+    Record(fields~, loc~, ..) => {
+      check_native_ffi_bypass_record_fields(env, fields, loc)
+      check_test_record_fields(env, fields, loc)
+    }
+    Let(pattern~, expr=value, loc~, ..) => {
+      check_native_ffi_bypass(env, value, loc)
       if env.test_rules_enabled &&
         is_forbidden_test_exec_package_ref(env.package_aliases, value) {
         emit(
@@ -1551,6 +1657,7 @@ impl @syntax.IterVisitor for LintEnv with fn visit_Expr(env, expr) {
       } else {
         bind_alias_if_needed(env, pattern, value)
       }
+    }
     _ => ()
   }
   env.base().visit_Expr(expr)
@@ -1578,6 +1685,7 @@ impl @syntax.IterVisitor for LintEnv with fn visit_Parameter_Optional(
       binder.loc,
     )
   }
+  check_native_ffi_bypass(env, default, binder.loc)
   env.base().visit_Parameter_Optional(binder~, default~, ty~)
 }
 
