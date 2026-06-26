@@ -105,6 +105,13 @@ fn heartbeat_map_reader(map : Map[String, Int64]) -> (String) -> Int64? {
 }
 
 ///|
+fn transcript_idle_map_reader(
+  map : Map[String, Int64],
+) -> (@types.Agent) -> Int64? {
+  fn(agent) { map.get(agent.agent_id.to_string()) }
+}
+
+///|
 fn escape_wave_state_test_toml_string(s : String) -> String {
   let buf = StringBuilder::new()
   for c in s {
@@ -180,6 +187,8 @@ fn wave_state_schema_test_snapshot() -> WaveStateSnapshot {
   tdd_phases.set("tl.leaf", @types.LeafTddPhase::Done)
   let heartbeats : Map[String, Int64] = {}
   heartbeats.set("tl.leaf", 1_700_000_003_000L)
+  let transcript_idle : Map[String, Int64] = {}
+  transcript_idle.set("tl.leaf", 42L)
   let bead_ids : Map[String, String] = {}
   bead_ids.set("tl", "choir-ptz")
   bead_ids.set("tl.leaf", "choir-ptz")
@@ -193,6 +202,7 @@ fn wave_state_schema_test_snapshot() -> WaveStateSnapshot {
     1_700_000_004_000L,
     beads_issue_reader=fn(agent) { bead_ids.get(agent.agent_id.to_string()) },
     tdd_phase_reader=fn(agent_id) { tdd_phases.get(agent_id) },
+    transcript_idle_reader=transcript_idle_map_reader(transcript_idle),
   ).unwrap()
 }
 
@@ -1225,6 +1235,97 @@ test "plan_wave_state worker with stale heartbeat appears in snapshot" {
     @phase.Worker(@phase.WorkerLifecycle::Working) => ()
     _ => fail("expected Worker(Working) for silent worker")
   }
+}
+
+///|
+test "plan_wave_state populates transcript idle with injected reader" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
+      )
+    }),
+  )
+  ignore(
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent(
+          "tl.claude-leaf",
+          @types.Role::Dev,
+          Some("tl"),
+          @types.AgentType::Claude,
+        ),
+      )
+    }),
+  )
+  let lifecycles : Map[String, @phase.AgentLifecycle] = {}
+  lifecycles.set(
+    "tl",
+    make_supervisor_lifecycle(
+      "tl",
+      @phase.SupervisorLifecycle::Supervising(children=[], wave=1),
+    ),
+  )
+  let transcript_idle : Map[String, Int64] = {}
+  transcript_idle.set("tl.claude-leaf", 37L)
+  let snap = plan_wave_state(
+    "tl",
+    reg,
+    lifecycle_map_reader(lifecycles),
+    None,
+    threads_zero_lookup,
+    no_heartbeat,
+    1_600_000_600_000L,
+    transcript_idle_reader=transcript_idle_map_reader(transcript_idle),
+  ).unwrap()
+  assert_eq(snap.children.length(), 1)
+  @debug.assert_eq(snap.children[0].transcript_idle_sec, Some(37L))
+}
+
+///|
+test "plan_wave_state defaults transcript idle to None" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
+      )
+    }),
+  )
+  ignore(
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent(
+          "tl.codex-leaf",
+          @types.Role::Dev,
+          Some("tl"),
+          @types.AgentType::Codex,
+        ),
+      )
+    }),
+  )
+  let lifecycles : Map[String, @phase.AgentLifecycle] = {}
+  lifecycles.set(
+    "tl",
+    make_supervisor_lifecycle(
+      "tl",
+      @phase.SupervisorLifecycle::Supervising(children=[], wave=1),
+    ),
+  )
+  let snap = plan_wave_state(
+    "tl",
+    reg,
+    lifecycle_map_reader(lifecycles),
+    None,
+    threads_zero_lookup,
+    no_heartbeat,
+    1_600_000_600_000L,
+  ).unwrap()
+  assert_eq(snap.schema_version, 1)
+  @debug.assert_eq(snap.children[0].transcript_idle_sec, None)
+  let decoded = wave_state_snapshot_decode_result(snap.to_json())
+  assert_true(decoded is Ok(_))
 }
 
 ///|

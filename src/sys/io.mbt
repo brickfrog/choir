@@ -4,6 +4,10 @@ extern "C" fn c_get_file_size(path : Bytes) -> Int = "choir_get_file_size"
 
 ///|
 #borrow(path)
+extern "C" fn c_file_mtime_sec(path : Bytes) -> Int64 = "choir_file_mtime_sec"
+
+///|
+#borrow(path)
 extern "C" fn c_path_entry_exists(path : Bytes) -> Int = "choir_path_entry_exists"
 
 ///|
@@ -141,6 +145,20 @@ pub fn path_exists(path : String) -> Bool {
 pub fn file_size(path : String) -> Int {
   let path_bytes = string_to_null_terminated_bytes(path)
   c_get_file_size(path_bytes)
+}
+
+///|
+/// Last modification time of `path` in Unix seconds, or `None` when `stat(2)`
+/// fails. Used by host adapters that need cheap file freshness without reading
+/// file contents.
+pub fn file_mtime_sec(path : String) -> Int64? {
+  let path_bytes = string_to_null_terminated_bytes(path)
+  let mtime = c_file_mtime_sec(path_bytes)
+  if mtime < 0L {
+    None
+  } else {
+    Some(mtime)
+  }
 }
 
 ///|

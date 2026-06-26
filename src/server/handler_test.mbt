@@ -10478,6 +10478,7 @@ fn pid_liveness_test_state(
   label : String,
   screen : String,
   process_alive : Bool,
+  transcript_idle_sec? : Int64? = None,
 ) -> ServerState {
   let project_dir = "/tmp/choir-pid-liveness-" +
     label +
@@ -10497,6 +10498,9 @@ fn pid_liveness_test_state(
     agent_process_alive: async fn(_dir, _id) {
       @async.sleep(0)
       process_alive
+    },
+    leaf_transcript_idle_sec: fn(_dir, _workspace, _agent_type) {
+      transcript_idle_sec
     },
   }
   let host : @runtime.PaneWatchHost = {
@@ -10522,11 +10526,12 @@ fn pid_liveness_dev(
   agent_id : String,
   parent_id : String,
   project_dir : String,
+  agent_type? : @types.AgentType = @types.AgentType::Codex,
 ) -> @types.Agent {
   {
     agent_id: @types.AgentId(agent_id),
     role: @types.Role::Dev,
-    agent_type: @types.AgentType::Codex,
+    agent_type,
     parent: Some(parent_id),
     workspace: project_dir + "/.choir/worktrees/" + agent_id,
     branch: agent_id,
@@ -10535,6 +10540,182 @@ fn pid_liveness_dev(
     spawn_depth: 1,
     state: @types.AgentState::Active,
   }
+}
+
+///|
+async test "check_idle_agents suppresses idle reap for fresh Claude transcript" {
+  let screen = "{\"event\":\"pane_update\",\"viewport\":[\"thinking\",\"thinking\"]}"
+  let state = pid_liveness_test_state(
+    "claude-transcript-fresh",
+    screen,
+    true,
+    transcript_idle_sec=Some(80L),
+  )
+  let parent_id = "main.parent"
+  let leaf_id = "main.dev-transcript"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      pid_liveness_dev(
+        leaf_id,
+        parent_id,
+        state.config.project_dir,
+        agent_type=@types.AgentType::Claude,
+      ),
+    ),
+  )
+  state.watch_pane(leaf_id)
+  let sent : Array[String] = []
+  let start = @poller.now_sec()
+  state.check_idle_agents(
+    start,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_idle_sec=0L,
+    transcript_progress_window_sec=90L,
+  )
+  state.check_idle_agents(
+    start + 301L,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_idle_sec=0L,
+    transcript_progress_window_sec=90L,
+  )
+  assert_eq(state.registry.get(leaf_id).state, @types.AgentState::Active)
+  assert_eq(worker_handoff_count_sent(sent, "[WATCHDOG] agent " + leaf_id), 0)
+  ignore(@sys.rm_rf(state.config.project_dir))
+}
+
+///|
+async test "check_idle_agents still reaps idle leaf when transcript missing" {
+  let screen = "{\"event\":\"pane_update\",\"viewport\":[\"hung\",\"hung\"]}"
+  let state = pid_liveness_test_state(
+    "claude-transcript-none",
+    screen,
+    true,
+    transcript_idle_sec=None,
+  )
+  let parent_id = "main.parent"
+  let leaf_id = "main.dev-transcript-none"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      pid_liveness_dev(
+        leaf_id,
+        parent_id,
+        state.config.project_dir,
+        agent_type=@types.AgentType::Claude,
+      ),
+    ),
+  )
+  state.watch_pane(leaf_id)
+  let sent : Array[String] = []
+  let start = @poller.now_sec()
+  state.check_idle_agents(
+    start,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_idle_sec=0L,
+    transcript_progress_window_sec=90L,
+  )
+  state.check_idle_agents(
+    start + 301L,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_idle_sec=0L,
+    transcript_progress_window_sec=90L,
+  )
+  assert_eq(state.registry.get(leaf_id).state, @types.AgentState::Failed)
+  assert_eq(worker_handoff_count_sent(sent, "no pane output change"), 1)
+  ignore(@sys.rm_rf(state.config.project_dir))
+}
+
+///|
+async test "check_idle_agents dead process beats fresh transcript" {
+  let screen = "{\"event\":\"pane_update\",\"viewport\":[\"recent\",\"exit\"]}"
+  let state = pid_liveness_test_state(
+    "claude-transcript-dead",
+    screen,
+    false,
+    transcript_idle_sec=Some(80L),
+  )
+  let parent_id = "main.parent"
+  let leaf_id = "main.dev-dead-transcript"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      pid_liveness_dev(
+        leaf_id,
+        parent_id,
+        state.config.project_dir,
+        agent_type=@types.AgentType::Claude,
+      ),
+    ),
+  )
+  state.watch_pane(leaf_id)
+  let sent : Array[String] = []
+  let start = @poller.now_sec()
+  state.check_idle_agents(
+    start,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_idle_sec=0L,
+    transcript_progress_window_sec=90L,
+  )
+  state.check_idle_agents(
+    start + 5L,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_idle_sec=0L,
+    transcript_progress_window_sec=90L,
+  )
+  assert_eq(state.registry.get(leaf_id).state, @types.AgentState::Failed)
+  assert_eq(worker_handoff_count_sent(sent, "owned process not alive"), 1)
+  ignore(@sys.rm_rf(state.config.project_dir))
+}
+
+///|
+async test "check_idle_agents ignores transcript value for non-Claude leaves" {
+  let screen = "{\"event\":\"pane_update\",\"viewport\":[\"codex\",\"hung\"]}"
+  let state = pid_liveness_test_state(
+    "codex-transcript-ignored",
+    screen,
+    true,
+    transcript_idle_sec=Some(80L),
+  )
+  let parent_id = "main.parent"
+  let leaf_id = "main.dev-codex-transcript"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      pid_liveness_dev(
+        leaf_id,
+        parent_id,
+        state.config.project_dir,
+        agent_type=@types.AgentType::Codex,
+      ),
+    ),
+  )
+  state.watch_pane(leaf_id)
+  let sent : Array[String] = []
+  let start = @poller.now_sec()
+  state.check_idle_agents(
+    start,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_idle_sec=0L,
+    transcript_progress_window_sec=90L,
+  )
+  state.check_idle_agents(
+    start + 301L,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_idle_sec=0L,
+    transcript_progress_window_sec=90L,
+  )
+  assert_eq(state.registry.get(leaf_id).state, @types.AgentState::Failed)
+  assert_eq(worker_handoff_count_sent(sent, "no pane output change"), 1)
+  ignore(@sys.rm_rf(state.config.project_dir))
 }
 
 ///|
