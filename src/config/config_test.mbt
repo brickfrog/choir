@@ -84,6 +84,48 @@ test "config_divergence names a single changed field" {
 }
 
 ///|
+test "parse_config worktree_provision_json parses typed entries" {
+  let cfg = parse_config(
+    (
+      #|worktree_provision_json = '[{"path":"node_modules","strategy":"copy"},{"path":"immutable-cache","strategy":"symlink"},{"path":".","strategy":"command","command":"bun install"}]'
+    ),
+  ).unwrap()
+  assert_eq(cfg.worktree_provision.length(), 3)
+  assert_eq(cfg.worktree_provision[0].path, "node_modules")
+  assert_eq(cfg.worktree_provision[0].strategy, @types.ProvisionStrategy::Copy)
+  @debug.assert_eq(cfg.worktree_provision[0].command, None)
+  assert_eq(cfg.worktree_provision[1].path, "immutable-cache")
+  assert_eq(
+    cfg.worktree_provision[1].strategy,
+    @types.ProvisionStrategy::Symlink,
+  )
+  assert_eq(cfg.worktree_provision[2].path, ".")
+  assert_eq(
+    cfg.worktree_provision[2].strategy,
+    @types.ProvisionStrategy::Command,
+  )
+  @debug.assert_eq(cfg.worktree_provision[2].command, Some("bun install"))
+}
+
+///|
+test "parse_config worktree_provision_json defaults empty and rejects missing command" {
+  @debug.assert_eq(parse_config("").unwrap().worktree_provision, [])
+  @debug.assert_eq(
+    parse_config("worktree_provision_json = ''").unwrap().worktree_provision,
+    [],
+  )
+  match
+    parse_config(
+      (
+        #|worktree_provision_json = '[{"path":".","strategy":"command"}]'
+      ),
+    ) {
+    Err(e) => assert_true(e.message().contains("worktree_provision_json"))
+    Ok(_) => fail("expected command strategy without command to fail")
+  }
+}
+
+///|
 fn config_test_pricing(
   key : String,
   rate_in : Double,
@@ -184,6 +226,7 @@ test "config_divergence names every changed top-level field" {
     worker_no_handoff_idle_sec: 10L,
     poller_heartbeat_tick_sec: 20,
     prenotify_checks: ["loaded-check"],
+    worktree_provision: [],
     auto_pull_after_integration: true,
     project: { verify_cmd: None },
     pr_policy: {
@@ -219,6 +262,13 @@ test "config_divergence names every changed top-level field" {
     worker_no_handoff_idle_sec: 30L,
     poller_heartbeat_tick_sec: 40,
     prenotify_checks: ["disk-check"],
+    worktree_provision: [
+      {
+        path: "node_modules",
+        strategy: @types.ProvisionStrategy::Copy,
+        command: None,
+      },
+    ],
     auto_pull_after_integration: false,
     project: { verify_cmd: Some("moon test --target native") },
     pr_policy: {
@@ -237,7 +287,7 @@ test "config_divergence names every changed top-level field" {
     "otlp_endpoint", "agent_id", "extra_mcp_servers_json", "companions_json", "plugins_json",
     "terminal_session", "automerge", "review_mode", "merge_strategy", "moon_verify_target",
     "agy_migration_incomplete", "hooks_enforcement", "worker_no_handoff_idle_sec",
-    "poller_heartbeat_tick_sec", "prenotify_checks", "auto_pull_after_integration",
+    "poller_heartbeat_tick_sec", "prenotify_checks", "worktree_provision", "auto_pull_after_integration",
     "project", "pr_policy", "auto_rebuild_after_pull", "auto_reload_after_rebuild",
     "pricing", "model", "effort",
   ])
@@ -320,6 +370,11 @@ test "default config has neutral prenotify_checks" {
 }
 
 ///|
+test "default config has neutral worktree_provision" {
+  @debug.assert_eq(@types.Config::default().worktree_provision, [])
+}
+
+///|
 test "parse_config - minimal" {
   let content = "default_role = \"worker\""
   let cfg = parse_config(content).unwrap()
@@ -334,6 +389,7 @@ test "parse_config - minimal" {
   assert_eq(cfg.hooks_enforcement, false)
   assert_eq(cfg.poller_heartbeat_tick_sec, 60)
   @debug.assert_eq(cfg.prenotify_checks, [])
+  @debug.assert_eq(cfg.worktree_provision, [])
   assert_eq(cfg.agy_migration_incomplete, false)
   assert_eq(cfg.auto_pull_after_integration, true)
   assert_eq(cfg.pr_policy.require_integration_audit, true)
@@ -464,6 +520,7 @@ test "parse_config - empty string defaults" {
     #|otlp_endpoint = ""
     #|agent_id = ""
     #|companions_json = ""
+    #|worktree_provision_json = ""
     #|plugins_json = ""
 
   let cfg = parse_config(content).unwrap()
@@ -474,6 +531,7 @@ test "parse_config - empty string defaults" {
   @debug.assert_eq(cfg.agent_id, None)
   @debug.assert_eq(cfg.extra_mcp_servers_json, None)
   @debug.assert_eq(cfg.companions_json, None)
+  @debug.assert_eq(cfg.worktree_provision, [])
   @debug.assert_eq(cfg.plugins_json, None)
 }
 

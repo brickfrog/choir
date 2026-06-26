@@ -1133,6 +1133,184 @@ fn command_program_count(
 }
 
 ///|
+fn worktree_spawn_spec(
+  slug : String,
+  reuse_workspace? : Bool = false,
+) -> @types.SpawnSpec {
+  @types.SpawnSpec::{
+    slug,
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    task: "do something",
+    task_contract: None,
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "root",
+    parent_branch: "main",
+    reuse_workspace,
+    workspace_slug: if reuse_workspace {
+      Some(slug)
+    } else {
+      None
+    },
+    reuse_git_branch: if reuse_workspace {
+      Some("main." + slug)
+    } else {
+      None
+    },
+    spawn_depth: 0,
+    automerge: None,
+    review_mode: None,
+    merge_strategy: None,
+    wave_id: None,
+  }
+}
+
+///|
+test "validate_provision_entries rejects unsafe declarations" {
+  let invalid_entries : Array[@types.ProvisionEntry] = [
+    { path: "", strategy: @types.ProvisionStrategy::Copy, command: None },
+    { path: "/abs", strategy: @types.ProvisionStrategy::Copy, command: None },
+    {
+      path: "pkg/../node_modules",
+      strategy: @types.ProvisionStrategy::Copy,
+      command: None,
+    },
+    {
+      path: "node_modules",
+      strategy: @types.ProvisionStrategy::Symlink,
+      command: None,
+    },
+    {
+      path: "pkg/target",
+      strategy: @types.ProvisionStrategy::Symlink,
+      command: None,
+    },
+    { path: ".", strategy: @types.ProvisionStrategy::Command, command: None },
+    {
+      path: "immutable-cache",
+      strategy: @types.ProvisionStrategy::Copy,
+      command: Some("bun install"),
+    },
+  ]
+  for entry in invalid_entries {
+    assert_true(@workspace.validate_provision_entries([entry]) is Err(_))
+  }
+}
+
+///|
+test "validate_provision_entries accepts valid mixed entries" {
+  match
+    @workspace.validate_provision_entries([
+      {
+        path: "node_modules",
+        strategy: @types.ProvisionStrategy::Copy,
+        command: None,
+      },
+      {
+        path: "immutable-cache",
+        strategy: @types.ProvisionStrategy::Symlink,
+        command: None,
+      },
+      {
+        path: ".",
+        strategy: @types.ProvisionStrategy::Command,
+        command: Some("bun install"),
+      },
+    ]) {
+    Ok(_) => ()
+    Err(e) => fail("expected valid provision entries: " + e.message())
+  }
+}
+
+///|
+test "provision_commands builds guarded copy symlink and command entries" {
+  let cmds = @workspace.provision_commands("/repo", "/wt", [
+    {
+      path: "node_modules",
+      strategy: @types.ProvisionStrategy::Copy,
+      command: None,
+    },
+    {
+      path: "immutable-cache",
+      strategy: @types.ProvisionStrategy::Symlink,
+      command: None,
+    },
+    {
+      path: ".",
+      strategy: @types.ProvisionStrategy::Command,
+      command: Some("bun install"),
+    },
+  ])
+  assert_eq(cmds.length(), 5)
+  @debug.assert_eq(cmds[0], @workspace.Command::{
+    program: "test",
+    args: ["-e", "/repo/node_modules"],
+    workdir: Some("/wt"),
+  })
+  assert_eq(cmds[1].program, "sh")
+  @debug.assert_eq(cmds[1].args, [
+    "-lc", "rm -rf /wt/node_modules && cp -a --reflink=auto /repo/node_modules /wt/node_modules",
+  ])
+  @debug.assert_eq(cmds[1].workdir, Some("/wt"))
+  @debug.assert_eq(cmds[2], @workspace.Command::{
+    program: "test",
+    args: ["-e", "/repo/immutable-cache"],
+    workdir: Some("/wt"),
+  })
+  @debug.assert_eq(cmds[3], @workspace.Command::{
+    program: "ln",
+    args: ["-sfn", "/repo/immutable-cache", "/wt/immutable-cache"],
+    workdir: Some("/wt"),
+  })
+  @debug.assert_eq(cmds[4], @workspace.Command::{
+    program: "sh",
+    args: ["-lc", "bun install"],
+    workdir: Some("/wt"),
+  })
+  @debug.assert_eq(@workspace.provision_commands("/repo", "/wt", []), [])
+}
+
+///|
+test "spawn_commands inserts provisioning after gitexclude before config write" {
+  let cfg =
+    #|worktree_provision_json = '[{"path":"node_modules","strategy":"copy"},{"path":"immutable-cache","strategy":"symlink"},{"path":".","strategy":"command","command":"bun install"}]'
+  let cmds = @workspace.spawn_commands(
+    worktree_spawn_spec("provisioned"),
+    "/repo",
+    "exo",
+    project_config_content=cfg,
+  )
+  let gitexclude_index = command_program_index(
+    cmds, @workspace.native_worktree_seed_agent_runtime_gitexclude_program,
+  )
+  let config_index = choir_file_write_index(cmds, "config.toml")
+  assert_true(gitexclude_index >= 0)
+  assert_true(config_index >= 0)
+  assert_eq(cmds[gitexclude_index + 1].program, "test")
+  assert_eq(cmds[gitexclude_index + 2].program, "sh")
+  assert_eq(cmds[gitexclude_index + 3].program, "test")
+  assert_eq(cmds[gitexclude_index + 4].program, "ln")
+  assert_eq(cmds[gitexclude_index + 5].program, "sh")
+  assert_eq(config_index, gitexclude_index + 6)
+}
+
+///|
+test "spawn_commands re-provisions reused worktrees before config write" {
+  let cfg =
+    #|worktree_provision_json = '[{"path":"node_modules","strategy":"copy"}]'
+  let cmds = @workspace.spawn_commands(
+    worktree_spawn_spec("reused", reuse_workspace=true),
+    "/repo",
+    "exo",
+    project_config_content=cfg,
+  )
+  let config_index = choir_file_write_index(cmds, "config.toml")
+  assert_eq(cmds[0].program, "test")
+  assert_eq(cmds[1].program, "sh")
+  assert_eq(config_index, 2)
+}
+
+///|
 fn assert_local_connection_fields(
   content : String,
   role : @types.Role,

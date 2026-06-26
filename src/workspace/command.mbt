@@ -121,6 +121,177 @@ fn validate_workspace_rel_path(rel : String) -> Bool {
 }
 
 ///|
+fn provision_path_is_mutable_output(rel : String) -> Bool {
+  for raw_segment in rel.split("/") {
+    let segment = raw_segment.to_owned()
+    match segment {
+      "node_modules"
+      | "target"
+      | "dist"
+      | "build"
+      | ".venv"
+      | ".tox"
+      | ".pytest_cache" => return true
+      _ => ()
+    }
+  }
+  false
+}
+
+///|
+pub fn validate_provision_entries(
+  entries : Array[@types.ProvisionEntry],
+) -> Result[Unit, @types.ChoirError] {
+  for entry in entries {
+    if !validate_workspace_rel_path(entry.path) {
+      return Err(
+        @types.ChoirError::validation_error(
+          "worktree_provision path must be a relative path without '..': " +
+          entry.path,
+        ),
+      )
+    }
+    match entry.strategy {
+      @types.ProvisionStrategy::Command =>
+        match entry.command {
+          Some(command) =>
+            if command.trim() == "" {
+              return Err(
+                @types.ChoirError::validation_error(
+                  "worktree_provision command strategy requires command",
+                ),
+              )
+            }
+          None =>
+            return Err(
+              @types.ChoirError::validation_error(
+                "worktree_provision command strategy requires command",
+              ),
+            )
+        }
+      @types.ProvisionStrategy::Symlink | @types.ProvisionStrategy::Copy =>
+        if entry.command is Some(_) {
+          return Err(
+            @types.ChoirError::validation_error(
+              "worktree_provision command is only valid for command strategy",
+            ),
+          )
+        }
+    }
+    if entry.strategy == @types.ProvisionStrategy::Symlink &&
+      provision_path_is_mutable_output(entry.path) {
+      return Err(
+        @types.ChoirError::validation_error(
+          "worktree_provision symlink cannot target mutable output path: " +
+          entry.path,
+        ),
+      )
+    }
+  }
+  Ok(())
+}
+
+///|
+fn shell_word_needs_quotes(s : String) -> Bool {
+  if s == "" {
+    return true
+  }
+  s.contains(" ") ||
+  s.contains("\t") ||
+  s.contains("\n") ||
+  s.contains("'") ||
+  s.contains("\"") ||
+  s.contains("$") ||
+  s.contains("`") ||
+  s.contains(";") ||
+  s.contains("&") ||
+  s.contains("|") ||
+  s.contains("(") ||
+  s.contains(")") ||
+  s.contains("<") ||
+  s.contains(">")
+}
+
+///|
+fn shell_quote_pure(s : String) -> String {
+  if !shell_word_needs_quotes(s) {
+    return s
+  }
+  let buf = StringBuilder::new()
+  buf.write_char('\'')
+  for c in s {
+    if c == '\'' {
+      buf.write_string("'\\''")
+    } else {
+      buf.write_char(c)
+    }
+  }
+  buf.write_char('\'')
+  buf.to_string()
+}
+
+///|
+fn path_join_abs(root : String, rel : String) -> String {
+  root + "/" + rel
+}
+
+///|
+fn provision_source_exists_guard(worktree : String, source : String) -> Command {
+  { program: "test", args: ["-e", source], workdir: Some(worktree) }
+}
+
+///|
+pub fn provision_commands(
+  root : String,
+  worktree : String,
+  entries : Array[@types.ProvisionEntry],
+) -> Array[Command] {
+  let cmds : Array[Command] = []
+  for entry in entries {
+    let source = path_join_abs(root, entry.path)
+    let dest = path_join_abs(worktree, entry.path)
+    match entry.strategy {
+      @types.ProvisionStrategy::Symlink => {
+        cmds.push(provision_source_exists_guard(worktree, source))
+        cmds.push({
+          program: "ln",
+          args: ["-sfn", source, dest],
+          workdir: Some(worktree),
+        })
+      }
+      @types.ProvisionStrategy::Copy => {
+        cmds.push(provision_source_exists_guard(worktree, source))
+        cmds.push({
+          program: "sh",
+          args: [
+            "-lc",
+            "rm -rf " +
+            shell_quote_pure(dest) +
+            " && cp -a --reflink=auto " +
+            shell_quote_pure(source) +
+            " " +
+            shell_quote_pure(dest),
+          ],
+          workdir: Some(worktree),
+        })
+      }
+      @types.ProvisionStrategy::Command => {
+        let command = match entry.command {
+          Some(command) => command
+          None => ""
+        }
+        cmds.push({
+          program: "sh",
+          args: ["-lc", command],
+          workdir: Some(worktree),
+        })
+      }
+    }
+  }
+  cmds
+}
+
+///|
 fn parent_dir_for_file(full_path : String) -> String {
   let last_slash = match full_path.rev_find("/") {
     Some(i) => i

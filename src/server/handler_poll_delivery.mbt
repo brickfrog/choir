@@ -3482,6 +3482,26 @@ fn config_model_value(model : Map[String, @types.AgentModelConfig]) -> String {
 }
 
 ///|
+fn config_worktree_provision_value(
+  entries : Array[@types.ProvisionEntry],
+) -> String {
+  let parts : Array[String] = []
+  for entry in entries {
+    let strategy = match entry.strategy {
+      @types.ProvisionStrategy::Symlink => "symlink"
+      @types.ProvisionStrategy::Copy => "copy"
+      @types.ProvisionStrategy::Command => "command"
+    }
+    let command = match entry.command {
+      Some(value) => ":command=" + value
+      None => ""
+    }
+    parts.push(entry.path + ":" + strategy + command)
+  }
+  parts.join(",")
+}
+
+///|
 fn config_field_value(config : @types.Config, field : String) -> String {
   match field {
     "default_role" => config.default_role.to_wire_string()
@@ -3507,6 +3527,8 @@ fn config_field_value(config : @types.Config, field : String) -> String {
       config.worker_no_handoff_idle_sec.to_string()
     "poller_heartbeat_tick_sec" => config.poller_heartbeat_tick_sec.to_string()
     "prenotify_checks" => config_string_array_value(config.prenotify_checks)
+    "worktree_provision" =>
+      config_worktree_provision_value(config.worktree_provision)
     "auto_pull_after_integration" =>
       config.auto_pull_after_integration.to_string()
     "project" => config_project_value(config.project)

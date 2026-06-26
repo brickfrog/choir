@@ -201,6 +201,13 @@ pub fn config_schema_entries() -> Array[ConfigSchemaEntry] {
     ),
     schema_entry(
       ConfigToml,
+      "worktree_provision_json",
+      "JSON Array[ProvisionEntry]",
+      "[]",
+      "JSON string declaring per-worktree dependency/output provisioning steps.",
+    ),
+    schema_entry(
+      ConfigToml,
       "auto_pull_after_integration",
       "Bool",
       "true",

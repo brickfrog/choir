@@ -925,21 +925,25 @@ pub async fn interpret_spawn_worker(
     plan.spec.role,
     normalized_args.effort,
   )
-  let cmds = @workspace.spawn_commands(
-    plan.spec,
-    project_dir,
-    session,
-    parent_session_id=None,
-    extra_mcp_servers_json~,
-    shell_command~,
-    listen_uds~,
-    listen_tcp~,
-    tcp_auth_token~,
-    agent_token=Some(agent_token),
-    project_config_content~,
-    model~,
-    effort~,
-  )
+  let cmds = match
+    @workspace.spawn_commands_result(
+      plan.spec,
+      project_dir,
+      session,
+      parent_session_id=None,
+      extra_mcp_servers_json~,
+      shell_command~,
+      listen_uds~,
+      listen_tcp~,
+      tcp_auth_token~,
+      agent_token=Some(agent_token),
+      project_config_content~,
+      model~,
+      effort~,
+    ) {
+    Ok(cmds) => cmds
+    Err(e) => return @types.Response::Err(e.message())
+  }
   let spawn_launch_bindings = spawn_launch_command_bindings_for_agent(
     plan.agent_id,
     0,
@@ -1210,19 +1214,23 @@ pub async fn interpret_spawn_gemini(
     plan.spec.role,
     agent_token,
   )
-  let cmds = @workspace.spawn_commands(
-    plan.spec,
-    project_dir,
-    session,
-    parent_session_id=spawn_args.parent_session_id,
-    extra_mcp_servers_json~,
-    shell_command~,
-    listen_uds~,
-    listen_tcp~,
-    tcp_auth_token~,
-    agent_token=Some(agent_token),
-    project_config_content=read_project_config_toml(project_dir, read_file~),
-  )
+  let cmds = match
+    @workspace.spawn_commands_result(
+      plan.spec,
+      project_dir,
+      session,
+      parent_session_id=spawn_args.parent_session_id,
+      extra_mcp_servers_json~,
+      shell_command~,
+      listen_uds~,
+      listen_tcp~,
+      tcp_auth_token~,
+      agent_token=Some(agent_token),
+      project_config_content=read_project_config_toml(project_dir, read_file~),
+    ) {
+    Ok(cmds) => cmds
+    Err(e) => return @types.Response::Err(e.message())
+  }
   let spawn_launch_bindings = spawn_launch_command_bindings_for_agent(
     @workspace.canonical_agent_id(plan.spec),
     0,
