@@ -1165,7 +1165,35 @@ pub async fn ServerState::check_idle_agents(
             @moontrace.field("percent", idle_watchdog_warning_percent),
           ])
         }
-        if observation.idle_sec < timeout {
+        // Existing behavior (preserved): a live-but-idle agent past the
+        // threshold is still reaped — the hung-but-alive case the watchdog
+        // exists for. Additive fast path: a pane that is observed idle whose
+        // owned process is no longer alive is reaped PROMPTLY, without waiting
+        // the full idle threshold. This catches a dead process whose pane
+        // shows stale content (a true-positive the screen-hash window can
+        // miss/delay). It does not turn off the idle reap for live agents, and
+        // it does not solve the busy-but-stuck blind spot (a live leaf
+        // thinking quietly still looks idle). pid-liveness only resolves for
+        // choir-managed worktrees; for any other workspace agent_process_alive
+        // has no owned handle, so the fast path stays disabled and the
+        // threshold reap is the only signal.
+        let idle_expired = observation.idle_sec >= timeout
+        let process_dead = if idle_expired {
+          // Already reaping via the idle threshold; the liveness probe would
+          // only change observability, so skip the subprocess call.
+          false
+        } else if @types.is_choir_managed_worktree_path(
+            self.config.project_dir,
+            agent.workspace,
+          ) {
+          !(self.recovery_provider.agent_process_alive)(
+            self.config.project_dir,
+            agent_id,
+          )
+        } else {
+          false
+        }
+        if !idle_expired && !process_dead {
           continue
         }
         self.emit_worker_exited_without_notify_if_needed(
@@ -1176,13 +1204,25 @@ pub async fn ServerState::check_idle_agents(
         // Kill the agent
         @moontrace.warn("watchdog killing idle agent", fields=[
           @moontrace.field("agent", agent_id),
-          @moontrace.field("idle_sec", timeout),
+          @moontrace.field(
+            "idle_sec",
+            if idle_expired { timeout } else { observation.idle_sec },
+          ),
+          @moontrace.field("process_dead", process_dead),
         ])
-        let message = "[WATCHDOG] agent " +
+        let message = if idle_expired {
+          "[WATCHDOG] agent " +
           agent_id +
           " killed after " +
           timeout.to_string() +
           "s idle (no pane output change)"
+        } else {
+          "[WATCHDOG] agent " +
+          agent_id +
+          " killed: owned process not alive (pane idle " +
+          observation.idle_sec.to_string() +
+          "s, agent_process_alive=false)"
+        }
         self.fail_agent_with_runner(
           agent_id,
           @phase.FailureReason::WatchdogTimeout,

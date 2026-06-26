@@ -10471,6 +10471,249 @@ async test "watchdog kill still records idle Working dev leaf as failure" {
 }
 
 ///|
+/// ServerState whose injected `agent_process_alive` returns `process_alive`,
+/// with a stable idle pane. Used to exercise the additive pid-liveness fast
+/// path in `check_idle_agents`.
+fn pid_liveness_test_state(
+  label : String,
+  screen : String,
+  process_alive : Bool,
+) -> ServerState {
+  let project_dir = "/tmp/choir-pid-liveness-" +
+    label +
+    "-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
+  let config = {
+    ..@types.Config::default(),
+    project_dir,
+    terminal_session: "test-session",
+    prenotify_checks: [],
+  }
+  let provider : @runtime.RecoveryProvider = {
+    ..make_hermetic_recovery_provider(),
+    agent_process_alive: async fn(_dir, _id) {
+      @async.sleep(0)
+      process_alive
+    },
+  }
+  let host : @runtime.PaneWatchHost = {
+    dump_pane_screen: async fn(_session, _pane_id) {
+      @async.sleep(0)
+      screen
+    },
+  }
+  ServerState::new(config, provider)
+  .with_pane_watcher(@runtime.PaneWatcher::with_host(host))
+  .with_list_panes_snapshot_capture(async fn(_session : String) {
+    @async.sleep(0)
+    @tools.parse_zellij_list_panes_json(
+      "[{\"id\":42,\"tab_name\":\"leaf-pane\",\"pane_name\":\"leaf-pane\"}]",
+    )
+  })
+}
+
+///|
+/// Dev leaf rooted in a choir-managed worktree path, so the pid-liveness probe
+/// (gated on `is_choir_managed_worktree_path`) actually resolves.
+fn pid_liveness_dev(
+  agent_id : String,
+  parent_id : String,
+  project_dir : String,
+) -> @types.Agent {
+  {
+    agent_id: @types.AgentId(agent_id),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Codex,
+    parent: Some(parent_id),
+    workspace: project_dir + "/.choir/worktrees/" + agent_id,
+    branch: agent_id,
+    terminal_target: Some(handler_auto_close_target("leaf-pane")),
+    host: @types.Host::Local,
+    spawn_depth: 1,
+    state: @types.AgentState::Active,
+  }
+}
+
+///|
+/// (a) A pane observed idle whose owned process is dead is reaped PROMPTLY,
+/// well before the idle threshold — the dead-process / frozen-pane true
+/// positive the screen-hash window can miss.
+async test "check_idle_agents promptly reaps dead-process idle leaf before threshold" {
+  let screen = "{\"event\":\"pane_update\",\"viewport\":[\"frozen\",\"frozen\"]}"
+  let state = pid_liveness_test_state("dead-prompt", screen, false)
+  let parent_id = "main.parent"
+  let leaf_id = "main.dev-dead"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      pid_liveness_dev(leaf_id, parent_id, state.config.project_dir),
+    ),
+  )
+  state.watch_pane(leaf_id)
+  let sent : Array[String] = []
+  let start = @poller.now_sec()
+  // tick 1 records the baseline observation (returns None, no reap)
+  state.check_idle_agents(
+    start,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_idle_sec=0L,
+  )
+  assert_eq(state.registry.get(leaf_id).state, @types.AgentState::Active)
+  // tick 2 observes the pane idle only 5s in — far below the 300s threshold —
+  // but the dead process triggers the prompt fast reap.
+  state.check_idle_agents(
+    start + 5L,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_idle_sec=0L,
+  )
+  assert_eq(state.registry.get(leaf_id).state, @types.AgentState::Failed)
+  assert_eq(worker_handoff_count_sent(sent, "[WATCHDOG] agent " + leaf_id), 1)
+  assert_eq(worker_handoff_count_sent(sent, "owned process not alive"), 1)
+  match @phase.read_lifecycle(state.config.project_dir, leaf_id) {
+    Some(
+      {
+        process: @phase.ProcessState::Failed(
+          reason=@phase.FailureReason::WatchdogTimeout
+        ),
+        ..,
+      }
+    ) => ()
+    Some(other) =>
+      fail("expected watchdog failure, got: " + other.to_json().stringify())
+    None => fail("expected lifecycle")
+  }
+  ignore(@sys.rm_rf(state.config.project_dir))
+}
+
+///|
+/// (b) PRESERVED: a LIVE but idle agent past the idle threshold is still reaped
+/// — the hung-but-alive case the watchdog exists for. pid-liveness must not
+/// suppress this.
+async test "check_idle_agents still reaps live idle leaf past threshold" {
+  let screen = "{\"event\":\"pane_update\",\"viewport\":[\"hung\",\"hung\"]}"
+  let state = pid_liveness_test_state("live-threshold", screen, true)
+  let parent_id = "main.parent"
+  let leaf_id = "main.dev-hung"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      pid_liveness_dev(leaf_id, parent_id, state.config.project_dir),
+    ),
+  )
+  state.watch_pane(leaf_id)
+  let sent : Array[String] = []
+  let start = @poller.now_sec()
+  state.check_idle_agents(
+    start,
+    180L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_idle_sec=0L,
+  )
+  state.check_idle_agents(
+    start + 181L,
+    180L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_idle_sec=0L,
+  )
+  assert_eq(state.registry.get(leaf_id).state, @types.AgentState::Failed)
+  assert_eq(worker_handoff_count_sent(sent, "[WATCHDOG] agent " + leaf_id), 1)
+  // Reaped via the idle threshold, not the dead-process fast path.
+  assert_eq(worker_handoff_count_sent(sent, "owned process not alive"), 0)
+  assert_eq(worker_handoff_count_sent(sent, "no pane output change"), 1)
+  ignore(@sys.rm_rf(state.config.project_dir))
+}
+
+///|
+/// (c) PRESERVED: a watchdog-exempt lifecycle state is never reaped, even when
+/// the owned process is dead and the pane is idle. The pid-liveness fast path
+/// sits behind the exemption gate.
+async test "check_idle_agents leaves dead-process exempt leaf unreaped" {
+  let screen = "{\"event\":\"pane_update\",\"viewport\":[\"red gate\",\"red gate\"]}"
+  let state = pid_liveness_test_state("dead-exempt", screen, false)
+  let parent_id = "main.parent"
+  let leaf_id = "main.dev-exempt"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      pid_liveness_dev(leaf_id, parent_id, state.config.project_dir),
+    ),
+  )
+  ignore(
+    @phase.write_lifecycle(
+      state.config.project_dir,
+      {
+        agent_id: leaf_id,
+        role: @types.Role::Dev,
+        process: @phase.ProcessState::Connected,
+        workflow: @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::WaitingForRedGate,
+        ),
+        last_updated_unix_sec: 0L,
+      },
+      now_sec=0L,
+    ),
+  )
+  state.watch_pane(leaf_id)
+  let sent : Array[String] = []
+  let start = @poller.now_sec()
+  state.check_idle_agents(
+    start,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_idle_sec=0L,
+  )
+  state.check_idle_agents(
+    start + 5L,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_idle_sec=0L,
+  )
+  assert_eq(state.registry.get(leaf_id).state, @types.AgentState::Active)
+  assert_eq(worker_handoff_count_sent(sent, "[WATCHDOG] agent " + leaf_id), 0)
+  ignore(@sys.rm_rf(state.config.project_dir))
+}
+
+///|
+/// (d) A LIVE process whose pane is idle but has not crossed the threshold is
+/// not reaped — pid-liveness adds a fast path for dead processes only; it does
+/// not lower the bar for live ones.
+async test "check_idle_agents keeps live not-yet-idle leaf alive" {
+  let screen = "{\"event\":\"pane_update\",\"viewport\":[\"thinking\",\"thinking\"]}"
+  let state = pid_liveness_test_state("live-fresh", screen, true)
+  let parent_id = "main.parent"
+  let leaf_id = "main.dev-live"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      pid_liveness_dev(leaf_id, parent_id, state.config.project_dir),
+    ),
+  )
+  state.watch_pane(leaf_id)
+  let sent : Array[String] = []
+  let start = @poller.now_sec()
+  state.check_idle_agents(
+    start,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_idle_sec=0L,
+  )
+  state.check_idle_agents(
+    start + 5L,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_idle_sec=0L,
+  )
+  assert_eq(state.registry.get(leaf_id).state, @types.AgentState::Active)
+  assert_eq(worker_handoff_count_sent(sent, "[WATCHDOG] agent " + leaf_id), 0)
+  ignore(@sys.rm_rf(state.config.project_dir))
+}
+
+///|
 async test "check_idle_agents does not stall leaf after fresh pane output" {
   let idle_snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"fixes pushed\",\"waiting\"]}"
   let active_snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"fixes pushed\",\"working again\"]}"
