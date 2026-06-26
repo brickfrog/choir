@@ -62,6 +62,29 @@ pub fn Project::default() -> Project {
 }
 
 ///|
+pub(all) enum ProvisionStrategy {
+  Symlink
+  Copy
+  Command
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub impl Show for ProvisionStrategy with fn output(self, logger) -> Unit {
+  match self {
+    Symlink => logger.write_string("symlink")
+    Copy => logger.write_string("copy")
+    Command => logger.write_string("command")
+  }
+}
+
+///|
+pub(all) struct ProvisionEntry {
+  path : String
+  strategy : ProvisionStrategy
+  command : String?
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub(all) struct AgentModelConfig {
   default : String?
   dev : String?
@@ -122,6 +145,8 @@ pub(all) struct Config {
   poller_heartbeat_tick_sec : Int
   /// Local checks that must pass before a Dev success `notify_parent` handoff.
   prenotify_checks : Array[String]
+  /// Declared per-worktree dependency/output provisioning steps.
+  worktree_provision : Array[ProvisionEntry]
   /// Best-effort `git pull --ff-only` on the parent worktree after an integration PR merges.
   auto_pull_after_integration : Bool
   /// Per-project defaults for repo-agnostic orchestration.
@@ -217,6 +242,7 @@ pub fn Config::default() -> Config {
     worker_no_handoff_idle_sec: 120L,
     poller_heartbeat_tick_sec: 60,
     prenotify_checks: [],
+    worktree_provision: [],
     auto_pull_after_integration: true,
     project: Project::default(),
     pr_policy: PrPolicy::default(),

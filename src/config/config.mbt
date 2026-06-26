@@ -358,6 +358,111 @@ fn parse_string_array_config_value(
 }
 
 ///|
+fn parse_provision_strategy_value(
+  key : String,
+  raw : String,
+) -> Result[@types.ProvisionStrategy, @types.ChoirError] {
+  match raw.trim().to_lower() {
+    "symlink" => Ok(@types.ProvisionStrategy::Symlink)
+    "copy" => Ok(@types.ProvisionStrategy::Copy)
+    "command" => Ok(@types.ProvisionStrategy::Command)
+    _ =>
+      Err(
+        @types.ChoirError::config_error(
+          key + ": strategy must be \"symlink\", \"copy\", or \"command\"",
+        ),
+      )
+  }
+}
+
+///|
+fn parse_worktree_provision_config_value(
+  key : String,
+  raw : String,
+) -> Result[Array[@types.ProvisionEntry], @types.ChoirError] {
+  let stripped = strip_toml_inline_comment(raw)
+  if stripped == "" {
+    return Ok([])
+  }
+  let parsed = @json.parse(stripped) catch {
+    e =>
+      return Err(
+        @types.ChoirError::config_error(
+          key + ": invalid JSON: " + e.to_string(),
+        ),
+      )
+  }
+  match parsed {
+    Array(values) => {
+      let out : Array[@types.ProvisionEntry] = []
+      for value in values {
+        guard value is Object(obj) else {
+          return Err(
+            @types.ChoirError::config_error(key + ": expected array of objects"),
+          )
+        }
+        let path = match obj.get("path") {
+          Some(String(s)) => s
+          _ =>
+            return Err(
+              @types.ChoirError::config_error(key + ": entry missing path"),
+            )
+        }
+        let strategy = match obj.get("strategy") {
+          Some(String(s)) =>
+            match parse_provision_strategy_value(key, s) {
+              Ok(strategy) => strategy
+              Err(e) => return Err(e)
+            }
+          _ =>
+            return Err(
+              @types.ChoirError::config_error(key + ": entry missing strategy"),
+            )
+        }
+        let command = match obj.get("command") {
+          Some(String(s)) => Some(s)
+          Some(_) =>
+            return Err(
+              @types.ChoirError::config_error(key + ": command must be string"),
+            )
+          None => None
+        }
+        match strategy {
+          @types.ProvisionStrategy::Command =>
+            match command {
+              Some(cmd) =>
+                if cmd.trim() == "" {
+                  return Err(
+                    @types.ChoirError::config_error(
+                      key + ": command strategy requires command",
+                    ),
+                  )
+                }
+              None =>
+                return Err(
+                  @types.ChoirError::config_error(
+                    key + ": command strategy requires command",
+                  ),
+                )
+            }
+          @types.ProvisionStrategy::Symlink | @types.ProvisionStrategy::Copy =>
+            if command is Some(_) {
+              return Err(
+                @types.ChoirError::config_error(
+                  key + ": command is only valid for command strategy",
+                ),
+              )
+            }
+        }
+        out.push({ path, strategy, command })
+      }
+      Ok(out)
+    }
+    _ => Err(@types.ChoirError::config_error(key + ": expected array"))
+  }
+}
+
+///|
 fn parse_pricing_config(
   doc : TomlDoc,
 ) -> Result[Map[String, @types.PricingRate], @types.ChoirError] {
@@ -680,6 +785,15 @@ pub fn parse_config(
         Err(e) => return Err(e)
       }
   }
+  let worktree_provision = match doc.get("worktree_provision_json") {
+    None => default_cfg.worktree_provision
+    Some(raw) =>
+      match
+        parse_worktree_provision_config_value("worktree_provision_json", raw) {
+        Ok(v) => v
+        Err(e) => return Err(e)
+      }
+  }
   let auto_pull_after_integration = match
     parse_required_bool_config_value(
       doc,
@@ -772,6 +886,7 @@ pub fn parse_config(
     worker_no_handoff_idle_sec,
     poller_heartbeat_tick_sec,
     prenotify_checks,
+    worktree_provision,
     auto_pull_after_integration,
     project: { verify_cmd: project_verify_cmd },
     pr_policy: {
@@ -791,6 +906,22 @@ pub fn parse_config(
 fn config_string_array_equal(
   left : Array[String],
   right : Array[String],
+) -> Bool {
+  if left.length() != right.length() {
+    return false
+  }
+  for i = 0; i < left.length(); i = i + 1 {
+    if left[i] != right[i] {
+      return false
+    }
+  }
+  true
+}
+
+///|
+fn config_provision_entries_equal(
+  left : Array[@types.ProvisionEntry],
+  right : Array[@types.ProvisionEntry],
 ) -> Bool {
   if left.length() != right.length() {
     return false
@@ -928,6 +1059,12 @@ pub fn config_divergence(
       on_disk.prenotify_checks,
     ) {
     fields.push("prenotify_checks")
+  }
+  if !config_provision_entries_equal(
+      loaded.worktree_provision,
+      on_disk.worktree_provision,
+    ) {
+    fields.push("worktree_provision")
   }
   if loaded.auto_pull_after_integration != on_disk.auto_pull_after_integration {
     fields.push("auto_pull_after_integration")

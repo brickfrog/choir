@@ -19,7 +19,7 @@ fn expected_config_schema_keys() -> Array[String] {
     "otlp_endpoint", "agent_id", "extra_mcp_servers_json", "companions_json", "plugins_json",
     "terminal_session", "automerge", "review_mode", "merge_strategy", "moon_verify_target",
     "agy_migration_incomplete", "hooks_enforcement", "worker_no_handoff_idle_sec",
-    "poller_heartbeat_tick_sec", "prenotify_checks", "auto_pull_after_integration",
+    "poller_heartbeat_tick_sec", "prenotify_checks", "worktree_provision_json", "auto_pull_after_integration",
     "project.verify_cmd", "pr_policy.require_integration_audit", "pr_policy.skip_copilot_on_feature_branch",
     "pr_policy.reviewer", "auto_rebuild_after_pull", "auto_reload_after_rebuild",
     "pricing.<agent_type>.rate_in", "pricing.<agent_type>.rate_out", "model.<agent_type>.default",

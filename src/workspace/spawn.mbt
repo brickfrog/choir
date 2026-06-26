@@ -611,7 +611,7 @@ pub fn provider_materialization_commands(
 }
 
 ///|
-pub fn spawn_commands(
+fn spawn_commands_unchecked(
   spec : @types.SpawnSpec,
   project_dir : String,
   session : String,
@@ -627,6 +627,7 @@ pub fn spawn_commands(
   extism_on_path? : () -> Bool = extism_on_path_default,
   model? : String? = None,
   effort? : String? = None,
+  worktree_provision? : Array[@types.ProvisionEntry] = [],
 ) -> Array[Command] {
   ignore(listen_tcp)
   ignore(tcp_auth_token)
@@ -713,6 +714,9 @@ pub fn spawn_commands(
           git_worktree_add(workspace, branch, "origin/" + spec.parent_branch),
         )
         cmds.push(command_seed_worktree_agent_runtime_gitexclude(workspace))
+      }
+      for cmd in provision_commands(root_project, workspace, worktree_provision) {
+        cmds.push(cmd)
       }
       cmds.push(write_worktree_config_toml(workspace, project_config_content))
       cmds.push(
@@ -885,6 +889,91 @@ pub fn spawn_commands(
       cmds
     }
   }
+}
+
+///|
+pub fn spawn_commands_result(
+  spec : @types.SpawnSpec,
+  project_dir : String,
+  session : String,
+  parent_session_id? : String? = None,
+  extra_mcp_servers_json? : String? = None,
+  shell_command? : String? = None,
+  listen_uds? : String = ".choir/run/server.sock",
+  listen_tcp? : String? = None,
+  tcp_auth_token? : String? = None,
+  agent_token? : String? = None,
+  project_config_content? : String = "",
+  read_file? : (String) -> String = @sys.read_file,
+  extism_on_path? : () -> Bool = extism_on_path_default,
+  model? : String? = None,
+  effort? : String? = None,
+) -> Result[Array[Command], @types.ChoirError] {
+  let cfg = match @config.parse_config(project_config_content) {
+    Ok(cfg) => cfg
+    Err(e) => return Err(e)
+  }
+  match validate_provision_entries(cfg.worktree_provision) {
+    Ok(_) => ()
+    Err(e) => return Err(e)
+  }
+  Ok(
+    spawn_commands_unchecked(
+      spec,
+      project_dir,
+      session,
+      parent_session_id~,
+      extra_mcp_servers_json~,
+      shell_command~,
+      listen_uds~,
+      listen_tcp~,
+      tcp_auth_token~,
+      agent_token~,
+      project_config_content~,
+      read_file~,
+      extism_on_path~,
+      model~,
+      effort~,
+      worktree_provision=cfg.worktree_provision,
+    ),
+  )
+}
+
+///|
+pub fn spawn_commands(
+  spec : @types.SpawnSpec,
+  project_dir : String,
+  session : String,
+  parent_session_id? : String? = None,
+  extra_mcp_servers_json? : String? = None,
+  shell_command? : String? = None,
+  listen_uds? : String = ".choir/run/server.sock",
+  listen_tcp? : String? = None,
+  tcp_auth_token? : String? = None,
+  agent_token? : String? = None,
+  project_config_content? : String = "",
+  read_file? : (String) -> String = @sys.read_file,
+  extism_on_path? : () -> Bool = extism_on_path_default,
+  model? : String? = None,
+  effort? : String? = None,
+) -> Array[Command] {
+  spawn_commands_result(
+    spec,
+    project_dir,
+    session,
+    parent_session_id~,
+    extra_mcp_servers_json~,
+    shell_command~,
+    listen_uds~,
+    listen_tcp~,
+    tcp_auth_token~,
+    agent_token~,
+    project_config_content~,
+    read_file~,
+    extism_on_path~,
+    model~,
+    effort~,
+  ).unwrap()
 }
 
 ///|

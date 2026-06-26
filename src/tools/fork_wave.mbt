@@ -923,6 +923,26 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
     }
   }
 
+  let project_config_content = read_project_config_toml(project_dir, read_file~)
+  let project_config = match @config.parse_config(project_config_content) {
+    Ok(cfg) => cfg
+    Err(e) =>
+      return (
+        @types.Response::Err(e.message()),
+        fork_wave_args,
+        empty_fork_wave_spawn_plan(),
+      )
+  }
+  match
+    @workspace.validate_provision_entries(project_config.worktree_provision) {
+    Ok(_) => ()
+    Err(e) =>
+      return (
+        @types.Response::Err(e.message()),
+        fork_wave_args,
+        empty_fork_wave_spawn_plan(),
+      )
+  }
   let spawn_plan = fork_wave_spawn_plan(
     fork_wave_args,
     child_spawn_depth,
@@ -936,7 +956,7 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
     listen_tcp~,
     tcp_auth_token~,
     agent_tokens~,
-    project_config_content=read_project_config_toml(project_dir, read_file~),
+    project_config_content~,
   )
   let mut seed_warning : String? = None
   if fork_wave_args.agent_type == @types.AgentType::Gemini &&
