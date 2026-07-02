@@ -368,6 +368,12 @@ fn provider_launch_command(
     Some(t) => [t]
     None => []
   }
+  // `--model <value>` is the verified flag form for codex, claude, agy
+  // (gemini), and cursor `agent` alike.
+  let model_args : Array[String] = match model {
+    Some(value) => ["--model", value]
+    None => []
+  }
   let cmd = match agent_type {
     Claude => {
       let program = cmd_program.unwrap_or("claude")
@@ -407,7 +413,8 @@ fn provider_launch_command(
               program,
               args: [
                 ..cmd_extra_args, "--dangerously-skip-permissions", ..claude_mcp,
-                ..settings_args, "--resume", session_id, "--fork-session", ..claude_task_args,
+                ..settings_args, ..model_args, "--resume", session_id, "--fork-session",
+                ..claude_task_args,
               ],
               workdir: Some(workspace_path),
             }
@@ -416,7 +423,7 @@ fn provider_launch_command(
               program,
               args: [
                 ..cmd_extra_args, "--dangerously-skip-permissions", ..claude_mcp,
-                ..settings_args, ..claude_task_args,
+                ..settings_args, ..model_args, ..claude_task_args,
               ],
               workdir: Some(workspace_path),
             }
@@ -429,7 +436,7 @@ fn provider_launch_command(
           program: cmd_program.unwrap_or(agy_binary_name()),
           args: [
             ..cmd_extra_args, "--dangerously-skip-permissions", "--prompt-interactive",
-            ..task_args,
+            ..model_args, ..task_args,
           ],
           workdir: Some(workspace_path),
         },
@@ -450,10 +457,6 @@ fn provider_launch_command(
         ["--dangerously-bypass-hook-trust"]
       } else {
         []
-      }
-      let model_args = match model {
-        Some(value) => ["--model", value]
-        None => []
       }
       let effort_args = match effort {
         Some(value) => ["-c", "model_reasoning_effort=" + value]
@@ -488,8 +491,8 @@ fn provider_launch_command(
       {
         program: cmd_program.unwrap_or("agent"),
         args: [
-          ..cmd_extra_args, "--yolo", "--approve-mcps", "--workspace", workspace_path,
-          ..task_args,
+          ..cmd_extra_args, "--yolo", "--approve-mcps", ..model_args, "--workspace",
+          workspace_path, ..task_args,
         ],
         workdir: Some(workspace_path),
       }
