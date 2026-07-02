@@ -1362,6 +1362,21 @@ pub fn command_seed_worktree_agent_runtime_gitexclude(
 }
 
 ///|
+/// Append a declared provision path to the worktree's `.git/info/exclude` so
+/// provisioning does not dirty `git status` (same native seeder as the
+/// agent-runtime snippet; idempotent per path).
+pub fn command_seed_worktree_provision_gitexclude(
+  worktree_path : String,
+  provision_path : String,
+) -> Command {
+  {
+    program: native_worktree_seed_agent_runtime_gitexclude_program,
+    args: [worktree_path, provision_gitexclude_snippet(provision_path)],
+    workdir: None,
+  }
+}
+
+///|
 /// Write `workspace_root/relative_path` with native file I/O (via `exec.run` sentinel).
 pub fn workspace_relative_file_command(
   workspace_root : String,

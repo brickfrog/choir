@@ -578,7 +578,7 @@ test "resolve_agent_effort follows override role default none cascade" {
 }
 
 ///|
-test "agent_launch_command emits codex model flag only for codex model option" {
+test "agent_launch_command emits model flag per provider when model option set" {
   let spec = @types.SpawnSpec::{
     slug: "test-slug",
     role: @types.Role::Worker,
@@ -597,28 +597,29 @@ test "agent_launch_command emits codex model flag only for codex model option" {
     merge_strategy: None,
     wave_id: None,
   }
-  let codex_with_model = @workspace.agent_launch_command(
-    spec,
-    "/path",
-    model=Some("codex-audit"),
-  )
-  let codex_model_body = launch_cmd_body_contains_setsid(codex_with_model)
-  assert_true(codex_model_body.contains("--model"))
-  assert_true(codex_model_body.contains("codex-audit"))
-
-  let codex_without_model = @workspace.agent_launch_command(spec, "/path")
-  let codex_default_body = launch_cmd_body_contains_setsid(codex_without_model)
-  assert_false(codex_default_body.contains("--model"))
-  assert_false(codex_default_body.contains("codex-audit"))
-
-  let claude_with_model = @workspace.agent_launch_command(
-    { ..spec, agent_type: @types.AgentType::Claude },
-    "/path",
-    model=Some("codex-audit"),
-  )
-  let claude_body = launch_cmd_body_contains_setsid(claude_with_model)
-  assert_false(claude_body.contains("--model"))
-  assert_false(claude_body.contains("codex-audit"))
+  for
+    agent_type in [
+      @types.AgentType::Codex,
+      @types.AgentType::Claude,
+      @types.AgentType::Gemini,
+      @types.AgentType::CursorAgent,
+    ] {
+    let with_model = @workspace.agent_launch_command(
+      { ..spec, agent_type, },
+      "/path",
+      model=Some("model-pick"),
+    )
+    let with_model_body = launch_cmd_body_contains_setsid(with_model)
+    assert_true(with_model_body.contains("--model"))
+    assert_true(with_model_body.contains("model-pick"))
+    let without_model = @workspace.agent_launch_command(
+      { ..spec, agent_type, },
+      "/path",
+    )
+    let default_body = launch_cmd_body_contains_setsid(without_model)
+    assert_false(default_body.contains("--model"))
+    assert_false(default_body.contains("model-pick"))
+  }
 }
 
 ///|
@@ -715,8 +716,9 @@ test "agent_launch_command omits codex effort flag for non-codex providers" {
   )
   let body = launch_cmd_body_contains_setsid(with_effort)
   assert_false(body.contains("model_reasoning_effort=high"))
-  assert_false(body.contains("--model"))
-  assert_false(body.contains("codex-audit"))
+  // model emission is per-provider and stays; only the effort flag is codex-only
+  assert_true(body.contains("--model"))
+  assert_true(body.contains("codex-audit"))
 }
 
 ///|

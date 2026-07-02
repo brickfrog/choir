@@ -28,6 +28,16 @@ pub fn agent_runtime_gitexclude_snippet() -> String {
 }
 
 ///|
+/// Root-anchored `info/exclude` pattern for a declared provision path, so a
+/// provisioned path that is not already gitignored does not dirty `git status`.
+/// The bare pattern is the whole snippet: the native seeder dedupes on the
+/// snippet's first line, so per-path snippets let provision entries added
+/// after the first seed still be appended.
+pub fn provision_gitexclude_snippet(path : String) -> String {
+  "/" + path
+}
+
+///|
 pub fn git_worktree_remove(path : String) -> Command {
   {
     program: "git",

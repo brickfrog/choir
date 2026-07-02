@@ -715,6 +715,14 @@ fn spawn_commands_unchecked(
         )
         cmds.push(command_seed_worktree_agent_runtime_gitexclude(workspace))
       }
+      for entry in worktree_provision {
+        // "." (command strategy over the worktree root) must not be excluded.
+        if entry.path != "." {
+          cmds.push(
+            command_seed_worktree_provision_gitexclude(workspace, entry.path),
+          )
+        }
+      }
       for cmd in provision_commands(root_project, workspace, worktree_provision) {
         cmds.push(cmd)
       }
