@@ -80,8 +80,10 @@ new bead, scan `bd list --label wontfix --all`: never re-suggest a `wontfix`
 idea or re-file a near-duplicate of one. A close alone doesn't stop the idea
 from coming back around; the label is the memory.
 
-Foot-guns: never bare `bd init` (it clobbers AGENTS.md and installs hooks) — use
-`bd init --skip-agents --skip-hooks --non-interactive --role maintainer`.
+If `.beads/` is missing, run `bd init --non-interactive` (bd ≥1.0: leaves
+AGENTS.md alone, installs no git hooks, doesn't auto-commit; role defaults to
+maintainer; only side effect is Beads/Dolt entries appended to `.gitignore`).
+The old `--skip-agents`/`--skip-hooks` flags no longer exist and now error.
 `auto-export: git add failed` is benign when the `bd` command itself succeeded.
 Create with `bd create "Title" -t task -p N --spec-id .choir/context/<slug>-spec.md`.
 
