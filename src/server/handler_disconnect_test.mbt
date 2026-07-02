@@ -245,7 +245,9 @@ async test "dead-leaf reaper finalizes a Disconnected+ReviewOwned leaf to Done" 
   state.schedule_disconnect(agent_id, 0L)
   let captured : Array[@moontrace.Event] = []
   @moontrace.set_subscriber(fn(event) { captured.push(event) })
-  state.process_pending_disconnects_with_runner(61L, 60L, runner=async fn(_cmds) {
+  state.process_pending_disconnects_with_runner(61L, 60L, runner=async fn(
+    _cmds,
+  ) {
     @async.sleep(0)
     []
   })

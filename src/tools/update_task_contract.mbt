@@ -309,10 +309,9 @@ test "plan_update_task_contract swaps verify, resets phase, preserves goal/beads
     ) {
     Ok(plan) => {
       assert_true(plan.phase_reset)
-      @debug.assert_eq(
-        plan.contract.verify,
-        ["test -f .githooks/pre-commit && bash .githooks/pre-commit"],
-      )
+      @debug.assert_eq(plan.contract.verify, [
+        "test -f .githooks/pre-commit && bash .githooks/pre-commit",
+      ])
       assert_eq(plan.contract.verify_satisfied_by_ci, true)
       // Frozen provenance fields are copied through unchanged.
       @debug.assert_eq(plan.contract.goal, "ship the bash hook fix")
@@ -326,10 +325,9 @@ test "plan_update_task_contract swaps verify, resets phase, preserves goal/beads
           ..
         ) => {
           @debug.assert_eq(old_verify, ["moon test --target native"])
-          @debug.assert_eq(
-            new_verify,
-            ["test -f .githooks/pre-commit && bash .githooks/pre-commit"],
-          )
+          @debug.assert_eq(new_verify, [
+            "test -f .githooks/pre-commit && bash .githooks/pre-commit",
+          ])
           assert_true(phase_reset)
         }
         _ => fail("expected TaskContractVerifyUpdated audit event")

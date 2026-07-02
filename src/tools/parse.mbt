@@ -1932,9 +1932,8 @@ fn parse_update_task_contract_args(
     Some(json) => Some(json_string_list(Some(json)))
     None => None
   }
-  let verify_satisfied_by_ci = match tool_args_get_json(
-      args, "verify_satisfied_by_ci",
-    ) {
+  let verify_satisfied_by_ci = match
+    tool_args_get_json(args, "verify_satisfied_by_ci") {
     Some(True) => Some(true)
     Some(False) => Some(false)
     Some(String(s)) =>

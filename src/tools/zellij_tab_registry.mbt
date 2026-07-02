@@ -61,7 +61,9 @@ pub fn render_zellij_tab_registry_json(reg : ZellijTabRegistry) -> String {
 }
 
 ///|
-fn parse_zellij_tab_entry(v : Json) -> Result[ZellijTabEntry, @types.ChoirError] {
+fn parse_zellij_tab_entry(
+  v : Json,
+) -> Result[ZellijTabEntry, @types.ChoirError] {
   guard v is Object(obj) else {
     return Err(
       @types.ChoirError::config_error("zellij tab entry must be an object"),

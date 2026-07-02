@@ -144,7 +144,10 @@ test "list_pending_wave_paths picks up only pending-wave-- entries" {
   ignore(@tools.write_pending_wave(project_dir, { wave_id: "wv-b", args }))
   // unrelated kv entry — must not be returned.
   ignore(
-    @sys.write_file_sync(project_dir + "/.choir/state/kv/lifecycle--main--dep", "{}"),
+    @sys.write_file_sync(
+      project_dir + "/.choir/state/kv/lifecycle--main--dep",
+      "{}",
+    ),
   )
   let paths = @tools.list_pending_wave_paths(project_dir)
   ignore(@sys.rm_rf(project_dir))
@@ -545,7 +548,10 @@ test "reap_unparseable_pending_waves deletes empty + invalid entries" {
   ignore(@tools.write_pending_wave(project_dir, { wave_id: "wv-ok", args }))
   // empty file (partial-write)
   ignore(
-    @sys.write_file_sync(project_dir + "/.choir/state/kv/pending-wave--wv-empty", ""),
+    @sys.write_file_sync(
+      project_dir + "/.choir/state/kv/pending-wave--wv-empty",
+      "",
+    ),
   )
   // garbage JSON
   ignore(

@@ -844,7 +844,10 @@ test "parse_local_config - metadata" {
   @debug.assert_eq(local_cfg.role, Some(@types.Role::Dev))
   @debug.assert_eq(local_cfg.default_role, Some(@types.Role::TL))
   @debug.assert_eq(local_cfg.project_dir, Some("/project"))
-  @debug.assert_eq(local_cfg.listen_uds, Some("/project/.choir/run/server.sock"))
+  @debug.assert_eq(
+    local_cfg.listen_uds,
+    Some("/project/.choir/run/server.sock"),
+  )
   @debug.assert_eq(local_cfg.terminal_session, Some("choir-choir"))
   @debug.assert_eq(local_cfg.agent_id, Some("main.child"))
   @debug.assert_eq(local_cfg.parent_id, Some("main"))

@@ -381,7 +381,8 @@ fn provider_launch_command(
       }
       if tl_init_mode {
         let plugin_dir = workspace_path + "/.choir/plugin"
-        let settings_path = workspace_path + "/.choir/state/claude-settings.json"
+        let settings_path = workspace_path +
+          "/.choir/state/claude-settings.json"
         let lean_args : Array[String] = if lean {
           ["--system-prompt", "."]
         } else {

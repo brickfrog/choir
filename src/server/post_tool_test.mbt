@@ -1305,8 +1305,7 @@ test "plan_closed_unmerged_finalization finalizes owner to Done(PrClosedUnmerged
       // remove_worktree=false (AR-9): NEVER tear down the worktree on a close.
       RemoveWorktree(_) => fail("must NOT remove worktree on closed-unmerged")
       // NEVER a merge at any layer.
-      DeliverToParentMerged(..) =>
-        fail("must NOT deliver merged for a close")
+      DeliverToParentMerged(..) => fail("must NOT deliver merged for a close")
       UpdateDevLifecycle(event=@phase.DevEvent::MergeObserved(..), ..) =>
         fail("must NOT emit MergeObserved for a close")
       NotifyParent(parent_id="main.tl", status=@types.Status::Info, ..) =>

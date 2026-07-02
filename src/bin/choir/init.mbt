@@ -574,8 +574,9 @@ fn init_cleanup_recreate_artifacts(
 /// Markers for purge-only cleanup (mirrors native `choir_init_cleanup_purge_artifacts`).
 fn init_purge_cleanup_marker_substrings() -> Array[String] {
   [
-    ".choir/worktrees", ".choir/state/inline", ".choir/state/outbox", ".choir/state/waves", ".choir/state/poller_state.json",
-    "lifecycle--", "children--", "phase-dev--", "phase-tl--", "pending-wave--",
+    ".choir/worktrees", ".choir/state/inline", ".choir/state/outbox", ".choir/state/waves",
+    ".choir/state/poller_state.json", "lifecycle--", "children--", "phase-dev--",
+    "phase-tl--", "pending-wave--",
   ]
 }
 
@@ -1204,7 +1205,9 @@ test "init reserved supervisor matcher only matches literal Server and TL" {
   assert_false(
     init_is_reserved_supervisor_zellij_tab_name("auto-rescue-pr-400-w2fix"),
   )
-  assert_false(init_is_reserved_supervisor_zellij_tab_name("unrelated-user-tab"))
+  assert_false(
+    init_is_reserved_supervisor_zellij_tab_name("unrelated-user-tab"),
+  )
 }
 
 ///|

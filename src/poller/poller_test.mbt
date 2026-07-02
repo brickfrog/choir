@@ -363,7 +363,8 @@ async test "tick_with closed unmerged PR emits PRClosedUnmerged not PRMerged (ch
   }
   for e in events {
     match e {
-      @poller.PollEvent::PRMerged(_) => fail("must NOT emit PRMerged for a close")
+      @poller.PollEvent::PRMerged(_) =>
+        fail("must NOT emit PRMerged for a close")
       _ => ()
     }
   }
