@@ -63,7 +63,7 @@ fn parent_pr_state_notification_decision(
   merge_mode? : @poller.MergeOperatorMode = @poller.MergeOperatorMode::Manual,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
-  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
+  reviewer? : @types.Reviewer = @types.Reviewer::None,
   skip_copilot_on_feature_branch? : Bool = false,
   default_branch? : String = "",
 ) -> @poller.PrStateNotificationDecision {
@@ -342,7 +342,7 @@ pub fn parent_poll_event_message(
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
   precomputed_decision? : @poller.PrStateNotificationDecision? = None,
-  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
+  reviewer? : @types.Reviewer = @types.Reviewer::None,
   skip_copilot_on_feature_branch? : Bool = false,
   default_branch? : String = "",
 ) -> (String, @types.Status)? {
@@ -1468,7 +1468,7 @@ pub fn clamp_review_summary_for_pane(body : String) -> String {
 pub fn leaf_poll_review_injection_message(
   event : @poller.PollEvent,
   tracked : @poller.TrackedPR?,
-  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
+  reviewer? : @types.Reviewer = @types.Reviewer::None,
   review_required? : Bool = true,
 ) -> (String, @types.Status)? {
   match event {

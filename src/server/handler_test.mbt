@@ -5875,6 +5875,7 @@ test "parent_poll_event_message PR READY stresses not merged" {
       "/repo",
       @poller.PollEvent::PRReady(7),
       None,
+      reviewer=@types.Reviewer::Copilot,
     ) {
     Some((message, status)) => {
       assert_eq(status, @types.Status::Success)
@@ -5885,6 +5886,24 @@ test "parent_poll_event_message PR READY stresses not merged" {
       assert_true(message.contains("[PR MERGED]"))
       assert_true(message.contains("TLDecision:"))
       assert_true(message.contains("Waiting on Copilot review"))
+    }
+    None => fail("expected PRReady message")
+  }
+}
+
+///|
+test "parent_poll_event_message default reviewer matches config default" {
+  let tracked = parent_poll_event_test_tracked(7, "main.dev-a", "work/a", "")
+  match
+    parent_poll_event_message(
+      tracked,
+      "/repo",
+      @poller.PollEvent::PRReady(7),
+      None,
+    ) {
+    Some((message, _)) => {
+      assert_true(message.contains("[PR READY]"))
+      assert_false(message.contains("Waiting on Copilot review"))
     }
     None => fail("expected PRReady message")
   }
@@ -6286,6 +6305,7 @@ test "parent_poll_event_message MergeReady on Mixed mode says MERGE READY (not M
       @poller.PollEvent::MergeReady(76),
       Some(0),
       merge_mode=@poller.MergeOperatorMode::Mixed,
+      reviewer=@types.Reviewer::Copilot,
     ) {
     Some((message, _)) => {
       assert_true(message.contains("[MERGE READY]"))
@@ -6309,6 +6329,7 @@ test "parent_poll_event_message ReviewTimeout emits EscalateConfiguredReview nex
       @poller.PollEvent::ReviewTimeout(77),
       Some(0),
       merge_mode=@poller.MergeOperatorMode::Manual,
+      reviewer=@types.Reviewer::Copilot,
     ) {
     Some((message, _)) => {
       assert_next_action_line(
@@ -6363,6 +6384,7 @@ test "parent_poll_event_message FixesPushed stresses not merged" {
       "/repo",
       @poller.PollEvent::FixesPushed(8),
       None,
+      reviewer=@types.Reviewer::Copilot,
     ) {
     Some((message, status)) => {
       assert_eq(status, @types.Status::Info)
@@ -6710,6 +6732,7 @@ test "leaf_poll_review_injection_message CILatestHeadRollupSucceeded escalates w
     leaf_poll_review_injection_message(
       @poller.PollEvent::CILatestHeadRollupSucceeded(178),
       Some(tracked),
+      reviewer=@types.Reviewer::Copilot,
     ) {
     Some((message, status)) => {
       assert_eq(status, @types.Status::Info)
@@ -8121,6 +8144,7 @@ test "parent_poll_event_message REVIEW TIMEOUT uses attention-required decision"
       "/repo",
       @poller.PollEvent::ReviewTimeout(61),
       None,
+      reviewer=@types.Reviewer::Copilot,
     ) {
     Some((message, status)) => {
       assert_eq(status, @types.Status::Failure)
@@ -8227,6 +8251,7 @@ test "parent_poll_event_message CI LATEST HEAD adds escalation when review timeo
       "/repo",
       @poller.PollEvent::CILatestHeadRollupSucceeded(171),
       Some(0),
+      reviewer=@types.Reviewer::Copilot,
     ) {
     Some((message, status)) => {
       assert_eq(status, @types.Status::Info)

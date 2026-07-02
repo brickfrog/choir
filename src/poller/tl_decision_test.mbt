@@ -265,10 +265,23 @@ test "plan_tl_poll_event_parent suppresses timeout escalation when review not re
 ///|
 test "tl_tracked_pr_recheck_gate_line matches no blocked snapshot" {
   let t = sample_tracked(Approved, Success, 11)
-  let line = tl_tracked_pr_recheck_gate_line(t, Some(0))
+  let line = tl_tracked_pr_recheck_gate_line(
+    t,
+    Some(0),
+    reviewer=@types.Reviewer::Copilot,
+  )
   assert_true(line.contains("no tracked blockers"))
   assert_true(line.contains("Does not merge"))
   assert_true(line.contains("no Copilot issue comment observed"))
+}
+
+///|
+test "tl_tracked_pr_recheck_gate_line default reviewer matches config default" {
+  let t = sample_tracked(Approved, Success, 11)
+  let line = tl_tracked_pr_recheck_gate_line(t, Some(0))
+  assert_true(line.contains("no tracked blockers"))
+  assert_true(line.contains("Does not merge"))
+  assert_false(line.contains("Copilot issue comment"))
 }
 
 ///|
@@ -465,14 +478,22 @@ test "tl_tracked_pr_recheck_gate_line merge-ready snapshot notes Copilot when se
     ..sample_tracked(Approved, Success, 12),
     copilot_issue_comment_seen: true,
   }
-  let line = tl_tracked_pr_recheck_gate_line(t, Some(0))
+  let line = tl_tracked_pr_recheck_gate_line(
+    t,
+    Some(0),
+    reviewer=@types.Reviewer::Copilot,
+  )
   assert_true(line.contains("Copilot issue comment observed"))
 }
 
 ///|
 test "tl_tracked_pr_recheck_gate_line mentions escalation when copilot silent after timeout" {
   let t = { ..sample_tracked(None_, Success, 42), last_timeout_at: 50L }
-  let line = tl_tracked_pr_recheck_gate_line(t, Some(0))
+  let line = tl_tracked_pr_recheck_gate_line(
+    t,
+    Some(0),
+    reviewer=@types.Reviewer::Copilot,
+  )
   assert_true(line.contains("timed out"))
   assert_true(line.contains("Copilot"))
 }
@@ -978,7 +999,11 @@ test "tl_classify_tracked_pr_workflow treats comment-only review as merge-ready 
 ///|
 test "merge_policy_decision_for_tracked_pr waits for comment-only review until Copilot comment is seen" {
   let t = sample_tracked(Commented, Success, 202)
-  let decision = merge_policy_decision_for_tracked_pr(t, Some(0))
+  let decision = merge_policy_decision_for_tracked_pr(
+    t,
+    Some(0),
+    reviewer=@types.Reviewer::Copilot,
+  )
   assert_eq(decision.label(), "wait")
 }
 
