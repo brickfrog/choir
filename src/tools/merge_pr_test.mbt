@@ -1228,7 +1228,9 @@ async test "interpret_merge_pr success fires pr_merged completion hooks" {
     read_file=fn(path) {
       if path.has_suffix("/.choir/state/audit-gate.json") {
         "{\"enabled_at_unix\":100}\n"
-      } else if path.has_suffix("/.choir/state/audit-receipts/abcdef123456.json") {
+      } else if path.has_suffix(
+          "/.choir/state/audit-receipts/abcdef123456.json",
+        ) {
         merge_pr_test_audit_receipt(head)
       } else {
         ""
@@ -1352,7 +1354,9 @@ async test "interpret_merge_pr suppresses pr_merged hooks when poller persist fa
     read_file=fn(path) {
       if path.has_suffix("/.choir/state/audit-gate.json") {
         "{\"enabled_at_unix\":100}\n"
-      } else if path.has_suffix("/.choir/state/audit-receipts/abcdef123456.json") {
+      } else if path.has_suffix(
+          "/.choir/state/audit-receipts/abcdef123456.json",
+        ) {
         merge_pr_test_audit_receipt(head)
       } else {
         ""
@@ -2483,9 +2487,11 @@ test "format_tl_pr_recheck_summary applies skipped review policy for feature bra
     skip_copilot_on_feature_branch=true,
     default_branch="main",
   )
+  assert_true(s.contains("Review requirement: skipped by policy"))
   assert_true(s.contains("review skipped by policy"))
   assert_true(s.contains("Advisory evaluation verdict: ready"))
   assert_true(s.contains("Merge policy decision: merge_now"))
+  assert_false(s.contains("issue comment (REST)"))
   assert_false(s.contains("waiting for review"))
   assert_false(s.contains("waiting for Copilot comments"))
 }

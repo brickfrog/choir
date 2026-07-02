@@ -868,24 +868,30 @@ pub fn format_tl_pr_recheck_summary(
     Some(n) => "Unresolved inline review threads (GraphQL): " + n.to_string()
     None => "Unresolved inline review threads (GraphQL): not fetched"
   }
-  let issue_comment_state = if tracked.copilot_issue_comment_seen {
-    "seen"
-  } else {
-    "not seen"
-  }
-  let issue_comment_line = match reviewer {
-    @types.Reviewer::None => None
-    @types.Reviewer::Copilot =>
-      Some("GitHub Copilot issue comment (REST): " + issue_comment_state)
-    @types.Reviewer::Named(handle) =>
-      Some("GitHub " + handle + " issue comment (REST): " + issue_comment_state)
-  }
   let review_required = @policy.review_required_for_branch(
     reviewer,
     skip_copilot_on_feature_branch,
     tracked.parent_branch,
     default_branch,
   )
+  let issue_comment_state = if tracked.copilot_issue_comment_seen {
+    "seen"
+  } else {
+    "not seen"
+  }
+  let issue_comment_line = if !review_required {
+    None
+  } else {
+    match reviewer {
+      @types.Reviewer::None => None
+      @types.Reviewer::Copilot =>
+        Some("GitHub Copilot issue comment (REST): " + issue_comment_state)
+      @types.Reviewer::Named(handle) =>
+        Some(
+          "GitHub " + handle + " issue comment (REST): " + issue_comment_state,
+        )
+    }
+  }
   let gate = @poller.tl_tracked_pr_recheck_gate_line(
     tracked,
     unresolved_thread_count,
@@ -929,6 +935,11 @@ pub fn format_tl_pr_recheck_summary(
   "- " +
   threads_line +
   "\n" +
+  (if review_required {
+    ""
+  } else {
+    "- Review requirement: skipped by policy\n"
+  }) +
   (match issue_comment_line {
     Some(line) => "- " + line + "\n"
     None => ""
