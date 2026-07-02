@@ -156,7 +156,7 @@ test "fork_wave spawn plan exports and records authoritative credential role" {
   let args = fork_wave_test_args(@types.Role::TL)
   let plan = fork_wave_spawn_plan(args, 1, Some(reg), "/repo", "sess", agent_tokens=[
     "fork-token-a",
-  ])
+  ]).unwrap()
   assert_true(fork_wave_test_commands_contain(plan.cmds, "CHOIR_AGENT_TOKEN"))
   assert_true(fork_wave_test_commands_contain(plan.cmds, "fork-token-a"))
   record_fork_wave_spawn_credentials(Some(reg), plan.spawned_specs, [
@@ -494,7 +494,7 @@ pub fn fork_wave_spawn_plan(
   tcp_auth_token? : String? = None,
   agent_tokens? : Array[String] = [],
   project_config_content? : String = "",
-) -> ForkWaveSpawnPlan {
+) -> Result[ForkWaveSpawnPlan, @types.ChoirError] {
   ignore(registry)
   let agent_ids = StringBuilder::new()
   let cmds : Array[@workspace.Command] = []
@@ -553,21 +553,25 @@ pub fn fork_wave_spawn_plan(
     } else {
       None
     }
-    let leaf_cmds = @workspace.spawn_commands(
-      spec,
-      project_dir,
-      session,
-      parent_session_id=fork_wave_args.parent_session_id,
-      extra_mcp_servers_json~,
-      shell_command~,
-      listen_uds~,
-      listen_tcp~,
-      tcp_auth_token~,
-      agent_token~,
-      project_config_content~,
-      model~,
-      effort~,
-    )
+    let leaf_cmds = match
+      @workspace.spawn_commands_result(
+        spec,
+        project_dir,
+        session,
+        parent_session_id=fork_wave_args.parent_session_id,
+        extra_mcp_servers_json~,
+        shell_command~,
+        listen_uds~,
+        listen_tcp~,
+        tcp_auth_token~,
+        agent_token~,
+        project_config_content~,
+        model~,
+        effort~,
+      ) {
+      Ok(cmds) => cmds
+      Err(e) => return Err(e)
+    }
     for
       binding in spawn_launch_command_bindings_for_agent(
         agent_id,
@@ -580,7 +584,7 @@ pub fn fork_wave_spawn_plan(
       cmds.push(cmd)
     }
   }
-  {
+  Ok({
     cmds,
     spawn_launch_bindings,
     spawned_specs,
@@ -589,7 +593,7 @@ pub fn fork_wave_spawn_plan(
     skipped_count: 0,
     agent_ids: agent_ids.to_string(),
     skipped_ids: "",
-  }
+  })
 }
 
 ///|
@@ -943,21 +947,30 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
         empty_fork_wave_spawn_plan(),
       )
   }
-  let spawn_plan = fork_wave_spawn_plan(
-    fork_wave_args,
-    child_spawn_depth,
-    registry,
-    project_dir,
-    session,
-    wave_id~,
-    extra_mcp_servers_json~,
-    shell_command~,
-    listen_uds~,
-    listen_tcp~,
-    tcp_auth_token~,
-    agent_tokens~,
-    project_config_content~,
-  )
+  let spawn_plan = match
+    fork_wave_spawn_plan(
+      fork_wave_args,
+      child_spawn_depth,
+      registry,
+      project_dir,
+      session,
+      wave_id~,
+      extra_mcp_servers_json~,
+      shell_command~,
+      listen_uds~,
+      listen_tcp~,
+      tcp_auth_token~,
+      agent_tokens~,
+      project_config_content~,
+    ) {
+    Ok(plan) => plan
+    Err(e) =>
+      return (
+        @types.Response::Err(e.message()),
+        fork_wave_args,
+        empty_fork_wave_spawn_plan(),
+      )
+  }
   let mut seed_warning : String? = None
   if fork_wave_args.agent_type == @types.AgentType::Gemini &&
     spawn_plan.spawned_count > 0 {

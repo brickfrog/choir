@@ -870,7 +870,9 @@ test "mcp startup retries UDS connect until success" {
   @debug.assert_eq(connect_paths, [
     ".choir/run/server.sock", ".choir/run/server.sock", ".choir/run/server.sock",
   ])
-  @debug.assert_eq(waits, [".choir/run/server.sock:150", ".choir/run/server.sock:150"])
+  @debug.assert_eq(waits, [
+    ".choir/run/server.sock:150", ".choir/run/server.sock:150",
+  ])
   @debug.assert_eq(sleeps, [1000, 2000])
   match mcp_startup_transport(result, None) {
     Uds(fd) => assert_eq(fd, 42)
@@ -911,7 +913,9 @@ test "wait_for_socket_returns_success_mid_attempt_breaks_outer_retry" {
       fail("expected startup connect to succeed after socket wait")
   }
   assert_eq(connect_calls, 2)
-  @debug.assert_eq(connect_paths, [".choir/run/server.sock", ".choir/run/server.sock"])
+  @debug.assert_eq(connect_paths, [
+    ".choir/run/server.sock", ".choir/run/server.sock",
+  ])
   @debug.assert_eq(waits, [".choir/run/server.sock:150"])
   @debug.assert_eq(sleeps, [])
   match mcp_startup_transport(result, None) {

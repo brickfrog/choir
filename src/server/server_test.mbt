@@ -254,7 +254,9 @@ async test "tdd_intent server handler repairs missing task contract on write pat
   assert_true(resp.is_ok())
   @debug.assert_eq(state.task_contract_for_agent(child_id), Some(contract))
   assert_true(
-    @sys.path_entry_exists(project_dir + "/.choir/state/agent-task-contracts.json"),
+    @sys.path_entry_exists(
+      project_dir + "/.choir/state/agent-task-contracts.json",
+    ),
   )
   ignore(@sys.rm_rf(project_dir))
 }

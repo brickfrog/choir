@@ -32,7 +32,7 @@ fn parent_poll_request_review_handle(reviewer : @types.Reviewer) -> String {
 /// When review-wait already timed out with no review in snapshot, CI-only parent lines must not read like ordinary progress.
 fn parent_poll_ci_escalation_prefix(
   tracked : @poller.TrackedPR,
-  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
+  reviewer? : @types.Reviewer = @types.Reviewer::None,
   review_required? : Bool = true,
 ) -> String {
   if @poller.tl_tracked_pr_copilot_review_silent_escalation_active(

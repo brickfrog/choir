@@ -26,7 +26,8 @@ fn pr_progress_update(
     None =>
       { last_sha: cur_sha, unresolved_count: cur_unresolved, since_unix: now }
     Some(p) => {
-      let advanced = cur_sha != p.last_sha || cur_unresolved < p.unresolved_count
+      let advanced = cur_sha != p.last_sha ||
+        cur_unresolved < p.unresolved_count
       let since = if advanced { now } else { p.since_unix }
       { last_sha: cur_sha, unresolved_count: cur_unresolved, since_unix: since }
     }
@@ -214,7 +215,9 @@ pub async fn ServerState::progress_backstop_sweep(
   now : Int64,
   threshold_sec : Int64,
 ) -> Unit {
-  self.progress_backstop_sweep_with_runner(now, threshold_sec, @exec.run_sequence)
+  self.progress_backstop_sweep_with_runner(
+    now, threshold_sec, @exec.run_sequence,
+  )
 }
 
 // Whitebox tests for the pure progress-snapshot helpers (private symbols).

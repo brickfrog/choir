@@ -578,7 +578,7 @@ test "resolve_agent_effort follows override role default none cascade" {
 }
 
 ///|
-test "agent_launch_command emits codex model flag only for codex model option" {
+test "agent_launch_command emits model flag per provider when model option set" {
   let spec = @types.SpawnSpec::{
     slug: "test-slug",
     role: @types.Role::Worker,
@@ -597,28 +597,29 @@ test "agent_launch_command emits codex model flag only for codex model option" {
     merge_strategy: None,
     wave_id: None,
   }
-  let codex_with_model = @workspace.agent_launch_command(
-    spec,
-    "/path",
-    model=Some("codex-audit"),
-  )
-  let codex_model_body = launch_cmd_body_contains_setsid(codex_with_model)
-  assert_true(codex_model_body.contains("--model"))
-  assert_true(codex_model_body.contains("codex-audit"))
-
-  let codex_without_model = @workspace.agent_launch_command(spec, "/path")
-  let codex_default_body = launch_cmd_body_contains_setsid(codex_without_model)
-  assert_false(codex_default_body.contains("--model"))
-  assert_false(codex_default_body.contains("codex-audit"))
-
-  let claude_with_model = @workspace.agent_launch_command(
-    { ..spec, agent_type: @types.AgentType::Claude },
-    "/path",
-    model=Some("codex-audit"),
-  )
-  let claude_body = launch_cmd_body_contains_setsid(claude_with_model)
-  assert_false(claude_body.contains("--model"))
-  assert_false(claude_body.contains("codex-audit"))
+  for
+    agent_type in [
+      @types.AgentType::Codex,
+      @types.AgentType::Claude,
+      @types.AgentType::Gemini,
+      @types.AgentType::CursorAgent,
+    ] {
+    let with_model = @workspace.agent_launch_command(
+      { ..spec, agent_type, },
+      "/path",
+      model=Some("model-pick"),
+    )
+    let with_model_body = launch_cmd_body_contains_setsid(with_model)
+    assert_true(with_model_body.contains("--model"))
+    assert_true(with_model_body.contains("model-pick"))
+    let without_model = @workspace.agent_launch_command(
+      { ..spec, agent_type, },
+      "/path",
+    )
+    let default_body = launch_cmd_body_contains_setsid(without_model)
+    assert_false(default_body.contains("--model"))
+    assert_false(default_body.contains("model-pick"))
+  }
 }
 
 ///|
@@ -715,8 +716,9 @@ test "agent_launch_command omits codex effort flag for non-codex providers" {
   )
   let body = launch_cmd_body_contains_setsid(with_effort)
   assert_false(body.contains("model_reasoning_effort=high"))
-  assert_false(body.contains("--model"))
-  assert_false(body.contains("codex-audit"))
+  // model emission is per-provider and stays; only the effort flag is codex-only
+  assert_true(body.contains("--model"))
+  assert_true(body.contains("codex-audit"))
 }
 
 ///|
@@ -861,7 +863,7 @@ test "spawn_commands writes codex Stop completion handoff hook" {
     merge_strategy: None,
     wave_id: None,
   }
-  let cmds = @workspace.spawn_commands(spec, "/project", "session")
+  let cmds = @workspace.spawn_commands_result(spec, "/project", "session").unwrap()
   let config_index = workspace_rel_file_write_index(cmds, ".codex/config.toml")
   assert_true(config_index >= 0)
   let content = cmds[config_index].args[2]
@@ -901,7 +903,7 @@ test "spawn_commands writes claude Stop hook outside plugin" {
     merge_strategy: None,
     wave_id: None,
   }
-  let cmds = @workspace.spawn_commands(spec, "/project", "session")
+  let cmds = @workspace.spawn_commands_result(spec, "/project", "session").unwrap()
   let script_index = workspace_rel_file_write_index(
     cmds, ".choir/hooks/completion_handoff_stop.sh",
   )
@@ -1274,40 +1276,56 @@ test "provision_commands builds guarded copy symlink and command entries" {
 test "spawn_commands inserts provisioning after gitexclude before config write" {
   let cfg =
     #|worktree_provision_json = '[{"path":"node_modules","strategy":"copy"},{"path":"immutable-cache","strategy":"symlink"},{"path":".","strategy":"command","command":"bun install"}]'
-  let cmds = @workspace.spawn_commands(
+  let cmds = @workspace.spawn_commands_result(
     worktree_spawn_spec("provisioned"),
     "/repo",
     "exo",
     project_config_content=cfg,
-  )
+  ).unwrap()
   let gitexclude_index = command_program_index(
     cmds, @workspace.native_worktree_seed_agent_runtime_gitexclude_program,
   )
   let config_index = choir_file_write_index(cmds, "config.toml")
   assert_true(gitexclude_index >= 0)
   assert_true(config_index >= 0)
-  assert_eq(cmds[gitexclude_index + 1].program, "test")
-  assert_eq(cmds[gitexclude_index + 2].program, "sh")
+  // Per-path provision excludes follow the base snippet; "." is never excluded.
+  assert_eq(
+    cmds[gitexclude_index + 1].program,
+    @workspace.native_worktree_seed_agent_runtime_gitexclude_program,
+  )
+  @debug.assert_eq(cmds[gitexclude_index + 1].args[1], "/node_modules")
+  assert_eq(
+    cmds[gitexclude_index + 2].program,
+    @workspace.native_worktree_seed_agent_runtime_gitexclude_program,
+  )
+  @debug.assert_eq(cmds[gitexclude_index + 2].args[1], "/immutable-cache")
   assert_eq(cmds[gitexclude_index + 3].program, "test")
-  assert_eq(cmds[gitexclude_index + 4].program, "ln")
-  assert_eq(cmds[gitexclude_index + 5].program, "sh")
-  assert_eq(config_index, gitexclude_index + 6)
+  assert_eq(cmds[gitexclude_index + 4].program, "sh")
+  assert_eq(cmds[gitexclude_index + 5].program, "test")
+  assert_eq(cmds[gitexclude_index + 6].program, "ln")
+  assert_eq(cmds[gitexclude_index + 7].program, "sh")
+  assert_eq(config_index, gitexclude_index + 8)
 }
 
 ///|
 test "spawn_commands re-provisions reused worktrees before config write" {
   let cfg =
     #|worktree_provision_json = '[{"path":"node_modules","strategy":"copy"}]'
-  let cmds = @workspace.spawn_commands(
+  let cmds = @workspace.spawn_commands_result(
     worktree_spawn_spec("reused", reuse_workspace=true),
     "/repo",
     "exo",
     project_config_content=cfg,
-  )
+  ).unwrap()
   let config_index = choir_file_write_index(cmds, "config.toml")
-  assert_eq(cmds[0].program, "test")
-  assert_eq(cmds[1].program, "sh")
-  assert_eq(config_index, 2)
+  assert_eq(
+    cmds[0].program,
+    @workspace.native_worktree_seed_agent_runtime_gitexclude_program,
+  )
+  @debug.assert_eq(cmds[0].args[1], "/node_modules")
+  assert_eq(cmds[1].program, "test")
+  assert_eq(cmds[2].program, "sh")
+  assert_eq(config_index, 3)
 }
 
 ///|
@@ -1628,7 +1646,7 @@ test "spawn_commands for worktree mode returns zellij tab" {
     merge_strategy: None,
     wave_id: None,
   }
-  let cmds = @workspace.spawn_commands(spec, "/project", "session")
+  let cmds = @workspace.spawn_commands_result(spec, "/project", "session").unwrap()
   // cleanup, fetch parent, git worktree add, seed info/exclude, config.toml,
   // local config, helpers, Claude completion hook materialization, zellij
   assert_eq(cmds.length(), 11)
@@ -1686,7 +1704,7 @@ test "spawn_commands worktree config write content" {
     merge_strategy: None,
     wave_id: None,
   }
-  let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
+  let cmds = @workspace.spawn_commands_result(spec, "/proj", "exo").unwrap()
   assert_eq(cmds.length(), 11)
   assert_eq(cmds[4].program, @workspace.native_write_choir_file_program)
   assert_true(cmds[4].args[0].contains("feature-a"))
@@ -1737,12 +1755,12 @@ test "spawn_commands worktree materializes portable config before launch" {
     #|
     #|[project]
     #|verify_cmd = "moon check --target native && moon test --target native"
-  let cmds = @workspace.spawn_commands(
+  let cmds = @workspace.spawn_commands_result(
     spec,
     "/proj",
     "exo",
     project_config_content=portable_config,
-  )
+  ).unwrap()
   let config_index = choir_file_write_index(cmds, "config.toml")
   let local_index = choir_file_write_index(cmds, "config.local.toml")
   let helper_index = command_program_index(
@@ -1795,7 +1813,7 @@ test "spawn_commands wraps TL worktree launch with policy watcher shell" {
     merge_strategy: None,
     wave_id: None,
   }
-  let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
+  let cmds = @workspace.spawn_commands_result(spec, "/proj", "exo").unwrap()
   let last = cmds[cmds.length() - 1]
   assert_eq(last.program, "zellij")
   assert_eq(last.args[9], "sh")
@@ -1829,7 +1847,7 @@ test "spawn_commands gemini worktree adds agy bootstrap and config" {
     merge_strategy: None,
     wave_id: None,
   }
-  let cmds = @workspace.spawn_commands(spec, "/proj", "howdy")
+  let cmds = @workspace.spawn_commands_result(spec, "/proj", "howdy").unwrap()
   assert_eq(cmds.length(), 12)
   assert_eq(cmds[4].program, @workspace.native_write_choir_file_program)
   assert_eq(cmds[4].args[1], "config.toml")
@@ -1873,7 +1891,7 @@ test "spawn_commands standalone includes config writes" {
     merge_strategy: None,
     wave_id: None,
   }
-  let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
+  let cmds = @workspace.spawn_commands_result(spec, "/proj", "exo").unwrap()
   // git init, config.local.toml, helpers, Claude completion hook materialization, zellij new-tab
   assert_eq(cmds.length(), 7)
   assert_no_tracked_config_write(cmds)
@@ -1916,7 +1934,7 @@ test "spawn_commands adds Gemini trust bootstrap" {
     merge_strategy: None,
     wave_id: None,
   }
-  let cmds = @workspace.spawn_commands(spec, "/project", "session")
+  let cmds = @workspace.spawn_commands_result(spec, "/project", "session").unwrap()
   assert_eq(cmds.length(), 12)
   assert_eq(cmds[4].program, @workspace.native_write_choir_file_program)
   assert_eq(cmds[4].args[1], "config.toml")
@@ -1960,7 +1978,7 @@ test "spawn_commands cursor_agent worktree adds mcp json" {
     merge_strategy: None,
     wave_id: None,
   }
-  let cmds = @workspace.spawn_commands(spec, "/proj", "howdy")
+  let cmds = @workspace.spawn_commands_result(spec, "/proj", "howdy").unwrap()
   // cleanup, fetch, worktree add, seed exclude, config.toml, local config, helpers, mcp json, zellij
   assert_eq(cmds.length(), 9)
   assert_eq(cmds[4].program, @workspace.native_write_choir_file_program)
@@ -1993,7 +2011,7 @@ test "spawn_commands for inline mode writes metadata and uses zellij run" {
     merge_strategy: None,
     wave_id: None,
   }
-  let cmds = @workspace.spawn_commands(spec, "/project", "howdy")
+  let cmds = @workspace.spawn_commands_result(spec, "/project", "howdy").unwrap()
   assert_eq(cmds.length(), 3)
   assert_eq(cmds[0].program, @workspace.native_write_choir_file_program)
   assert_true(
@@ -2038,7 +2056,7 @@ test "spawn_commands launch text contains env vars" {
     merge_strategy: None,
     wave_id: None,
   }
-  let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
+  let cmds = @workspace.spawn_commands_result(spec, "/proj", "exo").unwrap()
   // Last command is zellij new-tab; env + argv follow `-- env`
   let last = cmds[cmds.length() - 1]
   assert_eq(last.program, "zellij")
@@ -2856,7 +2874,7 @@ test "spawn_commands writes codex project hooks config when enforcement is avail
     merge_strategy: None,
     wave_id: None,
   }
-  let cmds = @workspace.spawn_commands(
+  let cmds = @workspace.spawn_commands_result(
     spec,
     "/project",
     "session",
@@ -2869,7 +2887,7 @@ test "spawn_commands writes codex project hooks config when enforcement is avail
         ""
       }
     },
-  )
+  ).unwrap()
   let codex_index = workspace_rel_file_write_index(cmds, ".codex/config.toml")
   assert_true(codex_index >= 0)
   let content = cmds[codex_index].args[2]
@@ -2920,7 +2938,7 @@ test "spawn_commands writes claude settings hooks and launches with settings pat
     merge_strategy: None,
     wave_id: None,
   }
-  let cmds = @workspace.spawn_commands(
+  let cmds = @workspace.spawn_commands_result(
     spec,
     "/project",
     "session",
@@ -2933,7 +2951,7 @@ test "spawn_commands writes claude settings hooks and launches with settings pat
         ""
       }
     },
-  )
+  ).unwrap()
   let settings_index = workspace_rel_file_write_index(
     cmds, ".choir/state/claude-settings.json",
   )
@@ -3009,7 +3027,7 @@ test "spawn_commands adds guard_paths to agy hooks when enforcement is available
     merge_strategy: None,
     wave_id: None,
   }
-  let cmds = @workspace.spawn_commands(
+  let cmds = @workspace.spawn_commands_result(
     spec,
     "/project",
     "session",
@@ -3022,7 +3040,7 @@ test "spawn_commands adds guard_paths to agy hooks when enforcement is available
         ""
       }
     },
-  )
+  ).unwrap()
   let hooks_index = workspace_rel_file_write_index(
     cmds, ".choir/agy-home/.gemini/config/hooks.json",
   )
@@ -3061,7 +3079,7 @@ test "spawn_commands flag off emits no contract-boundary hook wiring" {
     merge_strategy: None,
     wave_id: None,
   }
-  let cmds = @workspace.spawn_commands(
+  let cmds = @workspace.spawn_commands_result(
     spec,
     "/project",
     "session",
@@ -3074,7 +3092,7 @@ test "spawn_commands flag off emits no contract-boundary hook wiring" {
         ""
       }
     },
-  )
+  ).unwrap()
   let config_index = workspace_rel_file_write_index(cmds, ".codex/config.toml")
   assert_true(config_index >= 0)
   let content = cmds[config_index].args[2]
@@ -3116,14 +3134,14 @@ test "spawn_commands enforcement warning is fail-open when prerequisites are mis
     merge_strategy: None,
     wave_id: None,
   }
-  let cmds = @workspace.spawn_commands(
+  let cmds = @workspace.spawn_commands_result(
     spec,
     "/project",
     "session",
     project_config_content="hooks_enforcement = true\n",
     extism_on_path=fn() { false },
     read_file=fn(_) { "" },
-  )
+  ).unwrap()
   let config_index = workspace_rel_file_write_index(cmds, ".codex/config.toml")
   assert_true(config_index >= 0)
   let content = cmds[config_index].args[2]
@@ -3433,7 +3451,7 @@ test "spawn_commands worktree reuse skips destructive bootstrap" {
     merge_strategy: None,
     wave_id: None,
   }
-  let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
+  let cmds = @workspace.spawn_commands_result(spec, "/proj", "exo").unwrap()
   assert_eq(cmds.length(), 5)
   assert_eq(cmds[0].program, @workspace.native_write_choir_file_program)
   assert_eq(cmds[0].args[1], "config.toml")

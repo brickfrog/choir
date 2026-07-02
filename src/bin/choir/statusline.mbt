@@ -331,7 +331,10 @@ test "statusline_kv_files_with_prefix detects pending-wave entries" {
     ),
   )
   ignore(
-    @sys.write_file_sync(project_dir + "/.choir/state/kv/lifecycle--main--leaf", "{}"),
+    @sys.write_file_sync(
+      project_dir + "/.choir/state/kv/lifecycle--main--leaf",
+      "{}",
+    ),
   )
   let paths = statusline_kv_files_with_prefix(project_dir, "pending-wave--")
   ignore(@sys.rm_rf(project_dir))

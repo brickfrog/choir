@@ -673,7 +673,7 @@ pub fn advisory_evaluation_result_for_tracked_pr(
   task_contract? : @types.TaskContract? = None,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   verify_results? : Array[@types.VerifyCheckResult] = [],
-  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
+  reviewer? : @types.Reviewer = @types.Reviewer::None,
   skip_copilot_on_feature_branch? : Bool = false,
   default_branch? : String = "",
 ) -> @types.EvaluationResult {
@@ -727,7 +727,7 @@ pub fn advisory_evaluation_summary_line(
   task_contract? : @types.TaskContract? = None,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   verify_results? : Array[@types.VerifyCheckResult] = [],
-  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
+  reviewer? : @types.Reviewer = @types.Reviewer::None,
   skip_copilot_on_feature_branch? : Bool = false,
   default_branch? : String = "",
 ) -> String {
@@ -783,7 +783,7 @@ pub fn merge_policy_decision_for_tracked_pr(
   task_contract? : @types.TaskContract? = None,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   verify_results? : Array[@types.VerifyCheckResult] = [],
-  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
+  reviewer? : @types.Reviewer = @types.Reviewer::None,
   skip_copilot_on_feature_branch? : Bool = false,
   default_branch? : String = "",
 ) -> @policy.MergeDecision {
@@ -836,7 +836,7 @@ pub fn merge_policy_summary_line(
   task_contract? : @types.TaskContract? = None,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   verify_results? : Array[@types.VerifyCheckResult] = [],
-  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
+  reviewer? : @types.Reviewer = @types.Reviewer::None,
   skip_copilot_on_feature_branch? : Bool = false,
   default_branch? : String = "",
 ) -> String {
@@ -955,7 +955,7 @@ pub fn next_action_for_pr_state_notification(
   tracked : TrackedPR,
   unresolved_threads : Int?,
   mode : MergeOperatorMode,
-  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
+  reviewer? : @types.Reviewer = @types.Reviewer::None,
   owner_released? : Bool = true,
 ) -> NextAction {
   if decision is @policy.MergeDecision::ThreadsUnresolvedButFixed(..) {
@@ -1001,7 +1001,7 @@ pub fn pr_state_notification_decision_for_tracked_pr(
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   verify_results? : Array[@types.VerifyCheckResult] = [],
   merge_mode? : MergeOperatorMode = MergeOperatorMode::Manual,
-  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
+  reviewer? : @types.Reviewer = @types.Reviewer::None,
   skip_copilot_on_feature_branch? : Bool = false,
   default_branch? : String = "",
   owner_released? : Bool = true,
@@ -1158,7 +1158,7 @@ pub fn tl_classify_tracked_pr_workflow(
 /// One stable sentence per category for parent-facing notifications (`TLDecision:` line).
 pub fn tl_tracked_pr_workflow_category_sentence(
   cat : TlTrackedPrWorkflowCategory,
-  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
+  reviewer? : @types.Reviewer = @types.Reviewer::None,
 ) -> String {
   let reviewer_label = reviewer_text_label(reviewer)
   let reviewer_handle = reviewer_request_handle(reviewer)
@@ -1270,7 +1270,7 @@ pub fn plan_tl_poll_event_parent(
 pub fn tl_tracked_pr_recheck_gate_line(
   tracked : TrackedPR,
   unresolved_thread_count : Int?,
-  reviewer? : @types.Reviewer = @types.Reviewer::Copilot,
+  reviewer? : @types.Reviewer = @types.Reviewer::None,
   review_required? : Bool = true,
 ) -> String {
   let reviewer_label = reviewer_text_label(reviewer)

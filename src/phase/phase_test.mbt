@@ -364,7 +364,9 @@ test "lifecycle_thread_owning_dev covers the three thread-owning Dev states by n
     ),
   )
   assert_true(
-    lifecycle_thread_owning_dev(Dev(ChangesRequested(pr_number=7, next_round=2))),
+    lifecycle_thread_owning_dev(
+      Dev(ChangesRequested(pr_number=7, next_round=2)),
+    ),
   )
   // ExitRequestedDeferred owns a PR (carries pr_number + review state) and is
   // idle-watchdog-exempt + non-terminal — an alive-wedged one orphans unless the
@@ -1322,7 +1324,9 @@ test "interpret_lifecycle_effects skips append when persist fails" {
     "-" +
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.create_dir_all(project_dir + "/.choir"))
-  ignore(@sys.write_file_sync(project_dir + "/.choir/state/kv", "not-a-directory"))
+  ignore(
+    @sys.write_file_sync(project_dir + "/.choir/state/kv", "not-a-directory"),
+  )
   let lc = lifecycle_for_role("u1", @types.Role::Dev)
   let effects : Array[LifecycleEffect] = [
     PersistLifecycle(lifecycle=lc),
@@ -1493,8 +1497,7 @@ test "dev_lifecycle_transition closes ReviewOwned/ChangesRequested/ExitRequested
       PrClosedUnmerged(pr_number=200),
     ) {
     Transitioned(Done(reason=PrClosedUnmerged)) => ()
-    _ =>
-      fail("expected Done(PrClosedUnmerged) from ChangesRequested")
+    _ => fail("expected Done(PrClosedUnmerged) from ChangesRequested")
   }
   // ExitRequestedDeferred -> Done(PrClosedUnmerged)
   match
@@ -1503,8 +1506,7 @@ test "dev_lifecycle_transition closes ReviewOwned/ChangesRequested/ExitRequested
       PrClosedUnmerged(pr_number=200),
     ) {
     Transitioned(Done(reason=PrClosedUnmerged)) => ()
-    _ =>
-      fail("expected Done(PrClosedUnmerged) from ExitRequestedDeferred")
+    _ => fail("expected Done(PrClosedUnmerged) from ExitRequestedDeferred")
   }
   // PER-PR gate: a stale PR closing must NOT finalize a leaf owning a different PR.
   match

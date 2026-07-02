@@ -715,6 +715,14 @@ fn spawn_commands_unchecked(
         )
         cmds.push(command_seed_worktree_agent_runtime_gitexclude(workspace))
       }
+      for entry in worktree_provision {
+        // "." (command strategy over the worktree root) must not be excluded.
+        if entry.path != "." {
+          cmds.push(
+            command_seed_worktree_provision_gitexclude(workspace, entry.path),
+          )
+        }
+      }
       for cmd in provision_commands(root_project, workspace, worktree_provision) {
         cmds.push(cmd)
       }
@@ -937,43 +945,6 @@ pub fn spawn_commands_result(
       worktree_provision=cfg.worktree_provision,
     ),
   )
-}
-
-///|
-pub fn spawn_commands(
-  spec : @types.SpawnSpec,
-  project_dir : String,
-  session : String,
-  parent_session_id? : String? = None,
-  extra_mcp_servers_json? : String? = None,
-  shell_command? : String? = None,
-  listen_uds? : String = ".choir/run/server.sock",
-  listen_tcp? : String? = None,
-  tcp_auth_token? : String? = None,
-  agent_token? : String? = None,
-  project_config_content? : String = "",
-  read_file? : (String) -> String = @sys.read_file,
-  extism_on_path? : () -> Bool = extism_on_path_default,
-  model? : String? = None,
-  effort? : String? = None,
-) -> Array[Command] {
-  spawn_commands_result(
-    spec,
-    project_dir,
-    session,
-    parent_session_id~,
-    extra_mcp_servers_json~,
-    shell_command~,
-    listen_uds~,
-    listen_tcp~,
-    tcp_auth_token~,
-    agent_token~,
-    project_config_content~,
-    read_file~,
-    extism_on_path~,
-    model~,
-    effort~,
-  ).unwrap()
 }
 
 ///|
