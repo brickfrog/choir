@@ -961,14 +961,37 @@ fn parse_scaffold_commit(
 }
 
 ///|
+/// Per-leaf TaskContract override plus the presence information the contract's
+/// `Bool` field cannot carry: `verify_satisfied_by_ci` is `Some` only when the
+/// override object set it explicitly; `None` inherits the wave-level base
+/// (same Some=set/None=inherit convention as `UpdateTaskContractArgs`).
+priv struct TaskContractOverride {
+  contract : @types.TaskContract
+  verify_satisfied_by_ci : Bool?
+}
+
+///|
+fn empty_task_contract_override() -> TaskContractOverride {
+  { contract: @types.TaskContract::empty(), verify_satisfied_by_ci: None }
+}
+
+///|
 fn parse_task_contracts_json_items(
   items : Array[Json],
   field : String,
-) -> Result[Array[@types.TaskContract], ParseError] {
-  let contracts : Array[@types.TaskContract] = []
+) -> Result[Array[TaskContractOverride], ParseError] {
+  let contracts : Array[TaskContractOverride] = []
   for item in items {
     match item {
-      Object(_) => contracts.push(task_contract_from_json_object(Some(item)))
+      Object(fields) => {
+        let contract = task_contract_from_json_object(Some(item))
+        let verify_satisfied_by_ci : Bool? = match
+          fields.get("verify_satisfied_by_ci") {
+          None | Some(Null) => None
+          Some(_) => Some(contract.verify_satisfied_by_ci)
+        }
+        contracts.push({ contract, verify_satisfied_by_ci })
+      }
       _ =>
         return Err(
           ParseError::InvalidFormat(field~, message="entries must be objects"),
@@ -982,7 +1005,7 @@ fn parse_task_contracts_json_items(
 fn parse_task_contracts_json_value(
   value : Json?,
   field : String,
-) -> Result[Array[@types.TaskContract], ParseError] {
+) -> Result[Array[TaskContractOverride], ParseError] {
   match value {
     None => Ok([])
     Some(Array(items)) => parse_task_contracts_json_items(items, field)
@@ -1009,7 +1032,7 @@ fn parse_task_contracts_json_value(
 ///|
 fn parse_task_contracts_array(
   args : ToolArgs,
-) -> Result[Array[@types.TaskContract], ParseError] {
+) -> Result[Array[TaskContractOverride], ParseError] {
   match tool_args_get_json(args, "task_contracts") {
     Some(value) =>
       parse_task_contracts_json_value(Some(value), "task_contracts")
@@ -1047,8 +1070,9 @@ fn task_contract_override_lines(
 ///|
 fn apply_task_contract_override(
   base : @types.TaskContract,
-  patch_contract : @types.TaskContract,
+  patch : TaskContractOverride,
 ) -> @types.TaskContract {
+  let patch_contract = patch.contract
   {
     goal: if patch_contract.goal != "" {
       patch_contract.goal
@@ -1081,8 +1105,10 @@ fn apply_task_contract_override(
       None => base.review_context
     },
     verify: task_contract_override_lines(base.verify, patch_contract.verify),
-    verify_satisfied_by_ci: base.verify_satisfied_by_ci &&
-    patch_contract.verify_satisfied_by_ci,
+    verify_satisfied_by_ci: match patch.verify_satisfied_by_ci {
+      Some(value) => value
+      None => base.verify_satisfied_by_ci
+    },
   }
 }
 
@@ -1144,7 +1170,7 @@ pub fn parse_fork_wave_args(
       let task_contract_override = if explicit_task_contracts.length() > 0 {
         explicit_task_contracts[i]
       } else {
-        @types.TaskContract::empty()
+        empty_task_contract_override()
       }
       let task_contract = apply_task_contract_override(
         base_leaf_spec.task_contract,
@@ -1173,7 +1199,7 @@ pub fn parse_fork_wave_args(
       let task_contract_override = if explicit_task_contracts.length() > 0 {
         explicit_task_contracts[i]
       } else {
-        @types.TaskContract::empty()
+        empty_task_contract_override()
       }
       let task_contract = apply_task_contract_override(
         base_spec.task_contract,

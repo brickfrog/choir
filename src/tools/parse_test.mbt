@@ -49,6 +49,44 @@ test "parse_fork_wave_args verify default precedence" {
 }
 
 ///|
+test "parse_fork_wave_args per-leaf verify_satisfied_by_ci overrides wave-level base both ways" {
+  let args = {
+    "count": "3",
+    "task": "work",
+    "parent_branch": "main",
+    "caller_id": "root",
+    "verify_satisfied_by_ci": "false",
+    "task_contracts": "[{\"verify_satisfied_by_ci\": true}, {}, {\"verify_satisfied_by_ci\": false}]",
+  }
+  match @tools.parse_fork_wave_args(".", @tools.tool_args_from_map(args)) {
+    Ok(fork) => {
+      // explicit leaf true overrides wave-level false
+      @debug.assert_eq(fork.task_contracts[0].verify_satisfied_by_ci, true)
+      // omitted inherits the wave-level base
+      @debug.assert_eq(fork.task_contracts[1].verify_satisfied_by_ci, false)
+      @debug.assert_eq(fork.task_contracts[2].verify_satisfied_by_ci, false)
+    }
+    Err(e) => fail("parse_fork_wave_args per-leaf override: " + e.message())
+  }
+  let base_true_args = {
+    "count": "2",
+    "task": "work",
+    "parent_branch": "main",
+    "caller_id": "root",
+    "task_contracts": "[{\"verify_satisfied_by_ci\": false}, {}]",
+  }
+  match
+    @tools.parse_fork_wave_args(".", @tools.tool_args_from_map(base_true_args)) {
+    Ok(fork) => {
+      // explicit leaf false overrides the default-true base
+      @debug.assert_eq(fork.task_contracts[0].verify_satisfied_by_ci, false)
+      @debug.assert_eq(fork.task_contracts[1].verify_satisfied_by_ci, true)
+    }
+    Err(e) => fail("parse_fork_wave_args base-true override: " + e.message())
+  }
+}
+
+///|
 test "parse_fork_wave_args appends choir lint when available" {
   match
     @tools.parse_fork_wave_args(
