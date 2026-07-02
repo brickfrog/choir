@@ -940,43 +940,6 @@ pub fn spawn_commands_result(
 }
 
 ///|
-pub fn spawn_commands(
-  spec : @types.SpawnSpec,
-  project_dir : String,
-  session : String,
-  parent_session_id? : String? = None,
-  extra_mcp_servers_json? : String? = None,
-  shell_command? : String? = None,
-  listen_uds? : String = ".choir/run/server.sock",
-  listen_tcp? : String? = None,
-  tcp_auth_token? : String? = None,
-  agent_token? : String? = None,
-  project_config_content? : String = "",
-  read_file? : (String) -> String = @sys.read_file,
-  extism_on_path? : () -> Bool = extism_on_path_default,
-  model? : String? = None,
-  effort? : String? = None,
-) -> Array[Command] {
-  spawn_commands_result(
-    spec,
-    project_dir,
-    session,
-    parent_session_id~,
-    extra_mcp_servers_json~,
-    shell_command~,
-    listen_uds~,
-    listen_tcp~,
-    tcp_auth_token~,
-    agent_token~,
-    project_config_content~,
-    read_file~,
-    extism_on_path~,
-    model~,
-    effort~,
-  ).unwrap()
-}
-
-///|
 /// Remote `ssh ... <shell>` clone + branch checkout. `workspace` is left unquoted so a path
 /// like `$HOME/exo-workspaces/...` expands on the remote shell.
 fn remote_ssh_git_clone_checkout_script(

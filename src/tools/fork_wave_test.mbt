@@ -21,7 +21,7 @@ test "fork_wave_leaf_task_with_review_context appends CHOIR_REVIEW_CONTEXT secti
 ///|
 test "fork_wave_spawn_plan embeds review_context in each leaf task" {
   let args = { ..fork_wave_args_base(), review_context: Some("arch: foo") }
-  let plan = fork_wave_spawn_plan(args, 0, None, "/proj", "choir")
+  let plan = fork_wave_spawn_plan(args, 0, None, "/proj", "choir").unwrap()
   assert_eq(plan.spawned_count, 2)
   assert_true(plan.spawned_specs[0].task.contains("## CHOIR_REVIEW_CONTEXT"))
   assert_true(plan.spawned_specs[0].task.contains("arch: foo"))
@@ -431,7 +431,7 @@ fn fork_wave_args_base() -> ForkWaveArgs {
 ///|
 test "fork_wave_spawn_plan builds specs and agent_ids for shared-task wave" {
   let args = fork_wave_args_base()
-  let plan = fork_wave_spawn_plan(args, 0, None, "/proj", "choir")
+  let plan = fork_wave_spawn_plan(args, 0, None, "/proj", "choir").unwrap()
   assert_eq(plan.spawned_count, 2)
   assert_eq(plan.skipped_count, 0)
   assert_eq(plan.agent_ids, "main.wave-0,main.wave-1")
@@ -533,7 +533,7 @@ test "fork_wave_spawn_plan embeds wave_id discriminator in shared leaf identity"
     "/proj",
     "choir",
     wave_id=Some("wave-1776000000000-4242"),
-  )
+  ).unwrap()
   let second = fork_wave_spawn_plan(
     args,
     0,
@@ -541,7 +541,7 @@ test "fork_wave_spawn_plan embeds wave_id discriminator in shared leaf identity"
     "/proj",
     "choir",
     wave_id=Some("wave-1776000000001-4242"),
-  )
+  ).unwrap()
   assert_eq(first.spawned_count, 1)
   assert_eq(second.spawned_count, 1)
   let first_slug = first.spawned_slugs[0]
@@ -589,7 +589,7 @@ test "fork_wave_spawn_plan persists merge_strategy override to leaf local config
     ..fork_wave_args_base(),
     merge_strategy: Some(@types.MergeStrategy::Squash),
   }
-  let plan = fork_wave_spawn_plan(args, 0, None, "/proj", "choir")
+  let plan = fork_wave_spawn_plan(args, 0, None, "/proj", "choir").unwrap()
   let mut found = false
   for cmd in plan.cmds {
     if cmd.args.length() >= 3 && cmd.args[1] == "config.local.toml" {
@@ -633,7 +633,7 @@ test "fork_wave_spawn_plan resolves config model into codex launch command" {
     "/proj",
     "choir",
     project_config_content=config_content,
-  )
+  ).unwrap()
   assert_true(fork_wave_plan_commands_contain(plan.cmds, "--model"))
   assert_true(fork_wave_plan_commands_contain(plan.cmds, "codex-leaf"))
 }
@@ -657,7 +657,7 @@ test "fork_wave_spawn_plan resolves config effort into codex launch command" {
     "/proj",
     "choir",
     project_config_content=config_content,
-  )
+  ).unwrap()
   assert_true(
     fork_wave_plan_commands_contain(plan.cmds, "model_reasoning_effort=high"),
   )
@@ -691,7 +691,7 @@ test "fork_wave_spawn_plan disambiguates duplicate raw slugs" {
     depends_on: [],
     scaffold_commit: None,
   }
-  let plan = fork_wave_spawn_plan(args, 0, None, "/p", "sess")
+  let plan = fork_wave_spawn_plan(args, 0, None, "/p", "sess").unwrap()
   assert_eq(plan.spawned_count, 2)
   assert_eq(plan.spawned_slugs[0], "alpha-beta")
   assert_eq(plan.spawned_slugs[1], "alpha-beta-1")
@@ -727,7 +727,7 @@ test "fork_wave_spawn_plan disambiguates when a later raw slug matches an earlie
     depends_on: [],
     scaffold_commit: None,
   }
-  let plan = fork_wave_spawn_plan(args, 0, None, "/p", "sess")
+  let plan = fork_wave_spawn_plan(args, 0, None, "/p", "sess").unwrap()
   assert_eq(plan.spawned_count, 3)
   let slugs = plan.spawned_slugs
   let unique : Map[String, Int] = {}
@@ -769,7 +769,7 @@ test "fork_wave_spawn_plan embeds wave_id discriminator in per-leaf task slugs" 
     "/p",
     "sess",
     wave_id=Some("feature-foo-1776000000000-4242"),
-  )
+  ).unwrap()
   assert_eq(
     plan.spawned_slugs[0],
     "feature-foo-implement-leaf-a-1776000000000-4242",
@@ -813,7 +813,7 @@ test "fork_wave_spawn_plan honors custom slug_prefix for per-leaf tasks" {
     depends_on: [],
     scaffold_commit: None,
   }
-  let plan = fork_wave_spawn_plan(args, 0, None, "/p", "sess")
+  let plan = fork_wave_spawn_plan(args, 0, None, "/p", "sess").unwrap()
   assert_eq(plan.spawned_slugs[0], "sandbox-implement-leaf-a")
   assert_eq(plan.spawned_slugs[1], "sandbox-implement-leaf-b")
   assert_eq(
@@ -847,7 +847,7 @@ test "fork_wave_spawn_plan flattens slash in slug_prefix for child slugs" {
     depends_on: [],
     scaffold_commit: None,
   }
-  let plan = fork_wave_spawn_plan(args, 0, None, "/p", "sess")
+  let plan = fork_wave_spawn_plan(args, 0, None, "/p", "sess").unwrap()
   assert_eq(plan.spawned_slugs[0], "feature-foo-implement-leaf-a")
   assert_eq(plan.spawned_slugs[1], "feature-foo-implement-leaf-b")
   assert_eq(
@@ -874,7 +874,7 @@ test "fork_wave_spawn_plan leaves active collision rejection to preflight" {
     }),
   )
   let args = fork_wave_args_base()
-  let plan = fork_wave_spawn_plan(args, 0, Some(reg), "/proj", "choir")
+  let plan = fork_wave_spawn_plan(args, 0, Some(reg), "/proj", "choir").unwrap()
   assert_eq(plan.spawned_count, 2)
   assert_eq(plan.skipped_count, 0)
   assert_eq(plan.skipped_ids, "")
@@ -900,7 +900,7 @@ test "fork_wave_spawn_plan leaves completing collision rejection to preflight" {
     }),
   )
   let args = fork_wave_args_base()
-  let plan = fork_wave_spawn_plan(args, 0, Some(reg), "/proj", "choir")
+  let plan = fork_wave_spawn_plan(args, 0, Some(reg), "/proj", "choir").unwrap()
   assert_eq(plan.skipped_count, 0)
   assert_eq(plan.spawned_count, 2)
   assert_eq(plan.agent_ids, "main.wave-0,main.wave-1")
@@ -994,7 +994,7 @@ async test "interpret_fork_wave_spawn_effect_phase preflights wave_id leaf ident
 ///|
 test "fork_wave_spawn_plan passes child_spawn_depth into specs" {
   let args = fork_wave_args_base()
-  let plan = fork_wave_spawn_plan(args, 3, None, "/proj", "choir")
+  let plan = fork_wave_spawn_plan(args, 3, None, "/proj", "choir").unwrap()
   assert_eq(plan.spawned_specs[0].spawn_depth, 3)
   assert_eq(plan.spawned_specs[1].spawn_depth, 3)
 }
@@ -1002,7 +1002,7 @@ test "fork_wave_spawn_plan passes child_spawn_depth into specs" {
 ///|
 test "fork_wave_spawned_registry_agent matches fork_wave spawn upsert shape" {
   let args = fork_wave_args_base()
-  let plan = fork_wave_spawn_plan(args, 0, None, "/proj", "choir")
+  let plan = fork_wave_spawn_plan(args, 0, None, "/proj", "choir").unwrap()
   let spec = plan.spawned_specs[0]
   let agent = fork_wave_spawned_registry_agent(spec, "/proj", "choir")
   assert_eq(agent.agent_id, "main.wave-0")
@@ -1142,7 +1142,7 @@ async test "fork_wave post-spawn registers TL children by full spawn agent ids" 
     ..fork_wave_single_leaf_args("full-id"),
     agent_type: @types.AgentType::Codex,
   }
-  let plan = fork_wave_spawn_plan(args, 0, None, project_dir, session)
+  let plan = fork_wave_spawn_plan(args, 0, None, project_dir, session).unwrap()
   assert_eq(plan.agent_ids, "main.full-id-0")
   let reg = @registry.AgentRegistry::new()
   interpret_fork_wave_post_spawn(args, plan, project_dir, session, Some(reg), capture=async fn(
@@ -1183,7 +1183,7 @@ async test "fork_wave post-spawn warns only when spawned tab has no resolvable p
   ignore(@sys.rm_rf(project_dir))
   let session = "choir-missing-pane-test"
   let args = fork_wave_single_leaf_args("no-tab")
-  let plan = fork_wave_spawn_plan(args, 0, None, project_dir, session)
+  let plan = fork_wave_spawn_plan(args, 0, None, project_dir, session).unwrap()
   let reg = @registry.AgentRegistry::new()
   let captured : Array[@moontrace.Event] = []
   @moontrace.set_subscriber(fn(event) { captured.push(event) })
@@ -1227,7 +1227,7 @@ async test "fork_wave post-spawn warns only when spawned tab has no resolvable p
     None,
     resolved_project_dir,
     resolved_session,
-  )
+  ).unwrap()
   let resolved_reg = @registry.AgentRegistry::new()
   let resolved_captured : Array[@moontrace.Event] = []
   @moontrace.set_subscriber(fn(event) { resolved_captured.push(event) })
@@ -1257,7 +1257,7 @@ async test "fork_wave post-spawn records server task contracts" {
     @sys.get_pid().to_string()
   ignore(@sys.rm_rf(project_dir))
   let args = fork_wave_args_base()
-  let plan = fork_wave_spawn_plan(args, 0, None, project_dir, "choir")
+  let plan = fork_wave_spawn_plan(args, 0, None, project_dir, "choir").unwrap()
   let reg = @registry.AgentRegistry::new()
   let captured : Map[String, @types.TaskContract] = {}
   interpret_fork_wave_post_spawn(
@@ -1308,7 +1308,7 @@ async test "fork_wave post-spawn does not clobber a live registry collision" {
     @sys.get_pid().to_string()
   ignore(@sys.rm_rf(project_dir))
   let args = fork_wave_args_base()
-  let plan = fork_wave_spawn_plan(args, 0, None, project_dir, "choir")
+  let plan = fork_wave_spawn_plan(args, 0, None, project_dir, "choir").unwrap()
   let reg = @registry.AgentRegistry::new()
   ignore(
     reg.upsert({
@@ -2378,7 +2378,7 @@ test "fork_wave_spawn_plan allows Failed agents after kill_agent to respawn" {
     }),
   )
   let args = fork_wave_args_base()
-  let plan = fork_wave_spawn_plan(args, 0, Some(reg), "/proj", "choir")
+  let plan = fork_wave_spawn_plan(args, 0, Some(reg), "/proj", "choir").unwrap()
   assert_eq(plan.skipped_count, 0)
   assert_eq(plan.spawned_count, 2)
   assert_eq(plan.skipped_ids, "")
@@ -2404,7 +2404,7 @@ test "fork_wave_spawn_plan allows Done agents to respawn" {
     }),
   )
   let args = fork_wave_args_base()
-  let plan = fork_wave_spawn_plan(args, 0, Some(reg), "/proj", "choir")
+  let plan = fork_wave_spawn_plan(args, 0, Some(reg), "/proj", "choir").unwrap()
   assert_eq(plan.skipped_count, 0)
   assert_eq(plan.spawned_count, 2)
   assert_eq(plan.skipped_ids, "")
