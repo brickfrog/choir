@@ -18,6 +18,26 @@ pub fn Reviewer::to_wire_string(self : Reviewer) -> String {
 }
 
 ///|
+/// Human-facing label for reviewer-aware prose.
+pub fn Reviewer::text_label(self : Reviewer) -> String {
+  match self {
+    None => "reviewer"
+    Copilot => "Copilot"
+    Named(handle) => handle
+  }
+}
+
+///|
+/// Handle for `request_review(reviewer: ...)` invocations.
+pub fn Reviewer::request_handle(self : Reviewer) -> String {
+  match self {
+    None => "reviewer"
+    Copilot => "@copilot"
+    Named(handle) => handle
+  }
+}
+
+///|
 pub impl Show for Reviewer with fn output(self, logger) -> Unit {
   logger.write_string(self.to_wire_string())
 }

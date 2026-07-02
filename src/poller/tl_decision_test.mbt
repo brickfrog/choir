@@ -674,6 +674,103 @@ test "format_wave_rollup matches expected header and PR lines" {
 }
 
 ///|
+test "format_wave_rollup PR lines name the configured reviewer" {
+  let rollup : WaveRollup = {
+    parent_id: "main",
+    wave: 1,
+    entries: [
+      WaveRollupEntry::{
+        pr_number: 42,
+        agent_id: "main.leaf-a",
+        category: AttentionRequiredCopilotSilentAfterTimeout,
+      },
+      WaveRollupEntry::{
+        pr_number: 45,
+        agent_id: "main.leaf-c",
+        category: FixesPushedAwaitingGates,
+      },
+      WaveRollupEntry::{
+        pr_number: 47,
+        agent_id: "main.leaf-d",
+        category: WaitingOnCopilotIssueComment,
+      },
+    ],
+  }
+  let named = format_wave_rollup(
+    rollup,
+    3,
+    reviewer=@types.Reviewer::Named("alice"),
+  )
+  assert_true(
+    named.contains("Attention required: alice review silent after timeout"),
+  )
+  assert_true(named.contains("Fixes pushed; awaiting thread resolution + CI"))
+  // "does not re-review" is Copilot-specific; humans do re-review.
+  assert_false(named.contains("does not re-review"))
+  assert_true(named.contains("Waiting on alice issue comment"))
+  assert_false(named.contains("Copilot"))
+  let copilot = format_wave_rollup(rollup, 3, reviewer=@types.Reviewer::Copilot)
+  assert_true(
+    copilot.contains("Attention required: Copilot review silent after timeout"),
+  )
+  assert_true(copilot.contains("(Copilot does not re-review)"))
+  assert_true(copilot.contains("Waiting on Copilot issue comment"))
+  let default_rollup = format_wave_rollup(rollup, 3)
+  assert_true(
+    default_rollup.contains("Attention required: review silent after timeout"),
+  )
+  assert_false(default_rollup.contains("Copilot"))
+}
+
+///|
+test "next_action_detail_line AddressThreads names the configured reviewer" {
+  let named = next_action_detail_line(
+    AddressThreads,
+    7,
+    Some("main"),
+    Manual,
+    reviewer=@types.Reviewer::Named("alice"),
+  )
+  assert_eq(
+    named, "Next action: leaf addresses alice review threads; parent waits.",
+  )
+  let copilot = next_action_detail_line(
+    AddressThreads,
+    7,
+    Some("main"),
+    Manual,
+    reviewer=@types.Reviewer::Copilot,
+  )
+  assert_eq(
+    copilot, "Next action: leaf addresses Copilot review threads; parent waits.",
+  )
+  let default_line = next_action_detail_line(
+    AddressThreads,
+    7,
+    Some("main"),
+    Manual,
+  )
+  assert_eq(
+    default_line, "Next action: leaf addresses review threads; parent waits.",
+  )
+}
+
+///|
+test "advisory summary names the configured reviewer at the source" {
+  let t = {
+    ..sample_tracked(Commented, Success, 301),
+    copilot_issue_comment_seen: false,
+  }
+  let line = advisory_evaluation_summary_line(
+    t,
+    Some(0),
+    reviewer=@types.Reviewer::Named("alice"),
+  )
+  assert_true(line.contains("waiting for alice comments"))
+  assert_false(line.contains("Copilot"))
+}
+
+///|
 test "format_wave_rollup uses PR count as denominator when wave size unknown" {
   let rollup : WaveRollup = {
     parent_id: "main",

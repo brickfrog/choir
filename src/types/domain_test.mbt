@@ -725,7 +725,10 @@ test "advisory_evaluation_result needs human for comment-only review before Copi
       @types.EvaluationSignal::ThreadsObserved(count=0),
     ],
   }
-  let result = @types.advisory_evaluation_result(bundle)
+  let result = @types.advisory_evaluation_result(
+    bundle,
+    reviewer=@types.Reviewer::Copilot,
+  )
   match result.verdict {
     @types.EvaluationVerdict::NeedsHuman(reason~) =>
       assert_true(reason.contains("Copilot comments"))

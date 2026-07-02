@@ -140,29 +140,12 @@ pub fn merge_ready_next_action(
 }
 
 ///|
-fn reviewer_text_label(reviewer : @types.Reviewer) -> String {
-  match reviewer {
-    @types.Reviewer::None => "reviewer"
-    @types.Reviewer::Copilot => "Copilot"
-    @types.Reviewer::Named(handle) => handle
-  }
-}
-
-///|
-fn reviewer_request_handle(reviewer : @types.Reviewer) -> String {
-  match reviewer {
-    @types.Reviewer::None => "reviewer"
-    @types.Reviewer::Copilot => "@copilot"
-    @types.Reviewer::Named(handle) => handle
-  }
-}
-
-///|
 pub fn next_action_detail_line(
   action : NextAction,
   pr_number : Int,
   parent_branch : String?,
   mode : MergeOperatorMode,
+  reviewer? : @types.Reviewer = @types.Reviewer::None,
 ) -> String {
   match action {
     MergeNow =>
@@ -198,7 +181,14 @@ pub fn next_action_detail_line(
         _ => "Next action: wait for the next poller event."
       }
     AddressThreads =>
-      "Next action: leaf addresses Copilot review threads; parent waits."
+      match reviewer {
+        @types.Reviewer::None =>
+          "Next action: leaf addresses review threads; parent waits."
+        _ =>
+          "Next action: leaf addresses " +
+          reviewer.text_label() +
+          " review threads; parent waits."
+      }
     CrossCheckThreads =>
       "Next action: verify review threads via GitHub GraphQL plus CI/policy, then merge_pr only if clear."
     CrossCheckMergeMode =>
@@ -207,9 +197,9 @@ pub fn next_action_detail_line(
       "Next action: `request_review(pr_number: \"" +
       pr_number.to_string() +
       "\", reviewer: \"" +
-      reviewer_request_handle(reviewer) +
+      reviewer.request_handle() +
       "\")` (" +
-      reviewer_text_label(reviewer) +
+      reviewer.text_label() +
       " has not reviewed within the timeout window)."
     ResolveThreadsNow =>
       "Next action: RESOLVE THREADS NOW from the parent path with the server-side `resolve_my_review_threads` tool, then wait for the refreshed poller snapshot."
@@ -395,16 +385,32 @@ fn tl_category_rollup_header_bucket(
 }
 
 ///|
-fn tl_category_rollup_pr_line(cat : TlTrackedPrWorkflowCategory) -> String {
+fn tl_category_rollup_pr_line(
+  cat : TlTrackedPrWorkflowCategory,
+  reviewer : @types.Reviewer,
+) -> String {
   match cat {
     BlockedOnChanges => "Blocked on review changes"
     AttentionRequiredCopilotSilentAfterTimeout =>
-      "Attention required: Copilot review silent after timeout"
+      match reviewer {
+        @types.Reviewer::None =>
+          "Attention required: review silent after timeout"
+        _ =>
+          "Attention required: " +
+          reviewer.text_label() +
+          " review silent after timeout"
+      }
     AttentionRequiredCIFailed => "Attention required: CI failing"
     WaitingOnReviewOrCI => "Waiting on review or CI"
     FixesPushedAwaitingGates =>
-      "Fixes pushed; awaiting thread resolution + CI (Copilot does not re-review)"
-    WaitingOnCopilotIssueComment => "Waiting on Copilot issue comment"
+      // Copilot does not re-review pushed fixes; human/named reviewers do.
+      match reviewer {
+        @types.Reviewer::Copilot =>
+          "Fixes pushed; awaiting thread resolution + CI (Copilot does not re-review)"
+        _ => "Fixes pushed; awaiting thread resolution + CI"
+      }
+    WaitingOnCopilotIssueComment =>
+      "Waiting on " + reviewer.text_label() + " issue comment"
     CopilotIssueCommentSeenRecheckRemainingGates =>
       "Copilot issue comment seen; re-check gates"
     ReadyForTLRecheck => "Ready for TL re-check"
@@ -421,6 +427,7 @@ pub fn format_wave_rollup(
   rollup : WaveRollup,
   total_in_wave : Int,
   merge_mode? : MergeOperatorMode? = None,
+  reviewer? : @types.Reviewer = @types.Reviewer::None,
 ) -> String {
   let by_pr : Map[Int, WaveRollupEntry] = {}
   for e in rollup.entries {
@@ -489,7 +496,7 @@ pub fn format_wave_rollup(
       " (" +
       e.agent_id +
       "): " +
-      tl_category_rollup_pr_line(e.category),
+      tl_category_rollup_pr_line(e.category, reviewer),
     )
   }
   header + "\n" + lines.join("\n")
@@ -689,32 +696,19 @@ pub fn advisory_evaluation_result_for_tracked_pr(
       verify_results~,
     ),
     review_required~,
+    reviewer~,
   )
 }
 
 ///|
+/// Reviewer-specific labels come from `evaluation_cascade` itself now; the
+/// only remaining rewrite is the review-skipped framing.
 fn advisory_summary_for_review_requirement(
   result : @types.EvaluationResult,
   review_required : Bool,
-  reviewer : @types.Reviewer,
 ) -> String {
   if !review_required && result.verdict == @types.EvaluationVerdict::Ready {
     "ready: review skipped by policy; no tracked blockers"
-  } else if reviewer != @types.Reviewer::Copilot &&
-    result.summary == "waiting for Copilot comments" {
-    "waiting for " + reviewer_text_label(reviewer) + " comments"
-  } else if reviewer != @types.Reviewer::Copilot &&
-    result.summary ==
-    "ready: no tracked blockers; Copilot issue comment observed" {
-    "ready: no tracked blockers; " +
-    reviewer_text_label(reviewer) +
-    " issue comment observed"
-  } else if reviewer != @types.Reviewer::Copilot &&
-    result.summary ==
-    "ready: no tracked blockers; Copilot issue comment not observed" {
-    "ready: no tracked blockers; " +
-    reviewer_text_label(reviewer) +
-    " issue comment not observed"
   } else {
     result.summary
   }
@@ -747,7 +741,7 @@ pub fn advisory_evaluation_summary_line(
   "Advisory evaluation verdict: " +
   result.verdict.label() +
   " (" +
-  advisory_summary_for_review_requirement(result, review_required, reviewer) +
+  advisory_summary_for_review_requirement(result, review_required) +
   ")."
 }
 
@@ -797,7 +791,12 @@ pub fn merge_policy_decision_for_tracked_pr(
   let review_required = review_required_for_tracked_pr(
     tracked, reviewer, skip_copilot_on_feature_branch, default_branch,
   )
-  let canonical = @policy.decide_merge(task_contract, bundle, review_required~)
+  let canonical = @policy.decide_merge(
+    task_contract,
+    bundle,
+    review_required~,
+    reviewer~,
+  )
   match unresolved_threads {
     Some(count) =>
       if count > 0 &&
@@ -1160,8 +1159,8 @@ pub fn tl_tracked_pr_workflow_category_sentence(
   cat : TlTrackedPrWorkflowCategory,
   reviewer? : @types.Reviewer = @types.Reviewer::None,
 ) -> String {
-  let reviewer_label = reviewer_text_label(reviewer)
-  let reviewer_handle = reviewer_request_handle(reviewer)
+  let reviewer_label = reviewer.text_label()
+  let reviewer_handle = reviewer.request_handle()
   match cat {
     BlockedOnChanges =>
       "BLOCKED: review requested changes. Wait for leaf to push fixes."
@@ -1273,7 +1272,7 @@ pub fn tl_tracked_pr_recheck_gate_line(
   reviewer? : @types.Reviewer = @types.Reviewer::None,
   review_required? : Bool = true,
 ) -> String {
-  let reviewer_label = reviewer_text_label(reviewer)
+  let reviewer_label = reviewer.text_label()
   let snapshot_ready = tl_tracked_pr_merge_gate_snapshot_ready(
     tracked,
     unresolved_thread_count,

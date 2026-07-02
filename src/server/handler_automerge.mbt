@@ -21,14 +21,6 @@ fn ServerState::request_with_review_mode_default(
 }
 
 ///|
-fn parent_poll_request_review_handle(reviewer : @types.Reviewer) -> String {
-  match @tools.file_pr_reviewer_handle(reviewer) {
-    Some(handle) => handle
-    None => "reviewer"
-  }
-}
-
-///|
 /// When review-wait already timed out with no review in snapshot, CI-only parent lines must not read like ordinary progress.
 fn parent_poll_ci_escalation_prefix(
   tracked : @poller.TrackedPR,
@@ -39,7 +31,7 @@ fn parent_poll_ci_escalation_prefix(
       tracked,
       review_required~,
     ) {
-    let reviewer_handle = parent_poll_request_review_handle(reviewer)
+    let reviewer_handle = reviewer.request_handle()
     "Review timeout already fired — no review in snapshot. Run request_review(pr_number: \"" +
     tracked.pr_number.to_string() +
     "\", reviewer: \"" +
