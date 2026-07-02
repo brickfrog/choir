@@ -86,6 +86,7 @@ test "decide_merge waits for comment-only review until Copilot comments are obse
         details: "ok",
       }),
     ]),
+    reviewer=@types.Reviewer::Copilot,
   )
   assert_eq(decision.label(), "wait")
   assert_true(decision.reason().contains("Copilot comments"))

@@ -42,6 +42,7 @@ fn render_parent_next_action(
   pr_number : Int,
   parent_branch : String?,
   merge_mode : @poller.MergeOperatorMode,
+  reviewer : @types.Reviewer,
 ) -> String {
   @poller.next_action_line(decision.next_action) +
   "\n" +
@@ -50,6 +51,7 @@ fn render_parent_next_action(
     pr_number,
     parent_branch,
     merge_mode,
+    reviewer~,
   )
 }
 
@@ -272,7 +274,7 @@ pub fn parent_poll_event_message(
         @poller.premerge_wait_line(merge_mode) +
         "\n" +
         render_parent_next_action(
-          notification_decision, n, parent_branch, merge_mode,
+          notification_decision, n, parent_branch, merge_mode, reviewer,
         ) +
         parent_poll_tl_decision_suffix(notification_decision, merge_mode)
       Some((message, @types.Status::Success))
@@ -299,7 +301,7 @@ pub fn parent_poll_event_message(
         parent_thread_recheck_line(unresolved_threads_for_recheck) +
         premerge_line +
         render_parent_next_action(
-          notification_decision, n, parent_branch, merge_mode,
+          notification_decision, n, parent_branch, merge_mode, reviewer,
         ) +
         parent_poll_tl_decision_suffix(notification_decision, merge_mode)
       Some((message, @types.Status::Info))
@@ -327,7 +329,7 @@ pub fn parent_poll_event_message(
         pr_url +
         "\n" +
         render_parent_next_action(
-          notification_decision, n, parent_branch, merge_mode,
+          notification_decision, n, parent_branch, merge_mode, reviewer,
         ) +
         parent_poll_tl_decision_suffix(notification_decision, merge_mode)
       Some((message, status))
@@ -349,7 +351,7 @@ pub fn parent_poll_event_message(
             pr_url +
             "\n" +
             render_parent_next_action(
-              notification_decision, n, parent_branch, merge_mode,
+              notification_decision, n, parent_branch, merge_mode, reviewer,
             ) +
             parent_poll_tl_decision_suffix(notification_decision, merge_mode),
             @types.Status::Info,
@@ -366,7 +368,7 @@ pub fn parent_poll_event_message(
             comments +
             "\n" +
             render_parent_next_action(
-              notification_decision, n, parent_branch, merge_mode,
+              notification_decision, n, parent_branch, merge_mode, reviewer,
             ) +
             parent_poll_tl_decision_suffix(notification_decision, merge_mode),
             @types.Status::Info,
@@ -390,7 +392,7 @@ pub fn parent_poll_event_message(
           pr_url +
           "\n" +
           render_parent_next_action(
-            notification_decision, n, parent_branch, merge_mode,
+            notification_decision, n, parent_branch, merge_mode, reviewer,
           ) +
           parent_poll_tl_decision_suffix(notification_decision, merge_mode),
           @types.Status::Failure,
@@ -428,7 +430,7 @@ pub fn parent_poll_event_message(
           "\n" +
           prefix +
           render_parent_next_action(
-            notification_decision, n, parent_branch, merge_mode,
+            notification_decision, n, parent_branch, merge_mode, reviewer,
           ) +
           "\n\n" +
           summary +
@@ -469,7 +471,7 @@ pub fn parent_poll_event_message(
           "\n" +
           prefix +
           render_parent_next_action(
-            notification_decision, n, parent_branch, merge_mode,
+            notification_decision, n, parent_branch, merge_mode, reviewer,
           ) +
           "\n\n" +
           summary +
@@ -504,7 +506,7 @@ pub fn parent_poll_event_message(
           pr_url +
           "\n" +
           render_parent_next_action(
-            notification_decision, n, parent_branch, merge_mode,
+            notification_decision, n, parent_branch, merge_mode, reviewer,
           ) +
           "\n\n" +
           summary +
@@ -541,7 +543,7 @@ pub fn parent_poll_event_message(
         parent_merge_policy_line(notification_decision) +
         "\n" +
         render_parent_next_action(
-          notification_decision, n, parent_branch, merge_mode,
+          notification_decision, n, parent_branch, merge_mode, reviewer,
         ) +
         parent_poll_tl_decision_suffix(notification_decision, merge_mode)
       Some((message, @poller.merge_ready_status(merge_mode)))
@@ -570,7 +572,7 @@ pub fn parent_poll_event_message(
         pr_url +
         "\n" +
         render_parent_next_action(
-          notification_decision, n, parent_branch, merge_mode,
+          notification_decision, n, parent_branch, merge_mode, reviewer,
         ) +
         "\n\n" +
         summary +
@@ -1409,7 +1411,7 @@ pub fn leaf_poll_review_injection_message(
               pr,
               review_required~,
             ) {
-            let reviewer_handle = parent_poll_request_review_handle(reviewer)
+            let reviewer_handle = reviewer.request_handle()
             "[REVIEW] PR #" +
             n.to_string() +
             ": CI cleared but still no review. Run request_review(pr_number: \"" +
@@ -1434,7 +1436,7 @@ pub fn leaf_poll_review_injection_message(
               pr,
               review_required~,
             ) {
-            let reviewer_handle = parent_poll_request_review_handle(reviewer)
+            let reviewer_handle = reviewer.request_handle()
             "[REVIEW] PR #" +
             n.to_string() +
             ": CI green but still no review. Run request_review(pr_number: \"" +
@@ -2611,6 +2613,7 @@ async fn deliver_pending_poll_events(
         rollup,
         total_in_wave,
         merge_mode=rollup_merge_mode(matched),
+        reviewer=state.config.pr_policy.reviewer,
       )
       let status = rollup_delivery_status(matched)
       let sender = "poller"

@@ -62,6 +62,7 @@ pub fn decide_merge(
   task_contract : @types.TaskContract?,
   bundle : @types.EvaluationBundle,
   review_required? : Bool = true,
+  reviewer? : @types.Reviewer = @types.Reviewer::None,
 ) -> MergeDecision {
   let effective_contract = effective_task_contract(task_contract, bundle)
   let required_verify = match effective_contract {
@@ -72,6 +73,7 @@ pub fn decide_merge(
     required_verify,
     bundle.signals,
     review_required~,
+    reviewer~,
   )
   match cascade {
     Ready(_) =>

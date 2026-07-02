@@ -1354,6 +1354,7 @@ pub fn evaluation_cascade(
   verify_required : Array[String],
   signals : Array[EvaluationSignal],
   review_required? : Bool = true,
+  reviewer? : Reviewer = Reviewer::None,
 ) -> CascadeVerdict {
   let review = evaluation_latest_review_state(signals)
   let ci = evaluation_latest_ci_rollup(signals)
@@ -1408,15 +1409,21 @@ pub fn evaluation_cascade(
   if review_required &&
     review == EvaluationReviewState::Commented &&
     !copilot_seen {
-    return CascadeVerdict::Waiting(reason="waiting for Copilot comments")
+    return CascadeVerdict::Waiting(
+      reason="waiting for " + reviewer.text_label() + " comments",
+    )
   }
   if ci == EvaluationCiRollup::Unknown || ci == EvaluationCiRollup::InProgress {
     return CascadeVerdict::Waiting(reason="waiting for CI to finish")
   }
   let ready_reason = if copilot_seen {
-    "ready: no tracked blockers; Copilot issue comment observed"
+    "ready: no tracked blockers; " +
+    reviewer.text_label() +
+    " issue comment observed"
   } else {
-    "ready: no tracked blockers; Copilot issue comment not observed"
+    "ready: no tracked blockers; " +
+    reviewer.text_label() +
+    " issue comment not observed"
   }
   CascadeVerdict::Ready(reason=ready_reason)
 }
@@ -1425,6 +1432,7 @@ pub fn evaluation_cascade(
 pub fn advisory_evaluation_result(
   bundle : EvaluationBundle,
   review_required? : Bool = true,
+  reviewer? : Reviewer = Reviewer::None,
 ) -> EvaluationResult {
   let verify_required = match bundle.task_contract {
     Some(contract) => contract.verify
@@ -1434,6 +1442,7 @@ pub fn advisory_evaluation_result(
     verify_required,
     bundle.signals,
     review_required~,
+    reviewer~,
   )
   match cascade {
     Ready(reason~) => { verdict: EvaluationVerdict::Ready, summary: reason }
