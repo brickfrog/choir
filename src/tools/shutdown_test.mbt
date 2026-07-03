@@ -1548,6 +1548,56 @@ async test "interpret_shutdown allows parented worker after delivered handoff" {
 }
 
 ///|
+/// Invariant: a parentless worker cannot notify_parent ("no parent for root"),
+/// so the handoff gate must never apply to it — shutdown stays available.
+async test "interpret_shutdown allows parentless worker without delivered handoff" {
+  let t = match @types.LocalTarget::parse("zellij-tab:choir:worker") {
+    Some(v) => v
+    None => fail("expected parse")
+  }
+  let reg = @registry.AgentRegistry::new()
+  let agent = kill_agent_test_agent(
+    Some(t),
+    "/workspace/main.audit-worker",
+    role=@types.Role::Worker,
+    agent_id="main.audit-worker",
+  )
+  ignore(reg.upsert({ ..agent, parent: None }))
+  let ran : Array[@workspace.Command] = []
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      ran.push(cmd)
+      statuses.push(0)
+    }
+    statuses
+  }
+  let got = interpret_shutdown(
+    { caller_id: Some("main.audit-worker") },
+    "/proj",
+    None,
+    Some(reg),
+    runner,
+    capture=unreached_capture,
+    handoff_status_reader=shutdown_handoff_missing,
+  )
+  match got {
+    @types.Response::Ok(fields) =>
+      @debug.assert_eq(
+        fields.to_json_map().get("status"),
+        Some(String::to_json("shutdown")),
+      )
+    @types.Response::Err(msg) =>
+      fail("expected parentless worker shutdown ok, got: " + msg)
+  }
+  match kill_agent_pane_close_command(agent) {
+    Some(close_cmd) => assert_true(ran.iter().any(fn(cmd) { cmd == close_cmd }))
+    None => fail("expected close command")
+  }
+}
+
+///|
 async test "interpret_shutdown leaves dev leaf governed by exit plan without handoff" {
   let tmp = "/tmp/choir-shutdown-dev-handoff-missing-" +
     @sys.get_pid().to_string()
