@@ -65,6 +65,7 @@ fn parent_pr_state_notification_decision(
   merge_mode? : @poller.MergeOperatorMode = @poller.MergeOperatorMode::Manual,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
+  audit_receipt_state? : @types.AuditReceiptState = @types.AuditReceiptState::NotRequired,
   reviewer? : @types.Reviewer = @types.Reviewer::None,
   skip_copilot_on_feature_branch? : Bool = false,
   default_branch? : String = "",
@@ -93,6 +94,7 @@ fn parent_pr_state_notification_decision(
     task_contract~,
     review_mode~,
     verify_results~,
+    audit_receipt_state~,
     merge_mode~,
     reviewer~,
     skip_copilot_on_feature_branch~,
@@ -211,6 +213,7 @@ pub fn parent_poll_event_message(
   merge_mode? : @poller.MergeOperatorMode = @poller.MergeOperatorMode::Manual,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
+  audit_receipt_state? : @types.AuditReceiptState = @types.AuditReceiptState::NotRequired,
   precomputed_decision? : @poller.PrStateNotificationDecision? = None,
   reviewer? : @types.Reviewer = @types.Reviewer::None,
   skip_copilot_on_feature_branch? : Bool = false,
@@ -244,6 +247,7 @@ pub fn parent_poll_event_message(
         merge_mode~,
         review_mode~,
         moon_verify_target~,
+        audit_receipt_state~,
         reviewer~,
         skip_copilot_on_feature_branch~,
         default_branch~,
@@ -1684,6 +1688,7 @@ pub fn ServerState::plan_poll_event_deliveries(
   skip_parent? : Bool = false,
   now? : Int64 = @poller.now_sec(),
   default_branch? : String = "",
+  audit_receipt_state? : @types.AuditReceiptState = @types.AuditReceiptState::NotRequired,
 ) -> Array[PlannedDelivery] {
   let deliveries : Array[PlannedDelivery] = []
   let tracked = self.poller.get(poll_event_pr_number(event))
@@ -1753,6 +1758,7 @@ pub fn ServerState::plan_poll_event_deliveries(
           merge_mode~,
           review_mode~,
           moon_verify_target=self.config.moon_verify_target,
+          audit_receipt_state~,
           reviewer=self.config.pr_policy.reviewer,
           skip_copilot_on_feature_branch=self.config.pr_policy.skip_copilot_on_feature_branch,
           default_branch~,
@@ -1766,6 +1772,7 @@ pub fn ServerState::plan_poll_event_deliveries(
             merge_mode~,
             review_mode~,
             moon_verify_target=self.config.moon_verify_target,
+            audit_receipt_state~,
             precomputed_decision=Some(notification_decision),
             reviewer=self.config.pr_policy.reviewer,
             skip_copilot_on_feature_branch=self.config.pr_policy.skip_copilot_on_feature_branch,
@@ -2392,6 +2399,25 @@ async fn deliver_pending_poll_events(
         }
       None => (None, None)
     }
+    let audit_receipt_state_for_delivery = match tracked_for_delivery {
+      Some(pr) =>
+        if poll_event_is_external_merge(event) ||
+          poll_event_is_closed_unmerged(event) {
+          @types.AuditReceiptState::NotRequired
+        } else {
+          @tools.audit_receipt_advisory_state_for_tracked_pr(
+            state.config.project_dir,
+            pr.parent_branch,
+            default_branch,
+            pr.last_sha,
+            pr.first_seen,
+            capture,
+            audit_receipt_read,
+            audit_receipt_exists,
+          )
+        }
+      None => @types.AuditReceiptState::NotRequired
+    }
     match event {
       PRMerged(pr) => {
         let audit_outcome = @tools.detect_pr_merged_audit_enforcement(
@@ -2485,6 +2511,7 @@ async fn deliver_pending_poll_events(
             skip_parent=true,
             now~,
             default_branch~,
+            audit_receipt_state=audit_receipt_state_for_delivery,
           ) {
           ignore(state.durable_dispatch_planned(planned, runner, sleep_fn~))
         }
@@ -2534,6 +2561,7 @@ async fn deliver_pending_poll_events(
           merge_mode~,
           review_mode~,
           moon_verify_target=state.config.moon_verify_target,
+          audit_receipt_state=audit_receipt_state_for_delivery,
           reviewer=state.config.pr_policy.reviewer,
           skip_copilot_on_feature_branch=state.config.pr_policy.skip_copilot_on_feature_branch,
           default_branch~,
@@ -2548,6 +2576,7 @@ async fn deliver_pending_poll_events(
             merge_mode~,
             review_mode~,
             moon_verify_target=state.config.moon_verify_target,
+            audit_receipt_state=audit_receipt_state_for_delivery,
             precomputed_decision=Some(notification_decision),
             reviewer=state.config.pr_policy.reviewer,
             skip_copilot_on_feature_branch=state.config.pr_policy.skip_copilot_on_feature_branch,

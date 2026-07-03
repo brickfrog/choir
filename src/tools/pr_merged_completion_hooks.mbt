@@ -180,6 +180,47 @@ pub async fn audit_receipt_tree_sha_for_head(
 }
 
 ///|
+pub async fn audit_receipt_advisory_state_for_tracked_pr(
+  project_dir : String,
+  parent_branch : String,
+  default_branch : String,
+  head_sha : String,
+  pr_first_seen_unix : Int64,
+  capture : async (@workspace.Command) -> (Int, String),
+  read_file : (String) -> String,
+  path_exists : (String) -> Bool,
+) -> @types.AuditReceiptState {
+  if !file_pr_audit_receipt_required(parent_branch, default_branch) {
+    return @types.AuditReceiptState::NotRequired
+  }
+  let gate_state = match load_gate_state(project_dir, read_file, path_exists~) {
+    Ok(state) => state
+    Err(_) => return @types.AuditReceiptState::Pending(head_sha~)
+  }
+  if !merge_pr_audit_gate_required(gate_state, pr_first_seen_unix) {
+    return @types.AuditReceiptState::NotRequired
+  }
+  let trimmed_head = head_sha.trim().to_owned()
+  if trimmed_head == "" {
+    return @types.AuditReceiptState::Pending(head_sha~)
+  }
+  match
+    merge_pr_audit_receipt_validation_for_head(
+      parent_branch, default_branch, project_dir, trimmed_head, capture,
+    ) {
+    MergeAuditReceiptValid => @types.AuditReceiptState::Valid
+    MergeAuditReceiptFindingsRemain(sha, count) =>
+      @types.AuditReceiptState::FindingsRemain(head_sha=sha, count~)
+    MergeAuditReceiptMissing(sha)
+    | MergeAuditReceiptInvalid(sha)
+    | MergeAuditReceiptTreeUnavailable(sha) =>
+      @types.AuditReceiptState::Pending(head_sha=sha)
+    MergeAuditReceiptStale(_, current_sha) =>
+      @types.AuditReceiptState::Pending(head_sha=current_sha)
+  }
+}
+
+///|
 pub async fn detect_pr_merged_audit_enforcement(
   project_dir : String,
   require_integration_audit : Bool,

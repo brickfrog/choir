@@ -17,6 +17,8 @@ pub(all) enum TlTrackedPrWorkflowCategory {
   CopilotIssueCommentSeenRecheckRemainingGates
   ReadyForTLRecheck
   MergeGateOpenPendingPolicyConfirmation
+  AuditReceiptPending(head_sha~ : String)
+  AuditReceiptFindingsRemain(head_sha~ : String, count~ : Int)
   ObservedMergedExternal
   /// A tracked PR was closed on GitHub WITHOUT being merged; the owning leaf was
   /// finalized (work preserved). The TL may re-dispatch if it was superseded, or
@@ -371,6 +373,7 @@ fn tl_category_rollup_header_bucket(
   match cat {
     MergeGateOpenPendingPolicyConfirmation => "merge-ready"
     BlockedOnChanges | StalledOnChangesRequested => "blocked on changes"
+    AuditReceiptPending(_) | AuditReceiptFindingsRemain(_) => "audit pending"
     AttentionRequiredCopilotSilentAfterTimeout | AttentionRequiredCIFailed =>
       "attention required"
     WaitingOnReviewOrCI
@@ -415,6 +418,9 @@ fn tl_category_rollup_pr_line(
       "Copilot issue comment seen; re-check gates"
     ReadyForTLRecheck => "Ready for TL re-check"
     MergeGateOpenPendingPolicyConfirmation => "Merge gate open"
+    AuditReceiptPending(head_sha~) => "Audit pending for HEAD " + head_sha
+    AuditReceiptFindingsRemain(head_sha~, count~) =>
+      "Audit found " + count.to_string() + " finding(s) for HEAD " + head_sha
     ObservedMergedExternal => "Merged externally"
     ClosedUnmergedLeafFinalized => "Closed unmerged; leaf finalized"
     OrphanedPRNeedsManualAction => "Orphaned PR needs manual action"
@@ -460,7 +466,7 @@ pub fn format_wave_rollup(
     bucket_counts.set(b, prev + 1)
   }
   let order : Array[String] = [
-    "merge-ready", "blocked on changes", "attention required", "waiting or re-check",
+    "merge-ready", "audit pending", "blocked on changes", "attention required", "waiting or re-check",
     "merged externally", "orphaned",
   ]
   let summary_parts : Array[String] = []
@@ -555,11 +561,14 @@ pub fn tl_tracked_pr_merge_gate_snapshot_ready(
   unresolved_threads : Int?,
   review_mode? : @types.ReviewMode = tracked.review_mode,
   review_required? : Bool = true,
+  audit_receipt_state? : @types.AuditReceiptState = @types.AuditReceiptState::NotRequired,
 ) -> Bool {
   let threads_clear = match unresolved_threads {
     Some(n) => n == 0
     None => false
   }
+  let audit_clear = audit_receipt_state == @types.AuditReceiptState::Valid ||
+    audit_receipt_state == @types.AuditReceiptState::NotRequired
   let review_ok = if review_required {
     tracked.last_review_state == Approved ||
     (
@@ -582,7 +591,7 @@ pub fn tl_tracked_pr_merge_gate_snapshot_ready(
   if tracked.last_ci_rollup != Success && tracked.last_ci_rollup != NoChecks {
     return false
   }
-  threads_clear
+  threads_clear && audit_clear
 }
 
 ///|
@@ -640,6 +649,7 @@ pub fn advisory_evaluation_bundle_for_tracked_pr(
   task_contract? : @types.TaskContract? = None,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   verify_results? : Array[@types.VerifyCheckResult] = [],
+  audit_receipt_state? : @types.AuditReceiptState = @types.AuditReceiptState::NotRequired,
 ) -> @types.EvaluationBundle {
   let fixed_changes_requested = review_mode == @types.ReviewMode::SinglePass &&
     tracked_changes_requested_fixed(tracked)
@@ -670,6 +680,7 @@ pub fn advisory_evaluation_bundle_for_tracked_pr(
   for result in verify_results {
     signals.push(@types.EvaluationSignal::Verify(result~))
   }
+  signals.push(@types.EvaluationSignal::AuditReceipt(state=audit_receipt_state))
   { task_contract, signals }
 }
 
@@ -680,6 +691,7 @@ pub fn advisory_evaluation_result_for_tracked_pr(
   task_contract? : @types.TaskContract? = None,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   verify_results? : Array[@types.VerifyCheckResult] = [],
+  audit_receipt_state? : @types.AuditReceiptState = @types.AuditReceiptState::NotRequired,
   reviewer? : @types.Reviewer = @types.Reviewer::None,
   skip_copilot_on_feature_branch? : Bool = false,
   default_branch? : String = "",
@@ -694,6 +706,7 @@ pub fn advisory_evaluation_result_for_tracked_pr(
       task_contract~,
       review_mode~,
       verify_results~,
+      audit_receipt_state~,
     ),
     review_required~,
     reviewer~,
@@ -721,6 +734,7 @@ pub fn advisory_evaluation_summary_line(
   task_contract? : @types.TaskContract? = None,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   verify_results? : Array[@types.VerifyCheckResult] = [],
+  audit_receipt_state? : @types.AuditReceiptState = @types.AuditReceiptState::NotRequired,
   reviewer? : @types.Reviewer = @types.Reviewer::None,
   skip_copilot_on_feature_branch? : Bool = false,
   default_branch? : String = "",
@@ -734,6 +748,7 @@ pub fn advisory_evaluation_summary_line(
     task_contract~,
     review_mode~,
     verify_results~,
+    audit_receipt_state~,
     reviewer~,
     skip_copilot_on_feature_branch~,
     default_branch~,
@@ -777,6 +792,7 @@ pub fn merge_policy_decision_for_tracked_pr(
   task_contract? : @types.TaskContract? = None,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   verify_results? : Array[@types.VerifyCheckResult] = [],
+  audit_receipt_state? : @types.AuditReceiptState = @types.AuditReceiptState::NotRequired,
   reviewer? : @types.Reviewer = @types.Reviewer::None,
   skip_copilot_on_feature_branch? : Bool = false,
   default_branch? : String = "",
@@ -787,6 +803,7 @@ pub fn merge_policy_decision_for_tracked_pr(
     task_contract~,
     review_mode~,
     verify_results~,
+    audit_receipt_state~,
   )
   let review_required = review_required_for_tracked_pr(
     tracked, reviewer, skip_copilot_on_feature_branch, default_branch,
@@ -808,6 +825,7 @@ pub fn merge_policy_decision_for_tracked_pr(
           task_contract~,
           review_mode=@types.ReviewMode::SinglePass,
           verify_results~,
+          audit_receipt_state~,
         )
         if unresolved_threads_are_next_typed_blocker(fixed_review_bundle) {
           return @policy.MergeDecision::ThreadsUnresolvedButFixed(
@@ -835,6 +853,7 @@ pub fn merge_policy_summary_line(
   task_contract? : @types.TaskContract? = None,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   verify_results? : Array[@types.VerifyCheckResult] = [],
+  audit_receipt_state? : @types.AuditReceiptState = @types.AuditReceiptState::NotRequired,
   reviewer? : @types.Reviewer = @types.Reviewer::None,
   skip_copilot_on_feature_branch? : Bool = false,
   default_branch? : String = "",
@@ -845,6 +864,7 @@ pub fn merge_policy_summary_line(
     task_contract~,
     review_mode~,
     verify_results~,
+    audit_receipt_state~,
     reviewer~,
     skip_copilot_on_feature_branch~,
     default_branch~,
@@ -969,6 +989,7 @@ pub fn next_action_for_pr_state_notification(
         mode,
         owner_released~,
       )
+    AuditReceiptPending(_) | AuditReceiptFindingsRemain(_) => Wait
     BlockedOnChanges | StalledOnChangesRequested => AddressThreads
     FixesPushedAwaitingGates
     | ReadyForTLRecheck
@@ -999,6 +1020,7 @@ pub fn pr_state_notification_decision_for_tracked_pr(
   task_contract? : @types.TaskContract? = None,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   verify_results? : Array[@types.VerifyCheckResult] = [],
+  audit_receipt_state? : @types.AuditReceiptState = @types.AuditReceiptState::NotRequired,
   merge_mode? : MergeOperatorMode = MergeOperatorMode::Manual,
   reviewer? : @types.Reviewer = @types.Reviewer::None,
   skip_copilot_on_feature_branch? : Bool = false,
@@ -1014,6 +1036,7 @@ pub fn pr_state_notification_decision_for_tracked_pr(
     unresolved_threads,
     review_mode~,
     review_required~,
+    audit_receipt_state~,
   )
   let policy_decision = merge_policy_decision_for_tracked_pr(
     tracked,
@@ -1021,6 +1044,7 @@ pub fn pr_state_notification_decision_for_tracked_pr(
     task_contract~,
     review_mode~,
     verify_results~,
+    audit_receipt_state~,
     reviewer~,
     skip_copilot_on_feature_branch~,
     default_branch~,
@@ -1112,14 +1136,24 @@ pub fn tl_pr_state_notification_sentence(
 ///|
 fn tl_snapshot_workflow_category(
   tracked : TrackedPR,
+  unresolved_threads : Int?,
   merge_ready : Bool,
+  review_mode : @types.ReviewMode,
   review_required : Bool,
+  audit_receipt_state : @types.AuditReceiptState,
 ) -> TlTrackedPrWorkflowCategory {
   if tracked.last_review_state == ChangesRequested {
     return BlockedOnChanges
   }
   if merge_ready {
     return MergeGateOpenPendingPolicyConfirmation
+  }
+  match
+    audit_receipt_workflow_category_if_blocking(
+      tracked, unresolved_threads, review_mode, review_required, audit_receipt_state,
+    ) {
+    Some(cat) => return cat
+    None => ()
   }
   if !review_required {
     return ReadyForTLRecheck
@@ -1137,6 +1171,32 @@ fn tl_snapshot_workflow_category(
 }
 
 ///|
+fn audit_receipt_workflow_category_if_blocking(
+  tracked : TrackedPR,
+  unresolved_threads : Int?,
+  review_mode : @types.ReviewMode,
+  review_required : Bool,
+  audit_receipt_state : @types.AuditReceiptState,
+) -> TlTrackedPrWorkflowCategory? {
+  let ordinary_gates_ready = tl_tracked_pr_merge_gate_snapshot_ready(
+    tracked,
+    unresolved_threads,
+    review_mode~,
+    review_required~,
+    audit_receipt_state=@types.AuditReceiptState::Valid,
+  )
+  if !ordinary_gates_ready {
+    return None
+  }
+  match audit_receipt_state {
+    Pending(head_sha~) => Some(AuditReceiptPending(head_sha~))
+    FindingsRemain(head_sha~, count~) =>
+      Some(AuditReceiptFindingsRemain(head_sha~, count~))
+    NotRequired | Valid => None
+  }
+}
+
+///|
 /// Classify the snapshot when no specific poll event lens applies (e.g. generic
 /// triage). `ChangesRequested` is always blocked; a satisfied merge gate is a
 /// distinct category; otherwise wait on review/CI/thread data.
@@ -1144,13 +1204,22 @@ pub fn tl_classify_tracked_pr_workflow(
   tracked : TrackedPR,
   unresolved_threads : Int?,
   review_required? : Bool = true,
+  audit_receipt_state? : @types.AuditReceiptState = @types.AuditReceiptState::NotRequired,
 ) -> TlTrackedPrWorkflowCategory {
   let merge_ready = tl_tracked_pr_merge_gate_snapshot_ready(
     tracked,
     unresolved_threads,
     review_required~,
+    audit_receipt_state~,
   )
-  tl_snapshot_workflow_category(tracked, merge_ready, review_required)
+  tl_snapshot_workflow_category(
+    tracked,
+    unresolved_threads,
+    merge_ready,
+    tracked.review_mode,
+    review_required,
+    audit_receipt_state,
+  )
 }
 
 ///|
@@ -1186,6 +1255,14 @@ pub fn tl_tracked_pr_workflow_category_sentence(
       "CI/review changed. Check threads/CI, then merge_pr if clear."
     MergeGateOpenPendingPolicyConfirmation =>
       "MERGE NOW: reviewed, CI green, threads resolved. Run merge_pr."
+    AuditReceiptPending(head_sha~) =>
+      "BLOCKED: audit pending for HEAD " + head_sha + ". Do not merge."
+    AuditReceiptFindingsRemain(head_sha~, count~) =>
+      "BLOCKED: audit found " +
+      count.to_string() +
+      " finding(s) for HEAD " +
+      head_sha +
+      "; fix round in progress. Do not merge."
     ObservedMergedExternal =>
       "PR already merged externally. Automatic reconciliation will finalize the leaf."
     ClosedUnmergedLeafFinalized =>
@@ -1207,12 +1284,14 @@ pub fn plan_tl_poll_event_parent(
   unresolved_threads : Int?,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   review_required? : Bool = true,
+  audit_receipt_state? : @types.AuditReceiptState = @types.AuditReceiptState::NotRequired,
 ) -> TlTrackedPrWorkflowCategory {
   let merge_ready = tl_tracked_pr_merge_gate_snapshot_ready(
     tracked,
     unresolved_threads,
     review_mode~,
     review_required~,
+    audit_receipt_state~,
   )
   match event {
     PRMerged(_) => ObservedMergedExternal
@@ -1221,7 +1300,10 @@ pub fn plan_tl_poll_event_parent(
       if review_required {
         AttentionRequiredCopilotSilentAfterTimeout
       } else {
-        tl_snapshot_workflow_category(tracked, merge_ready, review_required)
+        tl_snapshot_workflow_category(
+          tracked, unresolved_threads, merge_ready, review_mode, review_required,
+          audit_receipt_state,
+        )
       }
     CIFailed(_) => AttentionRequiredCIFailed
     CIFailureCleared(_) | CILatestHeadRollupSucceeded(_) =>
@@ -1229,23 +1311,43 @@ pub fn plan_tl_poll_event_parent(
         MergeGateOpenPendingPolicyConfirmation
       } else if tracked.last_review_state == ChangesRequested {
         BlockedOnChanges
-      } else if tl_tracked_pr_copilot_review_silent_escalation_active(
-          tracked,
-          review_required~,
-        ) {
-        AttentionRequiredCopilotSilentAfterTimeout
       } else {
-        ReadyForTLRecheck
+        match
+          audit_receipt_workflow_category_if_blocking(
+            tracked, unresolved_threads, review_mode, review_required, audit_receipt_state,
+          ) {
+          Some(cat) => cat
+          None =>
+            if tl_tracked_pr_copilot_review_silent_escalation_active(
+                tracked,
+                review_required~,
+              ) {
+              AttentionRequiredCopilotSilentAfterTimeout
+            } else {
+              ReadyForTLRecheck
+            }
+        }
       }
     PRReady(_) =>
-      tl_snapshot_workflow_category(tracked, merge_ready, review_required)
+      tl_snapshot_workflow_category(
+        tracked, unresolved_threads, merge_ready, review_mode, review_required, audit_receipt_state,
+      )
     FixesPushed(_) =>
       if merge_ready {
         MergeGateOpenPendingPolicyConfirmation
-      } else if !review_required {
-        ReadyForTLRecheck
       } else {
-        FixesPushedAwaitingGates
+        match
+          audit_receipt_workflow_category_if_blocking(
+            tracked, unresolved_threads, review_mode, review_required, audit_receipt_state,
+          ) {
+          Some(cat) => cat
+          None =>
+            if !review_required {
+              ReadyForTLRecheck
+            } else {
+              FixesPushedAwaitingGates
+            }
+        }
       }
     ReviewReceived(_, _) =>
       if tracked.last_review_state == ChangesRequested {
@@ -1254,11 +1356,17 @@ pub fn plan_tl_poll_event_parent(
         WaitingOnReviewOrCI
       }
     ReviewCommented(_, _) =>
-      tl_snapshot_workflow_category(tracked, merge_ready, review_required)
+      tl_snapshot_workflow_category(
+        tracked, unresolved_threads, merge_ready, review_mode, review_required, audit_receipt_state,
+      )
     CopilotIssueCommentSeen(_) =>
-      tl_snapshot_workflow_category(tracked, merge_ready, review_required)
+      tl_snapshot_workflow_category(
+        tracked, unresolved_threads, merge_ready, review_mode, review_required, audit_receipt_state,
+      )
     MergeReady(_) =>
-      tl_snapshot_workflow_category(tracked, merge_ready, review_required)
+      tl_snapshot_workflow_category(
+        tracked, unresolved_threads, merge_ready, review_mode, review_required, audit_receipt_state,
+      )
     ReviewThreadsResolved(_) => ReadyForTLRecheck
   }
 }
@@ -1271,12 +1379,14 @@ pub fn tl_tracked_pr_recheck_gate_line(
   unresolved_thread_count : Int?,
   reviewer? : @types.Reviewer = @types.Reviewer::None,
   review_required? : Bool = true,
+  audit_receipt_state? : @types.AuditReceiptState = @types.AuditReceiptState::NotRequired,
 ) -> String {
   let reviewer_label = reviewer.text_label()
   let snapshot_ready = tl_tracked_pr_merge_gate_snapshot_ready(
     tracked,
     unresolved_thread_count,
     review_required~,
+    audit_receipt_state~,
   )
   if snapshot_ready {
     if !review_required {
@@ -1322,6 +1432,19 @@ pub fn tl_tracked_pr_recheck_gate_line(
           parts.push(n.to_string() + " unresolved inline thread(s) remain")
         }
       None => ()
+    }
+    match audit_receipt_state {
+      @types.AuditReceiptState::Pending(head_sha~) =>
+        parts.push("audit pending for HEAD " + head_sha)
+      @types.AuditReceiptState::FindingsRemain(head_sha~, count~) =>
+        parts.push(
+          "audit found " +
+          count.to_string() +
+          " finding(s) for HEAD " +
+          head_sha,
+        )
+      @types.AuditReceiptState::NotRequired | @types.AuditReceiptState::Valid =>
+        ()
     }
     if tracked.last_ci_rollup != Success && tracked.last_ci_rollup != NoChecks {
       parts.push("latest head CI rollup is not all-success")
