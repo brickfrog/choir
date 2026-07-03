@@ -349,14 +349,14 @@ pub fn shutdown_exit_plan(
 }
 
 ///|
-/// Adapter-side ordering for `shutdown`: pane close first, then poller gate,
-/// registry role, lifecycle read, optional dev exit event, optional worktree
-/// removal, and Beads mirror (matches dispatch).
+/// Adapter-side ordering for `shutdown`: poller gate, registry role, lifecycle
+/// read + exit plan, optional granted-exit pane close, optional dev exit event,
+/// optional worktree removal, and Beads mirror (matches dispatch).
 pub(all) enum ShutdownAdapterHostStep {
-  PaneClose
   PollerCriticalPhaseRead
   RegistryRoleLookup
   LifecycleRead
+  PaneClose
   DevExitEventApply
   WorktreeCleanupAttempt
   BeadsLifecycleMirror
@@ -370,10 +370,10 @@ pub impl Show for ShutdownAdapterHostStep with fn output(self, logger) -> Unit {
 ///|
 pub fn shutdown_adapter_host_steps() -> Array[ShutdownAdapterHostStep] {
   [
-    ShutdownAdapterHostStep::PaneClose,
     ShutdownAdapterHostStep::PollerCriticalPhaseRead,
     ShutdownAdapterHostStep::RegistryRoleLookup,
     ShutdownAdapterHostStep::LifecycleRead,
+    ShutdownAdapterHostStep::PaneClose,
     ShutdownAdapterHostStep::DevExitEventApply,
     ShutdownAdapterHostStep::WorktreeCleanupAttempt,
     ShutdownAdapterHostStep::BeadsLifecycleMirror,
@@ -437,8 +437,8 @@ pub fn workflow_state_pr_number(workflow : @phase.WorkflowState) -> Int? {
 }
 
 ///|
-/// Effectful shutdown adapter: pane close first, then poller gate, lifecycle +
-/// `shutdown_exit_plan`, dev exit event, worktree cleanup, Beads lifecycle
+/// Effectful shutdown adapter: poller gate, lifecycle + `shutdown_exit_plan`,
+/// granted-exit pane close, dev exit event, worktree cleanup, Beads lifecycle
 /// mirror.
 pub async fn interpret_shutdown(
   args : ShutdownArgs,
@@ -452,11 +452,22 @@ pub async fn interpret_shutdown(
     Some(v) => v
     None => return shutdown_missing_caller_response()
   }
-  match registry {
-    Some(reg) =>
-      try {
-        let agent = reg.get(caller_id)
-        if !@types.is_supervisor_role(agent.role) {
+  match shutdown_poller_block_pr_number(poller_state, caller_id) {
+    Some(pr_number) =>
+      return @types.Response::Err(shutdown_poller_block_message(pr_number))
+    None => ()
+  }
+  let role = shutdown_registry_role_for_caller(registry, caller_id)
+  let lifecycle = @phase.read_or_default_lifecycle(project_dir, caller_id, role)
+  let plan = shutdown_exit_plan(lifecycle, poller_state~)
+  let may_cleanup_workspace = plan.attempt_worktree_cleanup &&
+    !@types.is_supervisor_role(role)
+
+  if may_cleanup_workspace {
+    match registry {
+      Some(reg) =>
+        try {
+          let agent = reg.get(caller_id)
           match kill_agent_pane_close_command(agent) {
             Some(cmd) => {
               let codes = runner([cmd]) catch { _ => [-1] }
@@ -469,20 +480,12 @@ pub async fn interpret_shutdown(
             }
             None => ()
           }
+        } catch {
+          _ => ()
         }
-      } catch {
-        _ => ()
-      }
-    None => ()
+      None => ()
+    }
   }
-  match shutdown_poller_block_pr_number(poller_state, caller_id) {
-    Some(pr_number) =>
-      return @types.Response::Err(shutdown_poller_block_message(pr_number))
-    None => ()
-  }
-  let role = shutdown_registry_role_for_caller(registry, caller_id)
-  let lifecycle = @phase.read_or_default_lifecycle(project_dir, caller_id, role)
-  let plan = shutdown_exit_plan(lifecycle, poller_state~)
 
   if plan.apply_dev_exit_requested {
     ignore(
@@ -494,8 +497,6 @@ pub async fn interpret_shutdown(
       ),
     )
   }
-  let may_cleanup_workspace = plan.attempt_worktree_cleanup &&
-    !@types.is_supervisor_role(role)
   if may_cleanup_workspace {
     match registry {
       Some(reg) =>
