@@ -511,8 +511,8 @@ pub fn ServerState::request_goal_judge_tick(self : ServerState) -> Unit {
 pub async fn ServerState::process_requested_goal_judge_tick(
   self : ServerState,
   now_unix_sec : Int64,
-  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
-  bd_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
+  runner~ : async (Array[@workspace.Command]) -> Array[Int],
+  bd_capture~ : async (@workspace.Command) -> (Int, String),
 ) -> Bool {
   match
     self.process_requested_goal_judge_tick_with(
@@ -551,8 +551,8 @@ pub async fn ServerState::process_requested_goal_judge_tick(
 pub async fn ServerState::process_goal_judge_tick(
   self : ServerState,
   now_unix_sec : Int64,
-  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
-  bd_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
+  runner~ : async (Array[@workspace.Command]) -> Array[Int],
+  bd_capture~ : async (@workspace.Command) -> (Int, String),
 ) -> Unit {
   match
     self.process_goal_judge_tick_with(

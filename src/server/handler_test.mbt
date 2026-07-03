@@ -881,6 +881,11 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
       (0, "")
     },
     hook_path_exists=fn(_) { false },
+    git_capture=server_delivery_test_git_capture,
+    bd_capture=server_delivery_test_capture,
+    path_exists=@sys.path_entry_exists,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   assert_true(merged)
   assert_true(merge_seen)
@@ -989,6 +994,13 @@ async test "maybe_trigger_automerge_for_pending_event satisfies non-native moon 
     Some(0),
     runner,
     capture~,
+    git_capture=server_delivery_test_git_capture,
+    bd_capture=server_delivery_test_capture,
+    hook_capture=server_delivery_test_hook_capture,
+    path_exists=@sys.path_entry_exists,
+    hook_path_exists=@sys.path_entry_exists,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   assert_true(merged)
   assert_true(merge_seen)
@@ -1066,6 +1078,13 @@ async test "maybe_trigger_automerge_for_pending_event treats NoChecks as verify-
     Some(0),
     runner,
     capture~,
+    git_capture=server_delivery_test_git_capture,
+    bd_capture=server_delivery_test_capture,
+    hook_capture=server_delivery_test_hook_capture,
+    path_exists=@sys.path_entry_exists,
+    hook_path_exists=@sys.path_entry_exists,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   assert_true(merged)
   assert_true(merge_seen)
@@ -1108,6 +1127,13 @@ async test "maybe_trigger_automerge_for_pending_event skips already merged PR" {
       @async.sleep(0)
       (0, "")
     },
+    git_capture=server_delivery_test_git_capture,
+    bd_capture=server_delivery_test_capture,
+    hook_capture=server_delivery_test_hook_capture,
+    path_exists=@sys.path_entry_exists,
+    hook_path_exists=@sys.path_entry_exists,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   assert_false(got)
   assert_false(runner_called)
@@ -1145,6 +1171,13 @@ async test "maybe_trigger_automerge_for_pending_event skips observed merged PR" 
       @async.sleep(0)
       (0, "")
     },
+    git_capture=server_delivery_test_git_capture,
+    bd_capture=server_delivery_test_capture,
+    hook_capture=server_delivery_test_hook_capture,
+    path_exists=@sys.path_entry_exists,
+    hook_path_exists=@sys.path_entry_exists,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   assert_false(got)
   assert_false(runner_called)
@@ -1496,6 +1529,13 @@ async test "maybe_trigger_automerge_for_pending_event blocks missing server cont
     Some(0),
     runner,
     capture~,
+    git_capture=server_delivery_test_git_capture,
+    bd_capture=server_delivery_test_capture,
+    hook_capture=server_delivery_test_hook_capture,
+    path_exists=@sys.path_entry_exists,
+    hook_path_exists=@sys.path_entry_exists,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   assert_false(merged)
   assert_false(merge_seen)
@@ -2311,6 +2351,13 @@ async test "automerge audit policy block is visible and retryable for same head"
     runner,
     capture~,
     review_mode=Some(@types.ReviewMode::Iterative),
+    git_capture=server_delivery_test_git_capture,
+    bd_capture=server_delivery_test_capture,
+    hook_capture=server_delivery_test_hook_capture,
+    path_exists=@sys.path_entry_exists,
+    hook_path_exists=@sys.path_entry_exists,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   assert_false(merged)
   assert_false(merge_seen)
@@ -2429,6 +2476,13 @@ async test "automerge findings audit block is not retried for same head" {
     runner,
     capture~,
     review_mode=Some(@types.ReviewMode::Iterative),
+    git_capture=server_delivery_test_git_capture,
+    bd_capture=server_delivery_test_capture,
+    hook_capture=server_delivery_test_hook_capture,
+    path_exists=@sys.path_entry_exists,
+    hook_path_exists=@sys.path_entry_exists,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   assert_false(merged)
   assert_false(merge_seen)
@@ -2608,6 +2662,12 @@ async test "blocked gh notify auto-merges when latest poller snapshot is clear" 
     ),
     runner~,
     capture~,
+    git_capture=server_delivery_test_git_capture,
+    bd_capture=server_delivery_test_capture,
+    hook_capture=server_delivery_test_hook_capture,
+    path_exists=@sys.path_entry_exists,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   assert_true(resp.is_ok())
   assert_true(merge_seen)
@@ -2680,6 +2740,12 @@ async test "blocked gh notify honors single-pass review mode for fixes pushed" {
     ),
     runner~,
     capture~,
+    git_capture=server_delivery_test_git_capture,
+    bd_capture=server_delivery_test_capture,
+    hook_capture=server_delivery_test_hook_capture,
+    path_exists=@sys.path_entry_exists,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   assert_true(resp.is_ok())
   assert_true(merge_seen)
@@ -2747,6 +2813,12 @@ async test "blocked gh notify uses tracked review mode over global config" {
     ),
     runner~,
     capture~,
+    git_capture=server_delivery_test_git_capture,
+    bd_capture=server_delivery_test_capture,
+    hook_capture=server_delivery_test_hook_capture,
+    path_exists=@sys.path_entry_exists,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   assert_true(resp.is_ok())
   assert_true(merge_seen)
@@ -2796,6 +2868,12 @@ async test "blocked gh notify does not auto-merge unrelated blocked reasons" {
     ),
     runner~,
     capture~,
+    git_capture=server_delivery_test_git_capture,
+    bd_capture=server_delivery_test_capture,
+    hook_capture=server_delivery_test_hook_capture,
+    path_exists=@sys.path_entry_exists,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   assert_true(resp.is_ok())
   assert_false(merge_seen)
@@ -2812,6 +2890,12 @@ async test "blocked gh notify does not auto-merge unrelated blocked reasons" {
     ),
     runner~,
     capture~,
+    git_capture=server_delivery_test_git_capture,
+    bd_capture=server_delivery_test_capture,
+    hook_capture=server_delivery_test_hook_capture,
+    path_exists=@sys.path_entry_exists,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   assert_true(resp_partial.is_ok())
   assert_false(merge_seen)
@@ -2931,7 +3015,17 @@ async test "kill_agent auto-closes tracked stale PR and untracks it" {
       "caller_id": _parent_id,
     }),
   }
-  let resp = state.handle_with_runner_and_capture(req, runner~, capture~)
+  let resp = state.handle_with_runner_and_capture(
+    req,
+    runner~,
+    capture~,
+    git_capture=server_delivery_test_git_capture,
+    bd_capture=server_delivery_test_capture,
+    hook_capture=server_delivery_test_hook_capture,
+    path_exists=server_delivery_test_path_entry_exists,
+    hook_xdg_config_home=None,
+    hook_home="",
+  )
   assert_true(resp.is_ok())
   assert_true(close_seen)
   assert_true(stale_closed_delivered)
@@ -2982,7 +3076,17 @@ async test "kill_agent close failure sends one explicit stale PR failure and sup
       "caller_id": _parent_id,
     }),
   }
-  let resp = state.handle_with_runner_and_capture(req, runner~, capture~)
+  let resp = state.handle_with_runner_and_capture(
+    req,
+    runner~,
+    capture~,
+    git_capture=server_delivery_test_git_capture,
+    bd_capture=server_delivery_test_capture,
+    hook_capture=server_delivery_test_hook_capture,
+    path_exists=server_delivery_test_path_entry_exists,
+    hook_xdg_config_home=None,
+    hook_home="",
+  )
   assert_true(resp.is_ok())
   assert_true(stale_failed_delivered)
   match state.poller.get(pr_number) {
@@ -3033,7 +3137,17 @@ async test "kill_agent with empty caller_id does not auto-close tracked PRs" {
     name: "kill_agent",
     args: @types.RequestArgs::new({ "agent_id": child_id, "caller_id": "" }),
   }
-  let resp = state.handle_with_runner_and_capture(req, runner~, capture~)
+  let resp = state.handle_with_runner_and_capture(
+    req,
+    runner~,
+    capture~,
+    git_capture=server_delivery_test_git_capture,
+    bd_capture=server_delivery_test_capture,
+    hook_capture=server_delivery_test_hook_capture,
+    path_exists=server_delivery_test_path_entry_exists,
+    hook_xdg_config_home=None,
+    hook_home="",
+  )
   assert_true(resp.is_ok())
   assert_false(close_seen)
   assert_true(state.poller.get(pr_number) is Some(_))
@@ -3114,6 +3228,8 @@ async test "PRMerged completion hook fires only PrMerged for feature parent" {
     capture~,
     hook_capture~,
     path_exists~,
+    xdg_config_home=None,
+    home="",
   )
 
   assert_eq(default_branch_checks, 1)
@@ -3204,6 +3320,8 @@ async test "PRMerged completion hook fires PrMerged and WaveComplete for main pa
     capture~,
     hook_capture~,
     path_exists~,
+    xdg_config_home=None,
+    home="",
   )
 
   assert_eq(fired_inputs.length(), 2)
@@ -3253,6 +3371,8 @@ async test "PRMerged completion hook does not fire WaveComplete for non-default 
     capture~,
     hook_capture~,
     path_exists~,
+    xdg_config_home=None,
+    home="",
   )
 
   assert_eq(fired_inputs.length(), 1)
@@ -4005,6 +4125,8 @@ async test "untracked merge detection emits synthetic PRMerged and fires hooks" 
     path_exists=fn(path) {
       path.has_suffix("/pr_merged.sh") || path.has_suffix("/wave_complete.sh")
     },
+    xdg_config_home=None,
+    home="",
   )
   assert_eq(fired_inputs.length(), 2)
   assert_eq(fired_inputs[0].event, @hooks.HookEvent::PrMerged)
@@ -9763,6 +9885,10 @@ async fn dispatch_spawn_registration_fork_wave(
       state.record_spawn_launch_diagnostic(diagnostic)
     },
     read_file=fn(_) { "" },
+    bd_capture=server_delivery_test_capture,
+    hook_capture=server_delivery_test_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
 }
 

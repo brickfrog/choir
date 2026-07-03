@@ -557,6 +557,9 @@ pub async fn ServerState::interpret_teardown_effects(
             suspend_reason: None,
           },
           self.config.project_dir,
+          hook_capture=@exec.capture_hook_script_merged,
+          xdg_config_home=@exec.hook_xdg_config_home(),
+          home=@exec.hook_home(),
         )
       RemoveWorktree(path) =>
         if @types.is_choir_managed_worktree_path(self.config.project_dir, path) {
@@ -705,7 +708,13 @@ pub async fn ServerState::interpret_teardown_effects(
         } catch {
           _ => ()
         }
-      RefreshPR(pr_number) => self.refresh_pr_with_runner(pr_number, runner)
+      RefreshPR(pr_number) =>
+        self.refresh_pr_with_runner(
+          pr_number,
+          runner,
+          capture=@exec.capture_command_merged,
+          automerge_capture=@exec.capture_command_merged,
+        )
     }
   }
 }
@@ -2095,7 +2104,7 @@ async fn ServerState::handle_disconnect_confirming_with_runner(
 pub async fn ServerState::handle_disconnect_with_runner(
   self : ServerState,
   agent_id : String,
-  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  runner~ : async (Array[@workspace.Command]) -> Array[Int],
   kill_pgid? : (Int) -> Unit = default_kill_pgid_best_effort,
 ) -> Unit {
   self.handle_disconnect_confirming_with_runner(agent_id, runner, kill_pgid~)
@@ -2197,7 +2206,7 @@ pub async fn ServerState::process_pending_disconnects_with_runner(
   self : ServerState,
   now : Int64,
   grace_seconds : Int64,
-  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  runner~ : async (Array[@workspace.Command]) -> Array[Int],
   kill_pgid? : (Int) -> Unit = default_kill_pgid_best_effort,
 ) -> Unit {
   let stale : Array[String] = []

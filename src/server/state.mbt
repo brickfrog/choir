@@ -12,7 +12,10 @@ fn default_read_file(path : String) -> String {
 async fn default_list_panes_snapshot_capture(
   session : String,
 ) -> @tools.ZellijListPanesSnapshot {
-  @tools.capture_zellij_list_panes_snapshot(session)
+  @tools.capture_zellij_list_panes_snapshot(
+    session,
+    capture=@exec.capture_command_stdout,
+  )
 }
 
 ///|

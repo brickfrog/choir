@@ -604,7 +604,7 @@ async fn ServerState::replay_outbox_recipient_ids(
 pub async fn ServerState::replay_pending_outbox_with(
   self : ServerState,
   now : Int64,
-  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  runner~ : async (Array[@workspace.Command]) -> Array[Int],
   sleep_fn? : async (Int) -> Unit = @async.sleep,
   kill_pgid? : (Int) -> Unit = default_kill_pgid_best_effort,
 ) -> Unit {
@@ -675,7 +675,7 @@ pub async fn ServerState::replay_pending_outbox_with(
 ///|
 pub async fn ServerState::replay_pending_outbox(
   self : ServerState,
-  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  runner~ : async (Array[@workspace.Command]) -> Array[Int],
 ) -> Unit {
   self.replay_pending_outbox_with(@poller.now_sec(), runner~)
 }

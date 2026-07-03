@@ -12,7 +12,7 @@ pub async fn gh_pr_comment(
   pr_number : Int,
   body : String,
   project_dir : String,
-  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
+  capture~ : async (@workspace.Command) -> (Int, String),
 ) -> Result[Unit, @types.ChoirError] {
   let cmd = gh_pr_comment_command(pr_number, body, project_dir)
   let (exit_code, output) = capture(cmd)

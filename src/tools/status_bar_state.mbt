@@ -1055,7 +1055,7 @@ async fn status_bar_default_list_panes_capture(
 ///|
 async fn capture_zellij_list_panes_snapshot_result(
   session : String,
-  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+  capture~ : async (@workspace.Command) -> (Int, String),
 ) -> Result[ZellijListPanesSnapshot, @types.ChoirError] {
   let (exit_code, output) = capture(
     @workspace.zellij_list_panes_json_command(session),
@@ -1074,7 +1074,7 @@ async fn capture_zellij_list_panes_snapshot_result(
 ///|
 pub async fn capture_zellij_list_panes_snapshot(
   session : String,
-  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+  capture~ : async (@workspace.Command) -> (Int, String),
 ) -> ZellijListPanesSnapshot {
   match capture_zellij_list_panes_snapshot_result(session, capture~) {
     Ok(snapshot) => snapshot

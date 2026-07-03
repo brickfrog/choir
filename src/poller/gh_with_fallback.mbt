@@ -143,7 +143,7 @@ fn gh_fallback_age_sec(tracked : TrackedPR, now : Int64) -> Int {
 pub async fn gh_pr_view_with_fallback(
   pr_number : Int,
   poller_state : PollerState,
-  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+  capture~ : async (@workspace.Command) -> (Int, String),
   now_sec? : () -> Int64 = now_sec,
 ) -> GhWithFallback {
   let (exit_code, output) = capture(bounded_gh_pr_view_command(pr_number))

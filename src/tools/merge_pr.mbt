@@ -2167,6 +2167,8 @@ async fn interpret_merge_pr_fire_completion_hooks(
   hook_path_exists : (String) -> Bool,
   read_file : (String) -> String,
   require_integration_audit : Bool,
+  hook_xdg_config_home : String?,
+  hook_home : String,
 ) -> Unit {
   match pr {
     Some(tracked) => {
@@ -2180,6 +2182,8 @@ async fn interpret_merge_pr_fire_completion_hooks(
           capture~,
           hook_capture~,
           path_exists=hook_path_exists,
+          xdg_config_home=hook_xdg_config_home,
+          home=hook_home,
         )
       }
     }
@@ -2269,6 +2273,8 @@ pub async fn interpret_merge_pr(
     @async.sleep(0)
     (0, "")
   },
+  hook_xdg_config_home? : String? = None,
+  hook_home? : String = "",
   persist? : (@poller.PollerState, String) -> Bool = fn(ps, dir) {
     ps.write_state_file(dir)
   },
@@ -2394,7 +2400,7 @@ pub async fn interpret_merge_pr(
             if persisted {
               interpret_merge_pr_fire_completion_hooks(
                 project_dir, tracked, capture, hook_capture, path_exists, hook_path_exists,
-                read_file, require_integration_audit,
+                read_file, require_integration_audit, hook_xdg_config_home, hook_home,
               )
             } else {
               @moontrace.warn(

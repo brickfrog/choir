@@ -946,23 +946,6 @@ fn forbidden_helper_info(
 }
 
 ///|
-fn exec_package_ref_name(
-  package_aliases : Array[(String, String)],
-  expr : @syntax.Expr,
-) -> String? {
-  match expr {
-    Group(expr~, ..) => exec_package_ref_name(package_aliases, expr)
-    Apply(func~, ..) => exec_package_ref_name(package_aliases, func)
-    _ =>
-      if expr_package_matches(package_aliases, expr, "exec") {
-        dotted_ident_name(expr)
-      } else {
-        None
-      }
-  }
-}
-
-///|
 impl @syntax.IterVisitor for ExecPackageRefSearch with fn visit_Expr(self, expr) {
   if self.found {
     return
@@ -1219,105 +1202,6 @@ fn current_decl_name(env : LintEnv) -> String {
   } else {
     env.decl_stack[env.decl_stack.length() - 1]
   }
-}
-
-///|
-fn is_staged_existing_exec_default(
-  env : LintEnv,
-  binder : @syntax.Binder,
-  default : @syntax.Expr,
-) -> Bool {
-  if env.file.has_suffix("_test.mbt") {
-    return false
-  }
-  let default_name = match exec_package_ref_name(env.package_aliases, default) {
-    Some(name) => name
-    None => return false
-  }
-  let key = env.file +
-    "|" +
-    current_decl_name(env) +
-    "|" +
-    binder.name +
-    "|" +
-    default_name
-  let staged = [
-    "src/bin/choir_commands/smoke_subcommand.mbt|run_smoke_beads_handoff|capture|capture_command_merged",
-    "src/poller/gh_pr_comment.mbt|gh_pr_comment|capture|capture_command_merged",
-    "src/poller/gh_with_fallback.mbt|gh_pr_view_with_fallback|capture|capture_command_stdout",
-    "src/server/goal_judge.mbt|process_goal_judge_tick|bd_capture|capture_command_merged",
-    "src/server/goal_judge.mbt|process_goal_judge_tick|runner|run_sequence", "src/server/goal_judge.mbt|process_requested_goal_judge_tick|bd_capture|capture_command_merged",
-    "src/server/goal_judge.mbt|process_requested_goal_judge_tick|runner|run_sequence",
-    "src/server/handler.mbt|handle_with_runner|runner|run_sequence", "src/server/handler.mbt|handle_with_runner_and_capture|capture|capture_command_merged",
-    "src/server/handler.mbt|handle_with_runner_and_capture|hook_capture|capture_hook_script_merged",
-    "src/server/handler.mbt|handle_with_runner_and_capture|path_exists|path_entry_exists",
-    "src/server/handler.mbt|handle_with_runner_and_capture|runner|run_sequence",
-    "src/server/handler_automerge.mbt|maybe_trigger_automerge_for_pending_event|capture|capture_command_merged",
-    "src/server/handler_automerge.mbt|maybe_trigger_automerge_for_pending_event|hook_capture|capture_hook_script_merged",
-    "src/server/handler_automerge.mbt|maybe_trigger_automerge_for_pending_event|hook_path_exists|path_entry_exists",
-    "src/server/handler_disconnect.mbt|handle_disconnect_with_runner|runner|run_sequence",
-    "src/server/handler_disconnect.mbt|process_pending_disconnects_with_runner|runner|run_sequence",
-    "src/server/handler_poll_delivery.mbt|deliver_pending_poll_events|audit_receipt_exists|path_entry_exists",
-    "src/server/handler_poll_delivery.mbt|deliver_pending_poll_events|audit_receipt_read|read_file",
-    "src/server/handler_poll_delivery.mbt|deliver_pending_poll_events|automerge_capture|capture_command_merged",
-    "src/server/handler_poll_delivery.mbt|deliver_pending_poll_events|capture|capture_command_stdout",
-    "src/server/handler_poll_delivery.mbt|deliver_pending_poll_events|git_pull_capture|capture_command_merged",
-    "src/server/handler_poll_delivery.mbt|deliver_pending_poll_events|hook_capture|capture_hook_script_merged",
-    "src/server/handler_poll_delivery.mbt|deliver_pending_poll_events|hook_path_exists|path_entry_exists",
-    "src/server/handler_poll_delivery.mbt|detect_untracked_pr_merged_events|audit_receipt_exists|path_entry_exists",
-    "src/server/handler_poll_delivery.mbt|detect_untracked_pr_merged_events|audit_receipt_read|read_file",
-    "src/server/handler_poll_delivery.mbt|process_poller_tick|audit_receipt_exists|path_entry_exists",
-    "src/server/handler_poll_delivery.mbt|process_poller_tick|audit_receipt_read|read_file",
-    "src/server/handler_poll_delivery.mbt|process_poller_tick|automerge_capture|capture_command_merged",
-    "src/server/handler_poll_delivery.mbt|process_poller_tick|capture|capture_command_stdout",
-    "src/server/handler_poll_delivery.mbt|process_poller_tick|runner|run_sequence",
-    "src/server/handler_poll_delivery.mbt|process_poller_tick_with|audit_receipt_exists|path_entry_exists",
-    "src/server/handler_poll_delivery.mbt|process_poller_tick_with|audit_receipt_read|read_file",
-    "src/server/handler_poll_delivery.mbt|process_poller_tick_with|automerge_capture|capture_command_merged",
-    "src/server/handler_poll_delivery.mbt|process_poller_tick_with|capture|capture_command_stdout",
-    "src/server/handler_poll_delivery.mbt|process_poller_tick_with|git_pull_capture|capture_command_merged",
-    "src/server/handler_poll_delivery.mbt|process_poller_tick_with|hook_capture|capture_hook_script_merged",
-    "src/server/handler_poll_delivery.mbt|process_poller_tick_with|hook_path_exists|path_entry_exists",
-    "src/server/handler_poll_delivery.mbt|process_poller_tick_with|runner|run_sequence",
-    "src/server/handler_poll_delivery.mbt|refresh_pr_with|audit_receipt_exists|path_entry_exists",
-    "src/server/handler_poll_delivery.mbt|refresh_pr_with|audit_receipt_read|read_file",
-    "src/server/handler_poll_delivery.mbt|refresh_pr_with|automerge_capture|capture_command_merged",
-    "src/server/handler_poll_delivery.mbt|refresh_pr_with|capture|capture_command_stdout",
-    "src/server/handler_poll_delivery.mbt|refresh_pr_with|hook_path_exists|path_entry_exists",
-    "src/server/handler_poll_delivery.mbt|refresh_pr_with|runner|run_sequence", "src/server/handler_poll_delivery.mbt|refresh_pr_with_runner|automerge_capture|capture_command_merged",
-    "src/server/handler_poll_delivery.mbt|refresh_pr_with_runner|capture|capture_command_stdout",
-    "src/server/handler_poll_delivery.mbt|sweep_tracked_prs_for_automerge|capture|capture_command_merged",
-    "src/server/handler_request.mbt|replay_pending_outbox|runner|run_sequence", "src/server/handler_request.mbt|replay_pending_outbox_with|runner|run_sequence",
-    "src/tools/cancel_wave.mbt|interpret_cancel_wave|capture|capture_command_stdout",
-    "src/tools/dispatch.mbt|dispatch|bd_capture|capture_command_stdout_with_stderr_on_error",
-    "src/tools/dispatch.mbt|dispatch|git_capture|capture_stdout", "src/tools/dispatch.mbt|dispatch|hook_capture|capture_hook_script_merged",
-    "src/tools/dispatch.mbt|dispatch|runner|run_sequence", "src/tools/dispatch.mbt|dispatch_call|bd_capture|capture_command_stdout_with_stderr_on_error",
-    "src/tools/dispatch.mbt|dispatch_call|git_capture|capture_stdout", "src/tools/dispatch.mbt|dispatch_call|runner|run_sequence",
-    "src/tools/dispatch.mbt|fire_hook_async|home|hook_home", "src/tools/dispatch.mbt|fire_hook_async|hook_capture|capture_hook_script_merged",
-    "src/tools/dispatch.mbt|fire_hook_async|xdg_config_home|hook_xdg_config_home",
-    "src/tools/dispatch.mbt|handle_request|git_capture|capture_stdout", "src/tools/dispatch.mbt|handle_request|hook_capture|capture_hook_script_merged",
-    "src/tools/dispatch.mbt|handle_request|hook_home|hook_home", "src/tools/dispatch.mbt|handle_request|hook_xdg_config_home|hook_xdg_config_home",
-    "src/tools/dispatch.mbt|handle_request|runner|run_sequence", "src/tools/dispatch_helpers.mbt|handle_kv_list|capture|capture_command_stdout",
-    "src/tools/dispatch_helpers.mbt|handle_task_create|capture|capture_command_stdout",
-    "src/tools/dispatch_helpers.mbt|handle_task_get|capture|capture_command_stdout",
-    "src/tools/dispatch_helpers.mbt|handle_task_list|capture|capture_command_stdout",
-    "src/tools/dispatch_helpers.mbt|handle_task_update|capture|capture_command_stdout",
-    "src/tools/dispatch_helpers.mbt|resolve_zellij_tab_terminal_target|capture|capture_command_stdout",
-    "src/tools/dispatch_helpers.mbt|run_strict|capture|capture_command_output", "src/tools/effects.mbt|interpret|git_capture|capture_stdout",
-    "src/tools/effects.mbt|interpret|runner|run_sequence", "src/tools/fork_wave.mbt|interpret_fork_wave_post_spawn|capture|capture_command_stdout",
-    "src/tools/pr_merged_completion_hooks.mbt|fire_pr_merged_completion_hooks|capture|capture_command_stdout",
-    "src/tools/pr_merged_completion_hooks.mbt|fire_pr_merged_completion_hooks|home|hook_home",
-    "src/tools/pr_merged_completion_hooks.mbt|fire_pr_merged_completion_hooks|hook_capture|capture_hook_script_merged",
-    "src/tools/pr_merged_completion_hooks.mbt|fire_pr_merged_completion_hooks|path_exists|path_entry_exists",
-    "src/tools/pr_merged_completion_hooks.mbt|fire_pr_merged_completion_hooks|xdg_config_home|hook_xdg_config_home",
-    "src/tools/shutdown.mbt|interpret_shutdown|capture|capture_command_stdout_with_stderr_on_error",
-    "src/tools/status_bar_state.mbt|capture_zellij_list_panes_snapshot|capture|capture_command_stdout",
-    "src/tools/status_bar_state.mbt|capture_zellij_list_panes_snapshot_result|capture|capture_command_stdout",
-    "src/tools/suspend_resume.mbt|interpret_resume|hook_capture|capture_hook_script_merged",
-    "src/tools/suspend_resume.mbt|interpret_suspend|hook_capture|capture_hook_script_merged",
-    "src/tools/wave_state.mbt|interpret_wave_state|capture|capture_command_stdout",
-  ]
-  staged.any(fn(entry) { entry == key })
 }
 
 ///|
@@ -1676,8 +1560,7 @@ impl @syntax.IterVisitor for LintEnv with fn visit_Parameter_Optional(
   if expr_contains_exec_package_ref_with_package_aliases(
       env.package_aliases,
       default,
-    ) &&
-    !is_staged_existing_exec_default(env, binder, default) {
+    ) {
     emit(
       env,
       "exec-default-parameter",

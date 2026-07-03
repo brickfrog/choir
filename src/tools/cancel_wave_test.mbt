@@ -37,6 +37,11 @@ async test "cancel_wave force=false clean" {
     poller_state=Some(ps),
     caller_id=Some("main"),
     runner=local_mock_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
 
   match resp {
@@ -89,6 +94,11 @@ async test "cancel_wave cancels spawning agent" {
     registry=Some(reg),
     caller_id=Some("main"),
     runner=local_mock_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
 
   match resp {
@@ -178,6 +188,11 @@ async test "cancel_wave force=false blocked by PR" {
     poller_state=Some(ps),
     caller_id=Some("main"),
     runner=local_mock_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
 
   match resp {
@@ -239,6 +254,11 @@ async test "cancel_wave force=true overrides PR block" {
     poller_state=Some(ps),
     caller_id=Some("main"),
     runner=local_mock_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
 
   match resp {
@@ -456,6 +476,7 @@ async test "interpret_cancel_wave err when no registry" {
     None,
     None,
     mock_runner_all_ok,
+    capture=unreached_capture,
   )
   match got {
     @types.Response::Err(msg) => assert_eq(msg, "no agent registry available")
@@ -497,6 +518,7 @@ async test "interpret_cancel_wave kills recorded process group and removes pidfi
     read_agent_pgid=fn(id) { if id == agent_id { Some(6262) } else { None } },
     kill_pgid=fn(pgid) { killed.push(pgid) },
     remove_pid_file=fn(id) { removed.push(id) },
+    capture=unreached_capture,
   )
 
   match got {

@@ -451,6 +451,12 @@ pub async fn ServerState::handle(
     req,
     runner=@exec.run_sequence,
     capture=@exec.capture_command_merged,
+    git_capture=@exec.capture_stdout,
+    bd_capture=@exec.capture_command_stdout_with_stderr_on_error,
+    hook_capture=@exec.capture_hook_script_merged,
+    path_exists=@exec.path_entry_exists,
+    hook_xdg_config_home=@exec.hook_xdg_config_home(),
+    hook_home=@exec.hook_home(),
     authenticated_agent_id~,
   )
 }
@@ -459,13 +465,19 @@ pub async fn ServerState::handle(
 pub async fn ServerState::handle_with_runner(
   self : ServerState,
   req : @types.Request,
-  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  runner~ : async (Array[@workspace.Command]) -> Array[Int],
   authenticated_agent_id? : String? = None,
 ) -> @types.Response {
   self.handle_with_runner_and_capture(
     req,
     runner~,
     capture=@exec.capture_command_merged,
+    git_capture=@exec.capture_stdout,
+    bd_capture=@exec.capture_command_stdout_with_stderr_on_error,
+    hook_capture=@exec.capture_hook_script_merged,
+    path_exists=@exec.path_entry_exists,
+    hook_xdg_config_home=@exec.hook_xdg_config_home(),
+    hook_home=@exec.hook_home(),
     authenticated_agent_id~,
   )
 }
@@ -474,10 +486,14 @@ pub async fn ServerState::handle_with_runner(
 pub async fn ServerState::handle_with_runner_and_capture(
   self : ServerState,
   req : @types.Request,
-  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
-  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
-  hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
-  path_exists? : (String) -> Bool = @exec.path_entry_exists,
+  runner~ : async (Array[@workspace.Command]) -> Array[Int],
+  capture~ : async (@workspace.Command) -> (Int, String),
+  git_capture~ : async (String, Array[String]) -> String,
+  bd_capture~ : async (@workspace.Command) -> (Int, String),
+  hook_capture~ : async (String, String, String?) -> (Int, String),
+  path_exists~ : (String) -> Bool,
+  hook_xdg_config_home~ : String?,
+  hook_home~ : String,
   hook_path_exists? : (String) -> Bool = path_exists,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
   authenticated_agent_id? : String? = None,
@@ -539,9 +555,13 @@ pub async fn ServerState::handle_with_runner_and_capture(
       runner~,
       sleep_fn~,
       capture~,
+      git_capture~,
+      bd_capture~,
       hook_capture~,
       path_exists~,
       hook_path_exists~,
+      hook_xdg_config_home~,
+      hook_home~,
       extra_mcp_servers_json=self.config.extra_mcp_servers_json,
       shell_command=self.config.shell_command,
       listen_uds=self.config.listen_uds,
@@ -604,7 +624,18 @@ pub async fn ServerState::handle_with_runner_and_capture(
       },
       on_resolve_review_thread=async fn(pr_numbers : Array[Int]) {
         if pr_numbers.length() > 0 {
-          self.sweep_tracked_prs_for_automerge(runner, sleep_fn~) catch {
+          self.sweep_tracked_prs_for_automerge(
+            runner,
+            capture~,
+            git_capture~,
+            bd_capture~,
+            hook_capture~,
+            path_exists~,
+            hook_path_exists~,
+            hook_xdg_config_home~,
+            hook_home~,
+            sleep_fn~,
+          ) catch {
             e =>
               @moontrace.warn(
                 "failed to sweep PRs after resolve_review_thread",
@@ -685,7 +716,15 @@ pub async fn ServerState::handle_with_runner_and_capture(
   }
   ignore(
     self.maybe_trigger_automerge_for_blocked_gh_notify(
-      effective_req, runner, capture,
+      effective_req,
+      runner,
+      capture,
+      git_capture~,
+      bd_capture~,
+      hook_capture~,
+      path_exists~,
+      hook_xdg_config_home~,
+      hook_home~,
     ),
   )
   if goal_judge_post_tool_trigger(effective_req, resp) {

@@ -162,8 +162,8 @@ fn trace_zellij_launch_statuses(
 /// fold is running it here (async).
 pub async fn[A] interpret(
   m : Eff[A],
-  git_capture? : async (String, Array[String]) -> String = @exec.capture_stdout,
-  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  git_capture~ : async (String, Array[String]) -> String,
+  runner~ : async (Array[@workspace.Command]) -> Array[Int],
 ) -> A {
   match m {
     Pure(a) => a
@@ -267,6 +267,10 @@ async test "interpret logs zellij launch exit status" {
     runner=async fn(_cmds) {
       @async.sleep(0)
       [0]
+    },
+    git_capture=async fn(_program, _args) {
+      @async.sleep(0)
+      ""
     },
   )
   @moontrace.clear_subscriber()

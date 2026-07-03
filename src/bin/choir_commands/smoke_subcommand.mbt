@@ -469,7 +469,7 @@ pub async fn run_smoke_beads_handoff(
   args : SmokeBeadsArgs,
   choir_exe : String,
   project_dir : String,
-  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
+  capture~ : async (@workspace.Command) -> (Int, String),
   sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Result[SmokeBeadsReport, @types.ChoirError] {
   let before_status = match
@@ -623,7 +623,13 @@ fn smoke_beads_handoff_run(args : Array[String]) -> Unit {
   let project_dir = "."
   @async.run_async_main(async fn() {
     @async.with_task_group(async fn(_root) {
-      match run_smoke_beads_handoff(parsed, choir_exe, project_dir) {
+      match
+        run_smoke_beads_handoff(
+          parsed,
+          choir_exe,
+          project_dir,
+          capture=@exec.capture_command_merged,
+        ) {
         Ok(report) => @sys.write_stdout(render_smoke_beads_report(report))
         Err(e) => {
           @sys.write_stderr(

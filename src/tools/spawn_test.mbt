@@ -67,6 +67,11 @@ async test "dispatch rejects spawn_gemini when agy migration is incomplete" {
     ToolRequest::SpawnGemini(spawn_args),
     runner~,
     agy_migration_incomplete=true,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match got {
     @types.Response::Err(msg) =>
@@ -107,6 +112,11 @@ async test "dispatch rejects fork_wave gemini when agy migration is incomplete" 
     ToolRequest::ForkWave(args),
     runner~,
     agy_migration_incomplete=true,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match got {
     @types.Response::Err(msg) =>
@@ -1550,6 +1560,11 @@ async test "dispatch spawn_remote rejects live canonical agent id collision befo
     runner~,
     capture=mock_capture_empty,
     registry=Some(reg),
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match got {
     @types.Response::Err(msg) => {
@@ -1678,6 +1693,11 @@ async test "dispatch spawn_gemini rejects live canonical agent id collision befo
     runner~,
     capture~,
     registry=Some(reg),
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match got {
     @types.Response::Err(msg) => {

@@ -108,6 +108,12 @@ async test "dispatch resolve_my_review_threads skips pulse when final fetch fail
         pulses.push(n)
       }
     },
+    runner=unreached_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match got {
     @types.Response::Ok(fields) => {
@@ -4354,6 +4360,11 @@ async test "dispatch merge_pr routes injected append_file and path_exists" {
       path == leaf
     },
     task_contract_reader=merge_pr_test_empty_contract_reader,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match resp {
     @types.Response::Ok(_) => ()
@@ -4951,6 +4962,12 @@ async test "dispatch resolve_review_thread triggers pulse for unresolved count d
         seen.push(n)
       }
     },
+    runner=unreached_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match got {
     @types.Response::Ok(_) => ()
@@ -5087,6 +5104,12 @@ async test "dispatch resolve_review_thread triggers pulse for unresolved drop 5-
         seen.push(n)
       }
     },
+    runner=unreached_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match got {
     @types.Response::Ok(_) => ()
@@ -5175,6 +5198,12 @@ async test "dispatch resolve_review_thread skips pulse when after-count fetch fa
         seen.push(n)
       }
     },
+    runner=unreached_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match got {
     @types.Response::Ok(_) => ()
@@ -5294,6 +5323,12 @@ async test "dispatch resolve_my_review_threads resolves every fetched caller thr
         pulses.push(n)
       }
     },
+    runner=unreached_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match got {
     @types.Response::Ok(fields) => {
@@ -5389,6 +5424,12 @@ async test "dispatch resolve_my_review_threads lets TL target leaf PR by pr_numb
         pulses.push(n)
       }
     },
+    runner=unreached_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match got {
     @types.Response::Ok(fields) => {
@@ -5481,6 +5522,12 @@ async test "dispatch resolve_my_review_threads refuses owning leaf without post-
     poller_state=Some(ps),
     caller_role=@types.Role::Dev,
     capture~,
+    runner=unreached_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match got {
     @types.Response::Err(msg) => {
@@ -5572,6 +5619,12 @@ async test "dispatch resolve_my_review_threads refuses same-second mixed timesta
     poller_state=Some(ps),
     caller_role=@types.Role::Dev,
     capture~,
+    runner=unreached_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match got {
     @types.Response::Err(msg) => {
@@ -5669,6 +5722,12 @@ async test "dispatch resolve_my_review_threads allows owning leaf after post-rev
     poller_state=Some(ps),
     caller_role=@types.Role::Dev,
     capture~,
+    runner=unreached_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match got {
     @types.Response::Ok(fields) => {
@@ -5761,6 +5820,12 @@ async test "dispatch resolve_my_review_threads allows non owning caller without 
     poller_state=Some(ps),
     caller_role=@types.Role::TL,
     capture~,
+    runner=unreached_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match got {
     @types.Response::Ok(fields) => {

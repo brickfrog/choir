@@ -1207,7 +1207,7 @@ pub async fn interpret_fork_wave_post_spawn(
   project_dir : String,
   session : String,
   registry : @registry.AgentRegistry?,
-  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+  capture~ : async (@workspace.Command) -> (Int, String),
   record_task_contract? : (String, @types.TaskContract?) -> Unit = fn(
     _agent_id,
     _contract,

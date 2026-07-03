@@ -9,7 +9,9 @@ pub async fn interpret_suspend(
   args : SuspendArgs,
   registry : @registry.AgentRegistry?,
   project_dir : String,
-  hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
+  hook_capture~ : async (String, String, String?) -> (Int, String),
+  hook_xdg_config_home? : String? = None,
+  hook_home? : String = "",
 ) -> @types.Response {
   match registry {
     None => @types.Response::Err("no agent registry available")
@@ -41,6 +43,8 @@ pub async fn interpret_suspend(
         },
         project_dir,
         hook_capture~,
+        xdg_config_home=hook_xdg_config_home,
+        home=hook_home,
       )
       @types.Response::ok_values({
         "status": "suspended".to_json(),
@@ -58,7 +62,9 @@ pub async fn interpret_resume(
   args : ResumeArgs,
   registry : @registry.AgentRegistry?,
   project_dir : String,
-  hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
+  hook_capture~ : async (String, String, String?) -> (Int, String),
+  hook_xdg_config_home? : String? = None,
+  hook_home? : String = "",
 ) -> @types.Response {
   match registry {
     None => @types.Response::Err("no agent registry available")
@@ -89,6 +95,8 @@ pub async fn interpret_resume(
         },
         project_dir,
         hook_capture~,
+        xdg_config_home=hook_xdg_config_home,
+        home=hook_home,
       )
       @types.Response::ok_values({
         "status": "resumed".to_json(),

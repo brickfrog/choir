@@ -3668,7 +3668,21 @@ async test "heartbeat tick loop triggers automerge sweep path via process_poller
         "",
         runner~,
         capture~,
+        git_capture=async fn(_program, _args) {
+          @async.sleep(0)
+          ""
+        },
+        bd_capture=capture,
+        git_pull_capture=capture,
         automerge_capture=capture,
+        hook_capture=async fn(_p, _i, _c) {
+          @async.sleep(0)
+          (0, "")
+        },
+        path_exists=@exec.path_entry_exists,
+        hook_path_exists=@exec.path_entry_exists,
+        audit_receipt_exists=@exec.path_entry_exists,
+        audit_receipt_read=@exec.read_file,
         sleep_fn=no_sleep,
       )
     },
@@ -3830,12 +3844,21 @@ fn serve_run() -> Unit {
               now,
               timeout_sec,
               runner=@exec.run_sequence,
+              capture=@exec.capture_command_stdout,
+              automerge_capture=@exec.capture_command_merged,
+              audit_receipt_exists=@exec.path_entry_exists,
+              audit_receipt_read=@exec.read_file,
             )
             if !state.process_requested_goal_judge_tick(
                 now,
                 runner=@exec.run_sequence,
+                bd_capture=@exec.capture_command_merged,
               ) {
-              state.process_goal_judge_tick(now, runner=@exec.run_sequence)
+              state.process_goal_judge_tick(
+                now,
+                runner=@exec.run_sequence,
+                bd_capture=@exec.capture_command_merged,
+              )
             }
             state.check_idle_agents(
               now,
@@ -3857,7 +3880,15 @@ fn serve_run() -> Unit {
           now : Int64,
           timeout_sec : Int64,
         ) {
-          state.process_poller_tick(now, timeout_sec, runner=@exec.run_sequence) catch {
+          state.process_poller_tick(
+            now,
+            timeout_sec,
+            runner=@exec.run_sequence,
+            capture=@exec.capture_command_stdout,
+            automerge_capture=@exec.capture_command_merged,
+            audit_receipt_exists=@exec.path_entry_exists,
+            audit_receipt_read=@exec.read_file,
+          ) catch {
             e =>
               @moontrace.error("poller heartbeat tick error", fields=[
                 @moontrace.field("error", e.to_string()),
@@ -3873,6 +3904,7 @@ fn serve_run() -> Unit {
             state.process_requested_goal_judge_tick(
               now,
               runner=@exec.run_sequence,
+              bd_capture=@exec.capture_command_merged,
             ),
           ) catch {
             e =>

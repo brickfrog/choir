@@ -570,7 +570,7 @@ test "visits optional parameter defaults for test rules" {
 }
 
 ///|
-test "flags unstaged optional exec defaults in a file with staged defaults" {
+test "flags optional exec defaults in tools helpers" {
   let source =
     #|async fn new_dispatch_helper(
     #|  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
@@ -580,25 +580,6 @@ test "flags unstaged optional exec defaults in a file with staged defaults" {
   assert_single_rule_for_file(
     source, "src/tools/dispatch_helpers.mbt", "exec-default-parameter",
   )
-}
-
-///|
-test "allows staged exec defaults by function and parameter key" {
-  let source =
-    #|pub async fn resolve_zellij_tab_terminal_target(
-    #|  session : String,
-    #|  tab_name : String,
-    #|  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
-    #|) -> String? {
-    #|  ignore(session)
-    #|  ignore(tab_name)
-    #|  ignore(capture)
-    #|  None
-    #|}
-  match lint_source("src/tools/dispatch_helpers.mbt", source) {
-    Ok(findings) => assert_eq(findings.length(), 0)
-    Err(e) => fail(e.message())
-  }
 }
 
 ///|

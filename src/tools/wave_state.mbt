@@ -1051,7 +1051,7 @@ pub async fn interpret_wave_state(
   project_dir : String,
   registry : @registry.AgentRegistry?,
   poller_state : @poller.PollerState?,
-  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+  capture~ : async (@workspace.Command) -> (Int, String),
   heartbeat_reader? : (String) -> Int64? = wave_state_default_heartbeat,
   tdd_phase_reader? : (String) -> @types.LeafTddPhase? = wave_state_default_tdd_phase,
   transcript_idle_reader? : (@types.Agent) -> Int64? = wave_state_default_transcript_idle,
