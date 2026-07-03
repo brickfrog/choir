@@ -127,6 +127,61 @@ fn zellij_target_tab_id(
 }
 
 ///|
+priv enum ZellijSendPlan {
+  SendToPane(String)
+  TargetUnavailable(String)
+}
+
+///|
+fn zellij_send_target_error(
+  target : @types.LocalTarget,
+  panes : Array[ZellijPaneRef],
+) -> String {
+  let tab_names = panes.map(fn(p) { p.tab_name })
+  "zellij target not found or exited: " +
+  target.to_string() +
+  " (session=" +
+  target.session +
+  " panes_found=" +
+  panes.length().to_string() +
+  " tabs=" +
+  @debug.to_string(tab_names) +
+  ")"
+}
+
+///|
+fn zellij_send_pane_id(
+  target : @types.LocalTarget,
+  panes : Array[ZellijPaneRef],
+) -> String? {
+  if target.kind == @types.TargetKind::ZellijPane &&
+    target.name.has_prefix("terminal_") {
+    for pane in panes {
+      if pane.is_plugin || pane.exited {
+        continue
+      }
+      if pane.id == target.name {
+        return Some(pane.id)
+      }
+    }
+    return None
+  }
+  zellij_target_pane_id(target, panes)
+}
+
+///|
+fn zellij_send_plan(
+  target : @types.LocalTarget,
+  panes : Array[ZellijPaneRef],
+) -> ZellijSendPlan {
+  match zellij_send_pane_id(target, panes) {
+    Some(pane_id) => ZellijSendPlan::SendToPane(pane_id)
+    None =>
+      ZellijSendPlan::TargetUnavailable(zellij_send_target_error(target, panes))
+  }
+}
+
+///|
 fn zellij_action_usage() -> String {
   "usage: choir zellij-action <send|close> <target> [text]"
 }
@@ -159,9 +214,11 @@ fn zellij_action_run() -> Unit {
       } else {
         None
       }
-      let panes = match direct_pane_id {
-        Some(_) => [] // skip list-panes when we have a direct ID
-        None => zellij_list_panes(target.session)
+      let skip_list_panes = action == "close" && direct_pane_id is Some(_)
+      let panes = if skip_list_panes {
+        [] // close remains idempotent for direct pane ids.
+      } else {
+        zellij_list_panes(target.session)
       }
       match action {
         "send" => {
@@ -171,28 +228,13 @@ fn zellij_action_run() -> Unit {
             return
           }
           let text = args[4]
-          let pane_id = match direct_pane_id {
-            Some(id) => id
-            None =>
-              match zellij_target_pane_id(target, panes) {
-                Some(id) => id
-                None => {
-                  let tab_names = panes.map(fn(p) { p.tab_name })
-                  @sys.write_stdout(
-                    "error: zellij target not found: " +
-                    target_text +
-                    " (session=" +
-                    target.session +
-                    " panes_found=" +
-                    panes.length().to_string() +
-                    " tabs=" +
-                    @debug.to_string(tab_names) +
-                    ")\n",
-                  )
-                  @sys.exit(1)
-                  return
-                }
-              }
+          let pane_id = match zellij_send_plan(target, panes) {
+            ZellijSendPlan::SendToPane(id) => id
+            ZellijSendPlan::TargetUnavailable(message) => {
+              @sys.write_stdout("error: " + message + "\n")
+              @sys.exit(1)
+              return
+            }
           }
           // Wrap in bracketed paste (ESC[200~ ... ESC[201~) so agents
           // like Moon Pilot treat multi-line text as a single paste event
@@ -356,5 +398,93 @@ test "zellij_close_plan_resolves_pane_and_tab" {
   match zellij_close_plan(tab_target, panes, None) {
     ZellijClosePlan::CloseTab(id) => assert_eq(id, "t1")
     _ => fail("expected CloseTab")
+  }
+}
+
+///|
+test "zellij_send_plan_rejects_absent_direct_pane" {
+  let target : @types.LocalTarget = {
+    kind: @types.TargetKind::ZellijPane,
+    session: "sess",
+    name: "terminal_42",
+  }
+  match zellij_send_plan(target, []) {
+    ZellijSendPlan::TargetUnavailable(message) => {
+      assert_true(message.contains("zellij target not found or exited"))
+      assert_true(message.contains("terminal_42"))
+    }
+    _ => fail("expected unavailable send target")
+  }
+}
+
+///|
+test "zellij_send_plan_rejects_exited_tab_pane" {
+  let panes = [
+    {
+      id: "terminal_42",
+      tab_id: "t1",
+      title: "leaf-pane",
+      tab_name: "leaf-tab",
+      is_plugin: false,
+      exited: true,
+    },
+  ]
+  let target : @types.LocalTarget = {
+    kind: @types.TargetKind::ZellijTab,
+    session: "sess",
+    name: "leaf-tab",
+  }
+  match zellij_send_plan(target, panes) {
+    ZellijSendPlan::TargetUnavailable(message) => {
+      assert_true(message.contains("zellij target not found or exited"))
+      assert_true(message.contains("leaf-tab"))
+    }
+    _ => fail("expected unavailable send target")
+  }
+}
+
+///|
+test "zellij_send_plan_accepts_live_direct_pane" {
+  let panes = [
+    {
+      id: "terminal_42",
+      tab_id: "t1",
+      title: "leaf-pane",
+      tab_name: "leaf-tab",
+      is_plugin: false,
+      exited: false,
+    },
+  ]
+  let target : @types.LocalTarget = {
+    kind: @types.TargetKind::ZellijPane,
+    session: "sess",
+    name: "terminal_42",
+  }
+  match zellij_send_plan(target, panes) {
+    ZellijSendPlan::SendToPane(id) => assert_eq(id, "terminal_42")
+    _ => fail("expected live direct pane send")
+  }
+}
+
+///|
+test "zellij_send_plan_accepts_live_tab_target" {
+  let panes = [
+    {
+      id: "terminal_42",
+      tab_id: "t1",
+      title: "leaf-pane",
+      tab_name: "leaf-tab",
+      is_plugin: false,
+      exited: false,
+    },
+  ]
+  let target : @types.LocalTarget = {
+    kind: @types.TargetKind::ZellijTab,
+    session: "sess",
+    name: "leaf-tab",
+  }
+  match zellij_send_plan(target, panes) {
+    ZellijSendPlan::SendToPane(id) => assert_eq(id, "terminal_42")
+    _ => fail("expected live tab send")
   }
 }
