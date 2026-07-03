@@ -2275,8 +2275,82 @@ fn parse_send_message_args(
 }
 
 ///|
+fn parse_shutdown_identity_source(raw : String?) -> ShutdownIdentitySource? {
+  match raw {
+    Some(value) => {
+      let trimmed = value.trim().to_owned()
+      if trimmed == "" {
+        None
+      } else {
+        match ShutdownIdentitySource::try_parse_wire(trimmed) {
+          Ok(source) =>
+            match source {
+              Unknown => None
+              _ => Some(source)
+            }
+          Err(_) => None
+        }
+      }
+    }
+    None => None
+  }
+}
+
+///|
 fn parse_shutdown_args(args : ToolArgs) -> ShutdownArgs {
   { caller_id: tool_args_get(args, "caller_id") }
+}
+
+///|
+fn parse_shutdown_origin_metadata(args : ToolArgs) -> ShutdownOriginMetadata {
+  {
+    origin_ppid: tool_args_get(args, "origin_ppid"),
+    origin_comm: tool_args_get(args, "origin_comm"),
+    origin_identity_source: parse_shutdown_identity_source(
+      tool_args_get(args, "origin_identity_source"),
+    ),
+  }
+}
+
+///|
+pub fn parse_shutdown_origin_metadata_from_request_args(
+  args : @types.RequestArgs,
+) -> ShutdownOriginMetadata {
+  let values : Map[String, String] = {}
+  for key in ["origin_ppid", "origin_comm", "origin_identity_source"] {
+    match args.get(key) {
+      Some(value) => values.set(key, value)
+      None => ()
+    }
+  }
+  parse_shutdown_origin_metadata(tool_args_from_map(values))
+}
+
+///|
+test "parse_shutdown origin metadata leaves missing fields absent" {
+  let shutdown = parse_shutdown_args(
+    tool_args_from_map({ "caller_id": "main.leaf" }),
+  )
+  @debug.assert_eq(shutdown.caller_id, Some("main.leaf"))
+  let origin = parse_shutdown_origin_metadata(tool_args_from_map({}))
+  @debug.assert_eq(origin.origin_ppid, None)
+  @debug.assert_eq(origin.origin_comm, None)
+  @debug.assert_eq(origin.origin_identity_source, None)
+}
+
+///|
+test "parse_shutdown_origin_metadata carries optional origin fields" {
+  let origin = parse_shutdown_origin_metadata(
+    tool_args_from_map({
+      "caller_id": "main.worker",
+      "origin_ppid": "12345",
+      "origin_comm": "codex",
+      "origin_identity_source": "env",
+    }),
+  )
+  @debug.assert_eq(origin.origin_ppid, Some("12345"))
+  @debug.assert_eq(origin.origin_comm, Some("codex"))
+  @debug.assert_eq(origin.origin_identity_source, Some(Env))
 }
 
 ///|

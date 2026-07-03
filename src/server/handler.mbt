@@ -46,6 +46,55 @@ fn emit_request_log(
 }
 
 ///|
+fn append_shutdown_origin_span_fields(
+  req : @types.Request,
+  fields : Array[@moontrace.Field],
+) -> Unit {
+  if req.req_method != "tools/call" || req.name != "shutdown" {
+    return
+  }
+  let origin = @tools.parse_shutdown_origin_metadata_from_request_args(req.args)
+  append_shutdown_origin_string_field(fields, "origin_ppid", origin.origin_ppid)
+  append_shutdown_origin_string_field(fields, "origin_comm", origin.origin_comm)
+  match origin.origin_identity_source {
+    Some(source) =>
+      append_shutdown_origin_string_field(
+        fields,
+        "origin_identity_source",
+        Some(source.to_wire_string()),
+      )
+    None => ()
+  }
+}
+
+///|
+fn shutdown_origin_span_value(value : String) -> String {
+  let trimmed = value.trim().to_owned()
+  if trimmed.length() > 128 {
+    trimmed[0:128].to_owned()
+  } else {
+    trimmed
+  }
+}
+
+///|
+fn append_shutdown_origin_string_field(
+  fields : Array[@moontrace.Field],
+  key : String,
+  value : String?,
+) -> Unit {
+  match value {
+    Some(raw) => {
+      let capped = shutdown_origin_span_value(raw)
+      if capped != "" {
+        fields.push(@moontrace.field(key, capped))
+      }
+    }
+    None => ()
+  }
+}
+
+///|
 fn request_repairs_task_contract(req : @types.Request) -> Bool {
   if req.req_method != "tools/call" {
     return false
@@ -76,6 +125,7 @@ fn emit_span(
     @moontrace.field("status", status),
     @moontrace.field("duration_ms", duration_ms),
   ]
+  append_shutdown_origin_span_fields(req, fields)
   match resp.error_message() {
     Some(msg) => fields.push(@moontrace.field("error", msg))
     None => ()
@@ -180,6 +230,105 @@ test "emit_span enqueues OTLP span without flushing request hot path" {
     None => fail("expected OTLP exporter")
   }
   ignore(@sys.rm_rf(state.config.project_dir))
+}
+
+///|
+test "emit_span adds shutdown origin fields to request spans" {
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir: "/tmp/choir-emit-span-shutdown-origin-" +
+      @env.now().reinterpret_as_int64().to_string(),
+      otlp_endpoint: Some("http://collector:4318"),
+    },
+    make_hermetic_recovery_provider(),
+    otlp_exporter_factory=fn(_) {
+      make_otlp_span_exporter_with_batch(async fn(_, _, _) {
+        @async.sleep(0)
+        Ok({
+          success: true,
+          attempts: 1,
+          status_code: Some(200),
+          error: None,
+          retry_class: @transport.Success,
+        })
+      })
+    },
+  )
+  let req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::Worker,
+    name: "shutdown",
+    args: @types.RequestArgs::from_values({
+      "caller_id": "main.worker".to_json(),
+      "origin_ppid": "12345".to_json(),
+      "origin_comm": "codex".to_json(),
+      "origin_identity_source": "env".to_json(),
+    }),
+  }
+  emit_span(
+    state,
+    req,
+    (1000 : UInt64),
+    (1001 : UInt64),
+    @types.Response::Ok(@types.FieldMap::from_values({})),
+  )
+  match state.otlp_exporter {
+    Some(exporter) => {
+      let attrs = exporter.spans[0].attributes
+      let values : Map[String, String] = {}
+      for attr in attrs {
+        match attr.value {
+          @otlp.StringVal(s) => values.set(attr.key, s)
+          _ => ()
+        }
+      }
+      @debug.assert_eq(values.get("origin_ppid"), Some("12345"))
+      @debug.assert_eq(values.get("origin_comm"), Some("codex"))
+      @debug.assert_eq(values.get("origin_identity_source"), Some("env"))
+    }
+    None => fail("expected OTLP exporter")
+  }
+  ignore(@sys.rm_rf(state.config.project_dir))
+}
+
+///|
+test "append_shutdown_origin_span_fields omits empty origin fields" {
+  let fields : Array[@moontrace.Field] = []
+  let req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::Worker,
+    name: "shutdown",
+    args: @types.RequestArgs::from_values({
+      "origin_ppid": "".to_json(),
+      "origin_comm": "   ".to_json(),
+      "origin_identity_source": "unknown".to_json(),
+    }),
+  }
+  append_shutdown_origin_span_fields(req, fields)
+  assert_eq(fields.length(), 0)
+}
+
+///|
+test "append_shutdown_origin_span_fields caps long origin values" {
+  let long = StringBuilder::new()
+  for i = 0; i < 140; i = i + 1 {
+    long.write_char('x')
+  }
+  let fields : Array[@moontrace.Field] = []
+  let req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::Worker,
+    name: "shutdown",
+    args: @types.RequestArgs::from_values({
+      "origin_comm": long.to_string().to_json(),
+    }),
+  }
+  append_shutdown_origin_span_fields(req, fields)
+  match poll_delivery_moontrace_string_field(fields, "origin_comm") {
+    Some(value) => assert_eq(value.length(), 128)
+    None => fail("expected capped origin_comm field")
+  }
 }
 
 ///|
