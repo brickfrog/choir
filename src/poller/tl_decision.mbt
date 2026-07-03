@@ -1367,7 +1367,18 @@ pub fn plan_tl_poll_event_parent(
       tl_snapshot_workflow_category(
         tracked, unresolved_threads, merge_ready, review_mode, review_required, audit_receipt_state,
       )
-    ReviewThreadsResolved(_) => ReadyForTLRecheck
+    ReviewThreadsResolved(_) =>
+      if merge_ready {
+        MergeGateOpenPendingPolicyConfirmation
+      } else {
+        match
+          audit_receipt_workflow_category_if_blocking(
+            tracked, unresolved_threads, review_mode, review_required, audit_receipt_state,
+          ) {
+          Some(cat) => cat
+          None => ReadyForTLRecheck
+        }
+      }
   }
 }
 
