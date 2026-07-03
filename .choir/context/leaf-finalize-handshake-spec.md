@@ -18,22 +18,21 @@ theme of cleaning up a leaf cleanly:
   manually invoked `merge_pr`.
 
 - **`choir-0a7` (P2)**: the `shutdown` tool's adapter host-steps ordering
-  (`src/tools/shutdown.mbt::shutdown_adapter_host_steps`) includes
+  (`src/tools/shutdown.mbt::shutdown_adapter_host_steps`) is
   `PollerCriticalPhaseRead`, `RegistryRoleLookup`, `LifecycleRead`,
-  `DevExitEventApply`, `WorktreeCleanupAttempt`, `BeadsLifecycleMirror` —
-  but NOT `PaneClose`. `kill_agent`'s adapter has `PaneClose` as step 1;
-  `shutdown` doesn't. So when a leaf cleanly calls `notify_parent` then
-  `shutdown`, the server records Done + removes the worktree + mirrors to
-  beads, but the zellij pane and the `choir mcp-stdio` bridge process stay
-  alive. Observed on PR #348: leaf's shutdown logged ok at 10:59:24, but
-  pane stayed visibly open + bridge process alive until ~11:13 when the
-  TL's manual `merge_pr` fired `plan_finalize → CloseTerminal`.
+  `PaneClose`, `DevExitEventApply`, `WorktreeCleanupAttempt`,
+  `BeadsLifecycleMirror`. `PaneClose` is deliberately after the lifecycle
+  read: the interpreter computes `shutdown_exit_plan` first, then closes
+  the pane only when `attempt_worktree_cleanup` is true. Deferred
+  PR-owning shutdowns leave the agent process running so it can keep
+  processing messages.
 
 Observable target: a `fork_wave(automerge, iterative)` leaf clears its gate
 (TL resolves last thread, leaf notifies + shuts down). Within ~60 seconds
-the automerge sweep fires and merges the PR — without TL intervention. The
-leaf's `shutdown` call closes its pane and exits its bridge process; no
-manual `pkill` or `merge_pr` from the TL.
+the automerge sweep fires and merges the PR — without TL intervention. When
+the shutdown exit plan grants or releases exit, the leaf's `shutdown` call
+closes its pane and exits its bridge process; when the plan defers exit, the
+pane remains open and the leaf must keep processing messages.
 
 ## Clarifications
 > Q&A from the crystallize step. Durable; leaves read this.
@@ -55,13 +54,12 @@ heartbeat cadence; worst-case automerge latency after gate-clear is ~60s
 (or near-instant via the on-thread-resolve trigger).
 
 **Q: Shutdown tool's pane-close behavior?**
-A: Add `PaneClose` to `shutdown_adapter_host_steps`. Match
-`kill_agent_adapter_host_steps`. The leaf called `shutdown` — honor that;
-close the pane. Gated to `Role::Dev`/`Role::Worker` only (same
-`is_supervisor_role` guard `kill_agent` uses; never closes Root/TL panes).
-Pane scrollback / final output already covered by `.choir/serve.log` +
-`notify_parent` message; the post-mortem-pane use case isn't worth the
-"why is the pane still open?" friction we hit today.
+A: `PaneClose` belongs in `shutdown_adapter_host_steps` after
+`LifecycleRead`, not before the plan is known. The interpreter computes
+`shutdown_exit_plan` first, then closes the pane only when
+`attempt_worktree_cleanup` is true and the caller is not a supervisor. A
+deferred shutdown leaves the pane and process alive so the leaf can keep
+processing parent messages.
 
 ## Goals
 
@@ -90,42 +88,44 @@ Pane scrollback / final output already covered by `.choir/serve.log` +
   fires, the leaf transitions to Done(Merged) — no TL `merge_pr` call
   required.
 
-### choir-0a7 — `shutdown` closes the pane
+### choir-0a7 — `shutdown` closes the pane only when exit is granted
 
-- **Add `PaneClose` to `shutdown_adapter_host_steps`**: extend
-  `src/tools/shutdown.mbt::shutdown_adapter_host_steps` with `PaneClose`
-  as the new first step (matching `kill_agent_adapter_host_steps`'s
-  ordering). The `interpret_shutdown` host-side interpreter dispatches the
-  new step: when the agent has a `terminal_target` AND `Role::Dev` or
-  `Role::Worker`, invoke the same `kill_agent_pane_close_command` builder
-  + runner sequence `kill_agent` uses today.
+- **Gate `PaneClose` in `shutdown_adapter_host_steps`**: keep
+  `src/tools/shutdown.mbt::shutdown_adapter_host_steps` in this order:
+  `PollerCriticalPhaseRead`, `RegistryRoleLookup`, `LifecycleRead`,
+  `PaneClose`, `DevExitEventApply`, `WorktreeCleanupAttempt`,
+  `BeadsLifecycleMirror`. The `interpret_shutdown` host-side interpreter
+  computes `shutdown_exit_plan` after `LifecycleRead`; only when
+  `plan.attempt_worktree_cleanup` is true does it invoke the
+  `kill_agent_pane_close_command` builder + runner sequence.
 - **Role guard**: `Role::Root` and `Role::TL` are never pane-closed via
   `shutdown` (same `is_supervisor_role` invariant `kill_agent` enforces).
   This preserves the choir-eek protection (don't kill the TL).
 - **Failure mode**: if the pane-close runner returns non-zero, log a
   TRACE, continue with the rest of the shutdown host steps — pane-close
   failure doesn't block the rest of cleanup.
-- **End-to-end**: a leaf calls `notify_parent` then `shutdown`. The pane
-  closes within seconds, the bridge process exits cleanly. No `pkill`, no
-  manual `zellij action close-pane`.
+- **End-to-end**: a leaf calls `notify_parent` then `shutdown`. If the exit
+  plan grants or releases exit, the pane closes within seconds and the
+  bridge process exits cleanly. If the exit plan defers exit, the pane is
+  untouched and the leaf continues processing messages.
 
 ### Cross-cutting
 
 - Both fixes are server-side. No leaf prompt changes. No MCP tool surface
   changes. No new poller event types.
 - Tests cover the truth table for each fix: periodic-tick-fires-sweep,
-  on-thread-resolve-fires-tick, shutdown-closes-pane-for-Dev,
-  shutdown-doesn't-close-pane-for-Root/TL.
+  on-thread-resolve-fires-tick, shutdown-closes-pane-for-granted-exits,
+  shutdown-leaves-deferred-pane-alive, and shutdown-doesn't-close-pane-for
+  Root/TL.
 
 ## Non-Goals
 
 - Reactive-only fallback for environments where 60s ambient ticks are too
   costly. The `poller_heartbeat_tick_sec=0` knob handles disable. Tuning
   the default isn't in scope.
-- Conditional / delayed PaneClose for `shutdown` (`rename instead of
-  close`, `delayed 30s grace`). The straightforward "close like
-  kill_agent" is the spec; deferred tuning to a follow-up if observed
-  needing it.
+- Unconditional PaneClose for `shutdown`. The lifecycle exit plan is the
+  authority: deferred PR-owning shutdowns stay alive; granted and releasable
+  exits close the pane. Rename/delayed-close behavior is out of scope.
 - Touching the existing kill_agent path or the kill-watchdog timeout.
 - Changing the sweep logic itself (`pr_needs_automerge_sweep_attempt`,
   `last_automerge_attempt_sha`); the sweep is already correct, we just
@@ -197,21 +197,22 @@ tick now?" decision as a pure function for testing.
 ```moonbit
 pub fn shutdown_adapter_host_steps() -> Array[ShutdownAdapterHostStep] {
   [
-    PaneClose,                  // NEW — first step, matches kill_agent ordering
     PollerCriticalPhaseRead,
     RegistryRoleLookup,
     LifecycleRead,
+    PaneClose,                  // gated by shutdown_exit_plan
     DevExitEventApply,
     WorktreeCleanupAttempt,
     BeadsLifecycleMirror,
   ]
 }
 ```
-Add `PaneClose` to the `ShutdownAdapterHostStep` enum if it isn't already
-there.
+Keep `PaneClose` after `LifecycleRead` so the interpreter can compute the
+exit plan before side effects that may destroy the pane.
 
 **`interpret_shutdown`** (the host-side step interpreter): when handling
-`PaneClose`, look up the agent in the registry, check
+`PaneClose`, first require `shutdown_exit_plan(...).attempt_worktree_cleanup`.
+Then look up the agent in the registry and check
 `is_supervisor_role(agent.role)`:
 - If supervisor: SKIP — `Role::Root`/`Role::TL` panes are never closed
   via shutdown (choir-eek invariant).
@@ -220,11 +221,11 @@ there.
   failure with TRACE.
 
 **Tests**:
-- Truth table: Dev leaf with terminal_target ⇒ PaneClose command runner
-  is invoked; Worker with terminal_target ⇒ runner invoked; Dev without
-  terminal_target ⇒ no-op; Root/TL with terminal_target ⇒ no-op (skipped
-  by is_supervisor_role guard); Pane-close runner failure ⇒ logged but
-  shutdown continues to subsequent steps.
+- Truth table: Dev or Worker granted exit with terminal_target ⇒ PaneClose
+  command runner is invoked; deferred Dev exit ⇒ pane close is not invoked;
+  Dev without terminal_target ⇒ no-op; Root/TL with terminal_target ⇒ no-op
+  (skipped by is_supervisor_role guard); Pane-close runner failure ⇒ logged
+  but shutdown continues to subsequent steps.
 - Negative: kill_agent's PaneClose behavior unchanged (regression
   protection — choir-eek's Root/TL guard still refuses kill_agent on
   supervisors).
@@ -240,9 +241,13 @@ there.
     within ~60s (periodic tick) or seconds (on-thread-resolve trigger).
     Check via `choir logs --grep "automerge"` and the `[PR MERGED]` event
     timing.
-  - When the leaf calls `shutdown`, its pane disappears within seconds.
-    `ps -ef | grep "choir mcp-stdio.*<leaf-id>"` returns nothing within
-    seconds of the shutdown call.
+  - When the exit plan grants exit (Allowed or releasable deferred), the
+    leaf's pane disappears within seconds. `ps -ef | grep
+    "choir mcp-stdio.*<leaf-id>"` returns nothing within seconds of the
+    shutdown call.
+  - When shutdown is deferred because the leaf still owns an open PR, the
+    pane and `choir mcp-stdio` process MUST remain alive, and the leaf must
+    continue processing TL messages.
 - `grep -c "poller_heartbeat_tick_sec" src/types/config.mbt` ⇒ ≥1.
 - `grep -c "PaneClose" src/tools/shutdown.mbt` ⇒ ≥2 (definition +
   adapter step list).
@@ -254,9 +259,11 @@ there.
 - The on-thread-resolve trigger fires ONLY when the resolve actually
   decreased the unresolved count (or took it to 0). Don't fire on no-op
   resolves of already-resolved threads.
-- `PaneClose` for shutdown fires ONLY for `Role::Dev` and `Role::Worker`
-  agents. NEVER for `Role::Root` or `Role::TL` — the
-  `is_supervisor_role` guard is mandatory (choir-eek invariant).
+- `PaneClose` for shutdown fires ONLY when `shutdown_exit_plan` grants or
+  releases exit (`attempt_worktree_cleanup=true`) for non-supervisor agents.
+  It NEVER fires for deferred PR-owning shutdowns, `Role::Root`, or
+  `Role::TL` — the `is_supervisor_role` guard is mandatory (choir-eek
+  invariant).
 - PaneClose failure (runner exit ≠ 0) MUST NOT block the rest of
   shutdown's host steps. Log TRACE, continue with worktree cleanup +
   lifecycle event + beads mirror.
@@ -279,6 +286,6 @@ there.
   but doesn't replace user-facing notification.
 - `choir-3bj` (delta-audit on retry) — composes with this fix (faster
   audits + cleaner finalize handshake).
-- Conditional / delayed PaneClose variants for `shutdown` if the
-  always-close behavior turns out to remove value (post-mortem
-  visibility) in practice. File separately.
+- Rename/delayed PaneClose variants for `shutdown` if the granted-exit close
+  behavior turns out to remove value (post-mortem visibility) in practice.
+  File separately.

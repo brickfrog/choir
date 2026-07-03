@@ -801,20 +801,20 @@ test "shutdown_exit_plan allowed tl skips dev exit but may cleanup worktree" {
 }
 
 ///|
-test "shutdown_adapter_host_steps lists poller through cleanup" {
+test "shutdown_adapter_host_steps lists poller through gated pane close and cleanup" {
   let steps = shutdown_adapter_host_steps()
   assert_eq(steps.length(), 7)
-  assert_eq(steps[0], ShutdownAdapterHostStep::PaneClose)
-  assert_eq(steps[1], ShutdownAdapterHostStep::PollerCriticalPhaseRead)
-  assert_eq(steps[2], ShutdownAdapterHostStep::RegistryRoleLookup)
-  assert_eq(steps[3], ShutdownAdapterHostStep::LifecycleRead)
+  assert_eq(steps[0], ShutdownAdapterHostStep::PollerCriticalPhaseRead)
+  assert_eq(steps[1], ShutdownAdapterHostStep::RegistryRoleLookup)
+  assert_eq(steps[2], ShutdownAdapterHostStep::LifecycleRead)
+  assert_eq(steps[3], ShutdownAdapterHostStep::PaneClose)
   assert_eq(steps[4], ShutdownAdapterHostStep::DevExitEventApply)
   assert_eq(steps[5], ShutdownAdapterHostStep::WorktreeCleanupAttempt)
   assert_eq(steps[6], ShutdownAdapterHostStep::BeadsLifecycleMirror)
 }
 
 ///|
-async test "interpret_shutdown closes pane for dev and worker terminals" {
+async test "interpret_shutdown closes pane for granted dev and worker terminals" {
   let t = match @types.LocalTarget::parse("zellij-tab:choir:leaf") {
     Some(v) => v
     None => fail("expected parse")
@@ -839,12 +839,7 @@ async test "interpret_shutdown closes pane for dev and worker terminals" {
         role,
         process: @phase.ProcessState::Connected,
         workflow: if role == @types.Role::Dev {
-          @phase.WorkflowState::Dev(
-            @phase.DevLifecycle::ReviewOwned(
-              pr_number=88,
-              state=@phase.ReviewOwnership::OpenUnreviewed(url="https://ex/88"),
-            ),
-          )
+          @phase.WorkflowState::Dev(@phase.DevLifecycle::Exitable)
         } else {
           @phase.WorkflowState::Worker(@phase.WorkerLifecycle::Working)
         },
@@ -901,6 +896,137 @@ async test "interpret_shutdown closes pane for dev and worker terminals" {
       },
     )
   }
+}
+
+///|
+async test "interpret_shutdown leaves deferred dev pane untouched" {
+  let tmp = "/tmp/choir-shutdown-deferred-pane-" + @sys.get_pid().to_string()
+  let workspace = tmp + "/worker"
+  ignore(@sys.rm_rf(tmp))
+  assert_true(@sys.create_dir_all(tmp + "/.choir/state/kv"))
+  let reg = @registry.AgentRegistry::new()
+  let t = match @types.LocalTarget::parse("zellij-tab:choir:leaf") {
+    Some(v) => v
+    None => fail("expected parse")
+  }
+  let agent = kill_agent_test_agent(
+    Some(t),
+    workspace,
+    role=@types.Role::Dev,
+    agent_id="main.leaf",
+  )
+  ignore(reg.upsert(agent))
+  ignore(
+    @phase.write_lifecycle(tmp, {
+      agent_id: "main.leaf",
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::ReviewOwned(
+          pr_number=88,
+          state=@phase.ReviewOwnership::OpenUnreviewed(url="https://ex/88"),
+        ),
+      ),
+      last_updated_unix_sec: 0L,
+    }),
+  )
+  let seen : Array[@workspace.Command] = []
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    for cmd in cmds {
+      seen.push(cmd)
+    }
+    [0]
+  }
+  let got = interpret_shutdown(
+    { caller_id: Some("main.leaf") },
+    tmp,
+    None,
+    Some(reg),
+    runner,
+    capture=unreached_capture,
+  )
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      @debug.assert_eq(map.get("status"), Some(String::to_json("deferred")))
+    }
+    _ => fail("expected deferred ok")
+  }
+  match kill_agent_pane_close_command(agent) {
+    Some(close_cmd) =>
+      assert_false(seen.iter().any(fn(cmd) { cmd == close_cmd }))
+    None => fail("expected close command")
+  }
+  @debug.assert_eq(seen, [])
+  ignore(@sys.rm_rf(tmp))
+}
+
+///|
+async test "interpret_shutdown closes releasable deferred dev pane" {
+  let tmp = "/tmp/choir-shutdown-releasable-deferred-pane-" +
+    @sys.get_pid().to_string()
+  let workspace = tmp + "/.choir/worktrees/leaf"
+  ignore(@sys.rm_rf(tmp))
+  assert_true(@sys.create_dir_all(tmp + "/.choir/state/kv"))
+  let reg = @registry.AgentRegistry::new()
+  let t = match @types.LocalTarget::parse("zellij-tab:choir:leaf") {
+    Some(v) => v
+    None => fail("expected parse")
+  }
+  let agent = kill_agent_test_agent(
+    Some(t),
+    workspace,
+    role=@types.Role::Dev,
+    agent_id="main.leaf",
+  )
+  ignore(reg.upsert(agent))
+  ignore(
+    @phase.write_lifecycle(tmp, {
+      agent_id: "main.leaf",
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::ExitRequestedDeferred(
+          pr_number=88,
+          state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
+        ),
+      ),
+      last_updated_unix_sec: 0L,
+    }),
+  )
+  let seen : Array[@workspace.Command] = []
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    for cmd in cmds {
+      seen.push(cmd)
+    }
+    [0]
+  }
+  let got = interpret_shutdown(
+    { caller_id: Some("main.leaf") },
+    tmp,
+    None,
+    Some(reg),
+    runner,
+    capture=async fn(_cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      (0, "")
+    },
+  )
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      @debug.assert_eq(map.get("status"), Some(String::to_json("shutdown")))
+    }
+    _ => fail("expected shutdown ok")
+  }
+  match kill_agent_pane_close_command(agent) {
+    Some(close_cmd) =>
+      assert_true(seen.iter().any(fn(cmd) { cmd == close_cmd }))
+    None => fail("expected close command")
+  }
+  ignore(@sys.rm_rf(tmp))
 }
 
 ///|
@@ -1239,7 +1365,7 @@ async test "interpret_shutdown blocks poller critical phase before plan" {
 }
 
 ///|
-async test "interpret_shutdown closes pane before poller critical phase block" {
+async test "interpret_shutdown does not close pane when poller critical phase blocks" {
   let ps = @poller.PollerState::new()
   ps.track_recovered(
     5,
@@ -1287,7 +1413,7 @@ async test "interpret_shutdown closes pane before poller critical phase block" {
   }
   match kill_agent_pane_close_command(agent) {
     Some(close_cmd) =>
-      assert_true(seen.iter().any(fn(cmd) { cmd == close_cmd }))
+      assert_false(seen.iter().any(fn(cmd) { cmd == close_cmd }))
     None => fail("expected close command")
   }
 }
