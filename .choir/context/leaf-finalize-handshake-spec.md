@@ -114,8 +114,9 @@ processing parent messages.
 - Both fixes are server-side. No leaf prompt changes. No MCP tool surface
   changes. No new poller event types.
 - Tests cover the truth table for each fix: periodic-tick-fires-sweep,
-  on-thread-resolve-fires-tick, shutdown-closes-pane-for-Dev,
-  shutdown-doesn't-close-pane-for-Root/TL.
+  on-thread-resolve-fires-tick, shutdown-closes-pane-for-granted-exits,
+  shutdown-leaves-deferred-pane-alive, and shutdown-doesn't-close-pane-for
+  Root/TL.
 
 ## Non-Goals
 
@@ -240,9 +241,13 @@ Then look up the agent in the registry and check
     within ~60s (periodic tick) or seconds (on-thread-resolve trigger).
     Check via `choir logs --grep "automerge"` and the `[PR MERGED]` event
     timing.
-  - When the leaf calls `shutdown`, its pane disappears within seconds.
-    `ps -ef | grep "choir mcp-stdio.*<leaf-id>"` returns nothing within
-    seconds of the shutdown call.
+  - When the exit plan grants exit (Allowed or releasable deferred), the
+    leaf's pane disappears within seconds. `ps -ef | grep
+    "choir mcp-stdio.*<leaf-id>"` returns nothing within seconds of the
+    shutdown call.
+  - When shutdown is deferred because the leaf still owns an open PR, the
+    pane and `choir mcp-stdio` process MUST remain alive, and the leaf must
+    continue processing TL messages.
 - `grep -c "poller_heartbeat_tick_sec" src/types/config.mbt` ⇒ ≥1.
 - `grep -c "PaneClose" src/tools/shutdown.mbt` ⇒ ≥2 (definition +
   adapter step list).
