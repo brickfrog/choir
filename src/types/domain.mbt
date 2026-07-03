@@ -1164,6 +1164,19 @@ pub(all) struct VerifyCheckResult {
 
 ///|
 /// Typed evidence items used by advisory evaluation.
+pub(all) enum AuditReceiptState {
+  NotRequired
+  Pending(head_sha~ : String)
+  FindingsRemain(head_sha~ : String, count~ : Int)
+  Valid
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub impl Show for AuditReceiptState with fn output(self, logger) -> Unit {
+  self.to_repr().output(logger)
+}
+
+///|
 pub(all) enum EvaluationSignal {
   Review(state~ : EvaluationReviewState, body~ : String)
   Ci(status~ : EvaluationCiRollup)
@@ -1172,6 +1185,7 @@ pub(all) enum EvaluationSignal {
   CopilotIssueCommentObserved
   CopilotIssueCommentUnobserved
   Verify(result~ : VerifyCheckResult)
+  AuditReceipt(state~ : AuditReceiptState)
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -1269,6 +1283,20 @@ pub fn evaluation_latest_threads(signals : Array[EvaluationSignal]) -> Int? {
     match signal {
       EvaluationSignal::ThreadsObserved(count~) => latest = Some(count)
       EvaluationSignal::ThreadsUnobserved => latest = None
+      _ => ()
+    }
+  }
+  latest
+}
+
+///|
+pub fn evaluation_latest_audit_receipt_state(
+  signals : Array[EvaluationSignal],
+) -> AuditReceiptState {
+  let mut latest = AuditReceiptState::NotRequired
+  for signal in signals {
+    match signal {
+      EvaluationSignal::AuditReceipt(state~) => latest = state
       _ => ()
     }
   }
@@ -1383,6 +1411,19 @@ pub fn evaluation_cascade(
   }
   if ci == EvaluationCiRollup::Failure {
     return CascadeVerdict::Blocked(reason="CI failing")
+  }
+  match evaluation_latest_audit_receipt_state(signals) {
+    NotRequired | Valid => ()
+    Pending(head_sha~) =>
+      return CascadeVerdict::Waiting(
+        reason="audit pending for HEAD " + head_sha,
+      )
+    FindingsRemain(head_sha=_, count~) =>
+      return CascadeVerdict::Waiting(
+        reason="audit found " +
+          count.to_string() +
+          " findings; fix round in progress",
+      )
   }
   // AUDIT: Blocked-vs-NeedsHuman asymmetry is intentional. `verify_required`
   // is server-authoritative (sourced from bundle.task_contract.verify at

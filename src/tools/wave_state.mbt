@@ -693,6 +693,7 @@ fn wave_state_pr_from_tracked(
   reviewer : @types.Reviewer,
   skip_copilot_on_feature_branch : Bool,
   default_branch : String,
+  audit_receipt_state : @types.AuditReceiptState,
 ) -> WaveStatePR {
   let merge_gate_ready = if missing_task_contract_blocks &&
     task_contract is None &&
@@ -709,6 +710,7 @@ fn wave_state_pr_from_tracked(
         reviewer~,
         skip_copilot_on_feature_branch~,
         default_branch~,
+        audit_receipt_state~,
       ) {
       @policy.MergeDecision::MergeNow(_) => true
       _ => false
@@ -927,6 +929,9 @@ pub fn plan_wave_state(
   reviewer? : @types.Reviewer = @types.Config::default().pr_policy.reviewer,
   skip_copilot_on_feature_branch? : Bool = false,
   default_branch? : String = "",
+  audit_receipt_lookup? : (Int) -> @types.AuditReceiptState = fn(_) {
+    @types.AuditReceiptState::NotRequired
+  },
 ) -> Result[WaveStateSnapshot, @types.ChoirError] {
   guard registry.get_opt(caller_id) is Some(agent) else {
     return Err(@types.ChoirError::agent_not_found(caller_id))
@@ -958,8 +963,16 @@ pub fn plan_wave_state(
               }
               Some(
                 wave_state_pr_from_tracked(
-                  tracked, threads, err, task_contract, verify_results, missing_task_contract_blocks,
-                  reviewer, skip_copilot_on_feature_branch, default_branch,
+                  tracked,
+                  threads,
+                  err,
+                  task_contract,
+                  verify_results,
+                  missing_task_contract_blocks,
+                  reviewer,
+                  skip_copilot_on_feature_branch,
+                  default_branch,
+                  audit_receipt_lookup(pr_number),
                 ),
               )
             }
@@ -992,8 +1005,16 @@ pub fn plan_wave_state(
         }
         Some(
           wave_state_pr_from_tracked(
-            tracked, threads, err, task_contract, verify_results, missing_task_contract_blocks,
-            reviewer, skip_copilot_on_feature_branch, default_branch,
+            tracked,
+            threads,
+            err,
+            task_contract,
+            verify_results,
+            missing_task_contract_blocks,
+            reviewer,
+            skip_copilot_on_feature_branch,
+            default_branch,
+            audit_receipt_lookup(tracked.pr_number),
           ),
         )
       }
@@ -1052,6 +1073,8 @@ pub async fn interpret_wave_state(
   registry : @registry.AgentRegistry?,
   poller_state : @poller.PollerState?,
   capture~ : async (@workspace.Command) -> (Int, String),
+  read_file~ : (String) -> String,
+  path_exists~ : (String) -> Bool,
   heartbeat_reader? : (String) -> Int64? = wave_state_default_heartbeat,
   tdd_phase_reader? : (String) -> @types.LeafTddPhase? = wave_state_default_tdd_phase,
   transcript_idle_reader? : (@types.Agent) -> Int64? = wave_state_default_transcript_idle,
@@ -1151,10 +1174,36 @@ pub async fn interpret_wave_state(
       None => (None, Some("thread state not fetched"))
     }
   }
-  let default_branch = if skip_copilot_on_feature_branch {
-    detect_default_branch_with_capture(project_dir, capture)
-  } else {
-    ""
+  let default_branch = detect_default_branch_with_capture(project_dir, capture)
+  let audit_receipt_map : Map[Int, @types.AuditReceiptState] = {}
+  for pr_number in pr_numbers {
+    match poller_state {
+      Some(ps) =>
+        match ps.get(pr_number) {
+          Some(tracked) =>
+            audit_receipt_map.set(
+              pr_number,
+              audit_receipt_advisory_state_for_tracked_pr(
+                project_dir,
+                tracked.parent_branch,
+                default_branch,
+                tracked.last_sha,
+                tracked.first_seen,
+                capture,
+                read_file,
+                path_exists,
+              ),
+            )
+          None => ()
+        }
+      None => ()
+    }
+  }
+  let audit_receipt_lookup = fn(pr_number : Int) -> @types.AuditReceiptState {
+    match audit_receipt_map.get(pr_number) {
+      Some(state) => state
+      None => @types.AuditReceiptState::NotRequired
+    }
   }
   let lifecycle_reader = fn(agent_id : String) -> @phase.AgentLifecycle? {
     @phase.read_lifecycle(project_dir, agent_id)
@@ -1203,6 +1252,7 @@ pub async fn interpret_wave_state(
       reviewer~,
       skip_copilot_on_feature_branch~,
       default_branch~,
+      audit_receipt_lookup~,
     ) {
     Ok(s) => s
     Err(e) => return @types.Response::Err(e.message())

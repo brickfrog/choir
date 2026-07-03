@@ -6737,6 +6737,66 @@ test "parent_poll_event_message CILatestHeadRollupSucceeded stresses not merge o
 }
 
 ///|
+test "parent_poll_event_message CILatestHeadRollupSucceeded summary blocks on pending audit" {
+  let tracked = parent_poll_event_test_tracked(
+    174, "main.dev-z", "work/z", "abc123",
+  )
+  match
+    parent_poll_event_message(
+      tracked,
+      "/repo",
+      @poller.PollEvent::CILatestHeadRollupSucceeded(174),
+      Some(0),
+      audit_receipt_state=@types.AuditReceiptState::Pending(head_sha="abc123"),
+    ) {
+    Some((message, status)) => {
+      assert_eq(status, @types.Status::Info)
+      assert_true(message.contains("[CI LATEST HEAD]"))
+      assert_true(message.contains("PR re-check summary"))
+      assert_true(message.contains("audit pending for HEAD abc123"))
+      assert_true(message.contains("Advisory evaluation verdict: needs_human"))
+      assert_true(message.contains("Merge policy decision: wait"))
+      assert_true(message.contains("TLDecision: BLOCKED: audit pending"))
+      assert_false(message.to_lower().contains("ready"))
+      assert_false(message.contains("merge_now"))
+      assert_false(message.contains("no tracked blockers"))
+      assert_false(message.contains("MERGE NOW"))
+    }
+    None => fail("expected CILatestHeadRollupSucceeded message")
+  }
+}
+
+///|
+test "parent_poll_event_message ReviewThreadsResolved summary blocks on pending audit" {
+  let tracked = parent_poll_event_test_tracked(
+    175, "main.dev-z", "work/z", "abc123",
+  )
+  match
+    parent_poll_event_message(
+      tracked,
+      "/repo",
+      @poller.PollEvent::ReviewThreadsResolved(175),
+      Some(0),
+      audit_receipt_state=@types.AuditReceiptState::Pending(head_sha="abc123"),
+    ) {
+    Some((message, status)) => {
+      assert_eq(status, @types.Status::Info)
+      assert_true(message.contains("[THREADS RESOLVED]"))
+      assert_true(message.contains("PR re-check summary"))
+      assert_true(message.contains("audit pending for HEAD abc123"))
+      assert_true(message.contains("Advisory evaluation verdict: needs_human"))
+      assert_true(message.contains("Merge policy decision: wait"))
+      assert_true(message.contains("TLDecision: BLOCKED: audit pending"))
+      assert_false(message.to_lower().contains("ready"))
+      assert_false(message.contains("merge_now"))
+      assert_false(message.contains("no tracked blockers"))
+      assert_false(message.contains("MERGE NOW"))
+    }
+    None => fail("expected ReviewThreadsResolved message")
+  }
+}
+
+///|
 test "parent_poll_event_message applies skipped review policy for feature branch" {
   let tracked : @poller.TrackedPR = {
     ..parent_poll_event_test_tracked(172, "main.dev-z", "work/z", "abc"),

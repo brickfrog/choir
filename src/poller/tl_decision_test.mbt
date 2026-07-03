@@ -46,6 +46,26 @@ test "tl_tracked_pr_merge_gate_snapshot_ready requires threads when approved and
 }
 
 ///|
+test "tl_tracked_pr_merge_gate_snapshot_ready blocks on audit receipt state" {
+  let t = sample_tracked(Approved, Success, 11)
+  assert_true(tl_tracked_pr_merge_gate_snapshot_ready(t, Some(0)))
+  assert_true(
+    tl_tracked_pr_merge_gate_snapshot_ready(
+      t,
+      Some(0),
+      audit_receipt_state=@types.AuditReceiptState::Valid,
+    ),
+  )
+  assert_false(
+    tl_tracked_pr_merge_gate_snapshot_ready(
+      t,
+      Some(0),
+      audit_receipt_state=@types.AuditReceiptState::Pending(head_sha="abc123"),
+    ),
+  )
+}
+
+///|
 test "tl_classify_tracked_pr_workflow distinguishes blocked, waiting, and merge-gate-open" {
   assert_eq(
     tl_classify_tracked_pr_workflow(
@@ -185,6 +205,68 @@ test "plan_tl_poll_event_parent CI actionable events can open merge gate" {
     Some(0),
   )
   assert_eq(cat, MergeGateOpenPendingPolicyConfirmation)
+}
+
+///|
+test "pr_state_notification_decision waits and renders audit pending instead of MERGE NOW" {
+  let t = sample_tracked(Approved, Success, 711)
+  let decision = pr_state_notification_decision_for_tracked_pr(
+    CILatestHeadRollupSucceeded(711),
+    t,
+    Some(0),
+    audit_receipt_state=@types.AuditReceiptState::Pending(head_sha="abc123"),
+  )
+  assert_eq(decision.next_action, NextAction::Wait)
+  assert_eq(
+    decision.category,
+    TlTrackedPrWorkflowCategory::AuditReceiptPending(head_sha="abc123"),
+  )
+  assert_eq(decision.policy_decision.label(), "wait")
+  let sentence = tl_pr_state_notification_sentence(decision, Manual)
+  assert_false(sentence.contains("MERGE NOW"))
+  assert_true(sentence.contains("audit pending"))
+}
+
+///|
+test "pr_state_notification_decision waits and renders audit findings instead of MERGE NOW" {
+  let t = sample_tracked(Approved, Success, 712)
+  let decision = pr_state_notification_decision_for_tracked_pr(
+    CILatestHeadRollupSucceeded(712),
+    t,
+    Some(0),
+    audit_receipt_state=@types.AuditReceiptState::FindingsRemain(
+      head_sha="abc123",
+      count=2,
+    ),
+  )
+  assert_eq(decision.next_action, NextAction::Wait)
+  assert_eq(
+    decision.category,
+    TlTrackedPrWorkflowCategory::AuditReceiptFindingsRemain(
+      head_sha="abc123",
+      count=2,
+    ),
+  )
+  assert_eq(decision.policy_decision.label(), "wait")
+  let sentence = tl_pr_state_notification_sentence(decision, Manual)
+  assert_false(sentence.contains("MERGE NOW"))
+  assert_true(sentence.contains("audit found 2 finding(s)"))
+}
+
+///|
+test "pr_state_notification_decision still merges when audit receipt is valid" {
+  let t = sample_tracked(Approved, Success, 713)
+  let decision = pr_state_notification_decision_for_tracked_pr(
+    CILatestHeadRollupSucceeded(713),
+    t,
+    Some(0),
+    audit_receipt_state=@types.AuditReceiptState::Valid,
+  )
+  assert_eq(decision.next_action, NextAction::MergeNow)
+  assert_eq(decision.category, MergeGateOpenPendingPolicyConfirmation)
+  assert_eq(decision.policy_decision.label(), "merge_now")
+  let sentence = tl_pr_state_notification_sentence(decision, Manual)
+  assert_true(sentence.contains("MERGE NOW"))
 }
 
 ///|

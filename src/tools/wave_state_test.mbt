@@ -757,6 +757,72 @@ test "plan_wave_state merge_gate_ready: approved + threads=0 + CI success" {
 }
 
 ///|
+test "plan_wave_state merge_gate_ready blocks on pending audit receipt" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
+      )
+    }),
+  )
+  ignore(
+    wave_state_test_ignore(() => {
+      reg.insert(
+        make_agent(
+          "tl.leaf",
+          @types.Role::Dev,
+          Some("tl"),
+          @types.AgentType::Gemini,
+        ),
+      )
+    }),
+  )
+  let lifecycles : Map[String, @phase.AgentLifecycle] = {}
+  lifecycles.set(
+    "tl",
+    make_supervisor_lifecycle("tl", @phase.SupervisorLifecycle::Planning),
+  )
+  lifecycles.set(
+    "tl.leaf",
+    make_dev_lifecycle(
+      "tl.leaf",
+      @phase.DevLifecycle::ReviewOwned(
+        pr_number=10,
+        state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
+      ),
+    ),
+  )
+  let ps = @poller.PollerState::new()
+  ps.tracked.set(
+    10,
+    tracked_pr_with(
+      10,
+      "tl.leaf",
+      @poller.ReviewState::Approved,
+      @poller.CiRollupStatus::Success,
+      false,
+      0L,
+      "abc",
+    ),
+  )
+  let snap = plan_wave_state(
+    "tl",
+    reg,
+    lifecycle_map_reader(lifecycles),
+    Some(ps),
+    threads_zero_lookup,
+    no_heartbeat,
+    0L,
+    audit_receipt_lookup=fn(_) {
+      @types.AuditReceiptState::Pending(head_sha="abc")
+    },
+  ).unwrap()
+  let pr = snap.children[0].pr.unwrap()
+  assert_eq(pr.merge_gate_ready, false)
+}
+
+///|
 test "plan_wave_state merge_gate_ready includes task-contract verify policy" {
   let reg = @registry.AgentRegistry::new()
   ignore(
@@ -1439,6 +1505,10 @@ async fn mock_wave_state_capture_threads_none(
   cmd : @workspace.Command,
 ) -> (Int, String) {
   @async.sleep(0)
+  if cmd.program == "git" &&
+    cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+    return (0, "origin/main\n")
+  }
   if cmd.args.contains("graphql") {
     return (
       0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
@@ -1455,6 +1525,10 @@ async fn mock_wave_state_capture_threads_two(
   cmd : @workspace.Command,
 ) -> (Int, String) {
   @async.sleep(0)
+  if cmd.program == "git" &&
+    cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+    return (0, "origin/main\n")
+  }
   if cmd.args.contains("graphql") {
     return (
       0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[{\"id\":\"T1\",\"isResolved\":false,\"path\":\"f.mbt\",\"comments\":{\"nodes\":[{\"body\":\"fix\"}]}},{\"id\":\"T2\",\"isResolved\":false,\"path\":\"g.mbt\",\"comments\":{\"nodes\":[{\"body\":\"nit\"}]}}]}}}}}",
@@ -1471,6 +1545,10 @@ async fn mock_wave_state_capture_gh_fails(
   cmd : @workspace.Command,
 ) -> (Int, String) {
   @async.sleep(0)
+  if cmd.program == "git" &&
+    cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+    return (0, "origin/main\n")
+  }
   if cmd.args.contains("graphql") {
     return (1, "gh error")
   }
@@ -1557,6 +1635,8 @@ async test "interpret_wave_state unresolved_threads=Some(0) on clean graphql" {
     Some(reg),
     Some(ps),
     capture=mock_wave_state_capture_threads_none,
+    read_file=@sys.read_file,
+    path_exists=@sys.path_exists,
   )
   assert_true(resp.is_ok())
   let body = resp.ok_field("snapshot").unwrap()
@@ -1599,9 +1679,8 @@ async test "interpret_wave_state merge_gate_ready matches verify policy" {
     ),
   )
   let ps = @poller.PollerState::new()
-  ps.tracked.set(
-    102,
-    tracked_pr_with(
+  ps.tracked.set(102, {
+    ..tracked_pr_with(
       102,
       "tl.leaf",
       @poller.ReviewState::Approved,
@@ -1610,7 +1689,8 @@ async test "interpret_wave_state merge_gate_ready matches verify policy" {
       0L,
       "head-x",
     ),
-  )
+    parent_branch: "feature/base",
+  })
   let native_ci_contract = {
     ..@types.TaskContract::empty(),
     goal: "ship feature",
@@ -1622,6 +1702,8 @@ async test "interpret_wave_state merge_gate_ready matches verify policy" {
     Some(reg),
     Some(ps),
     capture=mock_wave_state_capture_threads_none,
+    read_file=@sys.read_file,
+    path_exists=@sys.path_exists,
     task_contract_reader=fn(_) { Some(native_ci_contract) },
   )
   assert_true(ready.is_ok())
@@ -1636,6 +1718,8 @@ async test "interpret_wave_state merge_gate_ready matches verify policy" {
     Some(reg),
     Some(ps),
     capture=mock_wave_state_capture_threads_none,
+    read_file=@sys.read_file,
+    path_exists=@sys.path_exists,
     task_contract_reader=fn(_) { Some(strict_contract) },
   )
   assert_true(blocked.is_ok())
@@ -1675,9 +1759,8 @@ async test "interpret_wave_state reviewer none marks green threadless PR merge_g
     ),
   )
   let ps = @poller.PollerState::new()
-  ps.tracked.set(
-    103,
-    tracked_pr_with(
+  ps.tracked.set(103, {
+    ..tracked_pr_with(
       103,
       "tl.leaf",
       @poller.ReviewState::None_,
@@ -1686,7 +1769,8 @@ async test "interpret_wave_state reviewer none marks green threadless PR merge_g
       0L,
       "head-reviewer-none",
     ),
-  )
+    parent_branch: "feature/base",
+  })
   let contract = { ..@types.TaskContract::empty(), goal: "ship reviewerless" }
   let ready = interpret_wave_state(
     { caller_id: "tl" },
@@ -1694,6 +1778,8 @@ async test "interpret_wave_state reviewer none marks green threadless PR merge_g
     Some(reg),
     Some(ps),
     capture=mock_wave_state_capture_threads_none,
+    read_file=@sys.read_file,
+    path_exists=@sys.path_exists,
     task_contract_reader=fn(_) { Some(contract) },
   )
   assert_true(ready.is_ok())
@@ -1751,6 +1837,8 @@ async test "interpret_wave_state unresolved_threads=Some(N) blocks merge_gate_re
     Some(reg),
     Some(ps),
     capture=mock_wave_state_capture_threads_two,
+    read_file=@sys.read_file,
+    path_exists=@sys.path_exists,
   )
   let body = resp.ok_field("snapshot").unwrap()
   assert_true(body.contains("\"unresolved_threads\":2"))
@@ -1806,6 +1894,8 @@ async test "interpret_wave_state fail-loud when gh graphql fails" {
     Some(reg),
     Some(ps),
     capture=mock_wave_state_capture_gh_fails,
+    read_file=@sys.read_file,
+    path_exists=@sys.path_exists,
   )
   // Snapshot must be emitted despite gh failure (queries don't gate).
   assert_true(resp.is_ok())

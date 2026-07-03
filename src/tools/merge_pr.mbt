@@ -847,6 +847,7 @@ pub fn format_tl_pr_recheck_summary(
   task_contract? : @types.TaskContract? = None,
   verify_results? : Array[@types.VerifyCheckResult] = [],
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
+  audit_receipt_state? : @types.AuditReceiptState = @types.AuditReceiptState::NotRequired,
   reviewer? : @types.Reviewer = @types.Reviewer::None,
   skip_copilot_on_feature_branch? : Bool = false,
   default_branch? : String = "",
@@ -897,6 +898,7 @@ pub fn format_tl_pr_recheck_summary(
     unresolved_thread_count,
     reviewer~,
     review_required~,
+    audit_receipt_state~,
   )
 
   let task_contract = @types.task_contract_with_normalized_verify(
@@ -913,6 +915,7 @@ pub fn format_tl_pr_recheck_summary(
     task_contract~,
     review_mode=tracked.review_mode,
     verify_results~,
+    audit_receipt_state~,
     reviewer~,
     skip_copilot_on_feature_branch~,
     default_branch~,
@@ -923,6 +926,7 @@ pub fn format_tl_pr_recheck_summary(
     task_contract~,
     review_mode=tracked.review_mode,
     verify_results~,
+    audit_receipt_state~,
     reviewer~,
     skip_copilot_on_feature_branch~,
     default_branch~,

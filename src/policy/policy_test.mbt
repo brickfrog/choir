@@ -44,6 +44,50 @@ test "decide_merge returns merge_now when review CI threads and verify all pass"
 }
 
 ///|
+test "decide_merge waits while audit receipt is pending" {
+  let contract = contract_with_verify()
+  let signals = approved_ready_signals()
+  signals.push(
+    @types.EvaluationSignal::AuditReceipt(
+      state=@types.AuditReceiptState::Pending(head_sha="abc123"),
+    ),
+  )
+  match @types.evaluation_cascade(contract.verify, signals) {
+    @types.CascadeVerdict::Waiting(reason~) =>
+      assert_eq(reason, "audit pending for HEAD abc123")
+    _ => fail("expected waiting cascade")
+  }
+  let decision = decide_merge(
+    None,
+    bundle_with_signals(Some(contract), signals),
+  )
+  assert_eq(decision.label(), "wait")
+  assert_true(decision.reason().contains("audit pending"))
+}
+
+///|
+test "decide_merge waits while audit receipt findings remain" {
+  let contract = contract_with_verify()
+  let signals = approved_ready_signals()
+  signals.push(
+    @types.EvaluationSignal::AuditReceipt(
+      state=@types.AuditReceiptState::FindingsRemain(head_sha="abc123", count=2),
+    ),
+  )
+  match @types.evaluation_cascade(contract.verify, signals) {
+    @types.CascadeVerdict::Waiting(reason~) =>
+      assert_eq(reason, "audit found 2 findings; fix round in progress")
+    _ => fail("expected waiting cascade")
+  }
+  let decision = decide_merge(
+    None,
+    bundle_with_signals(Some(contract), signals),
+  )
+  assert_eq(decision.label(), "wait")
+  assert_true(decision.reason().contains("audit found 2 findings"))
+}
+
+///|
 test "decide_merge returns merge_now for comment-only review when CI threads and verify all pass" {
   let contract = contract_with_verify()
   let decision = decide_merge(
