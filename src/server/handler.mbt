@@ -53,17 +53,43 @@ fn append_shutdown_origin_span_fields(
   if req.req_method != "tools/call" || req.name != "shutdown" {
     return
   }
-  match req.args.get("origin_ppid") {
-    Some(value) => fields.push(@moontrace.field("origin_ppid", value))
+  let origin = @tools.parse_shutdown_origin_metadata_from_request_args(req.args)
+  append_shutdown_origin_string_field(fields, "origin_ppid", origin.origin_ppid)
+  append_shutdown_origin_string_field(fields, "origin_comm", origin.origin_comm)
+  match origin.origin_identity_source {
+    Some(source) =>
+      append_shutdown_origin_string_field(
+        fields,
+        "origin_identity_source",
+        Some(source.to_wire_string()),
+      )
     None => ()
   }
-  match req.args.get("origin_comm") {
-    Some(value) => fields.push(@moontrace.field("origin_comm", value))
-    None => ()
+}
+
+///|
+fn shutdown_origin_span_value(value : String) -> String {
+  let trimmed = value.trim().to_owned()
+  if trimmed.length() > 128 {
+    trimmed[0:128].to_owned()
+  } else {
+    trimmed
   }
-  match req.args.get("origin_identity_source") {
-    Some(value) =>
-      fields.push(@moontrace.field("origin_identity_source", value))
+}
+
+///|
+fn append_shutdown_origin_string_field(
+  fields : Array[@moontrace.Field],
+  key : String,
+  value : String?,
+) -> Unit {
+  match value {
+    Some(raw) => {
+      let capped = shutdown_origin_span_value(raw)
+      if capped != "" {
+        fields.push(@moontrace.field(key, capped))
+      }
+    }
     None => ()
   }
 }
@@ -237,7 +263,7 @@ test "emit_span adds shutdown origin fields to request spans" {
       "caller_id": "main.worker".to_json(),
       "origin_ppid": "12345".to_json(),
       "origin_comm": "codex".to_json(),
-      "origin_identity_source": "env:CHOIR_AGENT_ID".to_json(),
+      "origin_identity_source": "env".to_json(),
     }),
   }
   emit_span(
@@ -250,9 +276,16 @@ test "emit_span adds shutdown origin fields to request spans" {
   match state.otlp_exporter {
     Some(exporter) => {
       let attrs = exporter.spans[0].attributes
-      assert_eq(attrs[4].key, "origin_ppid")
-      assert_eq(attrs[5].key, "origin_comm")
-      assert_eq(attrs[6].key, "origin_identity_source")
+      let values : Map[String, String] = {}
+      for attr in attrs {
+        match attr.value {
+          @otlp.StringVal(s) => values.set(attr.key, s)
+          _ => ()
+        }
+      }
+      @debug.assert_eq(values.get("origin_ppid"), Some("12345"))
+      @debug.assert_eq(values.get("origin_comm"), Some("codex"))
+      @debug.assert_eq(values.get("origin_identity_source"), Some("env"))
     }
     None => fail("expected OTLP exporter")
   }

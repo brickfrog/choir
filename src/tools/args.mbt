@@ -268,6 +268,49 @@ pub(all) struct ReportUsageArgs {
 } derive(Debug, Eq)
 
 ///|
+pub(all) enum ShutdownIdentitySource {
+  Flag
+  Env
+  LocalConfig
+  Unknown
+} derive(Debug, Eq)
+
+///|
+pub fn ShutdownIdentitySource::to_wire_string(
+  self : ShutdownIdentitySource,
+) -> String {
+  match self {
+    Flag => "flag"
+    Env => "env"
+    LocalConfig => "local_config"
+    Unknown => "unknown"
+  }
+}
+
+///|
+pub fn ShutdownIdentitySource::try_parse_wire(
+  raw : String,
+) -> Result[ShutdownIdentitySource, @types.ChoirError] {
+  match raw.trim().to_lower().to_owned() {
+    "flag" => Ok(Flag)
+    "env" => Ok(Env)
+    "local_config" => Ok(LocalConfig)
+    "unknown" => Ok(Unknown)
+    other =>
+      Err(
+        @types.ChoirError::validation_error(
+          "unknown shutdown identity source: " + other,
+        ),
+      )
+  }
+}
+
+///|
+pub impl Show for ShutdownIdentitySource with fn output(self, logger) -> Unit {
+  logger.write_string(self.to_wire_string())
+}
+
+///|
 pub(all) struct WaveStateArgs {
   caller_id : String
 } derive(Debug, Eq)
@@ -310,7 +353,7 @@ pub(all) struct ShutdownArgs {
 pub(all) struct ShutdownOriginMetadata {
   origin_ppid : String?
   origin_comm : String?
-  origin_identity_source : String?
+  origin_identity_source : ShutdownIdentitySource?
 } derive(Debug, Eq)
 
 ///|
