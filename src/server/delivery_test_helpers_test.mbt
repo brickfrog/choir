@@ -48,6 +48,15 @@ async fn server_delivery_test_hook_capture(
 }
 
 ///|
+async fn server_delivery_test_git_capture(
+  program : String,
+  args : Array[String],
+) -> String {
+  @async.sleep(0)
+  abort(@exec.hermetic_exec_violation_message(program + " " + args.join(" ")))
+}
+
+///|
 fn server_delivery_test_path_entry_exists(_path : String) -> Bool {
   false
 }
@@ -111,6 +120,12 @@ async fn ServerState::refresh_pr_with_test(
     automerge_capture~,
     hook_path_exists~,
     sleep_fn=server_delivery_test_sleep,
+    git_capture=server_delivery_test_git_capture,
+    bd_capture=server_delivery_test_capture,
+    path_exists=@sys.path_entry_exists,
+    git_pull_capture=server_delivery_test_capture,
+    audit_receipt_exists=@sys.path_entry_exists,
+    audit_receipt_read=@sys.read_file,
   )
 }
 
@@ -178,5 +193,8 @@ async fn ServerState::process_poller_tick_with_test(
     git_pull_runner~,
     sleep_fn=server_delivery_test_sleep,
     kill_pgid~,
+    git_capture=server_delivery_test_git_capture,
+    bd_capture=server_delivery_test_capture,
+    path_exists=@sys.path_entry_exists,
   )
 }

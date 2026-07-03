@@ -60,9 +60,29 @@ async test "status_bar_state server handler caches list-panes per session" {
     }
     (0, "")
   }
-  let first = state.handle_with_runner_and_capture(req, capture~)
+  let first = state.handle_with_runner_and_capture(
+    req,
+    capture~,
+    runner=server_delivery_test_runner,
+    git_capture=server_delivery_test_git_capture,
+    bd_capture=server_delivery_test_capture,
+    hook_capture=server_delivery_test_hook_capture,
+    path_exists=@sys.path_entry_exists,
+    hook_xdg_config_home=None,
+    hook_home="",
+  )
   assert_true(first.is_ok())
-  let second = state.handle_with_runner_and_capture(req, capture~)
+  let second = state.handle_with_runner_and_capture(
+    req,
+    capture~,
+    runner=server_delivery_test_runner,
+    git_capture=server_delivery_test_git_capture,
+    bd_capture=server_delivery_test_capture,
+    hook_capture=server_delivery_test_hook_capture,
+    path_exists=@sys.path_entry_exists,
+    hook_xdg_config_home=None,
+    hook_home="",
+  )
   assert_true(second.is_ok())
   assert_eq(captures, 1)
   ignore(@sys.rm_rf(project_dir))
@@ -180,7 +200,17 @@ async test "wave_state server handler does not repair task contracts from local 
     }
     (0, "")
   }
-  let resp = state.handle_with_runner_and_capture(req, capture~)
+  let resp = state.handle_with_runner_and_capture(
+    req,
+    capture~,
+    runner=server_delivery_test_runner,
+    git_capture=server_delivery_test_git_capture,
+    bd_capture=server_delivery_test_capture,
+    hook_capture=server_delivery_test_hook_capture,
+    path_exists=@sys.path_entry_exists,
+    hook_xdg_config_home=None,
+    hook_home="",
+  )
   assert_true(resp.is_ok())
   assert_false(@sys.path_entry_exists(contracts_path))
   @debug.assert_eq(state.task_contract_for_agent(child_id), None)
@@ -250,7 +280,17 @@ async test "tdd_intent server handler repairs missing task contract on write pat
       "intent": "write red test",
     }),
   }
-  let resp = state.handle_with_runner_and_capture(req)
+  let resp = state.handle_with_runner_and_capture(
+    req,
+    runner=server_delivery_test_runner,
+    capture=server_delivery_test_capture,
+    git_capture=server_delivery_test_git_capture,
+    bd_capture=server_delivery_test_capture,
+    hook_capture=server_delivery_test_hook_capture,
+    path_exists=@sys.path_entry_exists,
+    hook_xdg_config_home=None,
+    hook_home="",
+  )
   assert_true(resp.is_ok())
   @debug.assert_eq(state.task_contract_for_agent(child_id), Some(contract))
   assert_true(
@@ -1131,7 +1171,17 @@ async test "merge_pr after restart finalizes offline recovered owner and updates
     }
     (0, "")
   }
-  let resp = state.handle_with_runner_and_capture(req, runner~, capture~)
+  let resp = state.handle_with_runner_and_capture(
+    req,
+    runner~,
+    capture~,
+    git_capture=server_delivery_test_git_capture,
+    bd_capture=server_delivery_test_capture,
+    hook_capture=server_delivery_test_hook_capture,
+    path_exists=@sys.path_entry_exists,
+    hook_xdg_config_home=None,
+    hook_home="",
+  )
   assert_true(resp.is_ok())
   @debug.assert_eq(resp.ok_field("status"), Some("merged"))
   assert_true(state.poller.get(pr_number) == None)

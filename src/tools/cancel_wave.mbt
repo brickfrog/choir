@@ -111,7 +111,7 @@ pub async fn interpret_cancel_wave(
   poller_state : @poller.PollerState?,
   registry : @registry.AgentRegistry?,
   runner : async (Array[@workspace.Command]) -> Array[Int],
-  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+  capture~ : async (@workspace.Command) -> (Int, String),
   read_agent_pgid? : (String) -> Int? = fn(agent_id) {
     @workspace.parse_agent_pgid(
       @sys.read_file(@workspace.agent_pid_file_path(project_dir, agent_id)),

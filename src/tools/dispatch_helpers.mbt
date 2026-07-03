@@ -257,7 +257,7 @@ fn parse_zellij_tab_terminal_target_json(
 pub async fn resolve_zellij_tab_terminal_target(
   session : String,
   tab_name : String,
-  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+  capture~ : async (@workspace.Command) -> (Int, String),
 ) -> String? {
   let cmd : @workspace.Command = {
     program: "zellij",
@@ -1382,7 +1382,7 @@ async fn capture_beads_json(
 ///|
 async fn handle_task_list(
   project_dir : String,
-  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+  capture~ : async (@workspace.Command) -> (Int, String),
 ) -> @types.Response {
   let output = match
     capture_beads_json(
@@ -1412,7 +1412,7 @@ async fn handle_task_list(
 async fn handle_task_get(
   project_dir : String,
   id : String,
-  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+  capture~ : async (@workspace.Command) -> (Int, String),
 ) -> @types.Response {
   let output = match
     capture_beads_json(project_dir, "show", ["show", id, "--json"], capture) {
@@ -1433,7 +1433,7 @@ async fn handle_task_get(
 async fn handle_task_create(
   project_dir : String,
   task_args : TaskCreateArgs,
-  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+  capture~ : async (@workspace.Command) -> (Int, String),
 ) -> @types.Response {
   let existing = capture({
     program: "bd",
@@ -1511,7 +1511,7 @@ async fn handle_task_create(
 async fn handle_task_update(
   project_dir : String,
   update_args : TaskUpdateArgs,
-  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+  capture~ : async (@workspace.Command) -> (Int, String),
 ) -> @types.Response {
   if update_args.status is None &&
     update_args.assignee is None &&
@@ -1558,7 +1558,7 @@ async fn handle_task_update(
 ///|
 async fn handle_kv_list(
   project_dir : String,
-  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+  capture~ : async (@workspace.Command) -> (Int, String),
 ) -> @types.Response {
   let kv_dir = project_dir + "/.choir/state/kv"
   let test_cmd : @workspace.Command = {

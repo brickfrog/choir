@@ -86,6 +86,10 @@ async test "goal_set writes one session KV file and evaluates shell check throug
       true
     },
     goal_request_tick=fn() { requested_ticks = requested_ticks + 1 },
+    git_capture=unreached_git_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   assert_true(resp.is_ok())
   assert_eq(requested_ticks, 1)
@@ -134,6 +138,10 @@ async test "goal_set bead source evaluates bd show json through injected capture
       true
     },
     create_dir_all=fn(_path) { true },
+    git_capture=unreached_git_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   assert_true(resp.is_ok())
   assert_eq(bd_commands.length(), 1)
@@ -171,6 +179,12 @@ async test "goal_set rejects freeform goals without checks" {
     },
     create_dir_all=fn(_path) { true },
     goal_request_tick=fn() { requested_ticks = requested_ticks + 1 },
+    runner=unreached_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match resp.error_message() {
     Some(msg) =>
@@ -211,6 +225,10 @@ async test "goal_set supersedes previous goal without stacking keys" {
     read_file=goal_test_read_file(files),
     write_file_atomic=write_file,
     create_dir_all=fn(_path) { true },
+    git_capture=unreached_git_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   assert_true(first.is_ok())
   let second = dispatch(
@@ -232,6 +250,10 @@ async test "goal_set supersedes previous goal without stacking keys" {
       @async.sleep(0)
       events.push("deliver:" + message)
     },
+    git_capture=unreached_git_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   assert_true(second.is_ok())
   assert_eq(write_paths.length(), 2)
@@ -284,6 +306,10 @@ async test "goal_set does not emit superseded when replacement write fails" {
     read_file=goal_test_read_file(files),
     write_file_atomic=write_file,
     create_dir_all=fn(_path) { true },
+    git_capture=unreached_git_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   assert_true(first.is_ok())
   let second = dispatch(
@@ -305,6 +331,10 @@ async test "goal_set does not emit superseded when replacement write fails" {
       @async.sleep(0)
       events.push("deliver:" + message)
     },
+    git_capture=unreached_git_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match second.error_message() {
     Some(msg) => assert_true(msg.contains("failed to write goal kv file"))
@@ -391,6 +421,12 @@ async test "goal_clear removes the exact session KV path" {
       files.remove(p)
       true
     },
+    runner=unreached_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   assert_true(resp.is_ok())
   @debug.assert_eq(deleted, [path])
@@ -413,6 +449,12 @@ async test "goal_clear surfaces delete failures for existing goal KV" {
       deleted.push(p)
       false
     },
+    runner=unreached_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match resp.error_message() {
     Some(msg) => assert_eq(msg, "failed to delete goal kv file: " + path)
@@ -445,6 +487,10 @@ async test "goal_set overwrites corrupt existing goal KV" {
       true
     },
     create_dir_all=fn(_path) { true },
+    git_capture=unreached_git_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   assert_true(resp.is_ok())
   match resp.ok_payload() {
@@ -486,6 +532,10 @@ async test "goal_set maps thrown verification caps to failed checks" {
       true
     },
     create_dir_all=fn(_path) { true },
+    git_capture=unreached_git_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   assert_true(resp.is_ok())
   let stored = @types.Goal::from_json_string(files.get(path).unwrap()).unwrap()
@@ -532,6 +582,10 @@ async test "goal_status evaluate returns fresh completion without writing KV" {
       writes = writes + 1
       true
     },
+    git_capture=unreached_git_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   assert_true(resp.is_ok())
   assert_eq(writes, 0)
@@ -566,6 +620,12 @@ async test "goal_clear deletes corrupt goal KV unconditionally" {
       files.remove(p)
       true
     },
+    runner=unreached_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   assert_true(resp.is_ok())
   @debug.assert_eq(deleted, [path])

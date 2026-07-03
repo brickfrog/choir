@@ -1325,11 +1325,11 @@ pub async fn dispatch(
   req : ToolRequest,
   project_dir? : String = ".",
   session? : String = "choir",
-  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
-  git_capture? : async (String, Array[String]) -> String = @exec.capture_stdout,
+  runner~ : async (Array[@workspace.Command]) -> Array[Int],
+  git_capture~ : async (String, Array[String]) -> String,
   capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
-  bd_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout_with_stderr_on_error,
-  hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
+  bd_capture~ : async (@workspace.Command) -> (Int, String),
+  hook_capture~ : async (String, String, String?) -> (Int, String),
   append_file? : (String, String) -> Bool = @sys.append_file_sync,
   read_file? : (String) -> String = @sys.read_file,
   write_file_atomic? : (String, String) -> Bool = @sys.write_file_atomic,
@@ -1413,6 +1413,8 @@ pub async fn dispatch(
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
   handoff_status_reader? : (String) -> Bool = fn(_agent_id) { false },
   agy_migration_incomplete? : Bool = false,
+  hook_xdg_config_home~ : String?,
+  hook_home~ : String,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> @types.Response {
   let ensure_branch_ready = match ensure_branch_ready {
@@ -1797,6 +1799,8 @@ pub async fn dispatch(
         hook_path_exists~,
         read_file~,
         hook_capture~,
+        hook_xdg_config_home~,
+        hook_home~,
         merge_strategy~,
         caller_role~,
         task_contract_reader~,
@@ -2114,9 +2118,23 @@ pub async fn dispatch(
         },
       )
     ToolRequest::Suspend(suspend_args) =>
-      interpret_suspend(suspend_args, registry, project_dir, hook_capture~)
+      interpret_suspend(
+        suspend_args,
+        registry,
+        project_dir,
+        hook_capture~,
+        hook_xdg_config_home~,
+        hook_home~,
+      )
     ToolRequest::Resume(resume_args) =>
-      interpret_resume(resume_args, registry, project_dir, hook_capture~)
+      interpret_resume(
+        resume_args,
+        registry,
+        project_dir,
+        hook_capture~,
+        hook_xdg_config_home~,
+        hook_home~,
+      )
     ToolRequest::AgentList(args) =>
       match registry {
         Some(reg) => {
@@ -2579,10 +2597,11 @@ pub async fn handle_request(
   req : @types.Request,
   project_dir? : String = ".",
   session? : String = "choir",
-  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
-  git_capture? : async (String, Array[String]) -> String = @exec.capture_stdout,
+  runner~ : async (Array[@workspace.Command]) -> Array[Int],
+  git_capture~ : async (String, Array[String]) -> String,
   capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
-  hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
+  bd_capture~ : async (@workspace.Command) -> (Int, String),
+  hook_capture~ : async (String, String, String?) -> (Int, String),
   ensure_branch_ready? : (async (String, String, String) -> Result[
     Unit,
     @types.ChoirError,
@@ -2666,8 +2685,8 @@ pub async fn handle_request(
   delete_file? : (String) -> Bool = @sys.delete_file_sync,
   path_exists? : (String) -> Bool = @sys.path_entry_exists,
   hook_path_exists? : (String) -> Bool = path_exists,
-  hook_xdg_config_home? : String? = @exec.hook_xdg_config_home(),
-  hook_home? : String = @exec.hook_home(),
+  hook_xdg_config_home~ : String?,
+  hook_home~ : String,
   create_dir_all? : (String) -> Bool = @sys.create_dir_all,
   agy_migration_incomplete? : Bool = false,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
@@ -2760,7 +2779,10 @@ pub async fn handle_request(
                   runner~,
                   git_capture~,
                   capture~,
+                  bd_capture~,
                   hook_capture~,
+                  hook_xdg_config_home~,
+                  hook_home~,
                   ensure_branch_ready~,
                   ensure_pr~,
                   extra_mcp_servers_json~,
@@ -2859,10 +2881,10 @@ pub async fn fire_hook_async(
   event : @hooks.HookEvent,
   input : @hooks.HookInput,
   project_dir : String,
-  hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
+  hook_capture~ : async (String, String, String?) -> (Int, String),
   path_exists? : (String) -> Bool = @sys.path_entry_exists,
-  xdg_config_home? : String? = @exec.hook_xdg_config_home(),
-  home? : String = @exec.hook_home(),
+  xdg_config_home~ : String?,
+  home~ : String,
 ) -> Unit {
   let hook_path = match
     @hooks.resolve_hook_script_path(
@@ -2907,15 +2929,53 @@ fn dispatch_call_goal_gate_response(
 }
 
 ///|
+/// Inert capability defaults for the CLI/test entrypoint below: abort when
+/// invoked, so a call path that reaches host I/O without an injected
+/// capability fails loudly (the same contract as @exec's hermetic-test
+/// guard) instead of silently executing on the host.
+async fn uninjected_runner(_cmds : Array[@workspace.Command]) -> Array[Int] {
+  @async.sleep(0)
+  abort("dispatch_call: runner not injected")
+}
+
+///|
+async fn uninjected_git_capture(
+  _program : String,
+  _args : Array[String],
+) -> String {
+  @async.sleep(0)
+  abort("dispatch_call: git_capture not injected")
+}
+
+///|
+async fn uninjected_capture(_cmd : @workspace.Command) -> (Int, String) {
+  @async.sleep(0)
+  abort("dispatch_call: capture not injected")
+}
+
+///|
+async fn uninjected_hook_capture(
+  _hook_path : String,
+  _input_json : String,
+  _cwd : String?,
+) -> (Int, String) {
+  @async.sleep(0)
+  abort("dispatch_call: hook_capture not injected")
+}
+
+///|
 /// CLI / test entrypoint for tool dispatch.
 pub async fn dispatch_call(
   call : ToolCall,
   project_dir? : String = ".",
   session? : String = "choir",
-  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
-  git_capture? : async (String, Array[String]) -> String = @exec.capture_stdout,
+  runner? : async (Array[@workspace.Command]) -> Array[Int] = uninjected_runner,
+  git_capture? : async (String, Array[String]) -> String = uninjected_git_capture,
   capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
-  bd_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout_with_stderr_on_error,
+  bd_capture? : async (@workspace.Command) -> (Int, String) = uninjected_capture,
+  hook_capture? : async (String, String, String?) -> (Int, String) = uninjected_hook_capture,
+  hook_xdg_config_home? : String? = None,
+  hook_home? : String = "",
   ensure_branch_ready? : (async (String, String, String) -> Result[
     Unit,
     @types.ChoirError,
@@ -3019,6 +3079,9 @@ pub async fn dispatch_call(
                   git_capture~,
                   capture~,
                   bd_capture~,
+                  hook_capture~,
+                  hook_xdg_config_home~,
+                  hook_home~,
                   ensure_branch_ready~,
                   ensure_pr~,
                   extra_mcp_servers_json~,

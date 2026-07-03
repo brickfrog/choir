@@ -141,6 +141,17 @@ async test "ServerState::refresh_pr_with triggers poll and updates state" {
       res
     },
     capture=mock_refresh_capture,
+    git_capture=async fn(_program, _args) {
+      @async.sleep(0)
+      ""
+    },
+    bd_capture=mock_refresh_capture,
+    path_exists=fn(_) { false },
+    hook_path_exists=fn(_) { false },
+    git_pull_capture=mock_refresh_capture,
+    automerge_capture=mock_refresh_capture,
+    audit_receipt_exists=fn(_) { false },
+    audit_receipt_read=fn(_) { "" },
     sleep_fn=refresh_test_no_sleep,
   )
 
@@ -291,6 +302,17 @@ async test "ServerState::refresh_pr_with does not synthesize ReviewThreadsResolv
       }
       mock_refresh_capture(cmd)
     },
+    git_capture=async fn(_program, _args) {
+      @async.sleep(0)
+      ""
+    },
+    bd_capture=mock_refresh_capture,
+    path_exists=fn(_) { false },
+    hook_path_exists=fn(_) { false },
+    git_pull_capture=mock_refresh_capture,
+    automerge_capture=mock_refresh_capture,
+    audit_receipt_exists=fn(_) { false },
+    audit_receipt_read=fn(_) { "" },
     sleep_fn=refresh_test_no_sleep,
   )
 

@@ -179,6 +179,12 @@ async test "dispatch NotifyParent rejects success when prenotify check fails" {
     capture=mock_capture_prenotify_failure,
     prenotify_checks=["moon check --target native", "moon test --target native"],
     record_handoff_delivered=fn(id) { handoffs.push(id) },
+    runner=unreached_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match resp {
     Err(msg) => {
@@ -250,6 +256,12 @@ async test "dispatch NotifyParent runs prenotify checks for TL caller on registe
     },
     prenotify_checks=["moon test --target native"],
     record_handoff_delivered=fn(id) { handoffs.push(id) },
+    runner=unreached_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match resp {
     Err(msg) => {
@@ -320,6 +332,12 @@ async test "dispatch NotifyParent allows success after prenotify checks pass" {
     },
     prenotify_checks=["moon check --target native", "moon test --target native"],
     record_handoff_delivered=fn(id) { handoffs.push(id) },
+    runner=unreached_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   assert_true(resp.is_ok())
   @debug.assert_eq(handoffs, [agent_id])
@@ -377,6 +395,12 @@ async test "dispatch NotifyParent rejects success when caller workspace is empty
       (0, "ok")
     },
     prenotify_checks=["moon test --target native"],
+    runner=unreached_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match resp {
     Err(msg) => {
@@ -457,6 +481,11 @@ async test "dispatch NotifyParent blocked attempts local zellij send with NOTIFY
     registry=Some(reg),
     capture=mock_capture_threads_one,
     runner=runner_record_notify_blocked_text,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match resp {
     Err(msg) => assert_true(msg.contains("notify_parent blocked"))
@@ -515,6 +544,12 @@ async test "dispatch NotifyParent blocks on unresolved threads" {
     project_dir~,
     registry=Some(reg),
     capture=mock_capture_threads_one,
+    runner=unreached_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match resp1 {
     Err(msg) => {
@@ -531,6 +566,12 @@ async test "dispatch NotifyParent blocks on unresolved threads" {
     project_dir~,
     registry=Some(reg),
     capture=mock_capture_threads_none,
+    runner=unreached_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   assert_true(resp2.is_ok())
 
@@ -541,6 +582,12 @@ async test "dispatch NotifyParent blocks on unresolved threads" {
     project_dir~,
     registry=Some(reg),
     capture=mock_capture_threads_failed,
+    runner=unreached_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match resp3 {
     Err(msg) => {
@@ -558,6 +605,12 @@ async test "dispatch NotifyParent blocks on unresolved threads" {
     project_dir~,
     registry=Some(reg),
     capture=mock_capture_repo_view_fails,
+    runner=unreached_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match resp4 {
     Err(msg) => {
@@ -621,6 +674,12 @@ async test "dispatch NotifyParent blocks ExitRequestedDeferred on unresolved thr
     project_dir~,
     registry=Some(reg),
     capture=mock_capture_threads_one,
+    runner=unreached_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match resp {
     Err(msg) => {
@@ -683,6 +742,12 @@ async test "dispatch NotifyParent blocks ChangesRequested on unresolved threads"
     project_dir~,
     registry=Some(reg),
     capture=mock_capture_threads_one,
+    runner=unreached_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match resp {
     Err(msg) => {
@@ -744,6 +809,12 @@ async test "dispatch NotifyParent gate is status-agnostic (Failure still blocked
     project_dir~,
     registry=Some(reg),
     capture=mock_capture_threads_one,
+    runner=unreached_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match resp {
     Err(msg) => {

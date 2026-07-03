@@ -139,6 +139,12 @@ async test "dispatch write_audit_receipt routes injected filesystem capabilities
       writes.push((path, content))
       true
     },
+    runner=unreached_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match resp {
     @types.Response::Ok(_) => ()

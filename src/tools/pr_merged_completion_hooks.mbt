@@ -232,11 +232,11 @@ pub async fn detect_pr_merged_audit_enforcement(
 pub async fn fire_pr_merged_completion_hooks(
   project_dir : String,
   pr : @poller.TrackedPR,
-  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
-  hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
-  path_exists? : (String) -> Bool = @exec.path_entry_exists,
-  xdg_config_home? : String? = @exec.hook_xdg_config_home(),
-  home? : String = @exec.hook_home(),
+  capture~ : async (@workspace.Command) -> (Int, String),
+  hook_capture~ : async (String, String, String?) -> (Int, String),
+  path_exists~ : (String) -> Bool,
+  xdg_config_home~ : String?,
+  home~ : String,
 ) -> Unit {
   if @hooks.resolve_hook_script_path(
       project_dir,

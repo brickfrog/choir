@@ -446,7 +446,7 @@ pub async fn interpret_shutdown(
   poller_state : @poller.PollerState?,
   registry : @registry.AgentRegistry?,
   runner : async (Array[@workspace.Command]) -> Array[Int],
-  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout_with_stderr_on_error,
+  capture~ : async (@workspace.Command) -> (Int, String),
 ) -> @types.Response {
   let caller_id = match args.caller_id {
     Some(v) => v

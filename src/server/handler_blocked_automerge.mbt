@@ -170,6 +170,12 @@ async fn ServerState::maybe_trigger_automerge_for_blocked_gh_notify(
   req : @types.Request,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   capture : async (@workspace.Command) -> (Int, String),
+  git_capture~ : async (String, Array[String]) -> String,
+  bd_capture~ : async (@workspace.Command) -> (Int, String),
+  hook_capture~ : async (String, String, String?) -> (Int, String),
+  path_exists~ : (String) -> Bool,
+  hook_xdg_config_home~ : String?,
+  hook_home~ : String,
 ) -> Bool {
   let (caller_id, _) = match blocked_gh_notify_request_parts(req) {
     Some(parts) => parts
@@ -217,6 +223,12 @@ async fn ServerState::maybe_trigger_automerge_for_blocked_gh_notify(
     ),
     runner~,
     capture~,
+    git_capture~,
+    bd_capture~,
+    hook_capture~,
+    path_exists~,
+    hook_xdg_config_home~,
+    hook_home~,
   )
   append_poller_delivery_line(
     self.append_file,

@@ -865,6 +865,7 @@ async test "interpret_shutdown closes pane for dev and worker terminals" {
       None,
       Some(reg),
       runner,
+      capture=unreached_capture,
     )
     match got {
       @types.Response::Ok(fields) => {
@@ -932,6 +933,7 @@ async test "interpret_shutdown does not call pane close for supervisor roles" {
       None,
       Some(reg),
       runner,
+      capture=unreached_capture,
     )
     match got {
       @types.Response::Ok(fields) => {
@@ -989,6 +991,7 @@ async test "interpret_shutdown does not invoke pane close when dev has no termin
     None,
     Some(reg),
     runner,
+    capture=unreached_capture,
   )
   match got {
     @types.Response::Ok(fields) => {
@@ -1032,6 +1035,7 @@ async test "interpret_shutdown continues when pane close command fails" {
         None,
         Some(reg),
         runner,
+        capture=unreached_capture,
       )
       match got {
         @types.Response::Ok(fields) => {
@@ -1225,6 +1229,7 @@ async test "interpret_shutdown blocks poller critical phase before plan" {
     Some(ps),
     None,
     mock_shutdown_runner_record_worktree,
+    capture=unreached_capture,
   )
   match got {
     @types.Response::Err(msg) =>
@@ -1273,6 +1278,7 @@ async test "interpret_shutdown closes pane before poller critical phase block" {
     Some(ps),
     Some(reg),
     runner,
+    capture=unreached_capture,
   )
   match got {
     @types.Response::Err(msg) =>
@@ -1295,6 +1301,7 @@ async test "interpret_shutdown ok when caller missing uses best-effort" {
     None,
     None,
     mock_shutdown_runner_record_worktree,
+    capture=unreached_capture,
   )
   match got {
     @types.Response::Ok(fields) => {
@@ -1418,6 +1425,10 @@ async test "dispatch kill_agent mirrors Beads state through bd_capture" {
       seen.push(cmd.program + " " + cmd.args.join(" "))
       (0, "")
     },
+    git_capture=unreached_git_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match resp {
     @types.Response::Ok(fields) => {
@@ -1472,6 +1483,10 @@ async test "dispatch kill_agent removes pidfile through injected delete_file cap
       deleted.push(path)
       @sys.delete_file_sync(path)
     },
+    git_capture=unreached_git_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match resp {
     @types.Response::Ok(fields) => {

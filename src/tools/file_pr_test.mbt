@@ -1835,6 +1835,11 @@ async test "dispatch file_pr records verify evidence through injected append_fil
     task_contract_reader=file_pr_test_task_contract_reader(contract),
     tdd_phase_reader=file_pr_test_tdd_done,
     sleep_fn=file_pr_test_no_sleep,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match resp {
     @types.Response::Ok(_) => ()
@@ -2206,6 +2211,12 @@ async test "dispatch request_review runs reviewer request through server capture
       seen.push(cmd)
       (0, "")
     },
+    runner=unreached_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match got {
     @types.Response::Ok(_) => ()
@@ -2230,6 +2241,12 @@ async test "dispatch request_review rejects untracked PR" {
       @async.sleep(0)
       fail("request_review should not call capture for untracked PR")
     },
+    runner=unreached_runner,
+    git_capture=unreached_git_capture,
+    bd_capture=unreached_capture,
+    hook_capture=unreached_hook_capture,
+    hook_xdg_config_home=None,
+    hook_home="",
   )
   match got {
     @types.Response::Err(msg) => assert_true(msg.contains("is not tracked"))
