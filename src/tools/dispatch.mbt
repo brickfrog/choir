@@ -2081,6 +2081,7 @@ pub async fn dispatch(
         registry,
         runner,
         capture=bd_capture,
+        handoff_status_reader~,
       )
     ToolRequest::KillAgent(kill_args) =>
       interpret_kill_agent(

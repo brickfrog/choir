@@ -355,6 +355,7 @@ pub fn shutdown_exit_plan(
 pub(all) enum ShutdownAdapterHostStep {
   PollerCriticalPhaseRead
   RegistryRoleLookup
+  HandoffStatusRead
   LifecycleRead
   PaneClose
   DevExitEventApply
@@ -372,6 +373,7 @@ pub fn shutdown_adapter_host_steps() -> Array[ShutdownAdapterHostStep] {
   [
     ShutdownAdapterHostStep::PollerCriticalPhaseRead,
     ShutdownAdapterHostStep::RegistryRoleLookup,
+    ShutdownAdapterHostStep::HandoffStatusRead,
     ShutdownAdapterHostStep::LifecycleRead,
     ShutdownAdapterHostStep::PaneClose,
     ShutdownAdapterHostStep::DevExitEventApply,
@@ -405,6 +407,31 @@ pub fn shutdown_registry_role_for_caller(
     Some(reg) => reg.get(caller_id).role catch { _ => @types.Role::Dev }
     None => @types.Role::Dev
   }
+}
+
+///|
+/// Registry-backed parent presence for shutdown handoff gating. Missing
+/// registry or agent means "no parent" so legacy best-effort shutdown remains
+/// available for callers without a registry row.
+pub fn shutdown_registry_caller_has_parent(
+  registry : @registry.AgentRegistry?,
+  caller_id : String,
+) -> Bool {
+  match registry {
+    Some(reg) =>
+      try {
+        let agent = reg.get(caller_id)
+        agent.parent is Some(_)
+      } catch {
+        _ => false
+      }
+    None => false
+  }
+}
+
+///|
+pub fn shutdown_missing_handoff_message() -> String {
+  "cannot shutdown: call notify_parent with your report first, then shutdown"
 }
 
 ///|
@@ -447,6 +474,7 @@ pub async fn interpret_shutdown(
   registry : @registry.AgentRegistry?,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   capture~ : async (@workspace.Command) -> (Int, String),
+  handoff_status_reader~ : (String) -> Bool,
 ) -> @types.Response {
   let caller_id = match args.caller_id {
     Some(v) => v
@@ -458,6 +486,14 @@ pub async fn interpret_shutdown(
     None => ()
   }
   let role = shutdown_registry_role_for_caller(registry, caller_id)
+  if role == @types.Role::Worker &&
+    shutdown_registry_caller_has_parent(registry, caller_id) &&
+    !handoff_status_reader(caller_id) {
+    @moontrace.warn("shutdown refused: worker handoff not delivered", fields=[
+      @moontrace.field("caller_id", caller_id),
+    ])
+    return @types.Response::Err(shutdown_missing_handoff_message())
+  }
   let lifecycle = @phase.read_or_default_lifecycle(project_dir, caller_id, role)
   let plan = shutdown_exit_plan(lifecycle, poller_state~)
   let may_cleanup_workspace = plan.attempt_worktree_cleanup &&
