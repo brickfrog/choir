@@ -2021,6 +2021,8 @@ pub async fn dispatch(
         registry,
         poller_state,
         capture~,
+        read_file~,
+        path_exists~,
         tdd_phase_reader~,
         transcript_idle_reader~,
         task_contract_reader~,
