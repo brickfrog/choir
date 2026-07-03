@@ -213,7 +213,6 @@ fn zellij_action_run() -> Unit {
           return
         }
       }
-      // If the target name is already a pane ID (terminal_N), skip list-panes
       let direct_pane_id = if target.name.has_prefix("terminal_") {
         Some(target.name)
       } else {
@@ -282,6 +281,8 @@ fn zellij_action_run() -> Unit {
           @sys.exit(key_code)
         }
         "close" => {
+          // Close is idempotent: direct terminal_N targets skip list-panes so
+          // an already-gone pane still reports success.
           let panes = match direct_pane_id {
             Some(_) => [] // skip list-panes when we have a direct ID
             None => zellij_list_panes(target.session)

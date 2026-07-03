@@ -135,11 +135,11 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     tool_def(
       "reply", "Store a reply to a pending interaction request", all_roles,
     ),
-    tool_def("shutdown", "Notify parent, close own pane", [
-      @types.Role::TL,
-      @types.Role::Dev,
-      @types.Role::Worker,
-    ]),
+    tool_def(
+      "shutdown",
+      "Request completion; closes your pane only when exit is granted. A deferred shutdown leaves you running, and you must keep processing messages.",
+      [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],
+    ),
     tool_def(
       "kill_agent",
       "Kill a child agent by agent_id; closes its pane and cleans up registry",
