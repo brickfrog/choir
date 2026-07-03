@@ -46,6 +46,29 @@ fn emit_request_log(
 }
 
 ///|
+fn append_shutdown_origin_span_fields(
+  req : @types.Request,
+  fields : Array[@moontrace.Field],
+) -> Unit {
+  if req.req_method != "tools/call" || req.name != "shutdown" {
+    return
+  }
+  match req.args.get("origin_ppid") {
+    Some(value) => fields.push(@moontrace.field("origin_ppid", value))
+    None => ()
+  }
+  match req.args.get("origin_comm") {
+    Some(value) => fields.push(@moontrace.field("origin_comm", value))
+    None => ()
+  }
+  match req.args.get("origin_identity_source") {
+    Some(value) =>
+      fields.push(@moontrace.field("origin_identity_source", value))
+    None => ()
+  }
+}
+
+///|
 fn request_repairs_task_contract(req : @types.Request) -> Bool {
   if req.req_method != "tools/call" {
     return false
@@ -76,6 +99,7 @@ fn emit_span(
     @moontrace.field("status", status),
     @moontrace.field("duration_ms", duration_ms),
   ]
+  append_shutdown_origin_span_fields(req, fields)
   match resp.error_message() {
     Some(msg) => fields.push(@moontrace.field("error", msg))
     None => ()
@@ -176,6 +200,59 @@ test "emit_span enqueues OTLP span without flushing request hot path" {
       }
       assert_eq(span.start_time_unix_nano, (1_000_000_000 : UInt64))
       assert_eq(span.end_time_unix_nano, (1_025_000_000 : UInt64))
+    }
+    None => fail("expected OTLP exporter")
+  }
+  ignore(@sys.rm_rf(state.config.project_dir))
+}
+
+///|
+test "emit_span adds shutdown origin fields to request spans" {
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir: "/tmp/choir-emit-span-shutdown-origin-" +
+      @env.now().reinterpret_as_int64().to_string(),
+      otlp_endpoint: Some("http://collector:4318"),
+    },
+    make_hermetic_recovery_provider(),
+    otlp_exporter_factory=fn(_) {
+      make_otlp_span_exporter_with_batch(async fn(_, _, _) {
+        @async.sleep(0)
+        Ok({
+          success: true,
+          attempts: 1,
+          status_code: Some(200),
+          error: None,
+          retry_class: @transport.Success,
+        })
+      })
+    },
+  )
+  let req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::Worker,
+    name: "shutdown",
+    args: @types.RequestArgs::from_values({
+      "caller_id": "main.worker".to_json(),
+      "origin_ppid": "12345".to_json(),
+      "origin_comm": "codex".to_json(),
+      "origin_identity_source": "env:CHOIR_AGENT_ID".to_json(),
+    }),
+  }
+  emit_span(
+    state,
+    req,
+    (1000 : UInt64),
+    (1001 : UInt64),
+    @types.Response::Ok(@types.FieldMap::from_values({})),
+  )
+  match state.otlp_exporter {
+    Some(exporter) => {
+      let attrs = exporter.spans[0].attributes
+      assert_eq(attrs[4].key, "origin_ppid")
+      assert_eq(attrs[5].key, "origin_comm")
+      assert_eq(attrs[6].key, "origin_identity_source")
     }
     None => fail("expected OTLP exporter")
   }

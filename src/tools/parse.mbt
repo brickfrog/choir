@@ -2280,6 +2280,44 @@ fn parse_shutdown_args(args : ToolArgs) -> ShutdownArgs {
 }
 
 ///|
+fn parse_shutdown_origin_metadata(args : ToolArgs) -> ShutdownOriginMetadata {
+  {
+    origin_ppid: tool_args_get(args, "origin_ppid"),
+    origin_comm: tool_args_get(args, "origin_comm"),
+    origin_identity_source: tool_args_get(args, "origin_identity_source"),
+  }
+}
+
+///|
+test "parse_shutdown_args defaults optional origin fields to unknown" {
+  let shutdown = parse_shutdown_args(
+    tool_args_from_map({ "caller_id": "main.leaf" }),
+  )
+  let origin = parse_shutdown_origin_metadata(
+    tool_args_from_map({ "caller_id": "main.leaf" }),
+  )
+  @debug.assert_eq(shutdown.caller_id, Some("main.leaf"))
+  @debug.assert_eq(origin.origin_ppid, None)
+  @debug.assert_eq(origin.origin_comm, None)
+  @debug.assert_eq(origin.origin_identity_source, None)
+}
+
+///|
+test "parse_shutdown_origin_metadata carries optional origin fields" {
+  let origin = parse_shutdown_origin_metadata(
+    tool_args_from_map({
+      "caller_id": "main.worker",
+      "origin_ppid": "12345",
+      "origin_comm": "codex",
+      "origin_identity_source": "env:CHOIR_AGENT_ID",
+    }),
+  )
+  @debug.assert_eq(origin.origin_ppid, Some("12345"))
+  @debug.assert_eq(origin.origin_comm, Some("codex"))
+  @debug.assert_eq(origin.origin_identity_source, Some("env:CHOIR_AGENT_ID"))
+}
+
+///|
 fn parse_id_args(args : ToolArgs) -> Result[IdArgs, ParseError] {
   let id = tool_args_get(args, "id").unwrap_or("")
   if id == "" {

@@ -307,6 +307,13 @@ pub(all) struct ShutdownArgs {
 } derive(Debug, Eq)
 
 ///|
+pub(all) struct ShutdownOriginMetadata {
+  origin_ppid : String?
+  origin_comm : String?
+  origin_identity_source : String?
+} derive(Debug, Eq)
+
+///|
 pub(all) struct KillAgentArgs {
   agent_id : String
   reason : String
