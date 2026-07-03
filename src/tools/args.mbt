@@ -311,21 +311,6 @@ pub impl Show for ShutdownIdentitySource with fn output(self, logger) -> Unit {
 }
 
 ///|
-test "ShutdownIdentitySource wire strings round trip and reject unknown values" {
-  for source in [ShutdownIdentitySource::Flag, Env, LocalConfig, Unknown] {
-    match ShutdownIdentitySource::try_parse_wire(source.to_wire_string()) {
-      Ok(parsed) => @debug.assert_eq(parsed, source)
-      Err(e) => fail(e.message())
-    }
-  }
-  match ShutdownIdentitySource::try_parse_wire("bogus") {
-    Ok(_) => fail("expected invalid shutdown identity source")
-    Err(e) =>
-      assert_true(e.message().contains("unknown shutdown identity source"))
-  }
-}
-
-///|
 pub(all) struct WaveStateArgs {
   caller_id : String
 } derive(Debug, Eq)

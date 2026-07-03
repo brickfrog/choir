@@ -95,22 +95,6 @@ fn append_shutdown_origin_string_field(
 }
 
 ///|
-fn moontrace_string_field(
-  fields : Array[@moontrace.Field],
-  key : String,
-) -> String? {
-  for field in fields {
-    if field.key == key {
-      match field.value {
-        String(value) => return Some(value)
-        _ => return None
-      }
-    }
-  }
-  None
-}
-
-///|
 fn request_repairs_task_contract(req : @types.Request) -> Bool {
   if req.req_method != "tools/call" {
     return false
@@ -341,7 +325,7 @@ test "append_shutdown_origin_span_fields caps long origin values" {
     }),
   }
   append_shutdown_origin_span_fields(req, fields)
-  match moontrace_string_field(fields, "origin_comm") {
+  match poll_delivery_moontrace_string_field(fields, "origin_comm") {
     Some(value) => assert_eq(value.length(), 128)
     None => fail("expected capped origin_comm field")
   }
