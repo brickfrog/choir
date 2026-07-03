@@ -803,14 +803,15 @@ test "shutdown_exit_plan allowed tl skips dev exit but may cleanup worktree" {
 ///|
 test "shutdown_adapter_host_steps lists poller through gated pane close and cleanup" {
   let steps = shutdown_adapter_host_steps()
-  assert_eq(steps.length(), 7)
+  assert_eq(steps.length(), 8)
   assert_eq(steps[0], ShutdownAdapterHostStep::PollerCriticalPhaseRead)
   assert_eq(steps[1], ShutdownAdapterHostStep::RegistryRoleLookup)
-  assert_eq(steps[2], ShutdownAdapterHostStep::LifecycleRead)
-  assert_eq(steps[3], ShutdownAdapterHostStep::PaneClose)
-  assert_eq(steps[4], ShutdownAdapterHostStep::DevExitEventApply)
-  assert_eq(steps[5], ShutdownAdapterHostStep::WorktreeCleanupAttempt)
-  assert_eq(steps[6], ShutdownAdapterHostStep::BeadsLifecycleMirror)
+  assert_eq(steps[2], ShutdownAdapterHostStep::HandoffStatusRead)
+  assert_eq(steps[3], ShutdownAdapterHostStep::LifecycleRead)
+  assert_eq(steps[4], ShutdownAdapterHostStep::PaneClose)
+  assert_eq(steps[5], ShutdownAdapterHostStep::DevExitEventApply)
+  assert_eq(steps[6], ShutdownAdapterHostStep::WorktreeCleanupAttempt)
+  assert_eq(steps[7], ShutdownAdapterHostStep::BeadsLifecycleMirror)
 }
 
 ///|
@@ -861,6 +862,7 @@ async test "interpret_shutdown closes pane for granted dev and worker terminals"
       Some(reg),
       runner,
       capture=unreached_capture,
+      handoff_status_reader=shutdown_handoff_delivered,
     )
     match got {
       @types.Response::Ok(fields) => {
@@ -945,6 +947,7 @@ async test "interpret_shutdown leaves deferred dev pane untouched" {
     Some(reg),
     runner,
     capture=unreached_capture,
+    handoff_status_reader=shutdown_handoff_delivered,
   )
   match got {
     @types.Response::Ok(fields) => {
@@ -1013,6 +1016,7 @@ async test "interpret_shutdown closes releasable deferred dev pane" {
       @async.sleep(0)
       (0, "")
     },
+    handoff_status_reader=shutdown_handoff_delivered,
   )
   match got {
     @types.Response::Ok(fields) => {
@@ -1060,6 +1064,7 @@ async test "interpret_shutdown does not call pane close for supervisor roles" {
       Some(reg),
       runner,
       capture=unreached_capture,
+      handoff_status_reader=shutdown_handoff_delivered,
     )
     match got {
       @types.Response::Ok(fields) => {
@@ -1118,6 +1123,7 @@ async test "interpret_shutdown does not invoke pane close when dev has no termin
     Some(reg),
     runner,
     capture=unreached_capture,
+    handoff_status_reader=shutdown_handoff_delivered,
   )
   match got {
     @types.Response::Ok(fields) => {
@@ -1162,6 +1168,7 @@ async test "interpret_shutdown continues when pane close command fails" {
         Some(reg),
         runner,
         capture=unreached_capture,
+        handoff_status_reader=shutdown_handoff_delivered,
       )
       match got {
         @types.Response::Ok(fields) => {
@@ -1333,6 +1340,16 @@ fn shutdown_beads_registry_fixture(
 }
 
 ///|
+fn shutdown_handoff_delivered(_agent_id : String) -> Bool {
+  true
+}
+
+///|
+fn shutdown_handoff_missing(_agent_id : String) -> Bool {
+  false
+}
+
+///|
 async test "interpret_shutdown blocks poller critical phase before plan" {
   let ps = @poller.PollerState::new()
   ps.track_recovered(
@@ -1356,6 +1373,7 @@ async test "interpret_shutdown blocks poller critical phase before plan" {
     None,
     mock_shutdown_runner_record_worktree,
     capture=unreached_capture,
+    handoff_status_reader=shutdown_handoff_missing,
   )
   match got {
     @types.Response::Err(msg) =>
@@ -1405,6 +1423,7 @@ async test "interpret_shutdown does not close pane when poller critical phase bl
     Some(reg),
     runner,
     capture=unreached_capture,
+    handoff_status_reader=shutdown_handoff_missing,
   )
   match got {
     @types.Response::Err(msg) =>
@@ -1428,6 +1447,7 @@ async test "interpret_shutdown ok when caller missing uses best-effort" {
     None,
     mock_shutdown_runner_record_worktree,
     capture=unreached_capture,
+    handoff_status_reader=shutdown_handoff_missing,
   )
   match got {
     @types.Response::Ok(fields) => {
@@ -1436,6 +1456,206 @@ async test "interpret_shutdown ok when caller missing uses best-effort" {
     }
     _ => fail("expected missing-caller ok")
   }
+}
+
+///|
+async test "interpret_shutdown refuses parented worker before delivered handoff" {
+  let t = match @types.LocalTarget::parse("zellij-tab:choir:worker") {
+    Some(v) => v
+    None => fail("expected parse")
+  }
+  let reg = @registry.AgentRegistry::new()
+  let agent = kill_agent_test_agent(
+    Some(t),
+    "/proj/.choir/review-worktrees/main.audit-worker",
+    role=@types.Role::Worker,
+    agent_id="main.audit-worker",
+  )
+  ignore(reg.upsert({ ..agent, parent: Some("main") }))
+  let ran : Array[@workspace.Command] = []
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    for cmd in cmds {
+      ran.push(cmd)
+    }
+    [0]
+  }
+  let got = interpret_shutdown(
+    { caller_id: Some("main.audit-worker") },
+    "/proj",
+    None,
+    Some(reg),
+    runner,
+    capture=unreached_capture,
+    handoff_status_reader=fn(_agent_id) { false },
+  )
+  match got {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("notify_parent"))
+      assert_true(msg.contains("shutdown"))
+    }
+    _ => fail("expected notify_parent-first refusal")
+  }
+  @debug.assert_eq(ran, [])
+}
+
+///|
+async test "interpret_shutdown allows parented worker after delivered handoff" {
+  let t = match @types.LocalTarget::parse("zellij-tab:choir:worker") {
+    Some(v) => v
+    None => fail("expected parse")
+  }
+  let reg = @registry.AgentRegistry::new()
+  let agent = kill_agent_test_agent(
+    Some(t),
+    "/workspace/main.audit-worker",
+    role=@types.Role::Worker,
+    agent_id="main.audit-worker",
+  )
+  ignore(reg.upsert({ ..agent, parent: Some("main") }))
+  let ran : Array[@workspace.Command] = []
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      ran.push(cmd)
+      statuses.push(0)
+    }
+    statuses
+  }
+  let got = interpret_shutdown(
+    { caller_id: Some("main.audit-worker") },
+    "/proj",
+    None,
+    Some(reg),
+    runner,
+    capture=unreached_capture,
+    handoff_status_reader=shutdown_handoff_delivered,
+  )
+  match got {
+    @types.Response::Ok(fields) =>
+      @debug.assert_eq(
+        fields.to_json_map().get("status"),
+        Some(String::to_json("shutdown")),
+      )
+    @types.Response::Err(msg) =>
+      fail("expected shutdown ok after handoff, got: " + msg)
+  }
+  match kill_agent_pane_close_command(agent) {
+    Some(close_cmd) => assert_true(ran.iter().any(fn(cmd) { cmd == close_cmd }))
+    None => fail("expected close command")
+  }
+}
+
+///|
+/// Invariant: a parentless worker cannot notify_parent ("no parent for root"),
+/// so the handoff gate must never apply to it — shutdown stays available.
+async test "interpret_shutdown allows parentless worker without delivered handoff" {
+  let t = match @types.LocalTarget::parse("zellij-tab:choir:worker") {
+    Some(v) => v
+    None => fail("expected parse")
+  }
+  let reg = @registry.AgentRegistry::new()
+  let agent = kill_agent_test_agent(
+    Some(t),
+    "/workspace/main.audit-worker",
+    role=@types.Role::Worker,
+    agent_id="main.audit-worker",
+  )
+  ignore(reg.upsert({ ..agent, parent: None }))
+  let ran : Array[@workspace.Command] = []
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      ran.push(cmd)
+      statuses.push(0)
+    }
+    statuses
+  }
+  let got = interpret_shutdown(
+    { caller_id: Some("main.audit-worker") },
+    "/proj",
+    None,
+    Some(reg),
+    runner,
+    capture=unreached_capture,
+    handoff_status_reader=shutdown_handoff_missing,
+  )
+  match got {
+    @types.Response::Ok(fields) =>
+      @debug.assert_eq(
+        fields.to_json_map().get("status"),
+        Some(String::to_json("shutdown")),
+      )
+    @types.Response::Err(msg) =>
+      fail("expected parentless worker shutdown ok, got: " + msg)
+  }
+  match kill_agent_pane_close_command(agent) {
+    Some(close_cmd) => assert_true(ran.iter().any(fn(cmd) { cmd == close_cmd }))
+    None => fail("expected close command")
+  }
+}
+
+///|
+async test "interpret_shutdown leaves dev leaf governed by exit plan without handoff" {
+  let tmp = "/tmp/choir-shutdown-dev-handoff-missing-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(tmp))
+  assert_true(@sys.create_dir_all(tmp + "/.choir/state/kv"))
+  let reg = @registry.AgentRegistry::new()
+  let t = match @types.LocalTarget::parse("zellij-tab:choir:dev") {
+    Some(v) => v
+    None => fail("expected parse")
+  }
+  let agent = kill_agent_test_agent(
+    Some(t),
+    tmp + "/workspace",
+    role=@types.Role::Dev,
+    agent_id="main.leaf",
+  )
+  ignore(reg.upsert({ ..agent, parent: Some("main") }))
+  ignore(
+    @phase.write_lifecycle(tmp, {
+      agent_id: "main.leaf",
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::ReviewOwned(
+          pr_number=88,
+          state=@phase.ReviewOwnership::OpenUnreviewed(url="https://ex/88"),
+        ),
+      ),
+      last_updated_unix_sec: 0L,
+    }),
+  )
+  let ran : Array[@workspace.Command] = []
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    for cmd in cmds {
+      ran.push(cmd)
+    }
+    [0]
+  }
+  let got = interpret_shutdown(
+    { caller_id: Some("main.leaf") },
+    tmp,
+    None,
+    Some(reg),
+    runner,
+    capture=unreached_capture,
+    handoff_status_reader=shutdown_handoff_missing,
+  )
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      @debug.assert_eq(map.get("status"), Some(String::to_json("deferred")))
+    }
+    @types.Response::Err(msg) =>
+      fail("expected dev exit policy response, got: " + msg)
+  }
+  @debug.assert_eq(ran, [])
+  ignore(@sys.rm_rf(tmp))
 }
 
 ///|
@@ -1469,6 +1689,7 @@ async test "interpret_shutdown removes isolated review worker worktree" {
       @async.sleep(0)
       (0, "")
     },
+    handoff_status_reader=shutdown_handoff_missing,
   )
   match got {
     @types.Response::Ok(fields) =>
@@ -1507,6 +1728,7 @@ async test "interpret_shutdown mirrors lifecycle state to Beads on graceful exit
       seen.push(cmd.program + " " + cmd.args.join(" "))
       (0, "")
     },
+    handoff_status_reader=shutdown_handoff_delivered,
   )
   match got {
     @types.Response::Ok(fields) => {
@@ -1661,6 +1883,7 @@ async test "interpret_shutdown skips Beads shutdown mirror when exit is deferred
       seen.push(cmd.program + " " + cmd.args.join(" "))
       (0, "")
     },
+    handoff_status_reader=shutdown_handoff_missing,
   )
   match got {
     @types.Response::Ok(fields) => {
