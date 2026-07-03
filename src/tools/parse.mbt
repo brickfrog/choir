@@ -2297,7 +2297,7 @@ fn parse_shutdown_identity_source(raw : String?) -> ShutdownIdentitySource? {
 }
 
 ///|
-pub fn parse_shutdown_args(args : ToolArgs) -> ShutdownArgs {
+fn parse_shutdown_args(args : ToolArgs) -> ShutdownArgs {
   { caller_id: tool_args_get(args, "caller_id") }
 }
 

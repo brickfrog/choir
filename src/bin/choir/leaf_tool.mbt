@@ -11,6 +11,12 @@ priv struct LeafToolResolvedArgs {
 }
 
 ///|
+priv struct ToolLocalConfigResolution {
+  local_cfg : @types.LocalConfig
+  identity_source : @tools.ShutdownIdentitySource?
+}
+
+///|
 fn normalize_cli_key(key : String) -> String {
   let buf = StringBuilder::new()
   for c in key {
@@ -109,17 +115,6 @@ fn looks_like_branch_token(s : String) -> Bool {
 fn looks_like_legacy_branch_arg(s : String) -> Bool {
   looks_like_branch_token(s) &&
   (s.contains(".") || s.contains("/") || s.contains("-") || s.contains("_"))
-}
-
-///|
-fn leaf_tool_request_args(
-  tool : String,
-  cli_args : LeafCliArgs,
-  env_get? : (String) -> String? = leaf_tool_default_env_get,
-) -> Result[Map[String, String], String] {
-  leaf_tool_resolved_request_args(tool, cli_args, env_get~).map(fn(resolved) {
-    resolved.args
-  })
 }
 
 ///|
@@ -356,6 +351,7 @@ fn leaf_tool_resolved_request_args(
           None => ()
         }
       }
+      strip_shutdown_origin_string_args(flags)
       Ok({ args: flags, shutdown_identity_source })
     }
     "task_list" => Ok({ args: flags, shutdown_identity_source })
@@ -756,18 +752,23 @@ fn local_cfg_from_env_lookup(
 }
 
 ///|
-fn local_cfg_from_env() -> @types.LocalConfig {
-  local_cfg_from_env_lookup(fn(key) { @sys.getenv(key) })
-}
-
-///|
-fn tool_local_cfg_with_env_fallback(
+fn tool_local_cfg_with_env_fallback_resolution(
   local_cfg : @types.LocalConfig,
-) -> @types.LocalConfig {
+  env_get? : (String) -> String? = leaf_tool_default_env_get,
+) -> ToolLocalConfigResolution {
   if local_cfg_has_registration_identity(local_cfg) {
-    local_cfg
+    let identity_source = match local_cfg.agent_id {
+      Some(_) => Some(@tools.ShutdownIdentitySource::LocalConfig)
+      None => None
+    }
+    { local_cfg, identity_source }
   } else {
-    local_cfg_from_env()
+    let env_cfg = local_cfg_from_env_lookup(env_get)
+    let identity_source = match env_cfg.agent_id {
+      Some(_) => Some(@tools.ShutdownIdentitySource::Env)
+      None => None
+    }
+    { local_cfg: env_cfg, identity_source }
   }
 }
 
@@ -775,6 +776,25 @@ fn tool_local_cfg_with_env_fallback(
 fn tool_load_config(
   cli_args : LeafCliArgs,
 ) -> Result[(@types.Role, @types.Config, @types.LocalConfig), String] {
+  match tool_load_config_with_identity_source(cli_args) {
+    Ok((role, config, local_cfg, _identity_source)) =>
+      Ok((role, config, local_cfg))
+    Err(err) => Err(err)
+  }
+}
+
+///|
+fn tool_load_config_with_identity_source(
+  cli_args : LeafCliArgs,
+) -> Result[
+  (
+    @types.Role,
+    @types.Config,
+    @types.LocalConfig,
+    @tools.ShutdownIdentitySource?,
+  ),
+  String,
+] {
   let config_content = @sys.read_file(".choir/config.toml")
   if config_content == "" {
     return Err("missing .choir/config.toml")
@@ -785,19 +805,24 @@ fn tool_load_config(
     Ok(cfg) => cfg
     Err(e) => return Err(e.message())
   }
-  let local_cfg = tool_local_cfg_with_env_fallback(
+  let local_resolution = tool_local_cfg_with_env_fallback_resolution(
     match @config.parse_local_config(local_content) {
       Ok(cfg) => cfg
       Err(_) => @types.LocalConfig::default()
     },
   )
+  let local_cfg = local_resolution.local_cfg
   let config = tool_effective_config(base_config, local_cfg)
+  let identity_source = match base_config.agent_id {
+    Some(_) => Some(@tools.ShutdownIdentitySource::LocalConfig)
+    None => local_resolution.identity_source
+  }
   let role = match tool_cli_override_role(cli_args) {
     Ok(Some(role)) => role
     Ok(None) => @config.resolve_role(local_cfg.role, config)
     Err(err) => return Err(err)
   }
-  Ok((role, config, local_cfg))
+  Ok((role, config, local_cfg, identity_source))
 }
 
 ///|
@@ -997,9 +1022,14 @@ fn enrich_shutdown_origin_args(
 ///|
 fn shutdown_identity_source(
   resolved_source : @tools.ShutdownIdentitySource?,
+  config_source : @tools.ShutdownIdentitySource?,
   local_cfg : @types.LocalConfig,
 ) -> @tools.ShutdownIdentitySource {
   match resolved_source {
+    Some(source) => return source
+    None => ()
+  }
+  match config_source {
     Some(source) => return source
     None => ()
   }
@@ -1010,19 +1040,13 @@ fn shutdown_identity_source(
 }
 
 ///|
-fn tool_shutdown_identity_source(
-  cli_args : LeafCliArgs,
+fn shutdown_request_identity_source(
   req_args : Map[String, Json],
-  local_cfg : @types.LocalConfig,
-) -> @tools.ShutdownIdentitySource {
-  if cli_args.flags.contains("caller_id") ||
-    req_args.get("caller_id") is Some(_) {
-    @tools.ShutdownIdentitySource::Flag
+) -> @tools.ShutdownIdentitySource? {
+  if req_args.get("caller_id") is Some(_) {
+    Some(@tools.ShutdownIdentitySource::Flag)
   } else {
-    match local_cfg.agent_id {
-      Some(_) => @tools.ShutdownIdentitySource::LocalConfig
-      None => @tools.ShutdownIdentitySource::Unknown
-    }
+    None
   }
 }
 
@@ -1034,6 +1058,20 @@ fn enrich_shutdown_origin_json_args(
 ) -> Unit {
   let fields = shutdown_origin_fields(identity_source, read_file~)
   fields.each(fn(k, v) { args.set(k, v.to_json()) })
+}
+
+///|
+fn strip_shutdown_origin_string_args(args : Map[String, String]) -> Unit {
+  for key in ["origin_ppid", "origin_comm", "origin_identity_source"] {
+    ignore(args.remove(key))
+  }
+}
+
+///|
+fn strip_shutdown_origin_json_args(args : Map[String, Json]) -> Unit {
+  for key in ["origin_ppid", "origin_comm", "origin_identity_source"] {
+    ignore(args.remove(key))
+  }
 }
 
 ///|
@@ -1066,7 +1104,8 @@ fn tool_run() -> Unit {
       return
     }
   }
-  let (role, config, local_cfg) = match tool_load_config(cli_args) {
+  let (role, config, local_cfg, config_identity_source) = match
+    tool_load_config_with_identity_source(cli_args) {
     Ok(loaded) => loaded
     Err(err) => {
       client_emit(@types.Response::Err(err))
@@ -1074,9 +1113,14 @@ fn tool_run() -> Unit {
     }
   }
   if tool == "shutdown" {
+    strip_shutdown_origin_json_args(req_args)
     enrich_shutdown_origin_json_args(
       req_args,
-      tool_shutdown_identity_source(cli_args, req_args, local_cfg),
+      shutdown_identity_source(
+        shutdown_request_identity_source(req_args),
+        config_identity_source,
+        local_cfg,
+      ),
     )
   }
   let req : @types.Request = {
@@ -1135,6 +1179,7 @@ fn leaf_tool_run() -> Unit {
       req_args,
       shutdown_identity_source(
         resolved_args.shutdown_identity_source,
+        None,
         local_cfg,
       ),
     )
@@ -1153,39 +1198,39 @@ fn leaf_tool_run() -> Unit {
 
 ///|
 test "leaf tool parser supports notify_parent positional message and status" {
-  let parsed = leaf_tool_request_args(
-    "notify_parent",
-    parse_leaf_cli_args(["failure", "[BLOCKED]", "need", "help"]),
-  ).unwrap()
+  let parsed = leaf_tool_resolved_request_args(
+      "notify_parent",
+      parse_leaf_cli_args(["failure", "[BLOCKED]", "need", "help"]),
+    ).unwrap().args
   @debug.assert_eq(parsed.get("status"), Some("failure"))
   @debug.assert_eq(parsed.get("message"), Some("[BLOCKED] need help"))
 }
 
 ///|
 test "leaf tool parser supports handoff_status positional agent" {
-  let parsed = leaf_tool_request_args(
-    "handoff_status",
-    parse_leaf_cli_args(["main.leaf"]),
-  ).unwrap()
+  let parsed = leaf_tool_resolved_request_args(
+      "handoff_status",
+      parse_leaf_cli_args(["main.leaf"]),
+    ).unwrap().args
   @debug.assert_eq(parsed.get("agent_id"), Some("main.leaf"))
 }
 
 ///|
 test "leaf tool parser accepts legacy file_pr positional triplet" {
-  let parsed = leaf_tool_request_args(
-    "file_pr",
-    parse_leaf_cli_args(["main.gemini-leaf", "main.gemini-leaf", "main"]),
-  ).unwrap()
+  let parsed = leaf_tool_resolved_request_args(
+      "file_pr",
+      parse_leaf_cli_args(["main.gemini-leaf", "main.gemini-leaf", "main"]),
+    ).unwrap().args
   @debug.assert_eq(parsed.get("branch"), Some("main.gemini-leaf"))
   @debug.assert_eq(parsed.get("parent_branch"), Some("main"))
 }
 
 ///|
 test "leaf tool parser ignores prose positionals for file_pr" {
-  let parsed = leaf_tool_request_args(
-    "file_pr",
-    parse_leaf_cli_args(["Add", "pytest", "integration", "tests"]),
-  ).unwrap()
+  let parsed = leaf_tool_resolved_request_args(
+      "file_pr",
+      parse_leaf_cli_args(["Add", "pytest", "integration", "tests"]),
+    ).unwrap().args
   // Prose must not be interpreted as the legacy branch triplet (ambient CHOIR_* may still set branch).
   assert_true(parsed.get("branch") != Some("Add"))
   assert_true(parsed.get("branch") != Some("pytest"))
@@ -1204,20 +1249,20 @@ test "leaf tool usage includes file_pr args" {
 
 ///|
 test "leaf tool parser supports PR plumbing tools" {
-  let resolve = leaf_tool_request_args(
-    "resolve_my_review_threads",
-    parse_leaf_cli_args([
-      "427", "--caller-id", "main.tl", "--target-agent-id", "main.leaf",
-    ]),
-  ).unwrap()
+  let resolve = leaf_tool_resolved_request_args(
+      "resolve_my_review_threads",
+      parse_leaf_cli_args([
+        "427", "--caller-id", "main.tl", "--target-agent-id", "main.leaf",
+      ]),
+    ).unwrap().args
   @debug.assert_eq(resolve.get("caller_id"), Some("main.tl"))
   @debug.assert_eq(resolve.get("target_agent_id"), Some("main.leaf"))
   @debug.assert_eq(resolve.get("pr_number"), Some("427"))
 
-  let review = leaf_tool_request_args(
-    "request_review",
-    parse_leaf_cli_args(["45", "@copilot"]),
-  ).unwrap()
+  let review = leaf_tool_resolved_request_args(
+      "request_review",
+      parse_leaf_cli_args(["45", "@copilot"]),
+    ).unwrap().args
   @debug.assert_eq(review.get("pr_number"), Some("45"))
   @debug.assert_eq(review.get("reviewer"), Some("@copilot"))
 }
@@ -1317,12 +1362,37 @@ test "shutdown env identity source survives request arg resolution" {
     req_args,
     shutdown_identity_source(
       resolved.shutdown_identity_source,
+      None,
       @types.LocalConfig::default(),
     ),
     read_file=fn(_) { "" },
   )
   @debug.assert_eq(req_args.get("caller_id"), Some("main.env-worker"))
   @debug.assert_eq(req_args.get("origin_identity_source"), Some("env"))
+}
+
+///|
+test "shutdown origin enrichment strips caller supplied origin fields" {
+  let resolved = leaf_tool_resolved_request_args(
+    "shutdown",
+    parse_leaf_cli_args([
+      "--caller-id", "main.flag", "--origin-comm", "innocent", "--origin-ppid", "999",
+      "--origin-identity-source", "env",
+    ]),
+  ).unwrap()
+  let req_args = resolved.args
+  enrich_shutdown_origin_args(
+    req_args,
+    shutdown_identity_source(
+      resolved.shutdown_identity_source,
+      None,
+      @types.LocalConfig::default(),
+    ),
+    read_file=fn(_) { "" },
+  )
+  @debug.assert_eq(req_args.get("origin_ppid"), None)
+  @debug.assert_eq(req_args.get("origin_comm"), None)
+  @debug.assert_eq(req_args.get("origin_identity_source"), Some("flag"))
 }
 
 ///|
@@ -1336,6 +1406,7 @@ test "shutdown identity source records flag config and unknown origins" {
     flag_resolved.args,
     shutdown_identity_source(
       flag_resolved.shutdown_identity_source,
+      None,
       @types.LocalConfig::default(),
     ),
     read_file=fn(_) { "" },
@@ -1356,7 +1427,11 @@ test "shutdown identity source records flag config and unknown origins" {
   ).unwrap()
   enrich_shutdown_origin_args(
     local_resolved.args,
-    shutdown_identity_source(local_resolved.shutdown_identity_source, local_cfg),
+    shutdown_identity_source(
+      local_resolved.shutdown_identity_source,
+      None,
+      local_cfg,
+    ),
     read_file=fn(_) { "" },
   )
   @debug.assert_eq(
@@ -1373,11 +1448,74 @@ test "shutdown identity source records flag config and unknown origins" {
     unknown_resolved.args,
     shutdown_identity_source(
       unknown_resolved.shutdown_identity_source,
+      None,
       @types.LocalConfig::default(),
     ),
     read_file=fn(_) { "" },
   )
   @debug.assert_eq(unknown_resolved.args.get("origin_identity_source"), None)
+}
+
+///|
+test "generic shutdown identity source records flag env config and unknown origins" {
+  let env_resolution = tool_local_cfg_with_env_fallback_resolution(
+    @types.LocalConfig::default(),
+    env_get=fn(key) {
+      if key == "CHOIR_AGENT_ID" {
+        Some("main.env-worker")
+      } else {
+        None
+      }
+    },
+  )
+  @debug.assert_eq(
+    shutdown_identity_source(
+      shutdown_request_identity_source({}),
+      env_resolution.identity_source,
+      env_resolution.local_cfg,
+    ),
+    @tools.ShutdownIdentitySource::Env,
+  )
+
+  @debug.assert_eq(
+    shutdown_identity_source(
+      shutdown_request_identity_source({ "caller_id": "main.flag".to_json() }),
+      env_resolution.identity_source,
+      env_resolution.local_cfg,
+    ),
+    @tools.ShutdownIdentitySource::Flag,
+  )
+
+  let local_resolution = tool_local_cfg_with_env_fallback_resolution({
+    ..@types.LocalConfig::default(),
+    agent_id: Some("main.local"),
+  })
+  @debug.assert_eq(
+    shutdown_identity_source(
+      shutdown_request_identity_source({}),
+      local_resolution.identity_source,
+      local_resolution.local_cfg,
+    ),
+    @tools.ShutdownIdentitySource::LocalConfig,
+  )
+
+  @debug.assert_eq(
+    shutdown_identity_source(
+      shutdown_request_identity_source({}),
+      Some(@tools.ShutdownIdentitySource::LocalConfig),
+      @types.LocalConfig::default(),
+    ),
+    @tools.ShutdownIdentitySource::LocalConfig,
+  )
+
+  @debug.assert_eq(
+    shutdown_identity_source(
+      shutdown_request_identity_source({}),
+      None,
+      @types.LocalConfig::default(),
+    ),
+    @tools.ShutdownIdentitySource::Unknown,
+  )
 }
 
 ///|
@@ -1421,10 +1559,10 @@ test "tool usage documents caller role and json entrypoints" {
 
 ///|
 test "leaf tool parser supports task_create positionals" {
-  let parsed = leaf_tool_request_args(
-    "task_create",
-    parse_leaf_cli_args(["task-1", "Write", "better", "tests"]),
-  ).unwrap()
+  let parsed = leaf_tool_resolved_request_args(
+      "task_create",
+      parse_leaf_cli_args(["task-1", "Write", "better", "tests"]),
+    ).unwrap().args
   @debug.assert_eq(parsed.get("id"), Some("task-1"))
   @debug.assert_eq(parsed.get("title"), Some("Write better tests"))
 }

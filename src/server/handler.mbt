@@ -95,6 +95,22 @@ fn append_shutdown_origin_string_field(
 }
 
 ///|
+fn moontrace_string_field(
+  fields : Array[@moontrace.Field],
+  key : String,
+) -> String? {
+  for field in fields {
+    if field.key == key {
+      match field.value {
+        String(value) => return Some(value)
+        _ => return None
+      }
+    }
+  }
+  None
+}
+
+///|
 fn request_repairs_task_contract(req : @types.Request) -> Bool {
   if req.req_method != "tools/call" {
     return false
@@ -290,6 +306,45 @@ test "emit_span adds shutdown origin fields to request spans" {
     None => fail("expected OTLP exporter")
   }
   ignore(@sys.rm_rf(state.config.project_dir))
+}
+
+///|
+test "append_shutdown_origin_span_fields omits empty origin fields" {
+  let fields : Array[@moontrace.Field] = []
+  let req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::Worker,
+    name: "shutdown",
+    args: @types.RequestArgs::from_values({
+      "origin_ppid": "".to_json(),
+      "origin_comm": "   ".to_json(),
+      "origin_identity_source": "unknown".to_json(),
+    }),
+  }
+  append_shutdown_origin_span_fields(req, fields)
+  assert_eq(fields.length(), 0)
+}
+
+///|
+test "append_shutdown_origin_span_fields caps long origin values" {
+  let long = StringBuilder::new()
+  for i = 0; i < 140; i = i + 1 {
+    long.write_char('x')
+  }
+  let fields : Array[@moontrace.Field] = []
+  let req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::Worker,
+    name: "shutdown",
+    args: @types.RequestArgs::from_values({
+      "origin_comm": long.to_string().to_json(),
+    }),
+  }
+  append_shutdown_origin_span_fields(req, fields)
+  match moontrace_string_field(fields, "origin_comm") {
+    Some(value) => assert_eq(value.length(), 128)
+    None => fail("expected capped origin_comm field")
+  }
 }
 
 ///|
