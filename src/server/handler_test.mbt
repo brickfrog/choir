@@ -884,6 +884,7 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
     git_capture=server_delivery_test_git_capture,
     bd_capture=server_delivery_test_capture,
     path_exists=@sys.path_entry_exists,
+    read_file=@sys.read_file,
     hook_xdg_config_home=None,
     hook_home="",
   )
@@ -998,6 +999,7 @@ async test "maybe_trigger_automerge_for_pending_event satisfies non-native moon 
     bd_capture=server_delivery_test_capture,
     hook_capture=server_delivery_test_hook_capture,
     path_exists=@sys.path_entry_exists,
+    read_file=@sys.read_file,
     hook_path_exists=@sys.path_entry_exists,
     hook_xdg_config_home=None,
     hook_home="",
@@ -1082,6 +1084,7 @@ async test "maybe_trigger_automerge_for_pending_event treats NoChecks as verify-
     bd_capture=server_delivery_test_capture,
     hook_capture=server_delivery_test_hook_capture,
     path_exists=@sys.path_entry_exists,
+    read_file=@sys.read_file,
     hook_path_exists=@sys.path_entry_exists,
     hook_xdg_config_home=None,
     hook_home="",
@@ -1131,6 +1134,7 @@ async test "maybe_trigger_automerge_for_pending_event skips already merged PR" {
     bd_capture=server_delivery_test_capture,
     hook_capture=server_delivery_test_hook_capture,
     path_exists=@sys.path_entry_exists,
+    read_file=@sys.read_file,
     hook_path_exists=@sys.path_entry_exists,
     hook_xdg_config_home=None,
     hook_home="",
@@ -1175,6 +1179,7 @@ async test "maybe_trigger_automerge_for_pending_event skips observed merged PR" 
     bd_capture=server_delivery_test_capture,
     hook_capture=server_delivery_test_hook_capture,
     path_exists=@sys.path_entry_exists,
+    read_file=@sys.read_file,
     hook_path_exists=@sys.path_entry_exists,
     hook_xdg_config_home=None,
     hook_home="",
@@ -1533,6 +1538,7 @@ async test "maybe_trigger_automerge_for_pending_event blocks missing server cont
     bd_capture=server_delivery_test_capture,
     hook_capture=server_delivery_test_hook_capture,
     path_exists=@sys.path_entry_exists,
+    read_file=@sys.read_file,
     hook_path_exists=@sys.path_entry_exists,
     hook_xdg_config_home=None,
     hook_home="",
@@ -2253,7 +2259,7 @@ async test "quiet poller tick automerge sweep records attempted head on failure"
 }
 
 ///|
-async test "automerge audit policy block is visible and retryable for same head" {
+async test "maybe_trigger_automerge_for_pending_event waits while audit receipt pending" {
   let pr_number = 100
   let (state, _, project_dir) = blocked_gh_automerge_fixture(
     "audit-policy-block",
@@ -2355,6 +2361,7 @@ async test "automerge audit policy block is visible and retryable for same head"
     bd_capture=server_delivery_test_capture,
     hook_capture=server_delivery_test_hook_capture,
     path_exists=@sys.path_entry_exists,
+    read_file=@sys.read_file,
     hook_path_exists=@sys.path_entry_exists,
     hook_xdg_config_home=None,
     hook_home="",
@@ -2366,18 +2373,15 @@ async test "automerge audit policy block is visible and retryable for same head"
     None => fail("audit-blocked automerge must remain tracked")
   }
   let delivery_log = @sys.read_file(project_dir + "/.choir/logs/delivery.log")
-  assert_true(delivery_log.contains("automerge result pr=100 status=error"))
-  assert_true(delivery_log.contains("Run `/audit` until findings_count == 0"))
-  assert_true(
-    delivery_log.contains("automerge audit policy block pr=100 retryable=true"),
-  )
+  assert_false(delivery_log.contains("automerge attempt pr=100"))
+  assert_false(delivery_log.contains("automerge result pr=100"))
+  assert_false(delivery_log.contains("automerge audit policy block pr=100"))
   let parent_text = parent_messages.join("\n")
-  assert_true(parent_text.contains("[AUTOMERGE BLOCKED] PR #100"))
-  assert_true(parent_text.contains("Run `/audit` until findings_count == 0"))
+  assert_false(parent_text.contains("[AUTOMERGE BLOCKED] PR #100"))
 }
 
 ///|
-async test "automerge findings audit block is not retried for same head" {
+async test "maybe_trigger_automerge_for_pending_event waits while audit findings remain" {
   let pr_number = 101
   let label = "audit-findings-block"
   let (state, _, project_dir) = blocked_gh_automerge_fixture(
@@ -2480,6 +2484,7 @@ async test "automerge findings audit block is not retried for same head" {
     bd_capture=server_delivery_test_capture,
     hook_capture=server_delivery_test_hook_capture,
     path_exists=@sys.path_entry_exists,
+    read_file=@sys.read_file,
     hook_path_exists=@sys.path_entry_exists,
     hook_xdg_config_home=None,
     hook_home="",
@@ -2487,17 +2492,138 @@ async test "automerge findings audit block is not retried for same head" {
   assert_false(merged)
   assert_false(merge_seen)
   match state.poller.get(pr_number) {
-    Some(current) =>
-      assert_eq(current.last_automerge_attempt_sha, "sha-" + label)
+    Some(current) => assert_eq(current.last_automerge_attempt_sha, "")
     None => fail("audit-blocked automerge must remain tracked")
   }
   let delivery_log = @sys.read_file(project_dir + "/.choir/logs/delivery.log")
-  assert_true(delivery_log.contains("automerge result pr=101 status=error"))
-  assert_true(delivery_log.contains("reports 2 finding(s)"))
+  assert_false(delivery_log.contains("automerge attempt pr=101"))
+  assert_false(delivery_log.contains("automerge result pr=101"))
   assert_false(
     delivery_log.contains("automerge audit policy block pr=101 retryable=true"),
   )
   assert_eq(parent_messages.length(), 0)
+}
+
+///|
+async test "automerge sweep resolves default branch before audit gate readiness" {
+  let pr_number = 102
+  let label = "sweep-audit-pending"
+  let (state, _, project_dir) = blocked_gh_automerge_fixture(
+    label,
+    pr_number,
+    review_mode=@types.ReviewMode::Iterative,
+  )
+  assert_true(
+    @sys.write_file_sync(
+      project_dir + "/.choir/state/audit-gate.json",
+      "{\"enabled_at_unix\":1}\n",
+    ),
+  )
+  match state.poller.get(pr_number) {
+    Some(tracked) =>
+      state.poller.restore({
+        ..tracked,
+        parent_branch: "trunk",
+        last_sha: "sha-" + label,
+        unresolved_thread_ids: [],
+        unresolved_thread_ids_fetched: true,
+      })
+    None => fail("expected tracked PR")
+  }
+  let mut merge_seen = false
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "gh" &&
+        cmd.args.length() >= 3 &&
+        cmd.args[0] == "pr" &&
+        cmd.args[1] == "merge" {
+        merge_seen = true
+      }
+      statuses.push(0)
+    }
+    statuses
+  }
+  let mut default_branch_checks = 0
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    let repo_view_json =
+      #|{"owner":{"login":"brickfrog"},"name":"choir"}
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      default_branch_checks = default_branch_checks + 1
+      return (0, "origin/trunk\n")
+    }
+    if (
+        cmd.program == "gh" &&
+        cmd.args == ["repo", "view", "--json", "owner,name"]
+      ) ||
+      (
+        cmd.program == "timeout" &&
+        cmd.args == ["30s", "gh", "repo", "view", "--json", "owner,name"]
+      ) {
+      return (0, repo_view_json)
+    }
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1].has_suffix("/reviews") {
+      return (
+        0, "[{\"state\":\"APPROVED\",\"user\":{\"login\":\"copilot-pull-request-reviewer[bot]\"},\"submitted_at\":\"2026-05-10T00:00:00Z\"}]",
+      )
+    }
+    if cmd.args.contains("graphql") {
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
+    if cmd.program == "git" &&
+      cmd.args == ["rev-parse", "sha-" + label + "^{tree}"] {
+      return (0, "tree-" + label + "\n")
+    }
+    if cmd.program == "cat" {
+      return (1, "")
+    }
+    (0, "")
+  }
+  state.process_poller_tick_with_test(
+    500L,
+    900L,
+    async fn(_pr_number, _skip_issue_comment_fetch) {
+      @async.sleep(0)
+      (
+        true,
+        @poller.ReviewState::Approved,
+        "sha-" + label,
+        @poller.CiRollupStatus::Success,
+        "",
+        true,
+        false,
+        @poller.Mergeable::Unknown,
+        @poller.MergeStateStatus::Unknown,
+        None,
+      )
+    },
+    None,
+    "",
+    runner~,
+    capture~,
+    automerge_capture=capture,
+    audit_receipt_exists=@sys.path_entry_exists,
+    audit_receipt_read=@sys.read_file,
+  )
+  assert_true(default_branch_checks > 0)
+  assert_false(merge_seen)
+  match state.poller.get(pr_number) {
+    Some(current) => assert_eq(current.last_automerge_attempt_sha, "")
+    None => fail("audit-pending sweep must remain tracked")
+  }
+  let delivery_log = @sys.read_file(project_dir + "/.choir/logs/delivery.log")
+  assert_false(
+    delivery_log.contains("automerge sweep attempt pr=102 sha=sha-" + label),
+  )
+  assert_false(delivery_log.contains("automerge attempt pr=102"))
 }
 
 ///|
@@ -5793,6 +5919,7 @@ async test "quiet poller tick never-fetched retry clear re-enters automerge pipe
     runner~,
     capture~,
     automerge_capture=capture,
+    audit_receipt_read=@sys.read_file,
   )
   assert_true(thread_fetches >= 3)
   assert_true(review_gate_calls > 0)

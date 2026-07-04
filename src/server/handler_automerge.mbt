@@ -317,6 +317,7 @@ pub async fn maybe_trigger_automerge_for_pending_event(
   review_mode? : @types.ReviewMode? = None,
   hook_capture~ : async (String, String, String?) -> (Int, String),
   path_exists~ : (String) -> Bool,
+  read_file~ : (String) -> String,
   hook_path_exists~ : (String) -> Bool,
   hook_xdg_config_home~ : String?,
   hook_home~ : String,
@@ -399,6 +400,16 @@ pub async fn maybe_trigger_automerge_for_pending_event(
     state.config.project_dir,
     capture,
   )
+  let audit_receipt_state = @tools.audit_receipt_advisory_state_for_tracked_pr(
+    state.config.project_dir,
+    tracked.parent_branch,
+    default_branch,
+    tracked.last_sha,
+    tracked.first_seen,
+    capture,
+    read_file,
+    path_exists,
+  )
   let decision = @poller.merge_policy_decision_for_tracked_pr(
     tracked,
     unresolved_threads,
@@ -408,6 +419,7 @@ pub async fn maybe_trigger_automerge_for_pending_event(
     reviewer=state.config.pr_policy.reviewer,
     skip_copilot_on_feature_branch=state.config.pr_policy.skip_copilot_on_feature_branch,
     default_branch~,
+    audit_receipt_state~,
   )
   guard decision is @policy.MergeDecision::MergeNow(_) else { return false }
   let caller_id = match

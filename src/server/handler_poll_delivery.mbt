@@ -2544,6 +2544,7 @@ async fn deliver_pending_poll_events(
               review_mode=Some(review_mode),
               hook_capture~,
               path_exists~,
+              read_file=audit_receipt_read,
               hook_path_exists~,
               hook_xdg_config_home~,
               hook_home~,
@@ -2730,6 +2731,7 @@ async fn deliver_pending_poll_events(
     bd_capture~,
     hook_capture~,
     path_exists~,
+    read_file=state.read_file,
     hook_path_exists~,
     hook_xdg_config_home~,
     hook_home~,
@@ -2746,6 +2748,7 @@ async fn ServerState::sweep_tracked_prs_for_automerge(
   bd_capture~ : async (@workspace.Command) -> (Int, String),
   hook_capture~ : async (String, String, String?) -> (Int, String),
   path_exists~ : (String) -> Bool,
+  read_file? : (String) -> String = self.read_file,
   hook_path_exists~ : (String) -> Bool,
   hook_xdg_config_home~ : String?,
   hook_home~ : String,
@@ -2754,6 +2757,11 @@ async fn ServerState::sweep_tracked_prs_for_automerge(
   let tracked_prs : Array[@poller.TrackedPR] = []
   for tracked in self.poller.tracked.values() {
     tracked_prs.push(tracked)
+  }
+  let default_branch = if tracked_prs.length() > 0 {
+    @tools.detect_default_branch_with_capture(self.config.project_dir, capture)
+  } else {
+    ""
   }
   for tracked in tracked_prs {
     let current = match self.poller.get(tracked.pr_number) {
@@ -2771,13 +2779,24 @@ async fn ServerState::sweep_tracked_prs_for_automerge(
       self.config.pr_policy.reviewer,
       self.config.pr_policy.skip_copilot_on_feature_branch,
       current.parent_branch,
-      "",
+      default_branch,
+    )
+    let audit_receipt_state = @tools.audit_receipt_advisory_state_for_tracked_pr(
+      self.config.project_dir,
+      current.parent_branch,
+      default_branch,
+      current.last_sha,
+      current.first_seen,
+      capture,
+      read_file,
+      path_exists,
     )
     let gate_ready = @poller.tl_tracked_pr_merge_gate_snapshot_ready(
       current,
       unresolved_threads,
       review_mode=current.review_mode,
       review_required~,
+      audit_receipt_state~,
     )
     if !pr_needs_automerge_sweep_attempt(current, gate_ready, automerge_enabled) {
       continue
@@ -2803,6 +2822,7 @@ async fn ServerState::sweep_tracked_prs_for_automerge(
         review_mode=Some(current.review_mode),
         hook_capture~,
         path_exists~,
+        read_file~,
         hook_path_exists~,
         hook_xdg_config_home~,
         hook_home~,
