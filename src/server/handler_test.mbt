@@ -489,6 +489,101 @@ async test "process_poller_tick_with skips beads cache refresh when no beads dir
 }
 
 ///|
+async test "process_poller_tick_with throttles repeated failed beads refresh attempts" {
+  let project_dir = "/tmp/choir-poller-beads-cache-failed-attempt-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  ignore(@sys.create_dir_all(project_dir + "/.choir"))
+  let state = ServerState::new(
+    { ..@types.Config::default(), project_dir, terminal_session: "s" },
+    make_hermetic_recovery_provider(),
+  ).with_read_file(fn(_path) { "" })
+  let mut bd_calls = 0
+  let poll = async fn(_pr_number, _skip_issue_comment_fetch) {
+    @async.sleep(0)
+    (
+      false,
+      @poller.ReviewState::None_,
+      "",
+      @poller.CiRollupStatus::Unknown,
+      "",
+      true,
+      false,
+      @poller.Mergeable::Unknown,
+      @poller.MergeStateStatus::Unknown,
+      None,
+    )
+  }
+  let capture = async fn(_cmd) {
+    @async.sleep(0)
+    (1, "")
+  }
+  let bd_capture = async fn(_cmd) {
+    @async.sleep(0)
+    bd_calls = bd_calls + 1
+    (1, "bd unavailable")
+  }
+  state.process_poller_tick_with(
+    1000L,
+    900L,
+    poll,
+    None,
+    "",
+    runner=server_delivery_test_runner,
+    capture~,
+    git_capture=server_delivery_test_git_capture,
+    bd_capture~,
+    automerge_capture=server_delivery_test_capture,
+    git_pull_capture=server_delivery_test_capture,
+    hook_capture=server_delivery_test_hook_capture,
+    path_exists=fn(path) { path == project_dir + "/.beads" },
+    hook_path_exists=server_delivery_test_path_entry_exists,
+    audit_receipt_exists=server_delivery_test_path_entry_exists,
+    audit_receipt_read=server_delivery_test_read_file,
+    git_state_capture=async fn(_project_dir, _capture) {
+      @async.sleep(0)
+      None
+    },
+    git_pull_runner=async fn(_project_dir, _capture) {
+      @async.sleep(0)
+      false
+    },
+    sleep_fn=server_delivery_test_sleep,
+  )
+  state.process_poller_tick_with(
+    1010L,
+    900L,
+    poll,
+    None,
+    "",
+    runner=server_delivery_test_runner,
+    capture~,
+    git_capture=server_delivery_test_git_capture,
+    bd_capture~,
+    automerge_capture=server_delivery_test_capture,
+    git_pull_capture=server_delivery_test_capture,
+    hook_capture=server_delivery_test_hook_capture,
+    path_exists=fn(path) { path == project_dir + "/.beads" },
+    hook_path_exists=server_delivery_test_path_entry_exists,
+    audit_receipt_exists=server_delivery_test_path_entry_exists,
+    audit_receipt_read=server_delivery_test_read_file,
+    git_state_capture=async fn(_project_dir, _capture) {
+      @async.sleep(0)
+      None
+    },
+    git_pull_runner=async fn(_project_dir, _capture) {
+      @async.sleep(0)
+      false
+    },
+    sleep_fn=server_delivery_test_sleep,
+  )
+  ignore(@sys.rm_rf(project_dir))
+  assert_eq(bd_calls, 1)
+}
+
+///|
 test "merge_execution_mode_for_request distinguishes manual and automerge" {
   let manual_req : @types.Request = {
     req_method: "tools/call",

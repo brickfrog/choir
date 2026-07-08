@@ -523,6 +523,7 @@ test "statusline_beads_summary renders nonzero counts only" {
       project_dir,
       { ready: 32, in_progress: 5, blocked: 0, deferred: 2 },
       @poller.now_sec(),
+      write_file=@sys.write_file_atomic,
     ),
   )
   let summary = statusline_beads_summary(project_dir)
@@ -556,6 +557,28 @@ test "statusline_beads_summary returns empty when cache is stale" {
       project_dir,
       { ready: 32, in_progress: 5, blocked: 1, deferred: 2 },
       @poller.now_sec() - 601L,
+      write_file=@sys.write_file_atomic,
+    ),
+  )
+  let summary = statusline_beads_summary(project_dir)
+  ignore(@sys.rm_rf(project_dir))
+  assert_eq(summary, "")
+}
+
+///|
+test "statusline_beads_summary returns empty when cache is future dated" {
+  let project_dir = "/tmp/choir-statusline-beads-future-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state"))
+  ignore(
+    @poller.write_beads_status_cache(
+      project_dir,
+      { ready: 32, in_progress: 5, blocked: 1, deferred: 2 },
+      @poller.now_sec() + 60L,
+      write_file=@sys.write_file_atomic,
     ),
   )
   let summary = statusline_beads_summary(project_dir)
@@ -603,9 +626,13 @@ fn statusline_beads_summary(
   project_dir : String,
   now_sec? : Int64 = @poller.now_sec(),
 ) -> String {
-  let (counts, taken_at) = match @poller.read_beads_status_cache(project_dir) {
+  let (counts, taken_at) = match
+    @poller.read_beads_status_cache(project_dir, read_file=@sys.read_file) {
     Some(value) => value
     None => return ""
+  }
+  if taken_at > now_sec {
+    return ""
   }
   if now_sec - taken_at > 600L {
     return ""

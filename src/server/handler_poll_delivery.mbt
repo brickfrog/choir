@@ -3907,14 +3907,22 @@ async fn ServerState::refresh_beads_status_cache_if_due(
   path_exists : (String) -> Bool,
 ) -> Unit {
   let project_dir = self.config.project_dir
+  if self.last_beads_status_cache_attempt_unix_sec > 0L &&
+    now - self.last_beads_status_cache_attempt_unix_sec <
+    beads_status_cache_min_refresh_sec {
+    return
+  }
   match @poller.read_beads_status_cache(project_dir, read_file=self.read_file) {
-    Some((_, taken_at)) if now - taken_at < beads_status_cache_min_refresh_sec =>
-      return
+    Some((_, taken_at)) =>
+      if taken_at <= now && now - taken_at < beads_status_cache_min_refresh_sec {
+        return
+      }
     _ => ()
   }
   if !path_exists(project_dir + "/.beads") {
     return
   }
+  self.last_beads_status_cache_attempt_unix_sec = now
   let ready_json = match
     capture_beads_status_json(
       "bd ready --json",

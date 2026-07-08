@@ -84,7 +84,7 @@ pub fn write_beads_status_cache(
   project_dir : String,
   counts : BeadsStatusCounts,
   taken_at_unix_sec : Int64,
-  write_file? : (String, String) -> Bool = @sys.write_file_atomic,
+  write_file~ : (String, String) -> Bool,
 ) -> Bool {
   write_file(
     beads_status_cache_path(project_dir),
@@ -96,7 +96,7 @@ pub fn write_beads_status_cache(
 ///|
 pub fn read_beads_status_cache(
   project_dir : String,
-  read_file? : (String) -> String = @sys.read_file,
+  read_file~ : (String) -> String,
 ) -> (BeadsStatusCounts, Int64)? {
   let content = read_file(beads_status_cache_path(project_dir))
     .trim()
