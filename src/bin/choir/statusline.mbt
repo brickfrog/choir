@@ -41,6 +41,12 @@ fn statusline_json_object(
 }
 
 ///|
+fn statusline_model_segment(root : Map[String, Json]) -> String {
+  let model = statusline_json_object(root, "model")
+  statusline_json_string(model, "display_name").trim().to_owned()
+}
+
+///|
 priv struct StatuslinePrSummary {
   body : String
   has_automerge : Bool
@@ -505,6 +511,126 @@ test "statusline_pr_summary treats reviewer none PR as merge-ready without revie
 }
 
 ///|
+test "statusline_beads_summary renders nonzero counts only" {
+  let project_dir = "/tmp/choir-statusline-beads-summary-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state"))
+  ignore(
+    @poller.write_beads_status_cache(
+      project_dir,
+      { ready: 32, in_progress: 5, blocked: 0, deferred: 2 },
+      @poller.now_sec(),
+    ),
+  )
+  let summary = statusline_beads_summary(project_dir)
+  ignore(@sys.rm_rf(project_dir))
+  assert_eq(summary, "32 ready · 5 wip · 2 deferred")
+}
+
+///|
+test "statusline_beads_summary returns empty when cache is missing" {
+  let project_dir = "/tmp/choir-statusline-beads-missing-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state"))
+  let summary = statusline_beads_summary(project_dir)
+  ignore(@sys.rm_rf(project_dir))
+  assert_eq(summary, "")
+}
+
+///|
+test "statusline_beads_summary returns empty when cache is stale" {
+  let project_dir = "/tmp/choir-statusline-beads-stale-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state"))
+  ignore(
+    @poller.write_beads_status_cache(
+      project_dir,
+      { ready: 32, in_progress: 5, blocked: 1, deferred: 2 },
+      @poller.now_sec() - 601L,
+    ),
+  )
+  let summary = statusline_beads_summary(project_dir)
+  ignore(@sys.rm_rf(project_dir))
+  assert_eq(summary, "")
+}
+
+///|
+test "statusline render includes model display name as first segment" {
+  let project_dir = "/tmp/choir-statusline-model-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.git"))
+  ignore(
+    @sys.write_file_sync(project_dir + "/.git/HEAD", "ref: refs/heads/main\n"),
+  )
+  let input = "{\"cwd\":\"" +
+    project_dir +
+    "\",\"model\":{\"display_name\":\"Opus\"},\"rate_limits\":{\"five_hour\":{\"used_percentage\":12},\"seven_day\":{\"used_percentage\":3}}}"
+  let rendered = statusline_render(input)
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(
+    rendered.has_prefix(
+      "\u001b[1mOpus\u001b[0m\u001b[2m │ \u001b[0m\u001b[36mmain\u001b[0m",
+    ),
+  )
+}
+
+///|
+fn statusline_join_beads_parts(parts : Array[String]) -> String {
+  let out = StringBuilder::new()
+  for i = 0; i < parts.length(); i = i + 1 {
+    if i > 0 {
+      out.write_string(" · ")
+    }
+    out.write_string(parts[i])
+  }
+  out.to_string()
+}
+
+///|
+fn statusline_beads_summary(
+  project_dir : String,
+  now_sec? : Int64 = @poller.now_sec(),
+) -> String {
+  let (counts, taken_at) = match @poller.read_beads_status_cache(project_dir) {
+    Some(value) => value
+    None => return ""
+  }
+  if now_sec - taken_at > 600L {
+    return ""
+  }
+  let parts : Array[String] = []
+  if counts.ready > 0 {
+    parts.push(counts.ready.to_string() + " ready")
+  }
+  if counts.in_progress > 0 {
+    parts.push(counts.in_progress.to_string() + " wip")
+  }
+  if counts.blocked > 0 {
+    parts.push(counts.blocked.to_string() + " blocked")
+  }
+  if counts.deferred > 0 {
+    parts.push(counts.deferred.to_string() + " deferred")
+  }
+  if parts.length() == 0 {
+    ""
+  } else {
+    statusline_join_beads_parts(parts)
+  }
+}
+
+///|
 fn statusline_global_config(project_dir : String) -> @types.Config {
   let config_content = @sys.read_file(project_dir + "/.choir/config.toml")
   let local_content = @sys.read_file(project_dir + "/.choir/config.local.toml")
@@ -632,14 +758,13 @@ fn statusline_pr_summary(project_dir : String) -> StatuslinePrSummary {
 }
 
 ///|
-fn statusline_run() -> Unit {
-  let input = statusline_read_all_stdin()
+fn statusline_render(input : String) -> String {
   let json = @json.parse(input) catch {
-    _ => @json.parse("{}") catch { _ => return }
+    _ => @json.parse("{}") catch { _ => return "" }
   }
   let root = match json {
     Object(m) => m
-    _ => return
+    _ => return ""
   }
   let rate_obj = statusline_json_object(root, "rate_limits")
   let week_obj = statusline_json_object(rate_obj, "seven_day")
@@ -655,6 +780,14 @@ fn statusline_run() -> Unit {
   let out = StringBuilder::new()
 
   let sep = "\u001b[2m │ \u001b[0m"
+
+  let model = statusline_model_segment(root)
+  if model != "" {
+    out.write_string("\u001b[1m")
+    out.write_string(model)
+    out.write_string("\u001b[0m")
+    out.write_string(sep)
+  }
 
   // Branch segment: feature/* gets a distinguishing prefix; main/master plain.
   let branch = statusline_git_branch(project_dir)
@@ -676,8 +809,7 @@ fn statusline_run() -> Unit {
   out.write_string("  ")
   statusline_render_bar(out, week_pct, "7d")
   if !has_choir {
-    @sys.write_stdout(out.to_string())
-    return
+    return out.to_string()
   }
 
   // Leaf state glyphs — show only nonzero counts.
@@ -748,5 +880,18 @@ fn statusline_run() -> Unit {
   if pr_summary.has_automerge {
     out.write_string(" \u001b[36mam\u001b[0m")
   }
-  @sys.write_stdout(out.to_string())
+  let beads_summary = statusline_beads_summary(project_dir)
+  if beads_summary == "" {
+    out.to_string()
+  } else {
+    out.to_string() + "\n" + beads_summary
+  }
+}
+
+///|
+fn statusline_run() -> Unit {
+  let rendered = statusline_render(statusline_read_all_stdin())
+  if rendered != "" {
+    @sys.write_stdout(rendered)
+  }
 }
