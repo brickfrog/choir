@@ -335,6 +335,7 @@ pub struct ServerState {
   mut last_config_divergence_signature : String?
   list_panes_cache : Map[String, @tools.CachedListPanesSnapshot]
   recent_poller_event_emissions : Map[String, Map[String, RecentEmission]]
+  mut last_beads_status_cache_attempt_unix_sec : Int64
   goal_judge : GoalJudgeState
   pane_watcher : @runtime.PaneWatcher
   list_panes_snapshot_capture : async (String) -> @tools.ZellijListPanesSnapshot
@@ -461,6 +462,7 @@ pub fn ServerState::new(
     last_config_divergence_signature: None,
     list_panes_cache: {},
     recent_poller_event_emissions: {},
+    last_beads_status_cache_attempt_unix_sec: 0L,
     goal_judge: GoalJudgeState::new(),
     pane_watcher: @runtime.PaneWatcher::new(),
     list_panes_snapshot_capture: default_list_panes_snapshot_capture,

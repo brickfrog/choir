@@ -3856,6 +3856,7 @@ pub async fn ServerState::process_poller_tick_with(
     git_pull_runner~,
     sleep_fn~,
   )
+  self.refresh_beads_status_cache_if_due(now, bd_capture, path_exists)
   tick_summary.changes = pending_events.length()
   emit_tick_summary_line(
     self,
@@ -3867,6 +3868,155 @@ pub async fn ServerState::process_poller_tick_with(
   self.sweep_spawn_registration_timeouts(now, runner, kill_pgid~)
   self.sweep_outbox(now)
   ignore(self.poller.write_state_file(self.config.project_dir))
+}
+
+///|
+let beads_status_cache_min_refresh_sec : Int64 = 30L
+
+///|
+fn beads_status_command(
+  project_dir : String,
+  args : Array[String],
+) -> @workspace.Command {
+  { program: "bd", args, workdir: Some(project_dir) }
+}
+
+///|
+async fn capture_beads_status_json(
+  label : String,
+  cmd : @workspace.Command,
+  bd_capture : async (@workspace.Command) -> (Int, String),
+) -> Result[String, @types.ChoirError] {
+  let (code, output) = bd_capture(cmd)
+  if code != 0 {
+    Err(
+      @types.ChoirError::workspace_error(
+        label + " failed with exit code " + code.to_string(),
+      ),
+    )
+  } else {
+    Ok(output)
+  }
+}
+
+///|
+async fn ServerState::refresh_beads_status_cache_if_due(
+  self : ServerState,
+  now : Int64,
+  bd_capture : async (@workspace.Command) -> (Int, String),
+  path_exists : (String) -> Bool,
+) -> Unit {
+  let project_dir = self.config.project_dir
+  if self.last_beads_status_cache_attempt_unix_sec > 0L &&
+    now - self.last_beads_status_cache_attempt_unix_sec <
+    beads_status_cache_min_refresh_sec {
+    return
+  }
+  match @poller.read_beads_status_cache(project_dir, read_file=self.read_file) {
+    Some((_, taken_at)) =>
+      if taken_at <= now && now - taken_at < beads_status_cache_min_refresh_sec {
+        return
+      }
+    _ => ()
+  }
+  if !path_exists(project_dir + "/.beads") {
+    return
+  }
+  self.last_beads_status_cache_attempt_unix_sec = now
+  let ready_json = match
+    capture_beads_status_json(
+      "bd ready --json",
+      beads_status_command(project_dir, ["ready", "--json"]),
+      bd_capture,
+    ) {
+    Ok(output) => output
+    Err(e) => {
+      @moontrace.warn("beads status cache refresh command failed", fields=[
+        @moontrace.field("event", "beads_status_cache_refresh_failed"),
+        @moontrace.field("command", "bd ready --json"),
+        @moontrace.field("error", e.message()),
+      ])
+      return
+    }
+  }
+  let in_progress_json = match
+    capture_beads_status_json(
+      "bd list --json --status in_progress",
+      beads_status_command(project_dir, [
+        "list", "--json", "--status", "in_progress",
+      ]),
+      bd_capture,
+    ) {
+    Ok(output) => output
+    Err(e) => {
+      @moontrace.warn("beads status cache refresh command failed", fields=[
+        @moontrace.field("event", "beads_status_cache_refresh_failed"),
+        @moontrace.field("command", "bd list --json --status in_progress"),
+        @moontrace.field("error", e.message()),
+      ])
+      return
+    }
+  }
+  let blocked_json = match
+    capture_beads_status_json(
+      "bd list --json --status blocked",
+      beads_status_command(project_dir, [
+        "list", "--json", "--status", "blocked",
+      ]),
+      bd_capture,
+    ) {
+    Ok(output) => output
+    Err(e) => {
+      @moontrace.warn("beads status cache refresh command failed", fields=[
+        @moontrace.field("event", "beads_status_cache_refresh_failed"),
+        @moontrace.field("command", "bd list --json --status blocked"),
+        @moontrace.field("error", e.message()),
+      ])
+      return
+    }
+  }
+  let deferred_json = match
+    capture_beads_status_json(
+      "bd list --json --status deferred",
+      beads_status_command(project_dir, [
+        "list", "--json", "--status", "deferred",
+      ]),
+      bd_capture,
+    ) {
+    Ok(output) => output
+    Err(e) => {
+      @moontrace.warn("beads status cache refresh command failed", fields=[
+        @moontrace.field("event", "beads_status_cache_refresh_failed"),
+        @moontrace.field("command", "bd list --json --status deferred"),
+        @moontrace.field("error", e.message()),
+      ])
+      return
+    }
+  }
+  let counts = match
+    @poller.parse_beads_status_counts_from_bd_json(
+      ready_json, in_progress_json, blocked_json, deferred_json,
+    ) {
+    Ok(counts) => counts
+    Err(e) => {
+      @moontrace.warn("beads status cache refresh parse failed", fields=[
+        @moontrace.field("event", "beads_status_cache_refresh_parse_failed"),
+        @moontrace.field("error", e.message()),
+      ])
+      return
+    }
+  }
+  if !@poller.write_beads_status_cache(
+      project_dir,
+      counts,
+      now,
+      write_file=self.write_file_atomic,
+    ) {
+    @moontrace.warn("beads status cache write failed", fields=[
+      @moontrace.field("event", "beads_status_cache_write_failed"),
+      @moontrace.field("path", @poller.beads_status_cache_path(project_dir)),
+    ])
+  }
 }
 
 ///|
@@ -3943,6 +4093,9 @@ pub async fn ServerState::process_poller_tick(
     audit_receipt_exists~,
     audit_receipt_read~,
     sleep_fn~,
+  )
+  self.refresh_beads_status_cache_if_due(
+    now, @exec.capture_command_stdout_with_stderr_on_error, @exec.path_entry_exists,
   )
   tick_summary.changes = pending_events.length()
   emit_tick_summary_line(
