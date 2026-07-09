@@ -472,7 +472,10 @@ async test "detect_default_branch_result_with_capture returns branch on success"
   let branch = detect_default_branch_result_with_capture(
     "/repo", mock_detect_origin_master,
   )
-  assert_eq(branch, Ok("master"))
+  match branch {
+    Ok(value) => assert_eq(value, "master")
+    Err(_) => fail("expected default branch detection to succeed")
+  }
 }
 
 ///|
@@ -480,7 +483,10 @@ async test "detect_default_branch_result_with_capture exposes failure" {
   let branch = detect_default_branch_result_with_capture(
     "/repo", mock_detect_failure,
   )
-  assert_eq(branch, Err(()))
+  match branch {
+    Ok(value) => fail("expected default branch detection to fail: " + value)
+    Err(_) => ()
+  }
 }
 
 ///|

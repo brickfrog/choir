@@ -2932,6 +2932,128 @@ async test "automerge sweep resolves default branch before audit gate readiness"
 }
 
 ///|
+async test "automerge sweep blocks when default branch detection fails" {
+  let pr_number = 103
+  let label = "sweep-audit-default-branch-failure"
+  let (state, _, project_dir) = blocked_gh_automerge_fixture(
+    label,
+    pr_number,
+    review_mode=@types.ReviewMode::Iterative,
+  )
+  assert_true(
+    @sys.write_file_sync(
+      project_dir + "/.choir/state/audit-gate.json",
+      "{\"enabled_at_unix\":1}\n",
+    ),
+  )
+  match state.poller.get(pr_number) {
+    Some(tracked) =>
+      state.poller.restore({
+        ..tracked,
+        parent_branch: "trunk",
+        last_sha: "sha-" + label,
+        unresolved_thread_ids: [],
+        unresolved_thread_ids_fetched: true,
+      })
+    None => fail("expected tracked PR")
+  }
+  let mut merge_seen = false
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "gh" &&
+        cmd.args.length() >= 3 &&
+        cmd.args[0] == "pr" &&
+        cmd.args[1] == "merge" {
+        merge_seen = true
+      }
+      statuses.push(0)
+    }
+    statuses
+  }
+  let mut default_branch_checks = 0
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    let repo_view_json =
+      #|{"owner":{"login":"brickfrog"},"name":"choir"}
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      default_branch_checks = default_branch_checks + 1
+      return (1, "error: git unavailable\n")
+    }
+    if (
+        cmd.program == "gh" &&
+        cmd.args == ["repo", "view", "--json", "owner,name"]
+      ) ||
+      (
+        cmd.program == "timeout" &&
+        cmd.args == ["30s", "gh", "repo", "view", "--json", "owner,name"]
+      ) {
+      return (0, repo_view_json)
+    }
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1].has_suffix("/reviews") {
+      return (
+        0, "[{\"state\":\"APPROVED\",\"user\":{\"login\":\"copilot-pull-request-reviewer[bot]\"},\"submitted_at\":\"2026-05-10T00:00:00Z\"}]",
+      )
+    }
+    if cmd.args.contains("graphql") {
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
+    if cmd.program == "git" &&
+      cmd.args == ["rev-parse", "sha-" + label + "^{tree}"] {
+      return (0, "tree-" + label + "\n")
+    }
+    if cmd.program == "cat" {
+      return (1, "")
+    }
+    (0, "")
+  }
+  state.process_poller_tick_with_test(
+    500L,
+    900L,
+    async fn(_pr_number, _skip_issue_comment_fetch) {
+      @async.sleep(0)
+      (
+        true,
+        @poller.ReviewState::Approved,
+        "sha-" + label,
+        @poller.CiRollupStatus::Success,
+        "",
+        true,
+        false,
+        @poller.Mergeable::Unknown,
+        @poller.MergeStateStatus::Unknown,
+        None,
+      )
+    },
+    None,
+    "",
+    runner~,
+    capture~,
+    automerge_capture=capture,
+    audit_receipt_exists=@sys.path_entry_exists,
+    audit_receipt_read=@sys.read_file,
+  )
+  assert_true(default_branch_checks > 0)
+  assert_false(merge_seen)
+  match state.poller.get(pr_number) {
+    Some(current) => assert_eq(current.last_automerge_attempt_sha, "")
+    None => fail("default-branch failure must keep the PR tracked")
+  }
+  let delivery_log = @sys.read_file(project_dir + "/.choir/logs/delivery.log")
+  assert_false(
+    delivery_log.contains("automerge sweep attempt pr=103 sha=sha-" + label),
+  )
+  assert_false(delivery_log.contains("automerge attempt pr=103"))
+}
+
+///|
 async test "automerge sweep runs after queued parent rows are delivered" {
   let pr_number = 98
   let (state, _, _) = blocked_gh_automerge_fixture(
