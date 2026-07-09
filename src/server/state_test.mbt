@@ -1,4 +1,19 @@
 ///|
+test "ServerState::new defaults cached default branch to main" {
+  let project_dir = "/tmp/choir-cached-default-branch-init-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
+  let state = ServerState::new(
+    { ..@types.Config::default(), project_dir, },
+    make_hermetic_recovery_provider(),
+  )
+  assert_eq(state.cached_default_branch, "main")
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 test "register_agent_pid + forget_agent_pid" {
   let project_dir = "/tmp/choir-agent-pid-state-" +
     @sys.get_pid().to_string() +

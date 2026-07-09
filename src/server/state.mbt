@@ -306,6 +306,8 @@ pub struct ServerState {
   poller : @poller.PollerState
   kv_store : @kv.KvStore
   run_id : String
+  // Synchronous watchdog gate cache; populated by the poller tick, main before its first tick.
+  mut cached_default_branch : String
   pending_disconnects : Map[String, Int64]
   agent_pids : Map[String, Int]
   disconnect_contexts : Map[String, DisconnectContext]
@@ -446,6 +448,7 @@ pub fn ServerState::new(
     poller,
     kv_store: @kv.KvStore::new(config.project_dir),
     run_id,
+    cached_default_branch: "main",
     pending_disconnects: {},
     agent_pids: {},
     disconnect_contexts: {},
