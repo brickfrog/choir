@@ -694,6 +694,7 @@ async fn merge_pr_audit_receipt_validation_for_head(
     None => return MergeAuditReceiptTreeUnavailable(file_pr_short_sha(head_sha))
   }
   let receipt_path = file_pr_audit_receipt_path_for_head(tree_sha)
+  let receipt_path = project_relative_path(project_dir, receipt_path)
   let receipt_body = if path_exists(receipt_path) {
     Some(read_file(receipt_path))
   } else {
@@ -781,9 +782,9 @@ async test "merge_pr audit receipt validation parses an injected receipt body" {
     MergeAuditReceiptValid => ()
     _ => fail("expected injected valid receipt")
   }
-  assert_eq(receipt_paths, [
-    file_pr_audit_receipt_path_for_head(tree),
-    file_pr_audit_receipt_path_for_head(tree),
+  @debug.assert_eq(receipt_paths, [
+    project_relative_path("/repo", file_pr_audit_receipt_path_for_head(tree)),
+    project_relative_path("/repo", file_pr_audit_receipt_path_for_head(tree)),
   ])
 }
 
@@ -819,7 +820,54 @@ async test "merge_pr audit receipt validation only captures git tree resolution"
     MergeAuditReceiptValid => ()
     _ => fail("expected valid receipt")
   }
-  assert_eq(programs, ["git"])
+  @debug.assert_eq(programs, ["git"])
+}
+
+///|
+async test "merge_pr audit receipt validation reads receipt under project directory" {
+  let project_dir = "/tmp/choir-merge-pr-receipt-project-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let tree = "9999999999999999999999999999999999999999"
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/audit-receipts"))
+  let receipt_path = project_relative_path(
+    project_dir,
+    file_pr_audit_receipt_path_for_head(tree),
+  )
+  let receipt : @types.AuditReceipt = {
+    sha: head,
+    tree_sha: tree,
+    branch: "main",
+    audited_at: 1L,
+    agent_id: "main.tl",
+    findings_count: 0,
+    findings: Some(""),
+  }
+  assert_true(
+    @sys.write_file_sync(receipt_path, receipt.to_json().stringify() + "\n"),
+  )
+  let got = merge_pr_audit_receipt_validation_for_head(
+    "main",
+    "main",
+    project_dir,
+    head,
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "git" {
+        (0, tree + "\n")
+      } else {
+        (1, "")
+      }
+    },
+    @sys.read_file,
+    @sys.path_entry_exists,
+  )
+  match got {
+    MergeAuditReceiptValid => ()
+    _ => fail("expected receipt under project directory to validate")
+  }
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|

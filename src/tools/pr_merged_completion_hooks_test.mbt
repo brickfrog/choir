@@ -17,6 +17,7 @@ fn hooks_test_gate_path_exists(path : String) -> Bool {
 ///|
 fn hooks_test_receipt_path_exists(path : String) -> Bool {
   path.has_suffix("/.choir/state/audit-gate.json") ||
+  path.contains("/.choir/state/audit-receipts/") ||
   path.has_prefix(".choir/state/audit-receipts/")
 }
 

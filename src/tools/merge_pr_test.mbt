@@ -866,12 +866,14 @@ async test "interpret_merge_pr audit receipt remains valid when commit changes b
     fn(_, _) { true },
     fn(path) {
       path.has_suffix("/.choir/state/audit-gate.json") ||
+      path.contains("/.choir/state/audit-receipts/") ||
       path.has_prefix(".choir/state/audit-receipts/")
     },
     read_file=fn(path) {
       if path.has_suffix("/.choir/state/audit-gate.json") {
         "{\"enabled_at_unix\":100}\n"
-      } else if path.has_prefix(".choir/state/audit-receipts/") {
+      } else if path.contains("/.choir/state/audit-receipts/") ||
+        path.has_prefix(".choir/state/audit-receipts/") {
         merge_pr_test_audit_receipt_for_tree(audited_commit, tree, 0)
       } else {
         ""
@@ -1228,14 +1230,13 @@ async test "interpret_merge_pr main audit gate merges only matching audited head
     fn(_, _) { true },
     fn(path) {
       path.has_suffix("/.choir/state/audit-gate.json") ||
+      path.contains("/.choir/state/audit-receipts/") ||
       path.has_prefix(".choir/state/audit-receipts/")
     },
     read_file=fn(path) {
       if path.has_suffix("/.choir/state/audit-gate.json") {
         "{\"enabled_at_unix\":100}\n"
-      } else if path.has_suffix(
-          "/.choir/state/audit-receipts/abcdef123456.json",
-        ) ||
+      } else if path.contains("/.choir/state/audit-receipts/") ||
         path.has_prefix(".choir/state/audit-receipts/") {
         merge_pr_test_audit_receipt(head)
       } else {
