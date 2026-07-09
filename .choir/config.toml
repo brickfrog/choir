@@ -9,9 +9,11 @@ verify_cmd = "moon check --target native && moon test --target native"
 # trial. gpt-5.6-luna was parked on 2026-07-09 blaming it for codex leaves'
 # `choir mcp-stdio` subprocess launching with an empty CHOIR_* environment;
 # that was disproven the same day — gpt-5.5 leaves had identically scrubbed
-# env. Real cause: codex's shell_environment_policy never forwards the shell
-# environment into MCP stdio subprocesses, and choir's codex MCP entry set no
-# per-server env forwarding (choir-ghl9, fixed via
+# env. Real cause: codex's MCP stdio launcher builds server environments from
+# scratch (env_clear() + DEFAULT_ENV_VARS whitelist in rmcp-client's
+# create_env_for_mcp_server; shell_environment_policy only affects shell/exec
+# tools, not MCP), and choir's codex MCP entry set no per-server env
+# forwarding (choir-ghl9, fixed via
 # `mcp_servers.choir.env_vars` in codex_mcp_override_args). Model was never at
 # fault; re-tiering dev beyond gpt-5.5 is the operator's call once the fix
 # proves out. Effort is the real quota lever — see choir-mn0l.

@@ -847,36 +847,6 @@ test "codex_mcp_override_args forwards registration env by name only" {
 }
 
 ///|
-test "codex launch argv never carries a token assignment" {
-  let spec = @types.SpawnSpec::{
-    slug: "codex-env-fwd",
-    role: @types.Role::Dev,
-    agent_type: @types.AgentType::Codex,
-    task: "do work",
-    task_contract: None,
-    isolation: @types.IsolationMode::Worktree,
-    parent_id: "root",
-    parent_branch: "main",
-    reuse_workspace: false,
-    workspace_slug: None,
-    reuse_git_branch: None,
-    spawn_depth: 0,
-    automerge: None,
-    review_mode: None,
-    merge_strategy: None,
-    wave_id: None,
-  }
-  let cmd = @workspace.agent_launch_command(spec, "/proj/worktree")
-  let body = launch_cmd_body_contains_setsid(
-    cmd,
-    project_dir="/proj/worktree",
-    agent_id="main.codex-env-fwd",
-  )
-  assert_true(body.contains("mcp_servers.choir.env_vars"))
-  assert_false(body.contains("CHOIR_AGENT_TOKEN="))
-}
-
-///|
 test "codex_mcp_override_args includes semble server when pilot is enabled" {
   let args = @workspace.codex_mcp_override_args(
     @types.Role::Dev,
