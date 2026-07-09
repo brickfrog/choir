@@ -826,6 +826,27 @@ test "codex_mcp_override_args is argv-shaped Toml without sh" {
 }
 
 ///|
+test "codex_mcp_override_args forwards registration env by name only" {
+  for role in [@types.Role::TL, @types.Role::Dev, @types.Role::Worker] {
+    let args = @workspace.codex_mcp_override_args(role, "main.leaf", "/proj")
+    // codex does not inherit the shell environment into MCP stdio
+    // subprocesses; the names-only `env_vars` forward list is the one
+    // mechanism that gets CHOIR_AGENT_TOKEN there without the value.
+    assert_true(
+      args.contains("mcp_servers.choir.env_vars=[\"CHOIR_AGENT_TOKEN\"]"),
+    )
+    for arg in args {
+      // The token value must never ride argv: no `env` value-map entry
+      // (`mcp_servers.choir.env.KEY="..."` / `env={...}`) and no
+      // KEY=value assignment for the token anywhere.
+      assert_false(arg.contains("mcp_servers.choir.env."))
+      assert_false(arg.contains("mcp_servers.choir.env="))
+      assert_false(arg.contains("CHOIR_AGENT_TOKEN="))
+    }
+  }
+}
+
+///|
 test "codex_mcp_override_args includes semble server when pilot is enabled" {
   let args = @workspace.codex_mcp_override_args(
     @types.Role::Dev,

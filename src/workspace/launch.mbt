@@ -154,11 +154,24 @@ pub fn codex_mcp_override_args(
       ]
   }
   let args_lit = toml_string_array_literal(elems)
+  // codex's MCP stdio launcher builds each server's environment from scratch
+  // (`env_clear()` + a DEFAULT_ENV_VARS whitelist in rmcp-client's
+  // `create_env_for_mcp_server`; `shell_environment_policy` only governs
+  // shell/exec tools, not MCP), so `choir mcp-stdio` never inherits CHOIR_*
+  // ambiently (choir-ghl9). `env_vars` is codex's names-only forward
+  // list: values come from codex's own environment at spawn time and never
+  // ride this argv (argv leaks into ps/proc; the token is a secret). Identity
+  // and the socket path come from the per-leaf .choir/config.local.toml in
+  // `cwd` plus the --role/--name args above, so the token is the only
+  // env-sourced input registration needs.
+  let env_vars_lit = toml_string_array_literal(["CHOIR_AGENT_TOKEN"])
   let args = [
     "-c",
     "mcp_servers.choir.command=\"choir\"",
     "-c",
     "mcp_servers.choir.args=" + args_lit,
+    "-c",
+    "mcp_servers.choir.env_vars=" + env_vars_lit,
     "-c",
     "mcp_servers.choir.cwd=\"" + escape_toml_string(workspace_path) + "\"",
   ]
