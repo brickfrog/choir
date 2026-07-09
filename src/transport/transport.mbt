@@ -133,24 +133,24 @@ pub fn format_augmented_request(
   agent_id : String,
   local_cfg : @types.LocalConfig,
 ) -> String {
-  let args : Map[String, String] = {}
-  req.args.each(fn(k, v) { args.set(k, v) })
+  let args : Map[String, Json] = {}
+  req.args.each_json(fn(k, v) { args.set(k, v) })
   if !args.contains("caller_id") {
-    args.set("caller_id", agent_id)
+    args.set("caller_id", agent_id.to_json())
   }
   if req.name == "send_message" && !args.contains("sender_id") {
-    args.set("sender_id", agent_id)
+    args.set("sender_id", agent_id.to_json())
   }
   if req.name == "file_pr" {
     if !args.contains("branch") {
       match local_cfg.branch {
-        Some(v) => args.set("branch", v)
+        Some(v) => args.set("branch", v.to_json())
         None => ()
       }
     }
     if !args.contains("parent_branch") {
       match local_cfg.parent_branch {
-        Some(v) => args.set("parent_branch", v)
+        Some(v) => args.set("parent_branch", v.to_json())
         None => ()
       }
     }
@@ -159,7 +159,7 @@ pub fn format_augmented_request(
     req_method: req.req_method,
     role: req.role,
     name: req.name,
-    args: @types.RequestArgs::new(args),
+    args: @types.RequestArgs::from_values(args),
   })
 }
 

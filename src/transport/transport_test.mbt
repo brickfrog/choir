@@ -166,6 +166,14 @@ test "format_request serializes internal wire request" {
 }
 
 ///|
+fn parse_wire_args(output : String) -> Map[String, Json]? {
+  let json = @json.parse(output) catch { _ => return None }
+  guard json is Object(obj) else { return None }
+  guard obj.get("args") is Some(Object(args)) else { return None }
+  Some(args)
+}
+
+///|
 test "format_registration_request includes local config metadata" {
   let local_cfg = @types.LocalConfig::{
     role: None,
@@ -262,6 +270,78 @@ test "format_augmented_request adds caller and sender defaults" {
   let output = format_augmented_request(req, "leaf-1", local_cfg)
   assert_true(output.contains("\"caller_id\":\"leaf-1\""))
   assert_true(output.contains("\"sender_id\":\"leaf-1\""))
+}
+
+///|
+test "format_augmented_request preserves structured args" {
+  let verify = @json.parse("[\"cmd-a\",\"cmd-b\",\"cmd-c\"]") catch {
+    _ => {
+      fail("invalid verify json")
+      return
+    }
+  }
+  let metadata = @json.parse("{\"mode\":\"strict\",\"retries\":2}") catch {
+    _ => {
+      fail("invalid metadata json")
+      return
+    }
+  }
+  let req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::Dev,
+    name: "update_task_contract",
+    args: @types.RequestArgs::from_values({
+      "verify": verify,
+      "metadata": metadata,
+    }),
+  }
+  let output = format_augmented_request(
+    req,
+    "leaf-1",
+    @types.LocalConfig::default(),
+  )
+  guard parse_wire_args(output) is Some(args) else {
+    fail("expected args object")
+    return
+  }
+  guard args.get("verify") is Some(Array(items)) else {
+    fail("expected verify array")
+    return
+  }
+  assert_eq(items.length(), 3)
+  @debug.assert_eq(items[0], "cmd-a".to_json())
+  @debug.assert_eq(items[1], "cmd-b".to_json())
+  @debug.assert_eq(items[2], "cmd-c".to_json())
+  guard args.get("metadata") is Some(Object(metadata)) else {
+    fail("expected metadata object")
+    return
+  }
+  @debug.assert_eq(metadata.get("mode"), Some("strict".to_json()))
+  @debug.assert_eq(metadata.get("retries"), Some((2).to_json()))
+}
+
+///|
+test "format_augmented_request string args round trip as strings" {
+  let req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::Dev,
+    name: "file_pr",
+    args: @types.RequestArgs::new({ "title": "fix: preserve json args" }),
+  }
+  let local_cfg = {
+    ..@types.LocalConfig::default(),
+    branch: Some("main.leaf-1"),
+    parent_branch: Some("main"),
+  }
+  let output = format_augmented_request(req, "leaf-1", local_cfg)
+  guard parse_wire_args(output) is Some(args) else {
+    fail("expected args object")
+    return
+  }
+  @debug.assert_eq(args.get("title"), Some("fix: preserve json args".to_json()))
+  @debug.assert_eq(args.get("caller_id"), Some("leaf-1".to_json()))
+  @debug.assert_eq(args.get("branch"), Some("main.leaf-1".to_json()))
+  @debug.assert_eq(args.get("parent_branch"), Some("main".to_json()))
 }
 
 ///|
