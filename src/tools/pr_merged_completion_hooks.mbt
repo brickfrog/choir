@@ -212,7 +212,8 @@ pub async fn audit_receipt_advisory_state_for_tracked_pr(
   }
   match
     merge_pr_audit_receipt_validation_for_head(
-      parent_branch, default_branch, project_dir, trimmed_head, capture,
+      parent_branch, default_branch, project_dir, trimmed_head, capture, read_file,
+      path_exists,
     ) {
     MergeAuditReceiptValid => @types.AuditReceiptState::Valid
     MergeAuditReceiptFindingsRemain(sha, count) =>

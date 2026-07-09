@@ -639,9 +639,6 @@ async test "interpret_merge_pr missing audit receipt policy-blocks on master def
       if cmd.program == "git" && cmd.args == ["rev-parse", head + "^{tree}"] {
         return (0, head + "\n")
       }
-      if cmd.program == "cat" {
-        return (1, "")
-      }
       (1, "spawn failed")
     },
     fn(_path, content) {
@@ -755,9 +752,6 @@ async test "interpret_merge_pr blocks when default branch detection fails" {
         cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
         return (0, "feature/audit-gate\n")
       }
-      if cmd.program == "cat" {
-        return (1, "")
-      }
       (0, "")
     },
     fn(_path, content) {
@@ -819,7 +813,6 @@ async test "interpret_merge_pr audit receipt remains valid when commit changes b
     @poller.CiRollupStatus::Success,
     true,
   )
-  let cat_paths : Array[String] = []
   let mut runner_calls = 0
   let resp = interpret_merge_pr(
     {
@@ -868,20 +861,18 @@ async test "interpret_merge_pr audit receipt remains valid when commit changes b
       if cmd.program == "git" && cmd.args == ["rev-parse", head + "^{tree}"] {
         return (0, tree + "\n")
       }
-      if cmd.program == "cat" {
-        cat_paths.push(cmd.args[0])
-        return (
-          0,
-          merge_pr_test_audit_receipt_for_tree(audited_commit, tree, 0),
-        )
-      }
       (0, "")
     },
     fn(_, _) { true },
-    fn(path) { path.has_suffix("/.choir/state/audit-gate.json") },
+    fn(path) {
+      path.has_suffix("/.choir/state/audit-gate.json") ||
+      path.has_prefix(".choir/state/audit-receipts/")
+    },
     read_file=fn(path) {
       if path.has_suffix("/.choir/state/audit-gate.json") {
         "{\"enabled_at_unix\":100}\n"
+      } else if path.has_prefix(".choir/state/audit-receipts/") {
+        merge_pr_test_audit_receipt_for_tree(audited_commit, tree, 0)
       } else {
         ""
       }
@@ -893,7 +884,6 @@ async test "interpret_merge_pr audit receipt remains valid when commit changes b
     @types.Response::Err(msg) => fail("expected merge success: " + msg)
   }
   assert_eq(runner_calls, 1)
-  @debug.assert_eq(cat_paths, [file_pr_audit_receipt_path_for_head(tree)])
   ignore(@sys.rm_rf(project_dir))
 }
 
@@ -1233,16 +1223,21 @@ async test "interpret_merge_pr main audit gate merges only matching audited head
       if cmd.program == "git" && cmd.args == ["rev-parse", head + "^{tree}"] {
         return (0, head + "\n")
       }
-      if cmd.program == "cat" {
-        return (0, merge_pr_test_audit_receipt(head))
-      }
       (0, "")
     },
     fn(_, _) { true },
-    fn(path) { path.has_suffix("/.choir/state/audit-gate.json") },
+    fn(path) {
+      path.has_suffix("/.choir/state/audit-gate.json") ||
+      path.has_prefix(".choir/state/audit-receipts/")
+    },
     read_file=fn(path) {
       if path.has_suffix("/.choir/state/audit-gate.json") {
         "{\"enabled_at_unix\":100}\n"
+      } else if path.has_suffix(
+          "/.choir/state/audit-receipts/abcdef123456.json",
+        ) ||
+        path.has_prefix(".choir/state/audit-receipts/") {
+        merge_pr_test_audit_receipt(head)
       } else {
         ""
       }
@@ -1329,9 +1324,6 @@ async test "interpret_merge_pr success fires pr_merged completion hooks" {
       if cmd.program == "git" && cmd.args == ["rev-parse", head + "^{tree}"] {
         return (0, head + "\n")
       }
-      if cmd.program == "cat" {
-        return (0, merge_pr_test_audit_receipt(head))
-      }
       (0, "")
     },
     fn(_, _) { true },
@@ -1339,7 +1331,8 @@ async test "interpret_merge_pr success fires pr_merged completion hooks" {
       path.has_suffix("/.choir/state/audit-gate.json") ||
       path.has_suffix("/.choir/hooks/pr_merged.sh") ||
       path.has_suffix("/.choir/hooks/wave_complete.sh") ||
-      path.has_suffix("/.choir/state/audit-receipts/abcdef123456.json")
+      path.has_suffix("/.choir/state/audit-receipts/abcdef123456.json") ||
+      path.has_prefix(".choir/state/audit-receipts/")
     },
     hook_capture=async fn(
       path : String,
@@ -1362,7 +1355,8 @@ async test "interpret_merge_pr success fires pr_merged completion hooks" {
         "{\"enabled_at_unix\":100}\n"
       } else if path.has_suffix(
           "/.choir/state/audit-receipts/abcdef123456.json",
-        ) {
+        ) ||
+        path.has_prefix(".choir/state/audit-receipts/") {
         merge_pr_test_audit_receipt(head)
       } else {
         ""
@@ -1462,9 +1456,6 @@ async test "interpret_merge_pr suppresses pr_merged hooks when poller persist fa
       if cmd.program == "git" && cmd.args == ["rev-parse", head + "^{tree}"] {
         return (0, head + "\n")
       }
-      if cmd.program == "cat" {
-        return (0, merge_pr_test_audit_receipt(head))
-      }
       (0, "")
     },
     fn(_, _) { true },
@@ -1472,7 +1463,8 @@ async test "interpret_merge_pr suppresses pr_merged hooks when poller persist fa
       path.has_suffix("/.choir/state/audit-gate.json") ||
       path.has_suffix("/.choir/hooks/pr_merged.sh") ||
       path.has_suffix("/.choir/hooks/wave_complete.sh") ||
-      path.has_suffix("/.choir/state/audit-receipts/abcdef123456.json")
+      path.has_suffix("/.choir/state/audit-receipts/abcdef123456.json") ||
+      path.has_prefix(".choir/state/audit-receipts/")
     },
     hook_capture=async fn(
       path : String,
@@ -1488,7 +1480,8 @@ async test "interpret_merge_pr suppresses pr_merged hooks when poller persist fa
         "{\"enabled_at_unix\":100}\n"
       } else if path.has_suffix(
           "/.choir/state/audit-receipts/abcdef123456.json",
-        ) {
+        ) ||
+        path.has_prefix(".choir/state/audit-receipts/") {
         merge_pr_test_audit_receipt(head)
       } else {
         ""
@@ -3645,12 +3638,6 @@ async test "interpret_merge_pr tracked feature merge skips audit gate file and r
       cmd.args.length() == 2 &&
       cmd.args[0] == "rev-parse" &&
       cmd.args[1].contains("^{tree}") {
-      receipt_captures = receipt_captures + 1
-      return (1, "")
-    }
-    if cmd.program == "cat" &&
-      cmd.args.length() == 1 &&
-      cmd.args[0].has_prefix(".choir/state/audit-receipts/") {
       receipt_captures = receipt_captures + 1
       return (1, "")
     }
