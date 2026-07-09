@@ -468,6 +468,22 @@ async test "detect_default_branch_with_capture falls back to main on failure" {
 }
 
 ///|
+async test "detect_default_branch_result_with_capture returns branch on success" {
+  let branch = detect_default_branch_result_with_capture(
+    "/repo", mock_detect_origin_master,
+  )
+  assert_eq(branch, Ok("master"))
+}
+
+///|
+async test "detect_default_branch_result_with_capture exposes failure" {
+  let branch = detect_default_branch_result_with_capture(
+    "/repo", mock_detect_failure,
+  )
+  assert_eq(branch, Err(()))
+}
+
+///|
 fn mock_is_gh_pr_view(cmd : @workspace.Command) -> Bool {
   (
     cmd.program == "gh" &&

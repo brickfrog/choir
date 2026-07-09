@@ -2329,10 +2329,14 @@ async fn ServerState::refresh_tracked_pr_audit_receipt_states(
   if tracked_prs.length() == 0 {
     return
   }
-  let default_branch = @tools.detect_default_branch_with_capture(
+  let default_branch_result = @tools.detect_default_branch_result_with_capture(
     self.config.project_dir,
     capture,
   )
+  let default_branch = match default_branch_result {
+    Ok(branch) => branch
+    Err(_) => "main"
+  }
   self.cached_default_branch = default_branch
   for tracked in tracked_prs {
     match self.poller.get(tracked.pr_number) {
@@ -2346,6 +2350,7 @@ async fn ServerState::refresh_tracked_pr_audit_receipt_states(
           capture,
           read_file,
           path_exists,
+          default_branch_result=Some(default_branch_result),
         )
         self.poller.restore({ ..current, audit_receipt_state, })
       }

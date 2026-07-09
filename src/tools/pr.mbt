@@ -719,6 +719,36 @@ pub async fn detect_default_branch_with_capture(
 }
 
 ///|
+/// Detect the repo's default branch while preserving git lookup failures.
+/// This is for callers whose decision must fail closed when the branch is unknown.
+pub async fn detect_default_branch_result_with_capture(
+  project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Result[String, Unit] {
+  let cmd : @workspace.Command = {
+    program: "git",
+    args: ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+    workdir: Some(project_dir),
+  }
+  let (exit_code, output) = capture(cmd)
+  if exit_code != 0 {
+    return Err(())
+  }
+  let trimmed = output.trim().to_owned()
+  let prefix = "origin/"
+  let branch = if trimmed.has_prefix(prefix) {
+    trimmed[prefix.length():].to_owned()
+  } else {
+    trimmed
+  }
+  if branch == "" {
+    Err(())
+  } else {
+    Ok(branch)
+  }
+}
+
+///|
 /// Detect the repo's default branch via git symbolic-ref.
 /// Falls back to "main" if detection fails.
 pub async fn detect_default_branch(
