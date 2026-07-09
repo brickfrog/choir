@@ -2333,6 +2333,7 @@ async fn ServerState::refresh_tracked_pr_audit_receipt_states(
     self.config.project_dir,
     capture,
   )
+  self.cached_default_branch = default_branch
   for tracked in tracked_prs {
     match self.poller.get(tracked.pr_number) {
       Some(current) => {
@@ -2351,6 +2352,33 @@ async fn ServerState::refresh_tracked_pr_audit_receipt_states(
       None => ()
     }
   }
+}
+
+///|
+async test "poller audit refresh caches detected default branch" {
+  let project_dir = "/tmp/choir-tick-default-branch-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
+  let state = ServerState::new(
+    { ..@types.Config::default(), project_dir, },
+    make_hermetic_recovery_provider(),
+  )
+  state.poller.track(
+    902, "main.leaf-tick-default", "feature/leaf", "feature/base", "https://example.test/pr/902",
+    0L,
+  )
+  state.refresh_tracked_pr_audit_receipt_states(
+    async fn(_cmd) {
+      @async.sleep(0)
+      (0, "origin/develop\n")
+    },
+    fn(_) { false },
+    fn(_) { "" },
+  )
+  assert_eq(state.cached_default_branch, "develop")
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|

@@ -740,19 +740,111 @@ fn ServerState::leaf_merge_gate_ready_for_agent(
         self.config.pr_policy.reviewer,
         self.config.pr_policy.skip_copilot_on_feature_branch,
         tracked.parent_branch,
-        "",
+        self.cached_default_branch,
       )
       if @poller.tl_tracked_pr_merge_gate_snapshot_ready(
           tracked,
           unresolved_threads,
           review_mode=tracked.review_mode,
           review_required~,
+          audit_receipt_state=tracked.audit_receipt_state,
         ) {
         return true
       }
     }
   }
   false
+}
+
+///|
+test "leaf merge gate threads audit state and cached default branch" {
+  let make_state = fn(
+    label : String,
+    audit_receipt_state : @types.AuditReceiptState,
+    review : @poller.ReviewState,
+  ) -> ServerState {
+    let project_dir = "/tmp/choir-leaf-merge-gate-" +
+      label +
+      "-" +
+      @sys.get_pid().to_string() +
+      "-" +
+      @env.now().reinterpret_as_int64().to_string()
+    ignore(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
+    let state = ServerState::new(
+      {
+        ..@types.Config::default(),
+        project_dir,
+        pr_policy: {
+          ..@types.PrPolicy::default(),
+          reviewer: @types.Reviewer::Copilot,
+        },
+      },
+      make_hermetic_recovery_provider(),
+    )
+    let agent_id = "main.leaf-merge-gate"
+    state.poller.track(
+      901, agent_id, "feature/leaf", "feature/base", "https://example.test/pr/901",
+      0L,
+    )
+    match state.poller.get(901) {
+      Some(tracked) =>
+        state.poller.restore({
+          ..tracked,
+          last_review_state: review,
+          last_ci_rollup: @poller.CiRollupStatus::Success,
+          audit_receipt_state,
+          unresolved_thread_ids: [],
+          unresolved_thread_ids_fetched: true,
+        })
+      None => abort("expected tracked leaf PR")
+    }
+    state
+  }
+
+  let pending = make_state(
+    "pending",
+    @types.AuditReceiptState::Pending(head_sha="head"),
+    @poller.ReviewState::Approved,
+  )
+  assert_false(pending.leaf_merge_gate_ready_for_agent("main.leaf-merge-gate"))
+  ignore(@sys.rm_rf(pending.config.project_dir))
+
+  let findings = make_state(
+    "findings",
+    @types.AuditReceiptState::FindingsRemain(head_sha="head", count=2),
+    @poller.ReviewState::Approved,
+  )
+  assert_false(findings.leaf_merge_gate_ready_for_agent("main.leaf-merge-gate"))
+  ignore(@sys.rm_rf(findings.config.project_dir))
+
+  let valid = make_state(
+    "valid",
+    @types.AuditReceiptState::Valid,
+    @poller.ReviewState::Approved,
+  )
+  assert_true(valid.leaf_merge_gate_ready_for_agent("main.leaf-merge-gate"))
+  ignore(@sys.rm_rf(valid.config.project_dir))
+
+  let not_required = make_state(
+    "not-required",
+    @types.AuditReceiptState::NotRequired,
+    @poller.ReviewState::Approved,
+  )
+  assert_true(
+    not_required.leaf_merge_gate_ready_for_agent("main.leaf-merge-gate"),
+  )
+  ignore(@sys.rm_rf(not_required.config.project_dir))
+
+  let default_branch = make_state(
+    "default-branch",
+    @types.AuditReceiptState::NotRequired,
+    @poller.ReviewState::None_,
+  )
+  assert_eq(default_branch.cached_default_branch, "main")
+  assert_true(
+    default_branch.leaf_merge_gate_ready_for_agent("main.leaf-merge-gate"),
+  )
+  ignore(@sys.rm_rf(default_branch.config.project_dir))
 }
 
 ///|
