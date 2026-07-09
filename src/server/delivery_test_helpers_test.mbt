@@ -155,8 +155,8 @@ async fn ServerState::process_poller_tick_with_test(
   hook_capture? : async (String, String, String?) -> (Int, String) = server_delivery_test_hook_capture,
   hook_path_exists? : (String) -> Bool = server_delivery_test_path_entry_exists,
   path_exists? : (String) -> Bool = @sys.path_entry_exists,
-  audit_receipt_exists? : (String) -> Bool = @sys.path_entry_exists,
-  audit_receipt_read? : (String) -> String = self.read_file,
+  audit_receipt_exists? : (String) -> Bool = server_delivery_test_path_entry_exists,
+  audit_receipt_read? : (String) -> String = server_delivery_test_read_file,
   git_state_capture? : async (
     String,
     async (@workspace.Command) -> (Int, String),

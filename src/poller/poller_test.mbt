@@ -29,7 +29,7 @@ test "TrackedPR audit receipt state defaults for old JSON and round-trips" {
     #|    "last_timeout_at": 0
     #|  }
     #|]
-  let old = parse_tracked_prs_json(old_json)
+  let old = @poller.parse_tracked_prs_json(old_json)
   assert_eq(old.length(), 1)
   assert_eq(old[0].audit_receipt_state, @types.AuditReceiptState::NotRequired)
 
@@ -48,15 +48,15 @@ test "TrackedPR audit receipt state defaults for old JSON and round-trips" {
     #|    "notified_parent": true,
     #|    "last_ci_rollup": "success",
     #|    "last_timeout_at": 0,
-    #|    "audit_receipt_state": {"tag":"Pending","head_sha":"abc"}
+    #|    "audit_receipt_state": ["Pending",{"head_sha":"abc"}]
     #|  }
     #|]
-  let pending = parse_tracked_prs_json(pending_json)
+  let pending = @poller.parse_tracked_prs_json(pending_json)
   assert_eq(
     pending[0].audit_receipt_state,
     @types.AuditReceiptState::Pending(head_sha="abc"),
   )
-  let pending_round_trip = parse_tracked_prs_json(
+  let pending_round_trip = @poller.parse_tracked_prs_json(
     "[" + pending[0].to_json() + "]",
   )
   assert_eq(
@@ -79,15 +79,15 @@ test "TrackedPR audit receipt state defaults for old JSON and round-trips" {
     #|    "notified_parent": true,
     #|    "last_ci_rollup": "success",
     #|    "last_timeout_at": 0,
-    #|    "audit_receipt_state": {"tag":"FindingsRemain","head_sha":"abc","count":2}
+    #|    "audit_receipt_state": ["FindingsRemain",{"head_sha":"abc","count":2}]
     #|  }
     #|]
-  let findings = parse_tracked_prs_json(findings_json)
+  let findings = @poller.parse_tracked_prs_json(findings_json)
   assert_eq(
     findings[0].audit_receipt_state,
     @types.AuditReceiptState::FindingsRemain(head_sha="abc", count=2),
   )
-  let findings_round_trip = parse_tracked_prs_json(
+  let findings_round_trip = @poller.parse_tracked_prs_json(
     "[" + findings[0].to_json() + "]",
   )
   assert_eq(

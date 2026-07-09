@@ -2314,10 +2314,17 @@ async fn ServerState::refresh_tracked_pr_audit_receipt_states(
   path_exists : (String) -> Bool,
   read_file : (String) -> String,
   skip_pr_numbers? : Array[Int] = [],
+  only_pr_number? : Int? = None,
 ) -> Unit {
   let tracked_prs : Array[@poller.TrackedPR] = []
   for tracked in self.poller.tracked.values() {
-    tracked_prs.push(tracked)
+    let matches_target = match only_pr_number {
+      Some(pr_number) => tracked.pr_number == pr_number
+      None => true
+    }
+    if !skip_pr_numbers.contains(tracked.pr_number) && matches_target {
+      tracked_prs.push(tracked)
+    }
   }
   if tracked_prs.length() == 0 {
     return
@@ -2327,28 +2334,18 @@ async fn ServerState::refresh_tracked_pr_audit_receipt_states(
     capture,
   )
   for tracked in tracked_prs {
-    if skip_pr_numbers.contains(tracked.pr_number) {
-      continue
-    }
     match self.poller.get(tracked.pr_number) {
       Some(current) => {
-        let audit_gate_path = @tools.merge_pr_audit_gate_state_path(
+        let audit_receipt_state = @tools.audit_receipt_advisory_state_for_tracked_pr(
           self.config.project_dir,
+          current.parent_branch,
+          default_branch,
+          current.last_sha,
+          current.first_seen,
+          capture,
+          read_file,
+          path_exists,
         )
-        let audit_receipt_state = if !path_exists(audit_gate_path) {
-          current.audit_receipt_state
-        } else {
-          @tools.audit_receipt_advisory_state_for_tracked_pr(
-            self.config.project_dir,
-            current.parent_branch,
-            default_branch,
-            current.last_sha,
-            current.first_seen,
-            capture,
-            read_file,
-            path_exists,
-          )
-        }
         self.poller.restore({ ..current, audit_receipt_state, })
       }
       None => ()
@@ -4267,6 +4264,7 @@ pub async fn ServerState::refresh_pr_with(
     path_exists,
     self.read_file,
     skip_pr_numbers=poll_events_terminal_pr_numbers(pending_events),
+    only_pr_number=Some(pr_number),
   )
   if had_pending_events {
     self.request_goal_judge_tick()

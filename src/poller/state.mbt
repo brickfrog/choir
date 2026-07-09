@@ -122,57 +122,6 @@ fn review_thread_refs_to_json(refs : Array[ReviewThreadRef]) -> Json {
 }
 
 ///|
-fn audit_receipt_state_from_tag_fields(
-  tag : String,
-  fields : Map[String, Json],
-) -> @types.AuditReceiptState? {
-  match tag {
-    "NotRequired" => Some(@types.AuditReceiptState::NotRequired)
-    "Valid" => Some(@types.AuditReceiptState::Valid)
-    "Pending" =>
-      @types.json_field_string(fields, "head_sha").map(fn(head_sha) {
-        @types.AuditReceiptState::Pending(head_sha~)
-      })
-    "FindingsRemain" =>
-      match
-        (
-          @types.json_field_string(fields, "head_sha"),
-          @types.json_field_int(fields, "count"),
-        ) {
-        (Some(head_sha), Some(count)) =>
-          Some(@types.AuditReceiptState::FindingsRemain(head_sha~, count~))
-        _ => None
-      }
-    _ => None
-  }
-}
-
-///|
-fn audit_receipt_state_from_json(json : Json) -> @types.AuditReceiptState? {
-  match json {
-    Object(fields) =>
-      match @types.json_field_string(fields, "tag") {
-        Some(tag) => audit_receipt_state_from_tag_fields(tag, fields)
-        None => None
-      }
-    Array(items) => {
-      if items.length() != 2 {
-        return None
-      }
-      let tag = match items[0] {
-        String(value) => value
-        _ => return None
-      }
-      guard items[1] is Object(fields) else { return None }
-      audit_receipt_state_from_tag_fields(tag, fields)
-    }
-    String("NotRequired") => Some(@types.AuditReceiptState::NotRequired)
-    String("Valid") => Some(@types.AuditReceiptState::Valid)
-    _ => None
-  }
-}
-
-///|
 fn parse_review_thread_refs(json : Json?) -> Array[ReviewThreadRef]? {
   match json {
     None => Some([])
@@ -329,9 +278,9 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
   let merged_at_unix = @types.json_field_int64(fields, "merged_at_unix")
   let audit_receipt_state = match fields.get("audit_receipt_state") {
     Some(value) =>
-      audit_receipt_state_from_json(value).unwrap_or(
-        @types.AuditReceiptState::NotRequired,
-      )
+      @json.from_json(value) catch {
+        _ => @types.AuditReceiptState::NotRequired
+      }
     None => @types.AuditReceiptState::NotRequired
   }
   let last_timeout_at = match

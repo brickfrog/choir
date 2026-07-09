@@ -1,6 +1,4 @@
 ///|
-
-///|
 async test "poller tick persists injected audit receipt state" {
   let project_dir = "/tmp/choir-poller-audit-state-" +
     @sys.get_pid().to_string() +
