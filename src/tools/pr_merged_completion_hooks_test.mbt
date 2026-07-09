@@ -15,6 +15,27 @@ fn hooks_test_gate_path_exists(path : String) -> Bool {
 }
 
 ///|
+fn hooks_test_receipt_path_exists(path : String) -> Bool {
+  path.has_suffix("/.choir/state/audit-gate.json") ||
+  path.contains("/.choir/state/audit-receipts/") ||
+  path.has_prefix(".choir/state/audit-receipts/")
+}
+
+///|
+fn hooks_test_read_file_with_receipt(
+  enabled_at_unix : Int64,
+  receipt_body : String,
+) -> (String) -> String {
+  fn(path : String) -> String {
+    if path.has_suffix("/.choir/state/audit-gate.json") {
+      "{\"enabled_at_unix\":" + enabled_at_unix.to_string() + "}\n"
+    } else {
+      receipt_body
+    }
+  }
+}
+
+///|
 fn hooks_test_receipt_for_tree(
   tree_sha : String,
   findings_count : Int,
@@ -99,11 +120,11 @@ async test "audit receipt advisory uses resolved default branch on success" {
       if cmd.program == "git" {
         (0, tree + "\n")
       } else {
-        (0, hooks_test_receipt_for_tree(tree, 0))
+        (1, "")
       }
     },
-    hooks_test_gate_state_reader(1L),
-    hooks_test_gate_path_exists,
+    hooks_test_read_file_with_receipt(1L, hooks_test_receipt_for_tree(tree, 0)),
+    hooks_test_receipt_path_exists,
     default_branch_result=Some(default_branch),
   )
   assert_eq(state, @types.AuditReceiptState::Valid)
@@ -170,11 +191,11 @@ async test "audit_receipt_advisory_state_for_tracked_pr maps gate and receipt st
       if cmd.program == "git" {
         (0, tree + "\n")
       } else {
-        (0, hooks_test_receipt_for_tree(tree, 0))
+        (1, "")
       }
     },
-    hooks_test_gate_state_reader(1L),
-    hooks_test_gate_path_exists,
+    hooks_test_read_file_with_receipt(1L, hooks_test_receipt_for_tree(tree, 0)),
+    hooks_test_receipt_path_exists,
   )
   assert_eq(valid, @types.AuditReceiptState::Valid)
 
@@ -189,11 +210,11 @@ async test "audit_receipt_advisory_state_for_tracked_pr maps gate and receipt st
       if cmd.program == "git" {
         (0, tree + "\n")
       } else {
-        (0, hooks_test_receipt_for_tree(tree, 3))
+        (1, "")
       }
     },
-    hooks_test_gate_state_reader(1L),
-    hooks_test_gate_path_exists,
+    hooks_test_read_file_with_receipt(1L, hooks_test_receipt_for_tree(tree, 3)),
+    hooks_test_receipt_path_exists,
   )
   assert_eq(
     findings,
@@ -236,11 +257,11 @@ async test "audit_receipt_advisory_state_for_tracked_pr maps gate and receipt st
       if cmd.program == "git" {
         (0, tree + "\n")
       } else {
-        (0, "{not json")
+        (1, "")
       }
     },
-    hooks_test_gate_state_reader(1L),
-    hooks_test_gate_path_exists,
+    hooks_test_read_file_with_receipt(1L, "{not json"),
+    hooks_test_receipt_path_exists,
   )
   assert_eq(
     invalid,
@@ -258,11 +279,14 @@ async test "audit_receipt_advisory_state_for_tracked_pr maps gate and receipt st
       if cmd.program == "git" {
         (0, tree + "\n")
       } else {
-        (0, hooks_test_receipt_for_tree(other_tree, 0))
+        (1, "")
       }
     },
-    hooks_test_gate_state_reader(1L),
-    hooks_test_gate_path_exists,
+    hooks_test_read_file_with_receipt(
+      1L,
+      hooks_test_receipt_for_tree(other_tree, 0),
+    ),
+    hooks_test_receipt_path_exists,
   )
   assert_eq(stale, @types.AuditReceiptState::Pending(head_sha=tree))
 

@@ -685,6 +685,8 @@ async fn merge_pr_audit_receipt_validation_for_head(
   project_dir : String,
   head_sha : String,
   capture : async (@workspace.Command) -> (Int, String),
+  read_file : (String) -> String,
+  path_exists : (String) -> Bool,
 ) -> MergePrAuditReceiptValidation {
   let tree_sha = match
     audit_receipt_tree_sha_for_head(project_dir, head_sha, capture) {
@@ -692,21 +694,180 @@ async fn merge_pr_audit_receipt_validation_for_head(
     None => return MergeAuditReceiptTreeUnavailable(file_pr_short_sha(head_sha))
   }
   let receipt_path = file_pr_audit_receipt_path_for_head(tree_sha)
-  let (exit_code, receipt_body) = capture({
-    program: "cat",
-    args: [receipt_path],
-    workdir: Some(project_dir),
-  })
+  let receipt_path = project_relative_path(project_dir, receipt_path)
+  let receipt_body = if path_exists(receipt_path) {
+    Some(read_file(receipt_path))
+  } else {
+    None
+  }
   merge_pr_audit_receipt_validation(
-    parent_branch,
-    default_branch,
-    tree_sha,
-    if exit_code == 0 {
-      Some(receipt_body)
-    } else {
-      None
+    parent_branch, default_branch, tree_sha, receipt_body,
+  )
+}
+
+///|
+async test "merge_pr audit receipt validation reports missing receipt without reading it" {
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let tree = "9999999999999999999999999999999999999999"
+  let captured : Array[@workspace.Command] = []
+  let mut read_calls = 0
+  let got = merge_pr_audit_receipt_validation_for_head(
+    "main",
+    "main",
+    "/repo",
+    head,
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      captured.push(cmd)
+      if cmd.program == "git" {
+        (0, tree + "\n")
+      } else {
+        (1, "")
+      }
+    },
+    fn(_) {
+      read_calls = read_calls + 1
+      ""
+    },
+    fn(_) { false },
+  )
+  match got {
+    MergeAuditReceiptMissing(short_sha) =>
+      @debug.assert_eq(short_sha, file_pr_short_sha(tree))
+    _ => fail("expected missing receipt")
+  }
+  @debug.assert_eq(captured.length(), 1)
+  @debug.assert_eq(captured[0].program, "git")
+  @debug.assert_eq(read_calls, 0)
+}
+
+///|
+async test "merge_pr audit receipt validation parses an injected receipt body" {
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let tree = "9999999999999999999999999999999999999999"
+  let receipt : @types.AuditReceipt = {
+    sha: head,
+    tree_sha: tree,
+    branch: "main",
+    audited_at: 1L,
+    agent_id: "main.tl",
+    findings_count: 0,
+    findings: Some(""),
+  }
+  let receipt_body = receipt.to_json().stringify() + "\n"
+  let receipt_paths : Array[String] = []
+  let got = merge_pr_audit_receipt_validation_for_head(
+    "main",
+    "main",
+    "/repo",
+    head,
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "git" {
+        (0, tree + "\n")
+      } else {
+        (1, "")
+      }
+    },
+    fn(path) {
+      receipt_paths.push(path)
+      receipt_body
+    },
+    fn(path) {
+      receipt_paths.push(path)
+      true
     },
   )
+  match got {
+    MergeAuditReceiptValid => ()
+    _ => fail("expected injected valid receipt")
+  }
+  @debug.assert_eq(receipt_paths, [
+    project_relative_path("/repo", file_pr_audit_receipt_path_for_head(tree)),
+    project_relative_path("/repo", file_pr_audit_receipt_path_for_head(tree)),
+  ])
+}
+
+///|
+async test "merge_pr audit receipt validation only captures git tree resolution" {
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let tree = "9999999999999999999999999999999999999999"
+  let programs : Array[String] = []
+  let got = merge_pr_audit_receipt_validation_for_head(
+    "main",
+    "main",
+    "/repo",
+    head,
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      programs.push(cmd.program)
+      if cmd.program == "git" {
+        (0, tree + "\n")
+      } else {
+        (1, "")
+      }
+    },
+    fn(_) {
+      "{\"sha\":\"" +
+      head +
+      "\",\"tree_sha\":\"" +
+      tree +
+      "\",\"branch\":\"main\",\"audited_at\":1,\"agent_id\":\"main.tl\",\"findings_count\":0,\"findings\":\"\"}"
+    },
+    fn(_) { true },
+  )
+  match got {
+    MergeAuditReceiptValid => ()
+    _ => fail("expected valid receipt")
+  }
+  @debug.assert_eq(programs, ["git"])
+}
+
+///|
+async test "merge_pr audit receipt validation reads receipt under project directory" {
+  let project_dir = "/tmp/choir-merge-pr-receipt-project-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let tree = "9999999999999999999999999999999999999999"
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/audit-receipts"))
+  let receipt_path = project_relative_path(
+    project_dir,
+    file_pr_audit_receipt_path_for_head(tree),
+  )
+  let receipt : @types.AuditReceipt = {
+    sha: head,
+    tree_sha: tree,
+    branch: "main",
+    audited_at: 1L,
+    agent_id: "main.tl",
+    findings_count: 0,
+    findings: Some(""),
+  }
+  assert_true(
+    @sys.write_file_sync(receipt_path, receipt.to_json().stringify() + "\n"),
+  )
+  let got = merge_pr_audit_receipt_validation_for_head(
+    "main",
+    "main",
+    project_dir,
+    head,
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "git" {
+        (0, tree + "\n")
+      } else {
+        (1, "")
+      }
+    },
+    @sys.read_file,
+    @sys.path_entry_exists,
+  )
+  match got {
+    MergeAuditReceiptValid => ()
+    _ => fail("expected receipt under project directory to validate")
+  }
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
@@ -808,6 +969,8 @@ pub async fn merge_pr_require_audit_receipt(
   gate_state : MergeGateState,
   pr_first_seen_unix : Int64,
   capture : async (@workspace.Command) -> (Int, String),
+  read_file? : (String) -> String = @sys.read_file,
+  path_exists? : (String) -> Bool = @sys.path_entry_exists,
   append_file? : (String, String) -> Bool = fn(_, _) { false },
 ) -> Result[Unit, @types.ChoirError] {
   if !file_pr_audit_receipt_required(parent_branch, default_branch) {
@@ -827,7 +990,7 @@ pub async fn merge_pr_require_audit_receipt(
     )
   }
   let validation = merge_pr_audit_receipt_validation_for_head(
-    parent_branch, default_branch, project_dir, head_sha, capture,
+    parent_branch, default_branch, project_dir, head_sha, capture, read_file, path_exists,
   )
   match validation {
     MergeAuditReceiptValid => Ok(())
@@ -2380,6 +2543,8 @@ pub async fn interpret_merge_pr(
                 gate_state,
                 tracked.first_seen,
                 capture,
+                read_file~,
+                path_exists~,
                 append_file~,
               ) {
               Err(e) => return @types.Response::Err(e.message())
