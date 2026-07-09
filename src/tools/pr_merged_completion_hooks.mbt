@@ -189,7 +189,13 @@ pub async fn audit_receipt_advisory_state_for_tracked_pr(
   capture : async (@workspace.Command) -> (Int, String),
   read_file : (String) -> String,
   path_exists : (String) -> Bool,
+  default_branch_result? : Result[String, Unit]? = None,
 ) -> @types.AuditReceiptState {
+  let default_branch = match default_branch_result {
+    Some(Ok(branch)) => branch
+    Some(Err(_)) => return @types.AuditReceiptState::Pending(head_sha~)
+    None => default_branch
+  }
   if !file_pr_audit_receipt_required(parent_branch, default_branch) {
     return @types.AuditReceiptState::NotRequired
   }

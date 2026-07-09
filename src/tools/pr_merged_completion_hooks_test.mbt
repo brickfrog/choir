@@ -32,6 +32,84 @@ fn hooks_test_receipt_for_tree(
 }
 
 ///|
+async fn hooks_test_default_branch_failure_capture(
+  cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  if cmd.program == "git" &&
+    cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+    (1, "error: git unavailable\n")
+  } else {
+    (-1, "")
+  }
+}
+
+///|
+async fn hooks_test_default_branch_master_capture(
+  cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  if cmd.program == "git" &&
+    cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+    (0, "origin/master\n")
+  } else {
+    (-1, "")
+  }
+}
+
+///|
+async test "audit receipt advisory is pending when default branch detection fails" {
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let default_branch = detect_default_branch_result_with_capture(
+    "/repo", hooks_test_default_branch_failure_capture,
+  )
+  let state = audit_receipt_advisory_state_for_tracked_pr(
+    "/repo",
+    "feature/base",
+    "main",
+    head,
+    100L,
+    async fn(_) {
+      @async.sleep(0)
+      fail("audit capture must not run when default branch is unknown")
+      (0, "")
+    },
+    hooks_test_gate_state_reader(1L),
+    hooks_test_gate_path_exists,
+    default_branch_result=Some(default_branch),
+  )
+  assert_eq(state, @types.AuditReceiptState::Pending(head_sha=head))
+}
+
+///|
+async test "audit receipt advisory uses resolved default branch on success" {
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let tree = "9999999999999999999999999999999999999999"
+  let default_branch = detect_default_branch_result_with_capture(
+    "/repo", hooks_test_default_branch_master_capture,
+  )
+  let state = audit_receipt_advisory_state_for_tracked_pr(
+    "/repo",
+    "master",
+    "main",
+    head,
+    100L,
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "git" {
+        (0, tree + "\n")
+      } else {
+        (0, hooks_test_receipt_for_tree(tree, 0))
+      }
+    },
+    hooks_test_gate_state_reader(1L),
+    hooks_test_gate_path_exists,
+    default_branch_result=Some(default_branch),
+  )
+  assert_eq(state, @types.AuditReceiptState::Valid)
+}
+
+///|
 async test "audit_receipt_advisory_state_for_tracked_pr maps gate and receipt states" {
   let head = "abcdef1234567890abcdef1234567890abcdef12"
   let tree = "9999999999999999999999999999999999999999"

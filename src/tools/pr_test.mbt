@@ -468,6 +468,50 @@ async test "detect_default_branch_with_capture falls back to main on failure" {
 }
 
 ///|
+async test "detect_default_branch_result_with_capture returns branch on success" {
+  let branch = detect_default_branch_result_with_capture(
+    "/repo", mock_detect_origin_master,
+  )
+  match branch {
+    Ok(value) => assert_eq(value, "master")
+    Err(_) => fail("expected default branch detection to succeed")
+  }
+}
+
+///|
+async test "detect_default_branch_result_with_capture exposes failure" {
+  let branch = detect_default_branch_result_with_capture(
+    "/repo", mock_detect_failure,
+  )
+  match branch {
+    Ok(value) => fail("expected default branch detection to fail: " + value)
+    Err(_) => ()
+  }
+}
+
+///|
+async fn mock_detect_empty_output(cmd : @workspace.Command) -> (Int, String) {
+  @async.sleep(0)
+  if is_symbolic_ref_command(cmd) {
+    (0, "  \n")
+  } else {
+    (-1, "")
+  }
+}
+
+///|
+async test "detect_default_branch_result_with_capture exposes empty output" {
+  let branch = detect_default_branch_result_with_capture(
+    "/repo", mock_detect_empty_output,
+  )
+  match branch {
+    Ok(value) =>
+      fail("expected empty default branch detection to fail: " + value)
+    Err(_) => ()
+  }
+}
+
+///|
 fn mock_is_gh_pr_view(cmd : @workspace.Command) -> Bool {
   (
     cmd.program == "gh" &&

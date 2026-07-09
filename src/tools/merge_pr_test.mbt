@@ -690,6 +690,115 @@ async test "interpret_merge_pr missing audit receipt policy-blocks on master def
 }
 
 ///|
+async test "interpret_merge_pr blocks when default branch detection fails" {
+  let project_dir = "/tmp/choir-mpr-default-branch-failure-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    95,
+    "main.leaf",
+    "feature/audit-gate",
+    "trunk",
+    "https://github.com/o/r/pull/95",
+    200L,
+    @poller.ReviewState::Approved,
+    "",
+    head,
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  let logs : Array[String] = []
+  let hook_paths : Array[String] = []
+  let mut runner_calls = 0
+  let resp = interpret_merge_pr(
+    {
+      pr_number: 95,
+      parent_branch: "trunk",
+      caller_id: "main.tl",
+      review_mode: Some(@types.ReviewMode::SinglePass),
+    },
+    project_dir,
+    Some(ps),
+    None,
+    None,
+    async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      runner_calls = runner_calls + 1
+      let statuses = []
+      for _ in cmds {
+        statuses.push(0)
+      }
+      statuses
+    },
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "gh" &&
+        cmd.args.length() >= 2 &&
+        cmd.args[0] == "api" &&
+        cmd.args[1].has_suffix("/reviews") {
+        return (0, "[{\"state\":\"APPROVED\"}]")
+      }
+      if cmd.program == "timeout" && cmd.args.contains("repo") {
+        return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
+      }
+      if cmd.program == "timeout" && cmd.args.contains("graphql") {
+        return (
+          0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+        )
+      }
+      if cmd.program == "git" &&
+        cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+        return (1, "error: git unavailable\n")
+      }
+      if cmd.program == "git" &&
+        cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+        return (0, "feature/audit-gate\n")
+      }
+      if cmd.program == "cat" {
+        return (1, "")
+      }
+      (0, "")
+    },
+    fn(_path, content) {
+      logs.push(content)
+      true
+    },
+    fn(path) { path.has_suffix("/.choir/state/audit-gate.json") },
+    hook_capture=async fn(path : String, _input_json : String, _cwd : String?) {
+      @async.sleep(0)
+      hook_paths.push(path)
+      (0, "")
+    },
+    read_file=fn(path) {
+      if path.has_suffix("/.choir/state/audit-gate.json") {
+        "{\"enabled_at_unix\":100}\n"
+      } else {
+        ""
+      }
+    },
+    task_contract_reader=merge_pr_test_empty_contract_reader,
+  )
+  match resp {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("default branch"))
+      assert_true(msg.contains("PR #95"))
+    }
+    @types.Response::Ok(_) =>
+      fail("expected merge_pr to block when default branch detection fails")
+  }
+  assert_eq(runner_calls, 0)
+  assert_eq(hook_paths.length(), 0)
+  assert_true(
+    logs.iter().any(fn(line) { line.contains("outcome=audit_block") }),
+  )
+  assert_true(
+    logs.iter().any(fn(line) { line.contains("default_branch_unavailable") }),
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "interpret_merge_pr audit receipt remains valid when commit changes but tree matches" {
   let project_dir = "/tmp/choir-mpr-audit-tree-reuse-" +
     @sys.get_pid().to_string()
@@ -827,6 +936,10 @@ async test "interpret_merge_pr rejects caller parent branch mismatch before merg
     },
     async fn(cmd : @workspace.Command) -> (Int, String) {
       @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+        return (0, "origin/main\n")
+      }
       if cmd.program == "gh" &&
         cmd.args.length() >= 2 &&
         cmd.args[0] == "api" &&
@@ -918,6 +1031,10 @@ async test "interpret_merge_pr audit gate fails closed without poller state" {
     },
     async fn(cmd : @workspace.Command) -> (Int, String) {
       @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+        return (0, "origin/main\n")
+      }
       if cmd.program == "git" && cmd.args == ["remote", "get-url", "origin"] {
         return (0, "https://github.com/o/r.git\n")
       }
@@ -994,6 +1111,10 @@ async test "interpret_merge_pr audit gate fails closed for untracked PR" {
     },
     async fn(cmd : @workspace.Command) -> (Int, String) {
       @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+        return (0, "origin/main\n")
+      }
       if cmd.program == "git" && cmd.args == ["remote", "get-url", "origin"] {
         return (0, "https://github.com/o/r.git\n")
       }
@@ -1091,6 +1212,10 @@ async test "interpret_merge_pr main audit gate merges only matching audited head
     },
     async fn(cmd : @workspace.Command) -> (Int, String) {
       @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+        return (0, "origin/main\n")
+      }
       if cmd.program == "gh" &&
         cmd.args.length() >= 2 &&
         cmd.args[0] == "api" &&
@@ -1695,6 +1820,10 @@ async fn mock_preflight_capture_no_unresolved_threads(
   cmd : @workspace.Command,
 ) -> (Int, String) {
   @async.sleep(0)
+  if cmd.program == "git" &&
+    cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+    return (0, "origin/main\n")
+  }
   if cmd.program == "git" && cmd.args == ["remote", "get-url", "origin"] {
     return (0, "https://github.com/o/r.git\n")
   }
@@ -2249,6 +2378,10 @@ async fn mock_preflight_capture_one_unresolved_thread(
   cmd : @workspace.Command,
 ) -> (Int, String) {
   @async.sleep(0)
+  if cmd.program == "git" &&
+    cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+    return (0, "origin/main\n")
+  }
   if cmd.program == "git" && cmd.args == ["remote", "get-url", "origin"] {
     return (0, "https://github.com/o/r.git\n")
   }
@@ -2890,6 +3023,10 @@ async fn mock_merge_host_capture_for_merge(
   cmd : @workspace.Command,
 ) -> (Int, String) {
   @async.sleep(0)
+  if cmd.program == "git" &&
+    cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+    return (0, "origin/main\n")
+  }
   if cmd.program == "git" && cmd.args == ["remote", "get-url", "origin"] {
     return (0, "https://github.com/o/r.git\n")
   }
@@ -3965,6 +4102,10 @@ async test "interpret_merge_pr feature main closes wave and body beads then dele
   let ran : Array[@workspace.Command] = []
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
     if cmd.program == "gh" &&
       cmd.args.length() >= 2 &&
       cmd.args[0] == "api" &&
@@ -4133,6 +4274,10 @@ async test "interpret_merge_pr feature main with no issue ids does not call bd c
   let ran : Array[@workspace.Command] = []
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
     if cmd.program == "gh" &&
       cmd.args.length() >= 2 &&
       cmd.args[0] == "api" &&
@@ -4226,6 +4371,10 @@ async test "interpret_merge_pr leaf merge removes worktree and deletes local bra
   let ran : Array[@workspace.Command] = []
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
     if cmd.program == "gh" &&
       cmd.args.length() >= 2 &&
       cmd.args[0] == "api" &&
@@ -4324,6 +4473,10 @@ async test "dispatch merge_pr routes injected append_file and path_exists" {
   let path_checks : Array[String] = []
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
     if cmd.program == "gh" &&
       cmd.args.length() >= 2 &&
       cmd.args[0] == "api" &&
@@ -4401,6 +4554,10 @@ async test "interpret_merge_pr leaf merge skips missing worktree and still delet
   let ran : Array[@workspace.Command] = []
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
     if cmd.program == "gh" &&
       cmd.args.length() >= 2 &&
       cmd.args[0] == "api" &&
@@ -4508,6 +4665,10 @@ async test "interpret_merge_pr leaf cleanup refuses supervisor tracked agent" {
   let logs : Array[String] = []
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
     if cmd.program == "gh" &&
       cmd.args.length() >= 2 &&
       cmd.args[0] == "api" &&
@@ -4632,6 +4793,10 @@ async test "interpret_merge_pr leaf cleanup trusts dev lifecycle over stale supe
   let logs : Array[String] = []
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
     if cmd.program == "gh" &&
       cmd.args.length() >= 2 &&
       cmd.args[0] == "api" &&

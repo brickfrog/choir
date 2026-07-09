@@ -28,6 +28,7 @@ pub(all) enum MergePrAuditReceiptValidation {
 pub(all) enum MergePrAuditGateStatus {
   MergeAuditGateReceiptBlocked(MergePrAuditReceiptValidation)
   MergeAuditGateHeadUnavailable
+  MergeAuditGateDefaultBranchUnavailable
 } derive(Debug, Eq)
 
 ///|
@@ -64,6 +65,7 @@ fn MergePrAuditGateStatus::to_wire_string(
         MergeAuditReceiptTreeUnavailable(_) => "receipt_tree_unavailable"
       }
     MergeAuditGateHeadUnavailable => "head_unavailable"
+    MergeAuditGateDefaultBranchUnavailable => "default_branch_unavailable"
   }
 }
 
@@ -140,6 +142,12 @@ pub fn merge_pr_audit_gate_policy_block_message(
         "policy blocked: audit receipt gate cannot determine PR #" +
         pr_number.to_string() +
         " head SHA from tracked poller state. Wait for a poller snapshot with last_sha before merging.",
+      )
+    MergeAuditGateDefaultBranchUnavailable =>
+      Some(
+        "policy blocked: audit receipt gate cannot determine the repository default branch for PR #" +
+        pr_number.to_string() +
+        ". Wait for git default-branch detection to succeed before merging.",
       )
     MergeAuditGateReceiptBlocked(MergeAuditReceiptValid) => None
     MergeAuditGateReceiptBlocked(validation) => {
@@ -2283,7 +2291,21 @@ pub async fn interpret_merge_pr(
     ps.write_state_file(dir)
   },
 ) -> @types.Response {
-  let default_branch = detect_default_branch_with_capture(project_dir, capture)
+  let default_branch_result = detect_default_branch_result_with_capture(
+    project_dir, capture,
+  )
+  let default_branch = match default_branch_result {
+    Ok(branch) => branch
+    Err(_) =>
+      return @types.Response::Err(
+        merge_pr_audit_block_error(
+          project_dir,
+          merge_args.pr_number,
+          MergeAuditGateDefaultBranchUnavailable,
+          append_file,
+        ).message(),
+      )
+  }
   match
     interpret_merge_pr_preflight(
       merge_args.pr_number,

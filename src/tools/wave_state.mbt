@@ -1174,7 +1174,13 @@ pub async fn interpret_wave_state(
       None => (None, Some("thread state not fetched"))
     }
   }
-  let default_branch = detect_default_branch_with_capture(project_dir, capture)
+  let default_branch_result = detect_default_branch_result_with_capture(
+    project_dir, capture,
+  )
+  let default_branch = match default_branch_result {
+    Ok(branch) => branch
+    Err(_) => "main"
+  }
   let audit_receipt_map : Map[Int, @types.AuditReceiptState] = {}
   for pr_number in pr_numbers {
     match poller_state {
@@ -1192,6 +1198,7 @@ pub async fn interpret_wave_state(
                 capture,
                 read_file,
                 path_exists,
+                default_branch_result=Some(default_branch_result),
               ),
             )
           None => ()
