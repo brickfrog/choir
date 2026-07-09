@@ -733,12 +733,12 @@ async test "merge_pr audit receipt validation reports missing receipt without re
   )
   match got {
     MergeAuditReceiptMissing(short_sha) =>
-      assert_eq(short_sha, file_pr_short_sha(tree))
+      @debug.assert_eq(short_sha, file_pr_short_sha(tree))
     _ => fail("expected missing receipt")
   }
-  assert_eq(captured.length(), 1)
-  assert_eq(captured[0].program, "git")
-  assert_eq(read_calls, 0)
+  @debug.assert_eq(captured.length(), 1)
+  @debug.assert_eq(captured[0].program, "git")
+  @debug.assert_eq(read_calls, 0)
 }
 
 ///|
