@@ -136,6 +136,7 @@ pub(all) struct TrackedPR {
   mut mergeable : Mergeable
   mut merge_state_status : MergeStateStatus
   mut merged_at_unix : Int64?
+  mut audit_receipt_state : @types.AuditReceiptState
   mut last_timeout_at : Int64
   /// True once the poller has observed an issue-thread comment authored by a
   /// GitHub Copilot bot login (REST `/issues/{n}/comments`), distinct from review objects.

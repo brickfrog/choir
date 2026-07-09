@@ -624,6 +624,20 @@ fn poll_events_pr_merged_numbers(
 }
 
 ///|
+fn poll_events_terminal_pr_numbers(
+  events : Array[@poller.PollEvent],
+) -> Array[Int] {
+  let pr_numbers : Array[Int] = []
+  for event in events {
+    match event {
+      PRMerged(pr) | PRClosedUnmerged(pr) => pr_numbers.push(pr.pr_number)
+      _ => ()
+    }
+  }
+  pr_numbers
+}
+
+///|
 fn poll_event_tracked_snapshot(
   event : @poller.PollEvent,
   tracked : @poller.TrackedPR?,
@@ -937,6 +951,7 @@ fn synthetic_untracked_merged_pr(
     } else {
       Some(info.merged_at_unix)
     },
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
@@ -2290,6 +2305,52 @@ async fn ServerState::retry_auto_resolve_outdated_review_threads(
     }
   }
   events
+}
+
+///|
+async fn ServerState::refresh_tracked_pr_audit_receipt_states(
+  self : ServerState,
+  capture : async (@workspace.Command) -> (Int, String),
+  path_exists : (String) -> Bool,
+  read_file : (String) -> String,
+  skip_pr_numbers? : Array[Int] = [],
+  only_pr_number? : Int? = None,
+) -> Unit {
+  let tracked_prs : Array[@poller.TrackedPR] = []
+  for tracked in self.poller.tracked.values() {
+    let matches_target = match only_pr_number {
+      Some(pr_number) => tracked.pr_number == pr_number
+      None => true
+    }
+    if !skip_pr_numbers.contains(tracked.pr_number) && matches_target {
+      tracked_prs.push(tracked)
+    }
+  }
+  if tracked_prs.length() == 0 {
+    return
+  }
+  let default_branch = @tools.detect_default_branch_with_capture(
+    self.config.project_dir,
+    capture,
+  )
+  for tracked in tracked_prs {
+    match self.poller.get(tracked.pr_number) {
+      Some(current) => {
+        let audit_receipt_state = @tools.audit_receipt_advisory_state_for_tracked_pr(
+          self.config.project_dir,
+          current.parent_branch,
+          default_branch,
+          current.last_sha,
+          current.first_seen,
+          capture,
+          read_file,
+          path_exists,
+        )
+        self.poller.restore({ ..current, audit_receipt_state, })
+      }
+      None => ()
+    }
+  }
 }
 
 ///|
@@ -3793,6 +3854,7 @@ pub async fn ServerState::process_poller_tick_with(
   git_pull_runner? : async (String, async (@workspace.Command) -> (Int, String)) -> Bool = run_parent_git_pull_ff_only,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
   kill_pgid? : (Int) -> Unit = default_kill_pgid_best_effort,
+  read_file? : (String) -> String = self.read_file,
 ) -> Unit {
   self.mutex_registry.expire(now)
   self.warn_on_disk_config_divergence()
@@ -3855,6 +3917,12 @@ pub async fn ServerState::process_poller_tick_with(
     git_state_capture~,
     git_pull_runner~,
     sleep_fn~,
+  )
+  self.refresh_tracked_pr_audit_receipt_states(
+    capture,
+    path_exists,
+    read_file,
+    skip_pr_numbers=poll_events_terminal_pr_numbers(pending_events),
   )
   self.refresh_beads_status_cache_if_due(now, bd_capture, path_exists)
   tick_summary.changes = pending_events.length()
@@ -4094,6 +4162,12 @@ pub async fn ServerState::process_poller_tick(
     audit_receipt_read~,
     sleep_fn~,
   )
+  self.refresh_tracked_pr_audit_receipt_states(
+    capture,
+    @exec.path_entry_exists,
+    self.read_file,
+    skip_pr_numbers=poll_events_terminal_pr_numbers(pending_events),
+  )
   self.refresh_beads_status_cache_if_due(
     now, @exec.capture_command_stdout_with_stderr_on_error, @exec.path_entry_exists,
   )
@@ -4184,6 +4258,13 @@ pub async fn ServerState::refresh_pr_with(
     audit_receipt_exists~,
     audit_receipt_read~,
     sleep_fn~,
+  )
+  self.refresh_tracked_pr_audit_receipt_states(
+    capture,
+    path_exists,
+    self.read_file,
+    skip_pr_numbers=poll_events_terminal_pr_numbers(pending_events),
+    only_pr_number=Some(pr_number),
   )
   if had_pending_events {
     self.request_goal_judge_tick()

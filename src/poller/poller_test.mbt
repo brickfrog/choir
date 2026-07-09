@@ -11,6 +11,92 @@ test "poller_backoff_delay_after_failure exponential ladder capped at 900s" {
 }
 
 ///|
+test "TrackedPR audit receipt state defaults for old JSON and round-trips" {
+  let old_json =
+    #|[
+    #|  {
+    #|    "pr_number": 41,
+    #|    "agent_id": "main.leaf",
+    #|    "branch": "work/leaf",
+    #|    "parent_branch": "main",
+    #|    "pr_url": "https://example.test/pr/41",
+    #|    "first_seen": 1,
+    #|    "last_review_state": "approved",
+    #|    "last_review_bodies": "",
+    #|    "last_sha": "old-head",
+    #|    "notified_parent": true,
+    #|    "last_ci_rollup": "success",
+    #|    "last_timeout_at": 0
+    #|  }
+    #|]
+  let old = @poller.parse_tracked_prs_json(old_json)
+  assert_eq(old.length(), 1)
+  assert_eq(old[0].audit_receipt_state, @types.AuditReceiptState::NotRequired)
+
+  let pending_json =
+    #|[
+    #|  {
+    #|    "pr_number": 42,
+    #|    "agent_id": "main.leaf",
+    #|    "branch": "work/leaf",
+    #|    "parent_branch": "main",
+    #|    "pr_url": "https://example.test/pr/42",
+    #|    "first_seen": 1,
+    #|    "last_review_state": "approved",
+    #|    "last_review_bodies": "",
+    #|    "last_sha": "head",
+    #|    "notified_parent": true,
+    #|    "last_ci_rollup": "success",
+    #|    "last_timeout_at": 0,
+    #|    "audit_receipt_state": ["Pending",{"head_sha":"abc"}]
+    #|  }
+    #|]
+  let pending = @poller.parse_tracked_prs_json(pending_json)
+  assert_eq(
+    pending[0].audit_receipt_state,
+    @types.AuditReceiptState::Pending(head_sha="abc"),
+  )
+  let pending_round_trip = @poller.parse_tracked_prs_json(
+    "[" + pending[0].to_json() + "]",
+  )
+  assert_eq(
+    pending_round_trip[0].audit_receipt_state,
+    @types.AuditReceiptState::Pending(head_sha="abc"),
+  )
+
+  let findings_json =
+    #|[
+    #|  {
+    #|    "pr_number": 43,
+    #|    "agent_id": "main.leaf",
+    #|    "branch": "work/leaf",
+    #|    "parent_branch": "main",
+    #|    "pr_url": "https://example.test/pr/43",
+    #|    "first_seen": 1,
+    #|    "last_review_state": "approved",
+    #|    "last_review_bodies": "",
+    #|    "last_sha": "head",
+    #|    "notified_parent": true,
+    #|    "last_ci_rollup": "success",
+    #|    "last_timeout_at": 0,
+    #|    "audit_receipt_state": ["FindingsRemain",{"head_sha":"abc","count":2}]
+    #|  }
+    #|]
+  let findings = @poller.parse_tracked_prs_json(findings_json)
+  assert_eq(
+    findings[0].audit_receipt_state,
+    @types.AuditReceiptState::FindingsRemain(head_sha="abc", count=2),
+  )
+  let findings_round_trip = @poller.parse_tracked_prs_json(
+    "[" + findings[0].to_json() + "]",
+  )
+  assert_eq(
+    findings_round_trip[0].audit_receipt_state,
+    @types.AuditReceiptState::FindingsRemain(head_sha="abc", count=2),
+  )
+}
+
+///|
 test "PollerState merge receipts are bounded markers" {
   let ps = @poller.PollerState::new()
   ps.mark_merged_observed(10)

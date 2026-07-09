@@ -154,6 +154,7 @@ async fn ServerState::process_poller_tick_with_test(
   git_pull_capture? : async (@workspace.Command) -> (Int, String) = server_delivery_test_capture,
   hook_capture? : async (String, String, String?) -> (Int, String) = server_delivery_test_hook_capture,
   hook_path_exists? : (String) -> Bool = server_delivery_test_path_entry_exists,
+  path_exists? : (String) -> Bool = @sys.path_entry_exists,
   audit_receipt_exists? : (String) -> Bool = server_delivery_test_path_entry_exists,
   audit_receipt_read? : (String) -> String = server_delivery_test_read_file,
   git_state_capture? : async (
@@ -195,6 +196,7 @@ async fn ServerState::process_poller_tick_with_test(
     kill_pgid~,
     git_capture=server_delivery_test_git_capture,
     bd_capture=server_delivery_test_capture,
-    path_exists=@sys.path_entry_exists,
+    path_exists~,
+    read_file=audit_receipt_read,
   )
 }

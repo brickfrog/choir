@@ -22,6 +22,7 @@ fn sample_tracked(
     mergeable: Mergeable::Unknown,
     merge_state_status: MergeStateStatus::Unknown,
     merged_at_unix: None,
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,

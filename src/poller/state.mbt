@@ -169,6 +169,7 @@ pub fn TrackedPR::to_json(self : TrackedPR) -> String {
     "mergeable": self.mergeable.to_wire_string().to_json(),
     "merge_state_status": self.merge_state_status.to_wire_string().to_json(),
     "merged_at_unix": tracked_pr_optional_int64_to_json(self.merged_at_unix),
+    "audit_receipt_state": self.audit_receipt_state.to_json(),
     "last_timeout_at": self.last_timeout_at.to_json(),
     "copilot_issue_comment_seen": self.copilot_issue_comment_seen.to_json(),
     "orphan_notified": self.orphan_notified.to_json(),
@@ -275,6 +276,13 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     None => MergeStateStatus::Unknown
   }
   let merged_at_unix = @types.json_field_int64(fields, "merged_at_unix")
+  let audit_receipt_state = match fields.get("audit_receipt_state") {
+    Some(value) =>
+      @json.from_json(value) catch {
+        _ => @types.AuditReceiptState::NotRequired
+      }
+    None => @types.AuditReceiptState::NotRequired
+  }
   let last_timeout_at = match
     @types.json_field_int64(fields, "last_timeout_at") {
     Some(value) => value
@@ -355,6 +363,7 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     mergeable,
     merge_state_status,
     merged_at_unix,
+    audit_receipt_state,
     last_timeout_at,
     copilot_issue_comment_seen,
     orphan_notified,
@@ -434,6 +443,7 @@ pub fn PollerState::track(
     mergeable: Mergeable::Unknown,
     merge_state_status: MergeStateStatus::Unknown,
     merged_at_unix: None,
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
@@ -563,6 +573,7 @@ pub fn PollerState::track_recovered(
     mergeable: Mergeable::Unknown,
     merge_state_status: MergeStateStatus::Unknown,
     merged_at_unix: None,
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 0L,
     copilot_issue_comment_seen,
     orphan_notified: false,

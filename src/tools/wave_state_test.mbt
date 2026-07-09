@@ -253,6 +253,7 @@ fn tracked_pr_with(
     mergeable,
     merge_state_status,
     merged_at_unix,
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: copilot_comment,
     orphan_notified: false,
