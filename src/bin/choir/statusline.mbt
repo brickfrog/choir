@@ -429,6 +429,7 @@ fn statusline_test_tracked_pr(
     mergeable: @poller.Mergeable::Unknown,
     merge_state_status: @poller.MergeStateStatus::Unknown,
     merged_at_unix: None,
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: true,
     orphan_notified: false,
@@ -726,6 +727,7 @@ fn statusline_pr_token(
       Some(0),
       review_mode=tracked.review_mode,
       review_required~,
+      audit_receipt_state=tracked.audit_receipt_state,
     ) {
     return match merge_mode {
       @poller.MergeOperatorMode::Manual => "\u001b[32m#\{n}M\u001b[0m"
@@ -741,6 +743,41 @@ fn statusline_pr_token(
     @poller.ReviewState::Approved => "\u001b[32m#\{n}\u001b[0m"
     _ => "#\{n}"
   }
+}
+
+///|
+test "statusline_pr_summary gates merge-ready glyph on audit receipt state" {
+  let project_dir = "/tmp/choir-statusline-pr-audit-state-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state"))
+  ignore(
+    @sys.write_file_sync(
+      project_dir + "/.choir/config.toml",
+      "automerge = false\n",
+    ),
+  )
+  let pending = {
+    ..statusline_test_tracked_pr(84, "main.leaf-audit-pending"),
+    audit_receipt_state: @types.AuditReceiptState::Pending(head_sha="x"),
+  }
+  let valid = {
+    ..statusline_test_tracked_pr(85, "main.leaf-audit-valid"),
+    audit_receipt_state: @types.AuditReceiptState::Valid,
+  }
+  ignore(
+    @sys.write_file_sync(
+      project_dir + "/.choir/state/poller_state.json",
+      "[" + pending.to_json() + "," + valid.to_json() + "]",
+    ),
+  )
+  let summary = statusline_pr_summary(project_dir)
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(summary.body.contains("#84"))
+  assert_false(summary.body.contains("#84M"))
+  assert_true(summary.body.contains("#85M"))
 }
 
 ///|

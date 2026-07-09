@@ -122,6 +122,57 @@ fn review_thread_refs_to_json(refs : Array[ReviewThreadRef]) -> Json {
 }
 
 ///|
+fn audit_receipt_state_from_tag_fields(
+  tag : String,
+  fields : Map[String, Json],
+) -> @types.AuditReceiptState? {
+  match tag {
+    "NotRequired" => Some(@types.AuditReceiptState::NotRequired)
+    "Valid" => Some(@types.AuditReceiptState::Valid)
+    "Pending" =>
+      @types.json_field_string(fields, "head_sha").map(fn(head_sha) {
+        @types.AuditReceiptState::Pending(head_sha~)
+      })
+    "FindingsRemain" =>
+      match
+        (
+          @types.json_field_string(fields, "head_sha"),
+          @types.json_field_int(fields, "count"),
+        ) {
+        (Some(head_sha), Some(count)) =>
+          Some(@types.AuditReceiptState::FindingsRemain(head_sha~, count~))
+        _ => None
+      }
+    _ => None
+  }
+}
+
+///|
+fn audit_receipt_state_from_json(json : Json) -> @types.AuditReceiptState? {
+  match json {
+    Object(fields) =>
+      match @types.json_field_string(fields, "tag") {
+        Some(tag) => audit_receipt_state_from_tag_fields(tag, fields)
+        None => None
+      }
+    Array(items) => {
+      if items.length() != 2 {
+        return None
+      }
+      let tag = match items[0] {
+        String(value) => value
+        _ => return None
+      }
+      guard items[1] is Object(fields) else { return None }
+      audit_receipt_state_from_tag_fields(tag, fields)
+    }
+    String("NotRequired") => Some(@types.AuditReceiptState::NotRequired)
+    String("Valid") => Some(@types.AuditReceiptState::Valid)
+    _ => None
+  }
+}
+
+///|
 fn parse_review_thread_refs(json : Json?) -> Array[ReviewThreadRef]? {
   match json {
     None => Some([])
@@ -169,6 +220,7 @@ pub fn TrackedPR::to_json(self : TrackedPR) -> String {
     "mergeable": self.mergeable.to_wire_string().to_json(),
     "merge_state_status": self.merge_state_status.to_wire_string().to_json(),
     "merged_at_unix": tracked_pr_optional_int64_to_json(self.merged_at_unix),
+    "audit_receipt_state": self.audit_receipt_state.to_json(),
     "last_timeout_at": self.last_timeout_at.to_json(),
     "copilot_issue_comment_seen": self.copilot_issue_comment_seen.to_json(),
     "orphan_notified": self.orphan_notified.to_json(),
@@ -275,6 +327,13 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     None => MergeStateStatus::Unknown
   }
   let merged_at_unix = @types.json_field_int64(fields, "merged_at_unix")
+  let audit_receipt_state = match fields.get("audit_receipt_state") {
+    Some(value) =>
+      audit_receipt_state_from_json(value).unwrap_or(
+        @types.AuditReceiptState::NotRequired,
+      )
+    None => @types.AuditReceiptState::NotRequired
+  }
   let last_timeout_at = match
     @types.json_field_int64(fields, "last_timeout_at") {
     Some(value) => value
@@ -355,6 +414,7 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     mergeable,
     merge_state_status,
     merged_at_unix,
+    audit_receipt_state,
     last_timeout_at,
     copilot_issue_comment_seen,
     orphan_notified,
@@ -434,6 +494,7 @@ pub fn PollerState::track(
     mergeable: Mergeable::Unknown,
     merge_state_status: MergeStateStatus::Unknown,
     merged_at_unix: None,
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
@@ -563,6 +624,7 @@ pub fn PollerState::track_recovered(
     mergeable: Mergeable::Unknown,
     merge_state_status: MergeStateStatus::Unknown,
     merged_at_unix: None,
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 0L,
     copilot_issue_comment_seen,
     orphan_notified: false,

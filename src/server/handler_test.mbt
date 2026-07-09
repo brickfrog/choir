@@ -1,4 +1,71 @@
 ///|
+
+///|
+async test "poller tick persists injected audit receipt state" {
+  let project_dir = "/tmp/choir-poller-audit-state-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/state/kv"))
+  let state = ServerState::new(
+    { ..@types.Config::default(), project_dir, terminal_session: "s" },
+    make_hermetic_recovery_provider(),
+  )
+  state.poller.track(
+    44, "main.leaf", "work/leaf", "main", "https://example.test/pr/44", 1L,
+  )
+  state.process_poller_tick_with_test(
+    1000L,
+    900L,
+    async fn(_pr_number, _skip_issue_comment_fetch) {
+      @async.sleep(0)
+      (
+        true,
+        @poller.ReviewState::Approved,
+        "head",
+        @poller.CiRollupStatus::Success,
+        "",
+        true,
+        false,
+        @poller.Mergeable::Unknown,
+        @poller.MergeStateStatus::Unknown,
+        None,
+      )
+    },
+    None,
+    "",
+    runner=async fn(_cmds) {
+      @async.sleep(0)
+      [0]
+    },
+    capture=async fn(_cmd) {
+      @async.sleep(0)
+      (1, "")
+    },
+    automerge_capture=async fn(_cmd) {
+      @async.sleep(0)
+      (1, "")
+    },
+    path_exists=fn(path) { path.has_suffix("/.choir/state/audit-gate.json") },
+    audit_receipt_read=fn(path) {
+      if path.has_suffix("/.choir/state/audit-gate.json") {
+        "{\"enabled_at_unix\":1}\n"
+      } else {
+        ""
+      }
+    },
+  )
+  let persisted = @poller.read_state_file(project_dir)
+  assert_eq(persisted.length(), 1)
+  assert_eq(
+    persisted[0].audit_receipt_state,
+    @types.AuditReceiptState::Pending(head_sha="head"),
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 fn[T] handler_test_capture(
   body : () -> T raise @types.ChoirError,
 ) -> Result[T, @types.ChoirError] {
@@ -795,6 +862,7 @@ test "poll_event_beads_note_and_state maps review and ci events" {
         mergeable: @poller.Mergeable::Unknown,
         merge_state_status: @poller.MergeStateStatus::Unknown,
         merged_at_unix: None,
+        audit_receipt_state: @types.AuditReceiptState::NotRequired,
         last_timeout_at: 0L,
         copilot_issue_comment_seen: false,
         orphan_notified: false,
@@ -3538,6 +3606,7 @@ fn parent_poll_test_ready_tracked(pr_number : Int) -> @poller.TrackedPR {
     mergeable: @poller.Mergeable::Unknown,
     merge_state_status: @poller.MergeStateStatus::Unknown,
     merged_at_unix: None,
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: true,
     orphan_notified: false,
@@ -6309,6 +6378,7 @@ fn parent_poll_event_test_tracked(
     mergeable: @poller.Mergeable::Unknown,
     merge_state_status: @poller.MergeStateStatus::Unknown,
     merged_at_unix: None,
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: true,
     orphan_notified: false,
@@ -6344,6 +6414,7 @@ test "parent_poll_event_message PR READY stresses not merged" {
     mergeable: @poller.Mergeable::Unknown,
     merge_state_status: @poller.MergeStateStatus::Unknown,
     merged_at_unix: None,
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
@@ -6417,6 +6488,7 @@ test "parent_poll_event_message PR READY shows merge gate when snapshot allows" 
     mergeable: @poller.Mergeable::Unknown,
     merge_state_status: @poller.MergeStateStatus::Unknown,
     merged_at_unix: None,
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
@@ -6603,6 +6675,7 @@ test "parent_poll_event_message MergeReady is actionable in manual mode" {
     mergeable: @poller.Mergeable::Unknown,
     merge_state_status: @poller.MergeStateStatus::Unknown,
     merged_at_unix: None,
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: true,
     orphan_notified: false,
@@ -6656,6 +6729,7 @@ test "parent_poll_event_message MergeReady is informational in automerge mode" {
     mergeable: @poller.Mergeable::Unknown,
     merge_state_status: @poller.MergeStateStatus::Unknown,
     merged_at_unix: None,
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: true,
     orphan_notified: false,
@@ -6853,6 +6927,7 @@ test "parent_poll_event_message FixesPushed stresses not merged" {
     mergeable: @poller.Mergeable::Unknown,
     merge_state_status: @poller.MergeStateStatus::Unknown,
     merged_at_unix: None,
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
@@ -6908,6 +6983,7 @@ test "parent_poll_event_message FixesPushed single_pass avoids re-review wording
     mergeable: @poller.Mergeable::Unknown,
     merge_state_status: @poller.MergeStateStatus::Unknown,
     merged_at_unix: None,
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
@@ -6974,6 +7050,7 @@ test "parent_poll_event_message CIFailureCleared stresses re-check not merge" {
     mergeable: @poller.Mergeable::Unknown,
     merge_state_status: @poller.MergeStateStatus::Unknown,
     merged_at_unix: None,
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
@@ -7064,6 +7141,7 @@ test "parent_poll_event_message CILatestHeadRollupSucceeded stresses not merge o
     mergeable: @poller.Mergeable::Unknown,
     merge_state_status: @poller.MergeStateStatus::Unknown,
     merged_at_unix: None,
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
@@ -7263,6 +7341,7 @@ test "leaf_poll_review_injection_message CILatestHeadRollupSucceeded escalates w
     mergeable: @poller.Mergeable::Unknown,
     merge_state_status: @poller.MergeStateStatus::Unknown,
     merged_at_unix: None,
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 100L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
@@ -7341,6 +7420,7 @@ test "leaf_poll_review_injection_message CILatestHeadRollupSucceeded suppresses 
     mergeable: @poller.Mergeable::Unknown,
     merge_state_status: @poller.MergeStateStatus::Unknown,
     merged_at_unix: None,
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 100L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
@@ -7408,6 +7488,7 @@ test "parent_poll_event_message suppresses non-blocking review comments" {
     mergeable: @poller.Mergeable::Unknown,
     merge_state_status: @poller.MergeStateStatus::Unknown,
     merged_at_unix: None,
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
@@ -8673,6 +8754,7 @@ test "parent_poll_event_message REVIEW TIMEOUT uses attention-required decision"
     mergeable: @poller.Mergeable::Unknown,
     merge_state_status: @poller.MergeStateStatus::Unknown,
     merged_at_unix: None,
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
@@ -8726,6 +8808,7 @@ test "parent_poll_event_message ReviewTimeout is benign when review is skipped" 
     mergeable: @poller.Mergeable::Unknown,
     merge_state_status: @poller.MergeStateStatus::Unknown,
     merged_at_unix: None,
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 999L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
@@ -8780,6 +8863,7 @@ test "parent_poll_event_message CI LATEST HEAD adds escalation when review timeo
     mergeable: @poller.Mergeable::Unknown,
     merge_state_status: @poller.MergeStateStatus::Unknown,
     merged_at_unix: None,
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 999L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
@@ -8863,6 +8947,7 @@ test "parent_poll_event_message CI FAILED uses attention-required decision" {
     mergeable: @poller.Mergeable::Unknown,
     merge_state_status: @poller.MergeStateStatus::Unknown,
     merged_at_unix: None,
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
@@ -8912,6 +8997,7 @@ test "parent_poll_event_message PRMerged is handled by canonical teardown delive
     mergeable: @poller.Mergeable::Unknown,
     merge_state_status: @poller.MergeStateStatus::Unknown,
     merged_at_unix: None,
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
@@ -8956,6 +9042,7 @@ test "evidence_events_for_poll_snapshot emits normalized snapshot events" {
     mergeable: @poller.Mergeable::Unknown,
     merge_state_status: @poller.MergeStateStatus::Unknown,
     merged_at_unix: None,
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: true,
     orphan_notified: false,
@@ -9019,6 +9106,7 @@ test "evidence_events_for_poll_snapshot includes merge observed on PRMerged" {
     mergeable: @poller.Mergeable::Unknown,
     merge_state_status: @poller.MergeStateStatus::Unknown,
     merged_at_unix: None,
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
@@ -9067,6 +9155,7 @@ test "evidence_events_for_poll_snapshot emits NO MergeObserved for PRClosedUnmer
     mergeable: @poller.Mergeable::Unknown,
     merge_state_status: @poller.MergeStateStatus::Unknown,
     merged_at_unix: None,
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
@@ -9138,6 +9227,7 @@ async test "deliver_orphaned_pr_notification_for skips finalized merged lifecycl
     mergeable: @poller.Mergeable::Unknown,
     merge_state_status: @poller.MergeStateStatus::Unknown,
     merged_at_unix: None,
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
@@ -9203,6 +9293,7 @@ async test "deliver_poller_stall_notification_for skips finalized merged lifecyc
     mergeable: @poller.Mergeable::Unknown,
     merge_state_status: @poller.MergeStateStatus::Unknown,
     merged_at_unix: None,
+    audit_receipt_state: @types.AuditReceiptState::NotRequired,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
