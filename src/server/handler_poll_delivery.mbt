@@ -2435,10 +2435,20 @@ async fn deliver_pending_poll_events(
   if retried_events.length() > 0 {
     state.request_goal_judge_tick()
   }
-  let default_branch = if pending_events.length() > 0 {
-    @tools.detect_default_branch_with_capture(state.config.project_dir, capture)
+  let default_branch_result = if pending_events.length() > 0 {
+    Some(
+      @tools.detect_default_branch_result_with_capture(
+        state.config.project_dir,
+        capture,
+      ),
+    )
   } else {
-    ""
+    None
+  }
+  let default_branch = match default_branch_result {
+    Some(Ok(branch)) => branch
+    Some(Err(_)) => "main"
+    None => ""
   }
   for i = 0; i < pending_events.length(); i = i + 1 {
     let event = pending_events[i]
@@ -2512,6 +2522,7 @@ async fn deliver_pending_poll_events(
             capture,
             audit_receipt_read,
             audit_receipt_exists,
+            default_branch_result~,
           )
         }
       None => @types.AuditReceiptState::NotRequired
@@ -2852,10 +2863,20 @@ async fn ServerState::sweep_tracked_prs_for_automerge(
   for tracked in self.poller.tracked.values() {
     tracked_prs.push(tracked)
   }
-  let default_branch = if tracked_prs.length() > 0 {
-    @tools.detect_default_branch_with_capture(self.config.project_dir, capture)
+  let default_branch_result = if tracked_prs.length() > 0 {
+    Some(
+      @tools.detect_default_branch_result_with_capture(
+        self.config.project_dir,
+        capture,
+      ),
+    )
   } else {
-    ""
+    None
+  }
+  let default_branch = match default_branch_result {
+    Some(Ok(branch)) => branch
+    Some(Err(_)) => "main"
+    None => ""
   }
   for tracked in tracked_prs {
     let current = match self.poller.get(tracked.pr_number) {
@@ -2884,6 +2905,7 @@ async fn ServerState::sweep_tracked_prs_for_automerge(
       capture,
       read_file,
       path_exists,
+      default_branch_result~,
     )
     let gate_ready = @poller.tl_tracked_pr_merge_gate_snapshot_ready(
       current,

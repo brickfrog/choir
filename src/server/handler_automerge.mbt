@@ -396,10 +396,14 @@ pub async fn maybe_trigger_automerge_for_pending_event(
       )
     None => []
   }
-  let default_branch = @tools.detect_default_branch_with_capture(
+  let default_branch_result = @tools.detect_default_branch_result_with_capture(
     state.config.project_dir,
     capture,
   )
+  let default_branch = match default_branch_result {
+    Ok(branch) => branch
+    Err(_) => "main"
+  }
   let audit_receipt_state = @tools.audit_receipt_advisory_state_for_tracked_pr(
     state.config.project_dir,
     tracked.parent_branch,
@@ -409,6 +413,7 @@ pub async fn maybe_trigger_automerge_for_pending_event(
     capture,
     read_file,
     path_exists,
+    default_branch_result=Some(default_branch_result),
   )
   let decision = @poller.merge_policy_decision_for_tracked_pr(
     tracked,
