@@ -6,20 +6,24 @@ verify_cmd = "moon check --target native && moon test --target native"
 # Per-agent model selection (choir-w5m7). Passthrough to `codex --model <value>`.
 # dev (gpt-5.3-codex-spark) PARKED: spark could not drive the agentic TDD-leaf
 # protocol (mis-sequenced Red->Done, false verify-pass, exit-255 build) on first
-# trial. gpt-5.6 replaces the old flat gpt-5.5 default with per-role tiers: dev
-# leaves get well-scoped briefs from the TL and shouldn't need to reason much on
-# their own, so luna (cheap/fast, strong on agentic-coding benchmarks) at xhigh
-# effort trades model size for reasoning depth. Workers (audits) get terra
-# (roughly gpt-5.5-equivalent) since judgment-heavy single-pass review benefits
-# more from model strength than from effort.
+# trial. gpt-5.6-luna PARKED too (2026-07-09): every codex dev leaf spawned
+# under luna had its `choir mcp-stdio` MCP subprocess launch with a completely
+# empty CHOIR_* environment (confirmed via /proc/<pid>/environ), unlike gpt-5.5
+# leaves and unlike root's own Claude-Code-spawned mcp-stdio process, which both
+# correctly inherit CHOIR_AGENT_TOKEN etc. Missing token -> registration
+# silently rejected server-side (serve_authenticate_register_request) but
+# mcp_perform_registration_handshake only checks for a non-empty response, not
+# success, so the bridge proceeds as if authenticated and the next real
+# tools/call (tdd_intent et al) then fails opaquely as "server restarting,
+# retry" -- see choir bead for the write-up. Root cause not fully pinned
+# (whether it's luna specifically or the whole 5.6 family under some codex
+# runtime mode), so reverting dev to the known-good gpt-5.5 baseline rather
+# than guessing at terra. Effort is the real quota lever — see choir-mn0l.
 [model.codex]
-default = "gpt-5.6-terra"
-dev = "gpt-5.6-luna"
-worker = "gpt-5.6-terra"
+default = "gpt-5.5"
 
 # Per-agent reasoning effort (choir-mn0l). Emits `-c model_reasoning_effort=<v>`.
-# dev=xhigh: compensates for luna's smaller tier with max reasoning depth.
-# worker=high: terra doesn't need max effort for review/audit judgment calls.
+# dev=high: coding leaves drop off the global xhigh (the quota saver). Audits/workers
+# unset -> inherit the global codex effort (xhigh), where the reasoning is worth it.
 [effort.codex]
-dev = "xhigh"
-worker = "high"
+dev = "high"
