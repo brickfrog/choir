@@ -6,13 +6,20 @@ verify_cmd = "moon check --target native && moon test --target native"
 # Per-agent model selection (choir-w5m7). Passthrough to `codex --model <value>`.
 # dev (gpt-5.3-codex-spark) PARKED: spark could not drive the agentic TDD-leaf
 # protocol (mis-sequenced Red->Done, false verify-pass, exit-255 build) on first
-# trial. Coding leaves inherit gpt-5.5 until that's reliable. Effort is the real
-# quota lever — see choir-mn0l.
+# trial. gpt-5.6 replaces the old flat gpt-5.5 default with per-role tiers: dev
+# leaves get well-scoped briefs from the TL and shouldn't need to reason much on
+# their own, so luna (cheap/fast, strong on agentic-coding benchmarks) at xhigh
+# effort trades model size for reasoning depth. Workers (audits) get terra
+# (roughly gpt-5.5-equivalent) since judgment-heavy single-pass review benefits
+# more from model strength than from effort.
 [model.codex]
-default = "gpt-5.5"
+default = "gpt-5.6-terra"
+dev = "gpt-5.6-luna"
+worker = "gpt-5.6-terra"
 
 # Per-agent reasoning effort (choir-mn0l). Emits `-c model_reasoning_effort=<v>`.
-# dev=low: coding leaves drop off the global xhigh (the quota saver). Audits/workers
-# unset -> inherit the global codex effort (xhigh), where the reasoning is worth it.
+# dev=xhigh: compensates for luna's smaller tier with max reasoning depth.
+# worker=high: terra doesn't need max effort for review/audit judgment calls.
 [effort.codex]
-dev = "high"
+dev = "xhigh"
+worker = "high"
