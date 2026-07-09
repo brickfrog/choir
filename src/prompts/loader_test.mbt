@@ -443,6 +443,12 @@ test "leaf profile default prompt uses poller snapshots for review state" {
   assert_true(body.contains("tdd_red_check"))
   assert_true(body.contains("tdd_green_check"))
   assert_true(body.contains("refuses until your TDD phase is Done"))
+  assert_true(body.contains("PR lifecycle writes"))
+  assert_true(body.contains("GitHub App/connector tools"))
+  assert_true(body.contains("codex_apps.github.*"))
+  assert_true(
+    body.contains("re-call `file_pr` with the updated `body` argument"),
+  )
   assert_false(body.contains("## Codebase exploration"))
   assert_false(
     body.contains("you (the leaf) must resolve" + " each thread yourself"),
