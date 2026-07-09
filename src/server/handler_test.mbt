@@ -1156,6 +1156,10 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
   }
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
     let repo_view_json =
       #|{"owner":{"login":"brickfrog"},"name":"choir"}
     let review_threads_json =
@@ -1277,6 +1281,10 @@ async test "maybe_trigger_automerge_for_pending_event satisfies non-native moon 
   }
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
     let repo_view_json = "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}"
     let review_threads_json = "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}"
     if cmd.args.contains("repo") && cmd.args.contains("view") {
@@ -1362,6 +1370,10 @@ async test "maybe_trigger_automerge_for_pending_event treats NoChecks as verify-
   }
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
     let repo_view_json = "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}"
     let review_threads_json = "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}"
     if cmd.args.contains("repo") && cmd.args.contains("view") {
@@ -1647,6 +1659,10 @@ async test "refresh_pr_with pending events fires automerge after fixes and CI cl
   let mut review_gate_calls = 0
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
     let repo_view_json =
       #|{"owner":{"login":"brickfrog"},"name":"choir"}
     let blocked_threads_json =
@@ -2091,6 +2107,10 @@ async test "quiet poller tick automerge sweep records attempted head on success"
   }
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
     let repo_view_json =
       #|{"owner":{"login":"brickfrog"},"name":"choir"}
     if (
@@ -2176,6 +2196,10 @@ async test "quiet poller tick automerge sweep retries reviewerless ready PR" {
   }
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
     let repo_view_json =
       #|{"owner":{"login":"brickfrog"},"name":"choir"}
     if (
@@ -2305,6 +2329,10 @@ async test "quiet poller tick automerge sweep finalizes stale-role tracked leaf 
   }
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
     let repo_view_json =
       #|{"owner":{"login":"brickfrog"},"name":"choir"}
     if (
@@ -2462,6 +2490,10 @@ async test "quiet poller tick automerge sweep records attempted head on failure"
   }
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
     let repo_view_json =
       #|{"owner":{"login":"brickfrog"},"name":"choir"}
     if (
@@ -2616,6 +2648,10 @@ async test "maybe_trigger_automerge_for_pending_event waits while audit receipt 
   }
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
     let repo_view_json =
       #|{"owner":{"login":"brickfrog"},"name":"choir"}
     if (
@@ -2739,6 +2775,10 @@ async test "maybe_trigger_automerge_for_pending_event waits while audit findings
   }
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
     let repo_view_json =
       #|{"owner":{"login":"brickfrog"},"name":"choir"}
     if (
@@ -3097,6 +3137,10 @@ async test "automerge sweep runs after queued parent rows are delivered" {
   let mut graphql_calls = 0
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
     let repo_view_json =
       #|{"owner":{"login":"brickfrog"},"name":"choir"}
     if (
@@ -3189,6 +3233,10 @@ async test "blocked gh notify auto-merges when latest poller snapshot is clear" 
   }
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
     let repo_view_json =
       #|{"owner":{"login":"brickfrog"},"name":"choir"}
     let review_threads_json =
@@ -3267,6 +3315,10 @@ async test "blocked gh notify honors single-pass review mode for fixes pushed" {
   }
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
     let repo_view_json =
       #|{"owner":{"login":"brickfrog"},"name":"choir"}
     let review_threads_json =
@@ -3342,6 +3394,10 @@ async test "blocked gh notify uses tracked review mode over global config" {
   }
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
     if cmd.args.contains("repo") && cmd.args.contains("view") {
       return (0, "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}")
     }
@@ -6023,6 +6079,10 @@ async test "quiet poller tick successful auto resolve retry re-enters automerge 
   let mut review_gate_calls = 0
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
     let repo_view_json =
       #|{"owner":{"login":"brickfrog"},"name":"choir"}
     let unresolved_thread_json =
@@ -6295,6 +6355,10 @@ async test "quiet poller tick never-fetched retry clear re-enters automerge pipe
   let mut review_gate_calls = 0
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
     let repo_view_json =
       #|{"owner":{"login":"brickfrog"},"name":"choir"}
     let clear_threads_json =

@@ -3604,6 +3604,10 @@ async test "heartbeat tick loop triggers automerge sweep path via process_poller
   }
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
     let repo_view_json =
       #|{"owner":{"login":"brickfrog"},"name":"choir"}
     if (

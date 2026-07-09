@@ -490,6 +490,28 @@ async test "detect_default_branch_result_with_capture exposes failure" {
 }
 
 ///|
+async fn mock_detect_empty_output(cmd : @workspace.Command) -> (Int, String) {
+  @async.sleep(0)
+  if is_symbolic_ref_command(cmd) {
+    (0, "  \n")
+  } else {
+    (-1, "")
+  }
+}
+
+///|
+async test "detect_default_branch_result_with_capture exposes empty output" {
+  let branch = detect_default_branch_result_with_capture(
+    "/repo", mock_detect_empty_output,
+  )
+  match branch {
+    Ok(value) =>
+      fail("expected empty default branch detection to fail: " + value)
+    Err(_) => ()
+  }
+}
+
+///|
 fn mock_is_gh_pr_view(cmd : @workspace.Command) -> Bool {
   (
     cmd.program == "gh" &&

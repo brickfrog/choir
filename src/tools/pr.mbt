@@ -742,7 +742,7 @@ pub async fn detect_default_branch_result_with_capture(
     trimmed
   }
   if branch == "" {
-    Ok("main")
+    Err(())
   } else {
     Ok(branch)
   }
