@@ -160,6 +160,18 @@ pub fn gh_pr_create_command(
 }
 
 ///|
+fn gh_pr_edit_body_command(
+  pr_number : Int,
+  body : String,
+) -> @workspace.Command {
+  {
+    program: "gh",
+    args: ["pr", "edit", pr_number.to_string(), "--body", body],
+    workdir: None,
+  }
+}
+
+///|
 pub fn gh_pr_view_command(branch : String) -> @workspace.Command {
   {
     program: "gh",
@@ -582,7 +594,32 @@ pub async fn ensure_pull_request_with_capture(
   )
   if view.data != "" {
     match parse_pull_request_info(view.data) {
-      Some(pr) => if pr.state == "OPEN" { return Ok(pr) }
+      Some(pr) =>
+        if pr.state == "OPEN" {
+          match body {
+            Some(b) =>
+              if b != "" {
+                let edit_cmd = {
+                  ..gh_pr_edit_body_command(pr.number, b),
+                  workdir: Some(project_dir),
+                }
+                let (edit_exit, edit_output) = capture(edit_cmd)
+                if edit_exit != 0 {
+                  @moontrace.warn("existing PR body update failed", fields=[
+                    @moontrace.field(
+                      "event", "file_pr_existing_body_edit_failed",
+                    ),
+                    @moontrace.field("branch", branch),
+                    @moontrace.field("pr_number", pr.number),
+                    @moontrace.field("exit_code", edit_exit),
+                    @moontrace.field("output", edit_output.trim().to_owned()),
+                  ])
+                }
+              }
+            None => ()
+          }
+          return Ok(pr)
+        }
       None =>
         return Err(
           @types.ChoirError::validation_error(

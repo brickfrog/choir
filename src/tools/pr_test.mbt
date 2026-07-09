@@ -498,6 +498,13 @@ async fn mock_ensure_pr_exists(cmd : @workspace.Command) -> (Int, String) {
 }
 
 ///|
+fn mock_is_gh_pr_edit_body(cmd : @workspace.Command, body : String) -> Bool {
+  cmd.program == "gh" &&
+  cmd.args == ["pr", "edit", "42", "--body", body] &&
+  cmd.workdir == Some("/repo")
+}
+
+///|
 async test "ensure_branch_has_unique_commits_with_capture succeeds when ahead" {
   let got = ensure_branch_has_unique_commits_with_capture(
     "t.leaf", "main", "/repo", mock_preflight_all_ok,
@@ -519,6 +526,117 @@ async test "ensure_branch_has_unique_commits_with_capture fails when not ahead" 
     }
     Ok(_) => fail("expected error")
   }
+}
+
+///|
+async test "ensure_pull_request_with_capture updates existing open PR body" {
+  let seen : Array[@workspace.Command] = []
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    seen.push(cmd)
+    if mock_is_gh_pr_view(cmd) {
+      (
+        0, "{\"number\":42,\"url\":\"https://github.com/x/y/pull/42\",\"state\":\"OPEN\"}",
+      )
+    } else if mock_is_gh_pr_edit_body(cmd, "new body") {
+      (0, "")
+    } else {
+      (-1, "unhandled command")
+    }
+  }
+  let got = ensure_pull_request_with_capture(
+    "t.leaf",
+    "main",
+    "/repo",
+    None,
+    Some("new body"),
+    capture,
+  )
+  match got {
+    Ok(pr) => {
+      assert_eq(pr.number, 42)
+      assert_eq(pr.state, "OPEN")
+    }
+    Err(e) => fail("expected Ok: " + e.message())
+  }
+  assert_true(seen.any(fn(cmd) { mock_is_gh_pr_edit_body(cmd, "new body") }))
+}
+
+///|
+async test "ensure_pull_request_with_capture skips existing open PR body edit when absent or empty" {
+  let seen : Array[@workspace.Command] = []
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    seen.push(cmd)
+    if mock_is_gh_pr_view(cmd) {
+      (
+        0, "{\"number\":42,\"url\":\"https://github.com/x/y/pull/42\",\"state\":\"OPEN\"}",
+      )
+    } else {
+      (-1, "unexpected edit command")
+    }
+  }
+  let without_body = ensure_pull_request_with_capture(
+    "t.leaf",
+    "main",
+    "/repo",
+    None,
+    None,
+    capture,
+  )
+  match without_body {
+    Ok(pr) => assert_eq(pr.number, 42)
+    Err(e) => fail("expected Ok without body: " + e.message())
+  }
+  let with_empty_body = ensure_pull_request_with_capture(
+    "t.leaf",
+    "main",
+    "/repo",
+    None,
+    Some(""),
+    capture,
+  )
+  match with_empty_body {
+    Ok(pr) => assert_eq(pr.number, 42)
+    Err(e) => fail("expected Ok with empty body: " + e.message())
+  }
+  assert_false(
+    seen.any(fn(cmd) { cmd.program == "gh" && cmd.args[1] == "edit" }),
+  )
+}
+
+///|
+async test "ensure_pull_request_with_capture keeps existing open PR when body edit fails" {
+  let seen : Array[@workspace.Command] = []
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    seen.push(cmd)
+    if mock_is_gh_pr_view(cmd) {
+      (
+        0, "{\"number\":42,\"url\":\"https://github.com/x/y/pull/42\",\"state\":\"OPEN\"}",
+      )
+    } else if mock_is_gh_pr_edit_body(cmd, "new body") {
+      (1, "permission denied")
+    } else {
+      (-1, "unhandled command")
+    }
+  }
+  let got = ensure_pull_request_with_capture(
+    "t.leaf",
+    "main",
+    "/repo",
+    None,
+    Some("new body"),
+    capture,
+  )
+  match got {
+    Ok(pr) => {
+      assert_eq(pr.number, 42)
+      assert_eq(pr.state, "OPEN")
+    }
+    Err(e) => fail("expected non-fatal edit failure: " + e.message())
+  }
+  assert_true(seen.any(fn(cmd) { mock_is_gh_pr_edit_body(cmd, "new body") }))
 }
 
 ///|
