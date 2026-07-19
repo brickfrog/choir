@@ -1,0 +1,10 @@
+import {
+  "choir/src/control",
+  "choir/src/types",
+  "moonbitlang/core/json",
+  "moonbitlang/x/crypto",
+}
+
+options(
+  "is-main": false,
+)

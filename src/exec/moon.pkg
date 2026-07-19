@@ -1,7 +1,9 @@
 import {
+  "choir/src/control",
   "choir/src/sys",
   "choir/src/harness",
   "choir/src/sandbox",
+  "choir/src/storage",
   "choir/src/types",
   "choir/src/workspace",
   "moonbitlang/async",
@@ -10,16 +12,20 @@ import {
   "moonbitlang/core/env",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/json",
+  "moonbitlang/core/string",
   "moonbitlang/core/debug",
   "brickfrog/moontrace",
 }
 
 options(
   "is-main": false,
-  "native-stub": [ "stub.c" ],
+  "native-stub": [ "stub.c", "store.c" ],
   targets: {
     "exec_native.mbt": [ "native" ],
     "exec_stub.mbt": [ "js", "wasm", "wasm-gc" ],
+    "storage_native.mbt": [ "native" ],
+    "storage_stub.mbt": [ "js", "wasm", "wasm-gc" ],
+    "storage_test.mbt": [ "native" ],
     "live_zellij_dump_screen_test.mbt": [ "native" ],
     "worktree_gitexclude_test.mbt": [ "native" ],
   },

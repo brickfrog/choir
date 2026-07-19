@@ -11,6 +11,72 @@ extern "C" fn exec_replace_self_ffi(
 ) -> Int = "choir_exec_replace_self"
 
 ///|
+#borrow(path)
+extern "C" fn state_store_init_ffi(path : Bytes, path_len : Int) -> Int = "choir_state_store_init"
+
+///|
+#borrow(path, record_key, value_digest, semantic_key, payload_digest)
+extern "C" fn state_store_commit_ffi(
+  path : Bytes,
+  path_len : Int,
+  record_key : Bytes,
+  record_key_len : Int,
+  has_expected_version : Int,
+  expected_version : Int,
+  next_version : Int,
+  fencing_epoch : Int64,
+  value_digest : Bytes,
+  value_digest_len : Int,
+  semantic_key : Bytes,
+  semantic_key_len : Int,
+  payload_digest : Bytes,
+  payload_digest_len : Int,
+  fault_point : Int,
+) -> Int = "choir_state_store_commit"
+
+///|
+#borrow(path, record_key, output)
+extern "C" fn state_store_read_state_ffi(
+  path : Bytes,
+  path_len : Int,
+  record_key : Bytes,
+  record_key_len : Int,
+  output : Bytes,
+  output_size : Int,
+) -> Int = "choir_state_store_read_state"
+
+///|
+#borrow(path, semantic_key, output)
+extern "C" fn state_store_read_outbox_ffi(
+  path : Bytes,
+  path_len : Int,
+  semantic_key : Bytes,
+  semantic_key_len : Int,
+  output : Bytes,
+  output_size : Int,
+) -> Int = "choir_state_store_read_outbox"
+
+///|
+#borrow(root, digest, content)
+extern "C" fn artifact_store_adopt_ffi(
+  root : Bytes,
+  root_len : Int,
+  digest : Bytes,
+  digest_len : Int,
+  content : Bytes,
+  content_len : Int,
+) -> Int = "choir_artifact_store_adopt"
+
+///|
+#borrow(root, digest)
+extern "C" fn artifact_store_contains_ffi(
+  root : Bytes,
+  root_len : Int,
+  digest : Bytes,
+  digest_len : Int,
+) -> Int = "choir_artifact_store_contains"
+
+///|
 fn exec_string_to_null_terminated_bytes(s : String) -> (Bytes, Int) {
   let encoded = @utf8.encode(s)
   let len = encoded.length()
