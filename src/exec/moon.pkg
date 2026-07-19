@@ -13,6 +13,7 @@ import {
   "moonbitlang/core/env",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/json",
+  "moonbitlang/core/ref",
   "moonbitlang/core/string",
   "moonbitlang/core/debug",
   "brickfrog/moontrace",

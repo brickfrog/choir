@@ -366,3 +366,515 @@ test "workflow persistence rolls back injected faults and reconciles ack loss" {
   }
   clean_workflow_repository(repository)
 }
+
+///|
+fn workflow_driver_started_session(
+  session : @control.HarnessSession,
+) -> @control.HarnessSession {
+  {
+    ..session,
+    lifecycle: @control.HarnessSessionLifecycle::HarnessSessionAwaitingEvents,
+  }
+}
+
+///|
+fn workflow_driver_trace(
+  session : @control.HarnessSession,
+  prefix : String,
+) -> (@control.HarnessSession, Array[@control.HarnessEventEnvelope]) {
+  let started : @control.HarnessEventEnvelope = {
+    id: @control.HarnessEventId(prefix + "-started"),
+    take_id: session.take_id,
+    session_id: session.id,
+    source_position: @control.EventSourcePosition::EventNonResumableOrdinal(
+      prefix, 1,
+    ),
+    choir_sequence: @control.EventSequence(1L),
+    observed_at: 100L,
+    kind: @control.HarnessEventKind::HarnessStarted,
+    sanitized_payload_digest: workflow_store_digest_a,
+    redaction_state: @control.EventRedactionState::EventNotSensitive,
+    late: false,
+  }
+  let terminal : @control.HarnessEventEnvelope = {
+    id: @control.HarnessEventId(prefix + "-terminal"),
+    take_id: session.take_id,
+    session_id: session.id,
+    source_position: @control.EventSourcePosition::EventNonResumableOrdinal(
+      prefix, 2,
+    ),
+    choir_sequence: @control.EventSequence(2L),
+    observed_at: 101L,
+    kind: @control.HarnessEventKind::HarnessTerminal(
+      @control.HarnessTerminalObservation::HarnessCompleted,
+    ),
+    sanitized_payload_digest: workflow_store_digest_b,
+    redaction_state: @control.EventRedactionState::EventNotSensitive,
+    late: false,
+  }
+  (
+    {
+      ..session,
+      last_choir_sequence: @control.EventSequence(2L),
+      lifecycle: @control.HarnessSessionLifecycle::HarnessSessionIngestionClosedCleanly(
+        @control.HarnessTerminalObservation::HarnessCompleted,
+      ),
+    },
+    [started, terminal],
+  )
+}
+
+///|
+fn workflow_driver_observation(
+  snapshot : @workflow.OnePartWorkflowSnapshot,
+  intent : @workflow.OnePartEffectIntent,
+) -> Result[@workflow.OnePartEffectObservation, @types.ChoirError] {
+  match intent.kind {
+    @workflow.OnePartEffectKind::PrepareImplementationSandbox(lease) =>
+      Ok(
+        @workflow.OnePartEffectObservation::ImplementationSandboxPrepared({
+          ..lease,
+          lifecycle: @control.SandboxLeaseLifecycle::SandboxLeaseActive,
+        }),
+      )
+    @workflow.OnePartEffectKind::StartImplementationHarness(session) =>
+      Ok(
+        @workflow.OnePartEffectObservation::ImplementationHarnessStarted(
+          workflow_driver_started_session(session),
+        ),
+      )
+    @workflow.OnePartEffectKind::DispatchImplementation(take_id, session_id) => {
+      let started = workflow_driver_started_session(
+        snapshot.identities.implementation_session,
+      )
+      let (closed, events) = workflow_driver_trace(started, "implementation")
+      Ok(
+        @workflow.OnePartEffectObservation::ImplementationCompleted(
+          {
+            take_id,
+            session_id,
+            result_artifact: {
+              artifact_id: "implementation-result-store",
+              digest: workflow_store_digest_b,
+            },
+            finished_at: 102L,
+          },
+          closed,
+          events,
+        ),
+      )
+    }
+    @workflow.OnePartEffectKind::NormalizeImplementationCandidate(take_id, _) => {
+      let candidate : @control.CandidateCommit = {
+        id: @control.CandidateId("candidate-store"),
+        goal_id: snapshot.goal.id,
+        part_id: snapshot.part.id,
+        take_id,
+        base_commit_oid: snapshot.task_contract.base_commit_oid,
+        commit_oid: @control.GitOid("candidate-commit-store"),
+        tree_oid: @control.GitOid("candidate-tree-store"),
+        canonical_change_digest: workflow_store_digest_b,
+        changed_paths: [@control.RepoPath("src/store.mbt")],
+      }
+      Ok(
+        @workflow.OnePartEffectObservation::CandidateNormalized(candidate, {
+          candidate_tree_paths: [@control.RepoPath("src/store.mbt")],
+          symlink_prefix_paths: [],
+          normalization_collision_paths: [],
+        }),
+      )
+    }
+    @workflow.OnePartEffectKind::PrepareVerificationSandbox(lease) =>
+      Ok(
+        @workflow.OnePartEffectObservation::VerificationSandboxPrepared({
+          ..lease,
+          lifecycle: @control.SandboxLeaseLifecycle::SandboxLeaseActive,
+        }),
+      )
+    @workflow.OnePartEffectKind::StartVerificationHarness(session) =>
+      Ok(
+        @workflow.OnePartEffectObservation::VerificationHarnessStarted(
+          workflow_driver_started_session(session),
+        ),
+      )
+    @workflow.OnePartEffectKind::DispatchVerification(
+      take_id,
+      session_id,
+      subject
+    ) => {
+      let started = workflow_driver_started_session(
+        snapshot.identities.verification_session,
+      )
+      let (closed, events) = workflow_driver_trace(started, "verification")
+      let candidate = match snapshot.candidate {
+        Some(value) => value
+        None =>
+          return Err(@types.ChoirError::validation_error("candidate absent"))
+      }
+      Ok(
+        @workflow.OnePartEffectObservation::VerificationCompleted(
+          {
+            take_id,
+            session_id,
+            verification_execution_id: @control.VerificationExecutionId(
+              "verification-execution-store",
+            ),
+            subject,
+            verification_spec: snapshot.task_contract.verification_specs[0],
+            environment_and_image_digest: workflow_store_digest_b,
+            runtime_and_policy_digest: snapshot.identities.verification_sandbox.runtime_policy_digest,
+            subject_pre_tree_oid: candidate.tree_oid,
+            subject_post_tree_oid: candidate.tree_oid,
+            evidence: {
+              artifact_id: "verification-evidence-store",
+              digest: workflow_store_digest_b,
+            },
+            started_at: 100L,
+            finished_at: 102L,
+            outcome: @control.VerificationOutcome::VerificationPassed,
+          },
+          closed,
+          events,
+        ),
+      )
+    }
+    @workflow.OnePartEffectKind::PrepareAuditSandbox(lease) =>
+      Ok(
+        @workflow.OnePartEffectObservation::AuditSandboxPrepared({
+          ..lease,
+          lifecycle: @control.SandboxLeaseLifecycle::SandboxLeaseActive,
+        }),
+      )
+    @workflow.OnePartEffectKind::StartAuditHarness(session) =>
+      Ok(
+        @workflow.OnePartEffectObservation::AuditHarnessStarted(
+          workflow_driver_started_session(session),
+        ),
+      )
+    @workflow.OnePartEffectKind::DispatchAudit(take_id, session_id, subject) => {
+      let started = workflow_driver_started_session(
+        snapshot.identities.audit_session,
+      )
+      let (closed, events) = workflow_driver_trace(started, "audit")
+      Ok(
+        @workflow.OnePartEffectObservation::AuditCompleted(
+          {
+            audit_take_id: take_id,
+            take_fencing_epoch: snapshot.fencing_epoch,
+            audit_harness_session_id: session_id,
+            subject,
+            provider_conformance_report_digest: workflow_store_digest_a,
+            findings_artifact: None,
+            total_findings_count: 0,
+            blocking_findings_count: 0,
+            started_at: 100L,
+            finished_at: 102L,
+            outcome: @control.AuditOutcome::AuditPassed,
+          },
+          closed,
+          events,
+        ),
+      )
+    }
+    @workflow.OnePartEffectKind::GeneratePromotion(intent) =>
+      Ok(
+        @workflow.OnePartEffectObservation::PromotionGenerated({
+          intent_id: intent.id,
+          commit_oid: @control.GitOid("promotion-commit-store"),
+          tree_oid: @control.GitOid("promotion-tree-store"),
+          first_parent_oid: intent.expected_goal_head_oid,
+          second_parent_oid: intent.candidate_commit_oid,
+        }),
+      )
+    @workflow.OnePartEffectKind::ApplyIntegration(_, promotion) =>
+      Ok(
+        @workflow.OnePartEffectObservation::IntegrationWitnessObserved(
+          @control.IntegrationWitnessObservation::IntegrationWitnessApplied(
+            promotion.commit_oid,
+            promotion.commit_oid,
+          ),
+        ),
+      )
+  }
+}
+
+///|
+fn workflow_driver_dependencies(
+  execute_count : Ref[Int],
+  reconcile_count : Ref[Int],
+  fault : (@workflow.OnePartPersistenceBoundary) -> @storage.StateStoreFaultPoint?,
+  reconcile : (@workflow.OnePartWorkflowSnapshot, @workflow.OnePartEffectIntent) -> Result[
+    @workflow.OnePartEffectRecovery,
+    @types.ChoirError,
+  ],
+) -> @workflow.OnePartWorkflowDriverDependencies {
+  {
+    now: fn() { 110L },
+    persistence_fault: fault,
+    effects: {
+      execute: fn(snapshot, intent) {
+        execute_count.val = execute_count.val + 1
+        workflow_driver_observation(snapshot, intent)
+      },
+      reconcile: fn(snapshot, intent) {
+        reconcile_count.val = reconcile_count.val + 1
+        reconcile(snapshot, intent)
+      },
+    },
+    artifact_exists: fn(_) { true },
+    artifact_digest_exists: fn(_) { true },
+    is_nfc: fn(_) { true },
+    audit_receipt_metadata: fn(_) {
+      Ok({
+        receipt_id: @control.ReceiptId("audit-receipt-store"),
+        provider_surface_id: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+        provider_identity: "claude-code-test",
+        model_identity: @control.ModelIdentity::ReportedModelIdentity(
+          "claude-test",
+        ),
+      })
+    },
+    integration_plan: fn(snapshot) {
+      Ok({
+        lease: {
+          id: @control.IntegrationLeaseId("integration-lease-store"),
+          goal_id: snapshot.goal.id,
+          fencing_epoch: snapshot.fencing_epoch,
+          holder: "choird-test",
+        },
+        intent_id: @control.IntegrationIntentId("integration-intent-store"),
+        expected_goal_head_oid: @control.GitOid("goal-head-store"),
+        promotion_metadata_digest: workflow_store_digest_a,
+        git_witness_ref: "refs/choir/witness/integration-intent-store",
+      })
+    },
+    verification_environment_digest: fn(_) { workflow_store_digest_b },
+    verification_runtime_digest: fn(snapshot) {
+      snapshot.identities.verification_sandbox.runtime_policy_digest
+    },
+  }
+}
+
+///|
+fn workflow_driver_recover_observation(
+  snapshot : @workflow.OnePartWorkflowSnapshot,
+  intent : @workflow.OnePartEffectIntent,
+) -> Result[@workflow.OnePartEffectRecovery, @types.ChoirError] {
+  match workflow_driver_observation(snapshot, intent) {
+    Ok(value) =>
+      Ok(@workflow.OnePartEffectRecovery::EffectObservationRecovered(value))
+    Err(error) => Err(error)
+  }
+}
+
+///|
+test "one Part driver persists an integrated result and resumes without work" {
+  let repository = workflow_repository("driver-integrated")
+  clean_workflow_repository(repository)
+  let execute_count = @ref.new(0)
+  let reconcile_count = @ref.new(0)
+  let dependencies = workflow_driver_dependencies(
+    execute_count,
+    reconcile_count,
+    fn(_) { None },
+    workflow_driver_recover_observation,
+  )
+  let result = match
+    @workflow.run_new_one_part_workflow(
+      repository,
+      workflow_repository_adapters(),
+      workflow_store_fixture(),
+      dependencies,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(
+    result.outcome,
+    @workflow.OnePartWorkflowRunOutcome::OnePartRunIntegrated,
+  )
+  assert_eq(result.snapshot.effect_receipts.length(), 12)
+  assert_eq(result.snapshot.verification_receipts.length(), 1)
+  assert_true(result.snapshot.audit_receipt is Some(_))
+  assert_true(result.snapshot.integration_receipt is Some(_))
+  let executed_before_resume = execute_count.val
+  let resumed = match
+    @workflow.resume_one_part_workflow(
+      repository,
+      workflow_repository_adapters(),
+      "workflow-store",
+      dependencies,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(
+    resumed.outcome,
+    @workflow.OnePartWorkflowRunOutcome::OnePartRunIntegrated,
+  )
+  assert_eq(execute_count.val, executed_before_resume)
+  assert_eq(reconcile_count.val, 0)
+  clean_workflow_repository(repository)
+}
+
+///|
+test "restarted authorized effect waits for a witness without executing" {
+  let repository = workflow_repository("driver-uncertain")
+  clean_workflow_repository(repository)
+  let adapters = workflow_repository_adapters()
+  guard @workflow.initialize_one_part_workflow_repository(repository, adapters)
+    is Ok(_) else {
+    fail("initialize uncertain driver repository")
+  }
+  let initial = workflow_store_fixture()
+  let initial_receipt = match
+    @workflow.persist_one_part_snapshot(repository, adapters, {
+      snapshot: initial,
+      expected_store_version: None,
+      fault_point: None,
+    }) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  let intent = match @workflow.plan_next_one_part_effect(initial) {
+    Ok(Some(value)) => value
+    _ => fail("initial effect missing")
+  }
+  let planned = match
+    @workflow.persist_planned_one_part_effect(initial, intent) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  let planned_receipt = match
+    @workflow.persist_one_part_snapshot(repository, adapters, {
+      snapshot: planned,
+      expected_store_version: Some(initial_receipt.store_version),
+      fault_point: None,
+    }) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  let authorized = match @workflow.authorize_pending_one_part_effect(planned) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  guard @workflow.persist_one_part_snapshot(repository, adapters, {
+      snapshot: authorized,
+      expected_store_version: Some(planned_receipt.store_version),
+      fault_point: None,
+    })
+    is Ok(_) else {
+    fail("persist authorized effect")
+  }
+  let execute_count = @ref.new(0)
+  let reconcile_count = @ref.new(0)
+  let result = match
+    @workflow.resume_one_part_workflow(
+      repository,
+      adapters,
+      "workflow-store",
+      workflow_driver_dependencies(
+        execute_count,
+        reconcile_count,
+        fn(_) { None },
+        fn(_, _) {
+          Ok(@workflow.OnePartEffectRecovery::EffectWitnessUnavailable)
+        },
+      ),
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_true(
+    result.outcome
+    is @workflow.OnePartWorkflowRunOutcome::OnePartRunWaitingForEffectWitness(_),
+  )
+  assert_eq(execute_count.val, 0)
+  assert_eq(reconcile_count.val, 1)
+  clean_workflow_repository(repository)
+}
+
+///|
+test "driver recovers every persisted transition after rollback" {
+  let boundaries = [
+    @workflow.OnePartPersistenceBoundary::WorkflowAcceptedSnapshot,
+    @workflow.OnePartPersistenceBoundary::WorkflowEffectPlanned,
+    @workflow.OnePartPersistenceBoundary::WorkflowEffectAuthorized,
+    @workflow.OnePartPersistenceBoundary::WorkflowEffectObserved,
+    @workflow.OnePartPersistenceBoundary::WorkflowAuditReceiptRecorded,
+    @workflow.OnePartPersistenceBoundary::WorkflowIntegrationPlanned,
+    @workflow.OnePartPersistenceBoundary::WorkflowIntegrationAuthorized,
+  ]
+  for index, boundary in boundaries {
+    let repository = workflow_repository("driver-rollback-" + index.to_string())
+    clean_workflow_repository(repository)
+    let injected = @ref.new(false)
+    let execute_count = @ref.new(0)
+    let reconcile_count = @ref.new(0)
+    let first_dependencies = workflow_driver_dependencies(
+      execute_count,
+      reconcile_count,
+      fn(actual) {
+        if !injected.val && actual == boundary {
+          injected.val = true
+          Some(@storage.StateStoreFaultPoint::StateAfterMutationBeforeOutbox)
+        } else {
+          None
+        }
+      },
+      workflow_driver_recover_observation,
+    )
+    let first = match
+      @workflow.run_new_one_part_workflow(
+        repository,
+        workflow_repository_adapters(),
+        workflow_store_fixture(),
+        first_dependencies,
+      ) {
+      Ok(value) => value
+      Err(error) => fail(error.message())
+    }
+    assert_eq(
+      first.outcome,
+      @workflow.OnePartWorkflowRunOutcome::OnePartRunPersistenceFault(
+        boundary,
+        @storage.StateStoreFaultPoint::StateAfterMutationBeforeOutbox,
+      ),
+    )
+    let recovery_dependencies = workflow_driver_dependencies(
+      execute_count,
+      reconcile_count,
+      fn(_) { None },
+      workflow_driver_recover_observation,
+    )
+    let recovered = if boundary ==
+      @workflow.OnePartPersistenceBoundary::WorkflowAcceptedSnapshot {
+      @workflow.run_new_one_part_workflow(
+        repository,
+        workflow_repository_adapters(),
+        workflow_store_fixture(),
+        recovery_dependencies,
+      )
+    } else {
+      @workflow.resume_one_part_workflow(
+        repository,
+        workflow_repository_adapters(),
+        "workflow-store",
+        recovery_dependencies,
+      )
+    }
+    let result = match recovered {
+      Ok(value) => value
+      Err(error) => fail(error.message())
+    }
+    assert_eq(
+      result.outcome,
+      @workflow.OnePartWorkflowRunOutcome::OnePartRunIntegrated,
+    )
+    assert_eq(result.snapshot.effect_receipts.length(), 12)
+    assert_eq(result.snapshot.verification_receipts.length(), 1)
+    assert_true(result.snapshot.audit_receipt is Some(_))
+    assert_true(result.snapshot.integration_receipt is Some(_))
+    clean_workflow_repository(repository)
+  }
+}
