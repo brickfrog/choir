@@ -1,0 +1,209 @@
+///|
+let m2_digest_a : @control.Digest = @control.Digest(
+  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+)
+
+///|
+let m2_digest_b : @control.Digest = @control.Digest(
+  "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+)
+
+///|
+fn m2_contract(
+  declaration : @control.MutationDeclaration,
+) -> @control.TaskContractRevision {
+  {
+    id: @control.RevisionId("revision-1"),
+    goal_id: @control.GoalId("goal-1"),
+    part_id: @control.PartId("part-1"),
+    revision: 1,
+    digest: m2_digest_a,
+    base_commit_oid: @control.GitOid("base-oid"),
+    base_tree_oid: @control.GitOid("base-tree"),
+    path_mode: @control.RepositoryPathMode::CaseSensitiveNfc,
+    mutation_declaration: declaration,
+    verification_specs: [
+      {
+        id: @control.VerificationSpecId("moon-test"),
+        version: 1,
+        digest: m2_digest_a,
+        process_spec_digest: m2_digest_b,
+      },
+    ],
+    audit_policy_digest: m2_digest_a,
+    implementation_capability_profile_digest: m2_digest_a,
+    verification_capability_profile_digest: m2_digest_a,
+    audit_capability_profile_digest: m2_digest_a,
+  }
+}
+
+///|
+fn m2_take() -> @control.Take {
+  {
+    id: @control.TakeId("implementation-1"),
+    goal_id: @control.GoalId("goal-1"),
+    purpose: @control.TakePurpose::Implementation(
+      @control.PartId("part-1"),
+      @control.RevisionId("revision-1"),
+    ),
+    ordinal: 1,
+    fencing_epoch: Some(@control.FencingEpoch(1L)),
+    lifecycle: @control.TakeLifecycle::TakeRunning,
+  }
+}
+
+///|
+fn m2_candidate(paths : Array[@control.RepoPath]) -> @control.CandidateCommit {
+  {
+    id: @control.CandidateId("candidate-1"),
+    goal_id: @control.GoalId("goal-1"),
+    part_id: @control.PartId("part-1"),
+    take_id: @control.TakeId("implementation-1"),
+    base_commit_oid: @control.GitOid("base-oid"),
+    commit_oid: @control.GitOid("candidate-oid"),
+    tree_oid: @control.GitOid("candidate-tree"),
+    canonical_change_digest: m2_digest_b,
+    changed_paths: paths,
+  }
+}
+
+///|
+test "RepoPath validation rejects aliases controls Git internals and non-NFC" {
+  let valid = fn(_ : String) { true }
+  for
+    raw in [
+      "", "/src/a.mbt", "src//a.mbt", "src/../a.mbt", "src/.git/config", "src\\a.mbt",
+      "src/*.mbt",
+    ] {
+    assert_true(
+      @control.validate_repo_path(@control.RepoPath(raw), valid) is Err(_),
+    )
+  }
+  assert_true(
+    @control.validate_repo_path(@control.RepoPath("src/a.mbt"), valid) is Ok(_),
+  )
+  assert_true(
+    @control.validate_repo_path(@control.RepoPath("docs/café.md"), fn(_) {
+      false
+    })
+    is Err(_),
+  )
+}
+
+///|
+test "mutation conflicts use path-component boundaries" {
+  let src = @control.RepoPath("src")
+  let src2 = @control.RepoPath("src2")
+  let file = @control.RepoPath("src/a.mbt")
+  assert_true(
+    @control.mutation_declarations_conflict(
+      @control.MutationDeclaration::CompleteMutationDeclaration([
+        @control.MutationClaim::PathTree(src),
+      ]),
+      @control.MutationDeclaration::CompleteMutationDeclaration([
+        @control.MutationClaim::ExactPath(file),
+      ]),
+    ),
+  )
+  assert_false(
+    @control.mutation_declarations_conflict(
+      @control.MutationDeclaration::CompleteMutationDeclaration([
+        @control.MutationClaim::PathTree(src),
+      ]),
+      @control.MutationDeclaration::CompleteMutationDeclaration([
+        @control.MutationClaim::PathTree(src2),
+      ]),
+    ),
+  )
+  assert_false(
+    @control.mutation_declarations_conflict(
+      @control.MutationDeclaration::CompleteMutationDeclaration([]),
+      @control.MutationDeclaration::CompleteMutationDeclaration([
+        @control.MutationClaim::RepositoryWide,
+      ]),
+    ),
+  )
+  assert_true(
+    @control.mutation_declarations_conflict(
+      @control.MutationDeclaration::MissingMutationDeclaration,
+      @control.MutationDeclaration::CompleteMutationDeclaration([]),
+    ),
+  )
+}
+
+///|
+test "candidate validation enforces immutable contract and declared diff" {
+  let contract = m2_contract(
+    @control.MutationDeclaration::CompleteMutationDeclaration([
+      @control.MutationClaim::PathTree(@control.RepoPath("src")),
+    ]),
+  )
+  assert_true(
+    @control.validate_task_contract_revision(contract, fn(_) { true }) is Ok(_),
+  )
+  let candidate = m2_candidate([
+    @control.RepoPath("src/a.mbt"),
+    @control.RepoPath("moon.mod"),
+  ])
+  let evidence : @control.CandidatePathEvidence = {
+    candidate_tree_paths: [
+      @control.RepoPath("src/a.mbt"),
+      @control.RepoPath("moon.mod"),
+    ],
+    symlink_prefix_paths: [],
+    normalization_collision_paths: [],
+  }
+  match
+    @control.validate_candidate_commit(
+      contract,
+      m2_take(),
+      candidate,
+      evidence,
+      fn(_) { true },
+    ) {
+    Err(@control.CandidateValidationFailure::CandidateOwnershipViolation(paths)) =>
+      assert_eq(paths, [@control.RepoPath("moon.mod")])
+    _ => fail("expected an exact ownership violation")
+  }
+  assert_true(
+    @control.validate_candidate_commit(
+      {
+        ..contract,
+        mutation_declaration: @control.MutationDeclaration::UnknownMutationDeclaration(
+          @control.UnknownMutationReason::SemanticScopeUnknown,
+        ),
+      },
+      m2_take(),
+      candidate,
+      evidence,
+      fn(_) { true },
+    )
+    is Ok(_),
+  )
+}
+
+///|
+test "candidate path evidence rejects symlink-prefix ambiguity" {
+  let path = @control.RepoPath("src/generated/out.mbt")
+  let contract = m2_contract(
+    @control.MutationDeclaration::CompleteMutationDeclaration([
+      @control.MutationClaim::RepositoryWide,
+    ]),
+  )
+  match
+    @control.validate_candidate_commit(
+      contract,
+      m2_take(),
+      m2_candidate([path]),
+      {
+        candidate_tree_paths: [path],
+        symlink_prefix_paths: [path],
+        normalization_collision_paths: [],
+      },
+      fn(_) { true },
+    ) {
+    Err(@control.CandidateValidationFailure::CandidateInvalidPath(actual)) =>
+      assert_eq(actual, path)
+    _ => fail("expected invalid candidate path")
+  }
+}
