@@ -670,6 +670,200 @@ pub async fn capture_harness_probe(
 }
 
 ///|
+fn claude_startup_probe_args(
+  mcp_executable : String,
+  mcp_args : Array[String],
+) -> Array[String] {
+  let server : Map[String, Json] = {
+    "command": mcp_executable.to_json(),
+    "args": mcp_args.to_json(),
+  }
+  let servers : Map[String, Json] = { "choir_probe": server.to_json() }
+  let mcp_config : Map[String, Json] = { "mcpServers": servers.to_json() }
+  [
+    "-p",
+    "--setting-sources",
+    "",
+    "--tools",
+    "",
+    "--disable-slash-commands",
+    "--permission-mode",
+    "dontAsk",
+    "--allowedTools",
+    "mcp__choir_probe__probe",
+    "--strict-mcp-config",
+    "--mcp-config",
+    mcp_config.to_json().stringify(),
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--no-session-persistence",
+    "--system-prompt",
+    "You are a restricted startup probe.",
+    "Return exactly PROBE_OK without using tools.",
+  ]
+}
+
+///|
+async fn collect_claude_startup_probe(
+  claude : String,
+  args : Array[String],
+  root : String,
+  probe_env : Map[String, String],
+  timeout_ms : Int,
+  label : String,
+) -> Result[@harness.HarnessProbeCapture, @types.ChoirError] {
+  abort_if_hermetic_test_exec(command_for_program(claude, args, Some(root)))
+  let collected = @async.with_timeout_opt(timeout_ms, () => {
+    @process.collect_output_merged(
+      claude,
+      args,
+      extra_env=probe_env,
+      inherit_env=false,
+      cwd=root,
+    )
+  }) catch {
+    _ =>
+      return Err(
+        @types.ChoirError::transport_error(
+          "Claude " + label + " startup process failed",
+        ),
+      )
+  }
+  match collected {
+    None => Ok({ exit_code: -2, output: "" })
+    Some((exit_code, data)) => {
+      let output = data.text() catch {
+        _ =>
+          return Err(
+            @types.ChoirError::transport_error(
+              "Claude " + label + " startup output was not UTF-8",
+            ),
+          )
+      }
+      Ok({ exit_code, output })
+    }
+  }
+}
+
+///|
+fn claude_probe_executable() -> Result[String, @types.ChoirError] {
+  match resolve_executable_in_path("claude") {
+    Some(path) => Ok(path)
+    None =>
+      Err(
+        @types.ChoirError::transport_error(
+          "provider probe executable unavailable: claude",
+        ),
+      )
+  }
+}
+
+///|
+pub async fn capture_claude_synthetic_startup(
+  synthetic_root : String,
+  mcp_executable : String,
+  mcp_args : Array[String],
+) -> Result[@harness.HarnessProbeCapture, @types.ChoirError] {
+  if !synthetic_root.has_prefix("/tmp/choir-conformance-") ||
+    !mcp_executable.has_prefix("/") {
+    return Err(
+      @types.ChoirError::validation_error(
+        "synthetic startup paths are outside the conformance root",
+      ),
+    )
+  }
+  let claude = match claude_probe_executable() {
+    Ok(path) => path
+    Err(error) => return Err(error)
+  }
+  let probe_env : Map[String, String] = {
+    "HOME": synthetic_root,
+    "XDG_CONFIG_HOME": synthetic_root + "/xdg",
+    "TMPDIR": synthetic_root + "/tmp",
+    "PATH": "/usr/local/bin:/usr/bin:/bin",
+    "COLUMNS": "200",
+    "NO_COLOR": "1",
+  }
+  collect_claude_startup_probe(
+    claude,
+    claude_startup_probe_args(mcp_executable, mcp_args),
+    synthetic_root,
+    probe_env,
+    10000,
+    "synthetic",
+  )
+}
+
+///|
+fn claude_conflicting_credential_environment() -> String? {
+  let names = [
+    "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "AWS_BEARER_TOKEN_BEDROCK", "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
+  ]
+  for name in names {
+    match @sys.getenv(name) {
+      Some(_) => return Some(name)
+      None => ()
+    }
+  }
+  None
+}
+
+///|
+pub async fn capture_claude_live_startup(
+  dedicated_root : String,
+  mcp_executable : String,
+  mcp_args : Array[String],
+) -> Result[@harness.HarnessProbeCapture, @types.ChoirError] {
+  if !dedicated_root.has_prefix("/tmp/choir-conformance-") ||
+    !mcp_executable.has_prefix("/") {
+    return Err(
+      @types.ChoirError::validation_error(
+        "live startup paths are outside the conformance root",
+      ),
+    )
+  }
+  match claude_conflicting_credential_environment() {
+    Some(name) =>
+      return Err(
+        @types.ChoirError::policy_blocked(
+          "conflicting Claude credential environment is present: " + name,
+        ),
+      )
+    None => ()
+  }
+  let provider_home = match @sys.getenv("HOME") {
+    Some(path) if path != "" => path
+    _ =>
+      return Err(
+        @types.ChoirError::config_error(
+          "provider-owned HOME is unavailable for live Claude probe",
+        ),
+      )
+  }
+  let claude = match claude_probe_executable() {
+    Ok(path) => path
+    Err(error) => return Err(error)
+  }
+  let probe_env : Map[String, String] = {
+    "HOME": provider_home,
+    "TMPDIR": dedicated_root + "/tmp",
+    "PATH": "/usr/local/bin:/usr/bin:/bin",
+    "COLUMNS": "200",
+    "NO_COLOR": "1",
+  }
+  collect_claude_startup_probe(
+    claude,
+    claude_startup_probe_args(mcp_executable, mcp_args),
+    dedicated_root,
+    probe_env,
+    60000,
+    "live",
+  )
+}
+
+///|
 async fn capture_agy_shared_cache_cold_bootstrap(
   cmd : @workspace.Command,
 ) -> (Int, String) {

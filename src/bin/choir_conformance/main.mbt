@@ -53,6 +53,29 @@ fn run_hermetic() -> Int {
 }
 
 ///|
+fn probe_mcp_launch() -> Result[(String, Array[String]), @types.ChoirError] {
+  let node = match @exec.resolve_executable_in_path("node") {
+    Some(path) => path
+    None =>
+      return Err(
+        @types.ChoirError::workspace_error(
+          "node executable is required for the startup probe MCP fixture",
+        ),
+      )
+  }
+  let script = match @sys.realpath_native("scripts/choir_probe_mcp.mjs") {
+    Some(path) => path
+    None =>
+      return Err(
+        @types.ChoirError::workspace_error(
+          "failed to resolve startup probe MCP fixture",
+        ),
+      )
+  }
+  Ok((node, [script]))
+}
+
+///|
 async fn capture_surface_command(
   surface : @harness.ProviderSurface,
   command : @harness.HarnessProbeCommand,
@@ -97,6 +120,73 @@ async fn run_surface_declaration(surface : @harness.ProviderSurface) -> Int {
 }
 
 ///|
+async fn run_claude_synthetic_startup() -> Int {
+  let root = "/tmp/choir-conformance-claude-startup-" +
+    @sys.get_pid().to_string()
+  if !@sys.create_dir_all(root + "/tmp") || !@sys.create_dir_all(root + "/xdg") {
+    @sys.write_stderr("failed to create dedicated synthetic startup root\n")
+    return 1
+  }
+  let (mcp_command, mcp_args) = match probe_mcp_launch() {
+    Ok(launch) => launch
+    Err(error) => {
+      @sys.write_stderr(error.message() + "\n")
+      ignore(@sys.rm_rf(root))
+      return 1
+    }
+  }
+  let capture = match
+    @exec.capture_claude_synthetic_startup(root, mcp_command, mcp_args) {
+    Ok(capture) => capture
+    Err(error) => {
+      @sys.write_stderr(error.message() + "\n")
+      ignore(@sys.rm_rf(root))
+      return 1
+    }
+  }
+  let report = @harness.evaluate_claude_synthetic_startup(capture)
+  ignore(@sys.rm_rf(root))
+  @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
+  match report.support {
+    @harness.ChoirSurfaceSupport::SurfaceCandidate => 0
+    _ => 1
+  }
+}
+
+///|
+async fn run_claude_live_startup() -> Int {
+  let root = "/tmp/choir-conformance-claude-live-" + @sys.get_pid().to_string()
+  if !@sys.create_dir_all(root + "/tmp") {
+    @sys.write_stderr("failed to create dedicated live startup root\n")
+    return 1
+  }
+  let (mcp_command, mcp_args) = match probe_mcp_launch() {
+    Ok(launch) => launch
+    Err(error) => {
+      @sys.write_stderr(error.message() + "\n")
+      ignore(@sys.rm_rf(root))
+      return 1
+    }
+  }
+  let capture = match
+    @exec.capture_claude_live_startup(root, mcp_command, mcp_args) {
+    Ok(capture) => capture
+    Err(error) => {
+      @sys.write_stderr(error.message() + "\n")
+      ignore(@sys.rm_rf(root))
+      return 1
+    }
+  }
+  let report = @harness.evaluate_claude_live_startup(capture)
+  ignore(@sys.rm_rf(root))
+  @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
+  match report.support {
+    @harness.ChoirSurfaceSupport::SurfaceCandidate => 0
+    _ => 1
+  }
+}
+
+///|
 fn parse_surface(raw : String) -> @harness.ProviderSurface? {
   match raw {
     "claude-cli" => Some(@harness.ProviderSurface::ClaudeCli)
@@ -107,7 +197,23 @@ fn parse_surface(raw : String) -> @harness.ProviderSurface? {
 
 ///|
 fn run_harness_command(args : Array[String]) -> Unit {
-  if args.length() == 6 &&
+  if args.length() == 7 &&
+    args[2] == "--surface" &&
+    args[3] == "claude-cli" &&
+    args[4] == "--profile" &&
+    args[5] == "subscription" &&
+    args[6] == "--synthetic-startup" {
+    @async.run_async_main(async fn() {
+      @sys.exit(run_claude_synthetic_startup())
+    })
+  } else if args.length() == 7 &&
+    args[2] == "--surface" &&
+    args[3] == "claude-cli" &&
+    args[4] == "--profile" &&
+    args[5] == "subscription" &&
+    args[6] == "--live" {
+    @async.run_async_main(async fn() { @sys.exit(run_claude_live_startup()) })
+  } else if args.length() == 6 &&
     args[2] == "--surface" &&
     args[4] == "--profile" &&
     args[5] == "subscription" {
@@ -133,6 +239,10 @@ fn usage() -> Unit {
     "usage: choir_conformance hermetic\n" +
     "       choir_conformance harness --surface <claude-cli|codex-cli> " +
     "--profile subscription\n" +
+    "       choir_conformance harness --surface claude-cli " +
+    "--profile subscription --synthetic-startup\n" +
+    "       choir_conformance harness --surface claude-cli " +
+    "--profile subscription --live\n" +
     "live startup, sandbox, and e2e suites land behind their typed adapters\n",
   )
 }

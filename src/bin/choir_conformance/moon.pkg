@@ -4,6 +4,7 @@ import {
   "choir/src/exec",
   "choir/src/harness",
   "choir/src/sys",
+  "choir/src/types",
   "moonbitlang/async",
   "moonbitlang/core/env",
   "moonbitlang/core/json",

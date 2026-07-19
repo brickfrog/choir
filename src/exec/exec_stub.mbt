@@ -81,6 +81,32 @@ pub async fn capture_harness_probe(
 }
 
 ///|
+pub async fn capture_claude_synthetic_startup(
+  _synthetic_root : String,
+  _mcp_executable : String,
+  _mcp_args : Array[String],
+) -> Result[@harness.HarnessProbeCapture, @types.ChoirError] {
+  Err(
+    @types.ChoirError::transport_error(
+      "Claude synthetic startup probes require the native target",
+    ),
+  )
+}
+
+///|
+pub async fn capture_claude_live_startup(
+  _dedicated_root : String,
+  _mcp_executable : String,
+  _mcp_args : Array[String],
+) -> Result[@harness.HarnessProbeCapture, @types.ChoirError] {
+  Err(
+    @types.ChoirError::transport_error(
+      "Claude live startup probes require the native target",
+    ),
+  )
+}
+
+///|
 pub async fn capture_hook_script_merged(
   _hook_path : String,
   _stdin_body : String,

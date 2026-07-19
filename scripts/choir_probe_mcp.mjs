@@ -1,0 +1,60 @@
+import readline from "node:readline";
+
+const input = readline.createInterface({ input: process.stdin, terminal: false });
+
+function respond(id, result) {
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\n");
+}
+
+input.on("line", (line) => {
+  let request;
+  try {
+    request = JSON.parse(line);
+  } catch {
+    return;
+  }
+
+  if (request.id === undefined || request.id === null) return;
+
+  switch (request.method) {
+    case "initialize":
+      respond(request.id, {
+        protocolVersion: "2024-11-05",
+        capabilities: { tools: {} },
+        serverInfo: { name: "choir-probe", version: "1" },
+      });
+      break;
+    case "tools/list":
+      respond(request.id, {
+        tools: [
+          {
+            name: "probe",
+            description: "Choir startup conformance canary",
+            inputSchema: {
+              type: "object",
+              properties: {},
+              additionalProperties: false,
+            },
+          },
+        ],
+      });
+      break;
+    case "tools/call":
+      respond(request.id, {
+        content: [{ type: "text", text: "probe" }],
+        isError: false,
+      });
+      break;
+    case "ping":
+      respond(request.id, {});
+      break;
+    default:
+      process.stdout.write(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: request.id,
+          error: { code: -32601, message: `unsupported: ${request.method}` },
+        }) + "\n",
+      );
+  }
+});
