@@ -3,6 +3,7 @@ import {
   "choir/src/control",
   "choir/src/exec",
   "choir/src/harness",
+  "choir/src/sandbox",
   "choir/src/sys",
   "choir/src/types",
   "moonbitlang/async",

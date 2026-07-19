@@ -234,6 +234,44 @@ fn run_harness_command(args : Array[String]) -> Unit {
 }
 
 ///|
+async fn run_boxlite_live() -> Int {
+  let root = "/tmp/choir-conformance-boxlite-" + @sys.get_pid().to_string()
+  if !@sys.create_dir_all(root + "/tmp") || !@sys.create_dir_all(root + "/home") {
+    @sys.write_stderr("failed to create dedicated BoxLite probe root\n")
+    return 1
+  }
+  let evidence = match @exec.capture_boxlite_live_evidence(root) {
+    Ok(evidence) => evidence
+    Err(error) => {
+      @sys.write_stderr(error.message() + "\n")
+      ignore(@sys.rm_rf(root))
+      return 1
+    }
+  }
+  let report = @sandbox.evaluate_boxlite_live_evidence(evidence)
+  ignore(@sys.rm_rf(root))
+  @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
+  match report.support {
+    @sandbox.SandboxRuntimeSupport::SandboxRuntimeCandidate => 0
+    @sandbox.SandboxRuntimeSupport::SandboxRuntimeSupported => 0
+    @sandbox.SandboxRuntimeSupport::SandboxRuntimeBlockedByConformance => 1
+  }
+}
+
+///|
+fn run_sandbox_command(args : Array[String]) -> Unit {
+  if args.length() == 5 &&
+    args[2] == "--runtime" &&
+    args[3] == "boxlite" &&
+    args[4] == "--live" {
+    @async.run_async_main(async fn() { @sys.exit(run_boxlite_live()) })
+  } else {
+    usage()
+    @sys.exit(2)
+  }
+}
+
+///|
 fn usage() -> Unit {
   @sys.write_stderr(
     "usage: choir_conformance hermetic\n" +
@@ -243,7 +281,8 @@ fn usage() -> Unit {
     "--profile subscription --synthetic-startup\n" +
     "       choir_conformance harness --surface claude-cli " +
     "--profile subscription --live\n" +
-    "live startup, sandbox, and e2e suites land behind their typed adapters\n",
+    "       choir_conformance sandbox --runtime boxlite --live\n" +
+    "e2e suites land behind their typed adapters\n",
   )
 }
 
@@ -254,6 +293,8 @@ fn main {
     @sys.exit(run_hermetic())
   } else if args.length() >= 2 && args[1] == "harness" {
     run_harness_command(args)
+  } else if args.length() >= 2 && args[1] == "sandbox" {
+    run_sandbox_command(args)
   } else {
     usage()
     @sys.exit(2)

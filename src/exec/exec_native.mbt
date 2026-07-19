@@ -670,6 +670,249 @@ pub async fn capture_harness_probe(
 }
 
 ///|
+fn boxlite_probe_executable() -> Result[String, @types.ChoirError] {
+  match @sys.getenv("CHOIR_BOXLITE_BINARY") {
+    Some(path) =>
+      if path.has_prefix("/") {
+        Ok(path)
+      } else {
+        Err(
+          @types.ChoirError::validation_error(
+            "CHOIR_BOXLITE_BINARY must be an absolute operator-controlled conformance path",
+          ),
+        )
+      }
+    None =>
+      match resolve_executable_in_path("boxlite") {
+        Some(path) => Ok(path)
+        None =>
+          Err(
+            @types.ChoirError::transport_error(
+              "BoxLite probe executable unavailable: set CHOIR_BOXLITE_BINARY or install boxlite in PATH",
+            ),
+          )
+      }
+  }
+}
+
+///|
+fn boxlite_probe_program_and_args(
+  binary : String,
+  root : String,
+  operation : @sandbox.BoxLiteProbeOperation,
+) -> (String, Array[String], Int) {
+  let home = root + "/home"
+  match operation {
+    @sandbox.BoxLiteProbeOperation::BoxLiteHashExecutable =>
+      ("/usr/bin/sha256sum", [binary], 10000)
+    @sandbox.BoxLiteProbeOperation::BoxLiteVersion =>
+      (binary, ["--version"], 10000)
+    @sandbox.BoxLiteProbeOperation::BoxLiteInfo =>
+      (binary, ["--home", home, "info"], 10000)
+    @sandbox.BoxLiteProbeOperation::BoxLitePullPinnedImage =>
+      (binary, ["--home", home, "pull", @sandbox.boxlite_probe_image], 120000)
+    @sandbox.BoxLiteProbeOperation::BoxLiteSecureBoot =>
+      (
+        binary,
+        [
+          "--home", home, "run", "--rm", "--network", "disabled", "--security", "enable",
+          "--cpus", "1", "--memory", "256", "--disk-size", "1", @sandbox.boxlite_probe_image,
+          "/bin/echo", "CHOIR_BOXLITE_SECURE_OK",
+        ],
+        120000,
+      )
+    @sandbox.BoxLiteProbeOperation::BoxLiteInsecureBootDiagnostic =>
+      (
+        binary,
+        [
+          "--home", home, "run", "--rm", "--network", "disabled", "--security", "disable",
+          "--cpus", "1", "--memory", "256", "--disk-size", "1", @sandbox.boxlite_probe_image,
+          "/bin/echo", "CHOIR_BOXLITE_INSECURE_CONTROL_OK",
+        ],
+        120000,
+      )
+  }
+}
+
+///|
+async fn capture_boxlite_probe_operation(
+  binary : String,
+  root : String,
+  operation : @sandbox.BoxLiteProbeOperation,
+) -> Result[@sandbox.BoxLiteProbeCapture, @types.ChoirError] {
+  let (program, args, timeout_ms) = boxlite_probe_program_and_args(
+    binary, root, operation,
+  )
+  abort_if_hermetic_test_exec(command_for_program(program, args, Some(root)))
+  let probe_env : Map[String, String] = {
+    "HOME": root,
+    "TMPDIR": root + "/tmp",
+    "PATH": "/usr/local/bin:/usr/bin:/bin",
+    "NO_COLOR": "1",
+  }
+  let collected = @async.with_timeout_opt(timeout_ms, () => {
+    @process.collect_output_merged(
+      program,
+      args,
+      extra_env=probe_env,
+      inherit_env=false,
+      cwd=root,
+    )
+  }) catch {
+    _ =>
+      return Err(
+        @types.ChoirError::transport_error(
+          "BoxLite conformance process failed to start or collect output",
+        ),
+      )
+  }
+  match collected {
+    None => Ok({ exit_code: -2, output: "" })
+    Some((exit_code, data)) => {
+      let output = data.text() catch {
+        _ =>
+          return Err(
+            @types.ChoirError::transport_error(
+              "BoxLite conformance output was not UTF-8",
+            ),
+          )
+      }
+      Ok({ exit_code, output })
+    }
+  }
+}
+
+///|
+/// Execute only the fixed, pinned BoxLite release probe matrix.
+pub async fn capture_boxlite_live_evidence(
+  dedicated_root : String,
+) -> Result[@sandbox.BoxLiteLiveEvidence, @types.ChoirError] {
+  if !dedicated_root.has_prefix("/tmp/choir-conformance-boxlite-") {
+    return Err(
+      @types.ChoirError::validation_error(
+        "BoxLite probe root is outside the dedicated conformance namespace",
+      ),
+    )
+  }
+  let binary = match boxlite_probe_executable() {
+    Ok(path) => path
+    Err(error) => return Err(error)
+  }
+  let executable_hash = match
+    capture_boxlite_probe_operation(
+      binary,
+      dedicated_root,
+      @sandbox.BoxLiteProbeOperation::BoxLiteHashExecutable,
+    ) {
+    Ok(capture) => capture
+    Err(error) => return Err(error)
+  }
+  let observed_hash = executable_hash.output.trim().to_owned()
+  if executable_hash.exit_code != 0 ||
+    observed_hash.length() < 64 ||
+    observed_hash[:64].to_owned() != @sandbox.boxlite_release_executable_sha256 {
+    let not_run : @sandbox.BoxLiteProbeCapture = { exit_code: -3, output: "" }
+    return Ok({
+      executable_hash,
+      version: not_run,
+      info: not_run,
+      image_pull: not_run,
+      secure_boot: not_run,
+      insecure_boot_diagnostic: not_run,
+    })
+  }
+  let version = match
+    capture_boxlite_probe_operation(
+      binary,
+      dedicated_root,
+      @sandbox.BoxLiteProbeOperation::BoxLiteVersion,
+    ) {
+    Ok(capture) => capture
+    Err(error) => return Err(error)
+  }
+  if version.exit_code != 0 ||
+    version.output.trim().to_owned() != "boxlite 0.9.7" {
+    let not_run : @sandbox.BoxLiteProbeCapture = { exit_code: -3, output: "" }
+    return Ok({
+      executable_hash,
+      version,
+      info: not_run,
+      image_pull: not_run,
+      secure_boot: not_run,
+      insecure_boot_diagnostic: not_run,
+    })
+  }
+  let info = match
+    capture_boxlite_probe_operation(
+      binary,
+      dedicated_root,
+      @sandbox.BoxLiteProbeOperation::BoxLiteInfo,
+    ) {
+    Ok(capture) => capture
+    Err(error) => return Err(error)
+  }
+  if info.exit_code != 0 || !info.output.contains("virtualization: available") {
+    let not_run : @sandbox.BoxLiteProbeCapture = { exit_code: -3, output: "" }
+    return Ok({
+      executable_hash,
+      version,
+      info,
+      image_pull: not_run,
+      secure_boot: not_run,
+      insecure_boot_diagnostic: not_run,
+    })
+  }
+  let image_pull = match
+    capture_boxlite_probe_operation(
+      binary,
+      dedicated_root,
+      @sandbox.BoxLiteProbeOperation::BoxLitePullPinnedImage,
+    ) {
+    Ok(capture) => capture
+    Err(error) => return Err(error)
+  }
+  if image_pull.exit_code != 0 {
+    let not_run : @sandbox.BoxLiteProbeCapture = { exit_code: -3, output: "" }
+    return Ok({
+      executable_hash,
+      version,
+      info,
+      image_pull,
+      secure_boot: not_run,
+      insecure_boot_diagnostic: not_run,
+    })
+  }
+  let secure_boot = match
+    capture_boxlite_probe_operation(
+      binary,
+      dedicated_root,
+      @sandbox.BoxLiteProbeOperation::BoxLiteSecureBoot,
+    ) {
+    Ok(capture) => capture
+    Err(error) => return Err(error)
+  }
+  // This is a diagnostic control only. Its success can show that the image and
+  // KVM path work; it can never admit a runtime whose secure boot failed.
+  let insecure_boot_diagnostic = match
+    capture_boxlite_probe_operation(
+      binary,
+      dedicated_root,
+      @sandbox.BoxLiteProbeOperation::BoxLiteInsecureBootDiagnostic,
+    ) {
+    Ok(capture) => capture
+    Err(error) => return Err(error)
+  }
+  Ok({
+    executable_hash,
+    version,
+    info,
+    image_pull,
+    secure_boot,
+    insecure_boot_diagnostic,
+  })
+}
+
+///|
 fn claude_startup_probe_args(
   mcp_executable : String,
   mcp_args : Array[String],

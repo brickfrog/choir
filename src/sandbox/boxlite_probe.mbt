@@ -1,0 +1,334 @@
+///|
+pub let boxlite_release_tag : String = "v0.9.7"
+
+///|
+pub let boxlite_release_sha : String = "8803834036205cf2cac5cfca98bb3875812c897a"
+
+///|
+pub let boxlite_release_archive_sha256 : String = "c80eef9dae1e3443a6817095a5c9e38b90b5bb84a50fb87a732e067f867b5e7e"
+
+///|
+pub let boxlite_release_executable_sha256 : String = "81354f87e715113fb47303eb37663514af8ce4f350077a60b4e9ff7b093f0549"
+
+///|
+/// OCI platform-manifest digest, not the image-config digest printed by `pull --quiet`.
+pub let boxlite_probe_image : String = "alpine@sha256:7c8cb692ae09657cbc4a3f3cbd0e8d5a2690ba38386aaaf252dbb060bf5eb2e6"
+
+///|
+pub let boxlite_probe_image_digest : String = "sha256:7c8cb692ae09657cbc4a3f3cbd0e8d5a2690ba38386aaaf252dbb060bf5eb2e6"
+
+///|
+pub let boxlite_policy_id : String = "boxlite-v0.9.7-kvm-seccomp-network-disabled-v1"
+
+///|
+/// SHA-256 of the checked-in canonical policy tuple documented by the adapter.
+pub let boxlite_policy_digest : String = "816e0dda1abb681d49e7b8b0e0a602dd77edf15ec962f4ee3cd56c57c1459d12"
+
+///|
+pub(all) enum BoxLiteProbeOperation {
+  BoxLiteHashExecutable
+  BoxLiteVersion
+  BoxLiteInfo
+  BoxLitePullPinnedImage
+  BoxLiteSecureBoot
+  BoxLiteInsecureBootDiagnostic
+} derive(Debug, Eq)
+
+///|
+pub(all) struct BoxLiteProbeCapture {
+  exit_code : Int
+  output : String
+} derive(Debug, Eq)
+
+///|
+pub(all) struct BoxLiteLiveEvidence {
+  executable_hash : BoxLiteProbeCapture
+  version : BoxLiteProbeCapture
+  info : BoxLiteProbeCapture
+  image_pull : BoxLiteProbeCapture
+  secure_boot : BoxLiteProbeCapture
+  insecure_boot_diagnostic : BoxLiteProbeCapture
+} derive(Debug, Eq)
+
+///|
+pub(all) enum BoxLiteProbeCase {
+  BoxLiteRuntimeIdentity
+  BoxLiteKvmAvailability
+  BoxLitePinnedImagePreparation
+  BoxLiteSecureGuestBoot
+  BoxLiteInsecureDiagnosticControl
+  BoxLiteCloneIsolation
+  BoxLiteTransferLifecycle
+  BoxLiteAttachSignalKill
+  BoxLiteRestartReadoption
+  BoxLiteReadOnlyBoundary
+  BoxLiteNetworkDisabled
+  BoxLiteNetworkDns
+  BoxLiteNetworkTcp
+  BoxLiteNetworkUdp
+  BoxLiteNetworkQuic
+  BoxLiteNetworkHostAliases
+  BoxLiteNetworkChoirSocket
+  BoxLiteNetworkRuntimeSocket
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum BoxLiteBlockReason {
+  BoxLiteExecutableHashMismatch
+  BoxLiteVersionMismatch
+  BoxLiteKvmUnavailable
+  BoxLiteImagePreparationFailed
+  BoxLiteSecureBootTimedOut
+  BoxLiteSecureBootSeccompKilled
+  BoxLiteSecureBootFailed(Int)
+  BoxLiteInsecureDiagnosticFailed(Int)
+  BoxLitePrerequisiteFailed
+  BoxLiteRemainingLifecycleProbesNotImplemented
+  BoxLiteNotRunAfterSecureBootFailure
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum BoxLiteProbeCaseStatus {
+  BoxLiteCasePassed
+  BoxLiteCaseFailed(BoxLiteBlockReason)
+  BoxLiteCaseDiagnosticPassed
+  BoxLiteCaseNotRun(BoxLiteBlockReason)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct BoxLiteProbeCaseReport {
+  case_id : BoxLiteProbeCase
+  status : BoxLiteProbeCaseStatus
+  observed_exit_code : Int?
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum SandboxRuntimeSupport {
+  SandboxRuntimeCandidate
+  SandboxRuntimeSupported
+  SandboxRuntimeBlockedByConformance
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum SandboxSecurityProfile {
+  SandboxSecurityEnabled
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct BoxLiteConformanceReport {
+  release_tag : String
+  release_sha : String
+  release_archive_sha256 : String
+  executable_sha256 : String
+  image_digest : String
+  policy_id : String
+  policy_digest : String
+  security_profile : SandboxSecurityProfile
+  network_profile : SandboxNetworkProfile
+  support : SandboxRuntimeSupport
+  cases : Array[BoxLiteProbeCaseReport]
+  blocking_reasons : Array[BoxLiteBlockReason]
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+fn capture_passed(capture : BoxLiteProbeCapture) -> Bool {
+  capture.exit_code == 0
+}
+
+///|
+fn executable_hash(capture : BoxLiteProbeCapture) -> String {
+  let output = capture.output.trim().to_owned()
+  if output.length() < 64 {
+    ""
+  } else {
+    output[:64].to_owned()
+  }
+}
+
+///|
+fn not_run_after_secure_failure(
+  case_id : BoxLiteProbeCase,
+) -> BoxLiteProbeCaseReport {
+  {
+    case_id,
+    status: BoxLiteCaseNotRun(BoxLiteNotRunAfterSecureBootFailure),
+    observed_exit_code: None,
+  }
+}
+
+///|
+pub fn evaluate_boxlite_live_evidence(
+  evidence : BoxLiteLiveEvidence,
+) -> BoxLiteConformanceReport {
+  let cases : Array[BoxLiteProbeCaseReport] = []
+  let blockers : Array[BoxLiteBlockReason] = []
+  let observed_hash = executable_hash(evidence.executable_hash)
+  let identity_ok = capture_passed(evidence.executable_hash) &&
+    observed_hash == boxlite_release_executable_sha256 &&
+    capture_passed(evidence.version) &&
+    evidence.version.output.trim().to_owned() == "boxlite 0.9.7"
+  if identity_ok {
+    cases.push({
+      case_id: BoxLiteRuntimeIdentity,
+      status: BoxLiteCasePassed,
+      observed_exit_code: Some(0),
+    })
+  } else {
+    let reason = if observed_hash != boxlite_release_executable_sha256 {
+      BoxLiteExecutableHashMismatch
+    } else {
+      BoxLiteVersionMismatch
+    }
+    blockers.push(reason)
+    cases.push({
+      case_id: BoxLiteRuntimeIdentity,
+      status: BoxLiteCaseFailed(reason),
+      observed_exit_code: Some(evidence.version.exit_code),
+    })
+  }
+  let kvm_ok = identity_ok &&
+    capture_passed(evidence.info) &&
+    evidence.info.output.contains("virtualization: available")
+  if !identity_ok {
+    cases.push({
+      case_id: BoxLiteKvmAvailability,
+      status: BoxLiteCaseNotRun(BoxLitePrerequisiteFailed),
+      observed_exit_code: None,
+    })
+  } else if kvm_ok {
+    cases.push({
+      case_id: BoxLiteKvmAvailability,
+      status: BoxLiteCasePassed,
+      observed_exit_code: Some(0),
+    })
+  } else {
+    blockers.push(BoxLiteKvmUnavailable)
+    cases.push({
+      case_id: BoxLiteKvmAvailability,
+      status: BoxLiteCaseFailed(BoxLiteKvmUnavailable),
+      observed_exit_code: Some(evidence.info.exit_code),
+    })
+  }
+  let image_ok = identity_ok && capture_passed(evidence.image_pull)
+  if !identity_ok || !kvm_ok {
+    cases.push({
+      case_id: BoxLitePinnedImagePreparation,
+      status: BoxLiteCaseNotRun(BoxLitePrerequisiteFailed),
+      observed_exit_code: None,
+    })
+  } else if image_ok {
+    cases.push({
+      case_id: BoxLitePinnedImagePreparation,
+      status: BoxLiteCasePassed,
+      observed_exit_code: Some(0),
+    })
+  } else {
+    blockers.push(BoxLiteImagePreparationFailed)
+    cases.push({
+      case_id: BoxLitePinnedImagePreparation,
+      status: BoxLiteCaseFailed(BoxLiteImagePreparationFailed),
+      observed_exit_code: Some(evidence.image_pull.exit_code),
+    })
+  }
+  let prerequisites_ok = identity_ok && kvm_ok && image_ok
+  let secure_ok = prerequisites_ok &&
+    capture_passed(evidence.secure_boot) &&
+    evidence.secure_boot.output.contains("CHOIR_BOXLITE_SECURE_OK")
+  if !prerequisites_ok {
+    cases.push({
+      case_id: BoxLiteSecureGuestBoot,
+      status: BoxLiteCaseNotRun(BoxLitePrerequisiteFailed),
+      observed_exit_code: None,
+    })
+  } else if secure_ok {
+    cases.push({
+      case_id: BoxLiteSecureGuestBoot,
+      status: BoxLiteCasePassed,
+      observed_exit_code: Some(0),
+    })
+  } else {
+    let reason = if evidence.secure_boot.exit_code == -2 {
+      BoxLiteSecureBootTimedOut
+    } else if evidence.secure_boot.exit_code == 159 ||
+      evidence.secure_boot.output.contains("Exit code: 159") {
+      BoxLiteSecureBootSeccompKilled
+    } else {
+      BoxLiteSecureBootFailed(evidence.secure_boot.exit_code)
+    }
+    blockers.push(reason)
+    cases.push({
+      case_id: BoxLiteSecureGuestBoot,
+      status: BoxLiteCaseFailed(reason),
+      observed_exit_code: Some(evidence.secure_boot.exit_code),
+    })
+  }
+  if evidence.insecure_boot_diagnostic.exit_code == -3 {
+    cases.push({
+      case_id: BoxLiteInsecureDiagnosticControl,
+      status: BoxLiteCaseNotRun(BoxLitePrerequisiteFailed),
+      observed_exit_code: None,
+    })
+  } else if capture_passed(evidence.insecure_boot_diagnostic) &&
+    evidence.insecure_boot_diagnostic.output.contains(
+      "CHOIR_BOXLITE_INSECURE_CONTROL_OK",
+    ) {
+    cases.push({
+      case_id: BoxLiteInsecureDiagnosticControl,
+      status: BoxLiteCaseDiagnosticPassed,
+      observed_exit_code: Some(0),
+    })
+  } else {
+    cases.push({
+      case_id: BoxLiteInsecureDiagnosticControl,
+      status: BoxLiteCaseFailed(
+        BoxLiteInsecureDiagnosticFailed(
+          evidence.insecure_boot_diagnostic.exit_code,
+        ),
+      ),
+      observed_exit_code: Some(evidence.insecure_boot_diagnostic.exit_code),
+    })
+  }
+  let downstream = [
+    BoxLiteCloneIsolation,
+    BoxLiteTransferLifecycle,
+    BoxLiteAttachSignalKill,
+    BoxLiteRestartReadoption,
+    BoxLiteReadOnlyBoundary,
+    BoxLiteNetworkDisabled,
+    BoxLiteNetworkDns,
+    BoxLiteNetworkTcp,
+    BoxLiteNetworkUdp,
+    BoxLiteNetworkQuic,
+    BoxLiteNetworkHostAliases,
+    BoxLiteNetworkChoirSocket,
+    BoxLiteNetworkRuntimeSocket,
+  ]
+  if !secure_ok {
+    for case_id in downstream {
+      cases.push(not_run_after_secure_failure(case_id))
+    }
+  } else {
+    blockers.push(BoxLiteRemainingLifecycleProbesNotImplemented)
+    for case_id in downstream {
+      cases.push({
+        case_id,
+        status: BoxLiteCaseNotRun(BoxLiteRemainingLifecycleProbesNotImplemented),
+        observed_exit_code: None,
+      })
+    }
+  }
+  {
+    release_tag: boxlite_release_tag,
+    release_sha: boxlite_release_sha,
+    release_archive_sha256: boxlite_release_archive_sha256,
+    executable_sha256: observed_hash,
+    image_digest: boxlite_probe_image_digest,
+    policy_id: boxlite_policy_id,
+    policy_digest: boxlite_policy_digest,
+    security_profile: SandboxSecurityEnabled,
+    network_profile: NetworkDisabled,
+    support: SandboxRuntimeBlockedByConformance,
+    cases,
+    blocking_reasons: blockers,
+  }
+}

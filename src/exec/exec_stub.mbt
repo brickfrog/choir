@@ -81,6 +81,17 @@ pub async fn capture_harness_probe(
 }
 
 ///|
+pub async fn capture_boxlite_live_evidence(
+  _dedicated_root : String,
+) -> Result[@sandbox.BoxLiteLiveEvidence, @types.ChoirError] {
+  Err(
+    @types.ChoirError::transport_error(
+      "BoxLite live probes require the native target",
+    ),
+  )
+}
+
+///|
 pub async fn capture_claude_synthetic_startup(
   _synthetic_root : String,
   _mcp_executable : String,
