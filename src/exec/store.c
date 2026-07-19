@@ -638,3 +638,86 @@ int choir_artifact_store_contains(
     free(root_path); free(digest_text);
     return result;
 }
+
+static int choir_artifact_path(
+    const char *root,
+    int root_len,
+    const char *digest,
+    int digest_len,
+    char *target,
+    size_t target_size
+) {
+    char *root_path = choir_store_copy_string(root, root_len);
+    char *digest_text = choir_store_copy_string(digest, digest_len);
+    if (root_path == NULL || digest_text == NULL || digest_len != 64) {
+        free(root_path); free(digest_text);
+        return -1;
+    }
+    int written = snprintf(
+        target, target_size, "%s/sha256/%.2s/%s", root_path, digest_text, digest_text
+    );
+    free(root_path); free(digest_text);
+    return written < 0 || (size_t)written >= target_size ? -1 : 0;
+}
+
+int choir_artifact_store_size(
+    const char *root,
+    int root_len,
+    const char *digest,
+    int digest_len
+) {
+    char target[4096];
+    if (choir_artifact_path(
+            root, root_len, digest, digest_len, target, sizeof(target)
+        ) != 0) {
+        return -1;
+    }
+    int fd = open(target, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0) return -1;
+    struct stat st;
+    int result = -1;
+    if (fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_size >= 0 &&
+        st.st_size <= INT32_MAX) {
+        result = (int)st.st_size;
+    }
+    close(fd);
+    return result;
+}
+
+int choir_artifact_store_read(
+    const char *root,
+    int root_len,
+    const char *digest,
+    int digest_len,
+    unsigned char *output,
+    int output_size
+) {
+    if (output_size < 0 || (output == NULL && output_size != 0)) return -1;
+    char target[4096];
+    if (choir_artifact_path(
+            root, root_len, digest, digest_len, target, sizeof(target)
+        ) != 0) {
+        return -1;
+    }
+    int fd = open(target, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0) return -1;
+    struct stat st;
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) ||
+        st.st_size != output_size) {
+        close(fd);
+        return -1;
+    }
+    int offset = 0;
+    while (offset < output_size) {
+        ssize_t n = read(fd, output + offset, (size_t)(output_size - offset));
+        if (n <= 0) {
+            close(fd);
+            return -1;
+        }
+        offset += (int)n;
+    }
+    unsigned char trailing = 0;
+    ssize_t extra = read(fd, &trailing, 1);
+    close(fd);
+    return extra == 0 ? offset : -1;
+}

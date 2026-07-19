@@ -59,6 +59,35 @@ pub(all) struct ArtifactStoreAdapters {
     @types.ChoirError,
   ]
   contains : (ArtifactStore, @control.Digest) -> Result[Bool, @types.ChoirError]
+  read : (ArtifactStore, ArtifactReadRequest) -> Result[
+    Bytes,
+    @types.ChoirError,
+  ]
+}
+
+///|
+pub(all) struct ArtifactReadRequest {
+  digest : @control.Digest
+  max_bytes : Int
+} derive(Debug, Eq)
+
+///|
+pub fn validate_artifact_read(
+  request : ArtifactReadRequest,
+) -> Result[Unit, @types.ChoirError] {
+  match validate_digest(request.digest) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  if request.max_bytes <= 0 {
+    Err(
+      @types.ChoirError::validation_error(
+        "artifact read requires a positive byte limit",
+      ),
+    )
+  } else {
+    Ok(())
+  }
 }
 
 ///|

@@ -56,6 +56,18 @@ pub fn artifact_store_contains(
 }
 
 ///|
+pub fn read_artifact(
+  _store : @storage.ArtifactStore,
+  _request : @storage.ArtifactReadRequest,
+) -> Result[Bytes, @types.ChoirError] {
+  Err(@types.ChoirError::workspace_error("artifact store is native-only"))
+}
+
+///|
 pub fn local_artifact_store_adapters() -> @storage.ArtifactStoreAdapters {
-  { adopt: adopt_artifact, contains: artifact_store_contains }
+  {
+    adopt: adopt_artifact,
+    contains: artifact_store_contains,
+    read: read_artifact,
+  }
 }

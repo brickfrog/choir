@@ -307,6 +307,52 @@ pub fn artifact_store_contains(
 }
 
 ///|
+pub fn read_artifact(
+  store : @storage.ArtifactStore,
+  request : @storage.ArtifactReadRequest,
+) -> Result[Bytes, @types.ChoirError] {
+  match validate_store_path(store.root) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  match @storage.validate_artifact_read(request) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let (root, root_len) = exec_string_to_null_terminated_bytes(store.root)
+  let digest_text = @storage.digest_text(request.digest)
+  let (digest, digest_len) = exec_string_to_null_terminated_bytes(digest_text)
+  let size = artifact_store_size_ffi(root, root_len, digest, digest_len)
+  if size < 0 {
+    return Err(artifact_store_failure("read sizing"))
+  }
+  if size > request.max_bytes {
+    return Err(
+      @types.ChoirError::validation_error(
+        "artifact exceeds the authorized read byte limit",
+      ),
+    )
+  }
+  let output = Bytes::new(size)
+  if artifact_store_read_ffi(root, root_len, digest, digest_len, output, size) !=
+    size {
+    return Err(artifact_store_failure("read"))
+  }
+  if @storage.artifact_digest(output) != request.digest {
+    return Err(
+      @types.ChoirError::workspace_error(
+        "artifact store content no longer matches its digest path",
+      ),
+    )
+  }
+  Ok(output)
+}
+
+///|
 pub fn local_artifact_store_adapters() -> @storage.ArtifactStoreAdapters {
-  { adopt: adopt_artifact, contains: artifact_store_contains }
+  {
+    adopt: adopt_artifact,
+    contains: artifact_store_contains,
+    read: read_artifact,
+  }
 }

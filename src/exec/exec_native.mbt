@@ -77,6 +77,26 @@ extern "C" fn artifact_store_contains_ffi(
 ) -> Int = "choir_artifact_store_contains"
 
 ///|
+#borrow(root, digest)
+extern "C" fn artifact_store_size_ffi(
+  root : Bytes,
+  root_len : Int,
+  digest : Bytes,
+  digest_len : Int,
+) -> Int = "choir_artifact_store_size"
+
+///|
+#borrow(root, digest, output)
+extern "C" fn artifact_store_read_ffi(
+  root : Bytes,
+  root_len : Int,
+  digest : Bytes,
+  digest_len : Int,
+  output : Bytes,
+  output_size : Int,
+) -> Int = "choir_artifact_store_read"
+
+///|
 fn exec_string_to_null_terminated_bytes(s : String) -> (Bytes, Int) {
   let encoded = @utf8.encode(s)
   let len = encoded.length()

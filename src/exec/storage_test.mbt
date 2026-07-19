@@ -298,6 +298,12 @@ test "local artifact store atomically adopts immutable content" {
     Ok(_) => fail("unexpected artifact adoption receipt")
     Err(error) => fail(error.message())
   }
+  let restarted : @storage.ArtifactStore = { root, }
+  match read_artifact(restarted, { digest, max_bytes: 1024 }) {
+    Ok(actual) => assert_eq(actual, content)
+    Err(error) => fail(error.message())
+  }
+  assert_true(read_artifact(restarted, { digest, max_bytes: 4 }) is Err(_))
   match artifact_store_contains(store, digest) {
     Ok(true) => ()
     Ok(false) => fail("adopted artifact was not found")
@@ -345,6 +351,13 @@ test "local artifact store rejects corrupt targets and symlinked roots" {
     is Err(_),
   )
   assert_eq(@sys.read_file(target), "wrong")
+  assert_true(
+    read_artifact(@storage.ArtifactStore::{ root: corrupt_root }, {
+      digest,
+      max_bytes: 1024,
+    })
+    is Err(_),
+  )
   ignore(@sys.rm_rf(corrupt_root))
 
   let outside = storage_test_path("artifacts-outside")
