@@ -110,7 +110,8 @@ pub fn ingest_harness_event(
     }
     None =>
       match (session.lifecycle, incoming.kind) {
-        (HarnessSessionPlanned, HarnessStarted) =>
+        (HarnessSessionPlanned, HarnessStarted)
+        | (HarnessSessionAwaitingEvents, HarnessStarted) =>
           {
             session: {
               ..session,

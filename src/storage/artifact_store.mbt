@@ -26,6 +26,7 @@ pub(all) enum ArtifactProvenance {
   ArtifactVerificationEvidence(@control.TakeId)
   ArtifactAuditFindings(@control.TakeId)
   ArtifactConformanceEvidence
+  ArtifactWorkflowSnapshot(@control.GoalId)
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|

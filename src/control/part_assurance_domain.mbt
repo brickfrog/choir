@@ -238,6 +238,7 @@ pub(all) enum HarnessTerminalObservation {
 ///|
 pub(all) enum HarnessSessionLifecycle {
   HarnessSessionPlanned
+  HarnessSessionAwaitingEvents
   HarnessSessionRunning
   HarnessSessionTerminalObserved(HarnessTerminalObservation)
   HarnessSessionIngestionClosedCleanly(HarnessTerminalObservation)
