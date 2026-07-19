@@ -1,7 +1,10 @@
 import {
   "choir/src/conformance",
   "choir/src/control",
+  "choir/src/exec",
+  "choir/src/harness",
   "choir/src/sys",
+  "moonbitlang/async",
   "moonbitlang/core/env",
   "moonbitlang/core/json",
   "moonbitlang/core/ref",

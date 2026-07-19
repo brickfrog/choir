@@ -70,6 +70,17 @@ pub async fn capture_command_merged(_cmd : @workspace.Command) -> (Int, String) 
 }
 
 ///|
+pub async fn capture_harness_probe(
+  _spec : @harness.HarnessProbeProcess,
+) -> Result[@harness.HarnessProbeCapture, @types.ChoirError] {
+  Err(
+    @types.ChoirError::transport_error(
+      "provider declaration probes require the native target",
+    ),
+  )
+}
+
+///|
 pub async fn capture_hook_script_merged(
   _hook_path : String,
   _stdin_body : String,

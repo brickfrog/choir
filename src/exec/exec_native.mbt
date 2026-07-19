@@ -594,6 +594,82 @@ pub async fn capture_command_merged(cmd : @workspace.Command) -> (Int, String) {
 }
 
 ///|
+fn harness_probe_program_and_args(
+  spec : @harness.HarnessProbeProcess,
+) -> (String, Array[String]) {
+  match (spec.surface, spec.command) {
+    (
+      @harness.ProviderSurface::ClaudeCli,
+      @harness.HarnessProbeCommand::ProbeVersion,
+    ) => ("claude", ["--version"])
+    (
+      @harness.ProviderSurface::ClaudeCli,
+      @harness.HarnessProbeCommand::ProbeMainHelp,
+    ) => ("claude", ["--help"])
+    (
+      @harness.ProviderSurface::ClaudeCli,
+      @harness.HarnessProbeCommand::ProbeExecHelp,
+    ) => ("claude", ["--help"])
+    (
+      @harness.ProviderSurface::CodexCli,
+      @harness.HarnessProbeCommand::ProbeVersion,
+    ) => ("codex", ["--version"])
+    (
+      @harness.ProviderSurface::CodexCli,
+      @harness.HarnessProbeCommand::ProbeMainHelp,
+    ) => ("codex", ["--help"])
+    (
+      @harness.ProviderSurface::CodexCli,
+      @harness.HarnessProbeCommand::ProbeExecHelp,
+    ) => ("codex", ["exec", "--help"])
+  }
+}
+
+///|
+/// Execute the fixed, read-only provider declaration probes. No caller can
+/// supply an executable, argv item, working directory, or environment entry.
+pub async fn capture_harness_probe(
+  spec : @harness.HarnessProbeProcess,
+) -> Result[@harness.HarnessProbeCapture, @types.ChoirError] {
+  let (program, args) = harness_probe_program_and_args(spec)
+  abort_if_hermetic_test_exec(command_for_program(program, args, None))
+  let (reader, writer) = @process.read_from_process() catch {
+    _ =>
+      return Err(
+        @types.ChoirError::transport_error(
+          "provider probe pipe creation failed",
+        ),
+      )
+  }
+  let probe_env : Map[String, String] = { "COLUMNS": "200", "NO_COLOR": "1" }
+  let pid = @process.spawn_orphan(
+    program,
+    args[:],
+    extra_env=probe_env,
+    inherit_env=true,
+    stdout=writer,
+    stderr=writer,
+  ) catch {
+    _ => {
+      reader.close()
+      return Err(
+        @types.ChoirError::transport_error(
+          "provider probe executable unavailable: " + program,
+        ),
+      )
+    }
+  }
+  let (output, _) = drain_process_stdout(reader, capture_max_bytes)
+  let exit_code = @process.wait_pid(pid) catch {
+    _ =>
+      return Err(
+        @types.ChoirError::transport_error("provider probe wait failed"),
+      )
+  }
+  Ok({ exit_code, output })
+}
+
+///|
 async fn capture_agy_shared_cache_cold_bootstrap(
   cmd : @workspace.Command,
 ) -> (Int, String) {
