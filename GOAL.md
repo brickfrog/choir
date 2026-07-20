@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Context-only amendments through: 2026-07-20T13:10:42-05:00
+Context-only amendments through: 2026-07-20T13:50:14-05:00
 
 ## Charter Semantics and Readiness
 
@@ -148,9 +148,10 @@ unconnected product path usable.
 - Durable restart-readable state and content-addressed artifact stores with
   transactional fault injection.
 - A hermetic conformance runner with injected clock, identifiers, adapters,
-  and typed fault points. Its command now runs thirteen registered cases: the runner
-  dependency contract, `scheduler.generated_dags`, four event-ingestion cases,
-  four mutation-ownership cases, and three process-policy cases described below.
+  and typed fault points. Its command now runs fourteen registered cases: the
+  runner dependency contract, `selection.exact_snapshot`,
+  `scheduler.generated_dags`, four event-ingestion cases, four
+  mutation-ownership cases, and three process-policy cases described below.
   It does not yet implement the complete required case matrix.
 - Claude and Codex CLI surface probes. The exact Claude subscription CLI
   profile passed its startup/tool-surface probe. The pinned Codex subscription
@@ -158,11 +159,12 @@ unconnected product path usable.
   native host read/write denial, required-MCP fail-closed startup, and an exact
   sandbox-only event trace are executable checks.
 - Codex MCP resource discovery is now classified as provider-side discovery,
-  not as a Part effect, only when it targets the exact declared sandbox server.
-  Balanced discovery is omitted from durable tool-effect events and cannot
-  satisfy the requirement that a declared Part tool actually runs. Any other
-  undeclared MCP tool or server remains fail-closed with a sanitized diagnostic
-  naming the tool and whether the declared server matched.
+  not as a Part effect, only for the two read-only discovery methods and only
+  when Codex identifies either the exact declared server or its reserved
+  `codex` discovery server. Balanced discovery is omitted from durable
+  tool-effect events and cannot satisfy the requirement that a declared Part
+  tool actually runs. Every non-discovery call still requires the exact Choir
+  server and allowlisted tool; other servers and tools fail closed.
 - A pinned BoxLite v0.9.7 lifecycle/security adapter using the checked-in
   seccomp correction. Live KVM boot, clone isolation, bounded transfer,
   attach/signal/kill, restart re-adoption, read-only enforcement, and declared
@@ -189,6 +191,11 @@ unconnected product path usable.
   runner and emits typed counts for four graphs, 32 schedule runs, eight
   promotion runs, and 680 Part evaluations. The complete scale fixture and
   `SemanticRunProjection` comparison remain outstanding.
+- Exact selection is now a registered hermetic case using the production
+  evaluator. It proves deterministic identity under input permutation, one
+  valid acceptance, the exact five typed rejection classes for missing,
+  duplicate, closed, dependency-incomplete, and ambiguous Parts, and zero
+  dispatch before an accepted decision exists.
 - Harness event ingestion now has registered hermetic cases for duplicate
   conflicts, cursor gaps, late terminals, and conflicting terminals. A
   completion observed after an authoritative interruption is retained only as
@@ -417,7 +424,7 @@ Earlier evidence anchors are commits `5fb93fe8` for the native Part path,
 the linter correction. With the current assurance, cancellation, and provider changes,
 `moon check --target native`, `moon test --target native`, and
 `moon run --target native src/bin/choir_lint` all exit successfully on
-2026-07-20. After deleting obsolete source and tests, the full native suite reports 292
+2026-07-20. After deleting obsolete source and tests, the full native suite reports 293
 passed and 0 failed. The
 compiler still reports the repository's existing warning set.
 
@@ -430,13 +437,14 @@ compiler still reports the repository's existing warning set.
   execution.
 - The mixed-provider Goal fixture supplies two checked-in execution contracts.
   It proves concurrent provider dispatch and serialized integration.
-- The joined disposable-repository run uses the same typed submission adapter,
-  durable execution repository, and native Goal tick as the daemon. It proves
-  that an accepted Conductor draft can reach real provider execution and
-  promotion, a sealed combined-tree verification Take, an independent Goal
-  audit Take, and terminal assured state. It does not by itself prove the
-  interactive Claude `/goal` turn, interruption during an in-flight Goal-level
-  provider dispatch or a live external final-PR create.
+- A direct Codex Conductor turn in a disposable repository used the real ten-
+  tool MCP surface to inspect Beads and submit a durable Goal. The daemon then
+  ran the accepted Part through Codex implementation, native Moon verification,
+  an independent Part audit, promotion, combined-tree verification, and an
+  independent Goal audit. The run stopped honestly at publication because the
+  disposable repository had no remote. It does not prove the interactive
+  Claude `/goal` turn, interruption during an in-flight Goal-level provider
+  dispatch, or a live external final-PR create.
 
 ### Not yet connected
 - The remaining generated cancellation-ordering edge cases beyond the
@@ -3763,6 +3771,26 @@ fixed Choir MCP child reads only the socket and capability names from its
 direct Codex parent when Codex omits them from the child environment. A fresh
 repository now also creates the control database directory before the daemon's
 first Goal tick.
+
+At `2026-07-20T13:50:14-05:00`, the Codex Conductor inspected Bead `live-ap9`
+and submitted one durable Goal through `goal_submit` without editing the
+repository. `choird` dispatched a real Codex implementation Take in BoxLite,
+normalized the one-path candidate, ran `moon test --target native`, obtained an
+independent Part audit, promoted the candidate, verified the combined tree,
+and obtained an independent Goal audit. The Part recorded 12 effect receipts,
+one verification receipt, one audit receipt, and one integration receipt; the
+Goal recorded one verification receipt and one audit receipt. Publication then
+remained pending because the disposable repository deliberately had no remote.
+
+The first native verification exposed that the minimal Debian image lacked the
+C runtime objects required by MoonBit's native target. The Take runtime now
+pins the amd64 `buildpack-deps` platform manifest
+`sha256:5009ae2bfc9ff32268f48dd81844776a977a88cdfba28577db9b5857127a044a`;
+networking remains disabled and the runtime-policy digest binds the image.
+Codex also emitted its reserved-server resource discovery before ordinary
+Choir tool calls. The driver now permits only those two read-only discovery
+methods on that reserved server and continues to reject every non-discovery
+call outside the exact Choir server and allowlist.
 
 #### Post-snapshot mixed-provider Goal amendment
 

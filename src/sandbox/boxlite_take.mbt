@@ -1,10 +1,12 @@
 ///|
-/// Pinned amd64 OCI platform manifest used by the local Take runtime.
-pub let boxlite_take_image : String = "debian@sha256:63a496b5d3b99214b39f5ed70eb71a61e590a77979c79cbee4faf991f8c0783e"
+/// Pinned amd64 OCI platform manifest used by the local Take runtime. The
+/// buildpack image supplies the native C runtime objects required by MoonBit's
+/// native target while Take networking remains disabled.
+pub let boxlite_take_image : String = "buildpack-deps@sha256:5009ae2bfc9ff32268f48dd81844776a977a88cdfba28577db9b5857127a044a"
 
 ///|
 pub let boxlite_take_image_digest : @control.Digest = @control.Digest(
-  "63a496b5d3b99214b39f5ed70eb71a61e590a77979c79cbee4faf991f8c0783e",
+  "5009ae2bfc9ff32268f48dd81844776a977a88cdfba28577db9b5857127a044a",
 )
 
 ///|
@@ -68,6 +70,6 @@ test "Take runtime digests bind the declared tools and policy" {
   )
   assert_eq(
     boxlite_take_runtime_policy_digest().0,
-    "3306dedcb20dfaf3221811fd88e28ebaf1c361e8a343809ffd7909971b21b641",
+    "4870fd06343a2228e68688181f76994ccb04b64dd8054b20f795941893731e6f",
   )
 }

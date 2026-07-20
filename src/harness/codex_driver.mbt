@@ -178,8 +178,11 @@ pub fn evaluate_codex_conductor_capture(
             let tool = codex_json_string(item, "tool")
             let discovery = tool == "list_mcp_resources" ||
               tool == "list_mcp_resource_templates"
+            let discovery_server = server == expected_mcp_server ||
+              server == "codex"
             if id == "" ||
-              server != expected_mcp_server ||
+              (discovery && !discovery_server) ||
+              (!discovery && server != expected_mcp_server) ||
               (!discovery && !allowed_tools.contains(tool)) {
               return Err(
                 codex_driver_error("Conductor observed an undeclared tool"),

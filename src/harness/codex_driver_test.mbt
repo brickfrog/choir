@@ -191,6 +191,8 @@ test "Codex Conductor accepts a restricted resumable turn" {
   let output =
     #|{"type":"thread.started","thread_id":"019f80a5-df42-7411-9065-e0866506338c"}
     #|{"type":"turn.started"}
+    #|{"type":"item.started","item":{"id":"discovery-1","type":"mcp_tool_call","server":"codex","tool":"list_mcp_resources","status":"in_progress"}}
+    #|{"type":"item.completed","item":{"id":"discovery-1","type":"mcp_tool_call","server":"codex","tool":"list_mcp_resources","status":"completed"}}
     #|{"type":"item.started","item":{"id":"tool-1","type":"mcp_tool_call","server":"choir","tool":"goal_status","status":"in_progress"}}
     #|{"type":"item.completed","item":{"id":"tool-1","type":"mcp_tool_call","server":"choir","tool":"goal_status","status":"completed"}}
     #|{"type":"item.completed","item":{"id":"message-1","type":"agent_message","text":"The Goal is queued."}}
@@ -228,6 +230,21 @@ test "Codex Conductor rejects native host-tool events and thread drift" {
   assert_true(
     @harness.evaluate_codex_conductor_capture(
       { exit_code: 0, output: native },
+      None,
+      "choir",
+      ["goal_status"],
+    )
+    is Err(_),
+  )
+  let foreign_discovery = base.replace(
+    old="{\"type\":\"item.completed\",\"item\":{\"id\":\"message-1\",\"type\":\"agent_message\",\"text\":\"done\"}}",
+    new="{\"type\":\"item.started\",\"item\":{\"id\":\"discovery-1\",\"type\":\"mcp_tool_call\",\"server\":\"foreign\",\"tool\":\"list_mcp_resources\",\"status\":\"in_progress\"}}\n" +
+      "{\"type\":\"item.completed\",\"item\":{\"id\":\"discovery-1\",\"type\":\"mcp_tool_call\",\"server\":\"foreign\",\"tool\":\"list_mcp_resources\",\"status\":\"completed\"}}\n" +
+      "{\"type\":\"item.completed\",\"item\":{\"id\":\"message-1\",\"type\":\"agent_message\",\"text\":\"done\"}}",
+  )
+  assert_true(
+    @harness.evaluate_codex_conductor_capture(
+      { exit_code: 0, output: foreign_discovery },
       None,
       "choir",
       ["goal_status"],

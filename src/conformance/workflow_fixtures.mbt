@@ -553,3 +553,261 @@ pub fn scheduler_generated_dags_case() -> HermeticConformanceCase {
     },
   }
 }
+
+///|
+let selection_fixture_digest : @control.Digest = @control.Digest(
+  "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+)
+
+///|
+fn selection_fixture_source(
+  id : String,
+  dependencies : Array[@control.PartId],
+  state : @workflow.SelectionSourceState,
+) -> @workflow.GoalSelectionSourcePart {
+  {
+    part_id: @control.PartId(id),
+    source_revision_digest: selection_fixture_digest,
+    dependency_ids: dependencies,
+    state,
+  }
+}
+
+///|
+fn selection_fixture_part(
+  goal_id : @control.GoalId,
+  id : String,
+  dependencies : Array[@control.PartId],
+) -> @workflow.ConductorPartProposal {
+  let part_id = @control.PartId(id)
+  {
+    part_id,
+    source_revision_digest: selection_fixture_digest,
+    dependency_ids: dependencies,
+    task_contract: {
+      id: @control.RevisionId("revision-" + id),
+      goal_id,
+      part_id,
+      revision: 1,
+      digest: selection_fixture_digest,
+      instruction_artifact: {
+        artifact_id: "instruction-" + id,
+        digest: selection_fixture_digest,
+      },
+      base_commit_oid: @control.GitOid("selection-base-commit"),
+      base_tree_oid: @control.GitOid("selection-base-tree"),
+      path_mode: @control.RepositoryPathMode::CaseSensitiveNfc,
+      mutation_declaration: @control.MutationDeclaration::CompleteMutationDeclaration([
+          @control.MutationClaim::ExactPath(
+            @control.RepoPath("src/" + id + ".mbt"),
+          ),
+        ],
+      ),
+      verification_specs: [
+        {
+          id: @control.VerificationSpecId("verify-" + id),
+          version: 1,
+          digest: selection_fixture_digest,
+          process_spec_digest: selection_fixture_digest,
+        },
+      ],
+      audit_policy_digest: selection_fixture_digest,
+      implementation_capability_profile_digest: selection_fixture_digest,
+      verification_capability_profile_digest: selection_fixture_digest,
+      audit_capability_profile_digest: selection_fixture_digest,
+    },
+    provider_surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+  }
+}
+
+///|
+fn selection_fixture_snapshot(
+  parts : Array[@workflow.GoalSelectionSourcePart],
+) -> @workflow.GoalSelectionSnapshot {
+  {
+    repository_id: @workflow.RepositoryId("selection-repository"),
+    base_commit_oid: @control.GitOid("selection-base-commit"),
+    base_tree_oid: @control.GitOid("selection-base-tree"),
+    parts,
+  }
+}
+
+///|
+fn selection_fixture_proposal(
+  goal_id : @control.GoalId,
+  parts : Array[@workflow.ConductorPartProposal],
+) -> @workflow.GoalProposal {
+  {
+    id: @workflow.GoalProposalId("selection-proposal"),
+    goal_id,
+    repository_id: @workflow.RepositoryId("selection-repository"),
+    base_ref: @workflow.GitRefName("refs/heads/main"),
+    expected_base_commit_oid: @control.GitOid("selection-base-commit"),
+    expected_base_tree_oid: @control.GitOid("selection-base-tree"),
+    integration_target_ref: @workflow.GitRefName("refs/heads/main"),
+    selection_policy: @workflow.GoalSelectionPolicy::ExactClosure,
+    maximum_parallel_parts: 2,
+    parts,
+  }
+}
+
+///|
+fn selection_fixture_error(detail : String) -> @types.ChoirError {
+  @types.ChoirError::validation_error("selection conformance failed: " + detail)
+}
+
+///|
+pub fn selection_exact_snapshot_case() -> HermeticConformanceCase {
+  {
+    id: ConformanceCaseId("selection.exact_snapshot"),
+    run: fn(_) {
+      let goal_id = @control.GoalId("selection-goal")
+      let needed_id = @control.PartId("needed")
+      let sources = [
+        selection_fixture_source(
+          "valid",
+          [],
+          @workflow.SelectionSourceState::SelectionSourceOpen,
+        ),
+        selection_fixture_source(
+          "needed",
+          [],
+          @workflow.SelectionSourceState::SelectionSourceOpen,
+        ),
+        selection_fixture_source(
+          "dependency-missing",
+          [needed_id],
+          @workflow.SelectionSourceState::SelectionSourceOpen,
+        ),
+        selection_fixture_source(
+          "closed",
+          [],
+          @workflow.SelectionSourceState::SelectionSourceClosed,
+        ),
+        selection_fixture_source(
+          "ambiguous",
+          [],
+          @workflow.SelectionSourceState::SelectionSourceAmbiguous,
+        ),
+        selection_fixture_source(
+          "duplicate",
+          [],
+          @workflow.SelectionSourceState::SelectionSourceOpen,
+        ),
+      ]
+      let valid = selection_fixture_part(goal_id, "valid", [])
+      let dependency_missing = selection_fixture_part(
+        goal_id,
+        "dependency-missing",
+        [needed_id],
+      )
+      let closed = selection_fixture_part(goal_id, "closed", [])
+      let ambiguous = selection_fixture_part(goal_id, "ambiguous", [])
+      let missing = selection_fixture_part(goal_id, "missing", [])
+      let duplicate = selection_fixture_part(goal_id, "duplicate", [])
+      let proposed = [
+        valid, dependency_missing, closed, ambiguous, missing, duplicate, duplicate,
+      ]
+      let decision = match
+        @workflow.evaluate_goal_proposal(
+          selection_fixture_proposal(goal_id, proposed),
+          selection_fixture_snapshot(sources),
+          fn(_) { true },
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let expected_rejections : Array[@workflow.PartSelectionRejection] = [
+        {
+          part_id: @control.PartId("ambiguous"),
+          reasons: [@workflow.SelectionRejectionReason::SelectionAmbiguous],
+        },
+        {
+          part_id: @control.PartId("closed"),
+          reasons: [@workflow.SelectionRejectionReason::SelectionNotOpen],
+        },
+        {
+          part_id: @control.PartId("dependency-missing"),
+          reasons: [
+            @workflow.SelectionRejectionReason::SelectionMissingOpenDependency,
+          ],
+        },
+        {
+          part_id: @control.PartId("duplicate"),
+          reasons: [@workflow.SelectionRejectionReason::SelectionDuplicate],
+        },
+        {
+          part_id: @control.PartId("missing"),
+          reasons: [@workflow.SelectionRejectionReason::SelectionNotFound],
+        },
+      ]
+      expected_rejections.sort_by(fn(left, right) {
+        left.part_id.compare(right.part_id)
+      })
+      if decision.outcome !=
+        @workflow.GoalSelectionOutcome::GoalSelectionRejected ||
+        decision.goal is Some(_) ||
+        decision.accepted_parts.length() != 0 ||
+        decision.rejections != expected_rejections {
+        return Err(
+          selection_fixture_error(
+            "mixed rejection set changed: " +
+            decision.rejections.to_json().stringify(indent=0),
+          ),
+        )
+      }
+      let reverse_sources : Array[@workflow.GoalSelectionSourcePart] = []
+      for source in sources.rev_iter() {
+        reverse_sources.push(source)
+      }
+      let reverse_proposed : Array[@workflow.ConductorPartProposal] = []
+      for part in proposed.rev_iter() {
+        reverse_proposed.push(part)
+      }
+      let permuted = match
+        @workflow.evaluate_goal_proposal(
+          selection_fixture_proposal(goal_id, reverse_proposed),
+          selection_fixture_snapshot(reverse_sources),
+          fn(_) { true },
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      if permuted.id != decision.id ||
+        permuted.proposal_digest != decision.proposal_digest ||
+        permuted.source_snapshot_digest != decision.source_snapshot_digest ||
+        permuted.proposed_part_ids != decision.proposed_part_ids ||
+        permuted.rejections != decision.rejections {
+        return Err(
+          selection_fixture_error("input permutation changed identity"),
+        )
+      }
+      let accepted = match
+        @workflow.evaluate_goal_proposal(
+          selection_fixture_proposal(goal_id, [valid]),
+          selection_fixture_snapshot(sources),
+          fn(_) { true },
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      if accepted.outcome !=
+        @workflow.GoalSelectionOutcome::GoalSelectionAccepted ||
+        accepted.accepted_parts.map(fn(part) { part.part.id }) !=
+        [@control.PartId("valid")] ||
+        accepted.rejections.length() != 0 {
+        return Err(selection_fixture_error("valid selection was not accepted"))
+      }
+      Ok({
+        evidence: [
+          ObservedSelectionCase(
+            SelectionConformanceKind::SelectionExactSnapshot,
+            accepted.accepted_parts.length(),
+            decision.rejections.length(),
+            0,
+          ),
+        ],
+      })
+    },
+  }
+}

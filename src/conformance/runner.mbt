@@ -145,6 +145,7 @@ pub(all) enum ConformanceEvidence {
   ObservedEffectWitness(@control.Digest)
   ObservedFault(FaultPoint)
   ObservedGeneratedDagSuite(Int, Int, Int, Int)
+  ObservedSelectionCase(SelectionConformanceKind, Int, Int, Int)
   ObservedHarnessIngestion(
     @control.HarnessIngestionDisposition,
     @control.HarnessSessionLifecycle,
@@ -153,6 +154,11 @@ pub(all) enum ConformanceEvidence {
   ObservedOwnershipCase(OwnershipConformanceKind, Int)
   ObservedProcessCase(ProcessConformanceKind, Int)
   AllocatedId(ConformanceIdKind, String)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum SelectionConformanceKind {
+  SelectionExactSnapshot
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|

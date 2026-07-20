@@ -40,6 +40,7 @@ test "registered pure conformance cases satisfy their typed oracles" {
       @conformance.event_cursor_gap_case(),
       @conformance.event_late_terminal_case(),
       @conformance.event_conflicting_terminal_case(),
+      @conformance.selection_exact_snapshot_case(),
       @conformance.ownership_normalization_case(),
       @conformance.ownership_conflict_matrix_case(),
       @conformance.ownership_underclaim_case(),
@@ -50,7 +51,7 @@ test "registered pure conformance cases satisfy their typed oracles" {
     ],
     event_case_test_dependencies(),
   )
-  assert_eq(report.passed, 11)
+  assert_eq(report.passed, 12)
   assert_eq(report.failed, 0)
-  assert_eq(report.cases.length(), 11)
+  assert_eq(report.cases.length(), 12)
 }

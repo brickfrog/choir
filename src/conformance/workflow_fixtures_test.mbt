@@ -19,3 +19,35 @@ test "generated DAG fixture covers permutations and concurrency limits" {
   assert_eq(report.promotion_run_count, 8)
   assert_eq(report.part_evaluation_count, 680)
 }
+
+///|
+test "selection fixture records exact typed rejection and acceptance sets" {
+  let report = @conformance.run_hermetic_case(
+    @conformance.selection_exact_snapshot_case(),
+    {
+      now: fn() { 1L },
+      next_id: fn(_) { "selection-fixture-id" },
+      fault_enabled: fn(_) { false },
+      adapters: {
+        read_state: fn(_) { Ok(@conformance.StateObservation::StateMissing) },
+        read_artifact: fn(_) {
+          Ok(@conformance.ArtifactObservation::ArtifactMissing)
+        },
+        read_effect_witness: fn(_) {
+          Ok(@conformance.EffectWitnessObservation::EffectWitnessAbsent)
+        },
+      },
+    },
+  )
+  assert_true(
+    report.status is @conformance.ConformanceCaseStatus::ConformanceCasePassed,
+  )
+  assert_eq(report.evidence, [
+    @conformance.ConformanceEvidence::ObservedSelectionCase(
+      @conformance.SelectionConformanceKind::SelectionExactSnapshot,
+      1,
+      5,
+      0,
+    ),
+  ])
+}
