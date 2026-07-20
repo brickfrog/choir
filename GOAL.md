@@ -167,10 +167,10 @@ unconnected product path usable.
 - Durable restart-readable state and content-addressed artifact stores with
   transactional fault injection.
 - A hermetic conformance runner with injected clock, identifiers, adapters,
-  and typed fault points. Its command now runs eighteen registered cases: the
+  and typed fault points. Its command now runs nineteen registered cases: the
   runner dependency contract, `selection.exact_snapshot`,
   `selection.revision_invalidation`,
-  `scheduler.generated_dags`, three audit-authority cases, four event-ingestion
+  `scheduler.generated_dags`, three audit-authority cases, five event-ingestion
   cases, four mutation-ownership cases, and three process-policy cases described
   below. The audit cases prove a missing gate is passive, author Take/sandbox/
   session reuse is rejected, and seven independent subject/policy changes stale
@@ -188,8 +188,11 @@ unconnected product path usable.
   text, tool output, header-like fields, terminal output, and process output;
   native Take environment tests prove exact allowlists with no provider-key or
   Conductor variables. None of those raw bytes appear in normalized events,
-  terminal output, or durable evidence JSON. Registration of the combined
-  native probe under the standalone `event.redaction` case ID remains.
+  terminal output, or durable evidence JSON. The standalone `event.redaction`
+  hermetic case now runs both production provider normalizers with injected
+  secret fields and proves its retained results and report contain none of the
+  marker bytes; native environment and process-evidence checks remain in their
+  narrow adapter tests.
 - The Codex app-server event spool has a fixed 16 MiB admission bound. Crossing
   it now returns typed `EventIngestionOverflow`, terminates the exact recorded
   app-server process group, and causes the Part driver to atomically mark the
@@ -584,7 +587,7 @@ compiler still reports the repository's existing warning set.
   remaining generated cases for ambiguous identity, remote drift, and broader
   cancellation orderings. The checked synthetic forge proves control-plane
   behavior without mutating an external repository.
-- The remaining event transaction/replay, redaction, backpressure,
+- The remaining event transaction/replay, backpressure,
   cancellation ordering, conflict repair, hostile-surface, PR,
   and scale conformance cases. Duplicate conflicts, cursor gaps, late
   terminals, conflicting terminals, fixed-seed generated DAG scheduling,

@@ -205,3 +205,166 @@ pub fn event_conflicting_terminal_case() -> HermeticConformanceCase {
     },
   }
 }
+
+///|
+fn event_redaction_session(
+  surface : @control.ProviderSurfaceId,
+  manifest_digest : @control.Digest,
+  cursor_class : @control.HarnessCursorClass,
+) -> @control.HarnessSession {
+  {
+    id: @control.HarnessSessionId("event-redaction-session"),
+    take_id: @control.TakeId("event-redaction-take"),
+    sandbox_generation_id: @control.SandboxGenerationId(
+      "event-redaction-generation",
+    ),
+    surface,
+    effective_surface_manifest_digest: manifest_digest,
+    cursor_class,
+    provider_cursor: None,
+    last_choir_sequence: @control.EventSequence(0L),
+    open_tool_execution_ids: [],
+    lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+  }
+}
+
+///|
+fn event_redaction_claude(
+  secret : String,
+) -> Result[(@control.HarnessSession, String, String), @types.ChoirError] {
+  let tool = "mcp__choir_sandbox__execute"
+  let session = event_redaction_session(
+    @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+    @harness.expected_claude_take_surface_manifest_digest(
+      [tool],
+      "choir_sandbox",
+    ),
+    @control.HarnessCursorClass::HarnessCursorNotResumable,
+  )
+  let started = match @harness.start_claude_harness_session(session) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let init =
+    #|{"type":"system","subtype":"init","tools":["mcp__choir_sandbox__execute","StructuredOutput"],"mcp_servers":[{"name":"choir_sandbox","status":"connected"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.215","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"]}
+  let rate =
+    #|{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","overageStatus":"rejected","isUsingOverage":false}}
+  let assistant =
+    #|{"type":"assistant","authorization":"Bearer SECRET","message":{"model":"claude-opus-4-8","content":[{"type":"tool_use","id":"tool-1","name":"mcp__choir_sandbox__execute"}]}}
+  let tool_result =
+    #|{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tool-1","content":"SECRET"}]}}
+  let structured_start =
+    #|{"type":"assistant","message":{"model":"claude-opus-4-8","content":[{"type":"tool_use","id":"tool-2","name":"StructuredOutput"}]}}
+  let structured_result =
+    #|{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tool-2","content":"ok"}]}}
+  let terminal =
+    #|{"type":"result","subtype":"success","is_error":false,"result":"{\"outcome\":\"completed\",\"secret\":\"SECRET\"}"}
+  let output = [
+    init,
+    rate,
+    assistant.replace_all(old="SECRET", new=secret),
+    tool_result.replace_all(old="SECRET", new=secret),
+    structured_start,
+    structured_result,
+    terminal.replace_all(old="SECRET", new=secret),
+  ].join("\n")
+  let result = match
+    @harness.evaluate_claude_driver_capture({
+      session: started,
+      role: @harness.ClaudeTakeRole::ClaudeImplementationTake,
+      allowed_tools: [tool],
+      expected_mcp_server: "choir_sandbox",
+      capture: { exit_code: 0, output, started_at: 10L, finished_at: 20L },
+    }) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  Ok((
+    result.session,
+    result.events.to_json().stringify(indent=0),
+    result.terminal_response,
+  ))
+}
+
+///|
+fn event_redaction_codex(
+  secret : String,
+) -> Result[(@control.HarnessSession, String, String), @types.ChoirError] {
+  let tool = "read_file"
+  let session = event_redaction_session(
+    @control.ProviderSurfaceId::CodexSubscriptionCli,
+    @harness.codex_effective_surface_manifest_digest([tool], "choir_sandbox"),
+    @control.HarnessCursorClass::HarnessCursorProviderEventId,
+  )
+  let started = match @harness.start_codex_harness_session(session) {
+    Ok(value) => {
+      ..value,
+      provider_cursor: Some("redaction-thread:redaction-turn"),
+    }
+    Err(error) => return Err(error)
+  }
+  let thread = #|{"type":"thread.started","thread_id":"thread-redaction"}
+  let turn = #|{"type":"turn.started"}
+  let tool_started =
+    #|{"type":"item.started","authorization":"Bearer SECRET","item":{"id":"tool-1","type":"mcp_tool_call","server":"choir_sandbox","tool":"read_file","status":"in_progress"}}
+  let tool_finished =
+    #|{"type":"item.completed","item":{"id":"tool-1","type":"mcp_tool_call","server":"choir_sandbox","tool":"read_file","status":"completed","output":"SECRET"}}
+  let message =
+    #|{"type":"item.completed","item":{"id":"message-1","type":"agent_message","text":"{\"outcome\":\"completed\",\"secret\":\"SECRET\"}"}}
+  let completed = #|{"type":"turn.completed"}
+  let output = [
+    thread,
+    turn,
+    tool_started.replace_all(old="SECRET", new=secret),
+    tool_finished.replace_all(old="SECRET", new=secret),
+    message.replace_all(old="SECRET", new=secret),
+    completed,
+  ].join("\n")
+  let result = match
+    @harness.evaluate_codex_driver_capture({
+      session: started,
+      role: @harness.CodexTakeRole::CodexImplementationTake,
+      allowed_tools: [tool],
+      expected_mcp_server: "choir_sandbox",
+      capture: { exit_code: 0, output, started_at: 10L, finished_at: 20L },
+    }) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  Ok((
+    result.session,
+    result.events.to_json().stringify(indent=0),
+    result.terminal_response,
+  ))
+}
+
+///|
+pub fn event_redaction_case() -> HermeticConformanceCase {
+  {
+    id: ConformanceCaseId("event.redaction"),
+    run: fn(_) {
+      let secret = "CHOIR_SYNTHETIC_EVENT_SECRET"
+      let claude = match event_redaction_claude(secret) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let codex = match event_redaction_codex(secret) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let retained = [claude.1, claude.2, codex.1, codex.2].join("\n")
+      if retained.contains(secret) ||
+        !(claude.0.lifecycle
+        is @control.HarnessSessionLifecycle::HarnessSessionIngestionClosedCleanly(
+          @control.HarnessTerminalObservation::HarnessCompleted
+        )) ||
+        !(codex.0.lifecycle
+        is @control.HarnessSessionLifecycle::HarnessSessionIngestionClosedCleanly(
+          @control.HarnessTerminalObservation::HarnessCompleted
+        )) {
+        return Err(event_case_error("provider bytes crossed redaction boundary"))
+      }
+      Ok({ evidence: [ObservedEventCase(EventRedactionBoundary, 2)] })
+    },
+  }
+}

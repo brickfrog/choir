@@ -1,5 +1,6 @@
 import {
   "choir/src/control",
+  "choir/src/harness",
   "choir/src/sandbox",
   "choir/src/storage",
   "choir/src/types",

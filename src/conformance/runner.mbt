@@ -152,9 +152,15 @@ pub(all) enum ConformanceEvidence {
     @control.HarnessSessionLifecycle,
     Bool
   )
+  ObservedEventCase(EventConformanceKind, Int)
   ObservedOwnershipCase(OwnershipConformanceKind, Int)
   ObservedProcessCase(ProcessConformanceKind, Int)
   AllocatedId(ConformanceIdKind, String)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum EventConformanceKind {
+  EventRedactionBoundary
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
