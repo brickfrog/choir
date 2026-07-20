@@ -331,6 +331,9 @@ unconnected product path usable.
   authorization remains separate, so the lease cannot admit a non-fast-forward
   transition. A real local-bare-remote test covers absent-ref creation, exact
   prior update, concurrent create/update races, replay, and adversarial drift.
+  A second real Git and durable-storage test injects every named publication
+  crash boundary, restarts from disk, and proves convergence on the exact
+  remote OID and one receipt while the Goal remains merely assured.
   A disposable completed Goal was also published through the durable adapter
   at exact sealed OID
   `55cd8b2a425a833631b269c2a9ea7481c92966f5`; a second process invocation
@@ -432,7 +435,7 @@ Earlier evidence anchors are commits `5fb93fe8` for the native Part path,
 the linter correction. With the current assurance, cancellation, and provider changes,
 `moon check --target native`, `moon test --target native`, and
 `moon run --target native src/bin/choir_lint` all exit successfully on
-2026-07-20. After deleting obsolete source and tests, the full native suite reports 293
+2026-07-20. After deleting obsolete source and tests, the full native suite reports 294
 passed and 0 failed. The
 compiler still reports the repository's existing warning set.
 
@@ -464,7 +467,7 @@ compiler still reports the repository's existing warning set.
   cancellation orderings. The checked synthetic forge proves control-plane
   behavior without mutating an external repository.
 - The remaining event transaction/replay, redaction, backpressure,
-  cancellation ordering, conflict repair, hostile-surface, publication, PR,
+  cancellation ordering, conflict repair, hostile-surface, PR,
   and scale conformance cases. Duplicate conflicts, cursor gaps, late
   terminals, conflicting terminals, fixed-seed generated DAG scheduling,
   ownership normalization/conflicts, candidate under-claiming, and
@@ -3970,11 +3973,16 @@ uncertainty are distinct typed states. Every persistence step is guarded by the
 exact Goal state version and fencing epoch.
 
 The native adapter resolves the configured Git remote, reads the exact remote
-ref, and uses a non-force refspec with local hooks disabled. It always reads the
-remote again after the push request. A matching ref can therefore be adopted
-after process loss, while a different ref is reported as drift and is never
-overwritten. The real-Git adapter test covers initial creation, idempotent
-replay, and adversarial remote drift against an isolated bare repository.
+ref, and places that observed old OID into the push as an exact remote-head
+lease with local hooks disabled. An absent ref uses an empty expected OID.
+Authorization separately proves ancestry, so the lease cannot authorize a
+non-fast-forward update. It always reads the remote again after the push
+request. A matching ref can therefore be adopted after process loss, while a
+different ref is reported as drift and is never overwritten. Real-Git tests
+cover initial creation, exact-prior update, concurrent create/update races,
+idempotent replay, adversarial remote drift, and restart recovery at all five
+named publication fault points against an isolated bare repository and durable
+SQLite state.
 
 The previously assured disposable Goal was then published through the durable
 adapter to a fresh local bare remote. Both the initial invocation and a second
@@ -3990,6 +3998,14 @@ moon run --target native src/bin/choir_conformance -- publish --project <disposa
 
 This proves explicit publication and restart adoption. The later finalization
 slice connects it to the ordinary Goal runner.
+
+At `2026-07-20T14:19:57-05:00`, the implementation also exercised the complete
+named publication crash matrix: after intent persistence, after authorization,
+after the remote update before response handling, after response handling
+before receipt persistence, and during the receipt transaction. The first two
+recover with the remote absent; the latter three recover by adopting the exact
+sealed OID. Every case converges to one canonical receipt, replay is a no-op,
+and publication alone leaves the Goal in `GoalExecutionAssured`.
 
 #### Post-snapshot final-PR and readiness amendment
 

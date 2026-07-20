@@ -110,6 +110,15 @@ pub(all) enum GoalPublicationTickOutcome {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) enum GoalPublicationFaultPoint {
+  PublicationAfterIntentBeforeAuthorized
+  PublicationAfterAuthorizedBeforeRemoteUpdate
+  PublicationAfterRemoteUpdateBeforeResponse
+  PublicationAfterResponseBeforeReceipt
+  PublicationDuringReceiptTransaction
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 fn goal_publication_error(detail : String) -> @types.ChoirError {
   @types.ChoirError::validation_error("Goal publication: " + detail)
 }
