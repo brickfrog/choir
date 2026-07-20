@@ -629,19 +629,21 @@ fn workflow_driver_dependencies(
         ),
       })
     },
-    integration_plan: fn(snapshot) {
-      Ok({
-        lease: {
-          id: @control.IntegrationLeaseId("integration-lease-store"),
-          goal_id: snapshot.goal.id,
-          fencing_epoch: snapshot.fencing_epoch,
-          holder: "choird-test",
-        },
-        intent_id: @control.IntegrationIntentId("integration-intent-store"),
-        expected_goal_head_oid: @control.GitOid("goal-head-store"),
-        promotion_metadata_digest: workflow_store_digest_a,
-        git_witness_ref: "refs/choir/witness/integration-intent-store",
-      })
+    integration_admission: fn(snapshot) {
+      Ok(
+        @workflow.PartIntegrationAdmission::PartIntegrationAdmitted({
+          lease: {
+            id: @control.IntegrationLeaseId("integration-lease-store"),
+            goal_id: snapshot.goal.id,
+            fencing_epoch: snapshot.fencing_epoch,
+            holder: "choird-test",
+          },
+          intent_id: @control.IntegrationIntentId("integration-intent-store"),
+          expected_goal_head_oid: @control.GitOid("goal-head-store"),
+          promotion_metadata_digest: workflow_store_digest_a,
+          git_witness_ref: "refs/choir/witness/integration-intent-store",
+        }),
+      )
     },
     verification_environment_digest: fn(_) { workflow_store_digest_b },
     verification_runtime_digest: fn(snapshot) {
@@ -663,7 +665,7 @@ async fn workflow_driver_recover_observation(
 }
 
 ///|
-async test "one Part driver persists an integrated result and resumes without work" {
+async test "Part driver persists an integrated result and resumes without work" {
   let repository = workflow_repository("driver-integrated")
   clean_workflow_repository(repository)
   let execute_count = @ref.new(0)
@@ -705,6 +707,133 @@ async test "one Part driver persists an integrated result and resumes without wo
     @workflow.PartWorkflowRunOutcome::PartRunIntegrated,
   )
   assert_eq(execute_count.val, executed_before_resume)
+  assert_eq(reconcile_count.val, 0)
+  clean_workflow_repository(repository)
+}
+
+///|
+async test "audited Part waits durably for Goal promotion admission" {
+  let repository = workflow_repository("driver-awaiting-promotion")
+  clean_workflow_repository(repository)
+  let execute_count = @ref.new(0)
+  let reconcile_count = @ref.new(0)
+  let admitted = workflow_driver_dependencies(
+    execute_count,
+    reconcile_count,
+    fn(_) { None },
+    workflow_driver_recover_observation,
+  )
+  let deferred : @workflow.PartWorkflowDriverDependencies = {
+    ..admitted,
+    integration_admission: fn(_) {
+      Ok(@workflow.PartIntegrationAdmission::PartIntegrationDeferred)
+    },
+  }
+  let waiting = match
+    @workflow.run_new_part_workflow(
+      repository,
+      workflow_repository_adapters(),
+      workflow_store_fixture(),
+      deferred,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(
+    waiting.outcome,
+    @workflow.PartWorkflowRunOutcome::PartRunAwaitingPromotion,
+  )
+  assert_eq(waiting.snapshot.stage, @workflow.PartWorkflowStage::PartAudited)
+  assert_true(waiting.snapshot.integration_intent is None)
+  assert_true(waiting.snapshot.integration_lease is None)
+  let executed_before_resume = execute_count.val
+  let resumed = match
+    @workflow.resume_part_workflow(
+      repository,
+      workflow_repository_adapters(),
+      waiting.snapshot.workflow_id,
+      deferred,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(
+    resumed.outcome,
+    @workflow.PartWorkflowRunOutcome::PartRunAwaitingPromotion,
+  )
+  assert_eq(execute_count.val, executed_before_resume)
+  assert_eq(reconcile_count.val, 0)
+  clean_workflow_repository(repository)
+}
+
+///|
+async test "Goal adapter resumes promotion after a durable rollback" {
+  let repository = workflow_repository("goal-adapter-recovery")
+  clean_workflow_repository(repository)
+  let snapshot = workflow_store_fixture()
+  let scheduling_record : @workflow.GoalPartSchedulingRecord = {
+    part: { ..snapshot.part, lifecycle: @control.PartLifecycle::PartPending },
+    task_contract: snapshot.task_contract,
+  }
+  let execute_count = @ref.new(0)
+  let reconcile_count = @ref.new(0)
+  let inject_fault = @ref.new(true)
+  let config : @exec.GoalPartWorkflowAdapterConfig = {
+    bindings: [{ scheduling_record, initial_snapshot: snapshot, repository }],
+    repository_adapters: workflow_repository_adapters(),
+    dependencies: fn(_, admission) {
+      let dependencies = workflow_driver_dependencies(
+        execute_count,
+        reconcile_count,
+        fn(boundary) {
+          if inject_fault.val &&
+            boundary ==
+            @workflow.PartPersistenceBoundary::WorkflowIntegrationPlanned {
+            inject_fault.val = false
+            Some(@storage.StateStoreFaultPoint::StateAfterMutationBeforeOutbox)
+          } else {
+            None
+          }
+        },
+        workflow_driver_recover_observation,
+      )
+      Ok({ ..dependencies, integration_admission: fn(_) { Ok(admission) } })
+    },
+    integration_input: fn(snapshot, selection) {
+      Ok({
+        lease: {
+          id: @control.IntegrationLeaseId("goal-adapter-lease"),
+          goal_id: snapshot.goal.id,
+          fencing_epoch: snapshot.fencing_epoch,
+          holder: "choird-test",
+        },
+        intent_id: @control.IntegrationIntentId("goal-adapter-intent"),
+        expected_goal_head_oid: selection.expected_goal_head_oid,
+        promotion_metadata_digest: workflow_store_digest_a,
+        git_witness_ref: "refs/choir/witness/goal-adapter-intent",
+      })
+    },
+    read_goal_head: async fn() { Ok(@control.GitOid("goal-head-store")) },
+  }
+  let adapters = @exec.goal_part_workflow_adapters(config)
+  let paused = match
+    @workflow.run_goal_parts([scheduling_record], 1, adapters) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(paused.outcome, @workflow.GoalRunOutcome::GoalRunPaused)
+  assert_true(
+    paused.records[0].part.lifecycle
+    is @control.PartLifecycle::PartAudited(_, _, _),
+  )
+  let executed_before_resume = execute_count.val
+  let recovered = match @workflow.run_goal_parts(paused.records, 1, adapters) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(recovered.outcome, @workflow.GoalRunOutcome::GoalRunSucceeded)
+  assert_eq(recovered.promotion_order, [scheduling_record.part.id])
+  assert_eq(execute_count.val, executed_before_resume + 2)
   assert_eq(reconcile_count.val, 0)
   clean_workflow_repository(repository)
 }

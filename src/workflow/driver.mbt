@@ -76,8 +76,8 @@ pub(all) struct PartWorkflowDriverDependencies {
     AuditReceiptMetadata,
     @types.ChoirError,
   ]
-  integration_plan : (PartWorkflowSnapshot) -> Result[
-    IntegrationPlanInput,
+  integration_admission : (PartWorkflowSnapshot) -> Result[
+    PartIntegrationAdmission,
     @types.ChoirError,
   ]
   verification_environment_digest : (PartWorkflowSnapshot) -> @control.Digest
@@ -85,8 +85,15 @@ pub(all) struct PartWorkflowDriverDependencies {
 }
 
 ///|
+pub(all) enum PartIntegrationAdmission {
+  PartIntegrationDeferred
+  PartIntegrationAdmitted(IntegrationPlanInput)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub(all) enum PartWorkflowRunOutcome {
   PartRunIntegrated
+  PartRunAwaitingPromotion
   PartRunBlocked
   PartRunRecoveryUncertain
   PartRunWaitingForEffectWitness(String)
@@ -331,9 +338,18 @@ async fn drive_part_workflow(
         (next, WorkflowAuditReceiptRecorded)
       }
       PartAudited => {
-        let input = match (dependencies.integration_plan)(snapshot) {
+        let admission = match (dependencies.integration_admission)(snapshot) {
           Ok(value) => value
           Err(error) => return Err(error)
+        }
+        let input = match admission {
+          PartIntegrationDeferred =>
+            return Ok({
+              snapshot,
+              store_version: Some(store_version),
+              outcome: PartRunAwaitingPromotion,
+            })
+          PartIntegrationAdmitted(value) => value
         }
         let next = match plan_part_integration(snapshot, input) {
           Ok(value) => value

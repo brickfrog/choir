@@ -2,6 +2,7 @@ import {
   "choir/src/control",
   "choir/src/storage",
   "choir/src/types",
+  "moonbitlang/async",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/json",
   "moonbitlang/core/ref",

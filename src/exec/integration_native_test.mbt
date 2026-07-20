@@ -51,6 +51,9 @@ fn native_git_test_intent(
 fn native_git_test_config() -> @exec.NativeGitIntegrationConfig {
   {
     repository_root: "/tmp/choir-native-git-test",
+    git_directory: "/tmp/choir-native-git-test/.git",
+    object_directory: "/tmp/choir-native-git-test/.git/objects",
+    control_root: "/tmp/choir-native-git-test-control",
     goal_ref: "refs/heads/choir/goal-1",
   }
 }

@@ -504,7 +504,7 @@ fn drive_to_audited() -> @workflow.PartWorkflowSnapshot raise {
 }
 
 ///|
-test "one Part reaches one verified audited integration result" {
+test "Part reaches a verified audited integration result" {
   let mut snapshot = drive_to_audited()
   snapshot = match
     @workflow.plan_part_integration(snapshot, {

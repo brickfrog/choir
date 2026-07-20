@@ -18,6 +18,7 @@ priv struct NativePartFixtureRepository {
   root : String
   base_commit_oid : @control.GitOid
   base_tree_oid : @control.GitOid
+  git_directory : String
   object_directory : String
   goal_ref : String
 }
@@ -161,8 +162,16 @@ async fn create_native_part_fixture_repository(
     Ok(value) => value
     Err(error) => return Err(error)
   }
+  let git_directory = match
+    native_part_fixture_git_value(repository_root, [
+      "rev-parse", "--path-format=absolute", "--absolute-git-dir",
+    ]) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
   if !valid_hex_oid_text(head) ||
     !valid_hex_oid_text(tree) ||
+    @sys.realpath_native(git_directory) != Some(git_directory) ||
     @sys.realpath_native(object_directory) != Some(object_directory) {
     return Err(native_part_effect_error("fixture Git identity is invalid"))
   }
@@ -181,6 +190,7 @@ async fn create_native_part_fixture_repository(
     root: repository_root,
     base_commit_oid: @control.GitOid(head),
     base_tree_oid: @control.GitOid(tree),
+    git_directory,
     object_directory,
     goal_ref,
   })
@@ -571,23 +581,25 @@ fn native_part_dependencies(
         ),
       })
     },
-    integration_plan: fn(snapshot) {
-      Ok({
-        lease: {
-          id: @control.IntegrationLeaseId("integration-lease-native-part"),
-          goal_id: snapshot.goal.id,
-          fencing_epoch: snapshot.fencing_epoch,
-          holder: "choird-native-conformance",
-        },
-        intent_id: @control.IntegrationIntentId(
-          "integration-intent-native-part",
-        ),
-        expected_goal_head_oid: git.base_commit_oid,
-        promotion_metadata_digest: @storage.artifact_digest(
-          @utf8.encode("choir.native-part-promotion.v1"),
-        ),
-        git_witness_ref: "refs/choir/witness/native-part",
-      })
+    integration_admission: fn(snapshot) {
+      Ok(
+        @workflow.PartIntegrationAdmission::PartIntegrationAdmitted({
+          lease: {
+            id: @control.IntegrationLeaseId("integration-lease-native-part"),
+            goal_id: snapshot.goal.id,
+            fencing_epoch: snapshot.fencing_epoch,
+            holder: "choird-native-conformance",
+          },
+          intent_id: @control.IntegrationIntentId(
+            "integration-intent-native-part",
+          ),
+          expected_goal_head_oid: git.base_commit_oid,
+          promotion_metadata_digest: @storage.artifact_digest(
+            @utf8.encode("choir.native-part-promotion.v1"),
+          ),
+          git_witness_ref: "refs/choir/witness/native-part",
+        }),
+      )
     },
     verification_environment_digest: fn(_) {
       native_prepared_environment_digest({
@@ -623,7 +635,13 @@ fn native_part_runtime_config(
       object_directory: git.object_directory,
       staging_root: server.config.root + "/staging",
     },
-    git_integration: { repository_root: git.root, goal_ref: git.goal_ref },
+    git_integration: {
+      repository_root: git.root,
+      git_directory: git.git_directory,
+      object_directory: git.object_directory,
+      control_root: server.config.root + "/integration-control",
+      goal_ref: git.goal_ref,
+    },
     moon_home,
     node_executable: node,
     sandbox_mcp_script: mcp_script,

@@ -585,7 +585,9 @@ async fn run_end_to_end_command(args : Array[String]) -> Unit {
       @sys.exit(if report.passed { 0 } else { 1 })
     }
     "parallel-promotion" => {
-      let report = @conformance.run_multi_part_conformance_fixture()
+      let root = "/tmp/choir-v2-goal-conformance-" + @sys.get_pid().to_string()
+      let report = @exec.run_native_goal_conformance_fixture(root)
+      ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     }

@@ -22,12 +22,15 @@ pub(all) struct NativeGitCapture {
 ///|
 pub(all) struct NativeGitIntegrationConfig {
   repository_root : String
+  git_directory : String
+  object_directory : String
+  control_root : String
   goal_ref : String
 } derive(Debug, Eq)
 
 ///|
 pub(all) struct NativeGitIntegrationAdapters {
-  capture : async (String, NativeGitIntegrationCommand) -> Result[
+  capture : async (NativeGitIntegrationConfig, NativeGitIntegrationCommand) -> Result[
     NativeGitCapture,
     @types.ChoirError,
   ]
@@ -38,6 +41,7 @@ priv struct NativeGitProcessSpec {
   arguments : Array[String]
   stdin : String
   environment : Map[String, String]
+  working_directory : String
 }
 
 ///|
@@ -119,14 +123,42 @@ fn valid_git_ref(value : String, required_prefix : String) -> Bool {
 }
 
 ///|
+fn validate_native_git_paths(
+  config : NativeGitIntegrationConfig,
+) -> Result[Unit, @types.ChoirError] {
+  if !config.repository_root.has_prefix("/") ||
+    !config.git_directory.has_prefix("/") ||
+    !config.object_directory.has_prefix("/") ||
+    !config.object_directory.has_suffix("/objects") ||
+    !config.control_root.has_prefix("/") ||
+    config.repository_root.contains("\n") ||
+    config.git_directory.contains("\n") ||
+    config.object_directory.contains("\n") ||
+    config.control_root.contains("\n") ||
+    config.repository_root.contains("/../") ||
+    config.git_directory.contains("/../") ||
+    config.object_directory.contains("/../") ||
+    config.control_root.contains("/../") ||
+    !valid_git_ref(config.goal_ref, "refs/heads/") {
+    return Err(
+      @types.ChoirError::validation_error(
+        "native Git integration path is invalid",
+      ),
+    )
+  }
+  Ok(())
+}
+
+///|
 fn validate_native_git_config(
   config : NativeGitIntegrationConfig,
   intent : @control.IntegrationIntent,
 ) -> Result[Unit, @types.ChoirError] {
-  if !config.repository_root.has_prefix("/") ||
-    config.repository_root.contains("\n") ||
-    !valid_git_ref(config.goal_ref, "refs/heads/") ||
-    !valid_git_ref(intent.git_witness_ref, "refs/choir/witness/") ||
+  match validate_native_git_paths(config) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  if !valid_git_ref(intent.git_witness_ref, "refs/choir/witness/") ||
     !valid_git_identity(intent.id.0) ||
     !valid_git_identity(intent.goal_id.0) ||
     !valid_git_identity(intent.part_id.0) ||
@@ -176,7 +208,58 @@ fn native_git_environment(commit : Bool) -> Map[String, String] {
 }
 
 ///|
+fn native_git_integration_environment(
+  config : NativeGitIntegrationConfig,
+  object_access : Bool,
+  commit : Bool,
+) -> Map[String, String] {
+  let environment = native_git_environment(commit)
+  environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
+  environment["GIT_ATTR_NOSYSTEM"] = "1"
+  environment["XDG_CONFIG_HOME"] = "/nonexistent"
+  if object_access {
+    environment["GIT_DIR"] = config.control_root
+    environment["GIT_OBJECT_DIRECTORY"] = config.object_directory
+  } else {
+    environment["GIT_DIR"] = config.git_directory
+  }
+  environment
+}
+
+///|
+fn ensure_native_git_integration_control(
+  config : NativeGitIntegrationConfig,
+) -> Result[Unit, @types.ChoirError] {
+  let config_path = config.control_root + "/config"
+  let head_path = config.control_root + "/HEAD"
+  let config_content = "[core]\n\trepositoryformatversion = 0\n\tbare = true\n\thooksPath = /dev/null\n[commit]\n\tgpgSign = false\n"
+  let head_content = "ref: refs/heads/choir-control\n"
+  if !@sys.create_dir_all(config.control_root + "/refs/heads") ||
+    !@sys.create_dir_all(config.control_root + "/objects/info") ||
+    !@sys.create_dir_all(config.control_root + "/objects/pack") ||
+    @sys.realpath_native(config.control_root) != Some(config.control_root) {
+    return Err(git_error("sterile Git control root creation failed"))
+  }
+  if @sys.path_exists(config_path) {
+    if @sys.read_file(config_path) != config_content {
+      return Err(git_error("sterile Git control config is invalid"))
+    }
+  } else if !@sys.write_file_sync(config_path, config_content) {
+    return Err(git_error("sterile Git control config creation failed"))
+  }
+  if @sys.path_exists(head_path) {
+    if @sys.read_file(head_path) != head_content {
+      return Err(git_error("sterile Git control HEAD is invalid"))
+    }
+  } else if !@sys.write_file_sync(head_path, head_content) {
+    return Err(git_error("sterile Git control HEAD creation failed"))
+  }
+  Ok(())
+}
+
+///|
 fn native_git_process_spec(
+  config : NativeGitIntegrationConfig,
   command : NativeGitIntegrationCommand,
 ) -> NativeGitProcessSpec {
   match command {
@@ -184,13 +267,15 @@ fn native_git_process_spec(
       {
         arguments: ["show", "-s", "--format=%T", "--no-show-signature", oid.0],
         stdin: "",
-        environment: native_git_environment(false),
+        environment: native_git_integration_environment(config, true, false),
+        working_directory: config.control_root,
       }
     NativeGitReadCommitParents(oid) =>
       {
         arguments: ["show", "-s", "--format=%P", "--no-show-signature", oid.0],
         stdin: "",
-        environment: native_git_environment(false),
+        environment: native_git_integration_environment(config, true, false),
+        working_directory: config.control_root,
       }
     NativeGitMergeTree(head, candidate) =>
       {
@@ -202,7 +287,8 @@ fn native_git_process_spec(
           candidate.0,
         ],
         stdin: "",
-        environment: native_git_environment(false),
+        environment: native_git_integration_environment(config, true, false),
+        working_directory: config.control_root,
       }
     NativeGitCreatePromotion(tree, head, candidate, message) =>
       {
@@ -217,13 +303,15 @@ fn native_git_process_spec(
           message,
         ],
         stdin: "",
-        environment: native_git_environment(true),
+        environment: native_git_integration_environment(config, true, true),
+        working_directory: config.control_root,
       }
     NativeGitReadRef(reference) =>
       {
         arguments: ["rev-parse", "--verify", "--quiet", reference],
         stdin: "",
-        environment: native_git_environment(false),
+        environment: native_git_integration_environment(config, false, false),
+        working_directory: config.repository_root,
       }
     NativeGitApplyRefs(goal_ref, witness_ref, expected, promotion) =>
       {
@@ -242,26 +330,38 @@ fn native_git_process_spec(
         promotion.0 +
         "\n" +
         "prepare\ncommit\n",
-        environment: native_git_environment(false),
+        environment: native_git_integration_environment(config, false, false),
+        working_directory: config.repository_root,
       }
   }
 }
 
 ///|
 async fn capture_native_git_process(
-  repository_root : String,
+  config : NativeGitIntegrationConfig,
   command : NativeGitIntegrationCommand,
 ) -> Result[NativeGitCapture, @types.ChoirError] {
   let git = match resolve_executable_in_path("git") {
     Some(path) => path
     None => return Err(git_error("git executable is unavailable"))
   }
-  let spec = native_git_process_spec(command)
+  match ensure_native_git_integration_control(config) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  if @sys.realpath_native(config.repository_root) !=
+    Some(config.repository_root) ||
+    @sys.realpath_native(config.git_directory) != Some(config.git_directory) ||
+    @sys.realpath_native(config.object_directory) !=
+    Some(config.object_directory) {
+    return Err(git_error("native Git integration paths are not canonical"))
+  }
+  let spec = native_git_process_spec(config, command)
   abort_if_hermetic_test_exec(
     command_to_shell_string({
       program: git,
       args: spec.arguments,
-      workdir: Some(repository_root),
+      workdir: Some(spec.working_directory),
     }),
   )
   let (stdin_read, stdin_write) = @process.write_to_process() catch {
@@ -281,7 +381,7 @@ async fn capture_native_git_process(
     stdin=stdin_read,
     stdout=stdout_write,
     stderr=stdout_write,
-    cwd=repository_root,
+    cwd=spec.working_directory,
   ) catch {
     _ => {
       stdin_write.close()
@@ -311,8 +411,7 @@ async fn read_commit_tree(
   oid : @control.GitOid,
   adapters : NativeGitIntegrationAdapters,
 ) -> Result[@control.GitOid, @types.ChoirError] {
-  let capture = match
-    (adapters.capture)(config.repository_root, NativeGitReadCommitTree(oid)) {
+  let capture = match (adapters.capture)(config, NativeGitReadCommitTree(oid)) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -359,7 +458,7 @@ pub async fn generate_native_promotion(
   }
   let merged = match
     (adapters.capture)(
-      config.repository_root,
+      config,
       NativeGitMergeTree(
         intent.expected_goal_head_oid,
         intent.candidate_commit_oid,
@@ -378,7 +477,7 @@ pub async fn generate_native_promotion(
   }
   let committed = match
     (adapters.capture)(
-      config.repository_root,
+      config,
       NativeGitCreatePromotion(
         promotion_tree,
         intent.expected_goal_head_oid,
@@ -405,10 +504,7 @@ pub async fn generate_native_promotion(
     return Err(git_error("promotion tree witness does not match"))
   }
   let parents = match
-    (adapters.capture)(
-      config.repository_root,
-      NativeGitReadCommitParents(promotion_oid),
-    ) {
+    (adapters.capture)(config, NativeGitReadCommitParents(promotion_oid)) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -436,8 +532,7 @@ async fn read_ref(
   reference : String,
   adapters : NativeGitIntegrationAdapters,
 ) -> Result[@control.GitOid?, @types.ChoirError] {
-  let capture = match
-    (adapters.capture)(config.repository_root, NativeGitReadRef(reference)) {
+  let capture = match (adapters.capture)(config, NativeGitReadRef(reference)) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -450,6 +545,22 @@ async fn read_ref(
   match parsed_git_oid(capture.output) {
     Some(value) => Ok(Some(value))
     None => Err(git_error("Git ref has an invalid object identity"))
+  }
+}
+
+///|
+pub async fn read_native_goal_head(
+  config : NativeGitIntegrationConfig,
+  adapters : NativeGitIntegrationAdapters,
+) -> Result[@control.GitOid, @types.ChoirError] {
+  match validate_native_git_paths(config) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  match read_ref(config, config.goal_ref, adapters) {
+    Ok(Some(value)) => Ok(value)
+    Ok(None) => Err(git_error("Goal ref is absent"))
+    Err(error) => Err(error)
   }
 }
 
@@ -519,7 +630,7 @@ pub async fn apply_native_integration(
   }
   let applied = match
     (adapters.capture)(
-      config.repository_root,
+      config,
       NativeGitApplyRefs(
         config.goal_ref,
         intent.git_witness_ref,
@@ -592,4 +703,36 @@ pub async fn reconcile_native_git_effect(
     }
     _ => Err(git_error("effect is not a native Git integration operation"))
   }
+}
+
+///|
+test "promotion synthesis ignores repository and ambient Git configuration" {
+  let config : NativeGitIntegrationConfig = {
+    repository_root: "/repo",
+    git_directory: "/repo/.git",
+    object_directory: "/repo/.git/objects",
+    control_root: "/tmp/choir-v2-integration-control",
+    goal_ref: "refs/heads/choir/goal",
+  }
+  let object_spec = native_git_process_spec(
+    config,
+    NativeGitMergeTree(
+      @control.GitOid("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+      @control.GitOid("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+    ),
+  )
+  assert_eq(object_spec.environment["GIT_DIR"], config.control_root)
+  assert_eq(
+    object_spec.environment["GIT_OBJECT_DIRECTORY"],
+    config.object_directory,
+  )
+  assert_eq(object_spec.environment["GIT_CONFIG_GLOBAL"], "/dev/null")
+  assert_eq(object_spec.environment["GIT_CONFIG_NOSYSTEM"], "1")
+  assert_eq(object_spec.environment["GIT_ATTR_NOSYSTEM"], "1")
+  assert_eq(object_spec.environment["HOME"], "/nonexistent")
+  let ref_spec = native_git_process_spec(
+    config,
+    NativeGitReadRef(config.goal_ref),
+  )
+  assert_eq(ref_spec.environment["GIT_DIR"], config.git_directory)
 }

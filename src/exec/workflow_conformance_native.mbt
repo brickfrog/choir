@@ -470,21 +470,23 @@ fn conformance_dependencies(
         ),
       })
     },
-    integration_plan: fn(snapshot) {
-      Ok({
-        lease: {
-          id: @control.IntegrationLeaseId("integration-lease-conformance"),
-          goal_id: snapshot.goal.id,
-          fencing_epoch: snapshot.fencing_epoch,
-          holder: "choird-conformance",
-        },
-        intent_id: @control.IntegrationIntentId(
-          "integration-intent-conformance",
-        ),
-        expected_goal_head_oid: @control.GitOid("goal-head-conformance"),
-        promotion_metadata_digest: conformance_digest_a,
-        git_witness_ref: "refs/choir/witness/integration-conformance",
-      })
+    integration_admission: fn(snapshot) {
+      Ok(
+        @workflow.PartIntegrationAdmission::PartIntegrationAdmitted({
+          lease: {
+            id: @control.IntegrationLeaseId("integration-lease-conformance"),
+            goal_id: snapshot.goal.id,
+            fencing_epoch: snapshot.fencing_epoch,
+            holder: "choird-conformance",
+          },
+          intent_id: @control.IntegrationIntentId(
+            "integration-intent-conformance",
+          ),
+          expected_goal_head_oid: @control.GitOid("goal-head-conformance"),
+          promotion_metadata_digest: conformance_digest_a,
+          git_witness_ref: "refs/choir/witness/integration-conformance",
+        }),
+      )
     },
     verification_environment_digest: fn(_) { conformance_digest_b },
     verification_runtime_digest: fn(snapshot) {

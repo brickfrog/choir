@@ -301,3 +301,151 @@ test "promotion waits for the earliest stable topological rank" {
   assert_eq(selected.part_id, part_b.part.id)
   assert_eq(selected.expected_goal_head_oid, @control.GitOid("promotion-a"))
 }
+
+///|
+async test "independent Parts execute concurrently and promote deterministically" {
+  let part_a = scheduling_record(
+    "a",
+    [],
+    @control.PartLifecycle::PartPending,
+    @control.MutationDeclaration::CompleteMutationDeclaration([
+      @control.MutationClaim::PathTree(@control.RepoPath("src/a")),
+    ]),
+  )
+  let part_b = scheduling_record(
+    "b",
+    [],
+    @control.PartLifecycle::PartPending,
+    @control.MutationDeclaration::CompleteMutationDeclaration([
+      @control.MutationClaim::PathTree(@control.RepoPath("src/b")),
+    ]),
+  )
+  let active = @ref.new(0)
+  let maximum_active = @ref.new(0)
+  let head = @ref.new(@control.GitOid("goal-head"))
+  let observed_heads : Array[@control.GitOid] = []
+  let result = match
+    @workflow.run_goal_parts([part_b, part_a], 2, {
+      advance_part: async fn(record) {
+        active.val = active.val + 1
+        if active.val > maximum_active.val {
+          maximum_active.val = active.val
+        }
+        @async.sleep(0)
+        active.val = active.val - 1
+        Ok({
+          ..record,
+          part: {
+            ..record.part,
+            lifecycle: @control.PartLifecycle::PartAudited(
+              @control.CandidateId("candidate-" + record.part.id.0),
+              schedule_digest,
+              @control.ReceiptId("audit-" + record.part.id.0),
+            ),
+          },
+        })
+      },
+      read_goal_head: async fn() { Ok(head.val) },
+      promote_part: async fn(record, selection) {
+        observed_heads.push(selection.expected_goal_head_oid)
+        let promotion = @control.GitOid("promotion-" + record.part.id.0)
+        head.val = promotion
+        Ok({
+          ..record,
+          part: {
+            ..record.part,
+            lifecycle: @control.PartLifecycle::PartIntegrated(
+              @control.ReceiptId("integration-" + record.part.id.0),
+            ),
+          },
+        })
+      },
+      resume_promotion: async fn(_) {
+        Err(
+          @types.ChoirError::validation_error("unexpected promotion recovery"),
+        )
+      },
+    }) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(result.outcome, @workflow.GoalRunOutcome::GoalRunSucceeded)
+  assert_eq(maximum_active.val, 2)
+  assert_eq(result.promotion_order, [part_a.part.id, part_b.part.id])
+  assert_eq(observed_heads, [
+    @control.GitOid("goal-head"),
+    @control.GitOid("promotion-a"),
+  ])
+}
+
+///|
+async test "promotion recovery completes before new Part execution" {
+  let promoting = scheduling_record(
+    "a",
+    [],
+    @control.PartLifecycle::PartPromoting(
+      @control.CandidateId("candidate-a"),
+      schedule_digest,
+      @control.ReceiptId("audit-a"),
+    ),
+    @control.MutationDeclaration::CompleteMutationDeclaration([]),
+  )
+  let pending = scheduling_record(
+    "b",
+    [promoting.part.id],
+    @control.PartLifecycle::PartPending,
+    @control.MutationDeclaration::CompleteMutationDeclaration([]),
+  )
+  let events : Array[String] = []
+  let head = @ref.new(@control.GitOid("goal-head"))
+  let result = match
+    @workflow.run_goal_parts([pending, promoting], 2, {
+      advance_part: async fn(record) {
+        events.push("execute-" + record.part.id.0)
+        Ok({
+          ..record,
+          part: {
+            ..record.part,
+            lifecycle: @control.PartLifecycle::PartAudited(
+              @control.CandidateId("candidate-" + record.part.id.0),
+              schedule_digest,
+              @control.ReceiptId("audit-" + record.part.id.0),
+            ),
+          },
+        })
+      },
+      read_goal_head: async fn() { Ok(head.val) },
+      promote_part: async fn(record, _) {
+        events.push("promote-" + record.part.id.0)
+        head.val = @control.GitOid("promotion-" + record.part.id.0)
+        Ok({
+          ..record,
+          part: {
+            ..record.part,
+            lifecycle: @control.PartLifecycle::PartIntegrated(
+              @control.ReceiptId("integration-" + record.part.id.0),
+            ),
+          },
+        })
+      },
+      resume_promotion: async fn(record) {
+        events.push("recover-" + record.part.id.0)
+        head.val = @control.GitOid("promotion-" + record.part.id.0)
+        Ok({
+          ..record,
+          part: {
+            ..record.part,
+            lifecycle: @control.PartLifecycle::PartIntegrated(
+              @control.ReceiptId("integration-" + record.part.id.0),
+            ),
+          },
+        })
+      },
+    }) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(result.outcome, @workflow.GoalRunOutcome::GoalRunSucceeded)
+  assert_eq(events, ["recover-a", "execute-b", "promote-b"])
+  assert_eq(result.promotion_order, [promoting.part.id, pending.part.id])
+}
