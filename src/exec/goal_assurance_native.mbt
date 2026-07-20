@@ -380,7 +380,7 @@ async fn execute_native_goal_verification(
     let evidence_fields : Map[String, Json] = {
       "subject": subject.to_json(),
       "verification_spec": entry.0.to_json(),
-      "process_result": entry.1.to_json(),
+      "process_result": native_sandbox_process_evidence(entry.1),
       "provider_outcome": ToJson::to_json(provider.outcome),
       "provider_terminal_response": provider.terminal_response.to_json(),
       "pre_tree": subject.goal_tree_oid.to_json(),

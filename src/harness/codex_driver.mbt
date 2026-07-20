@@ -287,7 +287,7 @@ fn codex_response_int(fields : Map[String, Json], key : String) -> Int? {
 fn validate_codex_response(
   role : CodexTakeRole,
   response : String,
-) -> Result[CodexTakeOutcome, @types.ChoirError] {
+) -> Result[(CodexTakeOutcome, String), @types.ChoirError] {
   let json = @json.parse(response) catch {
     _ => return Err(codex_driver_error("terminal response is not JSON"))
   }
@@ -298,24 +298,35 @@ fn validate_codex_response(
   match role {
     CodexImplementationTake =>
       if outcome == "completed" {
-        Ok(CodexImplementationCompleted)
+        Ok((CodexImplementationCompleted, "{\"outcome\":\"completed\"}"))
       } else {
         Err(codex_driver_error("implementation outcome is invalid"))
       }
     CodexVerificationTake =>
       match outcome {
-        "passed" => Ok(CodexVerificationPassed)
-        "failed" => Ok(CodexVerificationFailed)
+        "passed" => Ok((CodexVerificationPassed, "{\"outcome\":\"passed\"}"))
+        "failed" => Ok((CodexVerificationFailed, "{\"outcome\":\"failed\"}"))
         _ => Err(codex_driver_error("verification outcome is invalid"))
       }
     CodexAuditTake => {
       let total = codex_response_int(fields, "total_findings")
       let blocking = codex_response_int(fields, "blocking_findings")
       match (outcome, total, blocking) {
-        ("passed", Some(0), Some(0)) => Ok(CodexAuditPassed)
+        ("passed", Some(0), Some(0)) =>
+          Ok((
+            CodexAuditPassed,
+            "{\"outcome\":\"passed\",\"total_findings\":0,\"blocking_findings\":0}",
+          ))
         ("findings", Some(total), Some(blocking)) if total > 0 &&
-          blocking >= 0 &&
-          blocking <= total => Ok(CodexAuditFindings(total, blocking))
+          blocking >= 0 && blocking <= total =>
+          Ok((
+            CodexAuditFindings(total, blocking),
+            "{\"outcome\":\"findings\",\"total_findings\":" +
+            total.to_string() +
+            ",\"blocking_findings\":" +
+            blocking.to_string() +
+            "}",
+          ))
         _ => Err(codex_driver_error("audit outcome is invalid"))
       }
     }
@@ -599,7 +610,8 @@ pub fn evaluate_codex_driver_capture(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let outcome = match validate_codex_response(request.role, response) {
+  let (outcome, terminal_response) = match
+    validate_codex_response(request.role, response) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -675,7 +687,7 @@ pub fn evaluate_codex_driver_capture(
     session,
     events,
     effective_surface_manifest_digest: expected_digest,
-    terminal_response: response,
+    terminal_response,
     outcome,
     started_at: request.capture.started_at,
     finished_at: request.capture.finished_at,

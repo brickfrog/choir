@@ -167,6 +167,20 @@ fn native_claude_environment(
 }
 
 ///|
+test "native Claude Take environment is an exact allowlist" {
+  let environment = native_claude_environment(
+    "/provider-home",
+    "/sterile-take",
+  )
+  assert_eq(environment.length(), 5)
+  assert_eq(environment["HOME"], "/provider-home")
+  assert_eq(environment["TMPDIR"], "/sterile-take/tmp")
+  assert_false(environment.contains("ANTHROPIC_API_KEY"))
+  assert_false(environment.contains("CLAUDE_CODE_OAUTH_TOKEN"))
+  assert_false(environment.contains("CHOIR_CONDUCTOR_TOKEN"))
+}
+
+///|
 async fn verify_native_claude_binary(
   claude : String,
 ) -> Result[Unit, @types.ChoirError] {

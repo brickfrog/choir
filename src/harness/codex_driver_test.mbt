@@ -130,6 +130,29 @@ test "Codex durable events exclude tool names and raw trace fields" {
 }
 
 ///|
+test "Codex canonicalizes terminal output before durable use" {
+  let secret = "CHOIR_SYNTHETIC_SECRET_CODEX"
+  let started = codex_driver_started_session()
+  let output = codex_driver_output(
+    "mcp_tool_call",
+    "{\"outcome\":\"completed\",\"secret\":\"" + secret + "\"}",
+  ).replace(
+    old="\"status\":\"in_progress\"",
+    new="\"status\":\"in_progress\",\"authorization\":\"Bearer " + secret + "\"",
+  )
+  let result = @harness.evaluate_codex_driver_capture({
+    session: started,
+    role: @harness.CodexTakeRole::CodexImplementationTake,
+    allowed_tools: ["read_file", "write_file"],
+    expected_mcp_server: "choir_sandbox",
+    capture: { exit_code: 0, output, started_at: 10L, finished_at: 20L },
+  }).unwrap()
+  assert_eq(result.terminal_response, "{\"outcome\":\"completed\"}")
+  assert_false(result.terminal_response.contains(secret))
+  assert_false(result.events.to_json().stringify(indent=0).contains(secret))
+}
+
+///|
 test "Codex driver rejects a native effect event disguised as success" {
   let started = codex_driver_started_session()
   let result = @harness.evaluate_codex_driver_capture({

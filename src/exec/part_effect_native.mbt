@@ -983,7 +983,7 @@ async fn execute_native_verification(
   let evidence_fields : Map[String, Json] = {
     "subject": subject.to_json(),
     "process_spec_digest": snapshot.task_contract.verification_specs[0].process_spec_digest.to_json(),
-    "process_result": process_result.to_json(),
+    "process_result": native_sandbox_process_evidence(process_result),
     "provider_outcome": ToJson::to_json(provider.outcome),
     "provider_terminal_response": provider.terminal_response.to_json(),
     "pre_tree": candidate.tree_oid.to_json(),

@@ -268,7 +268,7 @@ fn response_int(fields : Map[String, Json], key : String) -> Int? {
 fn validate_claude_take_response(
   role : ClaudeTakeRole,
   response : String,
-) -> Result[ClaudeTakeOutcome, @types.ChoirError] {
+) -> Result[(ClaudeTakeOutcome, String), @types.ChoirError] {
   let json = @json.parse(response) catch {
     _ => return Err(claude_driver_error("terminal response is not JSON"))
   }
@@ -279,24 +279,35 @@ fn validate_claude_take_response(
   match role {
     ClaudeImplementationTake =>
       if outcome == "completed" {
-        Ok(ClaudeImplementationCompleted)
+        Ok((ClaudeImplementationCompleted, "{\"outcome\":\"completed\"}"))
       } else {
         Err(claude_driver_error("implementation outcome is invalid"))
       }
     ClaudeVerificationTake =>
       match outcome {
-        "passed" => Ok(ClaudeVerificationPassed)
-        "failed" => Ok(ClaudeVerificationFailed)
+        "passed" => Ok((ClaudeVerificationPassed, "{\"outcome\":\"passed\"}"))
+        "failed" => Ok((ClaudeVerificationFailed, "{\"outcome\":\"failed\"}"))
         _ => Err(claude_driver_error("verification outcome is invalid"))
       }
     ClaudeAuditTake => {
       let total = response_int(fields, "total_findings")
       let blocking = response_int(fields, "blocking_findings")
       match (outcome, total, blocking) {
-        ("passed", Some(0), Some(0)) => Ok(ClaudeAuditPassed)
+        ("passed", Some(0), Some(0)) =>
+          Ok((
+            ClaudeAuditPassed,
+            "{\"outcome\":\"passed\",\"total_findings\":0,\"blocking_findings\":0}",
+          ))
         ("findings", Some(total), Some(blocking)) if total > 0 &&
-          blocking >= 0 &&
-          blocking <= total => Ok(ClaudeAuditFindings(total, blocking))
+          blocking >= 0 && blocking <= total =>
+          Ok((
+            ClaudeAuditFindings(total, blocking),
+            "{\"outcome\":\"findings\",\"total_findings\":" +
+            total.to_string() +
+            ",\"blocking_findings\":" +
+            blocking.to_string() +
+            "}",
+          ))
         _ => Err(claude_driver_error("audit outcome is invalid"))
       }
     }
@@ -433,7 +444,8 @@ pub fn evaluate_claude_driver_capture(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  let outcome = match validate_claude_take_response(request.role, response) {
+  let (outcome, terminal_response) = match
+    validate_claude_take_response(request.role, response) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -510,7 +522,7 @@ pub fn evaluate_claude_driver_capture(
     events,
     effective_surface_manifest_digest: digest,
     model_identity,
-    terminal_response: response,
+    terminal_response,
     outcome,
     started_at: request.capture.started_at,
     finished_at: request.capture.finished_at,

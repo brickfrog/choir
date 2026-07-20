@@ -301,6 +301,18 @@ fn native_codex_app_server_environment(
 }
 
 ///|
+test "native Codex Take environment is an exact allowlist" {
+  let environment = native_codex_app_server_environment("/sterile-take")
+  assert_eq(environment.length(), 6)
+  assert_eq(environment["HOME"], "/sterile-take/home")
+  assert_eq(environment["CODEX_HOME"], "/sterile-take/codex-home")
+  assert_eq(environment["TMPDIR"], "/sterile-take/tmp")
+  assert_false(environment.contains("OPENAI_API_KEY"))
+  assert_false(environment.contains("CHOIR_CONDUCTOR_TOKEN"))
+  assert_false(environment.contains("CHOIR_LISTEN_UDS"))
+}
+
+///|
 fn native_codex_conductor_environment(
   provider_home : String,
   config : NativeCodexConductorConfig,

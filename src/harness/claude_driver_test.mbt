@@ -131,6 +131,45 @@ test "Claude durable events exclude tool names and raw trace fields" {
 }
 
 ///|
+test "Claude canonicalizes terminal output before durable use" {
+  let secret = "CHOIR_SYNTHETIC_SECRET_CLAUDE"
+  let tool = "mcp__choir_sandbox__execute"
+  let digest = @harness.claude_effective_surface_manifest_digest(
+    claude_driver_manifest([tool, "StructuredOutput"]),
+  )
+  let started = @harness.start_claude_harness_session(
+    claude_driver_session(digest),
+  ).unwrap()
+  let output = claude_driver_output(tool)
+    .replace(
+      old="\"model\":\"claude-opus-4-8\"",
+      new="\"model\":\"claude-opus-4-8\",\"authorization\":\"Bearer " +
+        secret +
+        "\"",
+    )
+    .replace(
+      old="\"content\":\"ok\"",
+      new="\"content\":\"" + secret + "\"",
+    )
+    .replace(
+      old="{\\\"outcome\\\":\\\"completed\\\"}",
+      new="{\\\"outcome\\\":\\\"completed\\\",\\\"secret\\\":\\\"" +
+        secret +
+        "\\\"}",
+    )
+  let result = @harness.evaluate_claude_driver_capture({
+    session: started,
+    role: @harness.ClaudeTakeRole::ClaudeImplementationTake,
+    allowed_tools: [tool],
+    expected_mcp_server: "choir_sandbox",
+    capture: { exit_code: 0, output, started_at: 10L, finished_at: 20L },
+  }).unwrap()
+  assert_eq(result.terminal_response, "{\"outcome\":\"completed\"}")
+  assert_false(result.terminal_response.contains(secret))
+  assert_false(result.events.to_json().stringify(indent=0).contains(secret))
+}
+
+///|
 test "safe event digest binds typed tool disposition and redaction" {
   let succeeded = @control.HarnessEventKind::HarnessToolFinished(
     "tool-1",

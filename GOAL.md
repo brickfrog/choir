@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-20T16:53:49-05:00
+Implementation snapshot updated through: 2026-07-20T17:00:22-05:00
 
 ## Charter Semantics and Readiness
 
@@ -179,9 +179,16 @@ unconnected product path usable.
   terminal text, and raw trace fields are neither retained nor hashed; Codex
   source identity is the admitted provider cursor plus event ordinal rather
   than normalized provider text. Tool completion now retains only a typed
-  succeeded/failed disposition. Driver tests feed distinct synthetic secret
-  tool names and prove identical safe digests and zero secret bytes in the
-  durable event JSON. The broader multi-field `event.redaction` case remains.
+  succeeded/failed disposition. Provider terminal JSON is canonicalized from
+  the validated typed outcome before verification or audit artifacts use it;
+  undeclared response fields cannot cross that boundary. Captured verification
+  process output is represented durably by exit code and digest rather than raw
+  bytes. Driver tests inject synthetic secret bytes into tool names, provider
+  text, tool output, header-like fields, terminal output, and process output;
+  native Take environment tests prove exact allowlists with no provider-key or
+  Conductor variables. None of those raw bytes appear in normalized events,
+  terminal output, or durable evidence JSON. Registration of the combined
+  native probe under the standalone `event.redaction` case ID remains.
 - The Codex app-server event spool has a fixed 16 MiB admission bound. Crossing
   it now returns typed `EventIngestionOverflow`, terminates the exact recorded
   app-server process group, and causes the Part driver to atomically mark the

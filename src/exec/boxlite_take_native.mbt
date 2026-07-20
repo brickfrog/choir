@@ -38,6 +38,29 @@ pub(all) struct NativeSandboxProcessResult {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+fn native_sandbox_process_evidence(
+  result : NativeSandboxProcessResult,
+) -> Json {
+  {
+    "exit_code": result.exit_code.to_json(),
+    "output_digest": @storage.artifact_digest(@utf8.encode(result.output)).to_json(),
+  }.to_json()
+}
+
+///|
+test "durable process evidence excludes captured output" {
+  let secret = "CHOIR_SYNTHETIC_PROCESS_OUTPUT_SECRET"
+  let evidence = native_sandbox_process_evidence({
+    exit_code: 1,
+    output: "stderr: " + secret,
+  }).stringify(indent=0)
+  assert_true(evidence.contains("output_digest"))
+  assert_true(evidence.contains("exit_code"))
+  assert_false(evidence.contains(secret))
+  assert_false(evidence.contains("stderr"))
+}
+
+///|
 fn native_boxlite_take_error(message : String) -> @types.ChoirError {
   @types.ChoirError::transport_error("BoxLite Take runtime: " + message)
 }
