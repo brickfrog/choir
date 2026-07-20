@@ -29,7 +29,7 @@ options(
   targets: {
     "goal_cli.mbt": [ "native" ],
     "init.mbt": [ "native" ],
-    "leaf_tool.mbt": [ "native" ],
+    "client.mbt": [ "native" ],
     "main.mbt": [ "native" ],
     "mcp_mode.mbt": [ "native" ],
     "runtime_commands.mbt": [ "native" ],

@@ -413,7 +413,7 @@ struct ServeRequestLineResult {
   // spurious disconnect for the agent.
   connected_agent_id : String?
   // Authentication binding: set on ANY successful register (Session OR OneShot)
-  // so the agent's follow-up request on the same connection (the leaf-tool CLI
+  // so the agent's follow-up request on the same connection (the tool CLI
   // registers + calls on one OneShot socket) is verified as that agent rather
   // than downgraded to an unauthenticated Worker. Distinct from
   // connected_agent_id, which exists for disconnect tracking only.
@@ -466,27 +466,27 @@ fn register_auth_agent_id_after_response(
 }
 
 ///|
-async test "OneShot register binds auth identity for the follow-up call (leaf-tool CLI)" {
+async test "OneShot register binds auth identity for a tool follow-up call" {
   let (state, project_dir) = serve_test_state_with_root("oneshot-auth-bind")
-  let leaf_id = "main.leaf-oneshot.dev"
-  let token = "leaf-oneshot-token"
-  serve_test_record_credential(state, leaf_id, @types.Role::Dev, token)
-  // A OneShot register (the leaf-tool CLI pattern: register + call on one
+  let session_id = "session-oneshot-dev"
+  let token = "session-oneshot-token"
+  serve_test_record_credential(state, session_id, @types.Role::Dev, token)
+  // A OneShot register (register + call on one
   // socket) must bind the AUTH identity but NOT the lifecycle/disconnect id.
   let oneshot_register = "{\"method\":\"register\",\"role\":\"dev\",\"name\":\"register\",\"args\":{\"agent_id\":\"" +
-    leaf_id +
+    session_id +
     "\",\"agent_type\":\"codex\",\"branch\":\"" +
-    leaf_id +
+    session_id +
     "\",\"workspace\":\"" +
     project_dir +
     "\",\"token\":\"" +
     token +
     "\",\"connection_lifetime\":\"oneshot\"}}"
   let reg = serve_handle_request_line(state, oneshot_register, true)
-  @debug.assert_eq(reg.auth_agent_id, Some(leaf_id))
+  @debug.assert_eq(reg.auth_agent_id, Some(session_id))
   @debug.assert_eq(reg.connected_agent_id, None)
   let auth = authenticated_agent_id_after_request(None, reg)
-  @debug.assert_eq(auth, Some(leaf_id))
+  @debug.assert_eq(auth, Some(session_id))
   let tdd_call = "{\"method\":\"tools/call\",\"role\":\"dev\",\"name\":\"tdd_intent\",\"args\":{\"intent\":\"write the red test\"}}"
   // Bound (auth carried from the OneShot register): NOT downgraded to Worker.
   let bound = serve_handle_request_line(
@@ -2383,7 +2383,7 @@ struct LiveUDSRealClientResult {
 }
 
 ///|
-async fn live_uds_run_real_leaf_tool_client(
+async fn live_uds_run_real_tool_client(
   ctx : LiveUDSTestContext,
   choir_binary : String,
   agent_id : String,
@@ -2405,7 +2405,7 @@ async fn live_uds_run_real_leaf_tool_client(
           "CHOIR_WORKSPACE=" + ctx.project_dir,
           "CHOIR_AGENT_TYPE=codex",
           choir_binary,
-          "leaf-tool",
+          "tool",
           "handoff_status",
           "--agent-id",
           agent_id,
@@ -2468,7 +2468,7 @@ async fn live_uds_run_real_leaf_tool_client(
       }
       let (exit_code, output) = match child_result {
         Some(result) => result
-        None => fail("timed out waiting for real leaf-tool client")
+        None => fail("timed out waiting for real tool client")
       }
       let mut flush_attempts = 0
       while clients.length() > 0 && flush_attempts < 100 {
@@ -2755,19 +2755,15 @@ async test "real exec integration: live UDS: OneShot env identity authenticates 
         _ => None
       }
     }
-    match resolve_leaf_local_cfg(file_exists, read_file, env_get) {
-      Ok(cfg) => {
-        @debug.assert_eq(cfg.agent_id, Some(agent_id))
-        @debug.assert_eq(cfg.role, Some(@types.Role::Dev))
-      }
-      Err(e) =>
-        fail("resolve_leaf_local_cfg expected env identity: " + e.message())
-    }
-    let (role, config, local_cfg) = match
-      leaf_tool_load_config([], env_get~, path_exists=file_exists, read_file~) {
+    let (role, config, local_cfg, _) = match
+      tool_load_config_with_identity_source(
+        parse_client_cli_args([]),
+        env_get~,
+        path_exists=file_exists,
+        read_file~,
+      ) {
       Ok(value) => value
-      Err(e) =>
-        fail("leaf_tool_load_config expected env identity: " + e.message())
+      Err(e) => fail("tool client config expected env identity: " + e)
     }
     assert_eq(role, @types.Role::Dev)
     assert_eq(config.listen_uds, ctx.sock_path)
@@ -2843,7 +2839,7 @@ async test "real exec integration: live UDS: OneShot real client binary authenti
     serve_test_upsert_agent(ctx.state, agent_id, role, ctx.project_dir)
     serve_test_record_credential(ctx.state, agent_id, role, token)
     live_uds_write_real_client_project(ctx, agent_id)
-    let result = live_uds_run_real_leaf_tool_client(
+    let result = live_uds_run_real_tool_client(
       ctx,
       live_uds_built_choir_binary(),
       agent_id,
@@ -2852,7 +2848,7 @@ async test "real exec integration: live UDS: OneShot real client binary authenti
     )
     if result.exit_code != 0 {
       fail(
-        "real leaf-tool expected exit 0, got " +
+        "real tool client expected exit 0, got " +
         result.exit_code.to_string() +
         ": " +
         result.output,

@@ -14,7 +14,7 @@ fn goal_cli_no_serve_response() -> @types.Response {
 
 ///|
 fn goal_cli_call(tool : String, values : Map[String, Json]) -> @types.Response {
-  let empty_cli = parse_leaf_cli_args([])
+  let empty_cli = parse_client_cli_args([])
   let (role, config, local_cfg) = match tool_load_config(empty_cli) {
     Ok(loaded) => loaded
     Err(err) => return @types.Response::Err(err)
