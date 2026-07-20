@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Context-only amendments through: 2026-07-20T13:50:14-05:00
+Context-only amendments through: 2026-07-20T15:02:12-05:00
 
 ## Charter Semantics and Readiness
 
@@ -185,7 +185,10 @@ unconnected product path usable.
   either Claude or Codex for implementation, verification, and audit. The
   Codex run uses the real ChatGPT-authenticated client, resumes after the
   implementation boundary without redispatching it, and produces exactly one
-  verification, audit, and integration receipt.
+  verification, audit, and integration receipt. Every Codex Take now supplies
+  a fixed role-specific JSON output schema to the installed client; terminal
+  prose cannot substitute for an implementation, verification, or audit
+  result.
 - A concurrent Goal runner with conflict-aware admission and deterministic,
   serialized promotion. A native Git fixture proves that divergent candidates
   based on the same head are composed into a continuous promotion history and
@@ -448,6 +451,10 @@ unconnected product path usable.
   equal Goal IDs in different repositories cannot collide in sandbox, staging,
   integration-control, or BoxLite state. Runtime paths use product-purpose
   names without a branch/version label.
+- BoxLite runtime cleanup now restores owner-write permission only after the
+  sandbox server and boxes are stopped, then removes the exact validated
+  runtime root. Read-only assurance copies therefore remain immutable while
+  in use without accumulating sealed temporary trees afterward.
 - The repository linter admits only the narrow injected exec-adapter tests and
   explicitly tagged real-process fixtures used by this implementation.
 
@@ -456,7 +463,7 @@ Earlier evidence anchors are commits `5fb93fe8` for the native Part path,
 the linter correction. With the current assurance, cancellation, and provider changes,
 `moon check --target native`, `moon test --target native`, and
 `moon run --target native src/bin/choir_lint` all exit successfully on
-2026-07-20. After deleting obsolete source and tests, the full native suite reports 296
+2026-07-20. After deleting obsolete source and tests, the full native suite reports 298
 passed and 0 failed. The
 compiler still reports the repository's existing warning set.
 
@@ -1486,7 +1493,7 @@ amendments rather than backdated into the original context record.
 | `claude -p --setting-sources "" --tools "" --permission-mode dontAsk --allowedTools <generated-exact-choir-tool-list> --strict-mcp-config --mcp-config <generated-choir-config> --output-format=stream-json --verbose` | `2.1.215` | Claude driver candidate | Same confirmed provider-managed subscription; every other effective credential class fails | `SterileHostSandboxToolsOnly` | `Unspecified` | `RequiresConfirmation` | `Candidate` | `Passed` |
 | Claude Agent Teams within the pinned Claude CLI | `2.1.215` | Optional optimizer within one Conductor/take; never a driver or scheduler | Inherits the admitted owning Claude subscription session | `ChildEqualOrNarrower` | `Experimental` | `RequiresConfirmation` | `Candidate` | `NotRun` |
 | Codex interactive CLI | `0.144.6` | Conductor | Official client using the user's ChatGPT-managed Codex subscription | `ConductorHostObserver` | `Unspecified` | `Allowed` | `Candidate` | `NotRun` |
-| `codex exec --json --ephemeral --ignore-user-config --ignore-rules` with the pinned permission profile and required generated MCP server | `0.144.6` | Codex driver candidate | Saved ChatGPT-managed subscription login; every other effective credential class fails | `HostHarnessSandboxToolsOnly` | `Unspecified` | `Allowed` | `Candidate` | `Passed` |
+| `codex exec --json --ephemeral --ignore-user-config --ignore-rules --output-schema <fixed-role-schema>` with the pinned permission profile and required generated MCP server | `0.144.6` | Codex driver candidate | Saved ChatGPT-managed subscription login; every other effective credential class fails | `HostHarnessSandboxToolsOnly` | `Unspecified` | `Allowed` | `Candidate` | `Passed` |
 | Antigravity interactive CLI | `1.0.10` | Future Conductor candidate | Official client using the user's provider-managed consumer subscription | `ConductorHostObserver` | `Unspecified` | `RequiresConfirmation` | `Candidate` | `NotRun` |
 | Antigravity `agy -p` text mode | `1.0.10` | Driver surface | Same provider-managed subscription | `HostHarnessSandboxToolsOnly` | `Unspecified` | `RequiresConfirmation` | `Unsupported` | `Failed` |
 
@@ -1508,7 +1515,9 @@ called the sole admitted MCP tool, validated provider events rather than
 terminal prose, produced normalized durable events, and closed ingestion
 cleanly. The full native Part fixture then completed real Codex implementation,
 verification, independent audit, restart resumption, and Git promotion through
-BoxLite. The exact pairing remains a `Candidate` until interruption,
+BoxLite. Its role-specific output schemas are part of the attested effective
+surface and are passed through the client's native `--output-schema` option.
+The exact pairing remains a `Candidate` until interruption,
 cancellation, and mid-session recovery probes pass.
 
 No adapter may run a surface/auth pair absent from this matrix or promote
@@ -3786,6 +3795,16 @@ moon run --target native src/bin/choir_conformance -- harness --surface codex-cl
 moon run --target native src/bin/choir_conformance -- e2e --fixture native-codex-part-lifecycle
 ```
 
+At `2026-07-20T15:02:12-05:00`, the restricted live driver passed again with
+the role schema in its effective-surface digest. The complete real Codex Part
+fixture also passed after the driver began supplying the fixed schema through
+`--output-schema`: implementation completed, restart issued zero duplicate
+implementation Takes, verification and independent audit each ran once, and
+the candidate was promoted once. The run recorded 12 effect receipts and one
+verification, audit, and integration receipt. This removes reliance on a
+model voluntarily ending a longer turn with bare JSON; it does not satisfy the
+remaining mid-session recovery requirement.
+
 #### Post-snapshot Codex Conductor amendment
 
 At `2026-07-20T13:10:42-05:00`, `choir start --conductor codex` launched a
@@ -4134,6 +4153,14 @@ and the already pinned OCI manifest digest. Secure boot, clone isolation,
 copy-in/out, attach/signal/kill, restart re-adoption, read-only enforcement,
 and all declared network-denial cases passed. The uncorrected or unpinned
 runtime remains blocked.
+
+At `2026-07-20T15:02:12-05:00`, the complete live Take sandbox command passed
+again after runtime cleanup was tightened. The command proved the mutable
+result round trip, stable candidate retry, read-only assurance subject, audit
+scratch boundary, and typed process execution, then left no matching
+`/tmp/choir-take-*` runtime root. A narrow native regression test separately
+constructs a read-only result tree and proves the validated cleanup path
+removes it.
 
 `GHSA-xjhv-pp2r-6f82` is a later medium-severity timeout bypass affecting
 versions through 0.8.2. Version admission is exact and advisory-driven; “some
