@@ -398,6 +398,21 @@ test "allows pure exec hermetic violation formatter in tests" {
 }
 
 ///|
+test "allows exec APIs whose host effects require injected adapters" {
+  let source =
+    #|async test "injected" {
+    #|  ignore(@exec.generate_native_promotion(config, intent, adapters))
+    #|  ignore(@exec.apply_native_integration(config, intent, promotion, adapters))
+    #|  ignore(@exec.observe_native_integration(config, intent, promotion, adapters))
+    #|  ignore(@exec.goal_part_workflow_adapters(config))
+    #|}
+  match lint_source("src/exec/injected_test.mbt", source) {
+    Ok(findings) => assert_eq(findings.length(), 0)
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
 test "flags unqualified exec capture in exec package tests" {
   let source =
     #|async test "bad" {
@@ -415,6 +430,18 @@ test "allows explicitly tagged real exec integration tests" {
     #|  ignore(capture_command_merged({ program: "echo", args: ["ok"], workdir: None }))
     #|}
   match lint_source("src/exec/exec_test.mbt", source) {
+    Ok(findings) => assert_eq(findings.length(), 0)
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
+test "allows explicitly tagged real exec integration helpers" {
+  let source =
+    #|async test "real exec integration: workflow fixture" {
+    #|  ignore(@exec.run_part_conformance_fixture("/tmp/fixture"))
+    #|}
+  match lint_source("src/exec/workflow_conformance_test.mbt", source) {
     Ok(findings) => assert_eq(findings.length(), 0)
     Err(e) => fail(e.message())
   }

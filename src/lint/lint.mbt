@@ -534,7 +534,11 @@ fn is_allowed_test_exec_package_ref(
           Some(name) =>
             name == "hermetic_exec_violation_message" ||
             name == "real_exec_integration_enabled" ||
-            name == "strip_terminal_responses"
+            name == "strip_terminal_responses" ||
+            name == "generate_native_promotion" ||
+            name == "apply_native_integration" ||
+            name == "observe_native_integration" ||
+            name == "goal_part_workflow_adapters"
           None => false
         }
       }
@@ -1298,14 +1302,16 @@ fn check_test_apply(
         None => ()
       }
     None => {
-      if is_forbidden_test_exec_package_ref(env.package_aliases, func) {
+      if is_forbidden_test_exec_package_ref(env.package_aliases, func) &&
+        !is_explicit_real_exec_integration_test(env) {
         emit(
           env, "test-exec-reference", "test files must not reference real exec helpers; inject a mock capture/runner instead",
           loc,
         )
       }
       for arg in args {
-        if is_forbidden_test_exec_package_ref(env.package_aliases, arg.value) {
+        if is_forbidden_test_exec_package_ref(env.package_aliases, arg.value) &&
+          !is_explicit_real_exec_integration_test(env) {
           emit(
             env, "test-exec-reference", "test files must not reference real exec helpers; inject a mock capture/runner instead",
             loc,
