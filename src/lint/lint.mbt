@@ -64,8 +64,6 @@ priv enum DangerousCallKind {
   ShellCommand
   ProcessCommand
   ExecCapture
-  RecoveryProvider
-  ShellRecoveryProvider
 } derive(Eq)
 
 ///|
@@ -182,27 +180,6 @@ fn callable_name(expr : @syntax.Expr) -> String? {
 }
 
 ///|
-fn is_unqualified_ident(expr : @syntax.Expr, name : String) -> Bool {
-  match expr {
-    Ident(id={ name: Ident(name=n), .. }, ..) => n == name
-    _ => false
-  }
-}
-
-///|
-fn is_named_alias(
-  env : LintEnv,
-  expr : @syntax.Expr,
-  kind : DangerousCallKind,
-) -> Bool {
-  match expr {
-    Ident(id={ name: Ident(name~), .. }, ..) =>
-      env.aliases.any(fn(entry) { entry.0 == name && entry.1 == kind })
-    _ => false
-  }
-}
-
-///|
 fn is_reported_direct_reference_alias(
   env : LintEnv,
   expr : @syntax.Expr,
@@ -220,42 +197,6 @@ fn first_argument(args : @list.List[@syntax.Argument]) -> @syntax.Expr? {
   match args {
     Empty => None
     More(arg, ..) => Some(arg.value)
-  }
-}
-
-///|
-fn is_sys_shell_quote(
-  package_aliases : Array[(String, String)],
-  expr : @syntax.Expr,
-) -> Bool {
-  match expr {
-    Apply(func~, args~, ..) =>
-      is_package_ident(package_aliases, func, "sys", "shell_quote") &&
-      first_argument(args) is Some(_)
-    Group(expr~, ..) => is_sys_shell_quote(package_aliases, expr)
-    _ => false
-  }
-}
-
-///|
-fn is_allowed_test_system_command(
-  file : String,
-  package_aliases : Array[(String, String)],
-  expr : @syntax.Expr,
-) -> Bool {
-  if canonical_file(file) != "src/workspace/workspace_test.mbt" {
-    return false
-  }
-  match expr {
-    Infix(
-      op={ name: Ident(name="+"), .. },
-      lhs=Constant(c=String("test -x "), ..),
-      rhs~,
-      ..
-    ) => is_sys_shell_quote(package_aliases, rhs)
-    Group(expr~, ..) =>
-      is_allowed_test_system_command(file, package_aliases, expr)
-    _ => false
   }
 }
 
@@ -338,7 +279,6 @@ fn is_hazardous_native_ffi_ref(
 fn is_native_ffi_sanctioned_seam_file(file : String) -> Bool {
   let file = canonical_file(file)
   file.has_prefix("src/sys/") ||
-  file == "src/workspace/command.mbt" ||
   file.has_prefix("src/exec/") ||
   file.has_prefix("src/bin/")
 }
@@ -459,20 +399,6 @@ fn direct_forbidden_rule_for_apply(
             Some("test-exec-capture")
           }
         None => Some("test-exec-capture")
-      }
-    Some(RecoveryProvider) => Some("test-shell-recovery-provider")
-    Some(ShellRecoveryProvider) =>
-      match first_argument(args) {
-        Some(capture) =>
-          if is_exec_capture_ref_for_file_with_package_aliases(
-              file, package_aliases, capture,
-            ) ||
-            is_named_alias_with_aliases(aliases, capture, ExecCapture) {
-            Some("test-shell-recovery-provider")
-          } else {
-            None
-          }
-        None => None
       }
     None =>
       if is_forbidden_test_exec_package_ref(package_aliases, func) {
@@ -875,14 +801,6 @@ fn direct_alias_kind_for_expr(
       file, package_aliases, expr,
     ) {
     Some(ExecCapture)
-  } else if is_unqualified_ident(expr, "make_recovery_provider") ||
-    is_package_ident(package_aliases, expr, "server", "make_recovery_provider") {
-    Some(RecoveryProvider)
-  } else if is_unqualified_ident(expr, "make_shell_recovery_provider") ||
-    is_package_ident(
-      package_aliases, expr, "runtime", "make_shell_recovery_provider",
-    ) {
-    Some(ShellRecoveryProvider)
   } else {
     None
   }
@@ -941,14 +859,6 @@ fn dangerous_call_kind_with_aliases(
         Some(ProcessCommand)
       } else if is_named_alias_with_aliases(aliases, func, ExecCapture) {
         Some(ExecCapture)
-      } else if is_named_alias_with_aliases(aliases, func, RecoveryProvider) {
-        Some(RecoveryProvider)
-      } else if is_named_alias_with_aliases(
-          aliases,
-          func,
-          ShellRecoveryProvider,
-        ) {
-        Some(ShellRecoveryProvider)
       } else {
         None
       }
@@ -1034,17 +944,11 @@ fn check_test_apply(
   match dangerous_call_kind(env, func) {
     Some(ShellCommand) =>
       match first_argument(args) {
-        Some(command) =>
-          if !is_allowed_test_system_command(
-              env.file,
-              env.package_aliases,
-              command,
-            ) {
-            emit(
-              env, "test-shell-command", "test files must not run shell commands; use injected adapters or a narrow helper instead",
-              loc,
-            )
-          }
+        Some(_) =>
+          emit(
+            env, "test-shell-command", "test files must not run shell commands; use injected adapters or a narrow helper instead",
+            loc,
+          )
         None =>
           emit(
             env, "test-shell-command", "test files must not run shell commands; use injected adapters or a narrow helper instead",
@@ -1078,30 +982,6 @@ fn check_test_apply(
           env, rule_id, "test files must not call real processes through exec capture helpers; mock the command boundary",
           loc,
         )
-      }
-    Some(RecoveryProvider) =>
-      emit(
-        env, "test-shell-recovery-provider", "tests must use make_hermetic_recovery_provider(), not the shell-backed recovery provider",
-        loc,
-      )
-    Some(ShellRecoveryProvider) =>
-      match first_argument(args) {
-        Some(capture) =>
-          if (
-              is_exec_capture_ref_for_file_with_package_aliases(
-                env.file,
-                env.package_aliases,
-                capture,
-              ) ||
-              is_named_alias(env, capture, ExecCapture)
-            ) &&
-            !is_reported_direct_reference_alias(env, capture) {
-            emit(
-              env, "test-shell-recovery-provider", "tests must not wire shell recovery to real exec capture helpers",
-              loc,
-            )
-          }
-        None => ()
       }
     None => {
       if is_forbidden_test_exec_package_ref(env.package_aliases, func) &&
@@ -1138,8 +1018,6 @@ fn forbidden_value_reference_rule(
     Some(ShellCommand) => Some("test-shell-command")
     Some(ProcessCommand) => Some("test-direct-process")
     Some(ExecCapture) => Some("test-exec-reference")
-    Some(RecoveryProvider) | Some(ShellRecoveryProvider) =>
-      Some("test-shell-recovery-provider")
     None =>
       if is_forbidden_test_exec_package_ref(env.package_aliases, value) {
         Some("test-exec-reference")

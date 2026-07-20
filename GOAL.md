@@ -74,6 +74,11 @@ unconnected product path usable.
   branch-point audit found no other unchanged v1 source file without a current
   caller. Provider-independent protocol, UDS, signal, build, and hook files
   that predate v2 remain because the current product still executes them.
+- The linter no longer recognizes deleted v1 workspace, server, or runtime
+  recovery APIs as special cases. Their dedicated exception logic and tests
+  were removed; the general ban on real shell, process, and exec use in ordinary
+  tests remains and is stricter now that the deleted executable-bit exception is
+  gone.
 - The positional and generic tool clients, shutdown-origin metadata path,
   arbitrary flag-to-tool translation, server-reload command, and their v1
   process fixtures are deleted. The remaining Goal client has one purpose: send

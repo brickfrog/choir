@@ -48,18 +48,6 @@ test "flags shell command prefix spoofing" {
 }
 
 ///|
-test "permits existing executable-bit checks" {
-  let source =
-    #|test "ok" {
-    #|  assert_eq(@sys.system("test -x " + @sys.shell_quote("/tmp/tool")), 0)
-    #|}
-  match lint_source("src/workspace/workspace_test.mbt", source) {
-    Ok(findings) => assert_eq(findings.length(), 0)
-    Err(e) => fail(e.message())
-  }
-}
-
-///|
 test "flags direct process spawning in tests" {
   let source =
     #|test "bad" {
@@ -296,42 +284,13 @@ test "flags direct exec capture through exec and external helpers" {
 }
 
 ///|
-test "allows executable-bit check through sys package alias" {
-  let source =
-    #|test "ok" {
-    #|  assert_eq(@s.system("test -x " + @s.shell_quote("/tmp/tool")), 0)
-    #|}
-  let manifest =
-    #|import {
-    #|  "choir/src/sys" as s,
-    #|}
-  match
-    lint_source(
-      "src/workspace/workspace_test.mbt",
-      source,
-      read_file=fn(path) {
-        if path == "src/workspace/moon.pkg" {
-          manifest
-        } else {
-          ""
-        }
-      },
-      path_exists=fn(path) { path == "src/workspace/moon.pkg" },
-      package_alias_cache=@ref.new({}),
-    ) {
-    Ok(findings) => assert_eq(findings.length(), 0)
-    Err(e) => fail(e.message())
-  }
-}
-
-///|
 test "flags explicit adapter self-test capture cases in test files" {
   let source =
     #|async test "bad" {
     #|  ignore(@exec.capture_command_merged({ program: "echo", args: ["git"], workdir: None }))
     #|}
   assert_single_rule_for_file(
-    source, "src/tools/pr_test.mbt", "test-exec-capture",
+    source, "src/workflow/goal_runner_test.mbt", "test-exec-capture",
   )
 }
 
@@ -350,7 +309,7 @@ test "allows pure exec hermetic violation formatter in tests" {
     #|test "ok" {
     #|  ignore(@exec.hermetic_exec_violation_message("git status"))
     #|}
-  match lint_source("src/server/delivery_test_helpers_test.mbt", source) {
+  match lint_source("src/workflow/goal_runner_test.mbt", source) {
     Ok(findings) => assert_eq(findings.length(), 0)
     Err(e) => fail(e.message())
   }
@@ -412,7 +371,7 @@ test "allows explicitly tagged real exec integration tests outside exec package"
     #|async test "real exec integration: process group fixture" {
     #|  ignore(@process.spawn_orphan("setsid", ["bash", "-c", "true"]))
     #|}
-  match lint_source("src/server/handler_disconnect.mbt", source) {
+  match lint_source("src/workflow/goal_runner.mbt", source) {
     Ok(findings) => assert_eq(findings.length(), 0)
     Err(e) => fail(e.message())
   }
@@ -430,78 +389,6 @@ test "allows canonical real exec integration self-skip helper" {
     Ok(findings) => assert_eq(findings.length(), 0)
     Err(e) => fail(e.message())
   }
-}
-
-///|
-test "flags shell backed recovery provider in tests" {
-  let source =
-    #|async test "bad" {
-    #|  let state = ServerState::new(config, make_recovery_provider())
-    #|}
-  assert_single_rule(source, "test-shell-recovery-provider")
-}
-
-///|
-test "flags shell backed recovery provider through package alias" {
-  let source =
-    #|async test "bad" {
-    #|  let state = ServerState::new(config, @srv.make_recovery_provider())
-    #|}
-  let manifest =
-    #|import {
-    #|  "choir/src/server" as srv,
-    #|}
-  match
-    lint_source(
-      "src/server/alias_test.mbt",
-      source,
-      read_file=fn(path) {
-        if path == "src/server/moon.pkg" {
-          manifest
-        } else {
-          ""
-        }
-      },
-      path_exists=fn(path) { path == "src/server/moon.pkg" },
-      package_alias_cache=@ref.new({}),
-    ) {
-    Ok(findings) => {
-      assert_eq(findings.length(), 1)
-      assert_eq(findings[0].rule_id, "test-shell-recovery-provider")
-    }
-    Err(e) => fail(e.message())
-  }
-}
-
-///|
-test "allows hermetic recovery provider in tests" {
-  let source =
-    #|async test "ok" {
-    #|  let state = ServerState::new(config, make_hermetic_recovery_provider())
-    #|}
-  match lint_source("src/server/refresh_test_async.mbt", source) {
-    Ok(findings) => assert_eq(findings.length(), 0)
-    Err(e) => fail(e.message())
-  }
-}
-
-///|
-test "flags shell recovery wired to real exec capture" {
-  let source =
-    #|test "bad" {
-    #|  let provider = @runtime.make_shell_recovery_provider(@exec.capture_stdout_with_cwd)
-    #|}
-  assert_single_rule(source, "test-shell-recovery-provider")
-}
-
-///|
-test "flags shell recovery wired through exec capture alias" {
-  let source =
-    #|test "bad" {
-    #|  let cap = @exec.capture_stdout_with_cwd
-    #|  let provider = @runtime.make_shell_recovery_provider(cap)
-    #|}
-  assert_single_rule(source, "test-exec-reference")
 }
 
 ///|
@@ -534,13 +421,13 @@ test "flags dangerous exec references stashed in record fields" {
 ///|
 test "flags optional exec defaults in seam parameters" {
   let source =
-    #|async fn check_idle_agents(
-    #|  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+    #|async fn run_goal(
+    #|  capture? : async (@exec.Command) -> (Int, String) = @exec.capture_command_stdout,
     #|) -> Unit {
     #|  ignore(capture)
     #|}
   assert_single_rule_for_file(
-    source, "src/server/handler.mbt", "exec-default-parameter",
+    source, "src/workflow/goal_runner.mbt", "exec-default-parameter",
   )
 }
 
@@ -556,38 +443,13 @@ test "visits optional parameter defaults for test rules" {
 }
 
 ///|
-test "flags optional exec defaults in tools helpers" {
-  let source =
-    #|async fn new_dispatch_helper(
-    #|  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
-    #|) -> Unit {
-    #|  ignore(capture)
-    #|}
-  assert_single_rule_for_file(
-    source, "src/tools/dispatch_helpers.mbt", "exec-default-parameter",
-  )
-}
-
-///|
-test "allows shell recovery provider with injected fake capture" {
-  let source =
-    #|test "ok" {
-    #|  let provider = make_shell_recovery_provider(fake_capture)
-    #|}
-  match lint_source("src/runtime/recovery_test.mbt", source) {
-    Ok(findings) => assert_eq(findings.length(), 0)
-    Err(e) => fail(e.message())
-  }
-}
-
-///|
 test "flags inline tests in source files" {
   let source =
     #|test "bad" {
     #|  ignore(@process.spawn_orphan("git", ["status"]))
     #|}
   assert_single_rule_for_file(
-    source, "src/runtime/recovery.mbt", "test-direct-process",
+    source, "src/workflow/goal_runner.mbt", "test-direct-process",
   )
 }
 
@@ -701,7 +563,7 @@ test "parses fn-keyword trait body emitted by moon fmt" {
     #|  fn machine_name(Self) -> String
     #|  fn can_exit(Self) -> Bool
     #|}
-  match lint_source("src/phase/state_machine.mbt", source) {
+  match lint_source("src/workflow/machine.mbt", source) {
     Ok(findings) => assert_eq(findings.length(), 0)
     Err(e) =>
       fail("expected fn-keyword trait body to parse cleanly: " + e.message())
