@@ -79,6 +79,7 @@ test "Claude live startup classifies subscription lane without retaining quota d
     "\n" +
     (
       #|{"type":"assistant","message":{"model":"claude-opus-4-8","content":[{"type":"text","text":"PROBE_OK"}]}}
+      #|{"type":"assistant","message":{"model":"claude-opus-4-8","content":[{"type":"tool_use","name":"mcp__choir_probe__probe"}]}}
       #|{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":123456,"rateLimitType":"five_hour","overageStatus":"rejected","isUsingOverage":false}}
       #|{"type":"result","subtype":"success","is_error":false,"result":"PROBE_OK","session_id":"discard-me","total_cost_usd":0.01}
     )
@@ -96,7 +97,7 @@ test "Claude live startup classifies subscription lane without retaining quota d
 }
 
 ///|
-test "Claude live startup rejects tool use and missing subscription observation" {
+test "Claude live startup requires the sandbox tool and subscription observation" {
   let output = connected_init +
     "\n" +
     (
@@ -104,14 +105,47 @@ test "Claude live startup rejects tool use and missing subscription observation"
       #|{"type":"result","subtype":"success","is_error":false,"result":"PROBE_OK"}
     )
   let report = @harness.evaluate_claude_live_startup({ exit_code: 0, output })
-  assert_true(
+  assert_false(
     report.blocking_reasons.contains(
-      @harness.ClaudeLiveBlockReason::ClaudeLiveToolUseObserved,
+      @harness.ClaudeLiveBlockReason::ClaudeLiveRequiredToolUseMismatch,
     ),
   )
   assert_true(
     report.blocking_reasons.contains(
       @harness.ClaudeLiveBlockReason::ClaudeLiveMissingEntitlementObservation,
+    ),
+  )
+}
+
+///|
+test "Claude live startup accepts pending initialization after exact tool use" {
+  let output = (
+      #|{"type":"system","subtype":"init","tools":[],"mcp_servers":[{"name":"choir_probe","status":"pending"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.215","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"]}
+    ) +
+    "\n" +
+    (
+      #|{"type":"assistant","message":{"model":"claude-opus-4-8","content":[{"type":"tool_use","name":"mcp__choir_probe__probe"}]}}
+      #|{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","overageStatus":"rejected","isUsingOverage":false}}
+      #|{"type":"result","subtype":"success","is_error":false,"result":"PROBE_OK"}
+    )
+  let report = @harness.evaluate_claude_live_startup({ exit_code: 0, output })
+  assert_eq(report.support, @harness.ChoirSurfaceSupport::SurfaceCandidate)
+  assert_eq(report.blocking_reasons.length(), 0)
+}
+
+///|
+test "Claude live startup rejects any undeclared tool use" {
+  let output = connected_init +
+    "\n" +
+    (
+      #|{"type":"assistant","message":{"model":"claude-opus-4-8","content":[{"type":"tool_use","name":"mcp__choir_probe__probe"},{"type":"tool_use","name":"Read"}]}}
+      #|{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","overageStatus":"rejected","isUsingOverage":false}}
+      #|{"type":"result","subtype":"success","is_error":false,"result":"PROBE_OK"}
+    )
+  let report = @harness.evaluate_claude_live_startup({ exit_code: 0, output })
+  assert_true(
+    report.blocking_reasons.contains(
+      @harness.ClaudeLiveBlockReason::ClaudeLiveUnexpectedToolUse,
     ),
   )
 }

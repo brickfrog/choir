@@ -58,7 +58,8 @@ pub(all) enum ClaudeLiveBlockReason {
   ClaudeLiveConflictingEntitlement
   ClaudeLiveTerminalFailure
   ClaudeLiveUnexpectedResponse
-  ClaudeLiveToolUseObserved
+  ClaudeLiveRequiredToolUseMismatch
+  ClaudeLiveUnexpectedToolUse
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -196,11 +197,12 @@ fn claude_live_entitlement(output : String) -> EntitlementLane {
 }
 
 ///|
-fn claude_live_terminal(output : String) -> (Bool, Bool, String, Bool) {
+fn claude_live_terminal(output : String) -> (Bool, Bool, String, Int, Bool) {
   let mut succeeded = false
   let mut response_matched = false
   let mut model_identity = ""
-  let mut tool_use_observed = false
+  let mut required_tool_use_count = 0
+  let mut unexpected_tool_use = false
   for raw in output.split("\n") {
     let json = @json.parse(raw.trim().to_owned()) catch { _ => continue }
     guard json is Object(fields) else { continue }
@@ -215,7 +217,12 @@ fn claude_live_terminal(output : String) -> (Bool, Bool, String, Bool) {
                   match block {
                     Object(block_fields) =>
                       if startup_json_string(block_fields, "type") == "tool_use" {
-                        tool_use_observed = true
+                        if startup_json_string(block_fields, "name") ==
+                          "mcp__choir_probe__probe" {
+                          required_tool_use_count = required_tool_use_count + 1
+                        } else {
+                          unexpected_tool_use = true
+                        }
                       }
                     _ => ()
                   }
@@ -233,7 +240,25 @@ fn claude_live_terminal(output : String) -> (Bool, Bool, String, Bool) {
       _ => ()
     }
   }
-  (succeeded, response_matched, model_identity, tool_use_observed)
+  (
+    succeeded, response_matched, model_identity, required_tool_use_count, unexpected_tool_use,
+  )
+}
+
+///|
+fn claude_live_surface_blocked(
+  reasons : Array[ClaudeStartupBlockReason],
+  required_tool_use_count : Int,
+) -> Bool {
+  for reason in reasons {
+    match reason {
+      ClaudeStartupRequiredMcpToolMissing
+      | ClaudeStartupRequiredMcpNotConnected if required_tool_use_count == 1 =>
+        ()
+      _ => return true
+    }
+  }
+  false
 }
 
 ///|
@@ -323,26 +348,36 @@ pub fn evaluate_claude_live_startup(
 ) -> ClaudeLiveStartupReport {
   let reasons : Array[ClaudeLiveBlockReason] = []
   let surface = evaluate_claude_synthetic_startup(capture)
-  if surface.blocking_reasons.length() != 0 {
-    reasons.push(ClaudeLiveSurfaceBlocked)
-  }
   let entitlement = claude_live_entitlement(capture.output)
   match entitlement {
     EntitlementUnknown => reasons.push(ClaudeLiveMissingEntitlementObservation)
     EntitlementConflictingLane => reasons.push(ClaudeLiveConflictingEntitlement)
     EntitlementSubscriptionIncluded => ()
   }
-  let (succeeded, response_matched, model_identity, tool_use_observed) = claude_live_terminal(
-    capture.output,
-  )
+  let (
+    succeeded,
+    response_matched,
+    model_identity,
+    required_tool_use_count,
+    unexpected_tool_use,
+  ) = claude_live_terminal(capture.output)
+  if claude_live_surface_blocked(
+      surface.blocking_reasons,
+      required_tool_use_count,
+    ) {
+    reasons.push(ClaudeLiveSurfaceBlocked)
+  }
   if !succeeded {
     reasons.push(ClaudeLiveTerminalFailure)
   }
   if !response_matched {
     reasons.push(ClaudeLiveUnexpectedResponse)
   }
-  if tool_use_observed {
-    reasons.push(ClaudeLiveToolUseObserved)
+  if required_tool_use_count != 1 {
+    reasons.push(ClaudeLiveRequiredToolUseMismatch)
+  }
+  if unexpected_tool_use {
+    reasons.push(ClaudeLiveUnexpectedToolUse)
   }
   let passed = reasons.length() == 0
   {

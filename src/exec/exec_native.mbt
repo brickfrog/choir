@@ -2130,8 +2130,8 @@ fn claude_startup_probe_args(
     "--verbose",
     "--no-session-persistence",
     "--system-prompt",
-    "You are a restricted startup probe.",
-    "Return exactly PROBE_OK without using tools.",
+    "You are a restricted startup probe. Call the only available tool exactly once. Return exactly PROBE_OK only when its result is exactly probe.",
+    "Run the required probe.",
   ]
 }
 

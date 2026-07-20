@@ -992,7 +992,7 @@ amendments rather than backdated into the original context record.
 |---|---:|---|---|---|---|---|---|---|
 | Claude Code interactive CLI | `2.1.215` | Conductor | Official client using the user's provider-managed subscription | `ConductorHostObserver` | `Unspecified` | `RequiresConfirmation` | `Candidate` | `NotRun` |
 | `claude -p --safe-mode --tools "" --strict-mcp-config --mcp-config <generated-choir-config> --output-format=stream-json --verbose` | `2.1.215` | Rejected Claude driver profile | Same confirmed provider-managed subscription | `SafeModeSandboxToolsOnly` | `Unspecified` | `RequiresConfirmation` | `BlockedByConformance` | `Failed` |
-| `claude -p --setting-sources "" --tools "" --permission-mode dontAsk --allowedTools <generated-exact-choir-tool-list> --strict-mcp-config --mcp-config <generated-choir-config> --output-format=stream-json --verbose` | `2.1.215` | Claude driver candidate | Same confirmed provider-managed subscription; every other effective credential class fails | `SterileHostSandboxToolsOnly` | `Unspecified` | `RequiresConfirmation` | `Candidate` | `NotRun` |
+| `claude -p --setting-sources "" --tools "" --permission-mode dontAsk --allowedTools <generated-exact-choir-tool-list> --strict-mcp-config --mcp-config <generated-choir-config> --output-format=stream-json --verbose` | `2.1.215` | Claude driver candidate | Same confirmed provider-managed subscription; every other effective credential class fails | `SterileHostSandboxToolsOnly` | `Unspecified` | `RequiresConfirmation` | `Candidate` | `Passed` |
 | Claude Agent Teams within the pinned Claude CLI | `2.1.215` | Optional optimizer within one Conductor/take; never a driver or scheduler | Inherits the admitted owning Claude subscription session | `ChildEqualOrNarrower` | `Experimental` | `RequiresConfirmation` | `Candidate` | `NotRun` |
 | Codex interactive CLI | `0.144.6` | Conductor | Official client using the user's ChatGPT-managed Codex subscription | `ConductorHostObserver` | `Unspecified` | `Allowed` | `Candidate` | `NotRun` |
 | `codex exec --json` | `0.144.6` | Codex driver candidate | Saved ChatGPT-managed subscription login; every other effective credential class fails | `HostHarnessSandboxToolsOnly` | `Unspecified` | `Allowed` | `Candidate` | `NotRun` |
@@ -2927,6 +2927,16 @@ amendment lacks the full command/evidence archive required by
 promote the remaining profile to `Supported`. The provider and host-surface
 proof must rerun both the surface and root-topology probes into a complete
 conformance record.
+
+At `2026-07-19T20:37:00-05:00`, the executable conformance command for the
+Claude subscription profile passed against `2.1.215`. The initialization
+manifest exposed exactly `mcp__choir_probe__probe`, reported only the declared
+MCP server as connected, exposed no slash commands, skills, or plugins, and
+reported the expected built-in agent list. The model called the required tool
+exactly once, returned the expected canary, reported the provider-managed
+subscription entitlement lane, and exposed no undeclared tool use. This admits
+the exact driver surface as `Candidate`; interruption, cancellation, and full
+host-root isolation evidence remain required for `Supported`.
 
 ### Inspected source repositories
 
