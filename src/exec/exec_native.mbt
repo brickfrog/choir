@@ -317,7 +317,7 @@ pub async fn capture_harness_probe(
 }
 
 ///|
-fn boxlite_probe_executable() -> Result[String, @types.ChoirError] {
+pub fn native_boxlite_binary_path() -> Result[String, @types.ChoirError] {
   match @sys.getenv("CHOIR_BOXLITE_BINARY") {
     Some(path) =>
       if path.has_prefix("/") {
@@ -339,6 +339,28 @@ fn boxlite_probe_executable() -> Result[String, @types.ChoirError] {
             ),
           )
       }
+  }
+}
+
+///|
+pub fn native_boxlite_runtime_dir() -> Result[String, @types.ChoirError] {
+  match @sys.getenv("CHOIR_BOXLITE_RUNTIME_DIR") {
+    Some(path) =>
+      if path.has_prefix("/") && !path.contains(":") {
+        Ok(path)
+      } else {
+        Err(
+          @types.ChoirError::validation_error(
+            "CHOIR_BOXLITE_RUNTIME_DIR must be one absolute operator-controlled conformance path",
+          ),
+        )
+      }
+    None =>
+      Err(
+        @types.ChoirError::validation_error(
+          "CHOIR_BOXLITE_RUNTIME_DIR must select the pinned corrected runtime bundle",
+        ),
+      )
   }
 }
 
@@ -1501,7 +1523,7 @@ pub async fn capture_boxlite_live_evidence(
       }
     None => None
   }
-  let binary = match boxlite_probe_executable() {
+  let binary = match native_boxlite_binary_path() {
     Ok(path) => path
     Err(error) => return Err(error)
   }

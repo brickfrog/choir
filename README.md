@@ -16,16 +16,24 @@ Required:
 
 - Linux with KVM enabled
 - Git
-- [MoonBit](https://www.moonbitlang.com/)
-- [Beads](https://github.com/steveyegge/beads) (`bd`)
-- [BoxLite](https://github.com/boxlite-ai/boxlite) 0.9.0 or newer
+- [MoonBit](https://www.moonbitlang.com/) (or `nix develop` for the pinned toolchain)
+- [Beads](https://github.com/gastownhall/beads) 1.1.0 (`bd`)
+- [BoxLite](https://github.com/boxlite-ai/boxlite) v0.9.7 with Choir's
+  [pinned corrected runtime](docs/boxlite-runtime.md)
 - Node.js
-- Claude Code logged into the user's paid subscription
-- Codex CLI logged into the user's paid subscription
+- Claude Code 2.1.215 logged into the user's paid subscription
+- Codex CLI 0.144.6 logged into the user's paid subscription
 
 GitHub CLI is required only when Choir should publish the final pull request.
 No separately metered model credential is required or supported by the default
 execution profiles.
+
+Select the admitted BoxLite installation before starting Choir:
+
+```bash
+export CHOIR_BOXLITE_BINARY=/absolute/path/to/boxlite
+export CHOIR_BOXLITE_RUNTIME_DIR=/absolute/path/to/corrected-runtime
+```
 
 ```bash
 moon build --target native --release

@@ -286,14 +286,13 @@ pub async fn run_native_mixed_provider_goal_fixture(
   }
   let claude_snapshot = { ..claude_snapshot, goal: accepted_goal }
   let codex_snapshot = { ..codex_snapshot, goal: accepted_goal }
-  let binary = match @sys.getenv("CHOIR_BOXLITE_BINARY") {
-    Some(value) => value
-    None => "/home/justin/.local/bin/boxlite"
+  let binary = match native_boxlite_binary_path() {
+    Ok(value) => value
+    Err(error) => return failed_native_mixed_provider_goal(error.message())
   }
-  let runtime_dir = match @sys.getenv("CHOIR_BOXLITE_RUNTIME_DIR") {
-    Some(value) => value
-    None =>
-      "/home/justin/.local/share/choir/runtimes/boxlite-v0.9.7-seccomp-time"
+  let runtime_dir = match native_boxlite_runtime_dir() {
+    Ok(value) => value
+    Err(error) => return failed_native_mixed_provider_goal(error.message())
   }
   let moon_home = match @sys.getenv("CHOIR_MOON_HOME") {
     Some(value) => value

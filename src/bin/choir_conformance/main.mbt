@@ -996,14 +996,21 @@ async fn run_boxlite_take_live() -> Int {
       return 1
     }
   }
-  let binary = match @sys.getenv("CHOIR_BOXLITE_BINARY") {
-    Some(value) => value
-    None => "/home/justin/.local/bin/boxlite"
+  let binary = match @exec.native_boxlite_binary_path() {
+    Ok(value) => value
+    Err(error) => {
+      @sys.write_stderr(error.message() + "\n")
+      ignore(@sys.rm_rf(root))
+      return 1
+    }
   }
-  let runtime_dir = match @sys.getenv("CHOIR_BOXLITE_RUNTIME_DIR") {
-    Some(value) => value
-    None =>
-      "/home/justin/.local/share/choir/runtimes/boxlite-v0.9.7-seccomp-time"
+  let runtime_dir = match @exec.native_boxlite_runtime_dir() {
+    Ok(value) => value
+    Err(error) => {
+      @sys.write_stderr(error.message() + "\n")
+      ignore(@sys.rm_rf(root))
+      return 1
+    }
   }
   let moon_home = match @sys.getenv("CHOIR_MOON_HOME") {
     Some(value) => value

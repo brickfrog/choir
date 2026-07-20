@@ -302,14 +302,13 @@ async fn execute_native_goal_record(
     @sys.realpath_native(runtime_root) != Some(runtime_root) {
     return Err(native_goal_execution_error("runtime root is unavailable"))
   }
-  let binary = match @sys.getenv("CHOIR_BOXLITE_BINARY") {
-    Some(value) => value
-    None => "/home/justin/.local/bin/boxlite"
+  let binary = match native_boxlite_binary_path() {
+    Ok(value) => value
+    Err(error) => return Err(error)
   }
-  let runtime_dir = match @sys.getenv("CHOIR_BOXLITE_RUNTIME_DIR") {
-    Some(value) => value
-    None =>
-      "/home/justin/.local/share/choir/runtimes/boxlite-v0.9.7-seccomp-time"
+  let runtime_dir = match native_boxlite_runtime_dir() {
+    Ok(value) => value
+    Err(error) => return Err(error)
   }
   let moon_home = match @sys.getenv("CHOIR_MOON_HOME") {
     Some(value) => value
