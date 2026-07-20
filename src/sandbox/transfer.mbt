@@ -26,6 +26,7 @@ pub(all) struct TransferLimits {
 
 ///|
 pub(all) enum TransferBlockReason {
+  TransferInvalidLimits
   TransferEmptyPath
   TransferAbsolutePath(String)
   TransferTraversalPath(String)
@@ -41,13 +42,29 @@ pub(all) enum TransferBlockReason {
   TransferTotalBytesExceeded(Int64, Int64)
   TransferFileBytesExceeded(String, Int64, Int64)
   TransferDepthExceeded(String, Int, Int)
+  TransferDestinationSymlink(String)
+  TransferDestinationNotDirectory(String)
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-pub(all) struct ValidatedTransferManifest {
+pub struct ValidatedTransferManifest {
   entries : Array[TransferEntry]
   total_bytes : Int64
 } derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub fn ValidatedTransferManifest::entries(
+  self : ValidatedTransferManifest,
+) -> Array[TransferEntry] {
+  self.entries.copy()
+}
+
+///|
+pub fn ValidatedTransferManifest::total_bytes(
+  self : ValidatedTransferManifest,
+) -> Int64 {
+  self.total_bytes
+}
 
 ///|
 pub(all) enum TransferManifestDecision {
@@ -97,10 +114,30 @@ fn transfer_path_decision(
 }
 
 ///|
+pub(all) enum TransferDestinationKind {
+  TransferDestinationMissing
+  TransferDestinationDirectory
+  TransferDestinationSymlink
+  TransferDestinationOther
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct TransferDestinationComponent {
+  path : String
+  kind : TransferDestinationKind
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub fn evaluate_transfer_manifest(
   entries : Array[TransferEntry],
   limits : TransferLimits,
 ) -> TransferManifestDecision {
+  if limits.max_entries < 0 ||
+    limits.max_total_bytes < 0L ||
+    limits.max_file_bytes < 0L ||
+    limits.max_depth <= 0 {
+    return TransferManifestRejected(TransferInvalidLimits)
+  }
   if entries.length() > limits.max_entries {
     return TransferManifestRejected(
       TransferEntryLimitExceeded(entries.length(), limits.max_entries),
@@ -157,6 +194,7 @@ pub fn evaluate_transfer_manifest(
 ///|
 fn transfer_reason_label(reason : TransferBlockReason) -> String {
   match reason {
+    TransferInvalidLimits => "invalid_limits"
     TransferEmptyPath => "empty_path"
     TransferAbsolutePath(_) => "absolute_path"
     TransferTraversalPath(_) => "traversal_path"
@@ -172,7 +210,37 @@ fn transfer_reason_label(reason : TransferBlockReason) -> String {
     TransferTotalBytesExceeded(_, _) => "total_bytes_limit"
     TransferFileBytesExceeded(_, _, _) => "file_bytes_limit"
     TransferDepthExceeded(_, _, _) => "depth_limit"
+    TransferDestinationSymlink(_) => "destination_symlink"
+    TransferDestinationNotDirectory(_) => "destination_not_directory"
   }
+}
+
+///|
+pub fn validate_transfer_adoption_destination(
+  components : Array[TransferDestinationComponent],
+) -> Result[Unit, @types.ChoirError] {
+  for component in components {
+    match component.kind {
+      TransferDestinationMissing | TransferDestinationDirectory => ()
+      TransferDestinationSymlink =>
+        return Err(
+          @types.ChoirError::validation_error(
+            "sandbox transfer rejected: " +
+            transfer_reason_label(TransferDestinationSymlink(component.path)),
+          ),
+        )
+      TransferDestinationOther =>
+        return Err(
+          @types.ChoirError::validation_error(
+            "sandbox transfer rejected: " +
+            transfer_reason_label(
+              TransferDestinationNotDirectory(component.path),
+            ),
+          ),
+        )
+    }
+  }
+  Ok(())
 }
 
 ///|

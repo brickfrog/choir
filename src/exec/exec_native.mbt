@@ -869,6 +869,945 @@ async fn capture_boxlite_probe_operation(
 }
 
 ///|
+async fn capture_boxlite_fixed_process(
+  program : String,
+  args : Array[String],
+  root : String,
+  extra_env : Map[String, String],
+  timeout_ms : Int,
+) -> Result[@sandbox.BoxLiteProbeCapture, @types.ChoirError] {
+  abort_if_hermetic_test_exec(command_for_program(program, args, Some(root)))
+  let collected = @async.with_timeout_opt(timeout_ms, () => {
+    @process.collect_output_merged(
+      program,
+      args,
+      extra_env~,
+      inherit_env=false,
+      cwd=root,
+    )
+  }) catch {
+    _ =>
+      return Err(
+        @types.ChoirError::transport_error(
+          "BoxLite lifecycle process failed to start or collect output",
+        ),
+      )
+  }
+  match collected {
+    None => Ok({ exit_code: -2, output: "" })
+    Some((exit_code, data)) => {
+      let output = data.text() catch {
+        _ =>
+          return Err(
+            @types.ChoirError::transport_error(
+              "BoxLite lifecycle output was not UTF-8",
+            ),
+          )
+      }
+      Ok({ exit_code, output })
+    }
+  }
+}
+
+///|
+fn boxlite_probe_environment(
+  root : String,
+  api_key : String?,
+) -> Map[String, String] {
+  let environment : Map[String, String] = {
+    "HOME": root,
+    "TMPDIR": root + "/tmp",
+    "PATH": "/usr/local/bin:/usr/bin:/bin",
+    "NO_COLOR": "1",
+  }
+  match api_key {
+    Some(value) => environment["BOXLITE_API_KEY"] = value
+    None => ()
+  }
+  environment
+}
+
+///|
+async fn capture_boxlite_network_case(
+  binary : String,
+  root : String,
+  script : String,
+  security_enabled : Bool,
+) -> Result[@sandbox.BoxLiteProbeCapture, @types.ChoirError] {
+  capture_boxlite_fixed_process(
+    binary,
+    [
+      "--home",
+      root + "/home",
+      "run",
+      "--rm",
+      "--network",
+      "disabled",
+      "--security",
+      if security_enabled {
+        "enable"
+      } else {
+        "disable"
+      },
+      "--cpus",
+      "1",
+      "--memory",
+      "256",
+      "--disk-size",
+      "1",
+      @sandbox.boxlite_probe_image,
+      "/bin/sh",
+      "-c",
+      script,
+    ],
+    root,
+    boxlite_probe_environment(root, None),
+    120000,
+  )
+}
+
+///|
+async fn capture_boxlite_network_evidence(
+  binary : String,
+  root : String,
+  security_enabled : Bool,
+) -> Result[@sandbox.BoxLiteDownstreamEvidence, @types.ChoirError] {
+  let evidence = @sandbox.boxlite_downstream_not_run_evidence()
+  let network_disabled = match
+    capture_boxlite_network_case(
+      binary, root, "if [ -e /sys/class/net/eth0 ]; then exit 41; else echo CHOIR_BOXLITE_NETWORK_DISABLED_OK; fi",
+      security_enabled,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let network_dns = match
+    capture_boxlite_network_case(
+      binary, root, "if nslookup example.com >/dev/null 2>&1; then exit 42; else echo CHOIR_BOXLITE_DNS_DENIED; fi",
+      security_enabled,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let network_tcp = match
+    capture_boxlite_network_case(
+      binary, root, "if nc -z -w 1 1.1.1.1 443 >/dev/null 2>&1; then exit 43; else echo CHOIR_BOXLITE_TCP_DENIED; fi",
+      security_enabled,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let network_udp = match
+    capture_boxlite_network_case(
+      binary, root, "if nc -u -z -w 1 1.1.1.1 53 >/dev/null 2>&1; then exit 44; else echo CHOIR_BOXLITE_UDP_DENIED; fi",
+      security_enabled,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let network_quic = match
+    capture_boxlite_network_case(
+      binary, root, "if nc -u -z -w 1 1.1.1.1 443 >/dev/null 2>&1; then exit 45; else echo CHOIR_BOXLITE_QUIC_DENIED; fi",
+      security_enabled,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let network_host_aliases = match
+    capture_boxlite_network_case(
+      binary, root, "if nslookup host.docker.internal >/dev/null 2>&1 || nslookup host.containers.internal >/dev/null 2>&1 || nslookup host.boxlite.internal >/dev/null 2>&1; then exit 46; else echo CHOIR_BOXLITE_HOST_ALIASES_DENIED; fi",
+      security_enabled,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let network_choir_socket = match
+    capture_boxlite_network_case(
+      binary, root, "if [ -e /run/choir.sock ] || [ -e /tmp/choir.sock ]; then exit 47; else echo CHOIR_BOXLITE_CHOIR_SOCKET_DENIED; fi",
+      security_enabled,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let network_runtime_socket = match
+    capture_boxlite_network_case(
+      binary, root, "if [ -e /run/docker.sock ] || [ -e /run/containerd/containerd.sock ] || [ -e /var/run/docker.sock ]; then exit 48; else echo CHOIR_BOXLITE_RUNTIME_SOCKET_DENIED; fi",
+      security_enabled,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  Ok({
+    ..evidence,
+    network_disabled,
+    network_dns,
+    network_tcp,
+    network_udp,
+    network_quic,
+    network_host_aliases,
+    network_choir_socket,
+    network_runtime_socket,
+  })
+}
+
+///|
+priv struct BoxLiteProbeServer {
+  pid : Int
+  url : String
+  api_key : String
+}
+
+///|
+fn boxlite_json_string_field(body : String, key : String) -> String? {
+  let parsed = @json.parse(body) catch { _ => return None }
+  guard parsed is Object(fields) else { return None }
+  match fields.get(key) {
+    Some(String(value)) => Some(value)
+    _ => None
+  }
+}
+
+///|
+fn boxlite_pass_capture(marker : String) -> @sandbox.BoxLiteProbeCapture {
+  { exit_code: 0, output: marker + "\n" }
+}
+
+///|
+fn boxlite_failed_capture(
+  capture : @sandbox.BoxLiteProbeCapture,
+  label : String,
+) -> @sandbox.BoxLiteProbeCapture {
+  {
+    exit_code: if capture.exit_code == 0 {
+      1
+    } else {
+      capture.exit_code
+    },
+    output: label + ": " + capture.output,
+  }
+}
+
+///|
+async fn capture_boxlite_curl(
+  root : String,
+  args : Array[String],
+) -> Result[@sandbox.BoxLiteProbeCapture, @types.ChoirError] {
+  capture_boxlite_fixed_process(
+    "/usr/bin/curl",
+    args,
+    root,
+    boxlite_probe_environment(root, None),
+    30000,
+  )
+}
+
+///|
+async fn capture_boxlite_authorized_http(
+  server : BoxLiteProbeServer,
+  root : String,
+  http_method : String,
+  path : String,
+  body : String?,
+) -> Result[@sandbox.BoxLiteProbeCapture, @types.ChoirError] {
+  let args : Array[String] = [
+    "-fsS",
+    "--max-time",
+    "20",
+    "-X",
+    http_method,
+    "-H",
+    "Authorization: Bearer " + server.api_key,
+  ]
+  match body {
+    Some(value) => {
+      args.push("-H")
+      args.push("Content-Type: application/json")
+      args.push("--data-binary")
+      args.push(value)
+    }
+    None => ()
+  }
+  args.push(server.url + path)
+  capture_boxlite_curl(root, args)
+}
+
+///|
+async fn start_boxlite_probe_server(
+  binary : String,
+  root : String,
+) -> Result[BoxLiteProbeServer, @types.ChoirError] {
+  let port = 21000 + @sys.get_pid() % 20000
+  let url = "http://127.0.0.1:" + port.to_string()
+  let api_key = "choir-boxlite-probe-" + @sys.get_pid().to_string()
+  let home = root + "/server-home"
+  if !@sys.create_dir_all(home) {
+    return Err(
+      @types.ChoirError::workspace_error(
+        "cannot create dedicated BoxLite server home",
+      ),
+    )
+  }
+  let args = [
+    "--home",
+    home,
+    "serve",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    port.to_string(),
+    "--api-key",
+    api_key,
+  ]
+  abort_if_hermetic_test_exec(command_for_program(binary, args, Some(root)))
+  let pid = @process.spawn_orphan(
+    binary,
+    args[:],
+    extra_env=boxlite_probe_environment(root, None),
+    inherit_env=false,
+    cwd=root,
+  ) catch {
+    _ =>
+      return Err(
+        @types.ChoirError::transport_error(
+          "BoxLite probe server failed to start",
+        ),
+      )
+  }
+  let server : BoxLiteProbeServer = { pid, url, api_key }
+  for attempt = 0; attempt < 40; attempt = attempt + 1 {
+    let ready = match
+      capture_boxlite_curl(root, ["-fsS", "--max-time", "1", url + "/v1/config"]) {
+      Ok(value) => value
+      Err(error) => {
+        @sys.kill_server_pid_sequence_best_effort(pid)
+        return Err(error)
+      }
+    }
+    if ready.exit_code == 0 &&
+      ready.output.contains("\"clone_enabled\":true") &&
+      ready.output.contains("\"snapshots_enabled\":true") {
+      return Ok(server)
+    }
+    @async.sleep(100)
+  }
+  @sys.kill_server_pid_sequence_best_effort(pid)
+  Err(@types.ChoirError::timeout("BoxLite probe server readiness"))
+}
+
+///|
+fn stop_boxlite_probe_server(server : BoxLiteProbeServer) -> Unit {
+  @sys.kill_server_pid_sequence_best_effort(server.pid)
+}
+
+///|
+async fn capture_boxlite_remote_cli(
+  binary : String,
+  server : BoxLiteProbeServer,
+  root : String,
+  command_args : Array[String],
+  timeout_ms : Int,
+) -> Result[@sandbox.BoxLiteProbeCapture, @types.ChoirError] {
+  let args : Array[String] = [
+    "--home",
+    root + "/client-home",
+    "--url",
+    server.url,
+  ]
+  for arg in command_args {
+    args.push(arg)
+  }
+  capture_boxlite_fixed_process(
+    binary,
+    args,
+    root,
+    boxlite_probe_environment(root, Some(server.api_key)),
+    timeout_ms,
+  )
+}
+
+///|
+fn boxlite_create_body(name : String, network_disabled : Bool) -> String {
+  let network : Map[String, Json] = {
+    "mode": if network_disabled {
+      "disabled".to_json()
+    } else {
+      "enabled".to_json()
+    },
+    "allow_net": if network_disabled {
+      ([] : Array[String]).to_json()
+    } else {
+      ["127.0.0.1"].to_json()
+    },
+  }
+  let body : Map[String, Json] = {
+    "name": name.to_json(),
+    "image": @sandbox.boxlite_probe_image.to_json(),
+    "cpus": (1 : Int).to_json(),
+    "memory_mib": (256 : Int).to_json(),
+    "disk_size_gb": (1 : Int).to_json(),
+    "entrypoint": ["/bin/sh"].to_json(),
+    "cmd": ["-c", "while :; do sleep 60; done"].to_json(),
+    "network": network.to_json(),
+    "auto_remove": false.to_json(),
+    "detach": true.to_json(),
+  }
+  body.to_json().stringify(indent=0)
+}
+
+///|
+fn boxlite_clone_body(name : String) -> String {
+  let body : Map[String, Json] = { "name": name.to_json() }
+  body.to_json().stringify(indent=0)
+}
+
+///|
+fn boxlite_exec_body(command : String, args : Array[String]) -> String {
+  let body : Map[String, Json] = {
+    "command": command.to_json(),
+    "args": args.to_json(),
+    "tty": false.to_json(),
+  }
+  body.to_json().stringify(indent=0)
+}
+
+///|
+fn boxlite_signal_body(signal : Int) -> String {
+  let body : Map[String, Json] = { "signal": signal.to_json() }
+  body.to_json().stringify(indent=0)
+}
+
+///|
+test "BoxLite REST create body fixes security-relevant resource policy" {
+  let body = boxlite_create_body("probe", true)
+  assert_true(body.contains("\"mode\":\"disabled\""))
+  assert_true(body.contains("\"cpus\":1"))
+  assert_true(body.contains("\"memory_mib\":256"))
+  assert_true(body.contains("\"disk_size_gb\":1"))
+  assert_false(body.contains("rootfs_path"))
+  assert_false(body.contains("security"))
+  assert_false(body.contains("volume"))
+}
+
+///|
+test "BoxLite probe environment starts from an explicit narrow map" {
+  let environment = boxlite_probe_environment("/tmp/probe", Some("key"))
+  assert_eq(environment.length(), 5)
+  assert_eq(environment["HOME"], "/tmp/probe")
+  assert_eq(environment["BOXLITE_API_KEY"], "key")
+  assert_false(environment.contains("SSH_AUTH_SOCK"))
+  assert_false(environment.contains("DOCKER_HOST"))
+}
+
+///|
+fn boxlite_lifecycle_failure_evidence(
+  capture : @sandbox.BoxLiteProbeCapture,
+  label : String,
+) -> @sandbox.BoxLiteDownstreamEvidence {
+  let evidence = @sandbox.boxlite_downstream_not_run_evidence()
+  let failed = boxlite_failed_capture(capture, label)
+  {
+    ..evidence,
+    clone_isolation: failed,
+    transfer_lifecycle: failed,
+    attach_signal_kill: failed,
+    restart_recovery: failed,
+    read_only_boundary: failed,
+  }
+}
+
+///|
+async fn capture_boxlite_lifecycle_evidence(
+  binary : String,
+  root : String,
+  network_disabled : Bool,
+) -> Result[@sandbox.BoxLiteDownstreamEvidence, @types.ChoirError] {
+  let server = match start_boxlite_probe_server(binary, root) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let active_server = @ref.new(server)
+  defer stop_boxlite_probe_server(active_server.val)
+  let unauthenticated = match
+    capture_boxlite_curl(root, [
+      "-sS",
+      "--max-time",
+      "5",
+      "-o",
+      "/dev/null",
+      "-w",
+      "%{http_code}",
+      server.url + "/v1/boxes",
+    ]) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if unauthenticated.exit_code != 0 ||
+    unauthenticated.output.trim().to_owned() != "401" {
+    return Ok(
+      boxlite_lifecycle_failure_evidence(
+        unauthenticated, "unauthenticated mutation route was not denied",
+      ),
+    )
+  }
+  let base_name = "choir-base-" + @sys.get_pid().to_string()
+  let created = match
+    capture_boxlite_authorized_http(
+      server,
+      root,
+      "POST",
+      "/v1/boxes",
+      Some(boxlite_create_body(base_name, network_disabled)),
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let base_id = match boxlite_json_string_field(created.output, "box_id") {
+    Some(value) if created.exit_code == 0 => value
+    _ =>
+      return Ok(
+        boxlite_lifecycle_failure_evidence(created, "prepared base creation"),
+      )
+  }
+  let started_base = match
+    capture_boxlite_authorized_http(
+      server,
+      root,
+      "POST",
+      "/v1/boxes/" + base_id + "/start",
+      None,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if started_base.exit_code != 0 {
+    return Ok(
+      boxlite_lifecycle_failure_evidence(started_base, "prepared base start"),
+    )
+  }
+  let input_root = root + "/transfer-in"
+  if !@sys.create_dir_all(input_root) ||
+    !@sys.write_file_sync(
+      input_root + "/seed.txt",
+      "CHOIR_BOXLITE_TRANSFER_SEED\n",
+    ) {
+    return Err(
+      @types.ChoirError::workspace_error(
+        "cannot prepare BoxLite transfer staging input",
+      ),
+    )
+  }
+  // Seed the persistent guest filesystem independently of the transfer API.
+  // Transfer conformance is measured below and must not prevent the remaining
+  // lifecycle operations from being exercised.
+  let seed_base = match
+    capture_boxlite_remote_cli(
+      binary,
+      server,
+      root,
+      [
+        "exec", base_id, "--", "/bin/sh", "-c", "mkdir -p /root/choir-probe && printf '%s\\n' CHOIR_BOXLITE_TRANSFER_SEED > /root/choir-probe/seed.txt",
+      ],
+      30000,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if seed_base.exit_code != 0 {
+    return Ok(
+      boxlite_lifecycle_failure_evidence(seed_base, "prepared base seed"),
+    )
+  }
+  let stopped_base = match
+    capture_boxlite_authorized_http(
+      server,
+      root,
+      "POST",
+      "/v1/boxes/" + base_id + "/stop",
+      None,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if stopped_base.exit_code != 0 {
+    return Ok(
+      boxlite_lifecycle_failure_evidence(stopped_base, "prepared base stop"),
+    )
+  }
+  let clone_a_capture = match
+    capture_boxlite_authorized_http(
+      server,
+      root,
+      "POST",
+      "/v1/boxes/" + base_id + "/clone",
+      Some(boxlite_clone_body("choir-clone-a-" + @sys.get_pid().to_string())),
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let clone_a = match
+    boxlite_json_string_field(clone_a_capture.output, "box_id") {
+    Some(value) if clone_a_capture.exit_code == 0 => value
+    _ =>
+      return Ok(
+        boxlite_lifecycle_failure_evidence(clone_a_capture, "first clone"),
+      )
+  }
+  let clone_b_capture = match
+    capture_boxlite_authorized_http(
+      server,
+      root,
+      "POST",
+      "/v1/boxes/" + base_id + "/clone",
+      Some(boxlite_clone_body("choir-clone-b-" + @sys.get_pid().to_string())),
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let clone_b = match
+    boxlite_json_string_field(clone_b_capture.output, "box_id") {
+    Some(value) if clone_b_capture.exit_code == 0 => value
+    _ =>
+      return Ok(
+        boxlite_lifecycle_failure_evidence(clone_b_capture, "second clone"),
+      )
+  }
+  for clone_id in [clone_a, clone_b] {
+    let started = match
+      capture_boxlite_authorized_http(
+        server,
+        root,
+        "POST",
+        "/v1/boxes/" + clone_id + "/start",
+        None,
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    if started.exit_code != 0 {
+      return Ok(boxlite_lifecycle_failure_evidence(started, "clone start"))
+    }
+  }
+  let attached = match
+    capture_boxlite_remote_cli(
+      binary,
+      server,
+      root,
+      ["exec", clone_a, "--", "/bin/echo", "CHOIR_BOXLITE_ATTACH_OK"],
+      30000,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if attached.exit_code != 0 ||
+    !attached.output.contains("CHOIR_BOXLITE_ATTACH_OK") {
+    return Ok(boxlite_lifecycle_failure_evidence(attached, "attach stream"))
+  }
+  let transfer_marker = input_root + "/transfer-in.txt"
+  if !@sys.write_file_sync(transfer_marker, "CHOIR_BOXLITE_TRANSFER_IN\n") {
+    return Err(
+      @types.ChoirError::workspace_error(
+        "cannot prepare BoxLite transfer input",
+      ),
+    )
+  }
+  let copy_in = match
+    capture_boxlite_remote_cli(
+      binary,
+      server,
+      root,
+      ["cp", transfer_marker, clone_a + ":/root/choir-probe/transfer-in.txt"],
+      30000,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let copy_in_check = match
+    capture_boxlite_remote_cli(
+      binary,
+      server,
+      root,
+      ["exec", clone_a, "--", "/bin/cat", "/root/choir-probe/transfer-in.txt"],
+      30000,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let clone_a_write = match
+    capture_boxlite_remote_cli(
+      binary,
+      server,
+      root,
+      [
+        "exec", clone_a, "--", "/bin/sh", "-c", "printf '%s\\n' CHOIR_BOXLITE_CLONE_A_ONLY > /root/choir-probe/clone-a-only.txt",
+      ],
+      30000,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let clone_b_check = match
+    capture_boxlite_remote_cli(
+      binary,
+      server,
+      root,
+      [
+        "exec", clone_b, "--", "/bin/sh", "-c", "if [ -e /root/choir-probe/clone-a-only.txt ]; then exit 51; else echo CHOIR_BOXLITE_CLONE_B_ISOLATED; fi",
+      ],
+      30000,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let clone_a_check = match
+    capture_boxlite_remote_cli(
+      binary,
+      server,
+      root,
+      ["exec", clone_a, "--", "/bin/cat", "/root/choir-probe/clone-a-only.txt"],
+      30000,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let clone_isolation = if clone_a_write.exit_code != 0 ||
+    clone_a_check.exit_code != 0 ||
+    !clone_a_check.output.contains("CHOIR_BOXLITE_CLONE_A_ONLY") ||
+    clone_b_check.exit_code != 0 ||
+    !clone_b_check.output.contains("CHOIR_BOXLITE_CLONE_B_ISOLATED") {
+    boxlite_failed_capture(
+      if clone_a_write.exit_code != 0 {
+        clone_a_write
+      } else if clone_a_check.exit_code != 0 {
+        clone_a_check
+      } else {
+        clone_b_check
+      },
+      "clone isolation",
+    )
+  } else {
+    boxlite_pass_capture("CHOIR_BOXLITE_CLONE_OK")
+  }
+  let copy_out_root = root + "/transfer-out"
+  if !@sys.create_dir_all(copy_out_root) {
+    return Err(
+      @types.ChoirError::workspace_error(
+        "cannot create BoxLite transfer output staging root",
+      ),
+    )
+  }
+  let copy_out = match
+    capture_boxlite_remote_cli(
+      binary,
+      server,
+      root,
+      [
+        "cp",
+        clone_a + ":/root/choir-probe/seed.txt",
+        copy_out_root + "/seed.txt",
+      ],
+      30000,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let transfer_lifecycle = if copy_in.exit_code != 0 ||
+    copy_in_check.exit_code != 0 ||
+    !copy_in_check.output.contains("CHOIR_BOXLITE_TRANSFER_IN") ||
+    copy_out.exit_code != 0 ||
+    @sys.read_file(copy_out_root + "/seed.txt") !=
+    "CHOIR_BOXLITE_TRANSFER_SEED\n" {
+    boxlite_failed_capture(
+      if copy_in.exit_code != 0 {
+        copy_in
+      } else if copy_in_check.exit_code != 0 ||
+        !copy_in_check.output.contains("CHOIR_BOXLITE_TRANSFER_IN") {
+        copy_in_check
+      } else {
+        copy_out
+      },
+      "transfer lifecycle",
+    )
+  } else {
+    boxlite_pass_capture("CHOIR_BOXLITE_TRANSFER_OK")
+  }
+  let execution = match
+    capture_boxlite_authorized_http(
+      server,
+      root,
+      "POST",
+      "/v1/boxes/" + clone_a + "/exec",
+      Some(
+        boxlite_exec_body("/bin/sh", [
+          "-c", "trap 'exit 0' TERM; while :; do sleep 1; done",
+        ]),
+      ),
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let execution_id = match
+    boxlite_json_string_field(execution.output, "execution_id") {
+    Some(value) if execution.exit_code == 0 => value
+    _ =>
+      return Ok(
+        boxlite_lifecycle_failure_evidence(execution, "signal execution start"),
+      )
+  }
+  let signaled = match
+    capture_boxlite_authorized_http(
+      server,
+      root,
+      "POST",
+      "/v1/boxes/" + clone_a + "/executions/" + execution_id + "/signal",
+      Some(boxlite_signal_body(15)),
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let kill_execution = match
+    capture_boxlite_authorized_http(
+      server,
+      root,
+      "POST",
+      "/v1/boxes/" + clone_a + "/exec",
+      Some(boxlite_exec_body("/bin/sh", ["-c", "while :; do sleep 1; done"])),
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let kill_execution_id = match
+    boxlite_json_string_field(kill_execution.output, "execution_id") {
+    Some(value) if kill_execution.exit_code == 0 => value
+    _ =>
+      return Ok(
+        boxlite_lifecycle_failure_evidence(
+          kill_execution, "kill execution start",
+        ),
+      )
+  }
+  let killed = match
+    capture_boxlite_authorized_http(
+      server,
+      root,
+      "DELETE",
+      "/v1/boxes/" + clone_a + "/executions/" + kill_execution_id,
+      None,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if signaled.exit_code != 0 || killed.exit_code != 0 {
+    return Ok(
+      boxlite_lifecycle_failure_evidence(
+        if signaled.exit_code != 0 {
+          signaled
+        } else {
+          killed
+        },
+        "signal or kill",
+      ),
+    )
+  }
+  let host_canary = root + "/host-read-only-canary"
+  if !@sys.write_file_sync(host_canary, "HOST_ONLY\n") {
+    return Err(
+      @types.ChoirError::workspace_error(
+        "cannot create BoxLite host-boundary canary",
+      ),
+    )
+  }
+  let boundary = match
+    capture_boxlite_remote_cli(
+      binary,
+      server,
+      root,
+      [
+        "exec",
+        clone_a,
+        "--",
+        "/bin/sh",
+        "-c",
+        "if [ -e " +
+        host_canary +
+        "]; then exit 52; else echo CHOIR_BOXLITE_READ_ONLY_OK; fi",
+      ],
+      30000,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if boundary.exit_code != 0 ||
+    !boundary.output.contains("CHOIR_BOXLITE_READ_ONLY_OK") {
+    return Ok(boxlite_lifecycle_failure_evidence(boundary, "host boundary"))
+  }
+  for clone_id in [clone_a, clone_b] {
+    let stopped = match
+      capture_boxlite_authorized_http(
+        server,
+        root,
+        "POST",
+        "/v1/boxes/" + clone_id + "/stop",
+        None,
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    if stopped.exit_code != 0 {
+      return Ok(boxlite_lifecycle_failure_evidence(stopped, "clone stop"))
+    }
+  }
+  stop_boxlite_probe_server(server)
+  @async.sleep(400)
+  let restarted_server = match start_boxlite_probe_server(binary, root) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  active_server.val = restarted_server
+  let readopted = match
+    capture_boxlite_authorized_http(
+      restarted_server,
+      root,
+      "GET",
+      "/v1/boxes/" + clone_a,
+      None,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if readopted.exit_code != 0 || !readopted.output.contains(clone_a) {
+    return Ok(
+      boxlite_lifecycle_failure_evidence(readopted, "restart re-adoption"),
+    )
+  }
+  Ok({
+    ..@sandbox.boxlite_downstream_not_run_evidence(),
+    clone_isolation,
+    transfer_lifecycle,
+    attach_signal_kill: boxlite_pass_capture("CHOIR_BOXLITE_PROCESS_CONTROL_OK"),
+    restart_recovery: boxlite_pass_capture("CHOIR_BOXLITE_RESTART_RECOVERY_OK"),
+    read_only_boundary: boxlite_pass_capture("CHOIR_BOXLITE_READ_ONLY_OK"),
+  })
+}
+
+///|
+fn merge_boxlite_downstream_evidence(
+  lifecycle : @sandbox.BoxLiteDownstreamEvidence,
+  network : @sandbox.BoxLiteDownstreamEvidence,
+) -> @sandbox.BoxLiteDownstreamEvidence {
+  {
+    ..lifecycle,
+    network_disabled: network.network_disabled,
+    network_dns: network.network_dns,
+    network_tcp: network.network_tcp,
+    network_udp: network.network_udp,
+    network_quic: network.network_quic,
+    network_host_aliases: network.network_host_aliases,
+    network_choir_socket: network.network_choir_socket,
+    network_runtime_socket: network.network_runtime_socket,
+  }
+}
+
+///|
 /// Execute only the fixed, pinned BoxLite release probe matrix.
 pub async fn capture_boxlite_live_evidence(
   dedicated_root : String,
@@ -905,6 +1844,7 @@ pub async fn capture_boxlite_live_evidence(
       image_pull: not_run,
       secure_boot: not_run,
       insecure_boot_diagnostic: not_run,
+      downstream: @sandbox.boxlite_downstream_not_run_evidence(),
     })
   }
   let version = match
@@ -926,6 +1866,7 @@ pub async fn capture_boxlite_live_evidence(
       image_pull: not_run,
       secure_boot: not_run,
       insecure_boot_diagnostic: not_run,
+      downstream: @sandbox.boxlite_downstream_not_run_evidence(),
     })
   }
   let info = match
@@ -946,6 +1887,7 @@ pub async fn capture_boxlite_live_evidence(
       image_pull: not_run,
       secure_boot: not_run,
       insecure_boot_diagnostic: not_run,
+      downstream: @sandbox.boxlite_downstream_not_run_evidence(),
     })
   }
   let image_pull = match
@@ -966,6 +1908,7 @@ pub async fn capture_boxlite_live_evidence(
       image_pull,
       secure_boot: not_run,
       insecure_boot_diagnostic: not_run,
+      downstream: @sandbox.boxlite_downstream_not_run_evidence(),
     })
   }
   let secure_boot = match
@@ -988,6 +1931,32 @@ pub async fn capture_boxlite_live_evidence(
     Ok(capture) => capture
     Err(error) => return Err(error)
   }
+  let downstream = if secure_boot.exit_code == 0 &&
+    secure_boot.output.contains("CHOIR_BOXLITE_SECURE_OK") {
+    let lifecycle = match
+      capture_boxlite_lifecycle_evidence(binary, dedicated_root, true) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    let network = match
+      capture_boxlite_network_evidence(binary, dedicated_root, true) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    merge_boxlite_downstream_evidence(lifecycle, network)
+  } else {
+    let lifecycle = match
+      capture_boxlite_lifecycle_evidence(binary, dedicated_root, false) {
+      Ok(value) => value
+      Err(_) => @sandbox.boxlite_downstream_not_run_evidence()
+    }
+    let network = match
+      capture_boxlite_network_evidence(binary, dedicated_root, false) {
+      Ok(value) => value
+      Err(_) => @sandbox.boxlite_downstream_not_run_evidence()
+    }
+    merge_boxlite_downstream_evidence(lifecycle, network)
+  }
   Ok({
     executable_hash,
     version,
@@ -995,6 +1964,7 @@ pub async fn capture_boxlite_live_evidence(
     image_pull,
     secure_boot,
     insecure_boot_diagnostic,
+    downstream,
   })
 }
 

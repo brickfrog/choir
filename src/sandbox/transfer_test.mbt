@@ -34,8 +34,8 @@ test "transfer accepts bounded regular files and directories" {
   )
   match decision {
     @sandbox.TransferManifestDecision::TransferManifestAccepted(manifest) => {
-      assert_eq(manifest.total_bytes, 12L)
-      assert_eq(manifest.entries.length(), 2)
+      assert_eq(manifest.total_bytes(), 12L)
+      assert_eq(manifest.entries().length(), 2)
     }
     _ => fail("bounded manifest was rejected")
   }
@@ -137,5 +137,122 @@ test "transfer rejects links special files and expansion bounds" {
       },
     ]),
     @sandbox.TransferBlockReason::TransferDepthExceeded("a/b/c/d", 4, 3),
+  )
+  assert_eq(
+    rejected([
+      {
+        path: "a",
+        kind: @sandbox.TransferEntryKind::TransferFile,
+        size_bytes: 16L,
+      },
+      {
+        path: "b",
+        kind: @sandbox.TransferEntryKind::TransferFile,
+        size_bytes: 16L,
+      },
+      {
+        path: "c",
+        kind: @sandbox.TransferEntryKind::TransferFile,
+        size_bytes: 1L,
+      },
+    ]),
+    @sandbox.TransferBlockReason::TransferTotalBytesExceeded(33L, 32L),
+  )
+  assert_eq(
+    rejected([
+      {
+        path: "a",
+        kind: @sandbox.TransferEntryKind::TransferFile,
+        size_bytes: 0L,
+      },
+      {
+        path: "b",
+        kind: @sandbox.TransferEntryKind::TransferFile,
+        size_bytes: 0L,
+      },
+      {
+        path: "c",
+        kind: @sandbox.TransferEntryKind::TransferFile,
+        size_bytes: 0L,
+      },
+      {
+        path: "d",
+        kind: @sandbox.TransferEntryKind::TransferFile,
+        size_bytes: 0L,
+      },
+      {
+        path: "e",
+        kind: @sandbox.TransferEntryKind::TransferFile,
+        size_bytes: 0L,
+      },
+    ]),
+    @sandbox.TransferBlockReason::TransferEntryLimitExceeded(5, 4),
+  )
+}
+
+///|
+test "transfer rejects every link and special entry class" {
+  let kinds = [
+    @sandbox.TransferEntryKind::TransferSymlink,
+    @sandbox.TransferEntryKind::TransferHardlink,
+    @sandbox.TransferEntryKind::TransferDevice,
+    @sandbox.TransferEntryKind::TransferFifo,
+    @sandbox.TransferEntryKind::TransferSocket,
+  ]
+  for kind in kinds {
+    assert_eq(
+      rejected([{ path: "entry", kind, size_bytes: 0L }]),
+      @sandbox.TransferBlockReason::TransferUnsupportedEntryType("entry", kind),
+    )
+  }
+}
+
+///|
+test "transfer rejects invalid bounds and destination symlink traversal" {
+  assert_eq(
+    @sandbox.evaluate_transfer_manifest([], {
+      max_entries: -1,
+      max_total_bytes: 32L,
+      max_file_bytes: 16L,
+      max_depth: 3,
+    }),
+    @sandbox.TransferManifestDecision::TransferManifestRejected(
+      @sandbox.TransferBlockReason::TransferInvalidLimits,
+    ),
+  )
+  assert_true(
+    @sandbox.validate_transfer_adoption_destination([
+      {
+        path: "artifacts",
+        kind: @sandbox.TransferDestinationKind::TransferDestinationDirectory,
+      },
+      {
+        path: "artifacts/result",
+        kind: @sandbox.TransferDestinationKind::TransferDestinationSymlink,
+      },
+    ])
+    is Err(_),
+  )
+  assert_true(
+    @sandbox.validate_transfer_adoption_destination([
+      {
+        path: "artifacts",
+        kind: @sandbox.TransferDestinationKind::TransferDestinationDirectory,
+      },
+      {
+        path: "artifacts/result",
+        kind: @sandbox.TransferDestinationKind::TransferDestinationMissing,
+      },
+    ])
+    is Ok(_),
+  )
+  assert_true(
+    @sandbox.validate_transfer_adoption_destination([
+      {
+        path: "artifacts",
+        kind: @sandbox.TransferDestinationKind::TransferDestinationOther,
+      },
+    ])
+    is Err(_),
   )
 }

@@ -1,6 +1,8 @@
 import {
+  "choir/src/control",
   "choir/src/types",
   "moonbitlang/core/json",
+  "moonbitlang/core/ref",
 }
 
 options(

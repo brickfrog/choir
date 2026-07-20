@@ -48,6 +48,7 @@ pub(all) struct BoxLiteLiveEvidence {
   image_pull : BoxLiteProbeCapture
   secure_boot : BoxLiteProbeCapture
   insecure_boot_diagnostic : BoxLiteProbeCapture
+  downstream : BoxLiteDownstreamEvidence
 } derive(Debug, Eq)
 
 ///|
@@ -60,7 +61,7 @@ pub(all) enum BoxLiteProbeCase {
   BoxLiteCloneIsolation
   BoxLiteTransferLifecycle
   BoxLiteAttachSignalKill
-  BoxLiteRestartReadoption
+  BoxLiteRestartRecovery
   BoxLiteReadOnlyBoundary
   BoxLiteNetworkDisabled
   BoxLiteNetworkDns
@@ -83,7 +84,8 @@ pub(all) enum BoxLiteBlockReason {
   BoxLiteSecureBootFailed(Int)
   BoxLiteInsecureDiagnosticFailed(Int)
   BoxLitePrerequisiteFailed
-  BoxLiteRemainingLifecycleProbesNotImplemented
+  BoxLiteDownstreamProbeNotRun(BoxLiteProbeCase)
+  BoxLiteDownstreamProbeFailed(BoxLiteProbeCase, Int)
   BoxLiteNotRunAfterSecureBootFailure
 } derive(Debug, Eq, ToJson, FromJson)
 
@@ -92,6 +94,7 @@ pub(all) enum BoxLiteProbeCaseStatus {
   BoxLiteCasePassed
   BoxLiteCaseFailed(BoxLiteBlockReason)
   BoxLiteCaseDiagnosticPassed
+  BoxLiteCaseDiagnosticFailed(BoxLiteBlockReason)
   BoxLiteCaseNotRun(BoxLiteBlockReason)
 } derive(Debug, Eq, ToJson, FromJson)
 
@@ -288,34 +291,41 @@ pub fn evaluate_boxlite_live_evidence(
       observed_exit_code: Some(evidence.insecure_boot_diagnostic.exit_code),
     })
   }
-  let downstream = [
-    BoxLiteCloneIsolation,
-    BoxLiteTransferLifecycle,
-    BoxLiteAttachSignalKill,
-    BoxLiteRestartReadoption,
-    BoxLiteReadOnlyBoundary,
-    BoxLiteNetworkDisabled,
-    BoxLiteNetworkDns,
-    BoxLiteNetworkTcp,
-    BoxLiteNetworkUdp,
-    BoxLiteNetworkQuic,
-    BoxLiteNetworkHostAliases,
-    BoxLiteNetworkChoirSocket,
-    BoxLiteNetworkRuntimeSocket,
-  ]
   if !secure_ok {
-    for case_id in downstream {
-      cases.push(not_run_after_secure_failure(case_id))
+    for item in boxlite_downstream_cases(evidence.downstream) {
+      let (case_id, capture, marker) = item
+      if capture.exit_code == 0 && capture.output.contains(marker) {
+        cases.push({
+          case_id,
+          status: BoxLiteCaseDiagnosticPassed,
+          observed_exit_code: Some(0),
+        })
+      } else if capture.exit_code != -3 {
+        let reason = BoxLiteDownstreamProbeFailed(case_id, capture.exit_code)
+        cases.push({
+          case_id,
+          status: BoxLiteCaseDiagnosticFailed(reason),
+          observed_exit_code: Some(capture.exit_code),
+        })
+      } else {
+        cases.push(not_run_after_secure_failure(case_id))
+      }
     }
   } else {
-    blockers.push(BoxLiteRemainingLifecycleProbesNotImplemented)
-    for case_id in downstream {
-      cases.push({
-        case_id,
-        status: BoxLiteCaseNotRun(BoxLiteRemainingLifecycleProbesNotImplemented),
-        observed_exit_code: None,
-      })
+    let (downstream_reports, downstream_blockers) = evaluate_boxlite_downstream_evidence(
+      evidence.downstream,
+    )
+    for report in downstream_reports {
+      cases.push(report)
     }
+    for blocker in downstream_blockers {
+      blockers.push(blocker)
+    }
+  }
+  let support = if secure_ok && blockers.length() == 0 {
+    SandboxRuntimeSupported
+  } else {
+    SandboxRuntimeBlockedByConformance
   }
   {
     release_tag: boxlite_release_tag,
@@ -327,7 +337,7 @@ pub fn evaluate_boxlite_live_evidence(
     policy_digest: boxlite_policy_digest,
     security_profile: SandboxSecurityEnabled,
     network_profile: NetworkDisabled,
-    support: SandboxRuntimeBlockedByConformance,
+    support,
     cases,
     blocking_reasons: blockers,
   }
