@@ -34,6 +34,7 @@ options(
     "integration_native_test.mbt": [ "native" ],
     "claude_driver_native.mbt": [ "native" ],
     "boxlite_take_native.mbt": [ "native" ],
+    "git_workspace_native.mbt": [ "native" ],
     "live_zellij_dump_screen_test.mbt": [ "native" ],
     "worktree_gitexclude_test.mbt": [ "native" ],
   },

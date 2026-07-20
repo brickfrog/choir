@@ -787,6 +787,9 @@ pub async fn probe_native_boxlite_mcp(
     #|{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}
     #|{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}
     #|{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"read_file","arguments":{"path":"README.md"}}}
+    #|{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"write_file","arguments":{"path":".choir-live-roundtrip.txt","content":"sandbox mutation\n"}}}
+    #|{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"read_file","arguments":{"path":".choir-live-roundtrip.txt"}}}
+    #|{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"run","arguments":{"argv":["/usr/bin/find","/workspace","-type","l","-printf","%P -> %l\\n"]}}}
   let (stdin_read, stdin_write) = @process.write_to_process() catch {
     _ => return Err(native_boxlite_take_error("MCP probe stdin failed"))
   }
@@ -824,7 +827,7 @@ pub async fn probe_native_boxlite_mcp(
   }
   if exit_code == 0 &&
     output.contains("\"name\":\"read_file\"") &&
-    output.contains("sandbox fixture\\n") &&
+    output.contains("sandbox mutation\\n") &&
     !output.contains(take.prepared.server.config.api_key) {
     Ok(output)
   } else {
@@ -837,23 +840,124 @@ pub async fn copy_native_boxlite_take_result(
   take : NativeBoxLiteTakeSandbox,
 ) -> Result[String, @types.ChoirError] {
   let destination = take.prepared.server.config.root + "/results/" + take.box_id
-  if !@sys.create_dir_all(destination) {
+  if @sys.path_exists(destination) || !@sys.create_dir_all(destination) {
     return Err(native_boxlite_take_error("result root is unavailable"))
+  }
+  let guest_archive = "/root/choir-result.tar"
+  let archived = match
+    capture_native_boxlite_cli(
+      take.prepared.server,
+      [
+        "exec",
+        take.box_id,
+        "--",
+        "/bin/tar",
+        "--format=posix",
+        "-C",
+        "/workspace",
+        "-cf",
+        guest_archive,
+        ".",
+      ],
+      180000,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if archived.exit_code != 0 {
+    return Err(native_boxlite_take_error("result archive failed"))
   }
   let copied = match
     capture_native_boxlite_cli(
       take.prepared.server,
-      ["cp", "--include-parent=false", take.box_id + ":/workspace", destination],
+      ["cp", take.box_id + ":" + guest_archive, destination],
       180000,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
   if copied.exit_code != 0 {
-    Err(native_boxlite_take_error("copy-out failed"))
-  } else {
-    Ok(destination)
+    return Err(
+      native_boxlite_take_error(
+        "copy-out failed: " + copied.output.trim().to_owned(),
+      ),
+    )
   }
+  let archive = destination + "/choir-result.tar"
+  let workspace = destination + "/workspace"
+  if @sys.realpath_native(archive) != Some(archive) ||
+    !@sys.create_dir_all(workspace) {
+    return Err(native_boxlite_take_error("copied result archive is invalid"))
+  }
+  let extracted = @process.collect_output_merged(
+    "/usr/bin/bwrap",
+    [
+      "--unshare-all", "--die-with-parent", "--new-session", "--clearenv", "--setenv",
+      "PATH", "/usr/bin", "--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib",
+      "--symlink", "usr/lib", "/lib64", "--ro-bind", archive, "/input.tar", "--bind",
+      workspace, "/output", "/usr/bin/tar", "--extract", "--file", "/input.tar",
+      "--directory", "/output", "--no-same-owner", "--no-same-permissions",
+    ],
+    extra_env=native_boxlite_environment(take.prepared.server, false),
+    inherit_env=false,
+    cwd=take.prepared.server.config.root,
+  ) catch {
+    _ =>
+      return Err(native_boxlite_take_error("confined result extraction failed"))
+  }
+  if extracted.0 != 0 {
+    return Err(native_boxlite_take_error("confined result extraction failed"))
+  }
+  let special = @process.collect_output_merged(
+    "/usr/bin/find",
+    [
+      workspace, "-xdev", "!", "-type", "d", "!", "-type", "f", "!", "-type",
+      "l", "-print", "-quit",
+    ],
+    extra_env=native_boxlite_environment(take.prepared.server, false),
+    inherit_env=false,
+    cwd=take.prepared.server.config.root,
+  ) catch {
+    _ => return Err(native_boxlite_take_error("result type scan failed"))
+  }
+  let special_output = special.1.text() catch {
+    _ => return Err(native_boxlite_take_error("result type scan is not UTF-8"))
+  }
+  if special.0 != 0 || special_output != "" {
+    return Err(native_boxlite_take_error("result contains a special file"))
+  }
+  let located = @process.collect_output_merged(
+    "/usr/bin/find",
+    [workspace, "-type", "f", "-name", ".choir-source-root", "-print"],
+    extra_env=native_boxlite_environment(take.prepared.server, false),
+    inherit_env=false,
+    cwd=take.prepared.server.config.root,
+  ) catch {
+    _ => return Err(native_boxlite_take_error("result marker lookup failed"))
+  }
+  let output = located.1.text() catch {
+    _ => return Err(native_boxlite_take_error("result marker is not UTF-8"))
+  }
+  let markers : Array[String] = []
+  for line in output.split("\n") {
+    let path = line.trim().to_owned()
+    if path != "" {
+      markers.push(path)
+    }
+  }
+  if located.0 != 0 || markers.length() != 1 {
+    return Err(native_boxlite_take_error("result marker is not unique"))
+  }
+  let marker = markers[0]
+  if !marker.has_prefix(destination + "/") ||
+    @sys.read_file(marker) != take.source_digest.0 + "\n" {
+    return Err(native_boxlite_take_error("result marker is invalid"))
+  }
+  let suffix = "/.choir-source-root"
+  if !marker.has_suffix(suffix) || marker.length() <= suffix.length() {
+    return Err(native_boxlite_take_error("result root is invalid"))
+  }
+  Ok(marker[:marker.length() - suffix.length()].to_owned())
 }
 
 ///|

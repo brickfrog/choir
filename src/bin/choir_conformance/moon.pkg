@@ -4,12 +4,14 @@ import {
   "choir/src/exec",
   "choir/src/harness",
   "choir/src/sandbox",
+  "choir/src/storage",
   "choir/src/sys",
   "choir/src/types",
   "moonbitlang/async",
   "moonbitlang/core/env",
   "moonbitlang/core/json",
   "moonbitlang/core/ref",
+  "moonbitlang/core/encoding/utf8",
 }
 
 pkgtype(kind: "executable")

@@ -272,8 +272,8 @@ async fn exercise_boxlite_take(
   server : @exec.NativeBoxLiteServerHandle,
   active_server : @ref.Ref[@exec.NativeBoxLiteServerHandle],
   moon_home : String,
-  source : String,
-  source_digest : @control.Digest,
+  source : @exec.NativeGitWorkspaceSource,
+  git_config : @exec.NativeGitWorkspaceConfig,
 ) -> Result[Map[String, Json], @types.ChoirError] {
   let prepared = match
     @exec.prepare_native_boxlite_environment(
@@ -289,8 +289,8 @@ async fn exercise_boxlite_take(
     @exec.clone_native_boxlite_take(
       prepared,
       "choir-take-live-" + @sys.get_pid().to_string(),
-      source,
-      source_digest,
+      source.root,
+      source.source_digest,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -324,6 +324,43 @@ async fn exercise_boxlite_take(
     Ok(value) => value
     Err(error) => return Err(error)
   }
+  let result_root = match @exec.copy_native_boxlite_take_result(take) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if @sys.read_file(result_root + "/.choir-live-roundtrip.txt") !=
+    "sandbox mutation\n" {
+    return Err(
+      @types.ChoirError::workspace_error("sandbox result did not round-trip"),
+    )
+  }
+  let (candidate, path_evidence) = match
+    @exec.normalize_native_git_candidate(
+      git_config,
+      "take-live-" + @sys.get_pid().to_string(),
+      @control.GoalId("live-goal"),
+      @control.PartId("live-part"),
+      @control.TakeId("live-take"),
+      source.commit_oid,
+      result_root,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if candidate.base_commit_oid != source.commit_oid ||
+    candidate.tree_oid == source.tree_oid ||
+    candidate.changed_paths != [@control.RepoPath(".choir-live-roundtrip.txt")] ||
+    path_evidence.symlink_prefix_paths != [@control.RepoPath("AGENTS.md")] ||
+    path_evidence.normalization_collision_paths.length() != 0 {
+    return Err(
+      @types.ChoirError::git_error(
+        "sandbox result did not produce the exact candidate: " +
+        candidate.to_json().stringify(indent=0) +
+        " evidence=" +
+        path_evidence.to_json().stringify(indent=0),
+      ),
+    )
+  }
   match @exec.destroy_native_boxlite_take(take) {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -335,26 +372,79 @@ async fn exercise_boxlite_take(
     "tool_manifest_digest": prepared.tool_manifest_digest.to_json(),
     "tool_count": @sandbox.boxlite_take_mcp_tools().length().to_json(),
     "bridge_argument_count": arguments.length().to_json(),
-    "bridge_probe": bridge_probe.to_json(),
+    "bridge_probe_digest": @storage.artifact_digest(@utf8.encode(bridge_probe)).to_json(),
+    "result_round_trip": true.to_json(),
+    "candidate_commit": candidate.commit_oid.to_json(),
+    "candidate_tree": candidate.tree_oid.to_json(),
+    "changed_paths": candidate.changed_paths.to_json(),
     "inspection": inspected.to_json(),
   })
 }
 
 ///|
+async fn capture_live_git(
+  repository_root : String,
+  arguments : Array[String],
+) -> String {
+  @exec.capture_stdout_with_cwd(
+    "/usr/bin/git",
+    arguments,
+    Some(repository_root),
+  )
+}
+
+///|
 async fn run_boxlite_take_live() -> Int {
   let root = "/tmp/choir-v2-take-live-" + @sys.get_pid().to_string()
-  let source = root + "/staging/source"
-  let source_digest = @control.Digest(
-    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  )
-  if !@sys.create_dir_all(source) ||
-    !@sys.write_file_sync(
-      source + "/.choir-source-root",
-      source_digest.0 + "\n",
-    ) ||
-    !@sys.write_file_sync(source + "/README.md", "sandbox fixture\n") {
+  let repository_root = match @sys.realpath_native(".") {
+    Some(value) => value
+    None => {
+      @sys.write_stderr("repository root is unavailable\n")
+      return 1
+    }
+  }
+  let staging_root = root + "/staging"
+  if !@sys.create_dir_all(staging_root) {
     @sys.write_stderr("failed to create dedicated Take sandbox root\n")
     return 1
+  }
+  let head = capture_live_git(repository_root, ["rev-parse", "--verify", "HEAD"])
+    .trim()
+    .to_owned()
+  let tree = capture_live_git(repository_root, [
+      "show", "-s", "--format=%T", "--no-show-signature", head,
+    ])
+    .trim()
+    .to_owned()
+  if head.length() != 40 || tree.length() != 40 {
+    @sys.write_stderr("repository source identity is invalid\n")
+    ignore(@sys.rm_rf(root))
+    return 1
+  }
+  let host_state_before = capture_live_git(repository_root, [
+    "status", "--porcelain=v2", "--untracked-files=all",
+  ])
+  let source_digest = @storage.artifact_digest(
+    @utf8.encode("choir.live-source.v1\u{00}" + head + "\u{00}" + tree),
+  )
+  let git_config : @exec.NativeGitWorkspaceConfig = {
+    repository_root,
+    staging_root,
+  }
+  let source = match
+    @exec.stage_native_git_workspace(
+      git_config,
+      "source",
+      @control.GitOid(head),
+      @control.GitOid(tree),
+      source_digest,
+    ) {
+    Ok(value) => value
+    Err(error) => {
+      @sys.write_stderr(error.message() + "\n")
+      ignore(@sys.rm_rf(root))
+      return 1
+    }
   }
   let binary = match @sys.getenv("CHOIR_BOXLITE_BINARY") {
     Some(value) => value
@@ -393,10 +483,22 @@ async fn run_boxlite_take_live() -> Int {
   }
   let active_server = @ref.new(server)
   let exercised = exercise_boxlite_take(
-    server, active_server, moon_home, source, source_digest,
+    server, active_server, moon_home, source, git_config,
   )
   let cleanup = @exec.cleanup_native_boxlite_server(active_server.val)
+  let host_head_after = capture_live_git(repository_root, [
+      "rev-parse", "--verify", "HEAD",
+    ])
+    .trim()
+    .to_owned()
+  let host_state_after = capture_live_git(repository_root, [
+    "status", "--porcelain=v2", "--untracked-files=all",
+  ])
   ignore(@sys.rm_rf(root))
+  if host_head_after != head || host_state_after != host_state_before {
+    @sys.write_stderr("host checkout or ref changed during Take\n")
+    return 1
+  }
   match cleanup {
     Err(error) => {
       @sys.write_stderr(error.message() + "\n")
