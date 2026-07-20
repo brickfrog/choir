@@ -112,8 +112,6 @@
             pkgs.openssl
             pkgs.git
             pkgs.gh
-            pkgs.tmux
-            pkgs.zellij
             pkgs.watchexec
             pkgs.entr
           ];

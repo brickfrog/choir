@@ -99,7 +99,7 @@ fn init_synthesize_conductor_plugin(
     ) ||
     !@sys.write_file_sync(
       plugin_dir + "/skills/goal/SKILL.md",
-      @prompts.load_prompt(@prompts.PromptName::GoalSkill, project_dir),
+      @prompts.load_goal_prompt(project_dir),
     ) {
     return Err("failed to write the Conductor plugin")
   }

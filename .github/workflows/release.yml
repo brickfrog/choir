@@ -34,10 +34,6 @@ jobs:
             target: linux-x86_64
             artifact_name: choir-linux-x86_64
             shell: bash
-          - runner: macos-14
-            target: macos-arm64
-            artifact_name: choir-macos-arm64
-            shell: bash
     runs-on: ${{ matrix.runner }}
     defaults:
       run:
@@ -46,16 +42,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install system dependencies (Linux)
-        if: runner.os == 'Linux'
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y clang pkg-config libuv1-dev libssl-dev
-
-      - name: Install system dependencies (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew install libuv openssl pkg-config
 
       - name: Install MoonBit
         env:
@@ -132,7 +122,10 @@ jobs:
             Native Choir binaries for the current tag.
 
             Runtime dependencies:
+            - Linux with KVM enabled
             - git
             - gh for PR workflow
-            - tmux or zellij for local session management
-            - the agent CLIs you actually use: claude, gemini, moon
+            - BoxLite
+            - MoonBit
+            - bd
+            - subscription-authenticated claude and codex CLIs

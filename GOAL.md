@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Context-only amendments through: 2026-07-20T11:20:21-05:00
+Context-only amendments through: 2026-07-20T11:42:13-05:00
 
 ## Charter Semantics and Readiness
 
@@ -80,10 +80,21 @@ unconnected product path usable.
   the durable native stores. Task list/get/create/update use typed `bd` commands
   through one injected execution capability, normalize Beads states to the
   public `todo`/`in_progress`/`done` domain, and remain hermetic under tests.
-  Registration is the only remaining request still delegated to the old server
-  state, solely to establish the root Conductor credential. Obsolete transport
-  tests for v1 tools and server reload were deleted rather than preserved as
-  compatibility behavior.
+  Root bootstrap and registration now use a minimal Conductor server state that
+  contains only the current configuration, daemon identity, and one-time root
+  credential. The daemon has no generic agent registry, non-root session
+  lifecycle, reload path, TCP listener, or fallback tool dispatcher. Obsolete
+  transport tests for v1 tools and server reload were deleted rather than
+  preserved as compatibility behavior.
+- The closed v1 orchestration graph has been removed instead of retained behind
+  the new server. This deletes the old server, tool dispatcher, phase engine,
+  poller, pane runtime, evidence/hook/message/outbox/plugin/policy/registry
+  packages, generic prompt library, WebAssembly hook project, mock forge CLI,
+  old release helper, and terminal-multiplexer development dependencies. The
+  current prompt package contains only the Goal skill used by the Conductor.
+  This cleanup deletes 189 tracked files and more than 117,000 lines in the
+  current change while adding only the narrow Conductor server and two Goal
+  prompt files. The source tree drops from 372 tracked files to 198 files.
 - Fixed-domain Goal, Part, Take, harness-session, event, assurance, receipt,
   integration, and cancellation types plus pure transition functions.
 - Durable restart-readable state and content-addressed artifact stores with
@@ -98,6 +109,12 @@ unconnected product path usable.
   CLI profile now also passes its live startup oracle: ChatGPT-managed login,
   native host read/write denial, required-MCP fail-closed startup, and an exact
   sandbox-only event trace are executable checks.
+- Codex MCP resource discovery is now classified as provider-side discovery,
+  not as a Part effect, only when it targets the exact declared sandbox server.
+  Balanced discovery is omitted from durable tool-effect events and cannot
+  satisfy the requirement that a declared Part tool actually runs. Any other
+  undeclared MCP tool or server remains fail-closed with a sanitized diagnostic
+  naming the tool and whether the declared server matched.
 - A pinned BoxLite v0.9.7 lifecycle/security adapter using the checked-in
   seccomp correction. Live KVM boot, clone isolation, bounded transfer,
   attach/signal/kill, restart re-adoption, read-only enforcement, and declared
@@ -351,7 +368,7 @@ Earlier evidence anchors are commits `5fb93fe8` for the native Part path,
 the linter correction. With the current assurance, cancellation, and provider changes,
 `moon check --target native`, `moon test --target native`, and
 `moon run --target native src/bin/choir_lint` all exit successfully on
-2026-07-20. After deleting obsolete tests, the full native suite reports 2,235
+2026-07-20. After deleting obsolete source and tests, the full native suite reports 603
 passed and 0 failed. The
 compiler still reports the repository's existing warning set.
 
@@ -392,12 +409,11 @@ compiler still reports the repository's existing warning set.
   dispatch are also registered. The audit-scratch-boundary case now passes on
   the live BoxLite Take path; it is intentionally not reported as hermetic.
   These cases are not yet joined to the full semantic projection.
-- Deletion or extraction of the remaining dormant v1 source packages still
-  compiled behind the server implementation. They are no longer launched by
-  `init`, exposed to the Conductor, or run by the daemon, but they remain source
-  cruft until a minimal Goal server seam replaces their shared registry and
-  dispatch dependencies. The client parsing/authentication and Conductor MCP
-  catalog extractions are complete.
+- Narrowing the still-shared configuration, transport, process-command, and
+  workspace utility packages. Their current Conductor and Goal callers remain
+  live, while individual v1-only helpers inside those files are the next
+  extraction/deletion surface; no closed source package remains imported only
+  by another closed source package.
 
 The central user flow is now directly launchable and joined through Goal assurance: Claude can turn a
 user Goal into a durable accepted Part set through `/goal`, and the daemon can
@@ -406,8 +422,8 @@ Takes, serialized promotion, exact combined verification, and independent
 Goal audit. A Conductor can also inspect the durable Goal and its Parts by Goal
 ID after reconnecting. The durable execution path now reaches terminal success
 through the ordinary Goal runner. The product remains unfinished because it
-lacks the external final-PR canary, the full hostile/fault matrix, and final
-removal of dormant v1 packages.
+lacks the external final-PR canary and the full hostile/fault matrix. Remaining
+utility-level v1 helpers are cleanup work, not alternate workflow authorities.
 
 Implementation began with two bounded experiments authorized by this charter:
 
@@ -3568,10 +3584,11 @@ At `2026-07-19T19:50:26Z`:
 | Implemented architecture | v1 |
 | Audit test run | `moon test --target native`: 2,284 passed, 0 failed |
 
-The present source confirms the distinction: v1 still has
-`GoalCheck::ShellCommand(String)`, runs that representation through a shell,
-and resolves execution targets to Zellij tabs/panes. Those tests describe v1;
-they are not counted as v2 conformance.
+The source at that historical snapshot confirmed the distinction: v1 still had
+`GoalCheck::ShellCommand(String)`, ran that representation through a shell,
+and resolved execution targets to Zellij tabs/panes. Those historical tests
+described v1; they were not counted as current conformance and have now been
+deleted with the superseded orchestration graph.
 
 ### Host and installed clients
 
@@ -3694,6 +3711,15 @@ provider-private state. The command was:
 ```text
 moon run --target native src/bin/choir_conformance -- e2e --fixture mixed-provider-goal
 ```
+
+The same command passed again at `2026-07-20T11:40-05:00` after the old
+orchestration packages were deleted and the minimal Conductor server replaced
+the v1 server. During that rerun Codex first emitted a balanced
+`list_mcp_resources` event against the exact declared sandbox MCP server. Choir
+now treats that read-only protocol discovery as provider metadata, omits it from
+the durable Part-effect trace, and still requires at least one successful
+declared Part tool call. The rerun retained the same two-provider, 24-effect,
+two-verification, two-audit, two-integration result.
 
 This proves the checked-in two-Part path, not Conductor decomposition,
 user-facing Goal submission, provider interruption recovery, cancellation, or

@@ -10,8 +10,8 @@ submit another Goal merely to inspect one.
 
 If the user asks to cancel an existing durable Goal, call `goal_cancel` with
 its `goal_id`, report whether the cutoff was newly persisted, replayed, or the
-Goal was already terminal, and stop. Never substitute `cancel_wave`: provider
-resources and durable Goal authority are reconciled by Choir.
+Goal was already terminal, and stop. Provider resources and durable Goal
+authority are reconciled by Choir.
 
 If the user asks to pause, resume, or change concurrency for an existing Goal,
 call `goal_steer` with its `goal_id` and exactly one typed action. Use `pause`,

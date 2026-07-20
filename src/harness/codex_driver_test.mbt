@@ -147,3 +147,41 @@ test "Codex driver accepts a failed sandbox call followed by successful recovery
     @harness.CodexTakeOutcome::CodexImplementationCompleted,
   )
 }
+
+///|
+test "Codex driver ignores balanced discovery on the declared MCP server" {
+  let discovery =
+    #|{"type":"item.started","item":{"id":"discovery-1","type":"mcp_tool_call","server":"choir_sandbox","tool":"list_mcp_resources","status":"in_progress"}}
+    #|{"type":"item.completed","item":{"id":"discovery-1","type":"mcp_tool_call","server":"choir_sandbox","tool":"list_mcp_resources","status":"completed"}}
+  let output = codex_driver_output(
+    "mcp_tool_call", "{\"outcome\":\"completed\"}",
+  ).replace(
+    old="{\"type\":\"turn.started\"}",
+    new="{\"type\":\"turn.started\"}\n" + discovery,
+  )
+  let started = @harness.start_codex_harness_session(codex_driver_session()).unwrap()
+  let result = @harness.evaluate_codex_driver_capture({
+    session: started,
+    role: @harness.CodexTakeRole::CodexImplementationTake,
+    allowed_tools: ["read_file", "write_file"],
+    expected_mcp_server: "choir_sandbox",
+    capture: { exit_code: 0, output, started_at: 10L, finished_at: 20L },
+  }).unwrap()
+  assert_eq(result.events.length(), 4)
+}
+
+///|
+test "Codex MCP discovery cannot satisfy the declared tool requirement" {
+  let output = codex_driver_output(
+    "mcp_tool_call", "{\"outcome\":\"completed\"}",
+  ).replace(old="\"tool\":\"read_file\"", new="\"tool\":\"list_mcp_resources\"")
+  let started = @harness.start_codex_harness_session(codex_driver_session()).unwrap()
+  let result = @harness.evaluate_codex_driver_capture({
+    session: started,
+    role: @harness.CodexTakeRole::CodexImplementationTake,
+    allowed_tools: ["read_file", "write_file"],
+    expected_mcp_server: "choir_sandbox",
+    capture: { exit_code: 0, output, started_at: 10L, finished_at: 20L },
+  })
+  assert_true(result is Err(_))
+}

@@ -8,7 +8,7 @@ that syscall to the GNU and musl x86-64 profiles.
 Build the corrected shim from the v0.9.7 source commit:
 
 ```sh
-git apply /absolute/path/to/choir-v2/patches/boxlite-seccomp-time.patch
+git apply /absolute/path/to/choir/patches/boxlite-seccomp-time.patch
 git submodule update --init --recursive
 RUSTFLAGS='-C link-arg=-lbz2' cargo build --release -p boxlite-shim
 ```
@@ -35,4 +35,3 @@ The current host installation is:
 
 - CLI: `/home/justin/.local/bin/boxlite`
 - runtime: `/home/justin/.local/share/choir/runtimes/boxlite-v0.9.7-seccomp-time`
-

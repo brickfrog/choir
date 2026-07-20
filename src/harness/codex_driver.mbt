@@ -167,6 +167,7 @@ fn codex_driver_trace(
   let mut turn_started = 0
   let mut turn_completed = 0
   let mut response = ""
+  let discovery_open : Map[String, Unit] = Map([])
   for raw in output.split("\n") {
     let json = @json.parse(raw.trim().to_owned()) catch { _ => continue }
     guard json is Object(fields) else { continue }
@@ -191,17 +192,72 @@ fn codex_driver_trace(
             let id = codex_json_string(item, "id")
             let server = codex_json_string(item, "server")
             let tool = codex_json_string(item, "tool")
-            if id == "" ||
-              server != expected_server ||
-              !allowed_tools.contains(tool) {
-              return Err(codex_driver_error("undeclared MCP tool event"))
+            let diagnostic_tool = if valid_codex_tool_name(tool) {
+              tool
+            } else {
+              "<invalid>"
+            }
+            if id == "" || server != expected_server {
+              return Err(
+                codex_driver_error(
+                  "undeclared MCP tool event (server_matches=" +
+                  (server == expected_server).to_string() +
+                  ", tool=" +
+                  diagnostic_tool +
+                  ", id_present=" +
+                  (id != "").to_string() +
+                  ")",
+                ),
+              )
+            }
+            let discovery = tool == "list_mcp_resources" ||
+              tool == "list_mcp_resource_templates"
+            if !discovery && !allowed_tools.contains(tool) {
+              return Err(
+                codex_driver_error(
+                  "undeclared MCP tool event (server=" +
+                  expected_server +
+                  ", tool=" +
+                  diagnostic_tool +
+                  ", id_present=true)",
+                ),
+              )
             }
             if event_type == "item.started" {
-              events.push(CodexToolStarted(id, tool))
+              if discovery {
+                if discovery_open.contains(id) {
+                  return Err(
+                    codex_driver_error("duplicate MCP discovery start"),
+                  )
+                }
+                discovery_open[id] = ()
+              } else {
+                events.push(CodexToolStarted(id, tool))
+              }
             } else {
               match codex_json_string(item, "status") {
-                "completed" => events.push(CodexToolFinished(id, true))
-                "failed" => events.push(CodexToolFinished(id, false))
+                "completed" =>
+                  if discovery {
+                    if !discovery_open.contains(id) {
+                      return Err(
+                        codex_driver_error("unmatched MCP discovery result"),
+                      )
+                    }
+                    discovery_open.remove(id)
+                  } else {
+                    events.push(CodexToolFinished(id, true))
+                  }
+                "failed" =>
+                  if discovery {
+                    if !discovery_open.contains(id) {
+                      return Err(
+                        codex_driver_error("unmatched MCP discovery result"),
+                      )
+                    }
+                    discovery_open.remove(id)
+                  } else {
+                    events.push(CodexToolFinished(id, false))
+                  }
                 _ =>
                   return Err(
                     codex_driver_error("MCP tool result status is invalid"),
@@ -217,6 +273,9 @@ fn codex_driver_trace(
   }
   if thread_started != 1 || turn_started != 1 || turn_completed != 1 {
     return Err(codex_driver_error("provider lifecycle is incomplete"))
+  }
+  if discovery_open.length() != 0 {
+    return Err(codex_driver_error("MCP discovery trace is incomplete"))
   }
   let open : Map[String, String] = Map([])
   let mut starts = 0
