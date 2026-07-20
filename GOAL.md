@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Context-only amendments through: 2026-07-20T12:12:34-05:00
+Context-only amendments through: 2026-07-20T12:17:26-05:00
 
 ## Charter Semantics and Readiness
 
@@ -3738,6 +3738,16 @@ provider-private state. The command was:
 ```text
 moon run --target native src/bin/choir_conformance -- e2e --fixture mixed-provider-goal
 ```
+
+At `2026-07-20T12:17:26-05:00`, both native commands were rerun after the
+local configuration reduction. The Codex-only lifecycle again produced 12
+effect receipts and exactly one verification, audit, and integration receipt.
+Its candidate was `a5ee089287902099cd270cd7ad149eff861b7391`; serialized promotion
+produced `3d88e221df27010b993d07b7d432aba6d8cd4ae9`, and restart recovery issued
+zero duplicate implementation Takes. The mixed-provider Goal again reached
+concurrency two, promoted Codex then Claude, recorded 24/2/2/2 effect,
+verification, audit, and integration receipts, persisted the selection
+decision, and validated the combined tree.
 
 The same command passed again at `2026-07-20T11:40-05:00` after the old
 orchestration packages were deleted and the minimal Conductor server replaced
