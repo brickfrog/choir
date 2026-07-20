@@ -1058,15 +1058,6 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
       }
     None => ()
   }
-  if resp.is_ok() && spawn_plan.spawned_count > 0 {
-    // Record each spawned worktree tab in the persistent registry so the
-    // init-time reap can later close it iff its agent is terminal and its
-    // worktree is gone (never a user tab). Best-effort: a registry write
-    // failure must not fail the spawn.
-    for spec in spawn_plan.spawned_specs {
-      ignore(record_spawned_zellij_tab(project_dir, session, spec))
-    }
-  }
   let resp = fork_wave_response_with_beads_policy_warning(
     fork_wave_response_with_spawn_metadata(resp, spawn_plan.spawned_specs),
     fork_wave_args,

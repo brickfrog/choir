@@ -55,6 +55,9 @@ fn valid_advance_result(
   if !same_part_contract(expected, observed) {
     return false
   }
+  if observed == expected {
+    return true
+  }
   match observed.part.lifecycle {
     @control.PartLifecycle::PartAudited(_, _, _)
     | @control.PartLifecycle::PartBlocked(_) => true
@@ -254,10 +257,14 @@ pub async fn run_goal_parts(
     }
     let selected = ordered_active_records(current, schedule.admitted_part_ids)
     if selected.length() > 0 {
-      current = match advance_goal_records(current, selected, adapters) {
+      let advanced = match advance_goal_records(current, selected, adapters) {
         Ok(value) => value
         Err(error) => return Err(error)
       }
+      if advanced == current {
+        return Ok({ records: current, promotion_order, outcome: GoalRunPaused })
+      }
+      current = advanced
       continue
     }
     if !goal_records_have_audited(current) {

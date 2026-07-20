@@ -99,7 +99,26 @@ pub fn ingest_harness_event(
       let late = { ..incoming, late: true }
       match incoming.kind {
         HarnessTerminal(later_terminal) if later_terminal != existing_terminal =>
-          protocol_violated_ingestion(session, late)
+          if existing_terminal == HarnessInterrupted {
+            {
+              session: {
+                ..session,
+                last_choir_sequence: incoming.choir_sequence,
+              },
+              event: Some(late),
+              disposition: HarnessEventLate,
+            }
+          } else {
+            {
+              session: {
+                ..session,
+                last_choir_sequence: incoming.choir_sequence,
+                lifecycle: HarnessSessionRecoveryUncertain,
+              },
+              event: Some(late),
+              disposition: HarnessEventConflict,
+            }
+          }
         _ =>
           {
             session: { ..session, last_choir_sequence: incoming.choir_sequence },

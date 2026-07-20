@@ -84,6 +84,7 @@ test "sandbox process specs cannot name host executables or ambient env" {
         tool == @sandbox.SandboxRegisteredToolId("moon") &&
         digest == tool_digest
       },
+      fn(_, _) { false },
     )
     is Ok(_),
   )
@@ -100,6 +101,7 @@ test "sandbox process specs cannot name host executables or ambient env" {
       policy_digest,
       fn(_) { true },
       fn(tool, _) { tool == @sandbox.SandboxRegisteredToolId("moon") },
+      fn(_, _) { false },
     )
     is Err(_),
   )
@@ -113,6 +115,7 @@ test "sandbox process specs cannot name host executables or ambient env" {
       policy_digest,
       fn(_) { true },
       fn(_, _) { true },
+      fn(_, _) { false },
     )
     is Err(_),
   )
@@ -123,6 +126,7 @@ test "sandbox process specs cannot name host executables or ambient env" {
       policy_digest,
       fn(_) { true },
       fn(_, _) { true },
+      fn(_, _) { false },
     )
     is Err(_),
   )
@@ -133,6 +137,7 @@ test "sandbox process specs cannot name host executables or ambient env" {
       policy_digest,
       fn(_) { true },
       fn(_, _) { true },
+      fn(_, _) { false },
     )
     is Err(_),
   )
@@ -143,6 +148,7 @@ test "sandbox process specs cannot name host executables or ambient env" {
       policy_digest,
       fn(_) { true },
       fn(_, _) { true },
+      fn(_, _) { false },
     )
     is Err(_),
   )
@@ -174,6 +180,9 @@ test "invalid process specs are rejected before adapter dispatch" {
     capability: effect_capability(),
     resource_key: @sandbox.SandboxResourceKey("resource-1"),
     execution_key: @sandbox.RuntimeExecutionKey("execution-1"),
+    validated_process_spec_digest: @control.Digest(
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    ),
     process: {
       authority: @sandbox.SandboxProcessAuthority::SandboxImplementationTool(
         @control.TakeId("take-boxlite"),
@@ -212,6 +221,7 @@ test "invalid process specs are rejected before adapter dispatch" {
       request,
       policy_digest,
       fn(_) { true },
+      fn(_, _) { false },
       fn(_, _) { false },
     )
     is Err(_),

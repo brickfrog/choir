@@ -175,14 +175,40 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       "Set or supersede the active TL goal for this session",
       [@types.Role::TL],
     ),
+    tool_def(
+      "goal_submit",
+      "Submit a typed Conductor Goal draft; Choir captures Git and Beads state, validates exact closure, and durably records the selection before any Part can run",
+      [@types.Role::TL],
+    ),
     tool_def("goal_clear", "Clear the active TL goal for this session", [
       @types.Role::TL,
     ]),
     tool_def(
       "goal_status",
-      "Inspect the active TL goal for this session",
+      "Inspect a durable Goal and its Parts by Goal ID; without a Goal ID, inspect the active session goal",
       [@types.Role::TL],
       read_only=true,
+    ),
+    tool_def(
+      "goal_cancel",
+      "Install a durable cancellation cutoff for a Goal; no later work or success may be authorized",
+      [@types.Role::TL],
+    ),
+    tool_def(
+      "goal_steer",
+      "Create a durable scheduling-policy revision that pauses, resumes, or changes bounded Goal concurrency",
+      [@types.Role::TL],
+    ),
+    tool_def(
+      "goal_attach",
+      "Read the durable normalized event projection for one Take without changing it",
+      [@types.Role::TL],
+      read_only=true,
+    ),
+    tool_def(
+      "goal_answer",
+      "Answer one active durable Goal clarification request and resume its captured state",
+      [@types.Role::TL],
     ),
     tool_def(
       "mutex_acquire", "Acquire an in-memory coordination mutex", all_roles,

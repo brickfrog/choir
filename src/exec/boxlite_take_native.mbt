@@ -28,6 +28,7 @@ pub(all) struct NativeBoxLiteTakeSandbox {
   prepared : NativeBoxLitePreparedEnvironment
   box_id : String
   source_digest : @control.Digest
+  workspace_access : @sandbox.BoxLiteWorkspaceAccess
 } derive(Debug, Eq)
 
 ///|
@@ -64,7 +65,7 @@ fn valid_native_boxlite_token(value : String, max_length : Int) -> Bool {
 fn validate_native_boxlite_server_config(
   config : NativeBoxLiteServerConfig,
 ) -> Result[Unit, @types.ChoirError] {
-  let root_prefix = "/tmp/choir-v2-take-"
+  let root_prefix = "/tmp/choir-take-"
   if !config.binary.has_prefix("/") ||
     !config.runtime_dir.has_prefix("/") ||
     !config.root.has_prefix(root_prefix) ||
@@ -99,6 +100,35 @@ fn native_boxlite_environment(
     },
     Some(server.config.runtime_dir),
   )
+}
+
+///|
+fn native_boxlite_remote_client_home(
+  server : NativeBoxLiteServerHandle,
+  discriminator : String,
+) -> String {
+  server.config.root +
+  "/clients/" +
+  @storage.artifact_digest(@utf8.encode(discriminator)).0[:20].to_owned()
+}
+
+///|
+test "remote BoxLite clients get deterministic isolated homes" {
+  let server : NativeBoxLiteServerHandle = {
+    config: {
+      binary: "/bin/boxlite",
+      runtime_dir: "/runtime",
+      root: "/tmp/choir-take-client-home-test",
+      port: 12345,
+      api_key: "key",
+    },
+    pid: 1,
+    url: "http://127.0.0.1:12345",
+  }
+  let first = native_boxlite_remote_client_home(server, "box-a")
+  assert_eq(first, native_boxlite_remote_client_home(server, "box-a"))
+  assert_true(first.has_prefix(server.config.root + "/clients/"))
+  assert_false(first == native_boxlite_remote_client_home(server, "box-b"))
 }
 
 ///|
@@ -144,7 +174,7 @@ async fn capture_native_boxlite_cli(
 ) -> Result[@sandbox.BoxLiteProbeCapture, @types.ChoirError] {
   let args : Array[String] = [
     "--home",
-    server.config.root + "/client-home",
+    native_boxlite_remote_client_home(server, command.join("\u{00}")),
     "--url",
     server.url,
   ]
@@ -194,7 +224,7 @@ pub async fn start_native_boxlite_server(
   if !@sys.create_dir_all(config.root) ||
     !@sys.create_dir_all(config.root + "/tmp") ||
     !@sys.create_dir_all(config.root + "/server-home") ||
-    !@sys.create_dir_all(config.root + "/client-home") ||
+    !@sys.create_dir_all(config.root + "/clients") ||
     !@sys.create_dir_all(config.root + "/staging") ||
     !@sys.create_dir_all(config.root + "/results") {
     return Err(native_boxlite_take_error("runtime directories are unavailable"))
@@ -316,6 +346,27 @@ pub async fn cleanup_native_boxlite_server(
 }
 
 ///|
+pub async fn stop_native_boxlite_take(
+  take : NativeBoxLiteTakeSandbox,
+) -> Result[Unit, @types.ChoirError] {
+  let stopped = match
+    capture_native_boxlite_http(
+      take.prepared.server,
+      "POST",
+      "/v1/boxes/" + take.box_id + "/stop",
+      None,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if stopped.exit_code == 0 {
+    Ok(())
+  } else {
+    Err(native_boxlite_take_error("Take stop failed"))
+  }
+}
+
+///|
 fn native_boxlite_create_body(name : String) -> String {
   let network : Map[String, Json] = {
     "mode": "disabled".to_json(),
@@ -378,45 +429,83 @@ async fn create_and_start_native_boxlite(
 }
 
 ///|
-async fn normalize_native_boxlite_transfer(
+async fn copy_native_boxlite_toolchain_offline(
   config : NativeBoxLiteServerConfig,
   box_id : String,
-  destination : String,
-  marker : String,
+  source : String,
 ) -> Result[Unit, @types.ChoirError] {
+  let resolved_source = match @sys.realpath_native(source) {
+    Some(value) => value
+    None =>
+      return Err(
+        @types.ChoirError::validation_error(
+          "BoxLite toolchain source does not exist",
+        ),
+      )
+  }
+  if !resolved_source.has_prefix(config.root + "/staging/") ||
+    resolved_source != source ||
+    !valid_native_boxlite_token(box_id, 180) {
+    return Err(
+      @types.ChoirError::validation_error(
+        "BoxLite toolchain transfer is outside its dedicated roots",
+      ),
+    )
+  }
+  let started = match
+    capture_native_boxlite_local_cli(config, ["start", box_id], 60000) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if started.exit_code != 0 {
+    return Err(native_boxlite_take_error("toolchain transfer start failed"))
+  }
+  let copied = match
+    capture_native_boxlite_local_cli(
+      config,
+      ["cp", source, box_id + ":/opt/moon"],
+      180000,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if copied.exit_code != 0 {
+    return Err(
+      native_boxlite_take_error(
+        "toolchain copy-in failed: " + copied.output.trim().to_owned(),
+      ),
+    )
+  }
   let script =
     #|set -eu
-    #|marker=$(find "$1" -type f -name "$2" -print)
+    #|marker=$(find /opt/moon -type f -name .choir-toolchain-root -print)
     #|test "$(printf '%s\n' "$marker" | sed '/^$/d' | wc -l)" -eq 1
     #|source_root=$(dirname "$marker")
     #|mkdir -p /root/choir-transfer
     #|cp -a "$source_root"/. /root/choir-transfer/
-    #|rm -rf "$1"
-    #|mkdir -p "$1"
-    #|cp -a /root/choir-transfer/. "$1"/
+    #|rm -rf /opt/moon
+    #|mkdir -p /opt/moon
+    #|cp -a /root/choir-transfer/. /opt/moon/
     #|rm -rf /root/choir-transfer
-  let capture = match
+  let normalized = match
     capture_native_boxlite_local_cli(
       config,
-      [
-        "exec", box_id, "--", "/bin/sh", "-c", script, "choir-transfer", destination,
-        marker,
-      ],
+      ["exec", box_id, "--", "/bin/sh", "-c", script],
       60000,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  if capture.exit_code == 0 {
+  if normalized.exit_code == 0 {
     Ok(())
   } else {
-    Err(native_boxlite_take_error("transfer normalization failed"))
+    Err(native_boxlite_take_error("toolchain normalization failed"))
   }
 }
 
 ///|
-async fn copy_native_boxlite_input(
-  config : NativeBoxLiteServerConfig,
+async fn copy_native_boxlite_input_online(
+  server : NativeBoxLiteServerHandle,
   box_id : String,
   source : String,
   destination : String,
@@ -431,57 +520,164 @@ async fn copy_native_boxlite_input(
         ),
       )
   }
-  if !resolved_source.has_prefix(config.root + "/staging/") ||
+  if !resolved_source.has_prefix(server.config.root + "/staging/") ||
     resolved_source != source ||
-    !destination.has_prefix("/") ||
-    destination.contains("/../") {
+    !valid_native_boxlite_token(box_id, 180) {
     return Err(
       @types.ChoirError::validation_error(
         "BoxLite transfer is outside its dedicated roots",
       ),
     )
   }
-  let started = match
-    capture_native_boxlite_local_cli(config, ["start", box_id], 60000) {
+  if destination != "/workspace" {
+    return Err(
+      @types.ChoirError::validation_error(
+        "BoxLite online transfer destination is not admitted",
+      ),
+    )
+  }
+  let archive_key = @storage.artifact_digest(
+    @utf8.encode(box_id + "\u{00}" + source + "\u{00}" + destination),
+  ).0[:24].to_owned()
+  let transfer_root = server.config.root + "/staging/upload-" + archive_key
+  if !@sys.create_dir_all(transfer_root) ||
+    @sys.realpath_native(transfer_root) != Some(transfer_root) {
+    return Err(native_boxlite_take_error("transfer staging root failed"))
+  }
+  let archive = transfer_root + "/payload.tar"
+  let archived = match
+    capture_boxlite_fixed_process(
+      "/usr/bin/tar",
+      ["--format=ustar", "-C", source, "-cf", archive, "."],
+      server.config.root,
+      native_boxlite_environment(server, false),
+      120000,
+    ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  if started.exit_code != 0 {
+  if archived.exit_code != 0 || !@sys.path_exists(archive) {
     return Err(
       native_boxlite_take_error(
-        "local transfer start failed: " + started.output.trim().to_owned(),
+        "transfer archive creation failed: " + archived.output.trim().to_owned(),
       ),
     )
   }
-  let copied = match
-    capture_native_boxlite_local_cli(
-      config,
-      ["cp", source, box_id + ":" + destination],
+  let split = match
+    capture_boxlite_fixed_process(
+      "/usr/bin/split",
+      ["-b", "1048576", "-d", "-a", "4", archive, transfer_root + "/part-"],
+      server.config.root,
+      native_boxlite_environment(server, false),
+      120000,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if split.exit_code != 0 {
+    return Err(
+      native_boxlite_take_error(
+        "transfer archive split failed: " + split.output.trim().to_owned(),
+      ),
+    )
+  }
+  ignore(@sys.rm_rf(archive))
+  let encoded_upload_root = "%2Froot%2Fchoir-upload-" + archive_key
+  let mut chunk_count = 0
+  for index = 0; index < 2048; index = index + 1 {
+    let chunk_name = "part-" + index.to_string().pad_start(4, '0')
+    let chunk = transfer_root + "/" + chunk_name
+    if !@sys.path_exists(chunk) {
+      break
+    }
+    let upload_archive = transfer_root + "/upload-" + chunk_name + ".tar"
+    let wrapped = match
+      capture_boxlite_fixed_process(
+        "/usr/bin/tar",
+        [
+          "--format=ustar", "-C", transfer_root, "-cf", upload_archive, chunk_name,
+        ],
+        server.config.root,
+        native_boxlite_environment(server, false),
+        30000,
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    if wrapped.exit_code != 0 || !@sys.path_exists(upload_archive) {
+      return Err(native_boxlite_take_error("transfer chunk wrapping failed"))
+    }
+    let uploaded = match
+      capture_boxlite_fixed_process(
+        "/usr/bin/curl",
+        [
+          "-fsS",
+          "--max-time",
+          "180",
+          "-X",
+          "PUT",
+          "-H",
+          "Authorization: Bearer " + server.config.api_key,
+          "-H",
+          "Content-Type: application/x-tar",
+          "--data-binary",
+          "@" + upload_archive,
+          server.url +
+          "/v1/boxes/" +
+          box_id +
+          "/files?path=" +
+          encoded_upload_root,
+        ],
+        server.config.root,
+        native_boxlite_environment(server, false),
+        180000,
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    ignore(@sys.rm_rf(upload_archive))
+    if uploaded.exit_code != 0 {
+      return Err(
+        native_boxlite_take_error(
+          "online copy-in failed: " + uploaded.output.trim().to_owned(),
+        ),
+      )
+    }
+    chunk_count = chunk_count + 1
+  }
+  if chunk_count == 0 || @sys.path_exists(transfer_root + "/part-2048") {
+    return Err(native_boxlite_take_error("transfer chunk count is invalid"))
+  }
+  let assemble_script =
+    #|set -eu
+    #|upload_root="/root/choir-upload-$1"
+    #|assemble_root="/root/choir-assemble-$1"
+    #|rm -rf "$assemble_root"
+    #|mkdir -p "$assemble_root/extracted"
+    #|find "$upload_root" -type f -name 'part-*' -print | LC_ALL=C sort | while IFS= read -r part; do cat "$part"; done > "$assemble_root/payload.tar"
+    #|tar -xf "$assemble_root/payload.tar" -C "$assemble_root/extracted"
+    #|marker_path=$(find "$assemble_root/extracted" -type f -name "$2" -print)
+    #|test "$(printf '%s\n' "$marker_path" | sed '/^$/d' | wc -l)" -eq 1
+    #|source_root=$(dirname "$marker_path")
+    #|rm -rf "$3"
+    #|mkdir -p "$3"
+    #|cp -a "$source_root"/. "$3"/
+    #|rm -rf "$upload_root" "$assemble_root"
+  let assembled = match
+    capture_native_boxlite_cli(
+      server,
+      [
+        "exec", box_id, "--", "/bin/sh", "-c", assemble_script, "choir-upload", archive_key,
+        marker, destination,
+      ],
       180000,
     ) {
     Ok(value) => value
-    Err(error) => {
-      ignore(capture_native_boxlite_local_cli(config, ["stop", box_id], 60000))
-      return Err(error)
-    }
+    Err(error) => return Err(error)
   }
-  if copied.exit_code != 0 {
-    ignore(capture_native_boxlite_local_cli(config, ["stop", box_id], 60000))
-    return Err(
-      native_boxlite_take_error(
-        "copy-in failed: " + copied.output.trim().to_owned(),
-      ),
-    )
-  }
-  let normalized = normalize_native_boxlite_transfer(
-    config, box_id, destination, marker,
-  )
-  match normalized {
-    Ok(_) => ()
-    Err(error) => {
-      ignore(capture_native_boxlite_local_cli(config, ["stop", box_id], 60000))
-      return Err(error)
-    }
+  ignore(@sys.rm_rf(transfer_root))
+  if assembled.exit_code != 0 {
+    return Err(native_boxlite_take_error("transfer assembly failed"))
   }
   Ok(())
 }
@@ -568,13 +764,7 @@ pub async fn prepare_native_boxlite_environment(
   stop_native_boxlite_server(server)
   @async.sleep(400)
   match
-    copy_native_boxlite_input(
-      server.config,
-      base_box_id,
-      toolchain,
-      "/opt/moon",
-      ".choir-toolchain-root",
-    ) {
+    copy_native_boxlite_toolchain_offline(server.config, base_box_id, toolchain) {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
@@ -656,11 +846,22 @@ pub async fn clone_native_boxlite_take(
     Some(value) if cloned.exit_code == 0 => value
     _ => return Err(native_boxlite_take_error("prepared clone failed"))
   }
-  stop_native_boxlite_server(prepared.server)
-  @async.sleep(400)
+  let started = match
+    capture_native_boxlite_http(
+      prepared.server,
+      "POST",
+      "/v1/boxes/" + box_id + "/start",
+      None,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if started.exit_code != 0 {
+    return Err(native_boxlite_take_error("Take clone start failed"))
+  }
   match
-    copy_native_boxlite_input(
-      prepared.server.config,
+    copy_native_boxlite_input_online(
+      prepared.server,
       box_id,
       source_directory,
       "/workspace",
@@ -670,8 +871,8 @@ pub async fn clone_native_boxlite_take(
     Err(error) => return Err(error)
   }
   let checked = match
-    capture_native_boxlite_local_cli(
-      prepared.server.config,
+    capture_native_boxlite_cli(
+      prepared.server,
       [
         "exec",
         box_id,
@@ -690,36 +891,103 @@ pub async fn clone_native_boxlite_take(
   if checked.exit_code != 0 {
     return Err(native_boxlite_take_error("Take isolation check failed"))
   }
-  let local_stop = match
-    capture_native_boxlite_local_cli(
-      prepared.server.config,
-      ["stop", box_id],
+  let mcp_home = native_boxlite_remote_client_home(
+    prepared.server,
+    "mcp\u{00}" + box_id,
+  )
+  if !@sys.create_dir_all(mcp_home) ||
+    @sys.realpath_native(mcp_home) != Some(mcp_home) {
+    return Err(native_boxlite_take_error("MCP client home is unavailable"))
+  }
+  Ok({
+    prepared,
+    box_id,
+    source_digest,
+    workspace_access: @sandbox.BoxLiteWorkspaceAccess::BoxLiteMutableWorkspace,
+  })
+}
+
+///|
+pub async fn seal_native_boxlite_assurance_subject(
+  take : NativeBoxLiteTakeSandbox,
+) -> Result[NativeBoxLiteTakeSandbox, @types.ChoirError] {
+  if take.workspace_access !=
+    @sandbox.BoxLiteWorkspaceAccess::BoxLiteMutableWorkspace {
+    return Err(native_boxlite_take_error("assurance subject is already sealed"))
+  }
+  let seal_result = match
+    capture_native_boxlite_cli(
+      take.prepared.server,
+      [
+        "exec",
+        take.box_id,
+        "--",
+        "/bin/sh",
+        "-c",
+        "set -eu; find /workspace -xdev -type d -exec chmod 0555 '{}' +; find /workspace -xdev -type f -perm /111 -exec chmod 0555 '{}' +; find /workspace -xdev -type f ! -perm /111 -exec chmod 0444 '{}' +; mkdir -p /scratch/home /scratch/tmp /output; chmod 0777 /scratch /scratch/home /scratch/tmp /output",
+      ],
       60000,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  if local_stop.exit_code != 0 {
-    return Err(native_boxlite_take_error("Take isolation stop failed"))
+  if seal_result.exit_code != 0 {
+    return Err(native_boxlite_take_error("assurance subject sealing failed"))
   }
-  let restarted = match start_native_boxlite_server(prepared.server.config) {
-    Ok(value) => value
-    Err(error) => return Err(error)
-  }
-  let started = match
-    capture_native_boxlite_http(
-      restarted,
-      "POST",
-      "/v1/boxes/" + box_id + "/start",
-      None,
+  let probed = match
+    capture_native_boxlite_cli(
+      take.prepared.server,
+      [
+        "exec",
+        take.box_id,
+        "--",
+        "/usr/bin/setpriv",
+        "--reuid=65534",
+        "--regid=65534",
+        "--clear-groups",
+        "--",
+        "/bin/sh",
+        "-c",
+        "set -eu; if printf x >> /workspace/.choir-source-root 2>/dev/null; then exit 40; fi; printf scratch > /scratch/.choir-boundary-probe; printf output > /output/.choir-boundary-probe",
+      ],
+      30000,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  if started.exit_code != 0 {
-    return Err(native_boxlite_take_error("Take clone start failed"))
+  if probed.exit_code != 0 {
+    return Err(
+      native_boxlite_take_error(
+        "assurance write boundary failed with exit " +
+        probed.exit_code.to_string() +
+        ": " +
+        probed.output.trim().to_owned(),
+      ),
+    )
   }
-  Ok({ prepared: { ..prepared, server: restarted }, box_id, source_digest })
+  let cleared = match
+    capture_native_boxlite_cli(
+      take.prepared.server,
+      [
+        "exec",
+        take.box_id,
+        "--",
+        "/bin/sh",
+        "-c",
+        "set -eu; rm -f /scratch/.choir-boundary-probe /output/.choir-boundary-probe; test -z \"$(find /scratch /output -mindepth 1 ! -path /scratch/home ! -path /scratch/tmp -print -quit)\"",
+      ],
+      30000,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if cleared.exit_code != 0 {
+    return Err(native_boxlite_take_error("assurance scratch reset failed"))
+  }
+  Ok({
+    ..take,
+    workspace_access: @sandbox.BoxLiteWorkspaceAccess::BoxLiteReadOnlySubject,
+  })
 }
 
 ///|
@@ -734,6 +1002,10 @@ pub fn native_boxlite_take_mcp_arguments(
       ),
     )
   }
+  let client_home = native_boxlite_remote_client_home(
+    take.prepared.server,
+    "mcp\u{00}" + take.box_id,
+  )
   Ok([
     script,
     "--binary",
@@ -745,9 +1017,15 @@ pub fn native_boxlite_take_mcp_arguments(
     "--api-key",
     take.prepared.server.config.api_key,
     "--home",
-    take.prepared.server.config.root + "/client-home",
+    client_home,
     "--box",
     take.box_id,
+    "--access",
+    match take.workspace_access {
+      @sandbox.BoxLiteWorkspaceAccess::BoxLiteMutableWorkspace => "mutable"
+      @sandbox.BoxLiteWorkspaceAccess::BoxLiteReadOnlySubject =>
+        "read-only-subject"
+    },
   ])
 }
 
@@ -782,12 +1060,79 @@ pub async fn inspect_native_boxlite_take(
 }
 
 ///|
+fn validate_native_persisted_process_spec(
+  persisted_process_spec_digest : @control.Digest,
+  process : @sandbox.SandboxProcessSpec,
+) -> Result[Unit, @types.ChoirError] {
+  let observed_process_spec_digest = @storage.artifact_digest(
+    @utf8.encode(process.to_json().stringify(indent=0)),
+  )
+  if observed_process_spec_digest != persisted_process_spec_digest {
+    Err(
+      @types.ChoirError::policy_blocked(
+        "native sandbox process does not match its persisted specification",
+      ),
+    )
+  } else {
+    Ok(())
+  }
+}
+
+///|
+fn native_process_uses_scratch_target(arguments : Array[String]) -> Bool {
+  for index = 0; index < arguments.length(); index = index + 1 {
+    if arguments[index] == "--target-dir" &&
+      index + 1 < arguments.length() &&
+      arguments[index + 1].has_prefix("/scratch/") &&
+      arguments[index + 1].length() > "/scratch/".length() {
+      return true
+    }
+    if arguments[index].has_prefix("--target-dir=/scratch/") &&
+      arguments[index].length() > "--target-dir=/scratch/".length() {
+      return true
+    }
+  }
+  false
+}
+
+///|
+test "assurance process requires a nonempty scratch target" {
+  assert_true(
+    native_process_uses_scratch_target([
+      "test", "--target-dir", "/scratch/verification-take",
+    ]),
+  )
+  assert_true(
+    native_process_uses_scratch_target([
+      "test", "--target-dir=/scratch/audit-take",
+    ]),
+  )
+  assert_false(
+    native_process_uses_scratch_target([
+      "test", "--target-dir", "/workspace/target",
+    ]),
+  )
+  assert_false(native_process_uses_scratch_target(["test", "--target-dir"]))
+  assert_false(
+    native_process_uses_scratch_target(["test", "--target-dir=/scratch/"]),
+  )
+}
+
+///|
 pub async fn execute_native_boxlite_process(
   take : NativeBoxLiteTakeSandbox,
   capability : @sandbox.SandboxEffectCapability,
+  persisted_process_spec_digest : @control.Digest,
   process : @sandbox.SandboxProcessSpec,
   artifact_exists : (@control.ArtifactReference) -> Bool,
 ) -> Result[NativeSandboxProcessResult, @types.ChoirError] {
+  match
+    validate_native_persisted_process_spec(
+      persisted_process_spec_digest, process,
+    ) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   match
     @sandbox.validate_sandbox_process_spec(
       process,
@@ -798,6 +1143,7 @@ pub async fn execute_native_boxlite_process(
         tool_id == @sandbox.SandboxRegisteredToolId("moon") &&
         digest == take.prepared.tool_manifest_digest
       },
+      fn(_, _) { false },
     ) {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -808,6 +1154,29 @@ pub async fn execute_native_boxlite_process(
     return Err(
       @types.ChoirError::policy_blocked(
         "native sandbox process exceeds the admitted runtime bound",
+      ),
+    )
+  }
+  let assurance_process = match process.authority {
+    @sandbox.SandboxProcessAuthority::SandboxImplementationTool(_, _) => false
+    @sandbox.SandboxProcessAuthority::SandboxVerificationTool(_, _, _)
+    | @sandbox.SandboxProcessAuthority::SandboxAuditTool(_, _) => true
+  }
+  if assurance_process !=
+    (
+      take.workspace_access ==
+      @sandbox.BoxLiteWorkspaceAccess::BoxLiteReadOnlySubject
+    ) {
+    return Err(
+      @types.ChoirError::policy_blocked(
+        "native sandbox workspace access does not match process authority",
+      ),
+    )
+  }
+  if assurance_process && !native_process_uses_scratch_target(process.arguments) {
+    return Err(
+      @types.ChoirError::policy_blocked(
+        "native assurance process requires a declared scratch target",
       ),
     )
   }
@@ -845,13 +1214,28 @@ pub async fn execute_native_boxlite_process(
     @sandbox.SandboxWorkingDirectory::SandboxWorkspaceSubdirectory(path) =>
       "/workspace/" + path.0
   }
-  let command : Array[String] = ["exec", "--workdir", working_directory]
+  let command : Array[String] = ["exec"]
+  if assurance_process {
+    command.push("--env")
+    command.push("HOME=/scratch/home")
+    command.push("--env")
+    command.push("TMPDIR=/scratch/tmp")
+  }
+  command.push("--workdir")
+  command.push(working_directory)
   for entry in process.environment {
     command.push("--env")
     command.push(entry.key + "=" + entry.value)
   }
   command.push(take.box_id)
   command.push("--")
+  if assurance_process {
+    command.push("/usr/bin/setpriv")
+    command.push("--reuid=65534")
+    command.push("--regid=65534")
+    command.push("--clear-groups")
+    command.push("--")
+  }
   command.push(executable)
   for argument in process.arguments {
     command.push(argument)
@@ -894,14 +1278,29 @@ pub async fn probe_native_boxlite_mcp(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let requests =
-    #|{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
-    #|{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}
-    #|{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}
-    #|{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"read_file","arguments":{"path":"README.md"}}}
-    #|{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"write_file","arguments":{"path":".choir-live-roundtrip.txt","content":"sandbox mutation\n"}}}
-    #|{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"read_file","arguments":{"path":".choir-live-roundtrip.txt"}}}
-    #|{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"run","arguments":{"argv":["/usr/bin/find","/workspace","-type","l","-printf","%P -> %l\\n"]}}}
+  let requests = match take.workspace_access {
+    @sandbox.BoxLiteWorkspaceAccess::BoxLiteMutableWorkspace =>
+      (
+        #|{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
+        #|{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}
+        #|{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}
+        #|{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"read_file","arguments":{"path":"README.md"}}}
+        #|{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"write_file","arguments":{"path":".choir-live-roundtrip.txt","content":"sandbox mutation\n"}}}
+        #|{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"read_file","arguments":{"path":".choir-live-roundtrip.txt"}}}
+        #|{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"run","arguments":{"argv":["/usr/bin/find","/workspace","-type","l","-printf","%P -> %l\\n"]}}}
+      )
+    @sandbox.BoxLiteWorkspaceAccess::BoxLiteReadOnlySubject =>
+      (
+        #|{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
+        #|{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}
+        #|{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}
+        #|{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"read_file","arguments":{"path":"README.md"}}}
+        #|{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"write_scratch","arguments":{"path":"probe/scratch.txt","content":"scratch persisted\n"}}}
+        #|{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"write_output","arguments":{"path":"probe/output.txt","content":"output persisted\n"}}}
+        #|{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"write_file","arguments":{"path":"README.md","content":"subject mutation\n"}}}
+        #|{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"run","arguments":{"argv":["/bin/sh","-c","printf outside > /etc/choir-outside"]}}}
+      )
+  }
   let (stdin_read, stdin_write) = @process.write_to_process() catch {
     _ => return Err(native_boxlite_take_error("MCP probe stdin failed"))
   }
@@ -937,13 +1336,70 @@ pub async fn probe_native_boxlite_mcp(
   let output = data.text() catch {
     _ => return Err(native_boxlite_take_error("MCP probe output is not UTF-8"))
   }
+  let contract_ok = match take.workspace_access {
+    @sandbox.BoxLiteWorkspaceAccess::BoxLiteMutableWorkspace =>
+      output.contains("\"name\":\"read_file\"") &&
+      output.contains("sandbox mutation\\n")
+    @sandbox.BoxLiteWorkspaceAccess::BoxLiteReadOnlySubject => {
+      let boundary = match
+        capture_native_boxlite_cli(
+          take.prepared.server,
+          [
+            "exec",
+            take.box_id,
+            "--",
+            "/bin/sh",
+            "-c",
+            "set -eu; test \"$(cat /scratch/probe/scratch.txt)\" = 'scratch persisted'; test \"$(cat /output/probe/output.txt)\" = 'output persisted'; test ! -e /etc/choir-outside; test \"$(cat /workspace/.choir-source-root)\" = \"$1\"",
+            "choir-boundary",
+            take.source_digest.0,
+          ],
+          30000,
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      boundary.exit_code == 0 &&
+      output.contains("\"name\":\"write_scratch\"") &&
+      output.contains("\"name\":\"write_output\"") &&
+      !output.contains("\"name\":\"write_file\"") &&
+      !output.contains("\"name\":\"run\"") &&
+      output.contains("undeclared tool")
+    }
+  }
   if exit_code == 0 &&
-    output.contains("\"name\":\"read_file\"") &&
-    output.contains("sandbox mutation\\n") &&
+    contract_ok &&
     !output.contains(take.prepared.server.config.api_key) {
     Ok(output)
   } else {
-    Err(native_boxlite_take_error("MCP probe contract failed"))
+    Err(
+      native_boxlite_take_error(
+        "MCP probe contract failed: exit=" +
+        exit_code.to_string() +
+        " tools=" +
+        output.contains("\"name\":\"read_file\"").to_string() +
+        " mutation=" +
+        output.contains("sandbox mutation\\n").to_string() +
+        " leaked=" +
+        output.contains(take.prepared.server.config.api_key).to_string() +
+        " tool_error=" +
+        output.contains("\"isError\":true").to_string() +
+        " lock_error=" +
+        output.contains("runtime lock").to_string() +
+        " missing=" +
+        output.contains("No such file").to_string() +
+        " written=" +
+        output.contains("written").to_string() +
+        " read_failed=" +
+        output.contains("read failed with exit").to_string() +
+        " write_failed=" +
+        output.contains("write failed with exit").to_string() +
+        " execution_failed=" +
+        output.contains("BoxLite execution failed").to_string() +
+        " path_failed=" +
+        output.contains("workspace path").to_string(),
+      ),
+    )
   }
 }
 
@@ -1019,6 +1475,19 @@ pub async fn copy_native_boxlite_take_result(
   }
   if extracted.0 != 0 {
     return Err(native_boxlite_take_error("confined result extraction failed"))
+  }
+  let writable = @process.collect_output_merged(
+    "/usr/bin/chmod",
+    ["-R", "u+rwX", "--", workspace],
+    extra_env=native_boxlite_environment(take.prepared.server, false),
+    inherit_env=false,
+    cwd=take.prepared.server.config.root,
+  ) catch {
+    _ =>
+      return Err(native_boxlite_take_error("result mode normalization failed"))
+  }
+  if writable.0 != 0 {
+    return Err(native_boxlite_take_error("result mode normalization failed"))
   }
   let special = @process.collect_output_merged(
     "/usr/bin/find",
@@ -1109,7 +1578,7 @@ test "native BoxLite MCP launch binds one fixed box" {
     config: {
       binary: "/opt/boxlite",
       runtime_dir: "/opt/runtime",
-      root: "/tmp/choir-v2-take-test",
+      root: "/tmp/choir-take-test",
       port: 22000,
       api_key: "take-key",
     },
@@ -1130,11 +1599,63 @@ test "native BoxLite MCP launch binds one fixed box" {
       source_digest: @control.Digest(
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       ),
+      workspace_access: @sandbox.BoxLiteWorkspaceAccess::BoxLiteMutableWorkspace,
     },
     "/repo/scripts/choir_sandbox_mcp.mjs",
   ).unwrap()
   assert_true(args.contains("--box"))
   assert_true(args.contains("box-1"))
   assert_true(args.contains("--api-key"))
+  assert_true(args.contains("--access"))
+  assert_true(args.contains("mutable"))
   assert_false(args.contains("base-1"))
+}
+
+///|
+test "native process dispatch binds the exact persisted specification digest" {
+  let process : @sandbox.SandboxProcessSpec = {
+    authority: @sandbox.SandboxProcessAuthority::SandboxVerificationTool(
+      @control.TakeId("process-take"),
+      @control.VerificationSpecId("process-spec"),
+      @control.Digest("process-policy"),
+    ),
+    executable: @sandbox.SandboxExecutable::SandboxRegisteredTool(
+      @sandbox.SandboxRegisteredToolId("moon"),
+      @sandbox.boxlite_take_tool_manifest_digest(),
+    ),
+    arguments: ["test", "--target", "native"],
+    working_directory: @sandbox.SandboxWorkingDirectory::SandboxWorkspaceRoot,
+    environment: [{ key: "NO_COLOR", value: "1" }],
+    stdin: @sandbox.SandboxStdinPolicy::SandboxStdinClosed,
+    timeout_ms: 60000L,
+    resources: {
+      cpu_millis: 1000L,
+      memory_bytes: 268435456L,
+      process_count: 64,
+      file_bytes: 1073741824L,
+    },
+    network: {
+      profile: @sandbox.SandboxNetworkProfile::NetworkDisabled,
+      version: 1L,
+      policy_digest: @sandbox.boxlite_take_runtime_policy_digest(),
+    },
+    output: {
+      stdout_limit_bytes: 1048576L,
+      stderr_limit_bytes: 1048576L,
+      on_limit: @sandbox.SandboxOutputLimitDisposition::SandboxTerminateAndMarkExceeded,
+    },
+  }
+  let digest = @storage.artifact_digest(
+    @utf8.encode(process.to_json().stringify(indent=0)),
+  )
+  assert_true(validate_native_persisted_process_spec(digest, process) is Ok(_))
+  assert_true(
+    validate_native_persisted_process_spec(
+      @control.Digest(
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      ),
+      process,
+    )
+    is Err(_),
+  )
 }

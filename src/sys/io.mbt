@@ -76,6 +76,10 @@ extern "C" fn c_pgid_is_alive(pgid : Int) -> Int = "choir_pgid_is_alive"
 extern "C" fn c_set_parent_death_signal_term() -> Int = "choir_set_parent_death_signal_term"
 
 ///|
+#borrow(out)
+extern "C" fn c_mint_local_token(out : Bytes, out_size : Int) -> Int = "choir_mint_local_token"
+
+///|
 #borrow(exe)
 extern "C" fn c_spawn_serve(exe : Bytes, exe_len : Int) -> Int = "choir_spawn_serve"
 
@@ -427,6 +431,17 @@ pub fn realpath_native(path : String) -> String? {
     return None
   }
   Some(@utf8.decode_lossy(out[:len]))
+}
+
+///|
+pub fn mint_local_token() -> String? {
+  let out = Bytes::new(65)
+  let length = c_mint_local_token(out, out.length())
+  if length == 64 {
+    Some(@utf8.decode_lossy(out[:length]))
+  } else {
+    None
+  }
 }
 
 ///|

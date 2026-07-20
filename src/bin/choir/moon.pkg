@@ -1,5 +1,4 @@
 import {
-  "choir/src/bin/choir_commands",
   "choir/src/types",
   "choir/src/config",
   "choir/src/server",
@@ -10,11 +9,10 @@ import {
   "choir/src/exec",
   "choir/src/poller",
   "choir/src/mcp",
-  "choir/src/hooks",
   "choir/src/workspace",
-  "choir/src/runtime",
   "choir/src/phase",
   "choir/src/prompts",
+  "choir/src/workflow",
   "moonbitlang/core/env",
   "moonbitlang/core/json",
   "moonbitlang/core/string",
@@ -25,25 +23,20 @@ import {
   "brickfrog/moontrace",
 }
 
+pkgtype(kind: "executable")
+
 options(
-  "is-main": true,
   targets: {
-    "claude_wrapper.mbt": [ "native" ],
     "goal_cli.mbt": [ "native" ],
-    "hook.mbt": [ "native" ],
     "init.mbt": [ "native" ],
-    "init_bootstrap.mbt": [ "native" ],
     "leaf_tool.mbt": [ "native" ],
     "main.mbt": [ "native" ],
     "mcp_mode.mbt": [ "native" ],
-    "prompts_cmd.mbt": [ "native" ],
     "runtime_commands.mbt": [ "native" ],
-    "statusline.mbt": [ "native" ],
+    "start.mbt": [ "native" ],
     "stub_main.mbt": [ "not", "native" ],
     "tcp_reader.mbt": [ "native" ],
-    "trust_gemini_folder.mbt": [ "native" ],
     "uds_reader.mbt": [ "native" ],
     "uds_server.mbt": [ "native" ],
-    "zellij_action.mbt": [ "native" ],
   },
 )

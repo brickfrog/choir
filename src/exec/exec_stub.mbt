@@ -118,6 +118,20 @@ pub async fn capture_claude_live_startup(
 }
 
 ///|
+pub async fn capture_codex_live_startup(
+  _dedicated_root : String,
+  _mcp_executable : String,
+  _mcp_args : Array[String],
+  _read_canary_path : String,
+) -> Result[@harness.CodexLiveProbeEvidence, @types.ChoirError] {
+  Err(
+    @types.ChoirError::transport_error(
+      "Codex live startup probes require the native target",
+    ),
+  )
+}
+
+///|
 pub async fn capture_hook_script_merged(
   _hook_path : String,
   _stdin_body : String,
@@ -225,6 +239,14 @@ pub async fn run(cmd : @workspace.Command) -> Int {
   if native_agy_seed_if_needed >= 0 {
     return native_agy_seed_if_needed
   }
+  -1
+}
+
+///|
+pub async fn run_conductor_process(
+  _cmd : @workspace.Command,
+  _environment : @workspace.ConductorProcessEnvironment,
+) -> Int {
   -1
 }
 

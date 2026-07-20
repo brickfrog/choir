@@ -51,6 +51,226 @@ fn scheduling_record(
 }
 
 ///|
+fn generated_part_id(index : Int) -> @control.PartId {
+  @control.PartId("generated-part-" + index.to_string())
+}
+
+///|
+fn generated_mutation_declaration(
+  seed : Int,
+  index : Int,
+) -> @control.MutationDeclaration {
+  let group = (seed + index * 7) % 6
+  let path_group = (seed + index) % 4
+  match group {
+    0 =>
+      @control.MutationDeclaration::CompleteMutationDeclaration([
+        @control.MutationClaim::ExactPath(
+          @control.RepoPath(
+            "src/group-" +
+            path_group.to_string() +
+            "/part-" +
+            index.to_string() +
+            ".mbt",
+          ),
+        ),
+      ])
+    1 =>
+      @control.MutationDeclaration::CompleteMutationDeclaration([
+        @control.MutationClaim::PathTree(
+          @control.RepoPath("src/group-" + path_group.to_string()),
+        ),
+      ])
+    2 =>
+      @control.MutationDeclaration::CompleteMutationDeclaration([
+        @control.MutationClaim::ExactPath(
+          @control.RepoPath("shared/generated.lock"),
+        ),
+      ])
+    3 => @control.MutationDeclaration::CompleteMutationDeclaration([])
+    4 =>
+      @control.MutationDeclaration::UnknownMutationDeclaration(
+        @control.UnknownMutationReason::GeneratedOutputsUnknown,
+      )
+    _ => @control.MutationDeclaration::MissingMutationDeclaration
+  }
+}
+
+///|
+fn generated_scheduling_records(
+  seed : Int,
+  count : Int,
+) -> Array[@workflow.GoalPartSchedulingRecord] {
+  let records : Array[@workflow.GoalPartSchedulingRecord] = []
+  for index = 0; index < count; index = index + 1 {
+    let dependencies : Array[@control.PartId] = []
+    if index > 0 && (seed + index) % 3 != 0 {
+      dependencies.push(generated_part_id(index - 1))
+    }
+    if index > 3 && (seed + index * 3) % 5 == 0 {
+      let earlier = generated_part_id(index - 3)
+      if !dependencies.contains(earlier) {
+        dependencies.push(earlier)
+      }
+    }
+    records.push(
+      scheduling_record(
+        generated_part_id(index).0,
+        dependencies,
+        @control.PartLifecycle::PartPending,
+        generated_mutation_declaration(seed, index),
+      ),
+    )
+  }
+  records
+}
+
+///|
+fn replace_generated_part_lifecycle(
+  records : Array[@workflow.GoalPartSchedulingRecord],
+  part_id : @control.PartId,
+  lifecycle : @control.PartLifecycle,
+) -> Array[@workflow.GoalPartSchedulingRecord] {
+  records.map(fn(record) {
+    if record.part.id == part_id {
+      { ..record, part: { ..record.part, lifecycle, } }
+    } else {
+      record
+    }
+  })
+}
+
+///|
+fn generated_scheduling_record_by_id(
+  records : Array[@workflow.GoalPartSchedulingRecord],
+  part_id : @control.PartId,
+) -> @workflow.GoalPartSchedulingRecord? {
+  for record in records {
+    if record.part.id == part_id {
+      return Some(record)
+    }
+  }
+  None
+}
+
+///|
+fn assert_generated_admission_is_safe(
+  records : Array[@workflow.GoalPartSchedulingRecord],
+  admitted_part_ids : Array[@control.PartId],
+  maximum_parallel_parts : Int,
+) -> Unit raise {
+  assert_true(admitted_part_ids.length() <= maximum_parallel_parts)
+  for index, part_id in admitted_part_ids {
+    let record = match generated_scheduling_record_by_id(records, part_id) {
+      Some(value) => value
+      None => fail("scheduler admitted an unknown generated Part")
+    }
+    for dependency_id in record.part.dependency_ids {
+      let dependency = match
+        generated_scheduling_record_by_id(records, dependency_id) {
+        Some(value) => value
+        None => fail("generated dependency disappeared")
+      }
+      assert_true(
+        dependency.part.lifecycle is @control.PartLifecycle::PartIntegrated(_),
+      )
+    }
+    for other_index = index + 1
+        other_index < admitted_part_ids.length()
+        other_index = other_index + 1 {
+      let other_id = admitted_part_ids[other_index]
+      let other = match generated_scheduling_record_by_id(records, other_id) {
+        Some(value) => value
+        None => fail("scheduler admitted an unknown generated Part")
+      }
+      assert_false(
+        @control.mutation_declarations_conflict(
+          record.task_contract.mutation_declaration,
+          other.task_contract.mutation_declaration,
+        ),
+      )
+    }
+  }
+}
+
+///|
+fn complete_generated_schedule(
+  source : Array[@workflow.GoalPartSchedulingRecord],
+  maximum_parallel_parts : Int,
+) -> Array[@control.PartId] raise {
+  let mut records = source
+  let admission_order : Array[@control.PartId] = []
+  let mut remaining = records.length()
+  while remaining > 0 {
+    let schedule = match
+      @workflow.schedule_goal_parts(records, maximum_parallel_parts) {
+      Ok(value) => value
+      Err(error) => fail(error.message())
+    }
+    if schedule.admitted_part_ids.length() == 0 {
+      fail("generated acyclic schedule made no progress")
+    }
+    assert_generated_admission_is_safe(
+      records,
+      schedule.admitted_part_ids,
+      maximum_parallel_parts,
+    )
+    for part_id in schedule.admitted_part_ids {
+      admission_order.push(part_id)
+      records = replace_generated_part_lifecycle(
+        records,
+        part_id,
+        @control.PartLifecycle::PartIntegrated(
+          @control.ReceiptId("generated-integration-" + part_id.0),
+        ),
+      )
+      remaining = remaining - 1
+    }
+  }
+  admission_order
+}
+
+///|
+fn generated_promotion_order(
+  source : Array[@workflow.GoalPartSchedulingRecord],
+) -> Array[@control.PartId] raise {
+  let mut records = source.map(fn(record) {
+    {
+      ..record,
+      part: {
+        ..record.part,
+        lifecycle: @control.PartLifecycle::PartAudited(
+          @control.CandidateId("generated-candidate-" + record.part.id.0),
+          schedule_digest,
+          @control.ReceiptId("generated-audit-" + record.part.id.0),
+        ),
+      },
+    }
+  })
+  let order : Array[@control.PartId] = []
+  while order.length() < records.length() {
+    let selection = match
+      @workflow.select_next_deterministic_promotion(
+        records,
+        @control.GitOid("generated-head-" + order.length().to_string()),
+      ) {
+      Ok(Some(value)) => value
+      Ok(None) => fail("generated promotion order made no progress")
+      Err(error) => fail(error.message())
+    }
+    order.push(selection.part_id)
+    records = replace_generated_part_lifecycle(
+      records,
+      selection.part_id,
+      @control.PartLifecycle::PartIntegrated(
+        @control.ReceiptId("generated-integration-" + selection.part_id.0),
+      ),
+    )
+  }
+  order
+}
+
+///|
 test "scheduler admits independent Parts in stable order" {
   let part_a = scheduling_record(
     "a",
@@ -300,6 +520,38 @@ test "promotion waits for the earliest stable topological rank" {
   }
   assert_eq(selected.part_id, part_b.part.id)
   assert_eq(selected.expected_goal_head_oid, @control.GitOid("promotion-a"))
+}
+
+///|
+test "fixed-seed generated DAGs schedule safely at several concurrency limits" {
+  for seed in [3, 7, 19, 31] {
+    let records = generated_scheduling_records(seed, 17)
+    let reversed = records.copy()
+    reversed.sort_by(fn(left, right) { right.part.id.compare(left.part.id) })
+    for maximum_parallel_parts in [1, 2, 4, 7] {
+      let forward_order = complete_generated_schedule(
+        records, maximum_parallel_parts,
+      )
+      let reversed_order = complete_generated_schedule(
+        reversed, maximum_parallel_parts,
+      )
+      assert_eq(forward_order, reversed_order)
+      assert_eq(forward_order.length(), records.length())
+    }
+  }
+}
+
+///|
+test "fixed-seed generated DAG promotion order ignores input permutation" {
+  for seed in [5, 11, 23, 37] {
+    let records = generated_scheduling_records(seed, 19)
+    let reversed = records.copy()
+    reversed.sort_by(fn(left, right) { right.part.id.compare(left.part.id) })
+    let forward_order = generated_promotion_order(records)
+    let reversed_order = generated_promotion_order(reversed)
+    assert_eq(forward_order, reversed_order)
+    assert_eq(forward_order.length(), records.length())
+  }
 }
 
 ///|

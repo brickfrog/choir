@@ -56,6 +56,9 @@ Applies to every commit and PR opened by any agent (TL or leaf). No exceptions, 
   - Do not narrate the development process, list every leaf, or recount review history unless it materially affects the reviewer's decision.
 - Never paste this guideline, tool output, or process commentary into a PR/commit that doesn't need it.
 
-## Orchestrator Role
+## Conductor Role
 
-The above are repo-editing invariants — they apply to anyone editing this source. Operating *as* the Choir TL is a different surface: your guide is `.choir/context/tl.md` plus the `tl-stance` skill, and procedure lives in skills (`/crystallize`, `/decompose`, `/dispatch-leaf`, `/ship-pr`, `/audit`, `/onboard`). Leaf and worker lifecycle live in their role profiles. None of that belongs here.
+The above are repository-editing invariants. The interactive Conductor follows
+the generated Goal skill and `GOAL.md`; it proposes and steers durable Goals but
+does not spawn provider sessions, mint receipts, integrate commits, or decide
+completion itself. Those actions remain `choird` authority.

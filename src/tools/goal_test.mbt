@@ -566,7 +566,7 @@ async test "goal_status evaluate returns fresh completion without writing KV" {
   files.set(path, goal.to_json_string())
   let mut writes = 0
   let resp = dispatch(
-    ToolRequest::GoalStatus({ evaluate: true }),
+    ToolRequest::GoalStatus({ goal_id: None, evaluate: true }),
     project_dir="/repo",
     session="sess",
     runner=async fn(_cmds) {

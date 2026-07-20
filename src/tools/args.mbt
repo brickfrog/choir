@@ -197,8 +197,43 @@ pub(all) struct GoalSetArgs {
 } derive(Debug, Eq)
 
 ///|
+pub(all) struct GoalSubmitArgs {
+  draft_json : String
+} derive(Debug, Eq)
+
+///|
 pub(all) struct GoalStatusArgs {
+  goal_id : String?
   evaluate : Bool
+} derive(Debug, Eq)
+
+///|
+pub(all) struct GoalCancelArgs {
+  goal_id : String
+} derive(Debug, Eq)
+
+///|
+pub(all) enum GoalSteerAction {
+  GoalSteerPause
+  GoalSteerResume
+  GoalSteerSetMaximumParallelParts(Int)
+} derive(Debug, Eq)
+
+///|
+pub(all) struct GoalSteerArgs {
+  goal_id : String
+  action : GoalSteerAction
+} derive(Debug, Eq)
+
+///|
+pub(all) struct GoalAttachArgs {
+  take_id : String
+} derive(Debug, Eq)
+
+///|
+pub(all) struct GoalAnswerArgs {
+  request_id : String
+  answer : String
 } derive(Debug, Eq)
 
 ///|

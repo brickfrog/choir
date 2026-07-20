@@ -964,10 +964,6 @@ pub async fn interpret_spawn_worker(
       }
       record_task_contract(plan.agent_id, plan.spec.task_contract)
       ignore(mirror_beads_spawn_for_spec(project_dir, plan.spec, capture))
-      // Record the worktree tab in the persistent registry so the init reap can
-      // later close it iff its agent is terminal and its worktree is gone.
-      // Best-effort and no-op for inline workers (non-worktree isolation).
-      ignore(record_spawned_zellij_tab(project_dir, session, plan.spec))
       match seed_warning {
         Some(warning) => plan.ok_response.with_warning(warning)
         None => plan.ok_response

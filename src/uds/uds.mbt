@@ -9,6 +9,12 @@ extern "C" fn uds_accept_ffi(server_fd : Int) -> Int = "choir_uds_accept"
 extern "C" fn uds_accept_nonblocking_ffi(server_fd : Int) -> Int = "choir_uds_accept_nonblocking"
 
 ///|
+extern "C" fn uds_peer_is_current_user_ffi(fd : Int) -> Int = "choir_uds_peer_is_current_user"
+
+///|
+extern "C" fn uds_peer_pid_ffi(fd : Int) -> Int = "choir_uds_peer_pid"
+
+///|
 extern "C" fn uds_fd_has_cloexec_for_test_ffi(fd : Int) -> Int = "choir_uds_fd_has_cloexec_for_test"
 
 ///|
@@ -93,6 +99,16 @@ pub fn accept(server_fd : Int) -> Int {
 ///|
 pub fn accept_nonblocking(server_fd : Int) -> Int {
   uds_accept_nonblocking_ffi(server_fd)
+}
+
+///|
+pub fn peer_is_current_user(fd : Int) -> Bool {
+  uds_peer_is_current_user_ffi(fd) == 1
+}
+
+///|
+pub fn peer_pid(fd : Int) -> Int {
+  uds_peer_pid_ffi(fd)
 }
 
 ///|
@@ -225,4 +241,29 @@ test "accepted UDS fd from nonblocking accept is close-on-exec" {
   let (listener_flags, accepted_flags) = uds_accept_for_cloexec_test(path, true)
   assert_eq(listener_flags, 0)
   assert_eq(accepted_flags, 1)
+}
+
+///|
+test "accepted UDS peer exposes the current user and process" {
+  let path = uds_test_socket_path("peer-credential")
+  uds_unlink_test_path(path)
+  let server_fd = server_create(path)
+  let client_fd = if server_fd >= 0 { client_connect(path) } else { -1 }
+  let accepted_fd = if client_fd >= 0 { accept(server_fd) } else { -1 }
+  if accepted_fd < 0 {
+    if client_fd >= 0 {
+      close(client_fd)
+    }
+    if server_fd >= 0 {
+      close(server_fd)
+    }
+    uds_unlink_test_path(path)
+    fail("failed to create peer-credential fixture")
+  }
+  assert_true(peer_is_current_user(accepted_fd))
+  assert_eq(peer_pid(accepted_fd), uds_getpid_for_test_ffi())
+  close(accepted_fd)
+  close(client_fd)
+  close(server_fd)
+  uds_unlink_test_path(path)
 }

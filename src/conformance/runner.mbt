@@ -144,6 +144,14 @@ pub(all) enum ConformanceEvidence {
   ObservedArtifact(@control.Digest)
   ObservedEffectWitness(@control.Digest)
   ObservedFault(FaultPoint)
+  ObservedGeneratedDagSuite(Int, Int, Int, Int)
+  ObservedHarnessIngestion(
+    @control.HarnessIngestionDisposition,
+    @control.HarnessSessionLifecycle,
+    Bool
+  )
+  ObservedOwnershipCase(OwnershipConformanceKind, Int)
+  ObservedProcessCase(ProcessConformanceKind, Int)
   AllocatedId(ConformanceIdKind, String)
 } derive(Debug, Eq, ToJson, FromJson)
 

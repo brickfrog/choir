@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  assuranceTools,
   parseLaunchArgs,
   relativePath,
   tools,
+  toolsForAccess,
   validateArgv,
 } from "./choir_sandbox_mcp.mjs";
 
@@ -15,14 +17,19 @@ const launchArgs = [
   "--api-key", "take-key",
   "--home", "/tmp/take",
   "--box", "box-1",
+  "--access", "mutable",
 ];
 
 test("launch arguments admit only the fixed local shape", () => {
   assert.equal(parseLaunchArgs(launchArgs).box, "box-1");
+  assert.equal(parseLaunchArgs(launchArgs).access, "mutable");
   const remote = launchArgs.slice();
   remote[5] = "https://example.com";
   assert.throws(() => parseLaunchArgs(remote));
   assert.throws(() => parseLaunchArgs([...launchArgs, "--extra", "value"]));
+  const invalidAccess = launchArgs.slice();
+  invalidAccess[invalidAccess.length - 1] = "broad";
+  assert.throws(() => parseLaunchArgs(invalidAccess));
 });
 
 test("workspace paths reject aliases and escapes", () => {
@@ -50,4 +57,17 @@ test("tool declaration is fixed and unique", () => {
     "run",
   ]);
   assert.equal(new Set(tools.map((tool) => tool.name)).size, tools.length);
+  assert.deepEqual(assuranceTools.map((tool) => tool.name), [
+    "read_file",
+    "list_files",
+    "write_scratch",
+    "write_output",
+  ]);
+  assert.equal(
+    new Set(assuranceTools.map((tool) => tool.name)).size,
+    assuranceTools.length,
+  );
+  assert.equal(toolsForAccess("mutable"), tools);
+  assert.equal(toolsForAccess("read-only-subject"), assuranceTools);
+  assert.throws(() => toolsForAccess("unknown"));
 });

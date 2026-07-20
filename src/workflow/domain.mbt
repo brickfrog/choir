@@ -16,6 +16,7 @@ pub(all) enum PartWorkflowStage {
   PartPromotionPrepared
   PartIntegrationAuthorized
   PartIntegrated
+  PartCanceled
   PartBlocked
   PartRecoveryUncertain
 } derive(Debug, Eq, ToJson, FromJson)
@@ -63,6 +64,7 @@ pub(all) enum PartEffectLifecycle {
   PartEffectMayHaveOccurred
   PartEffectReceipted
   PartEffectUncertain
+  PartEffectAbandonedByCancellation
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|

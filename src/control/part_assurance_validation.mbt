@@ -219,6 +219,14 @@ fn path_in(paths : Array[RepoPath], expected : RepoPath) -> Bool {
 }
 
 ///|
+fn path_has_symlink_prefix(
+  paths : Array[RepoPath],
+  expected : RepoPath,
+) -> Bool {
+  paths.any(fn(path) { expected == path || expected.0.has_prefix(path.0 + "/") })
+}
+
+///|
 pub fn validate_candidate_commit(
   contract : TaskContractRevision,
   implementation_take : Take,
@@ -248,7 +256,6 @@ pub fn validate_candidate_commit(
   }
   for path in path_evidence.candidate_tree_paths {
     if validate_repo_path(path, is_nfc) is Err(_) ||
-      path_in(path_evidence.symlink_prefix_paths, path) ||
       path_in(path_evidence.normalization_collision_paths, path) {
       return Err(CandidateInvalidPath(path))
     }
@@ -256,7 +263,7 @@ pub fn validate_candidate_commit(
   let uncovered : Array[RepoPath] = []
   for path in candidate.changed_paths {
     if validate_repo_path(path, is_nfc) is Err(_) ||
-      path_in(path_evidence.symlink_prefix_paths, path) ||
+      path_has_symlink_prefix(path_evidence.symlink_prefix_paths, path) ||
       path_in(path_evidence.normalization_collision_paths, path) {
       return Err(CandidateInvalidPath(path))
     }

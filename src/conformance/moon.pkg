@@ -1,9 +1,12 @@
 import {
   "choir/src/control",
+  "choir/src/sandbox",
+  "choir/src/storage",
   "choir/src/types",
   "choir/src/workflow",
   "moonbitlang/core/json",
   "moonbitlang/core/ref",
+  "moonbitlang/core/encoding/utf8",
 }
 
 options(

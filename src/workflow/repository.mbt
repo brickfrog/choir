@@ -26,6 +26,12 @@ pub(all) struct PartSnapshotPersistenceReceipt {
 } derive(Debug, Eq)
 
 ///|
+pub(all) enum GuardedPartSnapshotPersistenceResult {
+  GuardedPartSnapshotPersisted(PartSnapshotPersistenceReceipt)
+  GuardedPartSnapshotPreconditionConflict
+} derive(Debug, Eq)
+
+///|
 pub(all) struct PartStoredSnapshot {
   state_record : @storage.StateRecord
   snapshot : PartWorkflowSnapshot
@@ -81,11 +87,12 @@ pub fn initialize_part_workflow_repository(
 }
 
 ///|
-pub fn persist_part_snapshot(
+fn persist_part_snapshot_internal(
   repository : PartWorkflowRepository,
   adapters : PartWorkflowRepositoryAdapters,
   request : PartSnapshotPersistenceRequest,
-) -> Result[PartSnapshotPersistenceReceipt, @types.ChoirError] {
+  precondition : @storage.StateRecordPrecondition?,
+) -> Result[GuardedPartSnapshotPersistenceResult, @types.ChoirError] {
   match validate_workflow_repository(repository) {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -130,12 +137,68 @@ pub fn persist_part_snapshot(
     },
     fault_point: request.fault_point,
   }
-  let outcome = match
-    (adapters.state.commit)(repository.state_store, transaction) {
-    Ok(value) => value
-    Err(error) => return Err(error)
+  let guarded_outcome = match precondition {
+    None =>
+      match (adapters.state.commit)(repository.state_store, transaction) {
+        Ok(value) =>
+          @storage.GuardedStateTransactionOutcome::GuardedStateTransactionCompleted(
+            value,
+          )
+        Err(error) => return Err(error)
+      }
+    Some(value) =>
+      match
+        (adapters.state.commit_guarded)(repository.state_store, {
+          transaction,
+          precondition: value,
+        }) {
+        Ok(result) => result
+        Err(error) => return Err(error)
+      }
   }
-  Ok({ store_version, snapshot_digest, transaction_outcome: outcome })
+  match guarded_outcome {
+    @storage.GuardedStateTransactionOutcome::GuardedStateTransactionCompleted(
+      outcome
+    ) =>
+      Ok(
+        GuardedPartSnapshotPersisted({
+          store_version,
+          snapshot_digest,
+          transaction_outcome: outcome,
+        }),
+      )
+    @storage.GuardedStateTransactionOutcome::GuardedStateTransactionPreconditionConflict =>
+      Ok(GuardedPartSnapshotPreconditionConflict)
+  }
+}
+
+///|
+pub fn persist_part_snapshot(
+  repository : PartWorkflowRepository,
+  adapters : PartWorkflowRepositoryAdapters,
+  request : PartSnapshotPersistenceRequest,
+) -> Result[PartSnapshotPersistenceReceipt, @types.ChoirError] {
+  match persist_part_snapshot_internal(repository, adapters, request, None) {
+    Ok(GuardedPartSnapshotPersisted(receipt)) => Ok(receipt)
+    Ok(GuardedPartSnapshotPreconditionConflict) =>
+      Err(workflow_error("unguarded snapshot persistence was rejected"))
+    Err(error) => Err(error)
+  }
+}
+
+///|
+pub fn persist_part_snapshot_guarded(
+  repository : PartWorkflowRepository,
+  adapters : PartWorkflowRepositoryAdapters,
+  request : PartSnapshotPersistenceRequest,
+  precondition : @storage.StateRecordPrecondition,
+) -> Result[GuardedPartSnapshotPersistenceResult, @types.ChoirError] {
+  persist_part_snapshot_internal(
+    repository,
+    adapters,
+    request,
+    Some(precondition),
+  )
 }
 
 ///|
@@ -178,6 +241,122 @@ pub fn load_part_snapshot(
     return Err(workflow_error("snapshot identity or fence is inconsistent"))
   }
   Ok(Some({ state_record, snapshot }))
+}
+
+///|
+pub fn persist_part_goal_cancellation(
+  repository : PartWorkflowRepository,
+  adapters : PartWorkflowRepositoryAdapters,
+  stored : PartStoredSnapshot,
+) -> Result[PartStoredSnapshot, @types.ChoirError] {
+  let next = match record_part_goal_cancellation(stored.snapshot) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if next == stored.snapshot {
+    return Ok(stored)
+  }
+  let receipt = match
+    persist_part_snapshot(repository, adapters, {
+      snapshot: next,
+      expected_store_version: Some(stored.state_record.version),
+      fault_point: None,
+    }) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  match receipt.transaction_outcome {
+    @storage.StateTransactionOutcome::StateTransactionCommitted
+    | @storage.StateTransactionOutcome::StateTransactionReplayed
+    | @storage.StateTransactionOutcome::StateTransactionCommittedAckLost => ()
+    @storage.StateTransactionOutcome::StateTransactionVersionConflict =>
+      match load_part_snapshot(repository, adapters, next.workflow_id) {
+        Ok(Some(current)) =>
+          if part_cancellation_disposition_is_known(current.snapshot) {
+            return Ok(current)
+          } else {
+            return Err(
+              workflow_error("Part changed while cancellation was recorded"),
+            )
+          }
+        Ok(_) =>
+          return Err(
+            workflow_error("Part changed while cancellation was recorded"),
+          )
+        Err(error) => return Err(error)
+      }
+    @storage.StateTransactionOutcome::StateTransactionStaleFence =>
+      return Err(workflow_error("Part cancellation fencing conflict"))
+    @storage.StateTransactionOutcome::StateTransactionSemanticConflict =>
+      return Err(workflow_error("Part cancellation semantic conflict"))
+    @storage.StateTransactionOutcome::StateTransactionFaultRolledBack(_) =>
+      return Err(workflow_error("Part cancellation persistence fault"))
+  }
+  match load_part_snapshot(repository, adapters, next.workflow_id) {
+    Ok(Some(current)) if current.snapshot == next => Ok(current)
+    Ok(_) => Err(workflow_error("Part cancellation did not reload"))
+    Err(error) => Err(error)
+  }
+}
+
+///|
+pub fn persist_recovered_part_effect_observation(
+  repository : PartWorkflowRepository,
+  adapters : PartWorkflowRepositoryAdapters,
+  stored : PartStoredSnapshot,
+  observation : PartEffectObservation,
+  observed_at : Int64,
+  artifact_exists : (@control.ArtifactReference) -> Bool,
+  is_nfc : (String) -> Bool,
+) -> Result[PartStoredSnapshot, @types.ChoirError] {
+  let next = match
+    apply_part_effect_observation(
+      stored.snapshot,
+      observation,
+      observed_at,
+      artifact_exists,
+      is_nfc,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let receipt = match
+    persist_part_snapshot(repository, adapters, {
+      snapshot: next,
+      expected_store_version: Some(stored.state_record.version),
+      fault_point: None,
+    }) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  match receipt.transaction_outcome {
+    @storage.StateTransactionOutcome::StateTransactionCommitted
+    | @storage.StateTransactionOutcome::StateTransactionReplayed
+    | @storage.StateTransactionOutcome::StateTransactionCommittedAckLost =>
+      match load_part_snapshot(repository, adapters, next.workflow_id) {
+        Ok(Some(current)) if current.snapshot == next => Ok(current)
+        Ok(_) =>
+          Err(workflow_error("recovered effect observation did not reload"))
+        Err(error) => Err(error)
+      }
+    @storage.StateTransactionOutcome::StateTransactionVersionConflict =>
+      match load_part_snapshot(repository, adapters, next.workflow_id) {
+        Ok(Some(current)) if current.snapshot == next => Ok(current)
+        Ok(_) =>
+          Err(
+            workflow_error(
+              "Part changed while its effect observation was recovered",
+            ),
+          )
+        Err(error) => Err(error)
+      }
+    @storage.StateTransactionOutcome::StateTransactionStaleFence =>
+      Err(workflow_error("recovered effect observation fencing conflict"))
+    @storage.StateTransactionOutcome::StateTransactionSemanticConflict =>
+      Err(workflow_error("recovered effect observation semantic conflict"))
+    @storage.StateTransactionOutcome::StateTransactionFaultRolledBack(_) =>
+      Err(workflow_error("recovered effect observation persistence fault"))
+  }
 }
 
 ///|

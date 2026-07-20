@@ -14,6 +14,7 @@ suberror ChoirError {
   PolicyBlocked(String)
   ValidationError(String)
   Timeout(String)
+  OperationCanceled(String)
   WorkspaceError(String)
   TransportError(String)
   GitError(String)
@@ -30,6 +31,7 @@ pub fn ChoirError::to_wire_string(self : ChoirError) -> String {
     PolicyBlocked(_) => "policy_blocked"
     ValidationError(_) => "validation_error"
     Timeout(_) => "timeout"
+    OperationCanceled(_) => "canceled"
     WorkspaceError(_) => "workspace_error"
     TransportError(_) => "transport_error"
     GitError(_) => "git_error"
@@ -47,6 +49,7 @@ pub fn ChoirError::message(self : ChoirError) -> String {
     PolicyBlocked(msg) => "policy blocked: " + msg
     ValidationError(msg) => "validation error: " + msg
     Timeout(msg) => "timeout error: " + msg
+    OperationCanceled(msg) => "canceled: " + msg
     WorkspaceError(msg) => "workspace error: " + msg
     TransportError(msg) => "transport error: " + msg
     GitError(msg) => "git error: " + msg
@@ -101,10 +104,16 @@ pub fn ChoirError::timeout(msg : String) -> ChoirError {
 }
 
 ///|
+pub fn ChoirError::canceled(msg : String) -> ChoirError {
+  OperationCanceled(msg)
+}
+
+///|
 pub fn ChoirError::validation_detail_or_message(self : ChoirError) -> String {
   match self {
     ValidationError(msg) => msg
     Timeout(msg) => msg
+    OperationCanceled(msg) => msg
     PermissionDeniedDetail(msg) => msg
     _ => self.message()
   }
@@ -167,6 +176,7 @@ pub fn choir_error_message_from_caught(e : Error) -> String {
     PolicyBlocked(msg) => ChoirError::policy_blocked(msg).message()
     ValidationError(msg) => ChoirError::validation_error(msg).message()
     Timeout(msg) => ChoirError::timeout(msg).message()
+    OperationCanceled(msg) => ChoirError::canceled(msg).message()
     WorkspaceError(msg) => ChoirError::workspace_error(msg).message()
     TransportError(msg) => ChoirError::transport_error(msg).message()
     GitError(msg) => ChoirError::git_error(msg).message()
@@ -186,6 +196,7 @@ pub fn caught_error_is_choir_error(e : Error) -> Bool {
     | PolicyBlocked(_)
     | ValidationError(_)
     | Timeout(_)
+    | OperationCanceled(_)
     | WorkspaceError(_)
     | TransportError(_)
     | GitError(_)

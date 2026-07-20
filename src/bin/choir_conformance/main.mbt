@@ -41,7 +41,21 @@ fn hermetic_dependencies() -> @conformance.ConformanceDependencies {
 ///|
 fn run_hermetic() -> Int {
   let report = @conformance.run_hermetic_suite(
-    [@conformance.runner_dependency_contract_case()],
+    [
+      @conformance.runner_dependency_contract_case(),
+      @conformance.scheduler_generated_dags_case(),
+      @conformance.event_duplicate_conflict_case(),
+      @conformance.event_cursor_gap_case(),
+      @conformance.event_late_terminal_case(),
+      @conformance.event_conflicting_terminal_case(),
+      @conformance.ownership_normalization_case(),
+      @conformance.ownership_conflict_matrix_case(),
+      @conformance.ownership_underclaim_case(),
+      @conformance.ownership_rename_delete_generate_case(),
+      @conformance.process_validation_matrix_case(),
+      @conformance.process_authority_fence_case(),
+      @conformance.process_canonical_dispatch_case(),
+    ],
     hermetic_dependencies(),
   )
   @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
@@ -187,6 +201,125 @@ async fn run_claude_live_startup() -> Int {
 }
 
 ///|
+async fn run_codex_live_startup() -> Int {
+  let root = "/tmp/choir-conformance-codex-live-" + @sys.get_pid().to_string()
+  if !@sys.create_dir_all(root + "/tmp") {
+    @sys.write_stderr("failed to create dedicated Codex startup root\n")
+    return 1
+  }
+  let (mcp_command, mcp_args) = match probe_mcp_launch() {
+    Ok(launch) => launch
+    Err(error) => {
+      @sys.write_stderr(error.message() + "\n")
+      ignore(@sys.rm_rf(root))
+      return 1
+    }
+  }
+  let read_canary = match @sys.realpath_native("GOAL.md") {
+    Some(path) => path
+    None => {
+      @sys.write_stderr("failed to resolve Codex read canary\n")
+      ignore(@sys.rm_rf(root))
+      return 1
+    }
+  }
+  let evidence = match
+    @exec.capture_codex_live_startup(root, mcp_command, mcp_args, read_canary) {
+    Ok(value) => value
+    Err(error) => {
+      @sys.write_stderr(error.message() + "\n")
+      ignore(@sys.rm_rf(root))
+      return 1
+    }
+  }
+  let report = @harness.evaluate_codex_live_startup(evidence)
+  ignore(@sys.rm_rf(root))
+  @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
+  match report.support {
+    @harness.ChoirSurfaceSupport::SurfaceCandidate => 0
+    _ => 1
+  }
+}
+
+///|
+async fn run_codex_live_driver() -> Int {
+  let root = "/tmp/choir-conformance-codex-driver-" + @sys.get_pid().to_string()
+  if !@sys.create_dir_all(root + "/tmp") {
+    @sys.write_stderr("failed to create dedicated Codex driver root\n")
+    return 1
+  }
+  let (mcp_command, mcp_args) = match probe_mcp_launch() {
+    Ok(launch) => launch
+    Err(error) => {
+      @sys.write_stderr(error.message() + "\n")
+      ignore(@sys.rm_rf(root))
+      return 1
+    }
+  }
+  let planned : @control.HarnessSession = {
+    id: @control.HarnessSessionId("codex-live-driver-session"),
+    take_id: @control.TakeId("codex-live-driver-take"),
+    sandbox_generation_id: @control.SandboxGenerationId(
+      "codex-live-driver-sandbox",
+    ),
+    surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+    effective_surface_manifest_digest: @harness.codex_effective_surface_manifest_digest(
+      ["probe"],
+      "choir_probe",
+    ),
+    cursor_class: @control.HarnessCursorClass::HarnessCursorNotResumable,
+    provider_cursor: None,
+    last_choir_sequence: @control.EventSequence(0L),
+    open_tool_execution_ids: [],
+    lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+  }
+  let started = match @harness.start_codex_harness_session(planned) {
+    Ok(value) => value
+    Err(error) => {
+      @sys.write_stderr(error.message() + "\n")
+      ignore(@sys.rm_rf(root))
+      return 1
+    }
+  }
+  let clock = @ref.new(100L)
+  let result = match
+    @exec.run_native_codex_take(
+      {
+        sterile_root: root,
+        mcp_executable: mcp_command,
+        mcp_arguments: mcp_args,
+        mcp_server_name: "choir_probe",
+        allowed_tools: ["probe"],
+        timeout_ms: 120000,
+      },
+      started,
+      @harness.CodexTakeRole::CodexImplementationTake,
+      "Call probe exactly once. Only after it returns probe, report the required completed outcome.",
+      fn() {
+        clock.val = clock.val + 1L
+        clock.val
+      },
+    ) {
+    Ok(value) => value
+    Err(error) => {
+      @sys.write_stderr(error.message() + "\n")
+      ignore(@sys.rm_rf(root))
+      return 1
+    }
+  }
+  ignore(@sys.rm_rf(root))
+  let report : Map[String, Json] = {
+    "surface": "CodexSubscriptionCli".to_json(),
+    "outcome": result.outcome.to_json(),
+    "event_count": result.events.length().to_json(),
+    "terminal_response": result.terminal_response.to_json(),
+    "lifecycle": result.session.lifecycle.to_json(),
+  }
+  @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
+  0
+}
+
+///|
 fn parse_surface(raw : String) -> @harness.ProviderSurface? {
   match raw {
     "claude-cli" => Some(@harness.ProviderSurface::ClaudeCli)
@@ -219,9 +352,14 @@ fn run_harness_command(args : Array[String]) -> Unit {
     args[4] == "--profile" &&
     args[5] == "subscription" &&
     args[6] == "--live" {
-    @async.run_async_main(async fn() {
-      @sys.exit(run_surface_declaration(@harness.ProviderSurface::CodexCli))
-    })
+    @async.run_async_main(async fn() { @sys.exit(run_codex_live_startup()) })
+  } else if args.length() == 7 &&
+    args[2] == "--surface" &&
+    args[3] == "codex-cli" &&
+    args[4] == "--profile" &&
+    args[5] == "subscription" &&
+    args[6] == "--driver-live" {
+    @async.run_async_main(async fn() { @sys.exit(run_codex_live_driver()) })
   } else if args.length() == 6 &&
     args[2] == "--surface" &&
     args[4] == "--profile" &&
@@ -236,6 +374,143 @@ fn run_harness_command(args : Array[String]) -> Unit {
         @sys.exit(2)
       }
     }
+  } else {
+    usage()
+    @sys.exit(2)
+  }
+}
+
+///|
+fn cleanup_conductor_start_probe(root : String) -> Unit {
+  let raw_pid = @sys.read_file(root + "/.choir/run/server.pid")
+    .trim()
+    .to_owned()
+  let pid = @string.parse_int(raw_pid) catch { _ => 0 }
+  if pid > 1 {
+    @sys.kill_server_pid_sequence_best_effort(pid)
+  }
+  ignore(@sys.rm_rf(root))
+}
+
+///|
+async fn run_conductor_start_live() -> Int {
+  let root = "/tmp/choir-conductor-start-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(root))
+  if !@sys.create_dir_all(root + "/bin") {
+    @sys.write_stderr("failed to create Conductor start fixture\n")
+    return 1
+  }
+  let (build_code, build_output) = @exec.capture_command_merged({
+    program: "moon",
+    args: ["build", "--target", "native", "src/bin/choir"],
+    workdir: None,
+  })
+  if build_code != 0 {
+    @sys.write_stderr(build_output)
+    cleanup_conductor_start_probe(root)
+    return 1
+  }
+  let choir_binary = match
+    @sys.realpath_native("_build/native/debug/build/src/bin/choir/choir.exe") {
+    Some(value) => value
+    None => {
+      @sys.write_stderr("built Choir binary is unavailable\n")
+      cleanup_conductor_start_probe(root)
+      return 1
+    }
+  }
+  let socket_path = root + "/.choir/run/server.sock"
+  let conductor_output = root + "/conductor-output.json"
+  let fake_conductor = root + "/bin/claude"
+  let fake_body = "#!/bin/sh\nif [ -n \"$CHOIR_AGENT_TOKEN\" ]; then token_state=present; else token_state=missing; fi\nprintf '%s|%s|%s|%s\\n' \"$CHOIR_AGENT_ID\" \"$CHOIR_ROLE\" \"$token_state\" \"$CHOIR_LISTEN_UDS\" > \"$CHOIR_START_TEST_OUTPUT.env\"\nprintf '%s\\n' \"$*\" > \"$CHOIR_START_TEST_OUTPUT.args\"\n\"$CHOIR_START_TEST_BINARY\" goal status missing > \"$CHOIR_START_TEST_OUTPUT\" 2>&1 || true\nexit 0\n"
+  if !@sys.write_file_sync(fake_conductor, fake_body) {
+    @sys.write_stderr("failed to write fake Conductor\n")
+    cleanup_conductor_start_probe(root)
+    return 1
+  }
+  let (chmod_code, chmod_output) = @exec.capture_command_merged({
+    program: "/usr/bin/chmod",
+    args: ["0700", fake_conductor],
+    workdir: None,
+  })
+  if chmod_code != 0 {
+    @sys.write_stderr(chmod_output)
+    cleanup_conductor_start_probe(root)
+    return 1
+  }
+  let inherited_path = @sys.getenv("PATH").unwrap_or("/usr/bin:/bin")
+  let (start_code, start_output) = @exec.capture_command_merged({
+    program: "/usr/bin/env",
+    args: [
+      "PATH=" + root + "/bin:" + inherited_path,
+      "CHOIR_START_TEST_BINARY=" + choir_binary,
+      "CHOIR_START_TEST_OUTPUT=" + conductor_output,
+      choir_binary,
+      "init",
+    ],
+    workdir: Some(root),
+  })
+  let conductor_result = @sys.read_file(conductor_output)
+  let conductor_environment = @sys.read_file(conductor_output + ".env")
+  let conductor_args = @sys.read_file(conductor_output + ".args")
+  let (mode_code, socket_mode) = @exec.capture_command_merged({
+    program: "/usr/bin/stat",
+    args: ["-c", "%a", socket_path],
+    workdir: None,
+  })
+  let project_initialized = @sys.path_exists(root + "/.choir/config.toml") &&
+    @sys.path_exists(root + "/.choir/config.local.toml")
+  let conductor_surface_restricted = conductor_args.contains("--tools") &&
+    conductor_args.contains("--setting-sources") &&
+    conductor_args.contains("--strict-mcp-config") &&
+    !conductor_args.contains("semble")
+  let functional_passed = start_code == 0 &&
+    conductor_result.contains("Goal is not registered") &&
+    !conductor_result.contains("authentication failed") &&
+    project_initialized &&
+    @sys.path_exists(root + "/.choir/plugin/skills/goal/SKILL.md") &&
+    !@sys.path_entry_exists(root + "/.choir/plugin/skills/audit") &&
+    conductor_surface_restricted &&
+    mode_code == 0 &&
+    socket_mode.trim().to_owned() == "600"
+  let daemon_pid = @string.parse_int(
+    @sys.read_file(root + "/.choir/run/server.pid").trim().to_owned(),
+  ) catch {
+    _ => 0
+  }
+  cleanup_conductor_start_probe(root)
+  let daemon_stopped = daemon_pid > 1 && !@sys.pid_is_alive(daemon_pid)
+  let passed = functional_passed && daemon_stopped
+  let report : Map[String, Json] = {
+    "passed": passed.to_json(),
+    "start_exit_code": start_code.to_json(),
+    "daemon_socket_mode": socket_mode.trim().to_owned().to_json(),
+    "conductor_registered": conductor_result
+    .contains("Goal is not registered")
+    .to_json(),
+    "project_initialized": project_initialized.to_json(),
+    "zellij_required": false.to_json(),
+    "conductor_surface_restricted": conductor_surface_restricted.to_json(),
+    "daemon_stopped": daemon_stopped.to_json(),
+  }
+  if !passed {
+    report.set("start_output", start_output.to_json())
+    report.set("conductor_output", conductor_result.to_json())
+    report.set("conductor_environment", conductor_environment.to_json())
+    report.set("conductor_args", conductor_args.to_json())
+  }
+  @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
+  if passed {
+    0
+  } else {
+    1
+  }
+}
+
+///|
+fn run_conductor_command(args : Array[String]) -> Unit {
+  if args.length() == 3 && args[2] == "--start-live" {
+    @async.run_async_main(async fn() { @sys.exit(run_conductor_start_live()) })
   } else {
     usage()
     @sys.exit(2)
@@ -377,7 +652,110 @@ async fn exercise_boxlite_take(
       ),
     )
   }
+  let assurance_mutable = match
+    @exec.clone_native_boxlite_take(
+      prepared,
+      "choir-assurance-live-" + @sys.get_pid().to_string(),
+      source.root,
+      source.source_digest,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let assurance = match
+    @exec.seal_native_boxlite_assurance_subject(assurance_mutable) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let assurance_process : @sandbox.SandboxProcessSpec = {
+    authority: @sandbox.SandboxProcessAuthority::SandboxVerificationTool(
+      @control.TakeId("assurance-live-take"),
+      @control.VerificationSpecId("assurance-live-spec"),
+      @control.Digest("assurance-live-policy"),
+    ),
+    executable: @sandbox.SandboxExecutable::SandboxRegisteredTool(
+      @sandbox.SandboxRegisteredToolId("moon"),
+      prepared.tool_manifest_digest,
+    ),
+    arguments: ["--target-dir", "/scratch/typed-verification", "version"],
+    working_directory: @sandbox.SandboxWorkingDirectory::SandboxWorkspaceRoot,
+    environment: [{ key: "NO_COLOR", value: "1" }],
+    stdin: @sandbox.SandboxStdinPolicy::SandboxStdinClosed,
+    timeout_ms: 120000L,
+    resources: {
+      cpu_millis: 2000L,
+      memory_bytes: 1073741824L,
+      process_count: 128,
+      file_bytes: 1073741824L,
+    },
+    network: {
+      profile: @sandbox.SandboxNetworkProfile::NetworkDisabled,
+      version: 1L,
+      policy_digest: prepared.runtime_policy_digest,
+    },
+    output: {
+      stdout_limit_bytes: 1048576L,
+      stderr_limit_bytes: 1048576L,
+      on_limit: @sandbox.SandboxOutputLimitDisposition::SandboxTerminateAndMarkExceeded,
+    },
+  }
+  let assurance_process_digest = @storage.artifact_digest(
+    @utf8.encode(assurance_process.to_json().stringify(indent=0)),
+  )
+  let assurance_process_result = match
+    @exec.execute_native_boxlite_process(
+      assurance,
+      {
+        goal_id: @control.GoalId("assurance-live-goal"),
+        take_id: @control.TakeId("assurance-live-take"),
+        fencing_epoch: @control.FencingEpoch(1L),
+      },
+      assurance_process_digest,
+      assurance_process,
+      fn(_) { false },
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if assurance_process_result.exit_code != 0 {
+    return Err(
+      @types.ChoirError::workspace_error(
+        "read-only typed verification failed: " +
+        assurance_process_result.output,
+      ),
+    )
+  }
+  let assurance_probe = match
+    @exec.probe_native_boxlite_mcp(assurance, node, script) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let assurance_result = match
+    @exec.copy_native_boxlite_take_result(assurance) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let assurance_tree = match
+    @exec.observe_native_git_result_tree(
+      git_config,
+      "assurance-live-" + @sys.get_pid().to_string(),
+      source.commit_oid,
+      source.source_digest,
+      assurance_result,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if assurance_tree != source.tree_oid {
+    return Err(
+      @types.ChoirError::workspace_error("read-only assurance subject changed"),
+    )
+  }
   match @exec.destroy_native_boxlite_take(take) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  match @exec.destroy_native_boxlite_take(assurance) {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
@@ -389,6 +767,13 @@ async fn exercise_boxlite_take(
     "tool_count": @sandbox.boxlite_take_mcp_tools().length().to_json(),
     "bridge_argument_count": arguments.length().to_json(),
     "bridge_probe_digest": @storage.artifact_digest(@utf8.encode(bridge_probe)).to_json(),
+    "assurance_probe_digest": @storage.artifact_digest(
+      @utf8.encode(assurance_probe),
+    ).to_json(),
+    "assurance_case_id": "process.audit_scratch_boundary".to_json(),
+    "assurance_subject_read_only": true.to_json(),
+    "assurance_scratch_output_persisted": true.to_json(),
+    "assurance_typed_process_exit": assurance_process_result.exit_code.to_json(),
     "result_round_trip": true.to_json(),
     "candidate_retry_stable": true.to_json(),
     "candidate_commit": candidate.commit_oid.to_json(),
@@ -412,7 +797,7 @@ async fn capture_live_git(
 
 ///|
 async fn run_boxlite_take_live() -> Int {
-  let root = "/tmp/choir-v2-take-live-" + @sys.get_pid().to_string()
+  let root = "/tmp/choir-take-live-" + @sys.get_pid().to_string()
   let repository_root = match @sys.realpath_native(".") {
     Some(value) => value
     None => {
@@ -559,7 +944,88 @@ fn run_sandbox_command(args : Array[String]) -> Unit {
 }
 
 ///|
+async fn run_joined_goal_until_settled(
+  project_dir : String,
+  goal_id : @control.GoalId,
+) -> Result[@workflow.GoalExecutionRecord, @types.ChoirError] {
+  let mut cycles = 0
+  while cycles < 16 {
+    cycles = cycles + 1
+    match @exec.run_native_goal_execution_tick(project_dir) {
+      Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickAdvanced(record)) =>
+        if record.goal.id != goal_id {
+          continue
+        } else {
+          match record.state {
+            @workflow.GoalExecutionState::GoalExecutionQueued
+            | @workflow.GoalExecutionState::GoalExecutionRunning
+            | @workflow.GoalExecutionState::GoalExecutionAssuring => continue
+            _ => return Ok(record)
+          }
+        }
+      Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickIdle) =>
+        return Err(
+          @types.ChoirError::validation_error("joined Goal tick found no work"),
+        )
+      Err(error) => return Err(error)
+    }
+  } nobreak {
+    Err(@types.ChoirError::timeout("joined Goal execution"))
+  }
+}
+
+///|
 async fn run_end_to_end_command(args : Array[String]) -> Unit {
+  if args.length() == 6 && args[2] == "--project" && args[4] == "--draft" {
+    guard @sys.realpath_native(args[3]) is Some(project_dir) else {
+      @sys.write_stderr("joined Goal project is unavailable\n")
+      @sys.exit(2)
+      return
+    }
+    let draft = @sys.read_file(args[5])
+    let submission = match
+      @exec.submit_native_conductor_goal_draft(
+        project_dir, draft, @exec.capture_command_merged,
+      ) {
+      Ok(value) => value
+      Err(error) => {
+        @sys.write_stderr(error.message() + "\n")
+        @sys.exit(1)
+        return
+      }
+    }
+    @sys.write_stdout(submission.to_json().stringify(indent=2) + "\n")
+    if !submission.accepted || !submission.execution_registered {
+      @sys.exit(1)
+    }
+    if submission.replayed {
+      match @exec.inspect_native_goal(project_dir, submission.goal_id) {
+        Ok(report) if report.state ==
+          @workflow.GoalExecutionState::GoalExecutionAssured => {
+          @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
+          @sys.exit(0)
+          return
+        }
+        _ => ()
+      }
+    }
+    match run_joined_goal_until_settled(project_dir, submission.goal_id) {
+      Ok(record) => {
+        @sys.write_stdout(record.to_json().stringify(indent=2) + "\n")
+        @sys.exit(
+          if record.state == @workflow.GoalExecutionState::GoalExecutionAssured {
+            0
+          } else {
+            1
+          },
+        )
+      }
+      Err(error) => {
+        @sys.write_stderr(error.message() + "\n")
+        @sys.exit(1)
+      }
+    }
+  }
   if args.length() != 4 || args[2] != "--fixture" {
     usage()
     @sys.exit(2)
@@ -578,14 +1044,37 @@ async fn run_end_to_end_command(args : Array[String]) -> Unit {
       @sys.exit(if report.passed { 0 } else { 1 })
     }
     "native-part-lifecycle" => {
-      let root = "/tmp/choir-v2-take-native-part-" + @sys.get_pid().to_string()
+      let root = "/tmp/choir-take-native-part-" + @sys.get_pid().to_string()
       let report = @exec.run_native_part_lifecycle_fixture(root)
       ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     }
+    "native-codex-part-lifecycle" => {
+      let root = "/tmp/choir-take-native-codex-part-" +
+        @sys.get_pid().to_string()
+      let report = @exec.run_native_codex_part_lifecycle_fixture(root)
+      ignore(@sys.rm_rf(root))
+      @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
+      @sys.exit(if report.passed { 0 } else { 1 })
+    }
+    "native-codex-cancellation" => {
+      let root = "/tmp/choir-take-native-codex-cancel-" +
+        @sys.get_pid().to_string()
+      let report = @exec.run_native_codex_cancellation_fixture(root)
+      ignore(@sys.rm_rf(root))
+      @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
+      @sys.exit(if report.passed { 0 } else { 1 })
+    }
+    "mixed-provider-goal" => {
+      let root = "/tmp/choir-take-mixed-provider-" + @sys.get_pid().to_string()
+      let report = @exec.run_native_mixed_provider_goal_fixture(root)
+      ignore(@sys.rm_rf(root))
+      @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
+      @sys.exit(if report.passed { 0 } else { 1 })
+    }
     "parallel-promotion" => {
-      let root = "/tmp/choir-v2-goal-conformance-" + @sys.get_pid().to_string()
+      let root = "/tmp/choir-goal-conformance-" + @sys.get_pid().to_string()
       let report = @exec.run_native_goal_conformance_fixture(root)
       ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
@@ -594,6 +1083,216 @@ async fn run_end_to_end_command(args : Array[String]) -> Unit {
     _ => {
       usage()
       @sys.exit(2)
+    }
+  }
+}
+
+///|
+fn run_goal_status_command(args : Array[String]) -> Unit {
+  if args.length() != 6 || args[2] != "--project" || args[4] != "--goal" {
+    usage()
+    @sys.exit(2)
+    return
+  }
+  guard @sys.realpath_native(args[3]) is Some(project_dir) else {
+    @sys.write_stderr("Goal project is unavailable\n")
+    @sys.exit(2)
+    return
+  }
+  match @exec.inspect_native_goal(project_dir, @control.GoalId(args[5])) {
+    Ok(report) => {
+      @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
+      @sys.exit(0)
+    }
+    Err(error) => {
+      @sys.write_stderr(error.message() + "\n")
+      @sys.exit(1)
+    }
+  }
+}
+
+///|
+fn run_goal_cancel_command(args : Array[String]) -> Unit {
+  if args.length() != 6 || args[2] != "--project" || args[4] != "--goal" {
+    usage()
+    @sys.exit(2)
+    return
+  }
+  guard @sys.realpath_native(args[3]) is Some(project_dir) else {
+    @sys.write_stderr("Goal project is unavailable\n")
+    @sys.exit(2)
+    return
+  }
+  match
+    @exec.cancel_native_goal(
+      project_dir,
+      @control.GoalId(args[5]),
+      @env.now().reinterpret_as_int64() / 1000L,
+    ) {
+    Ok(_) => {
+      @sys.write_stdout("cancellation recorded\n")
+      @sys.exit(0)
+    }
+    Err(error) => {
+      @sys.write_stderr(error.message() + "\n")
+      @sys.exit(1)
+    }
+  }
+}
+
+///|
+async fn run_goal_publish_command(args : Array[String]) -> Unit {
+  if args.length() != 6 || args[2] != "--project" || args[4] != "--goal" {
+    usage()
+    @sys.exit(2)
+    return
+  }
+  guard @sys.realpath_native(args[3]) is Some(project_dir) else {
+    @sys.write_stderr("Goal project is unavailable\n")
+    @sys.exit(2)
+    return
+  }
+  match
+    @exec.advance_native_goal_publication(project_dir, @control.GoalId(args[5])) {
+    Ok(outcome) => {
+      @sys.write_stdout(outcome.to_json().stringify(indent=2) + "\n")
+      @sys.exit(
+        if outcome ==
+          @workflow.GoalPublicationTickOutcome::GoalPublicationComplete {
+          0
+        } else {
+          1
+        },
+      )
+    }
+    Err(error) => {
+      @sys.write_stderr(error.message() + "\n")
+      @sys.exit(1)
+    }
+  }
+}
+
+///|
+async fn run_goal_pull_request_command(args : Array[String]) -> Unit {
+  let synthetic = args.length() == 7 && args[6] == "--synthetic"
+  if (args.length() != 6 && !synthetic) ||
+    args[2] != "--project" ||
+    args[4] != "--goal" {
+    usage()
+    @sys.exit(2)
+    return
+  }
+  guard @sys.realpath_native(args[3]) is Some(project_dir) else {
+    @sys.write_stderr("Goal project is unavailable\n")
+    @sys.exit(2)
+    return
+  }
+  let result = if synthetic {
+    @exec.advance_native_goal_pull_request_with_adapters(
+      project_dir,
+      @control.GoalId(args[5]),
+      @exec.synthetic_pull_request_forge_adapters(),
+    )
+  } else {
+    @exec.advance_native_goal_pull_request(
+      project_dir,
+      @control.GoalId(args[5]),
+    )
+  }
+  match result {
+    Ok(outcome) => {
+      @sys.write_stdout(outcome.to_json().stringify(indent=2) + "\n")
+      @sys.exit(
+        if outcome ==
+          @workflow.GoalPullRequestTickOutcome::GoalPullRequestComplete {
+          0
+        } else {
+          1
+        },
+      )
+    }
+    Err(error) => {
+      @sys.write_stderr(error.message() + "\n")
+      @sys.exit(1)
+    }
+  }
+}
+
+///|
+async fn run_goal_finish_command(args : Array[String]) -> Unit {
+  let synthetic = args.length() == 7 && args[6] == "--synthetic"
+  if (args.length() != 6 && !synthetic) ||
+    args[2] != "--project" ||
+    args[4] != "--goal" {
+    usage()
+    @sys.exit(2)
+    return
+  }
+  guard @sys.realpath_native(args[3]) is Some(project_dir) else {
+    @sys.write_stderr("Goal project is unavailable\n")
+    @sys.exit(2)
+    return
+  }
+  let result = if synthetic {
+    @exec.advance_native_goal_finalization_with_adapters(
+      project_dir,
+      @control.GoalId(args[5]),
+      @exec.synthetic_pull_request_forge_adapters(),
+    )
+  } else {
+    @exec.advance_native_goal_finalization(
+      project_dir,
+      @control.GoalId(args[5]),
+    )
+  }
+  match result {
+    Ok(outcome) => {
+      @sys.write_stdout(outcome.to_json().stringify(indent=2) + "\n")
+      @sys.exit(
+        if outcome ==
+          @workflow.GoalFinalizationTickOutcome::GoalFinalizationSucceeded {
+          0
+        } else {
+          1
+        },
+      )
+    }
+    Err(error) => {
+      @sys.write_stderr(error.message() + "\n")
+      @sys.exit(1)
+    }
+  }
+}
+
+///|
+async fn run_goal_tick_command(args : Array[String]) -> Unit {
+  let synthetic = args.length() == 5 && args[4] == "--synthetic"
+  if (args.length() != 4 && !synthetic) || args[2] != "--project" {
+    usage()
+    @sys.exit(2)
+    return
+  }
+  guard @sys.realpath_native(args[3]) is Some(project_dir) else {
+    @sys.write_stderr("Goal project is unavailable\n")
+    @sys.exit(2)
+    return
+  }
+  let result = if synthetic {
+    @exec.run_native_goal_execution_tick_with_forge(
+      project_dir,
+      @exec.synthetic_pull_request_forge_adapters(),
+    )
+  } else {
+    @exec.run_native_goal_execution_tick(project_dir)
+  }
+  match result {
+    Ok(outcome) => {
+      @sys.write_stdout(outcome.to_json().stringify(indent=2) + "\n")
+      @sys.exit(0)
+    }
+    Err(error) => {
+      @sys.write_stderr(error.message() + "\n")
+      @sys.exit(1)
     }
   }
 }
@@ -610,10 +1309,24 @@ fn usage() -> Unit {
     "--profile subscription --live\n" +
     "       choir_conformance harness --surface codex-cli " +
     "--profile subscription --live\n" +
+    "       choir_conformance harness --surface codex-cli " +
+    "--profile subscription --driver-live\n" +
+    "       choir_conformance conductor --start-live\n" +
     "       choir_conformance sandbox --runtime boxlite --live\n" +
     "       choir_conformance sandbox --runtime boxlite --take-live\n" +
     "       choir_conformance e2e --fixture " +
-    "<part-lifecycle|native-part-lifecycle|parallel-promotion>\n",
+    "<part-lifecycle|native-part-lifecycle|native-codex-part-lifecycle|" +
+    "native-codex-cancellation|mixed-provider-goal|parallel-promotion>\n" +
+    "       choir_conformance e2e --project <path> --draft <json-path>\n" +
+    "       choir_conformance status --project <path> --goal <goal-id>\n" +
+    "       choir_conformance publish --project <path> --goal <goal-id>\n" +
+    "       choir_conformance pull-request --project <path> --goal <goal-id>\n" +
+    "       choir_conformance pull-request --project <path> --goal <goal-id> --synthetic\n" +
+    "       choir_conformance finish --project <path> --goal <goal-id>\n" +
+    "       choir_conformance finish --project <path> --goal <goal-id> --synthetic\n" +
+    "       choir_conformance tick --project <path>\n" +
+    "       choir_conformance tick --project <path> --synthetic\n" +
+    "       choir_conformance cancel --project <path> --goal <goal-id>\n",
   )
 }
 
@@ -624,10 +1337,24 @@ fn main {
     @sys.exit(run_hermetic())
   } else if args.length() >= 2 && args[1] == "harness" {
     run_harness_command(args)
+  } else if args.length() >= 2 && args[1] == "conductor" {
+    run_conductor_command(args)
   } else if args.length() >= 2 && args[1] == "sandbox" {
     run_sandbox_command(args)
   } else if args.length() >= 2 && args[1] == "e2e" {
     @async.run_async_main(async fn() { run_end_to_end_command(args) })
+  } else if args.length() >= 2 && args[1] == "status" {
+    run_goal_status_command(args)
+  } else if args.length() >= 2 && args[1] == "publish" {
+    @async.run_async_main(async fn() { run_goal_publish_command(args) })
+  } else if args.length() >= 2 && args[1] == "pull-request" {
+    @async.run_async_main(async fn() { run_goal_pull_request_command(args) })
+  } else if args.length() >= 2 && args[1] == "finish" {
+    @async.run_async_main(async fn() { run_goal_finish_command(args) })
+  } else if args.length() >= 2 && args[1] == "tick" {
+    @async.run_async_main(async fn() { run_goal_tick_command(args) })
+  } else if args.length() >= 2 && args[1] == "cancel" {
+    run_goal_cancel_command(args)
   } else {
     usage()
     @sys.exit(2)

@@ -121,6 +121,70 @@ test "SQLite state transaction persists atomically and replays after restart" {
 }
 
 ///|
+test "SQLite state listing returns only the requested durable prefix" {
+  let path = storage_test_path("sqlite-list.db")
+  ignore(@sys.rm_rf(path))
+  ignore(@sys.rm_rf(path + "-shm"))
+  ignore(@sys.rm_rf(path + "-wal"))
+  let store : @storage.SqliteStateStore = { path, }
+  guard initialize_state_store(store) is Ok(_) else {
+    fail("initialize state store")
+  }
+  let requests : Array[@storage.StateTransactionRequest] = [
+    {
+      state: {
+        key: @storage.StateRecordKey("goal-run:alpha"),
+        expected_version: None,
+        next_version: 1,
+        fencing_epoch: @control.FencingEpoch(1L),
+        value_digest: store_digest_a,
+      },
+      outbox: {
+        semantic_key: @storage.SemanticEventKey("goal-run:alpha:created"),
+        payload_digest: store_digest_a,
+      },
+      fault_point: None,
+    },
+    {
+      state: {
+        key: @storage.StateRecordKey("goal-run:beta"),
+        expected_version: None,
+        next_version: 1,
+        fencing_epoch: @control.FencingEpoch(2L),
+        value_digest: store_digest_b,
+      },
+      outbox: {
+        semantic_key: @storage.SemanticEventKey("goal-run:beta:created"),
+        payload_digest: store_digest_b,
+      },
+      fault_point: None,
+    },
+    initial_state_request("unrelated", None),
+  ]
+  for request in requests {
+    guard commit_state_transaction(store, request)
+      is Ok(@storage.StateTransactionOutcome::StateTransactionCommitted) else {
+      fail("commit listed state")
+    }
+  }
+  match list_state_records(store, "goal-run:") {
+    Ok(records) => {
+      assert_eq(records.length(), 2)
+      assert_eq(
+        records.map(fn(record) { @storage.state_record_key_text(record.key) }),
+        ["goal-run:alpha", "goal-run:beta"],
+      )
+      assert_eq(records[0].value_digest, store_digest_a)
+      assert_eq(records[1].fencing_epoch, @control.FencingEpoch(2L))
+    }
+    Err(error) => fail(error.message())
+  }
+  ignore(@sys.rm_rf(path))
+  ignore(@sys.rm_rf(path + "-shm"))
+  ignore(@sys.rm_rf(path + "-wal"))
+}
+
+///|
 test "SQLite state transaction enforces semantic uniqueness versions and fences" {
   let path = storage_test_path("sqlite-conflicts.db")
   ignore(@sys.rm_rf(path))
@@ -207,6 +271,97 @@ test "SQLite state transaction enforces semantic uniqueness versions and fences"
     Ok(_) => fail("stale writer changed durable state")
     Err(error) => fail(error.message())
   }
+  ignore(@sys.rm_rf(path))
+  ignore(@sys.rm_rf(path + "-shm"))
+  ignore(@sys.rm_rf(path + "-wal"))
+}
+
+///|
+test "guarded state transaction orders Part authorization against Goal cutoff" {
+  let path = storage_test_path("sqlite-guarded-cutoff.db")
+  ignore(@sys.rm_rf(path))
+  ignore(@sys.rm_rf(path + "-shm"))
+  ignore(@sys.rm_rf(path + "-wal"))
+  let store : @storage.SqliteStateStore = { path, }
+  let running = initial_state_request("running", None)
+  guard initialize_state_store(store) is Ok(_) else {
+    fail("initialize guarded state store")
+  }
+  guard commit_state_transaction(store, running)
+    is Ok(@storage.StateTransactionOutcome::StateTransactionCommitted) else {
+    fail("commit running Goal")
+  }
+  let running_record = match read_state_record(store, running.state.key) {
+    Ok(Some(value)) => value
+    Ok(None) => fail("running Goal record is absent")
+    Err(error) => fail(error.message())
+  }
+  let authorized : @storage.StateTransactionRequest = {
+    state: {
+      key: @storage.StateRecordKey("part:p-1"),
+      expected_version: None,
+      next_version: 1,
+      fencing_epoch: @control.FencingEpoch(1L),
+      value_digest: store_digest_b,
+    },
+    outbox: {
+      semantic_key: @storage.SemanticEventKey("part:p-1:authorized"),
+      payload_digest: store_digest_b,
+    },
+    fault_point: None,
+  }
+  let guarded_authorized : @storage.GuardedStateTransactionRequest = {
+    transaction: authorized,
+    precondition: { record: running_record },
+  }
+  assert_eq(
+    commit_guarded_state_transaction(store, guarded_authorized).unwrap(),
+    @storage.GuardedStateTransactionOutcome::GuardedStateTransactionCompleted(
+      @storage.StateTransactionOutcome::StateTransactionCommitted,
+    ),
+  )
+  let cancellation : @storage.StateTransactionRequest = {
+    state: {
+      ..running.state,
+      expected_version: Some(1),
+      next_version: 2,
+      value_digest: store_digest_c,
+    },
+    outbox: {
+      semantic_key: @storage.SemanticEventKey("goal:g-1:canceling"),
+      payload_digest: store_digest_c,
+    },
+    fault_point: None,
+  }
+  guard commit_state_transaction(store, cancellation)
+    is Ok(@storage.StateTransactionOutcome::StateTransactionCommitted) else {
+    fail("commit Goal cancellation cutoff")
+  }
+  let rejected : @storage.StateTransactionRequest = {
+    state: { ..authorized.state, key: @storage.StateRecordKey("part:p-2") },
+    outbox: {
+      semantic_key: @storage.SemanticEventKey("part:p-2:authorized"),
+      payload_digest: store_digest_b,
+    },
+    fault_point: None,
+  }
+  assert_eq(
+    commit_guarded_state_transaction(store, {
+      transaction: rejected,
+      precondition: { record: running_record },
+    }).unwrap(),
+    @storage.GuardedStateTransactionOutcome::GuardedStateTransactionPreconditionConflict,
+  )
+  expect_state_absent(read_state_record(store, rejected.state.key))
+  expect_outbox_absent(
+    read_completion_outbox(store, rejected.outbox.semantic_key),
+  )
+  assert_eq(
+    commit_guarded_state_transaction(store, guarded_authorized).unwrap(),
+    @storage.GuardedStateTransactionOutcome::GuardedStateTransactionCompleted(
+      @storage.StateTransactionOutcome::StateTransactionReplayed,
+    ),
+  )
   ignore(@sys.rm_rf(path))
   ignore(@sys.rm_rf(path + "-shm"))
   ignore(@sys.rm_rf(path + "-wal"))

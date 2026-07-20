@@ -147,6 +147,12 @@ pub fn expected_surface_version(surface : ProviderSurface) -> String {
 pub let expected_claude_executable_sha256 : String = "c1efffaaf370aa187cb6a09dd93d4e511c646899b0078476f83791b664bde7fe"
 
 ///|
+pub let expected_codex_executable_sha256 : String = "134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477"
+
+///|
+pub let expected_codex_native_executable_sha256 : String = "a31ae9450a26216eb1e7c53102fd42123dd675974310b0e2ca3aa4cb622a2c15"
+
+///|
 fn version_matches(surface : ProviderSurface, output : String) -> Bool {
   output.contains(expected_surface_version(surface))
 }

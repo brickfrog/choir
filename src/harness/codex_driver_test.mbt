@@ -1,0 +1,149 @@
+///|
+fn codex_driver_session() -> @control.HarnessSession {
+  let tools = ["read_file", "write_file"]
+  {
+    id: @control.HarnessSessionId("session-codex-driver"),
+    take_id: @control.TakeId("take-codex-driver"),
+    sandbox_generation_id: @control.SandboxGenerationId("sandbox-codex-driver"),
+    surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+    effective_surface_manifest_digest: @harness.codex_effective_surface_manifest_digest(
+      tools, "choir_sandbox",
+    ),
+    cursor_class: @control.HarnessCursorClass::HarnessCursorNotResumable,
+    provider_cursor: None,
+    last_choir_sequence: @control.EventSequence(0L),
+    open_tool_execution_ids: [],
+    lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+  }
+}
+
+///|
+fn codex_driver_output(item_type : String, response : String) -> String {
+  let tool_started : Map[String, Json] = {
+    "id": "tool-1".to_json(),
+    "type": item_type.to_json(),
+    "server": "choir_sandbox".to_json(),
+    "tool": "read_file".to_json(),
+    "status": "in_progress".to_json(),
+  }
+  let tool_completed : Map[String, Json] = {
+    "id": "tool-1".to_json(),
+    "type": item_type.to_json(),
+    "server": "choir_sandbox".to_json(),
+    "tool": "read_file".to_json(),
+    "status": "completed".to_json(),
+  }
+  let message : Map[String, Json] = {
+    "id": "message-1".to_json(),
+    "type": "agent_message".to_json(),
+    "text": response.to_json(),
+  }
+  [
+    { "type": "thread.started".to_json(), "thread_id": "thread-1".to_json() }
+    .to_json()
+    .stringify(),
+    { "type": "turn.started".to_json() }.to_json().stringify(),
+    { "type": "item.started".to_json(), "item": tool_started.to_json() }
+    .to_json()
+    .stringify(),
+    { "type": "item.completed".to_json(), "item": tool_completed.to_json() }
+    .to_json()
+    .stringify(),
+    { "type": "item.completed".to_json(), "item": message.to_json() }
+    .to_json()
+    .stringify(),
+    { "type": "turn.completed".to_json() }.to_json().stringify(),
+  ].join("\n")
+}
+
+///|
+test "Codex driver accepts a balanced sandbox-only implementation trace" {
+  let started = @harness.start_codex_harness_session(codex_driver_session()).unwrap()
+  let result = @harness.evaluate_codex_driver_capture({
+    session: started,
+    role: @harness.CodexTakeRole::CodexImplementationTake,
+    allowed_tools: ["read_file", "write_file"],
+    expected_mcp_server: "choir_sandbox",
+    capture: {
+      exit_code: 0,
+      output: codex_driver_output(
+        "mcp_tool_call", "{\"outcome\":\"completed\"}",
+      ),
+      started_at: 10L,
+      finished_at: 20L,
+    },
+  }).unwrap()
+  assert_eq(
+    result.outcome,
+    @harness.CodexTakeOutcome::CodexImplementationCompleted,
+  )
+  assert_eq(
+    result.session.lifecycle,
+    @control.HarnessSessionLifecycle::HarnessSessionIngestionClosedCleanly(
+      @control.HarnessTerminalObservation::HarnessCompleted,
+    ),
+  )
+  assert_eq(result.events.length(), 4)
+}
+
+///|
+test "Codex driver rejects a native effect event disguised as success" {
+  let started = @harness.start_codex_harness_session(codex_driver_session()).unwrap()
+  let result = @harness.evaluate_codex_driver_capture({
+    session: started,
+    role: @harness.CodexTakeRole::CodexImplementationTake,
+    allowed_tools: ["read_file", "write_file"],
+    expected_mcp_server: "choir_sandbox",
+    capture: {
+      exit_code: 0,
+      output: codex_driver_output(
+        "command_execution", "{\"outcome\":\"completed\"}",
+      ),
+      started_at: 10L,
+      finished_at: 20L,
+    },
+  })
+  assert_true(result is Err(_))
+}
+
+///|
+test "Codex driver rejects terminal prose after a failed MCP call" {
+  let started = @harness.start_codex_harness_session(codex_driver_session()).unwrap()
+  let output = codex_driver_output(
+    "mcp_tool_call", "{\"outcome\":\"completed\"}",
+  ).replace(old="\"status\":\"completed\"", new="\"status\":\"failed\"")
+  let result = @harness.evaluate_codex_driver_capture({
+    session: started,
+    role: @harness.CodexTakeRole::CodexImplementationTake,
+    allowed_tools: ["read_file", "write_file"],
+    expected_mcp_server: "choir_sandbox",
+    capture: { exit_code: 0, output, started_at: 10L, finished_at: 20L },
+  })
+  assert_true(result is Err(_))
+}
+
+///|
+test "Codex driver accepts a failed sandbox call followed by successful recovery" {
+  let output =
+    #|{"type":"thread.started","thread_id":"thread-1"}
+    #|{"type":"turn.started"}
+    #|{"type":"item.started","item":{"id":"tool-1","type":"mcp_tool_call","server":"choir_sandbox","tool":"read_file","status":"in_progress"}}
+    #|{"type":"item.completed","item":{"id":"tool-1","type":"mcp_tool_call","server":"choir_sandbox","tool":"read_file","status":"failed"}}
+    #|{"type":"item.started","item":{"id":"tool-2","type":"mcp_tool_call","server":"choir_sandbox","tool":"write_file","status":"in_progress"}}
+    #|{"type":"item.completed","item":{"id":"tool-2","type":"mcp_tool_call","server":"choir_sandbox","tool":"write_file","status":"completed"}}
+    #|{"type":"item.completed","item":{"id":"message-1","type":"agent_message","text":"{\"outcome\":\"completed\"}"}}
+    #|{"type":"turn.completed"}
+  let started = @harness.start_codex_harness_session(codex_driver_session()).unwrap()
+  let result = @harness.evaluate_codex_driver_capture({
+    session: started,
+    role: @harness.CodexTakeRole::CodexImplementationTake,
+    allowed_tools: ["read_file", "write_file"],
+    expected_mcp_server: "choir_sandbox",
+    capture: { exit_code: 0, output, started_at: 10L, finished_at: 20L },
+  }).unwrap()
+  assert_eq(result.events.length(), 6)
+  assert_eq(
+    result.outcome,
+    @harness.CodexTakeOutcome::CodexImplementationCompleted,
+  )
+}

@@ -80,6 +80,10 @@ pub(all) struct PartWorkflowDriverDependencies {
     PartIntegrationAdmission,
     @types.ChoirError,
   ]
+  goal_authorizes_new_effects : () -> Result[
+    PartGoalAuthorization,
+    @types.ChoirError,
+  ]
   verification_environment_digest : (PartWorkflowSnapshot) -> @control.Digest
   verification_runtime_digest : (PartWorkflowSnapshot) -> @control.Digest
 }
@@ -91,11 +95,19 @@ pub(all) enum PartIntegrationAdmission {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) enum PartGoalAuthorization {
+  PartGoalNotAuthorized
+  PartGoalAuthorized(@storage.StateRecordPrecondition?)
+} derive(Debug, Eq)
+
+///|
 pub(all) enum PartWorkflowRunOutcome {
   PartRunIntegrated
+  PartRunCanceled
   PartRunAwaitingPromotion
   PartRunBlocked
   PartRunRecoveryUncertain
+  PartRunGoalNotAuthorizing
   PartRunWaitingForEffectWitness(String)
   PartRunPersistenceFault(
     PartPersistenceBoundary,
@@ -113,6 +125,7 @@ pub(all) struct PartWorkflowRunResult {
 ///|
 priv enum PartPersistenceDecision {
   WorkflowSnapshotPersisted(Int)
+  WorkflowSnapshotAuthorizationRejected
   WorkflowSnapshotPersistencePaused(
     PartPersistenceBoundary,
     @storage.StateStoreFaultPoint
@@ -149,15 +162,32 @@ fn persist_driver_snapshot(
   expected_store_version : Int?,
   boundary : PartPersistenceBoundary,
   dependencies : PartWorkflowDriverDependencies,
+  authorization_precondition : @storage.StateRecordPrecondition?,
 ) -> Result[PartPersistenceDecision, @types.ChoirError] {
-  let receipt = match
-    persist_part_snapshot(repository, repository_adapters, {
-      snapshot,
-      expected_store_version,
-      fault_point: (dependencies.persistence_fault)(boundary),
-    }) {
-    Ok(value) => value
-    Err(error) => return Err(error)
+  let request : PartSnapshotPersistenceRequest = {
+    snapshot,
+    expected_store_version,
+    fault_point: (dependencies.persistence_fault)(boundary),
+  }
+  let guarded = match authorization_precondition {
+    None =>
+      match persist_part_snapshot(repository, repository_adapters, request) {
+        Ok(value) => GuardedPartSnapshotPersisted(value)
+        Err(error) => return Err(error)
+      }
+    Some(precondition) =>
+      match
+        persist_part_snapshot_guarded(
+          repository, repository_adapters, request, precondition,
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+  }
+  let receipt = match guarded {
+    GuardedPartSnapshotPersisted(value) => value
+    GuardedPartSnapshotPreconditionConflict =>
+      return Ok(WorkflowSnapshotAuthorizationRejected)
   }
   match receipt.transaction_outcome {
     @storage.StateTransactionOutcome::StateTransactionCommitted =>
@@ -214,6 +244,12 @@ async fn drive_part_workflow(
           store_version: Some(store_version),
           outcome: PartRunIntegrated,
         })
+      PartCanceled =>
+        return Ok({
+          snapshot,
+          store_version: Some(store_version),
+          outcome: PartRunCanceled,
+        })
       PartBlocked =>
         return Ok({
           snapshot,
@@ -230,6 +266,19 @@ async fn drive_part_workflow(
     }
     match snapshot.pending_effect {
       Some({ lifecycle: PartEffectPlanned, .. }) => {
+        let authorizes = match (dependencies.goal_authorizes_new_effects)() {
+          Ok(value) => value
+          Err(error) => return Err(error)
+        }
+        let authorization_precondition = match authorizes {
+          PartGoalAuthorized(value) => value
+          PartGoalNotAuthorized =>
+            return Ok({
+              snapshot,
+              store_version: Some(store_version),
+              outcome: PartRunGoalNotAuthorizing,
+            })
+        }
         let authorized = match authorize_pending_part_effect(snapshot) {
           Ok(value) => value
           Err(error) => return Err(error)
@@ -242,6 +291,7 @@ async fn drive_part_workflow(
             Some(store_version),
             WorkflowEffectAuthorized,
             dependencies,
+            authorization_precondition,
           ) {
           Ok(WorkflowSnapshotPersisted(version)) => {
             snapshot = authorized
@@ -253,6 +303,12 @@ async fn drive_part_workflow(
             return Ok(
               persistence_result(snapshot, Some(store_version), boundary, point),
             )
+          Ok(WorkflowSnapshotAuthorizationRejected) =>
+            return Ok({
+              snapshot,
+              store_version: Some(store_version),
+              outcome: PartRunGoalNotAuthorizing,
+            })
           Err(error) => return Err(error)
         }
       }
@@ -298,6 +354,7 @@ async fn drive_part_workflow(
             Some(store_version),
             WorkflowEffectObserved,
             dependencies,
+            None,
           ) {
           Ok(WorkflowSnapshotPersisted(version)) => {
             snapshot = observed
@@ -308,6 +365,10 @@ async fn drive_part_workflow(
           Ok(WorkflowSnapshotPersistencePaused(boundary, point)) =>
             return Ok(
               persistence_result(snapshot, Some(store_version), boundary, point),
+            )
+          Ok(WorkflowSnapshotAuthorizationRejected) =>
+            return Err(
+              workflow_error("effect observation used an authorization guard"),
             )
           Err(error) => return Err(error)
         }
@@ -320,7 +381,8 @@ async fn drive_part_workflow(
         })
       None => ()
     }
-    let (advanced, boundary) = match snapshot.stage {
+    let (advanced, boundary, authorization_precondition) = match
+      snapshot.stage {
       PartAuditResultRecorded => {
         let metadata = match (dependencies.audit_receipt_metadata)(snapshot) {
           Ok(value) => value
@@ -335,9 +397,22 @@ async fn drive_part_workflow(
           Ok(value) => value
           Err(error) => return Err(error)
         }
-        (next, WorkflowAuditReceiptRecorded)
+        (next, WorkflowAuditReceiptRecorded, None)
       }
       PartAudited => {
+        let authorizes = match (dependencies.goal_authorizes_new_effects)() {
+          Ok(value) => value
+          Err(error) => return Err(error)
+        }
+        let authorization_precondition = match authorizes {
+          PartGoalAuthorized(value) => value
+          PartGoalNotAuthorized =>
+            return Ok({
+              snapshot,
+              store_version: Some(store_version),
+              outcome: PartRunGoalNotAuthorizing,
+            })
+        }
         let admission = match (dependencies.integration_admission)(snapshot) {
           Ok(value) => value
           Err(error) => return Err(error)
@@ -355,9 +430,22 @@ async fn drive_part_workflow(
           Ok(value) => value
           Err(error) => return Err(error)
         }
-        (next, WorkflowIntegrationPlanned)
+        (next, WorkflowIntegrationPlanned, authorization_precondition)
       }
       PartPromotionPrepared => {
+        let authorizes = match (dependencies.goal_authorizes_new_effects)() {
+          Ok(value) => value
+          Err(error) => return Err(error)
+        }
+        let authorization_precondition = match authorizes {
+          PartGoalAuthorized(value) => value
+          PartGoalNotAuthorized =>
+            return Ok({
+              snapshot,
+              store_version: Some(store_version),
+              outcome: PartRunGoalNotAuthorizing,
+            })
+        }
         let next = match
           authorize_part_integration(
             snapshot,
@@ -369,9 +457,22 @@ async fn drive_part_workflow(
           Ok(value) => value
           Err(error) => return Err(error)
         }
-        (next, WorkflowIntegrationAuthorized)
+        (next, WorkflowIntegrationAuthorized, authorization_precondition)
       }
       _ => {
+        let authorizes = match (dependencies.goal_authorizes_new_effects)() {
+          Ok(value) => value
+          Err(error) => return Err(error)
+        }
+        let authorization_precondition = match authorizes {
+          PartGoalAuthorized(value) => value
+          PartGoalNotAuthorized =>
+            return Ok({
+              snapshot,
+              store_version: Some(store_version),
+              outcome: PartRunGoalNotAuthorizing,
+            })
+        }
         let intent = match plan_next_part_effect(snapshot) {
           Ok(Some(value)) => value
           Ok(None) =>
@@ -384,7 +485,7 @@ async fn drive_part_workflow(
           Ok(value) => value
           Err(error) => return Err(error)
         }
-        (next, WorkflowEffectPlanned)
+        (next, WorkflowEffectPlanned, authorization_precondition)
       }
     }
     match
@@ -395,6 +496,7 @@ async fn drive_part_workflow(
         Some(store_version),
         boundary,
         dependencies,
+        authorization_precondition,
       ) {
       Ok(WorkflowSnapshotPersisted(version)) => {
         snapshot = advanced
@@ -409,6 +511,12 @@ async fn drive_part_workflow(
             point,
           ),
         )
+      Ok(WorkflowSnapshotAuthorizationRejected) =>
+        return Ok({
+          snapshot,
+          store_version: Some(store_version),
+          outcome: PartRunGoalNotAuthorizing,
+        })
       Err(error) => return Err(error)
     }
   } nobreak {
@@ -435,6 +543,7 @@ pub async fn run_new_part_workflow(
       None,
       WorkflowAcceptedSnapshot,
       dependencies,
+      None,
     ) {
     Ok(WorkflowSnapshotPersisted(version)) =>
       drive_part_workflow(
@@ -442,6 +551,8 @@ pub async fn run_new_part_workflow(
       )
     Ok(WorkflowSnapshotPersistencePaused(boundary, point)) =>
       Ok(persistence_result(snapshot, None, boundary, point))
+    Ok(WorkflowSnapshotAuthorizationRejected) =>
+      Err(workflow_error("accepted snapshot used an authorization guard"))
     Err(error) => Err(error)
   }
 }

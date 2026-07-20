@@ -76,6 +76,7 @@ pub fn commit_state_transaction(
     None => (0, 0)
     Some(version) => (1, version)
   }
+  let (empty, empty_len) = exec_string_to_null_terminated_bytes("")
   let result = state_store_commit_ffi(
     path,
     path_len,
@@ -92,6 +93,13 @@ pub fn commit_state_transaction(
     payload,
     payload_len,
     state_fault_code(request.fault_point),
+    0,
+    empty,
+    empty_len,
+    0,
+    0L,
+    empty,
+    empty_len,
   )
   match result {
     0 => Ok(@storage.StateTransactionOutcome::StateTransactionCommitted)
@@ -112,6 +120,101 @@ pub fn commit_state_transaction(
     7 => Ok(@storage.StateTransactionOutcome::StateTransactionCommittedAckLost)
     _ => Err(state_store_failure("transaction"))
   }
+}
+
+///|
+pub fn commit_guarded_state_transaction(
+  store : @storage.SqliteStateStore,
+  request : @storage.GuardedStateTransactionRequest,
+) -> Result[@storage.GuardedStateTransactionOutcome, @types.ChoirError] {
+  match validate_store_path(store.path) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  match @storage.validate_guarded_state_transaction(request) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let transaction = request.transaction
+  let precondition = request.precondition.record
+  let (path, path_len) = exec_string_to_null_terminated_bytes(store.path)
+  let key_text = @storage.state_record_key_text(transaction.state.key)
+  let (key, key_len) = exec_string_to_null_terminated_bytes(key_text)
+  let value_text = @storage.digest_text(transaction.state.value_digest)
+  let (value, value_len) = exec_string_to_null_terminated_bytes(value_text)
+  let semantic_text = @storage.semantic_event_key_text(
+    transaction.outbox.semantic_key,
+  )
+  let (semantic, semantic_len) = exec_string_to_null_terminated_bytes(
+    semantic_text,
+  )
+  let payload_text = @storage.digest_text(transaction.outbox.payload_digest)
+  let (payload, payload_len) = exec_string_to_null_terminated_bytes(
+    payload_text,
+  )
+  let precondition_key_text = @storage.state_record_key_text(precondition.key)
+  let (precondition_key, precondition_key_len) = exec_string_to_null_terminated_bytes(
+    precondition_key_text,
+  )
+  let precondition_digest_text = @storage.digest_text(precondition.value_digest)
+  let (precondition_digest, precondition_digest_len) = exec_string_to_null_terminated_bytes(
+    precondition_digest_text,
+  )
+  let (has_expected, expected) = match transaction.state.expected_version {
+    None => (0, 0)
+    Some(version) => (1, version)
+  }
+  let result = state_store_commit_ffi(
+    path,
+    path_len,
+    key,
+    key_len,
+    has_expected,
+    expected,
+    transaction.state.next_version,
+    @storage.fencing_epoch_value(transaction.state.fencing_epoch),
+    value,
+    value_len,
+    semantic,
+    semantic_len,
+    payload,
+    payload_len,
+    state_fault_code(transaction.fault_point),
+    1,
+    precondition_key,
+    precondition_key_len,
+    precondition.version,
+    @storage.fencing_epoch_value(precondition.fencing_epoch),
+    precondition_digest,
+    precondition_digest_len,
+  )
+  if result == 8 {
+    return Ok(
+      @storage.GuardedStateTransactionOutcome::GuardedStateTransactionPreconditionConflict,
+    )
+  }
+  let outcome = match result {
+    0 => @storage.StateTransactionOutcome::StateTransactionCommitted
+    1 => @storage.StateTransactionOutcome::StateTransactionReplayed
+    2 => @storage.StateTransactionOutcome::StateTransactionVersionConflict
+    3 => @storage.StateTransactionOutcome::StateTransactionStaleFence
+    4 => @storage.StateTransactionOutcome::StateTransactionSemanticConflict
+    5 =>
+      match transaction.fault_point {
+        Some(point) =>
+          @storage.StateTransactionOutcome::StateTransactionFaultRolledBack(
+            point,
+          )
+        None => return Err(state_store_failure("guarded fault classification"))
+      }
+    7 => @storage.StateTransactionOutcome::StateTransactionCommittedAckLost
+    _ => return Err(state_store_failure("guarded transaction"))
+  }
+  Ok(
+    @storage.GuardedStateTransactionOutcome::GuardedStateTransactionCompleted(
+      outcome,
+    ),
+  )
 }
 
 ///|
@@ -180,6 +283,58 @@ pub fn read_state_record(
 }
 
 ///|
+pub fn list_state_records(
+  store : @storage.SqliteStateStore,
+  prefix : String,
+) -> Result[Array[@storage.StateRecord], @types.ChoirError] {
+  match validate_store_path(store.path) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  match @storage.validate_state_record_prefix(prefix) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let (path, path_len) = exec_string_to_null_terminated_bytes(store.path)
+  let (prefix_bytes, prefix_len) = exec_string_to_null_terminated_bytes(prefix)
+  let output = Bytes::new(4 * 1024 * 1024)
+  let result = state_store_list_state_ffi(
+    path,
+    path_len,
+    prefix_bytes,
+    prefix_len,
+    output,
+    output.length(),
+  )
+  if result < 0 {
+    return Err(state_store_failure("record listing"))
+  }
+  if result == 0 {
+    return Ok([])
+  }
+  let records : Array[@storage.StateRecord] = []
+  for line in @utf8.decode_lossy(output[:result]).split("\n") {
+    if line == "" {
+      continue
+    }
+    let fields = line.split("|").to_array()
+    if fields.length() != 4 {
+      return Err(state_store_failure("record listing decode"))
+    }
+    let key = @storage.StateRecordKey(fields[0].to_owned())
+    if !@storage.state_record_key_text(key).has_prefix(prefix) {
+      return Err(state_store_failure("record listing prefix"))
+    }
+    let encoded = fields[1] + "|" + fields[2] + "|" + fields[3]
+    match parse_state_record_capture(key, encoded.to_owned()) {
+      Ok(record) => records.push(record)
+      Err(error) => return Err(error)
+    }
+  }
+  Ok(records)
+}
+
+///|
 pub fn read_completion_outbox(
   store : @storage.SqliteStateStore,
   key : @storage.SemanticEventKey,
@@ -222,7 +377,9 @@ pub fn sqlite_state_store_adapters() -> @storage.StateStoreAdapters {
   {
     initialize: initialize_state_store,
     commit: commit_state_transaction,
+    commit_guarded: commit_guarded_state_transaction,
     read_state: read_state_record,
+    list_state: list_state_records,
     read_outbox: read_completion_outbox,
   }
 }

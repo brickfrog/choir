@@ -28,6 +28,39 @@ static int choir_saved_sigpipe_for_test_valid = 0;
 #define CHOIR_SIGNAL_EXIT_CLOCK CLOCK_REALTIME
 #endif
 
+int choir_mint_local_token(char *out, int out_size) {
+    unsigned char random_bytes[32];
+    static const char hex[] = "0123456789abcdef";
+    if (out == NULL || out_size < 65) {
+        return -1;
+    }
+    int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        return -1;
+    }
+    size_t offset = 0;
+    while (offset < sizeof(random_bytes)) {
+        ssize_t read_count = read(fd, random_bytes + offset, sizeof(random_bytes) - offset);
+        if (read_count < 0 && errno == EINTR) {
+            continue;
+        }
+        if (read_count <= 0) {
+            close(fd);
+            memset(random_bytes, 0, sizeof(random_bytes));
+            return -1;
+        }
+        offset += (size_t)read_count;
+    }
+    close(fd);
+    for (size_t i = 0; i < sizeof(random_bytes); i++) {
+        out[i * 2] = hex[random_bytes[i] >> 4];
+        out[i * 2 + 1] = hex[random_bytes[i] & 0x0f];
+    }
+    out[64] = '\0';
+    memset(random_bytes, 0, sizeof(random_bytes));
+    return 64;
+}
+
 static int choir_append_literal(char *buf, int pos, int cap, const char *literal) {
     for (int i = 0; literal[i] != '\0'; i++) {
         if (pos >= cap) return -1;

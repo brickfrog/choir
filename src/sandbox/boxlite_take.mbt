@@ -8,11 +8,35 @@ pub let boxlite_take_image_digest : @control.Digest = @control.Digest(
 )
 
 ///|
+pub(all) enum BoxLiteWorkspaceAccess {
+  BoxLiteMutableWorkspace
+  BoxLiteReadOnlySubject
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub fn boxlite_take_mcp_tools() -> Array[String] {
   [
     "mcp__choir_sandbox__read_file", "mcp__choir_sandbox__list_files", "mcp__choir_sandbox__write_file",
     "mcp__choir_sandbox__replace_text", "mcp__choir_sandbox__run",
   ]
+}
+
+///|
+pub fn boxlite_take_codex_mcp_tools() -> Array[String] {
+  ["read_file", "list_files", "write_file", "replace_text", "run"]
+}
+
+///|
+pub fn boxlite_assurance_mcp_tools() -> Array[String] {
+  [
+    "mcp__choir_sandbox__read_file", "mcp__choir_sandbox__list_files", "mcp__choir_sandbox__write_scratch",
+    "mcp__choir_sandbox__write_output",
+  ]
+}
+
+///|
+pub fn boxlite_assurance_codex_mcp_tools() -> Array[String] {
+  ["read_file", "list_files", "write_scratch", "write_output"]
 }
 
 ///|

@@ -79,6 +79,11 @@ pub fn system(_cmd : String) -> Int {
 }
 
 ///|
+pub fn mint_local_token() -> String? {
+  None
+}
+
+///|
 pub fn spawn_serve(_self_exe : String) -> Bool {
   false
 }

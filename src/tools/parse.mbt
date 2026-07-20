@@ -1804,8 +1804,145 @@ fn parse_goal_set_args(args : ToolArgs) -> Result[GoalSetArgs, ParseError] {
 }
 
 ///|
+fn parse_goal_submit_args(
+  args : ToolArgs,
+) -> Result[GoalSubmitArgs, ParseError] {
+  let draft_json = match tool_args_get_json(args, "draft") {
+    Some(String(value)) => value
+    Some(value) => value.stringify(indent=0)
+    None => return Err(ParseError::MissingField(field="draft"))
+  }
+  if draft_json.trim() == "" {
+    Err(ParseError::MissingField(field="draft"))
+  } else {
+    Ok({ draft_json, })
+  }
+}
+
+///|
 fn parse_goal_status_args(args : ToolArgs) -> GoalStatusArgs {
-  { evaluate: tool_args_get_bool(args, "evaluate") }
+  let goal_id = match tool_args_get(args, "goal_id") {
+    Some(value) => {
+      let trimmed = value.trim().to_owned()
+      if trimmed == "" {
+        None
+      } else {
+        Some(trimmed)
+      }
+    }
+    None => None
+  }
+  { goal_id, evaluate: tool_args_get_bool(args, "evaluate") }
+}
+
+///|
+fn parse_goal_cancel_args(
+  args : ToolArgs,
+) -> Result[GoalCancelArgs, ParseError] {
+  let goal_id = tool_args_get(args, "goal_id").unwrap_or("").trim().to_owned()
+  if goal_id == "" {
+    Err(ParseError::MissingField(field="goal_id"))
+  } else if goal_id.contains("\u{00}") || goal_id.length() > 256 {
+    Err(ParseError::InvalidValue(field="goal_id", value=goal_id))
+  } else {
+    Ok({ goal_id, })
+  }
+}
+
+///|
+fn parse_goal_steer_args(args : ToolArgs) -> Result[GoalSteerArgs, ParseError] {
+  let goal_id = tool_args_get(args, "goal_id").unwrap_or("").trim().to_owned()
+  if goal_id == "" {
+    return Err(ParseError::MissingField(field="goal_id"))
+  }
+  if goal_id.contains("\u{00}") || goal_id.length() > 256 {
+    return Err(ParseError::InvalidValue(field="goal_id", value=goal_id))
+  }
+  let action_value = tool_args_get(args, "action")
+    .unwrap_or("")
+    .trim()
+    .to_lower()
+  let maximum = tool_args_get_int(args, "maximum_parallel_parts")
+  let action = match action_value {
+    "pause" => {
+      if maximum is Some(_) {
+        return Err(
+          ParseError::InvalidFormat(
+            field="maximum_parallel_parts",
+            message="pause does not accept a concurrency value",
+          ),
+        )
+      }
+      GoalSteerAction::GoalSteerPause
+    }
+    "resume" => {
+      if maximum is Some(_) {
+        return Err(
+          ParseError::InvalidFormat(
+            field="maximum_parallel_parts",
+            message="resume does not accept a concurrency value",
+          ),
+        )
+      }
+      GoalSteerAction::GoalSteerResume
+    }
+    "set_concurrency" | "concurrency" =>
+      match maximum {
+        Some(value) if value > 0 =>
+          GoalSteerAction::GoalSteerSetMaximumParallelParts(value)
+        _ =>
+          return Err(
+            ParseError::InvalidValue(
+              field="maximum_parallel_parts",
+              value=tool_args_get(args, "maximum_parallel_parts").unwrap_or(""),
+            ),
+          )
+      }
+    "" => return Err(ParseError::MissingField(field="action"))
+    other =>
+      return Err(
+        ParseError::InvalidValue(field="action", value=other.to_owned()),
+      )
+  }
+  Ok({ goal_id, action })
+}
+
+///|
+fn parse_goal_attach_args(
+  args : ToolArgs,
+) -> Result[GoalAttachArgs, ParseError] {
+  let take_id = tool_args_get(args, "take_id").unwrap_or("").trim().to_owned()
+  if take_id == "" {
+    Err(ParseError::MissingField(field="take_id"))
+  } else if take_id.contains("\u{00}") || take_id.length() > 256 {
+    Err(ParseError::InvalidValue(field="take_id", value=take_id))
+  } else {
+    Ok({ take_id, })
+  }
+}
+
+///|
+fn parse_goal_answer_args(
+  args : ToolArgs,
+) -> Result[GoalAnswerArgs, ParseError] {
+  let request_id = tool_args_get(args, "request_id")
+    .unwrap_or("")
+    .trim()
+    .to_owned()
+  let answer = tool_args_get(args, "answer").unwrap_or("")
+  if request_id == "" {
+    return Err(ParseError::MissingField(field="request_id"))
+  }
+  if request_id.contains("\u{00}") || request_id.length() > 256 {
+    return Err(ParseError::InvalidValue(field="request_id", value=request_id))
+  }
+  if answer.trim() == "" {
+    return Err(ParseError::MissingField(field="answer"))
+  }
+  if answer.contains("\u{00}") || answer.length() > 64 * 1024 {
+    return Err(ParseError::InvalidValue(field="answer", value="<invalid>"))
+  }
+  Ok({ request_id, answer })
 }
 
 ///|
@@ -2494,8 +2631,18 @@ fn parse_tool_request(
     "kv_list" => Ok(ToolRequest::KvList)
     "goal_set" =>
       parse_goal_set_args(args).map(fn(a) { ToolRequest::GoalSet(a) })
+    "goal_submit" =>
+      parse_goal_submit_args(args).map(fn(a) { ToolRequest::GoalSubmit(a) })
     "goal_clear" => Ok(ToolRequest::GoalClear)
     "goal_status" => Ok(ToolRequest::GoalStatus(parse_goal_status_args(args)))
+    "goal_cancel" =>
+      parse_goal_cancel_args(args).map(fn(a) { ToolRequest::GoalCancel(a) })
+    "goal_steer" =>
+      parse_goal_steer_args(args).map(fn(a) { ToolRequest::GoalSteer(a) })
+    "goal_attach" =>
+      parse_goal_attach_args(args).map(fn(a) { ToolRequest::GoalAttach(a) })
+    "goal_answer" =>
+      parse_goal_answer_args(args).map(fn(a) { ToolRequest::GoalAnswer(a) })
     "mutex_acquire" =>
       parse_mutex_acquire_args(args).map(fn(a) { ToolRequest::MutexAcquire(a) })
     "mutex_release" =>

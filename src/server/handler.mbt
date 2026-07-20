@@ -765,6 +765,237 @@ pub async fn ServerState::handle_with_runner_and_capture(
         self.deliver_goal_judge_message(message, status, runner)
       },
       goal_request_tick=fn() { self.request_goal_judge_tick() },
+      goal_submit=async fn(draft_json) {
+        match
+          @exec.submit_native_conductor_goal_draft(
+            self.config.project_dir,
+            draft_json,
+            capture,
+          ) {
+          Ok(report) =>
+            @types.Response::ok_values({
+              "accepted": report.accepted.to_json(),
+              "goal_id": report.goal_id.to_json(),
+              "accepted_part_ids": report.accepted_part_ids.to_json(),
+              "initialized_part_count": report.initialized_part_count.to_json(),
+              "execution_registered": report.execution_registered.to_json(),
+              "rejections": report.rejections.to_json(),
+              "proposal_digest": report.proposal_digest.to_json(),
+              "selection_decision_digest": report.selection_decision_digest.to_json(),
+              "source_snapshot_digest": report.source_snapshot_digest.to_json(),
+              "replayed": report.replayed.to_json(),
+            })
+          Err(error) => @types.Response::Err(error.message())
+        }
+      },
+      goal_status=async fn(goal_id) {
+        match
+          @exec.inspect_native_goal(
+            self.config.project_dir,
+            @control.GoalId(goal_id),
+          ) {
+          Ok(report) =>
+            @types.Response::ok_values({
+              "goal_id": report.goal_id.to_json(),
+              "state": report.state.to_json(),
+              "lifecycle": report.lifecycle.to_json(),
+              "goal_ref": report.goal_ref.to_json(),
+              "integration_target_ref": report.integration_target_ref.to_json(),
+              "durable_version": report.durable_version.to_json(),
+              "maximum_parallel_parts": report.maximum_parallel_parts.to_json(),
+              "active_policy_revision": report.active_policy_revision.to_json(),
+              "policy_revision_count": report.policy_revision_count.to_json(),
+              "pause_reason": report.pause_reason.to_json(),
+              "resume_state": report.resume_state.to_json(),
+              "active_input_request": report.active_input_request.to_json(),
+              "input_answer_count": report.input_answer_count.to_json(),
+              "assurance_stage": report.assurance_stage.to_json(),
+              "goal_verification_take_id": report.goal_verification_take_id.to_json(),
+              "goal_audit_take_id": report.goal_audit_take_id.to_json(),
+              "goal_branch_seal": report.goal_branch_seal.to_json(),
+              "assurance_sandbox_count": report.assurance_sandbox_count.to_json(),
+              "assurance_harness_session_count": report.assurance_harness_session_count.to_json(),
+              "assurance_effect_receipt_count": report.assurance_effect_receipt_count.to_json(),
+              "goal_verification_receipt_count": report.goal_verification_receipt_count.to_json(),
+              "goal_audit_receipt_present": report.goal_audit_receipt_present.to_json(),
+              "publication_state": report.publication_state.to_json(),
+              "publication_remote_repository_id": report.publication_remote_repository_id.to_json(),
+              "publication_remote_head_ref": report.publication_remote_head_ref.to_json(),
+              "publication_receipt_present": report.publication_receipt_present.to_json(),
+              "published_oid": report.published_oid.to_json(),
+              "pull_request_state": report.pull_request_state.to_json(),
+              "pull_request_receipt_present": report.pull_request_receipt_present.to_json(),
+              "pull_request_number": report.pull_request_number.to_json(),
+              "pull_request_url": report.pull_request_url.to_json(),
+              "finalization_id": report.finalization_id.to_json(),
+              "readiness_decision": report.readiness_decision.to_json(),
+              "readiness_observation_sequence": report.readiness_observation_sequence.to_json(),
+              "parts": report.parts.to_json(),
+            })
+          Err(error) => @types.Response::Err(error.message())
+        }
+      },
+      goal_cancel=async fn(goal_id) {
+        match
+          @exec.cancel_native_goal(
+            self.config.project_dir,
+            @control.GoalId(goal_id),
+            @poller.now_sec(),
+          ) {
+          Ok(
+            @workflow.GoalCancellationPersistenceResult::GoalCancellationPersisted(
+              record
+            )
+          ) =>
+            @types.Response::ok_values({
+              "goal_id": record.goal.id.to_json(),
+              "state": record.state.to_json(),
+              "lifecycle": record.goal.lifecycle.to_json(),
+              "durable_version": record.durable_version.to_json(),
+              "replayed": false.to_json(),
+            })
+          Ok(
+            @workflow.GoalCancellationPersistenceResult::GoalCancellationReplayed(
+              record
+            )
+          ) =>
+            @types.Response::ok_values({
+              "goal_id": record.goal.id.to_json(),
+              "state": record.state.to_json(),
+              "lifecycle": record.goal.lifecycle.to_json(),
+              "durable_version": record.durable_version.to_json(),
+              "replayed": true.to_json(),
+            })
+          Ok(
+            @workflow.GoalCancellationPersistenceResult::GoalCancellationTerminal(
+              state
+            )
+          ) =>
+            @types.Response::ok_values({
+              "goal_id": goal_id.to_json(),
+              "state": state.to_json(),
+              "already_terminal": true.to_json(),
+            })
+          Err(error) => @types.Response::Err(error.message())
+        }
+      },
+      goal_steer=async fn(goal_id, action) {
+        let change = match action {
+          @tools.GoalSteerAction::GoalSteerPause =>
+            @workflow.GoalPolicyChange::GoalPolicyPause
+          @tools.GoalSteerAction::GoalSteerResume =>
+            @workflow.GoalPolicyChange::GoalPolicyResume
+          @tools.GoalSteerAction::GoalSteerSetMaximumParallelParts(value) =>
+            @workflow.GoalPolicyChange::GoalPolicySetMaximumParallelParts(value)
+        }
+        match
+          @exec.steer_native_goal(
+            self.config.project_dir,
+            @control.GoalId(goal_id),
+            change,
+          ) {
+          Ok(
+            @workflow.GoalSteeringPersistenceResult::GoalSteeringPersisted(
+              record,
+              revision
+            )
+          ) =>
+            @types.Response::ok_values({
+              "goal_id": record.goal.id.to_json(),
+              "state": record.state.to_json(),
+              "lifecycle": record.goal.lifecycle.to_json(),
+              "durable_version": record.durable_version.to_json(),
+              "maximum_parallel_parts": record.maximum_parallel_parts.to_json(),
+              "policy_revision": revision.to_json(),
+              "pause": record.pause.to_json(),
+              "replayed": false.to_json(),
+            })
+          Ok(
+            @workflow.GoalSteeringPersistenceResult::GoalSteeringReplayed(
+              record
+            )
+          )
+          | Ok(
+            @workflow.GoalSteeringPersistenceResult::GoalSteeringNoChange(
+              record
+            )
+          ) =>
+            @types.Response::ok_values({
+              "goal_id": record.goal.id.to_json(),
+              "state": record.state.to_json(),
+              "lifecycle": record.goal.lifecycle.to_json(),
+              "durable_version": record.durable_version.to_json(),
+              "maximum_parallel_parts": record.maximum_parallel_parts.to_json(),
+              "pause": record.pause.to_json(),
+              "replayed": true.to_json(),
+            })
+          Ok(
+            @workflow.GoalSteeringPersistenceResult::GoalSteeringTerminal(state)
+          ) =>
+            @types.Response::ok_values({
+              "goal_id": goal_id.to_json(),
+              "state": state.to_json(),
+              "already_terminal": true.to_json(),
+            })
+          Err(error) => @types.Response::Err(error.message())
+        }
+      },
+      goal_attach=async fn(take_id) {
+        match
+          @exec.attach_native_goal(
+            self.config.project_dir,
+            @control.TakeId(take_id),
+          ) {
+          Ok(report) =>
+            @types.Response::ok_values({
+              "goal_id": report.goal_id.to_json(),
+              "take": report.take.to_json(),
+              "origin": report.origin.to_json(),
+              "sessions": report.sessions.to_json(),
+              "observational": true.to_json(),
+            })
+          Err(error) => @types.Response::Err(error.message())
+        }
+      },
+      goal_answer=async fn(request_id, answer) {
+        match
+          @exec.answer_native_goal_input(
+            self.config.project_dir,
+            @workflow.GoalInputRequestId(request_id),
+            answer,
+            @poller.now_sec(),
+          ) {
+          Ok(
+            @workflow.GoalInputAnswerPersistenceResult::GoalInputAnswerPersisted(
+              record,
+              receipt
+            )
+          ) =>
+            @types.Response::ok_values({
+              "goal_id": record.goal.id.to_json(),
+              "state": record.state.to_json(),
+              "lifecycle": record.goal.lifecycle.to_json(),
+              "durable_version": record.durable_version.to_json(),
+              "answer": receipt.to_json(),
+              "replayed": false.to_json(),
+            })
+          Ok(
+            @workflow.GoalInputAnswerPersistenceResult::GoalInputAnswerPersistenceReplayed(
+              record,
+              receipt
+            )
+          ) =>
+            @types.Response::ok_values({
+              "goal_id": record.goal.id.to_json(),
+              "state": record.state.to_json(),
+              "lifecycle": record.goal.lifecycle.to_json(),
+              "durable_version": record.durable_version.to_json(),
+              "answer": receipt.to_json(),
+              "replayed": true.to_json(),
+            })
+          Err(error) => @types.Response::Err(error.message())
+        }
+      },
       record_handoff_delivered=fn(agent_id) {
         self.mark_handoff_delivered(agent_id)
       },

@@ -113,6 +113,7 @@ pub fn transition_part_lifecycle(
     | (PartPromoting(_, _, _), BlockPart(reason)) => Ok(PartBlocked(reason))
     (PartPending, CancelPartNotRun)
     | (PartReady, CancelPartNotRun)
+    | (PartExecuting(_), CancelPartNotRun)
     | (PartBlocked(_), CancelPartNotRun) => Ok(PartCanceledNotRun)
     (PartIntegrated(_), _) | (PartCanceledNotRun, _) =>
       Err(invalid_transition("Part", "terminal state already committed"))
@@ -169,6 +170,11 @@ pub fn transition_take(
     (TakeRunning, RecordTakeResult(epoch, result_digest)) =>
       match require_take_fence(take, epoch) {
         Ok(_) => Ok({ ..take, lifecycle: TakeResultRecorded(result_digest) })
+        Err(error) => Err(error)
+      }
+    (TakeLeased, FinishTake(epoch, TakeCanceled)) =>
+      match require_take_fence(take, epoch) {
+        Ok(_) => Ok({ ..take, lifecycle: TakeTerminal(TakeCanceled) })
         Err(error) => Err(error)
       }
     (TakeRunning, FinishTake(epoch, disposition))

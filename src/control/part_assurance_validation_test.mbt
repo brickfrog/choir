@@ -246,3 +246,51 @@ test "candidate path evidence rejects symlink-prefix ambiguity" {
     _ => fail("expected invalid candidate path")
   }
 }
+
+///|
+test "unchanged symlinks do not invalidate an unrelated candidate" {
+  let changed = @control.RepoPath("src/feature.mbt")
+  let symlink = @control.RepoPath("README.md")
+  let contract = assurance_contract(
+    @control.MutationDeclaration::CompleteMutationDeclaration([
+      @control.MutationClaim::ExactPath(changed),
+    ]),
+  )
+  assert_true(
+    @control.validate_candidate_commit(
+      contract,
+      assurance_take(),
+      assurance_candidate([changed]),
+      {
+        candidate_tree_paths: [changed, symlink],
+        symlink_prefix_paths: [symlink],
+        normalization_collision_paths: [],
+      },
+      fn(_) { true },
+    )
+    is Ok(_),
+  )
+  let through_symlink = @control.RepoPath("vendor/current/file.mbt")
+  match
+    @control.validate_candidate_commit(
+      {
+        ..contract,
+        mutation_declaration: @control.MutationDeclaration::CompleteMutationDeclaration([
+            @control.MutationClaim::RepositoryWide,
+          ],
+        ),
+      },
+      assurance_take(),
+      assurance_candidate([through_symlink]),
+      {
+        candidate_tree_paths: [through_symlink],
+        symlink_prefix_paths: [@control.RepoPath("vendor/current")],
+        normalization_collision_paths: [],
+      },
+      fn(_) { true },
+    ) {
+    Err(@control.CandidateValidationFailure::CandidateInvalidPath(actual)) =>
+      assert_eq(actual, through_symlink)
+    _ => fail("expected a changed symlink descendant to be rejected")
+  }
+}

@@ -125,6 +125,8 @@ test "tools_list_response" {
           assert_true(t.contains("kv_get"))
           assert_true(t.contains("kv_set"))
           assert_true(t.contains("kv_delete"))
+          assert_true(t.contains("goal_submit"))
+          assert_true(t.contains("maximum_parallel_parts"))
           assert_true(t.contains("mutex_acquire"))
           assert_true(t.contains("mutex_release"))
           assert_true(t.contains("mutex_status"))

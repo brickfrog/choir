@@ -42,7 +42,7 @@ fn valid_native_git_workspace_config(config : NativeGitWorkspaceConfig) -> Bool 
   config.repository_root.has_prefix("/") &&
   config.object_directory.has_prefix("/") &&
   config.object_directory.has_suffix("/objects") &&
-  config.staging_root.has_prefix("/tmp/choir-v2-take-") &&
+  config.staging_root.has_prefix("/tmp/choir-take-") &&
   config.staging_root.has_suffix("/staging") &&
   !config.repository_root.contains("\n") &&
   !config.object_directory.contains("\n") &&
@@ -310,19 +310,13 @@ fn native_git_symlink_paths(output : String) -> Array[@control.RepoPath] {
 }
 
 ///|
-pub async fn normalize_native_git_candidate(
+async fn prepare_native_git_result_index(
   config : NativeGitWorkspaceConfig,
   key : String,
-  goal_id : @control.GoalId,
-  part_id : @control.PartId,
-  take_id : @control.TakeId,
   base_commit_oid : @control.GitOid,
   expected_source_digest : @control.Digest,
   result_root : String,
-) -> Result[
-  (@control.CandidateCommit, @control.CandidatePathEvidence),
-  @types.ChoirError,
-] {
+) -> Result[String, @types.ChoirError] {
   if !valid_native_git_workspace_config(config) ||
     !valid_native_git_workspace_key(key) ||
     !valid_hex_oid_text(base_commit_oid.0) ||
@@ -336,9 +330,7 @@ pub async fn normalize_native_git_candidate(
     ) ||
     @sys.path_exists(result_root + "/.git") {
     return Err(
-      @types.ChoirError::validation_error(
-        "native candidate workspace is invalid",
-      ),
+      @types.ChoirError::validation_error("native result workspace is invalid"),
     )
   }
   let marker = result_root + "/.choir-source-root"
@@ -352,30 +344,28 @@ pub async fn normalize_native_git_candidate(
     result_root +
     "\n"
   if !@sys.create_dir_all(index_root) {
-    return Err(native_git_workspace_error("candidate index root failed"))
+    return Err(native_git_workspace_error("result index root failed"))
   }
   if @sys.path_exists(state_file) {
     if @sys.read_file(state_file) != state_content {
       if !@sys.path_exists(marker) {
-        return Err(
-          native_git_workspace_error("candidate retry state is invalid"),
-        )
+        return Err(native_git_workspace_error("result retry state is invalid"))
       }
       match remove_native_workspace_file(index_root, state_file) {
         Ok(_) => ()
         Err(error) => return Err(error)
       }
       if !@sys.write_file_sync(state_file, state_content) {
-        return Err(native_git_workspace_error("candidate retry state failed"))
+        return Err(native_git_workspace_error("result retry state failed"))
       }
     }
   } else if !@sys.path_exists(marker) ||
     @sys.read_file(marker) != expected_source_digest.0 + "\n" ||
     !@sys.write_file_sync(state_file, state_content) {
-    return Err(native_git_workspace_error("candidate source is invalid"))
+    return Err(native_git_workspace_error("result source is invalid"))
   }
   if @sys.read_file(state_file) != state_content {
-    return Err(native_git_workspace_error("candidate retry state is false"))
+    return Err(native_git_workspace_error("result retry state is false"))
   }
   if @sys.path_exists(marker) {
     match remove_native_workspace_file(result_root, marker) {
@@ -400,9 +390,7 @@ pub async fn normalize_native_git_candidate(
     Err(error) => return Err(error)
   }
   if read_tree.exit_code != 0 {
-    return Err(
-      native_git_workspace_error("candidate index initialization failed"),
-    )
+    return Err(native_git_workspace_error("result index initialization failed"))
   }
   let added = match
     capture_native_git_workspace_process(
@@ -415,7 +403,54 @@ pub async fn normalize_native_git_candidate(
     Err(error) => return Err(error)
   }
   if added.exit_code != 0 {
-    return Err(native_git_workspace_error("candidate indexing failed"))
+    return Err(native_git_workspace_error("result indexing failed"))
+  }
+  Ok(index_file)
+}
+
+///|
+pub async fn observe_native_git_result_tree(
+  config : NativeGitWorkspaceConfig,
+  key : String,
+  base_commit_oid : @control.GitOid,
+  expected_source_digest : @control.Digest,
+  result_root : String,
+) -> Result[@control.GitOid, @types.ChoirError] {
+  let index_file = match
+    prepare_native_git_result_index(
+      config, key, base_commit_oid, expected_source_digest, result_root,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  native_git_workspace_oid(
+    config,
+    ["write-tree"],
+    index_file=Some(index_file),
+    work_tree=Some(result_root),
+  )
+}
+
+///|
+pub async fn normalize_native_git_candidate(
+  config : NativeGitWorkspaceConfig,
+  key : String,
+  goal_id : @control.GoalId,
+  part_id : @control.PartId,
+  take_id : @control.TakeId,
+  base_commit_oid : @control.GitOid,
+  expected_source_digest : @control.Digest,
+  result_root : String,
+) -> Result[
+  (@control.CandidateCommit, @control.CandidatePathEvidence),
+  @types.ChoirError,
+] {
+  let index_file = match
+    prepare_native_git_result_index(
+      config, key, base_commit_oid, expected_source_digest, result_root,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
   }
   let tree_oid = match
     native_git_workspace_oid(
@@ -529,18 +564,15 @@ test "native Git workspace environment isolates repository configuration" {
   let config : NativeGitWorkspaceConfig = {
     repository_root: "/repo",
     object_directory: "/repo/.git/objects",
-    staging_root: "/tmp/choir-v2-take-test/staging",
+    staging_root: "/tmp/choir-take-test/staging",
   }
   let environment = native_git_workspace_environment(
     config,
-    Some("/tmp/choir-v2-take-test/staging/index"),
-    Some("/tmp/choir-v2-take-test/result"),
+    Some("/tmp/choir-take-test/staging/index"),
+    Some("/tmp/choir-take-test/result"),
     false,
   )
-  assert_eq(
-    environment["GIT_DIR"],
-    "/tmp/choir-v2-take-test/staging/git-control",
-  )
+  assert_eq(environment["GIT_DIR"], "/tmp/choir-take-test/staging/git-control")
   assert_eq(environment["GIT_OBJECT_DIRECTORY"], "/repo/.git/objects")
   assert_eq(environment["GIT_CONFIG_GLOBAL"], "/dev/null")
   assert_eq(environment["GIT_ATTR_NOSYSTEM"], "1")
@@ -559,5 +591,158 @@ test "native Git evidence keeps NUL paths and symlink identity" {
       "100644 blob 0123456789012345678901234567890123456789\tREADME.md\u{00}",
     ),
     [@control.RepoPath("AGENTS.md")],
+  )
+}
+
+///|
+async fn native_git_evidence_test_command(
+  cwd : String,
+  arguments : Array[String],
+) -> String {
+  let (exit_code, data) = @process.collect_output_merged(
+    "/usr/bin/git",
+    arguments,
+    extra_env={
+      "GIT_CONFIG_GLOBAL": "/dev/null",
+      "GIT_CONFIG_NOSYSTEM": "1",
+      "HOME": "/nonexistent",
+      "LC_ALL": "C.UTF-8",
+      "PATH": "/usr/bin:/bin",
+    },
+    inherit_env=false,
+    cwd~,
+  ) catch {
+    _ => fail("native Git evidence fixture process failed")
+  }
+  let output = data.text() catch {
+    _ => fail("native Git evidence fixture output was not UTF-8")
+  }
+  if exit_code != 0 {
+    fail("native Git evidence fixture command failed: " + output)
+  }
+  output
+}
+
+///|
+async test "native Git candidate evidence captures raw changed paths and symlinks" {
+  let root = "/tmp/choir-take-path-evidence-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(root))
+  defer ignore(@sys.rm_rf(root))
+  let repository = root + "/repository"
+  let staging = root + "/staging"
+  let result = root + "/results/candidate"
+  guard @sys.create_dir_all(repository + "/src") &&
+    @sys.create_dir_all(repository + "/docs") &&
+    @sys.create_dir_all(staging) else {
+    fail("native Git evidence fixture root failed")
+  }
+  ignore(native_git_evidence_test_command(repository, ["init", "--quiet"]))
+  guard @sys.write_file_sync(repository + "/src/old_name.mbt", "old\n") &&
+    @sys.write_file_sync(repository + "/src/delete.mbt", "delete\n") &&
+    @sys.write_file_sync(repository + "/docs/café.md", "composed\n") else {
+    fail("native Git evidence fixture base files failed")
+  }
+  ignore(
+    native_git_evidence_test_command(repository, ["add", "--all", "--", "."]),
+  )
+  ignore(
+    native_git_evidence_test_command(repository, [
+      "-c", "user.name=Choir Test", "-c", "user.email=choir-test@invalid", "commit",
+      "--quiet", "-m", "base",
+    ]),
+  )
+  let base_commit = @control.GitOid(
+    native_git_evidence_test_command(repository, ["rev-parse", "HEAD"])
+    .trim()
+    .to_owned(),
+  )
+  let base_tree = @control.GitOid(
+    native_git_evidence_test_command(repository, [
+      "show", "-s", "--format=%T", "HEAD",
+    ])
+    .trim()
+    .to_owned(),
+  )
+  let config : NativeGitWorkspaceConfig = {
+    repository_root: repository,
+    object_directory: repository + "/.git/objects",
+    staging_root: staging,
+  }
+  let source_digest = @control.Digest(
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  )
+  let source = match
+    stage_native_git_workspace(
+      config, "path-evidence", base_commit, base_tree, source_digest,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  guard @sys.create_dir_all(result) else {
+    fail("native Git evidence result root failed")
+  }
+  let copied = @process.collect_output_merged(
+    "/usr/bin/cp",
+    ["-a", source.root + "/.", result],
+    extra_env={ "HOME": "/nonexistent", "PATH": "/usr/bin:/bin" },
+    inherit_env=false,
+    cwd=root,
+  ) catch {
+    _ => fail("native Git evidence source copy failed")
+  }
+  if copied.0 != 0 {
+    fail("native Git evidence source copy failed")
+  }
+  ignore(@sys.rm_rf(result + "/src/old_name.mbt"))
+  ignore(@sys.rm_rf(result + "/src/delete.mbt"))
+  guard @sys.write_file_sync(result + "/src/new_name.mbt", "old\n") &&
+    @sys.create_dir_all(result + "/generated") &&
+    @sys.create_dir_all(result + "/case") &&
+    @sys.write_file_sync(result + "/generated/schema.mbt", "generated\n") &&
+    @sys.write_file_sync(result + "/case/A.mbt", "upper\n") &&
+    @sys.write_file_sync(result + "/case/a.mbt", "lower\n") &&
+    @sys.write_file_sync(result + "/docs/cafe\u{301}.md", "decomposed\n") &&
+    @sys.symlink_force("new_name.mbt", result + "/src/link.mbt") else {
+    fail("native Git evidence candidate mutation failed")
+  }
+  let normalized = match
+    normalize_native_git_candidate(
+      config,
+      "path-evidence-candidate",
+      @control.GoalId("path-evidence-goal"),
+      @control.PartId("path-evidence-part"),
+      @control.TakeId("path-evidence-take"),
+      base_commit,
+      source.source_digest,
+      result,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  let expected = [
+    @control.RepoPath("case/A.mbt"),
+    @control.RepoPath("case/a.mbt"),
+    @control.RepoPath("docs/cafe\u{301}.md"),
+    @control.RepoPath("generated/schema.mbt"),
+    @control.RepoPath("src/delete.mbt"),
+    @control.RepoPath("src/link.mbt"),
+    @control.RepoPath("src/new_name.mbt"),
+    @control.RepoPath("src/old_name.mbt"),
+  ]
+  assert_eq(normalized.0.changed_paths.length(), expected.length())
+  for path in expected {
+    assert_true(
+      normalized.0.changed_paths.any(fn(observed) { observed == path }),
+    )
+  }
+  assert_eq(normalized.1.symlink_prefix_paths, [
+    @control.RepoPath("src/link.mbt"),
+  ])
+  assert_true(
+    @control.validate_repo_path(
+      @control.RepoPath("docs/cafe\u{301}.md"),
+      native_path_is_nfc,
+    )
+    is Err(_),
   )
 }

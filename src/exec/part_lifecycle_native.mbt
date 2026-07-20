@@ -1,6 +1,7 @@
 ///|
 pub(all) struct NativePartLifecycleReport {
   passed : Bool
+  provider_surface : @control.ProviderSurfaceId?
   effect_receipt_count : Int
   verification_receipt_count : Int
   audit_receipt_count : Int
@@ -31,9 +32,20 @@ priv struct NativePartDispatchCounts {
 }
 
 ///|
+priv struct NativePartFixtureDefinition {
+  key : String
+  goal_id : @control.GoalId
+  part_id : @control.PartId
+  source_path : @control.RepoPath
+  instruction : String
+  surface : @control.ProviderSurfaceId
+}
+
+///|
 fn failed_native_part_lifecycle(message : String) -> NativePartLifecycleReport {
   {
     passed: false,
+    provider_surface: None,
     effect_receipt_count: 0,
     verification_receipt_count: 0,
     audit_receipt_count: 0,
@@ -97,8 +109,9 @@ async fn native_part_fixture_git_value(
 }
 
 ///|
-async fn create_native_part_fixture_repository(
+async fn create_native_part_fixture_repository_with_sources(
   root : String,
+  sources : Array[(String, String)],
 ) -> Result[NativePartFixtureRepository, @types.ChoirError] {
   let repository_root = root + "/repository"
   if !@sys.create_dir_all(repository_root + "/src") ||
@@ -111,11 +124,17 @@ async fn create_native_part_fixture_repository(
       repository_root + "/.gitignore",
       "_build/\ntarget/\n.mooncakes/\n",
     ) ||
-    !@sys.write_file_sync(
-      repository_root + "/src/answer.mbt",
-      "///|\npub fn answer() -> Int { 1 }\n\n///|\ntest \"answer is corrected\" {\n  assert_eq(answer(), 2)\n}\n",
-    ) {
+    sources.length() == 0 {
     return Err(native_part_effect_error("fixture repository creation failed"))
+  }
+  for source in sources {
+    if !source.0.has_prefix("src/") ||
+      source.0.contains("..") ||
+      !@sys.write_file_sync(repository_root + "/" + source.0, source.1) {
+      return Err(
+        native_part_effect_error("fixture repository source creation failed"),
+      )
+    }
   }
   for
     command in [
@@ -197,6 +216,17 @@ async fn create_native_part_fixture_repository(
 }
 
 ///|
+async fn create_native_part_fixture_repository(
+  root : String,
+) -> Result[NativePartFixtureRepository, @types.ChoirError] {
+  create_native_part_fixture_repository_with_sources(root, [
+    (
+      "src/answer.mbt", "///|\npub fn answer() -> Int { 1 }\n\n///|\ntest \"answer is corrected\" {\n  assert_eq(answer(), 2)\n}\n",
+    ),
+  ])
+}
+
+///|
 fn adopt_native_part_fixture_artifact(
   repository : @workflow.PartWorkflowRepository,
   content : Bytes,
@@ -260,12 +290,13 @@ fn native_part_fixture_session(
   take : @control.Take,
   sandbox : @control.SandboxLease,
   surface_digest : @control.Digest,
+  surface : @control.ProviderSurfaceId,
 ) -> @control.HarnessSession {
   {
     id: @control.HarnessSessionId(id),
     take_id: take.id,
     sandbox_generation_id: sandbox.generation_id,
-    surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+    surface,
     effective_surface_manifest_digest: surface_digest,
     cursor_class: @control.HarnessCursorClass::HarnessCursorNotResumable,
     provider_cursor: None,
@@ -276,14 +307,16 @@ fn native_part_fixture_session(
 }
 
 ///|
-fn native_part_fixture_snapshot(
+fn native_part_fixture_snapshot_for_definition(
   repository : @workflow.PartWorkflowRepository,
   git : NativePartFixtureRepository,
+  definition : NativePartFixtureDefinition,
 ) -> Result[@workflow.PartWorkflowSnapshot, @types.ChoirError] {
-  let goal_id = @control.GoalId("goal-native-part")
-  let part_id = @control.PartId("part-native")
-  let revision_id = @control.RevisionId("revision-native-part")
-  let verification_spec_id = @control.VerificationSpecId("verify-native-part")
+  let goal_id = definition.goal_id
+  let part_id = definition.part_id
+  let key = definition.key
+  let revision_id = @control.RevisionId("revision-" + key)
+  let verification_spec_id = @control.VerificationSpecId("verify-" + key)
   let audit_policy_digest = @storage.artifact_digest(
     @utf8.encode("choir.native-part-audit-policy.v1"),
   )
@@ -300,12 +333,12 @@ fn native_part_fixture_snapshot(
     @utf8.encode("choir.native-part-verification-spec.v1"),
   )
   let implementation = native_part_fixture_take(
-    "take-native-implementation",
+    "take-" + key + "-implementation",
     goal_id,
     @control.TakePurpose::Implementation(part_id, revision_id),
   )
   let verification = native_part_fixture_take(
-    "take-native-verification",
+    "take-" + key + "-verification",
     goal_id,
     @control.TakePurpose::PartVerification(
       part_id,
@@ -314,7 +347,7 @@ fn native_part_fixture_snapshot(
     ),
   )
   let audit = native_part_fixture_take(
-    "take-native-audit",
+    "take-" + key + "-audit",
     goal_id,
     @control.TakePurpose::PartAudit(
       part_id,
@@ -325,9 +358,7 @@ fn native_part_fixture_snapshot(
   let instruction = match
     adopt_native_part_fixture_artifact(
       repository,
-      @utf8.encode(
-        "Change only src/answer.mbt so answer() returns 2. Inspect the file, make the smallest edit, run /opt/moon/bin/moon test --target wasm in the sandbox, and finish with the required JSON outcome.",
-      ),
+      @utf8.encode(definition.instruction),
       @storage.ArtifactProvenance::ArtifactTaskInstruction(revision_id),
       goal_id,
     ) {
@@ -344,7 +375,14 @@ fn native_part_fixture_snapshot(
       @sandbox.SandboxRegisteredToolId("moon"),
       @sandbox.boxlite_take_tool_manifest_digest(),
     ),
-    arguments: ["test", "--target", "wasm"],
+    arguments: [
+      "test",
+      "--target",
+      "wasm",
+      definition.source_path.0,
+      "--target-dir",
+      "/scratch/verification-" + key,
+    ],
     working_directory: @sandbox.SandboxWorkingDirectory::SandboxWorkspaceRoot,
     environment: [{ key: "NO_COLOR", value: "1" }],
     stdin: @sandbox.SandboxStdinPolicy::SandboxStdinClosed,
@@ -381,6 +419,8 @@ fn native_part_fixture_snapshot(
   let contract_digest = @storage.artifact_digest(
     @utf8.encode(
       "choir.native-part-contract.v1\u{00}" +
+      key +
+      "\u{00}" +
       git.base_commit_oid.0 +
       "\u{00}" +
       instruction.digest.0 +
@@ -390,7 +430,14 @@ fn native_part_fixture_snapshot(
   )
   let goal : @control.Goal = {
     id: goal_id,
-    contract_digest,
+    contract_digest: @storage.artifact_digest(
+      @utf8.encode(
+        "choir.native-goal-contract.v1\u{00}" +
+        goal_id.0 +
+        "\u{00}" +
+        git.base_commit_oid.0,
+      ),
+    ),
     lifecycle: @control.GoalLifecycle::GoalActive(
       @control.GoalActiveCondition::GoalRunning,
     ),
@@ -413,7 +460,7 @@ fn native_part_fixture_snapshot(
     base_tree_oid: git.base_tree_oid,
     path_mode: @control.RepositoryPathMode::CaseSensitiveNfc,
     mutation_declaration: @control.MutationDeclaration::CompleteMutationDeclaration([
-        @control.MutationClaim::ExactPath(@control.RepoPath("src/answer.mbt")),
+        @control.MutationClaim::ExactPath(definition.source_path),
       ],
     ),
     verification_specs: [
@@ -429,40 +476,79 @@ fn native_part_fixture_snapshot(
     verification_capability_profile_digest: verification_profile_digest,
     audit_capability_profile_digest: audit_profile_digest,
   }
-  let surface_digest = @harness.expected_claude_take_surface_manifest_digest(
-    @sandbox.boxlite_take_mcp_tools(),
-    "choir_sandbox",
-  )
+  let implementation_surface_digest = match definition.surface {
+    @control.ProviderSurfaceId::ClaudeSubscriptionCli =>
+      @harness.expected_claude_take_surface_manifest_digest(
+        @sandbox.boxlite_take_mcp_tools(),
+        "choir_sandbox",
+      )
+    @control.ProviderSurfaceId::CodexSubscriptionCli =>
+      @harness.codex_effective_surface_manifest_digest(
+        @sandbox.boxlite_take_codex_mcp_tools(),
+        "choir_sandbox",
+      )
+  }
+  let assurance_surface_digest = match definition.surface {
+    @control.ProviderSurfaceId::ClaudeSubscriptionCli =>
+      @harness.expected_claude_take_surface_manifest_digest(
+        @sandbox.boxlite_assurance_mcp_tools(),
+        "choir_sandbox",
+      )
+    @control.ProviderSurfaceId::CodexSubscriptionCli =>
+      @harness.codex_effective_surface_manifest_digest(
+        @sandbox.boxlite_assurance_codex_mcp_tools(),
+        "choir_sandbox",
+      )
+  }
   let implementation_sandbox = native_part_fixture_sandbox(
-    "sandbox-native-implementation", "generation-native-implementation", implementation,
+    "sandbox-" + key + "-implementation",
+    "generation-" + key + "-implementation",
+    implementation,
     implementation_profile_digest,
   )
   let verification_sandbox = native_part_fixture_sandbox(
-    "sandbox-native-verification", "generation-native-verification", verification,
+    "sandbox-" + key + "-verification",
+    "generation-" + key + "-verification",
+    verification,
     verification_profile_digest,
   )
   let audit_sandbox = native_part_fixture_sandbox(
-    "sandbox-native-audit", "generation-native-audit", audit, audit_profile_digest,
+    "sandbox-" + key + "-audit",
+    "generation-" + key + "-audit",
+    audit,
+    audit_profile_digest,
   )
   let identities : @workflow.PartIdentityPlan = {
     implementation_take: implementation,
     implementation_sandbox,
     implementation_session: native_part_fixture_session(
-      "session-native-implementation", implementation, implementation_sandbox, surface_digest,
+      "session-" + key + "-implementation",
+      implementation,
+      implementation_sandbox,
+      implementation_surface_digest,
+      definition.surface,
     ),
     verification_take: verification,
     verification_sandbox,
     verification_session: native_part_fixture_session(
-      "session-native-verification", verification, verification_sandbox, surface_digest,
+      "session-" + key + "-verification",
+      verification,
+      verification_sandbox,
+      assurance_surface_digest,
+      definition.surface,
     ),
     audit_take: audit,
     audit_sandbox,
     audit_session: native_part_fixture_session(
-      "session-native-audit", audit, audit_sandbox, surface_digest,
+      "session-" + key + "-audit",
+      audit,
+      audit_sandbox,
+      assurance_surface_digest,
+      definition.surface,
     ),
   }
   @workflow.initialize_part_workflow(
-    "workflow-native-part",
+    "workflow-" + key,
     goal,
     part,
     contract,
@@ -470,6 +556,22 @@ fn native_part_fixture_snapshot(
     @control.FencingEpoch(1L),
     fn(_) { true },
   )
+}
+
+///|
+fn native_part_fixture_snapshot(
+  repository : @workflow.PartWorkflowRepository,
+  git : NativePartFixtureRepository,
+  surface : @control.ProviderSurfaceId,
+) -> Result[@workflow.PartWorkflowSnapshot, @types.ChoirError] {
+  native_part_fixture_snapshot_for_definition(repository, git, {
+    key: "native-part",
+    goal_id: @control.GoalId("goal-native-part"),
+    part_id: @control.PartId("part-native"),
+    source_path: @control.RepoPath("src/answer.mbt"),
+    instruction: "Change only src/answer.mbt so answer() returns 2. Inspect the file, make the smallest edit, run /opt/moon/bin/moon test --target wasm src/answer.mbt in the sandbox, and finish with the required JSON outcome.",
+    surface,
+  })
 }
 
 ///|
@@ -491,6 +593,39 @@ fn counted_native_part_effects(
       (effects.execute)(snapshot, intent)
     },
     reconcile: effects.reconcile,
+  }
+}
+
+///|
+fn native_part_effect_prepares_sandbox(kind : @workflow.PartEffectKind) -> Bool {
+  kind is @workflow.PartEffectKind::PrepareImplementationSandbox(_) ||
+  kind is @workflow.PartEffectKind::PrepareVerificationSandbox(_) ||
+  kind is @workflow.PartEffectKind::PrepareAuditSandbox(_)
+}
+
+///|
+fn serialized_native_part_sandbox_preparation(
+  effects : @workflow.PartWorkflowDriverAdapters,
+  lock : Ref[Bool]?,
+) -> @workflow.PartWorkflowDriverAdapters {
+  match lock {
+    None => effects
+    Some(lock) =>
+      {
+        execute: async fn(snapshot, intent) {
+          if !native_part_effect_prepares_sandbox(intent.kind) {
+            return (effects.execute)(snapshot, intent)
+          }
+          while lock.val {
+            @async.sleep(10)
+          }
+          lock.val = true
+          let result = (effects.execute)(snapshot, intent)
+          lock.val = false
+          result
+        },
+        reconcile: effects.reconcile,
+      }
   }
 }
 
@@ -539,20 +674,83 @@ fn native_part_verification_debug(
 }
 
 ///|
+fn native_part_audit_debug(
+  repository : @workflow.PartWorkflowRepository,
+  snapshot : @workflow.PartWorkflowSnapshot,
+) -> String {
+  let result = match snapshot.audit_result {
+    Some(value) =>
+      "outcome=" +
+      value.outcome.to_json().stringify(indent=0) +
+      " total=" +
+      value.total_findings_count.to_string() +
+      " blocking=" +
+      value.blocking_findings_count.to_string()
+    None => "missing"
+  }
+  let receipt = match snapshot.audit_receipt {
+    Some(value) =>
+      "outcome=" +
+      value.outcome.to_json().stringify(indent=0) +
+      " total=" +
+      value.total_findings_count.to_string() +
+      " blocking=" +
+      value.blocking_findings_count.to_string()
+    None => "missing"
+  }
+  let findings = match snapshot.audit_result {
+    Some({ findings_artifact: Some(reference), .. }) =>
+      match
+        (local_part_workflow_repository_adapters().artifacts.read)(
+          repository.artifact_store,
+          { digest: reference.digest, max_bytes: 131072 },
+        ) {
+        Ok(value) => @utf8.decode_lossy(value)
+        Err(error) => "findings-error=" + error.message()
+      }
+    _ => "none"
+  }
+  "result=" + result + " receipt=" + receipt + " findings=" + findings
+}
+
+///|
 fn native_part_dependencies(
   repository : @workflow.PartWorkflowRepository,
   runtime : NativePartEffectRuntime,
-  git : NativePartFixtureRepository,
   clock : Ref[Int64],
   counts : NativePartDispatchCounts,
+  surface : @control.ProviderSurfaceId,
+  integration_head : @control.GitOid?,
+  sandbox_prepare_lock : Ref[Bool]?,
   fault : (@workflow.PartPersistenceBoundary) -> @storage.StateStoreFaultPoint?,
+) -> @workflow.PartWorkflowDriverDependencies {
+  native_part_dependencies_with_admission(
+    repository, runtime, clock, counts, surface, integration_head, sandbox_prepare_lock,
+    fault,
+  )
+}
+
+///|
+fn native_part_dependencies_with_admission(
+  repository : @workflow.PartWorkflowRepository,
+  runtime : NativePartEffectRuntime,
+  clock : Ref[Int64],
+  counts : NativePartDispatchCounts,
+  surface : @control.ProviderSurfaceId,
+  integration_head : @control.GitOid?,
+  sandbox_prepare_lock : Ref[Bool]?,
+  fault : (@workflow.PartPersistenceBoundary) -> @storage.StateStoreFaultPoint?,
+  explicit_admission? : @workflow.PartIntegrationAdmission? = None,
 ) -> @workflow.PartWorkflowDriverDependencies {
   let now = fn() {
     clock.val = clock.val + 1L
     clock.val
   }
   let effects = counted_native_part_effects(
-    native_part_effect_adapters(runtime),
+    serialized_native_part_sandbox_preparation(
+      native_part_effect_adapters(runtime),
+      sandbox_prepare_lock,
+    ),
     counts,
   )
   {
@@ -570,36 +768,62 @@ fn native_part_dependencies(
     artifact_digest_exists: fn(digest) {
       native_part_digest_exists(repository, digest)
     },
-    is_nfc: fn(_) { true },
-    audit_receipt_metadata: fn(_) {
+    is_nfc: native_path_is_nfc,
+    audit_receipt_metadata: fn(snapshot) {
+      let (provider_identity, model_identity) = match surface {
+        @control.ProviderSurfaceId::ClaudeSubscriptionCli =>
+          (
+            "claude-code-2.1.215",
+            @control.ModelIdentity::ReportedModelIdentity(
+              "claude-subscription-runtime",
+            ),
+          )
+        @control.ProviderSurfaceId::CodexSubscriptionCli =>
+          ("codex-cli-0.144.6", @control.ModelIdentity::UnreportedModelIdentity)
+      }
       Ok({
-        receipt_id: @control.ReceiptId("audit-receipt-native-part"),
-        provider_surface_id: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
-        provider_identity: "claude-code-2.1.215",
-        model_identity: @control.ModelIdentity::ReportedModelIdentity(
-          "claude-subscription-runtime",
-        ),
+        receipt_id: @control.ReceiptId("audit-receipt-" + snapshot.part.id.0),
+        provider_surface_id: surface,
+        provider_identity,
+        model_identity,
       })
     },
+    goal_authorizes_new_effects: fn() {
+      Ok(@workflow.PartGoalAuthorization::PartGoalAuthorized(None))
+    },
     integration_admission: fn(snapshot) {
-      Ok(
-        @workflow.PartIntegrationAdmission::PartIntegrationAdmitted({
-          lease: {
-            id: @control.IntegrationLeaseId("integration-lease-native-part"),
-            goal_id: snapshot.goal.id,
-            fencing_epoch: snapshot.fencing_epoch,
-            holder: "choird-native-conformance",
-          },
-          intent_id: @control.IntegrationIntentId(
-            "integration-intent-native-part",
-          ),
-          expected_goal_head_oid: git.base_commit_oid,
-          promotion_metadata_digest: @storage.artifact_digest(
-            @utf8.encode("choir.native-part-promotion.v1"),
-          ),
-          git_witness_ref: "refs/choir/witness/native-part",
-        }),
-      )
+      match explicit_admission {
+        Some(admission) => Ok(admission)
+        None =>
+          match integration_head {
+            None =>
+              Ok(@workflow.PartIntegrationAdmission::PartIntegrationDeferred)
+            Some(expected_goal_head_oid) =>
+              Ok(
+                @workflow.PartIntegrationAdmission::PartIntegrationAdmitted({
+                  lease: {
+                    id: @control.IntegrationLeaseId(
+                      "integration-lease-" + snapshot.part.id.0,
+                    ),
+                    goal_id: snapshot.goal.id,
+                    fencing_epoch: snapshot.fencing_epoch,
+                    holder: "choird-native-conformance",
+                  },
+                  intent_id: @control.IntegrationIntentId(
+                    "integration-intent-" + snapshot.part.id.0,
+                  ),
+                  expected_goal_head_oid,
+                  promotion_metadata_digest: @storage.artifact_digest(
+                    @utf8.encode(
+                      "choir.native-part-promotion.v1\u{00}" +
+                      snapshot.part.id.0,
+                    ),
+                  ),
+                  git_witness_ref: "refs/choir/witness/" + snapshot.part.id.0,
+                }),
+              )
+          }
+      }
     },
     verification_environment_digest: fn(_) {
       native_prepared_environment_digest({
@@ -626,31 +850,71 @@ fn native_part_runtime_config(
   mcp_script : String,
   now : () -> Int64,
 ) -> NativePartEffectRuntimeConfig {
+  native_part_runtime_config_for_paths(
+    repository,
+    server,
+    git.root,
+    git.git_directory,
+    git.object_directory,
+    git.goal_ref,
+    moon_home,
+    node,
+    mcp_script,
+    now,
+  )
+}
+
+///|
+fn native_part_runtime_config_for_paths(
+  repository : @workflow.PartWorkflowRepository,
+  server : NativeBoxLiteServerHandle,
+  repository_root : String,
+  git_directory : String,
+  object_directory : String,
+  goal_ref : String,
+  moon_home : String,
+  node : String,
+  mcp_script : String,
+  now : () -> Int64,
+  goal_cancellation_requested? : () -> Bool = fn() { false },
+) -> NativePartEffectRuntimeConfig {
   {
     repository,
     repository_adapters: local_part_workflow_repository_adapters(),
     server,
     git_workspace: {
-      repository_root: git.root,
-      object_directory: git.object_directory,
+      repository_root,
+      object_directory,
       staging_root: server.config.root + "/staging",
     },
     git_integration: {
-      repository_root: git.root,
-      git_directory: git.git_directory,
-      object_directory: git.object_directory,
+      repository_root,
+      git_directory,
+      object_directory,
       control_root: server.config.root + "/integration-control",
-      goal_ref: git.goal_ref,
+      goal_ref,
     },
     moon_home,
     node_executable: node,
     sandbox_mcp_script: mcp_script,
     claude_root: server.config.root + "/claude/",
-    provider_conformance_report_digest: @harness.expected_claude_take_surface_manifest_digest(
-      @sandbox.boxlite_take_mcp_tools(),
-      "choir_sandbox",
-    ),
+    codex_root: server.config.root + "/codex/",
+    provider_conformance_report_digest: fn(surface) {
+      match surface {
+        @control.ProviderSurfaceId::ClaudeSubscriptionCli =>
+          @harness.expected_claude_take_surface_manifest_digest(
+            @sandbox.boxlite_assurance_mcp_tools(),
+            "choir_sandbox",
+          )
+        @control.ProviderSurfaceId::CodexSubscriptionCli =>
+          @harness.codex_effective_surface_manifest_digest(
+            @sandbox.boxlite_assurance_codex_mcp_tools(),
+            "choir_sandbox",
+          )
+      }
+    },
     now,
+    goal_cancellation_requested,
   }
 }
 
@@ -664,10 +928,11 @@ async fn fail_native_part_runtime(
 }
 
 ///|
-pub async fn run_native_part_lifecycle_fixture(
+pub async fn run_native_part_lifecycle_fixture_for_surface(
   root : String,
+  surface : @control.ProviderSurfaceId,
 ) -> NativePartLifecycleReport {
-  if !root.has_prefix("/tmp/choir-v2-take-") ||
+  if !root.has_prefix("/tmp/choir-take-") ||
     root.contains("/../") ||
     !@sys.create_dir_all(root) ||
     @sys.realpath_native(root) != Some(root) {
@@ -682,7 +947,7 @@ pub async fn run_native_part_lifecycle_fixture(
     artifact_store: { root: root + "/artifacts" },
     max_snapshot_bytes: 1024 * 1024,
   }
-  let snapshot = match native_part_fixture_snapshot(repository, git) {
+  let snapshot = match native_part_fixture_snapshot(repository, git, surface) {
     Ok(value) => value
     Err(error) => return failed_native_part_lifecycle(error.message())
   }
@@ -752,9 +1017,11 @@ pub async fn run_native_part_lifecycle_fixture(
       native_part_dependencies(
         repository,
         first_runtime,
-        git,
         clock,
         first_counts,
+        surface,
+        Some(git.base_commit_oid),
+        None,
         fn(boundary) {
           if boundary ==
             @workflow.PartPersistenceBoundary::WorkflowEffectObserved {
@@ -816,9 +1083,11 @@ pub async fn run_native_part_lifecycle_fixture(
       native_part_dependencies(
         repository,
         restarted_runtime,
-        git,
         clock,
         restarted_counts,
+        surface,
+        Some(git.base_commit_oid),
+        None,
         fn(_) { None },
       ),
     ) {
@@ -840,7 +1109,9 @@ pub async fn run_native_part_lifecycle_fixture(
       "/" +
       restarted_counts.audit.val.to_string() +
       " verification=" +
-      native_part_verification_debug(repository, resumed.snapshot),
+      native_part_verification_debug(repository, resumed.snapshot) +
+      " audit=" +
+      native_part_audit_debug(repository, resumed.snapshot),
     )
   }
   let branch_head = match
@@ -884,6 +1155,7 @@ pub async fn run_native_part_lifecycle_fixture(
   }
   {
     passed: true,
+    provider_surface: Some(surface),
     effect_receipt_count: resumed.snapshot.effect_receipts.length(),
     verification_receipt_count: resumed.snapshot.verification_receipts.length(),
     audit_receipt_count: 1,
@@ -894,6 +1166,228 @@ pub async fn run_native_part_lifecycle_fixture(
     restarted_counts.audit.val,
     candidate_commit_oid: candidate.map(fn(value) { value.commit_oid }),
     promotion_commit_oid: promotion.map(fn(value) { value.commit_oid }),
+    failure: None,
+  }
+}
+
+///|
+pub async fn run_native_part_lifecycle_fixture(
+  root : String,
+) -> NativePartLifecycleReport {
+  run_native_part_lifecycle_fixture_for_surface(
+    root,
+    @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+  )
+}
+
+///|
+pub async fn run_native_codex_part_lifecycle_fixture(
+  root : String,
+) -> NativePartLifecycleReport {
+  run_native_part_lifecycle_fixture_for_surface(
+    root,
+    @control.ProviderSurfaceId::CodexSubscriptionCli,
+  )
+}
+
+///|
+pub async fn run_native_codex_cancellation_fixture(
+  root : String,
+) -> NativePartLifecycleReport {
+  if !root.has_prefix("/tmp/choir-take-") ||
+    root.contains("/../") ||
+    !@sys.create_dir_all(root) ||
+    @sys.realpath_native(root) != Some(root) {
+    return failed_native_part_lifecycle("native fixture root is invalid")
+  }
+  let git = match create_native_part_fixture_repository(root) {
+    Ok(value) => value
+    Err(error) => return failed_native_part_lifecycle(error.message())
+  }
+  let repository : @workflow.PartWorkflowRepository = {
+    state_store: { path: root + "/workflow.db" },
+    artifact_store: { root: root + "/artifacts" },
+    max_snapshot_bytes: 1024 * 1024,
+  }
+  let surface = @control.ProviderSurfaceId::CodexSubscriptionCli
+  let snapshot = match native_part_fixture_snapshot(repository, git, surface) {
+    Ok(value) => value
+    Err(error) => return failed_native_part_lifecycle(error.message())
+  }
+  let binary = match @sys.getenv("CHOIR_BOXLITE_BINARY") {
+    Some(value) => value
+    None => "/home/justin/.local/bin/boxlite"
+  }
+  let runtime_dir = match @sys.getenv("CHOIR_BOXLITE_RUNTIME_DIR") {
+    Some(value) => value
+    None =>
+      "/home/justin/.local/share/choir/runtimes/boxlite-v0.9.7-seccomp-time"
+  }
+  let moon_home = match @sys.getenv("CHOIR_MOON_HOME") {
+    Some(value) => value
+    None =>
+      match @sys.getenv("HOME") {
+        Some(value) => value + "/.moon"
+        None => return failed_native_part_lifecycle("Moon home is unavailable")
+      }
+  }
+  let node = match resolve_executable_in_path("node") {
+    Some(value) => value
+    None => return failed_native_part_lifecycle("Node is unavailable")
+  }
+  let mcp_script = match @sys.realpath_native("scripts/choir_sandbox_mcp.mjs") {
+    Some(value) => value
+    None => return failed_native_part_lifecycle("sandbox MCP is unavailable")
+  }
+  let server = match
+    start_native_boxlite_server({
+      binary,
+      runtime_dir,
+      root,
+      port: 36000 + @sys.get_pid() % 12000,
+      api_key: "choir-native-cancel-" + @sys.get_pid().to_string(),
+    }) {
+    Ok(value) => value
+    Err(error) => return failed_native_part_lifecycle(error.message())
+  }
+  let clock = @ref.new(2000L)
+  let now = fn() {
+    clock.val = clock.val + 1L
+    clock.val
+  }
+  let cancellation_probes = @ref.new(0)
+  let config = native_part_runtime_config_for_paths(
+    repository,
+    server,
+    git.root,
+    git.git_directory,
+    git.object_directory,
+    git.goal_ref,
+    moon_home,
+    node,
+    mcp_script,
+    now,
+    goal_cancellation_requested=fn() {
+      cancellation_probes.val = cancellation_probes.val + 1
+      cancellation_probes.val >= 5
+    },
+  )
+  let runtime = match create_native_part_effect_runtime(config) {
+    Ok(value) => value
+    Err(error) => {
+      ignore(cleanup_native_boxlite_server(server))
+      return failed_native_part_lifecycle(error.message())
+    }
+  }
+  let counts : NativePartDispatchCounts = {
+    implementation: @ref.new(0),
+    verification: @ref.new(0),
+    audit: @ref.new(0),
+  }
+  let execution = @workflow.run_new_part_workflow(
+    repository,
+    local_part_workflow_repository_adapters(),
+    snapshot,
+    native_part_dependencies(
+      repository,
+      runtime,
+      clock,
+      counts,
+      surface,
+      Some(git.base_commit_oid),
+      None,
+      fn(_) { None },
+    ),
+  )
+  match execution {
+    Err(error) if error.to_wire_string() == "canceled" => ()
+    Err(error) =>
+      return fail_native_part_runtime(
+        runtime,
+        "Codex cancellation returned " + error.message(),
+      )
+    Ok(_) =>
+      return fail_native_part_runtime(
+        runtime, "Codex Take completed before the cancellation cutoff",
+      )
+  }
+  let stored = match
+    @workflow.load_part_snapshot(
+      repository,
+      local_part_workflow_repository_adapters(),
+      snapshot.workflow_id,
+    ) {
+    Ok(Some(value)) => value
+    Ok(None) =>
+      return fail_native_part_runtime(
+        runtime, "interrupted Part snapshot is absent",
+      )
+    Err(error) => return fail_native_part_runtime(runtime, error.message())
+  }
+  if !(stored.snapshot.pending_effect
+    is Some(
+      {
+        lifecycle: @workflow.PartEffectLifecycle::PartEffectMayHaveOccurred,
+        kind: @workflow.PartEffectKind::DispatchImplementation(_, _),
+        ..,
+      }
+    )) ||
+    counts.implementation.val != 1 ||
+    cancellation_probes.val < 5 {
+    return fail_native_part_runtime(
+      runtime, "Codex interruption did not preserve the authorized provider effect",
+    )
+  }
+  let canceled = match
+    @workflow.persist_part_goal_cancellation(
+      repository,
+      local_part_workflow_repository_adapters(),
+      stored,
+    ) {
+    Ok(value) => value
+    Err(error) => return fail_native_part_runtime(runtime, error.message())
+  }
+  let valid = @workflow.part_cancellation_disposition_is_known(
+      canceled.snapshot,
+    ) &&
+    canceled.snapshot.stage == @workflow.PartWorkflowStage::PartBlocked &&
+    canceled.snapshot.pending_effect
+    is Some(
+      { lifecycle: @workflow.PartEffectLifecycle::PartEffectUncertain, .. }
+    ) &&
+    canceled.snapshot.implementation_take.lifecycle ==
+    @control.TakeLifecycle::TakeTerminal(
+      @control.TakeTerminalDisposition::TakeInterrupted,
+    ) &&
+    canceled.snapshot.sandbox_leases.all(fn(lease) {
+      lease.lifecycle == @control.SandboxLeaseLifecycle::SandboxLeaseUncertain
+    }) &&
+    canceled.snapshot.harness_sessions.all(fn(session) {
+      session.lifecycle ==
+      @control.HarnessSessionLifecycle::HarnessSessionRecoveryUncertain
+    })
+  let cleanup = cleanup_native_part_effect_runtime(runtime)
+  match cleanup {
+    Err(error) => return failed_native_part_lifecycle(error.message())
+    Ok(_) => ()
+  }
+  if !valid {
+    return failed_native_part_lifecycle(
+      "Codex cancellation did not persist an honest uncertain disposition",
+    )
+  }
+  {
+    passed: true,
+    provider_surface: Some(surface),
+    effect_receipt_count: canceled.snapshot.effect_receipts.length(),
+    verification_receipt_count: 0,
+    audit_receipt_count: 0,
+    integration_receipt_count: 0,
+    implementation_dispatches_before_restart: counts.implementation.val,
+    implementation_dispatches_after_restart: 0,
+    provider_dispatches_after_restart: 0,
+    candidate_commit_oid: None,
+    promotion_commit_oid: None,
     failure: None,
   }
 }

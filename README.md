@@ -1,64 +1,67 @@
 # Choir
 
-English | [简体中文](README.zh.md)
+Choir is a local, subscription-native development orchestrator. Claude Code is
+the interactive Conductor; `choird` turns an accepted Goal into durable Parts,
+runs Claude Code or Codex Takes in BoxLite microVMs, verifies and audits each
+candidate independently, serializes promotion, verifies the combined tree, and
+publishes one final pull request.
 
-> [!NOTE]
-> This is primarily used for my own workflows, so it may change as they / the space evolve.
-
-Choir is a local agent orchestrator written in MoonBit. One expensive model is the team lead (Claude); cheaper agents (Codex by default, or Gemini, Moon Pilot, or Cursor) run as leaves. Each leaf works in its own git worktree and files a PR back to the TL's branch. A built-in poller automates Copilot review, routes GitHub review and CI feedback to the right pane, and tells the TL when a PR is approved. The loop is scaffold, fork, converge: the TL commits shared types, forks a wave of parallel leaves, merges approved PRs one at a time, then forks another wave or files its own PR upward.
-
-```mermaid
-flowchart TD
-    init(["choir init"]) --> srv["Server: persistent UDS daemon"]
-    srv --> tl{{"TL: Claude (team lead)"}}
-
-    tl -. "optional, multi-wave" .-> spec["/crystallize then /decompose<br/>feature/&lt;slug&gt; branch"]
-    spec -.-> tl
-
-    tl -->|"1. scaffold commit (shared types)"| fork["fork_wave"]
-    fork --> la["Leaf A: own git worktree"]
-    fork --> lb["Leaf B: own git worktree"]
-
-    la -->|"file_pr"| pr["PRs to parent branch"]
-    lb -->|"file_pr"| pr
-    pr <--> gh[("GitHub: review / CI")]
-
-    subgraph optional["optional: Copilot auto-review"]
-        copilot["Copilot review"]
-    end
-    gh <-.-> copilot
-
-    gh --> poller["Poller"]
-    poller -->|"review / CI feedback to right pane"| la
-    poller -->|"review / CI feedback to right pane"| lb
-    poller -->|"approved + snapshot"| tl
-
-    tl ==>|"merge approved PRs, one at a time"| converge{{"converge"}}
-    converge -->|"WaveComplete: next wave"| fork
-    converge -->|"done"| up["file own PR upward"]
-
-    tl -. "fork_wave role=tl" .-> subtl[["Sub-TL: same loop"]]
-    subtl -->|"PR to TL branch"| tl
-
-    style optional stroke-dasharray: 5 5
-```
+Provider sessions never own workflow state. SQLite, typed effects, receipts,
+leases, and reconciliation remain authoritative across client exits and daemon
+restarts. Zellij is not required.
 
 ## Install
 
-```bash
-# prerequisites: git, gh, zellij 0.44+, bd (Beads), and the agent CLIs you use
-#   (claude, codex, gemini, moon, agent). The Nix dev shell provides the OSS deps.
+Required:
 
-moon build --target native --release   # build
-choir init                             # bring up the server + TL session
+- Linux with KVM enabled
+- Git
+- [MoonBit](https://www.moonbitlang.com/)
+- [Beads](https://github.com/steveyegge/beads) (`bd`)
+- [BoxLite](https://github.com/boxlite-ai/boxlite) 0.9.0 or newer
+- Node.js
+- Claude Code logged into the user's paid subscription
+- Codex CLI logged into the user's paid subscription
+
+GitHub CLI is required only when Choir should publish the final pull request.
+No separately metered model credential is required or supported by the default
+execution profiles.
+
+```bash
+moon build --target native --release
+install -Dm755 _build/native/release/build/src/bin/choir/choir.exe ~/.local/bin/choir
+choir init
 ```
 
+`choir init` creates the local project state, starts `choird`, and opens the
+Claude Conductor in the current terminal. Later sessions can use `choir start`.
+
+From the Conductor, discuss the intended feature, create or refine Beads when
+needed, then invoke `/goal`. The Conductor proposes the selected Parts and
+their contracts; Choir validates and schedules them according to dependencies,
+mutation overlap, available provider capacity, and the requested concurrency.
+
+Useful commands:
+
 ```bash
-choir claude [--lean]    # restart the TL pane on a running server (--lean: no default system prompt)
-choir init --recreate    # restart server + TL, keep recovery state
-choir stop [--purge]     # shut down (--purge also removes worktrees + state)
+choir goal status <goal-id>
+choir goal steer <goal-id> pause
+choir goal steer <goal-id> resume
+choir goal steer <goal-id> concurrency 4
+choir goal cancel <goal-id>
+choir stop
+```
+
+## Verify
+
+```bash
+node --test scripts/choir_sandbox_mcp_test.mjs
+moon check --target native
+moon test --target native
+moon run --target native src/bin/choir_lint
+moon run --target native src/bin/choir_conformance -- hermetic
 ```
 
 ## License
 
-MIT license. Architecture informed by [exomonad](https://github.com/tidepool-heavy-industries/exomonad).
+MIT

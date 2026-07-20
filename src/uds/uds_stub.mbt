@@ -14,6 +14,16 @@ pub fn accept(_server_fd : Int) -> Int {
 }
 
 ///|
+pub fn peer_is_current_user(_fd : Int) -> Bool {
+  false
+}
+
+///|
+pub fn peer_pid(_fd : Int) -> Int {
+  -1
+}
+
+///|
 pub fn accept_nonblocking(_server_fd : Int) -> Int {
   -1
 }

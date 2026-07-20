@@ -477,6 +477,41 @@ fn mcp_connect_uds_startup(
 }
 
 ///|
+fn mcp_conductor_tool_names() -> Array[String] {
+  [
+    "goal_submit", "goal_status", "goal_cancel", "goal_steer", "goal_attach", "goal_answer",
+    "task_list", "task_get", "task_create", "task_update",
+  ]
+}
+
+///|
+fn mcp_is_conductor(
+  role : @types.Role,
+  config : @types.Config,
+  local_cfg : @types.LocalConfig,
+) -> Bool {
+  role == @types.Role::TL &&
+  mcp_resolved_agent_id(role, config, local_cfg) == "root"
+}
+
+///|
+fn mcp_conductor_allows(name : String) -> Bool {
+  mcp_conductor_tool_names().contains(name)
+}
+
+///|
+test "Conductor MCP surface admits Goal and Beads operations only" {
+  assert_true(mcp_conductor_allows("goal_submit"))
+  assert_true(mcp_conductor_allows("goal_status"))
+  assert_true(mcp_conductor_allows("task_list"))
+  assert_true(mcp_conductor_allows("task_create"))
+  assert_false(mcp_conductor_allows("fork_wave"))
+  assert_false(mcp_conductor_allows("spawn_worker"))
+  assert_false(mcp_conductor_allows("file_pr"))
+  assert_false(mcp_conductor_allows("goal_set"))
+}
+
+///|
 fn mcp_run_request_loop(
   read_input : () -> String?,
   send_wire_request : (String) -> Bool,
@@ -487,6 +522,7 @@ fn mcp_run_request_loop(
   config : @types.Config,
   local_cfg : @types.LocalConfig,
 ) -> McpUdsLoopExit {
+  let conductor = mcp_is_conductor(role, config, local_cfg)
   for ;; {
     let line = match read_input() {
       Some(line) => line
@@ -503,9 +539,16 @@ fn mcp_run_request_loop(
             mcp_response_wire(@mcp.initialize_response(id), raw_stdio),
           )
         } else if rpc.req_method == @mcp.method_tools_list {
-          write_output(
-            mcp_response_wire(@mcp.tools_list_response(id, role), raw_stdio),
-          )
+          let response = if conductor {
+            @mcp.tools_list_response_filtered(
+              id,
+              role,
+              mcp_conductor_tool_names(),
+            )
+          } else {
+            @mcp.tools_list_response(id, role)
+          }
+          write_output(mcp_response_wire(response, raw_stdio))
         } else {
           match
             @mcp.to_internal_request(
@@ -516,6 +559,17 @@ fn mcp_run_request_loop(
               ),
             ) {
             Ok(internal_req) => {
+              if conductor && !mcp_conductor_allows(internal_req.name) {
+                write_output(
+                  mcp_response_wire(
+                    @mcp.error_response(
+                      id, @mcp.err_method_not_found, "tool is outside the Conductor surface",
+                    ),
+                    raw_stdio,
+                  ),
+                )
+                continue
+              }
               let wire_req = mcp_build_wire_request(
                 internal_req, role, config, local_cfg,
               )
@@ -717,6 +771,7 @@ fn mcp_run() -> Unit {
     Tcp(addr_str) =>
       @async.run_async_main(async fn() {
         @async.with_task_group(async fn(_root) {
+          let conductor = mcp_is_conductor(role, config, local_cfg)
           let conn = @socket.Tcp::connect(@socket.Addr::parse(addr_str)) catch {
             err => {
               println("error: failed to connect to \{addr_str}: \{err}")
@@ -762,11 +817,30 @@ fn mcp_run() -> Unit {
                   let resp = @mcp.initialize_response(id)
                   @sys.write_stdout(mcp_response_wire(resp, raw_stdio))
                 } else if rpc.req_method == @mcp.method_tools_list {
-                  let resp = @mcp.tools_list_response(id, role)
+                  let resp = if conductor {
+                    @mcp.tools_list_response_filtered(
+                      id,
+                      role,
+                      mcp_conductor_tool_names(),
+                    )
+                  } else {
+                    @mcp.tools_list_response(id, role)
+                  }
                   @sys.write_stdout(mcp_response_wire(resp, raw_stdio))
                 } else {
                   match @mcp.to_internal_request(rpc, role) {
                     Ok(internal_req) => {
+                      if conductor && !mcp_conductor_allows(internal_req.name) {
+                        @sys.write_stdout(
+                          mcp_response_wire(
+                            @mcp.error_response(
+                              id, @mcp.err_method_not_found, "tool is outside the Conductor surface",
+                            ),
+                            raw_stdio,
+                          ),
+                        )
+                        continue
+                      }
                       let wire_req = mcp_build_wire_request(
                         internal_req, role, config, local_cfg,
                       )

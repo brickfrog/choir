@@ -21,25 +21,9 @@ fn grow_connection_buffer(buf : FixedArray[Byte]) -> FixedArray[Byte] {
 }
 
 ///|
-async fn serve_dump_pane_screen(session : String, pane_id : String) -> String {
-  let (status, output) = @exec.capture_command_stdout(
-    @workspace.zellij_dump_screen_command(session, pane_id),
-  )
-  if status == 0 {
-    output
-  } else {
-    ""
-  }
-}
-
-///|
-fn serve_pane_watcher() -> @runtime.PaneWatcher {
-  @runtime.PaneWatcher::with_host({ dump_pane_screen: serve_dump_pane_screen })
-}
-
-///|
 struct ServeUDSClient {
   fd : Int
+  peer_is_choir : Bool
   mut buf : FixedArray[Byte]
   mut read_pos : Int
   mut connected_agent_id : String?
@@ -61,6 +45,7 @@ struct ServeUDSClient {
 fn ServeUDSClient::new(fd : Int) -> ServeUDSClient {
   {
     fd,
+    peer_is_choir: serve_peer_is_choir_client(fd),
     buf: FixedArray::make(4096, (0 : Byte)),
     read_pos: 0,
     connected_agent_id: None,
@@ -69,6 +54,26 @@ fn ServeUDSClient::new(fd : Int) -> ServeUDSClient {
     last_request_name: None,
     busy: false,
     close_after_response: false,
+  }
+}
+
+///|
+fn serve_peer_is_choir_client(fd : Int) -> Bool {
+  if fd < 0 || !@uds.peer_is_current_user(fd) {
+    return false
+  }
+  let pid = @uds.peer_pid(fd)
+  if pid <= 1 {
+    return false
+  }
+  match
+    (
+      @sys.realpath_native("/proc/" + pid.to_string() + "/exe"),
+      @sys.realpath_native("/proc/self/exe"),
+    ) {
+    (Some(peer_executable), Some(server_executable)) =>
+      peer_executable == server_executable
+    _ => false
   }
 }
 
@@ -201,9 +206,12 @@ let serve_root_boot_token_env : String = "CHOIR_ROOT_AGENT_TOKEN"
 let serve_reload_credentials_env : String = "CHOIR_RELOAD_CREDENTIALS"
 
 ///|
+let serve_root_bootstrap_method : String = "root_bootstrap"
+
+///|
 fn serve_root_credential_not_provisioned_response() -> @types.Response {
   @types.Response::Err(
-    "root credential not provisioned; re-run `choir init --recreate` to mint and wire a fresh root credential",
+    "Conductor credential not provisioned; run `choir start` to open an authenticated Conductor",
   )
 }
 
@@ -292,6 +300,46 @@ fn serve_constant_timeish_string_equal(
     }
   }
   diff == 0
+}
+
+///|
+fn serve_valid_root_bootstrap_token(token : String) -> Bool {
+  if token.length() != 64 {
+    return false
+  }
+  for i = 0; i < token.length(); i = i + 1 {
+    let unit = token.code_unit_at(i)
+    if !((unit >= 48 && unit <= 57) || (unit >= 97 && unit <= 102)) {
+      return false
+    }
+  }
+  true
+}
+
+///|
+fn serve_handle_root_bootstrap(
+  state : @server.ServerState,
+  req : @types.Request,
+  peer_is_choir : Bool,
+) -> @types.Response {
+  if req.req_method != serve_root_bootstrap_method ||
+    req.name != serve_root_bootstrap_method ||
+    req.role != @types.Role::TL ||
+    !peer_is_choir {
+    return @types.Response::Err("root bootstrap authentication failed")
+  }
+  let token = match req.args.get(@types.registration_token_arg) {
+    Some(value) => value
+    None => return @types.Response::Err("root bootstrap authentication failed")
+  }
+  if !serve_valid_root_bootstrap_token(token) {
+    return @types.Response::Err("root bootstrap authentication failed")
+  }
+  state.registry.record_spawn_credential(serve_root_agent_id, {
+    role: @types.Role::TL,
+    token,
+  })
+  @types.Response::ok_values({ "agent_id": serve_root_agent_id.to_json() })
 }
 
 ///|
@@ -1099,9 +1147,8 @@ async test "serve root register without boot credential gives init recreate guid
         Ok(resp) =>
           match resp.error_message() {
             Some(msg) => {
-              assert_true(msg.contains("root credential not provisioned"))
-              assert_true(msg.contains("choir init --recreate"))
-              assert_false(msg.contains("choir claude"))
+              assert_true(msg.contains("Conductor credential not provisioned"))
+              assert_true(msg.contains("choir start"))
               assert_false(msg.contains(presented_secret))
             }
             None => fail("expected root recovery error")
@@ -1154,6 +1201,37 @@ test "serve boot root token env ignores missing and empty values" {
     }),
     Some("root-env-token"),
   )
+}
+
+///|
+test "root bootstrap accepts only a same-binary peer and fixed token" {
+  let (state, project_dir) = serve_test_state_with_root("root-bootstrap")
+  let token = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+  let request : @types.Request = {
+    req_method: serve_root_bootstrap_method,
+    role: @types.Role::TL,
+    name: serve_root_bootstrap_method,
+    args: @types.RequestArgs::from_values({ "token": token.to_json() }),
+  }
+  assert_true(serve_valid_root_bootstrap_token(token))
+  assert_false(serve_valid_root_bootstrap_token(token + "0"))
+  assert_false(
+    serve_valid_root_bootstrap_token(
+      "g0112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+    ),
+  )
+  let denied = serve_handle_root_bootstrap(state, request, false)
+  assert_false(denied.is_ok())
+  @debug.assert_eq(state.registry.credential_for_agent("root"), None)
+  let accepted = serve_handle_root_bootstrap(state, request, true)
+  assert_true(accepted.is_ok())
+  guard state.registry.credential_for_agent("root") is Some(credential) else {
+    ignore(@sys.rm_rf(project_dir))
+    fail("root bootstrap did not record a credential")
+  }
+  assert_eq(credential.role, @types.Role::TL)
+  assert_eq(credential.token, token)
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
@@ -2219,6 +2297,36 @@ fn live_uds_note_pass(name : String) -> Unit {
 }
 
 ///|
+async test "real exec integration: same-binary local client bootstraps the root Conductor over UDS" {
+  if !@exec.real_exec_integration_enabled() {
+    return
+  }
+  live_uds_with_server("root-bootstrap", async fn(ctx) {
+    live_uds_with_session(ctx, async fn(session) {
+      assert_true(session.server_client.peer_is_choir)
+      let token = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+      let request : @types.Request = {
+        req_method: serve_root_bootstrap_method,
+        role: @types.Role::TL,
+        name: serve_root_bootstrap_method,
+        args: @types.RequestArgs::from_values({ "token": token.to_json() }),
+      }
+      let response = live_uds_send_wire(
+        ctx,
+        session,
+        @transport.format_request(request) + "\n",
+      )
+      live_uds_assert_ok(response, "root bootstrap")
+      guard ctx.state.registry.credential_for_agent("root") is Some(credential) else {
+        fail("root bootstrap credential was not recorded")
+      }
+      assert_eq(credential.role, @types.Role::TL)
+      assert_eq(credential.token, token)
+    })
+  })
+}
+
+///|
 fn live_uds_built_choir_binary() -> String raise {
   let root = @env.current_dir().unwrap_or(".")
   let rel = "_build/native/debug/build/src/bin/choir/choir.exe"
@@ -3050,6 +3158,16 @@ async fn serve_handle_uds_request_line(
   _line : String,
   req : @types.Request,
 ) -> Unit {
+  if req.req_method == serve_root_bootstrap_method {
+    let response = serve_handle_root_bootstrap(state, req, client.peer_is_choir)
+    serve_write_all_uds(
+      client.fd,
+      @utf8.encode(@transport.format_response(response) + "\n"),
+    )
+    client.busy = false
+    client.close_after_response = true
+    return
+  }
   let result = serve_handle_parsed_custom_request(
     state,
     req,
@@ -3756,6 +3874,12 @@ fn serve_run() -> Unit {
     )
   })
   @moontrace.set_min_level(@moontrace.Level::Debug)
+  match inherited_uds_fd {
+    Some(_) => ()
+    // Remove stale markers before publishing this server's PID. Publishing the
+    // PID first makes cleanup erase the only bounded shutdown handle.
+    None => @sys.init_cleanup_runtime_artifacts_native()
+  }
   @sys.write_pid_file(".choir/run/server.pid")
   @sys.register_cleanup_runtime_artifacts()
   @sys.install_crash_handlers()
@@ -3764,17 +3888,10 @@ fn serve_run() -> Unit {
   }
   match inherited_uds_fd {
     Some(_) => ()
-    // Clean stale runtime markers from previous sessions, but preserve recoverable
-    // worktrees/lifecycle/poller state so restart recovery can rehydrate agents.
-    None => {
-      @sys.init_cleanup_runtime_artifacts_native()
-      ignore(serve_cleanup_stale_goal_kv(config.project_dir))
-    }
+    None => ignore(serve_cleanup_stale_goal_kv(config.project_dir))
   }
   let provider = @server.make_recovery_provider()
-  let state = @server.ServerState::new(config, provider).with_pane_watcher(
-    serve_pane_watcher(),
-  )
+  let state = @server.ServerState::new(config, provider)
   @moontrace.set_global_field("service", "choir".to_json())
   @moontrace.set_global_field("run_id", state.run_id.to_json())
   @prompts.emit_prompt_drift_warnings(
@@ -3784,12 +3901,6 @@ fn serve_run() -> Unit {
   )
   @async.run_async_main(async fn() {
     @async.with_task_group(async fn(root) {
-      let recovery_input = @runtime.discover_recovery_input(
-        provider,
-        config.project_dir,
-        config.terminal_session,
-      )
-      @server.recover_state(state, config.terminal_session, recovery_input)
       let mut reload_snapshot_restored = false
       match inherited_uds_fd {
         Some(fd) =>
@@ -3820,7 +3931,6 @@ fn serve_run() -> Unit {
           }
         None => ()
       }
-      state.replay_pending_outbox(runner=@exec.run_sequence)
       if state.has_otlp_span_exporter() {
         root.spawn_bg(async fn() { state.run_otlp_span_export_loop() })
       }
@@ -3831,91 +3941,27 @@ fn serve_run() -> Unit {
         }
       })
       root.spawn_bg(async fn() {
-        let timeout_sec = 900L
-        let disconnect_grace_sec = 60L
-        // Long progress-backstop net (choir-3rp5, F1): deliberately hours, far
-        // beyond any legitimate review round — a net, not a tuned SLA. Reclaims
-        // an alive-but-wedged thread-owning leaf the idle watchdog (exempt) and
-        // the dead-leaf reaper (still alive) both miss.
-        let progress_backstop_threshold_sec = 21600L
-        let interval_ms = 30000
         for ;; {
-          @async.sleep(interval_ms)
-          let now = @poller.now_sec()
-          try {
-            state.process_pending_disconnects(now, disconnect_grace_sec)
-            state.process_poller_tick(
-              now,
-              timeout_sec,
-              runner=@exec.run_sequence,
-              capture=@exec.capture_command_stdout,
-              automerge_capture=@exec.capture_command_merged,
-              audit_receipt_exists=@exec.path_entry_exists,
-              audit_receipt_read=@exec.read_file,
-            )
-            if !state.process_requested_goal_judge_tick(
-                now,
-                runner=@exec.run_sequence,
-                bd_capture=@exec.capture_command_merged,
-              ) {
-              state.process_goal_judge_tick(
-                now,
-                runner=@exec.run_sequence,
-                bd_capture=@exec.capture_command_merged,
+          match @exec.run_native_goal_execution_tick(config.project_dir) {
+            Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickIdle) => ()
+            Ok(
+              @workflow.GoalExecutionTickResult::GoalExecutionTickAdvanced(
+                record
               )
-            }
-            state.check_idle_agents(
-              now,
-              300L,
-              @exec.run_sequence,
-              worker_no_handoff_idle_sec=config.worker_no_handoff_idle_sec,
-            )
-            state.progress_backstop_sweep(now, progress_backstop_threshold_sec)
-          } catch {
-            e =>
-              @moontrace.error("poller tick error", fields=[
-                @moontrace.field("error", e.to_string()),
+            ) =>
+              @moontrace.info("Goal execution advanced", fields=[
+                @moontrace.field("goal_id", record.goal.id.0),
+                @moontrace.field(
+                  "state",
+                  record.state.to_json().stringify(indent=0),
+                ),
+              ])
+            Err(error) =>
+              @moontrace.error("Goal execution tick failed", fields=[
+                @moontrace.field("error", error.message()),
               ])
           }
-        }
-      })
-      root.spawn_bg(async fn() {
-        run_poller_heartbeat_tick_loop(config.poller_heartbeat_tick_sec, async fn(
-          now : Int64,
-          timeout_sec : Int64,
-        ) {
-          state.process_poller_tick(
-            now,
-            timeout_sec,
-            runner=@exec.run_sequence,
-            capture=@exec.capture_command_stdout,
-            automerge_capture=@exec.capture_command_merged,
-            audit_receipt_exists=@exec.path_entry_exists,
-            audit_receipt_read=@exec.read_file,
-          ) catch {
-            e =>
-              @moontrace.error("poller heartbeat tick error", fields=[
-                @moontrace.field("error", e.to_string()),
-              ])
-          }
-        })
-      })
-      root.spawn_bg(async fn() {
-        for ;; {
           @async.sleep(1000)
-          let now = @poller.now_sec()
-          ignore(
-            state.process_requested_goal_judge_tick(
-              now,
-              runner=@exec.run_sequence,
-              bd_capture=@exec.capture_command_merged,
-            ),
-          ) catch {
-            e =>
-              @moontrace.error("goal judge requested tick loop error", fields=[
-                @moontrace.field("error", e.to_string()),
-              ])
-          }
         }
       })
       root.spawn_bg(async fn() {

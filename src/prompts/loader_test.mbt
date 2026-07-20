@@ -162,6 +162,26 @@ test "onboard is a registered skill prompt with a baked fallback body" {
 }
 
 ///|
+test "goal is a registered Conductor skill with a baked fallback body" {
+  assert_true(all_prompt_names().contains(PromptName::GoalSkill))
+  assert_eq(
+    prompt_relative_path(PromptName::GoalSkill),
+    ".choir/prompts/skills/goal.md",
+  )
+  let fs = PromptFs::new()
+  let body = load_prompt(
+    PromptName::GoalSkill,
+    "/repo",
+    path_exists=fn(path) { fs.exists(path) },
+    read_file=fn(path) { fs.read(path) },
+  )
+  assert_true(body.has_prefix("---\nname: goal\n"))
+  assert_true(body.contains("complete open blocking-dependency closure"))
+  assert_true(body.contains("Call `goal_submit` exactly once"))
+  assert_true(body.contains("`choird` is the sole workflow authority"))
+}
+
+///|
 test "detect_prompt_drift truth table" {
   assert_false(detect_prompt_drift(None, "default"))
   assert_false(detect_prompt_drift(Some("default"), "default"))

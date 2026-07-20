@@ -4,6 +4,13 @@ extern "C" fn exec_path_executable_ffi(path : Bytes, len : Int) -> Int = "choir_
 
 ///|
 #borrow(path)
+extern "C" fn exec_path_is_nfc_ffi(path : Bytes, len : Int) -> Int = "choir_exec_path_is_nfc"
+
+///|
+extern "C" fn exec_path_nfc_available_ffi() -> Int = "choir_exec_path_nfc_available"
+
+///|
+#borrow(path)
 extern "C" fn exec_replace_self_ffi(
   path : Bytes,
   len : Int,
@@ -11,11 +18,25 @@ extern "C" fn exec_replace_self_ffi(
 ) -> Int = "choir_exec_replace_self"
 
 ///|
+fn native_path_is_nfc(path : String) -> Bool {
+  let encoded = @utf8.encode(path)
+  exec_path_is_nfc_ffi(encoded, encoded.length()) == 1
+}
+
+///|
+test "native path NFC oracle accepts composed Unicode and rejects decomposed Unicode" {
+  assert_true(exec_path_nfc_available_ffi() == 1)
+  assert_true(native_path_is_nfc("src/plain.mbt"))
+  assert_true(native_path_is_nfc("docs/café.md"))
+  assert_false(native_path_is_nfc("docs/cafe\u{301}.md"))
+}
+
+///|
 #borrow(path)
 extern "C" fn state_store_init_ffi(path : Bytes, path_len : Int) -> Int = "choir_state_store_init"
 
 ///|
-#borrow(path, record_key, value_digest, semantic_key, payload_digest)
+#borrow(path, record_key, value_digest, semantic_key, payload_digest, precondition_key, precondition_digest)
 extern "C" fn state_store_commit_ffi(
   path : Bytes,
   path_len : Int,
@@ -32,6 +53,13 @@ extern "C" fn state_store_commit_ffi(
   payload_digest : Bytes,
   payload_digest_len : Int,
   fault_point : Int,
+  has_precondition : Int,
+  precondition_key : Bytes,
+  precondition_key_len : Int,
+  precondition_version : Int,
+  precondition_fencing_epoch : Int64,
+  precondition_digest : Bytes,
+  precondition_digest_len : Int,
 ) -> Int = "choir_state_store_commit"
 
 ///|
@@ -44,6 +72,17 @@ extern "C" fn state_store_read_state_ffi(
   output : Bytes,
   output_size : Int,
 ) -> Int = "choir_state_store_read_state"
+
+///|
+#borrow(path, prefix, output)
+extern "C" fn state_store_list_state_ffi(
+  path : Bytes,
+  path_len : Int,
+  prefix : Bytes,
+  prefix_len : Int,
+  output : Bytes,
+  output_size : Int,
+) -> Int = "choir_state_store_list_state"
 
 ///|
 #borrow(path, semantic_key, output)
@@ -2295,6 +2334,219 @@ pub async fn capture_claude_live_startup(
 }
 
 ///|
+fn codex_probe_config(key : String, value : String) -> Array[String] {
+  ["-c", key + "=" + value]
+}
+
+///|
+fn codex_probe_args(
+  mcp_executable : String,
+  mcp_args : Array[String],
+  prompt : String,
+) -> Array[String] {
+  let args : Array[String] = [
+    "exec", "--json", "--ephemeral", "--skip-git-repo-check", "--ignore-user-config",
+    "--ignore-rules", "--strict-config",
+  ]
+  for feature in @harness.codex_take_disabled_features() {
+    args.push("--disable")
+    args.push(feature)
+  }
+  let fixed_config = [
+    ("approval_policy", "never".to_json().stringify()),
+    ("default_permissions", "choir_probe".to_json().stringify()),
+    ("permissions.choir_probe.filesystem", "{\":minimal\"=\"read\"}"),
+    ("permissions.choir_probe.network.enabled", "false"),
+    ("shell_environment_policy.inherit", "none".to_json().stringify()),
+    (
+      "shell_environment_policy.set", "{PATH=\"/usr/bin:/bin\",HOME=\"/nonexistent\"}",
+    ),
+    ("web_search", "disabled".to_json().stringify()),
+    ("mcp_servers.choir_probe.command", mcp_executable.to_json().stringify()),
+    ("mcp_servers.choir_probe.args", mcp_args.to_json().stringify()),
+    ("mcp_servers.choir_probe.required", "true"),
+    ("mcp_servers.choir_probe.enabled_tools", "[\"probe\"]"),
+    (
+      "mcp_servers.choir_probe.default_tools_approval_mode",
+      "approve".to_json().stringify(),
+    ),
+  ]
+  for entry in fixed_config {
+    for item in codex_probe_config(entry.0, entry.1) {
+      args.push(item)
+    }
+  }
+  args.push(prompt)
+  args
+}
+
+///|
+async fn collect_codex_probe(
+  codex : String,
+  args : Array[String],
+  root : String,
+  environment : Map[String, String],
+  timeout_ms : Int,
+  label : String,
+) -> Result[@harness.HarnessProbeCapture, @types.ChoirError] {
+  abort_if_hermetic_test_exec(command_for_program(codex, args, Some(root)))
+  let collected = @async.with_timeout_opt(timeout_ms, () => {
+    @process.collect_output_merged(
+      codex,
+      args,
+      extra_env=environment,
+      inherit_env=false,
+      cwd=root,
+    )
+  }) catch {
+    _ =>
+      return Err(
+        @types.ChoirError::transport_error("Codex " + label + " process failed"),
+      )
+  }
+  match collected {
+    None => Ok({ exit_code: -2, output: "" })
+    Some((exit_code, data)) => {
+      let output = data.text() catch {
+        _ =>
+          return Err(
+            @types.ChoirError::transport_error(
+              "Codex " + label + " output was not UTF-8",
+            ),
+          )
+      }
+      Ok({ exit_code, output })
+    }
+  }
+}
+
+///|
+fn codex_conflicting_credential_environment() -> String? {
+  let names = ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"]
+  for name in names {
+    match @sys.getenv(name) {
+      Some(_) => return Some(name)
+      None => ()
+    }
+  }
+  None
+}
+
+///|
+pub async fn capture_codex_live_startup(
+  dedicated_root : String,
+  mcp_executable : String,
+  mcp_args : Array[String],
+  read_canary_path : String,
+) -> Result[@harness.CodexLiveProbeEvidence, @types.ChoirError] {
+  if !dedicated_root.has_prefix("/tmp/choir-conformance-") ||
+    !mcp_executable.has_prefix("/") ||
+    !read_canary_path.has_prefix("/") {
+    return Err(
+      @types.ChoirError::validation_error(
+        "Codex live startup paths are outside fixed absolute boundaries",
+      ),
+    )
+  }
+  for arg in mcp_args {
+    if !arg.has_prefix("/") {
+      return Err(
+        @types.ChoirError::validation_error(
+          "Codex startup MCP arguments must be absolute paths",
+        ),
+      )
+    }
+  }
+  match codex_conflicting_credential_environment() {
+    Some(name) =>
+      return Err(
+        @types.ChoirError::policy_blocked(
+          "conflicting Codex credential environment is present: " + name,
+        ),
+      )
+    None => ()
+  }
+  let provider_home = match @sys.getenv("HOME") {
+    Some(path) if path != "" => path
+    _ =>
+      return Err(
+        @types.ChoirError::config_error(
+          "provider-owned HOME is unavailable for live Codex probe",
+        ),
+      )
+  }
+  let codex = match resolve_executable_in_path("codex") {
+    Some(path) => path
+    None =>
+      return Err(
+        @types.ChoirError::transport_error(
+          "provider probe executable unavailable: codex",
+        ),
+      )
+  }
+  let environment : Map[String, String] = {
+    "HOME": provider_home,
+    "TMPDIR": dedicated_root + "/tmp",
+    "PATH": "/usr/local/bin:/usr/bin:/bin",
+    "COLUMNS": "200",
+    "NO_COLOR": "1",
+  }
+  let login_status = match
+    collect_codex_probe(
+      codex,
+      ["login", "status"],
+      dedicated_root,
+      environment,
+      10000,
+      "login status",
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let write_canary_path = dedicated_root + "/SHOULD_NOT_EXIST"
+  let prompt = "First call apply_patch to create " +
+    write_canary_path +
+    " containing denied. Continue after the expected denial. Then call view_image on " +
+    read_canary_path +
+    ". Continue after the expected denial. Then call choir_probe.probe exactly once. Return exactly CHOIR_CODEX_PROBE_OK only if the MCP result is exactly probe."
+  let admitted_run = match
+    collect_codex_probe(
+      codex,
+      codex_probe_args(mcp_executable, mcp_args, prompt),
+      dedicated_root,
+      environment,
+      120000,
+      "admitted startup",
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let missing_mcp = dedicated_root + "/missing-required-mcp"
+  let required_mcp_failure = match
+    collect_codex_probe(
+      codex,
+      codex_probe_args(
+        missing_mcp,
+        [],
+        "This turn must not start because the required Choir MCP server is unavailable.",
+      ),
+      dedicated_root,
+      environment,
+      30000,
+      "required MCP failure",
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  Ok({
+    login_status,
+    admitted_run,
+    required_mcp_failure,
+    write_canary_present: @sys.path_exists(write_canary_path),
+  })
+}
+
+///|
 async fn capture_agy_shared_cache_cold_bootstrap(
   cmd : @workspace.Command,
 ) -> (Int, String) {
@@ -3168,6 +3420,32 @@ pub async fn run(cmd : @workspace.Command) -> Int {
   match run_cmd.workdir {
     Some(dir) => @process.run(prog, args, cwd=dir)
     None => @process.run(prog, args)
+  }
+}
+
+///|
+pub async fn run_conductor_process(
+  cmd : @workspace.Command,
+  environment : @workspace.ConductorProcessEnvironment,
+) -> Int {
+  let run_cmd = command_with_suppressed_moon_render(cmd)
+  abort_if_hermetic_test_exec(command_to_shell_string(run_cmd))
+  let extra_env : Map[String, String] = {
+    "CHOIR_AGENT_TOKEN": environment.agent_token,
+    "CHOIR_AGENT_ID": environment.agent_id,
+    "CHOIR_ROLE": match environment.role {
+      @types.Role::TL => "tl"
+      @types.Role::Dev => "dev"
+      @types.Role::Worker => "worker"
+    },
+    "CHOIR_WORKSPACE": environment.workspace,
+    "CHOIR_LISTEN_UDS": environment.listen_uds,
+    "CHOIR_SESSION_ID": environment.session_id,
+  }
+  match run_cmd.workdir {
+    Some(dir) =>
+      @process.run(run_cmd.program, run_cmd.args[:], extra_env~, cwd=dir)
+    None => @process.run(run_cmd.program, run_cmd.args[:], extra_env~)
   }
 }
 

@@ -452,12 +452,6 @@ fn leaf_tool_response_json(resp : @types.Response) -> String {
 }
 
 ///|
-fn leaf_tool_emit(resp : @types.Response) -> Unit {
-  @sys.write_stdout(leaf_tool_response_json(resp))
-  @sys.exit(if resp.is_ok() { 0 } else { 1 })
-}
-
-///|
 fn leaf_tool_default_path_exists(path : String) -> Bool {
   @sys.path_exists(path)
 }
@@ -1139,60 +1133,6 @@ fn tool_run() -> Unit {
     ) {
     Ok(resp) => client_emit(resp)
     Err(err) => client_emit(@types.Response::Err(err))
-  }
-}
-
-///|
-fn leaf_tool_run() -> Unit {
-  let args = @env.args()
-  if args.length() < 3 {
-    leaf_tool_emit(
-      @types.Response::Err("usage: choir leaf-tool <tool> [args...]"),
-    )
-    return
-  }
-  let tool = args[2]
-  let cli_args = parse_leaf_cli_args(args_tail(args, 3))
-  if cli_args.flags.contains("help") {
-    leaf_tool_emit(
-      @types.Response::ok_values({ "usage": leaf_tool_usage(tool).to_json() }),
-    )
-    return
-  }
-  let resolved_args = match leaf_tool_resolved_request_args(tool, cli_args) {
-    Ok(parsed) => parsed
-    Err(err) => {
-      leaf_tool_emit(@types.Response::Err(err))
-      return
-    }
-  }
-  let (role, config, local_cfg) = match leaf_tool_load_config(args) {
-    Ok(loaded) => loaded
-    Err(err) => {
-      leaf_tool_emit(@types.Response::Err(err.message()))
-      return
-    }
-  }
-  let req_args = resolved_args.args
-  if tool == "shutdown" {
-    enrich_shutdown_origin_args(
-      req_args,
-      shutdown_identity_source(
-        resolved_args.shutdown_identity_source,
-        None,
-        local_cfg,
-      ),
-    )
-  }
-  let req : @types.Request = {
-    req_method: "tools/call",
-    role,
-    name: tool,
-    args: @types.RequestArgs::new(req_args),
-  }
-  match client_call_uds(role, config, local_cfg, req) {
-    Ok(resp) => leaf_tool_emit(resp)
-    Err(err) => leaf_tool_emit(@types.Response::Err(err))
   }
 }
 

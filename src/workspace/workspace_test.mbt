@@ -149,91 +149,8 @@ test "zellij_new_tab_shell keeps sh -lc for script launches" {
 }
 
 ///|
-test "init_tl_zellij_tab_command wraps TL with policy watcher shell" {
-  let cmd = @workspace.init_tl_zellij_tab_command(
-    "howdy", "/proj", "claude", "main",
-  )
-  assert_eq(cmd.program, "zellij")
-  assert_eq(cmd.args[9], "sh")
-  assert_eq(cmd.args[10], "-lc")
-  let script = cmd.args[11]
-  assert_true(script.contains("claude"))
-  assert_true(script.contains("CHOIR_AGENT_ID='root'"))
-  assert_true(script.contains("CHOIR_BRANCH='main'"))
-  assert_false(script.contains("HOME="))
-  assert_false(script.contains("choir tl-policy-watch"))
-  assert_true(script.contains("exec setsid"))
-  assert_true(script.contains("claude"))
-  assert_false(script.contains("child_pid=$!"))
-  assert_true(script.contains("[TL exited]"))
-  assert_true(script.contains("exec bash -l"))
-  // Every TL exit appends its timestamped exit code to .choir/logs/tl-exits.log
-  // so a silent harness crash is still diagnosable (choir-eek); a HUP/TERM
-  // trap keeps the outer shell alive past those signals so the exit code is
-  // still recorded.
-  assert_true(script.contains(".choir/logs/tl-exits.log"))
-  assert_true(script.contains("exit=%s"))
-  assert_true(script.contains("trap "))
-  assert_true(script.contains("HUP TERM"))
-  assert_true(script.contains("[TL wrapper caught signal]"))
-}
-
-///|
-test "init_tl_zellij_tab_command exports root agent token when provided" {
-  let cmd = @workspace.init_tl_zellij_tab_command(
-    "howdy",
-    "/proj",
-    "claude",
-    "main",
-    root_agent_token=Some("root-token-for-tl"),
-  )
-  let script = cmd.args[11]
-  assert_true(script.contains("CHOIR_AGENT_TOKEN='root-token-for-tl'"))
-  assert_false(script.contains("root credential not provisioned"))
-}
-
-///|
-test "init_tl_zellij_tab_command exports HOME only for gemini TL" {
-  let gemini = @workspace.init_tl_zellij_tab_command(
-    "howdy", "/proj", "gemini", "main",
-  )
-  let gemini_script = gemini.args[11]
-  assert_true(gemini_script.contains("HOME='/proj/.choir/agy-home'"))
-  assert_true(gemini_script.contains("CHOIR_AGENT_ID='root'"))
-
-  let claude = @workspace.init_tl_zellij_tab_command(
-    "howdy", "/proj", "claude", "main",
-  )
-  let claude_script = claude.args[11]
-  assert_false(claude_script.contains("HOME='/proj/.choir/agy-home'"))
-  assert_false(claude_script.contains("HOME="))
-}
-
-///|
-test "normalize_tl_type maps agent alias" {
-  assert_eq(@workspace.normalize_tl_type("agent"), "cursor_agent")
-  assert_eq(@workspace.normalize_tl_type("cursor_agent"), "cursor_agent")
-  assert_eq(@workspace.normalize_tl_type("codex"), "codex")
-}
-
-///|
 test "agy_binary_name resolves agy only" {
   assert_eq(@workspace.agy_binary_name(), "agy")
-}
-
-///|
-test "init_tl_agent_command supports agent alias for cursor" {
-  let cmd = @workspace.init_tl_agent_command("agent", "/repo")
-  let body = launch_cmd_body_contains_setsid(
-    cmd,
-    project_dir="/repo",
-    agent_id="root",
-  )
-  assert_true(body.contains("agent"))
-  assert_true(body.contains("--yolo"))
-  assert_true(body.contains("--approve-mcps"))
-  assert_true(body.contains("--workspace"))
-  assert_true(body.contains("/repo"))
 }
 
 ///|
@@ -3297,15 +3214,28 @@ test "mcp_json_content uses a per-agent stderr append log" {
 }
 
 ///|
-test "init_tl_claude_mcp_config_json sets alwaysLoad on the choir MCP entry" {
-  let json = @workspace.init_tl_claude_mcp_config_json()
+test "Claude Conductor MCP config exposes Choir without implicit services" {
+  let json = @workspace.conductor_claude_mcp_config_json()
   assert_true(json.contains("\"alwaysLoad\":true"))
   assert_true(json.contains("\"choir\""))
   assert_true(json.contains("\"--stderr-append-log\""))
   assert_true(json.contains("\".choir/logs/mcp-stdio.stderr.log\""))
-  // TL launched via `choir init` also gets semble (highest-volume reader).
-  assert_true(json.contains("\"semble\""))
-  assert_true(json.contains("\"uv\""))
+  assert_false(json.contains("\"semble\""))
+  assert_false(json.contains("\"uv\""))
+}
+
+///|
+test "Claude Conductor has no native host tools or ambient setting sources" {
+  let command = @workspace.conductor_launch_command(
+    @types.AgentType::Claude,
+    "/repo",
+  )
+  let body = command.to_string()
+  assert_true(body.contains("--tools"))
+  assert_true(body.contains("--setting-sources"))
+  assert_true(body.contains("--strict-mcp-config"))
+  assert_true(body.contains("/repo/.choir/plugin"))
+  assert_false(body.contains("semble"))
 }
 
 ///|

@@ -269,7 +269,8 @@ static int choir_sqlite_read_state_values(
  * Result codes:
  * 0 committed, 1 idempotent replay, 2 version conflict, 3 stale fence,
  * 4 semantic conflict, 5 fault rollback, 6 storage failure,
- * 7 committed but acknowledgment was deliberately lost.
+ * 7 committed but acknowledgment was deliberately lost,
+ * 8 guarded precondition conflict.
  */
 int choir_state_store_commit(
     const char *path,
@@ -286,14 +287,29 @@ int choir_state_store_commit(
     int semantic_key_len,
     const char *payload_digest,
     int payload_digest_len,
-    int fault_point
+    int fault_point,
+    int has_precondition,
+    const char *precondition_key,
+    int precondition_key_len,
+    int precondition_version,
+    int64_t precondition_fencing_epoch,
+    const char *precondition_digest,
+    int precondition_digest_len
 ) {
     char *key = choir_store_copy_string(record_key, record_key_len);
     char *value = choir_store_copy_string(value_digest, value_digest_len);
     char *semantic = choir_store_copy_string(semantic_key, semantic_key_len);
     char *payload = choir_store_copy_string(payload_digest, payload_digest_len);
-    if (key == NULL || value == NULL || semantic == NULL || payload == NULL) {
+    char *guard_key = has_precondition
+        ? choir_store_copy_string(precondition_key, precondition_key_len)
+        : NULL;
+    char *guard_digest = has_precondition
+        ? choir_store_copy_string(precondition_digest, precondition_digest_len)
+        : NULL;
+    if (key == NULL || value == NULL || semantic == NULL || payload == NULL ||
+        (has_precondition && (guard_key == NULL || guard_digest == NULL))) {
         free(key); free(value); free(semantic); free(payload);
+        free(guard_key); free(guard_digest);
         return 6;
     }
     sqlite3 *db = NULL;
@@ -301,6 +317,7 @@ int choir_state_store_commit(
         choir_sqlite_exec(db, "BEGIN IMMEDIATE") != 0) {
         if (db != NULL) choir_sqlite.close(db);
         free(key); free(value); free(semantic); free(payload);
+        free(guard_key); free(guard_digest);
         return 6;
     }
 
@@ -334,6 +351,28 @@ int choir_state_store_commit(
             result = 4;
         }
         goto rollback;
+    }
+
+    if (has_precondition) {
+        sqlite3_int64 guard_version = 0;
+        sqlite3_int64 guard_fence = 0;
+        char observed_guard_digest[65] = {0};
+        int guard_found = choir_sqlite_read_state_values(
+            db,
+            guard_key,
+            &guard_version,
+            &guard_fence,
+            observed_guard_digest,
+            sizeof(observed_guard_digest)
+        );
+        if (guard_found < 0) goto rollback;
+        if (guard_found == 0 ||
+            guard_version != precondition_version ||
+            guard_fence != precondition_fencing_epoch ||
+            strcmp(observed_guard_digest, guard_digest) != 0) {
+            result = 8;
+            goto rollback;
+        }
     }
 
     sqlite3_int64 current_version = 0;
@@ -406,6 +445,7 @@ rollback_without_tx:
 done:
     choir_sqlite.close(db);
     free(key); free(value); free(semantic); free(payload);
+    free(guard_key); free(guard_digest);
     return result;
 }
 
@@ -447,6 +487,73 @@ int choir_state_store_read_state(
     }
     choir_sqlite.close(db);
     free(key);
+    return result;
+}
+
+int choir_state_store_list_state(
+    const char *path,
+    int path_len,
+    const char *record_prefix,
+    int record_prefix_len,
+    char *output,
+    int output_size
+) {
+    char *prefix = choir_store_copy_string(record_prefix, record_prefix_len);
+    if (prefix == NULL || output == NULL || output_size <= 0) {
+        free(prefix);
+        return -1;
+    }
+    sqlite3 *db = NULL;
+    if (choir_sqlite_open_path(path, path_len, &db) != 0) {
+        free(prefix);
+        return -1;
+    }
+    sqlite3_stmt *stmt = NULL;
+    const char *sql =
+        "SELECT record_key, version, fencing_epoch, value_digest "
+        "FROM state_records WHERE substr(record_key, 1, length(?1)) = ?1 "
+        "ORDER BY record_key";
+    if (choir_sqlite.prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK ||
+        choir_sqlite_bind_text(stmt, 1, prefix) != 0) {
+        if (stmt != NULL) choir_sqlite.finalize(stmt);
+        choir_sqlite.close(db);
+        free(prefix);
+        return -1;
+    }
+    int used = 0;
+    int result = 0;
+    for (;;) {
+        int step = choir_sqlite.step(stmt);
+        if (step == SQLITE_DONE) break;
+        if (step != SQLITE_ROW) {
+            result = -1;
+            break;
+        }
+        const unsigned char *key = choir_sqlite.column_text(stmt, 0);
+        const unsigned char *digest = choir_sqlite.column_text(stmt, 3);
+        if (key == NULL || digest == NULL) {
+            result = -1;
+            break;
+        }
+        int written = snprintf(
+            output + used,
+            (size_t)(output_size - used),
+            "%s|%lld|%lld|%s\n",
+            (const char *)key,
+            (long long)choir_sqlite.column_int64(stmt, 1),
+            (long long)choir_sqlite.column_int64(stmt, 2),
+            (const char *)digest
+        );
+        if (written < 0 || written >= output_size - used) {
+            result = -2;
+            break;
+        }
+        used += written;
+    }
+    if (result == 0) result = used;
+    choir_sqlite.finalize(stmt);
+    choir_sqlite.close(db);
+    free(prefix);
     return result;
 }
 

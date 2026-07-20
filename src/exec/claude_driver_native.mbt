@@ -202,6 +202,7 @@ pub async fn run_native_claude_take(
   role : @harness.ClaudeTakeRole,
   instruction : String,
   now : () -> Int64,
+  cancellation_requested? : () -> Bool = fn() { false },
 ) -> Result[@harness.ClaudeDriverResult, @types.ChoirError] {
   match validate_native_claude_config(config) {
     Ok(_) => ()
@@ -270,25 +271,32 @@ pub async fn run_native_claude_take(
       workdir: Some(config.sterile_root),
     }),
   )
-  let collected = @async.with_timeout_opt(config.timeout_ms, () => {
-    @process.collect_output_merged(
+  let collected = match
+    collect_interruptible_process(
       claude,
       args,
-      extra_env=native_claude_environment(provider_home, config.sterile_root),
-      inherit_env=false,
-      stdin=stdin_read,
-      cwd=config.sterile_root,
-    )
-  }) catch {
-    _ => return Err(native_claude_driver_error("process failed"))
+      native_claude_environment(provider_home, config.sterile_root),
+      stdin_read,
+      config.sterile_root,
+      config.timeout_ms,
+      cancellation_requested,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
   }
   let (exit_code, data) = match collected {
-    Some(value) => value
-    None => return Err(@types.ChoirError::timeout("Claude Take"))
+    NativeInterruptibleProcessOutcome::NativeProcessCompleted(code, output) =>
+      (code, output)
+    NativeInterruptibleProcessOutcome::NativeProcessInterrupted(_) =>
+      return Err(
+        @types.ChoirError::canceled(
+          "Claude Take interrupted at the Goal cutoff",
+        ),
+      )
+    NativeInterruptibleProcessOutcome::NativeProcessTimedOut(_) =>
+      return Err(@types.ChoirError::timeout("Claude Take"))
   }
-  let output = data.text() catch {
-    _ => return Err(native_claude_driver_error("output was not UTF-8"))
-  }
+  let output = data
   @harness.evaluate_claude_driver_capture({
     session,
     role,

@@ -1,5 +1,6 @@
 import {
   "choir/src/config",
+  "choir/src/control",
   "choir/src/evidence",
   "choir/src/types",
   "choir/src/phase",
@@ -13,6 +14,7 @@ import {
   "choir/src/poller",
   "choir/src/sys",
   "choir/src/workspace",
+  "choir/src/workflow",
   "choir/src/hooks",
   "choir/src/runtime",
   "moonbitlang/async",

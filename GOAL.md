@@ -1,28 +1,28 @@
-# Choir v2 Goal
+# Choir Goal
 
-Status: draft target-product and architecture charter
+Status: active product and architecture charter
 
-Implementation status: Choir v1 remains the current user-facing product. A
-substantial Choir v2 foundation is now implemented on this branch, but the v2
-product is not yet usable end to end.
+Implementation status: the local Conductor-to-Goal-to-provider path is
+implemented and directly launchable. A live external final-PR canary and the
+complete hostile/fault matrix remain acceptance gates.
 
 Decision state: the strategic direction—local durable authority,
 provider-native Conductor sessions, isolated part execution, passive VSDD gates,
 and no Zellij lifecycle dependency—is accepted. The items in the current
 implementation snapshot below have direct implementation and test evidence.
-Every other v2 contract, command, adapter, state shape, delivery claim, and
+Every other contract, command, adapter, state shape, delivery claim, and
 provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Context-only amendments through: 2026-07-19T20:50:17Z
+Context-only amendments through: 2026-07-20T14:06:16Z
 
 ## Charter Semantics and Readiness
 
 This file specifies target behavior. It is not evidence that the current
 MoonBit types, state stores, provider adapters, or commands already implement
-that behavior. The green v1 test suite remains valuable regression evidence
-for v1; it is not v2 acceptance evidence.
+that behavior. Deleted behavior and its tests are not acceptance evidence for
+this product.
 
 The words **must**, **must not**, and **required** are normative. A section
 explicitly marked as an experiment or implementation gate may change after its
@@ -35,73 +35,353 @@ authorize an open `String` domain.
 
 ## Current Implementation Snapshot
 
-This snapshot describes the branch as of 2026-07-19 local time. It separates
+This snapshot describes the branch as of 2026-07-20 local time. It separates
 working implementation from target behavior; passing fixtures do not make an
 unconnected product path usable.
 
 ### Implemented and directly exercised
 
+- `choir init` now scaffolds only the current project files, starts the local
+  daemon without a terminal multiplexer, bootstraps one authenticated Claude
+  Conductor, and runs it in the invoking terminal. `choir start` reconnects the
+  same direct launch path. The UDS is owner-only, the one-time root bootstrap
+  requires a same-user peer running the exact Choir executable, and the minted
+  credential is passed only through a fixed typed process environment. The
+  Conductor loads only the generated Goal skill and the Choir MCP server; it
+  gets no Claude built-in host tools, no ambient setting sources, no implicit
+  Semble server, and no old spawn/file/merge tools in its MCP catalog. A live
+  isolated process probe proves project initialization, authenticated Goal
+  status, socket mode `0600`, restricted launch arguments, and zero Zellij
+  requirement.
+- The old session/tab startup, terminal status line, provider wrapper, hook
+  bridge, prompt-sync commands, companion commands, Zellij registry, live pane
+  test, command bundle, generated v1 role profiles, checked-in run state, and
+  historical context corpus have been deleted. The daemon no longer runs the
+  pane watcher, recovery scanner, PR poller, idle watchdog, or old Goal judge;
+  its active background workflow is the durable Goal runner.
 - Fixed-domain Goal, Part, Take, harness-session, event, assurance, receipt,
   integration, and cancellation types plus pure transition functions.
 - Durable restart-readable state and content-addressed artifact stores with
   transactional fault injection.
 - A hermetic conformance runner with injected clock, identifiers, adapters,
-  and typed fault points. Its command currently proves the runner dependency
-  contract; it does not yet implement the complete required case matrix.
+  and typed fault points. Its command now runs thirteen registered cases: the runner
+  dependency contract, `scheduler.generated_dags`, four event-ingestion cases,
+  four mutation-ownership cases, and three process-policy cases described below.
+  It does not yet implement the complete required case matrix.
 - Claude and Codex CLI surface probes. The exact Claude subscription CLI
-  profile passed its startup/tool-surface probe. The pinned Codex profile is
-  honestly `BlockedByConformance` because native host-tool removal and required
-  sandbox-tool failure behavior have not been proven.
+  profile passed its startup/tool-surface probe. The pinned Codex subscription
+  CLI profile now also passes its live startup oracle: ChatGPT-managed login,
+  native host read/write denial, required-MCP fail-closed startup, and an exact
+  sandbox-only event trace are executable checks.
 - A pinned BoxLite v0.9.7 lifecycle/security adapter using the checked-in
   seccomp correction. Live KVM boot, clone isolation, bounded transfer,
   attach/signal/kill, restart re-adoption, read-only enforcement, and declared
   network-denial probes passed on the recorded host.
 - A restart-safe native Part workflow. It creates an isolated BoxLite sandbox,
-  launches the official Claude subscription CLI with only the generated
-  sandbox MCP tools, executes an implementation Take, normalizes a candidate,
-  runs typed verification, launches a separate Claude audit Take, and promotes
-  the accepted candidate through the native Git integration adapter.
+  dispatches the typed harness session to the official Claude or Codex
+  subscription CLI with only the generated sandbox MCP tools, executes an
+  implementation Take, normalizes a candidate, runs typed verification,
+  launches a separate audit Take, and promotes the accepted candidate through
+  the native Git integration adapter. The full BoxLite fixture passes with
+  either Claude or Codex for implementation, verification, and audit. The
+  Codex run uses the real ChatGPT-authenticated client, resumes after the
+  implementation boundary without redispatching it, and produces exactly one
+  verification, audit, and integration receipt.
 - A concurrent Goal runner with conflict-aware admission and deterministic,
   serialized promotion. A native Git fixture proves that divergent candidates
   based on the same head are composed into a continuous promotion history and
   final combined tree.
+- Fixed-seed generated dependency graphs now exercise scheduling across
+  multiple graph shapes, mutation-declaration mixtures, input permutations,
+  and concurrency limits. Every run asserts dependency readiness, capacity,
+  pairwise mutation exclusion, eventual progress, and input-order-independent
+  promotion order. The same oracle is registered in the hermetic conformance
+  runner and emits typed counts for four graphs, 32 schedule runs, eight
+  promotion runs, and 680 Part evaluations. The complete scale fixture and
+  `SemanticRunProjection` comparison remain outstanding.
+- Harness event ingestion now has registered hermetic cases for duplicate
+  conflicts, cursor gaps, late terminals, and conflicting terminals. A
+  completion observed after an authoritative interruption is retained only as
+  a late diagnostic while the interruption remains authoritative. A distinct
+  failure after an observed completion retains the first event and moves the
+  session to recovery uncertainty, making it receipt-ineligible. The runner
+  emits the exact typed disposition, resulting session lifecycle, and late
+  marker for each case.
+- Mutation ownership now has registered hermetic cases for path normalization,
+  the symmetric conflict truth table, candidate under-claiming, and raw paths
+  produced by rename/delete/generated-file changes. The runner emits typed
+  evidence for 11 normalization rows, eight conflict rows, the exact omitted
+  path in the under-claim case, and all four raw changed paths in the combined
+  rename/delete/generated-file case. Missing or unknown declarations remain
+  conservative conflicts, and a candidate cannot widen its own declaration
+  after execution.
+- Native candidate normalization now obtains the raw NUL-delimited Git paths
+  for additions, deletions, rename sides, generated files, case-distinct names,
+  symlinks, and Unicode names. A tightly isolated native Git fixture proves all
+  eight changed paths are retained and the candidate symlink identity is
+  exposed to validation. Goal submission and Part execution now share one
+  fail-closed NFC oracle backed by the host `libutf8proc`; composed Unicode is
+  accepted, decomposed Unicode is rejected, and unavailable normalization
+  support blocks submission rather than silently accepting paths.
+- Typed process validation now has registered hermetic cases covering one
+  canonical process plus 12 hostile rows and four authority-fence rows. The
+  cases reject unregistered shell/eval requests, absolute, wildcard, and
+  `.git` working directories, forbidden/duplicated/NUL environment data,
+  NUL/oversized arguments, missing script artifacts, network enablement,
+  policy drift, wrong-Take authority, cross-Take artifacts, verification-owned
+  script artifacts, and capability-disallowed interpreters. Every hostile row
+  proves zero calls to the sandbox execution adapter. Interpreter admission is
+  now an explicit capability callback, and a verification Take cannot use its
+  own output artifact as an authorizing executable.
+- Canonical process dispatch is now a registered case. It hashes the exact
+  canonical persisted specification, carries that digest with the typed
+  execution request, and proves that the adapter receives the same capability,
+  owning Take, resource/execution keys, executable, arguments, environment,
+  logical working directory, limits, network policy, and output policy. The
+  real BoxLite execution path independently recomputes the decoded process
+  digest and rejects drift before launching; both Part and Goal verification
+  pass their persisted verification-spec digest into that check.
+- Verification and audit now execute against a sealed read-only subject with
+  separate writable `/scratch` and `/output` roots. Their MCP surface exposes
+  only candidate reads plus scoped scratch/output writes; candidate mutation
+  and arbitrary process tools are absent. Typed assurance processes run as an
+  unprivileged guest identity, require a unique `/scratch` target, and receive
+  fixed scratch-backed `HOME` and `TMPDIR` values. The live
+  `process.audit_scratch_boundary` probe proved candidate writes and arbitrary
+  execution were rejected, declared scratch/output writes persisted, the
+  copied Git tree stayed identical to the sealed subject, and the typed process
+  completed without a workspace write. The boundary uses an explicit
+  privilege drop because the tested BoxLite user-selection option did not
+  enforce the required guest identity on this surface.
+- A mixed-provider native Goal fixture using one real Claude subscription Part
+  and one real Codex subscription Part. Both implementation paths execute
+  concurrently in separate BoxLite Takes, each candidate receives its own
+  typed verification and independent audit, and Choir then promotes both in a
+  deterministic serialized order. The passing run produced 24 effect receipts,
+  two verification receipts, two audit receipts, two integration receipts, and
+  the expected combined Git tree.
+- A typed Conductor submission seam. The native adapter decodes a strict Goal
+  draft, independently captures the Git root/base commit/base tree and the
+  exact Beads JSON revisions, adopts task instructions and registered Moon
+  verification process specifications as content-addressed artifacts, validates
+  the exact dependency closure and mutation declarations, and transactionally
+  persists a restart-readable `SelectionDecision` before any Take can run.
+  After acceptance it also materializes one deterministic planned Part
+  workflow per accepted contract; rejected proposals create none, and restart
+  replay verifies rather than duplicates those initial snapshots. A TL-only
+  `goal_submit` tool exposes the transaction through the existing server and
+  MCP bridge, and the synthesized Claude plugin now includes `/goal`
+  instructions that translate the conversation and existing Beads into that
+  typed draft. An identical submission replay compares only the immutable Part
+  plan and identities, preserving any Takes, effects, and receipts already
+  recorded after acceptance.
+- Accepted submissions now become restart-discoverable execution records. Each
+  record binds the accepted Goal and selection digest to the captured Git base,
+  deterministic Goal ref, admitted Part workflow identifiers, concurrency
+  limit, and a fenced execution state. The native daemon enumerates these
+  records without relying on process memory, advances queued Goals through the
+  existing Part runner, and derives the Goal outcome from the reloaded durable
+  Part states rather than trusting an execution adapter to declare success.
+  Promotion remains serialized against the current Goal ref. Part integration
+  now advances the Goal to the nonterminal `GoalExecutionAssuring` state; the
+  state machine cannot enter `GoalExecutionSucceeded` directly from ordinary
+  execution. A joined native
+  conformance run submitted a one-Part Goal in a disposable repository, used
+  the real ChatGPT-authenticated Codex client inside BoxLite for implementation
+  and independent audit, ran typed verification, and integrated the Part with
+  exactly one verification, audit, and integration receipt. A preceding run
+  whose audit reported a blocking finding correctly stopped at
+  `GoalExecutionBlocked` and did not bypass the gate.
+- Goal assurance now has separate typed Goal-tree verification and combined-
+  audit subjects, receipts, results, authorization slots, and passive gates.
+  The combined audit rejects a Take, sandbox generation, or harness session
+  that contributed to prohibited earlier work. A durable Goal assurance record
+  canonicalizes the complete integration-receipt chain from the base to the
+  exact final head, derives the combined verification plan and versioned
+  assurance policy, and persists a planned, authorized, witnessed, then sealed
+  branch state. Every assurance write is atomically guarded by the exact
+  running Goal record, so cancellation and seal authorization have a defined
+  transaction order. The native Git adapter creates and reconciles one exact
+  immutable seal witness ref; repeated observation is idempotent and later
+  Goal-ref movement blocks readiness. Narrow tests cover the passive gates,
+  receipt-chain validation, record round trip, cancellation race, and real Git
+  witness behavior. Native execution is now connected as six separately
+  authorized and witnessed effects: prepare/start/dispatch for combined Goal
+  verification, followed by prepare/start/dispatch for the independent Goal
+  audit. Each effect re-adopts the exact stopped BoxLite sandbox generation
+  from its durable resource record; it does not rebuild or silently replace
+  the subject. The exact persisted Part instructions are included in both
+  provider Takes, so the verifier and auditor evaluate the sealed tree against
+  the actual accepted work rather than hashes without intent.
+- A live disposable-repository run completed the full joined Codex path through
+  `GoalExecutionAssured`. It produced one integrated Part, one immutable Goal
+  seal, one passing combined verification receipt, one passing independent
+  Goal-audit result and receipt, two distinct Goal assurance Takes, two
+  distinct sandbox generations, two distinct harness sessions, and six effect
+  receipts. Both assurance Takes observed the exact sealed tree before and
+  after execution. Resubmitting the identical accepted Goal returned the same
+  terminal state immediately without dispatching another provider Take.
+- Branch publication now has a typed durable intent, authorization,
+  observation, receipt, drift, uncertainty, and cancellation-disposition
+  model. Its deterministic identity binds the exact assured Goal, sealed head,
+  seal digest, combined verification evidence, independent Goal-audit receipt,
+  remote repository identity, remote name, and remote head ref. Publication
+  records use the same guarded SQLite commit as other finalization state, so a
+  stale Goal record cannot authorize or receipt a remote effect. The native Git
+  adapter observes the exact remote ref, performs a non-force push with local
+  hooks disabled, re-observes the remote after every request, adopts an already
+  exact head on recovery, and refuses drift. A real local-bare-remote test
+  covers create, replay, and adversarial drift. A disposable completed Goal was
+  also published through the durable adapter at exact sealed OID
+  `55cd8b2a425a833631b269c2a9ea7481c92966f5`; a second process invocation
+  returned `GoalPublicationComplete` without changing the remote.
+- Canonical final-PR reconciliation and final readiness now have typed durable
+  records. The PR intent binds the exact Goal, sealed and published head,
+  combined evidence, target ref, generated title/body artifact, and a
+  deterministic body marker. Choir scans all open, closed, and merged PR pages
+  before create; it adopts one exact marker, blocks markerless possible
+  matches and duplicate markers, preserves closed/drifted identities as
+  user-input states, and moves to `CreateMayHaveBeenIssued` before the one
+  allowed create request. Restart from that state only observes and never
+  resends. Readiness is a separate fresh observation requiring the exact open
+  PR, repositories, refs, sealed head, marker, Goal-contract link, and evidence
+  link. The terminal success write compare-and-sets the assured Goal while
+  atomically guarding the exact readiness record, so a concurrent later
+  observation or cancellation wins rather than being ignored. The ordinary
+  Goal runner now advances assured Goals through publication, PR
+  reconciliation, readiness, and `GoalExecutionSucceeded`.
+- A synthetic-forge disposable-repository proof exercised that entire durable
+  finalization path without creating an external PR. It persisted the one-shot
+  PR boundary and receipt, replayed the PR command without duplication,
+  recorded `PullRequestReady`, committed `GoalExecutionSucceeded`, replayed
+  success, and then repeated the finalization through the ordinary Goal tick.
+  The native forge parser separately covers exact-marker, possible-existing,
+  duplicate-marker, invalid-response, and complete paginated-result cases.
+- Durable Goal inspection is connected through the TL-only `goal_status` tool.
+  Given a Goal ID, it reloads the authoritative execution record and every
+  bound Part snapshot, validates their identities, and returns typed Goal and
+  Part lifecycle state, provider surface, workflow stage, durable version, and
+  receipt cardinalities. It also returns the durable Goal-assurance stage and
+  immutable branch seal when present, plus the Goal-level sandbox, harness,
+  effect-receipt, verification-receipt, and audit-receipt cardinalities. The
+  response also exposes the branch-publication state, canonical remote
+  identity and head ref, receipt presence, and published OID when present. It
+  also reports final-PR state/receipt/number/URL and the finalization ID,
+  readiness decision, and observation sequence. The
+  Claude `/goal` skill uses this path for status requests rather than
+  resubmitting work. A separate process successfully inspected the integrated
+  joined Goal after its execution process exited.
+- Goal policy steering is durable and replay-safe. `goal_steer` and
+  `choir goal steer` create versioned concurrency, pause, and resume revisions;
+  pausing prevents runner admission, resuming restores the captured execution
+  state, and recovery uncertainty remains distinct from an operator pause.
+  Status exposes the active revision and every Part and assurance Take ID.
+- `goal_attach` and `choir goal attach` return the durable normalized sessions
+  and gap-checked event journal for one Take. The path reloads state by Take ID
+  after restart and is strictly observational.
+- Finalization outcomes that need a person now create one durable typed input
+  request and pause the Goal. `goal_answer` and `choir goal answer` bind the
+  user's answer to that exact request as an immutable artifact, replay the same
+  answer safely after restart, reject conflicting answers, and resume only the
+  captured state. Ordinary resume steering cannot bypass an active request.
+- The Goal skill is materialized as the only Claude Conductor skill. Codex is
+  supported as a subscription-backed Part provider; a Codex Conductor is not
+  advertised until it has an equally restricted interactive surface.
+- Goal cancellation now has a durable, replay-safe cutoff and a TL-only
+  `goal_cancel` tool plus `choir goal cancel` CLI path. The runner prioritizes
+  canceling Goals, a passive authorization check prevents Parts from planning
+  or authorizing new effects after the cutoff, and a clean queued Goal can
+  reach terminal cancellation without starting BoxLite or a provider. Native
+  Claude and Codex Takes run in Choir-owned process groups; cancellation kills
+  the provider and sandbox-MCP process tree and then cleans up BoxLite. The
+  process-group kill and the zero-work cutoff path have narrow executable
+  tests. Mid-Take cancellation now persists the Take interruption, uncertain
+  sandbox/session disposition, blocked Part, and uncertain or abandoned effect
+  before terminal Goal cancellation; restart replay preserves that result. An
+  already-authorized Git integration is reconciled from the exact local Goal
+  and witness refs before its observation and cancellation disposition are
+  persisted. Part effect planning, effect authorization, integration planning,
+  and integration authorization use a guarded SQLite commit against the exact
+  running Goal record, so a concurrent cutoff either follows the authorization
+  or rejects it without a Part mutation or outbox record. Both transaction
+  orderings have executable tests. A live Codex/BoxLite fixture also proves
+  that the real provider process group is interrupted and reloaded as one
+  durable uncertain implementation effect.
+- Cancellation now reconciles durable branch-publication and final-PR records
+  before terminal Goal cancellation. Planned effects are abandoned, authorized
+  or possibly-issued effects receive one fresh remote observation, exact remote
+  results are receipted, drift is preserved, and unresolved observations remain
+  explicitly uncertain. Publication distinguishes preflight uncertainty from
+  post-mutation uncertainty, and both publication and PR reconciliation can
+  recover from their uncertain states without resending a remote mutation.
+- Native Goal runtime identities include both repository and Goal identity, so
+  equal Goal IDs in different repositories cannot collide in sandbox, staging,
+  integration-control, or BoxLite state. Runtime paths use product-purpose
+  names without a branch/version label.
 - The repository linter admits only the narrow injected exec-adapter tests and
   explicitly tagged real-process fixtures used by this implementation.
 
-Evidence anchors are commits `5fb93fe8` for the native Part path,
+Earlier evidence anchors are commits `5fb93fe8` for the native Part path,
 `2a184a59` for concurrent Parts and serialized promotion, and `0443cc3c` for
-the final linter correction. At that head, `moon test --target native` reports
-2,383 passed and zero failed, and `moon run --target native
-src/bin/choir_lint` exits successfully.
+the linter correction. With the current assurance, cancellation, and provider changes,
+`moon check --target native`, `moon test --target native`, and
+`moon run --target native src/bin/choir_lint` all exit successfully on
+2026-07-20. After deleting obsolete tests, the full native suite reports 2,292
+passed and 0 failed. The
+compiler still reports the repository's existing warning set.
 
-### Fixture-scoped behavior
+### Bounded conformance behavior
 
-- The native Part fixture supplies a checked-in task instruction. No Conductor
-  currently interprets a user Goal or creates the Part/task contract.
-- The native Part path uses Claude for implementation, verification, and audit.
-  There is no Codex execution driver.
+- Checked-in Part fixtures still provide narrow, reproducible coverage of the
+  Part lifecycle with Claude and Codex independently.
 - The concurrent native Git fixture creates candidate commits directly through
   fixture code. It tests scheduling and promotion, not concurrent provider task
   execution.
-- The native Part and concurrent Goal paths are executable conformance fixtures;
-  they are not wired into `choird`, `/goal`, or another user-facing command.
+- The mixed-provider Goal fixture supplies two checked-in execution contracts.
+  It proves concurrent provider dispatch and serialized integration.
+- The joined disposable-repository run uses the same typed submission adapter,
+  durable execution repository, and native Goal tick as the daemon. It proves
+  that an accepted Conductor draft can reach real provider execution and
+  promotion, a sealed combined-tree verification Take, an independent Goal
+  audit Take, and terminal assured state. It does not by itself prove the
+  interactive Claude `/goal` turn, interruption during an in-flight Goal-level
+  provider dispatch or a live external final-PR create.
 
 ### Not yet connected
+- The remaining generated cancellation-ordering edge cases beyond the
+  implemented Part, provider, integration, Goal-assurance, publication, and
+  final-PR reconciliation paths.
+- A live external final-PR canary for the native forge transport, plus the
+  generated failure matrix for ambiguous create, remote edit, readiness, and
+  cancellation orderings. The checked synthetic forge proves control-plane
+  behavior without mutating an external repository.
+- The remaining event transaction/replay, redaction, backpressure,
+  cancellation ordering, conflict repair, hostile-surface, publication, PR,
+  and scale conformance cases. Duplicate conflicts, cursor gaps, late
+  terminals, conflicting terminals, fixed-seed generated DAG scheduling,
+  ownership normalization/conflicts, candidate under-claiming, and
+  rename/delete/generated-file path coverage are registered in the hermetic
+  runner. Native Git acquisition now separately proves deletion/rename sides,
+  case-distinct paths, symlink identity, and composed/decomposed Unicode
+  handling. Process validation, authority fencing, and canonical persisted
+  dispatch are also registered. The audit-scratch-boundary case now passes on
+  the live BoxLite Take path; it is intentionally not reported as hermetic.
+  These cases are not yet joined to the full semantic projection.
+- Deletion or extraction of the remaining dormant v1 source packages still
+  compiled behind the old server/tool implementation. They are no longer
+  launched by `init`, exposed to the Conductor, or run by the daemon, but they
+  remain source cruft until the minimal Goal server/client seam replaces their
+  shared parsing and authentication helpers.
 
-- The Conductor bridge for proposing, accepting, inspecting, steering,
-  answering, canceling, attaching to, and reconnecting to Goals.
-- Provider-neutral dispatch from accepted Parts to Claude or Codex workers,
-  including a supported Codex driver and mixed-provider execution.
-- Goal-level verification, combined-tree audit, branch publication, canonical
-  final-PR reconciliation, readiness sealing, and terminal completion.
-- The full event replay, cancellation ordering, conflict repair, ownership,
-  hostile-surface, publication, PR, generated-DAG, and scale conformance cases.
-- Replacement and deletion of the remaining v1/Zellij correctness paths.
-
-The central user flow therefore remains unfinished: a Claude or Codex
-Conductor cannot yet turn a user Goal into durable Parts and have Choir dispatch
-those Parts across provider workers. The implemented foundation begins below
-that seam.
+The central user flow is now directly launchable and joined through Goal assurance: Claude can turn a
+user Goal into a durable accepted Part set through `/goal`, and the daemon can
+discover and run that accepted decision through subscription-backed provider
+Takes, serialized promotion, exact combined verification, and independent
+Goal audit. A Conductor can also inspect the durable Goal and its Parts by Goal
+ID after reconnecting. The durable execution path now reaches terminal success
+through the ordinary Goal runner. The product remains unfinished because it
+lacks the external final-PR canary, the full hostile/fault matrix, and final
+removal of dormant v1 packages.
 
 Implementation began with two bounded experiments authorized by this charter:
 
@@ -110,9 +390,9 @@ Implementation began with two bounded experiments authorized by this charter:
 - BoxLite lifecycle, host-boundary, and network conformance.
 
 Both now have executable probes and recorded results in the implementation
-snapshot and research amendments. Those results admit the exact Claude driver
-candidate and corrected BoxLite runtime pin; they do not admit Codex execution
-or complete the user-facing product.
+snapshot and research amendments. Those results admit the exact Claude and
+Codex driver candidates plus the corrected BoxLite runtime pin; they do not
+complete mixed-provider recovery/cancellation proof or the user-facing product.
 
 The scheduler and promotion slice began only after its durable schema and
 transition specification instantiated the required entities, uniqueness
@@ -561,7 +841,7 @@ Every verification take has one canonical subject:
 
 ```text
 VerificationSubject
-  LeafCandidate {
+  PartCandidate {
     part_id
     candidate_take_id
     candidate_commit_oid
@@ -639,7 +919,7 @@ manifest digest become part of the corresponding part or goal audit subject.
 
 ```text
 AuditSubject
-  LeafCandidate {
+  PartCandidate {
     part_id
     candidate_take_id
     candidate_commit_oid
@@ -1074,7 +1354,7 @@ amendments rather than backdated into the original context record.
 | `claude -p --setting-sources "" --tools "" --permission-mode dontAsk --allowedTools <generated-exact-choir-tool-list> --strict-mcp-config --mcp-config <generated-choir-config> --output-format=stream-json --verbose` | `2.1.215` | Claude driver candidate | Same confirmed provider-managed subscription; every other effective credential class fails | `SterileHostSandboxToolsOnly` | `Unspecified` | `RequiresConfirmation` | `Candidate` | `Passed` |
 | Claude Agent Teams within the pinned Claude CLI | `2.1.215` | Optional optimizer within one Conductor/take; never a driver or scheduler | Inherits the admitted owning Claude subscription session | `ChildEqualOrNarrower` | `Experimental` | `RequiresConfirmation` | `Candidate` | `NotRun` |
 | Codex interactive CLI | `0.144.6` | Conductor | Official client using the user's ChatGPT-managed Codex subscription | `ConductorHostObserver` | `Unspecified` | `Allowed` | `Candidate` | `NotRun` |
-| `codex exec --json` | `0.144.6` | Codex driver candidate | Saved ChatGPT-managed subscription login; every other effective credential class fails | `HostHarnessSandboxToolsOnly` | `Unspecified` | `Allowed` | `BlockedByConformance` | `Failed` |
+| `codex exec --json --ephemeral --ignore-user-config --ignore-rules` with the pinned permission profile and required generated MCP server | `0.144.6` | Codex driver candidate | Saved ChatGPT-managed subscription login; every other effective credential class fails | `HostHarnessSandboxToolsOnly` | `Unspecified` | `Allowed` | `Candidate` | `Passed` |
 | Antigravity interactive CLI | `1.0.10` | Future Conductor candidate | Official client using the user's provider-managed consumer subscription | `ConductorHostObserver` | `Unspecified` | `RequiresConfirmation` | `Candidate` | `NotRun` |
 | Antigravity `agy -p` text mode | `1.0.10` | Driver surface | Same provider-managed subscription | `HostHarnessSandboxToolsOnly` | `Unspecified` | `RequiresConfirmation` | `Unsupported` | `Failed` |
 
@@ -1087,12 +1367,17 @@ authentication. Choir admits it only when the live redacted status proves the
 requested ChatGPT-managed subscription identity. A wrapper is not presumed to
 preserve that identity without a probe.
 
-The executable probe against pinned Codex `0.144.6` confirmed its structured
-noninteractive, JSON event, ephemeral-session, configuration-suppression, and
-restrictive-sandbox command surfaces. It did not prove complete removal of
-native host tools or fail-closed behavior when the required Choir sandbox tool
-is unavailable. The exact pairing therefore returns a typed
-`BlockedByConformance` result and is not an execution driver.
+The live executable probes against pinned Codex `0.144.6` confirmed the saved
+ChatGPT login, structured JSON events, ephemeral sessions, ambient
+configuration/rule suppression, disabled native execution and child-agent
+features, denied host mutation and undeclared reads, and fail-closed startup
+when the required Choir MCP server is unavailable. A separate live driver run
+called the sole admitted MCP tool, validated provider events rather than
+terminal prose, produced normalized durable events, and closed ingestion
+cleanly. The full native Part fixture then completed real Codex implementation,
+verification, independent audit, restart resumption, and Git promotion through
+BoxLite. The exact pairing remains a `Candidate` until interruption,
+cancellation, and mid-session recovery probes pass.
 
 No adapter may run a surface/auth pair absent from this matrix or promote
 `Candidate` to `Supported` without a pinned passing report. A mismatch is a
@@ -1414,7 +1699,7 @@ must be a registered tool or trusted contract/base-tree script. An
 implementation artifact can never become its own authorizing verifier.
 
 Each verification execution receives a fresh sandbox view of its exact
-`LeafCandidate` or `GoalTree`. The subject tree is immutable/read-only. The
+`PartCandidate` or `GoalTree`. The subject tree is immutable/read-only. The
 verification spec may declare separate content-addressed build, scratch, temp,
 and artifact-output roots; those roots start empty for each execution and are
 not carried into another spec. Tools that require in-tree mutation need a
@@ -2391,8 +2676,9 @@ The behavioral operations are:
 /goal attach <take-id>
 ```
 
-Exact spelling may differ per Conductor until the shared skill/plugin surface is
-implemented. The contract is common:
+Claude and Codex now receive the same generated Goal skill. Submission,
+status, steering, typed clarification answers, cancellation, and observational
+Take attachment use the same TL-only Choir tools. Their contract is common:
 
 - start returns a durable goal ID, exact accepted set, and every rejection
   before dispatch;
@@ -2476,8 +2762,9 @@ probe using the real official-client login without copying or inspecting it.
   policy, live entitlement, and exact isolation. If it does not, report Claude
   execution blocked.
 - For Codex, prove exact native host-tool removal/redirection and required
-  sandbox-tool failure behavior. If not possible, keep the surface unsupported
-  and evaluate another official topology.
+  sandbox-tool failure behavior. The pinned profile now passes these startup
+  checks and the complete Part fixture; retain `Candidate` until interruption,
+  cancellation, and mid-session recovery pass.
 - Prove cancellation, child inheritance, and resume re-attestation.
 
 Exit criterion: at least one policy-allowed Claude execution profile has a
@@ -2565,10 +2852,12 @@ manifest.
 ### Codex conformance and Conductor parity
 
 Implement only the Codex surface/profile admitted by the provider and
-host-surface proof. Demonstrate
-one Claude and one Codex part in the same goal without provider-private state
-leaking into scheduling/gates. Implement the Codex Conductor bridge and reconnect
-to a goal also visible from Claude.
+host-surface proof. The typed Codex driver and native Part dispatch branch are
+implemented; their exact live MCP/event path and complete BoxLite Part fixture
+pass. One Claude and one Codex Part now also complete in the same durable Goal:
+provider execution overlaps, while promotion remains serialized and
+provider-private state does not enter scheduling or gates. Next, implement the
+Codex Conductor bridge and reconnect to a Goal also visible from Claude.
 
 Exit criterion: both satisfy the shared trace, evidence, cancellation,
 recovery, and host-isolation oracles at pinned versions. Provider-specific
@@ -2639,6 +2928,53 @@ Reconsider a driver only when a pinned official surface exposes structured
 events, cancellation, and a recoverable cursor or explicitly nonresumable
 contract; text-only `agy -p` is not adapted as a driver.
 
+### Final prior-art review
+
+After the core local Claude-Conductor, Codex-execution, assurance,
+publication, and recovery path is implemented and verified, repeat the
+prior-art extraction against the system that actually exists. Reinspect the
+pinned OmniGent, Overstory, Agent Orchestrator, Gas City, Beads, and Semble
+commits plus any newly discovered local-first subscription-harness
+orchestrators. Compare their concrete mechanisms with Choir's provider ports,
+Part scheduling, Take recovery, event replay, integration, and Conductor UX.
+
+Also inspect the corresponding Choir v1 paths and decide explicitly whether
+Exa Search and Semble still belong in the product:
+
+- Evaluate Exa only as an optional Conductor research/search capability. It
+  must not become workflow authority, a required network dependency, or a
+  substitute for provider-native research tools. Compare its retrieval quality,
+  latency, cost, failure behavior, and local secret boundary with built-in web
+  search and ordinary MCP alternatives.
+- Evaluate Semble only as an optional semantic code/research index. Measure
+  incremental refresh, stale and deleted-file behavior, ignored-file handling,
+  repository isolation, offline usability, resource cost, and whether its
+  results improve decomposition or Part context enough to justify another
+  local service.
+- Record one of `Adopt`, `KeepOptional`, or `Reject` for each, with the exact
+  Conductor or context-assembly seam it may occupy. Neither may enter the
+  scheduling, receipt, integration, cancellation, or recovery authority path.
+
+- Pin every newly inspected source to a commit and license.
+- Record the precise mechanism worth adopting, the Choir seam it would change,
+  and the failure or complexity it removes.
+- Record explicit rejections when a design relies on prompt-owned authority,
+  ambient host access, worker-declared completion, per-Part publication, or a
+  GUI/server correctness dependency.
+- Run the pending `bd` JSON-contract, Semble stale/ignored-file, and declared-
+  versus-observed provider capability probes.
+- Update the prior-art register and extraction notes below with accepted and
+  rejected findings. Any accepted change must preserve the already-proven
+  authority, isolation, receipt, cancellation, and recovery contracts.
+
+This is deliberately the last implementation-plan step: it may simplify or
+improve proven seams, but it does not delay the current path or replace
+empirical Choir evidence with another project's architecture.
+
+This review was completed on 2026-07-20. Its pinned decisions and local probes
+are recorded under `Reproducible Research Snapshot`; no reviewed project caused
+an authority or lifecycle redesign.
+
 ## Executable Conformance Plan
 
 The following command surface is normative for the implementation. The
@@ -2652,8 +2988,11 @@ moon run --target native src/bin/choir_conformance -- hermetic
 moon run --target native src/bin/choir_conformance -- sandbox --runtime boxlite --live
 moon run --target native src/bin/choir_conformance -- harness --surface claude-cli --profile subscription --live
 moon run --target native src/bin/choir_conformance -- harness --surface codex-cli --profile subscription --live
+moon run --target native src/bin/choir_conformance -- harness --surface codex-cli --profile subscription --driver-live
 moon run --target native src/bin/choir_conformance -- e2e --fixture part-lifecycle
 moon run --target native src/bin/choir_conformance -- e2e --fixture native-part-lifecycle
+moon run --target native src/bin/choir_conformance -- e2e --fixture native-codex-part-lifecycle
+moon run --target native src/bin/choir_conformance -- e2e --fixture mixed-provider-goal
 moon run --target native src/bin/choir_conformance -- e2e --fixture parallel-promotion
 moon run --target native src/bin/choir_conformance -- e2e --fixture scale-mixed
 ```
@@ -2743,6 +3082,7 @@ report, and exits nonzero on any oracle mismatch.
 | `sandbox.transfer_security` | Malicious copy archive with traversal, links, special files, destination symlinks, and expansion bombs | Typed rejection, bounded staging, zero mutation outside staging, only validated atomic artifact adoption |
 | `e2e.part_lifecycle` | Part-lifecycle fixture | 1 implementation, 1 part-verification take/set, 1 part audit, 1 integration |
 | `e2e.native_part_lifecycle` | Native Part-lifecycle fixture | Real subscription CLI, sandbox, typed verification, restart witness recovery, and Git promotion |
+| `e2e.mixed_provider_goal` | Native mixed-provider Goal fixture | One Claude and one Codex Part execute concurrently in isolated Takes, receive separate verification and audit receipts, and promote serially into the expected combined tree |
 | `e2e.parallel_promotion` | Parallel-promotion fixture | 4 implementations, 3 part-verification sets/audits/integrations, 1 goal-verification set and goal audit |
 | `scheduler.generated_dags` | Fixed-seed generated DAG/claim manifests | Dependency, concurrency, exclusivity, and conflict invariants |
 | `e2e.scale_mixed` | Checked-in manifest and digest | Exactly N accepted Parts, N part-verification sets/audits/integrations, and 1 goal-verification set/audit/publication/PR, where N is fixed by the manifest |
@@ -2798,6 +3138,10 @@ dependency order:
 8. Remove remaining compatibility formats, renamed wrappers, tests for removed
    behavior, and observer code that still affects correctness. Optional Zellij
    observation may then be rebuilt only on durable status/attach interfaces.
+9. Close the prior-art register with pinned extraction notes and focused local
+   probes. Adopt only mechanisms that simplify an existing Choir port; record
+   explicit rejections for patterns that would move authority into prompts,
+   terminal sessions, workers, dashboards, or external search tools.
 
 Each seam lands in its final namespace and deletes its predecessor in the same
 change or immediately bounded dependent change. There are no dual writes,
@@ -2840,10 +3184,11 @@ These choices remain provisional and are resolved only by named evidence:
 2. **Claude execution surface:** use the official subscription CLI only if
    policy confirmation and the host-surface oracle pass; otherwise report the
    execution provider blocked. There is no metered fallback.
-3. **Codex execution topology:** the pinned structured CLI is not supported
-   until exact host-tool isolation passes. Failure requires another explicit
-   official subscription surface in the matrix or an honest blocked
-   minimum-provider goal.
+3. **Codex execution topology:** the pinned structured CLI is admitted as a
+   candidate after exact startup isolation, live driver, full BoxLite Part,
+   and live process-group interruption/cancellation checks passed. Mid-session
+   recovery remains required before support; failure there returns the exact
+   pairing to a typed blocked state.
 4. **Sandbox runtime:** BoxLite is first. A failing runtime/security oracle
    selects another adapter without changing scheduler contracts.
 5. **Hardened runtime owner:** choose the smallest Unix-socket owner/upstream
@@ -2863,6 +3208,248 @@ storage but must preserve these contracts.
 This section records the dated evidence used to choose experiments. Moving
 documentation pages inform candidate selection; only pinned conformance reports
 can enable support.
+
+### Prior-art research register
+
+Prior art informs adapter boundaries and interaction design; it does not become
+workflow authority by imitation. Before copying an implementation, record its
+exact source commit, license, trusted-process assumptions, persistence model,
+failure behavior, and the smallest Choir seam it could improve. Reject any
+pattern that depends on prompt-owned lifecycle truth, worker-declared
+completion, ambient host access, one-PR-per-Part publication, or a GUI/server as
+a correctness dependency.
+
+Retain these research subjects until each has either a pinned extraction note
+or an explicit rejection:
+
+- **OmniGent Polly:** inspect provider roster and preflight, purpose-tagged
+  child dispatch, durable child conversation identity, completion-driven parent
+  wakeup, cancellation, per-worker workspace construction, and cross-provider
+  review routing. Determine which concepts belong in `HarnessDriver`, provider
+  capability discovery, and durable Choir events. Do not copy prompt-owned
+  registries, broad server/UI concerns, ambient credentials, unsafe worker
+  profiles, worker-owned publication, or worker prose as completion evidence.
+- **Beads and the Gas Town/Gas City ecosystem:** inspect dependency-ready
+  selection, hierarchy, atomic claim behavior, batch/group tracking, agent
+  identity, provider launch adapters, and status synchronization. Define and
+  test the exact supported `bd` JSON/version contract. Beads remains the
+  editable source inventory; Goal acceptance snapshots bead IDs, dependency
+  edges, source revisions, task-contract digests, and typed rejection reasons
+  before dispatch. Later Beads changes cannot silently rewrite an active Goal,
+  and Choir mirrors terminal status back only after authoritative transitions.
+- **Overstory:** inspect its provider-neutral runtime interface, structured
+  headless event parsing, typed SQLite mailbox, read-only coordinator boundary,
+  worktree isolation, serialized merge queue, guard enforcement, checkpoints,
+  and crash handoff. Extract only mechanisms that simplify Choir's existing
+  driver, event-envelope, integration, or recovery contracts; reject theatrical
+  role proliferation, prompt-managed authority, polling layers that duplicate
+  durable events, and permissive provider profiles.
+- **Agent Orchestrator:** inspect agent/runtime/workspace adapter separation,
+  stale-session reconciliation, follow-up routing, provider preflight, and the
+  feedback loop for verification failures, review requests, and merge
+  conflicts. Evaluate the local daemon and lifecycle seams without adopting its
+  dashboard, telemetry, terminal attachment as truth, or per-worker PR model.
+- **Provider-native Claude and Codex delegation:** track official teams,
+  subagents, child limits, cancellation, inheritance, and structured-event
+  behavior. Native children may optimize reasoning inside a Take, but provider
+  task lists, messages, and child completion remain disposable observations and
+  cannot replace Choir Parts, Takes, leases, receipts, or recovery.
+- **Semble:** retain it as an optional local, read-only semantic repository
+  search capability for the Conductor and explicitly admitted exploration or
+  audit Takes. Measure indexing lifecycle, stale-index behavior, sandbox/host
+  path exposure, result provenance, startup failure, and usefulness against
+  ordinary exact search. Semble must never be required by scheduling, gates,
+  receipt validity, recovery, or completion.
+- **External research and Exa:** define a separate networked research
+  capability profile for the Conductor or an explicit research Take. Prefer the
+  supported provider search surface; evaluate Exa only as an optional fallback
+  skill for searches it materially improves. Persist query, URLs, retrieval
+  time, and artifact digest when external research changes a task contract.
+  Never grant this capability implicitly to implementation, verification, or
+  audit Takes, and never make Exa a control-plane dependency.
+
+The Codex isolation and local app-server questions remain in the provider
+host-surface proof above because they can admit or block a required execution
+surface. The other subjects are non-blocking design research: implementation
+may proceed using the current typed ports, and a later extraction must preserve
+their contracts rather than redesign authority around the referenced project.
+
+### Prior-art extraction, 2026-07-20
+
+The first extraction pass inspected clean checkouts at the following exact
+commits. These are design references, not Choir dependencies:
+
+| Project | Commit | License | Decision |
+|---|---|---|---|
+| OmniGent | `7da32637a5eeba1c47431fe21fca948ced9b779e` | Apache-2.0 | Adopt selected driver/session patterns |
+| Overstory | `ff38f3f76f084abcc34f519bcaa69580f6e53cf1` | MIT | Extract mechanisms only; upstream is archived |
+| Agent Orchestrator | `b55f6c5c99f5b1f25cd61e3c79cd41a0112c4801` | Apache-2.0 | Extract adapter/reconciliation patterns |
+| Gas City | `95a4bb9763ab0474f9abaf0817319b42142a0ee5` | MIT | Extract graph/control-plane patterns |
+| Beads | `1823f47ae42c93cb753536dfc49fa2337ace8eb1` | MIT | Keep as source inventory with a pinned CLI contract |
+| Semble | `f4c397e2ede0c16ab1772adeee9a0af1024043bf` | MIT | Optional read-only capability; not control-plane infrastructure |
+| AWS CLI Agent Orchestrator | `bae80071a17e001380367c461b32d64bc6b54433` | Apache-2.0 | Adopt typed Conductor-control and provider-profile ideas only |
+| Codex Orchestrator | `035d5813a1d93c4d8385ee4d5ff09a9416f6a749` | MIT | Adopt the Claude-to-Codex interaction and turn-state UX only |
+| ORCH | `835cd6d8fd94dfb6528b35f172827d52cc2941d1` | MIT | Negative comparator; no new control-plane mechanism adopted |
+
+Adopt or preserve these mechanisms:
+
+- **Declared capability plus live drift probe.** OmniGent separates static
+  harness claims—launch mode, resume, authentication ownership, interrupt,
+  streaming, steering, and native subagents—from observed bench results. Choir
+  should keep its typed provider capability profile and require a live probe to
+  admit each exact surface. A declaration never enables support by itself.
+- **Durable child identity, disposable child completion.** OmniGent assigns a
+  durable child conversation ID, routes subsequent messages to that ID, and
+  uses a terminal status edge to wake the parent. Choir should retain the same
+  identity/wakeup split: a native child or extra harness session gets a typed
+  `HarnessSessionId`; its completion may wake `choird`, but cannot complete a
+  Part or mint a receipt.
+- **Ambiguous delivery is not blindly retried.** OmniGent classifies event
+  delivery failures into proven-undelivered and possibly-delivered, replaying
+  only the former. Choir's event and remote-effect ports should preserve that
+  distinction with idempotency keys or a durable uncertain disposition.
+- **Complete lifecycle ports.** Overstory's `AgentRuntime` combines spawn,
+  readiness, configuration/guards, transcript parsing, optional headless
+  structured events, and optional direct connection. Agent Orchestrator
+  separates agent argv/session behavior, runtime process ownership, and
+  workspace lifecycle. Choir already has the safer split—`HarnessDriver`,
+  sandbox port, process adapter, and Git integration port—and should reject a
+  provider plugin as incomplete unless startup, events, interruption,
+  reconciliation, and effective-surface proof all pass through those ports.
+- **Observe, reconcile, then act.** Agent Orchestrator probes whether a recorded
+  runtime survived daemon loss, adopts a witnessed live runtime, reaps a leaked
+  runtime belonging to terminal state, and preserves uncommitted work before
+  destructive cleanup. Choir should copy the ordering and uncertainty rule,
+  not its assumption that a terminal session plus saved work is equivalent to
+  workflow recovery.
+- **Feedback as durable observation, not conversational truth.** Agent
+  Orchestrator normalizes CI, review, and merge-conflict observations, dedupes
+  reactions, and routes follow-up to the owning session. Choir should later
+  translate equivalent evidence into typed observations that may request a new
+  Take or Conductor decision. A nudge itself authorizes nothing.
+- **Graph execution belongs to the control plane.** Gas City explicitly moves
+  dependency gating, ready-step fanout, retries, waits, and convergence out of
+  role prompts and into its orchestrator. Choir should retain this principle
+  while using its smaller fixed Goal/Part/Take machine instead of importing
+  formulas, role packs, convoys, orders, or a generic orchestration SDK.
+- **Atomic claim behavior is useful as an input-store property.** Beads now has
+  conformance cases for dependency-ready selection, filtered atomic claim,
+  idempotent same-owner claim, conflicting-owner rejection, heartbeats, and
+  expired-lease recovery. Choir should pin the exact `bd` version and JSON
+  shapes it reads, but snapshot selection into Choir before execution rather
+  than sharing Beads' mutable claims as workflow authority.
+- **Semantic search remains advisory and local.** Semble returns path and line
+  provenance, uses local tree-sitter chunks plus BM25/static embeddings, honors
+  `.gitignore` and `.sembleignore`, caches indexes locally, and rebuilds when
+  file metadata changes. It is a reasonable optional Conductor/exploration
+  tool after a sandbox-path and stale-index probe. Exact search remains the
+  correctness oracle, and Semble results never become receipt evidence without
+  reading the referenced current files.
+
+Explicit rejections from this pass:
+
+- no one-PR-per-worker or human-merge-only publication model;
+- no tmux, TUI, dashboard, mailbox poller, role prompt, agent YAML, formula, or
+  issue-store claim as lifecycle authority;
+- no permissive host worktree used as the mutation boundary;
+- no auto-completion from a provider stop hook, session exit, inbox result, or
+  worker status;
+- no broad plugin registry that covers launch but omits interruption, recovery,
+  isolation, or event replay;
+- no mandatory Semble or external research service. Provider-supported search
+  remains the first networked research surface; Exa remains an optional
+  fallback for an explicitly admitted research Take when ordinary search fails.
+
+The executable research pass used installed `bd` 1.1.0 and Semble 0.2.0. A
+read-only `bd list --json --limit 1` probe returned the expected durable issue
+identity, status, priority, type, and dependency fields. Choir must still pin
+and fixture every `bd` shape it consumes before Beads becomes an execution
+input rather than a Conductor drafting source.
+
+The Semble probe ran with isolated home and cache roots over one visible file,
+one `.gitignore`d file, and one `.sembleignore`d file. Search returned only the
+visible file. Changing that file caused the next search to return its current
+content rather than cached content. Deleting it removed the final supported
+file and produced an explicit `No supported files found` failure rather than a
+stale result. This is sufficient for `KeepOptional`, not for default startup or
+receipt evidence.
+
+| Subject | Decision | Permitted seam | Explicit exclusion |
+|---|---|---|---|
+| OmniGent | `Adopt` selected mechanisms | Provider capability discovery, durable harness-session identity, uncertain-delivery classification | No prompt-owned registry, ambient credential handling, UI, or publication authority |
+| Overstory | `Adopt` selected mechanisms | Driver lifecycle completeness, typed event parsing, serialized integration, crash handoff | No role proliferation, prompt authority, or polling as truth |
+| Agent Orchestrator | `Adopt` selected mechanisms | Runtime/workspace separation and observe-reconcile-act recovery | No dashboard, telemetry, terminal truth, or per-worker publication |
+| Gas City | `Adopt` selected mechanisms | Control-plane dependency gating, fanout, retry, wait, and convergence | No generic formula/role framework or issue-store authority |
+| Beads 1.1.0 | `Adopt` as source inventory | Conductor drafting input followed by an immutable Goal selection snapshot | Mutable Beads claims and status never become Choir workflow authority |
+| Semble 0.2.0 | `KeepOptional` | Explicit read-only Conductor context search or admitted exploration/audit Take | Absent from default launch; never used by scheduling, gates, receipts, recovery, or completion |
+| Exa | `KeepOptional` | Explicit networked research fallback only when ordinary and provider-supported search are inadequate | Absent from default launch; never implicit for implementation, verification, audit, or control-plane work |
+| Zellij and v1 prompt-owned orchestration | `Reject` | Optional future observation may consume durable status only | No launch, messaging, scheduling, completion, or recovery dependency |
+
+Semble and Exa are therefore not involved in ordinary Choir startup, Goal
+selection, Part scheduling, provider execution, verification, audit,
+integration, publication, cancellation, recovery, or completion.
+
+The implemented Goal-assurance path also produced two concrete extraction
+results. OmniGent's pinned-runner routing confirms that durable session affinity
+and a live capability check belong before dispatch; an offline or incapable
+runner is a typed conflict, not a reason to choose a different runner silently.
+BoxLite's own lifecycle contract and the live Choir run confirm that stopping a
+server process is not equivalent to stopping its boxes: Choir must explicitly
+stop every persisted box, retain its exact box identity, and re-adopt it through
+the next runtime before continuing. Choir now follows that rule. A focused
+runtime conformance case should preserve it across future BoxLite versions.
+
+#### Post-implementation extraction, 2026-07-20
+
+The final scan added three newer local CLI orchestrators and compared them with
+the implemented Goal runner rather than the target sketch.
+
+- **Keep the Conductor interaction thin and typed.** AWS CLI Agent
+  Orchestrator exposes the same session operations through a CLI, HTTP, and a
+  typed MCP control surface, and recommends MCP when the supervising harness
+  supports it. Choir should keep one authoritative `choird` command schema and
+  expose it to Claude through the checked-in Goal skill and MCP tools. The
+  skill explains when to submit, inspect, steer, cancel, or answer a typed
+  decision; it does not contain a second scheduler.
+- **Preserve the intended Claude-to-Codex user flow.** Codex Orchestrator's
+  useful product behavior is exactly the desired one: the user discusses work
+  with Claude, Claude decomposes and launches real Codex CLI processes, and
+  receives structured status plus a completion wakeup. Its separation of
+  process state, turn state, derived orchestration state, blocker kind, and
+  recommended next action is a useful Conductor projection. Choir already has
+  the stronger durable identities and event envelopes; add only any missing
+  blocker/action fields to status instead of importing its job-file protocol.
+- **Treat wakeups as hints, never outcomes.** Codex Orchestrator's per-job
+  notify hook and `await-turn` command avoid polling and allow follow-up
+  steering. In Choir the equivalent wakeup may prompt `choird` to inspect a
+  Take, but only durable observations, verification, audit, promotion, and
+  finalization can advance authoritative state.
+- **Keep complete CLI behavior behind an admitted provider profile.** AWS CLI
+  Agent Orchestrator demonstrates why running the real installed harness is
+  valuable: native authentication, subagents, and provider-specific behavior
+  remain available. It also demonstrates the danger of treating a terminal
+  adapter as isolation: its providers infer status from TUI output and its
+  Codex profile defaults to unrestricted execution for unattended work. Choir
+  therefore keeps structured provider events where available, live surface
+  probes, sandbox-only mutation, and fail-closed startup.
+- **Do not copy prompt-owned delegation policy.** Codex Orchestrator's skill
+  makes Codex delegation mandatory through prompt instructions, while AWS CLI
+  Agent Orchestrator makes tmux sessions and terminal parsing central. These
+  are useful prototypes for interaction, not lifecycle authority. Choir's
+  Conductor may propose Parts and providers; `choird` alone admits and
+  schedules them.
+- **ORCH adds no missing mechanism.** Its Goal/Task dependency model, provider
+  adapters, retry loop, and review state substantially overlap Choir's current
+  Goal/Part/Take machine, but use mutable file-backed state and task-owned proof
+  fields. Retain it as a negative comparator rather than adding another task
+  model or retry policy.
+
+The scan found no reason to redesign the implemented authority, integration,
+publication, receipt, cancellation, or recovery seams. The only accepted
+follow-up is a narrow Conductor UX pass: make conversational Goal submission,
+status, typed questions, steering, and cancellation feel native in Claude
+while every action still crosses the existing `choird` protocol. tmux remains
+optional observation infrastructure, not a dependency.
 
 ### Snapshot record shape
 
@@ -3026,6 +3613,252 @@ subscription entitlement lane, and exposed no undeclared tool use. This admits
 the exact driver surface as `Candidate`; interruption, cancellation, and full
 host-root isolation evidence remain required for `Supported`.
 
+#### Post-snapshot Codex probe amendment
+
+At `2026-07-20T05:05:49Z`, the executable startup and driver commands passed
+against Codex CLI `0.144.6` using the provider-owned ChatGPT login. The process
+environment inherited no separate credential variable; `codex login status`
+reported exactly `Logged in using ChatGPT`. The admitted invocation used
+ephemeral JSON execution, ignored user configuration and repository rules,
+disabled native shell, unified execution, multi-agent, browser, app, plugin,
+hook, memory, image-generation, workspace-dependency, and related host
+features, disabled network, and required one generated MCP server with an exact
+tool allowlist.
+
+The hostile startup turn attempted native mutation and an undeclared host read;
+both were denied and the write canary remained absent. It then completed the
+sole required MCP call. Replacing the MCP executable with a known-absent path
+made Codex exit before any thread or turn event. The evaluator rejects failed
+MCP calls, unexpected item types, unmatched tool events, false terminal prose,
+and write residue.
+
+The separate driver command started a typed Codex harness session, called the
+required `probe` tool, ingested one start, one tool-start, one tool-finish, and
+one terminal event, validated `{"outcome":"completed"}`, and closed ingestion
+cleanly. The full native Part command then passed using Codex for all three
+provider Takes through isolated BoxLite sandboxes. It recorded 12 effect
+receipts and exactly one verification, audit, and integration receipt; after
+the forced workflow restart it dispatched zero duplicate implementation Takes
+and the two remaining provider Takes. This evidence admits the pinned
+CLI/profile as `Candidate`, not `Supported`; interruption, cancellation, and
+mid-session recovery remain. The exact commands are:
+
+```text
+moon run --target native src/bin/choir_conformance -- harness --surface codex-cli --profile subscription --live
+moon run --target native src/bin/choir_conformance -- harness --surface codex-cli --profile subscription --driver-live
+moon run --target native src/bin/choir_conformance -- e2e --fixture native-codex-part-lifecycle
+```
+
+#### Post-snapshot mixed-provider Goal amendment
+
+At `2026-07-20T01:26:46-05:00`, the native mixed-provider Goal command passed
+against the same pinned Claude `2.1.215`, Codex `0.144.6`, and BoxLite `v0.9.7`
+profiles. Choir admitted two nonconflicting Parts at a concurrency limit of two.
+The Claude and Codex implementation workflows overlapped in separate BoxLite
+Takes; each then completed its own typed verification and independent audit.
+The Goal runner deferred promotion until assurance was present, serialized the
+two divergent candidates against the changing Goal head, and produced the
+expected combined tree.
+
+The run recorded exactly 24 effect receipts, two verification receipts, two
+audit receipts, and two integration receipts. Provider selection remained a
+typed per-Part capability; neither the scheduler nor any gate branched on
+provider-private state. The command was:
+
+```text
+moon run --target native src/bin/choir_conformance -- e2e --fixture mixed-provider-goal
+```
+
+This proves the checked-in two-Part path, not Conductor decomposition,
+user-facing Goal submission, provider interruption recovery, cancellation, or
+Goal-level assurance and publication.
+
+#### Post-snapshot joined submission and execution amendment
+
+At `2026-07-20T03:03:51-05:00`, the joined native command exercised the
+accepted-draft boundary and execution boundary in one disposable repository.
+It decoded and accepted a typed Goal draft backed by a real Bead, persisted the
+selection, Part workflow, and restart-discoverable Goal execution record, then
+ran the same native Goal tick used by the daemon. The Part used the pinned
+ChatGPT-authenticated Codex client through BoxLite for implementation and an
+independent audit, passed its typed Moon verification, and promoted through the
+deterministic Goal ref.
+
+An earlier joined run reached `GoalExecutionBlocked` because its independent
+audit returned a blocking finding; Choir did not integrate that candidate. The
+passing run integrated the durable Part with 12 effect receipts, one
+verification receipt, one audit receipt, and one integration receipt. At the
+time, the incomplete execution state machine also labeled that point
+`GoalExecutionSucceeded` and `GoalSucceeded`. That label is superseded: Part
+integration now advances to nonterminal `GoalExecutionAssuring`, and terminal
+success remains unavailable until all finalization evidence exists. Promotion
+commit `ed27840f2216d4541dd54a3e4dc302b89ea06546`
+changes `answer()` from `1` on `main` to `2` only on the deterministic Goal
+ref. The command shapes were:
+
+```text
+moon run --target native src/bin/choir_conformance -- e2e --project <disposable-repository> --draft <typed-goal-draft.json>
+moon run --target native src/bin/choir_conformance -- status --project <disposable-repository> --goal <goal-id>
+```
+
+The status command ran in a separate process after execution exited and
+reloaded the exact Goal and integrated Part identities and receipt counts. During
+this proof, an under-declared candidate containing Moon build output was
+rejected rather than widening its ownership claim, identical submission replay
+was corrected to preserve advanced Part state, and cross-repository runtime
+keys were corrected to include repository identity. This proves the durable
+submission-to-execution join, provider dispatch, passive Part gates, serialized
+promotion, and restart-readable inspection. It does not prove an interactive
+Claude `/goal` invocation, daemon-loss recovery during a live provider session,
+Goal-level combined assurance, publication, or final-PR reconciliation.
+
+#### Post-snapshot cancellation and authorization amendment
+
+At `2026-07-20T04:06:43-05:00`, cancellation gained an atomic Goal-to-Part
+authorization guard and exact integration-witness reconciliation. The state
+store now commits a Part mutation only while a supplied Goal state record still
+has the exact expected key, version, fencing epoch, and digest in the same
+SQLite transaction. An idempotent replay remains valid after the Goal changes,
+because it proves that exact mutation committed first; a new mutation using a
+stale running-Goal precondition is rejected without changing Part state or
+writing its outbox event. The driver applies this guard to Part effect planning,
+effect authorization, integration planning, and integration authorization.
+
+If cancellation finds an authorized integration effect, the native adapter
+reads the exact deterministic Goal ref and intent witness ref, persists the
+resulting applied/not-applied/diverged observation against the authorized
+effect, and only then records the Part cancellation disposition. An applied
+promotion and its receipt are preserved; an unapplied effect is not dispatched
+after cancellation; uncertainty never becomes success.
+
+The live Codex cancellation command launched the real provider-managed
+subscription client inside BoxLite, interrupted its Choir-owned process group,
+and reloaded one authorized implementation effect as `PartEffectUncertain`, an
+interrupted implementation Take, an uncertain sandbox lease, and a
+recovery-uncertain harness session. It dispatched Codex exactly once and
+recorded no verification, audit, or integration receipt:
+
+```text
+moon run --target native src/bin/choir_conformance -- e2e --fixture native-codex-cancellation
+```
+
+A fresh joined disposable-repository run then exercised the guarded production
+path through submission, Codex implementation, typed verification, independent
+Codex audit, and Git promotion. It reached `PartIntegrated` with 12 effect
+receipts, one verification receipt, one audit receipt, and one integration
+receipt. The former terminal Goal label at this point has since been removed.
+This proves the implemented
+Part/provider/integration cancellation slice and both cutoff transaction
+orderings; it does not substitute for the later Goal-level publication and PR
+ordering cases.
+
+#### Post-snapshot Goal branch seal amendment
+
+At `2026-07-20T09:34:08Z`, Goal assurance gained its first durable production
+slice. A fully integrated Part set no longer commits Goal success. The runner
+first persists `GoalExecutionAssuring`; `GoalExecutionSucceeded` is reachable
+only from the later assured/finalization path.
+
+The new assurance record reconstructs the complete promotion chain from the
+captured base to the observed Goal head, rejects missing, duplicated, forked,
+or discontinuous integration receipts, canonicalizes the combined verification
+specifications, and binds them to a derived assurance-policy revision. It then
+persists one seal intent through planned, authorized, witnessed, and sealed
+states. Every write uses the exact Goal state record as a SQLite precondition.
+A concurrent cancellation therefore either follows a committed assurance write
+or rejects the stale write without an assurance mutation or outbox record.
+
+The native Git adapter creates the deterministic seal witness only when the
+Goal ref and tree exactly match the authorized subject. Re-observation is
+idempotent; a changed witness, head, or tree is not accepted. Goal status now
+exposes the assurance stage and immutable seal when present. The checked tests
+cover the Goal-tree verification and combined-audit gates, seal authorization,
+record round trip, atomic cancellation race, and a real isolated Git witness
+creation/replay/divergence sequence. The later joined live run connected both
+Goal verification and independent Goal audit as durable BoxLite-backed Takes
+and reached `GoalExecutionAssured`.
+
+#### Post-snapshot branch publication amendment
+
+At `2026-07-20T11:12:51Z`, branch publication gained a durable production
+slice. One canonical publication record binds the exact assured Goal record,
+branch seal, combined verification evidence, independent Goal-audit evidence,
+remote repository identity, remote name, remote head ref, and sealed OID. The
+record advances through passive observation, explicit authorization, and an
+exact receipt; remote absence, an already exact head, drift, and observation
+uncertainty are distinct typed states. Every persistence step is guarded by the
+exact Goal state version and fencing epoch.
+
+The native adapter resolves the configured Git remote, reads the exact remote
+ref, and uses a non-force refspec with local hooks disabled. It always reads the
+remote again after the push request. A matching ref can therefore be adopted
+after process loss, while a different ref is reported as drift and is never
+overwritten. The real-Git adapter test covers initial creation, idempotent
+replay, and adversarial remote drift against an isolated bare repository.
+
+The previously assured disposable Goal was then published through the durable
+adapter to a fresh local bare remote. Both the initial invocation and a second
+process invocation returned `GoalPublicationComplete`; the remote and durable
+receipt both contained exact sealed OID
+`55cd8b2a425a833631b269c2a9ea7481c92966f5`. A separate status invocation
+reported `BranchPublicationReceipted`, the canonical remote identity and head
+ref, receipt presence, and that OID. The command shape was:
+
+```text
+moon run --target native src/bin/choir_conformance -- publish --project <disposable-repository> --goal <goal-id>
+```
+
+This proves explicit publication and restart adoption. The later finalization
+slice connects it to the ordinary Goal runner.
+
+#### Post-snapshot final-PR and readiness amendment
+
+At `2026-07-20T11:45:38Z`, the canonical final-PR protocol and terminal Goal
+decision gained durable production slices. The generated PR document is a
+content-addressed artifact containing the Goal-contract identity, evidence-
+manifest identity, and deterministic marker. The intent and every transition
+are persisted under the exact assured-Goal precondition. Before creation, the
+native forge adapter performs a complete paginated scan across open, closed,
+and merged PRs. Exactly one marker match is adopted; duplicate markers,
+markerless exact matches, closed PRs, changed heads/bases, and uncertain
+observations remain distinct non-success states.
+
+Create authorization and possible dispatch are separate durable transitions.
+Only the process that newly commits `PullRequestCreateMayHaveBeenIssued`
+receives the one-use create capability. A restart, replay, transaction conflict,
+or lost acknowledgement may only re-query; it cannot send another create. The
+adapter ignores create-command prose and re-queries the complete remote set
+before recording an exact receipt.
+
+Readiness is then observed separately against the canonical receipt. `Ready`
+requires an open PR with the exact repository identities, head and base refs,
+sealed head OID, identity marker, Goal-contract link, and evidence-manifest
+link. The terminal Goal write compare-and-sets `GoalExecutionAssured` to
+`GoalExecutionSucceeded` while guarding that exact readiness state record in
+the same SQLite transaction. A later readiness observation or cancellation
+therefore displaces success instead of racing past it.
+
+The disposable published Goal exercised the complete control-plane protocol
+with an injected synthetic forge, so no external PR was created. The first run
+persisted one PR receipt; replay returned the same canonical result. A fresh
+readiness observation then committed `GoalExecutionSucceeded`, replayed
+success, and exposed `PullRequestReady` plus the finalization ID through Goal
+status. Finally, the Goal was reset only inside the disposable fixture to its
+previous assured record and one ordinary Goal tick carried the same durable
+publication, PR, readiness, and terminal-success path to completion. Command
+shapes were:
+
+```text
+moon run --target native src/bin/choir_conformance -- pull-request --project <disposable-repository> --goal <goal-id> --synthetic
+moon run --target native src/bin/choir_conformance -- finish --project <disposable-repository> --goal <goal-id> --synthetic
+moon run --target native src/bin/choir_conformance -- tick --project <disposable-repository> --synthetic
+```
+
+This proves the durable one-shot and ordinary-runner semantics. The external
+forge create remains deliberately unperformed in this checkout; a controlled
+live canary and the complete ambiguous-create/edit/cancellation fault matrix
+remain required before calling that transport supported.
+
 ### Inspected source repositories
 
 | Repository | Remote | Commit and version evidence | State |
@@ -3119,6 +3952,18 @@ BoxLite:
 - [GHSA-g6ww-w5j2-r7x3](https://github.com/boxlite-ai/boxlite/security/advisories/GHSA-g6ww-w5j2-r7x3)
 - [GHSA-f396-4rp4-7v2j](https://github.com/boxlite-ai/boxlite/security/advisories/GHSA-f396-4rp4-7v2j)
 - [GHSA-xjhv-pp2r-6f82](https://github.com/boxlite-ai/boxlite/security/advisories/GHSA-xjhv-pp2r-6f82)
+
+Prior-art repositories:
+
+- [OmniGent](https://github.com/omnigent-ai/omnigent)
+- [Overstory](https://github.com/jayminwest/overstory)
+- [Agent Orchestrator](https://github.com/AgentWrapper/agent-orchestrator)
+- [Gas City](https://github.com/gastownhall/gascity)
+- [Beads](https://github.com/gastownhall/beads)
+- [Semble](https://github.com/MinishLab/semble)
+- [AWS CLI Agent Orchestrator](https://github.com/awslabs/cli-agent-orchestrator)
+- [Codex Orchestrator](https://github.com/kingbootoshi/codex-orchestrator)
+- [ORCH](https://github.com/oxgeneral/ORCH)
 
 The extracted Claude coordinator prompt and `tweakcc` informed only an
 unsupported experiment. Neither is a supported dependency or policy source.

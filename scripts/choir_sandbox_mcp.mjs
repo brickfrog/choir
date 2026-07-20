@@ -30,6 +30,7 @@ export function parseLaunchArgs(argv) {
     "--api-key",
     "--home",
     "--box",
+    "--access",
   ];
   if (values.size !== required.length) fail("unknown launch argument");
   for (const key of required) {
@@ -45,6 +46,9 @@ export function parseLaunchArgs(argv) {
   if (!/^[a-zA-Z0-9-]{1,180}$/.test(values.get("--box"))) {
     fail("invalid box identity");
   }
+  if (!["mutable", "read-only-subject"].includes(values.get("--access"))) {
+    fail("invalid workspace access");
+  }
   return Object.freeze({
     binary: values.get("--binary"),
     runtimeDir: values.get("--runtime-dir"),
@@ -52,6 +56,7 @@ export function parseLaunchArgs(argv) {
     apiKey: values.get("--api-key"),
     home: values.get("--home"),
     box: values.get("--box"),
+    access: values.get("--access"),
   });
 }
 
@@ -73,6 +78,11 @@ export function relativePath(value, allowRoot = false) {
 function guestPath(value, allowRoot = false) {
   const relative = relativePath(value, allowRoot);
   return relative === "" ? "/workspace" : `/workspace/${relative}`;
+}
+
+function scopedGuestPath(root, value, allowRoot = false) {
+  const relative = relativePath(value, allowRoot);
+  return relative === "" ? root : `${root}/${relative}`;
 }
 
 export function validateArgv(value) {
@@ -101,6 +111,16 @@ class SandboxClient {
   run(argv, cwd = "", timeoutMs = 120000) {
     const operation = async () => {
       const command = validateArgv(argv);
+      const guestCommand = this.config.access === "read-only-subject"
+        ? [
+            "/usr/bin/setpriv",
+            "--reuid=65534",
+            "--regid=65534",
+            "--clear-groups",
+            "--",
+            ...command,
+          ]
+        : command;
       const relativeCwd = relativePath(cwd, true);
       if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 600000) {
         fail("timeout is outside the admitted range");
@@ -115,7 +135,7 @@ class SandboxClient {
         guestPath(relativeCwd, true),
         this.config.box,
         "--",
-        ...command,
+        ...guestCommand,
       ];
       try {
         const result = await execFileAsync(this.config.binary, args, {
@@ -155,21 +175,30 @@ class SandboxClient {
     return result.stdout;
   }
 
-  async writeFile(path, content) {
+  async writeGuestFile(path, content) {
     if (typeof content !== "string" || Buffer.byteLength(content) > MAX_WRITE_BYTES) {
       fail("write content exceeds its bound");
     }
     const script = 'set -eu; mkdir -p "$(dirname "$1")"; printf %s "$2" | base64 -d > "$1"';
     const result = await this.run(
-      ["/bin/sh", "-c", script, "choir-write", guestPath(path), Buffer.from(content).toString("base64")],
+      ["/bin/sh", "-c", script, "choir-write", path, Buffer.from(content).toString("base64")],
       "",
       30000,
     );
     if (result.exitCode !== 0) fail(`write failed with exit ${result.exitCode}`);
   }
+
+
+  async writeFile(path, content) {
+    return this.writeGuestFile(guestPath(path), content);
+  }
+
+  async writeScopedFile(root, path, content) {
+    return this.writeGuestFile(scopedGuestPath(root, path), content);
+  }
 }
 
-export const tools = [
+export const mutableTools = [
   {
     name: "read_file",
     description: "Read one UTF-8 file from the sandbox workspace",
@@ -232,11 +261,67 @@ export const tools = [
   },
 ];
 
+export const assuranceTools = [
+  {
+    name: "read_file",
+    description: "Read one UTF-8 file from the read-only candidate",
+    inputSchema: {
+      type: "object",
+      properties: { path: { type: "string" } },
+      required: ["path"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "list_files",
+    description: "List paths under the read-only candidate",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", default: "" },
+        max_depth: { type: "integer", minimum: 1, maximum: 8, default: 4 },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "write_scratch",
+    description: "Write one UTF-8 file below the disposable scratch root",
+    inputSchema: {
+      type: "object",
+      properties: { path: { type: "string" }, content: { type: "string" } },
+      required: ["path", "content"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "write_output",
+    description: "Write one UTF-8 artifact below the declared output root",
+    inputSchema: {
+      type: "object",
+      properties: { path: { type: "string" }, content: { type: "string" } },
+      required: ["path", "content"],
+      additionalProperties: false,
+    },
+  },
+];
+
+export const tools = mutableTools;
+
+export function toolsForAccess(access) {
+  if (access === "mutable") return mutableTools;
+  if (access === "read-only-subject") return assuranceTools;
+  fail("invalid workspace access");
+}
+
 function toolText(value, isError = false) {
   return { content: [{ type: "text", text: value }], isError };
 }
 
 async function callTool(client, name, args) {
+  if (!toolsForAccess(client.config.access).some((tool) => tool.name === name)) {
+    fail("undeclared tool");
+  }
   switch (name) {
     case "read_file":
       return toolText(await client.readFile(args.path));
@@ -266,6 +351,12 @@ async function callTool(client, name, args) {
       await client.writeFile(args.path, updated);
       return toolText("replaced");
     }
+    case "write_scratch":
+      await client.writeScopedFile("/scratch", args.path, args.content);
+      return toolText("written");
+    case "write_output":
+      await client.writeScopedFile("/output", args.path, args.content);
+      return toolText("written");
     case "run": {
       const result = await client.run(args.argv, args.cwd ?? "", args.timeout_ms ?? 120000);
       return toolText(JSON.stringify({
@@ -293,6 +384,7 @@ function respondError(id, message) {
 
 export function startSandboxMcp(argv = process.argv.slice(2)) {
   const client = new SandboxClient(parseLaunchArgs(argv));
+  const visibleTools = toolsForAccess(client.config.access);
   const input = readline.createInterface({ input: process.stdin, terminal: false });
   input.on("line", async (line) => {
     let request;
@@ -312,7 +404,7 @@ export function startSandboxMcp(argv = process.argv.slice(2)) {
           });
           break;
         case "tools/list":
-          respond(request.id, { tools });
+          respond(request.id, { tools: visibleTools });
           break;
         case "tools/call":
           respond(request.id, await callTool(client, request.params?.name, request.params?.arguments ?? {}));

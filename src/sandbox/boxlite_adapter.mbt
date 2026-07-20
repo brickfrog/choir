@@ -224,6 +224,7 @@ pub(all) struct ExecuteSandboxRequest {
   capability : SandboxEffectCapability
   resource_key : SandboxResourceKey
   execution_key : RuntimeExecutionKey
+  validated_process_spec_digest : @control.Digest
   process : SandboxProcessSpec
 } derive(Debug, Eq, ToJson, FromJson)
 
@@ -425,11 +426,31 @@ pub fn validate_sandbox_effect_capability(
 ///|
 fn valid_logical_repo_path(path : @control.RepoPath) -> Bool {
   let text = path.0
-  if text == "" || text.has_prefix("/") || text.contains("\\") {
+  if text == "" ||
+    text.has_prefix("/") ||
+    text.has_suffix("/") ||
+    text.contains("//") {
     return false
   }
+  for character in text {
+    if character == '\u{00}' ||
+      character == '\\' ||
+      character == '*' ||
+      character == '?' ||
+      character == '[' ||
+      character == ']' ||
+      character == '{' ||
+      character == '}' ||
+      character < '\u{20}' ||
+      character == '\u{7f}' {
+      return false
+    }
+  }
   for segment in text.split("/") {
-    if segment == "" || segment == "." || segment == ".." {
+    if segment == "" ||
+      segment == "." ||
+      segment == ".." ||
+      segment.to_lower() == ".git" {
       return false
     }
   }
@@ -448,12 +469,27 @@ fn process_authority_take_id(
 }
 
 ///|
+fn valid_process_digest(digest : @control.Digest) -> Bool {
+  if digest.0.length() != 64 {
+    return false
+  }
+  for character in digest.0 {
+    if !((character >= '0' && character <= '9') ||
+      (character >= 'a' && character <= 'f')) {
+      return false
+    }
+  }
+  true
+}
+
+///|
 pub fn validate_sandbox_process_spec(
   process : SandboxProcessSpec,
   capability : SandboxEffectCapability,
   expected_policy_digest : @control.Digest,
   artifact_exists : (@control.ArtifactReference) -> Bool,
   registered_tool : (SandboxRegisteredToolId, @control.Digest) -> Bool,
+  interpreter_allowed : (SandboxProcessAuthority, SandboxInterpreter) -> Bool,
 ) -> Result[Unit, @types.ChoirError] {
   match validate_sandbox_effect_capability(capability) {
     Err(error) => return Err(error)
@@ -500,17 +536,19 @@ pub fn validate_sandbox_process_spec(
           ),
         )
       }
-    SandboxInterpreterArtifact(_, artifact, relative_path, provenance) => {
+    SandboxInterpreterArtifact(interpreter, artifact, relative_path, provenance) => {
       let invalid_provenance = match provenance {
         SandboxGoalContractArtifact => false
         SandboxBaseTreeBlob(commit, path, blob) =>
           commit.0 == "" || blob.0 == "" || !valid_logical_repo_path(path)
         SandboxTakeArtifact(take_id, source, digest) =>
           take_id != capability.take_id ||
+          process.authority is SandboxVerificationTool(_, _, _) ||
           !artifact_exists(source) ||
           source.digest != digest
       }
-      if !artifact_exists(artifact) ||
+      if !interpreter_allowed(process.authority, interpreter) ||
+        !artifact_exists(artifact) ||
         !valid_logical_repo_path(relative_path) ||
         invalid_provenance {
         return Err(
@@ -567,18 +605,37 @@ pub fn validate_sandbox_process_spec(
         ),
       )
   }
+  if process.environment.length() > 64 {
+    return Err(
+      @types.ChoirError::validation_error(
+        "sandbox environment has too many entries",
+      ),
+    )
+  }
   let seen : Map[String, Bool] = Map([])
+  let mut environment_bytes = 0
   for entry in process.environment {
     if !valid_environment_key(entry.key) ||
       forbidden_environment_key(entry.key) ||
-      seen.contains(entry.key) {
+      seen.contains(entry.key) ||
+      entry.value.contains("\u{00}") {
       return Err(
         @types.ChoirError::validation_error(
           "sandbox environment key is invalid or duplicated",
         ),
       )
     }
+    environment_bytes = environment_bytes +
+      entry.key.length() +
+      entry.value.length()
     seen[entry.key] = true
+  }
+  if environment_bytes > 65536 {
+    return Err(
+      @types.ChoirError::validation_error(
+        "sandbox environment exceeds the byte limit",
+      ),
+    )
   }
   Ok(())
 }
@@ -675,6 +732,7 @@ pub fn dispatch_boxlite_execute(
   expected_policy_digest : @control.Digest,
   artifact_exists : (@control.ArtifactReference) -> Bool,
   registered_tool : (SandboxRegisteredToolId, @control.Digest) -> Bool,
+  interpreter_allowed : (SandboxProcessAuthority, SandboxInterpreter) -> Bool,
 ) -> Result[SandboxExecutionObservation, @types.ChoirError] {
   match validate_sandbox_resource_key(request.resource_key) {
     Err(error) => return Err(error)
@@ -685,6 +743,13 @@ pub fn dispatch_boxlite_execute(
       @types.ChoirError::validation_error("sandbox execution key is empty"),
     )
   }
+  if !valid_process_digest(request.validated_process_spec_digest) {
+    return Err(
+      @types.ChoirError::validation_error(
+        "validated sandbox process digest is invalid",
+      ),
+    )
+  }
   match
     validate_sandbox_process_spec(
       request.process,
@@ -692,6 +757,7 @@ pub fn dispatch_boxlite_execute(
       expected_policy_digest,
       artifact_exists,
       registered_tool,
+      interpreter_allowed,
     ) {
     Err(error) => return Err(error)
     Ok(_) => ()

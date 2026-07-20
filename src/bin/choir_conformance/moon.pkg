@@ -7,10 +7,12 @@ import {
   "choir/src/storage",
   "choir/src/sys",
   "choir/src/types",
+  "choir/src/workflow",
   "moonbitlang/async",
   "moonbitlang/core/env",
   "moonbitlang/core/json",
   "moonbitlang/core/ref",
+  "moonbitlang/core/string",
   "moonbitlang/core/encoding/utf8",
 }
 

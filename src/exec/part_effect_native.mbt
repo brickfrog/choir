@@ -17,6 +17,7 @@ pub(all) struct NativeSandboxResourceManifest {
   image_digest : @control.Digest
   tool_manifest_digest : @control.Digest
   runtime_policy_digest : @control.Digest
+  workspace_access : @sandbox.BoxLiteWorkspaceAccess
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -30,8 +31,10 @@ pub(all) struct NativePartEffectRuntimeConfig {
   node_executable : String
   sandbox_mcp_script : String
   claude_root : String
-  provider_conformance_report_digest : @control.Digest
+  codex_root : String
+  provider_conformance_report_digest : (@control.ProviderSurfaceId) -> @control.Digest
   now : () -> Int64
+  goal_cancellation_requested : () -> Bool
 }
 
 ///|
@@ -77,6 +80,7 @@ pub fn create_native_part_effect_runtime(
     !config.node_executable.has_prefix("/") ||
     !config.sandbox_mcp_script.has_prefix("/") ||
     !config.claude_root.has_prefix(config.server.config.root + "/claude/") ||
+    !config.codex_root.has_prefix(config.server.config.root + "/codex/") ||
     config.repository.max_snapshot_bytes <= 0 {
     return Err(
       @types.ChoirError::validation_error(
@@ -84,9 +88,18 @@ pub fn create_native_part_effect_runtime(
       ),
     )
   }
-  match @storage.validate_digest(config.provider_conformance_report_digest) {
-    Ok(_) => ()
-    Err(error) => return Err(error)
+  for
+    surface in [
+      @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+      @control.ProviderSurfaceId::CodexSubscriptionCli,
+    ] {
+    match
+      @storage.validate_digest(
+        (config.provider_conformance_report_digest)(surface),
+      ) {
+      Ok(_) => ()
+      Err(error) => return Err(error)
+    }
   }
   Ok({
     config,
@@ -216,7 +229,7 @@ fn store_native_sandbox_resource(
     Err(error) => return Err(error)
   }
   let manifest : NativeSandboxResourceManifest = {
-    version: 1,
+    version: 2,
     generation_id,
     base_box_id: sandbox.prepared.base_box_id,
     box_id: sandbox.box_id,
@@ -224,6 +237,7 @@ fn store_native_sandbox_resource(
     image_digest: sandbox.prepared.image_digest,
     tool_manifest_digest: sandbox.prepared.tool_manifest_digest,
     runtime_policy_digest: sandbox.prepared.runtime_policy_digest,
+    workspace_access: sandbox.workspace_access,
   }
   let content = manifest.to_json().stringify(indent=0) + "\n"
   if @sys.path_exists(path) {
@@ -263,7 +277,7 @@ async fn native_runtime_sandbox(
     _ =>
       return Err(native_part_effect_error("sandbox registry schema is invalid"))
   }
-  if manifest.version != 1 ||
+  if manifest.version != 2 ||
     manifest.generation_id != generation_id ||
     !valid_native_effect_token(manifest.base_box_id) ||
     !valid_native_effect_token(manifest.box_id) ||
@@ -285,6 +299,7 @@ async fn native_runtime_sandbox(
     prepared,
     box_id: manifest.box_id,
     source_digest: manifest.source_digest,
+    workspace_access: manifest.workspace_access,
   }
   match inspect_native_boxlite_take(sandbox) {
     Ok(_) => ()
@@ -313,6 +328,35 @@ async fn prepare_native_part_sandbox(
   snapshot : @workflow.PartWorkflowSnapshot,
   lease : @control.SandboxLease,
 ) -> Result[@control.SandboxLease, @types.ChoirError] {
+  let (commit_oid, tree_oid) = if lease.take_id ==
+    snapshot.implementation_take.id {
+    (
+      snapshot.task_contract.base_commit_oid,
+      snapshot.task_contract.base_tree_oid,
+    )
+  } else {
+    match snapshot.candidate {
+      Some(candidate) => (candidate.commit_oid, candidate.tree_oid)
+      None => return Err(native_part_effect_error("candidate is missing"))
+    }
+  }
+  prepare_native_source_sandbox(
+    runtime,
+    lease,
+    commit_oid,
+    tree_oid,
+    read_only_subject=lease.take_id != snapshot.implementation_take.id,
+  )
+}
+
+///|
+async fn prepare_native_source_sandbox(
+  runtime : NativePartEffectRuntime,
+  lease : @control.SandboxLease,
+  commit_oid : @control.GitOid,
+  tree_oid : @control.GitOid,
+  read_only_subject? : Bool = false,
+) -> Result[@control.SandboxLease, @types.ChoirError] {
   match runtime.sandboxes.get(lease.generation_id.0) {
     Some(_) =>
       return Ok({
@@ -339,27 +383,7 @@ async fn prepare_native_part_sandbox(
       value
     }
   }
-  let (commit_oid, tree_oid, source_digest) = if lease.take_id ==
-    snapshot.implementation_take.id {
-    (
-      snapshot.task_contract.base_commit_oid,
-      snapshot.task_contract.base_tree_oid,
-      native_source_digest(
-        snapshot.task_contract.base_commit_oid,
-        snapshot.task_contract.base_tree_oid,
-      ),
-    )
-  } else {
-    match snapshot.candidate {
-      Some(candidate) =>
-        (
-          candidate.commit_oid,
-          candidate.tree_oid,
-          native_source_digest(candidate.commit_oid, candidate.tree_oid),
-        )
-      None => return Err(native_part_effect_error("candidate is missing"))
-    }
-  }
+  let source_digest = native_source_digest(commit_oid, tree_oid)
   let staged = match
     stage_native_git_workspace(
       runtime.config.git_workspace,
@@ -371,7 +395,7 @@ async fn prepare_native_part_sandbox(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let sandbox = match
+  let mutable_sandbox = match
     clone_native_boxlite_take(
       prepared,
       "choir-" + lease.generation_id.0,
@@ -380,6 +404,14 @@ async fn prepare_native_part_sandbox(
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
+  }
+  let sandbox = if read_only_subject {
+    match seal_native_boxlite_assurance_subject(mutable_sandbox) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+  } else {
+    mutable_sandbox
   }
   runtime.server.val = sandbox.prepared.server
   runtime.prepared.val = Some(sandbox.prepared)
@@ -410,9 +442,180 @@ fn native_claude_config(
     mcp_executable: runtime.config.node_executable,
     mcp_arguments: arguments,
     mcp_server_name: "choir_sandbox",
-    allowed_tools: @sandbox.boxlite_take_mcp_tools(),
+    allowed_tools: match sandbox.workspace_access {
+      @sandbox.BoxLiteWorkspaceAccess::BoxLiteMutableWorkspace =>
+        @sandbox.boxlite_take_mcp_tools()
+      @sandbox.BoxLiteWorkspaceAccess::BoxLiteReadOnlySubject =>
+        @sandbox.boxlite_assurance_mcp_tools()
+    },
     timeout_ms: 3600000,
   })
+}
+
+///|
+fn native_codex_config(
+  runtime : NativePartEffectRuntime,
+  session : @control.HarnessSession,
+  sandbox : NativeBoxLiteTakeSandbox,
+) -> Result[NativeCodexDriverConfig, @types.ChoirError] {
+  let arguments = match
+    native_boxlite_take_mcp_arguments(
+      sandbox,
+      runtime.config.sandbox_mcp_script,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  Ok({
+    sterile_root: runtime.config.codex_root + session.id.0,
+    mcp_executable: runtime.config.node_executable,
+    mcp_arguments: arguments,
+    mcp_server_name: "choir_sandbox",
+    allowed_tools: match sandbox.workspace_access {
+      @sandbox.BoxLiteWorkspaceAccess::BoxLiteMutableWorkspace =>
+        @sandbox.boxlite_take_codex_mcp_tools()
+      @sandbox.BoxLiteWorkspaceAccess::BoxLiteReadOnlySubject =>
+        @sandbox.boxlite_assurance_codex_mcp_tools()
+    },
+    timeout_ms: 3600000,
+  })
+}
+
+///|
+enum NativeTakeRole {
+  NativeImplementationTake
+  NativeVerificationTake
+  NativeAuditTake
+}
+
+///|
+enum NativeTakeOutcome {
+  NativeImplementationCompleted
+  NativeVerificationPassed
+  NativeVerificationFailed
+  NativeAuditPassed
+  NativeAuditFindings(Int, Int)
+} derive(Eq, ToJson)
+
+///|
+struct NativeProviderResult {
+  session : @control.HarnessSession
+  events : Array[@control.HarnessEventEnvelope]
+  terminal_response : String
+  outcome : NativeTakeOutcome
+  started_at : Int64
+  finished_at : Int64
+}
+
+///|
+async fn run_native_part_provider_take(
+  runtime : NativePartEffectRuntime,
+  session : @control.HarnessSession,
+  sandbox : NativeBoxLiteTakeSandbox,
+  role : NativeTakeRole,
+  instruction : String,
+) -> Result[NativeProviderResult, @types.ChoirError] {
+  match session.surface {
+    @control.ProviderSurfaceId::ClaudeSubscriptionCli => {
+      let config = match native_claude_config(runtime, session, sandbox) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let claude_role = match role {
+        NativeImplementationTake =>
+          @harness.ClaudeTakeRole::ClaudeImplementationTake
+        NativeVerificationTake =>
+          @harness.ClaudeTakeRole::ClaudeVerificationTake
+        NativeAuditTake => @harness.ClaudeTakeRole::ClaudeAuditTake
+      }
+      let result = match
+        run_native_claude_take(
+          config,
+          session,
+          claude_role,
+          instruction,
+          runtime.config.now,
+          cancellation_requested=runtime.config.goal_cancellation_requested,
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let outcome = match result.outcome {
+        @harness.ClaudeTakeOutcome::ClaudeImplementationCompleted =>
+          NativeImplementationCompleted
+        @harness.ClaudeTakeOutcome::ClaudeVerificationPassed =>
+          NativeVerificationPassed
+        @harness.ClaudeTakeOutcome::ClaudeVerificationFailed =>
+          NativeVerificationFailed
+        @harness.ClaudeTakeOutcome::ClaudeAuditPassed => NativeAuditPassed
+        @harness.ClaudeTakeOutcome::ClaudeAuditFindings(total, blocking) =>
+          NativeAuditFindings(total, blocking)
+      }
+      Ok({
+        session: result.session,
+        events: result.events,
+        terminal_response: result.terminal_response,
+        outcome,
+        started_at: result.started_at,
+        finished_at: result.finished_at,
+      })
+    }
+    @control.ProviderSurfaceId::CodexSubscriptionCli => {
+      let config = match native_codex_config(runtime, session, sandbox) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let codex_role = match role {
+        NativeImplementationTake =>
+          @harness.CodexTakeRole::CodexImplementationTake
+        NativeVerificationTake => @harness.CodexTakeRole::CodexVerificationTake
+        NativeAuditTake => @harness.CodexTakeRole::CodexAuditTake
+      }
+      let result = match
+        run_native_codex_take(
+          config,
+          session,
+          codex_role,
+          instruction,
+          runtime.config.now,
+          cancellation_requested=runtime.config.goal_cancellation_requested,
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let outcome = match result.outcome {
+        @harness.CodexTakeOutcome::CodexImplementationCompleted =>
+          NativeImplementationCompleted
+        @harness.CodexTakeOutcome::CodexVerificationPassed =>
+          NativeVerificationPassed
+        @harness.CodexTakeOutcome::CodexVerificationFailed =>
+          NativeVerificationFailed
+        @harness.CodexTakeOutcome::CodexAuditPassed => NativeAuditPassed
+        @harness.CodexTakeOutcome::CodexAuditFindings(total, blocking) =>
+          NativeAuditFindings(total, blocking)
+      }
+      Ok({
+        session: result.session,
+        events: result.events,
+        terminal_response: result.terminal_response,
+        outcome,
+        started_at: result.started_at,
+        finished_at: result.finished_at,
+      })
+    }
+  }
+}
+
+///|
+fn start_native_part_harness(
+  session : @control.HarnessSession,
+) -> Result[@control.HarnessSession, @types.ChoirError] {
+  match session.surface {
+    @control.ProviderSurfaceId::ClaudeSubscriptionCli =>
+      @harness.start_claude_harness_session(session)
+    @control.ProviderSurfaceId::CodexSubscriptionCli =>
+      @harness.start_codex_harness_session(session)
+  }
 }
 
 ///|
@@ -512,22 +715,18 @@ async fn execute_native_implementation(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let claude = match native_claude_config(runtime, session, sandbox) {
-    Ok(value) => value
-    Err(error) => return Err(error)
-  }
   let result = match
-    run_native_claude_take(
-      claude,
+    run_native_part_provider_take(
+      runtime,
       session,
-      @harness.ClaudeTakeRole::ClaudeImplementationTake,
+      sandbox,
+      NativeImplementationTake,
       instruction,
-      runtime.config.now,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  if result.outcome != @harness.ClaudeTakeOutcome::ClaudeImplementationCompleted {
+  if result.outcome != NativeImplementationCompleted {
     return Err(native_part_effect_error("implementation did not complete"))
   }
   let artifact = match
@@ -732,28 +931,38 @@ async fn execute_native_verification(
         take_id,
         fencing_epoch: snapshot.fencing_epoch,
       },
+      snapshot.task_contract.verification_specs[0].process_spec_digest,
       process,
       fn(artifact) { native_artifact_exists(runtime, artifact) },
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let claude = match native_claude_config(runtime, session, sandbox) {
+  let task = match
+    read_native_instruction(
+      runtime,
+      snapshot.task_contract.instruction_artifact,
+    ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let instruction = "Independently inspect candidate " +
+  let changed_paths = candidate.changed_paths.map(fn(path) { path.0 }).join(",")
+  let instruction = "Independently verify candidate " +
     candidate.commit_oid.0 +
-    ". The trusted typed verifier ran the declared process with exit code " +
+    " against this exact Part task:\n" +
+    task +
+    "\nThe candidate changed only these declared paths: " +
+    changed_paths +
+    ". The trusted typed verifier ran this Part's declared process with exit code " +
     process_result.exit_code.to_string() +
-    ". Inspect relevant files and return the required verification outcome."
+    ". Inspect the changed paths and declared task. Unchanged work assigned to other Parts is outside this verification subject. Return failed only for a defect attributable to this candidate or its declared verification."
   let provider = match
-    run_native_claude_take(
-      claude,
+    run_native_part_provider_take(
+      runtime,
       session,
-      @harness.ClaudeTakeRole::ClaudeVerificationTake,
+      sandbox,
+      NativeVerificationTake,
       instruction,
-      runtime.config.now,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -766,7 +975,7 @@ async fn execute_native_verification(
     Err(error) => return Err(error)
   }
   let outcome = if process_result.exit_code == 0 &&
-    provider.outcome == @harness.ClaudeTakeOutcome::ClaudeVerificationPassed {
+    provider.outcome == NativeVerificationPassed {
     @control.VerificationOutcome::VerificationPassed
   } else {
     @control.VerificationOutcome::VerificationFailed
@@ -775,7 +984,7 @@ async fn execute_native_verification(
     "subject": subject.to_json(),
     "process_spec_digest": snapshot.task_contract.verification_specs[0].process_spec_digest.to_json(),
     "process_result": process_result.to_json(),
-    "provider_outcome": provider.outcome.to_json(),
+    "provider_outcome": ToJson::to_json(provider.outcome),
     "provider_terminal_response": provider.terminal_response.to_json(),
     "pre_tree": candidate.tree_oid.to_json(),
     "post_tree": post_tree.to_json(),
@@ -847,19 +1056,21 @@ async fn execute_native_audit(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let claude = match native_claude_config(runtime, session, sandbox) {
-    Ok(value) => value
-    Err(error) => return Err(error)
-  }
-  let instruction = "Independently audit the candidate against this task:\n" +
-    task
+  let changed_paths = candidate.changed_paths.map(fn(path) { path.0 }).join(",")
+  let instruction = "Independently audit candidate " +
+    candidate.commit_oid.0 +
+    " against this exact Part task:\n" +
+    task +
+    "\nThe candidate changed only these declared paths: " +
+    changed_paths +
+    ". Findings must be attributable to this candidate or its task contract; unchanged work assigned to other Parts is outside this audit subject."
   let provider = match
-    run_native_claude_take(
-      claude,
+    run_native_part_provider_take(
+      runtime,
       session,
-      @harness.ClaudeTakeRole::ClaudeAuditTake,
+      sandbox,
+      NativeAuditTake,
       instruction,
-      runtime.config.now,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -874,9 +1085,8 @@ async fn execute_native_audit(
     },
   )
   let (outcome, total, blocking) = match provider.outcome {
-    @harness.ClaudeTakeOutcome::ClaudeAuditPassed =>
-      (@control.AuditOutcome::AuditPassed, 0, 0)
-    @harness.ClaudeTakeOutcome::ClaudeAuditFindings(total, blocking) =>
+    NativeAuditPassed => (@control.AuditOutcome::AuditPassed, 0, 0)
+    NativeAuditFindings(total, blocking) =>
       (@control.AuditOutcome::AuditFindings, total, blocking)
     _ => return Err(native_part_effect_error("audit outcome is invalid"))
   }
@@ -901,7 +1111,9 @@ async fn execute_native_audit(
         take_fencing_epoch: snapshot.fencing_epoch,
         audit_harness_session_id: session_id,
         subject,
-        provider_conformance_report_digest: runtime.config.provider_conformance_report_digest,
+        provider_conformance_report_digest: (runtime.config.provider_conformance_report_digest)(
+          session.surface,
+        ),
         findings_artifact: findings,
         total_findings_count: total,
         blocking_findings_count: blocking,
@@ -947,7 +1159,7 @@ async fn execute_native_part_effect(
         Err(error) => Err(error)
       }
     @workflow.PartEffectKind::StartImplementationHarness(session) =>
-      match @harness.start_claude_harness_session(session) {
+      match start_native_part_harness(session) {
         Ok(value) =>
           Ok(
             @workflow.PartEffectObservation::ImplementationHarnessStarted(value),
@@ -955,13 +1167,13 @@ async fn execute_native_part_effect(
         Err(error) => Err(error)
       }
     @workflow.PartEffectKind::StartVerificationHarness(session) =>
-      match @harness.start_claude_harness_session(session) {
+      match start_native_part_harness(session) {
         Ok(value) =>
           Ok(@workflow.PartEffectObservation::VerificationHarnessStarted(value))
         Err(error) => Err(error)
       }
     @workflow.PartEffectKind::StartAuditHarness(session) =>
-      match @harness.start_claude_harness_session(session) {
+      match start_native_part_harness(session) {
         Ok(value) =>
           Ok(@workflow.PartEffectObservation::AuditHarnessStarted(value))
         Err(error) => Err(error)

@@ -711,7 +711,7 @@ test "promotion synthesis ignores repository and ambient Git configuration" {
     repository_root: "/repo",
     git_directory: "/repo/.git",
     object_directory: "/repo/.git/objects",
-    control_root: "/tmp/choir-v2-integration-control",
+    control_root: "/tmp/choir-integration-control",
     goal_ref: "refs/heads/choir/goal",
   }
   let object_spec = native_git_process_spec(

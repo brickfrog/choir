@@ -1410,6 +1410,12 @@ pub async fn dispatch(
   goal_nonce? : () -> String = fn() {
     @types.next_goal_nonce(@env.now().reinterpret_as_int64())
   },
+  goal_submit? : async (String) -> @types.Response = goal_submit_unavailable,
+  goal_status? : async (String) -> @types.Response = goal_status_unavailable,
+  goal_cancel? : async (String) -> @types.Response = goal_cancel_unavailable,
+  goal_steer? : async (String, GoalSteerAction) -> @types.Response = goal_steer_unavailable,
+  goal_attach? : async (String) -> @types.Response = goal_attach_unavailable,
+  goal_answer? : async (String, String) -> @types.Response = goal_answer_unavailable,
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
   handoff_status_reader? : (String) -> Bool = fn(_agent_id) { false },
   agy_migration_incomplete? : Bool = false,
@@ -2231,18 +2237,29 @@ pub async fn dispatch(
         goal_deliver~,
         goal_request_tick~,
       )
+    ToolRequest::GoalSubmit(goal_args) => goal_submit(goal_args.draft_json)
     ToolRequest::GoalClear =>
       interpret_goal_clear(project_dir, session, read_file, delete_file)
     ToolRequest::GoalStatus(goal_args) =>
-      interpret_goal_status(
-        goal_args,
-        project_dir,
-        session,
-        runner,
-        bd_capture,
-        read_file,
-        @poller.now_sec(),
-      )
+      match goal_args.goal_id {
+        Some(goal_id) => goal_status(goal_id)
+        None =>
+          interpret_goal_status(
+            goal_args,
+            project_dir,
+            session,
+            runner,
+            bd_capture,
+            read_file,
+            @poller.now_sec(),
+          )
+      }
+    ToolRequest::GoalCancel(goal_args) => goal_cancel(goal_args.goal_id)
+    ToolRequest::GoalSteer(goal_args) =>
+      goal_steer(goal_args.goal_id, goal_args.action)
+    ToolRequest::GoalAttach(goal_args) => goal_attach(goal_args.take_id)
+    ToolRequest::GoalAnswer(goal_args) =>
+      goal_answer(goal_args.request_id, goal_args.answer)
     ToolRequest::MutexAcquire(mutex_args) =>
       match mutex_registry {
         Some(reg) => {
@@ -2678,6 +2695,12 @@ pub async fn handle_request(
   goal_nonce? : () -> String = fn() {
     @types.next_goal_nonce(@env.now().reinterpret_as_int64())
   },
+  goal_submit? : async (String) -> @types.Response = goal_submit_unavailable,
+  goal_status? : async (String) -> @types.Response = goal_status_unavailable,
+  goal_cancel? : async (String) -> @types.Response = goal_cancel_unavailable,
+  goal_steer? : async (String, GoalSteerAction) -> @types.Response = goal_steer_unavailable,
+  goal_attach? : async (String) -> @types.Response = goal_attach_unavailable,
+  goal_answer? : async (String, String) -> @types.Response = goal_answer_unavailable,
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
   handoff_status_reader? : (String) -> Bool = fn(_agent_id) { false },
   policy_enforcement_mode? : @policy.PolicyEnforcementMode = @policy.policy_enforcement_mode,
@@ -2828,6 +2851,12 @@ pub async fn handle_request(
                   goal_deliver~,
                   goal_request_tick~,
                   goal_nonce~,
+                  goal_submit~,
+                  goal_status~,
+                  goal_cancel~,
+                  goal_steer~,
+                  goal_attach~,
+                  goal_answer~,
                   record_handoff_delivered~,
                   handoff_status_reader~,
                   agy_migration_incomplete~,
@@ -2910,8 +2939,13 @@ fn dispatch_call_goal_gate_response(
   name : String,
 ) -> @types.Response? {
   let is_goal_tool = name == "goal_set" ||
+    name == "goal_submit" ||
     name == "goal_clear" ||
-    name == "goal_status"
+    name == "goal_status" ||
+    name == "goal_cancel" ||
+    name == "goal_steer" ||
+    name == "goal_attach" ||
+    name == "goal_answer"
   if !is_goal_tool {
     if name.has_prefix("goal_") {
       Some(
@@ -2964,6 +2998,42 @@ async fn uninjected_hook_capture(
 ) -> (Int, String) {
   @async.sleep(0)
   abort("dispatch_call: hook_capture not injected")
+}
+
+///|
+async fn goal_submit_unavailable(_draft_json : String) -> @types.Response {
+  @types.Response::Err("Goal submission capability is unavailable")
+}
+
+///|
+async fn goal_status_unavailable(_goal_id : String) -> @types.Response {
+  @types.Response::Err("Goal status capability is unavailable")
+}
+
+///|
+async fn goal_cancel_unavailable(_goal_id : String) -> @types.Response {
+  @types.Response::Err("Goal cancellation capability is unavailable")
+}
+
+///|
+async fn goal_steer_unavailable(
+  _goal_id : String,
+  _action : GoalSteerAction,
+) -> @types.Response {
+  @types.Response::Err("Goal steering capability is unavailable")
+}
+
+///|
+async fn goal_attach_unavailable(_take_id : String) -> @types.Response {
+  @types.Response::Err("Goal attach capability is unavailable")
+}
+
+///|
+async fn goal_answer_unavailable(
+  _request_id : String,
+  _answer : String,
+) -> @types.Response {
+  @types.Response::Err("Goal answer capability is unavailable")
 }
 
 ///|
@@ -3025,6 +3095,12 @@ pub async fn dispatch_call(
   project_verify_cmd? : String? = None,
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
   goal_request_tick? : () -> Unit = goal_noop_request_tick,
+  goal_submit? : async (String) -> @types.Response = goal_submit_unavailable,
+  goal_status? : async (String) -> @types.Response = goal_status_unavailable,
+  goal_cancel? : async (String) -> @types.Response = goal_cancel_unavailable,
+  goal_steer? : async (String, GoalSteerAction) -> @types.Response = goal_steer_unavailable,
+  goal_attach? : async (String) -> @types.Response = goal_attach_unavailable,
+  goal_answer? : async (String, String) -> @types.Response = goal_answer_unavailable,
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
   handoff_status_reader? : (String) -> Bool = fn(_agent_id) { false },
   policy_enforcement_mode? : @policy.PolicyEnforcementMode = @policy.policy_enforcement_mode,
@@ -3121,6 +3197,12 @@ pub async fn dispatch_call(
                   create_dir_all~,
                   goal_deliver~,
                   goal_request_tick~,
+                  goal_submit~,
+                  goal_status~,
+                  goal_cancel~,
+                  goal_steer~,
+                  goal_attach~,
+                  goal_answer~,
                   record_handoff_delivered~,
                   handoff_status_reader~,
                   agy_migration_incomplete~,

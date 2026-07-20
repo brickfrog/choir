@@ -24,8 +24,13 @@ pub(all) enum ToolRequest {
   KvDelete(KvKeyArgs)
   KvList
   GoalSet(GoalSetArgs)
+  GoalSubmit(GoalSubmitArgs)
   GoalClear
   GoalStatus(GoalStatusArgs)
+  GoalCancel(GoalCancelArgs)
+  GoalSteer(GoalSteerArgs)
+  GoalAttach(GoalAttachArgs)
+  GoalAnswer(GoalAnswerArgs)
   MutexAcquire(MutexAcquireArgs)
   MutexRelease(MutexReleaseArgs)
   MutexStatus(MutexNameArgs)
@@ -74,8 +79,13 @@ pub fn ToolRequest::tool_name(self : ToolRequest) -> String {
     KvDelete(_) => "kv_delete"
     KvList => "kv_list"
     GoalSet(_) => "goal_set"
+    GoalSubmit(_) => "goal_submit"
     GoalClear => "goal_clear"
     GoalStatus(_) => "goal_status"
+    GoalCancel(_) => "goal_cancel"
+    GoalSteer(_) => "goal_steer"
+    GoalAttach(_) => "goal_attach"
+    GoalAnswer(_) => "goal_answer"
     MutexAcquire(_) => "mutex_acquire"
     MutexRelease(_) => "mutex_release"
     MutexStatus(_) => "mutex_status"

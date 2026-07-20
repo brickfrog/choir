@@ -24,6 +24,75 @@ fn workflow_store_take(
 }
 
 ///|
+fn workflow_store_goal_assurance_identities(
+  goal : @control.Goal,
+  head_oid : @control.GitOid,
+) -> @workflow.GoalAssuranceIdentityPlan {
+  let verification = workflow_store_take(
+    "goal-verification-store",
+    @control.TakePurpose::GoalVerification(
+      goal.id,
+      head_oid,
+      goal.contract_digest,
+    ),
+  )
+  let audit = workflow_store_take(
+    "goal-audit-store",
+    @control.TakePurpose::GoalAudit(goal.id, goal.contract_digest),
+  )
+  let sandbox = fn(
+    id : String,
+    generation : String,
+    take : @control.Take,
+    capability : @control.Digest,
+  ) -> @control.SandboxLease {
+    {
+      id: @control.SandboxLeaseId(id),
+      take_id: take.id,
+      generation_id: @control.SandboxGenerationId(generation),
+      capability_profile_digest: capability,
+      runtime_policy_digest: workflow_store_digest_b,
+      lifecycle: @control.SandboxLeaseLifecycle::SandboxLeasePlanned,
+    }
+  }
+  let verification_sandbox = sandbox(
+    "goal-verification-sandbox-store", "goal-verification-generation-store", verification,
+    workflow_store_digest_a,
+  )
+  let audit_sandbox = sandbox(
+    "goal-audit-sandbox-store", "goal-audit-generation-store", audit, workflow_store_digest_b,
+  )
+  let session = fn(
+    id : String,
+    take : @control.Take,
+    lease : @control.SandboxLease,
+  ) -> @control.HarnessSession {
+    {
+      id: @control.HarnessSessionId(id),
+      take_id: take.id,
+      sandbox_generation_id: lease.generation_id,
+      surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+      effective_surface_manifest_digest: workflow_store_digest_a,
+      cursor_class: @control.HarnessCursorClass::HarnessCursorNotResumable,
+      provider_cursor: None,
+      last_choir_sequence: @control.EventSequence(0L),
+      open_tool_execution_ids: [],
+      lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+    }
+  }
+  {
+    verification_take: verification,
+    verification_sandbox,
+    verification_session: session(
+      "goal-verification-session-store", verification, verification_sandbox,
+    ),
+    audit_take: audit,
+    audit_sandbox,
+    audit_session: session("goal-audit-session-store", audit, audit_sandbox),
+  }
+}
+
+///|
 fn workflow_store_fixture() -> @workflow.PartWorkflowSnapshot raise {
   let goal : @control.Goal = {
     id: @control.GoalId("goal-store"),
@@ -629,6 +698,9 @@ fn workflow_driver_dependencies(
         ),
       })
     },
+    goal_authorizes_new_effects: fn() {
+      Ok(@workflow.PartGoalAuthorization::PartGoalAuthorized(None))
+    },
     integration_admission: fn(snapshot) {
       Ok(
         @workflow.PartIntegrationAdmission::PartIntegrationAdmitted({
@@ -650,6 +722,158 @@ fn workflow_driver_dependencies(
       snapshot.identities.verification_sandbox.runtime_policy_digest
     },
   }
+}
+
+///|
+async test "Goal cutoff stops Part effect planning without producing work" {
+  let repository = workflow_repository("driver-goal-cutoff")
+  clean_workflow_repository(repository)
+  let execute_count = @ref.new(0)
+  let reconcile_count = @ref.new(0)
+  let admitted = workflow_driver_dependencies(
+    execute_count,
+    reconcile_count,
+    fn(_) { None },
+    workflow_driver_recover_observation,
+  )
+  let cut_off : @workflow.PartWorkflowDriverDependencies = {
+    ..admitted,
+    goal_authorizes_new_effects: fn() {
+      Ok(@workflow.PartGoalAuthorization::PartGoalNotAuthorized)
+    },
+  }
+  let result = match
+    @workflow.run_new_part_workflow(
+      repository,
+      workflow_repository_adapters(),
+      workflow_store_fixture(),
+      cut_off,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(
+    result.outcome,
+    @workflow.PartWorkflowRunOutcome::PartRunGoalNotAuthorizing,
+  )
+  assert_eq(result.snapshot.stage, @workflow.PartWorkflowStage::PartAccepted)
+  assert_true(result.snapshot.pending_effect is None)
+  assert_eq(execute_count.val, 0)
+  assert_eq(reconcile_count.val, 0)
+  clean_workflow_repository(repository)
+}
+
+///|
+async test "Goal cutoff atomically rejects a concurrently authorized Part effect" {
+  let repository = workflow_repository("driver-goal-cutoff-race")
+  clean_workflow_repository(repository)
+  let adapters = workflow_repository_adapters()
+  guard @workflow.initialize_part_workflow_repository(repository, adapters)
+    is Ok(_) else {
+    fail("initialize cutoff-race repository")
+  }
+  let initial = workflow_store_fixture()
+  let initial_receipt = @workflow.persist_part_snapshot(repository, adapters, {
+    snapshot: initial,
+    expected_store_version: None,
+    fault_point: None,
+  }).unwrap()
+  let intent = @workflow.plan_next_part_effect(initial).unwrap().unwrap()
+  let planned = @workflow.persist_planned_part_effect(initial, intent).unwrap()
+  ignore(
+    @workflow.persist_part_snapshot(repository, adapters, {
+      snapshot: planned,
+      expected_store_version: Some(initial_receipt.store_version),
+      fault_point: None,
+    }).unwrap(),
+  )
+  let running_request : @storage.StateTransactionRequest = {
+    state: {
+      key: @storage.StateRecordKey("goal-run:cutoff-race"),
+      expected_version: None,
+      next_version: 1,
+      fencing_epoch: @control.FencingEpoch(7L),
+      value_digest: workflow_store_digest_a,
+    },
+    outbox: {
+      semantic_key: @storage.SemanticEventKey("goal-run:cutoff-race:running"),
+      payload_digest: workflow_store_digest_a,
+    },
+    fault_point: None,
+  }
+  assert_true(
+    (adapters.state.commit)(repository.state_store, running_request)
+    is Ok(@storage.StateTransactionOutcome::StateTransactionCommitted),
+  )
+  let running_record = (adapters.state.read_state)(
+      repository.state_store,
+      running_request.state.key,
+    )
+    .unwrap()
+    .unwrap()
+  let cutoff_written = @ref.new(false)
+  let execute_count = @ref.new(0)
+  let reconcile_count = @ref.new(0)
+  let admitted = workflow_driver_dependencies(
+    execute_count,
+    reconcile_count,
+    fn(_) { None },
+    workflow_driver_recover_observation,
+  )
+  let racing : @workflow.PartWorkflowDriverDependencies = {
+    ..admitted,
+    goal_authorizes_new_effects: fn() {
+      if !cutoff_written.val {
+        let cutoff : @storage.StateTransactionRequest = {
+          state: {
+            ..running_request.state,
+            expected_version: Some(1),
+            next_version: 2,
+            value_digest: workflow_store_digest_b,
+          },
+          outbox: {
+            semantic_key: @storage.SemanticEventKey(
+              "goal-run:cutoff-race:canceling",
+            ),
+            payload_digest: workflow_store_digest_b,
+          },
+          fault_point: None,
+        }
+        guard (adapters.state.commit)(repository.state_store, cutoff)
+          is Ok(@storage.StateTransactionOutcome::StateTransactionCommitted) else {
+          return Err(@types.ChoirError::workspace_error("cutoff commit failed"))
+        }
+        cutoff_written.val = true
+      }
+      Ok(
+        @workflow.PartGoalAuthorization::PartGoalAuthorized(
+          Some({ record: running_record }),
+        ),
+      )
+    },
+  }
+  let result = @workflow.resume_part_workflow(
+    repository,
+    adapters,
+    planned.workflow_id,
+    racing,
+  ).unwrap()
+  assert_eq(
+    result.outcome,
+    @workflow.PartWorkflowRunOutcome::PartRunGoalNotAuthorizing,
+  )
+  assert_eq(result.snapshot, planned)
+  assert_eq(execute_count.val, 0)
+  assert_eq(reconcile_count.val, 0)
+  let reloaded = @workflow.load_part_snapshot(
+      repository,
+      adapters,
+      planned.workflow_id,
+    )
+    .unwrap()
+    .unwrap()
+  assert_eq(reloaded.snapshot, planned)
+  clean_workflow_repository(repository)
 }
 
 ///|
@@ -708,6 +932,97 @@ async test "Part driver persists an integrated result and resumes without work" 
   )
   assert_eq(execute_count.val, executed_before_resume)
   assert_eq(reconcile_count.val, 0)
+  clean_workflow_repository(repository)
+}
+
+///|
+async test "Goal cancellation persists an applied integration witness before finishing" {
+  let repository = workflow_repository("cancel-integration-witness")
+  clean_workflow_repository(repository)
+  let adapters = workflow_repository_adapters()
+  let execute_count = @ref.new(0)
+  let reconcile_count = @ref.new(0)
+  let admitted = workflow_driver_dependencies(
+    execute_count,
+    reconcile_count,
+    fn(_) { None },
+    workflow_driver_recover_observation,
+  )
+  let interrupted : @workflow.PartWorkflowDriverDependencies = {
+    ..admitted,
+    effects: {
+      execute: async fn(snapshot, intent) {
+        execute_count.val = execute_count.val + 1
+        if intent.kind is @workflow.PartEffectKind::ApplyIntegration(_, _) {
+          Err(
+            @types.ChoirError::canceled(
+              "cancel after integration authorization",
+            ),
+          )
+        } else {
+          workflow_driver_observation(snapshot, intent)
+        }
+      },
+      reconcile: admitted.effects.reconcile,
+    },
+  }
+  assert_true(
+    @workflow.run_new_part_workflow(
+      repository,
+      adapters,
+      workflow_store_fixture(),
+      interrupted,
+    )
+    is Err(_),
+  )
+  let authorized = @workflow.load_part_snapshot(
+      repository, adapters, "workflow-store",
+    )
+    .unwrap()
+    .unwrap()
+  guard authorized.snapshot.pending_effect
+    is Some(
+      {
+        lifecycle: @workflow.PartEffectLifecycle::PartEffectMayHaveOccurred,
+        kind: @workflow.PartEffectKind::ApplyIntegration(_, promotion),
+        ..,
+      }
+    ) else {
+    fail("integration effect was not durably authorized")
+  }
+  let witnessed = @workflow.persist_recovered_part_effect_observation(
+    repository,
+    adapters,
+    authorized,
+    @workflow.PartEffectObservation::IntegrationWitnessObserved(
+      @control.IntegrationWitnessObservation::IntegrationWitnessApplied(
+        promotion.commit_oid,
+        promotion.commit_oid,
+      ),
+    ),
+    130L,
+    fn(_) { true },
+    fn(_) { true },
+  ).unwrap()
+  assert_eq(
+    witnessed.snapshot.stage,
+    @workflow.PartWorkflowStage::PartIntegrated,
+  )
+  assert_true(witnessed.snapshot.integration_receipt is Some(_))
+  assert_true(witnessed.snapshot.pending_effect is None)
+  let canceled = @workflow.persist_part_goal_cancellation(
+    repository, adapters, witnessed,
+  ).unwrap()
+  assert_true(
+    @workflow.part_cancellation_disposition_is_known(canceled.snapshot),
+  )
+  assert_true(canceled.snapshot.integration_receipt is Some(_))
+  let replay = @workflow.load_part_snapshot(
+      repository, adapters, "workflow-store",
+    )
+    .unwrap()
+    .unwrap()
+  assert_eq(replay, canceled)
   clean_workflow_repository(repository)
 }
 
@@ -839,6 +1154,392 @@ async test "Goal adapter resumes promotion after a durable rollback" {
 }
 
 ///|
+async test "Goal cancellation atomically rejects stale seal authorization" {
+  let repository = workflow_repository("goal-assurance-cutoff")
+  clean_workflow_repository(repository)
+  let adapters = workflow_repository_adapters()
+  let snapshot = workflow_store_fixture()
+  let scheduling_record : @workflow.GoalPartSchedulingRecord = {
+    part: { ..snapshot.part, lifecycle: @control.PartLifecycle::PartPending },
+    task_contract: snapshot.task_contract,
+  }
+  let execute_count = @ref.new(0)
+  let reconcile_count = @ref.new(0)
+  let config : @exec.GoalPartWorkflowAdapterConfig = {
+    bindings: [{ scheduling_record, initial_snapshot: snapshot, repository }],
+    repository_adapters: adapters,
+    dependencies: fn(_, admission) {
+      let dependencies = workflow_driver_dependencies(
+        execute_count,
+        reconcile_count,
+        fn(_) { None },
+        workflow_driver_recover_observation,
+      )
+      Ok({ ..dependencies, integration_admission: fn(_) { Ok(admission) } })
+    },
+    integration_input: fn(current, selection) {
+      Ok({
+        lease: {
+          id: @control.IntegrationLeaseId("assurance-cutoff-lease"),
+          goal_id: current.goal.id,
+          fencing_epoch: current.fencing_epoch,
+          holder: "choird-test",
+        },
+        intent_id: @control.IntegrationIntentId("assurance-cutoff-intent"),
+        expected_goal_head_oid: selection.expected_goal_head_oid,
+        promotion_metadata_digest: workflow_store_digest_a,
+        git_witness_ref: "refs/choir/witness/assurance-cutoff-intent",
+      })
+    },
+    read_goal_head: async fn() { Ok(@control.GitOid("goal-head-store")) },
+  }
+  let result = match
+    @workflow.run_goal_parts(
+      [scheduling_record],
+      1,
+      @exec.goal_part_workflow_adapters(config),
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(result.outcome, @workflow.GoalRunOutcome::GoalRunSucceeded)
+  let integrated = @workflow.load_part_snapshot(
+      repository,
+      adapters,
+      snapshot.workflow_id,
+    )
+    .unwrap()
+    .unwrap().snapshot
+  let execution : @workflow.GoalExecutionRecord = {
+    goal: integrated.goal,
+    repository_id: @workflow.RepositoryId("repository-assurance-cutoff"),
+    selection_decision_digest: workflow_store_digest_a,
+    base_ref: @workflow.GitRefName("refs/heads/main"),
+    base_commit_oid: @control.GitOid("goal-head-store"),
+    base_tree_oid: @control.GitOid("goal-tree-store"),
+    integration_target_ref: @workflow.GitRefName("refs/heads/main"),
+    goal_ref: @workflow.goal_execution_ref(integrated.goal.id),
+    maximum_parallel_parts: 1,
+    policy_revisions: [
+      @workflow.initial_goal_policy_revision(integrated.goal.id, 1),
+    ],
+    part_workflow_ids: [integrated.workflow_id],
+    state: @workflow.GoalExecutionState::GoalExecutionRunning,
+    pause: None,
+    active_input_request: None,
+    input_answers: [],
+    cancellation_request: None,
+    durable_version: 1,
+    fencing_epoch: integrated.fencing_epoch,
+  }
+  let execution_receipt = @workflow.persist_goal_execution_record(
+    repository,
+    adapters,
+    { record: execution, expected_store_version: None, fault_point: None },
+  ).unwrap()
+  assert_eq(
+    execution_receipt.transaction_outcome,
+    @storage.StateTransactionOutcome::StateTransactionCommitted,
+  )
+  let assurance_transition = match
+    @workflow.run_next_goal_execution_tick(repository, adapters, {
+      execute: async fn(_, _) {
+        fail("integrated Goal dispatched another Part")
+      },
+      assure: async fn(_, _) {
+        fail("Goal assurance ran before its durable state transition")
+      },
+      finalize: async fn(_, _) {
+        fail("Goal finalization ran before assurance")
+      },
+      cancel: async fn(_, _) { fail("running Goal entered cancellation") },
+    }) {
+    Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickAdvanced(advanced)) =>
+      advanced
+    Ok(_) => fail("integrated Goal did not enter assurance")
+    Err(error) => fail(error.message())
+  }
+  assert_eq(
+    assurance_transition.state,
+    @workflow.GoalExecutionState::GoalExecutionAssuring,
+  )
+  assert_eq(
+    assurance_transition.goal.lifecycle,
+    @control.GoalLifecycle::GoalActive(
+      @control.GoalActiveCondition::GoalRunning,
+    ),
+  )
+  let planned = @workflow.initialize_goal_assurance(
+    assurance_transition,
+    [integrated],
+    @control.GitOid("promotion-commit-store"),
+    @control.GitOid("promotion-tree-store"),
+    integrated.task_contract.verification_specs,
+    workflow_store_goal_assurance_identities(
+      assurance_transition.goal,
+      @control.GitOid("promotion-commit-store"),
+    ),
+  ).unwrap()
+  let planned_receipt = @workflow.persist_goal_assurance_record(
+    repository,
+    adapters,
+    {
+      record: planned,
+      expected_store_version: None,
+      goal_precondition: @workflow.goal_execution_state_precondition(
+        assurance_transition,
+      ),
+      fault_point: None,
+    },
+  ).unwrap()
+  assert_eq(
+    planned_receipt.outcome,
+    @workflow.GoalAssurancePersistenceOutcome::GoalAssurancePersistenceCompleted(
+      @storage.StateTransactionOutcome::StateTransactionCommitted,
+    ),
+  )
+  let authorized = @workflow.authorize_goal_assurance_seal(
+    planned,
+    assurance_transition.goal,
+    @control.GitOid("promotion-commit-store"),
+    @control.GitOid("promotion-tree-store"),
+  ).unwrap()
+  match
+    @workflow.persist_goal_cancellation_request(
+      repository,
+      adapters,
+      assurance_transition.goal.id,
+      1000L,
+    ) {
+    Ok(
+      @workflow.GoalCancellationPersistenceResult::GoalCancellationPersisted(_)
+    ) => ()
+    Ok(_) => fail("Goal cancellation did not install its cutoff")
+    Err(error) => fail(error.message())
+  }
+  let rejected = @workflow.persist_goal_assurance_record(repository, adapters, {
+    record: authorized,
+    expected_store_version: Some(1),
+    goal_precondition: @workflow.goal_execution_state_precondition(
+      assurance_transition,
+    ),
+    fault_point: None,
+  }).unwrap()
+  assert_eq(
+    rejected.outcome,
+    @workflow.GoalAssurancePersistenceOutcome::GoalAssuranceGoalPreconditionConflict,
+  )
+  let replay = @workflow.load_goal_assurance_record(
+      repository,
+      adapters,
+      assurance_transition.goal.id,
+    )
+    .unwrap()
+    .unwrap()
+  assert_eq(replay.record, planned)
+  clean_workflow_repository(repository)
+}
+
+///|
+async test "Goal steering persists revision history and paused Goals do not run" {
+  let repository = workflow_repository("goal-steering")
+  clean_workflow_repository(repository)
+  let adapters = workflow_repository_adapters()
+  @workflow.initialize_part_workflow_repository(repository, adapters).unwrap()
+  let fixture = workflow_store_fixture()
+  let execution : @workflow.GoalExecutionRecord = {
+    goal: fixture.goal,
+    repository_id: @workflow.RepositoryId("repository-goal-steering"),
+    selection_decision_digest: workflow_store_digest_a,
+    base_ref: @workflow.GitRefName("refs/heads/main"),
+    base_commit_oid: @control.GitOid("goal-steering-head"),
+    base_tree_oid: @control.GitOid("goal-steering-tree"),
+    integration_target_ref: @workflow.GitRefName("refs/heads/main"),
+    goal_ref: @workflow.goal_execution_ref(fixture.goal.id),
+    maximum_parallel_parts: 1,
+    policy_revisions: [
+      @workflow.initial_goal_policy_revision(fixture.goal.id, 1),
+    ],
+    part_workflow_ids: [fixture.workflow_id],
+    state: @workflow.GoalExecutionState::GoalExecutionQueued,
+    pause: None,
+    active_input_request: None,
+    input_answers: [],
+    cancellation_request: None,
+    durable_version: 1,
+    fencing_epoch: fixture.fencing_epoch,
+  }
+  ignore(
+    @workflow.persist_goal_execution_record(repository, adapters, {
+      record: execution,
+      expected_store_version: None,
+      fault_point: None,
+    }).unwrap(),
+  )
+  guard @workflow.persist_goal_steering(
+      repository,
+      adapters,
+      fixture.goal.id,
+      @workflow.GoalPolicyChange::GoalPolicySetMaximumParallelParts(3),
+    ).unwrap()
+    is @workflow.GoalSteeringPersistenceResult::GoalSteeringPersisted(
+      concurrent,
+      concurrency_revision
+    ) else {
+    fail("concurrency policy was not persisted")
+  }
+  assert_eq(concurrent.maximum_parallel_parts, 3)
+  assert_eq(concurrency_revision.ordinal, 2)
+  guard @workflow.persist_goal_steering(
+      repository,
+      adapters,
+      fixture.goal.id,
+      @workflow.GoalPolicyChange::GoalPolicySetMaximumParallelParts(3),
+    ).unwrap()
+    is @workflow.GoalSteeringPersistenceResult::GoalSteeringNoChange(_) else {
+    fail("identical concurrency policy was not idempotent")
+  }
+  guard @workflow.persist_goal_steering(
+      repository,
+      adapters,
+      fixture.goal.id,
+      @workflow.GoalPolicyChange::GoalPolicyPause,
+    ).unwrap()
+    is @workflow.GoalSteeringPersistenceResult::GoalSteeringPersisted(paused, _) else {
+    fail("pause policy was not persisted")
+  }
+  assert_eq(paused.state, @workflow.GoalExecutionState::GoalExecutionPaused)
+  assert_eq(
+    paused.pause.map(fn(value) { value.reason }),
+    Some(@workflow.GoalPauseReason::GoalPauseRequested),
+  )
+  let tick = @workflow.run_next_goal_execution_tick(repository, adapters, {
+    execute: async fn(_, _) { fail("paused Goal executed") },
+    assure: async fn(_, _) { fail("paused Goal entered assurance") },
+    finalize: async fn(_, _) { fail("paused Goal entered finalization") },
+    cancel: async fn(_, _) { fail("paused Goal entered cancellation") },
+  }).unwrap()
+  assert_eq(tick, @workflow.GoalExecutionTickResult::GoalExecutionTickIdle)
+  guard @workflow.persist_goal_steering(
+      repository,
+      adapters,
+      fixture.goal.id,
+      @workflow.GoalPolicyChange::GoalPolicyResume,
+    ).unwrap()
+    is @workflow.GoalSteeringPersistenceResult::GoalSteeringPersisted(
+      resumed,
+      _
+    ) else {
+    fail("resume policy was not persisted")
+  }
+  assert_eq(resumed.state, @workflow.GoalExecutionState::GoalExecutionQueued)
+  assert_eq(resumed.policy_revisions.length(), 4)
+  assert_eq(
+    @workflow.load_goal_execution_record(
+      repository,
+      workflow_repository_adapters(),
+      fixture.goal.id,
+    )
+    .unwrap()
+    .unwrap().record,
+    resumed,
+  )
+  clean_workflow_repository(repository)
+}
+
+///|
+async test "Goal finalization input request and answer survive restart" {
+  let repository = workflow_repository("goal-input-answer")
+  clean_workflow_repository(repository)
+  let adapters = workflow_repository_adapters()
+  @workflow.initialize_part_workflow_repository(repository, adapters).unwrap()
+  let fixture = workflow_store_fixture()
+  ignore(
+    @workflow.persist_part_snapshot(repository, adapters, {
+      snapshot: fixture,
+      expected_store_version: None,
+      fault_point: None,
+    }).unwrap(),
+  )
+  let execution : @workflow.GoalExecutionRecord = {
+    goal: fixture.goal,
+    repository_id: @workflow.RepositoryId("repository-goal-input"),
+    selection_decision_digest: workflow_store_digest_a,
+    base_ref: @workflow.GitRefName("refs/heads/main"),
+    base_commit_oid: @control.GitOid("goal-input-head"),
+    base_tree_oid: @control.GitOid("goal-input-tree"),
+    integration_target_ref: @workflow.GitRefName("refs/heads/main"),
+    goal_ref: @workflow.goal_execution_ref(fixture.goal.id),
+    maximum_parallel_parts: 1,
+    policy_revisions: [
+      @workflow.initial_goal_policy_revision(fixture.goal.id, 1),
+    ],
+    part_workflow_ids: [fixture.workflow_id],
+    state: @workflow.GoalExecutionState::GoalExecutionAssured,
+    pause: None,
+    active_input_request: None,
+    input_answers: [],
+    cancellation_request: None,
+    durable_version: 1,
+    fencing_epoch: fixture.fencing_epoch,
+  }
+  ignore(
+    @workflow.persist_goal_execution_record(repository, adapters, {
+      record: execution,
+      expected_store_version: None,
+      fault_point: None,
+    }).unwrap(),
+  )
+  let tick = @workflow.run_next_goal_execution_tick(repository, adapters, {
+    execute: async fn(_, _) { fail("answered Goal executed Parts") },
+    assure: async fn(_, _) { fail("answered Goal repeated assurance") },
+    finalize: async fn(_, _) {
+      Ok(@workflow.GoalFinalizationTickOutcome::GoalFinalizationNeedsUserInput)
+    },
+    cancel: async fn(_, _) { fail("answered Goal entered cancellation") },
+  }).unwrap()
+  guard tick
+    is @workflow.GoalExecutionTickResult::GoalExecutionTickAdvanced(paused) else {
+    fail("finalization input did not pause the Goal")
+  }
+  guard paused.active_input_request is Some(request) else {
+    fail("durable input request is absent")
+  }
+  assert_eq(paused.state, @workflow.GoalExecutionState::GoalExecutionPaused)
+  guard @workflow.persist_goal_input_answer(
+      workflow_repository("goal-input-answer"),
+      workflow_repository_adapters(),
+      request.id,
+      "The PR was reopened.",
+      20L,
+    ).unwrap()
+    is @workflow.GoalInputAnswerPersistenceResult::GoalInputAnswerPersisted(
+      resumed,
+      answer
+    ) else {
+    fail("durable input answer was not persisted")
+  }
+  assert_eq(resumed.state, @workflow.GoalExecutionState::GoalExecutionAssured)
+  assert_eq(resumed.active_input_request, None)
+  assert_eq(resumed.input_answers, [answer])
+  guard @workflow.persist_goal_input_answer(
+      workflow_repository("goal-input-answer"),
+      workflow_repository_adapters(),
+      request.id,
+      "The PR was reopened.",
+      21L,
+    ).unwrap()
+    is @workflow.GoalInputAnswerPersistenceResult::GoalInputAnswerPersistenceReplayed(
+      replayed,
+      _
+    ) else {
+    fail("durable input answer did not replay")
+  }
+  assert_eq(replayed, resumed)
+  clean_workflow_repository(repository)
+}
+
+///|
 async test "restarted authorized effect waits for a witness without executing" {
   let repository = workflow_repository("driver-uncertain")
   clean_workflow_repository(repository)
@@ -911,6 +1612,70 @@ async test "restarted authorized effect waits for a witness without executing" {
   )
   assert_eq(execute_count.val, 0)
   assert_eq(reconcile_count.val, 1)
+  clean_workflow_repository(repository)
+}
+
+///|
+test "Goal cancellation disposition persists across restart" {
+  let repository = workflow_repository("cancel-disposition")
+  clean_workflow_repository(repository)
+  let adapters = workflow_repository_adapters()
+  guard @workflow.initialize_part_workflow_repository(repository, adapters)
+    is Ok(_) else {
+    fail("initialize cancellation repository")
+  }
+  let initial = workflow_store_fixture()
+  let initial_receipt = @workflow.persist_part_snapshot(repository, adapters, {
+    snapshot: initial,
+    expected_store_version: None,
+    fault_point: None,
+  }).unwrap()
+  let intent = @workflow.plan_next_part_effect(initial).unwrap().unwrap()
+  let planned = @workflow.persist_planned_part_effect(initial, intent).unwrap()
+  let planned_receipt = @workflow.persist_part_snapshot(repository, adapters, {
+    snapshot: planned,
+    expected_store_version: Some(initial_receipt.store_version),
+    fault_point: None,
+  }).unwrap()
+  let authorized = @workflow.authorize_pending_part_effect(planned).unwrap()
+  ignore(
+    @workflow.persist_part_snapshot(repository, adapters, {
+      snapshot: authorized,
+      expected_store_version: Some(planned_receipt.store_version),
+      fault_point: None,
+    }).unwrap(),
+  )
+  let stored = @workflow.load_part_snapshot(
+      repository,
+      adapters,
+      authorized.workflow_id,
+    )
+    .unwrap()
+    .unwrap()
+  let canceled = @workflow.persist_part_goal_cancellation(
+    repository, adapters, stored,
+  ).unwrap()
+  assert_true(
+    @workflow.part_cancellation_disposition_is_known(canceled.snapshot),
+  )
+  assert_true(
+    canceled.snapshot.pending_effect
+    is Some(
+      { lifecycle: @workflow.PartEffectLifecycle::PartEffectUncertain, .. }
+    ),
+  )
+  let replay = @workflow.load_part_snapshot(
+      repository,
+      adapters,
+      authorized.workflow_id,
+    )
+    .unwrap()
+    .unwrap()
+  assert_eq(replay, canceled)
+  assert_eq(
+    @workflow.persist_part_goal_cancellation(repository, adapters, replay).unwrap(),
+    canceled,
+  )
   clean_workflow_repository(repository)
 }
 

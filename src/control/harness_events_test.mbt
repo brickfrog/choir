@@ -179,3 +179,67 @@ test "harness ingestion makes cursor gaps uncertain and late events inert" {
     _ => fail("expected late event to be retained and marked")
   }
 }
+
+///|
+test "completion after interruption is late and interruption stays authoritative" {
+  let interrupted = {
+    ..event_session(),
+    last_choir_sequence: @control.EventSequence(1L),
+    lifecycle: @control.HarnessSessionLifecycle::HarnessSessionTerminalObserved(
+      @control.HarnessTerminalObservation::HarnessInterrupted,
+    ),
+  }
+  let completion = @control.ingest_harness_event(
+    interrupted,
+    [],
+    harness_event(
+      "event-2",
+      2L,
+      @control.HarnessEventKind::HarnessTerminal(
+        @control.HarnessTerminalObservation::HarnessCompleted,
+      ),
+    ),
+  )
+  assert_eq(
+    completion.disposition,
+    @control.HarnessIngestionDisposition::HarnessEventLate,
+  )
+  assert_true(
+    completion.session.lifecycle
+    is @control.HarnessSessionLifecycle::HarnessSessionTerminalObserved(
+      @control.HarnessTerminalObservation::HarnessInterrupted
+    ),
+  )
+  assert_true(completion.event is Some({ late: true, .. }))
+}
+
+///|
+test "conflicting success and failure terminals make recovery uncertain" {
+  let completed = {
+    ..event_session(),
+    last_choir_sequence: @control.EventSequence(1L),
+    lifecycle: @control.HarnessSessionLifecycle::HarnessSessionTerminalObserved(
+      @control.HarnessTerminalObservation::HarnessCompleted,
+    ),
+  }
+  let failure = @control.ingest_harness_event(
+    completed,
+    [],
+    harness_event(
+      "event-2",
+      2L,
+      @control.HarnessEventKind::HarnessTerminal(
+        @control.HarnessTerminalObservation::HarnessFailed,
+      ),
+    ),
+  )
+  assert_eq(
+    failure.disposition,
+    @control.HarnessIngestionDisposition::HarnessEventConflict,
+  )
+  assert_true(
+    failure.session.lifecycle
+    is @control.HarnessSessionLifecycle::HarnessSessionRecoveryUncertain,
+  )
+  assert_true(failure.event is Some({ late: true, .. }))
+}

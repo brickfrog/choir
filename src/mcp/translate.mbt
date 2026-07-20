@@ -585,6 +585,17 @@ fn tool_defs() -> Array[CatalogTool] {
       required: [],
     },
     {
+      name: "goal_submit",
+      description: "Submit a typed Conductor Goal draft. Choir independently captures the base Git tree and Beads revisions, validates the exact dependency closure and typed Part contracts, and persists the selection before execution. This is the v2 Goal entrypoint; it does not accept caller-supplied source snapshots.",
+      props: [
+        {
+          name: "draft",
+          desc: "JSON object with proposal_id, goal_id, base_ref, integration_target_ref, maximum_parallel_parts, and parts. Each Part requires part_id, instruction, provider (claude or codex), exactly one mutation scope (exact_paths/path_trees or repository_wide), and verify_args for the registered Moon tool; optional verify_timeout_ms.",
+        },
+      ],
+      required: ["draft"],
+    },
+    {
       name: "goal_set",
       description: "Set or supersede the active TL goal for this session",
       props: [
@@ -607,14 +618,56 @@ fn tool_defs() -> Array[CatalogTool] {
     },
     {
       name: "goal_status",
-      description: "Inspect the active TL goal for this session",
+      description: "Inspect a durable Goal and its Parts by Goal ID. Omit goal_id only for the older active session goal.",
       props: [
+        { name: "goal_id", desc: "Durable Goal ID returned by goal_submit" },
         {
           name: "evaluate",
-          desc: "When true, run the goal's checks now and return the fresh result (read-only — only the goal judge persists last_eval, not this call)",
+          desc: "Only for an active session goal: run its checks and return the fresh result",
         },
       ],
       required: [],
+    },
+    {
+      name: "goal_cancel",
+      description: "Install a durable cancellation cutoff for a Goal. The cutoff closes new Take, retry, audit, promotion, publication, and completion authorization; already-authorized effects are reconciled separately.",
+      props: [
+        { name: "goal_id", desc: "Durable Goal ID returned by goal_submit" },
+      ],
+      required: ["goal_id"],
+    },
+    {
+      name: "goal_steer",
+      description: "Create one durable Goal policy revision. Supported actions are pause, resume, and set_concurrency; policy revisions never rewrite the selected Part set or existing evidence.",
+      props: [
+        { name: "goal_id", desc: "Durable Goal ID returned by goal_submit" },
+        { name: "action", desc: "One of pause, resume, or set_concurrency" },
+        {
+          name: "maximum_parallel_parts",
+          desc: "Required only for set_concurrency; positive bounded concurrency cap",
+        },
+      ],
+      required: ["goal_id", "action"],
+    },
+    {
+      name: "goal_attach",
+      description: "Read the durable normalized harness sessions and events for one Take. This operation is observational and never changes Take or Goal state.",
+      props: [
+        { name: "take_id", desc: "Durable Take ID exposed by Goal status" },
+      ],
+      required: ["take_id"],
+    },
+    {
+      name: "goal_answer",
+      description: "Answer one active durable Goal input request. The answer is stored as immutable evidence and resumes only the state captured by that exact request.",
+      props: [
+        {
+          name: "request_id",
+          desc: "Durable request ID returned by goal_status",
+        },
+        { name: "answer", desc: "The user's answer to that exact request" },
+      ],
+      required: ["request_id", "answer"],
     },
     {
       name: "fork_session",
@@ -705,8 +758,22 @@ pub fn tools_list_response(
   id : JsonRpcId,
   role : @types.Role,
 ) -> JsonRpcResponse {
+  tools_list_response_filtered(id, role, [])
+}
+
+///|
+/// Limit the visible catalog to an explicit surface. An empty list preserves
+/// the role's full catalog for non-Conductor clients.
+pub fn tools_list_response_filtered(
+  id : JsonRpcId,
+  role : @types.Role,
+  allowed_names : Array[String],
+) -> JsonRpcResponse {
   let registry = @tools.ToolRegistry::new()
   let defs = tool_defs().filter(fn(def) {
+    if allowed_names.length() > 0 && !allowed_names.contains(def.name) {
+      return false
+    }
     try {
       ignore(registry.lookup(role, def.name))
       true

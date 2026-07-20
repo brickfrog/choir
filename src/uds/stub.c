@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -98,6 +99,12 @@ int choir_uds_server_create(const char *path, int path_len) {
         return -1;
     }
 
+    if (chmod(addr.sun_path, 0600) != 0) {
+        close(fd);
+        unlink(addr.sun_path);
+        return -1;
+    }
+
     if (listen(fd, SOMAXCONN) != 0) {
         close(fd);
         unlink(addr.sun_path);
@@ -117,6 +124,36 @@ int choir_uds_accept_nonblocking(int server_fd) {
         return -2;
     }
     return fd;
+}
+
+int choir_uds_peer_is_current_user(int fd) {
+#ifdef __linux__
+    struct ucred credential;
+    socklen_t len = sizeof(credential);
+    if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &credential, &len) != 0 ||
+        len != sizeof(credential)) {
+        return 0;
+    }
+    return credential.uid == geteuid() ? 1 : 0;
+#else
+    (void)fd;
+    return 0;
+#endif
+}
+
+int choir_uds_peer_pid(int fd) {
+#ifdef __linux__
+    struct ucred credential;
+    socklen_t len = sizeof(credential);
+    if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &credential, &len) != 0 ||
+        len != sizeof(credential)) {
+        return -1;
+    }
+    return (int)credential.pid;
+#else
+    (void)fd;
+    return -1;
+#endif
 }
 
 int choir_uds_fd_has_cloexec_for_test(int fd) {

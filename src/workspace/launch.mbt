@@ -233,28 +233,6 @@ fn split_words(s : String) -> Array[String] {
 }
 
 ///|
-pub fn normalize_tl_type(tl_type : String) -> String {
-  match tl_type.trim().to_lower() {
-    "agent" => "cursor_agent"
-    other => other.to_owned()
-  }
-}
-
-///|
-pub fn tl_type_agent_type(tl_type : String) -> @types.AgentType {
-  match normalize_tl_type(tl_type) {
-    "claude" => @types.AgentType::Claude
-    "gemini" => @types.AgentType::Gemini
-    "moon_pilot" => @types.AgentType::MoonPilot
-    "moonpilot" => @types.AgentType::MoonPilot
-    "codex" => @types.AgentType::Codex
-    "cursor_agent" => @types.AgentType::CursorAgent
-    "cursoragent" => @types.AgentType::CursorAgent
-    _ => @types.AgentType::Claude
-  }
-}
-
-///|
 pub fn agy_binary_name() -> String {
   "agy"
 }
@@ -358,7 +336,7 @@ fn provider_launch_command(
   cmd_program? : String? = None,
   cmd_extra_args? : Array[String] = [],
   extra_mcp_servers_json? : String? = None,
-  tl_init_mode? : Bool = false,
+  conductor_mode? : Bool = false,
   lean? : Bool = false,
   project_dir? : String = workspace_path,
   claude_settings_path? : String? = None,
@@ -367,8 +345,8 @@ fn provider_launch_command(
   effort? : String? = None,
 ) -> Command {
   let semble_for_role = role == @types.Role::Dev || role == @types.Role::Worker
-  let claude_mcp = if tl_init_mode {
-    ["--mcp-config", init_tl_claude_mcp_config_json(), "--strict-mcp-config"]
+  let claude_mcp = if conductor_mode {
+    ["--mcp-config", conductor_claude_mcp_config_json(), "--strict-mcp-config"]
   } else {
     claude_mcp_args(
       role,
@@ -390,7 +368,7 @@ fn provider_launch_command(
   let cmd = match agent_type {
     Claude => {
       let program = cmd_program.unwrap_or("claude")
-      let claude_task_args : Array[String] = if tl_init_mode {
+      let claude_task_args : Array[String] = if conductor_mode {
         task_args
       } else {
         match task {
@@ -398,7 +376,7 @@ fn provider_launch_command(
           None => []
         }
       }
-      if tl_init_mode {
+      if conductor_mode {
         let plugin_dir = workspace_path + "/.choir/plugin"
         let settings_path = workspace_path +
           "/.choir/state/claude-settings.json"
@@ -410,8 +388,9 @@ fn provider_launch_command(
         {
           program,
           args: [
-            ..cmd_extra_args, "--dangerously-skip-permissions", ..claude_mcp, "--plugin-dir",
-            plugin_dir, "--settings", settings_path, ..lean_args,
+            ..cmd_extra_args, "--dangerously-skip-permissions", "--tools", "", "--setting-sources",
+            "", ..claude_mcp, "--plugin-dir", plugin_dir, "--settings", settings_path,
+            ..lean_args,
           ],
           workdir: Some(workspace_path),
         }
@@ -573,36 +552,43 @@ pub fn agent_launch_command(
 }
 
 ///|
-/// MCP JSON for TL init Claude only; matches legacy `choir init` (`mcp-stdio` + `--name root`, no `--role`).
-/// `alwaysLoad: true` keeps choir's orchestration tools out of Claude Code's
-/// tool-search deferral so the TL doesn't pay a ToolSearch round-trip on first
-/// use of every fork_wave / file_pr / merge_pr / wave_state call.
-pub fn init_tl_claude_mcp_config_json() -> String {
-  "{\"mcpServers\":{\"choir\":{\"type\":\"stdio\",\"command\":\"choir\",\"args\":[\"mcp-stdio\",\"--name\",\"root\",\"--stderr-append-log\",\".choir/logs/mcp-stdio.stderr.log\"],\"alwaysLoad\":true},\"semble\":{\"type\":\"stdio\",\"command\":\"uv\",\"args\":[\"tool\",\"run\",\"--from\",\"semble[mcp]\",\"semble\"]}}}"
+/// MCP JSON for the Claude Conductor. Optional research and indexing services
+/// are admitted separately after their own evaluation.
+pub fn conductor_claude_mcp_config_json() -> String {
+  "{\"mcpServers\":{\"choir\":{\"type\":\"stdio\",\"command\":\"choir\",\"args\":[\"mcp-stdio\",\"--name\",\"root\",\"--stderr-append-log\",\".choir/logs/mcp-stdio.stderr.log\"],\"alwaysLoad\":true}}}"
 }
 
 ///|
-/// Claude settings JSON for TL init — statusLine + plugin enablement.
+/// Claude settings JSON for the Conductor — status line + plugin enablement.
 /// MCP registration stays separate via `--mcp-config` / `--strict-mcp-config`.
-pub fn init_tl_claude_settings_json() -> String {
-  "{\"statusLine\":{\"type\":\"command\",\"command\":\"choir statusline\"},\"enabledPlugins\":{\"choir@local\":true}}"
+pub fn conductor_claude_settings_json() -> String {
+  "{\"enabledPlugins\":{\"choir@local\":true}}"
 }
 
 ///|
-/// Inner TL agent command for the init zellij tab (no post-exit trailer; that lives only in
-/// [`init_tl_zellij_tab_command`]).
-pub fn init_tl_agent_command(
-  tl_type : String,
+/// Launch the supported interactive Conductor directly on the host.
+pub fn conductor_launch_command(
+  agent_type : @types.AgentType,
   project_dir : String,
   lean? : Bool = false,
 ) -> Command {
   let cmd = provider_launch_command(
-    tl_type_agent_type(tl_type),
+    agent_type,
     @types.Role::TL,
     "root",
     project_dir,
-    tl_init_mode=true,
+    conductor_mode=true,
     lean~,
   )
   { ..cmd, workdir: None }
+}
+
+///|
+pub(all) struct ConductorProcessEnvironment {
+  agent_token : String
+  agent_id : String
+  role : @types.Role
+  workspace : String
+  listen_uds : String
+  session_id : String
 }

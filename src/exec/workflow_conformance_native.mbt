@@ -470,6 +470,9 @@ fn conformance_dependencies(
         ),
       })
     },
+    goal_authorizes_new_effects: fn() {
+      Ok(@workflow.PartGoalAuthorization::PartGoalAuthorized(None))
+    },
     integration_admission: fn(snapshot) {
       Ok(
         @workflow.PartIntegrationAdmission::PartIntegrationAdmitted({

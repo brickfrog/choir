@@ -53,6 +53,23 @@ pub(all) struct StateTransactionRequest {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) struct StateRecordPrecondition {
+  record : StateRecord
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct GuardedStateTransactionRequest {
+  transaction : StateTransactionRequest
+  precondition : StateRecordPrecondition
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum GuardedStateTransactionOutcome {
+  GuardedStateTransactionCompleted(StateTransactionOutcome)
+  GuardedStateTransactionPreconditionConflict
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub(all) enum StateTransactionOutcome {
   StateTransactionCommitted
   StateTransactionReplayed
@@ -84,14 +101,33 @@ pub(all) struct StateStoreAdapters {
     StateTransactionOutcome,
     @types.ChoirError,
   ]
+  commit_guarded : (SqliteStateStore, GuardedStateTransactionRequest) -> Result[
+    GuardedStateTransactionOutcome,
+    @types.ChoirError,
+  ]
   read_state : (SqliteStateStore, StateRecordKey) -> Result[
     StateRecord?,
+    @types.ChoirError,
+  ]
+  list_state : (SqliteStateStore, String) -> Result[
+    Array[StateRecord],
     @types.ChoirError,
   ]
   read_outbox : (SqliteStateStore, SemanticEventKey) -> Result[
     CompletionOutboxRecord?,
     @types.ChoirError,
   ]
+}
+
+///|
+pub fn validate_state_record_prefix(
+  prefix : String,
+) -> Result[Unit, @types.ChoirError] {
+  if valid_storage_key_text(prefix) {
+    Ok(())
+  } else {
+    Err(@types.ChoirError::validation_error("invalid state record prefix"))
+  }
 }
 
 ///|
@@ -230,6 +266,40 @@ pub fn validate_state_transaction(
     return Err(
       @types.ChoirError::validation_error(
         "state mutation requires a positive fencing epoch",
+      ),
+    )
+  }
+  Ok(())
+}
+
+///|
+pub fn validate_guarded_state_transaction(
+  request : GuardedStateTransactionRequest,
+) -> Result[Unit, @types.ChoirError] {
+  match validate_state_transaction(request.transaction) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let record = request.precondition.record
+  match validate_state_record_key(record.key) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  match validate_digest(record.value_digest) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  if record.version <= 0 || fencing_epoch_value(record.fencing_epoch) <= 0L {
+    return Err(
+      @types.ChoirError::validation_error(
+        "state precondition requires positive version and fencing epoch",
+      ),
+    )
+  }
+  if record.key == request.transaction.state.key {
+    return Err(
+      @types.ChoirError::validation_error(
+        "state precondition must guard a distinct record",
       ),
     )
   }

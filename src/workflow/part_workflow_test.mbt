@@ -76,6 +76,59 @@ fn workflow_session(
 }
 
 ///|
+fn workflow_goal_assurance_identities(
+  goal : @control.Goal,
+  head_oid : @control.GitOid,
+) -> @workflow.GoalAssuranceIdentityPlan {
+  let verification = workflow_take(
+    "goal-verification-take-1",
+    @control.TakePurpose::GoalVerification(
+      goal.id,
+      head_oid,
+      goal.contract_digest,
+    ),
+  )
+  let audit = workflow_take(
+    "goal-audit-take-1",
+    @control.TakePurpose::GoalAudit(goal.id, goal.contract_digest),
+  )
+  let verification_sandbox = workflow_sandbox(
+    "goal-verification-sandbox-1",
+    "goal-verification-generation-1",
+    verification.id,
+    workflow_digest_b,
+    workflow_digest_c,
+  )
+  let audit_sandbox = workflow_sandbox(
+    "goal-audit-sandbox-1",
+    "goal-audit-generation-1",
+    audit.id,
+    workflow_digest_c,
+    workflow_digest_c,
+  )
+  {
+    verification_take: verification,
+    verification_sandbox,
+    verification_session: workflow_session(
+      "goal-verification-session-1",
+      verification.id,
+      verification_sandbox.generation_id,
+      @control.ProviderSurfaceId::CodexSubscriptionCli,
+      workflow_digest_d,
+    ),
+    audit_take: audit,
+    audit_sandbox,
+    audit_session: workflow_session(
+      "goal-audit-session-1",
+      audit.id,
+      audit_sandbox.generation_id,
+      @control.ProviderSurfaceId::CodexSubscriptionCli,
+      workflow_digest_e,
+    ),
+  }
+}
+
+///|
 fn workflow_fixture() -> @workflow.PartWorkflowSnapshot raise {
   let goal : @control.Goal = {
     id: @control.GoalId("goal-1"),
@@ -308,6 +361,44 @@ fn apply_observation(
 }
 
 ///|
+fn authorize_next_goal_assurance(
+  record : @workflow.GoalAssuranceRecord,
+) -> @workflow.GoalAssuranceRecord raise {
+  let intent = match @workflow.plan_next_goal_assurance_effect(record) {
+    Ok(Some(value)) => value
+    Ok(None) => fail("expected another Goal assurance effect")
+    Err(error) => fail(error.message())
+  }
+  let planned = match
+    @workflow.persist_planned_goal_assurance_effect(record, intent) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  match @workflow.authorize_pending_goal_assurance_effect(planned) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+}
+
+///|
+fn apply_goal_assurance_observation(
+  record : @workflow.GoalAssuranceRecord,
+  observation : @workflow.GoalAssuranceEffectObservation,
+  observed_at : Int64,
+) -> @workflow.GoalAssuranceRecord raise {
+  match
+    @workflow.apply_goal_assurance_effect_observation(
+      authorize_next_goal_assurance(record),
+      observation,
+      observed_at,
+      fn(_) { true },
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+}
+
+///|
 fn round_trip(
   snapshot : @workflow.PartWorkflowSnapshot,
 ) -> @workflow.PartWorkflowSnapshot raise {
@@ -322,6 +413,168 @@ fn round_trip(
     @workflow.part_snapshot_digest(snapshot),
   )
   decoded
+}
+
+///|
+fn workflow_execution_for_attach(
+  snapshot : @workflow.PartWorkflowSnapshot,
+) -> @workflow.GoalExecutionRecord {
+  {
+    goal: snapshot.goal,
+    repository_id: @workflow.RepositoryId("repository-attach"),
+    selection_decision_digest: workflow_digest_a,
+    base_ref: @workflow.GitRefName("refs/heads/main"),
+    base_commit_oid: @control.GitOid("base-commit"),
+    base_tree_oid: @control.GitOid("base-tree"),
+    integration_target_ref: @workflow.GitRefName("refs/heads/main"),
+    goal_ref: @workflow.goal_execution_ref(snapshot.goal.id),
+    maximum_parallel_parts: 1,
+    policy_revisions: [
+      @workflow.initial_goal_policy_revision(snapshot.goal.id, 1),
+    ],
+    part_workflow_ids: [snapshot.workflow_id],
+    state: @workflow.GoalExecutionState::GoalExecutionRunning,
+    pause: None,
+    active_input_request: None,
+    input_answers: [],
+    cancellation_request: None,
+    durable_version: 2,
+    fencing_epoch: snapshot.fencing_epoch,
+  }
+}
+
+///|
+test "Goal attach projects one Take's durable events without changing state" {
+  let initial = workflow_fixture()
+  let (closed, trace) = successful_trace(
+    started_session(initial.identities.implementation_session),
+    "attach",
+    10L,
+  )
+  let reversed = [trace[1], trace[0]]
+  let snapshot = {
+    ..initial,
+    harness_sessions: [closed],
+    harness_events: reversed,
+  }
+  let execution = workflow_execution_for_attach(snapshot)
+  let report = @workflow.goal_attach_report(
+      execution,
+      [snapshot],
+      None,
+      initial.implementation_take.id,
+    )
+    .unwrap()
+    .unwrap()
+  assert_eq(report.goal_id, initial.goal.id)
+  assert_eq(report.take, initial.implementation_take)
+  assert_eq(
+    report.origin,
+    @workflow.GoalTakeOrigin::GoalTakeFromPart(initial.part.id),
+  )
+  assert_eq(report.sessions.length(), 1)
+  assert_eq(report.sessions[0].session, closed)
+  assert_eq(report.sessions[0].events, trace)
+  assert_eq(execution, workflow_execution_for_attach(snapshot))
+}
+
+///|
+test "Goal attach rejects a cursor that outruns the durable event journal" {
+  let initial = workflow_fixture()
+  let (closed, trace) = successful_trace(
+    started_session(initial.identities.implementation_session),
+    "attach-gap",
+    10L,
+  )
+  let snapshot = {
+    ..initial,
+    harness_sessions: [closed],
+    harness_events: [trace[0]],
+  }
+  assert_true(
+    @workflow.goal_attach_report(
+      workflow_execution_for_attach(snapshot),
+      [snapshot],
+      None,
+      initial.implementation_take.id,
+    )
+    is Err(_),
+  )
+}
+
+///|
+test "Goal cancellation records a clean Part that never ran" {
+  let initial = workflow_fixture()
+  let canceled = match @workflow.record_part_goal_cancellation(initial) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(canceled.stage, @workflow.PartWorkflowStage::PartCanceled)
+  assert_eq(canceled.part.lifecycle, @control.PartLifecycle::PartCanceledNotRun)
+  assert_eq(
+    canceled.implementation_take.lifecycle,
+    @control.TakeLifecycle::TakeTerminal(
+      @control.TakeTerminalDisposition::TakeCanceled,
+    ),
+  )
+  assert_true(@workflow.part_cancellation_disposition_is_known(canceled))
+  assert_eq(
+    @workflow.record_part_goal_cancellation(canceled).unwrap(),
+    canceled,
+  )
+}
+
+///|
+test "Goal cancellation records an authorized provider effect as uncertain" {
+  let initial = workflow_fixture()
+  let sandbox = active_sandbox(initial.identities.implementation_sandbox)
+  let prepared = apply_observation(
+    initial,
+    @workflow.PartEffectObservation::ImplementationSandboxPrepared(sandbox),
+    10L,
+  )
+  let session = started_session(initial.identities.implementation_session)
+  let started = apply_observation(
+    prepared,
+    @workflow.PartEffectObservation::ImplementationHarnessStarted(session),
+    11L,
+  )
+  let authorized = authorize_next(started)
+  let canceled = match @workflow.record_part_goal_cancellation(authorized) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(canceled.stage, @workflow.PartWorkflowStage::PartBlocked)
+  assert_eq(
+    canceled.part.lifecycle,
+    @control.PartLifecycle::PartBlocked(
+      @control.PartBlockReason::PartRecoveryUncertain,
+    ),
+  )
+  assert_eq(
+    canceled.implementation_take.lifecycle,
+    @control.TakeLifecycle::TakeTerminal(
+      @control.TakeTerminalDisposition::TakeInterrupted,
+    ),
+  )
+  assert_true(
+    canceled.pending_effect
+    is Some(
+      { lifecycle: @workflow.PartEffectLifecycle::PartEffectUncertain, .. }
+    ),
+  )
+  assert_true(
+    canceled.sandbox_leases.all(fn(lease) {
+      lease.lifecycle == @control.SandboxLeaseLifecycle::SandboxLeaseUncertain
+    }),
+  )
+  assert_true(
+    canceled.harness_sessions.all(fn(observed) {
+      observed.lifecycle ==
+      @control.HarnessSessionLifecycle::HarnessSessionRecoveryUncertain
+    }),
+  )
+  assert_true(@workflow.part_cancellation_disposition_is_known(canceled))
 }
 
 ///|
@@ -504,7 +757,7 @@ fn drive_to_audited() -> @workflow.PartWorkflowSnapshot raise {
 }
 
 ///|
-test "Part reaches a verified audited integration result" {
+fn drive_to_integration_authorized() -> @workflow.PartWorkflowSnapshot raise {
   let mut snapshot = drive_to_audited()
   snapshot = match
     @workflow.plan_part_integration(snapshot, {
@@ -545,6 +798,15 @@ test "Part reaches a verified audited integration result" {
     Ok(value) => value
     Err(error) => fail(error.message())
   }
+  snapshot
+}
+
+///|
+test "Part reaches a verified audited integration result" {
+  let mut snapshot = drive_to_integration_authorized()
+  guard snapshot.promotion_commit is Some(promotion) else {
+    fail("authorized integration has no promotion commit")
+  }
   snapshot = apply_observation(
     snapshot,
     @workflow.PartEffectObservation::IntegrationWitnessObserved(
@@ -569,6 +831,770 @@ test "Part reaches a verified audited integration result" {
     snapshot.identities.implementation_session.id !=
     snapshot.identities.audit_session.id,
   )
+}
+
+///|
+test "integrated Parts authorize one immutable Goal branch seal" {
+  let mut integrated = drive_to_integration_authorized()
+  guard integrated.promotion_commit is Some(promotion) else {
+    fail("authorized integration has no promotion commit")
+  }
+  integrated = apply_observation(
+    integrated,
+    @workflow.PartEffectObservation::IntegrationWitnessObserved(
+      @control.IntegrationWitnessObservation::IntegrationWitnessApplied(
+        promotion.commit_oid,
+        promotion.commit_oid,
+      ),
+    ),
+    27L,
+  )
+  let execution : @workflow.GoalExecutionRecord = {
+    goal: integrated.goal,
+    repository_id: @workflow.RepositoryId("repository-assurance"),
+    selection_decision_digest: workflow_digest_a,
+    base_ref: @workflow.GitRefName("refs/heads/main"),
+    base_commit_oid: @control.GitOid("goal-head"),
+    base_tree_oid: @control.GitOid("goal-tree-before"),
+    integration_target_ref: @workflow.GitRefName("refs/heads/main"),
+    goal_ref: @workflow.goal_execution_ref(integrated.goal.id),
+    maximum_parallel_parts: 1,
+    policy_revisions: [
+      @workflow.initial_goal_policy_revision(integrated.goal.id, 1),
+    ],
+    part_workflow_ids: [integrated.workflow_id],
+    state: @workflow.GoalExecutionState::GoalExecutionAssuring,
+    pause: None,
+    active_input_request: None,
+    input_answers: [],
+    cancellation_request: None,
+    durable_version: 3,
+    fencing_epoch: integrated.fencing_epoch,
+  }
+  let planned = match
+    @workflow.initialize_goal_assurance(
+      execution,
+      [integrated],
+      promotion.commit_oid,
+      promotion.tree_oid,
+      integrated.task_contract.verification_specs,
+      workflow_goal_assurance_identities(execution.goal, promotion.commit_oid),
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(planned.stage, @workflow.GoalAssuranceStage::GoalSealPlanned)
+  assert_eq(planned.integration_receipts.length(), 1)
+  assert_eq(
+    planned.verification_specs,
+    integrated.task_contract.verification_specs,
+  )
+  let authorized = match
+    @workflow.authorize_goal_assurance_seal(
+      planned,
+      execution.goal,
+      promotion.commit_oid,
+      promotion.tree_oid,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  let witnessed = match
+    @workflow.record_goal_assurance_seal_witness(
+      authorized,
+      @control.GoalBranchSealWitnessObservation::GoalBranchSealWitnessApplied(
+        promotion.commit_oid,
+        promotion.commit_oid,
+        promotion.tree_oid,
+      ),
+      28L,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  let completed_seal = match
+    @workflow.commit_goal_assurance_seal(
+      witnessed,
+      @control.GoalBranchSealId("seal-goal-1"),
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(completed_seal.stage, @workflow.GoalAssuranceStage::GoalSealed)
+  assert_eq(completed_seal.durable_version, 4)
+  let mut assured = apply_goal_assurance_observation(
+    completed_seal,
+    @workflow.GoalAssuranceEffectObservation::GoalVerificationSandboxPrepared(
+      active_sandbox(completed_seal.identities.verification_sandbox),
+    ),
+    29L,
+  )
+  let verification_session = started_session(
+    assured.identities.verification_session,
+  )
+  assured = apply_goal_assurance_observation(
+    assured,
+    @workflow.GoalAssuranceEffectObservation::GoalVerificationHarnessStarted(
+      verification_session,
+    ),
+    30L,
+  )
+  let verification_subject = match assured.verification_subject {
+    Some(value) => value
+    None => fail("combined verification subject is absent")
+  }
+  let (verification_final, verification_events) = successful_trace(
+    verification_session, "goal-verification", 31L,
+  )
+  assured = apply_goal_assurance_observation(
+    assured,
+    @workflow.GoalAssuranceEffectObservation::GoalVerificationCompleted(
+      {
+        take_id: assured.verification_take.id,
+        session_id: verification_session.id,
+        subject: verification_subject,
+        executions: [
+          {
+            verification_execution_id: @control.VerificationExecutionId(
+              "goal-verification-execution-1",
+            ),
+            verification_spec: assured.verification_specs[0],
+            environment_and_image_digest: workflow_digest_d,
+            runtime_and_policy_digest: assured.identities.verification_sandbox.runtime_policy_digest,
+            subject_pre_tree_oid: promotion.tree_oid,
+            subject_post_tree_oid: promotion.tree_oid,
+            evidence: {
+              artifact_id: "goal-verification-evidence-1",
+              digest: workflow_digest_e,
+            },
+            started_at: 31L,
+            finished_at: 32L,
+            outcome: @control.VerificationOutcome::VerificationPassed,
+          },
+        ],
+        evidence_manifest: {
+          artifact_id: "goal-verification-manifest-1",
+          digest: workflow_digest_c,
+        },
+      },
+      verification_final,
+      verification_events,
+    ),
+    33L,
+  )
+  assert_eq(assured.stage, @workflow.GoalAssuranceStage::GoalVerified)
+  assert_eq(assured.verification_receipts.length(), 1)
+  assert_true(assured.verification_authorization is Some(_))
+  assured = apply_goal_assurance_observation(
+    assured,
+    @workflow.GoalAssuranceEffectObservation::GoalAuditSandboxPrepared(
+      active_sandbox(assured.identities.audit_sandbox),
+    ),
+    34L,
+  )
+  let audit_session = started_session(assured.identities.audit_session)
+  assured = apply_goal_assurance_observation(
+    assured,
+    @workflow.GoalAssuranceEffectObservation::GoalAuditHarnessStarted(
+      audit_session,
+    ),
+    35L,
+  )
+  let audit_subject = match assured.audit_subject {
+    Some(value) => value
+    None => fail("combined audit subject is absent")
+  }
+  let (audit_final, audit_events) = successful_trace(
+    audit_session, "goal-audit", 36L,
+  )
+  assured = apply_goal_assurance_observation(
+    assured,
+    @workflow.GoalAssuranceEffectObservation::GoalAuditCompleted(
+      {
+        audit_take_id: assured.audit_take.id,
+        take_fencing_epoch: assured.fencing_epoch,
+        audit_harness_session_id: audit_session.id,
+        subject: audit_subject,
+        provider_conformance_report_digest: workflow_digest_b,
+        findings_artifact: None,
+        total_findings_count: 0,
+        blocking_findings_count: 0,
+        started_at: 36L,
+        finished_at: 37L,
+        outcome: @control.AuditOutcome::AuditPassed,
+      },
+      audit_final,
+      audit_events,
+    ),
+    38L,
+  )
+  assured = match
+    @workflow.mint_goal_audit_receipt(
+      assured,
+      {
+        receipt_id: @control.ReceiptId("goal-audit-receipt-1"),
+        provider_surface_id: @control.ProviderSurfaceId::CodexSubscriptionCli,
+        provider_identity: "codex-cli",
+        model_identity: @control.ModelIdentity::ReportedModelIdentity("codex"),
+      },
+      fn(_) { true },
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(assured.stage, @workflow.GoalAssuranceStage::GoalAudited)
+  assert_true(assured.audit_receipt is Some(_))
+  assert_true(
+    assured.identities.verification_sandbox.generation_id !=
+    assured.identities.audit_sandbox.generation_id,
+  )
+  assert_eq(assured.effect_receipts.length(), 6)
+  let status = match
+    @workflow.goal_status_report(
+      execution,
+      [integrated],
+      Some(assured),
+      None,
+      None,
+      None,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(
+    status.assurance_stage,
+    Some(@workflow.GoalAssuranceStage::GoalAudited),
+  )
+  assert_true(status.goal_branch_seal is Some(_))
+  assert_eq(status.assurance_sandbox_count, 2)
+  assert_eq(status.assurance_harness_session_count, 2)
+  assert_eq(status.assurance_effect_receipt_count, 6)
+  assert_eq(status.goal_verification_receipt_count, 1)
+  assert_true(status.goal_audit_receipt_present)
+  let assured_execution = {
+    ..execution,
+    state: @workflow.GoalExecutionState::GoalExecutionAssured,
+    durable_version: execution.durable_version + 1,
+  }
+  let publication = match
+    @workflow.initialize_goal_publication(
+      assured_execution,
+      assured,
+      @workflow.RemoteRepositoryId("remote-repository-assurance"),
+      @workflow.RemoteName("origin"),
+      @workflow.GitRefName("refs/heads/choir/goals/assurance"),
+      None,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(
+    publication.intent.state,
+    @workflow.BranchPublicationState::BranchPublicationPlanned,
+  )
+  let authorized_publication = match
+    @workflow.authorize_goal_publication(
+      publication,
+      assured_execution,
+      assured,
+      promotion.commit_oid,
+      @workflow.RemoteBranchObservation::RemoteBranchAbsent,
+      false,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  let published = match
+    @workflow.record_goal_publication_observation(
+      authorized_publication,
+      @workflow.RemoteBranchObservation::RemoteBranchAt(promotion.commit_oid),
+      @workflow.BranchPublicationReceiptOrigin::BranchPublicationMutationApplied,
+      None,
+      39L,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(
+    published.intent.state,
+    @workflow.BranchPublicationState::BranchPublicationReceipted,
+  )
+  guard published.receipt is Some(publication_receipt) else {
+    fail("publication receipt is absent")
+  }
+  assert_eq(publication_receipt.published_oid, promotion.commit_oid)
+  let published_status = match
+    @workflow.goal_status_report(
+      assured_execution,
+      [integrated],
+      Some(assured),
+      Some(published),
+      None,
+      None,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(
+    published_status.publication_state,
+    Some(@workflow.BranchPublicationState::BranchPublicationReceipted),
+  )
+  assert_true(published_status.publication_receipt_present)
+  assert_eq(published_status.published_oid, Some(promotion.commit_oid))
+  match
+    @workflow.decode_goal_publication_record(
+      @workflow.goal_publication_record_bytes(published),
+    ) {
+    Ok(decoded) => assert_eq(decoded, published)
+    Err(error) => fail(error.message())
+  }
+  let drifted = match
+    @workflow.authorize_goal_publication(
+      publication,
+      assured_execution,
+      assured,
+      promotion.commit_oid,
+      @workflow.RemoteBranchObservation::RemoteBranchAt(
+        @control.GitOid("other-remote-head"),
+      ),
+      false,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(
+    drifted.intent.state,
+    @workflow.BranchPublicationState::BranchPublicationDrift,
+  )
+  let abandoned_publication = @workflow.record_goal_publication_cancellation(
+    publication,
+    @workflow.RemoteBranchObservation::RemoteBranchAbsent,
+    39L,
+  ).unwrap()
+  assert_eq(
+    abandoned_publication.intent.state,
+    @workflow.BranchPublicationState::BranchPublicationAbandonedByCancellation,
+  )
+  assert_true(
+    @workflow.goal_publication_cancellation_disposition_is_known(
+      abandoned_publication,
+    ),
+  )
+  let cancellation_witnessed_publication = @workflow.record_goal_publication_cancellation(
+    authorized_publication,
+    @workflow.RemoteBranchObservation::RemoteBranchAt(promotion.commit_oid),
+    40L,
+  ).unwrap()
+  assert_eq(
+    cancellation_witnessed_publication.intent.state,
+    @workflow.BranchPublicationState::BranchPublicationReceipted,
+  )
+  assert_true(
+    @workflow.goal_publication_cancellation_disposition_is_known(
+      cancellation_witnessed_publication,
+    ),
+  )
+  let preflight_uncertain = @workflow.authorize_goal_publication(
+    publication,
+    assured_execution,
+    assured,
+    promotion.commit_oid,
+    @workflow.RemoteBranchObservation::RemoteBranchObservationUncertain,
+    false,
+  ).unwrap()
+  assert_eq(
+    preflight_uncertain.intent.state,
+    @workflow.BranchPublicationState::BranchPublicationPreflightUncertain,
+  )
+  let preflight_recovered = @workflow.authorize_goal_publication(
+    preflight_uncertain,
+    assured_execution,
+    assured,
+    promotion.commit_oid,
+    @workflow.RemoteBranchObservation::RemoteBranchAbsent,
+    false,
+  ).unwrap()
+  assert_eq(
+    preflight_recovered.intent.state,
+    @workflow.BranchPublicationState::BranchPublicationAuthorized,
+  )
+  let mutation_uncertain = @workflow.record_goal_publication_observation(
+    authorized_publication,
+    @workflow.RemoteBranchObservation::RemoteBranchObservationUncertain,
+    @workflow.BranchPublicationReceiptOrigin::BranchPublicationMutationApplied,
+    None,
+    40L,
+  ).unwrap()
+  assert_eq(
+    mutation_uncertain.intent.state,
+    @workflow.BranchPublicationState::BranchPublicationMutationUncertain,
+  )
+  let mutation_recovered = @workflow.record_goal_publication_observation(
+    mutation_uncertain,
+    @workflow.RemoteBranchObservation::RemoteBranchAt(promotion.commit_oid),
+    @workflow.BranchPublicationReceiptOrigin::BranchPublicationAdopted,
+    None,
+    41L,
+  ).unwrap()
+  assert_eq(
+    mutation_recovered.intent.state,
+    @workflow.BranchPublicationState::BranchPublicationReceipted,
+  )
+  let pr_marker = match
+    @workflow.goal_pull_request_identity_marker(
+      assured_execution,
+      published,
+      @workflow.RemoteRepositoryId("remote-repository-assurance"),
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  let pr_document : @workflow.PullRequestDocument = {
+    title: "feat: complete assurance Goal",
+    body: "Goal evidence\n\n" + pr_marker.0,
+  }
+  let pull_request = match
+    @workflow.initialize_goal_pull_request(
+      assured_execution,
+      assured,
+      published,
+      @workflow.PullRequestProvider::GitHubPullRequestProvider,
+      @workflow.RemoteRepositoryId("remote-repository-assurance"),
+      pr_document,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(
+    pull_request.intent.state,
+    @workflow.PullRequestIntentState::PullRequestPlanned,
+  )
+  let remote_pull_request : @workflow.RemotePullRequestSnapshot = {
+    remote_id: @workflow.RemotePullRequestId("PR_kwDO_assurance"),
+    number: @workflow.PullRequestNumber(42),
+    url: @workflow.PullRequestUrl("https://example.invalid/choir/pull/42"),
+    provider_repository_id: published.intent.canonical_repository_id,
+    head_repository_id: published.intent.canonical_repository_id,
+    head_ref: published.intent.remote_head_ref,
+    base_repository_id: @workflow.RemoteRepositoryId(
+      "remote-repository-assurance",
+    ),
+    base_ref: assured_execution.integration_target_ref,
+    observed_head_oid: promotion.commit_oid,
+    state: @workflow.RemotePullRequestState::RemotePullRequestOpen,
+    marker_state: @workflow.PullRequestMarkerState::PullRequestMarkerExact,
+    title_digest: @storage.artifact_digest(@utf8.encode("title")),
+    body_digest: @storage.artifact_digest(@utf8.encode("body")),
+    goal_contract_link_present: true,
+    evidence_manifest_link_present: true,
+  }
+  let authorized_pull_request = match
+    @workflow.authorize_goal_pull_request(
+      pull_request,
+      assured_execution,
+      assured,
+      published,
+      promotion.commit_oid,
+      @workflow.PullRequestLookupObservation::PullRequestNoMatch,
+      40L,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(
+    authorized_pull_request.intent.state,
+    @workflow.PullRequestIntentState::PullRequestAuthorized,
+  )
+  let issued_pull_request = match
+    @workflow.mark_goal_pull_request_create_may_have_been_issued(
+      authorized_pull_request, assured_execution, assured, published,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  let uncertain_pull_request = match
+    @workflow.reconcile_goal_pull_request_after_create(
+      issued_pull_request,
+      @workflow.PullRequestLookupObservation::PullRequestNoMatch,
+      41L,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(
+    uncertain_pull_request.intent.state,
+    @workflow.PullRequestIntentState::PullRequestRemoteCreateUncertain,
+  )
+  assert_true(
+    @workflow.goal_pull_request_cancellation_disposition_is_known(
+      uncertain_pull_request,
+    ),
+  )
+  let cancellation_witnessed_pull_request = @workflow.record_goal_pull_request_cancellation(
+    uncertain_pull_request,
+    @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch(
+      remote_pull_request,
+    ),
+    42L,
+  ).unwrap()
+  assert_eq(
+    cancellation_witnessed_pull_request.intent.state,
+    @workflow.PullRequestIntentState::PullRequestReceipted,
+  )
+  let abandoned_pull_request = @workflow.record_goal_pull_request_cancellation(
+    authorized_pull_request,
+    @workflow.PullRequestLookupObservation::PullRequestNoMatch,
+    42L,
+  ).unwrap()
+  assert_eq(
+    abandoned_pull_request.intent.state,
+    @workflow.PullRequestIntentState::PullRequestAbandonedByCancellation,
+  )
+  let adopted_pull_request = match
+    @workflow.authorize_goal_pull_request(
+      pull_request,
+      assured_execution,
+      assured,
+      published,
+      promotion.commit_oid,
+      @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch(
+        remote_pull_request,
+      ),
+      42L,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(
+    adopted_pull_request.intent.state,
+    @workflow.PullRequestIntentState::PullRequestReceipted,
+  )
+  guard adopted_pull_request.receipt is Some(pull_request_receipt) else {
+    fail("pull request receipt is absent")
+  }
+  assert_eq(pull_request_receipt.number, @workflow.PullRequestNumber(42))
+  assert_eq(
+    pull_request_receipt.origin,
+    @workflow.PullRequestReceiptOrigin::PullRequestAdopted,
+  )
+  let pull_request_status = match
+    @workflow.goal_status_report(
+      assured_execution,
+      [integrated],
+      Some(assured),
+      Some(published),
+      Some(adopted_pull_request),
+      None,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(
+    pull_request_status.pull_request_state,
+    Some(@workflow.PullRequestIntentState::PullRequestReceipted),
+  )
+  assert_true(pull_request_status.pull_request_receipt_present)
+  assert_eq(
+    pull_request_status.pull_request_number,
+    Some(@workflow.PullRequestNumber(42)),
+  )
+  let finalization = match
+    @workflow.observe_goal_pull_request_readiness(
+      assured_execution,
+      assured,
+      published,
+      adopted_pull_request,
+      @workflow.PullRequestLookupObservation::PullRequestStoredIdMatch(
+        remote_pull_request,
+      ),
+      Some("remote-version-42"),
+      1L,
+      46L,
+      47L,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(
+    finalization.readiness.decision,
+    @workflow.PullRequestReadinessDecision::PullRequestReady,
+  )
+  let final_status = match
+    @workflow.goal_status_report(
+      assured_execution,
+      [integrated],
+      Some(assured),
+      Some(published),
+      Some(adopted_pull_request),
+      Some(finalization),
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(
+    final_status.readiness_decision,
+    Some(@workflow.PullRequestReadinessDecision::PullRequestReady),
+  )
+  match
+    @workflow.decode_goal_finalization_record(
+      @workflow.goal_finalization_record_bytes(finalization),
+    ) {
+    Ok(decoded) => assert_eq(decoded, finalization)
+    Err(error) => fail(error.message())
+  }
+  let succeeded = match
+    @workflow.authorize_goal_execution_success(
+      assured_execution, assured, published, adopted_pull_request, finalization,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(
+    succeeded.state,
+    @workflow.GoalExecutionState::GoalExecutionSucceeded,
+  )
+  let missing_evidence = match
+    @workflow.observe_goal_pull_request_readiness(
+      assured_execution,
+      assured,
+      published,
+      adopted_pull_request,
+      @workflow.PullRequestLookupObservation::PullRequestStoredIdMatch({
+        ..remote_pull_request,
+        evidence_manifest_link_present: false,
+      }),
+      None,
+      2L,
+      48L,
+      49L,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(
+    missing_evidence.readiness.decision,
+    @workflow.PullRequestReadinessDecision::PullRequestReadinessNeedsInput(
+      @workflow.PullRequestReadinessNeedsInputReason::PullRequestEvidenceLinksMissing,
+    ),
+  )
+  assert_true(
+    @workflow.authorize_goal_execution_success(
+      assured_execution, assured, published, adopted_pull_request, missing_evidence,
+    )
+    is Err(_),
+  )
+  match
+    @workflow.decode_goal_pull_request_record(
+      @workflow.goal_pull_request_record_bytes(adopted_pull_request),
+    ) {
+    Ok(decoded) => assert_eq(decoded, adopted_pull_request)
+    Err(error) => fail(error.message())
+  }
+  let ambiguous_pull_request = match
+    @workflow.authorize_goal_pull_request(
+      pull_request,
+      assured_execution,
+      assured,
+      published,
+      promotion.commit_oid,
+      @workflow.PullRequestLookupObservation::PullRequestMultipleMarkerMatches,
+      43L,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(
+    ambiguous_pull_request.intent.state,
+    @workflow.PullRequestIntentState::PullRequestNeedsInput(
+      @workflow.PullRequestNeedsInputReason::PullRequestAmbiguousIdentity,
+    ),
+  )
+  let drifted_pull_request = match
+    @workflow.authorize_goal_pull_request(
+      pull_request,
+      assured_execution,
+      assured,
+      published,
+      promotion.commit_oid,
+      @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch({
+        ..remote_pull_request,
+        observed_head_oid: @control.GitOid("other-pr-head"),
+      }),
+      44L,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(
+    drifted_pull_request.intent.state,
+    @workflow.PullRequestIntentState::PullRequestNeedsInput(
+      @workflow.PullRequestNeedsInputReason::PullRequestRemoteDrift,
+    ),
+  )
+  let closed_pull_request = match
+    @workflow.authorize_goal_pull_request(
+      pull_request,
+      assured_execution,
+      assured,
+      published,
+      promotion.commit_oid,
+      @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch({
+        ..remote_pull_request,
+        state: @workflow.RemotePullRequestState::RemotePullRequestClosed,
+      }),
+      45L,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(
+    closed_pull_request.intent.state,
+    @workflow.PullRequestIntentState::PullRequestNeedsInput(
+      @workflow.PullRequestNeedsInputReason::PullRequestRemoteClosed,
+    ),
+  )
+  assert_true(closed_pull_request.receipt is Some(_))
+  match
+    @workflow.decode_goal_assurance_record(
+      @workflow.goal_assurance_record_bytes(assured),
+    ) {
+    Ok(decoded) => assert_eq(decoded, assured)
+    Err(error) => fail(error.message())
+  }
+  let corrupted = { ..assured, base_commit_oid: @control.GitOid("other-base") }
+  assert_true(
+    @workflow.decode_goal_assurance_record(
+      @workflow.goal_assurance_record_bytes(corrupted),
+    )
+    is Err(_),
+  )
+}
+
+///|
+test "cancellation preserves an authorized integration for reconciliation" {
+  let authorized = authorize_next(drive_to_integration_authorized())
+  guard authorized.pending_effect is Some(effect) else {
+    fail("authorized integration has no pending effect")
+  }
+  assert_true(effect.kind is @workflow.PartEffectKind::ApplyIntegration(_, _))
+  assert_eq(
+    effect.lifecycle,
+    @workflow.PartEffectLifecycle::PartEffectMayHaveOccurred,
+  )
+  let canceled = match @workflow.record_part_goal_cancellation(authorized) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  guard canceled.pending_effect is Some(pending) else {
+    fail("cancellation discarded the unresolved integration")
+  }
+  assert_eq(pending, effect)
+  assert_false(@workflow.part_cancellation_disposition_is_known(canceled))
+  let repeated = match @workflow.record_part_goal_cancellation(canceled) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(repeated, canceled)
 }
 
 ///|
