@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Context-only amendments through: 2026-07-20T11:59:40-05:00
+Context-only amendments through: 2026-07-20T12:04:04-05:00
 
 ## Charter Semantics and Readiness
 
@@ -111,6 +111,10 @@ unconnected product path usable.
   branch augmentation, connection-lifetime variants, TCP fallback, and dead
   TCP reader have been deleted with their compatibility tests. This removes
   another 1,806 lines and leaves 189 source files.
+- The v1 generated configuration-schema registry and generic spawn/tool type
+  registry were referenced only by their own compatibility tests and are now
+  deleted. The unused response-warning helper went with them. This removes 795
+  more lines and leaves 185 source files.
 - Fixed-domain Goal, Part, Take, harness-session, event, assurance, receipt,
   integration, and cancellation types plus pure transition functions.
 - Durable restart-readable state and content-addressed artifact stores with
@@ -384,7 +388,7 @@ Earlier evidence anchors are commits `5fb93fe8` for the native Part path,
 the linter correction. With the current assurance, cancellation, and provider changes,
 `moon check --target native`, `moon test --target native`, and
 `moon run --target native src/bin/choir_lint` all exit successfully on
-2026-07-20. After deleting obsolete source and tests, the full native suite reports 452
+2026-07-20. After deleting obsolete source and tests, the full native suite reports 444
 passed and 0 failed. The
 compiler still reports the repository's existing warning set.
 

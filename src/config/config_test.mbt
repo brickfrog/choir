@@ -294,68 +294,6 @@ test "config_divergence names every changed top-level field" {
 }
 
 ///|
-fn config_schema_key_present(file : @types.ConfigFile, key : String) -> Bool {
-  for entry in @types.config_schema_entries() {
-    if entry.file == file && entry.key == key {
-      return true
-    }
-  }
-  false
-}
-
-///|
-test "config schema nested keys match parser-accepted TOML shape" {
-  let file = @types.ConfigFile::ConfigToml
-  assert_true(
-    config_schema_key_present(file, "pr_policy.require_integration_audit"),
-  )
-  assert_true(
-    config_schema_key_present(file, "pr_policy.skip_copilot_on_feature_branch"),
-  )
-  assert_true(config_schema_key_present(file, "pr_policy.reviewer"))
-  assert_false(config_schema_key_present(file, "pr_policy"))
-  assert_true(config_schema_key_present(file, "project.verify_cmd"))
-  assert_false(config_schema_key_present(file, "project"))
-  assert_true(config_schema_key_present(file, "hooks_enforcement"))
-  assert_true(config_schema_key_present(file, "pricing.<agent_type>.rate_in"))
-  assert_true(config_schema_key_present(file, "pricing.<agent_type>.rate_out"))
-  assert_false(config_schema_key_present(file, "pricing"))
-  assert_true(config_schema_key_present(file, "model.<agent_type>.default"))
-  assert_true(config_schema_key_present(file, "model.<agent_type>.dev"))
-  assert_true(config_schema_key_present(file, "model.<agent_type>.worker"))
-  assert_true(config_schema_key_present(file, "model.<agent_type>.tl"))
-  assert_true(config_schema_key_present(file, "effort.<agent_type>.default"))
-  assert_true(config_schema_key_present(file, "effort.<agent_type>.dev"))
-  assert_true(config_schema_key_present(file, "effort.<agent_type>.worker"))
-  assert_true(config_schema_key_present(file, "effort.<agent_type>.tl"))
-  assert_false(config_schema_key_present(file, "model"))
-  assert_false(config_schema_key_present(file, "effort"))
-
-  let cfg = parse_config(
-    (
-      #|[pr_policy]
-      #|require_integration_audit = false
-      #|skip_copilot_on_feature_branch = false
-      #|reviewer = "copilot"
-      #|
-      #|[pricing.codex]
-      #|rate_in = 0.01
-      #|rate_out = 0.02
-    ),
-  ).unwrap()
-  assert_eq(cfg.pr_policy.require_integration_audit, false)
-  assert_eq(cfg.pr_policy.skip_copilot_on_feature_branch, false)
-  assert_eq(cfg.pr_policy.reviewer, @types.Reviewer::Copilot)
-  match cfg.pricing.get("codex") {
-    Some(rate) => {
-      assert_eq(rate.rate_in, 0.01)
-      assert_eq(rate.rate_out, 0.02)
-    }
-    None => fail("expected pricing.codex to parse")
-  }
-}
-
-///|
 test "parse_config silently ignores removed pr_review key" {
   let content =
     #|pr_review = true
