@@ -449,6 +449,7 @@ fn serve_run() -> Unit {
   ignore(@sys.create_dir_all(config.project_dir + "/.choir/logs"))
   ignore(@sys.create_dir_all(config.project_dir + "/.choir/run"))
   ignore(@sys.create_dir_all(config.project_dir + "/.choir/state"))
+  ignore(@sys.create_dir_all(config.project_dir + "/.choir/state/control"))
   @sys.init_cleanup_runtime_artifacts_native()
   @sys.write_pid_file(".choir/run/server.pid")
   @sys.register_cleanup_runtime_artifacts()

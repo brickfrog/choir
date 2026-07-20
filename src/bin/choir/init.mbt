@@ -1,6 +1,6 @@
 ///|
 fn init_usage() -> String {
-  "usage: choir init [--lean]"
+  "usage: choir init [--lean] [--conductor <claude|codex>]"
 }
 
 ///|
@@ -54,6 +54,7 @@ fn init_ensure_project_files(project_dir : String) -> Result[Unit, String] {
       project_dir + "/.choir/logs",
       project_dir + "/.choir/run",
       project_dir + "/.choir/state",
+      project_dir + "/.choir/state/control",
     ] {
     if !@sys.create_dir_all(path) {
       return Err("failed to create " + path)
@@ -157,10 +158,16 @@ fn init_run() -> Unit {
 test "init accepts the direct Conductor options" {
   assert_eq(init_parse_options(["choir", "init"]).unwrap(), StartOptions::{
     lean: false,
+    conductor: StartClaudeConductor,
   })
   assert_eq(init_parse_options(["choir", "init", "--lean"]).unwrap(), StartOptions::{
     lean: true,
+    conductor: StartClaudeConductor,
   })
+  assert_eq(
+    init_parse_options(["choir", "init", "--conductor", "codex"]).unwrap(),
+    StartOptions::{ lean: false, conductor: StartCodexConductor },
+  )
   assert_true(init_parse_options(["choir", "init", "--recreate"]) is Err(_))
 }
 

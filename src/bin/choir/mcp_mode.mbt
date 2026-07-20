@@ -314,8 +314,12 @@ fn mcp_connect_uds(path : String, wait_tries : Int) -> Int {
 }
 
 ///|
-fn mcp_required_environment(name : String) -> String {
-  match @sys.getenv(name) {
+fn mcp_required_environment(name : String, inherit_parent : Bool) -> String {
+  let observed = match @sys.getenv(name) {
+    Some(value) => Some(value)
+    None => if inherit_parent { @sys.get_parent_env(name) } else { None }
+  }
+  match observed {
     Some(value) =>
       if value.trim() != "" {
         value
@@ -341,8 +345,9 @@ fn mcp_run() -> Unit {
     Some(path) => ignore(@sys.redirect_stderr_append(path))
     None => ()
   }
-  let socket_path = mcp_required_environment("CHOIR_LISTEN_UDS")
-  let token = mcp_required_environment("CHOIR_AGENT_TOKEN")
+  let inherit_parent = mcp_has_arg(args, "--inherit-parent-environment")
+  let socket_path = mcp_required_environment("CHOIR_LISTEN_UDS", inherit_parent)
+  let token = mcp_required_environment("CHOIR_AGENT_TOKEN", inherit_parent)
   let raw_stdio = mcp_has_arg(args, "--raw-stdio")
   let wait_tries = mcp_wait_tries(args)
   let mut fd = mcp_connect_uds(socket_path, wait_tries)

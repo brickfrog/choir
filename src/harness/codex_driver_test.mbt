@@ -185,3 +185,53 @@ test "Codex MCP discovery cannot satisfy the declared tool requirement" {
   })
   assert_true(result is Err(_))
 }
+
+///|
+test "Codex Conductor accepts a restricted resumable turn" {
+  let output =
+    #|{"type":"thread.started","thread_id":"019f80a5-df42-7411-9065-e0866506338c"}
+    #|{"type":"turn.started"}
+    #|{"type":"item.started","item":{"id":"tool-1","type":"mcp_tool_call","server":"choir","tool":"goal_status","status":"in_progress"}}
+    #|{"type":"item.completed","item":{"id":"tool-1","type":"mcp_tool_call","server":"choir","tool":"goal_status","status":"completed"}}
+    #|{"type":"item.completed","item":{"id":"message-1","type":"agent_message","text":"The Goal is queued."}}
+    #|{"type":"turn.completed"}
+  let turn = @harness.evaluate_codex_conductor_capture(
+    { exit_code: 0, output },
+    Some("019f80a5-df42-7411-9065-e0866506338c"),
+    "choir",
+    ["goal_status"],
+  ).unwrap()
+  assert_eq(turn.response, "The Goal is queued.")
+  assert_eq(turn.tool_call_count, 1)
+}
+
+///|
+test "Codex Conductor rejects native host-tool events and thread drift" {
+  let base =
+    #|{"type":"thread.started","thread_id":"019f80a5-df42-7411-9065-e0866506338c"}
+    #|{"type":"turn.started"}
+    #|{"type":"item.completed","item":{"id":"message-1","type":"agent_message","text":"done"}}
+    #|{"type":"turn.completed"}
+  assert_true(
+    @harness.evaluate_codex_conductor_capture(
+      { exit_code: 0, output: base },
+      Some("019f80a5-df42-7411-9065-e0866506338d"),
+      "choir",
+      ["goal_status"],
+    )
+    is Err(_),
+  )
+  let native = base.replace(
+    old="{\"type\":\"item.completed\",\"item\":{\"id\":\"message-1\",\"type\":\"agent_message\",\"text\":\"done\"}}",
+    new="{\"type\":\"item.completed\",\"item\":{\"id\":\"command-1\",\"type\":\"command_execution\",\"status\":\"completed\"}}",
+  )
+  assert_true(
+    @harness.evaluate_codex_conductor_capture(
+      { exit_code: 0, output: native },
+      None,
+      "choir",
+      ["goal_status"],
+    )
+    is Err(_),
+  )
+}

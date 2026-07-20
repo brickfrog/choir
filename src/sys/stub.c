@@ -1011,6 +1011,53 @@ int choir_getenv(const char* name, char* out, int out_size) {
     return len;
 }
 
+int choir_get_parent_env(const char* name, char* out, int out_size) {
+#ifdef __linux__
+    if (!name || !out || out_size <= 0 || strchr(name, '=') != NULL) return 0;
+    char path[64];
+    int path_len = snprintf(path, sizeof(path), "/proc/%ld/environ", (long)getppid());
+    if (path_len <= 0 || path_len >= (int)sizeof(path)) return 0;
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    char environment[65536];
+    ssize_t total = 0;
+    while (total < (ssize_t)sizeof(environment)) {
+        ssize_t count = read(fd, environment + total, sizeof(environment) - (size_t)total);
+        if (count < 0) {
+            if (errno == EINTR) continue;
+            close(fd);
+            return 0;
+        }
+        if (count == 0) break;
+        total += count;
+    }
+    close(fd);
+    size_t name_len = strlen(name);
+    ssize_t offset = 0;
+    while (offset < total) {
+        size_t remaining = (size_t)(total - offset);
+        size_t entry_len = strnlen(environment + offset, remaining);
+        if (entry_len == remaining) break;
+        if (entry_len > name_len &&
+            memcmp(environment + offset, name, name_len) == 0 &&
+            environment[offset + (ssize_t)name_len] == '=') {
+            const char *value = environment + offset + name_len + 1;
+            int value_len = (int)(entry_len - name_len - 1);
+            if (value_len >= out_size) return value_len;
+            memcpy(out, value, (size_t)value_len);
+            out[value_len] = '\0';
+            return value_len;
+        }
+        offset += (ssize_t)entry_len + 1;
+    }
+#else
+    (void)name;
+    (void)out;
+    (void)out_size;
+#endif
+    return 0;
+}
+
 int choir_setenv(const char* name, const char* value) {
     if (!name || !value) return -EINVAL;
     if (setenv(name, value, 1) != 0) return -errno;

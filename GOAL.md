@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Context-only amendments through: 2026-07-20T12:37:00-05:00
+Context-only amendments through: 2026-07-20T13:10:42-05:00
 
 ## Charter Semantics and Readiness
 
@@ -42,14 +42,23 @@ unconnected product path usable.
 ### Implemented and directly exercised
 
 - `choir init` now scaffolds only the current project files, starts the local
-  daemon without a terminal multiplexer, bootstraps one authenticated Claude
+  daemon without a terminal multiplexer, bootstraps one authenticated
   Conductor, and runs it in the invoking terminal. `choir start` reconnects the
-  same direct launch path. The UDS is owner-only, the one-time root bootstrap
+  same direct launch path. Claude remains the default; selecting
+  `--conductor codex` starts a persistent Codex subscription thread through
+  `codex exec` and resumes that exact thread on later turns. The UDS is
+  owner-only, the one-time root bootstrap
   requires a same-user peer running the exact Choir executable, and the minted
   credential is passed only through a fixed typed process environment. The
-  Conductor loads only the generated Goal skill and the Choir MCP server; it
-  gets no Claude built-in host tools, no ambient setting sources, no implicit
-  Semble server, and no old spawn/file/merge tools in its MCP catalog. A live
+  Claude Conductor loads only the generated Goal skill and the Choir MCP
+  server; it gets no Claude built-in host tools, no ambient setting sources,
+  no implicit Semble server, and no old spawn/file/merge tools in its MCP
+  catalog. Codex starts from a sterile working root, ignores user configuration
+  and repository rules, disables native execution, network, delegation,
+  plugins, apps, hooks, memories, and browser surfaces, and admits only the
+  same ten Choir tools. Its one-time Choir capability remains environment-only;
+  the exact MCP child recovers only the fixed socket and capability names from
+  its direct Codex parent when Codex filters the child environment. A live
   isolated process probe proves project initialization, authenticated Goal
   status, socket mode `0600`, restricted launch arguments, and zero Zellij
   requirement.
@@ -365,9 +374,10 @@ unconnected product path usable.
   user's answer to that exact request as an immutable artifact, replay the same
   answer safely after restart, reject conflicting answers, and resume only the
   captured state. Ordinary resume steering cannot bypass an active request.
-- The Goal skill is materialized as the only Claude Conductor skill. Codex is
-  supported as a subscription-backed Part provider; a Codex Conductor is not
-  advertised until it has an equally restricted interactive surface.
+- The Goal skill is the sole Conductor instruction contract. Claude consumes
+  its generated plugin form; Codex receives the same contract as explicit
+  developer instructions. Both are directly launchable Conductors, and both
+  Claude and Codex remain supported as subscription-backed Part providers.
 - Goal cancellation now has a durable, replay-safe cutoff and a TL-only
   `goal_cancel` tool plus `choir goal cancel` CLI path. The runner prioritizes
   canceling Goals, a passive authorization check prevents Parts from planning
@@ -407,7 +417,7 @@ Earlier evidence anchors are commits `5fb93fe8` for the native Part path,
 the linter correction. With the current assurance, cancellation, and provider changes,
 `moon check --target native`, `moon test --target native`, and
 `moon run --target native src/bin/choir_lint` all exit successfully on
-2026-07-20. After deleting obsolete source and tests, the full native suite reports 289
+2026-07-20. After deleting obsolete source and tests, the full native suite reports 292
 passed and 0 failed. The
 compiler still reports the repository's existing warning set.
 
@@ -2937,8 +2947,11 @@ host-surface proof. The typed Codex driver and native Part dispatch branch are
 implemented; their exact live MCP/event path and complete BoxLite Part fixture
 pass. One Claude and one Codex Part now also complete in the same durable Goal:
 provider execution overlaps, while promotion remains serialized and
-provider-private state does not enter scheduling or gates. Next, implement the
-Codex Conductor bridge and reconnect to a Goal also visible from Claude.
+provider-private state does not enter scheduling or gates. The Codex Conductor
+bridge is now implemented with the same exact ten-tool Goal surface, a
+subscription-backed persistent thread, and fail-closed native-tool event
+validation. Cross-Conductor reconnection to one durable Goal remains to be
+exercised directly.
 
 Exit criterion: both satisfy the shared trace, evidence, cancellation,
 recovery, and host-isolation oracles at pinned versions. Provider-specific
@@ -3730,6 +3743,26 @@ moon run --target native src/bin/choir_conformance -- harness --surface codex-cl
 moon run --target native src/bin/choir_conformance -- harness --surface codex-cli --profile subscription --driver-live
 moon run --target native src/bin/choir_conformance -- e2e --fixture native-codex-part-lifecycle
 ```
+
+#### Post-snapshot Codex Conductor amendment
+
+At `2026-07-20T13:10:42-05:00`, `choir start --conductor codex` launched a
+Codex CLI `0.144.6` Conductor through the provider-owned ChatGPT subscription
+login. The initial turn called the real Choir `goal_status` MCP tool and
+received the daemon's typed missing-Goal response. A second turn resumed the
+same Codex thread and correctly identified the prior Goal ID without another
+tool call.
+
+The launch ignores ambient Codex configuration and repository rules, disables
+native execution and other undeclared host surfaces, uses a sterile working
+root, and requires the exact Choir MCP server with the same ten tools exposed
+to Claude. Choir rejects thread drift, undeclared tools, native host-tool
+events, incomplete tool lifecycles, failed turns, and non-JSON output. The
+one-time Conductor capability is never placed on the command line or disk; the
+fixed Choir MCP child reads only the socket and capability names from its
+direct Codex parent when Codex omits them from the child environment. A fresh
+repository now also creates the control database directory before the daemon's
+first Goal tick.
 
 #### Post-snapshot mixed-provider Goal amendment
 

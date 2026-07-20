@@ -1,16 +1,24 @@
 ///|
 fn start_usage() -> String {
-  "usage: choir start [--lean]"
+  "usage: choir start [--lean] [--conductor <claude|codex>]"
 }
+
+///|
+priv enum StartConductorSurface {
+  StartClaudeConductor
+  StartCodexConductor
+} derive(Debug, Eq)
 
 ///|
 priv struct StartOptions {
   lean : Bool
+  conductor : StartConductorSurface
 } derive(Debug, Eq)
 
 ///|
 fn start_parse_options(args : Array[String]) -> Result[StartOptions, String] {
   let mut lean = false
+  let mut conductor = StartClaudeConductor
   let mut index = 2
   while index < args.length() {
     match args[index] {
@@ -18,10 +26,22 @@ fn start_parse_options(args : Array[String]) -> Result[StartOptions, String] {
         lean = true
         index = index + 1
       }
+      "--conductor" if index + 1 < args.length() => {
+        conductor = match args[index + 1] {
+          "claude" => StartClaudeConductor
+          "codex" => StartCodexConductor
+          _ => return Err(start_usage())
+        }
+        index = index + 2
+      }
       _ => return Err(start_usage())
     }
   }
-  Ok({ lean, })
+  if lean && conductor == StartCodexConductor {
+    Err(start_usage())
+  } else {
+    Ok({ lean, conductor })
+  }
 }
 
 ///|
@@ -111,6 +131,69 @@ fn start_conductor_environment(
 }
 
 ///|
+async fn start_codex_conductor(
+  config : @types.Config,
+  token : String,
+  self_executable : String,
+) -> Int {
+  let executable = match @sys.realpath_native(self_executable) {
+    Some(value) => value
+    None => {
+      @sys.write_stderr("choir start: failed to resolve the Choir executable\n")
+      return 1
+    }
+  }
+  let conductor_config : @exec.NativeCodexConductorConfig = {
+    sterile_root: config.project_dir + "/.choir/run/codex-conductor",
+    mcp_executable: executable,
+    mcp_arguments: [
+      "mcp-stdio",
+      "--name",
+      "root",
+      "--raw-stdio",
+      "--inherit-parent-environment",
+      "--stderr-append-log",
+      config.project_dir + "/.choir/logs/codex-mcp.stderr.log",
+    ],
+    mcp_server_name: "choir",
+    allowed_tools: @mcp.conductor_tool_names(),
+    developer_instructions: @prompts.load_goal_prompt(config.project_dir),
+    timeout_ms: 3600000,
+    environment: start_conductor_environment(config, token),
+  }
+  let mut thread_id : String? = None
+  @sys.write_stdout(
+    "Codex Conductor ready. Describe a Goal, ask for status, or enter /exit.\n",
+  )
+  for ;; {
+    @sys.write_stdout("choir> ")
+    let prompt = match @sys.read_stdin_line(65536) {
+      Some(value) => value.trim().to_owned()
+      None => return 0
+    }
+    if prompt == "" {
+      continue
+    }
+    if prompt == "/exit" || prompt == "/quit" {
+      return 0
+    }
+    match
+      @exec.run_native_codex_conductor_turn(
+        conductor_config,
+        prompt,
+        thread_id~,
+      ) {
+      Ok(turn) => {
+        thread_id = Some(turn.thread_id)
+        @sys.write_stdout(turn.response + "\n")
+      }
+      Err(error) =>
+        @sys.write_stderr("Codex Conductor: " + error.message() + "\n")
+    }
+  }
+}
+
+///|
 fn start_with_options(options : StartOptions, self_executable : String) -> Unit {
   let config = match start_config() {
     Ok(value) => value
@@ -123,6 +206,7 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
   ignore(@sys.create_dir_all(config.project_dir + "/.choir/logs"))
   ignore(@sys.create_dir_all(config.project_dir + "/.choir/run"))
   ignore(@sys.create_dir_all(config.project_dir + "/.choir/state"))
+  ignore(@sys.create_dir_all(config.project_dir + "/.choir/state/control"))
   let token = match @sys.mint_local_token() {
     Some(value) => value
     None => {
@@ -148,15 +232,21 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
     }
   }
   @async.run_async_main(async fn() {
-    let command = @workspace.conductor_launch_command(
-      config.project_dir,
-      lean=options.lean,
-    )
-    let exit_code = @exec.run_conductor_process(
-      command,
-      start_conductor_environment(config, token),
-    ) catch {
-      _ => -1
+    let exit_code = match options.conductor {
+      StartClaudeConductor => {
+        let command = @workspace.conductor_launch_command(
+          config.project_dir,
+          lean=options.lean,
+        )
+        @exec.run_conductor_process(
+          command,
+          start_conductor_environment(config, token),
+        ) catch {
+          _ => -1
+        }
+      }
+      StartCodexConductor =>
+        start_codex_conductor(config, token, self_executable)
     }
     @sys.exit(exit_code)
   })
@@ -177,13 +267,23 @@ fn start_run() -> Unit {
 }
 
 ///|
-test "start accepts only the Claude Conductor launch options" {
+test "start selects only supported Conductor surfaces" {
   assert_eq(start_parse_options(["choir", "start"]).unwrap(), StartOptions::{
     lean: false,
+    conductor: StartClaudeConductor,
   })
   assert_eq(start_parse_options(["choir", "start", "--lean"]).unwrap(), StartOptions::{
     lean: true,
+    conductor: StartClaudeConductor,
   })
+  assert_eq(
+    start_parse_options(["choir", "start", "--conductor", "codex"]).unwrap(),
+    StartOptions::{ lean: false, conductor: StartCodexConductor },
+  )
+  assert_true(
+    start_parse_options(["choir", "start", "--lean", "--conductor", "codex"])
+    is Err(_),
+  )
   assert_true(start_parse_options(["choir", "start", "--conductor"]) is Err(_))
   assert_true(start_parse_options(["choir", "start", "--unknown"]) is Err(_))
 }

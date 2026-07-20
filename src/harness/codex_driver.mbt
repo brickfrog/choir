@@ -43,6 +43,19 @@ pub(all) struct CodexDriverResult {
 } derive(Debug, Eq)
 
 ///|
+pub(all) struct CodexConductorCapture {
+  exit_code : Int
+  output : String
+} derive(Debug, Eq)
+
+///|
+pub(all) struct CodexConductorTurn {
+  thread_id : String
+  response : String
+  tool_call_count : Int
+} derive(Debug, Eq, ToJson)
+
+///|
 priv enum CodexObservedToolEvent {
   CodexToolStarted(String, String)
   CodexToolFinished(String, Bool)
@@ -81,6 +94,154 @@ fn valid_codex_tool_name(tool : String) -> Bool {
     }
   }
   true
+}
+
+///|
+fn valid_codex_thread_id(value : String) -> Bool {
+  if value.length() < 16 || value.length() > 120 {
+    return false
+  }
+  for index = 0; index < value.length(); index = index + 1 {
+    let code = value[index].to_int()
+    let valid = (code >= 'a'.to_int() && code <= 'z'.to_int()) ||
+      (code >= 'A'.to_int() && code <= 'Z'.to_int()) ||
+      (code >= '0'.to_int() && code <= '9'.to_int()) ||
+      code == '-'.to_int() ||
+      code == '_'.to_int()
+    if !valid {
+      return false
+    }
+  }
+  true
+}
+
+///|
+pub fn evaluate_codex_conductor_capture(
+  capture : CodexConductorCapture,
+  expected_thread_id : String?,
+  expected_mcp_server : String,
+  allowed_tools : Array[String],
+) -> Result[CodexConductorTurn, @types.ChoirError] {
+  if capture.exit_code != 0 ||
+    expected_mcp_server == "" ||
+    allowed_tools.length() == 0 {
+    return Err(codex_driver_error("Conductor process capture is invalid"))
+  }
+  for index, tool in allowed_tools {
+    if !valid_codex_tool_name(tool) || allowed_tools[:index].contains(tool) {
+      return Err(codex_driver_error("Conductor tool declaration is invalid"))
+    }
+  }
+  let mut thread_id = ""
+  let mut turn_started = 0
+  let mut turn_completed = 0
+  let mut response = ""
+  let mut tool_call_count = 0
+  let open : Map[String, String] = Map([])
+  let discovery_open : Map[String, Unit] = Map([])
+  for raw in capture.output.split("\n") {
+    let line = raw.trim().to_owned()
+    if line == "" || line == "Reading additional input from stdin..." {
+      continue
+    }
+    let json = @json.parse(line) catch {
+      _ => return Err(codex_driver_error("Conductor emitted non-JSON output"))
+    }
+    guard json is Object(fields) else {
+      return Err(codex_driver_error("Conductor event is not an object"))
+    }
+    match codex_json_string(fields, "type") {
+      "thread.started" => {
+        if thread_id != "" {
+          return Err(codex_driver_error("Conductor started multiple threads"))
+        }
+        thread_id = codex_json_string(fields, "thread_id")
+      }
+      "turn.started" => turn_started = turn_started + 1
+      "turn.completed" => turn_completed = turn_completed + 1
+      "turn.failed" | "error" =>
+        return Err(codex_driver_error("Conductor turn failed"))
+      "item.started" | "item.completed" => {
+        guard codex_json_object(fields, "item") is Some(item) else {
+          return Err(codex_driver_error("Conductor item is malformed"))
+        }
+        match codex_json_string(item, "type") {
+          "reasoning" => ()
+          "agent_message" =>
+            if codex_json_string(fields, "type") == "item.completed" {
+              response = codex_json_string(item, "text")
+            }
+          "mcp_tool_call" => {
+            let event_type = codex_json_string(fields, "type")
+            let id = codex_json_string(item, "id")
+            let server = codex_json_string(item, "server")
+            let tool = codex_json_string(item, "tool")
+            let discovery = tool == "list_mcp_resources" ||
+              tool == "list_mcp_resource_templates"
+            if id == "" ||
+              server != expected_mcp_server ||
+              (!discovery && !allowed_tools.contains(tool)) {
+              return Err(
+                codex_driver_error("Conductor observed an undeclared tool"),
+              )
+            }
+            if event_type == "item.started" {
+              if open.contains(id) || discovery_open.contains(id) {
+                return Err(codex_driver_error("duplicate Conductor tool start"))
+              }
+              if discovery {
+                discovery_open[id] = ()
+              } else {
+                open[id] = tool
+                tool_call_count = tool_call_count + 1
+              }
+            } else {
+              let status = codex_json_string(item, "status")
+              if status != "completed" && status != "failed" {
+                return Err(
+                  codex_driver_error("Conductor tool status is invalid"),
+                )
+              }
+              if discovery {
+                if !discovery_open.contains(id) {
+                  return Err(
+                    codex_driver_error("unmatched Conductor discovery"),
+                  )
+                }
+                discovery_open.remove(id)
+              } else {
+                match open.get(id) {
+                  Some(open_tool) if open_tool == tool => open.remove(id)
+                  _ =>
+                    return Err(
+                      codex_driver_error("unmatched Conductor tool result"),
+                    )
+                }
+              }
+            }
+          }
+          _ =>
+            return Err(
+              codex_driver_error("Conductor emitted a native host-tool event"),
+            )
+        }
+      }
+      _ => ()
+    }
+  }
+  if !valid_codex_thread_id(thread_id) ||
+    turn_started != 1 ||
+    turn_completed != 1 ||
+    response == "" ||
+    open.length() != 0 ||
+    discovery_open.length() != 0 {
+    return Err(codex_driver_error("Conductor lifecycle is incomplete"))
+  }
+  match expected_thread_id {
+    Some(expected) if thread_id != expected =>
+      Err(codex_driver_error("Conductor resumed a different thread"))
+    _ => Ok({ thread_id, response, tool_call_count })
+  }
 }
 
 ///|

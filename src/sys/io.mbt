@@ -107,6 +107,14 @@ extern "C" fn c_write_pid_file(path : Bytes) -> Unit = "choir_write_pid_file"
 extern "C" fn c_getenv(name : Bytes, out : Bytes, out_size : Int) -> Int = "choir_getenv"
 
 ///|
+#borrow(name, out)
+extern "C" fn c_get_parent_env(
+  name : Bytes,
+  out : Bytes,
+  out_size : Int,
+) -> Int = "choir_get_parent_env"
+
+///|
 #borrow(name, value)
 extern "C" fn c_setenv(name : Bytes, value : Bytes) -> Int = "choir_setenv"
 
@@ -396,6 +404,18 @@ pub fn getenv(name : String) -> String? {
   } else {
     let copy_len = if large_len < len + 1 { large_len } else { len }
     Some(@utf8.decode_lossy(large_buf[:copy_len]))
+  }
+}
+
+///|
+pub fn get_parent_env(name : String) -> String? {
+  let name_bytes = string_to_null_terminated_bytes(name)
+  let buf = Bytes::new(4096)
+  let len = c_get_parent_env(name_bytes, buf, 4096)
+  if len <= 0 || len >= 4096 {
+    None
+  } else {
+    Some(@utf8.decode_lossy(buf[:len]))
   }
 }
 

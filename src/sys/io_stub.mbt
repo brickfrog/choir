@@ -64,6 +64,11 @@ pub fn getenv(_name : String) -> String? {
 }
 
 ///|
+pub fn get_parent_env(_name : String) -> String? {
+  None
+}
+
+///|
 pub fn setenv(_name : String, _value : String) -> Bool {
   false
 }
