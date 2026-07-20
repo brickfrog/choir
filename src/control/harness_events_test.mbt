@@ -140,6 +140,38 @@ test "harness ingestion deduplicates and rejects source conflicts" {
     conflict_result.session.lifecycle
     is @control.HarnessSessionLifecycle::HarnessSessionProtocolViolated,
   )
+  assert_eq(
+    conflict_result.session.last_choir_sequence,
+    @control.EventSequence(2L),
+  )
+  assert_true(
+    conflict_result.event
+    is Some({ choir_sequence: @control.EventSequence(2L), .. }),
+  )
+}
+
+///|
+test "source conflict replay cannot move the observer cursor backward" {
+  let original = harness_event(
+    "event-1",
+    1L,
+    @control.HarnessEventKind::HarnessStarted,
+  )
+  let running = {
+    ..event_session(),
+    last_choir_sequence: @control.EventSequence(4L),
+    lifecycle: @control.HarnessSessionLifecycle::HarnessSessionRunning,
+  }
+  let conflict = @control.ingest_harness_event(running, [original], {
+    ..original,
+    sanitized_payload_digest: @control.Digest(
+      "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    ),
+  })
+  assert_eq(conflict.session.last_choir_sequence, @control.EventSequence(5L))
+  assert_true(
+    conflict.event is Some({ choir_sequence: @control.EventSequence(5L), .. }),
+  )
 }
 
 ///|

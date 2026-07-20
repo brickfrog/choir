@@ -30,13 +30,19 @@ fn protocol_violated_ingestion(
   session : HarnessSession,
   event : HarnessEventEnvelope,
 ) -> HarnessIngestionResult {
+  let retained = {
+    ..event,
+    choir_sequence: EventSequence(
+      event_sequence_value(session.last_choir_sequence) + 1L,
+    ),
+  }
   {
     session: {
       ..session,
-      last_choir_sequence: event.choir_sequence,
+      last_choir_sequence: retained.choir_sequence,
       lifecycle: HarnessSessionProtocolViolated,
     },
-    event: Some(event),
+    event: Some(retained),
     disposition: HarnessEventConflict,
   }
 }

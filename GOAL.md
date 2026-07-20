@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-20T16:49:46-05:00
+Implementation snapshot updated through: 2026-07-20T16:53:49-05:00
 
 ## Charter Semantics and Readiness
 
@@ -279,6 +279,9 @@ unconnected product path usable.
   dispatch before an accepted decision exists.
 - Harness event ingestion now has registered hermetic cases for duplicate
   conflicts, cursor gaps, late terminals, and conflicting terminals. A
+  conflicting replay is retained at the next Choir observer sequence rather
+  than reusing its old provider-supplied sequence, so protocol violation can
+  never move the durable observer cursor backward. A
   completion observed after an authoritative interruption is retained only as
   a late diagnostic while the interruption remains authoritative. A distinct
   failure after an observed completion retains the first event and moves the

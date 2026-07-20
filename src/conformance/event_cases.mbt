@@ -89,6 +89,11 @@ pub fn event_duplicate_conflict_case() -> HermeticConformanceCase {
         @control.HarnessIngestionDisposition::HarnessEventDuplicate ||
         conflict.disposition !=
         @control.HarnessIngestionDisposition::HarnessEventConflict ||
+        conflict.session.last_choir_sequence != @control.EventSequence(2L) ||
+        !(conflict.event is Some({
+          choir_sequence: @control.EventSequence(2L),
+          ..
+        })) ||
         !(conflict.session.lifecycle
         is @control.HarnessSessionLifecycle::HarnessSessionProtocolViolated) {
         return Err(event_case_error("duplicate/conflict oracle did not hold"))
