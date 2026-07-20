@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-20T17:44:49-05:00
+Implementation snapshot updated through: 2026-07-20T18:04:00-05:00
 
 ## Charter Semantics and Readiness
 
@@ -167,10 +167,11 @@ unconnected product path usable.
 - Durable restart-readable state and content-addressed artifact stores with
   transactional fault injection.
 - A hermetic conformance runner with injected clock, identifiers, adapters,
-  and typed fault points. Its command now runs twenty-seven registered cases: the
+  and typed fault points. Its command now runs twenty-eight registered cases: the
   runner dependency contract, `selection.exact_snapshot`,
   `selection.revision_invalidation`,
-  `scheduler.generated_dags`, six audit-authority/recovery cases, ten event/recovery
+  `scheduler.generated_dags`, `branch.initialization_faults`, six
+  audit-authority/recovery cases, ten event/recovery
   cases, four mutation-ownership cases, and three process-policy cases described
   below. The audit cases prove a missing gate is passive, author Take/sandbox/
   session reuse is rejected, and seven independent subject/policy changes stale
@@ -417,6 +418,21 @@ unconnected product path usable.
   exactly one verification, audit, and integration receipt. A preceding run
   whose audit reported a blocking finding correctly stopped at
   `GoalExecutionBlocked` and did not bypass the gate.
+- Goal-branch initialization is now a durable pre-dispatch protocol rather
+  than an implicit Git side effect in Part execution. The Goal execution record
+  carries the deterministic intent, witness ref, idempotency key, lifecycle,
+  and receipt. The runner first commits authorization, then the native Git
+  adapter atomically creates the Goal and initialization-witness refs from the
+  captured base, re-observes both refs, and commits the receipt before admitting
+  any Part. Both-absent recovery permits only the exact authorized retry;
+  one-sided state blocks on integrity and divergent state pauses as uncertain.
+  Cancellation before authorization abandons the intent without touching Git;
+  cancellation after authorization must reconcile the exact transaction before
+  terminal cancellation. The registered `branch.initialization_faults` case
+  round-trips every durable state across all four named boundaries and covers
+  pre/post-authorization cancellation. A narrow real-Git test proves the two-ref
+  transaction is atomic, replay observes the same anchor, and partial ref state
+  is detected.
 - Goal assurance now has separate typed Goal-tree verification and combined-
   audit subjects, receipts, results, authorization slots, and passive gates.
   The combined audit rejects a Take, sandbox generation, or harness session
@@ -581,7 +597,7 @@ Earlier evidence anchors are commits `5fb93fe8` for the native Part path,
 the linter correction. With the current assurance, cancellation, and provider changes,
 `moon check --target native`, `moon test --target native`, and
 `moon run --target native src/bin/choir_lint` all exit successfully on
-2026-07-20. After deleting obsolete source and tests, the full native suite reports 306
+2026-07-20. After deleting obsolete source and tests, the full native suite reports 310
 passed and 0 failed. The
 compiler still reports the repository's existing warning set.
 
@@ -606,8 +622,8 @@ compiler still reports the repository's existing warning set.
 
 ### Not yet connected
 - The remaining generated cancellation-ordering edge cases beyond the
-  implemented Part, provider, integration, Goal-assurance, publication, and
-  final-PR reconciliation paths.
+  implemented branch-initialization, Part, provider, integration,
+  Goal-assurance, publication, and final-PR reconciliation paths.
 - A live external final-PR canary for the native forge transport, plus the
   remaining generated cases for ambiguous identity, remote drift, and broader
   cancellation orderings. The checked synthetic forge proves control-plane

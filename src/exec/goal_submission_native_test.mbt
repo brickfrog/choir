@@ -143,6 +143,7 @@ async test "native Conductor submission captures Beads and persists once" {
       repository,
       local_part_workflow_repository_adapters(),
       {
+        initialize: async fn(_) { Ok(true) },
         execute: async fn(record, snapshots) {
           execution_called.val = true
           assert_eq(record.goal.id, @control.GoalId("goal-native-submit"))
@@ -200,6 +201,7 @@ async test "native Conductor submission captures Beads and persists once" {
       repository,
       local_part_workflow_repository_adapters(),
       {
+        initialize: async fn(_) { fail("paused Goal initialized again") },
         execute: async fn(_, _) { fail("paused Goal executed again") },
         assure: async fn(_, _) { fail("paused Goal entered assurance") },
         finalize: async fn(_, _) { fail("paused Goal entered finalization") },

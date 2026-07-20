@@ -141,71 +141,105 @@ async fn discover_native_goal_repository(
 }
 
 ///|
-async fn reconcile_native_goal_ref(
+fn native_goal_initialization_git_config(
   repository : NativeGoalRepositoryIdentity,
   record : @workflow.GoalExecutionRecord,
-) -> Result[Unit, @types.ChoirError] {
-  let goal_ref = record.goal_ref.0
-  let observed = capture_native_goal_git(repository.root, [
-    "rev-parse",
-    "--verify",
-    goal_ref + "^{commit}",
-  ])
-  let head = match observed {
-    Ok({ exit_code: 0, output }) => Some(output.trim().to_owned())
-    Ok(_) => None
-    Err(error) => return Err(error)
+) -> NativeGitIntegrationConfig {
+  {
+    repository_root: repository.root,
+    git_directory: repository.git_directory,
+    object_directory: repository.object_directory,
+    control_root: native_goal_runtime_root(record.repository_id, record.goal.id) +
+    "/integration-control",
+    goal_ref: record.goal_ref.0,
   }
-  match head {
-    None => {
-      let zero = if record.base_commit_oid.0.length() == 64 {
-        "0000000000000000000000000000000000000000000000000000000000000000"
-      } else {
-        "0000000000000000000000000000000000000000"
-      }
-      let created = match
-        capture_native_goal_git(repository.root, [
-          "update-ref",
-          goal_ref,
-          record.base_commit_oid.0,
-          zero,
-        ]) {
-        Ok(value) => value
-        Err(error) => return Err(error)
-      }
-      if created.exit_code != 0 {
-        return Err(native_goal_execution_error("Goal ref creation conflicted"))
-      }
-    }
-    Some(value) => {
-      let ancestry = match
-        capture_native_goal_git(repository.root, [
-          "merge-base",
-          "--is-ancestor",
-          record.base_commit_oid.0,
-          value,
-        ]) {
-        Ok(result) => result
-        Err(error) => return Err(error)
-      }
-      if ancestry.exit_code != 0 {
-        return Err(native_goal_execution_error("Goal ref left its base"))
-      }
-    }
-  }
-  let verified = match
-    native_goal_git_value(repository.root, [
-      "rev-parse",
-      "--verify",
-      goal_ref + "^{commit}",
-    ]) {
+}
+
+///|
+async fn read_native_goal_initialization_ref(
+  config : NativeGitIntegrationConfig,
+  reference : String,
+) -> Result[@control.GitOid?, @types.ChoirError] {
+  let adapters = native_git_integration_adapters()
+  let captured = match (adapters.capture)(config, NativeGitReadRef(reference)) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  if verified == "" {
-    Err(native_goal_execution_error("Goal ref receipt is absent"))
+  if captured.exit_code != 0 {
+    Ok(None)
   } else {
+    let value = captured.output.trim().to_owned()
+    if value == "" {
+      Err(native_goal_execution_error("Git ref observation was empty"))
+    } else {
+      Ok(Some(@control.GitOid(value)))
+    }
+  }
+}
+
+///|
+async fn observe_native_goal_branch_initialization(
+  config : NativeGitIntegrationConfig,
+  initialization : @workflow.GoalBranchInitialization,
+) -> Result[@workflow.GoalBranchInitObservation, @types.ChoirError] {
+  let goal = match
+    read_native_goal_initialization_ref(config, initialization.goal_ref.0) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let witness = match
+    read_native_goal_initialization_ref(
+      config,
+      initialization.initialization_witness_ref.0,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  match (goal, witness) {
+    (None, None) =>
+      Ok(@workflow.GoalBranchInitObservation::GoalBranchInitRefsAbsent)
+    (Some(goal_oid), Some(witness_oid)) if goal_oid ==
+      initialization.captured_base_oid &&
+      witness_oid == initialization.captured_base_oid =>
+      Ok(@workflow.GoalBranchInitObservation::GoalBranchInitRefsAtBase)
+    (Some(goal_oid), None) if goal_oid == initialization.captured_base_oid =>
+      Ok(@workflow.GoalBranchInitObservation::GoalBranchInitBranchOnly)
+    (None, Some(witness_oid)) if witness_oid == initialization.captured_base_oid =>
+      Ok(@workflow.GoalBranchInitObservation::GoalBranchInitWitnessOnly)
+    _ => Ok(@workflow.GoalBranchInitObservation::GoalBranchInitRefsDiverged)
+  }
+}
+
+///|
+async fn apply_native_goal_branch_initialization(
+  config : NativeGitIntegrationConfig,
+  initialization : @workflow.GoalBranchInitialization,
+) -> Result[Unit, @types.ChoirError] {
+  let zero = if initialization.captured_base_oid.0.length() == 64 {
+    @control.GitOid(
+      "0000000000000000000000000000000000000000000000000000000000000000",
+    )
+  } else {
+    @control.GitOid("0000000000000000000000000000000000000000")
+  }
+  let adapters = native_git_integration_adapters()
+  let applied = match
+    (adapters.capture)(
+      config,
+      NativeGitApplyRefs(
+        initialization.goal_ref.0,
+        initialization.initialization_witness_ref.0,
+        zero,
+        initialization.captured_base_oid,
+      ),
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if applied.exit_code == 0 {
     Ok(())
+  } else {
+    Err(native_goal_execution_error("atomic Goal ref initialization failed"))
   }
 }
 
@@ -276,6 +310,110 @@ fn native_goal_mcp_script(project_dir : String) -> String? {
 }
 
 ///|
+async fn advance_native_goal_branch_initialization(
+  project_dir : String,
+  repository : @workflow.PartWorkflowRepository,
+  adapters : @workflow.PartWorkflowRepositoryAdapters,
+  goal_id : @control.GoalId,
+) -> Result[@workflow.GoalBranchInitLifecycle, @types.ChoirError] {
+  let stored = match
+    @workflow.load_goal_execution_record(repository, adapters, goal_id) {
+    Ok(Some(value)) => value
+    Ok(None) =>
+      return Err(native_goal_execution_error("Goal execution disappeared"))
+    Err(error) => return Err(error)
+  }
+  match stored.record.branch_initialization.lifecycle {
+    @workflow.GoalBranchInitLifecycle::GoalBranchInitReceipted
+    | @workflow.GoalBranchInitLifecycle::GoalBranchInitIntegrityBlocked
+    | @workflow.GoalBranchInitLifecycle::GoalBranchInitUncertain
+    | @workflow.GoalBranchInitLifecycle::GoalBranchInitAbandonedByCancellation =>
+      return Ok(stored.record.branch_initialization.lifecycle)
+    @workflow.GoalBranchInitLifecycle::GoalBranchInitPlanned => {
+      let authorized = match
+        @workflow.authorize_goal_branch_initialization(stored.record) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let persisted = match
+        @workflow.persist_goal_branch_initialization_transition(
+          repository, adapters, stored, authorized,
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      return Ok(persisted.record.branch_initialization.lifecycle)
+    }
+    @workflow.GoalBranchInitLifecycle::GoalBranchInitAuthorized => ()
+  }
+  let git = match discover_native_goal_repository(project_dir, stored.record) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let config = native_goal_initialization_git_config(git, stored.record)
+  let mut observation = match
+    observe_native_goal_branch_initialization(
+      config,
+      stored.record.branch_initialization,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if observation ==
+    @workflow.GoalBranchInitObservation::GoalBranchInitRefsAbsent {
+    match
+      apply_native_goal_branch_initialization(
+        config,
+        stored.record.branch_initialization,
+      ) {
+      Ok(_) => ()
+      Err(error) => return Err(error)
+    }
+    observation = match
+      observe_native_goal_branch_initialization(
+        config,
+        stored.record.branch_initialization,
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+  }
+  let reconciled = match
+    @workflow.reconcile_goal_branch_initialization(
+      stored.record,
+      observation,
+      @env.now().reinterpret_as_int64() / 1000L,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let next = match reconciled {
+    @workflow.GoalBranchInitReconciliation::GoalBranchInitObservationRecorded(
+      value
+    ) => value
+    @workflow.GoalBranchInitReconciliation::GoalBranchInitExactRetryAuthorized(
+      _
+    ) =>
+      return Err(
+        native_goal_execution_error(
+          "Goal branch initialization remained unapplied",
+        ),
+      )
+  }
+  if next == stored.record {
+    Ok(next.branch_initialization.lifecycle)
+  } else {
+    match
+      @workflow.persist_goal_branch_initialization_transition(
+        repository, adapters, stored, next,
+      ) {
+      Ok(value) => Ok(value.record.branch_initialization.lifecycle)
+      Err(error) => Err(error)
+    }
+  }
+}
+
+///|
 async fn execute_native_goal_record(
   project_dir : String,
   repository : @workflow.PartWorkflowRepository,
@@ -284,10 +422,6 @@ async fn execute_native_goal_record(
 ) -> Result[Unit, @types.ChoirError] {
   let git = match discover_native_goal_repository(project_dir, record) {
     Ok(value) => value
-    Err(error) => return Err(error)
-  }
-  match reconcile_native_goal_ref(git, record) {
-    Ok(_) => ()
     Err(error) => return Err(error)
   }
   let runtime_key = native_goal_runtime_key(
@@ -977,6 +1111,79 @@ async fn native_goal_seal_witness(
 }
 
 ///|
+async test "native Goal branch initialization atomically anchors both refs" {
+  let root = "/tmp/choir-goal-branch-init-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(root))
+  if !@sys.create_dir_all(root) {
+    fail("failed to create Goal branch initialization test root")
+  }
+  let git = async fn(arguments : Array[String]) -> NativeGitCapture {
+    match capture_native_goal_git(root, arguments) {
+      Ok(value) => value
+      Err(error) => fail(error.message())
+    }
+  }
+  if git(["init", "-q"]).exit_code != 0 {
+    fail("failed to initialize Goal branch repository")
+  }
+  let tree = git(["hash-object", "-w", "-t", "tree", "/dev/null"])
+  let commit = git([
+    "-c",
+    "user.name=Choir Test",
+    "-c",
+    "user.email=choir@example.invalid",
+    "commit-tree",
+    tree.output.trim().to_owned(),
+    "-m",
+    "base",
+  ])
+  if tree.exit_code != 0 || commit.exit_code != 0 {
+    fail("failed to create Goal branch base")
+  }
+  let base_oid = @control.GitOid(commit.output.trim().to_owned())
+  let goal_id = @control.GoalId("goal-branch-init-test")
+  let goal_ref = @workflow.goal_execution_ref(goal_id)
+  let initialization = @workflow.initial_goal_branch_initialization(
+    goal_id,
+    @workflow.RepositoryId("repository-branch-init-test"),
+    goal_ref,
+    base_oid,
+  )
+  let config : NativeGitIntegrationConfig = {
+    repository_root: root,
+    git_directory: root + "/.git",
+    object_directory: root + "/.git/objects",
+    control_root: root + "/control",
+    goal_ref: goal_ref.0,
+  }
+  assert_eq(
+    observe_native_goal_branch_initialization(config, initialization).unwrap(),
+    @workflow.GoalBranchInitObservation::GoalBranchInitRefsAbsent,
+  )
+  apply_native_goal_branch_initialization(config, initialization).unwrap()
+  assert_eq(
+    observe_native_goal_branch_initialization(config, initialization).unwrap(),
+    @workflow.GoalBranchInitObservation::GoalBranchInitRefsAtBase,
+  )
+  assert_true(
+    apply_native_goal_branch_initialization(config, initialization) is Err(_),
+  )
+  assert_eq(
+    observe_native_goal_branch_initialization(config, initialization).unwrap(),
+    @workflow.GoalBranchInitObservation::GoalBranchInitRefsAtBase,
+  )
+  assert_eq(
+    git(["update-ref", "-d", initialization.initialization_witness_ref.0]).exit_code,
+    0,
+  )
+  assert_eq(
+    observe_native_goal_branch_initialization(config, initialization).unwrap(),
+    @workflow.GoalBranchInitObservation::GoalBranchInitBranchOnly,
+  )
+  ignore(@sys.rm_rf(root))
+}
+
+///|
 async test "native Goal seal witness is exact and idempotent" {
   let root = "/tmp/choir-goal-seal-witness-" + @sys.get_pid().to_string()
   ignore(@sys.rm_rf(root))
@@ -1630,6 +1837,20 @@ pub async fn run_native_goal_execution_tick_with_forge(
     Err(error) => return Err(error)
   }
   @workflow.run_next_goal_execution_tick(repository, repository_adapters, {
+    initialize: async fn(record) {
+      match
+        advance_native_goal_branch_initialization(
+          project_dir,
+          repository,
+          repository_adapters,
+          record.goal.id,
+        ) {
+        Ok(@workflow.GoalBranchInitLifecycle::GoalBranchInitReceipted) =>
+          Ok(true)
+        Ok(_) => Ok(false)
+        Err(error) => Err(error)
+      }
+    },
     execute: async fn(record, snapshots) {
       execute_native_goal_record(project_dir, repository, record, snapshots)
     },
@@ -1693,6 +1914,28 @@ pub async fn run_native_goal_execution_tick_with_forge(
       )
     },
     cancel: async fn(record, snapshots) {
+      let initialization = match
+        advance_native_goal_branch_initialization(
+          project_dir,
+          repository,
+          repository_adapters,
+          record.goal.id,
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let initialization_known = match initialization {
+        @workflow.GoalBranchInitLifecycle::GoalBranchInitReceipted
+        | @workflow.GoalBranchInitLifecycle::GoalBranchInitIntegrityBlocked
+        | @workflow.GoalBranchInitLifecycle::GoalBranchInitUncertain
+        | @workflow.GoalBranchInitLifecycle::GoalBranchInitAbandonedByCancellation =>
+          true
+        _ => false
+      }
+      if !initialization_known ||
+        record.branch_initialization.lifecycle != initialization {
+        return Ok(false)
+      }
       match
         reconcile_native_goal_part_cancellation(
           project_dir, repository, repository_adapters, record, snapshots, forge,

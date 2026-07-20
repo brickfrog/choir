@@ -84,6 +84,65 @@ pub(all) struct GoalCancellationRequest {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) struct GoalBranchInitIntentId(String) derive (
+  Debug,
+  Eq,
+  Compare,
+  Hash,
+  ToJson,
+  FromJson,
+)
+
+///|
+pub(all) enum GoalBranchInitLifecycle {
+  GoalBranchInitPlanned
+  GoalBranchInitAuthorized
+  GoalBranchInitReceipted
+  GoalBranchInitIntegrityBlocked
+  GoalBranchInitUncertain
+  GoalBranchInitAbandonedByCancellation
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct GoalBranchInitReceipt {
+  intent_id : GoalBranchInitIntentId
+  idempotency_key : @control.Digest
+  repository_id : RepositoryId
+  goal_ref : GitRefName
+  initialized_oid : @control.GitOid
+  initialization_witness_ref : GitRefName
+  observed_at : Int64
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct GoalBranchInitialization {
+  intent_id : GoalBranchInitIntentId
+  goal_id : @control.GoalId
+  repository_id : RepositoryId
+  goal_ref : GitRefName
+  captured_base_oid : @control.GitOid
+  initialization_witness_ref : GitRefName
+  idempotency_key : @control.Digest
+  lifecycle : GoalBranchInitLifecycle
+  receipt : GoalBranchInitReceipt?
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum GoalBranchInitObservation {
+  GoalBranchInitRefsAbsent
+  GoalBranchInitRefsAtBase
+  GoalBranchInitBranchOnly
+  GoalBranchInitWitnessOnly
+  GoalBranchInitRefsDiverged
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum GoalBranchInitReconciliation {
+  GoalBranchInitObservationRecorded(GoalExecutionRecord)
+  GoalBranchInitExactRetryAuthorized(GoalExecutionRecord)
+} derive(Debug, Eq)
+
+///|
 pub(all) struct GoalExecutionRecord {
   goal : @control.Goal
   repository_id : RepositoryId
@@ -93,6 +152,7 @@ pub(all) struct GoalExecutionRecord {
   base_tree_oid : @control.GitOid
   integration_target_ref : GitRefName
   goal_ref : GitRefName
+  branch_initialization : GoalBranchInitialization
   maximum_parallel_parts : Int
   policy_revisions : Array[GoalPolicyRevision]
   part_workflow_ids : Array[String]
@@ -115,6 +175,113 @@ fn goal_execution_identity_digest(goal_id : @control.GoalId) -> @control.Digest 
   @storage.artifact_digest(
     @utf8.encode("choir.goal-execution.v1\u{00}" + goal_id.0),
   )
+}
+
+///|
+fn goal_branch_initialization_identity(
+  goal_id : @control.GoalId,
+  repository_id : RepositoryId,
+  goal_ref : GitRefName,
+  base_oid : @control.GitOid,
+) -> (GoalBranchInitIntentId, @control.Digest, GitRefName) {
+  let witness_ref = GitRefName(
+    "refs/choir/goals/" +
+    @storage.digest_text(goal_execution_identity_digest(goal_id)) +
+    "/initialized",
+  )
+  let digest = @storage.artifact_digest(
+    @utf8.encode(
+      "choir.goal-branch-initialization.v1\u{00}" +
+      [
+        goal_id.to_json(),
+        repository_id.to_json(),
+        goal_ref.to_json(),
+        base_oid.to_json(),
+        witness_ref.to_json(),
+      ]
+      .to_json()
+      .stringify(indent=0),
+    ),
+  )
+  (
+    GoalBranchInitIntentId("branch-init-" + @storage.digest_text(digest)),
+    digest,
+    witness_ref,
+  )
+}
+
+///|
+pub fn initial_goal_branch_initialization(
+  goal_id : @control.GoalId,
+  repository_id : RepositoryId,
+  goal_ref : GitRefName,
+  base_oid : @control.GitOid,
+) -> GoalBranchInitialization {
+  let (intent_id, idempotency_key, initialization_witness_ref) = goal_branch_initialization_identity(
+    goal_id, repository_id, goal_ref, base_oid,
+  )
+  {
+    intent_id,
+    goal_id,
+    repository_id,
+    goal_ref,
+    captured_base_oid: base_oid,
+    initialization_witness_ref,
+    idempotency_key,
+    lifecycle: GoalBranchInitLifecycle::GoalBranchInitPlanned,
+    receipt: None,
+  }
+}
+
+///|
+fn goal_branch_initialization_shape_is_valid(
+  record : GoalExecutionRecord,
+) -> Bool {
+  let expected = initial_goal_branch_initialization(
+    record.goal.id,
+    record.repository_id,
+    record.goal_ref,
+    record.base_commit_oid,
+  )
+  let initialization = record.branch_initialization
+  let identity_valid = initialization.intent_id == expected.intent_id &&
+    initialization.goal_id == record.goal.id &&
+    initialization.repository_id == record.repository_id &&
+    initialization.goal_ref == record.goal_ref &&
+    initialization.captured_base_oid == record.base_commit_oid &&
+    initialization.initialization_witness_ref ==
+    expected.initialization_witness_ref &&
+    initialization.idempotency_key == expected.idempotency_key
+  let receipt_valid = match (initialization.lifecycle, initialization.receipt) {
+    (GoalBranchInitReceipted, Some(receipt)) =>
+      receipt.intent_id == initialization.intent_id &&
+      receipt.idempotency_key == initialization.idempotency_key &&
+      receipt.repository_id == initialization.repository_id &&
+      receipt.goal_ref == initialization.goal_ref &&
+      receipt.initialized_oid == initialization.captured_base_oid &&
+      receipt.initialization_witness_ref ==
+      initialization.initialization_witness_ref &&
+      receipt.observed_at > 0L
+    (GoalBranchInitReceipted, None) => false
+    (_, None) => true
+    (_, Some(_)) => false
+  }
+  let lifecycle_valid = match record.state {
+    GoalExecutionQueued => initialization.lifecycle == GoalBranchInitPlanned
+    GoalExecutionRunning | GoalExecutionPaused | GoalExecutionBlocked => true
+    GoalExecutionCanceling | GoalExecutionCanceled =>
+      match initialization.lifecycle {
+        GoalBranchInitAuthorized
+        | GoalBranchInitReceipted
+        | GoalBranchInitIntegrityBlocked
+        | GoalBranchInitUncertain
+        | GoalBranchInitAbandonedByCancellation => true
+        GoalBranchInitPlanned => false
+      }
+    GoalExecutionAssuring | GoalExecutionAssured | GoalExecutionSucceeded =>
+      initialization.lifecycle == GoalBranchInitReceipted
+  }
+  identity_valid && receipt_valid && lifecycle_valid
 }
 
 ///|
@@ -368,6 +535,7 @@ pub fn goal_execution_record_from_selection(
     Some(value) => value
     None => return Err(goal_execution_error("accepted Goal is absent"))
   }
+  let goal_ref = goal_execution_ref(goal.id)
   if goal.lifecycle !=
     goal_execution_lifecycle(
       goal.id,
@@ -390,7 +558,13 @@ pub fn goal_execution_record_from_selection(
     base_commit_oid: decision.proposal.expected_base_commit_oid,
     base_tree_oid: decision.proposal.expected_base_tree_oid,
     integration_target_ref: decision.proposal.integration_target_ref,
-    goal_ref: goal_execution_ref(goal.id),
+    goal_ref,
+    branch_initialization: initial_goal_branch_initialization(
+      goal.id,
+      decision.proposal.repository_id,
+      goal_ref,
+      decision.proposal.expected_base_commit_oid,
+    ),
     maximum_parallel_parts: decision.proposal.maximum_parallel_parts,
     policy_revisions: [
       initial_goal_policy_revision(
@@ -449,6 +623,7 @@ pub fn decode_goal_execution_record(
     !goal_execution_pause_shape_is_valid(record) ||
     !goal_execution_input_answers_are_valid(record) ||
     !goal_execution_cancellation_shape_is_valid(record) ||
+    !goal_branch_initialization_shape_is_valid(record) ||
     @storage.validate_digest(record.selection_decision_digest) is Err(_) {
     Err(goal_execution_error("record identity is invalid"))
   } else {
@@ -481,6 +656,142 @@ pub fn goal_execution_is_terminal(record : GoalExecutionRecord) -> Bool {
 }
 
 ///|
+pub fn authorize_goal_branch_initialization(
+  record : GoalExecutionRecord,
+) -> Result[GoalExecutionRecord, @types.ChoirError] {
+  if record.state != GoalExecutionRunning ||
+    record.cancellation_request is Some(_) ||
+    record.branch_initialization.lifecycle != GoalBranchInitPlanned ||
+    !goal_branch_initialization_shape_is_valid(record) {
+    return Err(
+      goal_execution_error("branch initialization is not authorizable"),
+    )
+  }
+  Ok({
+    ..record,
+    branch_initialization: {
+      ..record.branch_initialization,
+      lifecycle: GoalBranchInitAuthorized,
+    },
+    durable_version: record.durable_version + 1,
+  })
+}
+
+///|
+pub fn reconcile_goal_branch_initialization(
+  record : GoalExecutionRecord,
+  observation : GoalBranchInitObservation,
+  observed_at : Int64,
+) -> Result[GoalBranchInitReconciliation, @types.ChoirError] {
+  let initialization = record.branch_initialization
+  if initialization.lifecycle == GoalBranchInitReceipted &&
+    observation == GoalBranchInitRefsAtBase {
+    return Ok(GoalBranchInitObservationRecorded(record))
+  }
+  if initialization.lifecycle != GoalBranchInitAuthorized || observed_at <= 0L {
+    return Err(goal_execution_error("branch initialization is not authorized"))
+  }
+  match observation {
+    GoalBranchInitRefsAbsent => Ok(GoalBranchInitExactRetryAuthorized(record))
+    GoalBranchInitRefsAtBase => {
+      let receipt : GoalBranchInitReceipt = {
+        intent_id: initialization.intent_id,
+        idempotency_key: initialization.idempotency_key,
+        repository_id: initialization.repository_id,
+        goal_ref: initialization.goal_ref,
+        initialized_oid: initialization.captured_base_oid,
+        initialization_witness_ref: initialization.initialization_witness_ref,
+        observed_at,
+      }
+      Ok(
+        GoalBranchInitObservationRecorded({
+          ..record,
+          branch_initialization: {
+            ..initialization,
+            lifecycle: GoalBranchInitReceipted,
+            receipt: Some(receipt),
+          },
+          durable_version: record.durable_version + 1,
+        }),
+      )
+    }
+    GoalBranchInitBranchOnly | GoalBranchInitWitnessOnly => {
+      let state = if record.state == GoalExecutionCanceling {
+        record.state
+      } else {
+        GoalExecutionBlocked
+      }
+      let lifecycle = goal_execution_lifecycle(
+        record.goal.id,
+        state,
+        None,
+        record.cancellation_request,
+      )
+      Ok(
+        GoalBranchInitObservationRecorded({
+          ..record,
+          goal: { ..record.goal, lifecycle, },
+          branch_initialization: {
+            ..initialization,
+            lifecycle: GoalBranchInitIntegrityBlocked,
+          },
+          state,
+          pause: None,
+          durable_version: record.durable_version + 1,
+        }),
+      )
+    }
+    GoalBranchInitRefsDiverged => {
+      let state = if record.state == GoalExecutionCanceling {
+        record.state
+      } else {
+        GoalExecutionPaused
+      }
+      let pause = if state == GoalExecutionPaused {
+        Some({
+          reason: GoalPauseRecoveryUncertain,
+          resume_state: GoalExecutionRunning,
+        })
+      } else {
+        None
+      }
+      let lifecycle = goal_execution_lifecycle(
+        record.goal.id,
+        state,
+        pause,
+        record.cancellation_request,
+      )
+      Ok(
+        GoalBranchInitObservationRecorded({
+          ..record,
+          goal: { ..record.goal, lifecycle, },
+          branch_initialization: {
+            ..initialization,
+            lifecycle: GoalBranchInitUncertain,
+          },
+          state,
+          pause,
+          durable_version: record.durable_version + 1,
+        }),
+      )
+    }
+  }
+}
+
+///|
+pub fn goal_branch_initialization_disposition_is_known(
+  record : GoalExecutionRecord,
+) -> Bool {
+  match record.branch_initialization.lifecycle {
+    GoalBranchInitReceipted
+    | GoalBranchInitIntegrityBlocked
+    | GoalBranchInitUncertain
+    | GoalBranchInitAbandonedByCancellation => true
+    _ => false
+  }
+}
+
+///|
 pub fn advance_goal_execution_state(
   record : GoalExecutionRecord,
   state : GoalExecutionState,
@@ -490,6 +801,16 @@ pub fn advance_goal_execution_state(
   }
   if record.active_input_request is Some(_) {
     return Err(goal_execution_error("Goal awaiting an answer cannot advance"))
+  }
+  if (
+      state == GoalExecutionAssuring ||
+      state == GoalExecutionAssured ||
+      state == GoalExecutionSucceeded
+    ) &&
+    record.branch_initialization.lifecycle != GoalBranchInitReceipted {
+    return Err(
+      goal_execution_error("Goal branch initialization is not receipted"),
+    )
   }
   let allowed = match (record.state, state) {
     (GoalExecutionQueued, GoalExecutionRunning)
@@ -814,10 +1135,20 @@ pub fn request_goal_execution_cancellation(
         Ok(value) => value
         Err(error) => return Err(error)
       }
+      let branch_initialization = if record.branch_initialization.lifecycle ==
+        GoalBranchInitPlanned {
+        {
+          ..record.branch_initialization,
+          lifecycle: GoalBranchInitAbandonedByCancellation,
+        }
+      } else {
+        record.branch_initialization
+      }
       Ok(
         GoalCancellationRequested({
           ..record,
           goal,
+          branch_initialization,
           state: GoalExecutionCanceling,
           pause: None,
           active_input_request: None,
@@ -834,7 +1165,8 @@ pub fn commit_goal_execution_cancellation(
   record : GoalExecutionRecord,
 ) -> Result[GoalExecutionRecord, @types.ChoirError] {
   if record.state != GoalExecutionCanceling ||
-    !goal_execution_cancellation_shape_is_valid(record) {
+    !goal_execution_cancellation_shape_is_valid(record) ||
+    !goal_branch_initialization_disposition_is_known(record) {
     return Err(goal_execution_error("Goal has no durable cancellation cutoff"))
   }
   let identity = @storage.digest_text(

@@ -9,6 +9,31 @@ let workflow_store_digest_b : @control.Digest = @control.Digest(
 )
 
 ///|
+fn workflow_store_initialized_branch(
+  goal_id : @control.GoalId,
+  repository_id : @workflow.RepositoryId,
+  goal_ref : @workflow.GitRefName,
+  base_oid : @control.GitOid,
+) -> @workflow.GoalBranchInitialization {
+  let planned = @workflow.initial_goal_branch_initialization(
+    goal_id, repository_id, goal_ref, base_oid,
+  )
+  {
+    ..planned,
+    lifecycle: @workflow.GoalBranchInitLifecycle::GoalBranchInitReceipted,
+    receipt: Some({
+      intent_id: planned.intent_id,
+      idempotency_key: planned.idempotency_key,
+      repository_id,
+      goal_ref,
+      initialized_oid: base_oid,
+      initialization_witness_ref: planned.initialization_witness_ref,
+      observed_at: 1L,
+    }),
+  }
+}
+
+///|
 fn workflow_store_take(
   id : String,
   purpose : @control.TakePurpose,
@@ -1220,6 +1245,12 @@ async test "Goal cancellation atomically rejects stale seal authorization" {
     base_tree_oid: @control.GitOid("goal-tree-store"),
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
     goal_ref: @workflow.goal_execution_ref(integrated.goal.id),
+    branch_initialization: workflow_store_initialized_branch(
+      integrated.goal.id,
+      @workflow.RepositoryId("repository-assurance-cutoff"),
+      @workflow.goal_execution_ref(integrated.goal.id),
+      @control.GitOid("goal-head-store"),
+    ),
     maximum_parallel_parts: 1,
     policy_revisions: [
       @workflow.initial_goal_policy_revision(integrated.goal.id, 1),
@@ -1244,6 +1275,7 @@ async test "Goal cancellation atomically rejects stale seal authorization" {
   )
   let assurance_transition = match
     @workflow.run_next_goal_execution_tick(repository, adapters, {
+      initialize: async fn(_) { Ok(true) },
       execute: async fn(_, _) {
         fail("integrated Goal dispatched another Part")
       },
@@ -1357,6 +1389,12 @@ async test "Goal steering persists revision history and paused Goals do not run"
     base_tree_oid: @control.GitOid("goal-steering-tree"),
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
     goal_ref: @workflow.goal_execution_ref(fixture.goal.id),
+    branch_initialization: @workflow.initial_goal_branch_initialization(
+      fixture.goal.id,
+      @workflow.RepositoryId("repository-goal-steering"),
+      @workflow.goal_execution_ref(fixture.goal.id),
+      @control.GitOid("goal-steering-head"),
+    ),
     maximum_parallel_parts: 1,
     policy_revisions: [
       @workflow.initial_goal_policy_revision(fixture.goal.id, 1),
@@ -1415,6 +1453,7 @@ async test "Goal steering persists revision history and paused Goals do not run"
     Some(@workflow.GoalPauseReason::GoalPauseRequested),
   )
   let tick = @workflow.run_next_goal_execution_tick(repository, adapters, {
+    initialize: async fn(_) { fail("paused Goal initialized") },
     execute: async fn(_, _) { fail("paused Goal executed") },
     assure: async fn(_, _) { fail("paused Goal entered assurance") },
     finalize: async fn(_, _) { fail("paused Goal entered finalization") },
@@ -1471,6 +1510,12 @@ async test "Goal finalization input request and answer survive restart" {
     base_tree_oid: @control.GitOid("goal-input-tree"),
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
     goal_ref: @workflow.goal_execution_ref(fixture.goal.id),
+    branch_initialization: workflow_store_initialized_branch(
+      fixture.goal.id,
+      @workflow.RepositoryId("repository-goal-input"),
+      @workflow.goal_execution_ref(fixture.goal.id),
+      @control.GitOid("goal-input-head"),
+    ),
     maximum_parallel_parts: 1,
     policy_revisions: [
       @workflow.initial_goal_policy_revision(fixture.goal.id, 1),
@@ -1492,6 +1537,7 @@ async test "Goal finalization input request and answer survive restart" {
     }).unwrap(),
   )
   let tick = @workflow.run_next_goal_execution_tick(repository, adapters, {
+    initialize: async fn(_) { fail("assured Goal initialized") },
     execute: async fn(_, _) { fail("answered Goal executed Parts") },
     assure: async fn(_, _) { fail("answered Goal repeated assurance") },
     finalize: async fn(_, _) {
@@ -1514,6 +1560,7 @@ async test "Goal finalization input request and answer survive restart" {
   )
   assert_eq(paused.state, @workflow.GoalExecutionState::GoalExecutionPaused)
   let idle = @workflow.run_next_goal_execution_tick(repository, adapters, {
+    initialize: async fn(_) { fail("input-blocked Goal initialized") },
     execute: async fn(_, _) { fail("input-blocked Goal executed Parts") },
     assure: async fn(_, _) { fail("input-blocked Goal repeated assurance") },
     finalize: async fn(_, _) { fail("input-blocked Goal retried finalization") },

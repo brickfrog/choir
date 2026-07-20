@@ -726,6 +726,31 @@ fn publication_digest(label : String) -> @control.Digest {
 }
 
 ///|
+fn publication_initialized_branch(
+  goal_id : @control.GoalId,
+  repository_id : @workflow.RepositoryId,
+  goal_ref : @workflow.GitRefName,
+  base_oid : @control.GitOid,
+) -> @workflow.GoalBranchInitialization {
+  let planned = @workflow.initial_goal_branch_initialization(
+    goal_id, repository_id, goal_ref, base_oid,
+  )
+  {
+    ..planned,
+    lifecycle: @workflow.GoalBranchInitLifecycle::GoalBranchInitReceipted,
+    receipt: Some({
+      intent_id: planned.intent_id,
+      idempotency_key: planned.idempotency_key,
+      repository_id,
+      goal_ref,
+      initialized_oid: base_oid,
+      initialization_witness_ref: planned.initialization_witness_ref,
+      observed_at: 1L,
+    }),
+  }
+}
+
+///|
 fn publication_take(
   goal_id : @control.GoalId,
   id : String,
@@ -1149,6 +1174,12 @@ async fn prove_publication_fault_recovery(
     base_tree_oid: @control.GitOid(tree_oid),
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
     goal_ref,
+    branch_initialization: publication_initialized_branch(
+      goal_id,
+      repository_id,
+      goal_ref,
+      @control.GitOid(base_oid),
+    ),
     maximum_parallel_parts: 1,
     policy_revisions: [@workflow.initial_goal_policy_revision(goal_id, 1)],
     part_workflow_ids: [integrated.workflow_id],

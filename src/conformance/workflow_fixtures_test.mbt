@@ -51,3 +51,40 @@ test "selection fixture records exact typed rejection and acceptance sets" {
     ),
   ])
 }
+
+///|
+test "branch initialization fixture covers crash and cancellation ordering" {
+  let clock = @ref.new(1L)
+  let report = @conformance.run_hermetic_case(
+    @conformance.branch_initialization_faults_case(),
+    {
+      now: fn() {
+        clock.val = clock.val + 1L
+        clock.val
+      },
+      next_id: fn(_) { "branch-initialization-fixture-id" },
+      fault_enabled: fn(_) { true },
+      adapters: {
+        read_state: fn(_) { Ok(@conformance.StateObservation::StateMissing) },
+        read_artifact: fn(_) {
+          Ok(@conformance.ArtifactObservation::ArtifactMissing)
+        },
+        read_effect_witness: fn(_) {
+          Ok(@conformance.EffectWitnessObservation::EffectWitnessAbsent)
+        },
+      },
+    },
+  )
+  assert_true(
+    report.status is @conformance.ConformanceCaseStatus::ConformanceCasePassed,
+  )
+  assert_eq(report.evidence, [
+    @conformance.ConformanceEvidence::ObservedBranchInitializationCase(
+      @conformance.BranchInitializationConformanceKind::BranchInitializationRecoveryMatrix,
+      1,
+      true,
+      true,
+      true,
+    ),
+  ])
+}

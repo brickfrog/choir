@@ -18,6 +18,12 @@ fn hermetic_dependencies() -> @conformance.ConformanceDependencies {
       prefix + "-" + ids.val.to_string()
     },
     fault_enabled: fn(point) {
+      point == @conformance.FaultPoint::BranchInitAfterIntentBeforeAuthorized ||
+      point ==
+      @conformance.FaultPoint::BranchInitAfterAuthorizedBeforeRefTransaction ||
+      point == @conformance.FaultPoint::BranchInitDuringRefTransaction ||
+      point ==
+      @conformance.FaultPoint::BranchInitAfterRefTransactionBeforeReceipt ||
       point == @conformance.FaultPoint::EventBeforeIngestTransaction ||
       point ==
       @conformance.FaultPoint::EventAfterIngestTransactionBeforeSourceAck ||
@@ -51,6 +57,7 @@ fn run_hermetic() -> Int {
     [
       @conformance.runner_dependency_contract_case(),
       @conformance.scheduler_generated_dags_case(),
+      @conformance.branch_initialization_faults_case(),
       @conformance.event_duplicate_conflict_case(),
       @conformance.event_cursor_gap_case(),
       @conformance.event_late_terminal_case(),

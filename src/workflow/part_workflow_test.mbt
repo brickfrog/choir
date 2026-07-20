@@ -416,18 +416,52 @@ fn round_trip(
 }
 
 ///|
+fn workflow_initialized_branch(
+  goal_id : @control.GoalId,
+  repository_id : @workflow.RepositoryId,
+  goal_ref : @workflow.GitRefName,
+  base_oid : @control.GitOid,
+) -> @workflow.GoalBranchInitialization {
+  let planned = @workflow.initial_goal_branch_initialization(
+    goal_id, repository_id, goal_ref, base_oid,
+  )
+  {
+    ..planned,
+    lifecycle: @workflow.GoalBranchInitLifecycle::GoalBranchInitReceipted,
+    receipt: Some({
+      intent_id: planned.intent_id,
+      idempotency_key: planned.idempotency_key,
+      repository_id,
+      goal_ref,
+      initialized_oid: base_oid,
+      initialization_witness_ref: planned.initialization_witness_ref,
+      observed_at: 1L,
+    }),
+  }
+}
+
+///|
 fn workflow_execution_for_attach(
   snapshot : @workflow.PartWorkflowSnapshot,
 ) -> @workflow.GoalExecutionRecord {
+  let repository_id = @workflow.RepositoryId("repository-attach")
+  let goal_ref = @workflow.goal_execution_ref(snapshot.goal.id)
+  let base_oid = @control.GitOid("base-commit")
   {
     goal: snapshot.goal,
-    repository_id: @workflow.RepositoryId("repository-attach"),
+    repository_id,
     selection_decision_digest: workflow_digest_a,
     base_ref: @workflow.GitRefName("refs/heads/main"),
-    base_commit_oid: @control.GitOid("base-commit"),
+    base_commit_oid: base_oid,
     base_tree_oid: @control.GitOid("base-tree"),
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
-    goal_ref: @workflow.goal_execution_ref(snapshot.goal.id),
+    goal_ref,
+    branch_initialization: workflow_initialized_branch(
+      snapshot.goal.id,
+      repository_id,
+      goal_ref,
+      base_oid,
+    ),
     maximum_parallel_parts: 1,
     policy_revisions: [
       @workflow.initial_goal_policy_revision(snapshot.goal.id, 1),
@@ -916,6 +950,12 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     base_tree_oid: @control.GitOid("goal-tree-before"),
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
     goal_ref: @workflow.goal_execution_ref(integrated.goal.id),
+    branch_initialization: workflow_initialized_branch(
+      integrated.goal.id,
+      @workflow.RepositoryId("repository-assurance"),
+      @workflow.goal_execution_ref(integrated.goal.id),
+      @control.GitOid("goal-head"),
+    ),
     maximum_parallel_parts: 1,
     policy_revisions: [
       @workflow.initial_goal_policy_revision(integrated.goal.id, 1),

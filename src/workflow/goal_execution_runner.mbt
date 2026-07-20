@@ -1,5 +1,6 @@
 ///|
 pub(all) struct GoalExecutionRunnerAdapters {
+  initialize : async (GoalExecutionRecord) -> Result[Bool, @types.ChoirError]
   execute : async (GoalExecutionRecord, Array[PartWorkflowSnapshot]) -> Result[
     Unit,
     @types.ChoirError,
@@ -311,20 +312,39 @@ pub async fn run_next_goal_execution_tick(
     GoalExecutionState::GoalExecutionRunning => selected
     _ => return Err(goal_execution_error("selected Goal is not runnable"))
   }
+  let initialized = match (runner_adapters.initialize)(running.record) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let current = match
+    load_goal_execution_record(
+      repository,
+      repository_adapters,
+      running.record.goal.id,
+    ) {
+    Ok(Some(value)) => value
+    Ok(None) => return Err(goal_execution_error("Goal disappeared"))
+    Err(error) => return Err(error)
+  }
+  if current.record != running.record || !initialized {
+    return Ok(
+      GoalExecutionTickResult::GoalExecutionTickAdvanced(current.record),
+    )
+  }
   let before = match
-    load_goal_execution_parts(repository, repository_adapters, running.record) {
+    load_goal_execution_parts(repository, repository_adapters, current.record) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
   let before_state = goal_execution_state_from_parts(before)
   if before_state is None {
-    match (runner_adapters.execute)(running.record, before) {
+    match (runner_adapters.execute)(current.record, before) {
       Ok(_) => ()
       Err(error) => return Err(error)
     }
   }
   let after = match
-    load_goal_execution_parts(repository, repository_adapters, running.record) {
+    load_goal_execution_parts(repository, repository_adapters, current.record) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -334,7 +354,7 @@ pub async fn run_next_goal_execution_tick(
   }
   let advanced = match
     persist_goal_execution_advance(
-      repository, repository_adapters, running, next_state,
+      repository, repository_adapters, current, next_state,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)

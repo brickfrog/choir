@@ -22,6 +22,10 @@ pub(all) enum ConformanceIdKind {
 /// packages extend this enum as their seams land; fault strings never flow
 /// through orchestration code.
 pub(all) enum FaultPoint {
+  BranchInitAfterIntentBeforeAuthorized
+  BranchInitAfterAuthorizedBeforeRefTransaction
+  BranchInitDuringRefTransaction
+  BranchInitAfterRefTransactionBeforeReceipt
   EventBeforeIngestTransaction
   EventAfterIngestTransactionBeforeSourceAck
   EventAfterSourceAckBeforeNextRead
@@ -155,7 +159,19 @@ pub(all) enum ConformanceEvidence {
   ObservedEventCase(EventConformanceKind, Int)
   ObservedOwnershipCase(OwnershipConformanceKind, Int)
   ObservedProcessCase(ProcessConformanceKind, Int)
+  ObservedBranchInitializationCase(
+    BranchInitializationConformanceKind,
+    Int,
+    Bool,
+    Bool,
+    Bool
+  )
   AllocatedId(ConformanceIdKind, String)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum BranchInitializationConformanceKind {
+  BranchInitializationRecoveryMatrix
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|

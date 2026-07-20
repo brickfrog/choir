@@ -203,6 +203,48 @@ pub fn list_goal_execution_records(
 }
 
 ///|
+pub fn persist_goal_branch_initialization_transition(
+  repository : PartWorkflowRepository,
+  adapters : PartWorkflowRepositoryAdapters,
+  previous : StoredGoalExecutionRecord,
+  next : GoalExecutionRecord,
+) -> Result[StoredGoalExecutionRecord, @types.ChoirError] {
+  if next.goal.id != previous.record.goal.id ||
+    next.durable_version != previous.record.durable_version + 1 {
+    return Err(
+      goal_execution_error("branch initialization transition is invalid"),
+    )
+  }
+  let receipt = match
+    persist_goal_execution_record(repository, adapters, {
+      record: next,
+      expected_store_version: Some(previous.state_record.version),
+      fault_point: None,
+    }) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  match receipt.transaction_outcome {
+    @storage.StateTransactionOutcome::StateTransactionCommitted
+    | @storage.StateTransactionOutcome::StateTransactionReplayed
+    | @storage.StateTransactionOutcome::StateTransactionCommittedAckLost =>
+      match load_goal_execution_record(repository, adapters, next.goal.id) {
+        Ok(Some(observed)) if observed.record == next => Ok(observed)
+        Ok(_) =>
+          Err(
+            goal_execution_error(
+              "branch initialization transition did not reload",
+            ),
+          )
+        Err(error) => Err(error)
+      }
+    @storage.StateTransactionOutcome::StateTransactionVersionConflict =>
+      Err(goal_execution_error("branch initialization lost a state race"))
+    _ => Err(goal_execution_error("branch initialization transaction failed"))
+  }
+}
+
+///|
 pub fn persist_goal_cancellation_request(
   repository : PartWorkflowRepository,
   adapters : PartWorkflowRepositoryAdapters,

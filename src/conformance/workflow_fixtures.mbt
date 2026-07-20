@@ -813,6 +813,251 @@ pub fn selection_exact_snapshot_case() -> HermeticConformanceCase {
 }
 
 ///|
+fn branch_initialization_fixture_error(detail : String) -> @types.ChoirError {
+  @types.ChoirError::validation_error(
+    "branch initialization conformance failed: " + detail,
+  )
+}
+
+///|
+fn branch_initialization_fixture_record() -> Result[
+  @workflow.GoalExecutionRecord,
+  @types.ChoirError,
+] {
+  let goal_id = @control.GoalId("branch-initialization-goal")
+  let source = selection_fixture_source(
+    "branch-initialization-part",
+    [],
+    @workflow.SelectionSourceState::SelectionSourceOpen,
+  )
+  let part = selection_fixture_part(goal_id, "branch-initialization-part", [])
+  let decision = match
+    @workflow.evaluate_goal_proposal(
+      selection_fixture_proposal(goal_id, [part]),
+      selection_fixture_snapshot([source]),
+      fn(_) { true },
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  @workflow.goal_execution_record_from_selection(
+    decision,
+    @workflow.goal_selection_decision_digest(decision),
+    ["workflow-branch-initialization-part"],
+  )
+}
+
+///|
+fn branch_initialization_fixture_round_trip(
+  record : @workflow.GoalExecutionRecord,
+) -> Result[@workflow.GoalExecutionRecord, @types.ChoirError] {
+  @workflow.decode_goal_execution_record(
+    @workflow.goal_execution_record_bytes(record),
+  )
+}
+
+///|
+pub fn branch_initialization_faults_case() -> HermeticConformanceCase {
+  {
+    id: ConformanceCaseId("branch.initialization_faults"),
+    run: fn(context) {
+      let fault_points = [
+        FaultPoint::BranchInitAfterIntentBeforeAuthorized,
+        FaultPoint::BranchInitAfterAuthorizedBeforeRefTransaction,
+        FaultPoint::BranchInitDuringRefTransaction,
+        FaultPoint::BranchInitAfterRefTransactionBeforeReceipt,
+      ]
+      for point in fault_points {
+        if !context.fault_enabled(point) {
+          return Err(
+            branch_initialization_fixture_error(
+              "required fault point was not injected",
+            ),
+          )
+        }
+      }
+      let queued = match branch_initialization_fixture_record() {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let queued = match branch_initialization_fixture_round_trip(queued) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let canceled_before_authorization = match
+        @workflow.request_goal_execution_cancellation(queued, context.now()) {
+        Ok(@workflow.GoalCancellationDecision::GoalCancellationRequested(value)) =>
+          value
+        Ok(_) =>
+          return Err(
+            branch_initialization_fixture_error(
+              "preauthorization cancellation was not installed",
+            ),
+          )
+        Err(error) => return Err(error)
+      }
+      if canceled_before_authorization.branch_initialization.lifecycle !=
+        @workflow.GoalBranchInitLifecycle::GoalBranchInitAbandonedByCancellation ||
+        @workflow.commit_goal_execution_cancellation(
+          canceled_before_authorization,
+        )
+        is Err(_) {
+        return Err(
+          branch_initialization_fixture_error(
+            "preauthorization cancellation did not abandon initialization",
+          ),
+        )
+      }
+      let running = match
+        @workflow.advance_goal_execution_state(
+          queued,
+          @workflow.GoalExecutionState::GoalExecutionRunning,
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let authorized = match
+        @workflow.authorize_goal_branch_initialization(running) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let authorized = match
+        branch_initialization_fixture_round_trip(authorized) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      match
+        @workflow.reconcile_goal_branch_initialization(
+          authorized,
+          @workflow.GoalBranchInitObservation::GoalBranchInitRefsAbsent,
+          context.now(),
+        ) {
+        Ok(
+          @workflow.GoalBranchInitReconciliation::GoalBranchInitExactRetryAuthorized(
+            replay
+          )
+        ) if replay == authorized => ()
+        Ok(_) =>
+          return Err(
+            branch_initialization_fixture_error(
+              "absent refs did not preserve exact authorization",
+            ),
+          )
+        Err(error) => return Err(error)
+      }
+      let receipted = match
+        @workflow.reconcile_goal_branch_initialization(
+          authorized,
+          @workflow.GoalBranchInitObservation::GoalBranchInitRefsAtBase,
+          context.now(),
+        ) {
+        Ok(
+          @workflow.GoalBranchInitReconciliation::GoalBranchInitObservationRecorded(
+            value
+          )
+        ) => value
+        Ok(_) =>
+          return Err(
+            branch_initialization_fixture_error(
+              "exact refs did not produce a receipt",
+            ),
+          )
+        Err(error) => return Err(error)
+      }
+      let receipted = match
+        branch_initialization_fixture_round_trip(receipted) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let partial_blocked = match
+        @workflow.reconcile_goal_branch_initialization(
+          authorized,
+          @workflow.GoalBranchInitObservation::GoalBranchInitBranchOnly,
+          context.now(),
+        ) {
+        Ok(
+          @workflow.GoalBranchInitReconciliation::GoalBranchInitObservationRecorded(
+            value
+          )
+        ) => value.state == @workflow.GoalExecutionState::GoalExecutionBlocked
+        _ => false
+      }
+      let divergence_uncertain = match
+        @workflow.reconcile_goal_branch_initialization(
+          authorized,
+          @workflow.GoalBranchInitObservation::GoalBranchInitRefsDiverged,
+          context.now(),
+        ) {
+        Ok(
+          @workflow.GoalBranchInitReconciliation::GoalBranchInitObservationRecorded(
+            value
+          )
+        ) =>
+          value.branch_initialization.lifecycle ==
+          @workflow.GoalBranchInitLifecycle::GoalBranchInitUncertain
+        _ => false
+      }
+      let canceling = match
+        @workflow.request_goal_execution_cancellation(authorized, context.now()) {
+        Ok(@workflow.GoalCancellationDecision::GoalCancellationRequested(value)) =>
+          value
+        _ =>
+          return Err(
+            branch_initialization_fixture_error(
+              "postauthorization cancellation was not installed",
+            ),
+          )
+      }
+      let cancellation_waited = @workflow.commit_goal_execution_cancellation(
+          canceling,
+        )
+        is Err(_)
+      let canceling_receipted = match
+        @workflow.reconcile_goal_branch_initialization(
+          canceling,
+          @workflow.GoalBranchInitObservation::GoalBranchInitRefsAtBase,
+          context.now(),
+        ) {
+        Ok(
+          @workflow.GoalBranchInitReconciliation::GoalBranchInitObservationRecorded(
+            value
+          )
+        ) => value
+        _ =>
+          return Err(
+            branch_initialization_fixture_error(
+              "postauthorization cancellation did not reconcile",
+            ),
+          )
+      }
+      if receipted.branch_initialization.receipt is None ||
+        !partial_blocked ||
+        !divergence_uncertain ||
+        !cancellation_waited ||
+        @workflow.commit_goal_execution_cancellation(canceling_receipted)
+        is Err(_) {
+        return Err(
+          branch_initialization_fixture_error(
+            "recovery matrix did not converge fail closed",
+          ),
+        )
+      }
+      Ok({
+        evidence: [
+          ObservedBranchInitializationCase(
+            BranchInitializationRecoveryMatrix,
+            1,
+            partial_blocked,
+            divergence_uncertain,
+            cancellation_waited,
+          ),
+        ],
+      })
+    },
+  }
+}
+
+///|
 let audit_fixture_digest_a : @control.Digest = @control.Digest(
   "1111111111111111111111111111111111111111111111111111111111111111",
 )

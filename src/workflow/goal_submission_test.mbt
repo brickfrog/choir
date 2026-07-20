@@ -141,6 +141,24 @@ fn submission_execution() -> @workflow.GoalExecutionRecord {
 }
 
 ///|
+fn submission_initialized_running(
+  running : @workflow.GoalExecutionRecord,
+) -> @workflow.GoalExecutionRecord raise {
+  let authorized = @workflow.authorize_goal_branch_initialization(running).unwrap()
+  guard @workflow.reconcile_goal_branch_initialization(
+      authorized,
+      @workflow.GoalBranchInitObservation::GoalBranchInitRefsAtBase,
+      1L,
+    ).unwrap()
+    is @workflow.GoalBranchInitReconciliation::GoalBranchInitObservationRecorded(
+      initialized
+    ) else {
+    fail("Goal branch initialization did not receipt")
+  }
+  initialized
+}
+
+///|
 test "Goal scheduling policy changes form a durable revision chain" {
   let queued = submission_execution()
   assert_eq(queued.policy_revisions.length(), 1)
@@ -260,10 +278,12 @@ test "Goal policy steering is idempotent and distinguishes recovery pause" {
 ///|
 test "Goal input requests require their exact durable answer before resuming" {
   let queued = submission_execution()
-  let running = @workflow.advance_goal_execution_state(
-    queued,
-    @workflow.GoalExecutionState::GoalExecutionRunning,
-  ).unwrap()
+  let running = submission_initialized_running(
+    @workflow.advance_goal_execution_state(
+      queued,
+      @workflow.GoalExecutionState::GoalExecutionRunning,
+    ).unwrap(),
+  )
   let assuring = @workflow.advance_goal_execution_state(
     running,
     @workflow.GoalExecutionState::GoalExecutionAssuring,
@@ -400,6 +420,7 @@ test "Conductor proposal accepts exact closure in deterministic order" {
     Ok(value) => value
     Err(error) => fail(error.message())
   }
+  let running = submission_initialized_running(running)
   assert_true(
     @workflow.advance_goal_execution_state(
       running,
@@ -434,7 +455,7 @@ test "Conductor proposal accepts exact closure in deterministic order" {
   assert_true(
     succeeded.goal.lifecycle is @control.GoalLifecycle::GoalSucceeded(_),
   )
-  assert_eq(succeeded.durable_version, 5)
+  assert_eq(succeeded.durable_version, 7)
   let malformed = {
     ..succeeded,
     goal: {
@@ -501,6 +522,10 @@ test "Goal cancellation installs one durable cutoff and excludes success" {
     @control.GoalLifecycle::GoalCanceling(@control.EventSequence(2L)),
   )
   assert_eq(canceling.durable_version, 2)
+  assert_eq(
+    canceling.branch_initialization.lifecycle,
+    @workflow.GoalBranchInitLifecycle::GoalBranchInitAbandonedByCancellation,
+  )
   match @workflow.request_goal_execution_cancellation(canceling, 2000L) {
     Ok(
       @workflow.GoalCancellationDecision::GoalCancellationAlreadyCanceling(
@@ -533,6 +558,89 @@ test "Goal cancellation installs one durable cutoff and excludes success" {
     Ok(_) => fail("terminal cancellation was not reported")
     Err(error) => fail(error.message())
   }
+}
+
+///|
+test "authorized Goal branch initialization is reconciled through cancellation" {
+  let running = @workflow.advance_goal_execution_state(
+    submission_execution(),
+    @workflow.GoalExecutionState::GoalExecutionRunning,
+  ).unwrap()
+  let authorized = @workflow.authorize_goal_branch_initialization(running).unwrap()
+  guard @workflow.request_goal_execution_cancellation(authorized, 100L).unwrap()
+    is @workflow.GoalCancellationDecision::GoalCancellationRequested(canceling) else {
+    fail("cancellation did not preserve authorized initialization")
+  }
+  assert_eq(
+    canceling.branch_initialization.lifecycle,
+    @workflow.GoalBranchInitLifecycle::GoalBranchInitAuthorized,
+  )
+  assert_true(@workflow.commit_goal_execution_cancellation(canceling) is Err(_))
+  guard @workflow.reconcile_goal_branch_initialization(
+      canceling,
+      @workflow.GoalBranchInitObservation::GoalBranchInitRefsAbsent,
+      101L,
+    ).unwrap()
+    is @workflow.GoalBranchInitReconciliation::GoalBranchInitExactRetryAuthorized(
+      retry
+    ) else {
+    fail("absent initialization refs did not authorize exact retry")
+  }
+  assert_eq(retry, canceling)
+  guard @workflow.reconcile_goal_branch_initialization(
+      canceling,
+      @workflow.GoalBranchInitObservation::GoalBranchInitRefsAtBase,
+      102L,
+    ).unwrap()
+    is @workflow.GoalBranchInitReconciliation::GoalBranchInitObservationRecorded(
+      receipted
+    ) else {
+    fail("applied initialization did not produce a receipt")
+  }
+  assert_eq(
+    receipted.branch_initialization.lifecycle,
+    @workflow.GoalBranchInitLifecycle::GoalBranchInitReceipted,
+  )
+  assert_true(@workflow.commit_goal_execution_cancellation(receipted) is Ok(_))
+}
+
+///|
+test "partial and divergent Goal branch initialization fail closed" {
+  let running = @workflow.advance_goal_execution_state(
+    submission_execution(),
+    @workflow.GoalExecutionState::GoalExecutionRunning,
+  ).unwrap()
+  let authorized = @workflow.authorize_goal_branch_initialization(running).unwrap()
+  guard @workflow.reconcile_goal_branch_initialization(
+      authorized,
+      @workflow.GoalBranchInitObservation::GoalBranchInitBranchOnly,
+      1L,
+    ).unwrap()
+    is @workflow.GoalBranchInitReconciliation::GoalBranchInitObservationRecorded(
+      blocked
+    ) else {
+    fail("partial initialization was not recorded")
+  }
+  assert_eq(blocked.state, @workflow.GoalExecutionState::GoalExecutionBlocked)
+  assert_eq(
+    blocked.branch_initialization.lifecycle,
+    @workflow.GoalBranchInitLifecycle::GoalBranchInitIntegrityBlocked,
+  )
+  guard @workflow.reconcile_goal_branch_initialization(
+      authorized,
+      @workflow.GoalBranchInitObservation::GoalBranchInitRefsDiverged,
+      1L,
+    ).unwrap()
+    is @workflow.GoalBranchInitReconciliation::GoalBranchInitObservationRecorded(
+      uncertain
+    ) else {
+    fail("divergent initialization was not recorded")
+  }
+  assert_eq(uncertain.state, @workflow.GoalExecutionState::GoalExecutionPaused)
+  assert_eq(
+    uncertain.branch_initialization.lifecycle,
+    @workflow.GoalBranchInitLifecycle::GoalBranchInitUncertain,
+  )
 }
 
 ///|
