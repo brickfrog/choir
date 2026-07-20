@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Context-only amendments through: 2026-07-20T16:12:54-05:00
+Context-only amendments through: 2026-07-20T16:21:47-05:00
 
 ## Charter Semantics and Readiness
 
@@ -210,6 +210,15 @@ unconnected product path usable.
   and finishes with one verification, audit, and integration receipt. The
   fixture reports both recovery checks explicitly and covers eight durable Part
   boundaries in total.
+- Conflicting durable effect witnesses now retain the first row and return the
+  typed `ProviderProtocolViolation` error instead of a generic validation
+  failure. When that violation comes from an authorized provider dispatch, the
+  Part driver atomically marks the exact session `ProtocolViolated`, the Take
+  `RecoveryUncertain(ProtocolViolation)`, the pending effect uncertain, and the
+  Part recovery-uncertain. A storage test proves the first witness remains and
+  no receipt is minted; a native restart test separately proves the blocked
+  snapshot is durable. The exact audit-terminal conflict case still needs
+  registration in the named conformance matrix.
 - Codex Takes now use one restricted `codex app-server` process per Take over a
   private stdio FIFO and bounded owner-only response log. Choir durably binds
   the exact session, thread, turn, deterministic client-message ID, request

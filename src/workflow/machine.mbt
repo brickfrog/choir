@@ -459,3 +459,97 @@ pub fn authorize_pending_part_effect(
     None => Err(workflow_error("no external effect is pending"))
   }
 }
+
+///|
+pub fn record_part_provider_protocol_violation(
+  snapshot : PartWorkflowSnapshot,
+  intent : PartEffectIntent,
+) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
+  if snapshot.pending_effect != Some(intent) ||
+    intent.lifecycle != PartEffectMayHaveOccurred {
+    return Err(workflow_error("protocol violation has no authorized effect"))
+  }
+  let (take, session_id) = match intent.kind {
+    DispatchImplementation(take_id, session_id)
+    | DispatchVerification(take_id, session_id, _)
+    | DispatchAudit(take_id, session_id, _) => {
+      let take = if take_id == snapshot.implementation_take.id {
+        snapshot.implementation_take
+      } else if take_id == snapshot.verification_take.id {
+        snapshot.verification_take
+      } else if take_id == snapshot.audit_take.id {
+        snapshot.audit_take
+      } else {
+        return Err(workflow_error("protocol violation named an unknown Take"))
+      }
+      (take, session_id)
+    }
+    _ =>
+      return Err(
+        workflow_error(
+          "protocol violation did not arise from a provider dispatch",
+        ),
+      )
+  }
+  let terminal_take = match
+    @control.transition_take(
+      take,
+      @control.TakeTransition::FinishTake(
+        snapshot.fencing_epoch,
+        @control.TakeTerminalDisposition::TakeRecoveryUncertain(
+          @control.TakeUncertaintyReason::TakeProtocolViolation,
+        ),
+      ),
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let mut found_session = false
+  let sessions = snapshot.harness_sessions.map(fn(session) {
+    if session.id == session_id && session.take_id == take.id {
+      found_session = true
+      {
+        ..session,
+        lifecycle: @control.HarnessSessionLifecycle::HarnessSessionProtocolViolated,
+      }
+    } else {
+      session
+    }
+  })
+  if !found_session {
+    return Err(workflow_error("protocol violation session is missing"))
+  }
+  let part = match
+    @control.transition_part(
+      snapshot.part,
+      @control.PartTransition::BlockPart(
+        @control.PartBlockReason::PartRecoveryUncertain,
+      ),
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  Ok({
+    ..snapshot,
+    durable_version: snapshot.durable_version + 1,
+    stage: PartRecoveryUncertain,
+    part,
+    implementation_take: if take.id == snapshot.implementation_take.id {
+      terminal_take
+    } else {
+      snapshot.implementation_take
+    },
+    verification_take: if take.id == snapshot.verification_take.id {
+      terminal_take
+    } else {
+      snapshot.verification_take
+    },
+    audit_take: if take.id == snapshot.audit_take.id {
+      terminal_take
+    } else {
+      snapshot.audit_take
+    },
+    harness_sessions: sessions,
+    pending_effect: Some({ ..intent, lifecycle: PartEffectUncertain }),
+  })
+}

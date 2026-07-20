@@ -1,3 +1,5 @@
+//|
+
 ///|
 pub(all) struct GoalAssurancePersistenceRequest {
   record : GoalAssuranceRecord
@@ -222,6 +224,13 @@ pub fn record_goal_assurance_effect_witness(
     observation_digest: goal_assurance_observation_digest(observation),
     observed_at,
   }
+  let witness_conflict = fn(detail : String) {
+    match intent.kind {
+      DispatchGoalVerification(_, _, _) | DispatchGoalAudit(_, _, _) =>
+        @types.ChoirError::provider_protocol_violation(detail)
+      _ => goal_assurance_error(detail)
+    }
+  }
   let content = goal_assurance_effect_witness_bytes(witness)
   let digest = @storage.artifact_digest(content)
   let adopted = match
@@ -246,7 +255,11 @@ pub fn record_goal_assurance_effect_witness(
       return if existing == witness {
         Ok(existing)
       } else {
-        Err(goal_assurance_error("effect witness identity was reused"))
+        Err(
+          witness_conflict(
+            "Goal assurance effect witness identity was reused with different semantics",
+          ),
+        )
       }
     Ok(None) => ()
     Err(error) => return Err(error)
@@ -276,13 +289,24 @@ pub fn record_goal_assurance_effect_witness(
     | @storage.StateTransactionOutcome::StateTransactionVersionConflict =>
       match load_goal_assurance_effect_witness(repository, adapters, intent) {
         Ok(Some(stored)) if stored == witness => Ok(stored)
-        Ok(_) => Err(goal_assurance_error("effect witness was not recovered"))
+        Ok(Some(_)) =>
+          Err(
+            witness_conflict(
+              "Goal assurance effect witness commit resolved to different semantics",
+            ),
+          )
+        Ok(None) =>
+          Err(goal_assurance_error("effect witness was not recovered"))
         Err(error) => Err(error)
       }
     @storage.StateTransactionOutcome::StateTransactionStaleFence =>
       Err(goal_assurance_error("effect witness fencing conflict"))
     @storage.StateTransactionOutcome::StateTransactionSemanticConflict =>
-      Err(goal_assurance_error("effect witness semantic conflict"))
+      Err(
+        witness_conflict(
+          "Goal assurance effect witness semantic key was reused",
+        ),
+      )
     @storage.StateTransactionOutcome::StateTransactionFaultRolledBack(_) =>
       Err(goal_assurance_error("effect witness transaction rolled back"))
   }

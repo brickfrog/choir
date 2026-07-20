@@ -419,6 +419,15 @@ pub fn record_part_effect_witness(
     observation_digest: part_effect_observation_digest(observation),
     observed_at,
   }
+  let witness_conflict = fn(detail : String) {
+    match intent.kind {
+      DispatchImplementation(_, _)
+      | DispatchVerification(_, _, _)
+      | DispatchAudit(_, _, _) =>
+        @types.ChoirError::provider_protocol_violation(detail)
+      _ => workflow_error(detail)
+    }
+  }
   let content = part_effect_witness_bytes(witness)
   let digest = @storage.artifact_digest(content)
   let adopted = match
@@ -443,7 +452,11 @@ pub fn record_part_effect_witness(
       return if existing == witness {
         Ok(existing)
       } else {
-        Err(workflow_error("effect witness identity was reused"))
+        Err(
+          witness_conflict(
+            "Part effect witness identity was reused with different semantics",
+          ),
+        )
       }
     Ok(None) => ()
     Err(error) => return Err(error)
@@ -473,13 +486,20 @@ pub fn record_part_effect_witness(
     | @storage.StateTransactionOutcome::StateTransactionVersionConflict =>
       match load_part_effect_witness(repository, adapters, intent) {
         Ok(Some(stored)) if stored == witness => Ok(stored)
-        Ok(_) => Err(workflow_error("effect witness commit was not recovered"))
+        Ok(Some(_)) =>
+          Err(
+            witness_conflict(
+              "Part effect witness commit resolved to different semantics",
+            ),
+          )
+        Ok(None) =>
+          Err(workflow_error("effect witness commit was not recovered"))
         Err(error) => Err(error)
       }
     @storage.StateTransactionOutcome::StateTransactionStaleFence =>
       Err(workflow_error("effect witness fencing conflict"))
     @storage.StateTransactionOutcome::StateTransactionSemanticConflict =>
-      Err(workflow_error("effect witness semantic conflict"))
+      Err(witness_conflict("Part effect witness semantic key was reused"))
     @storage.StateTransactionOutcome::StateTransactionFaultRolledBack(_) =>
       Err(workflow_error("effect witness transaction rolled back"))
   }

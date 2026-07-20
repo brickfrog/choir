@@ -4,6 +4,7 @@ pub(all) enum PartPersistenceBoundary {
   WorkflowEffectPlanned
   WorkflowEffectAuthorized
   WorkflowEffectObserved
+  WorkflowProviderProtocolViolationRecorded
   WorkflowAuditResultRecorded
   WorkflowAuditReceiptRecorded
   WorkflowIntegrationPlanned
@@ -227,6 +228,44 @@ fn persistence_result(
 }
 
 ///|
+fn persist_provider_protocol_violation(
+  repository : PartWorkflowRepository,
+  repository_adapters : PartWorkflowRepositoryAdapters,
+  snapshot : PartWorkflowSnapshot,
+  store_version : Int,
+  intent : PartEffectIntent,
+  dependencies : PartWorkflowDriverDependencies,
+) -> Result[PartWorkflowRunResult, @types.ChoirError] {
+  let violated = match
+    record_part_provider_protocol_violation(snapshot, intent) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  match
+    persist_driver_snapshot(
+      repository,
+      repository_adapters,
+      violated,
+      Some(store_version),
+      WorkflowProviderProtocolViolationRecorded,
+      dependencies,
+      None,
+    ) {
+    Ok(WorkflowSnapshotPersisted(version)) =>
+      Ok({
+        snapshot: violated,
+        store_version: Some(version),
+        outcome: PartRunRecoveryUncertain,
+      })
+    Ok(WorkflowSnapshotPersistencePaused(boundary, point)) =>
+      Ok(persistence_result(snapshot, Some(store_version), boundary, point))
+    Ok(WorkflowSnapshotAuthorizationRejected) =>
+      Err(workflow_error("protocol violation used an authorization guard"))
+    Err(error) => Err(error)
+  }
+}
+
+///|
 async fn drive_part_workflow(
   repository : PartWorkflowRepository,
   repository_adapters : PartWorkflowRepositoryAdapters,
@@ -317,7 +356,15 @@ async fn drive_part_workflow(
         let observation = if authorized_in_this_process {
           match (dependencies.effects.execute)(snapshot, intent) {
             Ok(value) => value
-            Err(error) => return Err(error)
+            Err(error) => {
+              if error.is_provider_protocol_violation() {
+                return persist_provider_protocol_violation(
+                  repository, repository_adapters, snapshot, store_version, intent,
+                  dependencies,
+                )
+              }
+              return Err(error)
+            }
           }
         } else {
           match (dependencies.effects.reconcile)(snapshot, intent) {
@@ -325,7 +372,15 @@ async fn drive_part_workflow(
             Ok(ExactEffectRetryAuthorized) =>
               match (dependencies.effects.execute)(snapshot, intent) {
                 Ok(value) => value
-                Err(error) => return Err(error)
+                Err(error) => {
+                  if error.is_provider_protocol_violation() {
+                    return persist_provider_protocol_violation(
+                      repository, repository_adapters, snapshot, store_version, intent,
+                      dependencies,
+                    )
+                  }
+                  return Err(error)
+                }
               }
             Ok(EffectWitnessUnavailable) =>
               return Ok({
@@ -333,7 +388,15 @@ async fn drive_part_workflow(
                 store_version: Some(store_version),
                 outcome: PartRunWaitingForEffectWitness(intent.effect_id),
               })
-            Err(error) => return Err(error)
+            Err(error) => {
+              if error.is_provider_protocol_violation() {
+                return persist_provider_protocol_violation(
+                  repository, repository_adapters, snapshot, store_version, intent,
+                  dependencies,
+                )
+              }
+              return Err(error)
+            }
           }
         }
         let observed = match

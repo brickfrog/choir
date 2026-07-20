@@ -578,6 +578,64 @@ test "Goal cancellation records an authorized provider effect as uncertain" {
 }
 
 ///|
+test "provider protocol violation terminally fences its Take and Part" {
+  let initial = workflow_fixture()
+  let implementation_session = started_session(
+    initial.identities.implementation_session,
+  )
+  let prepared = apply_observation(
+    initial,
+    @workflow.PartEffectObservation::ImplementationSandboxPrepared(
+      active_sandbox(initial.identities.implementation_sandbox),
+    ),
+    10L,
+  )
+  let running = apply_observation(
+    prepared,
+    @workflow.PartEffectObservation::ImplementationHarnessStarted(
+      implementation_session,
+    ),
+    11L,
+  )
+  let authorized = authorize_next(running)
+  let intent = match authorized.pending_effect {
+    Some(value) => value
+    None => fail("implementation dispatch was not authorized")
+  }
+  let violated = @workflow.record_part_provider_protocol_violation(
+    authorized, intent,
+  ).unwrap()
+  assert_eq(violated.stage, @workflow.PartWorkflowStage::PartRecoveryUncertain)
+  assert_eq(
+    violated.part.lifecycle,
+    @control.PartLifecycle::PartBlocked(
+      @control.PartBlockReason::PartRecoveryUncertain,
+    ),
+  )
+  assert_eq(
+    violated.implementation_take.lifecycle,
+    @control.TakeLifecycle::TakeTerminal(
+      @control.TakeTerminalDisposition::TakeRecoveryUncertain(
+        @control.TakeUncertaintyReason::TakeProtocolViolation,
+      ),
+    ),
+  )
+  assert_true(
+    violated.harness_sessions.any(fn(session) {
+      session.id == implementation_session.id &&
+      session.lifecycle ==
+      @control.HarnessSessionLifecycle::HarnessSessionProtocolViolated
+    }),
+  )
+  assert_true(
+    violated.pending_effect
+    is Some(
+      { lifecycle: @workflow.PartEffectLifecycle::PartEffectUncertain, .. }
+    ),
+  )
+}
+
+///|
 fn drive_to_verified() -> @workflow.PartWorkflowSnapshot raise {
   let initial = workflow_fixture()
   let implementation_session = started_session(
