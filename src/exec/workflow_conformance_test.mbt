@@ -1,5 +1,5 @@
 ///|
-test "one-Part conformance fixture survives restart and persistence faults" {
+async test "one-Part conformance fixture survives restart and persistence faults" {
   let root = "/tmp/choir-workflow-conformance-test-" +
     @sys.get_pid().to_string()
   ignore(@sys.rm_rf(root))

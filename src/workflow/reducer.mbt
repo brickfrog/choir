@@ -602,6 +602,8 @@ pub fn apply_one_part_effect_observation(
       )
     PromotionGenerated(promotion) =>
       record_promotion_generation(snapshot, observation, promotion, observed_at)
+    PromotionConflictObserved =>
+      record_promotion_conflict(snapshot, observation, observed_at)
     IntegrationWitnessObserved(witness) =>
       record_integration_witness(snapshot, observation, witness, observed_at)
   }

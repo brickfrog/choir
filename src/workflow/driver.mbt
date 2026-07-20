@@ -18,11 +18,11 @@ pub(all) enum OnePartEffectRecovery {
 
 ///|
 pub(all) struct OnePartWorkflowDriverAdapters {
-  execute : (OnePartWorkflowSnapshot, OnePartEffectIntent) -> Result[
+  execute : async (OnePartWorkflowSnapshot, OnePartEffectIntent) -> Result[
     OnePartEffectObservation,
     @types.ChoirError,
   ]
-  reconcile : (OnePartWorkflowSnapshot, OnePartEffectIntent) -> Result[
+  reconcile : async (OnePartWorkflowSnapshot, OnePartEffectIntent) -> Result[
     OnePartEffectRecovery,
     @types.ChoirError,
   ]
@@ -161,7 +161,7 @@ fn persistence_result(
 }
 
 ///|
-fn drive_one_part_workflow(
+async fn drive_one_part_workflow(
   repository : OnePartWorkflowRepository,
   repository_adapters : OnePartWorkflowRepositoryAdapters,
   starting_snapshot : OnePartWorkflowSnapshot,
@@ -373,7 +373,7 @@ fn drive_one_part_workflow(
 }
 
 ///|
-pub fn run_new_one_part_workflow(
+pub async fn run_new_one_part_workflow(
   repository : OnePartWorkflowRepository,
   repository_adapters : OnePartWorkflowRepositoryAdapters,
   snapshot : OnePartWorkflowSnapshot,
@@ -404,7 +404,7 @@ pub fn run_new_one_part_workflow(
 }
 
 ///|
-pub fn resume_one_part_workflow(
+pub async fn resume_one_part_workflow(
   repository : OnePartWorkflowRepository,
   repository_adapters : OnePartWorkflowRepositoryAdapters,
   workflow_id : String,

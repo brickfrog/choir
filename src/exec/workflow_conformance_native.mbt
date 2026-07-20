@@ -439,11 +439,11 @@ fn conformance_dependencies(
     now: fn() { 110L },
     persistence_fault: fault,
     effects: {
-      execute: fn(snapshot, intent) {
+      execute: async fn(snapshot, intent) {
         execute_count.val = execute_count.val + 1
         conformance_effect_observation(snapshot, intent)
       },
-      reconcile: fn(snapshot, intent) {
+      reconcile: async fn(snapshot, intent) {
         match conformance_effect_observation(snapshot, intent) {
           Ok(observation) =>
             Ok(
@@ -506,7 +506,7 @@ fn failed_one_part_report(message : String) -> OnePartConformanceReport {
 }
 
 ///|
-pub fn run_one_part_conformance_fixture(
+pub async fn run_one_part_conformance_fixture(
   root : String,
 ) -> OnePartConformanceReport {
   let snapshot = match conformance_snapshot() {

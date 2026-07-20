@@ -163,6 +163,7 @@ pub(all) enum OnePartEffectObservation {
     Array[@control.HarnessEventEnvelope]
   )
   PromotionGenerated(@control.PromotionCommit)
+  PromotionConflictObserved
   IntegrationWitnessObserved(@control.IntegrationWitnessObservation)
 } derive(Debug, Eq, ToJson, FromJson)
 

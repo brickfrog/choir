@@ -511,6 +511,50 @@ fn record_promotion_generation(
 }
 
 ///|
+fn record_promotion_conflict(
+  snapshot : OnePartWorkflowSnapshot,
+  observation : OnePartEffectObservation,
+  observed_at : Int64,
+) -> Result[OnePartWorkflowSnapshot, @types.ChoirError] {
+  let effect = match authorized_effect(snapshot) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let intent = match snapshot.integration_intent {
+    Some(value) => value
+    None => return Err(workflow_error("integration intent is missing"))
+  }
+  match effect.kind {
+    GeneratePromotion(expected) if expected == intent => ()
+    _ => return Err(workflow_error("promotion conflict has the wrong intent"))
+  }
+  let part = match
+    @control.transition_part(
+      snapshot.part,
+      @control.PartTransition::BlockPart(
+        @control.PartBlockReason::PartIntegrationConflict,
+      ),
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  finish_effect_observation(
+    snapshot,
+    {
+      ..snapshot,
+      stage: OnePartBlocked,
+      part,
+      integration_intent: Some({
+        ..intent,
+        lifecycle: @control.IntegrationIntentLifecycle::IntegrationConflict,
+      }),
+    },
+    observation,
+    observed_at,
+  )
+}
+
+///|
 pub fn authorize_one_part_integration(
   snapshot : OnePartWorkflowSnapshot,
   expected_verification_environment_digest : @control.Digest,

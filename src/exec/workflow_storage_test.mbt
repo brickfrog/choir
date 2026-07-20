@@ -603,20 +603,20 @@ fn workflow_driver_dependencies(
   execute_count : Ref[Int],
   reconcile_count : Ref[Int],
   fault : (@workflow.OnePartPersistenceBoundary) -> @storage.StateStoreFaultPoint?,
-  reconcile : (@workflow.OnePartWorkflowSnapshot, @workflow.OnePartEffectIntent) -> Result[
-    @workflow.OnePartEffectRecovery,
-    @types.ChoirError,
-  ],
+  reconcile : async (
+    @workflow.OnePartWorkflowSnapshot,
+    @workflow.OnePartEffectIntent,
+  ) -> Result[@workflow.OnePartEffectRecovery, @types.ChoirError],
 ) -> @workflow.OnePartWorkflowDriverDependencies {
   {
     now: fn() { 110L },
     persistence_fault: fault,
     effects: {
-      execute: fn(snapshot, intent) {
+      execute: async fn(snapshot, intent) {
         execute_count.val = execute_count.val + 1
         workflow_driver_observation(snapshot, intent)
       },
-      reconcile: fn(snapshot, intent) {
+      reconcile: async fn(snapshot, intent) {
         reconcile_count.val = reconcile_count.val + 1
         reconcile(snapshot, intent)
       },
@@ -656,7 +656,7 @@ fn workflow_driver_dependencies(
 }
 
 ///|
-fn workflow_driver_recover_observation(
+async fn workflow_driver_recover_observation(
   snapshot : @workflow.OnePartWorkflowSnapshot,
   intent : @workflow.OnePartEffectIntent,
 ) -> Result[@workflow.OnePartEffectRecovery, @types.ChoirError] {
@@ -668,7 +668,7 @@ fn workflow_driver_recover_observation(
 }
 
 ///|
-test "one Part driver persists an integrated result and resumes without work" {
+async test "one Part driver persists an integrated result and resumes without work" {
   let repository = workflow_repository("driver-integrated")
   clean_workflow_repository(repository)
   let execute_count = @ref.new(0)
@@ -718,7 +718,7 @@ test "one Part driver persists an integrated result and resumes without work" {
 }
 
 ///|
-test "restarted authorized effect waits for a witness without executing" {
+async test "restarted authorized effect waits for a witness without executing" {
   let repository = workflow_repository("driver-uncertain")
   clean_workflow_repository(repository)
   let adapters = workflow_repository_adapters()
@@ -777,7 +777,7 @@ test "restarted authorized effect waits for a witness without executing" {
         execute_count,
         reconcile_count,
         fn(_) { None },
-        fn(_, _) {
+        async fn(_, _) {
           Ok(@workflow.OnePartEffectRecovery::EffectWitnessUnavailable)
         },
       ),
@@ -795,7 +795,7 @@ test "restarted authorized effect waits for a witness without executing" {
 }
 
 ///|
-test "driver recovers every persisted transition after rollback" {
+async test "driver recovers every persisted transition after rollback" {
   let boundaries = [
     @workflow.OnePartPersistenceBoundary::WorkflowAcceptedSnapshot,
     @workflow.OnePartPersistenceBoundary::WorkflowEffectPlanned,

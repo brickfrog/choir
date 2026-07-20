@@ -281,7 +281,7 @@ fn run_sandbox_command(args : Array[String]) -> Unit {
 }
 
 ///|
-fn run_end_to_end_command(args : Array[String]) -> Unit {
+async fn run_end_to_end_command(args : Array[String]) -> Unit {
   if args.length() != 4 || args[2] != "--fixture" {
     usage()
     @sys.exit(2)
@@ -337,7 +337,7 @@ fn main {
   } else if args.length() >= 2 && args[1] == "sandbox" {
     run_sandbox_command(args)
   } else if args.length() >= 2 && args[1] == "e2e" {
-    run_end_to_end_command(args)
+    @async.run_async_main(async fn() { run_end_to_end_command(args) })
   } else {
     usage()
     @sys.exit(2)

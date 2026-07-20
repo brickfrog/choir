@@ -612,6 +612,48 @@ test "verified Part cannot plan or authorize integration without audit" {
 }
 
 ///|
+test "promotion conflict blocks the Part without minting integration evidence" {
+  let audited = drive_to_audited()
+  let planned = match
+    @workflow.plan_one_part_integration(audited, {
+      lease: {
+        id: @control.IntegrationLeaseId("integration-lease-conflict"),
+        goal_id: audited.goal.id,
+        fencing_epoch: audited.fencing_epoch,
+        holder: "choird-test",
+      },
+      intent_id: @control.IntegrationIntentId("integration-intent-conflict"),
+      expected_goal_head_oid: @control.GitOid("goal-head"),
+      promotion_metadata_digest: workflow_digest_c,
+      git_witness_ref: "refs/choir/witness/integration-intent-conflict",
+    }) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  let blocked = apply_observation(
+    planned,
+    @workflow.OnePartEffectObservation::PromotionConflictObserved,
+    26L,
+  )
+  assert_eq(blocked.stage, @workflow.OnePartWorkflowStage::OnePartBlocked)
+  assert_true(
+    blocked.part.lifecycle
+    is @control.PartLifecycle::PartBlocked(
+      @control.PartBlockReason::PartIntegrationConflict
+    ),
+  )
+  guard blocked.integration_intent is Some(intent) else {
+    fail("conflicted integration intent is absent")
+  }
+  assert_eq(
+    intent.lifecycle,
+    @control.IntegrationIntentLifecycle::IntegrationConflict,
+  )
+  assert_true(blocked.integration_receipt is None)
+  assert_eq(blocked.effect_receipts.length(), 11)
+}
+
+///|
 test "planned and authorized effects survive snapshot restart exactly once" {
   let initial = workflow_fixture()
   let intent = match @workflow.plan_next_one_part_effect(initial) {

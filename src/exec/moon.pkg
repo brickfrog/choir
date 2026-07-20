@@ -31,6 +31,7 @@ options(
     "workflow_storage_test.mbt": [ "native" ],
     "workflow_conformance_native.mbt": [ "native" ],
     "workflow_conformance_test.mbt": [ "native" ],
+    "integration_native_test.mbt": [ "native" ],
     "live_zellij_dump_screen_test.mbt": [ "native" ],
     "worktree_gitexclude_test.mbt": [ "native" ],
   },
