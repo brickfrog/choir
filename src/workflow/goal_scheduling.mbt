@@ -45,6 +45,34 @@ fn sorted_scheduling_records(
 }
 
 ///|
+fn stable_topological_records(
+  records : Array[GoalPartSchedulingRecord],
+) -> Result[Array[GoalPartSchedulingRecord], @types.ChoirError] {
+  let remaining = sorted_scheduling_records(records)
+  let ordered : Array[GoalPartSchedulingRecord] = []
+  while remaining.length() > 0 {
+    let mut ready_index = -1
+    for index, record in remaining {
+      if record.part.dependency_ids.all(fn(dependency_id) {
+          ordered.any(fn(completed) { completed.part.id == dependency_id })
+        }) {
+        ready_index = index
+        break
+      }
+    }
+    if ready_index < 0 {
+      return Err(
+        @types.ChoirError::validation_error(
+          "Part dependency graph has no stable topological order",
+        ),
+      )
+    }
+    ordered.push(remaining.remove(ready_index))
+  }
+  Ok(ordered)
+}
+
+///|
 fn find_scheduling_record(
   records : Array[GoalPartSchedulingRecord],
   part_id : @control.PartId,
@@ -170,6 +198,20 @@ fn conflicting_admitted_parts(
 }
 
 ///|
+fn active_mutation_reservations(
+  records : Array[GoalPartSchedulingRecord],
+) -> Array[GoalPartSchedulingRecord] {
+  let reservations : Array[GoalPartSchedulingRecord] = []
+  for record in sorted_scheduling_records(records) {
+    match record.part.lifecycle {
+      @control.PartLifecycle::PartExecuting(_) => reservations.push(record)
+      _ => ()
+    }
+  }
+  reservations
+}
+
+///|
 pub fn schedule_goal_parts(
   records : Array[GoalPartSchedulingRecord],
   maximum_parallel_parts : Int,
@@ -187,6 +229,8 @@ pub fn schedule_goal_parts(
   }
   let sorted = sorted_scheduling_records(records)
   let admitted : Array[GoalPartSchedulingRecord] = []
+  let mutation_reservations = active_mutation_reservations(records)
+  let active_count = mutation_reservations.length()
   let decisions : Array[GoalPartSchedulingDecision] = []
   for record in sorted {
     let admission = match record.part.lifecycle {
@@ -196,10 +240,13 @@ pub fn schedule_goal_parts(
           GoalPartDependencyUnavailable(unavailable)
         } else if waiting.length() > 0 {
           GoalPartWaitingOnDependencies(waiting)
-        } else if admitted.length() >= maximum_parallel_parts {
+        } else if active_count + admitted.length() >= maximum_parallel_parts {
           GoalPartDeferredByCapacity
         } else {
-          let conflicts = conflicting_admitted_parts(admitted, record)
+          let conflicts = conflicting_admitted_parts(
+            mutation_reservations, record,
+          )
+          conflicts.append(conflicting_admitted_parts(admitted, record))
           if conflicts.length() > 0 {
             GoalPartDeferredByMutationConflict(conflicts)
           } else {
@@ -235,8 +282,15 @@ pub fn select_next_deterministic_promotion(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  for record in sorted_scheduling_records(records) {
+  let ordered = match stable_topological_records(records) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  for record in ordered {
     match record.part.lifecycle {
+      @control.PartLifecycle::PartIntegrated(_)
+      | @control.PartLifecycle::PartBlocked(_)
+      | @control.PartLifecycle::PartCanceledNotRun => continue
       @control.PartLifecycle::PartAudited(candidate_id, _, audit_receipt_id) => {
         let (waiting, unavailable) = dependency_partition(records, record)
         if waiting.length() == 0 && unavailable.length() == 0 {
@@ -249,8 +303,9 @@ pub fn select_next_deterministic_promotion(
             }),
           )
         }
+        return Ok(None)
       }
-      _ => ()
+      _ => return Ok(None)
     }
   }
   Ok(None)

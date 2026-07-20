@@ -213,6 +213,15 @@ fn run_harness_command(args : Array[String]) -> Unit {
     args[5] == "subscription" &&
     args[6] == "--live" {
     @async.run_async_main(async fn() { @sys.exit(run_claude_live_startup()) })
+  } else if args.length() == 7 &&
+    args[2] == "--surface" &&
+    args[3] == "codex-cli" &&
+    args[4] == "--profile" &&
+    args[5] == "subscription" &&
+    args[6] == "--live" {
+    @async.run_async_main(async fn() {
+      @sys.exit(run_surface_declaration(@harness.ProviderSurface::CodexCli))
+    })
   } else if args.length() == 6 &&
     args[2] == "--surface" &&
     args[4] == "--profile" &&
@@ -272,6 +281,36 @@ fn run_sandbox_command(args : Array[String]) -> Unit {
 }
 
 ///|
+fn run_end_to_end_command(args : Array[String]) -> Unit {
+  if args.length() != 4 || args[2] != "--fixture" {
+    usage()
+    @sys.exit(2)
+  }
+  match args[3] {
+    "one-part" => {
+      let root = "/tmp/choir-conformance-one-part-" + @sys.get_pid().to_string()
+      if !@sys.create_dir_all(root) {
+        @sys.write_stderr("failed to create one-Part conformance root\n")
+        @sys.exit(1)
+      }
+      let report = @exec.run_one_part_conformance_fixture(root)
+      ignore(@sys.rm_rf(root))
+      @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
+      @sys.exit(if report.passed { 0 } else { 1 })
+    }
+    "three-part" => {
+      let report = @conformance.run_multi_part_conformance_fixture()
+      @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
+      @sys.exit(if report.passed { 0 } else { 1 })
+    }
+    _ => {
+      usage()
+      @sys.exit(2)
+    }
+  }
+}
+
+///|
 fn usage() -> Unit {
   @sys.write_stderr(
     "usage: choir_conformance hermetic\n" +
@@ -281,8 +320,10 @@ fn usage() -> Unit {
     "--profile subscription --synthetic-startup\n" +
     "       choir_conformance harness --surface claude-cli " +
     "--profile subscription --live\n" +
+    "       choir_conformance harness --surface codex-cli " +
+    "--profile subscription --live\n" +
     "       choir_conformance sandbox --runtime boxlite --live\n" +
-    "e2e suites land behind their typed adapters\n",
+    "       choir_conformance e2e --fixture <one-part|three-part>\n",
   )
 }
 
@@ -295,6 +336,8 @@ fn main {
     run_harness_command(args)
   } else if args.length() >= 2 && args[1] == "sandbox" {
     run_sandbox_command(args)
+  } else if args.length() >= 2 && args[1] == "e2e" {
+    run_end_to_end_command(args)
   } else {
     usage()
     @sys.exit(2)

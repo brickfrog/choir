@@ -131,6 +131,54 @@ test "scheduler serializes overlapping and unknown mutation declarations" {
 }
 
 ///|
+test "running Part keeps its mutation and capacity reservation" {
+  let running = scheduling_record(
+    "b",
+    [],
+    @control.PartLifecycle::PartExecuting(@control.TakeId("take-b")),
+    @control.MutationDeclaration::CompleteMutationDeclaration([
+      @control.MutationClaim::ExactPath(@control.RepoPath("src/shared.mbt")),
+    ]),
+  )
+  let conflicting = scheduling_record(
+    "c",
+    [],
+    @control.PartLifecycle::PartPending,
+    @control.MutationDeclaration::CompleteMutationDeclaration([
+      @control.MutationClaim::ExactPath(@control.RepoPath("src/shared.mbt")),
+    ]),
+  )
+  let conflict_schedule = match
+    @workflow.schedule_goal_parts([conflicting, running], 2) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(conflict_schedule.admitted_part_ids.length(), 0)
+  assert_eq(
+    conflict_schedule.decisions[1].admission,
+    @workflow.GoalPartAdmission::GoalPartDeferredByMutationConflict([
+      running.part.id,
+    ]),
+  )
+  let independent = scheduling_record(
+    "a",
+    [],
+    @control.PartLifecycle::PartPending,
+    @control.MutationDeclaration::CompleteMutationDeclaration([]),
+  )
+  let capacity_schedule = match
+    @workflow.schedule_goal_parts([independent, running], 1) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(capacity_schedule.admitted_part_ids.length(), 0)
+  assert_eq(
+    capacity_schedule.decisions[0].admission,
+    @workflow.GoalPartAdmission::GoalPartDeferredByCapacity,
+  )
+}
+
+///|
 test "scheduler rejects cyclic dependencies" {
   let part_a_id = @control.PartId("a")
   let part_b_id = @control.PartId("b")
@@ -201,4 +249,51 @@ test "promotion selection composes divergent candidates onto the current head" {
   }
   assert_eq(second.part_id, part_b.part.id)
   assert_eq(second.expected_goal_head_oid, @control.GitOid("promotion-a"))
+}
+
+///|
+test "promotion waits for the earliest stable topological rank" {
+  let audit_digest = schedule_digest
+  let part_a = scheduling_record(
+    "a",
+    [],
+    @control.PartLifecycle::PartPending,
+    @control.MutationDeclaration::CompleteMutationDeclaration([]),
+  )
+  let part_b = scheduling_record(
+    "b",
+    [],
+    @control.PartLifecycle::PartAudited(
+      @control.CandidateId("candidate-b"),
+      audit_digest,
+      @control.ReceiptId("audit-b"),
+    ),
+    @control.MutationDeclaration::CompleteMutationDeclaration([]),
+  )
+  assert_true(
+    @workflow.select_next_deterministic_promotion(
+      [part_b, part_a],
+      @control.GitOid("goal-head"),
+    )
+    is Ok(None),
+  )
+  let integrated_a = {
+    ..part_a,
+    part: {
+      ..part_a.part,
+      lifecycle: @control.PartLifecycle::PartIntegrated(
+        @control.ReceiptId("integration-a"),
+      ),
+    },
+  }
+  let selected = match
+    @workflow.select_next_deterministic_promotion(
+      [part_b, integrated_a],
+      @control.GitOid("promotion-a"),
+    ) {
+    Ok(Some(value)) => value
+    _ => fail("next stable promotion rank was not selected")
+  }
+  assert_eq(selected.part_id, part_b.part.id)
+  assert_eq(selected.expected_goal_head_oid, @control.GitOid("promotion-a"))
 }
