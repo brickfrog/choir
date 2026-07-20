@@ -811,3 +811,387 @@ pub fn selection_exact_snapshot_case() -> HermeticConformanceCase {
     },
   }
 }
+
+///|
+let audit_fixture_digest_a : @control.Digest = @control.Digest(
+  "1111111111111111111111111111111111111111111111111111111111111111",
+)
+
+///|
+let audit_fixture_digest_b : @control.Digest = @control.Digest(
+  "2222222222222222222222222222222222222222222222222222222222222222",
+)
+
+///|
+fn audit_fixture_subject() -> @control.PartAuditSubject {
+  {
+    part_id: @control.PartId("audit-part"),
+    candidate_take_id: @control.TakeId("implementation-take"),
+    candidate_commit_oid: @control.GitOid("candidate-commit"),
+    candidate_tree_oid: @control.GitOid("candidate-tree"),
+    task_contract_revision_id: @control.RevisionId("contract-revision"),
+    task_contract_digest: audit_fixture_digest_a,
+    verification_receipt_set_digest: audit_fixture_digest_a,
+    verification_evidence_manifest_digest: audit_fixture_digest_b,
+    subject_digest: audit_fixture_digest_a,
+  }
+}
+
+///|
+fn audit_fixture_result() -> @control.AuditResult {
+  {
+    id: @control.AuditResultId("audit-result"),
+    audit_take_id: @control.TakeId("audit-take"),
+    take_fencing_epoch: @control.FencingEpoch(7L),
+    audit_harness_session_id: @control.HarnessSessionId("audit-session"),
+    subject: audit_fixture_subject(),
+    auditor_capability_profile_digest: audit_fixture_digest_a,
+    effective_surface_manifest_digest: audit_fixture_digest_b,
+    provider_conformance_report_digest: audit_fixture_digest_a,
+    audit_policy_digest: audit_fixture_digest_b,
+    findings_artifact: None,
+    total_findings_count: 0,
+    blocking_findings_count: 0,
+    started_at: 10L,
+    finished_at: 11L,
+    outcome: @control.AuditOutcome::AuditPassed,
+    result_digest: audit_fixture_digest_a,
+  }
+}
+
+///|
+fn audit_fixture_receipt() -> @control.AuditReceipt {
+  {
+    receipt_id: @control.ReceiptId("audit-receipt"),
+    audit_result_id: @control.AuditResultId("audit-result"),
+    audit_result_digest: audit_fixture_digest_a,
+    subject: audit_fixture_subject(),
+    audit_take_id: @control.TakeId("audit-take"),
+    audit_harness_session_id: @control.HarnessSessionId("audit-session"),
+    audit_sandbox_generation_id: @control.SandboxGenerationId(
+      "audit-generation",
+    ),
+    auditor_capability_profile_digest: audit_fixture_digest_a,
+    provider_surface_id: @control.ProviderSurfaceId::CodexSubscriptionCli,
+    provider_identity: "codex-subscription",
+    model_identity: @control.ModelIdentity::UnreportedModelIdentity,
+    provider_conformance_report_digest: audit_fixture_digest_a,
+    audit_policy_digest: audit_fixture_digest_b,
+    findings_artifact: None,
+    total_findings_count: 0,
+    blocking_findings_count: 0,
+    started_at: 10L,
+    finished_at: 11L,
+    outcome: @control.AuditOutcome::AuditPassed,
+  }
+}
+
+///|
+fn audit_fixture_session() -> @control.HarnessSession {
+  {
+    id: @control.HarnessSessionId("audit-session"),
+    take_id: @control.TakeId("audit-take"),
+    sandbox_generation_id: @control.SandboxGenerationId("audit-generation"),
+    surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+    effective_surface_manifest_digest: audit_fixture_digest_b,
+    cursor_class: @control.HarnessCursorClass::HarnessCursorProviderEventId,
+    provider_cursor: Some("audit-thread:audit-turn"),
+    last_choir_sequence: @control.EventSequence(2L),
+    open_tool_execution_ids: [],
+    lifecycle: @control.HarnessSessionLifecycle::HarnessSessionIngestionClosedCleanly(
+      @control.HarnessTerminalObservation::HarnessCompleted,
+    ),
+  }
+}
+
+///|
+fn audit_fixture_observation(
+  subject : @control.PartAuditSubject,
+  receipt : @control.AuditReceipt?,
+  result : @control.AuditResult?,
+  artifact_exists : (@control.Digest) -> Bool,
+) -> @control.AuditGateObservation {
+  @control.evaluate_part_audit_gate(
+    subject,
+    receipt,
+    result,
+    @control.TakeId("implementation-take"),
+    @control.SandboxGenerationId("implementation-generation"),
+    [@control.HarnessSessionId("implementation-session")],
+    Some(audit_fixture_session()),
+    audit_fixture_digest_a,
+    audit_fixture_digest_b,
+    audit_fixture_digest_a,
+    audit_fixture_digest_b,
+    artifact_exists,
+  )
+}
+
+///|
+fn audit_fixture_error(detail : String) -> @types.ChoirError {
+  @types.ChoirError::validation_error("audit conformance failed: " + detail)
+}
+
+///|
+pub fn audit_gate_missing_is_passive_case() -> HermeticConformanceCase {
+  {
+    id: ConformanceCaseId("audit.gate_missing_is_passive"),
+    run: fn(_) {
+      let reads = @ref.new(0)
+      let observation = audit_fixture_observation(
+        audit_fixture_subject(),
+        None,
+        Some(audit_fixture_result()),
+        fn(_) {
+          reads.val = reads.val + 1
+          true
+        },
+      )
+      if observation != @control.AuditGateObservation::AuditGateMissing ||
+        reads.val != 0 {
+        return Err(audit_fixture_error("missing gate performed work"))
+      }
+      Ok({ evidence: [ObservedAuditCase(AuditMissingGatePassive, 1, 0)] })
+    },
+  }
+}
+
+///|
+pub fn audit_independence_rejects_author_case() -> HermeticConformanceCase {
+  {
+    id: ConformanceCaseId("audit.independence_rejects_author"),
+    run: fn(_) {
+      let candidate_take = @control.TakeId("implementation-take")
+      let candidate_session = @control.HarnessSessionId(
+        "implementation-session",
+      )
+      let take_receipt = {
+        ..audit_fixture_receipt(),
+        audit_take_id: candidate_take,
+      }
+      let take_result = {
+        ..audit_fixture_result(),
+        audit_take_id: candidate_take,
+      }
+      let sandbox_receipt = {
+        ..audit_fixture_receipt(),
+        audit_sandbox_generation_id: @control.SandboxGenerationId(
+          "implementation-generation",
+        ),
+      }
+      let session_receipt = {
+        ..audit_fixture_receipt(),
+        audit_harness_session_id: candidate_session,
+      }
+      let session_result = {
+        ..audit_fixture_result(),
+        audit_harness_session_id: candidate_session,
+      }
+      let observations = [
+        audit_fixture_observation(
+          audit_fixture_subject(),
+          Some(take_receipt),
+          Some(take_result),
+          fn(_) { true },
+        ),
+        audit_fixture_observation(
+          audit_fixture_subject(),
+          Some(sandbox_receipt),
+          Some(audit_fixture_result()),
+          fn(_) { true },
+        ),
+        audit_fixture_observation(
+          audit_fixture_subject(),
+          Some(session_receipt),
+          Some(session_result),
+          fn(_) { true },
+        ),
+      ]
+      let expected = @control.AuditGateObservation::AuditGateRejected(
+        @control.AuditGateRejectionReason::AuditNotIndependent,
+      )
+      if observations.any(fn(observation) { observation != expected }) {
+        return Err(audit_fixture_error("author identity was not rejected"))
+      }
+      Ok({
+        evidence: [
+          ObservedAuditCase(AuditIndependenceFence, observations.length(), 0),
+        ],
+      })
+    },
+  }
+}
+
+///|
+fn goal_audit_fixture_subject() -> @control.GoalAuditSubject {
+  {
+    goal_id: @control.GoalId("audit-goal"),
+    goal_branch_seal_id: @control.GoalBranchSealId("audit-seal"),
+    goal_branch_seal_digest: audit_fixture_digest_a,
+    goal_head_oid: @control.GitOid("goal-head"),
+    goal_tree_oid: @control.GitOid("goal-tree"),
+    goal_contract_digest: audit_fixture_digest_a,
+    assurance_policy_revision: @control.RevisionId("assurance-revision"),
+    integration_receipt_set_digest: audit_fixture_digest_a,
+    goal_verification_receipt_set_digest: audit_fixture_digest_a,
+    goal_verification_evidence_manifest_digest: audit_fixture_digest_b,
+    subject_digest: audit_fixture_digest_a,
+  }
+}
+
+///|
+fn goal_audit_fixture_result() -> @control.GoalAuditResult {
+  {
+    id: @control.AuditResultId("goal-audit-result"),
+    audit_take_id: @control.TakeId("goal-audit-take"),
+    take_fencing_epoch: @control.FencingEpoch(8L),
+    audit_harness_session_id: @control.HarnessSessionId("goal-audit-session"),
+    subject: goal_audit_fixture_subject(),
+    auditor_capability_profile_digest: audit_fixture_digest_a,
+    effective_surface_manifest_digest: audit_fixture_digest_b,
+    provider_conformance_report_digest: audit_fixture_digest_a,
+    audit_policy_digest: audit_fixture_digest_b,
+    findings_artifact: None,
+    total_findings_count: 0,
+    blocking_findings_count: 0,
+    started_at: 12L,
+    finished_at: 13L,
+    outcome: @control.AuditOutcome::AuditPassed,
+    result_digest: audit_fixture_digest_a,
+  }
+}
+
+///|
+fn goal_audit_fixture_receipt() -> @control.GoalAuditReceipt {
+  {
+    receipt_id: @control.ReceiptId("goal-audit-receipt"),
+    audit_result_id: @control.AuditResultId("goal-audit-result"),
+    audit_result_digest: audit_fixture_digest_a,
+    subject: goal_audit_fixture_subject(),
+    audit_take_id: @control.TakeId("goal-audit-take"),
+    audit_harness_session_id: @control.HarnessSessionId("goal-audit-session"),
+    audit_sandbox_generation_id: @control.SandboxGenerationId(
+      "goal-audit-generation",
+    ),
+    auditor_capability_profile_digest: audit_fixture_digest_a,
+    provider_surface_id: @control.ProviderSurfaceId::CodexSubscriptionCli,
+    provider_identity: "codex-subscription",
+    model_identity: @control.ModelIdentity::UnreportedModelIdentity,
+    provider_conformance_report_digest: audit_fixture_digest_a,
+    audit_policy_digest: audit_fixture_digest_b,
+    findings_artifact: None,
+    total_findings_count: 0,
+    blocking_findings_count: 0,
+    started_at: 12L,
+    finished_at: 13L,
+    outcome: @control.AuditOutcome::AuditPassed,
+  }
+}
+
+///|
+fn goal_audit_fixture_session() -> @control.HarnessSession {
+  {
+    id: @control.HarnessSessionId("goal-audit-session"),
+    take_id: @control.TakeId("goal-audit-take"),
+    sandbox_generation_id: @control.SandboxGenerationId("goal-audit-generation"),
+    surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+    effective_surface_manifest_digest: audit_fixture_digest_b,
+    cursor_class: @control.HarnessCursorClass::HarnessCursorProviderEventId,
+    provider_cursor: Some("goal-audit-thread:goal-audit-turn"),
+    last_choir_sequence: @control.EventSequence(2L),
+    open_tool_execution_ids: [],
+    lifecycle: @control.HarnessSessionLifecycle::HarnessSessionIngestionClosedCleanly(
+      @control.HarnessTerminalObservation::HarnessCompleted,
+    ),
+  }
+}
+
+///|
+pub fn audit_subject_staleness_case() -> HermeticConformanceCase {
+  {
+    id: ConformanceCaseId("audit.subject_staleness"),
+    run: fn(_) {
+      let original = audit_fixture_subject()
+      let changed_subjects = [
+        { ..original, candidate_commit_oid: @control.GitOid("changed-commit") },
+        { ..original, candidate_tree_oid: @control.GitOid("changed-tree") },
+        {
+          ..original,
+          task_contract_revision_id: @control.RevisionId("changed-contract"),
+          task_contract_digest: audit_fixture_digest_b,
+        },
+        { ..original, verification_receipt_set_digest: audit_fixture_digest_b },
+        {
+          ..original,
+          verification_evidence_manifest_digest: audit_fixture_digest_a,
+        },
+      ]
+      let expected_subject = @control.AuditGateObservation::AuditGateStale(
+        @control.AuditGateStaleReason::AuditStaleSubject,
+      )
+      for subject in changed_subjects {
+        let observation = audit_fixture_observation(
+          subject,
+          Some(audit_fixture_receipt()),
+          Some(audit_fixture_result()),
+          fn(_) { true },
+        )
+        if observation != expected_subject {
+          return Err(audit_fixture_error("subject change was not stale"))
+        }
+      }
+      let policy_observation = @control.evaluate_part_audit_gate(
+        original,
+        Some(audit_fixture_receipt()),
+        Some(audit_fixture_result()),
+        @control.TakeId("implementation-take"),
+        @control.SandboxGenerationId("implementation-generation"),
+        [@control.HarnessSessionId("implementation-session")],
+        Some(audit_fixture_session()),
+        audit_fixture_digest_a,
+        audit_fixture_digest_b,
+        audit_fixture_digest_a,
+        audit_fixture_digest_a,
+        fn(_) { true },
+      )
+      if policy_observation !=
+        @control.AuditGateObservation::AuditGateStale(
+          @control.AuditGateStaleReason::AuditStalePolicy,
+        ) {
+        return Err(audit_fixture_error("policy change was not stale"))
+      }
+      let goal_subject = {
+        ..goal_audit_fixture_subject(),
+        integration_receipt_set_digest: audit_fixture_digest_b,
+      }
+      let integration_observation = @control.evaluate_goal_audit_gate(
+        goal_subject,
+        Some(goal_audit_fixture_receipt()),
+        Some(goal_audit_fixture_result()),
+        [],
+        [],
+        [],
+        Some(goal_audit_fixture_session()),
+        audit_fixture_digest_a,
+        audit_fixture_digest_b,
+        audit_fixture_digest_a,
+        audit_fixture_digest_b,
+        fn(_) { true },
+      )
+      if integration_observation != expected_subject {
+        return Err(
+          audit_fixture_error("integration receipt set change was not stale"),
+        )
+      }
+      Ok({
+        evidence: [
+          ObservedAuditCase(
+            AuditSubjectStaleness,
+            changed_subjects.length() + 2,
+            0,
+          ),
+        ],
+      })
+    },
+  }
+}

@@ -121,7 +121,29 @@ fn validate_closed_trace(
   @types.ChoirError,
 ] {
   let durable : Array[@control.HarnessEventEnvelope] = []
-  let mut projected = initial
+  let projected_cursor = match initial.cursor_class {
+    @control.HarnessCursorClass::HarnessCursorNotResumable =>
+      if initial.provider_cursor is None &&
+        observed_final.provider_cursor is None {
+        None
+      } else {
+        return Err(workflow_error("non-resumable session reported a cursor"))
+      }
+    @control.HarnessCursorClass::HarnessCursorProviderEventId
+    | @control.HarnessCursorClass::HarnessCursorTransition =>
+      match observed_final.provider_cursor {
+        Some(cursor) if cursor != "" && cursor.length() <= 512 =>
+          match initial.provider_cursor {
+            Some(existing) if existing != cursor =>
+              return Err(
+                workflow_error("provider cursor changed during replay"),
+              )
+            _ => Some(cursor)
+          }
+        _ => return Err(workflow_error("resumable session omitted its cursor"))
+      }
+  }
+  let mut projected = { ..initial, provider_cursor: projected_cursor }
   for incoming in incoming_events {
     let result = @control.ingest_harness_event(projected, durable, incoming)
     match result.disposition {
@@ -144,6 +166,75 @@ fn validate_closed_trace(
   } else {
     Ok((closed, durable))
   }
+}
+
+///|
+test "closed trace adopts one bounded resumable provider cursor" {
+  let initial : @control.HarnessSession = {
+    id: @control.HarnessSessionId("session-resumable"),
+    take_id: @control.TakeId("take-resumable"),
+    sandbox_generation_id: @control.SandboxGenerationId("generation-resumable"),
+    surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+    effective_surface_manifest_digest: @control.Digest("surface-resumable"),
+    cursor_class: @control.HarnessCursorClass::HarnessCursorProviderEventId,
+    provider_cursor: None,
+    last_choir_sequence: @control.EventSequence(0L),
+    open_tool_execution_ids: [],
+    lifecycle: @control.HarnessSessionLifecycle::HarnessSessionAwaitingEvents,
+  }
+  let cursor = "thread-resumable:turn-resumable"
+  let events : Array[@control.HarnessEventEnvelope] = [
+    {
+      id: @control.HarnessEventId("event-resumable-1"),
+      take_id: initial.take_id,
+      session_id: initial.id,
+      source_position: @control.EventSourcePosition::EventProviderId(
+        cursor + ":started",
+      ),
+      choir_sequence: @control.EventSequence(1L),
+      observed_at: 1L,
+      kind: @control.HarnessEventKind::HarnessStarted,
+      sanitized_payload_digest: @control.Digest("event-resumable-started"),
+      redaction_state: @control.EventRedactionState::EventNotSensitive,
+      late: false,
+    },
+    {
+      id: @control.HarnessEventId("event-resumable-2"),
+      take_id: initial.take_id,
+      session_id: initial.id,
+      source_position: @control.EventSourcePosition::EventProviderId(
+        cursor + ":terminal",
+      ),
+      choir_sequence: @control.EventSequence(2L),
+      observed_at: 2L,
+      kind: @control.HarnessEventKind::HarnessTerminal(
+        @control.HarnessTerminalObservation::HarnessCompleted,
+      ),
+      sanitized_payload_digest: @control.Digest("event-resumable-terminal"),
+      redaction_state: @control.EventRedactionState::EventNotSensitive,
+      late: false,
+    },
+  ]
+  let observed = {
+    ..initial,
+    provider_cursor: Some(cursor),
+    last_choir_sequence: @control.EventSequence(2L),
+    lifecycle: @control.HarnessSessionLifecycle::HarnessSessionIngestionClosedCleanly(
+      @control.HarnessTerminalObservation::HarnessCompleted,
+    ),
+  }
+  assert_eq(
+    validate_closed_trace(initial, events, observed).unwrap().0,
+    observed,
+  )
+  assert_true(
+    validate_closed_trace(
+      { ..initial, provider_cursor: Some("different-thread:different-turn") },
+      events,
+      observed,
+    )
+    is Err(_),
+  )
 }
 
 ///|

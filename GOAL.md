@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Context-only amendments through: 2026-07-20T15:50:04-05:00
+Context-only amendments through: 2026-07-20T16:12:54-05:00
 
 ## Charter Semantics and Readiness
 
@@ -157,20 +157,23 @@ unconnected product path usable.
   audit-receipt format, agent/worktree/PR evaluation domain, and time parsing
   helpers were likewise referenced only by their own tests and are gone. The
   live types package now contains only the local transport roles, Beads task
-  status, launch configuration, request/response wire, and `ChoirError`; the
-  workspace package contains only typed process data and the restricted
-  Conductor launch. This follow-up removes a net 8,613 lines and seven more
-  tracked source-tree files, leaving 178 files under `src/`.
+  status, launch configuration, request/response wire, and `ChoirError`.
+  Typed process data and restricted Conductor launch assembly live at the
+  `src/exec` host-I/O seam; there is no residual workspace package. This
+  follow-up removes a net 8,613 lines and seven more tracked source-tree files,
+  leaving 178 files under `src/`.
 - Fixed-domain Goal, Part, Take, harness-session, event, assurance, receipt,
   integration, and cancellation types plus pure transition functions.
 - Durable restart-readable state and content-addressed artifact stores with
   transactional fault injection.
 - A hermetic conformance runner with injected clock, identifiers, adapters,
-  and typed fault points. Its command now runs fourteen registered cases: the
+  and typed fault points. Its command now runs seventeen registered cases: the
   runner dependency contract, `selection.exact_snapshot`,
-  `scheduler.generated_dags`, four event-ingestion cases, four
-  mutation-ownership cases, and three process-policy cases described below.
-  It does not yet implement the complete required case matrix.
+  `scheduler.generated_dags`, three audit-authority cases, four event-ingestion
+  cases, four mutation-ownership cases, and three process-policy cases described
+  below. The audit cases prove a missing gate is passive, author Take/sandbox/
+  session reuse is rejected, and seven independent subject/policy changes stale
+  the old receipt. It does not yet implement the complete required case matrix.
 - Claude and Codex CLI surface probes. The exact Claude subscription CLI
   profile passed its startup/tool-surface probe. The pinned Codex subscription
   CLI profile now also passes its live startup oracle: ChatGPT-managed login,
@@ -200,6 +203,13 @@ unconnected product path usable.
   a fixed role-specific JSON output schema to the installed client; terminal
   prose cannot substitute for an implementation, verification, or audit
   result.
+- Part persistence now distinguishes an audit result transaction from ordinary
+  effect observation. The native fault fixture crashes independently at the
+  durable audit-result and audit-receipt boundaries. Recovery reads the exact
+  stored result, creates one receipt, performs zero duplicate provider work,
+  and finishes with one verification, audit, and integration receipt. The
+  fixture reports both recovery checks explicitly and covers eight durable Part
+  boundaries in total.
 - Codex Takes now use one restricted `codex app-server` process per Take over a
   private stdio FIFO and bounded owner-only response log. Choir durably binds
   the exact session, thread, turn, deterministic client-message ID, request
@@ -212,7 +222,10 @@ unconnected product path usable.
   separate real BoxLite fixture proves `turn/interrupt`, process-group cleanup,
   durable cancellation, and zero provider redispatch after restart. The private
   spool is capped, contains no provider credential, and is removed with the Take
-  runtime root after its terminal evidence is durable.
+  runtime root after its terminal evidence is durable. Workflow trace replay now
+  adopts one bounded resumable provider cursor and rejects cursor changes; the
+  full Codex Part lifecycle passed again after this recovery contract was wired
+  through the workflow authority.
 - A concurrent Goal runner with conflict-aware admission and deterministic,
   serialized promotion. A native Git fixture proves that divergent candidates
   based on the same head are composed into a continuous promotion history and

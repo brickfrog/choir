@@ -7,6 +7,8 @@ pub(all) struct PartConformanceReport {
   integration_receipt_count : Int
   restart_executed_effect_count : Int
   persistence_boundaries_checked : Int
+  audit_result_recovery_checked : Bool
+  audit_receipt_recovery_checked : Bool
   failure : String?
 } derive(Debug, Eq, ToJson)
 
@@ -517,6 +519,8 @@ fn failed_part_report(message : String) -> PartConformanceReport {
     integration_receipt_count: 0,
     restart_executed_effect_count: 0,
     persistence_boundaries_checked: 0,
+    audit_result_recovery_checked: false,
+    audit_receipt_recovery_checked: false,
     failure: Some(message),
   }
 }
@@ -600,10 +604,13 @@ pub async fn run_part_conformance_fixture(
     @workflow.PartPersistenceBoundary::WorkflowEffectPlanned,
     @workflow.PartPersistenceBoundary::WorkflowEffectAuthorized,
     @workflow.PartPersistenceBoundary::WorkflowEffectObserved,
+    @workflow.PartPersistenceBoundary::WorkflowAuditResultRecorded,
     @workflow.PartPersistenceBoundary::WorkflowAuditReceiptRecorded,
     @workflow.PartPersistenceBoundary::WorkflowIntegrationPlanned,
     @workflow.PartPersistenceBoundary::WorkflowIntegrationAuthorized,
   ]
+  let audit_result_recovery_checked = @ref.new(false)
+  let audit_receipt_recovery_checked = @ref.new(false)
   for index, boundary in boundaries {
     let fault_repository = conformance_repository(
       root + "/fault-" + index.to_string(),
@@ -671,6 +678,15 @@ pub async fn run_part_conformance_fixture(
           return failed_part_report(
             "fault recovery violated receipt cardinality",
           )
+        } else {
+          if boundary ==
+            @workflow.PartPersistenceBoundary::WorkflowAuditResultRecorded {
+            audit_result_recovery_checked.val = true
+          }
+          if boundary ==
+            @workflow.PartPersistenceBoundary::WorkflowAuditReceiptRecorded {
+            audit_receipt_recovery_checked.val = true
+          }
         }
       Ok(_) => {
         clear_conformance_repository(fault_repository)
@@ -691,6 +707,8 @@ pub async fn run_part_conformance_fixture(
     integration_receipt_count,
     restart_executed_effect_count: restart_executed,
     persistence_boundaries_checked: boundaries.length(),
+    audit_result_recovery_checked: audit_result_recovery_checked.val,
+    audit_receipt_recovery_checked: audit_receipt_recovery_checked.val,
     failure: None,
   }
 }

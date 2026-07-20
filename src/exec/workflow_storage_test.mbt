@@ -1761,6 +1761,7 @@ async test "driver recovers every persisted transition after rollback" {
     @workflow.PartPersistenceBoundary::WorkflowEffectPlanned,
     @workflow.PartPersistenceBoundary::WorkflowEffectAuthorized,
     @workflow.PartPersistenceBoundary::WorkflowEffectObserved,
+    @workflow.PartPersistenceBoundary::WorkflowAuditResultRecorded,
     @workflow.PartPersistenceBoundary::WorkflowAuditReceiptRecorded,
     @workflow.PartPersistenceBoundary::WorkflowIntegrationPlanned,
     @workflow.PartPersistenceBoundary::WorkflowIntegrationAuthorized,

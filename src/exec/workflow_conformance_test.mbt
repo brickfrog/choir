@@ -12,5 +12,7 @@ async test "real exec integration: Part conformance survives restart and faults"
   assert_eq(report.audit_receipt_count, 1)
   assert_eq(report.integration_receipt_count, 1)
   assert_eq(report.restart_executed_effect_count, 0)
-  assert_eq(report.persistence_boundaries_checked, 7)
+  assert_eq(report.persistence_boundaries_checked, 8)
+  assert_true(report.audit_result_recovery_checked)
+  assert_true(report.audit_receipt_recovery_checked)
 }

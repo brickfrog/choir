@@ -146,6 +146,7 @@ pub(all) enum ConformanceEvidence {
   ObservedFault(FaultPoint)
   ObservedGeneratedDagSuite(Int, Int, Int, Int)
   ObservedSelectionCase(SelectionConformanceKind, Int, Int, Int)
+  ObservedAuditCase(AuditConformanceKind, Int, Int)
   ObservedHarnessIngestion(
     @control.HarnessIngestionDisposition,
     @control.HarnessSessionLifecycle,
@@ -159,6 +160,13 @@ pub(all) enum ConformanceEvidence {
 ///|
 pub(all) enum SelectionConformanceKind {
   SelectionExactSnapshot
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum AuditConformanceKind {
+  AuditMissingGatePassive
+  AuditIndependenceFence
+  AuditSubjectStaleness
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|

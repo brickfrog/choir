@@ -4,6 +4,7 @@ pub(all) enum PartPersistenceBoundary {
   WorkflowEffectPlanned
   WorkflowEffectAuthorized
   WorkflowEffectObserved
+  WorkflowAuditResultRecorded
   WorkflowAuditReceiptRecorded
   WorkflowIntegrationPlanned
   WorkflowIntegrationAuthorized
@@ -346,13 +347,18 @@ async fn drive_part_workflow(
           Ok(value) => value
           Err(error) => return Err(error)
         }
+        let observed_boundary = if observed.stage == PartAuditResultRecorded {
+          WorkflowAuditResultRecorded
+        } else {
+          WorkflowEffectObserved
+        }
         match
           persist_driver_snapshot(
             repository,
             repository_adapters,
             observed,
             Some(store_version),
-            WorkflowEffectObserved,
+            observed_boundary,
             dependencies,
             None,
           ) {
