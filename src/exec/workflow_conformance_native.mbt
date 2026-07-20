@@ -439,6 +439,7 @@ fn conformance_dependencies(
   execute_count : Ref[Int],
   fault : (@workflow.PartPersistenceBoundary) -> @storage.StateStoreFaultPoint?,
   inject_audit_conflict? : Bool = false,
+  implementation_dispatch_count? : Ref[Int]? = None,
 ) -> @workflow.PartWorkflowDriverDependencies {
   let now = fn() { 110L }
   let dependencies : @workflow.PartWorkflowDriverDependencies = {
@@ -447,6 +448,11 @@ fn conformance_dependencies(
     effects: {
       execute: async fn(snapshot, intent) {
         execute_count.val = execute_count.val + 1
+        match (implementation_dispatch_count, intent.kind) {
+          (Some(count), @workflow.PartEffectKind::DispatchImplementation(_, _)) =>
+            count.val = count.val + 1
+          _ => ()
+        }
         let observation = match conformance_effect_observation(snapshot, intent) {
           Ok(value) => value
           Err(error) => return Err(error)
@@ -659,19 +665,28 @@ pub async fn run_part_conformance_fixture(
     clear_conformance_repository(fault_repository)
     let injected = @ref.new(false)
     let fault_count = @ref.new(0)
+    let effect_observation_count = @ref.new(0)
+    let implementation_dispatch_count = @ref.new(0)
     let first = match
       @workflow.run_new_part_workflow(
         fault_repository,
         local_part_workflow_repository_adapters(),
         snapshot,
         conformance_dependencies(fault_repository, fault_count, fn(actual) {
-          if !injected.val && actual == boundary {
+          if actual ==
+            @workflow.PartPersistenceBoundary::WorkflowEffectObserved {
+            effect_observation_count.val = effect_observation_count.val + 1
+          }
+          let target_occurrence = boundary !=
+            @workflow.PartPersistenceBoundary::WorkflowEffectObserved ||
+            effect_observation_count.val == 3
+          if !injected.val && actual == boundary && target_occurrence {
             injected.val = true
             Some(@storage.StateStoreFaultPoint::StateAfterMutationBeforeOutbox)
           } else {
             None
           }
-        }),
+        }, implementation_dispatch_count=Some(implementation_dispatch_count)),
       ) {
       Ok(value) => value
       Err(error) => {
@@ -693,14 +708,24 @@ pub async fn run_part_conformance_fixture(
         fault_repository,
         local_part_workflow_repository_adapters(),
         snapshot,
-        conformance_dependencies(fault_repository, fault_count, fn(_) { None }),
+        conformance_dependencies(
+          fault_repository,
+          fault_count,
+          fn(_) { None },
+          implementation_dispatch_count=Some(implementation_dispatch_count),
+        ),
       )
     } else {
       @workflow.resume_part_workflow(
         fault_repository,
         local_part_workflow_repository_adapters(),
         "workflow-conformance",
-        conformance_dependencies(fault_repository, fault_count, fn(_) { None }),
+        conformance_dependencies(
+          fault_repository,
+          fault_count,
+          fn(_) { None },
+          implementation_dispatch_count=Some(implementation_dispatch_count),
+        ),
       )
     }
     match recovered {
@@ -711,7 +736,14 @@ pub async fn run_part_conformance_fixture(
           ..,
         }
       ) =>
-        if recovered_snapshot.effect_receipts.length() != 12 ||
+        if boundary ==
+          @workflow.PartPersistenceBoundary::WorkflowEffectObserved &&
+          implementation_dispatch_count.val != 1 {
+          clear_conformance_repository(fault_repository)
+          return failed_part_report(
+            "effect-observation recovery redispatched provider work",
+          )
+        } else if recovered_snapshot.effect_receipts.length() != 12 ||
           recovered_snapshot.verification_receipts.length() != 1 ||
           recovered_snapshot.audit_receipt is None ||
           recovered_snapshot.integration_receipt is None {

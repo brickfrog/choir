@@ -289,6 +289,284 @@ fn event_provider_uncertainty_holds(
 }
 
 ///|
+fn event_resumable_implementation_observation_fixture() -> (
+  @workflow.PartWorkflowSnapshot,
+  @workflow.PartEffectIntent,
+  @workflow.PartEffectObservation,
+) {
+  let (base, intent) = event_authorized_provider_dispatch_fixture()
+  let initial_session = {
+    ..base.identities.implementation_session,
+    surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+    cursor_class: @control.HarnessCursorClass::HarnessCursorProviderEventId,
+  }
+  let cursor = "thread-event:turn-event"
+  let started : @control.HarnessEventEnvelope = {
+    id: @control.HarnessEventId("event-transaction-started"),
+    take_id: initial_session.take_id,
+    session_id: initial_session.id,
+    source_position: @control.EventSourcePosition::EventProviderId(
+      cursor + ":started",
+    ),
+    choir_sequence: @control.EventSequence(1L),
+    observed_at: 101L,
+    kind: @control.HarnessEventKind::HarnessStarted,
+    sanitized_payload_digest: event_case_digest,
+    redaction_state: @control.EventRedactionState::EventNotSensitive,
+    late: false,
+  }
+  let terminal : @control.HarnessEventEnvelope = {
+    id: @control.HarnessEventId("event-transaction-terminal"),
+    take_id: initial_session.take_id,
+    session_id: initial_session.id,
+    source_position: @control.EventSourcePosition::EventProviderId(
+      cursor + ":terminal",
+    ),
+    choir_sequence: @control.EventSequence(2L),
+    observed_at: 102L,
+    kind: @control.HarnessEventKind::HarnessTerminal(
+      @control.HarnessTerminalObservation::HarnessCompleted,
+    ),
+    sanitized_payload_digest: event_case_digest,
+    redaction_state: @control.EventRedactionState::EventNotSensitive,
+    late: false,
+  }
+  let final_session = {
+    ..initial_session,
+    provider_cursor: Some(cursor),
+    last_choir_sequence: @control.EventSequence(2L),
+    lifecycle: @control.HarnessSessionLifecycle::HarnessSessionIngestionClosedCleanly(
+      @control.HarnessTerminalObservation::HarnessCompleted,
+    ),
+  }
+  let snapshot = {
+    ..base,
+    identities: { ..base.identities, implementation_session: initial_session },
+    harness_sessions: base.harness_sessions.map(fn(session) {
+      if session.id == initial_session.id { initial_session } else { session }
+    }),
+  }
+  let observation = @workflow.PartEffectObservation::ImplementationCompleted(
+    {
+      take_id: snapshot.implementation_take.id,
+      session_id: initial_session.id,
+      result_artifact: {
+        artifact_id: "event-transaction-result",
+        digest: event_case_digest,
+      },
+      finished_at: 103L,
+    },
+    final_session,
+    [started, terminal],
+  )
+  (snapshot, intent, observation)
+}
+
+///|
+fn event_apply_or_reconcile_observation(
+  snapshot : @workflow.PartWorkflowSnapshot,
+  intent : @workflow.PartEffectIntent,
+  observation : @workflow.PartEffectObservation,
+) -> Result[@workflow.PartWorkflowSnapshot, @types.ChoirError] {
+  @workflow.apply_or_reconcile_part_effect_observation(
+    snapshot,
+    intent,
+    observation,
+    104L,
+    fn(_) { true },
+    fn(_) { true },
+  )
+}
+
+///|
+fn event_committed_observation_holds(
+  original : @workflow.PartWorkflowSnapshot,
+  committed : @workflow.PartWorkflowSnapshot,
+  intent : @workflow.PartEffectIntent,
+  observation : @workflow.PartEffectObservation,
+) -> Bool {
+  let matching_receipts = committed.effect_receipts.filter(fn(receipt) {
+    receipt.effect_id == intent.effect_id &&
+    receipt.request_digest == intent.request_digest &&
+    receipt.observation_digest ==
+    @workflow.part_effect_observation_digest(observation)
+  })
+  let mut committed_session_holds = false
+  for session in committed.harness_sessions {
+    if session.id == committed.identities.implementation_session.id &&
+      session.provider_cursor == Some("thread-event:turn-event") &&
+      session.last_choir_sequence == @control.EventSequence(2L) &&
+      session.lifecycle ==
+      @control.HarnessSessionLifecycle::HarnessSessionIngestionClosedCleanly(
+        @control.HarnessTerminalObservation::HarnessCompleted,
+      ) {
+      committed_session_holds = true
+    }
+  }
+  committed.durable_version == original.durable_version + 1 &&
+  committed.stage == @workflow.PartWorkflowStage::PartImplementationCompleted &&
+  committed.pending_effect is None &&
+  committed.harness_events.length() == 2 &&
+  committed.implementation_result is Some(_) &&
+  matching_receipts.length() == 1 && committed_session_holds
+}
+
+///|
+pub fn event_before_ingest_transaction_case() -> HermeticConformanceCase {
+  {
+    id: ConformanceCaseId("event.before_ingest_tx"),
+    run: fn(context) {
+      let point = FaultPoint::EventBeforeIngestTransaction
+      if !context.fault_enabled(point) {
+        return Err(event_case_error("ingest transaction fault was not injected"))
+      }
+      let (snapshot, intent, observation) =
+        event_resumable_implementation_observation_fixture()
+      let discarded = match
+        event_apply_or_reconcile_observation(snapshot, intent, observation) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      if !event_committed_observation_holds(
+        snapshot, discarded, intent, observation,
+      ) {
+        return Err(event_case_error("discarded ingest projection was invalid"))
+      }
+      let restarted = match
+        @workflow.decode_part_snapshot(@workflow.part_snapshot_bytes(snapshot)) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let committed = match
+        event_apply_or_reconcile_observation(restarted, intent, observation) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      if !event_committed_observation_holds(
+        snapshot, committed, intent, observation,
+      ) {
+        return Err(event_case_error("pre-transaction restart lost the event batch"))
+      }
+      Ok({
+        evidence: [
+          ObservedFault(point),
+          ObservedEventCase(EventBeforeIngestTransactionRecovery, 2),
+        ],
+      })
+    },
+  }
+}
+
+///|
+pub fn event_after_ingest_transaction_before_source_ack_case(
+) -> HermeticConformanceCase {
+  {
+    id: ConformanceCaseId("event.after_ingest_tx_before_source_ack"),
+    run: fn(context) {
+      let point = FaultPoint::EventAfterIngestTransactionBeforeSourceAck
+      if !context.fault_enabled(point) {
+        return Err(event_case_error("post-ingest source-ack fault was not injected"))
+      }
+      let (snapshot, intent, observation) =
+        event_resumable_implementation_observation_fixture()
+      let committed = match
+        event_apply_or_reconcile_observation(snapshot, intent, observation) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let restarted = match
+        @workflow.decode_part_snapshot(@workflow.part_snapshot_bytes(committed)) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let replayed = match
+        event_apply_or_reconcile_observation(restarted, intent, observation) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let unrelated = event_apply_or_reconcile_observation(
+        restarted,
+        { ..intent, effect_id: "event-unrelated-dispatch" },
+        observation,
+      )
+      if replayed != restarted ||
+        !(unrelated is Err(_)) ||
+        !event_committed_observation_holds(
+          snapshot, replayed, intent, observation,
+        ) {
+        return Err(event_case_error("source replay duplicated the committed batch"))
+      }
+      Ok({
+        evidence: [
+          ObservedFault(point),
+          ObservedEventCase(
+            EventAfterIngestTransactionBeforeSourceAckRecovery,
+            replayed.harness_events.length(),
+          ),
+        ],
+      })
+    },
+  }
+}
+
+///|
+pub fn event_after_source_ack_before_next_read_case() -> HermeticConformanceCase {
+  {
+    id: ConformanceCaseId("event.after_source_ack_before_next_read"),
+    run: fn(context) {
+      let point = FaultPoint::EventAfterSourceAckBeforeNextRead
+      if !context.fault_enabled(point) {
+        return Err(event_case_error("post-ack next-read fault was not injected"))
+      }
+      let (snapshot, intent, observation) =
+        event_resumable_implementation_observation_fixture()
+      let committed = match
+        event_apply_or_reconcile_observation(snapshot, intent, observation) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let restarted = match
+        @workflow.decode_part_snapshot(@workflow.part_snapshot_bytes(committed)) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let replayed = match
+        event_apply_or_reconcile_observation(restarted, intent, observation) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let next = match @workflow.plan_next_part_effect(replayed) {
+        Ok(Some(value)) => value
+        Ok(None) => return Err(event_case_error("next effect was not planned"))
+        Err(error) => return Err(error)
+      }
+      let next_is_normalization = match next.kind {
+        @workflow.PartEffectKind::NormalizeImplementationCandidate(
+          take_id,
+          _,
+        ) => take_id == replayed.implementation_take.id
+        _ => false
+      }
+      if replayed != restarted || !next_is_normalization ||
+        !event_committed_observation_holds(
+          snapshot, replayed, intent, observation,
+        ) {
+        return Err(event_case_error("resume did not continue after the durable cursor"))
+      }
+      Ok({
+        evidence: [
+          ObservedFault(point),
+          ObservedEventCase(
+            EventAfterSourceAckBeforeNextReadRecovery,
+            replayed.harness_events.length(),
+          ),
+        ],
+      })
+    },
+  }
+}
+
+///|
 pub fn event_nonresumable_process_loss_case() -> HermeticConformanceCase {
   {
     id: ConformanceCaseId("event.nonresumable_process_loss"),

@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-20T17:00:22-05:00
+Implementation snapshot updated through: 2026-07-20T17:37:21-05:00
 
 ## Charter Semantics and Readiness
 
@@ -167,10 +167,10 @@ unconnected product path usable.
 - Durable restart-readable state and content-addressed artifact stores with
   transactional fault injection.
 - A hermetic conformance runner with injected clock, identifiers, adapters,
-  and typed fault points. Its command now runs twenty-one registered cases: the
+  and typed fault points. Its command now runs twenty-four registered cases: the
   runner dependency contract, `selection.exact_snapshot`,
   `selection.revision_invalidation`,
-  `scheduler.generated_dags`, three audit-authority cases, seven event/recovery
+  `scheduler.generated_dags`, three audit-authority cases, ten event/recovery
   cases, four mutation-ownership cases, and three process-policy cases described
   below. The audit cases prove a missing gate is passive, author Take/sandbox/
   session reuse is rejected, and seven independent subject/policy changes stale
@@ -204,6 +204,19 @@ unconnected product path usable.
   the production uncertainty transition, and reloads the snapshot to prove no
   event cursor, candidate, or receipt advanced. Choir selects typed overflow,
   rather than producer blocking, for this bounded disk-spool topology.
+- Resumable implementation observations now commit their normalized event
+  batch, provider cursor, terminal session projection, typed result, and exact
+  effect receipt in one durable Part snapshot transaction. Replay reconciliation
+  binds the effect ID, request digest, and observation digest; an exact replay
+  after commit is a no-op, while a different effect cannot borrow that receipt.
+  The registered `event.before_ingest_tx`,
+  `event.after_ingest_tx_before_source_ack`, and
+  `event.after_source_ack_before_next_read` cases inject each named boundary,
+  restart from encoded durable state, and prove one two-event batch, one receipt,
+  the exact persisted cursor, and continuation at candidate normalization. The
+  native workflow fault fixture separately proves recovery at
+  `WorkflowEffectObserved` consumes the durable witness without redispatching
+  provider work.
 - Nonresumable provider process loss and provider-dispatch timeouts now use the
   same durable uncertainty path. A nonzero Claude exit is typed
   `ProviderProcessLost`; the Part driver records the session as
@@ -594,8 +607,7 @@ compiler still reports the repository's existing warning set.
   remaining generated cases for ambiguous identity, remote drift, and broader
   cancellation orderings. The checked synthetic forge proves control-plane
   behavior without mutating an external repository.
-- The remaining event transaction/replay, cancellation ordering, conflict
-  repair, hostile-surface, PR,
+- The remaining cancellation ordering, conflict repair, hostile-surface, PR,
   and scale conformance cases. Duplicate conflicts, cursor gaps, late
   terminals, conflicting terminals, fixed-seed generated DAG scheduling,
   ownership normalization/conflicts, candidate under-claiming, and
@@ -1362,11 +1374,15 @@ For resumable sources, one transaction:
 6. applies the session projection.
 
 The adapter acknowledges or reads past a source event only after that
-transaction commits when the provider protocol permits acknowledgment. A
-bounded stream applies backpressure before dropping data. An expired cursor,
-lost unacknowledged range, or spool overflow is a typed `CursorGap` or
-`EventIngestionOverflow`; the take becomes recovery-uncertain and cannot
-complete.
+transaction commits when the provider protocol permits acknowledgment. The
+current Codex app-server adapter reads an immutable per-Take event spool, so
+there is no upstream acknowledgment operation: local progression beyond the
+recorded observation is the acknowledgment boundary, and exact replay is
+deduplicated from the durable effect identity and provider cursor. Its spool is
+bounded at 16 MiB and returns typed `EventIngestionOverflow` before parsing an
+oversized trace. An expired cursor, lost unacknowledged range, or spool overflow
+is a typed `CursorGap` or `EventIngestionOverflow`; the take becomes
+recovery-uncertain and cannot complete.
 
 `Completed`, `Failed`, and `Interrupted` are terminal observations about
 a harness session, not take outcomes or receipts. The first contiguous

@@ -507,8 +507,9 @@ async fn drive_part_workflow(
           }
         }
         let observed = match
-          apply_part_effect_observation(
+          apply_or_reconcile_part_effect_observation(
             snapshot,
+            intent,
             observation,
             (dependencies.now)(),
             dependencies.artifact_exists,

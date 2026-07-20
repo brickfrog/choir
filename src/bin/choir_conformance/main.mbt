@@ -18,7 +18,10 @@ fn hermetic_dependencies() -> @conformance.ConformanceDependencies {
       prefix + "-" + ids.val.to_string()
     },
     fault_enabled: fn(point) {
-      point == @conformance.FaultPoint::EventBeforeIngestTransaction
+      point == @conformance.FaultPoint::EventBeforeIngestTransaction ||
+      point ==
+      @conformance.FaultPoint::EventAfterIngestTransactionBeforeSourceAck ||
+      point == @conformance.FaultPoint::EventAfterSourceAckBeforeNextRead
     },
     adapters: {
       read_state: fn(_) {
@@ -48,6 +51,9 @@ fn run_hermetic() -> Int {
       @conformance.event_cursor_gap_case(),
       @conformance.event_late_terminal_case(),
       @conformance.event_conflicting_terminal_case(),
+      @conformance.event_before_ingest_transaction_case(),
+      @conformance.event_after_ingest_transaction_before_source_ack_case(),
+      @conformance.event_after_source_ack_before_next_read_case(),
       @conformance.event_nonresumable_process_loss_case(),
       @conformance.event_backpressure_case(),
       @conformance.event_redaction_case(),

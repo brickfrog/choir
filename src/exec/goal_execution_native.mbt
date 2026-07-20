@@ -546,6 +546,7 @@ async fn persist_native_cancellation_observation(
     repository,
     adapters,
     stored,
+    intent,
     observation,
     observed_at,
     fn(reference) { native_part_artifact_exists(repository, reference) },

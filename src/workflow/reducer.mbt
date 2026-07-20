@@ -695,3 +695,31 @@ pub fn apply_part_effect_observation(
       record_integration_witness(snapshot, observation, witness, observed_at)
   }
 }
+
+///|
+pub fn apply_or_reconcile_part_effect_observation(
+  snapshot : PartWorkflowSnapshot,
+  intent : PartEffectIntent,
+  observation : PartEffectObservation,
+  observed_at : Int64,
+  artifact_exists : (@control.ArtifactReference) -> Bool,
+  is_nfc : (String) -> Bool,
+) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
+  if snapshot.pending_effect is None {
+    let observation_digest = part_effect_observation_digest(observation)
+    if snapshot.effect_receipts.any(fn(receipt) {
+        receipt.effect_id == intent.effect_id &&
+        receipt.request_digest == intent.request_digest &&
+        receipt.observation_digest == observation_digest
+      }) {
+      return Ok(snapshot)
+    }
+  }
+  apply_part_effect_observation(
+    snapshot,
+    observation,
+    observed_at,
+    artifact_exists,
+    is_nfc,
+  )
+}

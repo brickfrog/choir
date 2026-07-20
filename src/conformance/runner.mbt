@@ -161,6 +161,9 @@ pub(all) enum ConformanceEvidence {
 ///|
 pub(all) enum EventConformanceKind {
   EventBackpressureBoundary
+  EventBeforeIngestTransactionRecovery
+  EventAfterIngestTransactionBeforeSourceAckRecovery
+  EventAfterSourceAckBeforeNextReadRecovery
   EventNonresumableProcessLoss
   EventRedactionBoundary
 } derive(Debug, Eq, ToJson, FromJson)

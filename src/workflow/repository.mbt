@@ -304,14 +304,16 @@ pub fn persist_recovered_part_effect_observation(
   repository : PartWorkflowRepository,
   adapters : PartWorkflowRepositoryAdapters,
   stored : PartStoredSnapshot,
+  intent : PartEffectIntent,
   observation : PartEffectObservation,
   observed_at : Int64,
   artifact_exists : (@control.ArtifactReference) -> Bool,
   is_nfc : (String) -> Bool,
 ) -> Result[PartStoredSnapshot, @types.ChoirError] {
   let next = match
-    apply_part_effect_observation(
+    apply_or_reconcile_part_effect_observation(
       stored.snapshot,
+      intent,
       observation,
       observed_at,
       artifact_exists,

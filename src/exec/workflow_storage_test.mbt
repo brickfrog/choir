@@ -986,7 +986,7 @@ async test "Goal cancellation persists an applied integration witness before fin
         lifecycle: @workflow.PartEffectLifecycle::PartEffectMayHaveOccurred,
         kind: @workflow.PartEffectKind::ApplyIntegration(_, promotion),
         ..,
-      }
+      } as intent
     ) else {
     fail("integration effect was not durably authorized")
   }
@@ -994,6 +994,7 @@ async test "Goal cancellation persists an applied integration witness before fin
     repository,
     adapters,
     authorized,
+    intent,
     @workflow.PartEffectObservation::IntegrationWitnessObserved(
       @control.IntegrationWitnessObservation::IntegrationWitnessApplied(
         promotion.commit_oid,
