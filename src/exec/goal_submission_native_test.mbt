@@ -7,7 +7,7 @@ async test "native Conductor submission captures Beads and persists once" {
   }
   let base_commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   let base_tree = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-  let capture = async fn(command : @workspace.Command) -> (Int, String) {
+  let capture = async fn(command : @exec.Command) -> (Int, String) {
     match (command.program, command.args) {
       ("git", ["rev-parse", "--show-toplevel"]) => (0, root + "\n")
       ("git", ["rev-parse", "--verify", "refs/heads/main^{commit}"]) =>
@@ -274,7 +274,7 @@ async test "durable Goal cancellation survives replay and starts no provider" {
   }
   let base_commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   let base_tree = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-  let capture = async fn(command : @workspace.Command) -> (Int, String) {
+  let capture = async fn(command : @exec.Command) -> (Int, String) {
     match (command.program, command.args) {
       ("git", ["rev-parse", "--show-toplevel"]) => (0, root + "\n")
       ("git", ["rev-parse", "--verify", "refs/heads/main^{commit}"]) =>
@@ -383,7 +383,7 @@ async test "rejected Conductor submission initializes no Part workflow" {
   }
   let base_commit = "cccccccccccccccccccccccccccccccccccccccc"
   let base_tree = "dddddddddddddddddddddddddddddddddddddddd"
-  let capture = async fn(command : @workspace.Command) -> (Int, String) {
+  let capture = async fn(command : @exec.Command) -> (Int, String) {
     match (command.program, command.args) {
       ("git", ["rev-parse", "--show-toplevel"]) => (0, root + "\n")
       ("git", ["rev-parse", "--verify", "refs/heads/main^{commit}"]) =>

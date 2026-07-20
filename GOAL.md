@@ -68,6 +68,12 @@ unconnected product path usable.
   historical context corpus have been deleted. The daemon no longer runs the
   pane watcher, recovery scanner, PR poller, idle watchdog, or old Goal judge;
   its active background workflow is the durable Goal runner.
+- The residual `src/workspace` package has been deleted. Its only live contents
+  were the typed process command, Conductor process environment, and Claude
+  launch assembly; those now live at the host-I/O seam in `src/exec`. The
+  branch-point audit found no other unchanged v1 source file without a current
+  caller. Provider-independent protocol, UDS, signal, build, and hook files
+  that predate v2 remain because the current product still executes them.
 - The positional and generic tool clients, shutdown-origin metadata path,
   arbitrary flag-to-tool translation, server-reload command, and their v1
   process fixtures are deleted. The remaining Goal client has one purpose: send
@@ -506,11 +512,9 @@ compiler still reports the repository's existing warning set.
   dispatch are also registered. The audit-scratch-boundary case now passes on
   the live BoxLite Take path; it is intentionally not reported as hermetic.
   These cases are not yet joined to the full semantic projection.
-- Narrowing the still-shared process-command utility package. Its current
-  Conductor, provider-probe, sandbox, and Goal callers remain live, while
-  individual v1-only helpers inside it are the next extraction/deletion
-  surface; no closed source package remains imported only by another closed
-  source package.
+- Further splitting or consolidating large live adapters only when a concrete
+  boundary or dead caller justifies it. The branch-point audit found no closed
+  source package imported only by another closed source package.
 
 The central user flow is now directly launchable and joined through Goal assurance: Claude can turn a
 user Goal into a durable accepted Part set through `/goal`, and the daemon can
@@ -3786,8 +3790,8 @@ provider Takes through isolated BoxLite sandboxes. It recorded 12 effect
 receipts and exactly one verification, audit, and integration receipt; after
 the forced workflow restart it dispatched zero duplicate implementation Takes
 and the two remaining provider Takes. This evidence admits the pinned
-CLI/profile as `Candidate`, not `Supported`; interruption, cancellation, and
-mid-session recovery remain. The exact commands are:
+CLI/profile as `Candidate`, not `Supported`; mid-session recovery remains. The
+exact commands are:
 
 ```text
 moon run --target native src/bin/choir_conformance -- harness --surface codex-cli --profile subscription --live
@@ -3804,6 +3808,27 @@ the candidate was promoted once. The run recorded 12 effect receipts and one
 verification, audit, and integration receipt. This removes reliance on a
 model voluntarily ending a longer turn with bare JSON; it does not satisfy the
 remaining mid-session recovery requirement.
+
+#### Post-snapshot Codex recovery topology amendment
+
+At `2026-07-20T15:18:00-05:00`, a disposable isolated Codex home and the pinned
+subscription client proved two distinct recovery behaviors. `codex exec
+resume <thread-id>` recovered the same persisted thread after its original
+client was killed before any tool effect. More importantly, the experimental
+local app-server on an owner-local Unix socket kept an active turn alive after
+its WebSocket client disconnected. A new client initialized, called
+`thread/resume` with the exact thread ID, observed the same turn as
+`inProgress`, then received its single completion; `thread/read` returned that
+same completed turn and final message.
+
+This selects the app-server Unix-socket lifecycle as the next Codex recovery
+adapter experiment instead of resending an instruction through `exec resume`.
+It does not promote Codex to `Supported`: the app-server surface is
+experimental, and Choir must still pin and attest its exact restricted MCP
+configuration, persist thread and turn witnesses before dispatch uncertainty,
+reconnect after daemon loss, prove one sandbox tool effect is not duplicated,
+and exercise cancellation. Generated provider schemas and disposable session
+files remain probe artifacts outside the repository.
 
 #### Post-snapshot Codex Conductor amendment
 

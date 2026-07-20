@@ -6,7 +6,6 @@ import {
   "choir/src/uds",
   "choir/src/exec",
   "choir/src/mcp",
-  "choir/src/workspace",
   "choir/src/prompts",
   "choir/src/workflow",
   "moonbitlang/core/env",

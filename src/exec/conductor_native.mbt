@@ -148,7 +148,7 @@ async fn native_conductor_capture_beads(
   project_dir : String,
   operation : String,
   arguments : Array[String],
-  capture : async (@workspace.Command) -> (Int, String),
+  capture : async (Command) -> (Int, String),
 ) -> Result[String, @types.ChoirError] {
   let (exit_code, output) = capture({
     program: "bd",
@@ -175,7 +175,7 @@ async fn native_conductor_capture_beads(
 ///|
 async fn dispatch_native_task_list(
   project_dir : String,
-  capture : async (@workspace.Command) -> (Int, String),
+  capture : async (Command) -> (Int, String),
 ) -> @types.Response {
   let output = match
     native_conductor_capture_beads(
@@ -201,7 +201,7 @@ async fn dispatch_native_task_list(
 async fn dispatch_native_task_get(
   project_dir : String,
   request : @types.Request,
-  capture : async (@workspace.Command) -> (Int, String),
+  capture : async (Command) -> (Int, String),
 ) -> @types.Response {
   let id = match native_conductor_required_string(request, "id") {
     Ok(value) => value
@@ -273,7 +273,7 @@ fn native_conductor_task_create_arguments(
 async fn dispatch_native_task_create(
   project_dir : String,
   request : @types.Request,
-  capture : async (@workspace.Command) -> (Int, String),
+  capture : async (Command) -> (Int, String),
 ) -> @types.Response {
   let (id, status, arguments) = match
     native_conductor_task_create_arguments(request) {
@@ -343,7 +343,7 @@ async fn dispatch_native_task_create(
 async fn dispatch_native_task_update(
   project_dir : String,
   request : @types.Request,
-  capture : async (@workspace.Command) -> (Int, String),
+  capture : async (Command) -> (Int, String),
 ) -> @types.Response {
   let id = match native_conductor_required_string(request, "id") {
     Ok(value) => value
@@ -399,7 +399,7 @@ async fn dispatch_native_task_update(
 async fn dispatch_native_goal_submit(
   project_dir : String,
   request : @types.Request,
-  capture : async (@workspace.Command) -> (Int, String),
+  capture : async (Command) -> (Int, String),
 ) -> @types.Response {
   let draft = match native_conductor_required_string(request, "draft_json") {
     Ok(value) => value
@@ -647,7 +647,7 @@ pub async fn dispatch_native_conductor_request(
   project_dir : String,
   request : @types.Request,
   now? : Int64 = @env.now().reinterpret_as_int64() / 1000L,
-  capture? : async (@workspace.Command) -> (Int, String) = capture_command_merged,
+  capture? : async (Command) -> (Int, String) = capture_command_merged,
 ) -> @types.Response {
   if request.req_method != "tools/call" {
     return native_conductor_error("authenticated Conductor required")

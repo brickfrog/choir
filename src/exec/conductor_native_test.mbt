@@ -1,6 +1,6 @@
 ///|
 async test "native Conductor task dispatch uses typed Beads commands" {
-  let commands : Array[@workspace.Command] = []
+  let commands : Array[@exec.Command] = []
   let request : @types.Request = {
     req_method: "tools/call",
     name: "task_create",
@@ -42,7 +42,7 @@ async test "native Conductor task dispatch uses typed Beads commands" {
 
 ///|
 async test "native Conductor maps completed tasks to closed Beads" {
-  let commands : Array[@workspace.Command] = []
+  let commands : Array[@exec.Command] = []
   let request : @types.Request = {
     req_method: "tools/call",
     name: "task_update",

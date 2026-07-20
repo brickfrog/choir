@@ -112,8 +112,6 @@
             pkgs.openssl
             pkgs.git
             pkgs.gh
-            pkgs.watchexec
-            pkgs.entr
           ];
 
           shellHook = ''
@@ -142,7 +140,7 @@
             moon update >/dev/null 2>&1 || true
             echo "Choir dev shell"
             echo "Open-source runtime deps are available."
-            echo "Install proprietary agent CLIs separately: claude, gemini, moon pilot."
+            echo "Install runtime CLIs separately: claude, codex, bd, and boxlite."
           '';
         };
       }

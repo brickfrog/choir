@@ -1,4 +1,67 @@
 ///|
+/// A validated process invocation assembled by an adapter. Orchestration code
+/// passes these values to injected execution capabilities; it never runs them
+/// directly.
+pub(all) struct Command {
+  program : String
+  args : Array[String]
+  workdir : String?
+} derive(Debug, Eq)
+
+///|
+pub impl Show for Command with fn output(self, logger) -> Unit {
+  self.to_repr().output(logger)
+}
+
+///|
+pub(all) struct ConductorProcessEnvironment {
+  conductor_token : String
+  workspace : String
+  listen_uds : String
+}
+
+///|
+pub fn conductor_claude_mcp_config_json() -> String {
+  "{\"mcpServers\":{\"choir\":{\"type\":\"stdio\",\"command\":\"choir\",\"args\":[\"mcp-stdio\",\"--name\",\"root\",\"--stderr-append-log\",\".choir/logs/mcp-stdio.stderr.log\"],\"alwaysLoad\":true}}}"
+}
+
+///|
+pub fn conductor_claude_settings_json() -> String {
+  "{\"enabledPlugins\":{\"choir@local\":true}}"
+}
+
+///|
+pub fn conductor_launch_command(
+  project_dir : String,
+  lean? : Bool = false,
+) -> Command {
+  let lean_args : Array[String] = if lean {
+    ["--system-prompt", "."]
+  } else {
+    []
+  }
+  {
+    program: "claude",
+    args: [
+      "--dangerously-skip-permissions",
+      "--tools",
+      "",
+      "--setting-sources",
+      "",
+      "--mcp-config",
+      conductor_claude_mcp_config_json(),
+      "--strict-mcp-config",
+      "--plugin-dir",
+      project_dir + "/.choir/plugin",
+      "--settings",
+      project_dir + "/.choir/state/claude-settings.json",
+      ..lean_args,
+    ],
+    workdir: None,
+  }
+}
+
+///|
 pub fn quote(s : String) -> String {
   @sys.shell_quote(s)
 }
@@ -122,7 +185,7 @@ pub fn strip_terminal_responses(s : String) -> String {
 }
 
 ///|
-pub fn command_to_shell_string(cmd : @workspace.Command) -> String {
+pub fn command_to_shell_string(cmd : Command) -> String {
   let mut shell_cmd = quote(cmd.program)
   for arg in cmd.args {
     shell_cmd = shell_cmd + " " + quote(arg)
@@ -172,7 +235,7 @@ fn command_for_program(
   args : Array[String],
   workdir : String?,
 ) -> String {
-  command_to_shell_string(@workspace.Command::{ program, args, workdir })
+  command_to_shell_string(Command::{ program, args, workdir })
 }
 
 ///|

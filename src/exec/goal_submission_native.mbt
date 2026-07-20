@@ -76,7 +76,7 @@ fn native_goal_submission_oid(value : String) -> @control.GitOid? {
 
 ///|
 async fn native_goal_submission_capture(
-  capture : async (@workspace.Command) -> (Int, String),
+  capture : async (Command) -> (Int, String),
   project_dir : String,
   program : String,
   arguments : Array[String],
@@ -111,7 +111,7 @@ fn native_goal_submission_source_part(
 async fn capture_native_goal_selection_snapshot(
   draft : @workflow.ConductorGoalDraft,
   project_dir : String,
-  capture : async (@workspace.Command) -> (Int, String),
+  capture : async (Command) -> (Int, String),
 ) -> Result[@workflow.GoalSelectionSnapshot, @types.ChoirError] {
   let root = match
     native_goal_submission_capture(
@@ -738,7 +738,7 @@ fn ensure_native_goal_execution(
 pub async fn submit_native_conductor_goal_draft(
   project_dir : String,
   draft_json : String,
-  capture : async (@workspace.Command) -> (Int, String),
+  capture : async (Command) -> (Int, String),
 ) -> Result[NativeConductorGoalSubmissionReport, @types.ChoirError] {
   if exec_path_nfc_available_ffi() != 1 {
     return Err(

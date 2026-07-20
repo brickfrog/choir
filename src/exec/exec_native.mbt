@@ -207,7 +207,7 @@ async fn drain_process_stdout(
 }
 
 ///|
-async fn capture_command_merged_raw(cmd : @workspace.Command) -> (Int, String) {
+async fn capture_command_merged_raw(cmd : Command) -> (Int, String) {
   abort_if_hermetic_test_exec(command_to_shell_string(cmd))
   let (reader, writer) = @process.read_from_process() catch {
     _ => return (-1, "")
@@ -236,7 +236,7 @@ async fn capture_command_merged_raw(cmd : @workspace.Command) -> (Int, String) {
 }
 
 ///|
-pub async fn capture_command_merged(cmd : @workspace.Command) -> (Int, String) {
+pub async fn capture_command_merged(cmd : Command) -> (Int, String) {
   capture_command_merged_raw(cmd)
 }
 
@@ -2100,8 +2100,8 @@ pub async fn capture_stdout_with_cwd(
 
 ///|
 pub async fn run_conductor_process(
-  cmd : @workspace.Command,
-  environment : @workspace.ConductorProcessEnvironment,
+  cmd : Command,
+  environment : ConductorProcessEnvironment,
 ) -> Int {
   abort_if_hermetic_test_exec(command_to_shell_string(cmd))
   let extra_env : Map[String, String] = {

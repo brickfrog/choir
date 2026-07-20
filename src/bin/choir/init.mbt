@@ -116,7 +116,7 @@ fn init_materialize_conductor_files(
   }
   if !@sys.write_file_sync(
       project_dir + "/.choir/state/claude-settings.json",
-      @workspace.conductor_claude_settings_json(),
+      @exec.conductor_claude_settings_json(),
     ) {
     return Err("failed to write Claude Conductor settings")
   }

@@ -6,7 +6,6 @@ import {
   "choir/src/storage",
   "choir/src/types",
   "choir/src/workflow",
-  "choir/src/workspace",
   "moonbitlang/async",
   "moonbitlang/async/process",
   "moonbitlang/core/env",

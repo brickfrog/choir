@@ -123,7 +123,7 @@ fn start_ensure_daemon(
 fn start_conductor_environment(
   config : @types.Config,
   token : String,
-) -> @workspace.ConductorProcessEnvironment {
+) -> @exec.ConductorProcessEnvironment {
   {
     conductor_token: token,
     workspace: config.project_dir,
@@ -235,7 +235,7 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
   @async.run_async_main(async fn() {
     let exit_code = match options.conductor {
       StartClaudeConductor => {
-        let command = @workspace.conductor_launch_command(
+        let command = @exec.conductor_launch_command(
           config.project_dir,
           lean=options.lean,
         )

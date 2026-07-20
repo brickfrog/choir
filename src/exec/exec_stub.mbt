@@ -1,7 +1,7 @@
 ///|
 /// Non-native targets keep the public adapter surface type-correct while all
 /// host-process operations fail closed.
-pub async fn capture_command_merged(_cmd : @workspace.Command) -> (Int, String) {
+pub async fn capture_command_merged(_cmd : Command) -> (Int, String) {
   (-1, "")
 }
 
@@ -78,8 +78,8 @@ pub async fn capture_stdout_with_cwd(
 
 ///|
 pub async fn run_conductor_process(
-  _cmd : @workspace.Command,
-  _environment : @workspace.ConductorProcessEnvironment,
+  _cmd : Command,
+  _environment : ConductorProcessEnvironment,
 ) -> Int {
   -1
 }

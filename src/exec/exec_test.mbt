@@ -1,6 +1,16 @@
 ///|
+test "Claude Conductor launch is terminal-local and strict MCP only" {
+  let command = conductor_launch_command("/repo")
+  let joined = command.args.join(" ")
+  assert_eq(command.program, "claude")
+  assert_true(joined.contains("--strict-mcp-config"))
+  assert_true(joined.contains("--plugin-dir /repo/.choir/plugin"))
+  assert_false(joined.contains("zellij"))
+}
+
+///|
 test "command_to_shell_string simple" {
-  let cmd = @workspace.Command::{
+  let cmd = @exec.Command::{
     program: "ls",
     args: ["-l", "/tmp"],
     workdir: None,
@@ -10,7 +20,7 @@ test "command_to_shell_string simple" {
 
 ///|
 test "command_to_shell_string workdir" {
-  let cmd = @workspace.Command::{
+  let cmd = @exec.Command::{
     program: "ls",
     args: ["-l"],
     workdir: Some("/home/user"),
@@ -20,7 +30,7 @@ test "command_to_shell_string workdir" {
 
 ///|
 test "command_to_shell_string quotes" {
-  let cmd = @workspace.Command::{
+  let cmd = @exec.Command::{
     program: "echo",
     args: ["it's fine", "quoted \"arg\""],
     workdir: None,
@@ -33,11 +43,7 @@ test "command_to_shell_string quotes" {
 
 ///|
 test "hermetic exec violation message names command and mock guidance" {
-  let cmd = @workspace.Command::{
-    program: "git",
-    args: ["status"],
-    workdir: None,
-  }
+  let cmd = @exec.Command::{ program: "git", args: ["status"], workdir: None }
   assert_eq(
     hermetic_exec_violation_message(command_to_shell_string(cmd)),
     "hermetic-test violation: real exec 'git' 'status' -- inject a mock capture/runner",

@@ -17,7 +17,7 @@ pub(all) struct NativeCodexConductorConfig {
   allowed_tools : Array[String]
   developer_instructions : String
   timeout_ms : Int
-  environment : @workspace.ConductorProcessEnvironment
+  environment : ConductorProcessEnvironment
 }
 
 ///|
