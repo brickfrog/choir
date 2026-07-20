@@ -133,28 +133,28 @@ test "SQLite state listing returns only the requested durable prefix" {
   let requests : Array[@storage.StateTransactionRequest] = [
     {
       state: {
-        key: @storage.StateRecordKey("goal-run:alpha"),
+        key: @storage.StateRecordKey("goal-run:first"),
         expected_version: None,
         next_version: 1,
         fencing_epoch: @control.FencingEpoch(1L),
         value_digest: store_digest_a,
       },
       outbox: {
-        semantic_key: @storage.SemanticEventKey("goal-run:alpha:created"),
+        semantic_key: @storage.SemanticEventKey("goal-run:first:created"),
         payload_digest: store_digest_a,
       },
       fault_point: None,
     },
     {
       state: {
-        key: @storage.StateRecordKey("goal-run:beta"),
+        key: @storage.StateRecordKey("goal-run:second"),
         expected_version: None,
         next_version: 1,
         fencing_epoch: @control.FencingEpoch(2L),
         value_digest: store_digest_b,
       },
       outbox: {
-        semantic_key: @storage.SemanticEventKey("goal-run:beta:created"),
+        semantic_key: @storage.SemanticEventKey("goal-run:second:created"),
         payload_digest: store_digest_b,
       },
       fault_point: None,
@@ -172,7 +172,7 @@ test "SQLite state listing returns only the requested durable prefix" {
       assert_eq(records.length(), 2)
       assert_eq(
         records.map(fn(record) { @storage.state_record_key_text(record.key) }),
-        ["goal-run:alpha", "goal-run:beta"],
+        ["goal-run:first", "goal-run:second"],
       )
       assert_eq(records[0].value_digest, store_digest_a)
       assert_eq(records[1].fencing_epoch, @control.FencingEpoch(2L))

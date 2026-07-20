@@ -37,25 +37,11 @@ pub fn TomlDoc::get(self : TomlDoc, key : String) -> String? {
 }
 
 ///|
-pub fn TomlDoc::get_or(
-  self : TomlDoc,
-  key : String,
-  fallback : String,
-) -> String {
-  self.get(key).unwrap_or(fallback)
-}
-
-///|
 pub fn TomlDoc::get_optional_nonempty(self : TomlDoc, key : String) -> String? {
   match self.get(key) {
     Some(value) => if value == "" { None } else { Some(value) }
     None => None
   }
-}
-
-///|
-pub fn TomlDoc::to_map(self : TomlDoc) -> Map[String, String] {
-  self.values
 }
 
 ///|
@@ -120,9 +106,4 @@ pub fn parse_toml_doc(content : String) -> TomlDoc {
     }
   }
   { values: map }
-}
-
-///|
-pub fn parse_toml(content : String) -> Map[String, String] {
-  parse_toml_doc(content).to_map()
 }

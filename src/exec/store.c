@@ -19,7 +19,7 @@ typedef struct {
     int (*close)(sqlite3 *);
     int (*exec)(sqlite3 *, const char *, int (*)(void *, int, char **, char **), void *, char **);
     void (*free_fn)(void *);
-    int (*prepare_v2)(sqlite3 *, const char *, int, sqlite3_stmt **, const char **);
+    int (*prepare_statement)(sqlite3 *, const char *, int, sqlite3_stmt **, const char **);
     int (*bind_text)(sqlite3_stmt *, int, const char *, int, void (*)(void *));
     int (*bind_int64)(sqlite3_stmt *, int, sqlite3_int64);
     int (*step)(sqlite3_stmt *);
@@ -53,7 +53,7 @@ static void choir_sqlite_load_once(void) {
     CHOIR_SQLITE_LOAD(close, "sqlite3_close");
     CHOIR_SQLITE_LOAD(exec, "sqlite3_exec");
     CHOIR_SQLITE_LOAD(free_fn, "sqlite3_free");
-    CHOIR_SQLITE_LOAD(prepare_v2, "sqlite3_prepare_v2");
+    CHOIR_SQLITE_LOAD(prepare_statement, "sqlite3_prepare_v2");
     CHOIR_SQLITE_LOAD(bind_text, "sqlite3_bind_text");
     CHOIR_SQLITE_LOAD(bind_int64, "sqlite3_bind_int64");
     CHOIR_SQLITE_LOAD(step, "sqlite3_step");
@@ -161,7 +161,7 @@ static int choir_sqlite_read_outbox_digest(
 ) {
     sqlite3_stmt *stmt = NULL;
     const char *sql = "SELECT payload_digest FROM completion_outbox WHERE semantic_key = ?1";
-    if (choir_sqlite.prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK ||
+    if (choir_sqlite.prepare_statement(db, sql, -1, &stmt, NULL) != SQLITE_OK ||
         choir_sqlite_bind_text(stmt, 1, semantic_key) != 0) {
         if (stmt != NULL) choir_sqlite.finalize(stmt);
         return -1;
@@ -199,7 +199,7 @@ static int choir_sqlite_read_outbox_transition(
     const char *sql =
         "SELECT payload_digest, record_key, state_version, fencing_epoch, "
         "state_value_digest FROM completion_outbox WHERE semantic_key = ?1";
-    if (choir_sqlite.prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK ||
+    if (choir_sqlite.prepare_statement(db, sql, -1, &stmt, NULL) != SQLITE_OK ||
         choir_sqlite_bind_text(stmt, 1, semantic_key) != 0) {
         if (stmt != NULL) choir_sqlite.finalize(stmt);
         return -1;
@@ -241,7 +241,7 @@ static int choir_sqlite_read_state_values(
     sqlite3_stmt *stmt = NULL;
     const char *sql =
         "SELECT version, fencing_epoch, value_digest FROM state_records WHERE record_key = ?1";
-    if (choir_sqlite.prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK ||
+    if (choir_sqlite.prepare_statement(db, sql, -1, &stmt, NULL) != SQLITE_OK ||
         choir_sqlite_bind_text(stmt, 1, record_key) != 0) {
         if (stmt != NULL) choir_sqlite.finalize(stmt);
         return -1;
@@ -397,7 +397,7 @@ int choir_state_store_commit(
     const char *mutation_sql = state_found == 0
         ? "INSERT INTO state_records(record_key, version, fencing_epoch, value_digest) VALUES(?1, ?2, ?3, ?4)"
         : "UPDATE state_records SET version = ?2, fencing_epoch = ?3, value_digest = ?4 WHERE record_key = ?1";
-    if (choir_sqlite.prepare_v2(db, mutation_sql, -1, &stmt, NULL) != SQLITE_OK ||
+    if (choir_sqlite.prepare_statement(db, mutation_sql, -1, &stmt, NULL) != SQLITE_OK ||
         choir_sqlite_bind_text(stmt, 1, key) != 0 ||
         choir_sqlite.bind_int64(stmt, 2, next_version) != SQLITE_OK ||
         choir_sqlite.bind_int64(stmt, 3, fencing_epoch) != SQLITE_OK ||
@@ -417,7 +417,7 @@ int choir_state_store_commit(
         "INSERT INTO completion_outbox(semantic_key, payload_digest, record_key, "
         "state_version, fencing_epoch, state_value_digest) "
         "VALUES(?1, ?2, ?3, ?4, ?5, ?6)";
-    if (choir_sqlite.prepare_v2(db, outbox_sql, -1, &stmt, NULL) != SQLITE_OK ||
+    if (choir_sqlite.prepare_statement(db, outbox_sql, -1, &stmt, NULL) != SQLITE_OK ||
         choir_sqlite_bind_text(stmt, 1, semantic) != 0 ||
         choir_sqlite_bind_text(stmt, 2, payload) != 0 ||
         choir_sqlite_bind_text(stmt, 3, key) != 0 ||
@@ -513,7 +513,7 @@ int choir_state_store_list_state(
         "SELECT record_key, version, fencing_epoch, value_digest "
         "FROM state_records WHERE substr(record_key, 1, length(?1)) = ?1 "
         "ORDER BY record_key";
-    if (choir_sqlite.prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK ||
+    if (choir_sqlite.prepare_statement(db, sql, -1, &stmt, NULL) != SQLITE_OK ||
         choir_sqlite_bind_text(stmt, 1, prefix) != 0) {
         if (stmt != NULL) choir_sqlite.finalize(stmt);
         choir_sqlite.close(db);
