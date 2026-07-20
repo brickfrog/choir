@@ -56,6 +56,267 @@ fn event_case_evidence(
 }
 
 ///|
+fn event_nonresumable_process_loss_fixture() -> (
+  @workflow.PartWorkflowSnapshot,
+  @workflow.PartEffectIntent,
+) {
+  let goal_id = @control.GoalId("event-process-loss-goal")
+  let part_id = @control.PartId("event-process-loss-part")
+  let revision_id = @control.RevisionId("event-process-loss-revision")
+  let epoch = @control.FencingEpoch(9L)
+  let implementation_take : @control.Take = {
+    id: @control.TakeId("event-process-loss-implementation"),
+    goal_id,
+    purpose: @control.TakePurpose::Implementation(part_id, revision_id),
+    ordinal: 1,
+    fencing_epoch: Some(epoch),
+    lifecycle: @control.TakeLifecycle::TakeRunning,
+  }
+  let verification_take : @control.Take = {
+    id: @control.TakeId("event-process-loss-verification"),
+    goal_id,
+    purpose: @control.TakePurpose::PartVerification(
+      part_id,
+      implementation_take.id,
+      event_case_digest,
+    ),
+    ordinal: 1,
+    fencing_epoch: None,
+    lifecycle: @control.TakeLifecycle::TakePlanned,
+  }
+  let audit_take : @control.Take = {
+    id: @control.TakeId("event-process-loss-audit"),
+    goal_id,
+    purpose: @control.TakePurpose::PartAudit(
+      part_id,
+      implementation_take.id,
+      event_case_digest,
+    ),
+    ordinal: 1,
+    fencing_epoch: None,
+    lifecycle: @control.TakeLifecycle::TakePlanned,
+  }
+  let lease = fn(
+    id : String,
+    take : @control.Take,
+    lifecycle : @control.SandboxLeaseLifecycle,
+  ) -> @control.SandboxLease {
+    {
+      id: @control.SandboxLeaseId(id),
+      take_id: take.id,
+      generation_id: @control.SandboxGenerationId(id + "-generation"),
+      capability_profile_digest: event_case_digest,
+      runtime_policy_digest: event_case_digest,
+      lifecycle,
+    }
+  }
+  let implementation_lease = lease(
+    "event-process-loss-implementation-lease",
+    implementation_take,
+    @control.SandboxLeaseLifecycle::SandboxLeaseActive,
+  )
+  let verification_lease = lease(
+    "event-process-loss-verification-lease",
+    verification_take,
+    @control.SandboxLeaseLifecycle::SandboxLeasePlanned,
+  )
+  let audit_lease = lease(
+    "event-process-loss-audit-lease",
+    audit_take,
+    @control.SandboxLeaseLifecycle::SandboxLeasePlanned,
+  )
+  let session = fn(
+    id : String,
+    take : @control.Take,
+    lease : @control.SandboxLease,
+    lifecycle : @control.HarnessSessionLifecycle,
+  ) -> @control.HarnessSession {
+    {
+      id: @control.HarnessSessionId(id),
+      take_id: take.id,
+      sandbox_generation_id: lease.generation_id,
+      surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+      effective_surface_manifest_digest: event_case_digest,
+      cursor_class: @control.HarnessCursorClass::HarnessCursorNotResumable,
+      provider_cursor: None,
+      last_choir_sequence: @control.EventSequence(0L),
+      open_tool_execution_ids: [],
+      lifecycle,
+    }
+  }
+  let implementation_session = session(
+    "event-process-loss-implementation-session",
+    implementation_take,
+    implementation_lease,
+    @control.HarnessSessionLifecycle::HarnessSessionAwaitingEvents,
+  )
+  let verification_session = session(
+    "event-process-loss-verification-session",
+    verification_take,
+    verification_lease,
+    @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+  )
+  let audit_session = session(
+    "event-process-loss-audit-session",
+    audit_take,
+    audit_lease,
+    @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+  )
+  let intent : @workflow.PartEffectIntent = {
+    effect_id: "event-process-loss-dispatch",
+    kind: @workflow.PartEffectKind::DispatchImplementation(
+      implementation_take.id,
+      implementation_session.id,
+    ),
+    request_digest: event_case_digest,
+    lifecycle: @workflow.PartEffectLifecycle::PartEffectMayHaveOccurred,
+  }
+  let snapshot : @workflow.PartWorkflowSnapshot = {
+    workflow_id: "event-process-loss-workflow",
+    durable_version: 7,
+    fencing_epoch: epoch,
+    stage: @workflow.PartWorkflowStage::PartImplementationHarnessStarted,
+    goal: {
+      id: goal_id,
+      contract_digest: event_case_digest,
+      lifecycle: @control.GoalLifecycle::GoalActive(
+        @control.GoalActiveCondition::GoalRunning,
+      ),
+    },
+    part: {
+      id: part_id,
+      goal_id,
+      dependency_ids: [],
+      task_contract_revision_id: revision_id,
+      lifecycle: @control.PartLifecycle::PartExecuting(implementation_take.id),
+    },
+    task_contract: {
+      id: revision_id,
+      goal_id,
+      part_id,
+      revision: 1,
+      digest: event_case_digest,
+      instruction_artifact: {
+        artifact_id: "event-process-loss-instruction",
+        digest: event_case_digest,
+      },
+      base_commit_oid: @control.GitOid("event-process-loss-base"),
+      base_tree_oid: @control.GitOid("event-process-loss-tree"),
+      path_mode: @control.RepositoryPathMode::CaseSensitiveNfc,
+      mutation_declaration: @control.MutationDeclaration::CompleteMutationDeclaration(
+        [],
+      ),
+      verification_specs: [],
+      audit_policy_digest: event_case_digest,
+      implementation_capability_profile_digest: event_case_digest,
+      verification_capability_profile_digest: event_case_digest,
+      audit_capability_profile_digest: event_case_digest,
+    },
+    identities: {
+      implementation_take,
+      implementation_sandbox: implementation_lease,
+      implementation_session,
+      verification_take,
+      verification_sandbox: verification_lease,
+      verification_session,
+      audit_take,
+      audit_sandbox: audit_lease,
+      audit_session,
+    },
+    implementation_take,
+    verification_take,
+    audit_take,
+    sandbox_leases: [implementation_lease, verification_lease, audit_lease],
+    harness_sessions: [
+      implementation_session,
+      verification_session,
+      audit_session,
+    ],
+    harness_events: [],
+    implementation_result: None,
+    candidate: None,
+    verification_subject: None,
+    verification_slots: [],
+    verification_receipts: [],
+    verification_authorization: None,
+    audit_subject: None,
+    audit_result: None,
+    audit_receipt: None,
+    integration_lease: None,
+    integration_intent: None,
+    promotion_commit: None,
+    integration_receipt: None,
+    pending_effect: Some(intent),
+    effect_receipts: [],
+  }
+  (snapshot, intent)
+}
+
+///|
+pub fn event_nonresumable_process_loss_case() -> HermeticConformanceCase {
+  {
+    id: ConformanceCaseId("event.nonresumable_process_loss"),
+    run: fn(_) {
+      let (snapshot, intent) = event_nonresumable_process_loss_fixture()
+      let uncertain = match
+        @workflow.record_part_provider_process_loss(snapshot, intent) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let restarted = match
+        @workflow.decode_part_snapshot(
+          @workflow.part_snapshot_bytes(uncertain),
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let implementation_session_uncertain = restarted.harness_sessions.any(
+        fn(session) {
+          session.id == restarted.identities.implementation_session.id &&
+          session.lifecycle ==
+          @control.HarnessSessionLifecycle::HarnessSessionRecoveryUncertain
+        },
+      )
+      if restarted != uncertain ||
+        restarted.durable_version != snapshot.durable_version + 1 ||
+        restarted.stage != @workflow.PartWorkflowStage::PartRecoveryUncertain ||
+        !(restarted.part.lifecycle
+        is @control.PartLifecycle::PartBlocked(
+          @control.PartBlockReason::PartRecoveryUncertain
+        )) ||
+        !(restarted.implementation_take.lifecycle
+        is @control.TakeLifecycle::TakeTerminal(
+          @control.TakeTerminalDisposition::TakeRecoveryUncertain(
+            @control.TakeUncertaintyReason::TakeEffectUncertain
+          )
+        )) ||
+        !implementation_session_uncertain ||
+        !(restarted.pending_effect
+        is Some({
+          lifecycle: @workflow.PartEffectLifecycle::PartEffectUncertain,
+          ..
+        })) ||
+        restarted.implementation_result is Some(_) ||
+        restarted.candidate is Some(_) ||
+        restarted.verification_receipts.length() != 0 ||
+        restarted.audit_receipt is Some(_) ||
+        restarted.integration_receipt is Some(_) {
+        return Err(
+          event_case_error(
+            "nonresumable process loss inferred progress or was not restart-stable",
+          ),
+        )
+      }
+      Ok({
+        evidence: [
+          ObservedEventCase(EventNonresumableProcessLoss, 10),
+        ],
+      })
+    },
+  }
+}
+
+///|
 pub fn event_duplicate_conflict_case() -> HermeticConformanceCase {
   {
     id: ConformanceCaseId("event.duplicate_conflict"),

@@ -167,10 +167,10 @@ unconnected product path usable.
 - Durable restart-readable state and content-addressed artifact stores with
   transactional fault injection.
 - A hermetic conformance runner with injected clock, identifiers, adapters,
-  and typed fault points. Its command now runs nineteen registered cases: the
+  and typed fault points. Its command now runs twenty registered cases: the
   runner dependency contract, `selection.exact_snapshot`,
   `selection.revision_invalidation`,
-  `scheduler.generated_dags`, three audit-authority cases, five event-ingestion
+  `scheduler.generated_dags`, three audit-authority cases, six event/recovery
   cases, four mutation-ownership cases, and three process-policy cases described
   below. The audit cases prove a missing gate is passive, author Take/sandbox/
   session reuse is rejected, and seven independent subject/policy changes stale
@@ -206,7 +206,10 @@ unconnected product path usable.
   recovery-uncertain, terminates the Take as `RecoveryUncertain(EffectUncertain)`,
   blocks the Part, and persists that state before returning. A restart test
   proves no missing event or terminal success is inferred. The standalone
-  `event.nonresumable_process_loss` case ID remains to be registered.
+  `event.nonresumable_process_loss` hermetic case now applies the production
+  uncertainty transition to an authorized dispatch, round-trips the durable
+  snapshot, and proves that no candidate or verification, audit, or integration
+  receipt can be inferred after restart.
 - Claude and Codex CLI surface probes. The exact Claude subscription CLI
   profile passed its startup/tool-surface probe. The pinned Codex subscription
   CLI profile now also passes its live startup oracle: ChatGPT-managed login,
@@ -611,7 +614,8 @@ Goal audit. A Conductor can also inspect the durable Goal and its Parts by Goal
 ID after reconnecting. The durable execution path now reaches terminal success
 through the ordinary Goal runner. The product remains unfinished because it
 lacks the external final-PR canary and the full hostile/fault matrix. Remaining
-utility-level v1 helpers are cleanup work, not alternate workflow authorities.
+work is on the v2 contracts; the branch-point reachability audit found no
+remaining v1 workflow-authority or compatibility island.
 
 Implementation began with two bounded experiments authorized by this charter:
 
@@ -4010,6 +4014,17 @@ zero duplicate implementation Takes. The mixed-provider Goal again reached
 concurrency two, promoted Codex then Claude, recorded 24/2/2/2 effect,
 verification, audit, and integration receipts, persisted the selection
 decision, and validated the combined tree.
+
+At `2026-07-20T17:23:36-05:00`, the pinned BoxLite admission command passed all
+18 live identity, KVM, lifecycle, isolation, read-only, and network-denial
+checks using an exact six-file corrected runtime bundle. The real
+`native-codex-part-lifecycle` command then ran implementation, verification,
+and independent audit through the saved Codex subscription login. It produced
+12 effect receipts and exactly one verification, audit, and integration
+receipt; restart issued zero duplicate implementation dispatches. The
+candidate and promotion commits were
+`a5ee089287902099cd270cd7ad149eff861b7391` and
+`3d88e221df27010b993d07b7d432aba6d8cd4ae9` respectively.
 
 At `2026-07-20T12:37:00-05:00`, the Codex-only lifecycle command passed again
 after deleting the generic runner, provider-hook/provisioning machinery, and
