@@ -297,6 +297,13 @@ pub async fn run_native_claude_take(
       return Err(@types.ChoirError::timeout("Claude Take"))
   }
   let output = data
+  if exit_code != 0 {
+    return Err(
+      @types.ChoirError::provider_process_lost(
+        "nonresumable Claude process exited before a complete trace",
+      ),
+    )
+  }
   @harness.evaluate_claude_driver_capture({
     session,
     role,

@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-20T16:46:25-05:00
+Implementation snapshot updated through: 2026-07-20T16:49:46-05:00
 
 ## Charter Semantics and Readiness
 
@@ -189,6 +189,13 @@ unconnected product path usable.
   pending effect uncertain, and the Part recovery-uncertain. A pure bound test
   and a durable restart test cover the error and workflow state. The remaining
   paused-consumer/backpressure case is not claimed by this overflow fence.
+- Nonresumable provider process loss and provider-dispatch timeouts now use the
+  same durable uncertainty path. A nonzero Claude exit is typed
+  `ProviderProcessLost`; the Part driver records the session as
+  recovery-uncertain, terminates the Take as `RecoveryUncertain(EffectUncertain)`,
+  blocks the Part, and persists that state before returning. A restart test
+  proves no missing event or terminal success is inferred. The standalone
+  `event.nonresumable_process_loss` case ID remains to be registered.
 - Claude and Codex CLI surface probes. The exact Claude subscription CLI
   profile passed its startup/tool-surface probe. The pinned Codex subscription
   CLI profile now also passes its live startup oracle: ChatGPT-managed login,
@@ -527,7 +534,7 @@ Earlier evidence anchors are commits `5fb93fe8` for the native Part path,
 the linter correction. With the current assurance, cancellation, and provider changes,
 `moon check --target native`, `moon test --target native`, and
 `moon run --target native src/bin/choir_lint` all exit successfully on
-2026-07-20. After deleting obsolete source and tests, the full native suite reports 299
+2026-07-20. After deleting obsolete source and tests, the full native suite reports 300
 passed and 0 failed. The
 compiler still reports the repository's existing warning set.
 

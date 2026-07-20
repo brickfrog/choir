@@ -6,6 +6,7 @@ pub(all) enum PartPersistenceBoundary {
   WorkflowEffectObserved
   WorkflowProviderProtocolViolationRecorded
   WorkflowEventIngestionOverflowRecorded
+  WorkflowProviderProcessLossRecorded
   WorkflowAuditResultRecorded
   WorkflowAuditReceiptRecorded
   WorkflowIntegrationPlanned
@@ -312,6 +313,30 @@ fn persist_event_ingestion_overflow(
 }
 
 ///|
+fn persist_provider_process_loss(
+  repository : PartWorkflowRepository,
+  repository_adapters : PartWorkflowRepositoryAdapters,
+  snapshot : PartWorkflowSnapshot,
+  store_version : Int,
+  intent : PartEffectIntent,
+  dependencies : PartWorkflowDriverDependencies,
+) -> Result[PartWorkflowRunResult, @types.ChoirError] {
+  let uncertain = match record_part_provider_process_loss(snapshot, intent) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  persist_provider_dispatch_uncertainty(
+    repository,
+    repository_adapters,
+    snapshot,
+    store_version,
+    uncertain,
+    WorkflowProviderProcessLossRecorded,
+    dependencies,
+  )
+}
+
+///|
 async fn drive_part_workflow(
   repository : PartWorkflowRepository,
   repository_adapters : PartWorkflowRepositoryAdapters,
@@ -415,6 +440,12 @@ async fn drive_part_workflow(
                   dependencies,
                 )
               }
+              if error.is_provider_process_lost() || error.is_timeout() {
+                return persist_provider_process_loss(
+                  repository, repository_adapters, snapshot, store_version, intent,
+                  dependencies,
+                )
+              }
               return Err(error)
             }
           }
@@ -437,6 +468,12 @@ async fn drive_part_workflow(
                       dependencies,
                     )
                   }
+                  if error.is_provider_process_lost() || error.is_timeout() {
+                    return persist_provider_process_loss(
+                      repository, repository_adapters, snapshot, store_version, intent,
+                      dependencies,
+                    )
+                  }
                   return Err(error)
                 }
               }
@@ -455,6 +492,12 @@ async fn drive_part_workflow(
               }
               if error.is_event_ingestion_overflow() {
                 return persist_event_ingestion_overflow(
+                  repository, repository_adapters, snapshot, store_version, intent,
+                  dependencies,
+                )
+              }
+              if error.is_provider_process_lost() || error.is_timeout() {
+                return persist_provider_process_loss(
                   repository, repository_adapters, snapshot, store_version, intent,
                   dependencies,
                 )

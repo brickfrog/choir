@@ -579,3 +579,17 @@ pub fn record_part_event_ingestion_overflow(
     "event ingestion overflow",
   )
 }
+
+///|
+pub fn record_part_provider_process_loss(
+  snapshot : PartWorkflowSnapshot,
+  intent : PartEffectIntent,
+) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
+  record_part_provider_dispatch_uncertainty(
+    snapshot,
+    intent,
+    @control.TakeUncertaintyReason::TakeEffectUncertain,
+    @control.HarnessSessionLifecycle::HarnessSessionRecoveryUncertain,
+    "provider process loss",
+  )
+}

@@ -14,6 +14,7 @@ suberror ChoirError {
   PolicyBlocked(String)
   ProviderProtocolViolation(String)
   EventIngestionOverflow(String)
+  ProviderProcessLost(String)
   ValidationError(String)
   Timeout(String)
   OperationCanceled(String)
@@ -33,6 +34,7 @@ pub fn ChoirError::to_wire_string(self : ChoirError) -> String {
     PolicyBlocked(_) => "policy_blocked"
     ProviderProtocolViolation(_) => "provider_protocol_violation"
     EventIngestionOverflow(_) => "event_ingestion_overflow"
+    ProviderProcessLost(_) => "provider_process_lost"
     ValidationError(_) => "validation_error"
     Timeout(_) => "timeout"
     OperationCanceled(_) => "canceled"
@@ -53,6 +55,7 @@ pub fn ChoirError::message(self : ChoirError) -> String {
     PolicyBlocked(msg) => "policy blocked: " + msg
     ProviderProtocolViolation(msg) => "provider protocol violation: " + msg
     EventIngestionOverflow(msg) => "event ingestion overflow: " + msg
+    ProviderProcessLost(msg) => "provider process lost: " + msg
     ValidationError(msg) => "validation error: " + msg
     Timeout(msg) => "timeout error: " + msg
     OperationCanceled(msg) => "canceled: " + msg
@@ -107,6 +110,11 @@ pub fn ChoirError::provider_protocol_violation(msg : String) -> ChoirError {
 ///|
 pub fn ChoirError::event_ingestion_overflow(msg : String) -> ChoirError {
   EventIngestionOverflow(msg)
+}
+
+///|
+pub fn ChoirError::provider_process_lost(msg : String) -> ChoirError {
+  ProviderProcessLost(msg)
 }
 
 ///|
@@ -196,6 +204,14 @@ pub fn ChoirError::is_event_ingestion_overflow(self : ChoirError) -> Bool {
 }
 
 ///|
+pub fn ChoirError::is_provider_process_lost(self : ChoirError) -> Bool {
+  match self {
+    ProviderProcessLost(_) => true
+    _ => false
+  }
+}
+
+///|
 /// Format a caught [`Error`] when it originated from [`ChoirError`] (`try` / `catch`).
 pub fn choir_error_message_from_caught(e : Error) -> String {
   match e {
@@ -210,6 +226,7 @@ pub fn choir_error_message_from_caught(e : Error) -> String {
       ChoirError::provider_protocol_violation(msg).message()
     EventIngestionOverflow(msg) =>
       ChoirError::event_ingestion_overflow(msg).message()
+    ProviderProcessLost(msg) => ChoirError::provider_process_lost(msg).message()
     ValidationError(msg) => ChoirError::validation_error(msg).message()
     Timeout(msg) => ChoirError::timeout(msg).message()
     OperationCanceled(msg) => ChoirError::canceled(msg).message()
@@ -232,6 +249,7 @@ pub fn caught_error_is_choir_error(e : Error) -> Bool {
     | PolicyBlocked(_)
     | ProviderProtocolViolation(_)
     | EventIngestionOverflow(_)
+    | ProviderProcessLost(_)
     | ValidationError(_)
     | Timeout(_)
     | OperationCanceled(_)
