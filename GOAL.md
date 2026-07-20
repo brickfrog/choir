@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-20T17:37:21-05:00
+Implementation snapshot updated through: 2026-07-20T17:44:49-05:00
 
 ## Charter Semantics and Readiness
 
@@ -167,14 +167,19 @@ unconnected product path usable.
 - Durable restart-readable state and content-addressed artifact stores with
   transactional fault injection.
 - A hermetic conformance runner with injected clock, identifiers, adapters,
-  and typed fault points. Its command now runs twenty-four registered cases: the
+  and typed fault points. Its command now runs twenty-seven registered cases: the
   runner dependency contract, `selection.exact_snapshot`,
   `selection.revision_invalidation`,
-  `scheduler.generated_dags`, three audit-authority cases, ten event/recovery
+  `scheduler.generated_dags`, six audit-authority/recovery cases, ten event/recovery
   cases, four mutation-ownership cases, and three process-policy cases described
   below. The audit cases prove a missing gate is passive, author Take/sandbox/
   session reuse is rejected, and seven independent subject/policy changes stale
-  the old receipt. It does not yet implement the complete required case matrix.
+  the old receipt. The three audit recovery cases restart between the durable
+  result and receipt transactions, restart between the receipt transaction and
+  passive gate evaluation, and fence a conflicting provider delivery. They
+  prove exactly one authorizing receipt, no gate-produced work, and no receipt
+  after protocol violation. It does not yet implement the complete required
+  case matrix.
 - Claude and Codex now derive each durable harness-event payload digest only
   from the typed safe event kind and its redaction state. Provider tool names,
   terminal text, and raw trace fields are neither retained nor hashed; Codex

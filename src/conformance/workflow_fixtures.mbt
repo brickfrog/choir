@@ -1023,6 +1023,290 @@ pub fn audit_independence_rejects_author_case() -> HermeticConformanceCase {
 }
 
 ///|
+fn audit_workflow_result_fixture() -> @workflow.PartWorkflowSnapshot {
+  let (base, _) = event_authorized_provider_dispatch_fixture()
+  let candidate : @control.CandidateCommit = {
+    id: @control.CandidateId("audit-workflow-candidate"),
+    goal_id: base.goal.id,
+    part_id: base.part.id,
+    take_id: base.implementation_take.id,
+    base_commit_oid: base.task_contract.base_commit_oid,
+    commit_oid: @control.GitOid("audit-workflow-commit"),
+    tree_oid: @control.GitOid("audit-workflow-tree"),
+    canonical_change_digest: audit_fixture_digest_a,
+    changed_paths: [],
+  }
+  let subject : @control.PartAuditSubject = {
+    part_id: base.part.id,
+    candidate_take_id: base.implementation_take.id,
+    candidate_commit_oid: candidate.commit_oid,
+    candidate_tree_oid: candidate.tree_oid,
+    task_contract_revision_id: base.task_contract.id,
+    task_contract_digest: base.task_contract.digest,
+    verification_receipt_set_digest: audit_fixture_digest_a,
+    verification_evidence_manifest_digest: audit_fixture_digest_b,
+    subject_digest: audit_fixture_digest_a,
+  }
+  let audit_session = {
+    ..base.identities.audit_session,
+    surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+    cursor_class: @control.HarnessCursorClass::HarnessCursorProviderEventId,
+    provider_cursor: Some("audit-workflow-thread:audit-workflow-turn"),
+    last_choir_sequence: @control.EventSequence(2L),
+    lifecycle: @control.HarnessSessionLifecycle::HarnessSessionIngestionClosedCleanly(
+      @control.HarnessTerminalObservation::HarnessCompleted,
+    ),
+  }
+  let result : @control.AuditResult = {
+    id: @control.AuditResultId("audit-workflow-result"),
+    audit_take_id: base.audit_take.id,
+    take_fencing_epoch: base.fencing_epoch,
+    audit_harness_session_id: audit_session.id,
+    subject,
+    auditor_capability_profile_digest: base.task_contract.audit_capability_profile_digest,
+    effective_surface_manifest_digest: audit_session.effective_surface_manifest_digest,
+    provider_conformance_report_digest: audit_fixture_digest_a,
+    audit_policy_digest: base.task_contract.audit_policy_digest,
+    findings_artifact: None,
+    total_findings_count: 0,
+    blocking_findings_count: 0,
+    started_at: 100L,
+    finished_at: 101L,
+    outcome: @control.AuditOutcome::AuditPassed,
+    result_digest: audit_fixture_digest_b,
+  }
+  {
+    ..base,
+    stage: @workflow.PartWorkflowStage::PartAuditResultRecorded,
+    part: {
+      ..base.part,
+      lifecycle: @control.PartLifecycle::PartVerified(
+        candidate.id,
+        subject.verification_receipt_set_digest,
+      ),
+    },
+    identities: { ..base.identities, audit_session, },
+    audit_take: {
+      ..base.audit_take,
+      lifecycle: @control.TakeLifecycle::TakeTerminal(
+        @control.TakeTerminalDisposition::TakeSucceeded,
+      ),
+    },
+    harness_sessions: base.harness_sessions.map(fn(session) {
+      if session.id == audit_session.id {
+        audit_session
+      } else {
+        session
+      }
+    }),
+    candidate: Some(candidate),
+    audit_subject: Some(subject),
+    audit_result: Some(result),
+    pending_effect: None,
+  }
+}
+
+///|
+fn audit_workflow_metadata() -> @workflow.AuditReceiptMetadata {
+  {
+    receipt_id: @control.ReceiptId("audit-workflow-receipt"),
+    provider_surface_id: @control.ProviderSurfaceId::CodexSubscriptionCli,
+    provider_identity: "codex-subscription-conformance",
+    model_identity: @control.ModelIdentity::UnreportedModelIdentity,
+  }
+}
+
+///|
+fn audit_workflow_gate(
+  snapshot : @workflow.PartWorkflowSnapshot,
+) -> @control.AuditGateObservation {
+  let subject = snapshot.audit_subject.unwrap()
+  let result = snapshot.audit_result.unwrap()
+  let session = snapshot.harness_sessions.filter(fn(candidate) {
+      candidate.id == result.audit_harness_session_id
+    })[0]
+  let candidate_sessions : Array[@control.HarnessSessionId] = []
+  for candidate in snapshot.harness_sessions {
+    if candidate.take_id == snapshot.implementation_take.id {
+      candidate_sessions.push(candidate.id)
+    }
+  }
+  @control.evaluate_part_audit_gate(
+    subject,
+    snapshot.audit_receipt,
+    Some(result),
+    snapshot.implementation_take.id,
+    snapshot.identities.implementation_sandbox.generation_id,
+    candidate_sessions,
+    Some(session),
+    snapshot.task_contract.audit_capability_profile_digest,
+    session.effective_surface_manifest_digest,
+    result.provider_conformance_report_digest,
+    snapshot.task_contract.audit_policy_digest,
+    fn(_) { true },
+  )
+}
+
+///|
+pub fn audit_result_reconcile_case() -> HermeticConformanceCase {
+  {
+    id: ConformanceCaseId("audit.result_reconcile"),
+    run: fn(context) {
+      let point = FaultPoint::AuditAfterResultTransactionBeforeReceiptTransaction
+      if !context.fault_enabled(point) {
+        return Err(
+          audit_fixture_error("result transaction fault was not injected"),
+        )
+      }
+      let durable_result = audit_workflow_result_fixture()
+      let restarted = match
+        @workflow.decode_part_snapshot(
+          @workflow.part_snapshot_bytes(durable_result),
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let receipted = match
+        @workflow.mint_part_audit_receipt(
+          restarted,
+          audit_workflow_metadata(),
+          fn(_) { true },
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      if receipted.stage != @workflow.PartWorkflowStage::PartAudited ||
+        receipted.audit_receipt is None ||
+        !(audit_workflow_gate(receipted)
+        is @control.AuditGateObservation::AuditGateValid(_)) {
+        return Err(audit_fixture_error("durable result did not reconcile once"))
+      }
+      Ok({
+        evidence: [
+          ObservedFault(point),
+          ObservedAuditCase(AuditResultReconciliation, 1, 0),
+        ],
+      })
+    },
+  }
+}
+
+///|
+pub fn audit_receipt_replay_case() -> HermeticConformanceCase {
+  {
+    id: ConformanceCaseId("audit.receipt_replay"),
+    run: fn(context) {
+      let point = FaultPoint::AuditAfterReceiptTransactionBeforeGateEvaluation
+      if !context.fault_enabled(point) {
+        return Err(
+          audit_fixture_error("receipt transaction fault was not injected"),
+        )
+      }
+      let receipted = match
+        @workflow.mint_part_audit_receipt(
+          audit_workflow_result_fixture(),
+          audit_workflow_metadata(),
+          fn(_) { true },
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let restarted = match
+        @workflow.decode_part_snapshot(@workflow.part_snapshot_bytes(receipted)) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let duplicate_mint = @workflow.mint_part_audit_receipt(
+        restarted,
+        audit_workflow_metadata(),
+        fn(_) { true },
+      )
+      if restarted != receipted ||
+        !(duplicate_mint is Err(_)) ||
+        !(audit_workflow_gate(restarted)
+        is @control.AuditGateObservation::AuditGateValid(_)) {
+        return Err(audit_fixture_error("receipt replay repeated producer work"))
+      }
+      Ok({
+        evidence: [
+          ObservedFault(point),
+          ObservedAuditCase(AuditReceiptReplay, 1, 0),
+        ],
+      })
+    },
+  }
+}
+
+///|
+pub fn audit_protocol_conflict_case() -> HermeticConformanceCase {
+  {
+    id: ConformanceCaseId("audit.protocol_conflict"),
+    run: fn(_) {
+      let base = audit_workflow_result_fixture()
+      let subject = base.audit_subject.unwrap()
+      let session = {
+        ..base.identities.audit_session,
+        provider_cursor: None,
+        last_choir_sequence: @control.EventSequence(0L),
+        lifecycle: @control.HarnessSessionLifecycle::HarnessSessionAwaitingEvents,
+      }
+      let intent : @workflow.PartEffectIntent = {
+        effect_id: "audit-conflicting-delivery",
+        kind: @workflow.PartEffectKind::DispatchAudit(
+          base.audit_take.id,
+          session.id,
+          subject,
+        ),
+        request_digest: audit_fixture_digest_a,
+        lifecycle: @workflow.PartEffectLifecycle::PartEffectMayHaveOccurred,
+      }
+      let authorized = {
+        ..base,
+        stage: @workflow.PartWorkflowStage::PartAuditHarnessStarted,
+        identities: { ..base.identities, audit_session: session },
+        audit_take: {
+          ..base.audit_take,
+          fencing_epoch: Some(base.fencing_epoch),
+          lifecycle: @control.TakeLifecycle::TakeRunning,
+        },
+        harness_sessions: base.harness_sessions.map(fn(candidate) {
+          if candidate.id == session.id {
+            session
+          } else {
+            candidate
+          }
+        }),
+        audit_result: None,
+        audit_receipt: None,
+        pending_effect: Some(intent),
+      }
+      let violated = match
+        @workflow.record_part_provider_protocol_violation(authorized, intent) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let session_fenced = violated.harness_sessions.any(fn(candidate) {
+        candidate.id == session.id &&
+        candidate.lifecycle ==
+        @control.HarnessSessionLifecycle::HarnessSessionProtocolViolated
+      })
+      if violated.stage != @workflow.PartWorkflowStage::PartRecoveryUncertain ||
+        violated.audit_receipt is Some(_) ||
+        !session_fenced ||
+        !(violated.audit_take.lifecycle
+        is @control.TakeLifecycle::TakeTerminal(
+          @control.TakeTerminalDisposition::TakeRecoveryUncertain(
+            @control.TakeUncertaintyReason::TakeProtocolViolation
+          )
+        )) {
+        return Err(audit_fixture_error("conflicting audit was not fenced"))
+      }
+      Ok({ evidence: [ObservedAuditCase(AuditProtocolConflictFence, 1, 0)] })
+    },
+  }
+}
+
+///|
 fn goal_audit_fixture_subject() -> @control.GoalAuditSubject {
   {
     goal_id: @control.GoalId("audit-goal"),

@@ -21,7 +21,11 @@ fn hermetic_dependencies() -> @conformance.ConformanceDependencies {
       point == @conformance.FaultPoint::EventBeforeIngestTransaction ||
       point ==
       @conformance.FaultPoint::EventAfterIngestTransactionBeforeSourceAck ||
-      point == @conformance.FaultPoint::EventAfterSourceAckBeforeNextRead
+      point == @conformance.FaultPoint::EventAfterSourceAckBeforeNextRead ||
+      point ==
+      @conformance.FaultPoint::AuditAfterResultTransactionBeforeReceiptTransaction ||
+      point ==
+      @conformance.FaultPoint::AuditAfterReceiptTransactionBeforeGateEvaluation
     },
     adapters: {
       read_state: fn(_) {
@@ -62,6 +66,9 @@ fn run_hermetic() -> Int {
       @conformance.audit_gate_missing_is_passive_case(),
       @conformance.audit_independence_rejects_author_case(),
       @conformance.audit_subject_staleness_case(),
+      @conformance.audit_protocol_conflict_case(),
+      @conformance.audit_result_reconcile_case(),
+      @conformance.audit_receipt_replay_case(),
       @conformance.ownership_normalization_case(),
       @conformance.ownership_conflict_matrix_case(),
       @conformance.ownership_underclaim_case(),

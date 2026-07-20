@@ -178,6 +178,9 @@ pub(all) enum SelectionConformanceKind {
 pub(all) enum AuditConformanceKind {
   AuditMissingGatePassive
   AuditIndependenceFence
+  AuditProtocolConflictFence
+  AuditReceiptReplay
+  AuditResultReconciliation
   AuditSubjectStaleness
 } derive(Debug, Eq, ToJson, FromJson)
 
