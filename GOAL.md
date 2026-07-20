@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-20T16:41:00-05:00
+Implementation snapshot updated through: 2026-07-20T16:46:25-05:00
 
 ## Charter Semantics and Readiness
 
@@ -182,6 +182,13 @@ unconnected product path usable.
   succeeded/failed disposition. Driver tests feed distinct synthetic secret
   tool names and prove identical safe digests and zero secret bytes in the
   durable event JSON. The broader multi-field `event.redaction` case remains.
+- The Codex app-server event spool has a fixed 16 MiB admission bound. Crossing
+  it now returns typed `EventIngestionOverflow`, terminates the exact recorded
+  app-server process group, and causes the Part driver to atomically mark the
+  session recovery-uncertain, the Take `RecoveryUncertain(CursorGap)`, the
+  pending effect uncertain, and the Part recovery-uncertain. A pure bound test
+  and a durable restart test cover the error and workflow state. The remaining
+  paused-consumer/backpressure case is not claimed by this overflow fence.
 - Claude and Codex CLI surface probes. The exact Claude subscription CLI
   profile passed its startup/tool-surface probe. The pinned Codex subscription
   CLI profile now also passes its live startup oracle: ChatGPT-managed login,
@@ -520,7 +527,7 @@ Earlier evidence anchors are commits `5fb93fe8` for the native Part path,
 the linter correction. With the current assurance, cancellation, and provider changes,
 `moon check --target native`, `moon test --target native`, and
 `moon run --target native src/bin/choir_lint` all exit successfully on
-2026-07-20. After deleting obsolete source and tests, the full native suite reports 297
+2026-07-20. After deleting obsolete source and tests, the full native suite reports 299
 passed and 0 failed. The
 compiler still reports the repository's existing warning set.
 

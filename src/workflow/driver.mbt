@@ -5,6 +5,7 @@ pub(all) enum PartPersistenceBoundary {
   WorkflowEffectAuthorized
   WorkflowEffectObserved
   WorkflowProviderProtocolViolationRecorded
+  WorkflowEventIngestionOverflowRecorded
   WorkflowAuditResultRecorded
   WorkflowAuditReceiptRecorded
   WorkflowIntegrationPlanned
@@ -228,6 +229,40 @@ fn persistence_result(
 }
 
 ///|
+fn persist_provider_dispatch_uncertainty(
+  repository : PartWorkflowRepository,
+  repository_adapters : PartWorkflowRepositoryAdapters,
+  snapshot : PartWorkflowSnapshot,
+  store_version : Int,
+  uncertain : PartWorkflowSnapshot,
+  boundary : PartPersistenceBoundary,
+  dependencies : PartWorkflowDriverDependencies,
+) -> Result[PartWorkflowRunResult, @types.ChoirError] {
+  match
+    persist_driver_snapshot(
+      repository,
+      repository_adapters,
+      uncertain,
+      Some(store_version),
+      boundary,
+      dependencies,
+      None,
+    ) {
+    Ok(WorkflowSnapshotPersisted(version)) =>
+      Ok({
+        snapshot: uncertain,
+        store_version: Some(version),
+        outcome: PartRunRecoveryUncertain,
+      })
+    Ok(WorkflowSnapshotPersistencePaused(boundary, point)) =>
+      Ok(persistence_result(snapshot, Some(store_version), boundary, point))
+    Ok(WorkflowSnapshotAuthorizationRejected) =>
+      Err(workflow_error("provider uncertainty used an authorization guard"))
+    Err(error) => Err(error)
+  }
+}
+
+///|
 fn persist_provider_protocol_violation(
   repository : PartWorkflowRepository,
   repository_adapters : PartWorkflowRepositoryAdapters,
@@ -241,28 +276,39 @@ fn persist_provider_protocol_violation(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  match
-    persist_driver_snapshot(
-      repository,
-      repository_adapters,
-      violated,
-      Some(store_version),
-      WorkflowProviderProtocolViolationRecorded,
-      dependencies,
-      None,
-    ) {
-    Ok(WorkflowSnapshotPersisted(version)) =>
-      Ok({
-        snapshot: violated,
-        store_version: Some(version),
-        outcome: PartRunRecoveryUncertain,
-      })
-    Ok(WorkflowSnapshotPersistencePaused(boundary, point)) =>
-      Ok(persistence_result(snapshot, Some(store_version), boundary, point))
-    Ok(WorkflowSnapshotAuthorizationRejected) =>
-      Err(workflow_error("protocol violation used an authorization guard"))
-    Err(error) => Err(error)
+  persist_provider_dispatch_uncertainty(
+    repository,
+    repository_adapters,
+    snapshot,
+    store_version,
+    violated,
+    WorkflowProviderProtocolViolationRecorded,
+    dependencies,
+  )
+}
+
+///|
+fn persist_event_ingestion_overflow(
+  repository : PartWorkflowRepository,
+  repository_adapters : PartWorkflowRepositoryAdapters,
+  snapshot : PartWorkflowSnapshot,
+  store_version : Int,
+  intent : PartEffectIntent,
+  dependencies : PartWorkflowDriverDependencies,
+) -> Result[PartWorkflowRunResult, @types.ChoirError] {
+  let uncertain = match record_part_event_ingestion_overflow(snapshot, intent) {
+    Ok(value) => value
+    Err(error) => return Err(error)
   }
+  persist_provider_dispatch_uncertainty(
+    repository,
+    repository_adapters,
+    snapshot,
+    store_version,
+    uncertain,
+    WorkflowEventIngestionOverflowRecorded,
+    dependencies,
+  )
 }
 
 ///|
@@ -363,6 +409,12 @@ async fn drive_part_workflow(
                   dependencies,
                 )
               }
+              if error.is_event_ingestion_overflow() {
+                return persist_event_ingestion_overflow(
+                  repository, repository_adapters, snapshot, store_version, intent,
+                  dependencies,
+                )
+              }
               return Err(error)
             }
           }
@@ -379,6 +431,12 @@ async fn drive_part_workflow(
                       dependencies,
                     )
                   }
+                  if error.is_event_ingestion_overflow() {
+                    return persist_event_ingestion_overflow(
+                      repository, repository_adapters, snapshot, store_version, intent,
+                      dependencies,
+                    )
+                  }
                   return Err(error)
                 }
               }
@@ -391,6 +449,12 @@ async fn drive_part_workflow(
             Err(error) => {
               if error.is_provider_protocol_violation() {
                 return persist_provider_protocol_violation(
+                  repository, repository_adapters, snapshot, store_version, intent,
+                  dependencies,
+                )
+              }
+              if error.is_event_ingestion_overflow() {
+                return persist_event_ingestion_overflow(
                   repository, repository_adapters, snapshot, store_version, intent,
                   dependencies,
                 )

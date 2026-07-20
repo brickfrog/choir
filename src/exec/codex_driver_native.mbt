@@ -526,17 +526,39 @@ fn native_codex_array_field(
 }
 
 ///|
+fn validate_native_codex_log_size(
+  size : Int,
+) -> Result[Unit, @types.ChoirError] {
+  if size < 0 || size > 16 * 1024 * 1024 {
+    Err(
+      @types.ChoirError::event_ingestion_overflow(
+        "Codex app-server event spool exceeded 16 MiB",
+      ),
+    )
+  } else {
+    Ok(())
+  }
+}
+
+///|
 fn native_codex_response_from_log(
   config : NativeCodexDriverConfig,
   request_id : String,
+  server_pid? : Int = 0,
 ) -> Result[Json?, @types.ChoirError] {
   let path = native_codex_log_path(config)
   if !@sys.path_exists(path) {
     return Ok(None)
   }
   let size = @sys.file_size(path)
-  if size < 0 || size > 16 * 1024 * 1024 {
-    return Err(native_codex_driver_error("app-server log exceeded its bound"))
+  match validate_native_codex_log_size(size) {
+    Ok(_) => ()
+    Err(error) => {
+      if server_pid > 0 {
+        @sys.kill_pgid_sequence_best_effort(server_pid)
+      }
+      return Err(error)
+    }
   }
   for raw in @sys.read_file(path).split("\n") {
     let line = raw.trim().to_owned()
@@ -616,8 +638,9 @@ async fn request_native_codex_app_server(
   request_id : String,
   method_name : String,
   params : Json,
+  server_pid? : Int = 0,
 ) -> Result[Json, @types.ChoirError] {
-  match native_codex_response_from_log(config, request_id) {
+  match native_codex_response_from_log(config, request_id, server_pid~) {
     Ok(Some(value)) => return Ok(value)
     Ok(None) => ()
     Err(error) => return Err(error)
@@ -632,7 +655,7 @@ async fn request_native_codex_app_server(
     Err(error) => return Err(error)
   }
   for poll = 0; poll < 200; poll = poll + 1 {
-    match native_codex_response_from_log(config, request_id) {
+    match native_codex_response_from_log(config, request_id, server_pid~) {
       Ok(Some(value)) => return Ok(value)
       Ok(None) => @async.sleep(50)
       Err(error) => return Err(error)
@@ -792,6 +815,7 @@ async fn ensure_native_codex_app_server(
       "initialize:" + generation,
       "initialize",
       initialize.to_json(),
+      server_pid=manifest.server_pid,
     ) {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -815,6 +839,7 @@ async fn ensure_native_codex_app_server(
           "thread-resume:" + generation,
           "thread/resume",
           params.to_json(),
+          server_pid=manifest.server_pid,
         ) {
         Ok(_) => ()
         Err(error) => return Err(error)
@@ -865,6 +890,7 @@ async fn read_native_codex_thread(
       "thread-read:" + next.read_ordinal.to_string(),
       "thread/read",
       params.to_json(),
+      server_pid=next.server_pid,
     ) {
     Ok(value) => value
     Err(error) if error.message().contains("is not materialized yet") => {
@@ -1164,6 +1190,7 @@ pub async fn run_native_codex_take(
           "thread-start",
           "thread/start",
           params.to_json(),
+          server_pid=manifest.server_pid,
         ) {
         Ok(value) => value
         Err(error) => return Err(error)
@@ -1214,6 +1241,7 @@ pub async fn run_native_codex_take(
           "turn-start",
           "turn/start",
           params.to_json(),
+          server_pid=manifest.server_pid,
         ) {
         Ok(value) => value
         Err(error) => return Err(error)
@@ -1282,6 +1310,7 @@ pub async fn run_native_codex_take(
             "turn-interrupt",
             "turn/interrupt",
             params.to_json(),
+            server_pid=manifest.server_pid,
           ) {
           Ok(_) => interrupt_sent = true
           Err(error) => return Err(error)
@@ -1522,6 +1551,15 @@ test "native Codex app-server argv removes native execution surfaces" {
     ),
   )
   assert_false(args.contains("--dangerously-bypass-approvals-and-sandbox"))
+}
+
+///|
+test "Codex app-server spool bound fails with typed ingestion overflow" {
+  assert_true(validate_native_codex_log_size(16 * 1024 * 1024) is Ok(_))
+  match validate_native_codex_log_size(16 * 1024 * 1024 + 1) {
+    Err(error) => assert_true(error.is_event_ingestion_overflow())
+    Ok(_) => fail("oversized app-server spool was admitted")
+  }
 }
 
 ///|

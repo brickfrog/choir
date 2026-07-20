@@ -13,6 +13,7 @@ suberror ChoirError {
   PermissionDeniedDetail(String)
   PolicyBlocked(String)
   ProviderProtocolViolation(String)
+  EventIngestionOverflow(String)
   ValidationError(String)
   Timeout(String)
   OperationCanceled(String)
@@ -31,6 +32,7 @@ pub fn ChoirError::to_wire_string(self : ChoirError) -> String {
     PermissionDeniedDetail(_) => "permission_denied"
     PolicyBlocked(_) => "policy_blocked"
     ProviderProtocolViolation(_) => "provider_protocol_violation"
+    EventIngestionOverflow(_) => "event_ingestion_overflow"
     ValidationError(_) => "validation_error"
     Timeout(_) => "timeout"
     OperationCanceled(_) => "canceled"
@@ -50,6 +52,7 @@ pub fn ChoirError::message(self : ChoirError) -> String {
     PermissionDeniedDetail(msg) => msg
     PolicyBlocked(msg) => "policy blocked: " + msg
     ProviderProtocolViolation(msg) => "provider protocol violation: " + msg
+    EventIngestionOverflow(msg) => "event ingestion overflow: " + msg
     ValidationError(msg) => "validation error: " + msg
     Timeout(msg) => "timeout error: " + msg
     OperationCanceled(msg) => "canceled: " + msg
@@ -99,6 +102,11 @@ pub fn ChoirError::policy_blocked(msg : String) -> ChoirError {
 ///|
 pub fn ChoirError::provider_protocol_violation(msg : String) -> ChoirError {
   ProviderProtocolViolation(msg)
+}
+
+///|
+pub fn ChoirError::event_ingestion_overflow(msg : String) -> ChoirError {
+  EventIngestionOverflow(msg)
 }
 
 ///|
@@ -180,6 +188,14 @@ pub fn ChoirError::is_provider_protocol_violation(self : ChoirError) -> Bool {
 }
 
 ///|
+pub fn ChoirError::is_event_ingestion_overflow(self : ChoirError) -> Bool {
+  match self {
+    EventIngestionOverflow(_) => true
+    _ => false
+  }
+}
+
+///|
 /// Format a caught [`Error`] when it originated from [`ChoirError`] (`try` / `catch`).
 pub fn choir_error_message_from_caught(e : Error) -> String {
   match e {
@@ -192,6 +208,8 @@ pub fn choir_error_message_from_caught(e : Error) -> String {
     PolicyBlocked(msg) => ChoirError::policy_blocked(msg).message()
     ProviderProtocolViolation(msg) =>
       ChoirError::provider_protocol_violation(msg).message()
+    EventIngestionOverflow(msg) =>
+      ChoirError::event_ingestion_overflow(msg).message()
     ValidationError(msg) => ChoirError::validation_error(msg).message()
     Timeout(msg) => ChoirError::timeout(msg).message()
     OperationCanceled(msg) => ChoirError::canceled(msg).message()
@@ -213,6 +231,7 @@ pub fn caught_error_is_choir_error(e : Error) -> Bool {
     | PermissionDeniedDetail(_)
     | PolicyBlocked(_)
     | ProviderProtocolViolation(_)
+    | EventIngestionOverflow(_)
     | ValidationError(_)
     | Timeout(_)
     | OperationCanceled(_)

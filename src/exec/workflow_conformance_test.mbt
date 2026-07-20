@@ -141,3 +141,78 @@ async test "driver durably records a provider protocol violation" {
   assert_eq(restarted.snapshot, result.snapshot)
   clean_workflow_repository(repository)
 }
+
+///|
+async test "driver durably records provider event ingestion overflow" {
+  let repository = workflow_repository("provider-event-overflow")
+  clean_workflow_repository(repository)
+  let adapters = workflow_repository_adapters()
+  guard @workflow.initialize_part_workflow_repository(repository, adapters)
+    is Ok(_) else {
+    fail("initialize event-overflow repository")
+  }
+  let authorized = workflow_authorized_implementation_dispatch()
+  ignore(
+    @workflow.persist_part_snapshot(repository, adapters, {
+      snapshot: authorized,
+      expected_store_version: None,
+      fault_point: None,
+    }).unwrap(),
+  )
+  let result = @workflow.resume_part_workflow(
+    repository,
+    adapters,
+    authorized.workflow_id,
+    workflow_driver_dependencies(
+      @ref.new(0),
+      @ref.new(0),
+      fn(_) { None },
+      async fn(_, _) {
+        Err(
+          @types.ChoirError::event_ingestion_overflow(
+            "provider event spool exceeded its bound",
+          ),
+        )
+      },
+    ),
+  ).unwrap()
+  assert_eq(
+    result.outcome,
+    @workflow.PartWorkflowRunOutcome::PartRunRecoveryUncertain,
+  )
+  assert_eq(
+    result.snapshot.stage,
+    @workflow.PartWorkflowStage::PartRecoveryUncertain,
+  )
+  assert_true(
+    result.snapshot.implementation_take.lifecycle
+    is @control.TakeLifecycle::TakeTerminal(
+      @control.TakeTerminalDisposition::TakeRecoveryUncertain(
+        @control.TakeUncertaintyReason::TakeCursorGap
+      )
+    ),
+  )
+  assert_true(
+    result.snapshot.harness_sessions.any(fn(session) {
+      session.id == result.snapshot.identities.implementation_session.id &&
+      session.lifecycle ==
+      @control.HarnessSessionLifecycle::HarnessSessionRecoveryUncertain
+    }),
+  )
+  assert_true(
+    result.snapshot.pending_effect
+    is Some({
+      lifecycle: @workflow.PartEffectLifecycle::PartEffectUncertain,
+      ..
+    }),
+  )
+  assert_eq(
+    @workflow.load_part_snapshot(
+      repository,
+      adapters,
+      authorized.workflow_id,
+    ).unwrap().unwrap().snapshot,
+    result.snapshot,
+  )
+  clean_workflow_repository(repository)
+}

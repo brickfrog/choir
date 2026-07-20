@@ -461,13 +461,16 @@ pub fn authorize_pending_part_effect(
 }
 
 ///|
-pub fn record_part_provider_protocol_violation(
+fn record_part_provider_dispatch_uncertainty(
   snapshot : PartWorkflowSnapshot,
   intent : PartEffectIntent,
+  reason : @control.TakeUncertaintyReason,
+  session_lifecycle : @control.HarnessSessionLifecycle,
+  error_context : String,
 ) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
   if snapshot.pending_effect != Some(intent) ||
     intent.lifecycle != PartEffectMayHaveOccurred {
-    return Err(workflow_error("protocol violation has no authorized effect"))
+    return Err(workflow_error(error_context + " has no authorized effect"))
   }
   let (take, session_id) = match intent.kind {
     DispatchImplementation(take_id, session_id)
@@ -480,14 +483,14 @@ pub fn record_part_provider_protocol_violation(
       } else if take_id == snapshot.audit_take.id {
         snapshot.audit_take
       } else {
-        return Err(workflow_error("protocol violation named an unknown Take"))
+        return Err(workflow_error(error_context + " named an unknown Take"))
       }
       (take, session_id)
     }
     _ =>
       return Err(
         workflow_error(
-          "protocol violation did not arise from a provider dispatch",
+          error_context + " did not arise from a provider dispatch",
         ),
       )
   }
@@ -496,9 +499,7 @@ pub fn record_part_provider_protocol_violation(
       take,
       @control.TakeTransition::FinishTake(
         snapshot.fencing_epoch,
-        @control.TakeTerminalDisposition::TakeRecoveryUncertain(
-          @control.TakeUncertaintyReason::TakeProtocolViolation,
-        ),
+        @control.TakeTerminalDisposition::TakeRecoveryUncertain(reason),
       ),
     ) {
     Ok(value) => value
@@ -508,16 +509,13 @@ pub fn record_part_provider_protocol_violation(
   let sessions = snapshot.harness_sessions.map(fn(session) {
     if session.id == session_id && session.take_id == take.id {
       found_session = true
-      {
-        ..session,
-        lifecycle: @control.HarnessSessionLifecycle::HarnessSessionProtocolViolated,
-      }
+      { ..session, lifecycle: session_lifecycle }
     } else {
       session
     }
   })
   if !found_session {
-    return Err(workflow_error("protocol violation session is missing"))
+    return Err(workflow_error(error_context + " session is missing"))
   }
   let part = match
     @control.transition_part(
@@ -552,4 +550,32 @@ pub fn record_part_provider_protocol_violation(
     harness_sessions: sessions,
     pending_effect: Some({ ..intent, lifecycle: PartEffectUncertain }),
   })
+}
+
+///|
+pub fn record_part_provider_protocol_violation(
+  snapshot : PartWorkflowSnapshot,
+  intent : PartEffectIntent,
+) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
+  record_part_provider_dispatch_uncertainty(
+    snapshot,
+    intent,
+    @control.TakeUncertaintyReason::TakeProtocolViolation,
+    @control.HarnessSessionLifecycle::HarnessSessionProtocolViolated,
+    "protocol violation",
+  )
+}
+
+///|
+pub fn record_part_event_ingestion_overflow(
+  snapshot : PartWorkflowSnapshot,
+  intent : PartEffectIntent,
+) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
+  record_part_provider_dispatch_uncertainty(
+    snapshot,
+    intent,
+    @control.TakeUncertaintyReason::TakeCursorGap,
+    @control.HarnessSessionLifecycle::HarnessSessionRecoveryUncertain,
+    "event ingestion overflow",
+  )
 }
