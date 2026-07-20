@@ -43,7 +43,11 @@ pub fn format_request(req : @types.Request) -> String {
   req.args.each_json(fn(k, v) { args_map.set(k, v) })
   {
     "method": req.req_method.to_json(),
-    "role": @config.role_to_string(req.role).to_json(),
+    "role": (match req.role {
+      @types.Role::TL => "root"
+      @types.Role::Dev => "dev"
+      @types.Role::Worker => "worker"
+    }).to_json(),
     "name": req.name.to_json(),
     "args": args_map.to_json(),
   }
@@ -52,114 +56,14 @@ pub fn format_request(req : @types.Request) -> String {
 }
 
 ///|
-pub(all) enum ConnectionLifetime {
-  Session
-  OneShot
-} derive(Debug, Eq)
-
-///|
-pub fn ConnectionLifetime::to_wire_string(self : ConnectionLifetime) -> String {
-  match self {
-    Session => "session"
-    OneShot => "oneshot"
-  }
-}
-
-///|
-pub fn parse_connection_lifetime(raw : String) -> ConnectionLifetime? {
-  match raw.trim().to_lower().to_owned() {
-    "session" => Some(Session)
-    "oneshot" | "one_shot" | "one-shot" | "tool_call" | "tool-call" =>
-      Some(OneShot)
-    _ => None
-  }
-}
-
-///|
-pub fn format_registration_request(
-  role : @types.Role,
-  agent_id : String,
-  local_cfg : @types.LocalConfig,
-  connection_lifetime? : ConnectionLifetime = Session,
-  agent_token? : String? = @sys.getenv("CHOIR_AGENT_TOKEN"),
-) -> String {
-  let args : Map[String, String] = {
-    "agent_id": agent_id,
-    "connection_lifetime": connection_lifetime.to_wire_string(),
-  }
-  match agent_token {
-    Some(v) => args.set(@types.registration_token_arg, v)
-    None => ()
-  }
-  match local_cfg.parent_id {
-    Some(v) => args.set("parent_id", v)
-    None => ()
-  }
-  match local_cfg.branch {
-    Some(v) => args.set("branch", v)
-    None => ()
-  }
-  match local_cfg.parent_branch {
-    Some(v) => args.set("parent_branch", v)
-    None => ()
-  }
-  match local_cfg.workspace {
-    Some(v) => args.set("workspace", v)
-    None => ()
-  }
-  match local_cfg.terminal_target {
-    Some(v) => args.set("terminal_target", v.to_string())
-    None => ()
-  }
-  match local_cfg.agent_type {
-    Some(v) => args.set("agent_type", @config.agent_type_to_string(v))
-    None => ()
-  }
-  match local_cfg.spawn_depth {
-    Some(d) => args.set("spawn_depth", d.to_string())
-    None => ()
-  }
+pub fn format_conductor_registration_request(agent_token : String) -> String {
+  let args : Map[String, String] = { "agent_id": "root" }
+  args.set(@types.registration_token_arg, agent_token)
   format_request({
     req_method: "register",
-    role,
+    role: @types.Role::TL,
     name: "register",
     args: @types.RequestArgs::new(args),
-  })
-}
-
-///|
-pub fn format_augmented_request(
-  req : @types.Request,
-  agent_id : String,
-  local_cfg : @types.LocalConfig,
-) -> String {
-  let args : Map[String, Json] = {}
-  req.args.each_json(fn(k, v) { args.set(k, v) })
-  if !args.contains("caller_id") {
-    args.set("caller_id", agent_id.to_json())
-  }
-  if req.name == "send_message" && !args.contains("sender_id") {
-    args.set("sender_id", agent_id.to_json())
-  }
-  if req.name == "file_pr" {
-    if !args.contains("branch") {
-      match local_cfg.branch {
-        Some(v) => args.set("branch", v.to_json())
-        None => ()
-      }
-    }
-    if !args.contains("parent_branch") {
-      match local_cfg.parent_branch {
-        Some(v) => args.set("parent_branch", v.to_json())
-        None => ()
-      }
-    }
-  }
-  format_request({
-    req_method: req.req_method,
-    role: req.role,
-    name: req.name,
-    args: @types.RequestArgs::from_values(args),
   })
 }
 

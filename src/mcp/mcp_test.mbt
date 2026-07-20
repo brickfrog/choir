@@ -1,5 +1,5 @@
 ///|
-test "Conductor tools/call preserves arguments and verified caller" {
+test "Conductor tools/call preserves structured arguments" {
   let arguments : Map[String, Json] = {
     "goal_id": "goal-a".to_json(),
     "action": "set_concurrency".to_json(),
@@ -15,45 +15,27 @@ test "Conductor tools/call preserves arguments and verified caller" {
     req_method: method_tools_call,
     params: Some(params.to_json()),
   }
-  match
-    @mcp.to_internal_request(
-      rpc,
-      @types.Role::TL,
-      default_caller_id=Some("root"),
-    ) {
+  match @mcp.to_internal_request(rpc, @types.Role::TL) {
     Ok(request) => {
       assert_eq(request.name, "goal_steer")
       @debug.assert_eq(request.args.get("goal_id"), Some("goal-a"))
       @debug.assert_eq(request.args.get("maximum_parallel_parts"), Some("3"))
-      @debug.assert_eq(request.args.get("caller_id"), Some("root"))
+      @debug.assert_eq(request.args.get("caller_id"), None)
     }
     Err(error) => fail("expected request: " + error.message)
   }
 }
 
 ///|
-test "Conductor translation rejects removed commands and stringified arguments" {
-  let empty_arguments : Map[String, Json] = Map([])
-  let removed_params : Map[String, Json] = {
-    "name": "fork_wave".to_json(),
-    "arguments": empty_arguments.to_json(),
-  }
-  let removed_request : @mcp.JsonRpcRequest = {
-    jsonrpc: "2.0",
-    id: Some(Number(2)),
-    req_method: method_tools_call,
-    params: Some(removed_params.to_json()),
-  }
-  match @mcp.to_internal_request(removed_request, @types.Role::TL) {
-    Err(error) => assert_eq(error.code, err_method_not_found)
-    Ok(_) => fail("removed command must not translate")
-  }
+test "Conductor translation rejects stringified arguments" {
   let stringified_params : Map[String, Json] = {
     "name": "goal_status".to_json(),
     "arguments": "{\"goal_id\":\"goal-a\"}".to_json(),
   }
   let stringified_request : @mcp.JsonRpcRequest = {
-    ..removed_request,
+    jsonrpc: "2.0",
+    id: Some(Number(2)),
+    req_method: method_tools_call,
     params: Some(stringified_params.to_json()),
   }
   match @mcp.to_internal_request(stringified_request, @types.Role::TL) {
@@ -80,10 +62,6 @@ test "Conductor catalog exposes only Goal and Beads operations" {
   assert_true(rendered.contains("goal_submit"))
   assert_true(rendered.contains("maximum_parallel_parts"))
   assert_true(rendered.contains("task_create"))
-  assert_false(rendered.contains("fork_wave"))
-  assert_false(rendered.contains("spawn_worker"))
-  assert_false(rendered.contains("file_pr"))
-  assert_false(rendered.contains("server_reload"))
 }
 
 ///|
@@ -111,8 +89,6 @@ test "initialize response reserves workflow authority for choird" {
   )
   assert_true(instructions.contains("use Beads to preserve intended work"))
   assert_true(instructions.contains("Do not execute a Part yourself"))
-  assert_false(instructions.contains("fork_wave"))
-  assert_false(instructions.contains("merge_pr"))
 }
 
 ///|

@@ -185,7 +185,6 @@ fn text_content_json(text : String) -> Json {
 pub fn to_internal_request(
   rpc : JsonRpcRequest,
   role : @types.Role,
-  default_caller_id? : String? = None,
 ) -> Result[@types.Request, JsonRpcError] {
   if rpc.req_method != method_tools_call {
     return Err({
@@ -228,10 +227,6 @@ pub fn to_internal_request(
         message: "tool arguments must be an object",
       })
     None => Map([])
-  }
-  match default_caller_id {
-    Some(id) => arguments.set("caller_id", id.to_json())
-    None => ()
   }
   Ok({
     req_method: rpc.req_method,

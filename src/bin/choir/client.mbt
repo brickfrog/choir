@@ -142,16 +142,15 @@ fn goal_client_load_config() -> Result[
 fn client_register_if_needed(
   uds_fd : Int,
   reader : UDSLineReader,
-  role : @types.Role,
-  config : @types.Config,
-  local_cfg : @types.LocalConfig,
+  _role : @types.Role,
+  _config : @types.Config,
+  _local_cfg : @types.LocalConfig,
 ) -> Result[Unit, String] {
-  let message = mcp_build_registration_message(
-    role,
-    config,
-    local_cfg,
-    connection_lifetime=@transport.ConnectionLifetime::OneShot,
-  )
+  let token = match @sys.getenv("CHOIR_AGENT_TOKEN") {
+    Some(value) => value
+    None => return Err("missing Conductor capability")
+  }
+  let message = @transport.format_conductor_registration_request(token) + "\n"
   if !mcp_write_all_uds(uds_fd, @utf8.encode(message)) {
     return Err("failed to write registration request")
   }
@@ -195,7 +194,7 @@ fn client_call_uds(
       }
     }
   }
-  let wire = mcp_build_wire_request(request, role, config, local_cfg)
+  let wire = mcp_build_wire_request(request)
   if !mcp_write_all_uds(uds_fd, @utf8.encode(wire)) {
     @uds.close(uds_fd)
     return Err("failed to write Goal request")
