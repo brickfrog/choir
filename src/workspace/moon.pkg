@@ -1,12 +1,3 @@
-import {
-  "choir/src/sys",
-  "choir/src/types",
-  "moonbitlang/core/env",
-  "moonbitlang/core/json",
-  "moonbitlang/core/string",
-  "moonbitlang/core/debug",
-}
-
 options(
   "is-main": false,
 )

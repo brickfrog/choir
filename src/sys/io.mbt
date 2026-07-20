@@ -131,10 +131,8 @@ fn string_to_null_terminated_bytes(s : String) -> Bytes {
 /// succeeded and `ftell` reported a size. On Linux this is ALSO true for
 /// directories: `fopen` on a directory returns a non-null FILE*, `fseek`
 /// fails, and `ftell` then returns 0, which compares >= 0. Callers that
-/// must distinguish files from directories cannot rely on this function
-/// alone — see `statusline.mbt:statusline_git_branch` for the read-first
-/// pattern that handles `.git` being either a file (linked worktree) or
-/// a directory. For pure existence checking that's correct for both
+/// must distinguish files from directories cannot rely on this function.
+/// For pure existence checking that's correct for both
 /// files and directories, use `path_entry_exists` (stat-based).
 pub fn path_exists(path : String) -> Bool {
   let path_bytes = string_to_null_terminated_bytes(path)
@@ -182,8 +180,7 @@ pub fn path_executable(path : String) -> Bool {
 ///|
 /// Recursive delete of `path`. Returns `true` on success (including the
 /// idempotent "already gone" case) and `false` on any failure. Symbolic
-/// links are unlinked, not followed. Intended for test scaffolding under
-/// `/tmp` — not a substitute for git-aware worktree removal.
+/// links are unlinked, not followed.
 pub fn rm_rf(path : String) -> Bool {
   c_rm_rf(string_to_null_terminated_bytes(path)) == 0
 }
@@ -192,8 +189,7 @@ pub fn rm_rf(path : String) -> Bool {
 /// Entry names of `path`, skipping `.` and `..`. Returns empty array when the
 /// directory cannot be opened (non-existent, permission denied, not a dir).
 /// A 64 KiB buffer caps the read; directories with more entries than fit are
-/// silently truncated — callers here operate on `.choir/state/kv` and `.choir/worktrees`
-/// which stay well under that.
+/// silently truncated.
 pub fn list_dir(path : String) -> Array[String] {
   let path_bytes = string_to_null_terminated_bytes(path)
   let max_size = 65536
@@ -570,8 +566,7 @@ pub fn copy_dir_recursive(src : String, dst : String) -> Bool {
   // dot-prefixed entries (see choir_list_dir in src/sys/stub.c), not just
   // `.`/`..`. Hidden files inside a skill dir are therefore not copied. This
   // is acceptable for SKILL.md-based skills which use conventional filenames.
-  // Changing the stub's policy would affect other callers (KV scan, worktree
-  // walks) and is out of scope for this PR.
+  // Changing the stub's policy would affect every directory consumer.
   if !is_dir(src) {
     return false
   }
@@ -666,10 +661,6 @@ pub fn symlink_force(target : String, linkpath : String) -> Bool {
 }
 
 ///|
-#borrow(pd, ws, br)
-extern "C" fn c_worktree_bootstrap_cleanup(pd : Bytes, ws : Bytes, br : Bytes) = "choir_worktree_bootstrap_cleanup"
-
-///|
 extern "C" fn c_init_cleanup_runtime_artifacts() = "choir_init_cleanup_runtime_artifacts"
 
 ///|
@@ -750,63 +741,13 @@ extern "C" fn c_server_exit_signal_handlers_installed() -> Int = "choir_server_e
 extern "C" fn c_reset_server_exit_signal_handlers() = "choir_reset_server_exit_signal_handlers"
 
 ///|
-#borrow(pd, br)
-extern "C" fn c_git_fetch_origin_branch_best_effort(pd : Bytes, br : Bytes) = "choir_git_fetch_origin_branch_best_effort"
-
-///|
-#borrow(ws, sn)
-extern "C" fn c_worktree_seed_agent_runtime_gitexclude(
-  ws : Bytes,
-  sn : Bytes,
-) -> Int = "choir_worktree_seed_agent_runtime_gitexclude"
-
-///|
-/// Best-effort worktree cleanup before spawn (`git -C` / `rm` via `execvp`, stderr discarded).
-pub fn worktree_bootstrap_cleanup_native(
-  project_dir : String,
-  workspace : String,
-  branch : String,
-) -> Unit {
-  c_worktree_bootstrap_cleanup(
-    string_to_null_terminated_bytes(project_dir),
-    string_to_null_terminated_bytes(workspace),
-    string_to_null_terminated_bytes(branch),
-  )
-}
-
-///|
-/// Best-effort `git fetch origin <branch>` with the same stderr warnings as the former `sh -c` helper.
-pub fn git_fetch_origin_branch_best_effort_native(
-  project_dir : String,
-  branch : String,
-) -> Unit {
-  c_git_fetch_origin_branch_best_effort(
-    string_to_null_terminated_bytes(project_dir),
-    string_to_null_terminated_bytes(branch),
-  )
-}
-
-///|
-/// Best-effort append of agent-runtime `info/exclude` rules (resolved under the worktree's Git
-/// directory). Always returns `0`; failures are logged to stderr and the append is skipped.
-pub fn worktree_seed_agent_runtime_gitexclude_native(
-  workspace : String,
-  snippet : String,
-) -> Int {
-  c_worktree_seed_agent_runtime_gitexclude(
-    string_to_null_terminated_bytes(workspace),
-    string_to_null_terminated_bytes(snippet),
-  )
-}
-
-///|
 /// Unlink runtime-only markers (restart recovery state preserved). No shell.
 pub fn init_cleanup_runtime_artifacts_native() -> Unit {
   c_init_cleanup_runtime_artifacts()
 }
 
 ///|
-/// Broader destructive cleanup: worktrees, inline, kv prefixes, poller state. No `sh -c`.
+/// Delete all current Choir runtime and durable state. No shell command.
 pub fn init_cleanup_purge_artifacts_native() -> Unit {
   c_init_cleanup_purge_artifacts()
 }

@@ -188,7 +188,7 @@ test "flags two-hop helper call that reaches forbidden exec capture" {
 test "does not flag helper that only parameterizes the capture function" {
   let source =
     #|fn capture(_ : String) -> Unit {
-    #|  ignore(@exec.replace_self("bin", 0))
+    #|  ignore(@exec.run_conductor_process(command, environment))
     #|}
     #|fn helper_with_capture(
     #|  capture : (String) -> Unit,
@@ -198,7 +198,7 @@ test "does not flag helper that only parameterizes the capture function" {
     #|test "ok" {
     #|  ignore(helper_with_capture(capture))
     #|}
-  match lint_source("src/tools/file_pr.mbt", source) {
+  match lint_source("src/exec/integration_native.mbt", source) {
     Ok(findings) => assert_eq(findings.length(), 0)
     Err(e) => fail(e.message())
   }
@@ -279,58 +279,17 @@ test "allows helper-chain calls in explicit real exec integration tests" {
 }
 
 ///|
-test "flags direct exec capture of gh and zellij helpers" {
+test "flags direct exec capture through exec and external helpers" {
   let source =
     #|async test "bad" {
     #|  ignore(@exec.capture_stdout_with_cwd("gh", ["pr", "list"], None))
-    #|  ignore(@other.capture_stdout_with_cwd("zellij", ["list-panes"], None))
+    #|  ignore(@other.capture_stdout_with_cwd("other-tool", ["status"], None))
     #|}
   match lint_source("src/example/bad_test.mbt", source) {
     Ok(findings) => {
       assert_eq(findings.length(), 2)
       assert_eq(findings[0].rule_id, "test-exec-capture")
       assert_eq(findings[1].rule_id, "test-exec-capture")
-    }
-    Err(e) => fail(e.message())
-  }
-}
-
-///|
-test "flags direct exec run in tests" {
-  let source =
-    #|async test "bad" {
-    #|  ignore(@exec.run({ program: "git", args: ["status"], workdir: None }))
-    #|}
-  assert_single_rule(source, "test-git-capture")
-}
-
-///|
-test "flags direct exec run through package alias" {
-  let source =
-    #|async test "bad" {
-    #|  ignore(@ex.run({ program: "git", args: ["status"], workdir: None }))
-    #|}
-  let manifest =
-    #|import {
-    #|  "choir/src/exec" as ex,
-    #|}
-  match
-    lint_source(
-      "src/example/exec_alias_test.mbt",
-      source,
-      read_file=fn(path) {
-        if path == "src/example/moon.pkg" {
-          manifest
-        } else {
-          ""
-        }
-      },
-      path_exists=fn(path) { path == "src/example/moon.pkg" },
-      package_alias_cache=@ref.new({}),
-    ) {
-    Ok(findings) => {
-      assert_eq(findings.length(), 1)
-      assert_eq(findings[0].rule_id, "test-git-capture")
     }
     Err(e) => fail(e.message())
   }
@@ -379,8 +338,8 @@ test "flags explicit adapter self-test capture cases in test files" {
 ///|
 test "flags direct non-capture exec calls in tests" {
   let source =
-    #|test "bad" {
-    #|  ignore(@exec.replace_self("/bin/true", 4))
+    #|async test "bad" {
+    #|  ignore(@exec.run_conductor_process(command, environment))
     #|}
   assert_single_rule(source, "test-exec-reference")
 }
@@ -622,57 +581,6 @@ test "allows shell recovery provider with injected fake capture" {
 }
 
 ///|
-test "flags delivery-capable poller tests without sleep override" {
-  let source =
-    #|async test "bad" {
-    #|  state.process_poller_tick_with(100L, 900L, poll, runner=runner)
-    #|}
-  assert_single_rule(source, "test-delivery-sleep")
-}
-
-///|
-test "allows delivery-capable poller tests with sleep override" {
-  let source =
-    #|async test "ok" {
-    #|  state.process_poller_tick_with(100L, 900L, poll, runner=runner, sleep_fn=no_sleep)
-    #|}
-  match lint_source("src/server/handler_test.mbt", source) {
-    Ok(findings) => assert_eq(findings.length(), 0)
-    Err(e) => fail(e.message())
-  }
-}
-
-///|
-test "flags file_pr post-success tests with registry delivery and default sleep" {
-  let source =
-    #|async test "bad" {
-    #|  ignore(interpret_file_pr_post_success("p", "s", "b", "a", "w", 1, false, effects, None, Some(reg), runner))
-    #|}
-  assert_single_rule(source, "test-delivery-sleep")
-}
-
-///|
-test "flags dispatch file_pr tests with runner and default sleep" {
-  let source =
-    #|async test "bad" {
-    #|  let resp = dispatch(ToolRequest::FilePr({ branch: "main.leaf" }), runner=runner)
-    #|}
-  assert_single_rule(source, "test-delivery-sleep")
-}
-
-///|
-test "does not require sleep override for unrelated dispatch tests" {
-  let source =
-    #|async test "ok" {
-    #|  let resp = dispatch(ToolRequest::Shutdown({ caller_id: None }), runner=runner)
-    #|}
-  match lint_source("src/tools/shutdown_test.mbt", source) {
-    Ok(findings) => assert_eq(findings.length(), 0)
-    Err(e) => fail(e.message())
-  }
-}
-
-///|
 test "flags inline tests in source files" {
   let source =
     #|test "bad" {
@@ -687,55 +595,20 @@ test "flags inline tests in source files" {
 test "flags hazardous native ffi call outside sanctioned seam" {
   let source =
     #|fn leak() {
-    #|  @sys.git_fetch_origin_branch_best_effort_native(".", "main")
+    #|  @sys.init_cleanup_purge_artifacts_native()
     #|}
   assert_single_rule_for_file(
-    source, "src/tools/fork_wave.mbt", "native-ffi-bypass",
+    source, "src/workflow/goal_runner.mbt", "native-ffi-bypass",
   )
-}
-
-///|
-test "flags hazardous native ffi wrapper through package alias" {
-  let source =
-    #|fn leak() {
-    #|  @ws.run_native_worktree_bootstrap_cleanup_command(".", ".", "main")
-    #|}
-  let manifest =
-    #|import {
-    #|  "choir/src/workspace" as ws,
-    #|}
-  match
-    lint_source(
-      "src/runtime/native_alias.mbt",
-      source,
-      read_file=fn(path) {
-        if path == "src/runtime/moon.pkg" {
-          manifest
-        } else {
-          ""
-        }
-      },
-      path_exists=fn(path) { path == "src/runtime/moon.pkg" },
-      package_alias_cache=@ref.new({}),
-    ) {
-    Ok(findings) => {
-      assert_eq(findings.length(), 1)
-      assert_eq(findings[0].rule_id, "native-ffi-bypass")
-    }
-    Err(e) => fail(e.message())
-  }
 }
 
 ///|
 test "allows hazardous native ffi call from sanctioned seam" {
   let source =
-    #|fn run_native_git_fetch_origin_branch_best_effort_command(
-    #|  project_dir : String,
-    #|  branch : String,
-    #|) -> Unit {
-    #|  @sys.git_fetch_origin_branch_best_effort_native(project_dir, branch)
+    #|fn clean_runtime() -> Unit {
+    #|  @sys.init_cleanup_runtime_artifacts_native()
     #|}
-  match lint_source("src/workspace/command.mbt", source) {
+  match lint_source("src/bin/choir/main.mbt", source) {
     Ok(findings) => assert_eq(findings.length(), 0)
     Err(e) => fail(e.message())
   }
@@ -745,7 +618,7 @@ test "allows hazardous native ffi call from sanctioned seam" {
 test "flags hazardous native ffi call from inline test inside sanctioned seam" {
   let source =
     #|test "bad" {
-    #|  @sys.worktree_bootstrap_cleanup_native(".", ".", "main")
+    #|  @sys.init_cleanup_runtime_artifacts_native()
     #|}
   assert_single_rule_for_file(source, "src/sys/io.mbt", "native-ffi-bypass")
 }
@@ -786,7 +659,7 @@ test "does not flag mocked git command comparisons" {
     #|    assert_true(true)
     #|  }
     #|}
-  match lint_source("src/tools/file_pr_test.mbt", source) {
+  match lint_source("src/exec/integration_native_test.mbt", source) {
     Ok(findings) => assert_eq(findings.length(), 0)
     Err(e) => fail(e.message())
   }

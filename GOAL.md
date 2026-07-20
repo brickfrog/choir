@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Context-only amendments through: 2026-07-20T12:17:26-05:00
+Context-only amendments through: 2026-07-20T12:37:00-05:00
 
 ## Charter Semantics and Readiness
 
@@ -122,6 +122,18 @@ unconnected product path usable.
   The replacement removes 2,611 lines while preserving the same 185-file source
   tree. The live startup probe passes with only the capability, workspace, and
   socket exported to Claude.
+- The remaining closed v1 workspace/execution and type islands are deleted.
+  Choir no longer carries generic host execution, worktree provisioning, Agy
+  cache/bootstrap, provider hook generation, hot reload, self-replacement,
+  process-group pidfiles, shell-plugin capture, or their native C escape
+  hatches and compatibility tests. The old standalone Goal evaluator, old
+  audit-receipt format, agent/worktree/PR evaluation domain, and time parsing
+  helpers were likewise referenced only by their own tests and are gone. The
+  live types package now contains only the local transport roles, Beads task
+  status, launch configuration, request/response wire, and `ChoirError`; the
+  workspace package contains only typed process data and the restricted
+  Conductor launch. This follow-up removes a net 8,613 lines and seven more
+  tracked source-tree files, leaving 178 files under `src/`.
 - Fixed-domain Goal, Part, Take, harness-session, event, assurance, receipt,
   integration, and cancellation types plus pure transition functions.
 - Durable restart-readable state and content-addressed artifact stores with
@@ -395,7 +407,7 @@ Earlier evidence anchors are commits `5fb93fe8` for the native Part path,
 the linter correction. With the current assurance, cancellation, and provider changes,
 `moon check --target native`, `moon test --target native`, and
 `moon run --target native src/bin/choir_lint` all exit successfully on
-2026-07-20. After deleting obsolete source and tests, the full native suite reports 385
+2026-07-20. After deleting obsolete source and tests, the full native suite reports 289
 passed and 0 failed. The
 compiler still reports the repository's existing warning set.
 
@@ -3748,6 +3760,14 @@ zero duplicate implementation Takes. The mixed-provider Goal again reached
 concurrency two, promoted Codex then Claude, recorded 24/2/2/2 effect,
 verification, audit, and integration receipts, persisted the selection
 decision, and validated the combined tree.
+
+At `2026-07-20T12:37:00-05:00`, the Codex-only lifecycle command passed again
+after deleting the generic runner, provider-hook/provisioning machinery, and
+old type domains. The restricted live Conductor startup also passed with
+socket mode `0600`, authenticated registration, no Zellij dependency, and the
+expected fail-closed tool surface. The accompanying native suite passed
+289/289, the hermetic runner passed 13/13, the sandbox MCP bridge passed 4/4,
+and the repository linter reported no findings.
 
 The same command passed again at `2026-07-20T11:40-05:00` after the old
 orchestration packages were deleted and the minimal Conductor server replaced

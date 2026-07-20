@@ -24,12 +24,6 @@ priv struct GitProgramSearch {
 }
 
 ///|
-priv struct ConstructorNameSearch {
-  target : String
-  mut found : Bool
-}
-
-///|
 priv struct ExecPackageRefSearch {
   package_aliases : Array[(String, String)]
   mut found : Bool
@@ -230,98 +224,6 @@ fn first_argument(args : @list.List[@syntax.Argument]) -> @syntax.Expr? {
 }
 
 ///|
-fn nth_argument(
-  args : @list.List[@syntax.Argument],
-  target : Int,
-) -> @syntax.Expr? {
-  let mut index = 0
-  for arg in args {
-    if index == target {
-      return Some(arg.value)
-    }
-    index = index + 1
-  }
-  None
-}
-
-///|
-fn argument_label_name(arg : @syntax.Argument) -> String? {
-  match arg.kind {
-    Positional => None
-    Labelled(label) => Some(label.name)
-    LabelledPun(label) => Some(label.name)
-    LabelledOption(label~, ..) => Some(label.name)
-    LabelledOptionPun(label~, ..) => Some(label.name)
-  }
-}
-
-///|
-fn args_have_label(args : @list.List[@syntax.Argument], label : String) -> Bool {
-  for arg in args {
-    match argument_label_name(arg) {
-      Some(name) => if name == label { return true }
-      None => ()
-    }
-  }
-  false
-}
-
-///|
-fn argument_value_for_label(
-  args : @list.List[@syntax.Argument],
-  label : String,
-) -> @syntax.Expr? {
-  for arg in args {
-    match argument_label_name(arg) {
-      Some(name) => if name == label { return Some(arg.value) }
-      None => ()
-    }
-  }
-  None
-}
-
-///|
-fn expr_is_none(expr : @syntax.Expr) -> Bool {
-  match expr {
-    Ident(id={ name: Ident(name~), .. }, ..) => name == "None"
-    Constr(constr~, ..) => constr.name.name == "None"
-    Group(expr~, ..) => expr_is_none(expr)
-    _ => false
-  }
-}
-
-///|
-impl @syntax.IterVisitor for ConstructorNameSearch with fn visit_Expr(
-  self,
-  expr,
-) {
-  if self.found {
-    return
-  }
-  match expr {
-    Constr(constr~, ..) =>
-      if constr.name.name == self.target {
-        self.found = true
-        return
-      }
-    Apply(func~, ..) =>
-      if callable_name(func) == Some(self.target) {
-        self.found = true
-        return
-      }
-    _ => ()
-  }
-  self.base().visit_Expr(expr)
-}
-
-///|
-fn expr_contains_constructor_name(expr : @syntax.Expr, name : String) -> Bool {
-  let search = ConstructorNameSearch::{ target: name, found: false }
-  search.visit_Expr(expr)
-  search.found
-}
-
-///|
 fn is_sys_shell_quote(
   package_aliases : Array[(String, String)],
   expr : @syntax.Expr,
@@ -371,14 +273,11 @@ fn is_process_ref(
 
 ///|
 fn is_exec_capture_ref(
-  package_aliases : Array[(String, String)],
+  _package_aliases : Array[(String, String)],
   expr : @syntax.Expr,
 ) -> Bool {
   match dotted_ident_name(expr) {
-    Some(id) =>
-      id.has_prefix("capture_") ||
-      id == "run_sequence" ||
-      (expr_package_matches(package_aliases, expr, "exec") && id == "run")
+    Some(id) => id.has_prefix("capture_")
     None => false
   }
 }
@@ -393,7 +292,7 @@ fn is_unqualified_exec_capture_ref(file : String, expr : @syntax.Expr) -> Bool {
     return false
   }
   match callable_name(expr) {
-    Some(id) => id.has_prefix("capture_") || id == "run_sequence" || id == "run"
+    Some(id) => id.has_prefix("capture_")
     None => false
   }
 }
@@ -417,28 +316,8 @@ fn is_hazardous_sys_native_ref(
     Some(name) =>
       expr_package_matches(package_aliases, expr, "sys") &&
       (
-        name == "git_fetch_origin_branch_best_effort_native" ||
-        name == "worktree_bootstrap_cleanup_native" ||
-        name == "worktree_seed_agent_runtime_gitexclude_native" ||
         name == "init_cleanup_runtime_artifacts_native" ||
         name == "init_cleanup_purge_artifacts_native"
-      )
-    None => false
-  }
-}
-
-///|
-fn is_hazardous_workspace_native_wrapper_ref(
-  package_aliases : Array[(String, String)],
-  expr : @syntax.Expr,
-) -> Bool {
-  match dotted_ident_name(expr) {
-    Some(name) =>
-      expr_package_matches(package_aliases, expr, "workspace") &&
-      (
-        name == "run_native_git_fetch_origin_branch_best_effort_command" ||
-        name == "run_native_worktree_bootstrap_cleanup_command" ||
-        name == "run_native_worktree_seed_agent_runtime_gitexclude_command"
       )
     None => false
   }
@@ -451,9 +330,7 @@ fn is_hazardous_native_ffi_ref(
 ) -> Bool {
   match expr {
     Group(expr~, ..) => is_hazardous_native_ffi_ref(package_aliases, expr)
-    _ =>
-      is_hazardous_sys_native_ref(package_aliases, expr) ||
-      is_hazardous_workspace_native_wrapper_ref(package_aliases, expr)
+    _ => is_hazardous_sys_native_ref(package_aliases, expr)
   }
 }
 
@@ -480,7 +357,7 @@ fn check_native_ffi_bypass(
   if native_ffi_bypass_rule_enabled(env) &&
     is_hazardous_native_ffi_ref(env.package_aliases, expr) {
     emit(
-      env, "native-ffi-bypass", "native FFI call does real network/FS I/O that bypasses the CHOIR_TEST_NO_EXEC tripwire; route through exec.run or the sanctioned run_native_* wrapper instead",
+      env, "native-ffi-bypass", "native FFI call does real filesystem I/O that bypasses the CHOIR_TEST_NO_EXEC tripwire; route through a typed exec effect or injected adapter",
       loc,
     )
   }
@@ -1092,75 +969,6 @@ fn is_named_alias_with_aliases(
 }
 
 ///|
-fn non_none_arg_at_or_label(
-  args : @list.List[@syntax.Argument],
-  index : Int,
-  label : String,
-) -> Bool {
-  match argument_value_for_label(args, label) {
-    Some(value) => !expr_is_none(value)
-    None =>
-      match nth_argument(args, index) {
-        Some(value) => !expr_is_none(value)
-        None => false
-      }
-  }
-}
-
-///|
-fn apply_requires_test_sleep_fn(
-  func : @syntax.Expr,
-  args : @list.List[@syntax.Argument],
-) -> Bool {
-  match callable_name(func) {
-    Some(name) =>
-      if name == "interpret_file_pr" {
-        non_none_arg_at_or_label(args, 4, "registry")
-      } else if name == "interpret_file_pr_post_success" {
-        non_none_arg_at_or_label(args, 9, "registry")
-      } else if name == "dispatch" {
-        args_have_label(args, "runner") &&
-        (match first_argument(args) {
-          Some(req) => expr_contains_constructor_name(req, "FilePr")
-          None => false
-        })
-      } else {
-        false
-      }
-    None => false
-  }
-}
-
-///|
-fn method_requires_test_sleep_fn(
-  method_name : String,
-  args : @list.List[@syntax.Argument],
-) -> Bool {
-  if !args_have_label(args, "runner") {
-    return false
-  }
-  method_name == "process_poller_tick_with" ||
-  method_name == "process_poller_tick" ||
-  method_name == "refresh_pr_with" ||
-  method_name == "replay_pending_outbox_with"
-}
-
-///|
-fn check_test_delivery_sleep(
-  env : LintEnv,
-  requires_sleep_fn : Bool,
-  args : @list.List[@syntax.Argument],
-  loc : @basic.Location,
-) -> Unit {
-  if requires_sleep_fn && !args_have_label(args, "sleep_fn") {
-    emit(
-      env, "test-delivery-sleep", "tests that drive delivery-capable helpers must use a test wrapper or pass sleep_fn; do not inherit production retry sleeps",
-      loc,
-    )
-  }
-}
-
-///|
 fn bind_alias_if_needed(
   env : LintEnv,
   pattern : @syntax.Pattern,
@@ -1223,12 +1031,6 @@ fn check_test_apply(
   if !env.test_rules_enabled {
     return
   }
-  check_test_delivery_sleep(
-    env,
-    apply_requires_test_sleep_fn(func, args),
-    args,
-    loc,
-  )
   match dangerous_call_kind(env, func) {
     Some(ShellCommand) =>
       match first_argument(args) {
@@ -1320,24 +1122,6 @@ fn check_test_apply(
       }
     }
   }
-}
-
-///|
-fn check_test_method_apply(
-  env : LintEnv,
-  method_name : String,
-  args : @list.List[@syntax.Argument],
-  loc : @basic.Location,
-) -> Unit {
-  if !env.test_rules_enabled {
-    return
-  }
-  check_test_delivery_sleep(
-    env,
-    method_requires_test_sleep_fn(method_name, args),
-    args,
-    loc,
-  )
 }
 
 ///|
@@ -1525,8 +1309,6 @@ impl @syntax.IterVisitor for LintEnv with fn visit_Expr(env, expr) {
         }
       }
     }
-    DotApply(method_name~, args~, loc~, ..) =>
-      check_test_method_apply(env, method_name.name, args, loc)
     Record(fields~, loc~, ..) => {
       check_native_ffi_bypass_record_fields(env, fields, loc)
       check_test_record_fields(env, fields, loc)

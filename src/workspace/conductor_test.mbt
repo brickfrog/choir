@@ -11,11 +11,3 @@ test "Claude Conductor launch exposes only Choir MCP" {
   assert_false(joined.contains("semble"))
   assert_false(joined.contains("zellij"))
 }
-
-///|
-test "Conductor process group parser rejects unsafe identities" {
-  assert_eq(@workspace.parse_agent_pgid("42\n"), Some(42))
-  assert_eq(@workspace.parse_agent_pgid(""), None)
-  assert_eq(@workspace.parse_agent_pgid("1"), None)
-  assert_eq(@workspace.parse_agent_pgid("nope"), None)
-}

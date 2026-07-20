@@ -72,7 +72,7 @@ async test "native Conductor rejects removed and unauthenticated dispatch" {
   let base : @types.Request = {
     req_method: "tools/call",
     role: @types.Role::TL,
-    name: "fork_wave",
+    name: "unknown_tool",
     args: @types.RequestArgs::from_values(Map([])),
   }
   let removed = dispatch_native_conductor_request("/repo", base, capture=_ => {
