@@ -60,9 +60,6 @@ pub fn conductor_launch_command(
 ///|
 pub(all) struct ConductorProcessEnvironment {
   agent_token : String
-  agent_id : String
-  role : @types.Role
   workspace : String
   listen_uds : String
-  session_id : String
 }

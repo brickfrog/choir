@@ -14,24 +14,21 @@ fn goal_cli_no_serve_response() -> @types.Response {
 
 ///|
 fn goal_cli_call(tool : String, values : Map[String, Json]) -> @types.Response {
-  let (role, config, local_cfg) = match goal_client_load_config() {
+  let config = match goal_client_load_config() {
     Ok(loaded) => loaded
     Err(err) => return @types.Response::Err(err)
   }
+  let capability = match @sys.getenv("CHOIR_AGENT_TOKEN") {
+    Some(value) => value
+    None => return @types.Response::Err("authenticated Conductor required")
+  }
   let req : @types.Request = {
     req_method: "tools/call",
-    role,
+    role: @types.Role::TL,
     name: tool,
     args: @types.RequestArgs::from_values(values),
   }
-  match
-    client_call_uds(
-      role,
-      config,
-      local_cfg,
-      req,
-      register_if_needed=client_should_register(local_cfg),
-    ) {
+  match client_call_uds(config, req, capability) {
     Ok(resp) => resp
     Err(_) => goal_cli_no_serve_response()
   }

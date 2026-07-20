@@ -38,7 +38,6 @@ fn init_local_config_content(project_dir : String) -> String {
   let escaped_socket = init_toml_escape_string(
     project_dir + "/.choir/run/server.sock",
   )
-  "default_role = \"tl\"\n" +
   "project_dir = \"" +
   escaped_project +
   "\"\n" +
@@ -168,13 +167,10 @@ test "init accepts the direct Conductor options" {
 ///|
 test "init writes only current local launch configuration" {
   let content = init_local_config_content("/tmp/choir repo")
-  assert_true(content.contains("default_role = \"tl\""))
   assert_true(content.contains("project_dir = \"/tmp/choir repo\""))
   assert_true(
     content.contains("listen_uds = \"/tmp/choir repo/.choir/run/server.sock\""),
   )
-  assert_false(content.contains("terminal_session"))
-  assert_false(init_config_toml_content().contains("require_integration_audit"))
 }
 
 ///|

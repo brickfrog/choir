@@ -105,11 +105,8 @@ fn start_conductor_environment(
 ) -> @workspace.ConductorProcessEnvironment {
   {
     agent_token: token,
-    agent_id: "root",
-    role: @types.Role::TL,
     workspace: config.project_dir,
     listen_uds: config.listen_uds,
-    session_id: "root",
   }
 }
 

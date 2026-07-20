@@ -1,12 +1,8 @@
 ///|
 test "default config" {
   let config = @types.Config::default()
-  assert_eq(config.default_role, @types.Role::TL)
+  assert_eq(config.project_dir, ".")
   assert_eq(config.listen_uds, ".choir/run/server.sock")
-  @debug.assert_eq(config.listen_tcp, None)
-  @debug.assert_eq(config.extra_mcp_servers_json, None)
-  @debug.assert_eq(config.companions_json, None)
-  @debug.assert_eq(config.plugins_json, None)
 }
 
 ///|

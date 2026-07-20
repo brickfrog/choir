@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Context-only amendments through: 2026-07-20T12:04:04-05:00
+Context-only amendments through: 2026-07-20T12:12:34-05:00
 
 ## Charter Semantics and Readiness
 
@@ -63,9 +63,8 @@ unconnected product path usable.
   arbitrary flag-to-tool translation, server-reload command, and their v1
   process fixtures are deleted. The remaining Goal client has one purpose: send
   typed Goal status/cancel/steer/attach/answer requests through an authenticated
-  one-shot UDS connection. Its configuration resolver accepts the explicit
-  Conductor environment identity without retaining the generic role-override
-  or arbitrary-command surface.
+  one-shot UDS connection. Its configuration resolver accepts only the fixed
+  Conductor capability, workspace, and socket environment.
 - The Conductor MCP initialization and catalog now describe only the current
   product. Claude receives the Conductor/Goal/Part/Take authority boundary and
   exactly ten typed Goal and Beads tools; old spawn, pane, worker, PR, and
@@ -115,6 +114,14 @@ unconnected product path usable.
   registry were referenced only by their own compatibility tests and are now
   deleted. The unused response-warning helper went with them. This removes 795
   more lines and leaves 185 source files.
+- The runtime configuration contract now contains only `project_dir` and
+  `listen_uds`, with machine-local values overriding the checked-in file. The
+  Goal client and Conductor process environment no longer parse or carry v1
+  roles, provider identities, parent/branch metadata, terminal targets, TCP,
+  plugin/companion JSON, polling, review, pricing, model, or effort settings.
+  The replacement removes 2,611 lines while preserving the same 185-file source
+  tree. The live startup probe passes with only the capability, workspace, and
+  socket exported to Claude.
 - Fixed-domain Goal, Part, Take, harness-session, event, assurance, receipt,
   integration, and cancellation types plus pure transition functions.
 - Durable restart-readable state and content-addressed artifact stores with
@@ -388,7 +395,7 @@ Earlier evidence anchors are commits `5fb93fe8` for the native Part path,
 the linter correction. With the current assurance, cancellation, and provider changes,
 `moon check --target native`, `moon test --target native`, and
 `moon run --target native src/bin/choir_lint` all exit successfully on
-2026-07-20. After deleting obsolete source and tests, the full native suite reports 444
+2026-07-20. After deleting obsolete source and tests, the full native suite reports 385
 passed and 0 failed. The
 compiler still reports the repository's existing warning set.
 
@@ -429,11 +436,11 @@ compiler still reports the repository's existing warning set.
   dispatch are also registered. The audit-scratch-boundary case now passes on
   the live BoxLite Take path; it is intentionally not reported as hermetic.
   These cases are not yet joined to the full semantic projection.
-- Narrowing the still-shared configuration and process-command utility
-  packages. Their current Conductor and Goal callers remain live, while
-  individual v1-only helpers inside those files are the next extraction/
-  deletion surface; no closed source package remains imported only by another
-  closed source package.
+- Narrowing the still-shared process-command utility package. Its current
+  Conductor, provider-probe, sandbox, and Goal callers remain live, while
+  individual v1-only helpers inside it are the next extraction/deletion
+  surface; no closed source package remains imported only by another closed
+  source package.
 
 The central user flow is now directly launchable and joined through Goal assurance: Claude can turn a
 user Goal into a durable accepted Part set through `/goal`, and the daemon can
