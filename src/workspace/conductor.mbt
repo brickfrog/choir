@@ -41,7 +41,7 @@ pub fn conductor_launch_command(
 
 ///|
 pub(all) struct ConductorProcessEnvironment {
-  agent_token : String
+  conductor_token : String
   workspace : String
   listen_uds : String
 }

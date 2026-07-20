@@ -15,7 +15,7 @@ test "Conductor tools/call preserves structured arguments" {
     req_method: method_tools_call,
     params: Some(params.to_json()),
   }
-  match @mcp.to_internal_request(rpc, @types.Role::TL) {
+  match @mcp.to_internal_request(rpc) {
     Ok(request) => {
       assert_eq(request.name, "goal_steer")
       @debug.assert_eq(request.args.get("goal_id"), Some("goal-a"))
@@ -38,7 +38,7 @@ test "Conductor translation rejects stringified arguments" {
     req_method: method_tools_call,
     params: Some(stringified_params.to_json()),
   }
-  match @mcp.to_internal_request(stringified_request, @types.Role::TL) {
+  match @mcp.to_internal_request(stringified_request) {
     Err(error) => assert_eq(error.code, err_invalid_params)
     Ok(_) => fail("stringified arguments must not translate")
   }
@@ -50,7 +50,7 @@ test "Conductor catalog exposes only Goal and Beads operations" {
     "goal_submit", "goal_status", "goal_cancel", "goal_steer", "goal_attach", "goal_answer",
     "task_list", "task_get", "task_create", "task_update",
   ])
-  let response = @mcp.tools_list_response(Number(20), @types.Role::TL)
+  let response = @mcp.tools_list_response(Number(20), true)
   guard response.result is Some(Object(result)) else {
     fail("expected catalog response")
   }
@@ -65,8 +65,8 @@ test "Conductor catalog exposes only Goal and Beads operations" {
 }
 
 ///|
-test "non-Conductor roles receive no tool catalog" {
-  let response = @mcp.tools_list_response(Number(22), @types.Role::Dev)
+test "unauthenticated clients receive no tool catalog" {
+  let response = @mcp.tools_list_response(Number(22), false)
   guard response.result is Some(Object(result)) else {
     fail("expected catalog response")
   }

@@ -2105,7 +2105,7 @@ pub async fn run_conductor_process(
 ) -> Int {
   abort_if_hermetic_test_exec(command_to_shell_string(cmd))
   let extra_env : Map[String, String] = {
-    "CHOIR_AGENT_TOKEN": environment.agent_token,
+    "CHOIR_CONDUCTOR_TOKEN": environment.conductor_token,
     "CHOIR_WORKSPACE": environment.workspace,
     "CHOIR_LISTEN_UDS": environment.listen_uds,
   }

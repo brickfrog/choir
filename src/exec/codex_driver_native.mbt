@@ -250,7 +250,7 @@ fn native_codex_conductor_environment(
   config : NativeCodexConductorConfig,
 ) -> Map[String, String] {
   let environment = native_codex_environment(provider_home, config.sterile_root)
-  environment["CHOIR_AGENT_TOKEN"] = config.environment.agent_token
+  environment["CHOIR_CONDUCTOR_TOKEN"] = config.environment.conductor_token
   environment["CHOIR_WORKSPACE"] = config.environment.workspace
   environment["CHOIR_LISTEN_UDS"] = config.environment.listen_uds
   match @sys.getenv("CODEX_HOME") {
@@ -499,7 +499,7 @@ pub async fn run_native_codex_conductor_turn(
     config.developer_instructions == "" ||
     config.timeout_ms < 1000 ||
     config.timeout_ms > 3600000 ||
-    config.environment.agent_token == "" ||
+    config.environment.conductor_token == "" ||
     config.environment.workspace == "" ||
     config.environment.listen_uds == "" {
     return Err(
@@ -645,7 +645,7 @@ test "native Codex Conductor argv is resumable and restricted" {
     developer_instructions: "Use Choir.",
     timeout_ms: 60000,
     environment: {
-      agent_token: "token",
+      conductor_token: "token",
       workspace: "/tmp/project",
       listen_uds: "/tmp/project/.choir/run/server.sock",
     },

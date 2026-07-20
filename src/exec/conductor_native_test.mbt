@@ -3,7 +3,6 @@ async test "native Conductor task dispatch uses typed Beads commands" {
   let commands : Array[@workspace.Command] = []
   let request : @types.Request = {
     req_method: "tools/call",
-    role: @types.Role::TL,
     name: "task_create",
     args: @types.RequestArgs::from_values({
       "id": "choir-task".to_json(),
@@ -46,7 +45,6 @@ async test "native Conductor maps completed tasks to closed Beads" {
   let commands : Array[@workspace.Command] = []
   let request : @types.Request = {
     req_method: "tools/call",
-    role: @types.Role::TL,
     name: "task_update",
     args: @types.RequestArgs::from_values({
       "id": "choir-task".to_json(),
@@ -68,10 +66,9 @@ async test "native Conductor maps completed tasks to closed Beads" {
 }
 
 ///|
-async test "native Conductor rejects removed and unauthenticated dispatch" {
+async test "native Conductor rejects removed dispatch" {
   let base : @types.Request = {
     req_method: "tools/call",
-    role: @types.Role::TL,
     name: "unknown_tool",
     args: @types.RequestArgs::from_values(Map([])),
   }
@@ -79,12 +76,4 @@ async test "native Conductor rejects removed and unauthenticated dispatch" {
     fail("removed command performed I/O")
   })
   assert_true(removed.error_message().unwrap_or("").contains("unknown tool"))
-  let unbound = dispatch_native_conductor_request(
-    "/repo",
-    { ..base, name: "task_list", role: @types.Role::Worker },
-    capture=_ => fail("unbound command performed I/O"),
-  )
-  assert_true(
-    unbound.error_message().unwrap_or("").contains("Conductor required"),
-  )
 }

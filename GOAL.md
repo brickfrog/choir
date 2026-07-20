@@ -47,7 +47,7 @@ unconnected product path usable.
   same direct launch path. Claude remains the default; selecting
   `--conductor codex` starts a persistent Codex subscription thread through
   `codex exec` and resumes that exact thread on later turns. The UDS is
-  owner-only, the one-time root bootstrap
+  owner-only, the one-time Conductor bootstrap
   requires a same-user peer running the exact Choir executable, and the minted
   credential is passed only through a fixed typed process environment. The
   Claude Conductor loads only the generated Goal skill and the Choir MCP
@@ -119,6 +119,13 @@ unconnected product path usable.
   branch augmentation, connection-lifetime variants, TCP fallback, and dead
   TCP reader have been deleted with their compatibility tests. This removes
   another 1,806 lines and leaves 189 source files.
+- The internal UDS request no longer carries a caller-supplied role. Conductor
+  authority comes exclusively from the authenticated connection, the
+  unauthenticated MCP catalog is empty, and legacy role-bearing request JSON is
+  rejected. The launch capability is named `CHOIR_CONDUCTOR_TOKEN` end to end;
+  registration carries only that capability. The remaining Beads status
+  conversion moved out of the obsolete role/agent-named source file into
+  `task_status_wire.mbt`.
 - The v1 generated configuration-schema registry and generic spawn/tool type
   registry were referenced only by their own compatibility tests and are now
   deleted. The unused response-warning helper went with them. This removes 795

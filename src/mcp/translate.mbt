@@ -184,7 +184,6 @@ fn text_content_json(text : String) -> Json {
 ///|
 pub fn to_internal_request(
   rpc : JsonRpcRequest,
-  role : @types.Role,
 ) -> Result[@types.Request, JsonRpcError] {
   if rpc.req_method != method_tools_call {
     return Err({
@@ -230,7 +229,6 @@ pub fn to_internal_request(
   }
   Ok({
     req_method: rpc.req_method,
-    role,
     name,
     args: @types.RequestArgs::from_values(arguments),
   })
@@ -269,9 +267,9 @@ pub fn initialize_response(id : JsonRpcId) -> JsonRpcResponse {
 ///|
 pub fn tools_list_response(
   id : JsonRpcId,
-  role : @types.Role,
+  catalog_visible : Bool,
 ) -> JsonRpcResponse {
-  let tools : Array[Json] = if role == @types.Role::TL {
+  let tools : Array[Json] = if catalog_visible {
     conductor_tools().map(catalog_tool_json)
   } else {
     []
@@ -283,18 +281,13 @@ pub fn tools_list_response(
 ///|
 pub fn tools_list_response_filtered(
   id : JsonRpcId,
-  role : @types.Role,
   allowed_names : Array[String],
 ) -> JsonRpcResponse {
-  let tools : Array[Json] = if role == @types.Role::TL {
-    conductor_tools()
+  let tools : Array[Json] = conductor_tools()
     .filter(fn(tool) {
       allowed_names.length() == 0 || allowed_names.contains(tool.name)
     })
     .map(catalog_tool_json)
-  } else {
-    []
-  }
   let result : Map[String, Json] = { "tools": tools.to_json() }
   { jsonrpc: "2.0", id, result: Some(result.to_json()), error: None }
 }

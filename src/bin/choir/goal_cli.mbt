@@ -18,13 +18,12 @@ fn goal_cli_call(tool : String, values : Map[String, Json]) -> @types.Response {
     Ok(loaded) => loaded
     Err(err) => return @types.Response::Err(err)
   }
-  let capability = match @sys.getenv("CHOIR_AGENT_TOKEN") {
+  let capability = match @sys.getenv("CHOIR_CONDUCTOR_TOKEN") {
     Some(value) => value
     None => return @types.Response::Err("authenticated Conductor required")
   }
   let req : @types.Request = {
     req_method: "tools/call",
-    role: @types.Role::TL,
     name: tool,
     args: @types.RequestArgs::from_values(values),
   }

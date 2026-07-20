@@ -649,7 +649,7 @@ pub async fn dispatch_native_conductor_request(
   now? : Int64 = @env.now().reinterpret_as_int64() / 1000L,
   capture? : async (@workspace.Command) -> (Int, String) = capture_command_merged,
 ) -> @types.Response {
-  if request.req_method != "tools/call" || request.role != @types.Role::TL {
+  if request.req_method != "tools/call" {
     return native_conductor_error("authenticated Conductor required")
   }
   match request.name {

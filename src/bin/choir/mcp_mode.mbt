@@ -190,17 +190,13 @@ fn mcp_run_request_loop(
         if rpc.req_method == @mcp.method_tools_list {
           write_output(
             mcp_response_wire(
-              @mcp.tools_list_response_filtered(
-                id,
-                @types.Role::TL,
-                @mcp.conductor_tool_names(),
-              ),
+              @mcp.tools_list_response_filtered(id, @mcp.conductor_tool_names()),
               raw_stdio,
             ),
           )
           continue
         }
-        match @mcp.to_internal_request(rpc, @types.Role::TL) {
+        match @mcp.to_internal_request(rpc) {
           Ok(request) => {
             if !mcp_conductor_allows(request.name) {
               write_output(
@@ -347,7 +343,7 @@ fn mcp_run() -> Unit {
   }
   let inherit_parent = mcp_has_arg(args, "--inherit-parent-environment")
   let socket_path = mcp_required_environment("CHOIR_LISTEN_UDS", inherit_parent)
-  let token = mcp_required_environment("CHOIR_AGENT_TOKEN", inherit_parent)
+  let token = mcp_required_environment("CHOIR_CONDUCTOR_TOKEN", inherit_parent)
   let raw_stdio = mcp_has_arg(args, "--raw-stdio")
   let wait_tries = mcp_wait_tries(args)
   let mut fd = mcp_connect_uds(socket_path, wait_tries)
@@ -394,7 +390,6 @@ test "Conductor MCP bridge exposes only current Goal and Beads tools" {
 test "Conductor MCP bridge forwards no caller identity" {
   let request : @types.Request = {
     req_method: "tools/call",
-    role: @types.Role::TL,
     name: "goal_status",
     args: @types.RequestArgs::from_values({ "goal_id": "goal-a".to_json() }),
   }

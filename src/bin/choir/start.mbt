@@ -45,17 +45,16 @@ fn start_parse_options(args : Array[String]) -> Result[StartOptions, String] {
 }
 
 ///|
-fn start_root_bootstrap_request(token : String) -> @types.Request {
+fn start_conductor_bootstrap_request(token : String) -> @types.Request {
   {
-    req_method: "root_bootstrap",
-    role: @types.Role::TL,
-    name: "root_bootstrap",
+    req_method: "conductor_bootstrap",
+    name: "conductor_bootstrap",
     args: @types.RequestArgs::from_values({ "token": token.to_json() }),
   }
 }
 
 ///|
-fn start_bootstrap_root(
+fn start_bootstrap_conductor(
   socket_path : String,
   token : String,
 ) -> Result[Unit, String] {
@@ -63,7 +62,9 @@ fn start_bootstrap_root(
   if fd < 0 {
     return Err("cannot connect to choird at " + socket_path)
   }
-  let request = @transport.format_request(start_root_bootstrap_request(token)) +
+  let request = @transport.format_request(
+      start_conductor_bootstrap_request(token),
+    ) +
     "\n"
   if !mcp_write_all_uds(fd, @utf8.encode(request)) {
     @uds.close(fd)
@@ -124,7 +125,7 @@ fn start_conductor_environment(
   token : String,
 ) -> @workspace.ConductorProcessEnvironment {
   {
-    agent_token: token,
+    conductor_token: token,
     workspace: config.project_dir,
     listen_uds: config.listen_uds,
   }
@@ -223,7 +224,7 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
       return
     }
   }
-  match start_bootstrap_root(config.listen_uds, token) {
+  match start_bootstrap_conductor(config.listen_uds, token) {
     Ok(_) => ()
     Err(error) => {
       @sys.write_stderr("choir start: " + error + "\n")
@@ -289,11 +290,10 @@ test "start selects only supported Conductor surfaces" {
 }
 
 ///|
-test "start root bootstrap request contains no provider credential" {
+test "start Conductor bootstrap request contains no provider credential" {
   let token = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
-  let request = start_root_bootstrap_request(token)
-  assert_eq(request.req_method, "root_bootstrap")
-  assert_eq(request.name, "root_bootstrap")
-  assert_eq(request.role, @types.Role::TL)
+  let request = start_conductor_bootstrap_request(token)
+  assert_eq(request.req_method, "conductor_bootstrap")
+  assert_eq(request.name, "conductor_bootstrap")
   @debug.assert_eq(request.args.get("token"), Some(token))
 }

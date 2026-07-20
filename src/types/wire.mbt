@@ -93,10 +93,9 @@ pub fn FieldMap::to_json_map(self : FieldMap) -> Map[String, Json] {
 pub let registration_token_arg : String = "token"
 
 ///|
-/// Internal wire format request (UDS/TCP, not MCP JSON-RPC).
+/// Internal wire format request (UDS, not MCP JSON-RPC).
 pub(all) struct Request {
   req_method : String
-  role : Role
   name : String
   args : RequestArgs
 } derive(Eq)

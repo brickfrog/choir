@@ -7,7 +7,6 @@ test "Conductor request wire preserves structured arguments" {
   }
   let request : @types.Request = {
     req_method: "tools/call",
-    role: @types.Role::TL,
     name: "goal_submit",
     args: @types.RequestArgs::from_values(values),
   }
@@ -15,7 +14,6 @@ test "Conductor request wire preserves structured arguments" {
   match parse_request(wire) {
     Ok(parsed) => {
       assert_eq(parsed.req_method, "tools/call")
-      assert_eq(parsed.role, @types.Role::TL)
       assert_eq(parsed.name, "goal_submit")
       @debug.assert_eq(parsed.args.get_json("count"), Some((3 : Int).to_json()))
       @debug.assert_eq(parsed.args.get_json("enabled"), Some(true.to_json()))
@@ -29,19 +27,17 @@ test "Conductor request wire preserves structured arguments" {
 }
 
 ///|
-test "Conductor registration contains only root identity and capability" {
+test "Conductor registration contains only its capability" {
   let wire = format_conductor_registration_request("capability-token")
   match parse_request(wire) {
     Ok(parsed) => {
       assert_eq(parsed.req_method, "register")
-      assert_eq(parsed.role, @types.Role::TL)
       assert_eq(parsed.name, "register")
-      @debug.assert_eq(parsed.args.get("agent_id"), Some("root"))
       @debug.assert_eq(
         parsed.args.get(@types.registration_token_arg),
         Some("capability-token"),
       )
-      assert_eq(parsed.args.to_json_map().length(), 2)
+      assert_eq(parsed.args.to_json_map().length(), 1)
     }
     Err(error) => fail(error)
   }
@@ -53,7 +49,7 @@ test "wire parser rejects malformed requests" {
   assert_true(parse_request("{}") is Err(_))
   assert_true(
     parse_request(
-      "{\"method\":\"tools/call\",\"role\":\"unknown\",\"name\":\"x\"}",
+      "{\"method\":\"tools/call\",\"role\":\"worker\",\"name\":\"x\"}",
     )
     is Err(_),
   )

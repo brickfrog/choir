@@ -1,6 +1,6 @@
 ///|
 /// Parse the internal wire format JSON request.
-/// Format: { "method": "...", "role": "...", "name": "...", "args": { ... } }
+/// Format: { "method": "...", "name": "...", "args": { ... } }
 pub fn parse_request(data : String) -> Result[@types.Request, String] {
   let json = @json.parse(data) catch { _ => return Err("invalid JSON") }
   guard json is Object(obj) else { return Err("expected JSON object") }
@@ -8,13 +8,8 @@ pub fn parse_request(data : String) -> Result[@types.Request, String] {
     Some(String(m)) => m
     _ => return Err("missing field: method")
   }
-  let role = match obj.get("role") {
-    Some(String("root")) => @types.Role::TL
-    Some(String("tl")) => @types.Role::TL
-    Some(String("dev")) => @types.Role::Dev
-    Some(String("worker")) => @types.Role::Worker
-    Some(String(r)) => return Err("invalid role: \{r}")
-    _ => return Err("missing field: role")
+  if obj.get("role") is Some(_) {
+    return Err("unexpected field: role")
   }
   let name = match obj.get("name") {
     Some(String(n)) => n
@@ -24,7 +19,7 @@ pub fn parse_request(data : String) -> Result[@types.Request, String] {
     Some(Object(a)) => @types.RequestArgs::from_values(a)
     _ => @types.RequestArgs::from_values({})
   }
-  Ok({ req_method: method_val, role, name, args })
+  Ok({ req_method: method_val, name, args })
 }
 
 ///|
@@ -43,11 +38,6 @@ pub fn format_request(req : @types.Request) -> String {
   req.args.each_json(fn(k, v) { args_map.set(k, v) })
   {
     "method": req.req_method.to_json(),
-    "role": (match req.role {
-      @types.Role::TL => "root"
-      @types.Role::Dev => "dev"
-      @types.Role::Worker => "worker"
-    }).to_json(),
     "name": req.name.to_json(),
     "args": args_map.to_json(),
   }
@@ -56,12 +46,13 @@ pub fn format_request(req : @types.Request) -> String {
 }
 
 ///|
-pub fn format_conductor_registration_request(agent_token : String) -> String {
-  let args : Map[String, String] = { "agent_id": "root" }
-  args.set(@types.registration_token_arg, agent_token)
+pub fn format_conductor_registration_request(
+  conductor_token : String,
+) -> String {
+  let args : Map[String, String] = Map([])
+  args.set(@types.registration_token_arg, conductor_token)
   format_request({
     req_method: "register",
-    role: @types.Role::TL,
     name: "register",
     args: @types.RequestArgs::new(args),
   })

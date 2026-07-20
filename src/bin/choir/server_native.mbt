@@ -2,12 +2,16 @@
 priv struct ConductorServerState {
   config : @types.Config
   run_id : String
-  mut root_token : String?
+  mut conductor_token : String?
 }
 
 ///|
 fn ConductorServerState::new(config : @types.Config) -> ConductorServerState {
-  { config, run_id: "serve-" + @sys.get_pid().to_string(), root_token: None }
+  {
+    config,
+    run_id: "serve-" + @sys.get_pid().to_string(),
+    conductor_token: None,
+  }
 }
 
 ///|
@@ -35,10 +39,7 @@ fn ConductorClient::new(fd : Int) -> ConductorClient {
 }
 
 ///|
-let conductor_root_id : String = "root"
-
-///|
-let conductor_bootstrap_method : String = "root_bootstrap"
+let conductor_bootstrap_method : String = "conductor_bootstrap"
 
 ///|
 fn conductor_peer_is_choir(fd : Int) -> Bool {
@@ -97,7 +98,6 @@ fn conductor_bootstrap(
 ) -> @types.Response {
   if request.req_method != conductor_bootstrap_method ||
     request.name != conductor_bootstrap_method ||
-    request.role != @types.Role::TL ||
     !peer_is_choir {
     return @types.Response::Err("Conductor bootstrap authentication failed")
   }
@@ -105,8 +105,8 @@ fn conductor_bootstrap(
   if !conductor_valid_bootstrap_token(token) {
     return @types.Response::Err("Conductor bootstrap authentication failed")
   }
-  state.root_token = Some(token)
-  @types.Response::ok_values({ "agent_id": conductor_root_id.to_json() })
+  state.conductor_token = Some(token)
+  @types.Response::ok_values(Map([]))
 }
 
 ///|
@@ -114,15 +114,11 @@ fn conductor_register(
   state : ConductorServerState,
   request : @types.Request,
 ) -> @types.Response {
-  let agent_id = request.args.get("agent_id").unwrap_or("")
   let presented = request.registration_token().unwrap_or("")
-  if request.req_method != "register" ||
-    agent_id != conductor_root_id ||
-    request.role != @types.Role::TL ||
-    presented == "" {
+  if request.req_method != "register" || presented == "" {
     return @types.Response::Err("Conductor registration authentication failed")
   }
-  let stored = match state.root_token {
+  let stored = match state.conductor_token {
     Some(token) => token
     None =>
       return @types.Response::Err(
@@ -132,7 +128,7 @@ fn conductor_register(
   if !conductor_tokens_equal(presented, stored) {
     return @types.Response::Err("Conductor registration authentication failed")
   }
-  @types.Response::ok_values({ "agent_id": conductor_root_id.to_json() })
+  @types.Response::ok_values(Map([]))
 }
 
 ///|
@@ -143,11 +139,9 @@ fn conductor_authenticated_request(request : @types.Request) -> @types.Request {
       arguments.set(name, value)
     }
   })
-  arguments.set("caller_id", conductor_root_id.to_json())
   {
     ..request,
     req_method: "tools/call",
-    role: @types.Role::TL,
     args: @types.RequestArgs::from_values(arguments),
   }
 }
@@ -246,13 +240,9 @@ async fn conductor_handle_jsonrpc_line(
       if rpc.req_method == @mcp.method_initialize {
         @mcp.initialize_response(id)
       } else if rpc.req_method == @mcp.method_tools_list {
-        if client.authenticated {
-          @mcp.tools_list_response(id, @types.Role::TL)
-        } else {
-          @mcp.tools_list_response(id, @types.Role::Worker)
-        }
+        @mcp.tools_list_response(id, client.authenticated)
       } else {
-        match @mcp.to_internal_request(rpc, @types.Role::TL) {
+        match @mcp.to_internal_request(rpc) {
           Ok(request) => {
             let internal = if client.authenticated {
               conductor_dispatch(state, request)
@@ -485,7 +475,6 @@ test "Conductor tokens require an exact lowercase hexadecimal capability" {
 test "Conductor strips caller identity before dispatch" {
   let request : @types.Request = {
     req_method: "tools/call",
-    role: @types.Role::Worker,
     name: "goal_status",
     args: @types.RequestArgs::from_values({
       "goal_id": "goal-a".to_json(),
@@ -494,8 +483,7 @@ test "Conductor strips caller identity before dispatch" {
     }),
   }
   let effective = conductor_authenticated_request(request)
-  assert_eq(effective.role, @types.Role::TL)
-  @debug.assert_eq(effective.args.get("caller_id"), Some("root"))
+  @debug.assert_eq(effective.args.get("caller_id"), None)
   @debug.assert_eq(effective.args.get("agent_id"), None)
   @debug.assert_eq(effective.args.get("goal_id"), Some("goal-a"))
 }
