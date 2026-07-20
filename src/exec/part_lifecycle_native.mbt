@@ -460,6 +460,7 @@ fn native_part_fixture_snapshot_for_definition(
     part_id,
     revision: 1,
     digest: contract_digest,
+    repair_conflict_id: None,
     instruction_artifact: instruction,
     base_commit_oid: git.base_commit_oid,
     base_tree_oid: git.base_tree_oid,
@@ -787,7 +788,9 @@ fn native_part_dependencies_with_admission(
           ("codex-cli-0.144.6", @control.ModelIdentity::UnreportedModelIdentity)
       }
       Ok({
-        receipt_id: @control.ReceiptId("audit-receipt-" + snapshot.part.id.0),
+        receipt_id: @control.ReceiptId(
+          "audit-receipt-" + snapshot.audit_take.id.0,
+        ),
         provider_surface_id: surface,
         provider_identity,
         model_identity,

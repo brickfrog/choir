@@ -920,6 +920,7 @@ fn publication_integrated_part(
       part_id,
       revision: 1,
       digest: publication_digest("contract"),
+      repair_conflict_id: None,
       instruction_artifact: {
         artifact_id: "publication-instruction",
         digest: publication_digest("instruction"),
@@ -946,6 +947,7 @@ fn publication_integrated_part(
       ),
       audit_capability_profile_digest: publication_digest("audit-capability"),
     },
+    task_contract_history: [],
     identities: {
       implementation_take: implementation,
       implementation_sandbox,
@@ -966,6 +968,8 @@ fn publication_integrated_part(
     implementation_take: implementation,
     verification_take: verification,
     audit_take: audit,
+    prior_takes: [],
+    prior_take_evidence: [],
     sandbox_leases: [],
     harness_sessions: [],
     harness_events: [],
@@ -982,6 +986,7 @@ fn publication_integrated_part(
     integration_intent: None,
     promotion_commit: None,
     integration_receipt: Some(receipt),
+    integration_conflicts: [],
     pending_effect: None,
     effect_receipts: [],
   }

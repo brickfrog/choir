@@ -181,7 +181,12 @@ pub fn validate_task_contract_revision(
   contract : TaskContractRevision,
   is_nfc : (String) -> Bool,
 ) -> Result[Unit, @types.ChoirError] {
+  let repair_identity_valid = match contract.repair_conflict_id {
+    Some(value) => value.0 != ""
+    None => true
+  }
   if contract.revision <= 0 ||
+    !repair_identity_valid ||
     !valid_lower_hex_digest(contract.digest) ||
     contract.instruction_artifact.artifact_id == "" ||
     !valid_lower_hex_digest(contract.instruction_artifact.digest) ||

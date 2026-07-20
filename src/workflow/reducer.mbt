@@ -689,8 +689,8 @@ pub fn apply_part_effect_observation(
       )
     PromotionGenerated(promotion) =>
       record_promotion_generation(snapshot, observation, promotion, observed_at)
-    PromotionConflictObserved =>
-      record_promotion_conflict(snapshot, observation, observed_at)
+    PromotionConflictObserved(_) =>
+      record_promotion_conflict(snapshot, observation, observed_at, is_nfc)
     IntegrationWitnessObserved(witness) =>
       record_integration_witness(snapshot, observation, witness, observed_at)
   }
@@ -716,10 +716,6 @@ pub fn apply_or_reconcile_part_effect_observation(
     }
   }
   apply_part_effect_observation(
-    snapshot,
-    observation,
-    observed_at,
-    artifact_exists,
-    is_nfc,
+    snapshot, observation, observed_at, artifact_exists, is_nfc,
   )
 }

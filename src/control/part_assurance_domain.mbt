@@ -156,6 +156,7 @@ pub(all) struct TaskContractRevision {
   part_id : PartId
   revision : Int
   digest : Digest
+  repair_conflict_id : IntegrationConflictId?
   instruction_artifact : ArtifactReference
   base_commit_oid : GitOid
   base_tree_oid : GitOid
@@ -529,6 +530,29 @@ pub(all) enum IntegrationIntentLifecycle {
   IntegrationIntegrityBlocked
   IntegrationUncertain
   IntegrationAbandonedByCancellation
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct IntegrationConflictId(String) derive (
+  Debug,
+  Eq,
+  Compare,
+  Hash,
+  ToJson,
+  FromJson,
+)
+
+///|
+pub(all) struct IntegrationConflict {
+  id : IntegrationConflictId
+  intent_id : IntegrationIntentId
+  candidate_id : CandidateId
+  candidate_commit_oid : GitOid
+  expected_goal_head_oid : GitOid
+  expected_goal_head_tree_oid : GitOid
+  merge_base_oid : GitOid
+  conflicting_paths : Array[RepoPath]
+  evidence_digest : Digest
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|

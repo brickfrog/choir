@@ -26,6 +26,7 @@ fn scheduling_record(
       part_id,
       revision: 1,
       digest: schedule_digest,
+      repair_conflict_id: None,
       instruction_artifact: {
         artifact_id: "instruction-" + id,
         digest: schedule_digest,
@@ -700,4 +701,69 @@ async test "promotion recovery completes before new Part execution" {
   assert_eq(result.outcome, @workflow.GoalRunOutcome::GoalRunSucceeded)
   assert_eq(events, ["recover-a", "execute-b", "promote-b"])
   assert_eq(result.promotion_order, [promoting.part.id, pending.part.id])
+}
+
+///|
+async test "promotion conflict may return a versioned repair Take" {
+  let audited = scheduling_record(
+    "repair",
+    [],
+    @control.PartLifecycle::PartAudited(
+      @control.CandidateId("candidate-original"),
+      schedule_digest,
+      @control.ReceiptId("audit-original"),
+    ),
+    @control.MutationDeclaration::CompleteMutationDeclaration([
+      @control.MutationClaim::ExactPath(@control.RepoPath("src/repair.mbt")),
+    ]),
+  )
+  let promotion_calls = @ref.new(0)
+  let result = match
+    @workflow.run_goal_parts([audited], 1, {
+      advance_part: async fn(record) { Ok(record) },
+      read_goal_head: async fn() { Ok(@control.GitOid("goal-head")) },
+      promote_part: async fn(record, _) {
+        promotion_calls.val = promotion_calls.val + 1
+        if promotion_calls.val == 1 {
+          let contract = {
+            ..record.task_contract,
+            id: @control.RevisionId("revision-repair-2"),
+            revision: 2,
+            repair_conflict_id: Some(
+              @control.IntegrationConflictId("integration-conflict-1"),
+            ),
+          }
+          Ok({
+            part: {
+              ..record.part,
+              task_contract_revision_id: contract.id,
+              lifecycle: @control.PartLifecycle::PartAudited(
+                @control.CandidateId("candidate-repaired"),
+                schedule_digest,
+                @control.ReceiptId("audit-repaired"),
+              ),
+            },
+            task_contract: contract,
+          })
+        } else {
+          Ok({
+            ..record,
+            part: {
+              ..record.part,
+              lifecycle: @control.PartLifecycle::PartIntegrated(
+                @control.ReceiptId("integration-repaired"),
+              ),
+            },
+          })
+        }
+      },
+      resume_promotion: async fn(record) { Ok(record) },
+    }) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(result.outcome, @workflow.GoalRunOutcome::GoalRunSucceeded)
+  assert_eq(promotion_calls.val, 2)
+  assert_eq(result.promotion_order, [audited.part.id])
+  assert_eq(result.records[0].task_contract.revision, 2)
 }

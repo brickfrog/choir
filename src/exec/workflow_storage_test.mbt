@@ -139,6 +139,7 @@ fn workflow_store_fixture() -> @workflow.PartWorkflowSnapshot raise {
     part_id: part.id,
     revision: 1,
     digest: workflow_store_digest_a,
+    repair_conflict_id: None,
     instruction_artifact: {
       artifact_id: "instruction-store",
       digest: workflow_store_digest_a,
@@ -1108,6 +1109,92 @@ async test "audited Part waits durably for Goal promotion admission" {
 }
 
 ///|
+async test "Goal adapter accepts the exact stored contract revision" {
+  let repository = workflow_repository("goal-adapter-contract-revision")
+  clean_workflow_repository(repository)
+  let adapters = workflow_repository_adapters()
+  guard @workflow.initialize_part_workflow_repository(repository, adapters)
+    is Ok(_) else {
+    fail("initialize revised-contract repository")
+  }
+  let initial = workflow_store_fixture()
+  let initial_record : @workflow.GoalPartSchedulingRecord = {
+    part: initial.part,
+    task_contract: initial.task_contract,
+  }
+  let revised_contract : @control.TaskContractRevision = {
+    ..initial.task_contract,
+    id: @control.RevisionId("revision-store-2"),
+    revision: 2,
+    digest: workflow_store_digest_b,
+  }
+  let revised_part : @control.GoalPart = {
+    ..initial.part,
+    task_contract_revision_id: revised_contract.id,
+    lifecycle: @control.PartLifecycle::PartBlocked(
+      @control.PartBlockReason::PartIntegrityBlocked,
+    ),
+  }
+  let revised = {
+    ..initial,
+    durable_version: initial.durable_version + 1,
+    stage: @workflow.PartWorkflowStage::PartBlocked,
+    part: revised_part,
+    task_contract: revised_contract,
+    task_contract_history: initial.task_contract_history + [revised_contract],
+  }
+  ignore(
+    @workflow.persist_part_snapshot(repository, adapters, {
+      snapshot: revised,
+      expected_store_version: None,
+      fault_point: None,
+    }).unwrap(),
+  )
+  let execute_count = @ref.new(0)
+  let reconcile_count = @ref.new(0)
+  let dependencies = workflow_driver_dependencies(
+    execute_count,
+    reconcile_count,
+    fn(_) { None },
+    workflow_driver_recover_observation,
+  )
+  let config : @exec.GoalPartWorkflowAdapterConfig = {
+    bindings: [{
+      scheduling_record: initial_record,
+      initial_snapshot: initial,
+      repository,
+    }],
+    repository_adapters: adapters,
+    dependencies: fn(_, admission) {
+      Ok({
+        ..dependencies,
+        integration_admission: fn(_) { Ok(admission) },
+      })
+    },
+    integration_input: fn(_, _) {
+      Err(@types.ChoirError::validation_error("integration is not expected"))
+    },
+    plan_conflict_repair: fn(_) {
+      Err(@types.ChoirError::validation_error("repair is not expected"))
+    },
+    read_goal_head: async fn() { Ok(@control.GitOid("goal-head-store")) },
+  }
+  let record : @workflow.GoalPartSchedulingRecord = {
+    part: revised_part,
+    task_contract: revised_contract,
+  }
+  let observed = match
+    (@exec.goal_part_workflow_adapters(config).advance_part)(record) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(observed, record)
+  assert_eq(execute_count.val, 0)
+  assert_eq(reconcile_count.val, 0)
+  clean_workflow_repository(repository)
+}
+
+///|
 async test "Goal adapter resumes promotion after a durable rollback" {
   let repository = workflow_repository("goal-adapter-recovery")
   clean_workflow_repository(repository)
@@ -1153,6 +1240,9 @@ async test "Goal adapter resumes promotion after a durable rollback" {
         promotion_metadata_digest: workflow_store_digest_a,
         git_witness_ref: "refs/choir/witness/goal-adapter-intent",
       })
+    },
+    plan_conflict_repair: fn(_) {
+      Ok(@workflow.PartConflictRepairDecision::PartConflictRepairLimitReached)
     },
     read_goal_head: async fn() { Ok(@control.GitOid("goal-head-store")) },
   }
@@ -1216,6 +1306,9 @@ async test "Goal cancellation atomically rejects stale seal authorization" {
         promotion_metadata_digest: workflow_store_digest_a,
         git_witness_ref: "refs/choir/witness/assurance-cutoff-intent",
       })
+    },
+    plan_conflict_repair: fn(_) {
+      Ok(@workflow.PartConflictRepairDecision::PartConflictRepairLimitReached)
     },
     read_goal_head: async fn() { Ok(@control.GitOid("goal-head-store")) },
   }

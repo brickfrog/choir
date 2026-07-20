@@ -26,6 +26,7 @@ fn ownership_contract(
     part_id: @control.PartId("ownership-part"),
     revision: 1,
     digest: ownership_digest_a,
+    repair_conflict_id: None,
     instruction_artifact: {
       artifact_id: "ownership-instruction",
       digest: ownership_digest_a,

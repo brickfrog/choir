@@ -104,6 +104,10 @@ pub fn transition_part_lifecycle(
       } else {
         Err(invalid_transition("Part", "integration subject is stale"))
       }
+    (
+      PartBlocked(PartIntegrationConflict),
+      StartPartConflictRepair(_, take_id),
+    ) => Ok(PartExecuting(take_id))
     (PartPending, BlockPart(reason))
     | (PartReady, BlockPart(reason))
     | (PartExecuting(_), BlockPart(reason))
@@ -117,6 +121,12 @@ pub fn transition_part_lifecycle(
     | (PartBlocked(_), CancelPartNotRun) => Ok(PartCanceledNotRun)
     (PartIntegrated(_), _) | (PartCanceledNotRun, _) =>
       Err(invalid_transition("Part", "terminal state already committed"))
+    (PartBlocked(_), StartPartConflictRepair(_, _)) =>
+      Err(
+        invalid_transition(
+          "Part", "conflict repair requires an integration conflict",
+        ),
+      )
     (PartBlocked(_), _) =>
       Err(
         invalid_transition(

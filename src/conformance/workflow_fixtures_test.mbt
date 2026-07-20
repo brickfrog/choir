@@ -88,3 +88,36 @@ test "branch initialization fixture covers crash and cancellation ordering" {
     ),
   ])
 }
+
+///|
+test "integration conflict repair preserves history and resets assurance" {
+  let report = @conformance.run_hermetic_case(
+    @conformance.integration_conflict_repair_case(),
+    {
+      now: fn() { 1L },
+      next_id: fn(_) { "conflict-repair-fixture-id" },
+      fault_enabled: fn(_) { false },
+      adapters: {
+        read_state: fn(_) { Ok(@conformance.StateObservation::StateMissing) },
+        read_artifact: fn(_) {
+          Ok(@conformance.ArtifactObservation::ArtifactMissing)
+        },
+        read_effect_witness: fn(_) {
+          Ok(@conformance.EffectWitnessObservation::EffectWitnessAbsent)
+        },
+      },
+    },
+  )
+  assert_eq(
+    report.status,
+    @conformance.ConformanceCaseStatus::ConformanceCasePassed,
+  )
+  assert_eq(report.evidence, [
+    @conformance.ConformanceEvidence::ObservedIntegrationConflictRepair(
+      2,
+      3,
+      true,
+      true,
+    ),
+  ])
+}

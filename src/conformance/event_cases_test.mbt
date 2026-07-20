@@ -56,6 +56,7 @@ test "registered pure conformance cases satisfy their typed oracles" {
       @conformance.event_backpressure_case(),
       @conformance.event_redaction_case(),
       @conformance.selection_exact_snapshot_case(),
+      @conformance.integration_conflict_repair_case(),
       @conformance.selection_revision_invalidation_case(),
       @conformance.audit_gate_missing_is_passive_case(),
       @conformance.audit_independence_rejects_author_case(),
@@ -73,7 +74,7 @@ test "registered pure conformance cases satisfy their typed oracles" {
     ],
     event_case_test_dependencies(),
   )
-  assert_eq(report.passed, 25)
+  assert_eq(report.passed, 26)
   assert_eq(report.failed, 0)
-  assert_eq(report.cases.length(), 25)
+  assert_eq(report.cases.length(), 26)
 }

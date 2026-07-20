@@ -48,6 +48,38 @@ fn same_part_contract(
 }
 
 ///|
+fn same_part_identity(
+  expected : GoalPartSchedulingRecord,
+  observed : GoalPartSchedulingRecord,
+) -> Bool {
+  expected.part.id == observed.part.id &&
+  expected.part.goal_id == observed.part.goal_id &&
+  expected.part.dependency_ids == observed.part.dependency_ids &&
+  observed.task_contract.goal_id == observed.part.goal_id &&
+  observed.task_contract.part_id == observed.part.id &&
+  observed.task_contract.id == observed.part.task_contract_revision_id
+}
+
+///|
+fn valid_conflict_repair_successor(
+  expected : GoalPartSchedulingRecord,
+  observed : GoalPartSchedulingRecord,
+) -> Bool {
+  same_part_identity(expected, observed) &&
+  expected.part.lifecycle is @control.PartLifecycle::PartAudited(_, _, _) &&
+  observed.task_contract.revision == expected.task_contract.revision + 1 &&
+  observed.task_contract.repair_conflict_id is Some(_) &&
+  (match observed.part.lifecycle {
+    @control.PartLifecycle::PartExecuting(_)
+    | @control.PartLifecycle::PartCandidate(_)
+    | @control.PartLifecycle::PartVerified(_, _)
+    | @control.PartLifecycle::PartAudited(_, _, _)
+    | @control.PartLifecycle::PartBlocked(_) => true
+    _ => false
+  })
+}
+
+///|
 fn valid_advance_result(
   expected : GoalPartSchedulingRecord,
   observed : GoalPartSchedulingRecord,
@@ -71,7 +103,7 @@ fn valid_promotion_result(
   observed : GoalPartSchedulingRecord,
 ) -> Bool {
   if !same_part_contract(expected, observed) {
-    return false
+    return valid_conflict_repair_successor(expected, observed)
   }
   match observed.part.lifecycle {
     @control.PartLifecycle::PartAudited(_, _, _)

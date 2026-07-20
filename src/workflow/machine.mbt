@@ -252,10 +252,13 @@ pub fn initialize_part_workflow(
     goal,
     part: executing,
     task_contract: contract,
+    task_contract_history: [contract],
     identities,
     implementation_take,
     verification_take: identities.verification_take,
     audit_take: identities.audit_take,
+    prior_takes: [],
+    prior_take_evidence: [],
     sandbox_leases: [],
     harness_sessions: [],
     harness_events: [],
@@ -272,9 +275,138 @@ pub fn initialize_part_workflow(
     integration_intent: None,
     promotion_commit: None,
     integration_receipt: None,
+    integration_conflicts: [],
     pending_effect: None,
     effect_receipts: [],
   })
+}
+
+///|
+pub fn maximum_part_conflict_repairs() -> Int {
+  2
+}
+
+///|
+fn conflict_repair_take_is_fresh(
+  previous : @control.Take,
+  repair : @control.Take,
+) -> Bool {
+  repair.id != previous.id &&
+  repair.ordinal == previous.ordinal + 1 &&
+  repair.lifecycle == @control.TakeLifecycle::TakePlanned
+}
+
+///|
+pub fn plan_part_conflict_repair(
+  snapshot : PartWorkflowSnapshot,
+  contract : @control.TaskContractRevision,
+  identities : PartIdentityPlan,
+  is_nfc : (String) -> Bool,
+) -> Result[PartConflictRepairDecision, @types.ChoirError] {
+  if snapshot.stage != PartBlocked ||
+    snapshot.pending_effect is Some(_) ||
+    !(snapshot.part.lifecycle is @control.PartLifecycle::PartBlocked(
+        @control.PartBlockReason::PartIntegrationConflict,
+      )) ||
+    snapshot.integration_conflicts.length() == 0 {
+    return Err(workflow_error("Part is not eligible for conflict repair"))
+  }
+  if snapshot.integration_conflicts.length() > maximum_part_conflict_repairs() {
+    return Ok(PartConflictRepairLimitReached)
+  }
+  let conflict = snapshot.integration_conflicts[
+    snapshot.integration_conflicts.length() - 1
+  ]
+  if snapshot.task_contract_history.length() == 0 ||
+    snapshot.task_contract_history[
+      snapshot.task_contract_history.length() - 1
+    ] != snapshot.task_contract ||
+    contract.id == snapshot.task_contract.id ||
+    contract.digest == snapshot.task_contract.digest ||
+    contract.goal_id != snapshot.goal.id ||
+    contract.part_id != snapshot.part.id ||
+    contract.revision != snapshot.task_contract.revision + 1 ||
+    contract.repair_conflict_id != Some(conflict.id) ||
+    contract.base_commit_oid != conflict.expected_goal_head_oid ||
+    contract.base_tree_oid != conflict.expected_goal_head_tree_oid ||
+    !conflict_repair_take_is_fresh(
+      snapshot.implementation_take,
+      identities.implementation_take,
+    ) ||
+    !conflict_repair_take_is_fresh(
+      snapshot.verification_take,
+      identities.verification_take,
+    ) ||
+    !conflict_repair_take_is_fresh(snapshot.audit_take, identities.audit_take) {
+    return Err(workflow_error("conflict repair identity plan is invalid"))
+  }
+  let used_take_ids = snapshot.prior_takes.map(fn(take) { take.id }) + [
+    snapshot.implementation_take.id,
+    snapshot.verification_take.id,
+    snapshot.audit_take.id,
+  ]
+  if used_take_ids.contains(identities.implementation_take.id) ||
+    used_take_ids.contains(identities.verification_take.id) ||
+    used_take_ids.contains(identities.audit_take.id) {
+    return Err(workflow_error("conflict repair reuses a prior Take identity"))
+  }
+  let pending_part = {
+    ..snapshot.part,
+    task_contract_revision_id: contract.id,
+    lifecycle: @control.PartLifecycle::PartPending,
+  }
+  let initialized = match
+    initialize_part_workflow(
+      snapshot.workflow_id,
+      snapshot.goal,
+      pending_part,
+      contract,
+      identities,
+      snapshot.fencing_epoch,
+      is_nfc,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let repaired_part = match
+    @control.transition_part(
+      snapshot.part,
+      @control.PartTransition::StartPartConflictRepair(
+        conflict.id,
+        identities.implementation_take.id,
+      ),
+    ) {
+    Ok(value) => { ..value, task_contract_revision_id: contract.id }
+    Err(error) => return Err(error)
+  }
+  Ok(
+    PartConflictRepairPlanned({
+      ..initialized,
+      durable_version: snapshot.durable_version + 1,
+      part: repaired_part,
+      task_contract_history: snapshot.task_contract_history + [contract],
+      prior_takes: snapshot.prior_takes + [
+        snapshot.implementation_take,
+        snapshot.verification_take,
+        snapshot.audit_take,
+      ],
+      prior_take_evidence: snapshot.prior_take_evidence + [{
+        task_contract_revision_id: snapshot.task_contract.id,
+        implementation_result: snapshot.implementation_result,
+        candidate: snapshot.candidate,
+        verification_receipts: snapshot.verification_receipts,
+        verification_authorization: snapshot.verification_authorization,
+        audit_result: snapshot.audit_result,
+        audit_receipt: snapshot.audit_receipt,
+        integration_intent: snapshot.integration_intent,
+      }],
+      sandbox_leases: snapshot.sandbox_leases,
+      harness_sessions: snapshot.harness_sessions,
+      harness_events: snapshot.harness_events,
+      integration_conflicts: snapshot.integration_conflicts,
+      effect_receipts: snapshot.effect_receipts,
+    }),
+  )
 }
 
 ///|

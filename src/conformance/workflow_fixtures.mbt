@@ -45,6 +45,7 @@ fn scheduling_fixture_record(
       part_id,
       revision: 1,
       digest: scheduling_fixture_digest,
+      repair_conflict_id: None,
       instruction_artifact: {
         artifact_id: "instruction-" + id,
         digest: scheduling_fixture_digest,
@@ -590,6 +591,7 @@ fn selection_fixture_part(
       part_id,
       revision: 1,
       digest: selection_fixture_digest,
+      repair_conflict_id: None,
       instruction_artifact: {
         artifact_id: "instruction-" + id,
         digest: selection_fixture_digest,
@@ -1050,6 +1052,229 @@ pub fn branch_initialization_faults_case() -> HermeticConformanceCase {
             partial_blocked,
             divergence_uncertain,
             cancellation_waited,
+          ),
+        ],
+      })
+    },
+  }
+}
+
+///|
+pub fn integration_conflict_repair_case() -> HermeticConformanceCase {
+  {
+    id: ConformanceCaseId("integration.conflict_repair"),
+    run: fn(_) {
+      let (source, _) = event_authorized_provider_dispatch_fixture()
+      let verification_spec : @control.VerificationSpec = {
+        id: @control.VerificationSpecId("conflict-repair-verification"),
+        version: 1,
+        digest: scheduling_fixture_digest,
+        process_spec_digest: selection_fixture_digest,
+      }
+      let current_contract = {
+        ..source.task_contract,
+        verification_specs: [verification_spec],
+      }
+      let conflict : @control.IntegrationConflict = {
+        id: @control.IntegrationConflictId("conflict-repair-1"),
+        intent_id: @control.IntegrationIntentId("conflict-repair-intent-1"),
+        candidate_id: @control.CandidateId("conflict-repair-candidate-1"),
+        candidate_commit_oid: @control.GitOid("conflict-repair-candidate-commit"),
+        expected_goal_head_oid: @control.GitOid("conflict-repair-goal-head"),
+        expected_goal_head_tree_oid: @control.GitOid(
+          "conflict-repair-goal-tree",
+        ),
+        merge_base_oid: current_contract.base_commit_oid,
+        conflicting_paths: [@control.RepoPath("src/conflict.mbt")],
+        evidence_digest: selection_fixture_digest,
+      }
+      let blocked = {
+        ..source,
+        stage: @workflow.PartWorkflowStage::PartBlocked,
+        part: {
+          ..source.part,
+          lifecycle: @control.PartLifecycle::PartBlocked(
+            @control.PartBlockReason::PartIntegrationConflict,
+          ),
+        },
+        task_contract: current_contract,
+        task_contract_history: [current_contract],
+        pending_effect: None,
+        integration_conflicts: [conflict],
+      }
+      let repair_contract : @control.TaskContractRevision = {
+        ..current_contract,
+        id: @control.RevisionId("conflict-repair-revision-2"),
+        revision: 2,
+        digest: ownership_digest_b,
+        repair_conflict_id: Some(conflict.id),
+        base_commit_oid: conflict.expected_goal_head_oid,
+        base_tree_oid: conflict.expected_goal_head_tree_oid,
+      }
+      let implementation : @control.Take = {
+        id: @control.TakeId("conflict-repair-implementation-2"),
+        goal_id: blocked.goal.id,
+        purpose: @control.TakePurpose::Implementation(
+          blocked.part.id,
+          repair_contract.id,
+        ),
+        ordinal: 2,
+        fencing_epoch: None,
+        lifecycle: @control.TakeLifecycle::TakePlanned,
+      }
+      let verification : @control.Take = {
+        id: @control.TakeId("conflict-repair-verification-2"),
+        goal_id: blocked.goal.id,
+        purpose: @control.TakePurpose::PartVerification(
+          blocked.part.id,
+          implementation.id,
+          verification_spec.digest,
+        ),
+        ordinal: 2,
+        fencing_epoch: None,
+        lifecycle: @control.TakeLifecycle::TakePlanned,
+      }
+      let audit : @control.Take = {
+        id: @control.TakeId("conflict-repair-audit-2"),
+        goal_id: blocked.goal.id,
+        purpose: @control.TakePurpose::PartAudit(
+          blocked.part.id,
+          implementation.id,
+          repair_contract.audit_policy_digest,
+        ),
+        ordinal: 2,
+        fencing_epoch: None,
+        lifecycle: @control.TakeLifecycle::TakePlanned,
+      }
+      let sandbox = fn(
+        id : String,
+        take : @control.Take,
+        previous : @control.SandboxLease,
+      ) -> @control.SandboxLease {
+        {
+          id: @control.SandboxLeaseId(id),
+          take_id: take.id,
+          generation_id: @control.SandboxGenerationId(id + "-generation"),
+          capability_profile_digest: previous.capability_profile_digest,
+          runtime_policy_digest: previous.runtime_policy_digest,
+          lifecycle: @control.SandboxLeaseLifecycle::SandboxLeasePlanned,
+        }
+      }
+      let implementation_sandbox = sandbox(
+        "conflict-repair-implementation-sandbox-2",
+        implementation,
+        blocked.identities.implementation_sandbox,
+      )
+      let verification_sandbox = sandbox(
+        "conflict-repair-verification-sandbox-2",
+        verification,
+        blocked.identities.verification_sandbox,
+      )
+      let audit_sandbox = sandbox(
+        "conflict-repair-audit-sandbox-2",
+        audit,
+        blocked.identities.audit_sandbox,
+      )
+      let session = fn(
+        id : String,
+        take : @control.Take,
+        sandbox : @control.SandboxLease,
+        previous : @control.HarnessSession,
+      ) -> @control.HarnessSession {
+        {
+          id: @control.HarnessSessionId(id),
+          take_id: take.id,
+          sandbox_generation_id: sandbox.generation_id,
+          surface: previous.surface,
+          effective_surface_manifest_digest: previous.effective_surface_manifest_digest,
+          cursor_class: previous.cursor_class,
+          provider_cursor: None,
+          last_choir_sequence: @control.EventSequence(0L),
+          open_tool_execution_ids: [],
+          lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+        }
+      }
+      let decision = match
+        @workflow.plan_part_conflict_repair(
+          blocked,
+          repair_contract,
+          {
+            implementation_take: implementation,
+            implementation_sandbox,
+            implementation_session: session(
+              "conflict-repair-implementation-session-2",
+              implementation,
+              implementation_sandbox,
+              blocked.identities.implementation_session,
+            ),
+            verification_take: verification,
+            verification_sandbox,
+            verification_session: session(
+              "conflict-repair-verification-session-2",
+              verification,
+              verification_sandbox,
+              blocked.identities.verification_session,
+            ),
+            audit_take: audit,
+            audit_sandbox,
+            audit_session: session(
+              "conflict-repair-audit-session-2",
+              audit,
+              audit_sandbox,
+              blocked.identities.audit_session,
+            ),
+          },
+          fn(_) { true },
+        ) {
+        Ok(@workflow.PartConflictRepairDecision::PartConflictRepairPlanned(value)) =>
+          value
+        Ok(_) =>
+          return Err(
+            branch_initialization_fixture_error(
+              "first conflict repair reached its limit",
+            ),
+          )
+        Err(error) => return Err(error)
+      }
+      let evidence_cleared = decision.candidate is None &&
+        decision.verification_receipts.length() == 0 &&
+        decision.audit_receipt is None &&
+        decision.integration_intent is None &&
+        decision.integration_receipt is None
+      let fresh_assurance = decision.verification_take.id == verification.id &&
+        decision.audit_take.id == audit.id &&
+        decision.verification_take.purpose ==
+        @control.TakePurpose::PartVerification(
+          blocked.part.id,
+          implementation.id,
+          verification_spec.digest,
+        ) &&
+        decision.audit_take.purpose ==
+        @control.TakePurpose::PartAudit(
+          blocked.part.id,
+          implementation.id,
+          repair_contract.audit_policy_digest,
+        )
+      if decision.task_contract != repair_contract ||
+        decision.task_contract_history.length() != 2 ||
+        decision.prior_takes.length() != 3 ||
+        decision.prior_take_evidence.length() != 1 ||
+        decision.integration_conflicts != [conflict] ||
+        !evidence_cleared ||
+        !fresh_assurance {
+        return Err(
+          branch_initialization_fixture_error(
+            "repair did not preserve history and reset assurance",
+          ),
+        )
+      }
+      Ok({
+        evidence: [
+          ObservedIntegrationConflictRepair(
+            decision.task_contract.revision,
+            decision.prior_takes.length(),
+            evidence_cleared,
+            fresh_assurance,
           ),
         ],
       })

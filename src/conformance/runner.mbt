@@ -166,6 +166,7 @@ pub(all) enum ConformanceEvidence {
     Bool,
     Bool
   )
+  ObservedIntegrationConflictRepair(Int, Int, Bool, Bool)
   AllocatedId(ConformanceIdKind, String)
 } derive(Debug, Eq, ToJson, FromJson)
 

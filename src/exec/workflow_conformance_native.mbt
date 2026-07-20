@@ -63,6 +63,7 @@ fn conformance_snapshot() -> Result[
     part_id: part.id,
     revision: 1,
     digest: conformance_digest_a,
+    repair_conflict_id: None,
     instruction_artifact: {
       artifact_id: "instruction-conformance",
       digest: conformance_digest_a,

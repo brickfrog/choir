@@ -143,6 +143,7 @@ fn native_goal_record(
       part_id,
       revision: 1,
       digest,
+      repair_conflict_id: None,
       instruction_artifact: { artifact_id: "instruction-" + part_id.0, digest },
       base_commit_oid: git.base_commit_oid,
       base_tree_oid: git.base_tree_oid,

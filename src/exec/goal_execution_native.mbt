@@ -266,7 +266,11 @@ fn native_goal_integration_input(
         "choir.native-goal-promotion.v1\u{00}" +
         snapshot.goal.id.0 +
         "\u{00}" +
-        snapshot.part.id.0,
+        snapshot.part.id.0 +
+        "\u{00}" +
+        selection.candidate_id.0 +
+        "\u{00}" +
+        selection.expected_goal_head_oid.0,
       ),
     ).0
   Ok({
@@ -283,6 +287,205 @@ fn native_goal_integration_input(
     ),
     git_witness_ref: "refs/choir/witness/" + key,
   })
+}
+
+///|
+fn native_goal_conflict_repair_take(
+  id : String,
+  previous : @control.Take,
+  purpose : @control.TakePurpose,
+) -> @control.Take {
+  {
+    id: @control.TakeId(id),
+    goal_id: previous.goal_id,
+    purpose,
+    ordinal: previous.ordinal + 1,
+    fencing_epoch: None,
+    lifecycle: @control.TakeLifecycle::TakePlanned,
+  }
+}
+
+///|
+fn native_goal_conflict_repair_sandbox(
+  key : String,
+  role : String,
+  take : @control.Take,
+  previous : @control.SandboxLease,
+) -> @control.SandboxLease {
+  {
+    id: @control.SandboxLeaseId("sandbox-" + key + "-" + role),
+    take_id: take.id,
+    generation_id: @control.SandboxGenerationId(
+      "generation-" + key + "-" + role,
+    ),
+    capability_profile_digest: previous.capability_profile_digest,
+    runtime_policy_digest: previous.runtime_policy_digest,
+    lifecycle: @control.SandboxLeaseLifecycle::SandboxLeasePlanned,
+  }
+}
+
+///|
+fn native_goal_conflict_repair_session(
+  key : String,
+  role : String,
+  take : @control.Take,
+  sandbox : @control.SandboxLease,
+  previous : @control.HarnessSession,
+) -> @control.HarnessSession {
+  {
+    id: @control.HarnessSessionId("session-" + key + "-" + role),
+    take_id: take.id,
+    sandbox_generation_id: sandbox.generation_id,
+    surface: previous.surface,
+    effective_surface_manifest_digest: previous.effective_surface_manifest_digest,
+    cursor_class: previous.cursor_class,
+    provider_cursor: None,
+    last_choir_sequence: @control.EventSequence(0L),
+    open_tool_execution_ids: [],
+    lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+  }
+}
+
+///|
+fn plan_native_goal_conflict_repair(
+  snapshot : @workflow.PartWorkflowSnapshot,
+) -> Result[@workflow.PartConflictRepairDecision, @types.ChoirError] {
+  if snapshot.integration_conflicts.length() == 0 {
+    return Err(native_goal_execution_error("integration conflict is absent"))
+  }
+  if snapshot.integration_conflicts.length() >
+    @workflow.maximum_part_conflict_repairs() {
+    return Ok(
+      @workflow.PartConflictRepairDecision::PartConflictRepairLimitReached,
+    )
+  }
+  let conflict = snapshot.integration_conflicts[
+    snapshot.integration_conflicts.length() - 1
+  ]
+  let repair_number = snapshot.integration_conflicts.length()
+  let identity_digest = @storage.artifact_digest(
+    @utf8.encode(
+      "choir.native-goal-conflict-repair.v1\u{00}" +
+      [
+        snapshot.task_contract.digest.to_json(),
+        conflict.id.to_json(),
+        conflict.expected_goal_head_oid.to_json(),
+        conflict.expected_goal_head_tree_oid.to_json(),
+        repair_number.to_json(),
+      ]
+      .to_json()
+      .stringify(indent=0),
+    ),
+  )
+  let key = @storage.digest_text(identity_digest)[:20].to_owned()
+  let revision_id = @control.RevisionId("repair-" + key)
+  let contract_digest = @storage.artifact_digest(
+    @utf8.encode(
+      "choir.task-contract-conflict-repair.v1\u{00}" +
+      [
+        revision_id.to_json(),
+        snapshot.goal.id.to_json(),
+        snapshot.part.id.to_json(),
+        (snapshot.task_contract.revision + 1).to_json(),
+        conflict.id.to_json(),
+        snapshot.task_contract.instruction_artifact.to_json(),
+        conflict.expected_goal_head_oid.to_json(),
+        conflict.expected_goal_head_tree_oid.to_json(),
+        snapshot.task_contract.mutation_declaration.to_json(),
+        snapshot.task_contract.verification_specs.to_json(),
+        snapshot.task_contract.audit_policy_digest.to_json(),
+        snapshot.task_contract.implementation_capability_profile_digest.to_json(),
+        snapshot.task_contract.verification_capability_profile_digest.to_json(),
+        snapshot.task_contract.audit_capability_profile_digest.to_json(),
+      ]
+      .to_json()
+      .stringify(indent=0),
+    ),
+  )
+  let contract : @control.TaskContractRevision = {
+    ..snapshot.task_contract,
+    id: revision_id,
+    revision: snapshot.task_contract.revision + 1,
+    digest: contract_digest,
+    repair_conflict_id: Some(conflict.id),
+    base_commit_oid: conflict.expected_goal_head_oid,
+    base_tree_oid: conflict.expected_goal_head_tree_oid,
+  }
+  let implementation = native_goal_conflict_repair_take(
+    "take-" + key + "-implementation",
+    snapshot.implementation_take,
+    @control.TakePurpose::Implementation(snapshot.part.id, contract.id),
+  )
+  let verification = native_goal_conflict_repair_take(
+    "take-" + key + "-verification",
+    snapshot.verification_take,
+    @control.TakePurpose::PartVerification(
+      snapshot.part.id,
+      implementation.id,
+      contract.verification_specs[0].digest,
+    ),
+  )
+  let audit = native_goal_conflict_repair_take(
+    "take-" + key + "-audit",
+    snapshot.audit_take,
+    @control.TakePurpose::PartAudit(
+      snapshot.part.id,
+      implementation.id,
+      contract.audit_policy_digest,
+    ),
+  )
+  let implementation_sandbox = native_goal_conflict_repair_sandbox(
+    key,
+    "implementation",
+    implementation,
+    snapshot.identities.implementation_sandbox,
+  )
+  let verification_sandbox = native_goal_conflict_repair_sandbox(
+    key,
+    "verification",
+    verification,
+    snapshot.identities.verification_sandbox,
+  )
+  let audit_sandbox = native_goal_conflict_repair_sandbox(
+    key,
+    "audit",
+    audit,
+    snapshot.identities.audit_sandbox,
+  )
+  @workflow.plan_part_conflict_repair(
+    snapshot,
+    contract,
+    {
+      implementation_take: implementation,
+      implementation_sandbox,
+      implementation_session: native_goal_conflict_repair_session(
+        key,
+        "implementation",
+        implementation,
+        implementation_sandbox,
+        snapshot.identities.implementation_session,
+      ),
+      verification_take: verification,
+      verification_sandbox,
+      verification_session: native_goal_conflict_repair_session(
+        key,
+        "verification",
+        verification,
+        verification_sandbox,
+        snapshot.identities.verification_session,
+      ),
+      audit_take: audit,
+      audit_sandbox,
+      audit_session: native_goal_conflict_repair_session(
+        key,
+        "audit",
+        audit,
+        audit_sandbox,
+        snapshot.identities.audit_session,
+      ),
+    },
+    native_path_is_nfc,
+  )
 }
 
 ///|
@@ -616,6 +819,7 @@ async fn execute_native_goal_record(
       })
     },
     integration_input: native_goal_integration_input,
+    plan_conflict_repair: plan_native_goal_conflict_repair,
     read_goal_head: async fn() {
       read_native_goal_head(integration, native_git_integration_adapters())
     },

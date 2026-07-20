@@ -2,6 +2,7 @@
 pub(all) enum NativeGitIntegrationCommand {
   NativeGitReadCommitTree(@control.GitOid)
   NativeGitReadCommitParents(@control.GitOid)
+  NativeGitReadMergeBase(@control.GitOid, @control.GitOid)
   NativeGitMergeTree(@control.GitOid, @control.GitOid)
   NativeGitCreatePromotion(
     @control.GitOid,
@@ -71,6 +72,16 @@ fn parsed_git_oid(output : String) -> @control.GitOid? {
     Some(@control.GitOid(value))
   } else {
     None
+  }
+}
+
+///|
+fn parsed_merge_tree_oid(output : String) -> @control.GitOid? {
+  let fields = output.split("\u{00}").to_array()
+  if fields.length() == 0 {
+    None
+  } else {
+    parsed_git_oid(fields[0].to_owned())
   }
 }
 
@@ -277,12 +288,21 @@ fn native_git_process_spec(
         environment: native_git_integration_environment(config, true, false),
         working_directory: config.control_root,
       }
+    NativeGitReadMergeBase(left, right) =>
+      {
+        arguments: ["merge-base", left.0, right.0],
+        stdin: "",
+        environment: native_git_integration_environment(config, true, false),
+        working_directory: config.control_root,
+      }
     NativeGitMergeTree(head, candidate) =>
       {
         arguments: [
           "merge-tree",
           "--write-tree",
           "--no-messages",
+          "--name-only",
+          "-z",
           head.0,
           candidate.0,
         ],
@@ -333,6 +353,73 @@ fn native_git_process_spec(
         environment: native_git_integration_environment(config, false, false),
         working_directory: config.repository_root,
       }
+  }
+}
+
+///|
+fn parsed_conflicting_paths(
+  output : String,
+) -> Result[Array[@control.RepoPath], @types.ChoirError] {
+  let fields = output.split("\u{00}").to_array()
+  if fields.length() < 2 || parsed_git_oid(fields[0].to_owned()) is None {
+    return Err(git_error("merge-tree returned invalid conflict evidence"))
+  }
+  let paths : Array[@control.RepoPath] = []
+  for index = 1; index < fields.length(); index = index + 1 {
+    let value = fields[index].to_owned()
+    if value == "" {
+      continue
+    }
+    let path = @control.RepoPath(value)
+    match @control.validate_repo_path(path, native_path_is_nfc) {
+      Ok(_) => paths.push(path)
+      Err(_) => return Err(git_error("merge-tree returned an invalid path"))
+    }
+  }
+  if paths.length() == 0 {
+    Err(git_error("merge-tree conflict has no paths"))
+  } else {
+    Ok(paths)
+  }
+}
+
+///|
+fn integration_conflict(
+  intent : @control.IntegrationIntent,
+  head_tree : @control.GitOid,
+  merge_base : @control.GitOid,
+  paths : Array[@control.RepoPath],
+  raw_evidence : String,
+) -> @control.IntegrationConflict {
+  let evidence_digest = @storage.artifact_digest(
+    @utf8.encode(
+      "choir.integration-conflict-evidence.v1\u{00}" +
+      [
+        intent.id.to_json(),
+        intent.candidate_id.to_json(),
+        intent.candidate_commit_oid.to_json(),
+        intent.expected_goal_head_oid.to_json(),
+        head_tree.to_json(),
+        merge_base.to_json(),
+        paths.to_json(),
+        raw_evidence.to_json(),
+      ]
+      .to_json()
+      .stringify(indent=0),
+    ),
+  )
+  {
+    id: @control.IntegrationConflictId(
+      "conflict-" + @storage.digest_text(evidence_digest),
+    ),
+    intent_id: intent.id,
+    candidate_id: intent.candidate_id,
+    candidate_commit_oid: intent.candidate_commit_oid,
+    expected_goal_head_oid: intent.expected_goal_head_oid,
+    expected_goal_head_tree_oid: head_tree,
+    merge_base_oid: merge_base,
+    conflicting_paths: paths,
+    evidence_digest,
   }
 }
 
@@ -468,9 +555,34 @@ pub async fn generate_native_promotion(
     Err(error) => return Err(error)
   }
   if merged.exit_code != 0 {
-    return Ok(@workflow.PartEffectObservation::PromotionConflictObserved)
+    let paths = match parsed_conflicting_paths(merged.output) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    let base = match
+      (adapters.capture)(
+        config,
+        NativeGitReadMergeBase(
+          intent.expected_goal_head_oid,
+          intent.candidate_commit_oid,
+        ),
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    let merge_base = match parsed_git_oid(base.output) {
+      Some(value) if base.exit_code == 0 => value
+      _ => return Err(git_error("Git merge base is unavailable"))
+    }
+    return Ok(
+      @workflow.PartEffectObservation::PromotionConflictObserved(
+        integration_conflict(
+          intent, head_tree, merge_base, paths, merged.output,
+        ),
+      ),
+    )
   }
-  let promotion_tree = match parsed_git_oid(merged.output) {
+  let promotion_tree = match parsed_merge_tree_oid(merged.output) {
     Some(value) => value
     None =>
       return Err(git_error("merge-tree returned an invalid tree identity"))

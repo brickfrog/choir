@@ -20,6 +20,7 @@ fn submission_contract(
     part_id,
     revision: 1,
     digest: submission_digest,
+    repair_conflict_id: None,
     instruction_artifact: {
       artifact_id: "instruction-" + part_id.0,
       digest: submission_digest,

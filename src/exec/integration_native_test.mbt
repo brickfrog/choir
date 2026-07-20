@@ -24,6 +24,11 @@ let git_promotion_oid : @control.GitOid = @control.GitOid(
 )
 
 ///|
+let git_merge_base_oid : @control.GitOid = @control.GitOid(
+  "1111111111111111111111111111111111111111",
+)
+
+///|
 fn native_git_test_intent(
   lifecycle : @control.IntegrationIntentLifecycle,
 ) -> @control.IntegrationIntent {
@@ -141,7 +146,12 @@ async test "native Git merge conflict produces a durable workflow observation" {
           @exec.NativeGitIntegrationCommand::NativeGitReadCommitTree(_) =>
             { exit_code: 0, output: git_candidate_tree.0 + "\n" }
           @exec.NativeGitIntegrationCommand::NativeGitMergeTree(_, _) =>
-            { exit_code: 1, output: "conflict\n" }
+            {
+              exit_code: 1,
+              output: git_promotion_tree.0 + "\u{00}src/conflict.mbt\u{00}",
+            }
+          @exec.NativeGitIntegrationCommand::NativeGitReadMergeBase(_, _) =>
+            { exit_code: 0, output: git_merge_base_oid.0 + "\n" }
           _ => { exit_code: 99, output: "unexpected command" }
         },
       )
@@ -158,10 +168,15 @@ async test "native Git merge conflict produces a durable workflow observation" {
     Ok(value) => value
     Err(error) => fail(error.message())
   }
-  assert_true(
-    observation is @workflow.PartEffectObservation::PromotionConflictObserved,
-  )
-  assert_eq(commands.length(), 3)
+  guard observation
+    is @workflow.PartEffectObservation::PromotionConflictObserved(conflict) else {
+    fail("expected durable promotion conflict")
+  }
+  assert_eq(conflict.intent_id, @control.IntegrationIntentId("intent-1"))
+  assert_eq(conflict.expected_goal_head_oid, git_head_oid)
+  assert_eq(conflict.merge_base_oid, git_merge_base_oid)
+  assert_eq(conflict.conflicting_paths, [@control.RepoPath("src/conflict.mbt")])
+  assert_eq(commands.length(), 4)
 }
 
 ///|

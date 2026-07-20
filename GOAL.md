@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-20T18:04:00-05:00
+Implementation snapshot updated through: 2026-07-20T18:30:44-05:00
 
 ## Charter Semantics and Readiness
 
@@ -167,10 +167,11 @@ unconnected product path usable.
 - Durable restart-readable state and content-addressed artifact stores with
   transactional fault injection.
 - A hermetic conformance runner with injected clock, identifiers, adapters,
-  and typed fault points. Its command now runs twenty-eight registered cases: the
+  and typed fault points. Its command now runs twenty-nine registered cases: the
   runner dependency contract, `selection.exact_snapshot`,
   `selection.revision_invalidation`,
-  `scheduler.generated_dags`, `branch.initialization_faults`, six
+  `scheduler.generated_dags`, `branch.initialization_faults`,
+  `integration.conflict_repair`, six
   audit-authority/recovery cases, ten event/recovery
   cases, four mutation-ownership cases, and three process-policy cases described
   below. The audit cases prove a missing gate is passive, author Take/sandbox/
@@ -433,6 +434,22 @@ unconnected product path usable.
   pre/post-authorization cancellation. A narrow real-Git test proves the two-ref
   transaction is atomic, replay observes the same anchor, and partial ref state
   is detected.
+- Native Git promotion now retains a typed immutable `IntegrationConflict`
+  instead of collapsing a failed three-way merge into an unstructured block.
+  The record binds the candidate, expected Goal head and tree, actual merge
+  base, canonical conflicting paths, and evidence digest. The scheduler may
+  then persist a fresh implementation Take under a task-contract revision that
+  references that conflict and starts from the exact authoritative head. Old
+  contracts and Takes remain in snapshot history; candidate, verification,
+  audit, and integration evidence are cleared so the repaired candidate must
+  pass the full Part workflow again. Repair admission is guarded by the same
+  running-Goal precondition as ordinary effects, and the initial product policy
+  permits two repairs before leaving the Part blocked. The registered
+  `integration.conflict_repair` case proves history retention, subject reset,
+  and fresh verification/audit Take identities; native Git tests prove
+  merge-base and NUL-delimited path capture. The Goal adapter accepts only the
+  exact revised record loaded from durable state, so the next scheduler pass
+  can advance the repair without accepting a stale caller record.
 - Goal assurance now has separate typed Goal-tree verification and combined-
   audit subjects, receipts, results, authorization slots, and passive gates.
   The combined audit rejects a Take, sandbox generation, or harness session
@@ -597,7 +614,7 @@ Earlier evidence anchors are commits `5fb93fe8` for the native Part path,
 the linter correction. With the current assurance, cancellation, and provider changes,
 `moon check --target native`, `moon test --target native`, and
 `moon run --target native src/bin/choir_lint` all exit successfully on
-2026-07-20. After deleting obsolete source and tests, the full native suite reports 310
+2026-07-20. After deleting obsolete source and tests, the full native suite reports 313
 passed and 0 failed. The
 compiler still reports the repository's existing warning set.
 
@@ -622,14 +639,15 @@ compiler still reports the repository's existing warning set.
 
 ### Not yet connected
 - The remaining generated cancellation-ordering edge cases beyond the
-  implemented branch-initialization, Part, provider, integration,
+  implemented branch-initialization, Part, provider, integration and conflict
+  repair,
   Goal-assurance, publication, and final-PR reconciliation paths.
 - A live external final-PR canary for the native forge transport, plus the
   remaining generated cases for ambiguous identity, remote drift, and broader
   cancellation orderings. The checked synthetic forge proves control-plane
   behavior without mutating an external repository.
-- The remaining cancellation ordering, conflict repair, hostile-surface, PR,
-  and scale conformance cases. Duplicate conflicts, cursor gaps, late
+- The remaining cancellation-ordering, hostile-surface, PR, and scale
+  conformance cases. Duplicate conflicts, cursor gaps, late
   terminals, conflicting terminals, fixed-seed generated DAG scheduling,
   ownership normalization/conflicts, candidate under-claiming, and
   rename/delete/generated-file path coverage are registered in the hermetic

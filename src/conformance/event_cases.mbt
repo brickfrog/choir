@@ -196,6 +196,7 @@ fn event_authorized_provider_dispatch_fixture() -> (
       part_id,
       revision: 1,
       digest: event_case_digest,
+      repair_conflict_id: None,
       instruction_artifact: {
         artifact_id: "event-process-loss-instruction",
         digest: event_case_digest,
@@ -212,6 +213,7 @@ fn event_authorized_provider_dispatch_fixture() -> (
       verification_capability_profile_digest: event_case_digest,
       audit_capability_profile_digest: event_case_digest,
     },
+    task_contract_history: [],
     identities: {
       implementation_take,
       implementation_sandbox: implementation_lease,
@@ -226,6 +228,8 @@ fn event_authorized_provider_dispatch_fixture() -> (
     implementation_take,
     verification_take,
     audit_take,
+    prior_takes: [],
+    prior_take_evidence: [],
     sandbox_leases: [implementation_lease, verification_lease, audit_lease],
     harness_sessions: [
       implementation_session,
@@ -246,6 +250,7 @@ fn event_authorized_provider_dispatch_fixture() -> (
     integration_intent: None,
     promotion_commit: None,
     integration_receipt: None,
+    integration_conflicts: [],
     pending_effect: Some(intent),
     effect_receipts: [],
   }

@@ -156,6 +156,7 @@ fn workflow_fixture() -> @workflow.PartWorkflowSnapshot raise {
     part_id: part.id,
     revision: 1,
     digest: workflow_digest_a,
+    repair_conflict_id: None,
     instruction_artifact: {
       artifact_id: "instruction-workflow",
       digest: workflow_digest_a,
@@ -1759,7 +1760,17 @@ test "promotion conflict blocks the Part without minting integration evidence" {
   }
   let blocked = apply_observation(
     planned,
-    @workflow.PartEffectObservation::PromotionConflictObserved,
+    @workflow.PartEffectObservation::PromotionConflictObserved({
+      id: @control.IntegrationConflictId("conflict-1"),
+      intent_id: @control.IntegrationIntentId("integration-intent-conflict"),
+      candidate_id: planned.candidate.unwrap().id,
+      candidate_commit_oid: planned.candidate.unwrap().commit_oid,
+      expected_goal_head_oid: @control.GitOid("goal-head"),
+      expected_goal_head_tree_oid: @control.GitOid("goal-head-tree"),
+      merge_base_oid: planned.candidate.unwrap().base_commit_oid,
+      conflicting_paths: [@control.RepoPath("src/feature.mbt")],
+      evidence_digest: workflow_digest_a,
+    }),
     26L,
   )
   assert_eq(blocked.stage, @workflow.PartWorkflowStage::PartBlocked)
@@ -1777,7 +1788,124 @@ test "promotion conflict blocks the Part without minting integration evidence" {
     @control.IntegrationIntentLifecycle::IntegrationConflict,
   )
   assert_true(blocked.integration_receipt is None)
+  assert_eq(blocked.integration_conflicts.length(), 1)
   assert_eq(blocked.effect_receipts.length(), 11)
+  let conflict = blocked.integration_conflicts[0]
+  let repair_contract : @control.TaskContractRevision = {
+    ..blocked.task_contract,
+    id: @control.RevisionId("revision-2"),
+    revision: 2,
+    digest: workflow_digest_d,
+    repair_conflict_id: Some(conflict.id),
+    base_commit_oid: conflict.expected_goal_head_oid,
+    base_tree_oid: conflict.expected_goal_head_tree_oid,
+  }
+  let implementation = {
+    ..workflow_take(
+      "implementation-take-2",
+      @control.TakePurpose::Implementation(blocked.part.id, repair_contract.id),
+    ),
+    ordinal: 2,
+  }
+  let verification = {
+    ..workflow_take(
+      "verification-take-2",
+      @control.TakePurpose::PartVerification(
+        blocked.part.id,
+        implementation.id,
+        workflow_digest_d,
+      ),
+    ),
+    ordinal: 2,
+  }
+  let audit = {
+    ..workflow_take(
+      "audit-take-2",
+      @control.TakePurpose::PartAudit(
+        blocked.part.id,
+        implementation.id,
+        repair_contract.audit_policy_digest,
+      ),
+    ),
+    ordinal: 2,
+  }
+  let implementation_sandbox = workflow_sandbox(
+    "implementation-sandbox-2",
+    "implementation-generation-2",
+    implementation.id,
+    repair_contract.implementation_capability_profile_digest,
+    workflow_digest_a,
+  )
+  let verification_sandbox = workflow_sandbox(
+    "verification-sandbox-2",
+    "verification-generation-2",
+    verification.id,
+    repair_contract.verification_capability_profile_digest,
+    workflow_digest_d,
+  )
+  let audit_sandbox = workflow_sandbox(
+    "audit-sandbox-2",
+    "audit-generation-2",
+    audit.id,
+    repair_contract.audit_capability_profile_digest,
+    workflow_digest_e,
+  )
+  let repair = match
+    @workflow.plan_part_conflict_repair(
+      blocked,
+      repair_contract,
+      {
+        implementation_take: implementation,
+        implementation_sandbox,
+        implementation_session: workflow_session(
+          "implementation-session-2",
+          implementation.id,
+          implementation_sandbox.generation_id,
+          @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+          workflow_digest_a,
+        ),
+        verification_take: verification,
+        verification_sandbox,
+        verification_session: workflow_session(
+          "verification-session-2",
+          verification.id,
+          verification_sandbox.generation_id,
+          @control.ProviderSurfaceId::CodexSubscriptionCli,
+          workflow_digest_b,
+        ),
+        audit_take: audit,
+        audit_sandbox,
+        audit_session: workflow_session(
+          "audit-session-2",
+          audit.id,
+          audit_sandbox.generation_id,
+          @control.ProviderSurfaceId::CodexSubscriptionCli,
+          workflow_digest_c,
+        ),
+      },
+      fn(_) { true },
+    ) {
+    Ok(@workflow.PartConflictRepairDecision::PartConflictRepairPlanned(value)) =>
+      value
+    Ok(_) => fail("first conflict repair reached the retry limit")
+    Err(error) => fail(error.message())
+  }
+  assert_eq(repair.stage, @workflow.PartWorkflowStage::PartAccepted)
+  assert_eq(repair.task_contract, repair_contract)
+  assert_eq(repair.task_contract_history.length(), 2)
+  assert_eq(repair.prior_takes.length(), 3)
+  assert_eq(repair.prior_take_evidence.length(), 1)
+  assert_eq(repair.prior_take_evidence[0].candidate, blocked.candidate)
+  assert_eq(repair.prior_take_evidence[0].audit_receipt, blocked.audit_receipt)
+  assert_eq(repair.integration_conflicts, [conflict])
+  assert_true(repair.candidate is None)
+  assert_true(repair.verification_receipts.length() == 0)
+  assert_true(repair.audit_receipt is None)
+  assert_true(repair.integration_intent is None)
+  assert_eq(
+    repair.part.lifecycle,
+    @control.PartLifecycle::PartExecuting(implementation.id),
+  )
 }
 
 ///|

@@ -18,6 +18,7 @@ fn assurance_contract(
     part_id: @control.PartId("part-1"),
     revision: 1,
     digest: assurance_digest_a,
+    repair_conflict_id: None,
     instruction_artifact: {
       artifact_id: "instruction-1",
       digest: assurance_digest_a,

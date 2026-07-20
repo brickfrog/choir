@@ -512,6 +512,7 @@ fn record_promotion_conflict(
   snapshot : PartWorkflowSnapshot,
   observation : PartEffectObservation,
   observed_at : Int64,
+  is_nfc : (String) -> Bool,
 ) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
   let effect = match authorized_effect(snapshot) {
     Ok(value) => value
@@ -521,9 +522,32 @@ fn record_promotion_conflict(
     Some(value) => value
     None => return Err(workflow_error("integration intent is missing"))
   }
+  let conflict = match observation {
+    PromotionConflictObserved(value) => value
+    _ => return Err(workflow_error("promotion conflict evidence is missing"))
+  }
   match effect.kind {
     GeneratePromotion(expected) if expected == intent => ()
     _ => return Err(workflow_error("promotion conflict has the wrong intent"))
+  }
+  if conflict.intent_id != intent.id ||
+    conflict.candidate_id != intent.candidate_id ||
+    conflict.candidate_commit_oid != intent.candidate_commit_oid ||
+    conflict.expected_goal_head_oid != intent.expected_goal_head_oid ||
+    conflict.expected_goal_head_tree_oid.0 == "" ||
+    conflict.merge_base_oid.0 == "" ||
+    @control.digest_text(conflict.evidence_digest).length() != 64 ||
+    conflict.id.0 == "" ||
+    conflict.conflicting_paths.length() == 0 ||
+    snapshot.integration_conflicts.any(fn(previous) {
+      previous.id == conflict.id
+    }) {
+    return Err(workflow_error("promotion conflict evidence is inconsistent"))
+  }
+  for path in conflict.conflicting_paths {
+    if @control.validate_repo_path(path, is_nfc) is Err(_) {
+      return Err(workflow_error("promotion conflict path is invalid"))
+    }
   }
   let part = match
     @control.transition_part(
@@ -545,6 +569,7 @@ fn record_promotion_conflict(
         ..intent,
         lifecycle: @control.IntegrationIntentLifecycle::IntegrationConflict,
       }),
+      integration_conflicts: snapshot.integration_conflicts + [conflict],
     },
     observation,
     observed_at,

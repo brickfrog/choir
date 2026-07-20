@@ -35,6 +35,18 @@ pub(all) struct PartIdentityPlan {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) struct PriorPartTakeEvidence {
+  task_contract_revision_id : @control.RevisionId
+  implementation_result : ImplementationExecutionResult?
+  candidate : @control.CandidateCommit?
+  verification_receipts : Array[@control.VerificationReceipt]
+  verification_authorization : @control.VerificationAuthorizationSet?
+  audit_result : @control.AuditResult?
+  audit_receipt : @control.AuditReceipt?
+  integration_intent : @control.IntegrationIntent?
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub(all) enum PartEffectKind {
   PrepareImplementationSandbox(@control.SandboxLease)
   StartImplementationHarness(@control.HarnessSession)
@@ -174,7 +186,7 @@ pub(all) enum PartEffectObservation {
     Array[@control.HarnessEventEnvelope]
   )
   PromotionGenerated(@control.PromotionCommit)
-  PromotionConflictObserved
+  PromotionConflictObserved(@control.IntegrationConflict)
   IntegrationWitnessObserved(@control.IntegrationWitnessObservation)
 } derive(Debug, Eq, ToJson, FromJson)
 
@@ -187,10 +199,13 @@ pub(all) struct PartWorkflowSnapshot {
   goal : @control.Goal
   part : @control.GoalPart
   task_contract : @control.TaskContractRevision
+  task_contract_history : Array[@control.TaskContractRevision]
   identities : PartIdentityPlan
   implementation_take : @control.Take
   verification_take : @control.Take
   audit_take : @control.Take
+  prior_takes : Array[@control.Take]
+  prior_take_evidence : Array[PriorPartTakeEvidence]
   sandbox_leases : Array[@control.SandboxLease]
   harness_sessions : Array[@control.HarnessSession]
   harness_events : Array[@control.HarnessEventEnvelope]
@@ -207,6 +222,13 @@ pub(all) struct PartWorkflowSnapshot {
   integration_intent : @control.IntegrationIntent?
   promotion_commit : @control.PromotionCommit?
   integration_receipt : @control.IntegrationReceipt?
+  integration_conflicts : Array[@control.IntegrationConflict]
   pending_effect : PartEffectIntent?
   effect_receipts : Array[PartEffectReceipt]
 } derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum PartConflictRepairDecision {
+  PartConflictRepairPlanned(PartWorkflowSnapshot)
+  PartConflictRepairLimitReached
+} derive(Debug, Eq)
