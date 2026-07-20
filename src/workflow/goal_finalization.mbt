@@ -71,6 +71,7 @@ pub(all) struct GoalFinalizationRecord {
 pub(all) enum GoalFinalizationTickOutcome {
   GoalFinalizationPending
   GoalFinalizationSucceeded
+  GoalFinalizationPublicationRemoteUnavailable
   GoalFinalizationNeedsUserInput
   GoalFinalizationDrifted
   GoalFinalizationAmbiguous

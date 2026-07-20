@@ -381,6 +381,11 @@ unconnected product path usable.
   user's answer to that exact request as an immutable artifact, replay the same
   answer safely after restart, reject conflicting answers, and resume only the
   captured state. Ordinary resume steering cannot bypass an active request.
+  An assured Goal whose repository has no `origin` now follows this path with
+  the exact `GoalInputPublicationRemoteUnavailable` reason. It creates no
+  publication intent and does not retry on each daemon tick; after the user
+  configures the remote and answers the request, the same assured Goal resumes
+  publication through the ordinary passive gate.
 - The Goal skill is the sole Conductor instruction contract. Claude consumes
   its generated plugin form; Codex receives the same contract as explicit
   developer instructions. Both are directly launchable Conductors, and both
@@ -442,9 +447,10 @@ compiler still reports the repository's existing warning set.
   ran the accepted Part through Codex implementation, native Moon verification,
   an independent Part audit, promotion, combined-tree verification, and an
   independent Goal audit. The run stopped honestly at publication because the
-  disposable repository had no remote. It does not prove the interactive
-  Claude `/goal` turn, interruption during an in-flight Goal-level provider
-  dispatch, or a live external final-PR create.
+  disposable repository had no remote. That condition is now a durable,
+  visible input request rather than a hidden retry loop. It does not prove the
+  interactive Claude `/goal` turn, interruption during an in-flight Goal-level
+  provider dispatch, or a live external final-PR create.
 
 ### Not yet connected
 - The remaining generated cancellation-ordering edge cases beyond the

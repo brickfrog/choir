@@ -1494,7 +1494,9 @@ async test "Goal finalization input request and answer survive restart" {
     execute: async fn(_, _) { fail("answered Goal executed Parts") },
     assure: async fn(_, _) { fail("answered Goal repeated assurance") },
     finalize: async fn(_, _) {
-      Ok(@workflow.GoalFinalizationTickOutcome::GoalFinalizationNeedsUserInput)
+      Ok(
+        @workflow.GoalFinalizationTickOutcome::GoalFinalizationPublicationRemoteUnavailable,
+      )
     },
     cancel: async fn(_, _) { fail("answered Goal entered cancellation") },
   }).unwrap()
@@ -1505,12 +1507,23 @@ async test "Goal finalization input request and answer survive restart" {
   guard paused.active_input_request is Some(request) else {
     fail("durable input request is absent")
   }
+  assert_eq(
+    request.reason,
+    @workflow.GoalInputReason::GoalInputPublicationRemoteUnavailable,
+  )
   assert_eq(paused.state, @workflow.GoalExecutionState::GoalExecutionPaused)
+  let idle = @workflow.run_next_goal_execution_tick(repository, adapters, {
+    execute: async fn(_, _) { fail("input-blocked Goal executed Parts") },
+    assure: async fn(_, _) { fail("input-blocked Goal repeated assurance") },
+    finalize: async fn(_, _) { fail("input-blocked Goal retried finalization") },
+    cancel: async fn(_, _) { fail("input-blocked Goal entered cancellation") },
+  }).unwrap()
+  assert_eq(idle, @workflow.GoalExecutionTickResult::GoalExecutionTickIdle)
   guard @workflow.persist_goal_input_answer(
       workflow_repository("goal-input-answer"),
       workflow_repository_adapters(),
       request.id,
-      "The PR was reopened.",
+      "The origin remote is configured.",
       20L,
     ).unwrap()
     is @workflow.GoalInputAnswerPersistenceResult::GoalInputAnswerPersisted(
@@ -1526,7 +1539,7 @@ async test "Goal finalization input request and answer survive restart" {
       workflow_repository("goal-input-answer"),
       workflow_repository_adapters(),
       request.id,
-      "The PR was reopened.",
+      "The origin remote is configured.",
       21L,
     ).unwrap()
     is @workflow.GoalInputAnswerPersistenceResult::GoalInputAnswerPersistenceReplayed(

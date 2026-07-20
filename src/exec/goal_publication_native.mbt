@@ -1,8 +1,14 @@
 ///|
+enum NativeGoalPublicationRemoteIdentity {
+  NativeGoalPublicationRemoteAvailable(@workflow.RemoteRepositoryId)
+  NativeGoalPublicationRemoteUnavailable
+} derive(Debug, Eq)
+
+///|
 async fn native_goal_publication_remote_identity(
   repository : NativeGoalRepositoryIdentity,
   remote_name : @workflow.RemoteName,
-) -> Result[@workflow.RemoteRepositoryId, @types.ChoirError] {
+) -> Result[NativeGoalPublicationRemoteIdentity, @types.ChoirError] {
   let captured = match
     capture_native_goal_git(repository.root, [
       "remote",
@@ -14,14 +20,16 @@ async fn native_goal_publication_remote_identity(
   }
   let url = captured.output.trim().to_owned()
   if captured.exit_code != 0 || url == "" || url.contains("\u{00}") {
-    return Err(native_goal_execution_error("publication remote is unavailable"))
+    return Ok(NativeGoalPublicationRemoteUnavailable)
   }
   Ok(
-    @workflow.RemoteRepositoryId(
-      "sha256:" +
-      @storage.digest_text(
-        @storage.artifact_digest(
-          @utf8.encode("choir.remote-repository.v1\u{00}" + url),
+    NativeGoalPublicationRemoteAvailable(
+      @workflow.RemoteRepositoryId(
+        "sha256:" +
+        @storage.digest_text(
+          @storage.artifact_digest(
+            @utf8.encode("choir.remote-repository.v1\u{00}" + url),
+          ),
         ),
       ),
     ),
@@ -222,7 +230,11 @@ pub async fn advance_native_goal_publication(
   let remote_name = @workflow.RemoteName("origin")
   let remote_repository_id = match
     native_goal_publication_remote_identity(git, remote_name) {
-    Ok(value) => value
+    Ok(NativeGoalPublicationRemoteAvailable(value)) => value
+    Ok(NativeGoalPublicationRemoteUnavailable) =>
+      return Ok(
+        @workflow.GoalPublicationTickOutcome::GoalPublicationRemoteUnavailable,
+      )
     Err(error) => return Err(error)
   }
   let mut current = match
@@ -454,13 +466,27 @@ async test "native Goal publication creates, adopts, and refuses remote drift" {
     fail("failed to create publication commit")
   }
   let oid = @control.GitOid(commit.output.trim().to_owned())
-  if local_git(["remote", "add", "origin", remote]).exit_code != 0 {
-    fail("failed to add publication remote")
-  }
   let repository : NativeGoalRepositoryIdentity = {
     root,
     git_directory: root + "/.git",
     object_directory: root + "/.git/objects",
+  }
+  guard native_goal_publication_remote_identity(
+      repository,
+      @workflow.RemoteName("origin"),
+    )
+    is Ok(NativeGoalPublicationRemoteUnavailable) else {
+    fail("absent publication remote was not reported")
+  }
+  if local_git(["remote", "add", "origin", remote]).exit_code != 0 {
+    fail("failed to add publication remote")
+  }
+  guard native_goal_publication_remote_identity(
+      repository,
+      @workflow.RemoteName("origin"),
+    )
+    is Ok(NativeGoalPublicationRemoteAvailable(_)) else {
+    fail("publication remote identity remained unavailable")
   }
   let intent : @workflow.BranchPublicationIntent = {
     id: @workflow.BranchPublicationIntentId("publication-test"),

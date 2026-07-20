@@ -1641,6 +1641,12 @@ pub async fn run_native_goal_execution_tick_with_forge(
     finalize: async fn(record, _) {
       match advance_native_goal_publication(project_dir, record.goal.id) {
         Ok(@workflow.GoalPublicationTickOutcome::GoalPublicationComplete) => ()
+        Ok(
+          @workflow.GoalPublicationTickOutcome::GoalPublicationRemoteUnavailable
+        ) =>
+          return Ok(
+            @workflow.GoalFinalizationTickOutcome::GoalFinalizationPublicationRemoteUnavailable,
+          )
         Ok(@workflow.GoalPublicationTickOutcome::GoalPublicationDrifted) =>
           return Ok(
             @workflow.GoalFinalizationTickOutcome::GoalFinalizationDrifted,

@@ -46,6 +46,5 @@ options(
     "git_workspace_native.mbt": [ "native" ],
     "part_effect_native.mbt": [ "native" ],
     "part_lifecycle_native.mbt": [ "native" ],
-    "worktree_gitexclude_test.mbt": [ "native" ],
   },
 )

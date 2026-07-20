@@ -215,10 +215,13 @@ pub async fn run_next_goal_execution_tick(
         return Ok(
           GoalExecutionTickResult::GoalExecutionTickAdvanced(selected.record),
         )
-      GoalFinalizationTickOutcome::GoalFinalizationNeedsUserInput
+      GoalFinalizationTickOutcome::GoalFinalizationPublicationRemoteUnavailable
+      | GoalFinalizationTickOutcome::GoalFinalizationNeedsUserInput
       | GoalFinalizationTickOutcome::GoalFinalizationDrifted
       | GoalFinalizationTickOutcome::GoalFinalizationAmbiguous => {
         let reason = match outcome {
+          GoalFinalizationPublicationRemoteUnavailable =>
+            GoalInputReason::GoalInputPublicationRemoteUnavailable
           GoalFinalizationNeedsUserInput =>
             GoalInputReason::GoalInputFinalizationNeedsUserInput
           GoalFinalizationDrifted =>

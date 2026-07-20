@@ -104,6 +104,7 @@ pub(all) struct GoalPublicationRecord {
 pub(all) enum GoalPublicationTickOutcome {
   GoalPublicationPending
   GoalPublicationComplete
+  GoalPublicationRemoteUnavailable
   GoalPublicationDrifted
   GoalPublicationRecoveryUncertain
 } derive(Debug, Eq, ToJson, FromJson)

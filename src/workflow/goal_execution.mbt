@@ -30,6 +30,7 @@ pub(all) struct GoalInputRequestId(String) derive (
 
 ///|
 pub(all) enum GoalInputReason {
+  GoalInputPublicationRemoteUnavailable
   GoalInputFinalizationNeedsUserInput
   GoalInputFinalizationDrifted
   GoalInputFinalizationAmbiguous
