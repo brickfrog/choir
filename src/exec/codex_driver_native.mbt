@@ -90,6 +90,42 @@ fn native_codex_role_prompt(role : @harness.CodexTakeRole) -> String {
 }
 
 ///|
+fn native_codex_output_schema(role : @harness.CodexTakeRole) -> String {
+  let outcome = match role {
+    @harness.CodexTakeRole::CodexImplementationTake => ["completed"]
+    @harness.CodexTakeRole::CodexVerificationTake => ["passed", "failed"]
+    @harness.CodexTakeRole::CodexAuditTake => ["passed", "findings"]
+  }
+  let properties : Map[String, Json] = {
+    "outcome": { "type": "string".to_json(), "enum": outcome.to_json() }.to_json(),
+  }
+  let required : Array[String] = ["outcome"]
+  match role {
+    @harness.CodexTakeRole::CodexAuditTake => {
+      properties["total_findings"] = {
+        "type": "integer".to_json(),
+        "minimum": (0).to_json(),
+      }.to_json()
+      properties["blocking_findings"] = {
+        "type": "integer".to_json(),
+        "minimum": (0).to_json(),
+      }.to_json()
+      required.push("total_findings")
+      required.push("blocking_findings")
+    }
+    _ => ()
+  }
+  let schema : Map[String, Json] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema".to_json(),
+    "type": "object".to_json(),
+    "properties": properties.to_json(),
+    "required": required.to_json(),
+    "additionalProperties": false.to_json(),
+  }
+  schema.to_json().stringify(indent=0) + "\n"
+}
+
+///|
 fn push_codex_config(
   args : Array[String],
   key : String,
@@ -100,7 +136,10 @@ fn push_codex_config(
 }
 
 ///|
-fn native_codex_driver_args(config : NativeCodexDriverConfig) -> Array[String] {
+fn native_codex_driver_args(
+  config : NativeCodexDriverConfig,
+  output_schema_path : String,
+) -> Array[String] {
   let args : Array[String] = [
     "exec", "--json", "--ephemeral", "--skip-git-repo-check", "--ignore-user-config",
     "--ignore-rules", "--strict-config",
@@ -150,6 +189,8 @@ fn native_codex_driver_args(config : NativeCodexDriverConfig) -> Array[String] {
     server_key + ".default_tools_approval_mode",
     "approve".to_json().stringify(),
   )
+  args.push("--output-schema")
+  args.push(output_schema_path)
   args.push("-")
   args
 }
@@ -406,6 +447,10 @@ pub async fn run_native_codex_take(
   if !@sys.create_dir_all(config.sterile_root + "/tmp") {
     return Err(native_codex_driver_error("sterile root is unavailable"))
   }
+  let output_schema_path = config.sterile_root + "/take-output-schema.json"
+  if !@sys.write_file_sync(output_schema_path, native_codex_output_schema(role)) {
+    return Err(native_codex_driver_error("output schema is unavailable"))
+  }
   match
     verify_native_codex_subscription(codex, provider_home, config.sterile_root) {
     Ok(_) => ()
@@ -427,7 +472,7 @@ pub async fn run_native_codex_take(
   )
   stdin_write.close()
   let started_at = now()
-  let args = native_codex_driver_args(config)
+  let args = native_codex_driver_args(config, output_schema_path)
   abort_if_hermetic_test_exec(
     command_to_shell_string({
       program: codex,
@@ -610,19 +655,26 @@ pub async fn run_native_codex_conductor_turn(
 
 ///|
 test "native Codex driver argv removes ambient and native execution surfaces" {
-  let args = native_codex_driver_args({
-    sterile_root: "/tmp/choir-codex-driver-test",
-    mcp_executable: "/usr/bin/node",
-    mcp_arguments: ["/opt/choir/sandbox-mcp.mjs"],
-    mcp_server_name: "choir_sandbox",
-    allowed_tools: ["read_file", "run"],
-    timeout_ms: 60000,
-  })
+  let args = native_codex_driver_args(
+    {
+      sterile_root: "/tmp/choir-codex-driver-test",
+      mcp_executable: "/usr/bin/node",
+      mcp_arguments: ["/opt/choir/sandbox-mcp.mjs"],
+      mcp_server_name: "choir_sandbox",
+      allowed_tools: ["read_file", "run"],
+      timeout_ms: 60000,
+    },
+    "/tmp/choir-codex-driver-test/take-output-schema.json",
+  )
   assert_true(args.contains("--ignore-user-config"))
   assert_true(args.contains("--ignore-rules"))
   assert_true(args.contains("shell_tool"))
   assert_true(args.contains("multi_agent"))
   assert_true(args.contains("mcp_servers.choir_sandbox.required=true"))
+  assert_true(args.contains("--output-schema"))
+  assert_true(
+    args.contains("/tmp/choir-codex-driver-test/take-output-schema.json"),
+  )
   assert_eq(args[args.length() - 1], "-")
   assert_true(
     args.contains(
@@ -630,6 +682,24 @@ test "native Codex driver argv removes ambient and native execution surfaces" {
     ),
   )
   assert_false(args.contains("--dangerously-bypass-approvals-and-sandbox"))
+}
+
+///|
+test "native Codex Take schemas constrain every terminal role" {
+  let implementation = native_codex_output_schema(
+    @harness.CodexTakeRole::CodexImplementationTake,
+  )
+  let verification = native_codex_output_schema(
+    @harness.CodexTakeRole::CodexVerificationTake,
+  )
+  let audit = native_codex_output_schema(@harness.CodexTakeRole::CodexAuditTake)
+  assert_true(@json.parse(implementation) is Object(_))
+  assert_true(implementation.contains("\"completed\""))
+  assert_true(verification.contains("\"passed\""))
+  assert_true(verification.contains("\"failed\""))
+  assert_true(audit.contains("\"total_findings\""))
+  assert_true(audit.contains("\"blocking_findings\""))
+  assert_true(audit.contains("\"additionalProperties\":false"))
 }
 
 ///|

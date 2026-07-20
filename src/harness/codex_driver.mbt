@@ -267,6 +267,7 @@ pub fn codex_effective_surface_manifest_digest(
       mcp_server_name +
       "\u{00}tools=" +
       tools.join(",") +
+      "\u{00}response_schema=choir.codex-take-output.v1" +
       "\u{00}disabled=" +
       disabled.join(","),
     ),
