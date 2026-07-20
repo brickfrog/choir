@@ -136,14 +136,10 @@ fn push_codex_config(
 }
 
 ///|
-fn native_codex_driver_args(
+fn push_native_codex_take_config(
+  args : Array[String],
   config : NativeCodexDriverConfig,
-  output_schema_path : String,
-) -> Array[String] {
-  let args : Array[String] = [
-    "exec", "--json", "--ephemeral", "--skip-git-repo-check", "--ignore-user-config",
-    "--ignore-rules", "--strict-config",
-  ]
+) -> Unit {
   for feature in @harness.codex_take_disabled_features() {
     args.push("--disable")
     args.push(feature)
@@ -167,6 +163,8 @@ fn native_codex_driver_args(
     args, "shell_environment_policy.set", "{PATH=\"/usr/bin:/bin\",HOME=\"/nonexistent\"}",
   )
   push_codex_config(args, "web_search", "disabled".to_json().stringify())
+  push_codex_config(args, "personality", "none".to_json().stringify())
+  push_codex_config(args, "project_doc_max_bytes", "0")
   let server_key = "mcp_servers." + config.mcp_server_name
   push_codex_config(
     args,
@@ -189,9 +187,14 @@ fn native_codex_driver_args(
     server_key + ".default_tools_approval_mode",
     "approve".to_json().stringify(),
   )
-  args.push("--output-schema")
-  args.push(output_schema_path)
-  args.push("-")
+}
+
+///|
+fn native_codex_app_server_args(
+  config : NativeCodexDriverConfig,
+) -> Array[String] {
+  let args : Array[String] = ["app-server", "--listen", "stdio://"]
+  push_native_codex_take_config(args, config)
   args
 }
 
@@ -283,6 +286,18 @@ fn native_codex_environment(
     "COLUMNS": "200",
     "NO_COLOR": "1",
   }
+}
+
+///|
+fn native_codex_app_server_environment(
+  sterile_root : String,
+) -> Map[String, String] {
+  let environment = native_codex_environment(
+    sterile_root + "/home",
+    sterile_root,
+  )
+  environment["CODEX_HOME"] = sterile_root + "/codex-home"
+  environment
 }
 
 ///|
@@ -393,6 +408,633 @@ async fn verify_native_codex_subscription(
 }
 
 ///|
+priv enum NativeCodexTakeState {
+  CodexServerStarting
+  CodexThreadReady
+  CodexTurnRunning
+  CodexTurnCompleted
+  CodexTurnInterrupted
+} derive(Eq, ToJson, FromJson)
+
+///|
+priv struct NativeCodexTakeManifest {
+  version : Int
+  session_id : @control.HarnessSessionId
+  take_id : @control.TakeId
+  role : @harness.CodexTakeRole
+  surface_digest : @control.Digest
+  server_pid : Int
+  server_generation : Int
+  server_initialized : Bool
+  thread_id : String?
+  turn_id : String?
+  client_user_message_id : String
+  read_ordinal : Int
+  state : NativeCodexTakeState
+  started_at : Int64
+  finished_at : Int64?
+  terminal_trace : String?
+} derive(ToJson, FromJson)
+
+///|
+fn native_codex_manifest_path(config : NativeCodexDriverConfig) -> String {
+  config.sterile_root + "/take-session.json"
+}
+
+///|
+fn native_codex_fifo_path(config : NativeCodexDriverConfig) -> String {
+  config.sterile_root + "/app-server.stdin"
+}
+
+///|
+fn native_codex_log_path(config : NativeCodexDriverConfig) -> String {
+  config.sterile_root + "/app-server.jsonl"
+}
+
+///|
+fn store_native_codex_manifest(
+  config : NativeCodexDriverConfig,
+  manifest : NativeCodexTakeManifest,
+) -> Result[Unit, @types.ChoirError] {
+  if @sys.write_file_atomic(
+      native_codex_manifest_path(config),
+      ToJson::to_json(manifest).stringify(indent=0) + "\n",
+    ) {
+    Ok(())
+  } else {
+    Err(native_codex_driver_error("Take session manifest write failed"))
+  }
+}
+
+///|
+fn load_native_codex_manifest(
+  config : NativeCodexDriverConfig,
+  session : @control.HarnessSession,
+  role : @harness.CodexTakeRole,
+) -> Result[NativeCodexTakeManifest?, @types.ChoirError] {
+  let path = native_codex_manifest_path(config)
+  if !@sys.path_exists(path) {
+    return Ok(None)
+  }
+  if @sys.file_size(path) <= 0 || @sys.file_size(path) > 65536 {
+    return Err(native_codex_driver_error("Take session manifest is invalid"))
+  }
+  let json = @json.parse(@sys.read_file(path)) catch {
+    _ =>
+      return Err(native_codex_driver_error("Take session manifest is not JSON"))
+  }
+  let manifest : NativeCodexTakeManifest = @json.from_json(json) catch {
+    _ =>
+      return Err(
+        native_codex_driver_error("Take session manifest schema is invalid"),
+      )
+  }
+  if manifest.version != 1 ||
+    manifest.session_id != session.id ||
+    manifest.take_id != session.take_id ||
+    manifest.role != role ||
+    manifest.surface_digest != session.effective_surface_manifest_digest ||
+    manifest.server_generation < 0 ||
+    manifest.read_ordinal < 0 ||
+    manifest.client_user_message_id == "" {
+    Err(native_codex_driver_error("Take session manifest identity is stale"))
+  } else {
+    Ok(Some(manifest))
+  }
+}
+
+///|
+fn native_codex_object_field(
+  fields : Map[String, Json],
+  key : String,
+) -> Map[String, Json]? {
+  match fields.get(key) {
+    Some(Object(value)) => Some(value)
+    _ => None
+  }
+}
+
+///|
+fn native_codex_array_field(
+  fields : Map[String, Json],
+  key : String,
+) -> Array[Json]? {
+  match fields.get(key) {
+    Some(Array(value)) => Some(value)
+    _ => None
+  }
+}
+
+///|
+fn native_codex_response_from_log(
+  config : NativeCodexDriverConfig,
+  request_id : String,
+) -> Result[Json?, @types.ChoirError] {
+  let path = native_codex_log_path(config)
+  if !@sys.path_exists(path) {
+    return Ok(None)
+  }
+  let size = @sys.file_size(path)
+  if size < 0 || size > 16 * 1024 * 1024 {
+    return Err(native_codex_driver_error("app-server log exceeded its bound"))
+  }
+  for raw in @sys.read_file(path).split("\n") {
+    let line = raw.trim().to_owned()
+    if line == "" {
+      continue
+    }
+    let json = @json.parse(line) catch { _ => continue }
+    guard json is Object(fields) else { continue }
+    if @types.json_field_string(fields, "id") != Some(request_id) {
+      continue
+    }
+    match fields.get("error") {
+      Some(Object(error)) => {
+        let message = match @types.json_field_string(error, "message") {
+          Some(value) => value
+          None => "unknown app-server error"
+        }
+        return Err(native_codex_driver_error(message))
+      }
+      _ => ()
+    }
+    match fields.get("result") {
+      Some(result) => return Ok(Some(result))
+      None =>
+        return Err(
+          native_codex_driver_error("app-server response has no result"),
+        )
+    }
+  }
+  Ok(None)
+}
+
+///|
+async fn write_native_codex_app_server(
+  config : NativeCodexDriverConfig,
+  message : Json,
+) -> Result[Unit, @types.ChoirError] {
+  let fifo = native_codex_fifo_path(config)
+  let (stdin_read, stdin_write) = @process.write_to_process() catch {
+    _ => return Err(native_codex_driver_error("app-server request pipe failed"))
+  }
+  ignore(
+    stdin_write.write(message.stringify(indent=0) + "\n") catch {
+      _ => {
+        stdin_write.close()
+        return Err(native_codex_driver_error("app-server request write failed"))
+      }
+    },
+  )
+  stdin_write.close()
+  let sink = @process.redirect_to_file("/dev/null") catch {
+    _ => return Err(native_codex_driver_error("app-server request sink failed"))
+  }
+  abort_if_hermetic_test_exec("/usr/bin/timeout 5s /usr/bin/tee " + fifo)
+  let code = @process.run(
+    "/usr/bin/timeout",
+    ["5s", "/usr/bin/tee", fifo],
+    extra_env={ "PATH": "/usr/bin:/bin", "LC_ALL": "C" },
+    inherit_env=false,
+    stdin=stdin_read,
+    stdout=sink,
+    stderr=sink,
+    cwd=config.sterile_root,
+  ) catch {
+    _ => return Err(native_codex_driver_error("app-server request failed"))
+  }
+  if code == 0 {
+    Ok(())
+  } else {
+    Err(native_codex_driver_error("app-server request transport failed"))
+  }
+}
+
+///|
+async fn request_native_codex_app_server(
+  config : NativeCodexDriverConfig,
+  request_id : String,
+  method_name : String,
+  params : Json,
+) -> Result[Json, @types.ChoirError] {
+  match native_codex_response_from_log(config, request_id) {
+    Ok(Some(value)) => return Ok(value)
+    Ok(None) => ()
+    Err(error) => return Err(error)
+  }
+  let request : Map[String, Json] = {
+    "id": request_id.to_json(),
+    "method": method_name.to_json(),
+    "params": params,
+  }
+  match write_native_codex_app_server(config, request.to_json()) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  for poll = 0; poll < 200; poll = poll + 1 {
+    match native_codex_response_from_log(config, request_id) {
+      Ok(Some(value)) => return Ok(value)
+      Ok(None) => @async.sleep(50)
+      Err(error) => return Err(error)
+    }
+  }
+  Err(@types.ChoirError::timeout("Codex app-server request"))
+}
+
+///|
+async fn notify_native_codex_app_server(
+  config : NativeCodexDriverConfig,
+  method_name : String,
+  params : Json,
+) -> Result[Unit, @types.ChoirError] {
+  let notification : Map[String, Json] = {
+    "method": method_name.to_json(),
+    "params": params,
+  }
+  write_native_codex_app_server(config, notification.to_json())
+}
+
+///|
+fn prepare_native_codex_app_server_home(
+  config : NativeCodexDriverConfig,
+  provider_home : String,
+) -> Result[Unit, @types.ChoirError] {
+  for
+    path in [
+      config.sterile_root,
+      config.sterile_root + "/tmp",
+      config.sterile_root + "/home",
+      config.sterile_root + "/codex-home",
+    ] {
+    if !@sys.create_dir_all(path) || !@sys.chmod_mode(path, 0o700) {
+      return Err(native_codex_driver_error("app-server root is unavailable"))
+    }
+  }
+  let provider_codex_home = match @sys.getenv("CODEX_HOME") {
+    Some(value) if value.has_prefix("/") => value
+    _ => provider_home + "/.codex"
+  }
+  let auth_source = provider_codex_home + "/auth.json"
+  if !@sys.path_exists(auth_source) ||
+    !@sys.symlink_force(
+      auth_source,
+      config.sterile_root + "/codex-home/auth.json",
+    ) {
+    return Err(
+      native_codex_driver_error("provider-managed login is unavailable"),
+    )
+  }
+  Ok(())
+}
+
+///|
+async fn spawn_native_codex_app_server(
+  config : NativeCodexDriverConfig,
+  codex : String,
+  manifest : NativeCodexTakeManifest,
+) -> Result[NativeCodexTakeManifest, @types.ChoirError] {
+  let fifo = native_codex_fifo_path(config)
+  if @sys.path_entry_exists(fifo) && !@sys.delete_file_sync(fifo) {
+    return Err(
+      native_codex_driver_error("stale app-server input could not be removed"),
+    )
+  }
+  let created = @process.collect_output_merged(
+    "/usr/bin/mkfifo",
+    ["-m", "600", fifo],
+    extra_env={ "PATH": "/usr/bin:/bin", "LC_ALL": "C" },
+    inherit_env=false,
+    cwd=config.sterile_root,
+  ) catch {
+    _ =>
+      return Err(native_codex_driver_error("app-server input creation failed"))
+  }
+  if created.0 != 0 {
+    return Err(native_codex_driver_error("app-server input creation failed"))
+  }
+  let script =
+    #|fifo=$1
+    #|output=$2
+    #|errors=$3
+    #|shift 3
+    #|exec 3<>"$fifo"
+    #|exec "$@" <&3 >>"$output" 2>>"$errors"
+  let arguments : Array[String] = [
+    "/bin/sh",
+    "-c",
+    script,
+    "choir-codex-app-server",
+    fifo,
+    native_codex_log_path(config),
+    config.sterile_root + "/app-server.stderr",
+    codex,
+  ]
+  for argument in native_codex_app_server_args(config) {
+    arguments.push(argument)
+  }
+  let sink = @process.redirect_to_file("/dev/null") catch {
+    _ => return Err(native_codex_driver_error("app-server sink failed"))
+  }
+  abort_if_hermetic_test_exec("/usr/bin/setsid /bin/sh -c <codex-app-server>")
+  let pid = @process.spawn_orphan(
+    "/usr/bin/setsid",
+    arguments,
+    extra_env=native_codex_app_server_environment(config.sterile_root),
+    inherit_env=false,
+    stdout=sink,
+    stderr=sink,
+    cwd=config.sterile_root,
+  ) catch {
+    _ => return Err(native_codex_driver_error("app-server failed to start"))
+  }
+  let updated = {
+    ..manifest,
+    server_pid: pid,
+    server_generation: manifest.server_generation + 1,
+    server_initialized: false,
+  }
+  match store_native_codex_manifest(config, updated) {
+    Ok(_) => Ok(updated)
+    Err(error) => {
+      @sys.kill_pgid_sequence_best_effort(pid)
+      Err(error)
+    }
+  }
+}
+
+///|
+async fn ensure_native_codex_app_server(
+  config : NativeCodexDriverConfig,
+  codex : String,
+  manifest : NativeCodexTakeManifest,
+) -> Result[NativeCodexTakeManifest, @types.ChoirError] {
+  let mut manifest = manifest
+  if manifest.server_pid <= 0 || !@sys.pgid_is_alive(manifest.server_pid) {
+    manifest = match spawn_native_codex_app_server(config, codex, manifest) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+  }
+  if manifest.server_initialized {
+    return Ok(manifest)
+  }
+  let generation = manifest.server_generation.to_string()
+  let initialize : Map[String, Json] = {
+    "clientInfo": {
+      "name": "choir".to_json(),
+      "title": "Choir".to_json(),
+      "version": "0.1.0".to_json(),
+    }.to_json(),
+  }
+  match
+    request_native_codex_app_server(
+      config,
+      "initialize:" + generation,
+      "initialize",
+      initialize.to_json(),
+    ) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  match
+    notify_native_codex_app_server(config, "initialized", Json::empty_object()) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  manifest = { ..manifest, server_initialized: true }
+  match store_native_codex_manifest(config, manifest) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  match manifest.thread_id {
+    Some(thread_id) => {
+      let params : Map[String, Json] = { "threadId": thread_id.to_json() }
+      match
+        request_native_codex_app_server(
+          config,
+          "thread-resume:" + generation,
+          "thread/resume",
+          params.to_json(),
+        ) {
+        Ok(_) => ()
+        Err(error) => return Err(error)
+      }
+    }
+    None => ()
+  }
+  Ok(manifest)
+}
+
+///|
+fn native_codex_result_object(
+  result : Json,
+  key : String,
+) -> Result[Map[String, Json], @types.ChoirError] {
+  guard result is Object(fields) else {
+    return Err(native_codex_driver_error("app-server result is not an object"))
+  }
+  match native_codex_object_field(fields, key) {
+    Some(value) => Ok(value)
+    None =>
+      Err(native_codex_driver_error("app-server result schema is invalid"))
+  }
+}
+
+///|
+async fn read_native_codex_thread(
+  config : NativeCodexDriverConfig,
+  manifest : NativeCodexTakeManifest,
+) -> Result[(NativeCodexTakeManifest, Json), @types.ChoirError] {
+  let thread_id = match manifest.thread_id {
+    Some(value) => value
+    None =>
+      return Err(native_codex_driver_error("thread identity is unavailable"))
+  }
+  let next = { ..manifest, read_ordinal: manifest.read_ordinal + 1 }
+  match store_native_codex_manifest(config, next) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let params : Map[String, Json] = {
+    "threadId": thread_id.to_json(),
+    "includeTurns": true.to_json(),
+  }
+  let result = match
+    request_native_codex_app_server(
+      config,
+      "thread-read:" + next.read_ordinal.to_string(),
+      "thread/read",
+      params.to_json(),
+    ) {
+    Ok(value) => value
+    Err(error) if error.message().contains("is not materialized yet") => {
+      let empty_thread : Map[String, Json] = {
+        "id": thread_id.to_json(),
+        "turns": ([] : Array[Json]).to_json(),
+      }
+      return Ok((next, empty_thread.to_json()))
+    }
+    Err(error) => return Err(error)
+  }
+  let thread = match native_codex_result_object(result, "thread") {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  Ok((next, thread.to_json()))
+}
+
+///|
+fn native_codex_turn_client_id(turn : Map[String, Json]) -> String? {
+  match native_codex_array_field(turn, "items") {
+    Some(items) =>
+      for item in items {
+        guard item is Object(fields) else { continue }
+        if @types.json_field_string(fields, "type") == Some("userMessage") {
+          match @types.json_field_string(fields, "clientId") {
+            Some(value) => return Some(value)
+            None => ()
+          }
+        }
+      }
+    None => ()
+  }
+  None
+}
+
+///|
+fn find_native_codex_turn(
+  thread : Json,
+  manifest : NativeCodexTakeManifest,
+) -> Map[String, Json]? {
+  guard thread is Object(fields) else { return None }
+  let turns = match native_codex_array_field(fields, "turns") {
+    Some(value) => value
+    None => return None
+  }
+  for turn in turns {
+    guard turn is Object(turn_fields) else { continue }
+    let id = @types.json_field_string(turn_fields, "id")
+    match manifest.turn_id {
+      Some(expected) if id == Some(expected) => return Some(turn_fields)
+      Some(_) => ()
+      None =>
+        if native_codex_turn_client_id(turn_fields) ==
+          Some(manifest.client_user_message_id) {
+          return Some(turn_fields)
+        }
+    }
+  }
+  None
+}
+
+///|
+fn native_codex_turn_trace(
+  thread_id : String,
+  turn : Map[String, Json],
+) -> Result[String, @types.ChoirError] {
+  let turn_id = match @types.json_field_string(turn, "id") {
+    Some(value) => value
+    None => return Err(native_codex_driver_error("turn identity is absent"))
+  }
+  let lines : Array[String] = []
+  lines.push(
+    { "type": "thread.started".to_json(), "thread_id": thread_id.to_json() }
+    .to_json()
+    .stringify(indent=0),
+  )
+  lines.push(
+    { "type": "turn.started".to_json(), "turn_id": turn_id.to_json() }
+    .to_json()
+    .stringify(indent=0),
+  )
+  let items = match native_codex_array_field(turn, "items") {
+    Some(value) => value
+    None => return Err(native_codex_driver_error("turn items are absent"))
+  }
+  for item in items {
+    guard item is Object(fields) else {
+      return Err(native_codex_driver_error("turn item is not an object"))
+    }
+    match @types.json_field_string(fields, "type") {
+      Some("userMessage") | Some("reasoning") => ()
+      Some("agentMessage") => {
+        let translated : Map[String, Json] = {
+          "id": match @types.json_field_string(fields, "id") {
+            Some(value) => value.to_json()
+            None => "missing".to_json()
+          },
+          "type": "agent_message".to_json(),
+          "text": match @types.json_field_string(fields, "text") {
+            Some(value) => value.to_json()
+            None => "".to_json()
+          },
+        }
+        lines.push(
+          { "type": "item.completed".to_json(), "item": translated.to_json() }
+          .to_json()
+          .stringify(indent=0),
+        )
+      }
+      Some("mcpToolCall") => {
+        let status = match @types.json_field_string(fields, "status") {
+          Some(value) => value
+          None => "invalid"
+        }
+        let translated : Map[String, Json] = {
+          "id": match @types.json_field_string(fields, "id") {
+            Some(value) => value.to_json()
+            None => "".to_json()
+          },
+          "type": "mcp_tool_call".to_json(),
+          "server": match @types.json_field_string(fields, "server") {
+            Some(value) => value.to_json()
+            None => "".to_json()
+          },
+          "tool": match @types.json_field_string(fields, "tool") {
+            Some(value) => value.to_json()
+            None => "".to_json()
+          },
+          "status": "in_progress".to_json(),
+        }
+        lines.push(
+          { "type": "item.started".to_json(), "item": translated.to_json() }
+          .to_json()
+          .stringify(indent=0),
+        )
+        translated["status"] = status.to_json()
+        lines.push(
+          { "type": "item.completed".to_json(), "item": translated.to_json() }
+          .to_json()
+          .stringify(indent=0),
+        )
+      }
+      Some(other) => {
+        let translated : Map[String, Json] = {
+          "id": "native-item".to_json(),
+          "type": other.to_json(),
+        }
+        lines.push(
+          { "type": "item.completed".to_json(), "item": translated.to_json() }
+          .to_json()
+          .stringify(indent=0),
+        )
+      }
+      None => return Err(native_codex_driver_error("turn item type is absent"))
+    }
+  }
+  match @types.json_field_string(turn, "status") {
+    Some("completed") =>
+      lines.push(
+        { "type": "turn.completed".to_json(), "turn_id": turn_id.to_json() }
+        .to_json()
+        .stringify(indent=0),
+      )
+    _ => return Err(native_codex_driver_error("turn is not complete"))
+  }
+  Ok(lines.join("\n") + "\n")
+}
+
+///|
 pub async fn run_native_codex_take(
   config : NativeCodexDriverConfig,
   session : @control.HarnessSession,
@@ -400,6 +1042,7 @@ pub async fn run_native_codex_take(
   instruction : String,
   now : () -> Int64,
   cancellation_requested? : () -> Bool = fn() { false },
+  after_turn_started? : () -> Unit = fn() { () },
 ) -> Result[@harness.CodexDriverResult, @types.ChoirError] {
   match validate_native_codex_config(config) {
     Ok(_) => ()
@@ -444,12 +1087,9 @@ pub async fn run_native_codex_take(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  if !@sys.create_dir_all(config.sterile_root + "/tmp") {
-    return Err(native_codex_driver_error("sterile root is unavailable"))
-  }
-  let output_schema_path = config.sterile_root + "/take-output-schema.json"
-  if !@sys.write_file_sync(output_schema_path, native_codex_output_schema(role)) {
-    return Err(native_codex_driver_error("output schema is unavailable"))
+  match prepare_native_codex_app_server_home(config, provider_home) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
   }
   match
     verify_native_codex_subscription(codex, provider_home, config.sterile_root) {
@@ -459,75 +1099,284 @@ pub async fn run_native_codex_take(
   let prompt = native_codex_role_prompt(role) +
     "\n\nInstruction:\n" +
     instruction
-  let (stdin_read, stdin_write) = @process.write_to_process() catch {
-    _ => return Err(native_codex_driver_error("stdin pipe failed"))
+  let output_schema = @json.parse(native_codex_output_schema(role)) catch {
+    _ => return Err(native_codex_driver_error("output schema is invalid"))
   }
-  ignore(
-    stdin_write.write(prompt) catch {
-      _ => {
-        stdin_write.close()
-        return Err(native_codex_driver_error("instruction write failed"))
-      }
-    },
-  )
-  stdin_write.close()
-  let started_at = now()
-  let args = native_codex_driver_args(config, output_schema_path)
-  abort_if_hermetic_test_exec(
-    command_to_shell_string({
-      program: codex,
-      args,
-      workdir: Some(config.sterile_root),
-    }),
-  )
-  let collected = match
-    collect_interruptible_process(
-      codex,
-      args,
-      native_codex_environment(provider_home, config.sterile_root),
-      stdin_read,
-      config.sterile_root,
-      config.timeout_ms,
-      cancellation_requested,
-    ) {
+  let loaded = match load_native_codex_manifest(config, session, role) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let (exit_code, data) = match collected {
-    NativeInterruptibleProcessOutcome::NativeProcessCompleted(code, output) =>
-      (code, output)
-    NativeInterruptibleProcessOutcome::NativeProcessInterrupted(_) =>
+  let mut manifest = match loaded {
+    Some(value) => value
+    None => {
+      let value : NativeCodexTakeManifest = {
+        version: 1,
+        session_id: session.id,
+        take_id: session.take_id,
+        role,
+        surface_digest: session.effective_surface_manifest_digest,
+        server_pid: 0,
+        server_generation: 0,
+        server_initialized: false,
+        thread_id: None,
+        turn_id: None,
+        client_user_message_id: "choir-" + session.id.0 + "-user-1",
+        read_ordinal: 0,
+        state: CodexServerStarting,
+        started_at: now(),
+        finished_at: None,
+        terminal_trace: None,
+      }
+      match store_native_codex_manifest(config, value) {
+        Ok(_) => value
+        Err(error) => return Err(error)
+      }
+    }
+  }
+  match manifest.state {
+    CodexTurnInterrupted =>
       return Err(
         @types.ChoirError::canceled("Codex Take interrupted at the Goal cutoff"),
       )
-    NativeInterruptibleProcessOutcome::NativeProcessTimedOut(_) =>
-      return Err(@types.ChoirError::timeout("Codex Take"))
+    _ => ()
   }
-  let output = data
-  if exit_code != 0 {
-    let usage_limited = output.contains("usage limit") ||
-      output.contains("rate limit") ||
-      output.contains("Usage limit") ||
-      output.contains("Rate limit")
-    let mcp_failed = (output.contains("MCP") || output.contains("mcp")) &&
-      (output.contains("failed") || output.contains("error"))
-    return Err(
-      native_codex_driver_error(
-        "provider process exited with status " +
-        exit_code.to_string() +
-        " usage_limited=" +
-        usage_limited.to_string() +
-        " mcp_failed=" +
-        mcp_failed.to_string(),
-      ),
-    )
+  let mut terminal_trace = match manifest.terminal_trace {
+    Some(value) => value
+    None => ""
+  }
+  if terminal_trace == "" {
+    manifest = match ensure_native_codex_app_server(config, codex, manifest) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    if manifest.thread_id is None {
+      let params : Map[String, Json] = {
+        "cwd": config.sterile_root.to_json(),
+        "ephemeral": false.to_json(),
+        "approvalPolicy": "never".to_json(),
+        "sandbox": "read-only".to_json(),
+        "personality": "none".to_json(),
+        "baseInstructions": native_codex_role_prompt(role).to_json(),
+      }
+      let result = match
+        request_native_codex_app_server(
+          config,
+          "thread-start",
+          "thread/start",
+          params.to_json(),
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let thread = match native_codex_result_object(result, "thread") {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let thread_id = match @types.json_field_string(thread, "id") {
+        Some(value) => value
+        None =>
+          return Err(native_codex_driver_error("thread identity is absent"))
+      }
+      manifest = {
+        ..manifest,
+        thread_id: Some(thread_id),
+        state: CodexThreadReady,
+      }
+      match store_native_codex_manifest(config, manifest) {
+        Ok(_) => ()
+        Err(error) => return Err(error)
+      }
+    }
+    let read = match read_native_codex_thread(config, manifest) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    manifest = read.0
+    let mut turn = find_native_codex_turn(read.1, manifest)
+    if turn is None {
+      let thread_id = match manifest.thread_id {
+        Some(value) => value
+        None =>
+          return Err(native_codex_driver_error("thread identity is absent"))
+      }
+      let input : Array[Json] = [
+        { "type": "text".to_json(), "text": prompt.to_json() }.to_json(),
+      ]
+      let params : Map[String, Json] = {
+        "threadId": thread_id.to_json(),
+        "input": input.to_json(),
+        "clientUserMessageId": manifest.client_user_message_id.to_json(),
+        "outputSchema": output_schema,
+      }
+      let result = match
+        request_native_codex_app_server(
+          config,
+          "turn-start",
+          "turn/start",
+          params.to_json(),
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let started_turn = match native_codex_result_object(result, "turn") {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let turn_id = match @types.json_field_string(started_turn, "id") {
+        Some(value) => value
+        None => return Err(native_codex_driver_error("turn identity is absent"))
+      }
+      manifest = { ..manifest, turn_id: Some(turn_id), state: CodexTurnRunning }
+      match store_native_codex_manifest(config, manifest) {
+        Ok(_) => after_turn_started()
+        Err(error) => return Err(error)
+      }
+      turn = Some(started_turn)
+    } else {
+      let existing_turn = match turn {
+        Some(value) => value
+        None =>
+          return Err(native_codex_driver_error("persisted turn is absent"))
+      }
+      let turn_id = match @types.json_field_string(existing_turn, "id") {
+        Some(value) => value
+        None => return Err(native_codex_driver_error("turn identity is absent"))
+      }
+      if manifest.turn_id != Some(turn_id) || manifest.state == CodexThreadReady {
+        manifest = {
+          ..manifest,
+          turn_id: Some(turn_id),
+          state: CodexTurnRunning,
+        }
+        match store_native_codex_manifest(config, manifest) {
+          Ok(_) => ()
+          Err(error) => return Err(error)
+        }
+      }
+    }
+    let mut elapsed_ms = 0
+    let mut interrupt_sent = false
+    while terminal_trace == "" {
+      manifest = match ensure_native_codex_app_server(config, codex, manifest) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      if cancellation_requested() && !interrupt_sent {
+        let thread_id = match manifest.thread_id {
+          Some(value) => value
+          None =>
+            return Err(native_codex_driver_error("thread identity is absent"))
+        }
+        let turn_id = match manifest.turn_id {
+          Some(value) => value
+          None =>
+            return Err(native_codex_driver_error("turn identity is absent"))
+        }
+        let params : Map[String, Json] = {
+          "threadId": thread_id.to_json(),
+          "turnId": turn_id.to_json(),
+        }
+        match
+          request_native_codex_app_server(
+            config,
+            "turn-interrupt",
+            "turn/interrupt",
+            params.to_json(),
+          ) {
+          Ok(_) => interrupt_sent = true
+          Err(error) => return Err(error)
+        }
+      }
+      let read = match read_native_codex_thread(config, manifest) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      manifest = read.0
+      let current = match find_native_codex_turn(read.1, manifest) {
+        Some(value) => value
+        None =>
+          return Err(native_codex_driver_error("persisted turn is absent"))
+      }
+      match @types.json_field_string(current, "status") {
+        Some("completed") => {
+          let thread_id = match manifest.thread_id {
+            Some(value) => value
+            None =>
+              return Err(native_codex_driver_error("thread identity is absent"))
+          }
+          terminal_trace = match native_codex_turn_trace(thread_id, current) {
+            Ok(value) => value
+            Err(error) => return Err(error)
+          }
+          let finished_at = now()
+          manifest = {
+            ..manifest,
+            state: CodexTurnCompleted,
+            finished_at: Some(finished_at),
+            terminal_trace: Some(terminal_trace),
+          }
+          match store_native_codex_manifest(config, manifest) {
+            Ok(_) => @sys.kill_pgid_sequence_best_effort(manifest.server_pid)
+            Err(error) => return Err(error)
+          }
+        }
+        Some("interrupted") => {
+          manifest = {
+            ..manifest,
+            state: CodexTurnInterrupted,
+            finished_at: Some(now()),
+          }
+          match store_native_codex_manifest(config, manifest) {
+            Ok(_) => @sys.kill_pgid_sequence_best_effort(manifest.server_pid)
+            Err(error) => return Err(error)
+          }
+          return Err(
+            @types.ChoirError::canceled(
+              "Codex Take interrupted at the Goal cutoff",
+            ),
+          )
+        }
+        Some("failed") => {
+          @sys.kill_pgid_sequence_best_effort(manifest.server_pid)
+          return Err(native_codex_driver_error("provider turn failed"))
+        }
+        Some("inProgress") => ()
+        _ =>
+          return Err(
+            native_codex_driver_error("provider turn status is invalid"),
+          )
+      }
+      if terminal_trace == "" {
+        if elapsed_ms >= config.timeout_ms {
+          return Err(@types.ChoirError::timeout("Codex Take"))
+        }
+        @async.sleep(200)
+        elapsed_ms = elapsed_ms + 200
+      }
+    }
+  }
+  let finished_at = match manifest.finished_at {
+    Some(value) => value
+    None => return Err(native_codex_driver_error("terminal time is absent"))
+  }
+  let provider_cursor = match (manifest.thread_id, manifest.turn_id) {
+    (Some(thread_id), Some(turn_id)) => thread_id + ":" + turn_id
+    _ =>
+      return Err(
+        native_codex_driver_error("terminal provider cursor is absent"),
+      )
   }
   @harness.evaluate_codex_driver_capture({
-    session,
+    session: { ..session, provider_cursor: Some(provider_cursor) },
     role,
     allowed_tools: config.allowed_tools,
     expected_mcp_server: config.mcp_server_name,
-    capture: { exit_code, output, started_at, finished_at: now() },
+    capture: {
+      exit_code: 0,
+      output: terminal_trace,
+      started_at: manifest.started_at,
+      finished_at,
+    },
   })
 }
 
@@ -654,34 +1503,74 @@ pub async fn run_native_codex_conductor_turn(
 }
 
 ///|
-test "native Codex driver argv removes ambient and native execution surfaces" {
-  let args = native_codex_driver_args(
-    {
-      sterile_root: "/tmp/choir-codex-driver-test",
-      mcp_executable: "/usr/bin/node",
-      mcp_arguments: ["/opt/choir/sandbox-mcp.mjs"],
-      mcp_server_name: "choir_sandbox",
-      allowed_tools: ["read_file", "run"],
-      timeout_ms: 60000,
-    },
-    "/tmp/choir-codex-driver-test/take-output-schema.json",
-  )
-  assert_true(args.contains("--ignore-user-config"))
-  assert_true(args.contains("--ignore-rules"))
+test "native Codex app-server argv removes native execution surfaces" {
+  let args = native_codex_app_server_args({
+    sterile_root: "/tmp/choir-codex-driver-test",
+    mcp_executable: "/usr/bin/node",
+    mcp_arguments: ["/opt/choir/sandbox-mcp.mjs"],
+    mcp_server_name: "choir_sandbox",
+    allowed_tools: ["read_file", "run"],
+    timeout_ms: 60000,
+  })
+  assert_eq(args[:3], ["app-server", "--listen", "stdio://"])
   assert_true(args.contains("shell_tool"))
   assert_true(args.contains("multi_agent"))
   assert_true(args.contains("mcp_servers.choir_sandbox.required=true"))
-  assert_true(args.contains("--output-schema"))
-  assert_true(
-    args.contains("/tmp/choir-codex-driver-test/take-output-schema.json"),
-  )
-  assert_eq(args[args.length() - 1], "-")
   assert_true(
     args.contains(
       "mcp_servers.choir_sandbox.enabled_tools=[\"read_file\",\"run\"]",
     ),
   )
   assert_false(args.contains("--dangerously-bypass-approvals-and-sandbox"))
+}
+
+///|
+test "Codex recovery adopts the turn with the durable client message id" {
+  let manifest : NativeCodexTakeManifest = {
+    version: 1,
+    session_id: @control.HarnessSessionId("session-recovery"),
+    take_id: @control.TakeId("take-recovery"),
+    role: @harness.CodexTakeRole::CodexImplementationTake,
+    surface_digest: @control.Digest("digest-recovery"),
+    server_pid: 1,
+    server_generation: 1,
+    server_initialized: true,
+    thread_id: Some("thread-recovery"),
+    turn_id: None,
+    client_user_message_id: "client-message-recovery",
+    read_ordinal: 1,
+    state: CodexThreadReady,
+    started_at: 10L,
+    finished_at: None,
+    terminal_trace: None,
+  }
+  let thread = @json.parse(
+    (
+      #|{"id":"thread-recovery","turns":[{"id":"turn-recovery","status":"inProgress","items":[{"id":"user-1","type":"userMessage","clientId":"client-message-recovery","content":[]}]}]}
+    ),
+  ) catch {
+    _ => fail("fixture JSON is invalid")
+  }
+  let turn = find_native_codex_turn(thread, manifest)
+  assert_true(turn is Some(_))
+  guard turn is Some(fields) else { fail("recovery turn is absent") }
+  assert_eq(@types.json_field_string(fields, "id"), Some("turn-recovery"))
+}
+
+///|
+test "Codex terminal history becomes one balanced provider trace" {
+  let turn = @json.parse(
+    (
+      #|{"id":"turn-terminal","status":"completed","items":[{"id":"user-1","type":"userMessage","clientId":"client-message","content":[]},{"id":"tool-1","type":"mcpToolCall","server":"choir_sandbox","tool":"read_file","status":"completed","arguments":{}},{"id":"message-1","type":"agentMessage","text":"{\"outcome\":\"completed\"}"}]}
+    ),
+  ) catch {
+    _ => fail("fixture JSON is invalid")
+  }
+  guard turn is Object(fields) else { fail("fixture turn is invalid") }
+  let trace = native_codex_turn_trace("thread-terminal", fields).unwrap()
+  assert_true(trace.contains("\"thread_id\":\"thread-terminal\""))
+  assert_true(trace.contains("\"type\":\"mcp_tool_call\""))
+  assert_true(trace.contains("\"type\":\"turn.completed\""))
 }
 
 ///|

@@ -1228,8 +1228,24 @@ async fn reconcile_unwitnessed_native_part_effect(
       }
     @workflow.PartEffectKind::DispatchImplementation(_, _)
     | @workflow.PartEffectKind::DispatchVerification(_, _, _)
-    | @workflow.PartEffectKind::DispatchAudit(_, _, _) =>
-      Ok(@workflow.PartEffectRecovery::EffectWitnessUnavailable)
+    | @workflow.PartEffectKind::DispatchAudit(_, _, _) => {
+      let session_id = match intent.kind {
+        @workflow.PartEffectKind::DispatchImplementation(_, id)
+        | @workflow.PartEffectKind::DispatchVerification(_, id, _)
+        | @workflow.PartEffectKind::DispatchAudit(_, id, _) => id
+        _ => return Ok(@workflow.PartEffectRecovery::EffectWitnessUnavailable)
+      }
+      let session = match native_snapshot_session(snapshot, session_id) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      match session.surface {
+        @control.ProviderSurfaceId::CodexSubscriptionCli =>
+          Ok(@workflow.PartEffectRecovery::ExactEffectRetryAuthorized)
+        @control.ProviderSurfaceId::ClaudeSubscriptionCli =>
+          Ok(@workflow.PartEffectRecovery::EffectWitnessUnavailable)
+      }
+    }
   }
 }
 

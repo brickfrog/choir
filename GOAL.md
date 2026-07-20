@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Context-only amendments through: 2026-07-20T15:02:12-05:00
+Context-only amendments through: 2026-07-20T15:50:04-05:00
 
 ## Charter Semantics and Readiness
 
@@ -200,6 +200,19 @@ unconnected product path usable.
   a fixed role-specific JSON output schema to the installed client; terminal
   prose cannot substitute for an implementation, verification, or audit
   result.
+- Codex Takes now use one restricted `codex app-server` process per Take over a
+  private stdio FIFO and bounded owner-only response log. Choir durably binds
+  the exact session, thread, turn, deterministic client-message ID, request
+  ordinals, process generation, and terminal trace before advancing workflow
+  state. If `choird` disappears, the app-server and active turn survive; the
+  replacement process resumes the same thread and adopts the same turn instead
+  of resending the instruction. A real subscription fixture killed the client
+  immediately after turn persistence, reconnected, completed the original turn
+  with one sandbox probe call, and retained the same thread and turn IDs. A
+  separate real BoxLite fixture proves `turn/interrupt`, process-group cleanup,
+  durable cancellation, and zero provider redispatch after restart. The private
+  spool is capped, contains no provider credential, and is removed with the Take
+  runtime root after its terminal evidence is durable.
 - A concurrent Goal runner with conflict-aware admission and deterministic,
   serialized promotion. A native Git fixture proves that divergent candidates
   based on the same head are composed into a continuous promotion history and
@@ -1502,7 +1515,7 @@ amendments rather than backdated into the original context record.
 | `claude -p --setting-sources "" --tools "" --permission-mode dontAsk --allowedTools <generated-exact-choir-tool-list> --strict-mcp-config --mcp-config <generated-choir-config> --output-format=stream-json --verbose` | `2.1.215` | Claude driver candidate | Same confirmed provider-managed subscription; every other effective credential class fails | `SterileHostSandboxToolsOnly` | `Unspecified` | `RequiresConfirmation` | `Candidate` | `Passed` |
 | Claude Agent Teams within the pinned Claude CLI | `2.1.215` | Optional optimizer within one Conductor/take; never a driver or scheduler | Inherits the admitted owning Claude subscription session | `ChildEqualOrNarrower` | `Experimental` | `RequiresConfirmation` | `Candidate` | `NotRun` |
 | Codex interactive CLI | `0.144.6` | Conductor | Official client using the user's ChatGPT-managed Codex subscription | `ConductorHostObserver` | `Unspecified` | `Allowed` | `Candidate` | `NotRun` |
-| `codex exec --json --ephemeral --ignore-user-config --ignore-rules --output-schema <fixed-role-schema>` with the pinned permission profile and required generated MCP server | `0.144.6` | Codex driver candidate | Saved ChatGPT-managed subscription login; every other effective credential class fails | `HostHarnessSandboxToolsOnly` | `Unspecified` | `Allowed` | `Candidate` | `Passed` |
+| `codex app-server --listen stdio://` with a private Take spool, pinned permission profile, fixed role schema, and required generated MCP server | `0.144.6` | Codex driver candidate | Saved ChatGPT-managed subscription login; every other effective credential class fails | `HostHarnessSandboxToolsOnly` | `Experimental` | `Allowed` | `Candidate` | `Passed` |
 | Antigravity interactive CLI | `1.0.10` | Future Conductor candidate | Official client using the user's provider-managed consumer subscription | `ConductorHostObserver` | `Unspecified` | `RequiresConfirmation` | `Candidate` | `NotRun` |
 | Antigravity `agy -p` text mode | `1.0.10` | Driver surface | Same provider-managed subscription | `HostHarnessSandboxToolsOnly` | `Unspecified` | `RequiresConfirmation` | `Unsupported` | `Failed` |
 
@@ -1510,13 +1523,13 @@ Anthropic's current policy makes the official subscription CLI the only Claude
 execution candidate in scope. A developer surface that requires separately
 metered credentials is excluded rather than used as a fallback.
 
-Current OpenAI documentation says `codex exec` reuses saved local CLI
-authentication. Choir admits it only when the live redacted status proves the
-requested ChatGPT-managed subscription identity. A wrapper is not presumed to
-preserve that identity without a probe.
+Current OpenAI documentation says the local Codex surfaces reuse saved CLI
+authentication. Choir admits the app-server only when the live redacted status
+proves the requested ChatGPT-managed subscription identity. A wrapper is not
+presumed to preserve that identity without a probe.
 
 The live executable probes against pinned Codex `0.144.6` confirmed the saved
-ChatGPT login, structured JSON events, ephemeral sessions, ambient
+ChatGPT login, structured events, ambient
 configuration/rule suppression, disabled native execution and child-agent
 features, denied host mutation and undeclared reads, and fail-closed startup
 when the required Choir MCP server is unavailable. A separate live driver run
@@ -1525,9 +1538,9 @@ terminal prose, produced normalized durable events, and closed ingestion
 cleanly. The full native Part fixture then completed real Codex implementation,
 verification, independent audit, restart resumption, and Git promotion through
 BoxLite. Its role-specific output schemas are part of the attested effective
-surface and are passed through the client's native `--output-schema` option.
-The exact pairing remains a `Candidate` until interruption,
-cancellation, and mid-session recovery probes pass.
+surface and are passed with `turn/start`. The exact app-server pairing remains
+a `Candidate` because the provider marks that surface experimental; live
+interruption, cancellation, and mid-session recovery now pass.
 
 No adapter may run a surface/auth pair absent from this matrix or promote
 `Candidate` to `Supported` without a pinned passing report. A mismatch is a
@@ -3340,9 +3353,9 @@ These choices remain provisional and are resolved only by named evidence:
    execution provider blocked. There is no metered fallback.
 3. **Codex execution topology:** the pinned structured CLI is admitted as a
    candidate after exact startup isolation, live driver, full BoxLite Part,
-   and live process-group interruption/cancellation checks passed. Mid-session
-   recovery remains required before support; failure there returns the exact
-   pairing to a typed blocked state.
+   live process-group interruption/cancellation, and exact-turn app-server
+   recovery checks passed. It remains a candidate while the required provider
+   surface is experimental.
 4. **Sandbox runtime:** BoxLite is first. A failing runtime/security oracle
    selects another adapter without changing scheduler contracts.
 5. **Hardened runtime owner:** choose the smallest Unix-socket owner/upstream
@@ -3795,7 +3808,8 @@ provider Takes through isolated BoxLite sandboxes. It recorded 12 effect
 receipts and exactly one verification, audit, and integration receipt; after
 the forced workflow restart it dispatched zero duplicate implementation Takes
 and the two remaining provider Takes. This evidence admits the pinned
-CLI/profile as `Candidate`, not `Supported`; mid-session recovery remains. The
+CLI/profile as `Candidate`, not `Supported`; at that point mid-session recovery
+remained. The
 exact commands are:
 
 ```text
@@ -3811,8 +3825,8 @@ fixture also passed after the driver began supplying the fixed schema through
 implementation Takes, verification and independent audit each ran once, and
 the candidate was promoted once. The run recorded 12 effect receipts and one
 verification, audit, and integration receipt. This removes reliance on a
-model voluntarily ending a longer turn with bare JSON; it does not satisfy the
-remaining mid-session recovery requirement.
+model voluntarily ending a longer turn with bare JSON; at that point the
+mid-session recovery requirement remained.
 
 #### Post-snapshot Codex recovery topology amendment
 
@@ -3826,14 +3840,37 @@ its WebSocket client disconnected. A new client initialized, called
 `inProgress`, then received its single completion; `thread/read` returned that
 same completed turn and final message.
 
-This selects the app-server Unix-socket lifecycle as the next Codex recovery
-adapter experiment instead of resending an instruction through `exec resume`.
-It does not promote Codex to `Supported`: the app-server surface is
-experimental, and Choir must still pin and attest its exact restricted MCP
-configuration, persist thread and turn witnesses before dispatch uncertainty,
-reconnect after daemon loss, prove one sandbox tool effect is not duplicated,
-and exercise cancellation. Generated provider schemas and disposable session
-files remain probe artifacts outside the repository.
+This selected app-server recovery instead of resending an instruction through
+`exec resume`. The implementation uses the supported stdio JSONL transport
+behind a private FIFO/log spool rather than carrying a WebSocket client: the
+app-server owns both FIFO ends, so it and the active turn survive Choir client
+loss while the replacement process can replay responses and issue
+`thread/resume` and `thread/read`.
+
+At `2026-07-20T15:50:04-05:00`, that adapter passed its real subscription
+recovery and cancellation fixtures. Choir killed a conformance child after the
+exact turn ID was durably stored, verified the app-server process group was
+still alive, then resumed the same thread and same turn. The recovered terminal
+trace contained one successful `probe` call and the structured completed
+outcome; no instruction or turn was redispatched. A separate BoxLite run
+interrupted an active Codex turn, terminated its process group, recorded
+cancellation, and restarted with zero additional provider dispatches. The
+implementation attests the pinned binary, saved ChatGPT login, restricted
+surface digest, exact MCP server and tool set, and fixed output schema. It stores
+the manifest and bounded event spool under an owner-only Take root, persists the
+terminal trace before killing the app-server, and removes the root after the
+workflow has durable evidence.
+
+The exact commands are:
+
+```text
+moon run --target native src/bin/choir_conformance -- harness --surface codex-cli --profile subscription --driver-recovery-live
+moon run --target native src/bin/choir_conformance -- e2e --fixture native-codex-cancellation
+```
+
+The surface remains `Candidate`, not `Supported`, because Codex app-server is
+provider-classified as experimental. The Choir-side recovery and cancellation
+gates named by the preceding experiment are now satisfied.
 
 #### Post-snapshot Codex Conductor amendment
 

@@ -267,6 +267,7 @@ pub fn codex_effective_surface_manifest_digest(
       mcp_server_name +
       "\u{00}tools=" +
       tools.join(",") +
+      "\u{00}transport=app-server-stdio-spool" +
       "\u{00}response_schema=choir.codex-take-output.v1" +
       "\u{00}disabled=" +
       disabled.join(","),
@@ -488,13 +489,16 @@ fn codex_take_event(
   kind : @control.HarnessEventKind,
   value : String,
 ) -> @control.HarnessEventEnvelope {
+  let provider_cursor = match session.provider_cursor {
+    Some(cursor) => cursor
+    None => "missing-provider-cursor"
+  }
   {
     id: @control.HarnessEventId(session.id.0 + ":event:" + sequence.to_string()),
     take_id: session.take_id,
     session_id: session.id,
-    source_position: @control.EventSourcePosition::EventNonResumableOrdinal(
-      session.id.0,
-      sequence.to_int(),
+    source_position: @control.EventSourcePosition::EventProviderId(
+      provider_cursor + ":" + value,
     ),
     choir_sequence: @control.EventSequence(sequence),
     observed_at,
@@ -534,7 +538,7 @@ pub fn start_codex_harness_session(
   if session.surface != @control.ProviderSurfaceId::CodexSubscriptionCli ||
     session.lifecycle != @control.HarnessSessionLifecycle::HarnessSessionPlanned ||
     session.cursor_class !=
-    @control.HarnessCursorClass::HarnessCursorNotResumable ||
+    @control.HarnessCursorClass::HarnessCursorProviderEventId ||
     session.provider_cursor is Some(_) ||
     session.last_choir_sequence != @control.EventSequence(0L) ||
     session.open_tool_execution_ids.length() != 0 {
@@ -574,6 +578,10 @@ pub fn evaluate_codex_driver_capture(
   if request.session.lifecycle !=
     @control.HarnessSessionLifecycle::HarnessSessionAwaitingEvents {
     return Err(codex_driver_error("session is not awaiting provider events"))
+  }
+  match request.session.provider_cursor {
+    Some(cursor) if cursor != "" && cursor.length() <= 512 => ()
+    _ => return Err(codex_driver_error("provider cursor is unavailable"))
   }
   let expected_digest = codex_effective_surface_manifest_digest(
     request.allowed_tools,

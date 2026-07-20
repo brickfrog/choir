@@ -482,7 +482,12 @@ fn native_goal_submission_session(
     sandbox_generation_id: sandbox.generation_id,
     surface,
     effective_surface_manifest_digest: surface_digest,
-    cursor_class: @control.HarnessCursorClass::HarnessCursorNotResumable,
+    cursor_class: match surface {
+      @control.ProviderSurfaceId::CodexSubscriptionCli =>
+        @control.HarnessCursorClass::HarnessCursorProviderEventId
+      @control.ProviderSurfaceId::ClaudeSubscriptionCli =>
+        @control.HarnessCursorClass::HarnessCursorNotResumable
+    },
     provider_cursor: None,
     last_choir_sequence: @control.EventSequence(0L),
     open_tool_execution_ids: [],

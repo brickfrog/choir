@@ -9,12 +9,18 @@ fn codex_driver_session() -> @control.HarnessSession {
     effective_surface_manifest_digest: @harness.codex_effective_surface_manifest_digest(
       tools, "choir_sandbox",
     ),
-    cursor_class: @control.HarnessCursorClass::HarnessCursorNotResumable,
+    cursor_class: @control.HarnessCursorClass::HarnessCursorProviderEventId,
     provider_cursor: None,
     last_choir_sequence: @control.EventSequence(0L),
     open_tool_execution_ids: [],
     lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
   }
+}
+
+///|
+fn codex_driver_started_session() -> @control.HarnessSession {
+  let started = @harness.start_codex_harness_session(codex_driver_session()).unwrap()
+  { ..started, provider_cursor: Some("thread-codex-driver:turn-codex-driver") }
 }
 
 ///|
@@ -58,7 +64,7 @@ fn codex_driver_output(item_type : String, response : String) -> String {
 
 ///|
 test "Codex driver accepts a balanced sandbox-only implementation trace" {
-  let started = @harness.start_codex_harness_session(codex_driver_session()).unwrap()
+  let started = codex_driver_started_session()
   let result = @harness.evaluate_codex_driver_capture({
     session: started,
     role: @harness.CodexTakeRole::CodexImplementationTake,
@@ -88,7 +94,7 @@ test "Codex driver accepts a balanced sandbox-only implementation trace" {
 
 ///|
 test "Codex driver rejects a native effect event disguised as success" {
-  let started = @harness.start_codex_harness_session(codex_driver_session()).unwrap()
+  let started = codex_driver_started_session()
   let result = @harness.evaluate_codex_driver_capture({
     session: started,
     role: @harness.CodexTakeRole::CodexImplementationTake,
@@ -108,7 +114,7 @@ test "Codex driver rejects a native effect event disguised as success" {
 
 ///|
 test "Codex driver rejects terminal prose after a failed MCP call" {
-  let started = @harness.start_codex_harness_session(codex_driver_session()).unwrap()
+  let started = codex_driver_started_session()
   let output = codex_driver_output(
     "mcp_tool_call", "{\"outcome\":\"completed\"}",
   ).replace(old="\"status\":\"completed\"", new="\"status\":\"failed\"")
@@ -133,7 +139,7 @@ test "Codex driver accepts a failed sandbox call followed by successful recovery
     #|{"type":"item.completed","item":{"id":"tool-2","type":"mcp_tool_call","server":"choir_sandbox","tool":"write_file","status":"completed"}}
     #|{"type":"item.completed","item":{"id":"message-1","type":"agent_message","text":"{\"outcome\":\"completed\"}"}}
     #|{"type":"turn.completed"}
-  let started = @harness.start_codex_harness_session(codex_driver_session()).unwrap()
+  let started = codex_driver_started_session()
   let result = @harness.evaluate_codex_driver_capture({
     session: started,
     role: @harness.CodexTakeRole::CodexImplementationTake,
@@ -159,7 +165,7 @@ test "Codex driver ignores balanced discovery on the declared MCP server" {
     old="{\"type\":\"turn.started\"}",
     new="{\"type\":\"turn.started\"}\n" + discovery,
   )
-  let started = @harness.start_codex_harness_session(codex_driver_session()).unwrap()
+  let started = codex_driver_started_session()
   let result = @harness.evaluate_codex_driver_capture({
     session: started,
     role: @harness.CodexTakeRole::CodexImplementationTake,
@@ -175,7 +181,7 @@ test "Codex MCP discovery cannot satisfy the declared tool requirement" {
   let output = codex_driver_output(
     "mcp_tool_call", "{\"outcome\":\"completed\"}",
   ).replace(old="\"tool\":\"read_file\"", new="\"tool\":\"list_mcp_resources\"")
-  let started = @harness.start_codex_harness_session(codex_driver_session()).unwrap()
+  let started = codex_driver_started_session()
   let result = @harness.evaluate_codex_driver_capture({
     session: started,
     role: @harness.CodexTakeRole::CodexImplementationTake,

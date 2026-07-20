@@ -1,5 +1,11 @@
 import readline from "node:readline";
 
+const delayIndex = process.argv.indexOf("--delay-ms");
+const delayMs = delayIndex >= 0 ? Number(process.argv[delayIndex + 1]) : 0;
+if (!Number.isInteger(delayMs) || delayMs < 0 || delayMs > 30_000) {
+  throw new Error("invalid probe delay");
+}
+
 const input = readline.createInterface({ input: process.stdin, terminal: false });
 
 function respond(id, result) {
@@ -40,10 +46,12 @@ input.on("line", (line) => {
       });
       break;
     case "tools/call":
-      respond(request.id, {
-        content: [{ type: "text", text: "probe" }],
-        isError: false,
-      });
+      setTimeout(() => {
+        respond(request.id, {
+          content: [{ type: "text", text: "probe" }],
+          isError: false,
+        });
+      }, delayMs);
       break;
     case "ping":
       respond(request.id, {});

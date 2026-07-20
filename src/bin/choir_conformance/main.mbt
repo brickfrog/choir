@@ -68,7 +68,9 @@ fn run_hermetic() -> Int {
 }
 
 ///|
-fn probe_mcp_launch() -> Result[(String, Array[String]), @types.ChoirError] {
+fn probe_mcp_launch(
+  delay_ms? : Int = 0,
+) -> Result[(String, Array[String]), @types.ChoirError] {
   let node = match @exec.resolve_executable_in_path("node") {
     Some(path) => path
     None =>
@@ -87,7 +89,17 @@ fn probe_mcp_launch() -> Result[(String, Array[String]), @types.ChoirError] {
         ),
       )
   }
-  Ok((node, [script]))
+  if delay_ms < 0 || delay_ms > 30000 {
+    return Err(
+      @types.ChoirError::validation_error("startup probe delay is invalid"),
+    )
+  }
+  let args = [script]
+  if delay_ms > 0 {
+    args.push("--delay-ms")
+    args.push(delay_ms.to_string())
+  }
+  Ok((node, args))
 }
 
 ///|
@@ -243,13 +255,17 @@ async fn run_codex_live_startup() -> Int {
 }
 
 ///|
-async fn run_codex_live_driver() -> Int {
-  let root = "/tmp/choir-conformance-codex-driver-" + @sys.get_pid().to_string()
+async fn run_codex_live_driver_at(
+  root : String,
+  delay_ms : Int,
+  crash_after_turn_start : Bool,
+  cleanup : Bool,
+) -> Int {
   if !@sys.create_dir_all(root + "/tmp") {
     @sys.write_stderr("failed to create dedicated Codex driver root\n")
     return 1
   }
-  let (mcp_command, mcp_args) = match probe_mcp_launch() {
+  let (mcp_command, mcp_args) = match probe_mcp_launch(delay_ms~) {
     Ok(launch) => launch
     Err(error) => {
       @sys.write_stderr(error.message() + "\n")
@@ -268,7 +284,7 @@ async fn run_codex_live_driver() -> Int {
       ["probe"],
       "choir_probe",
     ),
-    cursor_class: @control.HarnessCursorClass::HarnessCursorNotResumable,
+    cursor_class: @control.HarnessCursorClass::HarnessCursorProviderEventId,
     provider_cursor: None,
     last_choir_sequence: @control.EventSequence(0L),
     open_tool_execution_ids: [],
@@ -300,15 +316,20 @@ async fn run_codex_live_driver() -> Int {
         clock.val = clock.val + 1L
         clock.val
       },
+      after_turn_started=fn() { if crash_after_turn_start { @sys.exit(77) } },
     ) {
     Ok(value) => value
     Err(error) => {
       @sys.write_stderr(error.message() + "\n")
-      ignore(@sys.rm_rf(root))
+      if cleanup {
+        ignore(@sys.rm_rf(root))
+      }
       return 1
     }
   }
-  ignore(@sys.rm_rf(root))
+  if cleanup {
+    ignore(@sys.rm_rf(root))
+  }
   let report : Map[String, Json] = {
     "surface": "CodexSubscriptionCli".to_json(),
     "outcome": result.outcome.to_json(),
@@ -318,6 +339,107 @@ async fn run_codex_live_driver() -> Int {
   }
   @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
   0
+}
+
+///|
+async fn run_codex_live_driver() -> Int {
+  run_codex_live_driver_at(
+    "/tmp/choir-conformance-codex-driver-" + @sys.get_pid().to_string(),
+    0,
+    false,
+    true,
+  )
+}
+
+///|
+fn codex_recovery_manifest_identity(root : String) -> (String, String, Int)? {
+  let path = root + "/take-session.json"
+  if !@sys.path_exists(path) {
+    return None
+  }
+  let json = @json.parse(@sys.read_file(path)) catch { _ => return None }
+  guard json is Object(fields) else { return None }
+  let thread_id = match @types.json_field_string(fields, "thread_id") {
+    Some(value) => value
+    None => return None
+  }
+  let turn_id = match @types.json_field_string(fields, "turn_id") {
+    Some(value) => value
+    None => return None
+  }
+  let server_pid = match fields.get("server_pid") {
+    Some(Number(value, ..)) => value.to_int()
+    _ => return None
+  }
+  Some((thread_id, turn_id, server_pid))
+}
+
+///|
+async fn run_codex_live_recovery() -> Int {
+  let root = "/tmp/choir-conformance-codex-recovery-" +
+    @sys.get_pid().to_string()
+  let executable = match
+    @sys.realpath_native(
+      "_build/native/debug/build/src/bin/choir_conformance/choir_conformance.exe",
+    ) {
+    Some(value) => value
+    None => {
+      @sys.write_stderr("failed to resolve conformance executable\n")
+      return 1
+    }
+  }
+  let crash_code = @process.run(
+    executable,
+    [
+      "harness", "--surface", "codex-cli", "--profile", "subscription", "--driver-recovery-crash",
+      root,
+    ],
+    inherit_env=true,
+    cwd=match @sys.realpath_native(".") {
+      Some(value) => value
+      None => "/tmp"
+    },
+  ) catch {
+    _ => -1
+  }
+  if crash_code != 77 {
+    @sys.write_stderr(
+      "Codex recovery child did not stop at the injected boundary\n",
+    )
+    ignore(@sys.rm_rf(root))
+    return 1
+  }
+  let before = match codex_recovery_manifest_identity(root) {
+    Some(value) => value
+    None => {
+      @sys.write_stderr("Codex recovery manifest is incomplete\n")
+      ignore(@sys.rm_rf(root))
+      return 1
+    }
+  }
+  if !@sys.pgid_is_alive(before.2) {
+    @sys.write_stderr("Codex app-server did not survive client loss\n")
+    ignore(@sys.rm_rf(root))
+    return 1
+  }
+  let resumed = run_codex_live_driver_at(root, 5000, false, false)
+  let after = codex_recovery_manifest_identity(root)
+  let same_turn = match after {
+    Some(value) => value.0 == before.0 && value.1 == before.1
+    None => false
+  }
+  @sys.kill_pgid_sequence_best_effort(before.2)
+  ignore(@sys.rm_rf(root))
+  if resumed != 0 || !same_turn {
+    @sys.write_stderr("Codex recovery did not preserve the exact turn\n")
+    1
+  } else {
+    @sys.write_stdout(
+      { "recovered_exact_turn": true.to_json() }.to_json().stringify(indent=2) +
+      "\n",
+    )
+    0
+  }
 }
 
 ///|
@@ -361,6 +483,23 @@ fn run_harness_command(args : Array[String]) -> Unit {
     args[5] == "subscription" &&
     args[6] == "--driver-live" {
     @async.run_async_main(async fn() { @sys.exit(run_codex_live_driver()) })
+  } else if args.length() == 7 &&
+    args[2] == "--surface" &&
+    args[3] == "codex-cli" &&
+    args[4] == "--profile" &&
+    args[5] == "subscription" &&
+    args[6] == "--driver-recovery-live" {
+    @async.run_async_main(async fn() { @sys.exit(run_codex_live_recovery()) })
+  } else if args.length() == 8 &&
+    args[2] == "--surface" &&
+    args[3] == "codex-cli" &&
+    args[4] == "--profile" &&
+    args[5] == "subscription" &&
+    args[6] == "--driver-recovery-crash" &&
+    args[7].has_prefix("/tmp/choir-conformance-codex-recovery-") {
+    @async.run_async_main(async fn() {
+      @sys.exit(run_codex_live_driver_at(args[7], 5000, true, false))
+    })
   } else if args.length() == 6 &&
     args[2] == "--surface" &&
     args[4] == "--profile" &&
@@ -1312,6 +1451,8 @@ fn usage() -> Unit {
     "--profile subscription --live\n" +
     "       choir_conformance harness --surface codex-cli " +
     "--profile subscription --driver-live\n" +
+    "       choir_conformance harness --surface codex-cli " +
+    "--profile subscription --driver-recovery-live\n" +
     "       choir_conformance conductor --start-live\n" +
     "       choir_conformance sandbox --runtime boxlite --live\n" +
     "       choir_conformance sandbox --runtime boxlite --take-live\n" +
