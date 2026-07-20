@@ -1,6 +1,6 @@
 ///|
 fn workflow_error(detail : String) -> @types.ChoirError {
-  @types.ChoirError::validation_error("one-Part workflow: " + detail)
+  @types.ChoirError::validation_error("Part workflow: " + detail)
 }
 
 ///|
@@ -11,29 +11,58 @@ fn domain_digest(domain : String, json : Json) -> @control.Digest {
 }
 
 ///|
-pub fn one_part_snapshot_bytes(snapshot : OnePartWorkflowSnapshot) -> Bytes {
+pub fn part_snapshot_bytes(snapshot : PartWorkflowSnapshot) -> Bytes {
   @utf8.encode(snapshot.to_json().stringify(indent=0))
 }
 
 ///|
-pub fn one_part_snapshot_digest(
-  snapshot : OnePartWorkflowSnapshot,
-) -> @control.Digest {
-  @storage.artifact_digest(one_part_snapshot_bytes(snapshot))
+pub fn part_snapshot_digest(snapshot : PartWorkflowSnapshot) -> @control.Digest {
+  @storage.artifact_digest(part_snapshot_bytes(snapshot))
 }
 
 ///|
-pub fn decode_one_part_snapshot(
+pub fn decode_part_snapshot(
   content : Bytes,
-) -> Result[OnePartWorkflowSnapshot, @types.ChoirError] {
+) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
   let json = @json.parse(@utf8.decode_lossy(content)) catch {
     _ => return Err(workflow_error("durable snapshot is not valid JSON"))
   }
-  let snapshot : OnePartWorkflowSnapshot = @json.from_json(json) catch {
+  let snapshot : PartWorkflowSnapshot = @json.from_json(json) catch {
     _ =>
       return Err(workflow_error("durable snapshot does not match the schema"))
   }
   Ok(snapshot)
+}
+
+///|
+pub fn part_effect_observation_digest(
+  observation : PartEffectObservation,
+) -> @control.Digest {
+  domain_digest("choir.part-effect-observation.v1", observation.to_json())
+}
+
+///|
+pub fn part_effect_witness_bytes(witness : PartEffectWitness) -> Bytes {
+  @utf8.encode(witness.to_json().stringify(indent=0))
+}
+
+///|
+pub fn decode_part_effect_witness(
+  content : Bytes,
+) -> Result[PartEffectWitness, @types.ChoirError] {
+  let json = @json.parse(@utf8.decode_lossy(content)) catch {
+    _ => return Err(workflow_error("effect witness is not valid JSON"))
+  }
+  let witness : PartEffectWitness = @json.from_json(json) catch {
+    _ => return Err(workflow_error("effect witness does not match the schema"))
+  }
+  if witness.effect_id == "" ||
+    witness.observed_at <= 0L ||
+    witness.observation_digest !=
+    part_effect_observation_digest(witness.observation) {
+    return Err(workflow_error("effect witness identity is invalid"))
+  }
+  Ok(witness)
 }
 
 ///|
@@ -113,15 +142,15 @@ fn validate_planned_session(
 }
 
 ///|
-pub fn initialize_one_part_workflow(
+pub fn initialize_part_workflow(
   workflow_id : String,
   goal : @control.Goal,
   part : @control.GoalPart,
   contract : @control.TaskContractRevision,
-  identities : OnePartIdentityPlan,
+  identities : PartIdentityPlan,
   fencing_epoch : @control.FencingEpoch,
   is_nfc : (String) -> Bool,
-) -> Result[OnePartWorkflowSnapshot, @types.ChoirError] {
+) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
   if workflow_id == "" || workflow_id.contains("\u{00}") {
     return Err(workflow_error("workflow identity is empty or invalid"))
   }
@@ -219,7 +248,7 @@ pub fn initialize_one_part_workflow(
     workflow_id,
     durable_version: 0,
     fencing_epoch,
-    stage: OnePartAccepted,
+    stage: PartAccepted,
     goal,
     part: executing,
     task_contract: contract,
@@ -249,30 +278,30 @@ pub fn initialize_one_part_workflow(
 }
 
 ///|
-fn stage_effect_suffix(stage : OnePartWorkflowStage) -> String {
+fn stage_effect_suffix(stage : PartWorkflowStage) -> String {
   match stage {
-    OnePartAccepted => "implementation-sandbox"
-    OnePartImplementationSandboxPrepared => "implementation-harness"
-    OnePartImplementationHarnessStarted => "implementation-dispatch"
-    OnePartImplementationCompleted => "candidate-normalization"
-    OnePartCandidateRecorded => "verification-sandbox"
-    OnePartVerificationSandboxPrepared => "verification-harness"
-    OnePartVerificationHarnessStarted => "verification-dispatch"
-    OnePartVerified => "audit-sandbox"
-    OnePartAuditSandboxPrepared => "audit-harness"
-    OnePartAuditHarnessStarted => "audit-dispatch"
-    OnePartIntegrationPlanned => "promotion-generation"
-    OnePartIntegrationAuthorized => "integration-apply"
+    PartAccepted => "implementation-sandbox"
+    PartImplementationSandboxPrepared => "implementation-harness"
+    PartImplementationHarnessStarted => "implementation-dispatch"
+    PartImplementationCompleted => "candidate-normalization"
+    PartCandidateRecorded => "verification-sandbox"
+    PartVerificationSandboxPrepared => "verification-harness"
+    PartVerificationHarnessStarted => "verification-dispatch"
+    PartVerified => "audit-sandbox"
+    PartAuditSandboxPrepared => "audit-harness"
+    PartAuditHarnessStarted => "audit-dispatch"
+    PartIntegrationPlanned => "promotion-generation"
+    PartIntegrationAuthorized => "integration-apply"
     _ => "none"
   }
 }
 
 ///|
 fn next_effect_kind(
-  snapshot : OnePartWorkflowSnapshot,
-) -> Result[OnePartEffectKind?, @types.ChoirError] {
+  snapshot : PartWorkflowSnapshot,
+) -> Result[PartEffectKind?, @types.ChoirError] {
   match snapshot.stage {
-    OnePartAccepted =>
+    PartAccepted =>
       Ok(
         Some(
           PrepareImplementationSandbox(
@@ -280,13 +309,13 @@ fn next_effect_kind(
           ),
         ),
       )
-    OnePartImplementationSandboxPrepared =>
+    PartImplementationSandboxPrepared =>
       Ok(
         Some(
           StartImplementationHarness(snapshot.identities.implementation_session),
         ),
       )
-    OnePartImplementationHarnessStarted =>
+    PartImplementationHarnessStarted =>
       Ok(
         Some(
           DispatchImplementation(
@@ -295,7 +324,7 @@ fn next_effect_kind(
           ),
         ),
       )
-    OnePartImplementationCompleted =>
+    PartImplementationCompleted =>
       match snapshot.implementation_result {
         Some(result) =>
           Ok(
@@ -308,17 +337,17 @@ fn next_effect_kind(
           )
         None => Err(workflow_error("implementation result is missing"))
       }
-    OnePartCandidateRecorded =>
+    PartCandidateRecorded =>
       Ok(
         Some(
           PrepareVerificationSandbox(snapshot.identities.verification_sandbox),
         ),
       )
-    OnePartVerificationSandboxPrepared =>
+    PartVerificationSandboxPrepared =>
       Ok(
         Some(StartVerificationHarness(snapshot.identities.verification_session)),
       )
-    OnePartVerificationHarnessStarted =>
+    PartVerificationHarnessStarted =>
       match snapshot.verification_subject {
         Some(subject) =>
           Ok(
@@ -332,11 +361,11 @@ fn next_effect_kind(
           )
         None => Err(workflow_error("verification subject is missing"))
       }
-    OnePartVerified =>
+    PartVerified =>
       Ok(Some(PrepareAuditSandbox(snapshot.identities.audit_sandbox)))
-    OnePartAuditSandboxPrepared =>
+    PartAuditSandboxPrepared =>
       Ok(Some(StartAuditHarness(snapshot.identities.audit_session)))
-    OnePartAuditHarnessStarted =>
+    PartAuditHarnessStarted =>
       match snapshot.audit_subject {
         Some(subject) =>
           Ok(
@@ -350,12 +379,12 @@ fn next_effect_kind(
           )
         None => Err(workflow_error("audit subject is missing"))
       }
-    OnePartIntegrationPlanned =>
+    PartIntegrationPlanned =>
       match snapshot.integration_intent {
         Some(intent) => Ok(Some(GeneratePromotion(intent)))
         None => Err(workflow_error("integration intent is missing"))
       }
-    OnePartIntegrationAuthorized =>
+    PartIntegrationAuthorized =>
       match (snapshot.integration_intent, snapshot.promotion_commit) {
         (Some(intent), Some(promotion)) =>
           Ok(Some(ApplyIntegration(intent.id, promotion)))
@@ -366,9 +395,9 @@ fn next_effect_kind(
 }
 
 ///|
-pub fn plan_next_one_part_effect(
-  snapshot : OnePartWorkflowSnapshot,
-) -> Result[OnePartEffectIntent?, @types.ChoirError] {
+pub fn plan_next_part_effect(
+  snapshot : PartWorkflowSnapshot,
+) -> Result[PartEffectIntent?, @types.ChoirError] {
   match snapshot.pending_effect {
     Some(intent) => Ok(Some(intent))
     None =>
@@ -382,11 +411,11 @@ pub fn plan_next_one_part_effect(
             Some({
               effect_id,
               request_digest: domain_digest(
-                "choir.one-part-effect-request.v1",
+                "choir.part-effect-request.v1",
                 kind.to_json(),
               ),
               kind,
-              lifecycle: OnePartEffectPlanned,
+              lifecycle: PartEffectPlanned,
             }),
           )
         }
@@ -396,14 +425,14 @@ pub fn plan_next_one_part_effect(
 }
 
 ///|
-pub fn persist_planned_one_part_effect(
-  snapshot : OnePartWorkflowSnapshot,
-  intent : OnePartEffectIntent,
-) -> Result[OnePartWorkflowSnapshot, @types.ChoirError] {
+pub fn persist_planned_part_effect(
+  snapshot : PartWorkflowSnapshot,
+  intent : PartEffectIntent,
+) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
   if snapshot.pending_effect is Some(_) {
     return Err(workflow_error("another external effect is unresolved"))
   }
-  match plan_next_one_part_effect(snapshot) {
+  match plan_next_part_effect(snapshot) {
     Ok(Some(expected)) if expected == intent =>
       Ok({
         ..snapshot,
@@ -416,18 +445,15 @@ pub fn persist_planned_one_part_effect(
 }
 
 ///|
-pub fn authorize_pending_one_part_effect(
-  snapshot : OnePartWorkflowSnapshot,
-) -> Result[OnePartWorkflowSnapshot, @types.ChoirError] {
+pub fn authorize_pending_part_effect(
+  snapshot : PartWorkflowSnapshot,
+) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
   match snapshot.pending_effect {
-    Some({ lifecycle: OnePartEffectPlanned, .. } as intent) =>
+    Some({ lifecycle: PartEffectPlanned, .. } as intent) =>
       Ok({
         ..snapshot,
         durable_version: snapshot.durable_version + 1,
-        pending_effect: Some({
-          ..intent,
-          lifecycle: OnePartEffectMayHaveOccurred,
-        }),
+        pending_effect: Some({ ..intent, lifecycle: PartEffectMayHaveOccurred }),
       })
     Some(_) => Err(workflow_error("external effect is not planned"))
     None => Err(workflow_error("no external effect is pending"))

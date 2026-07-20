@@ -56,6 +56,9 @@ fn claude_driver_error(message : String) -> @types.ChoirError {
 
 ///|
 fn valid_declared_tool_name(tool : String) -> Bool {
+  if tool == "StructuredOutput" {
+    return true
+  }
   if !tool.has_prefix("mcp__") || tool.length() > 180 {
     return false
   }
@@ -102,12 +105,53 @@ fn exact_mcp_server(
 pub fn claude_effective_surface_manifest_digest(
   manifest : ClaudeInitializationManifest,
 ) -> @control.Digest {
+  let tools = manifest.tools.copy()
+  let mcp_servers = manifest.mcp_servers.copy()
+  let slash_commands = manifest.slash_commands.copy()
+  let skills = manifest.skills.copy()
+  let plugins = manifest.plugins.copy()
+  let agents = manifest.agents.copy()
+  tools.sort()
+  mcp_servers.sort_by(fn(left, right) { left.name.compare(right.name) })
+  slash_commands.sort()
+  skills.sort()
+  plugins.sort()
+  agents.sort()
+  let canonical : ClaudeInitializationManifest = {
+    ..manifest,
+    tools,
+    mcp_servers,
+    slash_commands,
+    skills,
+    plugins,
+    agents,
+  }
   @storage.artifact_digest(
     @utf8.encode(
       "choir.claude-effective-surface.v1\u{00}" +
-      manifest.to_json().stringify(indent=0),
+      canonical.to_json().stringify(indent=0),
     ),
   )
+}
+
+///|
+pub fn expected_claude_take_surface_manifest_digest(
+  allowed_tools : Array[String],
+  mcp_server_name : String,
+) -> @control.Digest {
+  let tools = allowed_tools.copy()
+  tools.push("StructuredOutput")
+  claude_effective_surface_manifest_digest({
+    client_version: expected_surface_version(ClaudeCli),
+    permission_mode: "dontAsk",
+    api_key_source: "none",
+    tools,
+    mcp_servers: [{ name: mcp_server_name, status: McpConnected }],
+    slash_commands: [],
+    skills: [],
+    plugins: [],
+    agents: ["claude", "Explore", "general-purpose", "Plan", "statusline-setup"],
+  })
 }
 
 ///|
@@ -181,9 +225,11 @@ fn claude_driver_trace(
 fn validate_claude_tool_trace(
   events : Array[ClaudeObservedToolEvent],
   allowed_tools : Array[String],
+  required_sandbox_tools : Array[String],
 ) -> Result[Unit, @types.ChoirError] {
   let open : Map[String, String] = Map([])
   let mut starts = 0
+  let mut sandbox_starts = 0
   for event in events {
     match event {
       ClaudeToolStarted(id, name) => {
@@ -192,6 +238,9 @@ fn validate_claude_tool_trace(
         }
         open[id] = name
         starts = starts + 1
+        if required_sandbox_tools.contains(name) {
+          sandbox_starts = sandbox_starts + 1
+        }
       }
       ClaudeToolFinished(id) =>
         if id == "" || !open.contains(id) {
@@ -201,7 +250,7 @@ fn validate_claude_tool_trace(
         }
     }
   }
-  if starts == 0 || open.length() != 0 {
+  if starts == 0 || sandbox_starts == 0 || open.length() != 0 {
     return Err(claude_driver_error("tool trace is absent or unbalanced"))
   }
   Ok(())
@@ -344,10 +393,12 @@ pub fn evaluate_claude_driver_capture(
     Some(value) if !early_event => value
     _ => return Err(claude_driver_error("initialization manifest is invalid"))
   }
+  let visible_tools = request.allowed_tools.copy()
+  visible_tools.push("StructuredOutput")
   if manifest.client_version != expected_surface_version(ClaudeCli) ||
     manifest.permission_mode != "dontAsk" ||
     manifest.api_key_source != "none" ||
-    !exact_tool_set(manifest.tools, request.allowed_tools) ||
+    !exact_tool_set(manifest.tools, visible_tools) ||
     !exact_mcp_server(manifest.mcp_servers, request.expected_mcp_server) ||
     manifest.slash_commands.length() != 0 ||
     manifest.skills.length() != 0 ||
@@ -365,7 +416,8 @@ pub fn evaluate_claude_driver_capture(
   if !succeeded || response == "" || model_identity == "" {
     return Err(claude_driver_error("provider terminal result is invalid"))
   }
-  match validate_claude_tool_trace(tool_trace, request.allowed_tools) {
+  match
+    validate_claude_tool_trace(tool_trace, visible_tools, request.allowed_tools) {
     Ok(_) => ()
     Err(error) => return Err(error)
   }

@@ -1,5 +1,5 @@
 ///|
-pub(all) enum OnePartPersistenceBoundary {
+pub(all) enum PartPersistenceBoundary {
   WorkflowAcceptedSnapshot
   WorkflowEffectPlanned
   WorkflowEffectAuthorized
@@ -10,88 +10,120 @@ pub(all) enum OnePartPersistenceBoundary {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-pub(all) enum OnePartEffectRecovery {
-  EffectObservationRecovered(OnePartEffectObservation)
+pub(all) enum PartEffectRecovery {
+  EffectObservationRecovered(PartEffectObservation)
   ExactEffectRetryAuthorized
   EffectWitnessUnavailable
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-pub(all) struct OnePartWorkflowDriverAdapters {
-  execute : async (OnePartWorkflowSnapshot, OnePartEffectIntent) -> Result[
-    OnePartEffectObservation,
+pub(all) struct PartWorkflowDriverAdapters {
+  execute : async (PartWorkflowSnapshot, PartEffectIntent) -> Result[
+    PartEffectObservation,
     @types.ChoirError,
   ]
-  reconcile : async (OnePartWorkflowSnapshot, OnePartEffectIntent) -> Result[
-    OnePartEffectRecovery,
+  reconcile : async (PartWorkflowSnapshot, PartEffectIntent) -> Result[
+    PartEffectRecovery,
     @types.ChoirError,
   ]
 }
 
 ///|
-pub(all) struct OnePartWorkflowDriverDependencies {
+pub fn witnessed_part_effect_adapters(
+  repository : PartWorkflowRepository,
+  repository_adapters : PartWorkflowRepositoryAdapters,
+  effects : PartWorkflowDriverAdapters,
+  now : () -> Int64,
+) -> PartWorkflowDriverAdapters {
+  {
+    execute: async fn(snapshot, intent) {
+      let observation = match (effects.execute)(snapshot, intent) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      match
+        record_part_effect_witness(
+          repository,
+          repository_adapters,
+          snapshot,
+          intent,
+          observation,
+          now(),
+        ) {
+        Ok(_) => Ok(observation)
+        Err(error) => Err(error)
+      }
+    },
+    reconcile: async fn(snapshot, intent) {
+      match load_part_effect_witness(repository, repository_adapters, intent) {
+        Ok(Some(witness)) => Ok(EffectObservationRecovered(witness.observation))
+        Ok(None) => (effects.reconcile)(snapshot, intent)
+        Err(error) => Err(error)
+      }
+    },
+  }
+}
+
+///|
+pub(all) struct PartWorkflowDriverDependencies {
   now : () -> Int64
-  persistence_fault : (OnePartPersistenceBoundary) -> @storage.StateStoreFaultPoint?
-  effects : OnePartWorkflowDriverAdapters
+  persistence_fault : (PartPersistenceBoundary) -> @storage.StateStoreFaultPoint?
+  effects : PartWorkflowDriverAdapters
   artifact_exists : (@control.ArtifactReference) -> Bool
   artifact_digest_exists : (@control.Digest) -> Bool
   is_nfc : (String) -> Bool
-  audit_receipt_metadata : (OnePartWorkflowSnapshot) -> Result[
+  audit_receipt_metadata : (PartWorkflowSnapshot) -> Result[
     AuditReceiptMetadata,
     @types.ChoirError,
   ]
-  integration_plan : (OnePartWorkflowSnapshot) -> Result[
+  integration_plan : (PartWorkflowSnapshot) -> Result[
     IntegrationPlanInput,
     @types.ChoirError,
   ]
-  verification_environment_digest : (OnePartWorkflowSnapshot) -> @control.Digest
-  verification_runtime_digest : (OnePartWorkflowSnapshot) -> @control.Digest
+  verification_environment_digest : (PartWorkflowSnapshot) -> @control.Digest
+  verification_runtime_digest : (PartWorkflowSnapshot) -> @control.Digest
 }
 
 ///|
-pub(all) enum OnePartWorkflowRunOutcome {
-  OnePartRunIntegrated
-  OnePartRunBlocked
-  OnePartRunRecoveryUncertain
-  OnePartRunWaitingForEffectWitness(String)
-  OnePartRunPersistenceFault(
-    OnePartPersistenceBoundary,
+pub(all) enum PartWorkflowRunOutcome {
+  PartRunIntegrated
+  PartRunBlocked
+  PartRunRecoveryUncertain
+  PartRunWaitingForEffectWitness(String)
+  PartRunPersistenceFault(
+    PartPersistenceBoundary,
     @storage.StateStoreFaultPoint
   )
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-pub(all) struct OnePartWorkflowRunResult {
-  snapshot : OnePartWorkflowSnapshot
+pub(all) struct PartWorkflowRunResult {
+  snapshot : PartWorkflowSnapshot
   store_version : Int?
-  outcome : OnePartWorkflowRunOutcome
+  outcome : PartWorkflowRunOutcome
 } derive(Debug, Eq)
 
 ///|
-priv enum OnePartPersistenceDecision {
+priv enum PartPersistenceDecision {
   WorkflowSnapshotPersisted(Int)
   WorkflowSnapshotPersistencePaused(
-    OnePartPersistenceBoundary,
+    PartPersistenceBoundary,
     @storage.StateStoreFaultPoint
   )
 }
 
 ///|
 fn load_exact_persisted_snapshot(
-  repository : OnePartWorkflowRepository,
-  repository_adapters : OnePartWorkflowRepositoryAdapters,
-  snapshot : OnePartWorkflowSnapshot,
+  repository : PartWorkflowRepository,
+  repository_adapters : PartWorkflowRepositoryAdapters,
+  snapshot : PartWorkflowSnapshot,
   expected_store_version : Int,
 ) -> Result[Unit, @types.ChoirError] {
   match
-    load_one_part_snapshot(
-      repository,
-      repository_adapters,
-      snapshot.workflow_id,
-    ) {
+    load_part_snapshot(repository, repository_adapters, snapshot.workflow_id) {
     Ok(Some(stored)) =>
       if stored.state_record.version == expected_store_version &&
-        stored.state_record.value_digest == one_part_snapshot_digest(snapshot) &&
+        stored.state_record.value_digest == part_snapshot_digest(snapshot) &&
         stored.snapshot == snapshot {
         Ok(())
       } else {
@@ -104,15 +136,15 @@ fn load_exact_persisted_snapshot(
 
 ///|
 fn persist_driver_snapshot(
-  repository : OnePartWorkflowRepository,
-  repository_adapters : OnePartWorkflowRepositoryAdapters,
-  snapshot : OnePartWorkflowSnapshot,
+  repository : PartWorkflowRepository,
+  repository_adapters : PartWorkflowRepositoryAdapters,
+  snapshot : PartWorkflowSnapshot,
   expected_store_version : Int?,
-  boundary : OnePartPersistenceBoundary,
-  dependencies : OnePartWorkflowDriverDependencies,
-) -> Result[OnePartPersistenceDecision, @types.ChoirError] {
+  boundary : PartPersistenceBoundary,
+  dependencies : PartWorkflowDriverDependencies,
+) -> Result[PartPersistenceDecision, @types.ChoirError] {
   let receipt = match
-    persist_one_part_snapshot(repository, repository_adapters, {
+    persist_part_snapshot(repository, repository_adapters, {
       snapshot,
       expected_store_version,
       fault_point: (dependencies.persistence_fault)(boundary),
@@ -148,54 +180,50 @@ fn persist_driver_snapshot(
 
 ///|
 fn persistence_result(
-  snapshot : OnePartWorkflowSnapshot,
+  snapshot : PartWorkflowSnapshot,
   store_version : Int?,
-  boundary : OnePartPersistenceBoundary,
+  boundary : PartPersistenceBoundary,
   point : @storage.StateStoreFaultPoint,
-) -> OnePartWorkflowRunResult {
-  {
-    snapshot,
-    store_version,
-    outcome: OnePartRunPersistenceFault(boundary, point),
-  }
+) -> PartWorkflowRunResult {
+  { snapshot, store_version, outcome: PartRunPersistenceFault(boundary, point) }
 }
 
 ///|
-async fn drive_one_part_workflow(
-  repository : OnePartWorkflowRepository,
-  repository_adapters : OnePartWorkflowRepositoryAdapters,
-  starting_snapshot : OnePartWorkflowSnapshot,
+async fn drive_part_workflow(
+  repository : PartWorkflowRepository,
+  repository_adapters : PartWorkflowRepositoryAdapters,
+  starting_snapshot : PartWorkflowSnapshot,
   starting_store_version : Int,
-  dependencies : OnePartWorkflowDriverDependencies,
-) -> Result[OnePartWorkflowRunResult, @types.ChoirError] {
+  dependencies : PartWorkflowDriverDependencies,
+) -> Result[PartWorkflowRunResult, @types.ChoirError] {
   let mut snapshot = starting_snapshot
   let mut store_version = starting_store_version
   let mut authorized_in_this_process = false
   while true {
     match snapshot.stage {
-      OnePartIntegrated =>
+      PartIntegrated =>
         return Ok({
           snapshot,
           store_version: Some(store_version),
-          outcome: OnePartRunIntegrated,
+          outcome: PartRunIntegrated,
         })
-      OnePartBlocked =>
+      PartBlocked =>
         return Ok({
           snapshot,
           store_version: Some(store_version),
-          outcome: OnePartRunBlocked,
+          outcome: PartRunBlocked,
         })
-      OnePartRecoveryUncertain =>
+      PartRecoveryUncertain =>
         return Ok({
           snapshot,
           store_version: Some(store_version),
-          outcome: OnePartRunRecoveryUncertain,
+          outcome: PartRunRecoveryUncertain,
         })
       _ => ()
     }
     match snapshot.pending_effect {
-      Some({ lifecycle: OnePartEffectPlanned, .. }) => {
-        let authorized = match authorize_pending_one_part_effect(snapshot) {
+      Some({ lifecycle: PartEffectPlanned, .. }) => {
+        let authorized = match authorize_pending_part_effect(snapshot) {
           Ok(value) => value
           Err(error) => return Err(error)
         }
@@ -221,7 +249,7 @@ async fn drive_one_part_workflow(
           Err(error) => return Err(error)
         }
       }
-      Some({ lifecycle: OnePartEffectMayHaveOccurred, .. } as intent) => {
+      Some({ lifecycle: PartEffectMayHaveOccurred, .. } as intent) => {
         let observation = if authorized_in_this_process {
           match (dependencies.effects.execute)(snapshot, intent) {
             Ok(value) => value
@@ -239,13 +267,13 @@ async fn drive_one_part_workflow(
               return Ok({
                 snapshot,
                 store_version: Some(store_version),
-                outcome: OnePartRunWaitingForEffectWitness(intent.effect_id),
+                outcome: PartRunWaitingForEffectWitness(intent.effect_id),
               })
             Err(error) => return Err(error)
           }
         }
         let observed = match
-          apply_one_part_effect_observation(
+          apply_part_effect_observation(
             snapshot,
             observation,
             (dependencies.now)(),
@@ -281,18 +309,18 @@ async fn drive_one_part_workflow(
         return Ok({
           snapshot,
           store_version: Some(store_version),
-          outcome: OnePartRunRecoveryUncertain,
+          outcome: PartRunRecoveryUncertain,
         })
       None => ()
     }
     let (advanced, boundary) = match snapshot.stage {
-      OnePartAuditResultRecorded => {
+      PartAuditResultRecorded => {
         let metadata = match (dependencies.audit_receipt_metadata)(snapshot) {
           Ok(value) => value
           Err(error) => return Err(error)
         }
         let next = match
-          mint_one_part_audit_receipt(
+          mint_part_audit_receipt(
             snapshot,
             metadata,
             dependencies.artifact_digest_exists,
@@ -302,20 +330,20 @@ async fn drive_one_part_workflow(
         }
         (next, WorkflowAuditReceiptRecorded)
       }
-      OnePartAudited => {
+      PartAudited => {
         let input = match (dependencies.integration_plan)(snapshot) {
           Ok(value) => value
           Err(error) => return Err(error)
         }
-        let next = match plan_one_part_integration(snapshot, input) {
+        let next = match plan_part_integration(snapshot, input) {
           Ok(value) => value
           Err(error) => return Err(error)
         }
         (next, WorkflowIntegrationPlanned)
       }
-      OnePartPromotionPrepared => {
+      PartPromotionPrepared => {
         let next = match
-          authorize_one_part_integration(
+          authorize_part_integration(
             snapshot,
             (dependencies.verification_environment_digest)(snapshot),
             (dependencies.verification_runtime_digest)(snapshot),
@@ -328,7 +356,7 @@ async fn drive_one_part_workflow(
         (next, WorkflowIntegrationAuthorized)
       }
       _ => {
-        let intent = match plan_next_one_part_effect(snapshot) {
+        let intent = match plan_next_part_effect(snapshot) {
           Ok(Some(value)) => value
           Ok(None) =>
             return Err(
@@ -336,7 +364,7 @@ async fn drive_one_part_workflow(
             )
           Err(error) => return Err(error)
         }
-        let next = match persist_planned_one_part_effect(snapshot, intent) {
+        let next = match persist_planned_part_effect(snapshot, intent) {
           Ok(value) => value
           Err(error) => return Err(error)
         }
@@ -373,14 +401,13 @@ async fn drive_one_part_workflow(
 }
 
 ///|
-pub async fn run_new_one_part_workflow(
-  repository : OnePartWorkflowRepository,
-  repository_adapters : OnePartWorkflowRepositoryAdapters,
-  snapshot : OnePartWorkflowSnapshot,
-  dependencies : OnePartWorkflowDriverDependencies,
-) -> Result[OnePartWorkflowRunResult, @types.ChoirError] {
-  match
-    initialize_one_part_workflow_repository(repository, repository_adapters) {
+pub async fn run_new_part_workflow(
+  repository : PartWorkflowRepository,
+  repository_adapters : PartWorkflowRepositoryAdapters,
+  snapshot : PartWorkflowSnapshot,
+  dependencies : PartWorkflowDriverDependencies,
+) -> Result[PartWorkflowRunResult, @types.ChoirError] {
+  match initialize_part_workflow_repository(repository, repository_adapters) {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
@@ -394,7 +421,7 @@ pub async fn run_new_one_part_workflow(
       dependencies,
     ) {
     Ok(WorkflowSnapshotPersisted(version)) =>
-      drive_one_part_workflow(
+      drive_part_workflow(
         repository, repository_adapters, snapshot, version, dependencies,
       )
     Ok(WorkflowSnapshotPersistencePaused(boundary, point)) =>
@@ -404,20 +431,19 @@ pub async fn run_new_one_part_workflow(
 }
 
 ///|
-pub async fn resume_one_part_workflow(
-  repository : OnePartWorkflowRepository,
-  repository_adapters : OnePartWorkflowRepositoryAdapters,
+pub async fn resume_part_workflow(
+  repository : PartWorkflowRepository,
+  repository_adapters : PartWorkflowRepositoryAdapters,
   workflow_id : String,
-  dependencies : OnePartWorkflowDriverDependencies,
-) -> Result[OnePartWorkflowRunResult, @types.ChoirError] {
-  match
-    initialize_one_part_workflow_repository(repository, repository_adapters) {
+  dependencies : PartWorkflowDriverDependencies,
+) -> Result[PartWorkflowRunResult, @types.ChoirError] {
+  match initialize_part_workflow_repository(repository, repository_adapters) {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  match load_one_part_snapshot(repository, repository_adapters, workflow_id) {
+  match load_part_snapshot(repository, repository_adapters, workflow_id) {
     Ok(Some(stored)) =>
-      drive_one_part_workflow(
+      drive_part_workflow(
         repository,
         repository_adapters,
         stored.snapshot,

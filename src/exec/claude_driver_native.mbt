@@ -78,6 +78,42 @@ fn native_claude_system_prompt(role : @harness.ClaudeTakeRole) -> String {
 }
 
 ///|
+fn native_claude_output_schema(role : @harness.ClaudeTakeRole) -> String {
+  let outcome : Json = match role {
+    @harness.ClaudeTakeRole::ClaudeImplementationTake =>
+      { "const": "completed".to_json() }.to_json()
+    @harness.ClaudeTakeRole::ClaudeVerificationTake =>
+      { "enum": ["passed", "failed"].to_json() }.to_json()
+    @harness.ClaudeTakeRole::ClaudeAuditTake =>
+      { "enum": ["passed", "findings"].to_json() }.to_json()
+  }
+  let properties : Map[String, Json] = { "outcome": outcome }
+  let required : Array[String] = ["outcome"]
+  match role {
+    @harness.ClaudeTakeRole::ClaudeAuditTake => {
+      properties["total_findings"] = {
+        "type": "integer".to_json(),
+        "minimum": (0).to_json(),
+      }.to_json()
+      properties["blocking_findings"] = {
+        "type": "integer".to_json(),
+        "minimum": (0).to_json(),
+      }.to_json()
+      required.push("total_findings")
+      required.push("blocking_findings")
+    }
+    _ => ()
+  }
+  let schema : Map[String, Json] = {
+    "type": "object".to_json(),
+    "properties": properties.to_json(),
+    "required": required.to_json(),
+    "additionalProperties": false.to_json(),
+  }
+  schema.to_json().stringify(indent=0)
+}
+
+///|
 fn native_claude_driver_args(
   config : NativeClaudeDriverConfig,
   role : @harness.ClaudeTakeRole,
@@ -109,6 +145,8 @@ fn native_claude_driver_args(
     "stream-json",
     "--verbose",
     "--no-session-persistence",
+    "--json-schema",
+    native_claude_output_schema(role),
     "--system-prompt",
     native_claude_system_prompt(role),
   ]
@@ -179,6 +217,14 @@ pub async fn run_native_claude_take(
       ),
     )
   }
+  if session.lifecycle !=
+    @control.HarnessSessionLifecycle::HarnessSessionAwaitingEvents {
+    return Err(
+      @types.ChoirError::validation_error(
+        "native Claude driver requires an authorized started session",
+      ),
+    )
+  }
   match claude_conflicting_credential_environment() {
     Some(name) =>
       return Err(
@@ -202,10 +248,6 @@ pub async fn run_native_claude_take(
   }
   if !@sys.create_dir_all(config.sterile_root + "/tmp") {
     return Err(native_claude_driver_error("sterile root is unavailable"))
-  }
-  let started = match @harness.start_claude_harness_session(session) {
-    Ok(value) => value
-    Err(error) => return Err(error)
   }
   let (stdin_read, stdin_write) = @process.write_to_process() catch {
     _ => return Err(native_claude_driver_error("stdin pipe failed"))
@@ -248,7 +290,7 @@ pub async fn run_native_claude_take(
     _ => return Err(native_claude_driver_error("output was not UTF-8"))
   }
   @harness.evaluate_claude_driver_capture({
-    session: started,
+    session,
     role,
     allowed_tools: config.allowed_tools,
     expected_mcp_server: config.mcp_server_name,
@@ -273,6 +315,7 @@ test "native Claude driver argv removes host tools and ambient configuration" {
   assert_true(args.contains("--tools"))
   assert_true(args.contains("--strict-mcp-config"))
   assert_true(args.contains("--no-session-persistence"))
+  assert_true(args.contains("--json-schema"))
   assert_true(args.contains("mcp__choir_sandbox__execute"))
   assert_false(args.contains("--bare"))
   assert_false(args.contains("--dangerously-skip-permissions"))

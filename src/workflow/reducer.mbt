@@ -1,10 +1,9 @@
 ///|
 fn authorized_effect(
-  snapshot : OnePartWorkflowSnapshot,
-) -> Result[OnePartEffectIntent, @types.ChoirError] {
+  snapshot : PartWorkflowSnapshot,
+) -> Result[PartEffectIntent, @types.ChoirError] {
   match snapshot.pending_effect {
-    Some({ lifecycle: OnePartEffectMayHaveOccurred, .. } as intent) =>
-      Ok(intent)
+    Some({ lifecycle: PartEffectMayHaveOccurred, .. } as intent) => Ok(intent)
     Some(_) => Err(workflow_error("pending effect is not authorized"))
     None => Err(workflow_error("effect observation has no durable intent"))
   }
@@ -12,11 +11,11 @@ fn authorized_effect(
 
 ///|
 fn finish_effect_observation(
-  before : OnePartWorkflowSnapshot,
-  after : OnePartWorkflowSnapshot,
-  observation : OnePartEffectObservation,
+  before : PartWorkflowSnapshot,
+  after : PartWorkflowSnapshot,
+  observation : PartEffectObservation,
   observed_at : Int64,
-) -> Result[OnePartWorkflowSnapshot, @types.ChoirError] {
+) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
   let intent = match authorized_effect(before) {
     Ok(intent) => intent
     Err(error) => return Err(error)
@@ -25,10 +24,7 @@ fn finish_effect_observation(
   receipts.push({
     effect_id: intent.effect_id,
     request_digest: intent.request_digest,
-    observation_digest: domain_digest(
-      "choir.one-part-effect-observation.v1",
-      observation.to_json(),
-    ),
+    observation_digest: part_effect_observation_digest(observation),
     observed_at,
   })
   Ok({
@@ -288,7 +284,7 @@ fn take_terminal_after_audit(
 }
 
 ///|
-priv enum OnePartTakeRole {
+priv enum PartTakeRole {
   WorkflowImplementationTake
   WorkflowVerificationTake
   WorkflowAuditTake
@@ -296,15 +292,15 @@ priv enum OnePartTakeRole {
 
 ///|
 fn record_sandbox_prepared(
-  snapshot : OnePartWorkflowSnapshot,
-  observation : OnePartEffectObservation,
+  snapshot : PartWorkflowSnapshot,
+  observation : PartEffectObservation,
   lease : @control.SandboxLease,
   expected : @control.SandboxLease,
-  expected_kind : (OnePartEffectKind) -> Bool,
-  stage : OnePartWorkflowStage,
-  take_role : OnePartTakeRole,
+  expected_kind : (PartEffectKind) -> Bool,
+  stage : PartWorkflowStage,
+  take_role : PartTakeRole,
   observed_at : Int64,
-) -> Result[OnePartWorkflowSnapshot, @types.ChoirError] {
+) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
   let intent = match authorized_effect(snapshot) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -346,15 +342,15 @@ fn record_sandbox_prepared(
 
 ///|
 fn record_harness_started(
-  snapshot : OnePartWorkflowSnapshot,
-  observation : OnePartEffectObservation,
+  snapshot : PartWorkflowSnapshot,
+  observation : PartEffectObservation,
   session : @control.HarnessSession,
   expected : @control.HarnessSession,
-  expected_kind : (OnePartEffectKind) -> Bool,
-  stage : OnePartWorkflowStage,
-  take_role : OnePartTakeRole,
+  expected_kind : (PartEffectKind) -> Bool,
+  stage : PartWorkflowStage,
+  take_role : PartTakeRole,
   observed_at : Int64,
-) -> Result[OnePartWorkflowSnapshot, @types.ChoirError] {
+) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
   let intent = match authorized_effect(snapshot) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -410,13 +406,13 @@ fn record_harness_started(
 }
 
 ///|
-pub fn apply_one_part_effect_observation(
-  snapshot : OnePartWorkflowSnapshot,
-  observation : OnePartEffectObservation,
+pub fn apply_part_effect_observation(
+  snapshot : PartWorkflowSnapshot,
+  observation : PartEffectObservation,
   observed_at : Int64,
   artifact_exists : (@control.ArtifactReference) -> Bool,
   is_nfc : (String) -> Bool,
-) -> Result[OnePartWorkflowSnapshot, @types.ChoirError] {
+) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
   match observation {
     ImplementationSandboxPrepared(lease) =>
       record_sandbox_prepared(
@@ -425,7 +421,7 @@ pub fn apply_one_part_effect_observation(
         lease,
         snapshot.identities.implementation_sandbox,
         fn(kind) { kind is PrepareImplementationSandbox(_) },
-        OnePartImplementationSandboxPrepared,
+        PartImplementationSandboxPrepared,
         WorkflowImplementationTake,
         observed_at,
       )
@@ -436,7 +432,7 @@ pub fn apply_one_part_effect_observation(
         lease,
         snapshot.identities.verification_sandbox,
         fn(kind) { kind is PrepareVerificationSandbox(_) },
-        OnePartVerificationSandboxPrepared,
+        PartVerificationSandboxPrepared,
         WorkflowVerificationTake,
         observed_at,
       )
@@ -447,7 +443,7 @@ pub fn apply_one_part_effect_observation(
         lease,
         snapshot.identities.audit_sandbox,
         fn(kind) { kind is PrepareAuditSandbox(_) },
-        OnePartAuditSandboxPrepared,
+        PartAuditSandboxPrepared,
         WorkflowAuditTake,
         observed_at,
       )
@@ -458,7 +454,7 @@ pub fn apply_one_part_effect_observation(
         session,
         snapshot.identities.implementation_session,
         fn(kind) { kind is StartImplementationHarness(_) },
-        OnePartImplementationHarnessStarted,
+        PartImplementationHarnessStarted,
         WorkflowImplementationTake,
         observed_at,
       )
@@ -469,7 +465,7 @@ pub fn apply_one_part_effect_observation(
         session,
         snapshot.identities.verification_session,
         fn(kind) { kind is StartVerificationHarness(_) },
-        OnePartVerificationHarnessStarted,
+        PartVerificationHarnessStarted,
         WorkflowVerificationTake,
         observed_at,
       )
@@ -480,7 +476,7 @@ pub fn apply_one_part_effect_observation(
         session,
         snapshot.identities.audit_session,
         fn(kind) { kind is StartAuditHarness(_) },
-        OnePartAuditHarnessStarted,
+        PartAuditHarnessStarted,
         WorkflowAuditTake,
         observed_at,
       )
@@ -526,7 +522,7 @@ pub fn apply_one_part_effect_observation(
         snapshot,
         {
           ..snapshot,
-          stage: OnePartImplementationCompleted,
+          stage: PartImplementationCompleted,
           implementation_take: take,
           harness_sessions: sessions,
           harness_events: append_events(snapshot.harness_events, durable_events),
@@ -582,7 +578,7 @@ pub fn apply_one_part_effect_observation(
         snapshot,
         {
           ..snapshot,
-          stage: OnePartCandidateRecorded,
+          stage: PartCandidateRecorded,
           part,
           candidate: Some(candidate),
           verification_subject: Some(subject),

@@ -342,6 +342,21 @@ async fn exercise_boxlite_take(
       @control.PartId("live-part"),
       @control.TakeId("live-take"),
       source.commit_oid,
+      source.source_digest,
+      result_root,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let retried = match
+    @exec.normalize_native_git_candidate(
+      git_config,
+      "take-live-" + @sys.get_pid().to_string(),
+      @control.GoalId("live-goal"),
+      @control.PartId("live-part"),
+      @control.TakeId("live-take"),
+      source.commit_oid,
+      source.source_digest,
       result_root,
     ) {
     Ok(value) => value
@@ -351,7 +366,8 @@ async fn exercise_boxlite_take(
     candidate.tree_oid == source.tree_oid ||
     candidate.changed_paths != [@control.RepoPath(".choir-live-roundtrip.txt")] ||
     path_evidence.symlink_prefix_paths != [@control.RepoPath("AGENTS.md")] ||
-    path_evidence.normalization_collision_paths.length() != 0 {
+    path_evidence.normalization_collision_paths.length() != 0 ||
+    retried != (candidate, path_evidence) {
     return Err(
       @types.ChoirError::git_error(
         "sandbox result did not produce the exact candidate: " +
@@ -374,6 +390,7 @@ async fn exercise_boxlite_take(
     "bridge_argument_count": arguments.length().to_json(),
     "bridge_probe_digest": @storage.artifact_digest(@utf8.encode(bridge_probe)).to_json(),
     "result_round_trip": true.to_json(),
+    "candidate_retry_stable": true.to_json(),
     "candidate_commit": candidate.commit_oid.to_json(),
     "candidate_tree": candidate.tree_oid.to_json(),
     "changed_paths": candidate.changed_paths.to_json(),
@@ -429,6 +446,11 @@ async fn run_boxlite_take_live() -> Int {
   )
   let git_config : @exec.NativeGitWorkspaceConfig = {
     repository_root,
+    object_directory: capture_live_git(repository_root, [
+      "rev-parse", "--path-format=absolute", "--git-path", "objects",
+    ])
+    .trim()
+    .to_owned(),
     staging_root,
   }
   let source = match
@@ -543,18 +565,26 @@ async fn run_end_to_end_command(args : Array[String]) -> Unit {
     @sys.exit(2)
   }
   match args[3] {
-    "one-part" => {
-      let root = "/tmp/choir-conformance-one-part-" + @sys.get_pid().to_string()
+    "part-lifecycle" => {
+      let root = "/tmp/choir-conformance-part-lifecycle-" +
+        @sys.get_pid().to_string()
       if !@sys.create_dir_all(root) {
-        @sys.write_stderr("failed to create one-Part conformance root\n")
+        @sys.write_stderr("failed to create Part conformance root\n")
         @sys.exit(1)
       }
-      let report = @exec.run_one_part_conformance_fixture(root)
+      let report = @exec.run_part_conformance_fixture(root)
       ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     }
-    "three-part" => {
+    "native-part-lifecycle" => {
+      let root = "/tmp/choir-v2-take-native-part-" + @sys.get_pid().to_string()
+      let report = @exec.run_native_part_lifecycle_fixture(root)
+      ignore(@sys.rm_rf(root))
+      @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
+      @sys.exit(if report.passed { 0 } else { 1 })
+    }
+    "parallel-promotion" => {
       let report = @conformance.run_multi_part_conformance_fixture()
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
@@ -580,7 +610,8 @@ fn usage() -> Unit {
     "--profile subscription --live\n" +
     "       choir_conformance sandbox --runtime boxlite --live\n" +
     "       choir_conformance sandbox --runtime boxlite --take-live\n" +
-    "       choir_conformance e2e --fixture <one-part|three-part>\n",
+    "       choir_conformance e2e --fixture " +
+    "<part-lifecycle|native-part-lifecycle|parallel-promotion>\n",
   )
 }
 

@@ -1,13 +1,13 @@
 ///|
 fn record_verification_completion(
-  snapshot : OnePartWorkflowSnapshot,
-  observation : OnePartEffectObservation,
+  snapshot : PartWorkflowSnapshot,
+  observation : PartEffectObservation,
   result : VerificationExecutionResult,
   final_session : @control.HarnessSession,
   events : Array[@control.HarnessEventEnvelope],
   observed_at : Int64,
   artifact_exists : (@control.ArtifactReference) -> Bool,
-) -> Result[OnePartWorkflowSnapshot, @types.ChoirError] {
+) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
   let intent = match authorized_effect(snapshot) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -116,10 +116,7 @@ fn record_verification_completion(
           "choir.verification-authorization-set.v1",
           receipts.to_json(),
         ),
-        evidence_manifest_digest: domain_digest(
-          "choir.verification-evidence-manifest.v1",
-          [result.evidence].to_json(),
-        ),
+        evidence_manifest_digest: result.evidence.digest,
       }
       let candidate = match snapshot.candidate {
         Some(value) => value
@@ -149,7 +146,7 @@ fn record_verification_completion(
         snapshot,
         {
           ..snapshot,
-          stage: OnePartVerified,
+          stage: PartVerified,
           part,
           verification_take: take,
           audit_take,
@@ -179,7 +176,7 @@ fn record_verification_completion(
         snapshot,
         {
           ..snapshot,
-          stage: OnePartBlocked,
+          stage: PartBlocked,
           part,
           verification_take: take,
           harness_sessions: sessions,
@@ -217,14 +214,14 @@ fn audit_submission_valid(submission : AuditSubmission) -> Bool {
 
 ///|
 fn record_audit_completion(
-  snapshot : OnePartWorkflowSnapshot,
-  observation : OnePartEffectObservation,
+  snapshot : PartWorkflowSnapshot,
+  observation : PartEffectObservation,
   submission : AuditSubmission,
   final_session : @control.HarnessSession,
   events : Array[@control.HarnessEventEnvelope],
   observed_at : Int64,
   artifact_exists : (@control.ArtifactReference) -> Bool,
-) -> Result[OnePartWorkflowSnapshot, @types.ChoirError] {
+) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
   let intent = match authorized_effect(snapshot) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -312,7 +309,7 @@ fn record_audit_completion(
     snapshot,
     {
       ..snapshot,
-      stage: OnePartAuditResultRecorded,
+      stage: PartAuditResultRecorded,
       audit_take: take,
       harness_sessions: sessions,
       harness_events: append_events(snapshot.harness_events, durable_events),
@@ -324,12 +321,12 @@ fn record_audit_completion(
 }
 
 ///|
-pub fn mint_one_part_audit_receipt(
-  snapshot : OnePartWorkflowSnapshot,
+pub fn mint_part_audit_receipt(
+  snapshot : PartWorkflowSnapshot,
   metadata : AuditReceiptMetadata,
   artifact_exists : (@control.Digest) -> Bool,
-) -> Result[OnePartWorkflowSnapshot, @types.ChoirError] {
-  if snapshot.stage != OnePartAuditResultRecorded ||
+) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
+  if snapshot.stage != PartAuditResultRecorded ||
     snapshot.pending_effect is Some(_) ||
     snapshot.audit_receipt is Some(_) {
     return Err(workflow_error("audit receipt is not ready to reconcile"))
@@ -405,7 +402,7 @@ pub fn mint_one_part_audit_receipt(
       Ok({
         ..snapshot,
         durable_version: snapshot.durable_version + 1,
-        stage: OnePartAudited,
+        stage: PartAudited,
         part,
         audit_receipt: Some(receipt),
       })
@@ -424,7 +421,7 @@ pub fn mint_one_part_audit_receipt(
       Ok({
         ..snapshot,
         durable_version: snapshot.durable_version + 1,
-        stage: OnePartBlocked,
+        stage: PartBlocked,
         part,
         audit_receipt: Some(receipt),
       })
@@ -434,11 +431,11 @@ pub fn mint_one_part_audit_receipt(
 }
 
 ///|
-pub fn plan_one_part_integration(
-  snapshot : OnePartWorkflowSnapshot,
+pub fn plan_part_integration(
+  snapshot : PartWorkflowSnapshot,
   input : IntegrationPlanInput,
-) -> Result[OnePartWorkflowSnapshot, @types.ChoirError] {
-  if snapshot.stage != OnePartAudited ||
+) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
+  if snapshot.stage != PartAudited ||
     snapshot.pending_effect is Some(_) ||
     snapshot.integration_intent is Some(_) ||
     input.lease.goal_id != snapshot.goal.id ||
@@ -468,7 +465,7 @@ pub fn plan_one_part_integration(
   Ok({
     ..snapshot,
     durable_version: snapshot.durable_version + 1,
-    stage: OnePartIntegrationPlanned,
+    stage: PartIntegrationPlanned,
     integration_lease: Some(input.lease),
     integration_intent: Some(intent),
   })
@@ -476,11 +473,11 @@ pub fn plan_one_part_integration(
 
 ///|
 fn record_promotion_generation(
-  snapshot : OnePartWorkflowSnapshot,
-  observation : OnePartEffectObservation,
+  snapshot : PartWorkflowSnapshot,
+  observation : PartEffectObservation,
   promotion : @control.PromotionCommit,
   observed_at : Int64,
-) -> Result[OnePartWorkflowSnapshot, @types.ChoirError] {
+) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
   let effect = match authorized_effect(snapshot) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -501,7 +498,7 @@ fn record_promotion_generation(
     snapshot,
     {
       ..snapshot,
-      stage: OnePartPromotionPrepared,
+      stage: PartPromotionPrepared,
       integration_intent: Some(prepared),
       promotion_commit: Some(promotion),
     },
@@ -512,10 +509,10 @@ fn record_promotion_generation(
 
 ///|
 fn record_promotion_conflict(
-  snapshot : OnePartWorkflowSnapshot,
-  observation : OnePartEffectObservation,
+  snapshot : PartWorkflowSnapshot,
+  observation : PartEffectObservation,
   observed_at : Int64,
-) -> Result[OnePartWorkflowSnapshot, @types.ChoirError] {
+) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
   let effect = match authorized_effect(snapshot) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -542,7 +539,7 @@ fn record_promotion_conflict(
     snapshot,
     {
       ..snapshot,
-      stage: OnePartBlocked,
+      stage: PartBlocked,
       part,
       integration_intent: Some({
         ..intent,
@@ -555,14 +552,14 @@ fn record_promotion_conflict(
 }
 
 ///|
-pub fn authorize_one_part_integration(
-  snapshot : OnePartWorkflowSnapshot,
+pub fn authorize_part_integration(
+  snapshot : PartWorkflowSnapshot,
   expected_verification_environment_digest : @control.Digest,
   expected_verification_runtime_digest : @control.Digest,
   evidence_exists : (@control.ArtifactReference) -> Bool,
   artifact_digest_exists : (@control.Digest) -> Bool,
-) -> Result[OnePartWorkflowSnapshot, @types.ChoirError] {
-  if snapshot.stage != OnePartPromotionPrepared ||
+) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
+  if snapshot.stage != PartPromotionPrepared ||
     snapshot.pending_effect is Some(_) {
     return Err(workflow_error("promotion is not ready for authorization"))
   }
@@ -655,7 +652,7 @@ pub fn authorize_one_part_integration(
   Ok({
     ..snapshot,
     durable_version: snapshot.durable_version + 1,
-    stage: OnePartIntegrationAuthorized,
+    stage: PartIntegrationAuthorized,
     part,
     integration_intent: Some(authorized),
   })
@@ -663,11 +660,11 @@ pub fn authorize_one_part_integration(
 
 ///|
 fn record_integration_witness(
-  snapshot : OnePartWorkflowSnapshot,
-  observation : OnePartEffectObservation,
+  snapshot : PartWorkflowSnapshot,
+  observation : PartEffectObservation,
   witness : @control.IntegrationWitnessObservation,
   observed_at : Int64,
-) -> Result[OnePartWorkflowSnapshot, @types.ChoirError] {
+) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
   let effect = match authorized_effect(snapshot) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -712,7 +709,7 @@ fn record_integration_witness(
         snapshot,
         {
           ..snapshot,
-          stage: OnePartIntegrated,
+          stage: PartIntegrated,
           part,
           integration_intent: Some({
             ..intent,
@@ -727,7 +724,7 @@ fn record_integration_witness(
     @control.IntegrationReconciliationOutcome::IntegrationRetryAuthorized =>
       finish_effect_observation(
         snapshot,
-        { ..snapshot, stage: OnePartIntegrationAuthorized },
+        { ..snapshot, stage: PartIntegrationAuthorized },
         observation,
         observed_at,
       )
@@ -744,7 +741,7 @@ fn record_integration_witness(
       }
       finish_effect_observation(
         snapshot,
-        { ..snapshot, stage: OnePartBlocked, part },
+        { ..snapshot, stage: PartBlocked, part },
         observation,
         observed_at,
       )
@@ -762,7 +759,7 @@ fn record_integration_witness(
       }
       finish_effect_observation(
         snapshot,
-        { ..snapshot, stage: OnePartRecoveryUncertain, part },
+        { ..snapshot, stage: PartRecoveryUncertain, part },
         observation,
         observed_at,
       )

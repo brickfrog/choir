@@ -1,27 +1,27 @@
 ///|
-pub(all) enum OnePartWorkflowStage {
-  OnePartAccepted
-  OnePartImplementationSandboxPrepared
-  OnePartImplementationHarnessStarted
-  OnePartImplementationCompleted
-  OnePartCandidateRecorded
-  OnePartVerificationSandboxPrepared
-  OnePartVerificationHarnessStarted
-  OnePartVerified
-  OnePartAuditSandboxPrepared
-  OnePartAuditHarnessStarted
-  OnePartAuditResultRecorded
-  OnePartAudited
-  OnePartIntegrationPlanned
-  OnePartPromotionPrepared
-  OnePartIntegrationAuthorized
-  OnePartIntegrated
-  OnePartBlocked
-  OnePartRecoveryUncertain
+pub(all) enum PartWorkflowStage {
+  PartAccepted
+  PartImplementationSandboxPrepared
+  PartImplementationHarnessStarted
+  PartImplementationCompleted
+  PartCandidateRecorded
+  PartVerificationSandboxPrepared
+  PartVerificationHarnessStarted
+  PartVerified
+  PartAuditSandboxPrepared
+  PartAuditHarnessStarted
+  PartAuditResultRecorded
+  PartAudited
+  PartIntegrationPlanned
+  PartPromotionPrepared
+  PartIntegrationAuthorized
+  PartIntegrated
+  PartBlocked
+  PartRecoveryUncertain
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-pub(all) struct OnePartIdentityPlan {
+pub(all) struct PartIdentityPlan {
   implementation_take : @control.Take
   implementation_sandbox : @control.SandboxLease
   implementation_session : @control.HarnessSession
@@ -34,7 +34,7 @@ pub(all) struct OnePartIdentityPlan {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-pub(all) enum OnePartEffectKind {
+pub(all) enum PartEffectKind {
   PrepareImplementationSandbox(@control.SandboxLease)
   StartImplementationHarness(@control.HarnessSession)
   DispatchImplementation(@control.TakeId, @control.HarnessSessionId)
@@ -58,25 +58,34 @@ pub(all) enum OnePartEffectKind {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-pub(all) enum OnePartEffectLifecycle {
-  OnePartEffectPlanned
-  OnePartEffectMayHaveOccurred
-  OnePartEffectReceipted
-  OnePartEffectUncertain
+pub(all) enum PartEffectLifecycle {
+  PartEffectPlanned
+  PartEffectMayHaveOccurred
+  PartEffectReceipted
+  PartEffectUncertain
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-pub(all) struct OnePartEffectIntent {
+pub(all) struct PartEffectIntent {
   effect_id : String
-  kind : OnePartEffectKind
+  kind : PartEffectKind
   request_digest : @control.Digest
-  lifecycle : OnePartEffectLifecycle
+  lifecycle : PartEffectLifecycle
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-pub(all) struct OnePartEffectReceipt {
+pub(all) struct PartEffectReceipt {
   effect_id : String
   request_digest : @control.Digest
+  observation_digest : @control.Digest
+  observed_at : Int64
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct PartEffectWitness {
+  effect_id : String
+  request_digest : @control.Digest
+  observation : PartEffectObservation
   observation_digest : @control.Digest
   observed_at : Int64
 } derive(Debug, Eq, ToJson, FromJson)
@@ -139,7 +148,7 @@ pub(all) struct IntegrationPlanInput {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-pub(all) enum OnePartEffectObservation {
+pub(all) enum PartEffectObservation {
   ImplementationSandboxPrepared(@control.SandboxLease)
   ImplementationHarnessStarted(@control.HarnessSession)
   ImplementationCompleted(
@@ -168,15 +177,15 @@ pub(all) enum OnePartEffectObservation {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-pub(all) struct OnePartWorkflowSnapshot {
+pub(all) struct PartWorkflowSnapshot {
   workflow_id : String
   durable_version : Int
   fencing_epoch : @control.FencingEpoch
-  stage : OnePartWorkflowStage
+  stage : PartWorkflowStage
   goal : @control.Goal
   part : @control.GoalPart
   task_contract : @control.TaskContractRevision
-  identities : OnePartIdentityPlan
+  identities : PartIdentityPlan
   implementation_take : @control.Take
   verification_take : @control.Take
   audit_take : @control.Take
@@ -196,6 +205,6 @@ pub(all) struct OnePartWorkflowSnapshot {
   integration_intent : @control.IntegrationIntent?
   promotion_commit : @control.PromotionCommit?
   integration_receipt : @control.IntegrationReceipt?
-  pending_effect : OnePartEffectIntent?
-  effect_receipts : Array[OnePartEffectReceipt]
+  pending_effect : PartEffectIntent?
+  effect_receipts : Array[PartEffectReceipt]
 } derive(Debug, Eq, ToJson, FromJson)

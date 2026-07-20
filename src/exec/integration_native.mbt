@@ -330,7 +330,7 @@ pub async fn generate_native_promotion(
   config : NativeGitIntegrationConfig,
   intent : @control.IntegrationIntent,
   adapters : NativeGitIntegrationAdapters,
-) -> Result[@workflow.OnePartEffectObservation, @types.ChoirError] {
+) -> Result[@workflow.PartEffectObservation, @types.ChoirError] {
   match validate_native_git_config(config, intent) {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -369,7 +369,7 @@ pub async fn generate_native_promotion(
     Err(error) => return Err(error)
   }
   if merged.exit_code != 0 {
-    return Ok(@workflow.OnePartEffectObservation::PromotionConflictObserved)
+    return Ok(@workflow.PartEffectObservation::PromotionConflictObserved)
   }
   let promotion_tree = match parsed_git_oid(merged.output) {
     Some(value) => value
@@ -420,7 +420,7 @@ pub async fn generate_native_promotion(
     return Err(git_error("promotion parent witness does not match"))
   }
   Ok(
-    @workflow.OnePartEffectObservation::PromotionGenerated({
+    @workflow.PartEffectObservation::PromotionGenerated({
       intent_id: intent.id,
       commit_oid: promotion_oid,
       tree_oid: promotion_tree,
@@ -507,7 +507,7 @@ pub async fn apply_native_integration(
   intent : @control.IntegrationIntent,
   promotion : @control.PromotionCommit,
   adapters : NativeGitIntegrationAdapters,
-) -> Result[@workflow.OnePartEffectObservation, @types.ChoirError] {
+) -> Result[@workflow.PartEffectObservation, @types.ChoirError] {
   match validate_native_git_config(config, intent) {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -540,20 +540,20 @@ pub async fn apply_native_integration(
     is @control.IntegrationWitnessObservation::IntegrationWitnessNotApplied(_) {
     return Err(git_error("atomic integration ref update was rejected"))
   }
-  Ok(@workflow.OnePartEffectObservation::IntegrationWitnessObserved(witness))
+  Ok(@workflow.PartEffectObservation::IntegrationWitnessObserved(witness))
 }
 
 ///|
 pub async fn execute_native_git_effect(
   config : NativeGitIntegrationConfig,
-  snapshot : @workflow.OnePartWorkflowSnapshot,
-  intent : @workflow.OnePartEffectIntent,
+  snapshot : @workflow.PartWorkflowSnapshot,
+  intent : @workflow.PartEffectIntent,
   adapters : NativeGitIntegrationAdapters,
-) -> Result[@workflow.OnePartEffectObservation, @types.ChoirError] {
+) -> Result[@workflow.PartEffectObservation, @types.ChoirError] {
   match intent.kind {
-    @workflow.OnePartEffectKind::GeneratePromotion(integration) =>
+    @workflow.PartEffectKind::GeneratePromotion(integration) =>
       generate_native_promotion(config, integration, adapters)
-    @workflow.OnePartEffectKind::ApplyIntegration(intent_id, promotion) => {
+    @workflow.PartEffectKind::ApplyIntegration(intent_id, promotion) => {
       let integration = match snapshot.integration_intent {
         Some(value) if value.id == intent_id => value
         _ => return Err(git_error("integration effect has no matching intent"))
@@ -567,14 +567,14 @@ pub async fn execute_native_git_effect(
 ///|
 pub async fn reconcile_native_git_effect(
   config : NativeGitIntegrationConfig,
-  snapshot : @workflow.OnePartWorkflowSnapshot,
-  intent : @workflow.OnePartEffectIntent,
+  snapshot : @workflow.PartWorkflowSnapshot,
+  intent : @workflow.PartEffectIntent,
   adapters : NativeGitIntegrationAdapters,
-) -> Result[@workflow.OnePartEffectRecovery, @types.ChoirError] {
+) -> Result[@workflow.PartEffectRecovery, @types.ChoirError] {
   match intent.kind {
-    @workflow.OnePartEffectKind::GeneratePromotion(_) =>
-      Ok(@workflow.OnePartEffectRecovery::ExactEffectRetryAuthorized)
-    @workflow.OnePartEffectKind::ApplyIntegration(intent_id, promotion) => {
+    @workflow.PartEffectKind::GeneratePromotion(_) =>
+      Ok(@workflow.PartEffectRecovery::ExactEffectRetryAuthorized)
+    @workflow.PartEffectKind::ApplyIntegration(intent_id, promotion) => {
       let integration = match snapshot.integration_intent {
         Some(value) if value.id == intent_id => value
         _ => return Err(git_error("integration effect has no matching intent"))
@@ -585,10 +585,8 @@ pub async fn reconcile_native_git_effect(
         Err(error) => return Err(error)
       }
       Ok(
-        @workflow.OnePartEffectRecovery::EffectObservationRecovered(
-          @workflow.OnePartEffectObservation::IntegrationWitnessObserved(
-            witness,
-          ),
+        @workflow.PartEffectRecovery::EffectObservationRecovered(
+          @workflow.PartEffectObservation::IntegrationWitnessObserved(witness),
         ),
       )
     }

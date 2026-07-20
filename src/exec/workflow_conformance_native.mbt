@@ -1,5 +1,5 @@
 ///|
-pub(all) struct OnePartConformanceReport {
+pub(all) struct PartConformanceReport {
   passed : Bool
   effect_receipt_count : Int
   verification_receipt_count : Int
@@ -37,7 +37,7 @@ fn conformance_take(
 
 ///|
 fn conformance_snapshot() -> Result[
-  @workflow.OnePartWorkflowSnapshot,
+  @workflow.PartWorkflowSnapshot,
   @types.ChoirError,
 ] {
   let goal : @control.Goal = {
@@ -157,7 +157,7 @@ fn conformance_snapshot() -> Result[
       lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
     }
   }
-  let identities : @workflow.OnePartIdentityPlan = {
+  let identities : @workflow.PartIdentityPlan = {
     implementation_take: implementation,
     implementation_sandbox,
     implementation_session: session(
@@ -172,7 +172,7 @@ fn conformance_snapshot() -> Result[
     audit_sandbox,
     audit_session: session("audit-session-conformance", audit, audit_sandbox),
   }
-  @workflow.initialize_one_part_workflow(
+  @workflow.initialize_part_workflow(
     "workflow-conformance",
     goal,
     part,
@@ -184,7 +184,7 @@ fn conformance_snapshot() -> Result[
 }
 
 ///|
-fn conformance_repository(root : String) -> @workflow.OnePartWorkflowRepository {
+fn conformance_repository(root : String) -> @workflow.PartWorkflowRepository {
   {
     state_store: { path: root + ".db" },
     artifact_store: { root: root + "-artifacts" },
@@ -194,7 +194,7 @@ fn conformance_repository(root : String) -> @workflow.OnePartWorkflowRepository 
 
 ///|
 fn clear_conformance_repository(
-  repository : @workflow.OnePartWorkflowRepository,
+  repository : @workflow.PartWorkflowRepository,
 ) -> Unit {
   ignore(@sys.rm_rf(repository.state_store.path))
   ignore(@sys.rm_rf(repository.state_store.path + "-shm"))
@@ -261,30 +261,30 @@ fn conformance_trace(
 
 ///|
 fn conformance_effect_observation(
-  snapshot : @workflow.OnePartWorkflowSnapshot,
-  intent : @workflow.OnePartEffectIntent,
-) -> Result[@workflow.OnePartEffectObservation, @types.ChoirError] {
+  snapshot : @workflow.PartWorkflowSnapshot,
+  intent : @workflow.PartEffectIntent,
+) -> Result[@workflow.PartEffectObservation, @types.ChoirError] {
   match intent.kind {
-    @workflow.OnePartEffectKind::PrepareImplementationSandbox(lease) =>
+    @workflow.PartEffectKind::PrepareImplementationSandbox(lease) =>
       Ok(
-        @workflow.OnePartEffectObservation::ImplementationSandboxPrepared({
+        @workflow.PartEffectObservation::ImplementationSandboxPrepared({
           ..lease,
           lifecycle: @control.SandboxLeaseLifecycle::SandboxLeaseActive,
         }),
       )
-    @workflow.OnePartEffectKind::StartImplementationHarness(session) =>
+    @workflow.PartEffectKind::StartImplementationHarness(session) =>
       Ok(
-        @workflow.OnePartEffectObservation::ImplementationHarnessStarted(
+        @workflow.PartEffectObservation::ImplementationHarnessStarted(
           conformance_started_session(session),
         ),
       )
-    @workflow.OnePartEffectKind::DispatchImplementation(take_id, session_id) => {
+    @workflow.PartEffectKind::DispatchImplementation(take_id, session_id) => {
       let started = conformance_started_session(
         snapshot.identities.implementation_session,
       )
       let (closed, events) = conformance_trace(started, "implementation")
       Ok(
-        @workflow.OnePartEffectObservation::ImplementationCompleted(
+        @workflow.PartEffectObservation::ImplementationCompleted(
           {
             take_id,
             session_id,
@@ -299,9 +299,9 @@ fn conformance_effect_observation(
         ),
       )
     }
-    @workflow.OnePartEffectKind::NormalizeImplementationCandidate(take_id, _) =>
+    @workflow.PartEffectKind::NormalizeImplementationCandidate(take_id, _) =>
       Ok(
-        @workflow.OnePartEffectObservation::CandidateNormalized(
+        @workflow.PartEffectObservation::CandidateNormalized(
           {
             id: @control.CandidateId("candidate-conformance"),
             goal_id: snapshot.goal.id,
@@ -320,24 +320,20 @@ fn conformance_effect_observation(
           },
         ),
       )
-    @workflow.OnePartEffectKind::PrepareVerificationSandbox(lease) =>
+    @workflow.PartEffectKind::PrepareVerificationSandbox(lease) =>
       Ok(
-        @workflow.OnePartEffectObservation::VerificationSandboxPrepared({
+        @workflow.PartEffectObservation::VerificationSandboxPrepared({
           ..lease,
           lifecycle: @control.SandboxLeaseLifecycle::SandboxLeaseActive,
         }),
       )
-    @workflow.OnePartEffectKind::StartVerificationHarness(session) =>
+    @workflow.PartEffectKind::StartVerificationHarness(session) =>
       Ok(
-        @workflow.OnePartEffectObservation::VerificationHarnessStarted(
+        @workflow.PartEffectObservation::VerificationHarnessStarted(
           conformance_started_session(session),
         ),
       )
-    @workflow.OnePartEffectKind::DispatchVerification(
-      take_id,
-      session_id,
-      subject
-    ) => {
+    @workflow.PartEffectKind::DispatchVerification(take_id, session_id, subject) => {
       let started = conformance_started_session(
         snapshot.identities.verification_session,
       )
@@ -348,7 +344,7 @@ fn conformance_effect_observation(
           return Err(@types.ChoirError::validation_error("candidate is absent"))
       }
       Ok(
-        @workflow.OnePartEffectObservation::VerificationCompleted(
+        @workflow.PartEffectObservation::VerificationCompleted(
           {
             take_id,
             session_id,
@@ -374,26 +370,26 @@ fn conformance_effect_observation(
         ),
       )
     }
-    @workflow.OnePartEffectKind::PrepareAuditSandbox(lease) =>
+    @workflow.PartEffectKind::PrepareAuditSandbox(lease) =>
       Ok(
-        @workflow.OnePartEffectObservation::AuditSandboxPrepared({
+        @workflow.PartEffectObservation::AuditSandboxPrepared({
           ..lease,
           lifecycle: @control.SandboxLeaseLifecycle::SandboxLeaseActive,
         }),
       )
-    @workflow.OnePartEffectKind::StartAuditHarness(session) =>
+    @workflow.PartEffectKind::StartAuditHarness(session) =>
       Ok(
-        @workflow.OnePartEffectObservation::AuditHarnessStarted(
+        @workflow.PartEffectObservation::AuditHarnessStarted(
           conformance_started_session(session),
         ),
       )
-    @workflow.OnePartEffectKind::DispatchAudit(take_id, session_id, subject) => {
+    @workflow.PartEffectKind::DispatchAudit(take_id, session_id, subject) => {
       let started = conformance_started_session(
         snapshot.identities.audit_session,
       )
       let (closed, events) = conformance_trace(started, "audit")
       Ok(
-        @workflow.OnePartEffectObservation::AuditCompleted(
+        @workflow.PartEffectObservation::AuditCompleted(
           {
             audit_take_id: take_id,
             take_fencing_epoch: snapshot.fencing_epoch,
@@ -412,9 +408,9 @@ fn conformance_effect_observation(
         ),
       )
     }
-    @workflow.OnePartEffectKind::GeneratePromotion(intent) =>
+    @workflow.PartEffectKind::GeneratePromotion(intent) =>
       Ok(
-        @workflow.OnePartEffectObservation::PromotionGenerated({
+        @workflow.PartEffectObservation::PromotionGenerated({
           intent_id: intent.id,
           commit_oid: @control.GitOid("promotion-commit-conformance"),
           tree_oid: @control.GitOid("promotion-tree-conformance"),
@@ -422,9 +418,9 @@ fn conformance_effect_observation(
           second_parent_oid: intent.candidate_commit_oid,
         }),
       )
-    @workflow.OnePartEffectKind::ApplyIntegration(_, promotion) =>
+    @workflow.PartEffectKind::ApplyIntegration(_, promotion) =>
       Ok(
-        @workflow.OnePartEffectObservation::IntegrationWitnessObserved(
+        @workflow.PartEffectObservation::IntegrationWitnessObserved(
           @control.IntegrationWitnessObservation::IntegrationWitnessApplied(
             promotion.commit_oid,
             promotion.commit_oid,
@@ -436,11 +432,13 @@ fn conformance_effect_observation(
 
 ///|
 fn conformance_dependencies(
+  repository : @workflow.PartWorkflowRepository,
   execute_count : Ref[Int],
-  fault : (@workflow.OnePartPersistenceBoundary) -> @storage.StateStoreFaultPoint?,
-) -> @workflow.OnePartWorkflowDriverDependencies {
-  {
-    now: fn() { 110L },
+  fault : (@workflow.PartPersistenceBoundary) -> @storage.StateStoreFaultPoint?,
+) -> @workflow.PartWorkflowDriverDependencies {
+  let now = fn() { 110L }
+  let dependencies : @workflow.PartWorkflowDriverDependencies = {
+    now,
     persistence_fault: fault,
     effects: {
       execute: async fn(snapshot, intent) {
@@ -451,7 +449,7 @@ fn conformance_dependencies(
         match conformance_effect_observation(snapshot, intent) {
           Ok(observation) =>
             Ok(
-              @workflow.OnePartEffectRecovery::EffectObservationRecovered(
+              @workflow.PartEffectRecovery::EffectObservationRecovered(
                 observation,
               ),
             )
@@ -493,10 +491,19 @@ fn conformance_dependencies(
       snapshot.identities.verification_sandbox.runtime_policy_digest
     },
   }
+  {
+    ..dependencies,
+    effects: @workflow.witnessed_part_effect_adapters(
+      repository,
+      local_part_workflow_repository_adapters(),
+      dependencies.effects,
+      now,
+    ),
+  }
 }
 
 ///|
-fn failed_one_part_report(message : String) -> OnePartConformanceReport {
+fn failed_part_report(message : String) -> PartConformanceReport {
   {
     passed: false,
     effect_receipt_count: 0,
@@ -510,54 +517,55 @@ fn failed_one_part_report(message : String) -> OnePartConformanceReport {
 }
 
 ///|
-pub async fn run_one_part_conformance_fixture(
+pub async fn run_part_conformance_fixture(
   root : String,
-) -> OnePartConformanceReport {
+) -> PartConformanceReport {
   let snapshot = match conformance_snapshot() {
     Ok(value) => value
-    Err(error) => return failed_one_part_report(error.message())
+    Err(error) => return failed_part_report(error.message())
   }
   let repository = conformance_repository(root + "/uninterrupted")
   clear_conformance_repository(repository)
   let execute_count = @ref.new(0)
-  let dependencies = conformance_dependencies(execute_count, fn(_) { None })
+  let dependencies = conformance_dependencies(repository, execute_count, fn(_) {
+    None
+  })
   let result = match
-    @workflow.run_new_one_part_workflow(
+    @workflow.run_new_part_workflow(
       repository,
-      local_one_part_workflow_repository_adapters(),
+      local_part_workflow_repository_adapters(),
       snapshot,
       dependencies,
     ) {
     Ok(value) => value
     Err(error) => {
       clear_conformance_repository(repository)
-      return failed_one_part_report(error.message())
+      return failed_part_report(error.message())
     }
   }
-  if result.outcome != @workflow.OnePartWorkflowRunOutcome::OnePartRunIntegrated {
+  if result.outcome != @workflow.PartWorkflowRunOutcome::PartRunIntegrated {
     clear_conformance_repository(repository)
-    return failed_one_part_report("uninterrupted workflow did not integrate")
+    return failed_part_report("uninterrupted workflow did not integrate")
   }
   let executed_before_restart = execute_count.val
   let resumed = match
-    @workflow.resume_one_part_workflow(
+    @workflow.resume_part_workflow(
       repository,
-      local_one_part_workflow_repository_adapters(),
+      local_part_workflow_repository_adapters(),
       "workflow-conformance",
       dependencies,
     ) {
     Ok(value) => value
     Err(error) => {
       clear_conformance_repository(repository)
-      return failed_one_part_report(error.message())
+      return failed_part_report(error.message())
     }
   }
   let restart_executed = execute_count.val - executed_before_restart
   clear_conformance_repository(repository)
-  if resumed.outcome !=
-    @workflow.OnePartWorkflowRunOutcome::OnePartRunIntegrated ||
+  if resumed.outcome != @workflow.PartWorkflowRunOutcome::PartRunIntegrated ||
     restart_executed != 0 {
-    return failed_one_part_report("restart repeated completed workflow work")
+    return failed_part_report("restart repeated completed workflow work")
   }
   let audit_receipt_count = if result.snapshot.audit_receipt is Some(_) {
     1
@@ -578,18 +586,18 @@ pub async fn run_one_part_conformance_fixture(
     result.snapshot.identities.audit_sandbox.generation_id ||
     result.snapshot.identities.implementation_session.id ==
     result.snapshot.identities.audit_session.id {
-    return failed_one_part_report(
+    return failed_part_report(
       "integrated workflow violated receipt or independence cardinality",
     )
   }
   let boundaries = [
-    @workflow.OnePartPersistenceBoundary::WorkflowAcceptedSnapshot,
-    @workflow.OnePartPersistenceBoundary::WorkflowEffectPlanned,
-    @workflow.OnePartPersistenceBoundary::WorkflowEffectAuthorized,
-    @workflow.OnePartPersistenceBoundary::WorkflowEffectObserved,
-    @workflow.OnePartPersistenceBoundary::WorkflowAuditReceiptRecorded,
-    @workflow.OnePartPersistenceBoundary::WorkflowIntegrationPlanned,
-    @workflow.OnePartPersistenceBoundary::WorkflowIntegrationAuthorized,
+    @workflow.PartPersistenceBoundary::WorkflowAcceptedSnapshot,
+    @workflow.PartPersistenceBoundary::WorkflowEffectPlanned,
+    @workflow.PartPersistenceBoundary::WorkflowEffectAuthorized,
+    @workflow.PartPersistenceBoundary::WorkflowEffectObserved,
+    @workflow.PartPersistenceBoundary::WorkflowAuditReceiptRecorded,
+    @workflow.PartPersistenceBoundary::WorkflowIntegrationPlanned,
+    @workflow.PartPersistenceBoundary::WorkflowIntegrationAuthorized,
   ]
   for index, boundary in boundaries {
     let fault_repository = conformance_repository(
@@ -599,11 +607,11 @@ pub async fn run_one_part_conformance_fixture(
     let injected = @ref.new(false)
     let fault_count = @ref.new(0)
     let first = match
-      @workflow.run_new_one_part_workflow(
+      @workflow.run_new_part_workflow(
         fault_repository,
-        local_one_part_workflow_repository_adapters(),
+        local_part_workflow_repository_adapters(),
         snapshot,
-        conformance_dependencies(fault_count, fn(actual) {
+        conformance_dependencies(fault_repository, fault_count, fn(actual) {
           if !injected.val && actual == boundary {
             injected.val = true
             Some(@storage.StateStoreFaultPoint::StateAfterMutationBeforeOutbox)
@@ -615,37 +623,37 @@ pub async fn run_one_part_conformance_fixture(
       Ok(value) => value
       Err(error) => {
         clear_conformance_repository(fault_repository)
-        return failed_one_part_report(error.message())
+        return failed_part_report(error.message())
       }
     }
     if first.outcome !=
-      @workflow.OnePartWorkflowRunOutcome::OnePartRunPersistenceFault(
+      @workflow.PartWorkflowRunOutcome::PartRunPersistenceFault(
         boundary,
         @storage.StateStoreFaultPoint::StateAfterMutationBeforeOutbox,
       ) {
       clear_conformance_repository(fault_repository)
-      return failed_one_part_report("fault was not observed at its boundary")
+      return failed_part_report("fault was not observed at its boundary")
     }
     let recovered = if boundary ==
-      @workflow.OnePartPersistenceBoundary::WorkflowAcceptedSnapshot {
-      @workflow.run_new_one_part_workflow(
+      @workflow.PartPersistenceBoundary::WorkflowAcceptedSnapshot {
+      @workflow.run_new_part_workflow(
         fault_repository,
-        local_one_part_workflow_repository_adapters(),
+        local_part_workflow_repository_adapters(),
         snapshot,
-        conformance_dependencies(fault_count, fn(_) { None }),
+        conformance_dependencies(fault_repository, fault_count, fn(_) { None }),
       )
     } else {
-      @workflow.resume_one_part_workflow(
+      @workflow.resume_part_workflow(
         fault_repository,
-        local_one_part_workflow_repository_adapters(),
+        local_part_workflow_repository_adapters(),
         "workflow-conformance",
-        conformance_dependencies(fault_count, fn(_) { None }),
+        conformance_dependencies(fault_repository, fault_count, fn(_) { None }),
       )
     }
     match recovered {
       Ok(
         {
-          outcome: @workflow.OnePartWorkflowRunOutcome::OnePartRunIntegrated,
+          outcome: @workflow.PartWorkflowRunOutcome::PartRunIntegrated,
           snapshot: recovered_snapshot,
           ..,
         }
@@ -655,17 +663,17 @@ pub async fn run_one_part_conformance_fixture(
           recovered_snapshot.audit_receipt is None ||
           recovered_snapshot.integration_receipt is None {
           clear_conformance_repository(fault_repository)
-          return failed_one_part_report(
+          return failed_part_report(
             "fault recovery violated receipt cardinality",
           )
         }
       Ok(_) => {
         clear_conformance_repository(fault_repository)
-        return failed_one_part_report("fault recovery did not integrate")
+        return failed_part_report("fault recovery did not integrate")
       }
       Err(error) => {
         clear_conformance_repository(fault_repository)
-        return failed_one_part_report(error.message())
+        return failed_part_report(error.message())
       }
     }
     clear_conformance_repository(fault_repository)

@@ -39,7 +39,7 @@ fn claude_driver_session(digest : @control.Digest) -> @control.HarnessSession {
 ///|
 fn claude_driver_output(tool_name : String) -> String {
   let init =
-    #|{"type":"system","subtype":"init","tools":["mcp__choir_sandbox__execute"],"mcp_servers":[{"name":"choir_sandbox","status":"connected"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.215","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"]}
+    #|{"type":"system","subtype":"init","tools":["mcp__choir_sandbox__execute","StructuredOutput"],"mcp_servers":[{"name":"choir_sandbox","status":"connected"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.215","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"]}
   init +
   "\n" +
   (
@@ -50,6 +50,8 @@ fn claude_driver_output(tool_name : String) -> String {
   (
     #|"}]}}
     #|{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tool-1","content":"ok"}]}}
+    #|{"type":"assistant","message":{"model":"claude-opus-4-8","content":[{"type":"tool_use","id":"tool-2","name":"StructuredOutput"}]}}
+    #|{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tool-2","content":"Structured output provided successfully"}]}}
     #|{"type":"result","subtype":"success","is_error":false,"result":"{\"outcome\":\"completed\"}"}
   )
 }
@@ -58,7 +60,7 @@ fn claude_driver_output(tool_name : String) -> String {
 test "Claude driver normalizes one balanced restricted Take" {
   let tools = ["mcp__choir_sandbox__execute"]
   let digest = @harness.claude_effective_surface_manifest_digest(
-    claude_driver_manifest(tools),
+    claude_driver_manifest([..tools, "StructuredOutput"]),
   )
   let started = @harness.start_claude_harness_session(
     claude_driver_session(digest),
@@ -81,7 +83,7 @@ test "Claude driver normalizes one balanced restricted Take" {
     result.outcome,
     @harness.ClaudeTakeOutcome::ClaudeImplementationCompleted,
   )
-  assert_eq(result.events.length(), 4)
+  assert_eq(result.events.length(), 6)
   assert_true(
     result.session.lifecycle
     is @control.HarnessSessionLifecycle::HarnessSessionIngestionClosedCleanly(
@@ -94,7 +96,7 @@ test "Claude driver normalizes one balanced restricted Take" {
 test "Claude driver rejects undeclared host tool use" {
   let tools = ["mcp__choir_sandbox__execute"]
   let digest = @harness.claude_effective_surface_manifest_digest(
-    claude_driver_manifest(tools),
+    claude_driver_manifest([..tools, "StructuredOutput"]),
   )
   let started = @harness.start_claude_harness_session(
     claude_driver_session(digest),

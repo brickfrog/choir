@@ -31,6 +31,12 @@ pub(all) struct NativeBoxLiteTakeSandbox {
 } derive(Debug, Eq)
 
 ///|
+pub(all) struct NativeSandboxProcessResult {
+  exit_code : Int
+  output : String
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 fn native_boxlite_take_error(message : String) -> @types.ChoirError {
   @types.ChoirError::transport_error("BoxLite Take runtime: " + message)
 }
@@ -531,22 +537,32 @@ pub async fn prepare_native_boxlite_environment(
     return Err(native_boxlite_take_error("prepared base stop failed"))
   }
   let toolchain = server.config.root + "/staging/moon-toolchain"
-  if !@sys.create_dir_all(toolchain) ||
-    !@sys.write_file_sync(
-      toolchain + "/.choir-toolchain-root",
-      @sandbox.boxlite_take_tool_manifest_digest().0 + "\n",
-    ) {
-    return Err(native_boxlite_take_error("toolchain staging root failed"))
-  }
-  for directory in ["bin", "lib", "include"] {
-    match
-      copy_native_toolchain_directory(
-        server,
-        moon_home + "/" + directory,
-        toolchain + "/" + directory,
-      ) {
-      Ok(_) => ()
-      Err(error) => return Err(error)
+  let toolchain_marker = toolchain + "/.choir-toolchain-root"
+  let toolchain_digest = @sandbox.boxlite_take_tool_manifest_digest().0 + "\n"
+  let staged = @sys.path_exists(toolchain_marker)
+  if staged {
+    if @sys.read_file(toolchain_marker) != toolchain_digest ||
+      @sys.realpath_native(toolchain) != Some(toolchain) ||
+      !@sys.path_exists(toolchain + "/bin/moon") ||
+      !@sys.path_exists(toolchain + "/lib") ||
+      !@sys.path_exists(toolchain + "/include") {
+      return Err(native_boxlite_take_error("staged toolchain is invalid"))
+    }
+  } else {
+    if !@sys.create_dir_all(toolchain) ||
+      !@sys.write_file_sync(toolchain_marker, toolchain_digest) {
+      return Err(native_boxlite_take_error("toolchain staging root failed"))
+    }
+    for directory in ["bin", "lib", "include"] {
+      match
+        copy_native_toolchain_directory(
+          server,
+          moon_home + "/" + directory,
+          toolchain + "/" + directory,
+        ) {
+        Ok(_) => ()
+        Err(error) => return Err(error)
+      }
     }
   }
   stop_native_boxlite_server(server)
@@ -766,6 +782,102 @@ pub async fn inspect_native_boxlite_take(
 }
 
 ///|
+pub async fn execute_native_boxlite_process(
+  take : NativeBoxLiteTakeSandbox,
+  capability : @sandbox.SandboxEffectCapability,
+  process : @sandbox.SandboxProcessSpec,
+  artifact_exists : (@control.ArtifactReference) -> Bool,
+) -> Result[NativeSandboxProcessResult, @types.ChoirError] {
+  match
+    @sandbox.validate_sandbox_process_spec(
+      process,
+      capability,
+      take.prepared.runtime_policy_digest,
+      artifact_exists,
+      fn(tool_id, digest) {
+        tool_id == @sandbox.SandboxRegisteredToolId("moon") &&
+        digest == take.prepared.tool_manifest_digest
+      },
+    ) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  if process.timeout_ms > 600000L ||
+    process.output.stdout_limit_bytes + process.output.stderr_limit_bytes >
+    2097152L {
+    return Err(
+      @types.ChoirError::policy_blocked(
+        "native sandbox process exceeds the admitted runtime bound",
+      ),
+    )
+  }
+  let executable = match process.executable {
+    @sandbox.SandboxExecutable::SandboxRegisteredTool(tool_id, digest) =>
+      if tool_id == @sandbox.SandboxRegisteredToolId("moon") &&
+        digest == take.prepared.tool_manifest_digest {
+        "/opt/moon/bin/moon"
+      } else {
+        return Err(
+          @types.ChoirError::policy_blocked(
+            "native sandbox executable is not in the admitted registry",
+          ),
+        )
+      }
+    _ =>
+      return Err(
+        @types.ChoirError::policy_blocked(
+          "native sandbox executable is not in the admitted registry",
+        ),
+      )
+  }
+  match process.stdin {
+    @sandbox.SandboxStdinPolicy::SandboxStdinClosed
+    | @sandbox.SandboxStdinPolicy::SandboxStdinEmpty => ()
+    _ =>
+      return Err(
+        @types.ChoirError::policy_blocked(
+          "native sandbox stdin artifact execution is not supported",
+        ),
+      )
+  }
+  let working_directory = match process.working_directory {
+    @sandbox.SandboxWorkingDirectory::SandboxWorkspaceRoot => "/workspace"
+    @sandbox.SandboxWorkingDirectory::SandboxWorkspaceSubdirectory(path) =>
+      "/workspace/" + path.0
+  }
+  let command : Array[String] = ["exec", "--workdir", working_directory]
+  for entry in process.environment {
+    command.push("--env")
+    command.push(entry.key + "=" + entry.value)
+  }
+  command.push(take.box_id)
+  command.push("--")
+  command.push(executable)
+  for argument in process.arguments {
+    command.push(argument)
+  }
+  let capture = match
+    capture_native_boxlite_cli(
+      take.prepared.server,
+      command,
+      process.timeout_ms.to_int(),
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let output_limit = process.output.stdout_limit_bytes +
+    process.output.stderr_limit_bytes
+  if capture.output.length().to_int64() > output_limit {
+    return Err(
+      @types.ChoirError::policy_blocked(
+        "native sandbox process output exceeded its admitted limit",
+      ),
+    )
+  }
+  Ok({ exit_code: capture.exit_code, output: capture.output })
+}
+
+///|
 pub async fn probe_native_boxlite_mcp(
   take : NativeBoxLiteTakeSandbox,
   node : String,
@@ -911,8 +1023,8 @@ pub async fn copy_native_boxlite_take_result(
   let special = @process.collect_output_merged(
     "/usr/bin/find",
     [
-      workspace, "-xdev", "!", "-type", "d", "!", "-type", "f", "!", "-type",
-      "l", "-print", "-quit",
+      workspace, "-xdev", "!", "-type", "d", "!", "-type", "f", "!", "-type", "l",
+      "-print", "-quit",
     ],
     extra_env=native_boxlite_environment(take.prepared.server, false),
     inherit_env=false,

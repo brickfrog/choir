@@ -126,6 +126,26 @@ test "sandbox process specs cannot name host executables or ambient env" {
     )
     is Err(_),
   )
+  assert_true(
+    @sandbox.validate_sandbox_process_spec(
+      { ..valid, arguments: ["test\u{00}injected"] },
+      effect_capability(),
+      policy_digest,
+      fn(_) { true },
+      fn(_, _) { true },
+    )
+    is Err(_),
+  )
+  assert_true(
+    @sandbox.validate_sandbox_process_spec(
+      { ..valid, arguments: Array::make(97, "argument") },
+      effect_capability(),
+      policy_digest,
+      fn(_) { true },
+      fn(_, _) { true },
+    )
+    is Err(_),
+  )
 }
 
 ///|

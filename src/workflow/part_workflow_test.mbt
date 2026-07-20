@@ -76,7 +76,7 @@ fn workflow_session(
 }
 
 ///|
-fn workflow_fixture() -> @workflow.OnePartWorkflowSnapshot raise {
+fn workflow_fixture() -> @workflow.PartWorkflowSnapshot raise {
   let goal : @control.Goal = {
     id: @control.GoalId("goal-1"),
     contract_digest: workflow_digest_a,
@@ -161,7 +161,7 @@ fn workflow_fixture() -> @workflow.OnePartWorkflowSnapshot raise {
     contract.audit_capability_profile_digest,
     workflow_digest_e,
   )
-  let identities : @workflow.OnePartIdentityPlan = {
+  let identities : @workflow.PartIdentityPlan = {
     implementation_take: implementation,
     implementation_sandbox,
     implementation_session: workflow_session(
@@ -191,7 +191,7 @@ fn workflow_fixture() -> @workflow.OnePartWorkflowSnapshot raise {
     ),
   }
   match
-    @workflow.initialize_one_part_workflow(
+    @workflow.initialize_part_workflow(
       "workflow-1",
       goal,
       part,
@@ -270,19 +270,18 @@ fn successful_trace(
 
 ///|
 fn authorize_next(
-  snapshot : @workflow.OnePartWorkflowSnapshot,
-) -> @workflow.OnePartWorkflowSnapshot raise {
-  let intent = match @workflow.plan_next_one_part_effect(snapshot) {
+  snapshot : @workflow.PartWorkflowSnapshot,
+) -> @workflow.PartWorkflowSnapshot raise {
+  let intent = match @workflow.plan_next_part_effect(snapshot) {
     Ok(Some(value)) => value
     Ok(None) => fail("expected another workflow effect")
     Err(error) => fail(error.message())
   }
-  let planned = match
-    @workflow.persist_planned_one_part_effect(snapshot, intent) {
+  let planned = match @workflow.persist_planned_part_effect(snapshot, intent) {
     Ok(value) => value
     Err(error) => fail(error.message())
   }
-  match @workflow.authorize_pending_one_part_effect(planned) {
+  match @workflow.authorize_pending_part_effect(planned) {
     Ok(value) => value
     Err(error) => fail(error.message())
   }
@@ -290,13 +289,13 @@ fn authorize_next(
 
 ///|
 fn apply_observation(
-  snapshot : @workflow.OnePartWorkflowSnapshot,
-  observation : @workflow.OnePartEffectObservation,
+  snapshot : @workflow.PartWorkflowSnapshot,
+  observation : @workflow.PartEffectObservation,
   observed_at : Int64,
-) -> @workflow.OnePartWorkflowSnapshot raise {
+) -> @workflow.PartWorkflowSnapshot raise {
   let authorized = authorize_next(snapshot)
   match
-    @workflow.apply_one_part_effect_observation(
+    @workflow.apply_part_effect_observation(
       authorized,
       observation,
       observed_at,
@@ -310,37 +309,37 @@ fn apply_observation(
 
 ///|
 fn round_trip(
-  snapshot : @workflow.OnePartWorkflowSnapshot,
-) -> @workflow.OnePartWorkflowSnapshot raise {
-  let encoded = @workflow.one_part_snapshot_bytes(snapshot)
-  let decoded = match @workflow.decode_one_part_snapshot(encoded) {
+  snapshot : @workflow.PartWorkflowSnapshot,
+) -> @workflow.PartWorkflowSnapshot raise {
+  let encoded = @workflow.part_snapshot_bytes(snapshot)
+  let decoded = match @workflow.decode_part_snapshot(encoded) {
     Ok(value) => value
     Err(error) => fail(error.message())
   }
   assert_eq(decoded, snapshot)
   assert_eq(
-    @workflow.one_part_snapshot_digest(decoded),
-    @workflow.one_part_snapshot_digest(snapshot),
+    @workflow.part_snapshot_digest(decoded),
+    @workflow.part_snapshot_digest(snapshot),
   )
   decoded
 }
 
 ///|
-fn drive_to_verified() -> @workflow.OnePartWorkflowSnapshot raise {
+fn drive_to_verified() -> @workflow.PartWorkflowSnapshot raise {
   let initial = workflow_fixture()
   let implementation_session = started_session(
     initial.identities.implementation_session,
   )
   let mut snapshot = apply_observation(
     initial,
-    @workflow.OnePartEffectObservation::ImplementationSandboxPrepared(
+    @workflow.PartEffectObservation::ImplementationSandboxPrepared(
       active_sandbox(initial.identities.implementation_sandbox),
     ),
     10L,
   )
   snapshot = apply_observation(
     snapshot,
-    @workflow.OnePartEffectObservation::ImplementationHarnessStarted(
+    @workflow.PartEffectObservation::ImplementationHarnessStarted(
       implementation_session,
     ),
     11L,
@@ -350,7 +349,7 @@ fn drive_to_verified() -> @workflow.OnePartWorkflowSnapshot raise {
   )
   snapshot = apply_observation(
     snapshot,
-    @workflow.OnePartEffectObservation::ImplementationCompleted(
+    @workflow.PartEffectObservation::ImplementationCompleted(
       {
         take_id: snapshot.implementation_take.id,
         session_id: implementation_session.id,
@@ -378,7 +377,7 @@ fn drive_to_verified() -> @workflow.OnePartWorkflowSnapshot raise {
   }
   snapshot = apply_observation(
     snapshot,
-    @workflow.OnePartEffectObservation::CandidateNormalized(candidate, {
+    @workflow.PartEffectObservation::CandidateNormalized(candidate, {
       candidate_tree_paths: [@control.RepoPath("src/feature.mbt")],
       symlink_prefix_paths: [],
       normalization_collision_paths: [],
@@ -390,14 +389,14 @@ fn drive_to_verified() -> @workflow.OnePartWorkflowSnapshot raise {
   )
   snapshot = apply_observation(
     snapshot,
-    @workflow.OnePartEffectObservation::VerificationSandboxPrepared(
+    @workflow.PartEffectObservation::VerificationSandboxPrepared(
       active_sandbox(snapshot.identities.verification_sandbox),
     ),
     16L,
   )
   snapshot = apply_observation(
     snapshot,
-    @workflow.OnePartEffectObservation::VerificationHarnessStarted(
+    @workflow.PartEffectObservation::VerificationHarnessStarted(
       verification_session,
     ),
     17L,
@@ -411,7 +410,7 @@ fn drive_to_verified() -> @workflow.OnePartWorkflowSnapshot raise {
   }
   snapshot = apply_observation(
     snapshot,
-    @workflow.OnePartEffectObservation::VerificationCompleted(
+    @workflow.PartEffectObservation::VerificationCompleted(
       {
         take_id: snapshot.verification_take.id,
         session_id: verification_session.id,
@@ -441,19 +440,19 @@ fn drive_to_verified() -> @workflow.OnePartWorkflowSnapshot raise {
 }
 
 ///|
-fn drive_to_audited() -> @workflow.OnePartWorkflowSnapshot raise {
+fn drive_to_audited() -> @workflow.PartWorkflowSnapshot raise {
   let mut snapshot = drive_to_verified()
   let audit_session = started_session(snapshot.identities.audit_session)
   snapshot = apply_observation(
     snapshot,
-    @workflow.OnePartEffectObservation::AuditSandboxPrepared(
+    @workflow.PartEffectObservation::AuditSandboxPrepared(
       active_sandbox(snapshot.identities.audit_sandbox),
     ),
     21L,
   )
   snapshot = apply_observation(
     snapshot,
-    @workflow.OnePartEffectObservation::AuditHarnessStarted(audit_session),
+    @workflow.PartEffectObservation::AuditHarnessStarted(audit_session),
     22L,
   )
   let (audit_final, audit_events) = successful_trace(
@@ -465,7 +464,7 @@ fn drive_to_audited() -> @workflow.OnePartWorkflowSnapshot raise {
   }
   snapshot = apply_observation(
     snapshot,
-    @workflow.OnePartEffectObservation::AuditCompleted(
+    @workflow.PartEffectObservation::AuditCompleted(
       {
         audit_take_id: snapshot.audit_take.id,
         take_fencing_epoch: snapshot.fencing_epoch,
@@ -486,7 +485,7 @@ fn drive_to_audited() -> @workflow.OnePartWorkflowSnapshot raise {
   )
   snapshot = round_trip(snapshot)
   snapshot = match
-    @workflow.mint_one_part_audit_receipt(
+    @workflow.mint_part_audit_receipt(
       snapshot,
       {
         receipt_id: @control.ReceiptId("audit-receipt-1"),
@@ -508,7 +507,7 @@ fn drive_to_audited() -> @workflow.OnePartWorkflowSnapshot raise {
 test "one Part reaches one verified audited integration result" {
   let mut snapshot = drive_to_audited()
   snapshot = match
-    @workflow.plan_one_part_integration(snapshot, {
+    @workflow.plan_part_integration(snapshot, {
       lease: {
         id: @control.IntegrationLeaseId("integration-lease-1"),
         goal_id: snapshot.goal.id,
@@ -532,11 +531,11 @@ test "one Part reaches one verified audited integration result" {
   }
   snapshot = apply_observation(
     snapshot,
-    @workflow.OnePartEffectObservation::PromotionGenerated(promotion),
+    @workflow.PartEffectObservation::PromotionGenerated(promotion),
     26L,
   )
   snapshot = match
-    @workflow.authorize_one_part_integration(
+    @workflow.authorize_part_integration(
       snapshot,
       workflow_digest_e,
       snapshot.identities.verification_sandbox.runtime_policy_digest,
@@ -548,7 +547,7 @@ test "one Part reaches one verified audited integration result" {
   }
   snapshot = apply_observation(
     snapshot,
-    @workflow.OnePartEffectObservation::IntegrationWitnessObserved(
+    @workflow.PartEffectObservation::IntegrationWitnessObserved(
       @control.IntegrationWitnessObservation::IntegrationWitnessApplied(
         promotion.commit_oid,
         promotion.commit_oid,
@@ -557,7 +556,7 @@ test "one Part reaches one verified audited integration result" {
     27L,
   )
   snapshot = round_trip(snapshot)
-  assert_eq(snapshot.stage, @workflow.OnePartWorkflowStage::OnePartIntegrated)
+  assert_eq(snapshot.stage, @workflow.PartWorkflowStage::PartIntegrated)
   assert_eq(snapshot.verification_receipts.length(), 1)
   assert_true(snapshot.audit_receipt is Some(_))
   assert_true(snapshot.integration_receipt is Some(_))
@@ -575,14 +574,14 @@ test "one Part reaches one verified audited integration result" {
 ///|
 test "verified Part cannot plan or authorize integration without audit" {
   let snapshot = drive_to_verified()
-  match @workflow.plan_next_one_part_effect(snapshot) {
-    Ok(Some({ kind: @workflow.OnePartEffectKind::PrepareAuditSandbox(_), .. })) =>
+  match @workflow.plan_next_part_effect(snapshot) {
+    Ok(Some({ kind: @workflow.PartEffectKind::PrepareAuditSandbox(_), .. })) =>
       ()
     _ => fail("verified Part did not require the audit Take")
   }
   let reads = @ref.new(0)
   assert_true(
-    @workflow.authorize_one_part_integration(
+    @workflow.authorize_part_integration(
       snapshot,
       workflow_digest_e,
       snapshot.identities.verification_sandbox.runtime_policy_digest,
@@ -599,7 +598,7 @@ test "verified Part cannot plan or authorize integration without audit" {
   )
   assert_eq(reads.val, 0)
   assert_true(
-    @workflow.plan_one_part_integration(snapshot, {
+    @workflow.plan_part_integration(snapshot, {
       lease: {
         id: @control.IntegrationLeaseId("lease-invalid"),
         goal_id: snapshot.goal.id,
@@ -619,7 +618,7 @@ test "verified Part cannot plan or authorize integration without audit" {
 test "promotion conflict blocks the Part without minting integration evidence" {
   let audited = drive_to_audited()
   let planned = match
-    @workflow.plan_one_part_integration(audited, {
+    @workflow.plan_part_integration(audited, {
       lease: {
         id: @control.IntegrationLeaseId("integration-lease-conflict"),
         goal_id: audited.goal.id,
@@ -636,10 +635,10 @@ test "promotion conflict blocks the Part without minting integration evidence" {
   }
   let blocked = apply_observation(
     planned,
-    @workflow.OnePartEffectObservation::PromotionConflictObserved,
+    @workflow.PartEffectObservation::PromotionConflictObserved,
     26L,
   )
-  assert_eq(blocked.stage, @workflow.OnePartWorkflowStage::OnePartBlocked)
+  assert_eq(blocked.stage, @workflow.PartWorkflowStage::PartBlocked)
   assert_true(
     blocked.part.lifecycle
     is @control.PartLifecycle::PartBlocked(
@@ -660,38 +659,37 @@ test "promotion conflict blocks the Part without minting integration evidence" {
 ///|
 test "planned and authorized effects survive snapshot restart exactly once" {
   let initial = workflow_fixture()
-  let intent = match @workflow.plan_next_one_part_effect(initial) {
+  let intent = match @workflow.plan_next_part_effect(initial) {
     Ok(Some(value)) => value
     _ => fail("expected initial sandbox effect")
   }
-  let planned = match
-    @workflow.persist_planned_one_part_effect(initial, intent) {
+  let planned = match @workflow.persist_planned_part_effect(initial, intent) {
     Ok(value) => round_trip(value)
     Err(error) => fail(error.message())
   }
-  match @workflow.plan_next_one_part_effect(planned) {
+  match @workflow.plan_next_part_effect(planned) {
     Ok(Some(recovered)) => assert_eq(recovered, intent)
     _ => fail("planned effect did not survive restart")
   }
-  let authorized = match @workflow.authorize_pending_one_part_effect(planned) {
+  let authorized = match @workflow.authorize_pending_part_effect(planned) {
     Ok(value) => round_trip(value)
     Err(error) => fail(error.message())
   }
-  match @workflow.plan_next_one_part_effect(authorized) {
+  match @workflow.plan_next_part_effect(authorized) {
     Ok(Some(recovered)) => {
       assert_eq(recovered.effect_id, intent.effect_id)
       assert_eq(recovered.request_digest, intent.request_digest)
       assert_eq(
         recovered.lifecycle,
-        @workflow.OnePartEffectLifecycle::OnePartEffectMayHaveOccurred,
+        @workflow.PartEffectLifecycle::PartEffectMayHaveOccurred,
       )
     }
     _ => fail("authorized effect was not recoverable")
   }
   let observed = match
-    @workflow.apply_one_part_effect_observation(
+    @workflow.apply_part_effect_observation(
       authorized,
-      @workflow.OnePartEffectObservation::ImplementationSandboxPrepared(
+      @workflow.PartEffectObservation::ImplementationSandboxPrepared(
         active_sandbox(initial.identities.implementation_sandbox),
       ),
       10L,
@@ -703,7 +701,7 @@ test "planned and authorized effects survive snapshot restart exactly once" {
   }
   assert_eq(observed.effect_receipts.length(), 1)
   assert_true(observed.pending_effect is None)
-  match @workflow.plan_next_one_part_effect(observed) {
+  match @workflow.plan_next_part_effect(observed) {
     Ok(Some(next)) => assert_true(next.effect_id != intent.effect_id)
     _ => fail("workflow did not advance after receipting the observation")
   }

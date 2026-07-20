@@ -116,7 +116,11 @@ pub(all) struct SandboxEnvironmentEntry {
 ///|
 pub(all) enum SandboxProcessAuthority {
   SandboxImplementationTool(@control.TakeId, @control.Digest)
-  SandboxVerificationTool(@control.TakeId, @control.Digest, @control.Digest)
+  SandboxVerificationTool(
+    @control.TakeId,
+    @control.VerificationSpecId,
+    @control.Digest
+  )
   SandboxAuditTool(@control.TakeId, @control.Digest)
 } derive(Debug, Eq, ToJson, FromJson)
 
@@ -459,6 +463,31 @@ pub fn validate_sandbox_process_spec(
     return Err(
       @types.ChoirError::policy_blocked(
         "sandbox process authority does not match the effect capability",
+      ),
+    )
+  }
+  if process.arguments.length() > 96 {
+    return Err(
+      @types.ChoirError::validation_error(
+        "sandbox process has too many arguments",
+      ),
+    )
+  }
+  let mut argument_bytes = 0
+  for argument in process.arguments {
+    if argument.contains("\u{00}") {
+      return Err(
+        @types.ChoirError::validation_error(
+          "sandbox process argument is invalid",
+        ),
+      )
+    }
+    argument_bytes = argument_bytes + argument.length()
+  }
+  if argument_bytes > 65536 {
+    return Err(
+      @types.ChoirError::validation_error(
+        "sandbox process arguments exceed the byte limit",
       ),
     )
   }

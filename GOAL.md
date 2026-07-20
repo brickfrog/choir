@@ -2348,7 +2348,7 @@ implemented. The contract is common:
 11. Keep provider, sandbox, Git, and forge surfaces replaceable through typed
     ports and conformance reports.
 12. Delete each superseded v1 seam as its complete v2 replacement lands.
-13. Prove one-part, divergent multi-part, and parameterized scale/mixed-workload
+13. Prove the Part lifecycle, divergent concurrent promotion, and parameterized scale/mixed-workload
     slices plus adversarial and fault-injection suites.
 
 ## Non-Goals
@@ -2427,7 +2427,7 @@ Claude native delegation with the same restricted child surface. Measure plannin
 supervision value. Provider task files and mailboxes remain nonauthoritative.
 The experiment may be deleted without changing the architecture.
 
-### One durable audited Claude Part
+### Durable audited Claude Part
 
 - Crystallize the durable schema/transition table and uniqueness constraints
   from this charter.
@@ -2448,7 +2448,7 @@ and integration receipt. No provider credential is readable in the guest or
 persisted by Choir; no host checkout mutation occurs outside the integration
 adapter.
 
-### Divergent three-Part scheduler and combined audit
+### Concurrent promotion and combined audit
 
 The fixed fixture contains:
 
@@ -2566,8 +2566,9 @@ moon run --target native src/bin/choir_conformance -- hermetic
 moon run --target native src/bin/choir_conformance -- sandbox --runtime boxlite --live
 moon run --target native src/bin/choir_conformance -- harness --surface claude-cli --profile subscription --live
 moon run --target native src/bin/choir_conformance -- harness --surface codex-cli --profile subscription --live
-moon run --target native src/bin/choir_conformance -- e2e --fixture one-part
-moon run --target native src/bin/choir_conformance -- e2e --fixture three-part
+moon run --target native src/bin/choir_conformance -- e2e --fixture part-lifecycle
+moon run --target native src/bin/choir_conformance -- e2e --fixture native-part-lifecycle
+moon run --target native src/bin/choir_conformance -- e2e --fixture parallel-promotion
 moon run --target native src/bin/choir_conformance -- e2e --fixture scale-mixed
 ```
 
@@ -2654,8 +2655,9 @@ report, and exits nonzero on any oracle mismatch.
 | `host.surface_matrix` | `SURFACE-001` through `TOOL-SEARCH-015` | Exact manifest, canary, auth/entitlement, child, death, and resume oracles |
 | `sandbox.lifecycle_security` | KVM boot/clone/attach/kill/re-adopt/root/network/advisory cases | Exact pinned runtime report and host/guest isolation artifacts |
 | `sandbox.transfer_security` | Malicious copy archive with traversal, links, special files, destination symlinks, and expansion bombs | Typed rejection, bounded staging, zero mutation outside staging, only validated atomic artifact adoption |
-| `e2e.one_part_baseline` | One-Part fixture | 1 implementation, 1 part-verification take/set, 1 part audit, 1 integration |
-| `e2e.three_part_baseline` | Three-Part fixture | 4 implementations, 3 part-verification sets/audits/integrations, 1 goal-verification set and goal audit |
+| `e2e.part_lifecycle` | Part-lifecycle fixture | 1 implementation, 1 part-verification take/set, 1 part audit, 1 integration |
+| `e2e.native_part_lifecycle` | Native Part-lifecycle fixture | Real subscription CLI, sandbox, typed verification, restart witness recovery, and Git promotion |
+| `e2e.parallel_promotion` | Parallel-promotion fixture | 4 implementations, 3 part-verification sets/audits/integrations, 1 goal-verification set and goal audit |
 | `scheduler.generated_dags` | Fixed-seed generated DAG/claim manifests | Dependency, concurrency, exclusivity, and conflict invariants |
 | `e2e.scale_mixed` | Checked-in manifest and digest | Exactly N accepted Parts, N part-verification sets/audits/integrations, and 1 goal-verification set/audit/publication/PR, where N is fixed by the manifest |
 
@@ -2701,7 +2703,7 @@ dependency order:
    direct orchestration I/O.
 4. Land one provider driver with exact event/effective-surface contracts;
    delete its Zellij launch/message/lifecycle dependency.
-5. Land the one-part VSDD, integration witness, and recovery path; delete old
+5. Land the Part VSDD, integration witness, and recovery path; delete old
    part completion and merge-gate paths.
 6. Land typed selection, mutation scheduling, revisions, and multi-part
    promotion; delete old prompt-/pane-owned scheduling state.
@@ -2746,7 +2748,7 @@ fallback reads, old-format translation, or “legacy” helpers.
 
 These choices remain provisional and are resolved only by named evidence:
 
-1. **State adapter:** SQLite is preferred. Before real one-Part execution, prove
+1. **State adapter:** SQLite is preferred. Before real Part execution, prove
    the transaction, uniqueness, fencing, outbox, and fault-injection requirements
    through a narrow injected MoonBit adapter.
 2. **Claude execution surface:** use the official subscription CLI only if

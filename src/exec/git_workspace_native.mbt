@@ -1,6 +1,7 @@
 ///|
 pub(all) struct NativeGitWorkspaceConfig {
   repository_root : String
+  object_directory : String
   staging_root : String
 } derive(Debug, Eq)
 
@@ -39,19 +40,29 @@ fn valid_native_git_workspace_key(value : String) -> Bool {
 ///|
 fn valid_native_git_workspace_config(config : NativeGitWorkspaceConfig) -> Bool {
   config.repository_root.has_prefix("/") &&
+  config.object_directory.has_prefix("/") &&
+  config.object_directory.has_suffix("/objects") &&
   config.staging_root.has_prefix("/tmp/choir-v2-take-") &&
   config.staging_root.has_suffix("/staging") &&
   !config.repository_root.contains("\n") &&
+  !config.object_directory.contains("\n") &&
+  !config.object_directory.contains("/../") &&
   !config.staging_root.contains("/../")
 }
 
 ///|
 fn native_git_workspace_environment(
+  config : NativeGitWorkspaceConfig,
   index_file : String?,
   work_tree : String?,
   commit : Bool,
 ) -> Map[String, String] {
   let environment = native_git_environment(commit)
+  environment["GIT_DIR"] = config.staging_root + "/git-control"
+  environment["GIT_OBJECT_DIRECTORY"] = config.object_directory
+  environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
+  environment["GIT_ATTR_NOSYSTEM"] = "1"
+  environment["XDG_CONFIG_HOME"] = "/nonexistent"
   match index_file {
     Some(value) => environment["GIT_INDEX_FILE"] = value
     None => ()
@@ -64,6 +75,40 @@ fn native_git_workspace_environment(
 }
 
 ///|
+fn ensure_native_git_control(
+  config : NativeGitWorkspaceConfig,
+) -> Result[Unit, @types.ChoirError] {
+  let root = config.staging_root + "/git-control"
+  let config_path = root + "/config"
+  let head_path = root + "/HEAD"
+  let config_content = "[core]\n\trepositoryformatversion = 0\n\tbare = true\n"
+  let head_content = "ref: refs/heads/choir-control\n"
+  if !@sys.create_dir_all(root + "/refs/heads") ||
+    !@sys.create_dir_all(root + "/objects/info") ||
+    !@sys.create_dir_all(root + "/objects/pack") {
+    return Err(native_git_workspace_error("Git control root creation failed"))
+  }
+  if @sys.realpath_native(root) != Some(root) {
+    return Err(native_git_workspace_error("Git control root is not canonical"))
+  }
+  if @sys.path_exists(config_path) {
+    if @sys.read_file(config_path) != config_content {
+      return Err(native_git_workspace_error("Git control config is invalid"))
+    }
+  } else if !@sys.write_file_sync(config_path, config_content) {
+    return Err(native_git_workspace_error("Git control config creation failed"))
+  }
+  if @sys.path_exists(head_path) {
+    if @sys.read_file(head_path) != head_content {
+      return Err(native_git_workspace_error("Git control HEAD is invalid"))
+    }
+  } else if !@sys.write_file_sync(head_path, head_content) {
+    return Err(native_git_workspace_error("Git control HEAD creation failed"))
+  }
+  Ok(())
+}
+
+///|
 async fn capture_native_git_workspace_process(
   config : NativeGitWorkspaceConfig,
   arguments : Array[String],
@@ -72,7 +117,11 @@ async fn capture_native_git_workspace_process(
   commit? : Bool = false,
   timeout_ms? : Int = 120000,
 ) -> Result[NativeGitCapture, @types.ChoirError] {
-  let args : Array[String] = ["-C", config.repository_root]
+  match ensure_native_git_control(config) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let args : Array[String] = []
   for item in arguments {
     args.push(item)
   }
@@ -80,9 +129,11 @@ async fn capture_native_git_workspace_process(
     @process.collect_output_merged(
       "/usr/bin/git",
       args,
-      extra_env=native_git_workspace_environment(index_file, work_tree, commit),
+      extra_env=native_git_workspace_environment(
+        config, index_file, work_tree, commit,
+      ),
       inherit_env=false,
-      cwd=config.repository_root,
+      cwd=config.staging_root,
     )
   }) catch {
     _ => return Err(native_git_workspace_error("Git process failed"))
@@ -164,6 +215,8 @@ pub async fn stage_native_git_workspace(
   }
   if @sys.realpath_native(config.repository_root) !=
     Some(config.repository_root) ||
+    @sys.realpath_native(config.object_directory) !=
+    Some(config.object_directory) ||
     @sys.realpath_native(config.staging_root) != Some(config.staging_root) {
     return Err(native_git_workspace_error("workspace roots are not canonical"))
   }
@@ -264,6 +317,7 @@ pub async fn normalize_native_git_candidate(
   part_id : @control.PartId,
   take_id : @control.TakeId,
   base_commit_oid : @control.GitOid,
+  expected_source_digest : @control.Digest,
   result_root : String,
 ) -> Result[
   (@control.CandidateCommit, @control.CandidatePathEvidence),
@@ -272,6 +326,9 @@ pub async fn normalize_native_git_candidate(
   if !valid_native_git_workspace_config(config) ||
     !valid_native_git_workspace_key(key) ||
     !valid_hex_oid_text(base_commit_oid.0) ||
+    !valid_hex_oid_text(expected_source_digest.0) ||
+    @sys.realpath_native(config.object_directory) !=
+    Some(config.object_directory) ||
     @sys.realpath_native(result_root) != Some(result_root) ||
     !result_root.has_prefix(
       config.staging_root[:config.staging_root.length() - "/staging".length()] +
@@ -285,19 +342,52 @@ pub async fn normalize_native_git_candidate(
     )
   }
   let marker = result_root + "/.choir-source-root"
-  if !@sys.path_exists(marker) {
-    return Err(native_git_workspace_error("candidate source marker is missing"))
-  }
-  match remove_native_workspace_file(result_root, marker) {
-    Ok(_) => ()
-    Err(error) => return Err(error)
-  }
   let index_root = config.staging_root + "/indexes"
   let index_file = index_root + "/" + key + ".index"
-  if !@sys.create_dir_all(index_root) || @sys.path_exists(index_file) {
-    return Err(
-      native_git_workspace_error("candidate index identity is not fresh"),
-    )
+  let state_file = index_root + "/" + key + ".state"
+  let state_content = base_commit_oid.0 +
+    "\n" +
+    expected_source_digest.0 +
+    "\n" +
+    result_root +
+    "\n"
+  if !@sys.create_dir_all(index_root) {
+    return Err(native_git_workspace_error("candidate index root failed"))
+  }
+  if @sys.path_exists(state_file) {
+    if @sys.read_file(state_file) != state_content {
+      if !@sys.path_exists(marker) {
+        return Err(
+          native_git_workspace_error("candidate retry state is invalid"),
+        )
+      }
+      match remove_native_workspace_file(index_root, state_file) {
+        Ok(_) => ()
+        Err(error) => return Err(error)
+      }
+      if !@sys.write_file_sync(state_file, state_content) {
+        return Err(native_git_workspace_error("candidate retry state failed"))
+      }
+    }
+  } else if !@sys.path_exists(marker) ||
+    @sys.read_file(marker) != expected_source_digest.0 + "\n" ||
+    !@sys.write_file_sync(state_file, state_content) {
+    return Err(native_git_workspace_error("candidate source is invalid"))
+  }
+  if @sys.read_file(state_file) != state_content {
+    return Err(native_git_workspace_error("candidate retry state is false"))
+  }
+  if @sys.path_exists(marker) {
+    match remove_native_workspace_file(result_root, marker) {
+      Ok(_) => ()
+      Err(error) => return Err(error)
+    }
+  }
+  if @sys.path_exists(index_file) {
+    match remove_native_workspace_file(index_root, index_file) {
+      Ok(_) => ()
+      Err(error) => return Err(error)
+    }
   }
   let read_tree = match
     capture_native_git_workspace_process(
@@ -432,6 +522,29 @@ test "native Git workspace keys reject path syntax" {
   assert_false(valid_native_git_workspace_key("../take"))
   assert_false(valid_native_git_workspace_key("take/one"))
   assert_false(valid_native_git_workspace_key(""))
+}
+
+///|
+test "native Git workspace environment isolates repository configuration" {
+  let config : NativeGitWorkspaceConfig = {
+    repository_root: "/repo",
+    object_directory: "/repo/.git/objects",
+    staging_root: "/tmp/choir-v2-take-test/staging",
+  }
+  let environment = native_git_workspace_environment(
+    config,
+    Some("/tmp/choir-v2-take-test/staging/index"),
+    Some("/tmp/choir-v2-take-test/result"),
+    false,
+  )
+  assert_eq(
+    environment["GIT_DIR"],
+    "/tmp/choir-v2-take-test/staging/git-control",
+  )
+  assert_eq(environment["GIT_OBJECT_DIRECTORY"], "/repo/.git/objects")
+  assert_eq(environment["GIT_CONFIG_GLOBAL"], "/dev/null")
+  assert_eq(environment["GIT_ATTR_NOSYSTEM"], "1")
+  assert_eq(environment["HOME"], "/nonexistent")
 }
 
 ///|

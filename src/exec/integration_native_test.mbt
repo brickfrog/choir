@@ -120,7 +120,7 @@ async test "native Git promotion uses witnessed deterministic parents" {
     Err(error) => fail(error.message())
   }
   guard observation
-    is @workflow.OnePartEffectObservation::PromotionGenerated(promotion) else {
+    is @workflow.PartEffectObservation::PromotionGenerated(promotion) else {
     fail("expected generated promotion")
   }
   assert_eq(promotion, native_git_test_promotion())
@@ -156,7 +156,7 @@ async test "native Git merge conflict produces a durable workflow observation" {
     Err(error) => fail(error.message())
   }
   assert_true(
-    observation is @workflow.OnePartEffectObservation::PromotionConflictObserved,
+    observation is @workflow.PartEffectObservation::PromotionConflictObserved,
   )
   assert_eq(commands.length(), 3)
 }
@@ -215,7 +215,7 @@ async test "native Git integration atomically updates and witnesses both refs" {
   }
   assert_true(
     observation
-    is @workflow.OnePartEffectObservation::IntegrationWitnessObserved(
+    is @workflow.PartEffectObservation::IntegrationWitnessObserved(
       @control.IntegrationWitnessObservation::IntegrationWitnessApplied(_, _)
     ),
   )

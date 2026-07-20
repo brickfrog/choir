@@ -24,7 +24,7 @@ fn workflow_store_take(
 }
 
 ///|
-fn workflow_store_fixture() -> @workflow.OnePartWorkflowSnapshot raise {
+fn workflow_store_fixture() -> @workflow.PartWorkflowSnapshot raise {
   let goal : @control.Goal = {
     id: @control.GoalId("goal-store"),
     contract_digest: workflow_store_digest_a,
@@ -140,7 +140,7 @@ fn workflow_store_fixture() -> @workflow.OnePartWorkflowSnapshot raise {
       lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
     }
   }
-  let identities : @workflow.OnePartIdentityPlan = {
+  let identities : @workflow.PartIdentityPlan = {
     implementation_take: implementation,
     implementation_sandbox,
     implementation_session: session(
@@ -156,7 +156,7 @@ fn workflow_store_fixture() -> @workflow.OnePartWorkflowSnapshot raise {
     audit_session: session("audit-session-store", audit, audit_sandbox),
   }
   match
-    @workflow.initialize_one_part_workflow(
+    @workflow.initialize_part_workflow(
       "workflow-store",
       goal,
       part,
@@ -171,7 +171,7 @@ fn workflow_store_fixture() -> @workflow.OnePartWorkflowSnapshot raise {
 }
 
 ///|
-fn workflow_repository(suffix : String) -> @workflow.OnePartWorkflowRepository {
+fn workflow_repository(suffix : String) -> @workflow.PartWorkflowRepository {
   let root = storage_test_path("workflow-" + suffix)
   {
     state_store: { path: root + ".db" },
@@ -182,7 +182,7 @@ fn workflow_repository(suffix : String) -> @workflow.OnePartWorkflowRepository {
 
 ///|
 fn clean_workflow_repository(
-  repository : @workflow.OnePartWorkflowRepository,
+  repository : @workflow.PartWorkflowRepository,
 ) -> Unit {
   ignore(@sys.rm_rf(repository.state_store.path))
   ignore(@sys.rm_rf(repository.state_store.path + "-shm"))
@@ -191,8 +191,8 @@ fn clean_workflow_repository(
 }
 
 ///|
-fn workflow_repository_adapters() -> @workflow.OnePartWorkflowRepositoryAdapters {
-  local_one_part_workflow_repository_adapters()
+fn workflow_repository_adapters() -> @workflow.PartWorkflowRepositoryAdapters {
+  local_part_workflow_repository_adapters()
 }
 
 ///|
@@ -200,13 +200,13 @@ test "workflow snapshots survive restart and replay after advancement" {
   let repository = workflow_repository("restart")
   clean_workflow_repository(repository)
   let adapters = workflow_repository_adapters()
-  guard @workflow.initialize_one_part_workflow_repository(repository, adapters)
+  guard @workflow.initialize_part_workflow_repository(repository, adapters)
     is Ok(_) else {
     fail("initialize workflow repository")
   }
   let initial = workflow_store_fixture()
   let first = match
-    @workflow.persist_one_part_snapshot(repository, adapters, {
+    @workflow.persist_part_snapshot(repository, adapters, {
       snapshot: initial,
       expected_store_version: None,
       fault_point: None,
@@ -219,8 +219,7 @@ test "workflow snapshots survive restart and replay after advancement" {
     @storage.StateTransactionOutcome::StateTransactionCommitted,
   )
   let restarted = workflow_repository("restart")
-  match
-    @workflow.load_one_part_snapshot(restarted, adapters, "workflow-store") {
+  match @workflow.load_part_snapshot(restarted, adapters, "workflow-store") {
     Ok(Some(stored)) => {
       assert_eq(stored.state_record.version, 1)
       assert_eq(stored.snapshot, initial)
@@ -228,17 +227,16 @@ test "workflow snapshots survive restart and replay after advancement" {
     Ok(None) => fail("durable workflow snapshot was absent")
     Err(error) => fail(error.message())
   }
-  let intent = match @workflow.plan_next_one_part_effect(initial) {
+  let intent = match @workflow.plan_next_part_effect(initial) {
     Ok(Some(value)) => value
     _ => fail("initial workflow had no next effect")
   }
-  let advanced = match
-    @workflow.persist_planned_one_part_effect(initial, intent) {
+  let advanced = match @workflow.persist_planned_part_effect(initial, intent) {
     Ok(value) => value
     Err(error) => fail(error.message())
   }
   let second = match
-    @workflow.persist_one_part_snapshot(restarted, adapters, {
+    @workflow.persist_part_snapshot(restarted, adapters, {
       snapshot: advanced,
       expected_store_version: Some(1),
       fault_point: None,
@@ -251,8 +249,7 @@ test "workflow snapshots survive restart and replay after advancement" {
     second.transaction_outcome,
     @storage.StateTransactionOutcome::StateTransactionCommitted,
   )
-  match
-    @workflow.load_one_part_snapshot(restarted, adapters, "workflow-store") {
+  match @workflow.load_part_snapshot(restarted, adapters, "workflow-store") {
     Ok(Some(stored)) => {
       assert_eq(stored.state_record.version, 2)
       assert_eq(stored.snapshot, advanced)
@@ -260,7 +257,7 @@ test "workflow snapshots survive restart and replay after advancement" {
     _ => fail("advanced workflow snapshot was not recovered")
   }
   let replay = match
-    @workflow.persist_one_part_snapshot(restarted, adapters, {
+    @workflow.persist_part_snapshot(restarted, adapters, {
       snapshot: initial,
       expected_store_version: None,
       fault_point: None,
@@ -285,15 +282,13 @@ test "workflow persistence rolls back injected faults and reconciles ack loss" {
     let repository = workflow_repository(point.to_json().stringify(indent=0))
     clean_workflow_repository(repository)
     let adapters = workflow_repository_adapters()
-    guard @workflow.initialize_one_part_workflow_repository(
-        repository, adapters,
-      )
+    guard @workflow.initialize_part_workflow_repository(repository, adapters)
       is Ok(_) else {
       fail("initialize rollback repository")
     }
     let snapshot = workflow_store_fixture()
     let receipt = match
-      @workflow.persist_one_part_snapshot(repository, adapters, {
+      @workflow.persist_part_snapshot(repository, adapters, {
         snapshot,
         expected_store_version: None,
         fault_point: Some(point),
@@ -306,11 +301,11 @@ test "workflow persistence rolls back injected faults and reconciles ack loss" {
       @storage.StateTransactionOutcome::StateTransactionFaultRolledBack(point),
     )
     assert_true(
-      @workflow.load_one_part_snapshot(repository, adapters, "workflow-store")
+      @workflow.load_part_snapshot(repository, adapters, "workflow-store")
       is Ok(None),
     )
     match
-      @workflow.persist_one_part_snapshot(repository, adapters, {
+      @workflow.persist_part_snapshot(repository, adapters, {
         snapshot,
         expected_store_version: None,
         fault_point: None,
@@ -328,13 +323,13 @@ test "workflow persistence rolls back injected faults and reconciles ack loss" {
   let repository = workflow_repository("ack-loss")
   clean_workflow_repository(repository)
   let adapters = workflow_repository_adapters()
-  guard @workflow.initialize_one_part_workflow_repository(repository, adapters)
+  guard @workflow.initialize_part_workflow_repository(repository, adapters)
     is Ok(_) else {
     fail("initialize acknowledgment-loss repository")
   }
   let snapshot = workflow_store_fixture()
   match
-    @workflow.persist_one_part_snapshot(repository, adapters, {
+    @workflow.persist_part_snapshot(repository, adapters, {
       snapshot,
       expected_store_version: None,
       fault_point: Some(
@@ -351,11 +346,11 @@ test "workflow persistence rolls back injected faults and reconciles ack loss" {
   }
   let restarted = workflow_repository("ack-loss")
   assert_true(
-    @workflow.load_one_part_snapshot(restarted, adapters, "workflow-store")
+    @workflow.load_part_snapshot(restarted, adapters, "workflow-store")
     is Ok(Some(_)),
   )
   match
-    @workflow.persist_one_part_snapshot(restarted, adapters, {
+    @workflow.persist_part_snapshot(restarted, adapters, {
       snapshot,
       expected_store_version: None,
       fault_point: None,
@@ -430,30 +425,30 @@ fn workflow_driver_trace(
 
 ///|
 fn workflow_driver_observation(
-  snapshot : @workflow.OnePartWorkflowSnapshot,
-  intent : @workflow.OnePartEffectIntent,
-) -> Result[@workflow.OnePartEffectObservation, @types.ChoirError] {
+  snapshot : @workflow.PartWorkflowSnapshot,
+  intent : @workflow.PartEffectIntent,
+) -> Result[@workflow.PartEffectObservation, @types.ChoirError] {
   match intent.kind {
-    @workflow.OnePartEffectKind::PrepareImplementationSandbox(lease) =>
+    @workflow.PartEffectKind::PrepareImplementationSandbox(lease) =>
       Ok(
-        @workflow.OnePartEffectObservation::ImplementationSandboxPrepared({
+        @workflow.PartEffectObservation::ImplementationSandboxPrepared({
           ..lease,
           lifecycle: @control.SandboxLeaseLifecycle::SandboxLeaseActive,
         }),
       )
-    @workflow.OnePartEffectKind::StartImplementationHarness(session) =>
+    @workflow.PartEffectKind::StartImplementationHarness(session) =>
       Ok(
-        @workflow.OnePartEffectObservation::ImplementationHarnessStarted(
+        @workflow.PartEffectObservation::ImplementationHarnessStarted(
           workflow_driver_started_session(session),
         ),
       )
-    @workflow.OnePartEffectKind::DispatchImplementation(take_id, session_id) => {
+    @workflow.PartEffectKind::DispatchImplementation(take_id, session_id) => {
       let started = workflow_driver_started_session(
         snapshot.identities.implementation_session,
       )
       let (closed, events) = workflow_driver_trace(started, "implementation")
       Ok(
-        @workflow.OnePartEffectObservation::ImplementationCompleted(
+        @workflow.PartEffectObservation::ImplementationCompleted(
           {
             take_id,
             session_id,
@@ -468,7 +463,7 @@ fn workflow_driver_observation(
         ),
       )
     }
-    @workflow.OnePartEffectKind::NormalizeImplementationCandidate(take_id, _) => {
+    @workflow.PartEffectKind::NormalizeImplementationCandidate(take_id, _) => {
       let candidate : @control.CandidateCommit = {
         id: @control.CandidateId("candidate-store"),
         goal_id: snapshot.goal.id,
@@ -481,31 +476,27 @@ fn workflow_driver_observation(
         changed_paths: [@control.RepoPath("src/store.mbt")],
       }
       Ok(
-        @workflow.OnePartEffectObservation::CandidateNormalized(candidate, {
+        @workflow.PartEffectObservation::CandidateNormalized(candidate, {
           candidate_tree_paths: [@control.RepoPath("src/store.mbt")],
           symlink_prefix_paths: [],
           normalization_collision_paths: [],
         }),
       )
     }
-    @workflow.OnePartEffectKind::PrepareVerificationSandbox(lease) =>
+    @workflow.PartEffectKind::PrepareVerificationSandbox(lease) =>
       Ok(
-        @workflow.OnePartEffectObservation::VerificationSandboxPrepared({
+        @workflow.PartEffectObservation::VerificationSandboxPrepared({
           ..lease,
           lifecycle: @control.SandboxLeaseLifecycle::SandboxLeaseActive,
         }),
       )
-    @workflow.OnePartEffectKind::StartVerificationHarness(session) =>
+    @workflow.PartEffectKind::StartVerificationHarness(session) =>
       Ok(
-        @workflow.OnePartEffectObservation::VerificationHarnessStarted(
+        @workflow.PartEffectObservation::VerificationHarnessStarted(
           workflow_driver_started_session(session),
         ),
       )
-    @workflow.OnePartEffectKind::DispatchVerification(
-      take_id,
-      session_id,
-      subject
-    ) => {
+    @workflow.PartEffectKind::DispatchVerification(take_id, session_id, subject) => {
       let started = workflow_driver_started_session(
         snapshot.identities.verification_session,
       )
@@ -516,7 +507,7 @@ fn workflow_driver_observation(
           return Err(@types.ChoirError::validation_error("candidate absent"))
       }
       Ok(
-        @workflow.OnePartEffectObservation::VerificationCompleted(
+        @workflow.PartEffectObservation::VerificationCompleted(
           {
             take_id,
             session_id,
@@ -542,26 +533,26 @@ fn workflow_driver_observation(
         ),
       )
     }
-    @workflow.OnePartEffectKind::PrepareAuditSandbox(lease) =>
+    @workflow.PartEffectKind::PrepareAuditSandbox(lease) =>
       Ok(
-        @workflow.OnePartEffectObservation::AuditSandboxPrepared({
+        @workflow.PartEffectObservation::AuditSandboxPrepared({
           ..lease,
           lifecycle: @control.SandboxLeaseLifecycle::SandboxLeaseActive,
         }),
       )
-    @workflow.OnePartEffectKind::StartAuditHarness(session) =>
+    @workflow.PartEffectKind::StartAuditHarness(session) =>
       Ok(
-        @workflow.OnePartEffectObservation::AuditHarnessStarted(
+        @workflow.PartEffectObservation::AuditHarnessStarted(
           workflow_driver_started_session(session),
         ),
       )
-    @workflow.OnePartEffectKind::DispatchAudit(take_id, session_id, subject) => {
+    @workflow.PartEffectKind::DispatchAudit(take_id, session_id, subject) => {
       let started = workflow_driver_started_session(
         snapshot.identities.audit_session,
       )
       let (closed, events) = workflow_driver_trace(started, "audit")
       Ok(
-        @workflow.OnePartEffectObservation::AuditCompleted(
+        @workflow.PartEffectObservation::AuditCompleted(
           {
             audit_take_id: take_id,
             take_fencing_epoch: snapshot.fencing_epoch,
@@ -580,9 +571,9 @@ fn workflow_driver_observation(
         ),
       )
     }
-    @workflow.OnePartEffectKind::GeneratePromotion(intent) =>
+    @workflow.PartEffectKind::GeneratePromotion(intent) =>
       Ok(
-        @workflow.OnePartEffectObservation::PromotionGenerated({
+        @workflow.PartEffectObservation::PromotionGenerated({
           intent_id: intent.id,
           commit_oid: @control.GitOid("promotion-commit-store"),
           tree_oid: @control.GitOid("promotion-tree-store"),
@@ -590,9 +581,9 @@ fn workflow_driver_observation(
           second_parent_oid: intent.candidate_commit_oid,
         }),
       )
-    @workflow.OnePartEffectKind::ApplyIntegration(_, promotion) =>
+    @workflow.PartEffectKind::ApplyIntegration(_, promotion) =>
       Ok(
-        @workflow.OnePartEffectObservation::IntegrationWitnessObserved(
+        @workflow.PartEffectObservation::IntegrationWitnessObserved(
           @control.IntegrationWitnessObservation::IntegrationWitnessApplied(
             promotion.commit_oid,
             promotion.commit_oid,
@@ -606,12 +597,12 @@ fn workflow_driver_observation(
 fn workflow_driver_dependencies(
   execute_count : Ref[Int],
   reconcile_count : Ref[Int],
-  fault : (@workflow.OnePartPersistenceBoundary) -> @storage.StateStoreFaultPoint?,
-  reconcile : async (
-    @workflow.OnePartWorkflowSnapshot,
-    @workflow.OnePartEffectIntent,
-  ) -> Result[@workflow.OnePartEffectRecovery, @types.ChoirError],
-) -> @workflow.OnePartWorkflowDriverDependencies {
+  fault : (@workflow.PartPersistenceBoundary) -> @storage.StateStoreFaultPoint?,
+  reconcile : async (@workflow.PartWorkflowSnapshot, @workflow.PartEffectIntent) -> Result[
+    @workflow.PartEffectRecovery,
+    @types.ChoirError,
+  ],
+) -> @workflow.PartWorkflowDriverDependencies {
   {
     now: fn() { 110L },
     persistence_fault: fault,
@@ -661,12 +652,12 @@ fn workflow_driver_dependencies(
 
 ///|
 async fn workflow_driver_recover_observation(
-  snapshot : @workflow.OnePartWorkflowSnapshot,
-  intent : @workflow.OnePartEffectIntent,
-) -> Result[@workflow.OnePartEffectRecovery, @types.ChoirError] {
+  snapshot : @workflow.PartWorkflowSnapshot,
+  intent : @workflow.PartEffectIntent,
+) -> Result[@workflow.PartEffectRecovery, @types.ChoirError] {
   match workflow_driver_observation(snapshot, intent) {
     Ok(value) =>
-      Ok(@workflow.OnePartEffectRecovery::EffectObservationRecovered(value))
+      Ok(@workflow.PartEffectRecovery::EffectObservationRecovered(value))
     Err(error) => Err(error)
   }
 }
@@ -684,7 +675,7 @@ async test "one Part driver persists an integrated result and resumes without wo
     workflow_driver_recover_observation,
   )
   let result = match
-    @workflow.run_new_one_part_workflow(
+    @workflow.run_new_part_workflow(
       repository,
       workflow_repository_adapters(),
       workflow_store_fixture(),
@@ -693,17 +684,14 @@ async test "one Part driver persists an integrated result and resumes without wo
     Ok(value) => value
     Err(error) => fail(error.message())
   }
-  assert_eq(
-    result.outcome,
-    @workflow.OnePartWorkflowRunOutcome::OnePartRunIntegrated,
-  )
+  assert_eq(result.outcome, @workflow.PartWorkflowRunOutcome::PartRunIntegrated)
   assert_eq(result.snapshot.effect_receipts.length(), 12)
   assert_eq(result.snapshot.verification_receipts.length(), 1)
   assert_true(result.snapshot.audit_receipt is Some(_))
   assert_true(result.snapshot.integration_receipt is Some(_))
   let executed_before_resume = execute_count.val
   let resumed = match
-    @workflow.resume_one_part_workflow(
+    @workflow.resume_part_workflow(
       repository,
       workflow_repository_adapters(),
       "workflow-store",
@@ -714,7 +702,7 @@ async test "one Part driver persists an integrated result and resumes without wo
   }
   assert_eq(
     resumed.outcome,
-    @workflow.OnePartWorkflowRunOutcome::OnePartRunIntegrated,
+    @workflow.PartWorkflowRunOutcome::PartRunIntegrated,
   )
   assert_eq(execute_count.val, executed_before_resume)
   assert_eq(reconcile_count.val, 0)
@@ -726,13 +714,13 @@ async test "restarted authorized effect waits for a witness without executing" {
   let repository = workflow_repository("driver-uncertain")
   clean_workflow_repository(repository)
   let adapters = workflow_repository_adapters()
-  guard @workflow.initialize_one_part_workflow_repository(repository, adapters)
+  guard @workflow.initialize_part_workflow_repository(repository, adapters)
     is Ok(_) else {
     fail("initialize uncertain driver repository")
   }
   let initial = workflow_store_fixture()
   let initial_receipt = match
-    @workflow.persist_one_part_snapshot(repository, adapters, {
+    @workflow.persist_part_snapshot(repository, adapters, {
       snapshot: initial,
       expected_store_version: None,
       fault_point: None,
@@ -740,17 +728,16 @@ async test "restarted authorized effect waits for a witness without executing" {
     Ok(value) => value
     Err(error) => fail(error.message())
   }
-  let intent = match @workflow.plan_next_one_part_effect(initial) {
+  let intent = match @workflow.plan_next_part_effect(initial) {
     Ok(Some(value)) => value
     _ => fail("initial effect missing")
   }
-  let planned = match
-    @workflow.persist_planned_one_part_effect(initial, intent) {
+  let planned = match @workflow.persist_planned_part_effect(initial, intent) {
     Ok(value) => value
     Err(error) => fail(error.message())
   }
   let planned_receipt = match
-    @workflow.persist_one_part_snapshot(repository, adapters, {
+    @workflow.persist_part_snapshot(repository, adapters, {
       snapshot: planned,
       expected_store_version: Some(initial_receipt.store_version),
       fault_point: None,
@@ -758,11 +745,11 @@ async test "restarted authorized effect waits for a witness without executing" {
     Ok(value) => value
     Err(error) => fail(error.message())
   }
-  let authorized = match @workflow.authorize_pending_one_part_effect(planned) {
+  let authorized = match @workflow.authorize_pending_part_effect(planned) {
     Ok(value) => value
     Err(error) => fail(error.message())
   }
-  guard @workflow.persist_one_part_snapshot(repository, adapters, {
+  guard @workflow.persist_part_snapshot(repository, adapters, {
       snapshot: authorized,
       expected_store_version: Some(planned_receipt.store_version),
       fault_point: None,
@@ -773,7 +760,7 @@ async test "restarted authorized effect waits for a witness without executing" {
   let execute_count = @ref.new(0)
   let reconcile_count = @ref.new(0)
   let result = match
-    @workflow.resume_one_part_workflow(
+    @workflow.resume_part_workflow(
       repository,
       adapters,
       "workflow-store",
@@ -782,7 +769,7 @@ async test "restarted authorized effect waits for a witness without executing" {
         reconcile_count,
         fn(_) { None },
         async fn(_, _) {
-          Ok(@workflow.OnePartEffectRecovery::EffectWitnessUnavailable)
+          Ok(@workflow.PartEffectRecovery::EffectWitnessUnavailable)
         },
       ),
     ) {
@@ -791,7 +778,7 @@ async test "restarted authorized effect waits for a witness without executing" {
   }
   assert_true(
     result.outcome
-    is @workflow.OnePartWorkflowRunOutcome::OnePartRunWaitingForEffectWitness(_),
+    is @workflow.PartWorkflowRunOutcome::PartRunWaitingForEffectWitness(_),
   )
   assert_eq(execute_count.val, 0)
   assert_eq(reconcile_count.val, 1)
@@ -799,15 +786,77 @@ async test "restarted authorized effect waits for a witness without executing" {
 }
 
 ///|
+test "effect witnesses are durable idempotent and bound to the request" {
+  let repository = workflow_repository("effect-witness")
+  clean_workflow_repository(repository)
+  let adapters = workflow_repository_adapters()
+  guard @workflow.initialize_part_workflow_repository(repository, adapters)
+    is Ok(_) else {
+    fail("initialize effect witness repository")
+  }
+  let initial = workflow_store_fixture()
+  let intent = match @workflow.plan_next_part_effect(initial) {
+    Ok(Some(value)) => value
+    _ => fail("effect intent is missing")
+  }
+  let planned = match @workflow.persist_planned_part_effect(initial, intent) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  let authorized = match @workflow.authorize_pending_part_effect(planned) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  let observation = match
+    workflow_driver_observation(authorized, {
+      ..intent,
+      lifecycle: @workflow.PartEffectLifecycle::PartEffectMayHaveOccurred,
+    }) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  let authorized_intent = match authorized.pending_effect {
+    Some(value) => value
+    None => fail("authorized effect is missing")
+  }
+  let first = match
+    @workflow.record_part_effect_witness(
+      repository, adapters, authorized, authorized_intent, observation, 120L,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  let replay = match
+    @workflow.record_part_effect_witness(
+      repository, adapters, authorized, authorized_intent, observation, 120L,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(first, replay)
+  assert_eq(
+    first.observation_digest,
+    @workflow.part_effect_observation_digest(observation),
+  )
+  match
+    @workflow.load_part_effect_witness(repository, adapters, authorized_intent) {
+    Ok(Some(stored)) => assert_eq(stored, first)
+    Ok(None) => fail("effect witness was not stored")
+    Err(error) => fail(error.message())
+  }
+  clean_workflow_repository(repository)
+}
+
+///|
 async test "driver recovers every persisted transition after rollback" {
   let boundaries = [
-    @workflow.OnePartPersistenceBoundary::WorkflowAcceptedSnapshot,
-    @workflow.OnePartPersistenceBoundary::WorkflowEffectPlanned,
-    @workflow.OnePartPersistenceBoundary::WorkflowEffectAuthorized,
-    @workflow.OnePartPersistenceBoundary::WorkflowEffectObserved,
-    @workflow.OnePartPersistenceBoundary::WorkflowAuditReceiptRecorded,
-    @workflow.OnePartPersistenceBoundary::WorkflowIntegrationPlanned,
-    @workflow.OnePartPersistenceBoundary::WorkflowIntegrationAuthorized,
+    @workflow.PartPersistenceBoundary::WorkflowAcceptedSnapshot,
+    @workflow.PartPersistenceBoundary::WorkflowEffectPlanned,
+    @workflow.PartPersistenceBoundary::WorkflowEffectAuthorized,
+    @workflow.PartPersistenceBoundary::WorkflowEffectObserved,
+    @workflow.PartPersistenceBoundary::WorkflowAuditReceiptRecorded,
+    @workflow.PartPersistenceBoundary::WorkflowIntegrationPlanned,
+    @workflow.PartPersistenceBoundary::WorkflowIntegrationAuthorized,
   ]
   for index, boundary in boundaries {
     let repository = workflow_repository("driver-rollback-" + index.to_string())
@@ -829,7 +878,7 @@ async test "driver recovers every persisted transition after rollback" {
       workflow_driver_recover_observation,
     )
     let first = match
-      @workflow.run_new_one_part_workflow(
+      @workflow.run_new_part_workflow(
         repository,
         workflow_repository_adapters(),
         workflow_store_fixture(),
@@ -840,7 +889,7 @@ async test "driver recovers every persisted transition after rollback" {
     }
     assert_eq(
       first.outcome,
-      @workflow.OnePartWorkflowRunOutcome::OnePartRunPersistenceFault(
+      @workflow.PartWorkflowRunOutcome::PartRunPersistenceFault(
         boundary,
         @storage.StateStoreFaultPoint::StateAfterMutationBeforeOutbox,
       ),
@@ -852,15 +901,15 @@ async test "driver recovers every persisted transition after rollback" {
       workflow_driver_recover_observation,
     )
     let recovered = if boundary ==
-      @workflow.OnePartPersistenceBoundary::WorkflowAcceptedSnapshot {
-      @workflow.run_new_one_part_workflow(
+      @workflow.PartPersistenceBoundary::WorkflowAcceptedSnapshot {
+      @workflow.run_new_part_workflow(
         repository,
         workflow_repository_adapters(),
         workflow_store_fixture(),
         recovery_dependencies,
       )
     } else {
-      @workflow.resume_one_part_workflow(
+      @workflow.resume_part_workflow(
         repository,
         workflow_repository_adapters(),
         "workflow-store",
@@ -873,7 +922,7 @@ async test "driver recovers every persisted transition after rollback" {
     }
     assert_eq(
       result.outcome,
-      @workflow.OnePartWorkflowRunOutcome::OnePartRunIntegrated,
+      @workflow.PartWorkflowRunOutcome::PartRunIntegrated,
     )
     assert_eq(result.snapshot.effect_receipts.length(), 12)
     assert_eq(result.snapshot.verification_receipts.length(), 1)
