@@ -304,8 +304,18 @@ fn validate_claude_take_response(
 }
 
 ///|
-fn event_digest(value : String) -> @control.Digest {
-  @storage.artifact_digest(@utf8.encode("choir.harness-event.v1\u{00}" + value))
+pub fn safe_harness_event_digest(
+  kind : @control.HarnessEventKind,
+  redaction_state : @control.EventRedactionState,
+) -> @control.Digest {
+  @storage.artifact_digest(
+    @utf8.encode(
+      "choir.safe-harness-event.v1\u{00}" +
+      kind.to_json().stringify(indent=0) +
+      "\u{00}" +
+      redaction_state.to_json().stringify(indent=0),
+    ),
+  )
 }
 
 ///|
@@ -314,7 +324,6 @@ fn claude_event(
   sequence : Int64,
   observed_at : Int64,
   kind : @control.HarnessEventKind,
-  digest_value : String,
 ) -> @control.HarnessEventEnvelope {
   {
     id: @control.HarnessEventId(session.id.0 + ":event:" + sequence.to_string()),
@@ -327,7 +336,10 @@ fn claude_event(
     choir_sequence: @control.EventSequence(sequence),
     observed_at,
     kind,
-    sanitized_payload_digest: event_digest(digest_value),
+    sanitized_payload_digest: safe_harness_event_digest(
+      kind,
+      @control.EventRedactionState::EventNotSensitive,
+    ),
     redaction_state: @control.EventRedactionState::EventNotSensitive,
     late: false,
   }
@@ -437,7 +449,6 @@ pub fn evaluate_claude_driver_capture(
         sequence,
         request.capture.started_at,
         @control.HarnessEventKind::HarnessStarted,
-        "started:" + request.role.to_json().stringify(indent=0),
       ),
     ) {
     Ok(value) => value
@@ -445,16 +456,13 @@ pub fn evaluate_claude_driver_capture(
   }
   for observed in tool_trace {
     sequence = sequence + 1L
-    let (kind, digest_value) = match observed {
-      ClaudeToolStarted(id, name) =>
-        (
-          @control.HarnessEventKind::HarnessToolStarted(id),
-          "tool-started:" + id + ":" + name,
-        )
+    let kind = match observed {
+      ClaudeToolStarted(id, _) =>
+        @control.HarnessEventKind::HarnessToolStarted(id)
       ClaudeToolFinished(id) =>
-        (
-          @control.HarnessEventKind::HarnessToolFinished(id),
-          "tool-finished:" + id,
+        @control.HarnessEventKind::HarnessToolFinished(
+          id,
+          @control.HarnessToolDisposition::HarnessToolSucceeded,
         )
     }
     session = match
@@ -466,7 +474,6 @@ pub fn evaluate_claude_driver_capture(
           sequence,
           request.capture.finished_at,
           kind,
-          digest_value,
         ),
       ) {
       Ok(value) => value
@@ -485,7 +492,6 @@ pub fn evaluate_claude_driver_capture(
         @control.HarnessEventKind::HarnessTerminal(
           @control.HarnessTerminalObservation::HarnessCompleted,
         ),
-        "terminal:completed",
       ),
     ) {
     Ok(value) => value

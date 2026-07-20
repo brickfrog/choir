@@ -72,7 +72,10 @@ test "harness ingestion persists one balanced terminal trace" {
   let tool_finished = harness_event(
     "event-3",
     3L,
-    @control.HarnessEventKind::HarnessToolFinished("process-1"),
+    @control.HarnessEventKind::HarnessToolFinished(
+      "process-1",
+      @control.HarnessToolDisposition::HarnessToolSucceeded,
+    ),
   )
   let tool_finish_result = @control.ingest_harness_event(
     tool_start_result.session,

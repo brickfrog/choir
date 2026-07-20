@@ -93,6 +93,74 @@ test "Claude driver normalizes one balanced restricted Take" {
 }
 
 ///|
+test "Claude durable events exclude tool names and raw trace fields" {
+  let first_tool = "mcp__choir_sandbox__first_secret_marker"
+  let second_tool = "mcp__choir_sandbox__second_secret_marker"
+  let evaluate = fn(tool : String) {
+    let digest = @harness.claude_effective_surface_manifest_digest(
+      claude_driver_manifest([tool, "StructuredOutput"]),
+    )
+    let started = @harness.start_claude_harness_session(
+      claude_driver_session(digest),
+    ).unwrap()
+    @harness.evaluate_claude_driver_capture({
+      session: started,
+      role: @harness.ClaudeTakeRole::ClaudeImplementationTake,
+      allowed_tools: [tool],
+      expected_mcp_server: "choir_sandbox",
+      capture: {
+        exit_code: 0,
+        output: claude_driver_output(tool).replace_all(
+          old="mcp__choir_sandbox__execute",
+          new=tool,
+        ),
+        started_at: 10L,
+        finished_at: 20L,
+      },
+    }).unwrap()
+  }
+  let first = evaluate(first_tool)
+  let second = evaluate(second_tool)
+  assert_eq(
+    first.events.map(fn(event) { event.sanitized_payload_digest }),
+    second.events.map(fn(event) { event.sanitized_payload_digest }),
+  )
+  let durable_json = first.events.to_json().stringify(indent=0)
+  assert_false(durable_json.contains(first_tool))
+  assert_false(durable_json.contains("first_secret_marker"))
+}
+
+///|
+test "safe event digest binds typed tool disposition and redaction" {
+  let succeeded = @control.HarnessEventKind::HarnessToolFinished(
+    "tool-1",
+    @control.HarnessToolDisposition::HarnessToolSucceeded,
+  )
+  let failed = @control.HarnessEventKind::HarnessToolFinished(
+    "tool-1",
+    @control.HarnessToolDisposition::HarnessToolFailed,
+  )
+  let succeeded_digest = @harness.safe_harness_event_digest(
+    succeeded,
+    @control.EventRedactionState::EventNotSensitive,
+  )
+  assert_false(
+    succeeded_digest ==
+    @harness.safe_harness_event_digest(
+      failed,
+      @control.EventRedactionState::EventNotSensitive,
+    ),
+  )
+  assert_false(
+    succeeded_digest ==
+    @harness.safe_harness_event_digest(
+      succeeded,
+      @control.EventRedactionState::EventWithheld,
+    ),
+  )
+}
+
+///|
 test "Claude driver rejects undeclared host tool use" {
   let tools = ["mcp__choir_sandbox__execute"]
   let digest = @harness.claude_effective_surface_manifest_digest(

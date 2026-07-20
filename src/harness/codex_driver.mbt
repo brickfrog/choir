@@ -487,7 +487,6 @@ fn codex_take_event(
   sequence : Int64,
   observed_at : Int64,
   kind : @control.HarnessEventKind,
-  value : String,
 ) -> @control.HarnessEventEnvelope {
   let provider_cursor = match session.provider_cursor {
     Some(cursor) => cursor
@@ -498,13 +497,14 @@ fn codex_take_event(
     take_id: session.take_id,
     session_id: session.id,
     source_position: @control.EventSourcePosition::EventProviderId(
-      provider_cursor + ":" + value,
+      provider_cursor + ":event:" + sequence.to_string(),
     ),
     choir_sequence: @control.EventSequence(sequence),
     observed_at,
     kind,
-    sanitized_payload_digest: @storage.artifact_digest(
-      @utf8.encode("choir.harness-event.v1\u{00}" + value),
+    sanitized_payload_digest: safe_harness_event_digest(
+      kind,
+      @control.EventRedactionState::EventNotSensitive,
     ),
     redaction_state: @control.EventRedactionState::EventNotSensitive,
     late: false,
@@ -615,7 +615,6 @@ pub fn evaluate_codex_driver_capture(
         sequence,
         request.capture.started_at,
         @control.HarnessEventKind::HarnessStarted,
-        "started:" + request.role.to_json().stringify(indent=0),
       ),
     ) {
     Ok(value) => value
@@ -623,18 +622,17 @@ pub fn evaluate_codex_driver_capture(
   }
   for event in observed {
     sequence = sequence + 1L
-    let (kind, digest_value) = match event {
-      CodexToolStarted(id, tool) =>
-        (
-          @control.HarnessEventKind::HarnessToolStarted(id),
-          "tool-started:" + id + ":" + tool,
-        )
+    let kind = match event {
+      CodexToolStarted(id, _) =>
+        @control.HarnessEventKind::HarnessToolStarted(id)
       CodexToolFinished(id, succeeded) =>
-        (
-          @control.HarnessEventKind::HarnessToolFinished(id),
-          "tool-finished:" +
-          id +
-          (if succeeded { ":completed" } else { ":failed" }),
+        @control.HarnessEventKind::HarnessToolFinished(
+          id,
+          if succeeded {
+            @control.HarnessToolDisposition::HarnessToolSucceeded
+          } else {
+            @control.HarnessToolDisposition::HarnessToolFailed
+          },
         )
     }
     session = match
@@ -646,7 +644,6 @@ pub fn evaluate_codex_driver_capture(
           sequence,
           request.capture.finished_at,
           kind,
-          digest_value,
         ),
       ) {
       Ok(value) => value
@@ -665,7 +662,6 @@ pub fn evaluate_codex_driver_capture(
         @control.HarnessEventKind::HarnessTerminal(
           @control.HarnessTerminalObservation::HarnessCompleted,
         ),
-        "terminal:completed",
       ),
     ) {
     Ok(value) => value

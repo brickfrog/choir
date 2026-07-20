@@ -279,8 +279,14 @@ pub(all) enum EventRedactionState {
 pub(all) enum HarnessEventKind {
   HarnessStarted
   HarnessToolStarted(String)
-  HarnessToolFinished(String)
+  HarnessToolFinished(String, HarnessToolDisposition)
   HarnessTerminal(HarnessTerminalObservation)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum HarnessToolDisposition {
+  HarnessToolSucceeded
+  HarnessToolFailed
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|

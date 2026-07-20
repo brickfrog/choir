@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-20T16:33:26-05:00
+Implementation snapshot updated through: 2026-07-20T16:41:00-05:00
 
 ## Charter Semantics and Readiness
 
@@ -174,6 +174,14 @@ unconnected product path usable.
   below. The audit cases prove a missing gate is passive, author Take/sandbox/
   session reuse is rejected, and seven independent subject/policy changes stale
   the old receipt. It does not yet implement the complete required case matrix.
+- Claude and Codex now derive each durable harness-event payload digest only
+  from the typed safe event kind and its redaction state. Provider tool names,
+  terminal text, and raw trace fields are neither retained nor hashed; Codex
+  source identity is the admitted provider cursor plus event ordinal rather
+  than normalized provider text. Tool completion now retains only a typed
+  succeeded/failed disposition. Driver tests feed distinct synthetic secret
+  tool names and prove identical safe digests and zero secret bytes in the
+  durable event JSON. The broader multi-field `event.redaction` case remains.
 - Claude and Codex CLI surface probes. The exact Claude subscription CLI
   profile passed its startup/tool-surface probe. The pinned Codex subscription
   CLI profile now also passes its live startup oracle: ChatGPT-managed login,
@@ -512,7 +520,7 @@ Earlier evidence anchors are commits `5fb93fe8` for the native Part path,
 the linter correction. With the current assurance, cancellation, and provider changes,
 `moon check --target native`, `moon test --target native`, and
 `moon run --target native src/bin/choir_lint` all exit successfully on
-2026-07-20. After deleting obsolete source and tests, the full native suite reports 298
+2026-07-20. After deleting obsolete source and tests, the full native suite reports 297
 passed and 0 failed. The
 compiler still reports the repository's existing warning set.
 

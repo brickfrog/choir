@@ -1,6 +1,7 @@
 ///|
-fn codex_driver_session() -> @control.HarnessSession {
-  let tools = ["read_file", "write_file"]
+fn codex_driver_session(
+  tools? : Array[String] = ["read_file", "write_file"],
+) -> @control.HarnessSession {
   {
     id: @control.HarnessSessionId("session-codex-driver"),
     take_id: @control.TakeId("take-codex-driver"),
@@ -18,8 +19,12 @@ fn codex_driver_session() -> @control.HarnessSession {
 }
 
 ///|
-fn codex_driver_started_session() -> @control.HarnessSession {
-  let started = @harness.start_codex_harness_session(codex_driver_session()).unwrap()
+fn codex_driver_started_session(
+  tools? : Array[String] = ["read_file", "write_file"],
+) -> @control.HarnessSession {
+  let started = @harness.start_codex_harness_session(
+    codex_driver_session(tools~),
+  ).unwrap()
   { ..started, provider_cursor: Some("thread-codex-driver:turn-codex-driver") }
 }
 
@@ -90,6 +95,38 @@ test "Codex driver accepts a balanced sandbox-only implementation trace" {
     ),
   )
   assert_eq(result.events.length(), 4)
+}
+
+///|
+test "Codex durable events exclude tool names and raw trace fields" {
+  let first_tool = "first_secret_marker"
+  let second_tool = "second_secret_marker"
+  let evaluate = fn(tool : String) {
+    let started = codex_driver_started_session(tools=[tool])
+    @harness.evaluate_codex_driver_capture({
+      session: started,
+      role: @harness.CodexTakeRole::CodexImplementationTake,
+      allowed_tools: [tool],
+      expected_mcp_server: "choir_sandbox",
+      capture: {
+        exit_code: 0,
+        output: codex_driver_output(
+          "mcp_tool_call", "{\"outcome\":\"completed\"}",
+        ).replace_all(old="read_file", new=tool),
+        started_at: 10L,
+        finished_at: 20L,
+      },
+    }).unwrap()
+  }
+  let first = evaluate(first_tool)
+  let second = evaluate(second_tool)
+  assert_eq(
+    first.events.map(fn(event) { event.sanitized_payload_digest }),
+    second.events.map(fn(event) { event.sanitized_payload_digest }),
+  )
+  let durable_json = first.events.to_json().stringify(indent=0)
+  assert_false(durable_json.contains(first_tool))
+  assert_false(durable_json.contains("first_secret_marker"))
 }
 
 ///|
