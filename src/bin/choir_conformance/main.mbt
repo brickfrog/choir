@@ -268,12 +268,166 @@ async fn run_boxlite_live() -> Int {
 }
 
 ///|
+async fn exercise_boxlite_take(
+  server : @exec.NativeBoxLiteServerHandle,
+  active_server : @ref.Ref[@exec.NativeBoxLiteServerHandle],
+  moon_home : String,
+  source : String,
+  source_digest : @control.Digest,
+) -> Result[Map[String, Json], @types.ChoirError] {
+  let prepared = match
+    @exec.prepare_native_boxlite_environment(
+      server,
+      moon_home,
+      "choir-take-base-" + @sys.get_pid().to_string(),
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  active_server.val = prepared.server
+  let take = match
+    @exec.clone_native_boxlite_take(
+      prepared,
+      "choir-take-live-" + @sys.get_pid().to_string(),
+      source,
+      source_digest,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  active_server.val = take.prepared.server
+  let inspected = match @exec.inspect_native_boxlite_take(take) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let script = match @sys.realpath_native("scripts/choir_sandbox_mcp.mjs") {
+    Some(value) => value
+    None =>
+      return Err(
+        @types.ChoirError::workspace_error("sandbox MCP bridge is unavailable"),
+      )
+  }
+  let arguments = match @exec.native_boxlite_take_mcp_arguments(take, script) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let node = match @exec.resolve_executable_in_path("node") {
+    Some(value) => value
+    None =>
+      return Err(
+        @types.ChoirError::workspace_error(
+          "node executable is required for the sandbox MCP bridge",
+        ),
+      )
+  }
+  let bridge_probe = match @exec.probe_native_boxlite_mcp(take, node, script) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  match @exec.destroy_native_boxlite_take(take) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  Ok({
+    "passed": true.to_json(),
+    "image_digest": prepared.image_digest.to_json(),
+    "runtime_policy_digest": prepared.runtime_policy_digest.to_json(),
+    "tool_manifest_digest": prepared.tool_manifest_digest.to_json(),
+    "tool_count": @sandbox.boxlite_take_mcp_tools().length().to_json(),
+    "bridge_argument_count": arguments.length().to_json(),
+    "bridge_probe": bridge_probe.to_json(),
+    "inspection": inspected.to_json(),
+  })
+}
+
+///|
+async fn run_boxlite_take_live() -> Int {
+  let root = "/tmp/choir-v2-take-live-" + @sys.get_pid().to_string()
+  let source = root + "/staging/source"
+  let source_digest = @control.Digest(
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  )
+  if !@sys.create_dir_all(source) ||
+    !@sys.write_file_sync(
+      source + "/.choir-source-root",
+      source_digest.0 + "\n",
+    ) ||
+    !@sys.write_file_sync(source + "/README.md", "sandbox fixture\n") {
+    @sys.write_stderr("failed to create dedicated Take sandbox root\n")
+    return 1
+  }
+  let binary = match @sys.getenv("CHOIR_BOXLITE_BINARY") {
+    Some(value) => value
+    None => "/home/justin/.local/bin/boxlite"
+  }
+  let runtime_dir = match @sys.getenv("CHOIR_BOXLITE_RUNTIME_DIR") {
+    Some(value) => value
+    None =>
+      "/home/justin/.local/share/choir/runtimes/boxlite-v0.9.7-seccomp-time"
+  }
+  let moon_home = match @sys.getenv("CHOIR_MOON_HOME") {
+    Some(value) => value
+    None =>
+      match @sys.getenv("HOME") {
+        Some(value) => value + "/.moon"
+        None => {
+          @sys.write_stderr("Moon toolchain root is unavailable\n")
+          return 1
+        }
+      }
+  }
+  let server = match
+    @exec.start_native_boxlite_server({
+      binary,
+      runtime_dir,
+      root,
+      port: 24000 + @sys.get_pid() % 12000,
+      api_key: "choir-take-live-" + @sys.get_pid().to_string(),
+    }) {
+    Ok(value) => value
+    Err(error) => {
+      @sys.write_stderr(error.message() + "\n")
+      ignore(@sys.rm_rf(root))
+      return 1
+    }
+  }
+  let active_server = @ref.new(server)
+  let exercised = exercise_boxlite_take(
+    server, active_server, moon_home, source, source_digest,
+  )
+  let cleanup = @exec.cleanup_native_boxlite_server(active_server.val)
+  ignore(@sys.rm_rf(root))
+  match cleanup {
+    Err(error) => {
+      @sys.write_stderr(error.message() + "\n")
+      1
+    }
+    Ok(_) =>
+      match exercised {
+        Ok(report) => {
+          @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
+          0
+        }
+        Err(error) => {
+          @sys.write_stderr(error.message() + "\n")
+          1
+        }
+      }
+  }
+}
+
+///|
 fn run_sandbox_command(args : Array[String]) -> Unit {
   if args.length() == 5 &&
     args[2] == "--runtime" &&
     args[3] == "boxlite" &&
     args[4] == "--live" {
     @async.run_async_main(async fn() { @sys.exit(run_boxlite_live()) })
+  } else if args.length() == 5 &&
+    args[2] == "--runtime" &&
+    args[3] == "boxlite" &&
+    args[4] == "--take-live" {
+    @async.run_async_main(async fn() { @sys.exit(run_boxlite_take_live()) })
   } else {
     usage()
     @sys.exit(2)
@@ -323,6 +477,7 @@ fn usage() -> Unit {
     "       choir_conformance harness --surface codex-cli " +
     "--profile subscription --live\n" +
     "       choir_conformance sandbox --runtime boxlite --live\n" +
+    "       choir_conformance sandbox --runtime boxlite --take-live\n" +
     "       choir_conformance e2e --fixture <one-part|three-part>\n",
   )
 }
