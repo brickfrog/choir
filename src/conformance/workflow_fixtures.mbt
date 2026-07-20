@@ -37,6 +37,10 @@ fn scheduling_fixture_record(
       part_id,
       revision: 1,
       digest: scheduling_fixture_digest,
+      instruction_artifact: {
+        artifact_id: "instruction-" + id,
+        digest: scheduling_fixture_digest,
+      },
       base_commit_oid: @control.GitOid("goal-head"),
       base_tree_oid: @control.GitOid("goal-tree"),
       path_mode: @control.RepositoryPathMode::CaseSensitiveNfc,

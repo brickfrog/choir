@@ -103,6 +103,10 @@ fn workflow_fixture() -> @workflow.OnePartWorkflowSnapshot raise {
     part_id: part.id,
     revision: 1,
     digest: workflow_digest_a,
+    instruction_artifact: {
+      artifact_id: "instruction-workflow",
+      digest: workflow_digest_a,
+    },
     base_commit_oid: @control.GitOid("base-commit"),
     base_tree_oid: @control.GitOid("base-tree"),
     path_mode: @control.RepositoryPathMode::CaseSensitiveNfc,

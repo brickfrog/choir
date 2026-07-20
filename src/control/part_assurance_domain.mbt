@@ -156,6 +156,7 @@ pub(all) struct TaskContractRevision {
   part_id : PartId
   revision : Int
   digest : Digest
+  instruction_artifact : ArtifactReference
   base_commit_oid : GitOid
   base_tree_oid : GitOid
   path_mode : RepositoryPathMode

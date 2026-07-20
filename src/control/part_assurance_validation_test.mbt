@@ -18,6 +18,10 @@ fn assurance_contract(
     part_id: @control.PartId("part-1"),
     revision: 1,
     digest: assurance_digest_a,
+    instruction_artifact: {
+      artifact_id: "instruction-1",
+      digest: assurance_digest_a,
+    },
     base_commit_oid: @control.GitOid("base-oid"),
     base_tree_oid: @control.GitOid("base-tree"),
     path_mode: @control.RepositoryPathMode::CaseSensitiveNfc,
@@ -181,6 +185,39 @@ test "candidate validation enforces immutable contract and declared diff" {
       fn(_) { true },
     )
     is Ok(_),
+  )
+}
+
+///|
+test "task contract requires an immutable instruction artifact" {
+  let contract = assurance_contract(
+    @control.MutationDeclaration::CompleteMutationDeclaration([]),
+  )
+  assert_true(
+    @control.validate_task_contract_revision(
+      {
+        ..contract,
+        instruction_artifact: {
+          ..contract.instruction_artifact,
+          artifact_id: "",
+        },
+      },
+      fn(_) { true },
+    )
+    is Err(_),
+  )
+  assert_true(
+    @control.validate_task_contract_revision(
+      {
+        ..contract,
+        instruction_artifact: {
+          ..contract.instruction_artifact,
+          digest: @control.Digest("not-a-digest"),
+        },
+      },
+      fn(_) { true },
+    )
+    is Err(_),
   )
 }
 

@@ -144,6 +144,9 @@ pub fn expected_surface_version(surface : ProviderSurface) -> String {
 }
 
 ///|
+pub let expected_claude_executable_sha256 : String = "c1efffaaf370aa187cb6a09dd93d4e511c646899b0078476f83791b664bde7fe"
+
+///|
 fn version_matches(surface : ProviderSurface, output : String) -> Bool {
   output.contains(expected_surface_version(surface))
 }

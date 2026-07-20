@@ -26,6 +26,10 @@ fn scheduling_record(
       part_id,
       revision: 1,
       digest: schedule_digest,
+      instruction_artifact: {
+        artifact_id: "instruction-" + id,
+        digest: schedule_digest,
+      },
       base_commit_oid: @control.GitOid("shared-base"),
       base_tree_oid: @control.GitOid("shared-tree"),
       path_mode: @control.RepositoryPathMode::CaseSensitiveNfc,

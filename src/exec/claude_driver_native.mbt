@@ -1,0 +1,279 @@
+///|
+pub(all) struct NativeClaudeDriverConfig {
+  sterile_root : String
+  mcp_executable : String
+  mcp_arguments : Array[String]
+  mcp_server_name : String
+  allowed_tools : Array[String]
+  timeout_ms : Int
+} derive(Debug, Eq)
+
+///|
+fn native_claude_driver_error(message : String) -> @types.ChoirError {
+  @types.ChoirError::transport_error("Claude driver: " + message)
+}
+
+///|
+fn valid_native_claude_token(value : String) -> Bool {
+  if value == "" || value.length() > 180 {
+    return false
+  }
+  for index = 0; index < value.length(); index = index + 1 {
+    let code = value[index].to_int()
+    let valid = (code >= 'a'.to_int() && code <= 'z'.to_int()) ||
+      (code >= 'A'.to_int() && code <= 'Z'.to_int()) ||
+      (code >= '0'.to_int() && code <= '9'.to_int()) ||
+      code == '_'.to_int() ||
+      code == '-'.to_int()
+    if !valid {
+      return false
+    }
+  }
+  true
+}
+
+///|
+fn validate_native_claude_config(
+  config : NativeClaudeDriverConfig,
+) -> Result[Unit, @types.ChoirError] {
+  if !config.sterile_root.has_prefix("/") ||
+    !config.mcp_executable.has_prefix("/") ||
+    !valid_native_claude_token(config.mcp_server_name) ||
+    config.allowed_tools.length() == 0 ||
+    config.timeout_ms < 1000 ||
+    config.timeout_ms > 3600000 {
+    return Err(
+      @types.ChoirError::validation_error(
+        "native Claude driver configuration is invalid",
+      ),
+    )
+  }
+  for index, tool in config.allowed_tools {
+    if !tool.has_prefix("mcp__" + config.mcp_server_name + "__") ||
+      config.allowed_tools[:index].contains(tool) {
+      return Err(
+        @types.ChoirError::validation_error(
+          "native Claude driver tool declaration is invalid",
+        ),
+      )
+    }
+  }
+  Ok(())
+}
+
+///|
+fn native_claude_system_prompt(role : @harness.ClaudeTakeRole) -> String {
+  let common = "Use only the declared MCP tools. Never request native host file, shell, network, plugin, hook, skill, or subagent access. "
+  match role {
+    @harness.ClaudeTakeRole::ClaudeImplementationTake =>
+      common +
+      "Complete the instruction in the sandbox. End with exactly {\"outcome\":\"completed\"}."
+    @harness.ClaudeTakeRole::ClaudeVerificationTake =>
+      common +
+      "Verify the supplied candidate with the declared verification tool. End with exactly {\"outcome\":\"passed\"} or {\"outcome\":\"failed\"}."
+    @harness.ClaudeTakeRole::ClaudeAuditTake =>
+      common +
+      "Independently audit the supplied candidate. End with exactly {\"outcome\":\"passed\",\"total_findings\":0,\"blocking_findings\":0} when clean, otherwise {\"outcome\":\"findings\",\"total_findings\":N,\"blocking_findings\":N}."
+  }
+}
+
+///|
+fn native_claude_driver_args(
+  config : NativeClaudeDriverConfig,
+  role : @harness.ClaudeTakeRole,
+) -> Array[String] {
+  let server : Map[String, Json] = {
+    "command": config.mcp_executable.to_json(),
+    "args": config.mcp_arguments.to_json(),
+  }
+  let servers : Map[String, Json] = Map([])
+  servers[config.mcp_server_name] = server.to_json()
+  let mcp_config : Map[String, Json] = { "mcpServers": servers.to_json() }
+  [
+    "-p",
+    "--input-format",
+    "text",
+    "--setting-sources",
+    "",
+    "--tools",
+    "",
+    "--disable-slash-commands",
+    "--permission-mode",
+    "dontAsk",
+    "--allowedTools",
+    config.allowed_tools.join(","),
+    "--strict-mcp-config",
+    "--mcp-config",
+    mcp_config.to_json().stringify(),
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--no-session-persistence",
+    "--system-prompt",
+    native_claude_system_prompt(role),
+  ]
+}
+
+///|
+fn native_claude_environment(
+  provider_home : String,
+  sterile_root : String,
+) -> Map[String, String] {
+  {
+    "HOME": provider_home,
+    "TMPDIR": sterile_root + "/tmp",
+    "PATH": "/usr/local/bin:/usr/bin:/bin",
+    "COLUMNS": "200",
+    "NO_COLOR": "1",
+  }
+}
+
+///|
+async fn verify_native_claude_binary(
+  claude : String,
+) -> Result[Unit, @types.ChoirError] {
+  let collected = @process.collect_output_merged(
+    "/usr/bin/sha256sum",
+    [claude],
+    extra_env={ "PATH": "/usr/bin:/bin", "LC_ALL": "C" },
+    inherit_env=false,
+    cwd="/tmp",
+  ) catch {
+    _ => return Err(native_claude_driver_error("binary hash probe failed"))
+  }
+  let (exit_code, data) = collected
+  let output = data.text() catch {
+    _ => return Err(native_claude_driver_error("binary hash was not UTF-8"))
+  }
+  if exit_code != 0 ||
+    !output.has_prefix(@harness.expected_claude_executable_sha256 + " ") {
+    Err(
+      @types.ChoirError::policy_blocked(
+        "Claude executable does not match the admitted pin",
+      ),
+    )
+  } else {
+    Ok(())
+  }
+}
+
+///|
+pub async fn run_native_claude_take(
+  config : NativeClaudeDriverConfig,
+  session : @control.HarnessSession,
+  role : @harness.ClaudeTakeRole,
+  instruction : String,
+  now : () -> Int64,
+) -> Result[@harness.ClaudeDriverResult, @types.ChoirError] {
+  match validate_native_claude_config(config) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let instruction_bytes = @utf8.encode(instruction)
+  if instruction_bytes.length() == 0 ||
+    instruction_bytes.length() > 16384 ||
+    instruction.contains("\u{00}") {
+    return Err(
+      @types.ChoirError::validation_error(
+        "Claude Take instruction is empty or exceeds the safe bound",
+      ),
+    )
+  }
+  match claude_conflicting_credential_environment() {
+    Some(name) =>
+      return Err(
+        @types.ChoirError::policy_blocked(
+          "conflicting Claude credential environment is present: " + name,
+        ),
+      )
+    None => ()
+  }
+  let provider_home = match @sys.getenv("HOME") {
+    Some(value) if value.has_prefix("/") => value
+    _ => return Err(native_claude_driver_error("provider home is unavailable"))
+  }
+  let claude = match claude_probe_executable() {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  match verify_native_claude_binary(claude) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  if !@sys.create_dir_all(config.sterile_root + "/tmp") {
+    return Err(native_claude_driver_error("sterile root is unavailable"))
+  }
+  let started = match @harness.start_claude_harness_session(session) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let (stdin_read, stdin_write) = @process.write_to_process() catch {
+    _ => return Err(native_claude_driver_error("stdin pipe failed"))
+  }
+  ignore(
+    stdin_write.write(instruction) catch {
+      _ => {
+        stdin_write.close()
+        return Err(native_claude_driver_error("instruction write failed"))
+      }
+    },
+  )
+  stdin_write.close()
+  let started_at = now()
+  let args = native_claude_driver_args(config, role)
+  abort_if_hermetic_test_exec(
+    command_to_shell_string({
+      program: claude,
+      args,
+      workdir: Some(config.sterile_root),
+    }),
+  )
+  let collected = @async.with_timeout_opt(config.timeout_ms, () => {
+    @process.collect_output_merged(
+      claude,
+      args,
+      extra_env=native_claude_environment(provider_home, config.sterile_root),
+      inherit_env=false,
+      stdin=stdin_read,
+      cwd=config.sterile_root,
+    )
+  }) catch {
+    _ => return Err(native_claude_driver_error("process failed"))
+  }
+  let (exit_code, data) = match collected {
+    Some(value) => value
+    None => return Err(@types.ChoirError::timeout("Claude Take"))
+  }
+  let output = data.text() catch {
+    _ => return Err(native_claude_driver_error("output was not UTF-8"))
+  }
+  @harness.evaluate_claude_driver_capture({
+    session: started,
+    role,
+    allowed_tools: config.allowed_tools,
+    expected_mcp_server: config.mcp_server_name,
+    capture: { exit_code, output, started_at, finished_at: now() },
+  })
+}
+
+///|
+test "native Claude driver argv removes host tools and ambient configuration" {
+  let args = native_claude_driver_args(
+    {
+      sterile_root: "/tmp/choir-claude-driver-test",
+      mcp_executable: "/opt/choir/sandbox-mcp",
+      mcp_arguments: ["serve", "sandbox-1"],
+      mcp_server_name: "choir_sandbox",
+      allowed_tools: ["mcp__choir_sandbox__execute"],
+      timeout_ms: 60000,
+    },
+    @harness.ClaudeTakeRole::ClaudeImplementationTake,
+  )
+  assert_true(args.contains("--setting-sources"))
+  assert_true(args.contains("--tools"))
+  assert_true(args.contains("--strict-mcp-config"))
+  assert_true(args.contains("--no-session-persistence"))
+  assert_true(args.contains("mcp__choir_sandbox__execute"))
+  assert_false(args.contains("--bare"))
+  assert_false(args.contains("--dangerously-skip-permissions"))
+}

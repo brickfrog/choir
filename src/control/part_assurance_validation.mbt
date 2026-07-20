@@ -183,6 +183,8 @@ pub fn validate_task_contract_revision(
 ) -> Result[Unit, @types.ChoirError] {
   if contract.revision <= 0 ||
     !valid_lower_hex_digest(contract.digest) ||
+    contract.instruction_artifact.artifact_id == "" ||
+    !valid_lower_hex_digest(contract.instruction_artifact.digest) ||
     !valid_lower_hex_digest(contract.audit_policy_digest) ||
     !valid_lower_hex_digest(contract.implementation_capability_profile_digest) ||
     !valid_lower_hex_digest(contract.verification_capability_profile_digest) ||

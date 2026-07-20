@@ -45,6 +45,10 @@ fn workflow_store_fixture() -> @workflow.OnePartWorkflowSnapshot raise {
     part_id: part.id,
     revision: 1,
     digest: workflow_store_digest_a,
+    instruction_artifact: {
+      artifact_id: "instruction-store",
+      digest: workflow_store_digest_a,
+    },
     base_commit_oid: @control.GitOid("base-store"),
     base_tree_oid: @control.GitOid("base-tree-store"),
     path_mode: @control.RepositoryPathMode::CaseSensitiveNfc,

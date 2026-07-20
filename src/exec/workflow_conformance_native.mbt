@@ -60,6 +60,10 @@ fn conformance_snapshot() -> Result[
     part_id: part.id,
     revision: 1,
     digest: conformance_digest_a,
+    instruction_artifact: {
+      artifact_id: "instruction-conformance",
+      digest: conformance_digest_a,
+    },
     base_commit_oid: @control.GitOid("base-conformance"),
     base_tree_oid: @control.GitOid("base-tree-conformance"),
     path_mode: @control.RepositoryPathMode::CaseSensitiveNfc,
