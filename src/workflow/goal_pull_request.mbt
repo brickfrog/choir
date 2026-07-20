@@ -197,6 +197,17 @@ pub(all) enum GoalPullRequestTickOutcome {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) enum GoalPullRequestFaultPoint {
+  PullRequestAfterIntentBeforeLookup
+  PullRequestAfterEmptyLookupBeforeAuthorized
+  PullRequestAfterAuthorizedBeforeCreateMayHaveBeenIssued
+  PullRequestAfterCreateMayHaveBeenIssuedBeforeDispatch
+  PullRequestAfterRemoteCreateBeforeResponse
+  PullRequestAfterResponseBeforeReceipt
+  PullRequestDuringReceiptTransaction
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 fn goal_pull_request_error(detail : String) -> @types.ChoirError {
   @types.ChoirError::validation_error("Goal pull request: " + detail)
 }

@@ -501,6 +501,7 @@ fn persist_native_goal_pull_request_record(
   execution : @workflow.GoalExecutionRecord,
   record : @workflow.GoalPullRequestRecord,
   expected_store_version : Int?,
+  fault_point? : @storage.StateStoreFaultPoint? = None,
 ) -> Result[(@workflow.StoredGoalPullRequestRecord?, Bool), @types.ChoirError] {
   let receipt = match
     @workflow.persist_goal_pull_request_record(
@@ -512,7 +513,7 @@ fn persist_native_goal_pull_request_record(
         goal_precondition: @workflow.goal_execution_state_precondition(
           execution,
         ),
-        fault_point: None,
+        fault_point,
       },
     ) {
     Ok(value) => value
@@ -608,6 +609,7 @@ pub async fn advance_native_goal_pull_request_with_adapters(
   project_dir : String,
   goal_id : @control.GoalId,
   forge : NativePullRequestForgeAdapters,
+  fault? : @workflow.GoalPullRequestFaultPoint? = None,
 ) -> Result[@workflow.GoalPullRequestTickOutcome, @types.ChoirError] {
   let repository = native_goal_repository(project_dir)
   let repository_adapters = local_part_workflow_repository_adapters()
@@ -730,6 +732,12 @@ pub async fn advance_native_goal_pull_request_with_adapters(
           Err(error) => return Err(error)
         }
         current = persisted.0
+        if fault ==
+          Some(
+            @workflow.GoalPullRequestFaultPoint::PullRequestAfterIntentBeforeLookup,
+          ) {
+          return Err(native_pull_request_error("injected pull request fault"))
+        }
       }
       Some(stored) =>
         match stored.record.intent.state {
@@ -739,6 +747,16 @@ pub async fn advance_native_goal_pull_request_with_adapters(
               repository_name,
               stored.record.intent,
             )
+            if lookup ==
+              @workflow.PullRequestLookupObservation::PullRequestNoMatch &&
+              fault ==
+              Some(
+                @workflow.GoalPullRequestFaultPoint::PullRequestAfterEmptyLookupBeforeAuthorized,
+              ) {
+              return Err(
+                native_pull_request_error("injected pull request fault"),
+              )
+            }
             let authorized = match
               @workflow.authorize_goal_pull_request(
                 stored.record,
@@ -764,6 +782,16 @@ pub async fn advance_native_goal_pull_request_with_adapters(
               Err(error) => return Err(error)
             }
             current = persisted.0
+            if authorized.intent.state ==
+              @workflow.PullRequestIntentState::PullRequestAuthorized &&
+              fault ==
+              Some(
+                @workflow.GoalPullRequestFaultPoint::PullRequestAfterAuthorizedBeforeCreateMayHaveBeenIssued,
+              ) {
+              return Err(
+                native_pull_request_error("injected pull request fault"),
+              )
+            }
           }
           @workflow.PullRequestIntentState::PullRequestAuthorized => {
             let issued = match
@@ -789,6 +817,16 @@ pub async fn advance_native_goal_pull_request_with_adapters(
             }
             current = persisted.0
             dispatch_create = persisted.1
+            if issued.intent.state ==
+              @workflow.PullRequestIntentState::PullRequestCreateMayHaveBeenIssued &&
+              fault ==
+              Some(
+                @workflow.GoalPullRequestFaultPoint::PullRequestAfterCreateMayHaveBeenIssuedBeforeDispatch,
+              ) {
+              return Err(
+                native_pull_request_error("injected pull request fault"),
+              )
+            }
           }
           @workflow.PullRequestIntentState::PullRequestCreateMayHaveBeenIssued
           | @workflow.PullRequestIntentState::PullRequestRemoteCreateUncertain => {
@@ -811,6 +849,14 @@ pub async fn advance_native_goal_pull_request_with_adapters(
                 document,
               )
               dispatch_create = false
+              if fault ==
+                Some(
+                  @workflow.GoalPullRequestFaultPoint::PullRequestAfterRemoteCreateBeforeResponse,
+                ) {
+                return Err(
+                  native_pull_request_error("injected pull request fault"),
+                )
+              }
             }
             let reconciled = match
               @workflow.reconcile_goal_pull_request_after_create(
@@ -826,6 +872,16 @@ pub async fn advance_native_goal_pull_request_with_adapters(
                 @workflow.GoalPullRequestTickOutcome::GoalPullRequestRecoveryUncertain,
               )
             }
+            if reconciled.intent.state ==
+              @workflow.PullRequestIntentState::PullRequestReceipted &&
+              fault ==
+              Some(
+                @workflow.GoalPullRequestFaultPoint::PullRequestAfterResponseBeforeReceipt,
+              ) {
+              return Err(
+                native_pull_request_error("injected pull request fault"),
+              )
+            }
             let persisted = match
               persist_native_goal_pull_request_record(
                 repository,
@@ -833,11 +889,31 @@ pub async fn advance_native_goal_pull_request_with_adapters(
                 execution,
                 reconciled,
                 Some(stored.state_record.version),
+                fault_point=if reconciled.intent.state ==
+                  @workflow.PullRequestIntentState::PullRequestReceipted &&
+                  fault ==
+                  Some(
+                    @workflow.GoalPullRequestFaultPoint::PullRequestDuringReceiptTransaction,
+                  ) {
+                  Some(@storage.StateStoreFaultPoint::StateAfterCommitBeforeAck)
+                } else {
+                  None
+                },
               ) {
               Ok(value) => value
               Err(error) => return Err(error)
             }
             current = persisted.0
+            if reconciled.intent.state ==
+              @workflow.PullRequestIntentState::PullRequestReceipted &&
+              fault ==
+              Some(
+                @workflow.GoalPullRequestFaultPoint::PullRequestDuringReceiptTransaction,
+              ) {
+              return Err(
+                native_pull_request_error("injected pull request fault"),
+              )
+            }
           }
           @workflow.PullRequestIntentState::PullRequestReceipted =>
             return Ok(
@@ -927,5 +1003,185 @@ test "GitHub lookup parser distinguishes identity, possible match, and ambiguity
   assert_true(
     parse_native_paginated_pull_request_lookup(paginated, "choir/choir", intent)
     is @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch(_),
+  )
+}
+
+///|
+fn pull_request_fault_snapshot(
+  intent : @workflow.PullRequestIntent,
+  document : @workflow.PullRequestDocument,
+) -> @workflow.RemotePullRequestSnapshot {
+  {
+    remote_id: @workflow.RemotePullRequestId("PR_fault_" + intent.goal_id.0),
+    number: @workflow.PullRequestNumber(1),
+    url: @workflow.PullRequestUrl("https://example.invalid/choir/pull/1"),
+    provider_repository_id: intent.canonical_repository_id,
+    head_repository_id: intent.head_repository_id,
+    head_ref: intent.head_ref,
+    base_repository_id: intent.base_repository_id,
+    base_ref: intent.base_ref,
+    observed_head_oid: intent.expected_head_oid,
+    state: @workflow.RemotePullRequestState::RemotePullRequestOpen,
+    marker_state: @workflow.PullRequestMarkerState::PullRequestMarkerExact,
+    title_digest: @storage.artifact_digest(@utf8.encode(document.title)),
+    body_digest: @storage.artifact_digest(@utf8.encode(document.body)),
+    goal_contract_link_present: true,
+    evidence_manifest_link_present: true,
+  }
+}
+
+///|
+async fn prove_pull_request_fault_recovery(
+  label : String,
+  fault : @workflow.GoalPullRequestFaultPoint,
+  expected_state : @workflow.PullRequestIntentState,
+  create_expected : Bool,
+  completion_expected : Bool,
+) -> Unit {
+  let fixture = prove_publication_fault_recovery(
+    "pull-request-" + label,
+    @workflow.GoalPublicationFaultPoint::PublicationAfterIntentBeforeAuthorized,
+    @workflow.BranchPublicationState::BranchPublicationPlanned,
+    false,
+  )
+  let root = fixture.0
+  let remote = fixture.1
+  let goal_id = fixture.2
+  let created = Ref(0)
+  let remote_pull_request : Ref[@workflow.RemotePullRequestSnapshot?] = Ref(
+    None,
+  )
+  let forge : NativePullRequestForgeAdapters = {
+    resolve_repository: async fn(_) { Ok("choir/fault-fixture") },
+    lookup: async fn(_, _, _) {
+      match remote_pull_request.val {
+        Some(snapshot) =>
+          @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch(
+            snapshot,
+          )
+        None => @workflow.PullRequestLookupObservation::PullRequestNoMatch
+      }
+    },
+    create: async fn(_, _, intent, document) {
+      created.val = created.val + 1
+      remote_pull_request.val = Some(
+        pull_request_fault_snapshot(intent, document),
+      )
+    },
+  }
+  assert_true(
+    advance_native_goal_pull_request_with_adapters(
+      root,
+      goal_id,
+      forge,
+      fault=Some(fault),
+    )
+    is Err(_),
+  )
+  let repository = native_goal_repository(root)
+  let adapters = local_part_workflow_repository_adapters()
+  let interrupted = @workflow.load_goal_pull_request_record(
+      repository, adapters, goal_id,
+    )
+    .unwrap()
+    .unwrap().record
+  assert_eq(interrupted.intent.state, expected_state)
+  assert_eq(created.val > 0, create_expected)
+  let recovered = advance_native_goal_pull_request_with_adapters(
+    root, goal_id, forge,
+  ).unwrap()
+  let durable = @workflow.load_goal_pull_request_record(
+      repository, adapters, goal_id,
+    )
+    .unwrap()
+    .unwrap().record
+  if completion_expected {
+    assert_eq(
+      recovered,
+      @workflow.GoalPullRequestTickOutcome::GoalPullRequestComplete,
+    )
+    assert_eq(
+      durable.intent.state,
+      @workflow.PullRequestIntentState::PullRequestReceipted,
+    )
+    assert_true(durable.receipt is Some(_))
+    assert_eq(created.val, 1)
+    assert_eq(
+      advance_native_goal_pull_request_with_adapters(root, goal_id, forge).unwrap(),
+      @workflow.GoalPullRequestTickOutcome::GoalPullRequestComplete,
+    )
+    assert_eq(created.val, 1)
+  } else {
+    assert_eq(
+      recovered,
+      @workflow.GoalPullRequestTickOutcome::GoalPullRequestRecoveryUncertain,
+    )
+    assert_eq(
+      durable.intent.state,
+      @workflow.PullRequestIntentState::PullRequestRemoteCreateUncertain,
+    )
+    assert_true(durable.receipt is None)
+    assert_eq(created.val, 0)
+  }
+  assert_eq(
+    @workflow.load_goal_execution_record(repository, adapters, goal_id)
+    .unwrap()
+    .unwrap().record.state,
+    @workflow.GoalExecutionState::GoalExecutionAssured,
+  )
+  ignore(@sys.rm_rf(root))
+  ignore(@sys.rm_rf(remote))
+}
+
+///|
+async test "real exec integration: final PR creation recovers without duplicate dispatch" {
+  prove_pull_request_fault_recovery(
+    "after-intent",
+    @workflow.GoalPullRequestFaultPoint::PullRequestAfterIntentBeforeLookup,
+    @workflow.PullRequestIntentState::PullRequestPlanned,
+    false,
+    true,
+  )
+  prove_pull_request_fault_recovery(
+    "after-empty-lookup",
+    @workflow.GoalPullRequestFaultPoint::PullRequestAfterEmptyLookupBeforeAuthorized,
+    @workflow.PullRequestIntentState::PullRequestPlanned,
+    false,
+    true,
+  )
+  prove_pull_request_fault_recovery(
+    "after-authorization",
+    @workflow.GoalPullRequestFaultPoint::PullRequestAfterAuthorizedBeforeCreateMayHaveBeenIssued,
+    @workflow.PullRequestIntentState::PullRequestAuthorized,
+    false,
+    true,
+  )
+  prove_pull_request_fault_recovery(
+    "before-dispatch",
+    @workflow.GoalPullRequestFaultPoint::PullRequestAfterCreateMayHaveBeenIssuedBeforeDispatch,
+    @workflow.PullRequestIntentState::PullRequestCreateMayHaveBeenIssued,
+    false,
+    false,
+  )
+  prove_pull_request_fault_recovery(
+    "after-create",
+    @workflow.GoalPullRequestFaultPoint::PullRequestAfterRemoteCreateBeforeResponse,
+    @workflow.PullRequestIntentState::PullRequestCreateMayHaveBeenIssued,
+    true,
+    true,
+  )
+  prove_pull_request_fault_recovery(
+    "after-response",
+    @workflow.GoalPullRequestFaultPoint::PullRequestAfterResponseBeforeReceipt,
+    @workflow.PullRequestIntentState::PullRequestCreateMayHaveBeenIssued,
+    true,
+    true,
+  )
+  prove_pull_request_fault_recovery(
+    "during-receipt",
+    @workflow.GoalPullRequestFaultPoint::PullRequestDuringReceiptTransaction,
+    @workflow.PullRequestIntentState::PullRequestReceipted,
+    true,
+    true,
   )
 }

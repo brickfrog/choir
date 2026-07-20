@@ -272,7 +272,7 @@ unconnected product path usable.
   persists a restart-readable `SelectionDecision` before any Take can run.
   After acceptance it also materializes one deterministic planned Part
   workflow per accepted contract; rejected proposals create none, and restart
-  replay verifies rather than duplicates those initial snapshots. A TL-only
+  replay verifies rather than duplicates those initial snapshots. A Conductor-only
   `goal_submit` tool exposes the transaction through the existing server and
   MCP bridge, and the synthesized Claude plugin now includes `/goal`
   instructions that translate the conversation and existing Beads into that
@@ -359,7 +359,12 @@ unconnected product path usable.
   atomically guarding the exact readiness record, so a concurrent later
   observation or cancellation wins rather than being ignored. The ordinary
   Goal runner now advances assured Goals through publication, PR
-  reconciliation, readiness, and `GoalExecutionSucceeded`.
+  reconciliation, readiness, and `GoalExecutionSucceeded`. A real Git,
+  durable-storage, and controlled-forge test injects all seven named PR
+  intent/create/receipt crash boundaries. Recoverable cases adopt one remote
+  PR and one receipt without duplicate create; a crash after recording that a
+  create may have been issued but before dispatch remains explicitly uncertain
+  and is never resent.
 - A synthetic-forge disposable-repository proof exercised that entire durable
   finalization path without creating an external PR. It persisted the one-shot
   PR boundary and receipt, replayed the PR command without duplication,
@@ -367,7 +372,8 @@ unconnected product path usable.
   success, and then repeated the finalization through the ordinary Goal tick.
   The native forge parser separately covers exact-marker, possible-existing,
   duplicate-marker, invalid-response, and complete paginated-result cases.
-- Durable Goal inspection is connected through the TL-only `goal_status` tool.
+- Durable Goal inspection is connected through the Conductor-only `goal_status`
+  tool.
   Given a Goal ID, it reloads the authoritative execution record and every
   bound Part snapshot, validates their identities, and returns typed Goal and
   Part lifecycle state, provider surface, workflow stage, durable version, and
@@ -403,7 +409,7 @@ unconnected product path usable.
   its generated plugin form; Codex receives the same contract as explicit
   developer instructions. Both are directly launchable Conductors, and both
   Claude and Codex remain supported as subscription-backed Part providers.
-- Goal cancellation now has a durable, replay-safe cutoff and a TL-only
+- Goal cancellation now has a durable, replay-safe cutoff and a Conductor-only
   `goal_cancel` tool plus `choir goal cancel` CLI path. The runner prioritizes
   canceling Goals, a passive authorization check prevents Parts from planning
   or authorizing new effects after the cutoff, and a clean queued Goal can
@@ -442,7 +448,7 @@ Earlier evidence anchors are commits `5fb93fe8` for the native Part path,
 the linter correction. With the current assurance, cancellation, and provider changes,
 `moon check --target native`, `moon test --target native`, and
 `moon run --target native src/bin/choir_lint` all exit successfully on
-2026-07-20. After deleting obsolete source and tests, the full native suite reports 294
+2026-07-20. After deleting obsolete source and tests, the full native suite reports 295
 passed and 0 failed. The
 compiler still reports the repository's existing warning set.
 
@@ -2797,7 +2803,7 @@ The behavioral operations are:
 
 Claude and Codex now receive the same generated Goal skill. Submission,
 status, steering, typed clarification answers, cancellation, and observational
-Take attachment use the same TL-only Choir tools. Their contract is common:
+Take attachment use the same Conductor-only Choir tools. Their contract is common:
 
 - start returns a durable goal ID, exact accepted set, and every rejection
   before dispatch;
@@ -4032,6 +4038,17 @@ receives the one-use create capability. A restart, replay, transaction conflict,
 or lost acknowledgement may only re-query; it cannot send another create. The
 adapter ignores create-command prose and re-queries the complete remote set
 before recording an exact receipt.
+
+At `2026-07-20T14:34:31-05:00`, the implementation exercised every named
+intent/create/receipt crash point through `pr.during_receipt_transaction`.
+Crashes before create authorization or dispatch recover from durable state;
+crashes after the controlled remote create adopt the exact marker-bound PR;
+and receipt-transaction acknowledgement loss reloads the committed receipt.
+Every recoverable case issues exactly one create and records exactly one
+receipt. The deliberately ambiguous crash after `CreateMayHaveBeenIssued` but
+before dispatch records `RemoteCreateUncertain`, issues zero creates, and does
+not resend after restart. The Goal remains `GoalExecutionAssured` throughout.
+The separate readiness/success race point remains in the finalization matrix.
 
 Readiness is then observed separately against the canonical receipt. `Ready`
 requires an open PR with the exact repository identities, head and base refs,

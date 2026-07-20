@@ -1071,7 +1071,7 @@ async fn prove_publication_fault_recovery(
   fault : @workflow.GoalPublicationFaultPoint,
   expected_state : @workflow.BranchPublicationState,
   remote_updated : Bool,
-) -> Unit {
+) -> (String, String, @control.GoalId) {
   let root = "/tmp/choir-publication-fault-" +
     @sys.get_pid().to_string() +
     "-" +
@@ -1257,40 +1257,53 @@ async fn prove_publication_fault_recovery(
     .unwrap().record.state,
     @workflow.GoalExecutionState::GoalExecutionAssured,
   )
-  ignore(@sys.rm_rf(root))
-  ignore(@sys.rm_rf(remote))
+  (root, remote, goal_id)
 }
 
 ///|
 async test "real exec integration: Goal publication recovers across every external-effect boundary" {
-  prove_publication_fault_recovery(
-    "after-intent",
-    @workflow.GoalPublicationFaultPoint::PublicationAfterIntentBeforeAuthorized,
-    @workflow.BranchPublicationState::BranchPublicationPlanned,
-    false,
+  let cleanup = fn(fixture : (String, String, @control.GoalId)) {
+    ignore(@sys.rm_rf(fixture.0))
+    ignore(@sys.rm_rf(fixture.1))
+  }
+  cleanup(
+    prove_publication_fault_recovery(
+      "after-intent",
+      @workflow.GoalPublicationFaultPoint::PublicationAfterIntentBeforeAuthorized,
+      @workflow.BranchPublicationState::BranchPublicationPlanned,
+      false,
+    ),
   )
-  prove_publication_fault_recovery(
-    "after-authorization",
-    @workflow.GoalPublicationFaultPoint::PublicationAfterAuthorizedBeforeRemoteUpdate,
-    @workflow.BranchPublicationState::BranchPublicationAuthorized,
-    false,
+  cleanup(
+    prove_publication_fault_recovery(
+      "after-authorization",
+      @workflow.GoalPublicationFaultPoint::PublicationAfterAuthorizedBeforeRemoteUpdate,
+      @workflow.BranchPublicationState::BranchPublicationAuthorized,
+      false,
+    ),
   )
-  prove_publication_fault_recovery(
-    "after-update",
-    @workflow.GoalPublicationFaultPoint::PublicationAfterRemoteUpdateBeforeResponse,
-    @workflow.BranchPublicationState::BranchPublicationAuthorized,
-    true,
+  cleanup(
+    prove_publication_fault_recovery(
+      "after-update",
+      @workflow.GoalPublicationFaultPoint::PublicationAfterRemoteUpdateBeforeResponse,
+      @workflow.BranchPublicationState::BranchPublicationAuthorized,
+      true,
+    ),
   )
-  prove_publication_fault_recovery(
-    "after-response",
-    @workflow.GoalPublicationFaultPoint::PublicationAfterResponseBeforeReceipt,
-    @workflow.BranchPublicationState::BranchPublicationAuthorized,
-    true,
+  cleanup(
+    prove_publication_fault_recovery(
+      "after-response",
+      @workflow.GoalPublicationFaultPoint::PublicationAfterResponseBeforeReceipt,
+      @workflow.BranchPublicationState::BranchPublicationAuthorized,
+      true,
+    ),
   )
-  prove_publication_fault_recovery(
-    "during-receipt",
-    @workflow.GoalPublicationFaultPoint::PublicationDuringReceiptTransaction,
-    @workflow.BranchPublicationState::BranchPublicationReceipted,
-    true,
+  cleanup(
+    prove_publication_fault_recovery(
+      "during-receipt",
+      @workflow.GoalPublicationFaultPoint::PublicationDuringReceiptTransaction,
+      @workflow.BranchPublicationState::BranchPublicationReceipted,
+      true,
+    ),
   )
 }
