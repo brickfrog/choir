@@ -167,8 +167,9 @@ unconnected product path usable.
 - Durable restart-readable state and content-addressed artifact stores with
   transactional fault injection.
 - A hermetic conformance runner with injected clock, identifiers, adapters,
-  and typed fault points. Its command now runs seventeen registered cases: the
+  and typed fault points. Its command now runs eighteen registered cases: the
   runner dependency contract, `selection.exact_snapshot`,
+  `selection.revision_invalidation`,
   `scheduler.generated_dags`, three audit-authority cases, four event-ingestion
   cases, four mutation-ownership cases, and three process-policy cases described
   below. The audit cases prove a missing gate is passive, author Take/sandbox/
@@ -218,7 +219,10 @@ unconnected product path usable.
 - A pinned BoxLite v0.9.7 lifecycle/security adapter using the checked-in
   seccomp correction. Live KVM boot, clone isolation, bounded transfer,
   attach/signal/kill, restart re-adoption, read-only enforcement, and declared
-  network-denial probes passed on the recorded host.
+  network-denial probes passed on the recorded host. Every live execution path
+  resolves the CLI from one validated operator override or `PATH` and requires
+  an explicit absolute corrected-runtime directory; no machine-user path is
+  compiled into the product.
 - A restart-safe native Part workflow. It creates an isolated BoxLite sandbox,
   dispatches the typed harness session to the official Claude or Codex
   subscription CLI with only the generated sandbox MCP tools, executes an
@@ -284,6 +288,11 @@ unconnected product path usable.
   valid acceptance, the exact five typed rejection classes for missing,
   duplicate, closed, dependency-incomplete, and ambiguous Parts, and zero
   dispatch before an accepted decision exists.
+- Revision invalidation is now a registered hermetic case using production
+  Goal steering and the production audit gate. A durable concurrency revision
+  preserves the exact valid receipt, while an assurance-policy revision stales
+  it as policy evidence and a task-contract revision stales it as subject
+  evidence.
 - Harness event ingestion now has registered hermetic cases for duplicate
   conflicts, cursor gaps, late terminals, and conflicting terminals. A
   conflicting replay is retained at the next Choir observer sequence rather
@@ -544,7 +553,7 @@ Earlier evidence anchors are commits `5fb93fe8` for the native Part path,
 the linter correction. With the current assurance, cancellation, and provider changes,
 `moon check --target native`, `moon test --target native`, and
 `moon run --target native src/bin/choir_lint` all exit successfully on
-2026-07-20. After deleting obsolete source and tests, the full native suite reports 300
+2026-07-20. After deleting obsolete source and tests, the full native suite reports 306
 passed and 0 failed. The
 compiler still reports the repository's existing warning set.
 

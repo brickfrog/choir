@@ -1195,3 +1195,135 @@ pub fn audit_subject_staleness_case() -> HermeticConformanceCase {
     },
   }
 }
+
+///|
+pub fn selection_revision_invalidation_case() -> HermeticConformanceCase {
+  {
+    id: ConformanceCaseId("selection.revision_invalidation"),
+    run: fn(_) {
+      let subject = audit_fixture_subject()
+      let valid = audit_fixture_observation(
+        subject,
+        Some(audit_fixture_receipt()),
+        Some(audit_fixture_result()),
+        fn(_) { true },
+      )
+      if valid !=
+        @control.AuditGateObservation::AuditGateValid(
+          @control.ReceiptId("audit-receipt"),
+        ) {
+        return Err(audit_fixture_error("baseline receipt was not valid"))
+      }
+      let goal_id = @control.GoalId("revision-invalidation-goal")
+      let source = selection_fixture_source(
+        "revision-part",
+        [],
+        @workflow.SelectionSourceState::SelectionSourceOpen,
+      )
+      let proposed = selection_fixture_part(goal_id, "revision-part", [])
+      let selection = match
+        @workflow.evaluate_goal_proposal(
+          selection_fixture_proposal(goal_id, [proposed]),
+          selection_fixture_snapshot([source]),
+          fn(_) { true },
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let queued = match
+        @workflow.goal_execution_record_from_selection(
+          selection,
+          @workflow.goal_selection_decision_digest(selection),
+          ["revision-part-workflow"],
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let running = match
+        @workflow.advance_goal_execution_state(
+          queued,
+          @workflow.GoalExecutionState::GoalExecutionRunning,
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let (steered, scheduling_revision) = match
+        @workflow.steer_goal_execution(
+          running,
+          @workflow.GoalPolicyChange::GoalPolicySetMaximumParallelParts(8),
+        ) {
+        Ok(
+          @workflow.GoalSteeringDecision::GoalSteeringApplied(record, revision)
+        ) => (record, revision)
+        Ok(_) =>
+          return Err(audit_fixture_error("scheduling change was not applied"))
+        Err(error) => return Err(error)
+      }
+      let after_scheduling_change = audit_fixture_observation(
+        subject,
+        Some(audit_fixture_receipt()),
+        Some(audit_fixture_result()),
+        fn(_) { true },
+      )
+      if steered.maximum_parallel_parts != 8 ||
+        steered.policy_revisions.length() != 2 ||
+        scheduling_revision.maximum_parallel_parts != 8 ||
+        after_scheduling_change != valid {
+        return Err(
+          audit_fixture_error("scheduling-only policy invalidated evidence"),
+        )
+      }
+      let after_assurance_change = @control.evaluate_part_audit_gate(
+        subject,
+        Some(audit_fixture_receipt()),
+        Some(audit_fixture_result()),
+        @control.TakeId("implementation-take"),
+        @control.SandboxGenerationId("implementation-generation"),
+        [@control.HarnessSessionId("implementation-session")],
+        Some(audit_fixture_session()),
+        audit_fixture_digest_a,
+        audit_fixture_digest_b,
+        audit_fixture_digest_a,
+        audit_fixture_digest_a,
+        fn(_) { true },
+      )
+      if after_assurance_change !=
+        @control.AuditGateObservation::AuditGateStale(
+          @control.AuditGateStaleReason::AuditStalePolicy,
+        ) {
+        return Err(
+          audit_fixture_error("assurance policy did not invalidate evidence"),
+        )
+      }
+      let changed_contract = {
+        ..subject,
+        task_contract_revision_id: @control.RevisionId("changed-contract"),
+        task_contract_digest: audit_fixture_digest_b,
+      }
+      let after_contract_change = audit_fixture_observation(
+        changed_contract,
+        Some(audit_fixture_receipt()),
+        Some(audit_fixture_result()),
+        fn(_) { true },
+      )
+      if after_contract_change !=
+        @control.AuditGateObservation::AuditGateStale(
+          @control.AuditGateStaleReason::AuditStaleSubject,
+        ) {
+        return Err(
+          audit_fixture_error("task contract did not invalidate evidence"),
+        )
+      }
+      Ok({
+        evidence: [
+          ObservedSelectionCase(
+            SelectionRevisionInvalidation,
+            1,
+            2,
+            scheduling_revision.maximum_parallel_parts,
+          ),
+        ],
+      })
+    },
+  }
+}

@@ -160,6 +160,7 @@ pub(all) enum ConformanceEvidence {
 ///|
 pub(all) enum SelectionConformanceKind {
   SelectionExactSnapshot
+  SelectionRevisionInvalidation
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|

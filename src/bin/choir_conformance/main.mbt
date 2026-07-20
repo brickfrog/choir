@@ -49,6 +49,7 @@ fn run_hermetic() -> Int {
       @conformance.event_late_terminal_case(),
       @conformance.event_conflicting_terminal_case(),
       @conformance.selection_exact_snapshot_case(),
+      @conformance.selection_revision_invalidation_case(),
       @conformance.audit_gate_missing_is_passive_case(),
       @conformance.audit_independence_rejects_author_case(),
       @conformance.audit_subject_staleness_case(),
