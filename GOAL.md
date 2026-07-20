@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Context-only amendments through: 2026-07-20T14:06:16Z
+Context-only amendments through: 2026-07-20T11:10:33-05:00
 
 ## Charter Semantics and Readiness
 
@@ -71,6 +71,18 @@ unconnected product path usable.
   server-reload commands are absent. Structured arguments remain JSON through
   dispatch, while the removed stringified-argument format is rejected. The MCP
   package no longer imports the old tool registry.
+- Authenticated Conductor tool calls now bypass the v1 tool dispatcher. The UDS
+  binds the exact root identity, removes caller-supplied identity fields, and
+  routes the ten-tool surface directly to the native Goal and Beads adapter;
+  any other registered session and any unbound request fail closed. Goal
+  submission, status, cancellation, steering, attachment, and input answers use
+  the durable native stores. Task list/get/create/update use typed `bd` commands
+  through one injected execution capability, normalize Beads states to the
+  public `todo`/`in_progress`/`done` domain, and remain hermetic under tests.
+  Registration is the only remaining request still delegated to the old server
+  state, solely to establish the root Conductor credential. Obsolete transport
+  tests for v1 tools and server reload were deleted rather than preserved as
+  compatibility behavior.
 - Fixed-domain Goal, Part, Take, harness-session, event, assurance, receipt,
   integration, and cancellation types plus pure transition functions.
 - Durable restart-readable state and content-addressed artifact stores with
@@ -338,7 +350,7 @@ Earlier evidence anchors are commits `5fb93fe8` for the native Part path,
 the linter correction. With the current assurance, cancellation, and provider changes,
 `moon check --target native`, `moon test --target native`, and
 `moon run --target native src/bin/choir_lint` all exit successfully on
-2026-07-20. After deleting obsolete tests, the full native suite reports 2,242
+2026-07-20. After deleting obsolete tests, the full native suite reports 2,240
 passed and 0 failed. The
 compiler still reports the repository's existing warning set.
 

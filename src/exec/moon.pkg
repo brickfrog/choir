@@ -35,6 +35,8 @@ options(
     "claude_driver_native.mbt": [ "native" ],
     "codex_driver_native.mbt": [ "native" ],
     "goal_submission_native.mbt": [ "native" ],
+    "conductor_native.mbt": [ "native" ],
+    "conductor_native_test.mbt": [ "native" ],
     "goal_submission_native_test.mbt": [ "native" ],
     "goal_execution_native.mbt": [ "native" ],
     "goal_publication_native.mbt": [ "native" ],

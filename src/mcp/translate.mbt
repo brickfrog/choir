@@ -130,7 +130,7 @@ fn conductor_tools() -> Array[CatalogTool] {
         { name: "title", description: "Short intended-work title" },
         {
           name: "status",
-          description: "Optional initial state: todo, in_progress, blocked, or done",
+          description: "Optional initial state: todo, in_progress, or done",
         },
         { name: "assignee", description: "Optional assignee" },
         { name: "notes", description: "Optional detailed context" },
@@ -145,7 +145,7 @@ fn conductor_tools() -> Array[CatalogTool] {
         { name: "id", description: "Bead identifier" },
         {
           name: "status",
-          description: "Optional state: todo, in_progress, blocked, or done",
+          description: "Optional state: todo, in_progress, or done",
         },
         { name: "assignee", description: "Optional assignee" },
         { name: "notes", description: "Optional replacement notes" },
