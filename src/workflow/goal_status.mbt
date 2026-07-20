@@ -17,6 +17,61 @@ pub(all) struct GoalPartStatus {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) struct SemanticDependencyEdge {
+  part_id : @control.PartId
+  dependency_id : @control.PartId
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct SemanticVerificationResult {
+  verification_spec_id : @control.VerificationSpecId
+  verification_spec_digest : @control.Digest
+  outcome : @control.VerificationOutcome
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct SemanticPartResult {
+  part_id : @control.PartId
+  task_contract_digest : @control.Digest
+  candidate_change_digest : @control.Digest
+  verification_results : Array[SemanticVerificationResult]
+  audit_policy_digest : @control.Digest
+  audit_outcome : @control.AuditOutcome
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct SemanticPromotionResult {
+  part_id : @control.PartId
+  rank : Int
+  resulting_tree_oid : @control.GitOid
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct SemanticReceiptCardinalities {
+  part_verification : Int
+  part_audit : Int
+  integration : Int
+  goal_verification : Int
+  goal_audit : Int
+  publication : Int
+  pull_request : Int
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct SemanticRunProjection {
+  accepted_part_ids : Array[@control.PartId]
+  dependency_edges : Array[SemanticDependencyEdge]
+  ordered_parts : Array[SemanticPartResult]
+  promotions : Array[SemanticPromotionResult]
+  final_tree_oid : @control.GitOid
+  goal_verification_results : Array[SemanticVerificationResult]
+  combined_audit_policy_digest : @control.Digest
+  combined_audit_outcome : @control.AuditOutcome
+  receipt_cardinalities : SemanticReceiptCardinalities
+  terminal_goal_outcome : GoalExecutionState
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub(all) struct GoalStatusReport {
   goal_id : @control.GoalId
   state : GoalExecutionState
@@ -52,6 +107,7 @@ pub(all) struct GoalStatusReport {
   finalization_id : @control.FinalizationId?
   readiness_decision : PullRequestReadinessDecision?
   readiness_observation_sequence : Int64?
+  semantic_run_projection : SemanticRunProjection?
   parts : Array[GoalPartStatus]
 } derive(Debug, Eq, ToJson, FromJson)
 
@@ -194,6 +250,304 @@ pub fn goal_attach_report(
 }
 
 ///|
+fn semantic_part_verification_results(
+  snapshot : PartWorkflowSnapshot,
+) -> Result[Array[SemanticVerificationResult], @types.ChoirError] {
+  let results : Array[SemanticVerificationResult] = []
+  for slot in snapshot.verification_slots {
+    let receipt_id = match slot.authorizing_receipt_id {
+      Some(value) => value
+      None =>
+        return Err(
+          goal_execution_error(
+            "semantic projection has an unauthorized Part verification slot",
+          ),
+        )
+    }
+    let matches = snapshot.verification_receipts.filter(fn(receipt) {
+      receipt.receipt_id == receipt_id &&
+      receipt.verification_spec == slot.verification_spec
+    })
+    if matches.length() != 1 ||
+      matches[0].outcome != @control.VerificationOutcome::VerificationPassed {
+      return Err(
+        goal_execution_error(
+          "semantic projection has an invalid Part verification result",
+        ),
+      )
+    }
+    results.push({
+      verification_spec_id: slot.verification_spec.id,
+      verification_spec_digest: slot.verification_spec.digest,
+      outcome: matches[0].outcome,
+    })
+  }
+  results.sort_by(fn(left, right) {
+    left.verification_spec_id.compare(right.verification_spec_id)
+  })
+  if results.length() == 0 {
+    Err(goal_execution_error("semantic projection has no Part verification"))
+  } else {
+    Ok(results)
+  }
+}
+
+///|
+fn semantic_goal_verification_results(
+  assurance : GoalAssuranceRecord,
+) -> Result[Array[SemanticVerificationResult], @types.ChoirError] {
+  let results : Array[SemanticVerificationResult] = []
+  for slot in assurance.verification_slots {
+    let receipt_id = match slot.authorizing_receipt_id {
+      Some(value) => value
+      None =>
+        return Err(
+          goal_execution_error(
+            "semantic projection has an unauthorized Goal verification slot",
+          ),
+        )
+    }
+    let matches = assurance.verification_receipts.filter(fn(receipt) {
+      receipt.receipt_id == receipt_id &&
+      receipt.verification_spec == slot.verification_spec
+    })
+    if matches.length() != 1 ||
+      matches[0].outcome != @control.VerificationOutcome::VerificationPassed {
+      return Err(
+        goal_execution_error(
+          "semantic projection has an invalid Goal verification result",
+        ),
+      )
+    }
+    results.push({
+      verification_spec_id: slot.verification_spec.id,
+      verification_spec_digest: slot.verification_spec.digest,
+      outcome: matches[0].outcome,
+    })
+  }
+  results.sort_by(fn(left, right) {
+    left.verification_spec_id.compare(right.verification_spec_id)
+  })
+  if results.length() == 0 {
+    Err(goal_execution_error("semantic projection has no Goal verification"))
+  } else {
+    Ok(results)
+  }
+}
+
+///|
+fn semantic_snapshot_for_part(
+  snapshots : Array[PartWorkflowSnapshot],
+  part_id : @control.PartId,
+) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
+  let matches = snapshots.filter(fn(snapshot) { snapshot.part.id == part_id })
+  if matches.length() == 1 {
+    Ok(matches[0])
+  } else {
+    Err(
+      goal_execution_error(
+        "semantic projection Part identity is absent or duplicated",
+      ),
+    )
+  }
+}
+
+///|
+pub fn semantic_run_projection(
+  record : GoalExecutionRecord,
+  snapshots : Array[PartWorkflowSnapshot],
+  assurance : GoalAssuranceRecord?,
+  publication : GoalPublicationRecord?,
+  pull_request : GoalPullRequestRecord?,
+  finalization : GoalFinalizationRecord?,
+) -> Result[SemanticRunProjection?, @types.ChoirError] {
+  if record.state != GoalExecutionState::GoalExecutionSucceeded {
+    return Ok(None)
+  }
+  guard record.goal.lifecycle is @control.GoalLifecycle::GoalSucceeded(_) &&
+    assurance is Some(assurance) &&
+    publication is Some(publication) &&
+    pull_request is Some(pull_request) &&
+    finalization is Some(finalization) &&
+    assurance.stage == GoalAssuranceStage::GoalAudited &&
+    assurance.seal is Some(seal) &&
+    assurance.audit_receipt is Some(goal_audit) &&
+    publication.intent.state ==
+    BranchPublicationState::BranchPublicationReceipted &&
+    publication.receipt is Some(publication_receipt) &&
+    pull_request.intent.state == PullRequestIntentState::PullRequestReceipted &&
+    pull_request.receipt is Some(pull_request_receipt) &&
+    finalization.readiness.decision ==
+    PullRequestReadinessDecision::PullRequestReady else {
+    return Err(
+      goal_execution_error(
+        "successful Goal lacks complete semantic projection evidence",
+      ),
+    )
+  }
+  if snapshots.length() == 0 ||
+    snapshots.length() != record.part_workflow_ids.length() ||
+    assurance.goal_id != record.goal.id ||
+    publication.goal_id != record.goal.id ||
+    pull_request.goal_id != record.goal.id ||
+    finalization.goal_id != record.goal.id ||
+    assurance.repository_id != record.repository_id ||
+    publication.repository_id != record.repository_id ||
+    pull_request.repository_id != record.repository_id ||
+    finalization.repository_id != record.repository_id ||
+    assurance.goal_contract_digest != record.goal.contract_digest ||
+    publication.goal_contract_digest != record.goal.contract_digest ||
+    pull_request.goal_contract_digest != record.goal.contract_digest ||
+    finalization.goal_contract_digest != record.goal.contract_digest ||
+    assurance.integration_receipts.length() != snapshots.length() ||
+    seal.head_oid != publication_receipt.published_oid ||
+    seal.head_oid != pull_request_receipt.expected_head_oid ||
+    publication.intent.goal_branch_seal_id != seal.id ||
+    publication.intent.goal_branch_seal_digest != seal.seal_digest ||
+    pull_request.intent.goal_branch_seal_id != seal.id ||
+    pull_request.intent.goal_branch_seal_digest != seal.seal_digest ||
+    pull_request.intent.combined_audit_receipt_id != goal_audit.receipt_id ||
+    finalization.readiness.pull_request_receipt_id !=
+    pull_request_receipt.receipt_id ||
+    finalization.readiness.goal_branch_seal_id != seal.id ||
+    finalization.readiness.goal_branch_seal_digest != seal.seal_digest ||
+    goal_audit.outcome != @control.AuditOutcome::AuditPassed ||
+    goal_audit.blocking_findings_count != 0 {
+    return Err(
+      goal_execution_error("successful Goal semantic evidence is inconsistent"),
+    )
+  }
+  let accepted_part_ids = snapshots.map(fn(snapshot) { snapshot.part.id })
+  accepted_part_ids.sort()
+  for index = 0; index < accepted_part_ids.length(); index = index + 1 {
+    if index > 0 && accepted_part_ids[index - 1] == accepted_part_ids[index] {
+      return Err(
+        goal_execution_error("semantic projection contains a duplicate Part"),
+      )
+    }
+  }
+  let dependency_edges : Array[SemanticDependencyEdge] = []
+  for workflow_id in record.part_workflow_ids {
+    if snapshots
+      .filter(fn(snapshot) { snapshot.workflow_id == workflow_id })
+      .length() !=
+      1 {
+      return Err(
+        goal_execution_error(
+          "semantic projection workflow identity is absent or duplicated",
+        ),
+      )
+    }
+  }
+  for snapshot in snapshots {
+    if snapshot.goal.id != record.goal.id ||
+      snapshot.part.goal_id != record.goal.id ||
+      !(snapshot.part.lifecycle is @control.PartLifecycle::PartIntegrated(_)) {
+      return Err(
+        goal_execution_error(
+          "semantic projection contains a nonintegrated Part",
+        ),
+      )
+    }
+    for dependency_id in snapshot.part.dependency_ids {
+      if !accepted_part_ids.contains(dependency_id) {
+        return Err(
+          goal_execution_error(
+            "semantic projection contains an unknown dependency",
+          ),
+        )
+      }
+      dependency_edges.push({ part_id: snapshot.part.id, dependency_id })
+    }
+  }
+  dependency_edges.sort_by(fn(left, right) {
+    let by_part = left.part_id.compare(right.part_id)
+    if by_part == 0 {
+      left.dependency_id.compare(right.dependency_id)
+    } else {
+      by_part
+    }
+  })
+  let ordered_parts : Array[SemanticPartResult] = []
+  let promotions : Array[SemanticPromotionResult] = []
+  let mut part_verification_count = 0
+  let mut expected_head = record.base_commit_oid
+  for rank, integration in assurance.integration_receipts {
+    let snapshot = match
+      semantic_snapshot_for_part(snapshots, integration.part_id) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    guard snapshot.candidate is Some(candidate) &&
+      snapshot.audit_receipt is Some(audit) &&
+      snapshot.integration_receipt == Some(integration) &&
+      integration.from_head_oid == expected_head &&
+      candidate.id == integration.candidate_id &&
+      candidate.commit_oid == integration.candidate_commit_oid &&
+      candidate.tree_oid == integration.candidate_tree_oid &&
+      audit.outcome == @control.AuditOutcome::AuditPassed &&
+      audit.blocking_findings_count == 0 else {
+      return Err(
+        goal_execution_error(
+          "semantic projection Part evidence is inconsistent",
+        ),
+      )
+    }
+    let verification = match semantic_part_verification_results(snapshot) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    part_verification_count = part_verification_count + verification.length()
+    ordered_parts.push({
+      part_id: snapshot.part.id,
+      task_contract_digest: snapshot.task_contract.digest,
+      candidate_change_digest: candidate.canonical_change_digest,
+      verification_results: verification,
+      audit_policy_digest: audit.audit_policy_digest,
+      audit_outcome: audit.outcome,
+    })
+    promotions.push({
+      part_id: snapshot.part.id,
+      rank: rank + 1,
+      resulting_tree_oid: integration.promotion_tree_oid,
+    })
+    expected_head = integration.promotion_commit_oid
+  }
+  if expected_head != seal.head_oid ||
+    promotions[promotions.length() - 1].resulting_tree_oid != seal.tree_oid {
+    return Err(
+      goal_execution_error("semantic projection final tree is inconsistent"),
+    )
+  }
+  let goal_verification = match semantic_goal_verification_results(assurance) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  Ok(
+    Some({
+      accepted_part_ids,
+      dependency_edges,
+      ordered_parts,
+      promotions,
+      final_tree_oid: seal.tree_oid,
+      goal_verification_results: goal_verification,
+      combined_audit_policy_digest: goal_audit.audit_policy_digest,
+      combined_audit_outcome: goal_audit.outcome,
+      receipt_cardinalities: {
+        part_verification: part_verification_count,
+        part_audit: snapshots.length(),
+        integration: assurance.integration_receipts.length(),
+        goal_verification: assurance.verification_slots.length(),
+        goal_audit: 1,
+        publication: 1,
+        pull_request: 1,
+      },
+      terminal_goal_outcome: record.state,
+    }),
+  )
+}
+
+///|
 pub fn goal_status_report(
   record : GoalExecutionRecord,
   snapshots : Array[PartWorkflowSnapshot],
@@ -306,6 +660,13 @@ pub fn goal_status_report(
       )
     None => (None, None, None)
   }
+  let semantic_run_projection = match
+    semantic_run_projection(
+      record, snapshots, assurance, publication, pull_request, finalization,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
   Ok({
     goal_id: record.goal.id,
     state: record.state,
@@ -342,6 +703,7 @@ pub fn goal_status_report(
     finalization_id: finalization_status.0,
     readiness_decision: finalization_status.1,
     readiness_observation_sequence: finalization_status.2,
+    semantic_run_projection,
     parts,
   })
 }

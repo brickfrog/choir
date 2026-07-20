@@ -1534,6 +1534,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     final_status.readiness_decision,
     Some(@workflow.PullRequestReadinessDecision::PullRequestReady),
   )
+  assert_true(final_status.semantic_run_projection is None)
   match
     @workflow.decode_goal_finalization_record(
       @workflow.goal_finalization_record_bytes(finalization),
@@ -1552,6 +1553,88 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     succeeded.state,
     @workflow.GoalExecutionState::GoalExecutionSucceeded,
   )
+  let succeeded_status = match
+    @workflow.goal_status_report(
+      succeeded,
+      [integrated],
+      Some(assured),
+      Some(published),
+      Some(adopted_pull_request),
+      Some(finalization),
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  guard succeeded_status.semantic_run_projection is Some(projection) else {
+    fail("successful Goal semantic projection is absent")
+  }
+  assert_eq(projection.accepted_part_ids, [integrated.part.id])
+  assert_eq(projection.dependency_edges, [])
+  assert_eq(projection.ordered_parts.length(), 1)
+  assert_eq(projection.ordered_parts[0].part_id, integrated.part.id)
+  assert_eq(
+    projection.ordered_parts[0].task_contract_digest,
+    integrated.task_contract.digest,
+  )
+  assert_eq(
+    projection.ordered_parts[0].candidate_change_digest,
+    integrated.candidate.unwrap().canonical_change_digest,
+  )
+  assert_eq(projection.ordered_parts[0].verification_results.length(), 1)
+  assert_eq(
+    projection.ordered_parts[0].audit_outcome,
+    @control.AuditOutcome::AuditPassed,
+  )
+  assert_eq(projection.promotions, [
+    {
+      part_id: integrated.part.id,
+      rank: 1,
+      resulting_tree_oid: promotion.tree_oid,
+    },
+  ])
+  assert_eq(projection.final_tree_oid, promotion.tree_oid)
+  assert_eq(projection.goal_verification_results.length(), 1)
+  assert_eq(
+    projection.combined_audit_outcome,
+    @control.AuditOutcome::AuditPassed,
+  )
+  assert_eq(projection.receipt_cardinalities, {
+    part_verification: 1,
+    part_audit: 1,
+    integration: 1,
+    goal_verification: 1,
+    goal_audit: 1,
+    publication: 1,
+    pull_request: 1,
+  })
+  assert_eq(
+    projection.terminal_goal_outcome,
+    @workflow.GoalExecutionState::GoalExecutionSucceeded,
+  )
+  let semantic_json = projection.to_json().stringify(indent=0)
+  assert_false(semantic_json.contains(integrated.implementation_take.id.0))
+  assert_false(semantic_json.contains(integrated.verification_take.id.0))
+  assert_false(semantic_json.contains(integrated.audit_take.id.0))
+  assert_false(
+    semantic_json.contains(integrated.audit_receipt.unwrap().receipt_id.0),
+  )
+  assert_false(semantic_json.contains(publication_receipt.receipt_id.0))
+  assert_false(semantic_json.contains(pull_request_receipt.receipt_id.0))
+  assert_false(semantic_json.contains(pull_request_receipt.url.0))
+  assert_false(
+    semantic_json.contains(integrated.candidate.unwrap().commit_oid.0),
+  )
+  assert_false(semantic_json.contains(promotion.commit_oid.0))
+  assert_false(semantic_json.contains("codex-cli"))
+  let other_concurrency_status = @workflow.goal_status_report(
+    { ..succeeded, maximum_parallel_parts: 4 },
+    [integrated],
+    Some(assured),
+    Some(published),
+    Some(adopted_pull_request),
+    Some(finalization),
+  ).unwrap()
+  assert_eq(other_concurrency_status.semantic_run_projection, Some(projection))
   let missing_evidence = match
     @workflow.observe_goal_pull_request_readiness(
       assured_execution,

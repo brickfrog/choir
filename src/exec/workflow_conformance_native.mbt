@@ -14,6 +14,40 @@ pub(all) struct PartConformanceReport {
 } derive(Debug, Eq, ToJson)
 
 ///|
+pub(all) struct ScaleConformanceReport {
+  passed : Bool
+  manifest_digest : @control.Digest
+  part_count : Int
+  concurrency_limits : Array[Int]
+  observed_parallelism : Array[Int]
+  promotion_order : Array[@control.PartId]
+  semantic_projection_digest : @control.Digest?
+  part_verification_receipt_count : Int
+  part_audit_receipt_count : Int
+  integration_receipt_count : Int
+  goal_verification_receipt_count : Int
+  goal_audit_receipt_count : Int
+  publication_receipt_count : Int
+  pull_request_receipt_count : Int
+  failure : String?
+} derive(Debug, Eq, ToJson)
+
+///|
+priv struct ScalePartManifestEntry {
+  part_id : @control.PartId
+  dependency_ids : Array[@control.PartId]
+  surface : @control.ProviderSurfaceId
+} derive(ToJson)
+
+///|
+priv struct ScaleRunResult {
+  snapshots : Array[@workflow.PartWorkflowSnapshot]
+  observed_parallelism : Int
+  promotion_order : Array[@control.PartId]
+  projection : @workflow.SemanticRunProjection
+}
+
+///|
 let conformance_digest_a : @control.Digest = @control.Digest(
   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 )
@@ -25,12 +59,13 @@ let conformance_digest_b : @control.Digest = @control.Digest(
 
 ///|
 fn conformance_take(
+  goal_id : @control.GoalId,
   id : String,
   purpose : @control.TakePurpose,
 ) -> @control.Take {
   {
     id: @control.TakeId(id),
-    goal_id: @control.GoalId("goal-conformance"),
+    goal_id,
     purpose,
     ordinal: 1,
     fencing_epoch: None,
@@ -39,22 +74,30 @@ fn conformance_take(
 }
 
 ///|
-fn conformance_snapshot() -> Result[
-  @workflow.PartWorkflowSnapshot,
-  @types.ChoirError,
-] {
+fn conformance_snapshot_for(
+  key : String,
+  goal_id : @control.GoalId,
+  part_id : @control.PartId,
+  dependency_ids : Array[@control.PartId],
+  surface : @control.ProviderSurfaceId,
+) -> Result[@workflow.PartWorkflowSnapshot, @types.ChoirError] {
+  let semantic_digest = @storage.artifact_digest(
+    @utf8.encode("choir.conformance-part.v1\u{00}" + part_id.0),
+  )
   let goal : @control.Goal = {
-    id: @control.GoalId("goal-conformance"),
-    contract_digest: conformance_digest_a,
+    id: goal_id,
+    contract_digest: @storage.artifact_digest(
+      @utf8.encode("choir.conformance-goal.v1\u{00}" + goal_id.0),
+    ),
     lifecycle: @control.GoalLifecycle::GoalActive(
       @control.GoalActiveCondition::GoalRunning,
     ),
   }
   let part : @control.GoalPart = {
-    id: @control.PartId("part-conformance"),
+    id: part_id,
     goal_id: goal.id,
-    dependency_ids: [],
-    task_contract_revision_id: @control.RevisionId("revision-conformance"),
+    dependency_ids,
+    task_contract_revision_id: @control.RevisionId("revision-" + key),
     lifecycle: @control.PartLifecycle::PartPending,
   }
   let contract : @control.TaskContractRevision = {
@@ -62,53 +105,52 @@ fn conformance_snapshot() -> Result[
     goal_id: goal.id,
     part_id: part.id,
     revision: 1,
-    digest: conformance_digest_a,
+    digest: semantic_digest,
     repair_conflict_id: None,
     instruction_artifact: {
-      artifact_id: "instruction-conformance",
-      digest: conformance_digest_a,
+      artifact_id: "instruction-" + key,
+      digest: semantic_digest,
     },
     base_commit_oid: @control.GitOid("base-conformance"),
     base_tree_oid: @control.GitOid("base-tree-conformance"),
     path_mode: @control.RepositoryPathMode::CaseSensitiveNfc,
     mutation_declaration: @control.MutationDeclaration::CompleteMutationDeclaration([
         @control.MutationClaim::ExactPath(
-          @control.RepoPath("src/conformance.mbt"),
+          @control.RepoPath("src/" + part_id.0 + ".mbt"),
         ),
       ],
     ),
     verification_specs: [
       {
-        id: @control.VerificationSpecId("verify-conformance"),
+        id: @control.VerificationSpecId("verify-" + part_id.0),
         version: 1,
-        digest: conformance_digest_a,
+        digest: semantic_digest,
         process_spec_digest: conformance_digest_b,
       },
     ],
-    audit_policy_digest: conformance_digest_a,
+    audit_policy_digest: semantic_digest,
     implementation_capability_profile_digest: conformance_digest_a,
     verification_capability_profile_digest: conformance_digest_b,
     audit_capability_profile_digest: conformance_digest_a,
   }
   let implementation = conformance_take(
-    "implementation-conformance",
+    goal.id,
+    "implementation-" + key,
     @control.TakePurpose::Implementation(part.id, contract.id),
   )
   let verification = conformance_take(
-    "verification-conformance",
+    goal.id,
+    "verification-" + key,
     @control.TakePurpose::PartVerification(
       part.id,
       implementation.id,
-      conformance_digest_a,
+      semantic_digest,
     ),
   )
   let audit = conformance_take(
-    "audit-conformance",
-    @control.TakePurpose::PartAudit(
-      part.id,
-      implementation.id,
-      conformance_digest_a,
-    ),
+    goal.id,
+    "audit-" + key,
+    @control.TakePurpose::PartAudit(part.id, implementation.id, semantic_digest),
   )
   let sandbox = fn(
     id : String,
@@ -126,20 +168,20 @@ fn conformance_snapshot() -> Result[
     }
   }
   let implementation_sandbox = sandbox(
-    "implementation-sandbox-conformance",
-    "implementation-generation-conformance",
+    "implementation-sandbox-" + key,
+    "implementation-generation-" + key,
     implementation,
     contract.implementation_capability_profile_digest,
   )
   let verification_sandbox = sandbox(
-    "verification-sandbox-conformance",
-    "verification-generation-conformance",
+    "verification-sandbox-" + key,
+    "verification-generation-" + key,
     verification,
     contract.verification_capability_profile_digest,
   )
   let audit_sandbox = sandbox(
-    "audit-sandbox-conformance",
-    "audit-generation-conformance",
+    "audit-sandbox-" + key,
+    "audit-generation-" + key,
     audit,
     contract.audit_capability_profile_digest,
   )
@@ -152,7 +194,7 @@ fn conformance_snapshot() -> Result[
       id: @control.HarnessSessionId(id),
       take_id: take.id,
       sandbox_generation_id: lease.generation_id,
-      surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+      surface,
       effective_surface_manifest_digest: conformance_digest_a,
       cursor_class: @control.HarnessCursorClass::HarnessCursorNotResumable,
       provider_cursor: None,
@@ -165,25 +207,43 @@ fn conformance_snapshot() -> Result[
     implementation_take: implementation,
     implementation_sandbox,
     implementation_session: session(
-      "implementation-session-conformance", implementation, implementation_sandbox,
+      "implementation-session-" + key,
+      implementation,
+      implementation_sandbox,
     ),
     verification_take: verification,
     verification_sandbox,
     verification_session: session(
-      "verification-session-conformance", verification, verification_sandbox,
+      "verification-session-" + key,
+      verification,
+      verification_sandbox,
     ),
     audit_take: audit,
     audit_sandbox,
-    audit_session: session("audit-session-conformance", audit, audit_sandbox),
+    audit_session: session("audit-session-" + key, audit, audit_sandbox),
   }
   @workflow.initialize_part_workflow(
-    "workflow-conformance",
+    "workflow-" + key,
     goal,
     part,
     contract,
     identities,
     @control.FencingEpoch(7L),
     fn(_) { true },
+  )
+}
+
+///|
+fn conformance_snapshot() -> Result[
+  @workflow.PartWorkflowSnapshot,
+  @types.ChoirError,
+] {
+  conformance_snapshot_for(
+    "conformance",
+    @control.GoalId("goal-conformance"),
+    @control.PartId("part-conformance"),
+    [],
+    @control.ProviderSurfaceId::ClaudeSubscriptionCli,
   )
 }
 
@@ -268,6 +328,10 @@ fn conformance_effect_observation(
   snapshot : @workflow.PartWorkflowSnapshot,
   intent : @workflow.PartEffectIntent,
 ) -> Result[@workflow.PartEffectObservation, @types.ChoirError] {
+  let key = snapshot.part.id.0
+  let change_digest = @storage.artifact_digest(
+    @utf8.encode("choir.conformance-change.v1\u{00}" + key),
+  )
   match intent.kind {
     @workflow.PartEffectKind::PrepareImplementationSandbox(lease) =>
       Ok(
@@ -286,15 +350,15 @@ fn conformance_effect_observation(
       let started = conformance_started_session(
         snapshot.identities.implementation_session,
       )
-      let (closed, events) = conformance_trace(started, "implementation")
+      let (closed, events) = conformance_trace(started, "implementation-" + key)
       Ok(
         @workflow.PartEffectObservation::ImplementationCompleted(
           {
             take_id,
             session_id,
             result_artifact: {
-              artifact_id: "implementation-result-conformance",
-              digest: conformance_digest_b,
+              artifact_id: "implementation-result-" + key,
+              digest: change_digest,
             },
             finished_at: 102L,
           },
@@ -307,18 +371,18 @@ fn conformance_effect_observation(
       Ok(
         @workflow.PartEffectObservation::CandidateNormalized(
           {
-            id: @control.CandidateId("candidate-conformance"),
+            id: @control.CandidateId("candidate-" + key),
             goal_id: snapshot.goal.id,
             part_id: snapshot.part.id,
             take_id,
             base_commit_oid: snapshot.task_contract.base_commit_oid,
-            commit_oid: @control.GitOid("candidate-commit-conformance"),
-            tree_oid: @control.GitOid("candidate-tree-conformance"),
-            canonical_change_digest: conformance_digest_b,
-            changed_paths: [@control.RepoPath("src/conformance.mbt")],
+            commit_oid: @control.GitOid("candidate-commit-" + key),
+            tree_oid: @control.GitOid("candidate-tree-" + key),
+            canonical_change_digest: change_digest,
+            changed_paths: [@control.RepoPath("src/" + key + ".mbt")],
           },
           {
-            candidate_tree_paths: [@control.RepoPath("src/conformance.mbt")],
+            candidate_tree_paths: [@control.RepoPath("src/" + key + ".mbt")],
             symlink_prefix_paths: [],
             normalization_collision_paths: [],
           },
@@ -341,7 +405,7 @@ fn conformance_effect_observation(
       let started = conformance_started_session(
         snapshot.identities.verification_session,
       )
-      let (closed, events) = conformance_trace(started, "verification")
+      let (closed, events) = conformance_trace(started, "verification-" + key)
       let candidate = match snapshot.candidate {
         Some(value) => value
         None =>
@@ -353,7 +417,7 @@ fn conformance_effect_observation(
             take_id,
             session_id,
             verification_execution_id: @control.VerificationExecutionId(
-              "verification-execution-conformance",
+              "verification-execution-" + key,
             ),
             subject,
             verification_spec: snapshot.task_contract.verification_specs[0],
@@ -362,8 +426,8 @@ fn conformance_effect_observation(
             subject_pre_tree_oid: candidate.tree_oid,
             subject_post_tree_oid: candidate.tree_oid,
             evidence: {
-              artifact_id: "verification-evidence-conformance",
-              digest: conformance_digest_b,
+              artifact_id: "verification-evidence-" + key,
+              digest: change_digest,
             },
             started_at: 100L,
             finished_at: 102L,
@@ -391,7 +455,7 @@ fn conformance_effect_observation(
       let started = conformance_started_session(
         snapshot.identities.audit_session,
       )
-      let (closed, events) = conformance_trace(started, "audit")
+      let (closed, events) = conformance_trace(started, "audit-" + key)
       Ok(
         @workflow.PartEffectObservation::AuditCompleted(
           {
@@ -416,8 +480,18 @@ fn conformance_effect_observation(
       Ok(
         @workflow.PartEffectObservation::PromotionGenerated({
           intent_id: intent.id,
-          commit_oid: @control.GitOid("promotion-commit-conformance"),
-          tree_oid: @control.GitOid("promotion-tree-conformance"),
+          commit_oid: @control.GitOid(
+            "promotion-commit-" +
+            key +
+            "-after-" +
+            intent.expected_goal_head_oid.0,
+          ),
+          tree_oid: @control.GitOid(
+            "promotion-tree-" +
+            key +
+            "-after-" +
+            intent.expected_goal_head_oid.0,
+          ),
           first_parent_oid: intent.expected_goal_head_oid,
           second_parent_oid: intent.candidate_commit_oid,
         }),
@@ -441,6 +515,9 @@ fn conformance_dependencies(
   fault : (@workflow.PartPersistenceBoundary) -> @storage.StateStoreFaultPoint?,
   inject_audit_conflict? : Bool = false,
   implementation_dispatch_count? : Ref[Int]? = None,
+  integration_head? : @control.GitOid? = Some(
+    @control.GitOid("goal-head-conformance"),
+  ),
 ) -> @workflow.PartWorkflowDriverDependencies {
   let now = fn() { 110L }
   let dependencies : @workflow.PartWorkflowDriverDependencies = {
@@ -454,7 +531,8 @@ fn conformance_dependencies(
             count.val = count.val + 1
           _ => ()
         }
-        let observation = match conformance_effect_observation(snapshot, intent) {
+        let observation = match
+          conformance_effect_observation(snapshot, intent) {
           Ok(value) => value
           Err(error) => return Err(error)
         }
@@ -465,7 +543,7 @@ fn conformance_dependencies(
               @workflow.PartEffectObservation::AuditCompleted(
                 result,
                 session,
-                events,
+                events
               ),
             ) => {
               match
@@ -509,13 +587,13 @@ fn conformance_dependencies(
     artifact_exists: fn(_) { true },
     artifact_digest_exists: fn(_) { true },
     is_nfc: fn(_) { true },
-    audit_receipt_metadata: fn(_) {
+    audit_receipt_metadata: fn(snapshot) {
       Ok({
-        receipt_id: @control.ReceiptId("audit-receipt-conformance"),
-        provider_surface_id: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
-        provider_identity: "claude-code-conformance",
+        receipt_id: @control.ReceiptId("audit-receipt-" + snapshot.part.id.0),
+        provider_surface_id: snapshot.identities.audit_session.surface,
+        provider_identity: "provider-conformance-" + snapshot.part.id.0,
         model_identity: @control.ModelIdentity::ReportedModelIdentity(
-          "claude-conformance",
+          "model-conformance-" + snapshot.part.id.0,
         ),
       })
     },
@@ -523,22 +601,29 @@ fn conformance_dependencies(
       Ok(@workflow.PartGoalAuthorization::PartGoalAuthorized(None))
     },
     integration_admission: fn(snapshot) {
-      Ok(
-        @workflow.PartIntegrationAdmission::PartIntegrationAdmitted({
-          lease: {
-            id: @control.IntegrationLeaseId("integration-lease-conformance"),
-            goal_id: snapshot.goal.id,
-            fencing_epoch: snapshot.fencing_epoch,
-            holder: "choird-conformance",
-          },
-          intent_id: @control.IntegrationIntentId(
-            "integration-intent-conformance",
-          ),
-          expected_goal_head_oid: @control.GitOid("goal-head-conformance"),
-          promotion_metadata_digest: conformance_digest_a,
-          git_witness_ref: "refs/choir/witness/integration-conformance",
-        }),
-      )
+      match integration_head {
+        None => Ok(@workflow.PartIntegrationAdmission::PartIntegrationDeferred)
+        Some(expected_goal_head_oid) =>
+          Ok(
+            @workflow.PartIntegrationAdmission::PartIntegrationAdmitted({
+              lease: {
+                id: @control.IntegrationLeaseId(
+                  "integration-lease-" + snapshot.part.id.0,
+                ),
+                goal_id: snapshot.goal.id,
+                fencing_epoch: snapshot.fencing_epoch,
+                holder: "choird-conformance",
+              },
+              intent_id: @control.IntegrationIntentId(
+                "integration-intent-" + snapshot.part.id.0,
+              ),
+              expected_goal_head_oid,
+              promotion_metadata_digest: conformance_digest_a,
+              git_witness_ref: "refs/choir/witness/integration-" +
+              snapshot.part.id.0,
+            }),
+          )
+      }
     },
     verification_environment_digest: fn(_) { conformance_digest_b },
     verification_runtime_digest: fn(snapshot) {
@@ -673,21 +758,28 @@ pub async fn run_part_conformance_fixture(
         fault_repository,
         local_part_workflow_repository_adapters(),
         snapshot,
-        conformance_dependencies(fault_repository, fault_count, fn(actual) {
-          if actual ==
-            @workflow.PartPersistenceBoundary::WorkflowEffectObserved {
-            effect_observation_count.val = effect_observation_count.val + 1
-          }
-          let target_occurrence = boundary !=
-            @workflow.PartPersistenceBoundary::WorkflowEffectObserved ||
-            effect_observation_count.val == 3
-          if !injected.val && actual == boundary && target_occurrence {
-            injected.val = true
-            Some(@storage.StateStoreFaultPoint::StateAfterMutationBeforeOutbox)
-          } else {
-            None
-          }
-        }, implementation_dispatch_count=Some(implementation_dispatch_count)),
+        conformance_dependencies(
+          fault_repository,
+          fault_count,
+          fn(actual) {
+            if actual ==
+              @workflow.PartPersistenceBoundary::WorkflowEffectObserved {
+              effect_observation_count.val = effect_observation_count.val + 1
+            }
+            let target_occurrence = boundary !=
+              @workflow.PartPersistenceBoundary::WorkflowEffectObserved ||
+              effect_observation_count.val == 3
+            if !injected.val && actual == boundary && target_occurrence {
+              injected.val = true
+              Some(
+                @storage.StateStoreFaultPoint::StateAfterMutationBeforeOutbox,
+              )
+            } else {
+              None
+            }
+          },
+          implementation_dispatch_count=Some(implementation_dispatch_count),
+        ),
       ) {
       Ok(value) => value
       Err(error) => {
@@ -737,8 +829,7 @@ pub async fn run_part_conformance_fixture(
           ..,
         }
       ) =>
-        if boundary ==
-          @workflow.PartPersistenceBoundary::WorkflowEffectObserved &&
+        if boundary == @workflow.PartPersistenceBoundary::WorkflowEffectObserved &&
           implementation_dispatch_count.val != 1 {
           clear_conformance_repository(fault_repository)
           return failed_part_report(
@@ -806,36 +897,38 @@ pub async fn run_part_conformance_fixture(
     local_part_workflow_repository_adapters(),
     conflict_intent,
   )
-  let audit_session_violated = conflict_result.snapshot.harness_sessions.any(
-    fn(session) {
-      session.id == conflict_result.snapshot.identities.audit_session.id &&
-      session.lifecycle ==
-      @control.HarnessSessionLifecycle::HarnessSessionProtocolViolated
-    },
-  )
-  let audit_take_uncertain = match conflict_result.snapshot.audit_take.lifecycle {
+  let audit_session_violated = conflict_result.snapshot.harness_sessions.any(fn(
+    session,
+  ) {
+    session.id == conflict_result.snapshot.identities.audit_session.id &&
+    session.lifecycle ==
+    @control.HarnessSessionLifecycle::HarnessSessionProtocolViolated
+  })
+  let audit_take_uncertain = match
+    conflict_result.snapshot.audit_take.lifecycle {
     @control.TakeLifecycle::TakeTerminal(
       @control.TakeTerminalDisposition::TakeRecoveryUncertain(
-        @control.TakeUncertaintyReason::TakeProtocolViolation,
-      ),
+        @control.TakeUncertaintyReason::TakeProtocolViolation
+      )
     ) => true
     _ => false
   }
   let first_audit_witness_retained = match first_witness {
     Ok(
-      Some({
-        observation: @workflow.PartEffectObservation::AuditCompleted(
-          { finished_at: 102L, .. },
-          _,
-          _,
-        ),
-        ..
-      }),
+      Some(
+        {
+          observation: @workflow.PartEffectObservation::AuditCompleted(
+            { finished_at: 102L, .. },
+            _,
+            _
+          ),
+          ..,
+        }
+      )
     ) => true
     _ => false
   }
-  let audit_protocol_conflict_checked =
-    conflict_result.outcome ==
+  let audit_protocol_conflict_checked = conflict_result.outcome ==
     @workflow.PartWorkflowRunOutcome::PartRunRecoveryUncertain &&
     conflict_result.snapshot.stage ==
     @workflow.PartWorkflowStage::PartRecoveryUncertain &&
@@ -858,6 +951,923 @@ pub async fn run_part_conformance_fixture(
     audit_result_recovery_checked: audit_result_recovery_checked.val,
     audit_receipt_recovery_checked: audit_receipt_recovery_checked.val,
     audit_protocol_conflict_checked,
+    failure: None,
+  }
+}
+
+///|
+fn scale_manifest() -> Array[ScalePartManifestEntry] {
+  [
+    {
+      part_id: @control.PartId("part-a"),
+      dependency_ids: [],
+      surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+    },
+    {
+      part_id: @control.PartId("part-b"),
+      dependency_ids: [],
+      surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+    },
+    {
+      part_id: @control.PartId("part-c"),
+      dependency_ids: [@control.PartId("part-a")],
+      surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+    },
+    {
+      part_id: @control.PartId("part-d"),
+      dependency_ids: [@control.PartId("part-b")],
+      surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+    },
+    {
+      part_id: @control.PartId("part-e"),
+      dependency_ids: [@control.PartId("part-c"), @control.PartId("part-d")],
+      surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+    },
+    {
+      part_id: @control.PartId("part-f"),
+      dependency_ids: [@control.PartId("part-e")],
+      surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+    },
+  ]
+}
+
+///|
+fn scale_snapshot_for_part(
+  snapshots : Array[@workflow.PartWorkflowSnapshot],
+  part_id : @control.PartId,
+) -> Result[@workflow.PartWorkflowSnapshot, @types.ChoirError] {
+  for snapshot in snapshots {
+    if snapshot.part.id == part_id {
+      return Ok(snapshot)
+    }
+  }
+  Err(@types.ChoirError::validation_error("scale Part is absent"))
+}
+
+///|
+fn load_scale_snapshot(
+  repository : @workflow.PartWorkflowRepository,
+  part_id : @control.PartId,
+) -> Result[@workflow.PartWorkflowSnapshot, @types.ChoirError] {
+  match
+    @workflow.load_part_snapshot(
+      repository,
+      local_part_workflow_repository_adapters(),
+      "workflow-" + part_id.0,
+    ) {
+    Ok(Some(stored)) => Ok(stored.snapshot)
+    Ok(None) =>
+      Err(@types.ChoirError::validation_error("scale snapshot is absent"))
+    Err(error) => Err(error)
+  }
+}
+
+///|
+fn scale_scheduling_record(
+  snapshot : @workflow.PartWorkflowSnapshot,
+) -> @workflow.GoalPartSchedulingRecord {
+  { part: snapshot.part, task_contract: snapshot.task_contract }
+}
+
+///|
+fn scale_pending_record(
+  snapshot : @workflow.PartWorkflowSnapshot,
+) -> @workflow.GoalPartSchedulingRecord {
+  {
+    part: { ..snapshot.part, lifecycle: @control.PartLifecycle::PartPending },
+    task_contract: snapshot.task_contract,
+  }
+}
+
+///|
+fn scale_initialized_branch(
+  goal_id : @control.GoalId,
+  repository_id : @workflow.RepositoryId,
+  goal_ref : @workflow.GitRefName,
+  base_oid : @control.GitOid,
+) -> @workflow.GoalBranchInitialization {
+  let planned = @workflow.initial_goal_branch_initialization(
+    goal_id, repository_id, goal_ref, base_oid,
+  )
+  {
+    ..planned,
+    lifecycle: @workflow.GoalBranchInitLifecycle::GoalBranchInitReceipted,
+    receipt: Some({
+      intent_id: planned.intent_id,
+      idempotency_key: planned.idempotency_key,
+      repository_id,
+      goal_ref,
+      initialized_oid: base_oid,
+      initialization_witness_ref: planned.initialization_witness_ref,
+      observed_at: 1L,
+    }),
+  }
+}
+
+///|
+fn scale_sandbox(
+  id : String,
+  take : @control.Take,
+  capability : @control.Digest,
+) -> @control.SandboxLease {
+  {
+    id: @control.SandboxLeaseId(id),
+    take_id: take.id,
+    generation_id: @control.SandboxGenerationId(id + "-generation"),
+    capability_profile_digest: capability,
+    runtime_policy_digest: conformance_digest_b,
+    lifecycle: @control.SandboxLeaseLifecycle::SandboxLeasePlanned,
+  }
+}
+
+///|
+fn scale_session(
+  id : String,
+  take : @control.Take,
+  sandbox : @control.SandboxLease,
+  surface : @control.ProviderSurfaceId,
+) -> @control.HarnessSession {
+  {
+    id: @control.HarnessSessionId(id),
+    take_id: take.id,
+    sandbox_generation_id: sandbox.generation_id,
+    surface,
+    effective_surface_manifest_digest: conformance_digest_a,
+    cursor_class: @control.HarnessCursorClass::HarnessCursorNotResumable,
+    provider_cursor: None,
+    last_choir_sequence: @control.EventSequence(0L),
+    open_tool_execution_ids: [],
+    lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+  }
+}
+
+///|
+fn scale_assurance_identities(
+  goal : @control.Goal,
+  head_oid : @control.GitOid,
+) -> @workflow.GoalAssuranceIdentityPlan {
+  let verification = conformance_take(
+    goal.id,
+    "goal-verification-scale",
+    @control.TakePurpose::GoalVerification(
+      goal.id,
+      head_oid,
+      goal.contract_digest,
+    ),
+  )
+  let audit = conformance_take(
+    goal.id,
+    "goal-audit-scale",
+    @control.TakePurpose::GoalAudit(goal.id, goal.contract_digest),
+  )
+  let verification_sandbox = scale_sandbox(
+    "goal-verification-sandbox-scale", verification, conformance_digest_b,
+  )
+  let audit_sandbox = scale_sandbox(
+    "goal-audit-sandbox-scale", audit, conformance_digest_a,
+  )
+  {
+    verification_take: verification,
+    verification_sandbox,
+    verification_session: scale_session(
+      "goal-verification-session-scale",
+      verification,
+      verification_sandbox,
+      @control.ProviderSurfaceId::CodexSubscriptionCli,
+    ),
+    audit_take: audit,
+    audit_sandbox,
+    audit_session: scale_session(
+      "goal-audit-session-scale",
+      audit,
+      audit_sandbox,
+      @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+    ),
+  }
+}
+
+///|
+fn apply_scale_assurance_observation(
+  record : @workflow.GoalAssuranceRecord,
+  observation : @workflow.GoalAssuranceEffectObservation,
+  observed_at : Int64,
+) -> Result[@workflow.GoalAssuranceRecord, @types.ChoirError] {
+  let intent = match @workflow.plan_next_goal_assurance_effect(record) {
+    Ok(Some(value)) => value
+    Ok(None) =>
+      return Err(
+        @types.ChoirError::validation_error(
+          "scale Goal assurance has no planned effect",
+        ),
+      )
+    Err(error) => return Err(error)
+  }
+  let planned = match
+    @workflow.persist_planned_goal_assurance_effect(record, intent) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let authorized = match
+    @workflow.authorize_pending_goal_assurance_effect(planned) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  @workflow.apply_goal_assurance_effect_observation(
+    authorized,
+    observation,
+    observed_at,
+    fn(_) { true },
+  )
+}
+
+///|
+fn scale_terminal_projection(
+  snapshots : Array[@workflow.PartWorkflowSnapshot],
+  promotion_order : Array[@control.PartId],
+  maximum_parallel_parts : Int,
+) -> Result[@workflow.SemanticRunProjection, @types.ChoirError] {
+  if snapshots.length() == 0 || promotion_order.length() != snapshots.length() {
+    return Err(
+      @types.ChoirError::validation_error(
+        "scale terminal evidence has inconsistent Part cardinality",
+      ),
+    )
+  }
+  let final_snapshot = match
+    scale_snapshot_for_part(
+      snapshots,
+      promotion_order[promotion_order.length() - 1],
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  guard final_snapshot.integration_receipt is Some(final_integration) else {
+    return Err(
+      @types.ChoirError::validation_error(
+        "scale terminal evidence lacks the final integration receipt",
+      ),
+    )
+  }
+  let goal = final_snapshot.goal
+  let repository_id = @workflow.RepositoryId("repository-scale-mixed")
+  let goal_ref = @workflow.goal_execution_ref(goal.id)
+  let base_oid = @control.GitOid("base-conformance")
+  let execution : @workflow.GoalExecutionRecord = {
+    goal,
+    repository_id,
+    selection_decision_digest: @storage.artifact_digest(
+      @utf8.encode(scale_manifest().to_json().stringify(indent=0)),
+    ),
+    base_ref: @workflow.GitRefName("refs/heads/main"),
+    base_commit_oid: base_oid,
+    base_tree_oid: @control.GitOid("base-tree-conformance"),
+    integration_target_ref: @workflow.GitRefName("refs/heads/main"),
+    goal_ref,
+    branch_initialization: scale_initialized_branch(
+      goal.id,
+      repository_id,
+      goal_ref,
+      base_oid,
+    ),
+    maximum_parallel_parts,
+    policy_revisions: [@workflow.initial_goal_policy_revision(goal.id, 1)],
+    part_workflow_ids: snapshots.map(fn(snapshot) { snapshot.workflow_id }),
+    state: @workflow.GoalExecutionState::GoalExecutionAssuring,
+    pause: None,
+    active_input_request: None,
+    input_answers: [],
+    cancellation_request: None,
+    durable_version: 3,
+    fencing_epoch: final_snapshot.fencing_epoch,
+  }
+  let goal_verification_spec : @control.VerificationSpec = {
+    id: @control.VerificationSpecId("verify-goal-scale"),
+    version: 1,
+    digest: @storage.artifact_digest(
+      @utf8.encode("choir.scale-goal-verification.v1"),
+    ),
+    process_spec_digest: conformance_digest_b,
+  }
+  let planned = match
+    @workflow.initialize_goal_assurance(
+      execution,
+      snapshots,
+      final_integration.promotion_commit_oid,
+      final_integration.promotion_tree_oid,
+      [goal_verification_spec],
+      scale_assurance_identities(goal, final_integration.promotion_commit_oid),
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let authorized = match
+    @workflow.authorize_goal_assurance_seal(
+      planned,
+      goal,
+      final_integration.promotion_commit_oid,
+      final_integration.promotion_tree_oid,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let witnessed = match
+    @workflow.record_goal_assurance_seal_witness(
+      authorized,
+      @control.GoalBranchSealWitnessObservation::GoalBranchSealWitnessApplied(
+        final_integration.promotion_commit_oid,
+        final_integration.promotion_commit_oid,
+        final_integration.promotion_tree_oid,
+      ),
+      200L,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let mut assurance = match
+    @workflow.commit_goal_assurance_seal(
+      witnessed,
+      @control.GoalBranchSealId("seal-goal-scale"),
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  assurance = match
+    apply_scale_assurance_observation(
+      assurance,
+      @workflow.GoalAssuranceEffectObservation::GoalVerificationSandboxPrepared({
+          ..assurance.identities.verification_sandbox,
+          lifecycle: @control.SandboxLeaseLifecycle::SandboxLeaseActive,
+        },
+      ),
+      201L,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let verification_session = conformance_started_session(
+    assurance.identities.verification_session,
+  )
+  assurance = match
+    apply_scale_assurance_observation(
+      assurance,
+      @workflow.GoalAssuranceEffectObservation::GoalVerificationHarnessStarted(
+        verification_session,
+      ),
+      202L,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  guard assurance.verification_subject is Some(verification_subject) else {
+    return Err(
+      @types.ChoirError::validation_error(
+        "scale Goal verification subject is absent",
+      ),
+    )
+  }
+  let (verification_closed, verification_events) = conformance_trace(
+    verification_session, "goal-verification-scale",
+  )
+  assurance = match
+    apply_scale_assurance_observation(
+      assurance,
+      @workflow.GoalAssuranceEffectObservation::GoalVerificationCompleted(
+        {
+          take_id: assurance.verification_take.id,
+          session_id: verification_session.id,
+          subject: verification_subject,
+          executions: [
+            {
+              verification_execution_id: @control.VerificationExecutionId(
+                "goal-verification-execution-scale",
+              ),
+              verification_spec: goal_verification_spec,
+              environment_and_image_digest: conformance_digest_a,
+              runtime_and_policy_digest: assurance.identities.verification_sandbox.runtime_policy_digest,
+              subject_pre_tree_oid: final_integration.promotion_tree_oid,
+              subject_post_tree_oid: final_integration.promotion_tree_oid,
+              evidence: {
+                artifact_id: "goal-verification-evidence-scale",
+                digest: conformance_digest_b,
+              },
+              started_at: 203L,
+              finished_at: 204L,
+              outcome: @control.VerificationOutcome::VerificationPassed,
+            },
+          ],
+          evidence_manifest: {
+            artifact_id: "goal-verification-manifest-scale",
+            digest: conformance_digest_a,
+          },
+        },
+        verification_closed,
+        verification_events,
+      ),
+      205L,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  assurance = match
+    apply_scale_assurance_observation(
+      assurance,
+      @workflow.GoalAssuranceEffectObservation::GoalAuditSandboxPrepared({
+        ..assurance.identities.audit_sandbox,
+        lifecycle: @control.SandboxLeaseLifecycle::SandboxLeaseActive,
+      }),
+      206L,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let audit_session = conformance_started_session(
+    assurance.identities.audit_session,
+  )
+  assurance = match
+    apply_scale_assurance_observation(
+      assurance,
+      @workflow.GoalAssuranceEffectObservation::GoalAuditHarnessStarted(
+        audit_session,
+      ),
+      207L,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  guard assurance.audit_subject is Some(audit_subject) else {
+    return Err(
+      @types.ChoirError::validation_error("scale Goal audit subject is absent"),
+    )
+  }
+  let (audit_closed, audit_events) = conformance_trace(
+    audit_session, "goal-audit-scale",
+  )
+  assurance = match
+    apply_scale_assurance_observation(
+      assurance,
+      @workflow.GoalAssuranceEffectObservation::GoalAuditCompleted(
+        {
+          audit_take_id: assurance.audit_take.id,
+          take_fencing_epoch: assurance.fencing_epoch,
+          audit_harness_session_id: audit_session.id,
+          subject: audit_subject,
+          provider_conformance_report_digest: conformance_digest_a,
+          findings_artifact: None,
+          total_findings_count: 0,
+          blocking_findings_count: 0,
+          started_at: 208L,
+          finished_at: 209L,
+          outcome: @control.AuditOutcome::AuditPassed,
+        },
+        audit_closed,
+        audit_events,
+      ),
+      210L,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  assurance = match
+    @workflow.mint_goal_audit_receipt(
+      assurance,
+      {
+        receipt_id: @control.ReceiptId("goal-audit-receipt-scale"),
+        provider_surface_id: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+        provider_identity: "claude-scale-conformance",
+        model_identity: @control.ModelIdentity::ReportedModelIdentity(
+          "claude-scale",
+        ),
+      },
+      fn(_) { true },
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let assured_execution = {
+    ..execution,
+    state: @workflow.GoalExecutionState::GoalExecutionAssured,
+    durable_version: execution.durable_version + 1,
+  }
+  let publication = match
+    @workflow.initialize_goal_publication(
+      assured_execution,
+      assurance,
+      @workflow.RemoteRepositoryId("remote-scale-mixed"),
+      @workflow.RemoteName("origin"),
+      @workflow.GitRefName("refs/heads/choir/goals/scale-mixed"),
+      None,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let authorized_publication = match
+    @workflow.authorize_goal_publication(
+      publication,
+      assured_execution,
+      assurance,
+      final_integration.promotion_commit_oid,
+      @workflow.RemoteBranchObservation::RemoteBranchAbsent,
+      false,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let published = match
+    @workflow.record_goal_publication_observation(
+      authorized_publication,
+      @workflow.RemoteBranchObservation::RemoteBranchAt(
+        final_integration.promotion_commit_oid,
+      ),
+      @workflow.BranchPublicationReceiptOrigin::BranchPublicationMutationApplied,
+      None,
+      211L,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let marker = match
+    @workflow.goal_pull_request_identity_marker(
+      assured_execution,
+      published,
+      @workflow.RemoteRepositoryId("remote-scale-mixed"),
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let pull_request = match
+    @workflow.initialize_goal_pull_request(
+      assured_execution,
+      assurance,
+      published,
+      @workflow.PullRequestProvider::GitHubPullRequestProvider,
+      @workflow.RemoteRepositoryId("remote-scale-mixed"),
+      {
+        title: "feat: complete scale Goal",
+        body: "Scale evidence\n\n" + marker.0,
+      },
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let remote_pull_request : @workflow.RemotePullRequestSnapshot = {
+    remote_id: @workflow.RemotePullRequestId("PR_scale_mixed"),
+    number: @workflow.PullRequestNumber(42),
+    url: @workflow.PullRequestUrl("https://example.invalid/choir/pull/42"),
+    provider_repository_id: published.intent.canonical_repository_id,
+    head_repository_id: published.intent.canonical_repository_id,
+    head_ref: published.intent.remote_head_ref,
+    base_repository_id: @workflow.RemoteRepositoryId("remote-scale-mixed"),
+    base_ref: assured_execution.integration_target_ref,
+    observed_head_oid: final_integration.promotion_commit_oid,
+    state: @workflow.RemotePullRequestState::RemotePullRequestOpen,
+    marker_state: @workflow.PullRequestMarkerState::PullRequestMarkerExact,
+    title_digest: @storage.artifact_digest(@utf8.encode("scale-title")),
+    body_digest: @storage.artifact_digest(@utf8.encode("scale-body")),
+    goal_contract_link_present: true,
+    evidence_manifest_link_present: true,
+  }
+  let adopted = match
+    @workflow.authorize_goal_pull_request(
+      pull_request,
+      assured_execution,
+      assurance,
+      published,
+      final_integration.promotion_commit_oid,
+      @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch(
+        remote_pull_request,
+      ),
+      212L,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let finalization = match
+    @workflow.observe_goal_pull_request_readiness(
+      assured_execution,
+      assurance,
+      published,
+      adopted,
+      @workflow.PullRequestLookupObservation::PullRequestStoredIdMatch(
+        remote_pull_request,
+      ),
+      Some("remote-version-scale"),
+      1L,
+      213L,
+      214L,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let succeeded = match
+    @workflow.authorize_goal_execution_success(
+      assured_execution, assurance, published, adopted, finalization,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  match
+    @workflow.semantic_run_projection(
+      succeeded,
+      snapshots,
+      Some(assurance),
+      Some(published),
+      Some(adopted),
+      Some(finalization),
+    ) {
+    Ok(Some(value)) => Ok(value)
+    Ok(None) =>
+      Err(
+        @types.ChoirError::validation_error(
+          "scale Goal semantic projection is absent",
+        ),
+      )
+    Err(error) => Err(error)
+  }
+}
+
+///|
+async fn run_scale_once(
+  root : String,
+  maximum_parallel_parts : Int,
+) -> Result[ScaleRunResult, @types.ChoirError] {
+  let repository = conformance_repository(
+    root + "/concurrency-" + maximum_parallel_parts.to_string(),
+  )
+  clear_conformance_repository(repository)
+  let goal_id = @control.GoalId("goal-scale-mixed")
+  let snapshots : Array[@workflow.PartWorkflowSnapshot] = []
+  for entry in scale_manifest() {
+    let snapshot = match
+      conformance_snapshot_for(
+        entry.part_id.0,
+        goal_id,
+        entry.part_id,
+        entry.dependency_ids,
+        entry.surface,
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    snapshots.push(snapshot)
+  }
+  let initial_records = snapshots.map(scale_pending_record)
+  let initial_schedule = match
+    @workflow.schedule_goal_parts(initial_records, maximum_parallel_parts) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let head = @ref.new(@control.GitOid("base-conformance"))
+  let execute_count = @ref.new(0)
+  let run = @workflow.run_goal_parts(initial_records, maximum_parallel_parts, {
+    advance_part: async fn(record) {
+      let initial = match scale_snapshot_for_part(snapshots, record.part.id) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let observed = @workflow.run_new_part_workflow(
+        repository,
+        local_part_workflow_repository_adapters(),
+        initial,
+        conformance_dependencies(
+          repository,
+          execute_count,
+          fn(_) { None },
+          integration_head=None,
+        ),
+      )
+      let observed = match observed {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      if observed.outcome !=
+        @workflow.PartWorkflowRunOutcome::PartRunAwaitingPromotion {
+        return Err(
+          @types.ChoirError::validation_error(
+            "scale Part did not stop at promotion admission",
+          ),
+        )
+      }
+      Ok(scale_scheduling_record(observed.snapshot))
+    },
+    read_goal_head: async fn() { Ok(head.val) },
+    promote_part: async fn(record, selection) {
+      let stored = match load_scale_snapshot(repository, record.part.id) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let promoted = match
+        @workflow.resume_part_workflow(
+          repository,
+          local_part_workflow_repository_adapters(),
+          stored.workflow_id,
+          conformance_dependencies(
+            repository,
+            execute_count,
+            fn(_) { None },
+            integration_head=Some(selection.expected_goal_head_oid),
+          ),
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      if promoted.outcome != @workflow.PartWorkflowRunOutcome::PartRunIntegrated {
+        return Err(
+          @types.ChoirError::validation_error(
+            "scale Part promotion did not integrate",
+          ),
+        )
+      }
+      guard promoted.snapshot.integration_receipt is Some(receipt) else {
+        return Err(
+          @types.ChoirError::validation_error(
+            "scale Part promotion lacks a receipt",
+          ),
+        )
+      }
+      head.val = receipt.promotion_commit_oid
+      Ok(scale_scheduling_record(promoted.snapshot))
+    },
+    resume_promotion: async fn(record) {
+      let stored = match load_scale_snapshot(repository, record.part.id) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let resumed = match
+        @workflow.resume_part_workflow(
+          repository,
+          local_part_workflow_repository_adapters(),
+          stored.workflow_id,
+          conformance_dependencies(
+            repository,
+            execute_count,
+            fn(_) { None },
+            integration_head=Some(head.val),
+          ),
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      Ok(scale_scheduling_record(resumed.snapshot))
+    },
+  })
+  let result = match run {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if result.outcome != @workflow.GoalRunOutcome::GoalRunSucceeded {
+    return Err(
+      @types.ChoirError::validation_error("scale Goal did not succeed"),
+    )
+  }
+  let final_snapshots : Array[@workflow.PartWorkflowSnapshot] = []
+  for entry in scale_manifest() {
+    let stored = match load_scale_snapshot(repository, entry.part_id) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    final_snapshots.push(stored)
+  }
+  let projection = match
+    scale_terminal_projection(
+      final_snapshots,
+      result.promotion_order,
+      maximum_parallel_parts,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  clear_conformance_repository(repository)
+  Ok({
+    snapshots: final_snapshots,
+    observed_parallelism: initial_schedule.admitted_part_ids.length(),
+    promotion_order: result.promotion_order,
+    projection,
+  })
+}
+
+///|
+fn failed_scale_report(
+  manifest_digest : @control.Digest,
+  message : String,
+) -> ScaleConformanceReport {
+  {
+    passed: false,
+    manifest_digest,
+    part_count: scale_manifest().length(),
+    concurrency_limits: [1, 2, 4],
+    observed_parallelism: [],
+    promotion_order: [],
+    semantic_projection_digest: None,
+    part_verification_receipt_count: 0,
+    part_audit_receipt_count: 0,
+    integration_receipt_count: 0,
+    goal_verification_receipt_count: 0,
+    goal_audit_receipt_count: 0,
+    publication_receipt_count: 0,
+    pull_request_receipt_count: 0,
+    failure: Some(message),
+  }
+}
+
+///|
+pub async fn run_scale_mixed_conformance_fixture(
+  root : String,
+) -> ScaleConformanceReport {
+  let manifest = scale_manifest()
+  let manifest_digest = @storage.artifact_digest(
+    @utf8.encode(
+      "choir.scale-mixed-manifest.v1\u{00}" +
+      manifest.to_json().stringify(indent=0),
+    ),
+  )
+  if !@sys.create_dir_all(root) {
+    return failed_scale_report(
+      manifest_digest, "failed to create the scale conformance root",
+    )
+  }
+  let limits = [1, 2, 4]
+  let runs : Array[ScaleRunResult] = []
+  for limit in limits {
+    match run_scale_once(root, limit) {
+      Ok(value) => runs.push(value)
+      Err(error) => return failed_scale_report(manifest_digest, error.message())
+    }
+  }
+  let baseline = runs[0]
+  if runs.any(fn(run) {
+      run.projection != baseline.projection ||
+      run.promotion_order != baseline.promotion_order
+    }) {
+    return failed_scale_report(
+      manifest_digest, "semantic projection changed with concurrency",
+    )
+  }
+  if runs[0].observed_parallelism != 1 ||
+    runs[1].observed_parallelism < 2 ||
+    runs[2].observed_parallelism < 2 {
+    return failed_scale_report(
+      manifest_digest,
+      "scale fixture did not exercise parallel scheduling: " +
+      runs
+      .map(fn(run) { run.observed_parallelism })
+      .to_json()
+      .stringify(indent=0),
+    )
+  }
+  let mut part_verification_receipt_count = 0
+  let mut part_audit_receipt_count = 0
+  let mut integration_receipt_count = 0
+  for snapshot in baseline.snapshots {
+    part_verification_receipt_count = part_verification_receipt_count +
+      snapshot.verification_receipts.length()
+    if snapshot.audit_receipt is Some(_) {
+      part_audit_receipt_count = part_audit_receipt_count + 1
+    }
+    if snapshot.integration_receipt is Some(_) {
+      integration_receipt_count = integration_receipt_count + 1
+    }
+  }
+  if part_verification_receipt_count != manifest.length() ||
+    part_audit_receipt_count != manifest.length() ||
+    integration_receipt_count != manifest.length() ||
+    baseline.projection.receipt_cardinalities.goal_verification != 1 ||
+    baseline.projection.receipt_cardinalities.goal_audit != 1 ||
+    baseline.projection.receipt_cardinalities.publication != 1 ||
+    baseline.projection.receipt_cardinalities.pull_request != 1 {
+    return failed_scale_report(
+      manifest_digest, "scale fixture receipt cardinality is inconsistent",
+    )
+  }
+  let projection_digest = @storage.artifact_digest(
+    @utf8.encode(baseline.projection.to_json().stringify(indent=0)),
+  )
+  {
+    passed: true,
+    manifest_digest,
+    part_count: manifest.length(),
+    concurrency_limits: limits,
+    observed_parallelism: runs.map(fn(run) { run.observed_parallelism }),
+    promotion_order: baseline.promotion_order,
+    semantic_projection_digest: Some(projection_digest),
+    part_verification_receipt_count,
+    part_audit_receipt_count,
+    integration_receipt_count,
+    goal_verification_receipt_count: baseline
+    .projection
+    .receipt_cardinalities
+    .goal_verification,
+    goal_audit_receipt_count: baseline
+    .projection
+    .receipt_cardinalities
+    .goal_audit,
+    publication_receipt_count: baseline
+    .projection
+    .receipt_cardinalities
+    .publication,
+    pull_request_receipt_count: baseline
+    .projection
+    .receipt_cardinalities
+    .pull_request,
     failure: None,
   }
 }

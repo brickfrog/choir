@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-20T18:30:44-05:00
+Implementation snapshot updated through: 2026-07-20T18:54:07-05:00
 
 ## Charter Semantics and Readiness
 
@@ -311,8 +311,25 @@ unconnected product path usable.
   pairwise mutation exclusion, eventual progress, and input-order-independent
   promotion order. The same oracle is registered in the hermetic conformance
   runner and emits typed counts for four graphs, 32 schedule runs, eight
-  promotion runs, and 680 Part evaluations. The complete scale fixture and
-  `SemanticRunProjection` comparison remain outstanding.
+  promotion runs, and 680 Part evaluations.
+- A terminal successful Goal now exposes a typed `SemanticRunProjection`
+  through ordinary Goal status. It is derived from the exact durable Part,
+  assurance, publication, PR, readiness, and terminal records and retains the
+  accepted Part/dependency set, task and change digests, authorizing
+  verification slots and outcomes, audit policy/outcome, deterministic
+  promotion ranks and resulting trees, final tree, receipt-kind cardinalities,
+  and terminal outcome. It rejects incomplete or cross-Goal evidence and
+  deliberately excludes Take/session/execution/receipt identities, provider
+  prose and identity, timestamps, candidate/promotion commit identities, and
+  remote PR number/URL. A checked-in six-Part mixed-provider manifest now runs
+  the complete synthetic flow at concurrency limits 1, 2, and 4. Each run
+  produces six Part verification sets, audits, and integrations plus one Goal
+  verification set, combined audit, publication receipt, final-PR receipt, and
+  successful terminal projection. All three runs produce the same promotion
+  order and exact `SemanticRunProjection` digest. The manifest digest is
+  `72077199c2544cbae292a9778733b34c72853a835fc5a3a36f57573bb4bb88df`;
+  the resulting semantic digest is
+  `04b1e37c4607053f603e432b751cd57c9e41ec380beeb2265fbad8d76979a74e`.
 - Exact selection is now a registered hermetic case using the production
   evaluator. It proves deterministic identity under input permutation, one
   valid acceptance, the exact five typed rejection classes for missing,
@@ -614,7 +631,7 @@ Earlier evidence anchors are commits `5fb93fe8` for the native Part path,
 the linter correction. With the current assurance, cancellation, and provider changes,
 `moon check --target native`, `moon test --target native`, and
 `moon run --target native src/bin/choir_lint` all exit successfully on
-2026-07-20. After deleting obsolete source and tests, the full native suite reports 313
+2026-07-20. After deleting obsolete source and tests, the full native suite reports 314
 passed and 0 failed. The
 compiler still reports the repository's existing warning set.
 
@@ -627,6 +644,12 @@ compiler still reports the repository's existing warning set.
   execution.
 - The mixed-provider Goal fixture supplies two checked-in execution contracts.
   It proves concurrent provider dispatch and serialized integration.
+- The fixed mixed-workload fixture supplies six content-digested Part
+  contracts with two independent roots, dependency joins, and alternating
+  synthetic Claude/Codex surface identities. It drives the real scheduler,
+  durable Part workflow, serialized promotion, Goal assurance, publication,
+  PR, readiness, and terminal projection at concurrency limits 1, 2, and 4.
+  The admitted parallelism is 1/2/2 and every run has the same semantic result.
 - A direct Codex Conductor turn in a disposable repository used the real ten-
   tool MCP surface to inspect Beads and submit a durable Goal. The daemon then
   ran the accepted Part through Codex implementation, native Moon verification,
@@ -646,7 +669,7 @@ compiler still reports the repository's existing warning set.
   remaining generated cases for ambiguous identity, remote drift, and broader
   cancellation orderings. The checked synthetic forge proves control-plane
   behavior without mutating an external repository.
-- The remaining cancellation-ordering, hostile-surface, PR, and scale
+- The remaining cancellation-ordering, hostile-surface, and PR
   conformance cases. Duplicate conflicts, cursor gaps, late
   terminals, conflicting terminals, fixed-seed generated DAG scheduling,
   ownership normalization/conflicts, candidate under-claiming, and
@@ -656,7 +679,8 @@ compiler still reports the repository's existing warning set.
   handling. Process validation, authority fencing, and canonical persisted
   dispatch are also registered. The audit-scratch-boundary case now passes on
   the live BoxLite Take path; it is intentionally not reported as hermetic.
-  These cases are not yet joined to the full semantic projection.
+  The fixed scale flow is joined to the full semantic projection; the remaining
+  negative cases retain their own typed blocked/recovery oracles.
 - Further splitting or consolidating large live adapters only when a concrete
   boundary or dead caller justifies it. The branch-point audit found no closed
   source package imported only by another closed source package.
