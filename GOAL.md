@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Context-only amendments through: 2026-07-20T16:21:47-05:00
+Implementation snapshot updated through: 2026-07-20T16:33:26-05:00
 
 ## Charter Semantics and Readiness
 
@@ -217,8 +217,11 @@ unconnected product path usable.
   `RecoveryUncertain(ProtocolViolation)`, the pending effect uncertain, and the
   Part recovery-uncertain. A storage test proves the first witness remains and
   no receipt is minted; a native restart test separately proves the blocked
-  snapshot is durable. The exact audit-terminal conflict case still needs
-  registration in the named conformance matrix.
+  snapshot is durable. The native Part lifecycle fixture also injects two
+  conflicting terminal results for the exact audit Take and proves the first
+  witness remains, the audit session/Take/Part are durably fenced, and no audit
+  receipt is minted. It reports `audit_protocol_conflict_checked`; registration
+  under the standalone hermetic case ID remains.
 - Codex Takes now use one restricted `codex app-server` process per Take over a
   private stdio FIFO and bounded owner-only response log. Choir durably binds
   the exact session, thread, turn, deterministic client-message ID, request

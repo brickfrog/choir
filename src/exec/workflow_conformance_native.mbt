@@ -9,6 +9,7 @@ pub(all) struct PartConformanceReport {
   persistence_boundaries_checked : Int
   audit_result_recovery_checked : Bool
   audit_receipt_recovery_checked : Bool
+  audit_protocol_conflict_checked : Bool
   failure : String?
 } derive(Debug, Eq, ToJson)
 
@@ -437,6 +438,7 @@ fn conformance_dependencies(
   repository : @workflow.PartWorkflowRepository,
   execute_count : Ref[Int],
   fault : (@workflow.PartPersistenceBoundary) -> @storage.StateStoreFaultPoint?,
+  inject_audit_conflict? : Bool = false,
 ) -> @workflow.PartWorkflowDriverDependencies {
   let now = fn() { 110L }
   let dependencies : @workflow.PartWorkflowDriverDependencies = {
@@ -445,7 +447,45 @@ fn conformance_dependencies(
     effects: {
       execute: async fn(snapshot, intent) {
         execute_count.val = execute_count.val + 1
-        conformance_effect_observation(snapshot, intent)
+        let observation = match conformance_effect_observation(snapshot, intent) {
+          Ok(value) => value
+          Err(error) => return Err(error)
+        }
+        if inject_audit_conflict {
+          match (intent.kind, observation) {
+            (
+              @workflow.PartEffectKind::DispatchAudit(_, _, _),
+              @workflow.PartEffectObservation::AuditCompleted(
+                result,
+                session,
+                events,
+              ),
+            ) => {
+              match
+                @workflow.record_part_effect_witness(
+                  repository,
+                  local_part_workflow_repository_adapters(),
+                  snapshot,
+                  intent,
+                  observation,
+                  now(),
+                ) {
+                Ok(_) => ()
+                Err(error) => return Err(error)
+              }
+              Ok(
+                @workflow.PartEffectObservation::AuditCompleted(
+                  { ..result, finished_at: result.finished_at + 1L },
+                  session,
+                  events,
+                ),
+              )
+            }
+            _ => Ok(observation)
+          }
+        } else {
+          Ok(observation)
+        }
       },
       reconcile: async fn(snapshot, intent) {
         match conformance_effect_observation(snapshot, intent) {
@@ -521,6 +561,7 @@ fn failed_part_report(message : String) -> PartConformanceReport {
     persistence_boundaries_checked: 0,
     audit_result_recovery_checked: false,
     audit_receipt_recovery_checked: false,
+    audit_protocol_conflict_checked: false,
     failure: Some(message),
   }
 }
@@ -699,6 +740,80 @@ pub async fn run_part_conformance_fixture(
     }
     clear_conformance_repository(fault_repository)
   }
+  let conflict_repository = conformance_repository(root + "/audit-conflict")
+  clear_conformance_repository(conflict_repository)
+  let conflict_count = @ref.new(0)
+  let conflict_result = match
+    @workflow.run_new_part_workflow(
+      conflict_repository,
+      local_part_workflow_repository_adapters(),
+      snapshot,
+      conformance_dependencies(
+        conflict_repository,
+        conflict_count,
+        fn(_) { None },
+        inject_audit_conflict=true,
+      ),
+    ) {
+    Ok(value) => value
+    Err(error) => {
+      clear_conformance_repository(conflict_repository)
+      return failed_part_report(error.message())
+    }
+  }
+  let conflict_intent = match conflict_result.snapshot.pending_effect {
+    Some(value) => value
+    None => {
+      clear_conformance_repository(conflict_repository)
+      return failed_part_report("audit conflict lost its effect intent")
+    }
+  }
+  let first_witness = @workflow.load_part_effect_witness(
+    conflict_repository,
+    local_part_workflow_repository_adapters(),
+    conflict_intent,
+  )
+  let audit_session_violated = conflict_result.snapshot.harness_sessions.any(
+    fn(session) {
+      session.id == conflict_result.snapshot.identities.audit_session.id &&
+      session.lifecycle ==
+      @control.HarnessSessionLifecycle::HarnessSessionProtocolViolated
+    },
+  )
+  let audit_take_uncertain = match conflict_result.snapshot.audit_take.lifecycle {
+    @control.TakeLifecycle::TakeTerminal(
+      @control.TakeTerminalDisposition::TakeRecoveryUncertain(
+        @control.TakeUncertaintyReason::TakeProtocolViolation,
+      ),
+    ) => true
+    _ => false
+  }
+  let first_audit_witness_retained = match first_witness {
+    Ok(
+      Some({
+        observation: @workflow.PartEffectObservation::AuditCompleted(
+          { finished_at: 102L, .. },
+          _,
+          _,
+        ),
+        ..
+      }),
+    ) => true
+    _ => false
+  }
+  let audit_protocol_conflict_checked =
+    conflict_result.outcome ==
+    @workflow.PartWorkflowRunOutcome::PartRunRecoveryUncertain &&
+    conflict_result.snapshot.stage ==
+    @workflow.PartWorkflowStage::PartRecoveryUncertain &&
+    conflict_result.snapshot.audit_receipt is None &&
+    audit_session_violated &&
+    audit_take_uncertain &&
+    first_audit_witness_retained
+  clear_conformance_repository(conflict_repository)
+  if !audit_protocol_conflict_checked {
+    return failed_part_report("audit protocol conflict was not durably fenced")
+  }
   {
     passed: true,
     effect_receipt_count: result.snapshot.effect_receipts.length(),
@@ -709,6 +824,7 @@ pub async fn run_part_conformance_fixture(
     persistence_boundaries_checked: boundaries.length(),
     audit_result_recovery_checked: audit_result_recovery_checked.val,
     audit_receipt_recovery_checked: audit_receipt_recovery_checked.val,
+    audit_protocol_conflict_checked,
     failure: None,
   }
 }

@@ -15,6 +15,7 @@ async test "real exec integration: Part conformance survives restart and faults"
   assert_eq(report.persistence_boundaries_checked, 8)
   assert_true(report.audit_result_recovery_checked)
   assert_true(report.audit_receipt_recovery_checked)
+  assert_true(report.audit_protocol_conflict_checked)
 }
 
 ///|
