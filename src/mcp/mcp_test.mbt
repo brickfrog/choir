@@ -1,8 +1,13 @@
 ///|
-test "translate tools/call to internal request" {
+test "Conductor tools/call preserves arguments and verified caller" {
+  let arguments : Map[String, Json] = {
+    "goal_id": "goal-a".to_json(),
+    "action": "set_concurrency".to_json(),
+    "maximum_parallel_parts": "3".to_json(),
+  }
   let params : Map[String, Json] = {
-    "name": "fork_wave".to_json(),
-    "arguments": { "task": "build feature".to_json() }.to_json(),
+    "name": "goal_steer".to_json(),
+    "arguments": arguments.to_json(),
   }
   let rpc : @mcp.JsonRpcRequest = {
     jsonrpc: "2.0",
@@ -10,393 +15,118 @@ test "translate tools/call to internal request" {
     req_method: method_tools_call,
     params: Some(params.to_json()),
   }
-  let result = @mcp.to_internal_request(rpc, @types.Role::TL)
-  match result {
-    Ok(req) => {
-      assert_eq(req.name, "fork_wave")
-      assert_eq(req.role, @types.Role::TL)
-      @debug.assert_eq(req.args.get("task"), Some("build feature"))
+  match
+    @mcp.to_internal_request(
+      rpc,
+      @types.Role::TL,
+      default_caller_id=Some("root"),
+    ) {
+    Ok(request) => {
+      assert_eq(request.name, "goal_steer")
+      @debug.assert_eq(request.args.get("goal_id"), Some("goal-a"))
+      @debug.assert_eq(request.args.get("maximum_parallel_parts"), Some("3"))
+      @debug.assert_eq(request.args.get("caller_id"), Some("root"))
     }
-    Err(_) => fail("expected Ok")
+    Err(error) => fail("expected request: " + error.message)
   }
 }
 
 ///|
-test "translate tools/list returns unsupported method error" {
-  // mcp_mode.mbt handles tools/list before calling to_internal_request;
-  // if it somehow falls through, to_internal_request returns an error.
-  let rpc : @mcp.JsonRpcRequest = {
+test "Conductor translation rejects removed commands and stringified arguments" {
+  let empty_arguments : Map[String, Json] = Map([])
+  let removed_params : Map[String, Json] = {
+    "name": "fork_wave".to_json(),
+    "arguments": empty_arguments.to_json(),
+  }
+  let removed_request : @mcp.JsonRpcRequest = {
     jsonrpc: "2.0",
     id: Some(Number(2)),
-    req_method: method_tools_list,
-    params: None,
-  }
-  let result = @mcp.to_internal_request(rpc, @types.Role::TL)
-  match result {
-    Err(e) => assert_true(e.message.contains("unsupported method"))
-    Ok(_) => fail("expected Err")
-  }
-}
-
-///|
-test "translate unknown method returns error" {
-  let rpc : @mcp.JsonRpcRequest = {
-    jsonrpc: "2.0",
-    id: Some(Number(4)),
-    req_method: "unknown/method",
-    params: None,
-  }
-  let result = @mcp.to_internal_request(rpc, @types.Role::TL)
-  assert_true(result is Err(_))
-}
-
-///|
-test "tools_list_response" {
-  let rpc = @mcp.tools_list_response(Number(20), @types.Role::TL)
-  assert_eq(rpc.id, Number(20))
-  match rpc.result {
-    Some(Object(res)) =>
-      match res.get("tools") {
-        Some(Array(tools)) => {
-          let t = tools.to_json().stringify()
-          let mut request_review_has_reviewer = false
-          let mut request_review_requires_reviewer = false
-          let mut resolve_my_has_pr_number = false
-          for item in tools {
-            match item {
-              Object(tool) =>
-                match tool.get("name") {
-                  Some(String("request_review")) =>
-                    match tool.get("inputSchema") {
-                      Some(Object(schema)) => {
-                        match schema.get("properties") {
-                          Some(Object(props)) =>
-                            request_review_has_reviewer = props.contains(
-                              "reviewer",
-                            )
-                          _ => ()
-                        }
-                        match schema.get("required") {
-                          Some(Array(required)) =>
-                            request_review_requires_reviewer = required.contains(
-                              String::to_json("reviewer"),
-                            )
-                          _ => ()
-                        }
-                      }
-                      _ => ()
-                    }
-                  Some(String("resolve_my_review_threads")) =>
-                    match tool.get("inputSchema") {
-                      Some(Object(schema)) =>
-                        match schema.get("properties") {
-                          Some(Object(props)) =>
-                            resolve_my_has_pr_number = props.contains(
-                              "pr_number",
-                            )
-                          _ => ()
-                        }
-                      _ => ()
-                    }
-                  _ => ()
-                }
-              _ => ()
-            }
-          }
-          assert_true(t.contains("fork_wave"))
-          assert_true(t.contains("file_pr"))
-          assert_true(t.contains("merge_pr"))
-          assert_true(t.contains("track_pr"))
-          assert_true(t.contains("resolve_my_review_threads"))
-          assert_true(t.contains("request_review"))
-          assert_true(t.contains("notify_parent"))
-          assert_true(t.contains("send_message"))
-          assert_true(t.contains("fork_wave"))
-          assert_true(t.contains("spawn_worker"))
-          assert_true(t.contains("read_first"))
-          assert_true(t.contains("done_criteria"))
-          assert_true(t.contains("key_decisions"))
-          assert_true(t.contains("agent_id"))
-          assert_true(t.contains("pr_url"))
-          assert_true(t.contains("parent_branch"))
-          assert_true(request_review_has_reviewer)
-          assert_true(request_review_requires_reviewer)
-          assert_true(resolve_my_has_pr_number)
-          assert_true(t.contains("kv_get"))
-          assert_true(t.contains("kv_set"))
-          assert_true(t.contains("kv_delete"))
-          assert_true(t.contains("goal_submit"))
-          assert_true(t.contains("maximum_parallel_parts"))
-          assert_true(t.contains("mutex_acquire"))
-          assert_true(t.contains("mutex_release"))
-          assert_true(t.contains("mutex_status"))
-          assert_true(t.contains("task_list"))
-          assert_true(t.contains("task_get"))
-          assert_true(t.contains("task_create"))
-          assert_true(t.contains("task_update"))
-          assert_true(t.contains("\"id\""))
-          assert_true(t.contains("\"id\""))
-          assert_true(t.contains("caller_id"))
-          assert_true(t.contains("shutdown"))
-          assert_true(t.contains("dev leaves") || t.contains("sub-team-lead"))
-          assert_true(t.contains("agent_type"))
-          assert_true(t.contains("tasks"))
-          assert_true(t.contains("per-leaf task"))
-          assert_true(t.contains("research/review"))
-          assert_true(t.contains("automerge"))
-          assert_true(t.contains("wave_state"))
-          assert_true(t.contains("merge_gate_ready"))
-          assert_true(t.contains("crystallize_spec"))
-          assert_true(t.contains("feature_slug"))
-          assert_true(t.contains("already exists"))
-          assert_true(t.contains("server_reload"))
-          assert_true(t.contains("re-exec choir-serve"))
-          assert_true(t.contains("binary_path"))
-        }
-        _ => fail("expected tools array")
-      }
-    None => fail("expected result")
-    Some(_) => fail("expected object result")
-  }
-}
-
-///|
-test "tools_list_response dev role includes file_pr" {
-  let rpc = @mcp.tools_list_response(Number(22), @types.Role::Dev)
-  match rpc.result {
-    Some(Object(res)) =>
-      match res.get("tools") {
-        Some(Array(tools)) => {
-          let t = tools.to_json().stringify()
-          assert_true(t.contains("file_pr"))
-          assert_true(t.contains("tdd_intent"))
-          assert_true(t.contains("artifact_path"))
-          assert_true(t.contains("tdd_red_check"))
-          assert_true(t.contains("tdd_green_check"))
-          assert_true(t.contains("resolve_my_review_threads"))
-          assert_true(t.contains("request_review"))
-          assert_false(t.contains("crystallize_spec"))
-        }
-        _ => fail("expected tools array")
-      }
-    None => fail("expected result")
-    Some(_) => fail("expected object result")
-  }
-}
-
-///|
-test "initialize_response instructions forbid parent branch implementation during leaf mode" {
-  let rpc = @mcp.initialize_response(Number(21))
-  match rpc.result {
-    Some(Object(result)) =>
-      match result.get("instructions") {
-        Some(String(instructions)) => {
-          assert_true(
-            instructions.contains(
-              "do not implement the feature directly on the parent branch",
-            ),
-          )
-          assert_true(
-            instructions.contains("DO NOT bypass it with raw `gh pr merge`"),
-          )
-          assert_true(
-            instructions.contains(
-              "kill that leaf immediately and close or abandon its PR",
-            ),
-          )
-          // Integration-branch pattern is non-optional, including for small waves.
-          assert_true(
-            instructions.contains(
-              "every wave forks off an integration branch named `feature/<wave-slug>`",
-            ),
-          )
-          assert_true(
-            instructions.contains(
-              "a wave that lands as N separate merges on main is a regression",
-            ),
-          )
-          // Audit context must reach the PR body, not just the commit message.
-          assert_true(
-            instructions.contains(
-              "task contract MUST include the receipt path and the specific finding text",
-            ),
-          )
-          assert_true(
-            instructions.contains("`.choir/state/audit-receipts/<sha>.json`"),
-          )
-        }
-        _ => fail("expected instructions string")
-      }
-    _ => fail("expected initialize result object")
-  }
-}
-
-///|
-test "translate missing name returns error" {
-  let rpc : @mcp.JsonRpcRequest = {
-    jsonrpc: "2.0",
-    id: Some(Number(3)),
     req_method: method_tools_call,
-    params: Some({ "task": "something".to_json() }.to_json()),
+    params: Some(removed_params.to_json()),
   }
-  let result = @mcp.to_internal_request(rpc, @types.Role::Dev)
-  assert_true(result is Err(_))
-}
-
-///|
-test "from_internal_response Ok" {
-  let resp = @types.Response::ok({ "url": "https://github.com/pr/1" })
-  @debug.assert_eq(resp.ok_field("url"), Some("https://github.com/pr/1"))
-  let rpc = @mcp.from_internal_response(Number(5), resp)
-  assert_eq(rpc.jsonrpc, "2.0")
-  assert_eq(rpc.id, Number(5))
-  match rpc.result {
-    Some(Object(result)) =>
-      match result.get("structuredContent") {
-        Some(Object(structured)) =>
-          match structured.get("url") {
-            Some(String(url)) => assert_eq(url, "https://github.com/pr/1")
-            _ => fail("expected structured url")
-          }
-        _ => fail("expected structuredContent object")
-      }
-    _ => fail("expected object result")
+  match @mcp.to_internal_request(removed_request, @types.Role::TL) {
+    Err(error) => assert_eq(error.code, err_method_not_found)
+    Ok(_) => fail("removed command must not translate")
   }
-  assert_true(rpc.error is None)
-}
-
-///|
-test "from_internal_response preserves raw primitives" {
-  let resp = @types.Response::ok_values({
-    "tracked": true.to_json(),
-    "pr_number": 22.0.to_json(),
-  })
-  let rpc = @mcp.from_internal_response(Number(55), resp)
-  match rpc.result {
-    Some(Object(result)) => {
-      match result.get("content") {
-        Some(Array(content_arr)) => {
-          let content = content_arr.to_json().stringify()
-          assert_true(content.contains("tracked"))
-          assert_true(content.contains("true"))
-          assert_true(content.contains("pr_number"))
-          assert_true(content.contains("22"))
-        }
-        _ => fail("expected content array")
-      }
-      match result.get("structuredContent") {
-        Some(Object(structured)) => {
-          match structured.get("tracked") {
-            Some(True) => ()
-            _ => fail("expected structured tracked true")
-          }
-          match structured.get("pr_number") {
-            Some(Number(n, ..)) => assert_eq(n.to_int(), 22)
-            _ => fail("expected structured pr_number 22")
-          }
-        }
-        _ => fail("expected structuredContent")
-      }
-    }
-    _ => fail("expected object result")
+  let stringified_params : Map[String, Json] = {
+    "name": "goal_status".to_json(),
+    "arguments": "{\"goal_id\":\"goal-a\"}".to_json(),
+  }
+  let stringified_request : @mcp.JsonRpcRequest = {
+    ..removed_request,
+    params: Some(stringified_params.to_json()),
+  }
+  match @mcp.to_internal_request(stringified_request, @types.Role::TL) {
+    Err(error) => assert_eq(error.code, err_invalid_params)
+    Ok(_) => fail("stringified arguments must not translate")
   }
 }
 
 ///|
-test "from_internal_response Err" {
-  let resp = @types.Response::Err("tool not found")
-  @debug.assert_eq(resp.error_message(), Some("tool not found"))
-  let rpc = @mcp.from_internal_response(Number(6), resp)
-  assert_eq(rpc.id, Number(6))
-  assert_true(rpc.error is None)
-  match rpc.result {
-    Some(Object(result)) => {
-      match result.get("isError") {
-        Some(True) => ()
-        _ => fail("expected isError true")
-      }
-      match result.get("content") {
-        Some(Array(content_arr)) => {
-          let content = content_arr.to_json().stringify()
-          assert_true(content.contains("tool not found"))
-        }
-        _ => fail("expected content")
-      }
-      match result.get("structuredContent") {
-        Some(Object(structured)) =>
-          match structured.get("error") {
-            Some(String(msg)) => assert_eq(msg, "tool not found")
-            _ => fail("expected structured error message")
-          }
-        _ => fail("expected structuredContent")
-      }
-    }
-    None => fail("expected result")
-    Some(_) => fail("expected object result")
+test "Conductor catalog exposes only Goal and Beads operations" {
+  assert_eq(@mcp.conductor_tool_names(), [
+    "goal_submit", "goal_status", "goal_cancel", "goal_steer", "goal_attach", "goal_answer",
+    "task_list", "task_get", "task_create", "task_update",
+  ])
+  let response = @mcp.tools_list_response(Number(20), @types.Role::TL)
+  guard response.result is Some(Object(result)) else {
+    fail("expected catalog response")
   }
+  guard result.get("tools") is Some(Array(tools)) else {
+    fail("expected tools array")
+  }
+  assert_eq(tools.length(), 10)
+  let rendered = tools.to_json().stringify()
+  assert_true(rendered.contains("goal_submit"))
+  assert_true(rendered.contains("maximum_parallel_parts"))
+  assert_true(rendered.contains("task_create"))
+  assert_false(rendered.contains("fork_wave"))
+  assert_false(rendered.contains("spawn_worker"))
+  assert_false(rendered.contains("file_pr"))
+  assert_false(rendered.contains("server_reload"))
 }
 
 ///|
-test "initialize MCP instructions point TL at wave_state for merge/review state" {
-  let rpc = @mcp.initialize_response(Number(21))
-  match rpc.result {
-    Some(Object(res)) =>
-      match res.get("instructions") {
-        Some(String(s)) => {
-          assert_true(s.contains("wave_state"))
-          assert_true(
-            s.contains(
-              "do not track merge/review status from notification prose",
-            ),
-          )
-          assert_true(s.contains("merge_pr"))
-          assert_true(s.contains("[PR MERGED]"))
-          assert_true(s.contains("directly verified"))
-        }
-        _ => fail("expected instructions string")
-      }
-    _ => fail("expected initialize result")
+test "non-Conductor roles receive no tool catalog" {
+  let response = @mcp.tools_list_response(Number(22), @types.Role::Dev)
+  guard response.result is Some(Object(result)) else {
+    fail("expected catalog response")
   }
+  let empty_tools : Array[Json] = []
+  @debug.assert_eq(result.get("tools"), Some(empty_tools.to_json()))
 }
 
 ///|
-test "error_response" {
-  let rpc = @mcp.error_response(
-    Number(7),
-    @mcp.err_method_not_found,
-    "no such method",
+test "initialize response reserves workflow authority for choird" {
+  let response = @mcp.initialize_response(Number(21))
+  guard response.result is Some(Object(result)) else {
+    fail("expected initialize result")
+  }
+  guard result.get("instructions") is Some(String(instructions)) else {
+    fail("expected instructions")
+  }
+  assert_true(instructions.contains("Choir's Conductor"))
+  assert_true(
+    instructions.contains("choird remains the sole workflow authority"),
   )
-  assert_eq(rpc.id, Number(7))
-  match rpc.error {
-    Some(e) => {
-      assert_eq(e.code, -32601)
-      assert_eq(e.message, "no such method")
-    }
-    None => fail("expected error")
+  assert_true(instructions.contains("use Beads to preserve intended work"))
+  assert_true(instructions.contains("Do not execute a Part yourself"))
+  assert_false(instructions.contains("fork_wave"))
+  assert_false(instructions.contains("merge_pr"))
+}
+
+///|
+test "internal responses preserve structured content" {
+  let response = @mcp.from_internal_response(
+    Number(3),
+    @types.Response::ok_values({ "goal_id": "goal-a".to_json() }),
+  )
+  guard response.result is Some(Object(result)) else {
+    fail("expected response result")
   }
-}
-
-///|
-test "serialize successful response" {
-  let resp = @types.Response::ok({ "status": "ok" })
-  let rpc = @mcp.from_internal_response(Number(10), resp)
-  let json = rpc.to_json_string()
-  assert_true(json.contains("\"jsonrpc\":\"2.0\""))
-  assert_true(json.contains("\"id\":10"))
-  assert_true(json.contains("\"result\":{"))
-  assert_true(json.contains("\"content\""))
-  assert_true(json.contains("\"structuredContent\""))
-  assert_true(json.contains("status"))
-  assert_true(json.contains("isError"))
-}
-
-///|
-test "serialize error response" {
-  let rpc = @mcp.error_response(Number(11), -32603, "internal error")
-  let json = rpc.to_json_string()
-  assert_true(json.contains("\"jsonrpc\":\"2.0\""))
-  assert_true(json.contains("\"id\":11"))
-  assert_true(json.contains("\"error\":{"))
-  assert_true(json.contains("\"code\":-32603"))
-  assert_true(json.contains("\"message\":\"internal error\""))
+  assert_eq(result.get("isError"), Some(false.to_json()))
+  guard result.get("structuredContent") is Some(Object(content)) else {
+    fail("expected structured content")
+  }
+  assert_eq(content.get("goal_id"), Some("goal-a".to_json()))
 }

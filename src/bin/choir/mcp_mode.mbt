@@ -478,10 +478,7 @@ fn mcp_connect_uds_startup(
 
 ///|
 fn mcp_conductor_tool_names() -> Array[String] {
-  [
-    "goal_submit", "goal_status", "goal_cancel", "goal_steer", "goal_attach", "goal_answer",
-    "task_list", "task_get", "task_create", "task_update",
-  ]
+  @mcp.conductor_tool_names()
 }
 
 ///|

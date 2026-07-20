@@ -9,7 +9,7 @@ fn id_to_json(id : JsonRpcId) -> Json {
 ///|
 /// Serialize a JsonRpcResponse to a JSON string.
 pub fn JsonRpcResponse::to_json_string(self : JsonRpcResponse) -> String {
-  let obj : Map[String, Json] = {}
+  let obj : Map[String, Json] = Map([])
   obj.set("jsonrpc", "2.0".to_json())
   obj.set("id", id_to_json(self.id))
   match self.result {

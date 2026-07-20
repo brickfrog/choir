@@ -1,38 +1,4 @@
 ///|
-test "parse_flat_json_object extracts string key-value pairs" {
-  let m = parse_flat_json_object(
-    "{\"key\":\"test\",\"value\":\"hello from claude\"}",
-  )
-  @debug.assert_eq(m.get("key"), Some("test"))
-  @debug.assert_eq(m.get("value"), Some("hello from claude"))
-}
-
-///|
-test "parse_flat_json_object unescapes newlines and quotes" {
-  let m = parse_flat_json_object(
-    "{\"task\":\"line one\\nline two\",\"note\":\"say \\\"hi\\\"\"}",
-  )
-  @debug.assert_eq(m.get("task"), Some("line one\nline two"))
-  @debug.assert_eq(m.get("note"), Some("say \"hi\""))
-}
-
-///|
-test "parse_flat_json_object empty object" {
-  let m = parse_flat_json_object("{}")
-  assert_eq(m.length(), 0)
-}
-
-///|
-test "parse_flat_json_object preserves primitive literals as strings" {
-  let m = parse_flat_json_object(
-    "{\"count\":3,\"enabled\":true,\"empty\":null}",
-  )
-  @debug.assert_eq(m.get("count"), Some("3"))
-  @debug.assert_eq(m.get("enabled"), Some("true"))
-  @debug.assert_eq(m.get("empty"), Some("null"))
-}
-
-///|
 test "parse valid jsonrpc request with tools/call" {
   let line = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"text\":\"hello\"}}}"
   match parse_jsonrpc_request(line) {
@@ -75,34 +41,6 @@ test "parse request with string id" {
   match parse_jsonrpc_request(line) {
     Ok(rpc) => @debug.assert_eq(rpc.id, Some(String("abc123")))
     Err(e) => fail("should have succeeded, got: \{e.message}")
-  }
-}
-
-///|
-test "translate numeric and boolean MCP arguments into internal string args" {
-  let args : Map[String, Json] = {
-    "task": "build feature".to_json(),
-    "count": 3.0.to_json(),
-    "fork_session": true.to_json(),
-  }
-  let params : Map[String, Json] = {
-    "name": "fork_wave".to_json(),
-    "arguments": args.to_json(),
-  }
-  let rpc : @mcp.JsonRpcRequest = {
-    jsonrpc: "2.0",
-    id: Some(Number(12)),
-    req_method: method_tools_call,
-    params: Some(params.to_json()),
-  }
-  let result = @mcp.to_internal_request(rpc, @types.Role::TL)
-  match result {
-    Ok(req) => {
-      @debug.assert_eq(req.args.get("task"), Some("build feature"))
-      @debug.assert_eq(req.args.get("count"), Some("3"))
-      @debug.assert_eq(req.args.get("fork_session"), Some("true"))
-    }
-    Err(e) => fail("expected Ok, got: " + e.message)
   }
 }
 

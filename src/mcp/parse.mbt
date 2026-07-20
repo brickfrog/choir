@@ -1,20 +1,4 @@
 ///|
-/// Parse a flat JSON object string into a Map of string keys to string values.
-/// Objects/arrays/booleans/numbers are stringified; strings are unquoted.
-pub fn parse_flat_json_object(s : String) -> Map[String, String] {
-  let map : Map[String, String] = {}
-  let json = @json.parse(s) catch { _ => return map }
-  guard json is Object(obj) else { return map }
-  obj.each(fn(k, v) {
-    match v {
-      String(text) => map.set(k, text)
-      _ => map.set(k, v.stringify())
-    }
-  })
-  map
-}
-
-///|
 pub fn parse_jsonrpc_request(
   line : String,
 ) -> Result[JsonRpcRequest, JsonRpcError] {

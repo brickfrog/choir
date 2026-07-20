@@ -65,6 +65,12 @@ unconnected product path usable.
   typed JSON argument path. A real-process test executes the built client over
   UDS with environment-provided session identity and confirms the follow-up
   call is authenticated without creating lifecycle-disconnect state.
+- The Conductor MCP initialization and catalog now describe only the current
+  product. Claude receives the Conductor/Goal/Part/Take authority boundary and
+  exactly ten typed Goal and Beads tools; old spawn, pane, worker, PR, and
+  server-reload commands are absent. Structured arguments remain JSON through
+  dispatch, while the removed stringified-argument format is rejected. The MCP
+  package no longer imports the old tool registry.
 - Fixed-domain Goal, Part, Take, harness-session, event, assurance, receipt,
   integration, and cancellation types plus pure transition functions.
 - Durable restart-readable state and content-addressed artifact stores with
@@ -332,7 +338,7 @@ Earlier evidence anchors are commits `5fb93fe8` for the native Part path,
 the linter correction. With the current assurance, cancellation, and provider changes,
 `moon check --target native`, `moon test --target native`, and
 `moon run --target native src/bin/choir_lint` all exit successfully on
-2026-07-20. After deleting obsolete tests, the full native suite reports 2,259
+2026-07-20. After deleting obsolete tests, the full native suite reports 2,242
 passed and 0 failed. The
 compiler still reports the repository's existing warning set.
 
@@ -377,8 +383,8 @@ compiler still reports the repository's existing warning set.
   compiled behind the server implementation. They are no longer launched by
   `init`, exposed to the Conductor, or run by the daemon, but they remain source
   cruft until a minimal Goal server seam replaces their shared registry and
-  dispatch dependencies. The client parsing and authentication extraction is
-  complete.
+  dispatch dependencies. The client parsing/authentication and Conductor MCP
+  catalog extractions are complete.
 
 The central user flow is now directly launchable and joined through Goal assurance: Claude can turn a
 user Goal into a durable accepted Part set through `/goal`, and the daemon can
