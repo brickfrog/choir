@@ -325,11 +325,14 @@ unconnected product path usable.
   remote repository identity, remote name, and remote head ref. Publication
   records use the same guarded SQLite commit as other finalization state, so a
   stale Goal record cannot authorize or receipt a remote effect. The native Git
-  adapter observes the exact remote ref, performs a non-force push with local
-  hooks disabled, re-observes the remote after every request, adopts an already
-  exact head on recovery, and refuses drift. A real local-bare-remote test
-  covers create, replay, and adversarial drift. A disposable completed Goal was
-  also published through the durable adapter at exact sealed OID
+  adapter observes the exact remote ref, includes that expected old OID as an
+  exact push lease with local hooks disabled, re-observes the remote after every
+  request, adopts an already exact head on recovery, and refuses drift. Ancestry
+  authorization remains separate, so the lease cannot admit a non-fast-forward
+  transition. A real local-bare-remote test covers absent-ref creation, exact
+  prior update, concurrent create/update races, replay, and adversarial drift.
+  A disposable completed Goal was also published through the durable adapter
+  at exact sealed OID
   `55cd8b2a425a833631b269c2a9ea7481c92966f5`; a second process invocation
   returned `GoalPublicationComplete` without changing the remote.
 - Canonical final-PR reconciliation and final readiness now have typed durable
@@ -2409,9 +2412,10 @@ Protocol:
    is absent, an authorized create may run. If it equals the recorded expected
    prior OID, that OID must be an ancestor of the sealed head before an
    authorized fast-forward update may run.
-4. The transport uses the ordinary create/fast-forward ref protocol with the
-   expected old OID. No force or non-fast-forward update is allowed, even when
-   the old OID is known.
+4. The transport includes the expected old OID in the push as an exact lease.
+   Authorization separately proves ancestry, so the lease is only a
+   compare-and-swap guard: no unconditional force or non-fast-forward update
+   is allowed, even when the old OID is known.
 5. Re-read after every response or disconnect. Exact sealed OID records one
    receipt; absent/unchanged expected OID permits retry of the exact authorized
    effect; any other OID is `RemoteBranchDrift`. An observation gap that

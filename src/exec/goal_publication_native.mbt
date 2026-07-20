@@ -105,8 +105,17 @@ async fn publish_native_goal_ref(
   repository : NativeGoalRepositoryIdentity,
   intent : @workflow.BranchPublicationIntent,
 ) -> Unit {
-  // The remote ref is the witness. Push never uses force, skips ambient hooks,
-  // and is always followed by a fresh ls-remote observation.
+  let expected_remote = match intent.expected_prior_remote_oid {
+    Some(oid) => oid.0
+    None => ""
+  }
+  let lease = "--force-with-lease=" +
+    intent.remote_head_ref.0 +
+    ":" +
+    expected_remote
+  // The exact prior OID is part of the remote mutation, closing the race
+  // between preflight observation and push. Authorization separately proves
+  // ancestry, so the lease never authorizes a non-fast-forward transition.
   ignore(
     capture_native_goal_git(repository.root, [
       "-c",
@@ -114,6 +123,7 @@ async fn publish_native_goal_ref(
       "push",
       "--porcelain",
       "--no-verify",
+      lease,
       intent.remote_name.0,
       intent.sealed_head_oid.0 + ":" + intent.remote_head_ref.0,
     ]),
@@ -452,7 +462,7 @@ async test "native Goal publication creates, adopts, and refuses remote drift" {
     fail("failed to initialize publication repositories")
   }
   let tree = local_git(["hash-object", "-w", "-t", "tree", "/dev/null"])
-  let commit = local_git([
+  let base = local_git([
     "-c",
     "user.name=Choir Test",
     "-c",
@@ -460,11 +470,40 @@ async test "native Goal publication creates, adopts, and refuses remote drift" {
     "commit-tree",
     tree.output.trim().to_owned(),
     "-m",
+    "publication base",
+  ])
+  let middle = local_git([
+    "-c",
+    "user.name=Choir Test",
+    "-c",
+    "user.email=choir@example.invalid",
+    "commit-tree",
+    tree.output.trim().to_owned(),
+    "-p",
+    base.output.trim().to_owned(),
+    "-m",
+    "publication middle",
+  ])
+  let commit = local_git([
+    "-c",
+    "user.name=Choir Test",
+    "-c",
+    "user.email=choir@example.invalid",
+    "commit-tree",
+    tree.output.trim().to_owned(),
+    "-p",
+    middle.output.trim().to_owned(),
+    "-m",
     "publication",
   ])
-  if tree.exit_code != 0 || commit.exit_code != 0 {
+  if tree.exit_code != 0 ||
+    base.exit_code != 0 ||
+    middle.exit_code != 0 ||
+    commit.exit_code != 0 {
     fail("failed to create publication commit")
   }
+  let base_oid = @control.GitOid(base.output.trim().to_owned())
+  let middle_oid = @control.GitOid(middle.output.trim().to_owned())
   let oid = @control.GitOid(commit.output.trim().to_owned())
   let repository : NativeGoalRepositoryIdentity = {
     root,
@@ -503,6 +542,71 @@ async test "native Goal publication creates, adopts, and refuses remote drift" {
     idempotency_key: "publication-test",
     state: @workflow.BranchPublicationState::BranchPublicationAuthorized,
   }
+  let create_race_intent : @workflow.BranchPublicationIntent = {
+    ..intent,
+    id: @workflow.BranchPublicationIntentId("publication-create-race"),
+    remote_head_ref: @workflow.GitRefName(
+      "refs/heads/choir/goals/publication-create-race",
+    ),
+    idempotency_key: "publication-create-race",
+  }
+  let create_race = local_git([
+    "push",
+    "origin",
+    middle_oid.0 + ":" + create_race_intent.remote_head_ref.0,
+  ])
+  if create_race.exit_code != 0 {
+    fail("failed to install concurrent publication creation")
+  }
+  publish_native_goal_ref(repository, create_race_intent)
+  assert_eq(
+    native_remote_branch_observation(repository, create_race_intent),
+    @workflow.RemoteBranchObservation::RemoteBranchAt(middle_oid),
+  )
+  let exact_update_intent : @workflow.BranchPublicationIntent = {
+    ..intent,
+    id: @workflow.BranchPublicationIntentId("publication-exact-update"),
+    remote_head_ref: @workflow.GitRefName(
+      "refs/heads/choir/goals/publication-exact-update",
+    ),
+    expected_prior_remote_oid: Some(base_oid),
+    idempotency_key: "publication-exact-update",
+  }
+  let exact_prior = local_git([
+    "push",
+    "origin",
+    base_oid.0 + ":" + exact_update_intent.remote_head_ref.0,
+  ])
+  if exact_prior.exit_code != 0 {
+    fail("failed to install exact publication prior")
+  }
+  publish_native_goal_ref(repository, exact_update_intent)
+  assert_eq(
+    native_remote_branch_observation(repository, exact_update_intent),
+    @workflow.RemoteBranchObservation::RemoteBranchAt(oid),
+  )
+  let update_race_intent : @workflow.BranchPublicationIntent = {
+    ..intent,
+    id: @workflow.BranchPublicationIntentId("publication-update-race"),
+    remote_head_ref: @workflow.GitRefName(
+      "refs/heads/choir/goals/publication-update-race",
+    ),
+    expected_prior_remote_oid: Some(base_oid),
+    idempotency_key: "publication-update-race",
+  }
+  let raced_prior = local_git([
+    "push",
+    "origin",
+    middle_oid.0 + ":" + update_race_intent.remote_head_ref.0,
+  ])
+  if raced_prior.exit_code != 0 {
+    fail("failed to install concurrent publication update")
+  }
+  publish_native_goal_ref(repository, update_race_intent)
+  assert_eq(
+    native_remote_branch_observation(repository, update_race_intent),
+    @workflow.RemoteBranchObservation::RemoteBranchAt(middle_oid),
+  )
   assert_eq(
     native_remote_branch_observation(repository, intent),
     @workflow.RemoteBranchObservation::RemoteBranchAbsent,
