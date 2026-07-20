@@ -251,7 +251,7 @@ test "audit gate requires fresh sandbox session and exact result" {
 
 ///|
 test "integration authorization and witness bind the audited candidate" {
-  let candidate = m2_candidate([@control.RepoPath("src/a.mbt")])
+  let candidate = assurance_candidate([@control.RepoPath("src/a.mbt")])
   let part : @control.GoalPart = {
     id: @control.PartId("part-1"),
     goal_id: @control.GoalId("goal-1"),

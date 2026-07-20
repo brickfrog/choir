@@ -1,15 +1,15 @@
 ///|
-let m2_digest_a : @control.Digest = @control.Digest(
+let assurance_digest_a : @control.Digest = @control.Digest(
   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 )
 
 ///|
-let m2_digest_b : @control.Digest = @control.Digest(
+let assurance_digest_b : @control.Digest = @control.Digest(
   "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 )
 
 ///|
-fn m2_contract(
+fn assurance_contract(
   declaration : @control.MutationDeclaration,
 ) -> @control.TaskContractRevision {
   {
@@ -17,7 +17,7 @@ fn m2_contract(
     goal_id: @control.GoalId("goal-1"),
     part_id: @control.PartId("part-1"),
     revision: 1,
-    digest: m2_digest_a,
+    digest: assurance_digest_a,
     base_commit_oid: @control.GitOid("base-oid"),
     base_tree_oid: @control.GitOid("base-tree"),
     path_mode: @control.RepositoryPathMode::CaseSensitiveNfc,
@@ -26,19 +26,19 @@ fn m2_contract(
       {
         id: @control.VerificationSpecId("moon-test"),
         version: 1,
-        digest: m2_digest_a,
-        process_spec_digest: m2_digest_b,
+        digest: assurance_digest_a,
+        process_spec_digest: assurance_digest_b,
       },
     ],
-    audit_policy_digest: m2_digest_a,
-    implementation_capability_profile_digest: m2_digest_a,
-    verification_capability_profile_digest: m2_digest_a,
-    audit_capability_profile_digest: m2_digest_a,
+    audit_policy_digest: assurance_digest_a,
+    implementation_capability_profile_digest: assurance_digest_a,
+    verification_capability_profile_digest: assurance_digest_a,
+    audit_capability_profile_digest: assurance_digest_a,
   }
 }
 
 ///|
-fn m2_take() -> @control.Take {
+fn assurance_take() -> @control.Take {
   {
     id: @control.TakeId("implementation-1"),
     goal_id: @control.GoalId("goal-1"),
@@ -53,7 +53,9 @@ fn m2_take() -> @control.Take {
 }
 
 ///|
-fn m2_candidate(paths : Array[@control.RepoPath]) -> @control.CandidateCommit {
+fn assurance_candidate(
+  paths : Array[@control.RepoPath],
+) -> @control.CandidateCommit {
   {
     id: @control.CandidateId("candidate-1"),
     goal_id: @control.GoalId("goal-1"),
@@ -62,7 +64,7 @@ fn m2_candidate(paths : Array[@control.RepoPath]) -> @control.CandidateCommit {
     base_commit_oid: @control.GitOid("base-oid"),
     commit_oid: @control.GitOid("candidate-oid"),
     tree_oid: @control.GitOid("candidate-tree"),
-    canonical_change_digest: m2_digest_b,
+    canonical_change_digest: assurance_digest_b,
     changed_paths: paths,
   }
 }
@@ -133,7 +135,7 @@ test "mutation conflicts use path-component boundaries" {
 
 ///|
 test "candidate validation enforces immutable contract and declared diff" {
-  let contract = m2_contract(
+  let contract = assurance_contract(
     @control.MutationDeclaration::CompleteMutationDeclaration([
       @control.MutationClaim::PathTree(@control.RepoPath("src")),
     ]),
@@ -141,7 +143,7 @@ test "candidate validation enforces immutable contract and declared diff" {
   assert_true(
     @control.validate_task_contract_revision(contract, fn(_) { true }) is Ok(_),
   )
-  let candidate = m2_candidate([
+  let candidate = assurance_candidate([
     @control.RepoPath("src/a.mbt"),
     @control.RepoPath("moon.mod"),
   ])
@@ -156,7 +158,7 @@ test "candidate validation enforces immutable contract and declared diff" {
   match
     @control.validate_candidate_commit(
       contract,
-      m2_take(),
+      assurance_take(),
       candidate,
       evidence,
       fn(_) { true },
@@ -173,7 +175,7 @@ test "candidate validation enforces immutable contract and declared diff" {
           @control.UnknownMutationReason::SemanticScopeUnknown,
         ),
       },
-      m2_take(),
+      assurance_take(),
       candidate,
       evidence,
       fn(_) { true },
@@ -185,7 +187,7 @@ test "candidate validation enforces immutable contract and declared diff" {
 ///|
 test "candidate path evidence rejects symlink-prefix ambiguity" {
   let path = @control.RepoPath("src/generated/out.mbt")
-  let contract = m2_contract(
+  let contract = assurance_contract(
     @control.MutationDeclaration::CompleteMutationDeclaration([
       @control.MutationClaim::RepositoryWide,
     ]),
@@ -193,8 +195,8 @@ test "candidate path evidence rejects symlink-prefix ambiguity" {
   match
     @control.validate_candidate_commit(
       contract,
-      m2_take(),
-      m2_candidate([path]),
+      assurance_take(),
+      assurance_candidate([path]),
       {
         candidate_tree_paths: [path],
         symlink_prefix_paths: [path],
