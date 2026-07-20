@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Context-only amendments through: 2026-07-20T11:10:33-05:00
+Context-only amendments through: 2026-07-20T11:20:21-05:00
 
 ## Charter Semantics and Readiness
 
@@ -59,12 +59,13 @@ unconnected product path usable.
   historical context corpus have been deleted. The daemon no longer runs the
   pane watcher, recovery scanner, PR poller, idle watchdog, or old Goal judge;
   its active background workflow is the durable Goal runner.
-- The deleted positional client wrapper and its compatibility tests are no
-  longer compiled. The remaining `choir tool` and Goal clients share one
-  injected configuration resolver, one-shot authenticated UDS transport, and
-  typed JSON argument path. A real-process test executes the built client over
-  UDS with environment-provided session identity and confirms the follow-up
-  call is authenticated without creating lifecycle-disconnect state.
+- The positional and generic tool clients, shutdown-origin metadata path,
+  arbitrary flag-to-tool translation, server-reload command, and their v1
+  process fixtures are deleted. The remaining Goal client has one purpose: send
+  typed Goal status/cancel/steer/attach/answer requests through an authenticated
+  one-shot UDS connection. Its configuration resolver accepts the explicit
+  Conductor environment identity without retaining the generic role-override
+  or arbitrary-command surface.
 - The Conductor MCP initialization and catalog now describe only the current
   product. Claude receives the Conductor/Goal/Part/Take authority boundary and
   exactly ten typed Goal and Beads tools; old spawn, pane, worker, PR, and
@@ -350,7 +351,7 @@ Earlier evidence anchors are commits `5fb93fe8` for the native Part path,
 the linter correction. With the current assurance, cancellation, and provider changes,
 `moon check --target native`, `moon test --target native`, and
 `moon run --target native src/bin/choir_lint` all exit successfully on
-2026-07-20. After deleting obsolete tests, the full native suite reports 2,240
+2026-07-20. After deleting obsolete tests, the full native suite reports 2,235
 passed and 0 failed. The
 compiler still reports the repository's existing warning set.
 

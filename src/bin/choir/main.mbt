@@ -23,10 +23,26 @@ fn choir_usage() -> String {
     #|Control
     #|  stop [--purge]        stop the server (optionally purge runtime state)
     #|
-    #|Internal (invoked by choir/agents, not for direct use):
-    #|  tool, mcp-stdio, reload
+    #|Internal:
+    #|  mcp-stdio             bridge the Conductor MCP session to choird
     #|
   )
+}
+
+///|
+fn stop_run() -> Unit {
+  let pid_text = @sys.read_file(".choir/run/server.pid").trim().to_owned()
+  let pid = @string.parse_int(pid_text) catch { _ => 0 }
+  if pid > 1 {
+    @sys.write_stdout("Stopping choird (PID \{pid})...\n")
+    @sys.kill_server_pid_sequence_best_effort(pid)
+  }
+  if @env.args().contains("--purge") {
+    @sys.init_cleanup_purge_artifacts_native()
+  } else {
+    @sys.init_cleanup_runtime_artifacts_native()
+  }
+  @sys.write_stdout("Choir stopped.\n")
 }
 
 ///|
@@ -36,8 +52,6 @@ fn main {
   match subcmd {
     "serve" => serve_run()
     "start" => start_run()
-    "reload" => reload_run()
-    "tool" => tool_run()
     "mcp-stdio" => mcp_run()
     "init" => init_run()
     "stop" => stop_run()

@@ -32,7 +32,6 @@ options(
     "client.mbt": [ "native" ],
     "main.mbt": [ "native" ],
     "mcp_mode.mbt": [ "native" ],
-    "runtime_commands.mbt": [ "native" ],
     "start.mbt": [ "native" ],
     "stub_main.mbt": [ "not", "native" ],
     "tcp_reader.mbt": [ "native" ],

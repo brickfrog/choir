@@ -14,8 +14,7 @@ fn goal_cli_no_serve_response() -> @types.Response {
 
 ///|
 fn goal_cli_call(tool : String, values : Map[String, Json]) -> @types.Response {
-  let empty_cli = parse_client_cli_args([])
-  let (role, config, local_cfg) = match tool_load_config(empty_cli) {
+  let (role, config, local_cfg) = match goal_client_load_config() {
     Ok(loaded) => loaded
     Err(err) => return @types.Response::Err(err)
   }
@@ -31,7 +30,7 @@ fn goal_cli_call(tool : String, values : Map[String, Json]) -> @types.Response {
       config,
       local_cfg,
       req,
-      register_if_needed=tool_should_register(local_cfg),
+      register_if_needed=client_should_register(local_cfg),
     ) {
     Ok(resp) => resp
     Err(_) => goal_cli_no_serve_response()

@@ -75,14 +75,14 @@ async test "native Conductor rejects removed and unauthenticated dispatch" {
     name: "fork_wave",
     args: @types.RequestArgs::from_values(Map([])),
   }
-  let removed = dispatch_native_conductor_request("/repo", base, capture=(_) => {
+  let removed = dispatch_native_conductor_request("/repo", base, capture=_ => {
     fail("removed command performed I/O")
   })
   assert_true(removed.error_message().unwrap_or("").contains("unknown tool"))
   let unbound = dispatch_native_conductor_request(
     "/repo",
     { ..base, name: "task_list", role: @types.Role::Worker },
-    capture=(_) => fail("unbound command performed I/O"),
+    capture=_ => fail("unbound command performed I/O"),
   )
   assert_true(
     unbound.error_message().unwrap_or("").contains("Conductor required"),
