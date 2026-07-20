@@ -116,27 +116,10 @@ fn mcp_build_registration_message(
   connection_lifetime? : @transport.ConnectionLifetime = @transport.ConnectionLifetime::Session,
 ) -> String {
   let agent_id = mcp_resolved_agent_id(role, config, local_cfg)
-  let registration_local_cfg = if local_cfg.terminal_target is None &&
-    local_cfg.parent_id is None &&
-    local_cfg.workspace is None &&
-    role == @types.Role::TL {
-    {
-      ..local_cfg,
-      terminal_target: Some(
-        @workspace.local_target_for(
-          config.terminal_session,
-          "TL",
-          @types.IsolationMode::Worktree,
-        ),
-      ),
-    }
-  } else {
-    local_cfg
-  }
   @transport.format_registration_request(
     role,
     agent_id,
-    registration_local_cfg,
+    local_cfg,
     connection_lifetime~,
   ) +
   "\n"
@@ -1288,24 +1271,6 @@ test "mcp local cfg keeps cwd config for root TL (no inline lookup)" {
   assert_eq(read_calls, 0)
   @debug.assert_eq(cfg.agent_id, Some("root"))
   @debug.assert_eq(cfg.role, Some(@types.Role::TL))
-}
-
-///|
-test "mcp registration infers zellij TL terminal target for top-level session" {
-  let cfg = {
-    ..@types.Config::default(),
-    terminal_session: "choir-resorter-py",
-  }
-  let output = mcp_build_registration_message(
-    @types.Role::TL,
-    cfg,
-    @types.LocalConfig::default(),
-  )
-  assert_true(output.contains("\"name\":\"register\""))
-  assert_true(output.contains("\"connection_lifetime\":\"session\""))
-  assert_true(
-    output.contains("\"terminal_target\":\"zellij-tab:choir-resorter-py:TL\""),
-  )
 }
 
 ///|

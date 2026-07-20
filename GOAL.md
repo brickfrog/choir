@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Context-only amendments through: 2026-07-20T11:42:13-05:00
+Context-only amendments through: 2026-07-20T11:51:21-05:00
 
 ## Charter Semantics and Readiness
 
@@ -95,6 +95,13 @@ unconnected product path usable.
   This cleanup deletes 189 tracked files and more than 117,000 lines in the
   current change while adding only the narrow Conductor server and two Goal
   prompt files. The source tree drops from 372 tracked files to 198 files.
+- The v1 workspace/spawn layer is also deleted: worktree spawning, provider
+  child launchers, team membership, terminal-target construction, Zellij
+  commands, Semble injection, and their broad test corpus no longer compile as
+  dormant helpers. The interactive launch path now constructs one direct Claude
+  Conductor command with the restricted Choir MCP and plugin settings. A live
+  startup run passes with the direct command and no terminal multiplexer. This
+  follow-up removes another 6,445 lines and leaves 190 source files.
 - Fixed-domain Goal, Part, Take, harness-session, event, assurance, receipt,
   integration, and cancellation types plus pure transition functions.
 - Durable restart-readable state and content-addressed artifact stores with
@@ -368,7 +375,7 @@ Earlier evidence anchors are commits `5fb93fe8` for the native Part path,
 the linter correction. With the current assurance, cancellation, and provider changes,
 `moon check --target native`, `moon test --target native`, and
 `moon run --target native src/bin/choir_lint` all exit successfully on
-2026-07-20. After deleting obsolete source and tests, the full native suite reports 603
+2026-07-20. After deleting obsolete source and tests, the full native suite reports 487
 passed and 0 failed. The
 compiler still reports the repository's existing warning set.
 
@@ -409,9 +416,9 @@ compiler still reports the repository's existing warning set.
   dispatch are also registered. The audit-scratch-boundary case now passes on
   the live BoxLite Take path; it is intentionally not reported as hermetic.
   These cases are not yet joined to the full semantic projection.
-- Narrowing the still-shared configuration, transport, process-command, and
-  workspace utility packages. Their current Conductor and Goal callers remain
-  live, while individual v1-only helpers inside those files are the next
+- Narrowing the still-shared configuration, transport, and process-command
+  utility packages. Their current Conductor and Goal callers remain live, while
+  individual v1-only helpers inside those files are the next
   extraction/deletion surface; no closed source package remains imported only
   by another closed source package.
 

@@ -152,7 +152,6 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
   }
   @async.run_async_main(async fn() {
     let command = @workspace.conductor_launch_command(
-      @types.AgentType::Claude,
       config.project_dir,
       lean=options.lean,
     )

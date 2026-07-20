@@ -11,6 +11,40 @@ pub impl Show for Command with fn output(self, logger) -> Unit {
 }
 
 ///|
+fn escape_toml_string(s : String) -> String {
+  let buf = StringBuilder::new()
+  for c in s {
+    match c {
+      '"' => buf.write_string("\\\"")
+      '\\' => buf.write_string("\\\\")
+      '\n' => buf.write_string("\\n")
+      '\r' => buf.write_string("\\r")
+      '\t' => buf.write_string("\\t")
+      _ => buf.write_char(c)
+    }
+  }
+  buf.to_string()
+}
+
+///|
+fn agent_runtime_gitexclude_snippet() -> String {
+  (
+    #|# choir: agent-runtime junk
+    #|.cursor/
+    #|.codex/
+    #|.gemini/
+    #|.antigravitycli/
+    #|.choir/agy-home/
+    #|.choir/config.toml
+  )
+}
+
+///|
+fn provision_gitexclude_snippet(path : String) -> String {
+  "/" + path
+}
+
+///|
 /// Marker `Command.program` for `run_native_choir_file_command` / `exec.run`.
 /// Args: `[worktree_path, basename_under_.choir, file_body]`.
 pub let native_write_choir_file_program : String = "__choir_native_write_choir_file__"
