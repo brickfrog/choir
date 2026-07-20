@@ -320,6 +320,37 @@ pub fn stop_native_boxlite_server(server : NativeBoxLiteServerHandle) -> Unit {
 }
 
 ///|
+async fn remove_native_boxlite_runtime_root(
+  config : NativeBoxLiteServerConfig,
+) -> Result[Unit, @types.ChoirError] {
+  match validate_native_boxlite_server_config(config) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  if !@sys.path_exists(config.root) {
+    return Ok(())
+  }
+  let writable = @process.collect_output_merged(
+    "/usr/bin/chmod",
+    ["-R", "u+rwX", "--", config.root],
+    extra_env={ "HOME": "/nonexistent", "PATH": "/usr/bin:/bin" },
+    inherit_env=false,
+    cwd="/tmp",
+  ) catch {
+    _ => return Err(native_boxlite_take_error("runtime root cleanup failed"))
+  }
+  if writable.0 != 0 {
+    return Err(native_boxlite_take_error("runtime root cleanup failed"))
+  }
+  ignore(@sys.rm_rf(config.root))
+  if @sys.path_exists(config.root) {
+    Err(native_boxlite_take_error("runtime root cleanup failed"))
+  } else {
+    Ok(())
+  }
+}
+
+///|
 pub async fn cleanup_native_boxlite_server(
   server : NativeBoxLiteServerHandle,
 ) -> Result[Unit, @types.ChoirError] {
@@ -335,7 +366,7 @@ pub async fn cleanup_native_boxlite_server(
     Err(error) => return Err(error)
   }
   if removed.exit_code == 0 {
-    Ok(())
+    remove_native_boxlite_runtime_root(server.config)
   } else {
     Err(
       native_boxlite_take_error(
@@ -343,6 +374,37 @@ pub async fn cleanup_native_boxlite_server(
       ),
     )
   }
+}
+
+///|
+async test "native BoxLite cleanup removes sealed result trees" {
+  let root = "/tmp/choir-take-cleanup-test-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(root))
+  let read_only_result = root + "/results/take/workspace/nested"
+  if !@sys.create_dir_all(read_only_result) ||
+    !@sys.write_file_sync(read_only_result + "/result.txt", "sealed\n") {
+    fail("failed to create cleanup fixture")
+  }
+  let modes = @process.collect_output_merged(
+    "/usr/bin/chmod",
+    ["-R", "a-w", "--", root + "/results/take/workspace"],
+    extra_env={ "HOME": "/nonexistent", "PATH": "/usr/bin:/bin" },
+    inherit_env=false,
+    cwd="/tmp",
+  ) catch {
+    _ => fail("failed to seal cleanup fixture")
+  }
+  if modes.0 != 0 {
+    fail("failed to seal cleanup fixture")
+  }
+  remove_native_boxlite_runtime_root({
+    binary: "/opt/boxlite",
+    runtime_dir: "/opt/runtime",
+    root,
+    port: 22000,
+    api_key: "cleanup-test",
+  }).unwrap()
+  assert_false(@sys.path_exists(root))
 }
 
 ///|
@@ -499,7 +561,11 @@ async fn copy_native_boxlite_toolchain_offline(
   if normalized.exit_code == 0 {
     Ok(())
   } else {
-    Err(native_boxlite_take_error("toolchain normalization failed"))
+    Err(
+      native_boxlite_take_error(
+        "toolchain normalization failed: " + normalized.output.trim().to_owned(),
+      ),
+    )
   }
 }
 
