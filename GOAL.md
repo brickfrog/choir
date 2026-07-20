@@ -2947,6 +2947,26 @@ issues in versions below 0.9.0:
 - `GHSA-g6ww-w5j2-r7x3`: read-only mount/remount permission bypass;
 - `GHSA-f396-4rp4-7v2j`: OCI-layer symlink/path escape causing host write.
 
+#### Post-snapshot BoxLite runtime amendment
+
+At `2026-07-20T01:13:14Z`, the pinned v0.9.7 CLI and OCI image completed the
+full live Choir sandbox matrix on this host with one checked-in correction to
+the v0.9.7 runtime shim. The stock shim was reproducibly killed by seccomp on
+`time(2)` during secure VMM startup. Applying
+`patches/boxlite-seccomp-time.patch` and selecting the resulting pinned runtime
+bundle corrected that defect without disabling seccomp.
+
+The accepted evidence binds the release CLI SHA-256
+`81354f87e715113fb47303eb37663514af8ce4f350077a60b4e9ff7b093f0549`,
+patch SHA-256
+`f5b6c5dfab0200d73e5bba9f7c44dd27c1acc8f3cbf9a059b80faf68a05e4c13`,
+runtime-bundle digest
+`66364c9b629315a2f3c0f5ab341fa16e21d41b43873866125a110051e8c142cc`,
+and the already pinned OCI manifest digest. Secure boot, clone isolation,
+copy-in/out, attach/signal/kill, restart re-adoption, read-only enforcement,
+and all declared network-denial cases passed. The uncorrected or unpinned
+runtime remains blocked.
+
 `GHSA-xjhv-pp2r-6f82` is a later medium-severity timeout bypass affecting
 versions through 0.8.2. Version admission is exact and advisory-driven; “some
 0.9.x” is not a pin.

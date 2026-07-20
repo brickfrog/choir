@@ -11,6 +11,44 @@ pub let boxlite_release_archive_sha256 : String = "c80eef9dae1e3443a6817095a5c9e
 pub let boxlite_release_executable_sha256 : String = "81354f87e715113fb47303eb37663514af8ce4f350077a60b4e9ff7b093f0549"
 
 ///|
+pub let boxlite_seccomp_patch_sha256 : String = "f5b6c5dfab0200d73e5bba9f7c44dd27c1acc8f3cbf9a059b80faf68a05e4c13"
+
+///|
+pub let boxlite_runtime_shim_sha256 : String = "29ceaa8e4530ae71408828a1e9067933c38d49f34b70b6efe2e82e6827a6ae70"
+
+///|
+pub let boxlite_runtime_bundle_digest : String = "66364c9b629315a2f3c0f5ab341fa16e21d41b43873866125a110051e8c142cc"
+
+///|
+pub fn boxlite_runtime_bundle_files() -> Array[String] {
+  [
+    "boxlite-guest", "boxlite-shim", "bwrap", "debugfs", "libkrunfw.so.5", "mke2fs",
+  ]
+}
+
+///|
+fn boxlite_runtime_bundle_entries() -> Array[(String, String)] {
+  [
+    (
+      "boxlite-guest", "8d090705ae2fe424a5d2a501733029a9cadb58f158691957abecc823c638ae40",
+    ),
+    ("boxlite-shim", boxlite_runtime_shim_sha256),
+    (
+      "bwrap", "3312ccace553fd083a00f4706c5658880113ed79f3fc1ec7bb486ec0797a7523",
+    ),
+    (
+      "debugfs", "cf3e94ba478311991c4dd461a983365529b612293ff82a76ed4b1c1d6adfaf89",
+    ),
+    (
+      "libkrunfw.so.5", "c29492267947a7f40218a9a181fe5aa3e9bcb96efbd0e3fab3d1839f5a0a9eff",
+    ),
+    (
+      "mke2fs", "c3bedf42c320212abeb1c6325bd2663d7507a46d0ba06c2a76af1a9222c8ebb1",
+    ),
+  ]
+}
+
+///|
 /// OCI platform-manifest digest, not the image-config digest printed by `pull --quiet`.
 pub let boxlite_probe_image : String = "alpine@sha256:7c8cb692ae09657cbc4a3f3cbd0e8d5a2690ba38386aaaf252dbb060bf5eb2e6"
 
@@ -18,11 +56,11 @@ pub let boxlite_probe_image : String = "alpine@sha256:7c8cb692ae09657cbc4a3f3cbd
 pub let boxlite_probe_image_digest : String = "sha256:7c8cb692ae09657cbc4a3f3cbd0e8d5a2690ba38386aaaf252dbb060bf5eb2e6"
 
 ///|
-pub let boxlite_policy_id : String = "boxlite-v0.9.7-kvm-seccomp-network-disabled-v1"
+pub let boxlite_policy_id : String = "boxlite-v0.9.7-seccomp-time-kvm-network-disabled-v1"
 
 ///|
 /// SHA-256 of the checked-in canonical policy tuple documented by the adapter.
-pub let boxlite_policy_digest : String = "816e0dda1abb681d49e7b8b0e0a602dd77edf15ec962f4ee3cd56c57c1459d12"
+pub let boxlite_policy_digest : String = "c01dfb40d7588eff477bd0723939e237e8da03183894c368ed1e6d8f50cdfc86"
 
 ///|
 pub(all) enum BoxLiteProbeOperation {
@@ -43,6 +81,7 @@ pub(all) struct BoxLiteProbeCapture {
 ///|
 pub(all) struct BoxLiteLiveEvidence {
   executable_hash : BoxLiteProbeCapture
+  runtime_bundle_hashes : BoxLiteProbeCapture
   version : BoxLiteProbeCapture
   info : BoxLiteProbeCapture
   image_pull : BoxLiteProbeCapture
@@ -76,6 +115,8 @@ pub(all) enum BoxLiteProbeCase {
 ///|
 pub(all) enum BoxLiteBlockReason {
   BoxLiteExecutableHashMismatch
+  BoxLiteRuntimeBundleOverrideMissing
+  BoxLiteRuntimeBundleHashMismatch
   BoxLiteVersionMismatch
   BoxLiteKvmUnavailable
   BoxLiteImagePreparationFailed
@@ -123,6 +164,8 @@ pub(all) struct BoxLiteConformanceReport {
   release_sha : String
   release_archive_sha256 : String
   executable_sha256 : String
+  seccomp_patch_sha256 : String
+  runtime_bundle_digest : String
   image_digest : String
   policy_id : String
   policy_digest : String
@@ -149,6 +192,57 @@ fn executable_hash(capture : BoxLiteProbeCapture) -> String {
 }
 
 ///|
+pub fn boxlite_runtime_bundle_matches(capture : BoxLiteProbeCapture) -> Bool {
+  if !capture_passed(capture) {
+    return false
+  }
+  let mut reading_entries = false
+  let mut entry_count = 0
+  let mut saw_hashes = false
+  for line in capture.output.split("\n") {
+    if line == "ENTRIES" {
+      reading_entries = true
+    } else if line == "HASHES" {
+      reading_entries = false
+      saw_hashes = true
+    } else if reading_entries && line != "" {
+      entry_count = entry_count + 1
+      let mut declared = false
+      for name in boxlite_runtime_bundle_files() {
+        if line == "f " + name {
+          declared = true
+        }
+      }
+      if !declared {
+        return false
+      }
+    }
+  }
+  if entry_count != boxlite_runtime_bundle_files().length() || !saw_hashes {
+    return false
+  }
+  for entry in boxlite_runtime_bundle_entries() {
+    let (name, expected_hash) = entry
+    let mut matched = false
+    let mut file_entry_matched = false
+    for line in capture.output.split("\n") {
+      if line == "f " + name {
+        file_entry_matched = true
+      }
+      if line.length() >= 64 &&
+        line[:64].to_owned() == expected_hash &&
+        line.has_suffix("/" + name) {
+        matched = true
+      }
+    }
+    if !matched || !file_entry_matched {
+      return false
+    }
+  }
+  true
+}
+
+///|
 fn not_run_after_secure_failure(
   case_id : BoxLiteProbeCase,
 ) -> BoxLiteProbeCaseReport {
@@ -166,8 +260,12 @@ pub fn evaluate_boxlite_live_evidence(
   let cases : Array[BoxLiteProbeCaseReport] = []
   let blockers : Array[BoxLiteBlockReason] = []
   let observed_hash = executable_hash(evidence.executable_hash)
+  let runtime_bundle_ok = boxlite_runtime_bundle_matches(
+    evidence.runtime_bundle_hashes,
+  )
   let identity_ok = capture_passed(evidence.executable_hash) &&
     observed_hash == boxlite_release_executable_sha256 &&
+    runtime_bundle_ok &&
     capture_passed(evidence.version) &&
     evidence.version.output.trim().to_owned() == "boxlite 0.9.7"
   if identity_ok {
@@ -179,6 +277,10 @@ pub fn evaluate_boxlite_live_evidence(
   } else {
     let reason = if observed_hash != boxlite_release_executable_sha256 {
       BoxLiteExecutableHashMismatch
+    } else if evidence.runtime_bundle_hashes.exit_code == -3 {
+      BoxLiteRuntimeBundleOverrideMissing
+    } else if !runtime_bundle_ok {
+      BoxLiteRuntimeBundleHashMismatch
     } else {
       BoxLiteVersionMismatch
     }
@@ -332,6 +434,12 @@ pub fn evaluate_boxlite_live_evidence(
     release_sha: boxlite_release_sha,
     release_archive_sha256: boxlite_release_archive_sha256,
     executable_sha256: observed_hash,
+    seccomp_patch_sha256: boxlite_seccomp_patch_sha256,
+    runtime_bundle_digest: if runtime_bundle_ok {
+      boxlite_runtime_bundle_digest
+    } else {
+      ""
+    },
     image_digest: boxlite_probe_image_digest,
     policy_id: boxlite_policy_id,
     policy_digest: boxlite_policy_digest,

@@ -830,12 +830,7 @@ async fn capture_boxlite_probe_operation(
     binary, root, operation,
   )
   abort_if_hermetic_test_exec(command_for_program(program, args, Some(root)))
-  let probe_env : Map[String, String] = {
-    "HOME": root,
-    "TMPDIR": root + "/tmp",
-    "PATH": "/usr/local/bin:/usr/bin:/bin",
-    "NO_COLOR": "1",
-  }
+  let probe_env = boxlite_probe_environment(root, None)
   let collected = @async.with_timeout_opt(timeout_ms, () => {
     @process.collect_output_merged(
       program,
@@ -910,9 +905,10 @@ async fn capture_boxlite_fixed_process(
 }
 
 ///|
-fn boxlite_probe_environment(
+fn boxlite_probe_environment_with_runtime(
   root : String,
   api_key : String?,
+  runtime_dir : String?,
 ) -> Map[String, String] {
   let environment : Map[String, String] = {
     "HOME": root,
@@ -924,7 +920,23 @@ fn boxlite_probe_environment(
     Some(value) => environment["BOXLITE_API_KEY"] = value
     None => ()
   }
+  match runtime_dir {
+    Some(value) => environment["BOXLITE_RUNTIME_DIR"] = value
+    None => ()
+  }
   environment
+}
+
+///|
+fn boxlite_probe_environment(
+  root : String,
+  api_key : String?,
+) -> Map[String, String] {
+  boxlite_probe_environment_with_runtime(
+    root,
+    api_key,
+    @sys.getenv("CHOIR_BOXLITE_RUNTIME_DIR"),
+  )
 }
 
 ///|
@@ -1277,6 +1289,32 @@ fn boxlite_signal_body(signal : Int) -> String {
 }
 
 ///|
+fn boxlite_copy_in_args(
+  host_source : String,
+  box_id : String,
+  guest_directory : String,
+) -> Array[String] {
+  ["cp", host_source, box_id + ":" + guest_directory]
+}
+
+///|
+fn boxlite_copy_out_args(
+  box_id : String,
+  guest_source : String,
+  host_directory : String,
+) -> Array[String] {
+  ["cp", box_id + ":" + guest_source, host_directory]
+}
+
+///|
+fn boxlite_rest_uploaded_path(
+  guest_directory : String,
+  source_name : String,
+) -> String {
+  guest_directory + "/extracted/" + source_name
+}
+
+///|
 test "BoxLite REST create body fixes security-relevant resource policy" {
   let body = boxlite_create_body("probe", true)
   assert_true(body.contains("\"mode\":\"disabled\""))
@@ -1289,11 +1327,31 @@ test "BoxLite REST create body fixes security-relevant resource policy" {
 }
 
 ///|
+test "BoxLite copy commands target staging directories" {
+  assert_eq(boxlite_copy_in_args("/stage/input.txt", "box-1", "/root/work"), [
+    "cp", "/stage/input.txt", "box-1:/root/work",
+  ])
+  assert_eq(
+    boxlite_copy_out_args("box-1", "/root/work/output.txt", "/stage/out"),
+    ["cp", "box-1:/root/work/output.txt", "/stage/out"],
+  )
+  assert_eq(
+    boxlite_rest_uploaded_path("/root/work", "input.txt"),
+    "/root/work/extracted/input.txt",
+  )
+}
+
+///|
 test "BoxLite probe environment starts from an explicit narrow map" {
-  let environment = boxlite_probe_environment("/tmp/probe", Some("key"))
-  assert_eq(environment.length(), 5)
+  let environment = boxlite_probe_environment_with_runtime(
+    "/tmp/probe",
+    Some("key"),
+    Some("/opt/choir/boxlite-runtime"),
+  )
+  assert_eq(environment.length(), 6)
   assert_eq(environment["HOME"], "/tmp/probe")
   assert_eq(environment["BOXLITE_API_KEY"], "key")
+  assert_eq(environment["BOXLITE_RUNTIME_DIR"], "/opt/choir/boxlite-runtime")
   assert_false(environment.contains("SSH_AUTH_SOCK"))
   assert_false(environment.contains("DOCKER_HOST"))
 }
@@ -1515,7 +1573,7 @@ async fn capture_boxlite_lifecycle_evidence(
       binary,
       server,
       root,
-      ["cp", transfer_marker, clone_a + ":/root/choir-probe/transfer-in.txt"],
+      boxlite_copy_in_args(transfer_marker, clone_a, "/root/choir-probe"),
       30000,
     ) {
     Ok(value) => value
@@ -1526,7 +1584,13 @@ async fn capture_boxlite_lifecycle_evidence(
       binary,
       server,
       root,
-      ["exec", clone_a, "--", "/bin/cat", "/root/choir-probe/transfer-in.txt"],
+      [
+        "exec",
+        clone_a,
+        "--",
+        "/bin/cat",
+        boxlite_rest_uploaded_path("/root/choir-probe", "transfer-in.txt"),
+      ],
       30000,
     ) {
     Ok(value) => value
@@ -1600,11 +1664,9 @@ async fn capture_boxlite_lifecycle_evidence(
       binary,
       server,
       root,
-      [
-        "cp",
-        clone_a + ":/root/choir-probe/seed.txt",
-        copy_out_root + "/seed.txt",
-      ],
+      boxlite_copy_out_args(
+        clone_a, "/root/choir-probe/seed.txt", copy_out_root,
+      ),
       30000,
     ) {
     Ok(value) => value
@@ -1808,6 +1870,52 @@ fn merge_boxlite_downstream_evidence(
 }
 
 ///|
+async fn capture_boxlite_runtime_bundle_hashes(
+  root : String,
+  runtime_dir : String?,
+) -> Result[@sandbox.BoxLiteProbeCapture, @types.ChoirError] {
+  match runtime_dir {
+    Some(path) => {
+      let environment = boxlite_probe_environment_with_runtime(
+        root,
+        None,
+        Some(path),
+      )
+      let entries = match
+        capture_boxlite_fixed_process(
+          "/usr/bin/find",
+          [path, "-mindepth", "1", "-maxdepth", "1", "-printf", "%y %f\n"],
+          root,
+          environment,
+          10000,
+        ) {
+        Ok(capture) => capture
+        Err(error) => return Err(error)
+      }
+      if entries.exit_code != 0 {
+        return Ok(entries)
+      }
+      let args : Array[String] = []
+      for name in @sandbox.boxlite_runtime_bundle_files() {
+        args.push(path + "/" + name)
+      }
+      let hashes = match
+        capture_boxlite_fixed_process(
+          "/usr/bin/sha256sum", args, root, environment, 10000,
+        ) {
+        Ok(capture) => capture
+        Err(error) => return Err(error)
+      }
+      Ok({
+        exit_code: hashes.exit_code,
+        output: "ENTRIES\n" + entries.output + "HASHES\n" + hashes.output,
+      })
+    }
+    None => Ok({ exit_code: -3, output: "" })
+  }
+}
+
+///|
 /// Execute only the fixed, pinned BoxLite release probe matrix.
 pub async fn capture_boxlite_live_evidence(
   dedicated_root : String,
@@ -1818,6 +1926,19 @@ pub async fn capture_boxlite_live_evidence(
         "BoxLite probe root is outside the dedicated conformance namespace",
       ),
     )
+  }
+  let runtime_dir = match @sys.getenv("CHOIR_BOXLITE_RUNTIME_DIR") {
+    Some(path) =>
+      if !path.has_prefix("/") || path.contains(":") {
+        return Err(
+          @types.ChoirError::validation_error(
+            "CHOIR_BOXLITE_RUNTIME_DIR must be one absolute operator-controlled conformance path",
+          ),
+        )
+      } else {
+        Some(path)
+      }
+    None => None
   }
   let binary = match boxlite_probe_executable() {
     Ok(path) => path
@@ -1833,12 +1954,19 @@ pub async fn capture_boxlite_live_evidence(
     Err(error) => return Err(error)
   }
   let observed_hash = executable_hash.output.trim().to_owned()
+  let runtime_bundle_hashes = match
+    capture_boxlite_runtime_bundle_hashes(dedicated_root, runtime_dir) {
+    Ok(capture) => capture
+    Err(error) => return Err(error)
+  }
   if executable_hash.exit_code != 0 ||
     observed_hash.length() < 64 ||
-    observed_hash[:64].to_owned() != @sandbox.boxlite_release_executable_sha256 {
+    observed_hash[:64].to_owned() != @sandbox.boxlite_release_executable_sha256 ||
+    !@sandbox.boxlite_runtime_bundle_matches(runtime_bundle_hashes) {
     let not_run : @sandbox.BoxLiteProbeCapture = { exit_code: -3, output: "" }
     return Ok({
       executable_hash,
+      runtime_bundle_hashes,
       version: not_run,
       info: not_run,
       image_pull: not_run,
@@ -1861,6 +1989,7 @@ pub async fn capture_boxlite_live_evidence(
     let not_run : @sandbox.BoxLiteProbeCapture = { exit_code: -3, output: "" }
     return Ok({
       executable_hash,
+      runtime_bundle_hashes,
       version,
       info: not_run,
       image_pull: not_run,
@@ -1882,6 +2011,7 @@ pub async fn capture_boxlite_live_evidence(
     let not_run : @sandbox.BoxLiteProbeCapture = { exit_code: -3, output: "" }
     return Ok({
       executable_hash,
+      runtime_bundle_hashes,
       version,
       info,
       image_pull: not_run,
@@ -1903,6 +2033,7 @@ pub async fn capture_boxlite_live_evidence(
     let not_run : @sandbox.BoxLiteProbeCapture = { exit_code: -3, output: "" }
     return Ok({
       executable_hash,
+      runtime_bundle_hashes,
       version,
       info,
       image_pull,
@@ -1959,6 +2090,7 @@ pub async fn capture_boxlite_live_evidence(
   }
   Ok({
     executable_hash,
+    runtime_bundle_hashes,
     version,
     info,
     image_pull,

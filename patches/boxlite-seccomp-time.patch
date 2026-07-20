@@ -1,0 +1,28 @@
+diff --git a/src/boxlite/resources/seccomp/x86_64-unknown-linux-gnu.json b/src/boxlite/resources/seccomp/x86_64-unknown-linux-gnu.json
+--- a/src/boxlite/resources/seccomp/x86_64-unknown-linux-gnu.json
++++ b/src/boxlite/resources/seccomp/x86_64-unknown-linux-gnu.json
+@@ -3,6 +3,10 @@
+     "default_action": "trap",
+     "filter_action": "allow",
+     "filter": [
++      {
++        "syscall": "time",
++        "comment": "libkrun wall-clock read during VMM startup"
++      },
+       {
+         "syscall": "getxattr",
+         "comment": "virtiofs xattr passthrough (e.g. dropping security.capability on write); a blocked xattr syscall SIGSYS-kills the VMM"
+diff --git a/src/boxlite/resources/seccomp/x86_64-unknown-linux-musl.json b/src/boxlite/resources/seccomp/x86_64-unknown-linux-musl.json
+--- a/src/boxlite/resources/seccomp/x86_64-unknown-linux-musl.json
++++ b/src/boxlite/resources/seccomp/x86_64-unknown-linux-musl.json
+@@ -3,6 +3,10 @@
+     "default_action": "trap",
+     "filter_action": "allow",
+     "filter": [
++      {
++        "syscall": "time",
++        "comment": "libkrun wall-clock read during VMM startup"
++      },
+       {
+         "syscall": "getxattr",
+         "comment": "virtiofs xattr passthrough (e.g. dropping security.capability on write); a blocked xattr syscall SIGSYS-kills the VMM"
