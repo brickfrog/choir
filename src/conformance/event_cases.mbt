@@ -56,7 +56,7 @@ fn event_case_evidence(
 }
 
 ///|
-fn event_nonresumable_process_loss_fixture() -> (
+fn event_authorized_provider_dispatch_fixture() -> (
   @workflow.PartWorkflowSnapshot,
   @workflow.PartEffectIntent,
 ) {
@@ -253,11 +253,47 @@ fn event_nonresumable_process_loss_fixture() -> (
 }
 
 ///|
+fn event_provider_uncertainty_holds(
+  original : @workflow.PartWorkflowSnapshot,
+  restarted : @workflow.PartWorkflowSnapshot,
+  reason : @control.TakeUncertaintyReason,
+) -> Bool {
+  let implementation_session_uncertain = restarted.harness_sessions.any(
+    fn(session) {
+      session.id == restarted.identities.implementation_session.id &&
+      session.lifecycle ==
+      @control.HarnessSessionLifecycle::HarnessSessionRecoveryUncertain
+    },
+  )
+  restarted.durable_version == original.durable_version + 1 &&
+  restarted.stage == @workflow.PartWorkflowStage::PartRecoveryUncertain &&
+  (restarted.part.lifecycle
+  is @control.PartLifecycle::PartBlocked(
+    @control.PartBlockReason::PartRecoveryUncertain
+  )) &&
+  restarted.implementation_take.lifecycle ==
+  @control.TakeLifecycle::TakeTerminal(
+    @control.TakeTerminalDisposition::TakeRecoveryUncertain(reason)
+  ) &&
+  implementation_session_uncertain &&
+  (restarted.pending_effect
+  is Some({
+    lifecycle: @workflow.PartEffectLifecycle::PartEffectUncertain,
+    ..
+  })) &&
+  restarted.implementation_result is None &&
+  restarted.candidate is None &&
+  restarted.verification_receipts.length() == 0 &&
+  restarted.audit_receipt is None &&
+  restarted.integration_receipt is None
+}
+
+///|
 pub fn event_nonresumable_process_loss_case() -> HermeticConformanceCase {
   {
     id: ConformanceCaseId("event.nonresumable_process_loss"),
     run: fn(_) {
-      let (snapshot, intent) = event_nonresumable_process_loss_fixture()
+      let (snapshot, intent) = event_authorized_provider_dispatch_fixture()
       let uncertain = match
         @workflow.record_part_provider_process_loss(snapshot, intent) {
         Ok(value) => value
@@ -270,37 +306,12 @@ pub fn event_nonresumable_process_loss_case() -> HermeticConformanceCase {
         Ok(value) => value
         Err(error) => return Err(error)
       }
-      let implementation_session_uncertain = restarted.harness_sessions.any(
-        fn(session) {
-          session.id == restarted.identities.implementation_session.id &&
-          session.lifecycle ==
-          @control.HarnessSessionLifecycle::HarnessSessionRecoveryUncertain
-        },
-      )
       if restarted != uncertain ||
-        restarted.durable_version != snapshot.durable_version + 1 ||
-        restarted.stage != @workflow.PartWorkflowStage::PartRecoveryUncertain ||
-        !(restarted.part.lifecycle
-        is @control.PartLifecycle::PartBlocked(
-          @control.PartBlockReason::PartRecoveryUncertain
-        )) ||
-        !(restarted.implementation_take.lifecycle
-        is @control.TakeLifecycle::TakeTerminal(
-          @control.TakeTerminalDisposition::TakeRecoveryUncertain(
-            @control.TakeUncertaintyReason::TakeEffectUncertain
-          )
-        )) ||
-        !implementation_session_uncertain ||
-        !(restarted.pending_effect
-        is Some({
-          lifecycle: @workflow.PartEffectLifecycle::PartEffectUncertain,
-          ..
-        })) ||
-        restarted.implementation_result is Some(_) ||
-        restarted.candidate is Some(_) ||
-        restarted.verification_receipts.length() != 0 ||
-        restarted.audit_receipt is Some(_) ||
-        restarted.integration_receipt is Some(_) {
+        !event_provider_uncertainty_holds(
+          snapshot,
+          restarted,
+          @control.TakeUncertaintyReason::TakeEffectUncertain,
+        ) {
         return Err(
           event_case_error(
             "nonresumable process loss inferred progress or was not restart-stable",
@@ -311,6 +322,58 @@ pub fn event_nonresumable_process_loss_case() -> HermeticConformanceCase {
         evidence: [
           ObservedEventCase(EventNonresumableProcessLoss, 10),
         ],
+      })
+    },
+  }
+}
+
+///|
+pub fn event_backpressure_case() -> HermeticConformanceCase {
+  {
+    id: ConformanceCaseId("event.backpressure"),
+    run: fn(_) {
+      let capacity = @harness.codex_event_spool_capacity_bytes
+      if !(@harness.validate_codex_event_spool_size(capacity) is Ok(_)) {
+        return Err(event_case_error("spool rejected its exact capacity"))
+      }
+      match @harness.validate_codex_event_spool_size(capacity + 1) {
+        Err(error) if error.is_event_ingestion_overflow() => ()
+        _ => return Err(event_case_error("spool overflow did not fail closed"))
+      }
+      let (snapshot, intent) = event_authorized_provider_dispatch_fixture()
+      let uncertain = match
+        @workflow.record_part_event_ingestion_overflow(snapshot, intent) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let restarted = match
+        @workflow.decode_part_snapshot(
+          @workflow.part_snapshot_bytes(uncertain),
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let cursor_advanced = restarted.harness_sessions.any(fn(session) {
+        session.id == restarted.identities.implementation_session.id &&
+        session.last_choir_sequence !=
+        snapshot.identities.implementation_session.last_choir_sequence
+      })
+      if restarted != uncertain ||
+        !event_provider_uncertainty_holds(
+          snapshot,
+          restarted,
+          @control.TakeUncertaintyReason::TakeCursorGap,
+        ) ||
+        restarted.harness_events != snapshot.harness_events ||
+        cursor_advanced {
+        return Err(
+          event_case_error(
+            "spool overflow advanced the event cursor or inferred progress",
+          ),
+        )
+      }
+      Ok({
+        evidence: [ObservedEventCase(EventBackpressureBoundary, capacity)],
       })
     },
   }

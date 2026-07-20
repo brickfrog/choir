@@ -67,6 +67,24 @@ fn codex_driver_error(message : String) -> @types.ChoirError {
 }
 
 ///|
+pub let codex_event_spool_capacity_bytes : Int = 16 * 1024 * 1024
+
+///|
+pub fn validate_codex_event_spool_size(
+  size : Int,
+) -> Result[Unit, @types.ChoirError] {
+  if size < 0 || size > codex_event_spool_capacity_bytes {
+    Err(
+      @types.ChoirError::event_ingestion_overflow(
+        "Codex app-server event spool exceeded 16 MiB",
+      ),
+    )
+  } else {
+    Ok(())
+  }
+}
+
+///|
 pub fn codex_take_disabled_features() -> Array[String] {
   [
     "multi_agent", "multi_agent_v2", "enable_fanout", "browser_use", "browser_use_external",

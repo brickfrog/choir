@@ -538,21 +538,6 @@ fn native_codex_array_field(
 }
 
 ///|
-fn validate_native_codex_log_size(
-  size : Int,
-) -> Result[Unit, @types.ChoirError] {
-  if size < 0 || size > 16 * 1024 * 1024 {
-    Err(
-      @types.ChoirError::event_ingestion_overflow(
-        "Codex app-server event spool exceeded 16 MiB",
-      ),
-    )
-  } else {
-    Ok(())
-  }
-}
-
-///|
 fn native_codex_response_from_log(
   config : NativeCodexDriverConfig,
   request_id : String,
@@ -563,7 +548,7 @@ fn native_codex_response_from_log(
     return Ok(None)
   }
   let size = @sys.file_size(path)
-  match validate_native_codex_log_size(size) {
+  match @harness.validate_codex_event_spool_size(size) {
     Ok(_) => ()
     Err(error) => {
       if server_pid > 0 {
@@ -1563,15 +1548,6 @@ test "native Codex app-server argv removes native execution surfaces" {
     ),
   )
   assert_false(args.contains("--dangerously-bypass-approvals-and-sandbox"))
-}
-
-///|
-test "Codex app-server spool bound fails with typed ingestion overflow" {
-  assert_true(validate_native_codex_log_size(16 * 1024 * 1024) is Ok(_))
-  match validate_native_codex_log_size(16 * 1024 * 1024 + 1) {
-    Err(error) => assert_true(error.is_event_ingestion_overflow())
-    Ok(_) => fail("oversized app-server spool was admitted")
-  }
 }
 
 ///|

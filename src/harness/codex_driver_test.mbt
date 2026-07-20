@@ -68,6 +68,23 @@ fn codex_driver_output(item_type : String, response : String) -> String {
 }
 
 ///|
+test "Codex event spool admits capacity and fails closed on overflow" {
+  assert_true(
+    @harness.validate_codex_event_spool_size(
+      @harness.codex_event_spool_capacity_bytes,
+    )
+    is Ok(_),
+  )
+  match
+    @harness.validate_codex_event_spool_size(
+      @harness.codex_event_spool_capacity_bytes + 1,
+    ) {
+    Err(error) => assert_true(error.is_event_ingestion_overflow())
+    Ok(_) => fail("oversized Codex event spool was admitted")
+  }
+}
+
+///|
 test "Codex driver accepts a balanced sandbox-only implementation trace" {
   let started = codex_driver_started_session()
   let result = @harness.evaluate_codex_driver_capture({

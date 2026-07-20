@@ -167,10 +167,10 @@ unconnected product path usable.
 - Durable restart-readable state and content-addressed artifact stores with
   transactional fault injection.
 - A hermetic conformance runner with injected clock, identifiers, adapters,
-  and typed fault points. Its command now runs twenty registered cases: the
+  and typed fault points. Its command now runs twenty-one registered cases: the
   runner dependency contract, `selection.exact_snapshot`,
   `selection.revision_invalidation`,
-  `scheduler.generated_dags`, three audit-authority cases, six event/recovery
+  `scheduler.generated_dags`, three audit-authority cases, seven event/recovery
   cases, four mutation-ownership cases, and three process-policy cases described
   below. The audit cases prove a missing gate is passive, author Take/sandbox/
   session reuse is rejected, and seven independent subject/policy changes stale
@@ -198,8 +198,12 @@ unconnected product path usable.
   app-server process group, and causes the Part driver to atomically mark the
   session recovery-uncertain, the Take `RecoveryUncertain(CursorGap)`, the
   pending effect uncertain, and the Part recovery-uncertain. A pure bound test
-  and a durable restart test cover the error and workflow state. The remaining
-  paused-consumer/backpressure case is not claimed by this overflow fence.
+  and a durable restart test cover the error and workflow state. The registered
+  `event.backpressure` case now uses the same public capacity policy as the
+  native log reader, exercises exact capacity and one-byte overflow, applies
+  the production uncertainty transition, and reloads the snapshot to prove no
+  event cursor, candidate, or receipt advanced. Choir selects typed overflow,
+  rather than producer blocking, for this bounded disk-spool topology.
 - Nonresumable provider process loss and provider-dispatch timeouts now use the
   same durable uncertainty path. A nonzero Claude exit is typed
   `ProviderProcessLost`; the Part driver records the session as
@@ -590,8 +594,8 @@ compiler still reports the repository's existing warning set.
   remaining generated cases for ambiguous identity, remote drift, and broader
   cancellation orderings. The checked synthetic forge proves control-plane
   behavior without mutating an external repository.
-- The remaining event transaction/replay, backpressure,
-  cancellation ordering, conflict repair, hostile-surface, PR,
+- The remaining event transaction/replay, cancellation ordering, conflict
+  repair, hostile-surface, PR,
   and scale conformance cases. Duplicate conflicts, cursor gaps, late
   terminals, conflicting terminals, fixed-seed generated DAG scheduling,
   ownership normalization/conflicts, candidate under-claiming, and
