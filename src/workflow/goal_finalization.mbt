@@ -79,6 +79,11 @@ pub(all) enum GoalFinalizationTickOutcome {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) enum GoalFinalizationFaultPoint {
+  PullRequestAfterReadinessObservationBeforeSuccessTransaction
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 fn goal_finalization_error(detail : String) -> @types.ChoirError {
   @types.ChoirError::validation_error("Goal finalization: " + detail)
 }

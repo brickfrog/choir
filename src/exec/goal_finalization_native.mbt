@@ -46,6 +46,7 @@ pub async fn advance_native_goal_finalization_with_adapters(
   project_dir : String,
   goal_id : @control.GoalId,
   forge : NativePullRequestForgeAdapters,
+  fault? : @workflow.GoalFinalizationFaultPoint? = None,
 ) -> Result[@workflow.GoalFinalizationTickOutcome, @types.ChoirError] {
   let repository = native_goal_repository(project_dir)
   let adapters = local_part_workflow_repository_adapters()
@@ -151,7 +152,15 @@ pub async fn advance_native_goal_finalization_with_adapters(
     Err(error) => return Err(error)
   }
   match stored.record.readiness.decision {
-    @workflow.PullRequestReadinessDecision::PullRequestReady =>
+    @workflow.PullRequestReadinessDecision::PullRequestReady => {
+      if fault ==
+        Some(
+          @workflow.GoalFinalizationFaultPoint::PullRequestAfterReadinessObservationBeforeSuccessTransaction,
+        ) {
+        return Err(
+          native_pull_request_error("injected Goal finalization fault"),
+        )
+      }
       match
         @workflow.persist_goal_execution_success(
           repository, adapters, execution, assurance, publication, pull_request,
@@ -161,6 +170,7 @@ pub async fn advance_native_goal_finalization_with_adapters(
           Ok(@workflow.GoalFinalizationTickOutcome::GoalFinalizationSucceeded)
         Err(error) => Err(error)
       }
+    }
     @workflow.PullRequestReadinessDecision::PullRequestReadinessNeedsInput(_) =>
       Ok(@workflow.GoalFinalizationTickOutcome::GoalFinalizationNeedsUserInput)
     @workflow.PullRequestReadinessDecision::PullRequestReadinessDrift(_) =>
@@ -180,4 +190,227 @@ pub async fn advance_native_goal_finalization(
     goal_id,
     native_pull_request_forge_adapters(),
   )
+}
+
+///|
+async fn prepare_goal_finalization_fixture(
+  label : String,
+) -> (
+  String,
+  String,
+  @control.GoalId,
+  Ref[@workflow.RemotePullRequestSnapshot?],
+  NativePullRequestForgeAdapters,
+) {
+  let fixture = prove_publication_fault_recovery(
+    "finalization-" + label,
+    @workflow.GoalPublicationFaultPoint::PublicationAfterIntentBeforeAuthorized,
+    @workflow.BranchPublicationState::BranchPublicationPlanned,
+    false,
+  )
+  let remote_pull_request : Ref[@workflow.RemotePullRequestSnapshot?] = Ref(
+    None,
+  )
+  let forge : NativePullRequestForgeAdapters = {
+    resolve_repository: async fn(_) { Ok("choir/finalization-fixture") },
+    lookup: async fn(_, _, _) {
+      match remote_pull_request.val {
+        Some(snapshot) =>
+          @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch(
+            snapshot,
+          )
+        None => @workflow.PullRequestLookupObservation::PullRequestNoMatch
+      }
+    },
+    create: async fn(_, _, intent, document) {
+      remote_pull_request.val = Some(
+        pull_request_fault_snapshot(intent, document),
+      )
+    },
+  }
+  let pull_request_outcome = match
+    advance_native_goal_pull_request_with_adapters(fixture.0, fixture.2, forge) {
+    Ok(value) => value
+    Err(error) => fail(label + ": PR setup: " + error.message())
+  }
+  assert_eq(
+    pull_request_outcome,
+    @workflow.GoalPullRequestTickOutcome::GoalPullRequestComplete,
+  )
+  (fixture.0, fixture.1, fixture.2, remote_pull_request, forge)
+}
+
+///|
+fn goal_execution_outbox_key(
+  goal_id : @control.GoalId,
+  version : Int,
+) -> @storage.SemanticEventKey {
+  @storage.SemanticEventKey(
+    "goal-run:" +
+    @storage.digest_text(@storage.artifact_digest(@utf8.encode(goal_id.0))) +
+    ":state:" +
+    version.to_string(),
+  )
+}
+
+///|
+async test "real exec integration: final PR readiness and terminal decisions linearize exactly" {
+  let before = prepare_goal_finalization_fixture("edit-before-response")
+  guard before.3.val is Some(before_snapshot) else {
+    fail("pre-response fixture has no remote pull request")
+  }
+  before.3.val = Some({
+    ..before_snapshot,
+    evidence_manifest_link_present: false,
+  })
+  let before_outcome = match
+    advance_native_goal_finalization_with_adapters(before.0, before.2, before.4) {
+    Ok(value) => value
+    Err(error) => fail("edit before response: " + error.message())
+  }
+  assert_eq(
+    before_outcome,
+    @workflow.GoalFinalizationTickOutcome::GoalFinalizationNeedsUserInput,
+  )
+  let before_repository = native_goal_repository(before.0)
+  let adapters = local_part_workflow_repository_adapters()
+  assert_eq(
+    @workflow.load_goal_execution_record(before_repository, adapters, before.2)
+    .unwrap()
+    .unwrap().record.state,
+    @workflow.GoalExecutionState::GoalExecutionAssured,
+  )
+  ignore(@sys.rm_rf(before.0))
+  ignore(@sys.rm_rf(before.1))
+
+  let after = prepare_goal_finalization_fixture("edit-after-response")
+  guard after.3.val is Some(after_snapshot) else {
+    fail("post-response fixture has no remote pull request")
+  }
+  let edit_after_response = Ref(true)
+  let after_forge : NativePullRequestForgeAdapters = {
+    resolve_repository: after.4.resolve_repository,
+    lookup: async fn(_, _, _) {
+      let observed = after.3.val.unwrap()
+      if edit_after_response.val {
+        edit_after_response.val = false
+        after.3.val = Some({ ..observed, evidence_manifest_link_present: false })
+      }
+      @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch(
+        observed,
+      )
+    },
+    create: after.4.create,
+  }
+  assert_eq(after_snapshot.evidence_manifest_link_present, true)
+  let after_outcome = match
+    advance_native_goal_finalization_with_adapters(
+      after.0,
+      after.2,
+      after_forge,
+    ) {
+    Ok(value) => value
+    Err(error) => fail("edit after response: " + error.message())
+  }
+  assert_eq(
+    after_outcome,
+    @workflow.GoalFinalizationTickOutcome::GoalFinalizationSucceeded,
+  )
+  guard after.3.val is Some(edited_snapshot) else {
+    fail("post-response remote edit disappeared")
+  }
+  assert_false(edited_snapshot.evidence_manifest_link_present)
+  let after_repository = native_goal_repository(after.0)
+  assert_eq(
+    cancel_native_goal(after.0, after.2, 100L).unwrap(),
+    @workflow.GoalCancellationPersistenceResult::GoalCancellationTerminal(
+      @workflow.GoalExecutionState::GoalExecutionSucceeded,
+    ),
+  )
+  assert_true(
+    (adapters.state.read_outbox)(
+      after_repository.state_store,
+      goal_execution_outbox_key(after.2, 2),
+    ).unwrap()
+    is Some(_),
+  )
+  assert_true(
+    (adapters.state.read_outbox)(
+      after_repository.state_store,
+      goal_execution_outbox_key(after.2, 3),
+    ).unwrap()
+    is None,
+  )
+  ignore(@sys.rm_rf(after.0))
+  ignore(@sys.rm_rf(after.1))
+
+  let canceled = prepare_goal_finalization_fixture("cancellation-wins")
+  assert_true(
+    advance_native_goal_finalization_with_adapters(
+      canceled.0,
+      canceled.2,
+      canceled.4,
+      fault=Some(
+        @workflow.GoalFinalizationFaultPoint::PullRequestAfterReadinessObservationBeforeSuccessTransaction,
+      ),
+    )
+    is Err(_),
+  )
+  let canceled_repository = native_goal_repository(canceled.0)
+  assert_eq(
+    @workflow.load_goal_finalization_record(
+      canceled_repository,
+      adapters,
+      canceled.2,
+    )
+    .unwrap()
+    .unwrap().record.readiness.decision,
+    @workflow.PullRequestReadinessDecision::PullRequestReady,
+  )
+  assert_true(
+    cancel_native_goal(canceled.0, canceled.2, 200L).unwrap()
+    is @workflow.GoalCancellationPersistenceResult::GoalCancellationPersisted(_),
+  )
+  assert_true(
+    advance_native_goal_finalization_with_adapters(
+      canceled.0,
+      canceled.2,
+      canceled.4,
+    )
+    is Err(_),
+  )
+  let canceling_record = @workflow.load_goal_execution_record(
+      canceled_repository,
+      adapters,
+      canceled.2,
+    )
+    .unwrap()
+    .unwrap()
+  let canceled_record = match
+    @workflow.persist_goal_cancellation_completion(
+      canceled_repository, adapters, canceling_record,
+    ) {
+    Ok(value) => value.record
+    Err(error) => fail("cancellation completion: " + error.message())
+  }
+  assert_eq(
+    canceled_record.state,
+    @workflow.GoalExecutionState::GoalExecutionCanceled,
+  )
+  assert_true(
+    (adapters.state.read_outbox)(
+      canceled_repository.state_store,
+      goal_execution_outbox_key(canceled.2, canceled_record.durable_version),
+    ).unwrap()
+    is Some(_),
+  )
+  assert_true(
+    (adapters.state.read_outbox)(
+      canceled_repository.state_store,
+      goal_execution_outbox_key(canceled.2, canceled_record.durable_version + 1),
+    ).unwrap()
+    is None,
+  )
+  ignore(@sys.rm_rf(canceled.0))
+  ignore(@sys.rm_rf(canceled.1))
 }

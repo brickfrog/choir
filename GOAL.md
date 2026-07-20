@@ -436,6 +436,14 @@ unconnected product path usable.
   explicitly uncertain. Publication distinguishes preflight uncertainty from
   post-mutation uncertainty, and both publication and PR reconciliation can
   recover from their uncertain states without resending a remote mutation.
+- Final-PR readiness now has an executable response-boundary and terminal-race
+  oracle. A typed fault after durable readiness but before terminal success
+  proves that cancellation can install its cutoff and permanently exclude
+  success; the inverse ordering returns success as already terminal. Controlled
+  remote edits prove that missing evidence before the readiness response blocks
+  success, while an edit after that response does not retroactively rewrite the
+  already-linearized observation. Both terminal orderings emit one durable
+  outbox record and no later terminal record.
 - Native Goal runtime identities include both repository and Goal identity, so
   equal Goal IDs in different repositories cannot collide in sandbox, staging,
   integration-control, or BoxLite state. Runtime paths use product-purpose
@@ -448,7 +456,7 @@ Earlier evidence anchors are commits `5fb93fe8` for the native Part path,
 the linter correction. With the current assurance, cancellation, and provider changes,
 `moon check --target native`, `moon test --target native`, and
 `moon run --target native src/bin/choir_lint` all exit successfully on
-2026-07-20. After deleting obsolete source and tests, the full native suite reports 295
+2026-07-20. After deleting obsolete source and tests, the full native suite reports 296
 passed and 0 failed. The
 compiler still reports the repository's existing warning set.
 
@@ -476,7 +484,7 @@ compiler still reports the repository's existing warning set.
   implemented Part, provider, integration, Goal-assurance, publication, and
   final-PR reconciliation paths.
 - A live external final-PR canary for the native forge transport, plus the
-  generated failure matrix for ambiguous create, remote edit, readiness, and
+  remaining generated cases for ambiguous identity, remote drift, and broader
   cancellation orderings. The checked synthetic forge proves control-plane
   behavior without mutating an external repository.
 - The remaining event transaction/replay, redaction, backpressure,
@@ -4048,7 +4056,16 @@ Every recoverable case issues exactly one create and records exactly one
 receipt. The deliberately ambiguous crash after `CreateMayHaveBeenIssued` but
 before dispatch records `RemoteCreateUncertain`, issues zero creates, and does
 not resend after restart. The Goal remains `GoalExecutionAssured` throughout.
-The separate readiness/success race point remains in the finalization matrix.
+At `2026-07-20T14:42:07-05:00`, the finalization response boundary and terminal
+race also became executable. A real Git/SQLite controlled-forge test removes
+the evidence-manifest link before the readiness response and observes
+`NeedsInput` with the Goal still assured. It then changes the same link only
+after a `Ready` response and proves that the response remains the readiness
+linearization point. At the injected
+`pr.after_readiness_observation_before_success_transaction` boundary,
+cancellation wins the Goal compare-and-set and a later success attempt fails;
+in the inverse ordering cancellation observes terminal success. Each ordering
+has exactly one terminal outbox record and no next-version terminal record.
 
 Readiness is then observed separately against the canonical receipt. `Ready`
 requires an open PR with the exact repository identities, head and base refs,
