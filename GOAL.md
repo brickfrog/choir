@@ -2,14 +2,17 @@
 
 Status: draft target-product and architecture charter
 
-Implementation status: Choir v1 is the current implementation. Choir v2 is
-not implemented on this branch as of the research snapshot.
+Implementation status: Choir v1 remains the current user-facing product. A
+substantial Choir v2 foundation is now implemented on this branch, but the v2
+product is not yet usable end to end.
 
 Decision state: the strategic direction—local durable authority,
 provider-native Conductor sessions, isolated part execution, passive VSDD gates,
-and no Zellij lifecycle dependency—is accepted. Every v2 contract, command,
-adapter, state shape, delivery claim, and provider-support claim below remains
-provisional until implemented and proven by its stated conformance oracle.
+and no Zellij lifecycle dependency—is accepted. The items in the current
+implementation snapshot below have direct implementation and test evidence.
+Every other v2 contract, command, adapter, state shape, delivery claim, and
+provider-support claim remains provisional until implemented and proven by its
+stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
 Context-only amendments through: 2026-07-19T20:50:17Z
@@ -30,16 +33,92 @@ In conceptual schemas, `reason`/`status` placeholders mean closed versioned
 enums or `ChoirError` suberrors defined by the durable schema; they never
 authorize an open `String` domain.
 
-Two bounded experiments may begin from this charter:
+## Current Implementation Snapshot
 
-1. Provider subscription-auth, entitlement, event, and host-tool-isolation
-   conformance.
-2. BoxLite lifecycle, host-boundary, and network conformance.
+This snapshot describes the branch as of 2026-07-19 local time. It separates
+working implementation from target behavior; passing fixtures do not make an
+unconnected product path usable.
 
-Before scheduler or promotion implementation begins, the durable schema and
-transition specification must instantiate the entities, uniqueness constraints,
-linearization points, and fault oracles in this charter. It may refine field
-layout; it may not silently choose different semantics.
+### Implemented and directly exercised
+
+- Fixed-domain Goal, Part, Take, harness-session, event, assurance, receipt,
+  integration, and cancellation types plus pure transition functions.
+- Durable restart-readable state and content-addressed artifact stores with
+  transactional fault injection.
+- A hermetic conformance runner with injected clock, identifiers, adapters,
+  and typed fault points. Its command currently proves the runner dependency
+  contract; it does not yet implement the complete required case matrix.
+- Claude and Codex CLI surface probes. The exact Claude subscription CLI
+  profile passed its startup/tool-surface probe. The pinned Codex profile is
+  honestly `BlockedByConformance` because native host-tool removal and required
+  sandbox-tool failure behavior have not been proven.
+- A pinned BoxLite v0.9.7 lifecycle/security adapter using the checked-in
+  seccomp correction. Live KVM boot, clone isolation, bounded transfer,
+  attach/signal/kill, restart re-adoption, read-only enforcement, and declared
+  network-denial probes passed on the recorded host.
+- A restart-safe native Part workflow. It creates an isolated BoxLite sandbox,
+  launches the official Claude subscription CLI with only the generated
+  sandbox MCP tools, executes an implementation Take, normalizes a candidate,
+  runs typed verification, launches a separate Claude audit Take, and promotes
+  the accepted candidate through the native Git integration adapter.
+- A concurrent Goal runner with conflict-aware admission and deterministic,
+  serialized promotion. A native Git fixture proves that divergent candidates
+  based on the same head are composed into a continuous promotion history and
+  final combined tree.
+- The repository linter admits only the narrow injected exec-adapter tests and
+  explicitly tagged real-process fixtures used by this implementation.
+
+Evidence anchors are commits `5fb93fe8` for the native Part path,
+`2a184a59` for concurrent Parts and serialized promotion, and `0443cc3c` for
+the final linter correction. At that head, `moon test --target native` reports
+2,383 passed and zero failed, and `moon run --target native
+src/bin/choir_lint` exits successfully.
+
+### Fixture-scoped behavior
+
+- The native Part fixture supplies a checked-in task instruction. No Conductor
+  currently interprets a user Goal or creates the Part/task contract.
+- The native Part path uses Claude for implementation, verification, and audit.
+  There is no Codex execution driver.
+- The concurrent native Git fixture creates candidate commits directly through
+  fixture code. It tests scheduling and promotion, not concurrent provider task
+  execution.
+- The native Part and concurrent Goal paths are executable conformance fixtures;
+  they are not wired into `choird`, `/goal`, or another user-facing command.
+
+### Not yet connected
+
+- The Conductor bridge for proposing, accepting, inspecting, steering,
+  answering, canceling, attaching to, and reconnecting to Goals.
+- Provider-neutral dispatch from accepted Parts to Claude or Codex workers,
+  including a supported Codex driver and mixed-provider execution.
+- Goal-level verification, combined-tree audit, branch publication, canonical
+  final-PR reconciliation, readiness sealing, and terminal completion.
+- The full event replay, cancellation ordering, conflict repair, ownership,
+  hostile-surface, publication, PR, generated-DAG, and scale conformance cases.
+- Replacement and deletion of the remaining v1/Zellij correctness paths.
+
+The central user flow therefore remains unfinished: a Claude or Codex
+Conductor cannot yet turn a user Goal into durable Parts and have Choir dispatch
+those Parts across provider workers. The implemented foundation begins below
+that seam.
+
+Implementation began with two bounded experiments authorized by this charter:
+
+- Provider subscription-auth, entitlement, event, and host-tool-isolation
+  conformance.
+- BoxLite lifecycle, host-boundary, and network conformance.
+
+Both now have executable probes and recorded results in the implementation
+snapshot and research amendments. Those results admit the exact Claude driver
+candidate and corrected BoxLite runtime pin; they do not admit Codex execution
+or complete the user-facing product.
+
+The scheduler and promotion slice began only after its durable schema and
+transition specification instantiated the required entities, uniqueness
+constraints, linearization points, and fault oracles. Expansion beyond the
+implemented slice may refine field layout; it may not silently choose different
+semantics.
 
 ## Context
 
@@ -995,7 +1074,7 @@ amendments rather than backdated into the original context record.
 | `claude -p --setting-sources "" --tools "" --permission-mode dontAsk --allowedTools <generated-exact-choir-tool-list> --strict-mcp-config --mcp-config <generated-choir-config> --output-format=stream-json --verbose` | `2.1.215` | Claude driver candidate | Same confirmed provider-managed subscription; every other effective credential class fails | `SterileHostSandboxToolsOnly` | `Unspecified` | `RequiresConfirmation` | `Candidate` | `Passed` |
 | Claude Agent Teams within the pinned Claude CLI | `2.1.215` | Optional optimizer within one Conductor/take; never a driver or scheduler | Inherits the admitted owning Claude subscription session | `ChildEqualOrNarrower` | `Experimental` | `RequiresConfirmation` | `Candidate` | `NotRun` |
 | Codex interactive CLI | `0.144.6` | Conductor | Official client using the user's ChatGPT-managed Codex subscription | `ConductorHostObserver` | `Unspecified` | `Allowed` | `Candidate` | `NotRun` |
-| `codex exec --json` | `0.144.6` | Codex driver candidate | Saved ChatGPT-managed subscription login; every other effective credential class fails | `HostHarnessSandboxToolsOnly` | `Unspecified` | `Allowed` | `Candidate` | `NotRun` |
+| `codex exec --json` | `0.144.6` | Codex driver candidate | Saved ChatGPT-managed subscription login; every other effective credential class fails | `HostHarnessSandboxToolsOnly` | `Unspecified` | `Allowed` | `BlockedByConformance` | `Failed` |
 | Antigravity interactive CLI | `1.0.10` | Future Conductor candidate | Official client using the user's provider-managed consumer subscription | `ConductorHostObserver` | `Unspecified` | `RequiresConfirmation` | `Candidate` | `NotRun` |
 | Antigravity `agy -p` text mode | `1.0.10` | Driver surface | Same provider-managed subscription | `HostHarnessSandboxToolsOnly` | `Unspecified` | `RequiresConfirmation` | `Unsupported` | `Failed` |
 
@@ -1007,6 +1086,13 @@ Current OpenAI documentation says `codex exec` reuses saved local CLI
 authentication. Choir admits it only when the live redacted status proves the
 requested ChatGPT-managed subscription identity. A wrapper is not presumed to
 preserve that identity without a probe.
+
+The executable probe against pinned Codex `0.144.6` confirmed its structured
+noninteractive, JSON event, ephemeral-session, configuration-suppression, and
+restrictive-sandbox command surfaces. It did not prove complete removal of
+native host tools or fail-closed behavior when the required Choir sandbox tool
+is unavailable. The exact pairing therefore returns a typed
+`BlockedByConformance` result and is not an execution driver.
 
 No adapter may run a surface/auth pair absent from this matrix or promote
 `Candidate` to `Supported` without a pinned passing report. A mismatch is a
