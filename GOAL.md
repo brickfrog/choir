@@ -8,7 +8,7 @@ not implemented on this branch as of the research snapshot.
 Decision state: the strategic direction—local durable authority,
 provider-native Conductor sessions, isolated part execution, passive VSDD gates,
 and no Zellij lifecycle dependency—is accepted. Every v2 contract, command,
-adapter, state shape, milestone, and provider-support claim below remains
+adapter, state shape, delivery claim, and provider-support claim below remains
 provisional until implemented and proven by its stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
@@ -27,7 +27,7 @@ probe. A provider or runtime is not supported merely because its documentation
 describes a capability or because one local invocation succeeded.
 
 In conceptual schemas, `reason`/`status` placeholders mean closed versioned
-enums or `ChoirError` suberrors defined by the schema milestone; they never
+enums or `ChoirError` suberrors defined by the durable schema; they never
 authorize an open `String` domain.
 
 Two bounded experiments may begin from this charter:
@@ -1164,8 +1164,8 @@ The initial adapter:
 - admits no version older than 0.9.0 and checks current advisories at upgrade;
 - treats the runtime owner as privileged;
 - binds loopback with an exact key for every stock mutation route during the
-  contained spike and moves to a narrow Unix-socket owner before the scale
-  milestone; stock `GET /v1/config` is an explicitly accepted unauthenticated
+  contained spike and moves to a narrow Unix-socket owner before scale testing;
+  stock `GET /v1/config` is an explicitly accepted unauthenticated
   discovery route whose response is captured and checked for nonsecret fields,
   so the spike is described as loopback-bound with authenticated mutation
   routes, not as wholly authenticated;
@@ -1569,7 +1569,8 @@ Part's rank. This intentionally trades some integration latency for a
 reproducible first-parent chain while implementation and audit remain parallel.
 
 Cross-concurrency conformance compares the `SemanticRunProjection` defined in
-Milestone 6. It compares task/change/tree and policy outcomes while excluding
+the parameterized scale proof. It compares task/change/tree and policy outcomes
+while excluding
 run-specific identities, observations, and timestamps.
 
 ### Candidate normalization
@@ -2374,9 +2375,9 @@ implemented. The contract is common:
 - Broad shell-harness tests that mutate the checkout, Git identity, provider
   config, credentials, or ambient host process state.
 
-## Milestones
+## Delivery Proof Sequence
 
-### Milestone 0 — Provider policy and host-surface proof
+### Provider policy and host-surface proof
 
 Run the host-driver conformance oracle for pinned Claude and Codex candidate
 surfaces in two explicit lanes: hermetic hostile-fixture probes using synthetic
@@ -2398,7 +2399,7 @@ passing effective-surface report, and Codex has either a passing candidate or
 an explicit typed blocking result. No product implementation calls a blocked
 pairing supported.
 
-### Milestone 1 — BoxLite lifecycle and security proof
+### BoxLite lifecycle and security proof
 
 - Pin one exact release/source SHA and image digest, including advisory review.
 - Boot a real KVM guest; create two isolated clones from one prepared base.
@@ -2419,14 +2420,14 @@ Exit criterion: the exact BoxLite build passes the replaceable sandbox contract
 on this host, or the spike records why another runtime is required. Merely
 having `/dev/kvm` is not a pass.
 
-### Experiment A — Native-team UX
+### Native-team UX experiment
 
-After a Claude profile passes Milestone 0, try official Claude native
-delegation with the same restricted child surface. Measure planning and
+After a Claude profile passes the provider and host-surface proof, try official
+Claude native delegation with the same restricted child surface. Measure planning and
 supervision value. Provider task files and mailboxes remain nonauthoritative.
 The experiment may be deleted without changing the architecture.
 
-### Milestone 2 — One durable audited Claude part
+### One durable audited Claude Part
 
 - Crystallize the durable schema/transition table and uniqueness constraints
   from this charter.
@@ -2447,7 +2448,7 @@ and integration receipt. No provider credential is readable in the guest or
 persisted by Choir; no host checkout mutation occurs outside the integration
 adapter.
 
-### Milestone 3 — Divergent three-part scheduler and combined audit
+### Divergent three-Part scheduler and combined audit
 
 The fixed fixture contains:
 
@@ -2475,9 +2476,10 @@ reachable through two serialized promotion commits. Receipt/effect
 cardinalities and dependency/conflict ordering equal the checked-in fixture
 manifest.
 
-### Milestone 4 — Codex conformance and Conductor parity
+### Codex conformance and Conductor parity
 
-Implement only the Codex surface/profile admitted by Milestone 0. Demonstrate
+Implement only the Codex surface/profile admitted by the provider and
+host-surface proof. Demonstrate
 one Claude and one Codex part in the same goal without provider-private state
 leaking into scheduling/gates. Implement the Codex Conductor bridge and reconnect
 to a goal also visible from Claude.
@@ -2486,7 +2488,7 @@ Exit criterion: both satisfy the shared trace, evidence, cancellation,
 recovery, and host-isolation oracles at pinned versions. Provider-specific
 capabilities remain behind the driver registry.
 
-### Milestone 5 — Hardened runtime owner
+### Hardened runtime owner
 
 Before scale, replace the broad stock sandbox server with a narrow Unix-socket
 runtime owner or equivalent upstream surface. It validates logical roots,
@@ -2497,7 +2499,7 @@ become a general VM service.
 Exit criterion: production Choir exposes only the narrow typed sandbox
 contract, regardless of runtime.
 
-### Milestone 6 — Parameterized scale and mixed-workload proof
+### Parameterized scale and mixed-workload proof
 
 - Run checked-in, content-digested fixtures whose manifest declares the work
   count, dependency/claim shapes, retries, audit work, and concurrency.
@@ -2544,7 +2546,7 @@ nondeterministic transport metadata. Literal receipt sets are not expected to
 match across runs. The live real-repository canary is not subject to this
 deterministic equality oracle.
 
-### Milestone 7 — Antigravity
+### Antigravity support
 
 Add an Antigravity Conductor only after the Claude/Codex contract is stable.
 Reconsider a driver only when a pinned official surface exposes structured
@@ -2554,7 +2556,7 @@ contract; text-only `agy -p` is not adapted as a driver.
 ## Executable Conformance Plan
 
 The following command surface is normative for the implementation. The
-`choir_conformance` package does not exist in v1; creating it is milestone
+`choir_conformance` package does not exist in v1; creating it is implementation
 work, not a claim about current commands.
 
 ```text
@@ -2652,8 +2654,8 @@ report, and exits nonzero on any oracle mismatch.
 | `host.surface_matrix` | `SURFACE-001` through `TOOL-SEARCH-015` | Exact manifest, canary, auth/entitlement, child, death, and resume oracles |
 | `sandbox.lifecycle_security` | KVM boot/clone/attach/kill/re-adopt/root/network/advisory cases | Exact pinned runtime report and host/guest isolation artifacts |
 | `sandbox.transfer_security` | Malicious copy archive with traversal, links, special files, destination symlinks, and expansion bombs | Typed rejection, bounded staging, zero mutation outside staging, only validated atomic artifact adoption |
-| `e2e.one_part_baseline` | Milestone 2 fixture | 1 implementation, 1 part-verification take/set, 1 part audit, 1 integration |
-| `e2e.three_part_baseline` | Milestone 3 fixture | 4 implementations, 3 part-verification sets/audits/integrations, 1 goal-verification set and goal audit |
+| `e2e.one_part_baseline` | One-Part fixture | 1 implementation, 1 part-verification take/set, 1 part audit, 1 integration |
+| `e2e.three_part_baseline` | Three-Part fixture | 4 implementations, 3 part-verification sets/audits/integrations, 1 goal-verification set and goal audit |
 | `scheduler.generated_dags` | Fixed-seed generated DAG/claim manifests | Dependency, concurrency, exclusivity, and conflict invariants |
 | `e2e.scale_mixed` | Checked-in manifest and digest | Exactly N accepted Parts, N part-verification sets/audits/integrations, and 1 goal-verification set/audit/publication/PR, where N is fixed by the manifest |
 
@@ -2744,8 +2746,8 @@ fallback reads, old-format translation, or “legacy” helpers.
 
 These choices remain provisional and are resolved only by named evidence:
 
-1. **State adapter:** SQLite is preferred. Before Milestone 2, prove the
-   transaction, uniqueness, fencing, outbox, and fault-injection requirements
+1. **State adapter:** SQLite is preferred. Before real one-Part execution, prove
+   the transaction, uniqueness, fencing, outbox, and fault-injection requirements
    through a narrow injected MoonBit adapter.
 2. **Claude execution surface:** use the official subscription CLI only if
    policy confirmation and the host-surface oracle pass; otherwise report the
@@ -2847,7 +2849,8 @@ lane.
 The narrative record below predates the first full conformance snapshot. It is
 explicitly `ContextOnly`: missing launcher, document-archive, per-probe, or
 surface-manifest fields are `NotRecorded`, and no row can promote a surface to
-`Supported`. Milestone 0 produces the first complete `SupportEvidence` record.
+`Supported`. The provider and host-surface proof produces the first complete
+`SupportEvidence` record.
 
 ### Choir checkout and current implementation
 
@@ -2905,8 +2908,8 @@ the snapshot unless explicitly stated otherwise.
 #### Post-snapshot Claude probe amendment
 
 At `2026-07-19T20:50:17Z`, hermetic startup probes against the same pinned
-Claude executable established three `ContextOnly` facts used to narrow
-Milestone 0:
+Claude executable established three `ContextOnly` facts used to narrow the
+provider and host-surface proof:
 
 - with synthetic configuration and no real model/auth use, `--safe-mode`
   reported empty tool and MCP-server sets and did not start the explicitly
@@ -2921,8 +2924,9 @@ Milestone 0:
 No credential value or login-store content was recorded. Because this manual
 amendment lacks the full command/evidence archive required by
 `SupportEvidence`, it may reject the known-bad safe-mode profile but cannot
-promote the remaining profile to `Supported`. Milestone 0 must rerun both the
-surface and root-topology probes into a complete conformance record.
+promote the remaining profile to `Supported`. The provider and host-surface
+proof must rerun both the surface and root-topology probes into a complete
+conformance record.
 
 ### Inspected source repositories
 
@@ -2934,8 +2938,8 @@ surface and root-topology probes into a complete conformance record.
 BoxLite release `v0.9.7` points at
 `8803834036205cf2cac5cfca98bb3875812c897a` and was published
 2026-07-01. The locally inspected later commit is not itself the production
-pin. Milestone 1 must choose one exact release or source SHA and rerun the
-advisory/probe suite.
+pin. The BoxLite lifecycle and security proof must choose one exact release or
+source SHA and rerun the advisory/probe suite.
 
 The BoxLite `v0.9.0` release and GitHub advisories identify two critical
 issues in versions below 0.9.0:
