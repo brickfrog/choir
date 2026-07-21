@@ -166,6 +166,7 @@ pub(all) enum ConformanceEvidence {
     Bool,
     Bool
   )
+  ObservedIntegrationCase(IntegrationConformanceKind, Int, Bool, Bool)
   ObservedIntegrationConflictRepair(Int, Int, Bool, Bool)
   ObservedCancellationCase(CancellationConformanceKind, Int, Int, Bool)
   AllocatedId(ConformanceIdKind, String)
@@ -206,6 +207,12 @@ pub(all) enum AuditConformanceKind {
 pub(all) enum CancellationConformanceKind {
   CancellationPartEffectOrdering
   CancellationGoalOrderingMatrix
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum IntegrationConformanceKind {
+  IntegrationPromotionOrder
+  IntegrationDivergentCandidateComposition
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|

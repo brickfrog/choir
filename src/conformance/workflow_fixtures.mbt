@@ -556,6 +556,270 @@ pub fn scheduler_generated_dags_case() -> HermeticConformanceCase {
 }
 
 ///|
+fn promotion_timing_fixture(
+  completion_order : Array[@control.PartId],
+) -> Result[Array[@control.PartId], @types.ChoirError] {
+  let part_a = scheduling_fixture_record(
+    "a",
+    [],
+    @control.PartLifecycle::PartPending,
+    @control.MutationDeclaration::CompleteMutationDeclaration([]),
+  )
+  let part_b = scheduling_fixture_record(
+    "b",
+    [],
+    @control.PartLifecycle::PartPending,
+    @control.MutationDeclaration::CompleteMutationDeclaration([]),
+  )
+  let part_c = scheduling_fixture_record(
+    "c",
+    [],
+    @control.PartLifecycle::PartPending,
+    @control.MutationDeclaration::CompleteMutationDeclaration([]),
+  )
+  let mut records = [part_c, part_a, part_b]
+  let promoted : Array[@control.PartId] = []
+  for completed_id in completion_order {
+    records = replace_fixture_lifecycle(
+      records,
+      completed_id,
+      @control.PartLifecycle::PartAudited(
+        @control.CandidateId("timing-candidate-" + completed_id.0),
+        scheduling_fixture_digest,
+        @control.ReceiptId("timing-audit-" + completed_id.0),
+      ),
+    )
+    let mut selecting = true
+    while selecting {
+      let head = if promoted.length() == 0 {
+        @control.GitOid("timing-head")
+      } else {
+        @control.GitOid("timing-promotion-" + promoted.last().unwrap().0)
+      }
+      match @workflow.select_next_deterministic_promotion(records, head) {
+        Ok(Some(selection)) => {
+          promoted.push(selection.part_id)
+          records = replace_fixture_lifecycle(
+            records,
+            selection.part_id,
+            @control.PartLifecycle::PartIntegrated(
+              @control.ReceiptId("timing-integration-" + selection.part_id.0),
+            ),
+          )
+        }
+        Ok(None) => selecting = false
+        Err(error) => return Err(error)
+      }
+    }
+  }
+  if promoted.length() != records.length() {
+    return Err(generated_dag_error("promotion timing fixture made no progress"))
+  }
+  Ok(promoted)
+}
+
+///|
+pub fn integration_promotion_order_case() -> HermeticConformanceCase {
+  {
+    id: ConformanceCaseId("integration.promotion_order"),
+    run: fn(_) {
+      let expected = [
+        @control.PartId("a"),
+        @control.PartId("b"),
+        @control.PartId("c"),
+      ]
+      let timings = [
+        [@control.PartId("a"), @control.PartId("b"), @control.PartId("c")],
+        [@control.PartId("a"), @control.PartId("c"), @control.PartId("b")],
+        [@control.PartId("b"), @control.PartId("a"), @control.PartId("c")],
+        [@control.PartId("b"), @control.PartId("c"), @control.PartId("a")],
+        [@control.PartId("c"), @control.PartId("a"), @control.PartId("b")],
+        [@control.PartId("c"), @control.PartId("b"), @control.PartId("a")],
+      ]
+      for timing in timings {
+        let actual = match promotion_timing_fixture(timing) {
+          Ok(value) => value
+          Err(error) => return Err(error)
+        }
+        if actual != expected {
+          return Err(
+            generated_dag_error(
+              "promotion order changed with completion timing",
+            ),
+          )
+        }
+      }
+      Ok({
+        evidence: [
+          ObservedIntegrationCase(
+            IntegrationPromotionOrder,
+            timings.length(),
+            true,
+            true,
+          ),
+        ],
+      })
+    },
+  }
+}
+
+///|
+fn divergent_candidate(
+  part_id : @control.PartId,
+  suffix : String,
+) -> @control.CandidateCommit {
+  {
+    id: @control.CandidateId("divergent-candidate-" + suffix),
+    goal_id: @control.GoalId("goal-scheduling-conformance"),
+    part_id,
+    take_id: @control.TakeId("divergent-take-" + suffix),
+    base_commit_oid: @control.GitOid("divergent-head"),
+    commit_oid: @control.GitOid("divergent-commit-" + suffix),
+    tree_oid: @control.GitOid("divergent-tree-" + suffix),
+    canonical_change_digest: scheduling_fixture_digest,
+    changed_paths: [],
+  }
+}
+
+///|
+fn divergent_receipt(
+  part : @control.GoalPart,
+  candidate : @control.CandidateCommit,
+  from_head : @control.GitOid,
+  suffix : String,
+  observed_at : Int64,
+) -> Result[
+  (@control.PromotionCommit, @control.IntegrationReceipt),
+  @types.ChoirError,
+] {
+  let intent : @control.IntegrationIntent = {
+    id: @control.IntegrationIntentId("divergent-intent-" + suffix),
+    goal_id: candidate.goal_id,
+    part_id: candidate.part_id,
+    candidate_id: candidate.id,
+    candidate_commit_oid: candidate.commit_oid,
+    candidate_tree_oid: candidate.tree_oid,
+    expected_goal_head_oid: from_head,
+    strategy: @control.PromotionStrategy::NoFastForwardThreeWayV1,
+    promotion_metadata_digest: scheduling_fixture_digest,
+    integration_lease_epoch: @control.FencingEpoch(1L),
+    lifecycle: @control.IntegrationIntentLifecycle::IntegrationPlanned,
+    promotion_commit_oid: None,
+    promotion_tree_oid: None,
+    git_witness_ref: "refs/choir/witness/divergent-" + suffix,
+  }
+  let promotion : @control.PromotionCommit = {
+    intent_id: intent.id,
+    commit_oid: @control.GitOid("divergent-promotion-" + suffix),
+    tree_oid: @control.GitOid("divergent-promotion-tree-" + suffix),
+    first_parent_oid: from_head,
+    second_parent_oid: candidate.commit_oid,
+  }
+  let prepared = match @control.prepare_integration_intent(intent, promotion) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let authorized = match
+    @control.authorize_part_integration(
+      part,
+      candidate,
+      @control.VerificationGateObservation::VerificationGateValid([
+        @control.ReceiptId("divergent-verification-" + suffix),
+      ]),
+      @control.AuditGateObservation::AuditGateValid(
+        @control.ReceiptId("divergent-audit-" + suffix),
+      ),
+      {
+        id: @control.IntegrationLeaseId("divergent-lease-" + suffix),
+        goal_id: candidate.goal_id,
+        fencing_epoch: @control.FencingEpoch(1L),
+        holder: "choird",
+      },
+      prepared,
+    ) {
+    Ok(value) => value
+    Err(_) =>
+      return Err(generated_dag_error("divergent candidate was not authorized"))
+  }
+  match
+    @control.reconcile_integration_witness(
+      authorized,
+      promotion,
+      @control.IntegrationWitnessObservation::IntegrationWitnessApplied(
+        promotion.commit_oid,
+        promotion.commit_oid,
+      ),
+      @control.IntegrationReceiptId("divergent-integration-" + suffix),
+      observed_at,
+    ) {
+    @control.IntegrationReconciliationOutcome::IntegrationApplied(receipt) =>
+      Ok((promotion, receipt))
+    _ => Err(generated_dag_error("divergent candidate was not receipted"))
+  }
+}
+
+///|
+pub fn integration_divergent_candidates_case() -> HermeticConformanceCase {
+  {
+    id: ConformanceCaseId("integration.divergent_candidates"),
+    run: fn(_) {
+      let audited_part = fn(suffix : String) {
+        let record = scheduling_fixture_record(
+          suffix,
+          [],
+          @control.PartLifecycle::PartPending,
+          @control.MutationDeclaration::CompleteMutationDeclaration([]),
+        )
+        let candidate = divergent_candidate(record.part.id, suffix)
+        let part = {
+          ..record.part,
+          lifecycle: @control.PartLifecycle::PartAudited(
+            candidate.id,
+            scheduling_fixture_digest,
+            @control.ReceiptId("divergent-audit-" + suffix),
+          ),
+        }
+        (part, candidate)
+      }
+      let (part_a, candidate_a) = audited_part("a")
+      let (part_b, candidate_b) = audited_part("b")
+      let base = @control.GitOid("divergent-head")
+      let (promotion_a, receipt_a) = match
+        divergent_receipt(part_a, candidate_a, base, "a", 1L) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let (promotion_b, receipt_b) = match
+        divergent_receipt(part_b, candidate_b, promotion_a.commit_oid, "b", 2L) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let parent_chain = promotion_a.first_parent_oid == base &&
+        promotion_a.second_parent_oid == candidate_a.commit_oid &&
+        promotion_b.first_parent_oid == promotion_a.commit_oid &&
+        promotion_b.second_parent_oid == candidate_b.commit_oid
+      let receipt_chain = receipt_a.from_head_oid == base &&
+        receipt_a.promotion_commit_oid == promotion_a.commit_oid &&
+        receipt_b.from_head_oid == receipt_a.promotion_commit_oid &&
+        receipt_b.promotion_commit_oid == promotion_b.commit_oid
+      if !parent_chain || !receipt_chain {
+        return Err(generated_dag_error("divergent promotion chain was broken"))
+      }
+      Ok({
+        evidence: [
+          ObservedIntegrationCase(
+            IntegrationDivergentCandidateComposition,
+            2,
+            parent_chain,
+            receipt_chain,
+          ),
+        ],
+      })
+    },
+  }
+}
+
+///|
 let selection_fixture_digest : @control.Digest = @control.Digest(
   "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
 )

@@ -21,6 +21,72 @@ test "generated DAG fixture covers permutations and concurrency limits" {
 }
 
 ///|
+test "promotion order is invariant across completion timings" {
+  let report = @conformance.run_hermetic_case(
+    @conformance.integration_promotion_order_case(),
+    {
+      now: fn() { 1L },
+      next_id: fn(_) { "promotion-order-fixture-id" },
+      fault_enabled: fn(_) { false },
+      adapters: {
+        read_state: fn(_) { Ok(@conformance.StateObservation::StateMissing) },
+        read_artifact: fn(_) {
+          Ok(@conformance.ArtifactObservation::ArtifactMissing)
+        },
+        read_effect_witness: fn(_) {
+          Ok(@conformance.EffectWitnessObservation::EffectWitnessAbsent)
+        },
+      },
+    },
+  )
+  assert_eq(
+    report.status,
+    @conformance.ConformanceCaseStatus::ConformanceCasePassed,
+  )
+  assert_eq(report.evidence, [
+    @conformance.ConformanceEvidence::ObservedIntegrationCase(
+      @conformance.IntegrationConformanceKind::IntegrationPromotionOrder,
+      6,
+      true,
+      true,
+    ),
+  ])
+}
+
+///|
+test "divergent candidates compose into one continuous promotion chain" {
+  let report = @conformance.run_hermetic_case(
+    @conformance.integration_divergent_candidates_case(),
+    {
+      now: fn() { 1L },
+      next_id: fn(_) { "divergent-candidate-fixture-id" },
+      fault_enabled: fn(_) { false },
+      adapters: {
+        read_state: fn(_) { Ok(@conformance.StateObservation::StateMissing) },
+        read_artifact: fn(_) {
+          Ok(@conformance.ArtifactObservation::ArtifactMissing)
+        },
+        read_effect_witness: fn(_) {
+          Ok(@conformance.EffectWitnessObservation::EffectWitnessAbsent)
+        },
+      },
+    },
+  )
+  assert_eq(
+    report.status,
+    @conformance.ConformanceCaseStatus::ConformanceCasePassed,
+  )
+  assert_eq(report.evidence, [
+    @conformance.ConformanceEvidence::ObservedIntegrationCase(
+      @conformance.IntegrationConformanceKind::IntegrationDivergentCandidateComposition,
+      2,
+      true,
+      true,
+    ),
+  ])
+}
+
+///|
 test "selection fixture records exact typed rejection and acceptance sets" {
   let report = @conformance.run_hermetic_case(
     @conformance.selection_exact_snapshot_case(),
@@ -114,10 +180,7 @@ test "integration conflict repair preserves history and resets assurance" {
   )
   assert_eq(report.evidence, [
     @conformance.ConformanceEvidence::ObservedIntegrationConflictRepair(
-      2,
-      3,
-      true,
-      true,
+      2, 3, true, true,
     ),
   ])
 }

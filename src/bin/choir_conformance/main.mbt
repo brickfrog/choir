@@ -58,6 +58,8 @@ fn run_hermetic() -> Int {
       @conformance.runner_dependency_contract_case(),
       @conformance.scheduler_generated_dags_case(),
       @conformance.branch_initialization_faults_case(),
+      @conformance.integration_promotion_order_case(),
+      @conformance.integration_divergent_candidates_case(),
       @conformance.integration_conflict_repair_case(),
       @conformance.event_duplicate_conflict_case(),
       @conformance.event_cursor_gap_case(),

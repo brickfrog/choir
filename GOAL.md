@@ -802,7 +802,10 @@ compiler still reports the repository's existing warning set.
   The fixed scale flow is joined to the full semantic projection; the remaining
   negative cases retain their own typed blocked/recovery oracles. The host
   surface now has an executable fifteen-row report rather than an implied
-  aggregate pass; four Codex rows still require their exact live oracles.
+  aggregate pass; two Codex rows still require their exact live oracles.
+  Deterministic promotion ordering across all three-Part completion timings and
+  composition of two candidates based on the same head into a continuous
+  two-parent promotion/receipt chain are now independently registered.
 - Further splitting or consolidating large live adapters only when a concrete
   boundary or dead caller justifies it. The branch-point audit found no closed
   source package imported only by another closed source package.
