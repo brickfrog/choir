@@ -101,6 +101,7 @@ fn run_hermetic() -> Int {
 fn probe_mcp_launch(
   delay_ms? : Int = 0,
   credential_canary_path? : String = "",
+  tool_start_canary_path? : String = "",
 ) -> Result[(String, Array[String]), @types.ChoirError] {
   let node = match @exec.resolve_executable_in_path("node") {
     Some(path) => path
@@ -134,7 +135,166 @@ fn probe_mcp_launch(
     args.push("--credential-canary-path")
     args.push(credential_canary_path)
   }
+  if tool_start_canary_path != "" {
+    args.push("--tool-start-canary-path")
+    args.push(tool_start_canary_path)
+  }
   Ok((node, args))
+}
+
+///|
+enum CodexCancellationProbePoint {
+  CodexCancelDuringGeneration
+  CodexCancelDuringToolExecution
+} derive(Debug, Eq)
+
+///|
+fn codex_cancellation_probe_name(point : CodexCancellationProbePoint) -> String {
+  match point {
+    CodexCancelDuringGeneration => "generation"
+    CodexCancelDuringToolExecution => "tool-execution"
+  }
+}
+
+///|
+async fn codex_probe_processes_stopped(root : String) -> Bool {
+  let captured = @process.collect_output_merged(
+    "/usr/bin/ps",
+    ["-eo", "args="],
+    extra_env={ "PATH": "/usr/bin:/bin", "LC_ALL": "C" },
+    inherit_env=false,
+    cwd="/tmp",
+  ) catch {
+    _ => return false
+  }
+  if captured.0 != 0 {
+    return false
+  }
+  let output = captured.1.text() catch { _ => return false }
+  !output.contains(root)
+}
+
+///|
+async fn run_codex_live_cancellation_case(
+  root : String,
+  point : CodexCancellationProbePoint,
+) -> Result[@control.Digest, @types.ChoirError] {
+  if !@sys.create_dir_all(root + "/tmp") {
+    return Err(
+      @types.ChoirError::workspace_error(
+        "failed to create Codex cancellation root",
+      ),
+    )
+  }
+  let tool_start_path = root + "/tool-started"
+  let delay_ms = match point {
+    CodexCancelDuringGeneration => 0
+    CodexCancelDuringToolExecution => 30000
+  }
+  let (mcp_command, mcp_args) = match
+    probe_mcp_launch(
+      delay_ms~,
+      tool_start_canary_path=if point == CodexCancelDuringToolExecution {
+        tool_start_path
+      } else {
+        ""
+      },
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let name = codex_cancellation_probe_name(point)
+  let planned : @control.HarnessSession = {
+    id: @control.HarnessSessionId("codex-cancel-" + name + "-session"),
+    take_id: @control.TakeId("codex-cancel-" + name + "-take"),
+    sandbox_generation_id: @control.SandboxGenerationId(
+      "codex-cancel-" + name + "-sandbox",
+    ),
+    surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+    effective_surface_manifest_digest: @harness.codex_effective_surface_manifest_digest(
+      ["probe"],
+      "choir_probe",
+    ),
+    cursor_class: @control.HarnessCursorClass::HarnessCursorProviderEventId,
+    provider_cursor: None,
+    last_choir_sequence: @control.EventSequence(0L),
+    open_tool_execution_ids: [],
+    lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+  }
+  let started = match @harness.start_codex_harness_session(planned) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let clock = @ref.new(500L)
+  let cancellation_checks = @ref.new(0)
+  let result = @exec.run_native_codex_take(
+    {
+      sterile_root: root,
+      mcp_executable: mcp_command,
+      mcp_arguments: mcp_args,
+      mcp_server_name: "choir_probe",
+      allowed_tools: ["probe"],
+      timeout_ms: 120000,
+    },
+    started,
+    @harness.CodexTakeRole::CodexImplementationTake,
+    "Call probe exactly once. Only after it returns probe, report the required completed outcome.",
+    fn() {
+      clock.val = clock.val + 1L
+      clock.val
+    },
+    cancellation_requested=fn() {
+      cancellation_checks.val = cancellation_checks.val + 1
+      match point {
+        CodexCancelDuringGeneration => true
+        CodexCancelDuringToolExecution =>
+          @sys.path_entry_exists(tool_start_path)
+      }
+    },
+  )
+  let error = match result {
+    Err(value) if value.to_wire_string() == "canceled" => value
+    Err(value) => return Err(value)
+    Ok(_) =>
+      return Err(
+        @types.ChoirError::validation_error(
+          "Codex cancellation probe completed unexpectedly",
+        ),
+      )
+  }
+  @async.sleep(200)
+  let manifest = @sys.read_file(root + "/take-session.json")
+  let tool_starts = @sys.read_file(tool_start_path)
+  let expected_starts = match point {
+    CodexCancelDuringGeneration => tool_starts == ""
+    CodexCancelDuringToolExecution => tool_starts == "started\n"
+  }
+  if !manifest.contains("CodexTurnInterrupted") ||
+    !expected_starts ||
+    cancellation_checks.val == 0 ||
+    !codex_probe_processes_stopped(root) {
+    return Err(
+      @types.ChoirError::validation_error(
+        "Codex cancellation did not stop the exact process/tool boundary",
+      ),
+    )
+  }
+  let evidence = @storage.artifact_digest(
+    @utf8.encode(
+      "choir.codex-cancellation-case.v1\u{00}" +
+      name +
+      "\u{00}" +
+      started.effective_surface_manifest_digest.0 +
+      "\u{00}" +
+      error.to_wire_string() +
+      "\u{00}" +
+      tool_starts +
+      "\u{00}" +
+      @storage.artifact_digest(@utf8.encode(manifest)).0,
+    ),
+  )
+  ignore(@sys.rm_rf(root))
+  Ok(evidence)
 }
 
 ///|
@@ -727,6 +887,84 @@ async fn run_codex_live_tool_search() -> Int {
 }
 
 ///|
+async fn run_codex_live_cancellation() -> Int {
+  let discriminator = @sys.get_pid().to_string()
+  let generation = match
+    run_codex_live_cancellation_case(
+      "/tmp/choir-conformance-codex-cancellation-generation-" + discriminator,
+      CodexCancellationProbePoint::CodexCancelDuringGeneration,
+    ) {
+    Ok(value) => value
+    Err(error) => {
+      @sys.write_stderr(error.message() + "\n")
+      return 1
+    }
+  }
+  let tool_execution = match
+    run_codex_live_cancellation_case(
+      "/tmp/choir-conformance-codex-cancellation-tool-" + discriminator,
+      CodexCancellationProbePoint::CodexCancelDuringToolExecution,
+    ) {
+    Ok(value) => value
+    Err(error) => {
+      @sys.write_stderr(error.message() + "\n")
+      return 1
+    }
+  }
+  let boxlite_root = "/tmp/choir-take-cancel-matrix-" + discriminator
+  let boxlite = @exec.run_native_codex_cancellation_fixture(boxlite_root)
+  ignore(@sys.rm_rf(boxlite_root))
+  let disabled = @harness.codex_take_disabled_features()
+  disabled.sort()
+  let passed = boxlite.passed &&
+    boxlite.implementation_dispatches_before_restart == 1 &&
+    boxlite.verification_receipt_count == 0 &&
+    boxlite.audit_receipt_count == 0 &&
+    boxlite.integration_receipt_count == 0 &&
+    disabled.contains("multi_agent") &&
+    disabled.contains("multi_agent_v2") &&
+    disabled.contains("enable_fanout")
+  let evidence = @storage.artifact_digest(
+    @utf8.encode(
+      "choir.codex-cancellation-matrix.v1\u{00}" +
+      generation.0 +
+      "\u{00}" +
+      tool_execution.0 +
+      "\u{00}" +
+      disabled.join(",") +
+      "\u{00}" +
+      @storage.artifact_digest(
+        @utf8.encode(boxlite.to_json().stringify(indent=0)),
+      ).0,
+    ),
+  )
+  let matrix = @harness.evaluate_host_surface_matrix(
+    @harness.ProviderSurface::CodexCli,
+    [
+      {
+        probe: @harness.HostSurfaceProbe::HostSurfaceCancellation,
+        outcome: if passed {
+          @harness.HostSurfaceProbeOutcome::HostSurfaceProbePassed(evidence)
+        } else {
+          @harness.HostSurfaceProbeOutcome::HostSurfaceProbeFailed(evidence)
+        },
+      },
+    ],
+  ).unwrap()
+  @sys.write_stdout(
+    { "boxlite": boxlite.to_json(), "host_surface_matrix": matrix.to_json() }
+    .to_json()
+    .stringify(indent=2) +
+    "\n",
+  )
+  if passed {
+    0
+  } else {
+    1
+  }
+}
+
+///|
 async fn run_codex_live_ambient_configuration() -> Int {
   let root = "/tmp/choir-conformance-codex-ambient-" +
     @sys.get_pid().to_string()
@@ -1032,6 +1270,15 @@ fn run_harness_command(args : Array[String]) -> Unit {
     args[5] == "subscription" &&
     args[6] == "--driver-tool-search-live" {
     @async.run_async_main(async fn() { @sys.exit(run_codex_live_tool_search()) })
+  } else if args.length() == 7 &&
+    args[2] == "--surface" &&
+    args[3] == "codex-cli" &&
+    args[4] == "--profile" &&
+    args[5] == "subscription" &&
+    args[6] == "--driver-cancellation-live" {
+    @async.run_async_main(async fn() {
+      @sys.exit(run_codex_live_cancellation())
+    })
   } else if args.length() == 7 &&
     args[2] == "--surface" &&
     args[3] == "codex-cli" &&
@@ -2104,6 +2351,8 @@ fn usage() -> Unit {
     "--profile subscription --driver-child-isolation-live\n" +
     "       choir_conformance harness --surface codex-cli " +
     "--profile subscription --driver-tool-search-live\n" +
+    "       choir_conformance harness --surface codex-cli " +
+    "--profile subscription --driver-cancellation-live\n" +
     "       choir_conformance harness --surface codex-cli " +
     "--profile subscription --driver-recovery-live\n" +
     "       choir_conformance harness --surface codex-cli " +

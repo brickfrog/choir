@@ -106,10 +106,18 @@ class SandboxClient {
   constructor(config) {
     this.config = config;
     this.queue = Promise.resolve();
+    this.controllers = new Set();
+    this.closed = false;
+  }
+
+  close() {
+    this.closed = true;
+    for (const controller of this.controllers) controller.abort();
   }
 
   run(argv, cwd = "", timeoutMs = 120000) {
     const operation = async () => {
+      if (this.closed) fail("bridge is closed");
       const command = validateArgv(argv);
       const guestCommand = this.config.access === "read-only-subject"
         ? [
@@ -137,6 +145,8 @@ class SandboxClient {
         "--",
         ...guestCommand,
       ];
+      const controller = new AbortController();
+      this.controllers.add(controller);
       try {
         const result = await execFileAsync(this.config.binary, args, {
           cwd: this.config.home,
@@ -149,10 +159,12 @@ class SandboxClient {
           },
           timeout: timeoutMs,
           maxBuffer: MAX_TEXT_BYTES,
+          signal: controller.signal,
           windowsHide: true,
         });
         return { exitCode: 0, stdout: result.stdout, stderr: result.stderr };
       } catch (error) {
+        if (error?.name === "AbortError") fail("execution interrupted");
         if (error?.killed) fail("execution timed out");
         if (typeof error?.code === "number") {
           return {
@@ -162,6 +174,8 @@ class SandboxClient {
           };
         }
         fail("BoxLite execution failed");
+      } finally {
+        this.controllers.delete(controller);
       }
     };
     const next = this.queue.then(operation, operation);
@@ -386,6 +400,10 @@ export function startSandboxMcp(argv = process.argv.slice(2)) {
   const client = new SandboxClient(parseLaunchArgs(argv));
   const visibleTools = toolsForAccess(client.config.access);
   const input = readline.createInterface({ input: process.stdin, terminal: false });
+  input.once("close", () => {
+    client.close();
+    setImmediate(() => process.exit(0));
+  });
   input.on("line", async (line) => {
     let request;
     try {
