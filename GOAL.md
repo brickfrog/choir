@@ -3649,6 +3649,32 @@ report, and exits nonzero on any oracle mismatch.
 | `scheduler.generated_dags` | Fixed-seed generated DAG/claim manifests | Dependency, concurrency, exclusivity, and conflict invariants |
 | `e2e.scale_mixed` | Checked-in manifest and digest | Exactly N accepted Parts, N part-verification sets/audits/integrations, and 1 goal-verification set/audit/publication/PR, where N is fixed by the manifest |
 
+### Required-case evidence accounting
+
+The `hermetic` report returns the exact matrix `case_id` for every required row
+except the fifteen rows below. Its current report contains 36 passing cases:
+the 35 directly keyed required rows plus `runner.dependency_injection`, with no
+failed or omitted case. The specialized rows are mapped as follows; a command
+must exit successfully and its typed report must satisfy the stated oracle.
+
+| Required row | Executable evidence |
+|---|---|
+| `process.audit_scratch_boundary` | `sandbox --runtime boxlite --take-live`; `assurance_case_id` is exact, scratch and output persist, the typed process exits zero, and the subject tree is unchanged |
+| `verification.immutable_subject` | The same live Take report; `assurance_subject_read_only` is true and candidate/assurance tree comparison rejects any mutation |
+| `effect.harness_start_command_faults` | Codex `--driver-recovery-live` plus `--driver-initialization-recovery-live`; the server-started, initialized-sent, turn-started, and terminal-recorded cutoffs are adopted, restarted, resumed, or stopped without duplicate work |
+| `integration.fault_matrix` | `integration-faults`; all eight stable cutoffs report the expected durable/ref state and remain duplicate-free |
+| `publication.fault_matrix` | `publication-faults`; all five cutoffs reconcile to one exact remote state and stable replay |
+| `pr.fault_matrix` | `pull-request-faults`; all seven cutoffs preserve at-most-one create and the exact receipt/uncertainty state |
+| `pr.remote_drift` | `pull-request-states`; exact, closed, retargeted, head-changed, edited, and duplicate observations reach their typed decisions without replacement |
+| `pr.readiness_and_terminal_race` | `finalization-races`; fresh edit observation and both success/cancellation orderings produce one terminal decision/outbox |
+| `host.surface_matrix` | The Codex subscription host-surface command family recorded in the research snapshot; the joined evidence set contains one passing digest for each canonical row from `SURFACE-001` through `TOOL-SEARCH-015` |
+| `sandbox.lifecycle_security` | `sandbox --runtime boxlite --live` plus `--take-live`; the pinned KVM runtime passes all eighteen lifecycle/security rows and the Take report proves the narrow owner, guest path identity, immutable assurance subject, transfer, and cleanup |
+| `e2e.part_lifecycle` | `e2e --fixture part-lifecycle`; twelve effect receipts, one verification, one audit, one integration, and eight persistence boundaries |
+| `e2e.native_part_lifecycle` | `native-part-lifecycle` and `native-codex-part-lifecycle`; each real subscription surface produces twelve effect receipts, one verification, one audit, one integration, and zero duplicate implementation after restart |
+| `e2e.mixed_provider_goal` | `e2e --fixture mixed-provider-goal`; Claude and Codex run concurrently, then promote in the recorded total order into the expected combined tree |
+| `e2e.parallel_promotion` | `e2e --fixture parallel-promotion`; concurrent completion retains a continuous promotion head chain and expected combined tree |
+| `e2e.scale_mixed` | `e2e --fixture scale-mixed`; the pinned six-Part manifest passes at concurrency limits 1, 2, and 4, with six Part receipt sets and one Goal assurance/publication/PR set |
+
 Stable audit/event fault IDs include:
 
 ```text
@@ -3741,19 +3767,20 @@ fallback reads, old-format translation, or “legacy” helpers.
 The current local product path has selected and implemented its SQLite state
 adapter, content-addressed artifact store, pinned Claude and Codex subscription
 surfaces, static concurrency policy, BoxLite runtime, and narrow model-facing
-runtime owner. Two acceptance tasks remain:
+runtime owner. One acceptance task remains:
 
 1. **External final-PR canary:** run the implemented finalization protocol
    against one disposable real forge repository, then prove create lookup,
    canonical receipt, readiness, terminal success, and replay without a second
    PR. This is an explicit externally mutating canary, not an ambient test.
-2. **Required-case accounting:** map every row in the required case matrix to
-   its current command and evidence artifact, run the complete set from a clean
-   checkout, and implement any row whose evidence is missing. The 36-case
-   hermetic report, specialized fault commands, complete fifteen-row Codex
-   host-surface report, provider lifecycle commands, and live BoxLite reports
-   are constituent evidence; no one report substitutes for the complete
-   accounting.
+The required-case accounting is complete. The 36-case hermetic report maps 35
+required rows by exact ID, and the specialized accounting table maps the other
+fifteen to their current typed commands. The clean run passed every hermetic
+case, all integration/publication/PR/finalization matrices, both pinned BoxLite
+reports, the provider recovery cutoffs, both real-provider Part lifecycles, the
+mixed-provider Goal, and the parallel and six-Part flows. The previously
+recorded complete fifteen-row Codex host-surface set remains bound to its
+individual live evidence digests.
 
 The integration algorithm, audit taxonomy, receipt validity, mutation grammar,
 event replay semantics, cancellation ordering, process authority policy, and
