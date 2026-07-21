@@ -91,10 +91,38 @@ fn client_register(
 }
 
 ///|
+fn client_register_local_cli(
+  fd : Int,
+  reader : UDSLineReader,
+) -> Result[Unit, String] {
+  let request : @types.Request = {
+    req_method: local_cli_register_method,
+    name: local_cli_register_method,
+    args: @types.RequestArgs::from_values(Map([])),
+  }
+  if !mcp_write_all_uds(fd, @utf8.encode(mcp_build_wire_request(request))) {
+    return Err("failed to write local CLI registration request")
+  }
+  let line = reader.read_line()
+  if line == "" {
+    return Err("server connection closed during local CLI registration")
+  }
+  match @transport.parse_response(line) {
+    Ok(response) =>
+      if response.is_ok() {
+        Ok(())
+      } else {
+        Err(response.error_message().unwrap_or("local CLI registration failed"))
+      }
+    Err(error) => Err("failed to parse local CLI registration: " + error)
+  }
+}
+
+///|
 fn client_call_uds(
   config : @types.Config,
   request : @types.Request,
-  capability : String,
+  capability : String?,
 ) -> Result[@types.Response, String] {
   let mut fd = @uds.client_connect(config.listen_uds)
   if fd < 0 && @sys.wait_for_socket(config.listen_uds, 60) {
@@ -104,7 +132,11 @@ fn client_call_uds(
     return Err("cannot connect to server at " + config.listen_uds)
   }
   let reader = UDSLineReader::new(fd)
-  match client_register(fd, reader, capability) {
+  let registered = match capability {
+    Some(value) => client_register(fd, reader, value)
+    None => client_register_local_cli(fd, reader)
+  }
+  match registered {
     Ok(_) => ()
     Err(error) => {
       @uds.close(fd)

@@ -186,7 +186,25 @@ test "Codex driver rejects a native effect event disguised as success" {
       finished_at: 20L,
     },
   })
-  assert_true(result is Err(_))
+  match result {
+    Err(error) => assert_true(error.is_provider_protocol_violation())
+    Ok(_) => fail("failed-only MCP trace was accepted")
+  }
+}
+
+///|
+test "Codex driver classifies a nonzero provider exit as process loss" {
+  let result = @harness.evaluate_codex_driver_capture({
+    session: codex_driver_started_session(),
+    role: @harness.CodexTakeRole::CodexImplementationTake,
+    allowed_tools: ["read_file", "write_file"],
+    expected_mcp_server: "choir_sandbox",
+    capture: { exit_code: 1, output: "", started_at: 10L, finished_at: 20L },
+  })
+  match result {
+    Err(error) => assert_true(error.is_provider_process_lost())
+    Ok(_) => fail("nonzero provider exit was accepted")
+  }
 }
 
 ///|
@@ -202,7 +220,10 @@ test "Codex driver rejects terminal prose after a failed MCP call" {
     expected_mcp_server: "choir_sandbox",
     capture: { exit_code: 0, output, started_at: 10L, finished_at: 20L },
   })
-  assert_true(result is Err(_))
+  match result {
+    Err(error) => assert_true(error.is_provider_protocol_violation())
+    Ok(_) => fail("failed-only MCP trace was accepted")
+  }
 }
 
 ///|

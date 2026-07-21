@@ -586,7 +586,7 @@ pub fn evaluate_codex_driver_capture(
 ) -> Result[CodexDriverResult, @types.ChoirError] {
   if request.capture.exit_code != 0 {
     return Err(
-      codex_driver_error(
+      @types.ChoirError::provider_process_lost(
         "provider process exited with status " +
         request.capture.exit_code.to_string(),
       ),
@@ -626,12 +626,18 @@ pub fn evaluate_codex_driver_capture(
       request.allowed_tools,
     ) {
     Ok(value) => value
-    Err(error) => return Err(error)
+    Err(error) =>
+      return Err(
+        @types.ChoirError::provider_protocol_violation(error.message()),
+      )
   }
   let (outcome, terminal_response) = match
     validate_codex_response(request.role, response) {
     Ok(value) => value
-    Err(error) => return Err(error)
+    Err(error) =>
+      return Err(
+        @types.ChoirError::provider_protocol_violation(error.message()),
+      )
   }
   let events : Array[@control.HarnessEventEnvelope] = []
   let mut session = request.session

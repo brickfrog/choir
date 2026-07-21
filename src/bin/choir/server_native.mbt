@@ -42,6 +42,9 @@ fn ConductorClient::new(fd : Int) -> ConductorClient {
 let conductor_bootstrap_method : String = "conductor_bootstrap"
 
 ///|
+let local_cli_register_method : String = "local_cli_register"
+
+///|
 fn conductor_peer_is_choir(fd : Int) -> Bool {
   if fd < 0 || !@uds.peer_is_current_user(fd) {
     return false
@@ -132,6 +135,20 @@ fn conductor_register(
 }
 
 ///|
+fn local_cli_register(
+  request : @types.Request,
+  peer_is_choir : Bool,
+) -> @types.Response {
+  if request.req_method != local_cli_register_method ||
+    request.name != local_cli_register_method ||
+    !peer_is_choir {
+    @types.Response::Err("local CLI authentication failed")
+  } else {
+    @types.Response::ok_values(Map([]))
+  }
+}
+
+///|
 fn conductor_authenticated_request(request : @types.Request) -> @types.Request {
   let arguments : Map[String, Json] = Map([])
   request.args.each_json(fn(name, value) {
@@ -205,6 +222,17 @@ async fn conductor_handle_custom_line(
   }
   if request.req_method == "register" {
     let response = conductor_register(state, request)
+    if response.is_ok() {
+      client.authenticated = true
+    } else {
+      client.close_after_response = true
+    }
+    ignore(conductor_send_response(client.fd, response))
+    client.busy = false
+    return
+  }
+  if request.req_method == local_cli_register_method {
+    let response = local_cli_register(request, client.peer_is_choir)
     if response.is_ok() {
       client.authenticated = true
     } else {
@@ -469,6 +497,20 @@ test "Conductor tokens require an exact lowercase hexadecimal capability" {
   assert_false(conductor_valid_bootstrap_token(token.replace(old="a", new="A")))
   assert_true(conductor_tokens_equal(token, token))
   assert_false(conductor_tokens_equal(token, token + "0"))
+}
+
+///|
+test "local CLI registration requires the current Choir executable" {
+  let request : @types.Request = {
+    req_method: local_cli_register_method,
+    name: local_cli_register_method,
+    args: @types.RequestArgs::from_values(Map([])),
+  }
+  assert_true(local_cli_register(request, true).is_ok())
+  assert_false(local_cli_register(request, false).is_ok())
+  assert_false(
+    local_cli_register({ ..request, req_method: "register" }, true).is_ok(),
+  )
 }
 
 ///|
