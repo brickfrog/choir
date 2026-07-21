@@ -167,11 +167,11 @@ unconnected product path usable.
 - Durable restart-readable state and content-addressed artifact stores with
   transactional fault injection.
 - A hermetic conformance runner with injected clock, identifiers, adapters,
-  and typed fault points. Its command now runs thirty-four registered cases: the
+  and typed fault points. Its command now runs thirty-five registered cases: the
   runner dependency contract, `selection.exact_snapshot`,
   `selection.revision_invalidation`,
   `scheduler.generated_dags`, `branch.initialization_faults`, three integration
-  cases, `seal.atomicity`, six
+  cases, `seal.atomicity`, `sandbox.transfer_security`, six
   audit-authority/recovery cases, two cancellation-ordering cases, ten event/recovery
   cases, four mutation-ownership cases, and three process-policy cases described
   below. The audit cases prove a missing gate is passive, author Take/sandbox/
@@ -817,7 +817,15 @@ compiler still reports the repository's existing warning set.
   replays the seal transition from the same witnessed state and requires the
   identical immutable seal, permits only one durable combined-verification
   effect, and rejects returning the assuring Goal to Part execution or sealing
-  it again. The hermetic runner now passes 34/34 cases.
+  it again.
+- Sandbox transfer validation is now registered as the hermetic
+  `sandbox.transfer_security` case. It uses the production manifest and
+  destination validators to accept one bounded file/directory manifest; reject
+  traversal, every link/special-entry kind, and entry/file/total/depth expansion
+  fixtures; accept a missing destination below directories; and reject a
+  symlink destination.
+  This pure case does not claim that adapter staging, outside-tree mutation, or
+  atomic adoption has been proven. The hermetic runner now passes 35/35 cases.
 - Further splitting or consolidating large live adapters only when a concrete
   boundary or dead caller justifies it. The branch-point audit found no closed
   source package imported only by another closed source package.

@@ -64,6 +64,222 @@ fn scheduling_fixture_record(
 }
 
 ///|
+pub fn sandbox_transfer_validation_case() -> HermeticConformanceCase {
+  {
+    id: ConformanceCaseId("sandbox.transfer_security"),
+    run: fn(_) {
+      let limits : @sandbox.TransferLimits = {
+        max_entries: 4,
+        max_total_bytes: 32L,
+        max_file_bytes: 16L,
+        max_depth: 3,
+      }
+      let accepted = @sandbox.evaluate_transfer_manifest(
+        [
+          {
+            path: "artifacts",
+            kind: @sandbox.TransferEntryKind::TransferDirectory,
+            size_bytes: 0L,
+          },
+          {
+            path: "artifacts/result.json",
+            kind: @sandbox.TransferEntryKind::TransferFile,
+            size_bytes: 12L,
+          },
+        ],
+        limits,
+      )
+      let rejected = [
+        @sandbox.evaluate_transfer_manifest(
+          [{
+            path: "../outside",
+            kind: @sandbox.TransferEntryKind::TransferFile,
+            size_bytes: 1L,
+          }],
+          limits,
+        ),
+        @sandbox.evaluate_transfer_manifest(
+          [{
+            path: "artifacts/hardlink",
+            kind: @sandbox.TransferEntryKind::TransferHardlink,
+            size_bytes: 0L,
+          }],
+          limits,
+        ),
+        @sandbox.evaluate_transfer_manifest(
+          [{
+            path: "artifacts/link",
+            kind: @sandbox.TransferEntryKind::TransferSymlink,
+            size_bytes: 0L,
+          }],
+          limits,
+        ),
+        @sandbox.evaluate_transfer_manifest(
+          [{
+            path: "artifacts/fifo",
+            kind: @sandbox.TransferEntryKind::TransferFifo,
+            size_bytes: 0L,
+          }],
+          limits,
+        ),
+        @sandbox.evaluate_transfer_manifest(
+          [{
+            path: "artifacts/socket",
+            kind: @sandbox.TransferEntryKind::TransferSocket,
+            size_bytes: 0L,
+          }],
+          limits,
+        ),
+        @sandbox.evaluate_transfer_manifest(
+          [{
+            path: "artifacts/device",
+            kind: @sandbox.TransferEntryKind::TransferDevice,
+            size_bytes: 0L,
+          }],
+          limits,
+        ),
+        @sandbox.evaluate_transfer_manifest(
+          [
+            {
+              path: "a",
+              kind: @sandbox.TransferEntryKind::TransferFile,
+              size_bytes: 16L,
+            },
+            {
+              path: "b",
+              kind: @sandbox.TransferEntryKind::TransferFile,
+              size_bytes: 16L,
+            },
+            {
+              path: "c",
+              kind: @sandbox.TransferEntryKind::TransferFile,
+              size_bytes: 1L,
+            },
+          ],
+          limits,
+        ),
+        @sandbox.evaluate_transfer_manifest(
+          [
+            {
+              path: "a",
+              kind: @sandbox.TransferEntryKind::TransferFile,
+              size_bytes: 0L,
+            },
+            {
+              path: "b",
+              kind: @sandbox.TransferEntryKind::TransferFile,
+              size_bytes: 0L,
+            },
+            {
+              path: "c",
+              kind: @sandbox.TransferEntryKind::TransferFile,
+              size_bytes: 0L,
+            },
+            {
+              path: "d",
+              kind: @sandbox.TransferEntryKind::TransferFile,
+              size_bytes: 0L,
+            },
+            {
+              path: "e",
+              kind: @sandbox.TransferEntryKind::TransferFile,
+              size_bytes: 0L,
+            },
+          ],
+          limits,
+        ),
+        @sandbox.evaluate_transfer_manifest(
+          [{
+            path: "a/b/c/d",
+            kind: @sandbox.TransferEntryKind::TransferFile,
+            size_bytes: 1L,
+          }],
+          limits,
+        ),
+        @sandbox.evaluate_transfer_manifest(
+          [{
+            path: "artifacts/large.bin",
+            kind: @sandbox.TransferEntryKind::TransferFile,
+            size_bytes: 17L,
+          }],
+          limits,
+        ),
+      ]
+      let mut rejected_count = 0
+      for decision in rejected {
+        match decision {
+          @sandbox.TransferManifestDecision::TransferManifestRejected(_) =>
+            rejected_count = rejected_count + 1
+          @sandbox.TransferManifestDecision::TransferManifestAccepted(_) =>
+            return Err(
+              @types.ChoirError::validation_error(
+                "sandbox transfer fixture unexpectedly accepted",
+              ),
+            )
+        }
+      }
+      let accepted_count = match accepted {
+        @sandbox.TransferManifestDecision::TransferManifestAccepted(manifest) =>
+          manifest.entries().length()
+        @sandbox.TransferManifestDecision::TransferManifestRejected(_) =>
+          return Err(
+            @types.ChoirError::validation_error(
+              "bounded sandbox transfer fixture was rejected",
+            ),
+          )
+      }
+      let destination_accepted =
+        @sandbox.validate_transfer_adoption_destination(
+          [
+            {
+              path: "artifacts",
+              kind: @sandbox.TransferDestinationKind::TransferDestinationDirectory,
+            },
+            {
+              path: "artifacts/result",
+              kind: @sandbox.TransferDestinationKind::TransferDestinationMissing,
+            },
+          ],
+        ) is Ok(_)
+      let destination_rejected =
+        @sandbox.validate_transfer_adoption_destination(
+          [
+            {
+              path: "artifacts",
+              kind: @sandbox.TransferDestinationKind::TransferDestinationDirectory,
+            },
+            {
+              path: "artifacts/result",
+              kind: @sandbox.TransferDestinationKind::TransferDestinationSymlink,
+            },
+          ],
+        ) is Err(_)
+      if accepted_count != 2 ||
+        rejected_count != 10 ||
+        !destination_accepted ||
+        !destination_rejected {
+        return Err(
+          @types.ChoirError::validation_error(
+            "sandbox transfer validation invariant failed",
+          ),
+        )
+      }
+      Ok({
+        evidence: [
+          ObservedTransferCase(
+            TransferValidationBoundary,
+            accepted_count,
+            rejected_count,
+            destination_accepted,
+            destination_rejected,
+          ),
+        ],
+      })
+    },
+  }
+}
+
+///|
 fn failed_multi_part_report(message : String) -> MultiPartConformanceReport {
   {
     passed: false,

@@ -217,3 +217,37 @@ test "integration conflict repair preserves history and resets assurance" {
     ),
   ])
 }
+
+///|
+test "sandbox transfer case enforces bounded manifests and destinations" {
+  let report = @conformance.run_hermetic_case(
+    @conformance.sandbox_transfer_validation_case(),
+    {
+      now: fn() { 1L },
+      next_id: fn(_) { "sandbox-transfer-fixture-id" },
+      fault_enabled: fn(_) { false },
+      adapters: {
+        read_state: fn(_) { Ok(@conformance.StateObservation::StateMissing) },
+        read_artifact: fn(_) {
+          Ok(@conformance.ArtifactObservation::ArtifactMissing)
+        },
+        read_effect_witness: fn(_) {
+          Ok(@conformance.EffectWitnessObservation::EffectWitnessAbsent)
+        },
+      },
+    },
+  )
+  assert_eq(
+    report.status,
+    @conformance.ConformanceCaseStatus::ConformanceCasePassed,
+  )
+  assert_eq(report.evidence, [
+    @conformance.ConformanceEvidence::ObservedTransferCase(
+      @conformance.TransferConformanceKind::TransferValidationBoundary,
+      2,
+      10,
+      true,
+      true,
+    ),
+  ])
+}

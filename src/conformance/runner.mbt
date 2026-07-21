@@ -169,6 +169,7 @@ pub(all) enum ConformanceEvidence {
   ObservedIntegrationCase(IntegrationConformanceKind, Int, Bool, Bool)
   ObservedIntegrationConflictRepair(Int, Int, Bool, Bool)
   ObservedSealCase(SealConformanceKind, Bool, Bool, Bool)
+  ObservedTransferCase(TransferConformanceKind, Int, Int, Bool, Bool)
   ObservedCancellationCase(CancellationConformanceKind, Int, Int, Bool)
   AllocatedId(ConformanceIdKind, String)
 } derive(Debug, Eq, ToJson, FromJson)
@@ -219,6 +220,11 @@ pub(all) enum IntegrationConformanceKind {
 ///|
 pub(all) enum SealConformanceKind {
   SealAtomicity
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum TransferConformanceKind {
+  TransferValidationBoundary
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
