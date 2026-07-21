@@ -13,6 +13,7 @@ pub(all) struct NativeBoxLiteServerHandle {
   pid : Int
   url : String
   owner_pid : Int
+  owner_socket_root : String
   owner_socket : String
   owner_token : String
 } derive(Debug, Eq)
@@ -155,7 +156,8 @@ test "remote BoxLite clients get deterministic isolated homes" {
     pid: 1,
     url: "http://127.0.0.1:12345",
     owner_pid: 2,
-    owner_socket: "/tmp/choir-take-client-home-test/owner.sock",
+    owner_socket_root: "/tmp/choir-take-client-home-test/owner-socket",
+    owner_socket: "/tmp/choir-take-client-home-test/owner-socket/owner.sock",
     owner_token: "a".repeat(64),
   }
   let first = native_boxlite_remote_client_home(server, "box-a")
@@ -351,7 +353,14 @@ pub async fn start_native_boxlite_server(
   ) catch {
     _ => return Err(native_boxlite_take_error("server failed to start"))
   }
-  let owner_socket = config.root + "/owner.sock"
+  let owner_socket_root = config.root + "/owner-socket"
+  if !@sys.create_dir_all(owner_socket_root) ||
+    !@sys.chmod_mode(owner_socket_root, 0o700) ||
+    @sys.realpath_native(owner_socket_root) != Some(owner_socket_root) {
+    @sys.kill_server_pid_sequence_best_effort(pid)
+    return Err(native_boxlite_take_error("runtime owner socket root failed"))
+  }
+  let owner_socket = owner_socket_root + "/owner.sock"
   let owner_token = match @sys.mint_local_token() {
     Some(value) if value.length() == 64 => value
     _ => {
@@ -366,6 +375,7 @@ pub async fn start_native_boxlite_server(
     pid,
     url,
     owner_pid: 0,
+    owner_socket_root,
     owner_socket,
     owner_token,
   }
@@ -1206,11 +1216,13 @@ pub async fn seal_native_boxlite_assurance_subject(
 pub fn native_boxlite_take_mcp_arguments(
   take : NativeBoxLiteTakeSandbox,
   script : String,
+  owner_socket? : String? = None,
 ) -> Result[Array[String], @types.ChoirError] {
-  if !script.has_prefix("/") {
+  let owner_socket = owner_socket.unwrap_or(take.prepared.server.owner_socket)
+  if !script.has_prefix("/") || !owner_socket.has_prefix("/") {
     return Err(
       @types.ChoirError::validation_error(
-        "sandbox MCP script path must be absolute",
+        "sandbox MCP paths must be absolute",
       ),
     )
   }
@@ -1232,7 +1244,7 @@ pub fn native_boxlite_take_mcp_arguments(
   Ok([
     script,
     "--owner-socket",
-    take.prepared.server.owner_socket,
+    owner_socket,
     "--owner-token",
     execution_token,
     "--box",
@@ -1855,7 +1867,8 @@ async test "native result archive is inspected through the production tar seam" 
       pid: 1,
       url: "http://127.0.0.1:22000",
       owner_pid: 2,
-      owner_socket: root + "/owner.sock",
+      owner_socket_root: root + "/owner-socket",
+      owner_socket: root + "/owner-socket/owner.sock",
       owner_token: "a".repeat(64),
     },
     archive,
@@ -2066,7 +2079,8 @@ test "native BoxLite MCP launch binds one fixed box" {
     pid: 10,
     url: "http://127.0.0.1:22000",
     owner_pid: 11,
-    owner_socket: "/tmp/choir-take-test/owner.sock",
+    owner_socket_root: "/tmp/choir-take-test/owner-socket",
+    owner_socket: "/tmp/choir-take-test/owner-socket/owner.sock",
     owner_token: "a".repeat(64),
   }
   let prepared : NativeBoxLitePreparedEnvironment = {

@@ -4728,6 +4728,33 @@ scratch boundary, and typed process execution, then left no matching
 constructs a read-only result tree and proves the validated cleanup path
 removes it.
 
+At `2026-07-21`, the narrowed runtime owner was exercised through the real
+provider lifecycle rather than only through its standalone MCP probe. Codex's
+host boundary masks host `/tmp`, so an owner socket placed directly in the
+BoxLite runtime root was unreachable from the MCP child. The owner now places
+only that socket in a dedicated mode-`0700` directory. The Codex boundary
+binds that exact sibling directory read-only at a fixed path inside the
+sterile Take root; it cannot bind an arbitrary host path, and the surrounding
+BoxLite runtime directory, REST key, owner secret, logs, and client state stay
+outside the namespace.
+
+The real Codex Part lifecycle then passed with twelve effect receipts, one
+verification receipt, one audit receipt, one integration receipt, no repeated
+implementation after restart, and one serialized promotion. The equivalent
+Claude lifecycle passed, and the mixed-provider Goal ran one Claude Part and
+one Codex Part concurrently, produced two verification, audit, and integration
+receipts, and reached the expected combined tree. The audit instruction now
+names the already-bound verification evidence digests: the auditor still
+inspects the candidate independently but does not invent a missing-execution
+finding merely because implementation transcripts are intentionally absent.
+The executable commands were:
+
+```text
+moon run --target native src/bin/choir_conformance -- e2e --fixture native-codex-part-lifecycle
+moon run --target native src/bin/choir_conformance -- e2e --fixture native-part-lifecycle
+moon run --target native src/bin/choir_conformance -- e2e --fixture mixed-provider-goal
+```
+
 `GHSA-xjhv-pp2r-6f82` is a later medium-severity timeout bypass affecting
 versions through 0.8.2. Version admission is exact and advisory-driven; “some
 0.9.x” is not a pin.

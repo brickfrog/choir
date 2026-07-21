@@ -3,6 +3,7 @@ pub(all) struct NativeCodexDriverConfig {
   sterile_root : String
   mcp_executable : String
   mcp_arguments : Array[String]
+  boxlite_owner_socket_root : String?
   mcp_server_name : String
   allowed_tools : Array[String]
   timeout_ms : Int
@@ -46,6 +47,18 @@ fn valid_native_codex_token(value : String) -> Bool {
 }
 
 ///|
+fn native_codex_expected_owner_socket_root(sterile_root : String) -> String? {
+  let parts = sterile_root.split("/codex/")
+  if parts.length() == 2 &&
+    parts[0] != "" &&
+    valid_native_codex_token(parts[1]) {
+    Some(parts[0] + "/owner-socket")
+  } else {
+    None
+  }
+}
+
+///|
 fn validate_native_codex_config(
   config : NativeCodexDriverConfig,
 ) -> Result[Unit, @types.ChoirError] {
@@ -76,6 +89,38 @@ fn validate_native_codex_config(
       return Err(
         @types.ChoirError::validation_error(
           "native Codex connect trace path is invalid",
+        ),
+      )
+    _ => ()
+  }
+  let owner_socket_target = config.sterile_root + "/boxlite-owner/owner.sock"
+  let mut owner_socket_argument_count = 0
+  for index, argument in config.mcp_arguments {
+    if argument == "--owner-socket" {
+      owner_socket_argument_count = owner_socket_argument_count + 1
+      if index + 1 >= config.mcp_arguments.length() ||
+        config.mcp_arguments[index + 1] != owner_socket_target {
+        return Err(
+          @types.ChoirError::validation_error(
+            "native Codex owner socket target is invalid",
+          ),
+        )
+      }
+    }
+  }
+  match config.boxlite_owner_socket_root {
+    Some(root) if native_codex_expected_owner_socket_root(config.sterile_root) !=
+      Some(root) ||
+      owner_socket_argument_count != 1 =>
+      return Err(
+        @types.ChoirError::validation_error(
+          "native Codex owner socket binding is invalid",
+        ),
+      )
+    None if owner_socket_argument_count != 0 =>
+      return Err(
+        @types.ChoirError::validation_error(
+          "native Codex owner socket binding is absent",
         ),
       )
     _ => ()
@@ -212,6 +257,7 @@ fn native_codex_app_server_args(
 fn native_codex_host_boundary_args(
   sterile_root : String,
   working_directory : String,
+  boxlite_owner_socket_root : String?,
   executable : String,
   executable_args : Array[String],
 ) -> Array[String] {
@@ -220,6 +266,15 @@ fn native_codex_host_boundary_args(
     "/proc", "--tmpfs", "/tmp", "--bind", sterile_root, sterile_root, "--chdir",
     working_directory, "--", executable,
   ]
+  match boxlite_owner_socket_root {
+    Some(source) => {
+      let chdir = args.search("--chdir").unwrap()
+      args.insert(chdir, "--ro-bind")
+      args.insert(chdir + 1, source)
+      args.insert(chdir + 2, sterile_root + "/boxlite-owner")
+    }
+    None => ()
+  }
   for argument in executable_args {
     args.push(argument)
   }
@@ -274,7 +329,13 @@ pub async fn capture_native_codex_host_boundary(
   let run = async fn(path : String) -> Int {
     @process.run(
       "/usr/bin/bwrap",
-      native_codex_host_boundary_args(root, root, "/usr/bin/touch", [path]),
+      native_codex_host_boundary_args(
+        root,
+        root,
+        None,
+        "/usr/bin/touch",
+        [path],
+      ),
       extra_env={ "PATH": "/usr/bin:/bin", "LC_ALL": "C" },
       inherit_env=false,
       stdout=sink,
@@ -1050,6 +1111,21 @@ fn prepare_native_codex_app_server_home(
       return Err(native_codex_driver_error("app-server root is unavailable"))
     }
   }
+  match config.boxlite_owner_socket_root {
+    Some(source) => {
+      let target = config.sterile_root + "/boxlite-owner"
+      if @sys.realpath_native(source) != Some(source) ||
+        @sys.realpath_native(source + "/owner.sock") !=
+        Some(source + "/owner.sock") ||
+        !@sys.create_dir_all(target) ||
+        !@sys.chmod_mode(target, 0o700) {
+        return Err(
+          native_codex_driver_error("BoxLite owner socket is unavailable"),
+        )
+      }
+    }
+    None => ()
+  }
   if native_codex_ambient_configuration_present(config, allow_provider_state) {
     return Err(
       @types.ChoirError::policy_blocked(
@@ -1157,6 +1233,7 @@ async fn spawn_native_codex_app_server(
     argument in native_codex_host_boundary_args(
       config.sterile_root,
       native_codex_app_server_working_directory(config),
+      config.boxlite_owner_socket_root,
       traced_program,
       traced_args,
     ) {
@@ -2022,6 +2099,7 @@ pub async fn run_native_codex_conductor_turn(
   let bounded_args = native_codex_host_boundary_args(
     config.sterile_root,
     config.sterile_root,
+    None,
     codex_native,
     args,
   )
@@ -2067,6 +2145,7 @@ test "native Codex app-server argv removes native execution surfaces" {
     sterile_root: "/tmp/choir-codex-driver-test",
     mcp_executable: "/usr/bin/node",
     mcp_arguments: ["/opt/choir/sandbox-mcp.mjs"],
+    boxlite_owner_socket_root: None,
     mcp_server_name: "choir_sandbox",
     allowed_tools: ["read_file", "run"],
     timeout_ms: 60000,
@@ -2090,6 +2169,7 @@ test "native Codex connect observation is confined to the sterile root" {
     sterile_root: "/tmp/choir-codex-driver-test",
     mcp_executable: "/usr/bin/node",
     mcp_arguments: ["/opt/choir/sandbox-mcp.mjs"],
+    boxlite_owner_socket_root: None,
     mcp_server_name: "choir_sandbox",
     allowed_tools: ["read_file"],
     timeout_ms: 60000,
@@ -2107,11 +2187,67 @@ test "native Codex connect observation is confined to the sterile root" {
 }
 
 ///|
+test "native Codex owner socket binding is exact and paired with MCP argv" {
+  let root = "/tmp/choir-boxlite-test/codex/session-test"
+  let source = "/tmp/choir-boxlite-test/owner-socket"
+  let target = root + "/boxlite-owner/owner.sock"
+  let config : NativeCodexDriverConfig = {
+    sterile_root: root,
+    mcp_executable: "/usr/bin/node",
+    mcp_arguments: [
+      "/opt/choir/sandbox-mcp.mjs",
+      "--owner-socket",
+      target,
+    ],
+    boxlite_owner_socket_root: Some(source),
+    mcp_server_name: "choir_sandbox",
+    allowed_tools: ["read_file"],
+    timeout_ms: 60000,
+    connect_trace_path: None,
+  }
+  assert_true(validate_native_codex_config(config) is Ok(_))
+  assert_true(
+    validate_native_codex_config({
+      ..config,
+      mcp_arguments: [
+        "/opt/choir/sandbox-mcp.mjs",
+        "--owner-socket",
+        source + "/owner.sock",
+      ],
+    }) is Err(_),
+  )
+  assert_true(
+    validate_native_codex_config({
+      ..config,
+      boxlite_owner_socket_root: None,
+    }) is Err(_),
+  )
+  assert_true(
+    validate_native_codex_config({
+      ..config,
+      boxlite_owner_socket_root: Some("/tmp/other/owner-socket"),
+    }) is Err(_),
+  )
+  let args = native_codex_host_boundary_args(
+    root,
+    root,
+    Some(source),
+    "/usr/bin/true",
+    [],
+  )
+  let source_index = args.search(source).unwrap()
+  assert_eq(args[source_index - 1], "--ro-bind")
+  assert_eq(args[source_index + 1], root + "/boxlite-owner")
+  assert_false(args.contains("/tmp/choir-boxlite-test"))
+}
+
+///|
 test "native Codex initialization attests the sterile client identity" {
   let config : NativeCodexDriverConfig = {
     sterile_root: "/tmp/choir-codex-driver-test",
     mcp_executable: "/usr/bin/node",
     mcp_arguments: [],
+    boxlite_owner_socket_root: None,
     mcp_server_name: "choir_sandbox",
     allowed_tools: ["probe"],
     timeout_ms: 60000,
@@ -2137,7 +2273,13 @@ test "native Codex initialization attests the sterile client identity" {
 ///|
 test "native Codex host boundary masks host temporary files" {
   let root = "/tmp/choir-codex-host-boundary-test"
-  let args = native_codex_host_boundary_args(root, root, "/usr/bin/true", [])
+  let args = native_codex_host_boundary_args(
+    root,
+    root,
+    None,
+    "/usr/bin/true",
+    [],
+  )
   assert_eq(args[:4], ["--die-with-parent", "--ro-bind", "/", "/"])
   assert_true(args.contains("--dev-bind"))
   assert_true(args.contains("--proc"))

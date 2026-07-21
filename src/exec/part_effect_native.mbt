@@ -470,18 +470,23 @@ fn native_codex_config(
   session : @control.HarnessSession,
   sandbox : NativeBoxLiteTakeSandbox,
 ) -> Result[NativeCodexDriverConfig, @types.ChoirError] {
+  let sterile_root = runtime.config.codex_root + session.id.0
   let arguments = match
     native_boxlite_take_mcp_arguments(
       sandbox,
       runtime.config.sandbox_mcp_script,
+      owner_socket=Some(sterile_root + "/boxlite-owner/owner.sock"),
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
   Ok({
-    sterile_root: runtime.config.codex_root + session.id.0,
+    sterile_root,
     mcp_executable: runtime.config.node_executable,
     mcp_arguments: arguments,
+    boxlite_owner_socket_root: Some(
+      sandbox.prepared.server.owner_socket_root,
+    ),
     mcp_server_name: "choir_sandbox",
     allowed_tools: match sandbox.workspace_access {
       @sandbox.BoxLiteWorkspaceAccess::BoxLiteMutableWorkspace =>
@@ -1072,6 +1077,21 @@ async fn execute_native_audit(
     Ok(value) => value
     Err(error) => return Err(error)
   }
+  let passed_verification_receipts = snapshot.verification_receipts.filter(
+    fn(receipt) {
+      receipt.subject.part_id == subject.part_id &&
+      receipt.subject.candidate_commit_oid == subject.candidate_commit_oid &&
+      receipt.outcome == @control.VerificationOutcome::VerificationPassed
+    },
+  )
+  if passed_verification_receipts.length() == 0 {
+    return Err(
+      native_part_effect_error("audit lacks passed verification evidence"),
+    )
+  }
+  let verification_evidence = passed_verification_receipts.map(
+    fn(receipt) { receipt.evidence.digest.0 },
+  ).join(",")
   let changed_paths = candidate.changed_paths.map(fn(path) { path.0 }).join(",")
   let instruction = "Independently audit candidate " +
     candidate.commit_oid.0 +
@@ -1079,7 +1099,9 @@ async fn execute_native_audit(
     task +
     "\nThe candidate changed only these declared paths: " +
     changed_paths +
-    ". Findings must be attributable to this candidate or its task contract; unchanged work assigned to other Parts is outside this audit subject."
+    ". Independent verification already ran and passed every declared process; its evidence digests are " +
+    verification_evidence +
+    ". Treat those receipts as authoritative execution evidence, while independently inspecting the candidate itself. Do not infer a failure merely because the implementation transcript is absent. Findings must be attributable to this candidate or its task contract; unchanged work assigned to other Parts is outside this audit subject."
   let provider = match
     run_native_part_provider_take(
       runtime,
