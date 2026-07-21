@@ -520,17 +520,27 @@ pub async fn cleanup_native_boxlite_server(
 ) -> Result[Unit, @types.ChoirError] {
   stop_native_boxlite_server(server)
   @async.sleep(400)
+  cleanup_native_boxlite_runtime(server.config)
+}
+
+///|
+pub async fn cleanup_native_boxlite_runtime(
+  config : NativeBoxLiteServerConfig,
+) -> Result[Unit, @types.ChoirError] {
+  match validate_native_boxlite_server_config(config) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  if !@sys.path_exists(config.root) {
+    return Ok(())
+  }
   let removed = match
-    capture_native_boxlite_local_cli(
-      server.config,
-      ["rm", "--all", "--force"],
-      120000,
-    ) {
+    capture_native_boxlite_local_cli(config, ["rm", "--all", "--force"], 120000) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
   if removed.exit_code == 0 {
-    remove_native_boxlite_runtime_root(server.config)
+    remove_native_boxlite_runtime_root(config)
   } else {
     Err(
       native_boxlite_take_error(

@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-21T16:08:00-05:00
+Implementation snapshot updated through: 2026-07-21T18:25:00-05:00
 
 ## Charter Semantics and Readiness
 
@@ -116,6 +116,15 @@ unconnected product path usable.
   state. A native regression test proves cleanup of a nested separately
   sessioned child process; the live disposable daemon also stopped without a
   surviving matching provider or BoxLite process.
+- Terminal Goal assurance and fully reconciled cancellation now remove the
+  exact BoxLite runtime root instead of merely stopping its processes. Roots
+  remain only while a Goal is genuinely recoverable, paused before terminal
+  assurance, or uncertain. A fresh real Codex Goal completed implementation,
+  verification, independent Part audit, promotion, combined verification, and
+  independent Goal audit while the host's `choir-take-goal-*` root count stayed
+  `0 -> 0`; the pre-fix probe had exposed four abandoned 4 GiB roots. Normal
+  runtime cleanup also removes the disposable Codex Conductor home, while
+  durable Goal state and evidence remain until explicit `stop --purge`.
 
 - `choir init` now scaffolds only the current project files, starts the local
   daemon without a terminal multiplexer, bootstraps one authenticated

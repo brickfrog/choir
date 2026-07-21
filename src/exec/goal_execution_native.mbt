@@ -504,6 +504,86 @@ fn native_goal_runtime_root(
 }
 
 ///|
+fn native_goal_boxlite_server_config(
+  record : @workflow.GoalExecutionRecord,
+) -> Result[NativeBoxLiteServerConfig, @types.ChoirError] {
+  let runtime_key = native_goal_runtime_key(
+    record.repository_id,
+    record.goal.id,
+  )
+  let binary = match native_boxlite_binary_path() {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let runtime_dir = match native_boxlite_runtime_dir() {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  Ok({
+    binary,
+    runtime_dir,
+    root: native_goal_runtime_root(record.repository_id, record.goal.id),
+    port: 40000 + @sys.get_pid() % 10000,
+    api_key: "choir-goal-" + runtime_key,
+  })
+}
+
+///|
+async fn cleanup_native_goal_runtime(
+  record : @workflow.GoalExecutionRecord,
+) -> Result[Unit, @types.ChoirError] {
+  let runtime_root = native_goal_runtime_root(
+    record.repository_id,
+    record.goal.id,
+  )
+  if !@sys.path_exists(runtime_root) {
+    return Ok(())
+  }
+  let config = match native_goal_boxlite_server_config(record) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  cleanup_native_boxlite_runtime(config)
+}
+
+///|
+async fn finish_native_goal_runtime(
+  terminal_ready : Bool,
+  cleanup : async () -> Result[Unit, @types.ChoirError],
+) -> Result[Bool, @types.ChoirError] {
+  if terminal_ready {
+    match cleanup() {
+      Ok(_) => ()
+      Err(error) => return Err(error)
+    }
+  }
+  Ok(terminal_ready)
+}
+
+///|
+async test "Goal runtime cleanup is required only at a terminal boundary" {
+  let cleaned = @ref.new(0)
+  let cleanup = async fn() {
+    @async.sleep(0)
+    cleaned.val = cleaned.val + 1
+    Ok(())
+  }
+  assert_false(finish_native_goal_runtime(false, cleanup).unwrap())
+  assert_eq(cleaned.val, 0)
+  assert_true(finish_native_goal_runtime(true, cleanup).unwrap())
+  assert_eq(cleaned.val, 1)
+}
+
+///|
+async test "Goal cannot cross its terminal boundary when cleanup fails" {
+  let result = finish_native_goal_runtime(true, async fn() {
+    @async.sleep(0)
+    Err(native_goal_execution_error("cleanup failed"))
+  })
+  assert_true(result is Err(_))
+}
+
+///|
 fn native_goal_mcp_script() -> String? {
   resolve_native_runtime_asset(ChoirRuntimeAsset::ChoirSandboxMcp)
 }
@@ -635,11 +715,7 @@ async fn execute_native_goal_record(
     @sys.realpath_native(runtime_root) != Some(runtime_root) {
     return Err(native_goal_execution_error("runtime root is unavailable"))
   }
-  let binary = match native_boxlite_binary_path() {
-    Ok(value) => value
-    Err(error) => return Err(error)
-  }
-  let runtime_dir = match native_boxlite_runtime_dir() {
+  let server_config = match native_goal_boxlite_server_config(record) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -659,14 +735,7 @@ async fn execute_native_goal_record(
     Some(value) => value
     None => return Err(native_goal_execution_error("sandbox MCP is absent"))
   }
-  let server = match
-    start_native_boxlite_server({
-      binary,
-      runtime_dir,
-      root: runtime_root,
-      port: 40000 + @sys.get_pid() % 10000,
-      api_key: "choir-goal-" + runtime_key,
-    }) {
+  let server = match start_native_boxlite_server(server_config) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -1813,6 +1882,15 @@ async fn advance_native_goal_assurance(
       }
       Some(stored) => {
         if stored.record.stage == @workflow.GoalAssuranceStage::GoalAudited {
+          ignore(
+            match
+              finish_native_goal_runtime(true, async fn() {
+                cleanup_native_goal_runtime(execution)
+              }) {
+              Ok(value) => value
+              Err(error) => return Err(error)
+            },
+          )
           return Ok(@workflow.GoalAssuranceTickOutcome::GoalAssuranceComplete)
         }
         if stored.record.stage ==
@@ -2250,11 +2328,13 @@ pub async fn run_native_goal_execution_tick_with_forge(
         reconcile_native_goal_part_cancellation(
           project_dir, repository, repository_adapters, record, snapshots, forge,
         ) {
-        Ok((reconciled, finalization_known)) =>
-          Ok(
-            native_goal_cancellation_can_finish(reconciled) &&
-            finalization_known,
-          )
+        Ok((reconciled, finalization_known)) => {
+          let terminal_ready = native_goal_cancellation_can_finish(reconciled) &&
+            finalization_known
+          finish_native_goal_runtime(terminal_ready, async fn() {
+            cleanup_native_goal_runtime(record)
+          })
+        }
         Err(error) => Err(error)
       }
     },

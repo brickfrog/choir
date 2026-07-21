@@ -18,6 +18,8 @@
 #include <unistd.h>
 
 static volatile sig_atomic_t choir_cleanup_runtime_native = 0;
+
+int choir_rm_rf(const char *path);
 static volatile sig_atomic_t choir_sigusr1_flag = 0;
 static struct sigaction choir_saved_sigpipe_for_test;
 static int choir_saved_sigpipe_for_test_valid = 0;
@@ -484,6 +486,7 @@ void choir_init_cleanup_runtime_artifacts(void) {
     unlink(".choir/run/server.pid");
     unlink(".choir/run/server.sock");
     unlink(".choir/run/run_id");
+    (void)choir_rm_rf(".choir/run/codex-conductor");
 }
 
 int choir_get_file_size(const char* path) {

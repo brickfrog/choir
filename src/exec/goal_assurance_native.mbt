@@ -17,11 +17,7 @@ async fn create_native_goal_assurance_runtime(
     @sys.realpath_native(runtime_root) != Some(runtime_root) {
     return Err(native_goal_execution_error("runtime root is unavailable"))
   }
-  let binary = match native_boxlite_binary_path() {
-    Ok(value) => value
-    Err(error) => return Err(error)
-  }
-  let runtime_dir = match native_boxlite_runtime_dir() {
+  let server_config = match native_goal_boxlite_server_config(execution) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -41,14 +37,7 @@ async fn create_native_goal_assurance_runtime(
     Some(value) => value
     None => return Err(native_goal_execution_error("sandbox MCP is absent"))
   }
-  let server = match
-    start_native_boxlite_server({
-      binary,
-      runtime_dir,
-      root: runtime_root,
-      port: 40000 + @sys.get_pid() % 10000,
-      api_key: "choir-goal-" + runtime_key,
-    }) {
+  let server = match start_native_boxlite_server(server_config) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
