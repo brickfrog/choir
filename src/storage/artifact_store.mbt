@@ -39,6 +39,7 @@ pub(all) enum ArtifactProvenance {
   ArtifactGoalFinalizationRecord(@control.GoalId)
   ArtifactWorkflowSnapshot(@control.GoalId)
   ArtifactEffectWitness(@control.GoalId)
+  ArtifactProcessExecution(@control.GoalId)
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|

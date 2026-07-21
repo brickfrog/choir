@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-20T23:58:56-05:00
+Implementation snapshot updated through: 2026-07-21T00:16:12-05:00
 
 ## Charter Semantics and Readiness
 
@@ -508,6 +508,22 @@ unconnected product path usable.
   real BoxLite execution path independently recomputes the decoded process
   digest and rejects drift before launching; both Part and Goal verification
   pass their persisted verification-spec digest into that check.
+- Process execution now has a durable identity and state record distinct from
+  its enclosing provider effect. Before BoxLite dispatch, Choir persists the
+  owning Take, exact sandbox lease and generation, authority, validated process
+  digest, capability/input digests, and a deterministic runtime key, then
+  records `MayHaveOccurred`. A terminal exit persists its code, output digest,
+  and exact start/finish observations before verification evidence can depend
+  on it; replay consumes that terminal record without executing again. The
+  pinned `boxlite serve` handler does not implement its advertised idempotency
+  key and assigns an execution ID only after starting the guest process, so an
+  ambiguous start is never retried. Recovery destroys the complete registered
+  Take generation, records terminal process uncertainty, and lets the enclosing
+  Part or Goal assurance become recovery-uncertain. The registered
+  `effect.process_start_terminal_faults` case and the production persistence
+  test cover crashes before authorization, after authorization, after guest
+  dispatch, and after terminal persistence, with a maximum of one dispatch in
+  every row.
 - Verification and audit now execute against a sealed read-only subject with
   separate writable `/scratch` and `/output` roots. Their MCP surface exposes
   only candidate reads plus scoped scratch/output writes; candidate mutation
@@ -763,7 +779,7 @@ Earlier evidence anchors are commits `5fb93fe8` for the native Part path,
 the linter correction. With the current assurance, cancellation, and provider changes,
 `moon check --target native`, `moon test --target native`, and
 `moon run --target native src/bin/choir_lint` all exit successfully on
-2026-07-20. After deleting obsolete source and tests, the full native suite reports 334
+2026-07-21. After deleting obsolete source and tests, the full native suite reports 338
 passed and 0 failed. The
 compiler still reports the repository's existing warning set.
 
@@ -841,7 +857,7 @@ compiler still reports the repository's existing warning set.
   Extraction remains confined by `bwrap`. A fresh full Take rerun reached the
   pinned BoxLite runtime but its VM exited with code 139 before copy-out, so this
   does not yet claim a fresh live adapter pass or atomic artifact adoption. The
-  hermetic runner passes 35/35 cases.
+  hermetic runner passes 36/36 cases.
 - Further splitting or consolidating large live adapters only when a concrete
   boundary or dead caller justifies it. The branch-point audit found no closed
   source package imported only by another closed source package.
@@ -4323,6 +4339,17 @@ receipt; restart issued zero duplicate implementation dispatches. The
 candidate and promotion commits were
 `a5ee089287902099cd270cd7ad149eff861b7391` and
 `3d88e221df27010b993d07b7d432aba6d8cd4ae9` respectively.
+
+At `2026-07-21T00:16:12-05:00`, the Codex lifecycle passed again after durable
+process execution was connected to Part verification. The typed BoxLite check
+exited zero, its exact start/terminal state and output digest persisted before
+the verification receipt, and restart produced zero duplicate implementation
+dispatches. The run again recorded 12 effect receipts and one verification,
+audit, and integration receipt. The mixed Claude/Codex Goal also passed with
+concurrency two, 24 effect receipts, two verification receipts, two audit
+receipts, two integrations, and the expected combined tree. The accompanying
+native suite passed 338/338 and the hermetic runner passed 36/36, including all
+four registered process crash boundaries.
 
 At `2026-07-20T12:37:00-05:00`, the Codex-only lifecycle command passed again
 after deleting the generic runner, provider-hook/provisioning machinery, and

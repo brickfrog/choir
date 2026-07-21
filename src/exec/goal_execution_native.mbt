@@ -2038,6 +2038,20 @@ async fn advance_native_goal_assurance(
                   _ => false
                 }
                 if authorized_effect_id != Some(intent.effect_id) && !retry_safe {
+                  ignore(
+                    match
+                      reconcile_native_goal_processes_once(
+                        project_dir,
+                        repository,
+                        execution,
+                        git,
+                        record,
+                        intent,
+                      ) {
+                      Ok(value) => value
+                      Err(error) => return Err(error)
+                    },
+                  )
                   let uncertain = match
                     @workflow.record_goal_assurance_recovery_uncertain(record) {
                     Ok(value) => value

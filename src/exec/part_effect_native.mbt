@@ -255,14 +255,10 @@ fn store_native_sandbox_resource(
 }
 
 ///|
-async fn native_runtime_sandbox(
+fn read_native_sandbox_resource(
   runtime : NativePartEffectRuntime,
   generation_id : @control.SandboxGenerationId,
 ) -> Result[NativeBoxLiteTakeSandbox, @types.ChoirError] {
-  match runtime.sandboxes.get(generation_id.0) {
-    Some(value) => return Ok(value)
-    None => ()
-  }
   let path = match native_sandbox_registry_path(runtime, generation_id) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -301,11 +297,27 @@ async fn native_runtime_sandbox(
     source_digest: manifest.source_digest,
     workspace_access: manifest.workspace_access,
   }
+  Ok(sandbox)
+}
+
+///|
+async fn native_runtime_sandbox(
+  runtime : NativePartEffectRuntime,
+  generation_id : @control.SandboxGenerationId,
+) -> Result[NativeBoxLiteTakeSandbox, @types.ChoirError] {
+  match runtime.sandboxes.get(generation_id.0) {
+    Some(value) => return Ok(value)
+    None => ()
+  }
+  let sandbox = match read_native_sandbox_resource(runtime, generation_id) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
   match inspect_native_boxlite_take(sandbox) {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  runtime.prepared.val = Some(prepared)
+  runtime.prepared.val = Some(sandbox.prepared)
   runtime.sandboxes[generation_id.0] = sandbox
   Ok(sandbox)
 }
@@ -899,6 +911,7 @@ async fn native_post_take_tree(
 async fn execute_native_verification(
   runtime : NativePartEffectRuntime,
   snapshot : @workflow.PartWorkflowSnapshot,
+  intent : @workflow.PartEffectIntent,
   take_id : @control.TakeId,
   session_id : @control.HarnessSessionId,
   subject : @control.PartVerificationSubject,
@@ -922,21 +935,23 @@ async fn execute_native_verification(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let started_at = (runtime.config.now)()
   let process_result = match
-    execute_native_boxlite_process(
+    execute_durable_native_boxlite_process(
+      runtime,
+      snapshot,
+      intent,
+      take_id,
+      session,
       sandbox,
-      {
-        goal_id: snapshot.goal.id,
-        take_id,
-        fencing_epoch: snapshot.fencing_epoch,
-      },
       snapshot.task_contract.verification_specs[0].process_spec_digest,
       process,
-      fn(artifact) { native_artifact_exists(runtime, artifact) },
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
+  }
+  let started_at = match process_result.started_at {
+    Some(value) => value
+    None => return Err(native_part_effect_error("process start was not durable"))
   }
   let task = match
     read_native_instruction(
@@ -1184,7 +1199,7 @@ async fn execute_native_part_effect(
       normalize_native_implementation(runtime, snapshot, take_id, digest)
     @workflow.PartEffectKind::DispatchVerification(take_id, session_id, subject) =>
       execute_native_verification(
-        runtime, snapshot, take_id, session_id, subject,
+        runtime, snapshot, intent, take_id, session_id, subject,
       )
     @workflow.PartEffectKind::DispatchAudit(take_id, session_id, subject) =>
       execute_native_audit(runtime, snapshot, take_id, session_id, subject)
@@ -1229,6 +1244,18 @@ async fn reconcile_unwitnessed_native_part_effect(
     @workflow.PartEffectKind::DispatchImplementation(_, _)
     | @workflow.PartEffectKind::DispatchVerification(_, _, _)
     | @workflow.PartEffectKind::DispatchAudit(_, _, _) => {
+      let process_uncertain = match
+        reconcile_unadoptable_native_process(runtime, snapshot, intent) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      if process_uncertain {
+        return Err(
+          @types.ChoirError::provider_process_lost(
+            "an unkeyed guest process may have started; its sandbox generation was retired",
+          ),
+        )
+      }
       let session_id = match intent.kind {
         @workflow.PartEffectKind::DispatchImplementation(_, id)
         | @workflow.PartEffectKind::DispatchVerification(_, id, _)

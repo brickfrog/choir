@@ -84,10 +84,11 @@ test "registered pure conformance cases satisfy their typed oracles" {
       @conformance.process_validation_matrix_case(),
       @conformance.process_authority_fence_case(),
       @conformance.process_canonical_dispatch_case(),
+      @conformance.process_start_terminal_faults_case(),
     ],
     event_case_test_dependencies(),
   )
-  assert_eq(report.passed, 32)
+  assert_eq(report.passed, 33)
   assert_eq(report.failed, 0)
-  assert_eq(report.cases.length(), 32)
+  assert_eq(report.cases.length(), 33)
 }

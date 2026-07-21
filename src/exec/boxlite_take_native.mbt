@@ -35,13 +35,16 @@ pub(all) struct NativeBoxLiteTakeSandbox {
 pub(all) struct NativeSandboxProcessResult {
   exit_code : Int
   output : String
+  output_digest : @control.Digest
+  started_at : Int64?
+  finished_at : Int64?
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
 fn native_sandbox_process_evidence(result : NativeSandboxProcessResult) -> Json {
   {
     "exit_code": result.exit_code.to_json(),
-    "output_digest": @storage.artifact_digest(@utf8.encode(result.output)).to_json(),
+    "output_digest": result.output_digest.to_json(),
   }.to_json()
 }
 
@@ -51,6 +54,9 @@ test "durable process evidence excludes captured output" {
   let evidence = native_sandbox_process_evidence({
     exit_code: 1,
     output: "stderr: " + secret,
+    output_digest: @storage.artifact_digest(@utf8.encode("stderr: " + secret)),
+    started_at: Some(1L),
+    finished_at: Some(2L),
   }).stringify(indent=0)
   assert_true(evidence.contains("output_digest"))
   assert_true(evidence.contains("exit_code"))
@@ -1345,7 +1351,13 @@ pub async fn execute_native_boxlite_process(
       ),
     )
   }
-  Ok({ exit_code: capture.exit_code, output: capture.output })
+  Ok({
+    exit_code: capture.exit_code,
+    output: capture.output,
+    output_digest: @storage.artifact_digest(@utf8.encode(capture.output)),
+    started_at: None,
+    finished_at: None,
+  })
 }
 
 ///|

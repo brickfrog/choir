@@ -291,6 +291,7 @@ async fn native_goal_assurance_post_tree(
 async fn execute_native_goal_verification(
   runtime : NativePartEffectRuntime,
   record : @workflow.GoalAssuranceRecord,
+  intent : @workflow.GoalAssuranceEffectIntent,
   take_id : @control.TakeId,
   session_id : @control.HarnessSessionId,
   subject : @control.GoalVerificationSubject,
@@ -317,21 +318,26 @@ async fn execute_native_goal_verification(
       Ok(value) => value
       Err(error) => return Err(error)
     }
-    let started_at = (runtime.config.now)()
     let result = match
-      execute_native_boxlite_process(
+      execute_durable_native_process(
+        runtime,
+        record.goal_id,
+        record.fencing_epoch,
+        intent.effect_id,
+        spec.id.0,
+        take_id,
+        session,
+        record.identities.verification_sandbox,
         sandbox,
-        {
-          goal_id: record.goal_id,
-          take_id,
-          fencing_epoch: record.fencing_epoch,
-        },
         spec.process_spec_digest,
         process,
-        fn(artifact) { native_artifact_exists(runtime, artifact) },
       ) {
       Ok(value) => value
       Err(error) => return Err(error)
+    }
+    let started_at = match result.started_at {
+      Some(value) => value
+      None => return Err(native_goal_execution_error("process start is absent"))
     }
     processes.push((spec, result, started_at))
   }
@@ -597,7 +603,7 @@ async fn execute_native_goal_assurance_effect(
       subject
     ) =>
       execute_native_goal_verification(
-        runtime, record, take_id, session_id, subject,
+        runtime, record, intent, take_id, session_id, subject,
       )
     @workflow.GoalAssuranceEffectKind::DispatchGoalAudit(
       take_id,
@@ -642,5 +648,58 @@ async fn execute_native_goal_assurance_effect_once(
         Some(error) => Err(error)
         None => Ok(value)
       }
+  }
+}
+
+///|
+async fn reconcile_native_goal_processes_once(
+  project_dir : String,
+  repository : @workflow.PartWorkflowRepository,
+  execution : @workflow.GoalExecutionRecord,
+  git : NativeGoalRepositoryIdentity,
+  record : @workflow.GoalAssuranceRecord,
+  intent : @workflow.GoalAssuranceEffectIntent,
+) -> Result[Bool, @types.ChoirError] {
+  let runtime = match
+    create_native_goal_assurance_runtime(
+      project_dir, repository, execution, git, record,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let mut uncertain = false
+  match intent.kind {
+    @workflow.GoalAssuranceEffectKind::DispatchGoalVerification(_, _, _) =>
+      for spec in record.verification_specs {
+        let value = match
+          reconcile_unadoptable_native_process_id(
+            runtime,
+            record.goal_id,
+            record.fencing_epoch,
+            @sandbox.ProcessExecutionId(
+              intent.effect_id + ".process." + spec.id.0,
+            ),
+          ) {
+          Ok(result) => result
+          Err(error) => {
+            stop_native_boxlite_server(runtime.server.val)
+            return Err(error)
+          }
+        }
+        uncertain = uncertain || value
+      }
+    _ => ()
+  }
+  let mut stop_error : @types.ChoirError? = None
+  for sandbox in runtime.sandboxes.values() {
+    match stop_native_boxlite_take(sandbox) {
+      Ok(_) => ()
+      Err(error) => stop_error = Some(error)
+    }
+  }
+  stop_native_boxlite_server(runtime.server.val)
+  match stop_error {
+    Some(error) => Err(error)
+    None => Ok(uncertain)
   }
 }

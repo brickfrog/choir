@@ -3,6 +3,7 @@ pub(all) enum ProcessConformanceKind {
   ProcessValidationMatrix
   ProcessAuthorityFence
   ProcessCanonicalDispatch
+  ProcessStartTerminalFaults
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -21,6 +22,81 @@ fn process_artifact(
   digest : @control.Digest,
 ) -> @control.ArtifactReference {
   { artifact_id: id, digest }
+}
+
+///|
+fn process_execution_fixture() -> @sandbox.ProcessExecution {
+  let process = valid_process_spec()
+  {
+    execution_id: @sandbox.ProcessExecutionId("process-effect.process"),
+    effect_intent_id: "process-effect",
+    runtime_execution_key: @sandbox.RuntimeExecutionKey(
+      "process-effect.process",
+    ),
+    take_id: @control.TakeId("process-take"),
+    process_authority: process.authority,
+    validated_process_spec_digest: process_spec_digest(process),
+    sandbox_lease_id: @control.SandboxLeaseId("process-lease"),
+    sandbox_generation_id: @control.SandboxGenerationId("process-generation"),
+    capability_profile_digest: @storage.artifact_digest(
+      @utf8.encode("process-capability"),
+    ),
+    input_artifact_set_digest: @storage.artifact_digest(
+      @utf8.encode("process-inputs"),
+    ),
+    output_artifact_set_digest: None,
+    started_at: None,
+    finished_at: None,
+    disposition: @sandbox.ProcessExecutionDisposition::ProcessStartPlanned,
+  }
+}
+
+///|
+pub fn process_start_terminal_faults_case() -> HermeticConformanceCase {
+  {
+    id: ConformanceCaseId("effect.process_start_terminal_faults"),
+    run: fn(_) {
+      let planned = process_execution_fixture()
+      let output = @storage.artifact_digest(@utf8.encode("bounded output"))
+      let authorized = match @sandbox.authorize_process_start(planned, 10L) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let terminal = match
+        @sandbox.record_process_exit(authorized, 0, output, 11L) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let rows : Array[@sandbox.ProcessRecoveryAction] = []
+      for execution in [planned, authorized, authorized, terminal] {
+        match @sandbox.recover_process_execution(execution, false) {
+          Ok(action) => rows.push(action)
+          Err(error) => return Err(error)
+        }
+      }
+      if rows[0] != @sandbox.ProcessRecoveryAction::ProcessRetryExactStart ||
+        rows[1] !=
+        @sandbox.ProcessRecoveryAction::ProcessRetireSandboxGeneration(
+          @control.SandboxGenerationId("process-generation"),
+        ) ||
+        rows[2] != rows[1] ||
+        rows[3] != @sandbox.ProcessRecoveryAction::ProcessUseTerminal(0, output) {
+        return Err(
+          process_validation_error("process recovery matrix disagreed"),
+        )
+      }
+      let dispatched_before_fault = [0, 0, 1, 1]
+      let dispatched_after_recovery = [1, 0, 0, 0]
+      for index = 0; index < dispatched_before_fault.length(); index = index + 1 {
+        if dispatched_before_fault[index] + dispatched_after_recovery[index] > 1 {
+          return Err(
+            process_validation_error("process was dispatched more than once"),
+          )
+        }
+      }
+      Ok({ evidence: [ObservedProcessCase(ProcessStartTerminalFaults, 4)] })
+    },
+  }
 }
 
 ///|

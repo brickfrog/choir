@@ -90,6 +90,7 @@ fn run_hermetic() -> Int {
       @conformance.process_validation_matrix_case(),
       @conformance.process_authority_fence_case(),
       @conformance.process_canonical_dispatch_case(),
+      @conformance.process_start_terminal_faults_case(),
     ],
     hermetic_dependencies(),
   )
