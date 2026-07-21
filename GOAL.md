@@ -4022,6 +4022,16 @@ Adopt or preserve these mechanisms:
   expired-lease recovery. Choir should pin the exact `bd` version and JSON
   shapes it reads, but snapshot selection into Choir before execution rather
   than sharing Beads' mutable claims as workflow authority.
+  A 2026-07-21 source check at Beads commit
+  [`70e329d8b381ac95e4cc1af8df2f088460412eaf`](https://github.com/gastownhall/beads/blob/70e329d8b381ac95e4cc1af8df2f088460412eaf/cmd/bd/update.go#L32-L34)
+  rules out treating `bd update <id...> --claim` as one Goal-sized claim:
+  updates are atomic only per issue and explicitly retain earlier successes
+  when a later ID fails. Choir must therefore use durable per-Part claim
+  intents and partial-delivery reconciliation before it mirrors accepted Parts
+  to `in_progress`; a batch command or read-then-write rollback is not an
+  acceptable substitute. Until that protocol exists, the immutable accepted
+  selection remains authoritative and mutable Beads status is only an input
+  eligibility/projection surface.
 - **Semantic search remains advisory and local.** Semble returns path and line
   provenance, uses local tree-sitter chunks plus BM25/static embeddings, honors
   `.gitignore` and `.sembleignore`, caches indexes locally, and rebuilds when
