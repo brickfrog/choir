@@ -48,11 +48,11 @@ fn valid_native_codex_token(value : String) -> Bool {
 
 ///|
 fn native_codex_expected_owner_socket_root(sterile_root : String) -> String? {
-  let parts = sterile_root.split("/codex/")
+  let parts = sterile_root.split("/codex/").to_array()
   if parts.length() == 2 &&
     parts[0] != "" &&
-    valid_native_codex_token(parts[1]) {
-    Some(parts[0] + "/owner-socket")
+    valid_native_codex_token(parts[1].to_owned()) {
+    Some(parts[0].to_owned() + "/owner-socket")
   } else {
     None
   }
