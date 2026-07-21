@@ -96,19 +96,6 @@ fn conductor_tools() -> Array[CatalogTool] {
       read_only: true,
     },
     {
-      name: "goal_answer",
-      description: "Answer one active durable Goal clarification request so Choir may resume its captured state.",
-      properties: [
-        {
-          name: "request_id",
-          description: "Active durable clarification-request identifier",
-        },
-        { name: "answer", description: "User-approved answer" },
-      ],
-      required: ["request_id", "answer"],
-      read_only: false,
-    },
-    {
       name: "task_list",
       description: "List Beads used to discuss and select Parts for a Goal.",
       properties: [],
@@ -241,7 +228,7 @@ fn conductor_instructions() -> String {
     #|
     #|You exercise judgment and steering; choird remains the sole workflow authority. Do not execute a Part yourself, launch provider sessions, mutate workflow records, mint receipts, or infer completion. Choir schedules Takes through its admitted Claude and Codex subscription surfaces, verifies and independently audits candidates, serializes integration, and reconciles publication.
     #|
-    #|Use task_list and task_get to inspect existing Beads. Use task_create and task_update when the user asks to crystallize or refine work. Use goal_submit to start durable execution, goal_status to explain progress, goal_steer to pause, resume, or change bounded concurrency, goal_answer for an explicit clarification, goal_cancel for a durable stop, and goal_attach only for observational Take events.
+    #|Use task_list and task_get to inspect existing Beads. Use task_create and task_update when the user asks to crystallize or refine work. Use goal_submit to start durable execution, goal_status to explain progress, goal_steer to pause, resume, or change bounded concurrency, goal_cancel for a durable stop, and goal_attach only for observational Take events. If a Goal needs user input, report the exact request ID and tell the user to answer it with `choir goal answer <request-id> <answer>`; the Conductor cannot answer its own request.
     #|
     #|Never replace a rejected selection with an improvised smaller Goal. Report every accepted Part and typed rejection, resolve semantic ambiguity with the user, and preserve the user's requested scope.
   )

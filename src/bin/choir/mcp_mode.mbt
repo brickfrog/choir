@@ -381,8 +381,8 @@ fn mcp_run() -> Unit {
 ///|
 test "Conductor MCP bridge exposes only current Goal and Beads tools" {
   assert_eq(@mcp.conductor_tool_names(), [
-    "goal_submit", "goal_status", "goal_cancel", "goal_steer", "goal_attach", "goal_answer",
-    "task_list", "task_get", "task_create", "task_update",
+    "goal_submit", "goal_status", "goal_cancel", "goal_steer", "goal_attach", "task_list",
+    "task_get", "task_create", "task_update",
   ])
 }
 

@@ -99,7 +99,11 @@ unconnected product path usable.
   verification, independent Part audit, integration, combined-Goal
   verification, and independent Goal audit all passed. The Goal then paused
   with typed reason `GoalInputPublicationRemoteUnavailable`, as required for
-  the disposable repository with no configured remote.
+  the disposable repository with no configured remote. A subsequent installed
+  Claude status turn saw the nine-tool catalog, reported the exact active
+  request and `choir goal answer <request-id> <answer>` command, and explicitly
+  stated that it could not answer on the Goal's behalf. The durable input-answer
+  count remained unchanged.
 - Sealed Moon verification now stages the offline registry into a private
   writable Moon home and maps `.mooncakes` to scratch while the candidate tree
   remains read-only. Choir removes that generated cache link before every
@@ -128,7 +132,7 @@ unconnected product path usable.
   catalog. Codex starts from a sterile working root, ignores user configuration
   and repository rules, disables native execution, network, delegation,
   plugins, apps, hooks, memories, and browser surfaces, and admits only the
-  same ten Choir tools. Its one-time Choir capability remains environment-only;
+  same nine model-facing Choir tools. Its one-time Choir capability remains environment-only;
   the exact MCP child recovers only the fixed socket and capability names from
   its direct Codex parent when Codex filters the child environment. A live
   isolated process probe proves project initialization, authenticated Goal
@@ -170,16 +174,17 @@ unconnected product path usable.
   Conductor capability, workspace, and socket environment.
 - The Conductor MCP initialization and catalog now describe only the current
   product. Claude receives the Conductor/Goal/Part/Take authority boundary and
-  exactly ten typed Goal and Beads tools; old spawn, pane, worker, PR, and
+  exactly nine typed Goal and Beads tools; old spawn, pane, worker, PR, and
   server-reload commands are absent. Structured arguments remain JSON through
   dispatch, while the removed stringified-argument format is rejected. The MCP
   package no longer imports the old tool registry.
 - Authenticated Conductor tool calls now bypass the v1 tool dispatcher. The UDS
   binds the exact root identity, removes caller-supplied identity fields, and
-  routes the ten-tool surface directly to the native Goal and Beads adapter;
+  routes the nine-tool surface directly to the native Goal and Beads adapter;
   any other registered session and any unbound request fail closed. Goal
-  submission, status, cancellation, steering, attachment, and input answers use
-  the durable native stores. Task list/get/create/update use typed `bd` commands
+  submission, status, cancellation, steering, and attachment use the durable
+  native stores. User input answers remain available only through the human-run
+  `choir goal answer` CLI. Task list/get/create/update use typed `bd` commands
   through one injected execution capability, normalize Beads states to the
   public `todo`/`in_progress`/`done` domain, and remain hermetic under tests.
   Root bootstrap and registration now use a minimal Conductor server state that
@@ -825,10 +830,12 @@ unconnected product path usable.
   and gap-checked event journal for one Take. The path reloads state by Take ID
   after restart and is strictly observational.
 - Finalization outcomes that need a person now create one durable typed input
-  request and pause the Goal. `goal_answer` and `choir goal answer` bind the
-  user's answer to that exact request as an immutable artifact, replay the same
-  answer safely after restart, reject conflicting answers, and resume only the
-  captured state. Ordinary resume steering cannot bypass an active request.
+  request and pause the Goal. `choir goal answer` binds the user's answer to
+  that exact request as an immutable artifact, replays the same answer safely
+  after restart, rejects conflicting answers, and resumes only the captured
+  state. `goal_answer` is deliberately absent from the model-facing MCP
+  catalog, so a Conductor can report the request but cannot satisfy it.
+  Ordinary resume steering cannot bypass an active request.
   An assured Goal whose repository has no `origin` now follows this path with
   the exact `GoalInputPublicationRemoteUnavailable` reason. It creates no
   publication intent and does not retry on each daemon tick; after the user
@@ -918,7 +925,7 @@ compiler still reports the repository's existing warning set.
   PR, readiness, and terminal projection at concurrency limits 1, 2, and 4.
   The admitted parallelism is 1/2/2 and every run has the same semantic result.
 - A direct Claude Conductor `/goal` turn in a disposable repository used the
-  real ten-tool MCP surface to inspect Beads and submit a durable Goal. The
+  restricted MCP surface to inspect Beads and submit a durable Goal. The
   daemon then ran the accepted Part through Codex implementation, native Moon
   verification, an independent Part audit, promotion, combined-tree
   verification, and an independent Goal audit. The run stopped honestly at
@@ -3472,7 +3479,7 @@ implemented; their exact live MCP/event path and complete BoxLite Part fixture
 pass. One Claude and one Codex Part now also complete in the same durable Goal:
 provider execution overlaps, while promotion remains serialized and
 provider-private state does not enter scheduling or gates. The Codex Conductor
-bridge is now implemented with the same exact ten-tool Goal surface, a
+bridge is now implemented with the same exact nine-tool Goal surface, a
 subscription-backed persistent thread, and fail-closed native-tool event
 validation. A live isolated probe now proves Claude and Codex independently
 reconnect to one durable paused Goal through the same daemon and observe the
@@ -4418,7 +4425,7 @@ tool call.
 
 The launch ignores ambient Codex configuration and repository rules, disables
 native execution and other undeclared host surfaces, uses a sterile working
-root, and requires the exact Choir MCP server with the same ten tools exposed
+root, and requires the exact Choir MCP server with the same nine tools exposed
 to Claude. Choir rejects thread drift, undeclared tools, native host-tool
 events, incomplete tool lifecycles, failed turns, and non-JSON output. The
 one-time Conductor capability is never placed on the command line or disk; the

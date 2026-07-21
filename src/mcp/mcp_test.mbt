@@ -47,8 +47,8 @@ test "Conductor translation rejects stringified arguments" {
 ///|
 test "Conductor catalog exposes only Goal and Beads operations" {
   assert_eq(@mcp.conductor_tool_names(), [
-    "goal_submit", "goal_status", "goal_cancel", "goal_steer", "goal_attach", "goal_answer",
-    "task_list", "task_get", "task_create", "task_update",
+    "goal_submit", "goal_status", "goal_cancel", "goal_steer", "goal_attach", "task_list",
+    "task_get", "task_create", "task_update",
   ])
   let response = @mcp.tools_list_response(Number(20), true)
   guard response.result is Some(Object(result)) else {
@@ -57,11 +57,34 @@ test "Conductor catalog exposes only Goal and Beads operations" {
   guard result.get("tools") is Some(Array(tools)) else {
     fail("expected tools array")
   }
-  assert_eq(tools.length(), 10)
+  assert_eq(tools.length(), 9)
   let rendered = tools.to_json().stringify()
   assert_true(rendered.contains("goal_submit"))
   assert_true(rendered.contains("maximum_parallel_parts"))
   assert_true(rendered.contains("task_create"))
+  assert_false(rendered.contains("goal_answer"))
+}
+
+///|
+test "Conductor cannot answer its own Goal input request" {
+  let arguments : Map[String, Json] = {
+    "request_id": "request-a".to_json(),
+    "answer": "invented by the Conductor".to_json(),
+  }
+  let params : Map[String, Json] = {
+    "name": "goal_answer".to_json(),
+    "arguments": arguments.to_json(),
+  }
+  let rpc : @mcp.JsonRpcRequest = {
+    jsonrpc: "2.0",
+    id: Some(Number(23)),
+    req_method: method_tools_call,
+    params: Some(params.to_json()),
+  }
+  match @mcp.to_internal_request(rpc) {
+    Err(error) => assert_eq(error.code, err_method_not_found)
+    Ok(_) => fail("model-facing Goal answer was accepted")
+  }
 }
 
 ///|
