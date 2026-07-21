@@ -205,6 +205,7 @@ pub(all) enum AuditConformanceKind {
 ///|
 pub(all) enum CancellationConformanceKind {
   CancellationPartEffectOrdering
+  CancellationGoalOrderingMatrix
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|

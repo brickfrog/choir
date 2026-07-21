@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-20T19:40:58-05:00
+Implementation snapshot updated through: 2026-07-20T19:53:05-05:00
 
 ## Charter Semantics and Readiness
 
@@ -161,18 +161,18 @@ unconnected product path usable.
   Typed process data and restricted Conductor launch assembly live at the
   `src/exec` host-I/O seam; there is no residual workspace package. This
   follow-up removes a net 8,613 lines and seven more tracked source-tree files,
-  leaving 178 files under `src/`.
+  leaving 173 tracked files under `src/`.
 - Fixed-domain Goal, Part, Take, harness-session, event, assurance, receipt,
   integration, and cancellation types plus pure transition functions.
 - Durable restart-readable state and content-addressed artifact stores with
   transactional fault injection.
 - A hermetic conformance runner with injected clock, identifiers, adapters,
-  and typed fault points. Its command now runs thirty registered cases: the
+  and typed fault points. Its command now runs thirty-one registered cases: the
   runner dependency contract, `selection.exact_snapshot`,
   `selection.revision_invalidation`,
   `scheduler.generated_dags`, `branch.initialization_faults`,
   `integration.conflict_repair`, six
-  audit-authority/recovery cases, one Part cancellation-ordering case, ten event/recovery
+  audit-authority/recovery cases, two cancellation-ordering cases, ten event/recovery
   cases, four mutation-ownership cases, and three process-policy cases described
   below. The audit cases prove a missing gate is passive, author Take/sandbox/
   session reuse is rejected, and seven independent subject/policy changes stale
@@ -292,6 +292,12 @@ unconnected product path usable.
   preserved unchanged for witness reconciliation. Every result round-trips
   through the durable snapshot codec, known dispositions are terminal, and
   replay of the unresolved integration performs no mutation.
+- `cancellation.ordering_matrix` now composes the branch-initialization and
+  Part-effect cases with the production Goal-assurance, publication, final-PR,
+  and terminal lifecycle transitions. It checks twenty-three cancellation
+  orderings: twenty-two reach a known or terminal disposition, while an
+  authorized branch seal correctly remains unresolved until its exact witness
+  is observed. Replaying the resulting records is mutation-free.
 - Codex Takes now use one restricted `codex app-server` process per Take over a
   private stdio FIFO and bounded owner-only response log. Choir durably binds
   the exact session, thread, turn, deterministic client-message ID, request
@@ -683,16 +689,11 @@ compiler still reports the repository's existing warning set.
   provider dispatch, or a live external final-PR create.
 
 ### Not yet connected
-- The remaining generated Goal-level cancellation-ordering edge cases beyond
-  the registered Part-effect matrix and the implemented branch-initialization,
-  provider, integration/conflict-repair, Goal-assurance, publication, and
-  final-PR reconciliation paths.
 - A live external final-PR canary for the native forge transport. The checked
   synthetic forge and pure workflow matrices prove control-plane fault,
   ambiguity, remote-state, readiness, and cancellation behavior without
   mutating an external repository.
-- The remaining Goal-level cancellation-ordering and hostile-surface
-  conformance cases. Duplicate conflicts, cursor gaps, late
+- The remaining hostile-surface conformance cases. Duplicate conflicts, cursor gaps, late
   terminals, conflicting terminals, fixed-seed generated DAG scheduling,
   ownership normalization/conflicts, candidate under-claiming, and
   rename/delete/generated-file path coverage are registered in the hermetic

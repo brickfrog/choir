@@ -20,6 +20,13 @@ fn event_case_test_dependencies() -> @conformance.ConformanceDependencies {
       }
     },
     fault_enabled: fn(point) {
+      point ==
+      @conformance.FaultPoint::BranchInitAfterIntentBeforeAuthorized ||
+      point ==
+      @conformance.FaultPoint::BranchInitAfterAuthorizedBeforeRefTransaction ||
+      point == @conformance.FaultPoint::BranchInitDuringRefTransaction ||
+      point ==
+      @conformance.FaultPoint::BranchInitAfterRefTransactionBeforeReceipt ||
       point == @conformance.FaultPoint::EventBeforeIngestTransaction ||
       point ==
       @conformance.FaultPoint::EventAfterIngestTransactionBeforeSourceAck ||
@@ -65,6 +72,7 @@ test "registered pure conformance cases satisfy their typed oracles" {
       @conformance.audit_result_reconcile_case(),
       @conformance.audit_receipt_replay_case(),
       @conformance.cancellation_part_effect_ordering_case(),
+      @conformance.cancellation_ordering_matrix_case(),
       @conformance.ownership_normalization_case(),
       @conformance.ownership_conflict_matrix_case(),
       @conformance.ownership_underclaim_case(),
@@ -75,7 +83,7 @@ test "registered pure conformance cases satisfy their typed oracles" {
     ],
     event_case_test_dependencies(),
   )
-  assert_eq(report.passed, 27)
+  assert_eq(report.passed, 28)
   assert_eq(report.failed, 0)
-  assert_eq(report.cases.length(), 27)
+  assert_eq(report.cases.length(), 28)
 }
