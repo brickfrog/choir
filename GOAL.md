@@ -336,6 +336,14 @@ unconnected product path usable.
   then completed its one declared MCP call inside the same boundary. This
   replaces the provisional syscall-observer experiment entirely. Combined
   evidence now covers thirteen rows; `HOST-READ-004` and `NETWORK-012` remain.
+- The admitted Codex Bubblewrap boundary now replaces host `/tmp` with a fresh
+  private filesystem before rebinding the exact sterile session root. A live
+  subscription-backed Take proves `HOST-READ-004`: its declared MCP child
+  attempts to read a synthetic secret from a host sibling path, observes only
+  a typed denial marker inside the sterile root, completes the one declared
+  tool call, and retains none of the secret in normalized events or terminal
+  output. Combined live evidence now covers fourteen rows; only `NETWORK-012`
+  remains unproven.
 - Codex MCP resource discovery is now classified as provider-side discovery,
   not as a Part effect, only for the two read-only discovery methods and only
   when Codex identifies either the exact declared server or its reserved

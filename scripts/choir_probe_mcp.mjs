@@ -1,5 +1,5 @@
 import readline from "node:readline";
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 
 const delayIndex = process.argv.indexOf("--delay-ms");
 const delayMs = delayIndex >= 0 ? Number(process.argv[delayIndex + 1]) : 0;
@@ -9,6 +9,12 @@ const credentialCanaryPath =
 const toolStartCanaryIndex = process.argv.indexOf("--tool-start-canary-path");
 const toolStartCanaryPath =
   toolStartCanaryIndex >= 0 ? process.argv[toolStartCanaryIndex + 1] : null;
+const readCanaryIndex = process.argv.indexOf("--read-canary-path");
+const readCanaryPath =
+  readCanaryIndex >= 0 ? process.argv[readCanaryIndex + 1] : null;
+const readResultIndex = process.argv.indexOf("--read-result-path");
+const readResultPath =
+  readResultIndex >= 0 ? process.argv[readResultIndex + 1] : null;
 if (!Number.isInteger(delayMs) || delayMs < 0 || delayMs > 30_000) {
   throw new Error("invalid probe delay");
 }
@@ -61,6 +67,15 @@ input.on("line", (line) => {
     case "tools/call":
       if (toolStartCanaryPath) {
         appendFileSync(toolStartCanaryPath, "started\n", { mode: 0o600 });
+      }
+      if (readCanaryPath && readResultPath) {
+        let observation = "denied";
+        try {
+          observation = `read:${readFileSync(readCanaryPath, "utf8")}`;
+        } catch {
+          // The admitted host boundary must make this path unreachable.
+        }
+        writeFileSync(readResultPath, observation, { mode: 0o600 });
       }
       setTimeout(() => {
         respond(request.id, {

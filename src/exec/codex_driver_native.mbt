@@ -206,22 +206,9 @@ fn native_codex_host_boundary_args(
   executable_args : Array[String],
 ) -> Array[String] {
   let args : Array[String] = [
-    "--die-with-parent",
-    "--ro-bind",
-    "/",
-    "/",
-    "--dev-bind",
-    "/dev",
-    "/dev",
-    "--proc",
-    "/proc",
-    "--bind",
-    sterile_root,
-    sterile_root,
-    "--chdir",
-    working_directory,
-    "--",
-    executable,
+    "--die-with-parent", "--ro-bind", "/", "/", "--dev-bind", "/dev", "/dev", "--proc",
+    "/proc", "--tmpfs", "/tmp", "--bind", sterile_root, sterile_root, "--chdir",
+    working_directory, "--", executable,
   ]
   for argument in executable_args {
     args.push(argument)
@@ -277,9 +264,7 @@ pub async fn capture_native_codex_host_boundary(
   let run = async fn(path : String) -> Int {
     @process.run(
       "/usr/bin/bwrap",
-      native_codex_host_boundary_args(
-        root, root, "/usr/bin/touch", [path],
-      ),
+      native_codex_host_boundary_args(root, root, "/usr/bin/touch", [path]),
       extra_env={ "PATH": "/usr/bin:/bin", "LC_ALL": "C" },
       inherit_env=false,
       stdout=sink,
@@ -433,10 +418,16 @@ fn native_codex_ambient_configuration_present(
   allow_provider_state : Bool,
 ) -> Bool {
   let home_entries = @sys.list_dir_all(config.sterile_root + "/home")
-  if ((!allow_provider_state && home_entries.length() != 0) ||
-    (allow_provider_state &&
-    (home_entries.length() > 1 ||
-    (home_entries.length() == 1 && home_entries[0] != ".cache")))) ||
+  if (
+      (!allow_provider_state && home_entries.length() != 0) ||
+      (
+        allow_provider_state &&
+        (
+          home_entries.length() > 1 ||
+          (home_entries.length() == 1 && home_entries[0] != ".cache")
+        )
+      )
+    ) ||
     @sys.list_dir_all(native_codex_app_server_working_directory(config)).length() !=
     0 {
     return true
@@ -701,7 +692,11 @@ fn native_codex_pid_witness(
     .trim()
     .to_owned()
   let pid = @string.parse_int(raw) catch { _ => return None }
-  if pid > 1 { Some(pid) } else { None }
+  if pid > 1 {
+    Some(pid)
+  } else {
+    None
+  }
 }
 
 ///|
@@ -762,8 +757,10 @@ fn load_native_codex_manifest(
     manifest.client_user_message_id == "" ||
     manifest.initialization_notification_may_have_been_sent !=
     (manifest.initialization_attestation_digest is Some(_)) ||
-    (manifest.server_initialized &&
-    !manifest.initialization_notification_may_have_been_sent) {
+    (
+      manifest.server_initialized &&
+      !manifest.initialization_notification_may_have_been_sent
+    ) {
     Err(native_codex_driver_error("Take session manifest identity is stale"))
   } else {
     Ok(Some(manifest))
@@ -1111,10 +1108,8 @@ async fn spawn_native_codex_app_server(
   }
   let mut witnessed_pid : Int? = None
   for poll = 0; poll < 100; poll = poll + 1 {
-    match native_codex_witnessed_server_pid(
-      config,
-      prepared.server_generation,
-    ) {
+    match
+      native_codex_witnessed_server_pid(config, prepared.server_generation) {
       Some(value) => {
         witnessed_pid = Some(value)
         break
@@ -1135,7 +1130,7 @@ async fn spawn_native_codex_app_server(
     }
   }
   after_server_started()
-  let updated = { ..prepared, server_pid }
+  let updated = { ..prepared, server_pid, }
   match store_native_codex_manifest(config, updated) {
     Ok(_) => Ok(updated)
     Err(error) => {
@@ -1187,10 +1182,7 @@ async fn ensure_native_codex_app_server(
     stop_native_codex_owned_server(config, manifest.server_pid)
     manifest = match
       spawn_native_codex_app_server(
-        config,
-        codex,
-        manifest,
-        after_server_started,
+        config, codex, manifest, after_server_started,
       ) {
       Ok(value) => value
       Err(error) => return Err(error)
@@ -1238,10 +1230,7 @@ async fn ensure_native_codex_app_server(
     Err(error) => return Err(error)
   }
   after_initialized_notification_sent()
-  manifest = {
-    ..manifest,
-    server_initialized: true,
-  }
+  manifest = { ..manifest, server_initialized: true }
   match store_native_codex_manifest(config, manifest) {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -1557,9 +1546,7 @@ pub async fn run_native_codex_take(
   }
   match
     prepare_native_codex_app_server_home(
-      config,
-      provider_home,
-      allow_provider_state,
+      config, provider_home, allow_provider_state,
     ) {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -1622,11 +1609,7 @@ pub async fn run_native_codex_take(
   if terminal_trace == "" {
     manifest = match
       ensure_native_codex_app_server(
-        config,
-        codex_native,
-        manifest,
-        after_server_started,
-        after_initialized_notification_sent,
+        config, codex_native, manifest, after_server_started, after_initialized_notification_sent,
       ) {
       Ok(value) => value
       Err(error) => return Err(error)
@@ -1743,11 +1726,7 @@ pub async fn run_native_codex_take(
     while terminal_trace == "" {
       manifest = match
         ensure_native_codex_app_server(
-          config,
-          codex_native,
-          manifest,
-          after_server_started,
-          after_initialized_notification_sent,
+          config, codex_native, manifest, after_server_started, after_initialized_notification_sent,
         ) {
         Ok(value) => value
         Err(error) => return Err(error)
@@ -2060,14 +2039,15 @@ test "native Codex initialization attests the sterile client identity" {
 }
 
 ///|
-test "native Codex host boundary exposes only the sterile root writable" {
+test "native Codex host boundary masks host temporary files" {
   let root = "/tmp/choir-codex-host-boundary-test"
-  let args = native_codex_host_boundary_args(
-    root, root, "/usr/bin/true", [],
-  )
+  let args = native_codex_host_boundary_args(root, root, "/usr/bin/true", [])
   assert_eq(args[:4], ["--die-with-parent", "--ro-bind", "/", "/"])
   assert_true(args.contains("--dev-bind"))
   assert_true(args.contains("--proc"))
+  assert_true(args.contains("--tmpfs"))
+  let tmpfs = args.search("--tmpfs").unwrap()
+  assert_eq(args[tmpfs + 1], "/tmp")
   assert_true(args.contains("--bind"))
   assert_eq(args[args.length() - 2], "--")
   assert_eq(args[args.length() - 1], "/usr/bin/true")
