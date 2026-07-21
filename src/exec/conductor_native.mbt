@@ -2,9 +2,14 @@
 priv struct NativeConductorTask {
   id : String
   title : String
+  description : String
+  acceptance_criteria : String
   status : @types.TaskStatus
   assignee : String
   notes : String
+  dependency_count : Int
+  blocking_dependency_ids : Array[String]
+  dependencies_loaded : Bool
 }
 
 ///|
@@ -83,6 +88,7 @@ fn native_conductor_task_status_for_beads(status : @types.TaskStatus) -> String 
 ///|
 fn native_conductor_task_from_json(
   value : Json,
+  require_dependency_details : Bool,
 ) -> Result[NativeConductorTask, @types.ChoirError] {
   guard value is Object(fields) else {
     return Err(@types.ChoirError::validation_error("invalid Beads task JSON"))
@@ -101,18 +107,95 @@ fn native_conductor_task_from_json(
     Ok(value) => value
     Err(error) => return Err(error)
   }
+  let dependency_count = match fields.get("dependency_count") {
+    Some(Number(value, ..)) if value.to_int() >= 0 => value.to_int()
+    Some(_) =>
+      return Err(
+        @types.ChoirError::validation_error(
+          "Beads task has an invalid dependency count",
+        ),
+      )
+    None => 0
+  }
+  let blocking_dependency_ids : Array[String] = []
+  let dependencies_loaded = match fields.get("dependencies") {
+    Some(Array(dependencies)) => {
+      if dependency_count != dependencies.length() {
+        return Err(
+          @types.ChoirError::validation_error(
+            "Beads task dependency count does not match its details",
+          ),
+        )
+      }
+      for dependency in dependencies {
+        guard dependency is Object(dependency_fields) else {
+          return Err(
+            @types.ChoirError::validation_error(
+              "Beads task contains an invalid dependency",
+            ),
+          )
+        }
+        let dependency_id = @types.json_field_string(dependency_fields, "id")
+          .unwrap_or("")
+          .trim()
+          .to_owned()
+        let dependency_type = @types.json_field_string(
+            dependency_fields, "dependency_type",
+          )
+          .unwrap_or("")
+          .trim()
+          .to_owned()
+        if dependency_id == "" || dependency_type == "" {
+          return Err(
+            @types.ChoirError::validation_error(
+              "Beads task dependency requires id and dependency_type",
+            ),
+          )
+        }
+        if dependency_type == "blocks" {
+          blocking_dependency_ids.push(dependency_id)
+        }
+      }
+      blocking_dependency_ids.sort()
+      true
+    }
+    Some(_) =>
+      return Err(
+        @types.ChoirError::validation_error(
+          "Beads task dependencies have the wrong shape",
+        ),
+      )
+    None => {
+      if require_dependency_details && dependency_count > 0 {
+        return Err(
+          @types.ChoirError::validation_error(
+            "Beads task omitted required dependency details",
+          ),
+        )
+      }
+      dependency_count == 0
+    }
+  }
   Ok({
     id,
     title,
+    description: @types.json_field_string(fields, "description").unwrap_or(""),
+    acceptance_criteria: @types.json_field_string(fields, "acceptance_criteria").unwrap_or(
+      "",
+    ),
     status: parsed_status,
     assignee: @types.json_field_string(fields, "assignee").unwrap_or(""),
     notes: @types.json_field_string(fields, "notes").unwrap_or(""),
+    dependency_count,
+    blocking_dependency_ids,
+    dependencies_loaded,
   })
 }
 
 ///|
 fn native_conductor_tasks_from_output(
   output : String,
+  require_dependency_details? : Bool = false,
 ) -> Result[Array[NativeConductorTask], @types.ChoirError] {
   let value = @json.parse(output) catch {
     _ => return Err(@types.ChoirError::validation_error("invalid Beads JSON"))
@@ -124,7 +207,7 @@ fn native_conductor_tasks_from_output(
   }
   let tasks : Array[NativeConductorTask] = []
   for item in items {
-    match native_conductor_task_from_json(item) {
+    match native_conductor_task_from_json(item, require_dependency_details) {
       Ok(task) => tasks.push(task)
       Err(error) => return Err(error)
     }
@@ -137,10 +220,41 @@ fn NativeConductorTask::to_json(self : NativeConductorTask) -> Json {
   {
     "id": self.id.to_json(),
     "title": self.title.to_json(),
+    "description": self.description.to_json(),
+    "acceptance_criteria": self.acceptance_criteria.to_json(),
     "status": self.status.to_wire_string().to_json(),
     "assignee": self.assignee.to_json(),
     "notes": self.notes.to_json(),
+    "dependency_count": self.dependency_count.to_json(),
+    "blocking_dependency_ids": self.blocking_dependency_ids.to_json(),
+    "dependencies_loaded": self.dependencies_loaded.to_json(),
   }.to_json()
+}
+
+///|
+pub async fn validate_native_beads_cli(
+  capture? : async (Command) -> (Int, String) = capture_command_merged,
+) -> Result[Unit, @types.ChoirError] {
+  let (exit_code, output) = capture({
+    program: "bd",
+    args: ["--version"],
+    workdir: None,
+  })
+  if exit_code != 0 {
+    return Err(
+      @types.ChoirError::transport_error(
+        "Beads 1.1.0 is required but bd --version failed",
+      ),
+    )
+  }
+  if output.trim() != "bd version 1.1.0 (v1.1.0)" {
+    return Err(
+      @types.ChoirError::validation_error(
+        "Beads 1.1.0 is required; observed " + output.trim().to_owned(),
+      ),
+    )
+  }
+  Ok(())
 }
 
 ///|
@@ -181,7 +295,7 @@ async fn dispatch_native_task_list(
     native_conductor_capture_beads(
       project_dir,
       "list",
-      ["list", "--json", "--all"],
+      ["list", "--json", "--all", "--readonly"],
       capture,
     ) {
     Ok(value) => value
@@ -211,13 +325,14 @@ async fn dispatch_native_task_get(
     native_conductor_capture_beads(
       project_dir,
       "show",
-      ["show", id, "--json"],
+      ["show", id, "--json", "--readonly"],
       capture,
     ) {
     Ok(value) => value
     Err(error) => return @types.Response::Err(error.message())
   }
-  match native_conductor_tasks_from_output(output) {
+  match
+    native_conductor_tasks_from_output(output, require_dependency_details=true) {
     Ok([task]) =>
       @types.Response::ok_values({
         "status": "ok".to_json(),

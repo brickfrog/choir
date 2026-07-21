@@ -3,8 +3,8 @@
 Status: active product and architecture charter
 
 Implementation status: the local Conductor-to-Goal-to-provider path is
-implemented and directly launchable. The complete hostile/fault matrix remains
-the acceptance gate.
+implemented and directly launchable. The required hostile/fault matrix is
+implemented and passing.
 
 Decision state: the strategic direction—local durable authority,
 provider-native Conductor sessions, isolated part execution, passive VSDD gates,
@@ -141,6 +141,13 @@ unconnected product path usable.
   branch augmentation, connection-lifetime variants, TCP fallback, and dead
   TCP reader have been deleted with their compatibility tests. This removes
   another 1,806 lines and leaves 189 source files.
+- The Beads boundary now pins `bd` 1.1.0 at Conductor startup. `task_get`
+  exposes description, acceptance criteria, dependency count, exact blocking
+  dependency IDs, and whether dependency details were loaded. Goal submission
+  validates the pinned issue/dependency shape and rejects missing, malformed,
+  or count-mismatched dependency details before recording a selection. The
+  real `choir init` → `choird` → restricted Conductor launch probe passes with
+  the installed pinned client.
 - The internal UDS request no longer carries a caller-supplied role. Conductor
   authority comes exclusively from the authenticated connection, the
   unauthenticated MCP catalog is empty, and legacy role-bearing request JSON is
@@ -191,8 +198,8 @@ unconnected product path usable.
   result and receipt transactions, restart between the receipt transaction and
   passive gate evaluation, and fence a conflicting provider delivery. They
   prove exactly one authorizing receipt, no gate-produced work, and no receipt
-  after protocol violation. It does not yet implement the complete required
-  case matrix.
+  after protocol violation. Together with the specialized live/native reports,
+  it implements the complete required case matrix.
 - Claude and Codex now derive each durable harness-event payload digest only
   from the typed safe event kind and its redaction state. Provider tool names,
   terminal text, and raw trace fields are neither retained nor hashed; Codex
@@ -848,15 +855,15 @@ compiler still reports the repository's existing warning set.
   interactive Claude `/goal` turn, interruption during an in-flight Goal-level
   provider dispatch.
 
-### Not yet connected
-- The remaining hostile-surface conformance cases. Duplicate conflicts, cursor gaps, late
-  terminals, conflicting terminals, fixed-seed generated DAG scheduling,
-  ownership normalization/conflicts, candidate under-claiming, and
-  rename/delete/generated-file path coverage are registered in the hermetic
-  runner. Native Git acquisition now separately proves deletion/rename sides,
-  case-distinct paths, symlink identity, and composed/decomposed Unicode
-  handling. Process validation, authority fencing, and canonical persisted
-  dispatch are also registered. The audit-scratch-boundary case now passes on
+### Conformance closure
+- Duplicate conflicts, cursor gaps, late terminals, conflicting terminals,
+  fixed-seed generated DAG scheduling, ownership normalization/conflicts,
+  candidate under-claiming, and rename/delete/generated-file path coverage are
+  registered in the hermetic runner. Native Git acquisition separately proves
+  deletion/rename sides, case-distinct paths, symlink identity, and
+  composed/decomposed Unicode handling. Process validation, authority fencing,
+  and canonical persisted dispatch are also registered. The
+  audit-scratch-boundary case now passes on
   the live BoxLite Take path; it is intentionally not reported as hermetic.
   The fixed scale flow is joined to the full semantic projection; the remaining
   negative cases retain their own typed blocked/recovery oracles. The host
@@ -908,10 +915,9 @@ discover and run that accepted decision through subscription-backed provider
 Takes, serialized promotion, exact combined verification, and independent
 Goal audit. A Conductor can also inspect the durable Goal and its Parts by Goal
 ID after reconnecting. The durable execution path now reaches terminal success
-through the ordinary Goal runner. The product remains unfinished because it
-lacks the full hostile/fault matrix. Remaining work is on the v2 contracts; the
-branch-point reachability audit found no remaining v1 workflow-authority or
-compatibility island.
+through the ordinary Goal runner. The required hostile/fault matrix is complete,
+and the branch-point reachability audit found no remaining v1 workflow-authority
+or compatibility island.
 
 Implementation began with two bounded experiments authorized by this charter:
 
@@ -3513,8 +3519,8 @@ Exa Search and Semble still belong in the product:
 - Record explicit rejections when a design relies on prompt-owned authority,
   ambient host access, worker-declared completion, per-Part publication, or a
   GUI/server correctness dependency.
-- Run the pending `bd` JSON-contract, Semble stale/ignored-file, and declared-
-  versus-observed provider capability probes.
+- Run the `bd` JSON-contract, Semble stale/ignored-file, and declared-versus-
+  observed provider capability probes.
 - Update the prior-art register and extraction notes below with accepted and
   rejected findings. Any accepted change must preserve the already-proven
   authority, isolation, receipt, cancellation, and recovery contracts.
@@ -3937,9 +3943,10 @@ Explicit rejections from this pass:
 
 The executable research pass used installed `bd` 1.1.0 and Semble 0.2.0. A
 read-only `bd list --json --limit 1` probe returned the expected durable issue
-identity, status, priority, type, and dependency fields. Choir must still pin
-and fixture every `bd` shape it consumes before Beads becomes an execution
-input rather than a Conductor drafting source.
+identity, status, priority, type, and dependency fields. Choir now pins that
+exact client at startup, fixtures its list/show/create/update and Goal-capture
+shapes, exposes blocking dependency details to the Conductor, and fails closed
+when Goal-capture dependency details are absent or inconsistent.
 
 The Semble probe ran with isolated home and cache roots over one visible file,
 one `.gitignore`d file, and one `.sembleignore`d file. Search returned only the

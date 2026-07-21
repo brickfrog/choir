@@ -80,6 +80,7 @@ test "Beads capture snapshots blocking dependencies and relevant revisions" {
         #|    "status":"open",
         #|    "priority":2,
         #|    "issue_type":"task",
+        #|    "dependency_count":0,
         #|    "updated_at":"2026-07-20T00:00:00Z"
         #|  },
         #|  {
@@ -90,6 +91,7 @@ test "Beads capture snapshots blocking dependencies and relevant revisions" {
         #|    "status":"open",
         #|    "priority":2,
         #|    "issue_type":"task",
+        #|    "dependency_count":1,
         #|    "updated_at":"2026-07-20T00:00:01Z",
         #|    "dependencies":[
         #|      {
@@ -117,5 +119,20 @@ test "Beads capture snapshots blocking dependencies and relevant revisions" {
   assert_eq(
     snapshot.parts[0].state,
     @workflow.SelectionSourceState::SelectionSourceOpen,
+  )
+}
+
+///|
+test "Beads capture rejects incomplete dependency details" {
+  let malformed =
+    #|[{"id":"choir-b","title":"Dependent B","status":"open","priority":2,"issue_type":"task","updated_at":"2026-07-20T00:00:01Z","dependency_count":1}]
+  assert_true(
+    @workflow.goal_selection_snapshot_from_beads_json(
+      @workflow.RepositoryId("repository-1"),
+      @control.GitOid("base-commit"),
+      @control.GitOid("base-tree"),
+      malformed,
+    )
+    is Err(_),
   )
 }

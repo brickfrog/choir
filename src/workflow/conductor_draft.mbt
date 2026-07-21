@@ -282,6 +282,65 @@ fn bead_string(fields : Map[String, Json], field : String) -> String {
 }
 
 ///|
+fn validate_bead_issue_fields(
+  fields : Map[String, Json],
+  nested_dependency : Bool,
+) -> Result[Int, @types.ChoirError] {
+  for field in ["id", "title", "status", "issue_type", "updated_at"] {
+    if bead_string(fields, field).trim() == "" {
+      return Err(goal_submission_error("Beads issue requires " + field))
+    }
+  }
+  match fields.get("priority") {
+    Some(Number(value, ..)) if value.to_int() >= 0 && value.to_int() <= 4 => ()
+    _ => return Err(goal_submission_error("Beads issue priority is invalid"))
+  }
+  if nested_dependency {
+    if bead_string(fields, "dependency_type").trim() == "" {
+      return Err(
+        goal_submission_error("Beads dependency requires dependency_type"),
+      )
+    }
+    return Ok(0)
+  }
+  match fields.get("dependency_count") {
+    Some(Number(value, ..)) if value.to_int() >= 0 => Ok(value.to_int())
+    _ => Err(goal_submission_error("Beads issue dependency_count is invalid"))
+  }
+}
+
+///|
+fn validate_bead_dependency_contract(
+  fields : Map[String, Json],
+) -> Result[Unit, @types.ChoirError] {
+  let expected = match validate_bead_issue_fields(fields, false) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  match fields.get("dependencies") {
+    None if expected == 0 => Ok(())
+    Some(Array(values)) if values.length() == expected => {
+      for value in values {
+        guard value is Object(dependency) else {
+          return Err(goal_submission_error("Beads dependency is not an issue"))
+        }
+        match validate_bead_issue_fields(dependency, true) {
+          Ok(_) => ()
+          Err(error) => return Err(error)
+        }
+      }
+      Ok(())
+    }
+    _ =>
+      Err(
+        goal_submission_error(
+          "Beads dependency_count does not match dependency details",
+        ),
+      )
+  }
+}
+
+///|
 fn bead_dependency_ids(fields : Map[String, Json]) -> Array[@control.PartId] {
   let ids : Array[@control.PartId] = []
   match fields.get("dependencies") {
@@ -426,6 +485,10 @@ pub fn goal_selection_snapshot_from_beads_json(
   for value in values {
     match value {
       Object(fields) => {
+        match validate_bead_dependency_contract(fields) {
+          Ok(_) => ()
+          Err(error) => return Err(error)
+        }
         match source_part_from_bead_fields(fields) {
           Some(part) =>
             match add_captured_source_part(parts, part) {

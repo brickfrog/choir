@@ -2096,7 +2096,7 @@ async fn run_conductor_reconnect_live() -> Int {
         (
           0,
           (
-            #|[{"id":"choir-reconnect","title":"Reconnect Conductors","description":"Prove shared durable authority","acceptance_criteria":"Both Conductors see the paused Goal","status":"open","priority":2,"issue_type":"task","updated_at":"2026-07-21T00:00:00Z"}]
+            #|[{"id":"choir-reconnect","title":"Reconnect Conductors","description":"Prove shared durable authority","acceptance_criteria":"Both Conductors see the paused Goal","status":"open","priority":2,"issue_type":"task","dependency_count":0,"updated_at":"2026-07-21T00:00:00Z"}]
           ),
         )
       _ => (-1, "unexpected capture")

@@ -26,7 +26,7 @@ async test "native Conductor submission captures Beads and persists once" {
         (
           0,
           (
-            #|[{"id":"choir-a","title":"Change A","description":"Update the answer","acceptance_criteria":"The focused test passes","status":"open","priority":2,"issue_type":"task","updated_at":"2026-07-20T00:00:00Z"}]
+            #|[{"id":"choir-a","title":"Change A","description":"Update the answer","acceptance_criteria":"The focused test passes","status":"open","priority":2,"issue_type":"task","dependency_count":0,"updated_at":"2026-07-20T00:00:00Z"}]
           ),
         )
       _ => (-1, "unexpected capture")
@@ -295,7 +295,7 @@ async test "durable Goal cancellation survives replay and starts no provider" {
         (
           0,
           (
-            #|[{"id":"choir-cancel","title":"Cancel proof","description":"No provider should start","acceptance_criteria":"Cancellation is durable","status":"open","priority":2,"issue_type":"task","updated_at":"2026-07-20T00:00:00Z"}]
+            #|[{"id":"choir-cancel","title":"Cancel proof","description":"No provider should start","acceptance_criteria":"Cancellation is durable","status":"open","priority":2,"issue_type":"task","dependency_count":0,"updated_at":"2026-07-20T00:00:00Z"}]
           ),
         )
       _ => (-1, "unexpected capture")
@@ -404,7 +404,7 @@ async test "rejected Conductor submission initializes no Part workflow" {
         (
           0,
           (
-            #|[{"id":"choir-closed","title":"Closed","status":"closed","priority":2,"issue_type":"task","updated_at":"2026-07-20T00:00:00Z"}]
+            #|[{"id":"choir-closed","title":"Closed","status":"closed","priority":2,"issue_type":"task","dependency_count":0,"updated_at":"2026-07-20T00:00:00Z"}]
           ),
         )
       _ => (-1, "unexpected capture")
