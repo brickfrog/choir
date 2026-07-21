@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-20T20:58:39-05:00
+Implementation snapshot updated through: 2026-07-20T21:01:08-05:00
 
 ## Charter Semantics and Readiness
 
@@ -302,6 +302,16 @@ unconnected product path usable.
   cannot be hidden by terminal prose. Evidence binds the disabled-feature set,
   exact session/surface, normalized trace, and terminal-response digest.
   Combined live evidence now covers nine rows, with six still unproven.
+- A live Codex Take probe now proves `TOOL-SEARCH-015`. Hostile repository text
+  requests discovery and dynamic loading of a deferred tool from another MCP
+  server, plugin, app, skill, or native registry. The exact surface disables
+  `tool_suggest`, exposes only the pre-attested `probe` tool, emits exactly one
+  successful call to it, and closes the original session cleanly. The driver
+  validates raw provider items before normalization, so an undeclared tool or
+  native discovery event fails instead of disappearing from the evidence.
+  Evidence binds the effective surface, disabled features, exact four-event
+  trace, and terminal response. Combined live evidence now covers ten rows,
+  with five still unproven.
 - Codex MCP resource discovery is now classified as provider-side discovery,
   not as a Part effect, only for the two read-only discovery methods and only
   when Codex identifies either the exact declared server or its reserved
@@ -768,7 +778,7 @@ compiler still reports the repository's existing warning set.
   The fixed scale flow is joined to the full semantic projection; the remaining
   negative cases retain their own typed blocked/recovery oracles. The host
   surface now has an executable fifteen-row report rather than an implied
-  aggregate pass; six Codex rows still require their exact live oracles.
+  aggregate pass; five Codex rows still require their exact live oracles.
 - Further splitting or consolidating large live adapters only when a concrete
   boundary or dead caller justifies it. The branch-point audit found no closed
   source package imported only by another closed source package.
