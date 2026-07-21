@@ -135,15 +135,8 @@ fn start_conductor_environment(
 async fn start_codex_conductor(
   config : @types.Config,
   token : String,
-  self_executable : String,
+  executable : String,
 ) -> Int {
-  let executable = match @sys.realpath_native(self_executable) {
-    Some(value) => value
-    None => {
-      @sys.write_stderr("choir start: failed to resolve the Choir executable\n")
-      return 1
-    }
-  }
   let conductor_config : @exec.NativeCodexConductorConfig = {
     sterile_root: config.project_dir + "/.choir/run/codex-conductor",
     mcp_executable: executable,
@@ -208,6 +201,14 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
   ignore(@sys.create_dir_all(config.project_dir + "/.choir/run"))
   ignore(@sys.create_dir_all(config.project_dir + "/.choir/state"))
   ignore(@sys.create_dir_all(config.project_dir + "/.choir/state/control"))
+  let executable = match @sys.realpath_native(self_executable) {
+    Some(value) => value
+    None => {
+      @sys.write_stderr("choir start: failed to resolve the Choir executable\n")
+      @sys.exit(1)
+      return
+    }
+  }
   let token = match @sys.mint_local_token() {
     Some(value) => value
     None => {
@@ -216,7 +217,7 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
       return
     }
   }
-  match start_ensure_daemon(config.listen_uds, self_executable) {
+  match start_ensure_daemon(config.listen_uds, executable) {
     Ok(_) => ()
     Err(error) => {
       @sys.write_stderr("choir start: " + error + "\n")
@@ -237,6 +238,7 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
       StartClaudeConductor => {
         let command = @exec.conductor_launch_command(
           config.project_dir,
+          executable,
           lean=options.lean,
         )
         @exec.run_conductor_process(
@@ -246,8 +248,7 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
           _ => -1
         }
       }
-      StartCodexConductor =>
-        start_codex_conductor(config, token, self_executable)
+      StartCodexConductor => start_codex_conductor(config, token, executable)
     }
     @sys.exit(exit_code)
   })

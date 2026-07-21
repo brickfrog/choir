@@ -1968,9 +1968,223 @@ async fn run_conductor_start_live() -> Int {
 }
 
 ///|
+async fn stop_conductor_fixture_daemon(root : String) -> Bool {
+  let pid = @string.parse_int(
+    @sys.read_file(root + "/.choir/run/server.pid").trim().to_owned(),
+  ) catch {
+    _ => 0
+  }
+  if pid <= 1 {
+    return false
+  }
+  @sys.kill_server_pid_sequence_best_effort(pid)
+  for poll = 0; poll < 100; poll = poll + 1 {
+    if !@sys.pid_is_alive(pid) {
+      return true
+    }
+    @async.sleep(20)
+  }
+  false
+}
+
+///|
+async fn capture_conductor_with_input(
+  program : String,
+  arguments : Array[String],
+  root : String,
+  environment : Map[String, String],
+  input : String,
+) -> (Int, String) {
+  let (stdin_read, stdin_write) = @process.write_to_process() catch {
+    _ => return (-1, "")
+  }
+  ignore(
+    stdin_write.write(input) catch {
+      _ => {
+        stdin_write.close()
+        return (-1, "")
+      }
+    },
+  )
+  stdin_write.close()
+  let captured = @process.collect_output_merged(
+    program,
+    arguments,
+    extra_env=environment,
+    inherit_env=true,
+    stdin=stdin_read,
+    cwd=root,
+  ) catch {
+    _ => return (-1, "")
+  }
+  let output = captured.1.text() catch { _ => return (captured.0, "") }
+  (captured.0, output)
+}
+
+///|
+async fn run_conductor_reconnect_live() -> Int {
+  let root = "/var/tmp/choir-conductor-reconnect-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(root))
+  if !@sys.create_dir_all(root + "/bin") {
+    @sys.write_stderr("failed to create Conductor reconnect fixture\n")
+    return 1
+  }
+  let real_claude = match @exec.resolve_executable_in_path("claude") {
+    Some(value) => value
+    None => {
+      ignore(@sys.rm_rf(root))
+      @sys.write_stderr("Claude executable is unavailable\n")
+      return 1
+    }
+  }
+  let (build_code, build_output) = @exec.capture_command_merged({
+    program: "moon",
+    args: ["build", "--target", "native", "src/bin/choir"],
+    workdir: None,
+  })
+  if build_code != 0 {
+    @sys.write_stderr(build_output)
+    ignore(@sys.rm_rf(root))
+    return 1
+  }
+  let choir_binary = match
+    @sys.realpath_native("_build/native/debug/build/src/bin/choir/choir.exe") {
+    Some(value) => value
+    None => {
+      ignore(@sys.rm_rf(root))
+      @sys.write_stderr("built Choir binary is unavailable\n")
+      return 1
+    }
+  }
+  let fake_claude = root + "/bin/claude"
+  let ambient_choir = root + "/bin/choir"
+  if !@sys.write_file_sync(fake_claude, "#!/bin/sh\nexit 0\n") ||
+    !@sys.write_file_sync(ambient_choir, "#!/bin/sh\nexit 97\n") {
+    ignore(@sys.rm_rf(root))
+    @sys.write_stderr("failed to prepare Conductor reconnect launchers\n")
+    return 1
+  }
+  let (chmod_code, _) = @exec.capture_command_merged({
+    program: "/usr/bin/chmod",
+    args: ["0700", fake_claude, ambient_choir],
+    workdir: None,
+  })
+  let inherited_path = @sys.getenv("PATH").unwrap_or("/usr/bin:/bin")
+  let fixture_path = root + "/bin:" + inherited_path
+  let (init_code, init_output) = @exec.capture_command_merged({
+    program: "/usr/bin/env",
+    args: ["PATH=" + fixture_path, choir_binary, "init"],
+    workdir: Some(root),
+  })
+  if chmod_code != 0 || init_code != 0 || !stop_conductor_fixture_daemon(root) {
+    @sys.write_stderr(init_output)
+    cleanup_conductor_start_probe(root)
+    return 1
+  }
+  let base_commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  let base_tree = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  let capture = async fn(command : @exec.Command) -> (Int, String) {
+    match (command.program, command.args) {
+      ("git", ["rev-parse", "--show-toplevel"]) => (0, root + "\n")
+      ("git", ["rev-parse", "--verify", "refs/heads/main^{commit}"]) =>
+        (0, base_commit + "\n")
+      ("git", ["show", "-s", "--format=%T", "--no-show-signature", ..]) =>
+        (0, base_tree + "\n")
+      ("bd", ["show", "choir-reconnect", "--json", "--readonly"]) =>
+        (
+          0,
+          (
+            #|[{"id":"choir-reconnect","title":"Reconnect Conductors","description":"Prove shared durable authority","acceptance_criteria":"Both Conductors see the paused Goal","status":"open","priority":2,"issue_type":"task","updated_at":"2026-07-21T00:00:00Z"}]
+          ),
+        )
+      _ => (-1, "unexpected capture")
+    }
+  }
+  let goal_id = @control.GoalId("goal-conductor-reconnect")
+  let draft =
+    #|{"proposal_id":"proposal-conductor-reconnect","goal_id":"goal-conductor-reconnect","base_ref":"refs/heads/main","integration_target_ref":"refs/heads/main","maximum_parallel_parts":1,"parts":[{"part_id":"choir-reconnect","instruction":"Do not execute this paused conformance Part.","provider":"codex","repository_wide":true,"verify_args":["test","--target","native"]}]}
+  let submitted = @exec.submit_native_conductor_goal_draft(root, draft, capture)
+  let paused = match submitted {
+    Ok(report) if report.accepted =>
+      @exec.steer_native_goal(
+        root,
+        goal_id,
+        @workflow.GoalPolicyChange::GoalPolicyPause,
+      )
+      is Ok(_)
+    _ => false
+  }
+  if !paused {
+    cleanup_conductor_start_probe(root)
+    @sys.write_stderr("failed to persist paused reconnect Goal\n")
+    return 1
+  }
+  let prompt = "Call goal_status exactly once with goal_id goal-conductor-reconnect. Return exactly CODEX_RECONNECT_OK only if the tool result reports that exact goal_id and state GoalExecutionPaused."
+  let codex = capture_conductor_with_input(
+    choir_binary,
+    ["start", "--conductor", "codex"],
+    root,
+    { "PATH": fixture_path },
+    prompt + "\n/exit\n",
+  )
+  let claude_wrapper = "#!/bin/sh\nexec \"$CHOIR_RECONNECT_REAL_CLAUDE\" \"$@\" -p \"$CHOIR_RECONNECT_PROMPT\" --allowedTools mcp__choir__goal_status --output-format stream-json --verbose --no-session-persistence\n"
+  let wrapper_ready = @sys.write_file_sync(fake_claude, claude_wrapper)
+  let claude_prompt = "Call goal_status exactly once with goal_id goal-conductor-reconnect. Return exactly CLAUDE_RECONNECT_OK only if the tool result reports that exact goal_id and state GoalExecutionPaused."
+  let claude = if wrapper_ready {
+    capture_conductor_with_input(
+      choir_binary,
+      ["start", "--conductor", "claude"],
+      root,
+      {
+        "PATH": fixture_path,
+        "CHOIR_RECONNECT_REAL_CLAUDE": real_claude,
+        "CHOIR_RECONNECT_PROMPT": claude_prompt,
+      },
+      "",
+    )
+  } else {
+    (-1, "")
+  }
+  let daemon_stopped = stop_conductor_fixture_daemon(root)
+  let status = @exec.inspect_native_goal(root, goal_id)
+  let passed = codex.0 == 0 &&
+    codex.1.contains("CODEX_RECONNECT_OK") &&
+    claude.0 == 0 &&
+    claude.1.contains("CLAUDE_RECONNECT_OK") &&
+    status is Ok(report) &&
+    report.goal_id == goal_id &&
+    report.state == @workflow.GoalExecutionState::GoalExecutionPaused &&
+    daemon_stopped
+  let report : Map[String, Json] = {
+    "passed": passed.to_json(),
+    "goal_id": goal_id.to_json(),
+    "codex_reconnected": codex.1.contains("CODEX_RECONNECT_OK").to_json(),
+    "claude_reconnected": claude.1.contains("CLAUDE_RECONNECT_OK").to_json(),
+    "daemon_stopped": daemon_stopped.to_json(),
+  }
+  if !passed {
+    report.set("codex_exit_code", codex.0.to_json())
+    report.set("codex_output", codex.1.to_json())
+    report.set("claude_exit_code", claude.0.to_json())
+    report.set("claude_output", claude.1.to_json())
+  }
+  ignore(@sys.rm_rf(root))
+  @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
+  if passed {
+    0
+  } else {
+    1
+  }
+}
+
+///|
 fn run_conductor_command(args : Array[String]) -> Unit {
   if args.length() == 3 && args[2] == "--start-live" {
     @async.run_async_main(async fn() { @sys.exit(run_conductor_start_live()) })
+  } else if args.length() == 3 && args[2] == "--reconnect-live" {
+    @async.run_async_main(async fn() {
+      @sys.exit(run_conductor_reconnect_live())
+    })
   } else {
     usage()
     @sys.exit(2)
@@ -2881,6 +3095,7 @@ fn usage() -> Unit {
     "       choir_conformance harness --surface codex-cli " +
     "--profile subscription --driver-resume-drift-live\n" +
     "       choir_conformance conductor --start-live\n" +
+    "       choir_conformance conductor --reconnect-live\n" +
     "       choir_conformance sandbox --runtime boxlite --live\n" +
     "       choir_conformance sandbox --runtime boxlite --take-live\n" +
     "       choir_conformance e2e --fixture " +

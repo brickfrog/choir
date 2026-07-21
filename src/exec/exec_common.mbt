@@ -21,8 +21,21 @@ pub(all) struct ConductorProcessEnvironment {
 }
 
 ///|
-pub fn conductor_claude_mcp_config_json() -> String {
-  "{\"mcpServers\":{\"choir\":{\"type\":\"stdio\",\"command\":\"choir\",\"args\":[\"mcp-stdio\",\"--name\",\"root\",\"--stderr-append-log\",\".choir/logs/mcp-stdio.stderr.log\"],\"alwaysLoad\":true}}}"
+pub fn conductor_claude_mcp_config_json(choir_executable : String) -> String {
+  {
+    "mcpServers": {
+      "choir": {
+        "type": "stdio".to_json(),
+        "command": choir_executable.to_json(),
+        "args": [
+          "mcp-stdio", "--name", "root", "--stderr-append-log", ".choir/logs/mcp-stdio.stderr.log",
+        ].to_json(),
+        "alwaysLoad": true.to_json(),
+      }.to_json(),
+    }.to_json(),
+  }
+  .to_json()
+  .stringify(indent=0)
 }
 
 ///|
@@ -33,6 +46,7 @@ pub fn conductor_claude_settings_json() -> String {
 ///|
 pub fn conductor_launch_command(
   project_dir : String,
+  choir_executable : String,
   lean? : Bool = false,
 ) -> Command {
   let lean_args : Array[String] = if lean {
@@ -49,7 +63,7 @@ pub fn conductor_launch_command(
       "--setting-sources",
       "",
       "--mcp-config",
-      conductor_claude_mcp_config_json(),
+      conductor_claude_mcp_config_json(choir_executable),
       "--strict-mcp-config",
       "--plugin-dir",
       project_dir + "/.choir/plugin",

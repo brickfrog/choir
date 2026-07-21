@@ -35,7 +35,7 @@ authorize an open `String` domain.
 
 ## Current Implementation Snapshot
 
-This snapshot describes the branch as of 2026-07-20 local time. It separates
+This snapshot describes the branch as of 2026-07-21 local time. It separates
 working implementation from target behavior; passing fixtures do not make an
 unconnected product path usable.
 
@@ -62,6 +62,17 @@ unconnected product path usable.
   isolated process probe proves project initialization, authenticated Goal
   status, socket mode `0600`, restricted launch arguments, and zero Zellij
   requirement.
+- A live cross-Conductor probe now persists one Goal, pauses it, and launches
+  Codex and Claude independently against the same daemon authority. Each
+  Conductor calls the same `goal_status` tool, observes the exact Goal ID and
+  `GoalExecutionPaused` state, and returns its provider-specific success
+  marker; the durable Goal remains paused after both sessions and the daemon
+  stops cleanly. Claude's strict MCP configuration now names the canonical
+  current Choir executable instead of resolving an ambient `choir` from
+  `PATH`. Codex keeps its real provider home read-only while using a private
+  writable state directory containing only a read-only link to the existing
+  provider-managed login. This directly exercises Conductor replacement and
+  reconnection without giving either provider workflow authority.
 - The old session/tab startup, terminal status line, provider wrapper, hook
   bridge, prompt-sync commands, companion commands, Zellij registry, live pane
   test, command bundle, generated v1 role profiles, checked-in run state, and
@@ -3378,8 +3389,9 @@ provider execution overlaps, while promotion remains serialized and
 provider-private state does not enter scheduling or gates. The Codex Conductor
 bridge is now implemented with the same exact ten-tool Goal surface, a
 subscription-backed persistent thread, and fail-closed native-tool event
-validation. Cross-Conductor reconnection to one durable Goal remains to be
-exercised directly.
+validation. A live isolated probe now proves Claude and Codex independently
+reconnect to one durable paused Goal through the same daemon and observe the
+same exact identity and state.
 
 Exit criterion: both satisfy the shared trace, evidence, cancellation,
 recovery, and host-isolation oracles at pinned versions. Provider-specific

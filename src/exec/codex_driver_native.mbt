@@ -476,14 +476,65 @@ fn native_codex_conductor_environment(
   config : NativeCodexConductorConfig,
 ) -> Map[String, String] {
   let environment = native_codex_environment(provider_home, config.sterile_root)
+  environment["CODEX_HOME"] = config.sterile_root + "/codex-home"
   environment["CHOIR_CONDUCTOR_TOKEN"] = config.environment.conductor_token
   environment["CHOIR_WORKSPACE"] = config.environment.workspace
   environment["CHOIR_LISTEN_UDS"] = config.environment.listen_uds
-  match @sys.getenv("CODEX_HOME") {
-    Some(value) if value != "" => environment["CODEX_HOME"] = value
-    _ => ()
-  }
   environment
+}
+
+///|
+fn prepare_native_codex_conductor_home(
+  config : NativeCodexConductorConfig,
+  provider_home : String,
+) -> Result[Unit, @types.ChoirError] {
+  for
+    path in [
+      config.sterile_root,
+      config.sterile_root + "/tmp",
+      config.sterile_root + "/codex-home",
+    ] {
+    if !@sys.create_dir_all(path) || !@sys.chmod_mode(path, 0o700) {
+      return Err(native_codex_driver_error("Conductor state root is unavailable"))
+    }
+  }
+  let provider_codex_home = match @sys.getenv("CODEX_HOME") {
+    Some(value) if value.has_prefix("/") => value
+    _ => provider_home + "/.codex"
+  }
+  let auth_source = provider_codex_home + "/auth.json"
+  if !@sys.path_exists(auth_source) ||
+    !@sys.symlink_force(
+      auth_source,
+      config.sterile_root + "/codex-home/auth.json",
+    ) {
+    return Err(
+      native_codex_driver_error("provider-managed login is unavailable"),
+    )
+  }
+  Ok(())
+}
+
+///|
+test "native Codex Conductor environment isolates writable provider state" {
+  let config : NativeCodexConductorConfig = {
+    sterile_root: "/run/choir/conductor",
+    mcp_executable: "/opt/choir/bin/choir",
+    mcp_arguments: [],
+    mcp_server_name: "choir",
+    allowed_tools: ["goal_status"],
+    developer_instructions: "Use Choir.",
+    timeout_ms: 1000,
+    environment: {
+      conductor_token: "token",
+      workspace: "/repo",
+      listen_uds: "/run/choir/server.sock",
+    },
+  }
+  let environment = native_codex_conductor_environment("/home/user", config)
+  assert_eq(environment["HOME"], "/home/user")
+  assert_eq(environment["CODEX_HOME"], "/run/choir/conductor/codex-home")
+  assert_eq(environment["CHOIR_WORKSPACE"], "/repo")
 }
 
 ///|
@@ -1946,10 +1997,9 @@ pub async fn run_native_codex_conductor_turn(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  if !@sys.create_dir_all(config.sterile_root + "/tmp") {
-    return Err(
-      native_codex_driver_error("Conductor sterile root is unavailable"),
-    )
+  match prepare_native_codex_conductor_home(config, provider_home) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
   }
   match
     verify_native_codex_subscription(codex, provider_home, config.sterile_root) {

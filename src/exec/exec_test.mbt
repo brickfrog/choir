@@ -1,10 +1,12 @@
 ///|
 test "Claude Conductor launch is terminal-local and strict MCP only" {
-  let command = conductor_launch_command("/repo")
+  let command = conductor_launch_command("/repo", "/opt/choir/bin/choir")
   let joined = command.args.join(" ")
   assert_eq(command.program, "claude")
   assert_true(joined.contains("--strict-mcp-config"))
   assert_true(joined.contains("--plugin-dir /repo/.choir/plugin"))
+  assert_true(joined.contains("\"command\":\"/opt/choir/bin/choir\""))
+  assert_false(joined.contains("\"command\":\"choir\""))
   assert_false(joined.contains("zellij"))
 }
 
