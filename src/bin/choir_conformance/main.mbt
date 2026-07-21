@@ -77,6 +77,7 @@ fn run_hermetic() -> Int {
       @conformance.audit_protocol_conflict_case(),
       @conformance.audit_result_reconcile_case(),
       @conformance.audit_receipt_replay_case(),
+      @conformance.cancellation_part_effect_ordering_case(),
       @conformance.ownership_normalization_case(),
       @conformance.ownership_conflict_matrix_case(),
       @conformance.ownership_underclaim_case(),

@@ -167,6 +167,7 @@ pub(all) enum ConformanceEvidence {
     Bool
   )
   ObservedIntegrationConflictRepair(Int, Int, Bool, Bool)
+  ObservedCancellationCase(CancellationConformanceKind, Int, Int, Bool)
   AllocatedId(ConformanceIdKind, String)
 } derive(Debug, Eq, ToJson, FromJson)
 
@@ -199,6 +200,11 @@ pub(all) enum AuditConformanceKind {
   AuditReceiptReplay
   AuditResultReconciliation
   AuditSubjectStaleness
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum CancellationConformanceKind {
+  CancellationPartEffectOrdering
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|

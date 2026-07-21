@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-20T19:13:06-05:00
+Implementation snapshot updated through: 2026-07-20T19:18:45-05:00
 
 ## Charter Semantics and Readiness
 
@@ -167,12 +167,12 @@ unconnected product path usable.
 - Durable restart-readable state and content-addressed artifact stores with
   transactional fault injection.
 - A hermetic conformance runner with injected clock, identifiers, adapters,
-  and typed fault points. Its command now runs twenty-nine registered cases: the
+  and typed fault points. Its command now runs thirty registered cases: the
   runner dependency contract, `selection.exact_snapshot`,
   `selection.revision_invalidation`,
   `scheduler.generated_dags`, `branch.initialization_faults`,
   `integration.conflict_repair`, six
-  audit-authority/recovery cases, ten event/recovery
+  audit-authority/recovery cases, one Part cancellation-ordering case, ten event/recovery
   cases, four mutation-ownership cases, and three process-policy cases described
   below. The audit cases prove a missing gate is passive, author Take/sandbox/
   session reuse is rejected, and seven independent subject/policy changes stale
@@ -283,8 +283,15 @@ unconnected product path usable.
   snapshot is durable. The native Part lifecycle fixture also injects two
   conflicting terminal results for the exact audit Take and proves the first
   witness remains, the audit session/Take/Part are durably fenced, and no audit
-  receipt is minted. It reports `audit_protocol_conflict_checked`; registration
-  under the standalone hermetic case ID remains.
+  receipt is minted. It reports `audit_protocol_conflict_checked` and is also
+  registered as the standalone `audit.protocol_conflict` hermetic case.
+- `cancellation.part_effect_ordering` now runs four production Part-effect
+  cancellation orderings in the hermetic report. Planned provider and
+  integration effects are abandoned; an authorized
+  provider effect becomes durably uncertain; and an authorized integration is
+  preserved unchanged for witness reconciliation. Every result round-trips
+  through the durable snapshot codec, known dispositions are terminal, and
+  replay of the unresolved integration performs no mutation.
 - Codex Takes now use one restricted `codex app-server` process per Take over a
   private stdio FIFO and bounded owner-only response log. Choir durably binds
   the exact session, thread, turn, deterministic client-message ID, request
@@ -667,15 +674,15 @@ compiler still reports the repository's existing warning set.
   provider dispatch, or a live external final-PR create.
 
 ### Not yet connected
-- The remaining generated cancellation-ordering edge cases beyond the
-  implemented branch-initialization, Part, provider, integration and conflict
-  repair,
-  Goal-assurance, publication, and final-PR reconciliation paths.
-- A live external final-PR canary for the native forge transport, plus the
-  remaining generated cases for ambiguous identity, remote drift, and broader
-  cancellation orderings. The checked synthetic forge proves control-plane
-  behavior without mutating an external repository.
-- The remaining cancellation-ordering, hostile-surface, and PR
+- The remaining generated Goal-level cancellation-ordering edge cases beyond
+  the registered Part-effect matrix and the implemented branch-initialization,
+  provider, integration/conflict-repair, Goal-assurance, publication, and
+  final-PR reconciliation paths.
+- A live external final-PR canary for the native forge transport. The checked
+  synthetic forge and pure workflow matrices prove control-plane fault,
+  ambiguity, remote-state, readiness, and cancellation behavior without
+  mutating an external repository.
+- The remaining Goal-level cancellation-ordering and hostile-surface
   conformance cases. Duplicate conflicts, cursor gaps, late
   terminals, conflicting terminals, fixed-seed generated DAG scheduling,
   ownership normalization/conflicts, candidate under-claiming, and
@@ -3400,6 +3407,7 @@ report, and exits nonzero on any oracle mismatch.
 | `integration.divergent_candidates` | Two audited candidates from H | Two serialized promotions, both candidates reachable, continuous receipts |
 | `integration.fault_matrix` | Every stable integration fault point | Same durable/ref result as uninterrupted run; no duplicate release |
 | `integration.conflict_repair` | Three-way content conflict | No promotion/receipt; new repaired candidate must reverify and reaudit |
+| `cancellation.part_effect_ordering` | Planned/authorized provider and integration effects | Abandonment, uncertainty, or preserved integration reconciliation exactly matches the cutoff side |
 | `cancellation.ordering_matrix` | Every ordering in cancellation section | No post-cutoff admission; preauthorized effects honestly reconciled |
 | `publication.fault_matrix` | Before/after remote ref request and receipt | At most one exact remote update; one receipt or typed drift |
 | `seal.atomicity` | Crash before/after seal transaction and takeed late promotion | One immutable seal; goal checks schedule once; late promotion denied |

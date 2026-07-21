@@ -1618,6 +1618,185 @@ fn audit_workflow_gate(
 }
 
 ///|
+fn cancellation_integration_intent(
+  snapshot : @workflow.PartWorkflowSnapshot,
+  authorized : Bool,
+) -> @control.IntegrationIntent {
+  let candidate = snapshot.candidate.unwrap()
+  {
+    id: @control.IntegrationIntentId(
+      if authorized {
+        "cancellation-integration-intent"
+      } else {
+        "cancellation-planned-integration"
+      },
+    ),
+    goal_id: snapshot.goal.id,
+    part_id: snapshot.part.id,
+    candidate_id: candidate.id,
+    candidate_commit_oid: candidate.commit_oid,
+    candidate_tree_oid: candidate.tree_oid,
+    expected_goal_head_oid: snapshot.task_contract.base_commit_oid,
+    strategy: @control.PromotionStrategy::NoFastForwardThreeWayV1,
+    promotion_metadata_digest: audit_fixture_digest_a,
+    integration_lease_epoch: snapshot.fencing_epoch,
+    lifecycle: if authorized {
+      @control.IntegrationIntentLifecycle::IntegrationAuthorized
+    } else {
+      @control.IntegrationIntentLifecycle::IntegrationPlanned
+    },
+    promotion_commit_oid: if authorized {
+      Some(@control.GitOid("cancellation-promotion"))
+    } else {
+      None
+    },
+    promotion_tree_oid: if authorized {
+      Some(@control.GitOid("cancellation-promotion-tree"))
+    } else {
+      None
+    },
+    git_witness_ref: "refs/choir/witness/cancellation-integration-intent",
+  }
+}
+
+///|
+fn cancellation_integration_effect(
+  snapshot : @workflow.PartWorkflowSnapshot,
+) -> @workflow.PartEffectIntent {
+  let intent = cancellation_integration_intent(snapshot, true)
+  let promotion : @control.PromotionCommit = {
+    intent_id: intent.id,
+    commit_oid: intent.promotion_commit_oid.unwrap(),
+    tree_oid: intent.promotion_tree_oid.unwrap(),
+    first_parent_oid: intent.expected_goal_head_oid,
+    second_parent_oid: intent.candidate_commit_oid,
+  }
+  {
+    effect_id: "cancellation-integration-effect",
+    kind: @workflow.PartEffectKind::ApplyIntegration(intent.id, promotion),
+    request_digest: audit_fixture_digest_b,
+    lifecycle: @workflow.PartEffectLifecycle::PartEffectMayHaveOccurred,
+  }
+}
+
+///|
+fn cancellation_planned_integration_effect(
+  snapshot : @workflow.PartWorkflowSnapshot,
+) -> @workflow.PartEffectIntent {
+  let intent = cancellation_integration_intent(snapshot, false)
+  {
+    effect_id: "cancellation-planned-integration-effect",
+    kind: @workflow.PartEffectKind::GeneratePromotion(intent),
+    request_digest: audit_fixture_digest_b,
+    lifecycle: @workflow.PartEffectLifecycle::PartEffectPlanned,
+  }
+}
+
+///|
+fn cancellation_provider_effect(
+  snapshot : @workflow.PartWorkflowSnapshot,
+  lifecycle : @workflow.PartEffectLifecycle,
+) -> @workflow.PartEffectIntent {
+  {
+    effect_id: "cancellation-provider-effect",
+    kind: @workflow.PartEffectKind::DispatchAudit(
+      snapshot.audit_take.id,
+      snapshot.identities.audit_session.id,
+      snapshot.audit_subject.unwrap(),
+    ),
+    request_digest: audit_fixture_digest_a,
+    lifecycle,
+  }
+}
+
+///|
+fn cancellation_snapshot_round_trips(
+  snapshot : @workflow.PartWorkflowSnapshot,
+) -> Bool {
+  match
+    @workflow.decode_part_snapshot(@workflow.part_snapshot_bytes(snapshot)) {
+    Ok(decoded) => decoded == snapshot
+    Err(_) => false
+  }
+}
+
+///|
+pub fn cancellation_part_effect_ordering_case() -> HermeticConformanceCase {
+  {
+    id: ConformanceCaseId("cancellation.part_effect_ordering"),
+    run: fn(_) {
+      let base = audit_workflow_result_fixture()
+      let planned_provider = @workflow.record_part_goal_cancellation({
+        ..base,
+        pending_effect: Some(
+          cancellation_provider_effect(
+            base,
+            @workflow.PartEffectLifecycle::PartEffectPlanned,
+          ),
+        ),
+      })
+      let authorized_provider = @workflow.record_part_goal_cancellation({
+        ..base,
+        pending_effect: Some(
+          cancellation_provider_effect(
+            base,
+            @workflow.PartEffectLifecycle::PartEffectMayHaveOccurred,
+          ),
+        ),
+      })
+      let planned_integration = @workflow.record_part_goal_cancellation({
+        ..base,
+        pending_effect: Some(cancellation_planned_integration_effect(base)),
+      })
+      let authorized_effect = cancellation_integration_effect(base)
+      let authorized_integration = @workflow.record_part_goal_cancellation({
+        ..base,
+        pending_effect: Some(authorized_effect),
+      })
+      let results = [
+        planned_provider, authorized_provider, planned_integration, authorized_integration,
+      ]
+      if results.any(fn(result) { result is Err(_) }) {
+        return Err(audit_fixture_error("cancellation ordering was rejected"))
+      }
+      let planned_provider = planned_provider.unwrap()
+      let authorized_provider = authorized_provider.unwrap()
+      let planned_integration = planned_integration.unwrap()
+      let authorized_integration = authorized_integration.unwrap()
+      let authorized_replay_is_stable = match
+        @workflow.record_part_goal_cancellation(authorized_integration) {
+        Ok(replayed) => replayed == authorized_integration
+        Err(_) => false
+      }
+      if planned_provider.pending_effect.unwrap().lifecycle !=
+        @workflow.PartEffectLifecycle::PartEffectAbandonedByCancellation ||
+        authorized_provider.pending_effect.unwrap().lifecycle !=
+        @workflow.PartEffectLifecycle::PartEffectUncertain ||
+        planned_integration.pending_effect.unwrap().lifecycle !=
+        @workflow.PartEffectLifecycle::PartEffectAbandonedByCancellation ||
+        !@workflow.part_cancellation_disposition_is_known(planned_provider) ||
+        !@workflow.part_cancellation_disposition_is_known(authorized_provider) ||
+        !@workflow.part_cancellation_disposition_is_known(planned_integration) ||
+        authorized_integration.pending_effect != Some(authorized_effect) ||
+        @workflow.part_cancellation_disposition_is_known(authorized_integration) ||
+        !authorized_replay_is_stable ||
+        results.any(fn(result) {
+          cancellation_snapshot_round_trips(result.unwrap()) == false
+        }) {
+        return Err(
+          audit_fixture_error("cancellation disposition violated its ordering"),
+        )
+      }
+      Ok({
+        evidence: [
+          ObservedCancellationCase(CancellationPartEffectOrdering, 4, 3, true),
+        ],
+      })
+    },
+  }
+}
+
+///|
 pub fn audit_result_reconcile_case() -> HermeticConformanceCase {
   {
     id: ConformanceCaseId("audit.result_reconcile"),
