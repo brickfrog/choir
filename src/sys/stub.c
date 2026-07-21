@@ -563,12 +563,192 @@ int choir_list_dir(const char *path, char *buf, int max_size) {
     return total;
 }
 
+int choir_list_dir_all(const char *path, char *buf, int max_size) {
+    DIR *d = opendir(path);
+    if (!d) {
+        return -1;
+    }
+    struct dirent *ent;
+    int total = 0;
+    while ((ent = readdir(d)) != NULL) {
+        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) {
+            continue;
+        }
+        int len = (int)strlen(ent->d_name);
+        if (total + len + 1 > max_size) {
+            break;
+        }
+        memcpy(buf + total, ent->d_name, (size_t)len);
+        buf[total + len] = '\n';
+        total += len + 1;
+    }
+    closedir(d);
+    return total;
+}
+
 void choir_read_file_to_buf(const char* path, char* buf, int size) {
     FILE* f = fopen(path, "rb");
     if (!f) return;
     size_t n = fread(buf, 1, (size_t)size, f);
     (void)n;
     fclose(f);
+}
+
+int choir_read_file_prefix(const char *path, char *buf, int max_size) {
+    if (path == NULL || buf == NULL || max_size <= 0 || max_size > 65536) {
+        return -1;
+    }
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        return -1;
+    }
+    int total = 0;
+    while (total < max_size) {
+        ssize_t n = read(fd, buf + total, (size_t)(max_size - total));
+        if (n < 0 && errno == EINTR) {
+            continue;
+        }
+        if (n <= 0) {
+            break;
+        }
+        total += (int)n;
+    }
+    close(fd);
+    return total;
+}
+
+static int choir_buffer_contains(
+    const char *buffer,
+    int buffer_size,
+    const char *needle
+) {
+    size_t needle_size = strlen(needle);
+    if (needle_size == 0 || needle_size > (size_t)buffer_size) {
+        return 0;
+    }
+    for (int offset = 0; offset + (int)needle_size <= buffer_size; offset++) {
+        if (memcmp(buffer + offset, needle, needle_size) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int choir_environment_has_entry(
+    const char *buffer,
+    int buffer_size,
+    const char *entry
+) {
+    size_t entry_size = strlen(entry);
+    int offset = 0;
+    while (offset < buffer_size) {
+        int end = offset;
+        while (end < buffer_size && buffer[end] != '\0') {
+            end++;
+        }
+        if ((size_t)(end - offset) == entry_size &&
+            memcmp(buffer + offset, entry, entry_size) == 0) {
+            return 1;
+        }
+        offset = end + 1;
+    }
+    return 0;
+}
+
+int choir_pgid_has_process_identity(
+    int pgid,
+    const char *environment_entry,
+    const char *command_fragment
+) {
+    if (pgid <= 1 || environment_entry == NULL || command_fragment == NULL) {
+        return 0;
+    }
+    DIR *proc = opendir("/proc");
+    if (proc == NULL) {
+        return 0;
+    }
+    struct dirent *entry;
+    char path[128];
+    char environment[65536];
+    char command[65536];
+    int matched = 0;
+    while ((entry = readdir(proc)) != NULL) {
+        char *end = NULL;
+        errno = 0;
+        long raw_pid = strtol(entry->d_name, &end, 10);
+        if (errno != 0 || end == entry->d_name || *end != '\0' ||
+            raw_pid <= 1 || raw_pid > INT_MAX || getpgid((pid_t)raw_pid) != pgid) {
+            continue;
+        }
+        int written = snprintf(
+            path, sizeof(path), "/proc/%ld/environ", raw_pid
+        );
+        if (written <= 0 || (size_t)written >= sizeof(path)) {
+            continue;
+        }
+        int environment_size = choir_read_file_prefix(
+            path, environment, (int)sizeof(environment)
+        );
+        written = snprintf(path, sizeof(path), "/proc/%ld/cmdline", raw_pid);
+        if (written <= 0 || (size_t)written >= sizeof(path)) {
+            continue;
+        }
+        int command_size = choir_read_file_prefix(
+            path, command, (int)sizeof(command)
+        );
+        if (environment_size > 0 && command_size > 0 &&
+            choir_environment_has_entry(
+                environment, environment_size, environment_entry
+            ) &&
+            choir_buffer_contains(command, command_size, command_fragment)) {
+            matched = 1;
+            break;
+        }
+    }
+    closedir(proc);
+    return matched;
+}
+
+int choir_pgid_has_non_zombie_process(int pgid) {
+    if (pgid <= 1) {
+        return 0;
+    }
+    DIR *proc = opendir("/proc");
+    if (proc == NULL) {
+        return 0;
+    }
+    struct dirent *entry;
+    char path[128];
+    char stat_buffer[4096];
+    int running = 0;
+    while ((entry = readdir(proc)) != NULL) {
+        char *end = NULL;
+        errno = 0;
+        long raw_pid = strtol(entry->d_name, &end, 10);
+        if (errno != 0 || end == entry->d_name || *end != '\0' ||
+            raw_pid <= 1 || raw_pid > INT_MAX || getpgid((pid_t)raw_pid) != pgid) {
+            continue;
+        }
+        int written = snprintf(path, sizeof(path), "/proc/%ld/stat", raw_pid);
+        if (written <= 0 || (size_t)written >= sizeof(path)) {
+            continue;
+        }
+        int stat_size = choir_read_file_prefix(
+            path, stat_buffer, (int)sizeof(stat_buffer) - 1
+        );
+        if (stat_size <= 0) {
+            continue;
+        }
+        stat_buffer[stat_size] = '\0';
+        char *close = strrchr(stat_buffer, ')');
+        if (close != NULL && close[1] == ' ' &&
+            close[2] != 'Z' && close[2] != 'X') {
+            running = 1;
+            break;
+        }
+    }
+    closedir(proc);
+    return running;
 }
 
 void choir_exit(int code) {

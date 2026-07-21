@@ -28,6 +28,28 @@ fn parse_pid_file_for_test(path : String) -> Int {
 }
 
 ///|
+test "read_file_prefix reads zero-sized proc files with a hard bound" {
+  let command = read_file_prefix("/proc/self/cmdline", 4096)
+  assert_true(command.length() > 0)
+  assert_true(command.length() <= 4096)
+  assert_eq(read_file_prefix("/proc/self/cmdline", 0), "")
+  assert_eq(read_file_prefix("/proc/self/cmdline", 65537), "")
+}
+
+///|
+test "list_dir_all includes hidden entries without dot traversal" {
+  let tmp = "/tmp/choir-list-dir-all-" + get_pid().to_string()
+  ignore(rm_rf(tmp))
+  assert_true(create_dir_all(tmp))
+  assert_true(write_file_sync(tmp + "/.hidden", "hidden"))
+  assert_true(write_file_sync(tmp + "/visible", "visible"))
+  let entries = list_dir_all(tmp)
+  entries.sort()
+  assert_eq(entries, [".hidden", "visible"])
+  ignore(rm_rf(tmp))
+}
+
+///|
 /// Hermetic /tmp integration: a setsid'd sleeper (its own pgroup leader) must
 /// die from the TERM→pause→KILL pgroup sequence, while guarded inputs
 /// (pgid <= 1, negative) must signal nothing.
@@ -47,6 +69,22 @@ test "kill_pgid_sequence_best_effort kills a setsid'd /tmp sleeper and guards pg
   }
   assert_true(wait_for_pgroup_file_for_test(pid_path, 80))
   assert_true(pid_is_alive(pgid))
+  assert_true(pgid_has_non_zombie_process(pgid))
+  let home = match getenv("HOME") {
+    Some(value) => value
+    None => {
+      kill_pgid_sequence_best_effort(pgid)
+      ignore(wait_pid_reap_for_test(pgid))
+      ignore(rm_rf(tmp))
+      fail("expected HOME for process identity fixture")
+    }
+  }
+  let command = read_file_prefix(
+    "/proc/" + pgid.to_string() + "/cmdline",
+    4096,
+  ).split("\u{00}").to_array()[0].to_owned()
+  assert_true(pgid_has_process_identity(pgid, "HOME=" + home, command))
+  assert_false(pgid_has_process_identity(pgid, "HOME=/not-the-fixture", command))
   // Guarded inputs: the sleeper must survive all of these.
   kill_pgid_sequence_best_effort(0)
   kill_pgid_sequence_best_effort(1)
@@ -55,6 +93,7 @@ test "kill_pgid_sequence_best_effort kills a setsid'd /tmp sleeper and guards pg
   kill_pgid_sequence_best_effort(pgid)
   ignore(wait_pid_reap_for_test(pgid))
   assert_false(pid_is_alive(pgid))
+  assert_false(pgid_has_non_zombie_process(pgid))
   assert_false(path_exists(sentinel_path))
   ignore(rm_rf(tmp))
 }

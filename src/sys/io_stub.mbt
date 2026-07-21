@@ -9,7 +9,17 @@ pub fn read_file(_path : String) -> String {
 }
 
 ///|
+pub fn read_file_prefix(_path : String, _max_size : Int) -> String {
+  ""
+}
+
+///|
 pub fn list_dir(_path : String) -> Array[String] {
+  []
+}
+
+///|
+pub fn list_dir_all(_path : String) -> Array[String] {
   []
 }
 
@@ -283,6 +293,20 @@ pub fn pid_is_alive(_pid : Int) -> Bool {
 
 ///|
 pub fn pgid_is_alive(_pgid : Int) -> Bool {
+  false
+}
+
+///|
+pub fn pgid_has_process_identity(
+  _pgid : Int,
+  _environment_entry : String,
+  _command_fragment : String,
+) -> Bool {
+  false
+}
+
+///|
+pub fn pgid_has_non_zombie_process(_pgid : Int) -> Bool {
   false
 }
 

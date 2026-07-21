@@ -24,7 +24,19 @@ extern "C" fn c_list_dir(path : Bytes, buf : Bytes, max_size : Int) -> Int = "ch
 
 ///|
 #borrow(path, buf)
+extern "C" fn c_list_dir_all(path : Bytes, buf : Bytes, max_size : Int) -> Int = "choir_list_dir_all"
+
+///|
+#borrow(path, buf)
 extern "C" fn c_read_file_to_buf(path : Bytes, buf : Bytes, size : Int) = "choir_read_file_to_buf"
+
+///|
+#borrow(path, buf)
+extern "C" fn c_read_file_prefix(
+  path : Bytes,
+  buf : Bytes,
+  max_size : Int,
+) -> Int = "choir_read_file_prefix"
 
 ///|
 #borrow(buf)
@@ -71,6 +83,17 @@ extern "C" fn c_pid_is_alive(pid : Int) -> Int = "choir_pid_is_alive"
 
 ///|
 extern "C" fn c_pgid_is_alive(pgid : Int) -> Int = "choir_pgid_is_alive"
+
+///|
+#borrow(environment_entry, command_fragment)
+extern "C" fn c_pgid_has_process_identity(
+  pgid : Int,
+  environment_entry : Bytes,
+  command_fragment : Bytes,
+) -> Int = "choir_pgid_has_process_identity"
+
+///|
+extern "C" fn c_pgid_has_non_zombie_process(pgid : Int) -> Int = "choir_pgid_has_non_zombie_process"
 
 ///|
 extern "C" fn c_set_parent_death_signal_term() -> Int = "choir_set_parent_death_signal_term"
@@ -218,6 +241,26 @@ pub fn list_dir(path : String) -> Array[String] {
 }
 
 ///|
+pub fn list_dir_all(path : String) -> Array[String] {
+  let path_bytes = string_to_null_terminated_bytes(path)
+  let max_size = 1024 * 1024
+  let buf = Bytes::new(max_size)
+  let n = c_list_dir_all(path_bytes, buf, max_size)
+  if n <= 0 {
+    return []
+  }
+  let content = @utf8.decode_lossy(buf[:n])
+  let entries : Array[String] = []
+  for raw in content.split("\n") {
+    let name = raw.trim().to_owned()
+    if name != "" {
+      entries.push(name)
+    }
+  }
+  entries
+}
+
+///|
 pub fn read_file(path : String) -> String {
   let path_bytes = string_to_null_terminated_bytes(path)
   let size = c_get_file_size(path_bytes)
@@ -227,6 +270,21 @@ pub fn read_file(path : String) -> String {
   let buf = Bytes::new(size)
   c_read_file_to_buf(path_bytes, buf, size)
   @utf8.decode_lossy(buf)
+}
+
+///|
+pub fn read_file_prefix(path : String, max_size : Int) -> String {
+  if max_size <= 0 || max_size > 65536 {
+    return ""
+  }
+  let path_bytes = string_to_null_terminated_bytes(path)
+  let buf = Bytes::new(max_size)
+  let size = c_read_file_prefix(path_bytes, buf, max_size)
+  if size <= 0 {
+    ""
+  } else {
+    @utf8.decode_lossy(buf[:size])
+  }
 }
 
 ///|
@@ -373,6 +431,27 @@ pub fn pid_is_alive(pid : Int) -> Bool {
 /// alive in the native helper and rejects groups <= 1.
 pub fn pgid_is_alive(pgid : Int) -> Bool {
   c_pgid_is_alive(pgid) != 0
+}
+
+///|
+pub fn pgid_has_process_identity(
+  pgid : Int,
+  environment_entry : String,
+  command_fragment : String,
+) -> Bool {
+  if pgid <= 1 || environment_entry == "" || command_fragment == "" {
+    return false
+  }
+  c_pgid_has_process_identity(
+    pgid,
+    string_to_null_terminated_bytes(environment_entry),
+    string_to_null_terminated_bytes(command_fragment),
+  ) != 0
+}
+
+///|
+pub fn pgid_has_non_zombie_process(pgid : Int) -> Bool {
+  pgid > 1 && c_pgid_has_non_zombie_process(pgid) != 0
 }
 
 ///|

@@ -506,6 +506,9 @@ async fn run_codex_live_driver_at(
   delay_ms : Int,
   crash_after_turn_start : Bool,
   cleanup : Bool,
+  crash_after_server_start? : Bool = false,
+  crash_after_initialized_notification? : Bool = false,
+  crash_after_terminal_recorded? : Bool = false,
   allowed_tools? : Array[String] = ["probe"],
   expect_surface_drift? : Bool = false,
   expect_ambient_block? : Bool = false,
@@ -597,7 +600,18 @@ async fn run_codex_live_driver_at(
       clock.val = clock.val + 1L
       clock.val
     },
+    after_server_started=fn() { if crash_after_server_start { @sys.exit(77) } },
+    after_initialized_notification_sent=fn() {
+      if crash_after_initialized_notification {
+        @sys.exit(77)
+      }
+    },
     after_turn_started=fn() { if crash_after_turn_start { @sys.exit(77) } },
+    after_terminal_recorded=fn() {
+      if crash_after_terminal_recorded {
+        @sys.exit(77)
+      }
+    },
   )
   if credential_probe {
     ignore(@sys.unsetenv("CHOIR_CREDENTIAL_CANARY"))
@@ -1081,7 +1095,58 @@ fn codex_recovery_manifest_identity(root : String) -> (String, String, Int)? {
 }
 
 ///|
-async fn run_codex_recovery_crash_child(root : String) -> Int {
+fn codex_recovery_manifest_int(root : String, key : String) -> Int? {
+  let path = root + "/take-session.json"
+  if !@sys.path_exists(path) {
+    return None
+  }
+  let json = @json.parse(@sys.read_file(path)) catch { _ => return None }
+  guard json is Object(fields) else { return None }
+  match fields.get(key) {
+    Some(Number(value, ..)) => Some(value.to_int())
+    _ => None
+  }
+}
+
+///|
+fn codex_recovery_manifest_bool(root : String, key : String) -> Bool? {
+  let path = root + "/take-session.json"
+  if !@sys.path_exists(path) {
+    return None
+  }
+  let json = @json.parse(@sys.read_file(path)) catch { _ => return None }
+  guard json is Object(fields) else { return None }
+  match fields.get(key) {
+    Some(True) => Some(true)
+    Some(False) => Some(false)
+    _ => None
+  }
+}
+
+///|
+fn codex_recovery_pid_witness(root : String, generation : Int) -> Int? {
+  let path = root + "/app-server-" + generation.to_string() + ".pid"
+  if !@sys.path_exists(path) {
+    return None
+  }
+  Some(@string.parse_int(@sys.read_file(path).trim().to_owned())) catch {
+    _ => None
+  }
+}
+
+///|
+async fn codex_recovery_pgid_stopped(pgid : Int) -> Bool {
+  for poll = 0; poll < 80; poll = poll + 1 {
+    if !@sys.pgid_has_non_zombie_process(pgid) {
+      return true
+    }
+    @async.sleep(25)
+  }
+  false
+}
+
+///|
+async fn run_codex_recovery_crash_child(root : String, point : String) -> Int {
   let moon = match @exec.resolve_executable_in_path("moon") {
     Some(value) => value
     None => return -1
@@ -1111,7 +1176,7 @@ async fn run_codex_recovery_crash_child(root : String) -> Int {
     executable,
     [
       "harness", "--surface", "codex-cli", "--profile", "subscription", "--driver-recovery-crash",
-      root,
+      point, root,
     ],
     inherit_env=true,
     cwd=match @sys.realpath_native(".") {
@@ -1124,29 +1189,146 @@ async fn run_codex_recovery_crash_child(root : String) -> Int {
 }
 
 ///|
-async fn run_codex_live_recovery() -> Int {
-  let root = "/tmp/choir-conformance-codex-recovery-" +
-    @sys.get_pid().to_string()
-  let crash_code = run_codex_recovery_crash_child(root)
+async fn run_codex_live_initialized_notification_recovery(
+  root : String,
+) -> Bool {
+  let crash_code = run_codex_recovery_crash_child(root, "initialized-sent")
+  let before_pid = codex_recovery_manifest_int(root, "server_pid")
+  let generation = codex_recovery_manifest_int(root, "server_generation")
+  let may_have_been_sent = codex_recovery_manifest_bool(
+    root,
+    "initialization_notification_may_have_been_sent",
+  )
+  let initialized = codex_recovery_manifest_bool(root, "server_initialized")
+  guard crash_code == 77 &&
+    before_pid is Some(pid) &&
+    generation == Some(1) &&
+    may_have_been_sent == Some(true) &&
+    initialized == Some(false) else {
+    @sys.write_stderr("Codex initialization notification witness is incomplete\n")
+    match before_pid {
+      Some(value) => @sys.kill_pgid_sequence_best_effort(value)
+      None => ()
+    }
+    ignore(@sys.rm_rf(root))
+    return false
+  }
+  let resumed = run_codex_live_driver_at(root, 5000, false, false)
+  let after_pid = codex_recovery_manifest_int(root, "server_pid")
+  let restarted = codex_recovery_manifest_int(root, "server_generation") ==
+    Some(2)
+  let original_stopped = codex_recovery_pgid_stopped(pid)
+  let current_stopped = match after_pid {
+    Some(value) => codex_recovery_pgid_stopped(value)
+    None => false
+  }
+  let current_owned = match after_pid {
+    Some(value) =>
+      @sys.pgid_has_process_identity(
+        value,
+        "CODEX_HOME=" + root + "/codex-home",
+        "app-server",
+      )
+    None => false
+  }
+  if !original_stopped {
+    @sys.kill_pgid_sequence_best_effort(pid)
+  }
+  match after_pid {
+    Some(value) if !current_stopped => @sys.kill_pgid_sequence_best_effort(value)
+    _ => ()
+  }
+  ignore(@sys.rm_rf(root))
+  let passed = resumed == 0 && restarted && original_stopped && current_stopped
+  if !passed {
+    let current_pid_text = match after_pid {
+      Some(value) => value.to_string()
+      None => "none"
+    }
+    @sys.write_stderr(
+      "Codex initialization recovery mismatch: resumed=" +
+      resumed.to_string() +
+      " restarted=" +
+      restarted.to_string() +
+      " original_stopped=" +
+      original_stopped.to_string() +
+      " current_stopped=" +
+      current_stopped.to_string() +
+      " original_pid=" +
+      pid.to_string() +
+      " current_pid=" +
+      current_pid_text +
+      " current_owned=" +
+      current_owned.to_string() +
+      "\n",
+    )
+  }
+  passed
+}
+
+///|
+async fn run_codex_live_server_start_recovery(root : String) -> Bool {
+  let crash_code = run_codex_recovery_crash_child(root, "server-started")
+  let generation = codex_recovery_manifest_int(root, "server_generation")
+  let recorded_pid = codex_recovery_manifest_int(root, "server_pid")
+  let witnessed_pid = match generation {
+    Some(value) => codex_recovery_pid_witness(root, value)
+    None => None
+  }
+  guard crash_code == 77 &&
+    generation == Some(1) &&
+    recorded_pid == Some(0) &&
+    witnessed_pid is Some(pid) else {
+    @sys.write_stderr("Codex server-start witness is incomplete\n")
+    match witnessed_pid {
+      Some(pid) => @sys.kill_pgid_sequence_best_effort(pid)
+      None => ()
+    }
+    ignore(@sys.rm_rf(root))
+    return false
+  }
+  let resumed = run_codex_live_driver_at(root, 5000, false, false)
+  let adopted_pid = codex_recovery_manifest_int(root, "server_pid")
+  let adopted_generation = codex_recovery_manifest_int(
+    root, "server_generation",
+  )
+  let original_stopped = codex_recovery_pgid_stopped(pid)
+  let current_stopped = match adopted_pid {
+    Some(value) => codex_recovery_pgid_stopped(value)
+    None => false
+  }
+  if !original_stopped {
+    @sys.kill_pgid_sequence_best_effort(pid)
+  }
+  match adopted_pid {
+    Some(value) if !current_stopped => @sys.kill_pgid_sequence_best_effort(value)
+    _ => ()
+  }
+  ignore(@sys.rm_rf(root))
+  resumed == 0 &&
+  adopted_pid == Some(pid) &&
+  adopted_generation == Some(1) &&
+  original_stopped &&
+  current_stopped
+}
+
+///|
+async fn run_codex_live_turn_recovery(root : String) -> Bool {
+  let crash_code = run_codex_recovery_crash_child(root, "turn-started")
   if crash_code != 77 {
     @sys.write_stderr(
       "Codex recovery child did not stop at the injected boundary\n",
     )
     ignore(@sys.rm_rf(root))
-    return 1
+    return false
   }
   let before = match codex_recovery_manifest_identity(root) {
     Some(value) => value
     None => {
       @sys.write_stderr("Codex recovery manifest is incomplete\n")
       ignore(@sys.rm_rf(root))
-      return 1
+      return false
     }
-  }
-  if !@sys.pgid_is_alive(before.2) {
-    @sys.write_stderr("Codex app-server did not survive client loss\n")
-    ignore(@sys.rm_rf(root))
-    return 1
   }
   let resumed = run_codex_live_driver_at(root, 5000, false, false)
   let after = codex_recovery_manifest_identity(root)
@@ -1154,24 +1336,108 @@ async fn run_codex_live_recovery() -> Int {
     Some(value) => value.0 == before.0 && value.1 == before.1
     None => false
   }
-  @sys.kill_pgid_sequence_best_effort(before.2)
-  ignore(@sys.rm_rf(root))
-  if resumed != 0 || !same_turn {
-    @sys.write_stderr("Codex recovery did not preserve the exact turn\n")
-    1
-  } else {
-    @sys.write_stdout(
-      { "recovered_exact_turn": true.to_json() }.to_json().stringify(indent=2) +
-      "\n",
-    )
-    0
+  let original_stopped = codex_recovery_pgid_stopped(before.2)
+  let current_stopped = match after {
+    Some(value) => codex_recovery_pgid_stopped(value.2)
+    None => false
   }
+  if !original_stopped {
+    @sys.kill_pgid_sequence_best_effort(before.2)
+  }
+  match after {
+    Some(value) if !current_stopped => @sys.kill_pgid_sequence_best_effort(value.2)
+    _ => ()
+  }
+  ignore(@sys.rm_rf(root))
+  if resumed != 0 || !same_turn || !original_stopped || !current_stopped {
+    @sys.write_stderr("Codex recovery did not preserve the exact turn\n")
+    false
+  } else {
+    true
+  }
+}
+
+///|
+async fn run_codex_live_terminal_recovery(root : String) -> Bool {
+  let crash_code = run_codex_recovery_crash_child(root, "terminal-recorded")
+  if crash_code != 77 {
+    @sys.write_stderr("Codex terminal child missed the injected boundary\n")
+    ignore(@sys.rm_rf(root))
+    return false
+  }
+  let before = match codex_recovery_manifest_identity(root) {
+    Some(value) => value
+    None => {
+      @sys.write_stderr("Codex terminal manifest is incomplete\n")
+      ignore(@sys.rm_rf(root))
+      return false
+    }
+  }
+  let generation = codex_recovery_manifest_int(root, "server_generation")
+  let resumed = run_codex_live_driver_at(root, 5000, false, false)
+  let after = codex_recovery_manifest_identity(root)
+  let same_subject = match after {
+    Some(value) => value == before
+    None => false
+  }
+  let same_generation = codex_recovery_manifest_int(root, "server_generation") ==
+    generation
+  let stopped = codex_recovery_pgid_stopped(before.2)
+  if !stopped {
+    @sys.kill_pgid_sequence_best_effort(before.2)
+  }
+  ignore(@sys.rm_rf(root))
+  resumed == 0 && same_subject && same_generation && stopped
+}
+
+///|
+async fn run_codex_live_recovery() -> Int {
+  let discriminator = @sys.get_pid().to_string()
+  let server = run_codex_live_server_start_recovery(
+    "/tmp/choir-conformance-codex-recovery-server-" + discriminator,
+  )
+  let notification = run_codex_live_initialized_notification_recovery(
+    "/tmp/choir-conformance-codex-recovery-initialized-" + discriminator,
+  )
+  let turn = run_codex_live_turn_recovery(
+    "/tmp/choir-conformance-codex-recovery-turn-" + discriminator,
+  )
+  let terminal = run_codex_live_terminal_recovery(
+    "/tmp/choir-conformance-codex-recovery-terminal-" + discriminator,
+  )
+  let report : Map[String, Json] = {
+    "server_process_adopted": server.to_json(),
+    "uncertain_initialization_restarted": notification.to_json(),
+    "exact_turn_resumed": turn.to_json(),
+    "terminal_process_reconciled": terminal.to_json(),
+  }
+  @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
+  if server && notification && turn && terminal {
+    0
+  } else {
+    1
+  }
+}
+
+///|
+async fn run_codex_live_initialization_recovery() -> Int {
+  let passed = run_codex_live_initialized_notification_recovery(
+    "/tmp/choir-conformance-codex-recovery-initialized-" +
+    @sys.get_pid().to_string(),
+  )
+  @sys.write_stdout(
+    { "uncertain_initialization_restarted": passed.to_json() }
+    .to_json()
+    .stringify(indent=2) +
+    "\n",
+  )
+  if passed { 0 } else { 1 }
 }
 
 ///|
 async fn run_codex_live_resume_drift() -> Int {
   let root = "/tmp/choir-conformance-codex-drift-" + @sys.get_pid().to_string()
-  let crash_code = run_codex_recovery_crash_child(root)
+  let crash_code = run_codex_recovery_crash_child(root, "turn-started")
   if crash_code != 77 {
     @sys.write_stderr(
       "Codex drift child did not stop at the injected boundary\n",
@@ -1334,22 +1600,44 @@ fn run_harness_command(args : Array[String]) -> Unit {
     args[3] == "codex-cli" &&
     args[4] == "--profile" &&
     args[5] == "subscription" &&
+    args[6] == "--driver-initialization-recovery-live" {
+    @async.run_async_main(async fn() {
+      @sys.exit(run_codex_live_initialization_recovery())
+    })
+  } else if args.length() == 7 &&
+    args[2] == "--surface" &&
+    args[3] == "codex-cli" &&
+    args[4] == "--profile" &&
+    args[5] == "subscription" &&
     args[6] == "--driver-resume-drift-live" {
     @async.run_async_main(async fn() {
       @sys.exit(run_codex_live_resume_drift())
     })
-  } else if args.length() == 8 &&
+  } else if args.length() == 9 &&
     args[2] == "--surface" &&
     args[3] == "codex-cli" &&
     args[4] == "--profile" &&
     args[5] == "subscription" &&
     args[6] == "--driver-recovery-crash" &&
+    [
+      "server-started", "initialized-sent", "turn-started", "terminal-recorded",
+    ].contains(args[7]) &&
     (
-      args[7].has_prefix("/tmp/choir-conformance-codex-recovery-") ||
-      args[7].has_prefix("/tmp/choir-conformance-codex-drift-")
+      args[8].has_prefix("/tmp/choir-conformance-codex-recovery-") ||
+      args[8].has_prefix("/tmp/choir-conformance-codex-drift-")
     ) {
     @async.run_async_main(async fn() {
-      @sys.exit(run_codex_live_driver_at(args[7], 5000, true, false))
+      @sys.exit(
+        run_codex_live_driver_at(
+          args[8],
+          5000,
+          args[7] == "turn-started",
+          false,
+          crash_after_server_start=args[7] == "server-started",
+          crash_after_initialized_notification=args[7] == "initialized-sent",
+          crash_after_terminal_recorded=args[7] == "terminal-recorded",
+        ),
+      )
     })
   } else if args.length() == 6 &&
     args[2] == "--surface" &&
@@ -2403,6 +2691,8 @@ fn usage() -> Unit {
     "--profile subscription --driver-cancellation-live\n" +
     "       choir_conformance harness --surface codex-cli " +
     "--profile subscription --driver-recovery-live\n" +
+    "       choir_conformance harness --surface codex-cli " +
+    "--profile subscription --driver-initialization-recovery-live\n" +
     "       choir_conformance harness --surface codex-cli " +
     "--profile subscription --driver-resume-drift-live\n" +
     "       choir_conformance conductor --start-live\n" +

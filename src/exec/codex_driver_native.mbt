@@ -430,9 +430,14 @@ fn native_codex_app_server_working_directory(
 ///|
 fn native_codex_ambient_configuration_present(
   config : NativeCodexDriverConfig,
+  allow_provider_state : Bool,
 ) -> Bool {
-  if @sys.list_dir(config.sterile_root + "/home").length() != 0 ||
-    @sys.list_dir(native_codex_app_server_working_directory(config)).length() !=
+  let home_entries = @sys.list_dir_all(config.sterile_root + "/home")
+  if ((!allow_provider_state && home_entries.length() != 0) ||
+    (allow_provider_state &&
+    (home_entries.length() > 1 ||
+    (home_entries.length() == 1 && home_entries[0] != ".cache")))) ||
+    @sys.list_dir_all(native_codex_app_server_working_directory(config)).length() !=
     0 {
     return true
   }
@@ -441,7 +446,12 @@ fn native_codex_ambient_configuration_present(
       "config.toml", "rules", "plugins", "skills", "commands", "agents", "hooks",
     ] {
     if @sys.path_entry_exists(config.sterile_root + "/codex-home/" + entry) {
-      return true
+      if !(allow_provider_state &&
+        entry == "skills" &&
+        @sys.list_dir_all(config.sterile_root + "/codex-home/skills") ==
+        [".system"]) {
+        return true
+      }
     }
   }
   false
@@ -589,6 +599,7 @@ priv struct NativeCodexTakeManifest {
   server_pid : Int
   server_generation : Int
   server_initialized : Bool
+  initialization_notification_may_have_been_sent : Bool
   initialization_attestation_digest : @control.Digest?
   thread_id : String?
   turn_id : String?
@@ -620,7 +631,7 @@ pub fn read_native_codex_initialization_attestation(
   let manifest : NativeCodexTakeManifest = @json.from_json(json) catch {
     _ => return None
   }
-  if manifest.version == 2 && manifest.server_initialized {
+  if manifest.version == 4 && manifest.server_initialized {
     manifest.initialization_attestation_digest
   } else {
     None
@@ -635,6 +646,72 @@ fn native_codex_fifo_path(config : NativeCodexDriverConfig) -> String {
 ///|
 fn native_codex_log_path(config : NativeCodexDriverConfig) -> String {
   config.sterile_root + "/app-server.jsonl"
+}
+
+///|
+fn native_codex_pid_witness_path(
+  config : NativeCodexDriverConfig,
+  generation : Int,
+) -> String {
+  config.sterile_root + "/app-server-" + generation.to_string() + ".pid"
+}
+
+///|
+fn native_codex_owned_server_alive(
+  config : NativeCodexDriverConfig,
+  pid : Int,
+) -> Bool {
+  if pid <= 0 || !@sys.pgid_is_alive(pid) {
+    return false
+  }
+  let command = @sys.read_file_prefix(
+    "/proc/" + pid.to_string() + "/cmdline",
+    65536,
+  )
+  (command.contains(config.sterile_root) && command.contains("app-server")) ||
+  @sys.pgid_has_process_identity(
+    pid,
+    "CODEX_HOME=" + config.sterile_root + "/codex-home",
+    "app-server",
+  )
+}
+
+///|
+fn native_codex_witnessed_server_pid(
+  config : NativeCodexDriverConfig,
+  generation : Int,
+) -> Int? {
+  let pid = match native_codex_pid_witness(config, generation) {
+    Some(value) => value
+    None => return None
+  }
+  if native_codex_owned_server_alive(config, pid) {
+    Some(pid)
+  } else {
+    None
+  }
+}
+
+///|
+fn native_codex_pid_witness(
+  config : NativeCodexDriverConfig,
+  generation : Int,
+) -> Int? {
+  let raw = @sys.read_file(native_codex_pid_witness_path(config, generation))
+    .trim()
+    .to_owned()
+  let pid = @string.parse_int(raw) catch { _ => return None }
+  if pid > 1 { Some(pid) } else { None }
+}
+
+///|
+fn stop_native_codex_owned_server(
+  config : NativeCodexDriverConfig,
+  pid : Int,
+) -> Unit {
+  if native_codex_owned_server_alive(config, pid) {
+    @sys.kill_pgid_sequence_best_effort(pid)
+  }
 }
 
 ///|
@@ -675,7 +752,7 @@ fn load_native_codex_manifest(
         native_codex_driver_error("Take session manifest schema is invalid"),
       )
   }
-  if manifest.version != 2 ||
+  if manifest.version != 4 ||
     manifest.session_id != session.id ||
     manifest.take_id != session.take_id ||
     manifest.role != role ||
@@ -683,8 +760,10 @@ fn load_native_codex_manifest(
     manifest.server_generation < 0 ||
     manifest.read_ordinal < 0 ||
     manifest.client_user_message_id == "" ||
-    manifest.server_initialized !=
-    (manifest.initialization_attestation_digest is Some(_)) {
+    manifest.initialization_notification_may_have_been_sent !=
+    (manifest.initialization_attestation_digest is Some(_)) ||
+    (manifest.server_initialized &&
+    !manifest.initialization_notification_may_have_been_sent) {
     Err(native_codex_driver_error("Take session manifest identity is stale"))
   } else {
     Ok(Some(manifest))
@@ -899,6 +978,7 @@ async fn notify_native_codex_app_server(
 fn prepare_native_codex_app_server_home(
   config : NativeCodexDriverConfig,
   provider_home : String,
+  allow_provider_state : Bool,
 ) -> Result[Unit, @types.ChoirError] {
   for
     path in [
@@ -912,7 +992,7 @@ fn prepare_native_codex_app_server_home(
       return Err(native_codex_driver_error("app-server root is unavailable"))
     }
   }
-  if native_codex_ambient_configuration_present(config) {
+  if native_codex_ambient_configuration_present(config, allow_provider_state) {
     return Err(
       @types.ChoirError::policy_blocked(
         "Codex Take ambient configuration is present",
@@ -941,7 +1021,29 @@ async fn spawn_native_codex_app_server(
   config : NativeCodexDriverConfig,
   codex : String,
   manifest : NativeCodexTakeManifest,
+  after_server_started : () -> Unit,
 ) -> Result[NativeCodexTakeManifest, @types.ChoirError] {
+  let prepared = {
+    ..manifest,
+    server_pid: 0,
+    server_generation: manifest.server_generation + 1,
+    server_initialized: false,
+    initialization_notification_may_have_been_sent: false,
+    initialization_attestation_digest: None,
+  }
+  match store_native_codex_manifest(config, prepared) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let pid_witness = native_codex_pid_witness_path(
+    config,
+    prepared.server_generation,
+  )
+  if @sys.path_entry_exists(pid_witness) && !@sys.delete_file_sync(pid_witness) {
+    return Err(
+      native_codex_driver_error("stale app-server PID witness remains"),
+    )
+  }
   let fifo = native_codex_fifo_path(config)
   if @sys.path_entry_exists(fifo) && !@sys.delete_file_sync(fifo) {
     return Err(
@@ -965,9 +1067,11 @@ async fn spawn_native_codex_app_server(
     #|fifo=$1
     #|output=$2
     #|errors=$3
-    #|shift 3
+    #|pid_witness=$4
+    #|shift 4
+    #|printf '%s\n' "$$" > "$pid_witness"
     #|exec 3<>"$fifo"
-    #|exec "$@" <&3 >>"$output" 2>>"$errors"
+    #|"$@" <&3 >>"$output" 2>>"$errors"
   let arguments : Array[String] = [
     "/bin/sh",
     "-c",
@@ -976,6 +1080,7 @@ async fn spawn_native_codex_app_server(
     fifo,
     native_codex_log_path(config),
     config.sterile_root + "/app-server.stderr",
+    pid_witness,
     "/usr/bin/bwrap",
   ]
   for
@@ -1004,17 +1109,37 @@ async fn spawn_native_codex_app_server(
   ) catch {
     _ => return Err(native_codex_driver_error("app-server failed to start"))
   }
-  let updated = {
-    ..manifest,
-    server_pid: pid,
-    server_generation: manifest.server_generation + 1,
-    server_initialized: false,
-    initialization_attestation_digest: None,
+  let mut witnessed_pid : Int? = None
+  for poll = 0; poll < 100; poll = poll + 1 {
+    match native_codex_witnessed_server_pid(
+      config,
+      prepared.server_generation,
+    ) {
+      Some(value) => {
+        witnessed_pid = Some(value)
+        break
+      }
+      None => ()
+    }
+    @async.sleep(10)
   }
+  let server_pid = match witnessed_pid {
+    Some(value) => value
+    None => {
+      match native_codex_pid_witness(config, prepared.server_generation) {
+        Some(value) => stop_native_codex_owned_server(config, value)
+        None => ()
+      }
+      stop_native_codex_owned_server(config, pid)
+      return Err(native_codex_driver_error("app-server PID witness is absent"))
+    }
+  }
+  after_server_started()
+  let updated = { ..prepared, server_pid }
   match store_native_codex_manifest(config, updated) {
     Ok(_) => Ok(updated)
     Err(error) => {
-      @sys.kill_pgid_sequence_best_effort(pid)
+      stop_native_codex_owned_server(config, server_pid)
       Err(error)
     }
   }
@@ -1025,10 +1150,48 @@ async fn ensure_native_codex_app_server(
   config : NativeCodexDriverConfig,
   codex : String,
   manifest : NativeCodexTakeManifest,
+  after_server_started : () -> Unit,
+  after_initialized_notification_sent : () -> Unit,
 ) -> Result[NativeCodexTakeManifest, @types.ChoirError] {
   let mut manifest = manifest
-  if manifest.server_pid <= 0 || !@sys.pgid_is_alive(manifest.server_pid) {
-    manifest = match spawn_native_codex_app_server(config, codex, manifest) {
+  if manifest.server_pid > 0 &&
+    @sys.pgid_is_alive(manifest.server_pid) &&
+    !native_codex_owned_server_alive(config, manifest.server_pid) {
+    return Err(native_codex_driver_error("app-server process identity changed"))
+  }
+  if !native_codex_owned_server_alive(config, manifest.server_pid) &&
+    manifest.server_generation > 0 {
+    match
+      native_codex_witnessed_server_pid(config, manifest.server_generation) {
+      Some(pid) => {
+        manifest = { ..manifest, server_pid: pid }
+        match store_native_codex_manifest(config, manifest) {
+          Ok(_) => ()
+          Err(error) => return Err(error)
+        }
+      }
+      None => ()
+    }
+  }
+  if !native_codex_owned_server_alive(config, manifest.server_pid) {
+    manifest = match
+      spawn_native_codex_app_server(
+        config, codex, manifest, after_server_started,
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+  }
+  if !manifest.server_initialized &&
+    manifest.initialization_notification_may_have_been_sent {
+    stop_native_codex_owned_server(config, manifest.server_pid)
+    manifest = match
+      spawn_native_codex_app_server(
+        config,
+        codex,
+        manifest,
+        after_server_started,
+      ) {
       Ok(value) => value
       Err(error) => return Err(error)
     }
@@ -1060,15 +1223,24 @@ async fn ensure_native_codex_app_server(
     Ok(value) => value
     Err(error) => return Err(error)
   }
+  manifest = {
+    ..manifest,
+    initialization_notification_may_have_been_sent: true,
+    initialization_attestation_digest: Some(attestation_digest),
+  }
+  match store_native_codex_manifest(config, manifest) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   match
     notify_native_codex_app_server(config, "initialized", Json::empty_object()) {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
+  after_initialized_notification_sent()
   manifest = {
     ..manifest,
     server_initialized: true,
-    initialization_attestation_digest: Some(attestation_digest),
   }
   match store_native_codex_manifest(config, manifest) {
     Ok(_) => ()
@@ -1312,7 +1484,10 @@ pub async fn run_native_codex_take(
   instruction : String,
   now : () -> Int64,
   cancellation_requested? : () -> Bool = fn() { false },
+  after_server_started? : () -> Unit = fn() { () },
+  after_initialized_notification_sent? : () -> Unit = fn() { () },
   after_turn_started? : () -> Unit = fn() { () },
+  after_terminal_recorded? : () -> Unit = fn() { () },
 ) -> Result[@harness.CodexDriverResult, @types.ChoirError] {
   match validate_native_codex_config(config) {
     Ok(_) => ()
@@ -1372,7 +1547,20 @@ pub async fn run_native_codex_take(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  match prepare_native_codex_app_server_home(config, provider_home) {
+  let loaded = match load_native_codex_manifest(config, session, role) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let allow_provider_state = match loaded {
+    Some(_) => true
+    None => false
+  }
+  match
+    prepare_native_codex_app_server_home(
+      config,
+      provider_home,
+      allow_provider_state,
+    ) {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
@@ -1387,15 +1575,11 @@ pub async fn run_native_codex_take(
   let output_schema = @json.parse(native_codex_output_schema(role)) catch {
     _ => return Err(native_codex_driver_error("output schema is invalid"))
   }
-  let loaded = match load_native_codex_manifest(config, session, role) {
-    Ok(value) => value
-    Err(error) => return Err(error)
-  }
   let mut manifest = match loaded {
     Some(value) => value
     None => {
       let value : NativeCodexTakeManifest = {
-        version: 2,
+        version: 4,
         session_id: session.id,
         take_id: session.take_id,
         role,
@@ -1403,6 +1587,7 @@ pub async fn run_native_codex_take(
         server_pid: 0,
         server_generation: 0,
         server_initialized: false,
+        initialization_notification_may_have_been_sent: false,
         initialization_attestation_digest: None,
         thread_id: None,
         turn_id: None,
@@ -1420,10 +1605,14 @@ pub async fn run_native_codex_take(
     }
   }
   match manifest.state {
-    CodexTurnInterrupted =>
+    CodexTurnInterrupted => {
+      stop_native_codex_owned_server(config, manifest.server_pid)
       return Err(
         @types.ChoirError::canceled("Codex Take interrupted at the Goal cutoff"),
       )
+    }
+    CodexTurnCompleted =>
+      stop_native_codex_owned_server(config, manifest.server_pid)
     _ => ()
   }
   let mut terminal_trace = match manifest.terminal_trace {
@@ -1432,7 +1621,13 @@ pub async fn run_native_codex_take(
   }
   if terminal_trace == "" {
     manifest = match
-      ensure_native_codex_app_server(config, codex_native, manifest) {
+      ensure_native_codex_app_server(
+        config,
+        codex_native,
+        manifest,
+        after_server_started,
+        after_initialized_notification_sent,
+      ) {
       Ok(value) => value
       Err(error) => return Err(error)
     }
@@ -1547,7 +1742,13 @@ pub async fn run_native_codex_take(
     let mut interrupt_sent = false
     while terminal_trace == "" {
       manifest = match
-        ensure_native_codex_app_server(config, codex_native, manifest) {
+        ensure_native_codex_app_server(
+          config,
+          codex_native,
+          manifest,
+          after_server_started,
+          after_initialized_notification_sent,
+        ) {
         Ok(value) => value
         Err(error) => return Err(error)
       }
@@ -1607,7 +1808,10 @@ pub async fn run_native_codex_take(
             terminal_trace: Some(terminal_trace),
           }
           match store_native_codex_manifest(config, manifest) {
-            Ok(_) => @sys.kill_pgid_sequence_best_effort(manifest.server_pid)
+            Ok(_) => {
+              after_terminal_recorded()
+              stop_native_codex_owned_server(config, manifest.server_pid)
+            }
             Err(error) => return Err(error)
           }
         }
@@ -1618,7 +1822,10 @@ pub async fn run_native_codex_take(
             finished_at: Some(now()),
           }
           match store_native_codex_manifest(config, manifest) {
-            Ok(_) => @sys.kill_pgid_sequence_best_effort(manifest.server_pid)
+            Ok(_) => {
+              after_terminal_recorded()
+              stop_native_codex_owned_server(config, manifest.server_pid)
+            }
             Err(error) => return Err(error)
           }
           return Err(
@@ -1628,7 +1835,7 @@ pub async fn run_native_codex_take(
           )
         }
         Some("failed") => {
-          @sys.kill_pgid_sequence_best_effort(manifest.server_pid)
+          stop_native_codex_owned_server(config, manifest.server_pid)
           return Err(native_codex_driver_error("provider turn failed"))
         }
         Some("inProgress") => ()
@@ -1869,7 +2076,7 @@ test "native Codex host boundary exposes only the sterile root writable" {
 ///|
 test "Codex recovery adopts the turn with the durable client message id" {
   let manifest : NativeCodexTakeManifest = {
-    version: 2,
+    version: 4,
     session_id: @control.HarnessSessionId("session-recovery"),
     take_id: @control.TakeId("take-recovery"),
     role: @harness.CodexTakeRole::CodexImplementationTake,
@@ -1877,6 +2084,7 @@ test "Codex recovery adopts the turn with the durable client message id" {
     server_pid: 1,
     server_generation: 1,
     server_initialized: true,
+    initialization_notification_may_have_been_sent: true,
     initialization_attestation_digest: Some(
       @control.Digest("initialization-recovery"),
     ),

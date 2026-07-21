@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-20T21:09:48-05:00
+Implementation snapshot updated through: 2026-07-20T23:58:56-05:00
 
 ## Charter Semantics and Readiness
 
@@ -398,12 +398,19 @@ unconnected product path usable.
 - Codex Takes now use one restricted `codex app-server` process per Take over a
   private stdio FIFO and bounded owner-only response log. Choir durably binds
   the exact session, thread, turn, deterministic client-message ID, request
-  ordinals, process generation, and terminal trace before advancing workflow
-  state. If `choird` disappears, the app-server and active turn survive; the
-  replacement process resumes the same thread and adopts the same turn instead
-  of resending the instruction. A real subscription fixture killed the client
-  immediately after turn persistence, reconnected, completed the original turn
-  with one sandbox probe call, and retained the same thread and turn IDs. A
+  ordinals, process generation, initialization-notification uncertainty, and
+  terminal trace before advancing workflow state. A dedicated supervisor and
+  generation-keyed PID witness keep the exact process group identifiable even
+  when its original launcher disappears or its leader exits before a child.
+  Recovery adopts only a matching live group; an uncertain `initialized`
+  notification kills that generation and starts a new one instead of resending
+  to it. Terminal recovery records the exact result before idempotently stopping
+  every non-zombie member of the owned group. A real subscription matrix killed
+  four clients after server creation, after the `initialized` notification,
+  after turn persistence, and after terminal persistence. Each replacement
+  either adopted or safely replaced the exact generation, completed one Take
+  with one sandbox probe call, retained the same persisted turn where one
+  existed, and left no running provider process. A
   separate real BoxLite fixture proves `turn/interrupt`, process-group cleanup,
   durable cancellation, and zero provider redispatch after restart. The private
   spool is capped, contains no provider credential, and is removed with the Take
@@ -756,7 +763,7 @@ Earlier evidence anchors are commits `5fb93fe8` for the native Part path,
 the linter correction. With the current assurance, cancellation, and provider changes,
 `moon check --target native`, `moon test --target native`, and
 `moon run --target native src/bin/choir_lint` all exit successfully on
-2026-07-20. After deleting obsolete source and tests, the full native suite reports 332
+2026-07-20. After deleting obsolete source and tests, the full native suite reports 334
 passed and 0 failed. The
 compiler still reports the repository's existing warning set.
 
@@ -4199,6 +4206,7 @@ The exact commands are:
 ```text
 moon run --target native src/bin/choir_conformance -- harness --surface codex-cli --profile subscription --live
 moon run --target native src/bin/choir_conformance -- harness --surface codex-cli --profile subscription --driver-recovery-live
+moon run --target native src/bin/choir_conformance -- harness --surface codex-cli --profile subscription --driver-initialization-recovery-live
 moon run --target native src/bin/choir_conformance -- harness --surface codex-cli --profile subscription --driver-resume-drift-live
 moon run --target native src/bin/choir_conformance -- e2e --fixture native-codex-cancellation
 ```
@@ -4220,6 +4228,16 @@ part of either command:
 moon run --target native src/bin/choir_conformance -- harness --surface codex-cli --profile subscription --host-boundary
 moon run --target native src/bin/choir_conformance -- harness --surface codex-cli --profile subscription --driver-live
 ```
+
+At `2026-07-20T23:58:56-05:00`, the subscription-backed recovery matrix passed
+four process boundaries against the production driver. It adopted the exact
+supervised server after launcher loss, restarted rather than replaying an
+uncertain `initialized` notification, resumed the exact persisted thread and
+turn without another `turn/start`, and reconstructed terminal evidence while
+stopping the remaining process group. The dedicated initialization command
+also passed independently. Process ownership is checked against the Take's
+exact `CODEX_HOME` across every non-zombie group member; a dead leader is not
+mistaken for a dead group, and zombies are not reported as running work.
 
 The surface remains `Candidate`, not `Supported`, because Codex app-server is
 provider-classified as experimental. The Choir-side recovery and cancellation
