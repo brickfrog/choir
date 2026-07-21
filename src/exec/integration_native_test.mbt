@@ -289,3 +289,163 @@ async test "native Git reconciliation distinguishes unapplied and divergence" {
     @control.IntegrationWitnessObservation::IntegrationWitnessDiverged,
   )
 }
+
+///|
+async test "native Git promotion recovery regenerates the identical object" {
+  let create_count = @ref.new(0)
+  let adapters : @exec.NativeGitIntegrationAdapters = {
+    capture: async fn(_, command) {
+      Ok(
+        match command {
+          @exec.NativeGitIntegrationCommand::NativeGitReadCommitTree(oid) =>
+            if oid == git_candidate_oid {
+              { exit_code: 0, output: git_candidate_tree.0 + "\n" }
+            } else if oid == git_promotion_oid {
+              { exit_code: 0, output: git_promotion_tree.0 + "\n" }
+            } else {
+              { exit_code: 0, output: git_candidate_tree.0 + "\n" }
+            }
+          @exec.NativeGitIntegrationCommand::NativeGitMergeTree(_, _) =>
+            { exit_code: 0, output: git_promotion_tree.0 + "\n" }
+          @exec.NativeGitIntegrationCommand::NativeGitCreatePromotion(
+            _,
+            _,
+            _,
+            _
+          ) => {
+            create_count.val = create_count.val + 1
+            { exit_code: 0, output: git_promotion_oid.0 + "\n" }
+          }
+          @exec.NativeGitIntegrationCommand::NativeGitReadCommitParents(_) =>
+            {
+              exit_code: 0,
+              output: git_head_oid.0 + " " + git_candidate_oid.0 + "\n",
+            }
+          _ => { exit_code: 99, output: "unexpected command" }
+        },
+      )
+    },
+  }
+  assert_true(
+    @exec.generate_native_promotion(
+      native_git_test_config(),
+      native_git_test_intent(
+        @control.IntegrationIntentLifecycle::IntegrationPlanned,
+      ),
+      adapters,
+      fault=Some(
+        @exec.NativeGitIntegrationFaultPoint::NativeGitAfterPromotionObjectBeforePrepared,
+      ),
+    )
+    is Err(_),
+  )
+  let recovered = @exec.generate_native_promotion(
+    native_git_test_config(),
+    native_git_test_intent(
+      @control.IntegrationIntentLifecycle::IntegrationPlanned,
+    ),
+    adapters,
+  ).unwrap()
+  assert_eq(
+    recovered,
+    @workflow.PartEffectObservation::PromotionGenerated(
+      native_git_test_promotion(),
+    ),
+  )
+  assert_eq(create_count.val, 2)
+}
+
+///|
+async test "native Git faults before ref transaction perform no mutation" {
+  let apply_count = @ref.new(0)
+  let adapters : @exec.NativeGitIntegrationAdapters = {
+    capture: async fn(_, command) {
+      match command {
+        @exec.NativeGitIntegrationCommand::NativeGitApplyRefs(_, _, _, _) =>
+          apply_count.val = apply_count.val + 1
+        _ => ()
+      }
+      Ok({ exit_code: 99, output: "unexpected command" })
+    },
+  }
+  assert_true(
+    @exec.apply_native_integration(
+      native_git_test_config(),
+      native_git_test_intent(
+        @control.IntegrationIntentLifecycle::IntegrationAuthorized,
+      ),
+      native_git_test_promotion(),
+      adapters,
+      fault=Some(
+        @exec.NativeGitIntegrationFaultPoint::NativeGitAfterAuthorizedBeforeRefTransaction,
+      ),
+    )
+    is Err(_),
+  )
+  assert_eq(apply_count.val, 0)
+}
+
+///|
+async test "native Git recovers an applied ref transaction after process loss" {
+  let applied = @ref.new(false)
+  let apply_count = @ref.new(0)
+  let adapters : @exec.NativeGitIntegrationAdapters = {
+    capture: async fn(_, command) {
+      Ok(
+        match command {
+          @exec.NativeGitIntegrationCommand::NativeGitApplyRefs(_, _, _, _) => {
+            apply_count.val = apply_count.val + 1
+            applied.val = true
+            { exit_code: 0, output: "start: ok\ncommit: ok\n" }
+          }
+          @exec.NativeGitIntegrationCommand::NativeGitReadRef(reference) =>
+            if reference == "refs/heads/choir/goal-1" {
+              {
+                exit_code: 0,
+                output: if applied.val {
+                  git_promotion_oid.0 + "\n"
+                } else {
+                  git_head_oid.0 + "\n"
+                },
+              }
+            } else if applied.val {
+              { exit_code: 0, output: git_promotion_oid.0 + "\n" }
+            } else {
+              { exit_code: 1, output: "" }
+            }
+          _ => { exit_code: 99, output: "unexpected command" }
+        },
+      )
+    },
+  }
+  let intent = native_git_test_intent(
+    @control.IntegrationIntentLifecycle::IntegrationAuthorized,
+  )
+  let promotion = native_git_test_promotion()
+  assert_true(
+    @exec.apply_native_integration(
+      native_git_test_config(),
+      intent,
+      promotion,
+      adapters,
+      fault=Some(
+        @exec.NativeGitIntegrationFaultPoint::NativeGitAfterRefTransactionBeforeObservation,
+      ),
+    )
+    is Err(_),
+  )
+  assert_eq(apply_count.val, 1)
+  assert_eq(
+    @exec.observe_native_integration(
+      native_git_test_config(),
+      intent,
+      promotion,
+      adapters,
+    ).unwrap(),
+    @control.IntegrationWitnessObservation::IntegrationWitnessApplied(
+      promotion.commit_oid,
+      promotion.commit_oid,
+    ),
+  )
+  assert_eq(apply_count.val, 1)
+}

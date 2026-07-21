@@ -167,7 +167,7 @@ unconnected product path usable.
 - Durable restart-readable state and content-addressed artifact stores with
   transactional fault injection.
 - A hermetic conformance runner with injected clock, identifiers, adapters,
-  and typed fault points. Its command now runs thirty-one registered cases: the
+  and typed fault points. Its command now runs thirty-three registered cases: the
   runner dependency contract, `selection.exact_snapshot`,
   `selection.revision_invalidation`,
   `scheduler.generated_dags`, `branch.initialization_faults`,
@@ -806,6 +806,10 @@ compiler still reports the repository's existing warning set.
   Deterministic promotion ordering across all three-Part completion timings and
   composition of two candidates based on the same head into a continuous
   two-parent promotion/receipt chain are now independently registered.
+  Native Git integration also has typed fault injection after promotion-object
+  creation, before the authorized ref transaction, and after the atomic ref
+  transaction; narrow adapter tests prove deterministic regeneration, zero
+  pre-transaction mutation, and witness-based adoption without a second CAS.
 - Further splitting or consolidating large live adapters only when a concrete
   boundary or dead caller justifies it. The branch-point audit found no closed
   source package imported only by another closed source package.

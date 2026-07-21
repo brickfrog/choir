@@ -38,6 +38,13 @@ pub(all) struct NativeGitIntegrationAdapters {
 }
 
 ///|
+pub(all) enum NativeGitIntegrationFaultPoint {
+  NativeGitAfterPromotionObjectBeforePrepared
+  NativeGitAfterAuthorizedBeforeRefTransaction
+  NativeGitAfterRefTransactionBeforeObservation
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 priv struct NativeGitProcessSpec {
   arguments : Array[String]
   stdin : String
@@ -516,6 +523,7 @@ pub async fn generate_native_promotion(
   config : NativeGitIntegrationConfig,
   intent : @control.IntegrationIntent,
   adapters : NativeGitIntegrationAdapters,
+  fault? : NativeGitIntegrationFaultPoint? = None,
 ) -> Result[@workflow.PartEffectObservation, @types.ChoirError] {
   match validate_native_git_config(config, intent) {
     Ok(_) => ()
@@ -627,6 +635,9 @@ pub async fn generate_native_promotion(
     parents.output.trim().to_owned() != expected_parents {
     return Err(git_error("promotion parent witness does not match"))
   }
+  if fault == Some(NativeGitAfterPromotionObjectBeforePrepared) {
+    return Err(git_error("injected integration fault after promotion object"))
+  }
   Ok(
     @workflow.PartEffectObservation::PromotionGenerated({
       intent_id: intent.id,
@@ -730,6 +741,7 @@ pub async fn apply_native_integration(
   intent : @control.IntegrationIntent,
   promotion : @control.PromotionCommit,
   adapters : NativeGitIntegrationAdapters,
+  fault? : NativeGitIntegrationFaultPoint? = None,
 ) -> Result[@workflow.PartEffectObservation, @types.ChoirError] {
   match validate_native_git_config(config, intent) {
     Ok(_) => ()
@@ -739,6 +751,9 @@ pub async fn apply_native_integration(
     @control.IntegrationIntentLifecycle::IntegrationAuthorized ||
     promotion.intent_id != intent.id {
     return Err(git_error("integration intent is not authorized"))
+  }
+  if fault == Some(NativeGitAfterAuthorizedBeforeRefTransaction) {
+    return Err(git_error("injected integration fault before ref transaction"))
   }
   let applied = match
     (adapters.capture)(
@@ -752,6 +767,9 @@ pub async fn apply_native_integration(
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
+  }
+  if fault == Some(NativeGitAfterRefTransactionBeforeObservation) {
+    return Err(git_error("injected integration fault after ref transaction"))
   }
   let witness = match
     observe_native_integration(config, intent, promotion, adapters) {
