@@ -94,6 +94,15 @@ test "Claude live startup classifies subscription lane without retaining quota d
     @harness.EntitlementLane::EntitlementSubscriptionIncluded,
   )
   assert_eq(report.model_identity, "claude-opus-4-8")
+  let matrix = @harness.claude_live_startup_host_surface_matrix(report).unwrap()
+  assert_eq(matrix.surface, @harness.ProviderSurface::ClaudeCli)
+  assert_eq(matrix.passed, 2)
+  assert_eq(matrix.failed, 0)
+  assert_eq(matrix.not_run, 13)
+  assert_eq(
+    matrix.disposition,
+    @harness.HostSurfaceMatrixDisposition::HostSurfaceMatrixIncomplete,
+  )
 }
 
 ///|
@@ -147,5 +156,13 @@ test "Claude live startup rejects any undeclared tool use" {
     report.blocking_reasons.contains(
       @harness.ClaudeLiveBlockReason::ClaudeLiveUnexpectedToolUse,
     ),
+  )
+  let matrix = @harness.claude_live_startup_host_surface_matrix(report).unwrap()
+  assert_eq(matrix.passed, 0)
+  assert_eq(matrix.failed, 2)
+  assert_eq(matrix.not_run, 13)
+  assert_eq(
+    matrix.disposition,
+    @harness.HostSurfaceMatrixDisposition::HostSurfaceMatrixFailed,
   )
 }

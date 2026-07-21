@@ -403,3 +403,58 @@ pub fn evaluate_claude_live_startup(
     blocking_reasons: reasons,
   }
 }
+
+///|
+pub fn claude_live_startup_host_surface_matrix(
+  report : ClaudeLiveStartupReport,
+) -> Result[HostSurfaceMatrixReport, @types.ChoirError] {
+  let digest = fn(label : String, value : Json) {
+    @storage.artifact_digest(
+      @utf8.encode(
+        "choir.claude-host-surface-observation.v1\u{00}" +
+        label +
+        "\u{00}" +
+        value.stringify(indent=0),
+      ),
+    )
+  }
+  let surface_exact = report.probe_status == SurfaceProbePassed &&
+    report.blocking_reasons.length() == 0 &&
+    report.manifest is Some(_)
+  let surface_digest = digest(
+    "SURFACE-001",
+    [
+      report.manifest.to_json(),
+      report.probe_status.to_json(),
+      report.blocking_reasons.to_json(),
+    ].to_json(),
+  )
+  let subscription_exact = report.observed_authentication ==
+    AuthenticationProviderManagedSubscription &&
+    report.observed_entitlement == EntitlementSubscriptionIncluded
+  let subscription_digest = digest(
+    "SUBSCRIPTION-013",
+    [
+      report.observed_authentication.to_json(),
+      report.observed_entitlement.to_json(),
+    ].to_json(),
+  )
+  evaluate_host_surface_matrix(ProviderSurface::ClaudeCli, [
+    {
+      probe: HostSurfaceProbe::HostSurfaceInitialization,
+      outcome: if surface_exact {
+        HostSurfaceProbeOutcome::HostSurfaceProbePassed(surface_digest)
+      } else {
+        HostSurfaceProbeOutcome::HostSurfaceProbeFailed(surface_digest)
+      },
+    },
+    {
+      probe: HostSurfaceProbe::HostSurfaceSubscriptionIdentity,
+      outcome: if subscription_exact {
+        HostSurfaceProbeOutcome::HostSurfaceProbePassed(subscription_digest)
+      } else {
+        HostSurfaceProbeOutcome::HostSurfaceProbeFailed(subscription_digest)
+      },
+    },
+  ])
+}

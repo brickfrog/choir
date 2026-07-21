@@ -456,8 +456,21 @@ async fn run_claude_live_startup() -> Int {
     }
   }
   let report = @harness.evaluate_claude_live_startup(capture)
+  let matrix = match @harness.claude_live_startup_host_surface_matrix(report) {
+    Ok(value) => value
+    Err(error) => {
+      @sys.write_stderr(error.message() + "\n")
+      ignore(@sys.rm_rf(root))
+      return 1
+    }
+  }
   ignore(@sys.rm_rf(root))
-  @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
+  @sys.write_stdout(
+    { "startup": report.to_json(), "host_surface_matrix": matrix.to_json() }
+    .to_json()
+    .stringify(indent=2) +
+    "\n",
+  )
   match report.support {
     @harness.ChoirSurfaceSupport::SurfaceCandidate => 0
     _ => 1
