@@ -48,6 +48,14 @@ test "Codex live startup admits exact subscription and isolation evidence" {
   assert_true(report.native_read_denied)
   assert_true(report.required_mcp_failed_closed)
   assert_eq(report.blocking_reasons.length(), 0)
+  let matrix = @harness.codex_live_startup_host_surface_matrix(report).unwrap()
+  assert_eq(matrix.passed, 2)
+  assert_eq(matrix.failed, 0)
+  assert_eq(matrix.not_run, 13)
+  assert_eq(
+    matrix.disposition,
+    @harness.HostSurfaceMatrixDisposition::HostSurfaceMatrixIncomplete,
+  )
 }
 
 ///|

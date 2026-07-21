@@ -237,3 +237,54 @@ pub fn evaluate_codex_live_startup(
     blocking_reasons: reasons,
   }
 }
+
+///|
+pub fn codex_live_startup_host_surface_matrix(
+  report : CodexLiveStartupReport,
+) -> Result[HostSurfaceMatrixReport, @types.ChoirError] {
+  let digest = fn(label : String, value : Json) {
+    @storage.artifact_digest(
+      @utf8.encode(
+        "choir.codex-host-surface-observation.v1\u{00}" +
+        label +
+        "\u{00}" +
+        value.stringify(indent=0),
+      ),
+    )
+  }
+  let startup_digest = digest(
+    "STARTUP-003",
+    report.required_mcp_failed_closed.to_json(),
+  )
+  let subscription_exact = report.observed_authentication ==
+    AuthenticationProviderManagedSubscription &&
+    report.observed_entitlement == EntitlementSubscriptionIncluded
+  let subscription_digest = digest(
+    "SUBSCRIPTION-013",
+    [
+      report.observed_authentication.to_json(),
+      report.observed_entitlement.to_json(),
+    ].to_json(),
+  )
+  evaluate_host_surface_matrix(
+    ProviderSurface::CodexCli,
+    [
+      {
+        probe: HostSurfaceProbe::HostSurfaceRequiredToolStartup,
+        outcome: if report.required_mcp_failed_closed {
+          HostSurfaceProbeOutcome::HostSurfaceProbePassed(startup_digest)
+        } else {
+          HostSurfaceProbeOutcome::HostSurfaceProbeFailed(startup_digest)
+        },
+      },
+      {
+        probe: HostSurfaceProbe::HostSurfaceSubscriptionIdentity,
+        outcome: if subscription_exact {
+          HostSurfaceProbeOutcome::HostSurfaceProbePassed(subscription_digest)
+        } else {
+          HostSurfaceProbeOutcome::HostSurfaceProbeFailed(subscription_digest)
+        },
+      },
+    ],
+  )
+}

@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-20T19:53:05-05:00
+Implementation snapshot updated through: 2026-07-20T20:01:15-05:00
 
 ## Charter Semantics and Readiness
 
@@ -239,6 +239,13 @@ unconnected product path usable.
   CLI profile now also passes its live startup oracle: ChatGPT-managed login,
   native host read/write denial, required-MCP fail-closed startup, and an exact
   sandbox-only event trace are executable checks.
+- Host-surface evidence now uses one typed, canonically ordered fifteen-row
+  matrix matching `SURFACE-001` through `TOOL-SEARCH-015`. Passed and failed
+  rows require content-addressed evidence; duplicates and invalid evidence are
+  rejected; omitted rows become `NotRun`; and the matrix is complete only when
+  all fifteen rows pass. The Codex live startup command currently proves only
+  required-tool fail-closed startup and subscription identity, so its report
+  correctly remains incomplete with two passed and thirteen unrun rows.
 - Codex MCP resource discovery is now classified as provider-side discovery,
   not as a Part effect, only for the two read-only discovery methods and only
   when Codex identifies either the exact declared server or its reserved
@@ -703,7 +710,9 @@ compiler still reports the repository's existing warning set.
   dispatch are also registered. The audit-scratch-boundary case now passes on
   the live BoxLite Take path; it is intentionally not reported as hermetic.
   The fixed scale flow is joined to the full semantic projection; the remaining
-  negative cases retain their own typed blocked/recovery oracles.
+  negative cases retain their own typed blocked/recovery oracles. The host
+  surface now has an executable fifteen-row report rather than an implied
+  aggregate pass; thirteen Codex rows still require their exact live oracles.
 - Further splitting or consolidating large live adapters only when a concrete
   boundary or dead caller justifies it. The branch-point audit found no closed
   source package imported only by another closed source package.
@@ -4044,9 +4053,17 @@ the manifest and bounded event spool under an owner-only Take root, persists the
 terminal trace before killing the app-server, and removes the root after the
 workflow has durable evidence.
 
+At `2026-07-20T20:01:15-05:00`, the live Codex startup probe passed again and
+emitted the canonical host-surface matrix. `STARTUP-003` and
+`SUBSCRIPTION-013` have content-addressed passing evidence; the other thirteen
+rows are explicitly `NotRun`, so the disposition is `Incomplete`. The
+exact-turn recovery command also passed, and the live BoxLite cancellation
+fixture restarted with zero provider redispatches.
+
 The exact commands are:
 
 ```text
+moon run --target native src/bin/choir_conformance -- harness --surface codex-cli --profile subscription --live
 moon run --target native src/bin/choir_conformance -- harness --surface codex-cli --profile subscription --driver-recovery-live
 moon run --target native src/bin/choir_conformance -- e2e --fixture native-codex-cancellation
 ```

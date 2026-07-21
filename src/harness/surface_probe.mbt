@@ -136,6 +136,145 @@ pub(all) struct SurfaceProbeReport {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) enum HostSurfaceProbe {
+  HostSurfaceInitialization
+  HostSurfaceAmbientConfiguration
+  HostSurfaceRequiredToolStartup
+  HostSurfaceReadIsolation
+  HostSurfaceWriteIsolation
+  HostSurfacePathIdentity
+  HostSurfaceCredentialIsolation
+  HostSurfaceCapabilityDeath
+  HostSurfaceChildIsolation
+  HostSurfaceResumeAttestation
+  HostSurfaceMutationBoundary
+  HostSurfaceNetworkBoundary
+  HostSurfaceSubscriptionIdentity
+  HostSurfaceCancellation
+  HostSurfaceToolSearch
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum HostSurfaceProbeOutcome {
+  HostSurfaceProbePassed(@control.Digest)
+  HostSurfaceProbeFailed(@control.Digest)
+  HostSurfaceProbeNotRun
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct HostSurfaceProbeObservation {
+  probe : HostSurfaceProbe
+  outcome : HostSurfaceProbeOutcome
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum HostSurfaceMatrixDisposition {
+  HostSurfaceMatrixComplete
+  HostSurfaceMatrixIncomplete
+  HostSurfaceMatrixFailed
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct HostSurfaceMatrixReport {
+  surface : ProviderSurface
+  observations : Array[HostSurfaceProbeObservation]
+  passed : Int
+  failed : Int
+  not_run : Int
+  disposition : HostSurfaceMatrixDisposition
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub fn required_host_surface_probes() -> Array[HostSurfaceProbe] {
+  [
+    HostSurfaceInitialization,
+    HostSurfaceAmbientConfiguration,
+    HostSurfaceRequiredToolStartup,
+    HostSurfaceReadIsolation,
+    HostSurfaceWriteIsolation,
+    HostSurfacePathIdentity,
+    HostSurfaceCredentialIsolation,
+    HostSurfaceCapabilityDeath,
+    HostSurfaceChildIsolation,
+    HostSurfaceResumeAttestation,
+    HostSurfaceMutationBoundary,
+    HostSurfaceNetworkBoundary,
+    HostSurfaceSubscriptionIdentity,
+    HostSurfaceCancellation,
+    HostSurfaceToolSearch,
+  ]
+}
+
+///|
+pub fn evaluate_host_surface_matrix(
+  surface : ProviderSurface,
+  supplied : Array[HostSurfaceProbeObservation],
+) -> Result[HostSurfaceMatrixReport, @types.ChoirError] {
+  let required = required_host_surface_probes()
+  let seen : Array[HostSurfaceProbe] = []
+  for observation in supplied {
+    if !required.contains(observation.probe) {
+      return Err(
+        @types.ChoirError::validation_error("unknown host-surface probe"),
+      )
+    }
+    if seen.contains(observation.probe) {
+      return Err(
+        @types.ChoirError::validation_error("duplicate host-surface probe"),
+      )
+    }
+    seen.push(observation.probe)
+    match observation.outcome {
+      HostSurfaceProbePassed(digest) | HostSurfaceProbeFailed(digest) =>
+        if @storage.validate_digest(digest) is Err(_) {
+          return Err(
+            @types.ChoirError::validation_error(
+              "host-surface evidence digest is invalid",
+            ),
+          )
+        }
+      HostSurfaceProbeNotRun => ()
+    }
+  }
+  let observations : Array[HostSurfaceProbeObservation] = []
+  let mut passed = 0
+  let mut failed = 0
+  let mut not_run = 0
+  for probe in required {
+    let mut observation : HostSurfaceProbeObservation = {
+      probe,
+      outcome: HostSurfaceProbeNotRun,
+    }
+    for item in supplied {
+      if item.probe == probe {
+        observation = item
+        break
+      }
+    }
+    match observation.outcome {
+      HostSurfaceProbePassed(_) => passed = passed + 1
+      HostSurfaceProbeFailed(_) => failed = failed + 1
+      HostSurfaceProbeNotRun => not_run = not_run + 1
+    }
+    observations.push(observation)
+  }
+  Ok({
+    surface,
+    observations,
+    passed,
+    failed,
+    not_run,
+    disposition: if failed > 0 {
+      HostSurfaceMatrixFailed
+    } else if not_run > 0 {
+      HostSurfaceMatrixIncomplete
+    } else {
+      HostSurfaceMatrixComplete
+    },
+  })
+}
+
+///|
 pub fn expected_surface_version(surface : ProviderSurface) -> String {
   match surface {
     ClaudeCli => "2.1.216"

@@ -88,3 +88,83 @@ test "surface declaration rejects version drift" {
     ),
   )
 }
+
+///|
+fn surface_evidence(label : String) -> @control.Digest {
+  @storage.artifact_digest(@utf8.encode(label))
+}
+
+///|
+test "host surface matrix is ordered and incomplete until every probe passes" {
+  let report = @harness.evaluate_host_surface_matrix(
+    @harness.ProviderSurface::CodexCli,
+    [
+      {
+        probe: @harness.HostSurfaceProbe::HostSurfaceSubscriptionIdentity,
+        outcome: @harness.HostSurfaceProbeOutcome::HostSurfaceProbePassed(
+          surface_evidence("subscription"),
+        ),
+      },
+      {
+        probe: @harness.HostSurfaceProbe::HostSurfaceRequiredToolStartup,
+        outcome: @harness.HostSurfaceProbeOutcome::HostSurfaceProbePassed(
+          surface_evidence("startup"),
+        ),
+      },
+    ],
+  ).unwrap()
+  assert_eq(report.observations.length(), 15)
+  assert_eq(report.passed, 2)
+  assert_eq(report.failed, 0)
+  assert_eq(report.not_run, 13)
+  assert_eq(
+    report.disposition,
+    @harness.HostSurfaceMatrixDisposition::HostSurfaceMatrixIncomplete,
+  )
+  assert_eq(
+    report.observations[0].probe,
+    @harness.HostSurfaceProbe::HostSurfaceInitialization,
+  )
+}
+
+///|
+test "host surface matrix rejects duplicate evidence" {
+  let observation : @harness.HostSurfaceProbeObservation = {
+    probe: @harness.HostSurfaceProbe::HostSurfaceRequiredToolStartup,
+    outcome: @harness.HostSurfaceProbeOutcome::HostSurfaceProbePassed(
+      surface_evidence("startup"),
+    ),
+  }
+  assert_true(
+    @harness.evaluate_host_surface_matrix(@harness.ProviderSurface::CodexCli, [
+      observation, observation,
+    ])
+    is Err(_),
+  )
+}
+
+///|
+test "host surface matrix completes only with all fifteen evidence rows" {
+  let observations : Array[@harness.HostSurfaceProbeObservation] = @harness.required_host_surface_probes().map(fn(
+      probe,
+    ) {
+      {
+        probe,
+        outcome: @harness.HostSurfaceProbeOutcome::HostSurfaceProbePassed(
+          surface_evidence(probe.to_json().stringify(indent=0)),
+        ),
+      }
+    },
+  )
+  let report = @harness.evaluate_host_surface_matrix(
+    @harness.ProviderSurface::CodexCli,
+    observations,
+  ).unwrap()
+  assert_eq(report.passed, 15)
+  assert_eq(report.failed, 0)
+  assert_eq(report.not_run, 0)
+  assert_eq(
+    report.disposition,
+    @harness.HostSurfaceMatrixDisposition::HostSurfaceMatrixComplete,
+  )
+}
