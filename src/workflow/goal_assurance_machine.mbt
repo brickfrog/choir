@@ -429,30 +429,7 @@ fn close_goal_assurance_trace(
   (@control.HarnessSession, Array[@control.HarnessEventEnvelope]),
   @types.ChoirError,
 ] {
-  let durable : Array[@control.HarnessEventEnvelope] = []
-  let mut projected = initial
-  for event in events {
-    let ingestion = @control.ingest_harness_event(projected, durable, event)
-    match ingestion.disposition {
-      @control.HarnessIngestionDisposition::HarnessEventAppended =>
-        match ingestion.event {
-          Some(value) => durable.push(value)
-          None => return Err(goal_assurance_error("event was not retained"))
-        }
-      @control.HarnessIngestionDisposition::HarnessEventDuplicate => ()
-      _ => return Err(goal_assurance_error("harness trace is not authorizing"))
-    }
-    projected = ingestion.session
-  }
-  let closed = match @control.close_harness_ingestion(projected) {
-    Ok(value) => value
-    Err(error) => return Err(error)
-  }
-  if closed == observed_final {
-    Ok((closed, durable))
-  } else {
-    Err(goal_assurance_error("adapter session projection disagrees"))
-  }
+  validate_closed_trace(initial, events, observed_final)
 }
 
 ///|

@@ -875,6 +875,10 @@ async fn native_post_take_tree(
   candidate : @control.CandidateCommit,
   suffix : String,
 ) -> Result[@control.GitOid, @types.ChoirError] {
+  match cleanup_native_boxlite_assurance_subject(sandbox) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   let artifact = match
     store_native_take_result(
       runtime,

@@ -202,6 +202,15 @@ pub fn spawn_leader_exited_pgroup_for_test(
 }
 
 ///|
+pub fn spawn_nested_sessions_for_test(
+  _root_path : String,
+  _child_path : String,
+  _sentinel_path : String,
+) -> Int {
+  -1
+}
+
+///|
 pub fn ignore_sigpipe() -> Bool {
   false
 }
@@ -273,6 +282,11 @@ pub fn kill_pgid_best_effort(_pgid : Int) -> Unit {
 
 ///|
 pub fn kill_server_pid_sequence_best_effort(_pid : Int) -> Unit {
+
+}
+
+///|
+pub fn kill_server_tree_sequence_best_effort(_pid : Int) -> Unit {
 
 }
 

@@ -382,6 +382,33 @@ int choir_spawn_leader_exited_pgroup_for_test(
     return (int)leader;
 }
 
+int choir_spawn_nested_sessions_for_test(
+    const char *root_path,
+    const char *child_path,
+    const char *sentinel_path) {
+    pid_t root = fork();
+    if (root < 0) return -1;
+    if (root == 0) {
+        if (setsid() < 0) _exit(127);
+        (void)choir_unblock_signal_for_test(SIGTERM);
+        if (choir_write_pid_file_for_test(root_path, getpid()) != 0) _exit(127);
+        pid_t child = fork();
+        if (child < 0) _exit(127);
+        if (child == 0) {
+            if (setsid() < 0) _exit(127);
+            (void)choir_unblock_signal_for_test(SIGTERM);
+            if (choir_write_pid_file_for_test(child_path, getpid()) != 0) _exit(127);
+            sleep(30);
+            choir_touch_file_for_test(sentinel_path);
+            _exit(0);
+        }
+        sleep(30);
+        choir_touch_file_for_test(sentinel_path);
+        _exit(0);
+    }
+    return (int)root;
+}
+
 int choir_ignore_sigpipe(void) {
     return signal(SIGPIPE, SIG_IGN) == SIG_ERR ? -1 : 0;
 }
@@ -842,6 +869,87 @@ void choir_init_kill_server_pid_sequence(int pid) {
     }
 }
 
+#define CHOIR_MAX_SERVER_TREE_PIDS 4096
+
+static int choir_proc_ppid(pid_t pid, pid_t *ppid_out) {
+    char path[64];
+    char stat_line[4096];
+    snprintf(path, sizeof(path), "/proc/%ld/stat", (long)pid);
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return -1;
+    ssize_t n = read(fd, stat_line, sizeof(stat_line) - 1);
+    close(fd);
+    if (n <= 0) return -1;
+    stat_line[n] = '\0';
+    char *close_paren = strrchr(stat_line, ')');
+    char state = '\0';
+    long parent = -1;
+    if (close_paren == NULL ||
+        sscanf(close_paren + 1, " %c %ld", &state, &parent) != 2 ||
+        parent < 0) {
+        return -1;
+    }
+    *ppid_out = (pid_t)parent;
+    return 0;
+}
+
+static int choir_pid_in_list(const pid_t *pids, int count, pid_t pid) {
+    for (int i = 0; i < count; i++) {
+        if (pids[i] == pid) return 1;
+    }
+    return 0;
+}
+
+static int choir_collect_process_tree(pid_t root, pid_t *pids, int capacity) {
+    if (root <= 1 || capacity <= 0) return 0;
+    int count = 1;
+    pids[0] = root;
+    int changed = 1;
+    while (changed && count < capacity) {
+        changed = 0;
+        DIR *proc = opendir("/proc");
+        if (proc == NULL) break;
+        struct dirent *entry;
+        while ((entry = readdir(proc)) != NULL && count < capacity) {
+            char *end = NULL;
+            long raw = strtol(entry->d_name, &end, 10);
+            if (entry->d_name[0] == '\0' || end == NULL || *end != '\0' || raw <= 1) {
+                continue;
+            }
+            pid_t candidate = (pid_t)raw;
+            if (choir_pid_in_list(pids, count, candidate)) continue;
+            pid_t parent = -1;
+            if (choir_proc_ppid(candidate, &parent) == 0 &&
+                choir_pid_in_list(pids, count, parent)) {
+                pids[count++] = candidate;
+                changed = 1;
+            }
+        }
+        closedir(proc);
+    }
+    return count;
+}
+
+/*
+ * Stop the exact detached server tree, including provider children that call
+ * setsid(2) and therefore leave the daemon's process group. The /proc walk is
+ * rooted at the recorded daemon PID; it never signals unrelated processes.
+ */
+void choir_init_kill_server_tree_sequence(int pid) {
+    if (pid <= 1) return;
+    pid_t pids[CHOIR_MAX_SERVER_TREE_PIDS];
+    int count = choir_collect_process_tree((pid_t)pid, pids, CHOIR_MAX_SERVER_TREE_PIDS);
+    for (int i = count - 1; i >= 0; i--) {
+        if (kill(pids[i], SIGTERM) < 0 && errno != ESRCH) { /* best-effort */ }
+    }
+    if (kill(-(pid_t)pid, SIGTERM) < 0 && errno != ESRCH) { /* best-effort */ }
+    usleep(300000);
+    for (int i = count - 1; i >= 0; i--) {
+        if (kill(pids[i], SIGKILL) < 0 && errno != ESRCH) { /* best-effort */ }
+    }
+    if (kill(-(pid_t)pid, SIGKILL) < 0 && errno != ESRCH) { /* best-effort */ }
+}
+
 /**
  * Owned-pgroup teardown: SIGTERM the process group, brief delay, then SIGKILL.
  * Groups <= 1 are rejected as no-op: 0 is the caller's own group and 1
@@ -932,6 +1040,14 @@ int choir_spawn_serve(const char* exe, int exe_len) {
             _exit(0);
         }
         // Child 2
+        /*
+         * Make the detached server the leader of a bounded process group.
+         * `choir stop` can then terminate the daemon and every child that
+         * inherits its group without touching the caller's process group.
+         */
+        if (setsid() < 0) {
+            _exit(127);
+        }
         /* logs/ may not exist yet: detached child opens the log before serve boots. */
         mkdir(".choir", 0755);
         mkdir(".choir/logs", 0755);

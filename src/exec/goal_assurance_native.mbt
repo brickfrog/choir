@@ -260,6 +260,10 @@ async fn native_goal_assurance_post_tree(
     Some(value) => value
     None => return Err(native_goal_execution_error("Goal seal is absent"))
   }
+  match cleanup_native_boxlite_assurance_subject(sandbox) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   let artifact = match
     store_native_take_result(runtime, record.goal_id, take_id, session, sandbox) {
     Ok(value) => value
@@ -288,6 +292,25 @@ async fn native_goal_assurance_post_tree(
 }
 
 ///|
+fn native_goal_assurance_active_lease(
+  record : @workflow.GoalAssuranceRecord,
+  take_id : @control.TakeId,
+  generation_id : @control.SandboxGenerationId,
+) -> Result[@control.SandboxLease, @types.ChoirError] {
+  for lease in record.sandbox_leases {
+    if lease.take_id == take_id && lease.generation_id == generation_id {
+      return if lease.lifecycle ==
+        @control.SandboxLeaseLifecycle::SandboxLeaseActive {
+        Ok(lease)
+      } else {
+        Err(native_goal_execution_error("assurance sandbox lease is not active"))
+      }
+    }
+  }
+  Err(native_goal_execution_error("assurance sandbox lease is missing"))
+}
+
+///|
 async fn execute_native_goal_verification(
   runtime : NativePartEffectRuntime,
   record : @workflow.GoalAssuranceRecord,
@@ -309,6 +332,15 @@ async fn execute_native_goal_verification(
     Ok(value) => value
     Err(error) => return Err(error)
   }
+  let lease = match
+    native_goal_assurance_active_lease(
+      record,
+      take_id,
+      session.sandbox_generation_id,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
   let processes : Array[
     (@control.VerificationSpec, NativeSandboxProcessResult, Int64),
   ] = []
@@ -327,7 +359,7 @@ async fn execute_native_goal_verification(
         spec.id.0,
         take_id,
         session,
-        record.identities.verification_sandbox,
+        lease,
         sandbox,
         spec.process_spec_digest,
         process,

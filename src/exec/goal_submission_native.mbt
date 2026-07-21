@@ -90,7 +90,16 @@ async fn native_goal_submission_capture(
   if status == 0 {
     Ok(output.trim().to_owned())
   } else {
-    Err(native_goal_submission_error(label + " capture failed"))
+    let detail = output.trim().to_owned()
+    let suffix = if detail == "" { "" } else { ": " + detail }
+    Err(
+      native_goal_submission_error(
+        label +
+        " capture failed with status " +
+        status.to_string() +
+        suffix,
+      ),
+    )
   }
 }
 
@@ -302,7 +311,10 @@ fn compile_native_conductor_part_proposal(
     ),
     arguments: verification_arguments,
     working_directory: @sandbox.SandboxWorkingDirectory::SandboxWorkspaceRoot,
-    environment: [{ key: "NO_COLOR", value: "1" }],
+    environment: [
+      { key: "MOON_HOME", value: "/scratch/home/.moon" },
+      { key: "NO_COLOR", value: "1" },
+    ],
     stdin: @sandbox.SandboxStdinPolicy::SandboxStdinClosed,
     timeout_ms: part.verification.timeout_ms,
     resources: {

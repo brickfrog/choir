@@ -105,13 +105,18 @@ fn conductor_draft_int64_or(
 }
 
 ///|
-fn conductor_draft_has_only(
+fn conductor_draft_unknown_fields(
   fields : Map[String, Json],
   allowed : Array[String],
-) -> Bool {
-  let valid = @ref.new(true)
-  fields.each(fn(key, _) { if !allowed.contains(key) { valid.val = false } })
-  valid.val
+) -> Array[String] {
+  let unknown : Array[String] = []
+  fields.each(fn(key, _) {
+    if !allowed.contains(key) {
+      unknown.push(key)
+    }
+  })
+  unknown.sort()
+  unknown
 }
 
 ///|
@@ -132,11 +137,20 @@ fn decode_conductor_part_draft(
   guard json is Object(fields) else {
     return Err(goal_submission_error("Conductor Part draft must be an object"))
   }
-  if !conductor_draft_has_only(fields, [
+  let allowed_fields = [
       "part_id", "instruction", "provider", "exact_paths", "path_trees", "repository_wide",
       "verify_args", "verify_timeout_ms",
-    ]) {
-    return Err(goal_submission_error("Conductor Part draft has unknown fields"))
+    ]
+  let unknown_fields = conductor_draft_unknown_fields(fields, allowed_fields)
+  if unknown_fields.length() > 0 {
+    return Err(
+      goal_submission_error(
+        "Conductor Part draft has unknown fields: " +
+        unknown_fields.join(", ") +
+        "; allowed fields: " +
+        allowed_fields.join(", "),
+      ),
+    )
   }
   let part_id = match conductor_draft_string(fields, "part_id") {
     Some(value) => @control.PartId(value)
@@ -220,11 +234,20 @@ pub fn decode_conductor_goal_draft(
   guard json is Object(fields) else {
     return Err(goal_submission_error("Conductor Goal draft must be an object"))
   }
-  if !conductor_draft_has_only(fields, [
+  let allowed_fields = [
       "proposal_id", "goal_id", "base_ref", "integration_target_ref", "maximum_parallel_parts",
       "parts",
-    ]) {
-    return Err(goal_submission_error("Conductor Goal draft has unknown fields"))
+    ]
+  let unknown_fields = conductor_draft_unknown_fields(fields, allowed_fields)
+  if unknown_fields.length() > 0 {
+    return Err(
+      goal_submission_error(
+        "Conductor Goal draft has unknown fields: " +
+        unknown_fields.join(", ") +
+        "; allowed fields: " +
+        allowed_fields.join(", "),
+      ),
+    )
   }
   let proposal_id = match conductor_draft_string(fields, "proposal_id") {
     Some(value) => GoalProposalId(value)

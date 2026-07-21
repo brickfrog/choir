@@ -35,7 +35,7 @@ fn stop_run() -> Unit {
   let pid = @string.parse_int(pid_text) catch { _ => 0 }
   if pid > 1 {
     @sys.write_stdout("Stopping choird (PID \{pid})...\n")
-    @sys.kill_server_pid_sequence_best_effort(pid)
+    @sys.kill_server_tree_sequence_best_effort(pid)
   }
   if @env.args().contains("--purge") {
     @sys.init_cleanup_purge_artifacts_native()

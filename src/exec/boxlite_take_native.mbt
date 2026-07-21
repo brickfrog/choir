@@ -1148,7 +1148,7 @@ pub async fn seal_native_boxlite_assurance_subject(
         "--",
         "/bin/sh",
         "-c",
-        "set -eu; find /workspace -xdev -type d -exec chmod 0555 '{}' +; find /workspace -xdev -type f -perm /111 -exec chmod 0555 '{}' +; find /workspace -xdev -type f ! -perm /111 -exec chmod 0444 '{}' +; mkdir -p /scratch/home /scratch/tmp /output; chmod 0777 /scratch /scratch/home /scratch/tmp /output",
+        "set -eu; mkdir -p /scratch/home /scratch/tmp /output; if test -d /opt/moon/registry; then mkdir -p /scratch/home/.moon /scratch/home/.mooncakes; cp -a /opt/moon/lib /opt/moon/include /opt/moon/registry /scratch/home/.moon/; test ! -e /workspace/.mooncakes; ln -s /scratch/home/.mooncakes /workspace/.mooncakes; (cd /workspace && HOME=/scratch/home MOON_HOME=/scratch/home/.moon NO_COLOR=1 /opt/moon/bin/moon install --target-dir /scratch/tmp/dependency-install >/dev/null); chown -R 65534:65534 /scratch/home; fi; find /workspace -xdev -type d -exec chmod 0555 '{}' +; find /workspace -xdev -type f -perm /111 -exec chmod 0555 '{}' +; find /workspace -xdev -type f ! -perm /111 -exec chmod 0444 '{}' +; chmod 0777 /scratch /scratch/home /scratch/tmp /output",
       ],
       60000,
     ) {
@@ -1198,7 +1198,7 @@ pub async fn seal_native_boxlite_assurance_subject(
         "--",
         "/bin/sh",
         "-c",
-        "set -eu; rm -f /scratch/.choir-boundary-probe /output/.choir-boundary-probe; test -z \"$(find /scratch /output -mindepth 1 ! -path /scratch/home ! -path /scratch/tmp -print -quit)\"",
+        "set -eu; rm -f /scratch/.choir-boundary-probe /output/.choir-boundary-probe; test -z \"$(find /scratch /output -mindepth 1 ! -path /scratch/home ! -path '/scratch/home/*' ! -path /scratch/tmp ! -path '/scratch/tmp/*' -print -quit)\"",
       ],
       30000,
     ) {
@@ -1492,6 +1492,34 @@ pub async fn execute_native_boxlite_process(
     started_at: None,
     finished_at: None,
   })
+}
+
+///|
+pub async fn cleanup_native_boxlite_assurance_subject(
+  take : NativeBoxLiteTakeSandbox,
+) -> Result[Unit, @types.ChoirError] {
+  let cleanup = match
+    capture_native_boxlite_cli(
+      take.prepared.server,
+      [
+        "exec",
+        take.box_id,
+        "--",
+        "/bin/rm",
+        "-f",
+        "--",
+        "/workspace/.mooncakes",
+      ],
+      30000,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if cleanup.exit_code == 0 {
+    Ok(())
+  } else {
+    Err(native_boxlite_take_error("dependency cache cleanup failed"))
+  }
 }
 
 ///|

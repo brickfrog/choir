@@ -110,6 +110,12 @@ async test "native Conductor submission captures Beads and persists once" {
     fail("verification process authority is wrong")
   }
   assert_eq(authority_take_id, stored.verification_take.id)
+  assert_true(
+    process.environment.contains({
+      key: "MOON_HOME",
+      value: "/scratch/home/.moon",
+    }),
+  )
   let execution = match
     @workflow.load_goal_execution_record(
       repository,

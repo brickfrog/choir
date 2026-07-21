@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-21T14:30:00-05:00
+Implementation snapshot updated through: 2026-07-21T16:08:00-05:00
 
 ## Charter Semantics and Readiness
 
@@ -40,6 +40,30 @@ working implementation from target behavior; passing fixtures do not make an
 unconnected product path usable.
 
 ### Implemented and directly exercised
+
+- The real subscription-native product path now completes from a Claude
+  Conductor through one accepted Bead-backed Goal and a Codex Part. In a fresh
+  disposable clone, Claude submitted the exact existing `pass-final` Bead;
+  Codex produced the declared one-file candidate; Choir recorded twelve Part
+  effect receipts, one Part verification receipt, one independent Part audit
+  receipt, and one integration receipt; the combined Goal then recorded six
+  assurance effect receipts, one Goal verification receipt, and one Goal audit
+  receipt. The Goal branch contained exactly `LIVE_GOAL.txt` with
+  `CHOIR_LIVE_GOAL_OK\n`, while the captured base branch remained unchanged.
+  Branch publication was receipted; final PR creation remained absent because
+  the disposable repository had no GitHub destination.
+- Sealed Moon verification now stages the offline registry into a private
+  writable Moon home and maps `.mooncakes` to scratch while the candidate tree
+  remains read-only. Choir removes that generated cache link before every
+  verification, audit, or combined-Goal result snapshot. Combined-Goal
+  verification resolves the active durable sandbox lease rather than its
+  planned identity, and it uses the same bounded resumable-cursor projection
+  already enforced for Part harnesses.
+- `choir stop` now terminates the exact daemon descendant tree, including
+  provider children that created their own sessions, before cleaning runtime
+  state. A native regression test proves cleanup of a nested separately
+  sessioned child process; the live disposable daemon also stopped without a
+  surviving matching provider or BoxLite process.
 
 - `choir init` now scaffolds only the current project files, starts the local
   daemon without a terminal multiplexer, bootstraps one authenticated

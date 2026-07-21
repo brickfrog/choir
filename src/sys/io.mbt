@@ -73,6 +73,9 @@ extern "C" fn c_kill_pgid(pgid : Int) -> Int = "choir_kill_pgid"
 extern "C" fn c_init_kill_server_pid_sequence(pid : Int) = "choir_init_kill_server_pid_sequence"
 
 ///|
+extern "C" fn c_init_kill_server_tree_sequence(pid : Int) = "choir_init_kill_server_tree_sequence"
+
+///|
 extern "C" fn c_kill_pgid_sequence(pgid : Int) = "choir_kill_pgid_sequence"
 
 ///|
@@ -401,6 +404,11 @@ pub fn kill_pgid_best_effort(pgid : Int) -> Unit {
 /// `SIGTERM`, ~300ms pause, then `SIGKILL` (init/stop server PID path; best-effort).
 pub fn kill_server_pid_sequence_best_effort(pid : Int) -> Unit {
   c_init_kill_server_pid_sequence(pid)
+}
+
+///|
+pub fn kill_server_tree_sequence_best_effort(pid : Int) -> Unit {
+  c_init_kill_server_tree_sequence(pid)
 }
 
 ///|
@@ -797,6 +805,14 @@ extern "C" fn c_spawn_leader_exited_pgroup_for_test(
 ) -> Int = "choir_spawn_leader_exited_pgroup_for_test"
 
 ///|
+#borrow(root_path, child_path, sentinel_path)
+extern "C" fn c_spawn_nested_sessions_for_test(
+  root_path : Bytes,
+  child_path : Bytes,
+  sentinel_path : Bytes,
+) -> Int = "choir_spawn_nested_sessions_for_test"
+
+///|
 extern "C" fn c_ignore_sigpipe() -> Int = "choir_ignore_sigpipe"
 
 ///|
@@ -898,6 +914,19 @@ pub fn spawn_leader_exited_pgroup_for_test(
 ) -> Int {
   c_spawn_leader_exited_pgroup_for_test(
     string_to_null_terminated_bytes(pgid_path),
+    string_to_null_terminated_bytes(child_path),
+    string_to_null_terminated_bytes(sentinel_path),
+  )
+}
+
+///|
+pub fn spawn_nested_sessions_for_test(
+  root_path : String,
+  child_path : String,
+  sentinel_path : String,
+) -> Int {
+  c_spawn_nested_sessions_for_test(
+    string_to_null_terminated_bytes(root_path),
     string_to_null_terminated_bytes(child_path),
     string_to_null_terminated_bytes(sentinel_path),
   )

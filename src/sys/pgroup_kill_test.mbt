@@ -139,3 +139,32 @@ test "pgid_is_alive detects a surviving child after the setsid leader exits" {
   assert_false(path_exists(sentinel_path))
   ignore(rm_rf(tmp))
 }
+
+///|
+test "server tree cleanup kills a provider child in a separate session" {
+  let tmp = "/tmp/choir-server-tree-" + get_pid().to_string()
+  ignore(rm_rf(tmp))
+  assert_true(create_dir_all(tmp))
+  let root_path = tmp + "/root"
+  let child_path = tmp + "/child"
+  let sentinel_path = tmp + "/should_not_exist"
+  let root = spawn_nested_sessions_for_test(
+    root_path, child_path, sentinel_path,
+  )
+  if root <= 1 {
+    ignore(rm_rf(tmp))
+    fail("expected server tree fixture to spawn")
+  }
+  assert_true(wait_for_pgroup_file_for_test(root_path, 80))
+  assert_true(wait_for_pgroup_file_for_test(child_path, 80))
+  let child = parse_pid_file_for_test(child_path)
+  assert_true(child > 1)
+  assert_true(pgid_has_non_zombie_process(root))
+  assert_true(pgid_has_non_zombie_process(child))
+  kill_server_tree_sequence_best_effort(root)
+  ignore(wait_pid_reap_for_test(root))
+  assert_false(pgid_has_non_zombie_process(root))
+  assert_false(pgid_has_non_zombie_process(child))
+  assert_false(path_exists(sentinel_path))
+  ignore(rm_rf(tmp))
+}

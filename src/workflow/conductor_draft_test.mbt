@@ -45,14 +45,30 @@ test "Conductor draft decodes friendly provider and verification fields" {
 
 ///|
 test "Conductor draft rejects unknown fields and ambiguous mutation scope" {
-  assert_true(
+  match
     @workflow.decode_conductor_goal_draft(
       (
         #|{"proposal_id":"p","goal_id":"g","base_ref":"refs/heads/main","integration_target_ref":"refs/heads/main","maximum_parallel_parts":1,"surprise":true,"parts":[]}
       ),
-    )
-    is Err(_),
-  )
+    ) {
+    Err(error) => {
+      assert_true(error.message().contains("unknown fields: surprise"))
+      assert_true(error.message().contains("allowed fields: proposal_id"))
+    }
+    Ok(_) => fail("unknown Goal field was accepted")
+  }
+  match
+    @workflow.decode_conductor_goal_draft(
+      (
+        #|{"proposal_id":"p","goal_id":"g","base_ref":"refs/heads/main","integration_target_ref":"refs/heads/main","maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","provider":"codex","repository_wide":true,"verify_args":["test"],"command":"moon test","dependencies":[]}]}
+      ),
+    ) {
+    Err(error) => {
+      assert_true(error.message().contains("unknown fields: command, dependencies"))
+      assert_true(error.message().contains("allowed fields: part_id"))
+    }
+    Ok(_) => fail("unknown Part fields were accepted")
+  }
   assert_true(
     @workflow.decode_conductor_goal_draft(
       (

@@ -390,18 +390,36 @@ pub fn evaluate_goal_proposal(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  if proposal.id.0 == "" ||
-    proposal.id.0.contains("\u{00}") ||
-    proposal.goal_id.0 == "" ||
-    proposal.goal_id.0.contains("\u{00}") ||
-    proposal.parts.length() == 0 ||
-    proposal.maximum_parallel_parts <= 0 ||
-    proposal.repository_id != snapshot.repository_id ||
+  if proposal.id.0 == "" || proposal.id.0.contains("\u{00}") {
+    return Err(goal_submission_error("proposal_id is invalid"))
+  }
+  if proposal.goal_id.0 == "" || proposal.goal_id.0.contains("\u{00}") {
+    return Err(goal_submission_error("goal_id is invalid"))
+  }
+  if proposal.parts.length() == 0 {
+    return Err(goal_submission_error("proposal parts are empty"))
+  }
+  if proposal.maximum_parallel_parts <= 0 {
+    return Err(goal_submission_error("maximum_parallel_parts is invalid"))
+  }
+  if proposal.repository_id != snapshot.repository_id ||
     proposal.expected_base_commit_oid != snapshot.base_commit_oid ||
-    proposal.expected_base_tree_oid != snapshot.base_tree_oid ||
-    !valid_git_ref_name(proposal.base_ref) ||
-    !valid_git_ref_name(proposal.integration_target_ref) {
-    return Err(goal_submission_error("proposal envelope is invalid"))
+    proposal.expected_base_tree_oid != snapshot.base_tree_oid {
+    return Err(goal_submission_error("captured repository snapshot mismatch"))
+  }
+  if !valid_git_ref_name(proposal.base_ref) {
+    return Err(
+      goal_submission_error(
+        "base_ref must be a fully qualified refs/... Git ref",
+      ),
+    )
+  }
+  if !valid_git_ref_name(proposal.integration_target_ref) {
+    return Err(
+      goal_submission_error(
+        "integration_target_ref must be a fully qualified refs/... Git ref",
+      ),
+    )
   }
   let proposed_part_ids = unique_sorted_part_ids(
     proposal.parts.map(fn(part) { part.part_id }),
