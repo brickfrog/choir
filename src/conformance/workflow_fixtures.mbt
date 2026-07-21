@@ -2064,6 +2064,92 @@ fn cancellation_goal_assurance_fixture() -> Result[
 }
 
 ///|
+pub fn seal_atomicity_case() -> HermeticConformanceCase {
+  {
+    id: ConformanceCaseId("seal.atomicity"),
+    run: fn(_) {
+      let (execution, planned) = match cancellation_goal_assurance_fixture() {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let authorized = match
+        @workflow.authorize_goal_assurance_seal(
+          planned,
+          execution.goal,
+          planned.seal_intent.expected_head_oid,
+          planned.seal_intent.expected_tree_oid,
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let witnessed = match
+        @workflow.record_goal_assurance_seal_witness(
+          authorized,
+          @control.GoalBranchSealWitnessObservation::GoalBranchSealWitnessApplied(
+            planned.seal_intent.expected_head_oid,
+            planned.seal_intent.expected_head_oid,
+            planned.seal_intent.expected_tree_oid,
+          ),
+          120L,
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let seal_id = @control.GoalBranchSealId("atomic-goal-seal")
+      let first = match @workflow.commit_goal_assurance_seal(witnessed, seal_id) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let replay = match @workflow.commit_goal_assurance_seal(witnessed, seal_id) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let immutable_replay = first == replay && first.seal is Some(_)
+      let planned_effect = match @workflow.plan_next_goal_assurance_effect(first) {
+        Ok(Some(value)) => value
+        Ok(None) => return Err(audit_fixture_error("sealed Goal scheduled no verification"))
+        Err(error) => return Err(error)
+      }
+      let persisted = match
+        @workflow.persist_planned_goal_assurance_effect(first, planned_effect) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let replayed_effect = match
+        @workflow.plan_next_goal_assurance_effect(persisted) {
+        Ok(Some(value)) => value
+        Ok(None) => return Err(audit_fixture_error("pending verification was lost"))
+        Err(error) => return Err(error)
+      }
+      let schedules_once = replayed_effect == planned_effect &&
+        @workflow.persist_planned_goal_assurance_effect(
+          persisted,
+          replayed_effect,
+        ) is Err(_)
+      let late_promotion_denied =
+        @workflow.advance_goal_execution_state(
+          execution,
+          @workflow.GoalExecutionState::GoalExecutionRunning,
+        ) is Err(_) &&
+        @workflow.commit_goal_assurance_seal(first, seal_id) is Err(_)
+      if !immutable_replay || !schedules_once || !late_promotion_denied {
+        return Err(audit_fixture_error("Goal seal atomicity invariant failed"))
+      }
+      Ok({
+        evidence: [
+          ObservedSealCase(
+            SealAtomicity,
+            immutable_replay,
+            schedules_once,
+            late_promotion_denied,
+          ),
+        ],
+      })
+    },
+  }
+}
+
+///|
 fn cancellation_audited_goal_fixture() -> Result[
   (@workflow.GoalExecutionRecord, @workflow.GoalAssuranceRecord),
   @types.ChoirError,

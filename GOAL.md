@@ -810,6 +810,11 @@ compiler still reports the repository's existing warning set.
   creation, before the authorized ref transaction, and after the atomic ref
   transaction; narrow adapter tests prove deterministic regeneration, zero
   pre-transaction mutation, and witness-based adoption without a second CAS.
+- Goal sealing is now registered as the hermetic `seal.atomicity` case. It
+  replays the seal transition from the same witnessed state and requires the
+  identical immutable seal, permits only one durable combined-verification
+  effect, and rejects returning the assuring Goal to Part execution or sealing
+  it again. The hermetic runner now passes 34/34 cases.
 - Further splitting or consolidating large live adapters only when a concrete
   boundary or dead caller justifies it. The branch-point audit found no closed
   source package imported only by another closed source package.
@@ -3526,7 +3531,7 @@ report, and exits nonzero on any oracle mismatch.
 | `cancellation.part_effect_ordering` | Planned/authorized provider and integration effects | Abandonment, uncertainty, or preserved integration reconciliation exactly matches the cutoff side |
 | `cancellation.ordering_matrix` | Every ordering in cancellation section | No post-cutoff admission; preauthorized effects honestly reconciled |
 | `publication.fault_matrix` | Before/after remote ref request and receipt | At most one exact remote update; one receipt or typed drift |
-| `seal.atomicity` | Crash before/after seal transaction and takeed late promotion | One immutable seal; goal checks schedule once; late promotion denied |
+| `seal.atomicity` | Crash before/after seal transaction and late promotion | One immutable seal; goal checks schedule once; late promotion denied |
 | `pr.fault_matrix` | Every stable PR fault point | At most one create request; unique PR receipt or `RemoteCreateUncertain`; receipt alone never completes |
 | `pr.remote_drift` | Closed, retargeted, head-changed, edited, duplicate cases | Exact adopt/needs-input/block behavior; no blind replacement |
 | `pr.readiness_and_terminal_race` | Human evidence edit plus simultaneous success/cancel | Fresh readiness oracle; exactly one terminal decision and outbox |

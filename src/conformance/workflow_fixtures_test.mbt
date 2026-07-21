@@ -87,6 +87,39 @@ test "divergent candidates compose into one continuous promotion chain" {
 }
 
 ///|
+test "Goal seal replay is immutable and schedules verification once" {
+  let report = @conformance.run_hermetic_case(
+    @conformance.seal_atomicity_case(),
+    {
+      now: fn() { 1L },
+      next_id: fn(_) { "seal-atomicity-fixture-id" },
+      fault_enabled: fn(_) { false },
+      adapters: {
+        read_state: fn(_) { Ok(@conformance.StateObservation::StateMissing) },
+        read_artifact: fn(_) {
+          Ok(@conformance.ArtifactObservation::ArtifactMissing)
+        },
+        read_effect_witness: fn(_) {
+          Ok(@conformance.EffectWitnessObservation::EffectWitnessAbsent)
+        },
+      },
+    },
+  )
+  assert_eq(
+    report.status,
+    @conformance.ConformanceCaseStatus::ConformanceCasePassed,
+  )
+  assert_eq(report.evidence, [
+    @conformance.ConformanceEvidence::ObservedSealCase(
+      @conformance.SealConformanceKind::SealAtomicity,
+      true,
+      true,
+      true,
+    ),
+  ])
+}
+
+///|
 test "selection fixture records exact typed rejection and acceptance sets" {
   let report = @conformance.run_hermetic_case(
     @conformance.selection_exact_snapshot_case(),

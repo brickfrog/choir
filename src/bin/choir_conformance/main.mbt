@@ -61,6 +61,7 @@ fn run_hermetic() -> Int {
       @conformance.integration_promotion_order_case(),
       @conformance.integration_divergent_candidates_case(),
       @conformance.integration_conflict_repair_case(),
+      @conformance.seal_atomicity_case(),
       @conformance.event_duplicate_conflict_case(),
       @conformance.event_cursor_gap_case(),
       @conformance.event_late_terminal_case(),
