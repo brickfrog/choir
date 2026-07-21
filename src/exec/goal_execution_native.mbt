@@ -1,9 +1,15 @@
 ///|
-struct NativeGoalRepositoryIdentity {
+priv struct NativeGoalRepositoryIdentity {
   root : String
   git_directory : String
   object_directory : String
 }
+
+///|
+pub(all) struct NativeGoalPurgeReport {
+  runtime_roots_removed : Int
+  git_refs_removed : Int
+} derive(Debug, Eq)
 
 ///|
 priv struct NativeGoalPartRuntime {
@@ -1810,6 +1816,60 @@ async test "native Goal branch initialization atomically anchors both refs" {
 }
 
 ///|
+async test "native Goal purge removes only an exact owned Git ref" {
+  let root = "/tmp/choir-goal-ref-purge-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(root))
+  if !@sys.create_dir_all(root) {
+    fail("failed to create Goal ref purge test root")
+  }
+  let git = async fn(arguments : Array[String]) -> NativeGitCapture {
+    match capture_native_goal_git(root, arguments) {
+      Ok(value) => value
+      Err(error) => fail(error.message())
+    }
+  }
+  if git(["init", "-q"]).exit_code != 0 {
+    fail("failed to initialize Goal ref purge repository")
+  }
+  let tree = git(["hash-object", "-w", "-t", "tree", "/dev/null"])
+  let commit = git([
+    "-c",
+    "user.name=Choir Test",
+    "-c",
+    "user.email=choir@example.invalid",
+    "commit-tree",
+    tree.output.trim().to_owned(),
+    "-m",
+    "base",
+  ])
+  if tree.exit_code != 0 || commit.exit_code != 0 {
+    fail("failed to create Goal ref purge base")
+  }
+  let reference = "refs/choir/witness/purge-test"
+  if git(["update-ref", reference, commit.output.trim().to_owned()]).exit_code !=
+    0 {
+    fail("failed to create Goal-owned purge ref")
+  }
+  let repository : NativeGoalRepositoryIdentity = {
+    root,
+    git_directory: root + "/.git",
+    object_directory: root + "/.git/objects",
+  }
+  match delete_native_goal_owned_git_ref(repository, reference) {
+    Ok(value) => assert_true(value)
+    Err(error) => fail(error.message())
+  }
+  match delete_native_goal_owned_git_ref(repository, reference) {
+    Ok(value) => assert_false(value)
+    Err(error) => fail(error.message())
+  }
+  assert_true(
+    delete_native_goal_owned_git_ref(repository, "refs/heads/main") is Err(_),
+  )
+  ignore(@sys.rm_rf(root))
+}
+
+///|
 async test "native Goal seal witness is exact and idempotent" {
   let root = "/tmp/choir-goal-seal-witness-" + @sys.get_pid().to_string()
   ignore(@sys.rm_rf(root))
@@ -2608,12 +2668,144 @@ pub async fn run_native_goal_execution_tick(
 }
 
 ///|
-pub async fn purge_native_goal_runtimes(
+fn native_goal_owned_git_ref_is_valid(reference : String) -> Bool {
+  valid_git_ref(reference, "refs/heads/choir/goals/") ||
+  valid_git_ref(reference, "refs/choir/goals/") ||
+  valid_git_ref(reference, "refs/choir/witness/")
+}
+
+///|
+fn append_native_goal_owned_git_ref(
+  refs : Array[String],
+  reference : String,
+) -> Result[Unit, @types.ChoirError] {
+  if !native_goal_owned_git_ref_is_valid(reference) {
+    return Err(native_goal_execution_error("owned Git ref is invalid"))
+  }
+  if !refs.contains(reference) {
+    refs.push(reference)
+  }
+  Ok(())
+}
+
+///|
+fn native_goal_owned_git_refs(
+  repository : @workflow.PartWorkflowRepository,
+  record : @workflow.GoalExecutionRecord,
+) -> Result[Array[String], @types.ChoirError] {
+  if record.goal_ref != @workflow.goal_execution_ref(record.goal.id) ||
+    record.branch_initialization.goal_id != record.goal.id ||
+    record.branch_initialization.goal_ref != record.goal_ref {
+    return Err(native_goal_execution_error("Goal ref ownership is invalid"))
+  }
+  let adapters = local_part_workflow_repository_adapters()
+  let refs : Array[String] = []
+  match
+    append_native_goal_owned_git_ref(
+      refs,
+      record.branch_initialization.initialization_witness_ref.0,
+    ) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  for workflow_id in record.part_workflow_ids {
+    let snapshot = match
+      @workflow.load_part_snapshot(repository, adapters, workflow_id) {
+      Ok(Some(value)) => value.snapshot
+      Ok(None) =>
+        return Err(native_goal_execution_error("Part disappeared during purge"))
+      Err(error) => return Err(error)
+    }
+    if snapshot.goal.id != record.goal.id {
+      return Err(native_goal_execution_error("Part Goal identity changed"))
+    }
+    match snapshot.integration_intent {
+      Some(intent) => {
+        if intent.goal_id != record.goal.id {
+          return Err(
+            native_goal_execution_error("integration Goal identity changed"),
+          )
+        }
+        match append_native_goal_owned_git_ref(refs, intent.git_witness_ref) {
+          Ok(_) => ()
+          Err(error) => return Err(error)
+        }
+      }
+      None => ()
+    }
+  }
+  match
+    @workflow.load_goal_assurance_record(repository, adapters, record.goal.id) {
+    Ok(Some(stored)) => {
+      if stored.record.goal_id != record.goal.id ||
+        stored.record.goal_ref != record.goal_ref {
+        return Err(
+          native_goal_execution_error("assurance Goal identity changed"),
+        )
+      }
+      match
+        append_native_goal_owned_git_ref(
+          refs,
+          stored.record.seal_intent.seal_witness_ref,
+        ) {
+        Ok(_) => ()
+        Err(error) => return Err(error)
+      }
+    }
+    Ok(None) => ()
+    Err(error) => return Err(error)
+  }
+  // Delete the live Goal ref last so a partial purge never leaves witnesses
+  // without the branch they prove.
+  match append_native_goal_owned_git_ref(refs, record.goal_ref.0) {
+    Ok(_) => Ok(refs)
+    Err(error) => Err(error)
+  }
+}
+
+///|
+async fn delete_native_goal_owned_git_ref(
+  repository : NativeGoalRepositoryIdentity,
+  reference : String,
+) -> Result[Bool, @types.ChoirError] {
+  if !native_goal_owned_git_ref_is_valid(reference) {
+    return Err(native_goal_execution_error("owned Git ref is invalid"))
+  }
+  let observed = match
+    capture_native_goal_git(repository.root, [
+      "rev-parse", "--verify", "--quiet", reference,
+    ]) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if observed.exit_code == 1 {
+    return Ok(false)
+  }
+  let oid = observed.output.trim().to_owned()
+  if observed.exit_code != 0 || !valid_hex_oid_text(oid) {
+    return Err(native_goal_execution_error("owned Git ref observation failed"))
+  }
+  let deleted = match
+    capture_native_goal_git(repository.root, [
+      "update-ref", "-d", reference, oid,
+    ]) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if deleted.exit_code == 0 {
+    Ok(true)
+  } else {
+    Err(native_goal_execution_error("owned Git ref changed during purge"))
+  }
+}
+
+///|
+pub async fn purge_native_goal_resources(
   project_dir : String,
-) -> Result[Int, @types.ChoirError] {
+) -> Result[NativeGoalPurgeReport, @types.ChoirError] {
   let repository = native_goal_repository(project_dir)
   if !@sys.path_exists(repository.state_store.path) {
-    return Ok(0)
+    return Ok({ runtime_roots_removed: 0, git_refs_removed: 0 })
   }
   let records = match
     @workflow.list_goal_execution_records(
@@ -2623,7 +2815,8 @@ pub async fn purge_native_goal_runtimes(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let mut removed = 0
+  let mut runtime_roots_removed = 0
+  let mut git_refs_removed = 0
   for stored in records {
     let runtime_root = native_goal_runtime_root(
       stored.record.repository_id,
@@ -2631,12 +2824,28 @@ pub async fn purge_native_goal_runtimes(
     )
     if @sys.path_exists(runtime_root) {
       match cleanup_native_goal_runtime(stored.record) {
-        Ok(_) => removed = removed + 1
+        Ok(_) => runtime_roots_removed = runtime_roots_removed + 1
+        Err(error) => return Err(error)
+      }
+    }
+    let refs = match native_goal_owned_git_refs(repository, stored.record) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    let identity = match
+      discover_native_goal_repository(project_dir, stored.record) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    for reference in refs {
+      match delete_native_goal_owned_git_ref(identity, reference) {
+        Ok(true) => git_refs_removed = git_refs_removed + 1
+        Ok(false) => ()
         Err(error) => return Err(error)
       }
     }
   }
-  Ok(removed)
+  Ok({ runtime_roots_removed, git_refs_removed })
 }
 
 ///|

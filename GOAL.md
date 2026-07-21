@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-21T14:11:30-05:00
+Implementation snapshot updated through: 2026-07-21T14:39:19-05:00
 
 ## Charter Semantics and Readiness
 
@@ -126,10 +126,15 @@ unconnected product path usable.
   runtime cleanup also removes the disposable Codex Conductor home, while
   durable Goal state and evidence remain until explicit `stop --purge`. Purge
   now enumerates every durable Goal identity and removes each exact surviving
-  runtime root before deleting the database. A live probe removed one seeded
-  recoverable root and its durable state together; a forced BoxLite cleanup
-  failure exited nonzero and preserved both root and database for an honest
-  retry.
+  runtime root and recorded local Goal/witness ref before deleting the
+  database. Ref deletion observes and compare-deletes the exact current OID,
+  replays missing refs as success, and removes the live Goal ref last. An
+  installed-layout Codex probe purged one active BoxLite root and two owned
+  refs, preserved an unrelated `keep-me` branch and the open source Bead,
+  removed durable state, and left no matching process. A prior live probe
+  removed one seeded recoverable root and its durable state together; a forced
+  BoxLite cleanup failure exited nonzero and preserved both root and database
+  for an honest retry.
 - An integrated Part now reconciles its source Bead to `closed` before Goal
   execution advances. Choir rereads the exact Bead, compares it with the source
   revision captured at Goal acceptance, and issues the typed `bd update` only
@@ -3276,6 +3281,31 @@ does not claim otherwise.
 
 Late provider completion after the cutoff remains diagnostic and cannot
 reverse cancellation or mint success.
+
+### Explicit local cleanup
+
+Ordinary completion and cancellation clean disposable process, sandbox, and
+Conductor state but preserve durable evidence and Git witnesses. Destructive
+cleanup is a separate explicit user action; no gate, terminal transition, or
+background worker may initiate it.
+
+`choir stop --purge` stops the daemon tree, enumerates persisted Goals, removes
+their exact runtime roots, then compare-and-deletes only their recorded local
+`refs/heads/choir/goals/*`, `refs/choir/goals/*`, and
+`refs/choir/witness/*` refs. The live Goal ref is deleted after its witnesses.
+Missing refs replay as success. An invalid identity, changed ref, inaccessible
+repository, or failed runtime deletion stops the purge and preserves the
+durable database for an honest retry. Only after those external resources are
+reconciled may Choir remove its local state and artifact store. Purge never
+deletes a user branch, remote branch, PR, source Bead, or provider-managed
+credential.
+
+Long-running installations also need selective terminal-Goal archival rather
+than an all-or-nothing wipe. That command must support a dry run, reject active,
+paused, recoverable, canceling, blocked, or uncertain Goals, and distinguish
+archiving durable evidence from deleting it. Its state transition and artifact
+reachability rules must be specified before implementation; `stop --purge`
+must not be misrepresented as that collector.
 
 ## End-to-End Goal Flow
 

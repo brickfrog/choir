@@ -65,10 +65,12 @@ fn stop_run() -> Unit {
       }
     }
     @async.run_async_main(async fn() {
-      match @exec.purge_native_goal_runtimes(project_dir) {
-        Ok(removed) => {
+      match @exec.purge_native_goal_resources(project_dir) {
+        Ok(report) => {
           @sys.init_cleanup_purge_artifacts_native()
-          @sys.write_stdout("Purged \{removed} Goal runtime root(s).\n")
+          @sys.write_stdout(
+            "Purged \{report.runtime_roots_removed} Goal runtime root(s) and \{report.git_refs_removed} owned Git ref(s).\n",
+          )
           @sys.write_stdout("Choir stopped.\n")
         }
         Err(error) => {

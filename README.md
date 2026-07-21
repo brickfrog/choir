@@ -74,9 +74,10 @@ choir stop --purge
 ```
 
 Normal stop preserves recoverable Goal state for restart. `stop --purge`
-removes every recorded Goal runtime before deleting durable state; if runtime
-cleanup fails, Choir keeps the database and exits nonzero so the purge can be
-retried safely.
+removes every recorded Goal runtime and exact local Goal/witness ref before
+deleting durable state. It does not delete user branches, remote branches, PRs,
+or source Beads. If external cleanup fails, Choir keeps the database and exits
+nonzero so the purge can be retried safely.
 
 ## Verify
 
