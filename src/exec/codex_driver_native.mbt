@@ -6,6 +6,7 @@ pub(all) struct NativeCodexDriverConfig {
   mcp_server_name : String
   allowed_tools : Array[String]
   timeout_ms : Int
+  connect_trace_path : String?
 } derive(Debug, Eq)
 
 ///|
@@ -69,6 +70,15 @@ fn validate_native_codex_config(
         ),
       )
     }
+  }
+  match config.connect_trace_path {
+    Some(path) if path != config.sterile_root + "/connect.trace" =>
+      return Err(
+        @types.ChoirError::validation_error(
+          "native Codex connect trace path is invalid",
+        ),
+      )
+    _ => ()
   }
   Ok(())
 }
@@ -1080,12 +1090,24 @@ async fn spawn_native_codex_app_server(
     pid_witness,
     "/usr/bin/bwrap",
   ]
+  let app_server_args = native_codex_app_server_args(config)
+  let traced_program = match config.connect_trace_path {
+    Some(_) => "/usr/bin/strace"
+    None => codex
+  }
+  let traced_args : Array[String] = match config.connect_trace_path {
+    Some(path) => [
+      "-f", "-qq", "-s", "256", "-e", "trace=connect", "-o", path, codex,
+      ..app_server_args,
+    ]
+    None => app_server_args
+  }
   for
     argument in native_codex_host_boundary_args(
       config.sterile_root,
       native_codex_app_server_working_directory(config),
-      codex,
-      native_codex_app_server_args(config),
+      traced_program,
+      traced_args,
     ) {
     arguments.push(argument)
   }
@@ -1998,6 +2020,7 @@ test "native Codex app-server argv removes native execution surfaces" {
     mcp_server_name: "choir_sandbox",
     allowed_tools: ["read_file", "run"],
     timeout_ms: 60000,
+    connect_trace_path: None,
   })
   assert_eq(args[:3], ["app-server", "--listen", "stdio://"])
   assert_true(args.contains("shell_tool"))
@@ -2012,6 +2035,28 @@ test "native Codex app-server argv removes native execution surfaces" {
 }
 
 ///|
+test "native Codex connect observation is confined to the sterile root" {
+  let config : NativeCodexDriverConfig = {
+    sterile_root: "/tmp/choir-codex-driver-test",
+    mcp_executable: "/usr/bin/node",
+    mcp_arguments: ["/opt/choir/sandbox-mcp.mjs"],
+    mcp_server_name: "choir_sandbox",
+    allowed_tools: ["read_file"],
+    timeout_ms: 60000,
+    connect_trace_path: Some("/tmp/outside.trace"),
+  }
+  assert_true(validate_native_codex_config(config) is Err(_))
+  assert_true(
+    validate_native_codex_config({
+      ..config,
+      connect_trace_path: Some(
+        "/tmp/choir-codex-driver-test/connect.trace",
+      ),
+    }) is Ok(_),
+  )
+}
+
+///|
 test "native Codex initialization attests the sterile client identity" {
   let config : NativeCodexDriverConfig = {
     sterile_root: "/tmp/choir-codex-driver-test",
@@ -2020,6 +2065,7 @@ test "native Codex initialization attests the sterile client identity" {
     mcp_server_name: "choir_sandbox",
     allowed_tools: ["probe"],
     timeout_ms: 60000,
+    connect_trace_path: None,
   }
   let response : Map[String, Json] = {
     "userAgent": ("choir/" +

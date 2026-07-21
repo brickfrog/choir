@@ -167,7 +167,7 @@ unconnected product path usable.
 - Durable restart-readable state and content-addressed artifact stores with
   transactional fault injection.
 - A hermetic conformance runner with injected clock, identifiers, adapters,
-  and typed fault points. Its command now runs thirty-five registered cases: the
+  and typed fault points. Its command now runs thirty-six registered cases: the
   runner dependency contract, `selection.exact_snapshot`,
   `selection.revision_invalidation`,
   `scheduler.generated_dags`, `branch.initialization_faults`, three integration
@@ -344,6 +344,16 @@ unconnected product path usable.
   tool call, and retains none of the secret in normalized events or terminal
   output. Combined live evidence now covers fourteen rows; only `NETWORK-012`
   remains unproven.
+- A live subscription-backed Codex Take now proves `NETWORK-012` from inside
+  the admitted Bubblewrap boundary. The exact Codex/app-server/MCP process tree
+  is traced only for network connection attempts; the typed evaluator accepts
+  provider HTTPS, DNS, and runtime address-selection probes, rejects the
+  loopback canary and every unclassified Internet transport, and retains only
+  canonical counts plus a content digest. The passing run recorded six
+  provider HTTPS connections, zero loopback-canary attempts, and zero
+  unclassified transports. Together with the already passing BoxLite guest
+  network policy, all fifteen Codex host-surface rows now have exact live
+  evidence.
 - Codex MCP resource discovery is now classified as provider-side discovery,
   not as a Part effect, only for the two read-only discovery methods and only
   when Codex identifies either the exact declared server or its reserved
@@ -787,7 +797,7 @@ Earlier evidence anchors are commits `5fb93fe8` for the native Part path,
 the linter correction. With the current assurance, cancellation, and provider changes,
 `moon check --target native`, `moon test --target native`, and
 `moon run --target native src/bin/choir_lint` all exit successfully on
-2026-07-21. After deleting obsolete source and tests, the full native suite reports 338
+2026-07-21. After deleting obsolete source and tests, the full native suite reports 341
 passed and 0 failed. The
 compiler still reports the repository's existing warning set.
 
@@ -833,7 +843,8 @@ compiler still reports the repository's existing warning set.
   The fixed scale flow is joined to the full semantic projection; the remaining
   negative cases retain their own typed blocked/recovery oracles. The host
   surface now has an executable fifteen-row report rather than an implied
-  aggregate pass; two Codex rows still require their exact live oracles.
+  aggregate pass; every Codex row now has its exact live oracle and passing
+  evidence.
   Deterministic promotion ordering across all three-Part completion timings and
   composition of two candidates based on the same head into a continuous
   two-parent promotion/receipt chain are now independently registered.
@@ -4356,7 +4367,7 @@ dispatches. The run again recorded 12 effect receipts and one verification,
 audit, and integration receipt. The mixed Claude/Codex Goal also passed with
 concurrency two, 24 effect receipts, two verification receipts, two audit
 receipts, two integrations, and the expected combined tree. The accompanying
-native suite passed 338/338 and the hermetic runner passed 36/36, including all
+native suite passed 341/341 and the hermetic runner passed 36/36, including all
 four registered process crash boundaries.
 
 At `2026-07-20T12:37:00-05:00`, the Codex-only lifecycle command passed again

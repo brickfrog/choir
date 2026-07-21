@@ -490,6 +490,7 @@ fn native_codex_config(
         @sandbox.boxlite_assurance_codex_mcp_tools()
     },
     timeout_ms: 3600000,
+    connect_trace_path: None,
   })
 }
 
