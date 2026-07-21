@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-21T18:25:00-05:00
+Implementation snapshot updated through: 2026-07-21T18:40:00-05:00
 
 ## Charter Semantics and Readiness
 
@@ -124,7 +124,12 @@ unconnected product path usable.
   independent Goal audit while the host's `choir-take-goal-*` root count stayed
   `0 -> 0`; the pre-fix probe had exposed four abandoned 4 GiB roots. Normal
   runtime cleanup also removes the disposable Codex Conductor home, while
-  durable Goal state and evidence remain until explicit `stop --purge`.
+  durable Goal state and evidence remain until explicit `stop --purge`. Purge
+  now enumerates every durable Goal identity and removes each exact surviving
+  runtime root before deleting the database. A live probe removed one seeded
+  recoverable root and its durable state together; a forced BoxLite cleanup
+  failure exited nonzero and preserved both root and database for an honest
+  retry.
 
 - `choir init` now scaffolds only the current project files, starts the local
   daemon without a terminal multiplexer, bootstraps one authenticated

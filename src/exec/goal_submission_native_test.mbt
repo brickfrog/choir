@@ -488,3 +488,12 @@ async test "rejected Conductor submission initializes no Part workflow" {
   }
   ignore(@sys.rm_rf(root))
 }
+
+///|
+async test "Goal runtime purge is a no-op without durable state" {
+  let root = "/tmp/choir-goal-purge-empty-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(root))
+  assert_true(@sys.create_dir_all(root))
+  assert_eq(purge_native_goal_runtimes(root).unwrap(), 0)
+  ignore(@sys.rm_rf(root))
+}

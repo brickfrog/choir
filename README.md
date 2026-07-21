@@ -66,7 +66,13 @@ choir goal steer <goal-id> resume
 choir goal steer <goal-id> concurrency 4
 choir goal cancel <goal-id>
 choir stop
+choir stop --purge
 ```
+
+Normal stop preserves recoverable Goal state for restart. `stop --purge`
+removes every recorded Goal runtime before deleting durable state; if runtime
+cleanup fails, Choir keeps the database and exits nonzero so the purge can be
+retried safely.
 
 ## Verify
 

@@ -39,11 +39,36 @@ fn stop_run() -> Unit {
     @sys.kill_server_tree_sequence_best_effort(pid)
   }
   if @env.args().contains("--purge") {
-    @sys.init_cleanup_purge_artifacts_native()
+    let project_dir = match @sys.realpath_native(".") {
+      Some(value) => value
+      None => {
+        @sys.write_stderr(
+          "choir stop: failed to resolve the project directory\n",
+        )
+        @sys.exit(1)
+        return
+      }
+    }
+    @async.run_async_main(async fn() {
+      match @exec.purge_native_goal_runtimes(project_dir) {
+        Ok(removed) => {
+          @sys.init_cleanup_purge_artifacts_native()
+          @sys.write_stdout("Purged \{removed} Goal runtime root(s).\n")
+          @sys.write_stdout("Choir stopped.\n")
+        }
+        Err(error) => {
+          @sys.init_cleanup_runtime_artifacts_native()
+          @sys.write_stderr(
+            "choir stop: runtime purge failed: " + error.message() + "\n",
+          )
+          @sys.exit(1)
+        }
+      }
+    })
   } else {
     @sys.init_cleanup_runtime_artifacts_native()
+    @sys.write_stdout("Choir stopped.\n")
   }
-  @sys.write_stdout("Choir stopped.\n")
 }
 
 ///|

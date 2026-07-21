@@ -2352,6 +2352,38 @@ pub async fn run_native_goal_execution_tick(
 }
 
 ///|
+pub async fn purge_native_goal_runtimes(
+  project_dir : String,
+) -> Result[Int, @types.ChoirError] {
+  let repository = native_goal_repository(project_dir)
+  if !@sys.path_exists(repository.state_store.path) {
+    return Ok(0)
+  }
+  let records = match
+    @workflow.list_goal_execution_records(
+      repository,
+      local_part_workflow_repository_adapters(),
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let mut removed = 0
+  for stored in records {
+    let runtime_root = native_goal_runtime_root(
+      stored.record.repository_id,
+      stored.record.goal.id,
+    )
+    if @sys.path_exists(runtime_root) {
+      match cleanup_native_goal_runtime(stored.record) {
+        Ok(_) => removed = removed + 1
+        Err(error) => return Err(error)
+      }
+    }
+  }
+  Ok(removed)
+}
+
+///|
 pub fn cancel_native_goal(
   project_dir : String,
   goal_id : @control.GoalId,
