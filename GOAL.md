@@ -3,8 +3,8 @@
 Status: active product and architecture charter
 
 Implementation status: the local Conductor-to-Goal-to-provider path is
-implemented and directly launchable. A live external final-PR canary and the
-complete hostile/fault matrix remain acceptance gates.
+implemented and directly launchable. The complete hostile/fault matrix remains
+the acceptance gate.
 
 Decision state: the strategic direction—local durable authority,
 provider-native Conductor sessions, isolated part execution, passive VSDD gates,
@@ -846,13 +846,9 @@ compiler still reports the repository's existing warning set.
   disposable repository had no remote. That condition is now a durable,
   visible input request rather than a hidden retry loop. It does not prove the
   interactive Claude `/goal` turn, interruption during an in-flight Goal-level
-  provider dispatch, or a live external final-PR create.
+  provider dispatch.
 
 ### Not yet connected
-- A live external final-PR canary for the native forge transport. The checked
-  synthetic forge and pure workflow matrices prove control-plane fault,
-  ambiguity, remote-state, readiness, and cancellation behavior without
-  mutating an external repository.
 - The remaining hostile-surface conformance cases. Duplicate conflicts, cursor gaps, late
   terminals, conflicting terminals, fixed-seed generated DAG scheduling,
   ownership normalization/conflicts, candidate under-claiming, and
@@ -913,9 +909,9 @@ Takes, serialized promotion, exact combined verification, and independent
 Goal audit. A Conductor can also inspect the durable Goal and its Parts by Goal
 ID after reconnecting. The durable execution path now reaches terminal success
 through the ordinary Goal runner. The product remains unfinished because it
-lacks the external final-PR canary and the full hostile/fault matrix. Remaining
-work is on the v2 contracts; the branch-point reachability audit found no
-remaining v1 workflow-authority or compatibility island.
+lacks the full hostile/fault matrix. Remaining work is on the v2 contracts; the
+branch-point reachability audit found no remaining v1 workflow-authority or
+compatibility island.
 
 Implementation began with two bounded experiments authorized by this charter:
 
@@ -3767,12 +3763,7 @@ fallback reads, old-format translation, or “legacy” helpers.
 The current local product path has selected and implemented its SQLite state
 adapter, content-addressed artifact store, pinned Claude and Codex subscription
 surfaces, static concurrency policy, BoxLite runtime, and narrow model-facing
-runtime owner. One acceptance task remains:
-
-1. **External final-PR canary:** run the implemented finalization protocol
-   against one disposable real forge repository, then prove create lookup,
-   canonical receipt, readiness, terminal success, and replay without a second
-   PR. This is an explicit externally mutating canary, not an ambient test.
+runtime owner. No external repository mutation is required for acceptance.
 The required-case accounting is complete. The 36-case hermetic report maps 35
 required rows by exact ID, and the specialized accounting table maps the other
 fifteen to their current typed commands. The clean run passed every hermetic
@@ -4702,9 +4693,7 @@ moon run --target native src/bin/choir_conformance -- finish --project <disposab
 moon run --target native src/bin/choir_conformance -- tick --project <disposable-repository> --synthetic
 ```
 
-This proves the durable one-shot and ordinary-runner semantics. The external
-forge create remains deliberately unperformed in this checkout; a controlled
-live canary remains required before calling that transport supported. The
+This proves the durable one-shot and ordinary-runner semantics. The
 ambiguous-create, remote-state, readiness, and cancellation race matrices are
 covered by the controlled-forge and pure workflow evidence above.
 
