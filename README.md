@@ -38,9 +38,15 @@ export CHOIR_BOXLITE_RUNTIME_DIR=/absolute/path/to/corrected-runtime
 
 ```bash
 moon build --target native --release
-install -Dm755 _build/native/release/build/src/bin/choir/choir.exe ~/.local/bin/choir
+install -Dm755 _build/native/release/build/src/bin/choir/choir.exe ~/.local/libexec/choir/choir
+install -Dm644 scripts/choir_sandbox_mcp.mjs scripts/choir_boxlite_owner.mjs -t ~/.local/libexec/choir
+ln -sfn ../libexec/choir/choir ~/.local/bin/choir
 choir init
 ```
+
+For an unpackaged development build, set `CHOIR_RUNTIME_ASSET_DIR` to the
+absolute `scripts` directory before starting Choir. Choir never loads these
+trusted host-side programs from the target repository.
 
 `choir init` creates the local project state, starts `choird`, and opens the
 Claude Conductor in the current terminal. Later sessions can use `choir start`.

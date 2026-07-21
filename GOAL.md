@@ -52,6 +52,20 @@ unconnected product path usable.
   `CHOIR_LIVE_GOAL_OK\n`, while the captured base branch remained unchanged.
   Branch publication was receipted; final PR creation remained absent because
   the disposable repository had no GitHub destination.
+- A fresh installed-layout probe now completes a two-Part Goal with maximum
+  parallelism two. Both Codex implementation Takes ran concurrently, each Part
+  produced a passing verification receipt and independent audit receipt, and
+  both candidates promoted into one continuous Goal branch. Combined-tree
+  assurance then recorded two verification receipts, one independent audit
+  receipt, and publication. BoxLite host CLI assurance operations are
+  serialized because they share one local server; provider implementation
+  sessions remain parallel.
+- Trusted host runtime programs are now resolved only from an explicit absolute
+  `CHOIR_RUNTIME_ASSET_DIR` or an installation directory adjacent to the Choir
+  executable. `choir start` fails closed when either program is absent, and a
+  target repository can no longer supply the sandbox MCP or BoxLite owner
+  program. The documented local installation places the executable and both
+  programs together under `~/.local/libexec/choir`.
 - Sealed Moon verification now stages the offline registry into a private
   writable Moon home and maps `.mooncakes` to scratch while the candidate tree
   remains read-only. Choir removes that generated cache link before every

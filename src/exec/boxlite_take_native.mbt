@@ -407,7 +407,7 @@ pub async fn start_native_boxlite_server(
         }
       }
       let owner_script = match
-        @sys.realpath_native("scripts/choir_boxlite_owner.mjs") {
+        resolve_native_runtime_asset(ChoirRuntimeAsset::ChoirBoxLiteOwner) {
         Some(value) => value
         None => {
           @sys.kill_server_pid_sequence_best_effort(pid)

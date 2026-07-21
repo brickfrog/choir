@@ -1,6 +1,5 @@
 ///|
 async fn create_native_goal_assurance_runtime(
-  project_dir : String,
   repository : @workflow.PartWorkflowRepository,
   execution : @workflow.GoalExecutionRecord,
   git : NativeGoalRepositoryIdentity,
@@ -38,7 +37,7 @@ async fn create_native_goal_assurance_runtime(
     Some(value) => value
     None => return Err(native_goal_execution_error("Node is absent"))
   }
-  let mcp_script = match native_goal_mcp_script(project_dir) {
+  let mcp_script = match native_goal_mcp_script() {
     Some(value) => value
     None => return Err(native_goal_execution_error("sandbox MCP is absent"))
   }
@@ -648,7 +647,6 @@ async fn execute_native_goal_assurance_effect(
 
 ///|
 async fn execute_native_goal_assurance_effect_once(
-  project_dir : String,
   repository : @workflow.PartWorkflowRepository,
   execution : @workflow.GoalExecutionRecord,
   git : NativeGoalRepositoryIdentity,
@@ -657,7 +655,7 @@ async fn execute_native_goal_assurance_effect_once(
 ) -> Result[@workflow.GoalAssuranceEffectObservation, @types.ChoirError] {
   let runtime = match
     create_native_goal_assurance_runtime(
-      project_dir, repository, execution, git, record,
+      repository, execution, git, record,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -685,7 +683,6 @@ async fn execute_native_goal_assurance_effect_once(
 
 ///|
 async fn reconcile_native_goal_processes_once(
-  project_dir : String,
   repository : @workflow.PartWorkflowRepository,
   execution : @workflow.GoalExecutionRecord,
   git : NativeGoalRepositoryIdentity,
@@ -694,7 +691,7 @@ async fn reconcile_native_goal_processes_once(
 ) -> Result[Bool, @types.ChoirError] {
   let runtime = match
     create_native_goal_assurance_runtime(
-      project_dir, repository, execution, git, record,
+      repository, execution, git, record,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)

@@ -12,6 +12,106 @@ fn native_path_is_nfc(path : String) -> Bool {
 }
 
 ///|
+priv enum ChoirRuntimeAsset {
+  ChoirSandboxMcp
+  ChoirBoxLiteOwner
+}
+
+///|
+fn ChoirRuntimeAsset::filename(self : ChoirRuntimeAsset) -> String {
+  match self {
+    ChoirSandboxMcp => "choir_sandbox_mcp.mjs"
+    ChoirBoxLiteOwner => "choir_boxlite_owner.mjs"
+  }
+}
+
+///|
+fn native_runtime_parent(path : String) -> String {
+  let mut index = path.length() - 1
+  while index >= 0 && path[index] != '/' {
+    index = index - 1
+  }
+  if index <= 0 {
+    "/"
+  } else {
+    path[:index].to_owned()
+  }
+}
+
+///|
+fn native_runtime_asset_candidates(
+  executable : String,
+  asset : ChoirRuntimeAsset,
+) -> Array[String] {
+  let executable_dir = native_runtime_parent(executable)
+  let filename = asset.filename()
+  [
+    executable_dir + "/" + filename,
+    executable_dir + "/../libexec/choir/" + filename,
+    executable_dir + "/../share/choir/" + filename,
+  ]
+}
+
+///|
+fn resolve_native_runtime_asset(asset : ChoirRuntimeAsset) -> String? {
+  match @sys.getenv("CHOIR_RUNTIME_ASSET_DIR") {
+    Some(directory) if directory.has_prefix("/") =>
+      match @sys.realpath_native(directory + "/" + asset.filename()) {
+        Some(path) => return Some(path)
+        None => ()
+      }
+    _ => ()
+  }
+  let executable = match @sys.realpath_native("/proc/self/exe") {
+    Some(value) => value
+    None => return None
+  }
+  for candidate in native_runtime_asset_candidates(executable, asset) {
+    match @sys.realpath_native(candidate) {
+      Some(path) => return Some(path)
+      None => ()
+    }
+  }
+  None
+}
+
+///|
+pub fn validate_native_runtime_assets() -> Result[Unit, @types.ChoirError] {
+  for asset in [ChoirRuntimeAsset::ChoirSandboxMcp, ChoirBoxLiteOwner] {
+    if resolve_native_runtime_asset(asset) is None {
+      return Err(
+        @types.ChoirError::workspace_error(
+          "required Choir runtime asset is absent: " + asset.filename(),
+        ),
+      )
+    }
+  }
+  Ok(())
+}
+
+///|
+test "runtime assets resolve only from explicit installation layouts" {
+  assert_eq(native_runtime_parent("/opt/choir/bin/choir"), "/opt/choir/bin")
+  assert_eq(native_runtime_parent("/choir"), "/")
+  assert_eq(
+    native_runtime_asset_candidates(
+      "/home/user/.local/bin/choir",
+      ChoirRuntimeAsset::ChoirSandboxMcp,
+    ),
+    [
+      "/home/user/.local/bin/choir_sandbox_mcp.mjs", "/home/user/.local/bin/../libexec/choir/choir_sandbox_mcp.mjs",
+      "/home/user/.local/bin/../share/choir/choir_sandbox_mcp.mjs",
+    ],
+  )
+  assert_false(
+    native_runtime_asset_candidates(
+      "/home/user/.local/bin/choir",
+      ChoirRuntimeAsset::ChoirSandboxMcp,
+    ).contains("scripts/choir_sandbox_mcp.mjs"),
+  )
+}
+
+///|
 test "native path NFC oracle accepts composed Unicode and rejects decomposed Unicode" {
   assert_true(exec_path_nfc_available_ffi() == 1)
   assert_true(native_path_is_nfc("src/plain.mbt"))

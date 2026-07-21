@@ -603,14 +603,18 @@ fn counted_native_part_effects(
 }
 
 ///|
-fn native_part_effect_prepares_sandbox(kind : @workflow.PartEffectKind) -> Bool {
+fn native_part_effect_uses_serial_boxlite_cli(
+  kind : @workflow.PartEffectKind,
+) -> Bool {
   kind is @workflow.PartEffectKind::PrepareImplementationSandbox(_) ||
   kind is @workflow.PartEffectKind::PrepareVerificationSandbox(_) ||
-  kind is @workflow.PartEffectKind::PrepareAuditSandbox(_)
+  kind is @workflow.PartEffectKind::PrepareAuditSandbox(_) ||
+  kind is @workflow.PartEffectKind::DispatchVerification(_, _, _) ||
+  kind is @workflow.PartEffectKind::DispatchAudit(_, _, _)
 }
 
 ///|
-fn serialized_native_part_sandbox_preparation(
+fn serialized_native_part_boxlite_effects(
   effects : @workflow.PartWorkflowDriverAdapters,
   lock : Ref[Bool]?,
 ) -> @workflow.PartWorkflowDriverAdapters {
@@ -619,7 +623,11 @@ fn serialized_native_part_sandbox_preparation(
     Some(lock) =>
       {
         execute: async fn(snapshot, intent) {
-          if !native_part_effect_prepares_sandbox(intent.kind) {
+          // Provider implementation sessions remain parallel. BoxLite's
+          // host CLI operations share one local server and are serialized so
+          // concurrent verification/audit clients cannot close each other's
+          // guest execution channel.
+          if !native_part_effect_uses_serial_boxlite_cli(intent.kind) {
             return (effects.execute)(snapshot, intent)
           }
           while lock.val {
@@ -753,7 +761,7 @@ fn native_part_dependencies_with_admission(
     clock.val
   }
   let effects = counted_native_part_effects(
-    serialized_native_part_sandbox_preparation(
+    serialized_native_part_boxlite_effects(
       native_part_effect_adapters(runtime),
       sandbox_prepare_lock,
     ),

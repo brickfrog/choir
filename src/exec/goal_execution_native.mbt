@@ -504,11 +504,8 @@ fn native_goal_runtime_root(
 }
 
 ///|
-fn native_goal_mcp_script(project_dir : String) -> String? {
-  match @sys.realpath_native(project_dir + "/scripts/choir_sandbox_mcp.mjs") {
-    Some(value) => Some(value)
-    None => @sys.realpath_native("scripts/choir_sandbox_mcp.mjs")
-  }
+fn native_goal_mcp_script() -> String? {
+  resolve_native_runtime_asset(ChoirRuntimeAsset::ChoirSandboxMcp)
 }
 
 ///|
@@ -658,7 +655,7 @@ async fn execute_native_goal_record(
     Some(value) => value
     None => return Err(native_goal_execution_error("Node is absent"))
   }
-  let mcp_script = match native_goal_mcp_script(project_dir) {
+  let mcp_script = match native_goal_mcp_script() {
     Some(value) => value
     None => return Err(native_goal_execution_error("sandbox MCP is absent"))
   }
@@ -756,7 +753,7 @@ async fn execute_native_goal_record(
     control_root: runtime_root + "/integration-control",
     goal_ref: record.goal_ref.0,
   }
-  let sandbox_prepare_lock = @ref.new(false)
+  let boxlite_effect_lock = @ref.new(false)
   let config : GoalPartWorkflowAdapterConfig = {
     bindings: parts.map(fn(part) {
       {
@@ -782,7 +779,7 @@ async fn execute_native_goal_record(
         part.counts,
         part.surface,
         None,
-        Some(sandbox_prepare_lock),
+        Some(boxlite_effect_lock),
         fn(_) { None },
         explicit_admission=Some(admission),
       )
@@ -2049,7 +2046,7 @@ async fn advance_native_goal_assurance(
                   ignore(
                     match
                       reconcile_native_goal_processes_once(
-                        project_dir, repository, execution, git, record, intent,
+                        repository, execution, git, record, intent,
                       ) {
                       Ok(value) => value
                       Err(error) => return Err(error)
@@ -2079,7 +2076,7 @@ async fn advance_native_goal_assurance(
                 }
                 let value = match
                   execute_native_goal_assurance_effect_once(
-                    project_dir, repository, execution, git, record, intent,
+                    repository, execution, git, record, intent,
                   ) {
                   Ok(value) => value
                   Err(error) => return Err(error)
