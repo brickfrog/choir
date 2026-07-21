@@ -1,6 +1,7 @@
 ///|
 pub(all) struct NativeCodexDriverConfig {
   sterile_root : String
+  process_trace_root : String
   mcp_executable : String
   mcp_arguments : Array[String]
   mcp_server_name : String
@@ -57,6 +58,20 @@ fn validate_native_codex_config(
     return Err(
       @types.ChoirError::validation_error(
         "native Codex driver configuration is invalid",
+      ),
+    )
+  }
+  if config.process_trace_root != "" &&
+    (
+      !config.process_trace_root.has_prefix(
+        "/tmp/choir-conformance-codex-trace-",
+      ) ||
+      @sys.realpath_native(config.process_trace_root) !=
+      Some(config.process_trace_root)
+    ) {
+    return Err(
+      @types.ChoirError::validation_error(
+        "native Codex process trace root is invalid",
       ),
     )
   }
@@ -852,8 +867,21 @@ async fn spawn_native_codex_app_server(
     fifo,
     native_codex_log_path(config),
     config.sterile_root + "/app-server.stderr",
-    codex,
   ]
+  if config.process_trace_root != "" {
+    arguments.push("/usr/bin/strace")
+    arguments.push("-ff")
+    arguments.push("-qq")
+    arguments.push("-yy")
+    arguments.push("-s")
+    arguments.push("4096")
+    arguments.push("-e")
+    arguments.push("trace=%file,%network,%process")
+    arguments.push("-o")
+    arguments.push(config.process_trace_root + "/trace")
+    arguments.push("--")
+  }
+  arguments.push(codex)
   for argument in native_codex_app_server_args(config) {
     arguments.push(argument)
   }
@@ -1659,6 +1687,7 @@ pub async fn run_native_codex_conductor_turn(
 test "native Codex app-server argv removes native execution surfaces" {
   let args = native_codex_app_server_args({
     sterile_root: "/tmp/choir-codex-driver-test",
+    process_trace_root: "",
     mcp_executable: "/usr/bin/node",
     mcp_arguments: ["/opt/choir/sandbox-mcp.mjs"],
     mcp_server_name: "choir_sandbox",
@@ -1681,6 +1710,7 @@ test "native Codex app-server argv removes native execution surfaces" {
 test "native Codex initialization attests the sterile client identity" {
   let config : NativeCodexDriverConfig = {
     sterile_root: "/tmp/choir-codex-driver-test",
+    process_trace_root: "",
     mcp_executable: "/usr/bin/node",
     mcp_arguments: [],
     mcp_server_name: "choir_sandbox",
