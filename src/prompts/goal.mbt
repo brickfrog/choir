@@ -25,6 +25,8 @@ const GOAL_PROMPT_DEFAULT : String =
   #|   - unique `proposal_id` and `goal_id`;
   #|   - `maximum_parallel_parts`;
   #|   - `parts`, each with `part_id`, `instruction`, `provider`, exactly one mutation form (`exact_paths`/`path_trees` or `repository_wide`), `moon_args`, and optional `verify_timeout_ms`.
+  #|   Path declarations are direct Part fields; never invent or nest them under a `mutation` object. A narrow Part has this exact shape:
+  #|   `{"part_id":"bd-123","instruction":"...","provider":"codex","exact_paths":["src/example.mbt"],"path_trees":[],"repository_wide":false,"moon_args":["test","--target","native"]}`.
   #|   Choir captures the current branch and commit itself. Never guess or submit Git refs.
   #|7. Report Choir's accepted Part IDs and every typed rejection. Never work around rejection by spawning workers or producing missing evidence yourself. Revise and resubmit only after the user resolves a semantic rejection or the source state genuinely changes.
   #|8. Retain the returned `goal_id`. Use `goal_status` with that ID whenever the user asks what survived, what is running, what is blocked, or what completed. Use `goal_steer` for scheduling-policy changes and `goal_attach` for durable Take events. User-input answers are CLI-only; never encode them through steering or resubmit the accepted selection.

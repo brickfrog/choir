@@ -8,6 +8,10 @@ test "Goal prompt falls back to the current Conductor contract" {
   assert_true(body.has_prefix("---\nname: goal\n"))
   assert_true(body.contains("complete open blocking-dependency closure"))
   assert_true(body.contains("Call `goal_submit` exactly once"))
+  assert_true(
+    body.contains("never invent or nest them under a `mutation` object"),
+  )
+  assert_true(body.contains("\"exact_paths\":[\"src/example.mbt\"]"))
   assert_true(body.contains("Never guess or submit Git refs"))
   assert_false(body.contains("`base_ref`"))
   assert_false(body.contains("`integration_target_ref`"))

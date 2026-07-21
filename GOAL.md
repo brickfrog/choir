@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-21T13:55:57-05:00
+Implementation snapshot updated through: 2026-07-21T14:11:30-05:00
 
 ## Charter Semantics and Readiness
 
@@ -137,6 +137,17 @@ unconnected product path usable.
   no-op, while a later user edit or reassignment is never overwritten. The
   narrow adapter test covers update, ambiguous-delivery replay, and source
   drift without mutating a real Beads database.
+- A fresh installed-layout Codex Conductor run exercised that projection with
+  real Bead `live-close`. Goal `goal-live-close-20260721-codex-01` produced the
+  one-file `lib.mbt` change, twelve Part effect receipts, Part verification,
+  independent Part audit, integration, six combined-assurance effect receipts,
+  Goal verification, and independent Goal audit. The Bead changed from `open`
+  to `closed` immediately after authoritative Part integration; the one live
+  `choir-take-goal-*` root remained through assurance and then fell to zero.
+  Publication correctly paused for a missing remote. The first Conductor turn
+  also exposed an invented `mutation` wrapper and was rejected before Goal
+  creation; the Goal prompt now gives the exact flat Part JSON shape and
+  explicitly forbids that wrapper.
 
 - `choir init` now scaffolds only the current project files, starts the local
   daemon without a terminal multiplexer, bootstraps one authenticated
