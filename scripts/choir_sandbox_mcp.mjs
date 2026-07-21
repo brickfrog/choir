@@ -115,6 +115,10 @@ class SandboxClient {
     for (const controller of this.controllers) controller.abort();
   }
 
+  drain() {
+    return this.queue;
+  }
+
   run(argv, cwd = "", timeoutMs = 120000) {
     const operation = async () => {
       if (this.closed) fail("bridge is closed");
@@ -400,9 +404,12 @@ export function startSandboxMcp(argv = process.argv.slice(2)) {
   const client = new SandboxClient(parseLaunchArgs(argv));
   const visibleTools = toolsForAccess(client.config.access);
   const input = readline.createInterface({ input: process.stdin, terminal: false });
+  let gracefulExitRequested = false;
   input.once("close", () => {
-    client.close();
-    setImmediate(() => process.exit(0));
+    if (!gracefulExitRequested) {
+      client.close();
+      setImmediate(() => process.exit(0));
+    }
   });
   input.on("line", async (line) => {
     let request;
@@ -411,7 +418,13 @@ export function startSandboxMcp(argv = process.argv.slice(2)) {
     } catch {
       return;
     }
-    if (request.id === undefined || request.id === null) return;
+    if (request.id === undefined || request.id === null) {
+      if (request.method === "notifications/exit") {
+        gracefulExitRequested = true;
+        client.drain().finally(() => process.exit(0));
+      }
+      return;
+    }
     try {
       switch (request.method) {
         case "initialize":

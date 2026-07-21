@@ -1387,6 +1387,7 @@ pub async fn probe_native_boxlite_mcp(
         #|{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"write_file","arguments":{"path":".choir-live-roundtrip.txt","content":"sandbox mutation\n"}}}
         #|{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"read_file","arguments":{"path":".choir-live-roundtrip.txt"}}}
         #|{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"run","arguments":{"argv":["/usr/bin/find","/workspace","-type","l","-printf","%P -> %l\\n"]}}}
+        #|{"jsonrpc":"2.0","method":"notifications/exit","params":{}}
       )
     @sandbox.BoxLiteWorkspaceAccess::BoxLiteReadOnlySubject =>
       (
@@ -1398,6 +1399,7 @@ pub async fn probe_native_boxlite_mcp(
         #|{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"write_output","arguments":{"path":"probe/output.txt","content":"output persisted\n"}}}
         #|{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"write_file","arguments":{"path":"README.md","content":"subject mutation\n"}}}
         #|{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"run","arguments":{"argv":["/bin/sh","-c","printf outside > /etc/choir-outside"]}}}
+        #|{"jsonrpc":"2.0","method":"notifications/exit","params":{}}
       )
   }
   let (stdin_read, stdin_write) = @process.write_to_process() catch {
@@ -1557,6 +1559,7 @@ pub async fn probe_native_boxlite_path_identity(
     #|{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"read_file","arguments":{"path":".choir-path-identity.txt"}}}
     #|{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"write_file","arguments":{"path":".choir-path-identity.txt","content":"GUEST_MUTATED_ONLY\n"}}}
     #|{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"read_file","arguments":{"path":".choir-path-identity.txt"}}}
+    #|{"jsonrpc":"2.0","method":"notifications/exit","params":{}}
   let (stdin_read, stdin_write) = @process.write_to_process() catch {
     _ =>
       return Err(native_boxlite_take_error("path identity probe stdin failed"))
@@ -1632,7 +1635,9 @@ async fn inspect_native_boxlite_result_archive(
   }
   let archive_size = @sys.file_size(archive)
   if archive_size <= 0 || archive_size > 805306368 {
-    return Err(native_boxlite_take_error("copied result archive exceeds bounds"))
+    return Err(
+      native_boxlite_take_error("copied result archive exceeds bounds"),
+    )
   }
   let listed = @process.collect_output_merged(
     "/usr/bin/tar",
@@ -1653,7 +1658,9 @@ async fn inspect_native_boxlite_result_archive(
     return Err(native_boxlite_take_error("result manifest listing failed"))
   }
   if listing.length() > 16777216 {
-    return Err(native_boxlite_take_error("result manifest listing exceeds bounds"))
+    return Err(
+      native_boxlite_take_error("result manifest listing exceeds bounds"),
+    )
   }
   validate_native_boxlite_result_listing(listing)
 }
@@ -1724,11 +1731,7 @@ pub async fn copy_native_boxlite_take_result(
     return Err(native_boxlite_take_error("result root is unavailable"))
   }
   let mut adopted = false
-  defer {
-    if !adopted {
-      ignore(@sys.rm_rf(destination))
-    }
-  }
+  defer (if !adopted { ignore(@sys.rm_rf(destination)) })
   let guest_archive = "/root/choir-result.tar"
   let archived = match
     capture_native_boxlite_cli(
@@ -1776,18 +1779,16 @@ pub async fn copy_native_boxlite_take_result(
     Err(error) => return Err(error)
   }
   match
-    @sandbox.validate_transfer_adoption_destination(
-      [
-        {
-          path: destination,
-          kind: @sandbox.TransferDestinationKind::TransferDestinationDirectory,
-        },
-        {
-          path: workspace,
-          kind: @sandbox.TransferDestinationKind::TransferDestinationMissing,
-        },
-      ],
-    ) {
+    @sandbox.validate_transfer_adoption_destination([
+      {
+        path: destination,
+        kind: @sandbox.TransferDestinationKind::TransferDestinationDirectory,
+      },
+      {
+        path: workspace,
+        kind: @sandbox.TransferDestinationKind::TransferDestinationMissing,
+      },
+    ]) {
     Ok(_) => ()
     Err(error) => return Err(error)
   }

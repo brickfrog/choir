@@ -873,10 +873,13 @@ compiler still reports the repository's existing warning set.
   symbolic links as Git data while rejecting hardlinks and special entries;
   generic transfer policy still rejects all links. A narrow native adapter test
   runs the real tar listing seam and validates a regular-file/symlink archive.
-  Extraction remains confined by `bwrap`. A fresh full Take rerun reached the
-  pinned BoxLite runtime but its VM exited with code 139 before copy-out, so this
-  does not yet claim a fresh live adapter pass or atomic artifact adoption. The
-  hermetic runner passes 36/36 cases.
+  Extraction remains confined by `bwrap`. A fresh full Take rerun now passes
+  against the pinned KVM-backed runtime, including MCP mutation, host/guest path
+  identity, bounded copy-out, deterministic candidate normalization,
+  read-only assurance, and atomic artifact adoption. The rerun exposed and
+  fixed a probe lifecycle race: probes now request a graceful queue-draining
+  MCP exit, while an unannounced stdin closure still aborts active BoxLite
+  commands for cancellation safety. The hermetic runner passes 36/36 cases.
 - Further splitting or consolidating large live adapters only when a concrete
   boundary or dead caller justifies it. The branch-point audit found no closed
   source package imported only by another closed source package.
