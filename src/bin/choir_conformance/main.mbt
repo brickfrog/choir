@@ -138,6 +138,40 @@ fn probe_mcp_launch(
 }
 
 ///|
+fn unavailable_sandbox_mcp_launch(
+  root : String,
+) -> Result[(String, Array[String]), @types.ChoirError] {
+  let node = match @exec.resolve_executable_in_path("node") {
+    Some(path) => path
+    None =>
+      return Err(
+        @types.ChoirError::workspace_error(
+          "node executable is required for the sandbox MCP fixture",
+        ),
+      )
+  }
+  let script = match @sys.realpath_native("scripts/choir_sandbox_mcp.mjs") {
+    Some(path) => path
+    None =>
+      return Err(
+        @types.ChoirError::workspace_error(
+          "failed to resolve the sandbox MCP bridge",
+        ),
+      )
+  }
+  Ok(
+    (
+      node,
+      [
+        script, "--binary", "/bin/false", "--runtime-dir", root, "--url", "http://127.0.0.1:29999",
+        "--api-key", "sandbox-capability-dead", "--home", root, "--box", "sandbox-capability-dead",
+        "--access", "mutable",
+      ],
+    ),
+  )
+}
+
+///|
 async fn capture_surface_command(
   surface : @harness.ProviderSurface,
   command : @harness.HarnessProbeCommand,
@@ -312,6 +346,7 @@ async fn run_codex_live_driver_at(
   expect_surface_drift? : Bool = false,
   expect_ambient_block? : Bool = false,
   credential_probe? : Bool = false,
+  capability_death_probe? : Bool = false,
 ) -> Int {
   if !@sys.create_dir_all(root + "/tmp") {
     @sys.write_stderr("failed to create dedicated Codex driver root\n")
@@ -322,14 +357,23 @@ async fn run_codex_live_driver_at(
   } else {
     ""
   }
-  let (mcp_command, mcp_args) = match
-    probe_mcp_launch(delay_ms~, credential_canary_path~) {
+  let mcp_launch = if capability_death_probe {
+    unavailable_sandbox_mcp_launch(root)
+  } else {
+    probe_mcp_launch(delay_ms~, credential_canary_path~)
+  }
+  let (mcp_command, mcp_args) = match mcp_launch {
     Ok(launch) => launch
     Err(error) => {
       @sys.write_stderr(error.message() + "\n")
       ignore(@sys.rm_rf(root))
       return 1
     }
+  }
+  let mcp_server_name = if capability_death_probe {
+    "choir_sandbox"
+  } else {
+    "choir_probe"
   }
   let planned : @control.HarnessSession = {
     id: @control.HarnessSessionId("codex-live-driver-session"),
@@ -339,7 +383,7 @@ async fn run_codex_live_driver_at(
     ),
     surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
     effective_surface_manifest_digest: @harness.codex_effective_surface_manifest_digest(
-      allowed_tools, "choir_probe",
+      allowed_tools, mcp_server_name,
     ),
     cursor_class: @control.HarnessCursorClass::HarnessCursorProviderEventId,
     provider_cursor: None,
@@ -368,13 +412,17 @@ async fn run_codex_live_driver_at(
       sterile_root: root,
       mcp_executable: mcp_command,
       mcp_arguments: mcp_args,
-      mcp_server_name: "choir_probe",
+      mcp_server_name,
       allowed_tools,
       timeout_ms: 120000,
     },
     started,
     @harness.CodexTakeRole::CodexImplementationTake,
-    "Call probe exactly once. Only after it returns probe, report the required completed outcome.",
+    if capability_death_probe {
+      "Call read_file for README.md exactly once. If that required tool call fails, do not use or attempt any fallback; report the required terminal outcome."
+    } else {
+      "Call probe exactly once. Only after it returns probe, report the required completed outcome."
+    },
     fn() {
       clock.val = clock.val + 1L
       clock.val
@@ -387,6 +435,36 @@ async fn run_codex_live_driver_at(
   let result = match provider_result {
     Ok(value) => value
     Err(error) => {
+      if capability_death_probe &&
+        error.to_wire_string() == "validation_error" &&
+        error.message().contains("every declared MCP tool call failed") {
+        let evidence = @storage.artifact_digest(
+          @utf8.encode(
+            "choir.codex-capability-death.v1\u{00}" +
+            started.effective_surface_manifest_digest.0 +
+            "\u{00}" +
+            @storage.artifact_digest(@utf8.encode(@sys.read_file(mcp_args[0]))).0 +
+            "\u{00}" +
+            error.to_wire_string() +
+            "\u{00}" +
+            error.message(),
+          ),
+        )
+        let matrix = @harness.evaluate_host_surface_matrix(
+          @harness.ProviderSurface::CodexCli,
+          [
+            {
+              probe: @harness.HostSurfaceProbe::HostSurfaceCapabilityDeath,
+              outcome: @harness.HostSurfaceProbeOutcome::HostSurfaceProbePassed(
+                evidence,
+              ),
+            },
+          ],
+        ).unwrap()
+        ignore(@sys.rm_rf(root))
+        @sys.write_stdout(matrix.to_json().stringify(indent=2) + "\n")
+        return 0
+      }
       if expect_ambient_block &&
         error.message().contains("ambient configuration is present") {
         let blocked = !@sys.path_entry_exists(root + "/take-session.json") &&
@@ -537,6 +615,19 @@ async fn run_codex_live_credentials() -> Int {
     false,
     true,
     credential_probe=true,
+  )
+}
+
+///|
+async fn run_codex_live_capability_death() -> Int {
+  run_codex_live_driver_at(
+    "/tmp/choir-conformance-codex-capability-death-" +
+    @sys.get_pid().to_string(),
+    0,
+    false,
+    true,
+    allowed_tools=["read_file"],
+    capability_death_probe=true,
   )
 }
 
@@ -821,6 +912,15 @@ fn run_harness_command(args : Array[String]) -> Unit {
     args[5] == "subscription" &&
     args[6] == "--driver-credentials-live" {
     @async.run_async_main(async fn() { @sys.exit(run_codex_live_credentials()) })
+  } else if args.length() == 7 &&
+    args[2] == "--surface" &&
+    args[3] == "codex-cli" &&
+    args[4] == "--profile" &&
+    args[5] == "subscription" &&
+    args[6] == "--driver-capability-death-live" {
+    @async.run_async_main(async fn() {
+      @sys.exit(run_codex_live_capability_death())
+    })
   } else if args.length() == 7 &&
     args[2] == "--surface" &&
     args[3] == "codex-cli" &&
@@ -1887,6 +1987,8 @@ fn usage() -> Unit {
     "--profile subscription --driver-ambient-live\n" +
     "       choir_conformance harness --surface codex-cli " +
     "--profile subscription --driver-credentials-live\n" +
+    "       choir_conformance harness --surface codex-cli " +
+    "--profile subscription --driver-capability-death-live\n" +
     "       choir_conformance harness --surface codex-cli " +
     "--profile subscription --driver-recovery-live\n" +
     "       choir_conformance harness --surface codex-cli " +
