@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-21T14:39:19-05:00
+Implementation snapshot updated through: 2026-07-21T15:20:51-05:00
 
 ## Charter Semantics and Readiness
 
@@ -278,7 +278,7 @@ unconnected product path usable.
   until every release or external conflict has a durable disposition. A local
   pinned-client probe confirmed `open/unassigned` →
   `in_progress/choir:goal-proof` → `open/unassigned` through the exact
-  production argument shapes. The completed seam passes all 372 native tests,
+  production argument shapes. The completed seam passes all 373 native tests,
   all 37 hermetic conformance cases, the six sandbox MCP tests, lint, and the
   formatter check.
 - The internal UDS request no longer carries a caller-supplied role. Conductor
@@ -900,7 +900,19 @@ unconnected product path usable.
 - The Goal skill is the sole Conductor instruction contract. Claude consumes
   its generated plugin form; Codex receives the same contract as explicit
   developer instructions. Both are directly launchable Conductors, and both
-  Claude and Codex remain supported as subscription-backed Part providers.
+  Claude and Codex are directly exercised as subscription-backed Part
+  providers. Support classification remains attached to each exact pinned
+  surface and its complete conformance record.
+- Claude Takes now use the same fail-closed Bubblewrap boundary as Codex:
+  read-only host root, private `/tmp`, one writable sterile Take root, and one
+  exact read-only BoxLite owner-socket binding. The driver validates that the
+  MCP argument names only the fixed in-boundary socket and that its source is
+  the exact Goal runtime socket root. A live pinned Claude lifecycle completed
+  implementation, restart, verification, independent audit, and promotion
+  inside that boundary with twelve effect receipts and exactly one receipt at
+  every passive gate. A separate live cutoff interrupted the Claude process
+  group and persisted an uncertain implementation effect, interrupted Take,
+  recovery-uncertain session, and no later gate receipt.
 - Goal cancellation now has a durable, replay-safe cutoff and a Conductor-only
   `goal_cancel` tool plus `choir goal cancel` CLI path. The runner prioritizes
   canceling Goals, a passive authorization check prevents Parts from planning
@@ -4367,6 +4379,29 @@ exactly once, returned the expected canary, reported the provider-managed
 subscription entitlement lane, and exposed no undeclared tool use. This admits
 the exact driver surface as `Candidate`; interruption, cancellation, and full
 host-root isolation evidence remain required for `Supported`.
+
+At `2026-07-21T15:20:51-05:00`, the production Claude Take launcher moved
+behind Choir's enforced read-only Bubblewrap host boundary. The private `/tmp`
+initially hid the BoxLite owner socket as intended; Choir then reused the exact
+Codex socket projection, rebinding only the validated Goal-owned socket root at
+the fixed `/tmp/choir-owner` target. The pinned subscription client worked with
+its provider home read-only under `--no-session-persistence`. The complete
+native Claude Part lifecycle passed with twelve effect receipts, one
+verification receipt, one independent audit receipt, and one integration
+receipt. A distinct live cancellation fixture interrupted the real Claude
+process group after one authorized implementation dispatch and preserved the
+honest uncertain terminal disposition without producing verification, audit,
+or integration evidence. The exact commands were:
+
+```text
+moon run --target native src/bin/choir_conformance -- e2e --fixture native-part-lifecycle
+moon run --target native src/bin/choir_conformance -- e2e --fixture native-claude-cancellation
+```
+
+This closes the production mutation boundary and live cancellation gap for the
+pinned Claude Take. The surface remains `Candidate` until its remaining
+host-surface rows and nonresumable daemon-loss disposition have executable
+evidence; a successful lifecycle is not silently promoted to broader support.
 
 #### Post-snapshot Codex probe amendment
 

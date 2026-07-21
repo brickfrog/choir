@@ -445,6 +445,7 @@ fn native_claude_config(
     native_boxlite_take_mcp_arguments(
       sandbox,
       runtime.config.sandbox_mcp_script,
+      owner_socket=Some(native_provider_owner_socket_path()),
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -453,6 +454,7 @@ fn native_claude_config(
     sterile_root: runtime.config.claude_root + session.id.0,
     mcp_executable: runtime.config.node_executable,
     mcp_arguments: arguments,
+    boxlite_owner_socket_root: Some(sandbox.prepared.server.owner_socket_root),
     mcp_server_name: "choir_sandbox",
     allowed_tools: match sandbox.workspace_access {
       @sandbox.BoxLiteWorkspaceAccess::BoxLiteMutableWorkspace =>
@@ -475,7 +477,7 @@ fn native_codex_config(
     native_boxlite_take_mcp_arguments(
       sandbox,
       runtime.config.sandbox_mcp_script,
-      owner_socket=Some(native_codex_owner_socket_path()),
+      owner_socket=Some(native_provider_owner_socket_path()),
     ) {
     Ok(value) => value
     Err(error) => return Err(error)

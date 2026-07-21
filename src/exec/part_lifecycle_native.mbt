@@ -1206,8 +1206,9 @@ pub async fn run_native_codex_part_lifecycle_fixture(
 }
 
 ///|
-pub async fn run_native_codex_cancellation_fixture(
+async fn run_native_part_cancellation_fixture_for_surface(
   root : String,
+  surface : @control.ProviderSurfaceId,
 ) -> NativePartLifecycleReport {
   if !root.has_prefix("/tmp/choir-take-") ||
     root.contains("/../") ||
@@ -1224,7 +1225,6 @@ pub async fn run_native_codex_cancellation_fixture(
     artifact_store: { root: root + "/artifacts" },
     max_snapshot_bytes: 1024 * 1024,
   }
-  let surface = @control.ProviderSurfaceId::CodexSubscriptionCli
   let snapshot = match native_part_fixture_snapshot(repository, git, surface) {
     Ok(value) => value
     Err(error) => return failed_native_part_lifecycle(error.message())
@@ -1318,11 +1318,11 @@ pub async fn run_native_codex_cancellation_fixture(
     Err(error) =>
       return fail_native_part_runtime(
         runtime,
-        "Codex cancellation returned " + error.message(),
+        "provider cancellation returned " + error.message(),
       )
     Ok(_) =>
       return fail_native_part_runtime(
-        runtime, "Codex Take completed before the cancellation cutoff",
+        runtime, "provider Take completed before the cancellation cutoff",
       )
   }
   let stored = match
@@ -1349,7 +1349,7 @@ pub async fn run_native_codex_cancellation_fixture(
     counts.implementation.val != 1 ||
     cancellation_probes.val < 5 {
     return fail_native_part_runtime(
-      runtime, "Codex interruption did not preserve the authorized provider effect",
+      runtime, "provider interruption did not preserve the authorized provider effect",
     )
   }
   let canceled = match
@@ -1387,7 +1387,7 @@ pub async fn run_native_codex_cancellation_fixture(
   }
   if !valid {
     return failed_native_part_lifecycle(
-      "Codex cancellation did not persist an honest uncertain disposition",
+      "provider cancellation did not persist an honest uncertain disposition",
     )
   }
   {
@@ -1404,4 +1404,24 @@ pub async fn run_native_codex_cancellation_fixture(
     promotion_commit_oid: None,
     failure: None,
   }
+}
+
+///|
+pub async fn run_native_claude_cancellation_fixture(
+  root : String,
+) -> NativePartLifecycleReport {
+  run_native_part_cancellation_fixture_for_surface(
+    root,
+    @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+  )
+}
+
+///|
+pub async fn run_native_codex_cancellation_fixture(
+  root : String,
+) -> NativePartLifecycleReport {
+  run_native_part_cancellation_fixture_for_surface(
+    root,
+    @control.ProviderSurfaceId::CodexSubscriptionCli,
+  )
 }

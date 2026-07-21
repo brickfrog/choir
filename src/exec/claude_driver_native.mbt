@@ -3,6 +3,7 @@ pub(all) struct NativeClaudeDriverConfig {
   sterile_root : String
   mcp_executable : String
   mcp_arguments : Array[String]
+  boxlite_owner_socket_root : String?
   mcp_server_name : String
   allowed_tools : Array[String]
   timeout_ms : Int
@@ -57,6 +58,40 @@ fn validate_native_claude_config(
         ),
       )
     }
+  }
+  let owner_socket_target = native_provider_owner_socket_path()
+  let mut owner_socket_argument_count = 0
+  for index, argument in config.mcp_arguments {
+    if argument == "--owner-socket" {
+      owner_socket_argument_count = owner_socket_argument_count + 1
+      if index + 1 >= config.mcp_arguments.length() ||
+        config.mcp_arguments[index + 1] != owner_socket_target {
+        return Err(
+          @types.ChoirError::validation_error(
+            "native Claude owner socket target is invalid",
+          ),
+        )
+      }
+    }
+  }
+  match config.boxlite_owner_socket_root {
+    Some(root) if native_provider_expected_owner_socket_root(
+        config.sterile_root,
+      ) !=
+      Some(root) ||
+      owner_socket_argument_count != 1 =>
+      return Err(
+        @types.ChoirError::validation_error(
+          "native Claude owner socket binding is invalid",
+        ),
+      )
+    None if owner_socket_argument_count != 0 =>
+      return Err(
+        @types.ChoirError::validation_error(
+          "native Claude owner socket source is absent",
+        ),
+      )
+    _ => ()
   }
   Ok(())
 }
@@ -178,6 +213,38 @@ test "native Claude Take environment is an exact allowlist" {
 }
 
 ///|
+test "native Claude owner socket binding is exact and paired with MCP argv" {
+  let root = "/tmp/choir-boxlite-test/claude/session-test"
+  let source = "/tmp/choir-boxlite-test/owner-socket"
+  let target = native_provider_owner_socket_path()
+  let config : NativeClaudeDriverConfig = {
+    sterile_root: root,
+    mcp_executable: "/usr/bin/node",
+    mcp_arguments: ["/opt/choir/sandbox-mcp.mjs", "--owner-socket", target],
+    boxlite_owner_socket_root: Some(source),
+    mcp_server_name: "choir_sandbox",
+    allowed_tools: ["mcp__choir_sandbox__read_file"],
+    timeout_ms: 60000,
+  }
+  assert_true(validate_native_claude_config(config) is Ok(_))
+  assert_true(
+    validate_native_claude_config({
+      ..config,
+      mcp_arguments: [
+        "/opt/choir/sandbox-mcp.mjs",
+        "--owner-socket",
+        source + "/owner.sock",
+      ],
+    })
+    is Err(_),
+  )
+  assert_true(
+    validate_native_claude_config({ ..config, boxlite_owner_socket_root: None })
+    is Err(_),
+  )
+}
+
+///|
 async fn verify_native_claude_binary(
   claude : String,
 ) -> Result[Unit, @types.ChoirError] {
@@ -258,6 +325,10 @@ pub async fn run_native_claude_take(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
+  match validate_native_provider_host_boundary() {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   if !@sys.create_dir_all(config.sterile_root + "/tmp") {
     return Err(native_claude_driver_error("sterile root is unavailable"))
   }
@@ -275,17 +346,24 @@ pub async fn run_native_claude_take(
   stdin_write.close()
   let started_at = now()
   let args = native_claude_driver_args(config, role)
+  let bounded_args = native_provider_host_boundary_args(
+    config.sterile_root,
+    config.sterile_root,
+    config.boxlite_owner_socket_root,
+    claude,
+    args,
+  )
   abort_if_hermetic_test_exec(
     command_to_shell_string({
-      program: claude,
-      args,
+      program: "/usr/bin/bwrap",
+      args: bounded_args,
       workdir: Some(config.sterile_root),
     }),
   )
   let collected = match
     collect_interruptible_process(
-      claude,
-      args,
+      "/usr/bin/bwrap",
+      bounded_args,
       native_claude_environment(provider_home, config.sterile_root),
       stdin_read,
       config.sterile_root,
@@ -331,6 +409,7 @@ test "native Claude driver argv removes host tools and ambient configuration" {
       sterile_root: "/tmp/choir-claude-driver-test",
       mcp_executable: "/opt/choir/sandbox-mcp",
       mcp_arguments: ["serve", "sandbox-1"],
+      boxlite_owner_socket_root: None,
       mcp_server_name: "choir_sandbox",
       allowed_tools: ["mcp__choir_sandbox__execute"],
       timeout_ms: 60000,

@@ -2871,6 +2871,14 @@ async fn run_end_to_end_command(args : Array[String]) -> Unit {
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     }
+    "native-claude-cancellation" => {
+      let root = "/tmp/choir-take-native-claude-cancel-" +
+        @sys.get_pid().to_string()
+      let report = @exec.run_native_claude_cancellation_fixture(root)
+      ignore(@sys.rm_rf(root))
+      @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
+      @sys.exit(if report.passed { 0 } else { 1 })
+    }
     "native-codex-cancellation" => {
       let root = "/tmp/choir-take-native-codex-cancel-" +
         @sys.get_pid().to_string()
@@ -3164,7 +3172,8 @@ fn usage() -> Unit {
     "       choir_conformance sandbox --runtime boxlite --take-live\n" +
     "       choir_conformance e2e --fixture " +
     "<part-lifecycle|native-part-lifecycle|native-codex-part-lifecycle|" +
-    "native-codex-cancellation|mixed-provider-goal|parallel-promotion|" +
+    "native-claude-cancellation|native-codex-cancellation|" +
+    "mixed-provider-goal|parallel-promotion|" +
     "scale-mixed>\n" +
     "       choir_conformance e2e --project <path> --draft <json-path>\n" +
     "       choir_conformance status --project <path> --goal <goal-id>\n" +

@@ -47,28 +47,6 @@ fn valid_native_codex_token(value : String) -> Bool {
 }
 
 ///|
-fn native_codex_expected_owner_socket_root(sterile_root : String) -> String? {
-  let parts = sterile_root.split("/codex/").to_array()
-  if parts.length() == 2 &&
-    parts[0] != "" &&
-    valid_native_codex_token(parts[1].to_owned()) {
-    Some(parts[0].to_owned() + "/owner-socket")
-  } else {
-    None
-  }
-}
-
-///|
-fn native_codex_owner_socket_root() -> String {
-  "/tmp/choir-owner"
-}
-
-///|
-fn native_codex_owner_socket_path() -> String {
-  native_codex_owner_socket_root() + "/owner.sock"
-}
-
-///|
 fn validate_native_codex_config(
   config : NativeCodexDriverConfig,
 ) -> Result[Unit, @types.ChoirError] {
@@ -103,7 +81,7 @@ fn validate_native_codex_config(
       )
     _ => ()
   }
-  let owner_socket_target = native_codex_owner_socket_path()
+  let owner_socket_target = native_provider_owner_socket_path()
   let mut owner_socket_argument_count = 0
   for index, argument in config.mcp_arguments {
     if argument == "--owner-socket" {
@@ -119,7 +97,9 @@ fn validate_native_codex_config(
     }
   }
   match config.boxlite_owner_socket_root {
-    Some(root) if native_codex_expected_owner_socket_root(config.sterile_root) !=
+    Some(root) if native_provider_expected_owner_socket_root(
+        config.sterile_root,
+      ) !=
       Some(root) ||
       owner_socket_argument_count != 1 =>
       return Err(
@@ -264,48 +244,6 @@ fn native_codex_app_server_args(
 }
 
 ///|
-fn native_codex_host_boundary_args(
-  sterile_root : String,
-  working_directory : String,
-  boxlite_owner_socket_root : String?,
-  executable : String,
-  executable_args : Array[String],
-) -> Array[String] {
-  let args : Array[String] = [
-    "--die-with-parent", "--ro-bind", "/", "/", "--dev-bind", "/dev", "/dev", "--proc",
-    "/proc", "--tmpfs", "/tmp", "--bind", sterile_root, sterile_root, "--chdir",
-    working_directory, "--", executable,
-  ]
-  match boxlite_owner_socket_root {
-    Some(source) => {
-      let chdir = args.search("--chdir").unwrap()
-      args.insert(chdir, "--ro-bind")
-      args.insert(chdir + 1, source)
-      args.insert(chdir + 2, native_codex_owner_socket_root())
-    }
-    None => ()
-  }
-  for argument in executable_args {
-    args.push(argument)
-  }
-  args
-}
-
-///|
-fn validate_native_codex_host_boundary() -> Result[Unit, @types.ChoirError] {
-  if @sys.realpath_native("/usr/bin/bwrap") != Some("/usr/bin/bwrap") ||
-    !@sys.path_executable("/usr/bin/bwrap") {
-    Err(
-      @types.ChoirError::policy_blocked(
-        "Codex read-only host boundary is unavailable",
-      ),
-    )
-  } else {
-    Ok(())
-  }
-}
-
-///|
 pub async fn capture_native_codex_host_boundary(
   root : String,
 ) -> Result[@control.Digest, @types.ChoirError] {
@@ -317,7 +255,7 @@ pub async fn capture_native_codex_host_boundary(
       ),
     )
   }
-  match validate_native_codex_host_boundary() {
+  match validate_native_provider_host_boundary() {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
@@ -339,7 +277,9 @@ pub async fn capture_native_codex_host_boundary(
   let run = async fn(path : String) -> Int {
     @process.run(
       "/usr/bin/bwrap",
-      native_codex_host_boundary_args(root, root, None, "/usr/bin/touch", [path]),
+      native_provider_host_boundary_args(root, root, None, "/usr/bin/touch", [
+        path,
+      ]),
       extra_env={ "PATH": "/usr/bin:/bin", "LC_ALL": "C" },
       inherit_env=false,
       stdout=sink,
@@ -1232,7 +1172,7 @@ async fn spawn_native_codex_app_server(
     None => app_server_args
   }
   for
-    argument in native_codex_host_boundary_args(
+    argument in native_provider_host_boundary_args(
       config.sterile_root,
       native_codex_app_server_working_directory(config),
       config.boxlite_owner_socket_root,
@@ -1634,7 +1574,7 @@ pub async fn run_native_codex_take(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  match validate_native_codex_host_boundary() {
+  match validate_native_provider_host_boundary() {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
@@ -2041,7 +1981,7 @@ pub async fn run_native_codex_conductor_turn(
       )
     }
   }
-  match validate_native_codex_host_boundary() {
+  match validate_native_provider_host_boundary() {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
@@ -2098,7 +2038,7 @@ pub async fn run_native_codex_conductor_turn(
   )
   stdin_write.close()
   let args = native_codex_conductor_args(config, thread_id)
-  let bounded_args = native_codex_host_boundary_args(
+  let bounded_args = native_provider_host_boundary_args(
     config.sterile_root,
     config.sterile_root,
     None,
@@ -2191,7 +2131,7 @@ test "native Codex connect observation is confined to the sterile root" {
 test "native Codex owner socket binding is exact and paired with MCP argv" {
   let root = "/tmp/choir-boxlite-test/codex/session-test"
   let source = "/tmp/choir-boxlite-test/owner-socket"
-  let target = native_codex_owner_socket_path()
+  let target = native_provider_owner_socket_path()
   let config : NativeCodexDriverConfig = {
     sterile_root: root,
     mcp_executable: "/usr/bin/node",
@@ -2225,7 +2165,7 @@ test "native Codex owner socket binding is exact and paired with MCP argv" {
     })
     is Err(_),
   )
-  let args = native_codex_host_boundary_args(
+  let args = native_provider_host_boundary_args(
     root,
     root,
     Some(source),
@@ -2234,7 +2174,7 @@ test "native Codex owner socket binding is exact and paired with MCP argv" {
   )
   let source_index = args.search(source).unwrap()
   assert_eq(args[source_index - 1], "--ro-bind")
-  assert_eq(args[source_index + 1], native_codex_owner_socket_root())
+  assert_eq(args[source_index + 1], native_provider_owner_socket_root())
   assert_false(args.contains("/tmp/choir-boxlite-test"))
 }
 
@@ -2268,9 +2208,9 @@ test "native Codex initialization attests the sterile client identity" {
 }
 
 ///|
-test "native Codex host boundary masks host temporary files" {
-  let root = "/tmp/choir-codex-host-boundary-test"
-  let args = native_codex_host_boundary_args(
+test "provider host boundary masks host temporary files" {
+  let root = "/tmp/choir-provider-host-boundary-test"
+  let args = native_provider_host_boundary_args(
     root,
     root,
     None,

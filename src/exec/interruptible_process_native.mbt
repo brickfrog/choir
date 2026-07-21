@@ -6,6 +6,90 @@ pub(all) enum NativeInterruptibleProcessOutcome {
 } derive(Debug, Eq)
 
 ///|
+fn valid_native_provider_boundary_token(value : String) -> Bool {
+  if value == "" || value.length() > 180 {
+    return false
+  }
+  for index = 0; index < value.length(); index = index + 1 {
+    let code = value[index].to_int()
+    let valid = (code >= 'a'.to_int() && code <= 'z'.to_int()) ||
+      (code >= 'A'.to_int() && code <= 'Z'.to_int()) ||
+      (code >= '0'.to_int() && code <= '9'.to_int()) ||
+      code == '_'.to_int() ||
+      code == '-'.to_int()
+    if !valid {
+      return false
+    }
+  }
+  true
+}
+
+///|
+fn native_provider_expected_owner_socket_root(sterile_root : String) -> String? {
+  for provider in ["claude", "codex"] {
+    let parts = sterile_root.split("/" + provider + "/").to_array()
+    if parts.length() == 2 &&
+      parts[0] != "" &&
+      valid_native_provider_boundary_token(parts[1].to_owned()) {
+      return Some(parts[0].to_owned() + "/owner-socket")
+    }
+  }
+  None
+}
+
+///|
+fn native_provider_owner_socket_root() -> String {
+  "/tmp/choir-owner"
+}
+
+///|
+fn native_provider_owner_socket_path() -> String {
+  native_provider_owner_socket_root() + "/owner.sock"
+}
+
+///|
+fn native_provider_host_boundary_args(
+  sterile_root : String,
+  working_directory : String,
+  boxlite_owner_socket_root : String?,
+  executable : String,
+  executable_args : Array[String],
+) -> Array[String] {
+  let args : Array[String] = [
+    "--die-with-parent", "--ro-bind", "/", "/", "--dev-bind", "/dev", "/dev", "--proc",
+    "/proc", "--tmpfs", "/tmp", "--bind", sterile_root, sterile_root, "--chdir",
+    working_directory, "--", executable,
+  ]
+  match boxlite_owner_socket_root {
+    Some(source) => {
+      let chdir = args.search("--chdir").unwrap()
+      args.insert(chdir, "--ro-bind")
+      args.insert(chdir + 1, source)
+      args.insert(chdir + 2, native_provider_owner_socket_root())
+    }
+    None => ()
+  }
+  for argument in executable_args {
+    args.push(argument)
+  }
+  args
+}
+
+///|
+fn validate_native_provider_host_boundary() -> Result[Unit, @types.ChoirError] {
+  if @sys.realpath_native("/usr/bin/bwrap") != Some("/usr/bin/bwrap") ||
+    !@sys.path_executable("/usr/bin/bwrap") {
+    Err(
+      @types.ChoirError::policy_blocked(
+        "provider read-only host boundary is unavailable",
+      ),
+    )
+  } else {
+    Ok(())
+  }
+}
+
+///|
 pub async fn collect_interruptible_process(
   program : String,
   arguments : Array[String],
