@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-21T01:42:31-05:00
+Implementation snapshot updated through: 2026-07-21T14:30:00-05:00
 
 ## Charter Semantics and Readiness
 
@@ -4756,10 +4756,19 @@ provider lifecycle rather than only through its standalone MCP probe. Codex's
 host boundary masks host `/tmp`, so an owner socket placed directly in the
 BoxLite runtime root was unreachable from the MCP child. The owner now places
 only that socket in a dedicated mode-`0700` directory. The Codex boundary
-binds that exact sibling directory read-only at a fixed path inside the
-sterile Take root; it cannot bind an arbitrary host path, and the surrounding
+binds that exact sibling directory read-only at the fixed short path
+`/tmp/choir-owner` inside the sterile process boundary. The short target stays
+within the Unix-domain socket path limit even when the source Take root is
+long. It cannot bind an arbitrary host path, and the surrounding
 BoxLite runtime directory, REST key, owner secret, logs, and client state stay
 outside the namespace.
+
+The same live run found that trusted `moon check` inside the guest requires the
+offline Moon registry as well as `bin`, `lib`, and `include`. Toolchain staging
+now copies and validates `registry/cache` and `registry/index`; verification
+does not depend on network package resolution. Local Goal control was also
+exercised outside the Conductor environment using authenticated registration
+with the current-user `choird` socket.
 
 The real Codex Part lifecycle then passed with twelve effect receipts, one
 verification receipt, one audit receipt, one integration receipt, no repeated

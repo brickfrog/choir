@@ -475,7 +475,7 @@ fn native_codex_config(
     native_boxlite_take_mcp_arguments(
       sandbox,
       runtime.config.sandbox_mcp_script,
-      owner_socket=Some(sterile_root + "/boxlite-owner/owner.sock"),
+      owner_socket=Some(native_codex_owner_socket_path()),
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -484,9 +484,7 @@ fn native_codex_config(
     sterile_root,
     mcp_executable: runtime.config.node_executable,
     mcp_arguments: arguments,
-    boxlite_owner_socket_root: Some(
-      sandbox.prepared.server.owner_socket_root,
-    ),
+    boxlite_owner_socket_root: Some(sandbox.prepared.server.owner_socket_root),
     mcp_server_name: "choir_sandbox",
     allowed_tools: match sandbox.workspace_access {
       @sandbox.BoxLiteWorkspaceAccess::BoxLiteMutableWorkspace =>
@@ -957,7 +955,8 @@ async fn execute_native_verification(
   }
   let started_at = match process_result.started_at {
     Some(value) => value
-    None => return Err(native_part_effect_error("process start was not durable"))
+    None =>
+      return Err(native_part_effect_error("process start was not durable"))
   }
   let task = match
     read_native_instruction(
@@ -1077,21 +1076,21 @@ async fn execute_native_audit(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let passed_verification_receipts = snapshot.verification_receipts.filter(
-    fn(receipt) {
-      receipt.subject.part_id == subject.part_id &&
-      receipt.subject.candidate_commit_oid == subject.candidate_commit_oid &&
-      receipt.outcome == @control.VerificationOutcome::VerificationPassed
-    },
-  )
+  let passed_verification_receipts = snapshot.verification_receipts.filter(fn(
+    receipt,
+  ) {
+    receipt.subject.part_id == subject.part_id &&
+    receipt.subject.candidate_commit_oid == subject.candidate_commit_oid &&
+    receipt.outcome == @control.VerificationOutcome::VerificationPassed
+  })
   if passed_verification_receipts.length() == 0 {
     return Err(
       native_part_effect_error("audit lacks passed verification evidence"),
     )
   }
-  let verification_evidence = passed_verification_receipts.map(
-    fn(receipt) { receipt.evidence.digest.0 },
-  ).join(",")
+  let verification_evidence = passed_verification_receipts
+    .map(fn(receipt) { receipt.evidence.digest.0 })
+    .join(",")
   let changed_paths = candidate.changed_paths.map(fn(path) { path.0 }).join(",")
   let instruction = "Independently audit candidate " +
     candidate.commit_oid.0 +

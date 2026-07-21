@@ -971,7 +971,9 @@ pub async fn prepare_native_boxlite_environment(
       @sys.realpath_native(toolchain) != Some(toolchain) ||
       !@sys.path_exists(toolchain + "/bin/moon") ||
       !@sys.path_exists(toolchain + "/lib") ||
-      !@sys.path_exists(toolchain + "/include") {
+      !@sys.path_exists(toolchain + "/include") ||
+      !@sys.path_exists(toolchain + "/registry/cache") ||
+      !@sys.path_exists(toolchain + "/registry/index") {
       return Err(native_boxlite_take_error("staged toolchain is invalid"))
     }
   } else {
@@ -979,7 +981,7 @@ pub async fn prepare_native_boxlite_environment(
       !@sys.write_file_sync(toolchain_marker, toolchain_digest) {
       return Err(native_boxlite_take_error("toolchain staging root failed"))
     }
-    for directory in ["bin", "lib", "include"] {
+    for directory in ["bin", "lib", "include", "registry"] {
       match
         copy_native_toolchain_directory(
           server,

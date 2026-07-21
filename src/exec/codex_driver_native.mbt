@@ -59,6 +59,16 @@ fn native_codex_expected_owner_socket_root(sterile_root : String) -> String? {
 }
 
 ///|
+fn native_codex_owner_socket_root() -> String {
+  "/tmp/choir-owner"
+}
+
+///|
+fn native_codex_owner_socket_path() -> String {
+  native_codex_owner_socket_root() + "/owner.sock"
+}
+
+///|
 fn validate_native_codex_config(
   config : NativeCodexDriverConfig,
 ) -> Result[Unit, @types.ChoirError] {
@@ -93,7 +103,7 @@ fn validate_native_codex_config(
       )
     _ => ()
   }
-  let owner_socket_target = config.sterile_root + "/boxlite-owner/owner.sock"
+  let owner_socket_target = native_codex_owner_socket_path()
   let mut owner_socket_argument_count = 0
   for index, argument in config.mcp_arguments {
     if argument == "--owner-socket" {
@@ -271,7 +281,7 @@ fn native_codex_host_boundary_args(
       let chdir = args.search("--chdir").unwrap()
       args.insert(chdir, "--ro-bind")
       args.insert(chdir + 1, source)
-      args.insert(chdir + 2, sterile_root + "/boxlite-owner")
+      args.insert(chdir + 2, native_codex_owner_socket_root())
     }
     None => ()
   }
@@ -1113,12 +1123,9 @@ fn prepare_native_codex_app_server_home(
   }
   match config.boxlite_owner_socket_root {
     Some(source) => {
-      let target = config.sterile_root + "/boxlite-owner"
       if @sys.realpath_native(source) != Some(source) ||
         @sys.realpath_native(source + "/owner.sock") !=
-        Some(source + "/owner.sock") ||
-        !@sys.create_dir_all(target) ||
-        !@sys.chmod_mode(target, 0o700) {
+        Some(source + "/owner.sock") {
         return Err(
           native_codex_driver_error("BoxLite owner socket is unavailable"),
         )
@@ -2190,7 +2197,7 @@ test "native Codex connect observation is confined to the sterile root" {
 test "native Codex owner socket binding is exact and paired with MCP argv" {
   let root = "/tmp/choir-boxlite-test/codex/session-test"
   let source = "/tmp/choir-boxlite-test/owner-socket"
-  let target = root + "/boxlite-owner/owner.sock"
+  let target = native_codex_owner_socket_path()
   let config : NativeCodexDriverConfig = {
     sterile_root: root,
     mcp_executable: "/usr/bin/node",
@@ -2237,7 +2244,7 @@ test "native Codex owner socket binding is exact and paired with MCP argv" {
   )
   let source_index = args.search(source).unwrap()
   assert_eq(args[source_index - 1], "--ro-bind")
-  assert_eq(args[source_index + 1], root + "/boxlite-owner")
+  assert_eq(args[source_index + 1], native_codex_owner_socket_root())
   assert_false(args.contains("/tmp/choir-boxlite-test"))
 }
 
