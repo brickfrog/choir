@@ -968,6 +968,13 @@ async fn reconcile_native_goal_part_cancellation(
     }
     reconciled.push(canceled.snapshot)
   }
+  let assurance_known = match
+    reconcile_native_goal_assurance_cancellation(
+      project_dir, repository, adapters, record, observed_at,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
   let finalization_known = match
     reconcile_native_goal_finalization_cancellation(
       project_dir, repository, adapters, record, forge, observed_at,
@@ -975,7 +982,92 @@ async fn reconcile_native_goal_part_cancellation(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  Ok((reconciled, finalization_known))
+  Ok((reconciled, assurance_known && finalization_known))
+}
+
+///|
+async fn reconcile_native_goal_assurance_cancellation(
+  project_dir : String,
+  repository : @workflow.PartWorkflowRepository,
+  adapters : @workflow.PartWorkflowRepositoryAdapters,
+  execution : @workflow.GoalExecutionRecord,
+  observed_at : Int64,
+) -> Result[Bool, @types.ChoirError] {
+  let stored = match
+    @workflow.load_goal_assurance_record(repository, adapters, execution.goal.id) {
+    Ok(Some(value)) => value
+    Ok(None) => return Ok(true)
+    Err(error) => return Err(error)
+  }
+  if @workflow.goal_assurance_cancellation_disposition_is_known(stored.record) {
+    return Ok(true)
+  }
+  let reconciled = if stored.record.seal_intent.lifecycle ==
+    @control.GoalBranchSealIntentLifecycle::GoalBranchSealAuthorized {
+    let git = match discover_native_goal_repository(project_dir, execution) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    let observation = match
+      native_goal_seal_witness(
+        git,
+        execution.goal_ref,
+        stored.record.seal_intent,
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    let witnessed = match
+      @workflow.record_goal_assurance_seal_witness(
+        stored.record,
+        observation,
+        observed_at,
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    match
+      persist_native_goal_assurance_record(
+        repository,
+        adapters,
+        execution,
+        witnessed,
+        Some(stored.state_record.version),
+      ) {
+      Ok(Some(value)) => value
+      Ok(None) => return Ok(false)
+      Err(error) => return Err(error)
+    }
+  } else {
+    stored
+  }
+  let canceled = match
+    @workflow.record_goal_assurance_cancellation(reconciled.record) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if canceled == reconciled.record {
+    return Ok(
+      @workflow.goal_assurance_cancellation_disposition_is_known(canceled),
+    )
+  }
+  let persisted = match
+    persist_native_goal_assurance_record(
+      repository,
+      adapters,
+      execution,
+      canceled,
+      Some(reconciled.state_record.version),
+    ) {
+    Ok(Some(value)) => value
+    Ok(None) => return Ok(false)
+    Err(error) => return Err(error)
+  }
+  Ok(
+    @workflow.goal_assurance_cancellation_disposition_is_known(
+      persisted.record,
+    ),
+  )
 }
 
 ///|

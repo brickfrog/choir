@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-20T19:30:47-05:00
+Implementation snapshot updated through: 2026-07-20T19:40:58-05:00
 
 ## Charter Semantics and Readiness
 
@@ -613,6 +613,15 @@ unconnected product path usable.
   orderings have executable tests. A live Codex/BoxLite fixture also proves
   that the real provider process group is interrupted and reloaded as one
   durable uncertain implementation effect.
+- Cancellation now also loads and reconciles the durable Goal-assurance
+  record before terminal cancellation. A planned branch seal is abandoned; an
+  authorized seal remains unresolved until its exact witness transaction is
+  reconciled; witnessed or committed seals are preserved. Planned combined
+  verification/audit effects are abandoned, possibly-issued effects become
+  uncertain, active Takes are interrupted, and active sandbox/session
+  resources receive terminal uncertain dispositions. The canceled assurance
+  record round-trips through durable storage under the canceling Goal's exact
+  precondition, and replay is stable.
 - Cancellation now reconciles durable branch-publication and final-PR records
   before terminal Goal cancellation. Planned effects are abandoned, authorized
   or possibly-issued effects receive one fresh remote observation, exact remote

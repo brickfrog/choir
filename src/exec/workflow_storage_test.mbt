@@ -1430,7 +1430,7 @@ async test "Goal cancellation atomically rejects stale seal authorization" {
     @control.GitOid("promotion-commit-store"),
     @control.GitOid("promotion-tree-store"),
   ).unwrap()
-  match
+  let canceling = match
     @workflow.persist_goal_cancellation_request(
       repository,
       adapters,
@@ -1438,8 +1438,8 @@ async test "Goal cancellation atomically rejects stale seal authorization" {
       1000L,
     ) {
     Ok(
-      @workflow.GoalCancellationPersistenceResult::GoalCancellationPersisted(_)
-    ) => ()
+      @workflow.GoalCancellationPersistenceResult::GoalCancellationPersisted(value)
+    ) => value
     Ok(_) => fail("Goal cancellation did not install its cutoff")
     Err(error) => fail(error.message())
   }
@@ -1463,6 +1463,38 @@ async test "Goal cancellation atomically rejects stale seal authorization" {
     .unwrap()
     .unwrap()
   assert_eq(replay.record, planned)
+  let canceled_assurance = @workflow.record_goal_assurance_cancellation(
+    replay.record,
+  ).unwrap()
+  let canceled_receipt = @workflow.persist_goal_assurance_record(
+    repository,
+    adapters,
+    {
+      record: canceled_assurance,
+      expected_store_version: Some(replay.state_record.version),
+      goal_precondition: @workflow.goal_execution_state_precondition(canceling),
+      fault_point: None,
+    },
+  ).unwrap()
+  assert_eq(
+    canceled_receipt.outcome,
+    @workflow.GoalAssurancePersistenceOutcome::GoalAssurancePersistenceCompleted(
+      @storage.StateTransactionOutcome::StateTransactionCommitted,
+    ),
+  )
+  let canceled_replay = @workflow.load_goal_assurance_record(
+      repository,
+      adapters,
+      assurance_transition.goal.id,
+    )
+    .unwrap()
+    .unwrap()
+  assert_eq(canceled_replay.record, canceled_assurance)
+  assert_true(
+    @workflow.goal_assurance_cancellation_disposition_is_known(
+      canceled_replay.record,
+    ),
+  )
   clean_workflow_repository(repository)
 }
 

@@ -10,6 +10,7 @@ pub(all) enum GoalAssuranceStage {
   GoalAudited
   GoalAssuranceBlocked
   GoalAssuranceRecoveryUncertain
+  GoalAssuranceCanceled
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -217,6 +218,31 @@ fn goal_assurance_stage_matches(record : GoalAssuranceRecord) -> Bool {
       Some(seal),
     ) => observed_at > 0L && seal.seal_digest == goal_branch_seal_digest(seal)
     (GoalAssuranceBlocked | GoalAssuranceRecoveryUncertain, _, _, _) => true
+    (
+      GoalAssuranceCanceled,
+      @control.GoalBranchSealIntentLifecycle::GoalBranchSealAbandonedByCancellation,
+      None,
+      None,
+    ) => true
+    (
+      GoalAssuranceCanceled,
+      @control.GoalBranchSealIntentLifecycle::GoalBranchSealWitnessed,
+      Some(observed_at),
+      None,
+    ) => observed_at > 0L
+    (
+      GoalAssuranceCanceled,
+      @control.GoalBranchSealIntentLifecycle::GoalBranchSealed,
+      Some(observed_at),
+      Some(seal),
+    ) => observed_at > 0L && seal.seal_digest == goal_branch_seal_digest(seal)
+    (
+      GoalAssuranceCanceled,
+      @control.GoalBranchSealIntentLifecycle::GoalBranchSealIntegrityBlocked(_)
+      | @control.GoalBranchSealIntentLifecycle::GoalBranchSealUncertain(_),
+      _,
+      _,
+    ) => true
     _ => false
   }
 }
@@ -590,4 +616,154 @@ pub fn commit_goal_assurance_seal(
     stage: GoalAssuranceStage::GoalSealed,
     durable_version: record.durable_version + 1,
   })
+}
+
+///|
+fn cancel_goal_assurance_take(
+  take : @control.Take,
+  fence : @control.FencingEpoch,
+) -> Result[@control.Take, @types.ChoirError] {
+  match take.lifecycle {
+    @control.TakeLifecycle::TakeLeased =>
+      @control.transition_take(
+        take,
+        @control.TakeTransition::FinishTake(
+          fence,
+          @control.TakeTerminalDisposition::TakeCanceled,
+        ),
+      )
+    @control.TakeLifecycle::TakeRunning
+    | @control.TakeLifecycle::TakeResultRecorded(_) =>
+      @control.transition_take(
+        take,
+        @control.TakeTransition::FinishTake(
+          fence,
+          @control.TakeTerminalDisposition::TakeInterrupted,
+        ),
+      )
+    _ => Ok(take)
+  }
+}
+
+///|
+fn goal_assurance_session_disposition_is_known(
+  session : @control.HarnessSession,
+) -> Bool {
+  match session.lifecycle {
+    @control.HarnessSessionLifecycle::HarnessSessionIngestionClosedCleanly(_)
+    | @control.HarnessSessionLifecycle::HarnessSessionProtocolViolated
+    | @control.HarnessSessionLifecycle::HarnessSessionRecoveryUncertain => true
+    _ => false
+  }
+}
+
+///|
+fn goal_assurance_take_disposition_is_known(take : @control.Take) -> Bool {
+  match take.lifecycle {
+    @control.TakeLifecycle::TakePlanned
+    | @control.TakeLifecycle::TakeTerminal(_) => true
+    _ => false
+  }
+}
+
+///|
+pub fn goal_assurance_cancellation_disposition_is_known(
+  record : GoalAssuranceRecord,
+) -> Bool {
+  let effect_known = match record.pending_effect {
+    None => true
+    Some(intent) =>
+      match intent.lifecycle {
+        GoalAssuranceEffectReceipted
+        | GoalAssuranceEffectUncertain
+        | GoalAssuranceEffectAbandonedByCancellation => true
+        _ => false
+      }
+  }
+  record.stage == GoalAssuranceCanceled &&
+  record.seal_intent.lifecycle !=
+  @control.GoalBranchSealIntentLifecycle::GoalBranchSealAuthorized &&
+  goal_assurance_take_disposition_is_known(record.verification_take) &&
+  goal_assurance_take_disposition_is_known(record.audit_take) &&
+  record.sandbox_leases.all(fn(lease) {
+    lease.lifecycle != @control.SandboxLeaseLifecycle::SandboxLeaseActive
+  }) &&
+  record.harness_sessions.all(goal_assurance_session_disposition_is_known) &&
+  effect_known
+}
+
+///|
+pub fn record_goal_assurance_cancellation(
+  record : GoalAssuranceRecord,
+) -> Result[GoalAssuranceRecord, @types.ChoirError] {
+  if goal_assurance_cancellation_disposition_is_known(record) {
+    return Ok(record)
+  }
+  if record.seal_intent.lifecycle ==
+    @control.GoalBranchSealIntentLifecycle::GoalBranchSealAuthorized {
+    return Ok(record)
+  }
+  let seal_intent = match record.seal_intent.lifecycle {
+    @control.GoalBranchSealIntentLifecycle::GoalBranchSealPlanned => {
+      ..record.seal_intent,
+      lifecycle: @control.GoalBranchSealIntentLifecycle::GoalBranchSealAbandonedByCancellation,
+    }
+    _ => record.seal_intent
+  }
+  let verification_take = match
+    cancel_goal_assurance_take(record.verification_take, record.fencing_epoch) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let audit_take = match
+    cancel_goal_assurance_take(record.audit_take, record.fencing_epoch) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let sandbox_leases = record.sandbox_leases.map(fn(lease) {
+    if lease.lifecycle == @control.SandboxLeaseLifecycle::SandboxLeaseActive {
+      {
+        ..lease,
+        lifecycle: @control.SandboxLeaseLifecycle::SandboxLeaseUncertain,
+      }
+    } else {
+      lease
+    }
+  })
+  let harness_sessions = record.harness_sessions.map(fn(session) {
+    if goal_assurance_session_disposition_is_known(session) {
+      session
+    } else {
+      {
+        ..session,
+        lifecycle: @control.HarnessSessionLifecycle::HarnessSessionRecoveryUncertain,
+      }
+    }
+  })
+  let pending_effect = match record.pending_effect {
+    Some({ lifecycle: GoalAssuranceEffectPlanned, .. } as intent) =>
+      Some({
+        ..intent,
+        lifecycle: GoalAssuranceEffectAbandonedByCancellation,
+      })
+    Some({ lifecycle: GoalAssuranceEffectMayHaveOccurred, .. } as intent) =>
+      Some({ ..intent, lifecycle: GoalAssuranceEffectUncertain })
+    other => other
+  }
+  let next = {
+    ..record,
+    verification_take,
+    audit_take,
+    seal_intent,
+    sandbox_leases,
+    harness_sessions,
+    pending_effect,
+    stage: GoalAssuranceCanceled,
+    durable_version: record.durable_version + 1,
+  }
+  if goal_assurance_cancellation_disposition_is_known(next) {
+    Ok(next)
+  } else {
+    Err(goal_assurance_error("cancellation disposition remains unresolved"))
+  }
 }

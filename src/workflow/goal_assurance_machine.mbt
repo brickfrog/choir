@@ -148,7 +148,10 @@ fn next_goal_assurance_effect_kind(
         }
       }
     }
-    GoalAudited | GoalAssuranceBlocked | GoalAssuranceRecoveryUncertain =>
+    GoalAudited
+    | GoalAssuranceBlocked
+    | GoalAssuranceRecoveryUncertain
+    | GoalAssuranceCanceled =>
       Ok(None)
     _ => Err(goal_assurance_error("seal is not ready for assurance work"))
   }

@@ -988,6 +988,24 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     planned.verification_specs,
     integrated.task_contract.verification_specs,
   )
+  let canceled_planned = @workflow.record_goal_assurance_cancellation(planned).unwrap()
+  assert_eq(
+    canceled_planned.stage,
+    @workflow.GoalAssuranceStage::GoalAssuranceCanceled,
+  )
+  assert_eq(
+    canceled_planned.seal_intent.lifecycle,
+    @control.GoalBranchSealIntentLifecycle::GoalBranchSealAbandonedByCancellation,
+  )
+  assert_true(
+    @workflow.goal_assurance_cancellation_disposition_is_known(canceled_planned),
+  )
+  assert_eq(
+    @workflow.decode_goal_assurance_record(
+      @workflow.goal_assurance_record_bytes(canceled_planned),
+    ).unwrap(),
+    canceled_planned,
+  )
   let authorized = match
     @workflow.authorize_goal_assurance_seal(
       planned,
@@ -998,6 +1016,13 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     Ok(value) => value
     Err(error) => fail(error.message())
   }
+  assert_eq(
+    @workflow.record_goal_assurance_cancellation(authorized).unwrap(),
+    authorized,
+  )
+  assert_false(
+    @workflow.goal_assurance_cancellation_disposition_is_known(authorized),
+  )
   let witnessed = match
     @workflow.record_goal_assurance_seal_witness(
       authorized,
@@ -1011,6 +1036,22 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     Ok(value) => value
     Err(error) => fail(error.message())
   }
+  let canceled_witnessed = @workflow.record_goal_assurance_cancellation(
+    witnessed,
+  ).unwrap()
+  assert_eq(
+    canceled_witnessed.stage,
+    @workflow.GoalAssuranceStage::GoalAssuranceCanceled,
+  )
+  assert_eq(
+    canceled_witnessed.seal_intent.lifecycle,
+    @control.GoalBranchSealIntentLifecycle::GoalBranchSealWitnessed,
+  )
+  assert_true(
+    @workflow.goal_assurance_cancellation_disposition_is_known(
+      canceled_witnessed,
+    ),
+  )
   let completed_seal = match
     @workflow.commit_goal_assurance_seal(
       witnessed,
@@ -1021,6 +1062,53 @@ test "integrated Parts authorize one immutable Goal branch seal" {
   }
   assert_eq(completed_seal.stage, @workflow.GoalAssuranceStage::GoalSealed)
   assert_eq(completed_seal.durable_version, 4)
+  let canceled_sealed = @workflow.record_goal_assurance_cancellation(
+    completed_seal,
+  ).unwrap()
+  assert_eq(
+    canceled_sealed.stage,
+    @workflow.GoalAssuranceStage::GoalAssuranceCanceled,
+  )
+  assert_true(canceled_sealed.seal is Some(_))
+  assert_true(
+    @workflow.goal_assurance_cancellation_disposition_is_known(canceled_sealed),
+  )
+  let planned_effect = @workflow.persist_planned_goal_assurance_effect(
+    completed_seal,
+    @workflow.plan_next_goal_assurance_effect(completed_seal).unwrap().unwrap(),
+  ).unwrap()
+  let canceled_planned_effect = @workflow.record_goal_assurance_cancellation(
+    planned_effect,
+  ).unwrap()
+  assert_true(
+    canceled_planned_effect.pending_effect
+    is Some(
+      {
+        lifecycle: @workflow.GoalAssuranceEffectLifecycle::GoalAssuranceEffectAbandonedByCancellation,
+        ..,
+      }
+    ),
+  )
+  let authorized_effect = @workflow.authorize_pending_goal_assurance_effect(
+    planned_effect,
+  ).unwrap()
+  let canceled_authorized_effect = @workflow.record_goal_assurance_cancellation(
+    authorized_effect,
+  ).unwrap()
+  assert_true(
+    canceled_authorized_effect.pending_effect
+    is Some(
+      {
+        lifecycle: @workflow.GoalAssuranceEffectLifecycle::GoalAssuranceEffectUncertain,
+        ..,
+      }
+    ),
+  )
+  assert_true(
+    @workflow.goal_assurance_cancellation_disposition_is_known(
+      canceled_authorized_effect,
+    ),
+  )
   let mut assured = apply_goal_assurance_observation(
     completed_seal,
     @workflow.GoalAssuranceEffectObservation::GoalVerificationSandboxPrepared(
