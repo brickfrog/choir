@@ -74,6 +74,11 @@ unconnected product path usable.
   target repository can no longer supply the sandbox MCP or BoxLite owner
   program. The documented local installation places the executable and both
   programs together under `~/.local/libexec/choir`.
+- Startup now validates both trusted runtime programs, the BoxLite executable,
+  and the corrected BoxLite runtime bundle before minting a Conductor
+  credential or starting `choird`. Missing runtime configuration exits without
+  leaving a daemon PID or socket; a disposable live probe also confirms that a
+  complete runtime still opens the Codex Conductor and stops cleanly.
 - Sealed Moon verification now stages the offline registry into a private
   writable Moon home and maps `.mooncakes` to scratch while the candidate tree
   remains read-only. Choir removes that generated cache link before every

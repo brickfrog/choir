@@ -90,6 +90,42 @@ pub fn validate_native_runtime_assets() -> Result[Unit, @types.ChoirError] {
 }
 
 ///|
+pub fn validate_native_goal_runtime(
+  validate_assets? : () -> Result[Unit, @types.ChoirError] = validate_native_runtime_assets,
+  resolve_binary? : () -> Result[String, @types.ChoirError] = native_boxlite_binary_path,
+  resolve_runtime? : () -> Result[String, @types.ChoirError] = native_boxlite_runtime_dir,
+  canonicalize? : (String) -> String? = @sys.realpath_native,
+) -> Result[Unit, @types.ChoirError] {
+  match validate_assets() {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let binary = match resolve_binary() {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if canonicalize(binary) is None {
+    return Err(
+      @types.ChoirError::workspace_error(
+        "BoxLite executable is absent at the configured path",
+      ),
+    )
+  }
+  let runtime = match resolve_runtime() {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if canonicalize(runtime) is None {
+    return Err(
+      @types.ChoirError::workspace_error(
+        "BoxLite runtime bundle is absent at the configured path",
+      ),
+    )
+  }
+  Ok(())
+}
+
+///|
 test "runtime assets resolve only from explicit installation layouts" {
   assert_eq(native_runtime_parent("/opt/choir/bin/choir"), "/opt/choir/bin")
   assert_eq(native_runtime_parent("/choir"), "/")

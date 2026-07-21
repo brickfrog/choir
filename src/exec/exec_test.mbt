@@ -130,3 +130,51 @@ test "strip_terminal_responses leaves normal text unchanged" {
 }
 
 ///|
+test "Goal runtime preflight validates every required installed path" {
+  let observed : Array[String] = []
+  let result = validate_native_goal_runtime(
+    validate_assets=fn() {
+      observed.push("assets")
+      Ok(())
+    },
+    resolve_binary=fn() {
+      observed.push("binary")
+      Ok("/opt/choir/boxlite")
+    },
+    resolve_runtime=fn() {
+      observed.push("runtime")
+      Ok("/opt/choir/runtime")
+    },
+    canonicalize=fn(path) {
+      observed.push(path)
+      Some(path)
+    },
+  )
+  assert_true(result is Ok(_))
+  assert_eq(observed, [
+    "assets", "binary", "/opt/choir/boxlite", "runtime", "/opt/choir/runtime",
+  ])
+}
+
+///|
+test "Goal runtime preflight fails before resolving later requirements" {
+  let binary_called = @ref.new(false)
+  let result = validate_native_goal_runtime(
+    validate_assets=fn() {
+      Err(@types.ChoirError::workspace_error("assets absent"))
+    },
+    resolve_binary=fn() {
+      binary_called.val = true
+      Ok("/opt/choir/boxlite")
+    },
+    resolve_runtime=fn() { Ok("/opt/choir/runtime") },
+    canonicalize=fn(path) { Some(path) },
+  )
+  assert_false(binary_called.val)
+  match result {
+    Err(error) => assert_true(error.message().contains("assets absent"))
+    Ok(_) => fail("incomplete Goal runtime passed preflight")
+  }
+}
+
+///|

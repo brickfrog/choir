@@ -209,6 +209,14 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
       return
     }
   }
+  match @exec.validate_native_goal_runtime() {
+    Ok(_) => ()
+    Err(error) => {
+      @sys.write_stderr("choir start: " + error.message() + "\n")
+      @sys.exit(1)
+      return
+    }
+  }
   let token = match @sys.mint_local_token() {
     Some(value) => value
     None => {
@@ -235,14 +243,6 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
   }
   @async.run_async_main(async fn() {
     match @exec.validate_native_beads_cli() {
-      Ok(_) => ()
-      Err(error) => {
-        @sys.write_stderr("choir start: " + error.message() + "\n")
-        @sys.exit(1)
-        return
-      }
-    }
-    match @exec.validate_native_runtime_assets() {
       Ok(_) => ()
       Err(error) => {
         @sys.write_stderr("choir start: " + error.message() + "\n")
