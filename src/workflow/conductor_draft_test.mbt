@@ -6,8 +6,6 @@ test "Conductor draft decodes friendly provider and verification fields" {
         #|{
         #|  "proposal_id": "proposal-1",
         #|  "goal_id": "goal-1",
-        #|  "base_ref": "refs/heads/main",
-        #|  "integration_target_ref": "refs/heads/main",
         #|  "maximum_parallel_parts": 2,
         #|  "parts": [
         #|    {
@@ -48,7 +46,7 @@ test "Conductor draft rejects unknown fields and ambiguous mutation scope" {
   match
     @workflow.decode_conductor_goal_draft(
       (
-        #|{"proposal_id":"p","goal_id":"g","base_ref":"refs/heads/main","integration_target_ref":"refs/heads/main","maximum_parallel_parts":1,"surprise":true,"parts":[]}
+        #|{"proposal_id":"p","goal_id":"g","maximum_parallel_parts":1,"surprise":true,"parts":[]}
       ),
     ) {
     Err(error) => {
@@ -60,11 +58,13 @@ test "Conductor draft rejects unknown fields and ambiguous mutation scope" {
   match
     @workflow.decode_conductor_goal_draft(
       (
-        #|{"proposal_id":"p","goal_id":"g","base_ref":"refs/heads/main","integration_target_ref":"refs/heads/main","maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","provider":"codex","repository_wide":true,"verify_args":["test"],"command":"moon test","dependencies":[]}]}
+        #|{"proposal_id":"p","goal_id":"g","maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","provider":"codex","repository_wide":true,"verify_args":["test"],"command":"moon test","dependencies":[]}]}
       ),
     ) {
     Err(error) => {
-      assert_true(error.message().contains("unknown fields: command, dependencies"))
+      assert_true(
+        error.message().contains("unknown fields: command, dependencies"),
+      )
       assert_true(error.message().contains("allowed fields: part_id"))
     }
     Ok(_) => fail("unknown Part fields were accepted")
@@ -72,11 +72,29 @@ test "Conductor draft rejects unknown fields and ambiguous mutation scope" {
   assert_true(
     @workflow.decode_conductor_goal_draft(
       (
-        #|{"proposal_id":"p","goal_id":"g","base_ref":"refs/heads/main","integration_target_ref":"refs/heads/main","maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","provider":"codex","repository_wide":true,"exact_paths":["src/a"],"verify_args":["test"]}]}
+        #|{"proposal_id":"p","goal_id":"g","maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","provider":"codex","repository_wide":true,"exact_paths":["src/a"],"verify_args":["test"]}]}
       ),
     )
     is Err(_),
   )
+}
+
+///|
+test "Conductor draft rejects Git refs owned by choird" {
+  match
+    @workflow.decode_conductor_goal_draft(
+      (
+        #|{"proposal_id":"p","goal_id":"g","base_ref":"refs/heads/guessed","integration_target_ref":"refs/heads/guessed","maximum_parallel_parts":1,"parts":[]}
+      ),
+    ) {
+    Err(error) =>
+      assert_true(
+        error
+        .message()
+        .contains("unknown fields: base_ref, integration_target_ref"),
+      )
+    Ok(_) => fail("Conductor-owned Git refs were accepted")
+  }
 }
 
 ///|

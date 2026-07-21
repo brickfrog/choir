@@ -19,8 +19,6 @@ pub(all) struct ConductorPartDraft {
 pub(all) struct ConductorGoalDraft {
   proposal_id : GoalProposalId
   goal_id : @control.GoalId
-  base_ref : GitRefName
-  integration_target_ref : GitRefName
   maximum_parallel_parts : Int
   parts : Array[ConductorPartDraft]
 } derive(Debug, Eq, ToJson, FromJson)
@@ -235,8 +233,7 @@ pub fn decode_conductor_goal_draft(
     return Err(goal_submission_error("Conductor Goal draft must be an object"))
   }
   let allowed_fields = [
-      "proposal_id", "goal_id", "base_ref", "integration_target_ref", "maximum_parallel_parts",
-      "parts",
+      "proposal_id", "goal_id", "maximum_parallel_parts", "parts",
     ]
   let unknown_fields = conductor_draft_unknown_fields(fields, allowed_fields)
   if unknown_fields.length() > 0 {
@@ -256,16 +253,6 @@ pub fn decode_conductor_goal_draft(
   let goal_id = match conductor_draft_string(fields, "goal_id") {
     Some(value) => @control.GoalId(value)
     None => return Err(goal_submission_error("goal_id is missing"))
-  }
-  let base_ref = match conductor_draft_string(fields, "base_ref") {
-    Some(value) => GitRefName(value)
-    None => return Err(goal_submission_error("base_ref is missing"))
-  }
-  let integration_target_ref = match
-    conductor_draft_string(fields, "integration_target_ref") {
-    Some(value) => GitRefName(value)
-    None =>
-      return Err(goal_submission_error("integration_target_ref is missing"))
   }
   let maximum_parallel_parts = match
     conductor_draft_int(fields, "maximum_parallel_parts") {
@@ -288,8 +275,6 @@ pub fn decode_conductor_goal_draft(
   Ok({
     proposal_id,
     goal_id,
-    base_ref,
-    integration_target_ref,
     maximum_parallel_parts,
     parts,
   })

@@ -104,6 +104,35 @@ async fn native_goal_submission_capture(
 }
 
 ///|
+async fn capture_native_goal_branch_ref(
+  project_dir : String,
+  capture : async (Command) -> (Int, String),
+) -> Result[@workflow.GitRefName, @types.ChoirError] {
+  let value = match
+    native_goal_submission_capture(
+      capture,
+      project_dir,
+      "git",
+      ["symbolic-ref", "--quiet", "HEAD"],
+      "current branch",
+    ) {
+    Ok(value) => value
+    Err(_) =>
+      return Err(
+        native_goal_submission_error(
+          "current checkout must be on a named branch",
+        ),
+      )
+  }
+  let branch_ref = @workflow.GitRefName(value)
+  if !branch_ref.0.has_prefix("refs/heads/") ||
+    branch_ref.0.length() == "refs/heads/".length() {
+    return Err(native_goal_submission_error("current branch ref is invalid"))
+  }
+  Ok(branch_ref)
+}
+
+///|
 fn native_goal_submission_source_part(
   snapshot : @workflow.GoalSelectionSnapshot,
   part_id : @control.PartId,
@@ -119,6 +148,7 @@ fn native_goal_submission_source_part(
 ///|
 async fn capture_native_goal_selection_snapshot(
   draft : @workflow.ConductorGoalDraft,
+  base_ref : @workflow.GitRefName,
   project_dir : String,
   capture : async (Command) -> (Int, String),
 ) -> Result[@workflow.GoalSelectionSnapshot, @types.ChoirError] {
@@ -138,7 +168,7 @@ async fn capture_native_goal_selection_snapshot(
       capture,
       project_dir,
       "git",
-      ["rev-parse", "--verify", draft.base_ref.0 + "^{commit}"],
+      ["rev-parse", "--verify", base_ref.0 + "^{commit}"],
       "base commit",
     ) {
     Ok(value) =>
@@ -785,8 +815,12 @@ pub async fn submit_native_conductor_goal_draft(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
+  let branch_ref = match capture_native_goal_branch_ref(project_dir, capture) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
   let snapshot = match
-    capture_native_goal_selection_snapshot(draft, project_dir, capture) {
+    capture_native_goal_selection_snapshot(draft, branch_ref, project_dir, capture) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -819,10 +853,10 @@ pub async fn submit_native_conductor_goal_draft(
     id: draft.proposal_id,
     goal_id: draft.goal_id,
     repository_id: snapshot.repository_id,
-    base_ref: draft.base_ref,
+    base_ref: branch_ref,
     expected_base_commit_oid: snapshot.base_commit_oid,
     expected_base_tree_oid: snapshot.base_tree_oid,
-    integration_target_ref: draft.integration_target_ref,
+    integration_target_ref: branch_ref,
     selection_policy: @workflow.GoalSelectionPolicy::ExactClosure,
     maximum_parallel_parts: draft.maximum_parallel_parts,
     parts,

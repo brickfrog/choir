@@ -2087,6 +2087,8 @@ async fn run_conductor_reconnect_live() -> Int {
   let base_tree = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   let capture = async fn(command : @exec.Command) -> (Int, String) {
     match (command.program, command.args) {
+      ("git", ["symbolic-ref", "--quiet", "HEAD"]) =>
+        (0, "refs/heads/main\n")
       ("git", ["rev-parse", "--show-toplevel"]) => (0, root + "\n")
       ("git", ["rev-parse", "--verify", "refs/heads/main^{commit}"]) =>
         (0, base_commit + "\n")
@@ -2104,7 +2106,7 @@ async fn run_conductor_reconnect_live() -> Int {
   }
   let goal_id = @control.GoalId("goal-conductor-reconnect")
   let draft =
-    #|{"proposal_id":"proposal-conductor-reconnect","goal_id":"goal-conductor-reconnect","base_ref":"refs/heads/main","integration_target_ref":"refs/heads/main","maximum_parallel_parts":1,"parts":[{"part_id":"choir-reconnect","instruction":"Do not execute this paused conformance Part.","provider":"codex","repository_wide":true,"verify_args":["test","--target","native"]}]}
+    #|{"proposal_id":"proposal-conductor-reconnect","goal_id":"goal-conductor-reconnect","maximum_parallel_parts":1,"parts":[{"part_id":"choir-reconnect","instruction":"Do not execute this paused conformance Part.","provider":"codex","repository_wide":true,"verify_args":["test","--target","native"]}]}
   let submitted = @exec.submit_native_conductor_goal_draft(root, draft, capture)
   let paused = match submitted {
     Ok(report) if report.accepted =>

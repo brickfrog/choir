@@ -9,6 +9,8 @@ async test "native Conductor submission captures Beads and persists once" {
   let base_tree = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   let capture = async fn(command : @exec.Command) -> (Int, String) {
     match (command.program, command.args) {
+      ("git", ["symbolic-ref", "--quiet", "HEAD"]) =>
+        (0, "refs/heads/main\n")
       ("git", ["rev-parse", "--show-toplevel"]) => (0, root + "\n")
       ("git", ["rev-parse", "--verify", "refs/heads/main^{commit}"]) =>
         (0, base_commit + "\n")
@@ -36,8 +38,6 @@ async test "native Conductor submission captures Beads and persists once" {
     #|{
     #|  "proposal_id": "proposal-native-submit",
     #|  "goal_id": "goal-native-submit",
-    #|  "base_ref": "refs/heads/main",
-    #|  "integration_target_ref": "refs/heads/main",
     #|  "maximum_parallel_parts": 1,
     #|  "parts": [
     #|    {
@@ -127,6 +127,11 @@ async test "native Conductor submission captures Beads and persists once" {
     Err(error) => fail(error.message())
   }
   assert_eq(execution.state, @workflow.GoalExecutionState::GoalExecutionQueued)
+  assert_eq(execution.base_ref, @workflow.GitRefName("refs/heads/main"))
+  assert_eq(
+    execution.integration_target_ref,
+    @workflow.GitRefName("refs/heads/main"),
+  )
   assert_eq(execution.maximum_parallel_parts, 1)
   assert_eq(execution.part_workflow_ids, [
     native_goal_part_workflow_id(
@@ -274,6 +279,31 @@ async test "native Conductor submission captures Beads and persists once" {
 }
 
 ///|
+async test "native Conductor submission rejects a detached checkout" {
+  let root = "/tmp/choir-conductor-detached-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(root))
+  if !@sys.create_dir_all(root) {
+    fail("failed to create detached submission root")
+  }
+  let capture = async fn(command : @exec.Command) -> (Int, String) {
+    match (command.program, command.args) {
+      ("git", ["symbolic-ref", "--quiet", "HEAD"]) => (1, "")
+      _ => (-1, "unexpected capture")
+    }
+  }
+  let draft =
+    #|{"proposal_id":"proposal-detached","goal_id":"goal-detached","maximum_parallel_parts":1,"parts":[{"part_id":"choir-a","instruction":"Change src/a.mbt.","provider":"codex","exact_paths":["src/a.mbt"],"verify_args":["test","--target","native"]}]}
+  match submit_native_conductor_goal_draft(root, draft, capture) {
+    Err(error) =>
+      assert_true(
+        error.message().contains("current checkout must be on a named branch"),
+      )
+    Ok(_) => fail("detached checkout was accepted")
+  }
+  ignore(@sys.rm_rf(root))
+}
+
+///|
 async test "durable Goal cancellation survives replay and starts no provider" {
   let root = "/tmp/choir-goal-cancel-" + @sys.get_pid().to_string()
   ignore(@sys.rm_rf(root))
@@ -284,6 +314,8 @@ async test "durable Goal cancellation survives replay and starts no provider" {
   let base_tree = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   let capture = async fn(command : @exec.Command) -> (Int, String) {
     match (command.program, command.args) {
+      ("git", ["symbolic-ref", "--quiet", "HEAD"]) =>
+        (0, "refs/heads/main\n")
       ("git", ["rev-parse", "--show-toplevel"]) => (0, root + "\n")
       ("git", ["rev-parse", "--verify", "refs/heads/main^{commit}"]) =>
         (0, base_commit + "\n")
@@ -311,8 +343,6 @@ async test "durable Goal cancellation survives replay and starts no provider" {
     #|{
     #|  "proposal_id": "proposal-cancel-proof",
     #|  "goal_id": "goal-cancel-proof",
-    #|  "base_ref": "refs/heads/main",
-    #|  "integration_target_ref": "refs/heads/main",
     #|  "maximum_parallel_parts": 1,
     #|  "parts": [{
     #|    "part_id": "choir-cancel",
@@ -393,6 +423,8 @@ async test "rejected Conductor submission initializes no Part workflow" {
   let base_tree = "dddddddddddddddddddddddddddddddddddddddd"
   let capture = async fn(command : @exec.Command) -> (Int, String) {
     match (command.program, command.args) {
+      ("git", ["symbolic-ref", "--quiet", "HEAD"]) =>
+        (0, "refs/heads/main\n")
       ("git", ["rev-parse", "--show-toplevel"]) => (0, root + "\n")
       ("git", ["rev-parse", "--verify", "refs/heads/main^{commit}"]) =>
         (0, base_commit + "\n")
@@ -417,7 +449,7 @@ async test "rejected Conductor submission initializes no Part workflow" {
     }
   }
   let draft =
-    #|{"proposal_id":"proposal-native-reject","goal_id":"goal-native-reject","base_ref":"refs/heads/main","integration_target_ref":"refs/heads/main","maximum_parallel_parts":1,"parts":[{"part_id":"choir-closed","instruction":"Do not run.","provider":"claude","repository_wide":true,"verify_args":["test","--target","native"]}]}
+    #|{"proposal_id":"proposal-native-reject","goal_id":"goal-native-reject","maximum_parallel_parts":1,"parts":[{"part_id":"choir-closed","instruction":"Do not run.","provider":"claude","repository_wide":true,"verify_args":["test","--target","native"]}]}
   let report = match submit_native_conductor_goal_draft(root, draft, capture) {
     Ok(value) => value
     Err(error) => fail(error.message())

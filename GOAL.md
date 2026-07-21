@@ -60,6 +60,14 @@ unconnected product path usable.
   receipt, and publication. BoxLite host CLI assurance operations are
   serialized because they share one local server; provider implementation
   sessions remain parallel.
+- Git refs are no longer Conductor-authored Goal inputs. At submission,
+  `choird` captures the checkout's current symbolic branch and uses that same
+  durable ref as the base and integration target; detached checkouts fail
+  explicitly. A live Codex Conductor submitted `ref-capture-live` without ref
+  fields from `refs/heads/feature/ref-capture`. The captured ref survived Part
+  implementation, verification, independent audit, promotion, combined-tree
+  verification, and combined-tree audit. Publication then correctly requested
+  input because the disposable repository had no remote.
 - Trusted host runtime programs are now resolved only from an explicit absolute
   `CHOIR_RUNTIME_ASSET_DIR` or an installation directory adjacent to the Choir
   executable. `choir start` fails closed when either program is absent, and a
