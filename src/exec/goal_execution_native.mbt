@@ -359,9 +359,8 @@ fn plan_native_goal_conflict_repair(
       @workflow.PartConflictRepairDecision::PartConflictRepairLimitReached,
     )
   }
-  let conflict = snapshot.integration_conflicts[
-    snapshot.integration_conflicts.length() - 1
-  ]
+  let conflict = snapshot.integration_conflicts[snapshot.integration_conflicts.length() -
+    1]
   let repair_number = snapshot.integration_conflicts.length()
   let identity_digest = @storage.artifact_digest(
     @utf8.encode(
@@ -829,10 +828,17 @@ async fn execute_native_goal_record(
     record.maximum_parallel_parts,
     goal_part_workflow_adapters(config),
   )
-  ignore(cleanup_native_boxlite_server(prepared.server))
   match result {
-    Ok(_) => Ok(())
-    Err(error) => Err(error)
+    Ok(_) => {
+      ignore(cleanup_native_boxlite_server(prepared.server))
+      Ok(())
+    }
+    Err(error) => {
+      // The authorized effect may still be retriable on the next tick. Keep
+      // its persisted sandbox generation while releasing live processes.
+      stop_native_boxlite_server(prepared.server)
+      Err(error)
+    }
   }
 }
 
@@ -994,7 +1000,11 @@ async fn reconcile_native_goal_assurance_cancellation(
   observed_at : Int64,
 ) -> Result[Bool, @types.ChoirError] {
   let stored = match
-    @workflow.load_goal_assurance_record(repository, adapters, execution.goal.id) {
+    @workflow.load_goal_assurance_record(
+      repository,
+      adapters,
+      execution.goal.id,
+    ) {
     Ok(Some(value)) => value
     Ok(None) => return Ok(true)
     Err(error) => return Err(error)
@@ -1064,9 +1074,7 @@ async fn reconcile_native_goal_assurance_cancellation(
     Err(error) => return Err(error)
   }
   Ok(
-    @workflow.goal_assurance_cancellation_disposition_is_known(
-      persisted.record,
-    ),
+    @workflow.goal_assurance_cancellation_disposition_is_known(persisted.record),
   )
 }
 
@@ -2041,12 +2049,7 @@ async fn advance_native_goal_assurance(
                   ignore(
                     match
                       reconcile_native_goal_processes_once(
-                        project_dir,
-                        repository,
-                        execution,
-                        git,
-                        record,
-                        intent,
+                        project_dir, repository, execution, git, record, intent,
                       ) {
                       Ok(value) => value
                       Err(error) => return Err(error)
