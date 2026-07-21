@@ -1096,12 +1096,27 @@ fn publication_audited_assurance(
 }
 
 ///|
+pub(all) struct NativePublicationFaultObservation {
+  fault : @workflow.GoalPublicationFaultPoint
+  interrupted_state : @workflow.BranchPublicationState
+  remote_updated : Bool
+  recovered : Bool
+  replay_stable : Bool
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct NativePublicationFaultConformanceReport {
+  observations : Array[NativePublicationFaultObservation]
+  passed : Bool
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 async fn prove_publication_fault_recovery(
   label : String,
   fault : @workflow.GoalPublicationFaultPoint,
   expected_state : @workflow.BranchPublicationState,
   remote_updated : Bool,
-) -> (String, String, @control.GoalId) {
+) -> (String, String, @control.GoalId, NativePublicationFaultObservation) {
   let root = "/tmp/choir-publication-fault-" +
     @sys.get_pid().to_string() +
     "-" +
@@ -1277,69 +1292,112 @@ async fn prove_publication_fault_recovery(
     @workflow.BranchPublicationState::BranchPublicationReceipted,
   )
   assert_true(completed.receipt is Some(_))
-  assert_eq(
-    advance_native_goal_publication(root, goal_id).unwrap(),
-    @workflow.GoalPublicationTickOutcome::GoalPublicationComplete,
-  )
-  assert_eq(
-    @workflow.load_goal_publication_record(repository, adapters, goal_id)
+  let replay_complete = advance_native_goal_publication(root, goal_id).unwrap() ==
+    @workflow.GoalPublicationTickOutcome::GoalPublicationComplete
+  let replay_stable = @workflow.load_goal_publication_record(
+      repository, adapters, goal_id,
+    )
     .unwrap()
-    .unwrap().record,
-    completed,
-  )
+    .unwrap().record ==
+    completed
+  assert_true(replay_complete)
+  assert_true(replay_stable)
   assert_eq(
     @workflow.load_goal_execution_record(repository, adapters, goal_id)
     .unwrap()
     .unwrap().record.state,
     @workflow.GoalExecutionState::GoalExecutionAssured,
   )
-  (root, remote, goal_id)
+  (
+    root,
+    remote,
+    goal_id,
+    {
+      fault,
+      interrupted_state: interrupted.intent.state,
+      remote_updated,
+      recovered: recovered ==
+      @workflow.GoalPublicationTickOutcome::GoalPublicationComplete,
+      replay_stable,
+    },
+  )
 }
 
 ///|
-async test "real exec integration: Goal publication recovers across every external-effect boundary" {
-  let cleanup = fn(fixture : (String, String, @control.GoalId)) {
+pub async fn run_native_publication_fault_conformance() -> NativePublicationFaultConformanceReport {
+  let cleanup = fn(
+    fixture : (
+      String,
+      String,
+      @control.GoalId,
+      NativePublicationFaultObservation,
+    ),
+  ) {
     ignore(@sys.rm_rf(fixture.0))
     ignore(@sys.rm_rf(fixture.1))
   }
-  cleanup(
-    prove_publication_fault_recovery(
+  let observations : Array[NativePublicationFaultObservation] = []
+  let cases : Array[
+    (
+      String,
+      @workflow.GoalPublicationFaultPoint,
+      @workflow.BranchPublicationState,
+      Bool,
+    ),
+  ] = [
+    (
       "after-intent",
       @workflow.GoalPublicationFaultPoint::PublicationAfterIntentBeforeAuthorized,
       @workflow.BranchPublicationState::BranchPublicationPlanned,
       false,
     ),
-  )
-  cleanup(
-    prove_publication_fault_recovery(
+    (
       "after-authorization",
       @workflow.GoalPublicationFaultPoint::PublicationAfterAuthorizedBeforeRemoteUpdate,
       @workflow.BranchPublicationState::BranchPublicationAuthorized,
       false,
     ),
-  )
-  cleanup(
-    prove_publication_fault_recovery(
+    (
       "after-update",
       @workflow.GoalPublicationFaultPoint::PublicationAfterRemoteUpdateBeforeResponse,
       @workflow.BranchPublicationState::BranchPublicationAuthorized,
       true,
     ),
-  )
-  cleanup(
-    prove_publication_fault_recovery(
+    (
       "after-response",
       @workflow.GoalPublicationFaultPoint::PublicationAfterResponseBeforeReceipt,
       @workflow.BranchPublicationState::BranchPublicationAuthorized,
       true,
     ),
-  )
-  cleanup(
-    prove_publication_fault_recovery(
+    (
       "during-receipt",
       @workflow.GoalPublicationFaultPoint::PublicationDuringReceiptTransaction,
       @workflow.BranchPublicationState::BranchPublicationReceipted,
       true,
     ),
-  )
+  ]
+  for config in cases {
+    let fixture = prove_publication_fault_recovery(
+      config.0,
+      config.1,
+      config.2,
+      config.3,
+    )
+    observations.push(fixture.3)
+    cleanup(fixture)
+  }
+  {
+    observations,
+    passed: observations.length() == cases.length() &&
+    observations.all(fn(observation) {
+      observation.recovered && observation.replay_stable
+    }),
+  }
+}
+
+///|
+async test "real exec integration: Goal publication recovers across every external-effect boundary" {
+  let report = run_native_publication_fault_conformance()
+  assert_true(report.passed)
+  assert_eq(report.observations.length(), 5)
 }

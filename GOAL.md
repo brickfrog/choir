@@ -3442,6 +3442,7 @@ work, not a claim about current commands.
 moon test --target native
 moon run --target native src/bin/choir_lint
 moon run --target native src/bin/choir_conformance -- hermetic
+moon run --target native src/bin/choir_conformance -- publication-faults
 moon run --target native src/bin/choir_conformance -- sandbox --runtime boxlite --live
 moon run --target native src/bin/choir_conformance -- harness --surface claude-cli --profile subscription --live
 moon run --target native src/bin/choir_conformance -- harness --surface codex-cli --profile subscription --live
@@ -4429,6 +4430,15 @@ cover initial creation, exact-prior update, concurrent create/update races,
 idempotent replay, adversarial remote drift, and restart recovery at all five
 named publication fault points against an isolated bare repository and durable
 SQLite state.
+
+The same five-cutoff proof is directly executable as
+`choir_conformance publication-faults`. Its typed report records the durable
+state observed at interruption, whether the exact remote ref had moved,
+successful recovery to one receipt, and stable replay for every cutoff. The
+current report passes 5/5: the remote remains unchanged before authorization
+and before the update, is adopted after either post-update interruption, and
+retains the committed receipt when acknowledgement of its transaction is
+lost.
 
 The previously assured disposable Goal was then published through the durable
 adapter to a fresh local bare remote. Both the initial invocation and a second
