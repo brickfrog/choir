@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-20T21:05:00-05:00
+Implementation snapshot updated through: 2026-07-20T20:28:51-05:00
 
 ## Charter Semantics and Readiness
 
@@ -260,6 +260,14 @@ unconnected product path usable.
   differs from the driver configuration before provider dispatch. The normal
   live Take command exposes the corresponding one-pass/fourteen-unrun matrix;
   combined live evidence now covers four rows, with eleven still unproven.
+- A hostile-home Codex Take probe now proves `AMBIENT-002` for the admitted
+  app-server topology. The driver uses a dedicated empty working directory,
+  rejects any user-home or working-directory entry, and rejects Codex config,
+  rule, plugin, skill, command, agent, or hook entries before authentication
+  setup or provider startup. The live probe seeds both `config.toml` with an
+  executable MCP canary and a hostile `AGENTS.md`; it observes no Take
+  manifest, app-server log, or canary write. Combined live evidence now covers
+  five rows, with ten still unproven.
 - Codex MCP resource discovery is now classified as provider-side discovery,
   not as a Part effect, only for the two read-only discovery methods and only
   when Codex identifies either the exact declared server or its reserved
@@ -726,7 +734,7 @@ compiler still reports the repository's existing warning set.
   The fixed scale flow is joined to the full semantic projection; the remaining
   negative cases retain their own typed blocked/recovery oracles. The host
   surface now has an executable fifteen-row report rather than an implied
-  aggregate pass; twelve Codex rows still require their exact live oracles.
+  aggregate pass; ten Codex rows still require their exact live oracles.
 - Further splitting or consolidating large live adapters only when a concrete
   boundary or dead caller justifies it. The branch-point audit found no closed
   source package imported only by another closed source package.

@@ -301,6 +301,33 @@ fn native_codex_app_server_environment(
 }
 
 ///|
+fn native_codex_app_server_working_directory(
+  config : NativeCodexDriverConfig,
+) -> String {
+  config.sterile_root + "/work"
+}
+
+///|
+fn native_codex_ambient_configuration_present(
+  config : NativeCodexDriverConfig,
+) -> Bool {
+  if @sys.list_dir(config.sterile_root + "/home").length() != 0 ||
+    @sys.list_dir(native_codex_app_server_working_directory(config)).length() !=
+    0 {
+    return true
+  }
+  for
+    entry in [
+      "config.toml", "rules", "plugins", "skills", "commands", "agents", "hooks",
+    ] {
+    if @sys.path_entry_exists(config.sterile_root + "/codex-home/" + entry) {
+      return true
+    }
+  }
+  false
+}
+
+///|
 test "native Codex Take environment is an exact allowlist" {
   let environment = native_codex_app_server_environment("/sterile-take")
   assert_eq(environment.length(), 6)
@@ -688,7 +715,7 @@ async fn write_native_codex_app_server(
     stdin=stdin_read,
     stdout=sink,
     stderr=sink,
-    cwd=config.sterile_root,
+    cwd=native_codex_app_server_working_directory(config),
   ) catch {
     _ => return Err(native_codex_driver_error("app-server request failed"))
   }
@@ -755,10 +782,18 @@ fn prepare_native_codex_app_server_home(
       config.sterile_root + "/tmp",
       config.sterile_root + "/home",
       config.sterile_root + "/codex-home",
+      native_codex_app_server_working_directory(config),
     ] {
     if !@sys.create_dir_all(path) || !@sys.chmod_mode(path, 0o700) {
       return Err(native_codex_driver_error("app-server root is unavailable"))
     }
+  }
+  if native_codex_ambient_configuration_present(config) {
+    return Err(
+      @types.ChoirError::policy_blocked(
+        "Codex Take ambient configuration is present",
+      ),
+    )
   }
   let provider_codex_home = match @sys.getenv("CODEX_HOME") {
     Some(value) if value.has_prefix("/") => value
@@ -794,7 +829,7 @@ async fn spawn_native_codex_app_server(
     ["-m", "600", fifo],
     extra_env={ "PATH": "/usr/bin:/bin", "LC_ALL": "C" },
     inherit_env=false,
-    cwd=config.sterile_root,
+    cwd=native_codex_app_server_working_directory(config),
   ) catch {
     _ =>
       return Err(native_codex_driver_error("app-server input creation failed"))
@@ -833,7 +868,7 @@ async fn spawn_native_codex_app_server(
     inherit_env=false,
     stdout=sink,
     stderr=sink,
-    cwd=config.sterile_root,
+    cwd=native_codex_app_server_working_directory(config),
   ) catch {
     _ => return Err(native_codex_driver_error("app-server failed to start"))
   }
@@ -1266,7 +1301,7 @@ pub async fn run_native_codex_take(
     }
     if manifest.thread_id is None {
       let params : Map[String, Json] = {
-        "cwd": config.sterile_root.to_json(),
+        "cwd": native_codex_app_server_working_directory(config).to_json(),
         "ephemeral": false.to_json(),
         "approvalPolicy": "never".to_json(),
         "sandbox": "read-only".to_json(),
