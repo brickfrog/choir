@@ -136,10 +136,11 @@ unconnected product path usable.
   BoxLite cleanup failure exited nonzero and preserved both root and database
   for an honest retry.
 - An integrated Part now reconciles its source Bead to `closed` before Goal
-  execution advances. Choir rereads the exact Bead, compares it with the source
-  revision captured at Goal acceptance, and issues the typed `bd update` only
-  when the open source is unchanged. A previously delivered close replays as a
-  no-op, while a later user edit or reassignment is never overwritten. The
+  execution advances. Choir rereads the exact Bead, compares its claim-neutral
+  content digest with Goal acceptance, and issues the typed `bd update` only
+  when the source remains claimed by the Goal's exact actor. A previously
+  delivered close replays as a no-op, while a later user edit or reassignment
+  is never overwritten. The
   narrow adapter test covers update, ambiguous-delivery replay, and source
   drift without mutating a real Beads database.
 - A fresh installed-layout Codex Conductor run exercised that projection with
@@ -265,6 +266,21 @@ unconnected product path usable.
   or count-mismatched dependency details before recording a selection. The
   real `choir init` → `choird` → restricted Conductor launch probe passes with
   the installed pinned client.
+- Accepted Parts now carry durable, independent Beads claim intents inside the
+  Goal execution record. The runner authorizes and reconciles each claim before
+  it may initialize the Goal branch or start a Take. It uses the deterministic
+  `choir:<goal-id>` actor, treats a same-owner replay as success, preserves
+  earlier receipts when a later Part conflicts, and blocks on another owner,
+  closure, ambiguity, or claim-neutral source-content drift. A lost update
+  acknowledgement is recovered by rereading Beads rather than issuing a batch
+  rollback. Cancellation symmetrically reconciles every claim back to open and
+  unassigned when Choir still owns it; terminal cancellation is forbidden
+  until every release or external conflict has a durable disposition. A local
+  pinned-client probe confirmed `open/unassigned` →
+  `in_progress/choir:goal-proof` → `open/unassigned` through the exact
+  production argument shapes. The completed seam passes all 372 native tests,
+  all 37 hermetic conformance cases, the six sandbox MCP tests, lint, and the
+  formatter check.
 - The internal UDS request no longer carries a caller-supplied role. Conductor
   authority comes exclusively from the authenticated connection, the
   unauthenticated MCP catalog is empty, and legacy role-bearing request JSON is
@@ -4067,12 +4083,11 @@ Adopt or preserve these mechanisms:
   [`70e329d8b381ac95e4cc1af8df2f088460412eaf`](https://github.com/gastownhall/beads/blob/70e329d8b381ac95e4cc1af8df2f088460412eaf/cmd/bd/update.go#L32-L34)
   rules out treating `bd update <id...> --claim` as one Goal-sized claim:
   updates are atomic only per issue and explicitly retain earlier successes
-  when a later ID fails. Choir must therefore use durable per-Part claim
-  intents and partial-delivery reconciliation before it mirrors accepted Parts
-  to `in_progress`; a batch command or read-then-write rollback is not an
-  acceptable substitute. Until that protocol exists, the immutable accepted
-  selection remains authoritative and mutable Beads status is only an input
-  eligibility/projection surface.
+  when a later ID fails. Choir therefore uses durable per-Part claim intents
+  and partial-delivery reconciliation before it mirrors accepted Parts to
+  `in_progress`; it never uses a batch command or read-then-write rollback.
+  The immutable accepted selection remains authoritative and mutable Beads
+  status remains only an ownership projection and input-eligibility surface.
 - **Semantic search remains advisory and local.** Semble returns path and line
   provenance, uses local tree-sitter chunks plus BM25/static embeddings, honors
   `.gitignore` and `.sembleignore`, caches indexes locally, and rebuilds when

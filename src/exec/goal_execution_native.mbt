@@ -590,6 +590,548 @@ async test "Goal cannot cross its terminal boundary when cleanup fails" {
 }
 
 ///|
+async fn capture_native_goal_source_state(
+  project_dir : String,
+  record : @workflow.GoalExecutionRecord,
+  claim : @workflow.GoalSourceClaim,
+  capture : async (Command) -> (Int, String),
+) -> Result[
+  (@workflow.GoalSelectionSourcePart, NativeConductorTask)?,
+  @types.ChoirError,
+] {
+  let output = match
+    native_conductor_capture_beads(
+      project_dir,
+      "show",
+      ["show", claim.part_id.0, "--json", "--readonly"],
+      capture,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let snapshot = match
+    @workflow.goal_selection_snapshot_from_beads_json(
+      record.repository_id,
+      record.base_commit_oid,
+      record.base_tree_oid,
+      output,
+    ) {
+    Ok(value) => value
+    Err(_) => return Ok(None)
+  }
+  let tasks = match native_conductor_tasks_from_output(output) {
+    Ok(value) => value
+    Err(_) => return Ok(None)
+  }
+  if snapshot.parts.length() != 1 ||
+    tasks.length() != 1 ||
+    snapshot.parts[0].part_id != claim.part_id ||
+    tasks[0].id != claim.part_id.0 {
+    return Ok(None)
+  }
+  Ok(Some((snapshot.parts[0], tasks[0])))
+}
+
+///|
+async fn observe_native_goal_source_claim(
+  project_dir : String,
+  record : @workflow.GoalExecutionRecord,
+  claim : @workflow.GoalSourceClaim,
+  capture : async (Command) -> (Int, String),
+) -> Result[@workflow.GoalSourceClaimObservation, @types.ChoirError] {
+  let (source, task) = match
+    capture_native_goal_source_state(project_dir, record, claim, capture) {
+    Ok(Some(value)) => value
+    Ok(None) =>
+      return Ok(@workflow.GoalSourceClaimObservation::GoalSourceAmbiguous)
+    Err(error) => return Err(error)
+  }
+  if source.source_content_digest != claim.source_content_digest {
+    return Ok(@workflow.GoalSourceClaimObservation::GoalSourceContentDrifted)
+  }
+  match task.status {
+    @types.TaskStatus::Done =>
+      Ok(@workflow.GoalSourceClaimObservation::GoalSourceClosed)
+    @types.TaskStatus::InProgress =>
+      if task.assignee == claim.claimant {
+        Ok(
+          @workflow.GoalSourceClaimObservation::GoalSourceClaimedByExpectedActor,
+        )
+      } else {
+        Ok(
+          @workflow.GoalSourceClaimObservation::GoalSourceClaimedByAnotherActor,
+        )
+      }
+    @types.TaskStatus::Todo =>
+      if task.assignee == "" {
+        Ok(@workflow.GoalSourceClaimObservation::GoalSourceUnclaimedExact)
+      } else if task.assignee == claim.claimant {
+        Ok(@workflow.GoalSourceClaimObservation::GoalSourceAmbiguous)
+      } else {
+        Ok(
+          @workflow.GoalSourceClaimObservation::GoalSourceClaimedByAnotherActor,
+        )
+      }
+  }
+}
+
+///|
+async fn observe_native_goal_source_release(
+  project_dir : String,
+  record : @workflow.GoalExecutionRecord,
+  claim : @workflow.GoalSourceClaim,
+  capture : async (Command) -> (Int, String),
+) -> Result[@workflow.GoalSourceClaimObservation, @types.ChoirError] {
+  let (source, task) = match
+    capture_native_goal_source_state(project_dir, record, claim, capture) {
+    Ok(Some(value)) => value
+    Ok(None) =>
+      return Ok(@workflow.GoalSourceClaimObservation::GoalSourceAmbiguous)
+    Err(error) => return Err(error)
+  }
+  match task.status {
+    @types.TaskStatus::InProgress if task.assignee == claim.claimant =>
+      Ok(@workflow.GoalSourceClaimObservation::GoalSourceClaimedByExpectedActor)
+    @types.TaskStatus::Todo if task.assignee == "" =>
+      Ok(@workflow.GoalSourceClaimObservation::GoalSourceUnclaimedExact)
+    _ if source.source_content_digest != claim.source_content_digest =>
+      Ok(@workflow.GoalSourceClaimObservation::GoalSourceContentDrifted)
+    @types.TaskStatus::Done =>
+      Ok(@workflow.GoalSourceClaimObservation::GoalSourceClosed)
+    @types.TaskStatus::InProgress | @types.TaskStatus::Todo =>
+      Ok(@workflow.GoalSourceClaimObservation::GoalSourceClaimedByAnotherActor)
+  }
+}
+
+///|
+async fn apply_native_goal_source_claim(
+  project_dir : String,
+  record : @workflow.GoalExecutionRecord,
+  claim : @workflow.GoalSourceClaim,
+  capture : async (Command) -> (Int, String),
+) -> Result[@workflow.GoalSourceClaimObservation, @types.ChoirError] {
+  let initial = match
+    observe_native_goal_source_claim(project_dir, record, claim, capture) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if initial != @workflow.GoalSourceClaimObservation::GoalSourceUnclaimedExact {
+    return Ok(initial)
+  }
+  let claim_result = native_conductor_capture_beads(
+    project_dir,
+    "claim",
+    ["update", claim.part_id.0, "--claim", "--actor", claim.claimant, "--json"],
+    capture,
+  )
+  let observed = match
+    observe_native_goal_source_claim(project_dir, record, claim, capture) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if observed == @workflow.GoalSourceClaimObservation::GoalSourceUnclaimedExact {
+    return match claim_result {
+      Err(error) => Err(error)
+      Ok(_) => Err(native_goal_execution_error("Beads claim was not applied"))
+    }
+  }
+  Ok(observed)
+}
+
+///|
+async fn apply_native_goal_source_release(
+  project_dir : String,
+  record : @workflow.GoalExecutionRecord,
+  claim : @workflow.GoalSourceClaim,
+  capture : async (Command) -> (Int, String),
+) -> Result[@workflow.GoalSourceClaimObservation, @types.ChoirError] {
+  let initial = match
+    observe_native_goal_source_release(project_dir, record, claim, capture) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if initial !=
+    @workflow.GoalSourceClaimObservation::GoalSourceClaimedByExpectedActor {
+    return Ok(initial)
+  }
+  let release_result = native_conductor_capture_beads(
+    project_dir,
+    "release",
+    [
+      "update",
+      claim.part_id.0,
+      "--status",
+      "open",
+      "--assignee",
+      "",
+      "--actor",
+      claim.claimant,
+      "--json",
+    ],
+    capture,
+  )
+  let observed = match
+    observe_native_goal_source_release(project_dir, record, claim, capture) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if observed ==
+    @workflow.GoalSourceClaimObservation::GoalSourceClaimedByExpectedActor {
+    return match release_result {
+      Err(error) => Err(error)
+      Ok(_) => Err(native_goal_execution_error("Beads release was not applied"))
+    }
+  }
+  Ok(observed)
+}
+
+///|
+fn native_source_claim_test_record(
+  content_digest : @control.Digest,
+) -> @workflow.GoalExecutionRecord {
+  let goal_id = @control.GoalId("goal-source-claim-test")
+  let part_id = @control.PartId("choir-source-claim")
+  let goal : @control.Goal = {
+    id: goal_id,
+    contract_digest: content_digest,
+    lifecycle: @control.GoalLifecycle::GoalActive(
+      @control.GoalActiveCondition::GoalRunning,
+    ),
+  }
+  let repository_id = @workflow.RepositoryId("source-claim-repository")
+  let goal_ref = @workflow.goal_execution_ref(goal_id)
+  {
+    goal,
+    repository_id,
+    selection_decision_digest: content_digest,
+    base_ref: @workflow.GitRefName("refs/heads/main"),
+    base_commit_oid: @control.GitOid("source-claim-base"),
+    base_tree_oid: @control.GitOid("source-claim-tree"),
+    integration_target_ref: @workflow.GitRefName("refs/heads/main"),
+    goal_ref,
+    branch_initialization: @workflow.initial_goal_branch_initialization(
+      goal_id,
+      repository_id,
+      goal_ref,
+      @control.GitOid("source-claim-base"),
+    ),
+    source_claims: [
+      {
+        ..@workflow.initial_goal_source_claim(
+          goal_id, part_id, content_digest, content_digest,
+        ),
+        lifecycle: @workflow.GoalSourceClaimLifecycle::GoalSourceClaimAuthorized,
+      },
+    ],
+    maximum_parallel_parts: 1,
+    policy_revisions: [@workflow.initial_goal_policy_revision(goal_id, 1)],
+    part_workflow_ids: ["source-claim-workflow"],
+    state: @workflow.GoalExecutionState::GoalExecutionRunning,
+    pause: None,
+    active_input_request: None,
+    input_answers: [],
+    cancellation_request: None,
+    durable_version: 2,
+    fencing_epoch: @control.FencingEpoch(1L),
+  }
+}
+
+///|
+async test "Beads claim recovers when delivery succeeded but acknowledgement was lost" {
+  let open =
+    #|[{"id":"choir-source-claim","title":"Claim me","description":"","acceptance_criteria":"","notes":"","status":"open","priority":2,"issue_type":"task","assignee":"","updated_at":"2026-07-21T00:00:00Z","dependency_count":0}]
+  let snapshot = @workflow.goal_selection_snapshot_from_beads_json(
+    @workflow.RepositoryId("source-claim-repository"),
+    @control.GitOid("source-claim-base"),
+    @control.GitOid("source-claim-tree"),
+    open,
+  ).unwrap()
+  let record = native_source_claim_test_record(
+    snapshot.parts[0].source_content_digest,
+  )
+  let claim = record.source_claims[0]
+  let calls = @ref.new(0)
+  let observation = apply_native_goal_source_claim("/fixture", record, claim, command => {
+    calls.val = calls.val + 1
+    match calls.val {
+      1 => (0, open)
+      2 => {
+        assert_eq(command.args, [
+          "update", "choir-source-claim", "--claim", "--actor", "choir:goal-source-claim-test",
+          "--json",
+        ])
+        (1, "connection closed after commit")
+      }
+      3 =>
+        (
+          0,
+          (
+            #|[{"id":"choir-source-claim","title":"Claim me","description":"","acceptance_criteria":"","notes":"","status":"in_progress","priority":2,"issue_type":"task","assignee":"choir:goal-source-claim-test","updated_at":"2026-07-21T00:01:00Z","dependency_count":0}]
+          ),
+        )
+      _ => fail("unexpected Beads claim command")
+    }
+  }).unwrap()
+  assert_eq(
+    observation,
+    @workflow.GoalSourceClaimObservation::GoalSourceClaimedByExpectedActor,
+  )
+  assert_eq(calls.val, 3)
+}
+
+///|
+async test "Beads claim rejects content drift before mutation" {
+  let changed =
+    #|[{"id":"choir-source-claim","title":"Changed","description":"","acceptance_criteria":"","notes":"","status":"open","priority":2,"issue_type":"task","assignee":"","updated_at":"2026-07-21T00:01:00Z","dependency_count":0}]
+  let record = native_source_claim_test_record(
+    @storage.artifact_digest(@utf8.encode("captured-content")),
+  )
+  let calls = @ref.new(0)
+  let observation = apply_native_goal_source_claim(
+    "/fixture",
+    record,
+    record.source_claims[0],
+    _ => {
+      calls.val = calls.val + 1
+      (0, changed)
+    },
+  ).unwrap()
+  assert_eq(
+    observation,
+    @workflow.GoalSourceClaimObservation::GoalSourceContentDrifted,
+  )
+  assert_eq(calls.val, 1)
+}
+
+///|
+async test "Beads release recovers when delivery succeeded but acknowledgement was lost" {
+  let claimed =
+    #|[{"id":"choir-source-claim","title":"Claim me","description":"","acceptance_criteria":"","notes":"","status":"in_progress","priority":2,"issue_type":"task","assignee":"choir:goal-source-claim-test","updated_at":"2026-07-21T00:01:00Z","dependency_count":0}]
+  let snapshot = @workflow.goal_selection_snapshot_from_beads_json(
+    @workflow.RepositoryId("source-claim-repository"),
+    @control.GitOid("source-claim-base"),
+    @control.GitOid("source-claim-tree"),
+    claimed,
+  ).unwrap()
+  let record = native_source_claim_test_record(
+    snapshot.parts[0].source_content_digest,
+  )
+  let claim = record.source_claims[0]
+  let calls = @ref.new(0)
+  let observation = apply_native_goal_source_release(
+    "/fixture",
+    record,
+    claim,
+    command => {
+      calls.val = calls.val + 1
+      match calls.val {
+        1 => (0, claimed)
+        2 => {
+          assert_eq(command.args, [
+            "update", "choir-source-claim", "--status", "open", "--assignee", "",
+            "--actor", "choir:goal-source-claim-test", "--json",
+          ])
+          (1, "connection closed after commit")
+        }
+        3 =>
+          (
+            0,
+            (
+              #|[{"id":"choir-source-claim","title":"Claim me","description":"","acceptance_criteria":"","notes":"","status":"open","priority":2,"issue_type":"task","assignee":"","updated_at":"2026-07-21T00:02:00Z","dependency_count":0}]
+            ),
+          )
+        _ => fail("unexpected Beads release command")
+      }
+    },
+  ).unwrap()
+  assert_eq(
+    observation,
+    @workflow.GoalSourceClaimObservation::GoalSourceUnclaimedExact,
+  )
+  assert_eq(calls.val, 3)
+}
+
+///|
+async fn advance_native_goal_source_claims(
+  project_dir : String,
+  repository : @workflow.PartWorkflowRepository,
+  adapters : @workflow.PartWorkflowRepositoryAdapters,
+  goal_id : @control.GoalId,
+  capture? : async (Command) -> (Int, String) = capture_command_merged,
+) -> Result[Bool, @types.ChoirError] {
+  let stored = match
+    @workflow.load_goal_execution_record(repository, adapters, goal_id) {
+    Ok(Some(value)) => value
+    Ok(None) =>
+      return Err(native_goal_execution_error("Goal execution disappeared"))
+    Err(error) => return Err(error)
+  }
+  if @workflow.goal_source_claims_have_conflict(stored.record) {
+    let blocked = match
+      @workflow.advance_goal_execution_state(
+        stored.record,
+        @workflow.GoalExecutionState::GoalExecutionBlocked,
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    match
+      @workflow.persist_goal_execution_transition(
+        repository, adapters, stored, blocked,
+      ) {
+      Ok(_) => return Ok(false)
+      Err(error) => return Err(error)
+    }
+  }
+  if @workflow.goal_source_claims_are_receipted(stored.record) {
+    return Ok(true)
+  }
+  let mut selected : @workflow.GoalSourceClaim? = None
+  for claim in stored.record.source_claims {
+    if claim.lifecycle !=
+      @workflow.GoalSourceClaimLifecycle::GoalSourceClaimReceipted {
+      selected = Some(claim)
+      break
+    }
+  }
+  let claim = match selected {
+    Some(value) => value
+    None => return Err(native_goal_execution_error("source claim disappeared"))
+  }
+  if claim.lifecycle ==
+    @workflow.GoalSourceClaimLifecycle::GoalSourceClaimPlanned {
+    let authorized = match
+      @workflow.authorize_goal_source_claim(stored.record, claim.part_id) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    return match
+      @workflow.persist_goal_execution_transition(
+        repository, adapters, stored, authorized,
+      ) {
+      Ok(_) => Ok(false)
+      Err(error) => Err(error)
+    }
+  }
+  if claim.lifecycle !=
+    @workflow.GoalSourceClaimLifecycle::GoalSourceClaimAuthorized {
+    return Err(native_goal_execution_error("source claim is not actionable"))
+  }
+  let observation = match
+    apply_native_goal_source_claim(project_dir, stored.record, claim, capture) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let reconciled = match
+    @workflow.reconcile_goal_source_claim(
+      stored.record,
+      claim.part_id,
+      observation,
+      @env.now().reinterpret_as_int64() / 1000L,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if reconciled == stored.record {
+    Ok(@workflow.goal_source_claims_are_receipted(reconciled))
+  } else {
+    match
+      @workflow.persist_goal_execution_transition(
+        repository, adapters, stored, reconciled,
+      ) {
+      Ok(_) => Ok(false)
+      Err(error) => Err(error)
+    }
+  }
+}
+
+///|
+async fn advance_native_goal_source_releases(
+  project_dir : String,
+  repository : @workflow.PartWorkflowRepository,
+  adapters : @workflow.PartWorkflowRepositoryAdapters,
+  goal_id : @control.GoalId,
+  capture? : async (Command) -> (Int, String) = capture_command_merged,
+) -> Result[Bool, @types.ChoirError] {
+  let stored = match
+    @workflow.load_goal_execution_record(repository, adapters, goal_id) {
+    Ok(Some(value)) => value
+    Ok(None) =>
+      return Err(native_goal_execution_error("Goal execution disappeared"))
+    Err(error) => return Err(error)
+  }
+  if @workflow.goal_source_release_dispositions_are_known(stored.record) {
+    return Ok(true)
+  }
+  let mut selected : @workflow.GoalSourceClaim? = None
+  for claim in stored.record.source_claims {
+    if !(claim.lifecycle
+      is @workflow.GoalSourceClaimLifecycle::GoalSourceReleased) &&
+      !(claim.lifecycle
+      is @workflow.GoalSourceClaimLifecycle::GoalSourceReleaseConflict(_)) &&
+      !(claim.lifecycle
+      is @workflow.GoalSourceClaimLifecycle::GoalSourceClaimConflict(_)) {
+      selected = Some(claim)
+      break
+    }
+  }
+  let claim = match selected {
+    Some(value) => value
+    None =>
+      return Err(native_goal_execution_error("source release disappeared"))
+  }
+  match claim.lifecycle {
+    @workflow.GoalSourceClaimLifecycle::GoalSourceClaimPlanned
+    | @workflow.GoalSourceClaimLifecycle::GoalSourceClaimAuthorized
+    | @workflow.GoalSourceClaimLifecycle::GoalSourceClaimReceipted => {
+      let authorized = match
+        @workflow.authorize_goal_source_release(stored.record, claim.part_id) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      return match
+        @workflow.persist_goal_execution_transition(
+          repository, adapters, stored, authorized,
+        ) {
+        Ok(_) => Ok(false)
+        Err(error) => Err(error)
+      }
+    }
+    @workflow.GoalSourceClaimLifecycle::GoalSourceReleaseAuthorized => ()
+    _ =>
+      return Err(
+        native_goal_execution_error("source release is not actionable"),
+      )
+  }
+  let observation = match
+    apply_native_goal_source_release(project_dir, stored.record, claim, capture) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let reconciled = match
+    @workflow.reconcile_goal_source_release(
+      stored.record,
+      claim.part_id,
+      observation,
+      @env.now().reinterpret_as_int64() / 1000L,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if reconciled == stored.record {
+    Ok(false)
+  } else {
+    match
+      @workflow.persist_goal_execution_transition(
+        repository, adapters, stored, reconciled,
+      ) {
+      Ok(_) => Ok(false)
+      Err(error) => Err(error)
+    }
+  }
+}
+
+///|
 fn native_goal_mcp_script() -> String? {
   resolve_native_runtime_asset(ChoirRuntimeAsset::ChoirSandboxMcp)
 }
@@ -621,7 +1163,7 @@ async fn advance_native_goal_branch_initialization(
         Err(error) => return Err(error)
       }
       let persisted = match
-        @workflow.persist_goal_branch_initialization_transition(
+        @workflow.persist_goal_execution_transition(
           repository, adapters, stored, authorized,
         ) {
         Ok(value) => value
@@ -689,7 +1231,7 @@ async fn advance_native_goal_branch_initialization(
     Ok(next.branch_initialization.lifecycle)
   } else {
     match
-      @workflow.persist_goal_branch_initialization_transition(
+      @workflow.persist_goal_execution_transition(
         repository, adapters, stored, next,
       ) {
       Ok(value) => Ok(value.record.branch_initialization.lifecycle)
@@ -934,7 +1476,8 @@ async fn reconcile_native_completed_bead(
   base_commit_oid : @control.GitOid,
   base_tree_oid : @control.GitOid,
   part_id : @control.PartId,
-  source_revision_digest : @control.Digest,
+  source_content_digest : @control.Digest,
+  claimant : String,
   capture? : async (Command) -> (Int, String) = capture_command_merged,
 ) -> Result[Unit, @types.ChoirError] {
   let current_output = match
@@ -974,20 +1517,28 @@ async fn reconcile_native_completed_bead(
         native_goal_execution_error("Beads omitted the integrated source Part"),
       )
   }
-  if source.state == @workflow.SelectionSourceState::SelectionSourceClosed {
-    return Ok(())
+  let task = match native_conductor_tasks_from_output(current_output) {
+    Ok([value]) if value.id == part_id.0 => value
+    Ok(_) =>
+      return Err(
+        native_goal_execution_error("Beads returned an ambiguous source Part"),
+      )
+    Err(error) => return Err(error)
   }
-  if source.source_revision_digest != source_revision_digest {
+  if source.source_content_digest != source_content_digest {
     return Err(
       native_goal_execution_error(
         "integrated source Part changed after Goal acceptance: " + part_id.0,
       ),
     )
   }
-  if source.state != @workflow.SelectionSourceState::SelectionSourceOpen {
+  if task.status == @types.TaskStatus::Done {
+    return Ok(())
+  }
+  if task.status != @types.TaskStatus::InProgress || task.assignee != claimant {
     return Err(
       native_goal_execution_error(
-        "integrated source Part is no longer open: " + part_id.0,
+        "integrated source Part is not claimed by this Goal: " + part_id.0,
       ),
     )
   }
@@ -1063,6 +1614,32 @@ async fn reconcile_native_integrated_part_sources(
           ),
         )
     }
+    let mut source_claim : @workflow.GoalSourceClaim? = None
+    for claim in record.source_claims {
+      if claim.part_id == source.part.id {
+        source_claim = Some(claim)
+      }
+    }
+    let claim = match source_claim {
+      Some(value) =>
+        if value.lifecycle ==
+          @workflow.GoalSourceClaimLifecycle::GoalSourceClaimReceipted &&
+          value.source_content_digest == source.source_content_digest {
+          value
+        } else {
+          return Err(
+            native_goal_execution_error(
+              "integrated Part has no exact source claim receipt",
+            ),
+          )
+        }
+      None =>
+        return Err(
+          native_goal_execution_error(
+            "integrated Part has no exact source claim receipt",
+          ),
+        )
+    }
     match
       reconcile_native_completed_bead(
         project_dir,
@@ -1070,7 +1647,8 @@ async fn reconcile_native_integrated_part_sources(
         record.base_commit_oid,
         record.base_tree_oid,
         source.part.id,
-        source.source_revision_digest,
+        source.source_content_digest,
+        claim.claimant,
         capture~,
       ) {
       Ok(_) => ()
@@ -1086,13 +1664,13 @@ async test "integrated Part source reconciliation is idempotent and drift safe" 
   let base_commit_oid = @control.GitOid("base-commit-source-sync")
   let base_tree_oid = @control.GitOid("base-tree-source-sync")
   let part_id = @control.PartId("choir-source-sync")
-  let open_source =
-    #|[{"id":"choir-source-sync","title":"Original","description":"","acceptance_criteria":"","notes":"","status":"open","priority":2,"issue_type":"task","assignee":"","updated_at":"2026-07-21T00:00:00Z","dependency_count":0}]
-  let expected_revision = match
+  let claimed_source =
+    #|[{"id":"choir-source-sync","title":"Original","description":"","acceptance_criteria":"","notes":"","status":"in_progress","priority":2,"issue_type":"task","assignee":"choir:goal-source-sync","updated_at":"2026-07-21T00:00:00Z","dependency_count":0}]
+  let expected_content = match
     @workflow.goal_selection_snapshot_from_beads_json(
-      repository_id, base_commit_oid, base_tree_oid, open_source,
+      repository_id, base_commit_oid, base_tree_oid, claimed_source,
     ) {
-    Ok({ parts: [source], .. }) => source.source_revision_digest
+    Ok({ parts: [source], .. }) => source.source_content_digest
     Ok(_) => fail("source fixture was ambiguous")
     Err(error) => fail(error.message())
   }
@@ -1103,11 +1681,12 @@ async test "integrated Part source reconciliation is idempotent and drift safe" 
     base_commit_oid,
     base_tree_oid,
     part_id,
-    expected_revision,
+    expected_content,
+    "choir:goal-source-sync",
     capture=command => {
       close_commands.push(command)
       if command.args[0] == "show" {
-        (0, open_source)
+        (0, claimed_source)
       } else {
         (
           0,
@@ -1134,7 +1713,8 @@ async test "integrated Part source reconciliation is idempotent and drift safe" 
     base_commit_oid,
     base_tree_oid,
     part_id,
-    expected_revision,
+    expected_content,
+    "choir:goal-source-sync",
     capture=command => {
       replay_commands.push(command)
       (
@@ -1155,13 +1735,14 @@ async test "integrated Part source reconciliation is idempotent and drift safe" 
     base_commit_oid,
     base_tree_oid,
     part_id,
-    expected_revision,
+    expected_content,
+    "choir:goal-source-sync",
     capture=command => {
       drift_commands.push(command)
       (
         0,
         (
-          #|[{"id":"choir-source-sync","title":"Changed","description":"","acceptance_criteria":"","notes":"","status":"open","priority":2,"issue_type":"task","assignee":"","updated_at":"2026-07-21T00:01:00Z","dependency_count":0}]
+          #|[{"id":"choir-source-sync","title":"Changed","description":"","acceptance_criteria":"","notes":"","status":"in_progress","priority":2,"issue_type":"task","assignee":"choir:goal-source-sync","updated_at":"2026-07-21T00:01:00Z","dependency_count":0}]
         ),
       )
     },
@@ -2530,6 +3111,7 @@ async fn advance_native_goal_assurance(
 pub async fn run_native_goal_execution_tick_with_forge(
   project_dir : String,
   forge : NativePullRequestForgeAdapters,
+  beads_capture? : async (Command) -> (Int, String) = capture_command_merged,
 ) -> Result[@workflow.GoalExecutionTickResult, @types.ChoirError] {
   let repository = native_goal_repository(project_dir)
   let repository_adapters = local_part_workflow_repository_adapters()
@@ -2542,6 +3124,20 @@ pub async fn run_native_goal_execution_tick_with_forge(
   }
   @workflow.run_next_goal_execution_tick(repository, repository_adapters, {
     initialize: async fn(record) {
+      let claimed = match
+        advance_native_goal_source_claims(
+          project_dir,
+          repository,
+          repository_adapters,
+          record.goal.id,
+          capture=beads_capture,
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      if !claimed {
+        return Ok(false)
+      }
       match
         advance_native_goal_branch_initialization(
           project_dir,
@@ -2618,6 +3214,20 @@ pub async fn run_native_goal_execution_tick_with_forge(
       )
     },
     cancel: async fn(record, snapshots) {
+      let sources_known = match
+        advance_native_goal_source_releases(
+          project_dir,
+          repository,
+          repository_adapters,
+          record.goal.id,
+          capture=beads_capture,
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      if !sources_known {
+        return Ok(false)
+      }
       let initialization = match
         advance_native_goal_branch_initialization(
           project_dir,

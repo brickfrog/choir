@@ -463,6 +463,15 @@ fn workflow_execution_for_attach(
       goal_ref,
       base_oid,
     ),
+    source_claims: [
+      receipted_goal_source_claim(
+        snapshot.goal.id,
+        snapshot.part.id,
+        workflow_digest_a,
+        workflow_digest_a,
+        1L,
+      ),
+    ],
     maximum_parallel_parts: 1,
     policy_revisions: [
       @workflow.initial_goal_policy_revision(snapshot.goal.id, 1),
@@ -957,6 +966,15 @@ test "integrated Parts authorize one immutable Goal branch seal" {
       @workflow.goal_execution_ref(integrated.goal.id),
       @control.GitOid("goal-head"),
     ),
+    source_claims: [
+      receipted_goal_source_claim(
+        integrated.goal.id,
+        integrated.part.id,
+        workflow_digest_a,
+        workflow_digest_a,
+        1L,
+      ),
+    ],
     maximum_parallel_parts: 1,
     policy_revisions: [
       @workflow.initial_goal_policy_revision(integrated.goal.id, 1),

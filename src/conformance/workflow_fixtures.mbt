@@ -1064,6 +1064,7 @@ fn selection_fixture_source(
   {
     part_id: @control.PartId(id),
     source_revision_digest: selection_fixture_digest,
+    source_content_digest: selection_fixture_digest,
     dependency_ids: dependencies,
     state,
   }
@@ -1079,6 +1080,7 @@ fn selection_fixture_part(
   {
     part_id,
     source_revision_digest: selection_fixture_digest,
+    source_content_digest: selection_fixture_digest,
     dependency_ids: dependencies,
     task_contract: {
       id: @control.RevisionId("revision-" + id),
@@ -1393,6 +1395,24 @@ pub fn branch_initialization_faults_case() -> HermeticConformanceCase {
           )
         Err(error) => return Err(error)
       }
+      let canceled_before_authorization = match
+        @workflow.authorize_goal_source_release(
+          canceled_before_authorization,
+          canceled_before_authorization.source_claims[0].part_id,
+        ) {
+        Ok(value) =>
+          match
+            @workflow.reconcile_goal_source_release(
+              value,
+              value.source_claims[0].part_id,
+              @workflow.GoalSourceClaimObservation::GoalSourceUnclaimedExact,
+              context.now(),
+            ) {
+            Ok(released) => released
+            Err(error) => return Err(error)
+          }
+        Err(error) => return Err(error)
+      }
       if canceled_before_authorization.branch_initialization.lifecycle !=
         @workflow.GoalBranchInitLifecycle::GoalBranchInitAbandonedByCancellation ||
         @workflow.commit_goal_execution_cancellation(
@@ -1411,6 +1431,24 @@ pub fn branch_initialization_faults_case() -> HermeticConformanceCase {
           @workflow.GoalExecutionState::GoalExecutionRunning,
         ) {
         Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let running = match
+        @workflow.authorize_goal_source_claim(
+          running,
+          running.source_claims[0].part_id,
+        ) {
+        Ok(value) =>
+          match
+            @workflow.reconcile_goal_source_claim(
+              value,
+              value.source_claims[0].part_id,
+              @workflow.GoalSourceClaimObservation::GoalSourceClaimedByExpectedActor,
+              context.now(),
+            ) {
+            Ok(claimed) => claimed
+            Err(error) => return Err(error)
+          }
         Err(error) => return Err(error)
       }
       let authorized = match
@@ -1527,11 +1565,29 @@ pub fn branch_initialization_faults_case() -> HermeticConformanceCase {
             ),
           )
       }
+      let canceling_released = match
+        @workflow.authorize_goal_source_release(
+          canceling_receipted,
+          canceling_receipted.source_claims[0].part_id,
+        ) {
+        Ok(value) =>
+          match
+            @workflow.reconcile_goal_source_release(
+              value,
+              value.source_claims[0].part_id,
+              @workflow.GoalSourceClaimObservation::GoalSourceUnclaimedExact,
+              context.now(),
+            ) {
+            Ok(released) => released
+            Err(error) => return Err(error)
+          }
+        Err(error) => return Err(error)
+      }
       if receipted.branch_initialization.receipt is None ||
         !partial_blocked ||
         !divergence_uncertain ||
         !cancellation_waited ||
-        @workflow.commit_goal_execution_cancellation(canceling_receipted)
+        @workflow.commit_goal_execution_cancellation(canceling_released)
         is Err(_) {
         return Err(
           branch_initialization_fixture_error(
@@ -2263,6 +2319,15 @@ fn cancellation_goal_assurance_fixture() -> Result[
       lifecycle: @workflow.GoalBranchInitLifecycle::GoalBranchInitReceipted,
       receipt: Some(branch_receipt),
     },
+    source_claims: [
+      @workflow.receipted_goal_source_claim(
+        base.goal.id,
+        integrated.part.id,
+        audit_fixture_digest_a,
+        audit_fixture_digest_a,
+        99L,
+      ),
+    ],
     maximum_parallel_parts: 1,
     policy_revisions: [@workflow.initial_goal_policy_revision(base.goal.id, 1)],
     part_workflow_ids: [integrated.workflow_id],

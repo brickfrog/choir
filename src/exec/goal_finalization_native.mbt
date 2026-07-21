@@ -555,6 +555,22 @@ pub async fn run_native_goal_finalization_race_conformance() -> NativeGoalFinali
     )
     .unwrap()
     .unwrap()
+  let release_authorized = @workflow.authorize_goal_source_release(
+    canceling_record.record,
+    canceling_record.record.source_claims[0].part_id,
+  ).unwrap()
+  let canceling_record = @workflow.persist_goal_execution_transition(
+    canceled_repository, adapters, canceling_record, release_authorized,
+  ).unwrap()
+  let released = @workflow.reconcile_goal_source_release(
+    canceling_record.record,
+    canceling_record.record.source_claims[0].part_id,
+    @workflow.GoalSourceClaimObservation::GoalSourceUnclaimedExact,
+    201L,
+  ).unwrap()
+  let canceling_record = @workflow.persist_goal_execution_transition(
+    canceled_repository, adapters, canceling_record, released,
+  ).unwrap()
   let canceled_record = match
     @workflow.persist_goal_cancellation_completion(
       canceled_repository, adapters, canceling_record,

@@ -375,7 +375,26 @@ async test "durable Goal cancellation survives replay and starts no provider" {
     Ok(_) => fail("cancellation replay changed durable state")
     Err(error) => fail(error.message())
   }
-  let tick = match run_native_goal_execution_tick(root) {
+  ignore(
+    run_native_goal_execution_tick_with_forge(
+      root,
+      native_pull_request_forge_adapters(),
+      beads_capture=capture,
+    ).unwrap(),
+  )
+  ignore(
+    run_native_goal_execution_tick_with_forge(
+      root,
+      native_pull_request_forge_adapters(),
+      beads_capture=capture,
+    ).unwrap(),
+  )
+  let tick = match
+    run_native_goal_execution_tick_with_forge(
+      root,
+      native_pull_request_forge_adapters(),
+      beads_capture=capture,
+    ) {
     Ok(value) => value
     Err(error) => fail(error.message())
   }
@@ -384,7 +403,7 @@ async test "durable Goal cancellation survives replay and starts no provider" {
     fail("canceling Goal did not reconcile")
   }
   assert_eq(canceled.state, @workflow.GoalExecutionState::GoalExecutionCanceled)
-  assert_eq(canceled.durable_version, 3)
+  assert_eq(canceled.durable_version, 5)
   let status = match inspect_native_goal(root, goal_id) {
     Ok(value) => value
     Err(error) => fail(error.message())

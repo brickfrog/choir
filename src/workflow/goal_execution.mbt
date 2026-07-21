@@ -84,6 +84,76 @@ pub(all) struct GoalCancellationRequest {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) struct GoalSourceClaimIntentId(String) derive (
+  Debug,
+  Eq,
+  Compare,
+  Hash,
+  ToJson,
+  FromJson,
+)
+
+///|
+pub(all) enum GoalSourceClaimConflictReason {
+  GoalSourceClaimContentDrift
+  GoalSourceClaimOwnedByAnotherActor
+  GoalSourceClaimClosedBeforeExecution
+  GoalSourceClaimAmbiguous
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum GoalSourceClaimLifecycle {
+  GoalSourceClaimPlanned
+  GoalSourceClaimAuthorized
+  GoalSourceClaimReceipted
+  GoalSourceClaimConflict(GoalSourceClaimConflictReason)
+  GoalSourceReleaseAuthorized
+  GoalSourceReleased
+  GoalSourceReleaseConflict(GoalSourceClaimConflictReason)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct GoalSourceClaimReceipt {
+  intent_id : GoalSourceClaimIntentId
+  part_id : @control.PartId
+  claimant : String
+  source_content_digest : @control.Digest
+  observed_at : Int64
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct GoalSourceReleaseReceipt {
+  intent_id : GoalSourceClaimIntentId
+  part_id : @control.PartId
+  claimant : String
+  source_content_digest : @control.Digest
+  observed_at : Int64
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct GoalSourceClaim {
+  intent_id : GoalSourceClaimIntentId
+  goal_id : @control.GoalId
+  part_id : @control.PartId
+  claimant : String
+  source_revision_digest : @control.Digest
+  source_content_digest : @control.Digest
+  lifecycle : GoalSourceClaimLifecycle
+  receipt : GoalSourceClaimReceipt?
+  release_receipt : GoalSourceReleaseReceipt?
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum GoalSourceClaimObservation {
+  GoalSourceUnclaimedExact
+  GoalSourceClaimedByExpectedActor
+  GoalSourceClaimedByAnotherActor
+  GoalSourceContentDrifted
+  GoalSourceClosed
+  GoalSourceAmbiguous
+} derive(Debug, Eq)
+
+///|
 pub(all) struct GoalBranchInitIntentId(String) derive (
   Debug,
   Eq,
@@ -153,6 +223,7 @@ pub(all) struct GoalExecutionRecord {
   integration_target_ref : GitRefName
   goal_ref : GitRefName
   branch_initialization : GoalBranchInitialization
+  source_claims : Array[GoalSourceClaim]
   maximum_parallel_parts : Int
   policy_revisions : Array[GoalPolicyRevision]
   part_workflow_ids : Array[String]
@@ -175,6 +246,144 @@ fn goal_execution_identity_digest(goal_id : @control.GoalId) -> @control.Digest 
   @storage.artifact_digest(
     @utf8.encode("choir.goal-execution.v1\u{00}" + goal_id.0),
   )
+}
+
+///|
+fn goal_source_claim_intent_id(
+  goal_id : @control.GoalId,
+  part_id : @control.PartId,
+) -> GoalSourceClaimIntentId {
+  let digest = @storage.artifact_digest(
+    @utf8.encode(
+      "choir.goal-source-claim.v1\u{00}" +
+      [goal_id.to_json(), part_id.to_json()].to_json().stringify(indent=0),
+    ),
+  )
+  GoalSourceClaimIntentId("source-claim-" + @storage.digest_text(digest))
+}
+
+///|
+pub fn initial_goal_source_claim(
+  goal_id : @control.GoalId,
+  part_id : @control.PartId,
+  source_revision_digest : @control.Digest,
+  source_content_digest : @control.Digest,
+) -> GoalSourceClaim {
+  {
+    intent_id: goal_source_claim_intent_id(goal_id, part_id),
+    goal_id,
+    part_id,
+    claimant: "choir:" + goal_id.0,
+    source_revision_digest,
+    source_content_digest,
+    lifecycle: GoalSourceClaimPlanned,
+    receipt: None,
+    release_receipt: None,
+  }
+}
+
+///|
+pub fn receipted_goal_source_claim(
+  goal_id : @control.GoalId,
+  part_id : @control.PartId,
+  source_revision_digest : @control.Digest,
+  source_content_digest : @control.Digest,
+  observed_at : Int64,
+) -> GoalSourceClaim {
+  let claim = initial_goal_source_claim(
+    goal_id, part_id, source_revision_digest, source_content_digest,
+  )
+  {
+    ..claim,
+    lifecycle: GoalSourceClaimReceipted,
+    receipt: Some(GoalSourceClaimReceipt::{
+      intent_id: claim.intent_id,
+      part_id,
+      claimant: claim.claimant,
+      source_content_digest,
+      observed_at,
+    }),
+  }
+}
+
+///|
+fn goal_source_claim_shape_is_valid(
+  claim : GoalSourceClaim,
+  goal_id : @control.GoalId,
+) -> Bool {
+  let identity_valid = claim.goal_id == goal_id &&
+    claim.part_id.0 != "" &&
+    claim.intent_id == goal_source_claim_intent_id(goal_id, claim.part_id) &&
+    claim.claimant == "choir:" + goal_id.0 &&
+    @storage.validate_digest(claim.source_revision_digest) is Ok(_) &&
+    @storage.validate_digest(claim.source_content_digest) is Ok(_)
+  let claim_receipt_valid = match (claim.lifecycle, claim.receipt) {
+    (GoalSourceClaimReceipted, Some(receipt)) =>
+      receipt.intent_id == claim.intent_id &&
+      receipt.part_id == claim.part_id &&
+      receipt.claimant == claim.claimant &&
+      receipt.source_content_digest == claim.source_content_digest &&
+      receipt.observed_at > 0L
+    (
+      GoalSourceReleaseAuthorized
+      | GoalSourceReleased
+      | GoalSourceReleaseConflict(_),
+      Some(receipt),
+    ) =>
+      receipt.intent_id == claim.intent_id &&
+      receipt.part_id == claim.part_id &&
+      receipt.claimant == claim.claimant &&
+      receipt.source_content_digest == claim.source_content_digest &&
+      receipt.observed_at > 0L
+    (
+      GoalSourceReleaseAuthorized
+      | GoalSourceReleased
+      | GoalSourceReleaseConflict(_),
+      None,
+    ) => true
+    (GoalSourceClaimPlanned | GoalSourceClaimAuthorized, None) => true
+    (GoalSourceClaimConflict(_), None) => true
+    _ => false
+  }
+  let release_receipt_valid = match (claim.lifecycle, claim.release_receipt) {
+    (GoalSourceReleased, Some(receipt)) =>
+      receipt.intent_id == claim.intent_id &&
+      receipt.part_id == claim.part_id &&
+      receipt.claimant == claim.claimant &&
+      receipt.source_content_digest == claim.source_content_digest &&
+      receipt.observed_at > 0L
+    (
+      GoalSourceClaimPlanned
+      | GoalSourceClaimAuthorized
+      | GoalSourceClaimReceipted
+      | GoalSourceClaimConflict(_)
+      | GoalSourceReleaseAuthorized
+      | GoalSourceReleaseConflict(_),
+      None,
+    ) => true
+    _ => false
+  }
+  identity_valid && claim_receipt_valid && release_receipt_valid
+}
+
+///|
+fn goal_source_claims_shape_is_valid(record : GoalExecutionRecord) -> Bool {
+  if record.source_claims.length() == 0 ||
+    record.source_claims.length() != record.part_workflow_ids.length() {
+    return false
+  }
+  for index = 0; index < record.source_claims.length(); index = index + 1 {
+    let claim = record.source_claims[index]
+    if !goal_source_claim_shape_is_valid(claim, record.goal.id) {
+      return false
+    }
+    for previous = 0; previous < index; previous = previous + 1 {
+      if record.source_claims[previous].part_id == claim.part_id {
+        return false
+      }
+    }
+  }
+  true
 }
 
 ///|
@@ -565,6 +774,14 @@ pub fn goal_execution_record_from_selection(
       goal_ref,
       decision.proposal.expected_base_commit_oid,
     ),
+    source_claims: decision.accepted_parts.map(fn(accepted) {
+      initial_goal_source_claim(
+        goal.id,
+        accepted.part.id,
+        accepted.source_revision_digest,
+        accepted.source_content_digest,
+      )
+    }),
     maximum_parallel_parts: decision.proposal.maximum_parallel_parts,
     policy_revisions: [
       initial_goal_policy_revision(
@@ -624,6 +841,7 @@ pub fn decode_goal_execution_record(
     !goal_execution_input_answers_are_valid(record) ||
     !goal_execution_cancellation_shape_is_valid(record) ||
     !goal_branch_initialization_shape_is_valid(record) ||
+    !goal_source_claims_shape_is_valid(record) ||
     @storage.validate_digest(record.selection_decision_digest) is Err(_) {
     Err(goal_execution_error("record identity is invalid"))
   } else {
@@ -656,12 +874,230 @@ pub fn goal_execution_is_terminal(record : GoalExecutionRecord) -> Bool {
 }
 
 ///|
+pub fn goal_source_claims_are_receipted(record : GoalExecutionRecord) -> Bool {
+  record.source_claims.all(fn(claim) {
+    claim.lifecycle == GoalSourceClaimReceipted
+  })
+}
+
+///|
+pub fn goal_source_claims_have_conflict(record : GoalExecutionRecord) -> Bool {
+  record.source_claims.any(fn(claim) {
+    claim.lifecycle is GoalSourceClaimConflict(_)
+  })
+}
+
+///|
+pub fn authorize_goal_source_claim(
+  record : GoalExecutionRecord,
+  part_id : @control.PartId,
+) -> Result[GoalExecutionRecord, @types.ChoirError] {
+  if record.state != GoalExecutionRunning ||
+    record.cancellation_request is Some(_) ||
+    !goal_source_claims_shape_is_valid(record) {
+    return Err(goal_execution_error("source claim is not authorizable"))
+  }
+  let claims = record.source_claims.copy()
+  let mut found = false
+  for index = 0; index < claims.length(); index = index + 1 {
+    if claims[index].part_id == part_id {
+      if claims[index].lifecycle != GoalSourceClaimPlanned {
+        return Err(goal_execution_error("source claim is not planned"))
+      }
+      claims[index] = { ..claims[index], lifecycle: GoalSourceClaimAuthorized }
+      found = true
+      break
+    }
+  }
+  if !found {
+    return Err(goal_execution_error("source claim Part is absent"))
+  }
+  Ok({
+    ..record,
+    source_claims: claims,
+    durable_version: record.durable_version + 1,
+  })
+}
+
+///|
+pub fn reconcile_goal_source_claim(
+  record : GoalExecutionRecord,
+  part_id : @control.PartId,
+  observation : GoalSourceClaimObservation,
+  observed_at : Int64,
+) -> Result[GoalExecutionRecord, @types.ChoirError] {
+  if record.state != GoalExecutionRunning ||
+    record.cancellation_request is Some(_) ||
+    observed_at <= 0L ||
+    !goal_source_claims_shape_is_valid(record) {
+    return Err(goal_execution_error("source claim is not reconcilable"))
+  }
+  let claims = record.source_claims.copy()
+  let mut found = false
+  for index = 0; index < claims.length(); index = index + 1 {
+    let claim = claims[index]
+    if claim.part_id != part_id {
+      continue
+    }
+    found = true
+    if claim.lifecycle == GoalSourceClaimReceipted &&
+      observation == GoalSourceClaimedByExpectedActor {
+      return Ok(record)
+    }
+    if claim.lifecycle != GoalSourceClaimAuthorized {
+      return Err(goal_execution_error("source claim is not authorized"))
+    }
+    let lifecycle = match observation {
+      GoalSourceUnclaimedExact => return Ok(record)
+      GoalSourceClaimedByExpectedActor => GoalSourceClaimReceipted
+      GoalSourceClaimedByAnotherActor =>
+        GoalSourceClaimConflict(GoalSourceClaimOwnedByAnotherActor)
+      GoalSourceContentDrifted =>
+        GoalSourceClaimConflict(GoalSourceClaimContentDrift)
+      GoalSourceClosed =>
+        GoalSourceClaimConflict(GoalSourceClaimClosedBeforeExecution)
+      GoalSourceAmbiguous => GoalSourceClaimConflict(GoalSourceClaimAmbiguous)
+    }
+    let receipt = if lifecycle == GoalSourceClaimReceipted {
+      Some(GoalSourceClaimReceipt::{
+        intent_id: claim.intent_id,
+        part_id: claim.part_id,
+        claimant: claim.claimant,
+        source_content_digest: claim.source_content_digest,
+        observed_at,
+      })
+    } else {
+      None
+    }
+    claims[index] = { ..claim, lifecycle, receipt }
+    break
+  }
+  if !found {
+    return Err(goal_execution_error("source claim Part is absent"))
+  }
+  Ok({
+    ..record,
+    source_claims: claims,
+    durable_version: record.durable_version + 1,
+  })
+}
+
+///|
+pub fn goal_source_release_dispositions_are_known(
+  record : GoalExecutionRecord,
+) -> Bool {
+  record.source_claims.all(fn(claim) {
+    claim.lifecycle is GoalSourceReleased ||
+    claim.lifecycle is GoalSourceReleaseConflict(_) ||
+    claim.lifecycle is GoalSourceClaimConflict(_)
+  })
+}
+
+///|
+pub fn authorize_goal_source_release(
+  record : GoalExecutionRecord,
+  part_id : @control.PartId,
+) -> Result[GoalExecutionRecord, @types.ChoirError] {
+  if record.state != GoalExecutionCanceling ||
+    record.cancellation_request is None ||
+    !goal_source_claims_shape_is_valid(record) {
+    return Err(goal_execution_error("source release is not authorizable"))
+  }
+  let claims = record.source_claims.copy()
+  let mut found = false
+  for index = 0; index < claims.length(); index = index + 1 {
+    if claims[index].part_id == part_id {
+      match claims[index].lifecycle {
+        GoalSourceClaimPlanned
+        | GoalSourceClaimAuthorized
+        | GoalSourceClaimReceipted => ()
+        _ => return Err(goal_execution_error("source release is not needed"))
+      }
+      claims[index] = {
+        ..claims[index],
+        lifecycle: GoalSourceReleaseAuthorized,
+      }
+      found = true
+      break
+    }
+  }
+  if !found {
+    return Err(goal_execution_error("source release Part is absent"))
+  }
+  Ok({
+    ..record,
+    source_claims: claims,
+    durable_version: record.durable_version + 1,
+  })
+}
+
+///|
+pub fn reconcile_goal_source_release(
+  record : GoalExecutionRecord,
+  part_id : @control.PartId,
+  observation : GoalSourceClaimObservation,
+  observed_at : Int64,
+) -> Result[GoalExecutionRecord, @types.ChoirError] {
+  if record.state != GoalExecutionCanceling ||
+    record.cancellation_request is None ||
+    observed_at <= 0L ||
+    !goal_source_claims_shape_is_valid(record) {
+    return Err(goal_execution_error("source release is not reconcilable"))
+  }
+  let claims = record.source_claims.copy()
+  let mut found = false
+  for index = 0; index < claims.length(); index = index + 1 {
+    let claim = claims[index]
+    if claim.part_id != part_id {
+      continue
+    }
+    found = true
+    if claim.lifecycle != GoalSourceReleaseAuthorized {
+      return Err(goal_execution_error("source release is not authorized"))
+    }
+    let lifecycle = match observation {
+      GoalSourceUnclaimedExact => GoalSourceReleased
+      GoalSourceClaimedByExpectedActor => return Ok(record)
+      GoalSourceClaimedByAnotherActor =>
+        GoalSourceReleaseConflict(GoalSourceClaimOwnedByAnotherActor)
+      GoalSourceContentDrifted =>
+        GoalSourceReleaseConflict(GoalSourceClaimContentDrift)
+      GoalSourceClosed =>
+        GoalSourceReleaseConflict(GoalSourceClaimClosedBeforeExecution)
+      GoalSourceAmbiguous => GoalSourceReleaseConflict(GoalSourceClaimAmbiguous)
+    }
+    let release_receipt = if lifecycle == GoalSourceReleased {
+      Some(GoalSourceReleaseReceipt::{
+        intent_id: claim.intent_id,
+        part_id: claim.part_id,
+        claimant: claim.claimant,
+        source_content_digest: claim.source_content_digest,
+        observed_at,
+      })
+    } else {
+      None
+    }
+    claims[index] = { ..claim, lifecycle, release_receipt }
+    break
+  }
+  if !found {
+    return Err(goal_execution_error("source release Part is absent"))
+  }
+  Ok({
+    ..record,
+    source_claims: claims,
+    durable_version: record.durable_version + 1,
+  })
+}
+
+///|
 pub fn authorize_goal_branch_initialization(
   record : GoalExecutionRecord,
 ) -> Result[GoalExecutionRecord, @types.ChoirError] {
   if record.state != GoalExecutionRunning ||
     record.cancellation_request is Some(_) ||
     record.branch_initialization.lifecycle != GoalBranchInitPlanned ||
+    !goal_source_claims_are_receipted(record) ||
     !goal_branch_initialization_shape_is_valid(record) {
     return Err(
       goal_execution_error("branch initialization is not authorizable"),
@@ -811,6 +1247,14 @@ pub fn advance_goal_execution_state(
     return Err(
       goal_execution_error("Goal branch initialization is not receipted"),
     )
+  }
+  if (
+      state == GoalExecutionAssuring ||
+      state == GoalExecutionAssured ||
+      state == GoalExecutionSucceeded
+    ) &&
+    !goal_source_claims_are_receipted(record) {
+    return Err(goal_execution_error("Goal source claims are not receipted"))
   }
   let allowed = match (record.state, state) {
     (GoalExecutionQueued, GoalExecutionRunning)
@@ -1166,7 +1610,8 @@ pub fn commit_goal_execution_cancellation(
 ) -> Result[GoalExecutionRecord, @types.ChoirError] {
   if record.state != GoalExecutionCanceling ||
     !goal_execution_cancellation_shape_is_valid(record) ||
-    !goal_branch_initialization_disposition_is_known(record) {
+    !goal_branch_initialization_disposition_is_known(record) ||
+    !goal_source_release_dispositions_are_known(record) {
     return Err(goal_execution_error("Goal has no durable cancellation cutoff"))
   }
   let identity = @storage.digest_text(

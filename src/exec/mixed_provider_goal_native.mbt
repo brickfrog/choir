@@ -184,12 +184,14 @@ pub async fn run_native_mixed_provider_goal_fixture(
       {
         part_id: claude_snapshot.part.id,
         source_revision_digest: claude_source_revision,
+        source_content_digest: claude_source_revision,
         dependency_ids: [],
         state: @workflow.SelectionSourceState::SelectionSourceOpen,
       },
       {
         part_id: codex_snapshot.part.id,
         source_revision_digest: codex_source_revision,
+        source_content_digest: codex_source_revision,
         dependency_ids: [],
         state: @workflow.SelectionSourceState::SelectionSourceOpen,
       },
@@ -209,6 +211,7 @@ pub async fn run_native_mixed_provider_goal_fixture(
       {
         part_id: claude_snapshot.part.id,
         source_revision_digest: claude_source_revision,
+        source_content_digest: claude_source_revision,
         dependency_ids: [],
         task_contract: claude_snapshot.task_contract,
         provider_surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
@@ -216,6 +219,7 @@ pub async fn run_native_mixed_provider_goal_fixture(
       {
         part_id: codex_snapshot.part.id,
         source_revision_digest: codex_source_revision,
+        source_content_digest: codex_source_revision,
         dependency_ids: [],
         task_contract: codex_snapshot.task_contract,
         provider_surface: @control.ProviderSurfaceId::CodexSubscriptionCli,

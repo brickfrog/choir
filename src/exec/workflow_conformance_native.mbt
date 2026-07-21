@@ -1762,6 +1762,15 @@ fn scale_terminal_projection(
       goal_ref,
       base_oid,
     ),
+    source_claims: snapshots.map(fn(snapshot) {
+      @workflow.receipted_goal_source_claim(
+        goal.id,
+        snapshot.part.id,
+        conformance_digest_a,
+        conformance_digest_a,
+        1L,
+      )
+    }),
     maximum_parallel_parts,
     policy_revisions: [@workflow.initial_goal_policy_revision(goal.id, 1)],
     part_workflow_ids: snapshots.map(fn(snapshot) { snapshot.workflow_id }),

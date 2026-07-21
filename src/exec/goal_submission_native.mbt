@@ -286,6 +286,14 @@ fn compile_native_conductor_part_proposal(
         part.part_id.to_json(),
       )
   }
+  let source_content_digest = match source {
+    Some(value) => value.source_content_digest
+    None =>
+      native_goal_submission_digest(
+        "choir.missing-source-content.v1",
+        part.part_id.to_json(),
+      )
+  }
   let dependency_ids = match source {
     Some(value) => value.dependency_ids
     None => []
@@ -437,6 +445,7 @@ fn compile_native_conductor_part_proposal(
   Ok({
     part_id: part.part_id,
     source_revision_digest,
+    source_content_digest,
     dependency_ids,
     task_contract: contract,
     provider_surface: part.provider_surface,
@@ -719,6 +728,7 @@ fn native_goal_execution_plan_matches(
   stored.base_tree_oid == expected.base_tree_oid &&
   stored.integration_target_ref == expected.integration_target_ref &&
   stored.goal_ref == expected.goal_ref &&
+  stored.source_claims == expected.source_claims &&
   stored.maximum_parallel_parts == expected.maximum_parallel_parts &&
   stored.part_workflow_ids == expected.part_workflow_ids
 }

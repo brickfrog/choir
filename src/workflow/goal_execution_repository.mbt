@@ -203,7 +203,7 @@ pub fn list_goal_execution_records(
 }
 
 ///|
-pub fn persist_goal_branch_initialization_transition(
+pub fn persist_goal_execution_transition(
   repository : PartWorkflowRepository,
   adapters : PartWorkflowRepositoryAdapters,
   previous : StoredGoalExecutionRecord,
@@ -211,9 +211,7 @@ pub fn persist_goal_branch_initialization_transition(
 ) -> Result[StoredGoalExecutionRecord, @types.ChoirError] {
   if next.goal.id != previous.record.goal.id ||
     next.durable_version != previous.record.durable_version + 1 {
-    return Err(
-      goal_execution_error("branch initialization transition is invalid"),
-    )
+    return Err(goal_execution_error("Goal execution transition is invalid"))
   }
   let receipt = match
     persist_goal_execution_record(repository, adapters, {

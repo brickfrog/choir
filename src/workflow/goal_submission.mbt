@@ -55,6 +55,7 @@ pub(all) enum SelectionSourceState {
 pub(all) struct GoalSelectionSourcePart {
   part_id : @control.PartId
   source_revision_digest : @control.Digest
+  source_content_digest : @control.Digest
   dependency_ids : Array[@control.PartId]
   state : SelectionSourceState
 } derive(Debug, Eq, ToJson, FromJson)
@@ -71,6 +72,7 @@ pub(all) struct GoalSelectionSnapshot {
 pub(all) struct ConductorPartProposal {
   part_id : @control.PartId
   source_revision_digest : @control.Digest
+  source_content_digest : @control.Digest
   dependency_ids : Array[@control.PartId]
   task_contract : @control.TaskContractRevision
   provider_surface : @control.ProviderSurfaceId
@@ -114,6 +116,7 @@ pub(all) struct PartSelectionRejection {
 pub(all) struct AcceptedGoalPart {
   part : @control.GoalPart
   source_revision_digest : @control.Digest
+  source_content_digest : @control.Digest
   task_contract : @control.TaskContractRevision
   provider_surface : @control.ProviderSurfaceId
 } derive(Debug, Eq, ToJson, FromJson)
@@ -306,6 +309,10 @@ fn validate_selection_snapshot(
       Ok(_) => ()
       Err(_) => return Err(goal_submission_error("source revision is invalid"))
     }
+    match @storage.validate_digest(part.source_content_digest) {
+      Ok(_) => ()
+      Err(_) => return Err(goal_submission_error("source content is invalid"))
+    }
     if part.dependency_ids.contains(part.part_id) {
       return Err(goal_submission_error("source dependency is self-referential"))
     }
@@ -351,6 +358,7 @@ fn canonical_goal_proposal_json(proposal : GoalProposal) -> Json {
       [
         part.part_id.to_json(),
         part.source_revision_digest.to_json(),
+        part.source_content_digest.to_json(),
         sorted_part_ids(part.dependency_ids).to_json(),
         part.task_contract.id.to_json(),
         part.task_contract.digest.to_json(),
@@ -451,6 +459,7 @@ pub fn evaluate_goal_proposal(
       SelectionSourceOpen => ()
     }
     if part.source_revision_digest != source.source_revision_digest ||
+      part.source_content_digest != source.source_content_digest ||
       sorted_part_ids(part.dependency_ids) !=
       sorted_part_ids(source.dependency_ids) ||
       part.task_contract.goal_id != proposal.goal_id ||
@@ -499,6 +508,7 @@ pub fn evaluate_goal_proposal(
           lifecycle: @control.PartLifecycle::PartPending,
         },
         source_revision_digest: part.source_revision_digest,
+        source_content_digest: part.source_content_digest,
         task_contract: part.task_contract,
         provider_surface: part.provider_surface,
       })

@@ -407,6 +407,24 @@ fn bead_source_revision_digest(fields : Map[String, Json]) -> @control.Digest {
 }
 
 ///|
+fn bead_source_content_digest(fields : Map[String, Json]) -> @control.Digest {
+  let dependencies = bead_dependency_ids(fields)
+  goal_submission_domain_digest(
+    "choir.bead-source-content.v1",
+    [
+      bead_string(fields, "id").to_json(),
+      bead_string(fields, "title").to_json(),
+      bead_string(fields, "description").to_json(),
+      bead_string(fields, "acceptance_criteria").to_json(),
+      bead_string(fields, "notes").to_json(),
+      bead_string(fields, "priority").to_json(),
+      bead_string(fields, "issue_type").to_json(),
+      dependencies.to_json(),
+    ].to_json(),
+  )
+}
+
+///|
 fn source_part_from_bead_fields(
   fields : Map[String, Json],
 ) -> GoalSelectionSourcePart? {
@@ -417,6 +435,7 @@ fn source_part_from_bead_fields(
   Some({
     part_id: @control.PartId(id),
     source_revision_digest: bead_source_revision_digest(fields),
+    source_content_digest: bead_source_content_digest(fields),
     dependency_ids: bead_dependency_ids(fields),
     state: bead_source_state(fields),
   })

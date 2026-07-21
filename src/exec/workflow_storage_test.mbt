@@ -1343,6 +1343,15 @@ async test "Goal cancellation atomically rejects stale seal authorization" {
       @workflow.goal_execution_ref(integrated.goal.id),
       @control.GitOid("goal-head-store"),
     ),
+    source_claims: [
+      @workflow.receipted_goal_source_claim(
+        integrated.goal.id,
+        integrated.part.id,
+        workflow_store_digest_a,
+        workflow_store_digest_a,
+        1L,
+      ),
+    ],
     maximum_parallel_parts: 1,
     policy_revisions: [
       @workflow.initial_goal_policy_revision(integrated.goal.id, 1),
@@ -1521,6 +1530,14 @@ async test "Goal steering persists revision history and paused Goals do not run"
       @workflow.goal_execution_ref(fixture.goal.id),
       @control.GitOid("goal-steering-head"),
     ),
+    source_claims: [
+      @workflow.initial_goal_source_claim(
+        fixture.goal.id,
+        fixture.part.id,
+        workflow_store_digest_a,
+        workflow_store_digest_a,
+      ),
+    ],
     maximum_parallel_parts: 1,
     policy_revisions: [
       @workflow.initial_goal_policy_revision(fixture.goal.id, 1),
@@ -1642,6 +1659,15 @@ async test "Goal finalization input request and answer survive restart" {
       @workflow.goal_execution_ref(fixture.goal.id),
       @control.GitOid("goal-input-head"),
     ),
+    source_claims: [
+      @workflow.receipted_goal_source_claim(
+        fixture.goal.id,
+        fixture.part.id,
+        workflow_store_digest_a,
+        workflow_store_digest_a,
+        1L,
+      ),
+    ],
     maximum_parallel_parts: 1,
     policy_revisions: [
       @workflow.initial_goal_policy_revision(fixture.goal.id, 1),

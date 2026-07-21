@@ -11,6 +11,7 @@ fn selection_store_decision() -> @workflow.GoalSelectionDecision raise {
   let source : @workflow.GoalSelectionSourcePart = {
     part_id,
     source_revision_digest: selection_store_digest,
+    source_content_digest: selection_store_digest,
     dependency_ids: [],
     state: @workflow.SelectionSourceState::SelectionSourceOpen,
   }
@@ -63,6 +64,7 @@ fn selection_store_decision() -> @workflow.GoalSelectionDecision raise {
           {
             part_id,
             source_revision_digest: selection_store_digest,
+            source_content_digest: selection_store_digest,
             dependency_ids: [],
             task_contract: contract,
             provider_surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,

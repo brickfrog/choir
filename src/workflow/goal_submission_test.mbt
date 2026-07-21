@@ -53,6 +53,7 @@ fn submission_source(
   {
     part_id: @control.PartId(id),
     source_revision_digest: submission_digest,
+    source_content_digest: submission_digest,
     dependency_ids: dependencies,
     state,
   }
@@ -69,6 +70,7 @@ fn submission_part(
   {
     part_id,
     source_revision_digest: submission_digest,
+    source_content_digest: submission_digest,
     dependency_ids: dependencies,
     task_contract: submission_contract(
       goal_id,
@@ -142,10 +144,28 @@ fn submission_execution() -> @workflow.GoalExecutionRecord {
 }
 
 ///|
+fn submission_claimed_running(
+  running : @workflow.GoalExecutionRecord,
+) -> @workflow.GoalExecutionRecord {
+  let mut claimed = running
+  for claim in running.source_claims {
+    claimed = @workflow.authorize_goal_source_claim(claimed, claim.part_id).unwrap()
+    claimed = @workflow.reconcile_goal_source_claim(
+      claimed,
+      claim.part_id,
+      @workflow.GoalSourceClaimObservation::GoalSourceClaimedByExpectedActor,
+      1L,
+    ).unwrap()
+  }
+  claimed
+}
+
+///|
 fn submission_initialized_running(
   running : @workflow.GoalExecutionRecord,
 ) -> @workflow.GoalExecutionRecord raise {
-  let authorized = @workflow.authorize_goal_branch_initialization(running).unwrap()
+  let claimed = submission_claimed_running(running)
+  let authorized = @workflow.authorize_goal_branch_initialization(claimed).unwrap()
   guard @workflow.reconcile_goal_branch_initialization(
       authorized,
       @workflow.GoalBranchInitObservation::GoalBranchInitRefsAtBase,
@@ -157,6 +177,150 @@ fn submission_initialized_running(
     fail("Goal branch initialization did not receipt")
   }
   initialized
+}
+
+///|
+test "source claim must be receipted before branch initialization" {
+  let running = @workflow.advance_goal_execution_state(
+    submission_execution(),
+    @workflow.GoalExecutionState::GoalExecutionRunning,
+  ).unwrap()
+  assert_true(@workflow.authorize_goal_branch_initialization(running) is Err(_))
+  let claim = running.source_claims[0]
+  let authorized = @workflow.authorize_goal_source_claim(running, claim.part_id).unwrap()
+  let receipted = @workflow.reconcile_goal_source_claim(
+    authorized,
+    claim.part_id,
+    @workflow.GoalSourceClaimObservation::GoalSourceClaimedByExpectedActor,
+    10L,
+  ).unwrap()
+  assert_true(@workflow.goal_source_claims_are_receipted(receipted))
+  assert_true(
+    @workflow.authorize_goal_branch_initialization(receipted) is Ok(_),
+  )
+}
+
+///|
+test "source drift records a typed conflict without minting a receipt" {
+  let running = @workflow.advance_goal_execution_state(
+    submission_execution(),
+    @workflow.GoalExecutionState::GoalExecutionRunning,
+  ).unwrap()
+  let claim = running.source_claims[0]
+  let authorized = @workflow.authorize_goal_source_claim(running, claim.part_id).unwrap()
+  let conflicted = @workflow.reconcile_goal_source_claim(
+    authorized,
+    claim.part_id,
+    @workflow.GoalSourceClaimObservation::GoalSourceContentDrifted,
+    10L,
+  ).unwrap()
+  assert_true(@workflow.goal_source_claims_have_conflict(conflicted))
+  assert_eq(conflicted.source_claims[0].receipt, None)
+  assert_eq(
+    conflicted.source_claims[0].lifecycle,
+    @workflow.GoalSourceClaimLifecycle::GoalSourceClaimConflict(
+      @workflow.GoalSourceClaimConflictReason::GoalSourceClaimContentDrift,
+    ),
+  )
+}
+
+///|
+test "partial source delivery preserves earlier receipts when a later Part conflicts" {
+  let goal_id = @control.GoalId("goal-partial-claims")
+  let decision = @workflow.evaluate_goal_proposal(
+    submission_proposal(goal_id, [
+      submission_part(
+        goal_id,
+        "a",
+        [],
+        @control.ProviderSurfaceId::CodexSubscriptionCli,
+      ),
+      submission_part(
+        goal_id,
+        "b",
+        [],
+        @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+      ),
+    ]),
+    submission_snapshot([
+      submission_source(
+        "a",
+        [],
+        @workflow.SelectionSourceState::SelectionSourceOpen,
+      ),
+      submission_source(
+        "b",
+        [],
+        @workflow.SelectionSourceState::SelectionSourceOpen,
+      ),
+    ]),
+    fn(_) { true },
+  ).unwrap()
+  let queued = @workflow.goal_execution_record_from_selection(
+    decision,
+    @workflow.goal_selection_decision_digest(decision),
+    ["workflow-a", "workflow-b"],
+  ).unwrap()
+  let running = @workflow.advance_goal_execution_state(
+    queued,
+    @workflow.GoalExecutionState::GoalExecutionRunning,
+  ).unwrap()
+  let first = @workflow.authorize_goal_source_claim(
+    running,
+    @control.PartId("a"),
+  ).unwrap()
+  let first_receipted = @workflow.reconcile_goal_source_claim(
+    first,
+    @control.PartId("a"),
+    @workflow.GoalSourceClaimObservation::GoalSourceClaimedByExpectedActor,
+    10L,
+  ).unwrap()
+  let second = @workflow.authorize_goal_source_claim(
+    first_receipted,
+    @control.PartId("b"),
+  ).unwrap()
+  let conflicted = @workflow.reconcile_goal_source_claim(
+    second,
+    @control.PartId("b"),
+    @workflow.GoalSourceClaimObservation::GoalSourceClaimedByAnotherActor,
+    11L,
+  ).unwrap()
+  assert_eq(
+    conflicted.source_claims[0].lifecycle,
+    @workflow.GoalSourceClaimLifecycle::GoalSourceClaimReceipted,
+  )
+  assert_true(conflicted.source_claims[0].receipt is Some(_))
+  assert_true(@workflow.goal_source_claims_have_conflict(conflicted))
+}
+
+///|
+test "cancellation cannot finish until Choir-owned source claims are released" {
+  let running = @workflow.advance_goal_execution_state(
+    submission_execution(),
+    @workflow.GoalExecutionState::GoalExecutionRunning,
+  ).unwrap()
+  let part_id = running.source_claims[0].part_id
+  let authorized = @workflow.authorize_goal_source_claim(running, part_id).unwrap()
+  let claimed = @workflow.reconcile_goal_source_claim(
+    authorized,
+    part_id,
+    @workflow.GoalSourceClaimObservation::GoalSourceClaimedByExpectedActor,
+    10L,
+  ).unwrap()
+  guard @workflow.request_goal_execution_cancellation(claimed, 11L).unwrap()
+    is @workflow.GoalCancellationDecision::GoalCancellationRequested(canceling) else {
+    fail("cancellation was not requested")
+  }
+  assert_true(@workflow.commit_goal_execution_cancellation(canceling) is Err(_))
+  let release = @workflow.authorize_goal_source_release(canceling, part_id).unwrap()
+  let released = @workflow.reconcile_goal_source_release(
+    release,
+    part_id,
+    @workflow.GoalSourceClaimObservation::GoalSourceUnclaimedExact,
+    12L,
+  ).unwrap()
+  assert_true(@workflow.goal_source_release_dispositions_are_known(released))
+  assert_true(@workflow.commit_goal_execution_cancellation(released) is Ok(_))
 }
 
 ///|
@@ -456,7 +620,7 @@ test "Conductor proposal accepts exact closure in deterministic order" {
   assert_true(
     succeeded.goal.lifecycle is @control.GoalLifecycle::GoalSucceeded(_),
   )
-  assert_eq(succeeded.durable_version, 7)
+  assert_eq(succeeded.durable_version, 11)
   let malformed = {
     ..succeeded,
     goal: {
@@ -543,7 +707,16 @@ test "Goal cancellation installs one durable cutoff and excludes success" {
     )
     is Err(_),
   )
-  let canceled = match @workflow.commit_goal_execution_cancellation(canceling) {
+  let released = @workflow.reconcile_goal_source_release(
+    @workflow.authorize_goal_source_release(
+      canceling,
+      canceling.source_claims[0].part_id,
+    ).unwrap(),
+    canceling.source_claims[0].part_id,
+    @workflow.GoalSourceClaimObservation::GoalSourceUnclaimedExact,
+    2001L,
+  ).unwrap()
+  let canceled = match @workflow.commit_goal_execution_cancellation(released) {
     Ok(value) => value
     Err(error) => fail(error.message())
   }
@@ -551,7 +724,7 @@ test "Goal cancellation installs one durable cutoff and excludes success" {
   assert_true(
     canceled.goal.lifecycle is @control.GoalLifecycle::GoalCanceled(_),
   )
-  assert_eq(canceled.durable_version, 3)
+  assert_eq(canceled.durable_version, 5)
   match @workflow.request_goal_execution_cancellation(canceled, 3000L) {
     Ok(
       @workflow.GoalCancellationDecision::GoalCancellationAlreadyTerminal(state)
@@ -567,6 +740,7 @@ test "authorized Goal branch initialization is reconciled through cancellation" 
     submission_execution(),
     @workflow.GoalExecutionState::GoalExecutionRunning,
   ).unwrap()
+  let running = submission_claimed_running(running)
   let authorized = @workflow.authorize_goal_branch_initialization(running).unwrap()
   guard @workflow.request_goal_execution_cancellation(authorized, 100L).unwrap()
     is @workflow.GoalCancellationDecision::GoalCancellationRequested(canceling) else {
@@ -602,7 +776,16 @@ test "authorized Goal branch initialization is reconciled through cancellation" 
     receipted.branch_initialization.lifecycle,
     @workflow.GoalBranchInitLifecycle::GoalBranchInitReceipted,
   )
-  assert_true(@workflow.commit_goal_execution_cancellation(receipted) is Ok(_))
+  let released = @workflow.reconcile_goal_source_release(
+    @workflow.authorize_goal_source_release(
+      receipted,
+      receipted.source_claims[0].part_id,
+    ).unwrap(),
+    receipted.source_claims[0].part_id,
+    @workflow.GoalSourceClaimObservation::GoalSourceUnclaimedExact,
+    103L,
+  ).unwrap()
+  assert_true(@workflow.commit_goal_execution_cancellation(released) is Ok(_))
 }
 
 ///|
@@ -611,6 +794,7 @@ test "partial and divergent Goal branch initialization fail closed" {
     submission_execution(),
     @workflow.GoalExecutionState::GoalExecutionRunning,
   ).unwrap()
+  let running = submission_claimed_running(running)
   let authorized = @workflow.authorize_goal_branch_initialization(running).unwrap()
   guard @workflow.reconcile_goal_branch_initialization(
       authorized,

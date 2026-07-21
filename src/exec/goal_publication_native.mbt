@@ -1200,6 +1200,15 @@ async fn prove_publication_fault_recovery(
       goal_ref,
       @control.GitOid(base_oid),
     ),
+    source_claims: [
+      @workflow.receipted_goal_source_claim(
+        goal_id,
+        integrated.part.id,
+        publication_digest("source-revision-" + label),
+        publication_digest("source-content-" + label),
+        1L,
+      ),
+    ],
     maximum_parallel_parts: 1,
     policy_revisions: [@workflow.initial_goal_policy_revision(goal_id, 1)],
     part_workflow_ids: [integrated.workflow_id],
