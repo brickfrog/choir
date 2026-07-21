@@ -167,11 +167,11 @@ unconnected product path usable.
 - Durable restart-readable state and content-addressed artifact stores with
   transactional fault injection.
 - A hermetic conformance runner with injected clock, identifiers, adapters,
-  and typed fault points. Its command now runs thirty-three registered cases: the
+  and typed fault points. Its command now runs thirty-four registered cases: the
   runner dependency contract, `selection.exact_snapshot`,
   `selection.revision_invalidation`,
-  `scheduler.generated_dags`, `branch.initialization_faults`,
-  `integration.conflict_repair`, six
+  `scheduler.generated_dags`, `branch.initialization_faults`, three integration
+  cases, `seal.atomicity`, six
   audit-authority/recovery cases, two cancellation-ordering cases, ten event/recovery
   cases, four mutation-ownership cases, and three process-policy cases described
   below. The audit cases prove a missing gate is passive, author Take/sandbox/
@@ -3443,6 +3443,7 @@ moon test --target native
 moon run --target native src/bin/choir_lint
 moon run --target native src/bin/choir_conformance -- hermetic
 moon run --target native src/bin/choir_conformance -- publication-faults
+moon run --target native src/bin/choir_conformance -- pull-request-faults
 moon run --target native src/bin/choir_conformance -- sandbox --runtime boxlite --live
 moon run --target native src/bin/choir_conformance -- harness --surface claude-cli --profile subscription --live
 moon run --target native src/bin/choir_conformance -- harness --surface codex-cli --profile subscription --live
@@ -4491,6 +4492,10 @@ Every recoverable case issues exactly one create and records exactly one
 receipt. The deliberately ambiguous crash after `CreateMayHaveBeenIssued` but
 before dispatch records `RemoteCreateUncertain`, issues zero creates, and does
 not resend after restart. The Goal remains `GoalExecutionAssured` throughout.
+The matrix is directly executable as `choir_conformance pull-request-faults`;
+its typed report currently passes all 7/7 cutoffs and records the interrupted
+intent state, total create count, expected terminal or uncertain outcome, and
+duplicate-dispatch result for each row.
 At `2026-07-20T14:42:07-05:00`, the finalization response boundary and terminal
 race also became executable. A real Git/SQLite controlled-forge test removes
 the evidence-manifest link before the readiness response and observes

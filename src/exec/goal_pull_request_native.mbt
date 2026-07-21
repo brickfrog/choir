@@ -1031,13 +1031,29 @@ fn pull_request_fault_snapshot(
 }
 
 ///|
+pub(all) struct NativePullRequestFaultObservation {
+  fault : @workflow.GoalPullRequestFaultPoint
+  interrupted_state : @workflow.PullRequestIntentState
+  create_count : Int
+  completion_expected : Bool
+  expected_outcome_observed : Bool
+  duplicate_free : Bool
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct NativePullRequestFaultConformanceReport {
+  observations : Array[NativePullRequestFaultObservation]
+  passed : Bool
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 async fn prove_pull_request_fault_recovery(
   label : String,
   fault : @workflow.GoalPullRequestFaultPoint,
   expected_state : @workflow.PullRequestIntentState,
   create_expected : Bool,
   completion_expected : Bool,
-) -> Unit {
+) -> NativePullRequestFaultObservation {
   let fixture = prove_publication_fault_recovery(
     "pull-request-" + label,
     @workflow.GoalPublicationFaultPoint::PublicationAfterIntentBeforeAuthorized,
@@ -1129,59 +1145,116 @@ async fn prove_pull_request_fault_recovery(
     .unwrap().record.state,
     @workflow.GoalExecutionState::GoalExecutionAssured,
   )
+  let observation = {
+    fault,
+    interrupted_state: interrupted.intent.state,
+    create_count: created.val,
+    completion_expected,
+    expected_outcome_observed: if completion_expected {
+      recovered == @workflow.GoalPullRequestTickOutcome::GoalPullRequestComplete &&
+      durable.intent.state ==
+      @workflow.PullRequestIntentState::PullRequestReceipted &&
+      durable.receipt is Some(_)
+    } else {
+      recovered ==
+      @workflow.GoalPullRequestTickOutcome::GoalPullRequestRecoveryUncertain &&
+      durable.intent.state ==
+      @workflow.PullRequestIntentState::PullRequestRemoteCreateUncertain &&
+      durable.receipt is None
+    },
+    duplicate_free: created.val <= 1,
+  }
   ignore(@sys.rm_rf(root))
   ignore(@sys.rm_rf(remote))
+  observation
+}
+
+///|
+pub async fn run_native_pull_request_fault_conformance(
+) -> NativePullRequestFaultConformanceReport {
+  let observations : Array[NativePullRequestFaultObservation] = []
+  let cases : Array[
+    (
+      String,
+      @workflow.GoalPullRequestFaultPoint,
+      @workflow.PullRequestIntentState,
+      Bool,
+      Bool,
+    )
+  ] = [
+    (
+      "after-intent",
+      @workflow.GoalPullRequestFaultPoint::PullRequestAfterIntentBeforeLookup,
+      @workflow.PullRequestIntentState::PullRequestPlanned,
+      false,
+      true,
+    ),
+    (
+      "after-empty-lookup",
+      @workflow.GoalPullRequestFaultPoint::PullRequestAfterEmptyLookupBeforeAuthorized,
+      @workflow.PullRequestIntentState::PullRequestPlanned,
+      false,
+      true,
+    ),
+    (
+      "after-authorization",
+      @workflow.GoalPullRequestFaultPoint::PullRequestAfterAuthorizedBeforeCreateMayHaveBeenIssued,
+      @workflow.PullRequestIntentState::PullRequestAuthorized,
+      false,
+      true,
+    ),
+    (
+      "before-dispatch",
+      @workflow.GoalPullRequestFaultPoint::PullRequestAfterCreateMayHaveBeenIssuedBeforeDispatch,
+      @workflow.PullRequestIntentState::PullRequestCreateMayHaveBeenIssued,
+      false,
+      false,
+    ),
+    (
+      "after-create",
+      @workflow.GoalPullRequestFaultPoint::PullRequestAfterRemoteCreateBeforeResponse,
+      @workflow.PullRequestIntentState::PullRequestCreateMayHaveBeenIssued,
+      true,
+      true,
+    ),
+    (
+      "after-response",
+      @workflow.GoalPullRequestFaultPoint::PullRequestAfterResponseBeforeReceipt,
+      @workflow.PullRequestIntentState::PullRequestCreateMayHaveBeenIssued,
+      true,
+      true,
+    ),
+    (
+      "during-receipt",
+      @workflow.GoalPullRequestFaultPoint::PullRequestDuringReceiptTransaction,
+      @workflow.PullRequestIntentState::PullRequestReceipted,
+      true,
+      true,
+    ),
+  ]
+  for config in cases {
+    observations.push(
+      prove_pull_request_fault_recovery(
+        config.0,
+        config.1,
+        config.2,
+        config.3,
+        config.4,
+      ),
+    )
+  }
+  {
+    observations,
+    passed: observations.length() == cases.length() &&
+    observations.all(fn(observation) {
+      observation.expected_outcome_observed && observation.duplicate_free
+    }),
+  }
 }
 
 ///|
 async test "real exec integration: final PR creation recovers without duplicate dispatch" {
-  prove_pull_request_fault_recovery(
-    "after-intent",
-    @workflow.GoalPullRequestFaultPoint::PullRequestAfterIntentBeforeLookup,
-    @workflow.PullRequestIntentState::PullRequestPlanned,
-    false,
-    true,
-  )
-  prove_pull_request_fault_recovery(
-    "after-empty-lookup",
-    @workflow.GoalPullRequestFaultPoint::PullRequestAfterEmptyLookupBeforeAuthorized,
-    @workflow.PullRequestIntentState::PullRequestPlanned,
-    false,
-    true,
-  )
-  prove_pull_request_fault_recovery(
-    "after-authorization",
-    @workflow.GoalPullRequestFaultPoint::PullRequestAfterAuthorizedBeforeCreateMayHaveBeenIssued,
-    @workflow.PullRequestIntentState::PullRequestAuthorized,
-    false,
-    true,
-  )
-  prove_pull_request_fault_recovery(
-    "before-dispatch",
-    @workflow.GoalPullRequestFaultPoint::PullRequestAfterCreateMayHaveBeenIssuedBeforeDispatch,
-    @workflow.PullRequestIntentState::PullRequestCreateMayHaveBeenIssued,
-    false,
-    false,
-  )
-  prove_pull_request_fault_recovery(
-    "after-create",
-    @workflow.GoalPullRequestFaultPoint::PullRequestAfterRemoteCreateBeforeResponse,
-    @workflow.PullRequestIntentState::PullRequestCreateMayHaveBeenIssued,
-    true,
-    true,
-  )
-  prove_pull_request_fault_recovery(
-    "after-response",
-    @workflow.GoalPullRequestFaultPoint::PullRequestAfterResponseBeforeReceipt,
-    @workflow.PullRequestIntentState::PullRequestCreateMayHaveBeenIssued,
-    true,
-    true,
-  )
-  prove_pull_request_fault_recovery(
-    "during-receipt",
-    @workflow.GoalPullRequestFaultPoint::PullRequestDuringReceiptTransaction,
-    @workflow.PullRequestIntentState::PullRequestReceipted,
-    true,
-    true,
-  )
+  let report = run_native_pull_request_fault_conformance()
+  assert_true(report.passed)
+  assert_eq(report.observations.length(), 7)
 }

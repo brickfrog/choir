@@ -2374,6 +2374,7 @@ fn usage() -> Unit {
   @sys.write_stderr(
     "usage: choir_conformance hermetic\n" +
     "       choir_conformance publication-faults\n" +
+    "       choir_conformance pull-request-faults\n" +
     "       choir_conformance harness --surface <claude-cli|codex-cli> " +
     "--profile subscription\n" +
     "       choir_conformance harness --surface claude-cli " +
@@ -2428,6 +2429,12 @@ fn main {
   } else if args.length() == 2 && args[1] == "publication-faults" {
     @async.run_async_main(async fn() {
       let report = @exec.run_native_publication_fault_conformance()
+      @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
+      @sys.exit(if report.passed { 0 } else { 1 })
+    })
+  } else if args.length() == 2 && args[1] == "pull-request-faults" {
+    @async.run_async_main(async fn() {
+      let report = @exec.run_native_pull_request_fault_conformance()
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     })
