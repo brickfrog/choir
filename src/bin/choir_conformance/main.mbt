@@ -2374,6 +2374,7 @@ fn usage() -> Unit {
   @sys.write_stderr(
     "usage: choir_conformance hermetic\n" +
     "       choir_conformance integration-faults\n" +
+    "       choir_conformance finalization-races\n" +
     "       choir_conformance publication-faults\n" +
     "       choir_conformance pull-request-faults\n" +
     "       choir_conformance pull-request-states\n" +
@@ -2435,6 +2436,12 @@ fn main {
       ignore(@sys.rm_rf(root))
       let report = @exec.run_integration_fault_conformance(root)
       ignore(@sys.rm_rf(root))
+      @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
+      @sys.exit(if report.passed { 0 } else { 1 })
+    })
+  } else if args.length() == 2 && args[1] == "finalization-races" {
+    @async.run_async_main(async fn() {
+      let report = @exec.run_native_goal_finalization_race_conformance()
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     })

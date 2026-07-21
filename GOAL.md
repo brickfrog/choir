@@ -3446,6 +3446,7 @@ moon test --target native
 moon run --target native src/bin/choir_lint
 moon run --target native src/bin/choir_conformance -- hermetic
 moon run --target native src/bin/choir_conformance -- integration-faults
+moon run --target native src/bin/choir_conformance -- finalization-races
 moon run --target native src/bin/choir_conformance -- publication-faults
 moon run --target native src/bin/choir_conformance -- pull-request-faults
 moon run --target native src/bin/choir_conformance -- pull-request-states
@@ -4517,6 +4518,11 @@ linearization point. At the injected
 cancellation wins the Goal compare-and-set and a later success attempt fails;
 in the inverse ordering cancellation observes terminal success. Each ordering
 has exactly one terminal outbox record and no next-version terminal record.
+That proof is now directly executable as
+`choir_conformance finalization-races`. Its typed report records both sides of
+the readiness-response boundary, success winning before late cancellation,
+cancellation winning after readiness but before success, and unique terminal
+outbox cardinality. The current report passes every field.
 
 Readiness is then observed separately against the canonical receipt. `Ready`
 requires an open PR with the exact repository identities, head and base refs,

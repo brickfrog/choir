@@ -421,7 +421,18 @@ async test "real exec integration: final PR remote states have exact outcomes" {
 }
 
 ///|
-async test "real exec integration: final PR readiness and terminal decisions linearize exactly" {
+pub(all) struct NativeGoalFinalizationRaceConformanceReport {
+  edit_before_response_rejected : Bool
+  edit_after_response_did_not_retroactively_change_decision : Bool
+  success_won_before_late_cancellation : Bool
+  cancellation_won_after_ready_before_success : Bool
+  terminal_outboxes_unique : Bool
+  passed : Bool
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub async fn run_native_goal_finalization_race_conformance(
+) -> NativeGoalFinalizationRaceConformanceReport {
   let before = prepare_goal_finalization_fixture("edit-before-response")
   guard before.3.val is Some(before_snapshot) else {
     fail("pre-response fixture has no remote pull request")
@@ -435,18 +446,17 @@ async test "real exec integration: final PR readiness and terminal decisions lin
     Ok(value) => value
     Err(error) => fail("edit before response: " + error.message())
   }
-  assert_eq(
-    before_outcome,
-    @workflow.GoalFinalizationTickOutcome::GoalFinalizationNeedsUserInput,
-  )
   let before_repository = native_goal_repository(before.0)
   let adapters = local_part_workflow_repository_adapters()
-  assert_eq(
-    @workflow.load_goal_execution_record(before_repository, adapters, before.2)
+  let before_goal_state = @workflow.load_goal_execution_record(
+      before_repository, adapters, before.2,
+    )
     .unwrap()
-    .unwrap().record.state,
-    @workflow.GoalExecutionState::GoalExecutionAssured,
-  )
+    .unwrap().record.state
+  let edit_before_response_rejected = before_outcome ==
+    @workflow.GoalFinalizationTickOutcome::GoalFinalizationNeedsUserInput &&
+    before_goal_state == @workflow.GoalExecutionState::GoalExecutionAssured
+  assert_true(edit_before_response_rejected)
   ignore(@sys.rm_rf(before.0))
   ignore(@sys.rm_rf(before.1))
 
@@ -479,35 +489,30 @@ async test "real exec integration: final PR readiness and terminal decisions lin
     Ok(value) => value
     Err(error) => fail("edit after response: " + error.message())
   }
-  assert_eq(
-    after_outcome,
-    @workflow.GoalFinalizationTickOutcome::GoalFinalizationSucceeded,
-  )
   guard after.3.val is Some(edited_snapshot) else {
     fail("post-response remote edit disappeared")
   }
-  assert_false(edited_snapshot.evidence_manifest_link_present)
+  let edit_after_response_did_not_retroactively_change_decision =
+    after_outcome ==
+      @workflow.GoalFinalizationTickOutcome::GoalFinalizationSucceeded &&
+    !edited_snapshot.evidence_manifest_link_present
+  assert_true(edit_after_response_did_not_retroactively_change_decision)
   let after_repository = native_goal_repository(after.0)
-  assert_eq(
-    cancel_native_goal(after.0, after.2, 100L).unwrap(),
+  let success_won_before_late_cancellation =
+    cancel_native_goal(after.0, after.2, 100L).unwrap() ==
     @workflow.GoalCancellationPersistenceResult::GoalCancellationTerminal(
       @workflow.GoalExecutionState::GoalExecutionSucceeded,
-    ),
-  )
-  assert_true(
-    (adapters.state.read_outbox)(
+    )
+  assert_true(success_won_before_late_cancellation)
+  let success_outbox_present = (adapters.state.read_outbox)(
       after_repository.state_store,
       goal_execution_outbox_key(after.2, 2),
-    ).unwrap()
-    is Some(_),
-  )
-  assert_true(
-    (adapters.state.read_outbox)(
+    ).unwrap() is Some(_)
+  let success_next_outbox_absent = (adapters.state.read_outbox)(
       after_repository.state_store,
       goal_execution_outbox_key(after.2, 3),
-    ).unwrap()
-    is None,
-  )
+    ).unwrap() is None
+  assert_true(success_outbox_present && success_next_outbox_absent)
   ignore(@sys.rm_rf(after.0))
   ignore(@sys.rm_rf(after.1))
 
@@ -524,28 +529,23 @@ async test "real exec integration: final PR readiness and terminal decisions lin
     is Err(_),
   )
   let canceled_repository = native_goal_repository(canceled.0)
-  assert_eq(
-    @workflow.load_goal_finalization_record(
+  let ready_before_race = @workflow.load_goal_finalization_record(
       canceled_repository,
       adapters,
       canceled.2,
     )
     .unwrap()
-    .unwrap().record.readiness.decision,
-    @workflow.PullRequestReadinessDecision::PullRequestReady,
-  )
-  assert_true(
-    cancel_native_goal(canceled.0, canceled.2, 200L).unwrap()
-    is @workflow.GoalCancellationPersistenceResult::GoalCancellationPersisted(_),
-  )
-  assert_true(
-    advance_native_goal_finalization_with_adapters(
+    .unwrap().record.readiness.decision ==
+    @workflow.PullRequestReadinessDecision::PullRequestReady
+  let cancellation_linearized = cancel_native_goal(
+      canceled.0, canceled.2, 200L,
+    ).unwrap() is
+    @workflow.GoalCancellationPersistenceResult::GoalCancellationPersisted(_)
+  let success_rejected = advance_native_goal_finalization_with_adapters(
       canceled.0,
       canceled.2,
       canceled.4,
-    )
-    is Err(_),
-  )
+    ) is Err(_)
   let canceling_record = @workflow.load_goal_execution_record(
       canceled_repository,
       adapters,
@@ -560,24 +560,42 @@ async test "real exec integration: final PR readiness and terminal decisions lin
     Ok(value) => value.record
     Err(error) => fail("cancellation completion: " + error.message())
   }
-  assert_eq(
-    canceled_record.state,
-    @workflow.GoalExecutionState::GoalExecutionCanceled,
-  )
-  assert_true(
-    (adapters.state.read_outbox)(
+  let cancellation_won_after_ready_before_success = ready_before_race &&
+    cancellation_linearized &&
+    success_rejected &&
+    canceled_record.state == @workflow.GoalExecutionState::GoalExecutionCanceled
+  assert_true(cancellation_won_after_ready_before_success)
+  let cancellation_outbox_present = (adapters.state.read_outbox)(
       canceled_repository.state_store,
       goal_execution_outbox_key(canceled.2, canceled_record.durable_version),
-    ).unwrap()
-    is Some(_),
-  )
-  assert_true(
-    (adapters.state.read_outbox)(
+    ).unwrap() is Some(_)
+  let cancellation_next_outbox_absent = (adapters.state.read_outbox)(
       canceled_repository.state_store,
       goal_execution_outbox_key(canceled.2, canceled_record.durable_version + 1),
-    ).unwrap()
-    is None,
-  )
+    ).unwrap() is None
+  let terminal_outboxes_unique = success_outbox_present &&
+    success_next_outbox_absent &&
+    cancellation_outbox_present &&
+    cancellation_next_outbox_absent
+  assert_true(terminal_outboxes_unique)
   ignore(@sys.rm_rf(canceled.0))
   ignore(@sys.rm_rf(canceled.1))
+  {
+    edit_before_response_rejected,
+    edit_after_response_did_not_retroactively_change_decision,
+    success_won_before_late_cancellation,
+    cancellation_won_after_ready_before_success,
+    terminal_outboxes_unique,
+    passed: edit_before_response_rejected &&
+    edit_after_response_did_not_retroactively_change_decision &&
+    success_won_before_late_cancellation &&
+    cancellation_won_after_ready_before_success &&
+    terminal_outboxes_unique,
+  }
+}
+
+///|
+async test "real exec integration: final PR readiness and terminal decisions linearize exactly" {
+  let report = run_native_goal_finalization_race_conformance()
+  assert_true(report.passed)
 }
