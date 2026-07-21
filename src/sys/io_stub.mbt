@@ -104,6 +104,23 @@ pub fn spawn_serve(_self_exe : String) -> Bool {
 }
 
 ///|
+pub fn spawn_goal_worker(_self_exe : String, _cwd : String) -> Int {
+  -1
+}
+
+///|
+pub(all) enum ChildProcessState {
+  ChildProcessRunning
+  ChildProcessExited(Int)
+  ChildProcessUnavailable
+} derive(Debug, Eq)
+
+///|
+pub fn child_process_state(_pid : Int) -> ChildProcessState {
+  ChildProcessUnavailable
+}
+
+///|
 pub fn wait_for_socket(_path : String, _max_tries : Int) -> Bool {
   false
 }

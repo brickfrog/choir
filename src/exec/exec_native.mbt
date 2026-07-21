@@ -465,16 +465,26 @@ pub fn native_boxlite_binary_path() -> Result[String, @types.ChoirError] {
           ),
         )
       }
-    None =>
+    None => {
+      let executable = @sys.realpath_native("/proc/self/exe")
+      if executable is Some(path) {
+        for candidate in native_boxlite_binary_candidates(path) {
+          match @sys.realpath_native(candidate) {
+            Some(value) => return Ok(value)
+            None => ()
+          }
+        }
+      }
       match resolve_executable_in_path("boxlite") {
         Some(path) => Ok(path)
         None =>
           Err(
             @types.ChoirError::transport_error(
-              "BoxLite probe executable unavailable: set CHOIR_BOXLITE_BINARY or install boxlite in PATH",
+              "BoxLite executable unavailable: install the admitted binary beside Choir, install it in PATH, or set CHOIR_BOXLITE_BINARY",
             ),
           )
       }
+    }
   }
 }
 
@@ -491,13 +501,53 @@ pub fn native_boxlite_runtime_dir() -> Result[String, @types.ChoirError] {
           ),
         )
       }
-    None =>
+    None => {
+      let executable = @sys.realpath_native("/proc/self/exe")
+      if executable is Some(path) {
+        for candidate in native_boxlite_runtime_candidates(path) {
+          match @sys.realpath_native(candidate) {
+            Some(value) => return Ok(value)
+            None => ()
+          }
+        }
+      }
       Err(
         @types.ChoirError::validation_error(
-          "CHOIR_BOXLITE_RUNTIME_DIR must select the pinned corrected runtime bundle",
+          "BoxLite runtime unavailable: install the corrected bundle beside Choir or set CHOIR_BOXLITE_RUNTIME_DIR",
         ),
       )
+    }
   }
+}
+
+///|
+fn native_boxlite_binary_candidates(executable : String) -> Array[String] {
+  let directory = native_runtime_parent(executable)
+  [directory + "/boxlite", directory + "/../libexec/choir/boxlite"]
+}
+
+///|
+fn native_boxlite_runtime_candidates(executable : String) -> Array[String] {
+  let directory = native_runtime_parent(executable)
+  [
+    directory + "/boxlite-runtime",
+    directory + "/../libexec/choir/boxlite-runtime",
+    directory + "/../share/choir/boxlite-runtime",
+  ]
+}
+
+///|
+test "BoxLite install candidates stay relative to the Choir executable" {
+  assert_eq(native_boxlite_binary_candidates("/home/user/.local/bin/choir"), [
+    "/home/user/.local/bin/boxlite", "/home/user/.local/bin/../libexec/choir/boxlite",
+  ])
+  assert_eq(
+    native_boxlite_runtime_candidates("/home/user/.local/libexec/choir/choir"),
+    [
+      "/home/user/.local/libexec/choir/boxlite-runtime", "/home/user/.local/libexec/choir/../libexec/choir/boxlite-runtime",
+      "/home/user/.local/libexec/choir/../share/choir/boxlite-runtime",
+    ],
+  )
 }
 
 ///|
@@ -2271,4 +2321,38 @@ pub async fn run_conductor_process(
     Some(dir) => @process.run(cmd.program, cmd.args[:], extra_env~, cwd=dir)
     None => @process.run(cmd.program, cmd.args[:], extra_env~)
   }
+}
+
+///|
+fn native_spawn_goal_worker(
+  command : Command,
+) -> Result[Int, @types.ChoirError] {
+  let directory = match command.workdir {
+    Some(value) => value
+    None =>
+      return Err(
+        @types.ChoirError::validation_error(
+          "Goal worker requires a project directory",
+        ),
+      )
+  }
+  let pid = @sys.spawn_goal_worker(command.program, directory)
+  if pid <= 1 {
+    Err(@types.ChoirError::transport_error("failed to start the Goal worker"))
+  } else {
+    Ok(pid)
+  }
+}
+
+///|
+pub fn spawn_native_goal_worker(
+  choir_executable : String,
+  project_dir : String,
+  spawn? : (Command) -> Result[Int, @types.ChoirError] = native_spawn_goal_worker,
+) -> Result[Int, @types.ChoirError] {
+  let command = match goal_worker_command(choir_executable, project_dir) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  spawn(command)
 }

@@ -46,14 +46,14 @@ The former known gaps (typed lifecycle triggers, typed lifecycle snapshots in ev
 
 ## Commit & PR Style
 
-Applies to every commit and PR opened by any agent (TL or leaf). No exceptions, no AI-attribution footers.
+Applies to every commit and PR opened by any agent. No exceptions, no AI-attribution footers.
 
 - **Commits:** semantic prefix (`feat:`/`fix:`/`refactor:`/`test:`/`docs:`/`chore:`), imperative subject ≤72 chars, no body unless it adds non-obvious context. Never add `Generated with` / `Co-Authored-By: Claude` / robot-emoji footers.
 - **PR title:** same semantic prefix + one-line description.
 - **PR body — scale to the change:**
-  - Trivial/single-leaf PR: 1–3 lines. Just what changed and the verify command result.
-  - Substantial PR (feature→main, multi-leaf): `## Summary` (2–4 sentences), `## What changed` (bullets), `## Verification` (commands + results). Add `## Follow-ups` only if real ones exist.
-  - Do not narrate the development process, list every leaf, or recount review history unless it materially affects the reviewer's decision.
+  - Trivial/single-Part PR: 1–3 lines. Just what changed and the verify command result.
+  - Substantial PR (feature→main, multi-Part): `## Summary` (2–4 sentences), `## What changed` (bullets), `## Verification` (commands + results). Add `## Follow-ups` only if real ones exist.
+  - Do not narrate the development process, list every Part, or recount review history unless it materially affects the reviewer's decision.
 - Never paste this guideline, tool output, or process commentary into a PR/commit that doesn't need it.
 
 ## Conductor Role

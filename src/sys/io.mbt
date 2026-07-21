@@ -110,6 +110,18 @@ extern "C" fn c_mint_local_token(out : Bytes, out_size : Int) -> Int = "choir_mi
 extern "C" fn c_spawn_serve(exe : Bytes, exe_len : Int) -> Int = "choir_spawn_serve"
 
 ///|
+#borrow(exe, cwd)
+extern "C" fn c_spawn_goal_worker(
+  exe : Bytes,
+  exe_len : Int,
+  cwd : Bytes,
+  cwd_len : Int,
+) -> Int = "choir_spawn_goal_worker"
+
+///|
+extern "C" fn c_child_process_state(pid : Int) -> Int = "choir_child_process_state"
+
+///|
 #borrow(path)
 extern "C" fn c_wait_for_socket(path : Bytes, max_tries : Int) -> Int = "choir_wait_for_socket"
 
@@ -551,6 +563,34 @@ pub fn mint_local_token() -> String? {
 pub fn spawn_serve(self_exe : String) -> Bool {
   let exe_bytes = string_to_null_terminated_bytes(self_exe)
   c_spawn_serve(exe_bytes, exe_bytes.length() - 1) == 0
+}
+
+///|
+pub fn spawn_goal_worker(self_exe : String, cwd : String) -> Int {
+  let exe_bytes = string_to_null_terminated_bytes(self_exe)
+  let cwd_bytes = string_to_null_terminated_bytes(cwd)
+  c_spawn_goal_worker(
+    exe_bytes,
+    exe_bytes.length() - 1,
+    cwd_bytes,
+    cwd_bytes.length() - 1,
+  )
+}
+
+///|
+pub(all) enum ChildProcessState {
+  ChildProcessRunning
+  ChildProcessExited(Int)
+  ChildProcessUnavailable
+} derive(Debug, Eq)
+
+///|
+pub fn child_process_state(pid : Int) -> ChildProcessState {
+  match c_child_process_state(pid) {
+    -2 => ChildProcessRunning
+    -3 => ChildProcessUnavailable
+    status => ChildProcessExited(status)
+  }
 }
 
 ///|

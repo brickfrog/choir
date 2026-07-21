@@ -76,6 +76,36 @@ pub fn conductor_launch_command(
 }
 
 ///|
+fn goal_worker_command(
+  choir_executable : String,
+  project_dir : String,
+) -> Result[Command, @types.ChoirError] {
+  if !choir_executable.has_prefix("/") || !project_dir.has_prefix("/") {
+    return Err(
+      @types.ChoirError::validation_error(
+        "Goal worker requires absolute executable and project paths",
+      ),
+    )
+  }
+  Ok({
+    program: choir_executable,
+    args: ["run-goals"],
+    workdir: Some(project_dir),
+  })
+}
+
+///|
+test "Goal worker command is bounded and executable-relative" {
+  let command = goal_worker_command("/opt/choir/choir", "/repo").unwrap()
+  assert_eq(command, Command::{
+    program: "/opt/choir/choir",
+    args: ["run-goals"],
+    workdir: Some("/repo"),
+  })
+  assert_true(goal_worker_command("choir", "/repo") is Err(_))
+}
+
+///|
 pub fn quote(s : String) -> String {
   @sys.shell_quote(s)
 }

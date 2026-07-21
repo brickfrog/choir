@@ -14,14 +14,17 @@ git submodule update --init --recursive
 RUSTFLAGS='-C link-arg=-lbz2' cargo build --release -p boxlite-shim
 ```
 
-Create a dedicated runtime directory from the official v0.9.7 runtime bundle,
-replace only `boxlite-shim` with the corrected build, and set both variables
-before starting `choird`:
+Create a dedicated runtime directory from the official v0.9.7 runtime bundle
+and replace only `boxlite-shim` with the corrected build. For the documented
+local installation, copy the admitted binary and directory beside Choir:
 
 ```sh
-export CHOIR_BOXLITE_BINARY=/absolute/path/to/boxlite-v0.9.7
-export CHOIR_BOXLITE_RUNTIME_DIR=/absolute/path/to/corrected-runtime
+install -Dm755 /absolute/path/to/boxlite-v0.9.7 ~/.local/libexec/choir/boxlite
+cp -a /absolute/path/to/corrected-runtime ~/.local/libexec/choir/boxlite-runtime
 ```
+
+Development and conformance runs may instead select them explicitly with
+`CHOIR_BOXLITE_BINARY` and `CHOIR_BOXLITE_RUNTIME_DIR`.
 
 Choir hashes the CLI and all six runtime files before booting a guest. The
 accepted identities are defined in `src/sandbox/boxlite_probe.mbt`; a missing

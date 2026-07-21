@@ -78,7 +78,17 @@ unconnected product path usable.
   and the corrected BoxLite runtime bundle before minting a Conductor
   credential or starting `choird`. Missing runtime configuration exits without
   leaving a daemon PID or socket; a disposable live probe also confirms that a
-  complete runtime still opens the Codex Conductor and stops cleanly.
+  complete runtime still opens the Codex Conductor and stops cleanly. The
+  installed executable now also resolves an adjacent admitted `boxlite`
+  executable and `boxlite-runtime` bundle, so the documented installation is
+  self-contained and does not require runtime environment exports.
+- Goal execution now runs in one supervised child process instead of blocking
+  the daemon's control socket. A live installed-layout probe submitted a real
+  Claude-Conductor Goal with a Codex Part, queried its durable status while the
+  Take was running, killed only the Goal worker, and observed the daemon restart
+  it while preserving byte-identical Goal status. The deliberately malformed
+  disposable task then failed verification without integration, confirming
+  that the responsive control path does not bypass passive receipt gates.
 - Sealed Moon verification now stages the offline registry into a private
   writable Moon home and maps `.mooncakes` to scratch while the candidate tree
   remains read-only. Choir removes that generated cache link before every

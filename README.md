@@ -29,20 +29,21 @@ GitHub CLI is required only when Choir should publish the final pull request.
 No separately metered model credential is required or supported by the default
 execution profiles.
 
-Select the admitted BoxLite installation before starting Choir:
-
-```bash
-export CHOIR_BOXLITE_BINARY=/absolute/path/to/boxlite
-export CHOIR_BOXLITE_RUNTIME_DIR=/absolute/path/to/corrected-runtime
-```
-
 ```bash
 moon build --target native --release
 install -Dm755 _build/native/release/build/src/bin/choir/choir.exe ~/.local/libexec/choir/choir
 install -Dm644 scripts/choir_sandbox_mcp.mjs scripts/choir_boxlite_owner.mjs -t ~/.local/libexec/choir
+install -Dm755 /absolute/path/to/boxlite-v0.9.7 ~/.local/libexec/choir/boxlite
+cp -a /absolute/path/to/corrected-runtime ~/.local/libexec/choir/boxlite-runtime
 ln -sfn ../libexec/choir/choir ~/.local/bin/choir
 choir init
 ```
+
+This layout is self-contained: Choir resolves the admitted BoxLite executable,
+runtime bundle, and trusted runtime programs relative to its own executable.
+`CHOIR_BOXLITE_BINARY`, `CHOIR_BOXLITE_RUNTIME_DIR`, and
+`CHOIR_RUNTIME_ASSET_DIR` remain explicit development overrides; they are not
+required for an installed build.
 
 For an unpackaged development build, set `CHOIR_RUNTIME_ASSET_DIR` to the
 absolute `scripts` directory before starting Choir. Choir never loads these

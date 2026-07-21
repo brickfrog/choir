@@ -3,6 +3,7 @@ priv struct ConductorServerState {
   config : @types.Config
   run_id : String
   mut conductor_token : String?
+  mut goal_worker_pid : Int?
 }
 
 ///|
@@ -11,6 +12,7 @@ fn ConductorServerState::new(config : @types.Config) -> ConductorServerState {
     config,
     run_id: "serve-" + @sys.get_pid().to_string(),
     conductor_token: None,
+    goal_worker_pid: None,
   }
 }
 
@@ -452,6 +454,88 @@ async fn conductor_goal_loop(project_dir : String) -> Unit {
 }
 
 ///|
+fn conductor_start_goal_worker(
+  state : ConductorServerState,
+  executable : String,
+) -> Result[Int, @types.ChoirError] {
+  let pid = match
+    @exec.spawn_native_goal_worker(executable, state.config.project_dir) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  state.goal_worker_pid = Some(pid)
+  Ok(pid)
+}
+
+///|
+async fn conductor_supervise_goal_worker(
+  state : ConductorServerState,
+  executable : String,
+) -> Unit {
+  for ;; {
+    match state.goal_worker_pid {
+      Some(pid) =>
+        match @sys.child_process_state(pid) {
+          @sys.ChildProcessState::ChildProcessRunning => ()
+          @sys.ChildProcessState::ChildProcessExited(status) => {
+            @moontrace.error("Goal worker exited", fields=[
+              @moontrace.field("pid", pid),
+              @moontrace.field("status", status),
+            ])
+            state.goal_worker_pid = None
+          }
+          @sys.ChildProcessState::ChildProcessUnavailable => {
+            @moontrace.error("Goal worker became unavailable", fields=[
+              @moontrace.field("pid", pid),
+            ])
+            state.goal_worker_pid = None
+          }
+        }
+      None =>
+        match conductor_start_goal_worker(state, executable) {
+          Ok(pid) =>
+            @moontrace.info("Goal worker restarted", fields=[
+              @moontrace.field("pid", pid),
+            ])
+          Err(error) =>
+            @moontrace.error("failed to restart Goal worker", fields=[
+              @moontrace.field("error", error.message()),
+            ])
+        }
+    }
+    @async.sleep(1000)
+  }
+}
+
+///|
+fn goal_worker_run() -> Unit {
+  let config_content = @sys.read_file(".choir/config.toml")
+  let local_content = @sys.read_file(".choir/config.local.toml")
+  let config = match
+    @config.parse_config(config_content, local_content=Some(local_content)) {
+    Ok(value) => value
+    Err(error) => {
+      @sys.write_stderr("choir run-goals: " + error.message() + "\n")
+      @sys.exit(1)
+      return
+    }
+  }
+  ignore(@sys.set_parent_death_signal_term())
+  @moontrace.set_global_field("service", "choir-goals".to_json())
+  @moontrace.set_global_field(
+    "run_id",
+    ("run-goals-" + @sys.get_pid().to_string()).to_json(),
+  )
+  let log_path = config.project_dir + "/.choir/logs/serve.log"
+  @moontrace.set_subscriber(fn(event) {
+    let rendered = @exec.strip_terminal_responses(event.format(color=false))
+    ignore(@sys.append_file_sync(log_path, rendered + "\n"))
+  })
+  @moontrace.set_min_level(@moontrace.Level::Debug)
+  @async.run_async_main(async fn() { conductor_goal_loop(config.project_dir) })
+}
+
+///|
 fn serve_run() -> Unit {
   let config_content = @sys.read_file(".choir/config.toml")
   let local_content = @sys.read_file(".choir/config.local.toml")
@@ -481,9 +565,32 @@ fn serve_run() -> Unit {
     ignore(@sys.append_file_sync(log_path, rendered + "\n"))
   })
   @moontrace.set_min_level(@moontrace.Level::Debug)
+  let executable = match @sys.realpath_native("/proc/self/exe") {
+    Some(value) => value
+    None => {
+      @moontrace.error("failed to resolve the Choir executable")
+      @sys.exit(1)
+      return
+    }
+  }
+  match conductor_start_goal_worker(state, executable) {
+    Ok(pid) =>
+      @moontrace.info("Goal worker started", fields=[
+        @moontrace.field("pid", pid),
+      ])
+    Err(error) => {
+      @moontrace.error("failed to start Goal worker", fields=[
+        @moontrace.field("error", error.message()),
+      ])
+      @sys.exit(1)
+      return
+    }
+  }
   @async.run_async_main(async fn() {
     @async.with_task_group(async fn(root) {
-      root.spawn_bg(async fn() { conductor_goal_loop(config.project_dir) })
+      root.spawn_bg(async fn() {
+        conductor_supervise_goal_worker(state, executable)
+      })
       conductor_serve_uds(state, root)
     })
   })

@@ -36,13 +36,12 @@ request that is still active.
 5. If selection, intended behavior, mutation ownership, or verification remains materially ambiguous, ask the user one concise question before submission.
 6. Call `goal_submit` exactly once with a JSON object containing:
    - unique `proposal_id` and `goal_id`;
-   - fully qualified `base_ref` and `integration_target_ref` for the current
-     branch, such as `refs/heads/main` rather than `main`;
    - `maximum_parallel_parts`;
-   - `parts`, each with the exact existing Bead ID as `part_id`, `instruction`,
-     `provider`, exactly one mutation form (`exact_paths`/`path_trees` or
-     `repository_wide`), `verify_args`, and optional `verify_timeout_ms`. Do not
-     prefix, rewrite, or invent a Part ID.
+   - `parts`, each with `part_id`, `instruction`, `provider`, exactly one
+     mutation form (`exact_paths`/`path_trees` or `repository_wide`),
+     `verify_args`, and optional `verify_timeout_ms`.
+   Choir captures the current branch and commit itself. Never guess or submit
+   Git refs.
 7. Report Choir's accepted Part IDs and every typed rejection. Never work around rejection by spawning workers or producing missing evidence yourself. Revise and resubmit only after the user resolves a semantic rejection or the source state genuinely changes.
 8. Retain the returned `goal_id`. Use `goal_status` with that ID whenever the user asks what survived, what is running, what is blocked, or what completed. Use `goal_steer` for scheduling-policy changes, `goal_attach` for durable Take events, and `goal_answer` only for the exact active request; never encode steering by resubmitting the accepted selection.
 

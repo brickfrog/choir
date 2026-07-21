@@ -1067,6 +1067,45 @@ int choir_spawn_serve(const char* exe, int exe_len) {
     return 0;
 }
 
+int choir_spawn_goal_worker(const char* exe, int exe_len, const char* cwd, int cwd_len) {
+    (void)exe_len;
+    (void)cwd_len;
+    pid_t pid = fork();
+    if (pid < 0) {
+        return -1;
+    }
+    if (pid == 0) {
+        if (chdir(cwd) != 0) {
+            _exit(127);
+        }
+        char* argv[] = { (char*)exe, "run-goals", NULL };
+        execvp(exe, argv);
+        _exit(127);
+    }
+    return (int)pid;
+}
+
+int choir_child_process_state(int pid) {
+    if (pid <= 1) {
+        return -3;
+    }
+    int status = 0;
+    pid_t result = waitpid((pid_t)pid, &status, WNOHANG);
+    if (result == 0) {
+        return -2;
+    }
+    if (result < 0) {
+        return -3;
+    }
+    if (WIFEXITED(status)) {
+        return WEXITSTATUS(status);
+    }
+    if (WIFSIGNALED(status)) {
+        return 128 + WTERMSIG(status);
+    }
+    return -3;
+}
+
 static int choir_wait_for_uds_ready(const char* path) {
     struct sockaddr_un addr;
     size_t path_len = strlen(path);
