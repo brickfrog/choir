@@ -202,6 +202,84 @@ fn native_claude_environment(
 }
 
 ///|
+fn native_claude_pid_witness_path(sterile_root : String) -> String {
+  sterile_root + "/provider.pid"
+}
+
+///|
+fn write_native_claude_pid_witness(
+  sterile_root : String,
+  pid : Int,
+) -> Result[Unit, @types.ChoirError] {
+  if pid <= 1 ||
+    !@sys.write_file_sync(
+      native_claude_pid_witness_path(sterile_root),
+      pid.to_string() + "\n",
+    ) {
+    Err(native_claude_driver_error("provider PID witness write failed"))
+  } else {
+    Ok(())
+  }
+}
+
+///|
+fn remove_native_claude_pid_witness(
+  sterile_root : String,
+) -> Result[Unit, @types.ChoirError] {
+  let path = native_claude_pid_witness_path(sterile_root)
+  if !@sys.path_entry_exists(path) || @sys.delete_file_sync(path) {
+    Ok(())
+  } else {
+    Err(native_claude_driver_error("provider PID witness cleanup failed"))
+  }
+}
+
+///|
+pub fn reconcile_native_claude_process_witness(
+  sterile_root : String,
+) -> Result[Bool, @types.ChoirError] {
+  if !sterile_root.has_prefix("/") ||
+    native_provider_expected_owner_socket_root(sterile_root) is None {
+    return Err(
+      @types.ChoirError::validation_error(
+        "Claude process witness root is invalid",
+      ),
+    )
+  }
+  let path = native_claude_pid_witness_path(sterile_root)
+  if !@sys.path_entry_exists(path) {
+    return Ok(false)
+  }
+  let pid = @string.parse_int(@sys.read_file(path).trim()) catch {
+    _ =>
+      return Err(
+        native_claude_driver_error("provider PID witness is malformed"),
+      )
+  }
+  if pid <= 1 {
+    return Err(native_claude_driver_error("provider PID witness is invalid"))
+  }
+  if @sys.pgid_has_non_zombie_process(pid) {
+    let cmdline = @sys.read_file("/proc/" + pid.to_string() + "/cmdline")
+    if !cmdline.contains("/usr/bin/bwrap") || !cmdline.contains(sterile_root) {
+      return Err(
+        @types.ChoirError::policy_blocked(
+          "Claude PID witness does not own the expected host boundary",
+        ),
+      )
+    }
+    @sys.kill_pgid_sequence_best_effort(pid)
+    if @sys.pgid_has_non_zombie_process(pid) {
+      return Err(native_claude_driver_error("lost provider process survived"))
+    }
+  }
+  match remove_native_claude_pid_witness(sterile_root) {
+    Ok(_) => Ok(true)
+    Err(error) => Err(error)
+  }
+}
+
+///|
 test "native Claude Take environment is an exact allowlist" {
   let environment = native_claude_environment("/provider-home", "/sterile-take")
   assert_eq(environment.length(), 5)
@@ -369,8 +447,15 @@ pub async fn run_native_claude_take(
       config.sterile_root,
       config.timeout_ms,
       cancellation_requested,
+      started=fn(pid) {
+        write_native_claude_pid_witness(config.sterile_root, pid)
+      },
     ) {
     Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  match remove_native_claude_pid_witness(config.sterile_root) {
+    Ok(_) => ()
     Err(error) => return Err(error)
   }
   let (exit_code, data) = match collected {

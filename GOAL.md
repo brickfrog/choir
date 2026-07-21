@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-21T15:20:51-05:00
+Implementation snapshot updated through: 2026-07-21T15:59:00-05:00
 
 ## Charter Semantics and Readiness
 
@@ -278,7 +278,7 @@ unconnected product path usable.
   until every release or external conflict has a durable disposition. A local
   pinned-client probe confirmed `open/unassigned` →
   `in_progress/choir:goal-proof` → `open/unassigned` through the exact
-  production argument shapes. The completed seam passes all 373 native tests,
+  production argument shapes. The completed seam passes all 374 native tests,
   all 37 hermetic conformance cases, the six sandbox MCP tests, lint, and the
   formatter check.
 - The internal UDS request no longer carries a caller-supplied role. Conductor
@@ -912,7 +912,13 @@ unconnected product path usable.
   inside that boundary with twelve effect receipts and exactly one receipt at
   every passive gate. A separate live cutoff interrupted the Claude process
   group and persisted an uncertain implementation effect, interrupted Take,
-  recovery-uncertain session, and no later gate receipt.
+  recovery-uncertain session, and no later gate receipt. Claude dispatches now
+  persist an exact PID witness beneath the sterile Take root. A live parent-loss
+  oracle killed only the owning worker during a delayed real tool call, proved
+  the Bubblewrap group died with it, reconciled and removed the surviving
+  witness, and routed the nonresumable dispatch to the existing durable
+  provider-process-lost disposition instead of waiting forever for evidence
+  that Claude cannot supply.
 - Goal cancellation now has a durable, replay-safe cutoff and a Conductor-only
   `goal_cancel` tool plus `choir goal cancel` CLI path. The runner prioritizes
   canceling Goals, a passive authorization check prevents Parts from planning
@@ -4396,12 +4402,17 @@ or integration evidence. The exact commands were:
 ```text
 moon run --target native src/bin/choir_conformance -- e2e --fixture native-part-lifecycle
 moon run --target native src/bin/choir_conformance -- e2e --fixture native-claude-cancellation
+moon run --target native --release src/bin/choir_conformance -- harness --surface claude-cli --profile subscription --driver-parent-loss-live
 ```
 
 This closes the production mutation boundary and live cancellation gap for the
-pinned Claude Take. The surface remains `Candidate` until its remaining
-host-surface rows and nonresumable daemon-loss disposition have executable
-evidence; a successful lifecycle is not silently promoted to broader support.
+pinned Claude Take. The parent-loss command additionally proves the
+nonresumable daemon-loss disposition: a real delayed provider process dies with
+its worker, its exact PID witness reconciles once, and workflow recovery maps
+the lost dispatch to a durable uncertain Take rather than redispatching it or
+waiting indefinitely. The surface remains `Candidate` until its remaining
+host-surface rows have executable evidence; these successful lifecycle and
+recovery probes are not silently promoted to broader support.
 
 #### Post-snapshot Codex probe amendment
 

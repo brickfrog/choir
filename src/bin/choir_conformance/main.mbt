@@ -465,6 +465,198 @@ async fn run_claude_live_startup() -> Int {
 }
 
 ///|
+async fn run_claude_parent_loss_child(root : String) -> Int {
+  let sterile_root = root + "/claude/session-parent-loss"
+  let tool_started = sterile_root + "/tool-started"
+  if !root.has_prefix("/tmp/choir-conformance-claude-parent-loss-") ||
+    !@sys.create_dir_all(sterile_root + "/tmp") {
+    return 1
+  }
+  let (mcp_command, mcp_args) = match
+    probe_mcp_launch(delay_ms=30000, tool_start_canary_path=tool_started) {
+    Ok(value) => value
+    Err(_) => return 1
+  }
+  let allowed_tools = ["mcp__choir_probe__probe"]
+  let planned : @control.HarnessSession = {
+    id: @control.HarnessSessionId("claude-parent-loss-session"),
+    take_id: @control.TakeId("claude-parent-loss-take"),
+    sandbox_generation_id: @control.SandboxGenerationId(
+      "claude-parent-loss-sandbox",
+    ),
+    surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+    effective_surface_manifest_digest: @harness.expected_claude_take_surface_manifest_digest(
+      allowed_tools, "choir_probe",
+    ),
+    cursor_class: @control.HarnessCursorClass::HarnessCursorNotResumable,
+    provider_cursor: None,
+    last_choir_sequence: @control.EventSequence(0L),
+    open_tool_execution_ids: [],
+    lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+  }
+  let started = match @harness.start_claude_harness_session(planned) {
+    Ok(value) => value
+    Err(_) => return 1
+  }
+  let clock = @ref.new(100L)
+  let result = @exec.run_native_claude_take(
+    {
+      sterile_root,
+      mcp_executable: mcp_command,
+      mcp_arguments: mcp_args,
+      boxlite_owner_socket_root: None,
+      mcp_server_name: "choir_probe",
+      allowed_tools,
+      timeout_ms: 120000,
+    },
+    started,
+    @harness.ClaudeTakeRole::ClaudeImplementationTake,
+    "Call the probe tool exactly once, wait for its result, then complete.",
+    fn() {
+      clock.val = clock.val + 1L
+      clock.val
+    },
+  )
+  if result is Ok(_) {
+    0
+  } else {
+    1
+  }
+}
+
+///|
+async fn run_claude_parent_loss_live() -> Int {
+  let root = "/tmp/choir-conformance-claude-parent-loss-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(root))
+  let sterile_root = root + "/claude/session-parent-loss"
+  let tool_started = sterile_root + "/tool-started"
+  let witness = sterile_root + "/provider.pid"
+  if !@sys.create_dir_all(root) {
+    return 1
+  }
+  let probe_script = match @sys.realpath_native("scripts/choir_probe_mcp.mjs") {
+    Some(value) => value
+    None => return 1
+  }
+  let script_suffix = "/scripts/choir_probe_mcp.mjs"
+  if !probe_script.has_suffix(script_suffix) {
+    return 1
+  }
+  let project_dir = probe_script[:probe_script.length() - script_suffix.length()].to_owned()
+  let executable = match
+    @sys.realpath_native(
+      project_dir +
+      "/_build/native/release/build/src/bin/choir_conformance/choir_conformance.exe",
+    ) {
+    Some(value) => value
+    None => return 1
+  }
+  let child_log = root + "/child.log"
+  if !@sys.write_file_sync(child_log, "") {
+    return 1
+  }
+  let sink = @process.redirect_to_file(child_log) catch { _ => return 1 }
+  let child = @process.spawn_orphan(
+    executable,
+    [
+      "harness", "--surface", "claude-cli", "--profile", "subscription", "--driver-parent-loss-child",
+      root,
+    ],
+    stdout=sink,
+    stderr=sink,
+    cwd=project_dir,
+  ) catch {
+    _ => {
+      @sys.write_stderr("failed to spawn Claude parent-loss child\n")
+      return 1
+    }
+  }
+  let mut ready = false
+  for attempt = 0; attempt < 600; attempt = attempt + 1 {
+    if @sys.path_entry_exists(tool_started) && @sys.path_entry_exists(witness) {
+      ready = true
+      break
+    }
+    if !@sys.pid_is_alive(child) {
+      break
+    }
+    @async.sleep(100)
+  }
+  if !ready {
+    @sys.write_stderr(
+      "Claude parent-loss child failed before its delayed tool call: child_alive=" +
+      @sys.pid_is_alive(child).to_string() +
+      " tool_started=" +
+      @sys.path_entry_exists(tool_started).to_string() +
+      " witness=" +
+      @sys.path_entry_exists(witness).to_string() +
+      " child_log=" +
+      @sys.read_file(child_log) +
+      "\n",
+    )
+    @sys.kill_server_tree_sequence_best_effort(child)
+    ignore(@sys.wait_pid_reap_for_test(child))
+    ignore(@sys.rm_rf(root))
+    return 1
+  }
+  let provider_pid = @string.parse_int(@sys.read_file(witness).trim()) catch {
+    _ => 0
+  }
+  let provider_started = provider_pid > 1 &&
+    @sys.pgid_has_non_zombie_process(provider_pid)
+  @sys.kill_server_pid_sequence_best_effort(child)
+  ignore(@sys.wait_pid_reap_for_test(child))
+  for attempt = 0; attempt < 100; attempt = attempt + 1 {
+    if !@sys.pgid_has_non_zombie_process(provider_pid) {
+      break
+    }
+    @async.sleep(50)
+  }
+  let provider_stopped = provider_pid > 1 &&
+    !@sys.pgid_has_non_zombie_process(provider_pid)
+  let reconciled = match
+    @exec.reconcile_native_claude_process_witness(sterile_root) {
+    Ok(value) => value
+    Err(error) => {
+      @sys.write_stderr(error.message() + "\n")
+      false
+    }
+  }
+  let witness_removed = !@sys.path_entry_exists(witness)
+  let evidence = @storage.artifact_digest(
+    @utf8.encode(
+      [provider_started, provider_stopped, reconciled, witness_removed]
+      .to_json()
+      .stringify(indent=0),
+    ),
+  )
+  let passed = provider_started &&
+    provider_stopped &&
+    reconciled &&
+    witness_removed
+  @sys.write_stdout(
+    {
+      "passed": passed.to_json(),
+      "provider_started": provider_started.to_json(),
+      "provider_stopped_with_parent": provider_stopped.to_json(),
+      "witness_reconciled": reconciled.to_json(),
+      "witness_removed": witness_removed.to_json(),
+      "evidence_digest": evidence.to_json(),
+    }
+    .to_json()
+    .stringify(indent=2) +
+    "\n",
+  )
+  ignore(@sys.rm_rf(root))
+  if passed {
+    0
+  } else {
+    1
+  }
+}
+
+///|
 async fn run_codex_live_startup() -> Int {
   let root = "/tmp/choir-conformance-codex-live-" + @sys.get_pid().to_string()
   if !@sys.create_dir_all(root + "/tmp") {
@@ -1699,6 +1891,25 @@ fn run_harness_command(args : Array[String]) -> Unit {
     args[5] == "subscription" &&
     args[6] == "--live" {
     @async.run_async_main(async fn() { @sys.exit(run_claude_live_startup()) })
+  } else if args.length() == 7 &&
+    args[2] == "--surface" &&
+    args[3] == "claude-cli" &&
+    args[4] == "--profile" &&
+    args[5] == "subscription" &&
+    args[6] == "--driver-parent-loss-live" {
+    @async.run_async_main(async fn() {
+      @sys.exit(run_claude_parent_loss_live())
+    })
+  } else if args.length() == 8 &&
+    args[2] == "--surface" &&
+    args[3] == "claude-cli" &&
+    args[4] == "--profile" &&
+    args[5] == "subscription" &&
+    args[6] == "--driver-parent-loss-child" &&
+    args[7].has_prefix("/tmp/choir-conformance-claude-parent-loss-") {
+    @async.run_async_main(async fn() {
+      @sys.exit(run_claude_parent_loss_child(args[7]))
+    })
   } else if args.length() == 7 &&
     args[2] == "--surface" &&
     args[3] == "codex-cli" &&
@@ -3140,6 +3351,8 @@ fn usage() -> Unit {
     "--profile subscription --synthetic-startup\n" +
     "       choir_conformance harness --surface claude-cli " +
     "--profile subscription --live\n" +
+    "       choir_conformance harness --surface claude-cli " +
+    "--profile subscription --driver-parent-loss-live\n" +
     "       choir_conformance harness --surface codex-cli " +
     "--profile subscription --live\n" +
     "       choir_conformance harness --surface codex-cli " +

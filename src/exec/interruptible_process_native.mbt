@@ -98,6 +98,7 @@ pub async fn collect_interruptible_process(
   cwd : String,
   timeout_ms : Int,
   cancellation_requested : () -> Bool,
+  started? : (Int) -> Result[Unit, @types.ChoirError] = fn(_) { Ok(()) },
 ) -> Result[NativeInterruptibleProcessOutcome, @types.ChoirError] {
   if !program.has_prefix("/") ||
     !cwd.has_prefix("/") ||
@@ -138,6 +139,15 @@ pub async fn collect_interruptible_process(
           "interruptible provider process failed to start",
         ),
       )
+    }
+  }
+  match started(pid) {
+    Ok(_) => ()
+    Err(error) => {
+      @sys.kill_pgid_sequence_best_effort(pid)
+      ignore(@process.wait_pid(pid) catch { _ => -1 })
+      reader.close()
+      return Err(error)
     }
   }
   @async.with_task_group(async fn(group) {

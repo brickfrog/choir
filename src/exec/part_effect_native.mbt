@@ -1243,6 +1243,40 @@ async fn execute_native_part_effect(
 }
 
 ///|
+fn native_provider_dispatch_recovery(
+  surface : @control.ProviderSurfaceId,
+) -> Result[@workflow.PartEffectRecovery, @types.ChoirError] {
+  match surface {
+    @control.ProviderSurfaceId::CodexSubscriptionCli =>
+      Ok(@workflow.PartEffectRecovery::ExactEffectRetryAuthorized)
+    @control.ProviderSurfaceId::ClaudeSubscriptionCli =>
+      Err(
+        @types.ChoirError::provider_process_lost(
+          "nonresumable Claude Take lost its owning Goal worker",
+        ),
+      )
+  }
+}
+
+///|
+test "provider dispatch recovery never retries a lost Claude Take" {
+  assert_true(
+    native_provider_dispatch_recovery(
+      @control.ProviderSurfaceId::CodexSubscriptionCli,
+    )
+    is Ok(@workflow.PartEffectRecovery::ExactEffectRetryAuthorized),
+  )
+  let claude = native_provider_dispatch_recovery(
+    @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+  )
+  assert_true(claude is Err(_))
+  match claude {
+    Err(error) => assert_true(error.is_provider_process_lost())
+    Ok(_) => fail("lost Claude Take was retried")
+  }
+}
+
+///|
 async fn reconcile_unwitnessed_native_part_effect(
   runtime : NativePartEffectRuntime,
   snapshot : @workflow.PartWorkflowSnapshot,
@@ -1295,11 +1329,17 @@ async fn reconcile_unwitnessed_native_part_effect(
         Err(error) => return Err(error)
       }
       match session.surface {
-        @control.ProviderSurfaceId::CodexSubscriptionCli =>
-          Ok(@workflow.PartEffectRecovery::ExactEffectRetryAuthorized)
         @control.ProviderSurfaceId::ClaudeSubscriptionCli =>
-          Ok(@workflow.PartEffectRecovery::EffectWitnessUnavailable)
+          match
+            reconcile_native_claude_process_witness(
+              runtime.config.claude_root + session.id.0,
+            ) {
+            Ok(_) => ()
+            Err(error) => return Err(error)
+          }
+        @control.ProviderSurfaceId::CodexSubscriptionCli => ()
       }
+      native_provider_dispatch_recovery(session.surface)
     }
   }
 }

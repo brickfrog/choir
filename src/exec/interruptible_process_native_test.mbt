@@ -5,6 +5,7 @@ async test "interruptible provider runner kills its owned process group" {
   }
   stdin_write.close()
   let probes = @ref.new(0)
+  let witnessed_pid = @ref.new(0)
   let outcome = match
     collect_interruptible_process(
       "/usr/bin/sleep",
@@ -17,6 +18,10 @@ async test "interruptible provider runner kills its owned process group" {
         probes.val = probes.val + 1
         probes.val >= 2
       },
+      started=fn(pid) {
+        witnessed_pid.val = pid
+        Ok(())
+      },
     ) {
     Ok(value) => value
     Err(error) => fail(error.message())
@@ -25,4 +30,6 @@ async test "interruptible provider runner kills its owned process group" {
     outcome is NativeInterruptibleProcessOutcome::NativeProcessInterrupted(_),
   )
   assert_true(probes.val >= 2)
+  assert_true(witnessed_pid.val > 1)
+  assert_false(@sys.pgid_has_non_zombie_process(witnessed_pid.val))
 }
