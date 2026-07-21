@@ -1,9 +1,7 @@
-import { execFile } from "node:child_process";
+import net from "node:net";
 import readline from "node:readline";
 import { pathToFileURL } from "node:url";
-import { promisify } from "node:util";
 
-const execFileAsync = promisify(execFile);
 const MAX_TEXT_BYTES = 1024 * 1024;
 const MAX_WRITE_BYTES = 256 * 1024;
 const MAX_ARG_COUNT = 96;
@@ -24,11 +22,8 @@ export function parseLaunchArgs(argv) {
     values.set(key, value);
   }
   const required = [
-    "--binary",
-    "--runtime-dir",
-    "--url",
-    "--api-key",
-    "--home",
+    "--owner-socket",
+    "--owner-token",
     "--box",
     "--access",
   ];
@@ -36,12 +31,11 @@ export function parseLaunchArgs(argv) {
   for (const key of required) {
     if (!values.get(key)) fail(`missing ${key}`);
   }
-  const absolute = ["--binary", "--runtime-dir", "--home"];
-  for (const key of absolute) {
-    if (!values.get(key).startsWith("/")) fail(`${key} must be absolute`);
+  if (!values.get("--owner-socket").startsWith("/")) {
+    fail("owner socket must be absolute");
   }
-  if (!/^http:\/\/127\.0\.0\.1:[0-9]{2,5}$/.test(values.get("--url"))) {
-    fail("server URL is not loopback HTTP");
+  if (!/^[a-f0-9]{64}$/.test(values.get("--owner-token"))) {
+    fail("owner capability is invalid");
   }
   if (!/^[a-zA-Z0-9-]{1,180}$/.test(values.get("--box"))) {
     fail("invalid box identity");
@@ -50,11 +44,8 @@ export function parseLaunchArgs(argv) {
     fail("invalid workspace access");
   }
   return Object.freeze({
-    binary: values.get("--binary"),
-    runtimeDir: values.get("--runtime-dir"),
-    url: values.get("--url"),
-    apiKey: values.get("--api-key"),
-    home: values.get("--home"),
+    ownerSocket: values.get("--owner-socket"),
+    ownerToken: values.get("--owner-token"),
     box: values.get("--box"),
     access: values.get("--access"),
   });
@@ -102,6 +93,53 @@ export function validateArgv(value) {
   return value;
 }
 
+function ownerExec(config, argv, cwd, timeoutMs, signal) {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection(config.ownerSocket);
+    let output = "";
+    const abort = () => socket.destroy(new Error("execution interrupted"));
+    signal.addEventListener("abort", abort, { once: true });
+    socket.setTimeout(timeoutMs + 5000, () => socket.destroy(new Error("owner timed out")));
+    socket.on("connect", () => {
+      socket.write(`${JSON.stringify({
+        operation: "exec",
+        token: config.ownerToken,
+        box: config.box,
+        access: config.access,
+        cwd,
+        timeout_ms: timeoutMs,
+        argv,
+      })}\n`);
+    });
+    socket.on("data", (chunk) => {
+      output += chunk.toString("utf8");
+      if (Buffer.byteLength(output) > MAX_TEXT_BYTES) {
+        socket.destroy(new Error("owner response exceeded its bound"));
+      }
+    });
+    socket.on("error", reject);
+    socket.on("end", () => {
+      signal.removeEventListener("abort", abort);
+      try {
+        const response = JSON.parse(output.trim());
+        if (!response?.ok) fail(response?.error ?? "owner rejected execution");
+        if (!Number.isInteger(response.exit_code) ||
+          typeof response.stdout !== "string" ||
+          typeof response.stderr !== "string") {
+          fail("owner response is malformed");
+        }
+        resolve({
+          exitCode: response.exit_code,
+          stdout: response.stdout,
+          stderr: response.stderr,
+        });
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
+}
+
 class SandboxClient {
   constructor(config) {
     this.config = config;
@@ -123,61 +161,23 @@ class SandboxClient {
     const operation = async () => {
       if (this.closed) fail("bridge is closed");
       const command = validateArgv(argv);
-      const guestCommand = this.config.access === "read-only-subject"
-        ? [
-            "/usr/bin/setpriv",
-            "--reuid=65534",
-            "--regid=65534",
-            "--clear-groups",
-            "--",
-            ...command,
-          ]
-        : command;
       const relativeCwd = relativePath(cwd, true);
       if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 600000) {
         fail("timeout is outside the admitted range");
       }
-      const args = [
-        "--home",
-        this.config.home,
-        "--url",
-        this.config.url,
-        "exec",
-        "--workdir",
-        guestPath(relativeCwd, true),
-        this.config.box,
-        "--",
-        ...guestCommand,
-      ];
       const controller = new AbortController();
       this.controllers.add(controller);
       try {
-        const result = await execFileAsync(this.config.binary, args, {
-          cwd: this.config.home,
-          env: {
-            HOME: this.config.home,
-            PATH: "/usr/bin:/bin",
-            BOXLITE_API_KEY: this.config.apiKey,
-            BOXLITE_RUNTIME_DIR: this.config.runtimeDir,
-            LC_ALL: "C",
-          },
-          timeout: timeoutMs,
-          maxBuffer: MAX_TEXT_BYTES,
-          signal: controller.signal,
-          windowsHide: true,
-        });
-        return { exitCode: 0, stdout: result.stdout, stderr: result.stderr };
+        return await ownerExec(
+          this.config,
+          command,
+          relativeCwd,
+          timeoutMs,
+          controller.signal,
+        );
       } catch (error) {
-        if (error?.name === "AbortError") fail("execution interrupted");
-        if (error?.killed) fail("execution timed out");
-        if (typeof error?.code === "number") {
-          return {
-            exitCode: error.code,
-            stdout: error.stdout ?? "",
-            stderr: error.stderr ?? "",
-          };
-        }
-        fail("BoxLite execution failed");
+        if (controller.signal.aborted) fail("execution interrupted");
+        fail(error instanceof Error ? error.message : "owner execution failed");
       } finally {
         this.controllers.delete(controller);
       }
@@ -400,18 +400,24 @@ function respondError(id, message) {
   })}\n`);
 }
 
+export async function drainPendingResponses(pendingResponses, drain) {
+  await Promise.allSettled([...pendingResponses]);
+  await drain();
+}
+
 export function startSandboxMcp(argv = process.argv.slice(2)) {
   const client = new SandboxClient(parseLaunchArgs(argv));
   const visibleTools = toolsForAccess(client.config.access);
   const input = readline.createInterface({ input: process.stdin, terminal: false });
   let gracefulExitRequested = false;
+  const pendingResponses = new Set();
   input.once("close", () => {
     if (!gracefulExitRequested) {
       client.close();
       setImmediate(() => process.exit(0));
     }
   });
-  input.on("line", async (line) => {
+  input.on("line", (line) => {
     let request;
     try {
       request = JSON.parse(line);
@@ -421,34 +427,39 @@ export function startSandboxMcp(argv = process.argv.slice(2)) {
     if (request.id === undefined || request.id === null) {
       if (request.method === "notifications/exit") {
         gracefulExitRequested = true;
-        client.drain().finally(() => process.exit(0));
+        drainPendingResponses(pendingResponses, () => client.drain())
+          .finally(() => process.exit(0));
       }
       return;
     }
-    try {
-      switch (request.method) {
-        case "initialize":
-          respond(request.id, {
-            protocolVersion: "2024-11-05",
-            capabilities: { tools: {} },
-            serverInfo: { name: "choir-sandbox", version: "1" },
-          });
-          break;
-        case "tools/list":
-          respond(request.id, { tools: visibleTools });
-          break;
-        case "tools/call":
-          respond(request.id, await callTool(client, request.params?.name, request.params?.arguments ?? {}));
-          break;
-        case "ping":
-          respond(request.id, {});
-          break;
-        default:
-          respondError(request.id, "unsupported method");
+    const response = (async () => {
+      try {
+        switch (request.method) {
+          case "initialize":
+            respond(request.id, {
+              protocolVersion: "2024-11-05",
+              capabilities: { tools: {} },
+              serverInfo: { name: "choir-sandbox", version: "1" },
+            });
+            break;
+          case "tools/list":
+            respond(request.id, { tools: visibleTools });
+            break;
+          case "tools/call":
+            respond(request.id, await callTool(client, request.params?.name, request.params?.arguments ?? {}));
+            break;
+          case "ping":
+            respond(request.id, {});
+            break;
+          default:
+            respondError(request.id, "unsupported method");
+        }
+      } catch (error) {
+        respond(request.id, toolText(error instanceof Error ? error.message : "sandbox bridge failed", true));
       }
-    } catch (error) {
-      respond(request.id, toolText(error instanceof Error ? error.message : "sandbox bridge failed", true));
-    }
+    })();
+    pendingResponses.add(response);
+    response.finally(() => pendingResponses.delete(response));
   });
 }
 

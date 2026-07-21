@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-21T00:16:12-05:00
+Implementation snapshot updated through: 2026-07-21T01:42:31-05:00
 
 ## Charter Semantics and Readiness
 
@@ -379,6 +379,17 @@ unconnected product path usable.
   resolves the CLI from one validated operator override or `PATH` and requires
   an explicit absolute corrected-runtime directory; no machine-user path is
   compiled into the product.
+- Model-directed sandbox tools now reach BoxLite only through an owner-only
+  Unix socket. The runtime owner holds the loopback REST credential and admits
+  one exact, bounded guest-execution request; the capability given to an MCP
+  bridge is derived for one box and one mutable or read-only access mode. The
+  bridge receives no BoxLite binary, runtime directory, REST URL, or REST key.
+  Startup requires the exact admitted CLI and six-file runtime identities,
+  socket mode `0600`, and a live owner process; drift fails before image pull or
+  KVM execution. Owner and runtime processes are stopped during Take cleanup.
+  The stock REST surface remains a private implementation transport for
+  trusted control-plane lifecycle operations and is not exposed to a
+  Conductor, provider process, MCP bridge, or guest.
 - A restart-safe native Part workflow. It creates an isolated BoxLite sandbox,
   dispatches the typed harness session to the official Claude or Codex
   subscription CLI with only the generated sandbox MCP tools, executes an
@@ -3399,14 +3410,25 @@ capabilities remain behind the driver registry.
 
 ### Hardened runtime owner
 
-Before scale, replace the broad stock sandbox server with a narrow Unix-socket
-runtime owner or equivalent upstream surface. It validates logical roots,
-exposes only required operations, authenticates every caller, fails closed,
-and implements the chosen lifecycle/network/snapshot policy. It does not
-become a general VM service.
+Choir now places model-directed guest execution behind a narrow Unix-socket
+runtime owner. It validates an exact request schema, normalized guest working
+directory, bounded absolute argv, timeout, box identity, and access mode. Its
+capability is cryptographically scoped to that box and access mode; the socket
+is owner-only, every request is authenticated, disconnect aborts the owned
+execution, and startup and shutdown fail closed. The sandbox MCP bridge has no
+stock BoxLite credential or endpoint and cannot request clone, lifecycle,
+network, snapshot, mount, or arbitrary-host operations.
 
-Exit criterion: production Choir exposes only the narrow typed sandbox
-contract, regardless of runtime.
+Trusted control-plane lifecycle code still uses the authenticated loopback
+BoxLite server privately for prepare, clone, copy, stop, inspect, and destroy.
+That transport is contained inside the `src/exec` sandbox adapter and is not a
+product or model-facing interface. Replacing it with an upstream embedded SDK
+or extending the owner to the complete typed lifecycle port is justified only
+if it removes the private server without enlarging the exposed contract.
+
+Exit criterion: outside the trusted sandbox adapter, production Choir exposes
+only the narrow typed sandbox contract, regardless of runtime. The live
+KVM-backed Take now passes this criterion.
 
 ### Parameterized scale and mixed-workload proof
 
@@ -3714,29 +3736,24 @@ fallback reads, old-format translation, or “legacy” helpers.
 - Do not widen the first slices into a GUI, hosted service, enterprise product,
   generic plugin system, or custom VM platform.
 
-## Remaining Implementation Gates
+## Remaining Acceptance Gates
 
-These choices remain provisional and are resolved only by named evidence:
+The current local product path has selected and implemented its SQLite state
+adapter, content-addressed artifact store, pinned Claude and Codex subscription
+surfaces, static concurrency policy, BoxLite runtime, and narrow model-facing
+runtime owner. Two acceptance tasks remain:
 
-1. **State adapter:** SQLite is preferred. Before real Part execution, prove
-   the transaction, uniqueness, fencing, outbox, and fault-injection requirements
-   through a narrow injected MoonBit adapter.
-2. **Claude execution surface:** use the official subscription CLI only if
-   policy confirmation and the host-surface oracle pass; otherwise report the
-   execution provider blocked. There is no metered fallback.
-3. **Codex execution topology:** the pinned structured CLI is admitted as a
-   candidate after exact startup isolation, live driver, full BoxLite Part,
-   live process-group interruption/cancellation, and exact-turn app-server
-   recovery checks passed. It remains a candidate while the required provider
-   surface is experimental.
-4. **Sandbox runtime:** BoxLite is first. A failing runtime/security oracle
-   selects another adapter without changing scheduler contracts.
-5. **Hardened runtime owner:** choose the smallest Unix-socket owner/upstream
-   surface that meets the exact sandbox port before scale.
-6. **Artifact store:** choose a local content-addressed layout whose atomic
-   stage/adopt/retention behavior satisfies receipt and recovery tests.
-7. **Quota policy:** begin with static per-surface concurrency and typed
-   backoff. Adaptive accounting waits for trustworthy structured usage events.
+1. **External final-PR canary:** run the implemented finalization protocol
+   against one disposable real forge repository, then prove create lookup,
+   canonical receipt, readiness, terminal success, and replay without a second
+   PR. This is an explicit externally mutating canary, not an ambient test.
+2. **Required-case accounting:** map every row in the required case matrix to
+   its current command and evidence artifact, run the complete set from a clean
+   checkout, and implement any row whose evidence is missing. The 36-case
+   hermetic report, specialized fault commands, complete fifteen-row Codex
+   host-surface report, provider lifecycle commands, and live BoxLite reports
+   are constituent evidence; no one report substitutes for the complete
+   accounting.
 
 The integration algorithm, audit taxonomy, receipt validity, mutation grammar,
 event replay semantics, cancellation ordering, process authority policy, and
@@ -4373,6 +4390,20 @@ receipt; restart issued zero duplicate implementation dispatches. The
 candidate and promotion commits were
 `a5ee089287902099cd270cd7ad149eff861b7391` and
 `3d88e221df27010b993d07b7d432aba6d8cd4ae9` respectively.
+
+At `2026-07-21T01:42:31-05:00`, the admitted BoxLite identity/security command
+again passed all 18 live rows, followed by a complete KVM-backed Take through
+the new Unix-socket runtime owner. The Take proved socket mode `0600`, a
+box-and-access-scoped execution capability, absence of the BoxLite REST key,
+URL, binary, and runtime directory from the MCP launch, mutable guest-only path
+identity, read-only assurance, typed verification, bounded copy-out,
+deterministic candidate normalization, and cleanup of both owner and runtime
+process groups. The run also exposed and fixed a graceful-exit race: the MCP
+bridge now drains pending JSON-RPC responses as well as guest commands before
+exiting. A negative run using the newer local BoxLite checkout was rejected at
+the new preflight identity barrier before image pull or KVM execution; direct
+diagnosis confirmed that unadmitted runtime's shim was independently failing
+with `SIGSEGV`, while the pinned v0.9.7 corrected bundle passed.
 
 At `2026-07-21T00:16:12-05:00`, the Codex lifecycle passed again after durable
 process execution was connected to Part verification. The typed BoxLite check

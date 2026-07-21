@@ -622,6 +622,9 @@ async test "process execution state persists and recovers every start boundary" 
       },
       pid: 1,
       url: "http://127.0.0.1:32123",
+      owner_pid: 2,
+      owner_socket: root + "/owner.sock",
+      owner_token: "a".repeat(64),
     },
     git_workspace: {
       repository_root: root + "/repo",

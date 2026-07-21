@@ -12,6 +12,9 @@ pub(all) struct NativeBoxLiteServerHandle {
   config : NativeBoxLiteServerConfig
   pid : Int
   url : String
+  owner_pid : Int
+  owner_socket : String
+  owner_token : String
 } derive(Debug, Eq)
 
 ///|
@@ -151,6 +154,9 @@ test "remote BoxLite clients get deterministic isolated homes" {
     },
     pid: 1,
     url: "http://127.0.0.1:12345",
+    owner_pid: 2,
+    owner_socket: "/tmp/choir-take-client-home-test/owner.sock",
+    owner_token: "a".repeat(64),
   }
   let first = native_boxlite_remote_client_home(server, "box-a")
   assert_eq(first, native_boxlite_remote_client_home(server, "box-a"))
@@ -259,6 +265,37 @@ pub async fn start_native_boxlite_server(
   if @sys.realpath_native(config.root) != Some(config.root) {
     return Err(native_boxlite_take_error("runtime root is not canonical"))
   }
+  let executable_hash = match
+    capture_boxlite_fixed_process(
+      "/usr/bin/sha256sum",
+      [config.binary],
+      config.root,
+      boxlite_probe_environment_with_runtime(
+        config.root,
+        None,
+        Some(config.runtime_dir),
+      ),
+      10000,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let runtime_hashes = match
+    capture_boxlite_runtime_bundle_hashes(config.root, Some(config.runtime_dir)) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if executable_hash.exit_code != 0 ||
+    executable_hash.output.length() < 64 ||
+    executable_hash.output[:64].to_owned() !=
+    @sandbox.boxlite_release_executable_sha256 ||
+    !@sandbox.boxlite_runtime_bundle_matches(runtime_hashes) {
+    return Err(
+      @types.ChoirError::policy_blocked(
+        "BoxLite executable or runtime bundle is not the admitted identity",
+      ),
+    )
+  }
   let image = match
     capture_boxlite_fixed_process(
       config.binary,
@@ -314,7 +351,24 @@ pub async fn start_native_boxlite_server(
   ) catch {
     _ => return Err(native_boxlite_take_error("server failed to start"))
   }
-  let server : NativeBoxLiteServerHandle = { config, pid, url }
+  let owner_socket = config.root + "/owner.sock"
+  let owner_token = match @sys.mint_local_token() {
+    Some(value) if value.length() == 64 => value
+    _ => {
+      @sys.kill_server_pid_sequence_best_effort(pid)
+      return Err(
+        native_boxlite_take_error("runtime owner capability mint failed"),
+      )
+    }
+  }
+  let server : NativeBoxLiteServerHandle = {
+    config,
+    pid,
+    url,
+    owner_pid: 0,
+    owner_socket,
+    owner_token,
+  }
   for attempt = 0; attempt < 80; attempt = attempt + 1 {
     let ready = match
       capture_boxlite_fixed_process(
@@ -333,7 +387,77 @@ pub async fn start_native_boxlite_server(
     if ready.exit_code == 0 &&
       ready.output.contains("\"clone_enabled\":true") &&
       ready.output.contains("\"snapshots_enabled\":true") {
-      return Ok(server)
+      let node = match resolve_executable_in_path("node") {
+        Some(value) => value
+        None => {
+          @sys.kill_server_pid_sequence_best_effort(pid)
+          return Err(
+            native_boxlite_take_error("runtime owner node is unavailable"),
+          )
+        }
+      }
+      let owner_script = match
+        @sys.realpath_native("scripts/choir_boxlite_owner.mjs") {
+        Some(value) => value
+        None => {
+          @sys.kill_server_pid_sequence_best_effort(pid)
+          return Err(
+            native_boxlite_take_error("runtime owner script is unavailable"),
+          )
+        }
+      }
+      ignore(@sys.delete_file_sync(owner_socket))
+      let owner_pid = @process.spawn_orphan(
+        node,
+        [
+          owner_script,
+          "--socket",
+          owner_socket,
+          "--binary",
+          config.binary,
+          "--runtime-dir",
+          config.runtime_dir,
+          "--home",
+          config.root + "/server-home",
+          "--url",
+          url,
+        ],
+        extra_env={
+          "HOME": config.root,
+          "PATH": "/usr/bin:/bin",
+          "CHOIR_BOXLITE_OWNER_TOKEN": owner_token,
+          "CHOIR_BOXLITE_API_KEY": config.api_key,
+        },
+        inherit_env=false,
+        cwd=config.root,
+      ) catch {
+        _ => {
+          @sys.kill_server_pid_sequence_best_effort(pid)
+          return Err(native_boxlite_take_error("runtime owner failed to start"))
+        }
+      }
+      for owner_attempt = 0
+          owner_attempt < 50
+          owner_attempt = owner_attempt + 1 {
+        if @sys.path_entry_exists(owner_socket) && @sys.pid_is_alive(owner_pid) {
+          return Ok({ ..server, owner_pid, })
+        }
+        @async.sleep(20)
+      }
+      @sys.kill_server_pid_sequence_best_effort(owner_pid)
+      @sys.kill_server_pid_sequence_best_effort(pid)
+      let detail = @sys.read_file(config.root + "/server-home/owner.log")
+        .trim()
+        .to_owned()
+      return Err(
+        native_boxlite_take_error(
+          if detail == "" {
+            "runtime owner readiness timed out"
+          } else {
+            "runtime owner readiness failed: " + detail
+          },
+        ),
+      )
     }
     @async.sleep(100)
   }
@@ -343,6 +467,9 @@ pub async fn start_native_boxlite_server(
 
 ///|
 pub fn stop_native_boxlite_server(server : NativeBoxLiteServerHandle) -> Unit {
+  if server.owner_pid > 1 {
+    @sys.kill_server_pid_sequence_best_effort(server.owner_pid)
+  }
   @sys.kill_server_pid_sequence_best_effort(server.pid)
 }
 
@@ -984,14 +1111,6 @@ pub async fn clone_native_boxlite_take(
   if checked.exit_code != 0 {
     return Err(native_boxlite_take_error("Take isolation check failed"))
   }
-  let mcp_home = native_boxlite_remote_client_home(
-    prepared.server,
-    "mcp\u{00}" + box_id,
-  )
-  if !@sys.create_dir_all(mcp_home) ||
-    @sys.realpath_native(mcp_home) != Some(mcp_home) {
-    return Err(native_boxlite_take_error("MCP client home is unavailable"))
-  }
   Ok({
     prepared,
     box_id,
@@ -1095,30 +1214,31 @@ pub fn native_boxlite_take_mcp_arguments(
       ),
     )
   }
-  let client_home = native_boxlite_remote_client_home(
-    take.prepared.server,
-    "mcp\u{00}" + take.box_id,
-  )
+  let access = match take.workspace_access {
+    @sandbox.BoxLiteWorkspaceAccess::BoxLiteMutableWorkspace => "mutable"
+    @sandbox.BoxLiteWorkspaceAccess::BoxLiteReadOnlySubject =>
+      "read-only-subject"
+  }
+  let execution_token = @storage.artifact_digest(
+      @utf8.encode(
+        "choir.boxlite-exec.v1\u{00}" +
+        take.prepared.server.owner_token +
+        "\u{00}" +
+        take.box_id +
+        "\u{00}" +
+        access,
+      ),
+    ).0
   Ok([
     script,
-    "--binary",
-    take.prepared.server.config.binary,
-    "--runtime-dir",
-    take.prepared.server.config.runtime_dir,
-    "--url",
-    take.prepared.server.url,
-    "--api-key",
-    take.prepared.server.config.api_key,
-    "--home",
-    client_home,
+    "--owner-socket",
+    take.prepared.server.owner_socket,
+    "--owner-token",
+    execution_token,
     "--box",
     take.box_id,
     "--access",
-    match take.workspace_access {
-      @sandbox.BoxLiteWorkspaceAccess::BoxLiteMutableWorkspace => "mutable"
-      @sandbox.BoxLiteWorkspaceAccess::BoxLiteReadOnlySubject =>
-        "read-only-subject"
-    },
+    access,
   ])
 }
 
@@ -1607,7 +1727,26 @@ pub async fn probe_native_boxlite_path_identity(
     !output.contains(take.prepared.server.config.api_key) {
     Ok(output)
   } else {
-    Err(native_boxlite_take_error("guest path identity contract failed"))
+    Err(
+      native_boxlite_take_error(
+        "guest path identity contract failed: exit=" +
+        exit_code.to_string() +
+        " initial=" +
+        output.contains("GUEST_INITIAL_ONLY\\n").to_string() +
+        " mutated=" +
+        output.contains("GUEST_MUTATED_ONLY\\n").to_string() +
+        " host=" +
+        output.contains("HOST_ONLY").to_string() +
+        " leaked=" +
+        output.contains(take.prepared.server.config.api_key).to_string() +
+        " tool_error=" +
+        output.contains("\"isError\":true").to_string() +
+        " auth=" +
+        output.contains("authentication failed").to_string() +
+        " owner=" +
+        output.contains("BoxLite owner").to_string(),
+      ),
+    )
   }
 }
 
@@ -1715,6 +1854,9 @@ async test "native result archive is inspected through the production tar seam" 
       },
       pid: 1,
       url: "http://127.0.0.1:22000",
+      owner_pid: 2,
+      owner_socket: root + "/owner.sock",
+      owner_token: "a".repeat(64),
     },
     archive,
   ).unwrap()
@@ -1923,6 +2065,9 @@ test "native BoxLite MCP launch binds one fixed box" {
     },
     pid: 10,
     url: "http://127.0.0.1:22000",
+    owner_pid: 11,
+    owner_socket: "/tmp/choir-take-test/owner.sock",
+    owner_token: "a".repeat(64),
   }
   let prepared : NativeBoxLitePreparedEnvironment = {
     server,
@@ -1944,7 +2089,15 @@ test "native BoxLite MCP launch binds one fixed box" {
   ).unwrap()
   assert_true(args.contains("--box"))
   assert_true(args.contains("box-1"))
-  assert_true(args.contains("--api-key"))
+  assert_true(args.contains("--owner-socket"))
+  assert_true(args.contains("--owner-token"))
+  assert_true(
+    args.contains(
+      "4494355adc99b905a122f7753198715a048dfa99d69e943cfb588c691b909ed2",
+    ),
+  )
+  assert_false(args.contains("--api-key"))
+  assert_false(args.contains("--url"))
   assert_true(args.contains("--access"))
   assert_true(args.contains("mutable"))
   assert_false(args.contains("base-1"))

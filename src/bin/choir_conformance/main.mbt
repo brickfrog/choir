@@ -2260,6 +2260,41 @@ async fn exercise_boxlite_take(
     Ok(value) => value
     Err(error) => return Err(error)
   }
+  let owner_mode_capture = @process.collect_output_merged(
+    "/usr/bin/stat",
+    ["-c", "%a", take.prepared.server.owner_socket],
+    extra_env={ "PATH": "/usr/bin:/bin", "LC_ALL": "C" },
+    inherit_env=false,
+    cwd=take.prepared.server.config.root,
+  ) catch {
+    _ =>
+      return Err(
+        @types.ChoirError::workspace_error(
+          "runtime owner socket mode is unavailable",
+        ),
+      )
+  }
+  let owner_mode = owner_mode_capture.1.text() catch {
+    _ =>
+      return Err(
+        @types.ChoirError::workspace_error(
+          "runtime owner socket mode is not UTF-8",
+        ),
+      )
+  }
+  if owner_mode_capture.0 != 0 ||
+    owner_mode.trim() != "600" ||
+    arguments.length() != 9 ||
+    arguments.contains(take.prepared.server.config.api_key) ||
+    arguments.contains(take.prepared.server.url) ||
+    arguments.contains(take.prepared.server.config.binary) ||
+    arguments.contains(take.prepared.server.config.runtime_dir) {
+    return Err(
+      @types.ChoirError::policy_blocked(
+        "sandbox bridge received a broad runtime capability",
+      ),
+    )
+  }
   let node = match @exec.resolve_executable_in_path("node") {
     Some(value) => value
     None =>
@@ -2504,6 +2539,9 @@ async fn exercise_boxlite_take(
     "tool_manifest_digest": prepared.tool_manifest_digest.to_json(),
     "tool_count": @sandbox.boxlite_take_mcp_tools().length().to_json(),
     "bridge_argument_count": arguments.length().to_json(),
+    "runtime_owner_socket_mode": owner_mode.trim().to_json(),
+    "runtime_owner_scoped_capability": true.to_json(),
+    "runtime_owner_broad_credentials_absent": true.to_json(),
     "bridge_probe_digest": @storage.artifact_digest(@utf8.encode(bridge_probe)).to_json(),
     "path_identity_probe_digest": path_identity_evidence.to_json(),
     "path_identity_host_unchanged": true.to_json(),
@@ -2641,7 +2679,11 @@ async fn run_boxlite_take_live() -> Int {
   let exercised = exercise_boxlite_take(
     server, active_server, moon_home, source, git_config,
   )
+  let owner_pid = active_server.val.owner_pid
+  let runtime_pid = active_server.val.pid
   let cleanup = @exec.cleanup_native_boxlite_server(active_server.val)
+  let owner_stopped = !@sys.pgid_has_non_zombie_process(owner_pid)
+  let runtime_stopped = !@sys.pgid_has_non_zombie_process(runtime_pid)
   let host_head_after = capture_live_git(repository_root, [
       "rev-parse", "--verify", "HEAD",
     ])
@@ -2662,9 +2704,15 @@ async fn run_boxlite_take_live() -> Int {
     }
     Ok(_) =>
       match exercised {
-        Ok(report) => {
+        Ok(report) if owner_stopped && runtime_stopped => {
+          report.set("runtime_owner_stopped", true.to_json())
+          report.set("runtime_server_stopped", true.to_json())
           @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
           0
+        }
+        Ok(_) => {
+          @sys.write_stderr("runtime owner or server survived cleanup\n")
+          1
         }
         Err(error) => {
           @sys.write_stderr(error.message() + "\n")
