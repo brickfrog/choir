@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-21T13:40:42-05:00
+Implementation snapshot updated through: 2026-07-21T13:55:57-05:00
 
 ## Charter Semantics and Readiness
 
@@ -130,6 +130,13 @@ unconnected product path usable.
   recoverable root and its durable state together; a forced BoxLite cleanup
   failure exited nonzero and preserved both root and database for an honest
   retry.
+- An integrated Part now reconciles its source Bead to `closed` before Goal
+  execution advances. Choir rereads the exact Bead, compares it with the source
+  revision captured at Goal acceptance, and issues the typed `bd update` only
+  when the open source is unchanged. A previously delivered close replays as a
+  no-op, while a later user edit or reassignment is never overwritten. The
+  narrow adapter test covers update, ambiguous-delivery replay, and source
+  drift without mutating a real Beads database.
 
 - `choir init` now scaffolds only the current project files, starts the local
   daemon without a terminal multiplexer, bootstraps one authenticated

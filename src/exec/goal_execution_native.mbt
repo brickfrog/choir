@@ -895,7 +895,20 @@ async fn execute_native_goal_record(
     goal_part_workflow_adapters(config),
   )
   match result {
-    Ok(_) => {
+    Ok(completed) => {
+      match
+        reconcile_native_integrated_part_sources(
+          project_dir,
+          repository,
+          record,
+          completed.records,
+        ) {
+        Ok(_) => ()
+        Err(error) => {
+          ignore(cleanup_native_boxlite_server(prepared.server))
+          return Err(error)
+        }
+      }
       ignore(cleanup_native_boxlite_server(prepared.server))
       Ok(())
     }
@@ -906,6 +919,249 @@ async fn execute_native_goal_record(
       Err(error)
     }
   }
+}
+
+///|
+async fn reconcile_native_completed_bead(
+  project_dir : String,
+  repository_id : @workflow.RepositoryId,
+  base_commit_oid : @control.GitOid,
+  base_tree_oid : @control.GitOid,
+  part_id : @control.PartId,
+  source_revision_digest : @control.Digest,
+  capture? : async (Command) -> (Int, String) = capture_command_merged,
+) -> Result[Unit, @types.ChoirError] {
+  let current_output = match
+    native_conductor_capture_beads(
+      project_dir,
+      "show",
+      ["show", part_id.0, "--json", "--readonly"],
+      capture,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let current_snapshot = match
+    @workflow.goal_selection_snapshot_from_beads_json(
+      repository_id, base_commit_oid, base_tree_oid, current_output,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let mut current : @workflow.GoalSelectionSourcePart? = None
+  for source in current_snapshot.parts {
+    if source.part_id == part_id {
+      if current is Some(_) {
+        return Err(
+          native_goal_execution_error(
+            "Beads returned duplicate source Part identity",
+          ),
+        )
+      }
+      current = Some(source)
+    }
+  }
+  let source = match current {
+    Some(value) => value
+    None =>
+      return Err(
+        native_goal_execution_error("Beads omitted the integrated source Part"),
+      )
+  }
+  if source.state == @workflow.SelectionSourceState::SelectionSourceClosed {
+    return Ok(())
+  }
+  if source.source_revision_digest != source_revision_digest {
+    return Err(
+      native_goal_execution_error(
+        "integrated source Part changed after Goal acceptance: " + part_id.0,
+      ),
+    )
+  }
+  if source.state != @workflow.SelectionSourceState::SelectionSourceOpen {
+    return Err(
+      native_goal_execution_error(
+        "integrated source Part is no longer open: " + part_id.0,
+      ),
+    )
+  }
+  let updated_output = match
+    native_conductor_capture_beads(
+      project_dir,
+      "update",
+      ["update", part_id.0, "--status", "closed", "--json"],
+      capture,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let updated = match native_conductor_tasks_from_output(updated_output) {
+    Ok([value]) => value
+    Ok(_) =>
+      return Err(
+        native_goal_execution_error("Beads update returned an ambiguous Part"),
+      )
+    Err(error) => return Err(error)
+  }
+  if updated.id != part_id.0 || updated.status != @types.TaskStatus::Done {
+    Err(
+      native_goal_execution_error(
+        "Beads did not confirm the integrated Part as closed",
+      ),
+    )
+  } else {
+    Ok(())
+  }
+}
+
+///|
+async fn reconcile_native_integrated_part_sources(
+  project_dir : String,
+  repository : @workflow.PartWorkflowRepository,
+  record : @workflow.GoalExecutionRecord,
+  records : Array[@workflow.GoalPartSchedulingRecord],
+  capture? : async (Command) -> (Int, String) = capture_command_merged,
+) -> Result[Unit, @types.ChoirError] {
+  let selection = match
+    @workflow.load_goal_selection_decision(
+      repository,
+      local_part_workflow_repository_adapters(),
+      record.goal.id,
+    ) {
+    Ok(Some(value)) => value
+    Ok(None) =>
+      return Err(native_goal_execution_error("Goal selection disappeared"))
+    Err(error) => return Err(error)
+  }
+  if selection.state_record.value_digest != record.selection_decision_digest ||
+    @workflow.goal_selection_decision_digest(selection.decision) !=
+    record.selection_decision_digest {
+    return Err(native_goal_execution_error("Goal selection digest drifted"))
+  }
+  for current in records {
+    if !(current.part.lifecycle is @control.PartLifecycle::PartIntegrated(_)) {
+      continue
+    }
+    let mut accepted : @workflow.AcceptedGoalPart? = None
+    for candidate in selection.decision.accepted_parts {
+      if candidate.part.id == current.part.id {
+        accepted = Some(candidate)
+      }
+    }
+    let source = match accepted {
+      Some(value) => value
+      None =>
+        return Err(
+          native_goal_execution_error(
+            "integrated Part is absent from the Goal selection",
+          ),
+        )
+    }
+    match
+      reconcile_native_completed_bead(
+        project_dir,
+        record.repository_id,
+        record.base_commit_oid,
+        record.base_tree_oid,
+        source.part.id,
+        source.source_revision_digest,
+        capture~,
+      ) {
+      Ok(_) => ()
+      Err(error) => return Err(error)
+    }
+  }
+  Ok(())
+}
+
+///|
+async test "integrated Part source reconciliation is idempotent and drift safe" {
+  let repository_id = @workflow.RepositoryId("repository-source-sync")
+  let base_commit_oid = @control.GitOid("base-commit-source-sync")
+  let base_tree_oid = @control.GitOid("base-tree-source-sync")
+  let part_id = @control.PartId("choir-source-sync")
+  let open_source =
+    #|[{"id":"choir-source-sync","title":"Original","description":"","acceptance_criteria":"","notes":"","status":"open","priority":2,"issue_type":"task","assignee":"","updated_at":"2026-07-21T00:00:00Z","dependency_count":0}]
+  let expected_revision = match
+    @workflow.goal_selection_snapshot_from_beads_json(
+      repository_id, base_commit_oid, base_tree_oid, open_source,
+    ) {
+    Ok({ parts: [source], .. }) => source.source_revision_digest
+    Ok(_) => fail("source fixture was ambiguous")
+    Err(error) => fail(error.message())
+  }
+  let close_commands : Array[Command] = []
+  let closed = reconcile_native_completed_bead(
+    "/repo",
+    repository_id,
+    base_commit_oid,
+    base_tree_oid,
+    part_id,
+    expected_revision,
+    capture=command => {
+      close_commands.push(command)
+      if command.args[0] == "show" {
+        (0, open_source)
+      } else {
+        (
+          0,
+          (
+            #|{"id":"choir-source-sync","title":"Original","status":"closed"}
+          ),
+        )
+      }
+    },
+  )
+  match closed {
+    Ok(_) => ()
+    Err(error) => fail(error.message())
+  }
+  @debug.assert_eq(close_commands.map(fn(command) { command.args }), [
+    ["show", "choir-source-sync", "--json", "--readonly"],
+    ["update", "choir-source-sync", "--status", "closed", "--json"],
+  ])
+
+  let replay_commands : Array[Command] = []
+  let replayed = reconcile_native_completed_bead(
+    "/repo",
+    repository_id,
+    base_commit_oid,
+    base_tree_oid,
+    part_id,
+    expected_revision,
+    capture=command => {
+      replay_commands.push(command)
+      (
+        0,
+        (
+          #|[{"id":"choir-source-sync","title":"Original","description":"","acceptance_criteria":"","notes":"","status":"closed","priority":2,"issue_type":"task","assignee":"","updated_at":"2026-07-21T00:01:00Z","dependency_count":0}]
+        ),
+      )
+    },
+  )
+  assert_true(replayed is Ok(_))
+  assert_eq(replay_commands.length(), 1)
+
+  let drift_commands : Array[Command] = []
+  let drifted = reconcile_native_completed_bead(
+    "/repo",
+    repository_id,
+    base_commit_oid,
+    base_tree_oid,
+    part_id,
+    expected_revision,
+    capture=command => {
+      drift_commands.push(command)
+      (
+        0,
+        (
+          #|[{"id":"choir-source-sync","title":"Changed","description":"","acceptance_criteria":"","notes":"","status":"open","priority":2,"issue_type":"task","assignee":"","updated_at":"2026-07-21T00:01:00Z","dependency_count":0}]
+        ),
+      )
+    },
+  )
+  assert_true(drifted is Err(_))
+  assert_eq(drift_commands.length(), 1)
 }
 
 ///|
