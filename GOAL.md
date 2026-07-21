@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-21T18:40:00-05:00
+Implementation snapshot updated through: 2026-07-21T13:40:42-05:00
 
 ## Charter Semantics and Readiness
 
@@ -184,8 +184,11 @@ unconnected product path usable.
   arbitrary flag-to-tool translation, server-reload command, and their v1
   process fixtures are deleted. The remaining Goal client has one purpose: send
   typed Goal status/cancel/steer/attach/answer requests through an authenticated
-  one-shot UDS connection. Its configuration resolver accepts only the fixed
-  Conductor capability, workspace, and socket environment.
+  one-shot UDS connection. Top-level help now lists only those current controls
+  and the Claude/Codex Conductor selector; it no longer advertises the deleted
+  direct Bead/text submission or shell-verification interface. Its configuration
+  resolver accepts only the fixed Conductor capability, workspace, and socket
+  environment.
 - The Conductor MCP initialization and catalog now describe only the current
   product. Claude receives the Conductor/Goal/Part/Take authority boundary and
   exactly nine typed Goal and Beads tools; old spawn, pane, worker, PR, and

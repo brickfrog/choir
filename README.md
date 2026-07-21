@@ -60,11 +60,15 @@ mutation overlap, available provider capacity, and the requested concurrency.
 Useful commands:
 
 ```bash
+choir start --conductor claude
+choir start --conductor codex
 choir goal status <goal-id>
 choir goal steer <goal-id> pause
 choir goal steer <goal-id> resume
 choir goal steer <goal-id> concurrency 4
 choir goal cancel <goal-id>
+choir goal attach <take-id>
+choir goal answer <request-id> <answer>
 choir stop
 choir stop --purge
 ```

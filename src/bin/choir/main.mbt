@@ -9,16 +9,20 @@ fn choir_usage() -> String {
     #|Usage: choir <command> [args]
     #|
     #|Setup
-    #|  init [--lean]
+    #|  init [--lean] [--conductor <claude|codex>]
     #|                        scaffold .choir, start choird, and open a Conductor
     #|
     #|Run
-    #|  start [--lean]
+    #|  start [--lean] [--conductor <claude|codex>]
     #|                        start choird and open a Conductor
     #|  serve                 run the orchestration server
     #|
     #|Goals
-    #|  goal <bead-id|text> [--verify <cmd>]...   submit or inspect a Goal
+    #|  goal status <goal-id>
+    #|  goal steer <goal-id> <pause|resume|concurrency N>
+    #|  goal cancel <goal-id>
+    #|  goal attach <take-id>
+    #|  goal answer <request-id> <answer>
     #|
     #|Control
     #|  stop [--purge]        stop the server (optionally purge runtime state)
@@ -28,6 +32,17 @@ fn choir_usage() -> String {
     #|  run-goals             execute durable Goal work for choird
     #|
   )
+}
+
+///|
+test "CLI help exposes only the current Conductor and Goal controls" {
+  let usage = choir_usage()
+  assert_true(usage.contains("--conductor <claude|codex>"))
+  assert_true(usage.contains("goal status <goal-id>"))
+  assert_true(usage.contains("goal attach <take-id>"))
+  assert_true(usage.contains("goal answer <request-id> <answer>"))
+  assert_false(usage.contains("<bead-id|text>"))
+  assert_false(usage.contains("--verify"))
 }
 
 ///|
