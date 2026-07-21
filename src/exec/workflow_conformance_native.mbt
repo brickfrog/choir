@@ -804,46 +804,59 @@ async fn observe_native_integration_cutoff(
           match command {
             NativeGitIntegrationCommand::NativeGitReadCommitTree(oid) =>
               if oid == integration_fault_candidate {
-                { exit_code: 0, output: integration_fault_candidate_tree.0 + "\n" }
+                {
+                  exit_code: 0,
+                  output: integration_fault_candidate_tree.0 + "\n",
+                }
               } else {
-                { exit_code: 0, output: integration_fault_promotion_tree.0 + "\n" }
+                {
+                  exit_code: 0,
+                  output: integration_fault_promotion_tree.0 + "\n",
+                }
               }
             NativeGitIntegrationCommand::NativeGitMergeTree(_, _) =>
-              { exit_code: 0, output: integration_fault_promotion_tree.0 + "\n" }
+              {
+                exit_code: 0,
+                output: integration_fault_promotion_tree.0 + "\n",
+              }
             NativeGitIntegrationCommand::NativeGitCreatePromotion(_, _, _, _) => {
               create_count.val = create_count.val + 1
               { exit_code: 0, output: integration_fault_promotion.0 + "\n" }
             }
-            NativeGitIntegrationCommand::NativeGitReadCommitParents(_) => {
-              exit_code: 0,
-              output: integration_fault_head.0 +
-              " " +
-              integration_fault_candidate.0 +
-              "\n",
-            }
+            NativeGitIntegrationCommand::NativeGitReadCommitParents(_) =>
+              {
+                exit_code: 0,
+                output: integration_fault_head.0 +
+                " " +
+                integration_fault_candidate.0 +
+                "\n",
+              }
             _ => { exit_code: 99, output: "unexpected command" }
           },
         )
       },
     }
     let interrupted = generate_native_promotion(
-      integration_fault_config(),
-      integration_fault_intent(
-        @control.IntegrationIntentLifecycle::IntegrationPlanned,
-      ),
-      adapters,
-      fault=Some(
-        NativeGitIntegrationFaultPoint::NativeGitAfterPromotionObjectBeforePrepared,
-      ),
-    ) is Err(_)
-    let recovered = match generate_native_promotion(
-      integration_fault_config(),
-      integration_fault_intent(
-        @control.IntegrationIntentLifecycle::IntegrationPlanned,
-      ),
-      adapters,
-    ) {
-      Ok(value) => value ==
+        integration_fault_config(),
+        integration_fault_intent(
+          @control.IntegrationIntentLifecycle::IntegrationPlanned,
+        ),
+        adapters,
+        fault=Some(
+          NativeGitIntegrationFaultPoint::NativeGitAfterPromotionObjectBeforePrepared,
+        ),
+      )
+      is Err(_)
+    let recovered = match
+      generate_native_promotion(
+        integration_fault_config(),
+        integration_fault_intent(
+          @control.IntegrationIntentLifecycle::IntegrationPlanned,
+        ),
+        adapters,
+      ) {
+      Ok(value) =>
+        value ==
         @workflow.PartEffectObservation::PromotionGenerated(
           integration_fault_promotion_commit(),
         )
@@ -862,9 +875,7 @@ async fn observe_native_integration_cutoff(
   let apply_count = @ref.new(0)
   let ambiguous = cutoff == IntegrationDuringCasAmbiguous
   let adapters = integration_fault_apply_adapters(
-    applied,
-    apply_count,
-    ambiguous,
+    applied, apply_count, ambiguous,
   )
   let intent = integration_fault_intent(
     @control.IntegrationIntentLifecycle::IntegrationAuthorized,
@@ -880,11 +891,16 @@ async fn observe_native_integration_cutoff(
         fault=Some(
           NativeGitIntegrationFaultPoint::NativeGitAfterAuthorizedBeforeRefTransaction,
         ),
-      ) is Err(_)
+      )
+      is Err(_)
     IntegrationDuringCasAmbiguous =>
       apply_native_integration(
-        integration_fault_config(), intent, promotion, adapters,
-      ) is Err(_)
+        integration_fault_config(),
+        intent,
+        promotion,
+        adapters,
+      )
+      is Err(_)
     IntegrationAfterCasBeforeAck =>
       apply_native_integration(
         integration_fault_config(),
@@ -894,33 +910,40 @@ async fn observe_native_integration_cutoff(
         fault=Some(
           NativeGitIntegrationFaultPoint::NativeGitAfterRefTransactionBeforeObservation,
         ),
-      ) is Err(_)
+      )
+      is Err(_)
     _ => false
   }
   let recovered = if cutoff == IntegrationAfterAuthorizedBeforeCas {
     match
       apply_native_integration(
-        integration_fault_config(), intent, promotion, adapters,
+        integration_fault_config(),
+        intent,
+        promotion,
+        adapters,
       ) {
       Ok(@workflow.PartEffectObservation::IntegrationWitnessObserved(value)) =>
         value ==
-          @control.IntegrationWitnessObservation::IntegrationWitnessApplied(
-            promotion.commit_oid,
-            promotion.commit_oid,
-          )
+        @control.IntegrationWitnessObservation::IntegrationWitnessApplied(
+          promotion.commit_oid,
+          promotion.commit_oid,
+        )
       _ => false
     }
   } else {
     match
       observe_native_integration(
-        integration_fault_config(), intent, promotion, adapters,
+        integration_fault_config(),
+        intent,
+        promotion,
+        adapters,
       ) {
       Ok(value) =>
         value ==
-          @control.IntegrationWitnessObservation::IntegrationWitnessApplied(
-            promotion.commit_oid,
-            promotion.commit_oid,
-          )
+        @control.IntegrationWitnessObservation::IntegrationWitnessApplied(
+          promotion.commit_oid,
+          promotion.commit_oid,
+        )
       Err(_) => false
     }
   }
@@ -976,7 +999,8 @@ async fn observe_durable_integration_cutoff(
           promotion_executed.val &&
           boundary ==
           @workflow.PartPersistenceBoundary::WorkflowIntegrationAuthorized
-        IntegrationAfterAckBeforeReceipt | IntegrationDuringReceiptTransaction =>
+        IntegrationAfterAckBeforeReceipt
+        | IntegrationDuringReceiptTransaction =>
           integration_executed.val &&
           boundary == @workflow.PartPersistenceBoundary::WorkflowEffectObserved
         _ => false
@@ -1028,27 +1052,29 @@ async fn observe_durable_integration_cutoff(
   let intermediate_ok = match cutoff {
     IntegrationAfterIntentBeforeGeneration =>
       first.outcome ==
-        @workflow.PartWorkflowRunOutcome::PartRunPersistenceFault(
-          @workflow.PartPersistenceBoundary::WorkflowEffectPlanned,
-          @storage.StateStoreFaultPoint::StateAfterMutationBeforeOutbox,
-        ) &&
-      first.snapshot.stage == @workflow.PartWorkflowStage::PartIntegrationPlanned &&
+      @workflow.PartWorkflowRunOutcome::PartRunPersistenceFault(
+        @workflow.PartPersistenceBoundary::WorkflowEffectPlanned,
+        @storage.StateStoreFaultPoint::StateAfterMutationBeforeOutbox,
+      ) &&
+      first.snapshot.stage ==
+      @workflow.PartWorkflowStage::PartIntegrationPlanned &&
       first.snapshot.integration_receipt is None
     IntegrationAfterPreparedBeforeAuthorized =>
       first.outcome ==
-        @workflow.PartWorkflowRunOutcome::PartRunPersistenceFault(
-          @workflow.PartPersistenceBoundary::WorkflowIntegrationAuthorized,
-          @storage.StateStoreFaultPoint::StateAfterMutationBeforeOutbox,
-        ) &&
+      @workflow.PartWorkflowRunOutcome::PartRunPersistenceFault(
+        @workflow.PartPersistenceBoundary::WorkflowIntegrationAuthorized,
+        @storage.StateStoreFaultPoint::StateAfterMutationBeforeOutbox,
+      ) &&
       first.snapshot.stage == @workflow.PartWorkflowStage::PartPromotionPrepared &&
       first.snapshot.integration_receipt is None
     IntegrationAfterAckBeforeReceipt =>
       first.outcome ==
-        @workflow.PartWorkflowRunOutcome::PartRunPersistenceFault(
-          @workflow.PartPersistenceBoundary::WorkflowEffectObserved,
-          @storage.StateStoreFaultPoint::StateAfterMutationBeforeOutbox,
-        ) &&
-      first.snapshot.stage == @workflow.PartWorkflowStage::PartIntegrationAuthorized &&
+      @workflow.PartWorkflowRunOutcome::PartRunPersistenceFault(
+        @workflow.PartPersistenceBoundary::WorkflowEffectObserved,
+        @storage.StateStoreFaultPoint::StateAfterMutationBeforeOutbox,
+      ) &&
+      first.snapshot.stage ==
+      @workflow.PartWorkflowStage::PartIntegrationAuthorized &&
       first.snapshot.integration_receipt is None
     IntegrationDuringReceiptTransaction =>
       first.outcome == @workflow.PartWorkflowRunOutcome::PartRunIntegrated &&
@@ -2359,22 +2385,10 @@ pub async fn run_scale_mixed_conformance_fixture(
     part_verification_receipt_count,
     part_audit_receipt_count,
     integration_receipt_count,
-    goal_verification_receipt_count: baseline
-    .projection
-    .receipt_cardinalities
-    .goal_verification,
-    goal_audit_receipt_count: baseline
-    .projection
-    .receipt_cardinalities
-    .goal_audit,
-    publication_receipt_count: baseline
-    .projection
-    .receipt_cardinalities
-    .publication,
-    pull_request_receipt_count: baseline
-    .projection
-    .receipt_cardinalities
-    .pull_request,
+    goal_verification_receipt_count: baseline.projection.receipt_cardinalities.goal_verification,
+    goal_audit_receipt_count: baseline.projection.receipt_cardinalities.goal_audit,
+    publication_receipt_count: baseline.projection.receipt_cardinalities.publication,
+    pull_request_receipt_count: baseline.projection.receipt_cardinalities.pull_request,
     failure: None,
   }
 }

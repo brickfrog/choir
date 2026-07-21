@@ -79,12 +79,13 @@ test "kill_pgid_sequence_best_effort kills a setsid'd /tmp sleeper and guards pg
       fail("expected HOME for process identity fixture")
     }
   }
-  let command = read_file_prefix(
-    "/proc/" + pgid.to_string() + "/cmdline",
-    4096,
-  ).split("\u{00}").to_array()[0].to_owned()
+  let command = read_file_prefix("/proc/" + pgid.to_string() + "/cmdline", 4096)
+  .split("\u{00}")
+  .to_array()[0].to_owned()
   assert_true(pgid_has_process_identity(pgid, "HOME=" + home, command))
-  assert_false(pgid_has_process_identity(pgid, "HOME=/not-the-fixture", command))
+  assert_false(
+    pgid_has_process_identity(pgid, "HOME=/not-the-fixture", command),
+  )
   // Guarded inputs: the sleeper must survive all of these.
   kill_pgid_sequence_best_effort(0)
   kill_pgid_sequence_best_effort(1)

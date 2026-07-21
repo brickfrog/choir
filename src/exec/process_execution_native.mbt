@@ -864,13 +864,16 @@ async test "process execution state persists and recovers every start boundary" 
     @sandbox.ProcessExecutionId("process-runner-error.process"),
   ).unwrap()
   assert_true(
-    failed_state is Some({
-      execution: {
-        disposition: @sandbox.ProcessExecutionDisposition::ProcessStartUncertain,
+    failed_state
+    is Some(
+      {
+        execution: {
+          disposition: @sandbox.ProcessExecutionDisposition::ProcessStartUncertain,
+          ..,
+        },
         ..,
-      },
-      ..,
-    }),
+      }
+    ),
   )
   ignore(@sys.rm_rf(root))
 }

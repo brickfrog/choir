@@ -266,25 +266,22 @@ pub fn codex_live_startup_host_surface_matrix(
       report.observed_entitlement.to_json(),
     ].to_json(),
   )
-  evaluate_host_surface_matrix(
-    ProviderSurface::CodexCli,
-    [
-      {
-        probe: HostSurfaceProbe::HostSurfaceRequiredToolStartup,
-        outcome: if report.required_mcp_failed_closed {
-          HostSurfaceProbeOutcome::HostSurfaceProbePassed(startup_digest)
-        } else {
-          HostSurfaceProbeOutcome::HostSurfaceProbeFailed(startup_digest)
-        },
+  evaluate_host_surface_matrix(ProviderSurface::CodexCli, [
+    {
+      probe: HostSurfaceProbe::HostSurfaceRequiredToolStartup,
+      outcome: if report.required_mcp_failed_closed {
+        HostSurfaceProbeOutcome::HostSurfaceProbePassed(startup_digest)
+      } else {
+        HostSurfaceProbeOutcome::HostSurfaceProbeFailed(startup_digest)
       },
-      {
-        probe: HostSurfaceProbe::HostSurfaceSubscriptionIdentity,
-        outcome: if subscription_exact {
-          HostSurfaceProbeOutcome::HostSurfaceProbePassed(subscription_digest)
-        } else {
-          HostSurfaceProbeOutcome::HostSurfaceProbeFailed(subscription_digest)
-        },
+    },
+    {
+      probe: HostSurfaceProbe::HostSurfaceSubscriptionIdentity,
+      outcome: if subscription_exact {
+        HostSurfaceProbeOutcome::HostSurfaceProbePassed(subscription_digest)
+      } else {
+        HostSurfaceProbeOutcome::HostSurfaceProbeFailed(subscription_digest)
       },
-    ],
-  )
+    },
+  ])
 }

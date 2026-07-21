@@ -204,8 +204,7 @@ fn event_authorized_provider_dispatch_fixture() -> (
       base_commit_oid: @control.GitOid("event-process-loss-base"),
       base_tree_oid: @control.GitOid("event-process-loss-tree"),
       path_mode: @control.RepositoryPathMode::CaseSensitiveNfc,
-      mutation_declaration: @control.MutationDeclaration::CompleteMutationDeclaration(
-        [],
+      mutation_declaration: @control.MutationDeclaration::CompleteMutationDeclaration([],
       ),
       verification_specs: [],
       audit_policy_digest: event_case_digest,
@@ -232,9 +231,7 @@ fn event_authorized_provider_dispatch_fixture() -> (
     prior_take_evidence: [],
     sandbox_leases: [implementation_lease, verification_lease, audit_lease],
     harness_sessions: [
-      implementation_session,
-      verification_session,
-      audit_session,
+      implementation_session, verification_session, audit_session,
     ],
     harness_events: [],
     implementation_result: None,
@@ -263,29 +260,26 @@ fn event_provider_uncertainty_holds(
   restarted : @workflow.PartWorkflowSnapshot,
   reason : @control.TakeUncertaintyReason,
 ) -> Bool {
-  let implementation_session_uncertain = restarted.harness_sessions.any(
-    fn(session) {
-      session.id == restarted.identities.implementation_session.id &&
-      session.lifecycle ==
-      @control.HarnessSessionLifecycle::HarnessSessionRecoveryUncertain
-    },
-  )
+  let implementation_session_uncertain = restarted.harness_sessions.any(fn(
+    session,
+  ) {
+    session.id == restarted.identities.implementation_session.id &&
+    session.lifecycle ==
+    @control.HarnessSessionLifecycle::HarnessSessionRecoveryUncertain
+  })
   restarted.durable_version == original.durable_version + 1 &&
   restarted.stage == @workflow.PartWorkflowStage::PartRecoveryUncertain &&
-  (restarted.part.lifecycle
+  restarted.part.lifecycle
   is @control.PartLifecycle::PartBlocked(
     @control.PartBlockReason::PartRecoveryUncertain
-  )) &&
+  ) &&
   restarted.implementation_take.lifecycle ==
   @control.TakeLifecycle::TakeTerminal(
-    @control.TakeTerminalDisposition::TakeRecoveryUncertain(reason)
+    @control.TakeTerminalDisposition::TakeRecoveryUncertain(reason),
   ) &&
   implementation_session_uncertain &&
-  (restarted.pending_effect
-  is Some({
-    lifecycle: @workflow.PartEffectLifecycle::PartEffectUncertain,
-    ..
-  })) &&
+  restarted.pending_effect
+  is Some({ lifecycle: @workflow.PartEffectLifecycle::PartEffectUncertain, .. }) &&
   restarted.implementation_result is None &&
   restarted.candidate is None &&
   restarted.verification_receipts.length() == 0 &&
@@ -348,7 +342,11 @@ fn event_resumable_implementation_observation_fixture() -> (
     ..base,
     identities: { ..base.identities, implementation_session: initial_session },
     harness_sessions: base.harness_sessions.map(fn(session) {
-      if session.id == initial_session.id { initial_session } else { session }
+      if session.id == initial_session.id {
+        initial_session
+      } else {
+        session
+      }
     }),
   }
   let observation = @workflow.PartEffectObservation::ImplementationCompleted(
@@ -413,7 +411,8 @@ fn event_committed_observation_holds(
   committed.pending_effect is None &&
   committed.harness_events.length() == 2 &&
   committed.implementation_result is Some(_) &&
-  matching_receipts.length() == 1 && committed_session_holds
+  matching_receipts.length() == 1 &&
+  committed_session_holds
 }
 
 ///|
@@ -423,18 +422,19 @@ pub fn event_before_ingest_transaction_case() -> HermeticConformanceCase {
     run: fn(context) {
       let point = FaultPoint::EventBeforeIngestTransaction
       if !context.fault_enabled(point) {
-        return Err(event_case_error("ingest transaction fault was not injected"))
+        return Err(
+          event_case_error("ingest transaction fault was not injected"),
+        )
       }
-      let (snapshot, intent, observation) =
-        event_resumable_implementation_observation_fixture()
+      let (snapshot, intent, observation) = event_resumable_implementation_observation_fixture()
       let discarded = match
         event_apply_or_reconcile_observation(snapshot, intent, observation) {
         Ok(value) => value
         Err(error) => return Err(error)
       }
       if !event_committed_observation_holds(
-        snapshot, discarded, intent, observation,
-      ) {
+          snapshot, discarded, intent, observation,
+        ) {
         return Err(event_case_error("discarded ingest projection was invalid"))
       }
       let restarted = match
@@ -448,9 +448,11 @@ pub fn event_before_ingest_transaction_case() -> HermeticConformanceCase {
         Err(error) => return Err(error)
       }
       if !event_committed_observation_holds(
-        snapshot, committed, intent, observation,
-      ) {
-        return Err(event_case_error("pre-transaction restart lost the event batch"))
+          snapshot, committed, intent, observation,
+        ) {
+        return Err(
+          event_case_error("pre-transaction restart lost the event batch"),
+        )
       }
       Ok({
         evidence: [
@@ -463,17 +465,17 @@ pub fn event_before_ingest_transaction_case() -> HermeticConformanceCase {
 }
 
 ///|
-pub fn event_after_ingest_transaction_before_source_ack_case(
-) -> HermeticConformanceCase {
+pub fn event_after_ingest_transaction_before_source_ack_case() -> HermeticConformanceCase {
   {
     id: ConformanceCaseId("event.after_ingest_tx_before_source_ack"),
     run: fn(context) {
       let point = FaultPoint::EventAfterIngestTransactionBeforeSourceAck
       if !context.fault_enabled(point) {
-        return Err(event_case_error("post-ingest source-ack fault was not injected"))
+        return Err(
+          event_case_error("post-ingest source-ack fault was not injected"),
+        )
       }
-      let (snapshot, intent, observation) =
-        event_resumable_implementation_observation_fixture()
+      let (snapshot, intent, observation) = event_resumable_implementation_observation_fixture()
       let committed = match
         event_apply_or_reconcile_observation(snapshot, intent, observation) {
         Ok(value) => value
@@ -499,7 +501,9 @@ pub fn event_after_ingest_transaction_before_source_ack_case(
         !event_committed_observation_holds(
           snapshot, replayed, intent, observation,
         ) {
-        return Err(event_case_error("source replay duplicated the committed batch"))
+        return Err(
+          event_case_error("source replay duplicated the committed batch"),
+        )
       }
       Ok({
         evidence: [
@@ -521,10 +525,11 @@ pub fn event_after_source_ack_before_next_read_case() -> HermeticConformanceCase
     run: fn(context) {
       let point = FaultPoint::EventAfterSourceAckBeforeNextRead
       if !context.fault_enabled(point) {
-        return Err(event_case_error("post-ack next-read fault was not injected"))
+        return Err(
+          event_case_error("post-ack next-read fault was not injected"),
+        )
       }
-      let (snapshot, intent, observation) =
-        event_resumable_implementation_observation_fixture()
+      let (snapshot, intent, observation) = event_resumable_implementation_observation_fixture()
       let committed = match
         event_apply_or_reconcile_observation(snapshot, intent, observation) {
         Ok(value) => value
@@ -546,17 +551,18 @@ pub fn event_after_source_ack_before_next_read_case() -> HermeticConformanceCase
         Err(error) => return Err(error)
       }
       let next_is_normalization = match next.kind {
-        @workflow.PartEffectKind::NormalizeImplementationCandidate(
-          take_id,
-          _,
-        ) => take_id == replayed.implementation_take.id
+        @workflow.PartEffectKind::NormalizeImplementationCandidate(take_id, _) =>
+          take_id == replayed.implementation_take.id
         _ => false
       }
-      if replayed != restarted || !next_is_normalization ||
+      if replayed != restarted ||
+        !next_is_normalization ||
         !event_committed_observation_holds(
           snapshot, replayed, intent, observation,
         ) {
-        return Err(event_case_error("resume did not continue after the durable cursor"))
+        return Err(
+          event_case_error("resume did not continue after the durable cursor"),
+        )
       }
       Ok({
         evidence: [
@@ -583,9 +589,7 @@ pub fn event_nonresumable_process_loss_case() -> HermeticConformanceCase {
         Err(error) => return Err(error)
       }
       let restarted = match
-        @workflow.decode_part_snapshot(
-          @workflow.part_snapshot_bytes(uncertain),
-        ) {
+        @workflow.decode_part_snapshot(@workflow.part_snapshot_bytes(uncertain)) {
         Ok(value) => value
         Err(error) => return Err(error)
       }
@@ -601,11 +605,7 @@ pub fn event_nonresumable_process_loss_case() -> HermeticConformanceCase {
           ),
         )
       }
-      Ok({
-        evidence: [
-          ObservedEventCase(EventNonresumableProcessLoss, 10),
-        ],
-      })
+      Ok({ evidence: [ObservedEventCase(EventNonresumableProcessLoss, 10)] })
     },
   }
 }
@@ -630,9 +630,7 @@ pub fn event_backpressure_case() -> HermeticConformanceCase {
         Err(error) => return Err(error)
       }
       let restarted = match
-        @workflow.decode_part_snapshot(
-          @workflow.part_snapshot_bytes(uncertain),
-        ) {
+        @workflow.decode_part_snapshot(@workflow.part_snapshot_bytes(uncertain)) {
         Ok(value) => value
         Err(error) => return Err(error)
       }
@@ -655,9 +653,7 @@ pub fn event_backpressure_case() -> HermeticConformanceCase {
           ),
         )
       }
-      Ok({
-        evidence: [ObservedEventCase(EventBackpressureBoundary, capacity)],
-      })
+      Ok({ evidence: [ObservedEventCase(EventBackpressureBoundary, capacity)] })
     },
   }
 }
@@ -697,10 +693,8 @@ pub fn event_duplicate_conflict_case() -> HermeticConformanceCase {
         conflict.disposition !=
         @control.HarnessIngestionDisposition::HarnessEventConflict ||
         conflict.session.last_choir_sequence != @control.EventSequence(2L) ||
-        !(conflict.event is Some({
-          choir_sequence: @control.EventSequence(2L),
-          ..
-        })) ||
+        !(conflict.event
+        is Some({ choir_sequence: @control.EventSequence(2L), .. })) ||
         !(conflict.session.lifecycle
         is @control.HarnessSessionLifecycle::HarnessSessionProtocolViolated) {
         return Err(event_case_error("duplicate/conflict oracle did not hold"))
@@ -886,11 +880,13 @@ fn event_redaction_claude(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  Ok((
-    result.session,
-    result.events.to_json().stringify(indent=0),
-    result.terminal_response,
-  ))
+  Ok(
+    (
+      result.session,
+      result.events.to_json().stringify(indent=0),
+      result.terminal_response,
+    ),
+  )
 }
 
 ///|
@@ -904,21 +900,22 @@ fn event_redaction_codex(
     @control.HarnessCursorClass::HarnessCursorProviderEventId,
   )
   let started = match @harness.start_codex_harness_session(session) {
-    Ok(value) => {
-      ..value,
-      provider_cursor: Some("redaction-thread:redaction-turn"),
-    }
+    Ok(value) =>
+      { ..value, provider_cursor: Some("redaction-thread:redaction-turn") }
     Err(error) => return Err(error)
   }
-  let thread = #|{"type":"thread.started","thread_id":"thread-redaction"}
-  let turn = #|{"type":"turn.started"}
+  let thread =
+    #|{"type":"thread.started","thread_id":"thread-redaction"}
+  let turn =
+    #|{"type":"turn.started"}
   let tool_started =
     #|{"type":"item.started","authorization":"Bearer SECRET","item":{"id":"tool-1","type":"mcp_tool_call","server":"choir_sandbox","tool":"read_file","status":"in_progress"}}
   let tool_finished =
     #|{"type":"item.completed","item":{"id":"tool-1","type":"mcp_tool_call","server":"choir_sandbox","tool":"read_file","status":"completed","output":"SECRET"}}
   let message =
     #|{"type":"item.completed","item":{"id":"message-1","type":"agent_message","text":"{\"outcome\":\"completed\",\"secret\":\"SECRET\"}"}}
-  let completed = #|{"type":"turn.completed"}
+  let completed =
+    #|{"type":"turn.completed"}
   let output = [
     thread,
     turn,
@@ -938,11 +935,13 @@ fn event_redaction_codex(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  Ok((
-    result.session,
-    result.events.to_json().stringify(indent=0),
-    result.terminal_response,
-  ))
+  Ok(
+    (
+      result.session,
+      result.events.to_json().stringify(indent=0),
+      result.terminal_response,
+    ),
+  )
 }
 
 ///|
@@ -969,7 +968,9 @@ pub fn event_redaction_case() -> HermeticConformanceCase {
         is @control.HarnessSessionLifecycle::HarnessSessionIngestionClosedCleanly(
           @control.HarnessTerminalObservation::HarnessCompleted
         )) {
-        return Err(event_case_error("provider bytes crossed redaction boundary"))
+        return Err(
+          event_case_error("provider bytes crossed redaction boundary"),
+        )
       }
       Ok({ evidence: [ObservedEventCase(EventRedactionBoundary, 2)] })
     },

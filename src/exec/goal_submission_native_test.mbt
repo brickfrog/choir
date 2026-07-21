@@ -9,8 +9,7 @@ async test "native Conductor submission captures Beads and persists once" {
   let base_tree = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   let capture = async fn(command : @exec.Command) -> (Int, String) {
     match (command.program, command.args) {
-      ("git", ["symbolic-ref", "--quiet", "HEAD"]) =>
-        (0, "refs/heads/main\n")
+      ("git", ["symbolic-ref", "--quiet", "HEAD"]) => (0, "refs/heads/main\n")
       ("git", ["rev-parse", "--show-toplevel"]) => (0, root + "\n")
       ("git", ["rev-parse", "--verify", "refs/heads/main^{commit}"]) =>
         (0, base_commit + "\n")
@@ -314,8 +313,7 @@ async test "durable Goal cancellation survives replay and starts no provider" {
   let base_tree = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   let capture = async fn(command : @exec.Command) -> (Int, String) {
     match (command.program, command.args) {
-      ("git", ["symbolic-ref", "--quiet", "HEAD"]) =>
-        (0, "refs/heads/main\n")
+      ("git", ["symbolic-ref", "--quiet", "HEAD"]) => (0, "refs/heads/main\n")
       ("git", ["rev-parse", "--show-toplevel"]) => (0, root + "\n")
       ("git", ["rev-parse", "--verify", "refs/heads/main^{commit}"]) =>
         (0, base_commit + "\n")
@@ -423,8 +421,7 @@ async test "rejected Conductor submission initializes no Part workflow" {
   let base_tree = "dddddddddddddddddddddddddddddddddddddddd"
   let capture = async fn(command : @exec.Command) -> (Int, String) {
     match (command.program, command.args) {
-      ("git", ["symbolic-ref", "--quiet", "HEAD"]) =>
-        (0, "refs/heads/main\n")
+      ("git", ["symbolic-ref", "--quiet", "HEAD"]) => (0, "refs/heads/main\n")
       ("git", ["rev-parse", "--show-toplevel"]) => (0, root + "\n")
       ("git", ["rev-parse", "--verify", "refs/heads/main^{commit}"]) =>
         (0, base_commit + "\n")

@@ -294,7 +294,8 @@ test "transfer parses fixed archive listings before policy evaluation" {
     @sandbox.evaluate_transfer_manifest(
       entries,
       @sandbox.repository_result_transfer_limits(),
-    ) is @sandbox.TransferManifestDecision::TransferManifestAccepted(_),
+    )
+    is @sandbox.TransferManifestDecision::TransferManifestAccepted(_),
   )
 }
 
@@ -304,12 +305,14 @@ test "transfer listing parser rejects malformed or unknown rows" {
   assert_true(
     @sandbox.parse_transfer_archive_listing(
       "?rw-r--r-- 1000/1000 0 2026-07-20 22:51:46.1 \"./entry\"\n",
-    ) is Err(_),
+    )
+    is Err(_),
   )
   assert_true(
     @sandbox.parse_transfer_archive_listing(
       "-rw-r--r-- 1000/1000 0 2026-07-20 22:51:46.1 \"./bad\\nname\"\n",
-    ) is Err(_),
+    )
+    is Err(_),
   )
 }
 
@@ -318,31 +321,39 @@ test "repository result policy preserves symbolic links but rejects hardlinks" {
   let limits = @sandbox.repository_result_transfer_limits()
   assert_true(
     @sandbox.evaluate_transfer_manifest(
-      [{
-        path: "AGENTS.md",
-        kind: @sandbox.TransferEntryKind::TransferSymlink,
-        size_bytes: 0L,
-      }],
+      [
+        {
+          path: "AGENTS.md",
+          kind: @sandbox.TransferEntryKind::TransferSymlink,
+          size_bytes: 0L,
+        },
+      ],
       limits,
-    ) is @sandbox.TransferManifestDecision::TransferManifestAccepted(_),
+    )
+    is @sandbox.TransferManifestDecision::TransferManifestAccepted(_),
   )
   assert_true(
     @sandbox.evaluate_transfer_manifest(
-      [{
-        path: "alias",
-        kind: @sandbox.TransferEntryKind::TransferHardlink,
-        size_bytes: 0L,
-      }],
+      [
+        {
+          path: "alias",
+          kind: @sandbox.TransferEntryKind::TransferHardlink,
+          size_bytes: 0L,
+        },
+      ],
       limits,
-    ) is @sandbox.TransferManifestDecision::TransferManifestRejected(_),
+    )
+    is @sandbox.TransferManifestDecision::TransferManifestRejected(_),
   )
   assert_eq(
     @sandbox.evaluate_transfer_manifest(
-      [{
-        path: "AGENTS.md",
-        kind: @sandbox.TransferEntryKind::TransferSymlink,
-        size_bytes: 1L,
-      }],
+      [
+        {
+          path: "AGENTS.md",
+          kind: @sandbox.TransferEntryKind::TransferSymlink,
+          size_bytes: 1L,
+        },
+      ],
       limits,
     ),
     @sandbox.TransferManifestDecision::TransferManifestRejected(

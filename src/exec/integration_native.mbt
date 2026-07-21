@@ -585,7 +585,11 @@ pub async fn generate_native_promotion(
     return Ok(
       @workflow.PartEffectObservation::PromotionConflictObserved(
         integration_conflict(
-          intent, head_tree, merge_base, paths, merged.output,
+          intent,
+          head_tree,
+          merge_base,
+          paths,
+          merged.output,
         ),
       ),
     )

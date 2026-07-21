@@ -183,18 +183,16 @@ async test "driver durably records provider event ingestion overflow" {
     repository,
     adapters,
     authorized.workflow_id,
-    workflow_driver_dependencies(
-      @ref.new(0),
-      @ref.new(0),
-      fn(_) { None },
-      async fn(_, _) {
-        Err(
-          @types.ChoirError::event_ingestion_overflow(
-            "provider event spool exceeded its bound",
-          ),
-        )
-      },
-    ),
+    workflow_driver_dependencies(@ref.new(0), @ref.new(0), fn(_) { None }, async fn(
+      _,
+      _,
+    ) {
+      Err(
+        @types.ChoirError::event_ingestion_overflow(
+          "provider event spool exceeded its bound",
+        ),
+      )
+    }),
   ).unwrap()
   assert_eq(
     result.outcome,
@@ -221,17 +219,14 @@ async test "driver durably records provider event ingestion overflow" {
   )
   assert_true(
     result.snapshot.pending_effect
-    is Some({
-      lifecycle: @workflow.PartEffectLifecycle::PartEffectUncertain,
-      ..
-    }),
+    is Some(
+      { lifecycle: @workflow.PartEffectLifecycle::PartEffectUncertain, .. }
+    ),
   )
   assert_eq(
-    @workflow.load_part_snapshot(
-      repository,
-      adapters,
-      authorized.workflow_id,
-    ).unwrap().unwrap().snapshot,
+    @workflow.load_part_snapshot(repository, adapters, authorized.workflow_id)
+    .unwrap()
+    .unwrap().snapshot,
     result.snapshot,
   )
   clean_workflow_repository(repository)
@@ -258,18 +253,16 @@ async test "driver durably records nonresumable provider process loss" {
     repository,
     adapters,
     authorized.workflow_id,
-    workflow_driver_dependencies(
-      @ref.new(0),
-      @ref.new(0),
-      fn(_) { None },
-      async fn(_, _) {
-        Err(
-          @types.ChoirError::provider_process_lost(
-            "nonresumable provider process disappeared",
-          ),
-        )
-      },
-    ),
+    workflow_driver_dependencies(@ref.new(0), @ref.new(0), fn(_) { None }, async fn(
+      _,
+      _,
+    ) {
+      Err(
+        @types.ChoirError::provider_process_lost(
+          "nonresumable provider process disappeared",
+        ),
+      )
+    }),
   ).unwrap()
   assert_eq(
     result.outcome,
@@ -291,11 +284,9 @@ async test "driver durably records nonresumable provider process loss" {
     }),
   )
   assert_eq(
-    @workflow.load_part_snapshot(
-      repository,
-      adapters,
-      authorized.workflow_id,
-    ).unwrap().unwrap().snapshot,
+    @workflow.load_part_snapshot(repository, adapters, authorized.workflow_id)
+    .unwrap()
+    .unwrap().snapshot,
     result.snapshot,
   )
   clean_workflow_repository(repository)

@@ -1170,8 +1170,7 @@ async fn prove_pull_request_fault_recovery(
 }
 
 ///|
-pub async fn run_native_pull_request_fault_conformance(
-) -> NativePullRequestFaultConformanceReport {
+pub async fn run_native_pull_request_fault_conformance() -> NativePullRequestFaultConformanceReport {
   let observations : Array[NativePullRequestFaultObservation] = []
   let cases : Array[
     (
@@ -1180,7 +1179,7 @@ pub async fn run_native_pull_request_fault_conformance(
       @workflow.PullRequestIntentState,
       Bool,
       Bool,
-    )
+    ),
   ] = [
     (
       "after-intent",

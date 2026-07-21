@@ -331,20 +331,25 @@ fn validate_codex_response(
       let blocking = codex_response_int(fields, "blocking_findings")
       match (outcome, total, blocking) {
         ("passed", Some(0), Some(0)) =>
-          Ok((
-            CodexAuditPassed,
-            "{\"outcome\":\"passed\",\"total_findings\":0,\"blocking_findings\":0}",
-          ))
+          Ok(
+            (
+              CodexAuditPassed,
+              "{\"outcome\":\"passed\",\"total_findings\":0,\"blocking_findings\":0}",
+            ),
+          )
         ("findings", Some(total), Some(blocking)) if total > 0 &&
-          blocking >= 0 && blocking <= total =>
-          Ok((
-            CodexAuditFindings(total, blocking),
-            "{\"outcome\":\"findings\",\"total_findings\":" +
-            total.to_string() +
-            ",\"blocking_findings\":" +
-            blocking.to_string() +
-            "}",
-          ))
+          blocking >= 0 &&
+          blocking <= total =>
+          Ok(
+            (
+              CodexAuditFindings(total, blocking),
+              "{\"outcome\":\"findings\",\"total_findings\":" +
+              total.to_string() +
+              ",\"blocking_findings\":" +
+              blocking.to_string() +
+              "}",
+            ),
+          )
         _ => Err(codex_driver_error("audit outcome is invalid"))
       }
     }
@@ -675,12 +680,7 @@ pub fn evaluate_codex_driver_capture(
       append_codex_take_event(
         session,
         events,
-        codex_take_event(
-          session,
-          sequence,
-          request.capture.finished_at,
-          kind,
-        ),
+        codex_take_event(session, sequence, request.capture.finished_at, kind),
       ) {
       Ok(value) => value
       Err(error) => return Err(error)

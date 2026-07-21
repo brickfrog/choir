@@ -466,7 +466,8 @@ pub fn pgid_has_process_identity(
     pgid,
     string_to_null_terminated_bytes(environment_entry),
     string_to_null_terminated_bytes(command_fragment),
-  ) != 0
+  ) !=
+  0
 }
 
 ///|

@@ -20,8 +20,7 @@ fn event_case_test_dependencies() -> @conformance.ConformanceDependencies {
       }
     },
     fault_enabled: fn(point) {
-      point ==
-      @conformance.FaultPoint::BranchInitAfterIntentBeforeAuthorized ||
+      point == @conformance.FaultPoint::BranchInitAfterIntentBeforeAuthorized ||
       point ==
       @conformance.FaultPoint::BranchInitAfterAuthorizedBeforeRefTransaction ||
       point == @conformance.FaultPoint::BranchInitDuringRefTransaction ||

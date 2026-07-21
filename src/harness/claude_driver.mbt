@@ -294,20 +294,25 @@ fn validate_claude_take_response(
       let blocking = response_int(fields, "blocking_findings")
       match (outcome, total, blocking) {
         ("passed", Some(0), Some(0)) =>
-          Ok((
-            ClaudeAuditPassed,
-            "{\"outcome\":\"passed\",\"total_findings\":0,\"blocking_findings\":0}",
-          ))
+          Ok(
+            (
+              ClaudeAuditPassed,
+              "{\"outcome\":\"passed\",\"total_findings\":0,\"blocking_findings\":0}",
+            ),
+          )
         ("findings", Some(total), Some(blocking)) if total > 0 &&
-          blocking >= 0 && blocking <= total =>
-          Ok((
-            ClaudeAuditFindings(total, blocking),
-            "{\"outcome\":\"findings\",\"total_findings\":" +
-            total.to_string() +
-            ",\"blocking_findings\":" +
-            blocking.to_string() +
-            "}",
-          ))
+          blocking >= 0 &&
+          blocking <= total =>
+          Ok(
+            (
+              ClaudeAuditFindings(total, blocking),
+              "{\"outcome\":\"findings\",\"total_findings\":" +
+              total.to_string() +
+              ",\"blocking_findings\":" +
+              blocking.to_string() +
+              "}",
+            ),
+          )
         _ => Err(claude_driver_error("audit outcome is invalid"))
       }
     }
@@ -481,12 +486,7 @@ pub fn evaluate_claude_driver_capture(
       append_claude_event(
         session,
         events,
-        claude_event(
-          session,
-          sequence,
-          request.capture.finished_at,
-          kind,
-        ),
+        claude_event(session, sequence, request.capture.finished_at, kind),
       ) {
       Ok(value) => value
       Err(error) => return Err(error)

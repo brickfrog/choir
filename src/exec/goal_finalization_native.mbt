@@ -337,43 +337,42 @@ async fn observe_pull_request_remote_state(
     create: fixture.4.create,
   }
   let outcome = match
-    advance_native_goal_finalization_with_adapters(
-      fixture.0,
-      fixture.2,
-      forge,
-    ) {
+    advance_native_goal_finalization_with_adapters(fixture.0, fixture.2, forge) {
     Ok(value) => value
     Err(error) => fail("remote-state finalization: " + error.message())
   }
   let repository = native_goal_repository(fixture.0)
   let adapters = local_part_workflow_repository_adapters()
   let decision = @workflow.load_goal_finalization_record(
-      repository, adapters, fixture.2,
+      repository,
+      adapters,
+      fixture.2,
     )
     .unwrap()
     .unwrap().record.readiness.decision
   let goal_state = @workflow.load_goal_execution_record(
-      repository, adapters, fixture.2,
+      repository,
+      adapters,
+      fixture.2,
     )
     .unwrap()
     .unwrap().record.state
   let passed = match case {
     PullRequestRemoteExact | PullRequestRemoteEdited =>
       outcome ==
-        @workflow.GoalFinalizationTickOutcome::GoalFinalizationSucceeded &&
+      @workflow.GoalFinalizationTickOutcome::GoalFinalizationSucceeded &&
       decision == @workflow.PullRequestReadinessDecision::PullRequestReady &&
       goal_state == @workflow.GoalExecutionState::GoalExecutionSucceeded
     PullRequestRemoteClosed =>
       outcome ==
-        @workflow.GoalFinalizationTickOutcome::GoalFinalizationNeedsUserInput &&
+      @workflow.GoalFinalizationTickOutcome::GoalFinalizationNeedsUserInput &&
       decision ==
       @workflow.PullRequestReadinessDecision::PullRequestReadinessNeedsInput(
         @workflow.PullRequestReadinessNeedsInputReason::PullRequestNotOpen,
       ) &&
       goal_state == @workflow.GoalExecutionState::GoalExecutionAssured
     PullRequestRemoteRetargeted | PullRequestRemoteHeadChanged =>
-      outcome ==
-        @workflow.GoalFinalizationTickOutcome::GoalFinalizationDrifted &&
+      outcome == @workflow.GoalFinalizationTickOutcome::GoalFinalizationDrifted &&
       decision ==
       @workflow.PullRequestReadinessDecision::PullRequestReadinessDrift(
         @workflow.PullRequestReadinessDriftReason::PullRequestHeadOrBaseChanged,
@@ -381,9 +380,9 @@ async fn observe_pull_request_remote_state(
       goal_state == @workflow.GoalExecutionState::GoalExecutionAssured
     PullRequestRemoteDuplicate =>
       outcome ==
-        @workflow.GoalFinalizationTickOutcome::GoalFinalizationAmbiguous &&
+      @workflow.GoalFinalizationTickOutcome::GoalFinalizationAmbiguous &&
       decision ==
-        @workflow.PullRequestReadinessDecision::PullRequestReadinessAmbiguous &&
+      @workflow.PullRequestReadinessDecision::PullRequestReadinessAmbiguous &&
       goal_state == @workflow.GoalExecutionState::GoalExecutionAssured
   }
   ignore(@sys.rm_rf(fixture.0))
@@ -392,8 +391,7 @@ async fn observe_pull_request_remote_state(
 }
 
 ///|
-pub async fn run_native_pull_request_remote_state_conformance(
-) -> NativePullRequestRemoteStateConformanceReport {
+pub async fn run_native_pull_request_remote_state_conformance() -> NativePullRequestRemoteStateConformanceReport {
   let observations : Array[NativePullRequestRemoteStateObservation] = []
   let cases = [
     NativePullRequestRemoteStateCase::PullRequestRemoteExact,
@@ -431,8 +429,7 @@ pub(all) struct NativeGoalFinalizationRaceConformanceReport {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-pub async fn run_native_goal_finalization_race_conformance(
-) -> NativeGoalFinalizationRaceConformanceReport {
+pub async fn run_native_goal_finalization_race_conformance() -> NativeGoalFinalizationRaceConformanceReport {
   let before = prepare_goal_finalization_fixture("edit-before-response")
   guard before.3.val is Some(before_snapshot) else {
     fail("pre-response fixture has no remote pull request")
@@ -449,7 +446,9 @@ pub async fn run_native_goal_finalization_race_conformance(
   let before_repository = native_goal_repository(before.0)
   let adapters = local_part_workflow_repository_adapters()
   let before_goal_state = @workflow.load_goal_execution_record(
-      before_repository, adapters, before.2,
+      before_repository,
+      adapters,
+      before.2,
     )
     .unwrap()
     .unwrap().record.state
@@ -492,14 +491,16 @@ pub async fn run_native_goal_finalization_race_conformance(
   guard after.3.val is Some(edited_snapshot) else {
     fail("post-response remote edit disappeared")
   }
-  let edit_after_response_did_not_retroactively_change_decision =
-    after_outcome ==
-      @workflow.GoalFinalizationTickOutcome::GoalFinalizationSucceeded &&
+  let edit_after_response_did_not_retroactively_change_decision = after_outcome ==
+    @workflow.GoalFinalizationTickOutcome::GoalFinalizationSucceeded &&
     !edited_snapshot.evidence_manifest_link_present
   assert_true(edit_after_response_did_not_retroactively_change_decision)
   let after_repository = native_goal_repository(after.0)
-  let success_won_before_late_cancellation =
-    cancel_native_goal(after.0, after.2, 100L).unwrap() ==
+  let success_won_before_late_cancellation = cancel_native_goal(
+      after.0,
+      after.2,
+      100L,
+    ).unwrap() ==
     @workflow.GoalCancellationPersistenceResult::GoalCancellationTerminal(
       @workflow.GoalExecutionState::GoalExecutionSucceeded,
     )
@@ -507,11 +508,13 @@ pub async fn run_native_goal_finalization_race_conformance(
   let success_outbox_present = (adapters.state.read_outbox)(
       after_repository.state_store,
       goal_execution_outbox_key(after.2, 2),
-    ).unwrap() is Some(_)
+    ).unwrap()
+    is Some(_)
   let success_next_outbox_absent = (adapters.state.read_outbox)(
       after_repository.state_store,
       goal_execution_outbox_key(after.2, 3),
-    ).unwrap() is None
+    ).unwrap()
+    is None
   assert_true(success_outbox_present && success_next_outbox_absent)
   ignore(@sys.rm_rf(after.0))
   ignore(@sys.rm_rf(after.1))
@@ -537,15 +540,14 @@ pub async fn run_native_goal_finalization_race_conformance(
     .unwrap()
     .unwrap().record.readiness.decision ==
     @workflow.PullRequestReadinessDecision::PullRequestReady
-  let cancellation_linearized = cancel_native_goal(
-      canceled.0, canceled.2, 200L,
-    ).unwrap() is
-    @workflow.GoalCancellationPersistenceResult::GoalCancellationPersisted(_)
+  let cancellation_linearized = cancel_native_goal(canceled.0, canceled.2, 200L).unwrap()
+    is @workflow.GoalCancellationPersistenceResult::GoalCancellationPersisted(_)
   let success_rejected = advance_native_goal_finalization_with_adapters(
       canceled.0,
       canceled.2,
       canceled.4,
-    ) is Err(_)
+    )
+    is Err(_)
   let canceling_record = @workflow.load_goal_execution_record(
       canceled_repository,
       adapters,
@@ -568,11 +570,13 @@ pub async fn run_native_goal_finalization_race_conformance(
   let cancellation_outbox_present = (adapters.state.read_outbox)(
       canceled_repository.state_store,
       goal_execution_outbox_key(canceled.2, canceled_record.durable_version),
-    ).unwrap() is Some(_)
+    ).unwrap()
+    is Some(_)
   let cancellation_next_outbox_absent = (adapters.state.read_outbox)(
       canceled_repository.state_store,
       goal_execution_outbox_key(canceled.2, canceled_record.durable_version + 1),
-    ).unwrap() is None
+    ).unwrap()
+    is None
   let terminal_outboxes_unique = success_outbox_present &&
     success_next_outbox_absent &&
     cancellation_outbox_present &&

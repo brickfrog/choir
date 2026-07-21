@@ -104,10 +104,8 @@ pub fn transition_part_lifecycle(
       } else {
         Err(invalid_transition("Part", "integration subject is stale"))
       }
-    (
-      PartBlocked(PartIntegrationConflict),
-      StartPartConflictRepair(_, take_id),
-    ) => Ok(PartExecuting(take_id))
+    (PartBlocked(PartIntegrationConflict), StartPartConflictRepair(_, take_id)) =>
+      Ok(PartExecuting(take_id))
     (PartPending, BlockPart(reason))
     | (PartReady, BlockPart(reason))
     | (PartExecuting(_), BlockPart(reason))

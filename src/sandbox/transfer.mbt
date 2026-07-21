@@ -151,7 +151,9 @@ fn transfer_listing_quoted_path(
 }
 
 ///|
-fn transfer_listing_entry(line : String) -> Result[TransferEntry?, @types.ChoirError] {
+fn transfer_listing_entry(
+  line : String,
+) -> Result[TransferEntry?, @types.ChoirError] {
   let mode = match transfer_listing_token(line, 0) {
     Some(value) => value
     None => return Err(transfer_listing_error("mode is absent"))

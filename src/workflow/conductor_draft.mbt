@@ -108,11 +108,7 @@ fn conductor_draft_unknown_fields(
   allowed : Array[String],
 ) -> Array[String] {
   let unknown : Array[String] = []
-  fields.each(fn(key, _) {
-    if !allowed.contains(key) {
-      unknown.push(key)
-    }
-  })
+  fields.each(fn(key, _) { if !allowed.contains(key) { unknown.push(key) } })
   unknown.sort()
   unknown
 }
@@ -136,9 +132,9 @@ fn decode_conductor_part_draft(
     return Err(goal_submission_error("Conductor Part draft must be an object"))
   }
   let allowed_fields = [
-      "part_id", "instruction", "provider", "exact_paths", "path_trees", "repository_wide",
-      "verify_args", "verify_timeout_ms",
-    ]
+    "part_id", "instruction", "provider", "exact_paths", "path_trees", "repository_wide",
+    "verify_args", "verify_timeout_ms",
+  ]
   let unknown_fields = conductor_draft_unknown_fields(fields, allowed_fields)
   if unknown_fields.length() > 0 {
     return Err(
@@ -233,8 +229,8 @@ pub fn decode_conductor_goal_draft(
     return Err(goal_submission_error("Conductor Goal draft must be an object"))
   }
   let allowed_fields = [
-      "proposal_id", "goal_id", "maximum_parallel_parts", "parts",
-    ]
+    "proposal_id", "goal_id", "maximum_parallel_parts", "parts",
+  ]
   let unknown_fields = conductor_draft_unknown_fields(fields, allowed_fields)
   if unknown_fields.length() > 0 {
     return Err(
@@ -272,12 +268,7 @@ pub fn decode_conductor_goal_draft(
     }
     _ => return Err(goal_submission_error("parts is missing or invalid"))
   }
-  Ok({
-    proposal_id,
-    goal_id,
-    maximum_parallel_parts,
-    parts,
-  })
+  Ok({ proposal_id, goal_id, maximum_parallel_parts, parts })
 }
 
 ///|

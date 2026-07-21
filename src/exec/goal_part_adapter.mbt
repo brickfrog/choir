@@ -194,8 +194,9 @@ async fn promote_bound_part(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  if !(result.snapshot.part.lifecycle is @control.PartLifecycle::PartBlocked(
-      @control.PartBlockReason::PartIntegrationConflict,
+  if !(result.snapshot.part.lifecycle
+    is @control.PartLifecycle::PartBlocked(
+      @control.PartBlockReason::PartIntegrationConflict
     )) {
     return Ok(scheduling_record_from_snapshot(result.snapshot))
   }
@@ -208,7 +209,8 @@ async fn promote_bound_part(
   }
   let current_version = match result.store_version {
     Some(value) => value
-    None => return Err(goal_part_adapter_error("conflict snapshot is unpersisted"))
+    None =>
+      return Err(goal_part_adapter_error("conflict snapshot is unpersisted"))
   }
   let authorization = match (dependencies.goal_authorizes_new_effects)() {
     Ok(value) => value
@@ -243,10 +245,14 @@ async fn promote_bound_part(
           },
           precondition,
         ) {
-        Ok(@workflow.GuardedPartSnapshotPersistenceResult::GuardedPartSnapshotPersisted(value)) =>
-          value
-        Ok(@workflow.GuardedPartSnapshotPersistenceResult::GuardedPartSnapshotPreconditionConflict) =>
-          return Ok(scheduling_record_from_snapshot(result.snapshot))
+        Ok(
+          @workflow.GuardedPartSnapshotPersistenceResult::GuardedPartSnapshotPersisted(
+            value
+          )
+        ) => value
+        Ok(
+          @workflow.GuardedPartSnapshotPersistenceResult::GuardedPartSnapshotPreconditionConflict
+        ) => return Ok(scheduling_record_from_snapshot(result.snapshot))
         Err(error) => return Err(error)
       }
   }

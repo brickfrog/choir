@@ -147,10 +147,7 @@ test "Claude canonicalizes terminal output before durable use" {
         secret +
         "\"",
     )
-    .replace(
-      old="\"content\":\"ok\"",
-      new="\"content\":\"" + secret + "\"",
-    )
+    .replace(old="\"content\":\"ok\"", new="\"content\":\"" + secret + "\"")
     .replace(
       old="{\\\"outcome\\\":\\\"completed\\\"}",
       new="{\\\"outcome\\\":\\\"completed\\\",\\\"secret\\\":\\\"" +

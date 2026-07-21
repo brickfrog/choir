@@ -339,13 +339,7 @@ pub async fn capture_native_codex_host_boundary(
   let run = async fn(path : String) -> Int {
     @process.run(
       "/usr/bin/bwrap",
-      native_codex_host_boundary_args(
-        root,
-        root,
-        None,
-        "/usr/bin/touch",
-        [path],
-      ),
+      native_codex_host_boundary_args(root, root, None, "/usr/bin/touch", [path]),
       extra_env={ "PATH": "/usr/bin:/bin", "LC_ALL": "C" },
       inherit_env=false,
       stdout=sink,
@@ -566,7 +560,9 @@ fn prepare_native_codex_conductor_home(
       config.sterile_root + "/codex-home",
     ] {
     if !@sys.create_dir_all(path) || !@sys.chmod_mode(path, 0o700) {
-      return Err(native_codex_driver_error("Conductor state root is unavailable"))
+      return Err(
+        native_codex_driver_error("Conductor state root is unavailable"),
+      )
     }
   }
   let provider_codex_home = match @sys.getenv("CODEX_HOME") {
@@ -1122,7 +1118,7 @@ fn prepare_native_codex_app_server_home(
     }
   }
   match config.boxlite_owner_socket_root {
-    Some(source) => {
+    Some(source) =>
       if @sys.realpath_native(source) != Some(source) ||
         @sys.realpath_native(source + "/owner.sock") !=
         Some(source + "/owner.sock") {
@@ -1130,7 +1126,6 @@ fn prepare_native_codex_app_server_home(
           native_codex_driver_error("BoxLite owner socket is unavailable"),
         )
       }
-    }
     None => ()
   }
   if native_codex_ambient_configuration_present(config, allow_provider_state) {
@@ -1230,10 +1225,10 @@ async fn spawn_native_codex_app_server(
     None => codex
   }
   let traced_args : Array[String] = match config.connect_trace_path {
-    Some(path) => [
-      "-f", "-qq", "-s", "256", "-e", "trace=connect", "-o", path, codex,
-      ..app_server_args,
-    ]
+    Some(path) =>
+      [
+        "-f", "-qq", "-s", "256", "-e", "trace=connect", "-o", path, codex, ..app_server_args,
+      ]
     None => app_server_args
   }
   for
@@ -2186,10 +2181,9 @@ test "native Codex connect observation is confined to the sterile root" {
   assert_true(
     validate_native_codex_config({
       ..config,
-      connect_trace_path: Some(
-        "/tmp/choir-codex-driver-test/connect.trace",
-      ),
-    }) is Ok(_),
+      connect_trace_path: Some("/tmp/choir-codex-driver-test/connect.trace"),
+    })
+    is Ok(_),
   )
 }
 
@@ -2201,11 +2195,7 @@ test "native Codex owner socket binding is exact and paired with MCP argv" {
   let config : NativeCodexDriverConfig = {
     sterile_root: root,
     mcp_executable: "/usr/bin/node",
-    mcp_arguments: [
-      "/opt/choir/sandbox-mcp.mjs",
-      "--owner-socket",
-      target,
-    ],
+    mcp_arguments: ["/opt/choir/sandbox-mcp.mjs", "--owner-socket", target],
     boxlite_owner_socket_root: Some(source),
     mcp_server_name: "choir_sandbox",
     allowed_tools: ["read_file"],
@@ -2221,19 +2211,19 @@ test "native Codex owner socket binding is exact and paired with MCP argv" {
         "--owner-socket",
         source + "/owner.sock",
       ],
-    }) is Err(_),
+    })
+    is Err(_),
   )
   assert_true(
-    validate_native_codex_config({
-      ..config,
-      boxlite_owner_socket_root: None,
-    }) is Err(_),
+    validate_native_codex_config({ ..config, boxlite_owner_socket_root: None })
+    is Err(_),
   )
   assert_true(
     validate_native_codex_config({
       ..config,
       boxlite_owner_socket_root: Some("/tmp/other/owner-socket"),
-    }) is Err(_),
+    })
+    is Err(_),
   )
   let args = native_codex_host_boundary_args(
     root,

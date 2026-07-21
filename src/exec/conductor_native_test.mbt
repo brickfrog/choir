@@ -143,9 +143,7 @@ async test "native Conductor distinguishes Beads summaries from details" {
     )
   })
   assert_true(summary.is_ok())
-  @debug.assert_eq(commands[0].args, [
-    "list", "--json", "--all", "--readonly",
-  ])
+  @debug.assert_eq(commands[0].args, ["list", "--json", "--all", "--readonly"])
   let tasks = summary
     .ok_payload()
     .unwrap()

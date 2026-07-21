@@ -704,10 +704,11 @@ pub fn record_goal_assurance_cancellation(
     return Ok(record)
   }
   let seal_intent = match record.seal_intent.lifecycle {
-    @control.GoalBranchSealIntentLifecycle::GoalBranchSealPlanned => {
-      ..record.seal_intent,
-      lifecycle: @control.GoalBranchSealIntentLifecycle::GoalBranchSealAbandonedByCancellation,
-    }
+    @control.GoalBranchSealIntentLifecycle::GoalBranchSealPlanned =>
+      {
+        ..record.seal_intent,
+        lifecycle: @control.GoalBranchSealIntentLifecycle::GoalBranchSealAbandonedByCancellation,
+      }
     _ => record.seal_intent
   }
   let verification_take = match
@@ -742,10 +743,7 @@ pub fn record_goal_assurance_cancellation(
   })
   let pending_effect = match record.pending_effect {
     Some({ lifecycle: GoalAssuranceEffectPlanned, .. } as intent) =>
-      Some({
-        ..intent,
-        lifecycle: GoalAssuranceEffectAbandonedByCancellation,
-      })
+      Some({ ..intent, lifecycle: GoalAssuranceEffectAbandonedByCancellation })
     Some({ lifecycle: GoalAssuranceEffectMayHaveOccurred, .. } as intent) =>
       Some({ ..intent, lifecycle: GoalAssuranceEffectUncertain })
     other => other

@@ -1159,17 +1159,16 @@ async test "Goal adapter accepts the exact stored contract revision" {
     workflow_driver_recover_observation,
   )
   let config : @exec.GoalPartWorkflowAdapterConfig = {
-    bindings: [{
-      scheduling_record: initial_record,
-      initial_snapshot: initial,
-      repository,
-    }],
+    bindings: [
+      {
+        scheduling_record: initial_record,
+        initial_snapshot: initial,
+        repository,
+      },
+    ],
     repository_adapters: adapters,
     dependencies: fn(_, admission) {
-      Ok({
-        ..dependencies,
-        integration_admission: fn(_) { Ok(admission) },
-      })
+      Ok({ ..dependencies, integration_admission: fn(_) { Ok(admission) } })
     },
     integration_input: fn(_, _) {
       Err(@types.ChoirError::validation_error("integration is not expected"))
@@ -1438,7 +1437,9 @@ async test "Goal cancellation atomically rejects stale seal authorization" {
       1000L,
     ) {
     Ok(
-      @workflow.GoalCancellationPersistenceResult::GoalCancellationPersisted(value)
+      @workflow.GoalCancellationPersistenceResult::GoalCancellationPersisted(
+        value
+      )
     ) => value
     Ok(_) => fail("Goal cancellation did not install its cutoff")
     Err(error) => fail(error.message())

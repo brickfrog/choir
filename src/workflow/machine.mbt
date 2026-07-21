@@ -305,22 +305,21 @@ pub fn plan_part_conflict_repair(
 ) -> Result[PartConflictRepairDecision, @types.ChoirError] {
   if snapshot.stage != PartBlocked ||
     snapshot.pending_effect is Some(_) ||
-    !(snapshot.part.lifecycle is @control.PartLifecycle::PartBlocked(
-        @control.PartBlockReason::PartIntegrationConflict,
-      )) ||
+    !(snapshot.part.lifecycle
+    is @control.PartLifecycle::PartBlocked(
+      @control.PartBlockReason::PartIntegrationConflict
+    )) ||
     snapshot.integration_conflicts.length() == 0 {
     return Err(workflow_error("Part is not eligible for conflict repair"))
   }
   if snapshot.integration_conflicts.length() > maximum_part_conflict_repairs() {
     return Ok(PartConflictRepairLimitReached)
   }
-  let conflict = snapshot.integration_conflicts[
-    snapshot.integration_conflicts.length() - 1
-  ]
+  let conflict = snapshot.integration_conflicts[snapshot.integration_conflicts.length() -
+    1]
   if snapshot.task_contract_history.length() == 0 ||
-    snapshot.task_contract_history[
-      snapshot.task_contract_history.length() - 1
-    ] != snapshot.task_contract ||
+    snapshot.task_contract_history[snapshot.task_contract_history.length() - 1] !=
+    snapshot.task_contract ||
     contract.id == snapshot.task_contract.id ||
     contract.digest == snapshot.task_contract.digest ||
     contract.goal_id != snapshot.goal.id ||
@@ -340,11 +339,12 @@ pub fn plan_part_conflict_repair(
     !conflict_repair_take_is_fresh(snapshot.audit_take, identities.audit_take) {
     return Err(workflow_error("conflict repair identity plan is invalid"))
   }
-  let used_take_ids = snapshot.prior_takes.map(fn(take) { take.id }) + [
-    snapshot.implementation_take.id,
-    snapshot.verification_take.id,
-    snapshot.audit_take.id,
-  ]
+  let used_take_ids = snapshot.prior_takes.map(fn(take) { take.id }) +
+    [
+      snapshot.implementation_take.id,
+      snapshot.verification_take.id,
+      snapshot.audit_take.id,
+    ]
   if used_take_ids.contains(identities.implementation_take.id) ||
     used_take_ids.contains(identities.verification_take.id) ||
     used_take_ids.contains(identities.audit_take.id) {
@@ -385,21 +385,25 @@ pub fn plan_part_conflict_repair(
       durable_version: snapshot.durable_version + 1,
       part: repaired_part,
       task_contract_history: snapshot.task_contract_history + [contract],
-      prior_takes: snapshot.prior_takes + [
+      prior_takes: snapshot.prior_takes +
+      [
         snapshot.implementation_take,
         snapshot.verification_take,
         snapshot.audit_take,
       ],
-      prior_take_evidence: snapshot.prior_take_evidence + [{
-        task_contract_revision_id: snapshot.task_contract.id,
-        implementation_result: snapshot.implementation_result,
-        candidate: snapshot.candidate,
-        verification_receipts: snapshot.verification_receipts,
-        verification_authorization: snapshot.verification_authorization,
-        audit_result: snapshot.audit_result,
-        audit_receipt: snapshot.audit_receipt,
-        integration_intent: snapshot.integration_intent,
-      }],
+      prior_take_evidence: snapshot.prior_take_evidence +
+      [
+        {
+          task_contract_revision_id: snapshot.task_contract.id,
+          implementation_result: snapshot.implementation_result,
+          candidate: snapshot.candidate,
+          verification_receipts: snapshot.verification_receipts,
+          verification_authorization: snapshot.verification_authorization,
+          audit_result: snapshot.audit_result,
+          audit_receipt: snapshot.audit_receipt,
+          integration_intent: snapshot.integration_intent,
+        },
+      ],
       sandbox_leases: snapshot.sandbox_leases,
       harness_sessions: snapshot.harness_sessions,
       harness_events: snapshot.harness_events,

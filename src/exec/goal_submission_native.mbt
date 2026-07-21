@@ -94,10 +94,7 @@ async fn native_goal_submission_capture(
     let suffix = if detail == "" { "" } else { ": " + detail }
     Err(
       native_goal_submission_error(
-        label +
-        " capture failed with status " +
-        status.to_string() +
-        suffix,
+        label + " capture failed with status " + status.to_string() + suffix,
       ),
     )
   }
@@ -820,7 +817,9 @@ pub async fn submit_native_conductor_goal_draft(
     Err(error) => return Err(error)
   }
   let snapshot = match
-    capture_native_goal_selection_snapshot(draft, branch_ref, project_dir, capture) {
+    capture_native_goal_selection_snapshot(
+      draft, branch_ref, project_dir, capture,
+    ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }

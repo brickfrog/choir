@@ -302,7 +302,9 @@ fn native_goal_assurance_active_lease(
         @control.SandboxLeaseLifecycle::SandboxLeaseActive {
         Ok(lease)
       } else {
-        Err(native_goal_execution_error("assurance sandbox lease is not active"))
+        Err(
+          native_goal_execution_error("assurance sandbox lease is not active"),
+        )
       }
     }
   }
@@ -654,9 +656,7 @@ async fn execute_native_goal_assurance_effect_once(
   intent : @workflow.GoalAssuranceEffectIntent,
 ) -> Result[@workflow.GoalAssuranceEffectObservation, @types.ChoirError] {
   let runtime = match
-    create_native_goal_assurance_runtime(
-      repository, execution, git, record,
-    ) {
+    create_native_goal_assurance_runtime(repository, execution, git, record) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -690,9 +690,7 @@ async fn reconcile_native_goal_processes_once(
   intent : @workflow.GoalAssuranceEffectIntent,
 ) -> Result[Bool, @types.ChoirError] {
   let runtime = match
-    create_native_goal_assurance_runtime(
-      repository, execution, git, record,
-    ) {
+    create_native_goal_assurance_runtime(repository, execution, git, record) {
     Ok(value) => value
     Err(error) => return Err(error)
   }

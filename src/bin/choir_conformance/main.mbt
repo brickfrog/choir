@@ -551,8 +551,10 @@ async fn run_codex_live_driver_at(
   let host_read_result = root + "/read-result"
   let host_read_secret = "choir-host-read-secret-19dce38a"
   if host_read_probe &&
-    (@sys.path_entry_exists(host_read_canary) ||
-    !@sys.write_file_sync(host_read_canary, host_read_secret)) {
+    (
+      @sys.path_entry_exists(host_read_canary) ||
+      !@sys.write_file_sync(host_read_canary, host_read_secret)
+    ) {
     ignore(@sys.rm_rf(root))
     @sys.write_stderr("failed to create Codex host-read canary\n")
     return 1
@@ -1069,8 +1071,7 @@ async fn run_codex_live_network() -> Int {
       return 1
     }
   }
-  let passed = driver_code == 0 &&
-    @harness.codex_network_trace_passed(summary)
+  let passed = driver_code == 0 && @harness.codex_network_trace_passed(summary)
   let evidence = @storage.artifact_digest(
     @utf8.encode(
       "choir.codex-network-boundary.v1\u{00}" +
@@ -1102,7 +1103,11 @@ async fn run_codex_live_network() -> Int {
     .stringify(indent=2) +
     "\n",
   )
-  if passed { 0 } else { 1 }
+  if passed {
+    0
+  } else {
+    1
+  }
 }
 
 ///|
@@ -1365,8 +1370,7 @@ async fn run_codex_live_initialized_notification_recovery(
   let before_pid = codex_recovery_manifest_int(root, "server_pid")
   let generation = codex_recovery_manifest_int(root, "server_generation")
   let may_have_been_sent = codex_recovery_manifest_bool(
-    root,
-    "initialization_notification_may_have_been_sent",
+    root, "initialization_notification_may_have_been_sent",
   )
   let initialized = codex_recovery_manifest_bool(root, "server_initialized")
   guard crash_code == 77 &&
@@ -1374,7 +1378,9 @@ async fn run_codex_live_initialized_notification_recovery(
     generation == Some(1) &&
     may_have_been_sent == Some(true) &&
     initialized == Some(false) else {
-    @sys.write_stderr("Codex initialization notification witness is incomplete\n")
+    @sys.write_stderr(
+      "Codex initialization notification witness is incomplete\n",
+    )
     match before_pid {
       Some(value) => @sys.kill_pgid_sequence_best_effort(value)
       None => ()
@@ -1404,7 +1410,8 @@ async fn run_codex_live_initialized_notification_recovery(
     @sys.kill_pgid_sequence_best_effort(pid)
   }
   match after_pid {
-    Some(value) if !current_stopped => @sys.kill_pgid_sequence_best_effort(value)
+    Some(value) if !current_stopped =>
+      @sys.kill_pgid_sequence_best_effort(value)
     _ => ()
   }
   ignore(@sys.rm_rf(root))
@@ -1470,7 +1477,8 @@ async fn run_codex_live_server_start_recovery(root : String) -> Bool {
     @sys.kill_pgid_sequence_best_effort(pid)
   }
   match adopted_pid {
-    Some(value) if !current_stopped => @sys.kill_pgid_sequence_best_effort(value)
+    Some(value) if !current_stopped =>
+      @sys.kill_pgid_sequence_best_effort(value)
     _ => ()
   }
   ignore(@sys.rm_rf(root))
@@ -1514,7 +1522,8 @@ async fn run_codex_live_turn_recovery(root : String) -> Bool {
     @sys.kill_pgid_sequence_best_effort(before.2)
   }
   match after {
-    Some(value) if !current_stopped => @sys.kill_pgid_sequence_best_effort(value.2)
+    Some(value) if !current_stopped =>
+      @sys.kill_pgid_sequence_best_effort(value.2)
     _ => ()
   }
   ignore(@sys.rm_rf(root))
@@ -1600,7 +1609,11 @@ async fn run_codex_live_initialization_recovery() -> Int {
     .stringify(indent=2) +
     "\n",
   )
-  if passed { 0 } else { 1 }
+  if passed {
+    0
+  } else {
+    1
+  }
 }
 
 ///|
@@ -1802,9 +1815,9 @@ fn run_harness_command(args : Array[String]) -> Unit {
     args[4] == "--profile" &&
     args[5] == "subscription" &&
     args[6] == "--driver-recovery-crash" &&
-    [
-      "server-started", "initialized-sent", "turn-started", "terminal-recorded",
-    ].contains(args[7]) &&
+    ["server-started", "initialized-sent", "turn-started", "terminal-recorded"].contains(
+      args[7],
+    ) &&
     (
       args[8].has_prefix("/tmp/choir-conformance-codex-recovery-") ||
       args[8].has_prefix("/tmp/choir-conformance-codex-drift-")
@@ -2087,8 +2100,7 @@ async fn run_conductor_reconnect_live() -> Int {
   let base_tree = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   let capture = async fn(command : @exec.Command) -> (Int, String) {
     match (command.program, command.args) {
-      ("git", ["symbolic-ref", "--quiet", "HEAD"]) =>
-        (0, "refs/heads/main\n")
+      ("git", ["symbolic-ref", "--quiet", "HEAD"]) => (0, "refs/heads/main\n")
       ("git", ["rev-parse", "--show-toplevel"]) => (0, root + "\n")
       ("git", ["rev-parse", "--verify", "refs/heads/main^{commit}"]) =>
         (0, base_commit + "\n")

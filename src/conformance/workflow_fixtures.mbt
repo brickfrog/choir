@@ -92,51 +92,63 @@ pub fn sandbox_transfer_validation_case() -> HermeticConformanceCase {
       )
       let rejected = [
         @sandbox.evaluate_transfer_manifest(
-          [{
-            path: "../outside",
-            kind: @sandbox.TransferEntryKind::TransferFile,
-            size_bytes: 1L,
-          }],
+          [
+            {
+              path: "../outside",
+              kind: @sandbox.TransferEntryKind::TransferFile,
+              size_bytes: 1L,
+            },
+          ],
           limits,
         ),
         @sandbox.evaluate_transfer_manifest(
-          [{
-            path: "artifacts/hardlink",
-            kind: @sandbox.TransferEntryKind::TransferHardlink,
-            size_bytes: 0L,
-          }],
+          [
+            {
+              path: "artifacts/hardlink",
+              kind: @sandbox.TransferEntryKind::TransferHardlink,
+              size_bytes: 0L,
+            },
+          ],
           limits,
         ),
         @sandbox.evaluate_transfer_manifest(
-          [{
-            path: "artifacts/link",
-            kind: @sandbox.TransferEntryKind::TransferSymlink,
-            size_bytes: 0L,
-          }],
+          [
+            {
+              path: "artifacts/link",
+              kind: @sandbox.TransferEntryKind::TransferSymlink,
+              size_bytes: 0L,
+            },
+          ],
           limits,
         ),
         @sandbox.evaluate_transfer_manifest(
-          [{
-            path: "artifacts/fifo",
-            kind: @sandbox.TransferEntryKind::TransferFifo,
-            size_bytes: 0L,
-          }],
+          [
+            {
+              path: "artifacts/fifo",
+              kind: @sandbox.TransferEntryKind::TransferFifo,
+              size_bytes: 0L,
+            },
+          ],
           limits,
         ),
         @sandbox.evaluate_transfer_manifest(
-          [{
-            path: "artifacts/socket",
-            kind: @sandbox.TransferEntryKind::TransferSocket,
-            size_bytes: 0L,
-          }],
+          [
+            {
+              path: "artifacts/socket",
+              kind: @sandbox.TransferEntryKind::TransferSocket,
+              size_bytes: 0L,
+            },
+          ],
           limits,
         ),
         @sandbox.evaluate_transfer_manifest(
-          [{
-            path: "artifacts/device",
-            kind: @sandbox.TransferEntryKind::TransferDevice,
-            size_bytes: 0L,
-          }],
+          [
+            {
+              path: "artifacts/device",
+              kind: @sandbox.TransferEntryKind::TransferDevice,
+              size_bytes: 0L,
+            },
+          ],
           limits,
         ),
         @sandbox.evaluate_transfer_manifest(
@@ -190,19 +202,23 @@ pub fn sandbox_transfer_validation_case() -> HermeticConformanceCase {
           limits,
         ),
         @sandbox.evaluate_transfer_manifest(
-          [{
-            path: "a/b/c/d",
-            kind: @sandbox.TransferEntryKind::TransferFile,
-            size_bytes: 1L,
-          }],
+          [
+            {
+              path: "a/b/c/d",
+              kind: @sandbox.TransferEntryKind::TransferFile,
+              size_bytes: 1L,
+            },
+          ],
           limits,
         ),
         @sandbox.evaluate_transfer_manifest(
-          [{
-            path: "artifacts/large.bin",
-            kind: @sandbox.TransferEntryKind::TransferFile,
-            size_bytes: 17L,
-          }],
+          [
+            {
+              path: "artifacts/large.bin",
+              kind: @sandbox.TransferEntryKind::TransferFile,
+              size_bytes: 17L,
+            },
+          ],
           limits,
         ),
       ]
@@ -229,9 +245,7 @@ pub fn sandbox_transfer_validation_case() -> HermeticConformanceCase {
             ),
           )
       }
-      let destination_accepted =
-        @sandbox.validate_transfer_adoption_destination(
-          [
+      let destination_accepted = @sandbox.validate_transfer_adoption_destination([
             {
               path: "artifacts",
               kind: @sandbox.TransferDestinationKind::TransferDestinationDirectory,
@@ -241,10 +255,9 @@ pub fn sandbox_transfer_validation_case() -> HermeticConformanceCase {
               kind: @sandbox.TransferDestinationKind::TransferDestinationMissing,
             },
           ],
-        ) is Ok(_)
-      let destination_rejected =
-        @sandbox.validate_transfer_adoption_destination(
-          [
+        )
+        is Ok(_)
+      let destination_rejected = @sandbox.validate_transfer_adoption_destination([
             {
               path: "artifacts",
               kind: @sandbox.TransferDestinationKind::TransferDestinationDirectory,
@@ -254,7 +267,8 @@ pub fn sandbox_transfer_validation_case() -> HermeticConformanceCase {
               kind: @sandbox.TransferDestinationKind::TransferDestinationSymlink,
             },
           ],
-        ) is Err(_)
+        )
+        is Err(_)
       if accepted_count != 2 ||
         rejected_count != 10 ||
         !destination_accepted ||
@@ -1560,7 +1574,9 @@ pub fn integration_conflict_repair_case() -> HermeticConformanceCase {
         id: @control.IntegrationConflictId("conflict-repair-1"),
         intent_id: @control.IntegrationIntentId("conflict-repair-intent-1"),
         candidate_id: @control.CandidateId("conflict-repair-candidate-1"),
-        candidate_commit_oid: @control.GitOid("conflict-repair-candidate-commit"),
+        candidate_commit_oid: @control.GitOid(
+          "conflict-repair-candidate-commit",
+        ),
         expected_goal_head_oid: @control.GitOid("conflict-repair-goal-head"),
         expected_goal_head_tree_oid: @control.GitOid(
           "conflict-repair-goal-tree",
@@ -1707,8 +1723,9 @@ pub fn integration_conflict_repair_case() -> HermeticConformanceCase {
           },
           fn(_) { true },
         ) {
-        Ok(@workflow.PartConflictRepairDecision::PartConflictRepairPlanned(value)) =>
-          value
+        Ok(
+          @workflow.PartConflictRepairDecision::PartConflictRepairPlanned(value)
+        ) => value
         Ok(_) =>
           return Err(
             branch_initialization_fixture_error(
@@ -2134,13 +2151,9 @@ fn cancellation_goal_assurance_identities(
     }
   }
   let verification_sandbox = sandbox(
-    "cancellation-goal-verification-sandbox",
-    verification_take,
+    "cancellation-goal-verification-sandbox", verification_take,
   )
-  let audit_sandbox = sandbox(
-    "cancellation-goal-audit-sandbox",
-    audit_take,
-  )
+  let audit_sandbox = sandbox("cancellation-goal-audit-sandbox", audit_take)
   let session = fn(
     id : String,
     take : @control.Take,
@@ -2163,16 +2176,12 @@ fn cancellation_goal_assurance_identities(
     verification_take,
     verification_sandbox,
     verification_session: session(
-      "cancellation-goal-verification-session",
-      verification_take,
-      verification_sandbox,
+      "cancellation-goal-verification-session", verification_take, verification_sandbox,
     ),
     audit_take,
     audit_sandbox,
     audit_session: session(
-      "cancellation-goal-audit-session",
-      audit_take,
-      audit_sandbox,
+      "cancellation-goal-audit-session", audit_take, audit_sandbox,
     ),
   }
 }
@@ -2313,18 +2322,24 @@ pub fn seal_atomicity_case() -> HermeticConformanceCase {
         Err(error) => return Err(error)
       }
       let seal_id = @control.GoalBranchSealId("atomic-goal-seal")
-      let first = match @workflow.commit_goal_assurance_seal(witnessed, seal_id) {
+      let first = match
+        @workflow.commit_goal_assurance_seal(witnessed, seal_id) {
         Ok(value) => value
         Err(error) => return Err(error)
       }
-      let replay = match @workflow.commit_goal_assurance_seal(witnessed, seal_id) {
+      let replay = match
+        @workflow.commit_goal_assurance_seal(witnessed, seal_id) {
         Ok(value) => value
         Err(error) => return Err(error)
       }
       let immutable_replay = first == replay && first.seal is Some(_)
-      let planned_effect = match @workflow.plan_next_goal_assurance_effect(first) {
+      let planned_effect = match
+        @workflow.plan_next_goal_assurance_effect(first) {
         Ok(Some(value)) => value
-        Ok(None) => return Err(audit_fixture_error("sealed Goal scheduled no verification"))
+        Ok(None) =>
+          return Err(
+            audit_fixture_error("sealed Goal scheduled no verification"),
+          )
         Err(error) => return Err(error)
       }
       let persisted = match
@@ -2335,19 +2350,20 @@ pub fn seal_atomicity_case() -> HermeticConformanceCase {
       let replayed_effect = match
         @workflow.plan_next_goal_assurance_effect(persisted) {
         Ok(Some(value)) => value
-        Ok(None) => return Err(audit_fixture_error("pending verification was lost"))
+        Ok(None) =>
+          return Err(audit_fixture_error("pending verification was lost"))
         Err(error) => return Err(error)
       }
       let schedules_once = replayed_effect == planned_effect &&
         @workflow.persist_planned_goal_assurance_effect(
-          persisted,
-          replayed_effect,
-        ) is Err(_)
-      let late_promotion_denied =
-        @workflow.advance_goal_execution_state(
+          persisted, replayed_effect,
+        )
+        is Err(_)
+      let late_promotion_denied = @workflow.advance_goal_execution_state(
           execution,
           @workflow.GoalExecutionState::GoalExecutionRunning,
-        ) is Err(_) &&
+        )
+        is Err(_) &&
         @workflow.commit_goal_assurance_seal(first, seal_id) is Err(_)
       if !immutable_replay || !schedules_once || !late_promotion_denied {
         return Err(audit_fixture_error("Goal seal atomicity invariant failed"))
@@ -2485,11 +2501,16 @@ fn cancellation_audited_goal_fixture() -> Result[
       @workflow.goal_assurance_record_bytes(audited),
     ) {
     Ok(round_trip) if round_trip == audited =>
-      Ok(({
-        ..execution,
-        state: @workflow.GoalExecutionState::GoalExecutionAssured,
-        durable_version: execution.durable_version + 1,
-      }, audited))
+      Ok(
+        (
+          {
+            ..execution,
+            state: @workflow.GoalExecutionState::GoalExecutionAssured,
+            durable_version: execution.durable_version + 1,
+          },
+          audited,
+        ),
+      )
     Ok(_) => Err(audit_fixture_error("audited Goal round trip changed"))
     Err(error) => Err(error)
   }
@@ -2709,7 +2730,8 @@ pub fn cancellation_ordering_matrix_case() -> HermeticConformanceCase {
       }
       let authorized_waits = match
         @workflow.record_goal_assurance_cancellation(authorized_assurance) {
-        Ok(value) => value == authorized_assurance &&
+        Ok(value) =>
+          value == authorized_assurance &&
           !@workflow.goal_assurance_cancellation_disposition_is_known(value)
         Err(_) => false
       }
@@ -2744,13 +2766,13 @@ pub fn cancellation_ordering_matrix_case() -> HermeticConformanceCase {
         Ok(Some(intent)) =>
           match
             @workflow.persist_planned_goal_assurance_effect(
-              sealed_for_effect,
-              intent,
+              sealed_for_effect, intent,
             ) {
             Ok(value) => value
             Err(error) => return Err(error)
           }
-        Ok(None) => return Err(audit_fixture_error("assurance effect was absent"))
+        Ok(None) =>
+          return Err(audit_fixture_error("assurance effect was absent"))
         Err(error) => return Err(error)
       }
       let abandoned_effect = match
@@ -2773,8 +2795,7 @@ pub fn cancellation_ordering_matrix_case() -> HermeticConformanceCase {
         Ok(value) => value
         Err(error) => return Err(error)
       }
-      let assurance_rows_hold =
-        @workflow.goal_assurance_cancellation_disposition_is_known(
+      let assurance_rows_hold = @workflow.goal_assurance_cancellation_disposition_is_known(
           abandoned_assurance,
         ) &&
         abandoned_assurance.seal_intent.lifecycle ==
@@ -2785,16 +2806,20 @@ pub fn cancellation_ordering_matrix_case() -> HermeticConformanceCase {
         ) &&
         canceled_witness.seal_intent.lifecycle ==
         @control.GoalBranchSealIntentLifecycle::GoalBranchSealWitnessed &&
-        (abandoned_effect.pending_effect
-        is Some({
-          lifecycle: @workflow.GoalAssuranceEffectLifecycle::GoalAssuranceEffectAbandonedByCancellation,
-          ..
-        })) &&
-        (uncertain_effect.pending_effect
-        is Some({
-          lifecycle: @workflow.GoalAssuranceEffectLifecycle::GoalAssuranceEffectUncertain,
-          ..
-        })) &&
+        abandoned_effect.pending_effect
+        is Some(
+          {
+            lifecycle: @workflow.GoalAssuranceEffectLifecycle::GoalAssuranceEffectAbandonedByCancellation,
+            ..,
+          }
+        ) &&
+        uncertain_effect.pending_effect
+        is Some(
+          {
+            lifecycle: @workflow.GoalAssuranceEffectLifecycle::GoalAssuranceEffectUncertain,
+            ..,
+          }
+        ) &&
         @workflow.goal_assurance_cancellation_disposition_is_known(
           canceled_audited,
         ) &&
@@ -2875,8 +2900,7 @@ pub fn cancellation_ordering_matrix_case() -> HermeticConformanceCase {
         Ok(value) => value
         Err(error) => return Err(error)
       }
-      let publication_rows_hold =
-        abandoned_publication.intent.state ==
+      let publication_rows_hold = abandoned_publication.intent.state ==
         @workflow.BranchPublicationState::BranchPublicationAbandonedByCancellation &&
         abandoned_authorized_publication.intent.state ==
         @workflow.BranchPublicationState::BranchPublicationAbandonedByCancellation &&
@@ -2885,9 +2909,7 @@ pub fn cancellation_ordering_matrix_case() -> HermeticConformanceCase {
         published.intent.state ==
         @workflow.BranchPublicationState::BranchPublicationReceipted &&
         [
-          abandoned_publication,
-          abandoned_authorized_publication,
-          canceled_uncertain_publication,
+          abandoned_publication, abandoned_authorized_publication, canceled_uncertain_publication,
           published,
         ].all(@workflow.goal_publication_cancellation_disposition_is_known)
       if !publication_rows_hold {
@@ -2968,10 +2990,7 @@ pub fn cancellation_ordering_matrix_case() -> HermeticConformanceCase {
       }
       let issued = match
         @workflow.mark_goal_pull_request_create_may_have_been_issued(
-          authorized_pull_request,
-          execution,
-          audited,
-          published,
+          authorized_pull_request, execution, audited, published,
         ) {
         Ok(value) => value
         Err(error) => return Err(error)
@@ -3005,9 +3024,7 @@ pub fn cancellation_ordering_matrix_case() -> HermeticConformanceCase {
         receipted_pull_request.intent.state ==
         @workflow.PullRequestIntentState::PullRequestReceipted &&
         [
-          abandoned_pull_request,
-          abandoned_authorized_pull_request,
-          uncertain_pull_request,
+          abandoned_pull_request, abandoned_authorized_pull_request, uncertain_pull_request,
           receipted_pull_request,
         ].all(@workflow.goal_pull_request_cancellation_disposition_is_known)
       if !pr_rows_hold {

@@ -1223,9 +1223,7 @@ pub fn native_boxlite_take_mcp_arguments(
   let owner_socket = owner_socket.unwrap_or(take.prepared.server.owner_socket)
   if !script.has_prefix("/") || !owner_socket.has_prefix("/") {
     return Err(
-      @types.ChoirError::validation_error(
-        "sandbox MCP paths must be absolute",
-      ),
+      @types.ChoirError::validation_error("sandbox MCP paths must be absolute"),
     )
   }
   let access = match take.workspace_access {
