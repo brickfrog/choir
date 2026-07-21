@@ -20,6 +20,7 @@ Required:
 - [Beads](https://github.com/gastownhall/beads) 1.1.0 (`bd`)
 - [BoxLite](https://github.com/boxlite-ai/boxlite) v0.9.7 with Choir's
   [pinned corrected runtime](docs/boxlite-runtime.md)
+- Bubblewrap (`bwrap`) for the read-only host boundary around provider clients
 - Node.js
 - Claude Code 2.1.216 logged into the user's paid subscription
 - Codex CLI 0.144.6 logged into the user's paid subscription

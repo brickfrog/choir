@@ -1,7 +1,6 @@
 ///|
 pub(all) struct NativeCodexDriverConfig {
   sterile_root : String
-  process_trace_root : String
   mcp_executable : String
   mcp_arguments : Array[String]
   mcp_server_name : String
@@ -58,20 +57,6 @@ fn validate_native_codex_config(
     return Err(
       @types.ChoirError::validation_error(
         "native Codex driver configuration is invalid",
-      ),
-    )
-  }
-  if config.process_trace_root != "" &&
-    (
-      !config.process_trace_root.has_prefix(
-        "/tmp/choir-conformance-codex-trace-",
-      ) ||
-      @sys.realpath_native(config.process_trace_root) !=
-      Some(config.process_trace_root)
-    ) {
-    return Err(
-      @types.ChoirError::validation_error(
-        "native Codex process trace root is invalid",
       ),
     )
   }
@@ -211,6 +196,126 @@ fn native_codex_app_server_args(
   let args : Array[String] = ["app-server", "--listen", "stdio://"]
   push_native_codex_take_config(args, config)
   args
+}
+
+///|
+fn native_codex_host_boundary_args(
+  sterile_root : String,
+  working_directory : String,
+  executable : String,
+  executable_args : Array[String],
+) -> Array[String] {
+  let args : Array[String] = [
+    "--die-with-parent",
+    "--ro-bind",
+    "/",
+    "/",
+    "--dev-bind",
+    "/dev",
+    "/dev",
+    "--proc",
+    "/proc",
+    "--bind",
+    sterile_root,
+    sterile_root,
+    "--chdir",
+    working_directory,
+    "--",
+    executable,
+  ]
+  for argument in executable_args {
+    args.push(argument)
+  }
+  args
+}
+
+///|
+fn validate_native_codex_host_boundary() -> Result[Unit, @types.ChoirError] {
+  if @sys.realpath_native("/usr/bin/bwrap") != Some("/usr/bin/bwrap") ||
+    !@sys.path_executable("/usr/bin/bwrap") {
+    Err(
+      @types.ChoirError::policy_blocked(
+        "Codex read-only host boundary is unavailable",
+      ),
+    )
+  } else {
+    Ok(())
+  }
+}
+
+///|
+pub async fn capture_native_codex_host_boundary(
+  root : String,
+) -> Result[@control.Digest, @types.ChoirError] {
+  if !root.has_prefix("/tmp/choir-codex-host-boundary-") ||
+    @sys.path_entry_exists(root) {
+    return Err(
+      @types.ChoirError::validation_error(
+        "Codex host-boundary probe root is invalid",
+      ),
+    )
+  }
+  match validate_native_codex_host_boundary() {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let outside = root + "-outside"
+  let inside = root + "/inside"
+  if @sys.path_entry_exists(outside) || !@sys.create_dir_all(root) {
+    return Err(
+      @types.ChoirError::workspace_error(
+        "Codex host-boundary probe fixtures are unavailable",
+      ),
+    )
+  }
+  let sink = @process.redirect_to_file("/dev/null") catch {
+    _ => {
+      ignore(@sys.rm_rf(root))
+      return Err(native_codex_driver_error("host-boundary probe sink failed"))
+    }
+  }
+  let run = async fn(path : String) -> Int {
+    @process.run(
+      "/usr/bin/bwrap",
+      native_codex_host_boundary_args(
+        root, root, "/usr/bin/touch", [path],
+      ),
+      extra_env={ "PATH": "/usr/bin:/bin", "LC_ALL": "C" },
+      inherit_env=false,
+      stdout=sink,
+      stderr=sink,
+      cwd="/tmp",
+    ) catch {
+      _ => -1
+    }
+  }
+  let inside_code = run(inside)
+  let outside_code = run(outside)
+  let inside_created = @sys.path_exists(inside)
+  let outside_absent = !@sys.path_entry_exists(outside)
+  let evidence = @storage.artifact_digest(
+    @utf8.encode(
+      "choir.codex-read-only-host-boundary.v1\u{00}" +
+      inside_code.to_string() +
+      "\u{00}" +
+      outside_code.to_string() +
+      "\u{00}" +
+      inside_created.to_string() +
+      "\u{00}" +
+      outside_absent.to_string(),
+    ),
+  )
+  ignore(@sys.rm_rf(root))
+  ignore(@sys.delete_file_sync(outside))
+  if inside_code == 0 && inside_created && outside_code != 0 && outside_absent {
+    Ok(evidence)
+  } else {
+    Err(
+      @types.ChoirError::policy_blocked(
+        "Codex read-only host boundary did not confine mutation",
+      ),
+    )
+  }
 }
 
 ///|
@@ -871,28 +976,23 @@ async fn spawn_native_codex_app_server(
     fifo,
     native_codex_log_path(config),
     config.sterile_root + "/app-server.stderr",
+    "/usr/bin/bwrap",
   ]
-  if config.process_trace_root != "" {
-    arguments.push("/usr/bin/strace")
-    arguments.push("-ff")
-    arguments.push("-qq")
-    arguments.push("-yy")
-    arguments.push("-s")
-    arguments.push("4096")
-    arguments.push("-e")
-    arguments.push("trace=%file,%network,%process")
-    arguments.push("-o")
-    arguments.push(config.process_trace_root + "/trace")
-    arguments.push("--")
-  }
-  arguments.push(codex)
-  for argument in native_codex_app_server_args(config) {
+  for
+    argument in native_codex_host_boundary_args(
+      config.sterile_root,
+      native_codex_app_server_working_directory(config),
+      codex,
+      native_codex_app_server_args(config),
+    ) {
     arguments.push(argument)
   }
   let sink = @process.redirect_to_file("/dev/null") catch {
     _ => return Err(native_codex_driver_error("app-server sink failed"))
   }
-  abort_if_hermetic_test_exec("/usr/bin/setsid /bin/sh -c <codex-app-server>")
+  abort_if_hermetic_test_exec(
+    "/usr/bin/setsid /bin/sh -c <bwrap-codex-app-server>",
+  )
   let pid = @process.spawn_orphan(
     "/usr/bin/setsid",
     arguments,
@@ -1215,6 +1315,10 @@ pub async fn run_native_codex_take(
   after_turn_started? : () -> Unit = fn() { () },
 ) -> Result[@harness.CodexDriverResult, @types.ChoirError] {
   match validate_native_codex_config(config) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  match validate_native_codex_host_boundary() {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
@@ -1599,6 +1703,10 @@ pub async fn run_native_codex_conductor_turn(
       )
     }
   }
+  match validate_native_codex_host_boundary() {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   let prompt_bytes = @utf8.encode(prompt)
   if prompt_bytes.length() == 0 ||
     prompt_bytes.length() > 65536 ||
@@ -1653,17 +1761,23 @@ pub async fn run_native_codex_conductor_turn(
   )
   stdin_write.close()
   let args = native_codex_conductor_args(config, thread_id)
+  let bounded_args = native_codex_host_boundary_args(
+    config.sterile_root,
+    config.sterile_root,
+    codex_native,
+    args,
+  )
   abort_if_hermetic_test_exec(
     command_to_shell_string({
-      program: codex_native,
-      args,
+      program: "/usr/bin/bwrap",
+      args: bounded_args,
       workdir: Some(config.sterile_root),
     }),
   )
   let collected = match
     collect_interruptible_process(
-      codex_native,
-      args,
+      "/usr/bin/bwrap",
+      bounded_args,
       native_codex_conductor_environment(provider_home, config),
       stdin_read,
       config.sterile_root,
@@ -1693,7 +1807,6 @@ pub async fn run_native_codex_conductor_turn(
 test "native Codex app-server argv removes native execution surfaces" {
   let args = native_codex_app_server_args({
     sterile_root: "/tmp/choir-codex-driver-test",
-    process_trace_root: "",
     mcp_executable: "/usr/bin/node",
     mcp_arguments: ["/opt/choir/sandbox-mcp.mjs"],
     mcp_server_name: "choir_sandbox",
@@ -1716,7 +1829,6 @@ test "native Codex app-server argv removes native execution surfaces" {
 test "native Codex initialization attests the sterile client identity" {
   let config : NativeCodexDriverConfig = {
     sterile_root: "/tmp/choir-codex-driver-test",
-    process_trace_root: "",
     mcp_executable: "/usr/bin/node",
     mcp_arguments: [],
     mcp_server_name: "choir_sandbox",
@@ -1738,6 +1850,20 @@ test "native Codex initialization attests the sterile client identity" {
   assert_true(
     attest_native_codex_initialization(config, response.to_json()) is Err(_),
   )
+}
+
+///|
+test "native Codex host boundary exposes only the sterile root writable" {
+  let root = "/tmp/choir-codex-host-boundary-test"
+  let args = native_codex_host_boundary_args(
+    root, root, "/usr/bin/true", [],
+  )
+  assert_eq(args[:4], ["--die-with-parent", "--ro-bind", "/", "/"])
+  assert_true(args.contains("--dev-bind"))
+  assert_true(args.contains("--proc"))
+  assert_true(args.contains("--bind"))
+  assert_eq(args[args.length() - 2], "--")
+  assert_eq(args[args.length() - 1], "/usr/bin/true")
 }
 
 ///|

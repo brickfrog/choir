@@ -468,7 +468,6 @@ fn native_codex_config(
   }
   Ok({
     sterile_root: runtime.config.codex_root + session.id.0,
-    process_trace_root: "",
     mcp_executable: runtime.config.node_executable,
     mcp_arguments: arguments,
     mcp_server_name: "choir_sandbox",
