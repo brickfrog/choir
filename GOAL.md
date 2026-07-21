@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-20T20:12:07-05:00
+Implementation snapshot updated through: 2026-07-20T21:05:00-05:00
 
 ## Charter Semantics and Readiness
 
@@ -251,6 +251,15 @@ unconnected product path usable.
   recovery, and requires the native driver to reject the stale persisted
   session without changing its manifest or issuing a replacement turn. The
   combined live evidence now covers three of the fifteen host-surface rows.
+- The native Codex Take driver now proves `SURFACE-001` at its pre-turn
+  initialization barrier. Before sending `initialized` or starting a thread,
+  it requires the pinned Codex identity, Choir client identity, sterile
+  `CODEX_HOME`, and Linux/Unix platform identity returned by app-server. It
+  records a content-addressed attestation in the durable Take manifest and
+  independently rejects a HarnessSession whose declared tool-surface digest
+  differs from the driver configuration before provider dispatch. The normal
+  live Take command exposes the corresponding one-pass/fourteen-unrun matrix;
+  combined live evidence now covers four rows, with eleven still unproven.
 - Codex MCP resource discovery is now classified as provider-side discovery,
   not as a Part effect, only for the two read-only discovery methods and only
   when Codex identifies either the exact declared server or its reserved

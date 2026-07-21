@@ -375,8 +375,34 @@ async fn run_codex_live_driver_at(
       return 1
     }
   }
-  if cleanup {
-    ignore(@sys.rm_rf(root))
+  let attestation = match
+    @exec.read_native_codex_initialization_attestation(root) {
+    Some(value) => value
+    None => {
+      @sys.write_stderr("Codex initialization attestation is absent\n")
+      if cleanup {
+        ignore(@sys.rm_rf(root))
+      }
+      return 1
+    }
+  }
+  let matrix = match
+    @harness.evaluate_host_surface_matrix(@harness.ProviderSurface::CodexCli, [
+      {
+        probe: @harness.HostSurfaceProbe::HostSurfaceInitialization,
+        outcome: @harness.HostSurfaceProbeOutcome::HostSurfaceProbePassed(
+          attestation,
+        ),
+      },
+    ]) {
+    Ok(value) => value
+    Err(error) => {
+      @sys.write_stderr(error.message() + "\n")
+      if cleanup {
+        ignore(@sys.rm_rf(root))
+      }
+      return 1
+    }
   }
   let report : Map[String, Json] = {
     "surface": "CodexSubscriptionCli".to_json(),
@@ -385,7 +411,15 @@ async fn run_codex_live_driver_at(
     "terminal_response": result.terminal_response.to_json(),
     "lifecycle": result.session.lifecycle.to_json(),
   }
-  @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
+  if cleanup {
+    ignore(@sys.rm_rf(root))
+  }
+  @sys.write_stdout(
+    { "driver": report.to_json(), "host_surface_matrix": matrix.to_json() }
+    .to_json()
+    .stringify(indent=2) +
+    "\n",
+  )
   0
 }
 

@@ -438,6 +438,7 @@ priv struct NativeCodexTakeManifest {
   server_pid : Int
   server_generation : Int
   server_initialized : Bool
+  initialization_attestation_digest : @control.Digest?
   thread_id : String?
   turn_id : String?
   client_user_message_id : String
@@ -451,6 +452,28 @@ priv struct NativeCodexTakeManifest {
 ///|
 fn native_codex_manifest_path(config : NativeCodexDriverConfig) -> String {
   config.sterile_root + "/take-session.json"
+}
+
+///|
+pub fn read_native_codex_initialization_attestation(
+  sterile_root : String,
+) -> @control.Digest? {
+  let path = sterile_root + "/take-session.json"
+  if !sterile_root.has_prefix("/") ||
+    !@sys.path_exists(path) ||
+    @sys.file_size(path) <= 0 ||
+    @sys.file_size(path) > 65536 {
+    return None
+  }
+  let json = @json.parse(@sys.read_file(path)) catch { _ => return None }
+  let manifest : NativeCodexTakeManifest = @json.from_json(json) catch {
+    _ => return None
+  }
+  if manifest.version == 2 && manifest.server_initialized {
+    manifest.initialization_attestation_digest
+  } else {
+    None
+  }
 }
 
 ///|
@@ -501,18 +524,65 @@ fn load_native_codex_manifest(
         native_codex_driver_error("Take session manifest schema is invalid"),
       )
   }
-  if manifest.version != 1 ||
+  if manifest.version != 2 ||
     manifest.session_id != session.id ||
     manifest.take_id != session.take_id ||
     manifest.role != role ||
     manifest.surface_digest != session.effective_surface_manifest_digest ||
     manifest.server_generation < 0 ||
     manifest.read_ordinal < 0 ||
-    manifest.client_user_message_id == "" {
+    manifest.client_user_message_id == "" ||
+    manifest.server_initialized !=
+    (manifest.initialization_attestation_digest is Some(_)) {
     Err(native_codex_driver_error("Take session manifest identity is stale"))
   } else {
     Ok(Some(manifest))
   }
+}
+
+///|
+fn attest_native_codex_initialization(
+  config : NativeCodexDriverConfig,
+  response : Json,
+) -> Result[@control.Digest, @types.ChoirError] {
+  guard response is Object(fields) else {
+    return Err(native_codex_driver_error("initialization response is invalid"))
+  }
+  let user_agent = match @types.json_field_string(fields, "userAgent") {
+    Some(value) => value
+    None =>
+      return Err(native_codex_driver_error("initialization identity is absent"))
+  }
+  let codex_home = match @types.json_field_string(fields, "codexHome") {
+    Some(value) => value
+    None =>
+      return Err(native_codex_driver_error("initialization home is absent"))
+  }
+  let platform_family = @types.json_field_string(fields, "platformFamily")
+  let platform_os = @types.json_field_string(fields, "platformOs")
+  if !user_agent.contains(
+      "choir/" +
+      @harness.expected_surface_version(@harness.ProviderSurface::CodexCli),
+    ) ||
+    !user_agent.contains("(choir; 0.1.0)") ||
+    codex_home != config.sterile_root + "/codex-home" ||
+    platform_family != Some("unix") ||
+    platform_os != Some("linux") {
+    return Err(
+      native_codex_driver_error("initialization identity does not match"),
+    )
+  }
+  Ok(
+    @storage.artifact_digest(
+      @utf8.encode(
+        "choir.codex-initialization-attestation.v1\u{00}" +
+        user_agent +
+        "\u{00}" +
+        codex_home +
+        "\u{00}unix\u{00}linux",
+      ),
+    ),
+  )
 }
 
 ///|
@@ -772,6 +842,7 @@ async fn spawn_native_codex_app_server(
     server_pid: pid,
     server_generation: manifest.server_generation + 1,
     server_initialized: false,
+    initialization_attestation_digest: None,
   }
   match store_native_codex_manifest(config, updated) {
     Ok(_) => Ok(updated)
@@ -806,7 +877,7 @@ async fn ensure_native_codex_app_server(
       "version": "0.1.0".to_json(),
     }.to_json(),
   }
-  match
+  let initialization = match
     request_native_codex_app_server(
       config,
       "initialize:" + generation,
@@ -814,7 +885,12 @@ async fn ensure_native_codex_app_server(
       initialize.to_json(),
       server_pid=manifest.server_pid,
     ) {
-    Ok(_) => ()
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let attestation_digest = match
+    attest_native_codex_initialization(config, initialization) {
+    Ok(value) => value
     Err(error) => return Err(error)
   }
   match
@@ -822,7 +898,11 @@ async fn ensure_native_codex_app_server(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  manifest = { ..manifest, server_initialized: true }
+  manifest = {
+    ..manifest,
+    server_initialized: true,
+    initialization_attestation_digest: Some(attestation_digest),
+  }
   match store_native_codex_manifest(config, manifest) {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -1089,6 +1169,17 @@ pub async fn run_native_codex_take(
       ),
     )
   }
+  let expected_surface_digest = @harness.codex_effective_surface_manifest_digest(
+    config.allowed_tools,
+    config.mcp_server_name,
+  )
+  if session.effective_surface_manifest_digest != expected_surface_digest {
+    return Err(
+      @types.ChoirError::policy_blocked(
+        "native Codex driver surface manifest changed before dispatch",
+      ),
+    )
+  }
   match codex_conflicting_credential_environment() {
     Some(name) =>
       return Err(
@@ -1133,7 +1224,7 @@ pub async fn run_native_codex_take(
     Some(value) => value
     None => {
       let value : NativeCodexTakeManifest = {
-        version: 1,
+        version: 2,
         session_id: session.id,
         take_id: session.take_id,
         role,
@@ -1141,6 +1232,7 @@ pub async fn run_native_codex_take(
         server_pid: 0,
         server_generation: 0,
         server_initialized: false,
+        initialization_attestation_digest: None,
         thread_id: None,
         turn_id: None,
         client_user_message_id: "choir-" + session.id.0 + "-user-1",
@@ -1551,9 +1643,36 @@ test "native Codex app-server argv removes native execution surfaces" {
 }
 
 ///|
+test "native Codex initialization attests the sterile client identity" {
+  let config : NativeCodexDriverConfig = {
+    sterile_root: "/tmp/choir-codex-driver-test",
+    mcp_executable: "/usr/bin/node",
+    mcp_arguments: [],
+    mcp_server_name: "choir_sandbox",
+    allowed_tools: ["probe"],
+    timeout_ms: 60000,
+  }
+  let response : Map[String, Json] = {
+    "userAgent": ("choir/" +
+    @harness.expected_surface_version(@harness.ProviderSurface::CodexCli) +
+    " (Linux; x86_64) terminal (choir; 0.1.0)").to_json(),
+    "codexHome": "/tmp/choir-codex-driver-test/codex-home".to_json(),
+    "platformFamily": "unix".to_json(),
+    "platformOs": "linux".to_json(),
+  }
+  assert_true(
+    attest_native_codex_initialization(config, response.to_json()) is Ok(_),
+  )
+  response["codexHome"] = "/home/user/.codex".to_json()
+  assert_true(
+    attest_native_codex_initialization(config, response.to_json()) is Err(_),
+  )
+}
+
+///|
 test "Codex recovery adopts the turn with the durable client message id" {
   let manifest : NativeCodexTakeManifest = {
-    version: 1,
+    version: 2,
     session_id: @control.HarnessSessionId("session-recovery"),
     take_id: @control.TakeId("take-recovery"),
     role: @harness.CodexTakeRole::CodexImplementationTake,
@@ -1561,6 +1680,9 @@ test "Codex recovery adopts the turn with the durable client message id" {
     server_pid: 1,
     server_generation: 1,
     server_initialized: true,
+    initialization_attestation_digest: Some(
+      @control.Digest("initialization-recovery"),
+    ),
     thread_id: Some("thread-recovery"),
     turn_id: None,
     client_user_message_id: "client-message-recovery",
