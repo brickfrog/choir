@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-20T20:01:15-05:00
+Implementation snapshot updated through: 2026-07-20T20:12:07-05:00
 
 ## Charter Semantics and Readiness
 
@@ -246,6 +246,11 @@ unconnected product path usable.
   all fifteen rows pass. The Codex live startup command currently proves only
   required-tool fail-closed startup and subscription identity, so its report
   correctly remains incomplete with two passed and thirteen unrun rows.
+- A separate live Codex resume-attestation probe now proves `RESUME-010`.
+  It starts a real turn, changes the effective allowed-tool manifest before
+  recovery, and requires the native driver to reject the stale persisted
+  session without changing its manifest or issuing a replacement turn. The
+  combined live evidence now covers three of the fifteen host-surface rows.
 - Codex MCP resource discovery is now classified as provider-side discovery,
   not as a Part effect, only for the two read-only discovery methods and only
   when Codex identifies either the exact declared server or its reserved
@@ -712,7 +717,7 @@ compiler still reports the repository's existing warning set.
   The fixed scale flow is joined to the full semantic projection; the remaining
   negative cases retain their own typed blocked/recovery oracles. The host
   surface now has an executable fifteen-row report rather than an implied
-  aggregate pass; thirteen Codex rows still require their exact live oracles.
+  aggregate pass; twelve Codex rows still require their exact live oracles.
 - Further splitting or consolidating large live adapters only when a concrete
   boundary or dead caller justifies it. The branch-point audit found no closed
   source package imported only by another closed source package.
@@ -4060,11 +4065,19 @@ rows are explicitly `NotRun`, so the disposition is `Incomplete`. The
 exact-turn recovery command also passed, and the live BoxLite cancellation
 fixture restarted with zero provider redispatches.
 
+At `2026-07-20T20:12:07-05:00`, the new live resume-attestation probe changed
+the exact allowed-tool set after a real Codex turn had been durably identified.
+Recovery rejected the stale surface digest before another turn, left the
+persisted Take manifest byte-identical, and kept the original authorized
+app-server alive until explicit cleanup. Its content-addressed `RESUME-010`
+row passed; the resulting one-row report remained `Incomplete` as required.
+
 The exact commands are:
 
 ```text
 moon run --target native src/bin/choir_conformance -- harness --surface codex-cli --profile subscription --live
 moon run --target native src/bin/choir_conformance -- harness --surface codex-cli --profile subscription --driver-recovery-live
+moon run --target native src/bin/choir_conformance -- harness --surface codex-cli --profile subscription --driver-resume-drift-live
 moon run --target native src/bin/choir_conformance -- e2e --fixture native-codex-cancellation
 ```
 

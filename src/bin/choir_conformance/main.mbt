@@ -286,10 +286,9 @@ async fn run_codex_live_startup() -> Int {
   }
   ignore(@sys.rm_rf(root))
   @sys.write_stdout(
-    {
-      "startup": report.to_json(),
-      "host_surface_matrix": matrix.to_json(),
-    }.to_json().stringify(indent=2) +
+    { "startup": report.to_json(), "host_surface_matrix": matrix.to_json() }
+    .to_json()
+    .stringify(indent=2) +
     "\n",
   )
   match report.support {
@@ -304,6 +303,8 @@ async fn run_codex_live_driver_at(
   delay_ms : Int,
   crash_after_turn_start : Bool,
   cleanup : Bool,
+  allowed_tools? : Array[String] = ["probe"],
+  expect_surface_drift? : Bool = false,
 ) -> Int {
   if !@sys.create_dir_all(root + "/tmp") {
     @sys.write_stderr("failed to create dedicated Codex driver root\n")
@@ -325,8 +326,7 @@ async fn run_codex_live_driver_at(
     ),
     surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
     effective_surface_manifest_digest: @harness.codex_effective_surface_manifest_digest(
-      ["probe"],
-      "choir_probe",
+      allowed_tools, "choir_probe",
     ),
     cursor_class: @control.HarnessCursorClass::HarnessCursorProviderEventId,
     provider_cursor: None,
@@ -350,7 +350,7 @@ async fn run_codex_live_driver_at(
         mcp_executable: mcp_command,
         mcp_arguments: mcp_args,
         mcp_server_name: "choir_probe",
-        allowed_tools: ["probe"],
+        allowed_tools,
         timeout_ms: 120000,
       },
       started,
@@ -364,6 +364,10 @@ async fn run_codex_live_driver_at(
     ) {
     Ok(value) => value
     Err(error) => {
+      if expect_surface_drift &&
+        error.message().contains("Take session manifest identity is stale") {
+        return 0
+      }
       @sys.write_stderr(error.message() + "\n")
       if cleanup {
         ignore(@sys.rm_rf(root))
@@ -419,20 +423,33 @@ fn codex_recovery_manifest_identity(root : String) -> (String, String, Int)? {
 }
 
 ///|
-async fn run_codex_live_recovery() -> Int {
-  let root = "/tmp/choir-conformance-codex-recovery-" +
-    @sys.get_pid().to_string()
+async fn run_codex_recovery_crash_child(root : String) -> Int {
+  let moon = match @exec.resolve_executable_in_path("moon") {
+    Some(value) => value
+    None => return -1
+  }
+  let built = @process.run(
+    moon,
+    ["build", "--target", "native", "src/bin/choir_conformance"],
+    inherit_env=true,
+    cwd=match @sys.realpath_native(".") {
+      Some(value) => value
+      None => "/tmp"
+    },
+  ) catch {
+    _ => -1
+  }
+  if built != 0 {
+    return built
+  }
   let executable = match
     @sys.realpath_native(
       "_build/native/debug/build/src/bin/choir_conformance/choir_conformance.exe",
     ) {
     Some(value) => value
-    None => {
-      @sys.write_stderr("failed to resolve conformance executable\n")
-      return 1
-    }
+    None => return -1
   }
-  let crash_code = @process.run(
+  @process.run(
     executable,
     [
       "harness", "--surface", "codex-cli", "--profile", "subscription", "--driver-recovery-crash",
@@ -446,6 +463,13 @@ async fn run_codex_live_recovery() -> Int {
   ) catch {
     _ => -1
   }
+}
+
+///|
+async fn run_codex_live_recovery() -> Int {
+  let root = "/tmp/choir-conformance-codex-recovery-" +
+    @sys.get_pid().to_string()
+  let crash_code = run_codex_recovery_crash_child(root)
   if crash_code != 77 {
     @sys.write_stderr(
       "Codex recovery child did not stop at the injected boundary\n",
@@ -484,6 +508,62 @@ async fn run_codex_live_recovery() -> Int {
     )
     0
   }
+}
+
+///|
+async fn run_codex_live_resume_drift() -> Int {
+  let root = "/tmp/choir-conformance-codex-drift-" + @sys.get_pid().to_string()
+  let crash_code = run_codex_recovery_crash_child(root)
+  if crash_code != 77 {
+    @sys.write_stderr(
+      "Codex drift child did not stop at the injected boundary\n",
+    )
+    ignore(@sys.rm_rf(root))
+    return 1
+  }
+  let before = @sys.read_file(root + "/take-session.json")
+  let identity = codex_recovery_manifest_identity(root)
+  guard identity is Some((_, _, server_pid)) && @sys.pgid_is_alive(server_pid) else {
+    @sys.write_stderr("Codex drift manifest is incomplete\n")
+    ignore(@sys.rm_rf(root))
+    return 1
+  }
+  let blocked = run_codex_live_driver_at(
+      root,
+      5000,
+      false,
+      false,
+      allowed_tools=["probe", "drift_probe"],
+      expect_surface_drift=true,
+    ) ==
+    0
+  let unchanged = before != "" &&
+    @sys.read_file(root + "/take-session.json") == before
+  let original_process_survived = @sys.pgid_is_alive(server_pid)
+  @sys.kill_pgid_sequence_best_effort(server_pid)
+  ignore(@sys.rm_rf(root))
+  if !blocked || !unchanged || !original_process_survived {
+    @sys.write_stderr("Codex resume surface drift was not fenced\n")
+    return 1
+  }
+  let evidence_digest = @storage.artifact_digest(
+    @utf8.encode(
+      "choir.codex-resume-surface-drift.v1\u{00}blocked\u{00}manifest-unchanged\u{00}original-process-survived",
+    ),
+  )
+  let matrix = @harness.evaluate_host_surface_matrix(
+    @harness.ProviderSurface::CodexCli,
+    [
+      {
+        probe: @harness.HostSurfaceProbe::HostSurfaceResumeAttestation,
+        outcome: @harness.HostSurfaceProbeOutcome::HostSurfaceProbePassed(
+          evidence_digest,
+        ),
+      },
+    ],
+  ).unwrap()
+  @sys.write_stdout(matrix.to_json().stringify(indent=2) + "\n")
+  0
 }
 
 ///|
@@ -534,13 +614,25 @@ fn run_harness_command(args : Array[String]) -> Unit {
     args[5] == "subscription" &&
     args[6] == "--driver-recovery-live" {
     @async.run_async_main(async fn() { @sys.exit(run_codex_live_recovery()) })
+  } else if args.length() == 7 &&
+    args[2] == "--surface" &&
+    args[3] == "codex-cli" &&
+    args[4] == "--profile" &&
+    args[5] == "subscription" &&
+    args[6] == "--driver-resume-drift-live" {
+    @async.run_async_main(async fn() {
+      @sys.exit(run_codex_live_resume_drift())
+    })
   } else if args.length() == 8 &&
     args[2] == "--surface" &&
     args[3] == "codex-cli" &&
     args[4] == "--profile" &&
     args[5] == "subscription" &&
     args[6] == "--driver-recovery-crash" &&
-    args[7].has_prefix("/tmp/choir-conformance-codex-recovery-") {
+    (
+      args[7].has_prefix("/tmp/choir-conformance-codex-recovery-") ||
+      args[7].has_prefix("/tmp/choir-conformance-codex-drift-")
+    ) {
     @async.run_async_main(async fn() {
       @sys.exit(run_codex_live_driver_at(args[7], 5000, true, false))
     })
@@ -1511,6 +1603,8 @@ fn usage() -> Unit {
     "--profile subscription --driver-live\n" +
     "       choir_conformance harness --surface codex-cli " +
     "--profile subscription --driver-recovery-live\n" +
+    "       choir_conformance harness --surface codex-cli " +
+    "--profile subscription --driver-resume-drift-live\n" +
     "       choir_conformance conductor --start-live\n" +
     "       choir_conformance sandbox --runtime boxlite --live\n" +
     "       choir_conformance sandbox --runtime boxlite --take-live\n" +
