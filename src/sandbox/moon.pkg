@@ -5,6 +5,7 @@ import {
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/json",
   "moonbitlang/core/ref",
+  "moonbitlang/core/string",
 }
 
 options(

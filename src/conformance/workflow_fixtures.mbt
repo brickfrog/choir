@@ -73,6 +73,7 @@ pub fn sandbox_transfer_validation_case() -> HermeticConformanceCase {
         max_total_bytes: 32L,
         max_file_bytes: 16L,
         max_depth: 3,
+        link_policy: @sandbox.TransferLinkPolicy::TransferRejectLinks,
       }
       let accepted = @sandbox.evaluate_transfer_manifest(
         [

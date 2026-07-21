@@ -756,7 +756,7 @@ Earlier evidence anchors are commits `5fb93fe8` for the native Part path,
 the linter correction. With the current assurance, cancellation, and provider changes,
 `moon check --target native`, `moon test --target native`, and
 `moon run --target native src/bin/choir_lint` all exit successfully on
-2026-07-20. After deleting obsolete source and tests, the full native suite reports 318
+2026-07-20. After deleting obsolete source and tests, the full native suite reports 332
 passed and 0 failed. The
 compiler still reports the repository's existing warning set.
 
@@ -823,9 +823,18 @@ compiler still reports the repository's existing warning set.
   destination validators to accept one bounded file/directory manifest; reject
   traversal, every link/special-entry kind, and entry/file/total/depth expansion
   fixtures; accept a missing destination below directories; and reject a
-  symlink destination.
-  This pure case does not claim that adapter staging, outside-tree mutation, or
-  atomic adoption has been proven. The hermetic runner now passes 35/35 cases.
+  symlink destination. The production BoxLite result-copy adapter now lists the
+  copied archive with fixed GNU tar options, parses that listing into the same
+  typed manifest, enforces entry/file/total/depth and archive-size bounds before
+  creating the extraction directory, validates the destination, and deletes its
+  exact result staging root on failure. Its repository-result policy preserves
+  symbolic links as Git data while rejecting hardlinks and special entries;
+  generic transfer policy still rejects all links. A narrow native adapter test
+  runs the real tar listing seam and validates a regular-file/symlink archive.
+  Extraction remains confined by `bwrap`. A fresh full Take rerun reached the
+  pinned BoxLite runtime but its VM exited with code 139 before copy-out, so this
+  does not yet claim a fresh live adapter pass or atomic artifact adoption. The
+  hermetic runner passes 35/35 cases.
 - Further splitting or consolidating large live adapters only when a concrete
   boundary or dead caller justifies it. The branch-point audit found no closed
   source package imported only by another closed source package.
@@ -3553,7 +3562,7 @@ report, and exits nonzero on any oracle mismatch.
 | `pr.readiness_and_terminal_race` | Human evidence edit plus simultaneous success/cancel | Fresh readiness oracle; exactly one terminal decision and outbox |
 | `host.surface_matrix` | `SURFACE-001` through `TOOL-SEARCH-015` | Exact manifest, canary, auth/entitlement, child, death, and resume oracles |
 | `sandbox.lifecycle_security` | KVM boot/clone/attach/kill/re-adopt/root/network/advisory cases | Exact pinned runtime report and host/guest isolation artifacts |
-| `sandbox.transfer_security` | Malicious copy archive with traversal, links, special files, destination symlinks, and expansion bombs | Typed rejection, bounded staging, zero mutation outside staging, only validated atomic artifact adoption |
+| `sandbox.transfer_security` | Untrusted copy archive with traversal, hardlinks, special files, escaped paths, destination symlinks, and expansion bombs | Typed rejection before extraction, bounded staging, repository symlinks preserved only as confined Git data, zero mutation outside staging, only validated atomic artifact adoption |
 | `e2e.part_lifecycle` | Part-lifecycle fixture | 1 implementation, 1 part-verification take/set, 1 part audit, 1 integration |
 | `e2e.native_part_lifecycle` | Native Part-lifecycle fixture | Real subscription CLI, sandbox, typed verification, restart witness recovery, and Git promotion |
 | `e2e.mixed_provider_goal` | Native mixed-provider Goal fixture | One Claude and one Codex Part execute concurrently in isolated Takes, receive separate verification and audit receipts, and promote serially into the expected combined tree |

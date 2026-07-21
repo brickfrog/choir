@@ -22,6 +22,13 @@ pub(all) struct TransferLimits {
   max_total_bytes : Int64
   max_file_bytes : Int64
   max_depth : Int
+  link_policy : TransferLinkPolicy
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum TransferLinkPolicy {
+  TransferRejectLinks
+  TransferAllowSymbolicLinks
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -38,6 +45,7 @@ pub(all) enum TransferBlockReason {
   TransferUnsupportedEntryType(String, TransferEntryKind)
   TransferNegativeSize(String)
   TransferDirectoryHasContentSize(String)
+  TransferLinkHasContentSize(String)
   TransferEntryLimitExceeded(Int, Int)
   TransferTotalBytesExceeded(Int64, Int64)
   TransferFileBytesExceeded(String, Int64, Int64)
@@ -71,6 +79,167 @@ pub(all) enum TransferManifestDecision {
   TransferManifestAccepted(ValidatedTransferManifest)
   TransferManifestRejected(TransferBlockReason)
 } derive(Debug, Eq, ToJson, FromJson)
+
+///|
+fn transfer_listing_error(message : String) -> @types.ChoirError {
+  @types.ChoirError::validation_error(
+    "sandbox transfer archive listing is invalid: " + message,
+  )
+}
+
+///|
+fn transfer_listing_token(line : String, start : Int) -> (String, Int)? {
+  let mut index = start
+  while index < line.length() && line[index] == ' ' {
+    index = index + 1
+  }
+  if index == line.length() {
+    return None
+  }
+  let begin = index
+  while index < line.length() && line[index] != ' ' {
+    index = index + 1
+  }
+  Some((line[begin:index].to_owned(), index))
+}
+
+///|
+fn transfer_listing_path(line : String, start : Int) -> String? {
+  let mut index = start
+  while index < line.length() && line[index] == ' ' {
+    index = index + 1
+  }
+  if index == line.length() {
+    None
+  } else {
+    Some(line[index:].to_owned())
+  }
+}
+
+///|
+fn transfer_listing_quoted_path(
+  raw : String,
+  kind : TransferEntryKind,
+) -> Result[String, @types.ChoirError] {
+  if raw.length() < 2 || raw[0] != '"' {
+    return Err(transfer_listing_error("path is not C-quoted"))
+  }
+  let mut end = 1
+  while end < raw.length() && raw[end] != '"' {
+    // The transfer grammar rejects every name that GNU tar must escape. This
+    // keeps the listing parser unambiguous without decoding attacker-controlled
+    // C/octal escape sequences.
+    if raw[end] == '\\' {
+      return Err(transfer_listing_error("escaped path is not portable"))
+    }
+    end = end + 1
+  }
+  if end == raw.length() {
+    return Err(transfer_listing_error("quoted path is unterminated"))
+  }
+  let trailing = raw[end + 1:].to_owned()
+  match kind {
+    TransferFile | TransferDirectory if trailing != "" =>
+      return Err(transfer_listing_error("path has trailing fields"))
+    TransferSymlink if !trailing.has_prefix(" -> \"") =>
+      return Err(transfer_listing_error("symbolic link target is malformed"))
+    TransferHardlink if !trailing.has_prefix(" link to \"") =>
+      return Err(transfer_listing_error("hardlink target is malformed"))
+    _ => ()
+  }
+  Ok(raw[1:end].to_owned())
+}
+
+///|
+fn transfer_listing_entry(line : String) -> Result[TransferEntry?, @types.ChoirError] {
+  let mode = match transfer_listing_token(line, 0) {
+    Some(value) => value
+    None => return Err(transfer_listing_error("mode is absent"))
+  }
+  let owner = match transfer_listing_token(line, mode.1) {
+    Some(value) => value
+    None => return Err(transfer_listing_error("owner is absent"))
+  }
+  let size = match transfer_listing_token(line, owner.1) {
+    Some(value) => value
+    None => return Err(transfer_listing_error("size is absent"))
+  }
+  let date = match transfer_listing_token(line, size.1) {
+    Some(value) => value
+    None => return Err(transfer_listing_error("date is absent"))
+  }
+  let time = match transfer_listing_token(line, date.1) {
+    Some(value) => value
+    None => return Err(transfer_listing_error("time is absent"))
+  }
+  let raw_path = match transfer_listing_path(line, time.1) {
+    Some(value) => value
+    None => return Err(transfer_listing_error("path is absent"))
+  }
+  if mode.0.length() != 10 || !owner.0.contains("/") {
+    return Err(transfer_listing_error("fixed verbose fields are malformed"))
+  }
+  let size_bytes = @string.parse_int(size.0) catch {
+    _ => return Err(transfer_listing_error("size is not decimal"))
+  }
+  if size_bytes < 0 {
+    return Err(transfer_listing_error("size is negative"))
+  }
+  let kind = match mode.0[0] {
+    '-' => TransferFile
+    'd' => TransferDirectory
+    'l' => TransferSymlink
+    'h' => TransferHardlink
+    'b' | 'c' => TransferDevice
+    'p' => TransferFifo
+    's' => TransferSocket
+    _ => return Err(transfer_listing_error("entry type is unsupported"))
+  }
+  let path_with_root = match transfer_listing_quoted_path(raw_path, kind) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if path_with_root == "./" && kind == TransferDirectory {
+    return Ok(None)
+  }
+  let mut path = if path_with_root.has_prefix("./") {
+    path_with_root[2:].to_owned()
+  } else {
+    path_with_root
+  }
+  if kind == TransferDirectory && path.has_suffix("/") {
+    path = path[:path.length() - 1].to_owned()
+  }
+  Ok(Some({ path, kind, size_bytes: size_bytes.to_int64() }))
+}
+
+///|
+pub fn parse_transfer_archive_listing(
+  listing : String,
+) -> Result[Array[TransferEntry], @types.ChoirError] {
+  let entries : Array[TransferEntry] = []
+  for raw in listing.split("\n") {
+    if raw != "" {
+      match transfer_listing_entry(raw.to_owned()) {
+        Ok(Some(entry)) => entries.push(entry)
+        Ok(None) => ()
+        Err(error) => return Err(error)
+      }
+    }
+  }
+  Ok(entries)
+}
+
+///|
+pub fn repository_result_transfer_limits() -> TransferLimits {
+  {
+    max_entries: 32768,
+    max_total_bytes: 536870912L,
+    max_file_bytes: 134217728L,
+    max_depth: 64,
+    link_policy: TransferAllowSymbolicLinks,
+  }
+}
 
 ///|
 fn transfer_path_decision(
@@ -163,6 +332,12 @@ pub fn evaluate_transfer_manifest(
             TransferDirectoryHasContentSize(entry.path),
           )
         }
+      TransferSymlink if limits.link_policy == TransferAllowSymbolicLinks =>
+        if entry.size_bytes != 0L {
+          return TransferManifestRejected(
+            TransferLinkHasContentSize(entry.path),
+          )
+        }
       kind =>
         return TransferManifestRejected(
           TransferUnsupportedEntryType(entry.path, kind),
@@ -206,6 +381,7 @@ fn transfer_reason_label(reason : TransferBlockReason) -> String {
     TransferUnsupportedEntryType(_, _) => "unsupported_entry_type"
     TransferNegativeSize(_) => "negative_size"
     TransferDirectoryHasContentSize(_) => "directory_content_size"
+    TransferLinkHasContentSize(_) => "link_content_size"
     TransferEntryLimitExceeded(_, _) => "entry_limit"
     TransferTotalBytesExceeded(_, _) => "total_bytes_limit"
     TransferFileBytesExceeded(_, _, _) => "file_bytes_limit"

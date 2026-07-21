@@ -1597,12 +1597,125 @@ pub async fn probe_native_boxlite_path_identity(
 }
 
 ///|
+fn validate_native_boxlite_result_listing(
+  listing : String,
+) -> Result[@sandbox.ValidatedTransferManifest, @types.ChoirError] {
+  let entries = match @sandbox.parse_transfer_archive_listing(listing) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  @sandbox.validate_transfer_manifest(
+    entries,
+    @sandbox.repository_result_transfer_limits(),
+  )
+}
+
+///|
+async fn inspect_native_boxlite_result_archive(
+  server : NativeBoxLiteServerHandle,
+  archive : String,
+) -> Result[@sandbox.ValidatedTransferManifest, @types.ChoirError] {
+  if @sys.realpath_native(archive) != Some(archive) {
+    return Err(native_boxlite_take_error("copied result archive is invalid"))
+  }
+  let archive_size = @sys.file_size(archive)
+  if archive_size <= 0 || archive_size > 805306368 {
+    return Err(native_boxlite_take_error("copied result archive exceeds bounds"))
+  }
+  let listed = @process.collect_output_merged(
+    "/usr/bin/tar",
+    [
+      "--list", "--verbose", "--file", archive, "--numeric-owner", "--full-time",
+      "--quoting-style=c",
+    ],
+    extra_env=native_boxlite_environment(server, false),
+    inherit_env=false,
+    cwd=server.config.root,
+  ) catch {
+    _ => return Err(native_boxlite_take_error("result manifest listing failed"))
+  }
+  let listing = listed.1.text() catch {
+    _ => return Err(native_boxlite_take_error("result manifest is not UTF-8"))
+  }
+  if listed.0 != 0 {
+    return Err(native_boxlite_take_error("result manifest listing failed"))
+  }
+  if listing.length() > 16777216 {
+    return Err(native_boxlite_take_error("result manifest listing exceeds bounds"))
+  }
+  validate_native_boxlite_result_listing(listing)
+}
+
+///|
+test "native result listing admits repository symlinks and rejects other links" {
+  let accepted =
+    #|drwxr-xr-x 1000/1000 0 2026-07-20 22:51:46.1 "./"
+    #|-rw-r--r-- 1000/1000 1 2026-07-20 22:51:46.1 "./file"
+    #|lrwxrwxrwx 1000/1000 0 2026-07-20 22:51:46.1 "./AGENTS.md" -> "CLAUDE.md"
+    #|
+  let rejected =
+    #|drwxr-xr-x 1000/1000 0 2026-07-20 22:51:46.1 "./"
+    #|hrw-r--r-- 1000/1000 0 2026-07-20 22:51:46.1 "./alias" link to "file"
+    #|
+  assert_true(validate_native_boxlite_result_listing(accepted) is Ok(_))
+  assert_true(validate_native_boxlite_result_listing(rejected) is Err(_))
+}
+
+///|
+async test "native result archive is inspected through the production tar seam" {
+  let root = "/tmp/choir-result-archive-test-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(root))
+  defer ignore(@sys.rm_rf(root))
+  let source = root + "/source"
+  if !@sys.create_dir_all(source) ||
+    !@sys.write_file_sync(source + "/file.txt", "content\n") ||
+    !@sys.symlink_force("file.txt", source + "/link.txt") {
+    fail("failed to create result archive fixture")
+  }
+  let archive = root + "/result.tar"
+  let created = @process.collect_output_merged(
+    "/usr/bin/tar",
+    ["--format=posix", "-C", source, "-cf", archive, "."],
+    extra_env={ "HOME": root, "PATH": "/usr/bin:/bin" },
+    inherit_env=false,
+    cwd=root,
+  ) catch {
+    _ => fail("failed to run result archive fixture")
+  }
+  if created.0 != 0 {
+    fail("failed to create result archive fixture")
+  }
+  let manifest = inspect_native_boxlite_result_archive(
+    {
+      config: {
+        binary: "/opt/boxlite",
+        runtime_dir: "/opt/runtime",
+        root,
+        port: 22000,
+        api_key: "archive-test",
+      },
+      pid: 1,
+      url: "http://127.0.0.1:22000",
+    },
+    archive,
+  ).unwrap()
+  assert_eq(manifest.entries().length(), 2)
+  assert_eq(manifest.total_bytes(), 8L)
+}
+
+///|
 pub async fn copy_native_boxlite_take_result(
   take : NativeBoxLiteTakeSandbox,
 ) -> Result[String, @types.ChoirError] {
   let destination = take.prepared.server.config.root + "/results/" + take.box_id
   if @sys.path_exists(destination) || !@sys.create_dir_all(destination) {
     return Err(native_boxlite_take_error("result root is unavailable"))
+  }
+  let mut adopted = false
+  defer {
+    if !adopted {
+      ignore(@sys.rm_rf(destination))
+    }
   }
   let guest_archive = "/root/choir-result.tar"
   let archived = match
@@ -1646,9 +1759,28 @@ pub async fn copy_native_boxlite_take_result(
   }
   let archive = destination + "/choir-result.tar"
   let workspace = destination + "/workspace"
-  if @sys.realpath_native(archive) != Some(archive) ||
-    !@sys.create_dir_all(workspace) {
-    return Err(native_boxlite_take_error("copied result archive is invalid"))
+  match inspect_native_boxlite_result_archive(take.prepared.server, archive) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  match
+    @sandbox.validate_transfer_adoption_destination(
+      [
+        {
+          path: destination,
+          kind: @sandbox.TransferDestinationKind::TransferDestinationDirectory,
+        },
+        {
+          path: workspace,
+          kind: @sandbox.TransferDestinationKind::TransferDestinationMissing,
+        },
+      ],
+    ) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  if !@sys.create_dir_all(workspace) {
+    return Err(native_boxlite_take_error("result workspace is unavailable"))
   }
   let extracted = @process.collect_output_merged(
     "/usr/bin/bwrap",
@@ -1731,6 +1863,7 @@ pub async fn copy_native_boxlite_take_result(
   if !marker.has_suffix(suffix) || marker.length() <= suffix.length() {
     return Err(native_boxlite_take_error("result root is invalid"))
   }
+  adopted = true
   Ok(marker[:marker.length() - suffix.length()].to_owned())
 }
 
