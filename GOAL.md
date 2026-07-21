@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-20T20:34:23-05:00
+Implementation snapshot updated through: 2026-07-20T20:44:30-05:00
 
 ## Charter Semantics and Readiness
 
@@ -274,6 +274,15 @@ unconnected product path usable.
   completed real Take produced no sentinel, no value in normalized events or
   terminal output, and no match anywhere in the dedicated Take state tree.
   Combined live evidence now covers six rows, with nine still unproven.
+- A live KVM-backed BoxLite Take probe now proves `PATH-ID-006` through the
+  exact sandbox MCP bridge admitted by the Codex Take surface. The bridge host
+  working root and guest workspace contain the same relative filename with
+  distinct canary values. MCP reads observe only the initial guest value, MCP
+  mutation replaces only the guest value, the copied candidate contains that
+  mutation, and the host canary remains byte-identical. The report binds the
+  logical path, both host observations, both guest observations, and bridge
+  output to one content-addressed evidence digest. Combined live evidence now
+  covers seven rows, with eight still unproven.
 - Codex MCP resource discovery is now classified as provider-side discovery,
   not as a Part effect, only for the two read-only discovery methods and only
   when Codex identifies either the exact declared server or its reserved
@@ -694,7 +703,7 @@ Earlier evidence anchors are commits `5fb93fe8` for the native Part path,
 the linter correction. With the current assurance, cancellation, and provider changes,
 `moon check --target native`, `moon test --target native`, and
 `moon run --target native src/bin/choir_lint` all exit successfully on
-2026-07-20. After deleting obsolete source and tests, the full native suite reports 314
+2026-07-20. After deleting obsolete source and tests, the full native suite reports 318
 passed and 0 failed. The
 compiler still reports the repository's existing warning set.
 
@@ -740,7 +749,7 @@ compiler still reports the repository's existing warning set.
   The fixed scale flow is joined to the full semantic projection; the remaining
   negative cases retain their own typed blocked/recovery oracles. The host
   surface now has an executable fifteen-row report rather than an implied
-  aggregate pass; nine Codex rows still require their exact live oracles.
+  aggregate pass; eight Codex rows still require their exact live oracles.
 - Further splitting or consolidating large live adapters only when a concrete
   boundary or dead caller justifies it. The branch-point audit found no closed
   source package imported only by another closed source package.

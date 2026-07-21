@@ -38,9 +38,7 @@ pub(all) struct NativeSandboxProcessResult {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-fn native_sandbox_process_evidence(
-  result : NativeSandboxProcessResult,
-) -> Json {
+fn native_sandbox_process_evidence(result : NativeSandboxProcessResult) -> Json {
   {
     "exit_code": result.exit_code.to_json(),
     "output_digest": @storage.artifact_digest(@utf8.encode(result.output)).to_json(),
@@ -1489,6 +1487,112 @@ pub async fn probe_native_boxlite_mcp(
         output.contains("workspace path").to_string(),
       ),
     )
+  }
+}
+
+///|
+pub async fn probe_native_boxlite_path_identity(
+  take : NativeBoxLiteTakeSandbox,
+  node : String,
+  script : String,
+) -> Result[String, @types.ChoirError] {
+  if take.workspace_access !=
+    @sandbox.BoxLiteWorkspaceAccess::BoxLiteMutableWorkspace {
+    return Err(
+      @types.ChoirError::policy_blocked(
+        "path identity requires a mutable Take workspace",
+      ),
+    )
+  }
+  if !node.has_prefix("/") || !script.has_prefix("/") {
+    return Err(
+      @types.ChoirError::validation_error(
+        "sandbox MCP probe executables must be absolute",
+      ),
+    )
+  }
+  let logical_path = ".choir-path-identity.txt"
+  let guest_initial = "GUEST_INITIAL_ONLY\n"
+  let seeded = match
+    capture_native_boxlite_cli(
+      take.prepared.server,
+      [
+        "exec",
+        take.box_id,
+        "--",
+        "/bin/sh",
+        "-c",
+        "set -eu; printf '%s' \"$1\" > \"/workspace/$2\"",
+        "choir-path-identity",
+        guest_initial,
+        logical_path,
+      ],
+      30000,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if seeded.exit_code != 0 {
+    return Err(native_boxlite_take_error("guest path canary setup failed"))
+  }
+  let args = match native_boxlite_take_mcp_arguments(take, script) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let requests =
+    #|{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
+    #|{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}
+    #|{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"read_file","arguments":{"path":".choir-path-identity.txt"}}}
+    #|{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"write_file","arguments":{"path":".choir-path-identity.txt","content":"GUEST_MUTATED_ONLY\n"}}}
+    #|{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"read_file","arguments":{"path":".choir-path-identity.txt"}}}
+  let (stdin_read, stdin_write) = @process.write_to_process() catch {
+    _ =>
+      return Err(native_boxlite_take_error("path identity probe stdin failed"))
+  }
+  ignore(
+    stdin_write.write(requests) catch {
+      _ => {
+        stdin_write.close()
+        return Err(
+          native_boxlite_take_error("path identity probe request failed"),
+        )
+      }
+    },
+  )
+  stdin_write.close()
+  let collected = @async.with_timeout_opt(60000, () => {
+    @process.collect_output_merged(
+      node,
+      args,
+      extra_env={
+        "HOME": take.prepared.server.config.root,
+        "PATH": "/usr/bin:/bin",
+        "NO_COLOR": "1",
+      },
+      inherit_env=false,
+      stdin=stdin_read,
+      cwd=take.prepared.server.config.root,
+    )
+  }) catch {
+    _ => return Err(native_boxlite_take_error("path identity probe failed"))
+  }
+  let (exit_code, data) = match collected {
+    Some(value) => value
+    None =>
+      return Err(@types.ChoirError::timeout("sandbox path identity probe"))
+  }
+  let output = data.text() catch {
+    _ =>
+      return Err(native_boxlite_take_error("path identity output is not UTF-8"))
+  }
+  if exit_code == 0 &&
+    output.contains("GUEST_INITIAL_ONLY\\n") &&
+    output.contains("GUEST_MUTATED_ONLY\\n") &&
+    !output.contains("HOST_ONLY") &&
+    !output.contains(take.prepared.server.config.api_key) {
+    Ok(output)
+  } else {
+    Err(native_boxlite_take_error("guest path identity contract failed"))
   }
 }
 

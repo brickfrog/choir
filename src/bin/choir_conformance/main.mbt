@@ -1089,6 +1089,20 @@ async fn exercise_boxlite_take(
     Ok(value) => value
     Err(error) => return Err(error)
   }
+  let logical_path = ".choir-path-identity.txt"
+  let host_path = take.prepared.server.config.root + "/" + logical_path
+  let host_canary = "HOST_ONLY\n"
+  if !@sys.write_file_sync(host_path, host_canary) {
+    return Err(
+      @types.ChoirError::workspace_error("host path canary is unavailable"),
+    )
+  }
+  let path_identity_probe = match
+    @exec.probe_native_boxlite_path_identity(take, node, script) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let host_after = @sys.read_file(host_path)
   let result_root = match @exec.copy_native_boxlite_take_result(take) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -1098,6 +1112,52 @@ async fn exercise_boxlite_take(
     return Err(
       @types.ChoirError::workspace_error("sandbox result did not round-trip"),
     )
+  }
+  let guest_after = @sys.read_file(result_root + "/" + logical_path)
+  if host_after != host_canary || guest_after != "GUEST_MUTATED_ONLY\n" {
+    return Err(
+      @types.ChoirError::workspace_error(
+        "host and guest logical paths were not isolated",
+      ),
+    )
+  }
+  let path_identity_evidence = @storage.artifact_digest(
+    @utf8.encode(
+      {
+        "logical_path": logical_path.to_json(),
+        "source_digest": take.source_digest.to_json(),
+        "tool_manifest_digest": take.prepared.tool_manifest_digest.to_json(),
+        "runtime_policy_digest": take.prepared.runtime_policy_digest.to_json(),
+        "workspace_access": take.workspace_access.to_json(),
+        "host_before_digest": @storage.artifact_digest(
+          @utf8.encode(host_canary),
+        ).to_json(),
+        "host_after_digest": @storage.artifact_digest(@utf8.encode(host_after)).to_json(),
+        "guest_initial_digest": @storage.artifact_digest(
+          @utf8.encode("GUEST_INITIAL_ONLY\n"),
+        ).to_json(),
+        "guest_after_digest": @storage.artifact_digest(
+          @utf8.encode(guest_after),
+        ).to_json(),
+        "bridge_output_digest": @storage.artifact_digest(
+          @utf8.encode(path_identity_probe),
+        ).to_json(),
+      }
+      .to_json()
+      .stringify(indent=0),
+    ),
+  )
+  let host_surface_matrix = match
+    @harness.evaluate_host_surface_matrix(@harness.ProviderSurface::CodexCli, [
+      {
+        probe: @harness.HostSurfaceProbe::HostSurfacePathIdentity,
+        outcome: @harness.HostSurfaceProbeOutcome::HostSurfaceProbePassed(
+          path_identity_evidence,
+        ),
+      },
+    ]) {
+    Ok(value) => value
+    Err(error) => return Err(error)
   }
   let (candidate, path_evidence) = match
     @exec.normalize_native_git_candidate(
@@ -1129,7 +1189,11 @@ async fn exercise_boxlite_take(
   }
   if candidate.base_commit_oid != source.commit_oid ||
     candidate.tree_oid == source.tree_oid ||
-    candidate.changed_paths != [@control.RepoPath(".choir-live-roundtrip.txt")] ||
+    candidate.changed_paths !=
+    [
+      @control.RepoPath(".choir-live-roundtrip.txt"),
+      @control.RepoPath(".choir-path-identity.txt"),
+    ] ||
     path_evidence.symlink_prefix_paths != [@control.RepoPath("AGENTS.md")] ||
     path_evidence.normalization_collision_paths.length() != 0 ||
     retried != (candidate, path_evidence) {
@@ -1257,6 +1321,10 @@ async fn exercise_boxlite_take(
     "tool_count": @sandbox.boxlite_take_mcp_tools().length().to_json(),
     "bridge_argument_count": arguments.length().to_json(),
     "bridge_probe_digest": @storage.artifact_digest(@utf8.encode(bridge_probe)).to_json(),
+    "path_identity_probe_digest": path_identity_evidence.to_json(),
+    "path_identity_host_unchanged": true.to_json(),
+    "path_identity_guest_mutated": true.to_json(),
+    "host_surface_matrix": host_surface_matrix.to_json(),
     "assurance_probe_digest": @storage.artifact_digest(
       @utf8.encode(assurance_probe),
     ).to_json(),
