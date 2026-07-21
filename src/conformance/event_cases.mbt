@@ -847,7 +847,7 @@ fn event_redaction_claude(
     Err(error) => return Err(error)
   }
   let init =
-    #|{"type":"system","subtype":"init","tools":["mcp__choir_sandbox__execute","StructuredOutput"],"mcp_servers":[{"name":"choir_sandbox","status":"connected"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.216","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"]}
+    #|{"type":"system","subtype":"init","tools":["mcp__choir_sandbox__execute","StructuredOutput"],"mcp_servers":[{"name":"choir_sandbox","status":"connected"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.217","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"]}
   let rate =
     #|{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","overageStatus":"rejected","isUsingOverage":false}}
   let assistant =

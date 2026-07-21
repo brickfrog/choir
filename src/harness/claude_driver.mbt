@@ -46,7 +46,7 @@ pub(all) enum ClaudeTakeOutcome {
 ///|
 priv enum ClaudeObservedToolEvent {
   ClaudeToolStarted(String, String)
-  ClaudeToolFinished(String)
+  ClaudeToolFinished(String, Bool)
 }
 
 ///|
@@ -202,6 +202,8 @@ fn claude_driver_trace(
                     tool_events.push(
                       ClaudeToolFinished(
                         startup_json_string(block_fields, "tool_use_id"),
+                        startup_json_bool(block_fields, "is_error") ==
+                        Some(true),
                       ),
                     )
                   }
@@ -230,6 +232,7 @@ fn validate_claude_tool_trace(
   let open : Map[String, String] = Map([])
   let mut starts = 0
   let mut sandbox_starts = 0
+  let mut failed = 0
   for event in events {
     match event {
       ClaudeToolStarted(id, name) => {
@@ -242,16 +245,22 @@ fn validate_claude_tool_trace(
           sandbox_starts = sandbox_starts + 1
         }
       }
-      ClaudeToolFinished(id) =>
+      ClaudeToolFinished(id, is_error) =>
         if id == "" || !open.contains(id) {
           return Err(claude_driver_error("unmatched tool result"))
         } else {
+          if is_error {
+            failed = failed + 1
+          }
           open.remove(id)
         }
     }
   }
   if starts == 0 || sandbox_starts == 0 || open.length() != 0 {
     return Err(claude_driver_error("tool trace is absent or unbalanced"))
+  }
+  if failed > 0 {
+    return Err(claude_driver_error("declared MCP tool call failed"))
   }
   Ok(())
 }
@@ -476,7 +485,7 @@ pub fn evaluate_claude_driver_capture(
     let kind = match observed {
       ClaudeToolStarted(id, _) =>
         @control.HarnessEventKind::HarnessToolStarted(id)
-      ClaudeToolFinished(id) =>
+      ClaudeToolFinished(id, _) =>
         @control.HarnessEventKind::HarnessToolFinished(
           id,
           @control.HarnessToolDisposition::HarnessToolSucceeded,

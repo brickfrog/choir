@@ -7,6 +7,7 @@ pub(all) struct NativeClaudeDriverConfig {
   mcp_server_name : String
   allowed_tools : Array[String]
   timeout_ms : Int
+  connect_trace_path : String?
 } derive(Debug, Eq)
 
 ///|
@@ -58,6 +59,15 @@ fn validate_native_claude_config(
         ),
       )
     }
+  }
+  match config.connect_trace_path {
+    Some(path) if path != config.sterile_root + "/connect.trace" =>
+      return Err(
+        @types.ChoirError::validation_error(
+          "native Claude connect trace path is invalid",
+        ),
+      )
+    _ => ()
   }
   let owner_socket_target = native_provider_owner_socket_path()
   let mut owner_socket_argument_count = 0
@@ -202,6 +212,178 @@ fn native_claude_environment(
 }
 
 ///|
+fn validate_native_claude_mcp_preflight_output(
+  output : String,
+  expected_tools : Array[String],
+) -> Result[Unit, @types.ChoirError] {
+  let mut initialized = false
+  let observed_tools : Array[String] = []
+  for raw in output.split("\n") {
+    let json = @json.parse(raw.trim().to_owned()) catch { _ => continue }
+    guard json is Object(fields) else { continue }
+    let id = match fields.get("id") {
+      Some(Number(value, ..)) => value.to_int()
+      _ => 0
+    }
+    guard fields.get("result") is Some(Object(result)) else { continue }
+    if id == 1 {
+      initialized = true
+    } else if id == 2 {
+      match result.get("tools") {
+        Some(Array(tools)) =>
+          for tool in tools {
+            guard tool is Object(tool_fields) else { continue }
+            match tool_fields.get("name") {
+              Some(String(name)) => observed_tools.push(name)
+              _ => ()
+            }
+          }
+        _ => ()
+      }
+    }
+  }
+  let expected = expected_tools.copy()
+  let observed = observed_tools.copy()
+  expected.sort()
+  observed.sort()
+  if !initialized || observed != expected {
+    Err(
+      @types.ChoirError::policy_blocked(
+        "Claude required MCP server failed pre-turn attestation",
+      ),
+    )
+  } else {
+    Ok(())
+  }
+}
+
+///|
+async fn preflight_native_claude_mcp(
+  config : NativeClaudeDriverConfig,
+  provider_home : String,
+) -> Result[Unit, @types.ChoirError] {
+  let prefix = "mcp__" + config.mcp_server_name + "__"
+  let expected_tools : Array[String] = []
+  for tool in config.allowed_tools {
+    expected_tools.push(tool[prefix.length():].to_owned())
+  }
+  let (stdin_read, stdin_write) = @process.write_to_process() catch {
+    _ =>
+      return Err(native_claude_driver_error("MCP preflight stdin pipe failed"))
+  }
+  let requests = [
+      (
+        #|{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"choir-preflight","version":"1"}}}
+      ),
+      (
+        #|{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}
+      ),
+      (
+        #|{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}
+      ),
+    ].join("\n") +
+    "\n"
+  ignore(
+    stdin_write.write(requests) catch {
+      _ => {
+        stdin_write.close()
+        return Err(
+          native_claude_driver_error("MCP preflight request write failed"),
+        )
+      }
+    },
+  )
+  stdin_write.close()
+  let bounded_args = native_provider_host_boundary_args(
+    config.sterile_root,
+    config.sterile_root,
+    config.boxlite_owner_socket_root,
+    config.mcp_executable,
+    config.mcp_arguments,
+  )
+  abort_if_hermetic_test_exec(
+    command_to_shell_string({
+      program: "/usr/bin/bwrap",
+      args: bounded_args,
+      workdir: Some(config.sterile_root),
+    }),
+  )
+  let captured = @async.with_timeout_opt(10000, () => {
+    @process.collect_output_merged(
+      "/usr/bin/bwrap",
+      bounded_args,
+      extra_env=native_claude_environment(provider_home, config.sterile_root),
+      inherit_env=false,
+      stdin=stdin_read,
+      cwd=config.sterile_root,
+    )
+  }) catch {
+    _ =>
+      return Err(
+        @types.ChoirError::policy_blocked(
+          "Claude required MCP server could not start",
+        ),
+      )
+  }
+  let (exit_code, data) = match captured {
+    Some(value) => value
+    None =>
+      return Err(
+        @types.ChoirError::policy_blocked(
+          "Claude required MCP server preflight timed out",
+        ),
+      )
+  }
+  let output = data.text() catch {
+    _ =>
+      return Err(
+        @types.ChoirError::policy_blocked(
+          "Claude required MCP preflight output was not UTF-8",
+        ),
+      )
+  }
+  if exit_code != 0 {
+    return Err(
+      @types.ChoirError::policy_blocked(
+        "Claude required MCP server failed before the model turn",
+      ),
+    )
+  }
+  validate_native_claude_mcp_preflight_output(output, expected_tools)
+}
+
+///|
+test "native Claude MCP preflight requires initialization and exact tools" {
+  let passing = [
+    (
+      #|{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05"}}
+    ),
+    (
+      #|{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"write_file"},{"name":"read_file"}]}}
+    ),
+  ].join("\n")
+  assert_true(
+    validate_native_claude_mcp_preflight_output(passing, [
+      "read_file", "write_file",
+    ])
+    is Ok(_),
+  )
+  assert_true(
+    validate_native_claude_mcp_preflight_output(passing, ["read_file"])
+    is Err(_),
+  )
+  assert_true(
+    validate_native_claude_mcp_preflight_output(
+      (
+        #|{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"read_file"}]}}
+      ),
+      ["read_file"],
+    )
+    is Err(_),
+  )
+}
+
+///|
 fn native_claude_pid_witness_path(sterile_root : String) -> String {
   sterile_root + "/provider.pid"
 }
@@ -303,6 +485,7 @@ test "native Claude owner socket binding is exact and paired with MCP argv" {
     mcp_server_name: "choir_sandbox",
     allowed_tools: ["mcp__choir_sandbox__read_file"],
     timeout_ms: 60000,
+    connect_trace_path: None,
   }
   assert_true(validate_native_claude_config(config) is Ok(_))
   assert_true(
@@ -410,6 +593,10 @@ pub async fn run_native_claude_take(
   if !@sys.create_dir_all(config.sterile_root + "/tmp") {
     return Err(native_claude_driver_error("sterile root is unavailable"))
   }
+  match preflight_native_claude_mcp(config, provider_home) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   let (stdin_read, stdin_write) = @process.write_to_process() catch {
     _ => return Err(native_claude_driver_error("stdin pipe failed"))
   }
@@ -424,12 +611,23 @@ pub async fn run_native_claude_take(
   stdin_write.close()
   let started_at = now()
   let args = native_claude_driver_args(config, role)
+  let traced_program = match config.connect_trace_path {
+    Some(_) => "/usr/bin/strace"
+    None => claude
+  }
+  let traced_args : Array[String] = match config.connect_trace_path {
+    Some(path) =>
+      [
+        "-f", "-qq", "-s", "256", "-e", "trace=connect", "-o", path, claude, ..args,
+      ]
+    None => args
+  }
   let bounded_args = native_provider_host_boundary_args(
     config.sterile_root,
     config.sterile_root,
     config.boxlite_owner_socket_root,
-    claude,
-    args,
+    traced_program,
+    traced_args,
   )
   abort_if_hermetic_test_exec(
     command_to_shell_string({
@@ -498,6 +696,7 @@ test "native Claude driver argv removes host tools and ambient configuration" {
       mcp_server_name: "choir_sandbox",
       allowed_tools: ["mcp__choir_sandbox__execute"],
       timeout_ms: 60000,
+      connect_trace_path: None,
     },
     @harness.ClaudeTakeRole::ClaudeImplementationTake,
   )

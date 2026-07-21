@@ -1,5 +1,5 @@
 ///|
-pub(all) struct CodexNetworkTraceSummary {
+pub(all) struct ProviderNetworkTraceSummary {
   provider_connections : Int
   address_selection_probes : Int
   dns_connections : Int
@@ -9,14 +9,14 @@ pub(all) struct CodexNetworkTraceSummary {
 } derive(Debug, Eq, ToJson)
 
 ///|
-pub fn evaluate_codex_network_trace(
+pub fn evaluate_provider_network_trace(
   trace : String,
   canary_port : Int,
-) -> Result[CodexNetworkTraceSummary, @types.ChoirError] {
+) -> Result[ProviderNetworkTraceSummary, @types.ChoirError] {
   if canary_port < 1024 || canary_port > 65535 {
     return Err(
       @types.ChoirError::validation_error(
-        "Codex network canary port is invalid",
+        "provider network canary port is invalid",
       ),
     )
   }
@@ -44,7 +44,7 @@ pub fn evaluate_codex_network_trace(
       } else if line.contains("sin_port=htons(53)") ||
         line.contains("sin6_port=htons(53)") {
         dns_connections = dns_connections + 1
-      } else if line.contains("htons(65535)") {
+      } else if line.contains("htons(0)") || line.contains("htons(65535)") {
         address_selection_probes = address_selection_probes + 1
       } else {
         other_inet_connections = other_inet_connections + 1
@@ -62,7 +62,9 @@ pub fn evaluate_codex_network_trace(
 }
 
 ///|
-pub fn codex_network_trace_passed(summary : CodexNetworkTraceSummary) -> Bool {
+pub fn provider_network_trace_passed(
+  summary : ProviderNetworkTraceSummary,
+) -> Bool {
   summary.provider_connections > 0 &&
   summary.canary_connections == 0 &&
   summary.other_inet_connections == 0

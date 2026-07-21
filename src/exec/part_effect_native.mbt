@@ -463,6 +463,7 @@ fn native_claude_config(
         @sandbox.boxlite_assurance_mcp_tools()
     },
     timeout_ms: 3600000,
+    connect_trace_path: None,
   })
 }
 

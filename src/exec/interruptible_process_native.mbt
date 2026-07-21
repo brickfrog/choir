@@ -90,6 +90,92 @@ fn validate_native_provider_host_boundary() -> Result[Unit, @types.ChoirError] {
 }
 
 ///|
+pub async fn capture_native_provider_host_boundary(
+  root : String,
+  surface : @harness.ProviderSurface,
+) -> Result[@control.Digest, @types.ChoirError] {
+  let label = match surface {
+    @harness.ProviderSurface::ClaudeCli => "claude"
+    @harness.ProviderSurface::CodexCli => "codex"
+  }
+  if !root.has_prefix("/tmp/choir-" + label + "-host-boundary-") ||
+    @sys.path_entry_exists(root) {
+    return Err(
+      @types.ChoirError::validation_error(
+        "provider host-boundary probe root is invalid",
+      ),
+    )
+  }
+  match validate_native_provider_host_boundary() {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let outside = root + "-outside"
+  let inside = root + "/inside"
+  if @sys.path_entry_exists(outside) || !@sys.create_dir_all(root) {
+    return Err(
+      @types.ChoirError::workspace_error(
+        "provider host-boundary probe fixtures are unavailable",
+      ),
+    )
+  }
+  let sink = @process.redirect_to_file("/dev/null") catch {
+    _ => {
+      ignore(@sys.rm_rf(root))
+      return Err(
+        @types.ChoirError::transport_error(
+          "provider host-boundary probe sink failed",
+        ),
+      )
+    }
+  }
+  let run = async fn(path : String) -> Int {
+    @process.run(
+      "/usr/bin/bwrap",
+      native_provider_host_boundary_args(root, root, None, "/usr/bin/touch", [
+        path,
+      ]),
+      extra_env={ "PATH": "/usr/bin:/bin", "LC_ALL": "C" },
+      inherit_env=false,
+      stdout=sink,
+      stderr=sink,
+      cwd="/tmp",
+    ) catch {
+      _ => -1
+    }
+  }
+  let inside_code = run(inside)
+  let outside_code = run(outside)
+  let inside_created = @sys.path_exists(inside)
+  let outside_absent = !@sys.path_entry_exists(outside)
+  let evidence = @storage.artifact_digest(
+    @utf8.encode(
+      "choir." +
+      label +
+      "-read-only-host-boundary.v1\u{00}" +
+      inside_code.to_string() +
+      "\u{00}" +
+      outside_code.to_string() +
+      "\u{00}" +
+      inside_created.to_string() +
+      "\u{00}" +
+      outside_absent.to_string(),
+    ),
+  )
+  ignore(@sys.rm_rf(root))
+  ignore(@sys.delete_file_sync(outside))
+  if inside_code == 0 && inside_created && outside_code != 0 && outside_absent {
+    Ok(evidence)
+  } else {
+    Err(
+      @types.ChoirError::policy_blocked(
+        "provider read-only host boundary did not confine mutation",
+      ),
+    )
+  }
+}
+
+///|
 pub async fn collect_interruptible_process(
   program : String,
   arguments : Array[String],

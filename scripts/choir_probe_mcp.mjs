@@ -15,6 +15,7 @@ const readCanaryPath =
 const readResultIndex = process.argv.indexOf("--read-result-path");
 const readResultPath =
   readResultIndex >= 0 ? process.argv[readResultIndex + 1] : null;
+const failTool = process.argv.includes("--fail-tool");
 if (!Number.isInteger(delayMs) || delayMs < 0 || delayMs > 30_000) {
   throw new Error("invalid probe delay");
 }
@@ -79,8 +80,13 @@ input.on("line", (line) => {
       }
       setTimeout(() => {
         respond(request.id, {
-          content: [{ type: "text", text: "probe" }],
-          isError: false,
+          content: [
+            {
+              type: "text",
+              text: failTool ? "sandbox capability unavailable" : "probe",
+            },
+          ],
+          isError: failTool,
         });
       }, delayMs);
       break;

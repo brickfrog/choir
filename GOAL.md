@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-21T15:59:00-05:00
+Implementation snapshot updated through: 2026-07-21T17:03:03-05:00
 
 ## Charter Semantics and Readiness
 
@@ -41,6 +41,13 @@ unconnected product path usable.
 
 ### Implemented and directly exercised
 
+- The current checkout passes `moon check --target native`, all 376 native
+  tests, the Choir lint command, every registered fault/race conformance
+  command, the synthetic Part lifecycle, parallel promotion, scale scheduling,
+  both native provider Part lifecycles, and the two-provider Goal fixture. The
+  live mixed-provider Goal ran Claude and Codex Parts concurrently, produced
+  two verification, two independent audit, and two integration receipts, and
+  verified one combined tree.
 - The real subscription-native product path now completes from a Claude
   Conductor through one accepted Bead-backed Goal and a Codex Part. In a fresh
   disposable clone, Claude submitted the exact existing `pass-final` Bead;
@@ -397,6 +404,18 @@ unconnected product path usable.
   all fifteen rows pass. The Codex live startup command currently proves only
   required-tool fail-closed startup and subscription identity, so its report
   correctly remains incomplete with two passed and thirteen unrun rows.
+- The exact Claude subscription driver now has live passing evidence for every
+  row in that same matrix on Claude Code `2.1.217`. The provider process starts
+  only after the declared MCP server passes initialization and exact tool-list
+  preflight; failed declared calls are terminal rather than a native fallback.
+  Current evidence covers startup, hostile ambient configuration, required-tool
+  startup, host read/write isolation, host/guest path identity, credentials,
+  capability loss, child isolation, nonresumable parent loss, mutation,
+  network, subscription identity, cancellation, and tool discovery. The
+  network trace recorded zero loopback-canary and zero unclassified
+  connections. The KVM-backed Claude Part lifecycle recorded twelve effect
+  receipts plus exactly one verification, one independent audit, and one
+  integration receipt.
 - A separate live Codex resume-attestation probe now proves `RESUME-010`.
   It starts a real turn, changes the effective allowed-tool manifest before
   recovery, and requires the native driver to reject the stale persisted
@@ -2042,10 +2061,10 @@ amendments rather than backdated into the original context record.
 
 | Exact surface | Version | Choir role | Required subscription identity | Capability profile | Maturity | Policy | Choir support | Probe |
 |---|---:|---|---|---|---|---|---|---|
-| Claude Code interactive CLI | `2.1.216` | Conductor | Official client using the user's provider-managed subscription | `ConductorHostObserver` | `Unspecified` | `RequiresConfirmation` | `Candidate` | `NotRun` |
-| `claude -p --safe-mode --tools "" --strict-mcp-config --mcp-config <generated-choir-config> --output-format=stream-json --verbose` | `2.1.216` | Rejected Claude driver profile | Same confirmed provider-managed subscription | `SafeModeSandboxToolsOnly` | `Unspecified` | `RequiresConfirmation` | `BlockedByConformance` | `Failed` |
-| `claude -p --setting-sources "" --tools "" --permission-mode dontAsk --allowedTools <generated-exact-choir-tool-list> --strict-mcp-config --mcp-config <generated-choir-config> --output-format=stream-json --verbose` | `2.1.216` | Claude driver candidate | Same confirmed provider-managed subscription; every other effective credential class fails | `SterileHostSandboxToolsOnly` | `Unspecified` | `RequiresConfirmation` | `Candidate` | `Passed` |
-| Claude Agent Teams within the pinned Claude CLI | `2.1.216` | Optional optimizer within one Conductor/take; never a driver or scheduler | Inherits the admitted owning Claude subscription session | `ChildEqualOrNarrower` | `Experimental` | `RequiresConfirmation` | `Candidate` | `NotRun` |
+| Claude Code interactive CLI | `2.1.217` | Conductor | Official client using the user's provider-managed subscription | `ConductorHostObserver` | `Unspecified` | `RequiresConfirmation` | `Candidate` | `Passed` |
+| `claude -p --safe-mode --tools "" --strict-mcp-config --mcp-config <generated-choir-config> --output-format=stream-json --verbose` | `2.1.217` | Rejected Claude driver profile | Same confirmed provider-managed subscription | `SafeModeSandboxToolsOnly` | `Unspecified` | `RequiresConfirmation` | `BlockedByConformance` | `Failed` |
+| `claude -p --setting-sources "" --tools "" --permission-mode dontAsk --allowedTools <generated-exact-choir-tool-list> --strict-mcp-config --mcp-config <generated-choir-config> --output-format=stream-json --verbose` | `2.1.217` | Claude driver | Same confirmed provider-managed subscription; every other effective credential class fails | `SterileHostSandboxToolsOnly` | `Unspecified` | `RequiresConfirmation` | `Supported` | `Passed` |
+| Claude Agent Teams within the pinned Claude CLI | `2.1.217` | Optional optimizer within one Conductor/take; never a driver or scheduler | Inherits the admitted owning Claude subscription session | `ChildEqualOrNarrower` | `Experimental` | `RequiresConfirmation` | `Candidate` | `NotRun` |
 | Codex interactive CLI | `0.144.6` | Conductor | Official client using the user's ChatGPT-managed Codex subscription | `ConductorHostObserver` | `Unspecified` | `Allowed` | `Candidate` | `NotRun` |
 | `codex app-server --listen stdio://` with a private Take spool, pinned permission profile, fixed role schema, and required generated MCP server | `0.144.6` | Codex driver candidate | Saved ChatGPT-managed subscription login; every other effective credential class fails | `HostHarnessSandboxToolsOnly` | `Experimental` | `Allowed` | `Candidate` | `Passed` |
 | Antigravity interactive CLI | `1.0.10` | Future Conductor candidate | Official client using the user's provider-managed consumer subscription | `ConductorHostObserver` | `Unspecified` | `RequiresConfirmation` | `Candidate` | `NotRun` |
@@ -3728,6 +3747,17 @@ moon run --target native src/bin/choir_conformance -- pull-request-faults
 moon run --target native src/bin/choir_conformance -- pull-request-states
 moon run --target native src/bin/choir_conformance -- sandbox --runtime boxlite --live
 moon run --target native src/bin/choir_conformance -- harness --surface claude-cli --profile subscription --live
+moon run --target native --release src/bin/choir_conformance -- harness --surface claude-cli --profile subscription --required-tool-startup-live
+moon run --target native --release src/bin/choir_conformance -- harness --surface claude-cli --profile subscription --driver-ambient-live
+moon run --target native --release src/bin/choir_conformance -- harness --surface claude-cli --profile subscription --driver-host-read-live
+moon run --target native --release src/bin/choir_conformance -- harness --surface claude-cli --profile subscription --driver-credentials-live
+moon run --target native --release src/bin/choir_conformance -- harness --surface claude-cli --profile subscription --driver-child-isolation-live
+moon run --target native --release src/bin/choir_conformance -- harness --surface claude-cli --profile subscription --driver-capability-death-live
+moon run --target native --release src/bin/choir_conformance -- harness --surface claude-cli --profile subscription --driver-parent-loss-live
+moon run --target native --release src/bin/choir_conformance -- harness --surface claude-cli --profile subscription --driver-network-live
+moon run --target native --release src/bin/choir_conformance -- harness --surface claude-cli --profile subscription --driver-cancellation-live
+moon run --target native --release src/bin/choir_conformance -- harness --surface claude-cli --profile subscription --driver-tool-search-live
+moon run --target native src/bin/choir_conformance -- harness --surface claude-cli --profile subscription --host-boundary
 moon run --target native src/bin/choir_conformance -- harness --surface codex-cli --profile subscription --live
 moon run --target native src/bin/choir_conformance -- harness --surface codex-cli --profile subscription --driver-live
 moon run --target native src/bin/choir_conformance -- e2e --fixture part-lifecycle
@@ -4413,6 +4443,31 @@ the lost dispatch to a durable uncertain Take rather than redispatching it or
 waiting indefinitely. The surface remains `Candidate` until its remaining
 host-surface rows have executable evidence; these successful lifecycle and
 recovery probes are not silently promoted to broader support.
+
+At `2026-07-21T17:03:03-05:00`, Claude Code updated locally to `2.1.217`.
+Choir rejected the changed executable before provider dispatch, then re-probed
+the installed surface and admitted SHA-256
+`2630fc5dc6db61bc03f86b95daf47766e5ed5b61873f7bb7cfea764c5ac5a9ba`.
+The initialization manifest, exact declared MCP tool, empty setting sources,
+empty native tool surface, built-in-agent set, model response, and
+provider-managed subscription identity remained conformant. All fifteen
+host-surface rows were then rerun against that exact binary and passed. In
+particular, the real network trace recorded fifteen provider TLS connections,
+two DNS connections, four port-zero address-selection probes, zero loopback
+canary attempts, and zero unclassified connections. The required-tool probe
+failed before creating a provider PID; capability loss rejected the failed
+declared call; and parent loss stopped the nonresumable provider process and
+reconciled its witness without redispatch.
+
+The same verification pass completed the KVM-backed Claude Part lifecycle,
+the KVM-backed Codex Part lifecycle, and a two-Part mixed-provider Goal with
+maximum concurrency two and a valid combined tree. The standalone BoxLite Take
+probe initially found that its assurance fixture copied the generated
+`.mooncakes` scratch link before observing the read-only tree. It now invokes
+the same assurance-cache cleanup used by the production path; the rerun proved
+the subject tree unchanged, host/guest path isolation, persisted scratch and
+output artifacts, and terminated runtime processes. `moon test --target
+native` passed 376 of 376 tests after the repair.
 
 #### Post-snapshot Codex probe amendment
 

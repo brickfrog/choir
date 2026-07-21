@@ -3,7 +3,7 @@ fn claude_driver_manifest(
   tools : Array[String],
 ) -> @harness.ClaudeInitializationManifest {
   {
-    client_version: "2.1.216",
+    client_version: "2.1.217",
     permission_mode: "dontAsk",
     api_key_source: "none",
     tools,
@@ -39,7 +39,7 @@ fn claude_driver_session(digest : @control.Digest) -> @control.HarnessSession {
 ///|
 fn claude_driver_output(tool_name : String) -> String {
   let init =
-    #|{"type":"system","subtype":"init","tools":["mcp__choir_sandbox__execute","StructuredOutput"],"mcp_servers":[{"name":"choir_sandbox","status":"connected"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.216","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"]}
+    #|{"type":"system","subtype":"init","tools":["mcp__choir_sandbox__execute","StructuredOutput"],"mcp_servers":[{"name":"choir_sandbox","status":"connected"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.217","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"]}
   init +
   "\n" +
   (
@@ -90,6 +90,35 @@ test "Claude driver normalizes one balanced restricted Take" {
       @control.HarnessTerminalObservation::HarnessCompleted
     ),
   )
+}
+
+///|
+test "Claude driver rejects a failed declared MCP tool result" {
+  let tools = ["mcp__choir_sandbox__execute"]
+  let digest = @harness.claude_effective_surface_manifest_digest(
+    claude_driver_manifest([..tools, "StructuredOutput"]),
+  )
+  let started = @harness.start_claude_harness_session(
+    claude_driver_session(digest),
+  ).unwrap()
+  let output = claude_driver_output("mcp__choir_sandbox__execute").replace(
+    old=(
+      #|"tool_use_id":"tool-1","content":"ok"
+    ),
+    new=(
+      #|"tool_use_id":"tool-1","content":"capability dead","is_error":true
+    ),
+  )
+  let result = @harness.evaluate_claude_driver_capture({
+    session: started,
+    role: @harness.ClaudeTakeRole::ClaudeImplementationTake,
+    allowed_tools: tools,
+    expected_mcp_server: "choir_sandbox",
+    capture: { exit_code: 0, output, started_at: 10L, finished_at: 20L },
+  })
+  assert_true(result is Err(_))
+  guard result is Err(error) else { fail("failed tool result was accepted") }
+  assert_true(error.message().contains("declared MCP tool call failed"))
 }
 
 ///|
