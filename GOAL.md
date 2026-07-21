@@ -89,6 +89,17 @@ unconnected product path usable.
   it while preserving byte-identical Goal status. The deliberately malformed
   disposable task then failed verification without integration, confirming
   that the responsive control path does not bypass passive receipt gates.
+- The Conductor submission contract now names registered Moon arguments
+  `moon_args`, documents that the executable is already selected, and rejects
+  an argument list beginning with `moon`. A fresh installed-layout run exposed
+  the prior ambiguity when Claude submitted `moon` as its own first argument;
+  the repaired Claude `/goal` run selected Bead `live-szh`, assigned its Part
+  to Codex, and persisted the exact command `moon test --target native` with a
+  scratch target. Codex produced the requested two-file candidate; Part
+  verification, independent Part audit, integration, combined-Goal
+  verification, and independent Goal audit all passed. The Goal then paused
+  with typed reason `GoalInputPublicationRemoteUnavailable`, as required for
+  the disposable repository with no configured remote.
 - Sealed Moon verification now stages the offline registry into a private
   writable Moon home and maps `.mooncakes` to scratch while the candidate tree
   remains read-only. Choir removes that generated cache link before every
@@ -887,7 +898,7 @@ Earlier evidence anchors are commits `5fb93fe8` for the native Part path,
 the linter correction. With the current assurance, cancellation, and provider changes,
 `moon check --target native`, `moon test --target native`, and
 `moon run --target native src/bin/choir_lint` all exit successfully on
-2026-07-21. After deleting obsolete source and tests, the full native suite reports 341
+2026-07-21. After deleting obsolete source and tests, the full native suite reports 358
 passed and 0 failed. The
 compiler still reports the repository's existing warning set.
 
@@ -906,15 +917,15 @@ compiler still reports the repository's existing warning set.
   durable Part workflow, serialized promotion, Goal assurance, publication,
   PR, readiness, and terminal projection at concurrency limits 1, 2, and 4.
   The admitted parallelism is 1/2/2 and every run has the same semantic result.
-- A direct Codex Conductor turn in a disposable repository used the real ten-
-  tool MCP surface to inspect Beads and submit a durable Goal. The daemon then
-  ran the accepted Part through Codex implementation, native Moon verification,
-  an independent Part audit, promotion, combined-tree verification, and an
-  independent Goal audit. The run stopped honestly at publication because the
-  disposable repository had no remote. That condition is now a durable,
-  visible input request rather than a hidden retry loop. It does not prove the
-  interactive Claude `/goal` turn, interruption during an in-flight Goal-level
-  provider dispatch.
+- A direct Claude Conductor `/goal` turn in a disposable repository used the
+  real ten-tool MCP surface to inspect Beads and submit a durable Goal. The
+  daemon then ran the accepted Part through Codex implementation, native Moon
+  verification, an independent Part audit, promotion, combined-tree
+  verification, and an independent Goal audit. The run stopped honestly at
+  publication because the disposable repository had no remote. That condition
+  is now a durable, visible input request rather than a hidden retry loop. This
+  does not prove interruption during an in-flight Goal-level provider dispatch
+  or final publication and PR creation against a real destination.
 
 ### Conformance closure
 - Duplicate conflicts, cursor gaps, late terminals, conflicting terminals,

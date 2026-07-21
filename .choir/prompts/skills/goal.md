@@ -30,7 +30,7 @@ an answer, reuse an older request ID, or use `goal_steer resume` to bypass a
 request that is still active.
 
 1. Inspect Beads through Choir's `task_list` and `task_get` tools. Select only existing open work. Include the complete open blocking-dependency closure; never silently omit a dependency or invent an issue.
-2. Read enough repository context to give every selected Part one concrete instruction, one honest mutation declaration, and one registered Moon verification argument list. Use `repository_wide` only when narrower exact paths or path trees would be false.
+2. Read enough repository context to give every selected Part one concrete instruction, one honest mutation declaration, and one registered Moon verification argument list. Use `repository_wide` only when narrower exact paths or path trees would be false. The registered executable is already `moon`: `moon_args` must begin with a Moon subcommand, for example `["test", "--target", "native"]`. Never include `moon` itself.
 3. Assign each Part to `claude` or `codex` based on the work and available subscription-backed surfaces. Provider assignment is a proposal; Choir remains authoritative.
 4. Preserve dependency-safe parallelism. Set `maximum_parallel_parts` from the user's instruction or a conservative value derived from declared overlap. Do not claim that concurrency overrides dependencies or mutation conflicts.
 5. If selection, intended behavior, mutation ownership, or verification remains materially ambiguous, ask the user one concise question before submission.
@@ -39,7 +39,7 @@ request that is still active.
    - `maximum_parallel_parts`;
    - `parts`, each with `part_id`, `instruction`, `provider`, exactly one
      mutation form (`exact_paths`/`path_trees` or `repository_wide`),
-     `verify_args`, and optional `verify_timeout_ms`.
+     `moon_args`, and optional `verify_timeout_ms`.
    Choir captures the current branch and commit itself. Never guess or submit
    Git refs.
 7. Report Choir's accepted Part IDs and every typed rejection. Never work around rejection by spawning workers or producing missing evidence yourself. Revise and resubmit only after the user resolves a semantic rejection or the source state genuinely changes.

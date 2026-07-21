@@ -13,14 +13,14 @@ test "Conductor draft decodes friendly provider and verification fields" {
         #|      "instruction": "Change the answer.",
         #|      "provider": "claude",
         #|      "exact_paths": ["src/a.mbt"],
-        #|      "verify_args": ["test", "--target", "native", "src/a.mbt"]
+        #|      "moon_args": ["test", "--target", "native", "src/a.mbt"]
         #|    },
         #|    {
         #|      "part_id": "choir-b",
         #|      "instruction": "Change the other answer.",
         #|      "provider": "codex",
         #|      "path_trees": ["src/b"],
-        #|      "verify_args": ["test", "--target", "native", "src/b"]
+        #|      "moon_args": ["test", "--target", "native", "src/b"]
         #|    }
         #|  ]
         #|}
@@ -58,7 +58,7 @@ test "Conductor draft rejects unknown fields and ambiguous mutation scope" {
   match
     @workflow.decode_conductor_goal_draft(
       (
-        #|{"proposal_id":"p","goal_id":"g","maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","provider":"codex","repository_wide":true,"verify_args":["test"],"command":"moon test","dependencies":[]}]}
+        #|{"proposal_id":"p","goal_id":"g","maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","provider":"codex","repository_wide":true,"moon_args":["test"],"command":"moon test","dependencies":[]}]}
       ),
     ) {
     Err(error) => {
@@ -72,11 +72,27 @@ test "Conductor draft rejects unknown fields and ambiguous mutation scope" {
   assert_true(
     @workflow.decode_conductor_goal_draft(
       (
-        #|{"proposal_id":"p","goal_id":"g","maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","provider":"codex","repository_wide":true,"exact_paths":["src/a"],"verify_args":["test"]}]}
+        #|{"proposal_id":"p","goal_id":"g","maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","provider":"codex","repository_wide":true,"exact_paths":["src/a"],"moon_args":["test"]}]}
       ),
     )
     is Err(_),
   )
+}
+
+///|
+test "Conductor draft rejects the Moon executable inside moon_args" {
+  match
+    @workflow.decode_conductor_goal_draft(
+      (
+        #|{"proposal_id":"p","goal_id":"g","maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","provider":"codex","repository_wide":true,"moon_args":["moon","test","--target","native"]}]}
+      ),
+    ) {
+    Err(error) =>
+      assert_true(
+        error.message().contains("moon_args must start with a Moon subcommand"),
+      )
+    Ok(_) => fail("Moon executable was accepted as its own first argument")
+  }
 }
 
 ///|

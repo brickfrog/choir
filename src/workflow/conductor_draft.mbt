@@ -133,7 +133,7 @@ fn decode_conductor_part_draft(
   }
   let allowed_fields = [
     "part_id", "instruction", "provider", "exact_paths", "path_trees", "repository_wide",
-    "verify_args", "verify_timeout_ms",
+    "moon_args", "verify_timeout_ms",
   ]
   let unknown_fields = conductor_draft_unknown_fields(fields, allowed_fields)
   if unknown_fields.length() > 0 {
@@ -195,9 +195,16 @@ fn decode_conductor_part_draft(
   if !repository_wide && exact_paths.length() == 0 && path_trees.length() == 0 {
     return Err(goal_submission_error("mutation declaration is empty"))
   }
-  let arguments = match conductor_draft_strings(fields, "verify_args") {
+  let arguments = match conductor_draft_strings(fields, "moon_args") {
     Some(values) if values.length() > 0 => values
-    _ => return Err(goal_submission_error("verify_args is missing or invalid"))
+    _ => return Err(goal_submission_error("moon_args is missing or invalid"))
+  }
+  if arguments[0] == "moon" || arguments[0].has_suffix("/moon") {
+    return Err(
+      goal_submission_error(
+        "moon_args must start with a Moon subcommand, not the moon executable",
+      ),
+    )
   }
   let timeout_ms = match
     conductor_draft_int64_or(fields, "verify_timeout_ms", 120000L) {
