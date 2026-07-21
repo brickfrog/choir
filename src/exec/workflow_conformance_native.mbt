@@ -518,6 +518,8 @@ fn conformance_dependencies(
   integration_head? : @control.GitOid? = Some(
     @control.GitOid("goal-head-conformance"),
   ),
+  effect_executed? : (@workflow.PartEffectKind) -> Unit = fn(_) { () },
+  integration_admitted? : () -> Unit = fn() { () },
 ) -> @workflow.PartWorkflowDriverDependencies {
   let now = fn() { 110L }
   let dependencies : @workflow.PartWorkflowDriverDependencies = {
@@ -526,6 +528,7 @@ fn conformance_dependencies(
     effects: {
       execute: async fn(snapshot, intent) {
         execute_count.val = execute_count.val + 1
+        effect_executed(intent.kind)
         match (implementation_dispatch_count, intent.kind) {
           (Some(count), @workflow.PartEffectKind::DispatchImplementation(_, _)) =>
             count.val = count.val + 1
@@ -603,7 +606,8 @@ fn conformance_dependencies(
     integration_admission: fn(snapshot) {
       match integration_head {
         None => Ok(@workflow.PartIntegrationAdmission::PartIntegrationDeferred)
-        Some(expected_goal_head_oid) =>
+        Some(expected_goal_head_oid) => {
+          integration_admitted()
           Ok(
             @workflow.PartIntegrationAdmission::PartIntegrationAdmitted({
               lease: {
@@ -623,6 +627,7 @@ fn conformance_dependencies(
               snapshot.part.id.0,
             }),
           )
+        }
       }
     },
     verification_environment_digest: fn(_) { conformance_digest_b },
@@ -638,6 +643,508 @@ fn conformance_dependencies(
       dependencies.effects,
       now,
     ),
+  }
+}
+
+///|
+pub(all) enum IntegrationRecoveryCutoff {
+  IntegrationAfterIntentBeforeGeneration
+  IntegrationAfterObjectBeforePrepared
+  IntegrationAfterPreparedBeforeAuthorized
+  IntegrationAfterAuthorizedBeforeCas
+  IntegrationDuringCasAmbiguous
+  IntegrationAfterCasBeforeAck
+  IntegrationAfterAckBeforeReceipt
+  IntegrationDuringReceiptTransaction
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct IntegrationRecoveryObservation {
+  cutoff : IntegrationRecoveryCutoff
+  expected_state_observed : Bool
+  external_apply_count : Int
+  integration_receipt_count : Int
+  duplicate_free : Bool
+  failure : String?
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct IntegrationFaultConformanceReport {
+  observations : Array[IntegrationRecoveryObservation]
+  passed : Bool
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+let integration_fault_head : @control.GitOid = @control.GitOid(
+  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+)
+
+///|
+let integration_fault_candidate : @control.GitOid = @control.GitOid(
+  "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+)
+
+///|
+let integration_fault_candidate_tree : @control.GitOid = @control.GitOid(
+  "cccccccccccccccccccccccccccccccccccccccc",
+)
+
+///|
+let integration_fault_promotion_tree : @control.GitOid = @control.GitOid(
+  "dddddddddddddddddddddddddddddddddddddddd",
+)
+
+///|
+let integration_fault_promotion : @control.GitOid = @control.GitOid(
+  "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+)
+
+///|
+fn integration_fault_config() -> NativeGitIntegrationConfig {
+  {
+    repository_root: "/tmp/choir-integration-fault",
+    git_directory: "/tmp/choir-integration-fault/.git",
+    object_directory: "/tmp/choir-integration-fault/.git/objects",
+    control_root: "/tmp/choir-integration-fault-control",
+    goal_ref: "refs/heads/choir/integration-fault",
+  }
+}
+
+///|
+fn integration_fault_intent(
+  lifecycle : @control.IntegrationIntentLifecycle,
+) -> @control.IntegrationIntent {
+  let prepared = lifecycle !=
+    @control.IntegrationIntentLifecycle::IntegrationPlanned
+  {
+    id: @control.IntegrationIntentId("integration-fault-intent"),
+    goal_id: @control.GoalId("integration-fault-goal"),
+    part_id: @control.PartId("integration-fault-part"),
+    candidate_id: @control.CandidateId("integration-fault-candidate"),
+    candidate_commit_oid: integration_fault_candidate,
+    candidate_tree_oid: integration_fault_candidate_tree,
+    expected_goal_head_oid: integration_fault_head,
+    strategy: @control.PromotionStrategy::NoFastForwardThreeWayV1,
+    promotion_metadata_digest: conformance_digest_a,
+    integration_lease_epoch: @control.FencingEpoch(1L),
+    lifecycle,
+    promotion_commit_oid: if prepared {
+      Some(integration_fault_promotion)
+    } else {
+      None
+    },
+    promotion_tree_oid: if prepared {
+      Some(integration_fault_promotion_tree)
+    } else {
+      None
+    },
+    git_witness_ref: "refs/choir/witness/integration-fault",
+  }
+}
+
+///|
+fn integration_fault_promotion_commit() -> @control.PromotionCommit {
+  {
+    intent_id: @control.IntegrationIntentId("integration-fault-intent"),
+    commit_oid: integration_fault_promotion,
+    tree_oid: integration_fault_promotion_tree,
+    first_parent_oid: integration_fault_head,
+    second_parent_oid: integration_fault_candidate,
+  }
+}
+
+///|
+fn integration_fault_apply_adapters(
+  applied : Ref[Bool],
+  apply_count : Ref[Int],
+  ambiguous : Bool,
+) -> NativeGitIntegrationAdapters {
+  {
+    capture: async fn(_, command) {
+      match command {
+        NativeGitIntegrationCommand::NativeGitApplyRefs(_, _, _, _) => {
+          apply_count.val = apply_count.val + 1
+          applied.val = true
+          if ambiguous {
+            Err(@types.ChoirError::git_error("integration response lost"))
+          } else {
+            Ok({ exit_code: 0, output: "start: ok\ncommit: ok\n" })
+          }
+        }
+        NativeGitIntegrationCommand::NativeGitReadRef(reference) =>
+          if reference == integration_fault_config().goal_ref {
+            Ok({
+              exit_code: 0,
+              output: if applied.val {
+                integration_fault_promotion.0 + "\n"
+              } else {
+                integration_fault_head.0 + "\n"
+              },
+            })
+          } else if applied.val {
+            Ok({ exit_code: 0, output: integration_fault_promotion.0 + "\n" })
+          } else {
+            Ok({ exit_code: 1, output: "" })
+          }
+        _ => Err(@types.ChoirError::git_error("unexpected integration command"))
+      }
+    },
+  }
+}
+
+///|
+async fn observe_native_integration_cutoff(
+  cutoff : IntegrationRecoveryCutoff,
+) -> IntegrationRecoveryObservation {
+  if cutoff == IntegrationAfterObjectBeforePrepared {
+    let create_count = @ref.new(0)
+    let adapters : NativeGitIntegrationAdapters = {
+      capture: async fn(_, command) {
+        Ok(
+          match command {
+            NativeGitIntegrationCommand::NativeGitReadCommitTree(oid) =>
+              if oid == integration_fault_candidate {
+                { exit_code: 0, output: integration_fault_candidate_tree.0 + "\n" }
+              } else {
+                { exit_code: 0, output: integration_fault_promotion_tree.0 + "\n" }
+              }
+            NativeGitIntegrationCommand::NativeGitMergeTree(_, _) =>
+              { exit_code: 0, output: integration_fault_promotion_tree.0 + "\n" }
+            NativeGitIntegrationCommand::NativeGitCreatePromotion(_, _, _, _) => {
+              create_count.val = create_count.val + 1
+              { exit_code: 0, output: integration_fault_promotion.0 + "\n" }
+            }
+            NativeGitIntegrationCommand::NativeGitReadCommitParents(_) => {
+              exit_code: 0,
+              output: integration_fault_head.0 +
+              " " +
+              integration_fault_candidate.0 +
+              "\n",
+            }
+            _ => { exit_code: 99, output: "unexpected command" }
+          },
+        )
+      },
+    }
+    let interrupted = generate_native_promotion(
+      integration_fault_config(),
+      integration_fault_intent(
+        @control.IntegrationIntentLifecycle::IntegrationPlanned,
+      ),
+      adapters,
+      fault=Some(
+        NativeGitIntegrationFaultPoint::NativeGitAfterPromotionObjectBeforePrepared,
+      ),
+    ) is Err(_)
+    let recovered = match generate_native_promotion(
+      integration_fault_config(),
+      integration_fault_intent(
+        @control.IntegrationIntentLifecycle::IntegrationPlanned,
+      ),
+      adapters,
+    ) {
+      Ok(value) => value ==
+        @workflow.PartEffectObservation::PromotionGenerated(
+          integration_fault_promotion_commit(),
+        )
+      Err(_) => false
+    }
+    return {
+      cutoff,
+      expected_state_observed: interrupted && recovered,
+      external_apply_count: 0,
+      integration_receipt_count: 0,
+      duplicate_free: create_count.val == 2,
+      failure: None,
+    }
+  }
+  let applied = @ref.new(false)
+  let apply_count = @ref.new(0)
+  let ambiguous = cutoff == IntegrationDuringCasAmbiguous
+  let adapters = integration_fault_apply_adapters(
+    applied,
+    apply_count,
+    ambiguous,
+  )
+  let intent = integration_fault_intent(
+    @control.IntegrationIntentLifecycle::IntegrationAuthorized,
+  )
+  let promotion = integration_fault_promotion_commit()
+  let interrupted = match cutoff {
+    IntegrationAfterAuthorizedBeforeCas =>
+      apply_native_integration(
+        integration_fault_config(),
+        intent,
+        promotion,
+        adapters,
+        fault=Some(
+          NativeGitIntegrationFaultPoint::NativeGitAfterAuthorizedBeforeRefTransaction,
+        ),
+      ) is Err(_)
+    IntegrationDuringCasAmbiguous =>
+      apply_native_integration(
+        integration_fault_config(), intent, promotion, adapters,
+      ) is Err(_)
+    IntegrationAfterCasBeforeAck =>
+      apply_native_integration(
+        integration_fault_config(),
+        intent,
+        promotion,
+        adapters,
+        fault=Some(
+          NativeGitIntegrationFaultPoint::NativeGitAfterRefTransactionBeforeObservation,
+        ),
+      ) is Err(_)
+    _ => false
+  }
+  let recovered = if cutoff == IntegrationAfterAuthorizedBeforeCas {
+    match
+      apply_native_integration(
+        integration_fault_config(), intent, promotion, adapters,
+      ) {
+      Ok(@workflow.PartEffectObservation::IntegrationWitnessObserved(value)) =>
+        value ==
+          @control.IntegrationWitnessObservation::IntegrationWitnessApplied(
+            promotion.commit_oid,
+            promotion.commit_oid,
+          )
+      _ => false
+    }
+  } else {
+    match
+      observe_native_integration(
+        integration_fault_config(), intent, promotion, adapters,
+      ) {
+      Ok(value) =>
+        value ==
+          @control.IntegrationWitnessObservation::IntegrationWitnessApplied(
+            promotion.commit_oid,
+            promotion.commit_oid,
+          )
+      Err(_) => false
+    }
+  }
+  {
+    cutoff,
+    expected_state_observed: interrupted && recovered,
+    external_apply_count: apply_count.val,
+    integration_receipt_count: 0,
+    duplicate_free: apply_count.val == 1,
+    failure: None,
+  }
+}
+
+///|
+async fn observe_durable_integration_cutoff(
+  root : String,
+  cutoff : IntegrationRecoveryCutoff,
+) -> IntegrationRecoveryObservation {
+  let repository = conformance_repository(
+    root + "/" + cutoff.to_json().stringify(),
+  )
+  clear_conformance_repository(repository)
+  let snapshot = match conformance_snapshot() {
+    Ok(value) => value
+    Err(error) =>
+      return {
+        cutoff,
+        expected_state_observed: false,
+        external_apply_count: 0,
+        integration_receipt_count: 0,
+        duplicate_free: false,
+        failure: Some(error.message()),
+      }
+  }
+  let execute_count = @ref.new(0)
+  let integration_apply_count = @ref.new(0)
+  let admitted = @ref.new(false)
+  let promotion_executed = @ref.new(false)
+  let integration_executed = @ref.new(false)
+  let injected = @ref.new(false)
+  let dependencies = conformance_dependencies(
+    repository,
+    execute_count,
+    fn(boundary) {
+      if injected.val {
+        return None
+      }
+      let target = match cutoff {
+        IntegrationAfterIntentBeforeGeneration =>
+          admitted.val &&
+          boundary == @workflow.PartPersistenceBoundary::WorkflowEffectPlanned
+        IntegrationAfterPreparedBeforeAuthorized =>
+          promotion_executed.val &&
+          boundary ==
+          @workflow.PartPersistenceBoundary::WorkflowIntegrationAuthorized
+        IntegrationAfterAckBeforeReceipt | IntegrationDuringReceiptTransaction =>
+          integration_executed.val &&
+          boundary == @workflow.PartPersistenceBoundary::WorkflowEffectObserved
+        _ => false
+      }
+      if target {
+        injected.val = true
+        if cutoff == IntegrationDuringReceiptTransaction {
+          Some(@storage.StateStoreFaultPoint::StateAfterCommitBeforeAck)
+        } else {
+          Some(@storage.StateStoreFaultPoint::StateAfterMutationBeforeOutbox)
+        }
+      } else {
+        None
+      }
+    },
+    effect_executed=fn(kind) {
+      match kind {
+        @workflow.PartEffectKind::GeneratePromotion(_) =>
+          promotion_executed.val = true
+        @workflow.PartEffectKind::ApplyIntegration(_, _) => {
+          integration_executed.val = true
+          integration_apply_count.val = integration_apply_count.val + 1
+        }
+        _ => ()
+      }
+    },
+    integration_admitted=fn() { admitted.val = true },
+  )
+  let first = match
+    @workflow.run_new_part_workflow(
+      repository,
+      local_part_workflow_repository_adapters(),
+      snapshot,
+      dependencies,
+    ) {
+    Ok(value) => value
+    Err(error) => {
+      clear_conformance_repository(repository)
+      return {
+        cutoff,
+        expected_state_observed: false,
+        external_apply_count: integration_apply_count.val,
+        integration_receipt_count: 0,
+        duplicate_free: false,
+        failure: Some("initial run: " + error.message()),
+      }
+    }
+  }
+  let intermediate_ok = match cutoff {
+    IntegrationAfterIntentBeforeGeneration =>
+      first.outcome ==
+        @workflow.PartWorkflowRunOutcome::PartRunPersistenceFault(
+          @workflow.PartPersistenceBoundary::WorkflowEffectPlanned,
+          @storage.StateStoreFaultPoint::StateAfterMutationBeforeOutbox,
+        ) &&
+      first.snapshot.stage == @workflow.PartWorkflowStage::PartIntegrationPlanned &&
+      first.snapshot.integration_receipt is None
+    IntegrationAfterPreparedBeforeAuthorized =>
+      first.outcome ==
+        @workflow.PartWorkflowRunOutcome::PartRunPersistenceFault(
+          @workflow.PartPersistenceBoundary::WorkflowIntegrationAuthorized,
+          @storage.StateStoreFaultPoint::StateAfterMutationBeforeOutbox,
+        ) &&
+      first.snapshot.stage == @workflow.PartWorkflowStage::PartPromotionPrepared &&
+      first.snapshot.integration_receipt is None
+    IntegrationAfterAckBeforeReceipt =>
+      first.outcome ==
+        @workflow.PartWorkflowRunOutcome::PartRunPersistenceFault(
+          @workflow.PartPersistenceBoundary::WorkflowEffectObserved,
+          @storage.StateStoreFaultPoint::StateAfterMutationBeforeOutbox,
+        ) &&
+      first.snapshot.stage == @workflow.PartWorkflowStage::PartIntegrationAuthorized &&
+      first.snapshot.integration_receipt is None
+    IntegrationDuringReceiptTransaction =>
+      first.outcome == @workflow.PartWorkflowRunOutcome::PartRunIntegrated &&
+      first.snapshot.integration_receipt is Some(_)
+    _ => false
+  }
+  let before_resume_applies = integration_apply_count.val
+  let recovered = match
+    @workflow.resume_part_workflow(
+      repository,
+      local_part_workflow_repository_adapters(),
+      snapshot.workflow_id,
+      dependencies,
+    ) {
+    Ok(value) => value
+    Err(error) => {
+      clear_conformance_repository(repository)
+      return {
+        cutoff,
+        expected_state_observed: false,
+        external_apply_count: integration_apply_count.val,
+        integration_receipt_count: 0,
+        duplicate_free: false,
+        failure: Some("recovery: " + error.message()),
+      }
+    }
+  }
+  let receipt_count = if recovered.snapshot.integration_receipt is Some(_) {
+    1
+  } else {
+    0
+  }
+  let stable = recovered.outcome ==
+    @workflow.PartWorkflowRunOutcome::PartRunIntegrated &&
+    receipt_count == 1 &&
+    recovered.snapshot.effect_receipts.length() == 12
+  let duplicate_free = if cutoff == IntegrationAfterAckBeforeReceipt ||
+    cutoff == IntegrationDuringReceiptTransaction {
+    before_resume_applies == 1 && integration_apply_count.val == 1
+  } else {
+    integration_apply_count.val == 1
+  }
+  clear_conformance_repository(repository)
+  {
+    cutoff,
+    expected_state_observed: intermediate_ok && stable,
+    external_apply_count: integration_apply_count.val,
+    integration_receipt_count: receipt_count,
+    duplicate_free,
+    failure: None,
+  }
+}
+
+///|
+pub async fn run_integration_fault_conformance(
+  root : String,
+) -> IntegrationFaultConformanceReport {
+  if !@sys.create_dir_all(root) {
+    return { observations: [], passed: false }
+  }
+  let observations = [
+    observe_durable_integration_cutoff(
+      root,
+      IntegrationRecoveryCutoff::IntegrationAfterIntentBeforeGeneration,
+    ),
+    observe_native_integration_cutoff(
+      IntegrationRecoveryCutoff::IntegrationAfterObjectBeforePrepared,
+    ),
+    observe_durable_integration_cutoff(
+      root,
+      IntegrationRecoveryCutoff::IntegrationAfterPreparedBeforeAuthorized,
+    ),
+    observe_native_integration_cutoff(
+      IntegrationRecoveryCutoff::IntegrationAfterAuthorizedBeforeCas,
+    ),
+    observe_native_integration_cutoff(
+      IntegrationRecoveryCutoff::IntegrationDuringCasAmbiguous,
+    ),
+    observe_native_integration_cutoff(
+      IntegrationRecoveryCutoff::IntegrationAfterCasBeforeAck,
+    ),
+    observe_durable_integration_cutoff(
+      root,
+      IntegrationRecoveryCutoff::IntegrationAfterAckBeforeReceipt,
+    ),
+    observe_durable_integration_cutoff(
+      root,
+      IntegrationRecoveryCutoff::IntegrationDuringReceiptTransaction,
+    ),
+  ]
+  {
+    observations,
+    passed: observations.length() == 8 &&
+    observations.all(fn(observation) {
+      observation.expected_state_observed && observation.duplicate_free
+    }),
   }
 }
 

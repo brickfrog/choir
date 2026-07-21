@@ -808,8 +808,11 @@ compiler still reports the repository's existing warning set.
   two-parent promotion/receipt chain are now independently registered.
   Native Git integration also has typed fault injection after promotion-object
   creation, before the authorized ref transaction, and after the atomic ref
-  transaction; narrow adapter tests prove deterministic regeneration, zero
-  pre-transaction mutation, and witness-based adoption without a second CAS.
+  transaction. The joined `integration-faults` report now covers all eight
+  stable integration cutoffs across the durable workflow and Git seams. It
+  proves deterministic object regeneration, zero pre-authorization mutation,
+  witness-based adoption of ambiguous/applied transactions, one final receipt,
+  and no duplicate ref application. The current report passes 8/8.
 - Goal sealing is now registered as the hermetic `seal.atomicity` case. It
   replays the seal transition from the same witnessed state and requires the
   identical immutable seal, permits only one durable combined-verification
@@ -3442,6 +3445,7 @@ work, not a claim about current commands.
 moon test --target native
 moon run --target native src/bin/choir_lint
 moon run --target native src/bin/choir_conformance -- hermetic
+moon run --target native src/bin/choir_conformance -- integration-faults
 moon run --target native src/bin/choir_conformance -- publication-faults
 moon run --target native src/bin/choir_conformance -- pull-request-faults
 moon run --target native src/bin/choir_conformance -- pull-request-states

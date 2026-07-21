@@ -2373,6 +2373,7 @@ async fn run_goal_tick_command(args : Array[String]) -> Unit {
 fn usage() -> Unit {
   @sys.write_stderr(
     "usage: choir_conformance hermetic\n" +
+    "       choir_conformance integration-faults\n" +
     "       choir_conformance publication-faults\n" +
     "       choir_conformance pull-request-faults\n" +
     "       choir_conformance pull-request-states\n" +
@@ -2427,6 +2428,16 @@ fn main {
   let args = @env.args()
   if args.length() == 2 && args[1] == "hermetic" {
     @sys.exit(run_hermetic())
+  } else if args.length() == 2 && args[1] == "integration-faults" {
+    @async.run_async_main(async fn() {
+      let root = "/tmp/choir-integration-fault-report-" +
+        @sys.get_pid().to_string()
+      ignore(@sys.rm_rf(root))
+      let report = @exec.run_integration_fault_conformance(root)
+      ignore(@sys.rm_rf(root))
+      @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
+      @sys.exit(if report.passed { 0 } else { 1 })
+    })
   } else if args.length() == 2 && args[1] == "publication-faults" {
     @async.run_async_main(async fn() {
       let report = @exec.run_native_publication_fault_conformance()
