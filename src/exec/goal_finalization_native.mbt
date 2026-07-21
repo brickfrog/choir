@@ -254,6 +254,173 @@ fn goal_execution_outbox_key(
 }
 
 ///|
+pub(all) enum NativePullRequestRemoteStateCase {
+  PullRequestRemoteExact
+  PullRequestRemoteClosed
+  PullRequestRemoteRetargeted
+  PullRequestRemoteHeadChanged
+  PullRequestRemoteEdited
+  PullRequestRemoteDuplicate
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct NativePullRequestRemoteStateObservation {
+  case : NativePullRequestRemoteStateCase
+  outcome : @workflow.GoalFinalizationTickOutcome
+  decision : @workflow.PullRequestReadinessDecision
+  goal_state : @workflow.GoalExecutionState
+  passed : Bool
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct NativePullRequestRemoteStateConformanceReport {
+  observations : Array[NativePullRequestRemoteStateObservation]
+  passed : Bool
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+fn pull_request_remote_state_label(
+  case : NativePullRequestRemoteStateCase,
+) -> String {
+  match case {
+    PullRequestRemoteExact => "exact"
+    PullRequestRemoteClosed => "closed"
+    PullRequestRemoteRetargeted => "retargeted"
+    PullRequestRemoteHeadChanged => "head-changed"
+    PullRequestRemoteEdited => "edited"
+    PullRequestRemoteDuplicate => "duplicate"
+  }
+}
+
+///|
+async fn observe_pull_request_remote_state(
+  case : NativePullRequestRemoteStateCase,
+) -> NativePullRequestRemoteStateObservation {
+  let fixture = prepare_goal_finalization_fixture(
+    pull_request_remote_state_label(case),
+  )
+  guard fixture.3.val is Some(snapshot) else {
+    fail("remote-state fixture has no pull request")
+  }
+  let lookup = match case {
+    PullRequestRemoteExact =>
+      @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch(
+        snapshot,
+      )
+    PullRequestRemoteClosed =>
+      @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch({
+        ..snapshot,
+        state: @workflow.RemotePullRequestState::RemotePullRequestClosed,
+      })
+    PullRequestRemoteRetargeted =>
+      @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch({
+        ..snapshot,
+        base_ref: @workflow.GitRefName("refs/heads/release"),
+      })
+    PullRequestRemoteHeadChanged =>
+      @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch({
+        ..snapshot,
+        observed_head_oid: @control.GitOid("remote-state-other-head"),
+      })
+    PullRequestRemoteEdited =>
+      @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch({
+        ..snapshot,
+        title_digest: @storage.artifact_digest(@utf8.encode("edited title")),
+        body_digest: @storage.artifact_digest(@utf8.encode("edited body")),
+      })
+    PullRequestRemoteDuplicate =>
+      @workflow.PullRequestLookupObservation::PullRequestMultipleMarkerMatches
+  }
+  let forge : NativePullRequestForgeAdapters = {
+    resolve_repository: fixture.4.resolve_repository,
+    lookup: async fn(_, _, _) { lookup },
+    create: fixture.4.create,
+  }
+  let outcome = match
+    advance_native_goal_finalization_with_adapters(
+      fixture.0,
+      fixture.2,
+      forge,
+    ) {
+    Ok(value) => value
+    Err(error) => fail("remote-state finalization: " + error.message())
+  }
+  let repository = native_goal_repository(fixture.0)
+  let adapters = local_part_workflow_repository_adapters()
+  let decision = @workflow.load_goal_finalization_record(
+      repository, adapters, fixture.2,
+    )
+    .unwrap()
+    .unwrap().record.readiness.decision
+  let goal_state = @workflow.load_goal_execution_record(
+      repository, adapters, fixture.2,
+    )
+    .unwrap()
+    .unwrap().record.state
+  let passed = match case {
+    PullRequestRemoteExact | PullRequestRemoteEdited =>
+      outcome ==
+        @workflow.GoalFinalizationTickOutcome::GoalFinalizationSucceeded &&
+      decision == @workflow.PullRequestReadinessDecision::PullRequestReady &&
+      goal_state == @workflow.GoalExecutionState::GoalExecutionSucceeded
+    PullRequestRemoteClosed =>
+      outcome ==
+        @workflow.GoalFinalizationTickOutcome::GoalFinalizationNeedsUserInput &&
+      decision ==
+      @workflow.PullRequestReadinessDecision::PullRequestReadinessNeedsInput(
+        @workflow.PullRequestReadinessNeedsInputReason::PullRequestNotOpen,
+      ) &&
+      goal_state == @workflow.GoalExecutionState::GoalExecutionAssured
+    PullRequestRemoteRetargeted | PullRequestRemoteHeadChanged =>
+      outcome ==
+        @workflow.GoalFinalizationTickOutcome::GoalFinalizationDrifted &&
+      decision ==
+      @workflow.PullRequestReadinessDecision::PullRequestReadinessDrift(
+        @workflow.PullRequestReadinessDriftReason::PullRequestHeadOrBaseChanged,
+      ) &&
+      goal_state == @workflow.GoalExecutionState::GoalExecutionAssured
+    PullRequestRemoteDuplicate =>
+      outcome ==
+        @workflow.GoalFinalizationTickOutcome::GoalFinalizationAmbiguous &&
+      decision ==
+        @workflow.PullRequestReadinessDecision::PullRequestReadinessAmbiguous &&
+      goal_state == @workflow.GoalExecutionState::GoalExecutionAssured
+  }
+  ignore(@sys.rm_rf(fixture.0))
+  ignore(@sys.rm_rf(fixture.1))
+  { case, outcome, decision, goal_state, passed }
+}
+
+///|
+pub async fn run_native_pull_request_remote_state_conformance(
+) -> NativePullRequestRemoteStateConformanceReport {
+  let observations : Array[NativePullRequestRemoteStateObservation] = []
+  let cases = [
+    NativePullRequestRemoteStateCase::PullRequestRemoteExact,
+    NativePullRequestRemoteStateCase::PullRequestRemoteClosed,
+    NativePullRequestRemoteStateCase::PullRequestRemoteRetargeted,
+    NativePullRequestRemoteStateCase::PullRequestRemoteHeadChanged,
+    NativePullRequestRemoteStateCase::PullRequestRemoteEdited,
+    NativePullRequestRemoteStateCase::PullRequestRemoteDuplicate,
+  ]
+  for case in cases {
+    observations.push(observe_pull_request_remote_state(case))
+  }
+  {
+    observations,
+    passed: observations.length() == cases.length() &&
+    observations.all(fn(observation) { observation.passed }),
+  }
+}
+
+///|
+async test "real exec integration: final PR remote states have exact outcomes" {
+  let report = run_native_pull_request_remote_state_conformance()
+  assert_true(report.passed)
+  assert_eq(report.observations.length(), 6)
+}
+
+///|
 async test "real exec integration: final PR readiness and terminal decisions linearize exactly" {
   let before = prepare_goal_finalization_fixture("edit-before-response")
   guard before.3.val is Some(before_snapshot) else {

@@ -3444,6 +3444,7 @@ moon run --target native src/bin/choir_lint
 moon run --target native src/bin/choir_conformance -- hermetic
 moon run --target native src/bin/choir_conformance -- publication-faults
 moon run --target native src/bin/choir_conformance -- pull-request-faults
+moon run --target native src/bin/choir_conformance -- pull-request-states
 moon run --target native src/bin/choir_conformance -- sandbox --runtime boxlite --live
 moon run --target native src/bin/choir_conformance -- harness --surface claude-cli --profile subscription --live
 moon run --target native src/bin/choir_conformance -- harness --surface codex-cli --profile subscription --live
@@ -4496,6 +4497,12 @@ The matrix is directly executable as `choir_conformance pull-request-faults`;
 its typed report currently passes all 7/7 cutoffs and records the interrupted
 intent state, total create count, expected terminal or uncertain outcome, and
 duplicate-dispatch result for each row.
+The separate `choir_conformance pull-request-states` command now drives six
+remote observations through the durable readiness adapter. Exact and manually
+edited title/body states succeed; a closed PR requests user input; retargeted
+or head-changed PRs report drift; and duplicate marker matches remain
+ambiguous. The current typed report passes 6/6 and leaves every non-ready Goal
+in `GoalExecutionAssured` rather than manufacturing success.
 At `2026-07-20T14:42:07-05:00`, the finalization response boundary and terminal
 race also became executable. A real Git/SQLite controlled-forge test removes
 the evidence-manifest link before the readiness response and observes
