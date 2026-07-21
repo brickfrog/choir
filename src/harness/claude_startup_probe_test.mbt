@@ -1,6 +1,6 @@
 ///|
 let connected_init =
-  #|{"type":"system","subtype":"init","tools":["mcp__choir_probe__probe"],"mcp_servers":[{"name":"choir_probe","status":"connected"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.215","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"],"session_id":"secret-discarded"}
+  #|{"type":"system","subtype":"init","tools":["mcp__choir_probe__probe"],"mcp_servers":[{"name":"choir_probe","status":"connected"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.216","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"],"session_id":"secret-discarded"}
   #|{"type":"result","result":"Not logged in"}
 
 ///|
@@ -23,7 +23,7 @@ test "Claude synthetic startup accepts exact restricted initialization" {
 ///|
 test "Claude synthetic startup rejects pending MCP and native tools" {
   let output =
-    #|{"type":"system","subtype":"init","tools":["Read"],"mcp_servers":[{"name":"choir_probe","status":"pending"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.215","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"]}
+    #|{"type":"system","subtype":"init","tools":["Read"],"mcp_servers":[{"name":"choir_probe","status":"pending"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.216","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"]}
   let report = @harness.evaluate_claude_synthetic_startup({
     exit_code: 1,
     output,
@@ -43,7 +43,7 @@ test "Claude synthetic startup rejects pending MCP and native tools" {
 ///|
 test "Claude synthetic startup distinguishes missing MCP tool from native tools" {
   let output =
-    #|{"type":"system","subtype":"init","tools":[],"mcp_servers":[{"name":"choir_probe","status":"pending"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.215","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"]}
+    #|{"type":"system","subtype":"init","tools":[],"mcp_servers":[{"name":"choir_probe","status":"pending"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.216","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"]}
   let report = @harness.evaluate_claude_synthetic_startup({
     exit_code: 1,
     output,
@@ -120,7 +120,7 @@ test "Claude live startup requires the sandbox tool and subscription observation
 ///|
 test "Claude live startup accepts pending initialization after exact tool use" {
   let output = (
-      #|{"type":"system","subtype":"init","tools":[],"mcp_servers":[{"name":"choir_probe","status":"pending"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.215","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"]}
+      #|{"type":"system","subtype":"init","tools":[],"mcp_servers":[{"name":"choir_probe","status":"pending"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.216","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"]}
     ) +
     "\n" +
     (

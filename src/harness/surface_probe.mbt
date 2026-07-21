@@ -138,13 +138,13 @@ pub(all) struct SurfaceProbeReport {
 ///|
 pub fn expected_surface_version(surface : ProviderSurface) -> String {
   match surface {
-    ClaudeCli => "2.1.215"
+    ClaudeCli => "2.1.216"
     CodexCli => "0.144.6"
   }
 }
 
 ///|
-pub let expected_claude_executable_sha256 : String = "c1efffaaf370aa187cb6a09dd93d4e511c646899b0078476f83791b664bde7fe"
+pub let expected_claude_executable_sha256 : String = "74deca45220b8080ec75ab099bd5a5980e41a2b5879846a008fb115d436de085"
 
 ///|
 pub let expected_codex_executable_sha256 : String = "134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477"

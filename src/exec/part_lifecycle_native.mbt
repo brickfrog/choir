@@ -779,7 +779,7 @@ fn native_part_dependencies_with_admission(
       let (provider_identity, model_identity) = match surface {
         @control.ProviderSurfaceId::ClaudeSubscriptionCli =>
           (
-            "claude-code-2.1.215",
+            "claude-code-2.1.216",
             @control.ModelIdentity::ReportedModelIdentity(
               "claude-subscription-runtime",
             ),

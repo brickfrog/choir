@@ -21,7 +21,7 @@ Required:
 - [BoxLite](https://github.com/boxlite-ai/boxlite) v0.9.7 with Choir's
   [pinned corrected runtime](docs/boxlite-runtime.md)
 - Node.js
-- Claude Code 2.1.215 logged into the user's paid subscription
+- Claude Code 2.1.216 logged into the user's paid subscription
 - Codex CLI 0.144.6 logged into the user's paid subscription
 
 GitHub CLI is required only when Choir should publish the final pull request.

@@ -7,7 +7,7 @@ fn capture(output : String) -> @harness.HarnessProbeCapture {
 test "Claude declaration remains Candidate with required isolation flags" {
   let report = @harness.evaluate_surface_declaration({
     surface: @harness.ProviderSurface::ClaudeCli,
-    version: capture("2.1.215 (Claude Code)"),
+    version: capture("2.1.216 (Claude Code)"),
     main_help: capture(
       "--print --output-format stream-json --tools --setting-sources " +
       "--allowedTools --strict-mcp-config",
@@ -26,7 +26,7 @@ test "Claude declaration remains Candidate with required isolation flags" {
 test "Claude declaration fails closed when a required flag disappears" {
   let report = @harness.evaluate_surface_declaration({
     surface: @harness.ProviderSurface::ClaudeCli,
-    version: capture("2.1.215 (Claude Code)"),
+    version: capture("2.1.216 (Claude Code)"),
     main_help: capture(
       "--print --output-format stream-json --tools --setting-sources --allowedTools",
     ),

@@ -3,7 +3,7 @@ fn claude_driver_manifest(
   tools : Array[String],
 ) -> @harness.ClaudeInitializationManifest {
   {
-    client_version: "2.1.215",
+    client_version: "2.1.216",
     permission_mode: "dontAsk",
     api_key_source: "none",
     tools,
@@ -39,7 +39,7 @@ fn claude_driver_session(digest : @control.Digest) -> @control.HarnessSession {
 ///|
 fn claude_driver_output(tool_name : String) -> String {
   let init =
-    #|{"type":"system","subtype":"init","tools":["mcp__choir_sandbox__execute","StructuredOutput"],"mcp_servers":[{"name":"choir_sandbox","status":"connected"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.215","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"]}
+    #|{"type":"system","subtype":"init","tools":["mcp__choir_sandbox__execute","StructuredOutput"],"mcp_servers":[{"name":"choir_sandbox","status":"connected"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.216","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"]}
   init +
   "\n" +
   (

@@ -103,7 +103,7 @@ fn gate_audit_receipt() -> @control.AuditReceipt {
     ),
     auditor_capability_profile_digest: gate_digest_a,
     provider_surface_id: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
-    provider_identity: "claude-code-2.1.215",
+    provider_identity: "claude-code-2.1.216",
     model_identity: @control.ModelIdentity::ReportedModelIdentity("claude-opus"),
     provider_conformance_report_digest: gate_digest_a,
     audit_policy_digest: gate_digest_b,
