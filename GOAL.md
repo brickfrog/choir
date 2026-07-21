@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-20T18:54:07-05:00
+Implementation snapshot updated through: 2026-07-20T19:13:06-05:00
 
 ## Charter Semantics and Readiness
 
@@ -330,6 +330,12 @@ unconnected product path usable.
   `72077199c2544cbae292a9778733b34c72853a835fc5a3a36f57573bb4bb88df`;
   the resulting semantic digest is
   `04b1e37c4607053f603e432b751cd57c9e41ec380beeb2265fbad8d76979a74e`.
+- The final-PR remote-state matrix now directly proves the declared policy for
+  closed, retargeted, head-changed, human-edited, and duplicate-marker PRs.
+  Closed, retargeted, and head-changed PRs are not replaced and enter their
+  exact needs-input state; duplicate markers refuse canonical identity.
+  Title/body edits are preserved, adopted, and bound into the receipt as
+  observed digests rather than overwritten.
 - Exact selection is now a registered hermetic case using the production
   evaluator. It proves deterministic identity under input permutation, one
   valid acceptance, the exact five typed rejection classes for missing,
@@ -4346,8 +4352,9 @@ moon run --target native src/bin/choir_conformance -- tick --project <disposable
 
 This proves the durable one-shot and ordinary-runner semantics. The external
 forge create remains deliberately unperformed in this checkout; a controlled
-live canary and the complete ambiguous-create/edit/cancellation fault matrix
-remain required before calling that transport supported.
+live canary remains required before calling that transport supported. The
+ambiguous-create, remote-state, readiness, and cancellation race matrices are
+covered by the controlled-forge and pure workflow evidence above.
 
 ### Inspected source repositories
 

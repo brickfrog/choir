@@ -1382,8 +1382,8 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     observed_head_oid: promotion.commit_oid,
     state: @workflow.RemotePullRequestState::RemotePullRequestOpen,
     marker_state: @workflow.PullRequestMarkerState::PullRequestMarkerExact,
-    title_digest: @storage.artifact_digest(@utf8.encode("title")),
-    body_digest: @storage.artifact_digest(@utf8.encode("body")),
+    title_digest: @storage.artifact_digest(@utf8.encode(pr_document.title)),
+    body_digest: @storage.artifact_digest(@utf8.encode(pr_document.body)),
     goal_contract_link_present: true,
     evidence_manifest_link_present: true,
   }
@@ -1709,6 +1709,72 @@ test "integrated Parts authorize one immutable Goal branch seal" {
   }
   assert_eq(
     drifted_pull_request.intent.state,
+    @workflow.PullRequestIntentState::PullRequestNeedsInput(
+      @workflow.PullRequestNeedsInputReason::PullRequestRemoteDrift,
+    ),
+  )
+  let edited_title_pull_request = @workflow.authorize_goal_pull_request(
+    pull_request,
+    assured_execution,
+    assured,
+    published,
+    promotion.commit_oid,
+    @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch({
+      ..remote_pull_request,
+      title_digest: @storage.artifact_digest(@utf8.encode("edited title")),
+    }),
+    44L,
+  ).unwrap()
+  assert_eq(
+    edited_title_pull_request.intent.state,
+    @workflow.PullRequestIntentState::PullRequestReceipted,
+  )
+  guard edited_title_pull_request.receipt is Some(edited_title_receipt) else {
+    fail("edited-title pull request receipt is absent")
+  }
+  assert_eq(
+    edited_title_receipt.observed_title_digest,
+    @storage.artifact_digest(@utf8.encode("edited title")),
+  )
+  let edited_body_pull_request = @workflow.authorize_goal_pull_request(
+    pull_request,
+    assured_execution,
+    assured,
+    published,
+    promotion.commit_oid,
+    @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch({
+      ..remote_pull_request,
+      body_digest: @storage.artifact_digest(
+        @utf8.encode("edited body\n" + pr_marker.0),
+      ),
+    }),
+    44L,
+  ).unwrap()
+  assert_eq(
+    edited_body_pull_request.intent.state,
+    @workflow.PullRequestIntentState::PullRequestReceipted,
+  )
+  guard edited_body_pull_request.receipt is Some(edited_body_receipt) else {
+    fail("edited-body pull request receipt is absent")
+  }
+  assert_eq(
+    edited_body_receipt.observed_body_digest,
+    @storage.artifact_digest(@utf8.encode("edited body\n" + pr_marker.0)),
+  )
+  let retargeted_pull_request = @workflow.authorize_goal_pull_request(
+    pull_request,
+    assured_execution,
+    assured,
+    published,
+    promotion.commit_oid,
+    @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch({
+      ..remote_pull_request,
+      base_ref: @workflow.GitRefName("refs/heads/release"),
+    }),
+    44L,
+  ).unwrap()
+  assert_eq(
+    retargeted_pull_request.intent.state,
     @workflow.PullRequestIntentState::PullRequestNeedsInput(
       @workflow.PullRequestNeedsInputReason::PullRequestRemoteDrift,
     ),
