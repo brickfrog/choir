@@ -100,6 +100,7 @@ fn run_hermetic() -> Int {
 ///|
 fn probe_mcp_launch(
   delay_ms? : Int = 0,
+  credential_canary_path? : String = "",
 ) -> Result[(String, Array[String]), @types.ChoirError] {
   let node = match @exec.resolve_executable_in_path("node") {
     Some(path) => path
@@ -128,6 +129,10 @@ fn probe_mcp_launch(
   if delay_ms > 0 {
     args.push("--delay-ms")
     args.push(delay_ms.to_string())
+  }
+  if credential_canary_path != "" {
+    args.push("--credential-canary-path")
+    args.push(credential_canary_path)
   }
   Ok((node, args))
 }
@@ -306,12 +311,19 @@ async fn run_codex_live_driver_at(
   allowed_tools? : Array[String] = ["probe"],
   expect_surface_drift? : Bool = false,
   expect_ambient_block? : Bool = false,
+  credential_probe? : Bool = false,
 ) -> Int {
   if !@sys.create_dir_all(root + "/tmp") {
     @sys.write_stderr("failed to create dedicated Codex driver root\n")
     return 1
   }
-  let (mcp_command, mcp_args) = match probe_mcp_launch(delay_ms~) {
+  let credential_canary_path = if credential_probe {
+    root + "/credential-leaked"
+  } else {
+    ""
+  }
+  let (mcp_command, mcp_args) = match
+    probe_mcp_launch(delay_ms~, credential_canary_path~) {
     Ok(launch) => launch
     Err(error) => {
       @sys.write_stderr(error.message() + "\n")
@@ -344,25 +356,35 @@ async fn run_codex_live_driver_at(
     }
   }
   let clock = @ref.new(100L)
-  let result = match
-    @exec.run_native_codex_take(
-      {
-        sterile_root: root,
-        mcp_executable: mcp_command,
-        mcp_arguments: mcp_args,
-        mcp_server_name: "choir_probe",
-        allowed_tools,
-        timeout_ms: 120000,
-      },
-      started,
-      @harness.CodexTakeRole::CodexImplementationTake,
-      "Call probe exactly once. Only after it returns probe, report the required completed outcome.",
-      fn() {
-        clock.val = clock.val + 1L
-        clock.val
-      },
-      after_turn_started=fn() { if crash_after_turn_start { @sys.exit(77) } },
-    ) {
+  let credential_secret = "choir-fake-credential-7f4ccadbe0e6"
+  if credential_probe &&
+    !@sys.setenv("CHOIR_CREDENTIAL_CANARY", credential_secret) {
+    @sys.write_stderr("failed to seed credential canary\n")
+    ignore(@sys.rm_rf(root))
+    return 1
+  }
+  let provider_result = @exec.run_native_codex_take(
+    {
+      sterile_root: root,
+      mcp_executable: mcp_command,
+      mcp_arguments: mcp_args,
+      mcp_server_name: "choir_probe",
+      allowed_tools,
+      timeout_ms: 120000,
+    },
+    started,
+    @harness.CodexTakeRole::CodexImplementationTake,
+    "Call probe exactly once. Only after it returns probe, report the required completed outcome.",
+    fn() {
+      clock.val = clock.val + 1L
+      clock.val
+    },
+    after_turn_started=fn() { if crash_after_turn_start { @sys.exit(77) } },
+  )
+  if credential_probe {
+    ignore(@sys.unsetenv("CHOIR_CREDENTIAL_CANARY"))
+  }
+  let result = match provider_result {
     Ok(value) => value
     Err(error) => {
       if expect_ambient_block &&
@@ -376,10 +398,7 @@ async fn run_codex_live_driver_at(
           "unexpected-provider-state"
         }
         let evidence = @storage.artifact_digest(
-          @utf8.encode(
-            "choir.codex-ambient-configuration.v1\u{00}" +
-            status,
-          ),
+          @utf8.encode("choir.codex-ambient-configuration.v1\u{00}" + status),
         )
         let matrix = @harness.evaluate_host_surface_matrix(
           @harness.ProviderSurface::CodexCli,
@@ -425,14 +444,39 @@ async fn run_codex_live_driver_at(
     }
   }
   let matrix = match
-    @harness.evaluate_host_surface_matrix(@harness.ProviderSurface::CodexCli, [
-      {
-        probe: @harness.HostSurfaceProbe::HostSurfaceInitialization,
-        outcome: @harness.HostSurfaceProbeOutcome::HostSurfaceProbePassed(
-          attestation,
-        ),
+    @harness.evaluate_host_surface_matrix(
+      @harness.ProviderSurface::CodexCli,
+      if credential_probe {
+        let trace = result.events.to_json().stringify(indent=0) +
+          result.terminal_response
+        let leaked = @sys.path_entry_exists(credential_canary_path) ||
+          trace.contains(credential_secret) ||
+          native_tree_contains(root, credential_secret)
+        let status = if leaked { "leaked" } else { "absent" }
+        let evidence = @storage.artifact_digest(
+          @utf8.encode("choir.codex-credential-isolation.v1\u{00}" + status),
+        )
+        [
+          {
+            probe: @harness.HostSurfaceProbe::HostSurfaceCredentialIsolation,
+            outcome: if leaked {
+              @harness.HostSurfaceProbeOutcome::HostSurfaceProbeFailed(evidence)
+            } else {
+              @harness.HostSurfaceProbeOutcome::HostSurfaceProbePassed(evidence)
+            },
+          },
+        ]
+      } else {
+        [
+          {
+            probe: @harness.HostSurfaceProbe::HostSurfaceInitialization,
+            outcome: @harness.HostSurfaceProbeOutcome::HostSurfaceProbePassed(
+              attestation,
+            ),
+          },
+        ]
       },
-    ]) {
+    ) {
     Ok(value) => value
     Err(error) => {
       @sys.write_stderr(error.message() + "\n")
@@ -468,6 +512,31 @@ async fn run_codex_live_driver() -> Int {
     0,
     false,
     true,
+  )
+}
+
+///|
+async fn native_tree_contains(root : String, value : String) -> Bool {
+  let captured = @process.collect_output_merged(
+    "/usr/bin/rg",
+    ["--fixed-strings", "--files-with-matches", value, root],
+    extra_env={ "PATH": "/usr/bin:/bin", "LC_ALL": "C" },
+    inherit_env=false,
+    cwd="/tmp",
+  ) catch {
+    _ => return true
+  }
+  captured.0 != 1
+}
+
+///|
+async fn run_codex_live_credentials() -> Int {
+  run_codex_live_driver_at(
+    "/tmp/choir-conformance-codex-credentials-" + @sys.get_pid().to_string(),
+    0,
+    false,
+    true,
+    credential_probe=true,
   )
 }
 
@@ -525,13 +594,7 @@ async fn run_codex_live_ambient_configuration() -> Int {
       return 1
     }
   }
-  run_codex_live_driver_at(
-    root,
-    0,
-    false,
-    false,
-    expect_ambient_block=true,
-  )
+  run_codex_live_driver_at(root, 0, false, false, expect_ambient_block=true)
 }
 
 ///|
@@ -751,6 +814,13 @@ fn run_harness_command(args : Array[String]) -> Unit {
     @async.run_async_main(async fn() {
       @sys.exit(run_codex_live_ambient_configuration())
     })
+  } else if args.length() == 7 &&
+    args[2] == "--surface" &&
+    args[3] == "codex-cli" &&
+    args[4] == "--profile" &&
+    args[5] == "subscription" &&
+    args[6] == "--driver-credentials-live" {
+    @async.run_async_main(async fn() { @sys.exit(run_codex_live_credentials()) })
   } else if args.length() == 7 &&
     args[2] == "--surface" &&
     args[3] == "codex-cli" &&
@@ -1747,6 +1817,8 @@ fn usage() -> Unit {
     "--profile subscription --driver-live\n" +
     "       choir_conformance harness --surface codex-cli " +
     "--profile subscription --driver-ambient-live\n" +
+    "       choir_conformance harness --surface codex-cli " +
+    "--profile subscription --driver-credentials-live\n" +
     "       choir_conformance harness --surface codex-cli " +
     "--profile subscription --driver-recovery-live\n" +
     "       choir_conformance harness --surface codex-cli " +

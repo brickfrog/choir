@@ -15,7 +15,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-20T20:28:51-05:00
+Implementation snapshot updated through: 2026-07-20T20:34:23-05:00
 
 ## Charter Semantics and Readiness
 
@@ -268,6 +268,12 @@ unconnected product path usable.
   executable MCP canary and a hostile `AGENTS.md`; it observes no Take
   manifest, app-server log, or canary write. Combined live evidence now covers
   five rows, with ten still unproven.
+- A live Codex process-tree probe now proves `CREDS-007` for inherited host
+  environment values. It plants a fake credential in Choir's parent process;
+  the probe MCP child writes a sentinel only if that value reaches it. A
+  completed real Take produced no sentinel, no value in normalized events or
+  terminal output, and no match anywhere in the dedicated Take state tree.
+  Combined live evidence now covers six rows, with nine still unproven.
 - Codex MCP resource discovery is now classified as provider-side discovery,
   not as a Part effect, only for the two read-only discovery methods and only
   when Codex identifies either the exact declared server or its reserved
@@ -734,7 +740,7 @@ compiler still reports the repository's existing warning set.
   The fixed scale flow is joined to the full semantic projection; the remaining
   negative cases retain their own typed blocked/recovery oracles. The host
   surface now has an executable fifteen-row report rather than an implied
-  aggregate pass; ten Codex rows still require their exact live oracles.
+  aggregate pass; nine Codex rows still require their exact live oracles.
 - Further splitting or consolidating large live adapters only when a concrete
   boundary or dead caller justifies it. The branch-point audit found no closed
   source package imported only by another closed source package.
