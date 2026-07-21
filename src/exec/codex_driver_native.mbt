@@ -403,7 +403,7 @@ async fn verify_native_codex_file(
 ///|
 async fn verify_native_codex_binary(
   codex : String,
-) -> Result[Unit, @types.ChoirError] {
+) -> Result[String, @types.ChoirError] {
   let launcher = match @sys.realpath_native(codex) {
     Some(value) => value
     None => return Err(native_codex_driver_error("launcher path is invalid"))
@@ -426,9 +426,13 @@ async fn verify_native_codex_binary(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  verify_native_codex_file(
-    native, @harness.expected_codex_native_executable_sha256, "native executable",
-  )
+  match
+    verify_native_codex_file(
+      native, @harness.expected_codex_native_executable_sha256, "native executable",
+    ) {
+    Ok(_) => Ok(native)
+    Err(error) => Err(error)
+  }
 }
 
 ///|
@@ -1260,8 +1264,8 @@ pub async fn run_native_codex_take(
     Some(value) => value
     None => return Err(native_codex_driver_error("executable is unavailable"))
   }
-  match verify_native_codex_binary(codex) {
-    Ok(_) => ()
+  let codex_native = match verify_native_codex_binary(codex) {
+    Ok(value) => value
     Err(error) => return Err(error)
   }
   match prepare_native_codex_app_server_home(config, provider_home) {
@@ -1323,7 +1327,8 @@ pub async fn run_native_codex_take(
     None => ""
   }
   if terminal_trace == "" {
-    manifest = match ensure_native_codex_app_server(config, codex, manifest) {
+    manifest = match
+      ensure_native_codex_app_server(config, codex_native, manifest) {
       Ok(value) => value
       Err(error) => return Err(error)
     }
@@ -1437,7 +1442,8 @@ pub async fn run_native_codex_take(
     let mut elapsed_ms = 0
     let mut interrupt_sent = false
     while terminal_trace == "" {
-      manifest = match ensure_native_codex_app_server(config, codex, manifest) {
+      manifest = match
+        ensure_native_codex_app_server(config, codex_native, manifest) {
         Ok(value) => value
         Err(error) => return Err(error)
       }
@@ -1620,8 +1626,8 @@ pub async fn run_native_codex_conductor_turn(
     Some(value) => value
     None => return Err(native_codex_driver_error("executable is unavailable"))
   }
-  match verify_native_codex_binary(codex) {
-    Ok(_) => ()
+  let codex_native = match verify_native_codex_binary(codex) {
+    Ok(value) => value
     Err(error) => return Err(error)
   }
   if !@sys.create_dir_all(config.sterile_root + "/tmp") {
@@ -1649,14 +1655,14 @@ pub async fn run_native_codex_conductor_turn(
   let args = native_codex_conductor_args(config, thread_id)
   abort_if_hermetic_test_exec(
     command_to_shell_string({
-      program: codex,
+      program: codex_native,
       args,
       workdir: Some(config.sterile_root),
     }),
   )
   let collected = match
     collect_interruptible_process(
-      codex,
+      codex_native,
       args,
       native_codex_conductor_environment(provider_home, config),
       stdin_read,
