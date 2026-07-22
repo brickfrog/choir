@@ -274,6 +274,18 @@ fn response_int(fields : Map[String, Json], key : String) -> Int? {
 }
 
 ///|
+fn claude_audit_terminal_response(
+  prefix : String,
+  fields : Map[String, Json],
+) -> String {
+  match fields.get("migration_findings") {
+    Some(value) =>
+      prefix + ",\"migration_findings\":" + value.stringify(indent=0) + "}"
+    None => prefix + "}"
+  }
+}
+
+///|
 fn validate_claude_take_response(
   role : ClaudeTakeRole,
   response : String,
@@ -306,7 +318,10 @@ fn validate_claude_take_response(
           Ok(
             (
               ClaudeAuditPassed,
-              "{\"outcome\":\"passed\",\"total_findings\":0,\"blocking_findings\":0}",
+              claude_audit_terminal_response(
+                "{\"outcome\":\"passed\",\"total_findings\":0,\"blocking_findings\":0",
+                fields,
+              ),
             ),
           )
         ("findings", Some(total), Some(blocking)) if total > 0 &&
@@ -315,17 +330,30 @@ fn validate_claude_take_response(
           Ok(
             (
               ClaudeAuditFindings(total, blocking),
-              "{\"outcome\":\"findings\",\"total_findings\":" +
-              total.to_string() +
-              ",\"blocking_findings\":" +
-              blocking.to_string() +
-              "}",
+              claude_audit_terminal_response(
+                "{\"outcome\":\"findings\",\"total_findings\":" +
+                total.to_string() +
+                ",\"blocking_findings\":" +
+                blocking.to_string(),
+                fields,
+              ),
             ),
           )
         _ => Err(claude_driver_error("audit outcome is invalid"))
       }
     }
   }
+}
+
+///|
+test "Claude audit response retains typed migration findings" {
+  let response = "{\"outcome\":\"findings\",\"total_findings\":1,\"blocking_findings\":1,\"migration_findings\":[{\"class\":\"RuleViolation\"}]}"
+  let (_, retained) = validate_claude_take_response(
+    ClaudeTakeRole::ClaudeAuditTake,
+    response,
+  ).unwrap()
+  assert_true(retained.contains("\"migration_findings\""))
+  assert_true(retained.contains("\"RuleViolation\""))
 }
 
 ///|

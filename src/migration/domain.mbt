@@ -200,6 +200,12 @@ pub(all) struct MigrationFinding {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) struct MigrationFindingsArtifact {
+  schema_version : Int
+  findings : Array[MigrationFinding]
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub(all) struct MigrationFindingPatternObservation {
   pattern_key : @control.Digest
   class : MigrationFindingClass

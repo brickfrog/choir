@@ -219,6 +219,104 @@ pub fn validate_migration_finding(
 }
 
 ///|
+pub fn validate_migration_findings_artifact(
+  artifact : MigrationFindingsArtifact,
+) -> Result[Unit, @types.ChoirError] {
+  if artifact.schema_version != 1 || artifact.findings.length() == 0 {
+    return Err(migration_validation_error("findings artifact is invalid"))
+  }
+  let ids : Array[MigrationFindingId] = []
+  for finding in artifact.findings {
+    match validate_migration_finding(finding) {
+      Ok(_) => ()
+      Err(error) => return Err(error)
+    }
+    if ids.contains(finding.id) {
+      return Err(migration_validation_error("finding identity is duplicated"))
+    }
+    ids.push(finding.id)
+  }
+  Ok(())
+}
+
+///|
+pub fn decode_migration_findings_artifact(
+  content : Bytes,
+) -> Result[MigrationFindingsArtifact, @types.ChoirError] {
+  let json = @json.parse(@utf8.decode_lossy(content)) catch {
+    _ => return Err(migration_validation_error("findings artifact is not JSON"))
+  }
+  let artifact : MigrationFindingsArtifact = @json.from_json(json) catch {
+    _ =>
+      return Err(
+        migration_validation_error("findings artifact schema is invalid"),
+      )
+  }
+  match validate_migration_findings_artifact(artifact) {
+    Ok(_) => Ok(artifact)
+    Err(error) => Err(error)
+  }
+}
+
+///|
+pub fn project_migration_patterns_from_audit_results(
+  results : Array[@control.AuditResult],
+  read_artifact : (@control.ArtifactReference) -> Result[
+    Bytes,
+    @types.ChoirError,
+  ],
+) -> Result[Array[MigrationFindingPatternObservation], @types.ChoirError] {
+  let findings : Array[MigrationFinding] = []
+  for result in results {
+    match (result.outcome, result.findings_artifact) {
+      (@control.AuditOutcome::AuditPassed, None) => ()
+      (@control.AuditOutcome::AuditFindings, Some(reference)) => {
+        let content = match read_artifact(reference) {
+          Ok(value) => value
+          Err(error) => return Err(error)
+        }
+        let observed_digest = @control.Digest(
+          @crypto.bytes_to_hex_string(@crypto.sha256(content)),
+        )
+        if observed_digest != reference.digest {
+          return Err(
+            migration_validation_error("findings artifact digest is stale"),
+          )
+        }
+        let artifact = match decode_migration_findings_artifact(content) {
+          Ok(value) => value
+          Err(error) => return Err(error)
+        }
+        let mut blocking = 0
+        for finding in artifact.findings {
+          if finding.audit_take_id != result.audit_take_id ||
+            finding.audit_subject_digest != result.subject.subject_digest {
+            return Err(
+              migration_validation_error("finding audit subject is stale"),
+            )
+          }
+          if finding.severity == MigrationFindingSeverity::Blocking {
+            blocking = blocking + 1
+          }
+          findings.push(finding)
+        }
+        if artifact.findings.length() != result.total_findings_count ||
+          blocking != result.blocking_findings_count {
+          return Err(
+            migration_validation_error("finding audit counts disagree"),
+          )
+        }
+      }
+      _ =>
+        return Err(
+          migration_validation_error("migration audit result is invalid"),
+        )
+    }
+  }
+  project_migration_finding_patterns(findings)
+}
+
+///|
 fn observation_index(
   observations : Array[MigrationFindingPatternObservation],
   key : @control.Digest,

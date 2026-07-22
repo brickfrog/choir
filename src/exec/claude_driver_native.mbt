@@ -118,7 +118,8 @@ fn native_claude_system_prompt(role : @harness.ClaudeTakeRole) -> String {
       "Verify the supplied candidate with the declared verification tool. End with exactly {\"outcome\":\"passed\"} or {\"outcome\":\"failed\"}."
     @harness.ClaudeTakeRole::ClaudeAuditTake =>
       common +
-      "Independently audit the supplied candidate. End with exactly {\"outcome\":\"passed\",\"total_findings\":0,\"blocking_findings\":0} when clean, otherwise {\"outcome\":\"findings\",\"total_findings\":N,\"blocking_findings\":N}."
+      "Independently audit the supplied candidate. Return outcome passed with zero counts when clean, otherwise outcome findings with exact total and blocking counts." +
+      native_migration_audit_output_instruction()
   }
 }
 
@@ -144,6 +145,7 @@ fn native_claude_output_schema(role : @harness.ClaudeTakeRole) -> String {
         "type": "integer".to_json(),
         "minimum": (0).to_json(),
       }.to_json()
+      properties["migration_findings"] = native_migration_findings_output_schema()
       required.push("total_findings")
       required.push("blocking_findings")
     }

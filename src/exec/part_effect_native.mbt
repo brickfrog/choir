@@ -1191,19 +1191,33 @@ async fn execute_native_audit(
       (@control.AuditOutcome::AuditFindings, total, blocking)
     _ => return Err(native_part_effect_error("audit outcome is invalid"))
   }
-  let findings = if total == 0 {
-    None
-  } else {
-    match
-      adopt_native_effect_artifact(
-        runtime,
-        snapshot.goal.id,
-        @utf8.encode(provider.terminal_response),
-        @storage.ArtifactProvenance::ArtifactAuditFindings(take_id),
-      ) {
-      Ok(value) => Some(value)
-      Err(error) => return Err(error)
-    }
+  let findings = match snapshot.task_contract.migration_contract_ref {
+    Some(_) =>
+      match
+        native_migration_findings_artifact(
+          runtime,
+          snapshot,
+          take_id,
+          subject,
+          provider.terminal_response,
+          total,
+          blocking,
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+    None if total == 0 => None
+    None =>
+      match
+        adopt_native_effect_artifact(
+          runtime,
+          snapshot.goal.id,
+          @utf8.encode(provider.terminal_response),
+          @storage.ArtifactProvenance::ArtifactAuditFindings(take_id),
+        ) {
+        Ok(value) => Some(value)
+        Err(error) => return Err(error)
+      }
   }
   Ok(
     @workflow.PartEffectObservation::AuditCompleted(

@@ -343,6 +343,18 @@ pub fn canonical_migration_finding_bytes(finding : MigrationFinding) -> Bytes {
 }
 
 ///|
+pub fn canonical_migration_findings_artifact_bytes(
+  artifact : MigrationFindingsArtifact,
+) -> Bytes {
+  let fields = [artifact.schema_version.to_string()]
+  fields.push(artifact.findings.length().to_string())
+  for finding in artifact.findings {
+    fields.push(@utf8.decode_lossy(canonical_migration_finding_bytes(finding)))
+  }
+  canonical_fields("choir.migration-findings-artifact.v1", fields)
+}
+
+///|
 pub fn migration_contract_digest(
   contract : MigrationContract,
 ) -> @control.Digest {

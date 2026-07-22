@@ -114,6 +114,53 @@ fn finding_fixture(
 }
 
 ///|
+fn audit_subject_fixture(
+  take_id : String,
+  subject_digest : @control.Digest,
+) -> @control.PartAuditSubject {
+  {
+    part_id: @control.PartId("part-1"),
+    candidate_take_id: @control.TakeId(take_id),
+    candidate_commit_oid: @control.GitOid("commit-1"),
+    candidate_tree_oid: @control.GitOid("tree-1"),
+    task_contract_revision_id: @control.RevisionId("revision-1"),
+    task_contract_digest: migration_digest_a,
+    verification_receipt_set_digest: migration_digest_b,
+    verification_evidence_manifest_digest: migration_digest_c,
+    subject_digest,
+  }
+}
+
+///|
+fn audit_result_fixture(
+  id : String,
+  take_id : String,
+  subject_digest : @control.Digest,
+  findings_artifact : @control.ArtifactReference,
+  total : Int,
+  blocking : Int,
+) -> @control.AuditResult {
+  {
+    id: @control.AuditResultId(id),
+    audit_take_id: @control.TakeId(take_id),
+    take_fencing_epoch: @control.FencingEpoch(1L),
+    audit_harness_session_id: @control.HarnessSessionId("session-" + id),
+    subject: audit_subject_fixture(take_id, subject_digest),
+    auditor_capability_profile_digest: migration_digest_a,
+    effective_surface_manifest_digest: migration_digest_b,
+    provider_conformance_report_digest: migration_digest_c,
+    audit_policy_digest: migration_digest_a,
+    findings_artifact: Some(findings_artifact),
+    total_findings_count: total,
+    blocking_findings_count: blocking,
+    started_at: 1L,
+    finished_at: 2L,
+    outcome: @control.AuditOutcome::AuditFindings,
+    result_digest: migration_digest_b,
+  }
+}
+
+///|
 test "migration domain canonical byte fixtures are explicit and versioned" {
   inspect(
     @utf8.decode_lossy(
@@ -175,6 +222,15 @@ test "migration domain canonical byte fixtures are explicit and versioned" {
       ),
     ),
     content="26#choir.migration-finding.v12#111#19#finding-164#ab7efb844b76423963ac36b7e2de64fd349eb77c438cda66dccb4d09fc2fd41114#rule-violation8#blocking4#rule18#imports-no-host-io7#audit-164#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb64#cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc15#revise-contract",
+  )
+  inspect(
+    @utf8.decode_lossy(
+      @migration.canonical_migration_findings_artifact_bytes({
+        schema_version: 1,
+        findings: [finding_fixture("finding-1", "audit-1", migration_digest_c)],
+      }),
+    ),
+    content="36#choir.migration-findings-artifact.v11#31#11#1329#26#choir.migration-finding.v12#111#19#finding-164#ab7efb844b76423963ac36b7e2de64fd349eb77c438cda66dccb4d09fc2fd41114#rule-violation8#blocking4#rule18#imports-no-host-io7#audit-164#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb64#cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc15#revise-contract",
   )
 }
 
@@ -238,6 +294,78 @@ test "finding patterns deduplicate occurrences but preserve anchors" {
 }
 
 ///|
+test "finding patterns project from persisted audit artifacts across restart" {
+  let first = finding_fixture("finding-1", "audit-1", migration_digest_a)
+  let second = {
+    ..first,
+    id: @migration.MigrationFindingId("finding-2"),
+    audit_take_id: @control.TakeId("audit-2"),
+    evidence_digest: migration_digest_c,
+  }
+  let first_content = @utf8.encode(
+    (
+      { schema_version: 1, findings: [first] } :
+      @migration.MigrationFindingsArtifact)
+    .to_json()
+    .stringify(indent=0),
+  )
+  let second_content = @utf8.encode(
+    (
+      { schema_version: 1, findings: [second] } :
+      @migration.MigrationFindingsArtifact)
+    .to_json()
+    .stringify(indent=0),
+  )
+  let first_reference : @control.ArtifactReference = {
+    artifact_id: "findings-1",
+    digest: digest_generated_text(@utf8.decode_lossy(first_content)),
+  }
+  let second_reference : @control.ArtifactReference = {
+    artifact_id: "findings-2",
+    digest: digest_generated_text(@utf8.decode_lossy(second_content)),
+  }
+  let persisted = [
+      audit_result_fixture(
+        "result-1", "audit-1", migration_digest_b, first_reference, 1, 1,
+      ),
+      audit_result_fixture(
+        "result-2", "audit-2", migration_digest_b, second_reference, 1, 1,
+      ),
+    ]
+    .to_json()
+    .stringify(indent=0)
+  let restarted : Array[@control.AuditResult] = @json.from_json(
+    @json.parse(persisted),
+  )
+  let projected = @migration.project_migration_patterns_from_audit_results(
+    restarted,
+    fn(reference) {
+      if reference == first_reference {
+        Ok(first_content)
+      } else if reference == second_reference {
+        Ok(second_content)
+      } else {
+        Err(@types.ChoirError::validation_error("artifact is missing"))
+      }
+    },
+  ).unwrap()
+  assert_eq(projected.length(), 1)
+  assert_eq(projected[0].occurrence_ids, [first.id, second.id])
+  let stale_result = {
+    ..restarted[0],
+    findings_artifact: Some({ ..first_reference, digest: migration_digest_c }),
+  }
+  assert_true(
+    @migration.project_migration_patterns_from_audit_results([stale_result], fn(
+      _,
+    ) {
+      Ok(first_content)
+    })
+    is Err(_),
+  )
+}
+
+///|
 fn digest_generated_text(value : String) -> @control.Digest {
   @control.Digest(
     @crypto.bytes_to_hex_string(@crypto.sha256(@utf8.encode(value))),
@@ -289,6 +417,34 @@ test "property: finding projection excludes occurrence identity" {
           observation.occurrence_ids.length() == 2
         _ => false
       }
+    },
+    max_success=128,
+    max_size=32,
+  )
+}
+
+///|
+test "property: findings canonical bytes ignore diagnostic JSON round trip" {
+  @quickcheck.quick_check_fn(
+    fn(values : (String, String)) -> Bool {
+      let (id_seed, evidence_seed) = values
+      let artifact : @migration.MigrationFindingsArtifact = {
+        schema_version: 1,
+        findings: [
+          finding_fixture(
+            "finding-" + id_seed,
+            "take-" + id_seed,
+            digest_generated_text(evidence_seed),
+          ),
+        ],
+      }
+      let diagnostic = artifact.to_json().stringify(indent=2)
+      let json = @json.parse(diagnostic) catch { _ => return false }
+      let decoded : @migration.MigrationFindingsArtifact = @json.from_json(json) catch {
+        _ => return false
+      }
+      @migration.canonical_migration_findings_artifact_bytes(artifact) ==
+      @migration.canonical_migration_findings_artifact_bytes(decoded)
     },
     max_success=128,
     max_size=32,
