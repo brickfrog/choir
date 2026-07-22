@@ -809,20 +809,33 @@ pub fn validate_migration_bead_proposal(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
+  let expected_title = match proposal.scope {
+    MigrationProductionBead => "Migrate " + proposal.stable_key.0
+    MigrationRehearsalBead(sample_digest) => {
+      if !digest_is_valid(sample_digest) {
+        return Err(
+          migration_validation_error("rehearsal Bead scope is invalid"),
+        )
+      }
+      "Rehearse " + proposal.stable_key.0
+    }
+  }
   if proposal.stable_key.0 == "" ||
-    proposal.title != "Migrate " + proposal.stable_key.0 ||
+    proposal.title != expected_title ||
     proposal.ownership_claim.0 == "" ||
     proposal.source_paths.length() == 0 ||
     proposal.id !=
     migration_bead_id(
       proposal.migration_contract_ref,
       proposal.stable_key,
+      proposal.scope,
       proposal.kind,
     ) ||
     proposal.idempotency_key !=
     migration_bead_idempotency_key(
       proposal.migration_contract_ref,
       proposal.stable_key,
+      proposal.scope,
       proposal.kind,
     ) ||
     proposal.blocking_dependency_ids.contains(proposal.id) ||
@@ -870,13 +883,20 @@ pub fn project_migration_bead_proposals(
         let idempotency_key = migration_bead_idempotency_key(
           contract_ref,
           unit.stable_key,
+          MigrationProductionBead,
           kind,
         )
         proposals.push({
-          id: migration_bead_id(contract_ref, unit.stable_key, kind),
+          id: migration_bead_id(
+            contract_ref,
+            unit.stable_key,
+            MigrationProductionBead,
+            kind,
+          ),
           idempotency_key,
           stable_key: unit.stable_key,
           migration_contract_ref: contract_ref,
+          scope: MigrationProductionBead,
           kind,
           title: "Migrate " + unit.stable_key.0,
           ownership_claim: unit.ownership_claim,
@@ -910,6 +930,95 @@ pub fn project_migration_bead_proposals(
     }
   }
   proposals.sort_by(fn(left, right) { left.id.compare(right.id) })
+  for proposal in proposals {
+    match validate_migration_bead_proposal(proposal, is_nfc) {
+      Ok(_) => ()
+      Err(error) => return Err(error)
+    }
+  }
+  Ok(proposals)
+}
+
+///|
+pub fn project_migration_rehearsal_bead_proposals(
+  inventory : MigrationInventory,
+  contract_ref : @control.MigrationContractRef,
+  sampled_inventory_digest : @control.Digest,
+  sampled_stable_keys : Array[InventoryStableKey],
+  is_nfc : (String) -> Bool,
+) -> Result[Array[MigrationBeadProposal], @types.ChoirError] {
+  if !digest_is_valid(sampled_inventory_digest) ||
+    sampled_stable_keys.length() == 0 {
+    return Err(migration_validation_error("rehearsal sample is invalid"))
+  }
+  for index, stable_key in sampled_stable_keys {
+    if stable_key.0 == "" ||
+      sampled_stable_keys[index + 1:].contains(stable_key) ||
+      !inventory.units.any(fn(unit) { unit.stable_key == stable_key }) {
+      return Err(migration_validation_error("rehearsal sample is invalid"))
+    }
+  }
+  let production = match
+    project_migration_bead_proposals(inventory, contract_ref, is_nfc) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let rehearsal_scope = MigrationBeadScope::MigrationRehearsalBead(
+    sampled_inventory_digest,
+  )
+  let proposals : Array[MigrationBeadProposal] = []
+  for proposal in production {
+    if sampled_stable_keys.contains(proposal.stable_key) {
+      let idempotency_key = migration_bead_idempotency_key(
+        contract_ref,
+        proposal.stable_key,
+        rehearsal_scope,
+        proposal.kind,
+      )
+      proposals.push({
+        ..proposal,
+        id: migration_bead_id(
+          contract_ref,
+          proposal.stable_key,
+          rehearsal_scope,
+          proposal.kind,
+        ),
+        idempotency_key,
+        scope: rehearsal_scope,
+        title: "Rehearse " + proposal.stable_key.0,
+        blocking_dependency_ids: [],
+      })
+    }
+  }
+  for index = 0; index < proposals.length(); index = index + 1 {
+    let production_proposal = production.filter(fn(candidate) {
+        candidate.stable_key == proposals[index].stable_key
+      })[0]
+    let dependencies : Array[MigrationBeadId] = []
+    for dependency_id in production_proposal.blocking_dependency_ids {
+      let matching = production.filter(fn(candidate) {
+        candidate.id == dependency_id
+      })
+      if matching.length() == 1 {
+        let dependency = matching[0]
+        if sampled_stable_keys.contains(dependency.stable_key) {
+          dependencies.push(
+            migration_bead_id(
+              contract_ref,
+              dependency.stable_key,
+              rehearsal_scope,
+              dependency.kind,
+            ),
+          )
+        }
+      }
+    }
+    dependencies.sort_by(fn(left, right) { left.compare(right) })
+    proposals[index] = {
+      ..proposals[index],
+      blocking_dependency_ids: dependencies,
+    }
+  }
   for proposal in proposals {
     match validate_migration_bead_proposal(proposal, is_nfc) {
       Ok(_) => ()

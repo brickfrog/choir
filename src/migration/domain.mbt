@@ -379,11 +379,18 @@ pub(all) enum MigrationBeadKind {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) enum MigrationBeadScope {
+  MigrationProductionBead
+  MigrationRehearsalBead(@control.Digest)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub(all) struct MigrationBeadProposal {
   id : MigrationBeadId
   idempotency_key : @control.Digest
   stable_key : InventoryStableKey
   migration_contract_ref : @control.MigrationContractRef
+  scope : MigrationBeadScope
   kind : MigrationBeadKind
   title : String
   ownership_claim : MigrationOwnershipClaim

@@ -519,8 +519,47 @@ test "inventory projects deterministic Bead identities and dependency edges" {
       @migration.canonical_migration_bead_proposal_bytes(unit_a),
     ),
     content=(
-      #|32#choir.migration-bead-proposal.v12#1334#choir-mig-2f5af8b0005fa39fa030d2e064#2f5af8b0005fa39fa030d2e0ddb995d3f17c125a5ec08bac0d06460d2b9ff8ce6#unit-a131#31#choir.migration-contract-ref.v11#410#contract-19#lineage-11#264#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa14#implementation17#semantic-judgment14#Migrate unit-a12#owner-unit-a1#19#src/a.mbt1#01#1185#26#choir.verification-spec.v11#413#verify-unit-a1#164#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb64#cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+      #|32#choir.migration-bead-proposal.v22#1434#choir-mig-669eb3a68269ebe5c47dbbb564#669eb3a68269ebe5c47dbbb5efda9ccf0fb7e2a41785c3ec50fca1ac8a073b7b6#unit-a131#31#choir.migration-contract-ref.v11#410#contract-19#lineage-11#264#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa10#production14#implementation17#semantic-judgment14#Migrate unit-a12#owner-unit-a1#19#src/a.mbt1#01#1185#26#choir.verification-spec.v11#413#verify-unit-a1#164#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb64#cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
     ),
+  )
+  let inventory_before = inventory
+  let rehearsal = @migration.project_migration_rehearsal_bead_proposals(
+    inventory,
+    migration_contract_ref_fixture(),
+    migration_digest_c,
+    [
+      @migration.InventoryStableKey("unit-a"),
+      @migration.InventoryStableKey("unit-b"),
+    ],
+    fn(_) { true },
+  ).unwrap()
+  assert_eq(inventory, inventory_before)
+  assert_eq(rehearsal.length(), projected.length())
+  for proposal in rehearsal {
+    assert_false(projected.any(fn(candidate) { candidate.id == proposal.id }))
+    assert_true(
+      proposal.scope ==
+      @migration.MigrationBeadScope::MigrationRehearsalBead(
+        migration_digest_c,
+      ),
+    )
+  }
+  let rehearsal_a = rehearsal.filter(fn(proposal) {
+      proposal.stable_key == @migration.InventoryStableKey("unit-a")
+    })[0]
+  let rehearsal_b = rehearsal.filter(fn(proposal) {
+      proposal.stable_key == @migration.InventoryStableKey("unit-b")
+    })[0]
+  assert_eq(rehearsal_b.blocking_dependency_ids, [rehearsal_a.id])
+  assert_true(
+    @migration.project_migration_rehearsal_bead_proposals(
+      inventory,
+      migration_contract_ref_fixture(),
+      migration_digest_c,
+      [@migration.InventoryStableKey("missing")],
+      fn(_) { true },
+    )
+    is Err(_),
   )
   let cyclic = {
     ..inventory,

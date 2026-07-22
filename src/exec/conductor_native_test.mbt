@@ -207,13 +207,20 @@ fn migration_materialization_proposals() -> Array[
     dependencies : Array[@migration.MigrationBeadId],
   ) -> @migration.MigrationBeadProposal {
     let stable_key = @migration.InventoryStableKey(key)
+    let scope = @migration.MigrationBeadScope::MigrationProductionBead
     {
-      id: @migration.migration_bead_id(contract_ref, stable_key, kind),
+      id: @migration.migration_bead_id(
+        contract_ref,
+        stable_key,
+        scope,
+        kind,
+      ),
       idempotency_key: @migration.migration_bead_idempotency_key(
-        contract_ref, stable_key, kind,
+        contract_ref, stable_key, scope, kind,
       ),
       stable_key,
       migration_contract_ref: contract_ref,
+      scope,
       kind,
       title: "Migrate " + key,
       ownership_claim: @migration.MigrationOwnershipClaim("owner-" + key),
