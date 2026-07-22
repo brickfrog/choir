@@ -344,7 +344,7 @@ pub async fn run_native_goal_conformance_fixture(
         }
         Ok({ ..record, part: integrated })
       },
-      resume_promotion: async fn(_) {
+      resume_promotion: _ => {
         Err(native_goal_error("unexpected promotion recovery"))
       },
     }) {

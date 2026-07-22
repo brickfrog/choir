@@ -449,8 +449,8 @@ pub fn native_pull_request_forge_adapters() -> NativePullRequestForgeAdapters {
 pub fn synthetic_pull_request_forge_adapters() -> NativePullRequestForgeAdapters {
   let created = Ref(false)
   {
-    resolve_repository: async fn(_) { Ok("choir/synthetic") },
-    lookup: async fn(_, _, intent) {
+    resolve_repository: _ => Ok("choir/synthetic"),
+    lookup: (_, _, intent) => {
       if !created.val && intent.canonical_remote_pull_request_id is None {
         return @workflow.PullRequestLookupObservation::PullRequestNoMatch
       }
@@ -478,7 +478,7 @@ pub fn synthetic_pull_request_forge_adapters() -> NativePullRequestForgeAdapters
         evidence_manifest_link_present: true,
       })
     },
-    create: async fn(_, _, _, _) { created.val = true },
+    create: (_, _, _, _) => created.val = true,
   }
 }
 
@@ -1071,8 +1071,8 @@ async fn prove_pull_request_fault_recovery(
     None,
   )
   let forge : NativePullRequestForgeAdapters = {
-    resolve_repository: async fn(_) { Ok("choir/fault-fixture") },
-    lookup: async fn(_, _, _) {
+    resolve_repository: _ => Ok("choir/fault-fixture"),
+    lookup: (_, _, _) => {
       match remote_pull_request.val {
         Some(snapshot) =>
           @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch(
@@ -1081,7 +1081,7 @@ async fn prove_pull_request_fault_recovery(
         None => @workflow.PullRequestLookupObservation::PullRequestNoMatch
       }
     },
-    create: async fn(_, _, intent, document) {
+    create: (_, _, intent, document) => {
       created.val = created.val + 1
       remote_pull_request.val = Some(
         pull_request_fault_snapshot(intent, document),

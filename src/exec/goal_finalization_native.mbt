@@ -216,8 +216,8 @@ async fn prepare_goal_finalization_fixture(
     None,
   )
   let forge : NativePullRequestForgeAdapters = {
-    resolve_repository: async fn(_) { Ok("choir/finalization-fixture") },
-    lookup: async fn(_, _, _) {
+    resolve_repository: _ => Ok("choir/finalization-fixture"),
+    lookup: (_, _, _) => {
       match remote_pull_request.val {
         Some(snapshot) =>
           @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch(
@@ -226,7 +226,7 @@ async fn prepare_goal_finalization_fixture(
         None => @workflow.PullRequestLookupObservation::PullRequestNoMatch
       }
     },
-    create: async fn(_, _, intent, document) {
+    create: (_, _, intent, document) => {
       remote_pull_request.val = Some(
         pull_request_fault_snapshot(intent, document),
       )
@@ -337,7 +337,7 @@ async fn observe_pull_request_remote_state(
   }
   let forge : NativePullRequestForgeAdapters = {
     resolve_repository: fixture.4.resolve_repository,
-    lookup: async fn(_, _, _) { lookup },
+    lookup: (_, _, _) => lookup,
     create: fixture.4.create,
   }
   let outcome = match
@@ -473,7 +473,7 @@ pub async fn run_native_goal_finalization_race_conformance() -> NativeGoalFinali
   let edit_after_response = Ref(true)
   let after_forge : NativePullRequestForgeAdapters = {
     resolve_repository: after.4.resolve_repository,
-    lookup: async fn(_, _, _) {
+    lookup: (_, _, _) => {
       let observed = after.3.val.unwrap()
       if edit_after_response.val {
         edit_after_response.val = false

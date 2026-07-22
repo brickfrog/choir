@@ -7,7 +7,7 @@ async test "native Conductor submission captures Beads and persists once" {
   }
   let base_commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   let base_tree = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-  let capture = async fn(command : @exec.Command) -> (Int, String) {
+  let capture : async (@exec.Command) -> (Int, String) = command => {
     match (command.program, command.args) {
       ("git", ["symbolic-ref", "--quiet", "HEAD"]) => (0, "refs/heads/main\n")
       ("git", ["rev-parse", "--show-toplevel"]) => (0, root + "\n")
@@ -153,16 +153,16 @@ async test "native Conductor submission captures Beads and persists once" {
       repository,
       local_part_workflow_repository_adapters(),
       {
-        initialize: async fn(_) { Ok(true) },
-        execute: async fn(record, snapshots) {
+        initialize: _ => Ok(true),
+        execute: (record, snapshots) => {
           execution_called.val = true
           assert_eq(record.goal.id, @control.GoalId("goal-native-submit"))
           assert_eq(snapshots.length(), 1)
           Ok(())
         },
-        assure: async fn(_, _) { fail("unintegrated Goal entered assurance") },
-        finalize: async fn(_, _) { fail("unassured Goal entered finalization") },
-        cancel: async fn(_, _) { Ok(false) },
+        assure: (_, _) => fail("unintegrated Goal entered assurance"),
+        finalize: (_, _) => fail("unassured Goal entered finalization"),
+        cancel: (_, _) => Ok(false),
       },
     ) {
     Ok(value) => value
@@ -211,11 +211,11 @@ async test "native Conductor submission captures Beads and persists once" {
       repository,
       local_part_workflow_repository_adapters(),
       {
-        initialize: async fn(_) { fail("paused Goal initialized again") },
-        execute: async fn(_, _) { fail("paused Goal executed again") },
-        assure: async fn(_, _) { fail("paused Goal entered assurance") },
-        finalize: async fn(_, _) { fail("paused Goal entered finalization") },
-        cancel: async fn(_, _) { fail("paused Goal was canceled") },
+        initialize: _ => fail("paused Goal initialized again"),
+        execute: (_, _) => fail("paused Goal executed again"),
+        assure: (_, _) => fail("paused Goal entered assurance"),
+        finalize: (_, _) => fail("paused Goal entered finalization"),
+        cancel: (_, _) => fail("paused Goal was canceled"),
       },
     ) {
     Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickIdle) => ()
@@ -284,7 +284,7 @@ async test "native Conductor submission rejects a detached checkout" {
   if !@sys.create_dir_all(root) {
     fail("failed to create detached submission root")
   }
-  let capture = async fn(command : @exec.Command) -> (Int, String) {
+  let capture : async (@exec.Command) -> (Int, String) = command => {
     match (command.program, command.args) {
       ("git", ["symbolic-ref", "--quiet", "HEAD"]) => (1, "")
       _ => (-1, "unexpected capture")
@@ -311,7 +311,7 @@ async test "durable Goal cancellation survives replay and starts no provider" {
   }
   let base_commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   let base_tree = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-  let capture = async fn(command : @exec.Command) -> (Int, String) {
+  let capture : async (@exec.Command) -> (Int, String) = command => {
     match (command.program, command.args) {
       ("git", ["symbolic-ref", "--quiet", "HEAD"]) => (0, "refs/heads/main\n")
       ("git", ["rev-parse", "--show-toplevel"]) => (0, root + "\n")
@@ -438,7 +438,7 @@ async test "rejected Conductor submission initializes no Part workflow" {
   }
   let base_commit = "cccccccccccccccccccccccccccccccccccccccc"
   let base_tree = "dddddddddddddddddddddddddddddddddddddddd"
-  let capture = async fn(command : @exec.Command) -> (Int, String) {
+  let capture : async (@exec.Command) -> (Int, String) = command => {
     match (command.program, command.args) {
       ("git", ["symbolic-ref", "--quiet", "HEAD"]) => (0, "refs/heads/main\n")
       ("git", ["rev-parse", "--show-toplevel"]) => (0, root + "\n")

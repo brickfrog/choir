@@ -582,7 +582,7 @@ fn conformance_dependencies(
     now,
     persistence_fault: fault,
     effects: {
-      execute: async fn(snapshot, intent) {
+      execute: (snapshot, intent) => {
         execute_count.val = execute_count.val + 1
         effect_executed(intent.kind)
         match (implementation_dispatch_count, intent.kind) {
@@ -631,7 +631,7 @@ fn conformance_dependencies(
           Ok(observation)
         }
       },
-      reconcile: async fn(snapshot, intent) {
+      reconcile: (snapshot, intent) => {
         match conformance_effect_observation(snapshot, intent) {
           Ok(observation) =>
             Ok(
@@ -816,7 +816,7 @@ fn integration_fault_apply_adapters(
   ambiguous : Bool,
 ) -> NativeGitIntegrationAdapters {
   {
-    capture: async fn(_, command) {
+    capture: (_, command) => {
       match command {
         NativeGitIntegrationCommand::NativeGitApplyRefs(_, _, _, _) => {
           apply_count.val = apply_count.val + 1
@@ -855,7 +855,7 @@ async fn observe_native_integration_cutoff(
   if cutoff == IntegrationAfterObjectBeforePrepared {
     let create_count = @ref.new(0)
     let adapters : NativeGitIntegrationAdapters = {
-      capture: async fn(_, command) {
+      capture: (_, command) => {
         Ok(
           match command {
             NativeGitIntegrationCommand::NativeGitReadCommitTree(oid) =>
@@ -2249,7 +2249,7 @@ async fn run_scale_once(
       }
       Ok(scale_scheduling_record(observed.snapshot))
     },
-    read_goal_head: async fn() { Ok(head.val) },
+    read_goal_head: () => Ok(head.val),
     promote_part: async fn(record, selection) {
       let stored = match load_scale_snapshot(repository, record.part.id) {
         Ok(value) => value

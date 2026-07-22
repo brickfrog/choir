@@ -257,7 +257,7 @@ async test "migration Beads materialize dependency-first and replay exactly" {
   let proposals = migration_materialization_proposals()
   let created : Array[String] = []
   let commands : Array[@exec.Command] = []
-  let capture = async fn(command : @exec.Command) -> (Int, String) {
+  let capture : async (@exec.Command) -> (Int, String) = command => {
     commands.push(command)
     if command.args[0] == "create" {
       created.push(command.args[3])

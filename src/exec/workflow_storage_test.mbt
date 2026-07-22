@@ -758,7 +758,7 @@ fn workflow_driver_dependencies(
     now: fn() { 110L },
     persistence_fault: fault,
     effects: {
-      execute: async fn(snapshot, intent) {
+      execute: (snapshot, intent) => {
         execute_count.val = execute_count.val + 1
         workflow_driver_observation(snapshot, intent)
       },
@@ -959,10 +959,13 @@ async test "Goal cutoff atomically rejects a concurrently authorized Part effect
 }
 
 ///|
-async fn workflow_driver_recover_observation(
-  snapshot : @workflow.PartWorkflowSnapshot,
-  intent : @workflow.PartEffectIntent,
-) -> Result[@workflow.PartEffectRecovery, @types.ChoirError] {
+let workflow_driver_recover_observation : async (
+  @workflow.PartWorkflowSnapshot,
+  @workflow.PartEffectIntent,
+) -> Result[@workflow.PartEffectRecovery, @types.ChoirError] = (
+  snapshot,
+  intent,
+) => {
   match workflow_driver_observation(snapshot, intent) {
     Ok(value) =>
       Ok(@workflow.PartEffectRecovery::EffectObservationRecovered(value))
@@ -1033,7 +1036,7 @@ async test "Goal cancellation persists an applied integration witness before fin
   let interrupted : @workflow.PartWorkflowDriverDependencies = {
     ..admitted,
     effects: {
-      execute: async fn(snapshot, intent) {
+      execute: (snapshot, intent) => {
         execute_count.val = execute_count.val + 1
         if intent.kind is @workflow.PartEffectKind::ApplyIntegration(_, _) {
           Err(
@@ -1232,7 +1235,7 @@ async test "Goal adapter accepts the exact stored contract revision" {
     plan_conflict_repair: fn(_) {
       Err(@types.ChoirError::validation_error("repair is not expected"))
     },
-    read_goal_head: async fn() { Ok(@control.GitOid("goal-head-store")) },
+    read_goal_head: () => Ok(@control.GitOid("goal-head-store")),
   }
   let record : @workflow.GoalPartSchedulingRecord = {
     part: revised_part,
@@ -1299,7 +1302,7 @@ async test "Goal adapter resumes promotion after a durable rollback" {
     plan_conflict_repair: fn(_) {
       Ok(@workflow.PartConflictRepairDecision::PartConflictRepairLimitReached)
     },
-    read_goal_head: async fn() { Ok(@control.GitOid("goal-head-store")) },
+    read_goal_head: () => Ok(@control.GitOid("goal-head-store")),
   }
   let adapters = @exec.goal_part_workflow_adapters(config)
   let paused = match
@@ -1365,7 +1368,7 @@ async test "Goal cancellation atomically rejects stale seal authorization" {
     plan_conflict_repair: fn(_) {
       Ok(@workflow.PartConflictRepairDecision::PartConflictRepairLimitReached)
     },
-    read_goal_head: async fn() { Ok(@control.GitOid("goal-head-store")) },
+    read_goal_head: () => Ok(@control.GitOid("goal-head-store")),
   }
   let result = match
     @workflow.run_goal_parts(
@@ -1434,17 +1437,13 @@ async test "Goal cancellation atomically rejects stale seal authorization" {
   )
   let assurance_transition = match
     @workflow.run_next_goal_execution_tick(repository, adapters, {
-      initialize: async fn(_) { Ok(true) },
-      execute: async fn(_, _) {
-        fail("integrated Goal dispatched another Part")
-      },
-      assure: async fn(_, _) {
+      initialize: _ => Ok(true),
+      execute: (_, _) => fail("integrated Goal dispatched another Part"),
+      assure: (_, _) => {
         fail("Goal assurance ran before its durable state transition")
       },
-      finalize: async fn(_, _) {
-        fail("Goal finalization ran before assurance")
-      },
-      cancel: async fn(_, _) { fail("running Goal entered cancellation") },
+      finalize: (_, _) => fail("Goal finalization ran before assurance"),
+      cancel: (_, _) => fail("running Goal entered cancellation"),
     }) {
     Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickAdvanced(advanced)) =>
       advanced
@@ -1656,11 +1655,11 @@ async test "Goal steering persists revision history and paused Goals do not run"
     Some(@workflow.GoalPauseReason::GoalPauseRequested),
   )
   let tick = @workflow.run_next_goal_execution_tick(repository, adapters, {
-    initialize: async fn(_) { fail("paused Goal initialized") },
-    execute: async fn(_, _) { fail("paused Goal executed") },
-    assure: async fn(_, _) { fail("paused Goal entered assurance") },
-    finalize: async fn(_, _) { fail("paused Goal entered finalization") },
-    cancel: async fn(_, _) { fail("paused Goal entered cancellation") },
+    initialize: _ => fail("paused Goal initialized"),
+    execute: (_, _) => fail("paused Goal executed"),
+    assure: (_, _) => fail("paused Goal entered assurance"),
+    finalize: (_, _) => fail("paused Goal entered finalization"),
+    cancel: (_, _) => fail("paused Goal entered cancellation"),
   }).unwrap()
   assert_eq(tick, @workflow.GoalExecutionTickResult::GoalExecutionTickIdle)
   guard @workflow.persist_goal_steering(
@@ -1751,15 +1750,15 @@ async test "Goal finalization input request and answer survive restart" {
     }).unwrap(),
   )
   let tick = @workflow.run_next_goal_execution_tick(repository, adapters, {
-    initialize: async fn(_) { fail("assured Goal initialized") },
-    execute: async fn(_, _) { fail("answered Goal executed Parts") },
-    assure: async fn(_, _) { fail("answered Goal repeated assurance") },
-    finalize: async fn(_, _) {
+    initialize: _ => fail("assured Goal initialized"),
+    execute: (_, _) => fail("answered Goal executed Parts"),
+    assure: (_, _) => fail("answered Goal repeated assurance"),
+    finalize: (_, _) => {
       Ok(
         @workflow.GoalFinalizationTickOutcome::GoalFinalizationPublicationRemoteUnavailable,
       )
     },
-    cancel: async fn(_, _) { fail("answered Goal entered cancellation") },
+    cancel: (_, _) => fail("answered Goal entered cancellation"),
   }).unwrap()
   guard tick
     is @workflow.GoalExecutionTickResult::GoalExecutionTickAdvanced(paused) else {
@@ -1774,11 +1773,11 @@ async test "Goal finalization input request and answer survive restart" {
   )
   assert_eq(paused.state, @workflow.GoalExecutionState::GoalExecutionPaused)
   let idle = @workflow.run_next_goal_execution_tick(repository, adapters, {
-    initialize: async fn(_) { fail("input-blocked Goal initialized") },
-    execute: async fn(_, _) { fail("input-blocked Goal executed Parts") },
-    assure: async fn(_, _) { fail("input-blocked Goal repeated assurance") },
-    finalize: async fn(_, _) { fail("input-blocked Goal retried finalization") },
-    cancel: async fn(_, _) { fail("input-blocked Goal entered cancellation") },
+    initialize: _ => fail("input-blocked Goal initialized"),
+    execute: (_, _) => fail("input-blocked Goal executed Parts"),
+    assure: (_, _) => fail("input-blocked Goal repeated assurance"),
+    finalize: (_, _) => fail("input-blocked Goal retried finalization"),
+    cancel: (_, _) => fail("input-blocked Goal entered cancellation"),
   }).unwrap()
   assert_eq(idle, @workflow.GoalExecutionTickResult::GoalExecutionTickIdle)
   guard @workflow.persist_goal_input_answer(
@@ -1874,9 +1873,7 @@ async test "restarted authorized effect waits for a witness without executing" {
         execute_count,
         reconcile_count,
         fn(_) { None },
-        async fn(_, _) {
-          Ok(@workflow.PartEffectRecovery::EffectWitnessUnavailable)
-        },
+        (_, _) => Ok(@workflow.PartEffectRecovery::EffectWitnessUnavailable),
       ),
     ) {
     Ok(value) => value

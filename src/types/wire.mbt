@@ -22,7 +22,7 @@ pub type ResponseFields = FieldMap
 
 ///|
 pub fn FieldMap::new(values : Map[String, String]) -> FieldMap {
-  let converted : Map[String, Json] = {}
+  let converted : Map[String, Json] = Map([])
   values.each(fn(k, v) { converted.set(k, v.to_json()) })
   { values: converted }
 }
@@ -79,7 +79,7 @@ pub fn FieldMap::each_json(self : FieldMap, f : (String, Json) -> Unit) -> Unit 
 
 ///|
 pub fn FieldMap::to_map(self : FieldMap) -> Map[String, String] {
-  let converted : Map[String, String] = {}
+  let converted : Map[String, String] = Map([])
   self.values.each(fn(k, v) { converted.set(k, json_to_wire_string(v)) })
   converted
 }

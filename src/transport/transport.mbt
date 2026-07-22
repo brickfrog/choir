@@ -17,7 +17,7 @@ pub fn parse_request(data : String) -> Result[@types.Request, String] {
   }
   let args = match obj.get("args") {
     Some(Object(a)) => @types.RequestArgs::from_values(a)
-    _ => @types.RequestArgs::from_values({})
+    _ => @types.RequestArgs::from_values(Map([]))
   }
   Ok({ req_method: method_val, name, args })
 }
@@ -34,7 +34,7 @@ pub fn is_jsonrpc_request(line : String) -> Bool {
 
 ///|
 pub fn format_request(req : @types.Request) -> String {
-  let args_map : Map[String, Json] = {}
+  let args_map : Map[String, Json] = Map([])
   req.args.each_json(fn(k, v) { args_map.set(k, v) })
   {
     "method": req.req_method.to_json(),
@@ -69,7 +69,7 @@ pub fn parse_response(data : String) -> Result[@types.Response, String] {
     Some(True) =>
       match obj.get("result") {
         Some(Object(result)) => Ok(@types.Response::ok_values(result))
-        _ => Ok(@types.Response::ok_values({}))
+        _ => Ok(@types.Response::ok_values(Map([])))
       }
     Some(False) =>
       match obj.get("error") {
@@ -85,7 +85,7 @@ pub fn parse_response(data : String) -> Result[@types.Response, String] {
 pub fn format_response(resp : @types.Response) -> String {
   match resp.ok_payload() {
     Some(result) => {
-      let result_map : Map[String, Json] = {}
+      let result_map : Map[String, Json] = Map([])
       result.each_json(fn(k, v) { result_map.set(k, v) })
       { "ok": true.to_json(), "result": result_map.to_json() }
       .to_json()

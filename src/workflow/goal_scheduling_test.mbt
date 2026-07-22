@@ -600,8 +600,8 @@ async test "independent Parts execute concurrently and promote deterministically
           },
         })
       },
-      read_goal_head: async fn() { Ok(head.val) },
-      promote_part: async fn(record, selection) {
+      read_goal_head: () => Ok(head.val),
+      promote_part: (record, selection) => {
         observed_heads.push(selection.expected_goal_head_oid)
         let promotion = @control.GitOid("promotion-" + record.part.id.0)
         head.val = promotion
@@ -615,7 +615,7 @@ async test "independent Parts execute concurrently and promote deterministically
           },
         })
       },
-      resume_promotion: async fn(_) {
+      resume_promotion: _ => {
         Err(
           @types.ChoirError::validation_error("unexpected promotion recovery"),
         )
@@ -655,7 +655,7 @@ async test "promotion recovery completes before new Part execution" {
   let head = @ref.new(@control.GitOid("goal-head"))
   let result = match
     @workflow.run_goal_parts([pending, promoting], 2, {
-      advance_part: async fn(record) {
+      advance_part: record => {
         events.push("execute-" + record.part.id.0)
         Ok({
           ..record,
@@ -669,8 +669,8 @@ async test "promotion recovery completes before new Part execution" {
           },
         })
       },
-      read_goal_head: async fn() { Ok(head.val) },
-      promote_part: async fn(record, _) {
+      read_goal_head: () => Ok(head.val),
+      promote_part: (record, _) => {
         events.push("promote-" + record.part.id.0)
         head.val = @control.GitOid("promotion-" + record.part.id.0)
         Ok({
@@ -683,7 +683,7 @@ async test "promotion recovery completes before new Part execution" {
           },
         })
       },
-      resume_promotion: async fn(record) {
+      resume_promotion: record => {
         events.push("recover-" + record.part.id.0)
         head.val = @control.GitOid("promotion-" + record.part.id.0)
         Ok({
@@ -722,9 +722,9 @@ async test "promotion conflict may return a versioned repair Take" {
   let promotion_calls = @ref.new(0)
   let result = match
     @workflow.run_goal_parts([audited], 1, {
-      advance_part: async fn(record) { Ok(record) },
-      read_goal_head: async fn() { Ok(@control.GitOid("goal-head")) },
-      promote_part: async fn(record, _) {
+      advance_part: record => Ok(record),
+      read_goal_head: () => Ok(@control.GitOid("goal-head")),
+      promote_part: (record, _) => {
         promotion_calls.val = promotion_calls.val + 1
         if promotion_calls.val == 1 {
           let contract = {
@@ -759,7 +759,7 @@ async test "promotion conflict may return a versioned repair Take" {
           })
         }
       },
-      resume_promotion: async fn(record) { Ok(record) },
+      resume_promotion: record => Ok(record),
     }) {
     Ok(value) => value
     Err(error) => fail(error.message())

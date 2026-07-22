@@ -37,7 +37,8 @@ priv struct ForbiddenHelper {
 }
 
 ///|
-let package_alias_cache : @ref.Ref[Map[String, Array[(String, String)]]] = @ref.new({},
+let package_alias_cache : @ref.Ref[Map[String, Array[(String, String)]]] = @ref.new(
+  Map([]),
 )
 
 ///|
@@ -83,13 +84,13 @@ impl @syntax.IterVisitor for GitProgramSearch with fn visit_Expr(self, expr) {
       }
     _ => ()
   }
-  self.base().visit_Expr(expr)
+  @syntax.IterVisitor::visit_Expr(@syntax.IterVisitor::base(self), expr)
 }
 
 ///|
 fn expr_contains_git_program(expr : @syntax.Expr) -> Bool {
   let search = GitProgramSearch::{ found: false }
-  search.visit_Expr(expr)
+  @syntax.IterVisitor::visit_Expr(search, expr)
   search.found
 }
 
@@ -439,7 +440,7 @@ fn function_call_info_from_body(
     aliases: Array::new(capacity=4),
     package_aliases,
   }
-  collector.visit_DeclBody(body)
+  @syntax.IterVisitor::visit_DeclBody(collector, body)
   (collector.direct_rule_id, collector.calls)
 }
 
@@ -605,7 +606,7 @@ impl @syntax.IterVisitor for FunctionBodyCollector with fn visit_Expr(
         visit_children = false
         let shadowed_len = self.shadowed_names.length()
         push_parameter_names(self.shadowed_names, func.parameters)
-        self.visit_Expr(func.body)
+        @syntax.IterVisitor::visit_Expr(self, func.body)
         pop_names_to(self.shadowed_names, shadowed_len)
       }
       LetFn(name~, func~, body~, ..) => {
@@ -614,14 +615,14 @@ impl @syntax.IterVisitor for FunctionBodyCollector with fn visit_Expr(
         self.shadowed_names.push(name.name)
         let inner_shadowed_len = self.shadowed_names.length()
         push_parameter_names(self.shadowed_names, func.parameters)
-        self.visit_Expr(func.body)
+        @syntax.IterVisitor::visit_Expr(self, func.body)
         pop_names_to(self.shadowed_names, inner_shadowed_len)
-        self.visit_Expr(body)
+        @syntax.IterVisitor::visit_Expr(self, body)
         pop_names_to(self.shadowed_names, outer_shadowed_len)
       }
       Let(pattern~, expr=value, body~, ..) => {
         visit_children = false
-        self.visit_Expr(value)
+        @syntax.IterVisitor::visit_Expr(self, value)
         if self.direct_rule_id is None {
           bind_alias_with_aliases(
             self.aliases,
@@ -635,7 +636,7 @@ impl @syntax.IterVisitor for FunctionBodyCollector with fn visit_Expr(
           } else {
             let shadowed_len = self.shadowed_names.length()
             push_pattern_bindings(self.shadowed_names, pattern)
-            self.visit_Expr(body)
+            @syntax.IterVisitor::visit_Expr(self, body)
             pop_names_to(self.shadowed_names, shadowed_len)
           }
         }
@@ -644,7 +645,7 @@ impl @syntax.IterVisitor for FunctionBodyCollector with fn visit_Expr(
     }
   }
   if self.direct_rule_id is None && visit_children {
-    self.base().visit_Expr(expr)
+    @syntax.IterVisitor::visit_Expr(@syntax.IterVisitor::base(self), expr)
   }
 }
 
@@ -761,7 +762,7 @@ impl @syntax.IterVisitor for ExecPackageRefSearch with fn visit_Expr(self, expr)
     self.found = true
     return
   }
-  self.base().visit_Expr(expr)
+  @syntax.IterVisitor::visit_Expr(@syntax.IterVisitor::base(self), expr)
 }
 
 ///|
@@ -770,7 +771,7 @@ fn expr_contains_exec_package_ref_with_package_aliases(
   expr : @syntax.Expr,
 ) -> Bool {
   let search = ExecPackageRefSearch::{ package_aliases, found: false }
-  search.visit_Expr(expr)
+  @syntax.IterVisitor::visit_Expr(search, expr)
   search.found
 }
 
@@ -1090,10 +1091,10 @@ fn scan_impls_with_package_aliases(
     match impl_ {
       TopTest(expr~, name~, ..) => {
         env.decl_stack.push(test_decl_name(name))
-        env.visit_Expr(expr)
+        @syntax.IterVisitor::visit_Expr(env, expr)
         ignore(env.decl_stack.pop())
       }
-      _ => env.visit_Impl(impl_)
+      _ => @syntax.IterVisitor::visit_Impl(env, impl_)
     }
   }
   findings
@@ -1113,8 +1114,8 @@ impl @syntax.IterVisitor for LintEnv with fn visit_Impl_TopFuncDef(
 ) {
   ignore(loc)
   env.decl_stack.push(fun_decl.name.name)
-  env.visit_FunDecl(fun_decl)
-  env.visit_DeclBody(decl_body)
+  @syntax.IterVisitor::visit_FunDecl(env, fun_decl)
+  @syntax.IterVisitor::visit_DeclBody(env, decl_body)
   ignore(env.decl_stack.pop())
 }
 
@@ -1141,20 +1142,20 @@ impl @syntax.IterVisitor for LintEnv with fn visit_Impl_TopImpl(
   ignore(doc)
   env.decl_stack.push(method_name.name)
   match self_ty {
-    Some(t) => env.visit_Type(t)
+    Some(t) => @syntax.IterVisitor::visit_Type(env, t)
     None => ()
   }
-  env.visit_TypeName(trait_)
-  env.visit_Binder(method_name)
-  quantifiers.each(x => env.visit_TypeVarBinder(x))
-  params.each(param => env.visit_Parameter(param))
+  @syntax.IterVisitor::visit_TypeName(env, trait_)
+  @syntax.IterVisitor::visit_Binder(env, method_name)
+  quantifiers.each(x => @syntax.IterVisitor::visit_TypeVarBinder(env, x))
+  params.each(param => @syntax.IterVisitor::visit_Parameter(env, param))
   match ret_ty {
-    Some(t) => env.visit_Type(t)
+    Some(t) => @syntax.IterVisitor::visit_Type(env, t)
     None => ()
   }
-  env.visit_ErrorType(err_ty)
-  env.visit_DeclBody(body)
-  env.visit_Visibility(vis)
+  @syntax.IterVisitor::visit_ErrorType(env, err_ty)
+  @syntax.IterVisitor::visit_DeclBody(env, body)
+  @syntax.IterVisitor::visit_Visibility(env, vis)
   ignore(env.decl_stack.pop())
 }
 
@@ -1210,7 +1211,7 @@ impl @syntax.IterVisitor for LintEnv with fn visit_Expr(env, expr) {
     }
     _ => ()
   }
-  env.base().visit_Expr(expr)
+  @syntax.IterVisitor::visit_Expr(@syntax.IterVisitor::base(env), expr)
 }
 
 ///|
@@ -1235,7 +1236,12 @@ impl @syntax.IterVisitor for LintEnv with fn visit_Parameter_Optional(
     )
   }
   check_native_ffi_bypass(env, default, binder.loc)
-  env.base().visit_Parameter_Optional(binder~, default~, ty~)
+  @syntax.IterVisitor::visit_Parameter_Optional(
+    @syntax.IterVisitor::base(env),
+    binder~,
+    default~,
+    ty~,
+  )
 }
 
 ///|
@@ -1384,7 +1390,7 @@ fn package_aliases_for_file(
 ///|
 test "package_aliases_for_file caches by directory" {
   let reads : Ref[Int] = @ref.new(0)
-  let cache : @ref.Ref[Map[String, Array[(String, String)]]] = @ref.new({})
+  let cache : @ref.Ref[Map[String, Array[(String, String)]]] = @ref.new(Map([]))
   let manifest =
     #|import {
     #|  "choir/src/exec" as ex,

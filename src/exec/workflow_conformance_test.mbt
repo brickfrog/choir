@@ -136,7 +136,7 @@ async test "driver durably records a provider protocol violation" {
       execute_count,
       reconcile_count,
       fn(_) { None },
-      async fn(_, _) {
+      (_, _) => {
         Err(
           @types.ChoirError::provider_protocol_violation(
             "conflicting terminal provider result",
@@ -187,7 +187,7 @@ async test "driver durably records provider event ingestion overflow" {
     repository,
     adapters,
     authorized.workflow_id,
-    workflow_driver_dependencies(@ref.new(0), @ref.new(0), fn(_) { None }, async fn(
+    workflow_driver_dependencies(@ref.new(0), @ref.new(0), fn(_) { None }, fn(
       _,
       _,
     ) {
@@ -257,7 +257,7 @@ async test "driver durably records nonresumable provider process loss" {
     repository,
     adapters,
     authorized.workflow_id,
-    workflow_driver_dependencies(@ref.new(0), @ref.new(0), fn(_) { None }, async fn(
+    workflow_driver_dependencies(@ref.new(0), @ref.new(0), fn(_) { None }, fn(
       _,
       _,
     ) {

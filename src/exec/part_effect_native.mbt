@@ -590,7 +590,7 @@ fn native_codex_config(
 }
 
 ///|
-enum NativeTakeRole {
+priv enum NativeTakeRole {
   NativeImplementationTake
   NativeVerificationTake
   NativeAuditTake
@@ -606,7 +606,7 @@ enum NativeTakeOutcome {
 } derive(Eq, ToJson)
 
 ///|
-struct NativeProviderResult {
+priv struct NativeProviderResult {
   session : @control.HarnessSession
   events : Array[@control.HarnessEventEnvelope]
   terminal_response : String

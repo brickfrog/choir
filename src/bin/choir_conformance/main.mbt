@@ -3215,7 +3215,7 @@ async fn run_conductor_reconnect_live() -> Int {
   }
   let base_commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   let base_tree = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-  let capture = async fn(command : @exec.Command) -> (Int, String) {
+  let capture : async (@exec.Command) -> (Int, String) = command => {
     match (command.program, command.args) {
       ("git", ["symbolic-ref", "--quiet", "HEAD"]) => (0, "refs/heads/main\n")
       ("git", ["rev-parse", "--show-toplevel"]) => (0, root + "\n")

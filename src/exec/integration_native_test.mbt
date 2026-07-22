@@ -78,7 +78,7 @@ fn native_git_test_promotion() -> @control.PromotionCommit {
 async test "native Git promotion uses witnessed deterministic parents" {
   let commands : Array[@exec.NativeGitIntegrationCommand] = []
   let adapters : @exec.NativeGitIntegrationAdapters = {
-    capture: async fn(_, command) {
+    capture: (_, command) => {
       commands.push(command)
       let capture : @exec.NativeGitCapture = match command {
         @exec.NativeGitIntegrationCommand::NativeGitReadCommitTree(oid) =>
@@ -139,7 +139,7 @@ async test "native Git promotion uses witnessed deterministic parents" {
 async test "native Git merge conflict produces a durable workflow observation" {
   let commands : Array[@exec.NativeGitIntegrationCommand] = []
   let adapters : @exec.NativeGitIntegrationAdapters = {
-    capture: async fn(_, command) {
+    capture: (_, command) => {
       commands.push(command)
       Ok(
         match command {
@@ -183,7 +183,7 @@ async test "native Git merge conflict produces a durable workflow observation" {
 async test "native Git integration atomically updates and witnesses both refs" {
   let applied = @ref.new(false)
   let adapters : @exec.NativeGitIntegrationAdapters = {
-    capture: async fn(_, command) {
+    capture: (_, command) => {
       Ok(
         match command {
           @exec.NativeGitIntegrationCommand::NativeGitApplyRefs(
@@ -244,7 +244,7 @@ async test "native Git reconciliation distinguishes unapplied and divergence" {
   let goal = @ref.new(git_head_oid)
   let witness : Ref[@control.GitOid?] = @ref.new(None)
   let adapters : @exec.NativeGitIntegrationAdapters = {
-    capture: async fn(_, command) {
+    capture: (_, command) => {
       Ok(
         match command {
           @exec.NativeGitIntegrationCommand::NativeGitReadRef(reference) =>
@@ -294,7 +294,7 @@ async test "native Git reconciliation distinguishes unapplied and divergence" {
 async test "native Git promotion recovery regenerates the identical object" {
   let create_count = @ref.new(0)
   let adapters : @exec.NativeGitIntegrationAdapters = {
-    capture: async fn(_, command) {
+    capture: (_, command) => {
       Ok(
         match command {
           @exec.NativeGitIntegrationCommand::NativeGitReadCommitTree(oid) =>
@@ -359,7 +359,7 @@ async test "native Git promotion recovery regenerates the identical object" {
 async test "native Git faults before ref transaction perform no mutation" {
   let apply_count = @ref.new(0)
   let adapters : @exec.NativeGitIntegrationAdapters = {
-    capture: async fn(_, command) {
+    capture: (_, command) => {
       match command {
         @exec.NativeGitIntegrationCommand::NativeGitApplyRefs(_, _, _, _) =>
           apply_count.val = apply_count.val + 1
@@ -390,7 +390,7 @@ async test "native Git recovers an applied ref transaction after process loss" {
   let applied = @ref.new(false)
   let apply_count = @ref.new(0)
   let adapters : @exec.NativeGitIntegrationAdapters = {
-    capture: async fn(_, command) {
+    capture: (_, command) => {
       Ok(
         match command {
           @exec.NativeGitIntegrationCommand::NativeGitApplyRefs(_, _, _, _) => {
