@@ -952,6 +952,7 @@ fn publication_integrated_part(
       audit_capability_profile_digest: publication_digest("audit-capability"),
     },
     task_contract_history: [],
+    part_context_manifest: None,
     identities: {
       implementation_take: implementation,
       implementation_sandbox,
@@ -977,6 +978,7 @@ fn publication_integrated_part(
     sandbox_leases: [],
     harness_sessions: [],
     harness_events: [],
+    prepared_commands: [],
     implementation_result: None,
     candidate: None,
     verification_subject: None,

@@ -524,6 +524,39 @@ fn workflow_driver_observation(
   snapshot : @workflow.PartWorkflowSnapshot,
   intent : @workflow.PartEffectIntent,
 ) -> Result[@workflow.PartEffectObservation, @types.ChoirError] {
+  let prepared_command = fn(plan : @workflow.PartCommandPreparationPlan) {
+    let context_manifest_digest = match plan.context_manifest {
+      None => None
+      Some(manifest) => Some(@migration.part_context_manifest_digest(manifest))
+    }
+    let command_artifact : @control.ArtifactReference = {
+      artifact_id: "prepared-command-store-" + plan.take.id.0,
+      digest: plan.template_digest,
+    }
+    @workflow.PartPreparedCommand::{
+      plan,
+      command_artifact,
+      provenance: {
+        schema_version: 1,
+        take_id: plan.take.id,
+        take_purpose_digest: @command.take_purpose_digest(plan.take.purpose),
+        subject_digest: @command.command_subject_digest(plan.subject),
+        goal_contract_digest: plan.goal_contract_digest,
+        task_contract_revision_id: plan.task_contract_revision_id,
+        task_contract_digest: plan.task_contract_digest,
+        migration_contract_ref: plan.migration_contract_ref,
+        template_digest: plan.template_digest,
+        provider_surface: plan.provider_surface,
+        provider_surface_and_profile_digest: plan.provider_surface_and_profile_digest,
+        context_assembly_policy_digest: plan.context_assembly_policy_digest,
+        context_manifest_digest,
+        context_projection_digest: plan.template_digest,
+        maximum_command_bytes: plan.maximum_command_bytes,
+        command_artifact_digest: command_artifact.digest,
+        command_byte_length: 1,
+      },
+    }
+  }
   match intent.kind {
     @workflow.PartEffectKind::PrepareImplementationSandbox(lease) =>
       Ok(
@@ -532,13 +565,20 @@ fn workflow_driver_observation(
           lifecycle: @control.SandboxLeaseLifecycle::SandboxLeaseActive,
         }),
       )
-    @workflow.PartEffectKind::StartImplementationHarness(session) =>
+    @workflow.PartEffectKind::PrepareImplementationCommand(plan) =>
+      Ok(
+        @workflow.PartEffectObservation::ImplementationCommandPrepared(
+          prepared_command(plan),
+        ),
+      )
+    @workflow.PartEffectKind::StartImplementationHarness(session, _) =>
       Ok(
         @workflow.PartEffectObservation::ImplementationHarnessStarted(
           workflow_driver_started_session(session),
         ),
       )
-    @workflow.PartEffectKind::DispatchImplementation(take_id, session_id) => {
+    @workflow.PartEffectKind::DispatchImplementation(take_id, command) => {
+      let session_id = command.session_id
       let started = workflow_driver_started_session(
         snapshot.identities.implementation_session,
       )
@@ -586,13 +626,20 @@ fn workflow_driver_observation(
           lifecycle: @control.SandboxLeaseLifecycle::SandboxLeaseActive,
         }),
       )
-    @workflow.PartEffectKind::StartVerificationHarness(session) =>
+    @workflow.PartEffectKind::PrepareVerificationCommand(plan) =>
+      Ok(
+        @workflow.PartEffectObservation::VerificationCommandPrepared(
+          prepared_command(plan),
+        ),
+      )
+    @workflow.PartEffectKind::StartVerificationHarness(session, _) =>
       Ok(
         @workflow.PartEffectObservation::VerificationHarnessStarted(
           workflow_driver_started_session(session),
         ),
       )
-    @workflow.PartEffectKind::DispatchVerification(take_id, session_id, subject) => {
+    @workflow.PartEffectKind::DispatchVerification(take_id, command, subject) => {
+      let session_id = command.session_id
       let started = workflow_driver_started_session(
         snapshot.identities.verification_session,
       )
@@ -636,13 +683,20 @@ fn workflow_driver_observation(
           lifecycle: @control.SandboxLeaseLifecycle::SandboxLeaseActive,
         }),
       )
-    @workflow.PartEffectKind::StartAuditHarness(session) =>
+    @workflow.PartEffectKind::PrepareAuditCommand(plan) =>
+      Ok(
+        @workflow.PartEffectObservation::AuditCommandPrepared(
+          prepared_command(plan),
+        ),
+      )
+    @workflow.PartEffectKind::StartAuditHarness(session, _) =>
       Ok(
         @workflow.PartEffectObservation::AuditHarnessStarted(
           workflow_driver_started_session(session),
         ),
       )
-    @workflow.PartEffectKind::DispatchAudit(take_id, session_id, subject) => {
+    @workflow.PartEffectKind::DispatchAudit(take_id, command, subject) => {
+      let session_id = command.session_id
       let started = workflow_driver_started_session(
         snapshot.identities.audit_session,
       )
@@ -938,7 +992,7 @@ async test "Part driver persists an integrated result and resumes without work" 
     Err(error) => fail(error.message())
   }
   assert_eq(result.outcome, @workflow.PartWorkflowRunOutcome::PartRunIntegrated)
-  assert_eq(result.snapshot.effect_receipts.length(), 12)
+  assert_eq(result.snapshot.effect_receipts.length(), 15)
   assert_eq(result.snapshot.verification_receipts.length(), 1)
   assert_true(result.snapshot.audit_receipt is Some(_))
   assert_true(result.snapshot.integration_receipt is Some(_))
@@ -1789,7 +1843,8 @@ async test "restarted authorized effect waits for a witness without executing" {
     Ok(value) => value
     Err(error) => fail(error.message())
   }
-  let authorized = match @workflow.authorize_pending_part_effect(planned) {
+  let authorized = match
+    @workflow.authorize_pending_part_effect(planned, fn(_) { true }) {
     Ok(value) => value
     Err(error) => fail(error.message())
   }
@@ -1851,7 +1906,9 @@ test "Goal cancellation disposition persists across restart" {
     expected_store_version: Some(initial_receipt.store_version),
     fault_point: None,
   }).unwrap()
-  let authorized = @workflow.authorize_pending_part_effect(planned).unwrap()
+  let authorized = @workflow.authorize_pending_part_effect(planned, fn(_) {
+    true
+  }).unwrap()
   ignore(
     @workflow.persist_part_snapshot(repository, adapters, {
       snapshot: authorized,
@@ -1971,7 +2028,7 @@ async test "driver recovers every persisted transition after rollback" {
       result.outcome,
       @workflow.PartWorkflowRunOutcome::PartRunIntegrated,
     )
-    assert_eq(result.snapshot.effect_receipts.length(), 12)
+    assert_eq(result.snapshot.effect_receipts.length(), 15)
     assert_eq(result.snapshot.verification_receipts.length(), 1)
     assert_true(result.snapshot.audit_receipt is Some(_))
     assert_true(result.snapshot.integration_receipt is Some(_))

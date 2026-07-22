@@ -25,6 +25,7 @@ pub(all) enum ArtifactProvenance {
   ArtifactTaskInstruction(@control.RevisionId)
   ArtifactVerificationProcessSpec(@control.VerificationSpecId)
   ArtifactTakeOutput(@control.TakeId)
+  ArtifactHarnessCommand(@control.TakeId)
   ArtifactVerificationEvidence(@control.TakeId)
   ArtifactAuditFindings(@control.TakeId)
   ArtifactConformanceEvidence

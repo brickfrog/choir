@@ -5,6 +5,16 @@ pub(all) struct ConductorVerificationDraft {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) struct ConductorMigrationContextDraft {
+  context_assembly_policy_digest : @control.Digest
+  rulebook_section_digests : Array[@control.Digest]
+  dependency_neighborhood_digest : @control.Digest
+  applicable_gap_entry_digests : Array[@control.Digest]
+  source_path_manifest_digest : @control.Digest
+  prior_take_context_digest : @control.Digest?
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub(all) struct ConductorPartDraft {
   part_id : @control.PartId
   instruction : String
@@ -14,6 +24,7 @@ pub(all) struct ConductorPartDraft {
   verification : ConductorVerificationDraft
   provider_surface : @control.ProviderSurfaceId
   migration_contract_ref : @control.MigrationContractRef?
+  migration_context : ConductorMigrationContextDraft?
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -185,6 +196,124 @@ fn conductor_migration_contract_ref(
 }
 
 ///|
+fn conductor_digest(
+  fields : Map[String, Json],
+  name : String,
+) -> @control.Digest? {
+  match conductor_draft_string(fields, name) {
+    Some(value) => {
+      let digest = @control.Digest(value)
+      if @storage.validate_digest(digest) is Ok(_) {
+        Some(digest)
+      } else {
+        None
+      }
+    }
+    None => None
+  }
+}
+
+///|
+fn conductor_digests(
+  fields : Map[String, Json],
+  name : String,
+) -> Array[@control.Digest]? {
+  match conductor_draft_strings(fields, name) {
+    Some(values) => {
+      let digests : Array[@control.Digest] = []
+      for value in values {
+        let digest = @control.Digest(value)
+        if @storage.validate_digest(digest) is Err(_) ||
+          digests.contains(digest) {
+          return None
+        }
+        digests.push(digest)
+      }
+      Some(digests)
+    }
+    None => None
+  }
+}
+
+///|
+fn conductor_migration_context(
+  fields : Map[String, Json],
+  contract_ref : @control.MigrationContractRef?,
+) -> Result[ConductorMigrationContextDraft?, @types.ChoirError] {
+  let required = [
+    "context_assembly_policy_digest", "rulebook_section_digests", "dependency_neighborhood_digest",
+    "applicable_gap_entry_digests", "source_path_manifest_digest",
+  ]
+  let prior_name = "prior_take_context_digest"
+  let any_present = required.any(fn(name) { fields.get(name) is Some(_) }) ||
+    fields.get(prior_name) is Some(_)
+  match contract_ref {
+    None =>
+      if any_present {
+        Err(
+          goal_submission_error(
+            "migration context requires a migration contract reference",
+          ),
+        )
+      } else {
+        Ok(None)
+      }
+    Some(_) => {
+      if required.any(fn(name) { fields.get(name) is None }) {
+        return Err(
+          goal_submission_error(
+            "migration context must provide every required digest field",
+          ),
+        )
+      }
+      let policy = match conductor_digest(fields, required[0]) {
+        Some(value) => value
+        None => return Err(goal_submission_error("context policy is invalid"))
+      }
+      let rulebook = match conductor_digests(fields, required[1]) {
+        Some(values) if values.length() > 0 => values
+        _ => return Err(goal_submission_error("rulebook sections are invalid"))
+      }
+      let dependency = match conductor_digest(fields, required[2]) {
+        Some(value) => value
+        None =>
+          return Err(
+            goal_submission_error("dependency neighborhood is invalid"),
+          )
+      }
+      let gaps = match conductor_digests(fields, required[3]) {
+        Some(values) => values
+        None => return Err(goal_submission_error("gap entries are invalid"))
+      }
+      let source_paths = match conductor_digest(fields, required[4]) {
+        Some(value) => value
+        None =>
+          return Err(goal_submission_error("source path manifest is invalid"))
+      }
+      let prior = match fields.get(prior_name) {
+        None => None
+        Some(_) =>
+          match conductor_digest(fields, prior_name) {
+            Some(value) => Some(value)
+            None =>
+              return Err(goal_submission_error("prior Take context is invalid"))
+          }
+      }
+      Ok(
+        Some({
+          context_assembly_policy_digest: policy,
+          rulebook_section_digests: rulebook,
+          dependency_neighborhood_digest: dependency,
+          applicable_gap_entry_digests: gaps,
+          source_path_manifest_digest: source_paths,
+          prior_take_context_digest: prior,
+        }),
+      )
+    }
+  }
+}
+
+///|
 fn decode_conductor_part_draft(
   json : Json,
 ) -> Result[ConductorPartDraft, @types.ChoirError] {
@@ -194,7 +323,9 @@ fn decode_conductor_part_draft(
   let allowed_fields = [
     "part_id", "instruction", "provider", "exact_paths", "path_trees", "repository_wide",
     "moon_args", "verify_timeout_ms", "migration_contract_id", "migration_lineage_id",
-    "migration_contract_revision", "migration_contract_artifact_digest",
+    "migration_contract_revision", "migration_contract_artifact_digest", "context_assembly_policy_digest",
+    "rulebook_section_digests", "dependency_neighborhood_digest", "applicable_gap_entry_digests",
+    "source_path_manifest_digest", "prior_take_context_digest",
   ]
   let unknown_fields = conductor_draft_unknown_fields(fields, allowed_fields)
   if unknown_fields.length() > 0 {
@@ -276,6 +407,11 @@ fn decode_conductor_part_draft(
     Ok(value) => value
     Err(error) => return Err(error)
   }
+  let migration_context = match
+    conductor_migration_context(fields, migration_contract_ref) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
   Ok({
     part_id,
     instruction,
@@ -285,6 +421,7 @@ fn decode_conductor_part_draft(
     verification: { arguments, timeout_ms },
     provider_surface,
     migration_contract_ref,
+    migration_context,
   })
 }
 

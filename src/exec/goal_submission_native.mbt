@@ -444,6 +444,26 @@ fn compile_native_conductor_part_proposal(
     verification_capability_profile_digest: verification_profile_digest,
     audit_capability_profile_digest: audit_profile_digest,
   }
+  let part_context_manifest : @migration.PartContextManifest? = match
+    (part.migration_contract_ref, part.migration_context) {
+    (None, None) => None
+    (Some(reference), Some(context)) =>
+      Some({
+        migration_contract_ref: reference,
+        part_task_contract_revision_id: contract.id,
+        part_task_contract_digest: contract.digest,
+        context_assembly_policy_digest: context.context_assembly_policy_digest,
+        rulebook_section_digests: context.rulebook_section_digests,
+        dependency_neighborhood_digest: context.dependency_neighborhood_digest,
+        applicable_gap_entry_digests: context.applicable_gap_entry_digests,
+        source_path_manifest_digest: context.source_path_manifest_digest,
+        prior_take_context_digest: context.prior_take_context_digest,
+      })
+    _ =>
+      return Err(
+        native_goal_submission_error("migration context binding is incomplete"),
+      )
+  }
   Ok({
     part_id: part.part_id,
     source_revision_digest,
@@ -451,6 +471,7 @@ fn compile_native_conductor_part_proposal(
     dependency_ids,
     task_contract: contract,
     provider_surface: part.provider_surface,
+    part_context_manifest,
   })
 }
 
@@ -630,6 +651,7 @@ fn native_goal_submission_part_snapshot(
     },
     @control.FencingEpoch(1L),
     native_path_is_nfc,
+    part_context_manifest=accepted.part_context_manifest,
   )
 }
 
@@ -661,6 +683,7 @@ fn native_goal_part_plan_matches(
   stored.part.task_contract_revision_id ==
   expected.part.task_contract_revision_id &&
   stored.task_contract == expected.task_contract &&
+  stored.part_context_manifest == expected.part_context_manifest &&
   stored.identities == expected.identities
 }
 

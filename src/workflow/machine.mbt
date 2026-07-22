@@ -150,6 +150,7 @@ pub fn initialize_part_workflow(
   identities : PartIdentityPlan,
   fencing_epoch : @control.FencingEpoch,
   is_nfc : (String) -> Bool,
+  part_context_manifest? : @migration.PartContextManifest? = None,
 ) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
   if workflow_id == "" || workflow_id.contains("\u{00}") {
     return Err(workflow_error("workflow identity is empty or invalid"))
@@ -168,6 +169,17 @@ pub fn initialize_part_workflow(
   match @control.validate_task_contract_revision(contract, is_nfc) {
     Ok(_) => ()
     Err(error) => return Err(error)
+  }
+  match (contract.migration_contract_ref, part_context_manifest) {
+    (None, None) => ()
+    (Some(reference), Some(manifest)) =>
+      if reference != manifest.migration_contract_ref ||
+        manifest.part_task_contract_revision_id != contract.id ||
+        manifest.part_task_contract_digest != contract.digest ||
+        @migration.validate_part_context_manifest(manifest) is Err(_) {
+        return Err(workflow_error("migration Part context is stale"))
+      }
+    _ => return Err(workflow_error("migration Part context is incomplete"))
   }
   if identities.implementation_take.lifecycle !=
     @control.TakeLifecycle::TakePlanned ||
@@ -253,6 +265,7 @@ pub fn initialize_part_workflow(
     part: executing,
     task_contract: contract,
     task_contract_history: [contract],
+    part_context_manifest,
     identities,
     implementation_take,
     verification_take: identities.verification_take,
@@ -262,6 +275,7 @@ pub fn initialize_part_workflow(
     sandbox_leases: [],
     harness_sessions: [],
     harness_events: [],
+    prepared_commands: [],
     implementation_result: None,
     candidate: None,
     verification_subject: None,
@@ -355,6 +369,22 @@ pub fn plan_part_conflict_repair(
     task_contract_revision_id: contract.id,
     lifecycle: @control.PartLifecycle::PartPending,
   }
+  let repair_context_manifest = match snapshot.part_context_manifest {
+    Some(manifest) =>
+      Some({
+        ..manifest,
+        migration_contract_ref: match contract.migration_contract_ref {
+          Some(reference) => reference
+          None =>
+            return Err(
+              workflow_error("conflict repair drops migration context"),
+            )
+        },
+        part_task_contract_revision_id: contract.id,
+        part_task_contract_digest: contract.digest,
+      })
+    None => None
+  }
   let initialized = match
     initialize_part_workflow(
       snapshot.workflow_id,
@@ -364,6 +394,7 @@ pub fn plan_part_conflict_repair(
       identities,
       snapshot.fencing_epoch,
       is_nfc,
+      part_context_manifest=repair_context_manifest,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -417,18 +448,269 @@ pub fn plan_part_conflict_repair(
 fn stage_effect_suffix(stage : PartWorkflowStage) -> String {
   match stage {
     PartAccepted => "implementation-sandbox"
-    PartImplementationSandboxPrepared => "implementation-harness"
+    PartImplementationSandboxPrepared => "implementation-command"
+    PartImplementationCommandPrepared => "implementation-harness"
     PartImplementationHarnessStarted => "implementation-dispatch"
     PartImplementationCompleted => "candidate-normalization"
     PartCandidateRecorded => "verification-sandbox"
-    PartVerificationSandboxPrepared => "verification-harness"
+    PartVerificationSandboxPrepared => "verification-command"
+    PartVerificationCommandPrepared => "verification-harness"
     PartVerificationHarnessStarted => "verification-dispatch"
     PartVerified => "audit-sandbox"
-    PartAuditSandboxPrepared => "audit-harness"
+    PartAuditSandboxPrepared => "audit-command"
+    PartAuditCommandPrepared => "audit-harness"
     PartAuditHarnessStarted => "audit-dispatch"
     PartIntegrationPlanned => "promotion-generation"
     PartIntegrationAuthorized => "integration-apply"
     _ => "none"
+  }
+}
+
+///|
+fn command_capability_profile_digest(
+  snapshot : PartWorkflowSnapshot,
+  role : @command.CommandRole,
+) -> @control.Digest {
+  match role {
+    ImplementationCommand =>
+      snapshot.task_contract.implementation_capability_profile_digest
+    PartVerificationCommand =>
+      snapshot.task_contract.verification_capability_profile_digest
+    PartAuditCommand => snapshot.task_contract.audit_capability_profile_digest
+    GoalVerificationCommand | GoalAuditCommand =>
+      snapshot.task_contract.audit_capability_profile_digest
+  }
+}
+
+///|
+fn part_command_preparation_plan(
+  snapshot : PartWorkflowSnapshot,
+  role : @command.CommandRole,
+  take : @control.Take,
+  session : @control.HarnessSession,
+  subject : @command.CommandExecutionSubject,
+) -> PartCommandPreparationPlan {
+  let policy_digest = match snapshot.part_context_manifest {
+    Some(manifest) => manifest.context_assembly_policy_digest
+    None => @command.default_part_context_policy_digest()
+  }
+  let template = @command.default_command_template(role)
+  {
+    role,
+    take,
+    session_id: session.id,
+    subject,
+    goal_contract_digest: snapshot.goal.contract_digest,
+    task_contract_revision_id: snapshot.task_contract.id,
+    task_contract_digest: snapshot.task_contract.digest,
+    instruction_artifact_digest: snapshot.task_contract.instruction_artifact.digest,
+    migration_contract_ref: snapshot.task_contract.migration_contract_ref,
+    provider_surface: session.surface,
+    provider_surface_and_profile_digest: @command.provider_surface_and_profile_digest(
+      session.surface,
+      session.effective_surface_manifest_digest,
+      command_capability_profile_digest(snapshot, role),
+    ),
+    context_assembly_policy_digest: policy_digest,
+    context_manifest: snapshot.part_context_manifest,
+    template_digest: template.digest,
+    maximum_command_bytes: 1048576,
+  }
+}
+
+///|
+fn prepared_command_for(
+  snapshot : PartWorkflowSnapshot,
+  role : @command.CommandRole,
+  take_id : @control.TakeId,
+  session_id : @control.HarnessSessionId,
+) -> PartPreparedCommand? {
+  for prepared in snapshot.prepared_commands {
+    if prepared.plan.role == role &&
+      prepared.plan.take.id == take_id &&
+      prepared.plan.session_id == session_id {
+      return Some(prepared)
+    }
+  }
+  None
+}
+
+///|
+fn session_start_intent(
+  snapshot : PartWorkflowSnapshot,
+  session : @control.HarnessSession,
+  prepared : PartPreparedCommand,
+) -> @control.HarnessSessionStartIntent {
+  {
+    effect_id: snapshot.workflow_id + ":" + session.id.0 + ":start",
+    session_id: session.id,
+    take_id: prepared.plan.take.id,
+    provider_surface_and_profile_digest: prepared.plan.provider_surface_and_profile_digest,
+    declared_surface_digest: session.effective_surface_manifest_digest,
+    initial_command_artifact_digest: Some(prepared.command_artifact.digest),
+    supervisor_key: "choir-harness-" + session.id.0,
+  }
+}
+
+///|
+fn harness_command_intent(
+  snapshot : PartWorkflowSnapshot,
+  session : @control.HarnessSession,
+  prepared : PartPreparedCommand,
+) -> @control.HarnessCommandIntent {
+  {
+    effect_id: snapshot.workflow_id + ":" + session.id.0 + ":command-1",
+    session_id: session.id,
+    command_id: @control.HarnessCommandId(session.id.0 + ":command-1"),
+    command_sequence: 1,
+    required_provider_cursor: None,
+    command_artifact_digest: prepared.command_artifact.digest,
+    provider_idempotency_token: Some(
+      snapshot.workflow_id + ":" + session.id.0 + ":command-1",
+    ),
+  }
+}
+
+///|
+fn prepared_command_is_current(
+  snapshot : PartWorkflowSnapshot,
+  prepared : PartPreparedCommand,
+) -> Bool {
+  let (expected, current_take) = match prepared.plan.role {
+    ImplementationCommand =>
+      (
+        Some(
+          part_command_preparation_plan(
+            snapshot,
+            @command.CommandRole::ImplementationCommand,
+            snapshot.implementation_take,
+            snapshot.identities.implementation_session,
+            @command.CommandExecutionSubject::ImplementationCommandSubject(
+              snapshot.part.id,
+              snapshot.task_contract.id,
+              snapshot.task_contract.digest,
+            ),
+          ),
+        ),
+        snapshot.implementation_take,
+      )
+    PartVerificationCommand =>
+      match snapshot.verification_subject {
+        Some(subject) =>
+          (
+            Some(
+              part_command_preparation_plan(
+                snapshot,
+                @command.CommandRole::PartVerificationCommand,
+                snapshot.verification_take,
+                snapshot.identities.verification_session,
+                @command.CommandExecutionSubject::PartVerificationCommandSubject(
+                  subject,
+                ),
+              ),
+            ),
+            snapshot.verification_take,
+          )
+        None => (None, snapshot.verification_take)
+      }
+    PartAuditCommand =>
+      match snapshot.audit_subject {
+        Some(subject) =>
+          (
+            Some(
+              part_command_preparation_plan(
+                snapshot,
+                @command.CommandRole::PartAuditCommand,
+                snapshot.audit_take,
+                snapshot.identities.audit_session,
+                @command.CommandExecutionSubject::PartAuditCommandSubject(
+                  subject,
+                ),
+              ),
+            ),
+            snapshot.audit_take,
+          )
+        None => (None, snapshot.audit_take)
+      }
+    GoalVerificationCommand | GoalAuditCommand => (None, prepared.plan.take)
+  }
+  let immutable_take_matches = prepared.plan.take.id == current_take.id &&
+    prepared.plan.take.goal_id == current_take.goal_id &&
+    prepared.plan.take.purpose == current_take.purpose &&
+    prepared.plan.take.ordinal == current_take.ordinal &&
+    prepared.plan.take.fencing_epoch == current_take.fencing_epoch
+  let expected_matches = match expected {
+    Some(value) => { ..value, take: prepared.plan.take } == prepared.plan
+    None => false
+  }
+  immutable_take_matches &&
+  expected_matches &&
+  prepared.provenance.command_artifact_digest ==
+  prepared.command_artifact.digest
+}
+
+///|
+fn start_intent_has_preparation(
+  snapshot : PartWorkflowSnapshot,
+  session : @control.HarnessSession,
+  start : @control.HarnessSessionStartIntent,
+  role : @command.CommandRole,
+  artifact_digest_exists : (@control.Digest) -> Bool,
+) -> Result[Unit, @types.ChoirError] {
+  match prepared_command_for(snapshot, role, session.take_id, session.id) {
+    Some(prepared) => {
+      if !prepared_command_is_current(snapshot, prepared) ||
+        start != session_start_intent(snapshot, session, prepared) {
+        return Err(@types.ChoirError::command_preparation_stale_binding())
+      }
+      if !artifact_digest_exists(prepared.command_artifact.digest) {
+        return Err(
+          @types.ChoirError::command_preparation_missing_required_artifact(
+            prepared.command_artifact.digest.0,
+          ),
+        )
+      }
+      Ok(())
+    }
+    None =>
+      Err(
+        @types.ChoirError::command_preparation_missing_required_artifact(
+          "prepared-command",
+        ),
+      )
+  }
+}
+
+///|
+fn command_intent_has_preparation(
+  snapshot : PartWorkflowSnapshot,
+  take_id : @control.TakeId,
+  command : @control.HarnessCommandIntent,
+  session : @control.HarnessSession,
+  role : @command.CommandRole,
+  artifact_digest_exists : (@control.Digest) -> Bool,
+) -> Result[Unit, @types.ChoirError] {
+  match prepared_command_for(snapshot, role, take_id, session.id) {
+    Some(prepared) => {
+      if !prepared_command_is_current(snapshot, prepared) ||
+        command != harness_command_intent(snapshot, session, prepared) {
+        return Err(@types.ChoirError::command_preparation_stale_binding())
+      }
+      if !artifact_digest_exists(prepared.command_artifact.digest) {
+        return Err(
+          @types.ChoirError::command_preparation_missing_required_artifact(
+            prepared.command_artifact.digest.0,
+          ),
+        )
+      }
+      Ok(())
+    }
+    None =>
+      Err(
+        @types.ChoirError::command_preparation_missing_required_artifact(
+          "prepared-command",
+        ),
+      )
   }
 }
 
@@ -448,18 +730,67 @@ fn next_effect_kind(
     PartImplementationSandboxPrepared =>
       Ok(
         Some(
-          StartImplementationHarness(snapshot.identities.implementation_session),
-        ),
-      )
-    PartImplementationHarnessStarted =>
-      Ok(
-        Some(
-          DispatchImplementation(
-            snapshot.implementation_take.id,
-            snapshot.identities.implementation_session.id,
+          PrepareImplementationCommand(
+            part_command_preparation_plan(
+              snapshot,
+              @command.CommandRole::ImplementationCommand,
+              snapshot.implementation_take,
+              snapshot.identities.implementation_session,
+              @command.CommandExecutionSubject::ImplementationCommandSubject(
+                snapshot.part.id,
+                snapshot.task_contract.id,
+                snapshot.task_contract.digest,
+              ),
+            ),
           ),
         ),
       )
+    PartImplementationCommandPrepared =>
+      match
+        prepared_command_for(
+          snapshot,
+          @command.CommandRole::ImplementationCommand,
+          snapshot.implementation_take.id,
+          snapshot.identities.implementation_session.id,
+        ) {
+        Some(prepared) =>
+          Ok(
+            Some(
+              StartImplementationHarness(
+                snapshot.identities.implementation_session,
+                session_start_intent(
+                  snapshot,
+                  snapshot.identities.implementation_session,
+                  prepared,
+                ),
+              ),
+            ),
+          )
+        None => Err(workflow_error("implementation command is missing"))
+      }
+    PartImplementationHarnessStarted =>
+      match
+        prepared_command_for(
+          snapshot,
+          @command.CommandRole::ImplementationCommand,
+          snapshot.implementation_take.id,
+          snapshot.identities.implementation_session.id,
+        ) {
+        Some(prepared) =>
+          Ok(
+            Some(
+              DispatchImplementation(
+                snapshot.implementation_take.id,
+                harness_command_intent(
+                  snapshot,
+                  snapshot.identities.implementation_session,
+                  prepared,
+                ),
+              ),
+            ),
+          )
+        None => Err(workflow_error("implementation command is missing"))
+      }
     PartImplementationCompleted =>
       match snapshot.implementation_result {
         Some(result) =>
@@ -480,39 +811,147 @@ fn next_effect_kind(
         ),
       )
     PartVerificationSandboxPrepared =>
-      Ok(
-        Some(StartVerificationHarness(snapshot.identities.verification_session)),
-      )
-    PartVerificationHarnessStarted =>
       match snapshot.verification_subject {
         Some(subject) =>
           Ok(
             Some(
-              DispatchVerification(
-                snapshot.verification_take.id,
-                snapshot.identities.verification_session.id,
-                subject,
+              PrepareVerificationCommand(
+                part_command_preparation_plan(
+                  snapshot,
+                  @command.CommandRole::PartVerificationCommand,
+                  snapshot.verification_take,
+                  snapshot.identities.verification_session,
+                  @command.CommandExecutionSubject::PartVerificationCommandSubject(
+                    subject,
+                  ),
+                ),
               ),
             ),
           )
         None => Err(workflow_error("verification subject is missing"))
       }
+    PartVerificationCommandPrepared =>
+      match
+        prepared_command_for(
+          snapshot,
+          @command.CommandRole::PartVerificationCommand,
+          snapshot.verification_take.id,
+          snapshot.identities.verification_session.id,
+        ) {
+        Some(prepared) =>
+          Ok(
+            Some(
+              StartVerificationHarness(
+                snapshot.identities.verification_session,
+                session_start_intent(
+                  snapshot,
+                  snapshot.identities.verification_session,
+                  prepared,
+                ),
+              ),
+            ),
+          )
+        None => Err(workflow_error("verification command is missing"))
+      }
+    PartVerificationHarnessStarted =>
+      match snapshot.verification_subject {
+        Some(subject) =>
+          match
+            prepared_command_for(
+              snapshot,
+              @command.CommandRole::PartVerificationCommand,
+              snapshot.verification_take.id,
+              snapshot.identities.verification_session.id,
+            ) {
+            Some(prepared) =>
+              Ok(
+                Some(
+                  DispatchVerification(
+                    snapshot.verification_take.id,
+                    harness_command_intent(
+                      snapshot,
+                      snapshot.identities.verification_session,
+                      prepared,
+                    ),
+                    subject,
+                  ),
+                ),
+              )
+            None => Err(workflow_error("verification command is missing"))
+          }
+        None => Err(workflow_error("verification subject is missing"))
+      }
     PartVerified =>
       Ok(Some(PrepareAuditSandbox(snapshot.identities.audit_sandbox)))
     PartAuditSandboxPrepared =>
-      Ok(Some(StartAuditHarness(snapshot.identities.audit_session)))
-    PartAuditHarnessStarted =>
       match snapshot.audit_subject {
         Some(subject) =>
           Ok(
             Some(
-              DispatchAudit(
-                snapshot.audit_take.id,
-                snapshot.identities.audit_session.id,
-                subject,
+              PrepareAuditCommand(
+                part_command_preparation_plan(
+                  snapshot,
+                  @command.CommandRole::PartAuditCommand,
+                  snapshot.audit_take,
+                  snapshot.identities.audit_session,
+                  @command.CommandExecutionSubject::PartAuditCommandSubject(
+                    subject,
+                  ),
+                ),
               ),
             ),
           )
+        None => Err(workflow_error("audit subject is missing"))
+      }
+    PartAuditCommandPrepared =>
+      match
+        prepared_command_for(
+          snapshot,
+          @command.CommandRole::PartAuditCommand,
+          snapshot.audit_take.id,
+          snapshot.identities.audit_session.id,
+        ) {
+        Some(prepared) =>
+          Ok(
+            Some(
+              StartAuditHarness(
+                snapshot.identities.audit_session,
+                session_start_intent(
+                  snapshot,
+                  snapshot.identities.audit_session,
+                  prepared,
+                ),
+              ),
+            ),
+          )
+        None => Err(workflow_error("audit command is missing"))
+      }
+    PartAuditHarnessStarted =>
+      match snapshot.audit_subject {
+        Some(subject) =>
+          match
+            prepared_command_for(
+              snapshot,
+              @command.CommandRole::PartAuditCommand,
+              snapshot.audit_take.id,
+              snapshot.identities.audit_session.id,
+            ) {
+            Some(prepared) =>
+              Ok(
+                Some(
+                  DispatchAudit(
+                    snapshot.audit_take.id,
+                    harness_command_intent(
+                      snapshot,
+                      snapshot.identities.audit_session,
+                      prepared,
+                    ),
+                    subject,
+                  ),
+                ),
+              )
+            None => Err(workflow_error("audit command is missing"))
+          }
         None => Err(workflow_error("audit subject is missing"))
       }
     PartIntegrationPlanned =>
@@ -583,14 +1022,74 @@ pub fn persist_planned_part_effect(
 ///|
 pub fn authorize_pending_part_effect(
   snapshot : PartWorkflowSnapshot,
+  artifact_digest_exists : (@control.Digest) -> Bool,
 ) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
   match snapshot.pending_effect {
-    Some({ lifecycle: PartEffectPlanned, .. } as intent) =>
+    Some({ lifecycle: PartEffectPlanned, .. } as intent) => {
+      let preparation_check = match intent.kind {
+        StartImplementationHarness(session, start) =>
+          start_intent_has_preparation(
+            snapshot,
+            session,
+            start,
+            @command.CommandRole::ImplementationCommand,
+            artifact_digest_exists,
+          )
+        StartVerificationHarness(session, start) =>
+          start_intent_has_preparation(
+            snapshot,
+            session,
+            start,
+            @command.CommandRole::PartVerificationCommand,
+            artifact_digest_exists,
+          )
+        StartAuditHarness(session, start) =>
+          start_intent_has_preparation(
+            snapshot,
+            session,
+            start,
+            @command.CommandRole::PartAuditCommand,
+            artifact_digest_exists,
+          )
+        DispatchImplementation(take_id, command) =>
+          command_intent_has_preparation(
+            snapshot,
+            take_id,
+            command,
+            snapshot.identities.implementation_session,
+            @command.CommandRole::ImplementationCommand,
+            artifact_digest_exists,
+          )
+        DispatchVerification(take_id, command, _) =>
+          command_intent_has_preparation(
+            snapshot,
+            take_id,
+            command,
+            snapshot.identities.verification_session,
+            @command.CommandRole::PartVerificationCommand,
+            artifact_digest_exists,
+          )
+        DispatchAudit(take_id, command, _) =>
+          command_intent_has_preparation(
+            snapshot,
+            take_id,
+            command,
+            snapshot.identities.audit_session,
+            @command.CommandRole::PartAuditCommand,
+            artifact_digest_exists,
+          )
+        _ => Ok(())
+      }
+      match preparation_check {
+        Ok(_) => ()
+        Err(error) => return Err(error)
+      }
       Ok({
         ..snapshot,
         durable_version: snapshot.durable_version + 1,
         pending_effect: Some({ ..intent, lifecycle: PartEffectMayHaveOccurred }),
       })
+    }
     Some(_) => Err(workflow_error("external effect is not planned"))
     None => Err(workflow_error("no external effect is pending"))
   }
@@ -609,9 +1108,9 @@ fn record_part_provider_dispatch_uncertainty(
     return Err(workflow_error(error_context + " has no authorized effect"))
   }
   let (take, session_id) = match intent.kind {
-    DispatchImplementation(take_id, session_id)
-    | DispatchVerification(take_id, session_id, _)
-    | DispatchAudit(take_id, session_id, _) => {
+    DispatchImplementation(take_id, command)
+    | DispatchVerification(take_id, command, _)
+    | DispatchAudit(take_id, command, _) => {
       let take = if take_id == snapshot.implementation_take.id {
         snapshot.implementation_take
       } else if take_id == snapshot.verification_take.id {
@@ -621,7 +1120,7 @@ fn record_part_provider_dispatch_uncertainty(
       } else {
         return Err(workflow_error(error_context + " named an unknown Take"))
       }
-      (take, session_id)
+      (take, command.session_id)
     }
     _ =>
       return Err(

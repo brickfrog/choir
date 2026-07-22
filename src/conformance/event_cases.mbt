@@ -166,10 +166,66 @@ fn event_authorized_provider_dispatch_fixture() -> (
     effect_id: "event-process-loss-dispatch",
     kind: @workflow.PartEffectKind::DispatchImplementation(
       implementation_take.id,
-      implementation_session.id,
+      {
+        effect_id: "event-process-loss-command",
+        session_id: implementation_session.id,
+        command_id: @control.HarnessCommandId("event-process-loss-command-1"),
+        command_sequence: 1,
+        required_provider_cursor: None,
+        command_artifact_digest: event_case_digest,
+        provider_idempotency_token: Some("event-process-loss-command"),
+      },
     ),
     request_digest: event_case_digest,
     lifecycle: @workflow.PartEffectLifecycle::PartEffectMayHaveOccurred,
+  }
+  let command_subject = @command.CommandExecutionSubject::ImplementationCommandSubject(
+    part_id, revision_id, event_case_digest,
+  )
+  let command_plan : @workflow.PartCommandPreparationPlan = {
+    role: @command.CommandRole::ImplementationCommand,
+    take: implementation_take,
+    session_id: implementation_session.id,
+    subject: command_subject,
+    goal_contract_digest: event_case_digest,
+    task_contract_revision_id: revision_id,
+    task_contract_digest: event_case_digest,
+    instruction_artifact_digest: event_case_digest,
+    migration_contract_ref: None,
+    provider_surface: implementation_session.surface,
+    provider_surface_and_profile_digest: event_case_digest,
+    context_assembly_policy_digest: event_case_digest,
+    context_manifest: None,
+    template_digest: event_case_digest,
+    maximum_command_bytes: 1048576,
+  }
+  let prepared_command : @workflow.PartPreparedCommand = {
+    plan: command_plan,
+    command_artifact: {
+      artifact_id: "event-process-loss-command",
+      digest: event_case_digest,
+    },
+    provenance: {
+      schema_version: 1,
+      take_id: implementation_take.id,
+      take_purpose_digest: @command.take_purpose_digest(
+        implementation_take.purpose,
+      ),
+      subject_digest: @command.command_subject_digest(command_subject),
+      goal_contract_digest: event_case_digest,
+      task_contract_revision_id: revision_id,
+      task_contract_digest: event_case_digest,
+      migration_contract_ref: None,
+      template_digest: event_case_digest,
+      provider_surface: implementation_session.surface,
+      provider_surface_and_profile_digest: event_case_digest,
+      context_assembly_policy_digest: event_case_digest,
+      context_manifest_digest: None,
+      context_projection_digest: event_case_digest,
+      maximum_command_bytes: 1048576,
+      command_artifact_digest: event_case_digest,
+      command_byte_length: 1,
+    },
   }
   let snapshot : @workflow.PartWorkflowSnapshot = {
     workflow_id: "event-process-loss-workflow",
@@ -214,6 +270,7 @@ fn event_authorized_provider_dispatch_fixture() -> (
       audit_capability_profile_digest: event_case_digest,
     },
     task_contract_history: [],
+    part_context_manifest: None,
     identities: {
       implementation_take,
       implementation_sandbox: implementation_lease,
@@ -235,6 +292,7 @@ fn event_authorized_provider_dispatch_fixture() -> (
       implementation_session, verification_session, audit_session,
     ],
     harness_events: [],
+    prepared_commands: [prepared_command],
     implementation_result: None,
     candidate: None,
     verification_subject: None,

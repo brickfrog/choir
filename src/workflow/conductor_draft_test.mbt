@@ -46,7 +46,7 @@ test "Conductor draft decodes friendly provider and verification fields" {
 test "Conductor Part draft carries one exact migration contract reference" {
   let draft = @workflow.decode_conductor_goal_draft(
     (
-      #|{"proposal_id":"p","goal_id":"g","maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","provider":"codex","repository_wide":true,"moon_args":["test"],"migration_contract_id":"contract-1","migration_lineage_id":"lineage-1","migration_contract_revision":3,"migration_contract_artifact_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}
+      #|{"proposal_id":"p","goal_id":"g","maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","provider":"codex","repository_wide":true,"moon_args":["test"],"migration_contract_id":"contract-1","migration_lineage_id":"lineage-1","migration_contract_revision":3,"migration_contract_artifact_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","context_assembly_policy_digest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","rulebook_section_digests":["cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"],"dependency_neighborhood_digest":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","applicable_gap_entry_digests":[],"source_path_manifest_digest":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}]}
     ),
   ).unwrap()
   assert_eq(
@@ -60,6 +60,7 @@ test "Conductor Part draft carries one exact migration contract reference" {
       ),
     }),
   )
+  assert_true(draft.parts[0].migration_context is Some(_))
   assert_true(
     @workflow.decode_conductor_goal_draft(
       (

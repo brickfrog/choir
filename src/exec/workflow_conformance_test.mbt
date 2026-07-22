@@ -7,7 +7,7 @@ async test "real exec integration: Part conformance survives restart and faults"
   let report = @exec.run_part_conformance_fixture(root)
   ignore(@sys.rm_rf(root))
   assert_true(report.passed)
-  assert_eq(report.effect_receipt_count, 12)
+  assert_eq(report.effect_receipt_count, 15)
   assert_eq(report.verification_receipt_count, 1)
   assert_eq(report.audit_receipt_count, 1)
   assert_eq(report.integration_receipt_count, 1)
@@ -43,7 +43,9 @@ fn workflow_authorized_implementation_dispatch() -> @workflow.PartWorkflowSnapsh
   let advance = fn(snapshot : @workflow.PartWorkflowSnapshot) {
     let intent = @workflow.plan_next_part_effect(snapshot).unwrap().unwrap()
     let planned = @workflow.persist_planned_part_effect(snapshot, intent).unwrap()
-    let authorized = @workflow.authorize_pending_part_effect(planned).unwrap()
+    let authorized = @workflow.authorize_pending_part_effect(planned, fn(_) {
+      true
+    }).unwrap()
     let observation = workflow_driver_observation(authorized, {
       ..intent,
       lifecycle: @workflow.PartEffectLifecycle::PartEffectMayHaveOccurred,
@@ -56,14 +58,16 @@ fn workflow_authorized_implementation_dispatch() -> @workflow.PartWorkflowSnapsh
       fn(_) { true },
     ).unwrap()
   }
-  let prepared = advance(workflow_store_fixture())
-  let running = advance(prepared)
+  let sandbox_prepared = advance(workflow_store_fixture())
+  let command_prepared = advance(sandbox_prepared)
+  let running = advance(command_prepared)
   let dispatch = @workflow.plan_next_part_effect(running).unwrap().unwrap()
   assert_true(
     dispatch.kind is @workflow.PartEffectKind::DispatchImplementation(_, _),
   )
   @workflow.authorize_pending_part_effect(
     @workflow.persist_planned_part_effect(running, dispatch).unwrap(),
+    fn(_) { true },
   ).unwrap()
 }
 

@@ -83,6 +83,7 @@ fn submission_part(
       ]),
     ),
     provider_surface: surface,
+    part_context_manifest: None,
   }
 }
 
@@ -115,6 +116,74 @@ fn submission_proposal(
     maximum_parallel_parts: 2,
     parts,
   }
+}
+
+///|
+test "accepted migration Part retains its exact context manifest" {
+  let goal_id = @control.GoalId("goal-migration-context")
+  let base = submission_part(
+    goal_id,
+    "migration-part",
+    [],
+    @control.ProviderSurfaceId::CodexSubscriptionCli,
+  )
+  let reference : @control.MigrationContractRef = {
+    contract_id: @control.MigrationContractId("migration-contract-1"),
+    migration_lineage_id: @control.MigrationLineageId("migration-lineage-1"),
+    revision: 1,
+    contract_artifact_digest: submission_digest,
+  }
+  let contract = {
+    ..base.task_contract,
+    migration_contract_ref: Some(reference),
+  }
+  let manifest : @migration.PartContextManifest = {
+    migration_contract_ref: reference,
+    part_task_contract_revision_id: contract.id,
+    part_task_contract_digest: contract.digest,
+    context_assembly_policy_digest: submission_digest,
+    rulebook_section_digests: [submission_digest],
+    dependency_neighborhood_digest: submission_digest,
+    applicable_gap_entry_digests: [],
+    source_path_manifest_digest: submission_digest,
+    prior_take_context_digest: None,
+  }
+  let proposal = submission_proposal(goal_id, [
+    { ..base, task_contract: contract, part_context_manifest: Some(manifest) },
+  ])
+  let decision = @workflow.evaluate_goal_proposal(
+    proposal,
+    submission_snapshot([
+      submission_source(
+        "migration-part",
+        [],
+        @workflow.SelectionSourceState::SelectionSourceOpen,
+      ),
+    ]),
+    fn(_) { true },
+  ).unwrap()
+  assert_eq(
+    decision.outcome,
+    @workflow.GoalSelectionOutcome::GoalSelectionAccepted,
+  )
+  assert_eq(decision.accepted_parts[0].part_context_manifest, Some(manifest))
+  assert_true(
+    @workflow.evaluate_goal_proposal(
+      {
+        ..proposal,
+        parts: [{ ..proposal.parts[0], part_context_manifest: None }],
+      },
+      submission_snapshot([
+        submission_source(
+          "migration-part",
+          [],
+          @workflow.SelectionSourceState::SelectionSourceOpen,
+        ),
+      ]),
+      fn(_) { true },
+    ).unwrap().outcome ==
+    @workflow.GoalSelectionOutcome::GoalSelectionRejected,
+  )
 }
 
 ///|

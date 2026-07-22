@@ -1118,6 +1118,7 @@ fn selection_fixture_part(
       audit_capability_profile_digest: selection_fixture_digest,
     },
     provider_surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+    part_context_manifest: None,
   }
 }
 
@@ -2667,7 +2668,15 @@ fn cancellation_provider_effect(
     effect_id: "cancellation-provider-effect",
     kind: @workflow.PartEffectKind::DispatchAudit(
       snapshot.audit_take.id,
-      snapshot.identities.audit_session.id,
+      {
+        effect_id: "cancellation-audit-command",
+        session_id: snapshot.identities.audit_session.id,
+        command_id: @control.HarnessCommandId("cancellation-audit-command-1"),
+        command_sequence: 1,
+        required_provider_cursor: None,
+        command_artifact_digest: audit_fixture_digest_a,
+        provider_idempotency_token: Some("cancellation-audit-command"),
+      },
       snapshot.audit_subject.unwrap(),
     ),
     request_digest: audit_fixture_digest_a,
@@ -3291,7 +3300,15 @@ pub fn audit_protocol_conflict_case() -> HermeticConformanceCase {
         effect_id: "audit-conflicting-delivery",
         kind: @workflow.PartEffectKind::DispatchAudit(
           base.audit_take.id,
-          session.id,
+          {
+            effect_id: "audit-conflicting-command",
+            session_id: session.id,
+            command_id: @control.HarnessCommandId("audit-conflicting-command-1"),
+            command_sequence: 1,
+            required_provider_cursor: None,
+            command_artifact_digest: audit_fixture_digest_a,
+            provider_idempotency_token: Some("audit-conflicting-command"),
+          },
           subject,
         ),
         request_digest: audit_fixture_digest_a,

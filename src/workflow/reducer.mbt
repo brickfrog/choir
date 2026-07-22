@@ -497,6 +497,81 @@ fn record_harness_started(
 }
 
 ///|
+fn prepared_command_matches_plan(
+  prepared : PartPreparedCommand,
+  plan : PartCommandPreparationPlan,
+  artifact_exists : (@control.ArtifactReference) -> Bool,
+) -> Bool {
+  let provenance = prepared.provenance
+  let expected_manifest_digest = match plan.context_manifest {
+    None => None
+    Some(manifest) => Some(@migration.part_context_manifest_digest(manifest))
+  }
+  prepared.plan == plan &&
+  artifact_exists(prepared.command_artifact) &&
+  provenance.schema_version == 1 &&
+  provenance.take_id == plan.take.id &&
+  provenance.take_purpose_digest ==
+  @command.take_purpose_digest(plan.take.purpose) &&
+  provenance.subject_digest == @command.command_subject_digest(plan.subject) &&
+  provenance.goal_contract_digest == plan.goal_contract_digest &&
+  provenance.task_contract_revision_id == plan.task_contract_revision_id &&
+  provenance.task_contract_digest == plan.task_contract_digest &&
+  provenance.migration_contract_ref == plan.migration_contract_ref &&
+  provenance.template_digest == plan.template_digest &&
+  provenance.provider_surface == plan.provider_surface &&
+  provenance.provider_surface_and_profile_digest ==
+  plan.provider_surface_and_profile_digest &&
+  provenance.context_assembly_policy_digest ==
+  plan.context_assembly_policy_digest &&
+  provenance.context_manifest_digest == expected_manifest_digest &&
+  @storage.validate_digest(provenance.context_projection_digest) is Ok(_) &&
+  provenance.maximum_command_bytes == plan.maximum_command_bytes &&
+  provenance.command_artifact_digest == prepared.command_artifact.digest &&
+  provenance.command_byte_length > 0 &&
+  provenance.command_byte_length <= plan.maximum_command_bytes
+}
+
+///|
+fn record_command_prepared(
+  snapshot : PartWorkflowSnapshot,
+  observation : PartEffectObservation,
+  prepared : PartPreparedCommand,
+  expected_kind : (PartEffectKind) -> PartCommandPreparationPlan?,
+  stage : PartWorkflowStage,
+  observed_at : Int64,
+  artifact_exists : (@control.ArtifactReference) -> Bool,
+) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
+  let intent = match authorized_effect(snapshot) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let plan = match expected_kind(intent.kind) {
+    Some(value) => value
+    None => return Err(workflow_error("command preparation has wrong effect"))
+  }
+  if !prepared_command_matches_plan(prepared, plan, artifact_exists) {
+    return Err(workflow_error("prepared command does not match its intent"))
+  }
+  if snapshot.prepared_commands.any(fn(existing) {
+      existing.plan.role == prepared.plan.role &&
+      existing.plan.take.id == prepared.plan.take.id
+    }) {
+    return Err(workflow_error("prepared command identity was reused"))
+  }
+  finish_effect_observation(
+    snapshot,
+    {
+      ..snapshot,
+      stage,
+      prepared_commands: snapshot.prepared_commands + [prepared],
+    },
+    observation,
+    observed_at,
+  )
+}
+
+///|
 pub fn apply_part_effect_observation(
   snapshot : PartWorkflowSnapshot,
   observation : PartEffectObservation,
@@ -544,7 +619,12 @@ pub fn apply_part_effect_observation(
         observation,
         session,
         snapshot.identities.implementation_session,
-        fn(kind) { kind is StartImplementationHarness(_) },
+        fn(kind) {
+          kind is StartImplementationHarness(_, start) &&
+          start.session_id == session.id &&
+          start.take_id == session.take_id &&
+          start.initial_command_artifact_digest is Some(_)
+        },
         PartImplementationHarnessStarted,
         WorkflowImplementationTake,
         observed_at,
@@ -555,7 +635,12 @@ pub fn apply_part_effect_observation(
         observation,
         session,
         snapshot.identities.verification_session,
-        fn(kind) { kind is StartVerificationHarness(_) },
+        fn(kind) {
+          kind is StartVerificationHarness(_, start) &&
+          start.session_id == session.id &&
+          start.take_id == session.take_id &&
+          start.initial_command_artifact_digest is Some(_)
+        },
         PartVerificationHarnessStarted,
         WorkflowVerificationTake,
         observed_at,
@@ -566,7 +651,12 @@ pub fn apply_part_effect_observation(
         observation,
         session,
         snapshot.identities.audit_session,
-        fn(kind) { kind is StartAuditHarness(_) },
+        fn(kind) {
+          kind is StartAuditHarness(_, start) &&
+          start.session_id == session.id &&
+          start.take_id == session.take_id &&
+          start.initial_command_artifact_digest is Some(_)
+        },
         PartAuditHarnessStarted,
         WorkflowAuditTake,
         observed_at,
@@ -576,9 +666,21 @@ pub fn apply_part_effect_observation(
         Ok(value) => value
         Err(error) => return Err(error)
       }
-      if !(intent.kind is DispatchImplementation(take_id, session_id) &&
+      let mut prepared_digest : @control.Digest? = None
+      for prepared in snapshot.prepared_commands {
+        if prepared.plan.take.id == result.take_id &&
+          prepared.plan.role == @command.CommandRole::ImplementationCommand {
+          prepared_digest = Some(prepared.command_artifact.digest)
+        }
+      }
+      let prepared_digest = match prepared_digest {
+        Some(digest) => digest
+        None => return Err(workflow_error("implementation command is missing"))
+      }
+      if !(intent.kind is DispatchImplementation(take_id, command) &&
         take_id == result.take_id &&
-        session_id == result.session_id) ||
+        command.session_id == result.session_id &&
+        command.command_artifact_digest == prepared_digest) ||
         result.take_id != snapshot.implementation_take.id ||
         !artifact_exists(result.result_artifact) {
         return Err(
@@ -623,6 +725,51 @@ pub fn apply_part_effect_observation(
         observed_at,
       )
     }
+    ImplementationCommandPrepared(prepared) =>
+      record_command_prepared(
+        snapshot,
+        observation,
+        prepared,
+        fn(kind) {
+          match kind {
+            PrepareImplementationCommand(plan) => Some(plan)
+            _ => None
+          }
+        },
+        PartImplementationCommandPrepared,
+        observed_at,
+        artifact_exists,
+      )
+    VerificationCommandPrepared(prepared) =>
+      record_command_prepared(
+        snapshot,
+        observation,
+        prepared,
+        fn(kind) {
+          match kind {
+            PrepareVerificationCommand(plan) => Some(plan)
+            _ => None
+          }
+        },
+        PartVerificationCommandPrepared,
+        observed_at,
+        artifact_exists,
+      )
+    AuditCommandPrepared(prepared) =>
+      record_command_prepared(
+        snapshot,
+        observation,
+        prepared,
+        fn(kind) {
+          match kind {
+            PrepareAuditCommand(plan) => Some(plan)
+            _ => None
+          }
+        },
+        PartAuditCommandPrepared,
+        observed_at,
+        artifact_exists,
+      )
     CandidateNormalized(candidate, path_evidence) => {
       let intent = match authorized_effect(snapshot) {
         Ok(value) => value

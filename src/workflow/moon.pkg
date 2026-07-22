@@ -1,5 +1,7 @@
 import {
+  "choir/src/command",
   "choir/src/control",
+  "choir/src/migration",
   "choir/src/storage",
   "choir/src/types",
   "moonbitlang/async",

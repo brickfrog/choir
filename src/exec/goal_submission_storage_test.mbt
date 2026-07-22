@@ -69,6 +69,7 @@ fn selection_store_decision() -> @workflow.GoalSelectionDecision raise {
             dependency_ids: [],
             task_contract: contract,
             provider_surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+            part_context_manifest: None,
           },
         ],
       },

@@ -333,6 +333,39 @@ fn conformance_effect_observation(
   let change_digest = @storage.artifact_digest(
     @utf8.encode("choir.conformance-change.v1\u{00}" + key),
   )
+  let prepared_command = fn(plan : @workflow.PartCommandPreparationPlan) {
+    let context_manifest_digest = match plan.context_manifest {
+      None => None
+      Some(manifest) => Some(@migration.part_context_manifest_digest(manifest))
+    }
+    let command_artifact : @control.ArtifactReference = {
+      artifact_id: "prepared-command-" + plan.take.id.0,
+      digest: plan.template_digest,
+    }
+    @workflow.PartPreparedCommand::{
+      plan,
+      command_artifact,
+      provenance: {
+        schema_version: 1,
+        take_id: plan.take.id,
+        take_purpose_digest: @command.take_purpose_digest(plan.take.purpose),
+        subject_digest: @command.command_subject_digest(plan.subject),
+        goal_contract_digest: plan.goal_contract_digest,
+        task_contract_revision_id: plan.task_contract_revision_id,
+        task_contract_digest: plan.task_contract_digest,
+        migration_contract_ref: plan.migration_contract_ref,
+        template_digest: plan.template_digest,
+        provider_surface: plan.provider_surface,
+        provider_surface_and_profile_digest: plan.provider_surface_and_profile_digest,
+        context_assembly_policy_digest: plan.context_assembly_policy_digest,
+        context_manifest_digest,
+        context_projection_digest: plan.template_digest,
+        maximum_command_bytes: plan.maximum_command_bytes,
+        command_artifact_digest: command_artifact.digest,
+        command_byte_length: 1,
+      },
+    }
+  }
   match intent.kind {
     @workflow.PartEffectKind::PrepareImplementationSandbox(lease) =>
       Ok(
@@ -341,13 +374,20 @@ fn conformance_effect_observation(
           lifecycle: @control.SandboxLeaseLifecycle::SandboxLeaseActive,
         }),
       )
-    @workflow.PartEffectKind::StartImplementationHarness(session) =>
+    @workflow.PartEffectKind::PrepareImplementationCommand(plan) =>
+      Ok(
+        @workflow.PartEffectObservation::ImplementationCommandPrepared(
+          prepared_command(plan),
+        ),
+      )
+    @workflow.PartEffectKind::StartImplementationHarness(session, _) =>
       Ok(
         @workflow.PartEffectObservation::ImplementationHarnessStarted(
           conformance_started_session(session),
         ),
       )
-    @workflow.PartEffectKind::DispatchImplementation(take_id, session_id) => {
+    @workflow.PartEffectKind::DispatchImplementation(take_id, command) => {
+      let session_id = command.session_id
       let started = conformance_started_session(
         snapshot.identities.implementation_session,
       )
@@ -396,13 +436,20 @@ fn conformance_effect_observation(
           lifecycle: @control.SandboxLeaseLifecycle::SandboxLeaseActive,
         }),
       )
-    @workflow.PartEffectKind::StartVerificationHarness(session) =>
+    @workflow.PartEffectKind::PrepareVerificationCommand(plan) =>
+      Ok(
+        @workflow.PartEffectObservation::VerificationCommandPrepared(
+          prepared_command(plan),
+        ),
+      )
+    @workflow.PartEffectKind::StartVerificationHarness(session, _) =>
       Ok(
         @workflow.PartEffectObservation::VerificationHarnessStarted(
           conformance_started_session(session),
         ),
       )
-    @workflow.PartEffectKind::DispatchVerification(take_id, session_id, subject) => {
+    @workflow.PartEffectKind::DispatchVerification(take_id, command, subject) => {
+      let session_id = command.session_id
       let started = conformance_started_session(
         snapshot.identities.verification_session,
       )
@@ -446,13 +493,20 @@ fn conformance_effect_observation(
           lifecycle: @control.SandboxLeaseLifecycle::SandboxLeaseActive,
         }),
       )
-    @workflow.PartEffectKind::StartAuditHarness(session) =>
+    @workflow.PartEffectKind::PrepareAuditCommand(plan) =>
+      Ok(
+        @workflow.PartEffectObservation::AuditCommandPrepared(
+          prepared_command(plan),
+        ),
+      )
+    @workflow.PartEffectKind::StartAuditHarness(session, _) =>
       Ok(
         @workflow.PartEffectObservation::AuditHarnessStarted(
           conformance_started_session(session),
         ),
       )
-    @workflow.PartEffectKind::DispatchAudit(take_id, session_id, subject) => {
+    @workflow.PartEffectKind::DispatchAudit(take_id, command, subject) => {
+      let session_id = command.session_id
       let started = conformance_started_session(
         snapshot.identities.audit_session,
       )
@@ -1254,7 +1308,7 @@ pub async fn run_part_conformance_fixture(
   } else {
     0
   }
-  if result.snapshot.effect_receipts.length() != 12 ||
+  if result.snapshot.effect_receipts.length() != 15 ||
     result.snapshot.verification_receipts.length() != 1 ||
     audit_receipt_count != 1 ||
     integration_receipt_count != 1 ||
@@ -1302,7 +1356,7 @@ pub async fn run_part_conformance_fixture(
             }
             let target_occurrence = boundary !=
               @workflow.PartPersistenceBoundary::WorkflowEffectObserved ||
-              effect_observation_count.val == 3
+              effect_observation_count.val == 4
             if !injected.val && actual == boundary && target_occurrence {
               injected.val = true
               Some(
@@ -1369,7 +1423,7 @@ pub async fn run_part_conformance_fixture(
           return failed_part_report(
             "effect-observation recovery redispatched provider work",
           )
-        } else if recovered_snapshot.effect_receipts.length() != 12 ||
+        } else if recovered_snapshot.effect_receipts.length() != 15 ||
           recovered_snapshot.verification_receipts.length() != 1 ||
           recovered_snapshot.audit_receipt is None ||
           recovered_snapshot.integration_receipt is None {

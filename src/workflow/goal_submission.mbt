@@ -76,6 +76,7 @@ pub(all) struct ConductorPartProposal {
   dependency_ids : Array[@control.PartId]
   task_contract : @control.TaskContractRevision
   provider_surface : @control.ProviderSurfaceId
+  part_context_manifest : @migration.PartContextManifest?
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -119,6 +120,7 @@ pub(all) struct AcceptedGoalPart {
   source_content_digest : @control.Digest
   task_contract : @control.TaskContractRevision
   provider_surface : @control.ProviderSurfaceId
+  part_context_manifest : @migration.PartContextManifest?
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -354,6 +356,11 @@ fn canonical_goal_proposal_json(proposal : GoalProposal) -> Json {
   parts.sort_by(fn(left, right) { left.part_id.compare(right.part_id) })
   let rows : Array[Json] = []
   for part in parts {
+    let context_manifest_digest : @control.Digest? = match
+      part.part_context_manifest {
+      None => None
+      Some(manifest) => Some(@migration.part_context_manifest_digest(manifest))
+    }
     rows.push(
       [
         part.part_id.to_json(),
@@ -363,6 +370,7 @@ fn canonical_goal_proposal_json(proposal : GoalProposal) -> Json {
         part.task_contract.id.to_json(),
         part.task_contract.digest.to_json(),
         part.provider_surface.to_json(),
+        context_manifest_digest.to_json(),
       ].to_json(),
     )
   }
@@ -477,6 +485,18 @@ pub fn evaluate_goal_proposal(
       is Err(_) {
       add_rejection(rejections, part_id, SelectionInvalidTaskContract)
     }
+    match
+      (part.task_contract.migration_contract_ref, part.part_context_manifest) {
+      (None, None) => ()
+      (Some(reference), Some(manifest)) =>
+        if reference != manifest.migration_contract_ref ||
+          manifest.part_task_contract_revision_id != part.task_contract.id ||
+          manifest.part_task_contract_digest != part.task_contract.digest ||
+          @migration.validate_part_context_manifest(manifest) is Err(_) {
+          add_rejection(rejections, part_id, SelectionInvalidTaskContract)
+        }
+      _ => add_rejection(rejections, part_id, SelectionInvalidTaskContract)
+    }
     let missing_open_dependency = source.dependency_ids.any(fn(dependency_id) {
       match source_part(snapshot, dependency_id) {
         Some(dependency) =>
@@ -511,6 +531,7 @@ pub fn evaluate_goal_proposal(
         source_content_digest: part.source_content_digest,
         task_contract: part.task_contract,
         provider_surface: part.provider_surface,
+        part_context_manifest: part.part_context_manifest,
       })
     }
     Some({

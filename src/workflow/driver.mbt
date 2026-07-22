@@ -390,7 +390,11 @@ async fn drive_part_workflow(
               outcome: PartRunGoalNotAuthorizing,
             })
         }
-        let authorized = match authorize_pending_part_effect(snapshot) {
+        let authorized = match
+          authorize_pending_part_effect(
+            snapshot,
+            dependencies.artifact_digest_exists,
+          ) {
           Ok(value) => value
           Err(error) => return Err(error)
         }

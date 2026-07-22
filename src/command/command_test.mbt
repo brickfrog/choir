@@ -172,3 +172,30 @@ test "property: context input ordering cannot change prepared bytes" {
     max_size=8,
   )
 }
+
+///|
+test "default command templates and provider profiles are deterministic" {
+  let template = @command.default_command_template(
+    @command.CommandRole::PartAuditCommand,
+  )
+  assert_eq(
+    template,
+    @command.default_command_template(@command.CommandRole::PartAuditCommand),
+  )
+  assert_eq(
+    template.digest,
+    fixture_digest(@utf8.decode_lossy(template.content)),
+  )
+  assert_eq(
+    @command.provider_surface_and_profile_digest(
+      @control.ProviderSurfaceId::CodexSubscriptionCli,
+      fixture_digest("surface"),
+      fixture_digest("profile"),
+    ),
+    @command.provider_surface_and_profile_digest(
+      @control.ProviderSurfaceId::CodexSubscriptionCli,
+      fixture_digest("surface"),
+      fixture_digest("profile"),
+    ),
+  )
+}

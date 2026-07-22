@@ -28,7 +28,7 @@ fn sorted_unique_digests(
 }
 
 ///|
-fn expected_context_digests(
+pub fn required_part_context_digests(
   instruction_digest : @control.Digest,
   manifest : @migration.PartContextManifest?,
 ) -> Array[@control.Digest] {
@@ -123,7 +123,7 @@ fn context_artifact_index(
 fn ordered_context_artifacts(
   request : CommandPreparationRequest,
 ) -> Result[Array[CommandContextArtifact], @types.ChoirError] {
-  let expected = expected_context_digests(
+  let expected = required_part_context_digests(
     request.instruction_artifact_digest,
     request.context_manifest,
   )

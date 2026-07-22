@@ -13,9 +13,9 @@ fn record_verification_completion(
     Err(error) => return Err(error)
   }
   match intent.kind {
-    DispatchVerification(take_id, session_id, subject) =>
+    DispatchVerification(take_id, command, subject) =>
       if take_id != result.take_id ||
-        session_id != result.session_id ||
+        command.session_id != result.session_id ||
         subject != result.subject {
         return Err(workflow_error("verification result does not match intent"))
       }
@@ -227,9 +227,9 @@ fn record_audit_completion(
     Err(error) => return Err(error)
   }
   match intent.kind {
-    DispatchAudit(take_id, session_id, subject) =>
+    DispatchAudit(take_id, command, subject) =>
       if take_id != submission.audit_take_id ||
-        session_id != submission.audit_harness_session_id ||
+        command.session_id != submission.audit_harness_session_id ||
         subject != submission.subject {
         return Err(workflow_error("audit submission does not match intent"))
       }

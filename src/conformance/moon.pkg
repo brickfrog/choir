@@ -1,4 +1,5 @@
 import {
+  "choir/src/command",
   "choir/src/control",
   "choir/src/harness",
   "choir/src/sandbox",

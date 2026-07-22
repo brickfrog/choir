@@ -336,7 +336,7 @@ fn authorize_next(
     Ok(value) => value
     Err(error) => fail(error.message())
   }
-  match @workflow.authorize_pending_part_effect(planned) {
+  match @workflow.authorize_pending_part_effect(planned, fn(_) { true }) {
     Ok(value) => value
     Err(error) => fail(error.message())
   }
@@ -360,6 +360,139 @@ fn apply_observation(
     Ok(value) => value
     Err(error) => fail(error.message())
   }
+}
+
+///|
+fn prepared_command_fixture(
+  plan : @workflow.PartCommandPreparationPlan,
+) -> @workflow.PartPreparedCommand {
+  let context_manifest_digest = match plan.context_manifest {
+    None => None
+    Some(manifest) => Some(@migration.part_context_manifest_digest(manifest))
+  }
+  let command_artifact : @control.ArtifactReference = {
+    artifact_id: "prepared-command-" + plan.take.id.0,
+    digest: plan.template_digest,
+  }
+  {
+    plan,
+    command_artifact,
+    provenance: {
+      schema_version: 1,
+      take_id: plan.take.id,
+      take_purpose_digest: @command.take_purpose_digest(plan.take.purpose),
+      subject_digest: @command.command_subject_digest(plan.subject),
+      goal_contract_digest: plan.goal_contract_digest,
+      task_contract_revision_id: plan.task_contract_revision_id,
+      task_contract_digest: plan.task_contract_digest,
+      migration_contract_ref: plan.migration_contract_ref,
+      template_digest: plan.template_digest,
+      provider_surface: plan.provider_surface,
+      provider_surface_and_profile_digest: plan.provider_surface_and_profile_digest,
+      context_assembly_policy_digest: plan.context_assembly_policy_digest,
+      context_manifest_digest,
+      context_projection_digest: plan.template_digest,
+      maximum_command_bytes: plan.maximum_command_bytes,
+      command_artifact_digest: command_artifact.digest,
+      command_byte_length: 1,
+    },
+  }
+}
+
+///|
+fn apply_command_preparation(
+  snapshot : @workflow.PartWorkflowSnapshot,
+  observed_at : Int64,
+) -> @workflow.PartWorkflowSnapshot raise {
+  let observation = match @workflow.plan_next_part_effect(snapshot) {
+    Ok(
+      Some(
+        {
+          kind: @workflow.PartEffectKind::PrepareImplementationCommand(plan),
+          ..,
+        }
+      )
+    ) =>
+      @workflow.PartEffectObservation::ImplementationCommandPrepared(
+        prepared_command_fixture(plan),
+      )
+    Ok(
+      Some(
+        { kind: @workflow.PartEffectKind::PrepareVerificationCommand(plan), .. }
+      )
+    ) =>
+      @workflow.PartEffectObservation::VerificationCommandPrepared(
+        prepared_command_fixture(plan),
+      )
+    Ok(Some({ kind: @workflow.PartEffectKind::PrepareAuditCommand(plan), .. })) =>
+      @workflow.PartEffectObservation::AuditCommandPrepared(
+        prepared_command_fixture(plan),
+      )
+    Ok(_) => fail("expected command preparation effect")
+    Err(error) => fail(error.message())
+  }
+  apply_observation(snapshot, observation, observed_at)
+}
+
+///|
+test "command authorization is passive and requires persisted exact bytes" {
+  let initial = workflow_fixture()
+  let sandbox_prepared = apply_observation(
+    initial,
+    @workflow.PartEffectObservation::ImplementationSandboxPrepared(
+      active_sandbox(initial.identities.implementation_sandbox),
+    ),
+    10L,
+  )
+  let command_prepared = apply_command_preparation(sandbox_prepared, 11L)
+  let start = @workflow.plan_next_part_effect(command_prepared)
+    .unwrap()
+    .unwrap()
+  let planned_start = @workflow.persist_planned_part_effect(
+    command_prepared, start,
+  ).unwrap()
+  let checks = @ref.new(0)
+  let blocked_start = @workflow.authorize_pending_part_effect(planned_start, fn(
+    _,
+  ) {
+    checks.val = checks.val + 1
+    false
+  })
+  assert_true(
+    blocked_start is Err(error) && error.is_command_preparation_blocked(),
+  )
+  assert_eq(checks.val, 1)
+  assert_eq(
+    planned_start.pending_effect.unwrap().lifecycle,
+    @workflow.PartEffectLifecycle::PartEffectPlanned,
+  )
+  let running = apply_observation(
+    command_prepared,
+    @workflow.PartEffectObservation::ImplementationHarnessStarted(
+      started_session(initial.identities.implementation_session),
+    ),
+    12L,
+  )
+  let dispatch = @workflow.plan_next_part_effect(running).unwrap().unwrap()
+  let planned_dispatch = @workflow.persist_planned_part_effect(
+    running, dispatch,
+  ).unwrap()
+  assert_true(
+    @workflow.authorize_pending_part_effect(planned_dispatch, fn(_) { false })
+    is Err(error) &&
+    error.is_command_preparation_blocked(),
+  )
+  let stale = {
+    ..planned_dispatch,
+    task_contract: {
+      ..planned_dispatch.task_contract,
+      digest: workflow_digest_e,
+    },
+  }
+  assert_true(
+    @workflow.authorize_pending_part_effect(stale, fn(_) { true }) is Err(error) &&
+    error.is_command_preparation_blocked(),
+  )
 }
 
 ///|
@@ -579,8 +712,9 @@ test "Goal cancellation records an authorized provider effect as uncertain" {
     10L,
   )
   let session = started_session(initial.identities.implementation_session)
+  let command_prepared = apply_command_preparation(prepared, 11L)
   let started = apply_observation(
-    prepared,
+    command_prepared,
     @workflow.PartEffectObservation::ImplementationHarnessStarted(session),
     11L,
   )
@@ -636,7 +770,7 @@ test "provider protocol violation terminally fences its Take and Part" {
     10L,
   )
   let running = apply_observation(
-    prepared,
+    apply_command_preparation(prepared, 11L),
     @workflow.PartEffectObservation::ImplementationHarnessStarted(
       implementation_session,
     ),
@@ -694,7 +828,7 @@ fn drive_to_verified() -> @workflow.PartWorkflowSnapshot raise {
     10L,
   )
   snapshot = apply_observation(
-    snapshot,
+    apply_command_preparation(snapshot, 11L),
     @workflow.PartEffectObservation::ImplementationHarnessStarted(
       implementation_session,
     ),
@@ -751,7 +885,7 @@ fn drive_to_verified() -> @workflow.PartWorkflowSnapshot raise {
     16L,
   )
   snapshot = apply_observation(
-    snapshot,
+    apply_command_preparation(snapshot, 17L),
     @workflow.PartEffectObservation::VerificationHarnessStarted(
       verification_session,
     ),
@@ -807,7 +941,7 @@ fn drive_to_audited() -> @workflow.PartWorkflowSnapshot raise {
     21L,
   )
   snapshot = apply_observation(
-    snapshot,
+    apply_command_preparation(snapshot, 22L),
     @workflow.PartEffectObservation::AuditHarnessStarted(audit_session),
     22L,
   )
@@ -925,7 +1059,7 @@ test "Part reaches a verified audited integration result" {
   assert_eq(snapshot.verification_receipts.length(), 1)
   assert_true(snapshot.audit_receipt is Some(_))
   assert_true(snapshot.integration_receipt is Some(_))
-  assert_eq(snapshot.effect_receipts.length(), 12)
+  assert_eq(snapshot.effect_receipts.length(), 15)
   assert_true(
     snapshot.identities.implementation_sandbox.generation_id !=
     snapshot.identities.audit_sandbox.generation_id,
@@ -2045,7 +2179,7 @@ test "promotion conflict blocks the Part without minting integration evidence" {
   )
   assert_true(blocked.integration_receipt is None)
   assert_eq(blocked.integration_conflicts.length(), 1)
-  assert_eq(blocked.effect_receipts.length(), 11)
+  assert_eq(blocked.effect_receipts.length(), 14)
   let conflict = blocked.integration_conflicts[0]
   let repair_contract : @control.TaskContractRevision = {
     ..blocked.task_contract,
@@ -2179,7 +2313,8 @@ test "planned and authorized effects survive snapshot restart exactly once" {
     Ok(Some(recovered)) => assert_eq(recovered, intent)
     _ => fail("planned effect did not survive restart")
   }
-  let authorized = match @workflow.authorize_pending_part_effect(planned) {
+  let authorized = match
+    @workflow.authorize_pending_part_effect(planned, fn(_) { true }) {
     Ok(value) => round_trip(value)
     Err(error) => fail(error.message())
   }

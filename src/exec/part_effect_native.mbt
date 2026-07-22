@@ -186,6 +186,95 @@ fn read_native_instruction(
 }
 
 ///|
+fn execute_native_command_preparation(
+  runtime : NativePartEffectRuntime,
+  snapshot : @workflow.PartWorkflowSnapshot,
+  plan : @workflow.PartCommandPreparationPlan,
+) -> Result[@workflow.PartPreparedCommand, @types.ChoirError] {
+  let template = @command.default_command_template(plan.role)
+  if template.digest != plan.template_digest {
+    return Err(@types.ChoirError::command_preparation_stale_binding())
+  }
+  let context_artifacts : Array[@command.CommandContextArtifact] = []
+  for
+    digest in @command.required_part_context_digests(
+      plan.instruction_artifact_digest,
+      plan.context_manifest,
+    ) {
+    let content = match
+      read_native_effect_artifact(runtime, digest, plan.maximum_command_bytes) {
+      Ok(value) => value
+      Err(_) =>
+        return Err(
+          @types.ChoirError::command_preparation_missing_required_artifact(
+            digest.0,
+          ),
+        )
+    }
+    context_artifacts.push({ digest, content })
+  }
+  let prepared = match
+    @command.prepare_command({
+      schema_version: 1,
+      take: plan.take,
+      subject: plan.subject,
+      goal_contract_digest: plan.goal_contract_digest,
+      task_contract_revision_id: plan.task_contract_revision_id,
+      task_contract_digest: plan.task_contract_digest,
+      instruction_artifact_digest: plan.instruction_artifact_digest,
+      migration_contract_ref: plan.migration_contract_ref,
+      provider_surface: plan.provider_surface,
+      provider_surface_and_profile_digest: plan.provider_surface_and_profile_digest,
+      context_assembly_policy_digest: plan.context_assembly_policy_digest,
+      context_manifest: plan.context_manifest,
+      template,
+      context_artifacts,
+      maximum_command_bytes: plan.maximum_command_bytes,
+    }) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let command_artifact = match
+    adopt_native_effect_artifact(
+      runtime,
+      snapshot.goal.id,
+      prepared.command_bytes,
+      @storage.ArtifactProvenance::ArtifactHarnessCommand(plan.take.id),
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if command_artifact.digest != prepared.provenance.command_artifact_digest {
+    return Err(@types.ChoirError::command_preparation_digest_mismatch())
+  }
+  Ok({ plan, command_artifact, provenance: prepared.provenance })
+}
+
+///|
+fn read_native_harness_command(
+  runtime : NativePartEffectRuntime,
+  command : @control.HarnessCommandIntent,
+) -> Result[String, @types.ChoirError] {
+  let content = match
+    read_native_effect_artifact(
+      runtime,
+      command.command_artifact_digest,
+      1048576,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let instruction = @utf8.decode(content) catch {
+    _ => return Err(native_part_effect_error("prepared command is not UTF-8"))
+  }
+  if instruction == "" {
+    Err(native_part_effect_error("prepared command is empty"))
+  } else {
+    Ok(instruction)
+  }
+}
+
+///|
 fn native_snapshot_session(
   snapshot : @workflow.PartWorkflowSnapshot,
   session_id : @control.HarnessSessionId,
@@ -712,8 +801,9 @@ async fn execute_native_implementation(
   runtime : NativePartEffectRuntime,
   snapshot : @workflow.PartWorkflowSnapshot,
   take_id : @control.TakeId,
-  session_id : @control.HarnessSessionId,
+  command : @control.HarnessCommandIntent,
 ) -> Result[@workflow.PartEffectObservation, @types.ChoirError] {
+  let session_id = command.session_id
   let session = match native_snapshot_session(snapshot, session_id) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -726,11 +816,7 @@ async fn execute_native_implementation(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let instruction = match
-    read_native_instruction(
-      runtime,
-      snapshot.task_contract.instruction_artifact,
-    ) {
+  let instruction = match read_native_harness_command(runtime, command) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -924,9 +1010,10 @@ async fn execute_native_verification(
   snapshot : @workflow.PartWorkflowSnapshot,
   intent : @workflow.PartEffectIntent,
   take_id : @control.TakeId,
-  session_id : @control.HarnessSessionId,
+  command : @control.HarnessCommandIntent,
   subject : @control.PartVerificationSubject,
 ) -> Result[@workflow.PartEffectObservation, @types.ChoirError] {
+  let session_id = command.session_id
   let candidate = match snapshot.candidate {
     Some(value) if value.commit_oid == subject.candidate_commit_oid &&
       value.tree_oid == subject.candidate_tree_oid => value
@@ -965,24 +1052,10 @@ async fn execute_native_verification(
     None =>
       return Err(native_part_effect_error("process start was not durable"))
   }
-  let task = match
-    read_native_instruction(
-      runtime,
-      snapshot.task_contract.instruction_artifact,
-    ) {
+  let instruction = match read_native_harness_command(runtime, command) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let changed_paths = candidate.changed_paths.map(fn(path) { path.0 }).join(",")
-  let instruction = "Independently verify candidate " +
-    candidate.commit_oid.0 +
-    " against this exact Part task:\n" +
-    task +
-    "\nThe candidate changed only these declared paths: " +
-    changed_paths +
-    ". The trusted typed verifier ran this Part's declared process with exit code " +
-    process_result.exit_code.to_string() +
-    ". Inspect the changed paths and declared task. Unchanged work assigned to other Parts is outside this verification subject. Return failed only for a defect attributable to this candidate or its declared verification."
   let provider = match
     run_native_part_provider_take(
       runtime,
@@ -1058,9 +1131,10 @@ async fn execute_native_audit(
   runtime : NativePartEffectRuntime,
   snapshot : @workflow.PartWorkflowSnapshot,
   take_id : @control.TakeId,
-  session_id : @control.HarnessSessionId,
+  command : @control.HarnessCommandIntent,
   subject : @control.PartAuditSubject,
 ) -> Result[@workflow.PartEffectObservation, @types.ChoirError] {
+  let session_id = command.session_id
   let candidate = match snapshot.candidate {
     Some(value) if value.commit_oid == subject.candidate_commit_oid &&
       value.tree_oid == subject.candidate_tree_oid => value
@@ -1072,14 +1146,6 @@ async fn execute_native_audit(
   }
   let sandbox = match
     native_runtime_sandbox(runtime, session.sandbox_generation_id) {
-    Ok(value) => value
-    Err(error) => return Err(error)
-  }
-  let task = match
-    read_native_instruction(
-      runtime,
-      snapshot.task_contract.instruction_artifact,
-    ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -1095,19 +1161,10 @@ async fn execute_native_audit(
       native_part_effect_error("audit lacks passed verification evidence"),
     )
   }
-  let verification_evidence = passed_verification_receipts
-    .map(fn(receipt) { receipt.evidence.digest.0 })
-    .join(",")
-  let changed_paths = candidate.changed_paths.map(fn(path) { path.0 }).join(",")
-  let instruction = "Independently audit candidate " +
-    candidate.commit_oid.0 +
-    " against this exact Part task:\n" +
-    task +
-    "\nThe candidate changed only these declared paths: " +
-    changed_paths +
-    ". Independent verification already ran and passed every declared process; its evidence digests are " +
-    verification_evidence +
-    ". Treat those receipts as authoritative execution evidence, while independently inspecting the candidate itself. Do not infer a failure merely because the implementation transcript is absent. Findings must be attributable to this candidate or its task contract; unchanged work assigned to other Parts is outside this audit subject."
+  let instruction = match read_native_harness_command(runtime, command) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
   let provider = match
     run_native_part_provider_take(
       runtime,
@@ -1202,7 +1259,31 @@ async fn execute_native_part_effect(
           Ok(@workflow.PartEffectObservation::AuditSandboxPrepared(value))
         Err(error) => Err(error)
       }
-    @workflow.PartEffectKind::StartImplementationHarness(session) =>
+    @workflow.PartEffectKind::PrepareImplementationCommand(plan) =>
+      match execute_native_command_preparation(runtime, snapshot, plan) {
+        Ok(value) =>
+          Ok(
+            @workflow.PartEffectObservation::ImplementationCommandPrepared(
+              value,
+            ),
+          )
+        Err(error) => Err(error)
+      }
+    @workflow.PartEffectKind::PrepareVerificationCommand(plan) =>
+      match execute_native_command_preparation(runtime, snapshot, plan) {
+        Ok(value) =>
+          Ok(
+            @workflow.PartEffectObservation::VerificationCommandPrepared(value),
+          )
+        Err(error) => Err(error)
+      }
+    @workflow.PartEffectKind::PrepareAuditCommand(plan) =>
+      match execute_native_command_preparation(runtime, snapshot, plan) {
+        Ok(value) =>
+          Ok(@workflow.PartEffectObservation::AuditCommandPrepared(value))
+        Err(error) => Err(error)
+      }
+    @workflow.PartEffectKind::StartImplementationHarness(session, _) =>
       match start_native_part_harness(session) {
         Ok(value) =>
           Ok(
@@ -1210,28 +1291,28 @@ async fn execute_native_part_effect(
           )
         Err(error) => Err(error)
       }
-    @workflow.PartEffectKind::StartVerificationHarness(session) =>
+    @workflow.PartEffectKind::StartVerificationHarness(session, _) =>
       match start_native_part_harness(session) {
         Ok(value) =>
           Ok(@workflow.PartEffectObservation::VerificationHarnessStarted(value))
         Err(error) => Err(error)
       }
-    @workflow.PartEffectKind::StartAuditHarness(session) =>
+    @workflow.PartEffectKind::StartAuditHarness(session, _) =>
       match start_native_part_harness(session) {
         Ok(value) =>
           Ok(@workflow.PartEffectObservation::AuditHarnessStarted(value))
         Err(error) => Err(error)
       }
-    @workflow.PartEffectKind::DispatchImplementation(take_id, session_id) =>
-      execute_native_implementation(runtime, snapshot, take_id, session_id)
+    @workflow.PartEffectKind::DispatchImplementation(take_id, command) =>
+      execute_native_implementation(runtime, snapshot, take_id, command)
     @workflow.PartEffectKind::NormalizeImplementationCandidate(take_id, digest) =>
       normalize_native_implementation(runtime, snapshot, take_id, digest)
-    @workflow.PartEffectKind::DispatchVerification(take_id, session_id, subject) =>
+    @workflow.PartEffectKind::DispatchVerification(take_id, command, subject) =>
       execute_native_verification(
-        runtime, snapshot, intent, take_id, session_id, subject,
+        runtime, snapshot, intent, take_id, command, subject,
       )
-    @workflow.PartEffectKind::DispatchAudit(take_id, session_id, subject) =>
-      execute_native_audit(runtime, snapshot, take_id, session_id, subject)
+    @workflow.PartEffectKind::DispatchAudit(take_id, command, subject) =>
+      execute_native_audit(runtime, snapshot, take_id, command, subject)
     @workflow.PartEffectKind::GeneratePromotion(_)
     | @workflow.PartEffectKind::ApplyIntegration(_, _) =>
       execute_native_git_effect(
@@ -1284,9 +1365,12 @@ async fn reconcile_unwitnessed_native_part_effect(
   intent : @workflow.PartEffectIntent,
 ) -> Result[@workflow.PartEffectRecovery, @types.ChoirError] {
   match intent.kind {
-    @workflow.PartEffectKind::StartImplementationHarness(_)
-    | @workflow.PartEffectKind::StartVerificationHarness(_)
-    | @workflow.PartEffectKind::StartAuditHarness(_)
+    @workflow.PartEffectKind::PrepareImplementationCommand(_)
+    | @workflow.PartEffectKind::PrepareVerificationCommand(_)
+    | @workflow.PartEffectKind::PrepareAuditCommand(_)
+    | @workflow.PartEffectKind::StartImplementationHarness(_, _)
+    | @workflow.PartEffectKind::StartVerificationHarness(_, _)
+    | @workflow.PartEffectKind::StartAuditHarness(_, _)
     | @workflow.PartEffectKind::NormalizeImplementationCandidate(_, _) =>
       Ok(@workflow.PartEffectRecovery::ExactEffectRetryAuthorized)
     @workflow.PartEffectKind::GeneratePromotion(_)
@@ -1320,9 +1404,10 @@ async fn reconcile_unwitnessed_native_part_effect(
         )
       }
       let session_id = match intent.kind {
-        @workflow.PartEffectKind::DispatchImplementation(_, id)
-        | @workflow.PartEffectKind::DispatchVerification(_, id, _)
-        | @workflow.PartEffectKind::DispatchAudit(_, id, _) => id
+        @workflow.PartEffectKind::DispatchImplementation(_, command)
+        | @workflow.PartEffectKind::DispatchVerification(_, command, _)
+        | @workflow.PartEffectKind::DispatchAudit(_, command, _) =>
+          command.session_id
         _ => return Ok(@workflow.PartEffectRecovery::EffectWitnessUnavailable)
       }
       let session = match native_snapshot_session(snapshot, session_id) {
