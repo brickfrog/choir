@@ -210,6 +210,26 @@ fn inventory_fixture() -> @migration.MigrationInventory {
 }
 
 ///|
+fn judge_qualification_binding_fixture() -> @migration.JudgeQualificationBinding {
+  {
+    qualifying_goal_id: @control.GoalId("judge-goal-1"),
+    qualifying_goal_contract_digest: migration_digest_a,
+    goal_branch_seal_id: @control.GoalBranchSealId("judge-seal-1"),
+    goal_branch_seal_digest: migration_digest_b,
+    judge_definition_digest: migration_digest_c,
+    source_revision: migration_digest_a,
+  }
+}
+
+///|
+fn rehearsal_binding_fixture() -> @migration.RehearsalBinding {
+  {
+    migration_contract_ref: migration_contract_ref_fixture(),
+    sampled_inventory_digest: migration_digest_b,
+  }
+}
+
+///|
 test "migration domain canonical byte fixtures are explicit and versioned" {
   inspect(
     @utf8.decode_lossy(
@@ -298,6 +318,111 @@ test "migration domain canonical byte fixtures are explicit and versioned" {
       }),
     ),
     content="42#choir.qualified-migration-inventory-ref.v11#517#source-revision-164#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa64#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb64#cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc24#inventory-verification-1",
+  )
+  inspect(
+    @utf8.decode_lossy(
+      @migration.canonical_judge_qualification_binding_bytes(
+        judge_qualification_binding_fixture(),
+      ),
+    ),
+    content=(
+      #|36#choir.judge-qualification-binding.v11#612#judge-goal-164#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa12#judge-seal-164#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb64#cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc64#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    ),
+  )
+  let judge_binding = judge_qualification_binding_fixture()
+  inspect(
+    @utf8.decode_lossy(
+      @migration.canonical_judge_qualification_evidence_ref_bytes({
+        binding: judge_binding,
+        completion_binding_digest: @migration.judge_qualification_binding_digest(
+          judge_binding,
+        ),
+        assurance_record_digest: migration_digest_b,
+        terminal: @migration.JudgeQualificationTerminal::JudgeQualificationEvidenceOnlyCanceled(
+          @control.CancellationSummaryId("judge-cancellation-1"),
+        ),
+      }),
+    ),
+    content=(
+      #|41#choir.judge-qualification-evidence-ref.v11#5340#36#choir.judge-qualification-binding.v11#612#judge-goal-164#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa12#judge-seal-164#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb64#cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc64#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa64#face00aabe6fec2cf4e341ea75f08b579f675849d62dd89123ccbaa11a34a96a64#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb22#evidence-only-canceled20#judge-cancellation-1
+    ),
+  )
+  inspect(
+    @utf8.decode_lossy(
+      @migration.canonical_rehearsal_binding_bytes(rehearsal_binding_fixture()),
+    ),
+    content=(
+      #|26#choir.rehearsal-binding.v11#2131#31#choir.migration-contract-ref.v11#410#contract-19#lineage-11#264#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa64#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    ),
+  )
+  let rehearsal_binding = rehearsal_binding_fixture()
+  inspect(
+    @utf8.decode_lossy(
+      @migration.canonical_rehearsal_evidence_ref_bytes({
+        rehearsal_goal_id: @control.GoalId("rehearsal-goal-1"),
+        migration_contract_ref: rehearsal_binding.migration_contract_ref,
+        sampled_inventory_digest: rehearsal_binding.sampled_inventory_digest,
+        completion_binding_digest: @migration.rehearsal_binding_digest(
+          rehearsal_binding,
+        ),
+        assurance_record_digest: migration_digest_c,
+        cancellation_summary_id: @control.CancellationSummaryId(
+          "rehearsal-cancellation-1",
+        ),
+      }),
+    ),
+    content=(
+      #|31#choir.rehearsal-evidence-ref.v11#616#rehearsal-goal-1131#31#choir.migration-contract-ref.v11#410#contract-19#lineage-11#264#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa64#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb64#8486583c4040ff0422a3732ff78813ee7c5b139643bf33804cdc4c80fb4e601e64#cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc24#rehearsal-cancellation-1
+    ),
+  )
+}
+
+///|
+test "qualification and rehearsal references reject stale bindings" {
+  let judge_binding = judge_qualification_binding_fixture()
+  let judge_reference : @migration.JudgeQualificationEvidenceRef = {
+    binding: judge_binding,
+    completion_binding_digest: @migration.judge_qualification_binding_digest(
+      judge_binding,
+    ),
+    assurance_record_digest: migration_digest_b,
+    terminal: @migration.JudgeQualificationTerminal::JudgeQualificationSucceeded(
+      @control.FinalizationId("judge-finalization-1"),
+    ),
+  }
+  assert_true(
+    @migration.validate_judge_qualification_evidence_ref(judge_reference)
+    is Ok(_),
+  )
+  assert_true(
+    @migration.validate_judge_qualification_evidence_ref({
+      ..judge_reference,
+      completion_binding_digest: migration_digest_c,
+    })
+    is Err(_),
+  )
+  let rehearsal_binding = rehearsal_binding_fixture()
+  let rehearsal_reference : @migration.RehearsalEvidenceRef = {
+    rehearsal_goal_id: @control.GoalId("rehearsal-goal-1"),
+    migration_contract_ref: rehearsal_binding.migration_contract_ref,
+    sampled_inventory_digest: rehearsal_binding.sampled_inventory_digest,
+    completion_binding_digest: @migration.rehearsal_binding_digest(
+      rehearsal_binding,
+    ),
+    assurance_record_digest: migration_digest_c,
+    cancellation_summary_id: @control.CancellationSummaryId(
+      "rehearsal-cancellation-1",
+    ),
+  }
+  assert_true(
+    @migration.validate_rehearsal_evidence_ref(rehearsal_reference) is Ok(_),
+  )
+  assert_true(
+    @migration.validate_rehearsal_evidence_ref({
+      ..rehearsal_reference,
+      sampled_inventory_digest: migration_digest_a,
+    })
+    is Err(_),
   )
 }
 

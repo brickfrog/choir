@@ -478,6 +478,60 @@ pub fn validate_qualified_migration_inventory_ref(
 }
 
 ///|
+pub fn validate_judge_qualification_evidence_ref(
+  reference : JudgeQualificationEvidenceRef,
+) -> Result[Unit, @types.ChoirError] {
+  let binding = reference.binding
+  let terminal_valid = match reference.terminal {
+    JudgeQualificationSucceeded(id) => id.0 != ""
+    JudgeQualificationEvidenceOnlyCanceled(id) => id.0 != ""
+  }
+  if binding.qualifying_goal_id.0 == "" ||
+    binding.goal_branch_seal_id.0 == "" ||
+    !all_digests_valid([
+      binding.qualifying_goal_contract_digest,
+      binding.goal_branch_seal_digest,
+      binding.judge_definition_digest,
+      binding.source_revision,
+      reference.completion_binding_digest,
+      reference.assurance_record_digest,
+    ]) ||
+    reference.completion_binding_digest !=
+    judge_qualification_binding_digest(binding) ||
+    !terminal_valid {
+    Err(migration_validation_error("judge qualification reference is invalid"))
+  } else {
+    Ok(())
+  }
+}
+
+///|
+pub fn validate_rehearsal_evidence_ref(
+  reference : RehearsalEvidenceRef,
+) -> Result[Unit, @types.ChoirError] {
+  match validate_migration_contract_ref(reference.migration_contract_ref) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let binding : RehearsalBinding = {
+    migration_contract_ref: reference.migration_contract_ref,
+    sampled_inventory_digest: reference.sampled_inventory_digest,
+  }
+  if reference.rehearsal_goal_id.0 == "" ||
+    reference.cancellation_summary_id.0 == "" ||
+    !all_digests_valid([
+      reference.sampled_inventory_digest,
+      reference.completion_binding_digest,
+      reference.assurance_record_digest,
+    ]) ||
+    reference.completion_binding_digest != rehearsal_binding_digest(binding) {
+    Err(migration_validation_error("rehearsal evidence reference is invalid"))
+  } else {
+    Ok(())
+  }
+}
+
+///|
 fn observation_index(
   observations : Array[MigrationFindingPatternObservation],
   key : @control.Digest,

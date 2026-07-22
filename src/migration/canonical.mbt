@@ -496,6 +496,84 @@ pub fn canonical_qualified_inventory_ref_bytes(
 }
 
 ///|
+pub fn canonical_judge_qualification_binding_bytes(
+  binding : JudgeQualificationBinding,
+) -> Bytes {
+  canonical_fields("choir.judge-qualification-binding.v1", [
+    binding.qualifying_goal_id.0,
+    binding.qualifying_goal_contract_digest.0,
+    binding.goal_branch_seal_id.0,
+    binding.goal_branch_seal_digest.0,
+    binding.judge_definition_digest.0,
+    binding.source_revision.0,
+  ])
+}
+
+///|
+pub fn judge_qualification_binding_digest(
+  binding : JudgeQualificationBinding,
+) -> @control.Digest {
+  canonical_digest(canonical_judge_qualification_binding_bytes(binding))
+}
+
+///|
+fn judge_qualification_terminal_fields(
+  terminal : JudgeQualificationTerminal,
+) -> Array[String] {
+  match terminal {
+    JudgeQualificationSucceeded(id) => ["succeeded", id.0]
+    JudgeQualificationEvidenceOnlyCanceled(id) =>
+      ["evidence-only-canceled", id.0]
+  }
+}
+
+///|
+pub fn canonical_judge_qualification_evidence_ref_bytes(
+  reference : JudgeQualificationEvidenceRef,
+) -> Bytes {
+  let fields = [
+    @utf8.decode_lossy(
+      canonical_judge_qualification_binding_bytes(reference.binding),
+    ),
+    reference.completion_binding_digest.0,
+    reference.assurance_record_digest.0,
+  ]
+  append_fields(fields, judge_qualification_terminal_fields(reference.terminal))
+  canonical_fields("choir.judge-qualification-evidence-ref.v1", fields)
+}
+
+///|
+pub fn canonical_rehearsal_binding_bytes(binding : RehearsalBinding) -> Bytes {
+  canonical_fields("choir.rehearsal-binding.v1", [
+    @utf8.decode_lossy(
+      canonical_migration_contract_ref_bytes(binding.migration_contract_ref),
+    ),
+    binding.sampled_inventory_digest.0,
+  ])
+}
+
+///|
+pub fn rehearsal_binding_digest(binding : RehearsalBinding) -> @control.Digest {
+  canonical_digest(canonical_rehearsal_binding_bytes(binding))
+}
+
+///|
+pub fn canonical_rehearsal_evidence_ref_bytes(
+  reference : RehearsalEvidenceRef,
+) -> Bytes {
+  canonical_fields("choir.rehearsal-evidence-ref.v1", [
+    reference.rehearsal_goal_id.0,
+    @utf8.decode_lossy(
+      canonical_migration_contract_ref_bytes(reference.migration_contract_ref),
+    ),
+    reference.sampled_inventory_digest.0,
+    reference.completion_binding_digest.0,
+    reference.assurance_record_digest.0,
+    reference.cancellation_summary_id.0,
+  ])
+}
+
+///|
 pub fn migration_contract_digest(
   contract : MigrationContract,
 ) -> @control.Digest {

@@ -229,6 +229,46 @@ pub(all) struct QualifiedMigrationInventoryRef {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) struct JudgeQualificationBinding {
+  qualifying_goal_id : @control.GoalId
+  qualifying_goal_contract_digest : @control.Digest
+  goal_branch_seal_id : @control.GoalBranchSealId
+  goal_branch_seal_digest : @control.Digest
+  judge_definition_digest : @control.Digest
+  source_revision : @control.Digest
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum JudgeQualificationTerminal {
+  JudgeQualificationSucceeded(@control.FinalizationId)
+  JudgeQualificationEvidenceOnlyCanceled(@control.CancellationSummaryId)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct JudgeQualificationEvidenceRef {
+  binding : JudgeQualificationBinding
+  completion_binding_digest : @control.Digest
+  assurance_record_digest : @control.Digest
+  terminal : JudgeQualificationTerminal
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct RehearsalBinding {
+  migration_contract_ref : @control.MigrationContractRef
+  sampled_inventory_digest : @control.Digest
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct RehearsalEvidenceRef {
+  rehearsal_goal_id : @control.GoalId
+  migration_contract_ref : @control.MigrationContractRef
+  sampled_inventory_digest : @control.Digest
+  completion_binding_digest : @control.Digest
+  assurance_record_digest : @control.Digest
+  cancellation_summary_id : @control.CancellationSummaryId
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub(all) enum MigrationFindingClass {
   RuleViolation
   RuleGap
