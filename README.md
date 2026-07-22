@@ -87,6 +87,14 @@ The accepted design records are retained under
 [docs/charters](docs/charters/README.md). They document the durable Goal
 workflow and its migration extension without occupying the repository root.
 
+## Operations
+
+Use the [dependency and runtime upgrade runbook](docs/runbooks/dependency-upgrades.md)
+to audit or qualify provider CLIs, BoxLite, Beads, MoonBit, native libraries,
+and CI/release infrastructure. It defines a read-only audit mode, component
+qualification gates, promotion boundaries, and the required report format for
+human or agent-driven maintenance.
+
 ## Verify
 
 ```bash
