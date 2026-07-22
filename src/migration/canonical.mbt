@@ -641,6 +641,147 @@ pub fn canonical_migration_bead_proposal_bytes(
 }
 
 ///|
+fn changed_artifact_kind_tag(kind : MigrationChangedArtifactKind) -> String {
+  match kind {
+    ChangedRulebook => "rulebook"
+    ChangedJudgeDefinition => "judge-definition"
+    ChangedDependencyMap => "dependency-map"
+    ChangedInventoryGenerator => "inventory-generator"
+    ChangedSourceRevision => "source-revision"
+    ChangedContextAssemblyPolicy => "context-assembly-policy"
+    ChangedValidationPlan => "validation-plan"
+    ChangedGapInventory => "gap-inventory"
+    ChangedTransformationPlan => "transformation-plan"
+  }
+}
+
+///|
+fn impact_reason_fields(reason : MigrationImpactReason) -> Array[String] {
+  match reason {
+    MigrationDirectArtifactImpact(kind) =>
+      ["direct", changed_artifact_kind_tag(kind)]
+    MigrationGeneralValidationImpact(kind) =>
+      ["general", changed_artifact_kind_tag(kind)]
+    MigrationUncertainDependencyImpact => ["uncertain"]
+  }
+}
+
+///|
+fn canonical_artifact_change_text(
+  change : MigrationContractArtifactChange,
+) -> String {
+  @utf8.decode_lossy(
+    canonical_fields("choir.migration-artifact-change.v1", [
+      changed_artifact_kind_tag(change.kind),
+      change.previous_digest.0,
+      change.next_digest.0,
+    ]),
+  )
+}
+
+///|
+fn canonical_part_impact_text(impact : MigrationPartImpact) -> String {
+  let reasons = impact.reasons.map(fn(reason) {
+    let fields = impact_reason_fields(reason)
+    canonical_fields("choir.migration-impact-reason.v1", fields)
+    |> @utf8.decode_lossy
+  })
+  reasons.sort()
+  let fields = [impact.part_id.0, impact.was_integrated.to_string()]
+  fields.push(reasons.length().to_string())
+  append_fields(fields, reasons)
+  @utf8.decode_lossy(canonical_fields("choir.migration-part-impact.v1", fields))
+}
+
+///|
+pub fn canonical_contract_revision_impact_set_bytes(
+  impact_set : MigrationContractRevisionImpactSet,
+) -> Bytes {
+  let changes = impact_set.changes.map(canonical_artifact_change_text)
+  changes.sort()
+  let impacts = impact_set.impacted_parts.map(canonical_part_impact_text)
+  impacts.sort()
+  let carried = impact_set.carried_forward_task_contract_revision_ids.map(fn(
+    id,
+  ) {
+    id.0
+  })
+  carried.sort()
+  let fields = [
+    @utf8.decode_lossy(
+      canonical_migration_contract_ref_bytes(impact_set.previous_contract_ref),
+    ),
+    @utf8.decode_lossy(
+      canonical_migration_contract_ref_bytes(impact_set.next_contract_ref),
+    ),
+    changes.length().to_string(),
+  ]
+  append_fields(fields, changes)
+  fields.push(impacts.length().to_string())
+  append_fields(fields, impacts)
+  fields.push(carried.length().to_string())
+  append_fields(fields, carried)
+  fields.push(
+    match impact_set.application {
+      MigrationRevisionAppliesInPlace => "in-place"
+      MigrationRevisionRequiresGoalSupersession => "supersession"
+    },
+  )
+  canonical_fields("choir.migration-contract-revision-impact-set.v1", fields)
+}
+
+///|
+pub fn contract_revision_impact_set_digest(
+  impact_set : MigrationContractRevisionImpactSet,
+) -> @control.Digest {
+  canonical_digest(canonical_contract_revision_impact_set_bytes(impact_set))
+}
+
+///|
+pub fn canonical_migration_supersession_bytes(
+  supersession : MigrationSupersession,
+) -> Bytes {
+  let parts = supersession.impacted_integrated_part_ids.map(fn(id) { id.0 })
+  parts.sort()
+  let fields = [
+    supersession.prior_goal_id.0,
+    @utf8.decode_lossy(
+      canonical_migration_contract_ref_bytes(supersession.previous_contract_ref),
+    ),
+    @utf8.decode_lossy(
+      canonical_migration_contract_ref_bytes(supersession.next_contract_ref),
+    ),
+    parts.length().to_string(),
+  ]
+  append_fields(fields, parts)
+  fields.push(supersession.observed_goal_head.0)
+  fields.push(supersession.cutoff_sequence.0.to_string())
+  canonical_fields("choir.migration-supersession.v1", fields)
+}
+
+///|
+pub fn migration_supersession_digest(
+  supersession : MigrationSupersession,
+) -> @control.Digest {
+  canonical_digest(canonical_migration_supersession_bytes(supersession))
+}
+
+///|
+pub fn canonical_migration_continuation_ref_bytes(
+  continuation : MigrationContinuationRef,
+) -> Bytes {
+  canonical_fields("choir.migration-continuation-ref.v1", [
+    continuation.prior_goal_id.0,
+    continuation.supersession_artifact_digest.0,
+    continuation.cancellation_summary_id.0,
+    continuation.terminal_preserved_head.0,
+    @utf8.decode_lossy(
+      canonical_migration_contract_ref_bytes(continuation.next_contract_ref),
+    ),
+  ])
+}
+
+///|
 pub fn migration_contract_digest(
   contract : MigrationContract,
 ) -> @control.Digest {

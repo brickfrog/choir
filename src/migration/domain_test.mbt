@@ -509,6 +509,148 @@ test "declining feasibility creates no migration contract" {
 }
 
 ///|
+test "contract revision impact is exact and conservative" {
+  let previous = migration_contract_ref_fixture()
+  let next = {
+    ..previous,
+    revision: previous.revision + 1,
+    contract_artifact_digest: migration_digest_b,
+  }
+  let change : @migration.MigrationContractArtifactChange = {
+    kind: @migration.MigrationChangedArtifactKind::ChangedRulebook,
+    previous_digest: migration_digest_a,
+    next_digest: migration_digest_b,
+  }
+  let parts : Array[@migration.MigrationPartRevisionDependency] = [
+    {
+      part_id: @control.PartId("part-a"),
+      effective_task_contract_revision_id: @control.RevisionId("revision-a"),
+      dependency_artifact_digests: [migration_digest_a],
+      integrated: false,
+      dependency_complete: true,
+    },
+    {
+      part_id: @control.PartId("part-b"),
+      effective_task_contract_revision_id: @control.RevisionId("revision-b"),
+      dependency_artifact_digests: [migration_digest_c],
+      integrated: false,
+      dependency_complete: true,
+    },
+  ]
+  let impact = @migration.compute_migration_contract_revision_impact_set(
+    previous,
+    next,
+    [change],
+    parts,
+  ).unwrap()
+  assert_eq(
+    impact.application,
+    @migration.MigrationContractRevisionApplication::MigrationRevisionAppliesInPlace,
+  )
+  assert_eq(impact.impacted_parts.map(fn(value) { value.part_id }), [
+    @control.PartId("part-a"),
+  ])
+  assert_false(
+    @migration.migration_part_evidence_is_current(
+      impact,
+      @control.PartId("part-a"),
+    ),
+  )
+  assert_true(
+    @migration.migration_part_evidence_is_current(
+      impact,
+      @control.PartId("part-b"),
+    ),
+  )
+  inspect(
+    @utf8.decode_lossy(
+      @migration.canonical_contract_revision_impact_set_bytes(impact),
+    ),
+    content=(
+      #|47#choir.migration-contract-revision-impact-set.v11#9131#31#choir.migration-contract-ref.v11#410#contract-19#lineage-11#264#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa131#31#choir.migration-contract-ref.v11#410#contract-19#lineage-11#364#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb1#1184#34#choir.migration-artifact-change.v11#38#rulebook64#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa64#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb1#1113#30#choir.migration-part-impact.v11#46#part-a5#false1#156#32#choir.migration-impact-reason.v11#26#direct8#rulebook1#110#revision-b8#in-place
+    ),
+  )
+  let integrated = @migration.compute_migration_contract_revision_impact_set(
+    previous,
+    next,
+    [change],
+    [{ ..parts[0], integrated: true }, parts[1]],
+  ).unwrap()
+  assert_eq(
+    integrated.application,
+    @migration.MigrationContractRevisionApplication::MigrationRevisionRequiresGoalSupersession,
+  )
+  let general = @migration.compute_migration_contract_revision_impact_set(
+    previous,
+    next,
+    [
+      {
+        ..change,
+        kind: @migration.MigrationChangedArtifactKind::ChangedJudgeDefinition,
+      },
+    ],
+    parts,
+  ).unwrap()
+  assert_eq(general.impacted_parts.length(), 2)
+  let uncertain = @migration.compute_migration_contract_revision_impact_set(
+    previous,
+    next,
+    [change],
+    [{ ..parts[1], dependency_complete: false }],
+  ).unwrap()
+  assert_eq(uncertain.impacted_parts.length(), 1)
+}
+
+///|
+test "supersession and continuation identities bind terminal provenance" {
+  let previous = migration_contract_ref_fixture()
+  let next = {
+    ..previous,
+    revision: previous.revision + 1,
+    contract_artifact_digest: migration_digest_b,
+  }
+  let supersession : @migration.MigrationSupersession = {
+    prior_goal_id: @control.GoalId("superseded-goal"),
+    previous_contract_ref: previous,
+    next_contract_ref: next,
+    impacted_integrated_part_ids: [@control.PartId("integrated-part")],
+    observed_goal_head: @control.GitOid("observed-head"),
+    cutoff_sequence: @control.EventSequence(9L),
+  }
+  assert_true(@migration.validate_migration_supersession(supersession) is Ok(_))
+  inspect(
+    @utf8.decode_lossy(
+      @migration.canonical_migration_supersession_bytes(supersession),
+    ),
+    content=(
+      #|31#choir.migration-supersession.v11#715#superseded-goal131#31#choir.migration-contract-ref.v11#410#contract-19#lineage-11#264#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa131#31#choir.migration-contract-ref.v11#410#contract-19#lineage-11#364#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb1#115#integrated-part13#observed-head1#9
+    ),
+  )
+  let continuation : @migration.MigrationContinuationRef = {
+    prior_goal_id: supersession.prior_goal_id,
+    supersession_artifact_digest: @migration.migration_supersession_digest(
+      supersession,
+    ),
+    cancellation_summary_id: @control.CancellationSummaryId(
+      "supersession-cancellation",
+    ),
+    terminal_preserved_head: @control.GitOid("terminal-head"),
+    next_contract_ref: next,
+  }
+  assert_true(
+    @migration.validate_migration_continuation_ref(continuation) is Ok(_),
+  )
+  inspect(
+    @utf8.decode_lossy(
+      @migration.canonical_migration_continuation_ref_bytes(continuation),
+    ),
+    content=(
+      #|35#choir.migration-continuation-ref.v11#515#superseded-goal64#2768a9e7bccc970924149bbee88f56ee5258395e59b15947ce60efefa76ab1be25#supersession-cancellation13#terminal-head131#31#choir.migration-contract-ref.v11#410#contract-19#lineage-11#364#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    ),
+  )
+}
+
+///|
 test "migration contract reference binds canonical contract bytes" {
   let contract = migration_contract_fixture()
   let reference = @migration.migration_contract_reference(contract).unwrap()
@@ -790,6 +932,69 @@ test "property: inventory encoding canonicalizes unit and field order" {
       }
       @migration.canonical_migration_inventory_unit_bytes(unit) ==
       @migration.canonical_migration_inventory_unit_bytes(reversed)
+    },
+    max_success=128,
+    max_size=32,
+  )
+}
+
+///|
+test "property: revision impact includes every direct dependency" {
+  @quickcheck.quick_check_fn(
+    fn(values : Array[String]) -> Bool {
+      if values.length() == 0 {
+        return true
+      }
+      let previous = migration_contract_ref_fixture()
+      let next = {
+        ..previous,
+        revision: previous.revision + 1,
+        contract_artifact_digest: migration_digest_b,
+      }
+      let changed = digest_generated_text(values[0])
+      let replacement = digest_generated_text("replacement-" + values[0])
+      if changed == replacement {
+        return true
+      }
+      let parts : Array[@migration.MigrationPartRevisionDependency] = []
+      for index, value in values {
+        let digest = digest_generated_text(value)
+        parts.push({
+          part_id: @control.PartId("part-" + index.to_string()),
+          effective_task_contract_revision_id: @control.RevisionId(
+            "revision-" + index.to_string(),
+          ),
+          dependency_artifact_digests: [digest],
+          integrated: false,
+          dependency_complete: true,
+        })
+      }
+      match
+        @migration.compute_migration_contract_revision_impact_set(
+          previous,
+          next,
+          [
+            {
+              kind: @migration.MigrationChangedArtifactKind::ChangedRulebook,
+              previous_digest: changed,
+              next_digest: replacement,
+            },
+          ],
+          parts,
+        ) {
+        Ok(impact) =>
+          parts.all(fn(part) {
+            if part.dependency_artifact_digests.contains(changed) {
+              !@migration.migration_part_evidence_is_current(
+                impact,
+                part.part_id,
+              )
+            } else {
+              true
+            }
+          })
+        Err(_) => false
+      }
     },
     max_success=128,
     max_size=32,

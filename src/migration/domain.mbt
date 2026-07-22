@@ -299,6 +299,84 @@ pub(all) struct MigrationBeadProposal {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) enum MigrationChangedArtifactKind {
+  ChangedRulebook
+  ChangedJudgeDefinition
+  ChangedDependencyMap
+  ChangedInventoryGenerator
+  ChangedSourceRevision
+  ChangedContextAssemblyPolicy
+  ChangedValidationPlan
+  ChangedGapInventory
+  ChangedTransformationPlan
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct MigrationContractArtifactChange {
+  kind : MigrationChangedArtifactKind
+  previous_digest : @control.Digest
+  next_digest : @control.Digest
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct MigrationPartRevisionDependency {
+  part_id : @control.PartId
+  effective_task_contract_revision_id : @control.RevisionId
+  dependency_artifact_digests : Array[@control.Digest]
+  integrated : Bool
+  dependency_complete : Bool
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum MigrationImpactReason {
+  MigrationDirectArtifactImpact(MigrationChangedArtifactKind)
+  MigrationGeneralValidationImpact(MigrationChangedArtifactKind)
+  MigrationUncertainDependencyImpact
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct MigrationPartImpact {
+  part_id : @control.PartId
+  reasons : Array[MigrationImpactReason]
+  was_integrated : Bool
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum MigrationContractRevisionApplication {
+  MigrationRevisionAppliesInPlace
+  MigrationRevisionRequiresGoalSupersession
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct MigrationContractRevisionImpactSet {
+  previous_contract_ref : @control.MigrationContractRef
+  next_contract_ref : @control.MigrationContractRef
+  changes : Array[MigrationContractArtifactChange]
+  impacted_parts : Array[MigrationPartImpact]
+  carried_forward_task_contract_revision_ids : Array[@control.RevisionId]
+  application : MigrationContractRevisionApplication
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct MigrationSupersession {
+  prior_goal_id : @control.GoalId
+  previous_contract_ref : @control.MigrationContractRef
+  next_contract_ref : @control.MigrationContractRef
+  impacted_integrated_part_ids : Array[@control.PartId]
+  observed_goal_head : @control.GitOid
+  cutoff_sequence : @control.EventSequence
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct MigrationContinuationRef {
+  prior_goal_id : @control.GoalId
+  supersession_artifact_digest : @control.Digest
+  cancellation_summary_id : @control.CancellationSummaryId
+  terminal_preserved_head : @control.GitOid
+  next_contract_ref : @control.MigrationContractRef
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub(all) enum MigrationFindingClass {
   RuleViolation
   RuleGap

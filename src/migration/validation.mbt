@@ -686,6 +686,181 @@ pub fn project_migration_bead_proposals(
 }
 
 ///|
+fn migration_change_is_general(kind : MigrationChangedArtifactKind) -> Bool {
+  match kind {
+    ChangedJudgeDefinition
+    | ChangedValidationPlan
+    | ChangedSourceRevision
+    | ChangedInventoryGenerator
+    | ChangedDependencyMap => true
+    _ => false
+  }
+}
+
+///|
+fn migration_change_requires_new_selection(
+  kind : MigrationChangedArtifactKind,
+) -> Bool {
+  match kind {
+    ChangedSourceRevision | ChangedInventoryGenerator | ChangedDependencyMap =>
+      true
+    _ => false
+  }
+}
+
+///|
+pub fn compute_migration_contract_revision_impact_set(
+  previous_contract_ref : @control.MigrationContractRef,
+  next_contract_ref : @control.MigrationContractRef,
+  changes : Array[MigrationContractArtifactChange],
+  parts : Array[MigrationPartRevisionDependency],
+) -> Result[MigrationContractRevisionImpactSet, @types.ChoirError] {
+  match validate_migration_contract_ref(previous_contract_ref) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  match validate_migration_contract_ref(next_contract_ref) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  if previous_contract_ref.migration_lineage_id !=
+    next_contract_ref.migration_lineage_id ||
+    next_contract_ref.revision <= previous_contract_ref.revision ||
+    changes.length() == 0 {
+    return Err(
+      migration_validation_error("contract revision lineage is invalid"),
+    )
+  }
+  for index, change in changes {
+    if !digest_is_valid(change.previous_digest) ||
+      !digest_is_valid(change.next_digest) ||
+      change.previous_digest == change.next_digest ||
+      changes[index + 1:].any(fn(candidate) { candidate.kind == change.kind }) {
+      return Err(
+        migration_validation_error("contract artifact change is invalid"),
+      )
+    }
+  }
+  for index, part in parts {
+    if part.part_id.0 == "" ||
+      part.effective_task_contract_revision_id.0 == "" ||
+      part.dependency_artifact_digests.any(fn(digest) {
+        !digest_is_valid(digest)
+      }) ||
+      parts[index + 1:].any(fn(candidate) { candidate.part_id == part.part_id }) {
+      return Err(
+        migration_validation_error("Part revision dependency is invalid"),
+      )
+    }
+  }
+  let impacts : Array[MigrationPartImpact] = []
+  let carried : Array[@control.RevisionId] = []
+  let mut selection_changed = false
+  for change in changes {
+    if migration_change_requires_new_selection(change.kind) {
+      selection_changed = true
+    }
+  }
+  for part in parts {
+    let reasons : Array[MigrationImpactReason] = []
+    if !part.dependency_complete {
+      reasons.push(MigrationUncertainDependencyImpact)
+    }
+    for change in changes {
+      if migration_change_is_general(change.kind) {
+        reasons.push(MigrationGeneralValidationImpact(change.kind))
+      } else if part.dependency_artifact_digests.contains(
+          change.previous_digest,
+        ) {
+        reasons.push(MigrationDirectArtifactImpact(change.kind))
+      }
+    }
+    if reasons.length() > 0 {
+      impacts.push({
+        part_id: part.part_id,
+        reasons,
+        was_integrated: part.integrated,
+      })
+    } else {
+      carried.push(part.effective_task_contract_revision_id)
+    }
+  }
+  impacts.sort_by(fn(left, right) { left.part_id.compare(right.part_id) })
+  carried.sort_by(fn(left, right) { left.compare(right) })
+  let application = if selection_changed ||
+    impacts.any(fn(impact) { impact.was_integrated }) {
+    MigrationRevisionRequiresGoalSupersession
+  } else {
+    MigrationRevisionAppliesInPlace
+  }
+  Ok({
+    previous_contract_ref,
+    next_contract_ref,
+    changes,
+    impacted_parts: impacts,
+    carried_forward_task_contract_revision_ids: carried,
+    application,
+  })
+}
+
+///|
+pub fn migration_part_evidence_is_current(
+  impact_set : MigrationContractRevisionImpactSet,
+  part_id : @control.PartId,
+) -> Bool {
+  !impact_set.impacted_parts.any(fn(impact) { impact.part_id == part_id })
+}
+
+///|
+pub fn validate_migration_supersession(
+  supersession : MigrationSupersession,
+) -> Result[Unit, @types.ChoirError] {
+  match validate_migration_contract_ref(supersession.previous_contract_ref) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  match validate_migration_contract_ref(supersession.next_contract_ref) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  if supersession.prior_goal_id.0 == "" ||
+    supersession.previous_contract_ref.migration_lineage_id !=
+    supersession.next_contract_ref.migration_lineage_id ||
+    supersession.next_contract_ref.revision <=
+    supersession.previous_contract_ref.revision ||
+    supersession.impacted_integrated_part_ids.length() == 0 ||
+    supersession.observed_goal_head.0 == "" ||
+    supersession.cutoff_sequence.0 <= 0L {
+    return Err(migration_validation_error("migration supersession is invalid"))
+  }
+  for index, part_id in supersession.impacted_integrated_part_ids {
+    if part_id.0 == "" ||
+      supersession.impacted_integrated_part_ids[index + 1:].contains(part_id) {
+      return Err(migration_validation_error("supersession Part is invalid"))
+    }
+  }
+  Ok(())
+}
+
+///|
+pub fn validate_migration_continuation_ref(
+  continuation : MigrationContinuationRef,
+) -> Result[Unit, @types.ChoirError] {
+  match validate_migration_contract_ref(continuation.next_contract_ref) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  if continuation.prior_goal_id.0 == "" ||
+    !digest_is_valid(continuation.supersession_artifact_digest) ||
+    continuation.cancellation_summary_id.0 == "" ||
+    continuation.terminal_preserved_head.0 == "" {
+    Err(migration_validation_error("migration continuation is invalid"))
+  } else {
+    Ok(())
+  }
+}
+
+///|
 fn observation_index(
   observations : Array[MigrationFindingPatternObservation],
   key : @control.Digest,
