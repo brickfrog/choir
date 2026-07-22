@@ -782,7 +782,13 @@ pub fn validate_migration_production_admission_ref(
     Some(digest) => !digest_is_valid(digest)
     None => false
   }
-  if !all_digests_valid(digests) || rehearsal_invalid {
+  let continuation_invalid = match reference.migration_continuation_ref_digest {
+    Some(digest) => !digest_is_valid(digest)
+    None => false
+  }
+  if !all_digests_valid(digests) ||
+    rehearsal_invalid ||
+    continuation_invalid {
     Err(migration_validation_error("production admission reference is invalid"))
   } else {
     Ok(())

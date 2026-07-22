@@ -228,5 +228,6 @@ pub fn validate_migration_production_admission(
     rehearsal_evidence_ref_digest: rehearsal.map(fn(evidence) {
       @migration.rehearsal_evidence_ref_digest(evidence)
     }),
+    migration_continuation_ref_digest: None,
   })
 }

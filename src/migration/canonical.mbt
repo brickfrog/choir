@@ -766,7 +766,7 @@ pub fn rehearsal_evidence_ref_digest(
 pub fn canonical_migration_production_admission_ref_bytes(
   reference : MigrationProductionAdmissionRef,
 ) -> Bytes {
-  canonical_fields("choir.migration-production-admission-ref.v1", [
+  canonical_fields("choir.migration-production-admission-ref.v2", [
     @utf8.decode_lossy(
       canonical_migration_contract_ref_bytes(reference.migration_contract_ref),
     ),
@@ -775,6 +775,10 @@ pub fn canonical_migration_production_admission_ref_bytes(
     reference.judge_qualification_report_digest.0,
     reference.judge_qualification_evidence_ref_digest.0,
     match reference.rehearsal_evidence_ref_digest {
+      Some(digest) => digest.0
+      None => "none"
+    },
+    match reference.migration_continuation_ref_digest {
       Some(digest) => digest.0
       None => "none"
     },

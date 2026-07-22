@@ -360,6 +360,7 @@ pub(all) struct MigrationProductionAdmissionRef {
   judge_qualification_report_digest : @control.Digest
   judge_qualification_evidence_ref_digest : @control.Digest
   rehearsal_evidence_ref_digest : @control.Digest?
+  migration_continuation_ref_digest : @control.Digest?
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|

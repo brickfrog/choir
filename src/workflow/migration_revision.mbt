@@ -119,13 +119,20 @@ pub fn validate_migration_continuation_terminal(
 
 ///|
 pub fn validate_migration_continuation_selection(
+  production_admission : @migration.MigrationProductionAdmissionRef,
   continuation : @migration.MigrationContinuationRef,
   supersession : @migration.MigrationSupersession,
   prior_execution : GoalExecutionRecord,
   terminal_goal_head : @control.GitOid,
   expected_new_base : @control.GitOid,
   task_contracts : Array[@control.TaskContractRevision],
-) -> Result[Unit, @types.ChoirError] {
+) -> Result[@migration.MigrationProductionAdmissionRef, @types.ChoirError] {
+  match @migration.validate_migration_production_admission_ref(
+    production_admission,
+  ) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   match
     validate_migration_continuation_terminal(
       continuation, supersession, prior_execution, terminal_goal_head, expected_new_base,
@@ -139,7 +146,10 @@ pub fn validate_migration_continuation_selection(
   let continuation_digest = @migration.migration_continuation_ref_digest(
     continuation,
   )
-  if task_contracts.any(fn(contract) {
+  if production_admission.migration_contract_ref !=
+    continuation.next_contract_ref ||
+    production_admission.migration_continuation_ref_digest is Some(_) ||
+    task_contracts.any(fn(contract) {
       contract.base_commit_oid != expected_new_base ||
       contract.migration_contract_ref != Some(continuation.next_contract_ref) ||
       contract.migration_continuation_ref_digest != Some(continuation_digest)
@@ -148,7 +158,10 @@ pub fn validate_migration_continuation_selection(
       migration_revision_error("continuation task contracts are inconsistent"),
     )
   }
-  Ok(())
+  Ok({
+    ..production_admission,
+    migration_continuation_ref_digest: Some(continuation_digest),
+  })
 }
 
 ///|

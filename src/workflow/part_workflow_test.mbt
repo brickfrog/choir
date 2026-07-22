@@ -1915,6 +1915,24 @@ test "integrated Parts authorize one immutable Goal branch seal" {
       }
     }),
   }
+  let failed_rehearsal_execution = {
+    ..required_rehearsal_execution,
+    goal: {
+      ..required_rehearsal_execution.goal,
+      lifecycle: @control.GoalLifecycle::GoalActive(
+        @control.GoalActiveCondition::GoalIntegrityBlocked,
+      ),
+    },
+    state: @workflow.GoalExecutionState::GoalExecutionBlocked,
+    cancellation_request: None,
+  }
+  assert_true(
+    @workflow.validate_rehearsal_admission(
+      required_contract_ref, sampled_inventory_digest, required_rehearsal_reference,
+      failed_rehearsal_execution, assured,
+    )
+    is Err(_),
+  )
   let required_acceptance = {
     ..migration_acceptance,
     contract_ref: required_contract_ref,

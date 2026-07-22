@@ -466,6 +466,11 @@ pub fn evaluate_goal_proposal(
   let continuation_digests = proposal.parts.filter_map(fn(part) {
     part.task_contract.migration_continuation_ref_digest
   })
+  let expected_continuation_digest = if continuation_digests.length() == 0 {
+    None
+  } else {
+    Some(continuation_digests[0])
+  }
   let migration_binding_inconsistent = (
       migration_refs.length() > 0 &&
       migration_refs.length() != proposal.parts.length()
@@ -487,7 +492,9 @@ pub fn evaluate_goal_proposal(
     (_, None) => true
     (_, Some(admission)) =>
       @migration.validate_migration_production_admission_ref(admission) is Err(_) ||
-      admission.migration_contract_ref != migration_refs[0]
+      admission.migration_contract_ref != migration_refs[0] ||
+      admission.migration_continuation_ref_digest !=
+      expected_continuation_digest
   }
   for part_id in proposed_part_ids {
     if proposal_part_count(proposal, part_id) > 1 {

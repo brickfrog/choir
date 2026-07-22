@@ -19,6 +19,7 @@ fn submission_migration_admission(
     judge_qualification_report_digest: submission_digest,
     judge_qualification_evidence_ref_digest: submission_digest,
     rehearsal_evidence_ref_digest: None,
+    migration_continuation_ref_digest: None,
   }
 }
 
@@ -215,6 +216,62 @@ test "accepted migration Part retains its exact context manifest" {
       fn(_) { true },
     ).unwrap().outcome ==
     @workflow.GoalSelectionOutcome::GoalSelectionRejected,
+  )
+  let continued_contract = {
+    ..contract,
+    migration_continuation_ref_digest: Some(submission_process_digest),
+  }
+  let continued_part = {
+    ..proposal.parts[0],
+    task_contract: continued_contract,
+    part_context_manifest: Some({
+      ..manifest,
+      part_task_contract_revision_id: continued_contract.id,
+      part_task_contract_digest: continued_contract.digest,
+    }),
+  }
+  let unbound_continuation = {
+    ..proposal,
+    parts: [continued_part],
+  }
+  assert_true(
+    @workflow.evaluate_goal_proposal(
+      unbound_continuation,
+      submission_snapshot([
+        submission_source(
+          "migration-part",
+          [],
+          @workflow.SelectionSourceState::SelectionSourceOpen,
+        ),
+      ]),
+      fn(_) { true },
+    ).unwrap().outcome ==
+    @workflow.GoalSelectionOutcome::GoalSelectionRejected,
+  )
+  let bound_continuation = {
+    ..unbound_continuation,
+    migration_production_admission: proposal.migration_production_admission.map(
+      fn(admission) {
+        {
+          ..admission,
+          migration_continuation_ref_digest: Some(submission_process_digest),
+        }
+      },
+    ),
+  }
+  assert_true(
+    @workflow.evaluate_goal_proposal(
+      bound_continuation,
+      submission_snapshot([
+        submission_source(
+          "migration-part",
+          [],
+          @workflow.SelectionSourceState::SelectionSourceOpen,
+        ),
+      ]),
+      fn(_) { true },
+    ).unwrap().outcome ==
+    @workflow.GoalSelectionOutcome::GoalSelectionAccepted,
   )
   assert_true(
     @workflow.evaluate_goal_proposal(
@@ -1014,6 +1071,31 @@ test "evidence-only Goal binds completion and cancels only after assurance" {
     @control.GitOid("supersession-observed-head"),
     101L,
   ).unwrap()
+  let publishable_assured = {
+    ..assured,
+    completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
+  }
+  let succeeded_before_supersession = @workflow.advance_goal_execution_state(
+    publishable_assured,
+    @workflow.GoalExecutionState::GoalExecutionSucceeded,
+  ).unwrap()
+  assert_true(
+    @workflow.authorize_migration_goal_supersession(
+      succeeded_before_supersession,
+      impact_set,
+      [@control.PartId("a")],
+      @control.GitOid("supersession-observed-head"),
+      101L,
+    )
+    is Err(_),
+  )
+  assert_true(
+    @workflow.advance_goal_execution_state(
+      supersession.canceling_record,
+      @workflow.GoalExecutionState::GoalExecutionSucceeded,
+    )
+    is Err(_),
+  )
   assert_eq(
     supersession.canceling_record.cancellation_request.map(fn(request) {
       request.cause
@@ -1085,19 +1167,34 @@ test "evidence-only Goal binds completion and cancels only after assurance" {
     migration_contract_ref: Some(next_contract_ref),
     migration_continuation_ref_digest: Some(continuation_digest),
   }
-  assert_true(
-    @workflow.validate_migration_continuation_selection(
+  let continuation_admission = @workflow.validate_migration_continuation_selection(
+      submission_migration_admission(next_contract_ref),
       continuation,
       supersession.supersession,
       canceled_supersession,
       terminal_head,
       terminal_head,
       [continuation_contract],
-    )
-    is Ok(_),
+    ).unwrap()
+  assert_eq(
+    continuation_admission.migration_continuation_ref_digest,
+    Some(continuation_digest),
   )
   assert_true(
     @workflow.validate_migration_continuation_selection(
+      submission_migration_admission(next_contract_ref),
+      continuation,
+      supersession.supersession,
+      supersession.canceling_record,
+      terminal_head,
+      terminal_head,
+      [continuation_contract],
+    )
+    is Err(_),
+  )
+  assert_true(
+    @workflow.validate_migration_continuation_selection(
+      submission_migration_admission(next_contract_ref),
       continuation,
       supersession.supersession,
       canceled_supersession,
