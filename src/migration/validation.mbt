@@ -429,6 +429,30 @@ pub fn validate_migration_inventory(
       }
     }
   }
+  let resolved : Array[InventoryStableKey] = []
+  while resolved.length() < stable_keys.length() {
+    let mut progressed = false
+    for unit in inventory.units {
+      if resolved.contains(unit.stable_key) {
+        continue
+      }
+      let ready = unit.dependency_keys.all(fn(dependency) {
+        match dependency {
+          InventoryUnitDependency(key) => resolved.contains(key)
+          InventoryExternalDependency(_) => true
+        }
+      })
+      if ready {
+        resolved.push(unit.stable_key)
+        progressed = true
+      }
+    }
+    if !progressed {
+      return Err(
+        migration_validation_error("inventory dependency cycle exists"),
+      )
+    }
+  }
   Ok(())
 }
 
@@ -543,6 +567,54 @@ fn migration_bead_kind_for_unit(
 }
 
 ///|
+pub fn validate_migration_bead_proposal(
+  proposal : MigrationBeadProposal,
+  is_nfc : (String) -> Bool,
+) -> Result[Unit, @types.ChoirError] {
+  match validate_migration_contract_ref(proposal.migration_contract_ref) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  if proposal.stable_key.0 == "" ||
+    proposal.title != "Migrate " + proposal.stable_key.0 ||
+    proposal.ownership_claim.0 == "" ||
+    proposal.source_paths.length() == 0 ||
+    proposal.id !=
+    migration_bead_id(
+      proposal.migration_contract_ref,
+      proposal.stable_key,
+      proposal.kind,
+    ) ||
+    proposal.idempotency_key !=
+    migration_bead_idempotency_key(
+      proposal.migration_contract_ref,
+      proposal.stable_key,
+      proposal.kind,
+    ) ||
+    proposal.blocking_dependency_ids.contains(proposal.id) ||
+    proposal.verification_specs.length() == 0 ||
+    proposal.verification_specs.any(fn(spec) {
+      !inventory_verification_spec_is_valid(spec)
+    }) {
+    return Err(migration_validation_error("migration Bead proposal is invalid"))
+  }
+  for index, dependency in proposal.blocking_dependency_ids {
+    if dependency.0 == "" ||
+      proposal.blocking_dependency_ids[index + 1:].contains(dependency) {
+      return Err(
+        migration_validation_error("migration Bead dependency is invalid"),
+      )
+    }
+  }
+  for path in proposal.source_paths {
+    if @control.validate_repo_path(path, is_nfc) is Err(_) {
+      return Err(migration_validation_error("migration Bead path is invalid"))
+    }
+  }
+  Ok(())
+}
+
+///|
 pub fn project_migration_bead_proposals(
   inventory : MigrationInventory,
   contract_ref : @control.MigrationContractRef,
@@ -604,6 +676,12 @@ pub fn project_migration_bead_proposals(
     }
   }
   proposals.sort_by(fn(left, right) { left.id.compare(right.id) })
+  for proposal in proposals {
+    match validate_migration_bead_proposal(proposal, is_nfc) {
+      Ok(_) => ()
+      Err(error) => return Err(error)
+    }
+  }
   Ok(proposals)
 }
 

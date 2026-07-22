@@ -455,6 +455,257 @@ async fn dispatch_native_task_create(
 }
 
 ///|
+pub(all) struct NativeMigrationBeadMaterialization {
+  bead_ids : Array[String]
+  created_ids : Array[String]
+  adopted_ids : Array[String]
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct NativeMigrationBeadContent {
+  id : String
+  title : String
+  description : String
+  acceptance_criteria : String
+  notes : String
+  blocking_dependency_ids : Array[String]
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+fn native_migration_bead_description(
+  proposal : @migration.MigrationBeadProposal,
+) -> String {
+  let paths = proposal.source_paths.map(@control.repo_path_text)
+  paths.sort()
+  "Migration inventory unit: " +
+  proposal.stable_key.0 +
+  "\nContract: " +
+  proposal.migration_contract_ref.contract_artifact_digest.0 +
+  "\nOwnership: " +
+  proposal.ownership_claim.0 +
+  "\nPaths: " +
+  paths.join(",")
+}
+
+///|
+fn native_migration_bead_acceptance(
+  proposal : @migration.MigrationBeadProposal,
+) -> String {
+  let specs = proposal.verification_specs.map(fn(spec) {
+    spec.id.0 +
+    "@" +
+    spec.version.to_string() +
+    ":" +
+    spec.digest.0 +
+    ":" +
+    spec.process_spec_digest.0
+  })
+  specs.sort()
+  "Declared verification: " + specs.join(",")
+}
+
+///|
+fn native_migration_bead_notes(
+  proposal : @migration.MigrationBeadProposal,
+) -> String {
+  "migration-idempotency:" +
+  proposal.idempotency_key.0 +
+  "\nproposal-digest:" +
+  @storage.artifact_digest(
+    @migration.canonical_migration_bead_proposal_bytes(proposal),
+  ).0
+}
+
+///|
+pub fn native_migration_bead_content(
+  proposal : @migration.MigrationBeadProposal,
+) -> NativeMigrationBeadContent {
+  let dependencies = proposal.blocking_dependency_ids.map(fn(id) { id.0 })
+  dependencies.sort()
+  {
+    id: proposal.id.0,
+    title: proposal.title,
+    description: native_migration_bead_description(proposal),
+    acceptance_criteria: native_migration_bead_acceptance(proposal),
+    notes: native_migration_bead_notes(proposal),
+    blocking_dependency_ids: dependencies,
+  }
+}
+
+///|
+fn native_migration_bead_is_exact(
+  task : NativeConductorTask,
+  proposal : @migration.MigrationBeadProposal,
+) -> Bool {
+  let content = native_migration_bead_content(proposal)
+  task.id == content.id &&
+  task.title == content.title &&
+  task.description == content.description &&
+  task.acceptance_criteria == content.acceptance_criteria &&
+  task.notes == content.notes &&
+  task.status == @types.TaskStatus::Todo &&
+  task.dependencies_loaded &&
+  task.blocking_dependency_ids == content.blocking_dependency_ids
+}
+
+///|
+pub async fn materialize_native_migration_beads(
+  project_dir : String,
+  proposals : Array[@migration.MigrationBeadProposal],
+  capture? : async (Command) -> (Int, String) = capture_command_merged,
+) -> Result[NativeMigrationBeadMaterialization, @types.ChoirError] {
+  let ordered = proposals.copy()
+  ordered.sort_by(fn(left, right) { left.id.compare(right.id) })
+  for index, proposal in ordered {
+    if @migration.validate_migration_bead_proposal(proposal, fn(_) { true })
+      is Err(_) ||
+      ordered[index + 1:].any(fn(candidate) { candidate.id == proposal.id }) {
+      return Err(
+        @types.ChoirError::validation_error(
+          "migration Bead proposal identity is invalid",
+        ),
+      )
+    }
+    if proposal.blocking_dependency_ids.any(fn(dependency) {
+        !ordered.any(fn(candidate) { candidate.id == dependency })
+      }) {
+      return Err(
+        @types.ChoirError::validation_error(
+          "migration Bead dependency proposal is absent",
+        ),
+      )
+    }
+  }
+  let missing : Array[@migration.MigrationBeadProposal] = []
+  let adopted_ids : Array[String] = []
+  for proposal in ordered {
+    let observed = capture({
+      program: "bd",
+      args: ["show", proposal.id.0, "--json", "--readonly"],
+      workdir: Some(project_dir),
+    })
+    if observed.0 != 0 {
+      missing.push(proposal)
+      continue
+    }
+    let task = match
+      native_conductor_tasks_from_output(
+        observed.1,
+        require_dependency_details=true,
+      ) {
+      Ok([value]) => value
+      Ok(_) =>
+        return Err(
+          @types.ChoirError::validation_error(
+            "existing migration Bead is ambiguous",
+          ),
+        )
+      Err(error) => return Err(error)
+    }
+    if !native_migration_bead_is_exact(task, proposal) {
+      return Err(
+        @types.ChoirError::validation_error(
+          "existing migration Bead conflicts with its proposal",
+        ),
+      )
+    }
+    adopted_ids.push(proposal.id.0)
+  }
+  let created_ids : Array[String] = []
+  let pending = missing.copy()
+  while pending.length() > 0 {
+    let mut progressed = false
+    for index = pending.length() - 1; index >= 0; index = index - 1 {
+      let proposal = pending[index]
+      if proposal.blocking_dependency_ids.any(fn(dependency) {
+          pending.any(fn(candidate) { candidate.id == dependency })
+        }) {
+        continue
+      }
+      let dependencies = proposal.blocking_dependency_ids.map(fn(id) { id.0 })
+      dependencies.sort()
+      let arguments = [
+        "create",
+        proposal.title,
+        "--id",
+        proposal.id.0,
+        "--force",
+        "--type",
+        "task",
+        "--priority",
+        "2",
+        "--json",
+        "--description",
+        native_migration_bead_description(proposal),
+        "--acceptance",
+        native_migration_bead_acceptance(proposal),
+        "--notes",
+        native_migration_bead_notes(proposal),
+      ]
+      if dependencies.length() > 0 {
+        arguments.push("--deps")
+        arguments.push(dependencies.join(","))
+      }
+      match
+        native_conductor_capture_beads(
+          project_dir, "create migration Bead", arguments, capture,
+        ) {
+        Ok(_) => ()
+        Err(error) => return Err(error)
+      }
+      let verified = match
+        native_conductor_capture_beads(
+          project_dir,
+          "show migration Bead",
+          ["show", proposal.id.0, "--json", "--readonly"],
+          capture,
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let task = match
+        native_conductor_tasks_from_output(
+          verified,
+          require_dependency_details=true,
+        ) {
+        Ok([value]) => value
+        Ok(_) =>
+          return Err(
+            @types.ChoirError::validation_error(
+              "created migration Bead is ambiguous",
+            ),
+          )
+        Err(error) => return Err(error)
+      }
+      if !native_migration_bead_is_exact(task, proposal) {
+        return Err(
+          @types.ChoirError::validation_error(
+            "created migration Bead does not match its proposal",
+          ),
+        )
+      }
+      created_ids.push(proposal.id.0)
+      ignore(pending.remove(index))
+      progressed = true
+    }
+    if !progressed {
+      return Err(
+        @types.ChoirError::validation_error(
+          "migration Bead dependency graph is cyclic",
+        ),
+      )
+    }
+  }
+  created_ids.sort()
+  adopted_ids.sort()
+  Ok({
+    bead_ids: ordered.map(fn(proposal) { proposal.id.0 }),
+    created_ids,
+    adopted_ids,
+  })
+}
+
+///|
 async fn dispatch_native_task_update(
   project_dir : String,
   request : @types.Request,
