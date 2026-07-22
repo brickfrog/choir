@@ -1,0 +1,20 @@
+import {
+  "choir/src/conformance",
+  "choir/src/control",
+  "choir/src/exec",
+  "choir/src/harness",
+  "choir/src/sandbox",
+  "choir/src/storage",
+  "choir/src/sys",
+  "choir/src/types",
+  "choir/src/workflow",
+  "moonbitlang/async",
+  "moonbitlang/async/process",
+  "moonbitlang/core/env",
+  "moonbitlang/core/json",
+  "moonbitlang/core/ref",
+  "moonbitlang/core/string",
+  "moonbitlang/core/encoding/utf8",
+}
+
+pkgtype(kind: "executable")

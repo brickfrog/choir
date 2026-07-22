@@ -18,6 +18,8 @@
 #include <unistd.h>
 
 static volatile sig_atomic_t choir_cleanup_runtime_native = 0;
+
+int choir_rm_rf(const char *path);
 static volatile sig_atomic_t choir_sigusr1_flag = 0;
 static struct sigaction choir_saved_sigpipe_for_test;
 static int choir_saved_sigpipe_for_test_valid = 0;
@@ -27,6 +29,39 @@ static int choir_saved_sigpipe_for_test_valid = 0;
 #else
 #define CHOIR_SIGNAL_EXIT_CLOCK CLOCK_REALTIME
 #endif
+
+int choir_mint_local_token(char *out, int out_size) {
+    unsigned char random_bytes[32];
+    static const char hex[] = "0123456789abcdef";
+    if (out == NULL || out_size < 65) {
+        return -1;
+    }
+    int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        return -1;
+    }
+    size_t offset = 0;
+    while (offset < sizeof(random_bytes)) {
+        ssize_t read_count = read(fd, random_bytes + offset, sizeof(random_bytes) - offset);
+        if (read_count < 0 && errno == EINTR) {
+            continue;
+        }
+        if (read_count <= 0) {
+            close(fd);
+            memset(random_bytes, 0, sizeof(random_bytes));
+            return -1;
+        }
+        offset += (size_t)read_count;
+    }
+    close(fd);
+    for (size_t i = 0; i < sizeof(random_bytes); i++) {
+        out[i * 2] = hex[random_bytes[i] >> 4];
+        out[i * 2 + 1] = hex[random_bytes[i] & 0x0f];
+    }
+    out[64] = '\0';
+    memset(random_bytes, 0, sizeof(random_bytes));
+    return 64;
+}
 
 static int choir_append_literal(char *buf, int pos, int cap, const char *literal) {
     for (int i = 0; literal[i] != '\0'; i++) {
@@ -349,6 +384,33 @@ int choir_spawn_leader_exited_pgroup_for_test(
     return (int)leader;
 }
 
+int choir_spawn_nested_sessions_for_test(
+    const char *root_path,
+    const char *child_path,
+    const char *sentinel_path) {
+    pid_t root = fork();
+    if (root < 0) return -1;
+    if (root == 0) {
+        if (setsid() < 0) _exit(127);
+        (void)choir_unblock_signal_for_test(SIGTERM);
+        if (choir_write_pid_file_for_test(root_path, getpid()) != 0) _exit(127);
+        pid_t child = fork();
+        if (child < 0) _exit(127);
+        if (child == 0) {
+            if (setsid() < 0) _exit(127);
+            (void)choir_unblock_signal_for_test(SIGTERM);
+            if (choir_write_pid_file_for_test(child_path, getpid()) != 0) _exit(127);
+            sleep(30);
+            choir_touch_file_for_test(sentinel_path);
+            _exit(0);
+        }
+        sleep(30);
+        choir_touch_file_for_test(sentinel_path);
+        _exit(0);
+    }
+    return (int)root;
+}
+
 int choir_ignore_sigpipe(void) {
     return signal(SIGPIPE, SIG_IGN) == SIG_ERR ? -1 : 0;
 }
@@ -424,6 +486,7 @@ void choir_init_cleanup_runtime_artifacts(void) {
     unlink(".choir/run/server.pid");
     unlink(".choir/run/server.sock");
     unlink(".choir/run/run_id");
+    (void)choir_rm_rf(".choir/run/codex-conductor");
 }
 
 int choir_get_file_size(const char* path) {
@@ -506,7 +569,7 @@ int choir_rm_rf(const char *path) {
  * "..").  Returns bytes written, or -1 if the directory could not be opened.
  * If the buffer would overflow, stops before the entry that would not fit —
  * caller sees a partial list with no indicator (sufficient for our use: the
- * caller expects small directories like .choir/state/kv and .choir/worktrees). */
+ * callers use it only for bounded local directories. */
 int choir_list_dir(const char *path, char *buf, int max_size) {
     DIR *d = opendir(path);
     if (!d) {
@@ -530,12 +593,192 @@ int choir_list_dir(const char *path, char *buf, int max_size) {
     return total;
 }
 
+int choir_list_dir_all(const char *path, char *buf, int max_size) {
+    DIR *d = opendir(path);
+    if (!d) {
+        return -1;
+    }
+    struct dirent *ent;
+    int total = 0;
+    while ((ent = readdir(d)) != NULL) {
+        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) {
+            continue;
+        }
+        int len = (int)strlen(ent->d_name);
+        if (total + len + 1 > max_size) {
+            break;
+        }
+        memcpy(buf + total, ent->d_name, (size_t)len);
+        buf[total + len] = '\n';
+        total += len + 1;
+    }
+    closedir(d);
+    return total;
+}
+
 void choir_read_file_to_buf(const char* path, char* buf, int size) {
     FILE* f = fopen(path, "rb");
     if (!f) return;
     size_t n = fread(buf, 1, (size_t)size, f);
     (void)n;
     fclose(f);
+}
+
+int choir_read_file_prefix(const char *path, char *buf, int max_size) {
+    if (path == NULL || buf == NULL || max_size <= 0 || max_size > 65536) {
+        return -1;
+    }
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        return -1;
+    }
+    int total = 0;
+    while (total < max_size) {
+        ssize_t n = read(fd, buf + total, (size_t)(max_size - total));
+        if (n < 0 && errno == EINTR) {
+            continue;
+        }
+        if (n <= 0) {
+            break;
+        }
+        total += (int)n;
+    }
+    close(fd);
+    return total;
+}
+
+static int choir_buffer_contains(
+    const char *buffer,
+    int buffer_size,
+    const char *needle
+) {
+    size_t needle_size = strlen(needle);
+    if (needle_size == 0 || needle_size > (size_t)buffer_size) {
+        return 0;
+    }
+    for (int offset = 0; offset + (int)needle_size <= buffer_size; offset++) {
+        if (memcmp(buffer + offset, needle, needle_size) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int choir_environment_has_entry(
+    const char *buffer,
+    int buffer_size,
+    const char *entry
+) {
+    size_t entry_size = strlen(entry);
+    int offset = 0;
+    while (offset < buffer_size) {
+        int end = offset;
+        while (end < buffer_size && buffer[end] != '\0') {
+            end++;
+        }
+        if ((size_t)(end - offset) == entry_size &&
+            memcmp(buffer + offset, entry, entry_size) == 0) {
+            return 1;
+        }
+        offset = end + 1;
+    }
+    return 0;
+}
+
+int choir_pgid_has_process_identity(
+    int pgid,
+    const char *environment_entry,
+    const char *command_fragment
+) {
+    if (pgid <= 1 || environment_entry == NULL || command_fragment == NULL) {
+        return 0;
+    }
+    DIR *proc = opendir("/proc");
+    if (proc == NULL) {
+        return 0;
+    }
+    struct dirent *entry;
+    char path[128];
+    char environment[65536];
+    char command[65536];
+    int matched = 0;
+    while ((entry = readdir(proc)) != NULL) {
+        char *end = NULL;
+        errno = 0;
+        long raw_pid = strtol(entry->d_name, &end, 10);
+        if (errno != 0 || end == entry->d_name || *end != '\0' ||
+            raw_pid <= 1 || raw_pid > INT_MAX || getpgid((pid_t)raw_pid) != pgid) {
+            continue;
+        }
+        int written = snprintf(
+            path, sizeof(path), "/proc/%ld/environ", raw_pid
+        );
+        if (written <= 0 || (size_t)written >= sizeof(path)) {
+            continue;
+        }
+        int environment_size = choir_read_file_prefix(
+            path, environment, (int)sizeof(environment)
+        );
+        written = snprintf(path, sizeof(path), "/proc/%ld/cmdline", raw_pid);
+        if (written <= 0 || (size_t)written >= sizeof(path)) {
+            continue;
+        }
+        int command_size = choir_read_file_prefix(
+            path, command, (int)sizeof(command)
+        );
+        if (environment_size > 0 && command_size > 0 &&
+            choir_environment_has_entry(
+                environment, environment_size, environment_entry
+            ) &&
+            choir_buffer_contains(command, command_size, command_fragment)) {
+            matched = 1;
+            break;
+        }
+    }
+    closedir(proc);
+    return matched;
+}
+
+int choir_pgid_has_non_zombie_process(int pgid) {
+    if (pgid <= 1) {
+        return 0;
+    }
+    DIR *proc = opendir("/proc");
+    if (proc == NULL) {
+        return 0;
+    }
+    struct dirent *entry;
+    char path[128];
+    char stat_buffer[4096];
+    int running = 0;
+    while ((entry = readdir(proc)) != NULL) {
+        char *end = NULL;
+        errno = 0;
+        long raw_pid = strtol(entry->d_name, &end, 10);
+        if (errno != 0 || end == entry->d_name || *end != '\0' ||
+            raw_pid <= 1 || raw_pid > INT_MAX || getpgid((pid_t)raw_pid) != pgid) {
+            continue;
+        }
+        int written = snprintf(path, sizeof(path), "/proc/%ld/stat", raw_pid);
+        if (written <= 0 || (size_t)written >= sizeof(path)) {
+            continue;
+        }
+        int stat_size = choir_read_file_prefix(
+            path, stat_buffer, (int)sizeof(stat_buffer) - 1
+        );
+        if (stat_size <= 0) {
+            continue;
+        }
+        stat_buffer[stat_size] = '\0';
+        char *close = strrchr(stat_buffer, ')');
+        if (close != NULL && close[1] == ' ' &&
+            close[2] != 'Z' && close[2] != 'X') {
+            running = 1;
+            break;
+        }
+    }
+    closedir(proc);
+    return running;
 }
 
 void choir_exit(int code) {
@@ -629,6 +872,87 @@ void choir_init_kill_server_pid_sequence(int pid) {
     }
 }
 
+#define CHOIR_MAX_SERVER_TREE_PIDS 4096
+
+static int choir_proc_ppid(pid_t pid, pid_t *ppid_out) {
+    char path[64];
+    char stat_line[4096];
+    snprintf(path, sizeof(path), "/proc/%ld/stat", (long)pid);
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return -1;
+    ssize_t n = read(fd, stat_line, sizeof(stat_line) - 1);
+    close(fd);
+    if (n <= 0) return -1;
+    stat_line[n] = '\0';
+    char *close_paren = strrchr(stat_line, ')');
+    char state = '\0';
+    long parent = -1;
+    if (close_paren == NULL ||
+        sscanf(close_paren + 1, " %c %ld", &state, &parent) != 2 ||
+        parent < 0) {
+        return -1;
+    }
+    *ppid_out = (pid_t)parent;
+    return 0;
+}
+
+static int choir_pid_in_list(const pid_t *pids, int count, pid_t pid) {
+    for (int i = 0; i < count; i++) {
+        if (pids[i] == pid) return 1;
+    }
+    return 0;
+}
+
+static int choir_collect_process_tree(pid_t root, pid_t *pids, int capacity) {
+    if (root <= 1 || capacity <= 0) return 0;
+    int count = 1;
+    pids[0] = root;
+    int changed = 1;
+    while (changed && count < capacity) {
+        changed = 0;
+        DIR *proc = opendir("/proc");
+        if (proc == NULL) break;
+        struct dirent *entry;
+        while ((entry = readdir(proc)) != NULL && count < capacity) {
+            char *end = NULL;
+            long raw = strtol(entry->d_name, &end, 10);
+            if (entry->d_name[0] == '\0' || end == NULL || *end != '\0' || raw <= 1) {
+                continue;
+            }
+            pid_t candidate = (pid_t)raw;
+            if (choir_pid_in_list(pids, count, candidate)) continue;
+            pid_t parent = -1;
+            if (choir_proc_ppid(candidate, &parent) == 0 &&
+                choir_pid_in_list(pids, count, parent)) {
+                pids[count++] = candidate;
+                changed = 1;
+            }
+        }
+        closedir(proc);
+    }
+    return count;
+}
+
+/*
+ * Stop the exact detached server tree, including provider children that call
+ * setsid(2) and therefore leave the daemon's process group. The /proc walk is
+ * rooted at the recorded daemon PID; it never signals unrelated processes.
+ */
+void choir_init_kill_server_tree_sequence(int pid) {
+    if (pid <= 1) return;
+    pid_t pids[CHOIR_MAX_SERVER_TREE_PIDS];
+    int count = choir_collect_process_tree((pid_t)pid, pids, CHOIR_MAX_SERVER_TREE_PIDS);
+    for (int i = count - 1; i >= 0; i--) {
+        if (kill(pids[i], SIGTERM) < 0 && errno != ESRCH) { /* best-effort */ }
+    }
+    if (kill(-(pid_t)pid, SIGTERM) < 0 && errno != ESRCH) { /* best-effort */ }
+    usleep(300000);
+    for (int i = count - 1; i >= 0; i--) {
+        if (kill(pids[i], SIGKILL) < 0 && errno != ESRCH) { /* best-effort */ }
+    }
+    if (kill(-(pid_t)pid, SIGKILL) < 0 && errno != ESRCH) { /* best-effort */ }
+}
+
 /**
  * Owned-pgroup teardown: SIGTERM the process group, brief delay, then SIGKILL.
  * Groups <= 1 are rejected as no-op: 0 is the caller's own group and 1
@@ -719,6 +1043,14 @@ int choir_spawn_serve(const char* exe, int exe_len) {
             _exit(0);
         }
         // Child 2
+        /*
+         * Make the detached server the leader of a bounded process group.
+         * `choir stop` can then terminate the daemon and every child that
+         * inherits its group without touching the caller's process group.
+         */
+        if (setsid() < 0) {
+            _exit(127);
+        }
         /* logs/ may not exist yet: detached child opens the log before serve boots. */
         mkdir(".choir", 0755);
         mkdir(".choir/logs", 0755);
@@ -736,6 +1068,45 @@ int choir_spawn_serve(const char* exe, int exe_len) {
     int st = 0;
     waitpid(pid, &st, 0);
     return 0;
+}
+
+int choir_spawn_goal_worker(const char* exe, int exe_len, const char* cwd, int cwd_len) {
+    (void)exe_len;
+    (void)cwd_len;
+    pid_t pid = fork();
+    if (pid < 0) {
+        return -1;
+    }
+    if (pid == 0) {
+        if (chdir(cwd) != 0) {
+            _exit(127);
+        }
+        char* argv[] = { (char*)exe, "run-goals", NULL };
+        execvp(exe, argv);
+        _exit(127);
+    }
+    return (int)pid;
+}
+
+int choir_child_process_state(int pid) {
+    if (pid <= 1) {
+        return -3;
+    }
+    int status = 0;
+    pid_t result = waitpid((pid_t)pid, &status, WNOHANG);
+    if (result == 0) {
+        return -2;
+    }
+    if (result < 0) {
+        return -3;
+    }
+    if (WIFEXITED(status)) {
+        return WEXITSTATUS(status);
+    }
+    if (WIFSIGNALED(status)) {
+        return 128 + WTERMSIG(status);
+    }
+    return -3;
 }
 
 static int choir_wait_for_uds_ready(const char* path) {
@@ -978,6 +1349,53 @@ int choir_getenv(const char* name, char* out, int out_size) {
     return len;
 }
 
+int choir_get_parent_env(const char* name, char* out, int out_size) {
+#ifdef __linux__
+    if (!name || !out || out_size <= 0 || strchr(name, '=') != NULL) return 0;
+    char path[64];
+    int path_len = snprintf(path, sizeof(path), "/proc/%ld/environ", (long)getppid());
+    if (path_len <= 0 || path_len >= (int)sizeof(path)) return 0;
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    char environment[65536];
+    ssize_t total = 0;
+    while (total < (ssize_t)sizeof(environment)) {
+        ssize_t count = read(fd, environment + total, sizeof(environment) - (size_t)total);
+        if (count < 0) {
+            if (errno == EINTR) continue;
+            close(fd);
+            return 0;
+        }
+        if (count == 0) break;
+        total += count;
+    }
+    close(fd);
+    size_t name_len = strlen(name);
+    ssize_t offset = 0;
+    while (offset < total) {
+        size_t remaining = (size_t)(total - offset);
+        size_t entry_len = strnlen(environment + offset, remaining);
+        if (entry_len == remaining) break;
+        if (entry_len > name_len &&
+            memcmp(environment + offset, name, name_len) == 0 &&
+            environment[offset + (ssize_t)name_len] == '=') {
+            const char *value = environment + offset + name_len + 1;
+            int value_len = (int)(entry_len - name_len - 1);
+            if (value_len >= out_size) return value_len;
+            memcpy(out, value, (size_t)value_len);
+            out[value_len] = '\0';
+            return value_len;
+        }
+        offset += (ssize_t)entry_len + 1;
+    }
+#else
+    (void)name;
+    (void)out;
+    (void)out_size;
+#endif
+    return 0;
+}
+
 int choir_setenv(const char* name, const char* value) {
     if (!name || !value) return -EINVAL;
     if (setenv(name, value, 1) != 0) return -errno;
@@ -1059,280 +1477,7 @@ int choir_symlink_force(const char* target, const char* linkpath) {
     return symlink(target, linkpath);
 }
 
-static int choir_spawn_wait_stderr_null(char **argv) {
-    pid_t pid = fork();
-    if (pid < 0) {
-        return -1;
-    }
-    if (pid == 0) {
-        int dn = open("/dev/null", O_WRONLY);
-        if (dn >= 0) {
-            dup2(dn, STDERR_FILENO);
-            close(dn);
-        }
-        execvp(argv[0], argv);
-        _exit(127);
-    }
-    int st = 0;
-    if (waitpid(pid, &st, 0) < 0) {
-        return -1;
-    }
-    if (WIFEXITED(st)) {
-        return WEXITSTATUS(st);
-    }
-    return -1;
-}
-
-static void choir_rm_rf_best_effort(const char *path) {
-    char *argv[] = {"rm", "-rf", (char *)path, NULL};
-    choir_spawn_wait_stderr_null(argv);
-}
-
 void choir_init_cleanup_purge_artifacts(void) {
-    DIR *wt = opendir(".choir/worktrees");
-    if (wt) {
-        struct dirent *ent;
-        char path[4096];
-        while ((ent = readdir(wt)) != NULL) {
-            if (ent->d_name[0] == '.') {
-                continue;
-            }
-            snprintf(path, sizeof(path), ".choir/worktrees/%s", ent->d_name);
-            struct stat st;
-            if (stat(path, &st) != 0) {
-                continue;
-            }
-            if (S_ISDIR(st.st_mode)) {
-                char *argv[] = {"git", "worktree", "remove", "--force", path, NULL};
-                choir_spawn_wait_stderr_null(argv);
-            }
-        }
-        closedir(wt);
-    }
-    choir_rm_rf_best_effort(".choir/worktrees");
-    choir_rm_rf_best_effort(".choir/state/inline");
-    choir_rm_rf_best_effort(".choir/state/outbox");
-    choir_rm_rf_best_effort(".choir/state/waves");
-    unlink(".choir/run/server.pid");
-    unlink(".choir/run/server.sock");
-    unlink(".choir/state/poller_state.json");
-    unlink(".choir/run/run_id");
-    DIR *kv = opendir(".choir/state/kv");
-    if (kv) {
-        struct dirent *ent;
-        char kp[4096];
-        while ((ent = readdir(kv)) != NULL) {
-            if (ent->d_name[0] == '.') {
-                continue;
-            }
-            const char *n = ent->d_name;
-            if (strncmp(n, "lifecycle--", 11) != 0 && strncmp(n, "children--", 10) != 0 &&
-                strncmp(n, "phase-dev--", 11) != 0 && strncmp(n, "phase-tl--", 10) != 0 &&
-                strncmp(n, "pending-wave--", 14) != 0) {
-                continue;
-            }
-            snprintf(kp, sizeof(kp), ".choir/state/kv/%s", n);
-            unlink(kp);
-        }
-        closedir(kv);
-    }
-}
-
-void choir_worktree_bootstrap_cleanup(const char *project_dir, const char *workspace, const char *branch) {
-    char *argv_prune[] = {"git", "-C", (char *)project_dir, "worktree", "prune", NULL};
-    choir_spawn_wait_stderr_null(argv_prune);
-    char *argv_rmwt[] = {"git", "-C", (char *)project_dir, "worktree", "remove", "--force", (char *)workspace, NULL};
-    choir_spawn_wait_stderr_null(argv_rmwt);
-    char *argv_rm[] = {"rm", "-rf", (char *)workspace, NULL};
-    choir_spawn_wait_stderr_null(argv_rm);
-    char *argv_bd[] = {"git", "-C", (char *)project_dir, "branch", "-D", (char *)branch, NULL};
-    choir_spawn_wait_stderr_null(argv_bd);
-}
-
-void choir_git_fetch_origin_branch_best_effort(const char *project_dir, const char *branch) {
-    struct stat st;
-    if (stat(project_dir, &st) != 0 || !S_ISDIR(st.st_mode)) {
-        fprintf(stderr, "choir: warning: could not cd to project directory %s\n", project_dir);
-        return;
-    }
-    char *argv[] = {"git", "-C", (char *)project_dir, "fetch", "origin", (char *)branch, NULL};
-    int code = choir_spawn_wait_stderr_null(argv);
-    if (code != 0) {
-        fprintf(stderr, "choir: warning: git fetch origin %s failed\n", branch);
-    }
-}
-
-static int choir_git_one_line_stdout(char *argv[], char *out, int outsz) {
-    if (outsz <= 1) {
-        return -1;
-    }
-    int p[2];
-    if (pipe(p) != 0) {
-        return -1;
-    }
-    pid_t pid = fork();
-    if (pid < 0) {
-        close(p[0]);
-        close(p[1]);
-        return -1;
-    }
-    if (pid == 0) {
-        close(p[0]);
-        dup2(p[1], STDOUT_FILENO);
-        int dn = open("/dev/null", O_WRONLY);
-        if (dn >= 0) {
-            dup2(dn, STDERR_FILENO);
-            close(dn);
-        }
-        close(p[1]);
-        execvp(argv[0], argv);
-        _exit(127);
-    }
-    close(p[1]);
-    FILE *in = fdopen(p[0], "r");
-    if (!in) {
-        close(p[0]);
-        waitpid(pid, NULL, 0);
-        return -1;
-    }
-    if (!fgets(out, outsz, in)) {
-        fclose(in);
-        waitpid(pid, NULL, 0);
-        return -1;
-    }
-    fclose(in);
-    int st = 0;
-    if (waitpid(pid, &st, 0) < 0) {
-        return -1;
-    }
-    if (!WIFEXITED(st) || WEXITSTATUS(st) != 0) {
-        return -1;
-    }
-    size_t n = strlen(out);
-    while (n > 0 && (out[n - 1] == '\n' || out[n - 1] == '\r')) {
-        out[--n] = '\0';
-    }
-    return 0;
-}
-
-static int choir_exclude_snippet_first_line_present(
-    const char *old,
-    size_t oldlen,
-    const char *snippet
-) {
-    size_t marker_len = strcspn(snippet, "\n");
-    if (marker_len == 0 || oldlen < marker_len) {
-        return 0;
-    }
-    for (size_t i = 0; i + marker_len <= oldlen; ++i) {
-        if (memcmp(old + i, snippet, marker_len) == 0) {
-            return 1;
-        }
-    }
-    return 0;
-}
-
-int choir_worktree_seed_agent_runtime_gitexclude(const char *workspace, const char *snippet) {
-    if (!workspace || workspace[0] == '\0' || !snippet || snippet[0] == '\0') {
-        fprintf(stderr, "choir: warning: worktree seed gitexclude: missing workspace or snippet\n");
-        return 0;
-    }
-    char *argv[] = {
-        "git", "-C", (char *)workspace, "rev-parse", "--git-path", "info/exclude", NULL,
-    };
-    char pathbuf[8192];
-    memset(pathbuf, 0, sizeof(pathbuf));
-    if (choir_git_one_line_stdout(argv, pathbuf, (int)sizeof(pathbuf)) != 0) {
-        fprintf(stderr, "choir: warning: worktree seed gitexclude: git rev-parse failed for %s\n", workspace);
-        return 0;
-    }
-    if (pathbuf[0] == '\0') {
-        fprintf(stderr, "choir: warning: worktree seed gitexclude: empty exclude path for %s\n", workspace);
-        return 0;
-    }
-
-    char *old = NULL;
-    size_t oldlen = 0;
-    FILE *ef = fopen(pathbuf, "rb");
-    if (ef) {
-        if (fseek(ef, 0, SEEK_END) != 0) {
-            fclose(ef);
-            fprintf(stderr, "choir: warning: worktree seed gitexclude: seek failed on %s\n", pathbuf);
-            return 0;
-        }
-        long sz = ftell(ef);
-        if (sz < 0) {
-            fclose(ef);
-            fprintf(stderr, "choir: warning: worktree seed gitexclude: size failed on %s\n", pathbuf);
-            return 0;
-        }
-        if (sz > 1048576) {
-            fclose(ef);
-            fprintf(stderr, "choir: warning: worktree seed gitexclude: exclude file too large %s\n", pathbuf);
-            return 0;
-        }
-        rewind(ef);
-        if (sz == 0) {
-            fclose(ef);
-            old = strdup("");
-            if (!old) {
-                fprintf(stderr, "choir: warning: worktree seed gitexclude: out of memory\n");
-                return 0;
-            }
-            oldlen = 0;
-        } else {
-            old = malloc((size_t)sz + 1);
-            if (!old) {
-                fclose(ef);
-                fprintf(stderr, "choir: warning: worktree seed gitexclude: out of memory\n");
-                return 0;
-            }
-            size_t got = fread(old, 1, (size_t)sz, ef);
-            fclose(ef);
-            if (got != (size_t)sz) {
-                free(old);
-                fprintf(stderr, "choir: warning: worktree seed gitexclude: short read on %s\n", pathbuf);
-                return 0;
-            }
-            old[sz] = '\0';
-            oldlen = (size_t)sz;
-        }
-    } else {
-        old = strdup("");
-        if (!old) {
-            fprintf(stderr, "choir: warning: worktree seed gitexclude: out of memory\n");
-            return 0;
-        }
-        oldlen = 0;
-    }
-
-    if (choir_exclude_snippet_first_line_present(old, oldlen, snippet)) {
-        free(old);
-        return 0;
-    }
-
-    size_t sniplen = strlen(snippet);
-    int need_nl = (oldlen > 0 && old[oldlen - 1] != '\n');
-    size_t newlen = oldlen + (need_nl ? 1u : 0u) + sniplen;
-    char *merged = malloc(newlen + 1);
-    if (!merged) {
-        free(old);
-        fprintf(stderr, "choir: warning: worktree seed gitexclude: out of memory\n");
-        return 0;
-    }
-    memcpy(merged, old, oldlen);
-    if (need_nl) {
-        merged[oldlen] = '\n';
-        memcpy(merged + oldlen + 1, snippet, sniplen);
-    } else {
-        memcpy(merged + oldlen, snippet, sniplen);
-    }
-    merged[newlen] = '\0';
-    int w = choir_write_file_sync(pathbuf, merged, (int)newlen);
-    free(merged);
-    free(old);
-    if (w != 0) {
-        fprintf(stderr, "choir: warning: worktree seed gitexclude: could not write %s\n", pathbuf);
-    }
-    return 0;
+    (void)choir_rm_rf(".choir/state");
+    (void)choir_rm_rf(".choir/run");
 }

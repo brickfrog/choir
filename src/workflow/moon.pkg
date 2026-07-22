@@ -1,0 +1,15 @@
+import {
+  "choir/src/command",
+  "choir/src/control",
+  "choir/src/migration",
+  "choir/src/storage",
+  "choir/src/types",
+  "moonbitlang/async",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/json",
+  "moonbitlang/core/ref",
+}
+
+options(
+  "is-main": false,
+)

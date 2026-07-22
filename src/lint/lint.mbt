@@ -24,12 +24,6 @@ priv struct GitProgramSearch {
 }
 
 ///|
-priv struct ConstructorNameSearch {
-  target : String
-  mut found : Bool
-}
-
-///|
 priv struct ExecPackageRefSearch {
   package_aliases : Array[(String, String)]
   mut found : Bool
@@ -70,8 +64,6 @@ priv enum DangerousCallKind {
   ShellCommand
   ProcessCommand
   ExecCapture
-  RecoveryProvider
-  ShellRecoveryProvider
 } derive(Eq)
 
 ///|
@@ -188,27 +180,6 @@ fn callable_name(expr : @syntax.Expr) -> String? {
 }
 
 ///|
-fn is_unqualified_ident(expr : @syntax.Expr, name : String) -> Bool {
-  match expr {
-    Ident(id={ name: Ident(name=n), .. }, ..) => n == name
-    _ => false
-  }
-}
-
-///|
-fn is_named_alias(
-  env : LintEnv,
-  expr : @syntax.Expr,
-  kind : DangerousCallKind,
-) -> Bool {
-  match expr {
-    Ident(id={ name: Ident(name~), .. }, ..) =>
-      env.aliases.any(fn(entry) { entry.0 == name && entry.1 == kind })
-    _ => false
-  }
-}
-
-///|
 fn is_reported_direct_reference_alias(
   env : LintEnv,
   expr : @syntax.Expr,
@@ -230,134 +201,6 @@ fn first_argument(args : @list.List[@syntax.Argument]) -> @syntax.Expr? {
 }
 
 ///|
-fn nth_argument(
-  args : @list.List[@syntax.Argument],
-  target : Int,
-) -> @syntax.Expr? {
-  let mut index = 0
-  for arg in args {
-    if index == target {
-      return Some(arg.value)
-    }
-    index = index + 1
-  }
-  None
-}
-
-///|
-fn argument_label_name(arg : @syntax.Argument) -> String? {
-  match arg.kind {
-    Positional => None
-    Labelled(label) => Some(label.name)
-    LabelledPun(label) => Some(label.name)
-    LabelledOption(label~, ..) => Some(label.name)
-    LabelledOptionPun(label~, ..) => Some(label.name)
-  }
-}
-
-///|
-fn args_have_label(args : @list.List[@syntax.Argument], label : String) -> Bool {
-  for arg in args {
-    match argument_label_name(arg) {
-      Some(name) => if name == label { return true }
-      None => ()
-    }
-  }
-  false
-}
-
-///|
-fn argument_value_for_label(
-  args : @list.List[@syntax.Argument],
-  label : String,
-) -> @syntax.Expr? {
-  for arg in args {
-    match argument_label_name(arg) {
-      Some(name) => if name == label { return Some(arg.value) }
-      None => ()
-    }
-  }
-  None
-}
-
-///|
-fn expr_is_none(expr : @syntax.Expr) -> Bool {
-  match expr {
-    Ident(id={ name: Ident(name~), .. }, ..) => name == "None"
-    Constr(constr~, ..) => constr.name.name == "None"
-    Group(expr~, ..) => expr_is_none(expr)
-    _ => false
-  }
-}
-
-///|
-impl @syntax.IterVisitor for ConstructorNameSearch with fn visit_Expr(
-  self,
-  expr,
-) {
-  if self.found {
-    return
-  }
-  match expr {
-    Constr(constr~, ..) =>
-      if constr.name.name == self.target {
-        self.found = true
-        return
-      }
-    Apply(func~, ..) =>
-      if callable_name(func) == Some(self.target) {
-        self.found = true
-        return
-      }
-    _ => ()
-  }
-  self.base().visit_Expr(expr)
-}
-
-///|
-fn expr_contains_constructor_name(expr : @syntax.Expr, name : String) -> Bool {
-  let search = ConstructorNameSearch::{ target: name, found: false }
-  search.visit_Expr(expr)
-  search.found
-}
-
-///|
-fn is_sys_shell_quote(
-  package_aliases : Array[(String, String)],
-  expr : @syntax.Expr,
-) -> Bool {
-  match expr {
-    Apply(func~, args~, ..) =>
-      is_package_ident(package_aliases, func, "sys", "shell_quote") &&
-      first_argument(args) is Some(_)
-    Group(expr~, ..) => is_sys_shell_quote(package_aliases, expr)
-    _ => false
-  }
-}
-
-///|
-fn is_allowed_test_system_command(
-  file : String,
-  package_aliases : Array[(String, String)],
-  expr : @syntax.Expr,
-) -> Bool {
-  if canonical_file(file) != "src/workspace/workspace_test.mbt" {
-    return false
-  }
-  match expr {
-    Infix(
-      op={ name: Ident(name="+"), .. },
-      lhs=Constant(c=String("test -x "), ..),
-      rhs~,
-      ..
-    ) => is_sys_shell_quote(package_aliases, rhs)
-    Group(expr~, ..) =>
-      is_allowed_test_system_command(file, package_aliases, expr)
-    _ => false
-  }
-}
-
-///|
 fn is_process_ref(
   package_aliases : Array[(String, String)],
   expr : @syntax.Expr,
@@ -371,14 +214,11 @@ fn is_process_ref(
 
 ///|
 fn is_exec_capture_ref(
-  package_aliases : Array[(String, String)],
+  _package_aliases : Array[(String, String)],
   expr : @syntax.Expr,
 ) -> Bool {
   match dotted_ident_name(expr) {
-    Some(id) =>
-      id.has_prefix("capture_") ||
-      id == "run_sequence" ||
-      (expr_package_matches(package_aliases, expr, "exec") && id == "run")
+    Some(id) => id.has_prefix("capture_")
     None => false
   }
 }
@@ -393,7 +233,7 @@ fn is_unqualified_exec_capture_ref(file : String, expr : @syntax.Expr) -> Bool {
     return false
   }
   match callable_name(expr) {
-    Some(id) => id.has_prefix("capture_") || id == "run_sequence" || id == "run"
+    Some(id) => id.has_prefix("capture_")
     None => false
   }
 }
@@ -417,28 +257,8 @@ fn is_hazardous_sys_native_ref(
     Some(name) =>
       expr_package_matches(package_aliases, expr, "sys") &&
       (
-        name == "git_fetch_origin_branch_best_effort_native" ||
-        name == "worktree_bootstrap_cleanup_native" ||
-        name == "worktree_seed_agent_runtime_gitexclude_native" ||
         name == "init_cleanup_runtime_artifacts_native" ||
         name == "init_cleanup_purge_artifacts_native"
-      )
-    None => false
-  }
-}
-
-///|
-fn is_hazardous_workspace_native_wrapper_ref(
-  package_aliases : Array[(String, String)],
-  expr : @syntax.Expr,
-) -> Bool {
-  match dotted_ident_name(expr) {
-    Some(name) =>
-      expr_package_matches(package_aliases, expr, "workspace") &&
-      (
-        name == "run_native_git_fetch_origin_branch_best_effort_command" ||
-        name == "run_native_worktree_bootstrap_cleanup_command" ||
-        name == "run_native_worktree_seed_agent_runtime_gitexclude_command"
       )
     None => false
   }
@@ -451,9 +271,7 @@ fn is_hazardous_native_ffi_ref(
 ) -> Bool {
   match expr {
     Group(expr~, ..) => is_hazardous_native_ffi_ref(package_aliases, expr)
-    _ =>
-      is_hazardous_sys_native_ref(package_aliases, expr) ||
-      is_hazardous_workspace_native_wrapper_ref(package_aliases, expr)
+    _ => is_hazardous_sys_native_ref(package_aliases, expr)
   }
 }
 
@@ -461,7 +279,6 @@ fn is_hazardous_native_ffi_ref(
 fn is_native_ffi_sanctioned_seam_file(file : String) -> Bool {
   let file = canonical_file(file)
   file.has_prefix("src/sys/") ||
-  file == "src/workspace/command.mbt" ||
   file.has_prefix("src/exec/") ||
   file.has_prefix("src/bin/")
 }
@@ -480,7 +297,7 @@ fn check_native_ffi_bypass(
   if native_ffi_bypass_rule_enabled(env) &&
     is_hazardous_native_ffi_ref(env.package_aliases, expr) {
     emit(
-      env, "native-ffi-bypass", "native FFI call does real network/FS I/O that bypasses the CHOIR_TEST_NO_EXEC tripwire; route through exec.run or the sanctioned run_native_* wrapper instead",
+      env, "native-ffi-bypass", "native FFI call does real filesystem I/O that bypasses the CHOIR_TEST_NO_EXEC tripwire; route through a typed exec effect or injected adapter",
       loc,
     )
   }
@@ -534,7 +351,11 @@ fn is_allowed_test_exec_package_ref(
           Some(name) =>
             name == "hermetic_exec_violation_message" ||
             name == "real_exec_integration_enabled" ||
-            name == "strip_terminal_responses"
+            name == "strip_terminal_responses" ||
+            name == "generate_native_promotion" ||
+            name == "apply_native_integration" ||
+            name == "observe_native_integration" ||
+            name == "goal_part_workflow_adapters"
           None => false
         }
       }
@@ -578,20 +399,6 @@ fn direct_forbidden_rule_for_apply(
             Some("test-exec-capture")
           }
         None => Some("test-exec-capture")
-      }
-    Some(RecoveryProvider) => Some("test-shell-recovery-provider")
-    Some(ShellRecoveryProvider) =>
-      match first_argument(args) {
-        Some(capture) =>
-          if is_exec_capture_ref_for_file_with_package_aliases(
-              file, package_aliases, capture,
-            ) ||
-            is_named_alias_with_aliases(aliases, capture, ExecCapture) {
-            Some("test-shell-recovery-provider")
-          } else {
-            None
-          }
-        None => None
       }
     None =>
       if is_forbidden_test_exec_package_ref(package_aliases, func) {
@@ -994,14 +801,6 @@ fn direct_alias_kind_for_expr(
       file, package_aliases, expr,
     ) {
     Some(ExecCapture)
-  } else if is_unqualified_ident(expr, "make_recovery_provider") ||
-    is_package_ident(package_aliases, expr, "server", "make_recovery_provider") {
-    Some(RecoveryProvider)
-  } else if is_unqualified_ident(expr, "make_shell_recovery_provider") ||
-    is_package_ident(
-      package_aliases, expr, "runtime", "make_shell_recovery_provider",
-    ) {
-    Some(ShellRecoveryProvider)
   } else {
     None
   }
@@ -1060,14 +859,6 @@ fn dangerous_call_kind_with_aliases(
         Some(ProcessCommand)
       } else if is_named_alias_with_aliases(aliases, func, ExecCapture) {
         Some(ExecCapture)
-      } else if is_named_alias_with_aliases(aliases, func, RecoveryProvider) {
-        Some(RecoveryProvider)
-      } else if is_named_alias_with_aliases(
-          aliases,
-          func,
-          ShellRecoveryProvider,
-        ) {
-        Some(ShellRecoveryProvider)
       } else {
         None
       }
@@ -1084,75 +875,6 @@ fn is_named_alias_with_aliases(
     Ident(id={ name: Ident(name~), .. }, ..) =>
       aliases.any(fn(entry) { entry.0 == name && entry.1 == kind })
     _ => false
-  }
-}
-
-///|
-fn non_none_arg_at_or_label(
-  args : @list.List[@syntax.Argument],
-  index : Int,
-  label : String,
-) -> Bool {
-  match argument_value_for_label(args, label) {
-    Some(value) => !expr_is_none(value)
-    None =>
-      match nth_argument(args, index) {
-        Some(value) => !expr_is_none(value)
-        None => false
-      }
-  }
-}
-
-///|
-fn apply_requires_test_sleep_fn(
-  func : @syntax.Expr,
-  args : @list.List[@syntax.Argument],
-) -> Bool {
-  match callable_name(func) {
-    Some(name) =>
-      if name == "interpret_file_pr" {
-        non_none_arg_at_or_label(args, 4, "registry")
-      } else if name == "interpret_file_pr_post_success" {
-        non_none_arg_at_or_label(args, 9, "registry")
-      } else if name == "dispatch" {
-        args_have_label(args, "runner") &&
-        (match first_argument(args) {
-          Some(req) => expr_contains_constructor_name(req, "FilePr")
-          None => false
-        })
-      } else {
-        false
-      }
-    None => false
-  }
-}
-
-///|
-fn method_requires_test_sleep_fn(
-  method_name : String,
-  args : @list.List[@syntax.Argument],
-) -> Bool {
-  if !args_have_label(args, "runner") {
-    return false
-  }
-  method_name == "process_poller_tick_with" ||
-  method_name == "process_poller_tick" ||
-  method_name == "refresh_pr_with" ||
-  method_name == "replay_pending_outbox_with"
-}
-
-///|
-fn check_test_delivery_sleep(
-  env : LintEnv,
-  requires_sleep_fn : Bool,
-  args : @list.List[@syntax.Argument],
-  loc : @basic.Location,
-) -> Unit {
-  if requires_sleep_fn && !args_have_label(args, "sleep_fn") {
-    emit(
-      env, "test-delivery-sleep", "tests that drive delivery-capable helpers must use a test wrapper or pass sleep_fn; do not inherit production retry sleeps",
-      loc,
-    )
   }
 }
 
@@ -1219,26 +941,14 @@ fn check_test_apply(
   if !env.test_rules_enabled {
     return
   }
-  check_test_delivery_sleep(
-    env,
-    apply_requires_test_sleep_fn(func, args),
-    args,
-    loc,
-  )
   match dangerous_call_kind(env, func) {
     Some(ShellCommand) =>
       match first_argument(args) {
-        Some(command) =>
-          if !is_allowed_test_system_command(
-              env.file,
-              env.package_aliases,
-              command,
-            ) {
-            emit(
-              env, "test-shell-command", "test files must not run shell commands; use injected adapters or a narrow helper instead",
-              loc,
-            )
-          }
+        Some(_) =>
+          emit(
+            env, "test-shell-command", "test files must not run shell commands; use injected adapters or a narrow helper instead",
+            loc,
+          )
         None =>
           emit(
             env, "test-shell-command", "test files must not run shell commands; use injected adapters or a narrow helper instead",
@@ -1273,39 +983,17 @@ fn check_test_apply(
           loc,
         )
       }
-    Some(RecoveryProvider) =>
-      emit(
-        env, "test-shell-recovery-provider", "tests must use make_hermetic_recovery_provider(), not the shell-backed recovery provider",
-        loc,
-      )
-    Some(ShellRecoveryProvider) =>
-      match first_argument(args) {
-        Some(capture) =>
-          if (
-              is_exec_capture_ref_for_file_with_package_aliases(
-                env.file,
-                env.package_aliases,
-                capture,
-              ) ||
-              is_named_alias(env, capture, ExecCapture)
-            ) &&
-            !is_reported_direct_reference_alias(env, capture) {
-            emit(
-              env, "test-shell-recovery-provider", "tests must not wire shell recovery to real exec capture helpers",
-              loc,
-            )
-          }
-        None => ()
-      }
     None => {
-      if is_forbidden_test_exec_package_ref(env.package_aliases, func) {
+      if is_forbidden_test_exec_package_ref(env.package_aliases, func) &&
+        !is_explicit_real_exec_integration_test(env) {
         emit(
           env, "test-exec-reference", "test files must not reference real exec helpers; inject a mock capture/runner instead",
           loc,
         )
       }
       for arg in args {
-        if is_forbidden_test_exec_package_ref(env.package_aliases, arg.value) {
+        if is_forbidden_test_exec_package_ref(env.package_aliases, arg.value) &&
+          !is_explicit_real_exec_integration_test(env) {
           emit(
             env, "test-exec-reference", "test files must not reference real exec helpers; inject a mock capture/runner instead",
             loc,
@@ -1314,24 +1002,6 @@ fn check_test_apply(
       }
     }
   }
-}
-
-///|
-fn check_test_method_apply(
-  env : LintEnv,
-  method_name : String,
-  args : @list.List[@syntax.Argument],
-  loc : @basic.Location,
-) -> Unit {
-  if !env.test_rules_enabled {
-    return
-  }
-  check_test_delivery_sleep(
-    env,
-    method_requires_test_sleep_fn(method_name, args),
-    args,
-    loc,
-  )
 }
 
 ///|
@@ -1348,8 +1018,6 @@ fn forbidden_value_reference_rule(
     Some(ShellCommand) => Some("test-shell-command")
     Some(ProcessCommand) => Some("test-direct-process")
     Some(ExecCapture) => Some("test-exec-reference")
-    Some(RecoveryProvider) | Some(ShellRecoveryProvider) =>
-      Some("test-shell-recovery-provider")
     None =>
       if is_forbidden_test_exec_package_ref(env.package_aliases, value) {
         Some("test-exec-reference")
@@ -1519,8 +1187,6 @@ impl @syntax.IterVisitor for LintEnv with fn visit_Expr(env, expr) {
         }
       }
     }
-    DotApply(method_name~, args~, loc~, ..) =>
-      check_test_method_apply(env, method_name.name, args, loc)
     Record(fields~, loc~, ..) => {
       check_native_ffi_bypass_record_fields(env, fields, loc)
       check_test_record_fields(env, fields, loc)

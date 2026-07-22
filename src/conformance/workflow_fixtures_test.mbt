@@ -1,0 +1,267 @@
+///|
+test "multi-Part fixture exercises conflict and stable promotion order" {
+  let report = @conformance.run_multi_part_conformance_fixture()
+  assert_true(report.passed)
+  assert_eq(report.initial_admission_count, 2)
+  assert_true(report.running_conflict_deferred)
+  assert_eq(report.promotion_count, 3)
+  assert_true(report.promotion_head_chain_valid)
+}
+
+///|
+test "bounded migration fixture reaches the ordinary publication boundary" {
+  let report = match @conformance.run_bounded_migration_conformance_fixture() {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_true(report.judge_qualified)
+  assert_true(report.multi_part_rehearsal_assured)
+  assert_true(report.rehearsal_canceled_with_evidence)
+  assert_true(report.production_admitted)
+  assert_true(report.preintegration_repair_routed)
+  assert_true(report.publication_boundary_reached)
+}
+
+///|
+test "generated DAG fixture covers permutations and concurrency limits" {
+  let report = match @conformance.run_generated_dag_conformance_fixture() {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(report.graph_count, 4)
+  assert_eq(report.schedule_run_count, 32)
+  assert_eq(report.promotion_run_count, 8)
+  assert_eq(report.part_evaluation_count, 680)
+}
+
+///|
+test "promotion order is invariant across completion timings" {
+  let report = @conformance.run_hermetic_case(
+    @conformance.integration_promotion_order_case(),
+    {
+      now: fn() { 1L },
+      next_id: fn(_) { "promotion-order-fixture-id" },
+      fault_enabled: fn(_) { false },
+      adapters: {
+        read_state: fn(_) { Ok(@conformance.StateObservation::StateMissing) },
+        read_artifact: fn(_) {
+          Ok(@conformance.ArtifactObservation::ArtifactMissing)
+        },
+        read_effect_witness: fn(_) {
+          Ok(@conformance.EffectWitnessObservation::EffectWitnessAbsent)
+        },
+      },
+    },
+  )
+  assert_eq(
+    report.status,
+    @conformance.ConformanceCaseStatus::ConformanceCasePassed,
+  )
+  assert_eq(report.evidence, [
+    @conformance.ConformanceEvidence::ObservedIntegrationCase(
+      @conformance.IntegrationConformanceKind::IntegrationPromotionOrder,
+      6,
+      true,
+      true,
+    ),
+  ])
+}
+
+///|
+test "divergent candidates compose into one continuous promotion chain" {
+  let report = @conformance.run_hermetic_case(
+    @conformance.integration_divergent_candidates_case(),
+    {
+      now: fn() { 1L },
+      next_id: fn(_) { "divergent-candidate-fixture-id" },
+      fault_enabled: fn(_) { false },
+      adapters: {
+        read_state: fn(_) { Ok(@conformance.StateObservation::StateMissing) },
+        read_artifact: fn(_) {
+          Ok(@conformance.ArtifactObservation::ArtifactMissing)
+        },
+        read_effect_witness: fn(_) {
+          Ok(@conformance.EffectWitnessObservation::EffectWitnessAbsent)
+        },
+      },
+    },
+  )
+  assert_eq(
+    report.status,
+    @conformance.ConformanceCaseStatus::ConformanceCasePassed,
+  )
+  assert_eq(report.evidence, [
+    @conformance.ConformanceEvidence::ObservedIntegrationCase(
+      @conformance.IntegrationConformanceKind::IntegrationDivergentCandidateComposition,
+      2,
+      true,
+      true,
+    ),
+  ])
+}
+
+///|
+test "Goal seal replay is immutable and schedules verification once" {
+  let report = @conformance.run_hermetic_case(
+    @conformance.seal_atomicity_case(),
+    {
+      now: fn() { 1L },
+      next_id: fn(_) { "seal-atomicity-fixture-id" },
+      fault_enabled: fn(_) { false },
+      adapters: {
+        read_state: fn(_) { Ok(@conformance.StateObservation::StateMissing) },
+        read_artifact: fn(_) {
+          Ok(@conformance.ArtifactObservation::ArtifactMissing)
+        },
+        read_effect_witness: fn(_) {
+          Ok(@conformance.EffectWitnessObservation::EffectWitnessAbsent)
+        },
+      },
+    },
+  )
+  assert_eq(
+    report.status,
+    @conformance.ConformanceCaseStatus::ConformanceCasePassed,
+  )
+  assert_eq(report.evidence, [
+    @conformance.ConformanceEvidence::ObservedSealCase(
+      @conformance.SealConformanceKind::SealAtomicity,
+      true,
+      true,
+      true,
+    ),
+  ])
+}
+
+///|
+test "selection fixture records exact typed rejection and acceptance sets" {
+  let report = @conformance.run_hermetic_case(
+    @conformance.selection_exact_snapshot_case(),
+    {
+      now: fn() { 1L },
+      next_id: fn(_) { "selection-fixture-id" },
+      fault_enabled: fn(_) { false },
+      adapters: {
+        read_state: fn(_) { Ok(@conformance.StateObservation::StateMissing) },
+        read_artifact: fn(_) {
+          Ok(@conformance.ArtifactObservation::ArtifactMissing)
+        },
+        read_effect_witness: fn(_) {
+          Ok(@conformance.EffectWitnessObservation::EffectWitnessAbsent)
+        },
+      },
+    },
+  )
+  assert_true(
+    report.status is @conformance.ConformanceCaseStatus::ConformanceCasePassed,
+  )
+  assert_eq(report.evidence, [
+    @conformance.ConformanceEvidence::ObservedSelectionCase(
+      @conformance.SelectionConformanceKind::SelectionExactSnapshot,
+      1,
+      5,
+      0,
+    ),
+  ])
+}
+
+///|
+test "branch initialization fixture covers crash and cancellation ordering" {
+  let clock = @ref.new(1L)
+  let report = @conformance.run_hermetic_case(
+    @conformance.branch_initialization_faults_case(),
+    {
+      now: fn() {
+        clock.val = clock.val + 1L
+        clock.val
+      },
+      next_id: fn(_) { "branch-initialization-fixture-id" },
+      fault_enabled: fn(_) { true },
+      adapters: {
+        read_state: fn(_) { Ok(@conformance.StateObservation::StateMissing) },
+        read_artifact: fn(_) {
+          Ok(@conformance.ArtifactObservation::ArtifactMissing)
+        },
+        read_effect_witness: fn(_) {
+          Ok(@conformance.EffectWitnessObservation::EffectWitnessAbsent)
+        },
+      },
+    },
+  )
+  assert_true(
+    report.status is @conformance.ConformanceCaseStatus::ConformanceCasePassed,
+  )
+  assert_eq(report.evidence, [
+    @conformance.ConformanceEvidence::ObservedBranchInitializationCase(
+      @conformance.BranchInitializationConformanceKind::BranchInitializationRecoveryMatrix,
+      1,
+      true,
+      true,
+      true,
+    ),
+  ])
+}
+
+///|
+test "integration conflict repair preserves history and resets assurance" {
+  let report = @conformance.run_hermetic_case(
+    @conformance.integration_conflict_repair_case(),
+    {
+      now: fn() { 1L },
+      next_id: fn(_) { "conflict-repair-fixture-id" },
+      fault_enabled: fn(_) { false },
+      adapters: {
+        read_state: fn(_) { Ok(@conformance.StateObservation::StateMissing) },
+        read_artifact: fn(_) {
+          Ok(@conformance.ArtifactObservation::ArtifactMissing)
+        },
+        read_effect_witness: fn(_) {
+          Ok(@conformance.EffectWitnessObservation::EffectWitnessAbsent)
+        },
+      },
+    },
+  )
+  assert_eq(
+    report.status,
+    @conformance.ConformanceCaseStatus::ConformanceCasePassed,
+  )
+  assert_eq(report.evidence, [
+    @conformance.ConformanceEvidence::ObservedIntegrationConflictRepair(
+      2, 3, true, true,
+    ),
+  ])
+}
+
+///|
+test "sandbox transfer case enforces bounded manifests and destinations" {
+  let report = @conformance.run_hermetic_case(
+    @conformance.sandbox_transfer_validation_case(),
+    {
+      now: fn() { 1L },
+      next_id: fn(_) { "sandbox-transfer-fixture-id" },
+      fault_enabled: fn(_) { false },
+      adapters: {
+        read_state: fn(_) { Ok(@conformance.StateObservation::StateMissing) },
+        read_artifact: fn(_) {
+          Ok(@conformance.ArtifactObservation::ArtifactMissing)
+        },
+        read_effect_witness: fn(_) {
+          Ok(@conformance.EffectWitnessObservation::EffectWitnessAbsent)
+        },
+      },
+    },
+  )
+  assert_eq(
+    report.status,
+    @conformance.ConformanceCaseStatus::ConformanceCasePassed,
+  )
+  assert_eq(report.evidence, [
+    @conformance.ConformanceEvidence::ObservedTransferCase(
+      @conformance.TransferConformanceKind::TransferValidationBoundary,
+      2,
+      10,
+      true,
+      true,
+    ),
+  ])
+}

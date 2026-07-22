@@ -9,7 +9,17 @@ pub fn read_file(_path : String) -> String {
 }
 
 ///|
+pub fn read_file_prefix(_path : String, _max_size : Int) -> String {
+  ""
+}
+
+///|
 pub fn list_dir(_path : String) -> Array[String] {
+  []
+}
+
+///|
+pub fn list_dir_all(_path : String) -> Array[String] {
   []
 }
 
@@ -64,6 +74,11 @@ pub fn getenv(_name : String) -> String? {
 }
 
 ///|
+pub fn get_parent_env(_name : String) -> String? {
+  None
+}
+
+///|
 pub fn setenv(_name : String, _value : String) -> Bool {
   false
 }
@@ -79,8 +94,30 @@ pub fn system(_cmd : String) -> Int {
 }
 
 ///|
+pub fn mint_local_token() -> String? {
+  None
+}
+
+///|
 pub fn spawn_serve(_self_exe : String) -> Bool {
   false
+}
+
+///|
+pub fn spawn_goal_worker(_self_exe : String, _cwd : String) -> Int {
+  -1
+}
+
+///|
+pub(all) enum ChildProcessState {
+  ChildProcessRunning
+  ChildProcessExited(Int)
+  ChildProcessUnavailable
+} derive(Debug, Eq)
+
+///|
+pub fn child_process_state(_pid : Int) -> ChildProcessState {
+  ChildProcessUnavailable
 }
 
 ///|
@@ -126,31 +163,6 @@ pub fn delete_file_sync(_path : String) -> Bool {
 ///|
 pub fn register_cleanup(_cmd : String) -> Unit {
 
-}
-
-///|
-pub fn worktree_bootstrap_cleanup_native(
-  _project_dir : String,
-  _workspace : String,
-  _branch : String,
-) -> Unit {
-
-}
-
-///|
-pub fn git_fetch_origin_branch_best_effort_native(
-  _project_dir : String,
-  _branch : String,
-) -> Unit {
-
-}
-
-///|
-pub fn worktree_seed_agent_runtime_gitexclude_native(
-  _workspace : String,
-  _snippet : String,
-) -> Int {
-  0
 }
 
 ///|
@@ -200,6 +212,15 @@ pub fn spawn_sigterm_unblocked_pgroup_for_test(
 ///|
 pub fn spawn_leader_exited_pgroup_for_test(
   _pgid_path : String,
+  _child_path : String,
+  _sentinel_path : String,
+) -> Int {
+  -1
+}
+
+///|
+pub fn spawn_nested_sessions_for_test(
+  _root_path : String,
   _child_path : String,
   _sentinel_path : String,
 ) -> Int {
@@ -282,6 +303,11 @@ pub fn kill_server_pid_sequence_best_effort(_pid : Int) -> Unit {
 }
 
 ///|
+pub fn kill_server_tree_sequence_best_effort(_pid : Int) -> Unit {
+
+}
+
+///|
 pub fn kill_pgid_sequence_best_effort(_pgid : Int) -> Unit {
 
 }
@@ -298,6 +324,20 @@ pub fn pid_is_alive(_pid : Int) -> Bool {
 
 ///|
 pub fn pgid_is_alive(_pgid : Int) -> Bool {
+  false
+}
+
+///|
+pub fn pgid_has_process_identity(
+  _pgid : Int,
+  _environment_entry : String,
+  _command_fragment : String,
+) -> Bool {
+  false
+}
+
+///|
+pub fn pgid_has_non_zombie_process(_pgid : Int) -> Bool {
   false
 }
 

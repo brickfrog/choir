@@ -37,15 +37,6 @@ pub fn TomlDoc::get(self : TomlDoc, key : String) -> String? {
 }
 
 ///|
-pub fn TomlDoc::get_or(
-  self : TomlDoc,
-  key : String,
-  fallback : String,
-) -> String {
-  self.get(key).unwrap_or(fallback)
-}
-
-///|
 pub fn TomlDoc::get_optional_nonempty(self : TomlDoc, key : String) -> String? {
   match self.get(key) {
     Some(value) => if value == "" { None } else { Some(value) }
@@ -54,8 +45,31 @@ pub fn TomlDoc::get_optional_nonempty(self : TomlDoc, key : String) -> String? {
 }
 
 ///|
-pub fn TomlDoc::to_map(self : TomlDoc) -> Map[String, String] {
-  self.values
+fn toml_value_without_comment(raw : String) -> String {
+  let mut in_basic = false
+  let mut in_literal = false
+  let mut escaped = false
+  let mut end = raw.length()
+  for index = 0; index < raw.length(); index = index + 1 {
+    let char = raw[index]
+    if in_basic && escaped {
+      escaped = false
+      continue
+    }
+    if in_basic && char == '\\' {
+      escaped = true
+      continue
+    }
+    if char == '"' && !in_literal {
+      in_basic = !in_basic
+    } else if char == '\'' && !in_basic {
+      in_literal = !in_literal
+    } else if char == '#' && !in_basic && !in_literal {
+      end = index
+      break
+    }
+  }
+  raw[0:end].to_owned().trim().to_owned()
 }
 
 ///|
@@ -82,7 +96,7 @@ pub fn parse_toml_doc(content : String) -> TomlDoc {
     if idx != -1 {
       let raw_key = str[0:idx].to_owned().trim().to_owned()
       let key = if section == "" { raw_key } else { section + "." + raw_key }
-      let mut val = str[idx + 1:].to_owned().trim().to_owned()
+      let mut val = toml_value_without_comment(str[idx + 1:].to_owned())
       if val.has_prefix("\"") && val.has_suffix("\"") && val.length() >= 2 {
         val = unescape_basic_toml_string(val[1:val.length() - 1].to_owned())
       } else if val.has_prefix("'") && val.has_suffix("'") && val.length() >= 2 {
@@ -92,9 +106,4 @@ pub fn parse_toml_doc(content : String) -> TomlDoc {
     }
   }
   { values: map }
-}
-
-///|
-pub fn parse_toml(content : String) -> Map[String, String] {
-  parse_toml_doc(content).to_map()
 }

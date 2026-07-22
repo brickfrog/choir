@@ -1,0 +1,11 @@
+import {
+  "choir/src/control",
+  "choir/src/storage",
+  "choir/src/types",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/json",
+}
+
+options(
+  "is-main": false,
+)

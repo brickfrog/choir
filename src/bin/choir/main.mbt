@@ -9,80 +9,102 @@ fn choir_usage() -> String {
     #|Usage: choir <command> [args]
     #|
     #|Setup
-    #|  init [--recreate] [--purge] [--tl <claude|codex|gemini|cursor_agent|agent>] [--lean]
-    #|                        scaffold .choir and start the server + TL
+    #|  init [--lean] [--conductor <claude|codex>]
+    #|                        scaffold .choir, start choird, and open a Conductor
     #|
     #|Run
+    #|  start [--lean] [--conductor <claude|codex>]
+    #|                        start choird and open a Conductor
     #|  serve                 run the orchestration server
-    #|  dev                   start a dev TL session
     #|
     #|Goals
-    #|  goal <bead-id|text> [--verify <cmd>]...   set the active TL goal
-    #|  goal-clear            clear the active goal
-    #|
-    #|Inspect
-    #|  logs [--source serve|delivery|events <agent>|wave <id>] [--tail N] [--follow|-f] [--grep PATTERN] [--level ...]
-    #|  log --wave <wave_id>  print a wave's log
-    #|  stats [--wave <id>|--agent-type <type>]   usage/cost stats
-    #|  watch                 live status watcher
-    #|
-    #|Configure
-    #|  config schema [--format=md|json]
-    #|  prompts <diff|sync>   inspect / sync prompt assets
-    #|  skill <add|list|remove>
-    #|  mcp <add|list|remove>
-    #|  beads <wave-from|gate|merge-slot|spec-link|doctor>
+    #|  goal status <goal-id>
+    #|  goal steer <goal-id> <pause|resume|concurrency N>
+    #|  goal cancel <goal-id>
+    #|  goal attach <take-id>
+    #|  goal answer <request-id> <answer>
     #|
     #|Control
     #|  stop [--purge]        stop the server (optionally purge runtime state)
     #|
-    #|Internal (invoked by choir/agents, not for direct use):
-    #|  tool, leaf-tool, mcp-stdio, hook, zellij-action, claude, reply,
-    #|  statusline, reload, trust-gemini-folder, smoke
+    #|Internal:
+    #|  mcp-stdio             bridge the Conductor MCP session to choird
+    #|  run-goals             execute durable Goal work for choird
     #|
   )
+}
+
+///|
+test "CLI help exposes only the current Conductor and Goal controls" {
+  let usage = choir_usage()
+  assert_true(usage.contains("--conductor <claude|codex>"))
+  assert_true(usage.contains("goal status <goal-id>"))
+  assert_true(usage.contains("goal attach <take-id>"))
+  assert_true(usage.contains("goal answer <request-id> <answer>"))
+  assert_false(usage.contains("<bead-id|text>"))
+  assert_false(usage.contains("--verify"))
+}
+
+///|
+fn stop_run() -> Unit {
+  let pid_text = @sys.read_file(".choir/run/server.pid").trim().to_owned()
+  let pid = @string.parse_int(pid_text) catch { _ => 0 }
+  if pid > 1 {
+    @sys.write_stdout("Stopping choird (PID \{pid})...\n")
+    @sys.kill_server_tree_sequence_best_effort(pid)
+  }
+  if @env.args().contains("--purge") {
+    let project_dir = match @sys.realpath_native(".") {
+      Some(value) => value
+      None => {
+        @sys.write_stderr(
+          "choir stop: failed to resolve the project directory\n",
+        )
+        @sys.exit(1)
+        return
+      }
+    }
+    @async.run_async_main(async fn() {
+      match @exec.purge_native_goal_resources(project_dir) {
+        Ok(report) => {
+          @sys.init_cleanup_purge_artifacts_native()
+          @sys.write_stdout(
+            "Purged \{report.runtime_roots_removed} Goal runtime root(s) and \{report.git_refs_removed} owned Git ref(s).\n",
+          )
+          @sys.write_stdout("Choir stopped.\n")
+        }
+        Err(error) => {
+          @sys.init_cleanup_runtime_artifacts_native()
+          @sys.write_stderr(
+            "choir stop: runtime purge failed: " + error.message() + "\n",
+          )
+          @sys.exit(1)
+        }
+      }
+    })
+  } else {
+    @sys.init_cleanup_runtime_artifacts_native()
+    @sys.write_stdout("Choir stopped.\n")
+  }
 }
 
 ///|
 fn main {
   let args = @env.args()
   let subcmd = if args.length() >= 2 { args[1] } else { "" }
-  if subcmd == @exec.DEV_RELOAD_SUBCOMMAND {
-    dev_reload_run()
-  } else {
-    match subcmd {
-      "serve" => serve_run()
-      "dev" => dev_run()
-      "reload" => reload_run()
-      "tool" => tool_run()
-      "leaf-tool" => leaf_tool_run()
-      "mcp-stdio" => mcp_run()
-      "trust-gemini-folder" => trust_gemini_folder_run()
-      "zellij-action" => zellij_action_run()
-      "hook" => hook_run()
-      "init" => init_run()
-      "claude" => claude_wrapper_run()
-      "stop" => stop_run()
-      "reply" => reply_run()
-      "watch" => watch_run()
-      "statusline" => statusline_run()
-      "goal" => goal_run()
-      "goal-clear" => goal_clear_run()
-      "prompts" => prompts_cmd_run()
-      "skill" => @choir_commands.skill_subcommand_run()
-      "mcp" => @choir_commands.mcp_subcommand_run()
-      "config" => @choir_commands.config_subcommand_run()
-      "beads" => @choir_commands.beads_subcommand_run()
-      "log" => @choir_commands.log_subcommand_run()
-      "logs" => @choir_commands.logs_subcommand_run()
-      "stats" => @choir_commands.stats_subcommand_run()
-      "smoke" => @choir_commands.smoke_subcommand_run()
-      "help" | "-h" | "--help" | "" => @sys.write_stdout(choir_usage())
-      _ => {
-        @sys.write_stdout("choir: unknown command '" + subcmd + "'\n\n")
-        @sys.write_stdout(choir_usage())
-        @sys.exit(1)
-      }
+  match subcmd {
+    "serve" => serve_run()
+    "start" => start_run()
+    "mcp-stdio" => mcp_run()
+    "run-goals" => goal_worker_run()
+    "init" => init_run()
+    "stop" => stop_run()
+    "goal" => goal_run()
+    "help" | "-h" | "--help" | "" => @sys.write_stdout(choir_usage())
+    _ => {
+      @sys.write_stdout("choir: unknown command '" + subcmd + "'\n\n")
+      @sys.write_stdout(choir_usage())
+      @sys.exit(1)
     }
   }
 }

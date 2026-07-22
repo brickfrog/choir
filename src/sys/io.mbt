@@ -24,7 +24,19 @@ extern "C" fn c_list_dir(path : Bytes, buf : Bytes, max_size : Int) -> Int = "ch
 
 ///|
 #borrow(path, buf)
+extern "C" fn c_list_dir_all(path : Bytes, buf : Bytes, max_size : Int) -> Int = "choir_list_dir_all"
+
+///|
+#borrow(path, buf)
 extern "C" fn c_read_file_to_buf(path : Bytes, buf : Bytes, size : Int) = "choir_read_file_to_buf"
+
+///|
+#borrow(path, buf)
+extern "C" fn c_read_file_prefix(
+  path : Bytes,
+  buf : Bytes,
+  max_size : Int,
+) -> Int = "choir_read_file_prefix"
 
 ///|
 #borrow(buf)
@@ -61,6 +73,9 @@ extern "C" fn c_kill_pgid(pgid : Int) -> Int = "choir_kill_pgid"
 extern "C" fn c_init_kill_server_pid_sequence(pid : Int) = "choir_init_kill_server_pid_sequence"
 
 ///|
+extern "C" fn c_init_kill_server_tree_sequence(pid : Int) = "choir_init_kill_server_tree_sequence"
+
+///|
 extern "C" fn c_kill_pgid_sequence(pgid : Int) = "choir_kill_pgid_sequence"
 
 ///|
@@ -73,11 +88,38 @@ extern "C" fn c_pid_is_alive(pid : Int) -> Int = "choir_pid_is_alive"
 extern "C" fn c_pgid_is_alive(pgid : Int) -> Int = "choir_pgid_is_alive"
 
 ///|
+#borrow(environment_entry, command_fragment)
+extern "C" fn c_pgid_has_process_identity(
+  pgid : Int,
+  environment_entry : Bytes,
+  command_fragment : Bytes,
+) -> Int = "choir_pgid_has_process_identity"
+
+///|
+extern "C" fn c_pgid_has_non_zombie_process(pgid : Int) -> Int = "choir_pgid_has_non_zombie_process"
+
+///|
 extern "C" fn c_set_parent_death_signal_term() -> Int = "choir_set_parent_death_signal_term"
+
+///|
+#borrow(out)
+extern "C" fn c_mint_local_token(out : Bytes, out_size : Int) -> Int = "choir_mint_local_token"
 
 ///|
 #borrow(exe)
 extern "C" fn c_spawn_serve(exe : Bytes, exe_len : Int) -> Int = "choir_spawn_serve"
+
+///|
+#borrow(exe, cwd)
+extern "C" fn c_spawn_goal_worker(
+  exe : Bytes,
+  exe_len : Int,
+  cwd : Bytes,
+  cwd_len : Int,
+) -> Int = "choir_spawn_goal_worker"
+
+///|
+extern "C" fn c_child_process_state(pid : Int) -> Int = "choir_child_process_state"
 
 ///|
 #borrow(path)
@@ -101,6 +143,14 @@ extern "C" fn c_write_pid_file(path : Bytes) -> Unit = "choir_write_pid_file"
 ///|
 #borrow(name, out)
 extern "C" fn c_getenv(name : Bytes, out : Bytes, out_size : Int) -> Int = "choir_getenv"
+
+///|
+#borrow(name, out)
+extern "C" fn c_get_parent_env(
+  name : Bytes,
+  out : Bytes,
+  out_size : Int,
+) -> Int = "choir_get_parent_env"
 
 ///|
 #borrow(name, value)
@@ -127,10 +177,8 @@ fn string_to_null_terminated_bytes(s : String) -> Bytes {
 /// succeeded and `ftell` reported a size. On Linux this is ALSO true for
 /// directories: `fopen` on a directory returns a non-null FILE*, `fseek`
 /// fails, and `ftell` then returns 0, which compares >= 0. Callers that
-/// must distinguish files from directories cannot rely on this function
-/// alone — see `statusline.mbt:statusline_git_branch` for the read-first
-/// pattern that handles `.git` being either a file (linked worktree) or
-/// a directory. For pure existence checking that's correct for both
+/// must distinguish files from directories cannot rely on this function.
+/// For pure existence checking that's correct for both
 /// files and directories, use `path_entry_exists` (stat-based).
 pub fn path_exists(path : String) -> Bool {
   let path_bytes = string_to_null_terminated_bytes(path)
@@ -178,8 +226,7 @@ pub fn path_executable(path : String) -> Bool {
 ///|
 /// Recursive delete of `path`. Returns `true` on success (including the
 /// idempotent "already gone" case) and `false` on any failure. Symbolic
-/// links are unlinked, not followed. Intended for test scaffolding under
-/// `/tmp` — not a substitute for git-aware worktree removal.
+/// links are unlinked, not followed.
 pub fn rm_rf(path : String) -> Bool {
   c_rm_rf(string_to_null_terminated_bytes(path)) == 0
 }
@@ -188,13 +235,32 @@ pub fn rm_rf(path : String) -> Bool {
 /// Entry names of `path`, skipping `.` and `..`. Returns empty array when the
 /// directory cannot be opened (non-existent, permission denied, not a dir).
 /// A 64 KiB buffer caps the read; directories with more entries than fit are
-/// silently truncated — callers here operate on `.choir/state/kv` and `.choir/worktrees`
-/// which stay well under that.
+/// silently truncated.
 pub fn list_dir(path : String) -> Array[String] {
   let path_bytes = string_to_null_terminated_bytes(path)
   let max_size = 65536
   let buf = Bytes::new(max_size)
   let n = c_list_dir(path_bytes, buf, max_size)
+  if n <= 0 {
+    return []
+  }
+  let content = @utf8.decode_lossy(buf[:n])
+  let entries : Array[String] = []
+  for raw in content.split("\n") {
+    let name = raw.trim().to_owned()
+    if name != "" {
+      entries.push(name)
+    }
+  }
+  entries
+}
+
+///|
+pub fn list_dir_all(path : String) -> Array[String] {
+  let path_bytes = string_to_null_terminated_bytes(path)
+  let max_size = 1024 * 1024
+  let buf = Bytes::new(max_size)
+  let n = c_list_dir_all(path_bytes, buf, max_size)
   if n <= 0 {
     return []
   }
@@ -219,6 +285,21 @@ pub fn read_file(path : String) -> String {
   let buf = Bytes::new(size)
   c_read_file_to_buf(path_bytes, buf, size)
   @utf8.decode_lossy(buf)
+}
+
+///|
+pub fn read_file_prefix(path : String, max_size : Int) -> String {
+  if max_size <= 0 || max_size > 65536 {
+    return ""
+  }
+  let path_bytes = string_to_null_terminated_bytes(path)
+  let buf = Bytes::new(max_size)
+  let size = c_read_file_prefix(path_bytes, buf, max_size)
+  if size <= 0 {
+    ""
+  } else {
+    @utf8.decode_lossy(buf[:size])
+  }
 }
 
 ///|
@@ -338,6 +419,11 @@ pub fn kill_server_pid_sequence_best_effort(pid : Int) -> Unit {
 }
 
 ///|
+pub fn kill_server_tree_sequence_best_effort(pid : Int) -> Unit {
+  c_init_kill_server_tree_sequence(pid)
+}
+
+///|
 /// `SIGTERM` the process group, ~300ms pause, then `SIGKILL` it (best-effort).
 /// Groups `<= 1` are rejected as no-op for the same reason as
 /// `kill_pgid_best_effort`: 0 is the caller's own group and 1 triggers the
@@ -365,6 +451,28 @@ pub fn pid_is_alive(pid : Int) -> Bool {
 /// alive in the native helper and rejects groups <= 1.
 pub fn pgid_is_alive(pgid : Int) -> Bool {
   c_pgid_is_alive(pgid) != 0
+}
+
+///|
+pub fn pgid_has_process_identity(
+  pgid : Int,
+  environment_entry : String,
+  command_fragment : String,
+) -> Bool {
+  if pgid <= 1 || environment_entry == "" || command_fragment == "" {
+    return false
+  }
+  c_pgid_has_process_identity(
+    pgid,
+    string_to_null_terminated_bytes(environment_entry),
+    string_to_null_terminated_bytes(command_fragment),
+  ) !=
+  0
+}
+
+///|
+pub fn pgid_has_non_zombie_process(pgid : Int) -> Bool {
+  pgid > 1 && c_pgid_has_non_zombie_process(pgid) != 0
 }
 
 ///|
@@ -400,6 +508,18 @@ pub fn getenv(name : String) -> String? {
 }
 
 ///|
+pub fn get_parent_env(name : String) -> String? {
+  let name_bytes = string_to_null_terminated_bytes(name)
+  let buf = Bytes::new(4096)
+  let len = c_get_parent_env(name_bytes, buf, 4096)
+  if len <= 0 || len >= 4096 {
+    None
+  } else {
+    Some(@utf8.decode_lossy(buf[:len]))
+  }
+}
+
+///|
 pub fn setenv(name : String, value : String) -> Bool {
   let name_bytes = string_to_null_terminated_bytes(name)
   let value_bytes = string_to_null_terminated_bytes(value)
@@ -430,9 +550,48 @@ pub fn realpath_native(path : String) -> String? {
 }
 
 ///|
+pub fn mint_local_token() -> String? {
+  let out = Bytes::new(65)
+  let length = c_mint_local_token(out, out.length())
+  if length == 64 {
+    Some(@utf8.decode_lossy(out[:length]))
+  } else {
+    None
+  }
+}
+
+///|
 pub fn spawn_serve(self_exe : String) -> Bool {
   let exe_bytes = string_to_null_terminated_bytes(self_exe)
   c_spawn_serve(exe_bytes, exe_bytes.length() - 1) == 0
+}
+
+///|
+pub fn spawn_goal_worker(self_exe : String, cwd : String) -> Int {
+  let exe_bytes = string_to_null_terminated_bytes(self_exe)
+  let cwd_bytes = string_to_null_terminated_bytes(cwd)
+  c_spawn_goal_worker(
+    exe_bytes,
+    exe_bytes.length() - 1,
+    cwd_bytes,
+    cwd_bytes.length() - 1,
+  )
+}
+
+///|
+pub(all) enum ChildProcessState {
+  ChildProcessRunning
+  ChildProcessExited(Int)
+  ChildProcessUnavailable
+} derive(Debug, Eq)
+
+///|
+pub fn child_process_state(pid : Int) -> ChildProcessState {
+  match c_child_process_state(pid) {
+    -2 => ChildProcessRunning
+    -3 => ChildProcessUnavailable
+    status => ChildProcessExited(status)
+  }
 }
 
 ///|
@@ -555,8 +714,7 @@ pub fn copy_dir_recursive(src : String, dst : String) -> Bool {
   // dot-prefixed entries (see choir_list_dir in src/sys/stub.c), not just
   // `.`/`..`. Hidden files inside a skill dir are therefore not copied. This
   // is acceptable for SKILL.md-based skills which use conventional filenames.
-  // Changing the stub's policy would affect other callers (KV scan, worktree
-  // walks) and is out of scope for this PR.
+  // Changing the stub's policy would affect every directory consumer.
   if !is_dir(src) {
     return false
   }
@@ -651,10 +809,6 @@ pub fn symlink_force(target : String, linkpath : String) -> Bool {
 }
 
 ///|
-#borrow(pd, ws, br)
-extern "C" fn c_worktree_bootstrap_cleanup(pd : Bytes, ws : Bytes, br : Bytes) = "choir_worktree_bootstrap_cleanup"
-
-///|
 extern "C" fn c_init_cleanup_runtime_artifacts() = "choir_init_cleanup_runtime_artifacts"
 
 ///|
@@ -690,6 +844,14 @@ extern "C" fn c_spawn_leader_exited_pgroup_for_test(
   child_path : Bytes,
   sentinel_path : Bytes,
 ) -> Int = "choir_spawn_leader_exited_pgroup_for_test"
+
+///|
+#borrow(root_path, child_path, sentinel_path)
+extern "C" fn c_spawn_nested_sessions_for_test(
+  root_path : Bytes,
+  child_path : Bytes,
+  sentinel_path : Bytes,
+) -> Int = "choir_spawn_nested_sessions_for_test"
 
 ///|
 extern "C" fn c_ignore_sigpipe() -> Int = "choir_ignore_sigpipe"
@@ -735,63 +897,13 @@ extern "C" fn c_server_exit_signal_handlers_installed() -> Int = "choir_server_e
 extern "C" fn c_reset_server_exit_signal_handlers() = "choir_reset_server_exit_signal_handlers"
 
 ///|
-#borrow(pd, br)
-extern "C" fn c_git_fetch_origin_branch_best_effort(pd : Bytes, br : Bytes) = "choir_git_fetch_origin_branch_best_effort"
-
-///|
-#borrow(ws, sn)
-extern "C" fn c_worktree_seed_agent_runtime_gitexclude(
-  ws : Bytes,
-  sn : Bytes,
-) -> Int = "choir_worktree_seed_agent_runtime_gitexclude"
-
-///|
-/// Best-effort worktree cleanup before spawn (`git -C` / `rm` via `execvp`, stderr discarded).
-pub fn worktree_bootstrap_cleanup_native(
-  project_dir : String,
-  workspace : String,
-  branch : String,
-) -> Unit {
-  c_worktree_bootstrap_cleanup(
-    string_to_null_terminated_bytes(project_dir),
-    string_to_null_terminated_bytes(workspace),
-    string_to_null_terminated_bytes(branch),
-  )
-}
-
-///|
-/// Best-effort `git fetch origin <branch>` with the same stderr warnings as the former `sh -c` helper.
-pub fn git_fetch_origin_branch_best_effort_native(
-  project_dir : String,
-  branch : String,
-) -> Unit {
-  c_git_fetch_origin_branch_best_effort(
-    string_to_null_terminated_bytes(project_dir),
-    string_to_null_terminated_bytes(branch),
-  )
-}
-
-///|
-/// Best-effort append of agent-runtime `info/exclude` rules (resolved under the worktree's Git
-/// directory). Always returns `0`; failures are logged to stderr and the append is skipped.
-pub fn worktree_seed_agent_runtime_gitexclude_native(
-  workspace : String,
-  snippet : String,
-) -> Int {
-  c_worktree_seed_agent_runtime_gitexclude(
-    string_to_null_terminated_bytes(workspace),
-    string_to_null_terminated_bytes(snippet),
-  )
-}
-
-///|
 /// Unlink runtime-only markers (restart recovery state preserved). No shell.
 pub fn init_cleanup_runtime_artifacts_native() -> Unit {
   c_init_cleanup_runtime_artifacts()
 }
 
 ///|
-/// Broader destructive cleanup: worktrees, inline, kv prefixes, poller state. No `sh -c`.
+/// Delete all current Choir runtime and durable state. No shell command.
 pub fn init_cleanup_purge_artifacts_native() -> Unit {
   c_init_cleanup_purge_artifacts()
 }
@@ -843,6 +955,19 @@ pub fn spawn_leader_exited_pgroup_for_test(
 ) -> Int {
   c_spawn_leader_exited_pgroup_for_test(
     string_to_null_terminated_bytes(pgid_path),
+    string_to_null_terminated_bytes(child_path),
+    string_to_null_terminated_bytes(sentinel_path),
+  )
+}
+
+///|
+pub fn spawn_nested_sessions_for_test(
+  root_path : String,
+  child_path : String,
+  sentinel_path : String,
+) -> Int {
+  c_spawn_nested_sessions_for_test(
+    string_to_null_terminated_bytes(root_path),
     string_to_null_terminated_bytes(child_path),
     string_to_null_terminated_bytes(sentinel_path),
   )

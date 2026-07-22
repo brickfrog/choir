@@ -12,12 +12,21 @@ suberror ChoirError {
   /// informative detail instead of the fixed `role X cannot call Y` rendering.
   PermissionDeniedDetail(String)
   PolicyBlocked(String)
+  ProviderProtocolViolation(String)
+  EventIngestionOverflow(String)
+  ProviderProcessLost(String)
   ValidationError(String)
   Timeout(String)
+  OperationCanceled(String)
   WorkspaceError(String)
   TransportError(String)
   GitError(String)
   ConfigError(String)
+  CommandPreparationMissingRequiredArtifact(String)
+  CommandPreparationStaleBinding
+  CommandPreparationSizeLimitExceeded(Int, Int)
+  CommandPreparationDigestMismatch
+  CommandPreparationUnsupportedTemplate
 }
 
 ///|
@@ -28,12 +37,22 @@ pub fn ChoirError::to_wire_string(self : ChoirError) -> String {
     PermissionDenied(_, _) => "permission_denied"
     PermissionDeniedDetail(_) => "permission_denied"
     PolicyBlocked(_) => "policy_blocked"
+    ProviderProtocolViolation(_) => "provider_protocol_violation"
+    EventIngestionOverflow(_) => "event_ingestion_overflow"
+    ProviderProcessLost(_) => "provider_process_lost"
     ValidationError(_) => "validation_error"
     Timeout(_) => "timeout"
+    OperationCanceled(_) => "canceled"
     WorkspaceError(_) => "workspace_error"
     TransportError(_) => "transport_error"
     GitError(_) => "git_error"
     ConfigError(_) => "config_error"
+    CommandPreparationMissingRequiredArtifact(_) =>
+      "command_preparation_blocked"
+    CommandPreparationStaleBinding => "command_preparation_blocked"
+    CommandPreparationSizeLimitExceeded(_, _) => "command_preparation_blocked"
+    CommandPreparationDigestMismatch => "command_preparation_blocked"
+    CommandPreparationUnsupportedTemplate => "command_preparation_blocked"
   }
 }
 
@@ -45,12 +64,30 @@ pub fn ChoirError::message(self : ChoirError) -> String {
     PermissionDenied(role, tool) => "role " + role + " cannot call " + tool
     PermissionDeniedDetail(msg) => msg
     PolicyBlocked(msg) => "policy blocked: " + msg
+    ProviderProtocolViolation(msg) => "provider protocol violation: " + msg
+    EventIngestionOverflow(msg) => "event ingestion overflow: " + msg
+    ProviderProcessLost(msg) => "provider process lost: " + msg
     ValidationError(msg) => "validation error: " + msg
     Timeout(msg) => "timeout error: " + msg
+    OperationCanceled(msg) => "canceled: " + msg
     WorkspaceError(msg) => "workspace error: " + msg
     TransportError(msg) => "transport error: " + msg
     GitError(msg) => "git error: " + msg
     ConfigError(msg) => "config error: " + msg
+    CommandPreparationMissingRequiredArtifact(digest) =>
+      "command preparation blocked: missing required artifact " + digest
+    CommandPreparationStaleBinding =>
+      "command preparation blocked: stale binding"
+    CommandPreparationSizeLimitExceeded(actual, limit) =>
+      "command preparation blocked: size limit exceeded (" +
+      actual.to_string() +
+      " > " +
+      limit.to_string() +
+      ")"
+    CommandPreparationDigestMismatch =>
+      "command preparation blocked: digest mismatch"
+    CommandPreparationUnsupportedTemplate =>
+      "command preparation blocked: unsupported template"
   }
 }
 
@@ -91,6 +128,21 @@ pub fn ChoirError::policy_blocked(msg : String) -> ChoirError {
 }
 
 ///|
+pub fn ChoirError::provider_protocol_violation(msg : String) -> ChoirError {
+  ProviderProtocolViolation(msg)
+}
+
+///|
+pub fn ChoirError::event_ingestion_overflow(msg : String) -> ChoirError {
+  EventIngestionOverflow(msg)
+}
+
+///|
+pub fn ChoirError::provider_process_lost(msg : String) -> ChoirError {
+  ProviderProcessLost(msg)
+}
+
+///|
 pub fn ChoirError::validation_error(msg : String) -> ChoirError {
   ValidationError(msg)
 }
@@ -101,10 +153,16 @@ pub fn ChoirError::timeout(msg : String) -> ChoirError {
 }
 
 ///|
+pub fn ChoirError::canceled(msg : String) -> ChoirError {
+  OperationCanceled(msg)
+}
+
+///|
 pub fn ChoirError::validation_detail_or_message(self : ChoirError) -> String {
   match self {
     ValidationError(msg) => msg
     Timeout(msg) => msg
+    OperationCanceled(msg) => msg
     PermissionDeniedDetail(msg) => msg
     _ => self.message()
   }
@@ -139,6 +197,48 @@ pub fn ChoirError::config_error(msg : String) -> ChoirError {
 }
 
 ///|
+pub fn ChoirError::command_preparation_missing_required_artifact(
+  digest : String,
+) -> ChoirError {
+  CommandPreparationMissingRequiredArtifact(digest)
+}
+
+///|
+pub fn ChoirError::command_preparation_stale_binding() -> ChoirError {
+  CommandPreparationStaleBinding
+}
+
+///|
+pub fn ChoirError::command_preparation_size_limit_exceeded(
+  actual_bytes : Int,
+  limit_bytes : Int,
+) -> ChoirError {
+  CommandPreparationSizeLimitExceeded(actual_bytes, limit_bytes)
+}
+
+///|
+pub fn ChoirError::command_preparation_digest_mismatch() -> ChoirError {
+  CommandPreparationDigestMismatch
+}
+
+///|
+pub fn ChoirError::command_preparation_unsupported_template() -> ChoirError {
+  CommandPreparationUnsupportedTemplate
+}
+
+///|
+pub fn ChoirError::is_command_preparation_blocked(self : ChoirError) -> Bool {
+  match self {
+    CommandPreparationMissingRequiredArtifact(_)
+    | CommandPreparationStaleBinding
+    | CommandPreparationSizeLimitExceeded(_, _)
+    | CommandPreparationDigestMismatch
+    | CommandPreparationUnsupportedTemplate => true
+    _ => false
+  }
+}
+
+///|
 pub fn ChoirError::is_tool_not_found(self : ChoirError) -> Bool {
   match self {
     ToolNotFound(_) => true
@@ -155,6 +255,30 @@ pub fn ChoirError::is_timeout(self : ChoirError) -> Bool {
 }
 
 ///|
+pub fn ChoirError::is_provider_protocol_violation(self : ChoirError) -> Bool {
+  match self {
+    ProviderProtocolViolation(_) => true
+    _ => false
+  }
+}
+
+///|
+pub fn ChoirError::is_event_ingestion_overflow(self : ChoirError) -> Bool {
+  match self {
+    EventIngestionOverflow(_) => true
+    _ => false
+  }
+}
+
+///|
+pub fn ChoirError::is_provider_process_lost(self : ChoirError) -> Bool {
+  match self {
+    ProviderProcessLost(_) => true
+    _ => false
+  }
+}
+
+///|
 /// Format a caught [`Error`] when it originated from [`ChoirError`] (`try` / `catch`).
 pub fn choir_error_message_from_caught(e : Error) -> String {
   match e {
@@ -165,12 +289,28 @@ pub fn choir_error_message_from_caught(e : Error) -> String {
     PermissionDeniedDetail(msg) =>
       ChoirError::permission_denied_detail(msg).message()
     PolicyBlocked(msg) => ChoirError::policy_blocked(msg).message()
+    ProviderProtocolViolation(msg) =>
+      ChoirError::provider_protocol_violation(msg).message()
+    EventIngestionOverflow(msg) =>
+      ChoirError::event_ingestion_overflow(msg).message()
+    ProviderProcessLost(msg) => ChoirError::provider_process_lost(msg).message()
     ValidationError(msg) => ChoirError::validation_error(msg).message()
     Timeout(msg) => ChoirError::timeout(msg).message()
+    OperationCanceled(msg) => ChoirError::canceled(msg).message()
     WorkspaceError(msg) => ChoirError::workspace_error(msg).message()
     TransportError(msg) => ChoirError::transport_error(msg).message()
     GitError(msg) => ChoirError::git_error(msg).message()
     ConfigError(msg) => ChoirError::config_error(msg).message()
+    CommandPreparationMissingRequiredArtifact(digest) =>
+      ChoirError::command_preparation_missing_required_artifact(digest).message()
+    CommandPreparationStaleBinding =>
+      ChoirError::command_preparation_stale_binding().message()
+    CommandPreparationSizeLimitExceeded(actual, limit) =>
+      ChoirError::command_preparation_size_limit_exceeded(actual, limit).message()
+    CommandPreparationDigestMismatch =>
+      ChoirError::command_preparation_digest_mismatch().message()
+    CommandPreparationUnsupportedTemplate =>
+      ChoirError::command_preparation_unsupported_template().message()
     _ => "internal error"
   }
 }
@@ -184,12 +324,21 @@ pub fn caught_error_is_choir_error(e : Error) -> Bool {
     | PermissionDenied(_, _)
     | PermissionDeniedDetail(_)
     | PolicyBlocked(_)
+    | ProviderProtocolViolation(_)
+    | EventIngestionOverflow(_)
+    | ProviderProcessLost(_)
     | ValidationError(_)
     | Timeout(_)
+    | OperationCanceled(_)
     | WorkspaceError(_)
     | TransportError(_)
     | GitError(_)
-    | ConfigError(_) => true
+    | ConfigError(_)
+    | CommandPreparationMissingRequiredArtifact(_)
+    | CommandPreparationStaleBinding
+    | CommandPreparationSizeLimitExceeded(_, _)
+    | CommandPreparationDigestMismatch
+    | CommandPreparationUnsupportedTemplate => true
     _ => false
   }
 }

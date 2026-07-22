@@ -1,0 +1,105 @@
+import readline from "node:readline";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+
+const delayIndex = process.argv.indexOf("--delay-ms");
+const delayMs = delayIndex >= 0 ? Number(process.argv[delayIndex + 1]) : 0;
+const credentialCanaryIndex = process.argv.indexOf("--credential-canary-path");
+const credentialCanaryPath =
+  credentialCanaryIndex >= 0 ? process.argv[credentialCanaryIndex + 1] : null;
+const toolStartCanaryIndex = process.argv.indexOf("--tool-start-canary-path");
+const toolStartCanaryPath =
+  toolStartCanaryIndex >= 0 ? process.argv[toolStartCanaryIndex + 1] : null;
+const readCanaryIndex = process.argv.indexOf("--read-canary-path");
+const readCanaryPath =
+  readCanaryIndex >= 0 ? process.argv[readCanaryIndex + 1] : null;
+const readResultIndex = process.argv.indexOf("--read-result-path");
+const readResultPath =
+  readResultIndex >= 0 ? process.argv[readResultIndex + 1] : null;
+const failTool = process.argv.includes("--fail-tool");
+if (!Number.isInteger(delayMs) || delayMs < 0 || delayMs > 30_000) {
+  throw new Error("invalid probe delay");
+}
+if (credentialCanaryPath && process.env.CHOIR_CREDENTIAL_CANARY) {
+  writeFileSync(credentialCanaryPath, process.env.CHOIR_CREDENTIAL_CANARY, {
+    mode: 0o600,
+  });
+}
+
+const input = readline.createInterface({ input: process.stdin, terminal: false });
+input.once("close", () => process.exit(0));
+
+function respond(id, result) {
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\n");
+}
+
+input.on("line", (line) => {
+  let request;
+  try {
+    request = JSON.parse(line);
+  } catch {
+    return;
+  }
+
+  if (request.id === undefined || request.id === null) return;
+
+  switch (request.method) {
+    case "initialize":
+      respond(request.id, {
+        protocolVersion: "2024-11-05",
+        capabilities: { tools: {} },
+        serverInfo: { name: "choir-probe", version: "1" },
+      });
+      break;
+    case "tools/list":
+      respond(request.id, {
+        tools: [
+          {
+            name: "probe",
+            description: "Choir startup conformance canary",
+            inputSchema: {
+              type: "object",
+              properties: {},
+              additionalProperties: false,
+            },
+          },
+        ],
+      });
+      break;
+    case "tools/call":
+      if (toolStartCanaryPath) {
+        appendFileSync(toolStartCanaryPath, "started\n", { mode: 0o600 });
+      }
+      if (readCanaryPath && readResultPath) {
+        let observation = "denied";
+        try {
+          observation = `read:${readFileSync(readCanaryPath, "utf8")}`;
+        } catch {
+          // The admitted host boundary must make this path unreachable.
+        }
+        writeFileSync(readResultPath, observation, { mode: 0o600 });
+      }
+      setTimeout(() => {
+        respond(request.id, {
+          content: [
+            {
+              type: "text",
+              text: failTool ? "sandbox capability unavailable" : "probe",
+            },
+          ],
+          isError: failTool,
+        });
+      }, delayMs);
+      break;
+    case "ping":
+      respond(request.id, {});
+      break;
+    default:
+      process.stdout.write(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: request.id,
+          error: { code: -32601, message: `unsupported: ${request.method}` },
+        }) + "\n",
+      );
+  }
+});

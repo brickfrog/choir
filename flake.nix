@@ -109,13 +109,10 @@
             pkgs.clang
             pkgs.pkg-config
             pkgs.libuv
+            pkgs.utf8proc
             pkgs.openssl
             pkgs.git
             pkgs.gh
-            pkgs.tmux
-            pkgs.zellij
-            pkgs.watchexec
-            pkgs.entr
           ];
 
           shellHook = ''
@@ -129,6 +126,7 @@
             export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [
               pkgs.openssl
               pkgs.libuv
+              pkgs.utf8proc
               pkgs.stdenv.cc.cc.lib
             ]}:''${LD_LIBRARY_PATH:-}"
             mkdir -p .mooncakes/moonbitlang
@@ -144,7 +142,7 @@
             moon update >/dev/null 2>&1 || true
             echo "Choir dev shell"
             echo "Open-source runtime deps are available."
-            echo "Install proprietary agent CLIs separately: claude, gemini, moon pilot."
+            echo "Install runtime CLIs separately: claude, codex, bd, and boxlite."
           '';
         };
       }
