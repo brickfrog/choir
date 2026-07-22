@@ -208,6 +208,7 @@ fn goal_publication_assurance_is_current(
     return false
   }
   execution.state == GoalExecutionState::GoalExecutionAssured &&
+  execution.completion_mode == GoalCompletionMode::GoalPublishable &&
   execution.goal.lifecycle ==
   @control.GoalLifecycle::GoalActive(@control.GoalActiveCondition::GoalRunning) &&
   assurance.stage == GoalAssuranceStage::GoalAudited &&

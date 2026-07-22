@@ -68,6 +68,10 @@ pub async fn advance_native_goal_finalization_with_adapters(
     @workflow.GoalExecutionState::GoalExecutionAssured {
     return Err(native_pull_request_error("Goal is not ready for finalization"))
   }
+  if execution.record.completion_mode !=
+    @workflow.GoalCompletionMode::GoalPublishable {
+    return Err(native_pull_request_error("Goal is not publishable"))
+  }
   let assurance = match
     @workflow.load_goal_assurance_record(repository, adapters, goal_id) {
     Ok(Some(value)) => value.record

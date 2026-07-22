@@ -80,7 +80,15 @@ pub(all) struct GoalPolicyRevision {
 pub(all) struct GoalCancellationRequest {
   goal_id : @control.GoalId
   cutoff_sequence : @control.EventSequence
+  cause : GoalCancellationCause
   requested_at : Int64
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum GoalCancellationCause {
+  GoalCancellationUserRequested
+  GoalCancellationEvidenceOnlyCompleted(@control.Digest, @control.Digest)
+  GoalCancellationSupersededByContractRevision(@control.Digest)
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -221,6 +229,7 @@ pub(all) struct GoalExecutionRecord {
   base_commit_oid : @control.GitOid
   base_tree_oid : @control.GitOid
   integration_target_ref : GitRefName
+  completion_mode : GoalCompletionMode
   goal_ref : GitRefName
   branch_initialization : GoalBranchInitialization
   source_claims : Array[GoalSourceClaim]
@@ -767,6 +776,7 @@ pub fn goal_execution_record_from_selection(
     base_commit_oid: decision.proposal.expected_base_commit_oid,
     base_tree_oid: decision.proposal.expected_base_tree_oid,
     integration_target_ref: decision.proposal.integration_target_ref,
+    completion_mode: decision.proposal.completion_mode,
     goal_ref,
     branch_initialization: initial_goal_branch_initialization(
       goal.id,
@@ -826,6 +836,7 @@ pub fn decode_goal_execution_record(
     record.goal_ref != goal_execution_ref(record.goal.id) ||
     record.maximum_parallel_parts <= 0 ||
     !goal_execution_policy_shape_is_valid(record) ||
+    !goal_completion_mode_is_valid(record.completion_mode) ||
     record.part_workflow_ids.length() == 0 ||
     record.part_workflow_ids.any(fn(id) { id == "" }) ||
     record.durable_version <= 0 ||
@@ -850,6 +861,14 @@ pub fn decode_goal_execution_record(
 }
 
 ///|
+fn goal_completion_mode_is_valid(mode : GoalCompletionMode) -> Bool {
+  match mode {
+    GoalPublishable => true
+    GoalEvidenceOnly(binding) => @storage.validate_digest(binding) is Ok(_)
+  }
+}
+
+///|
 fn goal_execution_cancellation_shape_is_valid(
   record : GoalExecutionRecord,
 ) -> Bool {
@@ -857,7 +876,15 @@ fn goal_execution_cancellation_shape_is_valid(
     (GoalExecutionCanceling | GoalExecutionCanceled, Some(request)) =>
       request.goal_id == record.goal.id &&
       request.cutoff_sequence.0 > 0L &&
-      request.requested_at > 0L
+      request.requested_at > 0L &&
+      (match request.cause {
+        GoalCancellationUserRequested => true
+        GoalCancellationEvidenceOnlyCompleted(binding, assurance_digest) =>
+          record.completion_mode == GoalEvidenceOnly(binding) &&
+          @storage.validate_digest(assurance_digest) is Ok(_)
+        GoalCancellationSupersededByContractRevision(digest) =>
+          @storage.validate_digest(digest) is Ok(_)
+      })
     (GoalExecutionCanceling | GoalExecutionCanceled, None) => false
     (_, None) => true
     (_, Some(_)) => false
@@ -1235,6 +1262,10 @@ pub fn advance_goal_execution_state(
   if goal_execution_is_terminal(record) {
     return Err(goal_execution_error("terminal record cannot advance"))
   }
+  if state == GoalExecutionState::GoalExecutionSucceeded &&
+    record.completion_mode != GoalCompletionMode::GoalPublishable {
+    return Err(goal_execution_error("evidence-only Goal cannot succeed"))
+  }
   if record.active_input_request is Some(_) {
     return Err(goal_execution_error("Goal awaiting an answer cannot advance"))
   }
@@ -1545,9 +1576,49 @@ pub(all) enum GoalCancellationDecision {
 } derive(Debug, Eq)
 
 ///|
+pub(all) struct GoalEvidenceOnlyCompletionAuthorization {
+  requested_at : Int64
+  cause : GoalCancellationCause
+} derive(Debug, Eq)
+
+///|
+pub fn authorize_goal_evidence_only_completion(
+  record : GoalExecutionRecord,
+  assurance : GoalAssuranceRecord,
+) -> Result[GoalEvidenceOnlyCompletionAuthorization, @types.ChoirError] {
+  guard record.completion_mode is GoalEvidenceOnly(binding) else {
+    return Err(goal_execution_error("Goal is not evidence-only"))
+  }
+  if record.state != GoalExecutionAssured ||
+    assurance.goal_id != record.goal.id ||
+    assurance.stage != GoalAssuranceStage::GoalAudited {
+    return Err(
+      goal_execution_error("evidence-only assurance is not terminally audited"),
+    )
+  }
+  match decode_goal_assurance_record(goal_assurance_record_bytes(assurance)) {
+    Ok(validated) if validated == assurance => ()
+    _ => return Err(goal_execution_error("evidence-only assurance is invalid"))
+  }
+  guard assurance.audit_receipt is Some(receipt) && receipt.finished_at > 0L else {
+    return Err(
+      goal_execution_error("evidence-only audit receipt is incomplete"),
+    )
+  }
+  Ok({
+    requested_at: receipt.finished_at,
+    cause: GoalCancellationEvidenceOnlyCompleted(
+      binding,
+      goal_assurance_record_digest(assurance),
+    ),
+  })
+}
+
+///|
 pub fn request_goal_execution_cancellation(
   record : GoalExecutionRecord,
   requested_at : Int64,
+  cause? : GoalCancellationCause = GoalCancellationUserRequested,
 ) -> Result[GoalCancellationDecision, @types.ChoirError] {
   if requested_at <= 0L {
     return Err(goal_execution_error("cancellation time is invalid"))
@@ -1562,11 +1633,29 @@ pub fn request_goal_execution_cancellation(
     GoalExecutionSucceeded | GoalExecutionCanceled =>
       Ok(GoalCancellationAlreadyTerminal(record.state))
     _ => {
+      match cause {
+        GoalCancellationEvidenceOnlyCompleted(binding, assurance_digest) =>
+          if record.state != GoalExecutionAssured ||
+            record.completion_mode != GoalEvidenceOnly(binding) ||
+            @storage.validate_digest(assurance_digest) is Err(_) {
+            return Err(
+              goal_execution_error(
+                "evidence-only cancellation does not match assured Goal",
+              ),
+            )
+          }
+        GoalCancellationSupersededByContractRevision(digest) =>
+          if @storage.validate_digest(digest) is Err(_) {
+            return Err(goal_execution_error("supersession digest is invalid"))
+          }
+        GoalCancellationUserRequested => ()
+      }
       let request : GoalCancellationRequest = {
         goal_id: record.goal.id,
         cutoff_sequence: @control.EventSequence(
           record.durable_version.to_int64() + 1L,
         ),
+        cause,
         requested_at,
       }
       let goal = match

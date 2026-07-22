@@ -631,6 +631,9 @@ pub async fn advance_native_goal_pull_request_with_adapters(
   if execution.state != @workflow.GoalExecutionState::GoalExecutionAssured {
     return Err(native_pull_request_error("Goal is not assured"))
   }
+  if execution.completion_mode != @workflow.GoalCompletionMode::GoalPublishable {
+    return Err(native_pull_request_error("Goal is not publishable"))
+  }
   let assurance = match
     @workflow.load_goal_assurance_record(
       repository, repository_adapters, goal_id,

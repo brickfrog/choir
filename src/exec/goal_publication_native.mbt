@@ -1199,6 +1199,7 @@ async fn prove_publication_fault_recovery(
     base_commit_oid: @control.GitOid(base_oid),
     base_tree_oid: @control.GitOid(tree_oid),
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
+    completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
     goal_ref,
     branch_initialization: publication_initialized_branch(
       goal_id,

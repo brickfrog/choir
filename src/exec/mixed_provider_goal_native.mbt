@@ -206,6 +206,7 @@ pub async fn run_native_mixed_provider_goal_fixture(
     expected_base_tree_oid: git.base_tree_oid,
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
     selection_policy: @workflow.GoalSelectionPolicy::ExactClosure,
+    completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
     maximum_parallel_parts: 2,
     parts: [
       {

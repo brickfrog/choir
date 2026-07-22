@@ -248,6 +248,7 @@ pub fn persist_goal_cancellation_request(
   adapters : PartWorkflowRepositoryAdapters,
   goal_id : @control.GoalId,
   requested_at : Int64,
+  cause? : GoalCancellationCause = GoalCancellationUserRequested,
 ) -> Result[GoalCancellationPersistenceResult, @types.ChoirError] {
   let stored = match load_goal_execution_record(repository, adapters, goal_id) {
     Ok(Some(value)) => value
@@ -255,7 +256,7 @@ pub fn persist_goal_cancellation_request(
     Err(error) => return Err(error)
   }
   let decision = match
-    request_goal_execution_cancellation(stored.record, requested_at) {
+    request_goal_execution_cancellation(stored.record, requested_at, cause~) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -286,6 +287,7 @@ pub fn persist_goal_cancellation_request(
                 request_goal_execution_cancellation(
                   observed.record,
                   requested_at,
+                  cause~,
                 ) {
                 Ok(GoalCancellationAlreadyCanceling(current)) =>
                   Ok(GoalCancellationReplayed(current))
@@ -304,6 +306,7 @@ pub fn persist_goal_cancellation_request(
                 request_goal_execution_cancellation(
                   observed.record,
                   requested_at,
+                  cause~,
                 ) {
                 Ok(GoalCancellationAlreadyCanceling(current)) =>
                   Ok(GoalCancellationReplayed(current))

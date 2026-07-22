@@ -590,6 +590,7 @@ fn workflow_execution_for_attach(
     base_commit_oid: base_oid,
     base_tree_oid: @control.GitOid("base-tree"),
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
+    completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
     goal_ref,
     branch_initialization: workflow_initialized_branch(
       snapshot.goal.id,
@@ -1094,6 +1095,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     base_commit_oid: @control.GitOid("goal-head"),
     base_tree_oid: @control.GitOid("goal-tree-before"),
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
+    completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
     goal_ref: @workflow.goal_execution_ref(integrated.goal.id),
     branch_initialization: workflow_initialized_branch(
       integrated.goal.id,
@@ -1416,6 +1418,43 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     state: @workflow.GoalExecutionState::GoalExecutionAssured,
     durable_version: execution.durable_version + 1,
   }
+  let evidence_only_execution = {
+    ..assured_execution,
+    completion_mode: @workflow.GoalCompletionMode::GoalEvidenceOnly(
+      workflow_digest_b,
+    ),
+  }
+  let evidence_only_completion = @workflow.authorize_goal_evidence_only_completion(
+    evidence_only_execution, assured,
+  ).unwrap()
+  assert_eq(
+    evidence_only_completion.cause,
+    @workflow.GoalCancellationCause::GoalCancellationEvidenceOnlyCompleted(
+      workflow_digest_b,
+      @workflow.goal_assurance_record_digest(assured),
+    ),
+  )
+  assert_eq(
+    evidence_only_completion.requested_at,
+    assured.audit_receipt.unwrap().finished_at,
+  )
+  assert_true(
+    @workflow.authorize_goal_evidence_only_completion(
+      assured_execution, assured,
+    )
+    is Err(_),
+  )
+  assert_true(
+    @workflow.initialize_goal_publication(
+      evidence_only_execution,
+      assured,
+      @workflow.RemoteRepositoryId("remote-repository-assurance"),
+      @workflow.RemoteName("origin"),
+      @workflow.GitRefName("refs/heads/choir/goals/assurance"),
+      None,
+    )
+    is Err(_),
+  )
   let publication = match
     @workflow.initialize_goal_publication(
       assured_execution,
@@ -1593,6 +1632,17 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     title: "feat: complete assurance Goal",
     body: "Goal evidence\n\n" + pr_marker.0,
   }
+  assert_true(
+    @workflow.initialize_goal_pull_request(
+      evidence_only_execution,
+      assured,
+      published,
+      @workflow.PullRequestProvider::GitHubPullRequestProvider,
+      @workflow.RemoteRepositoryId("remote-repository-assurance"),
+      pr_document,
+    )
+    is Err(_),
+  )
   let pull_request = match
     @workflow.initialize_goal_pull_request(
       assured_execution,

@@ -892,6 +892,7 @@ pub async fn submit_native_conductor_goal_draft(
     expected_base_tree_oid: snapshot.base_tree_oid,
     integration_target_ref: branch_ref,
     selection_policy: @workflow.GoalSelectionPolicy::ExactClosure,
+    completion_mode: draft.completion_mode,
     maximum_parallel_parts: draft.maximum_parallel_parts,
     parts,
   }

@@ -40,6 +40,35 @@ test "Conductor draft decodes friendly provider and verification fields" {
   )
   assert_eq(draft.parts[0].verification.timeout_ms, 120000L)
   assert_eq(draft.parts[0].migration_contract_ref, None)
+  assert_eq(
+    draft.completion_mode,
+    @workflow.GoalCompletionMode::GoalPublishable,
+  )
+}
+
+///|
+test "Conductor draft binds exact evidence-only completion" {
+  let draft = @workflow.decode_conductor_goal_draft(
+    (
+      #|{"proposal_id":"p","goal_id":"g","completion_mode":"evidence_only","evidence_only_binding_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","provider":"codex","repository_wide":true,"moon_args":["test"]}]}
+    ),
+  ).unwrap()
+  assert_eq(
+    draft.completion_mode,
+    @workflow.GoalCompletionMode::GoalEvidenceOnly(
+      @control.Digest(
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      ),
+    ),
+  )
+  assert_true(
+    @workflow.decode_conductor_goal_draft(
+      (
+        #|{"proposal_id":"p","goal_id":"g","completion_mode":"evidence_only","maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","provider":"codex","repository_wide":true,"moon_args":["test"]}]}
+      ),
+    )
+    is Err(_),
+  )
 }
 
 ///|

@@ -33,9 +33,18 @@ or use `goal_steer resume` to bypass an active request.
 2. Read enough repository context to give every selected Part one concrete instruction, one honest mutation declaration, and one registered Moon verification argument list. Use `repository_wide` only when narrower exact paths or path trees would be false. The registered executable is already `moon`: `moon_args` must begin with a Moon subcommand, for example `["test", "--target", "native"]`. Never include `moon` itself.
 3. Assign each Part to `claude` or `codex` based on the work and available subscription-backed surfaces. Provider assignment is a proposal; Choir remains authoritative.
 4. Preserve dependency-safe parallelism. Set `maximum_parallel_parts` from the user's instruction or a conservative value derived from declared overlap. Do not claim that concurrency overrides dependencies or mutation conflicts.
+   The completion mode is immutable after acceptance. Omit `completion_mode`
+   for an ordinary publishable Goal. Use `completion_mode: "evidence_only"`
+   only when the user has accepted a non-publishing preparatory or rehearsal
+   Goal, and include its exact `evidence_only_binding_digest`. Evidence-only
+   Goals still complete ordinary assurance and then Choir cancels them through
+   the existing typed cancellation path; never use this mode merely to avoid
+   publication requirements.
 5. If selection, intended behavior, mutation ownership, or verification remains materially ambiguous, ask the user one concise question before submission.
 6. Call `goal_submit` exactly once with a JSON object containing:
    - unique `proposal_id` and `goal_id`;
+   - optional `completion_mode` plus `evidence_only_binding_digest` exactly as
+     described above;
    - `maximum_parallel_parts`;
    - `parts`, each with `part_id`, `instruction`, `provider`, exactly one
      mutation form (`exact_paths`/`path_trees` or `repository_wide`),

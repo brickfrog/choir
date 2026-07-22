@@ -31,6 +31,7 @@ pub(all) struct ConductorPartDraft {
 pub(all) struct ConductorGoalDraft {
   proposal_id : GoalProposalId
   goal_id : @control.GoalId
+  completion_mode : GoalCompletionMode
   maximum_parallel_parts : Int
   parts : Array[ConductorPartDraft]
 } derive(Debug, Eq, ToJson, FromJson)
@@ -439,7 +440,8 @@ pub fn decode_conductor_goal_draft(
     return Err(goal_submission_error("Conductor Goal draft must be an object"))
   }
   let allowed_fields = [
-    "proposal_id", "goal_id", "maximum_parallel_parts", "parts",
+    "proposal_id", "goal_id", "completion_mode", "evidence_only_binding_digest",
+    "maximum_parallel_parts", "parts",
   ]
   let unknown_fields = conductor_draft_unknown_fields(fields, allowed_fields)
   if unknown_fields.length() > 0 {
@@ -460,6 +462,30 @@ pub fn decode_conductor_goal_draft(
     Some(value) => @control.GoalId(value)
     None => return Err(goal_submission_error("goal_id is missing"))
   }
+  let completion_mode = match
+    conductor_draft_string(fields, "completion_mode") {
+    None => {
+      if fields.get("evidence_only_binding_digest") is Some(_) {
+        return Err(goal_submission_error("evidence-only binding has no mode"))
+      }
+      GoalCompletionMode::GoalPublishable
+    }
+    Some("publishable") => {
+      if fields.get("evidence_only_binding_digest") is Some(_) {
+        return Err(
+          goal_submission_error("publishable Goal has evidence binding"),
+        )
+      }
+      GoalCompletionMode::GoalPublishable
+    }
+    Some("evidence_only") =>
+      match conductor_digest(fields, "evidence_only_binding_digest") {
+        Some(digest) => GoalCompletionMode::GoalEvidenceOnly(digest)
+        None =>
+          return Err(goal_submission_error("evidence-only binding is invalid"))
+      }
+    _ => return Err(goal_submission_error("completion_mode is invalid"))
+  }
   let maximum_parallel_parts = match
     conductor_draft_int(fields, "maximum_parallel_parts") {
     Some(value) if value > 0 => value
@@ -478,7 +504,7 @@ pub fn decode_conductor_goal_draft(
     }
     _ => return Err(goal_submission_error("parts is missing or invalid"))
   }
-  Ok({ proposal_id, goal_id, maximum_parallel_parts, parts })
+  Ok({ proposal_id, goal_id, completion_mode, maximum_parallel_parts, parts })
 }
 
 ///|

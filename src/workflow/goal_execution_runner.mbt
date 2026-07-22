@@ -191,6 +191,51 @@ pub async fn run_next_goal_execution_tick(
       Ok(value) => value
       Err(error) => return Err(error)
     }
+    match selected.record.completion_mode {
+      GoalCompletionMode::GoalEvidenceOnly(_) => {
+        let assurance = match
+          load_goal_assurance_record(
+            repository,
+            repository_adapters,
+            selected.record.goal.id,
+          ) {
+          Ok(Some(value)) => value.record
+          Ok(_) =>
+            return Err(
+              goal_execution_error("assured evidence record is absent"),
+            )
+          Err(error) => return Err(error)
+        }
+        let authorization = match
+          authorize_goal_evidence_only_completion(selected.record, assurance) {
+          Ok(value) => value
+          Err(error) => return Err(error)
+        }
+        let outcome = match
+          persist_goal_cancellation_request(
+            repository,
+            repository_adapters,
+            selected.record.goal.id,
+            authorization.requested_at,
+            cause=authorization.cause,
+          ) {
+          Ok(value) => value
+          Err(error) => return Err(error)
+        }
+        let record = match outcome {
+          GoalCancellationPersisted(value) | GoalCancellationReplayed(value) =>
+            value
+          GoalCancellationTerminal(_) =>
+            return Err(
+              goal_execution_error(
+                "evidence-only cancellation lost terminal race",
+              ),
+            )
+        }
+        return Ok(GoalExecutionTickResult::GoalExecutionTickAdvanced(record))
+      }
+      GoalCompletionMode::GoalPublishable => ()
+    }
     let outcome = match (runner_adapters.finalize)(selected.record, parts) {
       Ok(value) => value
       Err(error) => return Err(error)

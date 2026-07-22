@@ -516,7 +516,8 @@ pub fn initialize_goal_pull_request(
   base_repository_id : RemoteRepositoryId,
   document : PullRequestDocument,
 ) -> Result[GoalPullRequestRecord, @types.ChoirError] {
-  if !pull_request_prerequisites_are_current(execution, assurance, publication) ||
+  if execution.completion_mode != GoalCompletionMode::GoalPublishable ||
+    !pull_request_prerequisites_are_current(execution, assurance, publication) ||
     base_repository_id.0 == "" ||
     !pull_request_document_is_valid(document) {
     return Err(

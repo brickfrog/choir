@@ -44,6 +44,12 @@ pub(all) enum GoalSelectionPolicy {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) enum GoalCompletionMode {
+  GoalPublishable
+  GoalEvidenceOnly(@control.Digest)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub(all) enum SelectionSourceState {
   SelectionSourceOpen
   SelectionSourceClosed
@@ -89,6 +95,7 @@ pub(all) struct GoalProposal {
   expected_base_tree_oid : @control.GitOid
   integration_target_ref : GitRefName
   selection_policy : GoalSelectionPolicy
+  completion_mode : GoalCompletionMode
   maximum_parallel_parts : Int
   parts : Array[ConductorPartProposal]
 } derive(Debug, Eq, ToJson, FromJson)
@@ -383,6 +390,7 @@ fn canonical_goal_proposal_json(proposal : GoalProposal) -> Json {
     proposal.expected_base_tree_oid.to_json(),
     proposal.integration_target_ref.to_json(),
     proposal.selection_policy.to_json(),
+    proposal.completion_mode.to_json(),
     proposal.maximum_parallel_parts.to_json(),
     rows.to_json(),
   ].to_json()
@@ -391,7 +399,7 @@ fn canonical_goal_proposal_json(proposal : GoalProposal) -> Json {
 ///|
 pub fn goal_proposal_digest(proposal : GoalProposal) -> @control.Digest {
   goal_submission_domain_digest(
-    "choir.goal-proposal.v1",
+    "choir.goal-proposal.v2",
     canonical_goal_proposal_json(proposal),
   )
 }
@@ -417,6 +425,13 @@ pub fn evaluate_goal_proposal(
   }
   if proposal.maximum_parallel_parts <= 0 {
     return Err(goal_submission_error("maximum_parallel_parts is invalid"))
+  }
+  match proposal.completion_mode {
+    GoalPublishable => ()
+    GoalEvidenceOnly(binding) =>
+      if @storage.validate_digest(binding) is Err(_) {
+        return Err(goal_submission_error("evidence-only binding is invalid"))
+      }
   }
   if proposal.repository_id != snapshot.repository_id ||
     proposal.expected_base_commit_oid != snapshot.base_commit_oid ||

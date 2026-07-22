@@ -8,6 +8,8 @@ test "Goal prompt falls back to the current Conductor contract" {
   assert_true(body.has_prefix("---\nname: goal\n"))
   assert_true(body.contains("complete open blocking-dependency closure"))
   assert_true(body.contains("Call `goal_submit` exactly once"))
+  assert_true(body.contains("The completion mode is immutable"))
+  assert_true(body.contains("`evidence_only_binding_digest`"))
   assert_true(
     body.contains("never invent or nest them under a `mutation` object"),
   )

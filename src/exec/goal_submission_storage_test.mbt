@@ -60,6 +60,7 @@ fn selection_store_decision() -> @workflow.GoalSelectionDecision raise {
         expected_base_tree_oid: @control.GitOid("tree-selection-store"),
         integration_target_ref: @workflow.GitRefName("refs/heads/main"),
         selection_policy: @workflow.GoalSelectionPolicy::ExactClosure,
+        completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
         maximum_parallel_parts: 1,
         parts: [
           {

@@ -113,6 +113,7 @@ fn submission_proposal(
     expected_base_tree_oid: @control.GitOid("base-tree"),
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
     selection_policy: @workflow.GoalSelectionPolicy::ExactClosure,
+    completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
     maximum_parallel_parts: 2,
     parts,
   }
@@ -802,6 +803,111 @@ test "Goal cancellation installs one durable cutoff and excludes success" {
     Ok(_) => fail("terminal cancellation was not reported")
     Err(error) => fail(error.message())
   }
+}
+
+///|
+test "evidence-only Goal binds completion and cancels only after assurance" {
+  let goal_id = @control.GoalId("goal-evidence-only")
+  let binding = submission_digest
+  let assurance_digest = submission_process_digest
+  let part = submission_part(
+    goal_id,
+    "a",
+    [],
+    @control.ProviderSurfaceId::CodexSubscriptionCli,
+  )
+  let proposal = {
+    ..submission_proposal(goal_id, [part]),
+    completion_mode: @workflow.GoalCompletionMode::GoalEvidenceOnly(binding),
+  }
+  let decision = @workflow.evaluate_goal_proposal(
+    proposal,
+    submission_snapshot([
+      submission_source(
+        "a",
+        [],
+        @workflow.SelectionSourceState::SelectionSourceOpen,
+      ),
+    ]),
+    fn(_) { true },
+  ).unwrap()
+  let queued = @workflow.goal_execution_record_from_selection(
+    decision,
+    @workflow.goal_selection_decision_digest(decision),
+    ["workflow-a"],
+  ).unwrap()
+  assert_eq(queued.completion_mode, proposal.completion_mode)
+  let running = submission_initialized_running(
+    @workflow.advance_goal_execution_state(
+      queued,
+      @workflow.GoalExecutionState::GoalExecutionRunning,
+    ).unwrap(),
+  )
+  let assuring = @workflow.advance_goal_execution_state(
+    running,
+    @workflow.GoalExecutionState::GoalExecutionAssuring,
+  ).unwrap()
+  let assured = @workflow.advance_goal_execution_state(
+    assuring,
+    @workflow.GoalExecutionState::GoalExecutionAssured,
+  ).unwrap()
+  assert_true(
+    @workflow.advance_goal_execution_state(
+      assured,
+      @workflow.GoalExecutionState::GoalExecutionSucceeded,
+    )
+    is Err(_),
+  )
+  assert_true(
+    @workflow.request_goal_execution_cancellation(
+      assured,
+      100L,
+      cause=@workflow.GoalCancellationCause::GoalCancellationEvidenceOnlyCompleted(
+        submission_process_digest, assurance_digest,
+      ),
+    )
+    is Err(_),
+  )
+  guard @workflow.request_goal_execution_cancellation(
+      assured,
+      100L,
+      cause=@workflow.GoalCancellationCause::GoalCancellationEvidenceOnlyCompleted(
+        binding, assurance_digest,
+      ),
+    ).unwrap()
+    is @workflow.GoalCancellationDecision::GoalCancellationRequested(canceling) else {
+    fail("evidence-only cancellation was not requested")
+  }
+  assert_eq(
+    canceling.cancellation_request.map(fn(request) { request.cause }),
+    Some(
+      @workflow.GoalCancellationCause::GoalCancellationEvidenceOnlyCompleted(
+        binding, assurance_digest,
+      ),
+    ),
+  )
+  guard @workflow.request_goal_execution_cancellation(assured, 99L).unwrap()
+    is @workflow.GoalCancellationDecision::GoalCancellationRequested(
+      user_canceling
+    ) else {
+    fail("user cancellation did not win")
+  }
+  guard @workflow.request_goal_execution_cancellation(
+      user_canceling,
+      100L,
+      cause=@workflow.GoalCancellationCause::GoalCancellationEvidenceOnlyCompleted(
+        binding, assurance_digest,
+      ),
+    ).unwrap()
+    is @workflow.GoalCancellationDecision::GoalCancellationAlreadyCanceling(
+      replayed
+    ) else {
+    fail("terminal compare-and-set was not replayed")
+  }
+  assert_eq(
+    replayed.cancellation_request.map(fn(request) { request.cause }),
+    Some(@workflow.GoalCancellationCause::GoalCancellationUserRequested),
+  )
 }
 
 ///|
