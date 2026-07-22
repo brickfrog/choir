@@ -17,6 +17,16 @@ pub(all) struct GeneratedDagConformanceReport {
 } derive(Debug, Eq, ToJson)
 
 ///|
+pub(all) struct BoundedMigrationConformanceReport {
+  judge_qualified : Bool
+  multi_part_rehearsal_assured : Bool
+  rehearsal_canceled_with_evidence : Bool
+  production_admitted : Bool
+  preintegration_repair_routed : Bool
+  publication_boundary_reached : Bool
+} derive(Debug, Eq, ToJson)
+
+///|
 let scheduling_fixture_digest : @control.Digest = @control.Digest(
   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 )
@@ -2254,6 +2264,19 @@ fn cancellation_goal_assurance_fixture() -> Result[
   (@workflow.GoalExecutionRecord, @workflow.GoalAssuranceRecord),
   @types.ChoirError,
 ] {
+  cancellation_goal_assurance_fixture_with_part_count(1)
+}
+
+///|
+fn cancellation_goal_assurance_fixture_with_part_count(
+  part_count : Int,
+) -> Result[
+  (@workflow.GoalExecutionRecord, @workflow.GoalAssuranceRecord),
+  @types.ChoirError,
+] {
+  if part_count < 1 || part_count > 2 {
+    return Err(audit_fixture_error("assurance Part count is unsupported"))
+  }
   let base = audit_workflow_result_fixture()
   let candidate = base.candidate.unwrap()
   let promotion_commit = @control.GitOid("cancellation-goal-promotion")
@@ -2293,17 +2316,80 @@ fn cancellation_goal_assurance_fixture() -> Result[
     stage: @workflow.PartWorkflowStage::PartIntegrated,
     integration_receipt: Some(integration_receipt),
   }
+  let snapshots = [integrated]
+  let mut final_head = promotion_commit
+  let mut final_tree = promotion_tree
+  if part_count == 2 {
+    let second_part_id = @control.PartId(base.part.id.0 + "-second")
+    let second_candidate = {
+      ..candidate,
+      id: @control.CandidateId(candidate.id.0 + "-second"),
+      part_id: second_part_id,
+      commit_oid: @control.GitOid("cancellation-goal-commit-second"),
+      tree_oid: @control.GitOid("cancellation-goal-tree-second"),
+    }
+    let second_promotion = @control.GitOid(
+      "cancellation-goal-promotion-second",
+    )
+    let second_tree = @control.GitOid(
+      "cancellation-goal-promotion-tree-second",
+    )
+    let second_receipt : @control.IntegrationReceipt = {
+      ..integration_receipt,
+      id: @control.IntegrationReceiptId("cancellation-goal-integration-second"),
+      intent_id: @control.IntegrationIntentId(
+        "cancellation-goal-intent-second",
+      ),
+      part_id: second_part_id,
+      candidate_id: second_candidate.id,
+      candidate_commit_oid: second_candidate.commit_oid,
+      candidate_tree_oid: second_candidate.tree_oid,
+      from_head_oid: promotion_commit,
+      promotion_commit_oid: second_promotion,
+      promotion_tree_oid: second_tree,
+      witness_ref: "refs/choir/witness/cancellation-goal-intent-second",
+      integrated_at: 111L,
+    }
+    snapshots.push({
+      ..integrated,
+      workflow_id: integrated.workflow_id + "-second",
+      part: {
+        ..integrated.part,
+        id: second_part_id,
+        dependency_ids: [integrated.part.id],
+        task_contract_revision_id: @control.RevisionId(
+          integrated.task_contract.id.0 + "-second",
+        ),
+        lifecycle: @control.PartLifecycle::PartIntegrated(
+          @control.ReceiptId("cancellation-goal-integration-second"),
+        ),
+      },
+      task_contract: {
+        ..integrated.task_contract,
+        id: @control.RevisionId(integrated.task_contract.id.0 + "-second"),
+        part_id: second_part_id,
+      },
+      candidate: Some(second_candidate),
+      integration_receipt: Some(second_receipt),
+    })
+    final_head = second_promotion
+    final_tree = second_tree
+  }
   let repository_id = @workflow.RepositoryId("cancellation-repository")
   let goal_ref = @workflow.goal_execution_ref(base.goal.id)
+  let planned_branch = @workflow.initial_goal_branch_initialization(
+    base.goal.id,
+    repository_id,
+    goal_ref,
+    base.task_contract.base_commit_oid,
+  )
   let branch_receipt : @workflow.GoalBranchInitReceipt = {
-    intent_id: @workflow.GoalBranchInitIntentId("cancellation-branch-intent"),
-    idempotency_key: audit_fixture_digest_a,
+    intent_id: planned_branch.intent_id,
+    idempotency_key: planned_branch.idempotency_key,
     repository_id,
     goal_ref,
     initialized_oid: base.task_contract.base_commit_oid,
-    initialization_witness_ref: @workflow.GitRefName(
-      "refs/choir/witness/cancellation-branch",
-    ),
+    initialization_witness_ref: planned_branch.initialization_witness_ref,
     observed_at: 100L,
   }
   let execution : @workflow.GoalExecutionRecord = {
@@ -2318,28 +2404,24 @@ fn cancellation_goal_assurance_fixture() -> Result[
     migration_production_admission: None,
     goal_ref,
     branch_initialization: {
-      intent_id: branch_receipt.intent_id,
-      goal_id: base.goal.id,
-      repository_id,
-      goal_ref,
-      captured_base_oid: base.task_contract.base_commit_oid,
-      initialization_witness_ref: branch_receipt.initialization_witness_ref,
-      idempotency_key: branch_receipt.idempotency_key,
+      ..planned_branch,
       lifecycle: @workflow.GoalBranchInitLifecycle::GoalBranchInitReceipted,
       receipt: Some(branch_receipt),
     },
-    source_claims: [
+    source_claims: snapshots.map(fn(snapshot) {
       @workflow.receipted_goal_source_claim(
         base.goal.id,
-        integrated.part.id,
+        snapshot.part.id,
         audit_fixture_digest_a,
         audit_fixture_digest_a,
         99L,
-      ),
+      )
+    }),
+    maximum_parallel_parts: part_count,
+    policy_revisions: [
+      @workflow.initial_goal_policy_revision(base.goal.id, part_count),
     ],
-    maximum_parallel_parts: 1,
-    policy_revisions: [@workflow.initial_goal_policy_revision(base.goal.id, 1)],
-    part_workflow_ids: [integrated.workflow_id],
+    part_workflow_ids: snapshots.map(fn(snapshot) { snapshot.workflow_id }),
     state: @workflow.GoalExecutionState::GoalExecutionAssuring,
     pause: None,
     active_input_request: None,
@@ -2351,11 +2433,11 @@ fn cancellation_goal_assurance_fixture() -> Result[
   let planned = match
     @workflow.initialize_goal_assurance(
       execution,
-      [integrated],
-      promotion_commit,
-      promotion_tree,
+      snapshots,
+      final_head,
+      final_tree,
       [verification_spec],
-      cancellation_goal_assurance_identities(base.goal, promotion_commit),
+      cancellation_goal_assurance_identities(base.goal, final_head),
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -2461,7 +2543,18 @@ fn cancellation_audited_goal_fixture() -> Result[
   (@workflow.GoalExecutionRecord, @workflow.GoalAssuranceRecord),
   @types.ChoirError,
 ] {
-  let (execution, planned) = match cancellation_goal_assurance_fixture() {
+  cancellation_audited_goal_fixture_with_part_count(1)
+}
+
+///|
+fn cancellation_audited_goal_fixture_with_part_count(
+  part_count : Int,
+) -> Result[
+  (@workflow.GoalExecutionRecord, @workflow.GoalAssuranceRecord),
+  @types.ChoirError,
+] {
+  let (execution, planned) = match
+    cancellation_goal_assurance_fixture_with_part_count(part_count) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -2497,9 +2590,40 @@ fn cancellation_audited_goal_fixture() -> Result[
     Err(error) => return Err(error)
   }
   let seal = completed_seal.seal.unwrap()
+  let verification_subject : @control.GoalVerificationSubject = {
+    goal_id: execution.goal.id,
+    goal_branch_seal_id: seal.id,
+    goal_branch_seal_digest: seal.seal_digest,
+    goal_head_oid: seal.head_oid,
+    goal_tree_oid: seal.tree_oid,
+    goal_contract_digest: seal.goal_contract_digest,
+    assurance_policy_revision: seal.assurance_policy_revision,
+    integration_receipt_set_digest: seal.integration_receipt_set_digest,
+    subject_digest: audit_fixture_digest_a,
+  }
+  let verification_receipt : @control.GoalVerificationReceipt = {
+    receipt_id: @control.ReceiptId("cancellation-goal-verification"),
+    verification_take_id: completed_seal.verification_take.id,
+    verification_execution_id: @control.VerificationExecutionId(
+      "cancellation-goal-verification-execution",
+    ),
+    subject: verification_subject,
+    verification_spec: completed_seal.verification_specs[0],
+    prepared_environment_and_image_digest: audit_fixture_digest_a,
+    sandbox_runtime_and_policy_digest: audit_fixture_digest_b,
+    subject_pre_tree_oid: seal.tree_oid,
+    subject_post_tree_oid: seal.tree_oid,
+    evidence: {
+      artifact_id: "cancellation-goal-verification-evidence",
+      digest: audit_fixture_digest_b,
+    },
+    started_at: 120L,
+    finished_at: 121L,
+    outcome: @control.VerificationOutcome::VerificationPassed,
+  }
   let verification : @control.GoalVerificationAuthorizationSet = {
     subject_digest: audit_fixture_digest_a,
-    receipt_ids: [@control.ReceiptId("cancellation-goal-verification")],
+    receipt_ids: [verification_receipt.receipt_id],
     receipt_set_digest: audit_fixture_digest_a,
     evidence_manifest_digest: audit_fixture_digest_b,
   }
@@ -2557,6 +2681,8 @@ fn cancellation_audited_goal_fixture() -> Result[
   }
   let audited : @workflow.GoalAssuranceRecord = {
     ..completed_seal,
+    verification_subject: Some(verification_subject),
+    verification_receipts: [verification_receipt],
     verification_authorization: Some(verification),
     audit_subject: Some(subject),
     audit_result: Some(result),
@@ -2588,6 +2714,291 @@ fn cancellation_audited_goal_fixture() -> Result[
     Ok(_) => Err(audit_fixture_error("audited Goal round trip changed"))
     Err(error) => Err(error)
   }
+}
+
+///|
+pub fn run_bounded_migration_conformance_fixture() -> Result[
+  BoundedMigrationConformanceReport,
+  @types.ChoirError,
+] {
+  let (assured_execution, assurance) = match
+    cancellation_audited_goal_fixture_with_part_count(2) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let judge_definition : @migration.MigrationJudgeDefinition = {
+    schema_version: 1,
+    source_revision: audit_fixture_digest_a,
+    scenario_count: 1,
+    baseline_policy: @migration.JudgeBaselinePolicy::JudgeCleanBaseline,
+    negative_controls: [
+      {
+        scenario_id: @migration.MigrationScenarioId("bounded-broken-rule"),
+        class: @migration.JudgeNegativeControlClass::JudgeRuleViolationControl,
+        expected_failure_digest: audit_fixture_digest_a,
+      },
+    ],
+    excluded_surfaces_artifact_digest: audit_fixture_digest_a,
+    permitted_nondeterminism_artifact_digest: audit_fixture_digest_b,
+    substitute_oracle_artifact_digest: None,
+  }
+  let audit_receipt = match assurance.audit_receipt {
+    Some(value) => value
+    None => return Err(audit_fixture_error("bounded audit receipt is absent"))
+  }
+  let judge_report : @migration.JudgeQualificationReport = {
+    judge_definition_digest: @migration.migration_judge_definition_digest(
+      judge_definition,
+    ),
+    source_revision: judge_definition.source_revision,
+    baseline_results: [
+      {
+        scenario_id: @migration.MigrationScenarioId("bounded-source"),
+        normalized_outcome_digest: audit_fixture_digest_a,
+        classification: @migration.JudgeBaselineClassification::JudgeBaselinePassed,
+      },
+    ],
+    negative_control_results: [
+      {
+        scenario_id: @migration.MigrationScenarioId("bounded-broken-rule"),
+        class: @migration.JudgeNegativeControlClass::JudgeRuleViolationControl,
+        observed_failure_digest: audit_fixture_digest_a,
+        rejected: true,
+      },
+    ],
+    goal_verification_receipt_ids: assurance.verification_receipts.map(fn(
+      receipt,
+    ) {
+      receipt.receipt_id
+    }),
+    goal_audit_receipt_id: audit_receipt.receipt_id,
+  }
+  match
+    @migration.validate_judge_qualification_report(
+      judge_definition, judge_report,
+    ) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let assurance_digest = @workflow.goal_assurance_record_digest(assurance)
+  let sampled_inventory_digest = audit_fixture_digest_b
+  let contract : @migration.MigrationContract = {
+    id: @control.MigrationContractId("bounded-contract"),
+    migration_lineage_id: @control.MigrationLineageId("bounded-lineage"),
+    revision: 1,
+    source_revision: judge_definition.source_revision,
+    workflow_shape: @migration.MigrationWorkflowShape::StructurePreservingPort,
+    feasibility_report_artifact_digest: audit_fixture_digest_a,
+    target_architecture_artifact_digest: audit_fixture_digest_b,
+    rulebook_artifact_digest: audit_fixture_digest_a,
+    dependency_map_artifact_digest: audit_fixture_digest_b,
+    gap_inventory_artifact_digest: audit_fixture_digest_a,
+    inventory_generator_artifact_digest: audit_fixture_digest_b,
+    qualified_inventory_artifact_digest: audit_fixture_digest_a,
+    transformation_plan_artifact_digest: audit_fixture_digest_b,
+    context_assembly_policy_digest: audit_fixture_digest_a,
+    judge_definition_digest: judge_report.judge_definition_digest,
+    judge_qualification_assurance_record_digest: assurance_digest,
+    parity_definition_digest: None,
+    validation_plan_digest: audit_fixture_digest_b,
+    rehearsal_policy: @migration.RehearsalPolicy::RehearsalRequired(
+      sampled_inventory_digest,
+    ),
+  }
+  let contract_ref = match @migration.migration_contract_reference(contract) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let acceptance : @migration.MigrationContractAcceptance = {
+    contract_ref,
+    authorization: @migration.MigrationContractAuthorization::MigrationContractExplicitUserInput(
+      audit_fixture_digest_a,
+    ),
+    accepted_event_sequence: @control.EventSequence(200L),
+    accepted_at: 200L,
+  }
+  let seal = match assurance.seal {
+    Some(value) => value
+    None => return Err(audit_fixture_error("bounded Goal seal is absent"))
+  }
+  let qualification_binding : @migration.JudgeQualificationBinding = {
+    qualifying_goal_id: assured_execution.goal.id,
+    qualifying_goal_contract_digest: assured_execution.goal.contract_digest,
+    goal_branch_seal_id: seal.id,
+    goal_branch_seal_digest: seal.seal_digest,
+    judge_definition_digest: contract.judge_definition_digest,
+    source_revision: contract.source_revision,
+  }
+  let qualifying_execution = match
+    @workflow.advance_goal_execution_state(
+      assured_execution,
+      @workflow.GoalExecutionState::GoalExecutionSucceeded,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  guard qualifying_execution.goal.lifecycle
+    is @control.GoalLifecycle::GoalSucceeded(finalization_id) else {
+    return Err(audit_fixture_error("bounded qualification did not succeed"))
+  }
+  let qualification : @migration.JudgeQualificationEvidenceRef = {
+    binding: qualification_binding,
+    completion_binding_digest: @migration.judge_qualification_binding_digest(
+      qualification_binding,
+    ),
+    assurance_record_digest: assurance_digest,
+    terminal: @migration.JudgeQualificationTerminal::JudgeQualificationSucceeded(
+      finalization_id,
+    ),
+  }
+  let rehearsal_binding : @migration.RehearsalBinding = {
+    migration_contract_ref: contract_ref,
+    sampled_inventory_digest,
+  }
+  let rehearsal_binding_digest = @migration.rehearsal_binding_digest(
+    rehearsal_binding,
+  )
+  let rehearsal_execution = {
+    ..assured_execution,
+    completion_mode: @workflow.GoalCompletionMode::GoalEvidenceOnly(
+      rehearsal_binding_digest,
+    ),
+  }
+  let completion = match
+    @workflow.authorize_goal_evidence_only_completion(
+      rehearsal_execution, assurance,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let mut canceling = match
+    @workflow.request_goal_execution_cancellation(
+      rehearsal_execution,
+      completion.requested_at,
+      cause=completion.cause,
+    ) {
+    Ok(@workflow.GoalCancellationDecision::GoalCancellationRequested(value)) =>
+      value
+    Ok(_) => return Err(audit_fixture_error("rehearsal cancellation lost"))
+    Err(error) => return Err(error)
+  }
+  for claim in canceling.source_claims {
+    canceling = match
+      @workflow.authorize_goal_source_release(canceling, claim.part_id) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    canceling = match
+      @workflow.reconcile_goal_source_release(
+        canceling,
+        claim.part_id,
+        @workflow.GoalSourceClaimObservation::GoalSourceUnclaimedExact,
+        completion.requested_at + 1L,
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+  }
+  let canceled = match @workflow.commit_goal_execution_cancellation(canceling) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  guard canceled.goal.lifecycle
+    is @control.GoalLifecycle::GoalCanceled(cancellation_summary_id) else {
+    return Err(audit_fixture_error("rehearsal did not terminate canceled"))
+  }
+  let rehearsal : @migration.RehearsalEvidenceRef = {
+    rehearsal_goal_id: canceled.goal.id,
+    migration_contract_ref: contract_ref,
+    sampled_inventory_digest,
+    completion_binding_digest: rehearsal_binding_digest,
+    assurance_record_digest: assurance_digest,
+    cancellation_summary_id,
+  }
+  if @workflow.decode_goal_execution_record(
+      @workflow.goal_execution_record_bytes(qualifying_execution),
+    )
+    is Err(_) {
+    return Err(audit_fixture_error("qualifying execution is invalid"))
+  }
+  if @workflow.decode_goal_execution_record(
+      @workflow.goal_execution_record_bytes(canceled),
+    )
+    is Err(_) {
+    return Err(audit_fixture_error("rehearsal execution is invalid"))
+  }
+  let production_admission = match
+    @workflow.validate_migration_production_admission(
+      contract,
+      acceptance,
+      judge_definition,
+      judge_report,
+      qualification,
+      qualifying_execution,
+      assurance,
+      Some(rehearsal),
+      Some(canceled),
+      Some(assurance),
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let next_contract_ref = {
+    ..contract_ref,
+    revision: 2,
+    contract_artifact_digest: audit_fixture_digest_b,
+  }
+  let impact = match
+    @migration.compute_migration_contract_revision_impact_set(
+      contract_ref,
+      next_contract_ref,
+      [
+        {
+          kind: @migration.MigrationChangedArtifactKind::ChangedRulebook,
+          previous_digest: audit_fixture_digest_a,
+          next_digest: audit_fixture_digest_b,
+        },
+      ],
+      [
+        {
+          part_id: @control.PartId("bounded-production-part"),
+          effective_task_contract_revision_id: @control.RevisionId(
+            "bounded-production-revision",
+          ),
+          dependency_artifact_digests: [audit_fixture_digest_a],
+          integrated: false,
+          dependency_complete: true,
+        },
+      ],
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let publication = @workflow.initialize_goal_publication(
+    assured_execution,
+    assurance,
+    @workflow.RemoteRepositoryId("bounded-remote"),
+    @workflow.RemoteName("origin"),
+    @workflow.GitRefName("refs/heads/choir/goals/bounded-migration"),
+    None,
+  )
+  Ok({
+    judge_qualified: true,
+    multi_part_rehearsal_assured: assurance.integration_receipts.length() == 2,
+    rehearsal_canceled_with_evidence: canceled.state ==
+    @workflow.GoalExecutionState::GoalExecutionCanceled &&
+    canceled.cancellation_request.map(fn(request) { request.cause }) ==
+    Some(completion.cause),
+    production_admitted: production_admission.migration_contract_ref ==
+    contract_ref &&
+    production_admission.rehearsal_evidence_ref_digest ==
+    Some(@migration.rehearsal_evidence_ref_digest(rehearsal)),
+    preintegration_repair_routed: impact.application ==
+    @migration.MigrationContractRevisionApplication::MigrationRevisionAppliesInPlace &&
+    impact.impacted_parts.length() == 1 &&
+    !impact.impacted_parts[0].was_integrated,
+    publication_boundary_reached: publication is Ok(_),
+  })
 }
 
 ///|

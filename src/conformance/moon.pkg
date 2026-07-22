@@ -2,6 +2,7 @@ import {
   "choir/src/command",
   "choir/src/control",
   "choir/src/harness",
+  "choir/src/migration",
   "choir/src/sandbox",
   "choir/src/storage",
   "choir/src/types",

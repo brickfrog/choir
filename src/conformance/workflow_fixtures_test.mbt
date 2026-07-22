@@ -9,6 +9,20 @@ test "multi-Part fixture exercises conflict and stable promotion order" {
 }
 
 ///|
+test "bounded migration fixture reaches the ordinary publication boundary" {
+  let report = match @conformance.run_bounded_migration_conformance_fixture() {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_true(report.judge_qualified)
+  assert_true(report.multi_part_rehearsal_assured)
+  assert_true(report.rehearsal_canceled_with_evidence)
+  assert_true(report.production_admitted)
+  assert_true(report.preintegration_repair_routed)
+  assert_true(report.publication_boundary_reached)
+}
+
+///|
 test "generated DAG fixture covers permutations and concurrency limits" {
   let report = match @conformance.run_generated_dag_conformance_fixture() {
     Ok(value) => value
