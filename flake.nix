@@ -109,6 +109,7 @@
             pkgs.clang
             pkgs.pkg-config
             pkgs.libuv
+            pkgs.utf8proc
             pkgs.openssl
             pkgs.git
             pkgs.gh
@@ -125,6 +126,7 @@
             export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [
               pkgs.openssl
               pkgs.libuv
+              pkgs.utf8proc
               pkgs.stdenv.cc.cc.lib
             ]}:''${LD_LIBRARY_PATH:-}"
             mkdir -p .mooncakes/moonbitlang
