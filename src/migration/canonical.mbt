@@ -590,7 +590,11 @@ fn judge_negative_control_result_bytes(
     result.scenario_id.0,
     judge_negative_control_class_name(result.class),
     result.observed_failure_digest.0,
-    if result.rejected { "rejected" } else { "survived" },
+    if result.rejected {
+      "rejected"
+    } else {
+      "survived"
+    },
   ])
 }
 
@@ -604,9 +608,11 @@ pub fn canonical_judge_qualification_report_bytes(
   let control_rows = report.negative_control_results.map(fn(result) {
     @utf8.decode_lossy(judge_negative_control_result_bytes(result))
   })
-  let verification_receipts = report.goal_verification_receipt_ids.map(
-    fn(receipt_id) { receipt_id.0 },
-  )
+  let verification_receipts = report.goal_verification_receipt_ids.map(fn(
+    receipt_id,
+  ) {
+    receipt_id.0
+  })
   canonical_fields("choir.judge-qualification-report.v1", [
     report.judge_definition_digest.0,
     report.source_revision.0,
@@ -789,7 +795,9 @@ pub fn canonical_migration_production_admission_ref_bytes(
 pub fn migration_production_admission_ref_digest(
   reference : MigrationProductionAdmissionRef,
 ) -> @control.Digest {
-  canonical_digest(canonical_migration_production_admission_ref_bytes(reference))
+  canonical_digest(
+    canonical_migration_production_admission_ref_bytes(reference),
+  )
 }
 
 ///|
@@ -835,10 +843,7 @@ pub fn migration_bead_id(
   kind : MigrationBeadKind,
 ) -> MigrationBeadId {
   let digest = migration_bead_idempotency_key(
-    reference,
-    stable_key,
-    scope,
-    kind,
+    reference, stable_key, scope, kind,
   )
   MigrationBeadId("choir-mig-" + digest.0[0:24].to_owned())
 }

@@ -127,9 +127,8 @@ pub fn validate_migration_continuation_selection(
   expected_new_base : @control.GitOid,
   task_contracts : Array[@control.TaskContractRevision],
 ) -> Result[@migration.MigrationProductionAdmissionRef, @types.ChoirError] {
-  match @migration.validate_migration_production_admission_ref(
-    production_admission,
-  ) {
+  match
+    @migration.validate_migration_production_admission_ref(production_admission) {
     Ok(_) => ()
     Err(error) => return Err(error)
   }

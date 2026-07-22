@@ -209,7 +209,8 @@ pub fn validate_migration_production_admission(
         Ok(_) => ()
         Err(error) => return Err(error)
       }
-    _ => return Err(migration_admission_error("rehearsal evidence is incomplete"))
+    _ =>
+      return Err(migration_admission_error("rehearsal evidence is incomplete"))
   }
   Ok({
     migration_contract_ref: contract_ref,

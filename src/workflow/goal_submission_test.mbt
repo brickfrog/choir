@@ -230,10 +230,7 @@ test "accepted migration Part retains its exact context manifest" {
       part_task_contract_digest: continued_contract.digest,
     }),
   }
-  let unbound_continuation = {
-    ..proposal,
-    parts: [continued_part],
-  }
+  let unbound_continuation = { ..proposal, parts: [continued_part] }
   assert_true(
     @workflow.evaluate_goal_proposal(
       unbound_continuation,
@@ -250,8 +247,9 @@ test "accepted migration Part retains its exact context manifest" {
   )
   let bound_continuation = {
     ..unbound_continuation,
-    migration_production_admission: proposal.migration_production_admission.map(
-      fn(admission) {
+    migration_production_admission: proposal.migration_production_admission.map(fn(
+        admission,
+      ) {
         {
           ..admission,
           migration_continuation_ref_digest: Some(submission_process_digest),
@@ -1168,14 +1166,14 @@ test "evidence-only Goal binds completion and cancels only after assurance" {
     migration_continuation_ref_digest: Some(continuation_digest),
   }
   let continuation_admission = @workflow.validate_migration_continuation_selection(
-      submission_migration_admission(next_contract_ref),
-      continuation,
-      supersession.supersession,
-      canceled_supersession,
-      terminal_head,
-      terminal_head,
-      [continuation_contract],
-    ).unwrap()
+    submission_migration_admission(next_contract_ref),
+    continuation,
+    supersession.supersession,
+    canceled_supersession,
+    terminal_head,
+    terminal_head,
+    [continuation_contract],
+  ).unwrap()
   assert_eq(
     continuation_admission.migration_continuation_ref_digest,
     Some(continuation_digest),

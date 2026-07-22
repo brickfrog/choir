@@ -2328,18 +2328,12 @@ fn cancellation_goal_assurance_fixture_with_part_count(
       commit_oid: @control.GitOid("cancellation-goal-commit-second"),
       tree_oid: @control.GitOid("cancellation-goal-tree-second"),
     }
-    let second_promotion = @control.GitOid(
-      "cancellation-goal-promotion-second",
-    )
-    let second_tree = @control.GitOid(
-      "cancellation-goal-promotion-tree-second",
-    )
+    let second_promotion = @control.GitOid("cancellation-goal-promotion-second")
+    let second_tree = @control.GitOid("cancellation-goal-promotion-tree-second")
     let second_receipt : @control.IntegrationReceipt = {
       ..integration_receipt,
       id: @control.IntegrationReceiptId("cancellation-goal-integration-second"),
-      intent_id: @control.IntegrationIntentId(
-        "cancellation-goal-intent-second",
-      ),
+      intent_id: @control.IntegrationIntentId("cancellation-goal-intent-second"),
       part_id: second_part_id,
       candidate_id: second_candidate.id,
       candidate_commit_oid: second_candidate.commit_oid,

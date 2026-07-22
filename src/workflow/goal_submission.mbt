@@ -392,9 +392,11 @@ fn canonical_goal_proposal_json(proposal : GoalProposal) -> Json {
     proposal.integration_target_ref.to_json(),
     proposal.selection_policy.to_json(),
     proposal.completion_mode.to_json(),
-    proposal.migration_production_admission.map(fn(reference) {
+    proposal.migration_production_admission
+    .map(fn(reference) {
       @migration.migration_production_admission_ref_digest(reference)
-    }).to_json(),
+    })
+    .to_json(),
     proposal.maximum_parallel_parts.to_json(),
     rows.to_json(),
   ].to_json()
@@ -491,7 +493,8 @@ pub fn evaluate_goal_proposal(
     (0, Some(_)) => true
     (_, None) => true
     (_, Some(admission)) =>
-      @migration.validate_migration_production_admission_ref(admission) is Err(_) ||
+      @migration.validate_migration_production_admission_ref(admission)
+      is Err(_) ||
       admission.migration_contract_ref != migration_refs[0] ||
       admission.migration_continuation_ref_digest !=
       expected_continuation_digest

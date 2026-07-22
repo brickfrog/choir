@@ -540,9 +540,7 @@ test "inventory projects deterministic Bead identities and dependency edges" {
     assert_false(projected.any(fn(candidate) { candidate.id == proposal.id }))
     assert_true(
       proposal.scope ==
-      @migration.MigrationBeadScope::MigrationRehearsalBead(
-        migration_digest_c,
-      ),
+      @migration.MigrationBeadScope::MigrationRehearsalBead(migration_digest_c),
     )
   }
   let rehearsal_a = rehearsal.filter(fn(proposal) {

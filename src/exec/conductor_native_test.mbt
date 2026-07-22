@@ -209,12 +209,7 @@ fn migration_materialization_proposals() -> Array[
     let stable_key = @migration.InventoryStableKey(key)
     let scope = @migration.MigrationBeadScope::MigrationProductionBead
     {
-      id: @migration.migration_bead_id(
-        contract_ref,
-        stable_key,
-        scope,
-        kind,
-      ),
+      id: @migration.migration_bead_id(contract_ref, stable_key, scope, kind),
       idempotency_key: @migration.migration_bead_idempotency_key(
         contract_ref, stable_key, scope, kind,
       ),
