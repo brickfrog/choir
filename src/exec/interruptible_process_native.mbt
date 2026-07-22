@@ -119,7 +119,10 @@ pub async fn capture_native_provider_host_boundary(
       ),
     )
   }
-  let sink = @process.redirect_to_file("/dev/null") catch {
+  let sink = @process.redirect_to_file(
+    root + "/process.sink",
+    create_mode=@fs.CreateOrTruncate,
+  ) catch {
     _ => {
       ignore(@sys.rm_rf(root))
       return Err(
@@ -164,7 +167,10 @@ pub async fn capture_native_provider_host_boundary(
   )
   ignore(@sys.rm_rf(root))
   ignore(@sys.delete_file_sync(outside))
-  if inside_code == 0 && inside_created && outside_code != 0 && outside_absent {
+  // The private /tmp may accept the outside write; only host persistence is
+  // forbidden. Requiring the sandboxed touch itself to fail confuses an
+  // isolated writable tmpfs with host mutation authority.
+  if inside_code == 0 && inside_created && outside_absent {
     Ok(evidence)
   } else {
     Err(

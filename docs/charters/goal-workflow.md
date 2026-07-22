@@ -5080,6 +5080,34 @@ identity, sandbox lifecycle, and session trees. Choir does not copy its
 prompt-owned registries, broad server/UI, ambient credential handling, or
 shared unsandboxed execution.
 
+#### 2026-07-22 provider and sandbox qualification
+
+Codex CLI 0.145.0 was qualified with launcher SHA-256
+`134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477`
+and native executable SHA-256
+`a2a05dafaa1acb002a45eaec0a462de5b13694fcfcd7bc43305f14781ce7be14`.
+The live startup, driver, sterile-boundary, capability-death, recovery,
+resume-drift, cancellation, Conductor reconnect, and native Part lifecycle
+probes passed. Codex 0.145 rejects a Take at thread startup when a required MCP
+server cannot initialize; that fail-closed transport result is admitted as the
+current capability-death behavior. Its strict structured-output validation
+also requires every object property to be listed in `required`, so migration
+audit findings now carry a required string `anchor_secondary` and use an empty
+string for single-anchor findings.
+
+The current Docker Official Images Linux/amd64 Alpine 3.24.1 manifest,
+`sha256:79ff19e9084a00eece421b2523fb93e22d730e2c0e525905de047e848e56d95f`,
+passed the full secure/insecure boot, lifecycle, copy, clone, process-control,
+restart, and network-denial matrix with the existing corrected BoxLite v0.9.7
+runtime identity. The live Take gate also passed after dependency preparation
+was moved out of the passive assurance seal: the host boundary resolves the
+exact Moon package closure in a dedicated staged source, injects it into the
+network-disabled guest, and excludes that injected cache from result
+artifacts. The restarted Codex Part then integrated with 15 effect receipts,
+one verification receipt, one audit receipt, one integration receipt, zero
+implementation redispatches after restart, and two assurance-provider
+dispatches after restart.
+
 ### Primary sources retrieved
 
 Anthropic:

@@ -44,7 +44,7 @@ struct NativeMigrationFindingOutput {
   severity : NativeMigrationFindingSeverity
   anchor_kind : NativeMigrationFindingAnchorKind
   anchor_primary : String
-  anchor_secondary : String?
+  anchor_secondary : String
   evidence : String
   disposition : NativeMigrationFindingDisposition
 } derive(Debug, Eq, FromJson)
@@ -93,7 +93,8 @@ fn native_migration_finding_output_schema() -> Json {
       }.to_json(),
     }.to_json(),
     "required": [
-      "class", "severity", "anchor_kind", "anchor_primary", "evidence", "disposition",
+      "class", "severity", "anchor_kind", "anchor_primary", "anchor_secondary",
+      "evidence", "disposition",
     ].to_json(),
     "additionalProperties": false.to_json(),
   }.to_json()
@@ -109,7 +110,7 @@ fn native_migration_findings_output_schema() -> Json {
 
 ///|
 fn native_migration_audit_output_instruction() -> String {
-  " For a migration Part, also return migration_findings with one typed entry per finding. Use the exact enum labels from the output schema, anchor the concrete rule, scenario, inventory unit, dependency edge, ownership claim, parity scenario, or accepted Contract, and include bounded evidence text. Return an empty migration_findings array when clean."
+  " Always return migration_findings. For a migration Part, include one typed entry per finding; otherwise return an empty array. Use the exact enum labels from the output schema, set anchor_secondary to an empty string unless the anchor is a dependency edge, anchor the concrete rule, scenario, inventory unit, dependency edge, ownership claim, parity scenario, or accepted Contract, and include bounded evidence text. Return an empty migration_findings array when clean."
 }
 
 ///|
@@ -165,19 +166,19 @@ fn native_migration_finding_anchor(
     return Err(native_part_effect_error("migration finding anchor is invalid"))
   }
   match value.anchor_kind {
-    Rule if value.anchor_secondary is None =>
+    Rule if value.anchor_secondary == "" =>
       Ok(
         @migration.MigrationFindingAnchor::Rule(
           @migration.MigrationRuleId(value.anchor_primary),
         ),
       )
-    JudgeScenario if value.anchor_secondary is None =>
+    JudgeScenario if value.anchor_secondary == "" =>
       Ok(
         @migration.MigrationFindingAnchor::JudgeScenario(
           @migration.MigrationScenarioId(value.anchor_primary),
         ),
       )
-    InventoryUnit if value.anchor_secondary is None =>
+    InventoryUnit if value.anchor_secondary == "" =>
       Ok(
         @migration.MigrationFindingAnchor::InventoryUnit(
           @migration.InventoryStableKey(value.anchor_primary),
@@ -185,7 +186,7 @@ fn native_migration_finding_anchor(
       )
     DependencyEdge =>
       match value.anchor_secondary {
-        Some(secondary) if secondary != "" && !secondary.contains("\u{00}") =>
+        secondary if secondary != "" && !secondary.contains("\u{00}") =>
           Ok(
             @migration.MigrationFindingAnchor::DependencyEdge(
               @migration.InventoryStableKey(value.anchor_primary),
@@ -194,19 +195,19 @@ fn native_migration_finding_anchor(
           )
         _ => Err(native_part_effect_error("dependency anchor is incomplete"))
       }
-    OwnershipClaim if value.anchor_secondary is None =>
+    OwnershipClaim if value.anchor_secondary == "" =>
       Ok(
         @migration.MigrationFindingAnchor::OwnershipClaim(
           @migration.InventoryStableKey(value.anchor_primary),
         ),
       )
-    ParityScenario if value.anchor_secondary is None =>
+    ParityScenario if value.anchor_secondary == "" =>
       Ok(
         @migration.MigrationFindingAnchor::ParityScenario(
           @migration.MigrationScenarioId(value.anchor_primary),
         ),
       )
-    Contract if value.anchor_secondary is None &&
+    Contract if value.anchor_secondary == "" &&
       value.anchor_primary == contract_ref.contract_id.0 =>
       Ok(@migration.MigrationFindingAnchor::Contract(contract_ref))
     _ => Err(native_part_effect_error("migration finding anchor is invalid"))
@@ -339,7 +340,7 @@ fn native_migration_findings_artifact(
 ///|
 test "native migration audit output decodes closed finding domains" {
   let json = @json.parse(
-    "{\"outcome\":\"findings\",\"total_findings\":1,\"blocking_findings\":1,\"migration_findings\":[{\"class\":\"RuleViolation\",\"severity\":\"Blocking\",\"anchor_kind\":\"Rule\",\"anchor_primary\":\"rule-1\",\"evidence\":\"observed host I/O\",\"disposition\":\"ReviseContract\"}]}",
+    "{\"outcome\":\"findings\",\"total_findings\":1,\"blocking_findings\":1,\"migration_findings\":[{\"class\":\"RuleViolation\",\"severity\":\"Blocking\",\"anchor_kind\":\"Rule\",\"anchor_primary\":\"rule-1\",\"anchor_secondary\":\"\",\"evidence\":\"observed host I/O\",\"disposition\":\"ReviseContract\"}]}",
   )
   let output : NativeAuditStructuredOutput = @json.from_json(json)
   guard output.migration_findings is Some([finding]) else {
@@ -350,5 +351,12 @@ test "native migration audit output decodes closed finding domains" {
   assert_eq(
     finding.disposition,
     NativeMigrationFindingDisposition::ReviseContract,
+  )
+  let schema = native_migration_finding_output_schema().stringify(indent=0)
+  assert_true(schema.contains("\"anchor_secondary\":{\"type\":\"string\"}"))
+  assert_true(
+    schema.contains(
+      "\"required\":[\"class\",\"severity\",\"anchor_kind\",\"anchor_primary\",\"anchor_secondary\",\"evidence\",\"disposition\"]",
+    ),
   )
 }

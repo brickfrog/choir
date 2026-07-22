@@ -499,6 +499,7 @@ async fn prepare_native_source_sandbox(
   let mutable_sandbox = match
     clone_native_boxlite_take(
       prepared,
+      runtime.config.moon_home,
       "choir-" + lease.generation_id.0,
       staged.root,
       staged.source_digest,

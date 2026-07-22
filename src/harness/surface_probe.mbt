@@ -278,7 +278,7 @@ pub fn evaluate_host_surface_matrix(
 pub fn expected_surface_version(surface : ProviderSurface) -> String {
   match surface {
     ClaudeCli => "2.1.217"
-    CodexCli => "0.144.6"
+    CodexCli => "0.145.0"
   }
 }
 
@@ -289,7 +289,7 @@ pub let expected_claude_executable_sha256 : String = "2630fc5dc6db61bc03f86b95da
 pub let expected_codex_executable_sha256 : String = "134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477"
 
 ///|
-pub let expected_codex_native_executable_sha256 : String = "a31ae9450a26216eb1e7c53102fd42123dd675974310b0e2ca3aa4cb622a2c15"
+pub let expected_codex_native_executable_sha256 : String = "a2a05dafaa1acb002a45eaec0a462de5b13694fcfcd7bc43305f14781ce7be14"
 
 ///|
 fn version_matches(surface : ProviderSurface, output : String) -> Bool {

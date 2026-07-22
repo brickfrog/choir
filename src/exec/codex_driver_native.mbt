@@ -120,17 +120,17 @@ fn validate_native_codex_config(
 
 ///|
 fn native_codex_role_prompt(role : @harness.CodexTakeRole) -> String {
-  let common = "Use only tools from the required Choir MCP server. Never use native host file, shell, network, browser, plugin, hook, skill, app, or subagent capabilities. "
+  let common = "Use only tools from the required Choir MCP server. You must call at least one available Choir MCP tool before returning. Never use native host file, shell, network, browser, plugin, hook, skill, app, or subagent capabilities. "
   match role {
     @harness.CodexTakeRole::CodexImplementationTake =>
       common +
       "Complete the instruction in the sandbox. End with exactly {\"outcome\":\"completed\"}."
     @harness.CodexTakeRole::CodexVerificationTake =>
       common +
-      "Verify the supplied candidate in the sandbox. End with exactly {\"outcome\":\"passed\"} or {\"outcome\":\"failed\"}."
+      "Your first action must be a read_file call for a repository path named in the supplied Part task. Call read_file for every path the Part task permits to change, and do not return before those calls succeed. Verify the supplied candidate in the sandbox. End with exactly {\"outcome\":\"passed\"} or {\"outcome\":\"failed\"}."
     @harness.CodexTakeRole::CodexAuditTake =>
       common +
-      "Independently audit the supplied candidate. Return outcome passed with zero counts when clean, otherwise outcome findings with exact total and blocking counts." +
+      "Your first action must be a read_file call for a repository path named in the supplied Part task. Call read_file for every path the Part task permits to change, and do not return before those calls succeed. Independently audit the supplied candidate. Return outcome passed with zero counts when clean, otherwise outcome findings with exact total and blocking counts." +
       native_migration_audit_output_instruction()
   }
 }
@@ -159,6 +159,7 @@ fn native_codex_output_schema(role : @harness.CodexTakeRole) -> String {
       properties["migration_findings"] = native_migration_findings_output_schema()
       required.push("total_findings")
       required.push("blocking_findings")
+      required.push("migration_findings")
     }
     _ => ()
   }
@@ -898,7 +899,10 @@ async fn write_native_codex_app_server(
     },
   )
   stdin_write.close()
-  let sink = @process.redirect_to_file("/dev/null") catch {
+  let sink = @process.redirect_to_file(
+    config.sterile_root + "/app-server-request.sink",
+    create_mode=@fs.CreateOrTruncate,
+  ) catch {
     _ => return Err(native_codex_driver_error("app-server request sink failed"))
   }
   abort_if_hermetic_test_exec("/usr/bin/timeout 5s /usr/bin/tee " + fifo)
@@ -1108,7 +1112,10 @@ async fn spawn_native_codex_app_server(
     ) {
     arguments.push(argument)
   }
-  let sink = @process.redirect_to_file("/dev/null") catch {
+  let sink = @process.redirect_to_file(
+    config.sterile_root + "/app-server.sink",
+    create_mode=@fs.CreateOrTruncate,
+  ) catch {
     _ => return Err(native_codex_driver_error("app-server sink failed"))
   }
   abort_if_hermetic_test_exec(
@@ -1651,7 +1658,10 @@ pub async fn run_native_codex_take(
           server_pid=manifest.server_pid,
         ) {
         Ok(value) => value
-        Err(error) => return Err(error)
+        Err(error) => {
+          stop_native_codex_owned_server(config, manifest.server_pid)
+          return Err(error)
+        }
       }
       let thread = match native_codex_result_object(result, "thread") {
         Ok(value) => value
@@ -2223,7 +2233,34 @@ test "native Codex Take schemas constrain every terminal role" {
   assert_true(verification.contains("\"failed\""))
   assert_true(audit.contains("\"total_findings\""))
   assert_true(audit.contains("\"blocking_findings\""))
+  assert_true(audit.contains("\"migration_findings\""))
+  assert_true(
+    audit.contains(
+      "\"required\":[\"outcome\",\"total_findings\",\"blocking_findings\",\"migration_findings\"]",
+    ),
+  )
   assert_true(audit.contains("\"additionalProperties\":false"))
+  for role in [
+    @harness.CodexTakeRole::CodexImplementationTake,
+    @harness.CodexTakeRole::CodexVerificationTake,
+    @harness.CodexTakeRole::CodexAuditTake,
+  ] {
+    assert_true(
+      native_codex_role_prompt(role).contains(
+        "must call at least one available Choir MCP tool",
+      ),
+    )
+  }
+  assert_true(
+    native_codex_role_prompt(
+      @harness.CodexTakeRole::CodexVerificationTake,
+    ).contains("Call read_file for every path the Part task permits to change"),
+  )
+  assert_true(
+    native_codex_role_prompt(@harness.CodexTakeRole::CodexAuditTake).contains(
+      "Call read_file for every path the Part task permits to change",
+    ),
+  )
 }
 
 ///|

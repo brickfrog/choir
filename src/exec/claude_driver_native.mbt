@@ -148,6 +148,7 @@ fn native_claude_output_schema(role : @harness.ClaudeTakeRole) -> String {
       properties["migration_findings"] = native_migration_findings_output_schema()
       required.push("total_findings")
       required.push("blocking_findings")
+      required.push("migration_findings")
     }
     _ => ()
   }

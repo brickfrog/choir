@@ -49,7 +49,7 @@ test "Claude declaration fails closed when a required flag disappears" {
 test "Codex declaration records native tool isolation as a typed blocker" {
   let report = @harness.evaluate_surface_declaration({
     surface: @harness.ProviderSurface::CodexCli,
-    version: capture("codex-cli 0.144.6"),
+    version: capture("codex-cli 0.145.0"),
     main_help: capture("exec --sandbox"),
     exec_help: Some(
       capture("--json --ephemeral --ignore-user-config --ignore-rules"),

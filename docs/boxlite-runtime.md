@@ -14,6 +14,13 @@ git submodule update --init --recursive
 RUSTFLAGS='-C link-arg=-lbz2' cargo build --release -p boxlite-shim
 ```
 
+This produces a candidate shim, not proof of the admitted byte identity. The
+v0.9.7 build embeds absolute Go source paths and toolchain-generated build IDs;
+the qualified Linux shim was built with Rust 1.96.1, Go 1.26.5, LLD 22.1.2,
+and GCC 16.1.1. Preserve the complete qualified six-file runtime as the
+rollback and recovery unit. A rebuild must pass the hash gate and the full live
+qualification suite before it can replace those preserved bytes.
+
 Create a dedicated runtime directory from the official v0.9.7 runtime bundle
 and replace only `boxlite-shim` with the corrected build. For the documented
 local installation, copy the admitted binary and directory beside Choir:

@@ -1065,6 +1065,7 @@ fn native_boxlite_clone_body(name : String) -> String {
 ///|
 pub async fn clone_native_boxlite_take(
   prepared : NativeBoxLitePreparedEnvironment,
+  moon_home : String,
   name : String,
   source_directory : String,
   source_digest : @control.Digest,
@@ -1073,6 +1074,77 @@ pub async fn clone_native_boxlite_take(
     return Err(
       @types.ChoirError::validation_error("BoxLite Take identity is invalid"),
     )
+  }
+  let resolved_source = match @sys.realpath_native(source_directory) {
+    Some(value) => value
+    None =>
+      return Err(
+        @types.ChoirError::validation_error(
+          "BoxLite Take source is unavailable",
+        ),
+      )
+  }
+  let moon = match @sys.realpath_native(moon_home + "/bin/moon") {
+    Some(value) => value
+    None =>
+      return Err(
+        @types.ChoirError::validation_error(
+          "BoxLite Take Moon toolchain is unavailable",
+        ),
+      )
+  }
+  if resolved_source != source_directory ||
+    !resolved_source.has_prefix(prepared.server.config.root + "/staging/") ||
+    !moon_home.has_prefix("/") ||
+    moon_home.contains("/../") {
+    return Err(
+      @types.ChoirError::validation_error(
+        "BoxLite Take dependency preparation is outside its dedicated roots",
+      ),
+    )
+  }
+  if @sys.path_exists(source_directory + "/moon.mod") {
+    let dependency_target = prepared.server.config.root +
+      "/staging/dependencies-" +
+      source_digest.0[:24].to_owned()
+    if !@sys.create_dir_all(dependency_target) {
+      return Err(native_boxlite_take_error("dependency staging root failed"))
+    }
+    let dependencies = match
+      capture_boxlite_fixed_process(
+        moon,
+        ["install", "--target-dir", dependency_target],
+        source_directory,
+        {
+          "HOME": prepared.server.config.root + "/dependency-home",
+          "MOON_HOME": moon_home,
+          "NO_COLOR": "1",
+          "PATH": moon_home + "/bin:/usr/bin:/bin",
+        },
+        180000,
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    let dependency_root = match
+      @sys.realpath_native(source_directory + "/.mooncakes") {
+      Some(value) => value
+      None =>
+        return Err(
+          native_boxlite_take_error("dependency preparation produced no cache"),
+        )
+    }
+    if dependencies.exit_code != 0 ||
+      dependency_root != source_directory + "/.mooncakes" {
+      return Err(
+        native_boxlite_take_error(
+          "dependency preparation failed with exit " +
+          dependencies.exit_code.to_string() +
+          ": " +
+          dependencies.output.trim().to_owned(),
+        ),
+      )
+    }
   }
   let cloned = match
     capture_native_boxlite_http(
@@ -1133,6 +1205,27 @@ pub async fn clone_native_boxlite_take(
   if checked.exit_code != 0 {
     return Err(native_boxlite_take_error("Take isolation check failed"))
   }
+  let dependency_setup = match
+    capture_native_boxlite_cli(
+      prepared.server,
+      [
+        "exec", box_id, "--", "/bin/sh", "-c", "set -eu; mkdir -p /scratch/home /scratch/tmp /output; if test -d /workspace/.mooncakes; then mkdir -p /scratch/home/.moon; cp -a /opt/moon/lib /opt/moon/include /opt/moon/registry /scratch/home/.moon/; mv /workspace/.mooncakes /scratch/home/.mooncakes; ln -s /scratch/home/.mooncakes /workspace/.mooncakes; chown -R 65534:65534 /scratch/home; fi; chmod 0777 /scratch /scratch/home /scratch/tmp /output",
+      ],
+      60000,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if dependency_setup.exit_code != 0 {
+    return Err(
+      native_boxlite_take_error(
+        "dependency cache installation failed with exit " +
+        dependency_setup.exit_code.to_string() +
+        ": " +
+        dependency_setup.output.trim().to_owned(),
+      ),
+    )
+  }
   Ok({
     prepared,
     box_id,
@@ -1158,7 +1251,7 @@ pub async fn seal_native_boxlite_assurance_subject(
         "--",
         "/bin/sh",
         "-c",
-        "set -eu; mkdir -p /scratch/home /scratch/tmp /output; if test -d /opt/moon/registry; then mkdir -p /scratch/home/.moon /scratch/home/.mooncakes; cp -a /opt/moon/lib /opt/moon/include /opt/moon/registry /scratch/home/.moon/; test ! -e /workspace/.mooncakes; ln -s /scratch/home/.mooncakes /workspace/.mooncakes; (cd /workspace && HOME=/scratch/home MOON_HOME=/scratch/home/.moon NO_COLOR=1 /opt/moon/bin/moon install --target-dir /scratch/tmp/dependency-install >/dev/null); chown -R 65534:65534 /scratch/home; fi; find /workspace -xdev -type d -exec chmod 0555 '{}' +; find /workspace -xdev -type f -perm /111 -exec chmod 0555 '{}' +; find /workspace -xdev -type f ! -perm /111 -exec chmod 0444 '{}' +; chmod 0777 /scratch /scratch/home /scratch/tmp /output",
+        "set -eu; test -d /scratch/home; if test -e /workspace/moon.mod; then test -L /workspace/.mooncakes; fi; find /workspace -xdev -type d -exec chmod 0555 '{}' +; find /workspace -xdev -type f -perm /111 -exec chmod 0555 '{}' +; find /workspace -xdev -type f ! -perm /111 -exec chmod 0444 '{}' +; chmod 0777 /scratch /scratch/home /scratch/tmp /output",
       ],
       60000,
     ) {
@@ -1166,7 +1259,14 @@ pub async fn seal_native_boxlite_assurance_subject(
     Err(error) => return Err(error)
   }
   if seal_result.exit_code != 0 {
-    return Err(native_boxlite_take_error("assurance subject sealing failed"))
+    return Err(
+      native_boxlite_take_error(
+        "assurance subject sealing failed with exit " +
+        seal_result.exit_code.to_string() +
+        ": " +
+        seal_result.output.trim().to_owned(),
+      ),
+    )
   }
   let probed = match
     capture_native_boxlite_cli(
@@ -1916,6 +2016,21 @@ async test "native result archive is inspected through the production tar seam" 
 }
 
 ///|
+fn native_boxlite_result_archive_args(archive : String) -> Array[String] {
+  [
+    "--format=posix", "--exclude=./.mooncakes", "-C", "/workspace", "-cf", archive,
+    ".",
+  ]
+}
+
+///|
+test "Take result archives exclude injected dependency material" {
+  let args = native_boxlite_result_archive_args("/root/result.tar")
+  assert_true(args.contains("--exclude=./.mooncakes"))
+  assert_eq(args[args.length() - 1], ".")
+}
+
+///|
 pub async fn copy_native_boxlite_take_result(
   take : NativeBoxLiteTakeSandbox,
 ) -> Result[String, @types.ChoirError] {
@@ -1934,12 +2049,7 @@ pub async fn copy_native_boxlite_take_result(
         take.box_id,
         "--",
         "/bin/tar",
-        "--format=posix",
-        "-C",
-        "/workspace",
-        "-cf",
-        guest_archive,
-        ".",
+        ..native_boxlite_result_archive_args(guest_archive),
       ],
       180000,
     ) {

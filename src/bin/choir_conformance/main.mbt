@@ -1644,8 +1644,19 @@ async fn run_codex_live_driver_at(
     Ok(value) => value
     Err(error) => {
       if capability_death_probe &&
-        error.to_wire_string() == "validation_error" &&
-        error.message().contains("every declared MCP tool call failed") {
+        (
+          (
+            error.to_wire_string() == "validation_error" &&
+            error.message().contains("every declared MCP tool call failed")
+          ) ||
+          (
+            error.to_wire_string() == "transport_error" &&
+            error
+            .message()
+            .contains("required MCP servers failed to initialize") &&
+            error.message().contains("choir_sandbox")
+          )
+        ) {
         let evidence = @storage.artifact_digest(
           @utf8.encode(
             "choir.codex-capability-death.v1\u{00}" +
@@ -3260,7 +3271,7 @@ async fn run_conductor_reconnect_live() -> Int {
     { "PATH": fixture_path },
     prompt + "\n/exit\n",
   )
-  let claude_wrapper = "#!/bin/sh\nexec \"$CHOIR_RECONNECT_REAL_CLAUDE\" \"$@\" -p \"$CHOIR_RECONNECT_PROMPT\" --allowedTools mcp__choir__goal_status --output-format stream-json --verbose --no-session-persistence\n"
+  let claude_wrapper = "#!/bin/sh\nexec \"$CHOIR_RECONNECT_REAL_CLAUDE\" \"$@\" -p --allowedTools mcp__choir__goal_status --output-format stream-json --verbose --no-session-persistence\n"
   let wrapper_ready = @sys.write_file_sync(fake_claude, claude_wrapper)
   let claude_prompt = "Call goal_status exactly once with goal_id goal-conductor-reconnect. Return exactly CLAUDE_RECONNECT_OK only if the tool result reports that exact goal_id and state GoalExecutionPaused."
   let claude = if wrapper_ready {
@@ -3271,9 +3282,8 @@ async fn run_conductor_reconnect_live() -> Int {
       {
         "PATH": fixture_path,
         "CHOIR_RECONNECT_REAL_CLAUDE": real_claude,
-        "CHOIR_RECONNECT_PROMPT": claude_prompt,
       },
-      "",
+      claude_prompt,
     )
   } else {
     (-1, "")
@@ -3370,6 +3380,7 @@ async fn exercise_boxlite_take(
   let take = match
     @exec.clone_native_boxlite_take(
       prepared,
+      moon_home,
       "choir-take-live-" + @sys.get_pid().to_string(),
       source.root,
       source.source_digest,
@@ -3573,6 +3584,7 @@ async fn exercise_boxlite_take(
   let assurance_mutable = match
     @exec.clone_native_boxlite_take(
       prepared,
+      moon_home,
       "choir-assurance-live-" + @sys.get_pid().to_string(),
       source.root,
       source.source_digest,

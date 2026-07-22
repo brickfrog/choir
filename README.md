@@ -25,7 +25,7 @@ Required:
 - Bubblewrap (`bwrap`) for the read-only host boundary around provider clients
 - Node.js
 - Claude Code 2.1.217 logged into the user's paid subscription
-- Codex CLI 0.144.6 logged into the user's paid subscription
+- Codex CLI 0.145.0 logged into the user's paid subscription
 
 GitHub CLI is required only when Choir should publish the final pull request.
 No separately metered model credential is required or supported by the default

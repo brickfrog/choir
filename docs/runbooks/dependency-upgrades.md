@@ -562,17 +562,21 @@ dates or hashes.
    hash or disabling verification.
 4. Update MoonBit dependencies in `moon.mod` deliberately and inspect the
    resolved `.mooncakes` versions after `moon update`.
-5. Update `flake.lock` only for intended inputs and review the exact revision
+5. Run `moon clean` after changing package versions and before qualification.
+   Native package upgrades can rename or remove C sources; an incremental
+   archive may otherwise retain removed object members and report false
+   duplicate-symbol failures.
+6. Update `flake.lock` only for intended inputs and review the exact revision
    diff.
-6. Recreate a candidate local toolchain outside the existing `.nix-moon`
+7. Recreate a candidate local toolchain outside the existing `.nix-moon`
    cache. Do not treat an old cache as candidate evidence.
-7. Run the common baseline with the candidate toolchain, including the release
+8. Run the common baseline with the candidate toolchain, including the release
    build and native FFI surfaces.
-8. Compare warning classes and counts. New warnings require disposition; they
+9. Compare warning classes and counts. New warnings require disposition; they
    are not proof of failure by themselves.
-9. Verify SQLite, utf8proc, libuv, OpenSSL, and C toolchain availability in the
+10. Verify SQLite, utf8proc, libuv, OpenSSL, and C toolchain availability in the
    Nix shell, GitHub runner, and release artifact environment.
-10. Ensure CI and release request a reproducible candidate identity. If either
+11. Ensure CI and release request a reproducible candidate identity. If either
     still requests `latest`, report `DRIFT` and do not call the toolchain fully
     pinned.
 

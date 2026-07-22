@@ -577,7 +577,7 @@ fn native_part_fixture_snapshot(
     goal_id: @control.GoalId("goal-native-part"),
     part_id: @control.PartId("part-native"),
     source_path: @control.RepoPath("src/answer.mbt"),
-    instruction: "Change only src/answer.mbt so answer() returns 2. Inspect the file, make the smallest edit, run /opt/moon/bin/moon test --target wasm src/answer.mbt in the sandbox, and finish with the required JSON outcome.",
+    instruction: "Change only src/answer.mbt so answer() returns 2. Every implementation, verification, or audit role must begin by calling read_file with path src/answer.mbt. Make the smallest edit when authorized, run /opt/moon/bin/moon test --target wasm src/answer.mbt in the sandbox, and finish with the required JSON outcome.",
     surface,
   })
 }
@@ -586,6 +586,7 @@ fn native_part_fixture_snapshot(
 fn counted_native_part_effects(
   effects : @workflow.PartWorkflowDriverAdapters,
   counts : NativePartDispatchCounts,
+  effect_error : Ref[String]?,
 ) -> @workflow.PartWorkflowDriverAdapters {
   {
     execute: async fn(snapshot, intent) {
@@ -598,7 +599,12 @@ fn counted_native_part_effects(
           counts.audit.val = counts.audit.val + 1
         _ => ()
       }
-      (effects.execute)(snapshot, intent)
+      let result = (effects.execute)(snapshot, intent)
+      match (result, effect_error) {
+        (Err(error), Some(witness)) => witness.val = error.message()
+        _ => ()
+      }
+      result
     },
     reconcile: effects.reconcile,
   }
@@ -726,7 +732,14 @@ fn native_part_audit_debug(
       }
     _ => "none"
   }
-  "result=" + result + " receipt=" + receipt + " findings=" + findings
+  "result=" +
+  result +
+  " receipt=" +
+  receipt +
+  " findings=" +
+  findings +
+  " take=" +
+  snapshot.audit_take.to_json().stringify(indent=0)
 }
 
 ///|
@@ -739,10 +752,11 @@ fn native_part_dependencies(
   integration_head : @control.GitOid?,
   sandbox_prepare_lock : Ref[Bool]?,
   fault : (@workflow.PartPersistenceBoundary) -> @storage.StateStoreFaultPoint?,
+  effect_error? : Ref[String]? = None,
 ) -> @workflow.PartWorkflowDriverDependencies {
   native_part_dependencies_with_admission(
     repository, runtime, clock, counts, surface, integration_head, sandbox_prepare_lock,
-    fault,
+    fault, effect_error~,
   )
 }
 
@@ -757,6 +771,7 @@ fn native_part_dependencies_with_admission(
   sandbox_prepare_lock : Ref[Bool]?,
   fault : (@workflow.PartPersistenceBoundary) -> @storage.StateStoreFaultPoint?,
   explicit_admission? : @workflow.PartIntegrationAdmission? = None,
+  effect_error? : Ref[String]? = None,
 ) -> @workflow.PartWorkflowDriverDependencies {
   let now = fn() {
     clock.val = clock.val + 1L
@@ -768,6 +783,7 @@ fn native_part_dependencies_with_admission(
       sandbox_prepare_lock,
     ),
     counts,
+    effect_error,
   )
   {
     now,
@@ -795,7 +811,7 @@ fn native_part_dependencies_with_admission(
             ),
           )
         @control.ProviderSurfaceId::CodexSubscriptionCli =>
-          ("codex-cli-0.144.6", @control.ModelIdentity::UnreportedModelIdentity)
+          ("codex-cli-0.145.0", @control.ModelIdentity::UnreportedModelIdentity)
       }
       Ok({
         receipt_id: @control.ReceiptId(
@@ -1024,7 +1040,6 @@ pub async fn run_native_part_lifecycle_fixture_for_surface(
     verification: @ref.new(0),
     audit: @ref.new(0),
   }
-  let observed = @ref.new(0)
   let injected = @ref.new(false)
   let first = match
     @workflow.run_new_part_workflow(
@@ -1040,14 +1055,10 @@ pub async fn run_native_part_lifecycle_fixture_for_surface(
         Some(git.base_commit_oid),
         None,
         fn(boundary) {
-          if boundary ==
-            @workflow.PartPersistenceBoundary::WorkflowEffectObserved {
-            observed.val = observed.val + 1
-          }
           if !injected.val &&
             boundary ==
             @workflow.PartPersistenceBoundary::WorkflowEffectObserved &&
-            observed.val == 3 {
+            first_counts.implementation.val == 1 {
             injected.val = true
             Some(@storage.StateStoreFaultPoint::StateAfterMutationBeforeOutbox)
           } else {
@@ -1069,7 +1080,15 @@ pub async fn run_native_part_lifecycle_fixture_for_surface(
     first_counts.verification.val != 0 ||
     first_counts.audit.val != 0 {
     return fail_native_part_runtime(
-      first_runtime, "implementation fault did not stop at the durable witness boundary",
+      first_runtime,
+      "implementation fault did not stop at the durable witness boundary: outcome=" +
+      first.outcome.to_json().stringify(indent=0) +
+      " implementation=" +
+      first_counts.implementation.val.to_string() +
+      " verification=" +
+      first_counts.verification.val.to_string() +
+      " audit=" +
+      first_counts.audit.val.to_string(),
     )
   }
   let restarted_config = native_part_runtime_config(
@@ -1092,6 +1111,7 @@ pub async fn run_native_part_lifecycle_fixture_for_surface(
     verification: @ref.new(0),
     audit: @ref.new(0),
   }
+  let restarted_effect_error = @ref.new("")
   let resumed = match
     @workflow.resume_part_workflow(
       repository,
@@ -1106,6 +1126,7 @@ pub async fn run_native_part_lifecycle_fixture_for_surface(
         Some(git.base_commit_oid),
         None,
         fn(_) { None },
+        effect_error=Some(restarted_effect_error),
       ),
     ) {
     Ok(value) => value
@@ -1128,7 +1149,9 @@ pub async fn run_native_part_lifecycle_fixture_for_surface(
       " verification=" +
       native_part_verification_debug(repository, resumed.snapshot) +
       " audit=" +
-      native_part_audit_debug(repository, resumed.snapshot),
+      native_part_audit_debug(repository, resumed.snapshot) +
+      " effect-error=" +
+      restarted_effect_error.val,
     )
   }
   let branch_head = match
@@ -1148,7 +1171,7 @@ pub async fn run_native_part_lifecycle_fixture_for_surface(
   }
   let candidate = resumed.snapshot.candidate
   let promotion = resumed.snapshot.promotion_commit
-  let valid = resumed.snapshot.effect_receipts.length() == 12 &&
+  let valid = resumed.snapshot.effect_receipts.length() == 15 &&
     resumed.snapshot.verification_receipts.length() == 1 &&
     resumed.snapshot.audit_receipt is Some(_) &&
     resumed.snapshot.integration_receipt is Some(_) &&
@@ -1167,7 +1190,28 @@ pub async fn run_native_part_lifecycle_fixture_for_surface(
   }
   if !valid {
     return failed_native_part_lifecycle(
-      "native Part violated receipt, restart, diff, or promotion invariants",
+      "native Part violated receipt, restart, diff, or promotion invariants: effects=" +
+      resumed.snapshot.effect_receipts.length().to_string() +
+      " verification_receipts=" +
+      resumed.snapshot.verification_receipts.length().to_string() +
+      " audit_receipt=" +
+      (resumed.snapshot.audit_receipt is Some(_)).to_string() +
+      " integration_receipt=" +
+      (resumed.snapshot.integration_receipt is Some(_)).to_string() +
+      " dispatches=" +
+      restarted_counts.implementation.val.to_string() +
+      "/" +
+      restarted_counts.verification.val.to_string() +
+      "/" +
+      restarted_counts.audit.val.to_string() +
+      " candidate=" +
+      candidate.to_json().stringify(indent=0) +
+      " promotion=" +
+      promotion.to_json().stringify(indent=0) +
+      " branch_head=" +
+      branch_head.0 +
+      " integrated_answer=" +
+      integrated_source.contains("answer() -> Int { 2 }").to_string(),
     )
   }
   {

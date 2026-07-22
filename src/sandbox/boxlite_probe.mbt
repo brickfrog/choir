@@ -50,10 +50,10 @@ fn boxlite_runtime_bundle_entries() -> Array[(String, String)] {
 
 ///|
 /// OCI platform-manifest digest, not the image-config digest printed by `pull --quiet`.
-pub let boxlite_probe_image : String = "alpine@sha256:7c8cb692ae09657cbc4a3f3cbd0e8d5a2690ba38386aaaf252dbb060bf5eb2e6"
+pub let boxlite_probe_image : String = "alpine@sha256:79ff19e9084a00eece421b2523fb93e22d730e2c0e525905de047e848e56d95f"
 
 ///|
-pub let boxlite_probe_image_digest : String = "sha256:7c8cb692ae09657cbc4a3f3cbd0e8d5a2690ba38386aaaf252dbb060bf5eb2e6"
+pub let boxlite_probe_image_digest : String = "sha256:79ff19e9084a00eece421b2523fb93e22d730e2c0e525905de047e848e56d95f"
 
 ///|
 pub let boxlite_policy_id : String = "boxlite-v0.9.7-seccomp-time-kvm-network-disabled-v1"
