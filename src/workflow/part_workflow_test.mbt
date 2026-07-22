@@ -1444,6 +1444,255 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     )
     is Err(_),
   )
+  let qualification_assurance_digest = @workflow.goal_assurance_record_digest(
+    assured,
+  )
+  let migration_contract : @migration.MigrationContract = {
+    id: @control.MigrationContractId("migration-admission-contract"),
+    migration_lineage_id: @control.MigrationLineageId(
+      "migration-admission-lineage",
+    ),
+    revision: 1,
+    source_revision: workflow_digest_a,
+    workflow_shape: @migration.MigrationWorkflowShape::StructurePreservingPort,
+    feasibility_report_artifact_digest: workflow_digest_a,
+    target_architecture_artifact_digest: workflow_digest_b,
+    rulebook_artifact_digest: workflow_digest_a,
+    dependency_map_artifact_digest: workflow_digest_b,
+    gap_inventory_artifact_digest: workflow_digest_a,
+    inventory_generator_artifact_digest: workflow_digest_b,
+    qualified_inventory_artifact_digest: workflow_digest_a,
+    transformation_plan_artifact_digest: workflow_digest_b,
+    context_assembly_policy_digest: workflow_digest_a,
+    judge_definition_digest: workflow_digest_b,
+    judge_qualification_assurance_record_digest: qualification_assurance_digest,
+    parity_definition_digest: None,
+    validation_plan_digest: workflow_digest_a,
+    rehearsal_policy: @migration.RehearsalPolicy::RehearsalNotRequired,
+  }
+  let seal = assured.seal.unwrap()
+  let qualification_binding : @migration.JudgeQualificationBinding = {
+    qualifying_goal_id: assured_execution.goal.id,
+    qualifying_goal_contract_digest: assured_execution.goal.contract_digest,
+    goal_branch_seal_id: seal.id,
+    goal_branch_seal_digest: seal.seal_digest,
+    judge_definition_digest: migration_contract.judge_definition_digest,
+    source_revision: migration_contract.source_revision,
+  }
+  let qualification_completion_binding = @migration.judge_qualification_binding_digest(
+    qualification_binding,
+  )
+  let succeeded_qualification = @workflow.advance_goal_execution_state(
+    assured_execution,
+    @workflow.GoalExecutionState::GoalExecutionSucceeded,
+  ).unwrap()
+  guard succeeded_qualification.goal.lifecycle
+    is @control.GoalLifecycle::GoalSucceeded(finalization_id) else {
+    fail("qualifying Goal did not retain finalization identity")
+  }
+  let qualification_reference : @migration.JudgeQualificationEvidenceRef = {
+    binding: qualification_binding,
+    completion_binding_digest: qualification_completion_binding,
+    assurance_record_digest: qualification_assurance_digest,
+    terminal: @migration.JudgeQualificationTerminal::JudgeQualificationSucceeded(
+      finalization_id,
+    ),
+  }
+  assert_true(
+    @workflow.validate_judge_qualification_admission(
+      migration_contract, qualification_reference, succeeded_qualification, assured,
+    )
+    is Ok(_),
+  )
+  assert_true(
+    @workflow.validate_judge_qualification_admission(
+      migration_contract, qualification_reference, assured_execution, assured,
+    )
+    is Err(_),
+  )
+  let migration_contract_ref = @migration.migration_contract_reference(
+    migration_contract,
+  ).unwrap()
+  let migration_acceptance : @migration.MigrationContractAcceptance = {
+    contract_ref: migration_contract_ref,
+    authorization: @migration.MigrationContractAuthorization::MigrationContractExplicitUserInput(
+      workflow_digest_a,
+    ),
+    accepted_event_sequence: @control.EventSequence(1L),
+    accepted_at: 1L,
+  }
+  assert_true(
+    @workflow.validate_migration_production_admission(
+      migration_contract,
+      migration_acceptance,
+      qualification_reference,
+      succeeded_qualification,
+      assured,
+      None,
+      None,
+      None,
+    )
+    is Ok(_),
+  )
+  guard @workflow.request_goal_execution_cancellation(
+      evidence_only_execution,
+      evidence_only_completion.requested_at,
+      cause=evidence_only_completion.cause,
+    ).unwrap()
+    is @workflow.GoalCancellationDecision::GoalCancellationRequested(
+      rehearsal_canceling
+    ) else {
+    fail("rehearsal cancellation request was not accepted")
+  }
+  let mut rehearsal_releasing = rehearsal_canceling
+  for claim in rehearsal_releasing.source_claims {
+    rehearsal_releasing = @workflow.authorize_goal_source_release(
+      rehearsal_releasing,
+      claim.part_id,
+    ).unwrap()
+    rehearsal_releasing = @workflow.reconcile_goal_source_release(
+      rehearsal_releasing,
+      claim.part_id,
+      @workflow.GoalSourceClaimObservation::GoalSourceUnclaimedExact,
+      evidence_only_completion.requested_at + 1L,
+    ).unwrap()
+  }
+  let rehearsal_canceled = @workflow.commit_goal_execution_cancellation(
+    rehearsal_releasing,
+  ).unwrap()
+  guard rehearsal_canceled.goal.lifecycle
+    is @control.GoalLifecycle::GoalCanceled(rehearsal_summary_id) else {
+    fail("rehearsal Goal did not retain cancellation summary identity")
+  }
+  let sampled_inventory_digest = workflow_digest_b
+  let rehearsal_binding : @migration.RehearsalBinding = {
+    migration_contract_ref,
+    sampled_inventory_digest,
+  }
+  let rehearsal_reference : @migration.RehearsalEvidenceRef = {
+    rehearsal_goal_id: rehearsal_canceled.goal.id,
+    migration_contract_ref,
+    sampled_inventory_digest,
+    completion_binding_digest: @migration.rehearsal_binding_digest(
+      rehearsal_binding,
+    ),
+    assurance_record_digest: qualification_assurance_digest,
+    cancellation_summary_id: rehearsal_summary_id,
+  }
+  let rebound_rehearsal = {
+    ..rehearsal_canceled,
+    completion_mode: @workflow.GoalCompletionMode::GoalEvidenceOnly(
+      rehearsal_reference.completion_binding_digest,
+    ),
+    cancellation_request: rehearsal_canceled.cancellation_request.map(fn(
+      request,
+    ) {
+      {
+        ..request,
+        cause: @workflow.GoalCancellationCause::GoalCancellationEvidenceOnlyCompleted(
+          rehearsal_reference.completion_binding_digest,
+          qualification_assurance_digest,
+        ),
+      }
+    }),
+  }
+  assert_true(
+    @workflow.validate_rehearsal_admission(
+      migration_contract_ref, sampled_inventory_digest, rehearsal_reference, rebound_rehearsal,
+      assured,
+    )
+    is Ok(_),
+  )
+  let required_contract = {
+    ..migration_contract,
+    rehearsal_policy: @migration.RehearsalPolicy::RehearsalRequired(
+      sampled_inventory_digest,
+    ),
+  }
+  let required_contract_ref = @migration.migration_contract_reference(
+    required_contract,
+  ).unwrap()
+  let required_rehearsal_binding : @migration.RehearsalBinding = {
+    migration_contract_ref: required_contract_ref,
+    sampled_inventory_digest,
+  }
+  let required_rehearsal_reference = {
+    ..rehearsal_reference,
+    migration_contract_ref: required_contract_ref,
+    completion_binding_digest: @migration.rehearsal_binding_digest(
+      required_rehearsal_binding,
+    ),
+  }
+  let required_rehearsal_execution = {
+    ..rebound_rehearsal,
+    completion_mode: @workflow.GoalCompletionMode::GoalEvidenceOnly(
+      required_rehearsal_reference.completion_binding_digest,
+    ),
+    cancellation_request: rebound_rehearsal.cancellation_request.map(fn(
+      request,
+    ) {
+      {
+        ..request,
+        cause: @workflow.GoalCancellationCause::GoalCancellationEvidenceOnlyCompleted(
+          required_rehearsal_reference.completion_binding_digest,
+          qualification_assurance_digest,
+        ),
+      }
+    }),
+  }
+  let required_acceptance = {
+    ..migration_acceptance,
+    contract_ref: required_contract_ref,
+  }
+  assert_true(
+    @workflow.validate_migration_production_admission(
+      required_contract,
+      required_acceptance,
+      qualification_reference,
+      succeeded_qualification,
+      assured,
+      Some(required_rehearsal_reference),
+      Some(required_rehearsal_execution),
+      Some(assured),
+    )
+    is Ok(_),
+  )
+  let revised_contract = { ..required_contract, revision: 2 }
+  let revised_acceptance = {
+    ..required_acceptance,
+    contract_ref: @migration.migration_contract_reference(revised_contract).unwrap(),
+  }
+  assert_true(
+    @workflow.validate_migration_production_admission(
+      revised_contract,
+      revised_acceptance,
+      qualification_reference,
+      succeeded_qualification,
+      assured,
+      Some(required_rehearsal_reference),
+      Some(required_rehearsal_execution),
+      Some(assured),
+    )
+    is Err(_),
+  )
+  let user_canceled_rehearsal = {
+    ..rebound_rehearsal,
+    cancellation_request: rebound_rehearsal.cancellation_request.map(fn(
+      request,
+    ) {
+      {
+        ..request,
+        cause: @workflow.GoalCancellationCause::GoalCancellationUserRequested,
+      }
+    }),
+  }
+  assert_true(
+    @workflow.validate_rehearsal_admission(
+      migration_contract_ref, sampled_inventory_digest, rehearsal_reference, user_canceled_rehearsal,
+      assured,
+    )
+    is Err(_),
+  )
   assert_true(
     @workflow.initialize_goal_publication(
       evidence_only_execution,
