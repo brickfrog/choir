@@ -532,6 +532,82 @@ pub fn validate_rehearsal_evidence_ref(
 }
 
 ///|
+fn migration_bead_kind_for_unit(
+  unit : MigrationInventoryUnit,
+) -> MigrationBeadKind? {
+  match unit.disposition {
+    AgentAssisted(reason) => Some(MigrationImplementationBead(reason))
+    Unresolved(class) => Some(MigrationGapBead(class))
+    Irrelevant(_) | Mechanical(_) => None
+  }
+}
+
+///|
+pub fn project_migration_bead_proposals(
+  inventory : MigrationInventory,
+  contract_ref : @control.MigrationContractRef,
+  is_nfc : (String) -> Bool,
+) -> Result[Array[MigrationBeadProposal], @types.ChoirError] {
+  match validate_migration_inventory(inventory, is_nfc) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  match validate_migration_contract_ref(contract_ref) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let proposals : Array[MigrationBeadProposal] = []
+  for unit in inventory.units {
+    match migration_bead_kind_for_unit(unit) {
+      None => ()
+      Some(kind) => {
+        let idempotency_key = migration_bead_idempotency_key(
+          contract_ref,
+          unit.stable_key,
+          kind,
+        )
+        proposals.push({
+          id: migration_bead_id(contract_ref, unit.stable_key, kind),
+          idempotency_key,
+          stable_key: unit.stable_key,
+          migration_contract_ref: contract_ref,
+          kind,
+          title: "Migrate " + unit.stable_key.0,
+          ownership_claim: unit.ownership_claim,
+          source_paths: unit.source_paths,
+          blocking_dependency_ids: [],
+          verification_specs: unit.proposed_verification_specs,
+        })
+      }
+    }
+  }
+  for index = 0; index < proposals.length(); index = index + 1 {
+    let unit = inventory.units.filter(fn(candidate) {
+        candidate.stable_key == proposals[index].stable_key
+      })[0]
+    let dependencies : Array[MigrationBeadId] = []
+    for dependency in unit.dependency_keys {
+      match dependency {
+        InventoryUnitDependency(key) =>
+          for candidate in proposals {
+            if candidate.stable_key == key {
+              dependencies.push(candidate.id)
+            }
+          }
+        InventoryExternalDependency(_) => ()
+      }
+    }
+    dependencies.sort()
+    proposals[index] = {
+      ..proposals[index],
+      blocking_dependency_ids: dependencies,
+    }
+  }
+  proposals.sort_by(fn(left, right) { left.id.compare(right.id) })
+  Ok(proposals)
+}
+
+///|
 fn observation_index(
   observations : Array[MigrationFindingPatternObservation],
   key : @control.Digest,

@@ -269,6 +269,36 @@ pub(all) struct RehearsalEvidenceRef {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) struct MigrationBeadId(String) derive (
+  Debug,
+  Eq,
+  Compare,
+  Hash,
+  ToJson,
+  FromJson,
+)
+
+///|
+pub(all) enum MigrationBeadKind {
+  MigrationImplementationBead(AgentAssistedReason)
+  MigrationGapBead(UnresolvedGapClass)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct MigrationBeadProposal {
+  id : MigrationBeadId
+  idempotency_key : @control.Digest
+  stable_key : InventoryStableKey
+  migration_contract_ref : @control.MigrationContractRef
+  kind : MigrationBeadKind
+  title : String
+  ownership_claim : MigrationOwnershipClaim
+  source_paths : Array[@control.RepoPath]
+  blocking_dependency_ids : Array[MigrationBeadId]
+  verification_specs : Array[@control.VerificationSpec]
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub(all) enum MigrationFindingClass {
   RuleViolation
   RuleGap

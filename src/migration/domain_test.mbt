@@ -427,6 +427,39 @@ test "qualification and rehearsal references reject stale bindings" {
 }
 
 ///|
+test "inventory projects deterministic Bead identities and dependency edges" {
+  let inventory = inventory_fixture()
+  let projected = @migration.project_migration_bead_proposals(
+    inventory,
+    migration_contract_ref_fixture(),
+    fn(_) { true },
+  ).unwrap()
+  assert_eq(projected.length(), 2)
+  let unit_a = projected.filter(fn(proposal) {
+      proposal.stable_key == @migration.InventoryStableKey("unit-a")
+    })[0]
+  let unit_b = projected.filter(fn(proposal) {
+      proposal.stable_key == @migration.InventoryStableKey("unit-b")
+    })[0]
+  assert_eq(unit_a.blocking_dependency_ids, [])
+  assert_eq(unit_b.blocking_dependency_ids, [unit_a.id])
+  let replayed = @migration.project_migration_bead_proposals(
+    { ..inventory, units: inventory.units.rev() },
+    migration_contract_ref_fixture(),
+    fn(_) { true },
+  ).unwrap()
+  assert_eq(replayed, projected)
+  inspect(
+    @utf8.decode_lossy(
+      @migration.canonical_migration_bead_proposal_bytes(unit_a),
+    ),
+    content=(
+      #|32#choir.migration-bead-proposal.v12#1334#choir-mig-2f5af8b0005fa39fa030d2e064#2f5af8b0005fa39fa030d2e0ddb995d3f17c125a5ec08bac0d06460d2b9ff8ce6#unit-a131#31#choir.migration-contract-ref.v11#410#contract-19#lineage-11#264#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa14#implementation17#semantic-judgment14#Migrate unit-a12#owner-unit-a1#19#src/a.mbt1#01#1185#26#choir.verification-spec.v11#413#verify-unit-a1#164#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb64#cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    ),
+  )
+}
+
+///|
 test "declining feasibility creates no migration contract" {
   let declined : @migration.MigrationFeasibilityProposal = {
     report_artifact_digest: migration_digest_a,

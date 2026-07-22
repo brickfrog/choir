@@ -574,6 +574,73 @@ pub fn canonical_rehearsal_evidence_ref_bytes(
 }
 
 ///|
+fn migration_bead_kind_fields(kind : MigrationBeadKind) -> Array[String] {
+  match kind {
+    MigrationImplementationBead(reason) =>
+      ["implementation", agent_assisted_reason_tag(reason)]
+    MigrationGapBead(class) => ["gap", unresolved_gap_class_tag(class)]
+  }
+}
+
+///|
+pub fn migration_bead_idempotency_key(
+  reference : @control.MigrationContractRef,
+  stable_key : InventoryStableKey,
+  kind : MigrationBeadKind,
+) -> @control.Digest {
+  let fields = [
+    @utf8.decode_lossy(canonical_migration_contract_ref_bytes(reference)),
+    stable_key.0,
+  ]
+  append_fields(fields, migration_bead_kind_fields(kind))
+  canonical_digest(
+    canonical_fields("choir.migration-bead-idempotency.v1", fields),
+  )
+}
+
+///|
+pub fn migration_bead_id(
+  reference : @control.MigrationContractRef,
+  stable_key : InventoryStableKey,
+  kind : MigrationBeadKind,
+) -> MigrationBeadId {
+  let digest = migration_bead_idempotency_key(reference, stable_key, kind)
+  MigrationBeadId("choir-mig-" + digest.0[0:24].to_owned())
+}
+
+///|
+pub fn canonical_migration_bead_proposal_bytes(
+  proposal : MigrationBeadProposal,
+) -> Bytes {
+  let paths = proposal.source_paths.map(@control.repo_path_text)
+  paths.sort()
+  let dependencies = proposal.blocking_dependency_ids.map(fn(id) { id.0 })
+  dependencies.sort()
+  let verification = proposal.verification_specs.map(
+    canonical_verification_spec_text,
+  )
+  verification.sort()
+  let fields = [
+    proposal.id.0,
+    proposal.idempotency_key.0,
+    proposal.stable_key.0,
+    @utf8.decode_lossy(
+      canonical_migration_contract_ref_bytes(proposal.migration_contract_ref),
+    ),
+  ]
+  append_fields(fields, migration_bead_kind_fields(proposal.kind))
+  fields.push(proposal.title)
+  fields.push(proposal.ownership_claim.0)
+  fields.push(paths.length().to_string())
+  append_fields(fields, paths)
+  fields.push(dependencies.length().to_string())
+  append_fields(fields, dependencies)
+  fields.push(verification.length().to_string())
+  append_fields(fields, verification)
+  canonical_fields("choir.migration-bead-proposal.v1", fields)
+}
+
+///|
 pub fn migration_contract_digest(
   contract : MigrationContract,
 ) -> @control.Digest {
