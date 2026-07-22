@@ -959,6 +959,98 @@ test "inventory qualification binds two ordinary process executions" {
 }
 
 ///|
+test "migration status refuses incomplete or stale continuation evidence" {
+  let inventory = inventory_fixture()
+  let contract_ref = migration_contract_ref_fixture()
+  let continuation_digest = migration_digest_c
+  let statuses : Array[@migration.MigrationUnitExecutionStatus] = [
+    {
+      stable_key: inventory.units[0].stable_key,
+      effective_contract_ref: contract_ref,
+      task_contract_revision_id: @control.RevisionId("unit-a-revision"),
+      integrated: true,
+      continuation_ref_digest: Some(continuation_digest),
+    },
+    {
+      stable_key: inventory.units[1].stable_key,
+      effective_contract_ref: contract_ref,
+      task_contract_revision_id: @control.RevisionId("unit-b-revision"),
+      integrated: true,
+      continuation_ref_digest: Some(continuation_digest),
+    },
+  ]
+  let operational_counts : @migration.MigrationOperationalCounts = {
+    queued_parts: 0,
+    active_takes: 0,
+    waiting_verification_slots: 0,
+    running_verification_slots: 0,
+    invalidated_verification_slots: 0,
+  }
+  let complete = @migration.project_migration_status(
+    inventory,
+    statuses,
+    contract_ref,
+    Some(continuation_digest),
+    [],
+    operational_counts,
+    fn(_) { true },
+  ).unwrap()
+  assert_eq(
+    complete.completion,
+    @migration.MigrationCompletionCondition::MigrationCompletionReady,
+  )
+  assert_eq(complete.denominator, 2)
+  assert_eq(complete.integrated_units, 2)
+  assert_eq(complete.effective_contract_counts[0].unit_count, 2)
+  let unintegrated = @migration.project_migration_status(
+    inventory,
+    [{ ..statuses[0], integrated: false }, statuses[1]],
+    contract_ref,
+    Some(continuation_digest),
+    [],
+    operational_counts,
+    fn(_) { true },
+  ).unwrap()
+  assert_eq(
+    unintegrated.completion,
+    @migration.MigrationCompletionCondition::MigrationCompletionBlockedByUnintegratedUnits,
+  )
+  let stale = @migration.project_migration_status(
+    inventory,
+    [{ ..statuses[0], continuation_ref_digest: None }, statuses[1]],
+    contract_ref,
+    Some(continuation_digest),
+    [],
+    operational_counts,
+    fn(_) { true },
+  ).unwrap()
+  assert_eq(
+    stale.completion,
+    @migration.MigrationCompletionCondition::MigrationCompletionBlockedByContinuation,
+  )
+  let unresolved_unit = {
+    ..inventory.units[0],
+    gap_classes: [@migration.UnresolvedGapClass::MissingRule],
+    disposition: @migration.UnitDisposition::Unresolved(
+      @migration.UnresolvedGapClass::MissingRule,
+    ),
+  }
+  let unresolved = @migration.project_migration_status(
+    { ..inventory, units: [unresolved_unit, inventory.units[1]] },
+    [statuses[1]],
+    contract_ref,
+    Some(continuation_digest),
+    [],
+    operational_counts,
+    fn(_) { true },
+  ).unwrap()
+  assert_eq(
+    unresolved.completion,
+    @migration.MigrationCompletionCondition::MigrationCompletionBlockedByUnresolvedUnits,
+  )
+}
+
+///|
 fn digest_generated_text(value : String) -> @control.Digest {
   @control.Digest(
     @crypto.bytes_to_hex_string(@crypto.sha256(@utf8.encode(value))),

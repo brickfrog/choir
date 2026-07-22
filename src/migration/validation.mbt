@@ -1070,6 +1070,157 @@ pub fn validate_migration_continuation_ref(
 }
 
 ///|
+pub fn project_migration_status(
+  inventory : MigrationInventory,
+  unit_statuses : Array[MigrationUnitExecutionStatus],
+  current_contract_ref : @control.MigrationContractRef,
+  required_continuation_ref_digest : @control.Digest?,
+  affected_part_ids : Array[@control.PartId],
+  operational_counts : MigrationOperationalCounts,
+  is_nfc : (String) -> Bool,
+) -> Result[MigrationStatusProjection, @types.ChoirError] {
+  match validate_migration_inventory(inventory, is_nfc) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  match validate_migration_contract_ref(current_contract_ref) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  if required_continuation_ref_digest is Some(digest) &&
+    !digest_is_valid(digest) {
+    return Err(migration_validation_error("status continuation is invalid"))
+  }
+  let counts = [
+    operational_counts.queued_parts,
+    operational_counts.active_takes,
+    operational_counts.waiting_verification_slots,
+    operational_counts.running_verification_slots,
+    operational_counts.invalidated_verification_slots,
+  ]
+  if counts.any(fn(value) { value < 0 }) {
+    return Err(migration_validation_error("operational count is invalid"))
+  }
+  for index, part_id in affected_part_ids {
+    if part_id.0 == "" || affected_part_ids[index + 1:].contains(part_id) {
+      return Err(migration_validation_error("affected Part set is invalid"))
+    }
+  }
+  for index, status in unit_statuses {
+    if status.stable_key.0 == "" ||
+      status.task_contract_revision_id.0 == "" ||
+      unit_statuses[index + 1:].any(fn(candidate) {
+        candidate.stable_key == status.stable_key
+      }) ||
+      validate_migration_contract_ref(status.effective_contract_ref) is Err(_) ||
+      (
+        status.continuation_ref_digest is Some(digest) &&
+        !digest_is_valid(digest)
+      ) {
+      return Err(migration_validation_error("unit status is invalid"))
+    }
+  }
+  let mut irrelevant_units = 0
+  let mut mechanical_units = 0
+  let mut agent_assisted_units = 0
+  let mut unresolved_units = 0
+  let mut integrated_units = 0
+  let effective_contract_counts : Array[MigrationEffectiveContractCount] = []
+  let mut missing_or_unintegrated = false
+  let mut continuation_stale = false
+  for unit in inventory.units {
+    match unit.disposition {
+      Irrelevant(_) => irrelevant_units = irrelevant_units + 1
+      Mechanical(_) => mechanical_units = mechanical_units + 1
+      Unresolved(_) => unresolved_units = unresolved_units + 1
+      AgentAssisted(_) => {
+        agent_assisted_units = agent_assisted_units + 1
+        let matching = unit_statuses.filter(fn(status) {
+          status.stable_key == unit.stable_key
+        })
+        if matching.length() != 1 || !matching[0].integrated {
+          missing_or_unintegrated = true
+        } else {
+          let status = matching[0]
+          integrated_units = integrated_units + 1
+          match required_continuation_ref_digest {
+            Some(digest) =>
+              if status.effective_contract_ref != current_contract_ref ||
+                status.continuation_ref_digest != Some(digest) {
+                continuation_stale = true
+              }
+            None =>
+              if status.continuation_ref_digest is Some(_) {
+                continuation_stale = true
+              }
+          }
+          let mut existing : Int? = None
+          for index, count in effective_contract_counts {
+            if count.contract_ref == status.effective_contract_ref {
+              existing = Some(index)
+            }
+          }
+          match existing {
+            Some(index) =>
+              effective_contract_counts[index] = {
+                ..effective_contract_counts[index],
+                unit_count: effective_contract_counts[index].unit_count + 1,
+              }
+            None =>
+              effective_contract_counts.push({
+                contract_ref: status.effective_contract_ref,
+                unit_count: 1,
+              })
+          }
+        }
+      }
+    }
+  }
+  effective_contract_counts.sort_by(fn(left, right) {
+    let by_lineage = left.contract_ref.migration_lineage_id.compare(
+      right.contract_ref.migration_lineage_id,
+    )
+    if by_lineage == 0 {
+      left.contract_ref.revision.compare(right.contract_ref.revision)
+    } else {
+      by_lineage
+    }
+  })
+  let completion = if unresolved_units > 0 {
+    MigrationCompletionBlockedByUnresolvedUnits
+  } else if mechanical_units > 0 {
+    MigrationCompletionBlockedByUnsupportedMechanicalUnits
+  } else if missing_or_unintegrated {
+    MigrationCompletionBlockedByUnintegratedUnits
+  } else if continuation_stale {
+    MigrationCompletionBlockedByContinuation
+  } else {
+    MigrationCompletionReady
+  }
+  let next_route = match completion {
+    MigrationCompletionReady => MigrationNoFurtherRoute
+    MigrationCompletionBlockedByUnresolvedUnits => MigrationUserInputRoute
+    MigrationCompletionBlockedByUnsupportedMechanicalUnits =>
+      MigrationContractRevisionRoute
+    MigrationCompletionBlockedByUnintegratedUnits => MigrationRepairRoute
+    MigrationCompletionBlockedByContinuation => MigrationContinuationRoute
+  }
+  Ok({
+    denominator: inventory.units.length(),
+    irrelevant_units,
+    mechanical_units,
+    agent_assisted_units,
+    unresolved_units,
+    integrated_units,
+    effective_contract_counts,
+    affected_part_ids,
+    operational_counts,
+    next_route,
+    completion,
+  })
+}
+
+///|
 fn observation_index(
   observations : Array[MigrationFindingPatternObservation],
   key : @control.Digest,

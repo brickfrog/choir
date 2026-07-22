@@ -461,6 +461,63 @@ pub(all) struct MigrationContinuationRef {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) struct MigrationUnitExecutionStatus {
+  stable_key : InventoryStableKey
+  effective_contract_ref : @control.MigrationContractRef
+  task_contract_revision_id : @control.RevisionId
+  integrated : Bool
+  continuation_ref_digest : @control.Digest?
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct MigrationEffectiveContractCount {
+  contract_ref : @control.MigrationContractRef
+  unit_count : Int
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct MigrationOperationalCounts {
+  queued_parts : Int
+  active_takes : Int
+  waiting_verification_slots : Int
+  running_verification_slots : Int
+  invalidated_verification_slots : Int
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum MigrationNextRoute {
+  MigrationNoFurtherRoute
+  MigrationRepairRoute
+  MigrationContractRevisionRoute
+  MigrationUserInputRoute
+  MigrationContinuationRoute
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum MigrationCompletionCondition {
+  MigrationCompletionReady
+  MigrationCompletionBlockedByUnresolvedUnits
+  MigrationCompletionBlockedByUnintegratedUnits
+  MigrationCompletionBlockedByContinuation
+  MigrationCompletionBlockedByUnsupportedMechanicalUnits
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct MigrationStatusProjection {
+  denominator : Int
+  irrelevant_units : Int
+  mechanical_units : Int
+  agent_assisted_units : Int
+  unresolved_units : Int
+  integrated_units : Int
+  effective_contract_counts : Array[MigrationEffectiveContractCount]
+  affected_part_ids : Array[@control.PartId]
+  operational_counts : MigrationOperationalCounts
+  next_route : MigrationNextRoute
+  completion : MigrationCompletionCondition
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub(all) enum MigrationFindingClass {
   RuleViolation
   RuleGap
