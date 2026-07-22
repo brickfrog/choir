@@ -2325,6 +2325,9 @@ async fn native_goal_seal_witness(
 
 ///|
 async test "native Goal branch initialization atomically anchors both refs" {
+  if !real_exec_integration_enabled() {
+    return
+  }
   let root = "/tmp/choir-goal-branch-init-" + @sys.get_pid().to_string()
   ignore(@sys.rm_rf(root))
   if !@sys.create_dir_all(root) {
@@ -2398,6 +2401,9 @@ async test "native Goal branch initialization atomically anchors both refs" {
 
 ///|
 async test "native Goal purge removes only an exact owned Git ref" {
+  if !real_exec_integration_enabled() {
+    return
+  }
   let root = "/tmp/choir-goal-ref-purge-" + @sys.get_pid().to_string()
   ignore(@sys.rm_rf(root))
   if !@sys.create_dir_all(root) {
@@ -2452,6 +2458,9 @@ async test "native Goal purge removes only an exact owned Git ref" {
 
 ///|
 async test "native Goal seal witness is exact and idempotent" {
+  if !real_exec_integration_enabled() {
+    return
+  }
   let root = "/tmp/choir-goal-seal-witness-" + @sys.get_pid().to_string()
   ignore(@sys.rm_rf(root))
   if !@sys.create_dir_all(root) {

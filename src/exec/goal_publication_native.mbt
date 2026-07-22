@@ -505,6 +505,9 @@ pub async fn advance_native_goal_publication(
 
 ///|
 async test "native Goal publication creates, adopts, and refuses remote drift" {
+  if !real_exec_integration_enabled() {
+    return
+  }
   let root = "/tmp/choir-goal-publication-" + @sys.get_pid().to_string()
   let remote = root + "-remote.git"
   ignore(@sys.rm_rf(root))
@@ -1406,6 +1409,9 @@ pub async fn run_native_publication_fault_conformance() -> NativePublicationFaul
 
 ///|
 async test "real exec integration: Goal publication recovers across every external-effect boundary" {
+  if !real_exec_integration_enabled() {
+    return
+  }
   let report = run_native_publication_fault_conformance()
   assert_true(report.passed)
   assert_eq(report.observations.length(), 5)

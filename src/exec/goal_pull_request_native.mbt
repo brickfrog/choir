@@ -1253,6 +1253,9 @@ pub async fn run_native_pull_request_fault_conformance() -> NativePullRequestFau
 
 ///|
 async test "real exec integration: final PR creation recovers without duplicate dispatch" {
+  if !real_exec_integration_enabled() {
+    return
+  }
   let report = run_native_pull_request_fault_conformance()
   assert_true(report.passed)
   assert_eq(report.observations.length(), 7)
