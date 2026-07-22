@@ -317,6 +317,167 @@ pub fn project_migration_patterns_from_audit_results(
 }
 
 ///|
+fn inventory_verification_spec_is_valid(
+  spec : @control.VerificationSpec,
+) -> Bool {
+  spec.id.0 != "" &&
+  spec.version > 0 &&
+  digest_is_valid(spec.digest) &&
+  digest_is_valid(spec.process_spec_digest)
+}
+
+///|
+fn inventory_unit_disposition_is_valid(unit : MigrationInventoryUnit) -> Bool {
+  match unit.disposition {
+    Irrelevant(rule) | Mechanical(rule) =>
+      rule.0 != "" && unit.transformation_rule_ids.contains(rule)
+    AgentAssisted(_) => unit.proposed_verification_specs.length() > 0
+    Unresolved(class) => unit.gap_classes.contains(class)
+  }
+}
+
+///|
+fn inventory_unit_arrays_are_unique(unit : MigrationInventoryUnit) -> Bool {
+  for index, path in unit.source_paths {
+    if unit.source_paths[index + 1:].contains(path) {
+      return false
+    }
+  }
+  for index, dependency in unit.dependency_keys {
+    if unit.dependency_keys[index + 1:].contains(dependency) {
+      return false
+    }
+  }
+  for index, class in unit.gap_classes {
+    if unit.gap_classes[index + 1:].contains(class) {
+      return false
+    }
+  }
+  for index, rule in unit.transformation_rule_ids {
+    if unit.transformation_rule_ids[index + 1:].contains(rule) {
+      return false
+    }
+  }
+  for index, spec in unit.proposed_verification_specs {
+    if unit.proposed_verification_specs[index + 1:].any(fn(candidate) {
+        candidate.id == spec.id
+      }) {
+      return false
+    }
+  }
+  true
+}
+
+///|
+pub fn validate_migration_inventory(
+  inventory : MigrationInventory,
+  is_nfc : (String) -> Bool,
+) -> Result[Unit, @types.ChoirError] {
+  if inventory.schema_version != 1 ||
+    inventory.source_revision.0 == "" ||
+    !digest_is_valid(inventory.generator_digest) {
+    return Err(migration_validation_error("migration inventory is invalid"))
+  }
+  let stable_keys : Array[InventoryStableKey] = []
+  for unit in inventory.units {
+    if unit.stable_key.0 == "" ||
+      unit.stable_key.0.contains("\u{00}") ||
+      unit.ownership_claim.0 == "" ||
+      unit.ownership_claim.0.contains("\u{00}") ||
+      unit.source_paths.length() == 0 ||
+      !inventory_unit_arrays_are_unique(unit) ||
+      !inventory_unit_disposition_is_valid(unit) ||
+      unit.transformation_rule_ids.any(fn(rule) { rule.0 == "" }) ||
+      unit.proposed_verification_specs.any(fn(spec) {
+        !inventory_verification_spec_is_valid(spec)
+      }) {
+      return Err(
+        migration_validation_error("migration inventory unit is invalid"),
+      )
+    }
+    if stable_keys.contains(unit.stable_key) {
+      return Err(
+        migration_validation_error("inventory stable key is duplicated"),
+      )
+    }
+    stable_keys.push(unit.stable_key)
+    for path in unit.source_paths {
+      if @control.validate_repo_path(path, is_nfc) is Err(_) {
+        return Err(
+          migration_validation_error("inventory source path is invalid"),
+        )
+      }
+    }
+  }
+  for unit in inventory.units {
+    for dependency in unit.dependency_keys {
+      match dependency {
+        InventoryUnitDependency(key) if key == unit.stable_key =>
+          return Err(
+            migration_validation_error("inventory unit depends on itself"),
+          )
+        InventoryUnitDependency(key) if !stable_keys.contains(key) =>
+          return Err(
+            migration_validation_error("inventory dependency is unresolved"),
+          )
+        InventoryExternalDependency(key) if key.0 == "" ||
+          key.0.contains("\u{00}") =>
+          return Err(
+            migration_validation_error("external dependency is invalid"),
+          )
+        _ => ()
+      }
+    }
+  }
+  Ok(())
+}
+
+///|
+pub fn validate_migration_inventory_two_run(
+  first : MigrationInventory,
+  second : MigrationInventory,
+  is_nfc : (String) -> Bool,
+) -> Result[@control.Digest, @types.ChoirError] {
+  match validate_migration_inventory(first, is_nfc) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  match validate_migration_inventory(second, is_nfc) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  if first.source_revision != second.source_revision ||
+    first.generator_digest != second.generator_digest ||
+    canonical_migration_inventory_bytes(first) !=
+    canonical_migration_inventory_bytes(second) {
+    return Err(migration_validation_error("migration inventory drifted"))
+  }
+  Ok(migration_inventory_digest(first))
+}
+
+///|
+pub fn inventory_unit_is_initially_admissible(
+  unit : MigrationInventoryUnit,
+) -> Bool {
+  unit.disposition is UnitDisposition::AgentAssisted(_)
+}
+
+///|
+pub fn validate_qualified_migration_inventory_ref(
+  reference : QualifiedMigrationInventoryRef,
+) -> Result[Unit, @types.ChoirError] {
+  if reference.source_revision.0 == "" ||
+    !digest_is_valid(reference.generator_digest) ||
+    !digest_is_valid(reference.inventory_artifact_digest) ||
+    !digest_is_valid(reference.canonical_inventory_digest) ||
+    reference.verification_receipt_id.0 == "" {
+    Err(migration_validation_error("qualified inventory reference is invalid"))
+  } else {
+    Ok(())
+  }
+}
+
+///|
 fn observation_index(
   observations : Array[MigrationFindingPatternObservation],
   key : @control.Digest,

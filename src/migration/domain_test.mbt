@@ -161,6 +161,55 @@ fn audit_result_fixture(
 }
 
 ///|
+fn inventory_verification_fixture(id : String) -> @control.VerificationSpec {
+  {
+    id: @control.VerificationSpecId(id),
+    version: 1,
+    digest: migration_digest_b,
+    process_spec_digest: migration_digest_c,
+  }
+}
+
+///|
+fn inventory_unit_fixture(
+  key : String,
+  path : String,
+  dependencies : Array[@migration.MigrationInventoryDependency],
+) -> @migration.MigrationInventoryUnit {
+  {
+    stable_key: @migration.InventoryStableKey(key),
+    source_paths: [@control.RepoPath(path)],
+    dependency_keys: dependencies,
+    ownership_claim: @migration.MigrationOwnershipClaim("owner-" + key),
+    gap_classes: [],
+    disposition: @migration.UnitDisposition::AgentAssisted(
+      @migration.AgentAssistedReason::SemanticJudgment,
+    ),
+    transformation_rule_ids: [],
+    proposed_verification_specs: [
+      inventory_verification_fixture("verify-" + key),
+    ],
+  }
+}
+
+///|
+fn inventory_fixture() -> @migration.MigrationInventory {
+  {
+    schema_version: 1,
+    source_revision: @control.GitOid("source-revision-1"),
+    generator_digest: migration_digest_a,
+    units: [
+      inventory_unit_fixture("unit-a", "src/a.mbt", []),
+      inventory_unit_fixture("unit-b", "src/b.mbt", [
+        @migration.MigrationInventoryDependency::InventoryUnitDependency(
+          @migration.InventoryStableKey("unit-a"),
+        ),
+      ]),
+    ],
+  }
+}
+
+///|
 test "migration domain canonical byte fixtures are explicit and versioned" {
   inspect(
     @utf8.decode_lossy(
@@ -231,6 +280,24 @@ test "migration domain canonical byte fixtures are explicit and versioned" {
       }),
     ),
     content="36#choir.migration-findings-artifact.v11#31#11#1329#26#choir.migration-finding.v12#111#19#finding-164#ab7efb844b76423963ac36b7e2de64fd349eb77c438cda66dccb4d09fc2fd41114#rule-violation8#blocking4#rule18#imports-no-host-io7#audit-164#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb64#cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc15#revise-contract",
+  )
+  inspect(
+    @utf8.decode_lossy(
+      @migration.canonical_migration_inventory_bytes(inventory_fixture()),
+    ),
+    content="28#choir.migration-inventory.v11#61#117#source-revision-164#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1#2315#33#choir.migration-inventory-unit.v12#116#unit-a1#19#src/a.mbt1#012#owner-unit-a1#014#agent-assisted17#semantic-judgment1#01#1185#26#choir.verification-spec.v11#413#verify-unit-a1#164#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb64#cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc377#33#choir.migration-inventory-unit.v12#126#unit-b1#19#src/b.mbt1#159#39#choir.migration-inventory-dependency.v11#24#unit6#unit-a12#owner-unit-b1#014#agent-assisted17#semantic-judgment1#01#1185#26#choir.verification-spec.v11#413#verify-unit-b1#164#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb64#cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  )
+  inspect(
+    @utf8.decode_lossy(
+      @migration.canonical_qualified_inventory_ref_bytes({
+        source_revision: @control.GitOid("source-revision-1"),
+        generator_digest: migration_digest_a,
+        inventory_artifact_digest: migration_digest_b,
+        canonical_inventory_digest: migration_digest_c,
+        verification_receipt_id: @control.ReceiptId("inventory-verification-1"),
+      }),
+    ),
+    content="42#choir.qualified-migration-inventory-ref.v11#517#source-revision-164#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa64#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb64#cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc24#inventory-verification-1",
   )
 }
 
@@ -366,6 +433,66 @@ test "finding patterns project from persisted audit artifacts across restart" {
 }
 
 ///|
+test "migration inventory validates denominator and two-run determinism" {
+  let inventory = inventory_fixture()
+  assert_true(
+    @migration.validate_migration_inventory(inventory, fn(_) { true }) is Ok(_),
+  )
+  let reordered = { ..inventory, units: inventory.units.rev() }
+  assert_eq(
+    @migration.validate_migration_inventory_two_run(inventory, reordered, fn(
+      _,
+    ) {
+      true
+    }).unwrap(),
+    @migration.migration_inventory_digest(inventory),
+  )
+  let unresolved = {
+    ..inventory.units[0],
+    gap_classes: [@migration.UnresolvedGapClass::MissingRule],
+    disposition: @migration.UnitDisposition::Unresolved(
+      @migration.UnresolvedGapClass::MissingRule,
+    ),
+  }
+  assert_false(@migration.inventory_unit_is_initially_admissible(unresolved))
+  assert_true(
+    @migration.validate_migration_inventory(
+      { ..inventory, units: [unresolved, inventory.units[1]] },
+      fn(_) { true },
+    )
+    is Ok(_),
+  )
+}
+
+///|
+test "migration inventory rejects drift and disappearing dependencies" {
+  let inventory = inventory_fixture()
+  let drifted = {
+    ..inventory,
+    units: [
+      {
+        ..inventory.units[0],
+        ownership_claim: @migration.MigrationOwnershipClaim("other"),
+      },
+      inventory.units[1],
+    ],
+  }
+  assert_true(
+    @migration.validate_migration_inventory_two_run(inventory, drifted, fn(_) {
+      true
+    })
+    is Err(_),
+  )
+  assert_true(
+    @migration.validate_migration_inventory(
+      { ..inventory, units: [inventory.units[1]] },
+      fn(_) { true },
+    )
+    is Err(_),
+  )
+}
+
+///|
 fn digest_generated_text(value : String) -> @control.Digest {
   @control.Digest(
     @crypto.bytes_to_hex_string(@crypto.sha256(@utf8.encode(value))),
@@ -445,6 +572,34 @@ test "property: findings canonical bytes ignore diagnostic JSON round trip" {
       }
       @migration.canonical_migration_findings_artifact_bytes(artifact) ==
       @migration.canonical_migration_findings_artifact_bytes(decoded)
+    },
+    max_success=128,
+    max_size=32,
+  )
+}
+
+///|
+test "property: inventory encoding canonicalizes unit and field order" {
+  @quickcheck.quick_check_fn(
+    fn(values : Array[String]) -> Bool {
+      let paths = values.map(fn(value) {
+        @control.RepoPath("src/" + digest_generated_text(value).0 + ".mbt")
+      })
+      let rules = values.map(fn(value) {
+        @migration.MigrationRuleId("rule-" + digest_generated_text(value).0)
+      })
+      let unit = {
+        ..inventory_fixture().units[0],
+        source_paths: paths,
+        transformation_rule_ids: rules,
+      }
+      let reversed = {
+        ..unit,
+        source_paths: paths.rev(),
+        transformation_rule_ids: rules.rev(),
+      }
+      @migration.canonical_migration_inventory_unit_bytes(unit) ==
+      @migration.canonical_migration_inventory_unit_bytes(reversed)
     },
     max_success=128,
     max_size=32,

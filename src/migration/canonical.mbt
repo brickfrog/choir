@@ -355,6 +355,147 @@ pub fn canonical_migration_findings_artifact_bytes(
 }
 
 ///|
+fn agent_assisted_reason_tag(reason : AgentAssistedReason) -> String {
+  match reason {
+    SemanticJudgment => "semantic-judgment"
+    CrossUnitContext => "cross-unit-context"
+    ArchitecturalChoice => "architectural-choice"
+    UnsupportedMechanicalTool => "unsupported-mechanical-tool"
+    MechanicalQualificationFailed => "mechanical-qualification-failed"
+  }
+}
+
+///|
+fn unresolved_gap_class_tag(class : UnresolvedGapClass) -> String {
+  match class {
+    MissingRule => "missing-rule"
+    AmbiguousApplicability => "ambiguous-applicability"
+    MissingDependency => "missing-dependency"
+    OwnershipConflict => "ownership-conflict"
+    UnsupportedLanguage => "unsupported-language"
+    MissingJudge => "missing-judge"
+    ContextLimit => "context-limit"
+  }
+}
+
+///|
+fn inventory_disposition_fields(disposition : UnitDisposition) -> Array[String] {
+  match disposition {
+    Irrelevant(rule) => ["irrelevant", rule.0]
+    Mechanical(rule) => ["mechanical", rule.0]
+    AgentAssisted(reason) =>
+      ["agent-assisted", agent_assisted_reason_tag(reason)]
+    Unresolved(class) => ["unresolved", unresolved_gap_class_tag(class)]
+  }
+}
+
+///|
+fn inventory_dependency_fields(
+  dependency : MigrationInventoryDependency,
+) -> Array[String] {
+  match dependency {
+    InventoryUnitDependency(key) => ["unit", key.0]
+    InventoryExternalDependency(key) => ["external", key.0]
+  }
+}
+
+///|
+fn canonical_inventory_dependency_text(
+  dependency : MigrationInventoryDependency,
+) -> String {
+  @utf8.decode_lossy(
+    canonical_fields(
+      "choir.migration-inventory-dependency.v1",
+      inventory_dependency_fields(dependency),
+    ),
+  )
+}
+
+///|
+fn canonical_verification_spec_text(spec : @control.VerificationSpec) -> String {
+  @utf8.decode_lossy(
+    canonical_fields("choir.verification-spec.v1", [
+      spec.id.0,
+      spec.version.to_string(),
+      spec.digest.0,
+      spec.process_spec_digest.0,
+    ]),
+  )
+}
+
+///|
+pub fn canonical_migration_inventory_unit_bytes(
+  unit : MigrationInventoryUnit,
+) -> Bytes {
+  let paths = unit.source_paths.map(@control.repo_path_text)
+  paths.sort()
+  let dependencies = unit.dependency_keys.map(
+    canonical_inventory_dependency_text,
+  )
+  dependencies.sort()
+  let gaps = unit.gap_classes.map(unresolved_gap_class_tag)
+  gaps.sort()
+  let rules = unit.transformation_rule_ids.map(fn(rule) { rule.0 })
+  rules.sort()
+  let verification = unit.proposed_verification_specs.map(
+    canonical_verification_spec_text,
+  )
+  verification.sort()
+  let fields = [unit.stable_key.0]
+  fields.push(paths.length().to_string())
+  append_fields(fields, paths)
+  fields.push(dependencies.length().to_string())
+  append_fields(fields, dependencies)
+  fields.push(unit.ownership_claim.0)
+  fields.push(gaps.length().to_string())
+  append_fields(fields, gaps)
+  append_fields(fields, inventory_disposition_fields(unit.disposition))
+  fields.push(rules.length().to_string())
+  append_fields(fields, rules)
+  fields.push(verification.length().to_string())
+  append_fields(fields, verification)
+  canonical_fields("choir.migration-inventory-unit.v1", fields)
+}
+
+///|
+pub fn canonical_migration_inventory_bytes(
+  inventory : MigrationInventory,
+) -> Bytes {
+  let units = inventory.units.map(fn(unit) {
+    @utf8.decode_lossy(canonical_migration_inventory_unit_bytes(unit))
+  })
+  units.sort()
+  let fields = [
+    inventory.schema_version.to_string(),
+    inventory.source_revision.0,
+    inventory.generator_digest.0,
+    units.length().to_string(),
+  ]
+  append_fields(fields, units)
+  canonical_fields("choir.migration-inventory.v1", fields)
+}
+
+///|
+pub fn migration_inventory_digest(
+  inventory : MigrationInventory,
+) -> @control.Digest {
+  canonical_digest(canonical_migration_inventory_bytes(inventory))
+}
+
+///|
+pub fn canonical_qualified_inventory_ref_bytes(
+  reference : QualifiedMigrationInventoryRef,
+) -> Bytes {
+  canonical_fields("choir.qualified-migration-inventory-ref.v1", [
+    reference.source_revision.0,
+    reference.generator_digest.0,
+    reference.inventory_artifact_digest.0,
+    reference.canonical_inventory_digest.0,
+    reference.verification_receipt_id.0,
+  ])
+}
+
+///|
 pub fn migration_contract_digest(
   contract : MigrationContract,
 ) -> @control.Digest {

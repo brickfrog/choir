@@ -146,6 +146,89 @@ pub(all) struct InventoryStableKey(String) derive (
 )
 
 ///|
+pub(all) struct MigrationExternalDependencyKey(String) derive (
+  Debug,
+  Eq,
+  Compare,
+  Hash,
+  ToJson,
+  FromJson,
+)
+
+///|
+pub(all) struct MigrationOwnershipClaim(String) derive (
+  Debug,
+  Eq,
+  Compare,
+  Hash,
+  ToJson,
+  FromJson,
+)
+
+///|
+pub(all) enum AgentAssistedReason {
+  SemanticJudgment
+  CrossUnitContext
+  ArchitecturalChoice
+  UnsupportedMechanicalTool
+  MechanicalQualificationFailed
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum UnresolvedGapClass {
+  MissingRule
+  AmbiguousApplicability
+  MissingDependency
+  OwnershipConflict
+  UnsupportedLanguage
+  MissingJudge
+  ContextLimit
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum UnitDisposition {
+  Irrelevant(MigrationRuleId)
+  Mechanical(MigrationRuleId)
+  AgentAssisted(AgentAssistedReason)
+  Unresolved(UnresolvedGapClass)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum MigrationInventoryDependency {
+  InventoryUnitDependency(InventoryStableKey)
+  InventoryExternalDependency(MigrationExternalDependencyKey)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct MigrationInventoryUnit {
+  stable_key : InventoryStableKey
+  source_paths : Array[@control.RepoPath]
+  dependency_keys : Array[MigrationInventoryDependency]
+  ownership_claim : MigrationOwnershipClaim
+  gap_classes : Array[UnresolvedGapClass]
+  disposition : UnitDisposition
+  transformation_rule_ids : Array[MigrationRuleId]
+  proposed_verification_specs : Array[@control.VerificationSpec]
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct MigrationInventory {
+  schema_version : Int
+  source_revision : @control.GitOid
+  generator_digest : @control.Digest
+  units : Array[MigrationInventoryUnit]
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct QualifiedMigrationInventoryRef {
+  source_revision : @control.GitOid
+  generator_digest : @control.Digest
+  inventory_artifact_digest : @control.Digest
+  canonical_inventory_digest : @control.Digest
+  verification_receipt_id : @control.ReceiptId
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub(all) enum MigrationFindingClass {
   RuleViolation
   RuleGap
