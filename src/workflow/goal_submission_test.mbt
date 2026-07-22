@@ -908,6 +908,98 @@ test "evidence-only Goal binds completion and cancels only after assurance" {
     replayed.cancellation_request.map(fn(request) { request.cause }),
     Some(@workflow.GoalCancellationCause::GoalCancellationUserRequested),
   )
+  let previous_contract_ref : @control.MigrationContractRef = {
+    contract_id: @control.MigrationContractId("supersession-contract"),
+    migration_lineage_id: @control.MigrationLineageId("supersession-lineage"),
+    revision: 1,
+    contract_artifact_digest: submission_digest,
+  }
+  let next_contract_ref = {
+    ..previous_contract_ref,
+    revision: 2,
+    contract_artifact_digest: submission_process_digest,
+  }
+  let impact_set = @migration.compute_migration_contract_revision_impact_set(
+    previous_contract_ref,
+    next_contract_ref,
+    [
+      {
+        kind: @migration.MigrationChangedArtifactKind::ChangedRulebook,
+        previous_digest: submission_digest,
+        next_digest: submission_process_digest,
+      },
+    ],
+    [
+      {
+        part_id: @control.PartId("a"),
+        effective_task_contract_revision_id: @control.RevisionId("revision-a"),
+        dependency_artifact_digests: [submission_digest],
+        integrated: true,
+        dependency_complete: true,
+      },
+    ],
+  ).unwrap()
+  let supersession = @workflow.authorize_migration_goal_supersession(
+    assured,
+    impact_set,
+    [@control.PartId("a")],
+    @control.GitOid("supersession-observed-head"),
+    101L,
+  ).unwrap()
+  assert_eq(
+    supersession.canceling_record.cancellation_request.map(fn(request) {
+      request.cause
+    }),
+    Some(
+      @workflow.GoalCancellationCause::GoalCancellationSupersededByContractRevision(
+        supersession.supersession_artifact_digest,
+      ),
+    ),
+  )
+  let released_supersession = @workflow.reconcile_goal_source_release(
+    @workflow.authorize_goal_source_release(
+      supersession.canceling_record,
+      supersession.canceling_record.source_claims[0].part_id,
+    ).unwrap(),
+    supersession.canceling_record.source_claims[0].part_id,
+    @workflow.GoalSourceClaimObservation::GoalSourceUnclaimedExact,
+    102L,
+  ).unwrap()
+  let canceled_supersession = @workflow.commit_goal_execution_cancellation(
+    released_supersession,
+  ).unwrap()
+  guard canceled_supersession.goal.lifecycle
+    is @control.GoalLifecycle::GoalCanceled(summary_id) else {
+    fail("superseded Goal did not reach ordinary cancellation")
+  }
+  let terminal_head = @control.GitOid("supersession-terminal-head")
+  let continuation : @migration.MigrationContinuationRef = {
+    prior_goal_id: assured.goal.id,
+    supersession_artifact_digest: supersession.supersession_artifact_digest,
+    cancellation_summary_id: summary_id,
+    terminal_preserved_head: terminal_head,
+    next_contract_ref,
+  }
+  assert_true(
+    @workflow.validate_migration_continuation_terminal(
+      continuation,
+      supersession.supersession,
+      canceled_supersession,
+      terminal_head,
+      terminal_head,
+    )
+    is Ok(_),
+  )
+  assert_true(
+    @workflow.validate_migration_continuation_terminal(
+      continuation,
+      supersession.supersession,
+      canceled_supersession,
+      @control.GitOid("supersession-observed-head"),
+      @control.GitOid("supersession-observed-head"),
+    )
+    is Err(_),
+  )
 }
 
 ///|
