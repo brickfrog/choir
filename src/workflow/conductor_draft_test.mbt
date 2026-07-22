@@ -39,6 +39,35 @@ test "Conductor draft decodes friendly provider and verification fields" {
     @control.ProviderSurfaceId::CodexSubscriptionCli,
   )
   assert_eq(draft.parts[0].verification.timeout_ms, 120000L)
+  assert_eq(draft.parts[0].migration_contract_ref, None)
+}
+
+///|
+test "Conductor Part draft carries one exact migration contract reference" {
+  let draft = @workflow.decode_conductor_goal_draft(
+    (
+      #|{"proposal_id":"p","goal_id":"g","maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","provider":"codex","repository_wide":true,"moon_args":["test"],"migration_contract_id":"contract-1","migration_lineage_id":"lineage-1","migration_contract_revision":3,"migration_contract_artifact_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}
+    ),
+  ).unwrap()
+  assert_eq(
+    draft.parts[0].migration_contract_ref,
+    Some({
+      contract_id: @control.MigrationContractId("contract-1"),
+      migration_lineage_id: @control.MigrationLineageId("lineage-1"),
+      revision: 3,
+      contract_artifact_digest: @control.Digest(
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      ),
+    }),
+  )
+  assert_true(
+    @workflow.decode_conductor_goal_draft(
+      (
+        #|{"proposal_id":"p","goal_id":"g","maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","provider":"codex","repository_wide":true,"moon_args":["test"],"migration_contract_id":"contract-1"}]}
+      ),
+    )
+    is Err(_),
+  )
 }
 
 ///|

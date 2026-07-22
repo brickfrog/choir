@@ -44,6 +44,7 @@ fn selection_store_decision() -> @workflow.GoalSelectionDecision raise {
       },
     ],
     audit_policy_digest: selection_store_digest,
+    migration_contract_ref: None,
     implementation_capability_profile_digest: selection_store_digest,
     verification_capability_profile_digest: selection_store_digest,
     audit_capability_profile_digest: selection_store_digest,

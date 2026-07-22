@@ -161,6 +161,7 @@ fn native_goal_record(
         },
       ],
       audit_policy_digest: digest,
+      migration_contract_ref: None,
       implementation_capability_profile_digest: digest,
       verification_capability_profile_digest: digest,
       audit_capability_profile_digest: digest,

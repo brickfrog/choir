@@ -399,7 +399,7 @@ fn compile_native_conductor_part_proposal(
   )
   let mutation_declaration = native_goal_submission_mutation_declaration(part)
   let contract_digest = native_goal_submission_digest(
-    "choir.task-contract.v1",
+    "choir.task-contract.v2",
     [
       revision_id.to_json(),
       draft.goal_id.to_json(),
@@ -412,6 +412,7 @@ fn compile_native_conductor_part_proposal(
       verification_spec_digest.to_json(),
       process_artifact.digest.to_json(),
       audit_policy_digest.to_json(),
+      part.migration_contract_ref.to_json(),
       implementation_profile_digest.to_json(),
       verification_profile_digest.to_json(),
       audit_profile_digest.to_json(),
@@ -438,6 +439,7 @@ fn compile_native_conductor_part_proposal(
       },
     ],
     audit_policy_digest,
+    migration_contract_ref: part.migration_contract_ref,
     implementation_capability_profile_digest: implementation_profile_digest,
     verification_capability_profile_digest: verification_profile_digest,
     audit_capability_profile_digest: audit_profile_digest,

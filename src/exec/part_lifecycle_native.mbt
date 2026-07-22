@@ -478,6 +478,7 @@ fn native_part_fixture_snapshot_for_definition(
       },
     ],
     audit_policy_digest,
+    migration_contract_ref: None,
     implementation_capability_profile_digest: implementation_profile_digest,
     verification_capability_profile_digest: verification_profile_digest,
     audit_capability_profile_digest: audit_profile_digest,

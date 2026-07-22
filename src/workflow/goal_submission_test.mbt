@@ -38,6 +38,7 @@ fn submission_contract(
       },
     ],
     audit_policy_digest: submission_digest,
+    migration_contract_ref: None,
     implementation_capability_profile_digest: submission_digest,
     verification_capability_profile_digest: submission_digest,
     audit_capability_profile_digest: submission_digest,

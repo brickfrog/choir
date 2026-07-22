@@ -208,6 +208,7 @@ fn event_authorized_provider_dispatch_fixture() -> (
       ),
       verification_specs: [],
       audit_policy_digest: event_case_digest,
+      migration_contract_ref: None,
       implementation_capability_profile_digest: event_case_digest,
       verification_capability_profile_digest: event_case_digest,
       audit_capability_profile_digest: event_case_digest,

@@ -13,6 +13,7 @@ pub(all) struct ConductorPartDraft {
   repository_wide : Bool
   verification : ConductorVerificationDraft
   provider_surface : @control.ProviderSurfaceId
+  migration_contract_ref : @control.MigrationContractRef?
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -125,6 +126,65 @@ fn conductor_provider_surface(value : String) -> @control.ProviderSurfaceId? {
 }
 
 ///|
+fn conductor_migration_contract_ref(
+  fields : Map[String, Json],
+) -> Result[@control.MigrationContractRef?, @types.ChoirError] {
+  let names = [
+    "migration_contract_id", "migration_lineage_id", "migration_contract_revision",
+    "migration_contract_artifact_digest",
+  ]
+  let mut present = 0
+  for name in names {
+    if fields.get(name) is Some(_) {
+      present = present + 1
+    }
+  }
+  if present == 0 {
+    return Ok(None)
+  }
+  if present != names.length() {
+    return Err(
+      goal_submission_error(
+        "migration contract reference must provide all identity fields",
+      ),
+    )
+  }
+  let contract_id = match conductor_draft_string(fields, names[0]) {
+    Some(value) => @control.MigrationContractId(value)
+    None =>
+      return Err(goal_submission_error("migration contract ID is invalid"))
+  }
+  let lineage_id = match conductor_draft_string(fields, names[1]) {
+    Some(value) => @control.MigrationLineageId(value)
+    None => return Err(goal_submission_error("migration lineage ID is invalid"))
+  }
+  let revision = match conductor_draft_int(fields, names[2]) {
+    Some(value) if value > 0 => value
+    _ =>
+      return Err(
+        goal_submission_error("migration contract revision is invalid"),
+      )
+  }
+  let digest = match conductor_draft_string(fields, names[3]) {
+    Some(value) => @control.Digest(value)
+    None =>
+      return Err(goal_submission_error("migration contract digest is invalid"))
+  }
+  match @storage.validate_digest(digest) {
+    Ok(_) =>
+      Ok(
+        Some({
+          contract_id,
+          migration_lineage_id: lineage_id,
+          revision,
+          contract_artifact_digest: digest,
+        }),
+      )
+    Err(_) => Err(goal_submission_error("migration contract digest is invalid"))
+  }
+}
+
+///|
 fn decode_conductor_part_draft(
   json : Json,
 ) -> Result[ConductorPartDraft, @types.ChoirError] {
@@ -133,7 +193,8 @@ fn decode_conductor_part_draft(
   }
   let allowed_fields = [
     "part_id", "instruction", "provider", "exact_paths", "path_trees", "repository_wide",
-    "moon_args", "verify_timeout_ms",
+    "moon_args", "verify_timeout_ms", "migration_contract_id", "migration_lineage_id",
+    "migration_contract_revision", "migration_contract_artifact_digest",
   ]
   let unknown_fields = conductor_draft_unknown_fields(fields, allowed_fields)
   if unknown_fields.length() > 0 {
@@ -211,6 +272,10 @@ fn decode_conductor_part_draft(
     Some(value) if value > 0L && value <= 600000L => value
     _ => return Err(goal_submission_error("verify_timeout_ms is invalid"))
   }
+  let migration_contract_ref = match conductor_migration_contract_ref(fields) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
   Ok({
     part_id,
     instruction,
@@ -219,6 +284,7 @@ fn decode_conductor_part_draft(
     repository_wide,
     verification: { arguments, timeout_ms },
     provider_surface,
+    migration_contract_ref,
   })
 }
 

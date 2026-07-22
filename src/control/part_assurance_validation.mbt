@@ -185,8 +185,17 @@ pub fn validate_task_contract_revision(
     Some(value) => value.0 != ""
     None => true
   }
+  let migration_identity_valid = match contract.migration_contract_ref {
+    Some(reference) =>
+      reference.contract_id.0 != "" &&
+      reference.migration_lineage_id.0 != "" &&
+      reference.revision > 0 &&
+      valid_lower_hex_digest(reference.contract_artifact_digest)
+    None => true
+  }
   if contract.revision <= 0 ||
     !repair_identity_valid ||
+    !migration_identity_valid ||
     !valid_lower_hex_digest(contract.digest) ||
     contract.instruction_artifact.artifact_id == "" ||
     !valid_lower_hex_digest(contract.instruction_artifact.digest) ||
