@@ -1,4 +1,7 @@
-# Choir Goal
+# Goal Workflow Charter
+
+Originally developed as the repository-root `GOAL.md`, this charter is retained
+as the architectural record for Choir's durable Goal workflow.
 
 Status: active product and architecture charter
 

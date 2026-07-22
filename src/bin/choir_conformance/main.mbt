@@ -1448,7 +1448,8 @@ async fn run_codex_live_startup() -> Int {
       return 1
     }
   }
-  let read_canary = match @sys.realpath_native("GOAL.md") {
+  let read_canary = match
+    @sys.realpath_native("docs/charters/goal-workflow.md") {
     Some(path) => path
     None => {
       @sys.write_stderr("failed to resolve Codex read canary\n")

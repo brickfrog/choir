@@ -79,6 +79,12 @@ deleting durable state. It does not delete user branches, remote branches, PRs,
 or source Beads. If external cleanup fails, Choir keeps the database and exits
 nonzero so the purge can be retried safely.
 
+## Architecture
+
+The accepted design records are retained under
+[docs/charters](docs/charters/README.md). They document the durable Goal
+workflow and its migration extension without occupying the repository root.
+
 ## Verify
 
 ```bash

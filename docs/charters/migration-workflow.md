@@ -1,8 +1,11 @@
-# Choir Migration Workflow Goal
+# Migration Workflow Charter
 
-Status: draft extension charter
+Originally developed as the repository-root `GOAL2.md`, this charter is retained
+as the architectural record for Choir's migration workflow.
 
-Depends on: `GOAL.md`
+Status: Slices 1 and 2 implemented; later slices remain staged
+
+Depends on: [Goal workflow charter](goal-workflow.md)
 
 Research refreshed: 2026-07-21
 
@@ -70,8 +73,9 @@ parity suite into a claim of semantic equivalence.
 
 ## Normative Boundaries
 
-- This document extends `GOAL.md`; it does not replace or fork its Goal, Part,
-  Take, receipt, integration, publication, or cancellation protocols.
+- This document extends the [Goal workflow charter](goal-workflow.md); it does
+  not replace or fork its Goal, Part, Take, receipt, integration, publication,
+  or cancellation protocols.
 - Existing accepted Goal selection remains immutable. Adding or removing Parts
   requires a new Goal. Revising shared instructions may invalidate and rerun
   selected Parts, but it may not silently change the selected set.
@@ -286,7 +290,7 @@ Goal has one homogeneous revision.
 
 ### Explicit base-machine additions
 
-GOAL2 changes four base seams, none described as already implemented: an
+This extension adds four explicit base seams: an
 immutable completion-mode field in the accepted Goal contract; a typed cause in
 the cancellation request and summary; `Publishable` checks in publication and
 final-PR intent authorization; and a post-assurance runner branch that submits
@@ -305,7 +309,8 @@ GoalCancellationCause
 ```
 
 The completion mode is immutable at Goal acceptance. The cause is carried by
-the base cancellation request and the terminal summary required by `GOAL.md`;
+the base cancellation request and the terminal summary required by the
+[Goal workflow charter](goal-workflow.md);
 current cause-less user cancellation maps to `UserRequested` when this slice is
 built.
 These additions do not create another Goal lifecycle, terminal state, terminal
@@ -721,7 +726,8 @@ CommandPreparationBlock
 The corresponding failure path is a `ChoirError` suberror, not a free-form
 string.
 
-GOAL2 introduces deterministic command-artifact preparation; `GOAL.md` defines
+This charter introduces deterministic command-artifact preparation; the
+[Goal workflow charter](goal-workflow.md) defines
 the artifact digest fields but not a builder for their bytes. The pure builder
 binds the exact Take and purpose, canonical execution subject, current task and
 Goal contract digests, `MigrationContractRef` when present, immutable
@@ -926,12 +932,13 @@ Some checks are fast enough to run inside each Part. Others serialize the
 repository or take long enough that parallel invocation wastes time and causes
 contention.
 
-GOAL.md already provides the needed ownership. Per-Part checks are ordinary
-Part-verification slots. Full builds, combined smoke tests, and parity are
+The [Goal workflow charter](goal-workflow.md) already provides the needed
+ownership. Per-Part checks are ordinary Part-verification slots. Full builds,
+combined smoke tests, and parity are
 ordinary Goal-verification slots against the sealed `GoalTree`. Their existing
 subject/spec uniqueness and `ProcessExecution` records prevent duplicate
-authorization and reconcile crashes. GOAL2 adds no global-check lease, process
-owner, intent, receipt, or recovery loop.
+authorization and reconcile crashes. This charter adds no global-check lease,
+process owner, intent, receipt, or recovery loop.
 
 The first release accepts the cost of running required combined checks once at
 Goal assurance rather than inventing mutable intermediate batch subjects. If a
@@ -978,8 +985,9 @@ monitor the repository after publication.
 The existing independent audit remains the required baseline for every Part
 and the combined Goal tree.
 
-A multi-auditor panel is not part of the first three slices. `GOAL.md` already
-requires any future version to bind a canonical contributor set rather than
+A multi-auditor panel is not part of the first three slices. The
+[Goal workflow charter](goal-workflow.md) already requires any future version
+to bind a canonical contributor set rather than
 overload the baseline receipt. Choir should design adjudication only after a
 diagnostic study shows that an extra independent audit catches systemic defects
 often enough to justify the added provider capacity and a new authorization
@@ -1236,7 +1244,8 @@ inside dedicated disposable roots. Public-API-only coverage lives in blackbox
 - An online self-modifying rule learner, automatic activation from accepted
   patches, or a gate that synthesizes the transformation it requires.
 - Migration-specific context-delivery, global-check, parity-receipt, replay
-  receipt, process-recovery, or lease subsystems parallel to GOAL.md.
+  receipt, process-recovery, or lease subsystems parallel to the base Goal
+  workflow charter.
 - Provider-owned task or completion authority.
 - Per-Part pull requests, tmux/Zellij mailboxes, or a required dashboard.
 - Hand-patching generated output while leaving a known rulebook defect.
@@ -1260,11 +1269,13 @@ inside dedicated disposable roots. Public-API-only coverage lives in blackbox
 
 ## Prior-Art Decisions
 
-The research below refreshes and narrows the broader register in `GOAL.md` for
-large-transformation workflows. Repository links are pinned to the inspected
+The research below refreshes and narrows the broader register in the
+[Goal workflow charter](goal-workflow.md) for large-transformation workflows.
+Repository links are pinned to the inspected
 upstream revisions where a repository is the evidence; papers and official
 manuals are linked directly and interpreted within their stated scope.
-The generic orchestration register in `GOAL.md` remains controlling and is not
+The generic orchestration register in the
+[Goal workflow charter](goal-workflow.md) remains controlling and is not
 repeated here.
 
 | Prior art | Relevant mechanism | Choir decision |
