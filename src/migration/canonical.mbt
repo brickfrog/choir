@@ -782,6 +782,13 @@ pub fn canonical_migration_continuation_ref_bytes(
 }
 
 ///|
+pub fn migration_continuation_ref_digest(
+  continuation : MigrationContinuationRef,
+) -> @control.Digest {
+  canonical_digest(canonical_migration_continuation_ref_bytes(continuation))
+}
+
+///|
 pub fn migration_contract_digest(
   contract : MigrationContract,
 ) -> @control.Digest {

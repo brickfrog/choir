@@ -203,6 +203,7 @@ pub(all) struct TaskContractRevision {
   verification_specs : Array[VerificationSpec]
   audit_policy_digest : Digest
   migration_contract_ref : MigrationContractRef?
+  migration_continuation_ref_digest : Digest?
   implementation_capability_profile_digest : Digest
   verification_capability_profile_digest : Digest
   audit_capability_profile_digest : Digest

@@ -456,6 +456,26 @@ pub fn evaluate_goal_proposal(
     proposal.parts.map(fn(part) { part.part_id }),
   )
   let rejections : Array[PartSelectionRejection] = []
+  let migration_refs = proposal.parts.filter_map(fn(part) {
+    part.task_contract.migration_contract_ref
+  })
+  let continuation_digests = proposal.parts.filter_map(fn(part) {
+    part.task_contract.migration_continuation_ref_digest
+  })
+  let migration_binding_inconsistent = (
+      migration_refs.length() > 0 &&
+      migration_refs.length() != proposal.parts.length()
+    ) ||
+    migration_refs.any(fn(reference) { reference != migration_refs[0] }) ||
+    (
+      continuation_digests.length() > 0 &&
+      (
+        continuation_digests.length() != proposal.parts.length() ||
+        continuation_digests.any(fn(digest) {
+          digest != continuation_digests[0]
+        })
+      )
+    )
   for part_id in proposed_part_ids {
     if proposal_part_count(proposal, part_id) > 1 {
       add_rejection(rejections, part_id, SelectionDuplicate)
@@ -471,6 +491,9 @@ pub fn evaluate_goal_proposal(
         add_rejection(rejections, part_id, SelectionNotFound)
         continue
       }
+    }
+    if migration_binding_inconsistent {
+      add_rejection(rejections, part_id, SelectionInvalidTaskContract)
     }
     match source.state {
       SelectionSourceClosed =>

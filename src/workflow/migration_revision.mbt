@@ -116,3 +116,37 @@ pub fn validate_migration_continuation_terminal(
   }
   Ok(())
 }
+
+///|
+pub fn validate_migration_continuation_selection(
+  continuation : @migration.MigrationContinuationRef,
+  supersession : @migration.MigrationSupersession,
+  prior_execution : GoalExecutionRecord,
+  terminal_goal_head : @control.GitOid,
+  expected_new_base : @control.GitOid,
+  task_contracts : Array[@control.TaskContractRevision],
+) -> Result[Unit, @types.ChoirError] {
+  match
+    validate_migration_continuation_terminal(
+      continuation, supersession, prior_execution, terminal_goal_head, expected_new_base,
+    ) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  if task_contracts.length() == 0 {
+    return Err(migration_revision_error("continuation selection is empty"))
+  }
+  let continuation_digest = @migration.migration_continuation_ref_digest(
+    continuation,
+  )
+  if task_contracts.any(fn(contract) {
+      contract.base_commit_oid != expected_new_base ||
+      contract.migration_contract_ref != Some(continuation.next_contract_ref) ||
+      contract.migration_continuation_ref_digest != Some(continuation_digest)
+    }) {
+    return Err(
+      migration_revision_error("continuation task contracts are inconsistent"),
+    )
+  }
+  Ok(())
+}

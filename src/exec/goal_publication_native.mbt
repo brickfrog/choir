@@ -943,6 +943,7 @@ fn publication_integrated_part(
       ],
       audit_policy_digest: publication_digest("part-audit-policy"),
       migration_contract_ref: None,
+      migration_continuation_ref_digest: None,
       implementation_capability_profile_digest: publication_digest(
         "implementation-capability",
       ),

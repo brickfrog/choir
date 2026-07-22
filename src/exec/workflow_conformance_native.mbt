@@ -130,6 +130,7 @@ fn conformance_snapshot_for(
     ],
     audit_policy_digest: semantic_digest,
     migration_contract_ref: None,
+    migration_continuation_ref_digest: None,
     implementation_capability_profile_digest: conformance_digest_a,
     verification_capability_profile_digest: conformance_digest_b,
     audit_capability_profile_digest: conformance_digest_a,

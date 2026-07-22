@@ -37,6 +37,7 @@ fn assurance_contract(
     ],
     audit_policy_digest: assurance_digest_a,
     migration_contract_ref: None,
+    migration_continuation_ref_digest: None,
     implementation_capability_profile_digest: assurance_digest_a,
     verification_capability_profile_digest: assurance_digest_a,
     audit_capability_profile_digest: assurance_digest_a,

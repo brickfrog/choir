@@ -161,6 +161,7 @@ fn workflow_store_fixture() -> @workflow.PartWorkflowSnapshot raise {
     ],
     audit_policy_digest: workflow_store_digest_a,
     migration_contract_ref: None,
+    migration_continuation_ref_digest: None,
     implementation_capability_profile_digest: workflow_store_digest_a,
     verification_capability_profile_digest: workflow_store_digest_b,
     audit_capability_profile_digest: workflow_store_digest_a,

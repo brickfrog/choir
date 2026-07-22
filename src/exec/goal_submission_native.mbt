@@ -440,6 +440,7 @@ fn compile_native_conductor_part_proposal(
     ],
     audit_policy_digest,
     migration_contract_ref: part.migration_contract_ref,
+    migration_continuation_ref_digest: part.migration_continuation_ref_digest,
     implementation_capability_profile_digest: implementation_profile_digest,
     verification_capability_profile_digest: verification_profile_digest,
     audit_capability_profile_digest: audit_profile_digest,

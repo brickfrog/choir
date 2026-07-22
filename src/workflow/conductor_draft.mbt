@@ -24,6 +24,7 @@ pub(all) struct ConductorPartDraft {
   verification : ConductorVerificationDraft
   provider_surface : @control.ProviderSurfaceId
   migration_contract_ref : @control.MigrationContractRef?
+  migration_continuation_ref_digest : @control.Digest?
   migration_context : ConductorMigrationContextDraft?
 } derive(Debug, Eq, ToJson, FromJson)
 
@@ -326,7 +327,7 @@ fn decode_conductor_part_draft(
     "moon_args", "verify_timeout_ms", "migration_contract_id", "migration_lineage_id",
     "migration_contract_revision", "migration_contract_artifact_digest", "context_assembly_policy_digest",
     "rulebook_section_digests", "dependency_neighborhood_digest", "applicable_gap_entry_digests",
-    "source_path_manifest_digest", "prior_take_context_digest",
+    "source_path_manifest_digest", "prior_take_context_digest", "migration_continuation_ref_digest",
   ]
   let unknown_fields = conductor_draft_unknown_fields(fields, allowed_fields)
   if unknown_fields.length() > 0 {
@@ -408,6 +409,22 @@ fn decode_conductor_part_draft(
     Ok(value) => value
     Err(error) => return Err(error)
   }
+  let migration_continuation_ref_digest = match
+    fields.get("migration_continuation_ref_digest") {
+    None => None
+    Some(_) =>
+      match conductor_digest(fields, "migration_continuation_ref_digest") {
+        Some(value) if migration_contract_ref is Some(_) => Some(value)
+        Some(_) =>
+          return Err(
+            goal_submission_error(
+              "migration continuation requires a migration contract reference",
+            ),
+          )
+        None =>
+          return Err(goal_submission_error("migration continuation is invalid"))
+      }
+  }
   let migration_context = match
     conductor_migration_context(fields, migration_contract_ref) {
     Ok(value) => value
@@ -422,6 +439,7 @@ fn decode_conductor_part_draft(
     verification: { arguments, timeout_ms },
     provider_surface,
     migration_contract_ref,
+    migration_continuation_ref_digest,
     migration_context,
   })
 }

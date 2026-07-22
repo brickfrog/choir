@@ -39,6 +39,7 @@ fn submission_contract(
     ],
     audit_policy_digest: submission_digest,
     migration_contract_ref: None,
+    migration_continuation_ref_digest: None,
     implementation_capability_profile_digest: submission_digest,
     verification_capability_profile_digest: submission_digest,
     audit_capability_profile_digest: submission_digest,
@@ -997,6 +998,45 @@ test "evidence-only Goal binds completion and cancels only after assurance" {
       canceled_supersession,
       @control.GitOid("supersession-observed-head"),
       @control.GitOid("supersession-observed-head"),
+    )
+    is Err(_),
+  )
+  let continuation_digest = @migration.migration_continuation_ref_digest(
+    continuation,
+  )
+  let continuation_contract = {
+    ..submission_contract(
+      @control.GoalId("continued-goal"),
+      @control.PartId("continued-part"),
+      @control.MutationDeclaration::CompleteMutationDeclaration([
+        @control.MutationClaim::ExactPath(
+          @control.RepoPath("src/continued.mbt"),
+        ),
+      ]),
+    ),
+    base_commit_oid: terminal_head,
+    migration_contract_ref: Some(next_contract_ref),
+    migration_continuation_ref_digest: Some(continuation_digest),
+  }
+  assert_true(
+    @workflow.validate_migration_continuation_selection(
+      continuation,
+      supersession.supersession,
+      canceled_supersession,
+      terminal_head,
+      terminal_head,
+      [continuation_contract],
+    )
+    is Ok(_),
+  )
+  assert_true(
+    @workflow.validate_migration_continuation_selection(
+      continuation,
+      supersession.supersession,
+      canceled_supersession,
+      terminal_head,
+      terminal_head,
+      [{ ..continuation_contract, migration_continuation_ref_digest: None }],
     )
     is Err(_),
   )
