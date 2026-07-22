@@ -262,6 +262,196 @@ fn workflow_fixture() -> @workflow.PartWorkflowSnapshot raise {
 }
 
 ///|
+fn workflow_revision_identities(
+  snapshot : @workflow.PartWorkflowSnapshot,
+  contract : @control.TaskContractRevision,
+) -> @workflow.PartIdentityPlan {
+  let implementation = {
+    ..workflow_take(
+      "implementation-take-revision",
+      @control.TakePurpose::Implementation(snapshot.part.id, contract.id),
+    ),
+    ordinal: snapshot.implementation_take.ordinal + 1,
+  }
+  let verification = {
+    ..workflow_take(
+      "verification-take-revision",
+      @control.TakePurpose::PartVerification(
+        snapshot.part.id,
+        implementation.id,
+        contract.digest,
+      ),
+    ),
+    ordinal: snapshot.verification_take.ordinal + 1,
+  }
+  let audit = {
+    ..workflow_take(
+      "audit-take-revision",
+      @control.TakePurpose::PartAudit(
+        snapshot.part.id,
+        implementation.id,
+        contract.digest,
+      ),
+    ),
+    ordinal: snapshot.audit_take.ordinal + 1,
+  }
+  let implementation_sandbox = workflow_sandbox(
+    "implementation-sandbox-revision",
+    "implementation-generation-revision",
+    implementation.id,
+    contract.implementation_capability_profile_digest,
+    workflow_digest_a,
+  )
+  let verification_sandbox = workflow_sandbox(
+    "verification-sandbox-revision",
+    "verification-generation-revision",
+    verification.id,
+    contract.verification_capability_profile_digest,
+    workflow_digest_d,
+  )
+  let audit_sandbox = workflow_sandbox(
+    "audit-sandbox-revision",
+    "audit-generation-revision",
+    audit.id,
+    contract.audit_capability_profile_digest,
+    workflow_digest_e,
+  )
+  {
+    implementation_take: implementation,
+    implementation_sandbox,
+    implementation_session: workflow_session(
+      "implementation-session-revision",
+      implementation.id,
+      implementation_sandbox.generation_id,
+      @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+      workflow_digest_a,
+    ),
+    verification_take: verification,
+    verification_sandbox,
+    verification_session: workflow_session(
+      "verification-session-revision",
+      verification.id,
+      verification_sandbox.generation_id,
+      @control.ProviderSurfaceId::CodexSubscriptionCli,
+      workflow_digest_b,
+    ),
+    audit_take: audit,
+    audit_sandbox,
+    audit_session: workflow_session(
+      "audit-session-revision",
+      audit.id,
+      audit_sandbox.generation_id,
+      @control.ProviderSurfaceId::CodexSubscriptionCli,
+      workflow_digest_c,
+    ),
+  }
+}
+
+///|
+test "in-place migration revision invalidates only an impacted Part" {
+  let base = workflow_fixture()
+  let previous_ref : @control.MigrationContractRef = {
+    contract_id: @control.MigrationContractId("revision-contract"),
+    migration_lineage_id: @control.MigrationLineageId("revision-lineage"),
+    revision: 1,
+    contract_artifact_digest: workflow_digest_a,
+  }
+  let next_ref = {
+    ..previous_ref,
+    revision: 2,
+    contract_artifact_digest: workflow_digest_b,
+  }
+  let previous_contract = {
+    ..base.task_contract,
+    migration_contract_ref: Some(previous_ref),
+  }
+  let migration_snapshot = {
+    ..base,
+    task_contract: previous_contract,
+    task_contract_history: [previous_contract],
+    part_context_manifest: Some({
+      migration_contract_ref: previous_ref,
+      part_task_contract_revision_id: previous_contract.id,
+      part_task_contract_digest: previous_contract.digest,
+      context_assembly_policy_digest: workflow_digest_a,
+      rulebook_section_digests: [workflow_digest_b],
+      dependency_neighborhood_digest: workflow_digest_c,
+      applicable_gap_entry_digests: [],
+      source_path_manifest_digest: workflow_digest_d,
+      prior_take_context_digest: None,
+    }),
+  }
+  let impact_set : @migration.MigrationContractRevisionImpactSet = {
+    previous_contract_ref: previous_ref,
+    next_contract_ref: next_ref,
+    changes: [
+      {
+        kind: @migration.MigrationChangedArtifactKind::ChangedRulebook,
+        previous_digest: workflow_digest_b,
+        next_digest: workflow_digest_c,
+      },
+    ],
+    impacted_parts: [
+      {
+        part_id: base.part.id,
+        reasons: [
+          @migration.MigrationImpactReason::MigrationDirectArtifactImpact(
+            @migration.MigrationChangedArtifactKind::ChangedRulebook,
+          ),
+        ],
+        was_integrated: false,
+      },
+    ],
+    carried_forward_task_contract_revision_ids: [],
+    application: @migration.MigrationContractRevisionApplication::MigrationRevisionAppliesInPlace,
+  }
+  let revised_contract = {
+    ..previous_contract,
+    id: @control.RevisionId("revision-2"),
+    revision: 2,
+    digest: workflow_digest_e,
+    migration_contract_ref: Some(next_ref),
+  }
+  let revised = @workflow.plan_part_migration_revision(
+    migration_snapshot,
+    impact_set,
+    revised_contract,
+    workflow_revision_identities(migration_snapshot, revised_contract),
+    fn(_) { true },
+  ).unwrap()
+  assert_eq(revised.stage, @workflow.PartWorkflowStage::PartAccepted)
+  assert_eq(revised.task_contract, revised_contract)
+  assert_eq(revised.task_contract_history.length(), 2)
+  assert_eq(revised.prior_take_evidence.length(), 1)
+  assert_eq(revised.verification_receipts, [])
+  assert_eq(revised.audit_receipt, None)
+  assert_eq(revised.integration_receipt, None)
+  assert_true(
+    @workflow.plan_part_migration_revision(
+      migration_snapshot,
+      { ..impact_set, impacted_parts: [] },
+      revised_contract,
+      workflow_revision_identities(migration_snapshot, revised_contract),
+      fn(_) { true },
+    )
+    is Err(_),
+  )
+  assert_true(
+    @workflow.plan_part_migration_revision(
+      {
+        ..migration_snapshot,
+        stage: @workflow.PartWorkflowStage::PartIntegrated,
+      },
+      impact_set,
+      revised_contract,
+      workflow_revision_identities(migration_snapshot, revised_contract),
+      fn(_) { true },
+    )
+    is Err(_),
+  )
+}
+
+///|
 fn active_sandbox(lease : @control.SandboxLease) -> @control.SandboxLease {
   { ..lease, lifecycle: @control.SandboxLeaseLifecycle::SandboxLeaseActive }
 }

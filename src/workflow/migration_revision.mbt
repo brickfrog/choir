@@ -150,3 +150,131 @@ pub fn validate_migration_continuation_selection(
   }
   Ok(())
 }
+
+///|
+fn migration_revision_take_is_fresh(
+  prior : @control.Take,
+  replacement : @control.Take,
+) -> Bool {
+  replacement.id != prior.id &&
+  replacement.ordinal == prior.ordinal + 1 &&
+  replacement.lifecycle == @control.TakeLifecycle::TakePlanned
+}
+
+///|
+pub fn plan_part_migration_revision(
+  snapshot : PartWorkflowSnapshot,
+  impact_set : @migration.MigrationContractRevisionImpactSet,
+  contract : @control.TaskContractRevision,
+  identities : PartIdentityPlan,
+  is_nfc : (String) -> Bool,
+) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
+  if impact_set.application !=
+    @migration.MigrationContractRevisionApplication::MigrationRevisionAppliesInPlace ||
+    snapshot.pending_effect is Some(_) ||
+    snapshot.stage == PartWorkflowStage::PartIntegrated ||
+    snapshot.stage == PartWorkflowStage::PartCanceled ||
+    !impact_set.impacted_parts.any(fn(impact) {
+      impact.part_id == snapshot.part.id && !impact.was_integrated
+    }) {
+    return Err(
+      migration_revision_error("Part is not eligible for in-place revision"),
+    )
+  }
+  if snapshot.task_contract.migration_contract_ref !=
+    Some(impact_set.previous_contract_ref) ||
+    contract.migration_contract_ref != Some(impact_set.next_contract_ref) ||
+    contract.id == snapshot.task_contract.id ||
+    contract.digest == snapshot.task_contract.digest ||
+    contract.goal_id != snapshot.goal.id ||
+    contract.part_id != snapshot.part.id ||
+    contract.revision != snapshot.task_contract.revision + 1 ||
+    contract.base_commit_oid != snapshot.task_contract.base_commit_oid ||
+    contract.base_tree_oid != snapshot.task_contract.base_tree_oid ||
+    contract.mutation_declaration != snapshot.task_contract.mutation_declaration ||
+    contract.migration_continuation_ref_digest !=
+    snapshot.task_contract.migration_continuation_ref_digest ||
+    !migration_revision_take_is_fresh(
+      snapshot.implementation_take,
+      identities.implementation_take,
+    ) ||
+    !migration_revision_take_is_fresh(
+      snapshot.verification_take,
+      identities.verification_take,
+    ) ||
+    !migration_revision_take_is_fresh(
+      snapshot.audit_take,
+      identities.audit_take,
+    ) {
+    return Err(migration_revision_error("Part revision identity is invalid"))
+  }
+  let used_take_ids = snapshot.prior_takes.map(fn(take) { take.id }) +
+    [
+      snapshot.implementation_take.id,
+      snapshot.verification_take.id,
+      snapshot.audit_take.id,
+    ]
+  if used_take_ids.contains(identities.implementation_take.id) ||
+    used_take_ids.contains(identities.verification_take.id) ||
+    used_take_ids.contains(identities.audit_take.id) {
+    return Err(migration_revision_error("Part revision reuses a Take"))
+  }
+  let context_manifest = match snapshot.part_context_manifest {
+    Some(manifest) =>
+      Some({
+        ..manifest,
+        migration_contract_ref: impact_set.next_contract_ref,
+        part_task_contract_revision_id: contract.id,
+        part_task_contract_digest: contract.digest,
+      })
+    None => return Err(migration_revision_error("migration context is absent"))
+  }
+  let pending_part = {
+    ..snapshot.part,
+    task_contract_revision_id: contract.id,
+    lifecycle: @control.PartLifecycle::PartPending,
+  }
+  let initialized = match
+    initialize_part_workflow(
+      snapshot.workflow_id,
+      snapshot.goal,
+      pending_part,
+      contract,
+      identities,
+      snapshot.fencing_epoch,
+      is_nfc,
+      part_context_manifest=context_manifest,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  Ok({
+    ..initialized,
+    durable_version: snapshot.durable_version + 1,
+    task_contract_history: snapshot.task_contract_history + [contract],
+    prior_takes: snapshot.prior_takes +
+    [
+      snapshot.implementation_take,
+      snapshot.verification_take,
+      snapshot.audit_take,
+    ],
+    prior_take_evidence: snapshot.prior_take_evidence +
+    [
+      {
+        task_contract_revision_id: snapshot.task_contract.id,
+        implementation_result: snapshot.implementation_result,
+        candidate: snapshot.candidate,
+        verification_receipts: snapshot.verification_receipts,
+        verification_authorization: snapshot.verification_authorization,
+        audit_result: snapshot.audit_result,
+        audit_receipt: snapshot.audit_receipt,
+        integration_intent: snapshot.integration_intent,
+      },
+    ],
+    sandbox_leases: snapshot.sandbox_leases,
+    harness_sessions: snapshot.harness_sessions,
+    harness_events: snapshot.harness_events,
+    integration_conflicts: snapshot.integration_conflicts,
+    effect_receipts: snapshot.effect_receipts,
+  })
+}
