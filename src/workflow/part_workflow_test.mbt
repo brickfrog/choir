@@ -782,6 +782,7 @@ fn workflow_execution_for_attach(
     base_tree_oid: @control.GitOid("base-tree"),
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
     completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
+    migration_production_admission: None,
     goal_ref,
     branch_initialization: workflow_initialized_branch(
       snapshot.goal.id,
@@ -1287,6 +1288,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     base_tree_oid: @control.GitOid("goal-tree-before"),
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
     completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
+    migration_production_admission: None,
     goal_ref: @workflow.goal_execution_ref(integrated.goal.id),
     branch_initialization: workflow_initialized_branch(
       integrated.goal.id,
@@ -1757,20 +1759,34 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     accepted_event_sequence: @control.EventSequence(1L),
     accepted_at: 1L,
   }
-  assert_true(
-    @workflow.validate_migration_production_admission(
-      migration_contract,
-      migration_acceptance,
-      judge_definition,
-      judge_report,
-      qualification_reference,
-      succeeded_qualification,
-      assured,
-      None,
-      None,
-      None,
-    )
-    is Ok(_),
+  let production_admission = @workflow.validate_migration_production_admission(
+    migration_contract,
+    migration_acceptance,
+    judge_definition,
+    judge_report,
+    qualification_reference,
+    succeeded_qualification,
+    assured,
+    None,
+    None,
+    None,
+  ).unwrap()
+  assert_eq(production_admission.migration_contract_ref, migration_contract_ref)
+  assert_eq(
+    production_admission.contract_acceptance_digest,
+    @migration.migration_contract_acceptance_digest(migration_acceptance),
+  )
+  assert_eq(
+    production_admission.judge_definition_digest,
+    migration_contract.judge_definition_digest,
+  )
+  assert_eq(
+    production_admission.judge_qualification_report_digest,
+    @migration.judge_qualification_report_digest(judge_report),
+  )
+  assert_eq(
+    production_admission.judge_qualification_evidence_ref_digest,
+    @migration.judge_qualification_evidence_ref_digest(qualification_reference),
   )
   let surviving_control_report = {
     ..judge_report,

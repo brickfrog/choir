@@ -96,6 +96,7 @@ pub(all) struct GoalProposal {
   integration_target_ref : GitRefName
   selection_policy : GoalSelectionPolicy
   completion_mode : GoalCompletionMode
+  migration_production_admission : @migration.MigrationProductionAdmissionRef?
   maximum_parallel_parts : Int
   parts : Array[ConductorPartProposal]
 } derive(Debug, Eq, ToJson, FromJson)
@@ -391,6 +392,9 @@ fn canonical_goal_proposal_json(proposal : GoalProposal) -> Json {
     proposal.integration_target_ref.to_json(),
     proposal.selection_policy.to_json(),
     proposal.completion_mode.to_json(),
+    proposal.migration_production_admission.map(fn(reference) {
+      @migration.migration_production_admission_ref_digest(reference)
+    }).to_json(),
     proposal.maximum_parallel_parts.to_json(),
     rows.to_json(),
   ].to_json()
@@ -399,7 +403,7 @@ fn canonical_goal_proposal_json(proposal : GoalProposal) -> Json {
 ///|
 pub fn goal_proposal_digest(proposal : GoalProposal) -> @control.Digest {
   goal_submission_domain_digest(
-    "choir.goal-proposal.v2",
+    "choir.goal-proposal.v3",
     canonical_goal_proposal_json(proposal),
   )
 }
@@ -476,6 +480,15 @@ pub fn evaluate_goal_proposal(
         })
       )
     )
+  let migration_admission_inconsistent = match
+    (migration_refs.length(), proposal.migration_production_admission) {
+    (0, None) => false
+    (0, Some(_)) => true
+    (_, None) => true
+    (_, Some(admission)) =>
+      @migration.validate_migration_production_admission_ref(admission) is Err(_) ||
+      admission.migration_contract_ref != migration_refs[0]
+  }
   for part_id in proposed_part_ids {
     if proposal_part_count(proposal, part_id) > 1 {
       add_rejection(rejections, part_id, SelectionDuplicate)
@@ -492,7 +505,7 @@ pub fn evaluate_goal_proposal(
         continue
       }
     }
-    if migration_binding_inconsistent {
+    if migration_binding_inconsistent || migration_admission_inconsistent {
       add_rejection(rejections, part_id, SelectionInvalidTaskContract)
     }
     match source.state {

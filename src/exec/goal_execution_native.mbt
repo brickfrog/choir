@@ -809,6 +809,7 @@ fn native_source_claim_test_record(
     base_tree_oid: @control.GitOid("source-claim-tree"),
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
     completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
+    migration_production_admission: None,
     goal_ref,
     branch_initialization: @workflow.initial_goal_branch_initialization(
       goal_id,

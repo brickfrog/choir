@@ -1393,6 +1393,7 @@ async test "Goal cancellation atomically rejects stale seal authorization" {
     base_tree_oid: @control.GitOid("goal-tree-store"),
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
     completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
+    migration_production_admission: None,
     goal_ref: @workflow.goal_execution_ref(integrated.goal.id),
     branch_initialization: workflow_store_initialized_branch(
       integrated.goal.id,
@@ -1581,6 +1582,7 @@ async test "Goal steering persists revision history and paused Goals do not run"
     base_tree_oid: @control.GitOid("goal-steering-tree"),
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
     completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
+    migration_production_admission: None,
     goal_ref: @workflow.goal_execution_ref(fixture.goal.id),
     branch_initialization: @workflow.initial_goal_branch_initialization(
       fixture.goal.id,
@@ -1711,6 +1713,7 @@ async test "Goal finalization input request and answer survive restart" {
     base_tree_oid: @control.GitOid("goal-input-tree"),
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
     completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
+    migration_production_admission: None,
     goal_ref: @workflow.goal_execution_ref(fixture.goal.id),
     branch_initialization: workflow_store_initialized_branch(
       fixture.goal.id,

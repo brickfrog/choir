@@ -9,6 +9,20 @@ let submission_process_digest : @control.Digest = @control.Digest(
 )
 
 ///|
+fn submission_migration_admission(
+  reference : @control.MigrationContractRef,
+) -> @migration.MigrationProductionAdmissionRef {
+  {
+    migration_contract_ref: reference,
+    contract_acceptance_digest: submission_digest,
+    judge_definition_digest: submission_digest,
+    judge_qualification_report_digest: submission_digest,
+    judge_qualification_evidence_ref_digest: submission_digest,
+    rehearsal_evidence_ref_digest: None,
+  }
+}
+
+///|
 fn submission_contract(
   goal_id : @control.GoalId,
   part_id : @control.PartId,
@@ -115,6 +129,7 @@ fn submission_proposal(
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
     selection_policy: @workflow.GoalSelectionPolicy::ExactClosure,
     completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
+    migration_production_admission: None,
     maximum_parallel_parts: 2,
     parts,
   }
@@ -150,9 +165,14 @@ test "accepted migration Part retains its exact context manifest" {
     source_path_manifest_digest: submission_digest,
     prior_take_context_digest: None,
   }
-  let proposal = submission_proposal(goal_id, [
-    { ..base, task_contract: contract, part_context_manifest: Some(manifest) },
-  ])
+  let proposal = {
+    ..submission_proposal(goal_id, [
+      { ..base, task_contract: contract, part_context_manifest: Some(manifest) },
+    ]),
+    migration_production_admission: Some(
+      submission_migration_admission(reference),
+    ),
+  }
   let decision = @workflow.evaluate_goal_proposal(
     proposal,
     submission_snapshot([
@@ -169,6 +189,53 @@ test "accepted migration Part retains its exact context manifest" {
     @workflow.GoalSelectionOutcome::GoalSelectionAccepted,
   )
   assert_eq(decision.accepted_parts[0].part_context_manifest, Some(manifest))
+  assert_eq(
+    decision.proposal.migration_production_admission,
+    proposal.migration_production_admission,
+  )
+  let execution = @workflow.goal_execution_record_from_selection(
+    decision,
+    @workflow.goal_selection_decision_digest(decision),
+    ["migration-workflow"],
+  ).unwrap()
+  assert_eq(
+    execution.migration_production_admission,
+    proposal.migration_production_admission,
+  )
+  assert_true(
+    @workflow.evaluate_goal_proposal(
+      { ..proposal, migration_production_admission: None },
+      submission_snapshot([
+        submission_source(
+          "migration-part",
+          [],
+          @workflow.SelectionSourceState::SelectionSourceOpen,
+        ),
+      ]),
+      fn(_) { true },
+    ).unwrap().outcome ==
+    @workflow.GoalSelectionOutcome::GoalSelectionRejected,
+  )
+  assert_true(
+    @workflow.evaluate_goal_proposal(
+      {
+        ..proposal,
+        migration_production_admission: Some({
+          ..submission_migration_admission(reference),
+          migration_contract_ref: { ..reference, revision: 2 },
+        }),
+      },
+      submission_snapshot([
+        submission_source(
+          "migration-part",
+          [],
+          @workflow.SelectionSourceState::SelectionSourceOpen,
+        ),
+      ]),
+      fn(_) { true },
+    ).unwrap().outcome ==
+    @workflow.GoalSelectionOutcome::GoalSelectionRejected,
+  )
   assert_true(
     @workflow.evaluate_goal_proposal(
       {

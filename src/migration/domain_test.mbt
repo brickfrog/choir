@@ -425,6 +425,21 @@ test "migration domain canonical byte fixtures are explicit and versioned" {
       #|31#choir.rehearsal-evidence-ref.v11#616#rehearsal-goal-1131#31#choir.migration-contract-ref.v11#410#contract-19#lineage-11#264#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa64#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb64#8486583c4040ff0422a3732ff78813ee7c5b139643bf33804cdc4c80fb4e601e64#cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc24#rehearsal-cancellation-1
     ),
   )
+  inspect(
+    @utf8.decode_lossy(
+      @migration.canonical_migration_production_admission_ref_bytes({
+        migration_contract_ref: migration_contract_ref_fixture(),
+        contract_acceptance_digest: migration_digest_a,
+        judge_definition_digest: migration_digest_b,
+        judge_qualification_report_digest: migration_digest_c,
+        judge_qualification_evidence_ref_digest: migration_digest_a,
+        rehearsal_evidence_ref_digest: Some(migration_digest_b),
+      }),
+    ),
+    content=(
+      #|43#choir.migration-production-admission-ref.v11#6131#31#choir.migration-contract-ref.v11#410#contract-19#lineage-11#264#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa64#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa64#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb64#cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc64#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa64#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    ),
+  )
 }
 
 ///|
@@ -878,6 +893,14 @@ test "judge definition has fixed canonical bytes and rejects surviving controls"
     goal_verification_receipt_ids: [@control.ReceiptId("judge-verification")],
     goal_audit_receipt_id: @control.ReceiptId("judge-audit"),
   }
+  inspect(
+    @utf8.decode_lossy(
+      @migration.canonical_judge_qualification_report_bytes(report),
+    ),
+    content=(
+      #|35#choir.judge-qualification-report.v11#664#57cba8fe7cffc595079fc7e32cf8da269fd74ac0312202e449ded343de6b789b64#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa170#31#choir.judge-baseline-results.v11#1129#30#choir.judge-baseline-result.v11#315#source-baseline64#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa6#passed209#39#choir.judge-negative-control-results.v11#1160#38#choir.judge-negative-control-result.v11#419#broken-rule-control14#rule-violation64#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb8#rejected66#39#choir.judge-verification-receipt-ids.v11#118#judge-verification11#judge-audit
+    ),
+  )
   assert_true(
     @migration.validate_judge_qualification_report(definition, report) is Ok(_),
   )

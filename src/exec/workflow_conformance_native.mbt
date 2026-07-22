@@ -1812,6 +1812,7 @@ fn scale_terminal_projection(
     base_tree_oid: @control.GitOid("base-tree-conformance"),
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
     completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
+    migration_production_admission: None,
     goal_ref,
     branch_initialization: scale_initialized_branch(
       goal.id,

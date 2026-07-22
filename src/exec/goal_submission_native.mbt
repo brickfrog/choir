@@ -753,6 +753,8 @@ fn native_goal_execution_plan_matches(
   stored.base_commit_oid == expected.base_commit_oid &&
   stored.base_tree_oid == expected.base_tree_oid &&
   stored.integration_target_ref == expected.integration_target_ref &&
+  stored.migration_production_admission ==
+  expected.migration_production_admission &&
   stored.goal_ref == expected.goal_ref &&
   stored.source_claims == expected.source_claims &&
   stored.maximum_parallel_parts == expected.maximum_parallel_parts &&
@@ -820,6 +822,7 @@ pub async fn submit_native_conductor_goal_draft(
   project_dir : String,
   draft_json : String,
   capture : async (Command) -> (Int, String),
+  migration_production_admission? : @migration.MigrationProductionAdmissionRef? = None,
 ) -> Result[NativeConductorGoalSubmissionReport, @types.ChoirError] {
   if exec_path_nfc_available_ffi() != 1 {
     return Err(
@@ -894,6 +897,7 @@ pub async fn submit_native_conductor_goal_draft(
     integration_target_ref: branch_ref,
     selection_policy: @workflow.GoalSelectionPolicy::ExactClosure,
     completion_mode: draft.completion_mode,
+    migration_production_admission,
     maximum_parallel_parts: draft.maximum_parallel_parts,
     parts,
   }

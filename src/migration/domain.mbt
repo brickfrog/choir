@@ -353,6 +353,16 @@ pub(all) struct RehearsalEvidenceRef {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) struct MigrationProductionAdmissionRef {
+  migration_contract_ref : @control.MigrationContractRef
+  contract_acceptance_digest : @control.Digest
+  judge_definition_digest : @control.Digest
+  judge_qualification_report_digest : @control.Digest
+  judge_qualification_evidence_ref_digest : @control.Digest
+  rehearsal_evidence_ref_digest : @control.Digest?
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub(all) struct MigrationBeadId(String) derive (
   Debug,
   Eq,

@@ -151,7 +151,7 @@ pub fn validate_migration_production_admission(
   rehearsal : @migration.RehearsalEvidenceRef?,
   rehearsal_execution : GoalExecutionRecord?,
   rehearsal_assurance : GoalAssuranceRecord?,
-) -> Result[Unit, @types.ChoirError] {
+) -> Result[@migration.MigrationProductionAdmissionRef, @types.ChoirError] {
   match @migration.validate_contract_acceptance(acceptance) {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -195,17 +195,38 @@ pub fn validate_migration_production_admission(
       rehearsal_execution,
       rehearsal_assurance,
     ) {
-    (@migration.RehearsalPolicy::RehearsalNotRequired, None, None, None) =>
-      Ok(())
+    (@migration.RehearsalPolicy::RehearsalNotRequired, None, None, None) => ()
     (
       @migration.RehearsalPolicy::RehearsalRequired(sample_digest),
       Some(evidence),
       Some(execution),
       Some(assurance),
     ) =>
-      validate_rehearsal_admission(
-        contract_ref, sample_digest, evidence, execution, assurance,
-      )
-    _ => Err(migration_admission_error("rehearsal evidence is incomplete"))
+      match
+        validate_rehearsal_admission(
+          contract_ref, sample_digest, evidence, execution, assurance,
+        ) {
+        Ok(_) => ()
+        Err(error) => return Err(error)
+      }
+    _ => return Err(migration_admission_error("rehearsal evidence is incomplete"))
   }
+  Ok({
+    migration_contract_ref: contract_ref,
+    contract_acceptance_digest: @migration.migration_contract_acceptance_digest(
+      acceptance,
+    ),
+    judge_definition_digest: @migration.migration_judge_definition_digest(
+      judge_definition,
+    ),
+    judge_qualification_report_digest: @migration.judge_qualification_report_digest(
+      judge_report,
+    ),
+    judge_qualification_evidence_ref_digest: @migration.judge_qualification_evidence_ref_digest(
+      qualification,
+    ),
+    rehearsal_evidence_ref_digest: rehearsal.map(fn(evidence) {
+      @migration.rehearsal_evidence_ref_digest(evidence)
+    }),
+  })
 }

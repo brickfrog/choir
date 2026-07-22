@@ -1151,6 +1151,7 @@ fn selection_fixture_proposal(
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
     selection_policy: @workflow.GoalSelectionPolicy::ExactClosure,
     completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
+    migration_production_admission: None,
     maximum_parallel_parts: 2,
     parts,
   }
@@ -2314,6 +2315,7 @@ fn cancellation_goal_assurance_fixture() -> Result[
     base_tree_oid: base.task_contract.base_tree_oid,
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
     completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
+    migration_production_admission: None,
     goal_ref,
     branch_initialization: {
       intent_id: branch_receipt.intent_id,

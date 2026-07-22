@@ -229,6 +229,13 @@ pub fn canonical_contract_acceptance_bytes(
 }
 
 ///|
+pub fn migration_contract_acceptance_digest(
+  acceptance : MigrationContractAcceptance,
+) -> @control.Digest {
+  canonical_digest(canonical_contract_acceptance_bytes(acceptance))
+}
+
+///|
 pub fn canonical_part_context_manifest_bytes(
   manifest : PartContextManifest,
 ) -> Bytes {
@@ -562,6 +569,70 @@ pub fn migration_judge_definition_digest(
 }
 
 ///|
+fn judge_baseline_result_bytes(result : JudgeBaselineResult) -> Bytes {
+  canonical_fields("choir.judge-baseline-result.v1", [
+    result.scenario_id.0,
+    result.normalized_outcome_digest.0,
+    match result.classification {
+      JudgeBaselinePassed => "passed"
+      JudgeInheritedSourceFailure => "inherited-source-failure"
+      JudgeEnvironmentMismatch => "environment-mismatch"
+      JudgeDefect => "judge-defect"
+    },
+  ])
+}
+
+///|
+fn judge_negative_control_result_bytes(
+  result : JudgeNegativeControlResult,
+) -> Bytes {
+  canonical_fields("choir.judge-negative-control-result.v1", [
+    result.scenario_id.0,
+    judge_negative_control_class_name(result.class),
+    result.observed_failure_digest.0,
+    if result.rejected { "rejected" } else { "survived" },
+  ])
+}
+
+///|
+pub fn canonical_judge_qualification_report_bytes(
+  report : JudgeQualificationReport,
+) -> Bytes {
+  let baseline_rows = report.baseline_results.map(fn(result) {
+    @utf8.decode_lossy(judge_baseline_result_bytes(result))
+  })
+  let control_rows = report.negative_control_results.map(fn(result) {
+    @utf8.decode_lossy(judge_negative_control_result_bytes(result))
+  })
+  let verification_receipts = report.goal_verification_receipt_ids.map(
+    fn(receipt_id) { receipt_id.0 },
+  )
+  canonical_fields("choir.judge-qualification-report.v1", [
+    report.judge_definition_digest.0,
+    report.source_revision.0,
+    @utf8.decode_lossy(
+      canonical_fields("choir.judge-baseline-results.v1", baseline_rows),
+    ),
+    @utf8.decode_lossy(
+      canonical_fields("choir.judge-negative-control-results.v1", control_rows),
+    ),
+    @utf8.decode_lossy(
+      canonical_fields(
+        "choir.judge-verification-receipt-ids.v1", verification_receipts,
+      ),
+    ),
+    report.goal_audit_receipt_id.0,
+  ])
+}
+
+///|
+pub fn judge_qualification_report_digest(
+  report : JudgeQualificationReport,
+) -> @control.Digest {
+  canonical_digest(canonical_judge_qualification_report_bytes(report))
+}
+
+///|
 pub fn canonical_qualified_inventory_ref_bytes(
   reference : QualifiedMigrationInventoryRef,
 ) -> Bytes {
@@ -647,6 +718,13 @@ pub fn canonical_judge_qualification_evidence_ref_bytes(
 }
 
 ///|
+pub fn judge_qualification_evidence_ref_digest(
+  reference : JudgeQualificationEvidenceRef,
+) -> @control.Digest {
+  canonical_digest(canonical_judge_qualification_evidence_ref_bytes(reference))
+}
+
+///|
 pub fn canonical_rehearsal_binding_bytes(binding : RehearsalBinding) -> Bytes {
   canonical_fields("choir.rehearsal-binding.v1", [
     @utf8.decode_lossy(
@@ -675,6 +753,39 @@ pub fn canonical_rehearsal_evidence_ref_bytes(
     reference.assurance_record_digest.0,
     reference.cancellation_summary_id.0,
   ])
+}
+
+///|
+pub fn rehearsal_evidence_ref_digest(
+  reference : RehearsalEvidenceRef,
+) -> @control.Digest {
+  canonical_digest(canonical_rehearsal_evidence_ref_bytes(reference))
+}
+
+///|
+pub fn canonical_migration_production_admission_ref_bytes(
+  reference : MigrationProductionAdmissionRef,
+) -> Bytes {
+  canonical_fields("choir.migration-production-admission-ref.v1", [
+    @utf8.decode_lossy(
+      canonical_migration_contract_ref_bytes(reference.migration_contract_ref),
+    ),
+    reference.contract_acceptance_digest.0,
+    reference.judge_definition_digest.0,
+    reference.judge_qualification_report_digest.0,
+    reference.judge_qualification_evidence_ref_digest.0,
+    match reference.rehearsal_evidence_ref_digest {
+      Some(digest) => digest.0
+      None => "none"
+    },
+  ])
+}
+
+///|
+pub fn migration_production_admission_ref_digest(
+  reference : MigrationProductionAdmissionRef,
+) -> @control.Digest {
+  canonical_digest(canonical_migration_production_admission_ref_bytes(reference))
 }
 
 ///|
