@@ -229,6 +229,78 @@ pub(all) struct QualifiedMigrationInventoryRef {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) enum JudgeNegativeControlClass {
+  JudgeRuleViolationControl
+  JudgeBehavioralMismatchControl
+  JudgeDependencyFaultControl
+  JudgeTypeFaultControl
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct JudgeBaselineExpectation {
+  scenario_id : MigrationScenarioId
+  normalized_outcome_digest : @control.Digest
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum JudgeBaselinePolicy {
+  JudgeCleanBaseline
+  JudgeExpectedBaselineFailures(Array[JudgeBaselineExpectation])
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct JudgeNegativeControl {
+  scenario_id : MigrationScenarioId
+  class : JudgeNegativeControlClass
+  expected_failure_digest : @control.Digest
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct MigrationJudgeDefinition {
+  schema_version : Int
+  source_revision : @control.Digest
+  scenario_count : Int
+  baseline_policy : JudgeBaselinePolicy
+  negative_controls : Array[JudgeNegativeControl]
+  excluded_surfaces_artifact_digest : @control.Digest
+  permitted_nondeterminism_artifact_digest : @control.Digest
+  substitute_oracle_artifact_digest : @control.Digest?
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum JudgeBaselineClassification {
+  JudgeBaselinePassed
+  JudgeInheritedSourceFailure
+  JudgeEnvironmentMismatch
+  JudgeDefect
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct JudgeBaselineResult {
+  scenario_id : MigrationScenarioId
+  normalized_outcome_digest : @control.Digest
+  classification : JudgeBaselineClassification
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct JudgeNegativeControlResult {
+  scenario_id : MigrationScenarioId
+  class : JudgeNegativeControlClass
+  observed_failure_digest : @control.Digest
+  rejected : Bool
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct JudgeQualificationReport {
+  judge_definition_digest : @control.Digest
+  source_revision : @control.Digest
+  baseline_results : Array[JudgeBaselineResult]
+  negative_control_results : Array[JudgeNegativeControlResult]
+  goal_verification_receipt_ids : Array[@control.ReceiptId]
+  goal_audit_receipt_id : @control.ReceiptId
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub(all) struct JudgeQualificationBinding {
   qualifying_goal_id : @control.GoalId
   qualifying_goal_contract_digest : @control.Digest

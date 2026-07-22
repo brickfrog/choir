@@ -143,6 +143,8 @@ pub fn validate_rehearsal_admission(
 pub fn validate_migration_production_admission(
   contract : @migration.MigrationContract,
   acceptance : @migration.MigrationContractAcceptance,
+  judge_definition : @migration.MigrationJudgeDefinition,
+  judge_report : @migration.JudgeQualificationReport,
   qualification : @migration.JudgeQualificationEvidenceRef,
   qualification_execution : GoalExecutionRecord,
   qualification_assurance : GoalAssuranceRecord,
@@ -160,6 +162,24 @@ pub fn validate_migration_production_admission(
   }
   if acceptance.contract_ref != contract_ref {
     return Err(migration_admission_error("contract acceptance is stale"))
+  }
+  match
+    @migration.validate_judge_qualification_report(
+      judge_definition, judge_report,
+    ) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  if @migration.migration_judge_definition_digest(judge_definition) !=
+    contract.judge_definition_digest ||
+    judge_definition.source_revision != contract.source_revision ||
+    judge_report.goal_verification_receipt_ids !=
+    qualification_assurance.verification_receipts.map(fn(receipt) {
+      receipt.receipt_id
+    }) ||
+    qualification_assurance.audit_receipt.map(fn(receipt) { receipt.receipt_id }) !=
+    Some(judge_report.goal_audit_receipt_id) {
+    return Err(migration_admission_error("judge evidence is stale"))
   }
   match
     validate_judge_qualification_admission(

@@ -1448,6 +1448,49 @@ test "integrated Parts authorize one immutable Goal branch seal" {
   let qualification_assurance_digest = @workflow.goal_assurance_record_digest(
     assured,
   )
+  let judge_definition : @migration.MigrationJudgeDefinition = {
+    schema_version: 1,
+    source_revision: workflow_digest_a,
+    scenario_count: 1,
+    baseline_policy: @migration.JudgeBaselinePolicy::JudgeCleanBaseline,
+    negative_controls: [
+      {
+        scenario_id: @migration.MigrationScenarioId("broken-rule-control"),
+        class: @migration.JudgeNegativeControlClass::JudgeRuleViolationControl,
+        expected_failure_digest: workflow_digest_b,
+      },
+    ],
+    excluded_surfaces_artifact_digest: workflow_digest_a,
+    permitted_nondeterminism_artifact_digest: workflow_digest_b,
+    substitute_oracle_artifact_digest: None,
+  }
+  let judge_report : @migration.JudgeQualificationReport = {
+    judge_definition_digest: @migration.migration_judge_definition_digest(
+      judge_definition,
+    ),
+    source_revision: workflow_digest_a,
+    baseline_results: [
+      {
+        scenario_id: @migration.MigrationScenarioId("source-baseline"),
+        normalized_outcome_digest: workflow_digest_a,
+        classification: @migration.JudgeBaselineClassification::JudgeBaselinePassed,
+      },
+    ],
+    negative_control_results: [
+      {
+        scenario_id: @migration.MigrationScenarioId("broken-rule-control"),
+        class: @migration.JudgeNegativeControlClass::JudgeRuleViolationControl,
+        observed_failure_digest: workflow_digest_b,
+        rejected: true,
+      },
+    ],
+    goal_verification_receipt_ids: assured.verification_receipts.map(fn(
+      receipt,
+    ) {
+      receipt.receipt_id
+    }),
+    goal_audit_receipt_id: assured.audit_receipt.unwrap().receipt_id,
+  }
   let migration_contract : @migration.MigrationContract = {
     id: @control.MigrationContractId("migration-admission-contract"),
     migration_lineage_id: @control.MigrationLineageId(
@@ -1465,7 +1508,9 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     qualified_inventory_artifact_digest: workflow_digest_a,
     transformation_plan_artifact_digest: workflow_digest_b,
     context_assembly_policy_digest: workflow_digest_a,
-    judge_definition_digest: workflow_digest_b,
+    judge_definition_digest: @migration.migration_judge_definition_digest(
+      judge_definition,
+    ),
     judge_qualification_assurance_record_digest: qualification_assurance_digest,
     parity_definition_digest: None,
     validation_plan_digest: workflow_digest_a,
@@ -1526,6 +1571,8 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     @workflow.validate_migration_production_admission(
       migration_contract,
       migration_acceptance,
+      judge_definition,
+      judge_report,
       qualification_reference,
       succeeded_qualification,
       assured,
@@ -1534,6 +1581,27 @@ test "integrated Parts authorize one immutable Goal branch seal" {
       None,
     )
     is Ok(_),
+  )
+  let surviving_control_report = {
+    ..judge_report,
+    negative_control_results: [
+      { ..judge_report.negative_control_results[0], rejected: false },
+    ],
+  }
+  assert_true(
+    @workflow.validate_migration_production_admission(
+      migration_contract,
+      migration_acceptance,
+      judge_definition,
+      surviving_control_report,
+      qualification_reference,
+      succeeded_qualification,
+      assured,
+      None,
+      None,
+      None,
+    )
+    is Err(_),
   )
   guard @workflow.request_goal_execution_cancellation(
       evidence_only_execution,
@@ -1649,6 +1717,8 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     @workflow.validate_migration_production_admission(
       required_contract,
       required_acceptance,
+      judge_definition,
+      judge_report,
       qualification_reference,
       succeeded_qualification,
       assured,
@@ -1667,6 +1737,8 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     @workflow.validate_migration_production_admission(
       revised_contract,
       revised_acceptance,
+      judge_definition,
+      judge_report,
       qualification_reference,
       succeeded_qualification,
       assured,

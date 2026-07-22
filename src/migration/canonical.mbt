@@ -483,6 +483,85 @@ pub fn migration_inventory_digest(
 }
 
 ///|
+fn judge_negative_control_class_name(
+  class : JudgeNegativeControlClass,
+) -> String {
+  match class {
+    JudgeRuleViolationControl => "rule-violation"
+    JudgeBehavioralMismatchControl => "behavioral-mismatch"
+    JudgeDependencyFaultControl => "dependency-fault"
+    JudgeTypeFaultControl => "type-fault"
+  }
+}
+
+///|
+fn judge_baseline_expectation_fields(
+  expectation : JudgeBaselineExpectation,
+) -> String {
+  @utf8.decode_lossy(
+    canonical_fields("choir.judge-baseline-expectation.v1", [
+      expectation.scenario_id.0,
+      expectation.normalized_outcome_digest.0,
+    ]),
+  )
+}
+
+///|
+fn judge_baseline_policy_fields(policy : JudgeBaselinePolicy) -> Array[String] {
+  match policy {
+    JudgeCleanBaseline => ["clean"]
+    JudgeExpectedBaselineFailures(expectations) => {
+      let fields = expectations.map(judge_baseline_expectation_fields)
+      fields.sort()
+      ["expected-failures", fields.length().to_string()] + fields
+    }
+  }
+}
+
+///|
+fn judge_negative_control_fields(control : JudgeNegativeControl) -> String {
+  @utf8.decode_lossy(
+    canonical_fields("choir.judge-negative-control.v1", [
+      control.scenario_id.0,
+      judge_negative_control_class_name(control.class),
+      control.expected_failure_digest.0,
+    ]),
+  )
+}
+
+///|
+pub fn canonical_migration_judge_definition_bytes(
+  definition : MigrationJudgeDefinition,
+) -> Bytes {
+  let controls = definition.negative_controls.map(judge_negative_control_fields)
+  controls.sort()
+  let fields = [
+      definition.schema_version.to_string(),
+      definition.source_revision.0,
+      definition.scenario_count.to_string(),
+    ] +
+    judge_baseline_policy_fields(definition.baseline_policy) +
+    [controls.length().to_string()]
+  append_fields(fields, controls)
+  fields.push(definition.excluded_surfaces_artifact_digest.0)
+  fields.push(definition.permitted_nondeterminism_artifact_digest.0)
+  fields.push(
+    match definition.substitute_oracle_artifact_digest {
+      Some(digest) => digest.0
+      None => "none"
+    },
+  )
+  canonical_fields("choir.migration-judge-definition.v1", fields)
+}
+
+///|
+pub fn migration_judge_definition_digest(
+  definition : MigrationJudgeDefinition,
+) -> @control.Digest {
+  canonical_digest(canonical_migration_judge_definition_bytes(definition))
+}
+
+///|
 pub fn canonical_qualified_inventory_ref_bytes(
   reference : QualifiedMigrationInventoryRef,
 ) -> Bytes {

@@ -72,6 +72,26 @@ fn migration_contract_fixture() -> @migration.MigrationContract {
 }
 
 ///|
+fn migration_judge_definition_fixture() -> @migration.MigrationJudgeDefinition {
+  {
+    schema_version: 1,
+    source_revision: migration_digest_a,
+    scenario_count: 1,
+    baseline_policy: @migration.JudgeBaselinePolicy::JudgeCleanBaseline,
+    negative_controls: [
+      {
+        scenario_id: @migration.MigrationScenarioId("broken-rule-control"),
+        class: @migration.JudgeNegativeControlClass::JudgeRuleViolationControl,
+        expected_failure_digest: migration_digest_b,
+      },
+    ],
+    excluded_surfaces_artifact_digest: migration_digest_a,
+    permitted_nondeterminism_artifact_digest: migration_digest_b,
+    substitute_oracle_artifact_digest: None,
+  }
+}
+
+///|
 fn context_manifest_fixture() -> @migration.PartContextManifest {
   {
     migration_contract_ref: migration_contract_ref_fixture(),
@@ -793,6 +813,52 @@ test "migration inventory validates denominator and two-run determinism" {
       fn(_) { true },
     )
     is Ok(_),
+  )
+}
+
+///|
+test "judge definition has fixed canonical bytes and rejects surviving controls" {
+  let definition = migration_judge_definition_fixture()
+  assert_eq(
+    @utf8.decode_lossy(
+      @migration.canonical_migration_judge_definition_bytes(definition),
+    ),
+    "35#choir.migration-judge-definition.v11#91#164#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1#15#clean1#1143#31#choir.judge-negative-control.v11#319#broken-rule-control14#rule-violation64#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb64#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa64#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb4#none",
+  )
+  let report : @migration.JudgeQualificationReport = {
+    judge_definition_digest: @migration.migration_judge_definition_digest(
+      definition,
+    ),
+    source_revision: migration_digest_a,
+    baseline_results: [
+      {
+        scenario_id: @migration.MigrationScenarioId("source-baseline"),
+        normalized_outcome_digest: migration_digest_a,
+        classification: @migration.JudgeBaselineClassification::JudgeBaselinePassed,
+      },
+    ],
+    negative_control_results: [
+      {
+        scenario_id: @migration.MigrationScenarioId("broken-rule-control"),
+        class: @migration.JudgeNegativeControlClass::JudgeRuleViolationControl,
+        observed_failure_digest: migration_digest_b,
+        rejected: true,
+      },
+    ],
+    goal_verification_receipt_ids: [@control.ReceiptId("judge-verification")],
+    goal_audit_receipt_id: @control.ReceiptId("judge-audit"),
+  }
+  assert_true(
+    @migration.validate_judge_qualification_report(definition, report) is Ok(_),
+  )
+  assert_true(
+    @migration.validate_judge_qualification_report(definition, {
+      ..report,
+      negative_control_results: [
+        { ..report.negative_control_results[0], rejected: false },
+      ],
+    })
+    is Err(_),
   )
 }
 

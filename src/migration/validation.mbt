@@ -502,6 +502,142 @@ pub fn validate_qualified_migration_inventory_ref(
 }
 
 ///|
+pub fn validate_migration_judge_definition(
+  definition : MigrationJudgeDefinition,
+) -> Result[Unit, @types.ChoirError] {
+  let substitute_oracle_invalid = match
+    definition.substitute_oracle_artifact_digest {
+    Some(digest) => !digest_is_valid(digest)
+    None => false
+  }
+  if definition.schema_version != 1 ||
+    definition.scenario_count <= 0 ||
+    definition.negative_controls.length() == 0 ||
+    !all_digests_valid([
+      definition.source_revision,
+      definition.excluded_surfaces_artifact_digest,
+      definition.permitted_nondeterminism_artifact_digest,
+    ]) ||
+    substitute_oracle_invalid {
+    return Err(migration_validation_error("judge definition is invalid"))
+  }
+  match definition.baseline_policy {
+    JudgeCleanBaseline => ()
+    JudgeExpectedBaselineFailures(expectations) => {
+      if expectations.length() == 0 {
+        return Err(
+          migration_validation_error("baseline expectations are empty"),
+        )
+      }
+      for index, expectation in expectations {
+        if expectation.scenario_id.0 == "" ||
+          !digest_is_valid(expectation.normalized_outcome_digest) ||
+          expectations[index + 1:].any(fn(candidate) {
+            candidate.scenario_id == expectation.scenario_id
+          }) {
+          return Err(
+            migration_validation_error("baseline expectation is invalid"),
+          )
+        }
+      }
+    }
+  }
+  for index, control in definition.negative_controls {
+    if control.scenario_id.0 == "" ||
+      !digest_is_valid(control.expected_failure_digest) ||
+      definition.negative_controls[index + 1:].any(fn(candidate) {
+        candidate.scenario_id == control.scenario_id
+      }) {
+      return Err(migration_validation_error("negative control is invalid"))
+    }
+  }
+  Ok(())
+}
+
+///|
+pub fn validate_judge_qualification_report(
+  definition : MigrationJudgeDefinition,
+  report : JudgeQualificationReport,
+) -> Result[Unit, @types.ChoirError] {
+  match validate_migration_judge_definition(definition) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  if report.judge_definition_digest !=
+    migration_judge_definition_digest(definition) ||
+    report.source_revision != definition.source_revision ||
+    report.baseline_results.length() != definition.scenario_count ||
+    report.goal_verification_receipt_ids.length() == 0 ||
+    report.goal_audit_receipt_id.0 == "" {
+    return Err(migration_validation_error("judge report binding is stale"))
+  }
+  for index, result in report.baseline_results {
+    if result.scenario_id.0 == "" ||
+      !digest_is_valid(result.normalized_outcome_digest) ||
+      report.baseline_results[index + 1:].any(fn(candidate) {
+        candidate.scenario_id == result.scenario_id
+      }) {
+      return Err(migration_validation_error("baseline result is invalid"))
+    }
+  }
+  for index, receipt_id in report.goal_verification_receipt_ids {
+    if receipt_id.0 == "" ||
+      report.goal_verification_receipt_ids[index + 1:].contains(receipt_id) {
+      return Err(migration_validation_error("judge receipt set is invalid"))
+    }
+  }
+  match definition.baseline_policy {
+    JudgeCleanBaseline =>
+      if report.baseline_results.any(fn(result) {
+          result.classification != JudgeBaselinePassed
+        }) {
+        return Err(migration_validation_error("source baseline is not clean"))
+      }
+    JudgeExpectedBaselineFailures(expectations) => {
+      if report.baseline_results.length() != expectations.length() {
+        return Err(migration_validation_error("source baseline is incomplete"))
+      }
+      for expectation in expectations {
+        if !report.baseline_results.any(fn(result) {
+            result.scenario_id == expectation.scenario_id &&
+            result.normalized_outcome_digest ==
+            expectation.normalized_outcome_digest &&
+            result.classification == JudgeInheritedSourceFailure
+          }) {
+          return Err(migration_validation_error("source baseline drifted"))
+        }
+      }
+    }
+  }
+  if report.negative_control_results.length() !=
+    definition.negative_controls.length() {
+    return Err(migration_validation_error("negative controls are incomplete"))
+  }
+  for index, result in report.negative_control_results {
+    if result.scenario_id.0 == "" ||
+      !digest_is_valid(result.observed_failure_digest) ||
+      report.negative_control_results[index + 1:].any(fn(candidate) {
+        candidate.scenario_id == result.scenario_id
+      }) {
+      return Err(
+        migration_validation_error("negative control result is invalid"),
+      )
+    }
+  }
+  for control in definition.negative_controls {
+    if !report.negative_control_results.any(fn(result) {
+        result.scenario_id == control.scenario_id &&
+        result.class == control.class &&
+        result.observed_failure_digest == control.expected_failure_digest &&
+        result.rejected
+      }) {
+      return Err(migration_validation_error("negative control survived"))
+    }
+  }
+  Ok(())
+}
+
+///|
 pub fn validate_judge_qualification_evidence_ref(
   reference : JudgeQualificationEvidenceRef,
 ) -> Result[Unit, @types.ChoirError] {
