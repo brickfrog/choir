@@ -22,6 +22,11 @@ suberror ChoirError {
   TransportError(String)
   GitError(String)
   ConfigError(String)
+  CommandPreparationMissingRequiredArtifact(String)
+  CommandPreparationStaleBinding
+  CommandPreparationSizeLimitExceeded(Int, Int)
+  CommandPreparationDigestMismatch
+  CommandPreparationUnsupportedTemplate
 }
 
 ///|
@@ -42,6 +47,12 @@ pub fn ChoirError::to_wire_string(self : ChoirError) -> String {
     TransportError(_) => "transport_error"
     GitError(_) => "git_error"
     ConfigError(_) => "config_error"
+    CommandPreparationMissingRequiredArtifact(_) =>
+      "command_preparation_blocked"
+    CommandPreparationStaleBinding => "command_preparation_blocked"
+    CommandPreparationSizeLimitExceeded(_, _) => "command_preparation_blocked"
+    CommandPreparationDigestMismatch => "command_preparation_blocked"
+    CommandPreparationUnsupportedTemplate => "command_preparation_blocked"
   }
 }
 
@@ -63,6 +74,20 @@ pub fn ChoirError::message(self : ChoirError) -> String {
     TransportError(msg) => "transport error: " + msg
     GitError(msg) => "git error: " + msg
     ConfigError(msg) => "config error: " + msg
+    CommandPreparationMissingRequiredArtifact(digest) =>
+      "command preparation blocked: missing required artifact " + digest
+    CommandPreparationStaleBinding =>
+      "command preparation blocked: stale binding"
+    CommandPreparationSizeLimitExceeded(actual, limit) =>
+      "command preparation blocked: size limit exceeded (" +
+      actual.to_string() +
+      " > " +
+      limit.to_string() +
+      ")"
+    CommandPreparationDigestMismatch =>
+      "command preparation blocked: digest mismatch"
+    CommandPreparationUnsupportedTemplate =>
+      "command preparation blocked: unsupported template"
   }
 }
 
@@ -172,6 +197,48 @@ pub fn ChoirError::config_error(msg : String) -> ChoirError {
 }
 
 ///|
+pub fn ChoirError::command_preparation_missing_required_artifact(
+  digest : String,
+) -> ChoirError {
+  CommandPreparationMissingRequiredArtifact(digest)
+}
+
+///|
+pub fn ChoirError::command_preparation_stale_binding() -> ChoirError {
+  CommandPreparationStaleBinding
+}
+
+///|
+pub fn ChoirError::command_preparation_size_limit_exceeded(
+  actual_bytes : Int,
+  limit_bytes : Int,
+) -> ChoirError {
+  CommandPreparationSizeLimitExceeded(actual_bytes, limit_bytes)
+}
+
+///|
+pub fn ChoirError::command_preparation_digest_mismatch() -> ChoirError {
+  CommandPreparationDigestMismatch
+}
+
+///|
+pub fn ChoirError::command_preparation_unsupported_template() -> ChoirError {
+  CommandPreparationUnsupportedTemplate
+}
+
+///|
+pub fn ChoirError::is_command_preparation_blocked(self : ChoirError) -> Bool {
+  match self {
+    CommandPreparationMissingRequiredArtifact(_)
+    | CommandPreparationStaleBinding
+    | CommandPreparationSizeLimitExceeded(_, _)
+    | CommandPreparationDigestMismatch
+    | CommandPreparationUnsupportedTemplate => true
+    _ => false
+  }
+}
+
+///|
 pub fn ChoirError::is_tool_not_found(self : ChoirError) -> Bool {
   match self {
     ToolNotFound(_) => true
@@ -234,6 +301,16 @@ pub fn choir_error_message_from_caught(e : Error) -> String {
     TransportError(msg) => ChoirError::transport_error(msg).message()
     GitError(msg) => ChoirError::git_error(msg).message()
     ConfigError(msg) => ChoirError::config_error(msg).message()
+    CommandPreparationMissingRequiredArtifact(digest) =>
+      ChoirError::command_preparation_missing_required_artifact(digest).message()
+    CommandPreparationStaleBinding =>
+      ChoirError::command_preparation_stale_binding().message()
+    CommandPreparationSizeLimitExceeded(actual, limit) =>
+      ChoirError::command_preparation_size_limit_exceeded(actual, limit).message()
+    CommandPreparationDigestMismatch =>
+      ChoirError::command_preparation_digest_mismatch().message()
+    CommandPreparationUnsupportedTemplate =>
+      ChoirError::command_preparation_unsupported_template().message()
     _ => "internal error"
   }
 }
@@ -256,7 +333,12 @@ pub fn caught_error_is_choir_error(e : Error) -> Bool {
     | WorkspaceError(_)
     | TransportError(_)
     | GitError(_)
-    | ConfigError(_) => true
+    | ConfigError(_)
+    | CommandPreparationMissingRequiredArtifact(_)
+    | CommandPreparationStaleBinding
+    | CommandPreparationSizeLimitExceeded(_, _)
+    | CommandPreparationDigestMismatch
+    | CommandPreparationUnsupportedTemplate => true
     _ => false
   }
 }

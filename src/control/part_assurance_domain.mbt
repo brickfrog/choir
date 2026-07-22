@@ -29,6 +29,16 @@ pub(all) struct HarnessSessionId(String) derive (
 )
 
 ///|
+pub(all) struct HarnessCommandId(String) derive (
+  Debug,
+  Eq,
+  Compare,
+  Hash,
+  ToJson,
+  FromJson,
+)
+
+///|
 pub(all) struct HarnessEventId(String) derive (
   Debug,
   Eq,
@@ -289,6 +299,28 @@ pub(all) struct HarnessSession {
   last_choir_sequence : EventSequence
   open_tool_execution_ids : Array[String]
   lifecycle : HarnessSessionLifecycle
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct HarnessSessionStartIntent {
+  effect_id : String
+  session_id : HarnessSessionId
+  take_id : TakeId
+  provider_surface_and_profile_digest : Digest
+  declared_surface_digest : Digest
+  initial_command_artifact_digest : Digest?
+  supervisor_key : String
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct HarnessCommandIntent {
+  effect_id : String
+  session_id : HarnessSessionId
+  command_id : HarnessCommandId
+  command_sequence : Int
+  required_provider_cursor : String?
+  command_artifact_digest : Digest
+  provider_idempotency_token : String?
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
