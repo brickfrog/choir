@@ -494,11 +494,84 @@ pub fn validate_qualified_migration_inventory_ref(
     !digest_is_valid(reference.generator_digest) ||
     !digest_is_valid(reference.inventory_artifact_digest) ||
     !digest_is_valid(reference.canonical_inventory_digest) ||
+    !digest_is_valid(reference.execution_evidence_digest) ||
     reference.verification_receipt_id.0 == "" {
     Err(migration_validation_error("qualified inventory reference is invalid"))
   } else {
     Ok(())
   }
+}
+
+///|
+pub fn qualify_migration_inventory_execution(
+  first_inventory : MigrationInventory,
+  second_inventory : MigrationInventory,
+  first_execution : @sandbox.ProcessExecution,
+  second_execution : @sandbox.ProcessExecution,
+  verification_receipt_id : @control.ReceiptId,
+  is_nfc : (String) -> Bool,
+) -> Result[
+  (QualifiedMigrationInventoryRef, MigrationInventoryExecutionEvidence),
+  @types.ChoirError,
+] {
+  let canonical_inventory_digest = match
+    validate_migration_inventory_two_run(
+      first_inventory, second_inventory, is_nfc,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  match @sandbox.validate_process_execution(first_execution) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  match @sandbox.validate_process_execution(second_execution) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  guard first_execution.disposition
+    is @sandbox.ProcessExecutionDisposition::ProcessExited(
+      0,
+      first_output_digest
+    ) &&
+    second_execution.disposition
+    is @sandbox.ProcessExecutionDisposition::ProcessExited(
+      0,
+      second_output_digest
+    ) else {
+    return Err(migration_validation_error("inventory generator did not pass"))
+  }
+  if verification_receipt_id.0 == "" ||
+    first_execution.execution_id == second_execution.execution_id ||
+    first_execution.validated_process_spec_digest !=
+    second_execution.validated_process_spec_digest ||
+    first_execution.input_artifact_set_digest !=
+    second_execution.input_artifact_set_digest ||
+    first_output_digest != second_output_digest {
+    return Err(
+      migration_validation_error("inventory execution evidence is inconsistent"),
+    )
+  }
+  let evidence : MigrationInventoryExecutionEvidence = {
+    validated_process_spec_digest: first_execution.validated_process_spec_digest,
+    input_artifact_set_digest: first_execution.input_artifact_set_digest,
+    first_execution_id: first_execution.execution_id,
+    second_execution_id: second_execution.execution_id,
+    first_inventory_artifact_digest: first_output_digest,
+    second_inventory_artifact_digest: second_output_digest,
+    canonical_inventory_digest,
+  }
+  let reference : QualifiedMigrationInventoryRef = {
+    source_revision: first_inventory.source_revision,
+    generator_digest: first_inventory.generator_digest,
+    inventory_artifact_digest: first_output_digest,
+    canonical_inventory_digest,
+    execution_evidence_digest: migration_inventory_execution_evidence_digest(
+      evidence,
+    ),
+    verification_receipt_id,
+  }
+  Ok((reference, evidence))
 }
 
 ///|

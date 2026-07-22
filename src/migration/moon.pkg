@@ -1,5 +1,6 @@
 import {
   "choir/src/control",
+  "choir/src/sandbox",
   "choir/src/types",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/json",

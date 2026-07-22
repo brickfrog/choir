@@ -225,7 +225,19 @@ pub(all) struct QualifiedMigrationInventoryRef {
   generator_digest : @control.Digest
   inventory_artifact_digest : @control.Digest
   canonical_inventory_digest : @control.Digest
+  execution_evidence_digest : @control.Digest
   verification_receipt_id : @control.ReceiptId
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct MigrationInventoryExecutionEvidence {
+  validated_process_spec_digest : @control.Digest
+  input_artifact_set_digest : @control.Digest
+  first_execution_id : @sandbox.ProcessExecutionId
+  second_execution_id : @sandbox.ProcessExecutionId
+  first_inventory_artifact_digest : @control.Digest
+  second_inventory_artifact_digest : @control.Digest
+  canonical_inventory_digest : @control.Digest
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|

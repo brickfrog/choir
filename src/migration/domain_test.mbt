@@ -92,6 +92,35 @@ fn migration_judge_definition_fixture() -> @migration.MigrationJudgeDefinition {
 }
 
 ///|
+fn inventory_process_execution_fixture(
+  id : String,
+  output_digest : @control.Digest,
+) -> @sandbox.ProcessExecution {
+  {
+    execution_id: @sandbox.ProcessExecutionId(id),
+    effect_intent_id: id,
+    runtime_execution_key: @sandbox.RuntimeExecutionKey(id),
+    take_id: @control.TakeId("inventory-take"),
+    process_authority: @sandbox.SandboxProcessAuthority::SandboxVerificationTool(
+      @control.TakeId("inventory-take"),
+      @control.VerificationSpecId("inventory-determinism"),
+      migration_digest_a,
+    ),
+    validated_process_spec_digest: migration_digest_a,
+    sandbox_lease_id: @control.SandboxLeaseId("inventory-lease"),
+    sandbox_generation_id: @control.SandboxGenerationId("inventory-generation"),
+    capability_profile_digest: migration_digest_b,
+    input_artifact_set_digest: migration_digest_c,
+    output_artifact_set_digest: Some(output_digest),
+    started_at: Some(1L),
+    finished_at: Some(2L),
+    disposition: @sandbox.ProcessExecutionDisposition::ProcessExited(
+      0, output_digest,
+    ),
+  }
+}
+
+///|
 fn context_manifest_fixture() -> @migration.PartContextManifest {
   {
     migration_contract_ref: migration_contract_ref_fixture(),
@@ -334,10 +363,11 @@ test "migration domain canonical byte fixtures are explicit and versioned" {
         generator_digest: migration_digest_a,
         inventory_artifact_digest: migration_digest_b,
         canonical_inventory_digest: migration_digest_c,
+        execution_evidence_digest: migration_digest_a,
         verification_receipt_id: @control.ReceiptId("inventory-verification-1"),
       }),
     ),
-    content="42#choir.qualified-migration-inventory-ref.v11#517#source-revision-164#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa64#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb64#cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc24#inventory-verification-1",
+    content="42#choir.qualified-migration-inventory-ref.v11#617#source-revision-164#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa64#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb64#cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc64#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa24#inventory-verification-1",
   )
   inspect(
     @utf8.decode_lossy(
@@ -884,6 +914,44 @@ test "migration inventory rejects drift and disappearing dependencies" {
   assert_true(
     @migration.validate_migration_inventory(
       { ..inventory, units: [inventory.units[1]] },
+      fn(_) { true },
+    )
+    is Err(_),
+  )
+}
+
+///|
+test "inventory qualification binds two ordinary process executions" {
+  let inventory = inventory_fixture()
+  let first = inventory_process_execution_fixture(
+    "inventory-first", migration_digest_b,
+  )
+  let second = inventory_process_execution_fixture(
+    "inventory-second", migration_digest_b,
+  )
+  let (reference, evidence) = @migration.qualify_migration_inventory_execution(
+    inventory,
+    { ..inventory, units: inventory.units.rev() },
+    first,
+    second,
+    @control.ReceiptId("inventory-verification"),
+    fn(_) { true },
+  ).unwrap()
+  assert_eq(
+    reference.canonical_inventory_digest,
+    @migration.migration_inventory_digest(inventory),
+  )
+  assert_eq(
+    reference.execution_evidence_digest,
+    @migration.migration_inventory_execution_evidence_digest(evidence),
+  )
+  assert_true(
+    @migration.qualify_migration_inventory_execution(
+      inventory,
+      inventory,
+      first,
+      { ..second, validated_process_spec_digest: migration_digest_b },
+      @control.ReceiptId("inventory-verification"),
       fn(_) { true },
     )
     is Err(_),

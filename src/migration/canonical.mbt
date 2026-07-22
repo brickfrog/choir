@@ -570,8 +570,33 @@ pub fn canonical_qualified_inventory_ref_bytes(
     reference.generator_digest.0,
     reference.inventory_artifact_digest.0,
     reference.canonical_inventory_digest.0,
+    reference.execution_evidence_digest.0,
     reference.verification_receipt_id.0,
   ])
+}
+
+///|
+pub fn canonical_migration_inventory_execution_evidence_bytes(
+  evidence : MigrationInventoryExecutionEvidence,
+) -> Bytes {
+  canonical_fields("choir.migration-inventory-execution-evidence.v1", [
+    evidence.validated_process_spec_digest.0,
+    evidence.input_artifact_set_digest.0,
+    evidence.first_execution_id.0,
+    evidence.second_execution_id.0,
+    evidence.first_inventory_artifact_digest.0,
+    evidence.second_inventory_artifact_digest.0,
+    evidence.canonical_inventory_digest.0,
+  ])
+}
+
+///|
+pub fn migration_inventory_execution_evidence_digest(
+  evidence : MigrationInventoryExecutionEvidence,
+) -> @control.Digest {
+  canonical_digest(
+    canonical_migration_inventory_execution_evidence_bytes(evidence),
+  )
 }
 
 ///|
