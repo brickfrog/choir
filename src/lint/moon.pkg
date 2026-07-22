@@ -4,7 +4,7 @@ import {
   "moonbitlang/core/list",
   "moonbitlang/core/ref",
   "moonbitlang/parser",
-  "moonbitlang/parser/basic",
+  "moonbitlang/lexer/basic",
   "moonbitlang/parser/syntax",
   "choir/src/sys",
 }

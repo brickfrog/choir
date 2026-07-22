@@ -665,7 +665,7 @@ fn collect_forbidden_function_infos(
   }
   for impl_ in impls {
     match impl_ {
-      TopFuncDef(fun_decl~, decl_body~, loc~) => {
+      TopFuncDef(fun_decl~, decl_body~, loc~, ..) => {
         let parameter_names = collect_parameter_names(fun_decl.decl_params)
         let (direct_rule_id, called) = function_call_info_from_body(
           file, package_aliases, known_functions, parameter_names, decl_body,
@@ -1110,9 +1110,11 @@ impl @syntax.IterVisitor for LintEnv with fn visit_Impl_TopFuncDef(
   env,
   fun_decl~,
   decl_body~,
+  where_clause~,
   loc~,
 ) {
   ignore(loc)
+  ignore(where_clause)
   env.decl_stack.push(fun_decl.name.name)
   @syntax.IterVisitor::visit_FunDecl(env, fun_decl)
   @syntax.IterVisitor::visit_DeclBody(env, decl_body)
@@ -1125,8 +1127,8 @@ impl @syntax.IterVisitor for LintEnv with fn visit_Impl_TopImpl(
   self_ty~,
   trait_~,
   method_name~,
-  has_error~,
   quantifiers~,
+  method_quantifiers~,
   params~,
   ret_ty~,
   err_ty~,
@@ -1137,7 +1139,6 @@ impl @syntax.IterVisitor for LintEnv with fn visit_Impl_TopImpl(
   doc~,
 ) {
   ignore(loc)
-  ignore(has_error)
   ignore(attrs)
   ignore(doc)
   env.decl_stack.push(method_name.name)
@@ -1148,6 +1149,7 @@ impl @syntax.IterVisitor for LintEnv with fn visit_Impl_TopImpl(
   @syntax.IterVisitor::visit_TypeName(env, trait_)
   @syntax.IterVisitor::visit_Binder(env, method_name)
   quantifiers.each(x => @syntax.IterVisitor::visit_TypeVarBinder(env, x))
+  method_quantifiers.each(x => @syntax.IterVisitor::visit_TypeVarBinder(env, x))
   params.each(param => @syntax.IterVisitor::visit_Parameter(env, param))
   match ret_ty {
     Some(t) => @syntax.IterVisitor::visit_Type(env, t)
@@ -1162,7 +1164,7 @@ impl @syntax.IterVisitor for LintEnv with fn visit_Impl_TopImpl(
 ///|
 impl @syntax.IterVisitor for LintEnv with fn visit_Expr(env, expr) {
   match expr {
-    Apply(func~, args~, loc~, ..) => {
+    Apply(func~, args~, loc~) => {
       check_native_ffi_bypass(env, func, loc)
       check_native_ffi_bypass_args(env, args, loc)
       check_test_apply(env, func, args, loc)

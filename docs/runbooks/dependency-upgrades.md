@@ -233,7 +233,8 @@ node --version
 git --version
 gh --version
 bwrap --version
-test ! -x .nix-moon/bin/moon || .nix-moon/bin/moon version
+find .nix-moon -mindepth 2 -maxdepth 3 -type f -path '*/bin/moon' \
+  -exec {} version \; 2>/dev/null
 ldconfig -p 2>/dev/null | rg 'libutf8proc|libsqlite3|libuv|libssl'
 ```
 
@@ -614,16 +615,14 @@ The final handoff must state what changed, what remains installed, which live
 checks passed, which checks were not run, where rollback artifacts live, and
 whether anything was pushed or released.
 
-## Known drift that every audit must detect
+## Toolchain-coherence regression checks
 
-As of 2026-07-21, the repository contains two toolchain-coherence risks that
-must remain visible until corrected:
+Every audit must verify that CI, release, `scripts/install-moonbit.sh`, and
+`flake.nix` name the same exact composite MoonBit release. The installer must
+verify the platform and core archive hashes before extraction.
 
-- CI and release request `scripts/install-moonbit.sh latest`, while `flake.nix`
-  declares a fixed MoonBit overlay release and hashes.
-- `.nix-moon` is a persistent copied cache. Its presence alone does not prove
-  that it was refreshed when the flake pin changed.
-
-Do not remove this section merely because one workstation happens to report
-matching versions. Remove or revise it only when the underlying configuration
-enforces coherence and a regression check proves that enforcement.
+The Nix development shell keys each writable `.nix-moon` copy by the complete
+Nix derivation identity. An older sibling cache may remain on disk, but it must
+never be selected by the current shell. Treat a workflow request for `latest`,
+an unverified installer archive, or reuse of an unkeyed `.nix-moon/bin` as
+`DRIFT`.

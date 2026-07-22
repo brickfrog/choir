@@ -17,6 +17,7 @@ Required:
 - Linux with KVM enabled
 - Git
 - libutf8proc
+- SQLite 3 development headers when building and `libsqlite3.so.0` at runtime
 - [MoonBit](https://www.moonbitlang.com/) (or `nix develop` for the pinned toolchain)
 - [Beads](https://github.com/gastownhall/beads) 1.1.0 (`bd`)
 - [BoxLite](https://github.com/boxlite-ai/boxlite) v0.9.7 with Choir's
