@@ -1,14 +1,14 @@
 # Choir
 
-Choir is a local, subscription-native development orchestrator. Claude Code is
-the interactive Conductor; `choird` turns an accepted Goal into durable Parts,
-runs Claude Code or Codex Takes in BoxLite microVMs, verifies and audits each
-candidate independently, serializes promotion, verifies the combined tree, and
-publishes one final pull request.
+Choir provides durable, sandboxed orchestration for Claude Code and Codex coding
+agents. Either provider can act as the interactive Conductor; `choird` turns an
+accepted Goal into durable Parts, runs subscription-backed Takes in BoxLite
+microVMs, verifies and audits each candidate independently, serializes
+promotion, verifies the combined tree, and publishes one final pull request.
 
 Provider sessions never own workflow state. SQLite, typed effects, receipts,
 leases, and reconciliation remain authoritative across client exits and daemon
-restarts. Zellij is not required.
+restarts.
 
 ## Install
 
@@ -16,6 +16,7 @@ Required:
 
 - Linux with KVM enabled
 - Git
+- libutf8proc
 - [MoonBit](https://www.moonbitlang.com/) (or `nix develop` for the pinned toolchain)
 - [Beads](https://github.com/gastownhall/beads) 1.1.0 (`bd`)
 - [BoxLite](https://github.com/boxlite-ai/boxlite) v0.9.7 with Choir's
@@ -50,7 +51,8 @@ absolute `scripts` directory before starting Choir. Choir never loads these
 trusted host-side programs from the target repository.
 
 `choir init` creates the local project state, starts `choird`, and opens the
-Claude Conductor in the current terminal. Later sessions can use `choir start`.
+selected Conductor in the current terminal (Claude by default). Later sessions
+can use `choir start`.
 
 From the Conductor, discuss the intended feature, create or refine Beads when
 needed, then invoke `/goal`. The Conductor proposes the selected Parts and
