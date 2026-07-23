@@ -39,6 +39,11 @@ pub fn write_stdout_bytes(_b : Bytes) -> Unit {
 }
 
 ///|
+pub fn stdin_set_unbuffered() -> Bool {
+  true
+}
+
+///|
 pub fn write_stderr(_s : String) -> Unit {
 
 }

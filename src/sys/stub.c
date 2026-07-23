@@ -42,6 +42,10 @@ int choir_poll_readable_pair(int first_fd, int second_fd, int timeout_ms) {
     return ready;
 }
 
+int choir_stdin_set_unbuffered(void) {
+    return setvbuf(stdin, NULL, _IONBF, 0);
+}
+
 static volatile sig_atomic_t choir_cleanup_runtime_native = 0;
 
 int choir_rm_rf(const char *path);

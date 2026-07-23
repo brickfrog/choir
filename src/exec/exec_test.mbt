@@ -1,9 +1,10 @@
 ///|
-test "Claude Conductor launch is terminal-local and strict MCP only" {
+test "Claude Conductor keeps default tools and uses strict MCP config" {
   let command = conductor_launch_command("/repo", "/opt/choir/bin/choir")
   let joined = command.args.join(" ")
   assert_eq(command.program, "claude")
   assert_true(joined.contains("--strict-mcp-config"))
+  assert_false(command.args.contains("--tools"))
   assert_true(
     joined.contains(
       "--allowedTools mcp__choir__goal_submit,mcp__choir__goal_status,mcp__choir__goal_cancel,mcp__choir__goal_steer,mcp__choir__goal_attach,mcp__choir__goal_answer,mcp__choir__task_list,mcp__choir__task_get,mcp__choir__task_create,mcp__choir__task_update",

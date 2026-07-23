@@ -3066,11 +3066,10 @@ async fn run_conductor_start_live() -> Int {
   })
   let project_initialized = @sys.path_exists(root + "/.choir/config.toml") &&
     @sys.path_exists(root + "/.choir/config.local.toml")
-  let conductor_surface_restricted = conductor_args.contains("--tools") &&
+  let conductor_surface_configured = !conductor_args.contains("--tools") &&
     conductor_args.contains("--allowedTools") &&
     conductor_args.contains("mcp__choir__goal_submit") &&
     conductor_args.contains("mcp__choir__task_get") &&
-    !conductor_args.contains("Bash") &&
     conductor_args.contains("--setting-sources") &&
     conductor_args.contains("--strict-mcp-config") &&
     conductor_args.contains(
@@ -3088,7 +3087,7 @@ async fn run_conductor_start_live() -> Int {
     !@sys.path_entry_exists(root + "/.choir/plugin") &&
     conductor_args.contains("--append-system-prompt-file") &&
     !conductor_args.contains("--plugin-dir") &&
-    conductor_surface_restricted &&
+    conductor_surface_configured &&
     conductor_environment.has_suffix("|1\n") &&
     mode_code == 0 &&
     socket_mode.trim().to_owned() == "600"
@@ -3109,7 +3108,7 @@ async fn run_conductor_start_live() -> Int {
     .to_json(),
     "project_initialized": project_initialized.to_json(),
     "zellij_required": false.to_json(),
-    "conductor_surface_restricted": conductor_surface_restricted.to_json(),
+    "conductor_surface_configured": conductor_surface_configured.to_json(),
     "daemon_stopped": daemon_stopped.to_json(),
   }
   if !passed {

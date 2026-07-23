@@ -54,6 +54,9 @@ extern "C" fn c_poll_readable_pair(
 ) -> Int = "choir_poll_readable_pair"
 
 ///|
+extern "C" fn c_stdin_set_unbuffered() -> Int = "choir_stdin_set_unbuffered"
+
+///|
 #borrow(buf)
 extern "C" fn c_stdout_write(buf : Bytes, size : Int) = "choir_stdout_write"
 
@@ -240,6 +243,12 @@ pub fn poll_readable_pair(
   timeout_ms : Int,
 ) -> Int {
   c_poll_readable_pair(first_fd, second_fd, timeout_ms)
+}
+
+///|
+/// Disable libc read-ahead before combining stdin reads with poll(2).
+pub fn stdin_set_unbuffered() -> Bool {
+  c_stdin_set_unbuffered() == 0
 }
 
 ///|

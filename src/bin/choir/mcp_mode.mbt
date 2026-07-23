@@ -508,6 +508,12 @@ fn mcp_run() -> Unit {
   let token = mcp_required_environment("CHOIR_CONDUCTOR_TOKEN", inherit_parent)
   let raw_stdio = mcp_has_arg(args, "--raw-stdio")
   let channel = mcp_has_arg(args, "--channel")
+  if channel {
+    // The channel loop polls fd 0 between requests. Prevent fgets/fread from
+    // hiding a following framed request in libc's buffer where poll cannot
+    // observe it.
+    ignore(@sys.stdin_set_unbuffered())
+  }
   let wait_tries = mcp_wait_tries(args)
   let mut fd = mcp_connect_uds(socket_path, wait_tries)
   if fd < 0 {

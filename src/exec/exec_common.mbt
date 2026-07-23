@@ -91,8 +91,6 @@ pub fn conductor_launch_command(
     program: "claude",
     args: [
       "--dangerously-skip-permissions",
-      "--tools",
-      "",
       "--allowedTools",
       conductor_claude_allowed_tools(),
       "--setting-sources",
