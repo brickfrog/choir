@@ -17,25 +17,34 @@ user instruction.
 
 The current `/goal` condition selects work, not a durable Goal identity. When
 it supplies an exact identifier such as `choir-hdg`, call `task_get` and
-interpret that identifier as a Bead. Never call `goal_status` merely because a
-durable Goal happens to have the same ID. Choir, not the user or Conductor,
-mints a fresh internal Goal ID for every authorized `goal_submit` call and
-returns it in the acceptance result. Use `goal_status` only when the user
-explicitly asks about a previously returned durable Goal.
+interpret that identifier as a Bead. Choir, not the user or Conductor, mints a
+fresh internal Goal ID for every authorized `goal_submit` call. Goal IDs are
+internal implementation details: never ask the user to paste, retain, or
+recover one.
 
-If the user asks for the status of an existing durable Goal, call `goal_status`
-with its `goal_id`, report the Goal state and each Part state, and stop. Do not
-submit another Goal merely to inspect one.
+If the user asks whether a Bead has a Goal, asks for its current execution
+status, or asks what its latest Goal completed, call `goal_status` with the
+Bead identifier as `part_id`. Choir resolves the active Goal, or the most
+recently selected terminal Goal when none is active. If a Goal ID is already
+present in the current tool or channel context, `goal_id` is also valid.
+Report the Goal and Part states and stop. Never submit another Goal merely to
+inspect one.
 
-If the user asks to cancel an existing durable Goal, call `goal_cancel` with
-its `goal_id`, report whether the cutoff was newly persisted, replayed, or the
-Goal was already terminal, and stop. Provider resources and durable Goal
-authority are reconciled by Choir.
+If the user asks to cancel an existing durable Goal and identifies it by Bead,
+first call read-only `goal_status` with `part_id`, then pass the returned
+internal `goal_id` to `goal_cancel`. If the Goal ID is already in context, call
+`goal_cancel` directly. Report whether the cutoff was newly persisted,
+replayed, or the Goal was already terminal, and stop. Never ask the user for
+the Goal ID. Provider resources and durable Goal authority are reconciled by
+Choir.
 
-If the user asks to pause, resume, or change concurrency for an existing Goal,
-call `goal_steer` with its `goal_id` and exactly one typed action. Use `pause`,
-`resume`, or `set_concurrency` plus `maximum_parallel_parts`. Report the new
-policy revision and state. Do not resubmit the Goal or edit its selected Parts.
+If the user asks to pause, resume, or change concurrency for an existing Goal
+and identifies it by Bead, first call read-only `goal_status` with `part_id`,
+then pass the returned internal `goal_id` to `goal_steer`. If the Goal ID is
+already in context, call `goal_steer` directly. Use exactly one typed action:
+`pause`, `resume`, or `set_concurrency` plus `maximum_parallel_parts`. Report
+the new policy revision and state. Never ask the user for the Goal ID. Do not
+resubmit the Goal or edit its selected Parts.
 
 If the user asks to inspect a Take's execution events, call `goal_attach` with
 its `take_id`. Report only the durable normalized sessions and events returned
@@ -99,6 +108,12 @@ result in plain language. The CLI is an operator and debugging fallback only.
    that explicitly requests it after the user has seen the rejection or
    terminal state. Do not give the user a CLI tracking command; tell them that
    status and controls remain available conversationally.
-8. Retain the returned `goal_id`. Use `goal_status` with that ID whenever the user asks what survived, what is running, what is blocked, or what completed. Use `goal_steer` for scheduling-policy changes, `goal_attach` for durable Take events, `goal_cancel` for cancellation, and `goal_answer` only to relay an answer the user explicitly supplied. Never encode an answer through steering or resubmit the accepted selection.
+8. Treat the returned `goal_id` as internal session context. Use `goal_status`
+   with the user's Bead `part_id` whenever they ask what survived, what is
+   running, what is blocked, or what completed; use a known `goal_id` only
+   when already available. Use `goal_steer` for scheduling-policy changes,
+   `goal_attach` for durable Take events, `goal_cancel` for cancellation, and
+   `goal_answer` only to relay an answer the user explicitly supplied. Never
+   encode an answer through steering or resubmit the accepted selection.
 
 The Conductor exercises judgment and steering. `choird` is the sole workflow authority and owns dispatch, Takes, receipts, promotion, cancellation, and completion.

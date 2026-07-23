@@ -59,10 +59,14 @@ test "Conductor catalog exposes only Goal and Beads operations" {
   }
   assert_eq(tools.length(), 10)
   let mut goal_submit_schema : Json? = None
+  let mut goal_status_schema : Json? = None
   for tool in tools {
     guard tool is Object(fields) else { continue }
     if fields.get("name") == Some("goal_submit".to_json()) {
       goal_submit_schema = fields.get("inputSchema")
+    }
+    if fields.get("name") == Some("goal_status".to_json()) {
+      goal_status_schema = fields.get("inputSchema")
     }
   }
   guard goal_submit_schema is Some(Object(goal_submit)) else {
@@ -75,6 +79,23 @@ test "Conductor catalog exposes only Goal and Beads operations" {
   assert_eq(
     goal_submit.get("required"),
     Some(["proposal_id", "maximum_parallel_parts", "parts"].to_json()),
+  )
+  guard goal_status_schema is Some(Object(goal_status)) else {
+    fail("expected goal_status schema")
+  }
+  guard goal_status.get("properties") is Some(Object(status_properties)) else {
+    fail("expected goal_status properties")
+  }
+  assert_true(status_properties.get("goal_id") is Some(_))
+  assert_true(status_properties.get("part_id") is Some(_))
+  assert_eq(
+    goal_status.get("oneOf"),
+    Some(
+      [
+        { "required": ["goal_id"].to_json() }.to_json(),
+        { "required": ["part_id"].to_json() }.to_json(),
+      ].to_json(),
+    ),
   )
   let rendered = tools.to_json().stringify()
   assert_true(rendered.contains("goal_submit"))

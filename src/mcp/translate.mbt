@@ -147,20 +147,26 @@ fn conductor_tools() -> Array[CatalogTool] {
     },
     {
       name: "goal_status",
-      description: "Inspect durable Goal state for an explicit user status request. Background transitions arrive through the Choir channel.",
+      description: "Inspect durable Goal state for an explicit user status request. Select by internal goal_id when already known, or by the user-facing Bead/Part part_id. A part_id resolves its active Goal, or its most recently selected terminal Goal when none is active. Use part_id for Bead-oriented questions; never ask the user to supply an internal Goal ID. Exactly one selector is required. Background transitions arrive through the Choir channel.",
       input_schema: {
         "type": "object".to_json(),
         "properties": {
           "goal_id": conductor_string_schema("Durable Goal identifier"),
+          "part_id": conductor_string_schema(
+            "Bead/Part identifier whose active Goal should be resolved",
+          ),
         }.to_json(),
-        "required": ["goal_id"].to_json(),
+        "oneOf": [
+          { "required": ["goal_id"].to_json() }.to_json(),
+          { "required": ["part_id"].to_json() }.to_json(),
+        ].to_json(),
         "additionalProperties": false.to_json(),
       }.to_json(),
       read_only: true,
     },
     {
       name: "goal_cancel",
-      description: "Install a durable cancellation cutoff only when the user's current message explicitly requests cancellation. Never cancel as an inferred response to blocked or uncertain status.",
+      description: "Install a durable cancellation cutoff only when the user's current message explicitly requests cancellation. If the user identified the Goal by Bead/Part, resolve its internal goal_id with read-only goal_status first; never ask the user to supply it. Never cancel as an inferred response to blocked or uncertain status.",
       input_schema: {
         "type": "object".to_json(),
         "properties": {
@@ -173,7 +179,7 @@ fn conductor_tools() -> Array[CatalogTool] {
     },
     {
       name: "goal_steer",
-      description: "Apply one scheduling change only when the user's current message explicitly requests it.",
+      description: "Apply one scheduling change only when the user's current message explicitly requests it. If the user identified the Goal by Bead/Part, resolve its internal goal_id with read-only goal_status first; never ask the user to supply it.",
       input_schema: {
         "type": "object".to_json(),
         "properties": {

@@ -836,12 +836,35 @@ fn dispatch_native_goal_status(
   project_dir : String,
   request : @types.Request,
 ) -> @types.Response {
-  let goal_id = match native_conductor_required_string(request, "goal_id") {
-    Ok(value) => value
-    Err(error) => return @types.Response::Err(error.message())
+  let report = match
+    (
+      native_conductor_optional_string(request, "goal_id"),
+      native_conductor_optional_string(request, "part_id"),
+    ) {
+    (Some(goal_id), None) =>
+      inspect_native_goal(project_dir, @control.GoalId(goal_id))
+    (None, Some(part_id)) =>
+      inspect_native_goal_for_part(project_dir, @control.PartId(part_id))
+    _ =>
+      return @types.Response::Err(
+        "goal_status requires exactly one of goal_id or part_id",
+      )
   }
-  match inspect_native_goal(project_dir, @control.GoalId(goal_id)) {
-    Ok(report) => native_conductor_goal_action_ok_json(report.to_json())
+  match report {
+    Ok(report) => {
+      guard report.to_json() is Object(fields) else {
+        return native_conductor_error("status response was not an object")
+      }
+      match
+        native_goal_publication_probe_diagnostic(project_dir, report.goal_id) {
+        Some(diagnostic) => {
+          fields.set("publication_observation_diagnostic", diagnostic)
+          fields.set("diagnostic_is_observational", true.to_json())
+        }
+        None => ()
+      }
+      native_conductor_goal_action_ok_json(fields.to_json())
+    }
     Err(error) => @types.Response::Err(error.message())
   }
 }

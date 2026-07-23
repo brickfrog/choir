@@ -5,6 +5,96 @@ enum NativeGoalPublicationRemoteIdentity {
 } derive(Debug, Eq)
 
 ///|
+priv enum NativeRemoteBranchProbeFailureKind {
+  RemoteProbeProcessFailure
+  RemoteProbeExitFailure
+  RemoteProbeMalformedOutput
+  RemoteProbeAmbiguousOutput
+} derive(Debug, Eq, ToJson)
+
+///|
+priv struct NativeRemoteBranchProbe {
+  observation : @workflow.RemoteBranchObservation
+  failure_kind : NativeRemoteBranchProbeFailureKind?
+  exit_code : Int?
+  detail : String
+  attempts : Int
+}
+
+///|
+fn native_remote_branch_probe_to_json(probe : NativeRemoteBranchProbe) -> Json {
+  {
+    "observation": probe.observation.to_json(),
+    "failure_kind": probe.failure_kind.to_json(),
+    "exit_code": probe.exit_code.to_json(),
+    "detail": probe.detail.to_json(),
+    "attempts": probe.attempts.to_json(),
+  }.to_json()
+}
+
+///|
+fn native_remote_branch_probe_detail(value : String) -> String {
+  let trimmed = value.trim().to_owned()
+  let bytes = @utf8.encode(trimmed)
+  if bytes.length() <= 4096 {
+    trimmed
+  } else {
+    @utf8.decode_lossy(bytes[:4096]) + "\n[truncated]"
+  }
+}
+
+///|
+fn native_goal_publication_probe_path(
+  project_dir : String,
+  goal_id : @control.GoalId,
+) -> String {
+  let digest = @storage.digest_text(
+    @storage.artifact_digest(
+      @utf8.encode("choir.publication-observation.v1\u{00}" + goal_id.0),
+    ),
+  )
+  project_dir + "/.choir/state/observations/publication/" + digest + ".json"
+}
+
+///|
+fn persist_native_remote_branch_probe_diagnostic(
+  repository : NativeGoalRepositoryIdentity,
+  intent : @workflow.BranchPublicationIntent,
+  probe : NativeRemoteBranchProbe,
+) -> Unit {
+  let path = native_goal_publication_probe_path(repository.root, intent.goal_id)
+  if probe.observation
+    is @workflow.RemoteBranchObservation::RemoteBranchObservationUncertain {
+    let parent = repository.root + "/.choir/state/observations/publication"
+    if !@sys.create_dir_all(parent) ||
+      !@sys.write_file_atomic(
+        path,
+        native_remote_branch_probe_to_json(probe).stringify(indent=2) + "\n",
+      ) {
+      @sys.write_stderr(
+        "choir publication: failed to persist remote observation diagnostic\n",
+      )
+    }
+  } else if @sys.path_entry_exists(path) {
+    ignore(@sys.delete_file_sync(path))
+  }
+}
+
+///|
+pub fn native_goal_publication_probe_diagnostic(
+  project_dir : String,
+  goal_id : @control.GoalId,
+) -> Json? {
+  let path = native_goal_publication_probe_path(project_dir, goal_id)
+  if !@sys.path_entry_exists(path) {
+    return None
+  }
+  Some(@json.parse(@sys.read_file(path))) catch {
+    _ => None
+  }
+}
+
+///|
 async fn native_goal_publication_remote_identity(
   repository : NativeGoalRepositoryIdentity,
   remote_name : @workflow.RemoteName,
@@ -37,23 +127,39 @@ async fn native_goal_publication_remote_identity(
 }
 
 ///|
-async fn native_remote_branch_observation(
+async fn native_remote_branch_probe_once(
   repository : NativeGoalRepositoryIdentity,
   intent : @workflow.BranchPublicationIntent,
-) -> @workflow.RemoteBranchObservation {
+  capture? : async (String, Array[String]) -> Result[
+    NativeGitCapture,
+    @types.ChoirError,
+  ] = capture_native_goal_git,
+) -> NativeRemoteBranchProbe {
   let captured = match
-    capture_native_goal_git(repository.root, [
+    capture(repository.root, [
       "ls-remote",
       "--refs",
       intent.remote_name.0,
       intent.remote_head_ref.0,
     ]) {
     Ok(value) => value
-    Err(_) =>
-      return @workflow.RemoteBranchObservation::RemoteBranchObservationUncertain
+    Err(error) =>
+      return {
+        observation: @workflow.RemoteBranchObservation::RemoteBranchObservationUncertain,
+        failure_kind: Some(RemoteProbeProcessFailure),
+        exit_code: None,
+        detail: native_remote_branch_probe_detail(error.message()),
+        attempts: 1,
+      }
   }
   if captured.exit_code != 0 {
-    return @workflow.RemoteBranchObservation::RemoteBranchObservationUncertain
+    return {
+      observation: @workflow.RemoteBranchObservation::RemoteBranchObservationUncertain,
+      failure_kind: Some(RemoteProbeExitFailure),
+      exit_code: Some(captured.exit_code),
+      detail: native_remote_branch_probe_detail(captured.output),
+      attempts: 1,
+    }
   }
   let observed : Array[@control.GitOid] = []
   for raw in captured.output.split("\n") {
@@ -63,19 +169,184 @@ async fn native_remote_branch_observation(
     }
     let fields = line.split("\t").to_array()
     if fields.length() != 2 || fields[1] != intent.remote_head_ref.0 {
-      return @workflow.RemoteBranchObservation::RemoteBranchObservationUncertain
+      return {
+        observation: @workflow.RemoteBranchObservation::RemoteBranchObservationUncertain,
+        failure_kind: Some(RemoteProbeMalformedOutput),
+        exit_code: Some(captured.exit_code),
+        detail: native_remote_branch_probe_detail(captured.output),
+        attempts: 1,
+      }
     }
     let oid = fields[0].trim().to_owned()
     if oid.length() != intent.sealed_head_oid.0.length() {
-      return @workflow.RemoteBranchObservation::RemoteBranchObservationUncertain
+      return {
+        observation: @workflow.RemoteBranchObservation::RemoteBranchObservationUncertain,
+        failure_kind: Some(RemoteProbeMalformedOutput),
+        exit_code: Some(captured.exit_code),
+        detail: native_remote_branch_probe_detail(captured.output),
+        attempts: 1,
+      }
     }
     observed.push(@control.GitOid(oid))
   }
   match observed {
-    [] => @workflow.RemoteBranchObservation::RemoteBranchAbsent
-    [oid] => @workflow.RemoteBranchObservation::RemoteBranchAt(oid)
-    _ => @workflow.RemoteBranchObservation::RemoteBranchObservationUncertain
+    [] =>
+      {
+        observation: @workflow.RemoteBranchObservation::RemoteBranchAbsent,
+        failure_kind: None,
+        exit_code: Some(captured.exit_code),
+        detail: "",
+        attempts: 1,
+      }
+    [oid] =>
+      {
+        observation: @workflow.RemoteBranchObservation::RemoteBranchAt(oid),
+        failure_kind: None,
+        exit_code: Some(captured.exit_code),
+        detail: "",
+        attempts: 1,
+      }
+    _ =>
+      {
+        observation: @workflow.RemoteBranchObservation::RemoteBranchObservationUncertain,
+        failure_kind: Some(RemoteProbeAmbiguousOutput),
+        exit_code: Some(captured.exit_code),
+        detail: native_remote_branch_probe_detail(captured.output),
+        attempts: 1,
+      }
   }
+}
+
+///|
+async fn native_remote_branch_probe(
+  repository : NativeGoalRepositoryIdentity,
+  intent : @workflow.BranchPublicationIntent,
+  capture? : async (String, Array[String]) -> Result[
+    NativeGitCapture,
+    @types.ChoirError,
+  ] = capture_native_goal_git,
+  wait? : async (Int) -> Unit = async fn(milliseconds) {
+    @async.sleep(milliseconds)
+  },
+  persist? : (
+    NativeGoalRepositoryIdentity,
+    @workflow.BranchPublicationIntent,
+    NativeRemoteBranchProbe,
+  ) -> Unit = persist_native_remote_branch_probe_diagnostic,
+) -> NativeRemoteBranchProbe {
+  let mut probe = native_remote_branch_probe_once(repository, intent, capture~)
+  while probe.observation
+        is @workflow.RemoteBranchObservation::RemoteBranchObservationUncertain &&
+        probe.attempts < 3 {
+    wait(if probe.attempts == 1 { 500 } else { 1500 })
+    let next = native_remote_branch_probe_once(repository, intent, capture~)
+    probe = { ..next, attempts: probe.attempts + 1 }
+  }
+  persist(repository, intent, probe)
+  probe
+}
+
+///|
+async fn native_remote_branch_observation(
+  repository : NativeGoalRepositoryIdentity,
+  intent : @workflow.BranchPublicationIntent,
+) -> @workflow.RemoteBranchObservation {
+  native_remote_branch_probe(repository, intent).observation
+}
+
+///|
+async test "publication preflight retries read-only observation with backoff" {
+  let intent : @workflow.BranchPublicationIntent = {
+    id: @workflow.BranchPublicationIntentId("probe-test"),
+    goal_id: @control.GoalId("goal-probe-test"),
+    canonical_repository_id: @workflow.RemoteRepositoryId("remote-test"),
+    remote_name: @workflow.RemoteName("origin"),
+    remote_head_ref: @workflow.GitRefName("refs/heads/choir/goals/probe-test"),
+    expected_prior_remote_oid: None,
+    sealed_head_oid: @control.GitOid("1111111111111111111111111111111111111111"),
+    goal_branch_seal_id: @control.GoalBranchSealId("seal-probe-test"),
+    goal_branch_seal_digest: @control.Digest("seal-digest"),
+    idempotency_key: "probe-test",
+    state: @workflow.BranchPublicationState::BranchPublicationPlanned,
+  }
+  let repository : NativeGoalRepositoryIdentity = {
+    root: "/unused",
+    git_directory: "/unused/.git",
+    object_directory: "/unused/.git/objects",
+  }
+  let mut calls = 0
+  let waits : Array[Int] = []
+  let probe = native_remote_branch_probe(
+    repository,
+    intent,
+    capture=async fn(_, _) {
+      @async.sleep(0)
+      calls = calls + 1
+      if calls < 3 {
+        Ok({
+          exit_code: 128,
+          output: "ssh: Could not resolve hostname github.com",
+        })
+      } else {
+        Ok({ exit_code: 0, output: "" })
+      }
+    },
+    wait=async fn(milliseconds) {
+      @async.sleep(0)
+      waits.push(milliseconds)
+    },
+    persist=fn(_, _, _) { () },
+  )
+  assert_eq(calls, 3)
+  assert_eq(waits, [500, 1500])
+  assert_eq(probe.attempts, 3)
+  assert_eq(
+    probe.observation,
+    @workflow.RemoteBranchObservation::RemoteBranchAbsent,
+  )
+  assert_eq(probe.failure_kind, None)
+}
+
+///|
+async test "publication preflight retains final failure diagnostics" {
+  let intent : @workflow.BranchPublicationIntent = {
+    id: @workflow.BranchPublicationIntentId("probe-failure-test"),
+    goal_id: @control.GoalId("goal-probe-failure-test"),
+    canonical_repository_id: @workflow.RemoteRepositoryId("remote-test"),
+    remote_name: @workflow.RemoteName("origin"),
+    remote_head_ref: @workflow.GitRefName(
+      "refs/heads/choir/goals/probe-failure-test",
+    ),
+    expected_prior_remote_oid: None,
+    sealed_head_oid: @control.GitOid("2222222222222222222222222222222222222222"),
+    goal_branch_seal_id: @control.GoalBranchSealId("seal-probe-failure-test"),
+    goal_branch_seal_digest: @control.Digest("seal-digest"),
+    idempotency_key: "probe-failure-test",
+    state: @workflow.BranchPublicationState::BranchPublicationPlanned,
+  }
+  let repository : NativeGoalRepositoryIdentity = {
+    root: "/unused",
+    git_directory: "/unused/.git",
+    object_directory: "/unused/.git/objects",
+  }
+  let probe = native_remote_branch_probe(
+    repository,
+    intent,
+    capture=async fn(_, _) {
+      @async.sleep(0)
+      Ok({ exit_code: 128, output: "Permission denied (publickey)." })
+    },
+    wait=async fn(_) { @async.sleep(0) },
+    persist=fn(_, _, _) { () },
+  )
+  assert_eq(probe.attempts, 3)
+  assert_eq(probe.failure_kind, Some(RemoteProbeExitFailure))
+  assert_eq(probe.exit_code, Some(128))
+  assert_true(probe.detail.contains("Permission denied"))
+  assert_eq(
+    probe.observation,
+    @workflow.RemoteBranchObservation::RemoteBranchObservationUncertain,
+  )
 }
 
 ///|
@@ -328,6 +599,12 @@ pub async fn advance_native_goal_publication(
               ) {
               Ok(value) => value
               Err(error) => return Err(error)
+            }
+            if authorized.intent.state ==
+              @workflow.BranchPublicationState::BranchPublicationPreflightUncertain {
+              return Ok(
+                @workflow.GoalPublicationTickOutcome::GoalPublicationPending,
+              )
             }
             if authorized.intent.state ==
               @workflow.BranchPublicationState::BranchPublicationAuthorized &&

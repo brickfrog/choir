@@ -205,6 +205,13 @@ async test "native Conductor submission captures Beads and persists once" {
   }
   assert_eq(status.goal_id, @control.GoalId("goal-native-submit"))
   assert_eq(status.state, @workflow.GoalExecutionState::GoalExecutionPaused)
+  let status_by_part = match
+    inspect_native_goal_for_part(root, @control.PartId("choir-a")) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(status_by_part.goal_id, status.goal_id)
+  assert_eq(status_by_part.state, status.state)
   assert_eq(status.durable_version, 3)
   assert_eq(status.maximum_parallel_parts, 1)
   assert_eq(status.parts.length(), 1)

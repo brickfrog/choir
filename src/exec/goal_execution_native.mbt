@@ -4225,3 +4225,83 @@ pub fn inspect_native_goal(
     record, snapshots, assurance, publication, pull_request, finalization,
   )
 }
+
+///|
+pub fn inspect_native_goal_for_part(
+  project_dir : String,
+  part_id : @control.PartId,
+) -> Result[@workflow.GoalStatusReport, @types.ChoirError] {
+  let repository = native_goal_repository(project_dir)
+  if !@sys.path_entry_exists(repository.state_store.path) {
+    return Err(
+      native_goal_execution_error("no Goal is registered for this Part"),
+    )
+  }
+  let adapters = local_part_workflow_repository_adapters()
+  let records = match
+    @workflow.list_goal_execution_records(repository, adapters) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let active : Array[@control.GoalId] = []
+  let mut latest_terminal : (@control.GoalId, Int64)? = None
+  let mut terminal_timestamp_is_ambiguous = false
+  for stored in records {
+    let mut selected_at = 0L
+    let owns_part = stored.record.source_claims.any(fn(claim) {
+      if claim.part_id != part_id {
+        false
+      } else {
+        match claim.receipt {
+          Some(receipt) => selected_at = receipt.observed_at
+          None => ()
+        }
+        true
+      }
+    })
+    if !owns_part {
+      continue
+    }
+    if !@workflow.goal_execution_is_terminal(stored.record) {
+      active.push(stored.record.goal.id)
+      continue
+    }
+    match latest_terminal {
+      None => {
+        latest_terminal = Some((stored.record.goal.id, selected_at))
+        terminal_timestamp_is_ambiguous = false
+      }
+      Some((_, latest_at)) if selected_at > latest_at => {
+        latest_terminal = Some((stored.record.goal.id, selected_at))
+        terminal_timestamp_is_ambiguous = false
+      }
+      Some((_, latest_at)) if selected_at == latest_at =>
+        terminal_timestamp_is_ambiguous = true
+      _ => ()
+    }
+  }
+  match active {
+    [goal_id] => inspect_native_goal(project_dir, goal_id)
+    [] =>
+      match latest_terminal {
+        Some((goal_id, _)) if !terminal_timestamp_is_ambiguous =>
+          inspect_native_goal(project_dir, goal_id)
+        Some(_) =>
+          Err(
+            native_goal_execution_error(
+              "multiple historical Goals for this Part are equally recent",
+            ),
+          )
+        None =>
+          Err(
+            native_goal_execution_error("no Goal is registered for this Part"),
+          )
+      }
+    _ =>
+      Err(
+        native_goal_execution_error(
+          "multiple active Goals own this Part; durable state is inconsistent",
+        ),
+      )
+  }
+}
