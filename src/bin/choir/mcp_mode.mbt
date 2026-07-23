@@ -33,6 +33,57 @@ fn mcp_response_wire(
 }
 
 ///|
+fn mcp_message_wire(message : String, raw_stdio : Bool) -> String {
+  let body = message + "\n"
+  if raw_stdio {
+    body
+  } else {
+    "Content-Length: " +
+    @utf8.encode(body).length().to_string() +
+    "\r\n\r\n" +
+    body
+  }
+}
+
+///|
+fn mcp_tagged_identity(value : Json?) -> String? {
+  match value {
+    Some(String(identity)) => Some(identity)
+    Some(Array([String(_), String(identity)])) => Some(identity)
+    _ => None
+  }
+}
+
+///|
+fn mcp_goal_update_notification(line : String, raw_stdio : Bool) -> String? {
+  let parsed = @json.parse(line) catch { _ => return None }
+  guard parsed is Object(message) else { return None }
+  guard message.get("method") == Some("choir/goal_status_changed".to_json()) else {
+    return None
+  }
+  guard message.get("report") is Some(report_json) else { return None }
+  guard report_json is Object(report) else { return None }
+  let goal_id = mcp_tagged_identity(report.get("goal_id")).unwrap_or("unknown")
+  let state = match report.get("state") {
+    Some(String(value)) => value
+    Some(value) => value.stringify(indent=0)
+    None => "unknown"
+  }
+  let durable_version = match report.get("durable_version") {
+    Some(value) => value.stringify(indent=0)
+    None => "unknown"
+  }
+  let meta : Map[String, String] = {
+    "goal_id": goal_id,
+    "state": state,
+    "durable_version": durable_version,
+  }
+  let content = "Choir durable Goal state changed:\n" +
+    report_json.stringify(indent=0)
+  Some(mcp_message_wire(@mcp.channel_notification(content, meta), raw_stdio))
+}
+
+///|
 fn mcp_parse_content_length(line : String) -> Int? {
   let trimmed = line.trim().to_owned()
   let lower = trimmed.to_lower()
@@ -169,90 +220,110 @@ fn mcp_run_request_loop(
   read_server_line : () -> String,
   write_output : (String) -> Unit,
   raw_stdio : Bool,
+  channel? : Bool = false,
 ) -> McpLoopExit {
   for ;; {
     let line = match read_input() {
       Some(value) => value
       None => return InputClosed
     }
-    match @mcp.parse_jsonrpc_request(line) {
-      Ok(rpc) => {
-        let id = match rpc.id {
-          Some(value) => value
-          None => continue
-        }
-        if rpc.req_method == @mcp.method_initialize {
-          write_output(
-            mcp_response_wire(@mcp.initialize_response(id), raw_stdio),
-          )
-          continue
-        }
-        if rpc.req_method == @mcp.method_tools_list {
-          write_output(
-            mcp_response_wire(
-              @mcp.tools_list_response_filtered(id, @mcp.conductor_tool_names()),
-              raw_stdio,
-            ),
-          )
-          continue
-        }
-        match @mcp.to_internal_request(rpc) {
-          Ok(request) => {
-            if !mcp_conductor_allows(request.name) {
-              write_output(
-                mcp_response_wire(
-                  @mcp.error_response(
-                    id, @mcp.err_method_not_found, "tool is outside the Conductor surface",
-                  ),
-                  raw_stdio,
-                ),
-              )
-              continue
-            }
-            if !send_wire_request(mcp_build_wire_request(request)) {
-              write_output(
-                mcp_response_wire(
-                  @mcp.error_response(
-                    id, @mcp.err_internal, "choird disconnected; retry the tool call",
-                  ),
-                  raw_stdio,
-                ),
-              )
-              return Reconnect
-            }
-            let response_line = read_server_line()
-            if response_line == "" {
-              write_output(
-                mcp_response_wire(
-                  @mcp.error_response(
-                    id, @mcp.err_internal, "choird disconnected; retry the tool call",
-                  ),
-                  raw_stdio,
-                ),
-              )
-              return Reconnect
-            }
-            write_output(mcp_server_response(id, response_line, raw_stdio))
-          }
-          Err(error) =>
-            write_output(
-              mcp_response_wire(
-                @mcp.error_response(id, error.code, error.message),
-                raw_stdio,
-              ),
-            )
-        }
-      }
-      Err(error) =>
-        write_output(
-          mcp_response_wire(
-            @mcp.error_response(Number(0), error.code, error.message),
-            raw_stdio,
-          ),
-        )
+    match
+      mcp_handle_request(
+        line, send_wire_request, read_server_line, write_output, raw_stdio, channel,
+      ) {
+      Some(exit) => return exit
+      None => ()
     }
   }
   InputClosed
+}
+
+///|
+fn mcp_handle_request(
+  line : String,
+  send_wire_request : (String) -> Bool,
+  read_server_line : () -> String,
+  write_output : (String) -> Unit,
+  raw_stdio : Bool,
+  channel : Bool,
+) -> McpLoopExit? {
+  match @mcp.parse_jsonrpc_request(line) {
+    Ok(rpc) => {
+      let id = match rpc.id {
+        Some(value) => value
+        None => return None
+      }
+      if rpc.req_method == @mcp.method_initialize {
+        write_output(
+          mcp_response_wire(@mcp.initialize_response(id, channel~), raw_stdio),
+        )
+        return None
+      }
+      if rpc.req_method == @mcp.method_tools_list {
+        write_output(
+          mcp_response_wire(
+            @mcp.tools_list_response_filtered(id, @mcp.conductor_tool_names()),
+            raw_stdio,
+          ),
+        )
+        return None
+      }
+      match @mcp.to_internal_request(rpc) {
+        Ok(request) => {
+          if !mcp_conductor_allows(request.name) {
+            write_output(
+              mcp_response_wire(
+                @mcp.error_response(
+                  id, @mcp.err_method_not_found, "tool is outside the Conductor surface",
+                ),
+                raw_stdio,
+              ),
+            )
+            return None
+          }
+          if !send_wire_request(mcp_build_wire_request(request)) {
+            write_output(
+              mcp_response_wire(
+                @mcp.error_response(
+                  id, @mcp.err_internal, "choird disconnected; retry the tool call",
+                ),
+                raw_stdio,
+              ),
+            )
+            return Some(Reconnect)
+          }
+          let response_line = read_server_line()
+          if response_line == "" {
+            write_output(
+              mcp_response_wire(
+                @mcp.error_response(
+                  id, @mcp.err_internal, "choird disconnected; retry the tool call",
+                ),
+                raw_stdio,
+              ),
+            )
+            return Some(Reconnect)
+          }
+          write_output(mcp_server_response(id, response_line, raw_stdio))
+        }
+        Err(error) =>
+          write_output(
+            mcp_response_wire(
+              @mcp.error_response(id, error.code, error.message),
+              raw_stdio,
+            ),
+          )
+      }
+    }
+    Err(error) =>
+      write_output(
+        mcp_response_wire(
+          @mcp.error_response(Number(0), error.code, error.message),
+          raw_stdio,
+        ),
+      )
+  }
+  None
 }
 
 ///|
@@ -260,8 +331,12 @@ fn mcp_register_conductor(
   fd : Int,
   reader : UDSLineReader,
   token : String,
+  channel? : Bool = false,
 ) -> McpLoopExit? {
-  let wire = @transport.format_conductor_registration_request(token) + "\n"
+  let wire = @transport.format_conductor_registration_request_with_channel(
+      token, channel,
+    ) +
+    "\n"
   if !mcp_write_all_uds(fd, @utf8.encode(wire)) {
     return Some(Reconnect)
   }
@@ -298,6 +373,93 @@ fn mcp_run_uds_loop(fd : Int, token : String, raw_stdio : Bool) -> McpLoopExit {
     fn(output) { @sys.write_stdout(output) },
     raw_stdio,
   )
+}
+
+///|
+fn mcp_read_server_response_with_channels(
+  reader : UDSLineReader,
+  write_output : (String) -> Unit,
+  raw_stdio : Bool,
+) -> String {
+  for ;; {
+    let line = reader.read_line()
+    if line == "" {
+      return ""
+    }
+    match mcp_goal_update_notification(line, raw_stdio) {
+      Some(notification) => write_output(notification)
+      None => return line
+    }
+  }
+  ""
+}
+
+///|
+fn mcp_run_channel_uds_loop(
+  fd : Int,
+  token : String,
+  raw_stdio : Bool,
+) -> McpLoopExit {
+  let reader = UDSLineReader::new(fd)
+  match mcp_register_conductor(fd, reader, token, channel=true) {
+    Some(exit) => return exit
+    None => ()
+  }
+  for ;; {
+    // Registration or a tool response can share one socket read with a
+    // channel event. Drain complete frames already held by UDSLineReader
+    // before blocking in poll(2), because buffered bytes no longer make the
+    // kernel descriptor readable.
+    while reader.has_complete_line() {
+      let server_line = reader.read_line()
+      match mcp_goal_update_notification(server_line, raw_stdio) {
+        Some(notification) => @sys.write_stdout(notification)
+        None => return Reconnect
+      }
+    }
+    let ready = @sys.poll_readable_pair(0, fd, -1)
+    if ready < 0 {
+      return Reconnect
+    }
+    if ready == 2 || ready == 3 {
+      let server_line = reader.read_line()
+      if server_line == "" {
+        return Reconnect
+      }
+      match mcp_goal_update_notification(server_line, raw_stdio) {
+        Some(notification) => @sys.write_stdout(notification)
+        None => ()
+      }
+    }
+    if ready == 1 || ready == 3 {
+      let input = match
+        mcp_read_next_message(fn() { @sys.read_stdin_line(8192) }, fn(size) {
+          @sys.read_stdin_exact(size)
+        }) {
+        Some(value) => value
+        None => return InputClosed
+      }
+      match
+        mcp_handle_request(
+          input,
+          fn(wire) { mcp_write_all_uds(fd, @utf8.encode(wire)) },
+          fn() {
+            mcp_read_server_response_with_channels(
+              reader,
+              fn(output) { @sys.write_stdout(output) },
+              raw_stdio,
+            )
+          },
+          fn(output) { @sys.write_stdout(output) },
+          raw_stdio,
+          true,
+        ) {
+        Some(exit) => return exit
+        None => ()
+      }
+    }
+  }
+  InputClosed
 }
 
 ///|
@@ -345,6 +507,7 @@ fn mcp_run() -> Unit {
   let socket_path = mcp_required_environment("CHOIR_LISTEN_UDS", inherit_parent)
   let token = mcp_required_environment("CHOIR_CONDUCTOR_TOKEN", inherit_parent)
   let raw_stdio = mcp_has_arg(args, "--raw-stdio")
+  let channel = mcp_has_arg(args, "--channel")
   let wait_tries = mcp_wait_tries(args)
   let mut fd = mcp_connect_uds(socket_path, wait_tries)
   if fd < 0 {
@@ -355,7 +518,11 @@ fn mcp_run() -> Unit {
     return
   }
   for ;; {
-    let outcome = mcp_run_uds_loop(fd, token, raw_stdio)
+    let outcome = if channel {
+      mcp_run_channel_uds_loop(fd, token, raw_stdio)
+    } else {
+      mcp_run_uds_loop(fd, token, raw_stdio)
+    }
     @uds.close(fd)
     match outcome {
       InputClosed => return
@@ -473,4 +640,25 @@ test "Conductor MCP request loop uses choird for tool execution" {
   assert_eq(outputs.length(), 2)
   assert_true(outputs[0].contains("protocolVersion"))
   assert_true(outputs[1].contains("running"))
+}
+
+///|
+test "Conductor MCP channel translates durable Goal updates to inbound events" {
+  let internal = {
+      "method": "choir/goal_status_changed".to_json(),
+      "report": {
+        "goal_id": ["GoalId", "goal-a"].to_json(),
+        "state": "GoalExecutionRunning".to_json(),
+        "durable_version": (7 : Int).to_json(),
+      }.to_json(),
+    }
+    .to_json()
+    .stringify(indent=0)
+  let notification = mcp_goal_update_notification(internal, true).unwrap()
+  assert_true(
+    notification.contains("\"method\":\"notifications/claude/channel\""),
+  )
+  assert_true(notification.contains("\"goal_id\":\"goal-a\""))
+  assert_true(notification.contains("GoalExecutionRunning"))
+  assert_eq(mcp_goal_update_notification("{\"ok\":true}", true), None)
 }

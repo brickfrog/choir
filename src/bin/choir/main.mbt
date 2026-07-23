@@ -29,6 +29,7 @@ fn choir_usage() -> String {
     #|
     #|Internal:
     #|  mcp-stdio             bridge the Conductor MCP session to choird
+    #|  conductor-stop        park a built-in /goal until Choir emits an event
     #|  run-goals             execute durable Goal work for choird
     #|
   )
@@ -96,6 +97,7 @@ fn main {
     "serve" => serve_run()
     "start" => start_run()
     "mcp-stdio" => mcp_run()
+    "conductor-stop" => conductor_stop_run()
     "run-goals" => goal_worker_run()
     "init" => init_run()
     "stop" => stop_run()

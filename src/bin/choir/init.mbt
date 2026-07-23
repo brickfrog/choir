@@ -79,11 +79,12 @@ fn init_ensure_project_files(project_dir : String) -> Result[Unit, String] {
 ///|
 fn init_materialize_conductor_files(
   project_dir : String,
+  choir_executable : String,
 ) -> Result[Unit, String] {
   ignore(@sys.rm_rf(project_dir + "/.choir/plugin"))
   if !@sys.write_file_sync(
       project_dir + "/.choir/state/claude-settings.json",
-      @exec.conductor_claude_settings_json(),
+      @exec.conductor_claude_settings_json(choir_executable),
     ) ||
     !@sys.write_file_sync(
       project_dir + "/.choir/state/conductor-prompt.md",
@@ -107,14 +108,6 @@ fn init_run() -> Unit {
   }
   let project_dir = @env.current_dir().unwrap_or(".")
   match init_ensure_project_files(project_dir) {
-    Ok(_) => ()
-    Err(error) => {
-      @sys.write_stderr("choir init: " + error + "\n")
-      @sys.exit(1)
-      return
-    }
-  }
-  match init_materialize_conductor_files(project_dir) {
     Ok(_) => ()
     Err(error) => {
       @sys.write_stderr("choir init: " + error + "\n")
@@ -159,8 +152,8 @@ test "init Conductor prompt lives outside provider skill discovery" {
   )
   assert_false(@prompts.default_goal_prompt().contains("\nname: goal\n"))
   assert_true(
-    @prompts
-    .default_goal_prompt()
-    .contains("provider's built-in `/goal` command"),
+    @prompts.default_goal_prompt().contains(
+      "provider's built-in `/goal` command",
+    ),
   )
 }

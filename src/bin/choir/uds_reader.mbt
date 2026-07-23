@@ -21,6 +21,17 @@ fn grow_line_buffer(buf : FixedArray[Byte]) -> FixedArray[Byte] {
 }
 
 ///|
+fn UDSLineReader::has_complete_line(self : UDSLineReader) -> Bool {
+  let bytes = self.buf.unsafe_reinterpret_as_bytes()
+  for index = self.read_pos; index < self.write_pos; index = index + 1 {
+    if bytes[index] == (10 : Byte) {
+      return true
+    }
+  }
+  false
+}
+
+///|
 fn UDSLineReader::read_line(self : UDSLineReader) -> String {
   for ;; {
     let bytes = self.buf.unsafe_reinterpret_as_bytes()
@@ -63,4 +74,19 @@ fn UDSLineReader::read_line(self : UDSLineReader) -> String {
     }
     self.write_pos = self.write_pos + n
   }
+}
+
+///|
+test "UDS line reader exposes complete frames already in its buffer" {
+  let reader = UDSLineReader::new(-1)
+  let buffered = @utf8.encode("response\nnotification\n")
+  for index = 0; index < buffered.length(); index = index + 1 {
+    reader.buf[index] = buffered[index]
+  }
+  reader.write_pos = buffered.length()
+  assert_true(reader.has_complete_line())
+  assert_eq(reader.read_line(), "response")
+  assert_true(reader.has_complete_line())
+  assert_eq(reader.read_line(), "notification")
+  assert_false(reader.has_complete_line())
 }

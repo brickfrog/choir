@@ -60,13 +60,14 @@ needed, then invoke the provider's built-in `/goal`. The Conductor proposes the 
 their contracts; Choir validates and schedules them according to dependencies,
 mutation overlap, available provider capacity, and the requested concurrency.
 
-Choir does not install a slash command or skill named `goal`. The Conductor
-receives Choir's contract as launch-time instructions and treats each built-in
-`/goal` objective as one bounded operation. Submission is complete when Choir
-returns the accepted Parts and rejections; background execution remains
-`choird`'s responsibility. Status, attachment, steering, cancellation, and
-answers similarly complete after one corresponding tool call, so the
-provider's persistent Goal loop never polls an asynchronous Choir run.
+Choir does not install a slash command or skill named `goal`: `/goal` remains
+Claude Code's built-in session goal. While a durable Choir Goal is running, a
+deterministic Stop hook parks Claude instead of letting the built-in Goal loop
+start another turn. `choird` continues execution independently and sends each
+material durable Goal projection through an MCP Channel; that event wakes
+Claude for the next useful turn. This makes progress event-driven rather than
+a loop of `goal_status` calls, while `choird` remains the only lifecycle
+authority.
 
 Goal operation is conversational: ask the Conductor to show status, pause,
 resume, change concurrency, attach a Take, cancel, or relay your explicit

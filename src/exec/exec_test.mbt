@@ -5,14 +5,23 @@ test "Claude Conductor launch is terminal-local and strict MCP only" {
   assert_eq(command.program, "claude")
   assert_true(joined.contains("--strict-mcp-config"))
   assert_true(
+    joined.contains("--dangerously-load-development-channels server:choir"),
+  )
+  assert_true(
     joined.contains(
       "--append-system-prompt-file /repo/.choir/state/conductor-prompt.md",
     ),
   )
   assert_false(joined.contains("--plugin-dir"))
   assert_true(joined.contains("\"command\":\"/opt/choir/bin/choir\""))
+  assert_true(joined.contains("\"--channel\""))
   assert_false(joined.contains("\"command\":\"choir\""))
   assert_false(joined.contains("zellij"))
+  let settings = conductor_claude_settings_json("/opt/choir/bin/choir")
+  assert_true(settings.contains("\"Stop\""))
+  assert_true(settings.contains("/opt/choir/bin/choir"))
+  assert_true(settings.contains("conductor-stop"))
+  assert_false(settings.contains("automatic_polling_allowed"))
 }
 
 ///|

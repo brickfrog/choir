@@ -28,7 +28,7 @@ pub fn conductor_claude_mcp_config_json(choir_executable : String) -> String {
         "type": "stdio".to_json(),
         "command": choir_executable.to_json(),
         "args": [
-          "mcp-stdio", "--name", "root", "--stderr-append-log", ".choir/logs/mcp-stdio.stderr.log",
+          "mcp-stdio", "--name", "root", "--channel", "--stderr-append-log", ".choir/logs/mcp-stdio.stderr.log",
         ].to_json(),
         "alwaysLoad": true.to_json(),
       }.to_json(),
@@ -39,8 +39,25 @@ pub fn conductor_claude_mcp_config_json(choir_executable : String) -> String {
 }
 
 ///|
-pub fn conductor_claude_settings_json() -> String {
-  "{}"
+pub fn conductor_claude_settings_json(choir_executable : String) -> String {
+  {
+    "hooks": {
+      "Stop": [
+        {
+          "hooks": [
+            {
+              "type": "command".to_json(),
+              "command": choir_executable.to_json(),
+              "args": ["conductor-stop"].to_json(),
+              "timeout": (5 : Int).to_json(),
+            }.to_json(),
+          ].to_json(),
+        }.to_json(),
+      ].to_json(),
+    }.to_json(),
+  }
+  .to_json()
+  .stringify(indent=0)
 }
 
 ///|
@@ -69,6 +86,8 @@ pub fn conductor_launch_command(
       project_dir + "/.choir/state/conductor-prompt.md",
       "--settings",
       project_dir + "/.choir/state/claude-settings.json",
+      "--dangerously-load-development-channels",
+      "server:choir",
       ..lean_args,
     ],
     workdir: None,

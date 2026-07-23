@@ -44,6 +44,19 @@ test "Conductor registration contains only its capability" {
 }
 
 ///|
+test "channel registration opts in on the authenticated connection" {
+  let wire = format_conductor_registration_request_with_channel(
+    "capability-token", true,
+  )
+  let parsed = parse_request(wire).unwrap()
+  assert_eq(
+    parsed.args.get(@types.registration_token_arg),
+    Some("capability-token"),
+  )
+  assert_eq(parsed.args.get_bool("channel"), Some(true))
+}
+
+///|
 test "wire parser rejects malformed requests" {
   assert_true(parse_request("not json") is Err(_))
   assert_true(parse_request("{}") is Err(_))

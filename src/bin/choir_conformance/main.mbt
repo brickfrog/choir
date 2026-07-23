@@ -3056,6 +3056,9 @@ async fn run_conductor_start_live() -> Int {
   let conductor_result = @sys.read_file(conductor_output)
   let conductor_environment = @sys.read_file(conductor_output + ".env")
   let conductor_args = @sys.read_file(conductor_output + ".args")
+  let conductor_settings = @sys.read_file(
+    root + "/.choir/state/claude-settings.json",
+  )
   let (mode_code, socket_mode) = @exec.capture_command_merged({
     program: "/usr/bin/stat",
     args: ["-c", "%a", socket_path],
@@ -3066,6 +3069,12 @@ async fn run_conductor_start_live() -> Int {
   let conductor_surface_restricted = conductor_args.contains("--tools") &&
     conductor_args.contains("--setting-sources") &&
     conductor_args.contains("--strict-mcp-config") &&
+    conductor_args.contains(
+      "--dangerously-load-development-channels server:choir",
+    ) &&
+    conductor_args.contains("\"--channel\"") &&
+    conductor_settings.contains("\"Stop\"") &&
+    conductor_settings.contains("conductor-stop") &&
     !conductor_args.contains("semble")
   let functional_passed = start_code == 0 &&
     conductor_result.contains("Goal is not registered") &&

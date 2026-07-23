@@ -67,8 +67,12 @@ test "Conductor catalog exposes only Goal and Beads operations" {
   assert_true(rendered.contains("\"enum\":[\"codex\",\"claude\"]"))
   assert_true(rendered.contains("\"default\":\"codex\""))
   assert_true(rendered.contains("never authorizes an automatic retry"))
-  assert_true(rendered.contains("conductor_objective_complete=true"))
-  assert_true(rendered.contains("report it and end the provider Goal. Never poll"))
+  assert_true(rendered.contains("pushes later durable state transitions"))
+  assert_true(
+    rendered.contains("Background transitions arrive through the Choir channel"),
+  )
+  assert_false(rendered.contains("automatic_polling_allowed"))
+  assert_false(rendered.contains("conductor_objective_complete"))
   assert_true(rendered.contains("Never create a defect Bead"))
   assert_true(rendered.contains("task_create"))
   assert_true(rendered.contains("goal_answer"))
@@ -129,6 +133,28 @@ test "initialize response reserves workflow authority for choird" {
   )
   assert_true(instructions.contains("use Beads to preserve intended work"))
   assert_true(instructions.contains("Do not execute a Part yourself"))
+}
+
+///|
+test "channel initialize response declares Claude inbound push capability" {
+  let response = @mcp.initialize_response(Number(22), channel=true)
+  guard response.result is Some(Object(result)) else {
+    fail("expected initialize result")
+  }
+  guard result.get("capabilities") is Some(Object(capabilities)) else {
+    fail("expected capabilities")
+  }
+  assert_eq(
+    capabilities.get("experimental"),
+    Some({ "claude/channel": Json::empty_object() }.to_json()),
+  )
+  let notification = @mcp.channel_notification("Goal advanced", {
+    "goal_id": "goal-a",
+  })
+  assert_true(
+    notification.contains("\"method\":\"notifications/claude/channel\""),
+  )
+  assert_true(notification.contains("\"goal_id\":\"goal-a\""))
 }
 
 ///|

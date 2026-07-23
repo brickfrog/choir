@@ -137,7 +137,7 @@ fn conductor_tools() -> Array[CatalogTool] {
   [
     {
       name: "goal_submit",
-      description: "Submit one typed Conductor draft exactly once for the user's current built-in /goal objective. The response sets conductor_objective_complete=true: report it and end the provider Goal without calling status. A blocked, canceled, failed, or uncertain Goal never authorizes an automatic retry or a replacement Goal ID.",
+      description: "Submit one typed Conductor draft. Choir pushes later durable state transitions into this session through its channel; goal_status is for an explicit user status request, not background observation. A blocked, canceled, failed, or uncertain Goal never authorizes an automatic retry or a replacement Goal ID.",
       input_schema: {
         "type": "object".to_json(),
         "properties": goal_submit_properties.to_json(),
@@ -150,7 +150,7 @@ fn conductor_tools() -> Array[CatalogTool] {
     },
     {
       name: "goal_status",
-      description: "Inspect durable Goal state once for the user's current built-in /goal status objective. The response sets conductor_objective_complete=true: report it and end the provider Goal. Never poll.",
+      description: "Inspect durable Goal state for an explicit user status request. Background transitions arrive through the Choir channel.",
       input_schema: {
         "type": "object".to_json(),
         "properties": {
@@ -387,9 +387,18 @@ fn conductor_instructions() -> String {
 }
 
 ///|
-pub fn initialize_response(id : JsonRpcId) -> JsonRpcResponse {
+pub fn initialize_response(
+  id : JsonRpcId,
+  channel? : Bool = false,
+) -> JsonRpcResponse {
   let empty_tools : Map[String, Json] = Map([])
   let capabilities : Map[String, Json] = { "tools": empty_tools.to_json() }
+  if channel {
+    capabilities.set(
+      "experimental",
+      { "claude/channel": Json::empty_object() }.to_json(),
+    )
+  }
   let server_info : Map[String, Json] = {
     "name": "choir".to_json(),
     "version": "2".to_json(),
@@ -401,6 +410,24 @@ pub fn initialize_response(id : JsonRpcId) -> JsonRpcResponse {
     "instructions": conductor_instructions().to_json(),
   }
   { jsonrpc: "2.0", id, result: Some(result.to_json()), error: None }
+}
+
+///|
+pub fn channel_notification(
+  content : String,
+  meta : Map[String, String],
+) -> String {
+  let params : Map[String, Json] = {
+    "content": content.to_json(),
+    "meta": meta.to_json(),
+  }
+  {
+    "jsonrpc": "2.0".to_json(),
+    "method": "notifications/claude/channel".to_json(),
+    "params": params.to_json(),
+  }
+  .to_json()
+  .stringify(indent=0)
 }
 
 ///|

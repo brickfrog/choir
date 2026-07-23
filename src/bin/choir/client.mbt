@@ -158,6 +158,96 @@ fn client_call_uds(
 }
 
 ///|
+fn conductor_transcript_goal_active(transcript : String) -> Bool {
+  let mut active = false
+  for line in transcript.split("\n") {
+    let parsed = @json.parse(line) catch { _ => continue }
+    guard parsed is Object(entry) else { continue }
+    guard entry.get("attachment") is Some(Object(attachment)) else { continue }
+    if attachment.get("type") != Some("goal_status".to_json()) {
+      continue
+    }
+    active = attachment.get("met") == Some(false.to_json())
+  }
+  active
+}
+
+///|
+fn conductor_stop_goal_active(
+  hook_input : String,
+  read_file? : (String) -> String = fn(path) { @sys.read_file(path) },
+) -> Bool {
+  let parsed = @json.parse(hook_input) catch { _ => return false }
+  guard parsed is Object(input) else { return false }
+  guard input.get("transcript_path") is Some(String(path)) else { return false }
+  conductor_transcript_goal_active(read_file(path))
+}
+
+///|
+fn conductor_stop_output(park : Bool) -> String {
+  if park {
+    {
+      "continue": false.to_json(),
+      "stopReason": "Waiting for a durable Choir Goal state change.".to_json(),
+    }
+    .to_json()
+    .stringify(indent=0) +
+    "\n"
+  } else {
+    "{}\n"
+  }
+}
+
+///|
+fn conductor_stop_run() -> Unit {
+  let hook_input = match @sys.read_stdin_line(262144) {
+    Some(value) => value
+    None => {
+      @sys.write_stdout(conductor_stop_output(false))
+      return
+    }
+  }
+  if !conductor_stop_goal_active(hook_input) {
+    @sys.write_stdout(conductor_stop_output(false))
+    return
+  }
+  let config = match goal_client_load_config() {
+    Ok(value) => value
+    Err(_) => {
+      @sys.write_stdout(conductor_stop_output(false))
+      return
+    }
+  }
+  let token = match @sys.getenv("CHOIR_CONDUCTOR_TOKEN") {
+    Some(value) =>
+      if value.trim() != "" {
+        value
+      } else {
+        @sys.write_stdout(conductor_stop_output(false))
+        return
+      }
+    None => {
+      @sys.write_stdout(conductor_stop_output(false))
+      return
+    }
+  }
+  let request : @types.Request = {
+    req_method: conductor_stop_decision_method,
+    name: conductor_stop_decision_method,
+    args: @types.RequestArgs::from_values(Map([])),
+  }
+  let park = match client_call_uds(config, request, Some(token)) {
+    Ok(response) =>
+      match response.ok_payload() {
+        Some(fields) => fields.get_bool("park").unwrap_or(false)
+        None => false
+      }
+    Err(_) => false
+  }
+  @sys.write_stdout(conductor_stop_output(park))
+}
+
+///|
 test "Goal client uses the fixed Conductor launch environment" {
   let loaded = goal_client_load_config_with(
     env_get=fn(key) {
@@ -203,4 +293,35 @@ test "Goal client response preserves the Choir envelope" {
     client_response_json(@types.Response::Err("boom")),
     "{\"ok\":false,\"error\":\"boom\"}\n",
   )
+}
+
+///|
+test "Conductor Stop hook recognizes only an active built-in Goal" {
+  let active =
+    #|{"type":"attachment","attachment":{"type":"goal_status","met":false,"sentinel":true,"condition":"part-a"}}
+    #|
+  assert_true(conductor_transcript_goal_active(active))
+  let achieved = active +
+    (
+      #|{"type":"attachment","attachment":{"type":"goal_status","met":true,"condition":"part-a"}}
+      #|
+    )
+  assert_false(conductor_transcript_goal_active(achieved))
+  assert_false(conductor_transcript_goal_active("{\"type\":\"user\"}\n"))
+  assert_true(
+    conductor_stop_goal_active("{\"transcript_path\":\"/session.jsonl\"}", read_file=fn(
+      _,
+    ) {
+      active
+    }),
+  )
+}
+
+///|
+test "Conductor Stop hook parks without asking the model to poll" {
+  assert_eq(
+    conductor_stop_output(true),
+    "{\"continue\":false,\"stopReason\":\"Waiting for a durable Choir Goal state change.\"}\n",
+  )
+  assert_eq(conductor_stop_output(false), "{}\n")
 }

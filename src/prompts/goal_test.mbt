@@ -8,8 +8,8 @@ test "Conductor prompt delegates slash Goal ownership to the provider" {
   assert_true(body.has_prefix("Interpret the user's Goal request"))
   assert_true(body.contains("provider's built-in `/goal` command"))
   assert_true(body.contains("Choir does not register or shadow that command"))
-  assert_true(body.contains("complete as soon as `goal_submit` returns"))
-  assert_true(body.contains("Never keep the provider's built-in Goal active"))
+  assert_true(body.contains("command Stop hook parks an active built-in Goal"))
+  assert_true(body.contains("MCP channel injects the next material state"))
   assert_false(body.contains("\nname: choir-goal\n"))
   assert_false(body.contains("\nname: goal\n"))
   assert_true(body.contains("complete open blocking-dependency closure"))
@@ -19,7 +19,9 @@ test "Conductor prompt delegates slash Goal ownership to the provider" {
   assert_true(
     body.contains("user's current message explicitly requests Claude"),
   )
-  assert_true(body.contains("Never babysit a Goal with a polling loop"))
+  assert_true(
+    body.contains("Durable transitions arrive through the Choir channel"),
+  )
   assert_true(
     body.contains("Never retry or resubmit within the same user request"),
   )

@@ -49,12 +49,23 @@ pub fn format_request(req : @types.Request) -> String {
 pub fn format_conductor_registration_request(
   conductor_token : String,
 ) -> String {
-  let args : Map[String, String] = Map([])
-  args.set(@types.registration_token_arg, conductor_token)
+  format_conductor_registration_request_with_channel(conductor_token, false)
+}
+
+///|
+pub fn format_conductor_registration_request_with_channel(
+  conductor_token : String,
+  channel : Bool,
+) -> String {
+  let args : Map[String, Json] = Map([])
+  args.set(@types.registration_token_arg, conductor_token.to_json())
+  if channel {
+    args.set("channel", true.to_json())
+  }
   format_request({
     req_method: "register",
     name: "register",
-    args: @types.RequestArgs::new(args),
+    args: @types.RequestArgs::from_values(args),
   })
 }
 

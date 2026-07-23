@@ -47,6 +47,13 @@ extern "C" fn c_stdin_read_line(buf : Bytes, max_size : Int) -> Int = "choir_std
 extern "C" fn c_stdin_read(buf : Bytes, max_size : Int) -> Int = "choir_stdin_read"
 
 ///|
+extern "C" fn c_poll_readable_pair(
+  first_fd : Int,
+  second_fd : Int,
+  timeout_ms : Int,
+) -> Int = "choir_poll_readable_pair"
+
+///|
 #borrow(buf)
 extern "C" fn c_stdout_write(buf : Bytes, size : Int) = "choir_stdout_write"
 
@@ -221,6 +228,18 @@ pub fn path_entry_exists(path : String) -> Bool {
 pub fn path_executable(path : String) -> Bool {
   let path_bytes = string_to_null_terminated_bytes(path)
   c_path_executable(path_bytes) != 0
+}
+
+///|
+/// Wait for either descriptor to become readable, close, or fail. Bit 0
+/// represents `first_fd`; bit 1 represents `second_fd`. A negative result is
+/// a host polling failure.
+pub fn poll_readable_pair(
+  first_fd : Int,
+  second_fd : Int,
+  timeout_ms : Int,
+) -> Int {
+  c_poll_readable_pair(first_fd, second_fd, timeout_ms)
 }
 
 ///|

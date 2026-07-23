@@ -4253,6 +4253,28 @@ the implemented Goal runner rather than the target sketch.
   are useful prototypes for interaction, not lifecycle authority. Choir's
   Conductor may propose Parts and providers; `choird` alone admits and
   schedules them.
+
+#### Claude built-in Goal wakeup, 2026-07-23
+
+Claude Code's built-in `/goal` is a prompt-based Stop hook: an unmet condition
+normally starts another model turn immediately. Choir must not shadow that
+command, ask the model to enforce a no-polling promise, or encode lifecycle
+authority in response booleans. The native Conductor instead combines two
+host-boundary mechanisms:
+
+- a command Stop hook reads Claude's own `goal_status` transcript attachment
+  and, while `choird` reports an active watched Goal, returns `continue: false`
+  to park the session without clearing the built-in `/goal`; and
+- the Conductor MCP server advertises the experimental `claude/channel`
+  capability and translates changed durable Goal projections into
+  `notifications/claude/channel` events, which wake Claude for the next useful
+  turn.
+
+The worker publishes only after an authoritative execution tick advances, the
+server de-duplicates identical projections, and a reconnected channel receives
+the latest projection. `goal_status` remains an explicit observation tool, not
+a scheduler or heartbeat. Channel delivery is a wakeup only: every state in the
+payload still comes from `choird`'s durable projection.
 - **ORCH adds no missing mechanism.** Its Goal/Task dependency model, provider
   adapters, retry loop, and review state substantially overlap Choir's current
   Goal/Part/Take machine, but use mutable file-backed state and task-owned proof

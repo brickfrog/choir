@@ -20,27 +20,9 @@ fn native_conductor_error(detail : String) -> @types.Response {
 ///|
 fn native_conductor_goal_action_ok_json(value : Json) -> @types.Response {
   match value {
-    Object(fields) => {
-      fields.set("conductor_objective_complete", true.to_json())
-      fields.set("automatic_polling_allowed", false.to_json())
-      fields.set("next_observation_requires_user_request", true.to_json())
-      @types.Response::ok_values(fields)
-    }
+    Object(fields) => @types.Response::ok_values(fields)
     _ => native_conductor_error("internal response was not an object")
   }
-}
-
-///|
-test "Conductor Goal action response ends the built-in Goal without polling" {
-  let response = native_conductor_goal_action_ok_json({
-    "goal_id": "goal-1".to_json(),
-  }.to_json())
-  assert_eq(response.ok_field("conductor_objective_complete"), Some("true"))
-  assert_eq(response.ok_field("automatic_polling_allowed"), Some("false"))
-  assert_eq(
-    response.ok_field("next_observation_requires_user_request"),
-    Some("true"),
-  )
 }
 
 ///|

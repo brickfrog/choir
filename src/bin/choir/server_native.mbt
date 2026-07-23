@@ -4,6 +4,12 @@ priv struct ConductorServerState {
   run_id : String
   mut conductor_token : String?
   mut goal_worker_pid : Int?
+  channel_fds : Array[Int]
+  mut watched_goal_id : String?
+  mut parked_for_goal_event : Bool
+  mut last_goal_update : String?
+  mut last_goal_update_fingerprint : String?
+  goal_updates : Map[String, String]
 }
 
 ///|
@@ -13,6 +19,12 @@ fn ConductorServerState::new(config : @types.Config) -> ConductorServerState {
     run_id: "serve-" + @sys.get_pid().to_string(),
     conductor_token: None,
     goal_worker_pid: None,
+    channel_fds: [],
+    watched_goal_id: None,
+    parked_for_goal_event: false,
+    last_goal_update: None,
+    last_goal_update_fingerprint: None,
+    goal_updates: Map([]),
   }
 }
 
@@ -45,6 +57,190 @@ let conductor_bootstrap_method : String = "conductor_bootstrap"
 
 ///|
 let local_cli_register_method : String = "local_cli_register"
+
+///|
+let conductor_goal_update_method : String = "conductor_goal_update"
+
+///|
+let conductor_stop_decision_method : String = "conductor_stop_decision"
+
+///|
+fn conductor_goal_id_from_json(value : Json?) -> String? {
+  match value {
+    Some(String(identity)) => Some(identity)
+    Some(Array([String(_), String(identity)])) => Some(identity)
+    _ => None
+  }
+}
+
+///|
+fn conductor_response_goal_id(response : @types.Response) -> String? {
+  match response.ok_payload() {
+    Some(fields) => conductor_goal_id_from_json(fields.get_json("goal_id"))
+    None => None
+  }
+}
+
+///|
+fn conductor_response_state(response : @types.Response) -> String? {
+  match response.ok_payload() {
+    Some(fields) =>
+      match fields.get_json("state") {
+        Some(String(state)) => Some(state)
+        _ => None
+      }
+    None => None
+  }
+}
+
+///|
+fn conductor_goal_state_succeeded(state : String?) -> Bool {
+  state == Some("GoalExecutionSucceeded")
+}
+
+///|
+fn conductor_watch_goal(state : ConductorServerState, goal_id : String) -> Unit {
+  if state.watched_goal_id == Some(goal_id) {
+    return
+  }
+  state.watched_goal_id = Some(goal_id)
+  state.last_goal_update = None
+  state.last_goal_update_fingerprint = None
+  match state.goal_updates.get(goal_id) {
+    Some(serialized) => {
+      let report : Json? = Some(@json.parse(serialized)) catch { _ => None }
+      match report {
+        Some(value) => conductor_broadcast_goal_update(state, value)
+        None => ()
+      }
+    }
+    None => ()
+  }
+}
+
+///|
+fn conductor_observe_goal_response(
+  state : ConductorServerState,
+  request : @types.Request,
+  response : @types.Response,
+) -> Unit {
+  if !response.is_ok() || !request.name.has_prefix("goal_") {
+    return
+  }
+  let goal_id = match conductor_response_goal_id(response) {
+    Some(identity) => Some(identity)
+    None => request.args.get("goal_id")
+  }
+  state.parked_for_goal_event = !conductor_goal_state_succeeded(
+    conductor_response_state(response),
+  )
+  match goal_id {
+    Some(identity) => conductor_watch_goal(state, identity)
+    None => ()
+  }
+}
+
+///|
+fn conductor_goal_update_line(report : Json) -> String {
+  { "method": "choir/goal_status_changed".to_json(), "report": report }
+  .to_json()
+  .stringify(indent=0) +
+  "\n"
+}
+
+///|
+fn conductor_remove_channel_fd(state : ConductorServerState, fd : Int) -> Unit {
+  let mut index = 0
+  while index < state.channel_fds.length() {
+    if state.channel_fds[index] == fd {
+      ignore(state.channel_fds.remove(index))
+    } else {
+      index = index + 1
+    }
+  }
+}
+
+///|
+fn conductor_copy_projection_field(
+  source : Map[String, Json],
+  target : Map[String, Json],
+  name : String,
+) -> Unit {
+  match source.get(name) {
+    Some(value) => target.set(name, value)
+    None => ()
+  }
+}
+
+///|
+fn conductor_goal_update_fingerprint(report : Json) -> String {
+  guard report is Object(fields) else { return report.stringify(indent=0) }
+  let projection : Map[String, Json] = Map([])
+  for
+    name in [
+      "goal_id", "state", "lifecycle", "pause_reason", "resume_state", "active_input_request",
+      "assurance_stage", "publication_state", "pull_request_state", "finalization_id",
+      "readiness_decision",
+    ] {
+    conductor_copy_projection_field(fields, projection, name)
+  }
+  match fields.get("parts") {
+    Some(Array(parts)) => {
+      let projected_parts = parts.map(fn(part) {
+        guard part is Object(part_fields) else { return part }
+        let projected : Map[String, Json] = Map([])
+        for
+          name in [
+            "part_id", "implementation_take_lifecycle", "implementation_session_lifecycle",
+            "verification_take_lifecycle", "verification_session_lifecycle", "audit_take_lifecycle",
+            "audit_session_lifecycle", "lifecycle", "stage",
+          ] {
+          conductor_copy_projection_field(part_fields, projected, name)
+        }
+        projected.to_json()
+      })
+      projection.set("parts", projected_parts.to_json())
+    }
+    _ => ()
+  }
+  projection.to_json().stringify(indent=0)
+}
+
+///|
+fn conductor_broadcast_goal_update(
+  state : ConductorServerState,
+  report : Json,
+) -> Unit {
+  guard report is Object(fields) else { return }
+  let goal_id = conductor_goal_id_from_json(fields.get("goal_id"))
+  guard goal_id is Some(identity) else { return }
+  let serialized = report.stringify(indent=0)
+  // Cache updates before applying the watch filter. The Goal worker can win a
+  // race with goal_submit's response; watching that Goal must then replay the
+  // already-observed transition instead of sleeping until a later one.
+  state.goal_updates.set(identity, serialized)
+  if state.watched_goal_id != goal_id {
+    return
+  }
+  let fingerprint = conductor_goal_update_fingerprint(report)
+  state.last_goal_update = Some(serialized)
+  if state.last_goal_update_fingerprint == Some(fingerprint) {
+    return
+  }
+  state.last_goal_update_fingerprint = Some(fingerprint)
+  let goal_state = match fields.get("state") {
+    Some(String(value)) => Some(value)
+    _ => None
+  }
+  state.parked_for_goal_event = !conductor_goal_state_succeeded(goal_state)
+  let wire = @utf8.encode(conductor_goal_update_line(report))
+  let targets = state.channel_fds.copy()
+  for fd in targets {
+    if !conductor_write_all(fd, wire) {
+      conductor_remove_channel_fd(state, fd)
+    }
+  }
+}
 
 ///|
 fn conductor_peer_is_choir(fd : Int) -> Bool {
@@ -224,12 +420,41 @@ async fn conductor_handle_custom_line(
   }
   if request.req_method == "register" {
     let response = conductor_register(state, request)
+    let channel = request.args.get_bool("channel").unwrap_or(false)
     if response.is_ok() {
       client.authenticated = true
     } else {
       client.close_after_response = true
     }
-    ignore(conductor_send_response(client.fd, response))
+    let response_sent = conductor_send_response(client.fd, response)
+    // The registration response must be the first frame on this connection.
+    // Adding the descriptor earlier lets a concurrent Goal update race ahead
+    // of it and makes the MCP bridge parse the notification as registration.
+    if response.is_ok() && response_sent && channel {
+      if !state.channel_fds.contains(client.fd) {
+        state.channel_fds.push(client.fd)
+      }
+      // A channel reconnect can occur after the worker published a transition.
+      // Replay the latest projection so the Conductor cannot sleep forever
+      // waiting for an event that preceded the new transport connection.
+      match state.last_goal_update {
+        Some(serialized) => {
+          let report : Json? = Some(@json.parse(serialized)) catch { _ => None }
+          match report {
+            Some(value) =>
+              if !conductor_write_all(
+                  client.fd,
+                  @utf8.encode(conductor_goal_update_line(value)),
+                ) {
+                conductor_remove_channel_fd(state, client.fd)
+                client.close_after_response = true
+              }
+            None => ()
+          }
+        }
+        None => ()
+      }
+    }
     client.busy = false
     return
   }
@@ -244,11 +469,45 @@ async fn conductor_handle_custom_line(
     client.busy = false
     return
   }
+  if request.req_method == conductor_goal_update_method {
+    let response = if client.authenticated && client.peer_is_choir {
+      match request.args.get_json("report") {
+        Some(report) => {
+          conductor_broadcast_goal_update(state, report)
+          @types.Response::ok_values(Map([]))
+        }
+        None => @types.Response::Err("Goal update report is absent")
+      }
+    } else {
+      @types.Response::Err("Goal update authentication failed")
+    }
+    ignore(conductor_send_response(client.fd, response))
+    client.busy = false
+    return
+  }
+  if request.req_method == conductor_stop_decision_method {
+    let response = if client.authenticated {
+      let fields : Map[String, Json] = {
+        "park": state.parked_for_goal_event.to_json(),
+      }
+      match state.watched_goal_id {
+        Some(identity) => fields.set("goal_id", identity.to_json())
+        None => ()
+      }
+      @types.Response::ok_values(fields)
+    } else {
+      @types.Response::Err("authenticated Conductor required")
+    }
+    ignore(conductor_send_response(client.fd, response))
+    client.busy = false
+    return
+  }
   let response = if client.authenticated {
     conductor_dispatch(state, request)
   } else {
     @types.Response::Err("authenticated Conductor required")
   }
+  conductor_observe_goal_response(state, request, response)
   ignore(conductor_send_response(client.fd, response))
   client.busy = false
 }
@@ -427,6 +686,7 @@ async fn conductor_serve_uds(
         index = index + 1
       } else {
         let client = clients.remove(index)
+        conductor_remove_channel_fd(state, client.fd)
         @uds.close(client.fd)
       }
     }
@@ -435,15 +695,56 @@ async fn conductor_serve_uds(
 }
 
 ///|
+fn conductor_publish_goal_update(
+  report : @workflow.GoalStatusReport,
+) -> Result[Unit, String] {
+  let config = match goal_client_load_config() {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let request : @types.Request = {
+    req_method: conductor_goal_update_method,
+    name: conductor_goal_update_method,
+    args: @types.RequestArgs::from_values({ "report": report.to_json() }),
+  }
+  match client_call_uds(config, request, None) {
+    Ok(response) =>
+      if response.is_ok() {
+        Ok(())
+      } else {
+        Err(response.error_message().unwrap_or("Goal update rejected"))
+      }
+    Err(error) => Err(error)
+  }
+}
+
+///|
 async fn conductor_goal_loop(project_dir : String) -> Unit {
   for ;; {
     match @exec.run_native_goal_execution_tick(project_dir) {
       Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickIdle) => ()
-      Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickAdvanced(record)) =>
+      Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickAdvanced(record)) => {
         @moontrace.info("Goal execution advanced", fields=[
           @moontrace.field("goal_id", record.goal.id.0),
           @moontrace.field("state", record.state.to_json().stringify(indent=0)),
         ])
+        match @exec.inspect_native_goal(project_dir, record.goal.id) {
+          Ok(report) =>
+            match conductor_publish_goal_update(report) {
+              Ok(_) => ()
+              Err(error) =>
+                @moontrace.error("Goal update delivery failed", fields=[
+                  @moontrace.field("goal_id", record.goal.id.0),
+                  @moontrace.field("error", error),
+                ])
+            }
+          Err(error) =>
+            @moontrace.error("Goal update projection failed", fields=[
+              @moontrace.field("goal_id", record.goal.id.0),
+              @moontrace.field("error", error.message()),
+            ])
+        }
+      }
       Err(error) =>
         @moontrace.error("Goal execution tick failed", fields=[
           @moontrace.field("error", error.message()),
@@ -644,4 +945,109 @@ test "Conductor strips caller identity before dispatch" {
   @debug.assert_eq(effective.args.get("caller_id"), None)
   @debug.assert_eq(effective.args.get("agent_id"), None)
   @debug.assert_eq(effective.args.get("goal_id"), Some("goal-a"))
+}
+
+///|
+test "Conductor parks an active durable Goal until its success event" {
+  let state = ConductorServerState::new({
+    project_dir: "/repo",
+    listen_uds: "/repo/.choir/run/server.sock",
+  })
+  let submit : @types.Request = {
+    req_method: "tools/call",
+    name: "goal_submit",
+    args: @types.RequestArgs::from_values(Map([])),
+  }
+  conductor_observe_goal_response(
+    state,
+    submit,
+    @types.Response::ok_values({
+      "accepted": true.to_json(),
+      "execution_registered": true.to_json(),
+      "goal_id": ["GoalId", "goal-a"].to_json(),
+    }),
+  )
+  assert_eq(state.watched_goal_id, Some("goal-a"))
+  assert_true(state.parked_for_goal_event)
+  let status : @types.Request = {
+    req_method: "tools/call",
+    name: "goal_status",
+    args: @types.RequestArgs::from_values({ "goal_id": "goal-a".to_json() }),
+  }
+  conductor_observe_goal_response(
+    state,
+    status,
+    @types.Response::ok_values({
+      "goal_id": ["GoalId", "goal-a"].to_json(),
+      "state": @workflow.GoalExecutionState::GoalExecutionSucceeded.to_json(),
+    }),
+  )
+  assert_false(state.parked_for_goal_event)
+}
+
+///|
+test "Conductor channel wakes only for material Goal projection changes" {
+  let running = {
+    "goal_id": ["GoalId", "goal-a"].to_json(),
+    "state": "GoalExecutionRunning".to_json(),
+    "lifecycle": ["GoalActive", "GoalExecuting"].to_json(),
+    "durable_version": (7 : Int).to_json(),
+    "assurance_effect_receipt_count": (2 : Int).to_json(),
+    "parts": [
+      {
+        "part_id": ["PartId", "part-a"].to_json(),
+        "stage": "PartImplementationHarnessStarted".to_json(),
+        "durable_version": (11 : Int).to_json(),
+        "effect_receipt_count": (3 : Int).to_json(),
+      }.to_json(),
+    ].to_json(),
+  }.to_json()
+  let count_only = {
+    "goal_id": ["GoalId", "goal-a"].to_json(),
+    "state": "GoalExecutionRunning".to_json(),
+    "lifecycle": ["GoalActive", "GoalExecuting"].to_json(),
+    "durable_version": (8 : Int).to_json(),
+    "assurance_effect_receipt_count": (9 : Int).to_json(),
+    "parts": [
+      {
+        "part_id": ["PartId", "part-a"].to_json(),
+        "stage": "PartImplementationHarnessStarted".to_json(),
+        "durable_version": (12 : Int).to_json(),
+        "effect_receipt_count": (8 : Int).to_json(),
+      }.to_json(),
+    ].to_json(),
+  }.to_json()
+  assert_eq(
+    conductor_goal_update_fingerprint(running),
+    conductor_goal_update_fingerprint(count_only),
+  )
+  guard count_only is Object(fields) else { fail("expected report object") }
+  guard fields.get("parts") is Some(Array([Object(part)])) else {
+    fail("expected one Part")
+  }
+  part.set("stage", "PartVerificationHarnessStarted".to_json())
+  assert_true(
+    conductor_goal_update_fingerprint(running) !=
+    conductor_goal_update_fingerprint(count_only),
+  )
+}
+
+///|
+test "Conductor replays a worker update that races Goal observation" {
+  let state = ConductorServerState::new({
+    project_dir: "/repo",
+    listen_uds: "/repo/.choir/run/server.sock",
+  })
+  let report = {
+    "goal_id": ["GoalId", "goal-a"].to_json(),
+    "state": "GoalExecutionRunning".to_json(),
+    "lifecycle": ["GoalActive", "GoalExecuting"].to_json(),
+    "durable_version": (2 : Int).to_json(),
+    "parts": ([] : Array[Json]).to_json(),
+  }.to_json()
+  conductor_broadcast_goal_update(state, report)
+  assert_eq(state.last_goal_update, None)
+  conductor_watch_goal(state, "goal-a")
+  assert_eq(state.last_goal_update, Some(report.stringify(indent=0)))
+  assert_true(state.parked_for_goal_event)
 }

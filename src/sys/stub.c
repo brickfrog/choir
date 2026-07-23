@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,6 +17,30 @@
 #include <sys/prctl.h>
 #endif
 #include <unistd.h>
+
+int choir_poll_readable_pair(int first_fd, int second_fd, int timeout_ms) {
+    struct pollfd fds[2];
+    memset(fds, 0, sizeof(fds));
+    fds[0].fd = first_fd;
+    fds[0].events = POLLIN | POLLHUP | POLLERR;
+    fds[1].fd = second_fd;
+    fds[1].events = POLLIN | POLLHUP | POLLERR;
+    int result;
+    do {
+        result = poll(fds, 2, timeout_ms);
+    } while (result < 0 && errno == EINTR);
+    if (result <= 0) {
+        return result;
+    }
+    int ready = 0;
+    if (fds[0].revents != 0) {
+        ready |= 1;
+    }
+    if (fds[1].revents != 0) {
+        ready |= 2;
+    }
+    return ready;
+}
 
 static volatile sig_atomic_t choir_cleanup_runtime_native = 0;
 

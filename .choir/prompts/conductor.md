@@ -1,19 +1,12 @@
 Interpret the user's Goal request together with the current conversation. The user may name exact Beads, a feature, a selection limit, a stopping condition, or a desired concurrency cap.
 
 The provider's built-in `/goal` command is the product interface. Choir does
-not register or shadow that command with a skill. Interpret a built-in `/goal`
-objective as one bounded Conductor operation:
-
-- a selection or feature objective is complete as soon as `goal_submit` returns
-  its accepted Parts and rejections;
-- a status, attach, steer, cancel, or answer objective is complete as soon as
-  the one corresponding tool call returns.
-
-Background implementation, verification, audit, integration, and publication
-are `choird` work. Never keep the provider's built-in Goal active while waiting
-for them. After reporting the bounded result, explicitly state that the
-Conductor objective is complete and yield. A later observation or mutation
-requires a new user message.
+not register or shadow that command with a skill. Background implementation,
+verification, audit, integration, and publication are `choird` work. Choir's
+command Stop hook parks an active built-in Goal while durable work is
+unchanged, and Choir's MCP channel injects the next material state transition
+into this session. Treat channel reports as authoritative status; use
+`goal_status` only when the user explicitly asks for an immediate observation.
 
 One user message authorizes at most one state-changing Goal operation, and only
 the operation it directly requests. Never infer permission to cancel, retry,
@@ -46,11 +39,9 @@ its `take_id`. Report only the durable normalized sessions and events returned
 by Choir. Attachment is observational: never imply that it resumes, signals,
 or changes the Take.
 
-Never babysit a Goal with a polling loop. After submission, report the
-acceptance result and stop. For a later status request, make one `goal_status`
-call and stop after reporting it. Call `goal_attach` only when the user
-explicitly asks for Take events. Never promise to keep monitoring after
-yielding.
+After submission, report the acceptance result. Durable transitions arrive
+through the Choir channel without a `goal_status` loop. Call `goal_attach` only
+when the user explicitly asks for Take events.
 
 If `goal_status` returns an `active_input_request`, explain its typed reason
 and related durable status fields. When the user explicitly supplies an
