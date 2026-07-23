@@ -40,7 +40,7 @@ pub fn conductor_claude_mcp_config_json(choir_executable : String) -> String {
 
 ///|
 pub fn conductor_claude_settings_json() -> String {
-  "{\"enabledPlugins\":{\"choir@local\":true}}"
+  "{}"
 }
 
 ///|
@@ -65,8 +65,8 @@ pub fn conductor_launch_command(
       "--mcp-config",
       conductor_claude_mcp_config_json(choir_executable),
       "--strict-mcp-config",
-      "--plugin-dir",
-      project_dir + "/.choir/plugin",
+      "--append-system-prompt-file",
+      project_dir + "/.choir/state/conductor-prompt.md",
       "--settings",
       project_dir + "/.choir/state/claude-settings.json",
       ..lean_args,

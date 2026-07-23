@@ -18,11 +18,29 @@ fn native_conductor_error(detail : String) -> @types.Response {
 }
 
 ///|
-fn native_conductor_ok_json(value : Json) -> @types.Response {
+fn native_conductor_goal_action_ok_json(value : Json) -> @types.Response {
   match value {
-    Object(fields) => @types.Response::ok_values(fields)
+    Object(fields) => {
+      fields.set("conductor_objective_complete", true.to_json())
+      fields.set("automatic_polling_allowed", false.to_json())
+      fields.set("next_observation_requires_user_request", true.to_json())
+      @types.Response::ok_values(fields)
+    }
     _ => native_conductor_error("internal response was not an object")
   }
+}
+
+///|
+test "Conductor Goal action response ends the built-in Goal without polling" {
+  let response = native_conductor_goal_action_ok_json({
+    "goal_id": "goal-1".to_json(),
+  }.to_json())
+  assert_eq(response.ok_field("conductor_objective_complete"), Some("true"))
+  assert_eq(response.ok_field("automatic_polling_allowed"), Some("false"))
+  assert_eq(
+    response.ok_field("next_observation_requires_user_request"),
+    Some("true"),
+  )
 }
 
 ///|
@@ -805,7 +823,7 @@ async fn dispatch_native_goal_submit(
 ) -> @types.Response {
   let draft = native_conductor_goal_draft_json(request)
   match submit_native_conductor_goal_draft(project_dir, draft, capture) {
-    Ok(report) => native_conductor_ok_json(report.to_json())
+    Ok(report) => native_conductor_goal_action_ok_json(report.to_json())
     Err(error) => @types.Response::Err(error.message())
   }
 }
@@ -820,7 +838,7 @@ fn dispatch_native_goal_status(
     Err(error) => return @types.Response::Err(error.message())
   }
   match inspect_native_goal(project_dir, @control.GoalId(goal_id)) {
-    Ok(report) => native_conductor_ok_json(report.to_json())
+    Ok(report) => native_conductor_goal_action_ok_json(report.to_json())
     Err(error) => @types.Response::Err(error.message())
   }
 }
@@ -841,35 +859,35 @@ fn dispatch_native_goal_cancel(
         record
       )
     ) =>
-      @types.Response::ok_values({
+      native_conductor_goal_action_ok_json({
         "goal_id": record.goal.id.to_json(),
         "state": record.state.to_json(),
         "lifecycle": record.goal.lifecycle.to_json(),
         "durable_version": record.durable_version.to_json(),
         "replayed": false.to_json(),
-      })
+      }.to_json())
     Ok(
       @workflow.GoalCancellationPersistenceResult::GoalCancellationReplayed(
         record
       )
     ) =>
-      @types.Response::ok_values({
+      native_conductor_goal_action_ok_json({
         "goal_id": record.goal.id.to_json(),
         "state": record.state.to_json(),
         "lifecycle": record.goal.lifecycle.to_json(),
         "durable_version": record.durable_version.to_json(),
         "replayed": true.to_json(),
-      })
+      }.to_json())
     Ok(
       @workflow.GoalCancellationPersistenceResult::GoalCancellationTerminal(
         state
       )
     ) =>
-      @types.Response::ok_values({
+      native_conductor_goal_action_ok_json({
         "goal_id": goal_id.to_json(),
         "state": state.to_json(),
         "already_terminal": true.to_json(),
-      })
+      }.to_json())
     Err(error) => @types.Response::Err(error.message())
   }
 }
@@ -935,7 +953,7 @@ fn dispatch_native_goal_steer(
         revision
       )
     ) =>
-      @types.Response::ok_values({
+      native_conductor_goal_action_ok_json({
         "goal_id": record.goal.id.to_json(),
         "state": record.state.to_json(),
         "lifecycle": record.goal.lifecycle.to_json(),
@@ -944,10 +962,10 @@ fn dispatch_native_goal_steer(
         "policy_revision": revision.to_json(),
         "pause": record.pause.to_json(),
         "replayed": false.to_json(),
-      })
+      }.to_json())
     Ok(@workflow.GoalSteeringPersistenceResult::GoalSteeringReplayed(record))
     | Ok(@workflow.GoalSteeringPersistenceResult::GoalSteeringNoChange(record)) =>
-      @types.Response::ok_values({
+      native_conductor_goal_action_ok_json({
         "goal_id": record.goal.id.to_json(),
         "state": record.state.to_json(),
         "lifecycle": record.goal.lifecycle.to_json(),
@@ -955,13 +973,13 @@ fn dispatch_native_goal_steer(
         "maximum_parallel_parts": record.maximum_parallel_parts.to_json(),
         "pause": record.pause.to_json(),
         "replayed": true.to_json(),
-      })
+      }.to_json())
     Ok(@workflow.GoalSteeringPersistenceResult::GoalSteeringTerminal(state)) =>
-      @types.Response::ok_values({
+      native_conductor_goal_action_ok_json({
         "goal_id": goal_id.to_json(),
         "state": state.to_json(),
         "already_terminal": true.to_json(),
-      })
+      }.to_json())
     Err(error) => @types.Response::Err(error.message())
   }
 }
@@ -981,7 +999,7 @@ fn dispatch_native_goal_attach(
         return native_conductor_error("attach response was not an object")
       }
       fields.set("observational", true.to_json())
-      @types.Response::ok_values(fields)
+      native_conductor_goal_action_ok_json(fields.to_json())
     }
     Err(error) => @types.Response::Err(error.message())
   }
@@ -1015,28 +1033,28 @@ fn dispatch_native_goal_answer(
         receipt
       )
     ) =>
-      @types.Response::ok_values({
+      native_conductor_goal_action_ok_json({
         "goal_id": record.goal.id.to_json(),
         "state": record.state.to_json(),
         "lifecycle": record.goal.lifecycle.to_json(),
         "durable_version": record.durable_version.to_json(),
         "answer": receipt.to_json(),
         "replayed": false.to_json(),
-      })
+      }.to_json())
     Ok(
       @workflow.GoalInputAnswerPersistenceResult::GoalInputAnswerPersistenceReplayed(
         record,
         receipt
       )
     ) =>
-      @types.Response::ok_values({
+      native_conductor_goal_action_ok_json({
         "goal_id": record.goal.id.to_json(),
         "state": record.state.to_json(),
         "lifecycle": record.goal.lifecycle.to_json(),
         "durable_version": record.durable_version.to_json(),
         "answer": receipt.to_json(),
         "replayed": true.to_json(),
-      })
+      }.to_json())
     Err(error) => @types.Response::Err(error.message())
   }
 }

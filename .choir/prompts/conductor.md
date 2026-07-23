@@ -1,8 +1,19 @@
----
-name: goal
-description: Turn the current conversation and existing Beads into a durable Choir Goal.
----
 Interpret the user's Goal request together with the current conversation. The user may name exact Beads, a feature, a selection limit, a stopping condition, or a desired concurrency cap.
+
+The provider's built-in `/goal` command is the product interface. Choir does
+not register or shadow that command with a skill. Interpret a built-in `/goal`
+objective as one bounded Conductor operation:
+
+- a selection or feature objective is complete as soon as `goal_submit` returns
+  its accepted Parts and rejections;
+- a status, attach, steer, cancel, or answer objective is complete as soon as
+  the one corresponding tool call returns.
+
+Background implementation, verification, audit, integration, and publication
+are `choird` work. Never keep the provider's built-in Goal active while waiting
+for them. After reporting the bounded result, explicitly state that the
+Conductor objective is complete and yield. A later observation or mutation
+requires a new user message.
 
 One user message authorizes at most one state-changing Goal operation, and only
 the operation it directly requests. Never infer permission to cancel, retry,

@@ -77,48 +77,19 @@ fn init_ensure_project_files(project_dir : String) -> Result[Unit, String] {
 }
 
 ///|
-fn init_conductor_plugin_manifest() -> String {
-  { "name": "choir".to_json(), "description": "Choir Conductor".to_json() }
-  .to_json()
-  .stringify()
-}
-
-///|
-fn init_synthesize_conductor_plugin(
-  project_dir : String,
-) -> Result[Unit, String] {
-  let plugin_dir = project_dir + "/.choir/plugin"
-  ignore(@sys.rm_rf(plugin_dir))
-  if !@sys.create_dir_all(plugin_dir + "/.claude-plugin") ||
-    !@sys.create_dir_all(plugin_dir + "/skills/goal") {
-    return Err("failed to create the Conductor plugin")
-  }
-  if !@sys.write_file_sync(
-      plugin_dir + "/.claude-plugin/plugin.json",
-      init_conductor_plugin_manifest(),
-    ) ||
-    !@sys.write_file_sync(
-      plugin_dir + "/skills/goal/SKILL.md",
-      @prompts.load_goal_prompt(project_dir),
-    ) {
-    return Err("failed to write the Conductor plugin")
-  }
-  Ok(())
-}
-
-///|
 fn init_materialize_conductor_files(
   project_dir : String,
 ) -> Result[Unit, String] {
-  match init_synthesize_conductor_plugin(project_dir) {
-    Ok(_) => ()
-    Err(error) => return Err(error)
-  }
+  ignore(@sys.rm_rf(project_dir + "/.choir/plugin"))
   if !@sys.write_file_sync(
       project_dir + "/.choir/state/claude-settings.json",
       @exec.conductor_claude_settings_json(),
+    ) ||
+    !@sys.write_file_sync(
+      project_dir + "/.choir/state/conductor-prompt.md",
+      @prompts.load_goal_prompt(project_dir),
     ) {
-    return Err("failed to write Claude Conductor settings")
+    return Err("failed to write Conductor launch files")
   }
   Ok(())
 }
@@ -181,8 +152,15 @@ test "init writes only current local launch configuration" {
 }
 
 ///|
-test "init Conductor plugin contains only the Goal skill" {
-  let manifest = init_conductor_plugin_manifest()
-  assert_true(manifest.contains("\"name\":\"choir\""))
-  assert_false(manifest.contains("version"))
+test "init Conductor prompt lives outside provider skill discovery" {
+  assert_eq(
+    @prompts.goal_prompt_path("/repo"),
+    "/repo/.choir/prompts/conductor.md",
+  )
+  assert_false(@prompts.default_goal_prompt().contains("\nname: goal\n"))
+  assert_true(
+    @prompts
+    .default_goal_prompt()
+    .contains("provider's built-in `/goal` command"),
+  )
 }

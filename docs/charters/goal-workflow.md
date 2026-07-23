@@ -103,7 +103,7 @@ unconnected product path usable.
   `moon_args`, documents that the executable is already selected, and rejects
   an argument list beginning with `moon`. A fresh installed-layout run exposed
   the prior ambiguity when Claude submitted `moon` as its own first argument;
-  the repaired Claude `/goal` run selected Bead `live-szh`, assigned its Part
+  the repaired Claude built-in `/goal` run selected Bead `live-szh`, assigned its Part
   to Codex, and persisted the exact command `moon test --target native` with a
   scratch target. Codex produced the requested two-file candidate; Part
   verification, independent Part audit, integration, combined-Goal
@@ -169,14 +169,14 @@ unconnected product path usable.
   daemon without a terminal multiplexer, bootstraps one authenticated
   Conductor, and runs it in the invoking terminal. `choir start` reconnects the
   same direct launch path and rematerializes the generated Conductor files from
-  the current Goal prompt before launch, so a repaired installed build cannot
-  silently reuse an obsolete `/goal` contract. Claude remains the default; selecting
+  the current Conductor prompt before launch, so a repaired installed build
+  cannot silently reuse an obsolete built-in `/goal` contract. Claude remains the default; selecting
   `--conductor codex` starts a persistent Codex subscription thread through
   `codex exec` and resumes that exact thread on later turns. The UDS is
   owner-only, the one-time Conductor bootstrap
   requires a same-user peer running the exact Choir executable, and the minted
   credential is passed only through a fixed typed process environment. The
-  Claude Conductor loads only the generated Goal skill and the Choir MCP
+  Claude Conductor receives only the generated launch-time instructions and the Choir MCP
   server; it gets no Claude built-in host tools, no ambient setting sources,
   no implicit Semble server, and no old spawn/file/merge tools in its MCP
   catalog. Codex starts from a sterile working root, ignores user configuration
@@ -253,7 +253,9 @@ unconnected product path usable.
   poller, pane runtime, evidence/hook/message/outbox/plugin/policy/registry
   packages, generic prompt library, WebAssembly hook project, mock forge CLI,
   old release helper, and terminal-multiplexer development dependencies. The
-  current prompt package contains only the Goal skill used by the Conductor.
+  current prompt package contains only the launch-time contract used by the
+  Conductor. Choir registers no slash skill and leaves the provider's built-in
+  `/goal` command unshadowed.
   This cleanup deletes 189 tracked files and more than 117,000 lines in the
   current change while adding only the narrow Conductor server and two Goal
   prompt files. The source tree drops from 372 tracked files to 198 files.
@@ -759,8 +761,8 @@ unconnected product path usable.
   workflow per accepted contract; rejected proposals create none, and restart
   replay verifies rather than duplicates those initial snapshots. A Conductor-only
   `goal_submit` tool exposes the transaction through the existing server and
-  MCP bridge, and the synthesized Claude plugin now includes `/goal`
-  instructions that translate the conversation and existing Beads into that
+  MCP bridge, and the Claude launch instructions define how the provider's
+  built-in `/goal` translates the conversation and existing Beads into that
   typed draft. An identical submission replay compares only the immutable Part
   plan and identities, preserving any Takes, effects, and receipts already
   recorded after acceptance.
@@ -901,7 +903,8 @@ unconnected product path usable.
   identity and head ref, receipt presence, and published OID when present. It
   also reports final-PR state/receipt/number/URL and the finalization ID,
   readiness decision, and observation sequence. The
-  Claude `/goal` skill uses this path for status requests rather than
+  Claude's launch-time Conductor contract uses this path for built-in `/goal`
+  status requests rather than
   resubmitting work. A separate process successfully inspected the integrated
   joined Goal after its execution process exited.
 - Goal policy steering is durable and replay-safe. `goal_steer` and
@@ -925,9 +928,11 @@ unconnected product path usable.
   publication intent and does not retry on each daemon tick; after the user
   configures the remote and answers the request, the same assured Goal resumes
   publication through the ordinary passive gate.
-- The Goal skill is the sole Conductor instruction contract. Claude consumes
-  its generated plugin form; Codex receives the same contract as explicit
-  developer instructions. Both are directly launchable Conductors, and both
+- The launch-time Conductor prompt is the sole Conductor instruction contract.
+  Claude receives it through `--append-system-prompt-file`; Codex receives the
+  same contract as explicit developer instructions. Choir installs no skill
+  named `goal`, so the provider retains sole ownership of built-in `/goal`.
+  Both are directly launchable Conductors, and both
   Claude and Codex are directly exercised as subscription-backed Part
   providers. Support classification remains attached to each exact pinned
   surface and its complete conformance record.
@@ -1026,7 +1031,7 @@ compiler still reports the repository's existing warning set.
   durable Part workflow, serialized promotion, Goal assurance, publication,
   PR, readiness, and terminal projection at concurrency limits 1, 2, and 4.
   The admitted parallelism is 1/2/2 and every run has the same semantic result.
-- A direct Claude Conductor `/goal` turn in a disposable repository used the
+- A direct Claude Conductor built-in `/goal` turn in a disposable repository used the
   restricted MCP surface to inspect Beads and submit a durable Goal. The
   daemon then ran the accepted Part through Codex implementation, native Moon
   verification, an independent Part audit, promotion, combined-tree
@@ -1091,7 +1096,7 @@ compiler still reports the repository's existing warning set.
   source package imported only by another closed source package.
 
 The central user flow is now directly launchable and joined through Goal assurance: Claude can turn a
-user Goal into a durable accepted Part set through `/goal`, and the daemon can
+user Goal into a durable accepted Part set through built-in `/goal`, and the daemon can
 discover and run that accepted decision through subscription-backed provider
 Takes, serialized promotion, exact combined verification, and independent
 Goal audit. A Conductor can also inspect the durable Goal and its Parts by Goal
@@ -3371,7 +3376,7 @@ must not be misrepresented as that collector.
 
 ## End-to-End Goal Flow
 
-For `/goal <selection>; max concurrency 4; stop on ambiguity`:
+For built-in `/goal <selection>; max concurrency 4; stop on ambiguity`:
 
 1. The Conductor produces a typed explicit proposal.
 2. Choir captures repository/bead state, validates exact selection, dependency
@@ -3425,7 +3430,9 @@ The behavioral operations are:
 /goal attach <take-id>
 ```
 
-Claude and Codex now receive the same generated Goal skill. Submission,
+Claude and Codex now receive the same generated Conductor contract. Choir does
+not register `/goal`; each provider's built-in command owns its persistence.
+Submission,
 status, steering, typed clarification answers, cancellation, and observational
 Take attachment use the same Conductor-only Choir tools. Their contract is common:
 
@@ -4216,7 +4223,7 @@ the implemented Goal runner rather than the target sketch.
   Orchestrator exposes the same session operations through a CLI, HTTP, and a
   typed MCP control surface, and recommends MCP when the supervising harness
   supports it. Choir should keep one authoritative `choird` command schema and
-  expose it to Claude through the checked-in Goal skill and MCP tools. The
+  expose it to Claude through the checked-in Conductor prompt and MCP tools. The
   skill explains when to submit, inspect, steer, cancel, or answer a typed
   decision; it does not contain a second scheduler.
 - **Preserve the intended Claude-to-Codex user flow.** Codex Orchestrator's
@@ -4777,7 +4784,7 @@ was corrected to preserve advanced Part state, and cross-repository runtime
 keys were corrected to include repository identity. This proves the durable
 submission-to-execution join, provider dispatch, passive Part gates, serialized
 promotion, and restart-readable inspection. It does not prove an interactive
-Claude `/goal` invocation, daemon-loss recovery during a live provider session,
+Claude built-in `/goal` invocation, daemon-loss recovery during a live provider session,
 Goal-level combined assurance, publication, or final-PR reconciliation.
 
 #### Post-snapshot cancellation and authorization amendment

@@ -62,7 +62,8 @@ Applies to every commit and PR opened by any agent. No exceptions, no AI-attribu
 ## Conductor Role
 
 The above are repository-editing invariants. The interactive Conductor follows
-the generated Goal skill and the
+the generated launch-time Conductor prompt and the provider's unshadowed
+built-in `/goal` command, plus the
 [Goal workflow charter](docs/charters/goal-workflow.md); it proposes and steers
 durable Goals but does not spawn provider sessions, mint receipts, integrate
 commits, or decide completion itself. Those actions remain `choird` authority.

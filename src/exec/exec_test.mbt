@@ -4,7 +4,12 @@ test "Claude Conductor launch is terminal-local and strict MCP only" {
   let joined = command.args.join(" ")
   assert_eq(command.program, "claude")
   assert_true(joined.contains("--strict-mcp-config"))
-  assert_true(joined.contains("--plugin-dir /repo/.choir/plugin"))
+  assert_true(
+    joined.contains(
+      "--append-system-prompt-file /repo/.choir/state/conductor-prompt.md",
+    ),
+  )
+  assert_false(joined.contains("--plugin-dir"))
   assert_true(joined.contains("\"command\":\"/opt/choir/bin/choir\""))
   assert_false(joined.contains("\"command\":\"choir\""))
   assert_false(joined.contains("zellij"))

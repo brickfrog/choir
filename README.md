@@ -56,9 +56,17 @@ selected Conductor in the current terminal (Claude by default). Later sessions
 can use `choir start`.
 
 From the Conductor, discuss the intended feature, create or refine Beads when
-needed, then invoke `/goal`. The Conductor proposes the selected Parts and
+needed, then invoke the provider's built-in `/goal`. The Conductor proposes the selected Parts and
 their contracts; Choir validates and schedules them according to dependencies,
 mutation overlap, available provider capacity, and the requested concurrency.
+
+Choir does not install a slash command or skill named `goal`. The Conductor
+receives Choir's contract as launch-time instructions and treats each built-in
+`/goal` objective as one bounded operation. Submission is complete when Choir
+returns the accepted Parts and rejections; background execution remains
+`choird`'s responsibility. Status, attachment, steering, cancellation, and
+answers similarly complete after one corresponding tool call, so the
+provider's persistent Goal loop never polls an asynchronous Choir run.
 
 Goal operation is conversational: ask the Conductor to show status, pause,
 resume, change concurrency, attach a Take, cancel, or relay your explicit

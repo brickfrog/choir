@@ -137,7 +137,7 @@ fn conductor_tools() -> Array[CatalogTool] {
   [
     {
       name: "goal_submit",
-      description: "Submit one typed Conductor draft exactly once for the user's current request. A blocked, canceled, failed, or uncertain Goal never authorizes an automatic retry or a replacement Goal ID.",
+      description: "Submit one typed Conductor draft exactly once for the user's current built-in /goal objective. The response sets conductor_objective_complete=true: report it and end the provider Goal without calling status. A blocked, canceled, failed, or uncertain Goal never authorizes an automatic retry or a replacement Goal ID.",
       input_schema: {
         "type": "object".to_json(),
         "properties": goal_submit_properties.to_json(),
@@ -150,7 +150,7 @@ fn conductor_tools() -> Array[CatalogTool] {
     },
     {
       name: "goal_status",
-      description: "Inspect durable Goal state once for the user's current status request. Report the result and stop; never poll.",
+      description: "Inspect durable Goal state once for the user's current built-in /goal status objective. The response sets conductor_objective_complete=true: report it and end the provider Goal. Never poll.",
       input_schema: {
         "type": "object".to_json(),
         "properties": {

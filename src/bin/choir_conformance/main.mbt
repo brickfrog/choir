@@ -3071,8 +3071,10 @@ async fn run_conductor_start_live() -> Int {
     conductor_result.contains("Goal is not registered") &&
     !conductor_result.contains("authentication failed") &&
     project_initialized &&
-    @sys.path_exists(root + "/.choir/plugin/skills/goal/SKILL.md") &&
-    !@sys.path_entry_exists(root + "/.choir/plugin/skills/audit") &&
+    @sys.path_exists(root + "/.choir/state/conductor-prompt.md") &&
+    !@sys.path_entry_exists(root + "/.choir/plugin") &&
+    conductor_args.contains("--append-system-prompt-file") &&
+    !conductor_args.contains("--plugin-dir") &&
     conductor_surface_restricted &&
     mode_code == 0 &&
     socket_mode.trim().to_owned() == "600"

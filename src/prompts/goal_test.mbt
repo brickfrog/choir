@@ -1,11 +1,17 @@
 ///|
-test "Goal prompt falls back to the current Conductor contract" {
+test "Conductor prompt delegates slash Goal ownership to the provider" {
   let body = @prompts.load_goal_prompt("/repo", path_exists=fn(_) { false }, read_file=fn(
     _,
   ) {
     abort("missing prompt must not be read")
   })
-  assert_true(body.has_prefix("---\nname: goal\n"))
+  assert_true(body.has_prefix("Interpret the user's Goal request"))
+  assert_true(body.contains("provider's built-in `/goal` command"))
+  assert_true(body.contains("Choir does not register or shadow that command"))
+  assert_true(body.contains("complete as soon as `goal_submit` returns"))
+  assert_true(body.contains("Never keep the provider's built-in Goal active"))
+  assert_false(body.contains("\nname: choir-goal\n"))
+  assert_false(body.contains("\nname: goal\n"))
   assert_true(body.contains("complete open blocking-dependency closure"))
   assert_true(body.contains("call `goal_submit` exactly once"))
   assert_true(body.contains("Never probe `goal_submit`"))
@@ -36,8 +42,8 @@ test "Goal prompt falls back to the current Conductor contract" {
 }
 
 ///|
-test "Goal prompt permits one project override" {
-  let expected_path = "/repo/.choir/prompts/skills/goal.md"
+test "Conductor prompt permits one project override outside skill discovery" {
+  let expected_path = "/repo/.choir/prompts/conductor.md"
   let body = @prompts.load_goal_prompt(
     "/repo",
     path_exists=fn(path) { path == expected_path },
