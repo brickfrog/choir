@@ -112,7 +112,6 @@ fn conductor_tools() -> Array[CatalogTool] {
     "proposal_id": conductor_string_schema(
       "Unique ID for this exact submission proposal",
     ),
-    "goal_id": conductor_string_schema("Unique durable Goal ID"),
     "completion_mode": {
       "type": "string".to_json(),
       "description": "Omit for an ordinary publishable Goal; evidence_only requires the binding digest".to_json(),
@@ -137,12 +136,12 @@ fn conductor_tools() -> Array[CatalogTool] {
   [
     {
       name: "goal_submit",
-      description: "Submit one typed Conductor draft. Choir pushes later durable state transitions into this session through its channel; goal_status is for an explicit user status request, not background observation. A blocked, canceled, failed, or uncertain Goal never authorizes an automatic retry or a replacement Goal ID.",
+      description: "Submit one typed Conductor draft exactly once for the current user request. The selected Part IDs are Bead IDs; Choir securely mints and returns the internal durable Goal ID. The call consumes the request's one mutation allowance whether accepted or rejected; never call goal_submit a second time or diagnose a rejection with Bash or the CLI. Choir pushes later durable state transitions through its channel. A blocked, canceled, failed, or uncertain Goal never authorizes an automatic retry.",
       input_schema: {
         "type": "object".to_json(),
         "properties": goal_submit_properties.to_json(),
         "required": [
-          "proposal_id", "goal_id", "maximum_parallel_parts", "parts",
+          "proposal_id", "maximum_parallel_parts", "parts",
         ].to_json(),
         "additionalProperties": false.to_json(),
       }.to_json(),

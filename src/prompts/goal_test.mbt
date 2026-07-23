@@ -22,12 +22,14 @@ test "Conductor prompt delegates slash Goal ownership to the provider" {
   assert_true(
     body.contains("Durable transitions arrive through the Choir channel"),
   )
-  assert_true(
-    body.contains("Never retry or resubmit within the same user request"),
-  )
-  assert_true(
-    body.contains("treat it as that Goal even when a Bead has the same ID"),
-  )
+  assert_true(body.contains("selects work, not a durable Goal identity"))
+  assert_true(body.contains("interpret that identifier as a Bead"))
+  assert_true(body.contains("Never call `goal_status` merely because"))
+  assert_true(body.contains("Choir, not the user or Conductor"))
+  assert_true(body.contains("Choir mints the durable `goal_id`"))
+  assert_true(body.contains("whether Choir accepts or rejects it"))
+  assert_true(body.contains("Never call `goal_submit` a second time"))
+  assert_true(body.contains("using Bash, the Choir CLI, process inspection"))
   assert_true(body.contains("The conversation is the product interface"))
   assert_true(body.contains("call `goal_answer`"))
   assert_false(body.contains("User-input answers are CLI-only"))

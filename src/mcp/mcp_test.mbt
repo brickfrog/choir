@@ -58,6 +58,26 @@ test "Conductor catalog exposes only Goal and Beads operations" {
     fail("expected tools array")
   }
   assert_eq(tools.length(), 10)
+  let mut goal_submit_schema : Json? = None
+  for tool in tools {
+    guard tool is Object(fields) else { continue }
+    if fields.get("name") == Some("goal_submit".to_json()) {
+      goal_submit_schema = fields.get("inputSchema")
+    }
+  }
+  guard goal_submit_schema is Some(Object(goal_submit)) else {
+    fail("expected goal_submit schema")
+  }
+  guard goal_submit.get("properties") is Some(Object(goal_properties)) else {
+    fail("expected goal_submit properties")
+  }
+  assert_eq(goal_properties.get("goal_id"), None)
+  assert_eq(
+    goal_submit.get("required"),
+    Some([
+      "proposal_id", "maximum_parallel_parts", "parts",
+    ].to_json()),
+  )
   let rendered = tools.to_json().stringify()
   assert_true(rendered.contains("goal_submit"))
   assert_true(rendered.contains("maximum_parallel_parts"))
@@ -67,6 +87,11 @@ test "Conductor catalog exposes only Goal and Beads operations" {
   assert_true(rendered.contains("\"enum\":[\"codex\",\"claude\"]"))
   assert_true(rendered.contains("\"default\":\"codex\""))
   assert_true(rendered.contains("never authorizes an automatic retry"))
+  assert_true(rendered.contains("consumes the request's one mutation allowance"))
+  assert_true(rendered.contains("never call goal_submit a second time"))
+  assert_true(rendered.contains("diagnose a rejection with Bash or the CLI"))
+  assert_true(rendered.contains("selected Part IDs are Bead IDs"))
+  assert_true(rendered.contains("securely mints and returns"))
   assert_true(rendered.contains("pushes later durable state transitions"))
   assert_true(
     rendered.contains("Background transitions arrive through the Choir channel"),

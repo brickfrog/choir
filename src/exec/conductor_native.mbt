@@ -762,12 +762,18 @@ async fn dispatch_native_task_update(
 }
 
 ///|
-fn native_conductor_goal_draft_json(request : @types.Request) -> String {
-  request.args.to_json_map().to_json().stringify(indent=0)
+fn native_conductor_goal_draft_json(
+  request : @types.Request,
+  goal_id : @control.GoalId,
+) -> String {
+  let fields : Map[String, Json] = Map([])
+  request.args.each_json(fn(key, value) { fields.set(key, value) })
+  fields.set("goal_id", goal_id.0.to_json())
+  fields.to_json().stringify(indent=0)
 }
 
 ///|
-test "native Conductor preserves structured Goal submission arguments" {
+test "native Conductor mints Goal identity around structured submission arguments" {
   let part : Json = {
     "part_id": "bead-1".to_json(),
     "instruction": "implement the contract".to_json(),
@@ -782,15 +788,22 @@ test "native Conductor preserves structured Goal submission arguments" {
     name: "goal_submit",
     args: @types.RequestArgs::from_values({
       "proposal_id": "proposal-1".to_json(),
-      "goal_id": "goal-1".to_json(),
+      "goal_id": "bead-1-must-not-control-goal-identity".to_json(),
       "maximum_parallel_parts": (1).to_json(),
       "parts": [part].to_json(),
     }),
   }
-  let draft = @workflow.decode_conductor_goal_draft(
-    native_conductor_goal_draft_json(request),
-  ).unwrap()
-  assert_eq(draft.goal_id, @control.GoalId("goal-1"))
+  let draft = match
+    @workflow.decode_conductor_goal_draft(
+      native_conductor_goal_draft_json(
+        request,
+        @control.GoalId("goal-minted-by-choir"),
+      ),
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(draft.goal_id, @control.GoalId("goal-minted-by-choir"))
   assert_eq(draft.parts[0].part_id, @control.PartId("bead-1"))
   assert_eq(draft.parts[0].verification.arguments, [
     "test", "--target", "native",
@@ -803,7 +816,17 @@ async fn dispatch_native_goal_submit(
   request : @types.Request,
   capture : async (Command) -> (Int, String),
 ) -> @types.Response {
-  let draft = native_conductor_goal_draft_json(request)
+  let token = match @sys.mint_local_token() {
+    Some(value) => value
+    None =>
+      return native_conductor_error(
+        "failed to mint a durable Goal identity",
+      )
+  }
+  let draft = native_conductor_goal_draft_json(
+    request,
+    @control.GoalId("goal-" + token),
+  )
   match submit_native_conductor_goal_draft(project_dir, draft, capture) {
     Ok(report) => native_conductor_goal_action_ok_json(report.to_json())
     Err(error) => @types.Response::Err(error.message())

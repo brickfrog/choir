@@ -489,6 +489,20 @@ fn native_goal_submission_persisted(
 }
 
 ///|
+fn native_goal_identity_conflict(
+  goal_id : @control.GoalId,
+  proposal_id : @workflow.GoalProposalId,
+) -> @types.ChoirError {
+  native_goal_submission_error(
+    "Goal ID `" +
+    goal_id.0 +
+    "` is already durably registered by proposal `" +
+    proposal_id.0 +
+    "`. This identity conflict is permanent: do not retry goal_submit in this user turn and do not infer a transient Part lock. Inspect the existing Goal with goal_status.",
+  )
+}
+
+///|
 fn native_goal_submission_take(
   id : String,
   goal_id : @control.GoalId,
@@ -851,6 +865,20 @@ pub async fn submit_native_conductor_goal_draft(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
+  match
+    @workflow.load_goal_selection_decision(repository, adapters, draft.goal_id) {
+    Ok(Some(stored)) =>
+      if stored.decision.proposal.id != draft.proposal_id {
+        return Err(
+          native_goal_identity_conflict(
+            draft.goal_id,
+            stored.decision.proposal.id,
+          ),
+        )
+      }
+    Ok(None) => ()
+    Err(error) => return Err(error)
+  }
   let branch_ref = match capture_native_goal_branch_ref(project_dir, capture) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -915,7 +943,35 @@ pub async fn submit_native_conductor_goal_draft(
     Err(error) => return Err(error)
   }
   if !native_goal_submission_persisted(persistence.transaction_outcome) {
-    return Err(native_goal_submission_error("selection transaction conflicted"))
+    match
+      @workflow.load_goal_selection_decision(
+        repository,
+        adapters,
+        draft.goal_id,
+      ) {
+      Ok(Some(stored)) =>
+        if stored.decision.proposal.id != draft.proposal_id {
+          return Err(
+            native_goal_identity_conflict(
+              draft.goal_id,
+              stored.decision.proposal.id,
+            ),
+          )
+        } else {
+          return Err(
+            native_goal_submission_error(
+              "the replayed proposal disagrees with its durable selection; this is permanent and must not be retried in this user turn",
+            ),
+          )
+        }
+      Ok(None) =>
+        return Err(
+          native_goal_submission_error(
+            "selection persistence conflicted without an observable durable owner; do not retry automatically in this user turn",
+          ),
+        )
+      Err(error) => return Err(error)
+    }
   }
   let loaded = match
     @workflow.load_goal_selection_decision(repository, adapters, draft.goal_id) {

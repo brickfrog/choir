@@ -264,6 +264,30 @@ async test "native Conductor submission captures Beads and persists once" {
   assert_eq(replay.initialized_part_count, 1)
   assert_true(replay.execution_registered)
   assert_eq(replay.selection_decision_digest, first.selection_decision_digest)
+  let conflicting_draft = draft.replace(
+    old="proposal-native-submit",
+    new="proposal-native-reuse",
+  )
+  let conflicting_capture_called = @ref.new(false)
+  let conflicting_capture : async (@exec.Command) -> (Int, String) = _ => {
+    conflicting_capture_called.val = true
+    (-1, "identity conflict must short-circuit host capture")
+  }
+  match
+    submit_native_conductor_goal_draft(
+      root,
+      conflicting_draft,
+      conflicting_capture,
+    ) {
+    Err(error) => {
+      assert_true(error.message().contains("already durably registered"))
+      assert_true(error.message().contains("identity conflict is permanent"))
+      assert_true(error.message().contains("do not retry goal_submit"))
+      assert_true(error.message().contains("goal_status"))
+    }
+    Ok(_) => fail("a different proposal reused a durable Goal identity")
+  }
+  assert_false(conflicting_capture_called.val)
   match
     @workflow.load_part_snapshot(
       repository,
