@@ -1161,6 +1161,10 @@ fn selection_fixture_proposal(
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
     selection_policy: @workflow.GoalSelectionPolicy::ExactClosure,
     completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
+    pull_request_document: Some({
+      title: "test: run selection conformance",
+      body: "Exercises the selection conformance workflow.",
+    }),
     migration_production_admission: None,
     maximum_parallel_parts: 2,
     parts,
@@ -2386,6 +2390,10 @@ fn cancellation_goal_assurance_fixture_with_part_count(
     base_tree_oid: base.task_contract.base_tree_oid,
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
     completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
+    pull_request_document: Some({
+      title: "test: run audit conformance",
+      body: "Exercises the audit conformance workflow.",
+    }),
     migration_production_admission: None,
     goal_ref,
     branch_initialization: {
@@ -2848,6 +2856,7 @@ pub fn run_bounded_migration_conformance_fixture() -> Result[
     completion_mode: @workflow.GoalCompletionMode::GoalEvidenceOnly(
       rehearsal_binding_digest,
     ),
+    pull_request_document: None,
   }
   let completion = match
     @workflow.authorize_goal_evidence_only_completion(
@@ -3432,8 +3441,6 @@ pub fn cancellation_ordering_matrix_case() -> HermeticConformanceCase {
         marker_state: @workflow.PullRequestMarkerState::PullRequestMarkerExact,
         title_digest: audit_fixture_digest_a,
         body_digest: audit_fixture_digest_b,
-        goal_contract_link_present: true,
-        evidence_manifest_link_present: true,
       }
       let abandoned_pull_request = match
         @workflow.record_goal_pull_request_cancellation(

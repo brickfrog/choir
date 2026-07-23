@@ -164,12 +164,6 @@ fn native_pull_request_snapshot(
     },
     title_digest: @storage.artifact_digest(@utf8.encode(title)),
     body_digest: @storage.artifact_digest(@utf8.encode(body)),
-    goal_contract_link_present: body.contains(
-      @storage.digest_text(intent.goal_contract_digest),
-    ),
-    evidence_manifest_link_present: body.contains(
-      @storage.digest_text(intent.evidence_manifest_digest),
-    ),
   })
 }
 
@@ -257,12 +251,6 @@ fn native_rest_pull_request_snapshot(
     },
     title_digest: @storage.artifact_digest(@utf8.encode(title)),
     body_digest: @storage.artifact_digest(@utf8.encode(body)),
-    goal_contract_link_present: body.contains(
-      @storage.digest_text(intent.goal_contract_digest),
-    ),
-    evidence_manifest_link_present: body.contains(
-      @storage.digest_text(intent.evidence_manifest_digest),
-    ),
   })
 }
 
@@ -469,13 +457,11 @@ pub fn synthetic_pull_request_forge_adapters() -> NativePullRequestForgeAdapters
         state: @workflow.RemotePullRequestState::RemotePullRequestOpen,
         marker_state: @workflow.PullRequestMarkerState::PullRequestMarkerExact,
         title_digest: @storage.artifact_digest(
-          @utf8.encode("feat: complete Choir Goal"),
+          @utf8.encode(intent.document.title),
         ),
         body_digest: @storage.artifact_digest(
-          @utf8.encode(intent.identity_marker.0),
+          @utf8.encode(intent.document.body),
         ),
-        goal_contract_link_present: true,
-        evidence_manifest_link_present: true,
       })
     },
     create: (_, _, _, _) => created.val = true,
@@ -492,6 +478,41 @@ fn native_pull_request_transaction_completed(
     | @storage.StateTransactionOutcome::StateTransactionCommittedAckLost => true
     _ => false
   }
+}
+
+///|
+fn native_goal_pull_request_document(
+  proposed : @workflow.PullRequestDocument?,
+  marker : @workflow.PullRequestIdentityMarker,
+) -> Result[@workflow.PullRequestDocument, @types.ChoirError] {
+  guard proposed is Some(document) else {
+    return Err(
+      native_pull_request_error("publishable Goal has no pull request document"),
+    )
+  }
+  Ok({ title: document.title, body: document.body + "\n\n" + marker.0 })
+}
+
+///|
+test "native final PR preserves Conductor prose and adds only its marker" {
+  let marker = @workflow.PullRequestIdentityMarker(
+    "<!-- choir-final-pr:exact -->",
+  )
+  let document = native_goal_pull_request_document(
+    Some({
+      title: "docs: add first-Goal walkthrough",
+      body: "Explains the workflow and its verification.",
+    }),
+    marker,
+  ).unwrap()
+  assert_eq(document.title, "docs: add first-Goal walkthrough")
+  assert_eq(
+    document.body,
+    "Explains the workflow and its verification.\n\n" + marker.0,
+  )
+  assert_false(document.body.contains("goal-contract-digest"))
+  assert_false(document.body.contains("evidence-manifest-digest"))
+  assert_true(native_goal_pull_request_document(None, marker) is Err(_))
 }
 
 ///|
@@ -554,54 +575,6 @@ fn persist_native_goal_pull_request_record(
       }
     }
   }
-}
-
-///|
-fn adopt_native_pull_request_document(
-  repository : @workflow.PartWorkflowRepository,
-  repository_adapters : @workflow.PartWorkflowRepositoryAdapters,
-  goal_id : @control.GoalId,
-  document : @workflow.PullRequestDocument,
-) -> Result[@control.Digest, @types.ChoirError] {
-  let content = @workflow.pull_request_document_bytes(document)
-  let digest = @storage.artifact_digest(content)
-  let receipt = match
-    (repository_adapters.artifacts.adopt)(repository.artifact_store, {
-      content,
-      expected_digest: digest,
-      provenance: @storage.ArtifactProvenance::ArtifactPullRequestDocument(
-        goal_id,
-      ),
-      retention: @storage.ArtifactRetention::ArtifactPermanent,
-    }) {
-    Ok(value) => value
-    Err(error) => return Err(error)
-  }
-  if receipt.digest == digest && receipt.byte_length == content.length() {
-    Ok(digest)
-  } else {
-    Err(native_pull_request_error("PR document artifact receipt is false"))
-  }
-}
-
-///|
-fn load_native_pull_request_document(
-  repository : @workflow.PartWorkflowRepository,
-  repository_adapters : @workflow.PartWorkflowRepositoryAdapters,
-  digest : @control.Digest,
-) -> Result[@workflow.PullRequestDocument, @types.ChoirError] {
-  let content = match
-    (repository_adapters.artifacts.read)(repository.artifact_store, {
-      digest,
-      max_bytes: repository.max_snapshot_bytes,
-    }) {
-    Ok(value) => value
-    Err(error) => return Err(error)
-  }
-  if @storage.artifact_digest(content) != digest {
-    return Err(native_pull_request_error("PR document digest disagrees"))
-  }
-  @workflow.decode_pull_request_document(content)
 }
 
 ///|
@@ -691,24 +664,12 @@ pub async fn advance_native_goal_pull_request_with_adapters(
           Ok(value) => value
           Err(error) => return Err(error)
         }
-        let document : @workflow.PullRequestDocument = {
-          title: "feat: complete Choir Goal",
-          body: "## Summary\n\nCompletes Goal `" +
-          goal_id.0 +
-          "` from its sealed, verified, and independently audited branch.\n\nGoal contract: `" +
-          @storage.digest_text(execution.goal.contract_digest) +
-          "`\nEvidence manifest: `" +
-          @storage.digest_text(
-            publication.goal_verification_evidence_manifest_digest,
-          ) +
-          "`\n\n" +
-          marker.0,
-        }
-        match
-          adopt_native_pull_request_document(
-            repository, repository_adapters, goal_id, document,
+        let document = match
+          native_goal_pull_request_document(
+            execution.pull_request_document,
+            marker,
           ) {
-          Ok(_) => ()
+          Ok(value) => value
           Err(error) => return Err(error)
         }
         let planned = match
@@ -836,20 +797,11 @@ pub async fn advance_native_goal_pull_request_with_adapters(
             if dispatch_create &&
               stored.record.intent.state ==
               @workflow.PullRequestIntentState::PullRequestCreateMayHaveBeenIssued {
-              let document = match
-                load_native_pull_request_document(
-                  repository,
-                  repository_adapters,
-                  stored.record.intent.title_and_body_artifact_digest,
-                ) {
-                Ok(value) => value
-                Err(error) => return Err(error)
-              }
               (forge.create)(
                 git.root,
                 repository_name,
                 stored.record.intent,
-                document,
+                stored.record.intent.document,
               )
               dispatch_create = false
               if fault ==
@@ -968,7 +920,10 @@ test "GitHub lookup parser distinguishes identity, possible match, and ambiguity
     goal_branch_seal_digest: @control.Digest("sha256:fixture"),
     combined_audit_receipt_id: @control.ReceiptId("audit-fixture"),
     evidence_manifest_digest: @control.Digest("sha256:evidence"),
-    title_and_body_artifact_digest: @control.Digest("sha256:document"),
+    document: {
+      title: "docs: explain Goal workflow",
+      body: "Explains the Goal workflow.\n\n<!-- choir-final-pr:fixture -->",
+    },
     identity_marker: @workflow.PullRequestIdentityMarker(
       "<!-- choir-final-pr:fixture -->",
     ),
@@ -1028,8 +983,6 @@ fn pull_request_fault_snapshot(
     marker_state: @workflow.PullRequestMarkerState::PullRequestMarkerExact,
     title_digest: @storage.artifact_digest(@utf8.encode(document.title)),
     body_digest: @storage.artifact_digest(@utf8.encode(document.body)),
-    goal_contract_link_present: true,
-    evidence_manifest_link_present: true,
   }
 }
 

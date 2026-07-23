@@ -80,6 +80,11 @@ test "Conductor catalog exposes only Goal and Beads operations" {
     goal_submit.get("required"),
     Some(["proposal_id", "maximum_parallel_parts", "parts"].to_json()),
   )
+  guard goal_properties.get("pull_request") is Some(Object(pull_request)) else {
+    fail("expected publishable pull_request schema")
+  }
+  assert_eq(pull_request.get("required"), Some(["title", "body"].to_json()))
+  assert_true(goal_submit.get("oneOf") is Some(Array(_)))
   guard goal_status_schema is Some(Object(goal_status)) else {
     fail("expected goal_status schema")
   }

@@ -76,16 +76,23 @@ result in plain language. The CLI is an operator and debugging fallback only.
    Provider assignment is a proposal; Choir remains authoritative.
 4. Preserve dependency-safe parallelism. Set `maximum_parallel_parts` from the user's instruction or a conservative value derived from declared overlap. Do not claim that concurrency overrides dependencies or mutation conflicts.
    The completion mode is immutable after acceptance. Omit `completion_mode`
-   for an ordinary publishable Goal. Use `completion_mode: "evidence_only"`
-   only when the user has accepted a non-publishing preparatory or rehearsal
-   Goal, and include its exact `evidence_only_binding_digest`. Evidence-only
-   Goals still complete ordinary assurance and then Choir cancels them through
-   the existing typed cancellation path; never use this mode merely to avoid
+   for an ordinary publishable Goal and include a `pull_request` with a
+   semantic title and concise reviewer-facing body derived from the selected
+   Beads and intended change. Follow the repository's PR-title convention.
+   Describe what changes and how it will be verified; never put internal Goal
+   IDs, digests, receipt metadata, or a Choir identity marker in human-facing
+   prose. Choir appends its hidden reconciliation marker. Use
+   `completion_mode: "evidence_only"` only when the user has accepted a
+   non-publishing preparatory or rehearsal Goal, include its exact
+   `evidence_only_binding_digest`, and omit `pull_request`. Evidence-only Goals
+   still complete ordinary assurance and then Choir cancels them through the
+   existing typed cancellation path; never use this mode merely to avoid
    publication requirements.
 5. If selection, intended behavior, mutation ownership, or verification remains materially ambiguous, ask the user one concise question before submission.
 6. The `goal_submit` input schema is authoritative and exposes the complete structured Goal and Part shape. Never probe `goal_submit` to discover fields and never search source code for its schema. Assemble the complete draft first, then call `goal_submit` exactly once with structured arguments containing:
    - unique `proposal_id`; Choir mints the durable `goal_id`;
-   - optional `completion_mode` plus `evidence_only_binding_digest` exactly as
+   - `pull_request` for a publishable Goal, or optional `completion_mode` plus
+     `evidence_only_binding_digest` for an evidence-only Goal, exactly as
      described above;
    - `maximum_parallel_parts`;
    - `parts`, each with `part_id`, `instruction`, optional `provider` only for

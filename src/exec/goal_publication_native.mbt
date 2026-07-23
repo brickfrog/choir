@@ -1549,6 +1549,10 @@ async fn prove_publication_fault_recovery(
     base_tree_oid: @control.GitOid(tree_oid),
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
     completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
+    pull_request_document: Some({
+      title: "test: exercise Goal publication",
+      body: "Exercises native Goal publication.",
+    }),
     migration_production_admission: None,
     goal_ref,
     branch_initialization: publication_initialized_branch(

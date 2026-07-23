@@ -39,6 +39,9 @@ test "Conductor prompt delegates slash Goal ownership to the provider" {
   assert_false(body.contains("User-input answers are CLI-only"))
   assert_true(body.contains("The completion mode is immutable"))
   assert_true(body.contains("`evidence_only_binding_digest`"))
+  assert_true(body.contains("include a `pull_request` with a semantic title"))
+  assert_true(body.contains("never put internal Goal IDs, digests"))
+  assert_true(body.contains("Choir appends its hidden reconciliation marker"))
   assert_true(
     body.contains("never invent or nest them under a `mutation` object"),
   )

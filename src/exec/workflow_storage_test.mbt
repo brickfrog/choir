@@ -1368,6 +1368,10 @@ async test "Goal cancellation atomically rejects stale seal authorization" {
     base_tree_oid: @control.GitOid("goal-tree-store"),
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
     completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
+    pull_request_document: Some({
+      title: "test: exercise Goal assurance persistence",
+      body: "Exercises persisted Goal assurance.",
+    }),
     migration_production_admission: None,
     goal_ref: @workflow.goal_execution_ref(integrated.goal.id),
     branch_initialization: workflow_store_initialized_branch(
@@ -1553,6 +1557,10 @@ async test "Goal steering persists revision history and paused Goals do not run"
     base_tree_oid: @control.GitOid("goal-steering-tree"),
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
     completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
+    pull_request_document: Some({
+      title: "test: exercise Goal steering",
+      body: "Exercises persisted Goal steering.",
+    }),
     migration_production_admission: None,
     goal_ref: @workflow.goal_execution_ref(fixture.goal.id),
     branch_initialization: @workflow.initial_goal_branch_initialization(
@@ -1684,6 +1692,10 @@ async test "Goal finalization input request and answer survive restart" {
     base_tree_oid: @control.GitOid("goal-input-tree"),
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
     completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
+    pull_request_document: Some({
+      title: "test: exercise Goal input persistence",
+      body: "Exercises persisted Goal input handling.",
+    }),
     migration_production_admission: None,
     goal_ref: @workflow.goal_execution_ref(fixture.goal.id),
     branch_initialization: workflow_store_initialized_branch(

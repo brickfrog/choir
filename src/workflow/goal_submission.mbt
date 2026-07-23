@@ -96,6 +96,7 @@ pub(all) struct GoalProposal {
   integration_target_ref : GitRefName
   selection_policy : GoalSelectionPolicy
   completion_mode : GoalCompletionMode
+  pull_request_document : PullRequestDocument?
   migration_production_admission : @migration.MigrationProductionAdmissionRef?
   maximum_parallel_parts : Int
   parts : Array[ConductorPartProposal]
@@ -392,6 +393,7 @@ fn canonical_goal_proposal_json(proposal : GoalProposal) -> Json {
     proposal.integration_target_ref.to_json(),
     proposal.selection_policy.to_json(),
     proposal.completion_mode.to_json(),
+    proposal.pull_request_document.to_json(),
     proposal.migration_production_admission
     .map(fn(reference) {
       @migration.migration_production_admission_ref_digest(reference)
@@ -405,7 +407,7 @@ fn canonical_goal_proposal_json(proposal : GoalProposal) -> Json {
 ///|
 pub fn goal_proposal_digest(proposal : GoalProposal) -> @control.Digest {
   goal_submission_domain_digest(
-    "choir.goal-proposal.v3",
+    "choir.goal-proposal.v4",
     canonical_goal_proposal_json(proposal),
   )
 }
@@ -433,9 +435,23 @@ pub fn evaluate_goal_proposal(
     return Err(goal_submission_error("maximum_parallel_parts is invalid"))
   }
   match proposal.completion_mode {
-    GoalPublishable => ()
+    GoalPublishable =>
+      match proposal.pull_request_document {
+        Some(document) =>
+          if !pull_request_document_is_valid(document) ||
+            document.body.contains("<!-- choir-final-pr:") {
+            return Err(
+              goal_submission_error("pull_request document is invalid"),
+            )
+          }
+        None =>
+          return Err(
+            goal_submission_error("publishable Goal requires pull_request"),
+          )
+      }
     GoalEvidenceOnly(binding) =>
-      if @storage.validate_digest(binding) is Err(_) {
+      if @storage.validate_digest(binding) is Err(_) ||
+        proposal.pull_request_document is Some(_) {
         return Err(goal_submission_error("evidence-only binding is invalid"))
       }
   }

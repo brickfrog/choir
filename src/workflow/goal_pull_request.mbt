@@ -113,8 +113,6 @@ pub(all) struct RemotePullRequestSnapshot {
   marker_state : PullRequestMarkerState
   title_digest : @control.Digest
   body_digest : @control.Digest
-  goal_contract_link_present : Bool
-  evidence_manifest_link_present : Bool
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -143,7 +141,7 @@ pub(all) struct PullRequestIntent {
   goal_branch_seal_digest : @control.Digest
   combined_audit_receipt_id : @control.ReceiptId
   evidence_manifest_digest : @control.Digest
-  title_and_body_artifact_digest : @control.Digest
+  document : PullRequestDocument
   identity_marker : PullRequestIdentityMarker
   idempotency_key : String
   canonical_remote_pull_request_id : RemotePullRequestId?
@@ -264,45 +262,16 @@ fn pull_request_intent_key(
 }
 
 ///|
-fn pull_request_document_is_valid(document : PullRequestDocument) -> Bool {
+pub fn pull_request_document_is_valid(document : PullRequestDocument) -> Bool {
   let title = document.title.trim().to_owned()
   title != "" &&
   title.length() <= 256 &&
   !title.contains("\u{00}") &&
   !title.contains("\n") &&
   !title.contains("\r") &&
-  document.body != "" &&
+  document.body.trim() != "" &&
   document.body.length() <= 1024 * 1024 &&
   !document.body.contains("\u{00}")
-}
-
-///|
-pub fn pull_request_document_bytes(document : PullRequestDocument) -> Bytes {
-  @utf8.encode(document.to_json().stringify(indent=0))
-}
-
-///|
-pub fn pull_request_document_digest(
-  document : PullRequestDocument,
-) -> @control.Digest {
-  @storage.artifact_digest(pull_request_document_bytes(document))
-}
-
-///|
-pub fn decode_pull_request_document(
-  content : Bytes,
-) -> Result[PullRequestDocument, @types.ChoirError] {
-  let json = @json.parse(@utf8.decode_lossy(content)) catch {
-    _ => return Err(goal_pull_request_error("document is not valid JSON"))
-  }
-  let document : PullRequestDocument = @json.from_json(json) catch {
-    _ => return Err(goal_pull_request_error("document has the wrong schema"))
-  }
-  if pull_request_document_is_valid(document) {
-    Ok(document)
-  } else {
-    Err(goal_pull_request_error("document is invalid"))
-  }
 }
 
 ///|
@@ -400,8 +369,8 @@ fn goal_pull_request_record_shape_is_valid(
     record.intent.goal_contract_digest != record.goal_contract_digest ||
     @storage.validate_digest(record.intent.goal_branch_seal_digest) is Err(_) ||
     @storage.validate_digest(record.intent.evidence_manifest_digest) is Err(_) ||
-    @storage.validate_digest(record.intent.title_and_body_artifact_digest)
-    is Err(_) ||
+    !pull_request_document_is_valid(record.intent.document) ||
+    !record.intent.document.body.contains(marker) ||
     record.durable_version <= 0 ||
     record.fencing_epoch.0 <= 0L {
     return false
@@ -545,7 +514,6 @@ pub fn initialize_goal_pull_request(
   if !document.body.contains(marker.0) {
     return Err(goal_pull_request_error("document lacks its identity marker"))
   }
-  let title_and_body_artifact_digest = pull_request_document_digest(document)
   let record : GoalPullRequestRecord = {
     goal_id: execution.goal.id,
     repository_id: execution.repository_id,
@@ -567,7 +535,7 @@ pub fn initialize_goal_pull_request(
       goal_branch_seal_digest: seal.seal_digest,
       combined_audit_receipt_id: audit.receipt_id,
       evidence_manifest_digest: verification.evidence_manifest_digest,
-      title_and_body_artifact_digest,
+      document,
       identity_marker: marker,
       idempotency_key: "pr-" + key_text,
       canonical_remote_pull_request_id: None,

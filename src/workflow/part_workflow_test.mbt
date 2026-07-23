@@ -753,6 +753,10 @@ fn workflow_execution_for_attach(
     base_tree_oid: @control.GitOid("base-tree"),
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
     completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
+    pull_request_document: Some({
+      title: "test: exercise Part workflow",
+      body: "Exercises the Part workflow.",
+    }),
     migration_production_admission: None,
     goal_ref,
     branch_initialization: workflow_initialized_branch(
@@ -1256,6 +1260,10 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     base_tree_oid: @control.GitOid("goal-tree-before"),
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
     completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
+    pull_request_document: Some({
+      title: "test: exercise assurance workflow",
+      body: "Exercises Goal assurance from a Part workflow.",
+    }),
     migration_production_admission: None,
     goal_ref: @workflow.goal_execution_ref(integrated.goal.id),
     branch_initialization: workflow_initialized_branch(
@@ -1594,6 +1602,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     completion_mode: @workflow.GoalCompletionMode::GoalEvidenceOnly(
       workflow_digest_b,
     ),
+    pull_request_document: None,
   }
   let evidence_only_completion = @workflow.authorize_goal_evidence_only_completion(
     evidence_only_execution, assured,
@@ -1837,6 +1846,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     completion_mode: @workflow.GoalCompletionMode::GoalEvidenceOnly(
       rehearsal_reference.completion_binding_digest,
     ),
+    pull_request_document: None,
     cancellation_request: rehearsal_canceled.cancellation_request.map(fn(
       request,
     ) {
@@ -1881,6 +1891,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     completion_mode: @workflow.GoalCompletionMode::GoalEvidenceOnly(
       required_rehearsal_reference.completion_binding_digest,
     ),
+    pull_request_document: None,
     cancellation_request: rebound_rehearsal.cancellation_request.map(fn(
       request,
     ) {
@@ -2199,8 +2210,6 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     marker_state: @workflow.PullRequestMarkerState::PullRequestMarkerExact,
     title_digest: @storage.artifact_digest(@utf8.encode(pr_document.title)),
     body_digest: @storage.artifact_digest(@utf8.encode(pr_document.body)),
-    goal_contract_link_present: true,
-    evidence_manifest_link_present: true,
   }
   let authorized_pull_request = match
     @workflow.authorize_goal_pull_request(
@@ -2450,7 +2459,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     Some(finalization),
   ).unwrap()
   assert_eq(other_concurrency_status.semantic_run_projection, Some(projection))
-  let missing_evidence = match
+  let edited_prose = match
     @workflow.observe_goal_pull_request_readiness(
       assured_execution,
       assured,
@@ -2458,7 +2467,8 @@ test "integrated Parts authorize one immutable Goal branch seal" {
       adopted_pull_request,
       @workflow.PullRequestLookupObservation::PullRequestStoredIdMatch({
         ..remote_pull_request,
-        evidence_manifest_link_present: false,
+        title_digest: @storage.artifact_digest(@utf8.encode("edited title")),
+        body_digest: @storage.artifact_digest(@utf8.encode("edited body")),
       }),
       None,
       2L,
@@ -2469,14 +2479,38 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     Err(error) => fail(error.message())
   }
   assert_eq(
-    missing_evidence.readiness.decision,
-    @workflow.PullRequestReadinessDecision::PullRequestReadinessNeedsInput(
-      @workflow.PullRequestReadinessNeedsInputReason::PullRequestEvidenceLinksMissing,
+    edited_prose.readiness.decision,
+    @workflow.PullRequestReadinessDecision::PullRequestReady,
+  )
+  assert_true(
+    @workflow.authorize_goal_execution_success(
+      assured_execution, assured, published, adopted_pull_request, edited_prose,
+    )
+    is Ok(_),
+  )
+  let missing_marker = @workflow.observe_goal_pull_request_readiness(
+    assured_execution,
+    assured,
+    published,
+    adopted_pull_request,
+    @workflow.PullRequestLookupObservation::PullRequestStoredIdMatch({
+      ..remote_pull_request,
+      marker_state: @workflow.PullRequestMarkerState::PullRequestMarkerMissing,
+    }),
+    None,
+    3L,
+    50L,
+    51L,
+  ).unwrap()
+  assert_eq(
+    missing_marker.readiness.decision,
+    @workflow.PullRequestReadinessDecision::PullRequestReadinessDrift(
+      @workflow.PullRequestReadinessDriftReason::PullRequestCanonicalIdentityChanged,
     ),
   )
   assert_true(
     @workflow.authorize_goal_execution_success(
-      assured_execution, assured, published, adopted_pull_request, missing_evidence,
+      assured_execution, assured, published, adopted_pull_request, missing_marker,
     )
     is Err(_),
   )

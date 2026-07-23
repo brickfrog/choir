@@ -120,6 +120,20 @@ fn conductor_tools() -> Array[CatalogTool] {
     "evidence_only_binding_digest": conductor_string_schema(
       "Required 64-character binding digest only for evidence_only completion",
     ),
+    "pull_request": {
+      "type": "object".to_json(),
+      "description": "Required for a publishable Goal and forbidden for evidence_only. Human-facing title and review-ready body captured in the immutable Goal contract; Choir adds its hidden reconciliation marker.".to_json(),
+      "properties": {
+        "title": conductor_string_schema(
+          "Semantic PR title describing the selected work",
+        ),
+        "body": conductor_string_schema(
+          "Concise reviewer-facing summary and verification plan; do not include Goal IDs, digests, or Choir markers",
+        ),
+      }.to_json(),
+      "required": ["title", "body"].to_json(),
+      "additionalProperties": false.to_json(),
+    }.to_json(),
     "maximum_parallel_parts": {
       "type": "integer".to_json(),
       "description": "Positive concurrency cap; dependencies and mutation conflicts still serialize work".to_json(),
@@ -141,6 +155,15 @@ fn conductor_tools() -> Array[CatalogTool] {
         "type": "object".to_json(),
         "properties": goal_submit_properties.to_json(),
         "required": ["proposal_id", "maximum_parallel_parts", "parts"].to_json(),
+        "oneOf": [
+          { "required": ["pull_request"].to_json() }.to_json(),
+          {
+            "properties": {
+              "completion_mode": { "const": "evidence_only".to_json() }.to_json(),
+            }.to_json(),
+            "required": ["completion_mode", "evidence_only_binding_digest"].to_json(),
+          }.to_json(),
+        ].to_json(),
         "additionalProperties": false.to_json(),
       }.to_json(),
       read_only: false,

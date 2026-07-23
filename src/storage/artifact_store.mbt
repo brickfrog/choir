@@ -35,7 +35,6 @@ pub(all) enum ArtifactProvenance {
   ArtifactGoalInputAnswer(@control.GoalId)
   ArtifactGoalAssuranceRecord(@control.GoalId)
   ArtifactGoalPublicationRecord(@control.GoalId)
-  ArtifactPullRequestDocument(@control.GoalId)
   ArtifactGoalPullRequestRecord(@control.GoalId)
   ArtifactGoalFinalizationRecord(@control.GoalId)
   ArtifactWorkflowSnapshot(@control.GoalId)

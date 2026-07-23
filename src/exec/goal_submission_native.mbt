@@ -924,6 +924,7 @@ pub async fn submit_native_conductor_goal_draft(
     integration_target_ref: branch_ref,
     selection_policy: @workflow.GoalSelectionPolicy::ExactClosure,
     completion_mode: draft.completion_mode,
+    pull_request_document: draft.pull_request_document,
     migration_production_admission,
     maximum_parallel_parts: draft.maximum_parallel_parts,
     parts,

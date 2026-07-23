@@ -130,6 +130,10 @@ fn submission_proposal(
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
     selection_policy: @workflow.GoalSelectionPolicy::ExactClosure,
     completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
+    pull_request_document: Some({
+      title: "test: evaluate Goal submission",
+      body: "Exercises Goal submission.",
+    }),
     migration_production_admission: None,
     maximum_parallel_parts: 2,
     parts,
@@ -942,6 +946,7 @@ test "evidence-only Goal binds completion and cancels only after assurance" {
   let proposal = {
     ..submission_proposal(goal_id, [part]),
     completion_mode: @workflow.GoalCompletionMode::GoalEvidenceOnly(binding),
+    pull_request_document: None,
   }
   let decision = @workflow.evaluate_goal_proposal(
     proposal,

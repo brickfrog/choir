@@ -427,7 +427,7 @@ async test "real exec integration: final PR remote states have exact outcomes" {
 
 ///|
 pub(all) struct NativeGoalFinalizationRaceConformanceReport {
-  edit_before_response_rejected : Bool
+  edit_before_response_accepted : Bool
   edit_after_response_did_not_retroactively_change_decision : Bool
   success_won_before_late_cancellation : Bool
   cancellation_won_after_ready_before_success : Bool
@@ -443,7 +443,9 @@ pub async fn run_native_goal_finalization_race_conformance() -> NativeGoalFinali
   }
   before.3.val = Some({
     ..before_snapshot,
-    evidence_manifest_link_present: false,
+    body_digest: @storage.artifact_digest(
+      @utf8.encode("reviewer edited the PR body"),
+    ),
   })
   let before_outcome = match
     advance_native_goal_finalization_with_adapters(before.0, before.2, before.4) {
@@ -459,10 +461,10 @@ pub async fn run_native_goal_finalization_race_conformance() -> NativeGoalFinali
     )
     .unwrap()
     .unwrap().record.state
-  let edit_before_response_rejected = before_outcome ==
-    @workflow.GoalFinalizationTickOutcome::GoalFinalizationNeedsUserInput &&
-    before_goal_state == @workflow.GoalExecutionState::GoalExecutionAssured
-  assert_true(edit_before_response_rejected)
+  let edit_before_response_accepted = before_outcome ==
+    @workflow.GoalFinalizationTickOutcome::GoalFinalizationSucceeded &&
+    before_goal_state == @workflow.GoalExecutionState::GoalExecutionSucceeded
+  assert_true(edit_before_response_accepted)
   ignore(@sys.rm_rf(before.0))
   ignore(@sys.rm_rf(before.1))
 
@@ -477,7 +479,12 @@ pub async fn run_native_goal_finalization_race_conformance() -> NativeGoalFinali
       let observed = after.3.val.unwrap()
       if edit_after_response.val {
         edit_after_response.val = false
-        after.3.val = Some({ ..observed, evidence_manifest_link_present: false })
+        after.3.val = Some({
+          ..observed,
+          body_digest: @storage.artifact_digest(
+            @utf8.encode("body edited after the readiness observation"),
+          ),
+        })
       }
       @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch(
         observed,
@@ -485,7 +492,7 @@ pub async fn run_native_goal_finalization_race_conformance() -> NativeGoalFinali
     },
     create: after.4.create,
   }
-  assert_eq(after_snapshot.evidence_manifest_link_present, true)
+  let original_body_digest = after_snapshot.body_digest
   let after_outcome = match
     advance_native_goal_finalization_with_adapters(
       after.0,
@@ -500,7 +507,7 @@ pub async fn run_native_goal_finalization_race_conformance() -> NativeGoalFinali
   }
   let edit_after_response_did_not_retroactively_change_decision = after_outcome ==
     @workflow.GoalFinalizationTickOutcome::GoalFinalizationSucceeded &&
-    !edited_snapshot.evidence_manifest_link_present
+    edited_snapshot.body_digest != original_body_digest
   assert_true(edit_after_response_did_not_retroactively_change_decision)
   let after_repository = native_goal_repository(after.0)
   let success_won_before_late_cancellation = cancel_native_goal(
@@ -608,12 +615,12 @@ pub async fn run_native_goal_finalization_race_conformance() -> NativeGoalFinali
   ignore(@sys.rm_rf(canceled.0))
   ignore(@sys.rm_rf(canceled.1))
   {
-    edit_before_response_rejected,
+    edit_before_response_accepted,
     edit_after_response_did_not_retroactively_change_decision,
     success_won_before_late_cancellation,
     cancellation_won_after_ready_before_success,
     terminal_outboxes_unique,
-    passed: edit_before_response_rejected &&
+    passed: edit_before_response_accepted &&
     edit_after_response_did_not_retroactively_change_decision &&
     success_won_before_late_cancellation &&
     cancellation_won_after_ready_before_success &&

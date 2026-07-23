@@ -33,6 +33,7 @@ pub(all) struct ConductorGoalDraft {
   proposal_id : GoalProposalId
   goal_id : @control.GoalId
   completion_mode : GoalCompletionMode
+  pull_request_document : PullRequestDocument?
   maximum_parallel_parts : Int
   parts : Array[ConductorPartDraft]
 } derive(Debug, Eq, ToJson, FromJson)
@@ -135,6 +136,45 @@ fn conductor_provider_surface(value : String) -> @control.ProviderSurfaceId? {
     "codex" | "codex-subscription" | "codex-cli" =>
       Some(@control.ProviderSurfaceId::CodexSubscriptionCli)
     _ => None
+  }
+}
+
+///|
+fn conductor_pull_request_document(
+  fields : Map[String, Json],
+) -> Result[PullRequestDocument?, @types.ChoirError] {
+  match fields.get("pull_request") {
+    None => Ok(None)
+    Some(Object(document_fields)) => {
+      let allowed_fields = ["title", "body"]
+      let unknown_fields = conductor_draft_unknown_fields(
+        document_fields, allowed_fields,
+      )
+      if unknown_fields.length() > 0 {
+        return Err(
+          goal_submission_error(
+            "pull_request has unknown fields: " + unknown_fields.join(", "),
+          ),
+        )
+      }
+      let title = match conductor_draft_string(document_fields, "title") {
+        Some(value) => value
+        None =>
+          return Err(goal_submission_error("pull_request.title is invalid"))
+      }
+      let body = match document_fields.get("body") {
+        Some(String(value)) => value
+        _ => return Err(goal_submission_error("pull_request.body is invalid"))
+      }
+      let document : PullRequestDocument = { title, body }
+      if !pull_request_document_is_valid(document) ||
+        document.body.contains("<!-- choir-final-pr:") {
+        Err(goal_submission_error("pull_request document is invalid"))
+      } else {
+        Ok(Some(document))
+      }
+    }
+    Some(_) => Err(goal_submission_error("pull_request must be an object"))
   }
 }
 
@@ -459,7 +499,7 @@ pub fn decode_conductor_goal_draft(
   }
   let allowed_fields = [
     "proposal_id", "goal_id", "completion_mode", "evidence_only_binding_digest",
-    "maximum_parallel_parts", "parts",
+    "pull_request", "maximum_parallel_parts", "parts",
   ]
   let unknown_fields = conductor_draft_unknown_fields(fields, allowed_fields)
   if unknown_fields.length() > 0 {
@@ -504,6 +544,21 @@ pub fn decode_conductor_goal_draft(
       }
     _ => return Err(goal_submission_error("completion_mode is invalid"))
   }
+  let pull_request_document = match conductor_pull_request_document(fields) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  match (completion_mode, pull_request_document) {
+    (GoalCompletionMode::GoalPublishable, None) =>
+      return Err(
+        goal_submission_error("publishable Goal requires pull_request"),
+      )
+    (GoalCompletionMode::GoalEvidenceOnly(_), Some(_)) =>
+      return Err(
+        goal_submission_error("evidence-only Goal cannot define pull_request"),
+      )
+    _ => ()
+  }
   let maximum_parallel_parts = match
     conductor_draft_int(fields, "maximum_parallel_parts") {
     Some(value) if value > 0 => value
@@ -522,7 +577,14 @@ pub fn decode_conductor_goal_draft(
     }
     _ => return Err(goal_submission_error("parts is missing or invalid"))
   }
-  Ok({ proposal_id, goal_id, completion_mode, maximum_parallel_parts, parts })
+  Ok({
+    proposal_id,
+    goal_id,
+    completion_mode,
+    pull_request_document,
+    maximum_parallel_parts,
+    parts,
+  })
 }
 
 ///|

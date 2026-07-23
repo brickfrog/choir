@@ -865,24 +865,25 @@ unconnected product path usable.
   returned `GoalPublicationComplete` without changing the remote.
 - Canonical final-PR reconciliation and final readiness now have typed durable
   records. The PR intent binds the exact Goal, sealed and published head,
-  combined evidence, target ref, generated title/body artifact, and a
-  deterministic body marker. Choir scans all open, closed, and merged PR pages
-  before create; it adopts one exact marker, blocks markerless possible
-  matches and duplicate markers, preserves closed/drifted identities as
-  user-input states, and moves to `CreateMayHaveBeenIssued` before the one
-  allowed create request. Restart from that state only observes and never
-  resends. Readiness is a separate fresh observation requiring the exact open
-  PR, repositories, refs, sealed head, marker, Goal-contract link, and evidence
-  link. The terminal success write compare-and-sets the assured Goal while
-  atomically guarding the exact readiness record, so a concurrent later
-  observation or cancellation wins rather than being ignored. The ordinary
-  Goal runner now advances assured Goals through publication, PR
-  reconciliation, readiness, and `GoalExecutionSucceeded`. A real Git,
-  durable-storage, and controlled-forge test injects all seven named PR
-  intent/create/receipt crash boundaries. Recoverable cases adopt one remote
-  PR and one receipt without duplicate create; a crash after recording that a
-  create may have been issued but before dispatch remains explicitly uncertain
-  and is never resent.
+  combined evidence, target ref, the Conductor-authored review document
+  captured in the immutable Goal contract, and a deterministic hidden body
+  marker. Choir scans all open, closed, and merged PR pages before create; it
+  adopts one exact marker, blocks markerless possible matches and duplicate
+  markers, preserves closed/drifted identities as user-input states, and moves
+  to `CreateMayHaveBeenIssued` before the one allowed create request. Restart
+  from that state only observes and never resends. Readiness is a separate
+  fresh observation requiring the exact open PR, repositories, refs, sealed
+  head, and marker. Human title/body prose is not machine evidence and may be
+  edited without invalidating readiness. The terminal success write
+  compare-and-sets the assured Goal while atomically guarding the exact
+  readiness record, so a concurrent later observation or cancellation wins
+  rather than being ignored. The ordinary Goal runner now advances assured
+  Goals through publication, PR reconciliation, readiness, and
+  `GoalExecutionSucceeded`. A real Git, durable-storage, and controlled-forge
+  test injects all seven named PR intent/create/receipt crash boundaries.
+  Recoverable cases adopt one remote PR and one receipt without duplicate
+  create; a crash after recording that a create may have been issued but
+  before dispatch remains explicitly uncertain and is never resent.
 - A synthetic-forge disposable-repository proof exercised that entire durable
   finalization path without creating an external PR. It persisted the one-shot
   PR boundary and receipt, replayed the PR command without duplication,
@@ -3083,7 +3084,10 @@ PullRequestIntent {
   goal_branch_seal_digest
   combined_audit_receipt_id
   evidence_manifest_digest
-  title_and_body_artifact_digest
+  document {
+    title
+    body
+  }
   identity_marker
   idempotency_key
   canonical_remote_pull_request_id?
@@ -3100,10 +3104,20 @@ PullRequestIntentState
   AbandonedByCancellation
 ```
 
+For a publishable Goal, the Conductor must supply a semantic PR title and a
+concise reviewer-facing body in the proposal. Admission validates and captures
+that document in the immutable Goal contract. An evidence-only Goal must not
+carry a PR document. The Conductor document contains no Goal IDs, evidence
+digests, receipt metadata, or Choir marker; after assurance and publication,
+choird appends the deterministic hidden marker and persists the exact final
+document directly in the intent before any remote effect.
+
 The key derives from canonical repository identity, goal ID, head repository
 and ref, base repository and ref, and expected audited head OID. It is stored
-locally and embedded as a machine-readable marker in a newly created PR. A
-goal has one canonical final-PR intent; MVP retry never supersedes it.
+locally and embedded as a machine-readable marker in a newly created PR. The
+Goal contract and evidence manifest remain typed fields in the durable intent
+and receipts; human PR prose is not their transport. A Goal has one canonical
+final-PR intent; MVP retry never supersedes it.
 
 ### PR reconciliation
 
@@ -3198,8 +3212,6 @@ PullRequestReadinessSnapshot {
   observed_base_ref
   observed_head_oid
   observed_body_digest
-  goal_contract_link_present
-  evidence_manifest_link_present
   remote_version_token?
   observation_sequence
   observation_started_at
@@ -3212,12 +3224,13 @@ PullRequestReadinessDecision
 ```
 
 `Ready` requires one canonical open PR, the expected repository/head/base and
-sealed head OID, the current seal and combined-audit identities, and a body
-that exposes the goal-contract and evidence-manifest identities. A validly
-merged PR is recorded but is not treated as an open review surface unless an
-explicit later policy permits it. Human approval is not implied. If a human
-edit is observed before or during the readiness query and removes required
-evidence, that snapshot is `NeedsInput`; Choir preserves the edit.
+sealed head OID, the current seal and combined-audit identities, and the exact
+hidden identity marker. The typed intent and receipt chain—not human prose—
+bind the Goal contract and evidence manifest. A validly merged PR is recorded
+but is not treated as an open review surface unless an explicit later policy
+permits it. Human approval is not implied. Human title/body edits are
+preserved; if the exact marker remains, those prose edits do not change
+readiness.
 
 “Finalization-bound” replaces an undefined wall-clock freshness window. One
 finalization take allocates `finalization_id`, performs one complete remote
@@ -3378,7 +3391,9 @@ must not be misrepresented as that collector.
 
 For built-in `/goal <selection>; max concurrency 4; stop on ambiguity`:
 
-1. The Conductor produces a typed explicit proposal.
+1. The Conductor produces a typed explicit proposal. A publishable proposal
+   includes its semantic reviewer-facing PR title/body; an evidence-only
+   proposal omits them.
 2. Choir captures repository/bead state, validates exact selection, dependency
    closure, task-contract revisions, mutation declarations, assurance policy,
    integration target, and resource caps.
@@ -4942,15 +4957,19 @@ and publication alone leaves the Goal in `GoalExecutionAssured`.
 
 #### Post-snapshot final-PR and readiness amendment
 
-At `2026-07-20T11:45:38Z`, the canonical final-PR protocol and terminal Goal
-decision gained durable production slices. The generated PR document is a
-content-addressed artifact containing the Goal-contract identity, evidence-
-manifest identity, and deterministic marker. The intent and every transition
-are persisted under the exact assured-Goal precondition. Before creation, the
-native forge adapter performs a complete paginated scan across open, closed,
-and merged PRs. Exactly one marker match is adopted; duplicate markers,
-markerless exact matches, closed PRs, changed heads/bases, and uncertain
-observations remain distinct non-success states.
+The canonical final-PR protocol and terminal Goal decision use durable
+production slices. The PR document is supplied by the Conductor while it has
+the selected Beads and user intent, validated at admission, and stored in the
+Goal contract. At finalization, choird appends only the deterministic hidden
+marker and persists the exact create document in `PullRequestIntent`; there is
+no separate generated title/body artifact. Goal-contract and evidence-manifest
+digests stay in typed durable state and are never dumped into reviewer-facing
+prose. The intent and every transition are persisted under the exact
+assured-Goal precondition. Before creation, the native forge adapter performs a
+complete paginated scan across open, closed, and merged PRs. Exactly one marker
+match is adopted; duplicate markers, markerless exact matches, closed PRs,
+changed heads/bases, and uncertain observations remain distinct non-success
+states.
 
 Create authorization and possible dispatch are separate durable transitions.
 Only the process that newly commits `PullRequestCreateMayHaveBeenIssued`
@@ -4978,12 +4997,11 @@ edited title/body states succeed; a closed PR requests user input; retargeted
 or head-changed PRs report drift; and duplicate marker matches remain
 ambiguous. The current typed report passes 6/6 and leaves every non-ready Goal
 in `GoalExecutionAssured` rather than manufacturing success.
-At `2026-07-20T14:42:07-05:00`, the finalization response boundary and terminal
-race also became executable. A real Git/SQLite controlled-forge test removes
-the evidence-manifest link before the readiness response and observes
-`NeedsInput` with the Goal still assured. It then changes the same link only
-after a `Ready` response and proves that the response remains the readiness
-linearization point. At the injected
+The finalization response boundary and terminal race are also executable. A
+real Git/SQLite controlled-forge test edits reviewer-facing PR prose before
+the readiness response and proves that the exact marker-bound PR remains
+`Ready`. It then changes the prose only after a `Ready` response and proves
+that the response remains the readiness linearization point. At the injected
 `pr.after_readiness_observation_before_success_transaction` boundary,
 cancellation wins the Goal compare-and-set and a later success attempt fails;
 in the inverse ordering cancellation observes terminal success. Each ordering
@@ -4996,8 +5014,9 @@ outbox cardinality. The current report passes every field.
 
 Readiness is then observed separately against the canonical receipt. `Ready`
 requires an open PR with the exact repository identities, head and base refs,
-sealed head OID, identity marker, Goal-contract link, and evidence-manifest
-link. The terminal Goal write compare-and-sets `GoalExecutionAssured` to
+sealed head OID, and identity marker. The Goal-contract and evidence-manifest
+bindings are already durable typed fields in the intent and receipt chain. The
+terminal Goal write compare-and-sets `GoalExecutionAssured` to
 `GoalExecutionSucceeded` while guarding that exact readiness state record in
 the same SQLite transaction. A later readiness observation or cancellation
 therefore displaces success instead of racing past it.

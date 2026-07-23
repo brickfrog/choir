@@ -62,6 +62,10 @@ fn selection_store_decision() -> @workflow.GoalSelectionDecision raise {
         integration_target_ref: @workflow.GitRefName("refs/heads/main"),
         selection_policy: @workflow.GoalSelectionPolicy::ExactClosure,
         completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
+        pull_request_document: Some({
+          title: "test: persist Goal selection",
+          body: "Exercises persisted Goal selection.",
+        }),
         migration_production_admission: None,
         maximum_parallel_parts: 1,
         parts: [

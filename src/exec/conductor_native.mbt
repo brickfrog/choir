@@ -789,6 +789,10 @@ test "native Conductor mints Goal identity around structured submission argument
     args: @types.RequestArgs::from_values({
       "proposal_id": "proposal-1".to_json(),
       "goal_id": "bead-1-must-not-control-goal-identity".to_json(),
+      "pull_request": {
+        "title": "docs: update the README".to_json(),
+        "body": "Updates the README and verifies the native suite.".to_json(),
+      }.to_json(),
       "maximum_parallel_parts": (1).to_json(),
       "parts": [part].to_json(),
     }),

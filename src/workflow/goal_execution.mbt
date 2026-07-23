@@ -230,6 +230,7 @@ pub(all) struct GoalExecutionRecord {
   base_tree_oid : @control.GitOid
   integration_target_ref : GitRefName
   completion_mode : GoalCompletionMode
+  pull_request_document : PullRequestDocument?
   migration_production_admission : @migration.MigrationProductionAdmissionRef?
   goal_ref : GitRefName
   branch_initialization : GoalBranchInitialization
@@ -778,6 +779,7 @@ pub fn goal_execution_record_from_selection(
     base_tree_oid: decision.proposal.expected_base_tree_oid,
     integration_target_ref: decision.proposal.integration_target_ref,
     completion_mode: decision.proposal.completion_mode,
+    pull_request_document: decision.proposal.pull_request_document,
     migration_production_admission: decision.proposal.migration_production_admission,
     goal_ref,
     branch_initialization: initial_goal_branch_initialization(
@@ -839,6 +841,10 @@ pub fn decode_goal_execution_record(
     record.maximum_parallel_parts <= 0 ||
     !goal_execution_policy_shape_is_valid(record) ||
     !goal_completion_mode_is_valid(record.completion_mode) ||
+    !goal_pull_request_document_is_valid(
+      record.completion_mode,
+      record.pull_request_document,
+    ) ||
     !goal_migration_admission_is_valid(record.migration_production_admission) ||
     record.part_workflow_ids.length() == 0 ||
     record.part_workflow_ids.any(fn(id) { id == "" }) ||
@@ -879,6 +885,20 @@ fn goal_completion_mode_is_valid(mode : GoalCompletionMode) -> Bool {
   match mode {
     GoalPublishable => true
     GoalEvidenceOnly(binding) => @storage.validate_digest(binding) is Ok(_)
+  }
+}
+
+///|
+fn goal_pull_request_document_is_valid(
+  completion_mode : GoalCompletionMode,
+  document : PullRequestDocument?,
+) -> Bool {
+  match (completion_mode, document) {
+    (GoalPublishable, Some(value)) =>
+      pull_request_document_is_valid(value) &&
+      !value.body.contains("<!-- choir-final-pr:")
+    (GoalEvidenceOnly(_), None) => true
+    _ => false
   }
 }
 

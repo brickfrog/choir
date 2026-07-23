@@ -1779,6 +1779,10 @@ fn scale_terminal_projection(
     base_tree_oid: @control.GitOid("base-tree-conformance"),
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
     completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
+    pull_request_document: Some({
+      title: "test: run workflow conformance",
+      body: "Exercises the native workflow conformance suite.",
+    }),
     migration_production_admission: None,
     goal_ref,
     branch_initialization: scale_initialized_branch(
@@ -2068,8 +2072,6 @@ fn scale_terminal_projection(
     marker_state: @workflow.PullRequestMarkerState::PullRequestMarkerExact,
     title_digest: @storage.artifact_digest(@utf8.encode("scale-title")),
     body_digest: @storage.artifact_digest(@utf8.encode("scale-body")),
-    goal_contract_link_present: true,
-    evidence_manifest_link_present: true,
   }
   let adopted = match
     @workflow.authorize_goal_pull_request(

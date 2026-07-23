@@ -19,7 +19,6 @@ pub(all) enum PullRequestReadinessDecision {
 ///|
 pub(all) enum PullRequestReadinessNeedsInputReason {
   PullRequestNotOpen
-  PullRequestEvidenceLinksMissing
   PullRequestReadinessObservationUncertain
 } derive(Debug, Eq, ToJson, FromJson)
 
@@ -45,8 +44,6 @@ pub(all) struct PullRequestReadinessSnapshot {
   observed_base_ref : GitRefName?
   observed_head_oid : @control.GitOid?
   observed_body_digest : @control.Digest?
-  goal_contract_link_present : Bool
-  evidence_manifest_link_present : Bool
   remote_version_token : String?
   observation_sequence : Int64
   observation_started_at : Int64
@@ -148,12 +145,6 @@ fn readiness_decision(
       if snapshot.state != RemotePullRequestState::RemotePullRequestOpen {
         return PullRequestReadinessNeedsInput(
           PullRequestReadinessNeedsInputReason::PullRequestNotOpen,
-        )
-      }
-      if !snapshot.goal_contract_link_present ||
-        !snapshot.evidence_manifest_link_present {
-        return PullRequestReadinessNeedsInput(
-          PullRequestReadinessNeedsInputReason::PullRequestEvidenceLinksMissing,
         )
       }
       PullRequestReady
@@ -294,12 +285,6 @@ pub fn observe_goal_pull_request_readiness(
       observed_base_ref: observed.map(fn(value) { value.base_ref }),
       observed_head_oid: observed.map(fn(value) { value.observed_head_oid }),
       observed_body_digest: observed.map(fn(value) { value.body_digest }),
-      goal_contract_link_present: observed
-      .map(fn(value) { value.goal_contract_link_present })
-      .unwrap_or(false),
-      evidence_manifest_link_present: observed
-      .map(fn(value) { value.evidence_manifest_link_present })
-      .unwrap_or(false),
       remote_version_token,
       observation_sequence,
       observation_started_at,

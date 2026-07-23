@@ -47,6 +47,10 @@ async test "native Conductor submission captures Beads and persists once" {
     #|{
     #|  "proposal_id": "proposal-native-submit",
     #|  "goal_id": "goal-native-submit",
+    #|  "pull_request": {
+    #|    "title": "fix: change A",
+    #|    "body": "Changes A and verifies its focused native test."
+    #|  },
     #|  "maximum_parallel_parts": 1,
     #|  "parts": [
     #|    {
@@ -348,7 +352,7 @@ async test "native Conductor submission rejects a detached checkout" {
     }
   }
   let draft =
-    #|{"proposal_id":"proposal-detached","goal_id":"goal-detached","maximum_parallel_parts":1,"parts":[{"part_id":"choir-a","instruction":"Change src/a.mbt.","provider":"codex","exact_paths":["src/a.mbt"],"moon_args":["test","--target","native"]}]}
+    #|{"proposal_id":"proposal-detached","goal_id":"goal-detached","pull_request":{"title":"fix: change A","body":"Changes A."},"maximum_parallel_parts":1,"parts":[{"part_id":"choir-a","instruction":"Change src/a.mbt.","provider":"codex","exact_paths":["src/a.mbt"],"moon_args":["test","--target","native"]}]}
   match
     submit_native_conductor_goal_draft(
       root,
@@ -405,6 +409,10 @@ async test "durable Goal cancellation survives replay and starts no provider" {
     #|{
     #|  "proposal_id": "proposal-cancel-proof",
     #|  "goal_id": "goal-cancel-proof",
+    #|  "pull_request": {
+    #|    "title": "test: prove Goal cancellation",
+    #|    "body": "Proves cancellation does not start a provider."
+    #|  },
     #|  "maximum_parallel_parts": 1,
     #|  "parts": [{
     #|    "part_id": "choir-cancel",
@@ -536,7 +544,7 @@ async test "rejected Conductor submission initializes no Part workflow" {
     }
   }
   let draft =
-    #|{"proposal_id":"proposal-native-reject","goal_id":"goal-native-reject","maximum_parallel_parts":1,"parts":[{"part_id":"choir-closed","instruction":"Do not run.","provider":"claude","repository_wide":true,"moon_args":["test","--target","native"]}]}
+    #|{"proposal_id":"proposal-native-reject","goal_id":"goal-native-reject","pull_request":{"title":"test: reject closed work","body":"Exercises closed-work rejection."},"maximum_parallel_parts":1,"parts":[{"part_id":"choir-closed","instruction":"Do not run.","provider":"claude","repository_wide":true,"moon_args":["test","--target","native"]}]}
   let report = match
     submit_native_conductor_goal_draft(
       root,

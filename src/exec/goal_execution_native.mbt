@@ -33,7 +33,7 @@ priv struct NativeOrphanedGoalSourceClaim {
 }
 
 ///|
-let native_goal_control_state_generation : String = "choir-control-state-v2"
+let native_goal_control_state_generation : String = "choir-control-state-v3"
 
 ///|
 priv struct NativeGoalPartRuntime {
@@ -919,6 +919,10 @@ fn native_source_claim_test_record(
     base_tree_oid: @control.GitOid("source-claim-tree"),
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
     completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
+    pull_request_document: Some({
+      title: "test: exercise source claims",
+      body: "Exercises native source-claim handling.",
+    }),
     migration_production_admission: None,
     goal_ref,
     branch_initialization: @workflow.initial_goal_branch_initialization(
@@ -3737,6 +3741,9 @@ test "control state generation requires both marker and store" {
     ),
   )
   assert_false(native_goal_control_state_is_current("", true))
+  assert_false(
+    native_goal_control_state_is_current("choir-control-state-v2", true),
+  )
   assert_false(
     native_goal_control_state_is_current("choir-control-state-v1", true),
   )
