@@ -176,14 +176,88 @@ fn start_config() -> Result[@types.Config, String] {
 }
 
 ///|
+priv enum StartExistingDaemon {
+  StartDaemonCurrent
+  StartDaemonReplace(Int)
+  StartDaemonUntrusted
+} derive(Debug, Eq)
+
+///|
+fn start_existing_daemon(
+  peer_pid : Int,
+  recorded_pid : Int,
+  self_executable : String,
+  resolve : (String) -> String?,
+) -> StartExistingDaemon {
+  if peer_pid <= 1 {
+    return StartDaemonUntrusted
+  }
+  match resolve("/proc/" + peer_pid.to_string() + "/exe") {
+    Some(peer_executable) if peer_executable == self_executable =>
+      StartDaemonCurrent
+    Some(_) if recorded_pid == peer_pid => StartDaemonReplace(peer_pid)
+    _ => StartDaemonUntrusted
+  }
+}
+
+///|
+test "start replaces only a recorded daemon from an older executable" {
+  assert_eq(
+    start_existing_daemon(42, 42, "/opt/choir/new/choir", fn(_) {
+      Some("/opt/choir/new/choir")
+    }),
+    StartDaemonCurrent,
+  )
+  assert_eq(
+    start_existing_daemon(42, 42, "/opt/choir/new/choir", fn(_) {
+      Some("/opt/choir/old/choir")
+    }),
+    StartDaemonReplace(42),
+  )
+  assert_eq(
+    start_existing_daemon(42, 41, "/opt/choir/new/choir", fn(_) {
+      Some("/opt/choir/old/choir")
+    }),
+    StartDaemonUntrusted,
+  )
+  assert_eq(
+    start_existing_daemon(1, 1, "/opt/choir/new/choir", fn(_) {
+      Some("/opt/choir/old/choir")
+    }),
+    StartDaemonUntrusted,
+  )
+}
+
+///|
 fn start_ensure_daemon(
   socket_path : String,
   self_executable : String,
+  server_pid_path : String,
 ) -> Result[Unit, String] {
   let existing = @uds.client_connect(socket_path)
   if existing >= 0 {
+    let peer_pid = @uds.peer_pid(existing)
     @uds.close(existing)
-    return Ok(())
+    let recorded_pid = @string.parse_int(
+      @sys.read_file(server_pid_path).trim().to_owned(),
+    ) catch {
+      _ => 0
+    }
+    match
+      start_existing_daemon(
+        peer_pid, recorded_pid, self_executable, @sys.realpath_native,
+      ) {
+      StartDaemonCurrent => return Ok(())
+      StartDaemonReplace(pid) => {
+        @sys.kill_server_tree_sequence_best_effort(pid)
+        if @sys.pid_is_alive(pid) {
+          return Err("older choird did not stop during upgrade")
+        }
+        @sys.init_cleanup_runtime_artifacts_native()
+      }
+      StartDaemonUntrusted =>
+        return Err("existing choird identity could not be verified")
+    }
   }
   if !@sys.spawn_serve(self_executable) {
     return Err("failed to start choird")
@@ -309,7 +383,12 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
       return
     }
   }
-  match start_ensure_daemon(config.listen_uds, executable) {
+  match
+    start_ensure_daemon(
+      config.listen_uds,
+      executable,
+      config.project_dir + "/.choir/run/server.pid",
+    ) {
     Ok(_) => ()
     Err(error) => {
       @sys.write_stderr("choir start: " + error + "\n")
