@@ -5,6 +5,83 @@ enum NativeGoalPublicationRemoteIdentity {
 } derive(Debug, Eq)
 
 ///|
+fn native_goal_remote_git_environment(
+  getenv? : (String) -> String? = @sys.getenv,
+) -> Map[String, String] {
+  let environment = native_git_environment(false)
+  environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
+  environment["GIT_ATTR_NOSYSTEM"] = "1"
+  environment["XDG_CONFIG_HOME"] = "/nonexistent"
+  environment["GIT_TERMINAL_PROMPT"] = "0"
+  match getenv("HOME") {
+    Some(value) if value != "" && !value.contains("\u{00}") =>
+      environment["HOME"] = value
+    _ => ()
+  }
+  match getenv("SSH_AUTH_SOCK") {
+    Some(value) if value != "" && !value.contains("\u{00}") =>
+      environment["SSH_AUTH_SOCK"] = value
+    _ => ()
+  }
+  environment
+}
+
+///|
+async fn capture_native_goal_remote_git(
+  repository_root : String,
+  arguments : Array[String],
+) -> Result[NativeGitCapture, @types.ChoirError] {
+  let captured = @process.collect_output_merged(
+    "/usr/bin/git",
+    arguments,
+    extra_env=native_goal_remote_git_environment(),
+    inherit_env=false,
+    cwd=repository_root,
+  ) catch {
+    _ => return Err(native_goal_execution_error("remote Git process failed"))
+  }
+  let output = captured.1.text() catch {
+    _ =>
+      return Err(native_goal_execution_error("remote Git output is not UTF-8"))
+  }
+  Ok({ exit_code: captured.0, output })
+}
+
+///|
+test "remote Git carries only explicit SSH authentication inputs" {
+  let environment = native_goal_remote_git_environment(getenv=fn(name) {
+    match name {
+      "HOME" => Some("/home/provider")
+      "SSH_AUTH_SOCK" => Some("/run/user/1000/ssh-agent.socket")
+      "GIT_SSH_COMMAND" => Some("untrusted ssh wrapper")
+      _ => None
+    }
+  })
+  assert_eq(environment["PATH"], "/usr/bin:/bin")
+  assert_eq(environment["HOME"], "/home/provider")
+  assert_eq(environment["SSH_AUTH_SOCK"], "/run/user/1000/ssh-agent.socket")
+  assert_eq(environment["GIT_CONFIG_GLOBAL"], "/dev/null")
+  assert_eq(environment["GIT_CONFIG_NOSYSTEM"], "1")
+  assert_eq(environment["GIT_ATTR_NOSYSTEM"], "1")
+  assert_eq(environment["XDG_CONFIG_HOME"], "/nonexistent")
+  assert_eq(environment["GIT_TERMINAL_PROMPT"], "0")
+  assert_false(environment.contains("GIT_SSH_COMMAND"))
+}
+
+///|
+test "remote Git remains sterile when SSH inputs are unavailable" {
+  let environment = native_goal_remote_git_environment(getenv=fn(name) {
+    match name {
+      "HOME" => Some("")
+      "SSH_AUTH_SOCK" => Some("/tmp/agent\u{00}ignored")
+      _ => None
+    }
+  })
+  assert_eq(environment["HOME"], "/nonexistent")
+  assert_false(environment.contains("SSH_AUTH_SOCK"))
+}
+
+///|
 priv enum NativeRemoteBranchProbeFailureKind {
   RemoteProbeProcessFailure
   RemoteProbeExitFailure
@@ -133,7 +210,7 @@ async fn native_remote_branch_probe_once(
   capture? : async (String, Array[String]) -> Result[
     NativeGitCapture,
     @types.ChoirError,
-  ] = capture_native_goal_git,
+  ] = capture_native_goal_remote_git,
 ) -> NativeRemoteBranchProbe {
   let captured = match
     capture(repository.root, [
@@ -224,7 +301,7 @@ async fn native_remote_branch_probe(
   capture? : async (String, Array[String]) -> Result[
     NativeGitCapture,
     @types.ChoirError,
-  ] = capture_native_goal_git,
+  ] = capture_native_goal_remote_git,
   wait? : async (Int) -> Unit = async fn(milliseconds) {
     @async.sleep(milliseconds)
   },
@@ -388,7 +465,7 @@ async fn publish_native_goal_ref(
   // between preflight observation and push. Authorization separately proves
   // ancestry, so the lease never authorizes a non-fast-forward transition.
   ignore(
-    capture_native_goal_git(repository.root, [
+    capture_native_goal_remote_git(repository.root, [
       "-c",
       "core.hooksPath=/dev/null",
       "push",
