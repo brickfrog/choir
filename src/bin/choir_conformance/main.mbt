@@ -3067,6 +3067,10 @@ async fn run_conductor_start_live() -> Int {
   let project_initialized = @sys.path_exists(root + "/.choir/config.toml") &&
     @sys.path_exists(root + "/.choir/config.local.toml")
   let conductor_surface_restricted = conductor_args.contains("--tools") &&
+    conductor_args.contains("--allowedTools") &&
+    conductor_args.contains("mcp__choir__goal_submit") &&
+    conductor_args.contains("mcp__choir__task_get") &&
+    !conductor_args.contains("Bash") &&
     conductor_args.contains("--setting-sources") &&
     conductor_args.contains("--strict-mcp-config") &&
     conductor_args.contains(
