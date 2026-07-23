@@ -4,6 +4,81 @@ fn start_usage() -> String {
 }
 
 ///|
+fn start_resolve_executable(
+  self_executable : String,
+  resolve : (String) -> String?,
+) -> String? {
+  match resolve("/proc/self/exe") {
+    Some(path) => Some(path)
+    None => resolve(self_executable)
+  }
+}
+
+///|
+test "start resolves the running executable before a PATH command name" {
+  assert_eq(
+    start_resolve_executable("choir", fn(path) {
+      if path == "/proc/self/exe" {
+        Some("/opt/choir/versions/current/choir")
+      } else {
+        None
+      }
+    }),
+    Some("/opt/choir/versions/current/choir"),
+  )
+  assert_eq(
+    start_resolve_executable("/opt/choir", fn(path) {
+      if path == "/opt/choir" {
+        Some(path)
+      } else {
+        None
+      }
+    }),
+    Some("/opt/choir"),
+  )
+}
+
+///|
+fn native_resolve_launch_config(
+  config : @types.Config,
+  resolve : (String) -> String?,
+) -> Result[@types.Config, String] {
+  let project_dir = match resolve(config.project_dir) {
+    Some(path) if path.has_prefix("/") => path
+    _ => return Err("failed to resolve the project directory")
+  }
+  let listen_uds = if config.listen_uds.has_prefix("/") {
+    config.listen_uds
+  } else if project_dir == "/" {
+    "/" + config.listen_uds
+  } else {
+    project_dir + "/" + config.listen_uds
+  }
+  Ok({ project_dir, listen_uds })
+}
+
+///|
+test "native launch config gives the Goal worker absolute project and socket paths" {
+  assert_eq(
+    native_resolve_launch_config(
+      { project_dir: ".", listen_uds: ".choir/run/server.sock" },
+      fn(path) { if path == "." { Some("/work/repo") } else { None } },
+    ),
+    Ok({
+      project_dir: "/work/repo",
+      listen_uds: "/work/repo/.choir/run/server.sock",
+    }),
+  )
+  assert_eq(
+    native_resolve_launch_config(
+      { project_dir: "/work/repo", listen_uds: "/tmp/choir.sock" },
+      fn(path) { Some(path) },
+    ),
+    Ok({ project_dir: "/work/repo", listen_uds: "/tmp/choir.sock" }),
+  )
+}
+
+///|
 priv enum StartConductorSurface {
   StartClaudeConductor
   StartCodexConductor
@@ -95,7 +170,7 @@ fn start_config() -> Result[@types.Config, String] {
   let local_content = @sys.read_file(".choir/config.local.toml")
   match
     @config.parse_config(config_content, local_content=Some(local_content)) {
-    Ok(config) => Ok(config)
+    Ok(config) => native_resolve_launch_config(config, @sys.realpath_native)
     Err(error) => Err(error.message())
   }
 }
@@ -201,7 +276,8 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
   ignore(@sys.create_dir_all(config.project_dir + "/.choir/run"))
   ignore(@sys.create_dir_all(config.project_dir + "/.choir/state"))
   ignore(@sys.create_dir_all(config.project_dir + "/.choir/state/control"))
-  let executable = match @sys.realpath_native(self_executable) {
+  let executable = match
+    start_resolve_executable(self_executable, @sys.realpath_native) {
     Some(value) => value
     None => {
       @sys.write_stderr("choir start: failed to resolve the Choir executable\n")

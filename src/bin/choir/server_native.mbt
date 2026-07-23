@@ -539,11 +539,20 @@ fn goal_worker_run() -> Unit {
 fn serve_run() -> Unit {
   let config_content = @sys.read_file(".choir/config.toml")
   let local_content = @sys.read_file(".choir/config.local.toml")
-  let config = match
+  let parsed_config = match
     @config.parse_config(config_content, local_content=Some(local_content)) {
     Ok(value) => value
     Err(error) => {
       @sys.write_stderr("choir serve: " + error.message() + "\n")
+      @sys.exit(1)
+      return
+    }
+  }
+  let config = match
+    native_resolve_launch_config(parsed_config, @sys.realpath_native) {
+    Ok(value) => value
+    Err(error) => {
+      @sys.write_stderr("choir serve: " + error + "\n")
       @sys.exit(1)
       return
     }
