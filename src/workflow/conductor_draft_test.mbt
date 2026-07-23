@@ -47,6 +47,19 @@ test "Conductor draft decodes friendly provider and verification fields" {
 }
 
 ///|
+test "Conductor Part draft defaults an omitted provider to Codex" {
+  let draft = @workflow.decode_conductor_goal_draft(
+    (
+      #|{"proposal_id":"p","goal_id":"g","maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","repository_wide":true,"moon_args":["test"]}]}
+    ),
+  ).unwrap()
+  assert_eq(
+    draft.parts[0].provider_surface,
+    @control.ProviderSurfaceId::CodexSubscriptionCli,
+  )
+}
+
+///|
 test "Conductor draft binds exact evidence-only completion" {
   let draft = @workflow.decode_conductor_goal_draft(
     (

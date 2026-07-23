@@ -25,6 +25,32 @@ fn native_goal_execution_error(detail : String) -> @types.ChoirError {
 }
 
 ///|
+fn native_goal_cancellation_observed(
+  loaded : Result[@workflow.StoredGoalExecutionRecord?, @types.ChoirError],
+  is_cutoff : (@workflow.GoalExecutionRecord) -> Bool,
+) -> Bool {
+  match loaded {
+    Ok(Some(current)) => is_cutoff(current.record)
+    Ok(None) => true
+    // The process collector polls again. A read failure is not affirmative
+    // evidence that choird installed a cancellation cutoff.
+    Err(_) => false
+  }
+}
+
+///|
+test "Goal cancellation requires an affirmative durable observation" {
+  let failed : Result[@workflow.StoredGoalExecutionRecord?, @types.ChoirError] = Err(
+    @types.ChoirError::workspace_error("transient read failure"),
+  )
+  assert_false(native_goal_cancellation_observed(failed, fn(_) { true }))
+  let absent : Result[@workflow.StoredGoalExecutionRecord?, @types.ChoirError] = Ok(
+    None,
+  )
+  assert_true(native_goal_cancellation_observed(absent, fn(_) { false }))
+}
+
+///|
 pub fn native_goal_repository(
   project_dir : String,
 ) -> @workflow.PartWorkflowRepository {
@@ -1364,19 +1390,17 @@ async fn execute_native_goal_record(
     clock.val
   }
   let goal_cancellation_requested = fn() {
-    match
+    native_goal_cancellation_observed(
       @workflow.load_goal_execution_record(
         repository,
         local_part_workflow_repository_adapters(),
         record.goal.id,
-      ) {
-      Ok(Some(current)) =>
-        current.record.state ==
-        @workflow.GoalExecutionState::GoalExecutionCanceling ||
-        current.record.state ==
-        @workflow.GoalExecutionState::GoalExecutionCanceled
-      _ => true
-    }
+      ),
+      fn(current) {
+        current.state == @workflow.GoalExecutionState::GoalExecutionCanceling ||
+        current.state == @workflow.GoalExecutionState::GoalExecutionCanceled
+      },
+    )
   }
   let parts : Array[NativeGoalPartRuntime] = []
   for snapshot in snapshots {

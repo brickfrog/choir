@@ -41,8 +41,9 @@ fn conductor_tools() -> Array[CatalogTool] {
     ),
     "provider": {
       "type": "string".to_json(),
-      "description": "Subscription-backed provider for all Takes in this Part".to_json(),
+      "description": "Optional provider for all Takes in this Part. Omit for the resumable Codex default. Set claude only when the user's current message explicitly requests Claude after the non-resumable subscription cost warning; never inherit it from an earlier Goal.".to_json(),
       "enum": ["codex", "claude"].to_json(),
+      "default": "codex".to_json(),
     }.to_json(),
     "exact_paths": conductor_string_array_schema(
       "Exact repository-relative files this Part may mutate; use [] for repository-wide or path-tree scope",
@@ -103,8 +104,7 @@ fn conductor_tools() -> Array[CatalogTool] {
     "type": "object".to_json(),
     "properties": part_properties.to_json(),
     "required": [
-      "part_id", "instruction", "provider", "exact_paths", "path_trees", "repository_wide",
-      "moon_args",
+      "part_id", "instruction", "exact_paths", "path_trees", "repository_wide", "moon_args",
     ].to_json(),
     "additionalProperties": false.to_json(),
   }.to_json()
@@ -137,7 +137,7 @@ fn conductor_tools() -> Array[CatalogTool] {
   [
     {
       name: "goal_submit",
-      description: "Submit one typed Conductor draft. Choir validates and durably records the exact Part set and dependency snapshot before scheduling any Take.",
+      description: "Submit one typed Conductor draft exactly once for the user's current request. A blocked, canceled, failed, or uncertain Goal never authorizes an automatic retry or a replacement Goal ID.",
       input_schema: {
         "type": "object".to_json(),
         "properties": goal_submit_properties.to_json(),
@@ -150,7 +150,7 @@ fn conductor_tools() -> Array[CatalogTool] {
     },
     {
       name: "goal_status",
-      description: "Inspect durable Goal state, Parts, Takes, assurance, integration, publication, and final-PR state.",
+      description: "Inspect durable Goal state once for the user's current status request. Report the result and stop; never poll.",
       input_schema: {
         "type": "object".to_json(),
         "properties": {
@@ -163,7 +163,7 @@ fn conductor_tools() -> Array[CatalogTool] {
     },
     {
       name: "goal_cancel",
-      description: "Install a durable cancellation cutoff. Choir admits no later Take or successful terminal decision.",
+      description: "Install a durable cancellation cutoff only when the user's current message explicitly requests cancellation. Never cancel as an inferred response to blocked or uncertain status.",
       input_schema: {
         "type": "object".to_json(),
         "properties": {
@@ -176,7 +176,7 @@ fn conductor_tools() -> Array[CatalogTool] {
     },
     {
       name: "goal_steer",
-      description: "Pause, resume, or change bounded Part concurrency through a durable Goal policy revision.",
+      description: "Apply one scheduling change only when the user's current message explicitly requests it.",
       input_schema: {
         "type": "object".to_json(),
         "properties": {
@@ -199,7 +199,7 @@ fn conductor_tools() -> Array[CatalogTool] {
     },
     {
       name: "goal_attach",
-      description: "Read the durable normalized event projection for one Take without changing workflow state.",
+      description: "Read the durable normalized event projection once, only when the user explicitly requests Take events. Never use it for polling.",
       input_schema: {
         "type": "object".to_json(),
         "properties": {
@@ -251,7 +251,7 @@ fn conductor_tools() -> Array[CatalogTool] {
     },
     {
       name: "task_create",
-      description: "Create one Bead while crystallizing a feature or Goal with the user.",
+      description: "Create one Bead only when the user explicitly requests Bead creation or is actively crystallizing new work with you. Never create a defect Bead as an inferred response to Goal failure.",
       input_schema: {
         "type": "object".to_json(),
         "properties": {
@@ -272,7 +272,7 @@ fn conductor_tools() -> Array[CatalogTool] {
     },
     {
       name: "task_update",
-      description: "Update one Bead while refining the Goal; omitted fields remain unchanged.",
+      description: "Update one Bead only when the user explicitly requests the update or is actively refining that Bead with you; omitted fields remain unchanged.",
       input_schema: {
         "type": "object".to_json(),
         "properties": {

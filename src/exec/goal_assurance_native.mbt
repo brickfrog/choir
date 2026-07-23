@@ -47,21 +47,20 @@ async fn create_native_goal_assurance_runtime(
     clock.val
   }
   let cancellation_requested = fn() {
-    match
+    native_goal_cancellation_observed(
       @workflow.load_goal_execution_record(
         repository,
         local_part_workflow_repository_adapters(),
         execution.goal.id,
-      ) {
-      Ok(Some(current)) =>
-        current.record.state !=
-        @workflow.GoalExecutionState::GoalExecutionAssuring ||
-        current.record.goal.lifecycle !=
+      ),
+      fn(current) {
+        current.state != @workflow.GoalExecutionState::GoalExecutionAssuring ||
+        current.goal.lifecycle !=
         @control.GoalLifecycle::GoalActive(
           @control.GoalActiveCondition::GoalRunning,
         )
-      _ => true
-    }
+      },
+    )
   }
   let existing_generation = if @sys.path_exists(
       runtime_root +

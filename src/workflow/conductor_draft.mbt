@@ -356,7 +356,7 @@ fn decode_conductor_part_draft(
         None =>
           return Err(goal_submission_error("Conductor provider is unsupported"))
       }
-    None => return Err(goal_submission_error("Conductor provider is missing"))
+    None => @control.ProviderSurfaceId::CodexSubscriptionCli
   }
   let exact_paths = match fields.get("exact_paths") {
     None => []

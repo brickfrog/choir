@@ -9,9 +9,16 @@ test "Goal prompt falls back to the current Conductor contract" {
   assert_true(body.contains("complete open blocking-dependency closure"))
   assert_true(body.contains("call `goal_submit` exactly once"))
   assert_true(body.contains("Never probe `goal_submit`"))
-  assert_true(body.contains("Default each Part to `codex`"))
+  assert_true(body.contains("Omit `provider`"))
   assert_true(
-    body.contains("Use `claude` only when the user explicitly requests"),
+    body.contains("user's current message explicitly requests Claude"),
+  )
+  assert_true(body.contains("Never babysit a Goal with a polling loop"))
+  assert_true(
+    body.contains("Never retry or resubmit within the same user request"),
+  )
+  assert_true(
+    body.contains("treat it as that Goal even when a Bead has the same ID"),
   )
   assert_true(body.contains("The conversation is the product interface"))
   assert_true(body.contains("call `goal_answer`"))
