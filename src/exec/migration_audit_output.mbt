@@ -93,8 +93,8 @@ fn native_migration_finding_output_schema() -> Json {
       }.to_json(),
     }.to_json(),
     "required": [
-      "class", "severity", "anchor_kind", "anchor_primary", "anchor_secondary",
-      "evidence", "disposition",
+      "class", "severity", "anchor_kind", "anchor_primary", "anchor_secondary", "evidence",
+      "disposition",
     ].to_json(),
     "additionalProperties": false.to_json(),
   }.to_json()

@@ -164,6 +164,7 @@ async test "native Git merge conflict produces a durable workflow observation" {
         @control.IntegrationIntentLifecycle::IntegrationPlanned,
       ),
       adapters,
+      is_nfc=fn(_) { true },
     ) {
     Ok(value) => value
     Err(error) => fail(error.message())

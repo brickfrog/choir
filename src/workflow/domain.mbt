@@ -7,8 +7,6 @@ pub(all) enum PartWorkflowStage {
   PartImplementationCompleted
   PartCandidateRecorded
   PartVerificationSandboxPrepared
-  PartVerificationCommandPrepared
-  PartVerificationHarnessStarted
   PartVerified
   PartAuditSandboxPrepared
   PartAuditCommandPrepared
@@ -31,7 +29,6 @@ pub(all) struct PartIdentityPlan {
   implementation_session : @control.HarnessSession
   verification_take : @control.Take
   verification_sandbox : @control.SandboxLease
-  verification_session : @control.HarnessSession
   audit_take : @control.Take
   audit_sandbox : @control.SandboxLease
   audit_session : @control.HarnessSession
@@ -86,16 +83,7 @@ pub(all) enum PartEffectKind {
   DispatchImplementation(@control.TakeId, @control.HarnessCommandIntent)
   NormalizeImplementationCandidate(@control.TakeId, @control.Digest)
   PrepareVerificationSandbox(@control.SandboxLease)
-  PrepareVerificationCommand(PartCommandPreparationPlan)
-  StartVerificationHarness(
-    @control.HarnessSession,
-    @control.HarnessSessionStartIntent
-  )
-  DispatchVerification(
-    @control.TakeId,
-    @control.HarnessCommandIntent,
-    @control.PartVerificationSubject
-  )
+  DispatchVerification(@control.TakeId, @control.PartVerificationSubject)
   PrepareAuditSandbox(@control.SandboxLease)
   PrepareAuditCommand(PartCommandPreparationPlan)
   StartAuditHarness(@control.HarnessSession, @control.HarnessSessionStartIntent)
@@ -153,7 +141,6 @@ pub(all) struct ImplementationExecutionResult {
 ///|
 pub(all) struct VerificationExecutionResult {
   take_id : @control.TakeId
-  session_id : @control.HarnessSessionId
   verification_execution_id : @control.VerificationExecutionId
   subject : @control.PartVerificationSubject
   verification_spec : @control.VerificationSpec
@@ -211,13 +198,7 @@ pub(all) enum PartEffectObservation {
   )
   CandidateNormalized(@control.CandidateCommit, @control.CandidatePathEvidence)
   VerificationSandboxPrepared(@control.SandboxLease)
-  VerificationCommandPrepared(PartPreparedCommand)
-  VerificationHarnessStarted(@control.HarnessSession)
-  VerificationCompleted(
-    VerificationExecutionResult,
-    @control.HarnessSession,
-    Array[@control.HarnessEventEnvelope]
-  )
+  VerificationCompleted(VerificationExecutionResult)
   AuditSandboxPrepared(@control.SandboxLease)
   AuditCommandPrepared(PartPreparedCommand)
   AuditHarnessStarted(@control.HarnessSession)

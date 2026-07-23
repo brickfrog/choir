@@ -629,22 +629,6 @@ pub fn apply_part_effect_observation(
         WorkflowImplementationTake,
         observed_at,
       )
-    VerificationHarnessStarted(session) =>
-      record_harness_started(
-        snapshot,
-        observation,
-        session,
-        snapshot.identities.verification_session,
-        fn(kind) {
-          kind is StartVerificationHarness(_, start) &&
-          start.session_id == session.id &&
-          start.take_id == session.take_id &&
-          start.initial_command_artifact_digest is Some(_)
-        },
-        PartVerificationHarnessStarted,
-        WorkflowVerificationTake,
-        observed_at,
-      )
     AuditHarnessStarted(session) =>
       record_harness_started(
         snapshot,
@@ -740,21 +724,6 @@ pub fn apply_part_effect_observation(
         observed_at,
         artifact_exists,
       )
-    VerificationCommandPrepared(prepared) =>
-      record_command_prepared(
-        snapshot,
-        observation,
-        prepared,
-        fn(kind) {
-          match kind {
-            PrepareVerificationCommand(plan) => Some(plan)
-            _ => None
-          }
-        },
-        PartVerificationCommandPrepared,
-        observed_at,
-        artifact_exists,
-      )
     AuditCommandPrepared(prepared) =>
       record_command_prepared(
         snapshot,
@@ -826,9 +795,9 @@ pub fn apply_part_effect_observation(
         observed_at,
       )
     }
-    VerificationCompleted(result, final_session, events) =>
+    VerificationCompleted(result) =>
       record_verification_completion(
-        snapshot, observation, result, final_session, events, observed_at, artifact_exists,
+        snapshot, observation, result, observed_at, artifact_exists,
       )
     AuditCompleted(submission, final_session, events) =>
       record_audit_completion(

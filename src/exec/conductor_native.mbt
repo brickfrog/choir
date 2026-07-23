@@ -819,9 +819,7 @@ async fn dispatch_native_goal_submit(
   let token = match @sys.mint_local_token() {
     Some(value) => value
     None =>
-      return native_conductor_error(
-        "failed to mint a durable Goal identity",
-      )
+      return native_conductor_error("failed to mint a durable Goal identity")
   }
   let draft = native_conductor_goal_draft_json(
     request,
@@ -864,35 +862,41 @@ fn dispatch_native_goal_cancel(
         record
       )
     ) =>
-      native_conductor_goal_action_ok_json({
-        "goal_id": record.goal.id.to_json(),
-        "state": record.state.to_json(),
-        "lifecycle": record.goal.lifecycle.to_json(),
-        "durable_version": record.durable_version.to_json(),
-        "replayed": false.to_json(),
-      }.to_json())
+      native_conductor_goal_action_ok_json(
+        {
+          "goal_id": record.goal.id.to_json(),
+          "state": record.state.to_json(),
+          "lifecycle": record.goal.lifecycle.to_json(),
+          "durable_version": record.durable_version.to_json(),
+          "replayed": false.to_json(),
+        }.to_json(),
+      )
     Ok(
       @workflow.GoalCancellationPersistenceResult::GoalCancellationReplayed(
         record
       )
     ) =>
-      native_conductor_goal_action_ok_json({
-        "goal_id": record.goal.id.to_json(),
-        "state": record.state.to_json(),
-        "lifecycle": record.goal.lifecycle.to_json(),
-        "durable_version": record.durable_version.to_json(),
-        "replayed": true.to_json(),
-      }.to_json())
+      native_conductor_goal_action_ok_json(
+        {
+          "goal_id": record.goal.id.to_json(),
+          "state": record.state.to_json(),
+          "lifecycle": record.goal.lifecycle.to_json(),
+          "durable_version": record.durable_version.to_json(),
+          "replayed": true.to_json(),
+        }.to_json(),
+      )
     Ok(
       @workflow.GoalCancellationPersistenceResult::GoalCancellationTerminal(
         state
       )
     ) =>
-      native_conductor_goal_action_ok_json({
-        "goal_id": goal_id.to_json(),
-        "state": state.to_json(),
-        "already_terminal": true.to_json(),
-      }.to_json())
+      native_conductor_goal_action_ok_json(
+        {
+          "goal_id": goal_id.to_json(),
+          "state": state.to_json(),
+          "already_terminal": true.to_json(),
+        }.to_json(),
+      )
     Err(error) => @types.Response::Err(error.message())
   }
 }
@@ -958,33 +962,39 @@ fn dispatch_native_goal_steer(
         revision
       )
     ) =>
-      native_conductor_goal_action_ok_json({
-        "goal_id": record.goal.id.to_json(),
-        "state": record.state.to_json(),
-        "lifecycle": record.goal.lifecycle.to_json(),
-        "durable_version": record.durable_version.to_json(),
-        "maximum_parallel_parts": record.maximum_parallel_parts.to_json(),
-        "policy_revision": revision.to_json(),
-        "pause": record.pause.to_json(),
-        "replayed": false.to_json(),
-      }.to_json())
+      native_conductor_goal_action_ok_json(
+        {
+          "goal_id": record.goal.id.to_json(),
+          "state": record.state.to_json(),
+          "lifecycle": record.goal.lifecycle.to_json(),
+          "durable_version": record.durable_version.to_json(),
+          "maximum_parallel_parts": record.maximum_parallel_parts.to_json(),
+          "policy_revision": revision.to_json(),
+          "pause": record.pause.to_json(),
+          "replayed": false.to_json(),
+        }.to_json(),
+      )
     Ok(@workflow.GoalSteeringPersistenceResult::GoalSteeringReplayed(record))
     | Ok(@workflow.GoalSteeringPersistenceResult::GoalSteeringNoChange(record)) =>
-      native_conductor_goal_action_ok_json({
-        "goal_id": record.goal.id.to_json(),
-        "state": record.state.to_json(),
-        "lifecycle": record.goal.lifecycle.to_json(),
-        "durable_version": record.durable_version.to_json(),
-        "maximum_parallel_parts": record.maximum_parallel_parts.to_json(),
-        "pause": record.pause.to_json(),
-        "replayed": true.to_json(),
-      }.to_json())
+      native_conductor_goal_action_ok_json(
+        {
+          "goal_id": record.goal.id.to_json(),
+          "state": record.state.to_json(),
+          "lifecycle": record.goal.lifecycle.to_json(),
+          "durable_version": record.durable_version.to_json(),
+          "maximum_parallel_parts": record.maximum_parallel_parts.to_json(),
+          "pause": record.pause.to_json(),
+          "replayed": true.to_json(),
+        }.to_json(),
+      )
     Ok(@workflow.GoalSteeringPersistenceResult::GoalSteeringTerminal(state)) =>
-      native_conductor_goal_action_ok_json({
-        "goal_id": goal_id.to_json(),
-        "state": state.to_json(),
-        "already_terminal": true.to_json(),
-      }.to_json())
+      native_conductor_goal_action_ok_json(
+        {
+          "goal_id": goal_id.to_json(),
+          "state": state.to_json(),
+          "already_terminal": true.to_json(),
+        }.to_json(),
+      )
     Err(error) => @types.Response::Err(error.message())
   }
 }
@@ -1000,7 +1010,7 @@ fn dispatch_native_goal_attach(
   }
   match attach_native_goal(project_dir, @control.TakeId(take_id)) {
     Ok(report) => {
-      guard report.to_json() is Object(fields) else {
+      guard report is Object(fields) else {
         return native_conductor_error("attach response was not an object")
       }
       fields.set("observational", true.to_json())
@@ -1038,28 +1048,32 @@ fn dispatch_native_goal_answer(
         receipt
       )
     ) =>
-      native_conductor_goal_action_ok_json({
-        "goal_id": record.goal.id.to_json(),
-        "state": record.state.to_json(),
-        "lifecycle": record.goal.lifecycle.to_json(),
-        "durable_version": record.durable_version.to_json(),
-        "answer": receipt.to_json(),
-        "replayed": false.to_json(),
-      }.to_json())
+      native_conductor_goal_action_ok_json(
+        {
+          "goal_id": record.goal.id.to_json(),
+          "state": record.state.to_json(),
+          "lifecycle": record.goal.lifecycle.to_json(),
+          "durable_version": record.durable_version.to_json(),
+          "answer": receipt.to_json(),
+          "replayed": false.to_json(),
+        }.to_json(),
+      )
     Ok(
       @workflow.GoalInputAnswerPersistenceResult::GoalInputAnswerPersistenceReplayed(
         record,
         receipt
       )
     ) =>
-      native_conductor_goal_action_ok_json({
-        "goal_id": record.goal.id.to_json(),
-        "state": record.state.to_json(),
-        "lifecycle": record.goal.lifecycle.to_json(),
-        "durable_version": record.durable_version.to_json(),
-        "answer": receipt.to_json(),
-        "replayed": true.to_json(),
-      }.to_json())
+      native_conductor_goal_action_ok_json(
+        {
+          "goal_id": record.goal.id.to_json(),
+          "state": record.state.to_json(),
+          "lifecycle": record.goal.lifecycle.to_json(),
+          "durable_version": record.durable_version.to_json(),
+          "answer": receipt.to_json(),
+          "replayed": true.to_json(),
+        }.to_json(),
+      )
     Err(error) => @types.Response::Err(error.message())
   }
 }

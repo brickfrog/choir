@@ -113,9 +113,6 @@ fn native_claude_system_prompt(role : @harness.ClaudeTakeRole) -> String {
     @harness.ClaudeTakeRole::ClaudeImplementationTake =>
       common +
       "Complete the instruction in the sandbox. End with exactly {\"outcome\":\"completed\"}."
-    @harness.ClaudeTakeRole::ClaudeVerificationTake =>
-      common +
-      "Verify the supplied candidate with the declared verification tool. End with exactly {\"outcome\":\"passed\"} or {\"outcome\":\"failed\"}."
     @harness.ClaudeTakeRole::ClaudeAuditTake =>
       common +
       "Independently audit the supplied candidate. Return outcome passed with zero counts when clean, otherwise outcome findings with exact total and blocking counts." +
@@ -128,8 +125,6 @@ fn native_claude_output_schema(role : @harness.ClaudeTakeRole) -> String {
   let outcome : Json = match role {
     @harness.ClaudeTakeRole::ClaudeImplementationTake =>
       { "const": "completed".to_json() }.to_json()
-    @harness.ClaudeTakeRole::ClaudeVerificationTake =>
-      { "enum": ["passed", "failed"].to_json() }.to_json()
     @harness.ClaudeTakeRole::ClaudeAuditTake =>
       { "enum": ["passed", "findings"].to_json() }.to_json()
   }

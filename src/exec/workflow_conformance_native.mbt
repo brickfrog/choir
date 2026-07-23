@@ -215,11 +215,6 @@ fn conformance_snapshot_for(
     ),
     verification_take: verification,
     verification_sandbox,
-    verification_session: session(
-      "verification-session-" + key,
-      verification,
-      verification_sandbox,
-    ),
     audit_take: audit,
     audit_sandbox,
     audit_session: session("audit-session-" + key, audit, audit_sandbox),
@@ -437,54 +432,32 @@ fn conformance_effect_observation(
           lifecycle: @control.SandboxLeaseLifecycle::SandboxLeaseActive,
         }),
       )
-    @workflow.PartEffectKind::PrepareVerificationCommand(plan) =>
-      Ok(
-        @workflow.PartEffectObservation::VerificationCommandPrepared(
-          prepared_command(plan),
-        ),
-      )
-    @workflow.PartEffectKind::StartVerificationHarness(session, _) =>
-      Ok(
-        @workflow.PartEffectObservation::VerificationHarnessStarted(
-          conformance_started_session(session),
-        ),
-      )
-    @workflow.PartEffectKind::DispatchVerification(take_id, command, subject) => {
-      let session_id = command.session_id
-      let started = conformance_started_session(
-        snapshot.identities.verification_session,
-      )
-      let (closed, events) = conformance_trace(started, "verification-" + key)
+    @workflow.PartEffectKind::DispatchVerification(take_id, subject) => {
       let candidate = match snapshot.candidate {
         Some(value) => value
         None =>
           return Err(@types.ChoirError::validation_error("candidate is absent"))
       }
       Ok(
-        @workflow.PartEffectObservation::VerificationCompleted(
-          {
-            take_id,
-            session_id,
-            verification_execution_id: @control.VerificationExecutionId(
-              "verification-execution-" + key,
-            ),
-            subject,
-            verification_spec: snapshot.task_contract.verification_specs[0],
-            environment_and_image_digest: conformance_digest_b,
-            runtime_and_policy_digest: snapshot.identities.verification_sandbox.runtime_policy_digest,
-            subject_pre_tree_oid: candidate.tree_oid,
-            subject_post_tree_oid: candidate.tree_oid,
-            evidence: {
-              artifact_id: "verification-evidence-" + key,
-              digest: change_digest,
-            },
-            started_at: 100L,
-            finished_at: 102L,
-            outcome: @control.VerificationOutcome::VerificationPassed,
+        @workflow.PartEffectObservation::VerificationCompleted({
+          take_id,
+          verification_execution_id: @control.VerificationExecutionId(
+            "verification-execution-" + key,
+          ),
+          subject,
+          verification_spec: snapshot.task_contract.verification_specs[0],
+          environment_and_image_digest: conformance_digest_b,
+          runtime_and_policy_digest: snapshot.identities.verification_sandbox.runtime_policy_digest,
+          subject_pre_tree_oid: candidate.tree_oid,
+          subject_post_tree_oid: candidate.tree_oid,
+          evidence: {
+            artifact_id: "verification-evidence-" + key,
+            digest: change_digest,
           },
-          closed,
-          events,
-        ),
+          started_at: 100L,
+          finished_at: 102L,
+          outcome: @control.VerificationOutcome::VerificationPassed,
+        }),
       )
     }
     @workflow.PartEffectKind::PrepareAuditSandbox(lease) =>
@@ -1309,7 +1282,7 @@ pub async fn run_part_conformance_fixture(
   } else {
     0
   }
-  if result.snapshot.effect_receipts.length() != 15 ||
+  if result.snapshot.effect_receipts.length() != 13 ||
     result.snapshot.verification_receipts.length() != 1 ||
     audit_receipt_count != 1 ||
     integration_receipt_count != 1 ||
@@ -1424,7 +1397,7 @@ pub async fn run_part_conformance_fixture(
           return failed_part_report(
             "effect-observation recovery redispatched provider work",
           )
-        } else if recovered_snapshot.effect_receipts.length() != 15 ||
+        } else if recovered_snapshot.effect_receipts.length() != 13 ||
           recovered_snapshot.verification_receipts.length() != 1 ||
           recovered_snapshot.audit_receipt is None ||
           recovered_snapshot.integration_receipt is None {
@@ -1718,12 +1691,6 @@ fn scale_assurance_identities(
   {
     verification_take: verification,
     verification_sandbox,
-    verification_session: scale_session(
-      "goal-verification-session-scale",
-      verification,
-      verification_sandbox,
-      @control.ProviderSurfaceId::CodexSubscriptionCli,
-    ),
     audit_take: audit,
     audit_sandbox,
     audit_session: scale_session(
@@ -1904,20 +1871,6 @@ fn scale_terminal_projection(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let verification_session = conformance_started_session(
-    assurance.identities.verification_session,
-  )
-  assurance = match
-    apply_scale_assurance_observation(
-      assurance,
-      @workflow.GoalAssuranceEffectObservation::GoalVerificationHarnessStarted(
-        verification_session,
-      ),
-      202L,
-    ) {
-    Ok(value) => value
-    Err(error) => return Err(error)
-  }
   guard assurance.verification_subject is Some(verification_subject) else {
     return Err(
       @types.ChoirError::validation_error(
@@ -1925,44 +1878,36 @@ fn scale_terminal_projection(
       ),
     )
   }
-  let (verification_closed, verification_events) = conformance_trace(
-    verification_session, "goal-verification-scale",
-  )
   assurance = match
     apply_scale_assurance_observation(
       assurance,
-      @workflow.GoalAssuranceEffectObservation::GoalVerificationCompleted(
-        {
-          take_id: assurance.verification_take.id,
-          session_id: verification_session.id,
-          subject: verification_subject,
-          executions: [
-            {
-              verification_execution_id: @control.VerificationExecutionId(
-                "goal-verification-execution-scale",
-              ),
-              verification_spec: goal_verification_spec,
-              environment_and_image_digest: conformance_digest_a,
-              runtime_and_policy_digest: assurance.identities.verification_sandbox.runtime_policy_digest,
-              subject_pre_tree_oid: final_integration.promotion_tree_oid,
-              subject_post_tree_oid: final_integration.promotion_tree_oid,
-              evidence: {
-                artifact_id: "goal-verification-evidence-scale",
-                digest: conformance_digest_b,
-              },
-              started_at: 203L,
-              finished_at: 204L,
-              outcome: @control.VerificationOutcome::VerificationPassed,
+      @workflow.GoalAssuranceEffectObservation::GoalVerificationCompleted({
+        take_id: assurance.verification_take.id,
+        subject: verification_subject,
+        executions: [
+          {
+            verification_execution_id: @control.VerificationExecutionId(
+              "goal-verification-execution-scale",
+            ),
+            verification_spec: goal_verification_spec,
+            environment_and_image_digest: conformance_digest_a,
+            runtime_and_policy_digest: assurance.identities.verification_sandbox.runtime_policy_digest,
+            subject_pre_tree_oid: final_integration.promotion_tree_oid,
+            subject_post_tree_oid: final_integration.promotion_tree_oid,
+            evidence: {
+              artifact_id: "goal-verification-evidence-scale",
+              digest: conformance_digest_b,
             },
-          ],
-          evidence_manifest: {
-            artifact_id: "goal-verification-manifest-scale",
-            digest: conformance_digest_a,
+            started_at: 203L,
+            finished_at: 204L,
+            outcome: @control.VerificationOutcome::VerificationPassed,
           },
+        ],
+        evidence_manifest: {
+          artifact_id: "goal-verification-manifest-scale",
+          digest: conformance_digest_a,
         },
-        verification_closed,
-        verification_events,
-      ),
+      }),
       205L,
     ) {
     Ok(value) => value

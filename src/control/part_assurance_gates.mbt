@@ -23,7 +23,6 @@ pub fn evaluate_part_verification_gate(
   expected_environment_digest : Digest,
   expected_runtime_digest : Digest,
   evidence_exists : (ArtifactReference) -> Bool,
-  take_session_closed_cleanly : (TakeId) -> Bool,
 ) -> VerificationGateObservation {
   if duplicate_verification_receipt(receipts) {
     return VerificationGateCorrupt(VerificationDuplicateReceipt)
@@ -88,9 +87,6 @@ pub fn evaluate_part_verification_gate(
     }
     if !evidence_exists(receipt.evidence) {
       return VerificationGateCorrupt(VerificationEvidenceMissing)
-    }
-    if !take_session_closed_cleanly(receipt.verification_take_id) {
-      return VerificationGateRejected(VerificationSessionNotCleanlyClosed)
     }
     selected.push(receipt_id)
   }

@@ -274,19 +274,26 @@ fn planned_goal_assurance_resource(
 }
 
 ///|
+fn planned_goal_assurance_sandbox(
+  take : @control.Take,
+  lease : @control.SandboxLease,
+) -> Bool {
+  lease.take_id == take.id &&
+  lease.lifecycle == @control.SandboxLeaseLifecycle::SandboxLeasePlanned
+}
+
+///|
 fn goal_assurance_identity_plan_is_valid(record : GoalAssuranceRecord) -> Bool {
   let identities = record.identities
   if identities.verification_take.id == identities.audit_take.id ||
     identities.verification_sandbox.id == identities.audit_sandbox.id ||
     identities.verification_sandbox.generation_id ==
     identities.audit_sandbox.generation_id ||
-    identities.verification_session.id == identities.audit_session.id ||
     !planned_goal_assurance_take(identities.verification_take, record.goal_id) ||
     !planned_goal_assurance_take(identities.audit_take, record.goal_id) ||
-    !planned_goal_assurance_resource(
+    !planned_goal_assurance_sandbox(
       identities.verification_take,
       identities.verification_sandbox,
-      identities.verification_session,
     ) ||
     !planned_goal_assurance_resource(
       identities.audit_take,

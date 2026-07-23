@@ -150,12 +150,6 @@ fn event_authorized_provider_dispatch_fixture() -> (
     implementation_lease,
     @control.HarnessSessionLifecycle::HarnessSessionAwaitingEvents,
   )
-  let verification_session = session(
-    "event-process-loss-verification-session",
-    verification_take,
-    verification_lease,
-    @control.HarnessSessionLifecycle::HarnessSessionPlanned,
-  )
   let audit_session = session(
     "event-process-loss-audit-session",
     audit_take,
@@ -278,7 +272,6 @@ fn event_authorized_provider_dispatch_fixture() -> (
       implementation_session,
       verification_take,
       verification_sandbox: verification_lease,
-      verification_session,
       audit_take,
       audit_sandbox: audit_lease,
       audit_session,
@@ -289,9 +282,7 @@ fn event_authorized_provider_dispatch_fixture() -> (
     prior_takes: [],
     prior_take_evidence: [],
     sandbox_leases: [implementation_lease, verification_lease, audit_lease],
-    harness_sessions: [
-      implementation_session, verification_session, audit_session,
-    ],
+    harness_sessions: [implementation_session, audit_session],
     harness_events: [],
     prepared_commands: [prepared_command],
     implementation_result: None,

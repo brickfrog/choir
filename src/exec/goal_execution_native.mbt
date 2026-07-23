@@ -498,13 +498,6 @@ fn plan_native_goal_conflict_repair(
       ),
       verification_take: verification,
       verification_sandbox,
-      verification_session: native_goal_conflict_repair_session(
-        key,
-        "verification",
-        verification,
-        verification_sandbox,
-        snapshot.identities.verification_session,
-      ),
       audit_take: audit,
       audit_sandbox,
       audit_session: native_goal_conflict_repair_session(
@@ -1405,8 +1398,7 @@ async fn execute_native_goal_record(
   let parts : Array[NativeGoalPartRuntime] = []
   for snapshot in snapshots {
     let surface = snapshot.identities.implementation_session.surface
-    if snapshot.identities.verification_session.surface != surface ||
-      snapshot.identities.audit_session.surface != surface {
+    if snapshot.identities.audit_session.surface != surface {
       match existing_generation {
         Some(_) => stop_native_boxlite_server(active_server)
         None => ignore(cleanup_native_boxlite_server(active_server))
@@ -2817,12 +2809,6 @@ fn native_goal_assurance_plan(
       {
         verification_take,
         verification_sandbox,
-        verification_session: native_goal_submission_session(
-          "session-" + key + "-goal-verification-1",
-          verification_take,
-          verification_sandbox,
-          surface,
-        ),
         audit_take,
         audit_sandbox,
         audit_session: native_goal_submission_session(
@@ -3132,9 +3118,6 @@ async fn advance_native_goal_assurance(
               None => {
                 let retry_safe = match intent.kind {
                   @workflow.GoalAssuranceEffectKind::PrepareGoalVerificationSandbox(
-                    _
-                  )
-                  | @workflow.GoalAssuranceEffectKind::StartGoalVerificationHarness(
                     _
                   )
                   | @workflow.GoalAssuranceEffectKind::PrepareGoalAuditSandbox(
@@ -3618,10 +3601,138 @@ pub fn steer_native_goal(
 }
 
 ///|
+fn native_goal_attach_evidence(
+  repository : @workflow.PartWorkflowRepository,
+  adapters : @workflow.PartWorkflowRepositoryAdapters,
+  reference : @control.ArtifactReference,
+) -> Result[Json, @types.ChoirError] {
+  let content = match
+    (adapters.artifacts.read)(repository.artifact_store, {
+      digest: reference.digest,
+      max_bytes: 4 * 1024 * 1024,
+    }) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let evidence = @json.parse(@utf8.decode_lossy(content)) catch {
+    _ =>
+      return Err(
+        native_goal_execution_error("verification evidence is invalid"),
+      )
+  }
+  guard evidence is Object(fields) else {
+    return Err(
+      native_goal_execution_error("verification evidence is not an object"),
+    )
+  }
+  guard fields.get("process_result") is Some(Object(process)) else {
+    return Ok(evidence)
+  }
+  guard process.get("output_artifact") is Some(output_artifact_json) else {
+    return Ok(evidence)
+  }
+  let output_artifact : @control.ArtifactReference = @json.from_json(
+    output_artifact_json,
+  ) catch {
+    _ =>
+      return Err(
+        native_goal_execution_error(
+          "verification output artifact reference is invalid",
+        ),
+      )
+  }
+  let output = match
+    (adapters.artifacts.read)(repository.artifact_store, {
+      digest: output_artifact.digest,
+      max_bytes: 2 * 1024 * 1024,
+    }) {
+    Ok(value) =>
+      if @storage.artifact_digest(value) != output_artifact.digest {
+        return Err(native_goal_execution_error("verification output changed"))
+      } else {
+        @utf8.decode_lossy(value)
+      }
+    Err(error) => return Err(error)
+  }
+  process.set("output", output.to_json())
+  fields.set("process_result", process.to_json())
+  Ok(fields.to_json())
+}
+
+///|
+test "verification attach resolves durable process output" {
+  let root = "/tmp/choir-verification-attach-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(root))
+  let repository = native_goal_repository(root)
+  let adapters = local_part_workflow_repository_adapters()
+  assert_true(@sys.create_dir_all(root + "/.choir/state/control"))
+  match @workflow.initialize_part_workflow_repository(repository, adapters) {
+    Ok(_) => ()
+    Err(error) => fail(error.message())
+  }
+  let goal_id = @control.GoalId("goal-verification-attach")
+  let output = "moon test failed\npackage dependency is unavailable"
+  let output_content = @utf8.encode(output)
+  let output_digest = @storage.artifact_digest(output_content)
+  let output_adoption = match
+    (adapters.artifacts.adopt)(repository.artifact_store, {
+      content: output_content,
+      expected_digest: output_digest,
+      provenance: @storage.ArtifactProvenance::ArtifactProcessExecution(goal_id),
+      retention: @storage.ArtifactRetention::ArtifactUntilGoalTerminal(goal_id),
+    }) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  let output_reference : @control.ArtifactReference = {
+    artifact_id: @storage.artifact_id_text(output_adoption.artifact_id),
+    digest: output_digest,
+  }
+  let evidence_content = @utf8.encode(
+    {
+      "process_result": {
+        "exit_code": (2).to_json(),
+        "output_digest": output_digest.to_json(),
+        "output_artifact": output_reference.to_json(),
+      }.to_json(),
+    }
+    .to_json()
+    .stringify(indent=0),
+  )
+  let evidence_digest = @storage.artifact_digest(evidence_content)
+  let evidence_adoption = match
+    (adapters.artifacts.adopt)(repository.artifact_store, {
+      content: evidence_content,
+      expected_digest: evidence_digest,
+      provenance: @storage.ArtifactProvenance::ArtifactProcessExecution(goal_id),
+      retention: @storage.ArtifactRetention::ArtifactUntilGoalTerminal(goal_id),
+    }) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  let evidence = match
+    native_goal_attach_evidence(repository, adapters, {
+      artifact_id: @storage.artifact_id_text(evidence_adoption.artifact_id),
+      digest: evidence_digest,
+    }) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  guard evidence is Object(fields) else {
+    fail("verification evidence is not an object")
+  }
+  guard fields.get("process_result") is Some(Object(process)) else {
+    fail("verification evidence has no process result")
+  }
+  assert_eq(process.get("output"), Some(output.to_json()))
+  ignore(@sys.rm_rf(root))
+}
+
+///|
 pub fn attach_native_goal(
   project_dir : String,
   take_id : @control.TakeId,
-) -> Result[@workflow.GoalAttachReport, @types.ChoirError] {
+) -> Result[Json, @types.ChoirError] {
   let repository = native_goal_repository(project_dir)
   if !@sys.path_entry_exists(repository.state_store.path) {
     return Err(native_goal_execution_error("Take is not registered"))
@@ -3633,6 +3744,7 @@ pub fn attach_native_goal(
     Err(error) => return Err(error)
   }
   let mut report : @workflow.GoalAttachReport? = None
+  let evidence_references : Array[@control.ArtifactReference] = []
   for stored in records {
     let snapshots : Array[@workflow.PartWorkflowSnapshot] = []
     for workflow_id in stored.record.part_workflow_ids {
@@ -3660,13 +3772,48 @@ pub fn attach_native_goal(
           return Err(native_goal_execution_error("Take identity is ambiguous"))
         } else {
           report = Some(value)
+          for snapshot in snapshots {
+            if snapshot.verification_take.id == take_id {
+              for receipt in snapshot.verification_receipts {
+                if receipt.verification_take_id == take_id {
+                  evidence_references.push(receipt.evidence)
+                }
+              }
+            }
+          }
+          match assurance {
+            Some(value) if value.verification_take.id == take_id =>
+              for receipt in value.verification_receipts {
+                if receipt.verification_take_id == take_id {
+                  evidence_references.push(receipt.evidence)
+                }
+              }
+            _ => ()
+          }
         }
       Ok(None) => ()
       Err(error) => return Err(error)
     }
   }
   match report {
-    Some(value) => Ok(value)
+    Some(value) => {
+      guard value.to_json() is Object(fields) else {
+        return Err(
+          native_goal_execution_error("attach report is not an object"),
+        )
+      }
+      let evidence : Array[Json] = []
+      for reference in evidence_references {
+        evidence.push(
+          match native_goal_attach_evidence(repository, adapters, reference) {
+            Ok(value) => value
+            Err(error) => return Err(error)
+          },
+        )
+      }
+      fields.set("verification_evidence", evidence.to_json())
+      Ok(fields.to_json())
+    }
     None => Err(native_goal_execution_error("Take is not registered"))
   }
 }

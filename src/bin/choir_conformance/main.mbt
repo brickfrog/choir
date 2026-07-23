@@ -3294,10 +3294,7 @@ async fn run_conductor_reconnect_live() -> Int {
       choir_binary,
       ["start", "--conductor", "claude"],
       root,
-      {
-        "PATH": fixture_path,
-        "CHOIR_RECONNECT_REAL_CLAUDE": real_claude,
-      },
+      { "PATH": fixture_path, "CHOIR_RECONNECT_REAL_CLAUDE": real_claude },
       claude_prompt,
     )
   } else {
@@ -3622,9 +3619,14 @@ async fn exercise_boxlite_take(
       @sandbox.SandboxRegisteredToolId("moon"),
       prepared.tool_manifest_digest,
     ),
-    arguments: ["--target-dir", "/scratch/typed-verification", "version"],
+    arguments: [
+      "test", "--target", "native", "--target-dir", "/scratch/typed-verification",
+    ],
     working_directory: @sandbox.SandboxWorkingDirectory::SandboxWorkspaceRoot,
-    environment: [{ key: "NO_COLOR", value: "1" }],
+    environment: [
+      { key: "MOON_HOME", value: "/scratch/home/.moon" },
+      { key: "NO_COLOR", value: "1" },
+    ],
     stdin: @sandbox.SandboxStdinPolicy::SandboxStdinClosed,
     timeout_ms: 120000L,
     resources: {

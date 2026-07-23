@@ -140,9 +140,7 @@ fn conductor_tools() -> Array[CatalogTool] {
       input_schema: {
         "type": "object".to_json(),
         "properties": goal_submit_properties.to_json(),
-        "required": [
-          "proposal_id", "maximum_parallel_parts", "parts",
-        ].to_json(),
+        "required": ["proposal_id", "maximum_parallel_parts", "parts"].to_json(),
         "additionalProperties": false.to_json(),
       }.to_json(),
       read_only: false,

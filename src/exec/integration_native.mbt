@@ -366,6 +366,7 @@ fn native_git_process_spec(
 ///|
 fn parsed_conflicting_paths(
   output : String,
+  is_nfc : (String) -> Bool,
 ) -> Result[Array[@control.RepoPath], @types.ChoirError] {
   let fields = output.split("\u{00}").to_array()
   if fields.length() < 2 || parsed_git_oid(fields[0].to_owned()) is None {
@@ -378,7 +379,7 @@ fn parsed_conflicting_paths(
       continue
     }
     let path = @control.RepoPath(value)
-    match @control.validate_repo_path(path, native_path_is_nfc) {
+    match @control.validate_repo_path(path, is_nfc) {
       Ok(_) => paths.push(path)
       Err(_) => return Err(git_error("merge-tree returned an invalid path"))
     }
@@ -524,6 +525,7 @@ pub async fn generate_native_promotion(
   intent : @control.IntegrationIntent,
   adapters : NativeGitIntegrationAdapters,
   fault? : NativeGitIntegrationFaultPoint? = None,
+  is_nfc? : (String) -> Bool = native_path_is_nfc,
 ) -> Result[@workflow.PartEffectObservation, @types.ChoirError] {
   match validate_native_git_config(config, intent) {
     Ok(_) => ()
@@ -563,7 +565,7 @@ pub async fn generate_native_promotion(
     Err(error) => return Err(error)
   }
   if merged.exit_code != 0 {
-    let paths = match parsed_conflicting_paths(merged.output) {
+    let paths = match parsed_conflicting_paths(merged.output, is_nfc) {
       Ok(value) => value
       Err(error) => return Err(error)
     }

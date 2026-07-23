@@ -834,9 +834,6 @@ fn publication_assurance_identities(
   {
     verification_take: verification,
     verification_sandbox,
-    verification_session: publication_session(
-      "publication-goal-verification-session", verification, verification_sandbox,
-    ),
     audit_take: audit,
     audit_sandbox,
     audit_session: publication_session(
@@ -962,9 +959,6 @@ fn publication_integrated_part(
       ),
       verification_take: verification,
       verification_sandbox,
-      verification_session: publication_session(
-        "publication-verification-session", verification, verification_sandbox,
-      ),
       audit_take: audit,
       audit_sandbox,
       audit_session: publication_session(

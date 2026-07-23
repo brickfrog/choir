@@ -239,7 +239,7 @@ async fn native_goal_assurance_post_tree(
   runtime : NativePartEffectRuntime,
   record : @workflow.GoalAssuranceRecord,
   take_id : @control.TakeId,
-  session : @control.HarnessSession,
+  sandbox_generation_id : @control.SandboxGenerationId,
   sandbox : NativeBoxLiteTakeSandbox,
   suffix : String,
 ) -> Result[@control.GitOid, @types.ChoirError] {
@@ -252,7 +252,13 @@ async fn native_goal_assurance_post_tree(
     Err(error) => return Err(error)
   }
   let artifact = match
-    store_native_take_result(runtime, record.goal_id, take_id, session, sandbox) {
+    store_native_take_result(
+      runtime,
+      record.goal_id,
+      take_id,
+      sandbox_generation_id,
+      sandbox,
+    ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -305,19 +311,17 @@ async fn execute_native_goal_verification(
   record : @workflow.GoalAssuranceRecord,
   intent : @workflow.GoalAssuranceEffectIntent,
   take_id : @control.TakeId,
-  session_id : @control.HarnessSessionId,
   subject : @control.GoalVerificationSubject,
 ) -> Result[@workflow.GoalAssuranceEffectObservation, @types.ChoirError] {
   if record.verification_subject != Some(subject) ||
     record.verification_take.id != take_id {
     return Err(native_goal_execution_error("verification subject is stale"))
   }
-  let session = match native_goal_assurance_session(record, session_id) {
-    Ok(value) => value
-    Err(error) => return Err(error)
-  }
   let sandbox = match
-    native_runtime_sandbox(runtime, session.sandbox_generation_id) {
+    native_runtime_sandbox(
+      runtime,
+      record.identities.verification_sandbox.generation_id,
+    ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -325,7 +329,7 @@ async fn execute_native_goal_verification(
     native_goal_assurance_active_lease(
       record,
       take_id,
-      session.sandbox_generation_id,
+      record.identities.verification_sandbox.generation_id,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -347,7 +351,6 @@ async fn execute_native_goal_verification(
         intent.effect_id,
         spec.id.0,
         take_id,
-        session,
         lease,
         sandbox,
         spec.process_spec_digest,
@@ -362,43 +365,22 @@ async fn execute_native_goal_verification(
     }
     processes.push((spec, result, started_at))
   }
-  let process_summary = processes
-    .map(fn(entry) { entry.0.id.0 + " exit=" + entry.1.exit_code.to_string() })
-    .join("; ")
-  let task_summary = match native_goal_assurance_task_summary(runtime, record) {
-    Ok(value) => value
-    Err(error) => return Err(error)
-  }
-  let instruction = "Independently verify the complete sealed Goal tree " +
-    subject.goal_head_oid.0 +
-    " against these exact persisted Part tasks:\n" +
-    task_summary +
-    "\nThe trusted typed checks reported: " +
-    process_summary +
-    ". Inspect the whole combined tree and the Goal-level interactions. Return failed only for a concrete defect in the sealed result or its declared checks. Do not modify the workspace."
-  let provider = match
-    run_native_part_provider_take(
-      runtime,
-      session,
-      sandbox,
-      NativeVerificationTake,
-      instruction,
-    ) {
-    Ok(value) => value
-    Err(error) => return Err(error)
-  }
   let post_tree = match
     native_goal_assurance_post_tree(
-      runtime, record, take_id, session, sandbox, "goal-verification-post",
+      runtime,
+      record,
+      take_id,
+      record.identities.verification_sandbox.generation_id,
+      sandbox,
+      "goal-verification-post",
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let provider_passed = provider.outcome == NativeVerificationPassed
   let executions : Array[@workflow.GoalVerificationSpecExecution] = []
   let evidence_references : Array[@control.ArtifactReference] = []
   for entry in processes {
-    let outcome = if entry.1.exit_code == 0 && provider_passed {
+    let outcome = if entry.1.exit_code == 0 {
       @control.VerificationOutcome::VerificationPassed
     } else {
       @control.VerificationOutcome::VerificationFailed
@@ -407,8 +389,6 @@ async fn execute_native_goal_verification(
       "subject": subject.to_json(),
       "verification_spec": entry.0.to_json(),
       "process_result": native_sandbox_process_evidence(entry.1),
-      "provider_outcome": ToJson::to_json(provider.outcome),
-      "provider_terminal_response": provider.terminal_response.to_json(),
       "pre_tree": subject.goal_tree_oid.to_json(),
       "post_tree": post_tree.to_json(),
     }
@@ -436,7 +416,7 @@ async fn execute_native_goal_verification(
       subject_post_tree_oid: post_tree,
       evidence,
       started_at: entry.2,
-      finished_at: provider.finished_at,
+      finished_at: entry.1.finished_at.unwrap_or(entry.2),
       outcome,
     })
   }
@@ -451,11 +431,12 @@ async fn execute_native_goal_verification(
     Err(error) => return Err(error)
   }
   Ok(
-    @workflow.GoalAssuranceEffectObservation::GoalVerificationCompleted(
-      { take_id, session_id, subject, executions, evidence_manifest },
-      provider.session,
-      provider.events,
-    ),
+    @workflow.GoalAssuranceEffectObservation::GoalVerificationCompleted({
+      take_id,
+      subject,
+      executions,
+      evidence_manifest,
+    }),
   )
 }
 
@@ -504,7 +485,12 @@ async fn execute_native_goal_audit(
   ignore(
     match
       native_goal_assurance_post_tree(
-        runtime, record, take_id, session, sandbox, "goal-audit-post",
+        runtime,
+        record,
+        take_id,
+        session.sandbox_generation_id,
+        sandbox,
+        "goal-audit-post",
       ) {
       Ok(value) => value
       Err(error) => return Err(error)
@@ -598,16 +584,6 @@ async fn execute_native_goal_assurance_effect(
           )
         Err(error) => Err(error)
       }
-    @workflow.GoalAssuranceEffectKind::StartGoalVerificationHarness(session) =>
-      match start_native_part_harness(session) {
-        Ok(value) =>
-          Ok(
-            @workflow.GoalAssuranceEffectObservation::GoalVerificationHarnessStarted(
-              value,
-            ),
-          )
-        Err(error) => Err(error)
-      }
     @workflow.GoalAssuranceEffectKind::StartGoalAuditHarness(session) =>
       match start_native_part_harness(session) {
         Ok(value) =>
@@ -620,11 +596,10 @@ async fn execute_native_goal_assurance_effect(
       }
     @workflow.GoalAssuranceEffectKind::DispatchGoalVerification(
       take_id,
-      session_id,
       subject
     ) =>
       execute_native_goal_verification(
-        runtime, record, intent, take_id, session_id, subject,
+        runtime, record, intent, take_id, subject,
       )
     @workflow.GoalAssuranceEffectKind::DispatchGoalAudit(
       take_id,
@@ -684,7 +659,7 @@ async fn reconcile_native_goal_processes_once(
   }
   let mut uncertain = false
   match intent.kind {
-    @workflow.GoalAssuranceEffectKind::DispatchGoalVerification(_, _, _) =>
+    @workflow.GoalAssuranceEffectKind::DispatchGoalVerification(_, _) =>
       for spec in record.verification_specs {
         let value = match
           reconcile_unadoptable_native_process_id(

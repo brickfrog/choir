@@ -7,7 +7,7 @@ async test "real exec integration: Part conformance survives restart and faults"
   let report = @exec.run_part_conformance_fixture(root)
   ignore(@sys.rm_rf(root))
   assert_true(report.passed)
-  assert_eq(report.effect_receipt_count, 15)
+  assert_eq(report.effect_receipt_count, 13)
   assert_eq(report.verification_receipt_count, 1)
   assert_eq(report.audit_receipt_count, 1)
   assert_eq(report.integration_receipt_count, 1)

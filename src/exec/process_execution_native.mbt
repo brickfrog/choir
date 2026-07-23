@@ -42,6 +42,61 @@ fn native_process_event_key(
 }
 
 ///|
+fn adopt_native_process_output(
+  runtime : NativePartEffectRuntime,
+  goal_id : @control.GoalId,
+  result : NativeSandboxProcessResult,
+) -> Result[Unit, @types.ChoirError] {
+  let content = @utf8.encode(result.output)
+  if @storage.artifact_digest(content) != result.output_digest {
+    return Err(native_process_execution_error("process output digest is false"))
+  }
+  let receipt = match
+    (runtime.config.repository_adapters.artifacts.adopt)(
+      runtime.config.repository.artifact_store,
+      {
+        content,
+        expected_digest: result.output_digest,
+        provenance: @storage.ArtifactProvenance::ArtifactProcessExecution(
+          goal_id,
+        ),
+        retention: @storage.ArtifactRetention::ArtifactUntilGoalTerminal(
+          goal_id,
+        ),
+      },
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if receipt.digest != result.output_digest ||
+    receipt.byte_length != content.length() {
+    Err(native_process_execution_error("process output artifact is false"))
+  } else {
+    Ok(())
+  }
+}
+
+///|
+fn read_native_process_output(
+  runtime : NativePartEffectRuntime,
+  digest : @control.Digest,
+  max_bytes : Int,
+) -> Result[String, @types.ChoirError] {
+  let content = match
+    (runtime.config.repository_adapters.artifacts.read)(
+      runtime.config.repository.artifact_store,
+      { digest, max_bytes },
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if @storage.artifact_digest(content) != digest {
+    return Err(native_process_execution_error("process output changed"))
+  }
+  Ok(@utf8.decode_lossy(content))
+}
+
+///|
 fn load_native_process_execution(
   runtime : NativePartEffectRuntime,
   execution_id : @sandbox.ProcessExecutionId,
@@ -210,16 +265,11 @@ fn planned_native_process_execution(
   effect_intent_id : String,
   execution_id : @sandbox.ProcessExecutionId,
   take_id : @control.TakeId,
-  session : @control.HarnessSession,
   lease : @control.SandboxLease,
   process_digest : @control.Digest,
   process : @sandbox.SandboxProcessSpec,
 ) -> Result[@sandbox.ProcessExecution, @types.ChoirError] {
-  if session.take_id != take_id {
-    return Err(native_process_execution_error("session does not own the Take"))
-  }
   if lease.take_id != take_id ||
-    lease.generation_id != session.sandbox_generation_id ||
     lease.lifecycle != @control.SandboxLeaseLifecycle::SandboxLeaseActive {
     return Err(native_process_execution_error("sandbox lease is not active"))
   }
@@ -275,7 +325,6 @@ async fn execute_durable_native_process_with(
   effect_intent_id : String,
   discriminator : String,
   take_id : @control.TakeId,
-  session : @control.HarnessSession,
   lease : @control.SandboxLease,
   persisted_process_spec_digest : @control.Digest,
   process : @sandbox.SandboxProcessSpec,
@@ -286,7 +335,6 @@ async fn execute_durable_native_process_with(
       effect_intent_id,
       native_process_execution_id(effect_intent_id, discriminator),
       take_id,
-      session,
       lease,
       persisted_process_spec_digest,
       process,
@@ -325,14 +373,24 @@ async fn execute_durable_native_process_with(
     @sandbox.ProcessExecutionDisposition::ProcessExited(
       exit_code,
       output_digest
-    ) =>
+    ) => {
+      let output = match
+        read_native_process_output(
+          runtime,
+          output_digest,
+          (process.output.stdout_limit_bytes + process.output.stderr_limit_bytes).to_int(),
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
       return Ok({
         exit_code,
-        output: "",
+        output,
         output_digest,
         started_at: initial.execution.started_at,
         finished_at: initial.execution.finished_at,
       })
+    }
     @sandbox.ProcessExecutionDisposition::ProcessStartMayHaveOccurred
     | @sandbox.ProcessExecutionDisposition::ProcessStartUncertain
     | @sandbox.ProcessExecutionDisposition::ProcessTimedOut
@@ -401,6 +459,10 @@ async fn execute_durable_native_process_with(
   if (adapters.fault_enabled)(ProcessAfterDispatchBeforeTerminalPersistence) {
     return Err(native_process_execution_error("fault after process dispatch"))
   }
+  match adopt_native_process_output(runtime, goal_id, result) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   let terminal = match
     @sandbox.record_process_exit(
       authorized,
@@ -441,7 +503,6 @@ async fn execute_durable_native_process(
   effect_intent_id : String,
   discriminator : String,
   take_id : @control.TakeId,
-  session : @control.HarnessSession,
   lease : @control.SandboxLease,
   sandbox : NativeBoxLiteTakeSandbox,
   persisted_process_spec_digest : @control.Digest,
@@ -454,7 +515,6 @@ async fn execute_durable_native_process(
     effect_intent_id,
     discriminator,
     take_id,
-    session,
     lease,
     persisted_process_spec_digest,
     process,
@@ -489,13 +549,16 @@ async fn execute_durable_native_boxlite_process(
   snapshot : @workflow.PartWorkflowSnapshot,
   intent : @workflow.PartEffectIntent,
   take_id : @control.TakeId,
-  session : @control.HarnessSession,
   sandbox : NativeBoxLiteTakeSandbox,
   persisted_process_spec_digest : @control.Digest,
   process : @sandbox.SandboxProcessSpec,
 ) -> Result[NativeSandboxProcessResult, @types.ChoirError] {
   let lease = match
-    native_process_lease(snapshot, take_id, session.sandbox_generation_id) {
+    native_process_lease(
+      snapshot,
+      take_id,
+      snapshot.identities.verification_sandbox.generation_id,
+    ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -506,7 +569,6 @@ async fn execute_durable_native_boxlite_process(
     intent.effect_id,
     "",
     take_id,
-    session,
     lease,
     sandbox,
     persisted_process_spec_digest,
@@ -717,18 +779,6 @@ async test "process execution state persists and recovers every start boundary" 
     runtime_policy_digest: digest("fault-runtime"),
     lifecycle: @control.SandboxLeaseLifecycle::SandboxLeaseActive,
   }
-  let session : @control.HarnessSession = {
-    id: @control.HarnessSessionId("process-fault-session"),
-    take_id,
-    sandbox_generation_id: generation_id,
-    surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
-    effective_surface_manifest_digest: digest("fault-surface"),
-    cursor_class: @control.HarnessCursorClass::HarnessCursorProviderEventId,
-    provider_cursor: None,
-    last_choir_sequence: @control.EventSequence(0L),
-    open_tool_execution_ids: [],
-    lifecycle: @control.HarnessSessionLifecycle::HarnessSessionRunning,
-  }
   let process : @sandbox.SandboxProcessSpec = {
     authority: @sandbox.SandboxProcessAuthority::SandboxImplementationTool(
       take_id,
@@ -787,7 +837,6 @@ async test "process execution state persists and recovers every start boundary" 
       effect_id,
       "",
       take_id,
-      session,
       lease,
       digest("fault-spec"),
       process,
@@ -809,7 +858,6 @@ async test "process execution state persists and recovers every start boundary" 
       effect_id,
       "",
       take_id,
-      session,
       lease,
       digest("fault-spec"),
       process,
@@ -830,6 +878,10 @@ async test "process execution state persists and recovers every start boundary" 
     assert_true(calls.val <= 1)
     if index == 3 {
       assert_eq(calls.val, before_retry)
+      match second {
+        Ok(result) => assert_eq(result.output, "bounded")
+        Err(error) => fail(error.message())
+      }
     }
   }
   let retired = @ref.new(false)
@@ -840,7 +892,6 @@ async test "process execution state persists and recovers every start boundary" 
     "process-runner-error",
     "",
     take_id,
-    session,
     lease,
     digest("fault-spec"),
     process,

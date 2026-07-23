@@ -538,13 +538,6 @@ fn native_part_fixture_snapshot_for_definition(
     ),
     verification_take: verification,
     verification_sandbox,
-    verification_session: native_part_fixture_session(
-      "session-" + key + "-verification",
-      verification,
-      verification_sandbox,
-      assurance_surface_digest,
-      definition.surface,
-    ),
     audit_take: audit,
     audit_sandbox,
     audit_session: native_part_fixture_session(
@@ -593,7 +586,7 @@ fn counted_native_part_effects(
       match intent.kind {
         @workflow.PartEffectKind::DispatchImplementation(_, _) =>
           counts.implementation.val = counts.implementation.val + 1
-        @workflow.PartEffectKind::DispatchVerification(_, _, _) =>
+        @workflow.PartEffectKind::DispatchVerification(_, _) =>
           counts.verification.val = counts.verification.val + 1
         @workflow.PartEffectKind::DispatchAudit(_, _, _) =>
           counts.audit.val = counts.audit.val + 1
@@ -617,7 +610,7 @@ fn native_part_effect_uses_serial_boxlite_cli(
   kind is @workflow.PartEffectKind::PrepareImplementationSandbox(_) ||
   kind is @workflow.PartEffectKind::PrepareVerificationSandbox(_) ||
   kind is @workflow.PartEffectKind::PrepareAuditSandbox(_) ||
-  kind is @workflow.PartEffectKind::DispatchVerification(_, _, _) ||
+  kind is @workflow.PartEffectKind::DispatchVerification(_, _) ||
   kind is @workflow.PartEffectKind::DispatchAudit(_, _, _)
 }
 
@@ -755,8 +748,15 @@ fn native_part_dependencies(
   effect_error? : Ref[String]? = None,
 ) -> @workflow.PartWorkflowDriverDependencies {
   native_part_dependencies_with_admission(
-    repository, runtime, clock, counts, surface, integration_head, sandbox_prepare_lock,
-    fault, effect_error~,
+    repository,
+    runtime,
+    clock,
+    counts,
+    surface,
+    integration_head,
+    sandbox_prepare_lock,
+    fault,
+    effect_error~,
   )
 }
 

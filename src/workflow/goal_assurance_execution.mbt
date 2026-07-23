@@ -2,7 +2,6 @@
 pub(all) struct GoalAssuranceIdentityPlan {
   verification_take : @control.Take
   verification_sandbox : @control.SandboxLease
-  verification_session : @control.HarnessSession
   audit_take : @control.Take
   audit_sandbox : @control.SandboxLease
   audit_session : @control.HarnessSession
@@ -11,12 +10,7 @@ pub(all) struct GoalAssuranceIdentityPlan {
 ///|
 pub(all) enum GoalAssuranceEffectKind {
   PrepareGoalVerificationSandbox(@control.SandboxLease)
-  StartGoalVerificationHarness(@control.HarnessSession)
-  DispatchGoalVerification(
-    @control.TakeId,
-    @control.HarnessSessionId,
-    @control.GoalVerificationSubject
-  )
+  DispatchGoalVerification(@control.TakeId, @control.GoalVerificationSubject)
   PrepareGoalAuditSandbox(@control.SandboxLease)
   StartGoalAuditHarness(@control.HarnessSession)
   DispatchGoalAudit(
@@ -77,7 +71,6 @@ pub(all) struct GoalVerificationSpecExecution {
 ///|
 pub(all) struct GoalVerificationExecutionResult {
   take_id : @control.TakeId
-  session_id : @control.HarnessSessionId
   subject : @control.GoalVerificationSubject
   executions : Array[GoalVerificationSpecExecution]
   evidence_manifest : @control.ArtifactReference
@@ -109,12 +102,7 @@ pub(all) struct GoalAuditReceiptMetadata {
 ///|
 pub(all) enum GoalAssuranceEffectObservation {
   GoalVerificationSandboxPrepared(@control.SandboxLease)
-  GoalVerificationHarnessStarted(@control.HarnessSession)
-  GoalVerificationCompleted(
-    GoalVerificationExecutionResult,
-    @control.HarnessSession,
-    Array[@control.HarnessEventEnvelope]
-  )
+  GoalVerificationCompleted(GoalVerificationExecutionResult)
   GoalAuditSandboxPrepared(@control.SandboxLease)
   GoalAuditHarnessStarted(@control.HarnessSession)
   GoalAuditCompleted(

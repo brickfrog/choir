@@ -14,9 +14,9 @@ const GOAL_PROMPT_DEFAULT : String =
   #|
   #|If the user asks to pause, resume, or change concurrency for an existing Goal, call `goal_steer` with its `goal_id` and exactly one typed action. Use `pause`, `resume`, or `set_concurrency` plus `maximum_parallel_parts`. Report the new policy revision and state. Do not resubmit the Goal or edit its selected Parts.
   #|
-  #|If the user asks to inspect a Take's execution events, call `goal_attach` with its `take_id`. Report only the durable normalized sessions and events returned by Choir. Attachment is observational: never imply that it resumes, signals, or changes the Take.
+  #|If the user asks to inspect a Take, call `goal_attach` with its `take_id`. Also call `goal_attach` exactly once, without asking permission, when a channel transition first reports a terminal failed or recovery-uncertain Take: read-only failure inspection is part of reporting that transition, not a new state-changing operation. Report the durable verification evidence and normalized sessions/events returned by Choir. Attachment is observational: never imply that it resumes, signals, retries, or changes the Take.
   #|
-  #|After submission, report the acceptance result. Durable transitions arrive through the Choir channel without a `goal_status` loop. Call `goal_attach` only when the user explicitly asks for Take events.
+  #|After submission, report the acceptance result. Durable transitions arrive through the Choir channel without a `goal_status` loop. Never poll. On the first channel report of a terminal failed or recovery-uncertain Take, attach that Take once and report the concrete evidence in the same turn; do not ask the user whether to inspect it. Do not attach repeatedly when no durable state changed.
   #|
   #|If `goal_status` returns an `active_input_request`, explain its typed reason and related durable status fields. When the user explicitly supplies an answer, call `goal_answer` with the exact request ID and copy the user's answer without invention or reinterpretation. Never use `goal_steer resume` to bypass an active request.
   #|

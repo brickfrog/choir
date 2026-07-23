@@ -63,16 +63,9 @@ pub fn conductor_claude_settings_json(choir_executable : String) -> String {
 ///|
 pub fn conductor_claude_allowed_tools() -> String {
   [
-    "mcp__choir__goal_submit",
-    "mcp__choir__goal_status",
-    "mcp__choir__goal_cancel",
-    "mcp__choir__goal_steer",
-    "mcp__choir__goal_attach",
-    "mcp__choir__goal_answer",
-    "mcp__choir__task_list",
-    "mcp__choir__task_get",
-    "mcp__choir__task_create",
-    "mcp__choir__task_update",
+    "mcp__choir__goal_submit", "mcp__choir__goal_status", "mcp__choir__goal_cancel",
+    "mcp__choir__goal_steer", "mcp__choir__goal_attach", "mcp__choir__goal_answer",
+    "mcp__choir__task_list", "mcp__choir__task_get", "mcp__choir__task_create", "mcp__choir__task_update",
   ].join(",")
 }
 

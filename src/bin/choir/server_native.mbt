@@ -1025,7 +1025,7 @@ test "Conductor channel wakes only for material Goal projection changes" {
   guard fields.get("parts") is Some(Array([Object(part)])) else {
     fail("expected one Part")
   }
-  part.set("stage", "PartVerificationHarnessStarted".to_json())
+  part.set("stage", "PartVerificationSandboxPrepared".to_json())
   assert_true(
     conductor_goal_update_fingerprint(running) !=
     conductor_goal_update_fingerprint(count_only),

@@ -1779,12 +1779,6 @@ pub fn integration_conflict_repair_case() -> HermeticConformanceCase {
             ),
             verification_take: verification,
             verification_sandbox,
-            verification_session: session(
-              "conflict-repair-verification-session-2",
-              verification,
-              verification_sandbox,
-              blocked.identities.verification_session,
-            ),
             audit_take: audit,
             audit_sandbox,
             audit_session: session(
@@ -2248,9 +2242,6 @@ fn cancellation_goal_assurance_identities(
   {
     verification_take,
     verification_sandbox,
-    verification_session: session(
-      "cancellation-goal-verification-session", verification_take, verification_sandbox,
-    ),
     audit_take,
     audit_sandbox,
     audit_session: session(

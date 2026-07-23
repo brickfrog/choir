@@ -201,11 +201,6 @@ pub fn initialize_part_workflow(
       identities.implementation_sandbox,
     ) ||
     !validate_planned_session(
-      identities.verification_session,
-      identities.verification_take,
-      identities.verification_sandbox,
-    ) ||
-    !validate_planned_session(
       identities.audit_session,
       identities.audit_take,
       identities.audit_sandbox,
@@ -453,9 +448,7 @@ fn stage_effect_suffix(stage : PartWorkflowStage) -> String {
     PartImplementationHarnessStarted => "implementation-dispatch"
     PartImplementationCompleted => "candidate-normalization"
     PartCandidateRecorded => "verification-sandbox"
-    PartVerificationSandboxPrepared => "verification-command"
-    PartVerificationCommandPrepared => "verification-harness"
-    PartVerificationHarnessStarted => "verification-dispatch"
+    PartVerificationSandboxPrepared => "verification-dispatch"
     PartVerified => "audit-sandbox"
     PartAuditSandboxPrepared => "audit-command"
     PartAuditCommandPrepared => "audit-harness"
@@ -474,11 +467,7 @@ fn command_capability_profile_digest(
   match role {
     ImplementationCommand =>
       snapshot.task_contract.implementation_capability_profile_digest
-    PartVerificationCommand =>
-      snapshot.task_contract.verification_capability_profile_digest
     PartAuditCommand => snapshot.task_contract.audit_capability_profile_digest
-    GoalVerificationCommand | GoalAuditCommand =>
-      snapshot.task_contract.audit_capability_profile_digest
   }
 }
 
@@ -594,25 +583,6 @@ fn prepared_command_is_current(
         ),
         snapshot.implementation_take,
       )
-    PartVerificationCommand =>
-      match snapshot.verification_subject {
-        Some(subject) =>
-          (
-            Some(
-              part_command_preparation_plan(
-                snapshot,
-                @command.CommandRole::PartVerificationCommand,
-                snapshot.verification_take,
-                snapshot.identities.verification_session,
-                @command.CommandExecutionSubject::PartVerificationCommandSubject(
-                  subject,
-                ),
-              ),
-            ),
-            snapshot.verification_take,
-          )
-        None => (None, snapshot.verification_take)
-      }
     PartAuditCommand =>
       match snapshot.audit_subject {
         Some(subject) =>
@@ -632,7 +602,6 @@ fn prepared_command_is_current(
           )
         None => (None, snapshot.audit_take)
       }
-    GoalVerificationCommand | GoalAuditCommand => (None, prepared.plan.take)
   }
   let immutable_take_matches = prepared.plan.take.id == current_take.id &&
     prepared.plan.take.goal_id == current_take.goal_id &&
@@ -813,72 +782,7 @@ fn next_effect_kind(
     PartVerificationSandboxPrepared =>
       match snapshot.verification_subject {
         Some(subject) =>
-          Ok(
-            Some(
-              PrepareVerificationCommand(
-                part_command_preparation_plan(
-                  snapshot,
-                  @command.CommandRole::PartVerificationCommand,
-                  snapshot.verification_take,
-                  snapshot.identities.verification_session,
-                  @command.CommandExecutionSubject::PartVerificationCommandSubject(
-                    subject,
-                  ),
-                ),
-              ),
-            ),
-          )
-        None => Err(workflow_error("verification subject is missing"))
-      }
-    PartVerificationCommandPrepared =>
-      match
-        prepared_command_for(
-          snapshot,
-          @command.CommandRole::PartVerificationCommand,
-          snapshot.verification_take.id,
-          snapshot.identities.verification_session.id,
-        ) {
-        Some(prepared) =>
-          Ok(
-            Some(
-              StartVerificationHarness(
-                snapshot.identities.verification_session,
-                session_start_intent(
-                  snapshot,
-                  snapshot.identities.verification_session,
-                  prepared,
-                ),
-              ),
-            ),
-          )
-        None => Err(workflow_error("verification command is missing"))
-      }
-    PartVerificationHarnessStarted =>
-      match snapshot.verification_subject {
-        Some(subject) =>
-          match
-            prepared_command_for(
-              snapshot,
-              @command.CommandRole::PartVerificationCommand,
-              snapshot.verification_take.id,
-              snapshot.identities.verification_session.id,
-            ) {
-            Some(prepared) =>
-              Ok(
-                Some(
-                  DispatchVerification(
-                    snapshot.verification_take.id,
-                    harness_command_intent(
-                      snapshot,
-                      snapshot.identities.verification_session,
-                      prepared,
-                    ),
-                    subject,
-                  ),
-                ),
-              )
-            None => Err(workflow_error("verification command is missing"))
-          }
+          Ok(Some(DispatchVerification(snapshot.verification_take.id, subject)))
         None => Err(workflow_error("verification subject is missing"))
       }
     PartVerified =>
@@ -1035,14 +939,6 @@ pub fn authorize_pending_part_effect(
             @command.CommandRole::ImplementationCommand,
             artifact_digest_exists,
           )
-        StartVerificationHarness(session, start) =>
-          start_intent_has_preparation(
-            snapshot,
-            session,
-            start,
-            @command.CommandRole::PartVerificationCommand,
-            artifact_digest_exists,
-          )
         StartAuditHarness(session, start) =>
           start_intent_has_preparation(
             snapshot,
@@ -1060,15 +956,6 @@ pub fn authorize_pending_part_effect(
             @command.CommandRole::ImplementationCommand,
             artifact_digest_exists,
           )
-        DispatchVerification(take_id, command, _) =>
-          command_intent_has_preparation(
-            snapshot,
-            take_id,
-            command,
-            snapshot.identities.verification_session,
-            @command.CommandRole::PartVerificationCommand,
-            artifact_digest_exists,
-          )
         DispatchAudit(take_id, command, _) =>
           command_intent_has_preparation(
             snapshot,
@@ -1084,9 +971,26 @@ pub fn authorize_pending_part_effect(
         Ok(_) => ()
         Err(error) => return Err(error)
       }
+      let verification_take = match intent.kind {
+        DispatchVerification(take_id, _) =>
+          if take_id != snapshot.verification_take.id {
+            return Err(workflow_error("verification Take is misbound"))
+          } else {
+            match
+              @control.transition_take(
+                snapshot.verification_take,
+                @control.TakeTransition::StartTake(snapshot.fencing_epoch),
+              ) {
+              Ok(value) => value
+              Err(error) => return Err(error)
+            }
+          }
+        _ => snapshot.verification_take
+      }
       Ok({
         ..snapshot,
         durable_version: snapshot.durable_version + 1,
+        verification_take,
         pending_effect: Some({ ..intent, lifecycle: PartEffectMayHaveOccurred }),
       })
     }
@@ -1109,12 +1013,9 @@ fn record_part_provider_dispatch_uncertainty(
   }
   let (take, session_id) = match intent.kind {
     DispatchImplementation(take_id, command)
-    | DispatchVerification(take_id, command, _)
     | DispatchAudit(take_id, command, _) => {
       let take = if take_id == snapshot.implementation_take.id {
         snapshot.implementation_take
-      } else if take_id == snapshot.verification_take.id {
-        snapshot.verification_take
       } else if take_id == snapshot.audit_take.id {
         snapshot.audit_take
       } else {

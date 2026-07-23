@@ -424,7 +424,7 @@ pub fn record_part_effect_witness(
   let witness_conflict = fn(detail : String) {
     match intent.kind {
       DispatchImplementation(_, _)
-      | DispatchVerification(_, _, _)
+      | DispatchVerification(_, _)
       | DispatchAudit(_, _, _) =>
         @types.ChoirError::provider_protocol_violation(detail)
       _ => workflow_error(detail)

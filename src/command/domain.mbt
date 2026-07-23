@@ -1,10 +1,7 @@
 ///|
 pub(all) enum CommandRole {
   ImplementationCommand
-  PartVerificationCommand
   PartAuditCommand
-  GoalVerificationCommand
-  GoalAuditCommand
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -14,7 +11,6 @@ pub(all) enum CommandExecutionSubject {
     @control.RevisionId,
     @control.Digest
   )
-  PartVerificationCommandSubject(@control.PartVerificationSubject)
   PartAuditCommandSubject(@control.PartAuditSubject)
 } derive(Debug, Eq, ToJson, FromJson)
 

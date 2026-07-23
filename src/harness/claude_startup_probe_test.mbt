@@ -5,7 +5,7 @@ let connected_init =
 
 ///|
 let pending_no_login =
-    #|{"type":"system","subtype":"init","tools":[],"mcp_servers":[{"name":"choir_probe","status":"pending"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.218","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"]}
+  #|{"type":"system","subtype":"init","tools":[],"mcp_servers":[{"name":"choir_probe","status":"pending"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.218","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"]}
   #|{"is_error":true,"terminal_reason":"api_error","subtype":"success","result":"Not logged in · Please run /login","type":"result"}
 
 ///|
@@ -89,7 +89,7 @@ test "Claude synthetic startup rejects pending MCP and native tools" {
 ///|
 test "Claude synthetic startup distinguishes missing MCP tool from native tools" {
   let output =
-  #|{"type":"system","subtype":"init","tools":[],"mcp_servers":[{"name":"choir_probe","status":"pending"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.218","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"]}
+    #|{"type":"system","subtype":"init","tools":[],"mcp_servers":[{"name":"choir_probe","status":"pending"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.218","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"]}
   let report = @harness.evaluate_claude_synthetic_startup({
     exit_code: 1,
     output,

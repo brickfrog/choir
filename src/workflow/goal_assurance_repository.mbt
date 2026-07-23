@@ -226,7 +226,7 @@ pub fn record_goal_assurance_effect_witness(
   }
   let witness_conflict = fn(detail : String) {
     match intent.kind {
-      DispatchGoalVerification(_, _, _) | DispatchGoalAudit(_, _, _) =>
+      DispatchGoalVerification(_, _) | DispatchGoalAudit(_, _, _) =>
         @types.ChoirError::provider_protocol_violation(detail)
       _ => goal_assurance_error(detail)
     }

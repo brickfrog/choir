@@ -108,9 +108,6 @@ fn workflow_store_goal_assurance_identities(
   {
     verification_take: verification,
     verification_sandbox,
-    verification_session: session(
-      "goal-verification-session-store", verification, verification_sandbox,
-    ),
     audit_take: audit,
     audit_sandbox,
     audit_session: session("goal-audit-session-store", audit, audit_sandbox),
@@ -245,9 +242,6 @@ fn workflow_store_fixture() -> @workflow.PartWorkflowSnapshot raise {
     ),
     verification_take: verification,
     verification_sandbox,
-    verification_session: session(
-      "verification-session-store", verification, verification_sandbox,
-    ),
     audit_take: audit,
     audit_sandbox,
     audit_session: session("audit-session-store", audit, audit_sandbox),
@@ -627,54 +621,32 @@ fn workflow_driver_observation(
           lifecycle: @control.SandboxLeaseLifecycle::SandboxLeaseActive,
         }),
       )
-    @workflow.PartEffectKind::PrepareVerificationCommand(plan) =>
-      Ok(
-        @workflow.PartEffectObservation::VerificationCommandPrepared(
-          prepared_command(plan),
-        ),
-      )
-    @workflow.PartEffectKind::StartVerificationHarness(session, _) =>
-      Ok(
-        @workflow.PartEffectObservation::VerificationHarnessStarted(
-          workflow_driver_started_session(session),
-        ),
-      )
-    @workflow.PartEffectKind::DispatchVerification(take_id, command, subject) => {
-      let session_id = command.session_id
-      let started = workflow_driver_started_session(
-        snapshot.identities.verification_session,
-      )
-      let (closed, events) = workflow_driver_trace(started, "verification")
+    @workflow.PartEffectKind::DispatchVerification(take_id, subject) => {
       let candidate = match snapshot.candidate {
         Some(value) => value
         None =>
           return Err(@types.ChoirError::validation_error("candidate absent"))
       }
       Ok(
-        @workflow.PartEffectObservation::VerificationCompleted(
-          {
-            take_id,
-            session_id,
-            verification_execution_id: @control.VerificationExecutionId(
-              "verification-execution-store",
-            ),
-            subject,
-            verification_spec: snapshot.task_contract.verification_specs[0],
-            environment_and_image_digest: workflow_store_digest_b,
-            runtime_and_policy_digest: snapshot.identities.verification_sandbox.runtime_policy_digest,
-            subject_pre_tree_oid: candidate.tree_oid,
-            subject_post_tree_oid: candidate.tree_oid,
-            evidence: {
-              artifact_id: "verification-evidence-store",
-              digest: workflow_store_digest_b,
-            },
-            started_at: 100L,
-            finished_at: 102L,
-            outcome: @control.VerificationOutcome::VerificationPassed,
+        @workflow.PartEffectObservation::VerificationCompleted({
+          take_id,
+          verification_execution_id: @control.VerificationExecutionId(
+            "verification-execution-store",
+          ),
+          subject,
+          verification_spec: snapshot.task_contract.verification_specs[0],
+          environment_and_image_digest: workflow_store_digest_b,
+          runtime_and_policy_digest: snapshot.identities.verification_sandbox.runtime_policy_digest,
+          subject_pre_tree_oid: candidate.tree_oid,
+          subject_post_tree_oid: candidate.tree_oid,
+          evidence: {
+            artifact_id: "verification-evidence-store",
+            digest: workflow_store_digest_b,
           },
-          closed,
-          events,
-        ),
+          started_at: 100L,
+          finished_at: 102L,
+          outcome: @control.VerificationOutcome::VerificationPassed,
+        }),
       )
     }
     @workflow.PartEffectKind::PrepareAuditSandbox(lease) =>
@@ -996,7 +968,7 @@ async test "Part driver persists an integrated result and resumes without work" 
     Err(error) => fail(error.message())
   }
   assert_eq(result.outcome, @workflow.PartWorkflowRunOutcome::PartRunIntegrated)
-  assert_eq(result.snapshot.effect_receipts.length(), 15)
+  assert_eq(result.snapshot.effect_receipts.length(), 13)
   assert_eq(result.snapshot.verification_receipts.length(), 1)
   assert_true(result.snapshot.audit_receipt is Some(_))
   assert_true(result.snapshot.integration_receipt is Some(_))
@@ -2032,7 +2004,7 @@ async test "driver recovers every persisted transition after rollback" {
       result.outcome,
       @workflow.PartWorkflowRunOutcome::PartRunIntegrated,
     )
-    assert_eq(result.snapshot.effect_receipts.length(), 15)
+    assert_eq(result.snapshot.effect_receipts.length(), 13)
     assert_eq(result.snapshot.verification_receipts.length(), 1)
     assert_true(result.snapshot.audit_receipt is Some(_))
     assert_true(result.snapshot.integration_receipt is Some(_))

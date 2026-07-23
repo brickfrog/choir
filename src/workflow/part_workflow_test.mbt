@@ -109,13 +109,6 @@ fn workflow_goal_assurance_identities(
   {
     verification_take: verification,
     verification_sandbox,
-    verification_session: workflow_session(
-      "goal-verification-session-1",
-      verification.id,
-      verification_sandbox.generation_id,
-      @control.ProviderSurfaceId::CodexSubscriptionCli,
-      workflow_digest_d,
-    ),
     audit_take: audit,
     audit_sandbox,
     audit_session: workflow_session(
@@ -229,13 +222,6 @@ fn workflow_fixture() -> @workflow.PartWorkflowSnapshot raise {
     ),
     verification_take: verification,
     verification_sandbox,
-    verification_session: workflow_session(
-      "verification-session-1",
-      verification.id,
-      verification_sandbox.generation_id,
-      @control.ProviderSurfaceId::CodexSubscriptionCli,
-      workflow_digest_b,
-    ),
     audit_take: audit,
     audit_sandbox,
     audit_session: workflow_session(
@@ -328,13 +314,6 @@ fn workflow_revision_identities(
     ),
     verification_take: verification,
     verification_sandbox,
-    verification_session: workflow_session(
-      "verification-session-revision",
-      verification.id,
-      verification_sandbox.generation_id,
-      @control.ProviderSurfaceId::CodexSubscriptionCli,
-      workflow_digest_b,
-    ),
     audit_take: audit,
     audit_sandbox,
     audit_session: workflow_session(
@@ -605,14 +584,6 @@ fn apply_command_preparation(
       )
     ) =>
       @workflow.PartEffectObservation::ImplementationCommandPrepared(
-        prepared_command_fixture(plan),
-      )
-    Ok(
-      Some(
-        { kind: @workflow.PartEffectKind::PrepareVerificationCommand(plan), .. }
-      )
-    ) =>
-      @workflow.PartEffectObservation::VerificationCommandPrepared(
         prepared_command_fixture(plan),
       )
     Ok(Some({ kind: @workflow.PartEffectKind::PrepareAuditCommand(plan), .. })) =>
@@ -1067,9 +1038,6 @@ fn drive_to_verified() -> @workflow.PartWorkflowSnapshot raise {
     }),
     15L,
   )
-  let verification_session = started_session(
-    snapshot.identities.verification_session,
-  )
   snapshot = apply_observation(
     snapshot,
     @workflow.PartEffectObservation::VerificationSandboxPrepared(
@@ -1077,15 +1045,20 @@ fn drive_to_verified() -> @workflow.PartWorkflowSnapshot raise {
     ),
     16L,
   )
-  snapshot = apply_observation(
-    apply_command_preparation(snapshot, 17L),
-    @workflow.PartEffectObservation::VerificationHarnessStarted(
-      verification_session,
-    ),
-    17L,
-  )
-  let (verification_final, verification_events) = successful_trace(
-    verification_session, "verification", 18L,
+  let verification_dispatch = match @workflow.plan_next_part_effect(snapshot) {
+    Ok(Some(value)) => value
+    Ok(None) => fail("verification process dispatch was not planned")
+    Err(error) => fail(error.message())
+  }
+  match verification_dispatch.kind {
+    @workflow.PartEffectKind::DispatchVerification(take_id, _) =>
+      assert_eq(take_id, snapshot.verification_take.id)
+    _ => fail("verification planned a provider effect")
+  }
+  assert_false(
+    snapshot.harness_sessions.any(fn(session) {
+      session.take_id == snapshot.verification_take.id
+    }),
   )
   let subject = match snapshot.verification_subject {
     Some(value) => value
@@ -1093,30 +1066,25 @@ fn drive_to_verified() -> @workflow.PartWorkflowSnapshot raise {
   }
   snapshot = apply_observation(
     snapshot,
-    @workflow.PartEffectObservation::VerificationCompleted(
-      {
-        take_id: snapshot.verification_take.id,
-        session_id: verification_session.id,
-        verification_execution_id: @control.VerificationExecutionId(
-          "verification-execution-1",
-        ),
-        subject,
-        verification_spec: snapshot.task_contract.verification_specs[0],
-        environment_and_image_digest: workflow_digest_e,
-        runtime_and_policy_digest: snapshot.identities.verification_sandbox.runtime_policy_digest,
-        subject_pre_tree_oid: candidate.tree_oid,
-        subject_post_tree_oid: candidate.tree_oid,
-        evidence: {
-          artifact_id: "verification-evidence-1",
-          digest: workflow_digest_e,
-        },
-        started_at: 18L,
-        finished_at: 19L,
-        outcome: @control.VerificationOutcome::VerificationPassed,
+    @workflow.PartEffectObservation::VerificationCompleted({
+      take_id: snapshot.verification_take.id,
+      verification_execution_id: @control.VerificationExecutionId(
+        "verification-execution-1",
+      ),
+      subject,
+      verification_spec: snapshot.task_contract.verification_specs[0],
+      environment_and_image_digest: workflow_digest_e,
+      runtime_and_policy_digest: snapshot.identities.verification_sandbox.runtime_policy_digest,
+      subject_pre_tree_oid: candidate.tree_oid,
+      subject_post_tree_oid: candidate.tree_oid,
+      evidence: {
+        artifact_id: "verification-evidence-1",
+        digest: workflow_digest_e,
       },
-      verification_final,
-      verification_events,
-    ),
+      started_at: 18L,
+      finished_at: 19L,
+      outcome: @control.VerificationOutcome::VerificationPassed,
+    }),
     20L,
   )
   round_trip(snapshot)
@@ -1252,7 +1220,7 @@ test "Part reaches a verified audited integration result" {
   assert_eq(snapshot.verification_receipts.length(), 1)
   assert_true(snapshot.audit_receipt is Some(_))
   assert_true(snapshot.integration_receipt is Some(_))
-  assert_eq(snapshot.effect_receipts.length(), 15)
+  assert_eq(snapshot.effect_receipts.length(), 13)
   assert_true(
     snapshot.identities.implementation_sandbox.generation_id !=
     snapshot.identities.audit_sandbox.generation_id,
@@ -1464,57 +1432,55 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     ),
     29L,
   )
-  let verification_session = started_session(
-    assured.identities.verification_session,
-  )
-  assured = apply_goal_assurance_observation(
-    assured,
-    @workflow.GoalAssuranceEffectObservation::GoalVerificationHarnessStarted(
-      verification_session,
-    ),
-    30L,
+  let goal_verification_dispatch = match
+    @workflow.plan_next_goal_assurance_effect(assured) {
+    Ok(Some(value)) => value
+    Ok(None) => fail("Goal verification process dispatch was not planned")
+    Err(error) => fail(error.message())
+  }
+  match goal_verification_dispatch.kind {
+    @workflow.GoalAssuranceEffectKind::DispatchGoalVerification(take_id, _) =>
+      assert_eq(take_id, assured.verification_take.id)
+    _ => fail("Goal verification planned a provider effect")
+  }
+  assert_false(
+    assured.harness_sessions.any(fn(session) {
+      session.take_id == assured.verification_take.id
+    }),
   )
   let verification_subject = match assured.verification_subject {
     Some(value) => value
     None => fail("combined verification subject is absent")
   }
-  let (verification_final, verification_events) = successful_trace(
-    verification_session, "goal-verification", 31L,
-  )
   assured = apply_goal_assurance_observation(
     assured,
-    @workflow.GoalAssuranceEffectObservation::GoalVerificationCompleted(
-      {
-        take_id: assured.verification_take.id,
-        session_id: verification_session.id,
-        subject: verification_subject,
-        executions: [
-          {
-            verification_execution_id: @control.VerificationExecutionId(
-              "goal-verification-execution-1",
-            ),
-            verification_spec: assured.verification_specs[0],
-            environment_and_image_digest: workflow_digest_d,
-            runtime_and_policy_digest: assured.identities.verification_sandbox.runtime_policy_digest,
-            subject_pre_tree_oid: promotion.tree_oid,
-            subject_post_tree_oid: promotion.tree_oid,
-            evidence: {
-              artifact_id: "goal-verification-evidence-1",
-              digest: workflow_digest_e,
-            },
-            started_at: 31L,
-            finished_at: 32L,
-            outcome: @control.VerificationOutcome::VerificationPassed,
+    @workflow.GoalAssuranceEffectObservation::GoalVerificationCompleted({
+      take_id: assured.verification_take.id,
+      subject: verification_subject,
+      executions: [
+        {
+          verification_execution_id: @control.VerificationExecutionId(
+            "goal-verification-execution-1",
+          ),
+          verification_spec: assured.verification_specs[0],
+          environment_and_image_digest: workflow_digest_d,
+          runtime_and_policy_digest: assured.identities.verification_sandbox.runtime_policy_digest,
+          subject_pre_tree_oid: promotion.tree_oid,
+          subject_post_tree_oid: promotion.tree_oid,
+          evidence: {
+            artifact_id: "goal-verification-evidence-1",
+            digest: workflow_digest_e,
           },
-        ],
-        evidence_manifest: {
-          artifact_id: "goal-verification-manifest-1",
-          digest: workflow_digest_c,
+          started_at: 31L,
+          finished_at: 32L,
+          outcome: @control.VerificationOutcome::VerificationPassed,
         },
+      ],
+      evidence_manifest: {
+        artifact_id: "goal-verification-manifest-1",
+        digest: workflow_digest_c,
       },
-      verification_final,
-      verification_events,
-    ),
+    }),
     33L,
   )
   assert_eq(assured.stage, @workflow.GoalAssuranceStage::GoalVerified)
@@ -1583,7 +1549,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     assured.identities.verification_sandbox.generation_id !=
     assured.identities.audit_sandbox.generation_id,
   )
-  assert_eq(assured.effect_receipts.length(), 6)
+  assert_eq(assured.effect_receipts.length(), 5)
   let status = match
     @workflow.goal_status_report(
       execution,
@@ -1602,8 +1568,8 @@ test "integrated Parts authorize one immutable Goal branch seal" {
   )
   assert_true(status.goal_branch_seal is Some(_))
   assert_eq(status.assurance_sandbox_count, 2)
-  assert_eq(status.assurance_harness_session_count, 2)
-  assert_eq(status.assurance_effect_receipt_count, 6)
+  assert_eq(status.assurance_harness_session_count, 1)
+  assert_eq(status.assurance_effect_receipt_count, 5)
   assert_eq(status.goal_verification_receipt_count, 1)
   assert_true(status.goal_audit_receipt_present)
   assert_eq(
@@ -2787,7 +2753,7 @@ test "promotion conflict blocks the Part without minting integration evidence" {
   )
   assert_true(blocked.integration_receipt is None)
   assert_eq(blocked.integration_conflicts.length(), 1)
-  assert_eq(blocked.effect_receipts.length(), 14)
+  assert_eq(blocked.effect_receipts.length(), 12)
   let conflict = blocked.integration_conflicts[0]
   let repair_contract : @control.TaskContractRevision = {
     ..blocked.task_contract,
@@ -2864,13 +2830,6 @@ test "promotion conflict blocks the Part without minting integration evidence" {
         ),
         verification_take: verification,
         verification_sandbox,
-        verification_session: workflow_session(
-          "verification-session-2",
-          verification.id,
-          verification_sandbox.generation_id,
-          @control.ProviderSurfaceId::CodexSubscriptionCli,
-          workflow_digest_b,
-        ),
         audit_take: audit,
         audit_sandbox,
         audit_session: workflow_session(

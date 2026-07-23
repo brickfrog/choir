@@ -1,4 +1,14 @@
 ///|
+fn test_nfc_available() -> Bool {
+  true
+}
+
+///|
+fn test_path_is_nfc(path : String) -> Bool {
+  !path.contains("\u{301}")
+}
+
+///|
 async test "native Conductor submission captures Beads and persists once" {
   let root = "/tmp/choir-conductor-submit-" + @sys.get_pid().to_string()
   ignore(@sys.rm_rf(root))
@@ -48,7 +58,14 @@ async test "native Conductor submission captures Beads and persists once" {
     #|    }
     #|  ]
     #|}
-  let first = match submit_native_conductor_goal_draft(root, draft, capture) {
+  let first = match
+    submit_native_conductor_goal_draft(
+      root,
+      draft,
+      capture,
+      nfc_available=test_nfc_available,
+      is_nfc=test_path_is_nfc,
+    ) {
     Ok(value) => value
     Err(error) => fail(error.message())
   }
@@ -255,7 +272,14 @@ async test "native Conductor submission captures Beads and persists once" {
     Ok(_) => ()
     Err(error) => fail(error.message())
   }
-  let replay = match submit_native_conductor_goal_draft(root, draft, capture) {
+  let replay = match
+    submit_native_conductor_goal_draft(
+      root,
+      draft,
+      capture,
+      nfc_available=test_nfc_available,
+      is_nfc=test_path_is_nfc,
+    ) {
     Ok(value) => value
     Err(error) => fail(error.message())
   }
@@ -278,6 +302,8 @@ async test "native Conductor submission captures Beads and persists once" {
       root,
       conflicting_draft,
       conflicting_capture,
+      nfc_available=test_nfc_available,
+      is_nfc=test_path_is_nfc,
     ) {
     Err(error) => {
       assert_true(error.message().contains("already durably registered"))
@@ -316,7 +342,14 @@ async test "native Conductor submission rejects a detached checkout" {
   }
   let draft =
     #|{"proposal_id":"proposal-detached","goal_id":"goal-detached","maximum_parallel_parts":1,"parts":[{"part_id":"choir-a","instruction":"Change src/a.mbt.","provider":"codex","exact_paths":["src/a.mbt"],"moon_args":["test","--target","native"]}]}
-  match submit_native_conductor_goal_draft(root, draft, capture) {
+  match
+    submit_native_conductor_goal_draft(
+      root,
+      draft,
+      capture,
+      nfc_available=test_nfc_available,
+      is_nfc=test_path_is_nfc,
+    ) {
     Err(error) =>
       assert_true(
         error.message().contains("current checkout must be on a named branch"),
@@ -374,7 +407,14 @@ async test "durable Goal cancellation survives replay and starts no provider" {
     #|    "moon_args": ["test", "--target", "native", "src/cancel.mbt"]
     #|  }]
     #|}
-  match submit_native_conductor_goal_draft(root, draft, capture) {
+  match
+    submit_native_conductor_goal_draft(
+      root,
+      draft,
+      capture,
+      nfc_available=test_nfc_available,
+      is_nfc=test_path_is_nfc,
+    ) {
     Ok(report) => assert_true(report.accepted)
     Err(error) => fail(error.message())
   }
@@ -490,7 +530,14 @@ async test "rejected Conductor submission initializes no Part workflow" {
   }
   let draft =
     #|{"proposal_id":"proposal-native-reject","goal_id":"goal-native-reject","maximum_parallel_parts":1,"parts":[{"part_id":"choir-closed","instruction":"Do not run.","provider":"claude","repository_wide":true,"moon_args":["test","--target","native"]}]}
-  let report = match submit_native_conductor_goal_draft(root, draft, capture) {
+  let report = match
+    submit_native_conductor_goal_draft(
+      root,
+      draft,
+      capture,
+      nfc_available=test_nfc_available,
+      is_nfc=test_path_is_nfc,
+    ) {
     Ok(value) => value
     Err(error) => fail(error.message())
   }

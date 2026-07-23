@@ -148,7 +148,10 @@ test "runtime assets resolve only from explicit installation layouts" {
 }
 
 ///|
-test "native path NFC oracle accepts composed Unicode and rejects decomposed Unicode" {
+test "real exec integration: native path NFC oracle accepts composed Unicode and rejects decomposed Unicode" {
+  if !real_exec_integration_enabled() {
+    return
+  }
   assert_true(exec_path_nfc_available_ffi() == 1)
   assert_true(native_path_is_nfc("src/plain.mbt"))
   assert_true(native_path_is_nfc("docs/café.md"))

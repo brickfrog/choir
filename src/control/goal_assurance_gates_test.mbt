@@ -248,7 +248,6 @@ test "Goal verification gate selects only an exact immutable tree receipt" {
       goal_gate_digest_a,
       goal_gate_digest_b,
       fn(_) { true },
-      fn(_) { true },
     ),
     @control.VerificationGateObservation::VerificationGateValid([
       @control.ReceiptId("goal-verification-receipt-1"),
@@ -262,7 +261,6 @@ test "Goal verification gate selects only an exact immutable tree receipt" {
       [{ ..receipt, subject_post_tree_oid: @control.GitOid("changed-tree") }],
       goal_gate_digest_a,
       goal_gate_digest_b,
-      fn(_) { true },
       fn(_) { true },
     ),
     @control.VerificationGateObservation::VerificationGateRejected(

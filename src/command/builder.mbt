@@ -67,16 +67,6 @@ fn subject_matches_request(request : CommandPreparationRequest) -> Bool {
       revision_id == request.task_contract_revision_id &&
       digest == request.task_contract_digest
     (
-      PartVerification(part_id, candidate_take_id, subject_digest),
-      PartVerificationCommandSubject(subject),
-      PartVerificationCommand,
-    ) =>
-      part_id == subject.part_id &&
-      candidate_take_id == subject.candidate_take_id &&
-      subject_digest == subject.subject_digest &&
-      subject.task_contract_revision_id == request.task_contract_revision_id &&
-      subject.task_contract_digest == request.task_contract_digest
-    (
       PartAudit(part_id, candidate_take_id, subject_digest),
       PartAuditCommandSubject(subject),
       PartAuditCommand,

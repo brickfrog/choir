@@ -3,14 +3,8 @@ fn default_template_text(role : CommandRole) -> String {
   match role {
     ImplementationCommand =>
       "Implement the exact Part task supplied in the context. Obey the task contract, mutation boundary, and repository rules."
-    PartVerificationCommand =>
-      "Independently verify the exact candidate subject against the supplied Part task and declared changed paths. Report failure only for a defect attributable to this subject."
     PartAuditCommand =>
       "Independently audit the exact candidate subject against the supplied Part task and verification evidence. Findings must be attributable to this subject."
-    GoalVerificationCommand =>
-      "Independently verify the exact sealed Goal subject and its declared checks."
-    GoalAuditCommand =>
-      "Independently audit the exact sealed Goal subject and its verification evidence."
   }
 }
 

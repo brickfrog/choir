@@ -25,10 +25,7 @@ fn digest_bytes(content : Bytes) -> @control.Digest {
 fn role_tag(role : CommandRole) -> String {
   match role {
     ImplementationCommand => "implementation"
-    PartVerificationCommand => "part-verification"
     PartAuditCommand => "part-audit"
-    GoalVerificationCommand => "goal-verification"
-    GoalAuditCommand => "goal-audit"
   }
 }
 
@@ -47,17 +44,6 @@ pub fn canonical_command_subject_bytes(
   let fields = match subject {
     ImplementationCommandSubject(part_id, revision_id, contract_digest) =>
       ["implementation", part_id.0, revision_id.0, contract_digest.0]
-    PartVerificationCommandSubject(value) =>
-      [
-        "part-verification",
-        value.part_id.0,
-        value.candidate_take_id.0,
-        value.candidate_commit_oid.0,
-        value.candidate_tree_oid.0,
-        value.task_contract_revision_id.0,
-        value.task_contract_digest.0,
-        value.subject_digest.0,
-      ]
     PartAuditCommandSubject(value) =>
       [
         "part-audit",

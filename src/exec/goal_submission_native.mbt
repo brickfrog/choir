@@ -586,6 +586,7 @@ fn native_goal_submission_session(
 fn native_goal_submission_part_snapshot(
   goal : @control.Goal,
   accepted : @workflow.AcceptedGoalPart,
+  is_nfc : (String) -> Bool,
 ) -> Result[@workflow.PartWorkflowSnapshot, @types.ChoirError] {
   let part = accepted.part
   let contract = accepted.task_contract
@@ -649,12 +650,6 @@ fn native_goal_submission_part_snapshot(
       ),
       verification_take: verification,
       verification_sandbox,
-      verification_session: native_goal_submission_session(
-        "session-" + key + "-verification-1",
-        verification,
-        verification_sandbox,
-        accepted.provider_surface,
-      ),
       audit_take: audit,
       audit_sandbox,
       audit_session: native_goal_submission_session(
@@ -665,7 +660,7 @@ fn native_goal_submission_part_snapshot(
       ),
     },
     @control.FencingEpoch(1L),
-    native_path_is_nfc,
+    is_nfc,
     part_context_manifest=accepted.part_context_manifest,
   )
 }
@@ -707,6 +702,7 @@ fn initialize_native_goal_parts(
   repository : @workflow.PartWorkflowRepository,
   adapters : @workflow.PartWorkflowRepositoryAdapters,
   decision : @workflow.GoalSelectionDecision,
+  is_nfc : (String) -> Bool,
 ) -> Result[Int, @types.ChoirError] {
   if decision.outcome != @workflow.GoalSelectionOutcome::GoalSelectionAccepted {
     return Ok(0)
@@ -717,7 +713,8 @@ fn initialize_native_goal_parts(
   }
   let mut initialized = 0
   for accepted in decision.accepted_parts {
-    let snapshot = match native_goal_submission_part_snapshot(goal, accepted) {
+    let snapshot = match
+      native_goal_submission_part_snapshot(goal, accepted, is_nfc) {
       Ok(value) => value
       Err(error) => return Err(error)
     }
@@ -837,8 +834,10 @@ pub async fn submit_native_conductor_goal_draft(
   draft_json : String,
   capture : async (Command) -> (Int, String),
   migration_production_admission? : @migration.MigrationProductionAdmissionRef? = None,
+  nfc_available? : () -> Bool = fn() { exec_path_nfc_available_ffi() == 1 },
+  is_nfc? : (String) -> Bool = native_path_is_nfc,
 ) -> Result[NativeConductorGoalSubmissionReport, @types.ChoirError] {
-  if exec_path_nfc_available_ffi() != 1 {
+  if !nfc_available() {
     return Err(
       native_goal_submission_error(
         "Unicode NFC validation support is unavailable",
@@ -930,7 +929,7 @@ pub async fn submit_native_conductor_goal_draft(
     parts,
   }
   let decision = match
-    @workflow.evaluate_goal_proposal(proposal, snapshot, native_path_is_nfc) {
+    @workflow.evaluate_goal_proposal(proposal, snapshot, is_nfc) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -985,7 +984,7 @@ pub async fn submit_native_conductor_goal_draft(
     return Err(native_goal_submission_error("selection reload disagrees"))
   }
   let initialized_part_count = match
-    initialize_native_goal_parts(repository, adapters, decision) {
+    initialize_native_goal_parts(repository, adapters, decision, is_nfc) {
     Ok(value) => value
     Err(error) => return Err(error)
   }

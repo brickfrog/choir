@@ -1,15 +1,12 @@
 ///|
 pub(all) enum CodexTakeRole {
   CodexImplementationTake
-  CodexVerificationTake
   CodexAuditTake
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum CodexTakeOutcome {
   CodexImplementationCompleted
-  CodexVerificationPassed
-  CodexVerificationFailed
   CodexAuditPassed
   CodexAuditFindings(Int, Int)
 } derive(Debug, Eq, ToJson, FromJson)
@@ -331,12 +328,6 @@ fn validate_codex_response(
         Ok((CodexImplementationCompleted, "{\"outcome\":\"completed\"}"))
       } else {
         Err(codex_driver_error("implementation outcome is invalid"))
-      }
-    CodexVerificationTake =>
-      match outcome {
-        "passed" => Ok((CodexVerificationPassed, "{\"outcome\":\"passed\"}"))
-        "failed" => Ok((CodexVerificationFailed, "{\"outcome\":\"failed\"}"))
-        _ => Err(codex_driver_error("verification outcome is invalid"))
       }
     CodexAuditTake => {
       let total = codex_response_int(fields, "total_findings")

@@ -3,8 +3,6 @@ fn record_verification_completion(
   snapshot : PartWorkflowSnapshot,
   observation : PartEffectObservation,
   result : VerificationExecutionResult,
-  final_session : @control.HarnessSession,
-  events : Array[@control.HarnessEventEnvelope],
   observed_at : Int64,
   artifact_exists : (@control.ArtifactReference) -> Bool,
 ) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
@@ -13,10 +11,8 @@ fn record_verification_completion(
     Err(error) => return Err(error)
   }
   match intent.kind {
-    DispatchVerification(take_id, command, subject) =>
-      if take_id != result.take_id ||
-        command.session_id != result.session_id ||
-        subject != result.subject {
+    DispatchVerification(take_id, subject) =>
+      if take_id != result.take_id || subject != result.subject {
         return Err(workflow_error("verification result does not match intent"))
       }
     _ => return Err(workflow_error("verification result has the wrong effect"))
@@ -30,21 +26,6 @@ fn record_verification_completion(
     result.verification_spec != snapshot.task_contract.verification_specs[0] ||
     !artifact_exists(result.evidence) {
     return Err(workflow_error("verification result is stale or incomplete"))
-  }
-  let initial = match
-    find_harness_session(snapshot.harness_sessions, result.session_id) {
-    Some(value) => value
-    None => return Err(workflow_error("verification session is missing"))
-  }
-  let (closed, durable_events) = match
-    validate_closed_trace(initial, events, final_session) {
-    Ok(value) => value
-    Err(error) => return Err(error)
-  }
-  let sessions = match
-    replace_harness_session(snapshot.harness_sessions, closed) {
-    Ok(value) => value
-    Err(error) => return Err(error)
   }
   let receipt_id = @control.ReceiptId(
     snapshot.workflow_id + ":verification-receipt-1",
@@ -85,13 +66,6 @@ fn record_verification_completion(
     result.environment_and_image_digest,
     result.runtime_and_policy_digest,
     fn(evidence) { artifact_exists(evidence) },
-    fn(take_id) {
-      take_id == result.take_id &&
-      closed.lifecycle
-      is @control.HarnessSessionLifecycle::HarnessSessionIngestionClosedCleanly(
-        @control.HarnessTerminalObservation::HarnessCompleted
-      )
-    },
   )
   let result_digest = domain_digest(
     "choir.verification-execution-result.v1",
@@ -150,8 +124,6 @@ fn record_verification_completion(
           part,
           verification_take: take,
           audit_take,
-          harness_sessions: sessions,
-          harness_events: append_events(snapshot.harness_events, durable_events),
           verification_slots: slots,
           verification_receipts: receipts,
           verification_authorization: Some(authorization),
@@ -179,8 +151,6 @@ fn record_verification_completion(
           stage: PartBlocked,
           part,
           verification_take: take,
-          harness_sessions: sessions,
-          harness_events: append_events(snapshot.harness_events, durable_events),
           verification_slots: slots,
           verification_receipts: receipts,
         },
@@ -600,15 +570,6 @@ pub fn authorize_part_integration(
     expected_verification_environment_digest,
     expected_verification_runtime_digest,
     evidence_exists,
-    fn(take_id) {
-      snapshot.harness_sessions.any(fn(session) {
-        session.take_id == take_id &&
-        session.lifecycle
-        is @control.HarnessSessionLifecycle::HarnessSessionIngestionClosedCleanly(
-          @control.HarnessTerminalObservation::HarnessCompleted
-        )
-      })
-    },
   )
   let audit_subject = match snapshot.audit_subject {
     Some(value) => value

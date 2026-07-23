@@ -74,9 +74,7 @@ test "Conductor catalog exposes only Goal and Beads operations" {
   assert_eq(goal_properties.get("goal_id"), None)
   assert_eq(
     goal_submit.get("required"),
-    Some([
-      "proposal_id", "maximum_parallel_parts", "parts",
-    ].to_json()),
+    Some(["proposal_id", "maximum_parallel_parts", "parts"].to_json()),
   )
   let rendered = tools.to_json().stringify()
   assert_true(rendered.contains("goal_submit"))
@@ -87,7 +85,9 @@ test "Conductor catalog exposes only Goal and Beads operations" {
   assert_true(rendered.contains("\"enum\":[\"codex\",\"claude\"]"))
   assert_true(rendered.contains("\"default\":\"codex\""))
   assert_true(rendered.contains("never authorizes an automatic retry"))
-  assert_true(rendered.contains("consumes the request's one mutation allowance"))
+  assert_true(
+    rendered.contains("consumes the request's one mutation allowance"),
+  )
   assert_true(rendered.contains("never call goal_submit a second time"))
   assert_true(rendered.contains("diagnose a rejection with Bash or the CLI"))
   assert_true(rendered.contains("selected Part IDs are Bead IDs"))

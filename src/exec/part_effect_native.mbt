@@ -593,15 +593,12 @@ fn native_codex_config(
 ///|
 priv enum NativeTakeRole {
   NativeImplementationTake
-  NativeVerificationTake
   NativeAuditTake
 }
 
 ///|
 enum NativeTakeOutcome {
   NativeImplementationCompleted
-  NativeVerificationPassed
-  NativeVerificationFailed
   NativeAuditPassed
   NativeAuditFindings(Int, Int)
 } derive(Eq, ToJson)
@@ -633,8 +630,6 @@ async fn run_native_part_provider_take(
       let claude_role = match role {
         NativeImplementationTake =>
           @harness.ClaudeTakeRole::ClaudeImplementationTake
-        NativeVerificationTake =>
-          @harness.ClaudeTakeRole::ClaudeVerificationTake
         NativeAuditTake => @harness.ClaudeTakeRole::ClaudeAuditTake
       }
       let result = match
@@ -652,10 +647,6 @@ async fn run_native_part_provider_take(
       let outcome = match result.outcome {
         @harness.ClaudeTakeOutcome::ClaudeImplementationCompleted =>
           NativeImplementationCompleted
-        @harness.ClaudeTakeOutcome::ClaudeVerificationPassed =>
-          NativeVerificationPassed
-        @harness.ClaudeTakeOutcome::ClaudeVerificationFailed =>
-          NativeVerificationFailed
         @harness.ClaudeTakeOutcome::ClaudeAuditPassed => NativeAuditPassed
         @harness.ClaudeTakeOutcome::ClaudeAuditFindings(total, blocking) =>
           NativeAuditFindings(total, blocking)
@@ -677,7 +668,6 @@ async fn run_native_part_provider_take(
       let codex_role = match role {
         NativeImplementationTake =>
           @harness.CodexTakeRole::CodexImplementationTake
-        NativeVerificationTake => @harness.CodexTakeRole::CodexVerificationTake
         NativeAuditTake => @harness.CodexTakeRole::CodexAuditTake
       }
       let result = match
@@ -695,10 +685,6 @@ async fn run_native_part_provider_take(
       let outcome = match result.outcome {
         @harness.CodexTakeOutcome::CodexImplementationCompleted =>
           NativeImplementationCompleted
-        @harness.CodexTakeOutcome::CodexVerificationPassed =>
-          NativeVerificationPassed
-        @harness.CodexTakeOutcome::CodexVerificationFailed =>
-          NativeVerificationFailed
         @harness.CodexTakeOutcome::CodexAuditPassed => NativeAuditPassed
         @harness.CodexTakeOutcome::CodexAuditFindings(total, blocking) =>
           NativeAuditFindings(total, blocking)
@@ -732,7 +718,7 @@ async fn store_native_take_result(
   runtime : NativePartEffectRuntime,
   goal_id : @control.GoalId,
   take_id : @control.TakeId,
-  session : @control.HarnessSession,
+  sandbox_generation_id : @control.SandboxGenerationId,
   sandbox : NativeBoxLiteTakeSandbox,
 ) -> Result[@control.ArtifactReference, @types.ChoirError] {
   let result_root = match copy_native_boxlite_take_result(sandbox) {
@@ -749,7 +735,7 @@ async fn store_native_take_result(
   let manifest : NativeTakeResultManifest = {
     version: 1,
     take_id,
-    sandbox_generation_id: session.sandbox_generation_id,
+    sandbox_generation_id,
     result_key: sandbox.box_id,
     source_digest: sandbox.source_digest,
   }
@@ -840,7 +826,7 @@ async fn execute_native_implementation(
       runtime,
       snapshot.goal.id,
       take_id,
-      session,
+      session.sandbox_generation_id,
       sandbox,
     ) {
     Ok(value) => value
@@ -960,7 +946,7 @@ async fn native_post_take_tree(
   runtime : NativePartEffectRuntime,
   snapshot : @workflow.PartWorkflowSnapshot,
   take_id : @control.TakeId,
-  session : @control.HarnessSession,
+  sandbox_generation_id : @control.SandboxGenerationId,
   sandbox : NativeBoxLiteTakeSandbox,
   candidate : @control.CandidateCommit,
   suffix : String,
@@ -974,7 +960,7 @@ async fn native_post_take_tree(
       runtime,
       snapshot.goal.id,
       take_id,
-      session,
+      sandbox_generation_id,
       sandbox,
     ) {
     Ok(value) => value
@@ -1011,21 +997,18 @@ async fn execute_native_verification(
   snapshot : @workflow.PartWorkflowSnapshot,
   intent : @workflow.PartEffectIntent,
   take_id : @control.TakeId,
-  command : @control.HarnessCommandIntent,
   subject : @control.PartVerificationSubject,
 ) -> Result[@workflow.PartEffectObservation, @types.ChoirError] {
-  let session_id = command.session_id
   let candidate = match snapshot.candidate {
     Some(value) if value.commit_oid == subject.candidate_commit_oid &&
       value.tree_oid == subject.candidate_tree_oid => value
     _ => return Err(native_part_effect_error("verification subject is stale"))
   }
-  let session = match native_snapshot_session(snapshot, session_id) {
-    Ok(value) => value
-    Err(error) => return Err(error)
-  }
   let sandbox = match
-    native_runtime_sandbox(runtime, session.sandbox_generation_id) {
+    native_runtime_sandbox(
+      runtime,
+      snapshot.identities.verification_sandbox.generation_id,
+    ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -1040,7 +1023,6 @@ async fn execute_native_verification(
       snapshot,
       intent,
       take_id,
-      session,
       sandbox,
       snapshot.task_contract.verification_specs[0].process_spec_digest,
       process,
@@ -1053,30 +1035,25 @@ async fn execute_native_verification(
     None =>
       return Err(native_part_effect_error("process start was not durable"))
   }
-  let instruction = match read_native_harness_command(runtime, command) {
-    Ok(value) => value
-    Err(error) => return Err(error)
-  }
-  let provider = match
-    run_native_part_provider_take(
-      runtime,
-      session,
-      sandbox,
-      NativeVerificationTake,
-      instruction,
-    ) {
-    Ok(value) => value
-    Err(error) => return Err(error)
+  let finished_at = match process_result.finished_at {
+    Some(value) => value
+    None =>
+      return Err(native_part_effect_error("process finish was not durable"))
   }
   let post_tree = match
     native_post_take_tree(
-      runtime, snapshot, take_id, session, sandbox, candidate, "verification-post",
+      runtime,
+      snapshot,
+      take_id,
+      snapshot.identities.verification_sandbox.generation_id,
+      sandbox,
+      candidate,
+      "verification-post",
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let outcome = if process_result.exit_code == 0 &&
-    provider.outcome == NativeVerificationPassed {
+  let outcome = if process_result.exit_code == 0 {
     @control.VerificationOutcome::VerificationPassed
   } else {
     @control.VerificationOutcome::VerificationFailed
@@ -1085,8 +1062,6 @@ async fn execute_native_verification(
     "subject": subject.to_json(),
     "process_spec_digest": snapshot.task_contract.verification_specs[0].process_spec_digest.to_json(),
     "process_result": native_sandbox_process_evidence(process_result),
-    "provider_outcome": ToJson::to_json(provider.outcome),
-    "provider_terminal_response": provider.terminal_response.to_json(),
     "pre_tree": candidate.tree_oid.to_json(),
     "post_tree": post_tree.to_json(),
   }
@@ -1101,29 +1076,24 @@ async fn execute_native_verification(
     Err(error) => return Err(error)
   }
   Ok(
-    @workflow.PartEffectObservation::VerificationCompleted(
-      {
-        take_id,
-        session_id,
-        verification_execution_id: @control.VerificationExecutionId(
-          "verification-" + take_id.0,
-        ),
-        subject,
-        verification_spec: snapshot.task_contract.verification_specs[0],
-        environment_and_image_digest: native_prepared_environment_digest(
-          sandbox.prepared,
-        ),
-        runtime_and_policy_digest: sandbox.prepared.runtime_policy_digest,
-        subject_pre_tree_oid: candidate.tree_oid,
-        subject_post_tree_oid: post_tree,
-        evidence,
-        started_at,
-        finished_at: provider.finished_at,
-        outcome,
-      },
-      provider.session,
-      provider.events,
-    ),
+    @workflow.PartEffectObservation::VerificationCompleted({
+      take_id,
+      verification_execution_id: @control.VerificationExecutionId(
+        "verification-" + take_id.0,
+      ),
+      subject,
+      verification_spec: snapshot.task_contract.verification_specs[0],
+      environment_and_image_digest: native_prepared_environment_digest(
+        sandbox.prepared,
+      ),
+      runtime_and_policy_digest: sandbox.prepared.runtime_policy_digest,
+      subject_pre_tree_oid: candidate.tree_oid,
+      subject_post_tree_oid: post_tree,
+      evidence,
+      started_at,
+      finished_at,
+      outcome,
+    }),
   )
 }
 
@@ -1180,7 +1150,13 @@ async fn execute_native_audit(
   ignore(
     match
       native_post_take_tree(
-        runtime, snapshot, take_id, session, sandbox, candidate, "audit-post",
+        runtime,
+        snapshot,
+        take_id,
+        session.sandbox_generation_id,
+        sandbox,
+        candidate,
+        "audit-post",
       ) {
       Ok(value) => value
       Err(error) => return Err(error)
@@ -1284,14 +1260,6 @@ async fn execute_native_part_effect(
           )
         Err(error) => Err(error)
       }
-    @workflow.PartEffectKind::PrepareVerificationCommand(plan) =>
-      match execute_native_command_preparation(runtime, snapshot, plan) {
-        Ok(value) =>
-          Ok(
-            @workflow.PartEffectObservation::VerificationCommandPrepared(value),
-          )
-        Err(error) => Err(error)
-      }
     @workflow.PartEffectKind::PrepareAuditCommand(plan) =>
       match execute_native_command_preparation(runtime, snapshot, plan) {
         Ok(value) =>
@@ -1306,12 +1274,6 @@ async fn execute_native_part_effect(
           )
         Err(error) => Err(error)
       }
-    @workflow.PartEffectKind::StartVerificationHarness(session, _) =>
-      match start_native_part_harness(session) {
-        Ok(value) =>
-          Ok(@workflow.PartEffectObservation::VerificationHarnessStarted(value))
-        Err(error) => Err(error)
-      }
     @workflow.PartEffectKind::StartAuditHarness(session, _) =>
       match start_native_part_harness(session) {
         Ok(value) =>
@@ -1322,10 +1284,8 @@ async fn execute_native_part_effect(
       execute_native_implementation(runtime, snapshot, take_id, command)
     @workflow.PartEffectKind::NormalizeImplementationCandidate(take_id, digest) =>
       normalize_native_implementation(runtime, snapshot, take_id, digest)
-    @workflow.PartEffectKind::DispatchVerification(take_id, command, subject) =>
-      execute_native_verification(
-        runtime, snapshot, intent, take_id, command, subject,
-      )
+    @workflow.PartEffectKind::DispatchVerification(take_id, subject) =>
+      execute_native_verification(runtime, snapshot, intent, take_id, subject)
     @workflow.PartEffectKind::DispatchAudit(take_id, command, subject) =>
       execute_native_audit(runtime, snapshot, take_id, command, subject)
     @workflow.PartEffectKind::GeneratePromotion(_)
@@ -1381,10 +1341,8 @@ async fn reconcile_unwitnessed_native_part_effect(
 ) -> Result[@workflow.PartEffectRecovery, @types.ChoirError] {
   match intent.kind {
     @workflow.PartEffectKind::PrepareImplementationCommand(_)
-    | @workflow.PartEffectKind::PrepareVerificationCommand(_)
     | @workflow.PartEffectKind::PrepareAuditCommand(_)
     | @workflow.PartEffectKind::StartImplementationHarness(_, _)
-    | @workflow.PartEffectKind::StartVerificationHarness(_, _)
     | @workflow.PartEffectKind::StartAuditHarness(_, _)
     | @workflow.PartEffectKind::NormalizeImplementationCandidate(_, _) =>
       Ok(@workflow.PartEffectRecovery::ExactEffectRetryAuthorized)
@@ -1403,8 +1361,23 @@ async fn reconcile_unwitnessed_native_part_effect(
         Some(_) => Ok(@workflow.PartEffectRecovery::ExactEffectRetryAuthorized)
         None => Ok(@workflow.PartEffectRecovery::EffectWitnessUnavailable)
       }
+    @workflow.PartEffectKind::DispatchVerification(_, _) => {
+      let process_uncertain = match
+        reconcile_unadoptable_native_process(runtime, snapshot, intent) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      if process_uncertain {
+        Err(
+          @types.ChoirError::provider_process_lost(
+            "an unkeyed guest process may have started; its sandbox generation was retired",
+          ),
+        )
+      } else {
+        Ok(@workflow.PartEffectRecovery::ExactEffectRetryAuthorized)
+      }
+    }
     @workflow.PartEffectKind::DispatchImplementation(_, _)
-    | @workflow.PartEffectKind::DispatchVerification(_, _, _)
     | @workflow.PartEffectKind::DispatchAudit(_, _, _) => {
       let process_uncertain = match
         reconcile_unadoptable_native_process(runtime, snapshot, intent) {
@@ -1420,7 +1393,6 @@ async fn reconcile_unwitnessed_native_part_effect(
       }
       let session_id = match intent.kind {
         @workflow.PartEffectKind::DispatchImplementation(_, command)
-        | @workflow.PartEffectKind::DispatchVerification(_, command, _)
         | @workflow.PartEffectKind::DispatchAudit(_, command, _) =>
           command.session_id
         _ => return Ok(@workflow.PartEffectRecovery::EffectWitnessUnavailable)

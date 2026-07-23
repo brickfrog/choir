@@ -49,6 +49,12 @@ fn native_sandbox_process_evidence(result : NativeSandboxProcessResult) -> Json 
   {
     "exit_code": result.exit_code.to_json(),
     "output_digest": result.output_digest.to_json(),
+    "output_artifact": {
+      "artifact_id": @storage.artifact_id_text(
+        @storage.artifact_id_for_digest(result.output_digest),
+      ).to_json(),
+      "digest": result.output_digest.to_json(),
+    }.to_json(),
   }.to_json()
 }
 
@@ -63,6 +69,7 @@ test "durable process evidence excludes captured output" {
     finished_at: Some(2L),
   }).stringify(indent=0)
   assert_true(evidence.contains("output_digest"))
+  assert_true(evidence.contains("output_artifact"))
   assert_true(evidence.contains("exit_code"))
   assert_false(evidence.contains(secret))
   assert_false(evidence.contains("stderr"))

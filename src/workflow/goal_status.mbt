@@ -189,7 +189,9 @@ fn goal_attach_projection(
     }
   }
   sessions.sort_by(fn(left, right) { left.session.id.compare(right.session.id) })
-  if sessions.length() == 0 {
+  if sessions.length() == 0 &&
+    !(take.purpose is @control.TakePurpose::PartVerification(_, _, _) ||
+    take.purpose is @control.TakePurpose::GoalVerification(_, _, _)) {
     Err(goal_execution_error("attach Take has no registered harness session"))
   } else {
     Ok({ goal_id, take, origin, sessions })
@@ -609,10 +611,7 @@ pub fn goal_status_report(
       ),
       verification_take_id: snapshot.verification_take.id,
       verification_take_lifecycle: snapshot.verification_take.lifecycle,
-      verification_session_lifecycle: goal_part_session_lifecycle(
-        snapshot,
-        snapshot.identities.verification_session.id,
-      ),
+      verification_session_lifecycle: None,
       audit_take_id: snapshot.audit_take.id,
       audit_take_lifecycle: snapshot.audit_take.lifecycle,
       audit_session_lifecycle: goal_part_session_lifecycle(

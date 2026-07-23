@@ -153,7 +153,6 @@ test "verification gate selects the exact passing immutable receipt" {
       gate_digest_a,
       gate_digest_b,
       fn(_) { true },
-      fn(_) { true },
     ),
     @control.VerificationGateObservation::VerificationGateValid([
       @control.ReceiptId("verification-receipt-1"),
@@ -167,7 +166,6 @@ test "verification gate selects the exact passing immutable receipt" {
       [{ ..receipt, subject_post_tree_oid: @control.GitOid("changed-tree") }],
       gate_digest_a,
       gate_digest_b,
-      fn(_) { true },
       fn(_) { true },
     ),
     @control.VerificationGateObservation::VerificationGateRejected(

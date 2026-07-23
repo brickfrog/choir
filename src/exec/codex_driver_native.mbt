@@ -125,9 +125,6 @@ fn native_codex_role_prompt(role : @harness.CodexTakeRole) -> String {
     @harness.CodexTakeRole::CodexImplementationTake =>
       common +
       "Complete the instruction in the sandbox. End with exactly {\"outcome\":\"completed\"}."
-    @harness.CodexTakeRole::CodexVerificationTake =>
-      common +
-      "Your first action must be a read_file call for a repository path named in the supplied Part task. Call read_file for every path the Part task permits to change, and do not return before those calls succeed. Verify the supplied candidate in the sandbox. End with exactly {\"outcome\":\"passed\"} or {\"outcome\":\"failed\"}."
     @harness.CodexTakeRole::CodexAuditTake =>
       common +
       "Your first action must be a read_file call for a repository path named in the supplied Part task. Call read_file for every path the Part task permits to change, and do not return before those calls succeed. Independently audit the supplied candidate. Return outcome passed with zero counts when clean, otherwise outcome findings with exact total and blocking counts." +
@@ -139,7 +136,6 @@ fn native_codex_role_prompt(role : @harness.CodexTakeRole) -> String {
 fn native_codex_output_schema(role : @harness.CodexTakeRole) -> String {
   let outcome = match role {
     @harness.CodexTakeRole::CodexImplementationTake => ["completed"]
-    @harness.CodexTakeRole::CodexVerificationTake => ["passed", "failed"]
     @harness.CodexTakeRole::CodexAuditTake => ["passed", "findings"]
   }
   let properties : Map[String, Json] = {
@@ -2223,14 +2219,9 @@ test "native Codex Take schemas constrain every terminal role" {
   let implementation = native_codex_output_schema(
     @harness.CodexTakeRole::CodexImplementationTake,
   )
-  let verification = native_codex_output_schema(
-    @harness.CodexTakeRole::CodexVerificationTake,
-  )
   let audit = native_codex_output_schema(@harness.CodexTakeRole::CodexAuditTake)
   assert_true(@json.parse(implementation) is Object(_))
   assert_true(implementation.contains("\"completed\""))
-  assert_true(verification.contains("\"passed\""))
-  assert_true(verification.contains("\"failed\""))
   assert_true(audit.contains("\"total_findings\""))
   assert_true(audit.contains("\"blocking_findings\""))
   assert_true(audit.contains("\"migration_findings\""))
@@ -2240,22 +2231,17 @@ test "native Codex Take schemas constrain every terminal role" {
     ),
   )
   assert_true(audit.contains("\"additionalProperties\":false"))
-  for role in [
-    @harness.CodexTakeRole::CodexImplementationTake,
-    @harness.CodexTakeRole::CodexVerificationTake,
-    @harness.CodexTakeRole::CodexAuditTake,
-  ] {
+  for
+    role in [
+      @harness.CodexTakeRole::CodexImplementationTake,
+      @harness.CodexTakeRole::CodexAuditTake,
+    ] {
     assert_true(
       native_codex_role_prompt(role).contains(
         "must call at least one available Choir MCP tool",
       ),
     )
   }
-  assert_true(
-    native_codex_role_prompt(
-      @harness.CodexTakeRole::CodexVerificationTake,
-    ).contains("Call read_file for every path the Part task permits to change"),
-  )
   assert_true(
     native_codex_role_prompt(@harness.CodexTakeRole::CodexAuditTake).contains(
       "Call read_file for every path the Part task permits to change",

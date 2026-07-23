@@ -44,10 +44,6 @@ fn goal_assurance_effect_suffix(record : GoalAssuranceRecord) -> String {
           lease.id == record.identities.verification_sandbox.id
         }) {
         "prepare-verification-sandbox"
-      } else if !record.harness_sessions.any(fn(session) {
-          session.id == record.identities.verification_session.id
-        }) {
-        "start-verification-harness"
       } else {
         "dispatch-verification"
       }
@@ -83,9 +79,6 @@ fn next_goal_assurance_effect_kind(
       let has_sandbox = record.sandbox_leases.any(fn(lease) {
         lease.id == record.identities.verification_sandbox.id
       })
-      let has_session = record.harness_sessions.any(fn(session) {
-        session.id == record.identities.verification_session.id
-      })
       if !has_sandbox {
         Ok(
           Some(
@@ -94,22 +87,12 @@ fn next_goal_assurance_effect_kind(
             ),
           ),
         )
-      } else if !has_session {
-        Ok(
-          Some(
-            StartGoalVerificationHarness(record.identities.verification_session),
-          ),
-        )
       } else {
         match record.verification_subject {
           Some(subject) =>
             Ok(
               Some(
-                DispatchGoalVerification(
-                  record.verification_take.id,
-                  record.identities.verification_session.id,
-                  subject,
-                ),
+                DispatchGoalVerification(record.verification_take.id, subject),
               ),
             )
           None => Err(goal_assurance_error("verification subject is missing"))
@@ -212,15 +195,33 @@ pub fn authorize_pending_goal_assurance_effect(
   record : GoalAssuranceRecord,
 ) -> Result[GoalAssuranceRecord, @types.ChoirError] {
   match record.pending_effect {
-    Some({ lifecycle: GoalAssuranceEffectPlanned, .. } as intent) =>
+    Some({ lifecycle: GoalAssuranceEffectPlanned, .. } as intent) => {
+      let verification_take = match intent.kind {
+        DispatchGoalVerification(take_id, _) =>
+          if take_id != record.verification_take.id {
+            return Err(goal_assurance_error("verification Take is misbound"))
+          } else {
+            match
+              @control.transition_take(
+                record.verification_take,
+                @control.TakeTransition::StartTake(record.fencing_epoch),
+              ) {
+              Ok(value) => value
+              Err(error) => return Err(error)
+            }
+          }
+        _ => record.verification_take
+      }
       Ok({
         ..record,
+        verification_take,
         pending_effect: Some({
           ..intent,
           lifecycle: GoalAssuranceEffectMayHaveOccurred,
         }),
         durable_version: record.durable_version + 1,
       })
+    }
     Some(_) => Err(goal_assurance_error("pending effect is not planned"))
     None => Err(goal_assurance_error("no effect is pending"))
   }
@@ -513,8 +514,6 @@ fn apply_goal_verification_completion(
   record : GoalAssuranceRecord,
   observation : GoalAssuranceEffectObservation,
   result : GoalVerificationExecutionResult,
-  final_session : @control.HarnessSession,
-  events : Array[@control.HarnessEventEnvelope],
   observed_at : Int64,
   artifact_exists : (@control.ArtifactReference) -> Bool,
 ) -> Result[GoalAssuranceRecord, @types.ChoirError] {
@@ -523,10 +522,8 @@ fn apply_goal_verification_completion(
     Err(error) => return Err(error)
   }
   match intent.kind {
-    DispatchGoalVerification(take_id, session_id, subject) =>
-      if take_id != result.take_id ||
-        session_id != result.session_id ||
-        subject != result.subject {
+    DispatchGoalVerification(take_id, subject) =>
+      if take_id != result.take_id || subject != result.subject {
         return Err(goal_assurance_error("verification result is misbound"))
       }
     _ => return Err(goal_assurance_error("verification effect is wrong"))
@@ -540,21 +537,6 @@ fn apply_goal_verification_completion(
     result.executions.length() != record.verification_specs.length() ||
     !artifact_exists(result.evidence_manifest) {
     return Err(goal_assurance_error("verification result is stale"))
-  }
-  let initial = match
-    find_goal_assurance_session(record.harness_sessions, result.session_id) {
-    Some(value) => value
-    None => return Err(goal_assurance_error("verification session is absent"))
-  }
-  let (closed, durable_events) = match
-    close_goal_assurance_trace(initial, events, final_session) {
-    Ok(value) => value
-    Err(error) => return Err(error)
-  }
-  let sessions = match
-    replace_goal_assurance_session(record.harness_sessions, closed) {
-    Ok(value) => value
-    Err(error) => return Err(error)
   }
   let slots : Array[@control.GoalVerificationAuthorizationSlot] = []
   let receipts : Array[@control.GoalVerificationReceipt] = []
@@ -630,13 +612,6 @@ fn apply_goal_verification_completion(
     environment,
     runtime,
     artifact_exists,
-    fn(take_id) {
-      take_id == result.take_id &&
-      closed.lifecycle
-      is @control.HarnessSessionLifecycle::HarnessSessionIngestionClosedCleanly(
-        @control.HarnessTerminalObservation::HarnessCompleted
-      )
-    },
   )
   let result_digest = goal_assurance_domain_digest(
     "choir.goal-verification-execution-result.v1",
@@ -678,11 +653,6 @@ fn apply_goal_verification_completion(
               audit_subject.subject_digest,
             ),
           },
-          harness_sessions: sessions,
-          harness_events: append_goal_assurance_events(
-            record.harness_events,
-            durable_events,
-          ),
           verification_slots: slots,
           verification_receipts: receipts,
           verification_authorization: Some(authorization),
@@ -699,11 +669,6 @@ fn apply_goal_verification_completion(
         {
           ..record,
           verification_take: take,
-          harness_sessions: sessions,
-          harness_events: append_goal_assurance_events(
-            record.harness_events,
-            durable_events,
-          ),
           verification_slots: slots,
           verification_receipts: receipts,
           stage: GoalAssuranceBlocked,
@@ -900,36 +865,9 @@ pub fn apply_goal_assurance_effect_observation(
         observed_at,
       )
     }
-    GoalVerificationHarnessStarted(session) => {
-      let intent = match authorized_goal_assurance_effect(record) {
-        Ok(value) => value
-        Err(error) => return Err(error)
-      }
-      if !(intent.kind is StartGoalVerificationHarness(_)) ||
-        !started_goal_assurance_session_matches(
-          record.identities.verification_session,
-          session,
-        ) {
-        return Err(goal_assurance_error("verification session is misbound"))
-      }
-      let take = match
-        @control.transition_take(
-          record.verification_take,
-          @control.TakeTransition::StartTake(record.fencing_epoch),
-        ) {
-        Ok(value) => value
-        Err(error) => return Err(error)
-      }
-      finish_goal_assurance_observation(
-        record,
-        { ..record, verification_take: take, harness_sessions: [session] },
-        observation,
-        observed_at,
-      )
-    }
-    GoalVerificationCompleted(result, final_session, events) =>
+    GoalVerificationCompleted(result) =>
       apply_goal_verification_completion(
-        record, observation, result, final_session, events, observed_at, artifact_exists,
+        record, observation, result, observed_at, artifact_exists,
       )
     GoalAuditSandboxPrepared(lease) => {
       let intent = match authorized_goal_assurance_effect(record) {
@@ -1051,7 +989,7 @@ pub fn mint_goal_audit_receipt(
     Some(result),
     [record.verification_take.id],
     [record.identities.verification_sandbox.generation_id],
-    [record.identities.verification_session.id],
+    [],
     audit_session,
     record.identities.audit_sandbox.capability_profile_digest,
     record.identities.audit_session.effective_surface_manifest_digest,

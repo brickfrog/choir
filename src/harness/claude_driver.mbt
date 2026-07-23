@@ -1,7 +1,6 @@
 ///|
 pub(all) enum ClaudeTakeRole {
   ClaudeImplementationTake
-  ClaudeVerificationTake
   ClaudeAuditTake
 } derive(Debug, Eq, ToJson, FromJson)
 
@@ -37,8 +36,6 @@ pub(all) struct ClaudeDriverResult {
 ///|
 pub(all) enum ClaudeTakeOutcome {
   ClaudeImplementationCompleted
-  ClaudeVerificationPassed
-  ClaudeVerificationFailed
   ClaudeAuditPassed
   ClaudeAuditFindings(Int, Int)
 } derive(Debug, Eq, ToJson, FromJson)
@@ -304,12 +301,6 @@ fn validate_claude_take_response(
         Ok((ClaudeImplementationCompleted, "{\"outcome\":\"completed\"}"))
       } else {
         Err(claude_driver_error("implementation outcome is invalid"))
-      }
-    ClaudeVerificationTake =>
-      match outcome {
-        "passed" => Ok((ClaudeVerificationPassed, "{\"outcome\":\"passed\"}"))
-        "failed" => Ok((ClaudeVerificationFailed, "{\"outcome\":\"failed\"}"))
-        _ => Err(claude_driver_error("verification outcome is invalid"))
       }
     ClaudeAuditTake => {
       let total = response_int(fields, "total_findings")
