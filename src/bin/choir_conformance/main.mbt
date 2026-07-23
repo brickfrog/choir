@@ -3025,7 +3025,7 @@ async fn run_conductor_start_live() -> Int {
   let socket_path = root + "/.choir/run/server.sock"
   let conductor_output = root + "/conductor-output.json"
   let fake_conductor = root + "/bin/claude"
-  let fake_body = "#!/bin/sh\nif [ -n \"$CHOIR_CONDUCTOR_TOKEN\" ]; then token_state=present; else token_state=missing; fi\nprintf '%s|%s|%s\\n' \"$CHOIR_WORKSPACE\" \"$token_state\" \"$CHOIR_LISTEN_UDS\" > \"$CHOIR_START_TEST_OUTPUT.env\"\nprintf '%s\\n' \"$*\" > \"$CHOIR_START_TEST_OUTPUT.args\"\n\"$CHOIR_START_TEST_BINARY\" goal status missing > \"$CHOIR_START_TEST_OUTPUT\" 2>&1 || true\nexit 0\n"
+  let fake_body = "#!/bin/sh\nif [ -n \"$CHOIR_CONDUCTOR_TOKEN\" ]; then token_state=present; else token_state=missing; fi\nprintf '%s|%s|%s|%s\\n' \"$CHOIR_WORKSPACE\" \"$token_state\" \"$CHOIR_LISTEN_UDS\" \"$CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF\" > \"$CHOIR_START_TEST_OUTPUT.env\"\nprintf '%s\\n' \"$*\" > \"$CHOIR_START_TEST_OUTPUT.args\"\n\"$CHOIR_START_TEST_BINARY\" goal status missing > \"$CHOIR_START_TEST_OUTPUT\" 2>&1 || true\nexit 0\n"
   if !@sys.write_file_sync(fake_conductor, fake_body) {
     @sys.write_stderr("failed to write fake Conductor\n")
     cleanup_conductor_start_probe(root)
@@ -3085,6 +3085,7 @@ async fn run_conductor_start_live() -> Int {
     conductor_args.contains("--append-system-prompt-file") &&
     !conductor_args.contains("--plugin-dir") &&
     conductor_surface_restricted &&
+    conductor_environment.has_suffix("|1\n") &&
     mode_code == 0 &&
     socket_mode.trim().to_owned() == "600"
   let daemon_pid = @string.parse_int(

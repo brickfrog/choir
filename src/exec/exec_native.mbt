@@ -2316,6 +2316,10 @@ pub async fn run_conductor_process(
     "CHOIR_CONDUCTOR_TOKEN": environment.conductor_token,
     "CHOIR_WORKSPACE": environment.workspace,
     "CHOIR_LISTEN_UDS": environment.listen_uds,
+    // Claude disables GrowthBook feature reads when telemetry is disabled.
+    // Keep telemetry disabled while allowing its cached Channel availability
+    // decision to be read.
+    "CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF": "1",
   }
   match cmd.workdir {
     Some(dir) => @process.run(cmd.program, cmd.args[:], extra_env~, cwd=dir)
