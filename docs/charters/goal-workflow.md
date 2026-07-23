@@ -4272,10 +4272,13 @@ host-boundary mechanisms:
 
 `choir init` registers that server in the repository's ignored `.mcp.json`,
 preserving unrelated entries, and approves only `choir` in the generated
-session settings. The launcher uses Claude's ordinary
-`--channels server:choir` path; it must not use the development-channel bypass.
-The strict inline MCP definition remains the execution source so an ambient
-project server cannot enter the Conductor tool surface.
+session settings. Claude's current research preview does not admit custom
+channels through ordinary `--channels`, even when they are packaged in a
+private marketplace, so the launcher uses the required
+`--dangerously-load-development-channels server:choir` bypass. Project
+registration prevents Claude from falsely reporting that the server is
+missing. The strict inline MCP definition remains the execution source so an
+ambient project server cannot enter the Conductor tool surface.
 
 The worker publishes only after an authoritative execution tick advances, the
 server de-duplicates identical projections, and a reconnected channel receives

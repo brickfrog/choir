@@ -141,7 +141,7 @@ pub fn conductor_launch_command(
       project_dir + "/.choir/state/conductor-prompt.md",
       "--settings",
       project_dir + "/.choir/state/claude-settings.json",
-      "--channels",
+      "--dangerously-load-development-channels",
       "server:choir",
       ..lean_args,
     ],

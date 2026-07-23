@@ -10,8 +10,9 @@ test "Claude Conductor keeps default tools and uses strict MCP config" {
       "--allowedTools mcp__choir__goal_submit,mcp__choir__goal_status,mcp__choir__goal_cancel,mcp__choir__goal_steer,mcp__choir__goal_attach,mcp__choir__goal_answer,mcp__choir__task_list,mcp__choir__task_get,mcp__choir__task_create,mcp__choir__task_update",
     ),
   )
-  assert_true(joined.contains("--channels server:choir"))
-  assert_false(joined.contains("--dangerously-load-development-channels"))
+  assert_true(
+    joined.contains("--dangerously-load-development-channels server:choir"),
+  )
   assert_true(joined.contains("--setting-sources project"))
   assert_true(
     joined.contains(
