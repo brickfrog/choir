@@ -3,6 +3,7 @@ priv struct ConductorServerState {
   config : @types.Config
   run_id : String
   mut conductor_token : String?
+  mut statusline_cache_key : String?
   mut goal_worker_pid : Int?
   channel_fds : Array[Int]
   mut watched_goal_id : String?
@@ -18,6 +19,7 @@ fn ConductorServerState::new(config : @types.Config) -> ConductorServerState {
     config,
     run_id: "serve-" + @sys.get_pid().to_string(),
     conductor_token: None,
+    statusline_cache_key: None,
     goal_worker_pid: None,
     channel_fds: [],
     watched_goal_id: None,
@@ -106,6 +108,11 @@ fn conductor_watch_goal(state : ConductorServerState, goal_id : String) -> Unit 
   state.watched_goal_id = Some(goal_id)
   state.last_goal_update = None
   state.last_goal_update_fingerprint = None
+  match state.statusline_cache_key {
+    Some(key) =>
+      conductor_statusline_activate_cache(state.config.project_dir, key, None)
+    None => ()
+  }
   match state.goal_updates.get(goal_id) {
     Some(serialized) => {
       let report : Json? = Some(@json.parse(serialized)) catch { _ => None }
@@ -179,8 +186,8 @@ fn conductor_goal_update_fingerprint(report : Json) -> String {
   for
     name in [
       "goal_id", "state", "lifecycle", "pause_reason", "resume_state", "active_input_request",
-      "assurance_stage", "publication_state", "pull_request_state", "finalization_id",
-      "readiness_decision",
+      "maximum_parallel_parts", "assurance_stage", "publication_state", "pull_request_state",
+      "finalization_id", "readiness_decision",
     ] {
     conductor_copy_projection_field(fields, projection, name)
   }
@@ -228,6 +235,11 @@ fn conductor_broadcast_goal_update(
     return
   }
   state.last_goal_update_fingerprint = Some(fingerprint)
+  match state.statusline_cache_key {
+    Some(key) =>
+      conductor_statusline_update_cache(state.config.project_dir, key, report)
+    None => ()
+  }
   let goal_state = match fields.get("state") {
     Some(String(value)) => Some(value)
     _ => None
@@ -303,10 +315,24 @@ fn conductor_bootstrap(
     return @types.Response::Err("Conductor bootstrap authentication failed")
   }
   let token = request.args.get(@types.registration_token_arg).unwrap_or("")
-  if !conductor_valid_bootstrap_token(token) {
+  let statusline_cache_key = request.args
+    .get("statusline_cache_key")
+    .unwrap_or("")
+  if !conductor_valid_bootstrap_token(token) ||
+    !conductor_statusline_cache_key_valid(statusline_cache_key) {
     return @types.Response::Err("Conductor bootstrap authentication failed")
   }
   state.conductor_token = Some(token)
+  state.statusline_cache_key = Some(statusline_cache_key)
+  let latest_report : Json? = match state.last_goal_update {
+    Some(serialized) => Some(@json.parse(serialized)) catch { _ => None }
+    None => None
+  }
+  conductor_statusline_activate_cache(
+    state.config.project_dir,
+    statusline_cache_key,
+    latest_report,
+  )
   @types.Response::ok_values(Map([]))
 }
 
@@ -863,6 +889,7 @@ fn serve_run() -> Unit {
   ignore(@sys.create_dir_all(config.project_dir + "/.choir/state"))
   ignore(@sys.create_dir_all(config.project_dir + "/.choir/state/control"))
   @sys.init_cleanup_runtime_artifacts_native()
+  conductor_statusline_deactivate_cache(config.project_dir)
   @sys.write_pid_file(".choir/run/server.pid")
   @sys.register_cleanup_runtime_artifacts()
   @sys.install_crash_handlers()

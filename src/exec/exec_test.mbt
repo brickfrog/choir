@@ -29,7 +29,25 @@ test "Claude Conductor keeps default tools and uses strict MCP config" {
   assert_true(settings.contains("\"enabledMcpjsonServers\":[\"choir\"]"))
   assert_true(settings.contains("/opt/choir/bin/choir"))
   assert_true(settings.contains("conductor-stop"))
+  assert_true(settings.contains("conductor-statusline"))
+  assert_true(settings.contains("\"statusLine\""))
+  assert_true(settings.contains("\"padding\":0"))
+  assert_false(settings.contains("refreshInterval"))
   assert_false(settings.contains("automatic_polling_allowed"))
+  let parsed = @json.parse(settings) catch {
+    _ => fail("Conductor settings are not valid JSON")
+  }
+  guard parsed is Object(root) else {
+    fail("Conductor settings are not an object")
+  }
+  guard root.get("statusLine") is Some(Object(statusline)) else {
+    fail("Conductor statusLine is absent")
+  }
+  assert_eq(
+    statusline.get("command"),
+    Some("'/opt/choir/bin/choir' conductor-statusline".to_json()),
+  )
+  assert_eq(statusline.get("padding"), Some((0 : Int).to_json()))
 }
 
 ///|

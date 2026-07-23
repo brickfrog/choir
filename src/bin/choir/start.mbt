@@ -120,11 +120,17 @@ fn start_parse_options(args : Array[String]) -> Result[StartOptions, String] {
 }
 
 ///|
-fn start_conductor_bootstrap_request(token : String) -> @types.Request {
+fn start_conductor_bootstrap_request(
+  token : String,
+  statusline_cache_key : String,
+) -> @types.Request {
   {
     req_method: "conductor_bootstrap",
     name: "conductor_bootstrap",
-    args: @types.RequestArgs::from_values({ "token": token.to_json() }),
+    args: @types.RequestArgs::from_values({
+      "token": token.to_json(),
+      "statusline_cache_key": statusline_cache_key.to_json(),
+    }),
   }
 }
 
@@ -132,13 +138,14 @@ fn start_conductor_bootstrap_request(token : String) -> @types.Request {
 fn start_bootstrap_conductor(
   socket_path : String,
   token : String,
+  statusline_cache_key : String,
 ) -> Result[Unit, String] {
   let fd = @uds.client_connect(socket_path)
   if fd < 0 {
     return Err("cannot connect to choird at " + socket_path)
   }
   let request = @transport.format_request(
-      start_conductor_bootstrap_request(token),
+      start_conductor_bootstrap_request(token, statusline_cache_key),
     ) +
     "\n"
   if !mcp_write_all_uds(fd, @utf8.encode(request)) {
@@ -277,9 +284,11 @@ async fn start_ensure_daemon(
 fn start_conductor_environment(
   config : @types.Config,
   token : String,
+  statusline_cache_key : String,
 ) -> @exec.ConductorProcessEnvironment {
   {
     conductor_token: token,
+    statusline_cache_key,
     workspace: config.project_dir,
     listen_uds: config.listen_uds,
   }
@@ -289,6 +298,7 @@ fn start_conductor_environment(
 async fn start_codex_conductor(
   config : @types.Config,
   token : String,
+  statusline_cache_key : String,
   executable : String,
 ) -> Int {
   let conductor_config : @exec.NativeCodexConductorConfig = {
@@ -307,7 +317,9 @@ async fn start_codex_conductor(
     allowed_tools: @mcp.conductor_tool_names(),
     developer_instructions: @prompts.load_goal_prompt(config.project_dir),
     timeout_ms: 3600000,
-    environment: start_conductor_environment(config, token),
+    environment: start_conductor_environment(
+      config, token, statusline_cache_key,
+    ),
   }
   let mut thread_id : String? = None
   @sys.write_stdout(
@@ -388,6 +400,7 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
       return
     }
   }
+  let statusline_cache_key = "conductor-" + @sys.get_pid().to_string()
   @async.run_async_main(async fn() {
     match @exec.validate_native_beads_cli() {
       Ok(_) => ()
@@ -426,7 +439,8 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
         return
       }
     }
-    match start_bootstrap_conductor(config.listen_uds, token) {
+    match
+      start_bootstrap_conductor(config.listen_uds, token, statusline_cache_key) {
       Ok(_) => ()
       Err(error) => {
         @sys.write_stderr("choir start: " + error + "\n")
@@ -443,12 +457,13 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
         )
         @exec.run_conductor_process(
           command,
-          start_conductor_environment(config, token),
+          start_conductor_environment(config, token, statusline_cache_key),
         ) catch {
           _ => -1
         }
       }
-      StartCodexConductor => start_codex_conductor(config, token, executable)
+      StartCodexConductor =>
+        start_codex_conductor(config, token, statusline_cache_key, executable)
     }
     @sys.exit(exit_code)
   })
@@ -493,8 +508,12 @@ test "start selects only supported Conductor surfaces" {
 ///|
 test "start Conductor bootstrap request contains no provider credential" {
   let token = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
-  let request = start_conductor_bootstrap_request(token)
+  let request = start_conductor_bootstrap_request(token, "conductor-42")
   assert_eq(request.req_method, "conductor_bootstrap")
   assert_eq(request.name, "conductor_bootstrap")
   @debug.assert_eq(request.args.get("token"), Some(token))
+  @debug.assert_eq(
+    request.args.get("statusline_cache_key"),
+    Some("conductor-42"),
+  )
 }

@@ -16,6 +16,7 @@ pub impl Show for Command with fn output(self, logger) -> Unit {
 ///|
 pub(all) struct ConductorProcessEnvironment {
   conductor_token : String
+  statusline_cache_key : String
   workspace : String
   listen_uds : String
 }
@@ -87,6 +88,11 @@ pub fn conductor_claude_project_mcp_config_json(
 pub fn conductor_claude_settings_json(choir_executable : String) -> String {
   {
     "enabledMcpjsonServers": ["choir"].to_json(),
+    "statusLine": {
+      "type": "command".to_json(),
+      "command": (quote(choir_executable) + " conductor-statusline").to_json(),
+      "padding": (0 : Int).to_json(),
+    }.to_json(),
     "hooks": {
       "Stop": [
         {

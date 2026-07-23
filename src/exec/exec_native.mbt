@@ -2317,6 +2317,7 @@ pub async fn run_conductor_process(
   abort_if_hermetic_test_exec(command_to_shell_string(cmd))
   let extra_env : Map[String, String] = {
     "CHOIR_CONDUCTOR_TOKEN": environment.conductor_token,
+    "CHOIR_STATUSLINE_CACHE_KEY": environment.statusline_cache_key,
     "CHOIR_WORKSPACE": environment.workspace,
     "CHOIR_LISTEN_UDS": environment.listen_uds,
     // Claude disables GrowthBook feature reads when telemetry is disabled.

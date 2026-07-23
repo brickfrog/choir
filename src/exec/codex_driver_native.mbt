@@ -407,6 +407,7 @@ fn native_codex_conductor_environment(
   let environment = native_codex_environment(provider_home, config.sterile_root)
   environment["CODEX_HOME"] = config.sterile_root + "/codex-home"
   environment["CHOIR_CONDUCTOR_TOKEN"] = config.environment.conductor_token
+  environment["CHOIR_STATUSLINE_CACHE_KEY"] = config.environment.statusline_cache_key
   environment["CHOIR_WORKSPACE"] = config.environment.workspace
   environment["CHOIR_LISTEN_UDS"] = config.environment.listen_uds
   environment
@@ -458,6 +459,7 @@ test "native Codex Conductor environment isolates writable provider state" {
     timeout_ms: 1000,
     environment: {
       conductor_token: "token",
+      statusline_cache_key: "conductor-42",
       workspace: "/repo",
       listen_uds: "/run/choir/server.sock",
     },
@@ -2263,6 +2265,7 @@ test "native Codex Conductor argv is resumable and restricted" {
     timeout_ms: 60000,
     environment: {
       conductor_token: "token",
+      statusline_cache_key: "conductor-42",
       workspace: "/tmp/project",
       listen_uds: "/tmp/project/.choir/run/server.sock",
     },

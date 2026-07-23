@@ -30,5 +30,6 @@ options(
     "stub_main.mbt": [ "not", "native" ],
     "uds_reader.mbt": [ "native" ],
     "server_native.mbt": [ "native" ],
+    "statusline.mbt": [ "native" ],
   },
 )
