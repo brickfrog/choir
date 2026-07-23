@@ -119,7 +119,8 @@ async fn capture_native_goal_git(
     inherit_env=false,
     cwd=repository_root,
   ) catch {
-    _ => return Err(native_goal_execution_error("Git process failed"))
+    error =>
+      return Err(native_goal_execution_error("Git process failed: \{error}"))
   }
   let output = captured.1.text() catch {
     _ => return Err(native_goal_execution_error("Git output is not UTF-8"))
