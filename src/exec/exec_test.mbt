@@ -10,9 +10,9 @@ test "Claude Conductor keeps default tools and uses strict MCP config" {
       "--allowedTools mcp__choir__goal_submit,mcp__choir__goal_status,mcp__choir__goal_cancel,mcp__choir__goal_steer,mcp__choir__goal_attach,mcp__choir__goal_answer,mcp__choir__task_list,mcp__choir__task_get,mcp__choir__task_create,mcp__choir__task_update",
     ),
   )
-  assert_true(
-    joined.contains("--dangerously-load-development-channels server:choir"),
-  )
+  assert_true(joined.contains("--channels server:choir"))
+  assert_false(joined.contains("--dangerously-load-development-channels"))
+  assert_true(joined.contains("--setting-sources project"))
   assert_true(
     joined.contains(
       "--append-system-prompt-file /repo/.choir/state/conductor-prompt.md",
@@ -25,9 +25,41 @@ test "Claude Conductor keeps default tools and uses strict MCP config" {
   assert_false(joined.contains("zellij"))
   let settings = conductor_claude_settings_json("/opt/choir/bin/choir")
   assert_true(settings.contains("\"Stop\""))
+  assert_true(settings.contains("\"enabledMcpjsonServers\":[\"choir\"]"))
   assert_true(settings.contains("/opt/choir/bin/choir"))
   assert_true(settings.contains("conductor-stop"))
   assert_false(settings.contains("automatic_polling_allowed"))
+}
+
+///|
+test "Claude Conductor project MCP merge preserves unrelated servers" {
+  let existing =
+    #|{"custom":{"preserved":true},"mcpServers":{"other":{"type":"stdio","command":"/opt/other","args":[]}}}
+  let merged = conductor_claude_project_mcp_config_json(
+    existing, "/opt/choir/bin/choir",
+  ).unwrap()
+  let parsed = @json.parse(merged) catch {
+    _ => fail("merged MCP config is invalid")
+  }
+  guard parsed is Object(root) else {
+    fail("merged MCP config is not an object")
+  }
+  assert_true(root.get("custom") is Some(_))
+  guard root.get("mcpServers") is Some(Object(servers)) else {
+    fail("merged MCP servers are absent")
+  }
+  assert_true(servers.get("other") is Some(_))
+  guard servers.get("choir") is Some(Object(choir)) else {
+    fail("Choir MCP server is absent")
+  }
+  assert_eq(choir.get("command"), Some("/opt/choir/bin/choir".to_json()))
+  assert_true(choir.to_json().stringify().contains("\"--channel\""))
+  assert_true(
+    conductor_claude_project_mcp_config_json(
+      "{\"mcpServers\":[]}", "/opt/choir/bin/choir",
+    )
+    is Err(_),
+  )
 }
 
 ///|

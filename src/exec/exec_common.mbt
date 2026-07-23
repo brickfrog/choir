@@ -21,17 +21,22 @@ pub(all) struct ConductorProcessEnvironment {
 }
 
 ///|
+fn conductor_claude_mcp_server_json(choir_executable : String) -> Json {
+  {
+    "type": "stdio".to_json(),
+    "command": choir_executable.to_json(),
+    "args": [
+      "mcp-stdio", "--name", "root", "--channel", "--stderr-append-log", ".choir/logs/mcp-stdio.stderr.log",
+    ].to_json(),
+    "alwaysLoad": true.to_json(),
+  }.to_json()
+}
+
+///|
 pub fn conductor_claude_mcp_config_json(choir_executable : String) -> String {
   {
     "mcpServers": {
-      "choir": {
-        "type": "stdio".to_json(),
-        "command": choir_executable.to_json(),
-        "args": [
-          "mcp-stdio", "--name", "root", "--channel", "--stderr-append-log", ".choir/logs/mcp-stdio.stderr.log",
-        ].to_json(),
-        "alwaysLoad": true.to_json(),
-      }.to_json(),
+      "choir": conductor_claude_mcp_server_json(choir_executable),
     }.to_json(),
   }
   .to_json()
@@ -39,8 +44,49 @@ pub fn conductor_claude_mcp_config_json(choir_executable : String) -> String {
 }
 
 ///|
+pub fn conductor_claude_project_mcp_config_json(
+  existing : String,
+  choir_executable : String,
+) -> Result[String, @types.ChoirError] {
+  let parsed = if existing.trim() == "" {
+    let empty : Map[String, Json] = Map([])
+    { "mcpServers": empty.to_json() }.to_json()
+  } else {
+    @json.parse(existing) catch {
+      _ =>
+        return Err(
+          @types.ChoirError::validation_error(
+            "project .mcp.json is not valid JSON",
+          ),
+        )
+    }
+  }
+  guard parsed is Object(root) else {
+    return Err(
+      @types.ChoirError::validation_error(
+        "project .mcp.json is not a JSON object",
+      ),
+    )
+  }
+  let servers : Map[String, Json] = match root.get("mcpServers") {
+    Some(Object(value)) => value
+    None => Map([])
+    Some(_) =>
+      return Err(
+        @types.ChoirError::validation_error(
+          "project .mcp.json mcpServers is not an object",
+        ),
+      )
+  }
+  servers.set("choir", conductor_claude_mcp_server_json(choir_executable))
+  root.set("mcpServers", servers.to_json())
+  Ok(root.to_json().stringify(indent=2) + "\n")
+}
+
+///|
 pub fn conductor_claude_settings_json(choir_executable : String) -> String {
   {
+    "enabledMcpjsonServers": ["choir"].to_json(),
     "hooks": {
       "Stop": [
         {
@@ -87,7 +133,7 @@ pub fn conductor_launch_command(
       "--allowedTools",
       conductor_claude_allowed_tools(),
       "--setting-sources",
-      "",
+      "project",
       "--mcp-config",
       conductor_claude_mcp_config_json(choir_executable),
       "--strict-mcp-config",
@@ -95,7 +141,7 @@ pub fn conductor_launch_command(
       project_dir + "/.choir/state/conductor-prompt.md",
       "--settings",
       project_dir + "/.choir/state/claude-settings.json",
-      "--dangerously-load-development-channels",
+      "--channels",
       "server:choir",
       ..lean_args,
     ],

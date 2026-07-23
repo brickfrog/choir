@@ -3072,9 +3072,7 @@ async fn run_conductor_start_live() -> Int {
     conductor_args.contains("mcp__choir__task_get") &&
     conductor_args.contains("--setting-sources") &&
     conductor_args.contains("--strict-mcp-config") &&
-    conductor_args.contains(
-      "--dangerously-load-development-channels server:choir",
-    ) &&
+    conductor_args.contains("--channels server:choir") &&
     conductor_args.contains("\"--channel\"") &&
     conductor_settings.contains("\"Stop\"") &&
     conductor_settings.contains("conductor-stop") &&

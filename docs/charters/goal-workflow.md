@@ -4270,6 +4270,13 @@ host-boundary mechanisms:
   `notifications/claude/channel` events, which wake Claude for the next useful
   turn.
 
+`choir init` registers that server in the repository's ignored `.mcp.json`,
+preserving unrelated entries, and approves only `choir` in the generated
+session settings. The launcher uses Claude's ordinary
+`--channels server:choir` path; it must not use the development-channel bypass.
+The strict inline MCP definition remains the execution source so an ambient
+project server cannot enter the Conductor tool surface.
+
 The worker publishes only after an authoritative execution tick advances, the
 server de-duplicates identical projections, and a reconnected channel receives
 the latest projection. `goal_status` remains an explicit observation tool, not
