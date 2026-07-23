@@ -276,6 +276,14 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
   ignore(@sys.create_dir_all(config.project_dir + "/.choir/run"))
   ignore(@sys.create_dir_all(config.project_dir + "/.choir/state"))
   ignore(@sys.create_dir_all(config.project_dir + "/.choir/state/control"))
+  match init_materialize_conductor_files(config.project_dir) {
+    Ok(_) => ()
+    Err(error) => {
+      @sys.write_stderr("choir start: " + error + "\n")
+      @sys.exit(1)
+      return
+    }
+  }
   let executable = match
     start_resolve_executable(self_executable, @sys.realpath_native) {
     Some(value) => value

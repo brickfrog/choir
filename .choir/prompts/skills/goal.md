@@ -24,14 +24,19 @@ by Choir. Attachment is observational: never imply that it resumes, signals,
 or changes the Take.
 
 If `goal_status` returns an `active_input_request`, explain its typed reason
-and related durable status fields, then tell the user to run
-`choir goal answer <request-id> <answer>` with that exact request ID. The
-model-facing tool surface deliberately cannot answer: never invent an answer
-or use `goal_steer resume` to bypass an active request.
+and related durable status fields. When the user explicitly supplies an
+answer, call `goal_answer` with the exact request ID and copy the user's answer
+without invention or reinterpretation. Never use `goal_steer resume` to bypass
+an active request.
+
+The conversation is the product interface. Never direct the user to run
+`choir goal` CLI commands for status, attachment, steering, cancellation, or
+input answers. Call the corresponding typed tool yourself and explain the
+result in plain language. The CLI is an operator and debugging fallback only.
 
 1. Inspect Beads through Choir's `task_list` and `task_get` tools. Select only existing open work. Include the complete open blocking-dependency closure; never silently omit a dependency or invent an issue.
 2. Read enough repository context to give every selected Part one concrete instruction, one honest mutation declaration, and one registered Moon verification argument list. Use `repository_wide` only when narrower exact paths or path trees would be false. The registered executable is already `moon`: `moon_args` must begin with a Moon subcommand, for example `["test", "--target", "native"]`. Never include `moon` itself.
-3. Assign each Part to `claude` or `codex` based on the work and available subscription-backed surfaces. Provider assignment is a proposal; Choir remains authoritative.
+3. Default each Part to `codex`, whose Take cursor is resumable. Use `claude` only when the user explicitly requests Claude for that Part after being told that Claude Takes are non-resumable and consume Claude subscription allowance. Provider assignment is a proposal; Choir remains authoritative.
 4. Preserve dependency-safe parallelism. Set `maximum_parallel_parts` from the user's instruction or a conservative value derived from declared overlap. Do not claim that concurrency overrides dependencies or mutation conflicts.
    The completion mode is immutable after acceptance. Omit `completion_mode`
    for an ordinary publishable Goal. Use `completion_mode: "evidence_only"`
@@ -41,7 +46,7 @@ or use `goal_steer resume` to bypass an active request.
    the existing typed cancellation path; never use this mode merely to avoid
    publication requirements.
 5. If selection, intended behavior, mutation ownership, or verification remains materially ambiguous, ask the user one concise question before submission.
-6. Call `goal_submit` exactly once with a JSON object containing:
+6. The `goal_submit` input schema is authoritative and exposes the complete structured Goal and Part shape. Never probe `goal_submit` to discover fields and never search source code for its schema. Assemble the complete draft first, then call `goal_submit` exactly once with structured arguments containing:
    - unique `proposal_id` and `goal_id`;
    - optional `completion_mode` plus `evidence_only_binding_digest` exactly as
      described above;
@@ -54,7 +59,7 @@ or use `goal_steer resume` to bypass an active request.
    `{"part_id":"bd-123","instruction":"...","provider":"codex","exact_paths":["src/example.mbt"],"path_trees":[],"repository_wide":false,"moon_args":["test","--target","native"]}`.
    Choir captures the current branch and commit itself. Never guess or submit
    Git refs.
-7. Report Choir's accepted Part IDs and every typed rejection. Never work around rejection by spawning workers or producing missing evidence yourself. Revise and resubmit only after the user resolves a semantic rejection or the source state genuinely changes.
-8. Retain the returned `goal_id`. Use `goal_status` with that ID whenever the user asks what survived, what is running, what is blocked, or what completed. Use `goal_steer` for scheduling-policy changes and `goal_attach` for durable Take events. User-input answers are CLI-only; never encode them through steering or resubmit the accepted selection.
+7. Report Choir's accepted Part IDs and every typed rejection. Never work around rejection by spawning workers or producing missing evidence yourself. Revise and resubmit only after the user resolves a semantic rejection or the source state genuinely changes. Do not give the user a CLI tracking command; tell them that status and controls remain available conversationally.
+8. Retain the returned `goal_id`. Use `goal_status` with that ID whenever the user asks what survived, what is running, what is blocked, or what completed. Use `goal_steer` for scheduling-policy changes, `goal_attach` for durable Take events, `goal_cancel` for cancellation, and `goal_answer` only to relay an answer the user explicitly supplied. Never encode an answer through steering or resubmit the accepted selection.
 
 The Conductor exercises judgment and steering. `choird` is the sole workflow authority and owns dispatch, Takes, receipts, promotion, cancellation, and completion.

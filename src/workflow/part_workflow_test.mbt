@@ -1606,6 +1606,18 @@ test "integrated Parts authorize one immutable Goal branch seal" {
   assert_eq(status.assurance_effect_receipt_count, 6)
   assert_eq(status.goal_verification_receipt_count, 1)
   assert_true(status.goal_audit_receipt_present)
+  assert_eq(
+    status.parts[0].implementation_take_lifecycle,
+    integrated.implementation_take.lifecycle,
+  )
+  assert_eq(
+    status.parts[0].verification_take_lifecycle,
+    integrated.verification_take.lifecycle,
+  )
+  assert_eq(
+    status.parts[0].audit_take_lifecycle,
+    integrated.audit_take.lifecycle,
+  )
   let assured_execution = {
     ..execution,
     state: @workflow.GoalExecutionState::GoalExecutionAssured,

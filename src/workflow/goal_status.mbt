@@ -4,8 +4,14 @@ pub(all) struct GoalPartStatus {
   part_id : @control.PartId
   provider_surface : @control.ProviderSurfaceId
   implementation_take_id : @control.TakeId
+  implementation_take_lifecycle : @control.TakeLifecycle
+  implementation_session_lifecycle : @control.HarnessSessionLifecycle?
   verification_take_id : @control.TakeId
+  verification_take_lifecycle : @control.TakeLifecycle
+  verification_session_lifecycle : @control.HarnessSessionLifecycle?
   audit_take_id : @control.TakeId
+  audit_take_lifecycle : @control.TakeLifecycle
+  audit_session_lifecycle : @control.HarnessSessionLifecycle?
   lifecycle : @control.PartLifecycle
   stage : PartWorkflowStage
   durable_version : Int
@@ -15,6 +21,19 @@ pub(all) struct GoalPartStatus {
   audit_receipt_present : Bool
   integration_receipt_present : Bool
 } derive(Debug, Eq, ToJson, FromJson)
+
+///|
+fn goal_part_session_lifecycle(
+  snapshot : PartWorkflowSnapshot,
+  session_id : @control.HarnessSessionId,
+) -> @control.HarnessSessionLifecycle? {
+  for session in snapshot.harness_sessions {
+    if session.id == session_id {
+      return Some(session.lifecycle)
+    }
+  }
+  None
+}
 
 ///|
 pub(all) struct SemanticDependencyEdge {
@@ -583,8 +602,23 @@ pub fn goal_status_report(
       part_id: snapshot.part.id,
       provider_surface: snapshot.identities.implementation_session.surface,
       implementation_take_id: snapshot.implementation_take.id,
+      implementation_take_lifecycle: snapshot.implementation_take.lifecycle,
+      implementation_session_lifecycle: goal_part_session_lifecycle(
+        snapshot,
+        snapshot.identities.implementation_session.id,
+      ),
       verification_take_id: snapshot.verification_take.id,
+      verification_take_lifecycle: snapshot.verification_take.lifecycle,
+      verification_session_lifecycle: goal_part_session_lifecycle(
+        snapshot,
+        snapshot.identities.verification_session.id,
+      ),
       audit_take_id: snapshot.audit_take.id,
+      audit_take_lifecycle: snapshot.audit_take.lifecycle,
+      audit_session_lifecycle: goal_part_session_lifecycle(
+        snapshot,
+        snapshot.identities.audit_session.id,
+      ),
       lifecycle: snapshot.part.lifecycle,
       stage: snapshot.stage,
       durable_version: snapshot.durable_version,

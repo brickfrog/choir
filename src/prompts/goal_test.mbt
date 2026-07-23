@@ -7,7 +7,15 @@ test "Goal prompt falls back to the current Conductor contract" {
   })
   assert_true(body.has_prefix("---\nname: goal\n"))
   assert_true(body.contains("complete open blocking-dependency closure"))
-  assert_true(body.contains("Call `goal_submit` exactly once"))
+  assert_true(body.contains("call `goal_submit` exactly once"))
+  assert_true(body.contains("Never probe `goal_submit`"))
+  assert_true(body.contains("Default each Part to `codex`"))
+  assert_true(
+    body.contains("Use `claude` only when the user explicitly requests"),
+  )
+  assert_true(body.contains("The conversation is the product interface"))
+  assert_true(body.contains("call `goal_answer`"))
+  assert_false(body.contains("User-input answers are CLI-only"))
   assert_true(body.contains("The completion mode is immutable"))
   assert_true(body.contains("`evidence_only_binding_digest`"))
   assert_true(

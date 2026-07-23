@@ -60,7 +60,12 @@ needed, then invoke `/goal`. The Conductor proposes the selected Parts and
 their contracts; Choir validates and schedules them according to dependencies,
 mutation overlap, available provider capacity, and the requested concurrency.
 
-Useful commands:
+Goal operation is conversational: ask the Conductor to show status, pause,
+resume, change concurrency, attach a Take, cancel, or relay your explicit
+answer to an input request. You should not need to leave the Conductor to run
+the corresponding CLI command.
+
+The CLI mirrors remain available for automation and recovery:
 
 ```bash
 choir start --conductor claude

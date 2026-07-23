@@ -110,10 +110,10 @@ unconnected product path usable.
   verification, and independent Goal audit all passed. The Goal then paused
   with typed reason `GoalInputPublicationRemoteUnavailable`, as required for
   the disposable repository with no configured remote. A subsequent installed
-  Claude status turn saw the nine-tool catalog, reported the exact active
-  request and `choir goal answer <request-id> <answer>` command, and explicitly
-  stated that it could not answer on the Goal's behalf. The durable input-answer
-  count remained unchanged.
+  Claude status turn reported the exact active request without inventing an
+  answer. The Conductor catalog now includes `goal_answer`, so after the user
+  explicitly answers in conversation the Conductor relays those exact bytes to
+  the durable request without requiring a separate CLI turn.
 - Sealed Moon verification now stages the offline registry into a private
   writable Moon home and maps `.mooncakes` to scratch while the candidate tree
   remains read-only. Choir removes that generated cache link before every
@@ -168,7 +168,9 @@ unconnected product path usable.
 - `choir init` now scaffolds only the current project files, starts the local
   daemon without a terminal multiplexer, bootstraps one authenticated
   Conductor, and runs it in the invoking terminal. `choir start` reconnects the
-  same direct launch path. Claude remains the default; selecting
+  same direct launch path and rematerializes the generated Conductor files from
+  the current Goal prompt before launch, so a repaired installed build cannot
+  silently reuse an obsolete `/goal` contract. Claude remains the default; selecting
   `--conductor codex` starts a persistent Codex subscription thread through
   `codex exec` and resumes that exact thread on later turns. The UDS is
   owner-only, the one-time Conductor bootstrap
@@ -180,7 +182,7 @@ unconnected product path usable.
   catalog. Codex starts from a sterile working root, ignores user configuration
   and repository rules, disables native execution, network, delegation,
   plugins, apps, hooks, memories, and browser surfaces, and admits only the
-  same nine model-facing Choir tools. Its one-time Choir capability remains environment-only;
+  same ten model-facing Choir tools. Its one-time Choir capability remains environment-only;
   the exact MCP child recovers only the fixed socket and capability names from
   its direct Codex parent when Codex filters the child environment. A live
   isolated process probe proves project initialization, authenticated Goal
@@ -225,17 +227,19 @@ unconnected product path usable.
   environment.
 - The Conductor MCP initialization and catalog now describe only the current
   product. Claude receives the Conductor/Goal/Part/Take authority boundary and
-  exactly nine typed Goal and Beads tools; old spawn, pane, worker, PR, and
-  server-reload commands are absent. Structured arguments remain JSON through
-  dispatch, while the removed stringified-argument format is rejected. The MCP
-  package no longer imports the old tool registry.
+  exactly ten typed Goal and Beads tools; old spawn, pane, worker, PR, and
+  server-reload commands are absent. `goal_submit` exposes the complete typed
+  Goal and Part object schema directly; structured arguments remain JSON
+  through dispatch, while the removed opaque `draft_json` wrapper is rejected.
+  The MCP package no longer imports the old tool registry.
 - Authenticated Conductor tool calls now bypass the v1 tool dispatcher. The UDS
   binds the exact root identity, removes caller-supplied identity fields, and
-  routes the nine-tool surface directly to the native Goal and Beads adapter;
+  routes the ten-tool surface directly to the native Goal and Beads adapter;
   any other registered session and any unbound request fail closed. Goal
   submission, status, cancellation, steering, and attachment use the durable
-  native stores. User input answers remain available only through the human-run
-  `choir goal answer` CLI. Task list/get/create/update use typed `bd` commands
+  native stores. `goal_answer` lets the Conductor relay only an answer the user
+  explicitly supplied in conversation; it cannot invent an answer or bypass
+  the durable input request. Task list/get/create/update use typed `bd` commands
   through one injected execution capability, normalize Beads states to the
   public `todo`/`in_progress`/`done` domain, and remain hermetic under tests.
   Root bootstrap and registration now use a minimal Conductor server state that
@@ -888,8 +892,9 @@ unconnected product path usable.
   tool.
   Given a Goal ID, it reloads the authoritative execution record and every
   bound Part snapshot, validates their identities, and returns typed Goal and
-  Part lifecycle state, provider surface, workflow stage, durable version, and
-  receipt cardinalities. It also returns the durable Goal-assurance stage and
+  Part lifecycle state, provider surface, workflow stage, durable version,
+  current Take and harness-session lifecycles, and receipt cardinalities. It
+  also returns the durable Goal-assurance stage and
   immutable branch seal when present, plus the Goal-level sandbox, harness,
   effect-receipt, verification-receipt, and audit-receipt cardinalities. The
   response also exposes the branch-publication state, canonical remote
@@ -908,11 +913,12 @@ unconnected product path usable.
   and gap-checked event journal for one Take. The path reloads state by Take ID
   after restart and is strictly observational.
 - Finalization outcomes that need a person now create one durable typed input
-  request and pause the Goal. `choir goal answer` binds the user's answer to
+  request and pause the Goal. `goal_answer` (or its optional CLI mirror,
+  `choir goal answer`) binds the user's explicit answer to
   that exact request as an immutable artifact, replays the same answer safely
   after restart, rejects conflicting answers, and resumes only the captured
-  state. `goal_answer` is deliberately absent from the model-facing MCP
-  catalog, so a Conductor can report the request but cannot satisfy it.
+  state. The model-facing tool is a relay for the user's answer, not independent
+  authority to satisfy a request.
   Ordinary resume steering cannot bypass an active request.
   An assured Goal whose repository has no `origin` now follows this path with
   the exact `GoalInputPublicationRemoteUnavailable` reason. It creates no
@@ -3600,7 +3606,7 @@ implemented; their exact live MCP/event path and complete BoxLite Part fixture
 pass. One Claude and one Codex Part now also complete in the same durable Goal:
 provider execution overlaps, while promotion remains serialized and
 provider-private state does not enter scheduling or gates. The Codex Conductor
-bridge is now implemented with the same exact nine-tool Goal surface, a
+bridge is now implemented with the same exact ten-tool Goal surface, a
 subscription-backed persistent thread, and fail-closed native-tool event
 validation. A live isolated probe now proves Claude and Codex independently
 reconnect to one durable paused Goal through the same daemon and observe the

@@ -118,7 +118,81 @@ test "Claude driver rejects a failed declared MCP tool result" {
   })
   assert_true(result is Err(_))
   guard result is Err(error) else { fail("failed tool result was accepted") }
-  assert_true(error.message().contains("declared MCP tool call failed"))
+  assert_true(error.message().contains("every declared MCP tool call failed"))
+  assert_true(error.is_provider_protocol_violation())
+}
+
+///|
+test "Claude driver accepts a failed sandbox call followed by recovery" {
+  let tools = ["mcp__choir_sandbox__execute"]
+  let digest = @harness.claude_effective_surface_manifest_digest(
+    claude_driver_manifest([..tools, "StructuredOutput"]),
+  )
+  let started = @harness.start_claude_harness_session(
+    claude_driver_session(digest),
+  ).unwrap()
+  let output = claude_driver_output("mcp__choir_sandbox__execute")
+    .replace(
+      old="\"tool_use_id\":\"tool-1\",\"content\":\"ok\"",
+      new="\"tool_use_id\":\"tool-1\",\"content\":\"recoverable\",\"is_error\":true",
+    )
+    .replace(
+      old=(
+        #|{"type":"assistant","message":{"model":"claude-opus-4-8","content":[{"type":"tool_use","id":"tool-2","name":"StructuredOutput"}]}}
+      ),
+      new=(
+        #|{"type":"assistant","message":{"model":"claude-opus-4-8","content":[{"type":"tool_use","id":"tool-retry","name":"mcp__choir_sandbox__execute"}]}}
+        #|{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tool-retry","content":"ok"}]}}
+        #|{"type":"assistant","message":{"model":"claude-opus-4-8","content":[{"type":"tool_use","id":"tool-2","name":"StructuredOutput"}]}}
+      ),
+    )
+  let result = @harness.evaluate_claude_driver_capture({
+    session: started,
+    role: @harness.ClaudeTakeRole::ClaudeImplementationTake,
+    allowed_tools: tools,
+    expected_mcp_server: "choir_sandbox",
+    capture: { exit_code: 0, output, started_at: 10L, finished_at: 20L },
+  }).unwrap()
+  assert_true(
+    result.events.any(fn(event) {
+      event.kind ==
+      @control.HarnessEventKind::HarnessToolFinished(
+        "tool-1",
+        @control.HarnessToolDisposition::HarnessToolFailed,
+      )
+    }),
+  )
+  assert_true(
+    result.events.any(fn(event) {
+      event.kind ==
+      @control.HarnessEventKind::HarnessToolFinished(
+        "tool-retry",
+        @control.HarnessToolDisposition::HarnessToolSucceeded,
+      )
+    }),
+  )
+}
+
+///|
+test "Claude driver classifies a nonzero provider exit as process loss" {
+  let tools = ["mcp__choir_sandbox__execute"]
+  let digest = @harness.claude_effective_surface_manifest_digest(
+    claude_driver_manifest([..tools, "StructuredOutput"]),
+  )
+  let started = @harness.start_claude_harness_session(
+    claude_driver_session(digest),
+  ).unwrap()
+  let result = @harness.evaluate_claude_driver_capture({
+    session: started,
+    role: @harness.ClaudeTakeRole::ClaudeImplementationTake,
+    allowed_tools: tools,
+    expected_mcp_server: "choir_sandbox",
+    capture: { exit_code: 1, output: "", started_at: 10L, finished_at: 20L },
+  })
+  match result {
+    Err(error) => assert_true(error.is_provider_process_lost())
+    Ok(_) => fail("nonzero Claude exit was accepted")
+  }
 }
 
 ///|

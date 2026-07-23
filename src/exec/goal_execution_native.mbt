@@ -510,6 +510,41 @@ fn native_goal_runtime_root(
 }
 
 ///|
+fn native_existing_sandbox_generation(
+  runtime_root : String,
+  generations : Array[@control.SandboxGenerationId],
+  path_exists : (String) -> Bool,
+) -> @control.SandboxGenerationId? {
+  for generation_id in generations {
+    if valid_native_effect_token(generation_id.0) &&
+      path_exists(
+        runtime_root + "/state/sandboxes/" + generation_id.0 + ".json",
+      ) {
+      return Some(generation_id)
+    }
+  }
+  None
+}
+
+///|
+test "Goal runtime recovery selects an exact durable sandbox manifest" {
+  let observed : Array[String] = []
+  let existing = native_existing_sandbox_generation(
+    "/tmp/choir-take-goal-test",
+    [
+      @control.SandboxGenerationId("generation-1"),
+      @control.SandboxGenerationId("generation-2"),
+    ],
+    fn(path) {
+      observed.push(path)
+      path.has_suffix("/generation-2.json")
+    },
+  )
+  assert_eq(existing, Some(@control.SandboxGenerationId("generation-2")))
+  assert_eq(observed.length(), 2)
+}
+
+///|
 fn native_goal_boxlite_server_config(
   record : @workflow.GoalExecutionRecord,
 ) -> Result[NativeBoxLiteServerConfig, @types.ChoirError] {
@@ -1261,13 +1296,31 @@ async fn execute_native_goal_record(
     record.repository_id,
     record.goal.id,
   )
-  if !@sys.create_dir_all(runtime_root) ||
-    @sys.realpath_native(runtime_root) != Some(runtime_root) {
-    return Err(native_goal_execution_error("runtime root is unavailable"))
+  let runtime_preexisted = @sys.path_exists(runtime_root)
+  let generations : Array[@control.SandboxGenerationId] = []
+  for snapshot in snapshots {
+    for lease in snapshot.sandbox_leases {
+      if !generations.contains(lease.generation_id) {
+        generations.push(lease.generation_id)
+      }
+    }
   }
+  let existing_generation = native_existing_sandbox_generation(
+    runtime_root, generations, @sys.path_exists,
+  )
   let server_config = match native_goal_boxlite_server_config(record) {
     Ok(value) => value
     Err(error) => return Err(error)
+  }
+  if runtime_preexisted && existing_generation is None {
+    match cleanup_native_boxlite_runtime(server_config) {
+      Ok(_) => ()
+      Err(error) => return Err(error)
+    }
+  }
+  if !@sys.create_dir_all(runtime_root) ||
+    @sys.realpath_native(runtime_root) != Some(runtime_root) {
+    return Err(native_goal_execution_error("runtime root is unavailable"))
   }
   let moon_home = match @sys.getenv("CHOIR_MOON_HOME") {
     Some(value) => value
@@ -1289,17 +1342,21 @@ async fn execute_native_goal_record(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let prepared = match
-    prepare_native_boxlite_environment(
-      server,
-      moon_home,
-      "choir-base-goal-" + runtime_key,
-    ) {
-    Ok(value) => value
-    Err(error) => {
-      ignore(cleanup_native_boxlite_server(server))
-      return Err(error)
-    }
+  let (active_server, initial_prepared) = match existing_generation {
+    Some(_) => (server, None)
+    None =>
+      match
+        prepare_native_boxlite_environment(
+          server,
+          moon_home,
+          "choir-base-goal-" + runtime_key,
+        ) {
+        Ok(value) => (value.server, Some(value))
+        Err(error) => {
+          ignore(cleanup_native_boxlite_server(server))
+          return Err(error)
+        }
+      }
   }
   let clock = @ref.new(100000L)
   let now = fn() {
@@ -1326,7 +1383,10 @@ async fn execute_native_goal_record(
     let surface = snapshot.identities.implementation_session.surface
     if snapshot.identities.verification_session.surface != surface ||
       snapshot.identities.audit_session.surface != surface {
-      ignore(cleanup_native_boxlite_server(prepared.server))
+      match existing_generation {
+        Some(_) => stop_native_boxlite_server(active_server)
+        None => ignore(cleanup_native_boxlite_server(active_server))
+      }
       return Err(
         native_goal_execution_error("Part provider assignment drifted"),
       )
@@ -1335,7 +1395,7 @@ async fn execute_native_goal_record(
       create_native_part_effect_runtime(
         native_part_runtime_config_for_paths(
           repository,
-          prepared.server,
+          active_server,
           git.root,
           git.git_directory,
           git.object_directory,
@@ -1349,11 +1409,13 @@ async fn execute_native_goal_record(
       ) {
       Ok(value) => value
       Err(error) => {
-        ignore(cleanup_native_boxlite_server(prepared.server))
+        match existing_generation {
+          Some(_) => stop_native_boxlite_server(active_server)
+          None => ignore(cleanup_native_boxlite_server(active_server))
+        }
         return Err(error)
       }
     }
-    runtime.prepared.val = Some(prepared)
     parts.push({
       snapshot,
       runtime,
@@ -1364,6 +1426,36 @@ async fn execute_native_goal_record(
       },
       surface,
     })
+  }
+  if parts.length() == 0 {
+    match existing_generation {
+      Some(_) => stop_native_boxlite_server(active_server)
+      None => ignore(cleanup_native_boxlite_server(active_server))
+    }
+    return Err(native_goal_execution_error("Goal has no Part runtimes"))
+  }
+  let prepared = match initial_prepared {
+    Some(value) => value
+    None =>
+      match existing_generation {
+        Some(generation_id) =>
+          match native_runtime_sandbox(parts[0].runtime, generation_id) {
+            Ok(value) => value.prepared
+            Err(error) => {
+              stop_native_boxlite_server(active_server)
+              return Err(error)
+            }
+          }
+        None => {
+          stop_native_boxlite_server(active_server)
+          return Err(
+            native_goal_execution_error("Goal runtime preparation is absent"),
+          )
+        }
+      }
+  }
+  for part in parts {
+    part.runtime.prepared.val = Some(prepared)
   }
   let integration : NativeGitIntegrationConfig = {
     repository_root: git.root,

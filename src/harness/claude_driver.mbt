@@ -232,7 +232,7 @@ fn validate_claude_tool_trace(
   let open : Map[String, String] = Map([])
   let mut starts = 0
   let mut sandbox_starts = 0
-  let mut failed = 0
+  let mut successful_sandbox_finishes = 0
   for event in events {
     match event {
       ClaudeToolStarted(id, name) => {
@@ -249,8 +249,9 @@ fn validate_claude_tool_trace(
         if id == "" || !open.contains(id) {
           return Err(claude_driver_error("unmatched tool result"))
         } else {
-          if is_error {
-            failed = failed + 1
+          let tool = open[id]
+          if !is_error && required_sandbox_tools.contains(tool) {
+            successful_sandbox_finishes = successful_sandbox_finishes + 1
           }
           open.remove(id)
         }
@@ -259,8 +260,8 @@ fn validate_claude_tool_trace(
   if starts == 0 || sandbox_starts == 0 || open.length() != 0 {
     return Err(claude_driver_error("tool trace is absent or unbalanced"))
   }
-  if failed > 0 {
-    return Err(claude_driver_error("declared MCP tool call failed"))
+  if successful_sandbox_finishes == 0 {
+    return Err(claude_driver_error("every declared MCP tool call failed"))
   }
   Ok(())
 }
@@ -441,8 +442,15 @@ pub fn start_claude_harness_session(
 pub fn evaluate_claude_driver_capture(
   request : ClaudeDriverEvaluationRequest,
 ) -> Result[ClaudeDriverResult, @types.ChoirError] {
-  if request.capture.exit_code != 0 ||
-    request.capture.started_at <= 0L ||
+  if request.capture.exit_code != 0 {
+    return Err(
+      @types.ChoirError::provider_process_lost(
+        "provider process exited with status " +
+        request.capture.exit_code.to_string(),
+      ),
+    )
+  }
+  if request.capture.started_at <= 0L ||
     request.capture.finished_at < request.capture.started_at ||
     request.expected_mcp_server == "" {
     return Err(claude_driver_error("process capture is incomplete"))
@@ -484,12 +492,18 @@ pub fn evaluate_claude_driver_capture(
   match
     validate_claude_tool_trace(tool_trace, visible_tools, request.allowed_tools) {
     Ok(_) => ()
-    Err(error) => return Err(error)
+    Err(error) =>
+      return Err(
+        @types.ChoirError::provider_protocol_violation(error.message()),
+      )
   }
   let (outcome, terminal_response) = match
     validate_claude_take_response(request.role, response) {
     Ok(value) => value
-    Err(error) => return Err(error)
+    Err(error) =>
+      return Err(
+        @types.ChoirError::provider_protocol_violation(error.message()),
+      )
   }
   let events : Array[@control.HarnessEventEnvelope] = []
   let mut session = request.session
@@ -513,10 +527,14 @@ pub fn evaluate_claude_driver_capture(
     let kind = match observed {
       ClaudeToolStarted(id, _) =>
         @control.HarnessEventKind::HarnessToolStarted(id)
-      ClaudeToolFinished(id, _) =>
+      ClaudeToolFinished(id, is_error) =>
         @control.HarnessEventKind::HarnessToolFinished(
           id,
-          @control.HarnessToolDisposition::HarnessToolSucceeded,
+          if is_error {
+            @control.HarnessToolDisposition::HarnessToolFailed
+          } else {
+            @control.HarnessToolDisposition::HarnessToolSucceeded
+          },
         )
     }
     session = match

@@ -762,15 +762,48 @@ async fn dispatch_native_task_update(
 }
 
 ///|
+fn native_conductor_goal_draft_json(request : @types.Request) -> String {
+  request.args.to_json_map().to_json().stringify(indent=0)
+}
+
+///|
+test "native Conductor preserves structured Goal submission arguments" {
+  let part : Json = {
+    "part_id": "bead-1".to_json(),
+    "instruction": "implement the contract".to_json(),
+    "provider": "codex".to_json(),
+    "exact_paths": ["README.md"].to_json(),
+    "path_trees": ([] : Array[String]).to_json(),
+    "repository_wide": false.to_json(),
+    "moon_args": ["test", "--target", "native"].to_json(),
+  }.to_json()
+  let request : @types.Request = {
+    req_method: "tools/call",
+    name: "goal_submit",
+    args: @types.RequestArgs::from_values({
+      "proposal_id": "proposal-1".to_json(),
+      "goal_id": "goal-1".to_json(),
+      "maximum_parallel_parts": (1).to_json(),
+      "parts": [part].to_json(),
+    }),
+  }
+  let draft = @workflow.decode_conductor_goal_draft(
+    native_conductor_goal_draft_json(request),
+  ).unwrap()
+  assert_eq(draft.goal_id, @control.GoalId("goal-1"))
+  assert_eq(draft.parts[0].part_id, @control.PartId("bead-1"))
+  assert_eq(draft.parts[0].verification.arguments, [
+    "test", "--target", "native",
+  ])
+}
+
+///|
 async fn dispatch_native_goal_submit(
   project_dir : String,
   request : @types.Request,
   capture : async (Command) -> (Int, String),
 ) -> @types.Response {
-  let draft = match native_conductor_required_string(request, "draft_json") {
-    Ok(value) => value
-    Err(error) => return @types.Response::Err(error.message())
-  }
+  let draft = native_conductor_goal_draft_json(request)
   match submit_native_conductor_goal_draft(project_dir, draft, capture) {
     Ok(report) => native_conductor_ok_json(report.to_json())
     Err(error) => @types.Response::Err(error.message())

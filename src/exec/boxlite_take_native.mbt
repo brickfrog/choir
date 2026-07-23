@@ -134,6 +134,51 @@ fn native_boxlite_environment(
 }
 
 ///|
+fn kill_native_boxlite_child(pid : Int) -> Unit {
+  @sys.kill_server_pid_sequence_best_effort(pid)
+}
+
+///|
+async fn wait_native_boxlite_child(pid : Int) -> Unit {
+  ignore(@process.wait_pid(pid) catch { _ => -1 })
+}
+
+///|
+async fn stop_and_reap_native_boxlite_child(
+  pid : Int,
+  kill? : (Int) -> Unit = kill_native_boxlite_child,
+  wait? : async (Int) -> Unit = wait_native_boxlite_child,
+) -> Unit {
+  if pid > 1 {
+    kill(pid)
+    wait(pid)
+  }
+}
+
+///|
+async test "BoxLite child shutdown kills before reaping the exact child" {
+  let events : Array[String] = []
+  stop_and_reap_native_boxlite_child(
+    42,
+    kill=fn(pid) { events.push("kill:" + pid.to_string()) },
+    wait=async fn(pid) {
+      @async.sleep(0)
+      events.push("wait:" + pid.to_string())
+    },
+  )
+  assert_eq(events, ["kill:42", "wait:42"])
+  stop_and_reap_native_boxlite_child(
+    1,
+    kill=fn(_) { events.push("invalid-kill") },
+    wait=async fn(_) {
+      @async.sleep(0)
+      events.push("invalid-wait")
+    },
+  )
+  assert_eq(events, ["kill:42", "wait:42"])
+}
+
+///|
 fn native_boxlite_remote_client_home(
   server : NativeBoxLiteServerHandle,
   discriminator : String,
@@ -357,14 +402,14 @@ pub async fn start_native_boxlite_server(
   if !@sys.create_dir_all(owner_socket_root) ||
     !@sys.chmod_mode(owner_socket_root, 0o700) ||
     @sys.realpath_native(owner_socket_root) != Some(owner_socket_root) {
-    @sys.kill_server_pid_sequence_best_effort(pid)
+    stop_and_reap_native_boxlite_child(pid)
     return Err(native_boxlite_take_error("runtime owner socket root failed"))
   }
   let owner_socket = owner_socket_root + "/owner.sock"
   let owner_token = match @sys.mint_local_token() {
     Some(value) if value.length() == 64 => value
     _ => {
-      @sys.kill_server_pid_sequence_best_effort(pid)
+      stop_and_reap_native_boxlite_child(pid)
       return Err(
         native_boxlite_take_error("runtime owner capability mint failed"),
       )
@@ -390,7 +435,7 @@ pub async fn start_native_boxlite_server(
       ) {
       Ok(value) => value
       Err(error) => {
-        @sys.kill_server_pid_sequence_best_effort(pid)
+        stop_and_reap_native_boxlite_child(pid)
         return Err(error)
       }
     }
@@ -400,7 +445,7 @@ pub async fn start_native_boxlite_server(
       let node = match resolve_executable_in_path("node") {
         Some(value) => value
         None => {
-          @sys.kill_server_pid_sequence_best_effort(pid)
+          stop_and_reap_native_boxlite_child(pid)
           return Err(
             native_boxlite_take_error("runtime owner node is unavailable"),
           )
@@ -410,7 +455,7 @@ pub async fn start_native_boxlite_server(
         resolve_native_runtime_asset(ChoirRuntimeAsset::ChoirBoxLiteOwner) {
         Some(value) => value
         None => {
-          @sys.kill_server_pid_sequence_best_effort(pid)
+          stop_and_reap_native_boxlite_child(pid)
           return Err(
             native_boxlite_take_error("runtime owner script is unavailable"),
           )
@@ -442,7 +487,7 @@ pub async fn start_native_boxlite_server(
         cwd=config.root,
       ) catch {
         _ => {
-          @sys.kill_server_pid_sequence_best_effort(pid)
+          stop_and_reap_native_boxlite_child(pid)
           return Err(native_boxlite_take_error("runtime owner failed to start"))
         }
       }
@@ -454,8 +499,8 @@ pub async fn start_native_boxlite_server(
         }
         @async.sleep(20)
       }
-      @sys.kill_server_pid_sequence_best_effort(owner_pid)
-      @sys.kill_server_pid_sequence_best_effort(pid)
+      stop_and_reap_native_boxlite_child(owner_pid)
+      stop_and_reap_native_boxlite_child(pid)
       let detail = @sys.read_file(config.root + "/server-home/owner.log")
         .trim()
         .to_owned()
@@ -471,16 +516,16 @@ pub async fn start_native_boxlite_server(
     }
     @async.sleep(100)
   }
-  @sys.kill_server_pid_sequence_best_effort(pid)
+  stop_and_reap_native_boxlite_child(pid)
   Err(@types.ChoirError::timeout("BoxLite Take server readiness"))
 }
 
 ///|
-pub fn stop_native_boxlite_server(server : NativeBoxLiteServerHandle) -> Unit {
-  if server.owner_pid > 1 {
-    @sys.kill_server_pid_sequence_best_effort(server.owner_pid)
-  }
-  @sys.kill_server_pid_sequence_best_effort(server.pid)
+pub async fn stop_native_boxlite_server(
+  server : NativeBoxLiteServerHandle,
+) -> Unit {
+  stop_and_reap_native_boxlite_child(server.owner_pid)
+  stop_and_reap_native_boxlite_child(server.pid)
 }
 
 ///|
