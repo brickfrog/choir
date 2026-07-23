@@ -8,6 +8,9 @@ workflow architecture:
 - [Migration workflow](migration-workflow.md) extends that model for bounded,
   repeatable repository migrations. Its first two delivery slices are
   implemented; later slices remain staged work.
+- [macOS Apple Silicon host port](macos-host-port.md) defines the deferred
+  host-adapter and qualification work required to run Choir natively on an M2
+  or later Mac without weakening the Linux authority or isolation contracts.
 
 The charters explain architectural intent and acceptance boundaries. Current
 source code, schemas, and passing conformance tests remain the authority for
