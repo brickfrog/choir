@@ -229,10 +229,11 @@ test "start replaces only a recorded daemon from an older executable" {
 }
 
 ///|
-fn start_ensure_daemon(
+async fn start_ensure_daemon(
   socket_path : String,
   self_executable : String,
   server_pid_path : String,
+  prepare_control_state : async () -> Result[Unit, String],
 ) -> Result[Unit, String] {
   let existing = @uds.client_connect(socket_path)
   if existing >= 0 {
@@ -258,6 +259,10 @@ fn start_ensure_daemon(
       StartDaemonUntrusted =>
         return Err("existing choird identity could not be verified")
     }
+  }
+  match prepare_control_state() {
+    Ok(_) => ()
+    Err(error) => return Err(error)
   }
   if !@sys.spawn_serve(self_executable) {
     return Err("failed to start choird")
@@ -383,32 +388,48 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
       return
     }
   }
-  match
-    start_ensure_daemon(
-      config.listen_uds,
-      executable,
-      config.project_dir + "/.choir/run/server.pid",
-    ) {
-    Ok(_) => ()
-    Err(error) => {
-      @sys.write_stderr("choir start: " + error + "\n")
-      @sys.exit(1)
-      return
-    }
-  }
-  match start_bootstrap_conductor(config.listen_uds, token) {
-    Ok(_) => ()
-    Err(error) => {
-      @sys.write_stderr("choir start: " + error + "\n")
-      @sys.exit(1)
-      return
-    }
-  }
   @async.run_async_main(async fn() {
     match @exec.validate_native_beads_cli() {
       Ok(_) => ()
       Err(error) => {
         @sys.write_stderr("choir start: " + error.message() + "\n")
+        @sys.exit(1)
+        return
+      }
+    }
+    match
+      start_ensure_daemon(
+        config.listen_uds,
+        executable,
+        config.project_dir + "/.choir/run/server.pid",
+        async fn() {
+          match @exec.prepare_native_goal_control_state(config.project_dir) {
+            Ok(
+              @exec.NativeGoalControlStatePreparation::NativeGoalControlStateReset(
+                report
+              )
+            ) => {
+              @sys.write_stdout(
+                "Choir reset stale control state and released \{report.source_claims_released} Bead claim(s).\n",
+              )
+              Ok(())
+            }
+            Ok(_) => Ok(())
+            Err(error) => Err(error.message())
+          }
+        },
+      ) {
+      Ok(_) => ()
+      Err(error) => {
+        @sys.write_stderr("choir start: " + error + "\n")
+        @sys.exit(1)
+        return
+      }
+    }
+    match start_bootstrap_conductor(config.listen_uds, token) {
+      Ok(_) => ()
+      Err(error) => {
+        @sys.write_stderr("choir start: " + error + "\n")
         @sys.exit(1)
         return
       }

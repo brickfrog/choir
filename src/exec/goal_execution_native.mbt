@@ -12,6 +12,30 @@ pub(all) struct NativeGoalPurgeReport {
 } derive(Debug, Eq)
 
 ///|
+pub(all) struct NativeGoalControlStateResetReport {
+  source_claims_released : Int
+  runtime_roots_removed : Int
+  git_refs_removed : Int
+} derive(Debug, Eq)
+
+///|
+pub(all) enum NativeGoalControlStatePreparation {
+  NativeGoalControlStateCurrent
+  NativeGoalControlStateInitialized
+  NativeGoalControlStateReset(NativeGoalControlStateResetReport)
+} derive(Debug, Eq)
+
+///|
+priv struct NativeOrphanedGoalSourceClaim {
+  part_id : @control.PartId
+  claimant : String
+  goal_id : @control.GoalId
+}
+
+///|
+let native_goal_control_state_generation : String = "choir-control-state-v2"
+
+///|
 priv struct NativeGoalPartRuntime {
   snapshot : @workflow.PartWorkflowSnapshot
   runtime : NativePartEffectRuntime
@@ -529,6 +553,23 @@ fn native_goal_runtime_root(
 }
 
 ///|
+fn native_goal_repository_id(
+  project_dir : String,
+) -> Result[@workflow.RepositoryId, @types.ChoirError] {
+  let root = match @sys.realpath_native(project_dir) {
+    Some(value) => value
+    None =>
+      return Err(native_goal_execution_error("repository is not canonical"))
+  }
+  Ok(
+    @workflow.RepositoryId(
+      "sha256:" +
+      @storage.artifact_digest(@utf8.encode("choir.repository.v1\u{00}" + root)).0,
+    ),
+  )
+}
+
+///|
 fn native_existing_sandbox_generation(
   runtime_root : String,
   generations : Array[@control.SandboxGenerationId],
@@ -592,18 +633,33 @@ fn native_goal_boxlite_server_config(
 async fn cleanup_native_goal_runtime(
   record : @workflow.GoalExecutionRecord,
 ) -> Result[Unit, @types.ChoirError] {
-  let runtime_root = native_goal_runtime_root(
-    record.repository_id,
-    record.goal.id,
-  )
+  cleanup_native_goal_runtime_identity(record.repository_id, record.goal.id)
+}
+
+///|
+async fn cleanup_native_goal_runtime_identity(
+  repository_id : @workflow.RepositoryId,
+  goal_id : @control.GoalId,
+) -> Result[Unit, @types.ChoirError] {
+  let runtime_root = native_goal_runtime_root(repository_id, goal_id)
   if !@sys.path_exists(runtime_root) {
     return Ok(())
   }
-  let config = match native_goal_boxlite_server_config(record) {
+  let binary = match native_boxlite_binary_path() {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  cleanup_native_boxlite_runtime(config)
+  let runtime_dir = match native_boxlite_runtime_dir() {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  cleanup_native_boxlite_runtime({
+    binary,
+    runtime_dir,
+    root: runtime_root,
+    port: 40000 + @sys.get_pid() % 10000,
+    api_key: "choir-goal-" + native_goal_runtime_key(repository_id, goal_id),
+  })
 }
 
 ///|
@@ -3517,6 +3573,286 @@ async fn delete_native_goal_owned_git_ref(
   } else {
     Err(native_goal_execution_error("owned Git ref changed during purge"))
   }
+}
+
+///|
+async fn inspect_native_orphaned_goal_source_claims(
+  project_dir : String,
+  capture : async (Command) -> (Int, String),
+) -> Result[Array[NativeOrphanedGoalSourceClaim], @types.ChoirError] {
+  let output = match
+    native_conductor_capture_beads(
+      project_dir,
+      "list",
+      ["list", "--json", "--all", "--readonly"],
+      capture,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let tasks = match native_conductor_tasks_from_output(output) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let claims : Array[NativeOrphanedGoalSourceClaim] = []
+  for task in tasks {
+    if task.status != @types.TaskStatus::InProgress ||
+      !task.assignee.has_prefix("choir:") {
+      continue
+    }
+    let goal_id = task.assignee["choir:".length():].to_owned()
+    if goal_id == "" || goal_id.contains("\u{00}") {
+      return Err(
+        native_goal_execution_error("orphaned Bead claim identity is invalid"),
+      )
+    }
+    claims.push({
+      part_id: @control.PartId(task.id),
+      claimant: task.assignee,
+      goal_id: @control.GoalId(goal_id),
+    })
+  }
+  Ok(claims)
+}
+
+///|
+async fn release_native_orphaned_goal_source_claims(
+  project_dir : String,
+  claims : Array[NativeOrphanedGoalSourceClaim],
+  capture : async (Command) -> (Int, String),
+) -> Result[Int, @types.ChoirError] {
+  let mut released = 0
+  for claim in claims {
+    let output = match
+      native_conductor_capture_beads(
+        project_dir,
+        "release",
+        [
+          "update",
+          claim.part_id.0,
+          "--status",
+          "open",
+          "--assignee",
+          "",
+          "--actor",
+          claim.claimant,
+          "--json",
+        ],
+        capture,
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    let task = match native_conductor_tasks_from_output(output) {
+      Ok([value]) => value
+      Ok(_) =>
+        return Err(
+          native_goal_execution_error(
+            "Beads returned an ambiguous orphaned claim release",
+          ),
+        )
+      Err(error) => return Err(error)
+    }
+    if task.id != claim.part_id.0 ||
+      task.status != @types.TaskStatus::Todo ||
+      task.assignee != "" {
+      return Err(
+        native_goal_execution_error(
+          "Beads did not confirm the orphaned claim release",
+        ),
+      )
+    }
+    released = released + 1
+  }
+  Ok(released)
+}
+
+///|
+async fn purge_native_goal_owned_git_ref_namespace(
+  project_dir : String,
+) -> Result[Int, @types.ChoirError] {
+  let root = match
+    native_goal_git_value(project_dir, ["rev-parse", "--show-toplevel"]) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let canonical_root = match @sys.realpath_native(root) {
+    Some(value) => value
+    None =>
+      return Err(native_goal_execution_error("repository is not canonical"))
+  }
+  let captured = match
+    capture_native_goal_git(canonical_root, [
+      "for-each-ref", "--format=%(refname)", "refs/heads/choir/goals/", "refs/choir/goals/",
+      "refs/choir/witness/",
+    ]) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if captured.exit_code != 0 {
+    return Err(native_goal_execution_error("owned Git ref listing failed"))
+  }
+  let repository : NativeGoalRepositoryIdentity = {
+    root: canonical_root,
+    git_directory: "",
+    object_directory: "",
+  }
+  let mut removed = 0
+  for raw in captured.output.split("\n") {
+    let reference = raw.trim().to_owned()
+    if reference == "" {
+      continue
+    }
+    if !native_goal_owned_git_ref_is_valid(reference) {
+      return Err(native_goal_execution_error("owned Git ref is invalid"))
+    }
+    match delete_native_goal_owned_git_ref(repository, reference) {
+      Ok(true) => removed = removed + 1
+      Ok(false) => ()
+      Err(error) => return Err(error)
+    }
+  }
+  Ok(removed)
+}
+
+///|
+fn native_goal_control_state_is_current(
+  generation : String,
+  workflow_store_present : Bool,
+) -> Bool {
+  generation.trim() == native_goal_control_state_generation &&
+  workflow_store_present
+}
+
+///|
+test "control state generation requires both marker and store" {
+  assert_true(
+    native_goal_control_state_is_current(
+      native_goal_control_state_generation, true,
+    ),
+  )
+  assert_false(
+    native_goal_control_state_is_current(
+      native_goal_control_state_generation, false,
+    ),
+  )
+  assert_false(native_goal_control_state_is_current("", true))
+  assert_false(
+    native_goal_control_state_is_current("choir-control-state-v1", true),
+  )
+}
+
+///|
+pub async fn prepare_native_goal_control_state(
+  project_dir : String,
+  capture? : async (Command) -> (Int, String) = capture_command_merged,
+) -> Result[NativeGoalControlStatePreparation, @types.ChoirError] {
+  let control_root = project_dir + "/.choir/state/control"
+  let generation_path = control_root + "/generation"
+  let workflow_store_path = control_root + "/workflow.db"
+  if native_goal_control_state_is_current(
+      @sys.read_file(generation_path),
+      @sys.path_entry_exists(workflow_store_path),
+    ) {
+    return Ok(NativeGoalControlStateCurrent)
+  }
+  let had_control_state = @sys.path_entry_exists(workflow_store_path) ||
+    @sys.list_dir_all(control_root).length() > 0
+  let claims = match
+    inspect_native_orphaned_goal_source_claims(project_dir, capture) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let repository_id = match native_goal_repository_id(project_dir) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let goal_ids : Array[@control.GoalId] = []
+  for claim in claims {
+    if !goal_ids.contains(claim.goal_id) {
+      goal_ids.push(claim.goal_id)
+    }
+  }
+  let mut runtime_roots_removed = 0
+  for goal_id in goal_ids {
+    let runtime_root = native_goal_runtime_root(repository_id, goal_id)
+    let existed = @sys.path_entry_exists(runtime_root)
+    match cleanup_native_goal_runtime_identity(repository_id, goal_id) {
+      Ok(_) => ()
+      Err(error) => return Err(error)
+    }
+    if existed {
+      runtime_roots_removed = runtime_roots_removed + 1
+    }
+  }
+  let git_refs_removed = match
+    purge_native_goal_owned_git_ref_namespace(project_dir) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let source_claims_released = match
+    release_native_orphaned_goal_source_claims(project_dir, claims, capture) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if !@sys.rm_rf(control_root) ||
+    !@sys.create_dir_all(control_root) ||
+    !@sys.write_file_atomic(
+      generation_path,
+      native_goal_control_state_generation + "\n",
+    ) {
+    return Err(native_goal_execution_error("control state reset failed"))
+  }
+  let report : NativeGoalControlStateResetReport = {
+    source_claims_released,
+    runtime_roots_removed,
+    git_refs_removed,
+  }
+  if had_control_state ||
+    source_claims_released > 0 ||
+    runtime_roots_removed > 0 ||
+    git_refs_removed > 0 {
+    Ok(NativeGoalControlStateReset(report))
+  } else {
+    Ok(NativeGoalControlStateInitialized)
+  }
+}
+
+///|
+async test "orphaned claim reset releases only Choir-owned in-progress Beads" {
+  let calls : Array[Array[String]] = []
+  let capture = async fn(command : Command) {
+    @async.sleep(0)
+    calls.push(command.args)
+    if command.args[0] == "list" {
+      (
+        0,
+        (
+          #|[{"id":"choir-owned","title":"Owned","status":"in_progress","assignee":"choir:goal-owned"},{"id":"human-owned","title":"Human","status":"in_progress","assignee":"justin"},{"id":"closed-owned","title":"Closed","status":"closed","assignee":"choir:goal-closed"}]
+        ),
+      )
+    } else {
+      (
+        0,
+        (
+          #|[{"id":"choir-owned","title":"Owned","status":"open","assignee":""}]
+        ),
+      )
+    }
+  }
+  let claims = inspect_native_orphaned_goal_source_claims("/repo", capture).unwrap()
+  assert_eq(claims.length(), 1)
+  assert_eq(claims[0].part_id, @control.PartId("choir-owned"))
+  assert_eq(claims[0].goal_id, @control.GoalId("goal-owned"))
+  assert_eq(
+    release_native_orphaned_goal_source_claims("/repo", claims, capture).unwrap(),
+    1,
+  )
+  assert_eq(calls.length(), 2)
+  assert_eq(calls[1], [
+    "update", "choir-owned", "--status", "open", "--assignee", "", "--actor", "choir:goal-owned",
+    "--json",
+  ])
 }
 
 ///|
