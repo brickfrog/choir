@@ -5108,6 +5108,28 @@ one verification receipt, one audit receipt, one integration receipt, zero
 implementation redispatches after restart, and two assurance-provider
 dispatches after restart.
 
+#### 2026-07-22 Claude 2.1.218 qualification
+
+Claude Code 2.1.218 was qualified with Linux x86-64 executable SHA-256
+`e12071751a9336b8af1012c103358ff04ac18f9aaff4a738cff7ba5cdfaf63f2`,
+matching Anthropic release commit
+`bce61b433bc397ce68686368abd12f545b0a013a`. The no-login synthetic startup
+returned the exact fail-closed authentication terminal with no native tools
+and a pending declared MCP server. Required-tool availability remains owned by
+the authenticated probes; live startup observed the exact connected tool,
+provider-managed subscription entitlement, and no ambient credential lane.
+
+The required ambient-configuration, host-read, credential, child, tool-search,
+network, capability-death, cancellation, parent-loss, host-write, mutation,
+and lifecycle probes passed against those exact bytes. The network trace
+recorded fifteen provider connections, two DNS connections, four address
+selection probes, zero canary connections, and zero other Internet
+connections. The restarted native Claude Part integrated with 15 effect
+receipts, one verification receipt, one independent audit receipt, one
+integration receipt, zero implementation redispatches after restart, and two
+assurance-provider dispatches after restart. The separate cancellation fixture
+recorded three effect receipts and no post-restart provider dispatch.
+
 ### Primary sources retrieved
 
 Anthropic:

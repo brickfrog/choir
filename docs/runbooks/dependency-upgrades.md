@@ -345,6 +345,13 @@ moon run --target native src/bin/choir_conformance -- harness --surface claude-c
 moon run --target native src/bin/choir_conformance -- harness --surface claude-cli --profile subscription --required-tool-startup-live
 ```
 
+The synthetic-home check is intentionally passive. When the unauthenticated
+client returns the exact fail-closed no-login terminal, its initialization may
+show the declared MCP server as pending and expose no tools. That observation
+does not prove tool availability. The authenticated `--live` and
+`--required-tool-startup-live` checks own required-tool discovery, execution,
+and fail-closed startup evidence.
+
 ### Required driver boundary checks
 
 ```sh

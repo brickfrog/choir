@@ -270,12 +270,35 @@ fn claude_builtin_agents_match(actual : Array[String]) -> Bool {
 }
 
 ///|
+fn claude_synthetic_no_login_terminal(capture : HarnessProbeCapture) -> Bool {
+  if capture.exit_code != 1 {
+    return false
+  }
+  for raw in capture.output.split("\n") {
+    let json = @json.parse(raw.trim().to_owned()) catch { _ => continue }
+    guard json is Object(fields) else { continue }
+    if startup_json_string(fields, "type") == "result" &&
+      startup_json_string(fields, "subtype") == "success" &&
+      startup_json_bool(fields, "is_error") == Some(true) &&
+      startup_json_string(fields, "terminal_reason") == "api_error" &&
+      startup_json_string(fields, "result") ==
+      "Not logged in · Please run /login" {
+      return true
+    }
+  }
+  false
+}
+
+///|
 /// Evaluate a no-login synthetic-home startup. The report retains only
-/// allowlisted initialization fields; later error/prose events are discarded.
+/// allowlisted initialization fields and the exact no-login disposition. An
+/// unauthenticated client may defer MCP discovery; authenticated live probes
+/// remain authoritative for required-tool availability and execution.
 pub fn evaluate_claude_synthetic_startup(
   capture : HarnessProbeCapture,
 ) -> ClaudeSyntheticStartupReport {
   let reasons : Array[ClaudeStartupBlockReason] = []
+  let exact_no_login = claude_synthetic_no_login_terminal(capture)
   if capture.exit_code == -2 {
     reasons.push(ClaudeStartupTimedOut)
   }
@@ -298,13 +321,14 @@ pub fn evaluate_claude_synthetic_startup(
       if manifest.tools.any(fn(tool) { tool != "mcp__choir_probe__probe" }) {
         reasons.push(ClaudeStartupNativeToolsVisible)
       }
-      if !manifest.tools.contains("mcp__choir_probe__probe") {
+      if !manifest.tools.contains("mcp__choir_probe__probe") && !exact_no_login {
         reasons.push(ClaudeStartupRequiredMcpToolMissing)
       }
       if manifest.mcp_servers.length() != 1 ||
         manifest.mcp_servers[0].name != "choir_probe" {
         reasons.push(ClaudeStartupUnexpectedMcpServer)
-      } else if manifest.mcp_servers[0].status != McpConnected {
+      } else if manifest.mcp_servers[0].status != McpConnected &&
+        !(exact_no_login && manifest.mcp_servers[0].status == McpPending) {
         reasons.push(ClaudeStartupRequiredMcpNotConnected)
       }
       if manifest.slash_commands.length() != 0 {
