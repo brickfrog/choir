@@ -39,6 +39,18 @@ pub(all) struct ConductorGoalDraft {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub fn conductor_goal_draft_digest(
+  draft : ConductorGoalDraft,
+) -> @control.Digest {
+  @storage.artifact_digest(
+    @utf8.encode(
+      "choir.conductor-goal-draft.v1\u{00}" +
+      draft.to_json().stringify(indent=0),
+    ),
+  )
+}
+
+///|
 fn conductor_draft_string(
   fields : Map[String, Json],
   field : String,

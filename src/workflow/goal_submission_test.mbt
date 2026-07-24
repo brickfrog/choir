@@ -123,6 +123,7 @@ fn submission_proposal(
   {
     id: @workflow.GoalProposalId("proposal-test"),
     goal_id,
+    conductor_draft_digest: submission_digest,
     repository_id: @workflow.RepositoryId("repository-test"),
     base_ref: @workflow.GitRefName("refs/heads/main"),
     expected_base_commit_oid: @control.GitOid("base-commit"),
@@ -138,6 +139,186 @@ fn submission_proposal(
     maximum_parallel_parts: 2,
     parts,
   }
+}
+
+///|
+fn dependency_delivery_observation(
+  goal_id : String,
+  claimed_part_ids : Array[@control.PartId],
+  state : @workflow.GoalDependencyDeliveryState,
+) -> @workflow.GoalDependencyDeliveryObservation {
+  let id = @control.GoalId(goal_id)
+  {
+    goal_id: id,
+    goal_ref: @workflow.goal_execution_ref(id),
+    claimed_part_ids,
+    state,
+  }
+}
+
+///|
+test "Goal submission stacks only on an open dependency Goal" {
+  let dependency_id = @control.PartId("dependency")
+  let child_id = @control.PartId("child")
+  let snapshot = submission_snapshot([
+    submission_source(
+      "dependency",
+      [],
+      @workflow.SelectionSourceState::SelectionSourceClosed,
+    ),
+    submission_source(
+      "child",
+      [dependency_id],
+      @workflow.SelectionSourceState::SelectionSourceOpen,
+    ),
+  ])
+  let integration_target = @workflow.GitRefName("refs/heads/main")
+  let open = dependency_delivery_observation(
+    "goal-parent",
+    [dependency_id],
+    @workflow.GoalDependencyDeliveryState::GoalDependencyPullRequestOpen,
+  )
+  assert_eq(
+    @workflow.select_goal_submission_base(
+      snapshot,
+      [child_id],
+      integration_target,
+      [open],
+    ),
+    @workflow.GoalSubmissionBaseDecision::GoalSubmissionStackOnDependencyGoal(
+      open.goal_id,
+      open.goal_ref,
+    ),
+  )
+  let merged = {
+    ..open,
+    state: @workflow.GoalDependencyDeliveryState::GoalDependencyPullRequestMerged,
+  }
+  assert_eq(
+    @workflow.select_goal_submission_base(
+      snapshot,
+      [child_id],
+      integration_target,
+      [merged],
+    ),
+    @workflow.GoalSubmissionBaseDecision::GoalSubmissionUseIntegrationTarget(
+      integration_target,
+    ),
+  )
+  assert_eq(
+    @workflow.select_goal_submission_base(
+      snapshot,
+      [child_id],
+      integration_target,
+      [],
+    ),
+    @workflow.GoalSubmissionBaseDecision::GoalSubmissionUseIntegrationTarget(
+      integration_target,
+    ),
+  )
+}
+
+///|
+test "Goal submission rejects non-linear and undelivered dependency Goals" {
+  let dependency_a = @control.PartId("dependency-a")
+  let dependency_b = @control.PartId("dependency-b")
+  let child_id = @control.PartId("child")
+  let snapshot = submission_snapshot([
+    submission_source(
+      "dependency-a",
+      [],
+      @workflow.SelectionSourceState::SelectionSourceClosed,
+    ),
+    submission_source(
+      "dependency-b",
+      [],
+      @workflow.SelectionSourceState::SelectionSourceClosed,
+    ),
+    submission_source(
+      "child",
+      [dependency_a, dependency_b],
+      @workflow.SelectionSourceState::SelectionSourceOpen,
+    ),
+  ])
+  let integration_target = @workflow.GitRefName("refs/heads/main")
+  let open_a = dependency_delivery_observation(
+    "goal-a",
+    [dependency_a],
+    @workflow.GoalDependencyDeliveryState::GoalDependencyPullRequestOpen,
+  )
+  let open_b = dependency_delivery_observation(
+    "goal-b",
+    [dependency_b],
+    @workflow.GoalDependencyDeliveryState::GoalDependencyPullRequestOpen,
+  )
+  assert_eq(
+    @workflow.select_goal_submission_base(
+      snapshot,
+      [child_id],
+      integration_target,
+      [open_b, open_a],
+    ),
+    @workflow.GoalSubmissionBaseDecision::GoalSubmissionRejectBase(
+      @workflow.GoalSubmissionBaseRejection::GoalSubmissionDependenciesSpanOpenGoals([
+          open_a.goal_id,
+          open_b.goal_id,
+        ],
+      ),
+    ),
+  )
+  let same_parent = dependency_delivery_observation(
+    "goal-a",
+    [dependency_a, dependency_b],
+    @workflow.GoalDependencyDeliveryState::GoalDependencyPullRequestOpen,
+  )
+  assert_eq(
+    @workflow.select_goal_submission_base(
+      snapshot,
+      [child_id],
+      integration_target,
+      [same_parent],
+    ),
+    @workflow.GoalSubmissionBaseDecision::GoalSubmissionStackOnDependencyGoal(
+      same_parent.goal_id,
+      same_parent.goal_ref,
+    ),
+  )
+  let closed = {
+    ..open_a,
+    state: @workflow.GoalDependencyDeliveryState::GoalDependencyPullRequestClosed,
+  }
+  assert_eq(
+    @workflow.select_goal_submission_base(
+      snapshot,
+      [child_id],
+      integration_target,
+      [closed],
+    ),
+    @workflow.GoalSubmissionBaseDecision::GoalSubmissionRejectBase(
+      @workflow.GoalSubmissionBaseRejection::GoalSubmissionDependencyPullRequestClosed([
+          open_a.goal_id,
+        ],
+      ),
+    ),
+  )
+  let uncertain = {
+    ..open_a,
+    state: @workflow.GoalDependencyDeliveryState::GoalDependencyPullRequestObservationUncertain,
+  }
+  assert_eq(
+    @workflow.select_goal_submission_base(
+      snapshot,
+      [child_id],
+      integration_target,
+      [uncertain],
+    ),
+    @workflow.GoalSubmissionBaseDecision::GoalSubmissionRejectBase(
+      @workflow.GoalSubmissionBaseRejection::GoalSubmissionDependencyObservationUncertain([
+          open_a.goal_id,
+        ],
+      ),
+    ),
+  )
 }
 
 ///|

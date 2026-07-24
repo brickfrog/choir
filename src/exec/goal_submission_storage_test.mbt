@@ -55,6 +55,7 @@ fn selection_store_decision() -> @workflow.GoalSelectionDecision raise {
       {
         id: @workflow.GoalProposalId("proposal-selection-store"),
         goal_id,
+        conductor_draft_digest: selection_store_digest,
         repository_id,
         base_ref: @workflow.GitRefName("refs/heads/main"),
         expected_base_commit_oid: @control.GitOid("base-selection-store"),

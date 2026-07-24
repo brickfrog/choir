@@ -1154,6 +1154,7 @@ fn selection_fixture_proposal(
   {
     id: @workflow.GoalProposalId("selection-proposal"),
     goal_id,
+    conductor_draft_digest: selection_fixture_digest,
     repository_id: @workflow.RepositoryId("selection-repository"),
     base_ref: @workflow.GitRefName("refs/heads/main"),
     expected_base_commit_oid: @control.GitOid("selection-base-commit"),
