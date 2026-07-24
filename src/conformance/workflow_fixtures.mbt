@@ -2822,17 +2822,9 @@ pub fn run_bounded_migration_conformance_fixture() -> Result[
     judge_definition_digest: contract.judge_definition_digest,
     source_revision: contract.source_revision,
   }
-  let qualifying_awaiting = match
-    @workflow.advance_goal_execution_state(
-      assured_execution,
-      @workflow.GoalExecutionState::GoalExecutionAwaitingMerge,
-    ) {
-    Ok(value) => value
-    Err(error) => return Err(error)
-  }
   let qualifying_execution = match
     @workflow.advance_goal_execution_state(
-      qualifying_awaiting,
+      assured_execution,
       @workflow.GoalExecutionState::GoalExecutionSucceeded,
     ) {
     Ok(value) => value
@@ -3446,7 +3438,6 @@ pub fn cancellation_ordering_matrix_case() -> HermeticConformanceCase {
         base_ref: pull_request.intent.base_ref,
         observed_head_oid: pull_request.intent.expected_head_oid,
         state: @workflow.RemotePullRequestState::RemotePullRequestOpen,
-        merge_commit_oid: None,
         marker_state: @workflow.PullRequestMarkerState::PullRequestMarkerExact,
         title_digest: audit_fixture_digest_a,
         body_digest: audit_fixture_digest_b,

@@ -11,7 +11,6 @@ pub(all) struct PullRequestReadinessSnapshotId(String) derive (
 ///|
 pub(all) enum PullRequestReadinessDecision {
   PullRequestReady
-  PullRequestMergeObserved
   PullRequestReadinessNeedsInput(PullRequestReadinessNeedsInputReason)
   PullRequestReadinessDrift(PullRequestReadinessDriftReason)
   PullRequestReadinessAmbiguous
@@ -53,19 +52,6 @@ pub(all) struct PullRequestReadinessSnapshot {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-/// Delivery evidence observed after the remote reports the pull request
-/// merged. Binds the GitHub merge commit and the observed target head that
-/// contains it. The reviewed head SHA is deliberately not required to appear
-/// in the target: squash and rebase merges rewrite it, so the merge commit
-/// is the only durable link.
-pub(all) struct GoalDeliveryObservation {
-  merge_commit_oid : @control.GitOid
-  observed_target_head_oid : @control.GitOid
-  target_contains_merge : Bool
-  observed_at : Int64
-} derive(Debug, Eq, ToJson, FromJson)
-
-///|
 pub(all) struct GoalFinalizationRecord {
   goal_id : @control.GoalId
   repository_id : RepositoryId
@@ -74,7 +60,6 @@ pub(all) struct GoalFinalizationRecord {
   publication_record_digest : @control.Digest
   pull_request_record_digest : @control.Digest
   readiness : PullRequestReadinessSnapshot
-  delivery : GoalDeliveryObservation?
   durable_version : Int
   fencing_epoch : @control.FencingEpoch
 } derive(Debug, Eq, ToJson, FromJson)
@@ -82,7 +67,6 @@ pub(all) struct GoalFinalizationRecord {
 ///|
 pub(all) enum GoalFinalizationTickOutcome {
   GoalFinalizationPending
-  GoalFinalizationAwaitingMerge
   GoalFinalizationSucceeded
   GoalFinalizationPublicationRemoteUnavailable
   GoalFinalizationNeedsUserInput
@@ -158,16 +142,17 @@ fn readiness_decision(
           PullRequestReadinessDriftReason::PullRequestHeadOrBaseChanged,
         )
       }
-      match snapshot.state {
-        RemotePullRequestState::RemotePullRequestOpen => PullRequestReady
-        // Merged is the desired end state, not drift: the delivery flow
-        // verifies the merge commit and target containment before success.
-        RemotePullRequestState::RemotePullRequestMerged =>
-          PullRequestMergeObserved
-        RemotePullRequestState::RemotePullRequestClosed =>
-          PullRequestReadinessNeedsInput(
-            PullRequestReadinessNeedsInputReason::PullRequestNotOpen,
-          )
+      // A Goal is delivered the moment its pull request is open and exact:
+      // Choir's autonomous work is a reviewable PR, and landing it is the
+      // repository's merge queue / branch-protection policy, not Choir's job.
+      // A remote that already reports merged or closed is no longer an open
+      // deliverable and needs user attention.
+      if snapshot.state == RemotePullRequestState::RemotePullRequestOpen {
+        PullRequestReady
+      } else {
+        PullRequestReadinessNeedsInput(
+          PullRequestReadinessNeedsInputReason::PullRequestNotOpen,
+        )
       }
     }
   }
@@ -191,35 +176,7 @@ fn goal_finalization_record_shape_is_valid(
   @storage.validate_digest(record.assurance_record_digest) is Ok(_) &&
   @storage.validate_digest(record.publication_record_digest) is Ok(_) &&
   @storage.validate_digest(record.pull_request_record_digest) is Ok(_) &&
-  @storage.validate_digest(record.readiness.goal_branch_seal_digest) is Ok(_) &&
-  (match record.delivery {
-    None => true
-    Some(delivery) =>
-      delivery.merge_commit_oid.0 != "" &&
-      delivery.observed_target_head_oid.0 != "" &&
-      delivery.observed_at > 0L
-  })
-}
-
-///|
-/// Whether an awaiting-merge Goal is due for another passive remote
-/// observation. Backoff doubles with each observation up to sixteen minutes,
-/// so a Goal waiting on a human merge costs one forge call per interval
-/// rather than one per tick.
-pub fn goal_merge_observation_due(
-  record : GoalFinalizationRecord,
-  now : Int64,
-) -> Bool {
-  let exponent = record.readiness.observation_sequence - 1L
-  let capped = if exponent < 0L {
-    0L
-  } else if exponent > 4L {
-    4L
-  } else {
-    exponent
-  }
-  let interval = 60L * (1L << capped.to_int())
-  now >= record.readiness.observed_at + interval
+  @storage.validate_digest(record.readiness.goal_branch_seal_digest) is Ok(_)
 }
 
 ///|
@@ -340,7 +297,6 @@ pub fn observe_goal_pull_request_readiness(
       observed_at,
       decision: readiness_decision(pull_request.intent, receipt, lookup),
     },
-    delivery: None,
     durable_version: 1,
     fencing_epoch: execution.fencing_epoch,
   }
@@ -375,39 +331,11 @@ fn goal_finalization_evidence_is_current(
 }
 
 ///|
-/// A ready pull request advances the Goal to AwaitingMerge: Choir's work is
-/// published and review is in a human's hands, so the Goal stops consuming
-/// provider capacity and waits passively for the merge.
-pub fn authorize_goal_awaiting_merge(
-  execution : GoalExecutionRecord,
-  assurance : GoalAssuranceRecord,
-  publication : GoalPublicationRecord,
-  pull_request : GoalPullRequestRecord,
-  finalization : GoalFinalizationRecord,
-) -> Result[GoalExecutionRecord, @types.ChoirError] {
-  let decision_permits_wait = match finalization.readiness.decision {
-    // A merge observed while still Assured also enters AwaitingMerge first;
-    // the delivery observation then completes it on a later tick.
-    PullRequestReadinessDecision::PullRequestReady
-    | PullRequestReadinessDecision::PullRequestMergeObserved => true
-    _ => false
-  }
-  if !goal_finalization_evidence_is_current(
-      execution, assurance, publication, pull_request, finalization,
-    ) ||
-    !decision_permits_wait {
-    return Err(goal_finalization_error("readiness evidence is not current"))
-  }
-  advance_goal_execution_state(
-    execution,
-    GoalExecutionState::GoalExecutionAwaitingMerge,
-  )
-}
-
-///|
-/// Success requires observed delivery: the remote reports the pull request
-/// merged and the recorded merge commit is contained in the observed target
-/// head. Bead completion follows this authorization, never precedes it.
+/// A Goal succeeds when its pull request is open and exact. That is Choir's
+/// deliverable — a reviewable PR — matching how Cursor, Codex, and Factory
+/// draw the "done" line. Landing it on the trunk is the repository's merge
+/// queue and branch-protection policy, not a step Choir waits on or performs.
+/// Bead completion follows this authorization.
 pub fn authorize_goal_execution_success(
   execution : GoalExecutionRecord,
   assurance : GoalAssuranceRecord,
@@ -419,12 +347,8 @@ pub fn authorize_goal_execution_success(
       execution, assurance, publication, pull_request, finalization,
     ) ||
     finalization.readiness.decision !=
-    PullRequestReadinessDecision::PullRequestMergeObserved {
+    PullRequestReadinessDecision::PullRequestReady {
     return Err(goal_finalization_error("success evidence is not current"))
-  }
-  guard finalization.delivery is Some(delivery) &&
-    delivery.target_contains_merge else {
-    return Err(goal_finalization_error("delivery evidence is not current"))
   }
   advance_goal_execution_state(
     execution,

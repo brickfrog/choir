@@ -3535,7 +3535,6 @@ pub async fn run_native_goal_execution_tick_with_forge(
     repository,
     repository_adapters,
     fencing_epoch=current_native_goal_fencing_epoch(),
-    now=@env.now().reinterpret_as_int64() / 1000L,
     after=native_goal_rotation_state.val,
     {
     initialize: async fn(record) {

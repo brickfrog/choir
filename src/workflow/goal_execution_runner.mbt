@@ -79,14 +79,9 @@ fn rotate_goal_records(
 /// Pick the next Goal to tick. Cancellations always run first; otherwise the
 /// scan starts just after the previously served Goal so concurrent Goals
 /// round-robin instead of the first runnable Goal starving the rest.
-/// Awaiting-merge Goals join the rotation only when their passive
-/// re-observation backoff has elapsed.
 fn runnable_goal_execution(
-  repository : PartWorkflowRepository,
-  adapters : PartWorkflowRepositoryAdapters,
   records : Array[StoredGoalExecutionRecord],
   after : @control.GoalId?,
-  now : Int64,
 ) -> StoredGoalExecutionRecord? {
   for stored in records {
     if stored.record.state == GoalExecutionState::GoalExecutionCanceling {
@@ -99,19 +94,6 @@ fn runnable_goal_execution(
       | GoalExecutionState::GoalExecutionRunning
       | GoalExecutionState::GoalExecutionAssuring
       | GoalExecutionState::GoalExecutionAssured => return Some(stored)
-      GoalExecutionState::GoalExecutionAwaitingMerge => {
-        let due = match
-          load_goal_finalization_record(
-            repository, adapters, stored.record.goal.id,
-          ) {
-          Ok(Some(finalization)) =>
-            goal_merge_observation_due(finalization.record, now)
-          Ok(None) | Err(_) => true
-        }
-        if due {
-          return Some(stored)
-        }
-      }
       _ => ()
     }
   }
@@ -241,20 +223,6 @@ fn handle_goal_finalization_outcome(
         Ok(_) => Err(goal_execution_error("finalization did not commit success"))
         Err(error) => Err(error)
       }
-    GoalFinalizationTickOutcome::GoalFinalizationAwaitingMerge =>
-      // The Goal either just entered AwaitingMerge or re-observed a still
-      // open pull request; reload so the projection reflects durable state.
-      match
-        load_goal_execution_record(
-          repository,
-          repository_adapters,
-          selected.record.goal.id,
-        ) {
-        Ok(Some(current)) =>
-          Ok(GoalExecutionTickResult::GoalExecutionTickAdvanced(current.record))
-        Ok(None) => Err(goal_execution_error("Goal disappeared"))
-        Err(error) => Err(error)
-      }
     GoalFinalizationTickOutcome::GoalFinalizationPending =>
       Ok(GoalExecutionTickResult::GoalExecutionTickAdvanced(selected.record))
     GoalFinalizationTickOutcome::GoalFinalizationPublicationRemoteUnavailable
@@ -302,7 +270,6 @@ pub async fn run_next_goal_execution_tick(
   repository_adapters : PartWorkflowRepositoryAdapters,
   runner_adapters : GoalExecutionRunnerAdapters,
   fencing_epoch~ : @control.FencingEpoch = @control.FencingEpoch(1L),
-  now~ : Int64 = 0L,
   after~ : @control.GoalId? = None,
 ) -> Result[GoalExecutionTickResult, @types.ChoirError] {
   let listed = match
@@ -310,10 +277,7 @@ pub async fn run_next_goal_execution_tick(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let candidate = match
-    runnable_goal_execution(
-      repository, repository_adapters, listed, after, now,
-    ) {
+  let candidate = match runnable_goal_execution(listed, after) {
     Some(value) => value
     None => return Ok(GoalExecutionTickResult::GoalExecutionTickIdle)
   }
@@ -418,24 +382,6 @@ pub async fn run_next_goal_execution_tick(
         return Ok(GoalExecutionTickResult::GoalExecutionTickAdvanced(record))
       }
       GoalCompletionMode::GoalPublishable => ()
-    }
-    let outcome = match (runner_adapters.finalize)(selected.record, parts) {
-      Ok(value) => value
-      Err(error) => return Err(error)
-    }
-    return handle_goal_finalization_outcome(
-      repository, repository_adapters, selected, outcome,
-    )
-  }
-  if selected.record.state == GoalExecutionState::GoalExecutionAwaitingMerge {
-    let parts = match
-      load_goal_execution_parts(
-        repository,
-        repository_adapters,
-        selected.record,
-      ) {
-      Ok(value) => value
-      Err(error) => return Err(error)
     }
     let outcome = match (runner_adapters.finalize)(selected.record, parts) {
       Ok(value) => value

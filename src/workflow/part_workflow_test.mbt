@@ -1708,10 +1708,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     qualification_binding,
   )
   let succeeded_qualification = @workflow.advance_goal_execution_state(
-    @workflow.advance_goal_execution_state(
-      assured_execution,
-      @workflow.GoalExecutionState::GoalExecutionAwaitingMerge,
-    ).unwrap(),
+    assured_execution,
     @workflow.GoalExecutionState::GoalExecutionSucceeded,
   ).unwrap()
   guard succeeded_qualification.goal.lifecycle
@@ -2210,7 +2207,6 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     base_ref: assured_execution.integration_target_ref,
     observed_head_oid: promotion.commit_oid,
     state: @workflow.RemotePullRequestState::RemotePullRequestOpen,
-    merge_commit_oid: None,
     marker_state: @workflow.PullRequestMarkerState::PullRequestMarkerExact,
     title_digest: @storage.artifact_digest(@utf8.encode(pr_document.title)),
     body_digest: @storage.artifact_digest(@utf8.encode(pr_document.body)),
@@ -2370,74 +2366,11 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     Ok(decoded) => assert_eq(decoded, finalization)
     Err(error) => fail(error.message())
   }
-  // A ready pull request only authorizes the wait state; success requires an
-  // observed merge with delivery evidence.
-  assert_true(
-    @workflow.authorize_goal_execution_success(
-      assured_execution, assured, published, adopted_pull_request, finalization,
-    )
-    is Err(_),
-  )
-  let awaiting_execution = match
-    @workflow.authorize_goal_awaiting_merge(
-      assured_execution, assured, published, adopted_pull_request, finalization,
-    ) {
-    Ok(value) => value
-    Err(error) => fail(error.message())
-  }
-  assert_eq(
-    awaiting_execution.state,
-    @workflow.GoalExecutionState::GoalExecutionAwaitingMerge,
-  )
-  let merged_remote = {
-    ..remote_pull_request,
-    state: @workflow.RemotePullRequestState::RemotePullRequestMerged,
-    merge_commit_oid: Some(@control.GitOid("merge-commit-42")),
-  }
-  let merged_finalization = match
-    @workflow.observe_goal_pull_request_readiness(
-      awaiting_execution,
-      assured,
-      published,
-      adopted_pull_request,
-      @workflow.PullRequestLookupObservation::PullRequestStoredIdMatch(
-        merged_remote,
-      ),
-      Some("remote-version-43"),
-      2L,
-      48L,
-      49L,
-    ) {
-    Ok(value) => value
-    Err(error) => fail(error.message())
-  }
-  assert_eq(
-    merged_finalization.readiness.decision,
-    @workflow.PullRequestReadinessDecision::PullRequestMergeObserved,
-  )
-  // Observation two backs off for 120 seconds before the next remote call.
-  assert_false(@workflow.goal_merge_observation_due(merged_finalization, 168L))
-  assert_true(@workflow.goal_merge_observation_due(merged_finalization, 169L))
-  // Merge observed but delivery unverified must not authorize success.
-  assert_true(
-    @workflow.authorize_goal_execution_success(
-      awaiting_execution, assured, published, adopted_pull_request, merged_finalization,
-    )
-    is Err(_),
-  )
-  let delivery_observation : @workflow.GoalDeliveryObservation = {
-    merge_commit_oid: @control.GitOid("merge-commit-42"),
-    observed_target_head_oid: @control.GitOid("target-head-42"),
-    target_contains_merge: true,
-    observed_at: 49L,
-  }
-  let delivered_finalization = {
-    ..merged_finalization,
-    delivery: Some(delivery_observation),
-  }
+  // An open, exact pull request is the deliverable: success authorizes
+  // directly from Assured, with no merge observation.
   let succeeded = match
     @workflow.authorize_goal_execution_success(
-      awaiting_execution, assured, published, adopted_pull_request, delivered_finalization,
+      assured_execution, assured, published, adopted_pull_request, finalization,
     ) {
     Ok(value) => value
     Err(error) => fail(error.message())
@@ -2453,7 +2386,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
       Some(assured),
       Some(published),
       Some(adopted_pull_request),
-      Some(delivered_finalization),
+      Some(finalization),
     ) {
     Ok(value) => value
     Err(error) => fail(error.message())
@@ -2525,7 +2458,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     Some(assured),
     Some(published),
     Some(adopted_pull_request),
-    Some(delivered_finalization),
+    Some(finalization),
   ).unwrap()
   assert_eq(other_concurrency_status.semantic_run_projection, Some(projection))
   let edited_prose = match
@@ -2552,7 +2485,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     @workflow.PullRequestReadinessDecision::PullRequestReady,
   )
   assert_true(
-    @workflow.authorize_goal_awaiting_merge(
+    @workflow.authorize_goal_execution_success(
       assured_execution, assured, published, adopted_pull_request, edited_prose,
     )
     is Ok(_),
@@ -2582,7 +2515,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     ),
   )
   assert_true(
-    @workflow.authorize_goal_awaiting_merge(
+    @workflow.authorize_goal_execution_success(
       assured_execution, assured, published, adopted_pull_request, missing_marker,
     )
     is Err(_),

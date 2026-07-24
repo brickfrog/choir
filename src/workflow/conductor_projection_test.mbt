@@ -144,13 +144,6 @@ test "park releases only for terminal Goal states" {
       Some(@workflow.GoalExecutionState::GoalExecutionRunning),
     ),
   )
-  // Awaiting a human merge releases the park: no further durable event
-  // arrives until someone merges, so the Conductor must not sleep on it.
-  assert_false(
-    @workflow.conductor_park_for_goal_state(
-      Some(@workflow.GoalExecutionState::GoalExecutionAwaitingMerge),
-    ),
-  )
   assert_true(@workflow.conductor_park_for_goal_state(None))
   assert_eq(
     @workflow.parse_goal_execution_state("GoalExecutionRunning"),
@@ -192,17 +185,6 @@ test "display projection hides terminal Goals and classifies attention" {
     Some(@workflow.ConductorGoalAttention::ConductorAttentionBlocked),
   )
   assert_eq(blocked.attention_target, Some("part-a"))
-  let awaiting = @workflow.conductor_goal_display(
-    projection_report(
-      state=@workflow.GoalExecutionState::GoalExecutionAwaitingMerge,
-      parts=[projection_part(@workflow.PartWorkflowStage::PartIntegrated)],
-    ),
-  ).unwrap()
-  assert_eq(
-    awaiting.phase,
-    @workflow.ConductorGoalPhase::ConductorPhaseAwaitMerge,
-  )
-  assert_eq(awaiting.attention, None)
   let paused = @workflow.conductor_goal_display(
     projection_report(
       state=@workflow.GoalExecutionState::GoalExecutionPaused,
