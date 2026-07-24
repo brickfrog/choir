@@ -207,6 +207,69 @@ static int choir_sqlite_bind_text(sqlite3_stmt *stmt, int index, const char *val
                : -1;
 }
 
+/*
+ * Fencing generation counter. `choir serve` mints (increments) the epoch once
+ * per daemon generation while holding the instance lock; the goal worker it
+ * spawns reads the same value. Records written by a generation carry its
+ * epoch, so a surviving process from an older generation is rejected by the
+ * stale-fence gate as soon as the new generation adopts a record.
+ */
+static long long choir_state_store_epoch_row(sqlite3 *db) {
+    sqlite3_stmt *stmt = NULL;
+    long long epoch = -1;
+    if (choir_sqlite.prepare_statement(
+            db,
+            "SELECT epoch FROM fencing_generation WHERE id = 1",
+            -1,
+            &stmt,
+            NULL
+        ) == SQLITE_OK &&
+        choir_sqlite.step(stmt) == SQLITE_ROW) {
+        epoch = (long long)choir_sqlite.column_int64(stmt, 0);
+    }
+    if (stmt != NULL) choir_sqlite.finalize(stmt);
+    return epoch;
+}
+
+long long choir_state_store_mint_epoch(const char *path, int path_len) {
+    sqlite3 *db = NULL;
+    if (choir_sqlite_acquire(path, path_len, &db) != 0) {
+        return -1;
+    }
+    if (choir_sqlite_exec(
+            db,
+            "CREATE TABLE IF NOT EXISTS fencing_generation("
+            " id INTEGER PRIMARY KEY CHECK(id = 1),"
+            " epoch INTEGER NOT NULL CHECK(epoch > 0)"
+            ") STRICT;"
+        ) != 0 ||
+        choir_sqlite_exec(db, "BEGIN IMMEDIATE") != 0) {
+        return -1;
+    }
+    if (choir_sqlite_exec(
+            db,
+            "INSERT INTO fencing_generation(id, epoch) VALUES(1, 1) "
+            "ON CONFLICT(id) DO UPDATE SET epoch = epoch + 1"
+        ) != 0) {
+        choir_sqlite_exec(db, "ROLLBACK");
+        return -1;
+    }
+    long long epoch = choir_state_store_epoch_row(db);
+    if (epoch <= 0 || choir_sqlite_exec(db, "COMMIT") != 0) {
+        choir_sqlite_exec(db, "ROLLBACK");
+        return -1;
+    }
+    return epoch;
+}
+
+long long choir_state_store_read_epoch(const char *path, int path_len) {
+    sqlite3 *db = NULL;
+    if (choir_sqlite_acquire(path, path_len, &db) != 0) {
+        return -1;
+    }
+    return choir_state_store_epoch_row(db);
+}
+
 static int choir_sqlite_read_outbox_digest(
     sqlite3 *db,
     const char *semantic_key,

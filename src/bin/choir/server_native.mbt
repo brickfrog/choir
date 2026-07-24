@@ -869,6 +869,14 @@ fn goal_worker_run() -> Unit {
     }
   }
   ignore(@sys.set_parent_death_signal_term())
+  match @exec.observe_native_goal_fencing_epoch(config.project_dir) {
+    Ok(_) => ()
+    Err(error) => {
+      @sys.write_stderr("choir run-goals: " + error.message() + "\n")
+      @sys.exit(1)
+      return
+    }
+  }
   @moontrace.set_global_field("service", "choir-goals".to_json())
   @moontrace.set_global_field(
     "run_id",
@@ -935,6 +943,17 @@ fn serve_run() -> Unit {
   @sys.write_pid_file(".choir/run/server.pid")
   @sys.register_cleanup_runtime_artifacts()
   @sys.install_crash_handlers()
+  // Mint the fencing generation while holding the instance lock, before the
+  // goal worker spawns: the worker observes this value, and records written
+  // by older surviving processes are fenced once this generation adopts them.
+  match @exec.mint_native_goal_fencing_epoch(config.project_dir) {
+    Ok(_) => ()
+    Err(error) => {
+      @sys.write_stderr("choir serve: " + error.message() + "\n")
+      @sys.exit(1)
+      return
+    }
+  }
   let state = ConductorServerState::new(config)
   @moontrace.set_global_field("service", "choir".to_json())
   @moontrace.set_global_field("run_id", state.run_id.to_json())

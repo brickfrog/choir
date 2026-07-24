@@ -137,19 +137,68 @@ fn persist_goal_execution_advance(
 }
 
 ///|
+fn persist_goal_execution_epoch_adoption(
+  repository : PartWorkflowRepository,
+  adapters : PartWorkflowRepositoryAdapters,
+  previous : StoredGoalExecutionRecord,
+  fencing_epoch : @control.FencingEpoch,
+) -> Result[StoredGoalExecutionRecord, @types.ChoirError] {
+  let next = match
+    adopt_goal_execution_fencing_epoch(previous.record, fencing_epoch) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let receipt = match
+    persist_goal_execution_record(repository, adapters, {
+      record: next,
+      expected_store_version: Some(previous.state_record.version),
+      fault_point: None,
+    }) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if !goal_execution_transaction_persisted(receipt.transaction_outcome) {
+    return Err(goal_execution_error("fencing adoption conflicted"))
+  }
+  match load_goal_execution_record(repository, adapters, next.goal.id) {
+    Ok(Some(stored)) if stored.record == next => Ok(stored)
+    Ok(_) => Err(goal_execution_error("fencing adoption did not reload"))
+    Err(error) => Err(error)
+  }
+}
+
+///|
 pub async fn run_next_goal_execution_tick(
   repository : PartWorkflowRepository,
   repository_adapters : PartWorkflowRepositoryAdapters,
   runner_adapters : GoalExecutionRunnerAdapters,
+  fencing_epoch~ : @control.FencingEpoch = @control.FencingEpoch(1L),
 ) -> Result[GoalExecutionTickResult, @types.ChoirError] {
   let listed = match
     list_goal_execution_records(repository, repository_adapters) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let selected = match runnable_goal_execution(listed) {
+  let candidate = match runnable_goal_execution(listed) {
     Some(value) => value
     None => return Ok(GoalExecutionTickResult::GoalExecutionTickIdle)
+  }
+  // Adopt records inherited from an older daemon generation before doing any
+  // work on them: the raised stored fence is what rejects writes from a
+  // surviving worker of that older generation.
+  let selected = if candidate.record.fencing_epoch.0 < fencing_epoch.0 {
+    match
+      persist_goal_execution_epoch_adoption(
+        repository,
+        repository_adapters,
+        candidate,
+        fencing_epoch,
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+  } else {
+    candidate
   }
   if selected.record.state == GoalExecutionState::GoalExecutionCanceling {
     let parts = match
