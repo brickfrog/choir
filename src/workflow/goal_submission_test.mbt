@@ -219,6 +219,70 @@ test "Goal submission stacks only on an open dependency Goal" {
 }
 
 ///|
+test "Goal submission rejects conflicting refs for one open dependency Goal" {
+  let dependency_id = @control.PartId("dependency")
+  let child_id = @control.PartId("child")
+  let snapshot = submission_snapshot([
+    submission_source(
+      "dependency",
+      [],
+      @workflow.SelectionSourceState::SelectionSourceClosed,
+    ),
+    submission_source(
+      "child",
+      [dependency_id],
+      @workflow.SelectionSourceState::SelectionSourceOpen,
+    ),
+  ])
+  let integration_target = @workflow.GitRefName("refs/heads/main")
+  let open = dependency_delivery_observation(
+    "goal-parent",
+    [dependency_id],
+    @workflow.GoalDependencyDeliveryState::GoalDependencyPullRequestOpen,
+  )
+  assert_eq(
+    @workflow.select_goal_submission_base(
+      snapshot,
+      [child_id],
+      integration_target,
+      [open, open],
+    ),
+    @workflow.GoalSubmissionBaseDecision::GoalSubmissionStackOnDependencyGoal(
+      open.goal_id,
+      open.goal_ref,
+    ),
+  )
+  let conflicting = {
+    ..open,
+    goal_ref: @workflow.GitRefName("refs/heads/goal-conflict"),
+  }
+  let expected = @workflow.GoalSubmissionBaseDecision::GoalSubmissionRejectBase(
+    @workflow.GoalSubmissionBaseRejection::GoalSubmissionDependencyObservationUncertain([
+        open.goal_id,
+      ],
+    ),
+  )
+  assert_eq(
+    @workflow.select_goal_submission_base(
+      snapshot,
+      [child_id],
+      integration_target,
+      [open, conflicting],
+    ),
+    expected,
+  )
+  assert_eq(
+    @workflow.select_goal_submission_base(
+      snapshot,
+      [child_id],
+      integration_target,
+      [conflicting, open],
+    ),
+    expected,
+  )
+}
+
+///|
 test "Goal submission rejects non-linear and undelivered dependency Goals" {
   let dependency_a = @control.PartId("dependency-a")
   let dependency_b = @control.PartId("dependency-b")

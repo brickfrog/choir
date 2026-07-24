@@ -289,16 +289,29 @@ pub fn select_goal_submission_base(
       external_dependency_ids.contains(part_id)
     })
   })
-  let uncertain_goal_ids = unique_sorted_goal_ids(
-    relevant.filter_map(fn(observation) {
-      if observation.state ==
-        GoalDependencyDeliveryState::GoalDependencyPullRequestObservationUncertain {
-        Some(observation.goal_id)
-      } else {
-        None
-      }
-    }),
-  )
+  let uncertain_ids : Array[@control.GoalId] = []
+  let closed_ids : Array[@control.GoalId] = []
+  let open : Array[GoalDependencyDeliveryObservation] = []
+  for observation in relevant {
+    match observation.state {
+      GoalDependencyDeliveryState::GoalDependencyPullRequestOpen =>
+        open.push(observation)
+      GoalDependencyDeliveryState::GoalDependencyPullRequestMerged => ()
+      GoalDependencyDeliveryState::GoalDependencyPullRequestClosed =>
+        closed_ids.push(observation.goal_id)
+      GoalDependencyDeliveryState::GoalDependencyPullRequestObservationUncertain =>
+        uncertain_ids.push(observation.goal_id)
+    }
+  }
+  for observation in open {
+    if open.any(fn(other) {
+        other.goal_id == observation.goal_id &&
+        other.goal_ref != observation.goal_ref
+      }) {
+      uncertain_ids.push(observation.goal_id)
+    }
+  }
+  let uncertain_goal_ids = unique_sorted_goal_ids(uncertain_ids)
   if uncertain_goal_ids.length() > 0 {
     return GoalSubmissionBaseDecision::GoalSubmissionRejectBase(
       GoalSubmissionBaseRejection::GoalSubmissionDependencyObservationUncertain(
@@ -306,16 +319,7 @@ pub fn select_goal_submission_base(
       ),
     )
   }
-  let closed_goal_ids = unique_sorted_goal_ids(
-    relevant.filter_map(fn(observation) {
-      if observation.state ==
-        GoalDependencyDeliveryState::GoalDependencyPullRequestClosed {
-        Some(observation.goal_id)
-      } else {
-        None
-      }
-    }),
-  )
+  let closed_goal_ids = unique_sorted_goal_ids(closed_ids)
   if closed_goal_ids.length() > 0 {
     return GoalSubmissionBaseDecision::GoalSubmissionRejectBase(
       GoalSubmissionBaseRejection::GoalSubmissionDependencyPullRequestClosed(
@@ -323,10 +327,6 @@ pub fn select_goal_submission_base(
       ),
     )
   }
-  let open = relevant.filter(fn(observation) {
-    observation.state ==
-    GoalDependencyDeliveryState::GoalDependencyPullRequestOpen
-  })
   let open_goal_ids = unique_sorted_goal_ids(
     open.map(fn(observation) { observation.goal_id }),
   )
