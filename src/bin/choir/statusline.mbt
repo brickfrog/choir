@@ -23,8 +23,7 @@ fn conductor_attention_label(
       "RECOVERY UNCERTAIN"
     @workflow.ConductorGoalAttention::ConductorAttentionBlocked => "BLOCKED"
     @workflow.ConductorGoalAttention::ConductorAttentionPaused => "PAUSED"
-    @workflow.ConductorGoalAttention::ConductorAttentionCanceling =>
-      "CANCELING"
+    @workflow.ConductorGoalAttention::ConductorAttentionCanceling => "CANCELING"
   }
 }
 
@@ -124,7 +123,9 @@ fn conductor_statusline_goal_segment(report : Json) -> String {
             ] {
             let (count, phase) = pair
             if count > 0 {
-              segments.push(count.to_string() + " " + conductor_phase_label(phase))
+              segments.push(
+                count.to_string() + " " + conductor_phase_label(phase),
+              )
             }
           }
           if segments.length() == 1 {

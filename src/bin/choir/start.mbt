@@ -230,7 +230,10 @@ test "start replaces a recorded daemon whose build identity differs" {
     start_existing_daemon(42, 41, "digest-new", Some("digest-old")),
     StartDaemonUntrusted,
   )
-  assert_eq(start_existing_daemon(42, 41, "digest-new", None), StartDaemonUntrusted)
+  assert_eq(
+    start_existing_daemon(42, 41, "digest-new", None),
+    StartDaemonUntrusted,
+  )
   assert_eq(
     start_existing_daemon(1, 1, "digest-new", Some("digest-old")),
     StartDaemonUntrusted,

@@ -16,42 +16,46 @@ test "Conductor prompt delegates slash Goal ownership to the provider" {
   assert_true(body.contains("MCP channel injects the next material state"))
   assert_false(body.contains("\nname: choir-goal\n"))
   assert_false(body.contains("\nname: goal\n"))
-  assert_true(body.contains("complete open blocking-dependency closure"))
-  assert_true(body.contains("call `goal_submit` exactly once"))
-  assert_true(body.contains("Never probe `goal_submit`"))
-  assert_true(body.contains("Omit `provider`"))
+}
+
+///|
+/// The prompt shares the Conductor's attention with the MCP instructions block
+/// and eleven tool descriptions that both providers already receive. Only rules
+/// with no schema equivalent belong here: a rejected `goal_submit` still spends
+/// the user's turn, so the one-operation budget and the ban on self-service
+/// diagnosis cannot be expressed as a field constraint. Per-field submission
+/// rules live in the `goal_submit` schema descriptions and are enforced by
+/// `@workflow.decode_conductor_goal_draft`; assert those where they are gated.
+test "Conductor prompt keeps the authority rules no schema can express" {
+  let body = @prompts.default_goal_prompt()
   assert_true(
-    body.contains("user's current message explicitly requests Claude"),
+    body.contains("One user message authorizes at most one state-changing"),
   )
-  assert_true(
-    body.contains("Durable transitions arrive through the Choir channel"),
-  )
-  assert_true(body.contains("selects work, not a durable Goal identity"))
-  assert_true(body.contains("interpret that identifier as a Bead"))
-  assert_true(body.contains("Goal IDs are internal implementation details"))
-  assert_true(body.contains("never ask the user to paste"))
-  assert_true(body.contains("Bead identifier as `part_id`"))
-  assert_true(body.contains("pass the returned internal `goal_id`"))
-  assert_true(body.contains("Never ask the user for the Goal ID"))
-  assert_true(body.contains("Choir, not the user or Conductor"))
-  assert_true(body.contains("Choir mints the durable `goal_id`"))
   assert_true(body.contains("whether Choir accepts or rejects it"))
   assert_true(body.contains("Never call `goal_submit` a second time"))
   assert_true(body.contains("using Bash, the Choir CLI, process inspection"))
+  assert_true(body.contains("Never probe `goal_submit`"))
+  assert_true(body.contains("complete open blocking-dependency closure"))
   assert_true(body.contains("The conversation is the product interface"))
-  assert_true(body.contains("call `goal_answer`"))
-  assert_false(body.contains("User-input answers are CLI-only"))
-  assert_true(body.contains("The completion mode is immutable"))
-  assert_true(body.contains("`evidence_only_binding_digest`"))
-  assert_true(body.contains("include a `pull_request` with a semantic title"))
-  assert_true(body.contains("never put internal Goal IDs, digests"))
-  assert_true(body.contains("Choir appends its hidden reconciliation marker"))
-  assert_true(
-    body.contains("never invent or nest them under a `mutation` object"),
-  )
-  assert_true(body.contains("\"exact_paths\":[\"src/example.mbt\"]"))
-  assert_true(body.contains("Never guess or submit Git refs"))
+  assert_true(body.contains("`choird` is the sole workflow authority"))
+}
+
+///|
+/// Every past incident used to add a sentence here and nothing ever removed
+/// one, so the prompt could only grow while the schema that actually rejects
+/// bad calls stayed unread. This test is the ratchet's counterweight: crossing
+/// the budget means deleting prose that a gate already enforces, not raising
+/// the number. The literal-JSON assertions guard the specific regression --
+/// a Part field catalog and an example Part object teaching by example what
+/// the schema states by interface.
+test "Conductor prompt holds its budget and teaches no shape by example" {
+  let body = @prompts.default_goal_prompt()
+  assert_true(body.length() < 7000)
+  assert_false(body.contains("\"part_id\":"))
+  assert_false(body.contains("\"exact_paths\":"))
+  assert_false(body.contains("\"moon_args\":"))
+  // Draft fields the decoder rejects must never reappear as prompt guidance.
+  assert_false(body.contains("`mutation`"))
   assert_false(body.contains("`base_ref`"))
   assert_false(body.contains("`integration_target_ref`"))
-  assert_true(body.contains("`choird` is the sole workflow authority"))
 }

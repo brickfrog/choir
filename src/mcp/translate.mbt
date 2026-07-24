@@ -41,7 +41,7 @@ fn conductor_tools() -> Array[CatalogTool] {
     ),
     "provider": {
       "type": "string".to_json(),
-      "description": "Optional provider for all Takes in this Part. Omit for the resumable Codex default. Set claude only when the user's current message explicitly requests Claude after the non-resumable subscription cost warning; never inherit it from an earlier Goal.".to_json(),
+      "description": "Optional provider for all Takes in this Part, and only a proposal; Choir remains authoritative. Omit for the resumable Codex default. Set claude only when the user's current message explicitly requests Claude after being told that Claude Takes are non-resumable and consume Claude subscription allowance; never copy or infer it from an earlier Goal, status result, Bead, or repository context.".to_json(),
       "enum": ["codex", "claude"].to_json(),
       "default": "codex".to_json(),
     }.to_json(),
@@ -56,7 +56,7 @@ fn conductor_tools() -> Array[CatalogTool] {
       "description": "True only when no honest narrower mutation scope exists; cannot be combined with path declarations".to_json(),
     }.to_json(),
     "moon_args": conductor_string_array_schema(
-      "Arguments after the registered moon executable, beginning with a subcommand such as test",
+      "Arguments after the already-registered moon executable, beginning with a Moon subcommand such as test; never repeat moon itself",
     ),
     "verify_timeout_ms": {
       "type": "integer".to_json(),
@@ -114,7 +114,7 @@ fn conductor_tools() -> Array[CatalogTool] {
     ),
     "completion_mode": {
       "type": "string".to_json(),
-      "description": "Omit for an ordinary publishable Goal; evidence_only requires the binding digest".to_json(),
+      "description": "Immutable after acceptance. Omit for an ordinary publishable Goal; evidence_only requires the binding digest".to_json(),
       "enum": ["publishable", "evidence_only"].to_json(),
     }.to_json(),
     "evidence_only_binding_digest": conductor_string_schema(
@@ -125,10 +125,10 @@ fn conductor_tools() -> Array[CatalogTool] {
       "description": "Required for a publishable Goal and forbidden for evidence_only. Human-facing title and review-ready body captured in the immutable Goal contract; Choir adds its hidden reconciliation marker.".to_json(),
       "properties": {
         "title": conductor_string_schema(
-          "Semantic PR title describing the selected work",
+          "Semantic PR title describing the selected work, following the repository's title convention",
         ),
         "body": conductor_string_schema(
-          "Concise reviewer-facing summary and verification plan; do not include Goal IDs, digests, or Choir markers",
+          "Concise reviewer-facing summary and verification plan; do not include Goal IDs, digests, receipt metadata, or Choir markers",
         ),
       }.to_json(),
       "required": ["title", "body"].to_json(),
@@ -238,7 +238,7 @@ fn conductor_tools() -> Array[CatalogTool] {
     },
     {
       name: "goal_attach",
-      description: "Read the durable normalized event projection once, only when the user explicitly requests Take events. Never use it for polling.",
+      description: "Read the durable normalized event projection for one Take. Use it when the user explicitly requests Take events, and once when a channel transition first reports a terminal failed or recovery-uncertain Take. Observational only: it never resumes, signals, retries, or changes the Take. Never use it for polling or for a repeated read while no durable state has changed.",
       input_schema: {
         "type": "object".to_json(),
         "properties": {
@@ -417,9 +417,7 @@ fn conductor_instructions() -> String {
     #|
     #|You exercise judgment and steering; choird remains the sole workflow authority. Do not execute a Part yourself, launch provider sessions, mutate workflow records, mint receipts, or infer completion. Choir schedules Takes through its admitted Claude and Codex subscription surfaces, verifies and independently audits candidates, serializes integration, and reconciles publication.
     #|
-    #|Use task_list and task_get to inspect existing Beads. Use task_create and task_update when the user asks to crystallize or refine work. Use goal_submit to start durable execution, goal_status to explain progress, goal_steer to pause, resume, or change bounded concurrency, goal_cancel for a durable stop, and goal_attach only for observational Take events. If a Goal needs user input, explain the request and use goal_answer only after the user explicitly supplies the answer; copy that answer exactly.
-    #|
-    #|The conversation is the product interface. Never send the user to the `choir goal` CLI for status, attachment, steering, cancellation, or input answers. Perform the requested operation through the typed tools and explain the result in plain language. The CLI is an operator and debugging fallback only.
+    #|Use the Beads tools to inspect and refine intended work, and the Goal tools to start, explain, steer, stop, and observe durable execution. Each tool description and input schema states when that call is authorized and what its fields mean; they are authoritative, so do not restate or second-guess them from memory.
     #|
     #|Never replace a rejected selection with an improvised smaller Goal. Report every accepted Part and typed rejection, resolve semantic ambiguity with the user, and preserve the user's requested scope.
   )

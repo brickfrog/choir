@@ -194,12 +194,7 @@ pub async fn advance_native_goal_finalization_with_adapters(
       }
       match
         @workflow.persist_goal_execution_success(
-          repository,
-          adapters,
-          execution,
-          assurance,
-          publication,
-          pull_request,
+          repository, adapters, execution, assurance, publication, pull_request,
           stored,
         ) {
         Ok(_) =>

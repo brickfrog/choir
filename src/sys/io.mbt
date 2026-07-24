@@ -421,11 +421,7 @@ pub fn acquire_instance_lock(path : String) -> Bool {
 
 ///|
 #borrow(path, buf)
-extern "C" fn c_read_file_into(
-  path : Bytes,
-  buf : Bytes,
-  cap : Int,
-) -> Int = "choir_read_file_into"
+extern "C" fn c_read_file_into(path : Bytes, buf : Bytes, cap : Int) -> Int = "choir_read_file_into"
 
 ///|
 /// Read a file's full contents as raw bytes. Returns `None` when the file is
@@ -436,7 +432,11 @@ pub fn read_file_bytes(path : String) -> Bytes? {
     return None
   }
   let buffer = Bytes::new(size)
-  let got = c_read_file_into(string_to_null_terminated_bytes(path), buffer, size)
+  let got = c_read_file_into(
+    string_to_null_terminated_bytes(path),
+    buffer,
+    size,
+  )
   if got != size {
     return None
   }

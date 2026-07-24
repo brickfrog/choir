@@ -176,17 +176,11 @@ extern "C" fn state_store_init_ffi(path : Bytes, path_len : Int) -> Int = "choir
 
 ///|
 #borrow(path)
-extern "C" fn state_store_mint_epoch_ffi(
-  path : Bytes,
-  path_len : Int,
-) -> Int64 = "choir_state_store_mint_epoch"
+extern "C" fn state_store_mint_epoch_ffi(path : Bytes, path_len : Int) -> Int64 = "choir_state_store_mint_epoch"
 
 ///|
 #borrow(path)
-extern "C" fn state_store_read_epoch_ffi(
-  path : Bytes,
-  path_len : Int,
-) -> Int64 = "choir_state_store_read_epoch"
+extern "C" fn state_store_read_epoch_ffi(path : Bytes, path_len : Int) -> Int64 = "choir_state_store_read_epoch"
 
 ///|
 #borrow(path, record_key, value_digest, semantic_key, payload_digest, precondition_key, precondition_digest)
