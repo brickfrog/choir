@@ -1,6 +1,45 @@
 ///|
 fn goal_cli_usage() -> String {
-  "usage: choir goal status <goal-id> | choir goal steer <goal-id> <pause|resume|concurrency N> | choir goal cancel <goal-id> | choir goal attach <take-id> | choir goal answer <request-id> <answer>"
+  "usage: choir goal list | choir goal status <goal-id|--part bead-id> | choir goal steer <goal-id|--part bead-id> <pause|resume|concurrency N|retry [bead-id]> | choir goal cancel <goal-id|--part bead-id> | choir goal attach <take-id> | choir goal answer <request-id> <answer>"
+}
+
+///|
+/// Resolve a Goal selector shared across status/steer/cancel: a bare token is
+/// the internal goal_id, `--part <bead-id>` names the user-facing Bead whose
+/// Goal the daemon resolves. Recovery without a live Conductor needs the
+/// latter because internal Goal ids are never shown to the user.
+fn goal_cli_selector(
+  args : Array[String],
+  start : Int,
+) -> Result[(Map[String, Json], Int), String] {
+  if start >= args.length() {
+    return Err(goal_cli_usage())
+  }
+  if args[start] == "--part" {
+    if start + 1 >= args.length() || args[start + 1].trim() == "" {
+      return Err(goal_cli_usage())
+    }
+    Ok(({ "part_id": args[start + 1].trim().to_owned().to_json() }, start + 2))
+  } else {
+    let value = args[start].trim().to_owned()
+    if value == "" {
+      return Err(goal_cli_usage())
+    }
+    Ok(({ "goal_id": value.to_json() }, start + 1))
+  }
+}
+
+///|
+test "goal selector accepts a goal id or a Bead part selector" {
+  assert_eq(goal_cli_selector(["goal-a"], 0).unwrap().0, {
+    "goal_id": "goal-a".to_json(),
+  })
+  assert_eq(goal_cli_selector(["--part", "choir-x"], 0).unwrap().0, {
+    "part_id": "choir-x".to_json(),
+  })
+  assert_eq(goal_cli_selector(["--part", "choir-x"], 0).unwrap().1, 2)
+  assert_true(goal_cli_selector(["--part"], 0) is Err(_))
+  assert_true(goal_cli_selector([], 0) is Err(_))
 }
 
 ///|
@@ -35,16 +74,23 @@ fn goal_cli_status_values(
   args : Array[String],
   start : Int,
 ) -> Result[Map[String, Json], String] {
-  if start + 1 != args.length() || args[start].trim() == "" {
+  let (values, next) = match goal_cli_selector(args, start) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if next != args.length() {
     return Err(goal_cli_usage())
   }
-  Ok({ "goal_id": args[start].trim().to_owned().to_json() })
+  Ok(values)
 }
 
 ///|
-test "goal status requires exactly one durable Goal ID" {
+test "goal status accepts a Goal ID or a Bead part selector" {
   assert_eq(goal_cli_status_values(["goal-a"], 0).unwrap(), {
     "goal_id": "goal-a".to_json(),
+  })
+  assert_eq(goal_cli_status_values(["--part", "choir-x"], 0).unwrap(), {
+    "part_id": "choir-x".to_json(),
   })
   assert_true(goal_cli_status_values([], 0) is Err(_))
   assert_true(goal_cli_status_values(["goal-a", "goal-b"], 0) is Err(_))
@@ -66,34 +112,49 @@ fn goal_cli_steer_values(
   args : Array[String],
   start : Int,
 ) -> Result[Map[String, Json], String] {
-  if start + 1 >= args.length() {
+  let (selector, action_index) = match goal_cli_selector(args, start) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if action_index >= args.length() {
     return Err(goal_cli_usage())
   }
-  let goal_id = args[start].trim().to_owned()
-  let action = args[start + 1].trim().to_lower()
-  if goal_id == "" {
-    return Err(goal_cli_usage())
-  }
+  let action = args[action_index].trim().to_lower()
+  let values = selector
   match action {
     "pause" | "resume" => {
-      if start + 2 != args.length() {
+      if action_index + 1 != args.length() {
         return Err(goal_cli_usage())
       }
-      Ok({ "goal_id": goal_id.to_json(), "action": action.to_json() })
+      values["action"] = action.to_json()
+      Ok(values)
+    }
+    "retry" => {
+      // Optional trailing Bead id names the blocked Part; omitted when
+      // exactly one Part is blocked.
+      if action_index + 1 < args.length() {
+        if action_index + 2 != args.length() ||
+          args[action_index + 1].trim() == "" {
+          return Err(goal_cli_usage())
+        }
+        values["part_id"] = args[action_index + 1].trim().to_owned().to_json()
+      } else if action_index + 1 != args.length() {
+        return Err(goal_cli_usage())
+      }
+      values["action"] = "retry_part".to_json()
+      Ok(values)
     }
     "concurrency" => {
-      if start + 3 != args.length() {
+      if action_index + 2 != args.length() {
         return Err(goal_cli_usage())
       }
-      let value = @string.parse_int(args[start + 2]) catch { _ => 0 }
+      let value = @string.parse_int(args[action_index + 1]) catch { _ => 0 }
       if value <= 0 {
         return Err("concurrency requires a positive integer")
       }
-      Ok({
-        "goal_id": goal_id.to_json(),
-        "action": "set_concurrency".to_json(),
-        "maximum_parallel_parts": value.to_json(),
-      })
+      values["action"] = "set_concurrency".to_json()
+      values["maximum_parallel_parts"] = value.to_json()
+      Ok(values)
     }
     _ => Err(goal_cli_usage())
   }
@@ -105,14 +166,23 @@ test "goal CLI parses typed steering operations" {
     "goal_id": "goal-a".to_json(),
     "action": "pause".to_json(),
   })
-  assert_eq(goal_cli_steer_values(["goal-a", "resume"], 0).unwrap(), {
-    "goal_id": "goal-a".to_json(),
+  assert_eq(goal_cli_steer_values(["--part", "choir-x", "resume"], 0).unwrap(), {
+    "part_id": "choir-x".to_json(),
     "action": "resume".to_json(),
   })
   assert_eq(goal_cli_steer_values(["goal-a", "concurrency", "3"], 0).unwrap(), {
     "goal_id": "goal-a".to_json(),
     "action": "set_concurrency".to_json(),
     "maximum_parallel_parts": (3).to_json(),
+  })
+  assert_eq(goal_cli_steer_values(["goal-a", "retry"], 0).unwrap(), {
+    "goal_id": "goal-a".to_json(),
+    "action": "retry_part".to_json(),
+  })
+  assert_eq(goal_cli_steer_values(["goal-a", "retry", "choir-b"], 0).unwrap(), {
+    "goal_id": "goal-a".to_json(),
+    "action": "retry_part".to_json(),
+    "part_id": "choir-b".to_json(),
   })
   assert_true(
     goal_cli_steer_values(["goal-a", "concurrency", "0"], 0) is Err(_),
@@ -171,6 +241,14 @@ test "goal CLI binds an answer to one durable request" {
 ///|
 fn goal_run() -> Unit {
   let args = @env.args()
+  if args.length() >= 3 && args[2] == "list" {
+    if args.length() != 3 {
+      client_emit(@types.Response::Err(goal_cli_usage()))
+      return
+    }
+    client_emit(goal_cli_call("goal_list", Map([])))
+    return
+  }
   if args.length() >= 3 && args[2] == "status" {
     let values = match goal_cli_status_values(args, 3) {
       Ok(value) => value
@@ -183,11 +261,14 @@ fn goal_run() -> Unit {
     return
   }
   if args.length() >= 3 && args[2] == "cancel" {
-    if args.length() != 4 || args[3].trim() == "" {
-      client_emit(@types.Response::Err(goal_cli_usage()))
-      return
+    let values = match goal_cli_status_values(args, 3) {
+      Ok(value) => value
+      Err(err) => {
+        client_emit(@types.Response::Err(err))
+        return
+      }
     }
-    client_emit(goal_cli_call("goal_cancel", { "goal_id": args[3].to_json() }))
+    client_emit(goal_cli_call("goal_cancel", values))
     return
   }
   if args.length() >= 3 && args[2] == "steer" {

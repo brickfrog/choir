@@ -169,6 +169,16 @@ fn conductor_tools() -> Array[CatalogTool] {
       read_only: false,
     },
     {
+      name: "goal_list",
+      description: "Enumerate every durable Goal with its state, lifecycle, and claimed Bead/Part ids. Use only for an explicit request to see all Goals, or to recover a lost internal goal_id from the user-facing Bead it selected. Read-only.",
+      input_schema: {
+        "type": "object".to_json(),
+        "properties": (Map([]) : Map[String, Json]).to_json(),
+        "additionalProperties": false.to_json(),
+      }.to_json(),
+      read_only: true,
+    },
+    {
       name: "goal_status",
       description: "Inspect durable Goal state for an explicit user status request. Select by internal goal_id when already known, or by the user-facing Bead/Part part_id. A part_id resolves its active Goal, or its most recently selected terminal Goal when none is active. Use part_id for Bead-oriented questions; never ask the user to supply an internal Goal ID. Exactly one selector is required. Background transitions arrive through the Choir channel.",
       input_schema: {
