@@ -408,6 +408,63 @@ pub fn read_stdin_exact(size : Int) -> Bytes? {
 }
 
 ///|
+#borrow(path)
+extern "C" fn c_acquire_instance_lock(path : Bytes) -> Int = "choir_acquire_instance_lock"
+
+///|
+/// Acquire an exclusive, non-blocking `flock(2)` on `path`, creating the file
+/// when absent. The descriptor is intentionally never closed so the lock is
+/// held for the remaining lifetime of the process.
+pub fn acquire_instance_lock(path : String) -> Bool {
+  c_acquire_instance_lock(string_to_null_terminated_bytes(path)) >= 0
+}
+
+///|
+#borrow(path, buf)
+extern "C" fn c_read_file_into(
+  path : Bytes,
+  buf : Bytes,
+  cap : Int,
+) -> Int = "choir_read_file_into"
+
+///|
+/// Read a file's full contents as raw bytes. Returns `None` when the file is
+/// unreadable or grows past the initially observed size mid-read.
+pub fn read_file_bytes(path : String) -> Bytes? {
+  let size = c_get_file_size(string_to_null_terminated_bytes(path))
+  if size < 0 {
+    return None
+  }
+  let buffer = Bytes::new(size)
+  let got = c_read_file_into(string_to_null_terminated_bytes(path), buffer, size)
+  if got != size {
+    return None
+  }
+  Some(buffer)
+}
+
+///|
+test "instance lock is exclusive across open file descriptions" {
+  let path = "/tmp/choir-io-instance-lock-test-" + get_pid().to_string()
+  ignore(rm_rf(path))
+  assert_true(acquire_instance_lock(path))
+  // flock ownership follows the open file description, so a second acquire
+  // through a fresh descriptor must fail even within the same process.
+  assert_false(acquire_instance_lock(path))
+  ignore(rm_rf(path))
+}
+
+///|
+test "read_file_bytes returns exact file contents" {
+  let path = "/tmp/choir-io-read-bytes-test-" + get_pid().to_string()
+  ignore(rm_rf(path))
+  assert_true(write_file_sync(path, "byte-content"))
+  assert_eq(read_file_bytes(path), Some(b"byte-content"))
+  assert_eq(read_file_bytes(path + "-missing"), None)
+  ignore(rm_rf(path))
+}
+
+///|
 pub fn exit(code : Int) -> Unit {
   c_exit(code)
 }

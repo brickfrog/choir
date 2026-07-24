@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -516,6 +517,32 @@ void choir_init_cleanup_runtime_artifacts(void) {
     unlink(".choir/run/server.sock");
     unlink(".choir/run/run_id");
     (void)choir_rm_rf(".choir/run/codex-conductor");
+}
+
+int choir_acquire_instance_lock(const char* path) {
+    int fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (fd < 0) return -1;
+    if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
+        int err = errno;
+        close(fd);
+        errno = err;
+        return -1;
+    }
+    return fd;
+}
+
+int choir_read_file_into(const char* path, unsigned char* buf, int cap) {
+    FILE* f = fopen(path, "rb");
+    if (!f) return -1;
+    size_t got = fread(buf, 1, (size_t)cap, f);
+    if (ferror(f)) {
+        fclose(f);
+        return -1;
+    }
+    int extra = fgetc(f);
+    fclose(f);
+    if (extra != EOF) return -1;
+    return (int)got;
 }
 
 int choir_get_file_size(const char* path) {

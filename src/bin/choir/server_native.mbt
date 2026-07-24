@@ -11,6 +11,7 @@ priv struct ConductorServerState {
   mut last_goal_update : String?
   mut last_goal_update_fingerprint : String?
   goal_updates : Map[String, String]
+  mut server_identity : String
 }
 
 ///|
@@ -27,6 +28,7 @@ fn ConductorServerState::new(config : @types.Config) -> ConductorServerState {
     last_goal_update: None,
     last_goal_update_fingerprint: None,
     goal_updates: Map([]),
+    server_identity: "",
   }
 }
 
@@ -65,6 +67,9 @@ let conductor_goal_update_method : String = "conductor_goal_update"
 
 ///|
 let conductor_stop_decision_method : String = "conductor_stop_decision"
+
+///|
+let server_identity_method : String = "server_identity"
 
 ///|
 fn conductor_goal_id_from_json(value : Json?) -> String? {
@@ -433,6 +438,22 @@ async fn conductor_handle_custom_line(
   state : ConductorServerState,
   request : @types.Request,
 ) -> Unit {
+  if request.req_method == server_identity_method {
+    // Answered without authentication: the socket is 0600, and the build
+    // identity lets `choir start` decide whether this daemon is current
+    // even when the on-disk binary was replaced underneath it.
+    ignore(
+      conductor_send_response(
+        client.fd,
+        @types.Response::ok_values({
+          "identity": state.server_identity.to_json(),
+        }),
+      ),
+    )
+    client.close_after_response = true
+    client.busy = false
+    return
+  }
   if request.req_method == conductor_bootstrap_method {
     ignore(
       conductor_send_response(
@@ -863,6 +884,17 @@ fn goal_worker_run() -> Unit {
 }
 
 ///|
+/// Content digest of the Choir binary at `path`. Both `choir serve` (for the
+/// running daemon) and `choir start` (for the candidate binary) derive this,
+/// so upgrade staleness compares build content rather than executable paths.
+fn server_executable_identity(path : String) -> String? {
+  match @sys.read_file_bytes(path) {
+    Some(bytes) => Some(@crypto.bytes_to_hex_string(@crypto.sha256(bytes)))
+    None => None
+  }
+}
+
+///|
 fn serve_run() -> Unit {
   let config_content = @sys.read_file(".choir/config.toml")
   let local_content = @sys.read_file(".choir/config.local.toml")
@@ -888,6 +920,16 @@ fn serve_run() -> Unit {
   ignore(@sys.create_dir_all(config.project_dir + "/.choir/run"))
   ignore(@sys.create_dir_all(config.project_dir + "/.choir/state"))
   ignore(@sys.create_dir_all(config.project_dir + "/.choir/state/control"))
+  // The instance lock must precede any runtime-artifact cleanup: a live
+  // daemon holds it for its whole lifetime, so reaching the unlink below
+  // proves the socket and pid file are stale rather than another daemon's.
+  if !@sys.acquire_instance_lock(config.project_dir + "/.choir/run/server.lock") {
+    @sys.write_stderr(
+      "choir serve: another choird instance already holds this project\n",
+    )
+    @sys.exit(1)
+    return
+  }
   @sys.init_cleanup_runtime_artifacts_native()
   conductor_statusline_deactivate_cache(config.project_dir)
   @sys.write_pid_file(".choir/run/server.pid")
@@ -906,6 +948,14 @@ fn serve_run() -> Unit {
     Some(value) => value
     None => {
       @moontrace.error("failed to resolve the Choir executable")
+      @sys.exit(1)
+      return
+    }
+  }
+  match server_executable_identity(executable) {
+    Some(identity) => state.server_identity = identity
+    None => {
+      @moontrace.error("failed to fingerprint the Choir executable")
       @sys.exit(1)
       return
     }
