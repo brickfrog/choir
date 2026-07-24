@@ -1,10 +1,14 @@
 ///|
+test "Conductor prompt is sourced only from the embedded default" {
+  // load_goal_prompt no longer consults a project override, so it must equal
+  // the single embedded source regardless of project directory.
+  assert_eq(@prompts.load_goal_prompt("/repo"), @prompts.default_goal_prompt())
+  assert_eq(@prompts.load_goal_prompt(""), @prompts.default_goal_prompt())
+}
+
+///|
 test "Conductor prompt delegates slash Goal ownership to the provider" {
-  let body = @prompts.load_goal_prompt("/repo", path_exists=fn(_) { false }, read_file=fn(
-    _,
-  ) {
-    abort("missing prompt must not be read")
-  })
+  let body = @prompts.default_goal_prompt()
   assert_true(body.has_prefix("Interpret the user's Goal request"))
   assert_true(body.contains("provider's built-in `/goal` command"))
   assert_true(body.contains("Choir does not register or shadow that command"))
@@ -50,15 +54,4 @@ test "Conductor prompt delegates slash Goal ownership to the provider" {
   assert_false(body.contains("`base_ref`"))
   assert_false(body.contains("`integration_target_ref`"))
   assert_true(body.contains("`choird` is the sole workflow authority"))
-}
-
-///|
-test "Conductor prompt permits one project override outside skill discovery" {
-  let expected_path = "/repo/.choir/prompts/conductor.md"
-  let body = @prompts.load_goal_prompt(
-    "/repo",
-    path_exists=fn(path) { path == expected_path },
-    read_file=fn(_) { "project Goal prompt\n" },
-  )
-  assert_eq(body, "project Goal prompt\n")
 }
