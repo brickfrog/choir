@@ -104,6 +104,7 @@ fn run_hermetic() -> Int {
 
 ///|
 fn probe_mcp_launch(
+  fixture_root : String,
   delay_ms? : Int = 0,
   credential_canary_path? : String = "",
   tool_start_canary_path? : String = "",
@@ -129,12 +130,22 @@ fn probe_mcp_launch(
         ),
       )
   }
+  let fixture_script = fixture_root + "/choir_probe_mcp.mjs"
+  let fixture_content = @sys.read_file(script)
+  if fixture_content == "" ||
+    !@sys.write_file_sync(fixture_script, fixture_content) {
+    return Err(
+      @types.ChoirError::workspace_error(
+        "failed to copy startup probe MCP fixture into the provider root",
+      ),
+    )
+  }
   if delay_ms < 0 || delay_ms > 30000 {
     return Err(
       @types.ChoirError::validation_error("startup probe delay is invalid"),
     )
   }
-  let args = [script]
+  let args = [fixture_script]
   if delay_ms > 0 {
     args.push("--delay-ms")
     args.push(delay_ms.to_string())
@@ -217,6 +228,7 @@ async fn run_codex_live_cancellation_case(
   }
   let (mcp_command, mcp_args) = match
     probe_mcp_launch(
+      root,
       delay_ms~,
       tool_start_canary_path=if point == CodexCancelDuringToolExecution {
         tool_start_path
@@ -409,7 +421,7 @@ async fn run_claude_synthetic_startup() -> Int {
     @sys.write_stderr("failed to create dedicated synthetic startup root\n")
     return 1
   }
-  let (mcp_command, mcp_args) = match probe_mcp_launch() {
+  let (mcp_command, mcp_args) = match probe_mcp_launch(root) {
     Ok(launch) => launch
     Err(error) => {
       @sys.write_stderr(error.message() + "\n")
@@ -442,7 +454,7 @@ async fn run_claude_live_startup() -> Int {
     @sys.write_stderr("failed to create dedicated live startup root\n")
     return 1
   }
-  let (mcp_command, mcp_args) = match probe_mcp_launch() {
+  let (mcp_command, mcp_args) = match probe_mcp_launch(root) {
     Ok(launch) => launch
     Err(error) => {
       @sys.write_stderr(error.message() + "\n")
@@ -622,6 +634,7 @@ async fn run_claude_live_cancellation_case(
   let tool_start_path = sterile_root + "/tool-started"
   let (mcp_command, mcp_args) = match
     probe_mcp_launch(
+      sterile_root,
       delay_ms=if point == ClaudeCancelDuringToolExecution { 30000 } else { 0 },
       tool_start_canary_path=if point == ClaudeCancelDuringToolExecution {
         tool_start_path
@@ -915,6 +928,7 @@ async fn run_claude_live_driver_probe(probe : ClaudeLiveDriverProbe) -> Int {
   }
   let (mcp_command, mcp_args) = match
     probe_mcp_launch(
+      sterile_root,
       credential_canary_path=if probe == ClaudeProbeCredentialIsolation {
         credential_canary
       } else {
@@ -1101,6 +1115,7 @@ async fn run_claude_live_driver_probe(probe : ClaudeLiveDriverProbe) -> Int {
         "session_identity": (result.session.id == started.id).to_json(),
         "surface_identity": (result.effective_surface_manifest_digest ==
         started.effective_surface_manifest_digest).to_json(),
+        "model_identity": result.model_identity.to_json(),
         "event_count": result.events.length().to_json(),
         "terminal_response": result.terminal_response.to_json(),
       }.to_json(),
@@ -1127,7 +1142,11 @@ async fn run_claude_capability_death() -> Int {
     return 1
   }
   let (mcp_command, mcp_args) = match
-    probe_mcp_launch(tool_start_canary_path=tool_started, fail_tool=true) {
+    probe_mcp_launch(
+      sterile_root,
+      tool_start_canary_path=tool_started,
+      fail_tool=true,
+    ) {
     Ok(value) => value
     Err(error) => {
       @sys.write_stderr(error.message() + "\n")
@@ -1235,7 +1254,11 @@ async fn run_claude_parent_loss_child(root : String) -> Int {
     return 1
   }
   let (mcp_command, mcp_args) = match
-    probe_mcp_launch(delay_ms=30000, tool_start_canary_path=tool_started) {
+    probe_mcp_launch(
+      sterile_root,
+      delay_ms=30000,
+      tool_start_canary_path=tool_started,
+    ) {
     Ok(value) => value
     Err(_) => return 1
   }
@@ -1440,7 +1463,7 @@ async fn run_codex_live_startup() -> Int {
     @sys.write_stderr("failed to create dedicated Codex startup root\n")
     return 1
   }
-  let (mcp_command, mcp_args) = match probe_mcp_launch() {
+  let (mcp_command, mcp_args) = match probe_mcp_launch(root) {
     Ok(launch) => launch
     Err(error) => {
       @sys.write_stderr(error.message() + "\n")
@@ -1533,6 +1556,7 @@ async fn run_codex_live_driver_at(
     unavailable_sandbox_mcp_launch(root)
   } else {
     probe_mcp_launch(
+      root,
       delay_ms~,
       credential_canary_path~,
       read_canary_path=if host_read_probe { host_read_canary } else { "" },

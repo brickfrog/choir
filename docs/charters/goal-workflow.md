@@ -5194,10 +5194,43 @@ integration receipt, zero implementation redispatches after restart, and two
 assurance-provider dispatches after restart. The separate cancellation fixture
 recorded three effect receipts and no post-restart provider dispatch.
 
+#### 2026-07-24 Claude 2.1.219 patch qualification
+
+Claude Code 2.1.219 qualified through the provider patch fast path with the
+official Linux x86-64 executable SHA-256
+`22cfd6f5b3061c0391ba84e9cf8c9deaa37783aac18b004d42ec061e98f00691`
+and Anthropic release commit `0c188278cdf9b8b717c2740550bdb0f69c02f6b5`.
+The isolated executable reported `2.1.219 (Claude Code)`, and every flag emitted
+by the native Claude driver remained present.
+
+The applicable release changes were the new Opus 5 default and the additive
+`mcp_server_errors` initialization field. The startup and driver fixtures now
+cover the additive field. Choir does not opt into the changed nested-subagent
+forwarding behavior, dynamic workflow depth, added-directory hooks, or
+network allowlist settings, and it does not select a model explicitly. The
+bounded live implementation Take observed `claude-opus-5`, used only the exact
+declared `mcp__choir_probe__probe` surface, produced the expected six-event
+lifecycle, and returned `{"outcome":"completed"}`.
+
+The reduced hermetic baseline passed `git diff --check`, all 6 trusted
+JavaScript tests, all 464 native MoonBit tests, `moon check`, `choir_lint`, all
+36 hermetic conformance cases, and the native release build. The targeted live
+required-tool startup check failed closed before provider launch, and the live
+tool-search boundary passed. The other full Claude live-matrix probes were
+`NOT_RUN` because this candidate met the eligible patch fast path and did not
+change their owned authentication, isolation, cancellation, process, or
+recovery seams.
+
+Qualification also corrected a conformance-only fixture path: the hardened
+provider namespace cannot read the checkout, so the probe MCP script is copied
+into the already-authorized sterile fixture root. No production host path or
+provider capability was added.
+
 ### Primary sources retrieved
 
 Anthropic:
 
+- [Claude Code 2.1.219 release](https://github.com/anthropics/claude-code/releases/tag/v2.1.219)
 - [Authentication](https://code.claude.com/docs/en/authentication)
 - [Legal and compliance](https://code.claude.com/docs/en/legal-and-compliance)
 - [Programmatic/headless Claude Code](https://code.claude.com/docs/en/headless)

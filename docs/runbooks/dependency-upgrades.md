@@ -33,6 +33,18 @@ qualification check, and return the required Pin Audit Report. Do not promote,
 publish, release, or replace the installed runtime.
 ```
 
+For a provider patch-release fast path:
+
+```text
+Follow docs/runbooks/dependency-upgrades.md in qualification mode using the
+provider patch fast path for <Claude Code or Codex CLI> candidate <version>.
+Verify the isolated candidate identity, review the release notes and exact
+driver flags, run the reduced hermetic baseline, the affected targeted live
+checks, and one bounded implementation Take. Escalate to full qualification
+if any eligibility condition fails. Return the required Pin Audit Report and
+stop before promotion, installation, push, or release.
+```
+
 For promotion after reviewing qualification evidence:
 
 ```text
@@ -307,8 +319,10 @@ worktree and run the admission and conformance suite there. Those staged pin
 edits are qualification evidence; they are not permission to merge, install,
 push, or release the candidate.
 
-Run this baseline before changing a canonical pin, then again after candidate
-changes. A pre-existing failure must be separated from a candidate regression.
+For a full qualification, run this baseline before changing a canonical pin,
+then again after candidate changes. A pre-existing failure must be separated
+from a candidate regression. The provider patch fast path below uses its
+smaller baseline instead.
 
 ```sh
 git diff --check
@@ -325,6 +339,61 @@ Use the repository's documented environment controls for real-exec tests. Do
 not remove `CHOIR_TEST_NO_EXEC` protections or make hermetic tests depend on the
 ambient host.
 
+### Provider patch fast path
+
+An exact provider pin is an admission boundary, not a requirement to repeat
+every live boundary probe for each daily patch release. A Claude Code or Codex
+CLI candidate may use this fast path only when all of the following are true:
+
+- only the patch component changed;
+- an official changelog and exact platform artifact identity are available;
+- the isolated candidate's version and hash match that official identity;
+- every release-note item has been mapped to the exact CLI arguments, startup
+  events, structured output, MCP surface, authentication, sandbox, and process
+  lifecycle used by Choir;
+- removed or renamed flags and non-additive protocol changes are absent;
+- any additive event or field is ignored safely or covered by a focused parser
+  test; and
+- no applicable security advisory or trust-boundary change requires broader
+  evidence.
+
+A default-model or pricing change does not by itself force the full matrix, but
+the report must call it out and the bounded live Take must record the model
+identity actually observed.
+
+Before staging the candidate pin, record its absolute isolated path, version,
+SHA-256, official source, release notes, and auto-update exposure. Review the
+help for every flag emitted by the relevant Choir driver. Then stage every
+coupled version, hash, fixture, provider-evidence identity, and current-version
+document before running:
+
+```sh
+git diff --check
+node --test scripts/choir_sandbox_mcp_test.mjs
+CHOIR_TEST_NO_EXEC=1 moon test --target native
+moon check --target native
+moon run --target native src/bin/choir_lint
+moon run --target native src/bin/choir_conformance -- hermetic
+moon build --target native --release
+```
+
+For Claude Code, the minimum live fast-path evidence is
+`--required-tool-startup-live` plus one affected driver probe. For Codex CLI,
+it is `--driver-live` plus one affected driver probe. Each selected probe must
+run through the existing sterile driver boundary and at least one must execute
+a bounded implementation Take. Select affected probes from the full matrices
+below and explain the selection in the report; do not run unrelated probes
+merely to make the report longer.
+
+Escalate to the full qualification matrix before promotion when eligibility is
+uncertain, a targeted or hermetic check fails, the observed bytes drift, the
+candidate changes packaging or executable layout, or the release affects
+authentication, permission enforcement, sandbox escape resistance, credential
+isolation, cancellation, process ownership, recovery, or required MCP-tool
+discovery beyond what the selected probes establish. A fast-path report lists
+the unselected full-matrix checks as `NOT_RUN` with `eligible patch fast path`
+as the reason.
+
 ## Claude Code qualification
 
 ### Candidate preparation
@@ -336,7 +405,7 @@ ambient host.
   through a dedicated sterile home and the existing host boundary.
 - Review CLI help for every flag used by the Conductor and Take driver.
 
-### Required declaration and startup checks
+### Full qualification declaration and startup checks
 
 ```sh
 moon run --target native src/bin/choir_conformance -- harness --surface claude-cli --profile subscription
@@ -352,7 +421,7 @@ does not prove tool availability. The authenticated `--live` and
 `--required-tool-startup-live` checks own required-tool discovery, execution,
 and fail-closed startup evidence.
 
-### Required driver boundary checks
+### Full qualification driver boundary checks
 
 ```sh
 moon run --target native src/bin/choir_conformance -- harness --surface claude-cli --profile subscription --driver-ambient-live
