@@ -202,6 +202,20 @@ test "Conductor draft rejects unknown fields and ambiguous mutation scope" {
     }
     Ok(_) => fail("unknown Part fields were accepted")
   }
+  // Path declarations are direct Part fields. The Conductor prompt no longer
+  // says so in prose because this rejection is the guarantee.
+  match
+    @workflow.decode_conductor_goal_draft(
+      (
+        #|{"proposal_id":"p","goal_id":"g","pull_request":{"title":"fix: change x","body":"Changes x."},"maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","mutation":{"exact_paths":["src/a.mbt"]},"moon_args":["test"]}]}
+      ),
+    ) {
+    Err(error) => {
+      assert_true(error.message().contains("unknown fields: mutation"))
+      assert_true(error.message().contains("allowed fields: part_id"))
+    }
+    Ok(_) => fail("a nested mutation object was accepted")
+  }
   assert_true(
     @workflow.decode_conductor_goal_draft(
       (

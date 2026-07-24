@@ -124,6 +124,19 @@ test "Conductor catalog exposes only Goal and Beads operations" {
   )
   assert_false(rendered.contains("automatic_polling_allowed"))
   assert_false(rendered.contains("conductor_objective_complete"))
+  // Per-field submission rules live in the schema descriptions rather than in
+  // the Conductor prompt, so the field the rule governs carries it.
+  assert_true(rendered.contains("never repeat moon itself"))
+  assert_true(
+    rendered.contains("non-resumable and consume Claude subscription allowance"),
+  )
+  assert_true(rendered.contains("never copy or infer it from an earlier Goal"))
+  assert_true(rendered.contains("no honest narrower mutation scope exists"))
+  assert_true(rendered.contains("Immutable after acceptance"))
+  assert_true(rendered.contains("digests, receipt metadata, or Choir markers"))
+  assert_true(
+    rendered.contains("once when a channel transition first reports a terminal"),
+  )
   assert_true(rendered.contains("Never create a defect Bead"))
   assert_true(rendered.contains("task_create"))
   assert_true(rendered.contains("goal_answer"))
@@ -184,6 +197,10 @@ test "initialize response reserves workflow authority for choird" {
   )
   assert_true(instructions.contains("use Beads to preserve intended work"))
   assert_true(instructions.contains("Do not execute a Part yourself"))
+  // The block orients the Conductor and defers detail to the tool catalog it
+  // ships alongside; it does not restate per-tool or per-field rules.
+  assert_true(instructions.contains("they are authoritative"))
+  assert_true(instructions.length() < 1400)
 }
 
 ///|
