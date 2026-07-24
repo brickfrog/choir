@@ -13,6 +13,12 @@ pub(all) struct NativeConductorGoalSubmissionReport {
 } derive(Debug, Eq, ToJson)
 
 ///|
+priv struct NativeGoalSelectionSourceCapture {
+  repository_id : @workflow.RepositoryId
+  beads_json : String
+}
+
+///|
 fn native_goal_submission_error(detail : String) -> @types.ChoirError {
   @types.ChoirError::validation_error("native Goal submission: " + detail)
 }
@@ -143,12 +149,11 @@ fn native_goal_submission_source_part(
 }
 
 ///|
-async fn capture_native_goal_selection_snapshot(
+async fn capture_native_goal_selection_source(
   draft : @workflow.ConductorGoalDraft,
-  base_ref : @workflow.GitRefName,
   project_dir : String,
   capture : async (Command) -> (Int, String),
-) -> Result[@workflow.GoalSelectionSnapshot, @types.ChoirError] {
+) -> Result[NativeGoalSelectionSourceCapture, @types.ChoirError] {
   let root = match
     native_goal_submission_capture(
       capture,
@@ -160,6 +165,35 @@ async fn capture_native_goal_selection_snapshot(
     Ok(value) => value
     Err(error) => return Err(error)
   }
+  let bead_args : Array[String] = ["show"]
+  for part in draft.parts {
+    bead_args.push(part.part_id.0)
+  }
+  bead_args.push("--json")
+  bead_args.push("--readonly")
+  let beads_json = match
+    native_goal_submission_capture(
+      capture, project_dir, "bd", bead_args, "Beads source",
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let repository_id = @workflow.RepositoryId(
+    "sha256:" +
+    @storage.digest_text(
+      @storage.artifact_digest(@utf8.encode("choir.repository.v1\u{00}" + root)),
+    ),
+  )
+  Ok({ repository_id, beads_json })
+}
+
+///|
+async fn capture_native_goal_selection_snapshot(
+  source : NativeGoalSelectionSourceCapture,
+  base_ref : @workflow.GitRefName,
+  project_dir : String,
+  capture : async (Command) -> (Int, String),
+) -> Result[@workflow.GoalSelectionSnapshot, @types.ChoirError] {
   let base_commit = match
     native_goal_submission_capture(
       capture,
@@ -191,28 +225,186 @@ async fn capture_native_goal_selection_snapshot(
       }
     Err(error) => return Err(error)
   }
-  let bead_args : Array[String] = ["show"]
-  for part in draft.parts {
-    bead_args.push(part.part_id.0)
+  @workflow.goal_selection_snapshot_from_beads_json(
+    source.repository_id,
+    base_commit,
+    base_tree,
+    source.beads_json,
+  )
+}
+
+///|
+fn native_goal_dependency_pull_request_snapshot(
+  lookup : @workflow.PullRequestLookupObservation,
+) -> @workflow.RemotePullRequestSnapshot? {
+  match lookup {
+    @workflow.PullRequestLookupObservation::PullRequestStoredIdMatch(snapshot)
+    | @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch(
+      snapshot
+    )
+    | @workflow.PullRequestLookupObservation::PullRequestPossibleExistingMatch(
+      snapshot
+    ) => Some(snapshot)
+    _ => None
   }
-  bead_args.push("--json")
-  bead_args.push("--readonly")
-  let beads_json = match
-    native_goal_submission_capture(
-      capture, project_dir, "bd", bead_args, "Beads source",
+}
+
+///|
+async fn observe_native_goal_dependency_delivery(
+  project_dir : String,
+  repository : @workflow.PartWorkflowRepository,
+  adapters : @workflow.PartWorkflowRepositoryAdapters,
+  execution : @workflow.GoalExecutionRecord,
+) -> @workflow.GoalDependencyDeliveryState {
+  let pull_request = match
+    @workflow.load_goal_pull_request_record(
+      repository,
+      adapters,
+      execution.goal.id,
     ) {
+    Ok(Some(value)) => value.record
+    _ =>
+      return @workflow.GoalDependencyDeliveryState::GoalDependencyPullRequestObservationUncertain
+  }
+  guard pull_request.receipt is Some(receipt) &&
+    pull_request.goal_id == execution.goal.id &&
+    pull_request.repository_id == execution.repository_id &&
+    pull_request.intent.goal_id == execution.goal.id &&
+    pull_request.intent.head_ref == execution.goal_ref &&
+    pull_request.intent.state ==
+    @workflow.PullRequestIntentState::PullRequestReceipted else {
+    return @workflow.GoalDependencyDeliveryState::GoalDependencyPullRequestObservationUncertain
+  }
+  let forge = native_pull_request_forge_adapters()
+  let repository_name = match (forge.resolve_repository)(project_dir) {
+    Ok(value) => value
+    Err(_) =>
+      return @workflow.GoalDependencyDeliveryState::GoalDependencyPullRequestObservationUncertain
+  }
+  let lookup = (forge.lookup)(project_dir, repository_name, pull_request.intent)
+  guard native_goal_dependency_pull_request_snapshot(lookup) is Some(snapshot) &&
+    snapshot.remote_id == receipt.remote_pull_request_id &&
+    snapshot.head_ref == execution.goal_ref &&
+    snapshot.observed_head_oid == pull_request.intent.expected_head_oid &&
+    snapshot.marker_state ==
+    @workflow.PullRequestMarkerState::PullRequestMarkerExact else {
+    return @workflow.GoalDependencyDeliveryState::GoalDependencyPullRequestObservationUncertain
+  }
+  match snapshot.state {
+    @workflow.RemotePullRequestState::RemotePullRequestOpen =>
+      @workflow.GoalDependencyDeliveryState::GoalDependencyPullRequestOpen
+    @workflow.RemotePullRequestState::RemotePullRequestMerged =>
+      @workflow.GoalDependencyDeliveryState::GoalDependencyPullRequestMerged
+    @workflow.RemotePullRequestState::RemotePullRequestClosed =>
+      @workflow.GoalDependencyDeliveryState::GoalDependencyPullRequestClosed
+  }
+}
+
+///|
+fn native_goal_submission_external_dependency_ids(
+  draft : @workflow.ConductorGoalDraft,
+  snapshot : @workflow.GoalSelectionSnapshot,
+) -> Array[@control.PartId] {
+  let proposed_part_ids = draft.parts.map(fn(part) { part.part_id })
+  let dependency_ids : Array[@control.PartId] = []
+  for part in draft.parts {
+    match native_goal_submission_source_part(snapshot, part.part_id) {
+      Some(source) =>
+        for dependency_id in source.dependency_ids {
+          if !proposed_part_ids.contains(dependency_id) &&
+            !dependency_ids.contains(dependency_id) {
+            dependency_ids.push(dependency_id)
+          }
+        }
+      None => ()
+    }
+  }
+  dependency_ids
+}
+
+///|
+async fn capture_native_goal_dependency_observations(
+  project_dir : String,
+  repository : @workflow.PartWorkflowRepository,
+  adapters : @workflow.PartWorkflowRepositoryAdapters,
+  draft : @workflow.ConductorGoalDraft,
+  snapshot : @workflow.GoalSelectionSnapshot,
+  observe : async (
+    String,
+    @workflow.PartWorkflowRepository,
+    @workflow.PartWorkflowRepositoryAdapters,
+    @workflow.GoalExecutionRecord,
+  ) -> @workflow.GoalDependencyDeliveryState,
+) -> Result[
+  Array[@workflow.GoalDependencyDeliveryObservation],
+  @types.ChoirError,
+] {
+  let dependency_ids = native_goal_submission_external_dependency_ids(
+    draft, snapshot,
+  )
+  if dependency_ids.length() == 0 {
+    return Ok([])
+  }
+  let records = match
+    @workflow.list_goal_execution_records(repository, adapters) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let repository_id = @workflow.RepositoryId(
-    "sha256:" +
-    @storage.digest_text(
-      @storage.artifact_digest(@utf8.encode("choir.repository.v1\u{00}" + root)),
-    ),
-  )
-  @workflow.goal_selection_snapshot_from_beads_json(
-    repository_id, base_commit, base_tree, beads_json,
-  )
+  let observations : Array[@workflow.GoalDependencyDeliveryObservation] = []
+  for stored in records {
+    let record = stored.record
+    if record.state != @workflow.GoalExecutionState::GoalExecutionSucceeded ||
+      record.repository_id != snapshot.repository_id ||
+      !record.source_claims.any(fn(claim) {
+        dependency_ids.contains(claim.part_id)
+      }) {
+      continue
+    }
+    observations.push({
+      goal_id: record.goal.id,
+      goal_ref: record.goal_ref,
+      claimed_part_ids: record.source_claims.map(fn(claim) { claim.part_id }),
+      state: observe(project_dir, repository, adapters, record),
+    })
+  }
+  Ok(observations)
+}
+
+///|
+fn native_goal_ids_text(ids : Array[@control.GoalId]) -> String {
+  ids.map(fn(id) { id.0 }).join(", ")
+}
+
+///|
+fn native_goal_submission_base_rejection(
+  rejection : @workflow.GoalSubmissionBaseRejection,
+) -> @types.ChoirError {
+  match rejection {
+    @workflow.GoalSubmissionBaseRejection::GoalSubmissionDependenciesSpanOpenGoals(
+      goal_ids
+    ) =>
+      native_goal_submission_error(
+        "dependencies span multiple unmerged Goals (" +
+        native_goal_ids_text(goal_ids) +
+        "); merge one dependency first",
+      )
+    @workflow.GoalSubmissionBaseRejection::GoalSubmissionDependencyPullRequestClosed(
+      goal_ids
+    ) =>
+      native_goal_submission_error(
+        "dependency Goal pull request is closed without merge (" +
+        native_goal_ids_text(goal_ids) +
+        "); reopen or deliver the dependency before submitting this Goal",
+      )
+    @workflow.GoalSubmissionBaseRejection::GoalSubmissionDependencyObservationUncertain(
+      goal_ids
+    ) =>
+      native_goal_submission_error(
+        "dependency Goal pull request state is uncertain (" +
+        native_goal_ids_text(goal_ids) +
+        "); retry after the forge state is observable",
+      )
+  }
 }
 
 ///|
@@ -832,6 +1024,29 @@ fn ensure_native_goal_execution(
 }
 
 ///|
+fn native_goal_submission_report(
+  decision : @workflow.GoalSelectionDecision,
+  selection_decision_digest : @control.Digest,
+  initialized_part_count : Int,
+  execution_registered : Bool,
+  replayed : Bool,
+) -> NativeConductorGoalSubmissionReport {
+  {
+    accepted: decision.outcome ==
+    @workflow.GoalSelectionOutcome::GoalSelectionAccepted,
+    goal_id: decision.proposal.goal_id,
+    proposal_digest: decision.proposal_digest,
+    selection_decision_digest,
+    source_snapshot_digest: decision.source_snapshot_digest,
+    accepted_part_ids: decision.accepted_parts.map(fn(part) { part.part.id }),
+    initialized_part_count,
+    execution_registered,
+    rejections: decision.rejections,
+    replayed,
+  }
+}
+
+///|
 pub async fn submit_native_conductor_goal_draft(
   project_dir : String,
   draft_json : String,
@@ -839,6 +1054,12 @@ pub async fn submit_native_conductor_goal_draft(
   migration_production_admission? : @migration.MigrationProductionAdmissionRef? = None,
   nfc_available? : () -> Bool = fn() { exec_path_nfc_available_ffi() == 1 },
   is_nfc? : (String) -> Bool = native_path_is_nfc,
+  dependency_delivery_observer? : async (
+    String,
+    @workflow.PartWorkflowRepository,
+    @workflow.PartWorkflowRepositoryAdapters,
+    @workflow.GoalExecutionRecord,
+  ) -> @workflow.GoalDependencyDeliveryState = observe_native_goal_dependency_delivery,
 ) -> Result[NativeConductorGoalSubmissionReport, @types.ChoirError] {
   if !nfc_available() {
     return Err(
@@ -867,9 +1088,10 @@ pub async fn submit_native_conductor_goal_draft(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
+  let conductor_draft_digest = @workflow.conductor_goal_draft_digest(draft)
   match
     @workflow.load_goal_selection_decision(repository, adapters, draft.goal_id) {
-    Ok(Some(stored)) =>
+    Ok(Some(stored)) => {
       if stored.decision.proposal.id != draft.proposal_id {
         return Err(
           native_goal_identity_conflict(
@@ -878,6 +1100,46 @@ pub async fn submit_native_conductor_goal_draft(
           ),
         )
       }
+      if stored.decision.proposal.conductor_draft_digest !=
+        conductor_draft_digest ||
+        stored.decision.proposal.migration_production_admission !=
+        migration_production_admission {
+        return Err(
+          native_goal_submission_error(
+            "the replayed draft disagrees with its durable selection; this identity conflict is permanent and must not be retried in this user turn",
+          ),
+        )
+      }
+      let initialized_part_count = match
+        initialize_native_goal_parts(
+          repository,
+          adapters,
+          stored.decision,
+          is_nfc,
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let execution_registered = match
+        ensure_native_goal_execution(
+          repository,
+          adapters,
+          stored.decision,
+          stored.state_record.value_digest,
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      return Ok(
+        native_goal_submission_report(
+          stored.decision,
+          stored.state_record.value_digest,
+          initialized_part_count,
+          execution_registered,
+          true,
+        ),
+      )
+    }
     Ok(None) => ()
     Err(error) => return Err(error)
   }
@@ -885,12 +1147,55 @@ pub async fn submit_native_conductor_goal_draft(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let snapshot = match
+  let source = match
+    capture_native_goal_selection_source(draft, project_dir, capture) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let integration_snapshot = match
     capture_native_goal_selection_snapshot(
-      draft, branch_ref, project_dir, capture,
+      source, branch_ref, project_dir, capture,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
+  }
+  let dependency_observations = match
+    capture_native_goal_dependency_observations(
+      project_dir, repository, adapters, draft, integration_snapshot, dependency_delivery_observer,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let base_ref = match
+    @workflow.select_goal_submission_base(
+      integration_snapshot,
+      draft.parts.map(fn(part) { part.part_id }),
+      branch_ref,
+      dependency_observations,
+    ) {
+    @workflow.GoalSubmissionBaseDecision::GoalSubmissionUseIntegrationTarget(
+      reference
+    )
+    | @workflow.GoalSubmissionBaseDecision::GoalSubmissionStackOnDependencyGoal(
+      _,
+      reference
+    ) => reference
+    @workflow.GoalSubmissionBaseDecision::GoalSubmissionRejectBase(rejection) =>
+      return Err(native_goal_submission_base_rejection(rejection))
+  }
+  // Base selection is durable. If the parent later merges, the forge owns the
+  // open child PR's automatic retargeting; submission replay must not rewrite
+  // the already-captured branch contract.
+  let snapshot = if base_ref == branch_ref {
+    integration_snapshot
+  } else {
+    match
+      capture_native_goal_selection_snapshot(
+        source, base_ref, project_dir, capture,
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
   }
   let snapshot_bytes = @workflow.goal_selection_snapshot_bytes(snapshot)
   let snapshot_artifact = match
@@ -920,11 +1225,12 @@ pub async fn submit_native_conductor_goal_draft(
   let proposal : @workflow.GoalProposal = {
     id: draft.proposal_id,
     goal_id: draft.goal_id,
+    conductor_draft_digest,
     repository_id: snapshot.repository_id,
-    base_ref: branch_ref,
+    base_ref,
     expected_base_commit_oid: snapshot.base_commit_oid,
     expected_base_tree_oid: snapshot.base_tree_oid,
-    integration_target_ref: branch_ref,
+    integration_target_ref: base_ref,
     selection_policy: @workflow.GoalSelectionPolicy::ExactClosure,
     completion_mode: draft.completion_mode,
     pull_request_document: draft.pull_request_document,
@@ -1002,18 +1308,97 @@ pub async fn submit_native_conductor_goal_draft(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  Ok({
-    accepted: decision.outcome ==
-    @workflow.GoalSelectionOutcome::GoalSelectionAccepted,
-    goal_id: draft.goal_id,
-    proposal_digest: decision.proposal_digest,
-    selection_decision_digest: persistence.decision_digest,
-    source_snapshot_digest: decision.source_snapshot_digest,
-    accepted_part_ids: decision.accepted_parts.map(fn(part) { part.part.id }),
-    initialized_part_count,
-    execution_registered,
-    rejections: decision.rejections,
-    replayed: persistence.transaction_outcome ==
-    @storage.StateTransactionOutcome::StateTransactionReplayed,
-  })
+  Ok(
+    native_goal_submission_report(
+      decision,
+      persistence.decision_digest,
+      initialized_part_count,
+      execution_registered,
+      persistence.transaction_outcome ==
+      @storage.StateTransactionOutcome::StateTransactionReplayed,
+    ),
+  )
+}
+
+///|
+async test "real exec integration: stacked base capture reads parent Goal head" {
+  if !real_exec_integration_enabled() {
+    return
+  }
+  let root = "/tmp/choir-stacked-base-capture-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(root))
+  if !@sys.create_dir_all(root) {
+    fail("failed to create stacked base capture root")
+  }
+  let run_git : async (Array[String]) -> String = arguments => {
+    let (status, output) = capture_command_merged({
+      program: "/usr/bin/git",
+      args: arguments,
+      workdir: Some(root),
+    })
+    if status != 0 {
+      fail("stacked base Git command failed: " + output)
+    }
+    output.trim().to_owned()
+  }
+  ignore(run_git(["init", "-q", "-b", "main"]))
+  if !@sys.write_file_sync(root + "/README.md", "stack fixture\n") {
+    fail("failed to write stacked base fixture")
+  }
+  ignore(run_git(["add", "README.md"]))
+  ignore(
+    run_git([
+      "-c", "user.name=Choir Test", "-c", "user.email=choir-test@example.invalid",
+      "commit", "-q", "-m", "base",
+    ]),
+  )
+  let parent_goal_id = @control.GoalId("goal-real-stack-parent")
+  let parent_ref = @workflow.goal_execution_ref(parent_goal_id)
+  let parent_short_ref = parent_ref.0["refs/heads/".length():].to_owned()
+  ignore(run_git(["checkout", "-q", "-b", parent_short_ref]))
+  if !@sys.create_dir_all(root + "/src") ||
+    !@sys.write_file_sync(
+      root + "/src/parent.mbt",
+      "pub fn parent() -> Int { 1 }\n",
+    ) {
+    fail("failed to write stacked parent branch")
+  }
+  ignore(run_git(["add", "src/parent.mbt"]))
+  ignore(
+    run_git([
+      "-c", "user.name=Choir Test", "-c", "user.email=choir-test@example.invalid",
+      "commit", "-q", "-m", "parent",
+    ]),
+  )
+  let parent_head = run_git(["rev-parse", "HEAD"])
+  let parent_tree = run_git([
+    "show", "-s", "--format=%T", "--no-show-signature", "HEAD",
+  ])
+  ignore(run_git(["checkout", "-q", "main"]))
+  let draft = @workflow.decode_conductor_goal_draft(
+    (
+      #|{"proposal_id":"proposal-real-stack-child","goal_id":"goal-real-stack-child","pull_request":{"title":"feat: publish real stack child","body":"Publishes the real child change."},"maximum_parallel_parts":1,"parts":[{"part_id":"choir-real-child","instruction":"Change only src/child.mbt.","provider":"codex","exact_paths":["src/child.mbt"],"moon_args":["test","--target","native"]}]}
+    ),
+  ).unwrap()
+  let capture : async (Command) -> (Int, String) = command => {
+    match (command.program, command.args) {
+      ("bd", ["show", "choir-real-child", "--json", "--readonly"]) =>
+        (
+          0,
+          (
+            #|[{"id":"choir-real-child","title":"Real child","description":"Build on the real parent","acceptance_criteria":"Child captures parent head","status":"open","priority":2,"issue_type":"task","dependency_count":1,"updated_at":"2026-07-24T00:00:01Z","dependencies":[{"id":"choir-real-parent","title":"Real parent","description":"Publish the real parent","acceptance_criteria":"Parent PR is open","status":"closed","priority":2,"issue_type":"task","updated_at":"2026-07-24T00:00:00Z","dependency_type":"blocks"}]}]
+          ),
+        )
+      ("git", _) =>
+        capture_command_merged({ ..command, program: "/usr/bin/git" })
+      _ => (-1, "unexpected stacked base capture")
+    }
+  }
+  let source = capture_native_goal_selection_source(draft, root, capture).unwrap()
+  let snapshot = capture_native_goal_selection_snapshot(
+    source, parent_ref, root, capture,
+  ).unwrap()
+  assert_eq(snapshot.base_commit_oid, @control.GitOid(parent_head))
+  assert_eq(snapshot.base_tree_oid, @control.GitOid(parent_tree))
+  ignore(@sys.rm_rf(root))
 }

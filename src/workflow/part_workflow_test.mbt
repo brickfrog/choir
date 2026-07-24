@@ -2194,6 +2194,36 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     pull_request.intent.state,
     @workflow.PullRequestIntentState::PullRequestPlanned,
   )
+  let stacked_base = @workflow.GitRefName("refs/heads/choir/goals/parent-stack")
+  let stacked_execution = {
+    ..assured_execution,
+    integration_target_ref: stacked_base,
+  }
+  let stacked_marker = match
+    @workflow.goal_pull_request_identity_marker(
+      stacked_execution,
+      published,
+      @workflow.RemoteRepositoryId("remote-repository-assurance"),
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  let stacked_pull_request = match
+    @workflow.initialize_goal_pull_request(
+      stacked_execution,
+      assured,
+      published,
+      @workflow.PullRequestProvider::GitHubPullRequestProvider,
+      @workflow.RemoteRepositoryId("remote-repository-assurance"),
+      {
+        title: "feat: stack dependent Goal",
+        body: "Stacks on its open dependency.\n\n" + stacked_marker.0,
+      },
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(stacked_pull_request.intent.base_ref, stacked_base)
   let remote_pull_request : @workflow.RemotePullRequestSnapshot = {
     remote_id: @workflow.RemotePullRequestId("PR_kwDO_assurance"),
     number: @workflow.PullRequestNumber(42),

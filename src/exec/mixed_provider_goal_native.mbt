@@ -200,6 +200,7 @@ pub async fn run_native_mixed_provider_goal_fixture(
   let proposal : @workflow.GoalProposal = {
     id: @workflow.GoalProposalId("proposal-native-mixed-provider"),
     goal_id,
+    conductor_draft_digest: claude_source_revision,
     repository_id,
     base_ref: @workflow.GitRefName("refs/heads/main"),
     expected_base_commit_oid: git.base_commit_oid,

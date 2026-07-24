@@ -89,6 +89,7 @@ pub(all) struct ConductorPartProposal {
 pub(all) struct GoalProposal {
   id : GoalProposalId
   goal_id : @control.GoalId
+  conductor_draft_digest : @control.Digest
   repository_id : RepositoryId
   base_ref : GitRefName
   expected_base_commit_oid : @control.GitOid
@@ -149,6 +150,36 @@ pub(all) struct GoalSelectionDecision {
   rejections : Array[PartSelectionRejection]
   goal : @control.Goal?
   outcome : GoalSelectionOutcome
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum GoalDependencyDeliveryState {
+  GoalDependencyPullRequestOpen
+  GoalDependencyPullRequestMerged
+  GoalDependencyPullRequestClosed
+  GoalDependencyPullRequestObservationUncertain
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct GoalDependencyDeliveryObservation {
+  goal_id : @control.GoalId
+  goal_ref : GitRefName
+  claimed_part_ids : Array[@control.PartId]
+  state : GoalDependencyDeliveryState
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum GoalSubmissionBaseRejection {
+  GoalSubmissionDependenciesSpanOpenGoals(Array[@control.GoalId])
+  GoalSubmissionDependencyPullRequestClosed(Array[@control.GoalId])
+  GoalSubmissionDependencyObservationUncertain(Array[@control.GoalId])
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum GoalSubmissionBaseDecision {
+  GoalSubmissionUseIntegrationTarget(GitRefName)
+  GoalSubmissionStackOnDependencyGoal(@control.GoalId, GitRefName)
+  GoalSubmissionRejectBase(GoalSubmissionBaseRejection)
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -216,6 +247,109 @@ fn source_part(
     }
   }
   None
+}
+
+///|
+fn unique_sorted_goal_ids(
+  ids : Array[@control.GoalId],
+) -> Array[@control.GoalId] {
+  let sorted = ids.copy()
+  sorted.sort_by(fn(left, right) { left.compare(right) })
+  let unique : Array[@control.GoalId] = []
+  for id in sorted {
+    if !unique.contains(id) {
+      unique.push(id)
+    }
+  }
+  unique
+}
+
+///|
+pub fn select_goal_submission_base(
+  snapshot : GoalSelectionSnapshot,
+  proposed_part_ids : Array[@control.PartId],
+  integration_target_ref : GitRefName,
+  observations : Array[GoalDependencyDeliveryObservation],
+) -> GoalSubmissionBaseDecision {
+  let external_dependency_ids : Array[@control.PartId] = []
+  for proposed_part_id in proposed_part_ids {
+    match source_part(snapshot, proposed_part_id) {
+      Some(part) =>
+        for dependency_id in part.dependency_ids {
+          if !proposed_part_ids.contains(dependency_id) &&
+            !external_dependency_ids.contains(dependency_id) {
+            external_dependency_ids.push(dependency_id)
+          }
+        }
+      None => ()
+    }
+  }
+  let relevant = observations.filter(fn(observation) {
+    observation.claimed_part_ids.any(fn(part_id) {
+      external_dependency_ids.contains(part_id)
+    })
+  })
+  let uncertain_goal_ids = unique_sorted_goal_ids(
+    relevant.filter_map(fn(observation) {
+      if observation.state ==
+        GoalDependencyDeliveryState::GoalDependencyPullRequestObservationUncertain {
+        Some(observation.goal_id)
+      } else {
+        None
+      }
+    }),
+  )
+  if uncertain_goal_ids.length() > 0 {
+    return GoalSubmissionBaseDecision::GoalSubmissionRejectBase(
+      GoalSubmissionBaseRejection::GoalSubmissionDependencyObservationUncertain(
+        uncertain_goal_ids,
+      ),
+    )
+  }
+  let closed_goal_ids = unique_sorted_goal_ids(
+    relevant.filter_map(fn(observation) {
+      if observation.state ==
+        GoalDependencyDeliveryState::GoalDependencyPullRequestClosed {
+        Some(observation.goal_id)
+      } else {
+        None
+      }
+    }),
+  )
+  if closed_goal_ids.length() > 0 {
+    return GoalSubmissionBaseDecision::GoalSubmissionRejectBase(
+      GoalSubmissionBaseRejection::GoalSubmissionDependencyPullRequestClosed(
+        closed_goal_ids,
+      ),
+    )
+  }
+  let open = relevant.filter(fn(observation) {
+    observation.state ==
+    GoalDependencyDeliveryState::GoalDependencyPullRequestOpen
+  })
+  let open_goal_ids = unique_sorted_goal_ids(
+    open.map(fn(observation) { observation.goal_id }),
+  )
+  if open_goal_ids.length() > 1 {
+    return GoalSubmissionBaseDecision::GoalSubmissionRejectBase(
+      GoalSubmissionBaseRejection::GoalSubmissionDependenciesSpanOpenGoals(
+        open_goal_ids,
+      ),
+    )
+  }
+  match open_goal_ids {
+    [goal_id] => {
+      let observation = open[0]
+      GoalSubmissionBaseDecision::GoalSubmissionStackOnDependencyGoal(
+        goal_id,
+        observation.goal_ref,
+      )
+    }
+    _ =>
+      GoalSubmissionBaseDecision::GoalSubmissionUseIntegrationTarget(
+        integration_target_ref,
+      )
+  }
 }
 
 ///|
@@ -386,6 +520,7 @@ fn canonical_goal_proposal_json(proposal : GoalProposal) -> Json {
   [
     proposal.id.to_json(),
     proposal.goal_id.to_json(),
+    proposal.conductor_draft_digest.to_json(),
     proposal.repository_id.to_json(),
     proposal.base_ref.to_json(),
     proposal.expected_base_commit_oid.to_json(),
@@ -407,7 +542,7 @@ fn canonical_goal_proposal_json(proposal : GoalProposal) -> Json {
 ///|
 pub fn goal_proposal_digest(proposal : GoalProposal) -> @control.Digest {
   goal_submission_domain_digest(
-    "choir.goal-proposal.v4",
+    "choir.goal-proposal.v5",
     canonical_goal_proposal_json(proposal),
   )
 }
@@ -427,6 +562,9 @@ pub fn evaluate_goal_proposal(
   }
   if proposal.goal_id.0 == "" || proposal.goal_id.0.contains("\u{00}") {
     return Err(goal_submission_error("goal_id is invalid"))
+  }
+  if @storage.validate_digest(proposal.conductor_draft_digest) is Err(_) {
+    return Err(goal_submission_error("conductor draft digest is invalid"))
   }
   if proposal.parts.length() == 0 {
     return Err(goal_submission_error("proposal parts are empty"))
