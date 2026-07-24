@@ -836,6 +836,68 @@ async fn dispatch_native_goal_submit(
 }
 
 ///|
+/// Resolve the Goal selector shared by cancel and steer: an explicit goal_id,
+/// or a user-facing part_id whose Goal the daemon looks up. Recovery from the
+/// CLI relies on the part_id path because internal Goal ids are never shown.
+fn native_conductor_resolve_goal_id(
+  project_dir : String,
+  request : @types.Request,
+) -> Result[@control.GoalId, @types.ChoirError] {
+  match
+    (
+      native_conductor_optional_string(request, "goal_id"),
+      native_conductor_optional_string(request, "part_id"),
+    ) {
+    (Some(goal_id), None) => Ok(@control.GoalId(goal_id))
+    (None, Some(part_id)) =>
+      match inspect_native_goal_for_part(project_dir, @control.PartId(part_id)) {
+        Ok(report) => Ok(report.goal_id)
+        Err(error) => Err(error)
+      }
+    _ =>
+      Err(
+        @types.ChoirError::validation_error(
+          "exactly one of goal_id or part_id is required",
+        ),
+      )
+  }
+}
+
+///|
+/// Project enumeration for recovery without a live Conductor: every durable
+/// Goal with its state, lifecycle, and the Bead part ids it claimed, so a
+/// user who lost the session can find a Goal by its work rather than by an
+/// internal id they were never shown.
+fn dispatch_native_goal_list(project_dir : String) -> @types.Response {
+  let repository = native_goal_repository(project_dir)
+  let adapters = local_part_workflow_repository_adapters()
+  match @workflow.initialize_part_workflow_repository(repository, adapters) {
+    Ok(_) => ()
+    Err(error) => return @types.Response::Err(error.message())
+  }
+  let records = match
+    @workflow.list_goal_execution_records(repository, adapters) {
+    Ok(value) => value
+    Err(error) => return @types.Response::Err(error.message())
+  }
+  let goals = records.map(fn(stored) {
+    let record = stored.record
+    ({
+      "goal_id": record.goal.id.to_json(),
+      "state": record.state.to_json(),
+      "lifecycle": record.goal.lifecycle.to_json(),
+      "durable_version": record.durable_version.to_json(),
+      "part_ids": record.source_claims
+      .map(fn(claim) { claim.part_id.0 })
+      .to_json(),
+    } : Map[String, Json]).to_json()
+  })
+  native_conductor_goal_action_ok_json(
+    ({ "goals": goals.to_json() } : Map[String, Json]).to_json(),
+  )
+}
+
+///|
 fn dispatch_native_goal_status(
   project_dir : String,
   request : @types.Request,
@@ -879,11 +941,11 @@ fn dispatch_native_goal_cancel(
   request : @types.Request,
   now : Int64,
 ) -> @types.Response {
-  let goal_id = match native_conductor_required_string(request, "goal_id") {
+  let goal = match native_conductor_resolve_goal_id(project_dir, request) {
     Ok(value) => value
     Err(error) => return @types.Response::Err(error.message())
   }
-  match cancel_native_goal(project_dir, @control.GoalId(goal_id), now) {
+  match cancel_native_goal(project_dir, goal, now) {
     Ok(
       @workflow.GoalCancellationPersistenceResult::GoalCancellationPersisted(
         record
@@ -919,7 +981,7 @@ fn dispatch_native_goal_cancel(
     ) =>
       native_conductor_goal_action_ok_json(
         {
-          "goal_id": goal_id.to_json(),
+          "goal_id": goal.to_json(),
           "state": state.to_json(),
           "already_terminal": true.to_json(),
         }.to_json(),
@@ -974,15 +1036,37 @@ fn dispatch_native_goal_steer(
   project_dir : String,
   request : @types.Request,
 ) -> @types.Response {
-  let goal_id = match native_conductor_required_string(request, "goal_id") {
+  let goal = match native_conductor_resolve_goal_id(project_dir, request) {
     Ok(value) => value
     Err(error) => return @types.Response::Err(error.message())
   }
+  if request.args.get("action") == Some("retry_part") {
+    // When the Goal was selected by part_id, that same Bead names the
+    // blocked Part to retry; a bare goal_id retries the sole blocked Part
+    // unless a part_id explicitly names one.
+    let part_id = request.args
+      .get("part_id")
+      .map(fn(value) { @control.PartId(value) })
+    return match retry_native_goal_part(project_dir, goal, part_id) {
+      Ok(record) =>
+        native_conductor_goal_action_ok_json(
+          {
+            "goal_id": record.goal.id.to_json(),
+            "state": record.state.to_json(),
+            "lifecycle": record.goal.lifecycle.to_json(),
+            "durable_version": record.durable_version.to_json(),
+            "retried": true.to_json(),
+          }.to_json(),
+        )
+      Err(error) => @types.Response::Err(error.message())
+    }
+  }
+  let goal_id = goal.0
   let change = match native_conductor_policy_change(request) {
     Ok(value) => value
     Err(error) => return @types.Response::Err(error.message())
   }
-  match steer_native_goal(project_dir, @control.GoalId(goal_id), change) {
+  match steer_native_goal(project_dir, goal, change) {
     Ok(
       @workflow.GoalSteeringPersistenceResult::GoalSteeringPersisted(
         record,
@@ -1117,6 +1201,7 @@ pub async fn dispatch_native_conductor_request(
   }
   match request.name {
     "goal_submit" => dispatch_native_goal_submit(project_dir, request, capture)
+    "goal_list" => dispatch_native_goal_list(project_dir)
     "goal_status" => dispatch_native_goal_status(project_dir, request)
     "goal_cancel" => dispatch_native_goal_cancel(project_dir, request, now)
     "goal_steer" => dispatch_native_goal_steer(project_dir, request)

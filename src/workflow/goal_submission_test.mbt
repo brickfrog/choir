@@ -863,9 +863,17 @@ test "Conductor proposal accepts exact closure in deterministic order" {
     Ok(value) => value
     Err(error) => fail(error.message())
   }
-  let succeeded = match
+  let awaiting = match
     @workflow.advance_goal_execution_state(
       assured,
+      @workflow.GoalExecutionState::GoalExecutionAwaitingMerge,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  let succeeded = match
+    @workflow.advance_goal_execution_state(
+      awaiting,
       @workflow.GoalExecutionState::GoalExecutionSucceeded,
     ) {
     Ok(value) => value
@@ -874,7 +882,7 @@ test "Conductor proposal accepts exact closure in deterministic order" {
   assert_true(
     succeeded.goal.lifecycle is @control.GoalLifecycle::GoalSucceeded(_),
   )
-  assert_eq(succeeded.durable_version, 11)
+  assert_eq(succeeded.durable_version, 12)
   let malformed = {
     ..succeeded,
     goal: {
@@ -1135,7 +1143,10 @@ test "evidence-only Goal binds completion and cancels only after assurance" {
     completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
   }
   let succeeded_before_supersession = @workflow.advance_goal_execution_state(
-    publishable_assured,
+    @workflow.advance_goal_execution_state(
+      publishable_assured,
+      @workflow.GoalExecutionState::GoalExecutionAwaitingMerge,
+    ).unwrap(),
     @workflow.GoalExecutionState::GoalExecutionSucceeded,
   ).unwrap()
   assert_true(

@@ -832,6 +832,84 @@ fn ensure_native_goal_execution(
 }
 
 ///|
+/// Cross-Goal admission gate: a dependency Bead that Choir closed binds to
+/// the delivering Goal's merge commit. The proposal's captured base must
+/// contain that commit, or the dependent Goal would build on a base that
+/// lacks its dependency's code. Beads closed by users carry no delivery
+/// record and remain user-authoritative.
+async fn validate_native_dependency_deliveries(
+  project_dir : String,
+  repository : @workflow.PartWorkflowRepository,
+  adapters : @workflow.PartWorkflowRepositoryAdapters,
+  proposal : @workflow.GoalProposal,
+  snapshot : @workflow.GoalSelectionSnapshot,
+) -> Result[Unit, @types.ChoirError] {
+  let closed_dependencies : Array[@control.PartId] = []
+  for part in proposal.parts {
+    for dependency_id in part.dependency_ids {
+      if closed_dependencies.contains(dependency_id) {
+        continue
+      }
+      if snapshot.parts.any(fn(source) {
+          source.part_id == dependency_id &&
+          source.state == @workflow.SelectionSourceState::SelectionSourceClosed
+        }) {
+        closed_dependencies.push(dependency_id)
+      }
+    }
+  }
+  if closed_dependencies.length() == 0 {
+    return Ok(())
+  }
+  let records = match
+    @workflow.list_goal_execution_records(repository, adapters) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  for dependency_id in closed_dependencies {
+    for stored in records {
+      if stored.record.state !=
+        @workflow.GoalExecutionState::GoalExecutionSucceeded ||
+        !stored.record.source_claims.any(fn(claim) {
+          claim.part_id == dependency_id
+        }) {
+        continue
+      }
+      let delivery = match
+        @workflow.load_goal_finalization_record(
+          repository,
+          adapters,
+          stored.record.goal.id,
+        ) {
+        Ok(Some(finalization)) => finalization.record.delivery
+        Ok(None) | Err(_) => None
+      }
+      guard delivery is Some(delivery) else { continue }
+      let ancestry = match
+        capture_native_goal_git(project_dir, [
+          "merge-base",
+          "--is-ancestor",
+          delivery.merge_commit_oid.0,
+          proposal.expected_base_commit_oid.0,
+        ]) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      if ancestry.exit_code != 0 {
+        return Err(
+          native_goal_submission_error(
+            "dependency '" +
+            dependency_id.0 +
+            "' was delivered by a prior Goal but the captured base does not contain its merge commit; sync the integration target and propose again",
+          ),
+        )
+      }
+    }
+  }
+  Ok(())
+}
+
+///|
 pub async fn submit_native_conductor_goal_draft(
   project_dir : String,
   draft_json : String,
@@ -931,6 +1009,17 @@ pub async fn submit_native_conductor_goal_draft(
     migration_production_admission,
     maximum_parallel_parts: draft.maximum_parallel_parts,
     parts,
+  }
+  match
+    validate_native_dependency_deliveries(
+      project_dir,
+      repository,
+      adapters,
+      proposal,
+      snapshot,
+    ) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
   }
   let decision = match
     @workflow.evaluate_goal_proposal(proposal, snapshot, is_nfc) {

@@ -1,8 +1,3 @@
-import {
-  "choir/src/sys",
-  "moonbitlang/core/debug",
-}
-
 options(
   "is-main": false,
 )

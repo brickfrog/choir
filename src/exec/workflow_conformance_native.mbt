@@ -2069,6 +2069,7 @@ fn scale_terminal_projection(
     base_ref: assured_execution.integration_target_ref,
     observed_head_oid: final_integration.promotion_commit_oid,
     state: @workflow.RemotePullRequestState::RemotePullRequestOpen,
+    merge_commit_oid: None,
     marker_state: @workflow.PullRequestMarkerState::PullRequestMarkerExact,
     title_digest: @storage.artifact_digest(@utf8.encode("scale-title")),
     body_digest: @storage.artifact_digest(@utf8.encode("scale-body")),
@@ -2105,9 +2106,48 @@ fn scale_terminal_projection(
     Ok(value) => value
     Err(error) => return Err(error)
   }
+  let awaiting_execution = match
+    @workflow.authorize_goal_awaiting_merge(
+      assured_execution, assurance, published, adopted, finalization,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let merged_remote = {
+    ..remote_pull_request,
+    state: @workflow.RemotePullRequestState::RemotePullRequestMerged,
+    merge_commit_oid: Some(final_integration.promotion_commit_oid),
+  }
+  let merged_finalization = match
+    @workflow.observe_goal_pull_request_readiness(
+      awaiting_execution,
+      assurance,
+      published,
+      adopted,
+      @workflow.PullRequestLookupObservation::PullRequestStoredIdMatch(
+        merged_remote,
+      ),
+      Some("remote-version-scale-merged"),
+      2L,
+      215L,
+      216L,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let delivery_observation : @workflow.GoalDeliveryObservation = {
+    merge_commit_oid: final_integration.promotion_commit_oid,
+    observed_target_head_oid: final_integration.promotion_commit_oid,
+    target_contains_merge: true,
+    observed_at: 216L,
+  }
+  let delivered_finalization = {
+    ..merged_finalization,
+    delivery: Some(delivery_observation),
+  }
   let succeeded = match
     @workflow.authorize_goal_execution_success(
-      assured_execution, assurance, published, adopted, finalization,
+      awaiting_execution, assurance, published, adopted, delivered_finalization,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -2119,7 +2159,7 @@ fn scale_terminal_projection(
       Some(assurance),
       Some(published),
       Some(adopted),
-      Some(finalization),
+      Some(delivered_finalization),
     ) {
     Ok(Some(value)) => Ok(value)
     Ok(None) =>

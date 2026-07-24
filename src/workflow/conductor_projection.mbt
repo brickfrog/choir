@@ -21,6 +21,10 @@ pub fn goal_execution_state_is_terminal(state : GoalExecutionState) -> Bool {
 /// matching the pre-observation default.
 pub fn conductor_park_for_goal_state(state : GoalExecutionState?) -> Bool {
   match state {
+    // Awaiting a human merge is not a durable event the Conductor should
+    // sleep for: the park must release or the Stop hook would hold the
+    // session hostage until someone merges the pull request.
+    Some(GoalExecutionState::GoalExecutionAwaitingMerge) => false
     Some(value) => !goal_execution_state_is_terminal(value)
     None => true
   }
@@ -85,6 +89,7 @@ pub(all) enum ConductorGoalPhase {
   ConductorPhaseAssure
   ConductorPhasePublish
   ConductorPhasePullRequest
+  ConductorPhaseAwaitMerge
 } derive(Debug, Eq)
 
 ///|
@@ -267,6 +272,8 @@ pub fn conductor_goal_display(
   let phase = match report.state {
     GoalExecutionState::GoalExecutionAssuring =>
       ConductorGoalPhase::ConductorPhaseAssure
+    GoalExecutionState::GoalExecutionAwaitingMerge =>
+      ConductorGoalPhase::ConductorPhaseAwaitMerge
     GoalExecutionState::GoalExecutionAssured =>
       if report.publication_state ==
         Some(BranchPublicationState::BranchPublicationReceipted) {

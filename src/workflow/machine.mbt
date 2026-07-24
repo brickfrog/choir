@@ -440,6 +440,108 @@ pub fn plan_part_conflict_repair(
 }
 
 ///|
+/// User-requested retry of a blocked Part: same task contract, fresh Take,
+/// sandbox, and session identities, prior evidence archived. Integration
+/// conflicts are excluded — they retry through conflict repair, which must
+/// revise the contract to the conflicting head.
+pub fn plan_part_retry(
+  snapshot : PartWorkflowSnapshot,
+  identities : PartIdentityPlan,
+  is_nfc : (String) -> Bool,
+) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
+  guard snapshot.stage == PartBlocked &&
+    snapshot.pending_effect is None &&
+    snapshot.part.lifecycle is @control.PartLifecycle::PartBlocked(reason) else {
+    return Err(workflow_error("Part is not eligible for retry"))
+  }
+  if reason == @control.PartBlockReason::PartIntegrationConflict {
+    return Err(
+      workflow_error("integration conflicts retry through conflict repair"),
+    )
+  }
+  if !conflict_repair_take_is_fresh(
+      snapshot.implementation_take,
+      identities.implementation_take,
+    ) ||
+    !conflict_repair_take_is_fresh(
+      snapshot.verification_take,
+      identities.verification_take,
+    ) ||
+    !conflict_repair_take_is_fresh(snapshot.audit_take, identities.audit_take) {
+    return Err(workflow_error("retry identity plan is invalid"))
+  }
+  let used_take_ids = snapshot.prior_takes.map(fn(take) { take.id }) +
+    [
+      snapshot.implementation_take.id,
+      snapshot.verification_take.id,
+      snapshot.audit_take.id,
+    ]
+  if used_take_ids.contains(identities.implementation_take.id) ||
+    used_take_ids.contains(identities.verification_take.id) ||
+    used_take_ids.contains(identities.audit_take.id) {
+    return Err(workflow_error("retry reuses a prior Take identity"))
+  }
+  let pending_part = {
+    ..snapshot.part,
+    lifecycle: @control.PartLifecycle::PartPending,
+  }
+  let initialized = match
+    initialize_part_workflow(
+      snapshot.workflow_id,
+      snapshot.goal,
+      pending_part,
+      snapshot.task_contract,
+      identities,
+      snapshot.fencing_epoch,
+      is_nfc,
+      part_context_manifest=snapshot.part_context_manifest,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let retried_part = match
+    @control.transition_part(
+      snapshot.part,
+      @control.PartTransition::RestartBlockedPart(
+        identities.implementation_take.id,
+      ),
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  Ok({
+    ..initialized,
+    durable_version: snapshot.durable_version + 1,
+    part: retried_part,
+    task_contract_history: snapshot.task_contract_history,
+    prior_takes: snapshot.prior_takes +
+    [
+      snapshot.implementation_take,
+      snapshot.verification_take,
+      snapshot.audit_take,
+    ],
+    prior_take_evidence: snapshot.prior_take_evidence +
+    [
+      {
+        task_contract_revision_id: snapshot.task_contract.id,
+        implementation_result: snapshot.implementation_result,
+        candidate: snapshot.candidate,
+        verification_receipts: snapshot.verification_receipts,
+        verification_authorization: snapshot.verification_authorization,
+        audit_result: snapshot.audit_result,
+        audit_receipt: snapshot.audit_receipt,
+        integration_intent: snapshot.integration_intent,
+      },
+    ],
+    sandbox_leases: snapshot.sandbox_leases,
+    harness_sessions: snapshot.harness_sessions,
+    harness_events: snapshot.harness_events,
+    integration_conflicts: snapshot.integration_conflicts,
+    effect_receipts: snapshot.effect_receipts,
+  })
+}
+
+///|
 fn stage_effect_suffix(stage : PartWorkflowStage) -> String {
   match stage {
     PartAccepted => "implementation-sandbox"

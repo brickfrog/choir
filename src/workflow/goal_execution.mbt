@@ -4,6 +4,7 @@ pub(all) enum GoalExecutionState {
   GoalExecutionRunning
   GoalExecutionAssuring
   GoalExecutionAssured
+  GoalExecutionAwaitingMerge
   GoalExecutionPaused
   GoalExecutionBlocked
   GoalExecutionCanceling
@@ -498,8 +499,10 @@ fn goal_branch_initialization_shape_is_valid(
         | GoalBranchInitAbandonedByCancellation => true
         GoalBranchInitPlanned => false
       }
-    GoalExecutionAssuring | GoalExecutionAssured | GoalExecutionSucceeded =>
-      initialization.lifecycle == GoalBranchInitReceipted
+    GoalExecutionAssuring
+    | GoalExecutionAssured
+    | GoalExecutionAwaitingMerge
+    | GoalExecutionSucceeded => initialization.lifecycle == GoalBranchInitReceipted
   }
   identity_valid && receipt_valid && lifecycle_valid
 }
@@ -696,7 +699,8 @@ fn goal_execution_lifecycle(
     GoalExecutionQueued
     | GoalExecutionRunning
     | GoalExecutionAssuring
-    | GoalExecutionAssured =>
+    | GoalExecutionAssured
+    | GoalExecutionAwaitingMerge =>
       @control.GoalLifecycle::GoalActive(
         @control.GoalActiveCondition::GoalRunning,
       )
@@ -1335,6 +1339,7 @@ pub fn advance_goal_execution_state(
   if (
       state == GoalExecutionAssuring ||
       state == GoalExecutionAssured ||
+      state == GoalExecutionAwaitingMerge ||
       state == GoalExecutionSucceeded
     ) &&
     !goal_source_claims_are_receipted(record) {
@@ -1348,8 +1353,10 @@ pub fn advance_goal_execution_state(
     | (GoalExecutionAssuring, GoalExecutionAssured)
     | (GoalExecutionAssuring, GoalExecutionPaused)
     | (GoalExecutionAssuring, GoalExecutionBlocked)
-    | (GoalExecutionAssured, GoalExecutionSucceeded)
+    | (GoalExecutionAssured, GoalExecutionAwaitingMerge)
     | (GoalExecutionAssured, GoalExecutionPaused)
+    | (GoalExecutionAwaitingMerge, GoalExecutionSucceeded)
+    | (GoalExecutionAwaitingMerge, GoalExecutionPaused)
     | (GoalExecutionPaused, GoalExecutionRunning)
     | (GoalExecutionBlocked, GoalExecutionRunning) => true
     _ => false

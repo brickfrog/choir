@@ -43,26 +43,14 @@ const GOAL_PROMPT_DEFAULT : String =
   #|
 
 ///|
-pub fn goal_prompt_path(project_dir : String) -> String {
-  let base = if project_dir == "" { "." } else { project_dir }
-  base + "/.choir/prompts/conductor.md"
-}
-
-///|
+/// The embedded Conductor prompt is the single source of truth. A checked-in
+/// `.choir/prompts/conductor.md` override used to shadow it and drifted
+/// silently; the launch files are now always rendered from this constant.
 pub fn default_goal_prompt() -> String {
   GOAL_PROMPT_DEFAULT
 }
 
 ///|
-pub fn load_goal_prompt(
-  project_dir : String,
-  path_exists? : (String) -> Bool = @sys.path_exists,
-  read_file? : (String) -> String = @sys.read_file,
-) -> String {
-  let path = goal_prompt_path(project_dir)
-  if path_exists(path) {
-    read_file(path)
-  } else {
-    GOAL_PROMPT_DEFAULT
-  }
+pub fn load_goal_prompt(_project_dir : String) -> String {
+  GOAL_PROMPT_DEFAULT
 }

@@ -155,10 +155,6 @@ test "init writes only current local launch configuration" {
 
 ///|
 test "init Conductor prompt lives outside provider skill discovery" {
-  assert_eq(
-    @prompts.goal_prompt_path("/repo"),
-    "/repo/.choir/prompts/conductor.md",
-  )
   assert_false(@prompts.default_goal_prompt().contains("\nname: goal\n"))
   assert_true(
     @prompts.default_goal_prompt().contains(

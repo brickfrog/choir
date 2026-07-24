@@ -106,6 +106,13 @@ pub fn transition_part_lifecycle(
       }
     (PartBlocked(PartIntegrationConflict), StartPartConflictRepair(_, take_id)) =>
       Ok(PartExecuting(take_id))
+    (PartBlocked(PartIntegrationConflict), RestartBlockedPart(_)) =>
+      Err(
+        invalid_transition(
+          "Part", "integration conflicts retry through conflict repair",
+        ),
+      )
+    (PartBlocked(_), RestartBlockedPart(take_id)) => Ok(PartExecuting(take_id))
     (PartPending, BlockPart(reason))
     | (PartReady, BlockPart(reason))
     | (PartExecuting(_), BlockPart(reason))
