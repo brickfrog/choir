@@ -153,6 +153,7 @@ pub(all) enum PartTransition {
   BeginPartPromotion(CandidateId)
   RecordPartIntegration(CandidateId, ReceiptId)
   StartPartConflictRepair(IntegrationConflictId, TakeId)
+  RestartBlockedPart(TakeId)
   BlockPart(PartBlockReason)
   CancelPartNotRun
 } derive(Debug, Eq, ToJson, FromJson)

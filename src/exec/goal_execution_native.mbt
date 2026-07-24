@@ -597,6 +597,187 @@ fn plan_native_goal_conflict_repair(
 }
 
 ///|
+/// User-requested retry for a blocked Part: re-arm the Part workflow with
+/// fresh Take identities under the same task contract, then return the
+/// blocked Goal to Running so the scheduler dispatches the fresh Take.
+pub fn retry_native_goal_part(
+  project_dir : String,
+  goal_id : @control.GoalId,
+  part_id : @control.PartId?,
+) -> Result[@workflow.GoalExecutionRecord, @types.ChoirError] {
+  let repository = native_goal_repository(project_dir)
+  let adapters = local_part_workflow_repository_adapters()
+  match @workflow.initialize_part_workflow_repository(repository, adapters) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let stored = match
+    @workflow.load_goal_execution_record(repository, adapters, goal_id) {
+    Ok(Some(value)) => value
+    Ok(None) => return Err(native_goal_execution_error("Goal is not registered"))
+    Err(error) => return Err(error)
+  }
+  if stored.record.state != @workflow.GoalExecutionState::GoalExecutionBlocked {
+    return Err(native_goal_execution_error("Goal is not blocked"))
+  }
+  let blocked : Array[@workflow.PartStoredSnapshot] = []
+  for workflow_id in stored.record.part_workflow_ids {
+    match @workflow.load_part_snapshot(repository, adapters, workflow_id) {
+      Ok(Some(part)) =>
+        if part.snapshot.stage == @workflow.PartWorkflowStage::PartBlocked {
+          blocked.push(part)
+        }
+      Ok(None) =>
+        return Err(native_goal_execution_error("Part workflow is absent"))
+      Err(error) => return Err(error)
+    }
+  }
+  let selected = match part_id {
+    Some(id) => {
+      let mut found : @workflow.PartStoredSnapshot? = None
+      for part in blocked {
+        if part.snapshot.part.id == id {
+          found = Some(part)
+        }
+      }
+      match found {
+        Some(value) => value
+        None =>
+          return Err(
+            native_goal_execution_error(
+              "Part '" + id.0 + "' is not blocked in this Goal",
+            ),
+          )
+      }
+    }
+    None =>
+      match blocked {
+        [single] => single
+        [] => return Err(native_goal_execution_error("no Part is blocked"))
+        _ =>
+          return Err(
+            native_goal_execution_error(
+              "several Parts are blocked; name the part_id to retry",
+            ),
+          )
+      }
+  }
+  let snapshot = selected.snapshot
+  let retry_number = snapshot.prior_takes.length() / 3 + 1
+  let identity_digest = @storage.artifact_digest(
+    @utf8.encode(
+      "choir.native-goal-part-retry.v1\u{00}" +
+      [
+        snapshot.task_contract.digest.to_json(),
+        snapshot.part.id.to_json(),
+        retry_number.to_json(),
+      ]
+      .to_json()
+      .stringify(indent=0),
+    ),
+  )
+  let key = @storage.digest_text(identity_digest)[:20].to_owned()
+  let implementation = native_goal_conflict_repair_take(
+    "take-" + key + "-implementation",
+    snapshot.implementation_take,
+    @control.TakePurpose::Implementation(
+      snapshot.part.id,
+      snapshot.task_contract.id,
+    ),
+  )
+  let verification = native_goal_conflict_repair_take(
+    "take-" + key + "-verification",
+    snapshot.verification_take,
+    @control.TakePurpose::PartVerification(
+      snapshot.part.id,
+      implementation.id,
+      snapshot.task_contract.verification_specs[0].digest,
+    ),
+  )
+  let audit = native_goal_conflict_repair_take(
+    "take-" + key + "-audit",
+    snapshot.audit_take,
+    @control.TakePurpose::PartAudit(
+      snapshot.part.id,
+      implementation.id,
+      snapshot.task_contract.audit_policy_digest,
+    ),
+  )
+  let implementation_sandbox = native_goal_conflict_repair_sandbox(
+    key,
+    "implementation",
+    implementation,
+    snapshot.identities.implementation_sandbox,
+  )
+  let verification_sandbox = native_goal_conflict_repair_sandbox(
+    key,
+    "verification",
+    verification,
+    snapshot.identities.verification_sandbox,
+  )
+  let audit_sandbox = native_goal_conflict_repair_sandbox(
+    key,
+    "audit",
+    audit,
+    snapshot.identities.audit_sandbox,
+  )
+  let retried = match
+    @workflow.plan_part_retry(
+      snapshot,
+      {
+        implementation_take: implementation,
+        implementation_sandbox,
+        implementation_session: native_goal_conflict_repair_session(
+          key,
+          "implementation",
+          implementation,
+          implementation_sandbox,
+          snapshot.identities.implementation_session,
+        ),
+        verification_take: verification,
+        verification_sandbox,
+        audit_take: audit,
+        audit_sandbox,
+        audit_session: native_goal_conflict_repair_session(
+          key,
+          "audit",
+          audit,
+          audit_sandbox,
+          snapshot.identities.audit_session,
+        ),
+      },
+      native_path_is_nfc,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  match
+    @workflow.persist_part_snapshot(repository, adapters, {
+      snapshot: retried,
+      expected_store_version: Some(selected.state_record.version),
+      fault_point: None,
+    }) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let running = match
+    @workflow.advance_goal_execution_state(
+      stored.record,
+      @workflow.GoalExecutionState::GoalExecutionRunning,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  match
+    @workflow.persist_goal_execution_transition(
+      repository, adapters, stored, running,
+    ) {
+    Ok(value) => Ok(value.record)
+    Err(error) => Err(error)
+  }
+}
+
+///|
 fn native_goal_runtime_key(
   repository_id : @workflow.RepositoryId,
   goal_id : @control.GoalId,

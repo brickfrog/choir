@@ -2982,6 +2982,116 @@ test "promotion conflict blocks the Part without minting integration evidence" {
     repair.part.lifecycle,
     @control.PartLifecycle::PartExecuting(implementation.id),
   )
+  // A user retry refuses integration conflicts (they require conflict
+  // repair) but re-arms any other block reason under the same contract.
+  let retry_implementation = {
+    ..workflow_take(
+      "implementation-take-3",
+      @control.TakePurpose::Implementation(
+        blocked.part.id,
+        blocked.task_contract.id,
+      ),
+    ),
+    ordinal: 2,
+  }
+  let retry_verification = {
+    ..workflow_take(
+      "verification-take-3",
+      @control.TakePurpose::PartVerification(
+        blocked.part.id,
+        retry_implementation.id,
+        blocked.task_contract.verification_specs[0].digest,
+      ),
+    ),
+    ordinal: 2,
+  }
+  let retry_audit = {
+    ..workflow_take(
+      "audit-take-3",
+      @control.TakePurpose::PartAudit(
+        blocked.part.id,
+        retry_implementation.id,
+        blocked.task_contract.audit_policy_digest,
+      ),
+    ),
+    ordinal: 2,
+  }
+  let retry_implementation_sandbox = workflow_sandbox(
+    "implementation-sandbox-3",
+    "implementation-generation-3",
+    retry_implementation.id,
+    blocked.task_contract.implementation_capability_profile_digest,
+    workflow_digest_a,
+  )
+  let retry_verification_sandbox = workflow_sandbox(
+    "verification-sandbox-3",
+    "verification-generation-3",
+    retry_verification.id,
+    blocked.task_contract.verification_capability_profile_digest,
+    workflow_digest_d,
+  )
+  let retry_audit_sandbox = workflow_sandbox(
+    "audit-sandbox-3",
+    "audit-generation-3",
+    retry_audit.id,
+    blocked.task_contract.audit_capability_profile_digest,
+    workflow_digest_e,
+  )
+  let retry_identities : @workflow.PartIdentityPlan = {
+    implementation_take: retry_implementation,
+    implementation_sandbox: retry_implementation_sandbox,
+    implementation_session: workflow_session(
+      "implementation-session-3",
+      retry_implementation.id,
+      retry_implementation_sandbox.generation_id,
+      @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+      workflow_digest_a,
+    ),
+    verification_take: retry_verification,
+    verification_sandbox: retry_verification_sandbox,
+    audit_take: retry_audit,
+    audit_sandbox: retry_audit_sandbox,
+    audit_session: workflow_session(
+      "audit-session-3",
+      retry_audit.id,
+      retry_audit_sandbox.generation_id,
+      @control.ProviderSurfaceId::CodexSubscriptionCli,
+      workflow_digest_c,
+    ),
+  }
+  assert_true(
+    @workflow.plan_part_retry(blocked, retry_identities, fn(_) { true })
+    is Err(_),
+  )
+  let verification_blocked = {
+    ..blocked,
+    part: {
+      ..blocked.part,
+      lifecycle: @control.PartLifecycle::PartBlocked(
+        @control.PartBlockReason::PartVerificationFailed,
+      ),
+    },
+  }
+  let retried = match
+    @workflow.plan_part_retry(verification_blocked, retry_identities, fn(_) {
+      true
+    }) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(retried.stage, @workflow.PartWorkflowStage::PartAccepted)
+  assert_eq(retried.task_contract, verification_blocked.task_contract)
+  assert_eq(
+    retried.task_contract_history,
+    verification_blocked.task_contract_history,
+  )
+  assert_eq(retried.prior_takes.length(), 3)
+  assert_eq(retried.prior_take_evidence.length(), 1)
+  assert_eq(
+    retried.part.lifecycle,
+    @control.PartLifecycle::PartExecuting(retry_implementation.id),
+  )
+  assert_eq(retried.durable_version, verification_blocked.durable_version + 1)
 }
 
 ///|

@@ -202,7 +202,7 @@ fn conductor_tools() -> Array[CatalogTool] {
     },
     {
       name: "goal_steer",
-      description: "Apply one scheduling change only when the user's current message explicitly requests it. If the user identified the Goal by Bead/Part, resolve its internal goal_id with read-only goal_status first; never ask the user to supply it.",
+      description: "Apply one scheduling change only when the user's current message explicitly requests it. If the user identified the Goal by Bead/Part, resolve its internal goal_id with read-only goal_status first; never ask the user to supply it. retry_part re-dispatches a fresh implementation Take for a blocked Part and resumes the blocked Goal; integrated sibling Parts are preserved.",
       input_schema: {
         "type": "object".to_json(),
         "properties": {
@@ -210,13 +210,16 @@ fn conductor_tools() -> Array[CatalogTool] {
           "action": {
             "type": "string".to_json(),
             "description": "One typed steering action".to_json(),
-            "enum": ["pause", "resume", "set_concurrency"].to_json(),
+            "enum": ["pause", "resume", "set_concurrency", "retry_part"].to_json(),
           }.to_json(),
           "maximum_parallel_parts": {
             "type": "integer".to_json(),
             "description": "Required positive cap only for set_concurrency".to_json(),
             "minimum": (1).to_json(),
           }.to_json(),
+          "part_id": conductor_string_schema(
+            "Bead id of the blocked Part for retry_part; optional when exactly one Part is blocked",
+          ),
         }.to_json(),
         "required": ["goal_id", "action"].to_json(),
         "additionalProperties": false.to_json(),

@@ -978,6 +978,25 @@ fn dispatch_native_goal_steer(
     Ok(value) => value
     Err(error) => return @types.Response::Err(error.message())
   }
+  if request.args.get("action") == Some("retry_part") {
+    let part_id = request.args
+      .get("part_id")
+      .map(fn(value) { @control.PartId(value) })
+    return match
+      retry_native_goal_part(project_dir, @control.GoalId(goal_id), part_id) {
+      Ok(record) =>
+        native_conductor_goal_action_ok_json(
+          {
+            "goal_id": record.goal.id.to_json(),
+            "state": record.state.to_json(),
+            "lifecycle": record.goal.lifecycle.to_json(),
+            "durable_version": record.durable_version.to_json(),
+            "retried": true.to_json(),
+          }.to_json(),
+        )
+      Err(error) => @types.Response::Err(error.message())
+    }
+  }
   let change = match native_conductor_policy_change(request) {
     Ok(value) => value
     Err(error) => return @types.Response::Err(error.message())
