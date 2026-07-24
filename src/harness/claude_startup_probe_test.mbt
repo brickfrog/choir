@@ -1,11 +1,11 @@
 ///|
 let connected_init =
-  #|{"type":"system","subtype":"init","tools":["mcp__choir_probe__probe"],"mcp_servers":[{"name":"choir_probe","status":"connected"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.218","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"],"session_id":"secret-discarded"}
+  #|{"type":"system","subtype":"init","tools":["mcp__choir_probe__probe"],"mcp_servers":[{"name":"choir_probe","status":"connected"}],"mcp_server_errors":[],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.219","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"],"session_id":"secret-discarded"}
   #|{"type":"result","result":"Not logged in"}
 
 ///|
 let pending_no_login =
-  #|{"type":"system","subtype":"init","tools":[],"mcp_servers":[{"name":"choir_probe","status":"pending"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.218","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"]}
+  #|{"type":"system","subtype":"init","tools":[],"mcp_servers":[{"name":"choir_probe","status":"pending"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.219","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"]}
   #|{"is_error":true,"terminal_reason":"api_error","subtype":"success","result":"Not logged in · Please run /login","type":"result"}
 
 ///|
@@ -69,7 +69,7 @@ test "Claude synthetic startup does not infer no-login evidence from prose alone
 ///|
 test "Claude synthetic startup rejects pending MCP and native tools" {
   let output =
-    #|{"type":"system","subtype":"init","tools":["Read"],"mcp_servers":[{"name":"choir_probe","status":"pending"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.218","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"]}
+    #|{"type":"system","subtype":"init","tools":["Read"],"mcp_servers":[{"name":"choir_probe","status":"pending"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.219","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"]}
   let report = @harness.evaluate_claude_synthetic_startup({
     exit_code: 1,
     output,
@@ -89,7 +89,7 @@ test "Claude synthetic startup rejects pending MCP and native tools" {
 ///|
 test "Claude synthetic startup distinguishes missing MCP tool from native tools" {
   let output =
-    #|{"type":"system","subtype":"init","tools":[],"mcp_servers":[{"name":"choir_probe","status":"pending"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.218","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"]}
+    #|{"type":"system","subtype":"init","tools":[],"mcp_servers":[{"name":"choir_probe","status":"pending"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.219","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"]}
   let report = @harness.evaluate_claude_synthetic_startup({
     exit_code: 1,
     output,
@@ -175,7 +175,7 @@ test "Claude live startup requires the sandbox tool and subscription observation
 ///|
 test "Claude live startup accepts pending initialization after exact tool use" {
   let output = (
-      #|{"type":"system","subtype":"init","tools":[],"mcp_servers":[{"name":"choir_probe","status":"pending"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.218","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"]}
+      #|{"type":"system","subtype":"init","tools":[],"mcp_servers":[{"name":"choir_probe","status":"pending"}],"permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.219","slash_commands":[],"skills":[],"plugins":[],"agents":["claude","Explore","general-purpose","Plan","statusline-setup"]}
     ) +
     "\n" +
     (
