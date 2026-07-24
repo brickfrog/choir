@@ -101,8 +101,21 @@ fn conductor_response_state(response : @types.Response) -> String? {
 }
 
 ///|
-fn conductor_goal_state_succeeded(state : String?) -> Bool {
-  state == Some("GoalExecutionSucceeded")
+fn conductor_goal_state_terminal(state : String?) -> Bool {
+  // Both terminal states must release the park: after cancellation no further
+  // durable Goal event will ever arrive, so parking on it would hold the
+  // Conductor's Stop hook forever.
+  state == Some("GoalExecutionSucceeded") ||
+  state == Some("GoalExecutionCanceled")
+}
+
+///|
+test "Conductor park releases on both terminal Goal states" {
+  assert_true(conductor_goal_state_terminal(Some("GoalExecutionSucceeded")))
+  assert_true(conductor_goal_state_terminal(Some("GoalExecutionCanceled")))
+  assert_false(conductor_goal_state_terminal(Some("GoalExecutionCanceling")))
+  assert_false(conductor_goal_state_terminal(Some("GoalExecutionRunning")))
+  assert_false(conductor_goal_state_terminal(None))
 }
 
 ///|
@@ -143,7 +156,7 @@ fn conductor_observe_goal_response(
     Some(identity) => Some(identity)
     None => request.args.get("goal_id")
   }
-  state.parked_for_goal_event = !conductor_goal_state_succeeded(
+  state.parked_for_goal_event = !conductor_goal_state_terminal(
     conductor_response_state(response),
   )
   match goal_id {
@@ -249,7 +262,7 @@ fn conductor_broadcast_goal_update(
     Some(String(value)) => Some(value)
     _ => None
   }
-  state.parked_for_goal_event = !conductor_goal_state_succeeded(goal_state)
+  state.parked_for_goal_event = !conductor_goal_state_terminal(goal_state)
   let wire = @utf8.encode(conductor_goal_update_line(report))
   let targets = state.channel_fds.copy()
   for fd in targets {
