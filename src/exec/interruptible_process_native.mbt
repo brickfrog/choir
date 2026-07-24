@@ -48,18 +48,67 @@ fn native_provider_owner_socket_path() -> String {
 }
 
 ///|
+/// Host directories credential-bearing enough that even the provider's own
+/// HOME must not expose them to a Take-influenced provider turn.
+let native_provider_masked_home_entries : Array[String] = [
+  ".ssh", ".gnupg", ".aws", ".kube", ".config/gh",
+]
+
+///|
+/// Minimal read allowlist replacing the old whole-host `--ro-bind / /`:
+/// toolchains and libraries, /etc for DNS and TLS roots, and the provider's
+/// HOME for CLI installs and subscription state, with common credential
+/// directories masked. Everything else on the host — other repositories,
+/// /var, /mnt, /root, sibling users — is invisible. A fresh minimal /dev
+/// replaces the old whole-device bind. The network stays shared because the
+/// provider CLI must reach its model API.
 fn native_provider_host_boundary_args(
   sterile_root : String,
   working_directory : String,
   boxlite_owner_socket_root : String?,
   executable : String,
   executable_args : Array[String],
+  provider_home? : String? = @sys.getenv("HOME"),
+  mask_entry_exists? : (String) -> Bool = @sys.path_entry_exists,
 ) -> Array[String] {
-  let args : Array[String] = [
-    "--die-with-parent", "--ro-bind", "/", "/", "--dev-bind", "/dev", "/dev", "--proc",
-    "/proc", "--tmpfs", "/tmp", "--bind", sterile_root, sterile_root, "--chdir",
-    working_directory, "--", executable,
-  ]
+  let args : Array[String] = ["--die-with-parent"]
+  for path in ["/usr", "/etc"] {
+    args.push("--ro-bind")
+    args.push(path)
+    args.push(path)
+  }
+  for
+    path in [
+      "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/opt", "/nix", "/run/systemd/resolve",
+    ] {
+    args.push("--ro-bind-try")
+    args.push(path)
+    args.push(path)
+  }
+  match provider_home {
+    Some(home) if home.has_prefix("/") => {
+      args.push("--ro-bind")
+      args.push(home)
+      args.push(home)
+      // Masking requires an existing mount point beneath the read-only HOME
+      // bind, so only present directories are covered by a tmpfs.
+      for entry in native_provider_masked_home_entries {
+        let masked = home + "/" + entry
+        if mask_entry_exists(masked) {
+          args.push("--tmpfs")
+          args.push(masked)
+        }
+      }
+    }
+    _ => ()
+  }
+  for
+    tail in [
+      "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--bind", sterile_root,
+      sterile_root, "--chdir", working_directory, "--", executable,
+    ] {
+    args.push(tail)
+  }
   match boxlite_owner_socket_root {
     Some(source) => {
       let chdir = args.search("--chdir").unwrap()
@@ -73,6 +122,48 @@ fn native_provider_host_boundary_args(
     args.push(argument)
   }
   args
+}
+
+///|
+test "provider boundary allowlists reads and masks credential directories" {
+  let args = native_provider_host_boundary_args(
+    "/tmp/choir-boundary-test",
+    "/tmp/choir-boundary-test",
+    None,
+    "/usr/bin/true",
+    [],
+    provider_home=Some("/home/provider"),
+    mask_entry_exists=fn(path) { path == "/home/provider/.ssh" },
+  )
+  assert_true(args.contains("/proc"))
+  // The whole-host bind and whole-device bind are gone.
+  for index = 0; index < args.length() - 2; index = index + 1 {
+    assert_false(
+      args[index] == "--ro-bind" &&
+      args[index + 1] == "/" &&
+      args[index + 2] == "/",
+    )
+  }
+  assert_false(args.contains("--dev-bind"))
+  assert_true(args.contains("--dev"))
+  // HOME is readable but existing credential directories are masked.
+  assert_true(args.contains("/home/provider"))
+  let mask = args.search("/home/provider/.ssh").unwrap()
+  assert_eq(args[mask - 1], "--tmpfs")
+  assert_false(args.contains("/home/provider/.gnupg"))
+  // No HOME bind without an absolute provider home.
+  let homeless = native_provider_host_boundary_args(
+    "/tmp/choir-boundary-test",
+    "/tmp/choir-boundary-test",
+    None,
+    "/usr/bin/true",
+    [],
+    provider_home=None,
+    mask_entry_exists=fn(_) { false },
+  )
+  assert_true(homeless.contains("--tmpfs"))
+  assert_true(homeless.contains("/usr"))
+  assert_false(homeless.contains("/home/provider"))
 }
 
 ///|

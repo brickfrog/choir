@@ -2106,6 +2106,8 @@ test "native Codex owner socket binding is exact and paired with MCP argv" {
     Some(source),
     "/usr/bin/true",
     [],
+    provider_home=None,
+    mask_entry_exists=fn(_) { false },
   )
   let source_index = args.search(source).unwrap()
   assert_eq(args[source_index - 1], "--ro-bind")
@@ -2151,9 +2153,12 @@ test "provider host boundary masks host temporary files" {
     None,
     "/usr/bin/true",
     [],
+    provider_home=None,
+    mask_entry_exists=fn(_) { false },
   )
-  assert_eq(args[:4], ["--die-with-parent", "--ro-bind", "/", "/"])
-  assert_true(args.contains("--dev-bind"))
+  assert_eq(args[0], "--die-with-parent")
+  assert_false(args.contains("--dev-bind"))
+  assert_true(args.contains("--dev"))
   assert_true(args.contains("--proc"))
   assert_true(args.contains("--tmpfs"))
   let tmpfs = args.search("--tmpfs").unwrap()
