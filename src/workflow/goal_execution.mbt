@@ -498,9 +498,8 @@ fn goal_branch_initialization_shape_is_valid(
         | GoalBranchInitAbandonedByCancellation => true
         GoalBranchInitPlanned => false
       }
-    GoalExecutionAssuring
-    | GoalExecutionAssured
-    | GoalExecutionSucceeded => initialization.lifecycle == GoalBranchInitReceipted
+    GoalExecutionAssuring | GoalExecutionAssured | GoalExecutionSucceeded =>
+      initialization.lifecycle == GoalBranchInitReceipted
   }
   identity_valid && receipt_valid && lifecycle_valid
 }
@@ -747,7 +746,7 @@ pub fn goal_execution_record_from_selection(
   decision : GoalSelectionDecision,
   selection_decision_digest : @control.Digest,
   part_workflow_ids : Array[String],
-  fencing_epoch~ : @control.FencingEpoch = @control.FencingEpoch(1L),
+  fencing_epoch? : @control.FencingEpoch = @control.FencingEpoch(1L),
 ) -> Result[GoalExecutionRecord, @types.ChoirError] {
   if decision.outcome != GoalSelectionOutcome::GoalSelectionAccepted ||
     selection_decision_digest != goal_selection_decision_digest(decision) {
@@ -827,11 +826,7 @@ pub fn adopt_goal_execution_fencing_epoch(
   if fencing_epoch.0 <= record.fencing_epoch.0 {
     return Err(goal_execution_error("fencing adoption must raise the epoch"))
   }
-  Ok({
-    ..record,
-    durable_version: record.durable_version + 1,
-    fencing_epoch,
-  })
+  Ok({ ..record, durable_version: record.durable_version + 1, fencing_epoch })
 }
 
 ///|

@@ -220,7 +220,8 @@ fn handle_goal_finalization_outcome(
         Ok(Some(current)) if current.record.state ==
           GoalExecutionState::GoalExecutionSucceeded =>
           Ok(GoalExecutionTickResult::GoalExecutionTickAdvanced(current.record))
-        Ok(_) => Err(goal_execution_error("finalization did not commit success"))
+        Ok(_) =>
+          Err(goal_execution_error("finalization did not commit success"))
         Err(error) => Err(error)
       }
     GoalFinalizationTickOutcome::GoalFinalizationPending =>
@@ -269,8 +270,8 @@ pub async fn run_next_goal_execution_tick(
   repository : PartWorkflowRepository,
   repository_adapters : PartWorkflowRepositoryAdapters,
   runner_adapters : GoalExecutionRunnerAdapters,
-  fencing_epoch~ : @control.FencingEpoch = @control.FencingEpoch(1L),
-  after~ : @control.GoalId? = None,
+  fencing_epoch? : @control.FencingEpoch = @control.FencingEpoch(1L),
+  after? : @control.GoalId? = None,
 ) -> Result[GoalExecutionTickResult, @types.ChoirError] {
   let listed = match
     list_goal_execution_records(repository, repository_adapters) {
@@ -287,10 +288,7 @@ pub async fn run_next_goal_execution_tick(
   let selected = if candidate.record.fencing_epoch.0 < fencing_epoch.0 {
     match
       persist_goal_execution_epoch_adoption(
-        repository,
-        repository_adapters,
-        candidate,
-        fencing_epoch,
+        repository, repository_adapters, candidate, fencing_epoch,
       ) {
       Ok(value) => value
       Err(error) => return Err(error)

@@ -44,33 +44,35 @@ pub fn parse_goal_execution_state(tag : String) -> GoalExecutionState? {
 /// the Conductor or rewrites the statusline cache.
 pub fn goal_report_material_fingerprint(report : GoalStatusReport) -> String {
   let parts = report.parts.map(fn(part) {
-    ({
-      "part_id": part.part_id.to_json(),
-      "implementation_take_lifecycle": part.implementation_take_lifecycle.to_json(),
-      "implementation_session_lifecycle": part.implementation_session_lifecycle.to_json(),
-      "verification_take_lifecycle": part.verification_take_lifecycle.to_json(),
-      "verification_session_lifecycle": part.verification_session_lifecycle.to_json(),
-      "audit_take_lifecycle": part.audit_take_lifecycle.to_json(),
-      "audit_session_lifecycle": part.audit_session_lifecycle.to_json(),
-      "lifecycle": part.lifecycle.to_json(),
-      "stage": part.stage.to_json(),
-    } : Map[String, Json]).to_json()
+    (
+      {
+        "part_id": part.part_id.to_json(),
+        "implementation_take_lifecycle": part.implementation_take_lifecycle.to_json(),
+        "implementation_session_lifecycle": part.implementation_session_lifecycle.to_json(),
+        "verification_take_lifecycle": part.verification_take_lifecycle.to_json(),
+        "verification_session_lifecycle": part.verification_session_lifecycle.to_json(),
+        "audit_take_lifecycle": part.audit_take_lifecycle.to_json(),
+        "audit_session_lifecycle": part.audit_session_lifecycle.to_json(),
+        "lifecycle": part.lifecycle.to_json(),
+        "stage": part.stage.to_json(),
+      } : Map[String, Json]).to_json()
   })
-  ({
-    "goal_id": report.goal_id.to_json(),
-    "state": report.state.to_json(),
-    "lifecycle": report.lifecycle.to_json(),
-    "pause_reason": report.pause_reason.to_json(),
-    "resume_state": report.resume_state.to_json(),
-    "active_input_request": report.active_input_request.to_json(),
-    "maximum_parallel_parts": report.maximum_parallel_parts.to_json(),
-    "assurance_stage": report.assurance_stage.to_json(),
-    "publication_state": report.publication_state.to_json(),
-    "pull_request_state": report.pull_request_state.to_json(),
-    "finalization_id": report.finalization_id.to_json(),
-    "readiness_decision": report.readiness_decision.to_json(),
-    "parts": parts.to_json(),
-  } : Map[String, Json])
+  (
+    {
+      "goal_id": report.goal_id.to_json(),
+      "state": report.state.to_json(),
+      "lifecycle": report.lifecycle.to_json(),
+      "pause_reason": report.pause_reason.to_json(),
+      "resume_state": report.resume_state.to_json(),
+      "active_input_request": report.active_input_request.to_json(),
+      "maximum_parallel_parts": report.maximum_parallel_parts.to_json(),
+      "assurance_stage": report.assurance_stage.to_json(),
+      "publication_state": report.publication_state.to_json(),
+      "pull_request_state": report.pull_request_state.to_json(),
+      "finalization_id": report.finalization_id.to_json(),
+      "readiness_decision": report.readiness_decision.to_json(),
+      "parts": parts.to_json(),
+    } : Map[String, Json])
   .to_json()
   .stringify(indent=0)
 }
@@ -146,9 +148,8 @@ fn conductor_recovery_target(
               Some("assure")
             _ =>
               match report.pull_request_state {
-                Some(
-                  PullRequestIntentState::PullRequestRemoteCreateUncertain
-                ) => Some("file PR")
+                Some(PullRequestIntentState::PullRequestRemoteCreateUncertain) =>
+                  Some("file PR")
                 _ => None
               }
           }
@@ -182,11 +183,7 @@ pub fn conductor_goal_display(
   let mut recovery_count = 0
   let mut blocked_count = 0
   for part in report.parts {
-    let part_id = if part.part_id.0 == "" {
-      None
-    } else {
-      Some(part.part_id.0)
-    }
+    let part_id = if part.part_id.0 == "" { None } else { Some(part.part_id.0) }
     if report.parts.length() == 1 {
       single_part_id = part_id
     }

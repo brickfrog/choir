@@ -166,10 +166,10 @@ test "goal CLI parses typed steering operations" {
     "goal_id": "goal-a".to_json(),
     "action": "pause".to_json(),
   })
-  assert_eq(goal_cli_steer_values(["--part", "choir-x", "resume"], 0).unwrap(), {
-    "part_id": "choir-x".to_json(),
-    "action": "resume".to_json(),
-  })
+  assert_eq(
+    goal_cli_steer_values(["--part", "choir-x", "resume"], 0).unwrap(),
+    { "part_id": "choir-x".to_json(), "action": "resume".to_json() },
+  )
   assert_eq(goal_cli_steer_values(["goal-a", "concurrency", "3"], 0).unwrap(), {
     "goal_id": "goal-a".to_json(),
     "action": "set_concurrency".to_json(),

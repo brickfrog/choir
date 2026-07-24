@@ -614,7 +614,8 @@ pub fn retry_native_goal_part(
   let stored = match
     @workflow.load_goal_execution_record(repository, adapters, goal_id) {
     Ok(Some(value)) => value
-    Ok(None) => return Err(native_goal_execution_error("Goal is not registered"))
+    Ok(None) =>
+      return Err(native_goal_execution_error("Goal is not registered"))
     Err(error) => return Err(error)
   }
   if stored.record.state != @workflow.GoalExecutionState::GoalExecutionBlocked {
@@ -3537,152 +3538,156 @@ pub async fn run_native_goal_execution_tick_with_forge(
     fencing_epoch=current_native_goal_fencing_epoch(),
     after=native_goal_rotation_state.val,
     {
-    initialize: async fn(record) {
-      let claimed = match
-        advance_native_goal_source_claims(
-          project_dir,
-          repository,
-          repository_adapters,
-          record.goal.id,
-          capture=beads_capture,
-        ) {
-        Ok(value) => value
-        Err(error) => return Err(error)
-      }
-      if !claimed {
-        return Ok(false)
-      }
-      match
-        advance_native_goal_branch_initialization(
-          project_dir,
-          repository,
-          repository_adapters,
-          record.goal.id,
-        ) {
-        Ok(@workflow.GoalBranchInitLifecycle::GoalBranchInitReceipted) =>
-          Ok(true)
-        Ok(_) => Ok(false)
-        Err(error) => Err(error)
-      }
-    },
-    execute: async fn(record, snapshots) {
-      execute_native_goal_record(project_dir, repository, record, snapshots)
-    },
-    assure: async fn(record, snapshots) {
-      advance_native_goal_assurance(
-        project_dir, repository, repository_adapters, record, snapshots,
-      )
-    },
-    finalize: async fn(record, _) {
-      match advance_native_goal_publication(project_dir, record.goal.id) {
-        Ok(@workflow.GoalPublicationTickOutcome::GoalPublicationComplete) => ()
-        Ok(
-          @workflow.GoalPublicationTickOutcome::GoalPublicationRemoteUnavailable
-        ) =>
-          return Ok(
-            @workflow.GoalFinalizationTickOutcome::GoalFinalizationPublicationRemoteUnavailable,
-          )
-        Ok(@workflow.GoalPublicationTickOutcome::GoalPublicationDrifted) =>
-          return Ok(
-            @workflow.GoalFinalizationTickOutcome::GoalFinalizationDrifted,
-          )
-        Ok(
-          @workflow.GoalPublicationTickOutcome::GoalPublicationRecoveryUncertain
-        ) =>
-          return Ok(
-            @workflow.GoalFinalizationTickOutcome::GoalFinalizationRecoveryUncertain,
-          )
-        Ok(_) =>
-          return Ok(
-            @workflow.GoalFinalizationTickOutcome::GoalFinalizationPending,
-          )
-        Err(error) => return Err(error)
-      }
-      match
-        advance_native_goal_pull_request_with_adapters(
+      initialize: async fn(record) {
+        let claimed = match
+          advance_native_goal_source_claims(
+            project_dir,
+            repository,
+            repository_adapters,
+            record.goal.id,
+            capture=beads_capture,
+          ) {
+          Ok(value) => value
+          Err(error) => return Err(error)
+        }
+        if !claimed {
+          return Ok(false)
+        }
+        match
+          advance_native_goal_branch_initialization(
+            project_dir,
+            repository,
+            repository_adapters,
+            record.goal.id,
+          ) {
+          Ok(@workflow.GoalBranchInitLifecycle::GoalBranchInitReceipted) =>
+            Ok(true)
+          Ok(_) => Ok(false)
+          Err(error) => Err(error)
+        }
+      },
+      execute: async fn(record, snapshots) {
+        execute_native_goal_record(project_dir, repository, record, snapshots)
+      },
+      assure: async fn(record, snapshots) {
+        advance_native_goal_assurance(
+          project_dir, repository, repository_adapters, record, snapshots,
+        )
+      },
+      finalize: async fn(record, _) {
+        match advance_native_goal_publication(project_dir, record.goal.id) {
+          Ok(@workflow.GoalPublicationTickOutcome::GoalPublicationComplete) =>
+            ()
+          Ok(
+            @workflow.GoalPublicationTickOutcome::GoalPublicationRemoteUnavailable
+          ) =>
+            return Ok(
+              @workflow.GoalFinalizationTickOutcome::GoalFinalizationPublicationRemoteUnavailable,
+            )
+          Ok(@workflow.GoalPublicationTickOutcome::GoalPublicationDrifted) =>
+            return Ok(
+              @workflow.GoalFinalizationTickOutcome::GoalFinalizationDrifted,
+            )
+          Ok(
+            @workflow.GoalPublicationTickOutcome::GoalPublicationRecoveryUncertain
+          ) =>
+            return Ok(
+              @workflow.GoalFinalizationTickOutcome::GoalFinalizationRecoveryUncertain,
+            )
+          Ok(_) =>
+            return Ok(
+              @workflow.GoalFinalizationTickOutcome::GoalFinalizationPending,
+            )
+          Err(error) => return Err(error)
+        }
+        match
+          advance_native_goal_pull_request_with_adapters(
+            project_dir,
+            record.goal.id,
+            forge,
+          ) {
+          Ok(@workflow.GoalPullRequestTickOutcome::GoalPullRequestComplete) =>
+            ()
+          Ok(
+            @workflow.GoalPullRequestTickOutcome::GoalPullRequestNeedsUserInput
+          ) =>
+            return Ok(
+              @workflow.GoalFinalizationTickOutcome::GoalFinalizationNeedsUserInput,
+            )
+          Ok(
+            @workflow.GoalPullRequestTickOutcome::GoalPullRequestRecoveryUncertain
+          ) =>
+            return Ok(
+              @workflow.GoalFinalizationTickOutcome::GoalFinalizationRecoveryUncertain,
+            )
+          Ok(_) =>
+            return Ok(
+              @workflow.GoalFinalizationTickOutcome::GoalFinalizationPending,
+            )
+          Err(error) => return Err(error)
+        }
+        advance_native_goal_finalization_with_adapters(
           project_dir,
           record.goal.id,
           forge,
-        ) {
-        Ok(@workflow.GoalPullRequestTickOutcome::GoalPullRequestComplete) => ()
-        Ok(@workflow.GoalPullRequestTickOutcome::GoalPullRequestNeedsUserInput) =>
-          return Ok(
-            @workflow.GoalFinalizationTickOutcome::GoalFinalizationNeedsUserInput,
-          )
-        Ok(
-          @workflow.GoalPullRequestTickOutcome::GoalPullRequestRecoveryUncertain
-        ) =>
-          return Ok(
-            @workflow.GoalFinalizationTickOutcome::GoalFinalizationRecoveryUncertain,
-          )
-        Ok(_) =>
-          return Ok(
-            @workflow.GoalFinalizationTickOutcome::GoalFinalizationPending,
-          )
-        Err(error) => return Err(error)
-      }
-      advance_native_goal_finalization_with_adapters(
-        project_dir,
-        record.goal.id,
-        forge,
-      )
-    },
-    cancel: async fn(record, snapshots) {
-      let sources_known = match
-        advance_native_goal_source_releases(
-          project_dir,
-          repository,
-          repository_adapters,
-          record.goal.id,
-          capture=beads_capture,
-        ) {
-        Ok(value) => value
-        Err(error) => return Err(error)
-      }
-      if !sources_known {
-        return Ok(false)
-      }
-      let initialization = match
-        advance_native_goal_branch_initialization(
-          project_dir,
-          repository,
-          repository_adapters,
-          record.goal.id,
-        ) {
-        Ok(value) => value
-        Err(error) => return Err(error)
-      }
-      let initialization_known = match initialization {
-        @workflow.GoalBranchInitLifecycle::GoalBranchInitReceipted
-        | @workflow.GoalBranchInitLifecycle::GoalBranchInitIntegrityBlocked
-        | @workflow.GoalBranchInitLifecycle::GoalBranchInitUncertain
-        | @workflow.GoalBranchInitLifecycle::GoalBranchInitAbandonedByCancellation =>
-          true
-        _ => false
-      }
-      if !initialization_known ||
-        record.branch_initialization.lifecycle != initialization {
-        return Ok(false)
-      }
-      match
-        reconcile_native_goal_part_cancellation(
-          project_dir, repository, repository_adapters, record, snapshots, forge,
-        ) {
-        Ok((reconciled, finalization_known)) => {
-          let terminal_ready = native_goal_cancellation_can_finish(reconciled) &&
-            finalization_known
-          finish_native_goal_runtime(terminal_ready, async fn() {
-            cleanup_native_goal_runtime(record)
-          })
+        )
+      },
+      cancel: async fn(record, snapshots) {
+        let sources_known = match
+          advance_native_goal_source_releases(
+            project_dir,
+            repository,
+            repository_adapters,
+            record.goal.id,
+            capture=beads_capture,
+          ) {
+          Ok(value) => value
+          Err(error) => return Err(error)
         }
-        Err(error) => Err(error)
-      }
+        if !sources_known {
+          return Ok(false)
+        }
+        let initialization = match
+          advance_native_goal_branch_initialization(
+            project_dir,
+            repository,
+            repository_adapters,
+            record.goal.id,
+          ) {
+          Ok(value) => value
+          Err(error) => return Err(error)
+        }
+        let initialization_known = match initialization {
+          @workflow.GoalBranchInitLifecycle::GoalBranchInitReceipted
+          | @workflow.GoalBranchInitLifecycle::GoalBranchInitIntegrityBlocked
+          | @workflow.GoalBranchInitLifecycle::GoalBranchInitUncertain
+          | @workflow.GoalBranchInitLifecycle::GoalBranchInitAbandonedByCancellation =>
+            true
+          _ => false
+        }
+        if !initialization_known ||
+          record.branch_initialization.lifecycle != initialization {
+          return Ok(false)
+        }
+        match
+          reconcile_native_goal_part_cancellation(
+            project_dir, repository, repository_adapters, record, snapshots, forge,
+          ) {
+          Ok((reconciled, finalization_known)) => {
+            let terminal_ready = native_goal_cancellation_can_finish(reconciled) &&
+              finalization_known
+            finish_native_goal_runtime(terminal_ready, async fn() {
+              cleanup_native_goal_runtime(record)
+            })
+          }
+          Err(error) => Err(error)
+        }
+      },
     },
-  })
+  )
   match result {
-    Ok(
-      @workflow.GoalExecutionTickResult::GoalExecutionTickAdvanced(record)
-    ) => native_goal_rotation_state.val = Some(record.goal.id)
+    Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickAdvanced(record)) =>
+      native_goal_rotation_state.val = Some(record.goal.id)
     _ => ()
   }
   result
