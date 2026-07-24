@@ -45,20 +45,73 @@ fn goal_execution_transaction_persisted(
 }
 
 ///|
-fn runnable_goal_execution(
+fn rotate_goal_records(
   records : Array[StoredGoalExecutionRecord],
+  after : @control.GoalId?,
+) -> Array[StoredGoalExecutionRecord] {
+  let pivot = match after {
+    None => return records
+    Some(id) => {
+      let mut found = -1
+      for index = 0; index < records.length(); index = index + 1 {
+        if records[index].record.goal.id == id {
+          found = index
+          break
+        }
+      }
+      if found < 0 {
+        return records
+      }
+      found
+    }
+  }
+  let rotated : Array[StoredGoalExecutionRecord] = []
+  for index = pivot + 1; index < records.length(); index = index + 1 {
+    rotated.push(records[index])
+  }
+  for index = 0; index <= pivot; index = index + 1 {
+    rotated.push(records[index])
+  }
+  rotated
+}
+
+///|
+/// Pick the next Goal to tick. Cancellations always run first; otherwise the
+/// scan starts just after the previously served Goal so concurrent Goals
+/// round-robin instead of the first runnable Goal starving the rest.
+/// Awaiting-merge Goals join the rotation only when their passive
+/// re-observation backoff has elapsed.
+fn runnable_goal_execution(
+  repository : PartWorkflowRepository,
+  adapters : PartWorkflowRepositoryAdapters,
+  records : Array[StoredGoalExecutionRecord],
+  after : @control.GoalId?,
+  now : Int64,
 ) -> StoredGoalExecutionRecord? {
   for stored in records {
     if stored.record.state == GoalExecutionState::GoalExecutionCanceling {
       return Some(stored)
     }
   }
-  for stored in records {
+  for stored in rotate_goal_records(records, after) {
     match stored.record.state {
       GoalExecutionState::GoalExecutionQueued
       | GoalExecutionState::GoalExecutionRunning
       | GoalExecutionState::GoalExecutionAssuring
       | GoalExecutionState::GoalExecutionAssured => return Some(stored)
+      GoalExecutionState::GoalExecutionAwaitingMerge => {
+        let due = match
+          load_goal_finalization_record(
+            repository, adapters, stored.record.goal.id,
+          ) {
+          Ok(Some(finalization)) =>
+            goal_merge_observation_due(finalization.record, now)
+          Ok(None) | Err(_) => true
+        }
+        if due {
+          return Some(stored)
+        }
+      }
       _ => ()
     }
   }
@@ -168,18 +221,99 @@ fn persist_goal_execution_epoch_adoption(
 }
 
 ///|
+fn handle_goal_finalization_outcome(
+  repository : PartWorkflowRepository,
+  repository_adapters : PartWorkflowRepositoryAdapters,
+  selected : StoredGoalExecutionRecord,
+  outcome : GoalFinalizationTickOutcome,
+) -> Result[GoalExecutionTickResult, @types.ChoirError] {
+  match outcome {
+    GoalFinalizationTickOutcome::GoalFinalizationSucceeded =>
+      match
+        load_goal_execution_record(
+          repository,
+          repository_adapters,
+          selected.record.goal.id,
+        ) {
+        Ok(Some(current)) if current.record.state ==
+          GoalExecutionState::GoalExecutionSucceeded =>
+          Ok(GoalExecutionTickResult::GoalExecutionTickAdvanced(current.record))
+        Ok(_) => Err(goal_execution_error("finalization did not commit success"))
+        Err(error) => Err(error)
+      }
+    GoalFinalizationTickOutcome::GoalFinalizationAwaitingMerge =>
+      // The Goal either just entered AwaitingMerge or re-observed a still
+      // open pull request; reload so the projection reflects durable state.
+      match
+        load_goal_execution_record(
+          repository,
+          repository_adapters,
+          selected.record.goal.id,
+        ) {
+        Ok(Some(current)) =>
+          Ok(GoalExecutionTickResult::GoalExecutionTickAdvanced(current.record))
+        Ok(None) => Err(goal_execution_error("Goal disappeared"))
+        Err(error) => Err(error)
+      }
+    GoalFinalizationTickOutcome::GoalFinalizationPending =>
+      Ok(GoalExecutionTickResult::GoalExecutionTickAdvanced(selected.record))
+    GoalFinalizationTickOutcome::GoalFinalizationPublicationRemoteUnavailable
+    | GoalFinalizationTickOutcome::GoalFinalizationNeedsUserInput
+    | GoalFinalizationTickOutcome::GoalFinalizationDrifted
+    | GoalFinalizationTickOutcome::GoalFinalizationAmbiguous => {
+      let reason = match outcome {
+        GoalFinalizationPublicationRemoteUnavailable =>
+          GoalInputReason::GoalInputPublicationRemoteUnavailable
+        GoalFinalizationNeedsUserInput =>
+          GoalInputReason::GoalInputFinalizationNeedsUserInput
+        GoalFinalizationDrifted => GoalInputReason::GoalInputFinalizationDrifted
+        GoalFinalizationAmbiguous =>
+          GoalInputReason::GoalInputFinalizationAmbiguous
+        _ => abort("unreachable finalization input outcome")
+      }
+      let paused = match
+        persist_goal_input_request(
+          repository, repository_adapters, selected, reason,
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      Ok(GoalExecutionTickResult::GoalExecutionTickAdvanced(paused.record))
+    }
+    GoalFinalizationTickOutcome::GoalFinalizationRecoveryUncertain => {
+      let paused = match
+        persist_goal_execution_advance(
+          repository,
+          repository_adapters,
+          selected,
+          GoalExecutionState::GoalExecutionPaused,
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      Ok(GoalExecutionTickResult::GoalExecutionTickAdvanced(paused.record))
+    }
+  }
+}
+
+///|
 pub async fn run_next_goal_execution_tick(
   repository : PartWorkflowRepository,
   repository_adapters : PartWorkflowRepositoryAdapters,
   runner_adapters : GoalExecutionRunnerAdapters,
   fencing_epoch~ : @control.FencingEpoch = @control.FencingEpoch(1L),
+  now~ : Int64 = 0L,
+  after~ : @control.GoalId? = None,
 ) -> Result[GoalExecutionTickResult, @types.ChoirError] {
   let listed = match
     list_goal_execution_records(repository, repository_adapters) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let candidate = match runnable_goal_execution(listed) {
+  let candidate = match
+    runnable_goal_execution(
+      repository, repository_adapters, listed, after, now,
+    ) {
     Some(value) => value
     None => return Ok(GoalExecutionTickResult::GoalExecutionTickIdle)
   }
@@ -289,69 +423,27 @@ pub async fn run_next_goal_execution_tick(
       Ok(value) => value
       Err(error) => return Err(error)
     }
-    match outcome {
-      GoalFinalizationTickOutcome::GoalFinalizationSucceeded =>
-        return match
-          load_goal_execution_record(
-            repository,
-            repository_adapters,
-            selected.record.goal.id,
-          ) {
-          Ok(Some(current)) if current.record.state ==
-            GoalExecutionState::GoalExecutionSucceeded =>
-            Ok(
-              GoalExecutionTickResult::GoalExecutionTickAdvanced(current.record),
-            )
-          Ok(_) =>
-            Err(goal_execution_error("finalization did not commit success"))
-          Err(error) => Err(error)
-        }
-      GoalFinalizationTickOutcome::GoalFinalizationPending =>
-        return Ok(
-          GoalExecutionTickResult::GoalExecutionTickAdvanced(selected.record),
-        )
-      GoalFinalizationTickOutcome::GoalFinalizationPublicationRemoteUnavailable
-      | GoalFinalizationTickOutcome::GoalFinalizationNeedsUserInput
-      | GoalFinalizationTickOutcome::GoalFinalizationDrifted
-      | GoalFinalizationTickOutcome::GoalFinalizationAmbiguous => {
-        let reason = match outcome {
-          GoalFinalizationPublicationRemoteUnavailable =>
-            GoalInputReason::GoalInputPublicationRemoteUnavailable
-          GoalFinalizationNeedsUserInput =>
-            GoalInputReason::GoalInputFinalizationNeedsUserInput
-          GoalFinalizationDrifted =>
-            GoalInputReason::GoalInputFinalizationDrifted
-          GoalFinalizationAmbiguous =>
-            GoalInputReason::GoalInputFinalizationAmbiguous
-          _ => abort("unreachable finalization input outcome")
-        }
-        let paused = match
-          persist_goal_input_request(
-            repository, repository_adapters, selected, reason,
-          ) {
-          Ok(value) => value
-          Err(error) => return Err(error)
-        }
-        return Ok(
-          GoalExecutionTickResult::GoalExecutionTickAdvanced(paused.record),
-        )
-      }
-      GoalFinalizationTickOutcome::GoalFinalizationRecoveryUncertain => {
-        let paused = match
-          persist_goal_execution_advance(
-            repository,
-            repository_adapters,
-            selected,
-            GoalExecutionState::GoalExecutionPaused,
-          ) {
-          Ok(value) => value
-          Err(error) => return Err(error)
-        }
-        return Ok(
-          GoalExecutionTickResult::GoalExecutionTickAdvanced(paused.record),
-        )
-      }
+    return handle_goal_finalization_outcome(
+      repository, repository_adapters, selected, outcome,
+    )
+  }
+  if selected.record.state == GoalExecutionState::GoalExecutionAwaitingMerge {
+    let parts = match
+      load_goal_execution_parts(
+        repository,
+        repository_adapters,
+        selected.record,
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
     }
+    let outcome = match (runner_adapters.finalize)(selected.record, parts) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    return handle_goal_finalization_outcome(
+      repository, repository_adapters, selected, outcome,
+    )
   }
   if selected.record.state == GoalExecutionState::GoalExecutionAssuring {
     let parts = match

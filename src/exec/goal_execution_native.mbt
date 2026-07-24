@@ -33,7 +33,7 @@ priv struct NativeOrphanedGoalSourceClaim {
 }
 
 ///|
-let native_goal_control_state_generation : String = "choir-control-state-v3"
+let native_goal_control_state_generation : String = "choir-control-state-v4"
 
 ///|
 priv struct NativeGoalPartRuntime {
@@ -92,6 +92,13 @@ pub fn native_goal_repository(
 /// state store's stale-fence gate reject writes from surviving processes of
 /// an older generation.
 let native_goal_fencing_epoch_state : Ref[Int64] = Ref(1L)
+
+///|
+/// Goal id served by the previous execution tick. The runner starts its scan
+/// just after this Goal so concurrent Goals round-robin instead of the first
+/// runnable Goal starving the rest. In-memory only: a worker restart merely
+/// restarts the rotation.
+let native_goal_rotation_state : Ref[@control.GoalId?] = Ref(None)
 
 ///|
 pub fn current_native_goal_fencing_epoch() -> @control.FencingEpoch {
@@ -3343,10 +3350,12 @@ pub async fn run_native_goal_execution_tick_with_forge(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  @workflow.run_next_goal_execution_tick(
+  let result = @workflow.run_next_goal_execution_tick(
     repository,
     repository_adapters,
     fencing_epoch=current_native_goal_fencing_epoch(),
+    now=@env.now().reinterpret_as_int64() / 1000L,
+    after=native_goal_rotation_state.val,
     {
     initialize: async fn(record) {
       let claimed = match
@@ -3490,6 +3499,13 @@ pub async fn run_native_goal_execution_tick_with_forge(
       }
     },
   })
+  match result {
+    Ok(
+      @workflow.GoalExecutionTickResult::GoalExecutionTickAdvanced(record)
+    ) => native_goal_rotation_state.val = Some(record.goal.id)
+    _ => ()
+  }
+  result
 }
 
 ///|

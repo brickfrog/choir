@@ -1708,7 +1708,10 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     qualification_binding,
   )
   let succeeded_qualification = @workflow.advance_goal_execution_state(
-    assured_execution,
+    @workflow.advance_goal_execution_state(
+      assured_execution,
+      @workflow.GoalExecutionState::GoalExecutionAwaitingMerge,
+    ).unwrap(),
     @workflow.GoalExecutionState::GoalExecutionSucceeded,
   ).unwrap()
   guard succeeded_qualification.goal.lifecycle
@@ -2207,6 +2210,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     base_ref: assured_execution.integration_target_ref,
     observed_head_oid: promotion.commit_oid,
     state: @workflow.RemotePullRequestState::RemotePullRequestOpen,
+    merge_commit_oid: None,
     marker_state: @workflow.PullRequestMarkerState::PullRequestMarkerExact,
     title_digest: @storage.artifact_digest(@utf8.encode(pr_document.title)),
     body_digest: @storage.artifact_digest(@utf8.encode(pr_document.body)),
@@ -2366,9 +2370,74 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     Ok(decoded) => assert_eq(decoded, finalization)
     Err(error) => fail(error.message())
   }
-  let succeeded = match
+  // A ready pull request only authorizes the wait state; success requires an
+  // observed merge with delivery evidence.
+  assert_true(
     @workflow.authorize_goal_execution_success(
       assured_execution, assured, published, adopted_pull_request, finalization,
+    )
+    is Err(_),
+  )
+  let awaiting_execution = match
+    @workflow.authorize_goal_awaiting_merge(
+      assured_execution, assured, published, adopted_pull_request, finalization,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(
+    awaiting_execution.state,
+    @workflow.GoalExecutionState::GoalExecutionAwaitingMerge,
+  )
+  let merged_remote = {
+    ..remote_pull_request,
+    state: @workflow.RemotePullRequestState::RemotePullRequestMerged,
+    merge_commit_oid: Some(@control.GitOid("merge-commit-42")),
+  }
+  let merged_finalization = match
+    @workflow.observe_goal_pull_request_readiness(
+      awaiting_execution,
+      assured,
+      published,
+      adopted_pull_request,
+      @workflow.PullRequestLookupObservation::PullRequestStoredIdMatch(
+        merged_remote,
+      ),
+      Some("remote-version-43"),
+      2L,
+      48L,
+      49L,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(
+    merged_finalization.readiness.decision,
+    @workflow.PullRequestReadinessDecision::PullRequestMergeObserved,
+  )
+  // Observation two backs off for 120 seconds before the next remote call.
+  assert_false(@workflow.goal_merge_observation_due(merged_finalization, 168L))
+  assert_true(@workflow.goal_merge_observation_due(merged_finalization, 169L))
+  // Merge observed but delivery unverified must not authorize success.
+  assert_true(
+    @workflow.authorize_goal_execution_success(
+      awaiting_execution, assured, published, adopted_pull_request, merged_finalization,
+    )
+    is Err(_),
+  )
+  let delivery_observation : @workflow.GoalDeliveryObservation = {
+    merge_commit_oid: @control.GitOid("merge-commit-42"),
+    observed_target_head_oid: @control.GitOid("target-head-42"),
+    target_contains_merge: true,
+    observed_at: 49L,
+  }
+  let delivered_finalization = {
+    ..merged_finalization,
+    delivery: Some(delivery_observation),
+  }
+  let succeeded = match
+    @workflow.authorize_goal_execution_success(
+      awaiting_execution, assured, published, adopted_pull_request, delivered_finalization,
     ) {
     Ok(value) => value
     Err(error) => fail(error.message())
@@ -2384,7 +2453,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
       Some(assured),
       Some(published),
       Some(adopted_pull_request),
-      Some(finalization),
+      Some(delivered_finalization),
     ) {
     Ok(value) => value
     Err(error) => fail(error.message())
@@ -2456,7 +2525,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     Some(assured),
     Some(published),
     Some(adopted_pull_request),
-    Some(finalization),
+    Some(delivered_finalization),
   ).unwrap()
   assert_eq(other_concurrency_status.semantic_run_projection, Some(projection))
   let edited_prose = match
@@ -2483,25 +2552,29 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     @workflow.PullRequestReadinessDecision::PullRequestReady,
   )
   assert_true(
-    @workflow.authorize_goal_execution_success(
+    @workflow.authorize_goal_awaiting_merge(
       assured_execution, assured, published, adopted_pull_request, edited_prose,
     )
     is Ok(_),
   )
-  let missing_marker = @workflow.observe_goal_pull_request_readiness(
-    assured_execution,
-    assured,
-    published,
-    adopted_pull_request,
-    @workflow.PullRequestLookupObservation::PullRequestStoredIdMatch({
-      ..remote_pull_request,
-      marker_state: @workflow.PullRequestMarkerState::PullRequestMarkerMissing,
-    }),
-    None,
-    3L,
-    50L,
-    51L,
-  ).unwrap()
+  let missing_marker = match
+    @workflow.observe_goal_pull_request_readiness(
+      assured_execution,
+      assured,
+      published,
+      adopted_pull_request,
+      @workflow.PullRequestLookupObservation::PullRequestStoredIdMatch({
+        ..remote_pull_request,
+        marker_state: @workflow.PullRequestMarkerState::PullRequestMarkerMissing,
+      }),
+      None,
+      3L,
+      50L,
+      51L,
+    ) {
+    Ok(value) => value
+    Err(error) => fail("missing-marker observation: " + error.message())
+  }
   assert_eq(
     missing_marker.readiness.decision,
     @workflow.PullRequestReadinessDecision::PullRequestReadinessDrift(
@@ -2509,7 +2582,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     ),
   )
   assert_true(
-    @workflow.authorize_goal_execution_success(
+    @workflow.authorize_goal_awaiting_merge(
       assured_execution, assured, published, adopted_pull_request, missing_marker,
     )
     is Err(_),
@@ -2562,18 +2635,22 @@ test "integrated Parts authorize one immutable Goal branch seal" {
       @workflow.PullRequestNeedsInputReason::PullRequestRemoteDrift,
     ),
   )
-  let edited_title_pull_request = @workflow.authorize_goal_pull_request(
-    pull_request,
-    assured_execution,
-    assured,
-    published,
-    promotion.commit_oid,
-    @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch({
-      ..remote_pull_request,
-      title_digest: @storage.artifact_digest(@utf8.encode("edited title")),
-    }),
-    44L,
-  ).unwrap()
+  let edited_title_pull_request = match
+    @workflow.authorize_goal_pull_request(
+      pull_request,
+      assured_execution,
+      assured,
+      published,
+      promotion.commit_oid,
+      @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch({
+        ..remote_pull_request,
+        title_digest: @storage.artifact_digest(@utf8.encode("edited title")),
+      }),
+      44L,
+    ) {
+    Ok(value) => value
+    Err(error) => fail("edited-title adoption: " + error.message())
+  }
   assert_eq(
     edited_title_pull_request.intent.state,
     @workflow.PullRequestIntentState::PullRequestReceipted,
@@ -2585,20 +2662,24 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     edited_title_receipt.observed_title_digest,
     @storage.artifact_digest(@utf8.encode("edited title")),
   )
-  let edited_body_pull_request = @workflow.authorize_goal_pull_request(
-    pull_request,
-    assured_execution,
-    assured,
-    published,
-    promotion.commit_oid,
-    @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch({
-      ..remote_pull_request,
-      body_digest: @storage.artifact_digest(
-        @utf8.encode("edited body\n" + pr_marker.0),
-      ),
-    }),
-    44L,
-  ).unwrap()
+  let edited_body_pull_request = match
+    @workflow.authorize_goal_pull_request(
+      pull_request,
+      assured_execution,
+      assured,
+      published,
+      promotion.commit_oid,
+      @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch({
+        ..remote_pull_request,
+        body_digest: @storage.artifact_digest(
+          @utf8.encode("edited body\n" + pr_marker.0),
+        ),
+      }),
+      44L,
+    ) {
+    Ok(value) => value
+    Err(error) => fail("edited-body adoption: " + error.message())
+  }
   assert_eq(
     edited_body_pull_request.intent.state,
     @workflow.PullRequestIntentState::PullRequestReceipted,
@@ -2610,18 +2691,22 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     edited_body_receipt.observed_body_digest,
     @storage.artifact_digest(@utf8.encode("edited body\n" + pr_marker.0)),
   )
-  let retargeted_pull_request = @workflow.authorize_goal_pull_request(
-    pull_request,
-    assured_execution,
-    assured,
-    published,
-    promotion.commit_oid,
-    @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch({
-      ..remote_pull_request,
-      base_ref: @workflow.GitRefName("refs/heads/release"),
-    }),
-    44L,
-  ).unwrap()
+  let retargeted_pull_request = match
+    @workflow.authorize_goal_pull_request(
+      pull_request,
+      assured_execution,
+      assured,
+      published,
+      promotion.commit_oid,
+      @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch({
+        ..remote_pull_request,
+        base_ref: @workflow.GitRefName("refs/heads/release"),
+      }),
+      44L,
+    ) {
+    Ok(value) => value
+    Err(error) => fail("retargeted adoption: " + error.message())
+  }
   assert_eq(
     retargeted_pull_request.intent.state,
     @workflow.PullRequestIntentState::PullRequestNeedsInput(

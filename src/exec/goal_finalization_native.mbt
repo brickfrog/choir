@@ -42,6 +42,75 @@ fn persist_native_goal_finalization_record(
 }
 
 ///|
+fn readiness_lookup_merge_commit(
+  lookup : @workflow.PullRequestLookupObservation,
+) -> @control.GitOid? {
+  match lookup {
+    @workflow.PullRequestLookupObservation::PullRequestStoredIdMatch(value)
+    | @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch(
+      value
+    )
+    | @workflow.PullRequestLookupObservation::PullRequestPossibleExistingMatch(
+      value
+    ) => value.merge_commit_oid
+    _ => None
+  }
+}
+
+///|
+/// Passive delivery observation: fetch the integration target from the
+/// publication remote and check whether it contains the reported merge
+/// commit. The reviewed head SHA is deliberately not consulted — squash and
+/// rebase merges rewrite it, so the merge commit is the delivery link.
+async fn observe_native_goal_delivery(
+  git : NativeGoalRepositoryIdentity,
+  publication_intent : @workflow.BranchPublicationIntent,
+  record : @workflow.GoalExecutionRecord,
+  merge_commit_oid : @control.GitOid,
+  observed_at : Int64,
+) -> Result[@workflow.GoalDeliveryObservation, @types.ChoirError] {
+  guard pull_request_short_ref(record.integration_target_ref) is Some(target) else {
+    return Err(native_pull_request_error("integration target ref is invalid"))
+  }
+  let remote = publication_intent.remote_name.0
+  let fetched = match
+    capture_native_goal_git(git.root, ["fetch", "--quiet", remote, target]) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if fetched.exit_code != 0 {
+    return Err(native_pull_request_error("delivery target fetch failed"))
+  }
+  let head = match
+    capture_native_goal_git(git.root, ["rev-parse", "FETCH_HEAD"]) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let target_head = head.output.trim().to_owned()
+  if head.exit_code != 0 || target_head == "" {
+    return Err(native_pull_request_error("delivery target head is unreadable"))
+  }
+  let ancestry = match
+    capture_native_goal_git(git.root, [
+      "merge-base",
+      "--is-ancestor",
+      merge_commit_oid.0,
+      target_head,
+    ]) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  Ok({
+    merge_commit_oid,
+    observed_target_head_oid: @control.GitOid(target_head),
+    // Exit 1 means not an ancestor; an unknown object behaves the same and
+    // both read as replication lag, so the caller re-observes on backoff.
+    target_contains_merge: ancestry.exit_code == 0,
+    observed_at,
+  })
+}
+
+///|
 /// Delivery-boundary source completion used by production finalization: the
 /// host adapter closes each integrated Part's source Bead and re-observes
 /// the closure before the Goal success transaction commits. Fixtures without
@@ -83,7 +152,9 @@ pub async fn advance_native_goal_finalization_with_adapters(
     return Ok(@workflow.GoalFinalizationTickOutcome::GoalFinalizationSucceeded)
   }
   if execution.record.state !=
-    @workflow.GoalExecutionState::GoalExecutionAssured {
+    @workflow.GoalExecutionState::GoalExecutionAssured &&
+    execution.record.state !=
+    @workflow.GoalExecutionState::GoalExecutionAwaitingMerge {
     return Err(native_pull_request_error("Goal is not ready for finalization"))
   }
   if execution.record.completion_mode !=
@@ -122,7 +193,11 @@ pub async fn advance_native_goal_finalization_with_adapters(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  if native_remote_branch_observation(git, publication.intent) !=
+  // The exact-branch preflight applies only before the pull request is
+  // handed to review: after a merge GitHub commonly deletes the Goal branch,
+  // and an awaiting-merge Goal must still be able to observe delivery.
+  if execution.record.state == @workflow.GoalExecutionState::GoalExecutionAssured &&
+    native_remote_branch_observation(git, publication.intent) !=
     @workflow.RemoteBranchObservation::RemoteBranchAt(
       publication_receipt.published_oid,
     ) {
@@ -162,6 +237,36 @@ pub async fn advance_native_goal_finalization_with_adapters(
       { ..observed, durable_version: value.record.durable_version + 1 }
     None => observed
   }
+  // Delivery evidence joins the same durable observation: one persisted
+  // record binds the merged decision and the target-containment check.
+  let next = if next.readiness.decision ==
+    @workflow.PullRequestReadinessDecision::PullRequestMergeObserved &&
+    execution.record.state ==
+    @workflow.GoalExecutionState::GoalExecutionAwaitingMerge {
+    let merge_commit_oid = match readiness_lookup_merge_commit(lookup) {
+      Some(value) => value
+      None =>
+        return Err(
+          native_pull_request_error(
+            "merged pull request reported no merge commit",
+          ),
+        )
+    }
+    let delivery = match
+      observe_native_goal_delivery(
+        git,
+        publication.intent,
+        execution.record,
+        merge_commit_oid,
+        now,
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    { ..next, delivery: Some(delivery) }
+  } else {
+    next
+  }
   let stored = match
     persist_native_goal_finalization_record(
       repository,
@@ -175,6 +280,56 @@ pub async fn advance_native_goal_finalization_with_adapters(
   }
   match stored.record.readiness.decision {
     @workflow.PullRequestReadinessDecision::PullRequestReady => {
+      if execution.record.state ==
+        @workflow.GoalExecutionState::GoalExecutionAssured {
+        match
+          @workflow.persist_goal_awaiting_merge(
+            repository,
+            adapters,
+            execution,
+            assurance,
+            publication,
+            pull_request,
+            stored,
+          ) {
+          Ok(_) => ()
+          Err(error) => return Err(error)
+        }
+      }
+      Ok(@workflow.GoalFinalizationTickOutcome::GoalFinalizationAwaitingMerge)
+    }
+    @workflow.PullRequestReadinessDecision::PullRequestMergeObserved => {
+      if execution.record.state ==
+        @workflow.GoalExecutionState::GoalExecutionAssured {
+        // Merged before the Goal entered AwaitingMerge: record the wait state
+        // first; the next due observation completes delivery.
+        match
+          @workflow.persist_goal_awaiting_merge(
+            repository,
+            adapters,
+            execution,
+            assurance,
+            publication,
+            pull_request,
+            stored,
+          ) {
+          Ok(_) => ()
+          Err(error) => return Err(error)
+        }
+        return Ok(
+          @workflow.GoalFinalizationTickOutcome::GoalFinalizationAwaitingMerge,
+        )
+      }
+      guard stored.record.delivery is Some(delivery) else {
+        return Err(native_pull_request_error("delivery evidence is absent"))
+      }
+      if !delivery.target_contains_merge {
+        // The forge reports the merge but the target head does not contain
+        // the merge commit yet; treat as replication lag and re-observe.
+        return Ok(
+          @workflow.GoalFinalizationTickOutcome::GoalFinalizationAwaitingMerge,
+        )
+      }
       if fault ==
         Some(
           @workflow.GoalFinalizationFaultPoint::PullRequestAfterReadinessObservationBeforeSuccessTransaction,
@@ -183,7 +338,7 @@ pub async fn advance_native_goal_finalization_with_adapters(
           native_pull_request_error("injected Goal finalization fault"),
         )
       }
-      // Close source Beads only now, with a ready PR observed, and before the
+      // Close source Beads only now, with delivery observed, and before the
       // success transaction: a crash in between retries idempotently on the
       // next tick, while success-before-closure would strand open Beads on a
       // Goal the runner never ticks again.
@@ -193,7 +348,12 @@ pub async fn advance_native_goal_finalization_with_adapters(
       }
       match
         @workflow.persist_goal_execution_success(
-          repository, adapters, execution, assurance, publication, pull_request,
+          repository,
+          adapters,
+          execution,
+          assurance,
+          publication,
+          pull_request,
           stored,
         ) {
         Ok(_) =>
@@ -361,12 +521,15 @@ async fn observe_pull_request_remote_state(
     PullRequestRemoteDuplicate =>
       @workflow.PullRequestLookupObservation::PullRequestMultipleMarkerMatches
   }
+  let observed_lookup : Ref[@workflow.PullRequestLookupObservation] = Ref(
+    lookup,
+  )
   let forge : NativePullRequestForgeAdapters = {
     resolve_repository: fixture.4.resolve_repository,
-    lookup: (_, _, _) => lookup,
+    lookup: (_, _, _) => observed_lookup.val,
     create: fixture.4.create,
   }
-  let outcome = match
+  let mut outcome = match
     advance_native_goal_finalization_with_adapters(
       fixture.0,
       fixture.2,
@@ -375,6 +538,31 @@ async fn observe_pull_request_remote_state(
     ) {
     Ok(value) => value
     Err(error) => fail("remote-state finalization: " + error.message())
+  }
+  if case == NativePullRequestRemoteStateCase::PullRequestRemoteExact {
+    // The ready pull request parks the Goal awaiting merge; simulate the
+    // human merge and observe delivery on the follow-up tick.
+    assert_eq(
+      outcome,
+      @workflow.GoalFinalizationTickOutcome::GoalFinalizationAwaitingMerge,
+    )
+    simulate_fixture_pull_request_merge(fixture.1, fixture.3)
+    guard fixture.3.val is Some(merged_snapshot) else {
+      fail("merge simulation lost the pull request")
+    }
+    observed_lookup.val = @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch(
+      merged_snapshot,
+    )
+    outcome = match
+      advance_native_goal_finalization_with_adapters(
+        fixture.0,
+        fixture.2,
+        forge,
+        reconcile_sources=fn(_, _, _) { Ok(()) },
+      ) {
+      Ok(value) => value
+      Err(error) => fail("remote-state delivery: " + error.message())
+    }
   }
   let repository = native_goal_repository(fixture.0)
   let adapters = local_part_workflow_repository_adapters()
@@ -393,11 +581,17 @@ async fn observe_pull_request_remote_state(
     .unwrap()
     .unwrap().record.state
   let passed = match case {
-    PullRequestRemoteExact | PullRequestRemoteEdited =>
+    PullRequestRemoteExact =>
       outcome ==
       @workflow.GoalFinalizationTickOutcome::GoalFinalizationSucceeded &&
-      decision == @workflow.PullRequestReadinessDecision::PullRequestReady &&
+      decision ==
+      @workflow.PullRequestReadinessDecision::PullRequestMergeObserved &&
       goal_state == @workflow.GoalExecutionState::GoalExecutionSucceeded
+    PullRequestRemoteEdited =>
+      outcome ==
+      @workflow.GoalFinalizationTickOutcome::GoalFinalizationAwaitingMerge &&
+      decision == @workflow.PullRequestReadinessDecision::PullRequestReady &&
+      goal_state == @workflow.GoalExecutionState::GoalExecutionAwaitingMerge
     PullRequestRemoteClosed =>
       outcome ==
       @workflow.GoalFinalizationTickOutcome::GoalFinalizationNeedsUserInput &&
@@ -423,6 +617,36 @@ async fn observe_pull_request_remote_state(
   ignore(@sys.rm_rf(fixture.0))
   ignore(@sys.rm_rf(fixture.1))
   { case, outcome, decision, goal_state, passed }
+}
+
+///|
+/// Simulate the human merge for a finalization fixture: fast-forward the
+/// bare remote's target branch to the pull request head and report the pull
+/// request merged with that head as the merge commit.
+async fn simulate_fixture_pull_request_merge(
+  remote_root : String,
+  snapshot_ref : Ref[@workflow.RemotePullRequestSnapshot?],
+) -> Unit {
+  guard snapshot_ref.val is Some(snapshot) else {
+    abort("merge simulation fixture has no pull request")
+  }
+  match
+    capture_native_goal_git(remote_root, [
+      "update-ref",
+      snapshot.base_ref.0,
+      snapshot.observed_head_oid.0,
+    ]) {
+    Ok(capture) =>
+      if capture.exit_code != 0 {
+        abort("merge simulation update-ref failed: " + capture.output)
+      }
+    Err(error) => abort("merge simulation git failed: " + error.message())
+  }
+  snapshot_ref.val = Some({
+    ..snapshot,
+    state: @workflow.RemotePullRequestState::RemotePullRequestMerged,
+    merge_commit_oid: Some(snapshot.observed_head_oid),
+  })
 }
 
 ///|
@@ -478,7 +702,7 @@ pub async fn run_native_goal_finalization_race_conformance() -> NativeGoalFinali
       @utf8.encode("reviewer edited the PR body"),
     ),
   })
-  let before_outcome = match
+  let before_wait_outcome = match
     advance_native_goal_finalization_with_adapters(
       before.0,
       before.2,
@@ -487,6 +711,17 @@ pub async fn run_native_goal_finalization_race_conformance() -> NativeGoalFinali
     ) {
     Ok(value) => value
     Err(error) => fail("edit before response: " + error.message())
+  }
+  simulate_fixture_pull_request_merge(before.1, before.3)
+  let before_outcome = match
+    advance_native_goal_finalization_with_adapters(
+      before.0,
+      before.2,
+      before.4,
+      reconcile_sources=fn(_, _, _) { Ok(()) },
+    ) {
+    Ok(value) => value
+    Err(error) => fail("edit before delivery: " + error.message())
   }
   let before_repository = native_goal_repository(before.0)
   let adapters = local_part_workflow_repository_adapters()
@@ -497,7 +732,9 @@ pub async fn run_native_goal_finalization_race_conformance() -> NativeGoalFinali
     )
     .unwrap()
     .unwrap().record.state
-  let edit_before_response_accepted = before_outcome ==
+  let edit_before_response_accepted = before_wait_outcome ==
+    @workflow.GoalFinalizationTickOutcome::GoalFinalizationAwaitingMerge &&
+    before_outcome ==
     @workflow.GoalFinalizationTickOutcome::GoalFinalizationSucceeded &&
     before_goal_state == @workflow.GoalExecutionState::GoalExecutionSucceeded
   assert_true(edit_before_response_accepted)
@@ -529,7 +766,7 @@ pub async fn run_native_goal_finalization_race_conformance() -> NativeGoalFinali
     create: after.4.create,
   }
   let original_body_digest = after_snapshot.body_digest
-  let after_outcome = match
+  let after_wait_outcome = match
     advance_native_goal_finalization_with_adapters(
       after.0,
       after.2,
@@ -542,7 +779,20 @@ pub async fn run_native_goal_finalization_race_conformance() -> NativeGoalFinali
   guard after.3.val is Some(edited_snapshot) else {
     fail("post-response remote edit disappeared")
   }
-  let edit_after_response_did_not_retroactively_change_decision = after_outcome ==
+  simulate_fixture_pull_request_merge(after.1, after.3)
+  let after_outcome = match
+    advance_native_goal_finalization_with_adapters(
+      after.0,
+      after.2,
+      after_forge,
+      reconcile_sources=fn(_, _, _) { Ok(()) },
+    ) {
+    Ok(value) => value
+    Err(error) => fail("edit after delivery: " + error.message())
+  }
+  let edit_after_response_did_not_retroactively_change_decision = after_wait_outcome ==
+    @workflow.GoalFinalizationTickOutcome::GoalFinalizationAwaitingMerge &&
+    after_outcome ==
     @workflow.GoalFinalizationTickOutcome::GoalFinalizationSucceeded &&
     edited_snapshot.body_digest != original_body_digest
   assert_true(edit_after_response_did_not_retroactively_change_decision)
@@ -556,14 +806,15 @@ pub async fn run_native_goal_finalization_race_conformance() -> NativeGoalFinali
       @workflow.GoalExecutionState::GoalExecutionSucceeded,
     )
   assert_true(success_won_before_late_cancellation)
+  // Version 2 is the AwaitingMerge advance, version 3 the success.
   let success_outbox_present = (adapters.state.read_outbox)(
       after_repository.state_store,
-      goal_execution_outbox_key(after.2, 2),
+      goal_execution_outbox_key(after.2, 3),
     ).unwrap()
     is Some(_)
   let success_next_outbox_absent = (adapters.state.read_outbox)(
       after_repository.state_store,
-      goal_execution_outbox_key(after.2, 3),
+      goal_execution_outbox_key(after.2, 4),
     ).unwrap()
     is None
   assert_true(success_outbox_present && success_next_outbox_absent)
@@ -571,6 +822,18 @@ pub async fn run_native_goal_finalization_race_conformance() -> NativeGoalFinali
   ignore(@sys.rm_rf(after.1))
 
   let canceled = prepare_goal_finalization_fixture("cancellation-wins")
+  // Reach AwaitingMerge with the merge already observed, then inject the
+  // crash between the delivery observation and the success transaction.
+  simulate_fixture_pull_request_merge(canceled.1, canceled.3)
+  assert_eq(
+    advance_native_goal_finalization_with_adapters(
+      canceled.0,
+      canceled.2,
+      canceled.4,
+      reconcile_sources=fn(_, _, _) { Ok(()) },
+    ).unwrap(),
+    @workflow.GoalFinalizationTickOutcome::GoalFinalizationAwaitingMerge,
+  )
   assert_true(
     advance_native_goal_finalization_with_adapters(
       canceled.0,
@@ -591,7 +854,7 @@ pub async fn run_native_goal_finalization_race_conformance() -> NativeGoalFinali
     )
     .unwrap()
     .unwrap().record.readiness.decision ==
-    @workflow.PullRequestReadinessDecision::PullRequestReady
+    @workflow.PullRequestReadinessDecision::PullRequestMergeObserved
   let cancellation_linearized = cancel_native_goal(canceled.0, canceled.2, 200L).unwrap()
     is @workflow.GoalCancellationPersistenceResult::GoalCancellationPersisted(_)
   let success_rejected = advance_native_goal_finalization_with_adapters(

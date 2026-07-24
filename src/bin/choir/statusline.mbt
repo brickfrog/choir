@@ -9,6 +9,7 @@ fn conductor_phase_label(phase : @workflow.ConductorGoalPhase) -> String {
     @workflow.ConductorGoalPhase::ConductorPhaseAssure => "assure"
     @workflow.ConductorGoalPhase::ConductorPhasePublish => "publish"
     @workflow.ConductorGoalPhase::ConductorPhasePullRequest => "file PR"
+    @workflow.ConductorGoalPhase::ConductorPhaseAwaitMerge => "await merge"
   }
 }
 

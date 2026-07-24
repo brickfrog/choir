@@ -146,6 +146,19 @@ fn native_pull_request_snapshot(
   } else {
     @workflow.RemoteRepositoryId("github:" + head_repository_name)
   }
+  let merge_commit_oid = if state ==
+    @workflow.RemotePullRequestState::RemotePullRequestMerged {
+    match fields.get("mergeCommit") {
+      Some(Object(merge_commit)) =>
+        match merge_commit.get("oid") {
+          Some(String(value)) if value != "" => Some(@control.GitOid(value))
+          _ => None
+        }
+      _ => None
+    }
+  } else {
+    None
+  }
   Some({
     remote_id,
     number,
@@ -157,6 +170,7 @@ fn native_pull_request_snapshot(
     base_ref: @workflow.GitRefName("refs/heads/" + base_name),
     observed_head_oid: head_oid,
     state,
+    merge_commit_oid,
     marker_state: if body.contains(intent.identity_marker.0) {
       @workflow.PullRequestMarkerState::PullRequestMarkerExact
     } else {
@@ -233,6 +247,17 @@ fn native_rest_pull_request_snapshot(
   } else {
     @workflow.RemoteRepositoryId("github:" + head_repository_name)
   }
+  // REST reports merge_commit_sha as a test-merge commit for unmerged pull
+  // requests; only a merged state makes it delivery evidence.
+  let merge_commit_oid = if state ==
+    @workflow.RemotePullRequestState::RemotePullRequestMerged {
+    match fields.get("merge_commit_sha") {
+      Some(String(value)) if value != "" => Some(@control.GitOid(value))
+      _ => None
+    }
+  } else {
+    None
+  }
   Some({
     remote_id,
     number,
@@ -244,6 +269,7 @@ fn native_rest_pull_request_snapshot(
     base_ref: @workflow.GitRefName("refs/heads/" + base_name),
     observed_head_oid: head_oid,
     state,
+    merge_commit_oid,
     marker_state: if body.contains(intent.identity_marker.0) {
       @workflow.PullRequestMarkerState::PullRequestMarkerExact
     } else {
@@ -455,6 +481,7 @@ pub fn synthetic_pull_request_forge_adapters() -> NativePullRequestForgeAdapters
         base_ref: intent.base_ref,
         observed_head_oid: intent.expected_head_oid,
         state: @workflow.RemotePullRequestState::RemotePullRequestOpen,
+        merge_commit_oid: None,
         marker_state: @workflow.PullRequestMarkerState::PullRequestMarkerExact,
         title_digest: @storage.artifact_digest(
           @utf8.encode(intent.document.title),
@@ -980,6 +1007,7 @@ fn pull_request_fault_snapshot(
     base_ref: intent.base_ref,
     observed_head_oid: intent.expected_head_oid,
     state: @workflow.RemotePullRequestState::RemotePullRequestOpen,
+    merge_commit_oid: None,
     marker_state: @workflow.PullRequestMarkerState::PullRequestMarkerExact,
     title_digest: @storage.artifact_digest(@utf8.encode(document.title)),
     body_digest: @storage.artifact_digest(@utf8.encode(document.body)),
