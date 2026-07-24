@@ -101,21 +101,22 @@ fn conductor_response_state(response : @types.Response) -> String? {
 }
 
 ///|
-fn conductor_goal_state_terminal(state : String?) -> Bool {
-  // Both terminal states must release the park: after cancellation no further
-  // durable Goal event will ever arrive, so parking on it would hold the
-  // Conductor's Stop hook forever.
-  state == Some("GoalExecutionSucceeded") ||
-  state == Some("GoalExecutionCanceled")
+fn conductor_park_for_state_tag(state : String?) -> Bool {
+  @workflow.conductor_park_for_goal_state(
+    match state {
+      Some(tag) => @workflow.parse_goal_execution_state(tag)
+      None => None
+    },
+  )
 }
 
 ///|
 test "Conductor park releases on both terminal Goal states" {
-  assert_true(conductor_goal_state_terminal(Some("GoalExecutionSucceeded")))
-  assert_true(conductor_goal_state_terminal(Some("GoalExecutionCanceled")))
-  assert_false(conductor_goal_state_terminal(Some("GoalExecutionCanceling")))
-  assert_false(conductor_goal_state_terminal(Some("GoalExecutionRunning")))
-  assert_false(conductor_goal_state_terminal(None))
+  assert_false(conductor_park_for_state_tag(Some("GoalExecutionSucceeded")))
+  assert_false(conductor_park_for_state_tag(Some("GoalExecutionCanceled")))
+  assert_true(conductor_park_for_state_tag(Some("GoalExecutionCanceling")))
+  assert_true(conductor_park_for_state_tag(Some("GoalExecutionRunning")))
+  assert_true(conductor_park_for_state_tag(None))
 }
 
 ///|
@@ -156,7 +157,7 @@ fn conductor_observe_goal_response(
     Some(identity) => Some(identity)
     None => request.args.get("goal_id")
   }
-  state.parked_for_goal_event = !conductor_goal_state_terminal(
+  state.parked_for_goal_event = conductor_park_for_state_tag(
     conductor_response_state(response),
   )
   match goal_id {
@@ -186,49 +187,14 @@ fn conductor_remove_channel_fd(state : ConductorServerState, fd : Int) -> Unit {
 }
 
 ///|
-fn conductor_copy_projection_field(
-  source : Map[String, Json],
-  target : Map[String, Json],
-  name : String,
-) -> Unit {
-  match source.get(name) {
-    Some(value) => target.set(name, value)
-    None => ()
+/// Decode a wire report into the typed projection input. The worker
+/// serializes `@workflow.GoalStatusReport`, so failure here means version
+/// skew or corruption; callers fall back conservatively.
+fn conductor_typed_goal_report(report : Json) -> @workflow.GoalStatusReport? {
+  let decoded : @workflow.GoalStatusReport = @json.from_json(report) catch {
+    _ => return None
   }
-}
-
-///|
-fn conductor_goal_update_fingerprint(report : Json) -> String {
-  guard report is Object(fields) else { return report.stringify(indent=0) }
-  let projection : Map[String, Json] = Map([])
-  for
-    name in [
-      "goal_id", "state", "lifecycle", "pause_reason", "resume_state", "active_input_request",
-      "maximum_parallel_parts", "assurance_stage", "publication_state", "pull_request_state",
-      "finalization_id", "readiness_decision",
-    ] {
-    conductor_copy_projection_field(fields, projection, name)
-  }
-  match fields.get("parts") {
-    Some(Array(parts)) => {
-      let projected_parts = parts.map(fn(part) {
-        guard part is Object(part_fields) else { return part }
-        let projected : Map[String, Json] = Map([])
-        for
-          name in [
-            "part_id", "implementation_take_lifecycle", "implementation_session_lifecycle",
-            "verification_take_lifecycle", "verification_session_lifecycle", "audit_take_lifecycle",
-            "audit_session_lifecycle", "lifecycle", "stage",
-          ] {
-          conductor_copy_projection_field(part_fields, projected, name)
-        }
-        projected.to_json()
-      })
-      projection.set("parts", projected_parts.to_json())
-    }
-    _ => ()
-  }
-  projection.to_json().stringify(indent=0)
+  Some(decoded)
 }
 
 ///|
@@ -247,7 +213,12 @@ fn conductor_broadcast_goal_update(
   if state.watched_goal_id != goal_id {
     return
   }
-  let fingerprint = conductor_goal_update_fingerprint(report)
+  let typed = conductor_typed_goal_report(report)
+  let fingerprint = match typed {
+    Some(value) => @workflow.goal_report_material_fingerprint(value)
+    // Undecodable reports are always material and keep the park unchanged.
+    None => serialized
+  }
   state.last_goal_update = Some(serialized)
   if state.last_goal_update_fingerprint == Some(fingerprint) {
     return
@@ -258,11 +229,13 @@ fn conductor_broadcast_goal_update(
       conductor_statusline_update_cache(state.config.project_dir, key, report)
     None => ()
   }
-  let goal_state = match fields.get("state") {
-    Some(String(value)) => Some(value)
-    _ => None
+  match typed {
+    Some(value) =>
+      state.parked_for_goal_event = @workflow.conductor_park_for_goal_state(
+        Some(value.state),
+      )
+    None => ()
   }
-  state.parked_for_goal_event = !conductor_goal_state_terminal(goal_state)
   let wire = @utf8.encode(conductor_goal_update_line(report))
   let targets = state.channel_fds.copy()
   for fd in targets {
@@ -1095,65 +1068,12 @@ test "Conductor parks an active durable Goal until its success event" {
 }
 
 ///|
-test "Conductor channel wakes only for material Goal projection changes" {
-  let running = {
-    "goal_id": ["GoalId", "goal-a"].to_json(),
-    "state": "GoalExecutionRunning".to_json(),
-    "lifecycle": ["GoalActive", "GoalExecuting"].to_json(),
-    "durable_version": (7 : Int).to_json(),
-    "assurance_effect_receipt_count": (2 : Int).to_json(),
-    "parts": [
-      {
-        "part_id": ["PartId", "part-a"].to_json(),
-        "stage": "PartImplementationHarnessStarted".to_json(),
-        "durable_version": (11 : Int).to_json(),
-        "effect_receipt_count": (3 : Int).to_json(),
-      }.to_json(),
-    ].to_json(),
-  }.to_json()
-  let count_only = {
-    "goal_id": ["GoalId", "goal-a"].to_json(),
-    "state": "GoalExecutionRunning".to_json(),
-    "lifecycle": ["GoalActive", "GoalExecuting"].to_json(),
-    "durable_version": (8 : Int).to_json(),
-    "assurance_effect_receipt_count": (9 : Int).to_json(),
-    "parts": [
-      {
-        "part_id": ["PartId", "part-a"].to_json(),
-        "stage": "PartImplementationHarnessStarted".to_json(),
-        "durable_version": (12 : Int).to_json(),
-        "effect_receipt_count": (8 : Int).to_json(),
-      }.to_json(),
-    ].to_json(),
-  }.to_json()
-  assert_eq(
-    conductor_goal_update_fingerprint(running),
-    conductor_goal_update_fingerprint(count_only),
-  )
-  guard count_only is Object(fields) else { fail("expected report object") }
-  guard fields.get("parts") is Some(Array([Object(part)])) else {
-    fail("expected one Part")
-  }
-  part.set("stage", "PartVerificationSandboxPrepared".to_json())
-  assert_true(
-    conductor_goal_update_fingerprint(running) !=
-    conductor_goal_update_fingerprint(count_only),
-  )
-}
-
-///|
 test "Conductor replays a worker update that races Goal observation" {
   let state = ConductorServerState::new({
     project_dir: "/repo",
     listen_uds: "/repo/.choir/run/server.sock",
   })
-  let report = {
-    "goal_id": ["GoalId", "goal-a"].to_json(),
-    "state": "GoalExecutionRunning".to_json(),
-    "lifecycle": ["GoalActive", "GoalExecuting"].to_json(),
-    "durable_version": (2 : Int).to_json(),
-    "parts": ([] : Array[Json]).to_json(),
-  }.to_json()
+  let report = conductor_statusline_test_report("GoalExecutionRunning", 1, [])
   conductor_broadcast_goal_update(state, report)
   assert_eq(state.last_goal_update, None)
   conductor_watch_goal(state, "goal-a")
