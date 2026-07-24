@@ -86,6 +86,23 @@ fn native_conductor_task_status_for_beads(status : @types.TaskStatus) -> String 
 }
 
 ///|
+/// Read a dependency-edge string under either bd JSON shape: `bd show`'s
+/// dependency issues use `primary`, `bd list`'s edge rows use `fallback`.
+fn beads_dependency_field(
+  fields : Map[String, Json],
+  primary : String,
+  fallback : String,
+) -> String {
+  let value = @types.json_field_string(fields, primary).unwrap_or("")
+  let resolved = if value == "" {
+    @types.json_field_string(fields, fallback).unwrap_or("")
+  } else {
+    value
+  }
+  resolved.trim().to_owned()
+}
+
+///|
 fn native_conductor_task_from_json(
   value : Json,
   require_dependency_details : Bool,
@@ -120,7 +137,15 @@ fn native_conductor_task_from_json(
   let blocking_dependency_ids : Array[String] = []
   let dependencies_loaded = match fields.get("dependencies") {
     Some(Array(dependencies)) => {
-      if dependency_count != dependencies.length() {
+      // bd emits two dependency shapes. `bd show` returns full dependency
+      // issues ({"id","dependency_type"}) and its dependency_count counts
+      // every edge, so it equals the array length. `bd list` returns edge
+      // rows ({"depends_on_id","type"}) and its dependency_count counts only
+      // blocking edges, so it is smaller than the array whenever a task also
+      // carries parent-child or related edges. Accept either field shape and
+      // only apply the count-equals-length guard to the show path that
+      // require_dependency_details consumes for blocking-closure decisions.
+      if require_dependency_details && dependency_count != dependencies.length() {
         return Err(
           @types.ChoirError::validation_error(
             "Beads task dependency count does not match its details",
@@ -135,16 +160,12 @@ fn native_conductor_task_from_json(
             ),
           )
         }
-        let dependency_id = @types.json_field_string(dependency_fields, "id")
-          .unwrap_or("")
-          .trim()
-          .to_owned()
-        let dependency_type = @types.json_field_string(
-            dependency_fields, "dependency_type",
-          )
-          .unwrap_or("")
-          .trim()
-          .to_owned()
+        let dependency_id = beads_dependency_field(
+          dependency_fields, "id", "depends_on_id",
+        )
+        let dependency_type = beads_dependency_field(
+          dependency_fields, "dependency_type", "type",
+        )
         if dependency_id == "" || dependency_type == "" {
           return Err(
             @types.ChoirError::validation_error(
@@ -815,6 +836,45 @@ test "native Conductor mints Goal identity around structured submission argument
 }
 
 ///|
+test "Beads parser accepts both bd show and bd list dependency shapes" {
+  // bd list edge rows: depends_on_id/type, dependency_count counts only the
+  // blocking edges even though the array also carries parent-child/related.
+  let list_shape =
+    #|{"id":"choir-tga.2","title":"Slice B","status":"closed","dependency_count":1,"dependencies":[{"issue_id":"choir-tga.2","depends_on_id":"choir-tv2","type":"blocks"},{"issue_id":"choir-tga.2","depends_on_id":"choir-tga","type":"parent-child"},{"issue_id":"choir-tga.2","depends_on_id":"choir-eon","type":"related"}]}
+  let list_tasks = match native_conductor_tasks_from_output(list_shape) {
+    Ok(value) => value
+    Err(error) => fail("bd list shape: " + error.message())
+  }
+  assert_eq(list_tasks[0].blocking_dependency_ids, ["choir-tv2"])
+  assert_true(list_tasks[0].dependencies_loaded)
+
+  // bd show dependency issues: id/dependency_type, dependency_count counts
+  // every edge so it equals the array length.
+  let show_shape =
+    #|{"id":"choir-tga.2","title":"Slice B","status":"closed","dependency_count":3,"dependencies":[{"id":"choir-tv2","dependency_type":"blocks"},{"id":"choir-tga","dependency_type":"parent-child"},{"id":"choir-ft5","dependency_type":"blocks"}]}
+  let show_tasks = match
+    native_conductor_tasks_from_output(
+      show_shape,
+      require_dependency_details=true,
+    ) {
+    Ok(value) => value
+    Err(error) => fail("bd show shape: " + error.message())
+  }
+  assert_eq(show_tasks[0].blocking_dependency_ids, ["choir-ft5", "choir-tv2"])
+
+  // The strict show path still rejects a count that disagrees with the array.
+  let truncated =
+    #|{"id":"choir-x","title":"X","status":"open","dependency_count":5,"dependencies":[{"id":"choir-y","dependency_type":"blocks"}]}
+  assert_true(
+    native_conductor_tasks_from_output(
+      truncated,
+      require_dependency_details=true,
+    )
+    is Err(_),
+  )
+}
+
+///|
 async fn dispatch_native_goal_submit(
   project_dir : String,
   request : @types.Request,
@@ -850,7 +910,8 @@ fn native_conductor_resolve_goal_id(
     ) {
     (Some(goal_id), None) => Ok(@control.GoalId(goal_id))
     (None, Some(part_id)) =>
-      match inspect_native_goal_for_part(project_dir, @control.PartId(part_id)) {
+      match
+        inspect_native_goal_for_part(project_dir, @control.PartId(part_id)) {
         Ok(report) => Ok(report.goal_id)
         Err(error) => Err(error)
       }
@@ -882,15 +943,16 @@ fn dispatch_native_goal_list(project_dir : String) -> @types.Response {
   }
   let goals = records.map(fn(stored) {
     let record = stored.record
-    ({
-      "goal_id": record.goal.id.to_json(),
-      "state": record.state.to_json(),
-      "lifecycle": record.goal.lifecycle.to_json(),
-      "durable_version": record.durable_version.to_json(),
-      "part_ids": record.source_claims
-      .map(fn(claim) { claim.part_id.0 })
-      .to_json(),
-    } : Map[String, Json]).to_json()
+    (
+      {
+        "goal_id": record.goal.id.to_json(),
+        "state": record.state.to_json(),
+        "lifecycle": record.goal.lifecycle.to_json(),
+        "durable_version": record.durable_version.to_json(),
+        "part_ids": record.source_claims
+        .map(fn(claim) { claim.part_id.0 })
+        .to_json(),
+      } : Map[String, Json]).to_json()
   })
   native_conductor_goal_action_ok_json(
     ({ "goals": goals.to_json() } : Map[String, Json]).to_json(),
