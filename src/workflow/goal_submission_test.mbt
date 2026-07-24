@@ -342,6 +342,62 @@ fn submission_execution() -> @workflow.GoalExecutionRecord {
 }
 
 ///|
+test "execution records are created with the caller's fencing epoch" {
+  let record = submission_execution()
+  assert_eq(record.fencing_epoch, @control.FencingEpoch(1L))
+  let goal_id = @control.GoalId("goal-epoch-test")
+  let part = submission_part(
+    goal_id,
+    "epoch-part",
+    [],
+    @control.ProviderSurfaceId::CodexSubscriptionCli,
+  )
+  let decision = @workflow.evaluate_goal_proposal(
+    submission_proposal(goal_id, [part]),
+    submission_snapshot([
+      submission_source(
+        "epoch-part",
+        [],
+        @workflow.SelectionSourceState::SelectionSourceOpen,
+      ),
+    ]),
+    fn(_) { true },
+  ).unwrap()
+  let minted = @workflow.goal_execution_record_from_selection(
+    decision,
+    @workflow.goal_selection_decision_digest(decision),
+    ["workflow-epoch-part"],
+    fencing_epoch=@control.FencingEpoch(7L),
+  ).unwrap()
+  assert_eq(minted.fencing_epoch, @control.FencingEpoch(7L))
+}
+
+///|
+test "fencing adoption raises the epoch and rejects non-increases" {
+  let record = submission_execution()
+  let adopted = @workflow.adopt_goal_execution_fencing_epoch(
+    record,
+    @control.FencingEpoch(3L),
+  ).unwrap()
+  assert_eq(adopted.fencing_epoch, @control.FencingEpoch(3L))
+  assert_eq(adopted.durable_version, record.durable_version + 1)
+  assert_true(
+    @workflow.adopt_goal_execution_fencing_epoch(
+      adopted,
+      @control.FencingEpoch(3L),
+    )
+    is Err(_),
+  )
+  assert_true(
+    @workflow.adopt_goal_execution_fencing_epoch(
+      record,
+      @control.FencingEpoch(1L),
+    )
+    is Err(_),
+  )
+}
+
+///|
 fn submission_claimed_running(
   running : @workflow.GoalExecutionRecord,
 ) -> @workflow.GoalExecutionRecord {

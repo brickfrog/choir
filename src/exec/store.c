@@ -85,7 +85,50 @@ static char *choir_store_copy_string(const char *value, int len) {
     return copy;
 }
 
-static int choir_sqlite_open_path(const char *path, int path_len, sqlite3 **db) {
+static int choir_sqlite_exec_rc(sqlite3 *db, const char *sql) {
+    char *error = NULL;
+    int rc = choir_sqlite.exec(db, sql, NULL, NULL, &error);
+    if (error != NULL) {
+        choir_sqlite.free_fn(error);
+    }
+    return rc;
+}
+
+static int choir_sqlite_exec(sqlite3 *db, const char *sql) {
+    return choir_sqlite_exec_rc(db, sql) == SQLITE_OK ? 0 : -1;
+}
+
+/*
+ * Connection cache. Each store entry point used to open and close a fresh
+ * connection, discarding the page cache per call and — because no busy
+ * handler was ever installed — turning any cross-process write collision
+ * between choird and the goal worker into an immediate hard failure.
+ * Connections are cached per path for the process lifetime; entries are
+ * recycled round-robin so test binaries touching many temp stores stay
+ * bounded. Handles are opened FULLMUTEX and every FFI call runs a complete
+ * operation, so sharing a cached handle is safe.
+ */
+#define CHOIR_SQLITE_CACHE_SLOTS 8
+
+typedef struct {
+    char *path;
+    sqlite3 *db;
+} choir_sqlite_cached;
+
+static choir_sqlite_cached choir_sqlite_cache[CHOIR_SQLITE_CACHE_SLOTS];
+static unsigned choir_sqlite_cache_next = 0;
+static pthread_mutex_t choir_sqlite_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static int choir_sqlite_configure(sqlite3 *db) {
+    return choir_sqlite_exec(
+        db,
+        "PRAGMA busy_timeout=5000;"
+        "PRAGMA synchronous=FULL;"
+        "PRAGMA foreign_keys=ON;"
+    );
+}
+
+static int choir_sqlite_acquire(const char *path, int path_len, sqlite3 **db) {
     if (choir_sqlite_load() != 0) {
         return -1;
     }
@@ -93,35 +136,48 @@ static int choir_sqlite_open_path(const char *path, int path_len, sqlite3 **db) 
     if (copy == NULL) {
         return -1;
     }
+    pthread_mutex_lock(&choir_sqlite_cache_mutex);
+    for (int i = 0; i < CHOIR_SQLITE_CACHE_SLOTS; ++i) {
+        if (choir_sqlite_cache[i].path != NULL &&
+            strcmp(choir_sqlite_cache[i].path, copy) == 0) {
+            *db = choir_sqlite_cache[i].db;
+            pthread_mutex_unlock(&choir_sqlite_cache_mutex);
+            free(copy);
+            return 0;
+        }
+    }
+    sqlite3 *opened = NULL;
     int rc = choir_sqlite.open_v2(
         copy,
-        db,
+        &opened,
         SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
         NULL
     );
-    free(copy);
-    if (rc != SQLITE_OK) {
-        if (*db != NULL) {
-            choir_sqlite.close(*db);
-            *db = NULL;
+    if (rc != SQLITE_OK || choir_sqlite_configure(opened) != 0) {
+        if (opened != NULL) {
+            choir_sqlite.close(opened);
         }
+        pthread_mutex_unlock(&choir_sqlite_cache_mutex);
+        free(copy);
         return -1;
     }
-    return 0;
-}
-
-static int choir_sqlite_exec(sqlite3 *db, const char *sql) {
-    char *error = NULL;
-    int rc = choir_sqlite.exec(db, sql, NULL, NULL, &error);
-    if (error != NULL) {
-        choir_sqlite.free_fn(error);
+    choir_sqlite_cached *slot =
+        &choir_sqlite_cache[choir_sqlite_cache_next % CHOIR_SQLITE_CACHE_SLOTS];
+    choir_sqlite_cache_next += 1;
+    if (slot->path != NULL) {
+        choir_sqlite.close(slot->db);
+        free(slot->path);
     }
-    return rc == SQLITE_OK ? 0 : -1;
+    slot->path = copy;
+    slot->db = opened;
+    pthread_mutex_unlock(&choir_sqlite_cache_mutex);
+    *db = opened;
+    return 0;
 }
 
 int choir_state_store_init(const char *path, int path_len) {
     sqlite3 *db = NULL;
-    if (choir_sqlite_open_path(path, path_len, &db) != 0) {
+    if (choir_sqlite_acquire(path, path_len, &db) != 0) {
         return -1;
     }
     const char *schema =
@@ -142,15 +198,76 @@ int choir_state_store_init(const char *path, int path_len) {
         " fencing_epoch INTEGER NOT NULL CHECK(fencing_epoch > 0),"
         " state_value_digest TEXT NOT NULL CHECK(length(state_value_digest) = 64)"
         ") STRICT;";
-    int rc = choir_sqlite_exec(db, schema);
-    choir_sqlite.close(db);
-    return rc;
+    return choir_sqlite_exec(db, schema);
 }
 
 static int choir_sqlite_bind_text(sqlite3_stmt *stmt, int index, const char *value) {
     return choir_sqlite.bind_text(stmt, index, value, -1, SQLITE_TRANSIENT) == SQLITE_OK
                ? 0
                : -1;
+}
+
+/*
+ * Fencing generation counter. `choir serve` mints (increments) the epoch once
+ * per daemon generation while holding the instance lock; the goal worker it
+ * spawns reads the same value. Records written by a generation carry its
+ * epoch, so a surviving process from an older generation is rejected by the
+ * stale-fence gate as soon as the new generation adopts a record.
+ */
+static long long choir_state_store_epoch_row(sqlite3 *db) {
+    sqlite3_stmt *stmt = NULL;
+    long long epoch = -1;
+    if (choir_sqlite.prepare_statement(
+            db,
+            "SELECT epoch FROM fencing_generation WHERE id = 1",
+            -1,
+            &stmt,
+            NULL
+        ) == SQLITE_OK &&
+        choir_sqlite.step(stmt) == SQLITE_ROW) {
+        epoch = (long long)choir_sqlite.column_int64(stmt, 0);
+    }
+    if (stmt != NULL) choir_sqlite.finalize(stmt);
+    return epoch;
+}
+
+long long choir_state_store_mint_epoch(const char *path, int path_len) {
+    sqlite3 *db = NULL;
+    if (choir_sqlite_acquire(path, path_len, &db) != 0) {
+        return -1;
+    }
+    if (choir_sqlite_exec(
+            db,
+            "CREATE TABLE IF NOT EXISTS fencing_generation("
+            " id INTEGER PRIMARY KEY CHECK(id = 1),"
+            " epoch INTEGER NOT NULL CHECK(epoch > 0)"
+            ") STRICT;"
+        ) != 0 ||
+        choir_sqlite_exec(db, "BEGIN IMMEDIATE") != 0) {
+        return -1;
+    }
+    if (choir_sqlite_exec(
+            db,
+            "INSERT INTO fencing_generation(id, epoch) VALUES(1, 1) "
+            "ON CONFLICT(id) DO UPDATE SET epoch = epoch + 1"
+        ) != 0) {
+        choir_sqlite_exec(db, "ROLLBACK");
+        return -1;
+    }
+    long long epoch = choir_state_store_epoch_row(db);
+    if (epoch <= 0 || choir_sqlite_exec(db, "COMMIT") != 0) {
+        choir_sqlite_exec(db, "ROLLBACK");
+        return -1;
+    }
+    return epoch;
+}
+
+long long choir_state_store_read_epoch(const char *path, int path_len) {
+    sqlite3 *db = NULL;
+    if (choir_sqlite_acquire(path, path_len, &db) != 0) {
+        return -1;
+    }
+    return choir_state_store_epoch_row(db);
 }
 
 static int choir_sqlite_read_outbox_digest(
@@ -270,7 +387,8 @@ static int choir_sqlite_read_state_values(
  * 0 committed, 1 idempotent replay, 2 version conflict, 3 stale fence,
  * 4 semantic conflict, 5 fault rollback, 6 storage failure,
  * 7 committed but acknowledgment was deliberately lost,
- * 8 guarded precondition conflict.
+ * 8 guarded precondition conflict,
+ * 9 lock acquisition timed out (SQLITE_BUSY after busy_timeout; retryable).
  */
 int choir_state_store_commit(
     const char *path,
@@ -313,12 +431,16 @@ int choir_state_store_commit(
         return 6;
     }
     sqlite3 *db = NULL;
-    if (choir_sqlite_open_path(path, path_len, &db) != 0 ||
-        choir_sqlite_exec(db, "BEGIN IMMEDIATE") != 0) {
-        if (db != NULL) choir_sqlite.close(db);
+    if (choir_sqlite_acquire(path, path_len, &db) != 0) {
         free(key); free(value); free(semantic); free(payload);
         free(guard_key); free(guard_digest);
         return 6;
+    }
+    int begin_rc = choir_sqlite_exec_rc(db, "BEGIN IMMEDIATE");
+    if (begin_rc != SQLITE_OK) {
+        free(key); free(value); free(semantic); free(payload);
+        free(guard_key); free(guard_digest);
+        return begin_rc == SQLITE_BUSY ? 9 : 6;
     }
 
     int result = 6;
@@ -433,17 +555,19 @@ int choir_state_store_commit(
         result = 5;
         goto rollback;
     }
-    if (choir_sqlite_exec(db, "COMMIT") != 0) {
-        goto rollback_without_tx;
+    int commit_rc = choir_sqlite_exec_rc(db, "COMMIT");
+    if (commit_rc != SQLITE_OK) {
+        result = commit_rc == SQLITE_BUSY ? 9 : 6;
+        goto rollback;
     }
     result = fault_point == 3 ? 7 : 0;
     goto done;
 
 rollback:
+    /* The connection outlives this call, so a failed transaction must be
+     * rolled back explicitly rather than discarded with the handle. */
     choir_sqlite_exec(db, "ROLLBACK");
-rollback_without_tx:
 done:
-    choir_sqlite.close(db);
     free(key); free(value); free(semantic); free(payload);
     free(guard_key); free(guard_digest);
     return result;
@@ -463,7 +587,7 @@ int choir_state_store_read_state(
         return -1;
     }
     sqlite3 *db = NULL;
-    if (choir_sqlite_open_path(path, path_len, &db) != 0) {
+    if (choir_sqlite_acquire(path, path_len, &db) != 0) {
         free(key);
         return -1;
     }
@@ -485,7 +609,6 @@ int choir_state_store_read_state(
             result = written;
         }
     }
-    choir_sqlite.close(db);
     free(key);
     return result;
 }
@@ -504,7 +627,7 @@ int choir_state_store_list_state(
         return -1;
     }
     sqlite3 *db = NULL;
-    if (choir_sqlite_open_path(path, path_len, &db) != 0) {
+    if (choir_sqlite_acquire(path, path_len, &db) != 0) {
         free(prefix);
         return -1;
     }
@@ -516,7 +639,6 @@ int choir_state_store_list_state(
     if (choir_sqlite.prepare_statement(db, sql, -1, &stmt, NULL) != SQLITE_OK ||
         choir_sqlite_bind_text(stmt, 1, prefix) != 0) {
         if (stmt != NULL) choir_sqlite.finalize(stmt);
-        choir_sqlite.close(db);
         free(prefix);
         return -1;
     }
@@ -552,7 +674,6 @@ int choir_state_store_list_state(
     }
     if (result == 0) result = used;
     choir_sqlite.finalize(stmt);
-    choir_sqlite.close(db);
     free(prefix);
     return result;
 }
@@ -571,7 +692,7 @@ int choir_state_store_read_outbox(
         return -1;
     }
     sqlite3 *db = NULL;
-    if (choir_sqlite_open_path(path, path_len, &db) != 0) {
+    if (choir_sqlite_acquire(path, path_len, &db) != 0) {
         free(key);
         return -1;
     }
@@ -579,7 +700,6 @@ int choir_state_store_read_outbox(
         db, key, output, (size_t)output_size
     );
     if (result == 1) result = 64;
-    choir_sqlite.close(db);
     free(key);
     return result;
 }

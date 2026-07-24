@@ -176,6 +176,16 @@ pub fn init_cleanup_runtime_artifacts_native() -> Unit {
 }
 
 ///|
+pub fn acquire_instance_lock(_path : String) -> Bool {
+  false
+}
+
+///|
+pub fn read_file_bytes(_path : String) -> Bytes? {
+  None
+}
+
+///|
 pub fn init_cleanup_purge_artifacts_native() -> Unit {
 
 }

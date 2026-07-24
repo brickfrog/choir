@@ -659,7 +659,7 @@ fn native_goal_submission_part_snapshot(
         accepted.provider_surface,
       ),
     },
-    @control.FencingEpoch(1L),
+    current_native_goal_fencing_epoch(),
     is_nfc,
     part_context_manifest=accepted.part_context_manifest,
   )
@@ -787,7 +787,10 @@ fn ensure_native_goal_execution(
   })
   let expected = match
     @workflow.goal_execution_record_from_selection(
-      decision, decision_digest, workflow_ids,
+      decision,
+      decision_digest,
+      workflow_ids,
+      fencing_epoch=current_native_goal_fencing_epoch(),
     ) {
     Ok(value) => value
     Err(error) => return Err(error)

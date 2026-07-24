@@ -19,6 +19,14 @@ fn state_store_failure(operation : String) -> @types.ChoirError {
 }
 
 ///|
+/// Result code 9: the write lock stayed contended past busy_timeout. Unlike
+/// the generic storage failure this is retryable, so surface it through the
+/// typed timeout classification callers can already distinguish.
+fn state_store_busy(operation : String) -> @types.ChoirError {
+  @types.ChoirError::timeout("SQLite state store " + operation + " busy")
+}
+
+///|
 pub fn initialize_state_store(
   store : @storage.SqliteStateStore,
 ) -> Result[Unit, @types.ChoirError] {
@@ -118,6 +126,7 @@ pub fn commit_state_transaction(
         None => Err(state_store_failure("fault classification"))
       }
     7 => Ok(@storage.StateTransactionOutcome::StateTransactionCommittedAckLost)
+    9 => Err(state_store_busy("transaction"))
     _ => Err(state_store_failure("transaction"))
   }
 }
@@ -208,6 +217,7 @@ pub fn commit_guarded_state_transaction(
         None => return Err(state_store_failure("guarded fault classification"))
       }
     7 => @storage.StateTransactionOutcome::StateTransactionCommittedAckLost
+    9 => return Err(state_store_busy("guarded transaction"))
     _ => return Err(state_store_failure("guarded transaction"))
   }
   Ok(

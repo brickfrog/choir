@@ -746,6 +746,7 @@ pub fn goal_execution_record_from_selection(
   decision : GoalSelectionDecision,
   selection_decision_digest : @control.Digest,
   part_workflow_ids : Array[String],
+  fencing_epoch~ : @control.FencingEpoch = @control.FencingEpoch(1L),
 ) -> Result[GoalExecutionRecord, @types.ChoirError] {
   if decision.outcome != GoalSelectionOutcome::GoalSelectionAccepted ||
     selection_decision_digest != goal_selection_decision_digest(decision) {
@@ -810,7 +811,25 @@ pub fn goal_execution_record_from_selection(
     input_answers: [],
     cancellation_request: None,
     durable_version: 1,
-    fencing_epoch: @control.FencingEpoch(1L),
+    fencing_epoch,
+  })
+}
+
+///|
+/// Adopt a Goal execution record into a newer fencing generation. The
+/// persisted adoption raises the stored fence, which is what actually locks
+/// out surviving writers from older generations.
+pub fn adopt_goal_execution_fencing_epoch(
+  record : GoalExecutionRecord,
+  fencing_epoch : @control.FencingEpoch,
+) -> Result[GoalExecutionRecord, @types.ChoirError] {
+  if fencing_epoch.0 <= record.fencing_epoch.0 {
+    return Err(goal_execution_error("fencing adoption must raise the epoch"))
+  }
+  Ok({
+    ..record,
+    durable_version: record.durable_version + 1,
+    fencing_epoch,
   })
 }
 

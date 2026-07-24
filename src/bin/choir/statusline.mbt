@@ -1,272 +1,57 @@
 ///|
-priv enum ConductorStatusPhase {
-  Queued
-  Implement
-  Verify
-  Audit
-  Integrate
-  Assure
-  Publish
-  PullRequest
-}
-
-///|
-fn ConductorStatusPhase::label(self : ConductorStatusPhase) -> String {
-  match self {
-    Queued => "queued"
-    Implement => "impl"
-    Verify => "verify"
-    Audit => "audit"
-    Integrate => "integrate"
-    Assure => "assure"
-    Publish => "publish"
-    PullRequest => "file PR"
+fn conductor_phase_label(phase : @workflow.ConductorGoalPhase) -> String {
+  match phase {
+    @workflow.ConductorGoalPhase::ConductorPhaseQueued => "queued"
+    @workflow.ConductorGoalPhase::ConductorPhaseImplement => "impl"
+    @workflow.ConductorGoalPhase::ConductorPhaseVerify => "verify"
+    @workflow.ConductorGoalPhase::ConductorPhaseAudit => "audit"
+    @workflow.ConductorGoalPhase::ConductorPhaseIntegrate => "integrate"
+    @workflow.ConductorGoalPhase::ConductorPhaseAssure => "assure"
+    @workflow.ConductorGoalPhase::ConductorPhasePublish => "publish"
+    @workflow.ConductorGoalPhase::ConductorPhasePullRequest => "file PR"
   }
 }
 
 ///|
-priv enum ConductorStatusAttention {
-  NeedsInput
-  RecoveryUncertain
-  Blocked
-  Paused
-  Canceling
-}
-
-///|
-fn ConductorStatusAttention::label(self : ConductorStatusAttention) -> String {
-  match self {
-    NeedsInput => "NEEDS INPUT"
-    RecoveryUncertain => "RECOVERY UNCERTAIN"
-    Blocked => "BLOCKED"
-    Paused => "PAUSED"
-    Canceling => "CANCELING"
+fn conductor_attention_label(
+  attention : @workflow.ConductorGoalAttention,
+) -> String {
+  match attention {
+    @workflow.ConductorGoalAttention::ConductorAttentionNeedsInput =>
+      "NEEDS INPUT"
+    @workflow.ConductorGoalAttention::ConductorAttentionRecoveryUncertain =>
+      "RECOVERY UNCERTAIN"
+    @workflow.ConductorGoalAttention::ConductorAttentionBlocked => "BLOCKED"
+    @workflow.ConductorGoalAttention::ConductorAttentionPaused => "PAUSED"
+    @workflow.ConductorGoalAttention::ConductorAttentionCanceling =>
+      "CANCELING"
   }
 }
 
 ///|
-priv struct ConductorGoalDisplay {
-  maximum_parallel_parts : Int
-  total_parts : Int
-  integrated_parts : Int
-  implementation_parts : Int
-  verification_parts : Int
-  audit_parts : Int
-  integration_parts : Int
-  single_part_id : String?
-  phase : ConductorStatusPhase
-  attention : ConductorStatusAttention?
-  attention_target : String?
-  additional_attention : Int
+fn conductor_statusline_goal_display(
+  report : Json,
+) -> @workflow.ConductorGoalDisplay? {
+  let typed : @workflow.GoalStatusReport = @json.from_json(report) catch {
+    _ => return None
+  }
+  @workflow.conductor_goal_display(typed)
 }
 
 ///|
-fn conductor_statusline_json_tag(value : Json?) -> String {
-  match value {
-    Some(String(tag)) => tag
-    Some(Array(values)) if values.length() > 0 =>
-      match values[0] {
-        String(tag) => tag
-        _ => ""
-      }
-    _ => ""
-  }
-}
-
-///|
-fn conductor_statusline_identity(value : Json?) -> String? {
-  match value {
-    Some(String(identity)) if identity != "" => Some(identity)
-    Some(Array(values)) if values.length() >= 2 =>
-      match values[1] {
-        String(identity) if identity != "" => Some(identity)
-        _ => None
-      }
-    _ => None
-  }
-}
-
-///|
-fn conductor_statusline_input_request(
-  fields : Map[String, Json],
-) -> (Bool, String?) {
-  guard fields.get("active_input_request") is Some(Object(request)) else {
-    return (false, None)
-  }
-  let target = match conductor_statusline_json_tag(request.get("reason")) {
-    "GoalInputPublicationRemoteUnavailable" => Some("publish")
-    "GoalInputFinalizationNeedsUserInput"
-    | "GoalInputFinalizationDrifted"
-    | "GoalInputFinalizationAmbiguous" => Some("file PR")
-    _ => None
-  }
-  (true, target)
-}
-
-///|
-fn conductor_statusline_recovery_target(
-  fields : Map[String, Json],
-  part_target : String?,
-) -> String? {
-  match part_target {
-    Some(_) => part_target
-    None =>
-      match conductor_statusline_json_tag(fields.get("publication_state")) {
-        "BranchPublicationPreflightUncertain"
-        | "BranchPublicationMutationUncertain" => Some("publish")
-        _ =>
-          match conductor_statusline_json_tag(fields.get("assurance_stage")) {
-            "GoalAssuranceRecoveryUncertain" => Some("assure")
-            _ =>
-              match
-                conductor_statusline_json_tag(fields.get("pull_request_state")) {
-                "PullRequestRemoteCreateUncertain" => Some("file PR")
-                _ => None
-              }
-          }
-      }
-  }
-}
-
-///|
-fn conductor_statusline_goal_display(report : Json) -> ConductorGoalDisplay? {
-  guard report is Object(fields) else { return None }
-  let state = conductor_statusline_json_tag(fields.get("state"))
-  if state == "GoalExecutionSucceeded" || state == "GoalExecutionCanceled" {
-    return None
-  }
-  let maximum_parallel_parts = match fields.get("maximum_parallel_parts") {
-    Some(Number(value, ..)) if value.to_int() > 0 => value.to_int()
-    _ => 1
-  }
-  let parts = match fields.get("parts") {
-    Some(Array(values)) => values
-    _ => []
-  }
-  let mut integrated = 0
-  let mut implementation = 0
-  let mut verification = 0
-  let mut audit = 0
-  let mut integration = 0
-  let mut single_part_id : String? = None
-  let mut recovery_target : String? = None
-  let mut blocked_target : String? = None
-  let mut recovery_count = 0
-  let mut blocked_count = 0
-  for part in parts {
-    guard part is Object(part_fields) else { continue }
-    let part_id = conductor_statusline_identity(part_fields.get("part_id"))
-    if parts.length() == 1 {
-      single_part_id = part_id
-    }
-    match conductor_statusline_json_tag(part_fields.get("stage")) {
-      "PartImplementationSandboxPrepared"
-      | "PartImplementationCommandPrepared"
-      | "PartImplementationHarnessStarted"
-      | "PartImplementationCompleted" => implementation = implementation + 1
-      "PartCandidateRecorded" | "PartVerificationSandboxPrepared" =>
-        verification = verification + 1
-      "PartVerified"
-      | "PartAuditSandboxPrepared"
-      | "PartAuditCommandPrepared"
-      | "PartAuditHarnessStarted"
-      | "PartAuditResultRecorded" => audit = audit + 1
-      "PartAudited"
-      | "PartIntegrationPlanned"
-      | "PartPromotionPrepared"
-      | "PartIntegrationAuthorized" => integration = integration + 1
-      "PartIntegrated" => integrated = integrated + 1
-      "PartRecoveryUncertain" => {
-        recovery_count = recovery_count + 1
-        if recovery_target is None {
-          recovery_target = part_id
-        }
-      }
-      "PartBlocked" => {
-        blocked_count = blocked_count + 1
-        if blocked_target is None {
-          blocked_target = part_id
-        }
-      }
-      _ => ()
-    }
-  }
-  let (has_input, input_target) = conductor_statusline_input_request(fields)
-  let part_attention_count = recovery_count + blocked_count
-  let (attention, attention_target, additional_attention) = if has_input {
-    (Some(NeedsInput), input_target, part_attention_count)
-  } else if recovery_count > 0 {
-    (
-      Some(RecoveryUncertain),
-      conductor_statusline_recovery_target(fields, recovery_target),
-      part_attention_count - 1,
-    )
-  } else if state == "GoalExecutionPaused" &&
-    conductor_statusline_json_tag(fields.get("pause_reason")) ==
-    "GoalPauseRecoveryUncertain" {
-    (
-      Some(RecoveryUncertain),
-      conductor_statusline_recovery_target(fields, None),
-      blocked_count,
-    )
-  } else if blocked_count > 0 || state == "GoalExecutionBlocked" {
-    (
-      Some(Blocked),
-      blocked_target,
-      if blocked_count > 0 {
-        blocked_count - 1
-      } else {
-        0
-      },
-    )
-  } else if state == "GoalExecutionPaused" {
-    (Some(Paused), None, 0)
-  } else if state == "GoalExecutionCanceling" {
-    (Some(Canceling), None, 0)
-  } else {
-    (None, None, 0)
-  }
-  let phase = match state {
-    "GoalExecutionAssuring" => Assure
-    "GoalExecutionAssured" =>
-      if conductor_statusline_json_tag(fields.get("publication_state")) ==
-        "BranchPublicationReceipted" {
-        PullRequest
-      } else {
-        Publish
-      }
-    "GoalExecutionRunning" if parts.length() > 0 && integrated == parts.length() =>
-      Assure
-    _ => Queued
-  }
-  Some({
-    maximum_parallel_parts,
-    total_parts: parts.length(),
-    integrated_parts: integrated,
-    implementation_parts: implementation,
-    verification_parts: verification,
-    audit_parts: audit,
-    integration_parts: integration,
-    single_part_id,
-    phase,
-    attention,
-    attention_target,
-    additional_attention,
-  })
-}
-
-///|
-fn conductor_statusline_active_phase(display : ConductorGoalDisplay) -> String {
+fn conductor_statusline_active_phase(
+  display : @workflow.ConductorGoalDisplay,
+) -> String {
   if display.integration_parts > 0 {
-    Integrate.label()
+    conductor_phase_label(@workflow.ConductorGoalPhase::ConductorPhaseIntegrate)
   } else if display.audit_parts > 0 {
-    Audit.label()
+    conductor_phase_label(@workflow.ConductorGoalPhase::ConductorPhaseAudit)
   } else if display.verification_parts > 0 {
-    Verify.label()
+    conductor_phase_label(@workflow.ConductorGoalPhase::ConductorPhaseVerify)
   } else if display.implementation_parts > 0 {
-    Implement.label()
+    conductor_phase_label(@workflow.ConductorGoalPhase::ConductorPhaseImplement)
   } else {
-    display.phase.label()
+    conductor_phase_label(display.phase)
   }
 }
 
@@ -278,7 +63,7 @@ fn conductor_statusline_goal_segment(report : Json) -> String {
   }
   match display.attention {
     Some(attention) => {
-      let label = attention.label()
+      let label = conductor_attention_label(attention)
       let additional = if display.additional_attention > 0 {
         " (+" + display.additional_attention.to_string() + ")"
       } else {
@@ -320,18 +105,30 @@ fn conductor_statusline_goal_segment(report : Json) -> String {
           ]
           for
             pair in [
-              (display.implementation_parts, Implement),
-              (display.verification_parts, Verify),
-              (display.audit_parts, Audit),
-              (display.integration_parts, Integrate),
+              (
+                display.implementation_parts,
+                @workflow.ConductorGoalPhase::ConductorPhaseImplement,
+              ),
+              (
+                display.verification_parts,
+                @workflow.ConductorGoalPhase::ConductorPhaseVerify,
+              ),
+              (
+                display.audit_parts,
+                @workflow.ConductorGoalPhase::ConductorPhaseAudit,
+              ),
+              (
+                display.integration_parts,
+                @workflow.ConductorGoalPhase::ConductorPhaseIntegrate,
+              ),
             ] {
             let (count, phase) = pair
             if count > 0 {
-              segments.push(count.to_string() + " " + phase.label())
+              segments.push(count.to_string() + " " + conductor_phase_label(phase))
             }
           }
           if segments.length() == 1 {
-            segments.push(display.phase.label())
+            segments.push(conductor_phase_label(display.phase))
           }
           if display.maximum_parallel_parts > 1 &&
             display.integrated_parts < display.total_parts {
@@ -385,9 +182,12 @@ fn conductor_statusline_cache_path(
 
 ///|
 fn conductor_statusline_cache_content(report : Json?) -> String {
+  // The cache stores the full report, not a projection: the statusline
+  // decodes it as a typed GoalStatusReport, and any projection subset would
+  // silently drop fields the typed decoder requires.
   match report {
     Some(value) if conductor_statusline_goal_display(value) is Some(_) =>
-      conductor_goal_update_fingerprint(value) + "\n"
+      value.stringify(indent=0) + "\n"
     _ => ""
   }
 }
@@ -654,21 +454,112 @@ fn conductor_statusline_run() -> Unit {
 }
 
 ///|
-fn conductor_statusline_test_part(id : String, stage : String) -> Json {
-  { "part_id": ["PartId", id].to_json(), "stage": stage.to_json() }.to_json()
+fn conductor_statusline_test_part(
+  id : String,
+  stage : String,
+) -> @workflow.GoalPartStatus {
+  let parsed_stage : @workflow.PartWorkflowStage = @json.from_json(
+    Json::string(stage),
+  ) catch {
+    _ => abort("unknown Part stage tag: " + stage)
+  }
+  {
+    workflow_id: "wf-" + id,
+    part_id: @control.PartId(id),
+    provider_surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+    implementation_take_id: @control.TakeId("take-" + id + "-impl"),
+    implementation_take_lifecycle: @control.TakeLifecycle::TakeRunning,
+    implementation_session_lifecycle: None,
+    verification_take_id: @control.TakeId("take-" + id + "-verify"),
+    verification_take_lifecycle: @control.TakeLifecycle::TakePlanned,
+    verification_session_lifecycle: None,
+    audit_take_id: @control.TakeId("take-" + id + "-audit"),
+    audit_take_lifecycle: @control.TakeLifecycle::TakePlanned,
+    audit_session_lifecycle: None,
+    lifecycle: @control.PartLifecycle::PartReady,
+    stage: parsed_stage,
+    durable_version: 1,
+    harness_session_count: 0,
+    effect_receipt_count: 0,
+    verification_receipt_count: 0,
+    audit_receipt_present: false,
+    integration_receipt_present: false,
+  }
 }
 
 ///|
 fn conductor_statusline_test_report(
   state : String,
   maximum_parallel_parts : Int,
-  parts : Array[Json],
+  parts : Array[@workflow.GoalPartStatus],
+  input_reason? : @workflow.GoalInputReason,
 ) -> Json {
-  {
-    "state": state.to_json(),
-    "maximum_parallel_parts": maximum_parallel_parts.to_json(),
-    "parts": parts.to_json(),
-  }.to_json()
+  let parsed_state : @workflow.GoalExecutionState = @json.from_json(
+    Json::string(state),
+  ) catch {
+    _ => abort("unknown Goal state tag: " + state)
+  }
+  let goal_id = @control.GoalId("goal-a")
+  let report : @workflow.GoalStatusReport = {
+    goal_id,
+    state: parsed_state,
+    lifecycle: @control.GoalLifecycle::GoalActive(
+      @control.GoalActiveCondition::GoalRunning,
+    ),
+    goal_ref: @workflow.GitRefName("refs/heads/choir/goals/goal-a"),
+    integration_target_ref: @workflow.GitRefName("refs/heads/main"),
+    durable_version: 2,
+    maximum_parallel_parts,
+    active_policy_revision: {
+      id: @control.RevisionId("revision-1"),
+      goal_id,
+      parent_revision_id: None,
+      ordinal: 1,
+      change: @workflow.GoalPolicyChange::GoalPolicyInitial,
+      maximum_parallel_parts,
+      digest: @control.Digest(
+        "0000000000000000000000000000000000000000000000000000000000000000",
+      ),
+    },
+    policy_revision_count: 1,
+    pause_reason: None,
+    resume_state: None,
+    active_input_request: match input_reason {
+      Some(reason) =>
+        Some({
+          id: @workflow.GoalInputRequestId("input-1"),
+          goal_id,
+          reason,
+          created_at_version: 2,
+        })
+      None => None
+    },
+    input_answer_count: 0,
+    assurance_stage: None,
+    goal_verification_take_id: None,
+    goal_audit_take_id: None,
+    goal_branch_seal: None,
+    assurance_sandbox_count: 0,
+    assurance_harness_session_count: 0,
+    assurance_effect_receipt_count: 0,
+    goal_verification_receipt_count: 0,
+    goal_audit_receipt_present: false,
+    publication_state: None,
+    publication_remote_repository_id: None,
+    publication_remote_head_ref: None,
+    publication_receipt_present: false,
+    published_oid: None,
+    pull_request_state: None,
+    pull_request_receipt_present: false,
+    pull_request_number: None,
+    pull_request_url: None,
+    finalization_id: None,
+    readiness_decision: None,
+    readiness_observation_sequence: None,
+    semantic_run_projection: None,
+    parts,
+  }
+  report.to_json()
 }
 
 ///|
@@ -714,13 +605,7 @@ test "Conductor statusline names Goal-level input and assurance phases" {
     "GoalExecutionPaused",
     1,
     [conductor_statusline_test_part("choir-a", "PartIntegrated")],
-  )
-  guard awaiting_input is Object(input_fields) else {
-    fail("expected report object")
-  }
-  input_fields.set(
-    "active_input_request",
-    { "reason": "GoalInputPublicationRemoteUnavailable".to_json() }.to_json(),
+    input_reason=@workflow.GoalInputReason::GoalInputPublicationRemoteUnavailable,
   )
   assert_eq(
     conductor_statusline_goal_segment(awaiting_input),

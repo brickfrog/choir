@@ -1,5 +1,6 @@
 import {
   "choir/src/types",
+  "choir/src/control",
   "choir/src/config",
   "choir/src/transport",
   "choir/src/sys",
@@ -14,6 +15,7 @@ import {
   "moonbitlang/async",
   "moonbitlang/core/debug",
   "moonbitlang/core/encoding/utf8",
+  "moonbitlang/x/crypto",
   "brickfrog/moontrace",
 }
 

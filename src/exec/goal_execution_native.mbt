@@ -86,6 +86,58 @@ pub fn native_goal_repository(
 }
 
 ///|
+/// Fencing epoch of this process generation. `choir serve` mints it under the
+/// instance lock; `choir run-goals` observes the value serve minted. Records
+/// created or adopted by this generation carry it, which is what lets the
+/// state store's stale-fence gate reject writes from surviving processes of
+/// an older generation.
+let native_goal_fencing_epoch_state : Ref[Int64] = Ref(1L)
+
+///|
+pub fn current_native_goal_fencing_epoch() -> @control.FencingEpoch {
+  @control.FencingEpoch(native_goal_fencing_epoch_state.val)
+}
+
+///|
+/// Increment and adopt the durable generation epoch. Only the daemon may
+/// mint, and only while holding the single-instance lock.
+pub fn mint_native_goal_fencing_epoch(
+  project_dir : String,
+) -> Result[Int64, @types.ChoirError] {
+  let store = native_goal_repository(project_dir).state_store
+  let (path, path_len) = exec_string_to_null_terminated_bytes(store.path)
+  let epoch = state_store_mint_epoch_ffi(path, path_len)
+  if epoch <= 0L {
+    return Err(
+      native_goal_execution_error("fencing generation could not be minted"),
+    )
+  }
+  native_goal_fencing_epoch_state.val = epoch
+  Ok(epoch)
+}
+
+///|
+/// Adopt the generation epoch the daemon minted without incrementing it.
+/// The goal worker runs in a separate process of the same generation and
+/// must share the daemon's epoch, or the two would fence each other off.
+pub fn observe_native_goal_fencing_epoch(
+  project_dir : String,
+) -> Result[Int64, @types.ChoirError] {
+  let store = native_goal_repository(project_dir).state_store
+  let (path, path_len) = exec_string_to_null_terminated_bytes(store.path)
+  let epoch = state_store_read_epoch_ffi(path, path_len)
+  if epoch <= 0L {
+    return Err(
+      native_goal_execution_error(
+        "fencing generation is absent; start the worker through choird",
+      ),
+    )
+  }
+  native_goal_fencing_epoch_state.val = epoch
+  Ok(epoch)
+}
+
+///|
 async fn native_goal_git_value(
   project_dir : String,
   arguments : Array[String],
@@ -1614,20 +1666,10 @@ async fn execute_native_goal_record(
     goal_part_workflow_adapters(config),
   )
   match result {
-    Ok(completed) => {
-      match
-        reconcile_native_integrated_part_sources(
-          project_dir,
-          repository,
-          record,
-          completed.records,
-        ) {
-        Ok(_) => ()
-        Err(error) => {
-          ignore(cleanup_native_boxlite_server(prepared.server))
-          return Err(error)
-        }
-      }
+    // Source Beads deliberately stay claimed here: Part integration onto the
+    // private Goal branch is not delivery. Closure happens at the Goal
+    // delivery boundary, inside finalization once the PR is observed ready.
+    Ok(_) => {
       ignore(cleanup_native_boxlite_server(prepared.server))
       Ok(())
     }
@@ -1743,19 +1785,19 @@ async fn reconcile_native_completed_bead(
 }
 
 ///|
-async fn reconcile_native_integrated_part_sources(
+/// Close the source Beads of every integrated Part. This is the Goal
+/// delivery boundary effect: it must run only once the finalization gate has
+/// observed a ready pull request, never at Part integration, so a Bead's
+/// closed status keeps meaning "Choir delivered this work".
+pub async fn reconcile_native_integrated_part_sources(
   project_dir : String,
   repository : @workflow.PartWorkflowRepository,
   record : @workflow.GoalExecutionRecord,
-  records : Array[@workflow.GoalPartSchedulingRecord],
   capture? : async (Command) -> (Int, String) = capture_command_merged,
 ) -> Result[Unit, @types.ChoirError] {
+  let adapters = local_part_workflow_repository_adapters()
   let selection = match
-    @workflow.load_goal_selection_decision(
-      repository,
-      local_part_workflow_repository_adapters(),
-      record.goal.id,
-    ) {
+    @workflow.load_goal_selection_decision(repository, adapters, record.goal.id) {
     Ok(Some(value)) => value
     Ok(None) =>
       return Err(native_goal_execution_error("Goal selection disappeared"))
@@ -1766,7 +1808,15 @@ async fn reconcile_native_integrated_part_sources(
     record.selection_decision_digest {
     return Err(native_goal_execution_error("Goal selection digest drifted"))
   }
-  for current in records {
+  for workflow_id in record.part_workflow_ids {
+    let stored = match
+      @workflow.load_part_snapshot(repository, adapters, workflow_id) {
+      Ok(Some(value)) => value
+      Ok(None) =>
+        return Err(native_goal_execution_error("Part workflow is absent"))
+      Err(error) => return Err(error)
+    }
+    let current = stored.snapshot
     if !(current.part.lifecycle is @control.PartLifecycle::PartIntegrated(_)) {
       continue
     }
@@ -3293,7 +3343,11 @@ pub async fn run_native_goal_execution_tick_with_forge(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  @workflow.run_next_goal_execution_tick(repository, repository_adapters, {
+  @workflow.run_next_goal_execution_tick(
+    repository,
+    repository_adapters,
+    fencing_epoch=current_native_goal_fencing_epoch(),
+    {
     initialize: async fn(record) {
       let claimed = match
         advance_native_goal_source_claims(

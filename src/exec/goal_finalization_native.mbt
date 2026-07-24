@@ -42,11 +42,29 @@ fn persist_native_goal_finalization_record(
 }
 
 ///|
+/// Delivery-boundary source completion used by production finalization: the
+/// host adapter closes each integrated Part's source Bead and re-observes
+/// the closure before the Goal success transaction commits. Fixtures without
+/// real Beads inject a no-op completion instead.
+async fn reconcile_native_goal_delivery_sources(
+  project_dir : String,
+  repository : @workflow.PartWorkflowRepository,
+  record : @workflow.GoalExecutionRecord,
+) -> Result[Unit, @types.ChoirError] {
+  reconcile_native_integrated_part_sources(project_dir, repository, record)
+}
+
+///|
 pub async fn advance_native_goal_finalization_with_adapters(
   project_dir : String,
   goal_id : @control.GoalId,
   forge : NativePullRequestForgeAdapters,
   fault? : @workflow.GoalFinalizationFaultPoint? = None,
+  reconcile_sources? : async (
+    String,
+    @workflow.PartWorkflowRepository,
+    @workflow.GoalExecutionRecord,
+  ) -> Result[Unit, @types.ChoirError] = reconcile_native_goal_delivery_sources,
 ) -> Result[@workflow.GoalFinalizationTickOutcome, @types.ChoirError] {
   let repository = native_goal_repository(project_dir)
   let adapters = local_part_workflow_repository_adapters()
@@ -164,6 +182,14 @@ pub async fn advance_native_goal_finalization_with_adapters(
         return Err(
           native_pull_request_error("injected Goal finalization fault"),
         )
+      }
+      // Close source Beads only now, with a ready PR observed, and before the
+      // success transaction: a crash in between retries idempotently on the
+      // next tick, while success-before-closure would strand open Beads on a
+      // Goal the runner never ticks again.
+      match reconcile_sources(project_dir, repository, execution.record) {
+        Ok(_) => ()
+        Err(error) => return Err(error)
       }
       match
         @workflow.persist_goal_execution_success(
@@ -341,7 +367,12 @@ async fn observe_pull_request_remote_state(
     create: fixture.4.create,
   }
   let outcome = match
-    advance_native_goal_finalization_with_adapters(fixture.0, fixture.2, forge) {
+    advance_native_goal_finalization_with_adapters(
+      fixture.0,
+      fixture.2,
+      forge,
+      reconcile_sources=fn(_, _, _) { Ok(()) },
+    ) {
     Ok(value) => value
     Err(error) => fail("remote-state finalization: " + error.message())
   }
@@ -448,7 +479,12 @@ pub async fn run_native_goal_finalization_race_conformance() -> NativeGoalFinali
     ),
   })
   let before_outcome = match
-    advance_native_goal_finalization_with_adapters(before.0, before.2, before.4) {
+    advance_native_goal_finalization_with_adapters(
+      before.0,
+      before.2,
+      before.4,
+      reconcile_sources=fn(_, _, _) { Ok(()) },
+    ) {
     Ok(value) => value
     Err(error) => fail("edit before response: " + error.message())
   }
@@ -498,6 +534,7 @@ pub async fn run_native_goal_finalization_race_conformance() -> NativeGoalFinali
       after.0,
       after.2,
       after_forge,
+      reconcile_sources=fn(_, _, _) { Ok(()) },
     ) {
     Ok(value) => value
     Err(error) => fail("edit after response: " + error.message())
@@ -539,6 +576,7 @@ pub async fn run_native_goal_finalization_race_conformance() -> NativeGoalFinali
       canceled.0,
       canceled.2,
       canceled.4,
+      reconcile_sources=fn(_, _, _) { Ok(()) },
       fault=Some(
         @workflow.GoalFinalizationFaultPoint::PullRequestAfterReadinessObservationBeforeSuccessTransaction,
       ),
@@ -560,6 +598,7 @@ pub async fn run_native_goal_finalization_race_conformance() -> NativeGoalFinali
       canceled.0,
       canceled.2,
       canceled.4,
+      reconcile_sources=fn(_, _, _) { Ok(()) },
     )
     is Err(_)
   let canceling_record = @workflow.load_goal_execution_record(

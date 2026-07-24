@@ -190,54 +190,78 @@ priv enum StartExistingDaemon {
 } derive(Debug, Eq)
 
 ///|
+/// Decide what to do with a daemon already answering on the socket, from its
+/// reported build identity rather than executable paths: path comparison
+/// breaks both when the binary is replaced in place (stale daemon looks
+/// current) and when the old file was unlinked (`/proc/<pid>/exe` dangles).
 fn start_existing_daemon(
   peer_pid : Int,
   recorded_pid : Int,
-  self_executable : String,
-  resolve : (String) -> String?,
+  self_identity : String,
+  daemon_identity : String?,
 ) -> StartExistingDaemon {
   if peer_pid <= 1 {
     return StartDaemonUntrusted
   }
-  match resolve("/proc/" + peer_pid.to_string() + "/exe") {
-    Some(peer_executable) if peer_executable == self_executable =>
-      StartDaemonCurrent
-    Some(_) if recorded_pid == peer_pid => StartDaemonReplace(peer_pid)
+  match daemon_identity {
+    Some(identity) if identity == self_identity => StartDaemonCurrent
+    _ if recorded_pid == peer_pid => StartDaemonReplace(peer_pid)
     _ => StartDaemonUntrusted
   }
 }
 
 ///|
-test "start replaces only a recorded daemon from an older executable" {
+test "start replaces a recorded daemon whose build identity differs" {
   assert_eq(
-    start_existing_daemon(42, 42, "/opt/choir/new/choir", fn(_) {
-      Some("/opt/choir/new/choir")
-    }),
+    start_existing_daemon(42, 42, "digest-new", Some("digest-new")),
     StartDaemonCurrent,
   )
   assert_eq(
-    start_existing_daemon(42, 42, "/opt/choir/new/choir", fn(_) {
-      Some("/opt/choir/old/choir")
-    }),
+    start_existing_daemon(42, 42, "digest-new", Some("digest-old")),
+    StartDaemonReplace(42),
+  )
+  // A daemon that cannot report an identity is replaceable only when the
+  // recorded pid file corroborates the socket peer.
+  assert_eq(
+    start_existing_daemon(42, 42, "digest-new", None),
     StartDaemonReplace(42),
   )
   assert_eq(
-    start_existing_daemon(42, 41, "/opt/choir/new/choir", fn(_) {
-      Some("/opt/choir/old/choir")
-    }),
+    start_existing_daemon(42, 41, "digest-new", Some("digest-old")),
     StartDaemonUntrusted,
   )
+  assert_eq(start_existing_daemon(42, 41, "digest-new", None), StartDaemonUntrusted)
   assert_eq(
-    start_existing_daemon(1, 1, "/opt/choir/new/choir", fn(_) {
-      Some("/opt/choir/old/choir")
-    }),
+    start_existing_daemon(1, 1, "digest-new", Some("digest-old")),
     StartDaemonUntrusted,
   )
 }
 
 ///|
+fn start_probe_daemon_identity(fd : Int) -> String? {
+  let request = @transport.format_request({
+      req_method: server_identity_method,
+      name: server_identity_method,
+      args: @types.RequestArgs::from_values(Map([])),
+    }) +
+    "\n"
+  if !mcp_write_all_uds(fd, @utf8.encode(request)) {
+    return None
+  }
+  let response_line = UDSLineReader::new(fd).read_line()
+  if response_line == "" {
+    return None
+  }
+  match @transport.parse_response(response_line) {
+    Ok(response) => response.ok_field("identity")
+    Err(_) => None
+  }
+}
+
+///|
 async fn start_ensure_daemon(
   socket_path : String,
+  self_identity : String,
   self_executable : String,
   server_pid_path : String,
   prepare_control_state : async () -> Result[Unit, String],
@@ -245,6 +269,7 @@ async fn start_ensure_daemon(
   let existing = @uds.client_connect(socket_path)
   if existing >= 0 {
     let peer_pid = @uds.peer_pid(existing)
+    let daemon_identity = start_probe_daemon_identity(existing)
     @uds.close(existing)
     let recorded_pid = @string.parse_int(
       @sys.read_file(server_pid_path).trim().to_owned(),
@@ -253,7 +278,7 @@ async fn start_ensure_daemon(
     }
     match
       start_existing_daemon(
-        peer_pid, recorded_pid, self_executable, @sys.realpath_native,
+        peer_pid, recorded_pid, self_identity, daemon_identity,
       ) {
       StartDaemonCurrent => return Ok(())
       StartDaemonReplace(pid) => {
@@ -261,7 +286,8 @@ async fn start_ensure_daemon(
         if @sys.pid_is_alive(pid) {
           return Err("older choird did not stop during upgrade")
         }
-        @sys.init_cleanup_runtime_artifacts_native()
+        // Runtime-artifact cleanup happens inside the replacement daemon,
+        // under its instance lock, so a client never unlinks a live socket.
       }
       StartDaemonUntrusted =>
         return Err("existing choird identity could not be verified")
@@ -410,9 +436,20 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
         return
       }
     }
+    let self_identity = match server_executable_identity(executable) {
+      Some(value) => value
+      None => {
+        @sys.write_stderr(
+          "choir start: failed to fingerprint the Choir executable\n",
+        )
+        @sys.exit(1)
+        return
+      }
+    }
     match
       start_ensure_daemon(
         config.listen_uds,
+        self_identity,
         executable,
         config.project_dir + "/.choir/run/server.pid",
         async fn() {
