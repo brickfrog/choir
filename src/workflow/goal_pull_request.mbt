@@ -110,10 +110,6 @@ pub(all) struct RemotePullRequestSnapshot {
   base_ref : GitRefName
   observed_head_oid : @control.GitOid
   state : RemotePullRequestState
-  // Present only once the remote reports the pull request merged. For squash
-  // and rebase merges this commit is the only durable link between the
-  // reviewed head and the target branch, so delivery evidence binds it.
-  merge_commit_oid : @control.GitOid?
   marker_state : PullRequestMarkerState
   title_digest : @control.Digest
   body_digest : @control.Digest
@@ -454,8 +450,7 @@ fn pull_request_prerequisites_are_current(
     publication.receipt is Some(publication_receipt) else {
     return false
   }
-  (execution.state == GoalExecutionState::GoalExecutionAssured ||
-  execution.state == GoalExecutionState::GoalExecutionAwaitingMerge) &&
+  execution.state == GoalExecutionState::GoalExecutionAssured &&
   execution.goal.lifecycle ==
   @control.GoalLifecycle::GoalActive(@control.GoalActiveCondition::GoalRunning) &&
   assurance.stage == GoalAssuranceStage::GoalAudited &&

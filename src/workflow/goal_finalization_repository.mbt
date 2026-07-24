@@ -177,32 +177,6 @@ pub fn persist_goal_execution_success(
 }
 
 ///|
-pub fn persist_goal_awaiting_merge(
-  repository : PartWorkflowRepository,
-  adapters : PartWorkflowRepositoryAdapters,
-  execution : StoredGoalExecutionRecord,
-  assurance : GoalAssuranceRecord,
-  publication : GoalPublicationRecord,
-  pull_request : GoalPullRequestRecord,
-  finalization : StoredGoalFinalizationRecord,
-) -> Result[StoredGoalExecutionRecord, @types.ChoirError] {
-  let awaiting = match
-    authorize_goal_awaiting_merge(
-      execution.record,
-      assurance,
-      publication,
-      pull_request,
-      finalization.record,
-    ) {
-    Ok(value) => value
-    Err(error) => return Err(error)
-  }
-  persist_finalization_authorized_advance(
-    repository, adapters, execution, finalization, awaiting,
-  )
-}
-
-///|
 fn persist_finalization_authorized_advance(
   repository : PartWorkflowRepository,
   adapters : PartWorkflowRepositoryAdapters,

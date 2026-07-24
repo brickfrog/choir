@@ -399,9 +399,7 @@ pub fn semantic_run_projection(
     pull_request.intent.state == PullRequestIntentState::PullRequestReceipted &&
     pull_request.receipt is Some(pull_request_receipt) &&
     finalization.readiness.decision ==
-    PullRequestReadinessDecision::PullRequestMergeObserved &&
-    finalization.delivery is Some(delivery) &&
-    delivery.target_contains_merge else {
+    PullRequestReadinessDecision::PullRequestReady else {
     return Err(
       goal_execution_error(
         "successful Goal lacks complete semantic projection evidence",
