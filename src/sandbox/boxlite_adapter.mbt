@@ -186,40 +186,6 @@ pub(all) enum SandboxLogicalRoot {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-pub(all) struct SandboxTransferRequest {
-  capability : SandboxEffectCapability
-  transfer_id : TransferId
-  resource_key : SandboxResourceKey
-  direction : SandboxTransferDirection
-  logical_root : SandboxLogicalRoot
-  manifest : ValidatedTransferManifest
-} derive(Debug, Eq, ToJson, FromJson)
-
-///|
-pub(all) struct PrepareEnvironmentRequest {
-  capability : SandboxEffectCapability
-  prepared_environment_key : PreparedEnvironmentKey
-  policy : BoxLiteSandboxPolicy
-  tool_manifest_digest : @control.Digest
-} derive(Debug, Eq, ToJson, FromJson)
-
-///|
-pub(all) struct CreateSandboxRequest {
-  capability : SandboxEffectCapability
-  resource_key : SandboxResourceKey
-  prepared_environment_key : PreparedEnvironmentKey
-  policy : BoxLiteSandboxPolicy
-} derive(Debug, Eq, ToJson, FromJson)
-
-///|
-pub(all) struct CloneSandboxRequest {
-  capability : SandboxEffectCapability
-  resource_key : SandboxResourceKey
-  prepared_environment_key : PreparedEnvironmentKey
-  policy : BoxLiteSandboxPolicy
-} derive(Debug, Eq, ToJson, FromJson)
-
-///|
 pub(all) struct ExecuteSandboxRequest {
   capability : SandboxEffectCapability
   resource_key : SandboxResourceKey
@@ -236,20 +202,6 @@ pub(all) enum SandboxDesiredProcessState {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-pub(all) struct SandboxProcessControlRequest {
-  capability : SandboxEffectCapability
-  resource_key : SandboxResourceKey
-  execution_key : RuntimeExecutionKey
-  desired_state : SandboxDesiredProcessState
-} derive(Debug, Eq, ToJson, FromJson)
-
-///|
-pub(all) struct SandboxResourceRequest {
-  capability : SandboxEffectCapability
-  resource_key : SandboxResourceKey
-} derive(Debug, Eq, ToJson, FromJson)
-
-///|
 pub(all) enum SandboxResourceLifecycle {
   SandboxResourcePrepared
   SandboxResourceCreated
@@ -257,21 +209,6 @@ pub(all) enum SandboxResourceLifecycle {
   SandboxResourceStopped
   SandboxResourceDestroyed
   SandboxResourceUncertain
-} derive(Debug, Eq, ToJson, FromJson)
-
-///|
-pub(all) struct PreparedEnvironmentObservation {
-  prepared_environment_key : PreparedEnvironmentKey
-  image_digest : @control.Digest
-  policy_digest : @control.Digest
-} derive(Debug, Eq, ToJson, FromJson)
-
-///|
-pub(all) struct SandboxResourceObservation {
-  resource_key : SandboxResourceKey
-  runtime_id : String
-  lifecycle : SandboxResourceLifecycle
-  generation_digest : @control.Digest
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -301,62 +238,11 @@ pub(all) enum SandboxProcessEventKind {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-pub(all) struct SandboxProcessEvent {
-  cursor : SandboxProcessEventCursor
-  execution_key : RuntimeExecutionKey
-  kind : SandboxProcessEventKind
-} derive(Debug, Eq, ToJson, FromJson)
-
-///|
-pub(all) struct AttachSandboxRequest {
-  capability : SandboxEffectCapability
-  resource_key : SandboxResourceKey
-  execution_key : RuntimeExecutionKey
-  after : SandboxProcessEventCursor?
-} derive(Debug, Eq, ToJson, FromJson)
-
-///|
-pub(all) struct SandboxTransferObservation {
-  transfer_id : TransferId
-  manifest_digest : @control.Digest
-  bytes_transferred : Int64
-} derive(Debug, Eq, ToJson, FromJson)
-
-///|
 pub(all) struct BoxLiteSandboxAdapter {
-  prepare : (PrepareEnvironmentRequest) -> Result[
-    PreparedEnvironmentObservation,
-    @types.ChoirError,
-  ]
-  create : (CreateSandboxRequest) -> Result[
-    SandboxResourceObservation,
-    @types.ChoirError,
-  ]
-  clone : (CloneSandboxRequest) -> Result[
-    SandboxResourceObservation,
-    @types.ChoirError,
-  ]
   execute : (ExecuteSandboxRequest) -> Result[
     SandboxExecutionObservation,
     @types.ChoirError,
   ]
-  attach : (AttachSandboxRequest) -> Result[
-    Array[SandboxProcessEvent],
-    @types.ChoirError,
-  ]
-  copy : (SandboxTransferRequest) -> Result[
-    SandboxTransferObservation,
-    @types.ChoirError,
-  ]
-  signal_or_kill : (SandboxProcessControlRequest) -> Result[
-    SandboxExecutionObservation,
-    @types.ChoirError,
-  ]
-  inspect : (SandboxResourceRequest) -> Result[
-    SandboxResourceObservation,
-    @types.ChoirError,
-  ]
-  destroy : (SandboxResourceRequest) -> Result[Unit, @types.ChoirError]
 }
 
 ///|
@@ -652,80 +538,6 @@ fn validate_sandbox_resource_key(
 }
 
 ///|
-pub fn dispatch_boxlite_prepare(
-  adapter : BoxLiteSandboxAdapter,
-  request : PrepareEnvironmentRequest,
-) -> Result[PreparedEnvironmentObservation, @types.ChoirError] {
-  match validate_sandbox_effect_capability(request.capability) {
-    Err(error) => return Err(error)
-    Ok(_) => ()
-  }
-  match validate_boxlite_policy(request.policy) {
-    Err(error) => return Err(error)
-    Ok(_) => ()
-  }
-  if request.prepared_environment_key.0 == "" ||
-    request.tool_manifest_digest.0 == "" {
-    return Err(
-      @types.ChoirError::validation_error(
-        "prepared environment identity is incomplete",
-      ),
-    )
-  }
-  (adapter.prepare)(request)
-}
-
-///|
-pub fn dispatch_boxlite_create(
-  adapter : BoxLiteSandboxAdapter,
-  request : CreateSandboxRequest,
-) -> Result[SandboxResourceObservation, @types.ChoirError] {
-  match validate_sandbox_effect_capability(request.capability) {
-    Err(error) => return Err(error)
-    Ok(_) => ()
-  }
-  match validate_sandbox_resource_key(request.resource_key) {
-    Err(error) => return Err(error)
-    Ok(_) => ()
-  }
-  match validate_boxlite_policy(request.policy) {
-    Err(error) => return Err(error)
-    Ok(_) => ()
-  }
-  if request.prepared_environment_key.0 == "" {
-    return Err(
-      @types.ChoirError::validation_error("prepared environment key is empty"),
-    )
-  }
-  (adapter.create)(request)
-}
-
-///|
-pub fn dispatch_boxlite_clone(
-  adapter : BoxLiteSandboxAdapter,
-  request : CloneSandboxRequest,
-) -> Result[SandboxResourceObservation, @types.ChoirError] {
-  match validate_sandbox_effect_capability(request.capability) {
-    Err(error) => return Err(error)
-    Ok(_) => ()
-  }
-  match validate_sandbox_resource_key(request.resource_key) {
-    Err(error) => return Err(error)
-    Ok(_) => ()
-  }
-  match validate_boxlite_policy(request.policy) {
-    Err(error) => return Err(error)
-    Ok(_) => ()
-  }
-  if request.prepared_environment_key.0 == "" {
-    return Err(
-      @types.ChoirError::validation_error("prepared environment key is empty"),
-    )
-  }
-  (adapter.clone)(request)
-}
-
-///|
 pub fn dispatch_boxlite_execute(
   adapter : BoxLiteSandboxAdapter,
   request : ExecuteSandboxRequest,
@@ -765,97 +577,3 @@ pub fn dispatch_boxlite_execute(
   (adapter.execute)(request)
 }
 
-///|
-pub fn dispatch_boxlite_copy(
-  adapter : BoxLiteSandboxAdapter,
-  request : SandboxTransferRequest,
-) -> Result[SandboxTransferObservation, @types.ChoirError] {
-  match validate_sandbox_effect_capability(request.capability) {
-    Err(error) => return Err(error)
-    Ok(_) => ()
-  }
-  match validate_sandbox_resource_key(request.resource_key) {
-    Err(error) => return Err(error)
-    Ok(_) => ()
-  }
-  if request.transfer_id.0 == "" {
-    return Err(
-      @types.ChoirError::validation_error("sandbox transfer id is empty"),
-    )
-  }
-  (adapter.copy)(request)
-}
-
-///|
-pub fn dispatch_boxlite_attach(
-  adapter : BoxLiteSandboxAdapter,
-  request : AttachSandboxRequest,
-) -> Result[Array[SandboxProcessEvent], @types.ChoirError] {
-  match validate_sandbox_effect_capability(request.capability) {
-    Err(error) => return Err(error)
-    Ok(_) => ()
-  }
-  match validate_sandbox_resource_key(request.resource_key) {
-    Err(error) => return Err(error)
-    Ok(_) => ()
-  }
-  if request.execution_key.0 == "" {
-    return Err(
-      @types.ChoirError::validation_error("sandbox execution key is empty"),
-    )
-  }
-  (adapter.attach)(request)
-}
-
-///|
-pub fn dispatch_boxlite_process_control(
-  adapter : BoxLiteSandboxAdapter,
-  request : SandboxProcessControlRequest,
-) -> Result[SandboxExecutionObservation, @types.ChoirError] {
-  match validate_sandbox_effect_capability(request.capability) {
-    Err(error) => return Err(error)
-    Ok(_) => ()
-  }
-  match validate_sandbox_resource_key(request.resource_key) {
-    Err(error) => return Err(error)
-    Ok(_) => ()
-  }
-  if request.execution_key.0 == "" {
-    return Err(
-      @types.ChoirError::validation_error("sandbox execution key is empty"),
-    )
-  }
-  (adapter.signal_or_kill)(request)
-}
-
-///|
-pub fn dispatch_boxlite_inspect(
-  adapter : BoxLiteSandboxAdapter,
-  request : SandboxResourceRequest,
-) -> Result[SandboxResourceObservation, @types.ChoirError] {
-  match validate_sandbox_effect_capability(request.capability) {
-    Err(error) => return Err(error)
-    Ok(_) => ()
-  }
-  match validate_sandbox_resource_key(request.resource_key) {
-    Err(error) => return Err(error)
-    Ok(_) => ()
-  }
-  (adapter.inspect)(request)
-}
-
-///|
-pub fn dispatch_boxlite_destroy(
-  adapter : BoxLiteSandboxAdapter,
-  request : SandboxResourceRequest,
-) -> Result[Unit, @types.ChoirError] {
-  match validate_sandbox_effect_capability(request.capability) {
-    Err(error) => return Err(error)
-    Ok(_) => ()
-  }
-  match validate_sandbox_resource_key(request.resource_key) {
-    Err(error) => return Err(error)
-    Ok(_) => ()
-  }
-  (adapter.destroy)(request)
-}
