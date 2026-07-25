@@ -914,14 +914,23 @@ fn decode_native_verification_process(
         native_part_effect_error("verification process schema is invalid"),
       )
   }
+  // The authority proves this process spec was minted for this Part's
+  // verification, which the spec identity and digest carry. The Take that
+  // minted it is fixed at submission, while a retried Part is fenced onto a
+  // fresh verification Take, so demanding the current Take rejected the
+  // Part's own spec on every retry. A superseded Take of this same Part still
+  // authorizes it; anything else does not.
   match process.authority {
     @sandbox.SandboxProcessAuthority::SandboxVerificationTool(
       authority_take_id,
       verification_spec_id,
       verification_spec_digest
-    ) if authority_take_id == take_id &&
-      verification_spec_id == spec.id &&
-      verification_spec_digest == spec.digest => Ok(process)
+    ) if verification_spec_id == spec.id &&
+      verification_spec_digest == spec.digest &&
+      (
+        authority_take_id == take_id ||
+        snapshot.prior_takes.any(fn(prior) { prior.id == authority_take_id })
+      ) => Ok(process)
     _ =>
       Err(native_part_effect_error("verification process authority is stale"))
   }

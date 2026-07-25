@@ -3449,14 +3449,19 @@ fn native_goal_assurance_plan(
             ),
           )
       }
+      // A Part that was retried carries a verification spec minted under a
+      // superseded Take of that same Part. See the Part-level decode: the
+      // spec identity and digest are what authorize it, and a Take this Part
+      // has already retired still counts.
       match source_process.authority {
         @sandbox.SandboxProcessAuthority::SandboxVerificationTool(
           take_id,
           spec_id,
           spec_digest
-        ) if take_id == snapshot.verification_take.id &&
-          spec_id == source_spec.id &&
-          spec_digest == source_spec.digest => ()
+        ) if spec_id == source_spec.id &&
+          spec_digest == source_spec.digest &&
+          (take_id == snapshot.verification_take.id ||
+          snapshot.prior_takes.any(fn(prior) { prior.id == take_id })) => ()
         _ =>
           return Err(
             native_goal_execution_error(
