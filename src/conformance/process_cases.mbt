@@ -182,9 +182,6 @@ fn process_dispatch_adapter(
   called : Ref[Int],
 ) -> @sandbox.BoxLiteSandboxAdapter {
   {
-    prepare: fn(_) { abort("unused process prepare") },
-    create: fn(_) { abort("unused process create") },
-    clone: fn(_) { abort("unused process clone") },
     execute: fn(request) {
       called.val = called.val + 1
       Ok({
@@ -193,11 +190,6 @@ fn process_dispatch_adapter(
         lifecycle: @sandbox.SandboxResourceLifecycle::SandboxResourceRunning,
       })
     },
-    attach: fn(_) { abort("unused process attach") },
-    copy: fn(_) { abort("unused process copy") },
-    signal_or_kill: fn(_) { abort("unused process control") },
-    inspect: fn(_) { abort("unused process inspect") },
-    destroy: fn(_) { abort("unused process destroy") },
   }
 }
 
@@ -441,9 +433,6 @@ pub fn process_canonical_dispatch_case() -> HermeticConformanceCase {
       }
       let observed : Ref[@sandbox.ExecuteSandboxRequest?] = @ref.new(None)
       let adapter : @sandbox.BoxLiteSandboxAdapter = {
-        prepare: fn(_) { abort("unused canonical prepare") },
-        create: fn(_) { abort("unused canonical create") },
-        clone: fn(_) { abort("unused canonical clone") },
         execute: fn(request) {
           observed.val = Some(request)
           Ok({
@@ -452,11 +441,6 @@ pub fn process_canonical_dispatch_case() -> HermeticConformanceCase {
             lifecycle: @sandbox.SandboxResourceLifecycle::SandboxResourceRunning,
           })
         },
-        attach: fn(_) { abort("unused canonical attach") },
-        copy: fn(_) { abort("unused canonical copy") },
-        signal_or_kill: fn(_) { abort("unused canonical process control") },
-        inspect: fn(_) { abort("unused canonical inspect") },
-        destroy: fn(_) { abort("unused canonical destroy") },
       }
       let result = @sandbox.dispatch_boxlite_execute(
         adapter,
