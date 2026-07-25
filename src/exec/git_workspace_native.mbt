@@ -56,8 +56,9 @@ fn native_git_workspace_environment(
   index_file : String?,
   work_tree : String?,
   commit : Bool,
+  commit_epoch~ : Int64 = 0L,
 ) -> Map[String, String] {
-  let environment = native_git_environment(commit)
+  let environment = native_git_environment(commit, commit_epoch~)
   environment["GIT_DIR"] = config.staging_root + "/git-control"
   environment["GIT_OBJECT_DIRECTORY"] = config.object_directory
   environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
@@ -115,6 +116,7 @@ async fn capture_native_git_workspace_process(
   index_file? : String? = None,
   work_tree? : String? = None,
   commit? : Bool = false,
+  commit_epoch? : Int64 = 0L,
   timeout_ms? : Int = 120000,
 ) -> Result[NativeGitCapture, @types.ChoirError] {
   match ensure_native_git_control(config) {
@@ -130,7 +132,7 @@ async fn capture_native_git_workspace_process(
       "/usr/bin/git",
       args,
       extra_env=native_git_workspace_environment(
-        config, index_file, work_tree, commit,
+        config, index_file, work_tree, commit, commit_epoch~,
       ),
       inherit_env=false,
       cwd=config.staging_root,
@@ -155,6 +157,7 @@ async fn native_git_workspace_oid(
   index_file? : String? = None,
   work_tree? : String? = None,
   commit? : Bool = false,
+  commit_epoch? : Int64 = 0L,
 ) -> Result[@control.GitOid, @types.ChoirError] {
   let capture = match
     capture_native_git_workspace_process(
@@ -163,6 +166,7 @@ async fn native_git_workspace_oid(
       index_file~,
       work_tree~,
       commit~,
+      commit_epoch~,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -462,6 +466,14 @@ pub async fn normalize_native_git_candidate(
     Ok(value) => value
     Err(error) => return Err(error)
   }
+  let base_epoch = match
+    capture_native_git_workspace_process(config, [
+      "show", "-s", "--format=%ct", "--no-show-signature", base_commit_oid.0,
+    ]) {
+    Ok(read) if read.exit_code == 0 =>
+      @string.parse_int64(read.output.trim().to_owned()) catch { _ => 0L }
+    _ => 0L
+  }
   let commit_oid = match
     native_git_workspace_oid(
       config,
@@ -476,6 +488,7 @@ pub async fn normalize_native_git_candidate(
       index_file=Some(index_file),
       work_tree=Some(result_root),
       commit=true,
+      commit_epoch=base_epoch,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)

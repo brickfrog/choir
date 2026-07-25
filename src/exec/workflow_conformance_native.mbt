@@ -848,7 +848,7 @@ async fn observe_native_integration_cutoff(
                 exit_code: 0,
                 output: integration_fault_promotion_tree.0 + "\n",
               }
-            NativeGitIntegrationCommand::NativeGitCreatePromotion(_, _, _, _) => {
+            NativeGitIntegrationCommand::NativeGitCreatePromotion(_, _, _, _, _) => {
               create_count.val = create_count.val + 1
               { exit_code: 0, output: integration_fault_promotion.0 + "\n" }
             }

@@ -4,11 +4,13 @@ pub(all) enum NativeGitIntegrationCommand {
   NativeGitReadCommitParents(@control.GitOid)
   NativeGitReadMergeBase(@control.GitOid, @control.GitOid)
   NativeGitMergeTree(@control.GitOid, @control.GitOid)
+  NativeGitReadCommitEpoch(@control.GitOid)
   NativeGitCreatePromotion(
     @control.GitOid,
     @control.GitOid,
     @control.GitOid,
-    String
+    String,
+    Int64
   )
   NativeGitReadRef(String)
   NativeGitApplyRefs(String, String, @control.GitOid, @control.GitOid)
@@ -206,7 +208,42 @@ fn promotion_message(intent : @control.IntegrationIntent) -> String {
 }
 
 ///|
-fn native_git_environment(commit : Bool) -> Map[String, String] {
+/// The commit date Choir stamps on a commit it creates.
+///
+/// A Choir commit must be reproducible: an interrupted effect is retried and
+/// has to yield the identical commit identity, which a wall clock cannot do.
+/// Zero satisfied that and dated every promotion to 1970, which is what every
+/// git interface then reports. Inheriting the newest parent's date is equally
+/// deterministic, keeps history non-decreasing, and tells the truth about when
+/// the work this commit carries was actually based.
+pub fn native_git_inherited_commit_epoch(parents : Array[Int64]) -> Int64 {
+  let mut newest = 0L
+  for parent in parents {
+    if parent > newest {
+      newest = parent
+    }
+  }
+  newest
+}
+
+///|
+fn native_git_commit_date(epoch : Int64) -> String {
+  "@" + epoch.to_string() + " +0000"
+}
+
+///|
+test "a created commit inherits the newest parent's date" {
+  assert_eq(native_git_inherited_commit_epoch([1700000000L, 1699999999L]), 1700000000L)
+  assert_eq(native_git_inherited_commit_epoch([]), 0L)
+  assert_eq(native_git_inherited_commit_epoch([-5L]), 0L)
+  assert_eq(native_git_commit_date(1700000000L), "@1700000000 +0000")
+}
+
+///|
+fn native_git_environment(commit : Bool, commit_epoch~ : Int64 = 0L) -> Map[
+  String,
+  String,
+] {
   let environment : Map[String, String] = {
     "PATH": "/usr/bin:/bin",
     "HOME": "/nonexistent",
@@ -215,12 +252,13 @@ fn native_git_environment(commit : Bool) -> Map[String, String] {
     "GIT_TERMINAL_PROMPT": "0",
   }
   if commit {
+    let date = native_git_commit_date(commit_epoch)
     environment["GIT_AUTHOR_NAME"] = "Choir"
     environment["GIT_AUTHOR_EMAIL"] = "choir@localhost"
-    environment["GIT_AUTHOR_DATE"] = "@0 +0000"
+    environment["GIT_AUTHOR_DATE"] = date
     environment["GIT_COMMITTER_NAME"] = "Choir"
     environment["GIT_COMMITTER_EMAIL"] = "choir@localhost"
-    environment["GIT_COMMITTER_DATE"] = "@0 +0000"
+    environment["GIT_COMMITTER_DATE"] = date
   }
   environment
 }
@@ -230,8 +268,9 @@ fn native_git_integration_environment(
   config : NativeGitIntegrationConfig,
   object_access : Bool,
   commit : Bool,
+  commit_epoch~ : Int64 = 0L,
 ) -> Map[String, String] {
-  let environment = native_git_environment(commit)
+  let environment = native_git_environment(commit, commit_epoch~)
   environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
   environment["GIT_ATTR_NOSYSTEM"] = "1"
   environment["XDG_CONFIG_HOME"] = "/nonexistent"
@@ -288,6 +327,13 @@ fn native_git_process_spec(
         environment: native_git_integration_environment(config, true, false),
         working_directory: config.control_root,
       }
+    NativeGitReadCommitEpoch(oid) =>
+      {
+        arguments: ["show", "-s", "--format=%ct", "--no-show-signature", oid.0],
+        stdin: "",
+        environment: native_git_integration_environment(config, true, false),
+        working_directory: config.control_root,
+      }
     NativeGitReadCommitParents(oid) =>
       {
         arguments: ["show", "-s", "--format=%P", "--no-show-signature", oid.0],
@@ -317,7 +363,7 @@ fn native_git_process_spec(
         environment: native_git_integration_environment(config, true, false),
         working_directory: config.control_root,
       }
-    NativeGitCreatePromotion(tree, head, candidate, message) =>
+    NativeGitCreatePromotion(tree, head, candidate, message, commit_epoch) =>
       {
         arguments: [
           "commit-tree",
@@ -330,7 +376,12 @@ fn native_git_process_spec(
           message,
         ],
         stdin: "",
-        environment: native_git_integration_environment(config, true, true),
+        environment: native_git_integration_environment(
+          config,
+          true,
+          true,
+          commit_epoch~,
+        ),
         working_directory: config.control_root,
       }
     NativeGitReadRef(reference) =>
@@ -601,6 +652,18 @@ pub async fn generate_native_promotion(
     None =>
       return Err(git_error("merge-tree returned an invalid tree identity"))
   }
+  let parent_epochs : Array[Int64] = []
+  for parent in [intent.expected_goal_head_oid, intent.candidate_commit_oid] {
+    match (adapters.capture)(config, NativeGitReadCommitEpoch(parent)) {
+      Ok(read) =>
+        if read.exit_code == 0 {
+          parent_epochs.push(
+            @string.parse_int64(read.output.trim().to_owned()) catch { _ => 0L },
+          )
+        }
+      Err(error) => return Err(error)
+    }
+  }
   let committed = match
     (adapters.capture)(
       config,
@@ -609,6 +672,7 @@ pub async fn generate_native_promotion(
         intent.expected_goal_head_oid,
         intent.candidate_commit_oid,
         promotion_message(intent),
+        native_git_inherited_commit_epoch(parent_epochs),
       ),
     ) {
     Ok(value) => value

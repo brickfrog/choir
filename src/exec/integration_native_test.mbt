@@ -91,15 +91,24 @@ async test "native Git promotion uses witnessed deterministic parents" {
           }
         @exec.NativeGitIntegrationCommand::NativeGitMergeTree(_, _) =>
           { exit_code: 0, output: git_promotion_tree.0 + "\n" }
+        @exec.NativeGitIntegrationCommand::NativeGitReadCommitEpoch(oid) =>
+          if oid == git_head_oid {
+            { exit_code: 0, output: "1700000000\n" }
+          } else {
+            { exit_code: 0, output: "1699999999\n" }
+          }
         @exec.NativeGitIntegrationCommand::NativeGitCreatePromotion(
           tree,
           head,
           candidate,
-          message
+          message,
+          commit_epoch
         ) => {
           assert_eq(tree, git_promotion_tree)
           assert_eq(head, git_head_oid)
           assert_eq(candidate, git_candidate_oid)
+          // The promotion inherits its newest parent rather than the epoch.
+          assert_eq(commit_epoch, 1700000000L)
           assert_true(message.contains("Part: ") == false)
           assert_true(message.contains("promote Part part-1"))
           { exit_code: 0, output: git_promotion_oid.0 + "\n" }
@@ -132,7 +141,7 @@ async test "native Git promotion uses witnessed deterministic parents" {
     fail("expected generated promotion")
   }
   assert_eq(promotion, native_git_test_promotion())
-  assert_eq(commands.length(), 6)
+  assert_eq(commands.length(), 8)
 }
 
 ///|
@@ -309,6 +318,7 @@ async test "native Git promotion recovery regenerates the identical object" {
           @exec.NativeGitIntegrationCommand::NativeGitMergeTree(_, _) =>
             { exit_code: 0, output: git_promotion_tree.0 + "\n" }
           @exec.NativeGitIntegrationCommand::NativeGitCreatePromotion(
+            _,
             _,
             _,
             _,
