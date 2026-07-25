@@ -8,7 +8,10 @@ pub let boxlite_release_sha : String = "8803834036205cf2cac5cfca98bb3875812c897a
 pub let boxlite_release_archive_sha256 : String = "c80eef9dae1e3443a6817095a5c9e38b90b5bb84a50fb87a732e067f867b5e7e"
 
 ///|
-pub let boxlite_release_executable_sha256 : String = "81354f87e715113fb47303eb37663514af8ce4f350077a60b4e9ff7b093f0549"
+pub let boxlite_release_executable_sha256 : String = "91c12dcae07887a0f341e43a8c47af751f01f87075dfaefa82460958e8870576"
+
+///|
+pub let boxlite_reflink_permissions_patch_sha256 : String = "d73b284cb1ad050a13bcf61970cd010c95c71282ce44c44db0529ed955722221"
 
 ///|
 pub let boxlite_seccomp_patch_sha256 : String = "f5b6c5dfab0200d73e5bba9f7c44dd27c1acc8f3cbf9a059b80faf68a05e4c13"
@@ -164,6 +167,7 @@ pub(all) struct BoxLiteConformanceReport {
   release_sha : String
   release_archive_sha256 : String
   executable_sha256 : String
+  reflink_permissions_patch_sha256 : String
   seccomp_patch_sha256 : String
   runtime_bundle_digest : String
   image_digest : String
@@ -434,6 +438,7 @@ pub fn evaluate_boxlite_live_evidence(
     release_sha: boxlite_release_sha,
     release_archive_sha256: boxlite_release_archive_sha256,
     executable_sha256: observed_hash,
+    reflink_permissions_patch_sha256: boxlite_reflink_permissions_patch_sha256,
     seccomp_patch_sha256: boxlite_seccomp_patch_sha256,
     runtime_bundle_digest: if runtime_bundle_ok {
       boxlite_runtime_bundle_digest

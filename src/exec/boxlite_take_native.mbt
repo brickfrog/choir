@@ -108,11 +108,65 @@ fn valid_native_boxlite_token(value : String, max_length : Int) -> Bool {
 }
 
 ///|
+fn valid_native_boxlite_home(home : String) -> Bool {
+  let temporary_prefix = "/tmp/choir-boxlite-"
+  if !home.has_prefix("/") ||
+    home == "/" ||
+    home.contains("/../") ||
+    home.has_suffix("/..") ||
+    home.has_suffix("/") {
+    return false
+  }
+  if home.has_prefix(temporary_prefix) {
+    return valid_native_boxlite_token(
+      home[temporary_prefix.length():].to_owned(),
+      120,
+    )
+  }
+  match home.rev_find("/") {
+    Some(index) => {
+      let parent = home[:index].to_owned()
+      let name = home[index + 1:].to_owned()
+      let repository_prefix = "repository-"
+      parent.has_suffix("/choir/boxlite") &&
+      name.has_prefix(repository_prefix) &&
+      valid_native_boxlite_token(
+        name[repository_prefix.length():].to_owned(),
+        120,
+      )
+    }
+    None => false
+  }
+}
+
+///|
+test "BoxLite homes accept durable absolute paths without traversal" {
+  assert_true(
+    valid_native_boxlite_home(
+      "/home/user/.local/share/choir/boxlite/repository-abc123",
+    ),
+  )
+  assert_true(valid_native_boxlite_home("/tmp/choir-boxlite-test"))
+  assert_false(valid_native_boxlite_home("relative/home"))
+  assert_false(valid_native_boxlite_home("/"))
+  assert_false(valid_native_boxlite_home("/home/user"))
+  assert_false(
+    valid_native_boxlite_home("/home/user/.local/share/repository-abc123"),
+  )
+  assert_false(
+    valid_native_boxlite_home(
+      "/home/user/.local/share/choir/boxlite/unscoped-abc123",
+    ),
+  )
+  assert_false(valid_native_boxlite_home("/home/user/../other"))
+  assert_false(valid_native_boxlite_home("/home/user/cache/"))
+}
+
+///|
 fn validate_native_boxlite_server_config(
   config : NativeBoxLiteServerConfig,
 ) -> Result[Unit, @types.ChoirError] {
   let root_prefix = "/tmp/choir-take-"
-  let home_prefix = "/tmp/choir-boxlite-"
   if !config.binary.has_prefix("/") ||
     !config.runtime_dir.has_prefix("/") ||
     !config.root.has_prefix(root_prefix) ||
@@ -120,11 +174,7 @@ fn validate_native_boxlite_server_config(
       config.root[root_prefix.length():].to_owned(),
       120,
     ) ||
-    !config.home.has_prefix(home_prefix) ||
-    !valid_native_boxlite_token(
-      config.home[home_prefix.length():].to_owned(),
-      120,
-    ) ||
+    !valid_native_boxlite_home(config.home) ||
     config.port < 1024 ||
     config.port > 65535 ||
     !valid_native_boxlite_token(config.api_key, 180) {
@@ -323,16 +373,21 @@ pub async fn start_native_boxlite_server(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  if !@sys.create_dir_all(config.root) ||
+  if !@sys.create_dir_all(config.root) || !@sys.create_dir_all(config.home) {
+    return Err(native_boxlite_take_error("runtime directories are unavailable"))
+  }
+  if @sys.realpath_native(config.root) != Some(config.root) ||
+    @sys.realpath_native(config.home) != Some(config.home) {
+    return Err(
+      native_boxlite_take_error("runtime directories are not canonical"),
+    )
+  }
+  if !@sys.chmod_mode(config.home, 0o700) ||
     !@sys.create_dir_all(config.root + "/tmp") ||
-    !@sys.create_dir_all(config.home) ||
     !@sys.create_dir_all(config.root + "/clients") ||
     !@sys.create_dir_all(config.root + "/staging") ||
     !@sys.create_dir_all(config.root + "/results") {
     return Err(native_boxlite_take_error("runtime directories are unavailable"))
-  }
-  if @sys.realpath_native(config.root) != Some(config.root) {
-    return Err(native_boxlite_take_error("runtime root is not canonical"))
   }
   let executable_hash = match
     capture_boxlite_fixed_process(

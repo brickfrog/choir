@@ -21,7 +21,7 @@ Required:
 - [MoonBit](https://www.moonbitlang.com/) (or `nix develop` for the pinned toolchain)
 - [Beads](https://github.com/gastownhall/beads) 1.1.0 (`bd`)
 - [BoxLite](https://github.com/boxlite-ai/boxlite) v0.9.7 with Choir's
-  [pinned corrected runtime](docs/boxlite-runtime.md)
+  [pinned corrected CLI and runtime](docs/boxlite-runtime.md)
 - Bubblewrap (`bwrap`) for the read-only host boundary around provider clients
 - Node.js
 - Claude Code 2.1.219 logged into the user's paid subscription
@@ -35,7 +35,7 @@ execution profiles.
 moon build --target native --release
 install -Dm755 _build/native/release/build/src/bin/choir/choir.exe ~/.local/libexec/choir/choir
 install -Dm644 scripts/choir_sandbox_mcp.mjs scripts/choir_boxlite_owner.mjs -t ~/.local/libexec/choir
-install -Dm755 /absolute/path/to/boxlite-v0.9.7 ~/.local/libexec/choir/boxlite
+install -Dm755 /absolute/path/to/corrected-boxlite-v0.9.7 ~/.local/libexec/choir/boxlite
 cp -a /absolute/path/to/corrected-runtime ~/.local/libexec/choir/boxlite-runtime
 ln -sfn ../libexec/choir/choir ~/.local/bin/choir
 choir init

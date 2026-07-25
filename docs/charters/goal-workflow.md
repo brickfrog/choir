@@ -5226,6 +5226,45 @@ provider namespace cannot read the checkout, so the probe MCP script is copied
 into the already-authorized sterile fixture root. No production host path or
 provider capability was added.
 
+#### 2026-07-25 durable BoxLite image-home qualification
+
+The BoxLite image store, database, boxes, and locks now use one durable home per
+repository under the user's data directory:
+`$XDG_DATA_HOME/choir/boxlite/repository-<digest>`, falling back to
+`$HOME/.local/share/choir/boxlite/repository-<digest>`. Goal runtime roots
+remain separate and disposable. Removing or restarting a Goal therefore does
+not discard the pinned OCI image index or trigger another registry pull, and
+there is no cache copy, seed, restore, or operator migration step.
+
+Qualification found the durable-home boot failure in the owning dependency.
+BoxLite v0.9.7 locks `reflink-copy` 0.1.29; its successful Btrfs reflink path
+does not restore source permissions after `FICLONE`, so the jailer's copied
+`boxlite-shim` becomes mode `0644`. Upstream `reflink-copy` issue 173 records
+the same failure, and release 0.1.30 incorporates pull request 174's permission
+preservation fix. BoxLite v0.9.7 and its current development branch still lock
+0.1.29, so Choir admits an otherwise exact v0.9.7 CLI with only the lockfile
+advanced to 0.1.30.
+
+The accepted CLI SHA-256 is
+`91c12dcae07887a0f341e43a8c47af751f01f87075dfaefa82460958e8870576`;
+the checked-in lockfile patch SHA-256 is
+`d73b284cb1ad050a13bcf61970cd010c95c71282ce44c44db0529ed955722221`.
+The independently corrected six-file runtime retains bundle digest
+`66364c9b629315a2f3c0f5ab341fa16e21d41b43873866125a110051e8c142cc`
+and seccomp patch SHA-256
+`f5b6c5dfab0200d73e5bba9f7c44dd27c1acc8f3cbf9a059b80faf68a05e4c13`.
+
+On this host's Btrfs data filesystem, the corrected CLI created the jailer shim
+as mode `0755`, booted the pinned guest, and executed a command without any
+Choir-side staging or permission repair. The full 18-case live BoxLite matrix
+passed against those exact bytes. A complete live Take also passed from the
+durable home, including owner shutdown, mutable-result round trip, assurance
+identity, and stable-candidate checks. The parallel-promotion fixture retained
+the expected two-entry promotion order and continuous head chain. The broader
+native Part fixture subsequently reached two BoxLite boots from the same
+durable home, then stopped at its separate Git object-identity assertion; it is
+not counted as durable-image-home evidence.
+
 ### Primary sources retrieved
 
 Anthropic:
@@ -5257,6 +5296,8 @@ Google:
 BoxLite:
 
 - [BoxLite v0.9.7](https://github.com/boxlite-ai/boxlite/releases/tag/v0.9.7)
+- [reflink-copy Btrfs permission defect](https://github.com/cargo-bins/reflink-copy/issues/173)
+- [reflink-copy permission-preservation fix](https://github.com/cargo-bins/reflink-copy/pull/174)
 - [BoxLite v0.9.0 security release](https://github.com/boxlite-ai/boxlite/releases/tag/v0.9.0)
 - [GHSA-g6ww-w5j2-r7x3](https://github.com/boxlite-ai/boxlite/security/advisories/GHSA-g6ww-w5j2-r7x3)
 - [GHSA-f396-4rp4-7v2j](https://github.com/boxlite-ai/boxlite/security/advisories/GHSA-f396-4rp4-7v2j)
