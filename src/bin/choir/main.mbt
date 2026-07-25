@@ -71,7 +71,7 @@ fn stop_run() -> Unit {
         Ok(report) => {
           @sys.init_cleanup_purge_artifacts_native()
           @sys.write_stdout(
-            "Purged \{report.runtime_roots_removed} Goal runtime root(s) and \{report.git_refs_removed} owned Git ref(s).\n",
+            "Purged \{report.runtime_roots_removed} Goal runtime root(s), \{report.git_refs_removed} owned Git ref(s), and released \{report.source_claims_released} Bead claim(s).\n",
           )
           @sys.write_stdout("Choir stopped.\n")
         }

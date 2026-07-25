@@ -941,9 +941,60 @@ async test "Goal runtime purge is a no-op without durable state" {
   let root = "/tmp/choir-goal-purge-empty-" + @sys.get_pid().to_string()
   ignore(@sys.rm_rf(root))
   assert_true(@sys.create_dir_all(root))
-  assert_eq(purge_native_goal_resources(root).unwrap(), {
-    runtime_roots_removed: 0,
-    git_refs_removed: 0,
-  })
+  let capture = async fn(_command : Command) {
+    @async.sleep(0)
+    (0, "[]")
+  }
+  let cleanup_runtime = async fn(
+    _repository_id : @workflow.RepositoryId,
+    _goal_id : @control.GoalId,
+  ) {
+    @async.sleep(0)
+    Ok(())
+  }
+  let purge_refs = async fn(_project_dir : String) {
+    @async.sleep(0)
+    Ok(0)
+  }
+  assert_eq(
+    purge_native_goal_resources(root, capture~, cleanup_runtime~, purge_refs~).unwrap(),
+    { source_claims_released: 0, runtime_roots_removed: 0, git_refs_removed: 0 },
+  )
+  ignore(@sys.rm_rf(root))
+}
+
+///|
+async test "Goal runtime purge does not decode incompatible durable state" {
+  let root = "/tmp/choir-goal-purge-incompatible-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(root))
+  assert_true(@sys.create_dir_all(root + "/.choir/state/control"))
+  assert_true(
+    @sys.write_file_atomic(
+      root + "/.choir/state/control/workflow.db",
+      "not a compatible workflow database",
+    ),
+  )
+  let capture = async fn(_command : Command) {
+    @async.sleep(0)
+    (0, "[]")
+  }
+  let cleanup_runtime = async fn(
+    _repository_id : @workflow.RepositoryId,
+    _goal_id : @control.GoalId,
+  ) {
+    @async.sleep(0)
+    Ok(())
+  }
+  let purge_refs = async fn(_project_dir : String) {
+    @async.sleep(0)
+    Ok(0)
+  }
+  assert_eq(
+    purge_native_goal_resources(root, capture~, cleanup_runtime~, purge_refs~).unwrap(),
+    { source_claims_released: 0, runtime_roots_removed: 0, git_refs_removed: 0 },
+  )
+  assert_true(
+    @sys.path_entry_exists(root + "/.choir/state/control/workflow.db"),
+  )
   ignore(@sys.rm_rf(root))
 }
