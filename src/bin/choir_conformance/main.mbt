@@ -3868,6 +3868,7 @@ async fn run_boxlite_take_live() -> Int {
       binary,
       runtime_dir,
       root,
+      home: "/tmp/choir-boxlite-take-live-" + @sys.get_pid().to_string(),
       port: 24000 + @sys.get_pid() % 12000,
       api_key: "choir-take-live-" + @sys.get_pid().to_string(),
     }) {

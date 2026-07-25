@@ -2,7 +2,15 @@
 pub(all) struct NativeBoxLiteServerConfig {
   binary : String
   runtime_dir : String
+  /// Per-Goal runtime root: staging, results, client sockets, and the sandbox
+  /// registry, all discarded with the Goal that owns them.
   root : String
+  /// BoxLite home: the image store, box database, and locks. Scoped to the
+  /// repository rather than the Goal, because the pinned Take image is
+  /// identical for every Goal and a per-Goal home re-pulls it from the registry
+  /// every time — the home is where cached images live, so tying its lifetime
+  /// to one Goal throws the cache away with it.
+  home : String
   port : Int
   api_key : String
 } derive(Debug, Eq)
@@ -104,11 +112,17 @@ fn validate_native_boxlite_server_config(
   config : NativeBoxLiteServerConfig,
 ) -> Result[Unit, @types.ChoirError] {
   let root_prefix = "/tmp/choir-take-"
+  let home_prefix = "/tmp/choir-boxlite-"
   if !config.binary.has_prefix("/") ||
     !config.runtime_dir.has_prefix("/") ||
     !config.root.has_prefix(root_prefix) ||
     !valid_native_boxlite_token(
       config.root[root_prefix.length():].to_owned(),
+      120,
+    ) ||
+    !config.home.has_prefix(home_prefix) ||
+    !valid_native_boxlite_token(
+      config.home[home_prefix.length():].to_owned(),
       120,
     ) ||
     config.port < 1024 ||
@@ -202,6 +216,7 @@ test "remote BoxLite clients get deterministic isolated homes" {
       binary: "/bin/boxlite",
       runtime_dir: "/runtime",
       root: "/tmp/choir-take-client-home-test",
+      home: "/tmp/choir-boxlite-client-home-test",
       port: 12345,
       api_key: "key",
     },
@@ -283,7 +298,7 @@ async fn capture_native_boxlite_local_cli(
   command : Array[String],
   timeout_ms : Int,
 ) -> Result[@sandbox.BoxLiteProbeCapture, @types.ChoirError] {
-  let args : Array[String] = ["--home", config.root + "/server-home"]
+  let args : Array[String] = ["--home", config.home]
   for item in command {
     args.push(item)
   }
@@ -310,7 +325,7 @@ pub async fn start_native_boxlite_server(
   }
   if !@sys.create_dir_all(config.root) ||
     !@sys.create_dir_all(config.root + "/tmp") ||
-    !@sys.create_dir_all(config.root + "/server-home") ||
+    !@sys.create_dir_all(config.home) ||
     !@sys.create_dir_all(config.root + "/clients") ||
     !@sys.create_dir_all(config.root + "/staging") ||
     !@sys.create_dir_all(config.root + "/results") {
@@ -353,12 +368,7 @@ pub async fn start_native_boxlite_server(
   let image = match
     capture_boxlite_fixed_process(
       config.binary,
-      [
-        "--home",
-        config.root + "/server-home",
-        "pull",
-        @sandbox.boxlite_take_image,
-      ],
+      ["--home", config.home, "pull", @sandbox.boxlite_take_image],
       config.root,
       boxlite_probe_environment_with_runtime(
         config.root,
@@ -380,7 +390,7 @@ pub async fn start_native_boxlite_server(
   let url = "http://127.0.0.1:" + config.port.to_string()
   let args = [
     "--home",
-    config.root + "/server-home",
+    config.home,
     "serve",
     "--host",
     "127.0.0.1",
@@ -480,7 +490,7 @@ pub async fn start_native_boxlite_server(
           "--runtime-dir",
           config.runtime_dir,
           "--home",
-          config.root + "/server-home",
+          config.home,
           "--url",
           url,
         ],
@@ -627,6 +637,7 @@ async test "native BoxLite cleanup removes sealed result trees" {
     binary: "/opt/boxlite",
     runtime_dir: "/opt/runtime",
     root,
+    home: "/tmp/choir-boxlite-cleanup-test",
     port: 22000,
     api_key: "cleanup-test",
   }).unwrap()
@@ -2051,6 +2062,7 @@ async test "native result archive is inspected through the production tar seam" 
         binary: "/opt/boxlite",
         runtime_dir: "/opt/runtime",
         root,
+        home: "/tmp/choir-boxlite-archive-test",
         port: 22000,
         api_key: "archive-test",
       },
@@ -2273,6 +2285,7 @@ test "native BoxLite MCP launch binds one fixed box" {
       binary: "/opt/boxlite",
       runtime_dir: "/opt/runtime",
       root: "/tmp/choir-take-test",
+      home: "/tmp/choir-boxlite-take-test",
       port: 22000,
       api_key: "take-key",
     },

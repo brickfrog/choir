@@ -679,6 +679,7 @@ async test "process execution state persists and recovers every start boundary" 
         binary: "/bin/false",
         runtime_dir: "/tmp",
         root,
+        home: "/tmp/choir-boxlite-process-state",
         port: 32123,
         api_key: "process-state-key",
       },
