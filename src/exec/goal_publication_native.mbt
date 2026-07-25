@@ -1629,14 +1629,17 @@ async fn prove_publication_fault_recovery(
     Ok(_) => ()
     Err(error) => fail(label + ": " + error.message())
   }
-  assert_true(
-    advance_native_goal_publication(root, goal_id, fault=Some(fault)) is Err(_),
-  )
-  let interrupted = @workflow.load_goal_publication_record(
-      repository, adapters, goal_id,
-    )
-    .unwrap()
-    .unwrap().record
+  match advance_native_goal_publication(root, goal_id, fault=Some(fault)) {
+    Err(_) => ()
+    Ok(_) => fail(label + ": injected publication fault did not interrupt")
+  }
+  let interrupted = match
+    @workflow.load_goal_publication_record(repository, adapters, goal_id) {
+    Ok(Some(value)) => value.record
+    Ok(None) => fail(label + ": interrupted publication record is absent")
+    Err(error) =>
+      fail(label + ": interrupted publication record: " + error.message())
+  }
   assert_eq(interrupted.intent.state, expected_state)
   let observed = git(root, ["ls-remote", "--refs", "origin", goal_ref.0])
   assert_eq(observed.0, 0)
