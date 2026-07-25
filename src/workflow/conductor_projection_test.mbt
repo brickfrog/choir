@@ -235,9 +235,9 @@ test "an attention summary names the durable cause, not the counters" {
 ///|
 test "a running Goal reports the stage its Parts reached, not queued" {
   let phase_for = fn(stage) {
-    @workflow.conductor_goal_display(projection_report(parts=[projection_part(stage)]))
-    .unwrap()
-    .phase
+    @workflow.conductor_goal_display(
+      projection_report(parts=[projection_part(stage)]),
+    ).unwrap().phase
   }
   assert_eq(
     phase_for(@workflow.PartWorkflowStage::PartImplementationHarnessStarted),

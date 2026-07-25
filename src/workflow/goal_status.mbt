@@ -439,7 +439,8 @@ pub fn semantic_run_projection(
     @control.audit_findings_admission(
       goal_audit.outcome,
       goal_audit.blocking_findings_count,
-    ) is Some(_) {
+    )
+    is Some(_) {
     return Err(
       goal_execution_error("successful Goal semantic evidence is inconsistent"),
     )
@@ -515,7 +516,8 @@ pub fn semantic_run_projection(
       @control.audit_findings_admission(
         audit.outcome,
         audit.blocking_findings_count,
-      ) is None else {
+      )
+      is None else {
       return Err(
         goal_execution_error(
           "semantic projection Part evidence is inconsistent",

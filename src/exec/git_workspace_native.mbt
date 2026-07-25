@@ -56,7 +56,7 @@ fn native_git_workspace_environment(
   index_file : String?,
   work_tree : String?,
   commit : Bool,
-  commit_epoch~ : Int64 = 0L,
+  commit_epoch? : Int64 = 0L,
 ) -> Map[String, String] {
   let environment = native_git_environment(commit, commit_epoch~)
   environment["GIT_DIR"] = config.staging_root + "/git-control"
@@ -132,7 +132,11 @@ async fn capture_native_git_workspace_process(
       "/usr/bin/git",
       args,
       extra_env=native_git_workspace_environment(
-        config, index_file, work_tree, commit, commit_epoch~,
+        config,
+        index_file,
+        work_tree,
+        commit,
+        commit_epoch~,
       ),
       inherit_env=false,
       cwd=config.staging_root,
@@ -468,10 +472,16 @@ pub async fn normalize_native_git_candidate(
   }
   let base_epoch = match
     capture_native_git_workspace_process(config, [
-      "show", "-s", "--format=%ct", "--no-show-signature", base_commit_oid.0,
+      "show",
+      "-s",
+      "--format=%ct",
+      "--no-show-signature",
+      base_commit_oid.0,
     ]) {
     Ok(read) if read.exit_code == 0 =>
-      @string.parse_int64(read.output.trim().to_owned()) catch { _ => 0L }
+      @string.parse_int64(read.output.trim().to_owned()) catch {
+        _ => 0L
+      }
     _ => 0L
   }
   let commit_oid = match

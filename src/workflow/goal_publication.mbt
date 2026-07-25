@@ -237,7 +237,10 @@ fn goal_publication_assurance_is_current(
   // Restating it drifted: an audit the gate authorized with advisory findings
   // was rejected here, and the publication tick then failed forever with no
   // durable state to explain it.
-  @control.audit_findings_admission(audit.outcome, audit.blocking_findings_count)
+  @control.audit_findings_admission(
+    audit.outcome,
+    audit.blocking_findings_count,
+  )
   is None
 }
 

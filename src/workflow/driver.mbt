@@ -472,28 +472,48 @@ async fn drive_part_workflow(
               if part_effect_is_provider_dispatch(intent) &&
                 error.is_provider_protocol_violation() {
                 return persist_provider_protocol_violation(
-                  repository, repository_adapters, snapshot, store_version, intent,
-                  dependencies, error.message(),
+                  repository,
+                  repository_adapters,
+                  snapshot,
+                  store_version,
+                  intent,
+                  dependencies,
+                  error.message(),
                 )
               }
               if part_effect_is_provider_dispatch(intent) &&
                 error.is_event_ingestion_overflow() {
                 return persist_event_ingestion_overflow(
-                  repository, repository_adapters, snapshot, store_version, intent,
-                  dependencies, error.message(),
+                  repository,
+                  repository_adapters,
+                  snapshot,
+                  store_version,
+                  intent,
+                  dependencies,
+                  error.message(),
                 )
               }
               if part_effect_is_dispatch(intent) &&
                 (error.is_provider_process_lost() || error.is_timeout()) {
                 return persist_provider_process_loss(
-                  repository, repository_adapters, snapshot, store_version, intent,
-                  dependencies, error.message(),
+                  repository,
+                  repository_adapters,
+                  snapshot,
+                  store_version,
+                  intent,
+                  dependencies,
+                  error.message(),
                 )
               }
               if part_effect_is_dispatch(intent) {
                 record_dispatch_failure(
-                  repository, repository_adapters, snapshot, store_version, intent,
-                  dependencies, error.message(),
+                  repository,
+                  repository_adapters,
+                  snapshot,
+                  store_version,
+                  intent,
+                  dependencies,
+                  error.message(),
                 )
               }
               return Err(error)
@@ -507,24 +527,39 @@ async fn drive_part_workflow(
                 Ok(value) => value
                 Err(error) => {
                   if part_effect_is_provider_dispatch(intent) &&
-                error.is_provider_protocol_violation() {
+                    error.is_provider_protocol_violation() {
                     return persist_provider_protocol_violation(
-                      repository, repository_adapters, snapshot, store_version, intent,
-                      dependencies, error.message(),
+                      repository,
+                      repository_adapters,
+                      snapshot,
+                      store_version,
+                      intent,
+                      dependencies,
+                      error.message(),
                     )
                   }
                   if part_effect_is_provider_dispatch(intent) &&
-                error.is_event_ingestion_overflow() {
+                    error.is_event_ingestion_overflow() {
                     return persist_event_ingestion_overflow(
-                      repository, repository_adapters, snapshot, store_version, intent,
-                      dependencies, error.message(),
+                      repository,
+                      repository_adapters,
+                      snapshot,
+                      store_version,
+                      intent,
+                      dependencies,
+                      error.message(),
                     )
                   }
                   if part_effect_is_dispatch(intent) &&
-                (error.is_provider_process_lost() || error.is_timeout()) {
+                    (error.is_provider_process_lost() || error.is_timeout()) {
                     return persist_provider_process_loss(
-                      repository, repository_adapters, snapshot, store_version, intent,
-                      dependencies, error.message(),
+                      repository,
+                      repository_adapters,
+                      snapshot,
+                      store_version,
+                      intent,
+                      dependencies,
+                      error.message(),
                     )
                   }
                   return Err(error)
@@ -540,28 +575,48 @@ async fn drive_part_workflow(
               if part_effect_is_provider_dispatch(intent) &&
                 error.is_provider_protocol_violation() {
                 return persist_provider_protocol_violation(
-                  repository, repository_adapters, snapshot, store_version, intent,
-                  dependencies, error.message(),
+                  repository,
+                  repository_adapters,
+                  snapshot,
+                  store_version,
+                  intent,
+                  dependencies,
+                  error.message(),
                 )
               }
               if part_effect_is_provider_dispatch(intent) &&
                 error.is_event_ingestion_overflow() {
                 return persist_event_ingestion_overflow(
-                  repository, repository_adapters, snapshot, store_version, intent,
-                  dependencies, error.message(),
+                  repository,
+                  repository_adapters,
+                  snapshot,
+                  store_version,
+                  intent,
+                  dependencies,
+                  error.message(),
                 )
               }
               if part_effect_is_dispatch(intent) &&
                 (error.is_provider_process_lost() || error.is_timeout()) {
                 return persist_provider_process_loss(
-                  repository, repository_adapters, snapshot, store_version, intent,
-                  dependencies, error.message(),
+                  repository,
+                  repository_adapters,
+                  snapshot,
+                  store_version,
+                  intent,
+                  dependencies,
+                  error.message(),
                 )
               }
               if part_effect_is_dispatch(intent) {
                 record_dispatch_failure(
-                  repository, repository_adapters, snapshot, store_version, intent,
-                  dependencies, error.message(),
+                  repository,
+                  repository_adapters,
+                  snapshot,
+                  store_version,
+                  intent,
+                  dependencies,
+                  error.message(),
                 )
               }
               return Err(error)

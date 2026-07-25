@@ -233,17 +233,20 @@ fn native_git_commit_date(epoch : Int64) -> String {
 
 ///|
 test "a created commit inherits the newest parent's date" {
-  assert_eq(native_git_inherited_commit_epoch([1700000000L, 1699999999L]), 1700000000L)
+  assert_eq(
+    native_git_inherited_commit_epoch([1700000000L, 1699999999L]),
+    1700000000L,
+  )
   assert_eq(native_git_inherited_commit_epoch([]), 0L)
   assert_eq(native_git_inherited_commit_epoch([-5L]), 0L)
   assert_eq(native_git_commit_date(1700000000L), "@1700000000 +0000")
 }
 
 ///|
-fn native_git_environment(commit : Bool, commit_epoch~ : Int64 = 0L) -> Map[
-  String,
-  String,
-] {
+fn native_git_environment(
+  commit : Bool,
+  commit_epoch? : Int64 = 0L,
+) -> Map[String, String] {
   let environment : Map[String, String] = {
     "PATH": "/usr/bin:/bin",
     "HOME": "/nonexistent",
@@ -268,7 +271,7 @@ fn native_git_integration_environment(
   config : NativeGitIntegrationConfig,
   object_access : Bool,
   commit : Bool,
-  commit_epoch~ : Int64 = 0L,
+  commit_epoch? : Int64 = 0L,
 ) -> Map[String, String] {
   let environment = native_git_environment(commit, commit_epoch~)
   environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
@@ -658,7 +661,9 @@ pub async fn generate_native_promotion(
       Ok(read) =>
         if read.exit_code == 0 {
           parent_epochs.push(
-            @string.parse_int64(read.output.trim().to_owned()) catch { _ => 0L },
+            @string.parse_int64(read.output.trim().to_owned()) catch {
+              _ => 0L
+            },
           )
         }
       Err(error) => return Err(error)

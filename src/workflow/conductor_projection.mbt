@@ -123,11 +123,14 @@ pub fn goal_report_attention_summary(report : GoalStatusReport) -> String? {
   }
   match report.active_input_request {
     Some(request) =>
-      causes.push("input requested " + request.reason.to_json().stringify(indent=0))
+      causes.push(
+        "input requested " + request.reason.to_json().stringify(indent=0),
+      )
     None => ()
   }
   match report.pause_reason {
-    Some(reason) => causes.push("paused " + reason.to_json().stringify(indent=0))
+    Some(reason) =>
+      causes.push("paused " + reason.to_json().stringify(indent=0))
     None => ()
   }
   if causes.length() == 0 {

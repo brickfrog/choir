@@ -175,7 +175,8 @@ pub fn evaluate_part_audit_gate(
     expected_provider_conformance_digest {
     return AuditGateStale(AuditStaleProviderConformance)
   }
-  match audit_findings_admission(receipt.outcome, receipt.blocking_findings_count) {
+  match
+    audit_findings_admission(receipt.outcome, receipt.blocking_findings_count) {
     Some(rejection) => return AuditGateRejected(rejection)
     None => ()
   }

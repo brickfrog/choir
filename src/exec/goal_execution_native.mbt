@@ -3460,8 +3460,10 @@ fn native_goal_assurance_plan(
           spec_digest
         ) if spec_id == source_spec.id &&
           spec_digest == source_spec.digest &&
-          (take_id == snapshot.verification_take.id ||
-          snapshot.prior_takes.any(fn(prior) { prior.id == take_id })) => ()
+          (
+            take_id == snapshot.verification_take.id ||
+            snapshot.prior_takes.any(fn(prior) { prior.id == take_id })
+          ) => ()
         _ =>
           return Err(
             native_goal_execution_error(
