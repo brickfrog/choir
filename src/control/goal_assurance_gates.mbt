@@ -238,11 +238,9 @@ pub fn evaluate_goal_audit_gate(
     expected_provider_conformance_digest {
     return AuditGateStale(AuditStaleProviderConformance)
   }
-  if receipt.outcome != AuditPassed {
-    return AuditGateRejected(AuditOutcomeNotPassing)
-  }
-  if receipt.total_findings_count != 0 || receipt.blocking_findings_count != 0 {
-    return AuditGateRejected(AuditHasBlockingFindings)
+  match audit_findings_admission(receipt.outcome, receipt.blocking_findings_count) {
+    Some(rejection) => return AuditGateRejected(rejection)
+    None => ()
   }
   let result = match result {
     Some(value) => value

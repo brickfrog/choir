@@ -331,9 +331,23 @@ pub fn conductor_goal_display(
       } else {
         ConductorGoalPhase::ConductorPhasePublish
       }
-    GoalExecutionState::GoalExecutionRunning if report.parts.length() > 0 &&
-      integrated == report.parts.length() =>
-      ConductorGoalPhase::ConductorPhaseAssure
+    // A running Goal reports the furthest stage its Parts have reached. It
+    // used to render as "queued" for the entire length of a Take, which reads
+    // as "nothing has started" while a provider session is doing the work.
+    GoalExecutionState::GoalExecutionRunning if report.parts.length() > 0 =>
+      if integrated == report.parts.length() {
+        ConductorGoalPhase::ConductorPhaseAssure
+      } else if integration > 0 {
+        ConductorGoalPhase::ConductorPhaseIntegrate
+      } else if audit > 0 {
+        ConductorGoalPhase::ConductorPhaseAudit
+      } else if verification > 0 {
+        ConductorGoalPhase::ConductorPhaseVerify
+      } else if implementation > 0 {
+        ConductorGoalPhase::ConductorPhaseImplement
+      } else {
+        ConductorGoalPhase::ConductorPhaseQueued
+      }
     _ => ConductorGoalPhase::ConductorPhaseQueued
   }
   Some({

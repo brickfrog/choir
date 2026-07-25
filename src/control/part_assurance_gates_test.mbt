@@ -329,3 +329,30 @@ test "integration authorization and witness bind the audited candidate" {
     _ => fail("expected applied integration receipt")
   }
 }
+
+///|
+test "advisory audit findings authorize while blocking findings reject" {
+  assert_eq(
+    @control.audit_findings_admission(@control.AuditOutcome::AuditPassed, 0),
+    None,
+  )
+  assert_eq(
+    @control.audit_findings_admission(@control.AuditOutcome::AuditFindings, 0),
+    None,
+  )
+  assert_eq(
+    @control.audit_findings_admission(@control.AuditOutcome::AuditFindings, 1),
+    Some(@control.AuditGateRejectionReason::AuditHasBlockingFindings),
+  )
+  assert_eq(
+    @control.audit_findings_admission(@control.AuditOutcome::AuditFailed, 0),
+    Some(@control.AuditGateRejectionReason::AuditOutcomeNotPassing),
+  )
+  assert_eq(
+    @control.audit_findings_admission(
+      @control.AuditOutcome::AuditInterrupted,
+      0,
+    ),
+    Some(@control.AuditGateRejectionReason::AuditOutcomeNotPassing),
+  )
+}

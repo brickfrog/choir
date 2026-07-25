@@ -484,6 +484,8 @@ fn conductor_statusline_test_part(
     effect_receipt_count: 0,
     verification_receipt_count: 0,
     audit_receipt_present: false,
+    audit_total_findings_count: 0,
+    audit_blocking_findings_count: 0,
     integration_receipt_present: false,
     dispatch_diagnostic: None,
   }

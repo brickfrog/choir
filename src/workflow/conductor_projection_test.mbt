@@ -24,6 +24,8 @@ fn projection_part(
     effect_receipt_count,
     verification_receipt_count: 0,
     audit_receipt_present: false,
+    audit_total_findings_count: 0,
+    audit_blocking_findings_count: 0,
     integration_receipt_present: false,
     dispatch_diagnostic: None,
   }
@@ -227,4 +229,37 @@ test "an attention summary names the durable cause, not the counters" {
   assert_true(summary.contains("part-a"))
   assert_true(summary.contains("PartRecoveryUncertain"))
   assert_true(summary.contains("codex exit 1"))
+}
+
+///|
+test "a running Goal reports the stage its Parts reached, not queued" {
+  let phase_for = fn(stage) {
+    @workflow.conductor_goal_display(projection_report(parts=[projection_part(stage)]))
+    .unwrap()
+    .phase
+  }
+  assert_eq(
+    phase_for(@workflow.PartWorkflowStage::PartImplementationHarnessStarted),
+    @workflow.ConductorGoalPhase::ConductorPhaseImplement,
+  )
+  assert_eq(
+    phase_for(@workflow.PartWorkflowStage::PartCandidateRecorded),
+    @workflow.ConductorGoalPhase::ConductorPhaseVerify,
+  )
+  assert_eq(
+    phase_for(@workflow.PartWorkflowStage::PartAuditHarnessStarted),
+    @workflow.ConductorGoalPhase::ConductorPhaseAudit,
+  )
+  assert_eq(
+    phase_for(@workflow.PartWorkflowStage::PartIntegrationPlanned),
+    @workflow.ConductorGoalPhase::ConductorPhaseIntegrate,
+  )
+  assert_eq(
+    phase_for(@workflow.PartWorkflowStage::PartIntegrated),
+    @workflow.ConductorGoalPhase::ConductorPhaseAssure,
+  )
+  assert_eq(
+    phase_for(@workflow.PartWorkflowStage::PartAccepted),
+    @workflow.ConductorGoalPhase::ConductorPhaseQueued,
+  )
 }

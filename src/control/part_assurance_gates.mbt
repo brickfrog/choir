@@ -117,6 +117,32 @@ fn audit_result_matches_receipt(
 }
 
 ///|
+/// Whether an audit outcome authorizes its subject, or the reason it does not.
+///
+/// Auditors are instructed to return "outcome findings with exact total and
+/// blocking counts", so the two counts are a deliberate distinction: a
+/// blocking finding rejects the subject, while an advisory one is recorded
+/// against the retained findings artifact and does not discard an otherwise
+/// clean candidate. Treating any nonzero total as blocking would make the
+/// blocking count unreachable and no audited subject could carry an advisory
+/// note.
+pub fn audit_findings_admission(
+  outcome : AuditOutcome,
+  blocking_findings_count : Int,
+) -> AuditGateRejectionReason? {
+  match outcome {
+    AuditPassed => None
+    AuditFindings =>
+      if blocking_findings_count != 0 {
+        Some(AuditHasBlockingFindings)
+      } else {
+        None
+      }
+    AuditFailed | AuditInterrupted => Some(AuditOutcomeNotPassing)
+  }
+}
+
+///|
 pub fn evaluate_part_audit_gate(
   subject : PartAuditSubject,
   receipt : AuditReceipt?,
@@ -149,11 +175,9 @@ pub fn evaluate_part_audit_gate(
     expected_provider_conformance_digest {
     return AuditGateStale(AuditStaleProviderConformance)
   }
-  if receipt.outcome != AuditPassed {
-    return AuditGateRejected(AuditOutcomeNotPassing)
-  }
-  if receipt.total_findings_count != 0 || receipt.blocking_findings_count != 0 {
-    return AuditGateRejected(AuditHasBlockingFindings)
+  match audit_findings_admission(receipt.outcome, receipt.blocking_findings_count) {
+    Some(rejection) => return AuditGateRejected(rejection)
+    None => ()
   }
   let result = match result {
     Some(result) => result
