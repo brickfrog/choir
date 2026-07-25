@@ -1383,6 +1383,75 @@ fn find_native_codex_turn(
 }
 
 ///|
+/// Longest the turn poll may rely on the notification stream alone before it
+/// reads the thread again. The read is the authority on turn status; this
+/// bounds how long a missing or unrecognized `turn/*` notification can delay
+/// observing a terminal turn.
+let native_codex_turn_read_interval_ms : Int = 30000
+
+///|
+/// Latest status the app-server published for `turn_id` in its notification
+/// stream.
+///
+/// `thread/read` returns the whole thread on every call, so polling it at the
+/// turn cadence appends a full thread snapshot to the append-only event spool
+/// on every iteration: spool bytes grow with reads times thread size while the
+/// thread itself stays small, and the ingestion budget is exhausted by repeated
+/// copies of one conversation rather than by event volume. The `turn/started`
+/// and `turn/completed` notifications already carry `params.turn.status`, so
+/// the poll watches them instead and reads the thread only once the turn is no
+/// longer running.
+fn native_codex_turn_status_from_events(
+  spool : String,
+  turn_id : String,
+) -> String? {
+  let mut status = None
+  for raw in spool.split("\n") {
+    let line = raw.trim().to_owned()
+    if line == "" {
+      continue
+    }
+    let json = @json.parse(line) catch { _ => continue }
+    guard json is Object(fields) else { continue }
+    let notification = match @types.json_field_string(fields, "method") {
+      Some(value) => value
+      None => continue
+    }
+    if !notification.has_prefix("turn/") {
+      continue
+    }
+    let params = match native_codex_object_field(fields, "params") {
+      Some(value) => value
+      None => continue
+    }
+    let turn = match native_codex_object_field(params, "turn") {
+      Some(value) => value
+      None => continue
+    }
+    if @types.json_field_string(turn, "id") != Some(turn_id) {
+      continue
+    }
+    match @types.json_field_string(turn, "status") {
+      Some(value) => status = Some(value)
+      None => ()
+    }
+  }
+  status
+}
+
+///|
+fn native_codex_observed_turn_status(
+  config : NativeCodexDriverConfig,
+  turn_id : String,
+) -> String? {
+  let path = native_codex_log_path(config)
+  if !@sys.path_exists(path) {
+    return None
+  }
+  native_codex_turn_status_from_events(@sys.read_file(path), turn_id)
+}
+
+///|
 fn native_codex_turn_trace(
   thread_id : String,
   turn : Map[String, Json],
@@ -1749,6 +1818,7 @@ pub async fn run_native_codex_take(
       }
     }
     let mut elapsed_ms = 0
+    let mut last_turn_read_ms = 0
     let mut interrupt_sent = false
     while terminal_trace == "" {
       manifest = match
@@ -1785,6 +1855,23 @@ pub async fn run_native_codex_take(
           Err(error) => return Err(error)
         }
       }
+      let running_per_events = match manifest.turn_id {
+        Some(turn_id) =>
+          native_codex_observed_turn_status(config, turn_id) ==
+          Some("inProgress")
+        None => false
+      }
+      let read_is_due = elapsed_ms - last_turn_read_ms >=
+        native_codex_turn_read_interval_ms
+      if running_per_events && !read_is_due {
+        if elapsed_ms >= config.timeout_ms {
+          return Err(@types.ChoirError::timeout("Codex Take"))
+        }
+        @async.sleep(200)
+        elapsed_ms = elapsed_ms + 200
+        continue
+      }
+      last_turn_read_ms = elapsed_ms
       let read = match read_native_codex_thread(config, manifest) {
         Ok(value) => value
         Err(error) => return Err(error)
@@ -2203,6 +2290,47 @@ test "Codex recovery adopts the turn with the durable client message id" {
   assert_true(turn is Some(_))
   guard turn is Some(fields) else { fail("recovery turn is absent") }
   assert_eq(@types.json_field_string(fields, "id"), Some("turn-recovery"))
+}
+
+///|
+test "Codex turn status comes from the notification stream" {
+  let spool =
+    #|{"method":"thread/started","params":{"threadId":"thread-1"}}
+    #|{"method":"turn/started","params":{"threadId":"thread-1","turn":{"id":"turn-1","items":[],"itemsView":"notLoaded","status":"inProgress"}}}
+    #|{"id":"thread-read:1","result":{"thread":{"id":"thread-1","turns":[]}}}
+    #|{"method":"item/completed","params":{"threadId":"thread-1","item":{"id":"item-1"}}}
+    #|{"method":"turn/started","params":{"threadId":"thread-1","turn":{"id":"turn-other","status":"inProgress"}}}
+    #|{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","items":[],"itemsView":"notLoaded","status":"completed"}}}
+    #|
+  // The last status published for the turn wins, and a sibling turn's
+  // notifications never leak into it.
+  assert_eq(
+    native_codex_turn_status_from_events(spool, "turn-1"),
+    Some("completed"),
+  )
+  assert_eq(
+    native_codex_turn_status_from_events(spool, "turn-other"),
+    Some("inProgress"),
+  )
+  // An unobserved turn keeps the poll on the authoritative thread read.
+  assert_eq(native_codex_turn_status_from_events(spool, "turn-absent"), None)
+}
+
+///|
+test "Codex turn status tolerates a truncated or interleaved spool" {
+  let spool =
+    #|not json at all
+    #|{"method":"turn/started","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"inProgress"}}}
+    #|{"method":"turn/completed","params":{}}
+    #|{"method":"turn/completed","params":{"turn":{"id":"turn-1"}}}
+    #|{"id":"thread-read:2","result":{"thread":{"id":"thread-1"}}}
+    #|{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"tur
+  // Malformed, partial, and field-less records are skipped rather than
+  // fabricating a terminal status, so a torn final line keeps the turn running.
+  assert_eq(
+    native_codex_turn_status_from_events(spool, "turn-1"),
+    Some("inProgress"),
+  )
 }
 
 ///|
