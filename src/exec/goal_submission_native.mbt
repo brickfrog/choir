@@ -188,12 +188,93 @@ async fn capture_native_goal_selection_source(
 }
 
 ///|
+/// Whether a Goal may be based on a commit its upstream does not have.
+///
+/// Choir cuts the Goal branch from the current base and opens the pull request
+/// against that same branch on the remote. When the local base carries commits
+/// the remote has not seen, every one of them lands in the Goal's pull request
+/// alongside the Part's work, which misrepresents what the Goal changed.
+/// Rejecting at submission costs a push; discovering it costs a whole run.
+fn native_goal_unpushed_base_rejection(
+  base_ref : @workflow.GitRefName,
+  ahead : Int,
+) -> @types.ChoirError? {
+  if ahead <= 0 {
+    None
+  } else {
+    Some(
+      native_goal_submission_error(
+        base_ref.0 +
+        " is " +
+        ahead.to_string() +
+        " commit(s) ahead of its upstream; push it first or the Goal's pull request will contain them",
+      ),
+    )
+  }
+}
+
+///|
+test "an unpushed base is rejected before a Goal can bake it into a PR" {
+  let base = @workflow.GitRefName("refs/heads/main")
+  assert_true(native_goal_unpushed_base_rejection(base, 0) is None)
+  match native_goal_unpushed_base_rejection(base, 2) {
+    Some(error) => {
+      assert_true(error.message().contains("refs/heads/main is 2 commit(s)"))
+      assert_true(error.message().contains("push it first"))
+    }
+    None => fail("an unpushed base was admitted")
+  }
+}
+
+///|
+/// Count commits on `base_ref` that its upstream does not have. A base with no
+/// configured upstream cannot be checked and is reported as zero rather than
+/// blocking submission on a repository that does not track a remote.
+async fn native_goal_base_ahead_of_upstream(
+  capture : async (Command) -> (Int, String),
+  project_dir : String,
+  base_ref : @workflow.GitRefName,
+) -> Int {
+  let (upstream_status, upstream) = capture({
+    program: "git",
+    args: ["rev-parse", "--verify", "--quiet", base_ref.0 + "@{upstream}"],
+    workdir: Some(project_dir),
+  })
+  if upstream_status != 0 || upstream.trim().to_owned() == "" {
+    return 0
+  }
+  let (count_status, count) = capture({
+    program: "git",
+    args: [
+      "rev-list",
+      "--count",
+      upstream.trim().to_owned() + ".." + base_ref.0,
+    ],
+    workdir: Some(project_dir),
+  })
+  if count_status != 0 {
+    return 0
+  }
+  @string.parse_int(count.trim().to_owned()) catch {
+    _ => 0
+  }
+}
+
+///|
 async fn capture_native_goal_selection_snapshot(
   source : NativeGoalSelectionSourceCapture,
   base_ref : @workflow.GitRefName,
   project_dir : String,
   capture : async (Command) -> (Int, String),
 ) -> Result[@workflow.GoalSelectionSnapshot, @types.ChoirError] {
+  match
+    native_goal_unpushed_base_rejection(
+      base_ref,
+      native_goal_base_ahead_of_upstream(capture, project_dir, base_ref),
+    ) {
+    Some(rejection) => return Err(rejection)
+    None => ()
+  }
   let base_commit = match
     native_goal_submission_capture(
       capture,
