@@ -845,6 +845,19 @@ fn native_goal_runtime_root(
 }
 
 ///|
+/// BoxLite home shared by every Goal in a repository.
+///
+/// The pinned Take image is the same for all of them, and BoxLite only knows an
+/// image is cached when its home's database says so, so a home scoped to one
+/// Goal pulls the image again for the next one. Keeping the home per repository
+/// pulls it once; Goal-scoped state stays under the Goal runtime root and is
+/// still discarded with the Goal.
+fn native_goal_boxlite_home(repository_id : @workflow.RepositoryId) -> String {
+  "/tmp/choir-boxlite-" +
+  @storage.artifact_digest(@utf8.encode(repository_id.0)).0[:20].to_owned()
+}
+
+///|
 fn native_goal_repository_id(
   project_dir : String,
 ) -> Result[@workflow.RepositoryId, @types.ChoirError] {
@@ -876,6 +889,34 @@ fn native_existing_sandbox_generation(
     }
   }
   None
+}
+
+///|
+test "the BoxLite home outlives the Goals that share it" {
+  let repository = @workflow.RepositoryId("repository-a")
+  let other_repository = @workflow.RepositoryId("repository-b")
+  let goal_a = @control.GoalId("goal-a")
+  let goal_b = @control.GoalId("goal-b")
+  // Two Goals in one repository share a home, so the pinned Take image is
+  // pulled once rather than once per Goal.
+  assert_eq(
+    native_goal_boxlite_home(repository),
+    native_goal_boxlite_home(repository),
+  )
+  assert_true(
+    native_goal_boxlite_home(repository) !=
+    native_goal_boxlite_home(other_repository),
+  )
+  // The home is not inside any Goal runtime root, so discarding a Goal cannot
+  // take the image cache with it.
+  let home = native_goal_boxlite_home(repository)
+  assert_false(home.has_prefix(native_goal_runtime_root(repository, goal_a)))
+  assert_false(home.has_prefix(native_goal_runtime_root(repository, goal_b)))
+  assert_true(
+    native_goal_runtime_root(repository, goal_a) !=
+    native_goal_runtime_root(repository, goal_b),
+  )
+  assert_true(home.has_prefix("/tmp/choir-boxlite-"))
 }
 
 ///|
@@ -1044,6 +1085,7 @@ fn native_goal_boxlite_server_config(
     binary,
     runtime_dir,
     root: native_goal_runtime_root(record.repository_id, record.goal.id),
+    home: native_goal_boxlite_home(record.repository_id),
     port: 40000 + @sys.get_pid() % 10000,
     api_key: "choir-goal-" + runtime_key,
   })
@@ -1077,6 +1119,7 @@ async fn cleanup_native_goal_runtime_identity(
     binary,
     runtime_dir,
     root: runtime_root,
+    home: native_goal_boxlite_home(repository_id),
     port: 40000 + @sys.get_pid() % 10000,
     api_key: "choir-goal-" + native_goal_runtime_key(repository_id, goal_id),
   })

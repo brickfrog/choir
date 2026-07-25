@@ -330,6 +330,7 @@ pub async fn run_native_mixed_provider_goal_fixture(
       binary,
       runtime_dir,
       root,
+      home: "/tmp/choir-boxlite-mixed-" + @sys.get_pid().to_string(),
       port: 36000 + @sys.get_pid() % 12000,
       api_key: "choir-native-mixed-" + @sys.get_pid().to_string(),
     }) {

@@ -1014,6 +1014,7 @@ pub async fn run_native_part_lifecycle_fixture_for_surface(
       binary,
       runtime_dir,
       root,
+      home: "/tmp/choir-boxlite-part-" + @sys.get_pid().to_string(),
       port: 36000 + @sys.get_pid() % 12000,
       api_key: "choir-native-part-" + @sys.get_pid().to_string(),
     }) {
@@ -1304,6 +1305,7 @@ async fn run_native_part_cancellation_fixture_for_surface(
       binary,
       runtime_dir,
       root,
+      home: "/tmp/choir-boxlite-cancel-" + @sys.get_pid().to_string(),
       port: 36000 + @sys.get_pid() % 12000,
       api_key: "choir-native-cancel-" + @sys.get_pid().to_string(),
     }) {
