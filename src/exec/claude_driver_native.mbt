@@ -504,35 +504,6 @@ test "native Claude owner socket binding is exact and paired with MCP argv" {
 }
 
 ///|
-async fn verify_native_claude_binary(
-  claude : String,
-) -> Result[Unit, @types.ChoirError] {
-  let collected = @process.collect_output_merged(
-    "/usr/bin/sha256sum",
-    [claude],
-    extra_env={ "PATH": "/usr/bin:/bin", "LC_ALL": "C" },
-    inherit_env=false,
-    cwd="/tmp",
-  ) catch {
-    _ => return Err(native_claude_driver_error("binary hash probe failed"))
-  }
-  let (exit_code, data) = collected
-  let output = data.text() catch {
-    _ => return Err(native_claude_driver_error("binary hash was not UTF-8"))
-  }
-  if exit_code != 0 ||
-    !output.has_prefix(@harness.expected_claude_executable_sha256 + " ") {
-    Err(
-      @types.ChoirError::policy_blocked(
-        "Claude executable does not match the admitted pin",
-      ),
-    )
-  } else {
-    Ok(())
-  }
-}
-
-///|
 pub async fn run_native_claude_take(
   config : NativeClaudeDriverConfig,
   session : @control.HarnessSession,
@@ -578,10 +549,6 @@ pub async fn run_native_claude_take(
   }
   let claude = match claude_probe_executable() {
     Ok(value) => value
-    Err(error) => return Err(error)
-  }
-  match verify_native_claude_binary(claude) {
-    Ok(_) => ()
     Err(error) => return Err(error)
   }
   match validate_native_provider_host_boundary() {

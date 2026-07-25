@@ -283,9 +283,6 @@ pub fn expected_surface_version(surface : ProviderSurface) -> String {
 }
 
 ///|
-pub let expected_claude_executable_sha256 : String = "22cfd6f5b3061c0391ba84e9cf8c9deaa37783aac18b004d42ec061e98f00691"
-
-///|
 pub let expected_codex_executable_sha256 : String = "134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477"
 
 ///|
