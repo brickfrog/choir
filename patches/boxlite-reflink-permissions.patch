@@ -1,0 +1,13 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 8a31905b..6314bc47 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -4010,6 +4010,6 @@
+ [[package]]
+ name = "reflink-copy"
+-version = "0.1.29"
++version = "0.1.30"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "13362233b147e57674c37b802d216b7c5e3dcccbed8967c84f0d8d223868ae27"
++checksum = "d9dd7ab4af0363d5ccfd2838d782a28196cf32a5cc2e4fe3c5dc83f2be588b8b"
+ dependencies = [

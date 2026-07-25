@@ -845,16 +845,113 @@ fn native_goal_runtime_root(
 }
 
 ///|
+/// Select the durable data root used by repository-scoped BoxLite homes.
+///
+/// An empty XDG_DATA_HOME is unspecified by the XDG base-directory contract, so
+/// it falls back to HOME just like an absent value.
+fn native_boxlite_data_home_from(
+  xdg_data_home : String?,
+  home : String?,
+) -> Result[String, @types.ChoirError] {
+  let selected_xdg = match xdg_data_home {
+    Some(value) => if value == "" { None } else { Some(value) }
+    None => None
+  }
+  let path = match selected_xdg {
+    Some(value) => value
+    None =>
+      match home {
+        Some(value) =>
+          if value == "" {
+            return Err(
+              native_goal_execution_error(
+                "durable BoxLite data home is unavailable",
+              ),
+            )
+          } else {
+            value + "/.local/share"
+          }
+        None =>
+          return Err(
+            native_goal_execution_error(
+              "durable BoxLite data home is unavailable",
+            ),
+          )
+      }
+  }
+  if !path.has_prefix("/") ||
+    path == "/" ||
+    path.contains("/../") ||
+    path.has_suffix("/..") ||
+    path.has_suffix("/") {
+    return Err(
+      native_goal_execution_error("durable BoxLite data home is invalid"),
+    )
+  }
+  Ok(path)
+}
+
+///|
+/// Read the data-home inputs at the native execution boundary.
+fn native_boxlite_data_home() -> Result[String, @types.ChoirError] {
+  native_boxlite_data_home_from(
+    @sys.getenv("XDG_DATA_HOME"),
+    @sys.getenv("HOME"),
+  )
+}
+
+///|
+test "the durable BoxLite data home follows XDG fallback semantics" {
+  guard native_boxlite_data_home_from(
+      Some("/var/lib/choir-user"),
+      Some("/home/user"),
+    )
+    is Ok(xdg_home) else {
+    fail("absolute XDG data home was rejected")
+  }
+  assert_eq(xdg_home, "/var/lib/choir-user")
+  guard native_boxlite_data_home_from(None, Some("/home/user")) is Ok(fallback) else {
+    fail("HOME fallback was rejected")
+  }
+  assert_eq(fallback, "/home/user/.local/share")
+  guard native_boxlite_data_home_from(Some(""), Some("/home/user"))
+    is Ok(empty_fallback) else {
+    fail("empty XDG data home did not fall back")
+  }
+  assert_eq(empty_fallback, "/home/user/.local/share")
+  assert_true(native_boxlite_data_home_from(None, None) is Err(_))
+  assert_true(native_boxlite_data_home_from(Some("relative"), None) is Err(_))
+  assert_true(
+    native_boxlite_data_home_from(Some("/home/user/../other"), None) is Err(_),
+  )
+}
+
+///|
 /// BoxLite home shared by every Goal in a repository.
 ///
 /// The pinned Take image is the same for all of them, and BoxLite only knows an
 /// image is cached when its home's database says so, so a home scoped to one
 /// Goal pulls the image again for the next one. Keeping the home per repository
 /// pulls it once; Goal-scoped state stays under the Goal runtime root and is
-/// still discarded with the Goal.
-fn native_goal_boxlite_home(repository_id : @workflow.RepositoryId) -> String {
-  "/tmp/choir-boxlite-" +
+/// still discarded with the Goal. The home is durable because it contains the
+/// image index and database that make the pinned image a cache hit after reboot.
+fn native_goal_boxlite_home_at(
+  data_home : String,
+  repository_id : @workflow.RepositoryId,
+) -> String {
+  data_home +
+  "/choir/boxlite/repository-" +
   @storage.artifact_digest(@utf8.encode(repository_id.0)).0[:20].to_owned()
+}
+
+///|
+fn native_goal_boxlite_home(
+  repository_id : @workflow.RepositoryId,
+) -> Result[String, @types.ChoirError] {
+  match native_boxlite_data_home() {
+    Ok(data_home) => Ok(native_goal_boxlite_home_at(data_home, repository_id))
+    Err(error) => Err(error)
+  }
 }
 
 ///|
@@ -897,26 +994,32 @@ test "the BoxLite home outlives the Goals that share it" {
   let other_repository = @workflow.RepositoryId("repository-b")
   let goal_a = @control.GoalId("goal-a")
   let goal_b = @control.GoalId("goal-b")
+  let data_home = "/home/user/.local/share"
   // Two Goals in one repository share a home, so the pinned Take image is
   // pulled once rather than once per Goal.
   assert_eq(
-    native_goal_boxlite_home(repository),
-    native_goal_boxlite_home(repository),
+    native_goal_boxlite_home_at(data_home, repository),
+    native_goal_boxlite_home_at(data_home, repository),
   )
   assert_true(
-    native_goal_boxlite_home(repository) !=
-    native_goal_boxlite_home(other_repository),
+    native_goal_boxlite_home_at(data_home, repository) !=
+    native_goal_boxlite_home_at(data_home, other_repository),
   )
   // The home is not inside any Goal runtime root, so discarding a Goal cannot
   // take the image cache with it.
-  let home = native_goal_boxlite_home(repository)
+  let home = native_goal_boxlite_home_at(data_home, repository)
   assert_false(home.has_prefix(native_goal_runtime_root(repository, goal_a)))
   assert_false(home.has_prefix(native_goal_runtime_root(repository, goal_b)))
   assert_true(
     native_goal_runtime_root(repository, goal_a) !=
     native_goal_runtime_root(repository, goal_b),
   )
-  assert_true(home.has_prefix("/tmp/choir-boxlite-"))
+  assert_eq(
+    home,
+    "/home/user/.local/share/choir/boxlite/repository-" +
+    @storage.artifact_digest(@utf8.encode(repository.0)).0[:20].to_owned(),
+  )
+  assert_false(home.has_prefix("/tmp/"))
 }
 
 ///|
@@ -1081,11 +1184,15 @@ fn native_goal_boxlite_server_config(
     Ok(value) => value
     Err(error) => return Err(error)
   }
+  let home = match native_goal_boxlite_home(record.repository_id) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
   Ok({
     binary,
     runtime_dir,
     root: native_goal_runtime_root(record.repository_id, record.goal.id),
-    home: native_goal_boxlite_home(record.repository_id),
+    home,
     port: 40000 + @sys.get_pid() % 10000,
     api_key: "choir-goal-" + runtime_key,
   })
@@ -1115,11 +1222,15 @@ async fn cleanup_native_goal_runtime_identity(
     Ok(value) => value
     Err(error) => return Err(error)
   }
+  let home = match native_goal_boxlite_home(repository_id) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
   cleanup_native_boxlite_runtime({
     binary,
     runtime_dir,
     root: runtime_root,
-    home: native_goal_boxlite_home(repository_id),
+    home,
     port: 40000 + @sys.get_pid() % 10000,
     api_key: "choir-goal-" + native_goal_runtime_key(repository_id, goal_id),
   })
