@@ -128,6 +128,28 @@ fn exact_mcp_server(
 }
 
 ///|
+/// The admitted part of a Claude surface: the fields that decide what the
+/// session may do, canonicalized for digesting.
+///
+/// The client version and the built-in agent roster deliberately do not
+/// appear. Both change on an ordinary Claude Code release without changing
+/// what the repository under audit can reach, and digesting them meant every
+/// auto-update invalidated planned sessions and demanded a requalification
+/// commit before any Take could run. What the repository can reach — the tool
+/// set, the single MCP server, the permission mode, the credential source, and
+/// the absence of project-supplied commands, skills, and plugins — is asserted
+/// exactly.
+struct ClaudeAdmittedSurface {
+  permission_mode : String
+  api_key_source : String
+  tools : Array[String]
+  mcp_servers : Array[McpServerObservation]
+  slash_commands : Array[String]
+  skills : Array[String]
+  plugins : Array[String]
+} derive(ToJson)
+
+///|
 pub fn claude_effective_surface_manifest_digest(
   manifest : ClaudeInitializationManifest,
 ) -> @control.Digest {
@@ -136,25 +158,23 @@ pub fn claude_effective_surface_manifest_digest(
   let slash_commands = manifest.slash_commands.copy()
   let skills = manifest.skills.copy()
   let plugins = manifest.plugins.copy()
-  let agents = manifest.agents.copy()
   tools.sort()
   mcp_servers.sort_by(fn(left, right) { left.name.compare(right.name) })
   slash_commands.sort()
   skills.sort()
   plugins.sort()
-  agents.sort()
-  let canonical : ClaudeInitializationManifest = {
-    ..manifest,
+  let canonical : ClaudeAdmittedSurface = {
+    permission_mode: manifest.permission_mode,
+    api_key_source: manifest.api_key_source,
     tools,
     mcp_servers,
     slash_commands,
     skills,
     plugins,
-    agents,
   }
   @storage.artifact_digest(
     @utf8.encode(
-      "choir.claude-effective-surface.v1\u{00}" +
+      "choir.claude-effective-surface.v2\u{00}" +
       canonical.to_json().stringify(indent=0),
     ),
   )
@@ -168,7 +188,7 @@ pub fn expected_claude_take_surface_manifest_digest(
   let tools = allowed_tools.copy()
   tools.push("StructuredOutput")
   claude_effective_surface_manifest_digest({
-    client_version: expected_surface_version(ClaudeCli),
+    client_version: "",
     permission_mode: "dontAsk",
     api_key_source: "none",
     tools,
@@ -176,8 +196,43 @@ pub fn expected_claude_take_surface_manifest_digest(
     slash_commands: [],
     skills: [],
     plugins: [],
-    agents: ["claude", "Explore", "general-purpose", "Plan", "statusline-setup"],
+    agents: [],
   })
+}
+
+///|
+test "an admitted Claude surface is independent of the client release" {
+  let surface = fn(version, agents) {
+    claude_effective_surface_manifest_digest({
+      client_version: version,
+      permission_mode: "dontAsk",
+      api_key_source: "none",
+      tools: ["mcp__choir_sandbox__execute", "StructuredOutput"],
+      mcp_servers: [{ name: "choir_sandbox", status: McpConnected }],
+      slash_commands: [],
+      skills: [],
+      plugins: [],
+      agents,
+    })
+  }
+  assert_eq(
+    surface("2.1.219", ["claude", "Explore"]),
+    surface("2.1.220", ["claude", "Explore", "a-new-builtin"]),
+  )
+  assert_not_eq(
+    surface("2.1.219", []),
+    claude_effective_surface_manifest_digest({
+      client_version: "2.1.219",
+      permission_mode: "dontAsk",
+      api_key_source: "none",
+      tools: ["mcp__choir_sandbox__execute", "StructuredOutput"],
+      mcp_servers: [{ name: "choir_sandbox", status: McpConnected }],
+      slash_commands: [],
+      skills: ["a-project-skill"],
+      plugins: [],
+      agents: [],
+    }),
+  )
 }
 
 ///|
@@ -527,15 +582,13 @@ pub fn evaluate_claude_driver_capture(
   }
   let visible_tools = request.allowed_tools.copy()
   visible_tools.push("StructuredOutput")
-  if manifest.client_version != expected_surface_version(ClaudeCli) ||
-    manifest.permission_mode != "dontAsk" ||
+  if manifest.permission_mode != "dontAsk" ||
     manifest.api_key_source != "none" ||
     !exact_tool_set(manifest.tools, visible_tools) ||
     !exact_mcp_server(manifest.mcp_servers, request.expected_mcp_server) ||
     manifest.slash_commands.length() != 0 ||
     manifest.skills.length() != 0 ||
-    manifest.plugins.length() != 0 ||
-    !claude_builtin_agents_match(manifest.agents) {
+    manifest.plugins.length() != 0 {
     return Err(claude_driver_error("effective surface is not admitted"))
   }
   if claude_live_entitlement(request.capture.output) !=
