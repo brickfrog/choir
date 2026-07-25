@@ -123,6 +123,43 @@ fn load_goal_execution_parts(
 }
 
 ///|
+/// Delay before the next Goal execution tick.
+///
+/// A tick that fails for a durable reason — a host runtime that cannot start a
+/// sandbox, a snapshot that no longer decodes — fails the same way immediately
+/// afterwards, so a fixed one-second retry spins the machine and buries the
+/// cause under a log line per second. Back off geometrically to a ceiling so a
+/// persistent failure settles into a slow poll while a transient one still
+/// recovers promptly.
+pub fn goal_execution_tick_delay_ms(consecutive_failures : Int) -> Int {
+  let base = 1000
+  let ceiling = 30000
+  let mut delay = base
+  for attempt = 0; attempt < consecutive_failures; attempt = attempt + 1 {
+    if delay >= ceiling {
+      return ceiling
+    }
+    delay = delay * 2
+  }
+  if delay > ceiling {
+    ceiling
+  } else {
+    delay
+  }
+}
+
+///|
+/// Whether repeated tick failures have gone on long enough to be reported as a
+/// standing condition rather than a passing one. A Goal whose every tick fails
+/// is not making progress, and saying so is the difference between a stall the
+/// operator can see and one that only exists in the log.
+pub fn goal_execution_tick_failure_is_persistent(
+  consecutive_failures : Int,
+) -> Bool {
+  consecutive_failures >= 5
+}
+
+///|
 /// Durable state a completed execute pass implies for the Goal.
 ///
 /// `None` means the Parts imply no state change: they are neither all
