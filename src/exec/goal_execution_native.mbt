@@ -3307,6 +3307,40 @@ async test "native Goal seal witness is exact and idempotent" {
 }
 
 ///|
+/// The provider surface Goal-level assurance runs on.
+///
+/// A Part already audits on the surface that Part ran, so a Goal whose Parts
+/// all used one surface has no reason to demand a second provider
+/// subscription for its combined audit. A mixed-provider Goal keeps the Codex
+/// default: no Part surface is more authoritative than another there.
+fn native_goal_assurance_surface(
+  part_surfaces : Array[@control.ProviderSurfaceId],
+) -> @control.ProviderSurfaceId {
+  let default = @control.ProviderSurfaceId::CodexSubscriptionCli
+  let mut uniform : @control.ProviderSurfaceId? = None
+  for surface in part_surfaces {
+    match uniform {
+      None => uniform = Some(surface)
+      Some(value) => if value != surface { return default }
+    }
+  }
+  match uniform {
+    Some(value) => value
+    None => default
+  }
+}
+
+///|
+test "Goal assurance runs on the surface its Parts already used" {
+  let claude = @control.ProviderSurfaceId::ClaudeSubscriptionCli
+  let codex = @control.ProviderSurfaceId::CodexSubscriptionCli
+  assert_eq(native_goal_assurance_surface([claude, claude]), claude)
+  assert_eq(native_goal_assurance_surface([codex]), codex)
+  assert_eq(native_goal_assurance_surface([claude, codex]), codex)
+  assert_eq(native_goal_assurance_surface([]), codex)
+}
+
+///|
 fn native_goal_assurance_plan(
   repository : @workflow.PartWorkflowRepository,
   execution : @workflow.GoalExecutionRecord,
@@ -3430,7 +3464,11 @@ fn native_goal_assurance_plan(
   if specs.length() == 0 {
     return Err(native_goal_execution_error("Goal verification plan is empty"))
   }
-  let surface = @control.ProviderSurfaceId::CodexSubscriptionCli
+  let surface = native_goal_assurance_surface(
+    ordered.map(fn(snapshot) {
+      snapshot.identities.implementation_session.surface
+    }),
+  )
   let verification_sandbox = native_goal_submission_sandbox(
     "sandbox-" + key + "-goal-verification-1",
     "generation-" + key + "-goal-verification-1",
@@ -3561,8 +3599,14 @@ async fn advance_native_goal_assurance(
                 receipt_id: @control.ReceiptId(
                   stored.record.goal_id.0 + ":goal-audit-receipt",
                 ),
-                provider_surface_id: @control.ProviderSurfaceId::CodexSubscriptionCli,
-                provider_identity: "codex-subscription-cli",
+                provider_surface_id: stored.record.identities.audit_session.surface,
+                provider_identity: match
+                  stored.record.identities.audit_session.surface {
+                  @control.ProviderSurfaceId::CodexSubscriptionCli =>
+                    "codex-subscription-cli"
+                  @control.ProviderSurfaceId::ClaudeSubscriptionCli =>
+                    "claude-subscription-cli"
+                },
                 model_identity: @control.ModelIdentity::UnreportedModelIdentity,
               },
               fn(digest) {
