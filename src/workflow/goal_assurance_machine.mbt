@@ -480,6 +480,7 @@ fn finish_goal_audit_take(
   fence : @control.FencingEpoch,
   result_digest : @control.Digest,
   outcome : @control.AuditOutcome,
+  blocking_findings_count : Int,
 ) -> Result[@control.Take, @types.ChoirError] {
   let recorded = match
     @control.transition_take(
@@ -489,13 +490,20 @@ fn finish_goal_audit_take(
     Ok(value) => value
     Err(error) => return Err(error)
   }
+  // A Take that reported only advisory findings did its job: the audit gate
+  // authorizes it, so failing the Take here would contradict the receipt it
+  // produced.
   let disposition = match outcome {
     @control.AuditOutcome::AuditPassed =>
       @control.TakeTerminalDisposition::TakeSucceeded
     @control.AuditOutcome::AuditFindings =>
-      @control.TakeTerminalDisposition::TakeFailed(
-        @control.TakeFailureReason::TakeAuditFindings,
-      )
+      if blocking_findings_count == 0 {
+        @control.TakeTerminalDisposition::TakeSucceeded
+      } else {
+        @control.TakeTerminalDisposition::TakeFailed(
+          @control.TakeFailureReason::TakeAuditFindings,
+        )
+      }
     @control.AuditOutcome::AuditFailed =>
       @control.TakeTerminalDisposition::TakeFailed(
         @control.TakeFailureReason::TakeProviderFailed,
@@ -791,6 +799,7 @@ fn apply_goal_audit_completion(
       record.fencing_epoch,
       result.result_digest,
       result.outcome,
+      result.blocking_findings_count,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)

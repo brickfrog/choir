@@ -1578,7 +1578,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     Some(
       @workflow.GoalAssuranceBlockReason::GoalAssuranceAuditBlocked(
         @control.AuditGateObservation::AuditGateRejected(
-          @control.AuditGateRejectionReason::AuditOutcomeNotPassing,
+          @control.AuditGateRejectionReason::AuditHasBlockingFindings,
         ),
       ),
     ),

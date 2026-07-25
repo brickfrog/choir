@@ -19,6 +19,8 @@ pub(all) struct GoalPartStatus {
   effect_receipt_count : Int
   verification_receipt_count : Int
   audit_receipt_present : Bool
+  audit_total_findings_count : Int
+  audit_blocking_findings_count : Int
   integration_receipt_present : Bool
   dispatch_diagnostic : PartDispatchDiagnostic?
 } derive(Debug, Eq, ToJson, FromJson)
@@ -434,8 +436,10 @@ pub fn semantic_run_projection(
     pull_request_receipt.receipt_id ||
     finalization.readiness.goal_branch_seal_id != seal.id ||
     finalization.readiness.goal_branch_seal_digest != seal.seal_digest ||
-    goal_audit.outcome != @control.AuditOutcome::AuditPassed ||
-    goal_audit.blocking_findings_count != 0 {
+    @control.audit_findings_admission(
+      goal_audit.outcome,
+      goal_audit.blocking_findings_count,
+    ) is Some(_) {
     return Err(
       goal_execution_error("successful Goal semantic evidence is inconsistent"),
     )
@@ -508,8 +512,10 @@ pub fn semantic_run_projection(
       candidate.id == integration.candidate_id &&
       candidate.commit_oid == integration.candidate_commit_oid &&
       candidate.tree_oid == integration.candidate_tree_oid &&
-      audit.outcome == @control.AuditOutcome::AuditPassed &&
-      audit.blocking_findings_count == 0 else {
+      @control.audit_findings_admission(
+        audit.outcome,
+        audit.blocking_findings_count,
+      ) is None else {
       return Err(
         goal_execution_error(
           "semantic projection Part evidence is inconsistent",
@@ -627,6 +633,14 @@ pub fn goal_status_report(
       effect_receipt_count: snapshot.effect_receipts.length(),
       verification_receipt_count: snapshot.verification_receipts.length(),
       audit_receipt_present: snapshot.audit_receipt is Some(_),
+      audit_total_findings_count: match snapshot.audit_receipt {
+        Some(receipt) => receipt.total_findings_count
+        None => 0
+      },
+      audit_blocking_findings_count: match snapshot.audit_receipt {
+        Some(receipt) => receipt.blocking_findings_count
+        None => 0
+      },
       integration_receipt_present: snapshot.integration_receipt is Some(_),
       dispatch_diagnostic: snapshot.dispatch_diagnostic,
     })

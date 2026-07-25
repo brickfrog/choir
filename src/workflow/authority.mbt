@@ -271,6 +271,7 @@ fn record_audit_completion(
       snapshot.fencing_epoch,
       result_digest,
       submission.outcome,
+      submission.blocking_findings_count,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
