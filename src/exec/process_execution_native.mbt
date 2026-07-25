@@ -425,7 +425,10 @@ async fn execute_durable_native_process_with(
   }
   let result = match (adapters.execute)() {
     Ok(value) => value
-    Err(_) => {
+    // The dispatch error names why the guest process could not be observed —
+    // a timeout, an output limit, a lost box. Collapsing it to a generic
+    // "not durably observed" left the Part fenced with nothing to act on.
+    Err(cause) => {
       match (adapters.retire_generation)() {
         Ok(_) => ()
         Err(error) => return Err(error)
@@ -451,7 +454,7 @@ async fn execute_durable_native_process_with(
       }
       return Err(
         @types.ChoirError::provider_process_lost(
-          "guest process result was not durably observed",
+          "guest process result was not durably observed: " + cause.message(),
         ),
       )
     }
