@@ -158,9 +158,6 @@ test "sandbox process specs cannot name host executables or ambient env" {
 test "invalid process specs are rejected before adapter dispatch" {
   let called = @ref.new(false)
   let adapter : @sandbox.BoxLiteSandboxAdapter = {
-    prepare: fn(_) { abort("unused prepare") },
-    create: fn(_) { abort("unused create") },
-    clone: fn(_) { abort("unused clone") },
     execute: fn(request) {
       called.val = true
       Ok({
@@ -169,11 +166,6 @@ test "invalid process specs are rejected before adapter dispatch" {
         lifecycle: @sandbox.SandboxResourceLifecycle::SandboxResourceRunning,
       })
     },
-    attach: fn(_) { abort("unused attach") },
-    copy: fn(_) { abort("unused copy") },
-    signal_or_kill: fn(_) { abort("unused process control") },
-    inspect: fn(_) { abort("unused inspect") },
-    destroy: fn(_) { abort("unused destroy") },
   }
   let policy_digest = @control.Digest(@sandbox.boxlite_policy_digest)
   let request : @sandbox.ExecuteSandboxRequest = {
