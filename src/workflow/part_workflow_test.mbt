@@ -951,7 +951,7 @@ test "provider protocol violation terminally fences its Take and Part" {
     None => fail("implementation dispatch was not authorized")
   }
   let violated = @workflow.record_part_provider_protocol_violation(
-    authorized, intent,
+    authorized, intent, "codex driver: provider lifecycle is incomplete",
   ).unwrap()
   assert_eq(violated.stage, @workflow.PartWorkflowStage::PartRecoveryUncertain)
   assert_eq(
@@ -980,6 +980,15 @@ test "provider protocol violation terminally fences its Take and Part" {
     is Some(
       { lifecycle: @workflow.PartEffectLifecycle::PartEffectUncertain, .. }
     ),
+  )
+  assert_eq(
+    violated.dispatch_diagnostic,
+    Some({
+      take_id: violated.implementation_take.id,
+      session_id: implementation_session.id,
+      reason: @control.TakeUncertaintyReason::TakeProtocolViolation,
+      detail: "codex driver: provider lifecycle is incomplete",
+    }),
   )
 }
 
@@ -3211,7 +3220,9 @@ fn uncertain_implementation_dispatch() -> @workflow.PartWorkflowSnapshot raise {
     Some(value) => value
     None => fail("implementation dispatch was not authorized")
   }
-  @workflow.record_part_event_ingestion_overflow(authorized, intent).unwrap()
+  @workflow.record_part_event_ingestion_overflow(
+    authorized, intent, "harness event ingestion overflowed",
+  ).unwrap()
 }
 
 ///|

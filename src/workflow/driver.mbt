@@ -271,9 +271,10 @@ fn persist_provider_protocol_violation(
   store_version : Int,
   intent : PartEffectIntent,
   dependencies : PartWorkflowDriverDependencies,
+  detail : String,
 ) -> Result[PartWorkflowRunResult, @types.ChoirError] {
   let violated = match
-    record_part_provider_protocol_violation(snapshot, intent) {
+    record_part_provider_protocol_violation(snapshot, intent, detail) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -296,8 +297,10 @@ fn persist_event_ingestion_overflow(
   store_version : Int,
   intent : PartEffectIntent,
   dependencies : PartWorkflowDriverDependencies,
+  detail : String,
 ) -> Result[PartWorkflowRunResult, @types.ChoirError] {
-  let uncertain = match record_part_event_ingestion_overflow(snapshot, intent) {
+  let uncertain = match
+    record_part_event_ingestion_overflow(snapshot, intent, detail) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -320,8 +323,10 @@ fn persist_provider_process_loss(
   store_version : Int,
   intent : PartEffectIntent,
   dependencies : PartWorkflowDriverDependencies,
+  detail : String,
 ) -> Result[PartWorkflowRunResult, @types.ChoirError] {
-  let uncertain = match record_part_provider_process_loss(snapshot, intent) {
+  let uncertain = match
+    record_part_provider_process_loss(snapshot, intent, detail) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -435,19 +440,19 @@ async fn drive_part_workflow(
               if error.is_provider_protocol_violation() {
                 return persist_provider_protocol_violation(
                   repository, repository_adapters, snapshot, store_version, intent,
-                  dependencies,
+                  dependencies, error.message(),
                 )
               }
               if error.is_event_ingestion_overflow() {
                 return persist_event_ingestion_overflow(
                   repository, repository_adapters, snapshot, store_version, intent,
-                  dependencies,
+                  dependencies, error.message(),
                 )
               }
               if error.is_provider_process_lost() || error.is_timeout() {
                 return persist_provider_process_loss(
                   repository, repository_adapters, snapshot, store_version, intent,
-                  dependencies,
+                  dependencies, error.message(),
                 )
               }
               return Err(error)
@@ -463,19 +468,19 @@ async fn drive_part_workflow(
                   if error.is_provider_protocol_violation() {
                     return persist_provider_protocol_violation(
                       repository, repository_adapters, snapshot, store_version, intent,
-                      dependencies,
+                      dependencies, error.message(),
                     )
                   }
                   if error.is_event_ingestion_overflow() {
                     return persist_event_ingestion_overflow(
                       repository, repository_adapters, snapshot, store_version, intent,
-                      dependencies,
+                      dependencies, error.message(),
                     )
                   }
                   if error.is_provider_process_lost() || error.is_timeout() {
                     return persist_provider_process_loss(
                       repository, repository_adapters, snapshot, store_version, intent,
-                      dependencies,
+                      dependencies, error.message(),
                     )
                   }
                   return Err(error)
@@ -491,19 +496,19 @@ async fn drive_part_workflow(
               if error.is_provider_protocol_violation() {
                 return persist_provider_protocol_violation(
                   repository, repository_adapters, snapshot, store_version, intent,
-                  dependencies,
+                  dependencies, error.message(),
                 )
               }
               if error.is_event_ingestion_overflow() {
                 return persist_event_ingestion_overflow(
                   repository, repository_adapters, snapshot, store_version, intent,
-                  dependencies,
+                  dependencies, error.message(),
                 )
               }
               if error.is_provider_process_lost() || error.is_timeout() {
                 return persist_provider_process_loss(
                   repository, repository_adapters, snapshot, store_version, intent,
-                  dependencies,
+                  dependencies, error.message(),
                 )
               }
               return Err(error)

@@ -20,6 +20,7 @@ pub(all) struct GoalPartStatus {
   verification_receipt_count : Int
   audit_receipt_present : Bool
   integration_receipt_present : Bool
+  dispatch_diagnostic : PartDispatchDiagnostic?
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -627,6 +628,7 @@ pub fn goal_status_report(
       verification_receipt_count: snapshot.verification_receipts.length(),
       audit_receipt_present: snapshot.audit_receipt is Some(_),
       integration_receipt_present: snapshot.integration_receipt is Some(_),
+      dispatch_diagnostic: snapshot.dispatch_diagnostic,
     })
   }
   match assurance {

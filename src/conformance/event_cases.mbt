@@ -301,6 +301,7 @@ fn event_authorized_provider_dispatch_fixture() -> (
     integration_conflicts: [],
     pending_effect: Some(intent),
     effect_receipts: [],
+    dispatch_diagnostic: None,
   }
   (snapshot, intent)
 }
@@ -635,7 +636,9 @@ pub fn event_nonresumable_process_loss_case() -> HermeticConformanceCase {
     run: fn(_) {
       let (snapshot, intent) = event_authorized_provider_dispatch_fixture()
       let uncertain = match
-        @workflow.record_part_provider_process_loss(snapshot, intent) {
+        @workflow.record_part_provider_process_loss(
+          snapshot, intent, "provider process lost",
+        ) {
         Ok(value) => value
         Err(error) => return Err(error)
       }
@@ -676,7 +679,9 @@ pub fn event_backpressure_case() -> HermeticConformanceCase {
       }
       let (snapshot, intent) = event_authorized_provider_dispatch_fixture()
       let uncertain = match
-        @workflow.record_part_event_ingestion_overflow(snapshot, intent) {
+        @workflow.record_part_event_ingestion_overflow(
+          snapshot, intent, "event ingestion overflow",
+        ) {
         Ok(value) => value
         Err(error) => return Err(error)
       }
