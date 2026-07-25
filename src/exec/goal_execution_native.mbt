@@ -846,6 +846,49 @@ fn native_goal_runtime_root(
 }
 
 ///|
+pub let native_goal_runtime_root_prefix : String = "choir-take-goal-"
+
+///|
+/// Which Goal runtime roots under the temporary directory no longer belong to
+/// a live Goal.
+///
+/// Reclaiming by Bead claim alone misses every Goal whose claim was already
+/// released, so an abandoned root survived until the machine rebooted. These
+/// roots hold a BoxLite home and a staged toolchain, so a handful of them is
+/// gigabytes; on a tmpfs that is memory. Matching on the exact root shape and
+/// keeping every live key means the sweep can only remove roots this
+/// repository owns and no longer references.
+pub fn native_reclaimable_goal_runtime_roots(
+  entries : Array[String],
+  live_keys : Array[String],
+) -> Array[String] {
+  let reclaimable : Array[String] = []
+  for entry in entries {
+    if !entry.has_prefix(native_goal_runtime_root_prefix) {
+      continue
+    }
+    let key = entry[native_goal_runtime_root_prefix.length():].to_owned()
+    if key == "" || key.contains("/") || live_keys.contains(key) {
+      continue
+    }
+    reclaimable.push(entry)
+  }
+  reclaimable
+}
+
+///|
+test "a runtime sweep keeps live roots and only matches its own shape" {
+  let entries = [
+    "choir-take-goal-live", "choir-take-goal-dead", "choir-take-goal-", "choir-boxlite-take-live-1",
+    "unrelated", "choir-take-goal-a/b",
+  ]
+  assert_eq(native_reclaimable_goal_runtime_roots(entries, ["live"]), [
+    "choir-take-goal-dead",
+  ])
+  assert_eq(native_reclaimable_goal_runtime_roots(entries, ["live", "dead"]), [])
+}
+
+///|
 /// Select the durable data root used by repository-scoped BoxLite homes.
 ///
 /// An empty XDG_DATA_HOME is unspecified by the XDG base-directory contract, so
@@ -4301,6 +4344,91 @@ test "control state generation requires both marker and store" {
   assert_false(
     native_goal_control_state_is_current("choir-control-state-v1", true),
   )
+}
+
+///|
+async fn cleanup_native_goal_runtime_at_key(
+  repository_id : @workflow.RepositoryId,
+  temporary_root : String,
+  key : String,
+) -> Result[Unit, @types.ChoirError] {
+  let binary = match native_boxlite_binary_path() {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let runtime_dir = match native_boxlite_runtime_dir() {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let home = match native_goal_boxlite_home(repository_id) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  cleanup_native_boxlite_runtime({
+    binary,
+    runtime_dir,
+    root: temporary_root + "/" + native_goal_runtime_root_prefix + key,
+    home,
+    port: 40000 + @sys.get_pid() % 10000,
+    api_key: "choir-goal-" + key,
+  })
+}
+
+///|
+/// Reclaim Goal runtime roots this repository no longer references.
+///
+/// Runs on every daemon start rather than only on a control-state generation
+/// change. Reclaiming by Bead claim alone missed every Goal whose claim was
+/// already released, so an abandoned root survived until the machine
+/// rebooted; each root carries a BoxLite home and a staged toolchain, so a
+/// few of them fill a tmpfs. Returns how many roots were removed.
+pub async fn reclaim_native_goal_runtime_roots(
+  project_dir : String,
+  temporary_root? : String = "/tmp",
+  list_dir? : (String) -> Array[String] = @sys.list_dir_all,
+) -> Result[Int, @types.ChoirError] {
+  let repository_id = match native_goal_repository_id(project_dir) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let live_keys : Array[String] = []
+  match
+    @workflow.list_goal_execution_records(
+      native_goal_repository(project_dir),
+      local_part_workflow_repository_adapters(),
+    ) {
+    Ok(records) =>
+      for stored in records {
+        if !@workflow.goal_execution_state_is_terminal(stored.record.state) {
+          live_keys.push(
+            native_goal_runtime_key(
+              stored.record.repository_id,
+              stored.record.goal.id,
+            ),
+          )
+        }
+      }
+    // An unreadable Goal store cannot prove which roots are live, and removing
+    // a root a running Goal still owns is worse than leaving it behind.
+    Err(_) => return Ok(0)
+  }
+  let mut removed = 0
+  for
+    entry in native_reclaimable_goal_runtime_roots(
+      list_dir(temporary_root),
+      live_keys,
+    ) {
+    let key = entry[native_goal_runtime_root_prefix.length():].to_owned()
+    if !@sys.path_entry_exists(temporary_root + "/" + entry) {
+      continue
+    }
+    match
+      cleanup_native_goal_runtime_at_key(repository_id, temporary_root, key) {
+      Ok(_) => removed = removed + 1
+      Err(error) => return Err(error)
+    }
+  }
+  Ok(removed)
 }
 
 ///|

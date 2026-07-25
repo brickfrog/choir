@@ -1193,6 +1193,21 @@ fn serve_run() -> Unit {
           "\n",
         )
     }
+    if control_state_prepared.val {
+      // Runtime roots outlive the Goals that made them. Reclaiming here means
+      // an abandoned Goal costs one restart of disk, not a reboot.
+      match @exec.reclaim_native_goal_runtime_roots(config.project_dir) {
+        Ok(0) => ()
+        Ok(removed) =>
+          @sys.write_stdout(
+            "Choir reclaimed \{removed} abandoned Goal runtime root(s).\n",
+          )
+        Err(error) =>
+          @moontrace.error("Goal runtime reclaim failed", fields=[
+            @moontrace.field("error", error.message()),
+          ])
+      }
+    }
   })
   if !control_state_prepared.val {
     @sys.exit(1)
