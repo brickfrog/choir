@@ -212,7 +212,8 @@ test "an attention summary names the durable cause, not the counters" {
     dispatch_diagnostic: Some({
       take_id: @control.TakeId("take-impl"),
       session_id: @control.HarnessSessionId("session-impl"),
-      reason: @control.TakeUncertaintyReason::TakeProtocolViolation,
+      reason: Some(@control.TakeUncertaintyReason::TakeProtocolViolation),
+      recovery: None,
       detail: "Codex driver: provider lifecycle is incomplete (codex exit 1, 0 output bytes)",
     }),
   }

@@ -222,8 +222,16 @@ pub(all) enum PartEffectObservation {
 pub(all) struct PartDispatchDiagnostic {
   take_id : @control.TakeId
   session_id : @control.HarnessSessionId
-  reason : @control.TakeUncertaintyReason
+  /// The terminal classification, once the Take has one. A dispatch that
+  /// failed while the Take is still unresolved has no classification yet, and
+  /// claiming one would misreport the failure.
+  reason : @control.TakeUncertaintyReason?
+  /// What Choir observed at the moment the dispatch failed.
   detail : String
+  /// Why the failure could not be recovered, when a later reconciliation
+  /// decided that. This is a verdict about recovery, never the cause, and it
+  /// never replaces `detail`.
+  recovery : String?
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|

@@ -316,6 +316,38 @@ fn persist_event_ingestion_overflow(
 }
 
 ///|
+/// Keep the observed dispatch failure on the Part, then let the tick fail.
+///
+/// The effect stays unresolved so reconciliation still runs; recording is
+/// best effort, because losing the durable cause must not turn a failing tick
+/// into a different failing tick.
+fn record_dispatch_failure(
+  repository : PartWorkflowRepository,
+  repository_adapters : PartWorkflowRepositoryAdapters,
+  snapshot : PartWorkflowSnapshot,
+  store_version : Int,
+  intent : PartEffectIntent,
+  dependencies : PartWorkflowDriverDependencies,
+  detail : String,
+) -> Unit {
+  match record_part_dispatch_failure(snapshot, intent, detail) {
+    Ok(recorded) if recorded.durable_version != snapshot.durable_version =>
+      ignore(
+        persist_driver_snapshot(
+          repository,
+          repository_adapters,
+          recorded,
+          Some(store_version),
+          WorkflowProviderProtocolViolationRecorded,
+          dependencies,
+          None,
+        ),
+      )
+    _ => ()
+  }
+}
+
+///|
 fn persist_provider_process_loss(
   repository : PartWorkflowRepository,
   repository_adapters : PartWorkflowRepositoryAdapters,
@@ -455,6 +487,10 @@ async fn drive_part_workflow(
                   dependencies, error.message(),
                 )
               }
+              record_dispatch_failure(
+                repository, repository_adapters, snapshot, store_version, intent,
+                dependencies, error.message(),
+              )
               return Err(error)
             }
           }
@@ -511,6 +547,10 @@ async fn drive_part_workflow(
                   dependencies, error.message(),
                 )
               }
+              record_dispatch_failure(
+                repository, repository_adapters, snapshot, store_version, intent,
+                dependencies, error.message(),
+              )
               return Err(error)
             }
           }

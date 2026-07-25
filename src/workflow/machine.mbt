@@ -1189,8 +1189,64 @@ fn record_part_provider_dispatch_uncertainty(
     },
     harness_sessions: sessions,
     pending_effect: Some({ ..intent, lifecycle: PartEffectUncertain }),
-    dispatch_diagnostic: Some({ take_id: take.id, session_id, reason, detail }),
+    // A cause recorded when the dispatch actually failed outranks anything a
+    // later reconciliation can say. Reconciliation observes that recovery is
+    // impossible, which is a verdict, not evidence of what went wrong.
+    dispatch_diagnostic: Some(
+      match snapshot.dispatch_diagnostic {
+        Some(observed) if observed.take_id == take.id =>
+          { ..observed, reason: Some(reason), recovery: Some(detail) }
+        _ =>
+          {
+            take_id: take.id,
+            session_id,
+            reason: Some(reason),
+            detail,
+            recovery: None,
+          }
+      },
+    ),
   })
+}
+
+///|
+/// Record what an effect dispatch observed at the moment it failed, without
+/// resolving the Take.
+///
+/// The failure that ends a Take is frequently not the one a later tick can
+/// classify: a result archive that fails to transfer kills the tick, and the
+/// next tick sees only an unresolvable pending effect. Keeping the first
+/// observation is what makes the eventual block report a cause instead of a
+/// guess.
+pub fn record_part_dispatch_failure(
+  snapshot : PartWorkflowSnapshot,
+  intent : PartEffectIntent,
+  detail : String,
+) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
+  if snapshot.pending_effect != Some(intent) ||
+    intent.lifecycle != PartEffectMayHaveOccurred {
+    return Err(workflow_error("dispatch failure has no authorized effect"))
+  }
+  let (take_id, session_id) = match intent.kind {
+    DispatchImplementation(take_id, command)
+    | DispatchAudit(take_id, command, _) => (take_id, command.session_id)
+    _ => return Err(workflow_error("dispatch failure is not a provider effect"))
+  }
+  match snapshot.dispatch_diagnostic {
+    Some(observed) if observed.take_id == take_id => Ok(snapshot)
+    _ =>
+      Ok({
+        ..snapshot,
+        durable_version: snapshot.durable_version + 1,
+        dispatch_diagnostic: Some({
+          take_id,
+          session_id,
+          reason: None,
+          detail,
+          recovery: None,
+        }),
+      })
+  }
 }
 
 ///|

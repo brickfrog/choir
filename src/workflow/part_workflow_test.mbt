@@ -986,10 +986,71 @@ test "provider protocol violation terminally fences its Take and Part" {
     Some({
       take_id: violated.implementation_take.id,
       session_id: implementation_session.id,
-      reason: @control.TakeUncertaintyReason::TakeProtocolViolation,
+      reason: Some(@control.TakeUncertaintyReason::TakeProtocolViolation),
+      recovery: None,
       detail: "codex driver: provider lifecycle is incomplete",
     }),
   )
+}
+
+///|
+test "a recovery verdict never overwrites the failure that was observed" {
+  let initial = workflow_fixture()
+  let implementation_session = started_session(
+    initial.identities.implementation_session,
+  )
+  let running = apply_observation(
+    apply_command_preparation(
+      apply_observation(
+        initial,
+        @workflow.PartEffectObservation::ImplementationSandboxPrepared(
+          active_sandbox(initial.identities.implementation_sandbox),
+        ),
+        10L,
+      ),
+      11L,
+    ),
+    @workflow.PartEffectObservation::ImplementationHarnessStarted(
+      implementation_session,
+    ),
+    11L,
+  )
+  let authorized = authorize_next(running)
+  let intent = match authorized.pending_effect {
+    Some(value) => value
+    None => fail("implementation dispatch was not authorized")
+  }
+  // The tick that actually ran the Take is the only one that sees why it died.
+  let observed = @workflow.record_part_dispatch_failure(
+    authorized, intent, "transport error: BoxLite Take runtime: result archive failed",
+  ).unwrap()
+  assert_eq(
+    observed.dispatch_diagnostic,
+    Some({
+      take_id: observed.implementation_take.id,
+      session_id: implementation_session.id,
+      reason: None,
+      recovery: None,
+      detail: "transport error: BoxLite Take runtime: result archive failed",
+    }),
+  )
+  assert_eq(observed.stage, authorized.stage)
+  // A later tick can only report that recovery is impossible. That verdict is
+  // recorded beside the cause, never in place of it.
+  let lost = @workflow.record_part_provider_process_loss(
+    observed, intent, "nonresumable Claude Take lost its owning Goal worker",
+  ).unwrap()
+  assert_eq(
+    lost.dispatch_diagnostic,
+    Some({
+      take_id: lost.implementation_take.id,
+      session_id: implementation_session.id,
+      reason: Some(@control.TakeUncertaintyReason::TakeEffectUncertain),
+      recovery: Some("nonresumable Claude Take lost its owning Goal worker"),
+      detail: "transport error: BoxLite Take runtime: result archive failed",
+    }),
+  )
+  assert_eq(lost.stage, @workflow.PartWorkflowStage::PartRecoveryUncertain)
 }
 
 ///|
