@@ -134,6 +134,7 @@ fn submission_proposal(
     pull_request_document: Some({
       title: "test: evaluate Goal submission",
       body: "Exercises Goal submission.",
+      draft: false,
     }),
     migration_production_admission: None,
     maximum_parallel_parts: 2,

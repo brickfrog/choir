@@ -1165,6 +1165,7 @@ fn selection_fixture_proposal(
     pull_request_document: Some({
       title: "test: run selection conformance",
       body: "Exercises the selection conformance workflow.",
+      draft: false,
     }),
     migration_production_admission: None,
     maximum_parallel_parts: 2,
@@ -2394,6 +2395,7 @@ fn cancellation_goal_assurance_fixture_with_part_count(
     pull_request_document: Some({
       title: "test: run audit conformance",
       body: "Exercises the audit conformance workflow.",
+      draft: false,
     }),
     migration_production_admission: None,
     goal_ref,
@@ -3415,6 +3417,7 @@ pub fn cancellation_ordering_matrix_case() -> HermeticConformanceCase {
       let document : @workflow.PullRequestDocument = {
         title: "test: cancellation ordering",
         body: "Cancellation evidence\n\n" + marker.0,
+        draft: false,
       }
       let pull_request = match
         @workflow.initialize_goal_pull_request(

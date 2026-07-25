@@ -84,6 +84,16 @@ test "Conductor catalog exposes only Goal and Beads operations" {
     fail("expected publishable pull_request schema")
   }
   assert_eq(pull_request.get("required"), Some(["title", "body"].to_json()))
+  guard pull_request.get("properties") is Some(Object(pr_properties)) else {
+    fail("expected pull_request properties")
+  }
+  guard pr_properties.get("draft") is Some(Object(draft_schema)) else {
+    fail("expected optional draft schema")
+  }
+  assert_eq(draft_schema.get("type"), Some("boolean".to_json()))
+  assert_false(
+    pull_request.get("required") == Some(["title", "body", "draft"].to_json()),
+  )
   assert_true(goal_submit.get("oneOf") is Some(Array(_)))
   guard goal_status_schema is Some(Object(goal_status)) else {
     fail("expected goal_status schema")

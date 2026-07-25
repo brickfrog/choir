@@ -158,7 +158,7 @@ fn conductor_pull_request_document(
   match fields.get("pull_request") {
     None => Ok(None)
     Some(Object(document_fields)) => {
-      let allowed_fields = ["title", "body"]
+      let allowed_fields = ["title", "body", "draft"]
       let unknown_fields = conductor_draft_unknown_fields(
         document_fields, allowed_fields,
       )
@@ -178,7 +178,12 @@ fn conductor_pull_request_document(
         Some(String(value)) => value
         _ => return Err(goal_submission_error("pull_request.body is invalid"))
       }
-      let document : PullRequestDocument = { title, body }
+      let draft = match conductor_draft_bool(document_fields, "draft", false) {
+        Some(value) => value
+        None =>
+          return Err(goal_submission_error("pull_request.draft is invalid"))
+      }
+      let document : PullRequestDocument = { title, body, draft }
       if !pull_request_document_is_valid(document) ||
         document.body.contains("<!-- choir-final-pr:") {
         Err(goal_submission_error("pull_request document is invalid"))

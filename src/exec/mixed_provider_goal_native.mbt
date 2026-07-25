@@ -211,6 +211,7 @@ pub async fn run_native_mixed_provider_goal_fixture(
     pull_request_document: Some({
       title: "test: exercise mixed-provider Goal",
       body: "Exercises the mixed-provider native workflow.",
+      draft: false,
     }),
     migration_production_admission: None,
     maximum_parallel_parts: 2,

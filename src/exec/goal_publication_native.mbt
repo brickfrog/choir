@@ -1552,6 +1552,7 @@ async fn prove_publication_fault_recovery(
     pull_request_document: Some({
       title: "test: exercise Goal publication",
       body: "Exercises native Goal publication.",
+      draft: false,
     }),
     migration_production_admission: None,
     goal_ref,

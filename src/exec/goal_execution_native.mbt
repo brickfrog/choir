@@ -1496,6 +1496,7 @@ fn native_source_claim_test_record(
     pull_request_document: Some({
       title: "test: exercise source claims",
       body: "Exercises native source-claim handling.",
+      draft: false,
     }),
     migration_production_admission: None,
     goal_ref,

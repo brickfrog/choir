@@ -52,6 +52,7 @@ pub(all) struct PullRequestIdentityMarker(String) derive (
 pub(all) struct PullRequestDocument {
   title : String
   body : String
+  draft : Bool
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|

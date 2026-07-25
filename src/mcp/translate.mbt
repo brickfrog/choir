@@ -130,6 +130,10 @@ fn conductor_tools() -> Array[CatalogTool] {
         "body": conductor_string_schema(
           "Concise reviewer-facing summary and verification plan; do not include Goal IDs, digests, receipt metadata, or Choir markers",
         ),
+        "draft": {
+          "type": "boolean".to_json(),
+          "description": "When true, the PR opens as a draft; defaults to false".to_json(),
+        }.to_json(),
       }.to_json(),
       "required": ["title", "body"].to_json(),
       "additionalProperties": false.to_json(),
