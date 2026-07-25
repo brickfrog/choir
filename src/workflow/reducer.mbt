@@ -758,6 +758,11 @@ pub fn apply_part_effect_observation(
           workflow_error("candidate does not match normalization intent"),
         )
       }
+      // A candidate that violates its declared contract is a complete answer
+      // from that Take, not a fault to retry: the same durable result fails
+      // validation identically on every tick, so erroring here spun the Goal
+      // forever with nothing recorded. `PartOwnershipViolation` is the typed
+      // reason for exactly this, and blocking on it keeps the evidence.
       match
         @control.validate_candidate_commit(
           snapshot.task_contract,
@@ -767,7 +772,36 @@ pub fn apply_part_effect_observation(
           is_nfc,
         ) {
         Ok(_) => ()
-        Err(_) => return Err(workflow_error("candidate failed normalization"))
+        Err(violation) => {
+          let blocked = match
+            @control.transition_part(
+              snapshot.part,
+              @control.PartTransition::BlockPart(
+                @control.PartBlockReason::PartOwnershipViolation,
+              ),
+            ) {
+            Ok(value) => value
+            Err(error) => return Err(error)
+          }
+          return finish_effect_observation(
+            snapshot,
+            {
+              ..snapshot,
+              stage: PartBlocked,
+              part: blocked,
+              dispatch_diagnostic: Some({
+                take_id: snapshot.implementation_take.id,
+                session_id: None,
+                reason: None,
+                detail: "candidate failed normalization: " +
+                violation.to_json().stringify(indent=0),
+                recovery: None,
+              }),
+            },
+            observation,
+            observed_at,
+          )
+        }
       }
       let part = match
         @control.transition_part(
