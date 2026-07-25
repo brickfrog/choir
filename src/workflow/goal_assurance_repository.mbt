@@ -194,14 +194,10 @@ pub fn load_goal_assurance_effect_witness(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  if witness.effect_id != intent.effect_id || record.fencing_epoch.0 <= 0L {
-    return Err(goal_assurance_error("effect witness disagrees with its intent"))
-  }
-  // Assurance effect ids are derived from the stage, so a re-planned effect
-  // reuses the id with a different request. See `load_part_effect_witness`:
-  // a witness for a superseded request is absent evidence, not corruption.
-  if witness.request_digest != intent.request_digest {
-    Ok(None)
+  if witness.effect_id != intent.effect_id ||
+    witness.request_digest != intent.request_digest ||
+    record.fencing_epoch.0 <= 0L {
+    Err(goal_assurance_error("effect witness disagrees with its intent"))
   } else {
     Ok(Some(witness))
   }

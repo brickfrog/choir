@@ -106,23 +106,25 @@ test "provider effect witnesses retain the first terminal observation" {
     @workflow.load_part_effect_witness(repository, adapters, intent).unwrap(),
     Some(first),
   )
-  // A retried Part re-plans the same stage, so it reuses this effect id with a
-  // different request. The stored witness describes the attempt that was
-  // superseded; reporting it as a mismatch wedged every retry tick.
-  let retried : @workflow.PartEffectIntent = {
+  // A retried Part plans a fresh effect id, so it never collides with this
+  // witness at all. Under one id the request must match or the row is corrupt.
+  assert_true(intent.effect_id.contains(authorized.implementation_take.id.0))
+  let corrupt : @workflow.PartEffectIntent = {
     ..intent,
     request_digest: @control.Digest(
       "9999999999999999999999999999999999999999999999999999999999999999",
     ),
   }
+  assert_true(
+    @workflow.load_part_effect_witness(repository, adapters, corrupt) is Err(_),
+  )
+  let retried : @workflow.PartEffectIntent = {
+    ..intent,
+    effect_id: intent.effect_id + ":attempt-2",
+  }
   assert_eq(
     @workflow.load_part_effect_witness(repository, adapters, retried).unwrap(),
     None,
-  )
-  // A witness that is not this effect at all is still corruption.
-  let foreign : @workflow.PartEffectIntent = { ..intent, effect_id: intent.effect_id + ":other" }
-  assert_true(
-    @workflow.load_part_effect_witness(repository, adapters, foreign) is Ok(None),
   )
   clean_workflow_repository(repository)
 }

@@ -391,18 +391,13 @@ pub fn load_part_effect_witness(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  if witness.effect_id != intent.effect_id || record.fencing_epoch.0 <= 0L {
-    return Err(
-      workflow_error("effect witness does not match its durable intent"),
-    )
-  }
-  // An effect id is derived from the Part and its stage, so a retried Part
-  // plans the same id with a different request. The stored witness then
-  // describes the superseded attempt and is evidence about a request that is
-  // no longer pending — not corruption. Reporting it as absent lets the retry
-  // execute and overwrite it; erroring wedged the tick on every retry.
-  if witness.request_digest != intent.request_digest {
-    Ok(None)
+  // Effect ids are scoped to a single attempt, so a witness stored under this
+  // id describes this exact request or the durable state is corrupt. A
+  // retried Part plans fresh ids and never reaches this comparison.
+  if witness.effect_id != intent.effect_id ||
+    witness.request_digest != intent.request_digest ||
+    record.fencing_epoch.0 <= 0L {
+    Err(workflow_error("effect witness does not match its durable intent"))
   } else {
     Ok(Some(witness))
   }

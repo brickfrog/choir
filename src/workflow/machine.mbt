@@ -986,7 +986,17 @@ pub fn plan_next_part_effect(
       match next_effect_kind(snapshot) {
         Ok(None) => Ok(None)
         Ok(Some(kind)) => {
+          // The attempt discriminator matters. A retried Part re-plans the
+          // same stages, so an id built only from the workflow and stage
+          // collides with the previous attempt's witnesses: the retry then
+          // either errors on every tick or waits forever for a witness that
+          // can never match. A retry mints a fresh implementation Take, and
+          // that identity is stable for the life of one attempt, so it scopes
+          // the effect id to the attempt without disturbing recovery within
+          // an attempt across daemon restarts.
           let effect_id = snapshot.workflow_id +
+            ":" +
+            snapshot.implementation_take.id.0 +
             ":" +
             stage_effect_suffix(snapshot.stage)
           Ok(
