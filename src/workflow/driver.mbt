@@ -469,28 +469,33 @@ async fn drive_part_workflow(
           match (dependencies.effects.execute)(snapshot, intent) {
             Ok(value) => value
             Err(error) => {
-              if error.is_provider_protocol_violation() {
+              if part_effect_is_provider_dispatch(intent) &&
+                error.is_provider_protocol_violation() {
                 return persist_provider_protocol_violation(
                   repository, repository_adapters, snapshot, store_version, intent,
                   dependencies, error.message(),
                 )
               }
-              if error.is_event_ingestion_overflow() {
+              if part_effect_is_provider_dispatch(intent) &&
+                error.is_event_ingestion_overflow() {
                 return persist_event_ingestion_overflow(
                   repository, repository_adapters, snapshot, store_version, intent,
                   dependencies, error.message(),
                 )
               }
-              if error.is_provider_process_lost() || error.is_timeout() {
+              if part_effect_is_provider_dispatch(intent) &&
+                (error.is_provider_process_lost() || error.is_timeout()) {
                 return persist_provider_process_loss(
                   repository, repository_adapters, snapshot, store_version, intent,
                   dependencies, error.message(),
                 )
               }
-              record_dispatch_failure(
-                repository, repository_adapters, snapshot, store_version, intent,
-                dependencies, error.message(),
-              )
+              if part_effect_is_provider_dispatch(intent) {
+                record_dispatch_failure(
+                  repository, repository_adapters, snapshot, store_version, intent,
+                  dependencies, error.message(),
+                )
+              }
               return Err(error)
             }
           }
@@ -501,19 +506,22 @@ async fn drive_part_workflow(
               match (dependencies.effects.execute)(snapshot, intent) {
                 Ok(value) => value
                 Err(error) => {
-                  if error.is_provider_protocol_violation() {
+                  if part_effect_is_provider_dispatch(intent) &&
+                error.is_provider_protocol_violation() {
                     return persist_provider_protocol_violation(
                       repository, repository_adapters, snapshot, store_version, intent,
                       dependencies, error.message(),
                     )
                   }
-                  if error.is_event_ingestion_overflow() {
+                  if part_effect_is_provider_dispatch(intent) &&
+                error.is_event_ingestion_overflow() {
                     return persist_event_ingestion_overflow(
                       repository, repository_adapters, snapshot, store_version, intent,
                       dependencies, error.message(),
                     )
                   }
-                  if error.is_provider_process_lost() || error.is_timeout() {
+                  if part_effect_is_provider_dispatch(intent) &&
+                (error.is_provider_process_lost() || error.is_timeout()) {
                     return persist_provider_process_loss(
                       repository, repository_adapters, snapshot, store_version, intent,
                       dependencies, error.message(),
@@ -529,28 +537,33 @@ async fn drive_part_workflow(
                 outcome: PartRunWaitingForEffectWitness(intent.effect_id),
               })
             Err(error) => {
-              if error.is_provider_protocol_violation() {
+              if part_effect_is_provider_dispatch(intent) &&
+                error.is_provider_protocol_violation() {
                 return persist_provider_protocol_violation(
                   repository, repository_adapters, snapshot, store_version, intent,
                   dependencies, error.message(),
                 )
               }
-              if error.is_event_ingestion_overflow() {
+              if part_effect_is_provider_dispatch(intent) &&
+                error.is_event_ingestion_overflow() {
                 return persist_event_ingestion_overflow(
                   repository, repository_adapters, snapshot, store_version, intent,
                   dependencies, error.message(),
                 )
               }
-              if error.is_provider_process_lost() || error.is_timeout() {
+              if part_effect_is_provider_dispatch(intent) &&
+                (error.is_provider_process_lost() || error.is_timeout()) {
                 return persist_provider_process_loss(
                   repository, repository_adapters, snapshot, store_version, intent,
                   dependencies, error.message(),
                 )
               }
-              record_dispatch_failure(
-                repository, repository_adapters, snapshot, store_version, intent,
-                dependencies, error.message(),
-              )
+              if part_effect_is_provider_dispatch(intent) {
+                record_dispatch_failure(
+                  repository, repository_adapters, snapshot, store_version, intent,
+                  dependencies, error.message(),
+                )
+              }
               return Err(error)
             }
           }

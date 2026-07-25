@@ -1228,6 +1228,35 @@ fn record_part_provider_dispatch_uncertainty(
 /// next tick sees only an unresolvable pending effect. Keeping the first
 /// observation is what makes the eventual block report a cause instead of a
 /// guess.
+/// Whether an effect runs a provider session, and so can be classified by the
+/// provider-uncertainty recorders.
+///
+/// Verification runs a sandbox process with no harness session. Routing its
+/// failure to the provider recorders rejected it as "not a provider dispatch"
+/// on every tick, turning one lost verification process into a permanent
+/// stall.
+pub fn part_effect_is_provider_dispatch(intent : PartEffectIntent) -> Bool {
+  match intent.kind {
+    DispatchImplementation(_, _) | DispatchAudit(_, _, _) => true
+    _ => false
+  }
+}
+
+///|
+test "a sandbox-only effect is not a provider dispatch" {
+  let intent : PartEffectIntent = {
+    effect_id: "e",
+    kind: PartEffectKind::NormalizeImplementationCandidate(
+      @control.TakeId("take-1"),
+      @control.Digest("d"),
+    ),
+    request_digest: @control.Digest("r"),
+    lifecycle: PartEffectMayHaveOccurred,
+  }
+  assert_false(part_effect_is_provider_dispatch(intent))
+}
+
+///|
 pub fn record_part_dispatch_failure(
   snapshot : PartWorkflowSnapshot,
   intent : PartEffectIntent,
