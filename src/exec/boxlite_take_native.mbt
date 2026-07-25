@@ -1380,13 +1380,16 @@ pub async fn clone_native_boxlite_take(
 /// by later effects in a fresh host process, so the invariant is re-checked
 /// where it is relied on rather than assumed to have survived.
 fn native_boxlite_assurance_cache_command() -> String {
-  "set -eu; if ! test -e /workspace/moon.mod; then exit 0; fi; if ! test -L /workspace/.mooncakes; then exit 44; fi; cache=$(readlink -f /workspace/.mooncakes); case \"$cache\" in /scratch/*) ;; *) exit 45 ;; esac; test -d \"$cache\"; chown -R 65534:65534 \"$cache\"; chmod -R u+rwX \"$cache\""
+  "set -eu; if ! test -e /workspace/moon.mod; then exit 0; fi; if test -d /workspace/.mooncakes && ! test -L /workspace/.mooncakes; then mkdir -p /scratch/home; chmod u+w /workspace; mv /workspace/.mooncakes /scratch/home/.mooncakes; ln -s /scratch/home/.mooncakes /workspace/.mooncakes; chmod a-w /workspace; fi; if ! test -L /workspace/.mooncakes; then exit 44; fi; cache=$(readlink -f /workspace/.mooncakes); case \"$cache\" in /scratch/*) ;; *) exit 45 ;; esac; test -d \"$cache\"; chown -R 65534:65534 \"$cache\"; chmod -R u+rwX \"$cache\""
 }
 
 ///|
 test "the assurance cache admission keeps the cache out of the sealed tree" {
   let command = native_boxlite_assurance_cache_command()
-  assert_true(command.contains("test -L /workspace/.mooncakes"))
+  assert_true(
+    command.contains("mv /workspace/.mooncakes /scratch/home/.mooncakes"),
+  )
+  assert_true(command.contains("chmod a-w /workspace"))
   assert_true(command.contains("case \"$cache\" in /scratch/*)"))
   assert_true(command.contains("chown -R 65534:65534"))
 }
@@ -1416,7 +1419,7 @@ async fn admit_native_boxlite_assurance_cache(
     44 =>
       Err(
         native_boxlite_take_error(
-          "sealed subject keeps its Moon dependency cache inside the read-only tree",
+          "sealed subject has no Moon dependency cache to admit",
         ),
       )
     45 =>
