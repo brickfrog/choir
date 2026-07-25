@@ -1026,15 +1026,45 @@ async fn execute_native_verification(
     Ok(value) => value
     Err(error) => return Err(error)
   }
+  // The task contract's verification process is minted once, against the Take
+  // that existed at submission. A retried Part runs on a fresh verification
+  // Take, and the sandbox capability admits a process only for the Take it is
+  // executing, so the contract's own spec was refused. Rebinding the
+  // authority to the executing Take — and adopting that exact bytes as the
+  // persisted spec — keeps the digest the executor validates honest without
+  // rewriting the immutable contract. This mirrors how Goal-level assurance
+  // rebinds each Part spec onto its own verification Take.
+  let spec = snapshot.task_contract.verification_specs[0]
+  let authority_take_id = match process.authority {
+    @sandbox.SandboxProcessAuthority::SandboxImplementationTool(id, _)
+    | @sandbox.SandboxProcessAuthority::SandboxVerificationTool(id, _, _)
+    | @sandbox.SandboxProcessAuthority::SandboxAuditTool(id, _) => id
+  }
+  let (persisted_digest, bound_process) = if authority_take_id == take_id {
+    (spec.process_spec_digest, process)
+  } else {
+    let rebound = {
+      ..process,
+      authority: @sandbox.SandboxProcessAuthority::SandboxVerificationTool(
+        take_id,
+        spec.id,
+        spec.digest,
+      ),
+    }
+    match
+      adopt_native_effect_artifact(
+        runtime,
+        snapshot.goal.id,
+        @utf8.encode(rebound.to_json().stringify(indent=0)),
+        @storage.ArtifactProvenance::ArtifactVerificationProcessSpec(spec.id),
+      ) {
+      Ok(reference) => (reference.digest, rebound)
+      Err(error) => return Err(error)
+    }
+  }
   let process_result = match
     execute_durable_native_boxlite_process(
-      runtime,
-      snapshot,
-      intent,
-      take_id,
-      sandbox,
-      snapshot.task_contract.verification_specs[0].process_spec_digest,
-      process,
+      runtime, snapshot, intent, take_id, sandbox, persisted_digest, bound_process,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
