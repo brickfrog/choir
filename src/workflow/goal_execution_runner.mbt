@@ -149,6 +149,21 @@ pub fn goal_execution_tick_delay_ms(consecutive_failures : Int) -> Int {
 }
 
 ///|
+/// Whether a run of ticks that changed nothing has gone on long enough to be
+/// reported.
+///
+/// A tick that fails is loud; a tick that succeeds while advancing nothing is
+/// silent, and a Goal can spin in that state indefinitely looking healthy. Both
+/// mean the same thing to the person waiting for the work, so both are
+/// surfaced. The threshold is looser than the failure one because a slow Take
+/// legitimately spans many ticks without changing durable state.
+pub fn goal_execution_tick_stall_is_reportable(
+  ticks_without_progress : Int,
+) -> Bool {
+  ticks_without_progress > 0 && ticks_without_progress % 60 == 0
+}
+
+///|
 /// Whether repeated tick failures have gone on long enough to be reported as a
 /// standing condition rather than a passing one. A Goal whose every tick fails
 /// is not making progress, and saying so is the difference between a stall the

@@ -879,6 +879,134 @@ fn native_existing_sandbox_generation(
 }
 
 ///|
+/// What a Goal runtime root on disk says about the sandboxes it holds.
+pub(all) enum NativeGoalRuntimeDisposition {
+  /// No runtime root yet; nothing to reuse and nothing to discard.
+  NativeGoalRuntimeAbsent
+  /// A root exists but has registered no sandbox, which is the ordinary shape
+  /// of a runtime that was just built and has not completed a sandbox effect.
+  NativeGoalRuntimeUnregistered
+  /// A registered sandbox matches one this run expects.
+  NativeGoalRuntimeCurrent(@control.SandboxGenerationId)
+  /// Every registered sandbox belongs to a generation this run does not expect.
+  NativeGoalRuntimeStale
+} derive(Debug, Eq)
+
+///|
+/// Decide what to do with an existing Goal runtime root.
+///
+/// Discarding it whenever no expected generation is registered conflates "not
+/// registered yet" with "left over from an earlier run". A freshly rebuilt
+/// runtime has registered nothing, so that reading wipes the runtime on every
+/// tick, re-extracts its base image, and never survives long enough to register
+/// a sandbox — a rebuild loop that reports no error because nothing fails. Only
+/// registrations that exist and disagree are evidence of staleness.
+fn native_goal_runtime_disposition(
+  runtime_root : String,
+  generations : Array[@control.SandboxGenerationId],
+  path_exists : (String) -> Bool,
+  list_dir : (String) -> Array[String],
+) -> NativeGoalRuntimeDisposition {
+  if !path_exists(runtime_root) {
+    return NativeGoalRuntimeAbsent
+  }
+  match
+    native_existing_sandbox_generation(runtime_root, generations, path_exists) {
+    Some(generation_id) => return NativeGoalRuntimeCurrent(generation_id)
+    None => ()
+  }
+  let registry = runtime_root + "/state/sandboxes"
+  if !path_exists(registry) {
+    return NativeGoalRuntimeUnregistered
+  }
+  let mut registered = 0
+  for entry in list_dir(registry) {
+    if entry.has_suffix(".json") {
+      registered = registered + 1
+    }
+  }
+  if registered == 0 {
+    NativeGoalRuntimeUnregistered
+  } else {
+    NativeGoalRuntimeStale
+  }
+}
+
+///|
+test "a runtime that has registered nothing is not stale" {
+  let registry = "/tmp/choir-take-goal-test/state/sandboxes"
+  let generation = @control.SandboxGenerationId("generation-a")
+  // A root that was just rebuilt: present, but no registry yet. Discarding it
+  // here is what produced the rebuild loop.
+  assert_eq(
+    native_goal_runtime_disposition(
+      "/tmp/choir-take-goal-test",
+      [generation],
+      fn(path) { path == "/tmp/choir-take-goal-test" },
+      fn(_) { [] },
+    ),
+    NativeGoalRuntimeUnregistered,
+  )
+  // A registry directory with no manifests in it reads the same way.
+  assert_eq(
+    native_goal_runtime_disposition(
+      "/tmp/choir-take-goal-test",
+      [generation],
+      fn(path) { path == "/tmp/choir-take-goal-test" || path == registry },
+      fn(_) { [] },
+    ),
+    NativeGoalRuntimeUnregistered,
+  )
+  // No root at all.
+  assert_eq(
+    native_goal_runtime_disposition(
+      "/tmp/choir-take-goal-test",
+      [generation],
+      fn(_) { false },
+      fn(_) { [] },
+    ),
+    NativeGoalRuntimeAbsent,
+  )
+}
+
+///|
+test "registrations that disagree with this run are stale" {
+  let root = "/tmp/choir-take-goal-test"
+  let registry = root + "/state/sandboxes"
+  let generation = @control.SandboxGenerationId("generation-a")
+  // A manifest for this run's generation: reuse it.
+  assert_eq(
+    native_goal_runtime_disposition(
+      root,
+      [generation],
+      fn(path) { path == root || path == registry + "/generation-a.json" },
+      fn(_) { ["generation-a.json"] },
+    ),
+    NativeGoalRuntimeCurrent(generation),
+  )
+  // Manifests exist but none belong to this run: left over, discard.
+  assert_eq(
+    native_goal_runtime_disposition(
+      root,
+      [generation],
+      fn(path) { path == root || path == registry },
+      fn(_) { ["generation-old.json"] },
+    ),
+    NativeGoalRuntimeStale,
+  )
+  // Non-manifest entries do not count as registrations.
+  assert_eq(
+    native_goal_runtime_disposition(
+      root,
+      [generation],
+      fn(path) { path == root || path == registry },
+      fn(_) { ["README", "scratch.tmp"] },
+    ),
+    NativeGoalRuntimeUnregistered,
+  )
+}
+
+///|
 test "Goal runtime recovery selects an exact durable sandbox manifest" {
   let observed : Array[String] = []
   let existing = native_existing_sandbox_generation(
@@ -1667,7 +1795,6 @@ async fn execute_native_goal_record(
     record.repository_id,
     record.goal.id,
   )
-  let runtime_preexisted = @sys.path_exists(runtime_root)
   let generations : Array[@control.SandboxGenerationId] = []
   for snapshot in snapshots {
     for lease in snapshot.sandbox_leases {
@@ -1676,14 +1803,21 @@ async fn execute_native_goal_record(
       }
     }
   }
-  let existing_generation = native_existing_sandbox_generation(
-    runtime_root, generations, @sys.path_exists,
+  let disposition = native_goal_runtime_disposition(
+    runtime_root, generations, @sys.path_exists, @sys.list_dir,
   )
+  let existing_generation = match disposition {
+    NativeGoalRuntimeCurrent(generation_id) => Some(generation_id)
+    _ => None
+  }
   let server_config = match native_goal_boxlite_server_config(record) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  if runtime_preexisted && existing_generation is None {
+  // Only discard a runtime whose registered sandboxes belong to an earlier run.
+  // A runtime that has registered nothing yet is the normal state right after a
+  // rebuild, and discarding it there rebuilds it again on the next tick forever.
+  if disposition is NativeGoalRuntimeStale {
     match cleanup_native_boxlite_runtime(server_config) {
       Ok(_) => ()
       Err(error) => return Err(error)

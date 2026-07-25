@@ -754,12 +754,41 @@ fn conductor_publish_goal_update(
 ///|
 async fn conductor_goal_loop(project_dir : String) -> Unit {
   let mut consecutive_failures = 0
+  // A Goal whose ticks succeed while advancing nothing looks identical to one
+  // that is working. Track the durable version the last advance reported so a
+  // run of ticks that changes nothing is reported instead of staying silent.
+  let mut ticks_without_progress = 0
+  let mut last_progress = ""
   for ;; {
     match @exec.run_native_goal_execution_tick(project_dir) {
       Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickIdle) =>
         consecutive_failures = 0
       Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickAdvanced(record)) => {
         consecutive_failures = 0
+        let progress = record.goal.id.0 +
+          "@" +
+          record.durable_version.to_string()
+        if progress == last_progress {
+          ticks_without_progress = ticks_without_progress + 1
+          if @workflow.goal_execution_tick_stall_is_reportable(
+              ticks_without_progress,
+            ) {
+            @moontrace.error("Goal execution is not advancing", fields=[
+              @moontrace.field("goal_id", record.goal.id.0),
+              @moontrace.field(
+                "durable_version",
+                record.durable_version.to_string(),
+              ),
+              @moontrace.field(
+                "ticks_without_progress",
+                ticks_without_progress.to_string(),
+              ),
+            ])
+          }
+        } else {
+          ticks_without_progress = 0
+          last_progress = progress
+        }
         @moontrace.info("Goal execution advanced", fields=[
           @moontrace.field("goal_id", record.goal.id.0),
           @moontrace.field("state", record.state.to_json().stringify(indent=0)),

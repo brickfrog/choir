@@ -20,3 +20,17 @@ test "persistent tick failure is distinguished from a passing one" {
   assert_true(@workflow.goal_execution_tick_failure_is_persistent(5))
   assert_true(@workflow.goal_execution_tick_failure_is_persistent(100))
 }
+
+///|
+test "a run of ticks that changes nothing is reported periodically" {
+  // A slow Take spans many ticks without changing durable state, so the first
+  // quiet ticks say nothing.
+  assert_false(@workflow.goal_execution_tick_stall_is_reportable(0))
+  assert_false(@workflow.goal_execution_tick_stall_is_reportable(1))
+  assert_false(@workflow.goal_execution_tick_stall_is_reportable(59))
+  // A run this long is a stall worth naming, and it keeps saying so rather than
+  // reporting once and going quiet again.
+  assert_true(@workflow.goal_execution_tick_stall_is_reportable(60))
+  assert_false(@workflow.goal_execution_tick_stall_is_reportable(61))
+  assert_true(@workflow.goal_execution_tick_stall_is_reportable(120))
+}
