@@ -1370,6 +1370,74 @@ pub async fn clone_native_boxlite_take(
 }
 
 ///|
+/// Assert that a sealed subject's Moon dependency cache is still outside the
+/// sealed tree and writable by the unprivileged process that is about to run.
+///
+/// Sealing makes every directory under `/workspace` read-only, so a cache that
+/// is still a real directory there cannot be locked and Moon fails with a bare
+/// `Permission denied` naming a path that looks like it should be writable.
+/// The relocation happens once at clone time and the subject is adopted again
+/// by later effects in a fresh host process, so the invariant is re-checked
+/// where it is relied on rather than assumed to have survived.
+fn native_boxlite_assurance_cache_command() -> String {
+  "set -eu; if ! test -e /workspace/moon.mod; then exit 0; fi; if ! test -L /workspace/.mooncakes; then exit 44; fi; cache=$(readlink -f /workspace/.mooncakes); case \"$cache\" in /scratch/*) ;; *) exit 45 ;; esac; test -d \"$cache\"; chown -R 65534:65534 \"$cache\"; chmod -R u+rwX \"$cache\""
+}
+
+///|
+test "the assurance cache admission keeps the cache out of the sealed tree" {
+  let command = native_boxlite_assurance_cache_command()
+  assert_true(command.contains("test -L /workspace/.mooncakes"))
+  assert_true(command.contains("case \"$cache\" in /scratch/*)"))
+  assert_true(command.contains("chown -R 65534:65534"))
+}
+
+///|
+async fn admit_native_boxlite_assurance_cache(
+  take : NativeBoxLiteTakeSandbox,
+) -> Result[Unit, @types.ChoirError] {
+  let admitted = match
+    capture_native_boxlite_cli(
+      take.prepared.server,
+      [
+        "exec",
+        take.box_id,
+        "--",
+        "/bin/sh",
+        "-c",
+        native_boxlite_assurance_cache_command(),
+      ],
+      60000,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  match admitted.exit_code {
+    0 => Ok(())
+    44 =>
+      Err(
+        native_boxlite_take_error(
+          "sealed subject keeps its Moon dependency cache inside the read-only tree",
+        ),
+      )
+    45 =>
+      Err(
+        native_boxlite_take_error(
+          "sealed subject dependency cache resolves outside the disposable scratch root",
+        ),
+      )
+    code =>
+      Err(
+        native_boxlite_take_error(
+          "sealed subject dependency cache admission failed with exit " +
+          code.to_string() +
+          ": " +
+          admitted.output.trim().to_owned(),
+        ),
+      )
+  }
+}
+
+///|
 pub async fn seal_native_boxlite_assurance_subject(
   take : NativeBoxLiteTakeSandbox,
 ) -> Result[NativeBoxLiteTakeSandbox, @types.ChoirError] {
@@ -1683,6 +1751,12 @@ pub async fn execute_native_boxlite_process(
     @sandbox.SandboxWorkingDirectory::SandboxWorkspaceRoot => "/workspace"
     @sandbox.SandboxWorkingDirectory::SandboxWorkspaceSubdirectory(path) =>
       "/workspace/" + path.0
+  }
+  if assurance_process {
+    match admit_native_boxlite_assurance_cache(take) {
+      Ok(_) => ()
+      Err(error) => return Err(error)
+    }
   }
   let command : Array[String] = ["exec"]
   if assurance_process {
