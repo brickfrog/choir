@@ -621,12 +621,53 @@ pub fn retry_native_goal_part(
   if stored.record.state != @workflow.GoalExecutionState::GoalExecutionBlocked {
     return Err(native_goal_execution_error("Goal is not blocked"))
   }
+  // A Part parked on provider-dispatch uncertainty reports as blocked through
+  // its lifecycle but carries the PartRecoveryUncertain stage, so selecting on
+  // stage alone hid it from retry entirely: status said "blocked", retry said
+  // "no Part is blocked", and the Part had no way forward. Reconcile those
+  // first, which discharges the ones whose effect left no artifact behind and
+  // leaves the rest parked with their uncertainty intact.
   let blocked : Array[@workflow.PartStoredSnapshot] = []
+  let mut retained_uncertain = 0
   for workflow_id in stored.record.part_workflow_ids {
     match @workflow.load_part_snapshot(repository, adapters, workflow_id) {
       Ok(Some(part)) =>
-        if part.snapshot.stage == @workflow.PartWorkflowStage::PartBlocked {
-          blocked.push(part)
+        match part.snapshot.stage {
+          @workflow.PartWorkflowStage::PartBlocked => blocked.push(part)
+          @workflow.PartWorkflowStage::PartRecoveryUncertain =>
+            match @workflow.reconcile_part_recovery_uncertainty(part.snapshot) {
+              Ok(
+                @workflow.PartUncertaintyReconciliation::PartUncertaintyDischarged(
+                  discharged
+                )
+              ) => {
+                match
+                  @workflow.persist_part_snapshot(repository, adapters, {
+                    snapshot: discharged,
+                    expected_store_version: Some(part.state_record.version),
+                    fault_point: None,
+                  }) {
+                  Ok(_) => ()
+                  Err(error) => return Err(error)
+                }
+                match
+                  @workflow.load_part_snapshot(
+                    repository, adapters, workflow_id,
+                  ) {
+                  Ok(Some(reloaded)) => blocked.push(reloaded)
+                  Ok(None) =>
+                    return Err(
+                      native_goal_execution_error("Part workflow is absent"),
+                    )
+                  Err(error) => return Err(error)
+                }
+              }
+              Ok(
+                @workflow.PartUncertaintyReconciliation::PartUncertaintyRetained
+              ) => retained_uncertain = retained_uncertain + 1
+              Err(error) => return Err(error)
+            }
+          _ => ()
         }
       Ok(None) =>
         return Err(native_goal_execution_error("Part workflow is absent"))
@@ -654,7 +695,16 @@ pub fn retry_native_goal_part(
     None =>
       match blocked {
         [single] => single
-        [] => return Err(native_goal_execution_error("no Part is blocked"))
+        [] =>
+          if retained_uncertain > 0 {
+            return Err(
+              native_goal_execution_error(
+                "every blocked Part is parked on an effect that may have occurred; retry cannot decide this",
+              ),
+            )
+          } else {
+            return Err(native_goal_execution_error("no Part is blocked"))
+          }
         _ =>
           return Err(
             native_goal_execution_error(

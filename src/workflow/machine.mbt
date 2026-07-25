@@ -1219,6 +1219,93 @@ pub fn record_part_event_ingestion_overflow(
 }
 
 ///|
+/// Durable artifact an effect leaves behind when it reaches the Part, used to
+/// decide whether an uncertain effect actually occurred.
+///
+/// Effects that mutate the shared integration branch have no such local
+/// artifact, so they are never discharged from evidence held by the Part alone.
+priv enum PartEffectEvidence {
+  PartEffectEvidenceAbsent
+  PartEffectEvidencePresent
+  PartEffectEvidenceUnavailable
+}
+
+///|
+fn part_effect_evidence(
+  snapshot : PartWorkflowSnapshot,
+  kind : PartEffectKind,
+) -> PartEffectEvidence {
+  let present = fn(landed : Bool) {
+    if landed {
+      PartEffectEvidencePresent
+    } else {
+      PartEffectEvidenceAbsent
+    }
+  }
+  match kind {
+    PrepareImplementationSandbox(_)
+    | PrepareImplementationCommand(_)
+    | StartImplementationHarness(_, _)
+    | DispatchImplementation(_, _)
+    | NormalizeImplementationCandidate(_, _) =>
+      present(snapshot.candidate is Some(_))
+    PrepareVerificationSandbox(_) | DispatchVerification(_, _) =>
+      present(snapshot.verification_receipts.length() > 0)
+    PrepareAuditSandbox(_)
+    | PrepareAuditCommand(_)
+    | StartAuditHarness(_, _)
+    | DispatchAudit(_, _, _) => present(snapshot.audit_receipt is Some(_))
+    GeneratePromotion(_) | ApplyIntegration(_, _) =>
+      PartEffectEvidenceUnavailable
+  }
+}
+
+///|
+pub(all) enum PartUncertaintyReconciliation {
+  PartUncertaintyDischarged(PartWorkflowSnapshot)
+  PartUncertaintyRetained
+} derive(Debug, Eq)
+
+///|
+/// Resolve a Part parked on provider-dispatch uncertainty using the evidence
+/// the Part already holds.
+///
+/// A Take that died without leaving its artifact — no candidate, no
+/// verification receipt, no audit receipt — did not occur, so the uncertainty
+/// is discharged and the Part becomes retryable through the ordinary blocked
+/// path. Uncertainty is retained whenever the effect did leave an artifact, or
+/// where the Part cannot see the outcome at all (integration and promotion),
+/// because a wrong guess there would duplicate a durable side effect.
+pub fn reconcile_part_recovery_uncertainty(
+  snapshot : PartWorkflowSnapshot,
+) -> Result[PartUncertaintyReconciliation, @types.ChoirError] {
+  guard snapshot.stage == PartRecoveryUncertain &&
+    snapshot.part.lifecycle
+    is @control.PartLifecycle::PartBlocked(
+      @control.PartBlockReason::PartRecoveryUncertain
+    ) else {
+    return Err(workflow_error("Part is not parked on recovery uncertainty"))
+  }
+  let intent = match snapshot.pending_effect {
+    Some(value) if value.lifecycle == PartEffectUncertain => value
+    _ => return Err(workflow_error("Part has no uncertain effect"))
+  }
+  match part_effect_evidence(snapshot, intent.kind) {
+    PartEffectEvidenceAbsent =>
+      Ok(
+        PartUncertaintyDischarged({
+          ..snapshot,
+          durable_version: snapshot.durable_version + 1,
+          stage: PartBlocked,
+          pending_effect: None,
+        }),
+      )
+    PartEffectEvidencePresent | PartEffectEvidenceUnavailable =>
+      Ok(PartUncertaintyRetained)
+  }
+}
+
+///|
 pub fn record_part_provider_process_loss(
   snapshot : PartWorkflowSnapshot,
   intent : PartEffectIntent,

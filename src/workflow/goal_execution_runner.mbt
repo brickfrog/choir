@@ -123,22 +123,37 @@ fn load_goal_execution_parts(
 }
 
 ///|
-fn goal_execution_state_from_parts(
-  snapshots : Array[PartWorkflowSnapshot],
+/// Durable state a completed execute pass implies for the Goal.
+///
+/// `None` means the Parts imply no state change: they are neither all
+/// integrated nor blocked, which is the ordinary shape of a run with work still
+/// outstanding. It is not evidence of uncertainty, and the tick holds the
+/// current state rather than advancing on it.
+fn goal_execution_state_from_part_lifecycles(
+  lifecycles : Array[@control.PartLifecycle],
 ) -> GoalExecutionState? {
-  if snapshots.length() > 0 &&
-    snapshots.all(fn(snapshot) {
-      snapshot.part.lifecycle is @control.PartLifecycle::PartIntegrated(_)
+  if lifecycles.length() > 0 &&
+    lifecycles.all(fn(lifecycle) {
+      lifecycle is @control.PartLifecycle::PartIntegrated(_)
     }) {
     return Some(GoalExecutionState::GoalExecutionAssuring)
   }
-  if snapshots.any(fn(snapshot) {
-      snapshot.part.lifecycle is @control.PartLifecycle::PartBlocked(_) ||
-      snapshot.part.lifecycle is @control.PartLifecycle::PartCanceledNotRun
+  if lifecycles.any(fn(lifecycle) {
+      lifecycle is @control.PartLifecycle::PartBlocked(_) ||
+      lifecycle is @control.PartLifecycle::PartCanceledNotRun
     }) {
     return Some(GoalExecutionState::GoalExecutionBlocked)
   }
   None
+}
+
+///|
+fn goal_execution_state_from_parts(
+  snapshots : Array[PartWorkflowSnapshot],
+) -> GoalExecutionState? {
+  goal_execution_state_from_part_lifecycles(
+    snapshots.map(fn(snapshot) { snapshot.part.lifecycle }),
+  )
 }
 
 ///|
@@ -478,9 +493,17 @@ pub async fn run_next_goal_execution_tick(
     Ok(value) => value
     Err(error) => return Err(error)
   }
+  // Parts with work still outstanding imply no durable state change. Advancing
+  // to Paused here parked the Goal under GoalPauseRecoveryUncertain whenever an
+  // execute pass ended with Parts mid-flight — a host-side Take start failure,
+  // for instance — and only a human resume could restart it, even though no
+  // Part was uncertain and the next tick would have carried it forward.
   let next_state = match goal_execution_state_from_parts(after) {
     Some(value) => value
-    None => GoalExecutionState::GoalExecutionPaused
+    None =>
+      return Ok(
+        GoalExecutionTickResult::GoalExecutionTickAdvanced(current.record),
+      )
   }
   let advanced = match
     persist_goal_execution_advance(
@@ -490,4 +513,73 @@ pub async fn run_next_goal_execution_tick(
     Err(error) => return Err(error)
   }
   Ok(GoalExecutionTickResult::GoalExecutionTickAdvanced(advanced.record))
+}
+
+///|
+test "Parts still in flight imply no Goal state change" {
+  let take = @control.TakeId("take-1")
+  let candidate = @control.CandidateId("candidate-1")
+  let digest = @control.Digest(
+    "0000000000000000000000000000000000000000000000000000000000000000",
+  )
+  let receipt = @control.ReceiptId("receipt-1")
+  // Every mid-run shape: dispatched, built, verified, audited, promoting, and
+  // a run where only some Parts have integrated.
+  assert_eq(goal_execution_state_from_part_lifecycles([]), None)
+  assert_eq(
+    goal_execution_state_from_part_lifecycles([
+      @control.PartLifecycle::PartExecuting(take),
+    ]),
+    None,
+  )
+  assert_eq(
+    goal_execution_state_from_part_lifecycles([
+      @control.PartLifecycle::PartCandidate(candidate),
+      @control.PartLifecycle::PartVerified(candidate, digest),
+    ]),
+    None,
+  )
+  assert_eq(
+    goal_execution_state_from_part_lifecycles([
+      @control.PartLifecycle::PartAudited(candidate, digest, receipt),
+      @control.PartLifecycle::PartPromoting(candidate, digest, receipt),
+    ]),
+    None,
+  )
+  assert_eq(
+    goal_execution_state_from_part_lifecycles([
+      @control.PartLifecycle::PartIntegrated(receipt),
+      @control.PartLifecycle::PartCandidate(candidate),
+    ]),
+    None,
+  )
+}
+
+///|
+test "Goal state advances only on integrated or blocked Parts" {
+  let candidate = @control.CandidateId("candidate-1")
+  let receipt = @control.ReceiptId("receipt-1")
+  assert_eq(
+    goal_execution_state_from_part_lifecycles([
+      @control.PartLifecycle::PartIntegrated(receipt),
+      @control.PartLifecycle::PartIntegrated(receipt),
+    ]),
+    Some(GoalExecutionState::GoalExecutionAssuring),
+  )
+  // A blocked Part decides the Goal even beside Parts that are still running.
+  assert_eq(
+    goal_execution_state_from_part_lifecycles([
+      @control.PartLifecycle::PartCandidate(candidate),
+      @control.PartLifecycle::PartBlocked(
+        @control.PartBlockReason::PartRecoveryUncertain,
+      ),
+    ]),
+    Some(GoalExecutionState::GoalExecutionBlocked),
+  )
+  assert_eq(
+    goal_execution_state_from_part_lifecycles([
+      @control.PartLifecycle::PartCanceledNotRun,
+    ]),
+    Some(GoalExecutionState::GoalExecutionBlocked),
+  )
 }
