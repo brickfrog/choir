@@ -1181,6 +1181,18 @@ fn native_boxlite_clone_body(name : String) -> String {
 }
 
 ///|
+fn native_boxlite_dependency_setup_command() -> String {
+  "set -eu; mkdir -p /scratch/home /scratch/tmp /output; if test -d /workspace/.mooncakes; then mkdir -p /scratch/home/.moon; cp -a /opt/moon/lib /opt/moon/include /opt/moon/registry /scratch/home/.moon/; mv /workspace/.mooncakes /scratch/home/.mooncakes; ln -s /scratch/home/.mooncakes /workspace/.mooncakes; chown -R 65534:65534 /scratch/home; chmod -R u+rwX /scratch/home; fi; chmod 0777 /scratch /scratch/home /scratch/tmp /output"
+}
+
+///|
+test "BoxLite dependency setup keeps the private Moon home owner-writable" {
+  let command = native_boxlite_dependency_setup_command()
+  assert_true(command.contains("chown -R 65534:65534 /scratch/home"))
+  assert_true(command.contains("chmod -R u+rwX /scratch/home"))
+}
+
+///|
 pub async fn clone_native_boxlite_take(
   prepared : NativeBoxLitePreparedEnvironment,
   moon_home : String,
@@ -1327,7 +1339,12 @@ pub async fn clone_native_boxlite_take(
     capture_native_boxlite_cli(
       prepared.server,
       [
-        "exec", box_id, "--", "/bin/sh", "-c", "set -eu; mkdir -p /scratch/home /scratch/tmp /output; if test -d /workspace/.mooncakes; then mkdir -p /scratch/home/.moon; cp -a /opt/moon/lib /opt/moon/include /opt/moon/registry /scratch/home/.moon/; mv /workspace/.mooncakes /scratch/home/.mooncakes; ln -s /scratch/home/.mooncakes /workspace/.mooncakes; chown -R 65534:65534 /scratch/home; fi; chmod 0777 /scratch /scratch/home /scratch/tmp /output",
+        "exec",
+        box_id,
+        "--",
+        "/bin/sh",
+        "-c",
+        native_boxlite_dependency_setup_command(),
       ],
       60000,
     ) {
@@ -1400,7 +1417,7 @@ pub async fn seal_native_boxlite_assurance_subject(
         "--",
         "/bin/sh",
         "-c",
-        "set -eu; if printf x >> /workspace/.choir-source-root 2>/dev/null; then exit 40; fi; printf scratch > /scratch/.choir-boundary-probe; printf output > /output/.choir-boundary-probe",
+        "set -eu; if printf x >> /workspace/.choir-source-root 2>/dev/null; then exit 40; fi; if test -L /workspace/.mooncakes; then printf cache > /workspace/.mooncakes/.choir-boundary-probe; rm -f /workspace/.mooncakes/.choir-boundary-probe; fi; printf scratch > /scratch/.choir-boundary-probe; printf output > /output/.choir-boundary-probe",
       ],
       30000,
     ) {
