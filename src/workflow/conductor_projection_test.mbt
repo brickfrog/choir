@@ -123,7 +123,7 @@ test "material fingerprint ignores counter churn but tracks stage movement" {
 }
 
 ///|
-test "park releases only for terminal Goal states" {
+test "park releases for terminal states and a durable cancellation cutoff" {
   assert_false(
     @workflow.conductor_park_for_goal_state(
       Some(@workflow.GoalExecutionState::GoalExecutionSucceeded),
@@ -134,7 +134,7 @@ test "park releases only for terminal Goal states" {
       Some(@workflow.GoalExecutionState::GoalExecutionCanceled),
     ),
   )
-  assert_true(
+  assert_false(
     @workflow.conductor_park_for_goal_state(
       Some(@workflow.GoalExecutionState::GoalExecutionCanceling),
     ),

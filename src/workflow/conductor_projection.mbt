@@ -16,12 +16,18 @@ pub fn goal_execution_state_is_terminal(state : GoalExecutionState) -> Bool {
 
 ///|
 /// Whether the Conductor's Stop hook should park awaiting a further durable
-/// Goal event. Terminal states must release the park: after success or
-/// cancellation no further event will ever arrive. An unknown state parks,
-/// matching the pre-observation default.
+/// Goal event. A durable cancellation cutoff also releases the park: choird
+/// continues reconciliation independently, but the user's cancellation request
+/// has been accepted and must not trap the Conductor in repeated Stop-hook
+/// turns. An unknown state parks, matching the pre-observation default.
 pub fn conductor_park_for_goal_state(state : GoalExecutionState?) -> Bool {
   match state {
-    Some(value) => !goal_execution_state_is_terminal(value)
+    Some(
+      GoalExecutionState::GoalExecutionSucceeded
+      | GoalExecutionState::GoalExecutionCanceling
+      | GoalExecutionState::GoalExecutionCanceled
+    ) => false
+    Some(_) => true
     None => true
   }
 }

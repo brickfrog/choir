@@ -10,6 +10,7 @@ priv struct ConductorServerState {
   mut parked_for_goal_event : Bool
   mut last_goal_update : String?
   mut last_goal_update_fingerprint : String?
+  mut last_goal_worker_health : String?
   goal_updates : Map[String, String]
   mut server_identity : String
 }
@@ -27,6 +28,7 @@ fn ConductorServerState::new(config : @types.Config) -> ConductorServerState {
     parked_for_goal_event: false,
     last_goal_update: None,
     last_goal_update_fingerprint: None,
+    last_goal_worker_health: None,
     goal_updates: Map([]),
     server_identity: "",
   }
@@ -64,6 +66,9 @@ let local_cli_register_method : String = "local_cli_register"
 
 ///|
 let conductor_goal_update_method : String = "conductor_goal_update"
+
+///|
+let conductor_goal_worker_health_method : String = "conductor_goal_worker_health"
 
 ///|
 let conductor_stop_decision_method : String = "conductor_stop_decision"
@@ -111,10 +116,10 @@ fn conductor_park_for_state_tag(state : String?) -> Bool {
 }
 
 ///|
-test "Conductor park releases on both terminal Goal states" {
+test "Conductor park releases on terminal states and cancellation cutoff" {
   assert_false(conductor_park_for_state_tag(Some("GoalExecutionSucceeded")))
   assert_false(conductor_park_for_state_tag(Some("GoalExecutionCanceled")))
-  assert_true(conductor_park_for_state_tag(Some("GoalExecutionCanceling")))
+  assert_false(conductor_park_for_state_tag(Some("GoalExecutionCanceling")))
   assert_true(conductor_park_for_state_tag(Some("GoalExecutionRunning")))
   assert_true(conductor_park_for_state_tag(None))
 }
@@ -169,6 +174,31 @@ fn conductor_observe_goal_response(
 ///|
 fn conductor_goal_update_line(report : Json) -> String {
   { "method": "choir/goal_status_changed".to_json(), "report": report }
+  .to_json()
+  .stringify(indent=0) +
+  "\n"
+}
+
+///|
+fn conductor_goal_worker_health_line(
+  healthy : Bool,
+  consecutive_failures : Int,
+  detail : String,
+  goal_id : String?,
+) -> String {
+  let health : Map[String, Json] = {
+    "healthy": healthy.to_json(),
+    "consecutive_failures": consecutive_failures.to_json(),
+    "detail": detail.to_json(),
+  }
+  match goal_id {
+    Some(identity) => health.set("goal_id", identity.to_json())
+    None => ()
+  }
+  {
+    "method": "choir/goal_worker_health_changed".to_json(),
+    "health": health.to_json(),
+  }
   .to_json()
   .stringify(indent=0) +
   "\n"
@@ -237,6 +267,35 @@ fn conductor_broadcast_goal_update(
     None => ()
   }
   let wire = @utf8.encode(conductor_goal_update_line(report))
+  let targets = state.channel_fds.copy()
+  for fd in targets {
+    if !conductor_write_all(fd, wire) {
+      conductor_remove_channel_fd(state, fd)
+    }
+  }
+}
+
+///|
+fn conductor_broadcast_goal_worker_health(
+  state : ConductorServerState,
+  healthy : Bool,
+  consecutive_failures : Int,
+  detail : String,
+) -> Unit {
+  let line = conductor_goal_worker_health_line(
+    healthy,
+    consecutive_failures,
+    detail,
+    state.watched_goal_id,
+  )
+  state.last_goal_worker_health = Some(line)
+  if !healthy {
+    // A persistent worker failure means the event the Stop hook is waiting for
+    // cannot arrive. Deliver the health event and release the park instead of
+    // trapping the Conductor in repeated Stop-hook turns.
+    state.parked_for_goal_event = false
+  }
+  let wire = @utf8.encode(line)
   let targets = state.channel_fds.copy()
   for fd in targets {
     if !conductor_write_all(fd, wire) {
@@ -487,6 +546,14 @@ async fn conductor_handle_custom_line(
         }
         None => ()
       }
+      match state.last_goal_worker_health {
+        Some(line) =>
+          if !conductor_write_all(client.fd, @utf8.encode(line)) {
+            conductor_remove_channel_fd(state, client.fd)
+            client.close_after_response = true
+          }
+        None => ()
+      }
     }
     client.busy = false
     return
@@ -513,6 +580,29 @@ async fn conductor_handle_custom_line(
       }
     } else {
       @types.Response::Err("Goal update authentication failed")
+    }
+    ignore(conductor_send_response(client.fd, response))
+    client.busy = false
+    return
+  }
+  if request.req_method == conductor_goal_worker_health_method {
+    let response = if client.authenticated && client.peer_is_choir {
+      match
+        (
+          request.args.get_bool("healthy"),
+          request.args.get_int("consecutive_failures"),
+          request.args.get("detail"),
+        ) {
+        (Some(healthy), Some(consecutive_failures), Some(detail)) => {
+          conductor_broadcast_goal_worker_health(
+            state, healthy, consecutive_failures, detail,
+          )
+          @types.Response::ok_values(Map([]))
+        }
+        _ => @types.Response::Err("Goal worker health report is incomplete")
+      }
+    } else {
+      @types.Response::Err("Goal worker health authentication failed")
     }
     ignore(conductor_send_response(client.fd, response))
     client.busy = false
@@ -752,6 +842,36 @@ fn conductor_publish_goal_update(
 }
 
 ///|
+fn conductor_publish_goal_worker_health(
+  healthy : Bool,
+  consecutive_failures : Int,
+  detail : String,
+) -> Result[Unit, String] {
+  let config = match goal_client_load_config() {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let request : @types.Request = {
+    req_method: conductor_goal_worker_health_method,
+    name: conductor_goal_worker_health_method,
+    args: @types.RequestArgs::from_values({
+      "healthy": healthy.to_json(),
+      "consecutive_failures": consecutive_failures.to_json(),
+      "detail": detail.to_json(),
+    }),
+  }
+  match client_call_uds(config, request, None) {
+    Ok(response) =>
+      if response.is_ok() {
+        Ok(())
+      } else {
+        Err(response.error_message().unwrap_or("Goal worker health rejected"))
+      }
+    Err(error) => Err(error)
+  }
+}
+
+///|
 async fn conductor_goal_loop(project_dir : String) -> Unit {
   let mut consecutive_failures = 0
   // A Goal whose ticks succeed while advancing nothing looks identical to one
@@ -761,9 +881,38 @@ async fn conductor_goal_loop(project_dir : String) -> Unit {
   let mut last_progress = ""
   for ;; {
     match @exec.run_native_goal_execution_tick(project_dir) {
-      Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickIdle) =>
+      Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickIdle) => {
+        if @workflow.goal_execution_tick_failure_is_persistent(
+            consecutive_failures,
+          ) {
+          match
+            conductor_publish_goal_worker_health(
+              true, 0, "Goal execution ticks recovered",
+            ) {
+            Ok(_) => ()
+            Err(error) =>
+              @moontrace.error("Goal worker recovery delivery failed", fields=[
+                @moontrace.field("error", error),
+              ])
+          }
+        }
         consecutive_failures = 0
+      }
       Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickAdvanced(record)) => {
+        if @workflow.goal_execution_tick_failure_is_persistent(
+            consecutive_failures,
+          ) {
+          match
+            conductor_publish_goal_worker_health(
+              true, 0, "Goal execution ticks recovered",
+            ) {
+            Ok(_) => ()
+            Err(error) =>
+              @moontrace.error("Goal worker recovery delivery failed", fields=[
+                @moontrace.field("error", error),
+              ])
+          }
+        }
         consecutive_failures = 0
         let progress = record.goal.id.0 +
           "@" +
@@ -812,6 +961,21 @@ async fn conductor_goal_loop(project_dir : String) -> Unit {
       }
       Err(error) => {
         consecutive_failures = consecutive_failures + 1
+        let error_message = error.message()
+        if @workflow.goal_execution_tick_failure_should_notify(
+            consecutive_failures,
+          ) {
+          match
+            conductor_publish_goal_worker_health(
+              false, consecutive_failures, error_message,
+            ) {
+            Ok(_) => ()
+            Err(delivery_error) =>
+              @moontrace.error("Goal worker health delivery failed", fields=[
+                @moontrace.field("error", delivery_error),
+              ])
+          }
+        }
         // A tick that keeps failing is a Goal that is not advancing. Report the
         // run of failures, not just the latest one, so a standing stall is
         // distinguishable from a passing error in the log.
@@ -819,7 +983,7 @@ async fn conductor_goal_loop(project_dir : String) -> Unit {
             consecutive_failures,
           ) {
           @moontrace.error("Goal execution is not advancing", fields=[
-            @moontrace.field("error", error.message()),
+            @moontrace.field("error", error_message),
             @moontrace.field(
               "consecutive_failures",
               consecutive_failures.to_string(),
@@ -827,7 +991,7 @@ async fn conductor_goal_loop(project_dir : String) -> Unit {
           ])
         } else {
           @moontrace.error("Goal execution tick failed", fields=[
-            @moontrace.field("error", error.message()),
+            @moontrace.field("error", error_message),
           ])
         }
       }
@@ -995,6 +1159,32 @@ fn serve_run() -> Unit {
   }
   @sys.init_cleanup_runtime_artifacts_native()
   conductor_statusline_deactivate_cache(config.project_dir)
+  let control_state_prepared = Ref(false)
+  @async.run_async_main(async fn() {
+    match @exec.prepare_native_goal_control_state(config.project_dir) {
+      Ok(
+        @exec.NativeGoalControlStatePreparation::NativeGoalControlStateReset(
+          report
+        )
+      ) => {
+        @sys.write_stdout(
+          "Choir reset stale control state and released \{report.source_claims_released} Bead claim(s).\n",
+        )
+        control_state_prepared.val = true
+      }
+      Ok(_) => control_state_prepared.val = true
+      Err(error) =>
+        @sys.write_stderr(
+          "choir serve: failed to prepare Goal control state: " +
+          error.message() +
+          "\n",
+        )
+    }
+  })
+  if !control_state_prepared.val {
+    @sys.exit(1)
+    return
+  }
   @sys.write_pid_file(".choir/run/server.pid")
   @sys.register_cleanup_runtime_artifacts()
   @sys.install_crash_handlers()
@@ -1134,6 +1324,24 @@ test "Conductor parks an active durable Goal until its success event" {
     }),
   )
   assert_false(state.parked_for_goal_event)
+}
+
+///|
+test "persistent Goal worker failure releases the Conductor park" {
+  let state = ConductorServerState::new({
+    project_dir: "/repo",
+    listen_uds: "/repo/.choir/run/server.sock",
+  })
+  state.watched_goal_id = Some("goal-a")
+  state.parked_for_goal_event = true
+  conductor_broadcast_goal_worker_health(
+    state, false, 5, "record has the wrong schema",
+  )
+  assert_false(state.parked_for_goal_event)
+  let line = state.last_goal_worker_health.unwrap()
+  assert_true(line.contains("choir/goal_worker_health_changed"))
+  assert_true(line.contains("\"goal_id\":\"goal-a\""))
+  assert_true(line.contains("\"consecutive_failures\":5"))
 }
 
 ///|
