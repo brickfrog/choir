@@ -21,6 +21,7 @@ import {
 
 options(
   "is-main": false,
+  "max-concurrent-tests": 1,
   "native-stub": [ "stub.c", "store.c" ],
   targets: {
     "exec_native.mbt": [ "native" ],
