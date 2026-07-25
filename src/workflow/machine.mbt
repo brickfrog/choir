@@ -1135,13 +1135,21 @@ fn record_part_provider_dispatch_uncertainty(
       } else {
         return Err(workflow_error(error_context + " named an unknown Take"))
       }
-      (take, command.session_id)
+      (take, Some(command.session_id))
     }
+    // Verification runs a sandbox process with no harness session. It still
+    // has a Take to fence and a Part to block, and leaving it unrecordable
+    // meant a lost verification process retried forever with nothing durable
+    // to show for it.
+    DispatchVerification(take_id, _) =>
+      if take_id == snapshot.verification_take.id {
+        (snapshot.verification_take, None)
+      } else {
+        return Err(workflow_error(error_context + " named an unknown Take"))
+      }
     _ =>
       return Err(
-        workflow_error(
-          error_context + " did not arise from a provider dispatch",
-        ),
+        workflow_error(error_context + " did not arise from a dispatch"),
       )
   }
   let terminal_take = match
@@ -1155,17 +1163,23 @@ fn record_part_provider_dispatch_uncertainty(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let mut found_session = false
-  let sessions = snapshot.harness_sessions.map(fn(session) {
-    if session.id == session_id && session.take_id == take.id {
-      found_session = true
-      { ..session, lifecycle: session_lifecycle }
-    } else {
-      session
+  let sessions = match session_id {
+    None => snapshot.harness_sessions
+    Some(identity) => {
+      let mut found_session = false
+      let updated = snapshot.harness_sessions.map(fn(session) {
+        if session.id == identity && session.take_id == take.id {
+          found_session = true
+          { ..session, lifecycle: session_lifecycle }
+        } else {
+          session
+        }
+      })
+      if !found_session {
+        return Err(workflow_error(error_context + " session is missing"))
+      }
+      updated
     }
-  })
-  if !found_session {
-    return Err(workflow_error(error_context + " session is missing"))
   }
   let part = match
     @control.transition_part(
@@ -1243,6 +1257,18 @@ pub fn part_effect_is_provider_dispatch(intent : PartEffectIntent) -> Bool {
 }
 
 ///|
+/// Whether an effect dispatches work whose loss can be fenced onto a Take.
+/// Verification belongs here even though it has no harness session.
+pub fn part_effect_is_dispatch(intent : PartEffectIntent) -> Bool {
+  match intent.kind {
+    DispatchImplementation(_, _)
+    | DispatchAudit(_, _, _)
+    | DispatchVerification(_, _) => true
+    _ => false
+  }
+}
+
+///|
 test "a sandbox-only effect is not a provider dispatch" {
   let intent : PartEffectIntent = {
     effect_id: "e",
@@ -1268,8 +1294,9 @@ pub fn record_part_dispatch_failure(
   }
   let (take_id, session_id) = match intent.kind {
     DispatchImplementation(take_id, command)
-    | DispatchAudit(take_id, command, _) => (take_id, command.session_id)
-    _ => return Err(workflow_error("dispatch failure is not a provider effect"))
+    | DispatchAudit(take_id, command, _) => (take_id, Some(command.session_id))
+    DispatchVerification(take_id, _) => (take_id, None)
+    _ => return Err(workflow_error("dispatch failure is not a dispatch effect"))
   }
   match snapshot.dispatch_diagnostic {
     Some(observed) if observed.take_id == take_id => Ok(snapshot)

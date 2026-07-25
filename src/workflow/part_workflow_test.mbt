@@ -985,7 +985,7 @@ test "provider protocol violation terminally fences its Take and Part" {
     violated.dispatch_diagnostic,
     Some({
       take_id: violated.implementation_take.id,
-      session_id: implementation_session.id,
+      session_id: Some(implementation_session.id),
       reason: Some(@control.TakeUncertaintyReason::TakeProtocolViolation),
       recovery: None,
       detail: "codex driver: provider lifecycle is incomplete",
@@ -1028,7 +1028,7 @@ test "a recovery verdict never overwrites the failure that was observed" {
     observed.dispatch_diagnostic,
     Some({
       take_id: observed.implementation_take.id,
-      session_id: implementation_session.id,
+      session_id: Some(implementation_session.id),
       reason: None,
       recovery: None,
       detail: "transport error: BoxLite Take runtime: result archive failed",
@@ -1044,7 +1044,7 @@ test "a recovery verdict never overwrites the failure that was observed" {
     lost.dispatch_diagnostic,
     Some({
       take_id: lost.implementation_take.id,
-      session_id: implementation_session.id,
+      session_id: Some(implementation_session.id),
       reason: Some(@control.TakeUncertaintyReason::TakeEffectUncertain),
       recovery: Some("nonresumable Claude Take lost its owning Goal worker"),
       detail: "transport error: BoxLite Take runtime: result archive failed",

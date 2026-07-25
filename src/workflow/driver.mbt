@@ -483,14 +483,14 @@ async fn drive_part_workflow(
                   dependencies, error.message(),
                 )
               }
-              if part_effect_is_provider_dispatch(intent) &&
+              if part_effect_is_dispatch(intent) &&
                 (error.is_provider_process_lost() || error.is_timeout()) {
                 return persist_provider_process_loss(
                   repository, repository_adapters, snapshot, store_version, intent,
                   dependencies, error.message(),
                 )
               }
-              if part_effect_is_provider_dispatch(intent) {
+              if part_effect_is_dispatch(intent) {
                 record_dispatch_failure(
                   repository, repository_adapters, snapshot, store_version, intent,
                   dependencies, error.message(),
@@ -520,7 +520,7 @@ async fn drive_part_workflow(
                       dependencies, error.message(),
                     )
                   }
-                  if part_effect_is_provider_dispatch(intent) &&
+                  if part_effect_is_dispatch(intent) &&
                 (error.is_provider_process_lost() || error.is_timeout()) {
                     return persist_provider_process_loss(
                       repository, repository_adapters, snapshot, store_version, intent,
@@ -551,14 +551,14 @@ async fn drive_part_workflow(
                   dependencies, error.message(),
                 )
               }
-              if part_effect_is_provider_dispatch(intent) &&
+              if part_effect_is_dispatch(intent) &&
                 (error.is_provider_process_lost() || error.is_timeout()) {
                 return persist_provider_process_loss(
                   repository, repository_adapters, snapshot, store_version, intent,
                   dependencies, error.message(),
                 )
               }
-              if part_effect_is_provider_dispatch(intent) {
+              if part_effect_is_dispatch(intent) {
                 record_dispatch_failure(
                   repository, repository_adapters, snapshot, store_version, intent,
                   dependencies, error.message(),

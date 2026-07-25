@@ -221,7 +221,9 @@ pub(all) enum PartEffectObservation {
 /// it classified; provider output is never copied into durable state.
 pub(all) struct PartDispatchDiagnostic {
   take_id : @control.TakeId
-  session_id : @control.HarnessSessionId
+  /// The harness session, when the effect had one. Verification runs a
+  /// sandbox process with no session.
+  session_id : @control.HarnessSessionId?
   /// The terminal classification, once the Take has one. A dispatch that
   /// failed while the Take is still unresolved has no classification yet, and
   /// claiming one would misreport the failure.
