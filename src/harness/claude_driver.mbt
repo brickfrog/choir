@@ -250,6 +250,28 @@ fn claude_driver_trace(
 }
 
 ///|
+/// A tool name safe to place in a diagnostic. Provider-supplied names are
+/// untrusted text, so anything outside the declared-name charset collapses to
+/// a fixed marker rather than being copied through.
+fn diagnostic_tool_name(name : String) -> String {
+  if valid_declared_tool_name(name) {
+    name
+  } else {
+    "<invalid>"
+  }
+}
+
+///|
+test "a tool diagnostic never copies an undeclared name through" {
+  assert_eq(
+    diagnostic_tool_name("mcp__choir_sandbox__execute"),
+    "mcp__choir_sandbox__execute",
+  )
+  assert_eq(diagnostic_tool_name("Bash; rm -rf /"), "<invalid>")
+  assert_eq(diagnostic_tool_name(""), "<invalid>")
+}
+
+///|
 fn validate_claude_tool_trace(
   events : Array[ClaudeObservedToolEvent],
   allowed_tools : Array[String],
@@ -262,8 +284,25 @@ fn validate_claude_tool_trace(
   for event in events {
     match event {
       ClaudeToolStarted(id, name) => {
-        if id == "" || !allowed_tools.contains(name) || open.contains(id) {
-          return Err(claude_driver_error("undeclared or duplicate tool use"))
+        // Name the exact rejection. One collapsed message made a 20-minute
+        // Take unattributable: an undeclared tool, a replayed assistant
+        // message, and a malformed block all read the same.
+        if id == "" {
+          return Err(claude_driver_error("tool use carries no identity"))
+        }
+        if open.contains(id) {
+          return Err(
+            claude_driver_error(
+              "duplicate tool use id (tool=" + diagnostic_tool_name(name) + ")",
+            ),
+          )
+        }
+        if !allowed_tools.contains(name) {
+          return Err(
+            claude_driver_error(
+              "undeclared tool use (tool=" + diagnostic_tool_name(name) + ")",
+            ),
+          )
         }
         open[id] = name
         starts = starts + 1
