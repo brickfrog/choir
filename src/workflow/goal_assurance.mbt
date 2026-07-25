@@ -14,6 +14,18 @@ pub(all) enum GoalAssuranceStage {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+/// Why Goal-level assurance stopped, recorded when the stage becomes
+/// `GoalAssuranceBlocked`. A blocked Goal is a normal terminal answer — a
+/// failing combined verification or an auditor that reported findings — so the
+/// deciding gate observation is retained rather than discarded, and every
+/// consumer reads the reason from durable state instead of guessing at
+/// receipt counts.
+pub(all) enum GoalAssuranceBlockReason {
+  GoalAssuranceVerificationBlocked(@control.VerificationGateObservation)
+  GoalAssuranceAuditBlocked(@control.AuditGateObservation)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub(all) struct GoalAssuranceRecord {
   goal_id : @control.GoalId
   repository_id : RepositoryId
@@ -44,6 +56,7 @@ pub(all) struct GoalAssuranceRecord {
   pending_effect : GoalAssuranceEffectIntent?
   effect_receipts : Array[GoalAssuranceEffectReceipt]
   stage : GoalAssuranceStage
+  blocked_reason : GoalAssuranceBlockReason?
   durable_version : Int
   fencing_epoch : @control.FencingEpoch
 } derive(Debug, Eq, ToJson, FromJson)
@@ -516,6 +529,7 @@ pub fn initialize_goal_assurance(
     pending_effect: None,
     effect_receipts: [],
     stage: GoalAssuranceStage::GoalSealPlanned,
+    blocked_reason: None,
     durable_version: 1,
     fencing_epoch: execution.fencing_epoch,
   })
