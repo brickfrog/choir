@@ -753,10 +753,42 @@ fn conductor_publish_goal_update(
 
 ///|
 async fn conductor_goal_loop(project_dir : String) -> Unit {
+  let mut consecutive_failures = 0
+  // A Goal whose ticks succeed while advancing nothing looks identical to one
+  // that is working. Track the durable version the last advance reported so a
+  // run of ticks that changes nothing is reported instead of staying silent.
+  let mut ticks_without_progress = 0
+  let mut last_progress = ""
   for ;; {
     match @exec.run_native_goal_execution_tick(project_dir) {
-      Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickIdle) => ()
+      Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickIdle) =>
+        consecutive_failures = 0
       Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickAdvanced(record)) => {
+        consecutive_failures = 0
+        let progress = record.goal.id.0 +
+          "@" +
+          record.durable_version.to_string()
+        if progress == last_progress {
+          ticks_without_progress = ticks_without_progress + 1
+          if @workflow.goal_execution_tick_stall_is_reportable(
+              ticks_without_progress,
+            ) {
+            @moontrace.error("Goal execution is not advancing", fields=[
+              @moontrace.field("goal_id", record.goal.id.0),
+              @moontrace.field(
+                "durable_version",
+                record.durable_version.to_string(),
+              ),
+              @moontrace.field(
+                "ticks_without_progress",
+                ticks_without_progress.to_string(),
+              ),
+            ])
+          }
+        } else {
+          ticks_without_progress = 0
+          last_progress = progress
+        }
         @moontrace.info("Goal execution advanced", fields=[
           @moontrace.field("goal_id", record.goal.id.0),
           @moontrace.field("state", record.state.to_json().stringify(indent=0)),
@@ -778,12 +810,29 @@ async fn conductor_goal_loop(project_dir : String) -> Unit {
             ])
         }
       }
-      Err(error) =>
-        @moontrace.error("Goal execution tick failed", fields=[
-          @moontrace.field("error", error.message()),
-        ])
+      Err(error) => {
+        consecutive_failures = consecutive_failures + 1
+        // A tick that keeps failing is a Goal that is not advancing. Report the
+        // run of failures, not just the latest one, so a standing stall is
+        // distinguishable from a passing error in the log.
+        if @workflow.goal_execution_tick_failure_is_persistent(
+            consecutive_failures,
+          ) {
+          @moontrace.error("Goal execution is not advancing", fields=[
+            @moontrace.field("error", error.message()),
+            @moontrace.field(
+              "consecutive_failures",
+              consecutive_failures.to_string(),
+            ),
+          ])
+        } else {
+          @moontrace.error("Goal execution tick failed", fields=[
+            @moontrace.field("error", error.message()),
+          ])
+        }
+      }
     }
-    @async.sleep(1000)
+    @async.sleep(@workflow.goal_execution_tick_delay_ms(consecutive_failures))
   }
 }
 
@@ -806,11 +855,17 @@ async fn conductor_supervise_goal_worker(
   state : ConductorServerState,
   executable : String,
 ) -> Unit {
+  // A worker that dies during startup — an unreadable config, a missing
+  // dependency — dies again the instant it is respawned. Restarting it
+  // unconditionally every second turns that into a fork/exec loop whose only
+  // trace is a log line per second, so respawns share the tick's backoff.
+  let mut consecutive_restarts = 0
   for ;; {
     match state.goal_worker_pid {
       Some(pid) =>
         match @sys.child_process_state(pid) {
-          @sys.ChildProcessState::ChildProcessRunning => ()
+          @sys.ChildProcessState::ChildProcessRunning =>
+            consecutive_restarts = 0
           @sys.ChildProcessState::ChildProcessExited(status) => {
             @moontrace.error("Goal worker exited", fields=[
               @moontrace.field("pid", pid),
@@ -825,19 +880,33 @@ async fn conductor_supervise_goal_worker(
             state.goal_worker_pid = None
           }
         }
-      None =>
+      None => {
+        consecutive_restarts = consecutive_restarts + 1
         match conductor_start_goal_worker(state, executable) {
           Ok(pid) =>
-            @moontrace.info("Goal worker restarted", fields=[
-              @moontrace.field("pid", pid),
-            ])
+            if @workflow.goal_execution_tick_failure_is_persistent(
+                consecutive_restarts,
+              ) {
+              @moontrace.error("Goal worker keeps exiting", fields=[
+                @moontrace.field("pid", pid),
+                @moontrace.field(
+                  "consecutive_restarts",
+                  consecutive_restarts.to_string(),
+                ),
+              ])
+            } else {
+              @moontrace.info("Goal worker restarted", fields=[
+                @moontrace.field("pid", pid),
+              ])
+            }
           Err(error) =>
             @moontrace.error("failed to restart Goal worker", fields=[
               @moontrace.field("error", error.message()),
             ])
         }
+      }
     }
-    @async.sleep(1000)
+    @async.sleep(@workflow.goal_execution_tick_delay_ms(consecutive_restarts))
   }
 }
 

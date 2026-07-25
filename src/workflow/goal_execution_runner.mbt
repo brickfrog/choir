@@ -123,22 +123,89 @@ fn load_goal_execution_parts(
 }
 
 ///|
-fn goal_execution_state_from_parts(
-  snapshots : Array[PartWorkflowSnapshot],
+/// Delay before the next Goal execution tick.
+///
+/// A tick that fails for a durable reason — a host runtime that cannot start a
+/// sandbox, a snapshot that no longer decodes — fails the same way immediately
+/// afterwards, so a fixed one-second retry spins the machine and buries the
+/// cause under a log line per second. Back off geometrically to a ceiling so a
+/// persistent failure settles into a slow poll while a transient one still
+/// recovers promptly.
+pub fn goal_execution_tick_delay_ms(consecutive_failures : Int) -> Int {
+  let base = 1000
+  let ceiling = 30000
+  let mut delay = base
+  for attempt = 0; attempt < consecutive_failures; attempt = attempt + 1 {
+    if delay >= ceiling {
+      return ceiling
+    }
+    delay = delay * 2
+  }
+  if delay > ceiling {
+    ceiling
+  } else {
+    delay
+  }
+}
+
+///|
+/// Whether a run of ticks that changed nothing has gone on long enough to be
+/// reported.
+///
+/// A tick that fails is loud; a tick that succeeds while advancing nothing is
+/// silent, and a Goal can spin in that state indefinitely looking healthy. Both
+/// mean the same thing to the person waiting for the work, so both are
+/// surfaced. The threshold is looser than the failure one because a slow Take
+/// legitimately spans many ticks without changing durable state.
+pub fn goal_execution_tick_stall_is_reportable(
+  ticks_without_progress : Int,
+) -> Bool {
+  ticks_without_progress > 0 && ticks_without_progress % 60 == 0
+}
+
+///|
+/// Whether repeated tick failures have gone on long enough to be reported as a
+/// standing condition rather than a passing one. A Goal whose every tick fails
+/// is not making progress, and saying so is the difference between a stall the
+/// operator can see and one that only exists in the log.
+pub fn goal_execution_tick_failure_is_persistent(
+  consecutive_failures : Int,
+) -> Bool {
+  consecutive_failures >= 5
+}
+
+///|
+/// Durable state a completed execute pass implies for the Goal.
+///
+/// `None` means the Parts imply no state change: they are neither all
+/// integrated nor blocked, which is the ordinary shape of a run with work still
+/// outstanding. It is not evidence of uncertainty, and the tick holds the
+/// current state rather than advancing on it.
+fn goal_execution_state_from_part_lifecycles(
+  lifecycles : Array[@control.PartLifecycle],
 ) -> GoalExecutionState? {
-  if snapshots.length() > 0 &&
-    snapshots.all(fn(snapshot) {
-      snapshot.part.lifecycle is @control.PartLifecycle::PartIntegrated(_)
+  if lifecycles.length() > 0 &&
+    lifecycles.all(fn(lifecycle) {
+      lifecycle is @control.PartLifecycle::PartIntegrated(_)
     }) {
     return Some(GoalExecutionState::GoalExecutionAssuring)
   }
-  if snapshots.any(fn(snapshot) {
-      snapshot.part.lifecycle is @control.PartLifecycle::PartBlocked(_) ||
-      snapshot.part.lifecycle is @control.PartLifecycle::PartCanceledNotRun
+  if lifecycles.any(fn(lifecycle) {
+      lifecycle is @control.PartLifecycle::PartBlocked(_) ||
+      lifecycle is @control.PartLifecycle::PartCanceledNotRun
     }) {
     return Some(GoalExecutionState::GoalExecutionBlocked)
   }
   None
+}
+
+///|
+fn goal_execution_state_from_parts(
+  snapshots : Array[PartWorkflowSnapshot],
+) -> GoalExecutionState? {
+  goal_execution_state_from_part_lifecycles(
+    snapshots.map(fn(snapshot) { snapshot.part.lifecycle }),
+  )
 }
 
 ///|
@@ -478,9 +545,17 @@ pub async fn run_next_goal_execution_tick(
     Ok(value) => value
     Err(error) => return Err(error)
   }
+  // Parts with work still outstanding imply no durable state change. Advancing
+  // to Paused here parked the Goal under GoalPauseRecoveryUncertain whenever an
+  // execute pass ended with Parts mid-flight — a host-side Take start failure,
+  // for instance — and only a human resume could restart it, even though no
+  // Part was uncertain and the next tick would have carried it forward.
   let next_state = match goal_execution_state_from_parts(after) {
     Some(value) => value
-    None => GoalExecutionState::GoalExecutionPaused
+    None =>
+      return Ok(
+        GoalExecutionTickResult::GoalExecutionTickAdvanced(current.record),
+      )
   }
   let advanced = match
     persist_goal_execution_advance(
@@ -490,4 +565,73 @@ pub async fn run_next_goal_execution_tick(
     Err(error) => return Err(error)
   }
   Ok(GoalExecutionTickResult::GoalExecutionTickAdvanced(advanced.record))
+}
+
+///|
+test "Parts still in flight imply no Goal state change" {
+  let take = @control.TakeId("take-1")
+  let candidate = @control.CandidateId("candidate-1")
+  let digest = @control.Digest(
+    "0000000000000000000000000000000000000000000000000000000000000000",
+  )
+  let receipt = @control.ReceiptId("receipt-1")
+  // Every mid-run shape: dispatched, built, verified, audited, promoting, and
+  // a run where only some Parts have integrated.
+  assert_eq(goal_execution_state_from_part_lifecycles([]), None)
+  assert_eq(
+    goal_execution_state_from_part_lifecycles([
+      @control.PartLifecycle::PartExecuting(take),
+    ]),
+    None,
+  )
+  assert_eq(
+    goal_execution_state_from_part_lifecycles([
+      @control.PartLifecycle::PartCandidate(candidate),
+      @control.PartLifecycle::PartVerified(candidate, digest),
+    ]),
+    None,
+  )
+  assert_eq(
+    goal_execution_state_from_part_lifecycles([
+      @control.PartLifecycle::PartAudited(candidate, digest, receipt),
+      @control.PartLifecycle::PartPromoting(candidate, digest, receipt),
+    ]),
+    None,
+  )
+  assert_eq(
+    goal_execution_state_from_part_lifecycles([
+      @control.PartLifecycle::PartIntegrated(receipt),
+      @control.PartLifecycle::PartCandidate(candidate),
+    ]),
+    None,
+  )
+}
+
+///|
+test "Goal state advances only on integrated or blocked Parts" {
+  let candidate = @control.CandidateId("candidate-1")
+  let receipt = @control.ReceiptId("receipt-1")
+  assert_eq(
+    goal_execution_state_from_part_lifecycles([
+      @control.PartLifecycle::PartIntegrated(receipt),
+      @control.PartLifecycle::PartIntegrated(receipt),
+    ]),
+    Some(GoalExecutionState::GoalExecutionAssuring),
+  )
+  // A blocked Part decides the Goal even beside Parts that are still running.
+  assert_eq(
+    goal_execution_state_from_part_lifecycles([
+      @control.PartLifecycle::PartCandidate(candidate),
+      @control.PartLifecycle::PartBlocked(
+        @control.PartBlockReason::PartRecoveryUncertain,
+      ),
+    ]),
+    Some(GoalExecutionState::GoalExecutionBlocked),
+  )
+  assert_eq(
+    goal_execution_state_from_part_lifecycles([
+      @control.PartLifecycle::PartCanceledNotRun,
+    ]),
+    Some(GoalExecutionState::GoalExecutionBlocked),
+  )
 }

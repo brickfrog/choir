@@ -621,12 +621,53 @@ pub fn retry_native_goal_part(
   if stored.record.state != @workflow.GoalExecutionState::GoalExecutionBlocked {
     return Err(native_goal_execution_error("Goal is not blocked"))
   }
+  // A Part parked on provider-dispatch uncertainty reports as blocked through
+  // its lifecycle but carries the PartRecoveryUncertain stage, so selecting on
+  // stage alone hid it from retry entirely: status said "blocked", retry said
+  // "no Part is blocked", and the Part had no way forward. Reconcile those
+  // first, which discharges the ones whose effect left no artifact behind and
+  // leaves the rest parked with their uncertainty intact.
   let blocked : Array[@workflow.PartStoredSnapshot] = []
+  let mut retained_uncertain = 0
   for workflow_id in stored.record.part_workflow_ids {
     match @workflow.load_part_snapshot(repository, adapters, workflow_id) {
       Ok(Some(part)) =>
-        if part.snapshot.stage == @workflow.PartWorkflowStage::PartBlocked {
-          blocked.push(part)
+        match part.snapshot.stage {
+          @workflow.PartWorkflowStage::PartBlocked => blocked.push(part)
+          @workflow.PartWorkflowStage::PartRecoveryUncertain =>
+            match @workflow.reconcile_part_recovery_uncertainty(part.snapshot) {
+              Ok(
+                @workflow.PartUncertaintyReconciliation::PartUncertaintyDischarged(
+                  discharged
+                )
+              ) => {
+                match
+                  @workflow.persist_part_snapshot(repository, adapters, {
+                    snapshot: discharged,
+                    expected_store_version: Some(part.state_record.version),
+                    fault_point: None,
+                  }) {
+                  Ok(_) => ()
+                  Err(error) => return Err(error)
+                }
+                match
+                  @workflow.load_part_snapshot(
+                    repository, adapters, workflow_id,
+                  ) {
+                  Ok(Some(reloaded)) => blocked.push(reloaded)
+                  Ok(None) =>
+                    return Err(
+                      native_goal_execution_error("Part workflow is absent"),
+                    )
+                  Err(error) => return Err(error)
+                }
+              }
+              Ok(
+                @workflow.PartUncertaintyReconciliation::PartUncertaintyRetained
+              ) => retained_uncertain = retained_uncertain + 1
+              Err(error) => return Err(error)
+            }
+          _ => ()
         }
       Ok(None) =>
         return Err(native_goal_execution_error("Part workflow is absent"))
@@ -654,7 +695,16 @@ pub fn retry_native_goal_part(
     None =>
       match blocked {
         [single] => single
-        [] => return Err(native_goal_execution_error("no Part is blocked"))
+        [] =>
+          if retained_uncertain > 0 {
+            return Err(
+              native_goal_execution_error(
+                "every blocked Part is parked on an effect that may have occurred; retry cannot decide this",
+              ),
+            )
+          } else {
+            return Err(native_goal_execution_error("no Part is blocked"))
+          }
         _ =>
           return Err(
             native_goal_execution_error(
@@ -826,6 +876,134 @@ fn native_existing_sandbox_generation(
     }
   }
   None
+}
+
+///|
+/// What a Goal runtime root on disk says about the sandboxes it holds.
+pub(all) enum NativeGoalRuntimeDisposition {
+  /// No runtime root yet; nothing to reuse and nothing to discard.
+  NativeGoalRuntimeAbsent
+  /// A root exists but has registered no sandbox, which is the ordinary shape
+  /// of a runtime that was just built and has not completed a sandbox effect.
+  NativeGoalRuntimeUnregistered
+  /// A registered sandbox matches one this run expects.
+  NativeGoalRuntimeCurrent(@control.SandboxGenerationId)
+  /// Every registered sandbox belongs to a generation this run does not expect.
+  NativeGoalRuntimeStale
+} derive(Debug, Eq)
+
+///|
+/// Decide what to do with an existing Goal runtime root.
+///
+/// Discarding it whenever no expected generation is registered conflates "not
+/// registered yet" with "left over from an earlier run". A freshly rebuilt
+/// runtime has registered nothing, so that reading wipes the runtime on every
+/// tick, re-extracts its base image, and never survives long enough to register
+/// a sandbox — a rebuild loop that reports no error because nothing fails. Only
+/// registrations that exist and disagree are evidence of staleness.
+fn native_goal_runtime_disposition(
+  runtime_root : String,
+  generations : Array[@control.SandboxGenerationId],
+  path_exists : (String) -> Bool,
+  list_dir : (String) -> Array[String],
+) -> NativeGoalRuntimeDisposition {
+  if !path_exists(runtime_root) {
+    return NativeGoalRuntimeAbsent
+  }
+  match
+    native_existing_sandbox_generation(runtime_root, generations, path_exists) {
+    Some(generation_id) => return NativeGoalRuntimeCurrent(generation_id)
+    None => ()
+  }
+  let registry = runtime_root + "/state/sandboxes"
+  if !path_exists(registry) {
+    return NativeGoalRuntimeUnregistered
+  }
+  let mut registered = 0
+  for entry in list_dir(registry) {
+    if entry.has_suffix(".json") {
+      registered = registered + 1
+    }
+  }
+  if registered == 0 {
+    NativeGoalRuntimeUnregistered
+  } else {
+    NativeGoalRuntimeStale
+  }
+}
+
+///|
+test "a runtime that has registered nothing is not stale" {
+  let registry = "/tmp/choir-take-goal-test/state/sandboxes"
+  let generation = @control.SandboxGenerationId("generation-a")
+  // A root that was just rebuilt: present, but no registry yet. Discarding it
+  // here is what produced the rebuild loop.
+  assert_eq(
+    native_goal_runtime_disposition(
+      "/tmp/choir-take-goal-test",
+      [generation],
+      fn(path) { path == "/tmp/choir-take-goal-test" },
+      fn(_) { [] },
+    ),
+    NativeGoalRuntimeUnregistered,
+  )
+  // A registry directory with no manifests in it reads the same way.
+  assert_eq(
+    native_goal_runtime_disposition(
+      "/tmp/choir-take-goal-test",
+      [generation],
+      fn(path) { path == "/tmp/choir-take-goal-test" || path == registry },
+      fn(_) { [] },
+    ),
+    NativeGoalRuntimeUnregistered,
+  )
+  // No root at all.
+  assert_eq(
+    native_goal_runtime_disposition(
+      "/tmp/choir-take-goal-test",
+      [generation],
+      fn(_) { false },
+      fn(_) { [] },
+    ),
+    NativeGoalRuntimeAbsent,
+  )
+}
+
+///|
+test "registrations that disagree with this run are stale" {
+  let root = "/tmp/choir-take-goal-test"
+  let registry = root + "/state/sandboxes"
+  let generation = @control.SandboxGenerationId("generation-a")
+  // A manifest for this run's generation: reuse it.
+  assert_eq(
+    native_goal_runtime_disposition(
+      root,
+      [generation],
+      fn(path) { path == root || path == registry + "/generation-a.json" },
+      fn(_) { ["generation-a.json"] },
+    ),
+    NativeGoalRuntimeCurrent(generation),
+  )
+  // Manifests exist but none belong to this run: left over, discard.
+  assert_eq(
+    native_goal_runtime_disposition(
+      root,
+      [generation],
+      fn(path) { path == root || path == registry },
+      fn(_) { ["generation-old.json"] },
+    ),
+    NativeGoalRuntimeStale,
+  )
+  // Non-manifest entries do not count as registrations.
+  assert_eq(
+    native_goal_runtime_disposition(
+      root,
+      [generation],
+      fn(path) { path == root || path == registry },
+      fn(_) { ["README", "scratch.tmp"] },
+    ),
+    NativeGoalRuntimeUnregistered,
+  )
 }
 
 ///|
@@ -1617,7 +1795,6 @@ async fn execute_native_goal_record(
     record.repository_id,
     record.goal.id,
   )
-  let runtime_preexisted = @sys.path_exists(runtime_root)
   let generations : Array[@control.SandboxGenerationId] = []
   for snapshot in snapshots {
     for lease in snapshot.sandbox_leases {
@@ -1626,14 +1803,21 @@ async fn execute_native_goal_record(
       }
     }
   }
-  let existing_generation = native_existing_sandbox_generation(
-    runtime_root, generations, @sys.path_exists,
+  let disposition = native_goal_runtime_disposition(
+    runtime_root, generations, @sys.path_exists, @sys.list_dir,
   )
+  let existing_generation = match disposition {
+    NativeGoalRuntimeCurrent(generation_id) => Some(generation_id)
+    _ => None
+  }
   let server_config = match native_goal_boxlite_server_config(record) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  if runtime_preexisted && existing_generation is None {
+  // Only discard a runtime whose registered sandboxes belong to an earlier run.
+  // A runtime that has registered nothing yet is the normal state right after a
+  // rebuild, and discarding it there rebuilds it again on the next tick forever.
+  if disposition is NativeGoalRuntimeStale {
     match cleanup_native_boxlite_runtime(server_config) {
       Ok(_) => ()
       Err(error) => return Err(error)

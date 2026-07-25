@@ -3108,3 +3108,107 @@ test "planned and authorized effects survive snapshot restart exactly once" {
     _ => fail("workflow did not advance after receipting the observation")
   }
 }
+
+///|
+fn uncertain_implementation_dispatch() -> @workflow.PartWorkflowSnapshot raise {
+  let initial = workflow_fixture()
+  let implementation_session = started_session(
+    initial.identities.implementation_session,
+  )
+  let prepared = apply_observation(
+    initial,
+    @workflow.PartEffectObservation::ImplementationSandboxPrepared(
+      active_sandbox(initial.identities.implementation_sandbox),
+    ),
+    10L,
+  )
+  let running = apply_observation(
+    apply_command_preparation(prepared, 11L),
+    @workflow.PartEffectObservation::ImplementationHarnessStarted(
+      implementation_session,
+    ),
+    11L,
+  )
+  let authorized = authorize_next(running)
+  let intent = match authorized.pending_effect {
+    Some(value) => value
+    None => fail("implementation dispatch was not authorized")
+  }
+  @workflow.record_part_event_ingestion_overflow(authorized, intent).unwrap()
+}
+
+///|
+test "an uncertain Take that left no candidate is discharged and retryable" {
+  let uncertain = uncertain_implementation_dispatch()
+  assert_eq(uncertain.stage, @workflow.PartWorkflowStage::PartRecoveryUncertain)
+  assert_true(uncertain.candidate is None)
+  // The dispatch left no candidate, so it did not occur and the Part returns to
+  // the ordinary blocked path rather than parking for a human.
+  let reconciled = match
+    @workflow.reconcile_part_recovery_uncertainty(uncertain) {
+    Ok(
+      @workflow.PartUncertaintyReconciliation::PartUncertaintyDischarged(value)
+    ) => value
+    _ => fail("uncertainty was not discharged")
+  }
+  assert_eq(reconciled.stage, @workflow.PartWorkflowStage::PartBlocked)
+  assert_true(reconciled.pending_effect is None)
+  // The block reason stays truthful about why the Part stopped.
+  assert_eq(
+    reconciled.part.lifecycle,
+    @control.PartLifecycle::PartBlocked(
+      @control.PartBlockReason::PartRecoveryUncertain,
+    ),
+  )
+  assert_eq(reconciled.durable_version, uncertain.durable_version + 1)
+  // The point of discharging: retry accepts the Part afterwards and refuses it
+  // before, which is what left recovery-uncertain Parts with no way forward.
+  assert_true(
+    @workflow.plan_part_retry(
+      reconciled,
+      workflow_revision_identities(reconciled, reconciled.task_contract),
+      fn(_) { true },
+    )
+    is Ok(_),
+  )
+  assert_true(
+    @workflow.plan_part_retry(
+      uncertain,
+      workflow_revision_identities(uncertain, uncertain.task_contract),
+      fn(_) { true },
+    )
+    is Err(_),
+  )
+}
+
+///|
+test "an uncertain Take that left a candidate keeps its uncertainty" {
+  let uncertain = uncertain_implementation_dispatch()
+  let candidate : @control.CandidateCommit = {
+    id: @control.CandidateId("candidate-uncertain"),
+    goal_id: uncertain.goal.id,
+    part_id: uncertain.part.id,
+    take_id: uncertain.implementation_take.id,
+    base_commit_oid: uncertain.task_contract.base_commit_oid,
+    commit_oid: @control.GitOid("candidate-commit"),
+    tree_oid: @control.GitOid("candidate-tree"),
+    canonical_change_digest: workflow_digest_d,
+    changed_paths: [@control.RepoPath("src/feature.mbt")],
+  }
+  // The same uncertain shape, except the dispatch did leave its artifact behind.
+  // Discharging here would re-run work that already landed.
+  assert_true(
+    @workflow.reconcile_part_recovery_uncertainty({
+      ..uncertain,
+      candidate: Some(candidate),
+    })
+    is Ok(@workflow.PartUncertaintyReconciliation::PartUncertaintyRetained),
+  )
+}
+
+///|
+test "reconciliation refuses a Part that is not parked on uncertainty" {
+  assert_true(
+    @workflow.reconcile_part_recovery_uncertainty(workflow_fixture()) is Err(_),
+  )
+}

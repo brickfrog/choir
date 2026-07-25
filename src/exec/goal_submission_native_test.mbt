@@ -298,21 +298,24 @@ async test "native Conductor submission captures Beads and persists once" {
     is @workflow.GoalExecutionTickResult::GoalExecutionTickAdvanced(advanced) else {
     fail("queued Goal was not advanced")
   }
-  assert_eq(advanced.state, @workflow.GoalExecutionState::GoalExecutionPaused)
+  // The stubbed execute pass advances no Part, so the Part is still in flight.
+  // That is an ordinary mid-run shape, not uncertainty: the Goal stays running
+  // and the next tick carries it forward.
+  assert_eq(advanced.state, @workflow.GoalExecutionState::GoalExecutionRunning)
   assert_eq(
     advanced.goal.lifecycle,
     @control.GoalLifecycle::GoalActive(
-      @control.GoalActiveCondition::GoalRecoveryUncertain,
+      @control.GoalActiveCondition::GoalRunning,
     ),
   )
-  assert_eq(advanced.durable_version, 3)
+  assert_eq(advanced.durable_version, 2)
   let status = match
     inspect_native_goal(root, @control.GoalId("goal-native-submit")) {
     Ok(value) => value
     Err(error) => fail(error.message())
   }
   assert_eq(status.goal_id, @control.GoalId("goal-native-submit"))
-  assert_eq(status.state, @workflow.GoalExecutionState::GoalExecutionPaused)
+  assert_eq(status.state, @workflow.GoalExecutionState::GoalExecutionRunning)
   let status_by_part = match
     inspect_native_goal_for_part(root, @control.PartId("choir-a")) {
     Ok(value) => value
@@ -320,7 +323,7 @@ async test "native Conductor submission captures Beads and persists once" {
   }
   assert_eq(status_by_part.goal_id, status.goal_id)
   assert_eq(status_by_part.state, status.state)
-  assert_eq(status.durable_version, 3)
+  assert_eq(status.durable_version, 2)
   assert_eq(status.maximum_parallel_parts, 1)
   assert_eq(status.parts.length(), 1)
   assert_eq(status.parts[0].part_id, @control.PartId("choir-a"))
@@ -338,22 +341,29 @@ async test "native Conductor submission captures Beads and persists once" {
   assert_eq(status.parts[0].verification_receipt_count, 0)
   assert_false(status.parts[0].audit_receipt_present)
   assert_false(status.parts[0].integration_receipt_present)
+  // The Goal is still running rather than parked, so the next tick picks it up
+  // again. That re-tick is what carries an in-flight Goal forward on its own.
+  let reticked = @ref.new(false)
   match
     @workflow.run_next_goal_execution_tick(
       repository,
       local_part_workflow_repository_adapters(),
       {
-        initialize: _ => fail("paused Goal initialized again"),
-        execute: (_, _) => fail("paused Goal executed again"),
-        assure: (_, _) => fail("paused Goal entered assurance"),
-        finalize: (_, _) => fail("paused Goal entered finalization"),
-        cancel: (_, _) => fail("paused Goal was canceled"),
+        initialize: _ => Ok(true),
+        execute: (_, _) => {
+          reticked.val = true
+          Ok(())
+        },
+        assure: (_, _) => fail("unintegrated Goal entered assurance"),
+        finalize: (_, _) => fail("unassured Goal entered finalization"),
+        cancel: (_, _) => Ok(false),
       },
     ) {
-    Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickIdle) => ()
-    Ok(_) => fail("paused Goal remained runnable")
+    Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickAdvanced(_)) => ()
+    Ok(_) => fail("running Goal was not ticked again")
     Err(error) => fail(error.message())
   }
+  assert_true(reticked.val)
   let current = match
     @workflow.load_part_snapshot(
       repository,
