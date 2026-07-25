@@ -68,6 +68,7 @@ fn projection_report(
     active_input_request: None,
     input_answer_count: 0,
     assurance_stage: None,
+    assurance_block_reason: None,
     goal_verification_take_id: None,
     goal_audit_take_id: None,
     goal_branch_seal: None,

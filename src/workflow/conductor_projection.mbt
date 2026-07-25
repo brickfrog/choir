@@ -73,6 +73,7 @@ pub fn goal_report_material_fingerprint(report : GoalStatusReport) -> String {
       "active_input_request": report.active_input_request.to_json(),
       "maximum_parallel_parts": report.maximum_parallel_parts.to_json(),
       "assurance_stage": report.assurance_stage.to_json(),
+      "assurance_block_reason": report.assurance_block_reason.to_json(),
       "publication_state": report.publication_state.to_json(),
       "pull_request_state": report.pull_request_state.to_json(),
       "finalization_id": report.finalization_id.to_json(),

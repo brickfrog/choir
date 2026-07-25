@@ -106,6 +106,7 @@ pub(all) struct GoalStatusReport {
   active_input_request : GoalInputRequest?
   input_answer_count : Int
   assurance_stage : GoalAssuranceStage?
+  assurance_block_reason : GoalAssuranceBlockReason?
   goal_verification_take_id : @control.TakeId?
   goal_audit_take_id : @control.TakeId?
   goal_branch_seal : @control.GoalBranchSeal?
@@ -648,6 +649,10 @@ pub fn goal_status_report(
       )
     None => (None, None, None, None, 0, 0, 0, 0, false)
   }
+  let assurance_block_reason = match assurance {
+    Some(value) => value.blocked_reason
+    None => None
+  }
   match publication {
     Some(value) if value.goal_id != record.goal.id =>
       return Err(goal_execution_error("publication belongs to another Goal"))
@@ -716,6 +721,7 @@ pub fn goal_status_report(
     active_input_request: record.active_input_request,
     input_answer_count: record.input_answers.length(),
     assurance_stage: assurance_status.0,
+    assurance_block_reason,
     goal_verification_take_id: assurance_status.1,
     goal_audit_take_id: assurance_status.2,
     goal_branch_seal: assurance_status.3,

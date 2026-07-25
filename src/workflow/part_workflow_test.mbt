@@ -1518,6 +1518,79 @@ test "integrated Parts authorize one immutable Goal branch seal" {
   let (audit_final, audit_events) = successful_trace(
     audit_session, "goal-audit", 36L,
   )
+  let (findings_final, findings_events) = successful_trace(
+    audit_session, "goal-audit-findings", 36L,
+  )
+  let with_findings = apply_goal_assurance_observation(
+    assured,
+    @workflow.GoalAssuranceEffectObservation::GoalAuditCompleted(
+      {
+        audit_take_id: assured.audit_take.id,
+        take_fencing_epoch: assured.fencing_epoch,
+        audit_harness_session_id: audit_session.id,
+        subject: audit_subject,
+        provider_conformance_report_digest: workflow_digest_b,
+        findings_artifact: Some({
+          artifact_id: "goal-audit-findings-1",
+          digest: workflow_digest_e,
+        }),
+        total_findings_count: 2,
+        blocking_findings_count: 1,
+        started_at: 36L,
+        finished_at: 37L,
+        outcome: @control.AuditOutcome::AuditFindings,
+      },
+      findings_final,
+      findings_events,
+    ),
+    38L,
+  )
+  let blocked_by_findings = match
+    @workflow.mint_goal_audit_receipt(
+      with_findings,
+      {
+        receipt_id: @control.ReceiptId("goal-audit-receipt-findings-1"),
+        provider_surface_id: @control.ProviderSurfaceId::CodexSubscriptionCli,
+        provider_identity: "codex-cli",
+        model_identity: @control.ModelIdentity::ReportedModelIdentity("codex"),
+      },
+      fn(_) { true },
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(
+    blocked_by_findings.stage,
+    @workflow.GoalAssuranceStage::GoalAssuranceBlocked,
+  )
+  assert_true(blocked_by_findings.audit_receipt is Some(_))
+  assert_eq(
+    blocked_by_findings.blocked_reason,
+    Some(
+      @workflow.GoalAssuranceBlockReason::GoalAssuranceAuditBlocked(
+        @control.AuditGateObservation::AuditGateRejected(
+          @control.AuditGateRejectionReason::AuditOutcomeNotPassing,
+        ),
+      ),
+    ),
+  )
+  let blocked_status = match
+    @workflow.goal_status_report(
+      execution,
+      [integrated],
+      Some(blocked_by_findings),
+      None,
+      None,
+      None,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(
+    blocked_status.assurance_block_reason,
+    blocked_by_findings.blocked_reason,
+  )
+  assert_true(blocked_status.goal_audit_receipt_present)
   assured = apply_goal_assurance_observation(
     assured,
     @workflow.GoalAssuranceEffectObservation::GoalAuditCompleted(

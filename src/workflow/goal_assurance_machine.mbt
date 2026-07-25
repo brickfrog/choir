@@ -672,6 +672,7 @@ fn apply_goal_verification_completion(
           verification_slots: slots,
           verification_receipts: receipts,
           stage: GoalAssuranceBlocked,
+          blocked_reason: Some(GoalAssuranceVerificationBlocked(gate)),
         },
         observation,
         observed_at,
@@ -1003,6 +1004,18 @@ pub fn mint_goal_audit_receipt(
         ..record,
         audit_receipt: Some(receipt),
         stage: GoalAudited,
+        durable_version: record.durable_version + 1,
+      })
+    // An auditor that reports findings against the sealed tree is a complete,
+    // expected answer, not a failed tick. Blocking on the retained receipt
+    // ends the Goal's assurance instead of re-minting the same rejected
+    // receipt on every subsequent tick.
+    @control.AuditGateObservation::AuditGateRejected(_) =>
+      Ok({
+        ..record,
+        audit_receipt: Some(receipt),
+        stage: GoalAssuranceBlocked,
+        blocked_reason: Some(GoalAssuranceAuditBlocked(gate)),
         durable_version: record.durable_version + 1,
       })
     _ => Err(goal_assurance_error("audit gate did not authorize the receipt"))
