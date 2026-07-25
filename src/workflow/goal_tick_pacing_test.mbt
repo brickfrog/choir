@@ -19,6 +19,9 @@ test "persistent tick failure is distinguished from a passing one" {
   assert_false(@workflow.goal_execution_tick_failure_is_persistent(4))
   assert_true(@workflow.goal_execution_tick_failure_is_persistent(5))
   assert_true(@workflow.goal_execution_tick_failure_is_persistent(100))
+  assert_false(@workflow.goal_execution_tick_failure_should_notify(4))
+  assert_true(@workflow.goal_execution_tick_failure_should_notify(5))
+  assert_false(@workflow.goal_execution_tick_failure_should_notify(6))
 }
 
 ///|

@@ -33,7 +33,7 @@ priv struct NativeOrphanedGoalSourceClaim {
 }
 
 ///|
-let native_goal_control_state_generation : String = "choir-control-state-v4"
+let native_goal_control_state_generation : String = "choir-control-state-v5"
 
 ///|
 priv struct NativeGoalPartRuntime {
@@ -4336,6 +4336,9 @@ test "control state generation requires both marker and store" {
     ),
   )
   assert_false(native_goal_control_state_is_current("", true))
+  assert_false(
+    native_goal_control_state_is_current("choir-control-state-v4", true),
+  )
   assert_false(
     native_goal_control_state_is_current("choir-control-state-v2", true),
   )

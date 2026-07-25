@@ -455,22 +455,8 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
         self_identity,
         executable,
         config.project_dir + "/.choir/run/server.pid",
-        async fn() {
-          match @exec.prepare_native_goal_control_state(config.project_dir) {
-            Ok(
-              @exec.NativeGoalControlStatePreparation::NativeGoalControlStateReset(
-                report
-              )
-            ) => {
-              @sys.write_stdout(
-                "Choir reset stale control state and released \{report.source_claims_released} Bead claim(s).\n",
-              )
-              Ok(())
-            }
-            Ok(_) => Ok(())
-            Err(error) => Err(error.message())
-          }
-        },
+        // choird prepares control state after acquiring the instance lock.
+        fn() { Ok(()) },
       ) {
       Ok(_) => ()
       Err(error) => {

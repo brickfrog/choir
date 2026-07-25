@@ -175,6 +175,16 @@ pub fn goal_execution_tick_failure_is_persistent(
 }
 
 ///|
+/// Emit one operator-facing health transition when a failure run first becomes
+/// persistent. Later retries remain visible in logs without waking the
+/// Conductor every backoff interval.
+pub fn goal_execution_tick_failure_should_notify(
+  consecutive_failures : Int,
+) -> Bool {
+  consecutive_failures == 5
+}
+
+///|
 /// Durable state a completed execute pass implies for the Goal.
 ///
 /// `None` means the Parts imply no state change: they are neither all

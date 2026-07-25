@@ -58,29 +58,61 @@ fn mcp_tagged_identity(value : Json?) -> String? {
 fn mcp_goal_update_notification(line : String, raw_stdio : Bool) -> String? {
   let parsed = @json.parse(line) catch { _ => return None }
   guard parsed is Object(message) else { return None }
-  guard message.get("method") == Some("choir/goal_status_changed".to_json()) else {
-    return None
+  match message.get("method") {
+    Some(String("choir/goal_status_changed")) => {
+      guard message.get("report") is Some(report_json) else { return None }
+      guard report_json is Object(report) else { return None }
+      let goal_id = mcp_tagged_identity(report.get("goal_id")).unwrap_or(
+        "unknown",
+      )
+      let state = match report.get("state") {
+        Some(String(value)) => value
+        Some(value) => value.stringify(indent=0)
+        None => "unknown"
+      }
+      let durable_version = match report.get("durable_version") {
+        Some(value) => value.stringify(indent=0)
+        None => "unknown"
+      }
+      let meta : Map[String, String] = {
+        "goal_id": goal_id,
+        "state": state,
+        "durable_version": durable_version,
+      }
+      let content = "Choir durable Goal state changed:\n" +
+        report_json.stringify(indent=0)
+      Some(
+        mcp_message_wire(@mcp.channel_notification(content, meta), raw_stdio),
+      )
+    }
+    Some(String("choir/goal_worker_health_changed")) => {
+      guard message.get("health") is Some(health_json) else { return None }
+      guard health_json is Object(health) else { return None }
+      let healthy = match health.get("healthy") {
+        Some(True) => "true"
+        Some(False) => "false"
+        _ => "unknown"
+      }
+      let consecutive_failures = match health.get("consecutive_failures") {
+        Some(value) => value.stringify(indent=0)
+        None => "unknown"
+      }
+      let meta : Map[String, String] = {
+        "healthy": healthy,
+        "consecutive_failures": consecutive_failures,
+      }
+      match health.get("goal_id") {
+        Some(String(identity)) => meta.set("goal_id", identity)
+        _ => ()
+      }
+      let content = "Choir Goal worker health changed:\n" +
+        health_json.stringify(indent=0)
+      Some(
+        mcp_message_wire(@mcp.channel_notification(content, meta), raw_stdio),
+      )
+    }
+    _ => None
   }
-  guard message.get("report") is Some(report_json) else { return None }
-  guard report_json is Object(report) else { return None }
-  let goal_id = mcp_tagged_identity(report.get("goal_id")).unwrap_or("unknown")
-  let state = match report.get("state") {
-    Some(String(value)) => value
-    Some(value) => value.stringify(indent=0)
-    None => "unknown"
-  }
-  let durable_version = match report.get("durable_version") {
-    Some(value) => value.stringify(indent=0)
-    None => "unknown"
-  }
-  let meta : Map[String, String] = {
-    "goal_id": goal_id,
-    "state": state,
-    "durable_version": durable_version,
-  }
-  let content = "Choir durable Goal state changed:\n" +
-    report_json.stringify(indent=0)
-  Some(mcp_message_wire(@mcp.channel_notification(content, meta), raw_stdio))
 }
 
 ///|
@@ -667,4 +699,27 @@ test "Conductor MCP channel translates durable Goal updates to inbound events" {
   assert_true(notification.contains("\"goal_id\":\"goal-a\""))
   assert_true(notification.contains("GoalExecutionRunning"))
   assert_eq(mcp_goal_update_notification("{\"ok\":true}", true), None)
+}
+
+///|
+test "Conductor MCP channel translates Goal worker health failures" {
+  let internal = {
+      "method": "choir/goal_worker_health_changed".to_json(),
+      "health": {
+        "healthy": false.to_json(),
+        "consecutive_failures": (5 : Int).to_json(),
+        "detail": "record has the wrong schema".to_json(),
+        "goal_id": "goal-a".to_json(),
+      }.to_json(),
+    }
+    .to_json()
+    .stringify(indent=0)
+  let notification = mcp_goal_update_notification(internal, true).unwrap()
+  assert_true(
+    notification.contains("\"method\":\"notifications/claude/channel\""),
+  )
+  assert_true(notification.contains("\"healthy\":\"false\""))
+  assert_true(notification.contains("\"consecutive_failures\":\"5\""))
+  assert_true(notification.contains("record has the wrong schema"))
+  assert_true(notification.contains("\"goal_id\":\"goal-a\""))
 }
