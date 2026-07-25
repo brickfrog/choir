@@ -872,6 +872,30 @@ fn conductor_publish_goal_worker_health(
 }
 
 ///|
+/// Project durable Goal state on its own cadence.
+///
+/// The execute loop only projects when a tick returns, and a tick runs a
+/// provider Take inline, so a Goal can advance through several Part stages
+/// with nothing reaching the Conductor. This observes the same durable
+/// records the tick writes and publishes them; the server drops any report
+/// whose material fingerprint is unchanged, so an idle Goal emits nothing.
+async fn conductor_goal_observer(project_dir : String) -> Unit {
+  for ;; {
+    let active = match @exec.list_native_active_goal_ids(project_dir) {
+      Ok(value) => value
+      Err(_) => []
+    }
+    for goal_id in active {
+      match @exec.inspect_native_goal(project_dir, goal_id) {
+        Ok(report) => ignore(conductor_publish_goal_update(report))
+        Err(_) => ()
+      }
+    }
+    @async.sleep(@workflow.goal_observation_interval_ms(active.length()))
+  }
+}
+
+///|
 async fn conductor_goal_loop(project_dir : String) -> Unit {
   let mut consecutive_failures = 0
   // A Goal whose ticks succeed while advancing nothing looks identical to one
@@ -1120,7 +1144,12 @@ fn goal_worker_run() -> Unit {
     ignore(@sys.append_file_sync(log_path, rendered + "\n"))
   })
   @moontrace.set_min_level(@moontrace.Level::Debug)
-  @async.run_async_main(async fn() { conductor_goal_loop(config.project_dir) })
+  @async.run_async_main(async fn() {
+    @async.with_task_group(async fn(group) {
+      group.spawn_bg(async fn() { conductor_goal_observer(config.project_dir) })
+      conductor_goal_loop(config.project_dir)
+    })
+  })
 }
 
 ///|

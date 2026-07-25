@@ -4347,6 +4347,28 @@ test "control state generation requires both marker and store" {
 }
 
 ///|
+/// Goal identities this repository is still working on.
+pub fn list_native_active_goal_ids(
+  project_dir : String,
+) -> Result[Array[@control.GoalId], @types.ChoirError] {
+  let active : Array[@control.GoalId] = []
+  match
+    @workflow.list_goal_execution_records(
+      native_goal_repository(project_dir),
+      local_part_workflow_repository_adapters(),
+    ) {
+    Ok(records) =>
+      for stored in records {
+        if !@workflow.goal_execution_state_is_terminal(stored.record.state) {
+          active.push(stored.record.goal.id)
+        }
+      }
+    Err(error) => return Err(error)
+  }
+  Ok(active)
+}
+
+///|
 async fn cleanup_native_goal_runtime_at_key(
   repository_id : @workflow.RepositoryId,
   temporary_root : String,

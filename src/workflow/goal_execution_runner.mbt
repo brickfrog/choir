@@ -131,6 +131,30 @@ fn load_goal_execution_parts(
 /// cause under a log line per second. Back off geometrically to a ceiling so a
 /// persistent failure settles into a slow poll while a transient one still
 /// recovers promptly.
+/// How long to wait between projections of durable Goal state.
+///
+/// Publishing is otherwise bolted to the execute tick, and the tick runs a
+/// provider Take inline: for the length of that Take nothing is projected, so
+/// the Conductor and statusline show whatever state preceded it while the Part
+/// silently advances through harness start, candidate, and verification. An
+/// observer on its own cadence projects that movement; the report fingerprint
+/// already suppresses counter-only churn, so a quiet Goal stays quiet.
+pub fn goal_observation_interval_ms(active_goals : Int) -> Int {
+  if active_goals > 0 {
+    3000
+  } else {
+    15000
+  }
+}
+
+///|
+test "observation keeps a tighter cadence only while a Goal is active" {
+  assert_eq(goal_observation_interval_ms(1), 3000)
+  assert_eq(goal_observation_interval_ms(4), 3000)
+  assert_eq(goal_observation_interval_ms(0), 15000)
+}
+
+///|
 pub fn goal_execution_tick_delay_ms(consecutive_failures : Int) -> Int {
   let base = 1000
   let ceiling = 30000
