@@ -175,13 +175,19 @@ pub fn goal_execution_tick_failure_is_persistent(
 }
 
 ///|
-/// Emit one operator-facing health transition when a failure run first becomes
-/// persistent. Later retries remain visible in logs without waking the
-/// Conductor every backoff interval.
+/// Emit an operator-facing health transition when a failure run first becomes
+/// persistent, and again at a bounded interval while it continues.
+///
+/// Notifying only once left a Goal that fails every tick silent forever after
+/// its fifth failure: the log filled up while the Conductor and statusline
+/// showed a Goal that looked merely slow. The repeat is far coarser than the
+/// backoff, so a standing stall stays visible without waking the Conductor
+/// every retry.
 pub fn goal_execution_tick_failure_should_notify(
   consecutive_failures : Int,
 ) -> Bool {
-  consecutive_failures == 5
+  consecutive_failures == 5 ||
+  (consecutive_failures > 5 && consecutive_failures % 20 == 0)
 }
 
 ///|

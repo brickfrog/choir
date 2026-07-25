@@ -233,8 +233,12 @@ fn goal_publication_assurance_is_current(
   audit.subject.integration_receipt_set_digest ==
   seal.integration_receipt_set_digest &&
   audit.audit_result_digest == audit_result.result_digest &&
-  audit.outcome == @control.AuditOutcome::AuditPassed &&
-  audit.blocking_findings_count == 0
+  // Publication reuses the audit gate's admission rather than restating it.
+  // Restating it drifted: an audit the gate authorized with advisory findings
+  // was rejected here, and the publication tick then failed forever with no
+  // durable state to explain it.
+  @control.audit_findings_admission(audit.outcome, audit.blocking_findings_count)
+  is None
 }
 
 ///|

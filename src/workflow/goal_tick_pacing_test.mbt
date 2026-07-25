@@ -22,6 +22,12 @@ test "persistent tick failure is distinguished from a passing one" {
   assert_false(@workflow.goal_execution_tick_failure_should_notify(4))
   assert_true(@workflow.goal_execution_tick_failure_should_notify(5))
   assert_false(@workflow.goal_execution_tick_failure_should_notify(6))
+  // A failure run that never ends keeps saying so instead of reporting once
+  // and leaving the Conductor to assume the Goal is merely slow.
+  assert_false(@workflow.goal_execution_tick_failure_should_notify(19))
+  assert_true(@workflow.goal_execution_tick_failure_should_notify(20))
+  assert_false(@workflow.goal_execution_tick_failure_should_notify(21))
+  assert_true(@workflow.goal_execution_tick_failure_should_notify(100))
 }
 
 ///|
