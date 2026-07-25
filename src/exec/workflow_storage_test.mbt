@@ -1371,6 +1371,7 @@ async test "Goal cancellation atomically rejects stale seal authorization" {
     pull_request_document: Some({
       title: "test: exercise Goal assurance persistence",
       body: "Exercises persisted Goal assurance.",
+      draft: false,
     }),
     migration_production_admission: None,
     goal_ref: @workflow.goal_execution_ref(integrated.goal.id),
@@ -1560,6 +1561,7 @@ async test "Goal steering persists revision history and paused Goals do not run"
     pull_request_document: Some({
       title: "test: exercise Goal steering",
       body: "Exercises persisted Goal steering.",
+      draft: false,
     }),
     migration_production_admission: None,
     goal_ref: @workflow.goal_execution_ref(fixture.goal.id),
@@ -1695,6 +1697,7 @@ async test "Goal finalization input request and answer survive restart" {
     pull_request_document: Some({
       title: "test: exercise Goal input persistence",
       body: "Exercises persisted Goal input handling.",
+      draft: false,
     }),
     migration_production_admission: None,
     goal_ref: @workflow.goal_execution_ref(fixture.goal.id),

@@ -66,6 +66,7 @@ fn selection_store_decision() -> @workflow.GoalSelectionDecision raise {
         pull_request_document: Some({
           title: "test: persist Goal selection",
           body: "Exercises persisted Goal selection.",
+          draft: false,
         }),
         migration_production_admission: None,
         maximum_parallel_parts: 1,

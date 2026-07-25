@@ -53,6 +53,7 @@ test "Conductor draft decodes friendly provider and verification fields" {
     Some({
       title: "docs: explain the answer",
       body: "Explains both answer changes and their verification.",
+      draft: false,
     }),
   )
 }

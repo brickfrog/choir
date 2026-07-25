@@ -365,6 +365,54 @@ fn parse_native_paginated_pull_request_lookup(
 }
 
 ///|
+fn native_pull_request_create_arguments(
+  repository_name : String,
+  base : String,
+  head : String,
+  document : @workflow.PullRequestDocument,
+) -> Array[String] {
+  let arguments = [
+    "pr",
+    "create",
+    "--repo",
+    repository_name,
+    "--base",
+    base,
+    "--head",
+    head,
+    "--title",
+    document.title,
+    "--body",
+    document.body,
+  ]
+  if document.draft {
+    arguments.push("--draft")
+  }
+  arguments
+}
+
+///|
+test "native PR create arguments include draft only when requested" {
+  let ready = native_pull_request_create_arguments(
+    "brickfrog/choir",
+    "main",
+    "choir/goals/example",
+    { title: "fix: ready", body: "Ready for review.", draft: false },
+  )
+  assert_eq(ready, [
+    "pr", "create", "--repo", "brickfrog/choir", "--base", "main", "--head", "choir/goals/example",
+    "--title", "fix: ready", "--body", "Ready for review.",
+  ])
+  let draft = native_pull_request_create_arguments(
+    "brickfrog/choir",
+    "main",
+    "choir/goals/example",
+    { title: "fix: draft", body: "Preliminary review.", draft: true },
+  )
+  assert_eq(draft[ready.length():], ["--draft"])
+}
+
+///|
 pub fn native_pull_request_forge_adapters() -> NativePullRequestForgeAdapters {
   {
     resolve_repository: async fn(repository_root) {
@@ -413,22 +461,10 @@ pub fn native_pull_request_forge_adapters() -> NativePullRequestForgeAdapters {
       // The durable state is changed to CreateMayHaveBeenIssued before this
       // call. This function puts at most one request on the wire and its output
       // is never trusted; reconciliation always performs a fresh lookup.
-      ignore(
-        native_gh_capture(repository_root, [
-          "pr",
-          "create",
-          "--repo",
-          repository_name,
-          "--base",
-          base,
-          "--head",
-          head,
-          "--title",
-          document.title,
-          "--body",
-          document.body,
-        ]),
+      let arguments = native_pull_request_create_arguments(
+        repository_name, base, head, document,
       )
+      ignore(native_gh_capture(repository_root, arguments))
     },
   }
 }
@@ -490,7 +526,11 @@ fn native_goal_pull_request_document(
       native_pull_request_error("publishable Goal has no pull request document"),
     )
   }
-  Ok({ title: document.title, body: document.body + "\n\n" + marker.0 })
+  Ok({
+    title: document.title,
+    body: document.body + "\n\n" + marker.0,
+    draft: document.draft,
+  })
 }
 
 ///|
@@ -502,6 +542,7 @@ test "native final PR preserves Conductor prose and adds only its marker" {
     Some({
       title: "docs: add first-Goal walkthrough",
       body: "Explains the workflow and its verification.",
+      draft: false,
     }),
     marker,
   ).unwrap()
@@ -923,6 +964,7 @@ test "GitHub lookup parser distinguishes identity, possible match, and ambiguity
     document: {
       title: "docs: explain Goal workflow",
       body: "Explains the Goal workflow.\n\n<!-- choir-final-pr:fixture -->",
+      draft: false,
     },
     identity_marker: @workflow.PullRequestIdentityMarker(
       "<!-- choir-final-pr:fixture -->",

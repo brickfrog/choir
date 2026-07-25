@@ -756,6 +756,7 @@ fn workflow_execution_for_attach(
     pull_request_document: Some({
       title: "test: exercise Part workflow",
       body: "Exercises the Part workflow.",
+      draft: false,
     }),
     migration_production_admission: None,
     goal_ref,
@@ -1263,6 +1264,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     pull_request_document: Some({
       title: "test: exercise assurance workflow",
       body: "Exercises Goal assurance from a Part workflow.",
+      draft: false,
     }),
     migration_production_admission: None,
     goal_ref: @workflow.goal_execution_ref(integrated.goal.id),
@@ -2166,6 +2168,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
   let pr_document : @workflow.PullRequestDocument = {
     title: "feat: complete assurance Goal",
     body: "Goal evidence\n\n" + pr_marker.0,
+    draft: false,
   }
   assert_true(
     @workflow.initialize_goal_pull_request(
@@ -2218,6 +2221,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
       {
         title: "feat: stack dependent Goal",
         body: "Stacks on its open dependency.\n\n" + stacked_marker.0,
+        draft: false,
       },
     ) {
     Ok(value) => value

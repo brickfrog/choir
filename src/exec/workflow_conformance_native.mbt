@@ -1782,6 +1782,7 @@ fn scale_terminal_projection(
     pull_request_document: Some({
       title: "test: run workflow conformance",
       body: "Exercises the native workflow conformance suite.",
+      draft: false,
     }),
     migration_production_admission: None,
     goal_ref,
@@ -2053,6 +2054,7 @@ fn scale_terminal_projection(
       {
         title: "feat: complete scale Goal",
         body: "Scale evidence\n\n" + marker.0,
+        draft: false,
       },
     ) {
     Ok(value) => value
