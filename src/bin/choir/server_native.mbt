@@ -943,7 +943,19 @@ async fn conductor_goal_loop(project_dir : String) -> Unit {
           @moontrace.field("state", record.state.to_json().stringify(indent=0)),
         ])
         match @exec.inspect_native_goal(project_dir, record.goal.id) {
-          Ok(report) =>
+          Ok(report) => {
+            match @workflow.goal_report_attention_summary(report) {
+              Some(summary) =>
+                @moontrace.error("Goal needs attention", fields=[
+                  @moontrace.field("goal_id", record.goal.id.0),
+                  @moontrace.field(
+                    "state",
+                    record.state.to_json().stringify(indent=0),
+                  ),
+                  @moontrace.field("cause", summary),
+                ])
+              None => ()
+            }
             match conductor_publish_goal_update(report) {
               Ok(_) => ()
               Err(error) =>
@@ -952,6 +964,7 @@ async fn conductor_goal_loop(project_dir : String) -> Unit {
                   @moontrace.field("error", error),
                 ])
             }
+          }
           Err(error) =>
             @moontrace.error("Goal update projection failed", fields=[
               @moontrace.field("goal_id", record.goal.id.0),

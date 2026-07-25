@@ -213,6 +213,20 @@ pub(all) enum PartEffectObservation {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+/// What Choir observed when a provider dispatch ended recovery-uncertain.
+///
+/// Without this the Part records only that "a Take was uncertain", and a
+/// provider outage, a harness bug, and a lost process are indistinguishable to
+/// anyone reading the Goal. `detail` is Choir's own diagnostic for the failure
+/// it classified; provider output is never copied into durable state.
+pub(all) struct PartDispatchDiagnostic {
+  take_id : @control.TakeId
+  session_id : @control.HarnessSessionId
+  reason : @control.TakeUncertaintyReason
+  detail : String
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub(all) struct PartWorkflowSnapshot {
   workflow_id : String
   durable_version : Int
@@ -249,6 +263,7 @@ pub(all) struct PartWorkflowSnapshot {
   integration_conflicts : Array[@control.IntegrationConflict]
   pending_effect : PartEffectIntent?
   effect_receipts : Array[PartEffectReceipt]
+  dispatch_diagnostic : PartDispatchDiagnostic?
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|

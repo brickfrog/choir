@@ -1344,6 +1344,7 @@ fn publication_integrated_part(
     integration_conflicts: [],
     pending_effect: None,
     effect_receipts: [],
+    dispatch_diagnostic: None,
   }
 }
 

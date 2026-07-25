@@ -64,6 +64,39 @@ fn codex_driver_error(message : String) -> @types.ChoirError {
 }
 
 ///|
+/// Attribute a rejected Codex trace to the provider run that produced it.
+///
+/// A provider outage, a CLI that never started, and a genuinely malformed
+/// trace all reduce to the same parse rejection. The CLI exit status and the
+/// size of what it emitted are the two facts that separate them, and both are
+/// Choir's own observations rather than provider text, so they are safe to
+/// carry into durable state.
+fn codex_provider_violation(
+  capture : CodexDriverCapture,
+  error : @types.ChoirError,
+) -> @types.ChoirError {
+  @types.ChoirError::provider_protocol_violation(
+    error.message() +
+    " (codex exit " +
+    capture.exit_code.to_string() +
+    ", " +
+    @utf8.encode(capture.output).length().to_string() +
+    " output bytes)",
+  )
+}
+
+///|
+test "a rejected Codex trace names the provider run that produced it" {
+  let detail = codex_provider_violation(
+    { exit_code: 1, output: "", started_at: 1L, finished_at: 2L },
+    codex_driver_error("provider lifecycle is incomplete"),
+  ).message()
+  assert_true(detail.contains("provider lifecycle is incomplete"))
+  assert_true(detail.contains("codex exit 1"))
+  assert_true(detail.contains("0 output bytes"))
+}
+
+///|
 pub let codex_event_spool_capacity_bytes : Int = 16 * 1024 * 1024
 
 ///|
@@ -650,18 +683,12 @@ pub fn evaluate_codex_driver_capture(
       request.allowed_tools,
     ) {
     Ok(value) => value
-    Err(error) =>
-      return Err(
-        @types.ChoirError::provider_protocol_violation(error.message()),
-      )
+    Err(error) => return Err(codex_provider_violation(request.capture, error))
   }
   let (outcome, terminal_response) = match
     validate_codex_response(request.role, response) {
     Ok(value) => value
-    Err(error) =>
-      return Err(
-        @types.ChoirError::provider_protocol_violation(error.message()),
-      )
+    Err(error) => return Err(codex_provider_violation(request.capture, error))
   }
   let events : Array[@control.HarnessEventEnvelope] = []
   let mut session = request.session

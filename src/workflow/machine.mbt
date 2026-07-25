@@ -287,6 +287,7 @@ pub fn initialize_part_workflow(
     integration_conflicts: [],
     pending_effect: None,
     effect_receipts: [],
+    dispatch_diagnostic: None,
   })
 }
 
@@ -1108,6 +1109,7 @@ fn record_part_provider_dispatch_uncertainty(
   reason : @control.TakeUncertaintyReason,
   session_lifecycle : @control.HarnessSessionLifecycle,
   error_context : String,
+  detail : String,
 ) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
   if snapshot.pending_effect != Some(intent) ||
     intent.lifecycle != PartEffectMayHaveOccurred {
@@ -1187,6 +1189,7 @@ fn record_part_provider_dispatch_uncertainty(
     },
     harness_sessions: sessions,
     pending_effect: Some({ ..intent, lifecycle: PartEffectUncertain }),
+    dispatch_diagnostic: Some({ take_id: take.id, session_id, reason, detail }),
   })
 }
 
@@ -1194,6 +1197,7 @@ fn record_part_provider_dispatch_uncertainty(
 pub fn record_part_provider_protocol_violation(
   snapshot : PartWorkflowSnapshot,
   intent : PartEffectIntent,
+  detail : String,
 ) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
   record_part_provider_dispatch_uncertainty(
     snapshot,
@@ -1201,6 +1205,7 @@ pub fn record_part_provider_protocol_violation(
     @control.TakeUncertaintyReason::TakeProtocolViolation,
     @control.HarnessSessionLifecycle::HarnessSessionProtocolViolated,
     "protocol violation",
+    detail,
   )
 }
 
@@ -1208,6 +1213,7 @@ pub fn record_part_provider_protocol_violation(
 pub fn record_part_event_ingestion_overflow(
   snapshot : PartWorkflowSnapshot,
   intent : PartEffectIntent,
+  detail : String,
 ) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
   record_part_provider_dispatch_uncertainty(
     snapshot,
@@ -1215,6 +1221,7 @@ pub fn record_part_event_ingestion_overflow(
     @control.TakeUncertaintyReason::TakeCursorGap,
     @control.HarnessSessionLifecycle::HarnessSessionRecoveryUncertain,
     "event ingestion overflow",
+    detail,
   )
 }
 
@@ -1309,6 +1316,7 @@ pub fn reconcile_part_recovery_uncertainty(
 pub fn record_part_provider_process_loss(
   snapshot : PartWorkflowSnapshot,
   intent : PartEffectIntent,
+  detail : String,
 ) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
   record_part_provider_dispatch_uncertainty(
     snapshot,
@@ -1316,5 +1324,6 @@ pub fn record_part_provider_process_loss(
     @control.TakeUncertaintyReason::TakeEffectUncertain,
     @control.HarnessSessionLifecycle::HarnessSessionRecoveryUncertain,
     "provider process loss",
+    detail,
   )
 }

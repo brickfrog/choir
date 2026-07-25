@@ -61,6 +61,7 @@ pub fn goal_report_material_fingerprint(report : GoalStatusReport) -> String {
         "audit_session_lifecycle": part.audit_session_lifecycle.to_json(),
         "lifecycle": part.lifecycle.to_json(),
         "stage": part.stage.to_json(),
+        "dispatch_diagnostic": part.dispatch_diagnostic.to_json(),
       } : Map[String, Json]).to_json()
   })
   (
@@ -82,6 +83,58 @@ pub fn goal_report_material_fingerprint(report : GoalStatusReport) -> String {
     } : Map[String, Json])
   .to_json()
   .stringify(indent=0)
+}
+
+///|
+fn part_attention_summary(part : GoalPartStatus) -> String? {
+  let reason = match part.lifecycle {
+    @control.PartLifecycle::PartBlocked(reason) =>
+      reason.to_json().stringify(indent=0)
+    @control.PartLifecycle::PartCanceledNotRun => "\"PartCanceledNotRun\""
+    _ => return None
+  }
+  let detail = match part.dispatch_diagnostic {
+    Some(diagnostic) => ": " + diagnostic.detail
+    None => ""
+  }
+  Some("Part " + part.part_id.0 + " " + reason + detail)
+}
+
+///|
+/// One line naming why a Goal currently needs attention, or `None` while it is
+/// simply running.
+///
+/// The daemon log used to record only that a Goal reached
+/// `GoalExecutionBlocked`, which left an operator reading `serve.log` with no
+/// way to separate a failing verification from a provider outage. Every cause
+/// this returns is read from typed durable state, never inferred.
+pub fn goal_report_attention_summary(report : GoalStatusReport) -> String? {
+  let causes : Array[String] = []
+  for part in report.parts {
+    match part_attention_summary(part) {
+      Some(value) => causes.push(value)
+      None => ()
+    }
+  }
+  match report.assurance_block_reason {
+    Some(reason) =>
+      causes.push("Goal assurance " + reason.to_json().stringify(indent=0))
+    None => ()
+  }
+  match report.active_input_request {
+    Some(request) =>
+      causes.push("input requested " + request.reason.to_json().stringify(indent=0))
+    None => ()
+  }
+  match report.pause_reason {
+    Some(reason) => causes.push("paused " + reason.to_json().stringify(indent=0))
+    None => ()
+  }
+  if causes.length() == 0 {
+    None
+  } else {
+    Some(causes.join("; "))
+  }
 }
 
 ///|

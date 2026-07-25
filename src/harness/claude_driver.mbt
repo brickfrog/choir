@@ -52,6 +52,35 @@ fn claude_driver_error(message : String) -> @types.ChoirError {
 }
 
 ///|
+/// Attribute a rejected Claude trace to the provider run that produced it, so
+/// a provider outage is distinguishable from a malformed trace in durable
+/// state. See `codex_provider_violation` for the same reasoning.
+fn claude_provider_violation(
+  capture : ClaudeDriverCapture,
+  error : @types.ChoirError,
+) -> @types.ChoirError {
+  @types.ChoirError::provider_protocol_violation(
+    error.message() +
+    " (claude exit " +
+    capture.exit_code.to_string() +
+    ", " +
+    @utf8.encode(capture.output).length().to_string() +
+    " output bytes)",
+  )
+}
+
+///|
+test "a rejected Claude trace names the provider run that produced it" {
+  let detail = claude_provider_violation(
+    { exit_code: 2, output: "x", started_at: 1L, finished_at: 2L },
+    claude_driver_error("provider terminal result is invalid"),
+  ).message()
+  assert_true(detail.contains("provider terminal result is invalid"))
+  assert_true(detail.contains("claude exit 2"))
+  assert_true(detail.contains("1 output bytes"))
+}
+
+///|
 fn valid_declared_tool_name(tool : String) -> Bool {
   if tool == "StructuredOutput" {
     return true
@@ -483,18 +512,12 @@ pub fn evaluate_claude_driver_capture(
   match
     validate_claude_tool_trace(tool_trace, visible_tools, request.allowed_tools) {
     Ok(_) => ()
-    Err(error) =>
-      return Err(
-        @types.ChoirError::provider_protocol_violation(error.message()),
-      )
+    Err(error) => return Err(claude_provider_violation(request.capture, error))
   }
   let (outcome, terminal_response) = match
     validate_claude_take_response(request.role, response) {
     Ok(value) => value
-    Err(error) =>
-      return Err(
-        @types.ChoirError::provider_protocol_violation(error.message()),
-      )
+    Err(error) => return Err(claude_provider_violation(request.capture, error))
   }
   let events : Array[@control.HarnessEventEnvelope] = []
   let mut session = request.session

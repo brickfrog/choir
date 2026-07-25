@@ -25,6 +25,7 @@ fn projection_part(
     verification_receipt_count: 0,
     audit_receipt_present: false,
     integration_receipt_present: false,
+    dispatch_diagnostic: None,
   }
 }
 
@@ -196,4 +197,34 @@ test "display projection hides terminal Goals and classifies attention" {
     paused.attention,
     Some(@workflow.ConductorGoalAttention::ConductorAttentionRecoveryUncertain),
   )
+}
+
+///|
+test "an attention summary names the durable cause, not the counters" {
+  assert_eq(@workflow.goal_report_attention_summary(projection_report()), None)
+  let uncertain = {
+    ..projection_part(@workflow.PartWorkflowStage::PartRecoveryUncertain),
+    lifecycle: @control.PartLifecycle::PartBlocked(
+      @control.PartBlockReason::PartRecoveryUncertain,
+    ),
+    dispatch_diagnostic: Some({
+      take_id: @control.TakeId("take-impl"),
+      session_id: @control.HarnessSessionId("session-impl"),
+      reason: @control.TakeUncertaintyReason::TakeProtocolViolation,
+      detail: "Codex driver: provider lifecycle is incomplete (codex exit 1, 0 output bytes)",
+    }),
+  }
+  let summary = match
+    @workflow.goal_report_attention_summary(
+      projection_report(
+        state=@workflow.GoalExecutionState::GoalExecutionBlocked,
+        parts=[uncertain],
+      ),
+    ) {
+    Some(value) => value
+    None => fail("a blocked Goal reported no cause")
+  }
+  assert_true(summary.contains("part-a"))
+  assert_true(summary.contains("PartRecoveryUncertain"))
+  assert_true(summary.contains("codex exit 1"))
 }
