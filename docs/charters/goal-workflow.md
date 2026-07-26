@@ -103,11 +103,18 @@ unconnected product path usable.
   is the one commit that lands on `main`.
 - A Goal remains the unit of publication, with its Parts scheduled as a stable
   dependency DAG: only dependency-ready, mutation-compatible Parts fan out up
-  to `maximum_parallel_parts`. Multiple live Goals coexist and the runner
-  advances them round-robin. In `auto_merge` mode, an unmerged Goal retains its
+  to `maximum_parallel_parts`. Concurrency has exactly two levels today, and
+  they are not equivalent. *Inside* one Goal, dependency-ready Parts run
+  concurrently within a single `run_goal_parts` pass. *Between* Goals, the
+  runner rotates one Goal per tick, and that rotation happens only between
+  ticks: a tick that enters `run_goal_parts` holds the worker until that pass
+  returns, so a long inline Take does delay every other Goal. There is no
+  portfolio-level preemption and no global per-surface provider admission —
+  a Goal is never suspended mid-pass to let another Goal or provider surface
+  through. In `auto_merge` mode, an unmerged Goal retains its
   source Bead claims, making its merge a dependency barrier while unrelated
-  Goals continue independently.
-- The current checkout passes `moon check --target native`, all 515 native
+  Goals continue between ticks.
+- The current checkout passes `moon check --target native`, all 522 native
   tests, the Choir lint command, every registered fault/race conformance
   command, the synthetic Part lifecycle, parallel promotion, scale scheduling,
   both native provider Part lifecycles, and the two-provider Goal fixture. The

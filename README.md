@@ -58,7 +58,9 @@ can use `choir start`.
 From the Conductor, discuss the intended feature, create or refine Beads when
 needed, then invoke the provider's built-in `/goal`. The Conductor proposes the selected Parts and
 their contracts; Choir validates and schedules them according to dependencies,
-mutation overlap, available provider capacity, and the requested concurrency.
+mutation overlap, and the requested concurrency. Provider surfaces have no
+global per-surface admission policy yet, so concurrency is bounded per Goal by
+`maximum_parallel_parts` rather than by measured provider capacity.
 
 Choir does not install a slash command or skill named `goal`: `/goal` remains
 Claude Code's built-in session goal. While a durable Choir Goal is running, a
