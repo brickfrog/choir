@@ -14,7 +14,7 @@ priv struct NativeConductorTask {
 
 ///|
 fn native_conductor_error(detail : String) -> @types.Response {
-  @types.Response::Err("Conductor request: " + detail)
+  @types.Response::err_text("Conductor request: " + detail)
 }
 
 ///|
@@ -320,11 +320,11 @@ async fn dispatch_native_task_list(
       capture,
     ) {
     Ok(value) => value
-    Err(error) => return @types.Response::Err(error.message())
+    Err(error) => return @types.Response::err(error)
   }
   let tasks = match native_conductor_tasks_from_output(output) {
     Ok(value) => value
-    Err(error) => return @types.Response::Err(error.message())
+    Err(error) => return @types.Response::err(error)
   }
   @types.Response::ok_values({
     "status": "ok".to_json(),
@@ -340,7 +340,7 @@ async fn dispatch_native_task_get(
 ) -> @types.Response {
   let id = match native_conductor_required_string(request, "id") {
     Ok(value) => value
-    Err(error) => return @types.Response::Err(error.message())
+    Err(error) => return @types.Response::err(error)
   }
   let output = match
     native_conductor_capture_beads(
@@ -350,7 +350,7 @@ async fn dispatch_native_task_get(
       capture,
     ) {
     Ok(value) => value
-    Err(error) => return @types.Response::Err(error.message())
+    Err(error) => return @types.Response::err(error)
   }
   match
     native_conductor_tasks_from_output(output, require_dependency_details=true) {
@@ -360,7 +360,7 @@ async fn dispatch_native_task_get(
         "task": task.to_json(),
       })
     Ok(_) => native_conductor_error("Beads show returned an invalid task set")
-    Err(error) => @types.Response::Err(error.message())
+    Err(error) => @types.Response::err(error)
   }
 }
 
@@ -414,7 +414,7 @@ async fn dispatch_native_task_create(
   let (id, status, arguments) = match
     native_conductor_task_create_arguments(request) {
     Ok(value) => value
-    Err(error) => return @types.Response::Err(error.message())
+    Err(error) => return @types.Response::err(error)
   }
   let existing = capture({
     program: "bd",
@@ -430,18 +430,18 @@ async fn dispatch_native_task_create(
           "task": task.to_json(),
         })
       Ok(_) => native_conductor_error("existing Bead result was ambiguous")
-      Err(error) => @types.Response::Err(error.message())
+      Err(error) => @types.Response::err(error)
     }
   }
   let created = match
     native_conductor_capture_beads(project_dir, "create", arguments, capture) {
     Ok(output) => output
-    Err(error) => return @types.Response::Err(error.message())
+    Err(error) => return @types.Response::err(error)
   }
   let task = match native_conductor_tasks_from_output(created) {
     Ok([value]) => value
     Ok(_) => return native_conductor_error("Beads create returned no task")
-    Err(error) => return @types.Response::Err(error.message())
+    Err(error) => return @types.Response::err(error)
   }
   let final_task = if status == @types.TaskStatus::Todo {
     task
@@ -460,12 +460,12 @@ async fn dispatch_native_task_create(
         capture,
       ) {
       Ok(output) => output
-      Err(error) => return @types.Response::Err(error.message())
+      Err(error) => return @types.Response::err(error)
     }
     match native_conductor_tasks_from_output(updated) {
       Ok([value]) => value
       Ok(_) => return native_conductor_error("Beads update returned no task")
-      Err(error) => return @types.Response::Err(error.message())
+      Err(error) => return @types.Response::err(error)
     }
   }
   @types.Response::ok_values({
@@ -734,7 +734,7 @@ async fn dispatch_native_task_update(
 ) -> @types.Response {
   let id = match native_conductor_required_string(request, "id") {
     Ok(value) => value
-    Err(error) => return @types.Response::Err(error.message())
+    Err(error) => return @types.Response::err(error)
   }
   let arguments : Array[String] = ["update", id]
   match native_conductor_optional_string(request, "title") {
@@ -765,7 +765,7 @@ async fn dispatch_native_task_update(
           arguments.push("--status")
           arguments.push(native_conductor_task_status_for_beads(status))
         }
-        Err(error) => return @types.Response::Err(error.message())
+        Err(error) => return @types.Response::err(error)
       }
     None => ()
   }
@@ -790,7 +790,7 @@ async fn dispatch_native_task_update(
   let output = match
     native_conductor_capture_beads(project_dir, "update", arguments, capture) {
     Ok(value) => value
-    Err(error) => return @types.Response::Err(error.message())
+    Err(error) => return @types.Response::err(error)
   }
   match native_conductor_tasks_from_output(output) {
     Ok([task]) =>
@@ -799,7 +799,7 @@ async fn dispatch_native_task_update(
         "task": task.to_json(),
       })
     Ok(_) => native_conductor_error("Beads update returned no task")
-    Err(error) => @types.Response::Err(error.message())
+    Err(error) => @types.Response::err(error)
   }
 }
 
@@ -913,7 +913,7 @@ async fn dispatch_native_goal_submit(
   )
   match submit_native_conductor_goal_draft(project_dir, draft, capture) {
     Ok(report) => native_conductor_goal_action_ok_json(report.to_json())
-    Err(error) => @types.Response::Err(error.message())
+    Err(error) => @types.Response::err(error)
   }
 }
 
@@ -956,12 +956,12 @@ fn dispatch_native_goal_list(project_dir : String) -> @types.Response {
   let adapters = local_part_workflow_repository_adapters()
   match @workflow.initialize_part_workflow_repository(repository, adapters) {
     Ok(_) => ()
-    Err(error) => return @types.Response::Err(error.message())
+    Err(error) => return @types.Response::err(error)
   }
   let records = match
     @workflow.list_goal_execution_records(repository, adapters) {
     Ok(value) => value
-    Err(error) => return @types.Response::Err(error.message())
+    Err(error) => return @types.Response::err(error)
   }
   let goals = records.map(fn(stored) {
     let record = stored.record
@@ -996,7 +996,7 @@ fn dispatch_native_goal_status(
     (None, Some(part_id)) =>
       inspect_native_goal_for_part(project_dir, @control.PartId(part_id))
     _ =>
-      return @types.Response::Err(
+      return @types.Response::err_text(
         "goal_status requires exactly one of goal_id or part_id",
       )
   }
@@ -1015,7 +1015,7 @@ fn dispatch_native_goal_status(
       }
       native_conductor_goal_action_ok_json(fields.to_json())
     }
-    Err(error) => @types.Response::Err(error.message())
+    Err(error) => @types.Response::err(error)
   }
 }
 
@@ -1027,7 +1027,7 @@ fn dispatch_native_goal_cancel(
 ) -> @types.Response {
   let goal = match native_conductor_resolve_goal_id(project_dir, request) {
     Ok(value) => value
-    Err(error) => return @types.Response::Err(error.message())
+    Err(error) => return @types.Response::err(error)
   }
   match cancel_native_goal(project_dir, goal, now) {
     Ok(
@@ -1070,7 +1070,7 @@ fn dispatch_native_goal_cancel(
           "already_terminal": true.to_json(),
         }.to_json(),
       )
-    Err(error) => @types.Response::Err(error.message())
+    Err(error) => @types.Response::err(error)
   }
 }
 
@@ -1122,7 +1122,7 @@ fn dispatch_native_goal_steer(
 ) -> @types.Response {
   let goal = match native_conductor_resolve_goal_id(project_dir, request) {
     Ok(value) => value
-    Err(error) => return @types.Response::Err(error.message())
+    Err(error) => return @types.Response::err(error)
   }
   if request.args.get("action") == Some("retry_part") {
     // When the Goal was selected by part_id, that same Bead names the
@@ -1142,13 +1142,13 @@ fn dispatch_native_goal_steer(
             "retried": true.to_json(),
           }.to_json(),
         )
-      Err(error) => @types.Response::Err(error.message())
+      Err(error) => @types.Response::err(error)
     }
   }
   let goal_id = goal.0
   let change = match native_conductor_policy_change(request) {
     Ok(value) => value
-    Err(error) => return @types.Response::Err(error.message())
+    Err(error) => return @types.Response::err(error)
   }
   match steer_native_goal(project_dir, goal, change) {
     Ok(
@@ -1190,7 +1190,7 @@ fn dispatch_native_goal_steer(
           "already_terminal": true.to_json(),
         }.to_json(),
       )
-    Err(error) => @types.Response::Err(error.message())
+    Err(error) => @types.Response::err(error)
   }
 }
 
@@ -1201,7 +1201,7 @@ fn dispatch_native_goal_attach(
 ) -> @types.Response {
   let take_id = match native_conductor_required_string(request, "take_id") {
     Ok(value) => value
-    Err(error) => return @types.Response::Err(error.message())
+    Err(error) => return @types.Response::err(error)
   }
   match attach_native_goal(project_dir, @control.TakeId(take_id)) {
     Ok(report) => {
@@ -1211,7 +1211,7 @@ fn dispatch_native_goal_attach(
       fields.set("observational", true.to_json())
       native_conductor_goal_action_ok_json(fields.to_json())
     }
-    Err(error) => @types.Response::Err(error.message())
+    Err(error) => @types.Response::err(error)
   }
 }
 
@@ -1224,11 +1224,11 @@ fn dispatch_native_goal_answer(
   let request_id = match
     native_conductor_required_string(request, "request_id") {
     Ok(value) => value
-    Err(error) => return @types.Response::Err(error.message())
+    Err(error) => return @types.Response::err(error)
   }
   let answer = match native_conductor_required_string(request, "answer") {
     Ok(value) => value
-    Err(error) => return @types.Response::Err(error.message())
+    Err(error) => return @types.Response::err(error)
   }
   match
     answer_native_goal_input(
@@ -1269,7 +1269,7 @@ fn dispatch_native_goal_answer(
           "replayed": true.to_json(),
         }.to_json(),
       )
-    Err(error) => @types.Response::Err(error.message())
+    Err(error) => @types.Response::err(error)
   }
 }
 

@@ -44,7 +44,7 @@ test "goal selector accepts a goal id or a Bead part selector" {
 
 ///|
 fn goal_cli_no_serve_response() -> @types.Response {
-  @types.Response::Err(
+  @types.Response::err_text(
     @types.ChoirError::transport_error(
       "no `choir serve` is running — start it, then run `choir goal`.",
     ).message(),
@@ -55,7 +55,7 @@ fn goal_cli_no_serve_response() -> @types.Response {
 fn goal_cli_call(tool : String, values : Map[String, Json]) -> @types.Response {
   let config = match goal_client_load_config() {
     Ok(loaded) => loaded
-    Err(err) => return @types.Response::Err(err)
+    Err(err) => return @types.Response::err_text(err)
   }
   let capability = @sys.getenv("CHOIR_CONDUCTOR_TOKEN")
   let req : @types.Request = {
@@ -72,7 +72,7 @@ fn goal_cli_call(tool : String, values : Map[String, Json]) -> @types.Response {
       if client_error_is_unreachable(error, config.listen_uds) {
         goal_cli_no_serve_response()
       } else {
-        @types.Response::Err(
+        @types.Response::err_text(
           @types.ChoirError::transport_error(error).message(),
         )
       }
@@ -253,7 +253,7 @@ fn goal_run() -> Unit {
   let args = @env.args()
   if args.length() >= 3 && args[2] == "list" {
     if args.length() != 3 {
-      client_emit(@types.Response::Err(goal_cli_usage()))
+      client_emit(@types.Response::err_text(goal_cli_usage()))
       return
     }
     client_emit(goal_cli_call("goal_list", Map([])))
@@ -263,7 +263,7 @@ fn goal_run() -> Unit {
     let values = match goal_cli_status_values(args, 3) {
       Ok(value) => value
       Err(err) => {
-        client_emit(@types.Response::Err(err))
+        client_emit(@types.Response::err_text(err))
         return
       }
     }
@@ -274,7 +274,7 @@ fn goal_run() -> Unit {
     let values = match goal_cli_status_values(args, 3) {
       Ok(value) => value
       Err(err) => {
-        client_emit(@types.Response::Err(err))
+        client_emit(@types.Response::err_text(err))
         return
       }
     }
@@ -285,7 +285,7 @@ fn goal_run() -> Unit {
     let values = match goal_cli_steer_values(args, 3) {
       Ok(value) => value
       Err(err) => {
-        client_emit(@types.Response::Err(err))
+        client_emit(@types.Response::err_text(err))
         return
       }
     }
@@ -296,7 +296,7 @@ fn goal_run() -> Unit {
     let values = match goal_cli_attach_values(args, 3) {
       Ok(value) => value
       Err(err) => {
-        client_emit(@types.Response::Err(err))
+        client_emit(@types.Response::err_text(err))
         return
       }
     }
@@ -307,12 +307,12 @@ fn goal_run() -> Unit {
     let values = match goal_cli_answer_values(args, 3) {
       Ok(value) => value
       Err(err) => {
-        client_emit(@types.Response::Err(err))
+        client_emit(@types.Response::err_text(err))
         return
       }
     }
     client_emit(goal_cli_call("goal_answer", values))
     return
   }
-  client_emit(@types.Response::Err(goal_cli_usage()))
+  client_emit(@types.Response::err_text(goal_cli_usage()))
 }

@@ -362,7 +362,9 @@ fn conductor_bootstrap(
   if request.req_method != conductor_bootstrap_method ||
     request.name != conductor_bootstrap_method ||
     !peer_is_choir {
-    return @types.Response::Err("Conductor bootstrap authentication failed")
+    return @types.Response::err_text(
+      "Conductor bootstrap authentication failed",
+    )
   }
   let token = request.args.get(@types.registration_token_arg).unwrap_or("")
   let statusline_cache_key = request.args
@@ -370,7 +372,9 @@ fn conductor_bootstrap(
     .unwrap_or("")
   if !conductor_valid_bootstrap_token(token) ||
     !conductor_statusline_cache_key_valid(statusline_cache_key) {
-    return @types.Response::Err("Conductor bootstrap authentication failed")
+    return @types.Response::err_text(
+      "Conductor bootstrap authentication failed",
+    )
   }
   state.conductor_token = Some(token)
   state.statusline_cache_key = Some(statusline_cache_key)
@@ -393,17 +397,21 @@ fn conductor_register(
 ) -> @types.Response {
   let presented = request.registration_token().unwrap_or("")
   if request.req_method != "register" || presented == "" {
-    return @types.Response::Err("Conductor registration authentication failed")
+    return @types.Response::err_text(
+      "Conductor registration authentication failed",
+    )
   }
   let stored = match state.conductor_token {
     Some(token) => token
     None =>
-      return @types.Response::Err(
+      return @types.Response::err_text(
         "Conductor credential not provisioned; run `choir start`",
       )
   }
   if !conductor_tokens_equal(presented, stored) {
-    return @types.Response::Err("Conductor registration authentication failed")
+    return @types.Response::err_text(
+      "Conductor registration authentication failed",
+    )
   }
   @types.Response::ok_values(Map([]))
 }
@@ -416,7 +424,7 @@ fn local_cli_register(
   if request.req_method != local_cli_register_method ||
     request.name != local_cli_register_method ||
     !peer_is_choir {
-    @types.Response::Err("local CLI authentication failed")
+    @types.Response::err_text("local CLI authentication failed")
   } else {
     @types.Response::ok_values(Map([]))
   }
@@ -451,7 +459,7 @@ async fn conductor_dispatch(
         @moontrace.field("request", request.name),
         @moontrace.field("error", error.to_string()),
       ])
-      @types.Response::Err("internal error: " + error.to_string())
+      @types.Response::err_text("internal error: " + error.to_string())
     }
   }
 }
@@ -576,10 +584,10 @@ async fn conductor_handle_custom_line(
           conductor_broadcast_goal_update(state, report)
           @types.Response::ok_values(Map([]))
         }
-        None => @types.Response::Err("Goal update report is absent")
+        None => @types.Response::err_text("Goal update report is absent")
       }
     } else {
-      @types.Response::Err("Goal update authentication failed")
+      @types.Response::err_text("Goal update authentication failed")
     }
     ignore(conductor_send_response(client.fd, response))
     client.busy = false
@@ -599,10 +607,11 @@ async fn conductor_handle_custom_line(
           )
           @types.Response::ok_values(Map([]))
         }
-        _ => @types.Response::Err("Goal worker health report is incomplete")
+        _ =>
+          @types.Response::err_text("Goal worker health report is incomplete")
       }
     } else {
-      @types.Response::Err("Goal worker health authentication failed")
+      @types.Response::err_text("Goal worker health authentication failed")
     }
     ignore(conductor_send_response(client.fd, response))
     client.busy = false
@@ -619,7 +628,7 @@ async fn conductor_handle_custom_line(
       }
       @types.Response::ok_values(fields)
     } else {
-      @types.Response::Err("authenticated Conductor required")
+      @types.Response::err_text("authenticated Conductor required")
     }
     ignore(conductor_send_response(client.fd, response))
     client.busy = false
@@ -628,7 +637,7 @@ async fn conductor_handle_custom_line(
   let response = if client.authenticated {
     conductor_dispatch(state, request)
   } else {
-    @types.Response::Err("authenticated Conductor required")
+    @types.Response::err_text("authenticated Conductor required")
   }
   conductor_observe_goal_response(state, request, response)
   ignore(conductor_send_response(client.fd, response))
@@ -659,7 +668,7 @@ async fn conductor_handle_jsonrpc_line(
             let internal = if client.authenticated {
               conductor_dispatch(state, request)
             } else {
-              @types.Response::Err("authenticated Conductor required")
+              @types.Response::err_text("authenticated Conductor required")
             }
             @mcp.from_internal_response(id, internal)
           }
@@ -759,7 +768,7 @@ fn conductor_poll_client(
           ignore(
             conductor_send_response(
               client.fd,
-              @types.Response::Err("parse error: " + error),
+              @types.Response::err_text("parse error: " + error),
             ),
           )
           client.busy = false

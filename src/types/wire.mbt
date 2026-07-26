@@ -110,11 +110,123 @@ pub fn Request::registration_token(self : Request) -> String? {
 }
 
 ///|
+/// The closed taxonomy that crosses the internal wire. `ChoirError` already
+/// classifies every failure; without this the classification stopped at the
+/// daemon boundary and clients could only display opaque prose.
+pub(all) enum WireErrorCode {
+  WireAgentNotFound
+  WireToolNotFound
+  WirePermissionDenied
+  WirePolicyBlocked
+  WireProviderProtocolViolation
+  WireEventIngestionOverflow
+  WireProviderProcessLost
+  WireValidationError
+  WireTimeout
+  WireCanceled
+  WireWorkspaceError
+  WireTransportError
+  WireGitError
+  WireConfigError
+  WireCommandPreparationBlocked
+  /// A peer sent an error this build does not classify. Kept distinct so an
+  /// unrecognized code is never silently read as a known one.
+  WireUnclassifiedError
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct WireError {
+  code : WireErrorCode
+  message : String
+} derive(Debug, Eq)
+
+///|
 /// Internal wire format response.
 pub(all) enum Response {
   Ok(ResponseFields)
-  Err(String)
+  Err(WireError)
 } derive(Eq)
+
+///|
+pub fn wire_error_code_text(code : WireErrorCode) -> String {
+  match code {
+    WireAgentNotFound => "agent_not_found"
+    WireToolNotFound => "tool_not_found"
+    WirePermissionDenied => "permission_denied"
+    WirePolicyBlocked => "policy_blocked"
+    WireProviderProtocolViolation => "provider_protocol_violation"
+    WireEventIngestionOverflow => "event_ingestion_overflow"
+    WireProviderProcessLost => "provider_process_lost"
+    WireValidationError => "validation_error"
+    WireTimeout => "timeout"
+    WireCanceled => "canceled"
+    WireWorkspaceError => "workspace_error"
+    WireTransportError => "transport_error"
+    WireGitError => "git_error"
+    WireConfigError => "config_error"
+    WireCommandPreparationBlocked => "command_preparation_blocked"
+    WireUnclassifiedError => "unclassified_error"
+  }
+}
+
+///|
+pub fn wire_error_code_from_text(text : String) -> WireErrorCode {
+  match text {
+    "agent_not_found" => WireAgentNotFound
+    "tool_not_found" => WireToolNotFound
+    "permission_denied" => WirePermissionDenied
+    "policy_blocked" => WirePolicyBlocked
+    "provider_protocol_violation" => WireProviderProtocolViolation
+    "event_ingestion_overflow" => WireEventIngestionOverflow
+    "provider_process_lost" => WireProviderProcessLost
+    "validation_error" => WireValidationError
+    "timeout" => WireTimeout
+    "canceled" => WireCanceled
+    "workspace_error" => WireWorkspaceError
+    "transport_error" => WireTransportError
+    "git_error" => WireGitError
+    "config_error" => WireConfigError
+    "command_preparation_blocked" => WireCommandPreparationBlocked
+    _ => WireUnclassifiedError
+  }
+}
+
+///|
+/// Carry a classified failure across the wire with its taxonomy intact.
+pub fn Response::err(error : ChoirError) -> Response {
+  Err({
+    code: wire_error_code_from_text(error.to_wire_string()),
+    message: error.message(),
+  })
+}
+
+///|
+/// A failure raised at the wire boundary itself, before any `ChoirError`
+/// exists: a malformed request, a missing capability, a usage rejection.
+pub fn Response::err_text(message : String) -> Response {
+  Err({ code: WireValidationError, message })
+}
+
+///|
+pub fn Response::error_code(self : Response) -> WireErrorCode? {
+  match self {
+    Ok(_) => None
+    Err(error) => Some(error.code)
+  }
+}
+
+///|
+/// Whether the peer classified this failure as worth another attempt rather
+/// than as a decision the caller must change something to satisfy.
+pub fn Response::error_is_retryable(self : Response) -> Bool {
+  match self.error_code() {
+    Some(WireTransportError)
+    | Some(WireTimeout)
+    | Some(WireProviderProcessLost)
+    | Some(WireEventIngestionOverflow) => true
+    _ => false
+  }
+}
 
 ///|
 pub fn Response::ok(self : Map[String, String]) -> Response {
@@ -162,7 +274,7 @@ pub fn Response::is_ok(self : Response) -> Bool {
 pub fn Response::error_message(self : Response) -> String? {
   match self {
     Ok(_) => None
-    Err(msg) => Some(msg)
+    Err(error) => Some(error.message)
   }
 }
 

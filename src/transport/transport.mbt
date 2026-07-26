@@ -84,7 +84,16 @@ pub fn parse_response(data : String) -> Result[@types.Response, String] {
       }
     Some(False) =>
       match obj.get("error") {
-        Some(String(msg)) => Ok(@types.Response::Err(msg))
+        Some(String(msg)) => {
+          // An absent or unrecognized code is never read as a known one: the
+          // peer either did not classify the failure or classified it with a
+          // taxonomy this build does not have.
+          let code = match obj.get("code") {
+            Some(String(text)) => @types.wire_error_code_from_text(text)
+            _ => @types.WireErrorCode::WireUnclassifiedError
+          }
+          Ok(@types.Response::Err({ code, message: msg }))
+        }
         _ => Err("missing field: error")
       }
     _ => Err("could not determine response status (ok: true/false)")
@@ -107,7 +116,17 @@ pub fn format_response(resp : @types.Response) -> String {
         Some(msg) => msg
         None => ""
       }
-      { "ok": false.to_json(), "error": err.to_json() }.to_json().stringify()
+      let code = match resp.error_code() {
+        Some(value) => value
+        None => @types.WireErrorCode::WireUnclassifiedError
+      }
+      {
+        "ok": false.to_json(),
+        "error": err.to_json(),
+        "code": @types.wire_error_code_text(code).to_json(),
+      }
+      .to_json()
+      .stringify()
     }
   }
 }

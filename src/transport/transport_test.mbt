@@ -88,7 +88,7 @@ test "response wire round trips success and failure" {
     }
     Err(error) => fail(error)
   }
-  match parse_response(format_response(@types.Response::Err("denied"))) {
+  match parse_response(format_response(@types.Response::err_text("denied"))) {
     Ok(parsed) => {
       assert_false(parsed.is_ok())
       @debug.assert_eq(parsed.error_message(), Some("denied"))
@@ -104,4 +104,68 @@ test "JSON-RPC detection is structural" {
   )
   assert_false(is_jsonrpc_request("{\"method\":\"initialize\"}"))
   assert_false(is_jsonrpc_request("not json"))
+}
+
+///|
+test "the error taxonomy survives a wire round trip" {
+  let classified = @types.Response::err(
+    @types.ChoirError::permission_denied_detail("Conductor token is stale"),
+  )
+  assert_eq(
+    classified.error_code(),
+    Some(@types.WireErrorCode::WirePermissionDenied),
+  )
+  let round_tripped = match
+    @transport.parse_response(@transport.format_response(classified)) {
+    Ok(value) => value
+    Err(error) => fail(error)
+  }
+  assert_true(round_tripped == classified)
+  assert_eq(round_tripped.error_message(), Some("Conductor token is stale"))
+  // A permission rejection is a decision, not something to retry.
+  assert_false(round_tripped.error_is_retryable())
+  let transient = @types.Response::err(
+    @types.ChoirError::transport_error("socket closed mid-stream"),
+  )
+  assert_true(transient.error_is_retryable())
+  assert_true(
+    @types.Response::err(@types.ChoirError::provider_process_lost("gone")).error_is_retryable(),
+  )
+  // A boundary rejection with no ChoirError behind it is a validation failure.
+  assert_eq(
+    @types.Response::err_text("usage: choir goal ...").error_code(),
+    Some(@types.WireErrorCode::WireValidationError),
+  )
+}
+
+///|
+test "an unrecognized peer code is never read as a known one" {
+  let parsed = match
+    @transport.parse_response(
+      (
+        #|{"ok":false,"error":"something new","code":"from_a_newer_build"}
+      ),
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error)
+  }
+  assert_eq(
+    parsed.error_code(),
+    Some(@types.WireErrorCode::WireUnclassifiedError),
+  )
+  assert_false(parsed.error_is_retryable())
+  // A peer that sent no code at all is equally unclassified, not assumed.
+  let uncoded = match
+    @transport.parse_response(
+      (
+        #|{"ok":false,"error":"legacy"}
+      ),
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error)
+  }
+  assert_eq(
+    uncoded.error_code(),
+    Some(@types.WireErrorCode::WireUnclassifiedError),
+  )
 }

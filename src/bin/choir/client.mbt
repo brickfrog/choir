@@ -313,8 +313,8 @@ test "Goal client reads local launch settings outside a Conductor" {
 ///|
 test "Goal client response preserves the Choir envelope" {
   assert_eq(
-    client_response_json(@types.Response::Err("boom")),
-    "{\"ok\":false,\"error\":\"boom\"}\n",
+    client_response_json(@types.Response::err_text("boom")),
+    "{\"ok\":false,\"error\":\"boom\",\"code\":\"validation_error\"}\n",
   )
 }
 
