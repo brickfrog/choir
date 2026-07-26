@@ -1180,6 +1180,7 @@ fn plan_native_part_recovery_retry(
     snapshot,
     native_part_retry_identity_plan(snapshot),
     native_path_is_nfc,
+    now=@env.now().reinterpret_as_int64() / 1000L,
   )
 }
 

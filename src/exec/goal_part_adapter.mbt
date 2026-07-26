@@ -137,6 +137,9 @@ async fn advance_bound_part(
           Ok(@workflow.PartRecoveryRetryDecision::PartRecoveryRetryRetained)
           | Ok(
             @workflow.PartRecoveryRetryDecision::PartRecoveryRetryLimitReached
+          )
+          | Ok(
+            @workflow.PartRecoveryRetryDecision::PartRecoveryRetryDeferred(_)
           ) => return Ok(scheduling_record_from_snapshot(value.snapshot))
           Err(error) => return Err(error)
         }

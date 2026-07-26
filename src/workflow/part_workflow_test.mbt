@@ -993,6 +993,7 @@ test "provider protocol violation terminally fences its Take and Part" {
       reason: Some(@control.TakeUncertaintyReason::TakeProtocolViolation),
       recovery: None,
       detail: "codex driver: provider lifecycle is incomplete",
+      availability: @control.ProviderAvailability::ProviderUnavailable,
     }),
   )
 }
@@ -1036,6 +1037,7 @@ test "a recovery verdict never overwrites the failure that was observed" {
       reason: None,
       recovery: None,
       detail: "transport error: BoxLite Take runtime: result archive failed",
+      availability: @control.ProviderAvailability::ProviderUnavailable,
     }),
   )
   assert_eq(observed.stage, authorized.stage)
@@ -1052,6 +1054,7 @@ test "a recovery verdict never overwrites the failure that was observed" {
       reason: Some(@control.TakeUncertaintyReason::TakeEffectUncertain),
       recovery: Some("nonresumable Claude Take lost its owning Goal worker"),
       detail: "transport error: BoxLite Take runtime: result archive failed",
+      availability: @control.ProviderAvailability::ProviderUnavailable,
     }),
   )
   assert_eq(lost.stage, @workflow.PartWorkflowStage::PartRecoveryUncertain)
@@ -4304,4 +4307,79 @@ test "provider loss with no artifact re-arms the Part without a user message" {
     )
     is Ok(@workflow.PartRecoveryRetryDecision::PartRecoveryRetryLimitReached),
   )
+}
+
+///|
+test "a spent provider allowance defers recovery instead of burning a Take" {
+  let uncertain = uncertain_implementation_dispatch()
+  let identities = workflow_revision_identities(
+    uncertain,
+    uncertain.task_contract,
+  )
+  guard uncertain.dispatch_diagnostic is Some(diagnostic) else {
+    fail("uncertain dispatch recorded no diagnostic")
+  }
+  // With no trusted reset evidence the surface is not retried at all: an
+  // invented reset would burn the recovery budget against a spent allowance.
+  let exhausted = {
+    ..uncertain,
+    dispatch_diagnostic: Some({
+      ..diagnostic,
+      availability: @control.ProviderAvailability::ProviderAllowanceExhausted(
+        None,
+      ),
+    }),
+  }
+  match
+    @workflow.plan_part_recovery_retry(
+      exhausted,
+      identities,
+      fn(_) { true },
+      now=500L,
+    ) {
+    Ok(@workflow.PartRecoveryRetryDecision::PartRecoveryRetryDeferred(observed)) =>
+      assert_eq(
+        observed,
+        @control.ProviderAvailability::ProviderAllowanceExhausted(None),
+      )
+    _ => fail("a spent allowance did not defer recovery")
+  }
+  // Reported reset evidence is a wait, then an ordinary recovery.
+  let resets_at = {
+    ..uncertain,
+    dispatch_diagnostic: Some({
+      ..diagnostic,
+      availability: @control.ProviderAvailability::ProviderRetryAfter(1_000L),
+    }),
+  }
+  assert_true(
+    @workflow.plan_part_recovery_retry(
+      resets_at,
+      identities,
+      fn(_) { true },
+      now=999L,
+    )
+    is Ok(@workflow.PartRecoveryRetryDecision::PartRecoveryRetryDeferred(_)),
+  )
+  assert_true(
+    @workflow.plan_part_recovery_retry(
+      resets_at,
+      identities,
+      fn(_) { true },
+      now=1_000L,
+    )
+    is Ok(@workflow.PartRecoveryRetryDecision::PartRecoveryRetryPlanned(_)),
+  )
+  // Deferral never rewrites which provider the contract authorized.
+  match
+    @workflow.plan_part_recovery_retry(
+      resets_at,
+      identities,
+      fn(_) { true },
+      now=1_000L,
+    ) {
+    Ok(@workflow.PartRecoveryRetryDecision::PartRecoveryRetryPlanned(planned)) =>
+      assert_eq(planned.task_contract, uncertain.task_contract)
+    _ => fail("recovery was not planned after the reset instant")
+  }
 }

@@ -796,6 +796,7 @@ pub fn apply_part_effect_observation(
                 detail: "candidate failed normalization: " +
                 violation.to_json().stringify(indent=0),
                 recovery: None,
+                availability: @control.ProviderAvailability::ProviderAvailable,
               }),
             },
             observation,

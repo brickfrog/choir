@@ -1562,6 +1562,7 @@ fn record_part_provider_dispatch_uncertainty(
   session_lifecycle : @control.HarnessSessionLifecycle,
   error_context : String,
   detail : String,
+  availability? : @control.ProviderAvailability = @control.ProviderAvailability::ProviderUnavailable,
 ) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
   if snapshot.pending_effect != Some(intent) ||
     intent.lifecycle != PartEffectMayHaveOccurred {
@@ -1661,7 +1662,12 @@ fn record_part_provider_dispatch_uncertainty(
     dispatch_diagnostic: Some(
       match snapshot.dispatch_diagnostic {
         Some(observed) if observed.take_id == take.id =>
-          { ..observed, reason: Some(reason), recovery: Some(detail) }
+          {
+            ..observed,
+            reason: Some(reason),
+            recovery: Some(detail),
+            availability,
+          }
         _ =>
           {
             take_id: take.id,
@@ -1669,6 +1675,7 @@ fn record_part_provider_dispatch_uncertainty(
             reason: Some(reason),
             detail,
             recovery: None,
+            availability,
           }
       },
     ),
@@ -1752,6 +1759,7 @@ pub fn record_part_dispatch_failure(
           reason: None,
           detail,
           recovery: None,
+          availability: @control.ProviderAvailability::ProviderUnavailable,
         }),
       })
   }
@@ -1881,6 +1889,9 @@ pub(all) enum PartRecoveryRetryDecision {
   PartRecoveryRetryPlanned(PartWorkflowSnapshot)
   PartRecoveryRetryRetained
   PartRecoveryRetryLimitReached
+  /// The surface itself said it cannot serve yet. This is a wait, not a
+  /// failure, and it never changes which provider the contract authorized.
+  PartRecoveryRetryDeferred(@control.ProviderAvailability)
 } derive(Debug, Eq)
 
 ///|
@@ -1896,7 +1907,21 @@ pub fn plan_part_recovery_retry(
   snapshot : PartWorkflowSnapshot,
   identities : PartIdentityPlan,
   is_nfc : (String) -> Bool,
+  now? : Int64 = 0L,
 ) -> Result[PartRecoveryRetryDecision, @types.ChoirError] {
+  // A surface that reported a spent allowance or a retry-after must not be
+  // hit again until its own evidence says it is ready. Re-arming here would
+  // burn the recovery budget against a surface that cannot serve.
+  match snapshot.dispatch_diagnostic {
+    Some(diagnostic) =>
+      if !@control.provider_availability_admits_dispatch(
+          diagnostic.availability,
+          now,
+        ) {
+        return Ok(PartRecoveryRetryDeferred(diagnostic.availability))
+      }
+    None => ()
+  }
   let discharged = match reconcile_part_recovery_uncertainty(snapshot) {
     Ok(PartUncertaintyDischarged(value)) => value
     Ok(PartUncertaintyRetained) => return Ok(PartRecoveryRetryRetained)

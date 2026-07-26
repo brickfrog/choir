@@ -219,6 +219,7 @@ test "an attention summary names the durable cause, not the counters" {
       reason: Some(@control.TakeUncertaintyReason::TakeProtocolViolation),
       recovery: None,
       detail: "Codex driver: provider lifecycle is incomplete (codex exit 1, 0 output bytes)",
+      availability: @control.ProviderAvailability::ProviderAvailable,
     }),
   }
   let summary = match

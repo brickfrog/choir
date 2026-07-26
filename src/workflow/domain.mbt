@@ -235,6 +235,10 @@ pub(all) struct PartDispatchDiagnostic {
   /// decided that. This is a verdict about recovery, never the cause, and it
   /// never replaces `detail`.
   recovery : String?
+  /// What the provider surface itself reported. An exhausted subscription
+  /// allowance and a crashed provider are both "the Take did not run", but
+  /// only one of them clears at a known instant.
+  availability : @control.ProviderAvailability
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
