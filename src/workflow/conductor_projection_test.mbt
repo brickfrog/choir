@@ -298,3 +298,15 @@ test "an assured automatic-delivery Goal reports merge phase" {
     @workflow.ConductorGoalPhase::ConductorPhaseMerge,
   )
 }
+
+///|
+test "a spent-token figure stays short enough for a status line" {
+  assert_eq(@workflow.compact_token_count(0), "0")
+  assert_eq(@workflow.compact_token_count(999), "999")
+  assert_eq(@workflow.compact_token_count(1000), "1k")
+  assert_eq(@workflow.compact_token_count(45_600), "45k")
+  assert_eq(@workflow.compact_token_count(999_999), "999k")
+  assert_eq(@workflow.compact_token_count(1_000_000), "1.0M")
+  assert_eq(@workflow.compact_token_count(2_450_000), "2.4M")
+  assert_eq(@workflow.compact_token_count(12_000_000), "12.0M")
+}

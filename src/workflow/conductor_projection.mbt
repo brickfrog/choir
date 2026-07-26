@@ -178,7 +178,27 @@ pub(all) struct ConductorGoalDisplay {
   attention : ConductorGoalAttention?
   attention_target : String?
   additional_attention : Int
+  /// Total tokens this Goal's Takes reported spending against the user's paid
+  /// subscription allowance. Zero when no surface reported any.
+  spent_tokens : Int
 } derive(Debug, Eq)
+
+///|
+/// A token count short enough to sit in a status line: exact below a thousand,
+/// then thousands, then millions. Rounding here is presentation only; the
+/// durable figure keeps its full precision.
+pub fn compact_token_count(tokens : Int) -> String {
+  if tokens < 1000 {
+    tokens.to_string()
+  } else if tokens < 1000000 {
+    (tokens / 1000).to_string() + "k"
+  } else {
+    (tokens / 1000000).to_string() +
+    "." +
+    (tokens % 1000000 / 100000).to_string() +
+    "M"
+  }
+}
 
 ///|
 fn conductor_input_request_target(report : GoalStatusReport) -> (Bool, String?) {
@@ -379,5 +399,6 @@ pub fn conductor_goal_display(
     attention,
     attention_target,
     additional_attention,
+    spent_tokens: @control.take_usage_total_tokens(report.usage),
   })
 }

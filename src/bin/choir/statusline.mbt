@@ -56,11 +56,25 @@ fn conductor_statusline_active_phase(
 }
 
 ///|
+/// What this Goal has spent, appended only once a surface reported something.
+/// A zero figure is noise, not information.
+fn conductor_statusline_spend(
+  display : @workflow.ConductorGoalDisplay,
+) -> String {
+  if display.spent_tokens <= 0 {
+    ""
+  } else {
+    " · " + @workflow.compact_token_count(display.spent_tokens) + " tok"
+  }
+}
+
+///|
 fn conductor_statusline_goal_segment(report : Json) -> String {
   let display = match conductor_statusline_goal_display(report) {
     Some(value) => value
     None => return ""
   }
+  let spend = conductor_statusline_spend(display)
   match display.attention {
     Some(attention) => {
       let label = conductor_attention_label(attention)
@@ -72,8 +86,8 @@ fn conductor_statusline_goal_segment(report : Json) -> String {
       match
         (display.total_parts, display.single_part_id, display.attention_target) {
         (1, Some(part_id), Some(target)) if part_id == target =>
-          part_id + ": " + label + additional
-        (1, Some(part_id), None) => part_id + ": " + label + additional
+          part_id + ": " + label + additional + spend
+        (1, Some(part_id), None) => part_id + ": " + label + additional + spend
         _ => {
           let target = match display.attention_target {
             Some(value) => ": " + value
@@ -88,14 +102,14 @@ fn conductor_statusline_goal_segment(report : Json) -> String {
           } else {
             ""
           }
-          "Choir " + label + target + additional + progress
+          "Choir " + label + target + additional + progress + spend
         }
       }
     }
     None =>
       match (display.total_parts, display.single_part_id) {
         (1, Some(part_id)) =>
-          part_id + ": " + conductor_statusline_active_phase(display)
+          part_id + ": " + conductor_statusline_active_phase(display) + spend
         _ => {
           let segments : Array[String] = [
             display.integrated_parts.to_string() +
@@ -136,7 +150,7 @@ fn conductor_statusline_goal_segment(report : Json) -> String {
             display.integrated_parts < display.total_parts {
             segments.push("cap " + display.maximum_parallel_parts.to_string())
           }
-          "Choir " + segments.join(" · ")
+          "Choir " + segments.join(" · ") + spend
         }
       }
   }
@@ -499,6 +513,7 @@ fn conductor_statusline_test_report(
   maximum_parallel_parts : Int,
   parts : Array[@workflow.GoalPartStatus],
   input_reason? : @workflow.GoalInputReason,
+  usage? : @control.TakeUsage = @control.empty_take_usage(),
 ) -> Json {
   let parsed_state : @workflow.GoalExecutionState = @json.from_json(
     Json::string(state),
@@ -560,7 +575,7 @@ fn conductor_statusline_test_report(
     pull_request_delivery_policy: None,
     pull_request_draft: None,
     readiness_observed_draft: None,
-    usage: @control.empty_take_usage(),
+    usage,
     pull_request_merge_state: None,
     pull_request_receipt_present: false,
     pull_request_number: None,
@@ -582,6 +597,21 @@ test "Conductor statusline renders single and parallel Part progress" {
     ),
   ])
   assert_eq(conductor_statusline_goal_segment(single), "choir-hdg: verify")
+  // Spend appears only once a surface reported something, and stays compact.
+  let spent = conductor_statusline_test_report(
+    "GoalExecutionRunning",
+    1,
+    [
+      conductor_statusline_test_part(
+        "choir-hdg", "PartVerificationSandboxPrepared",
+      ),
+    ],
+    usage={ ..@control.empty_take_usage(), input_tokens: 45_600 },
+  )
+  assert_eq(
+    conductor_statusline_goal_segment(spent),
+    "choir-hdg: verify · 45k tok",
+  )
   let parallel = conductor_statusline_test_report("GoalExecutionRunning", 4, [
     conductor_statusline_test_part(
       "choir-a", "PartImplementationHarnessStarted",
