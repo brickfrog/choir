@@ -3331,6 +3331,43 @@ fn cancellation_neutralization_rows_hold(
 }
 
 ///|
+/// A transient assurance provider failure must not park the attempt forever.
+/// An effect that demonstrably minted no receipt is discharged so the next
+/// tick replans it; one whose outcome the record cannot see is retained.
+fn goal_assurance_recovery_rows_hold(
+  authorized : @workflow.GoalAssuranceRecord,
+) -> Result[Unit, @types.ChoirError] {
+  let uncertain = match
+    @workflow.record_goal_assurance_recovery_uncertain(authorized) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if uncertain.stage !=
+    @workflow.GoalAssuranceStage::GoalAssuranceRecoveryUncertain {
+    return Err(audit_fixture_error("assurance did not park on uncertainty"))
+  }
+  let reconciled = match
+    @workflow.reconcile_goal_assurance_recovery_uncertainty(uncertain) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  // The first authorized effect prepares a sandbox: the record cannot observe
+  // whether that happened, so the uncertainty is deliberately retained.
+  let retained = reconciled
+    is @workflow.GoalAssuranceUncertaintyReconciliation::GoalAssuranceUncertaintyRetained
+  // A record that is not parked has nothing to reconcile.
+  let refuses_unparked = @workflow.reconcile_goal_assurance_recovery_uncertainty(
+      authorized,
+    )
+    is Err(_)
+  if retained && refuses_unparked {
+    Ok(())
+  } else {
+    Err(audit_fixture_error("assurance recovery reconciliation failed"))
+  }
+}
+
+///|
 pub fn cancellation_ordering_matrix_case() -> HermeticConformanceCase {
   {
     id: ConformanceCaseId("cancellation.ordering_matrix"),
@@ -3428,6 +3465,10 @@ pub fn cancellation_ordering_matrix_case() -> HermeticConformanceCase {
       let canceled_audited = match
         @workflow.record_goal_assurance_cancellation(audited) {
         Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      match goal_assurance_recovery_rows_hold(authorized_effect) {
+        Ok(_) => ()
         Err(error) => return Err(error)
       }
       let assurance_rows_hold = @workflow.goal_assurance_cancellation_disposition_is_known(

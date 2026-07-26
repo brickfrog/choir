@@ -1030,3 +1030,75 @@ pub fn mint_goal_audit_receipt(
     _ => Err(goal_assurance_error("audit gate did not authorize the receipt"))
   }
 }
+
+///|
+pub(all) enum GoalAssuranceUncertaintyReconciliation {
+  GoalAssuranceUncertaintyDischarged(GoalAssuranceRecord)
+  GoalAssuranceUncertaintyRetained
+} derive(Debug, Eq)
+
+///|
+/// Whether the uncertain assurance effect left the artifact it would have
+/// produced. A sandbox or harness that never reported is invisible to the
+/// record, so only the two effects that mint durable evidence can be decided
+/// here; the rest are conservatively retained.
+fn goal_assurance_effect_left_evidence(
+  record : GoalAssuranceRecord,
+  kind : GoalAssuranceEffectKind,
+) -> Bool? {
+  match kind {
+    DispatchGoalVerification(_, subject) =>
+      Some(
+        record.verification_receipts.any(fn(receipt) {
+          receipt.subject.subject_digest == subject.subject_digest
+        }),
+      )
+    DispatchGoalAudit(_, _, subject) =>
+      Some(
+        match record.audit_result {
+          Some(result) =>
+            result.subject.subject_digest == subject.subject_digest
+          None => false
+        },
+      )
+    PrepareGoalVerificationSandbox(_)
+    | PrepareGoalAuditSandbox(_)
+    | StartGoalAuditHarness(_) => None
+  }
+}
+
+///|
+/// Resolve a Goal assurance attempt parked on provider-dispatch uncertainty
+/// using the evidence the record already holds.
+///
+/// A combined verification or Goal audit that died without minting its receipt
+/// did not occur, so the uncertainty is discharged and the attempt becomes
+/// replannable. An effect that did mint evidence, and the sandbox and harness
+/// effects whose outcome the record cannot see, keep their uncertainty:
+/// guessing there would duplicate a durable side effect.
+pub fn reconcile_goal_assurance_recovery_uncertainty(
+  record : GoalAssuranceRecord,
+) -> Result[GoalAssuranceUncertaintyReconciliation, @types.ChoirError] {
+  guard record.stage == GoalAssuranceRecoveryUncertain else {
+    return Err(
+      goal_assurance_error("assurance is not parked on recovery uncertainty"),
+    )
+  }
+  let intent = match record.pending_effect {
+    Some({ lifecycle: GoalAssuranceEffectUncertain, .. } as value) => value
+    _ => return Err(goal_assurance_error("assurance has no uncertain effect"))
+  }
+  match goal_assurance_effect_left_evidence(record, intent.kind) {
+    Some(false) =>
+      Ok(
+        GoalAssuranceUncertaintyDischarged({
+          ..record,
+          pending_effect: None,
+          stage: GoalAssuranceBlocked,
+          blocked_reason: None,
+          durable_version: record.durable_version + 1,
+        }),
+      )
+    Some(true) | None => Ok(GoalAssuranceUncertaintyRetained)
+  }
+}

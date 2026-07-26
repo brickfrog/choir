@@ -5080,7 +5080,39 @@ async fn advance_native_goal_assurance(
         }
         if stored.record.stage ==
           @workflow.GoalAssuranceStage::GoalAssuranceRecoveryUncertain {
-          return Ok(@workflow.GoalAssuranceTickOutcome::GoalAssurancePending)
+          // A transient assurance provider failure used to park here forever.
+          // Discharge the effects that demonstrably left no receipt so the
+          // attempt is replanned with fresh identities on the next tick.
+          match
+            @workflow.reconcile_goal_assurance_recovery_uncertainty(
+              stored.record,
+            ) {
+            Ok(
+              @workflow.GoalAssuranceUncertaintyReconciliation::GoalAssuranceUncertaintyDischarged(
+                discharged
+              )
+            ) => {
+              current = match
+                persist_native_goal_assurance_record(
+                  repository,
+                  adapters,
+                  execution,
+                  discharged,
+                  Some(stored.state_record.version),
+                ) {
+                Ok(value) => value
+                Err(error) => return Err(error)
+              }
+              continue
+            }
+            Ok(
+              @workflow.GoalAssuranceUncertaintyReconciliation::GoalAssuranceUncertaintyRetained
+            ) =>
+              return Ok(
+                @workflow.GoalAssuranceTickOutcome::GoalAssurancePending,
+              )
+            Err(error) => return Err(error)
+          }
         }
         if stored.record.stage == @workflow.GoalAssuranceStage::GoalAuditPending &&
           stored.record.audit_result is Some(_) &&
