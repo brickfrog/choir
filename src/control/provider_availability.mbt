@@ -64,9 +64,17 @@ pub fn classify_provider_availability(
   if exit_code == 0 {
     return ProviderAvailability::ProviderAvailable
   }
+  // A reset instant reaches here only from a surface that stated its allowance
+  // is spent, so it names the condition on its own. That is stronger evidence
+  // than matching words in untrusted output, and it is checked first so a
+  // structured statement is not discarded because the failure text happened to
+  // be phrased in words this classifier does not know.
+  if reset_at is Some(_) {
+    return ProviderAvailability::ProviderAllowanceExhausted(reset_at)
+  }
   let lowered = output.to_lower()
   if provider_output_reports_allowance(lowered) {
-    return ProviderAvailability::ProviderAllowanceExhausted(reset_at)
+    return ProviderAvailability::ProviderAllowanceExhausted(None)
   }
   match retry_after_seconds {
     Some(seconds) if seconds > 0L && now > 0L =>

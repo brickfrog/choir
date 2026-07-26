@@ -355,16 +355,28 @@ fn persist_provider_process_loss(
   store_version : Int,
   intent : PartEffectIntent,
   dependencies : PartWorkflowDriverDependencies,
-  detail : String,
+  error : @types.ChoirError,
 ) -> Result[PartWorkflowRunResult, @types.ChoirError] {
   // Classify what the surface reported so an exhausted allowance defers to its
-  // own reset evidence instead of burning the bounded recovery budget.
+  // own reset evidence instead of burning the bounded recovery budget. The
+  // observation travels on the error because only the adapter that read the
+  // provider's stream could have seen it.
+  let detail = error.message()
+  let allowance = error.provider_allowance_observation()
   let uncertain = match
     record_part_provider_process_loss(
       snapshot,
       intent,
       detail,
-      availability=@control.classify_provider_availability(1, detail),
+      availability=@control.classify_provider_availability(
+        1,
+        detail,
+        reset_at=allowance.bind(fn(value) { value.reset_at }),
+        retry_after_seconds=allowance.bind(fn(value) {
+          value.retry_after_seconds
+        }),
+        now=(dependencies.now)(),
+      ),
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -503,13 +515,8 @@ async fn drive_part_workflow(
               if part_effect_is_dispatch(intent) &&
                 (error.is_provider_process_lost() || error.is_timeout()) {
                 return persist_provider_process_loss(
-                  repository,
-                  repository_adapters,
-                  snapshot,
-                  store_version,
-                  intent,
-                  dependencies,
-                  error.message(),
+                  repository, repository_adapters, snapshot, store_version, intent,
+                  dependencies, error,
                 )
               }
               if part_effect_is_dispatch(intent) {
@@ -560,13 +567,8 @@ async fn drive_part_workflow(
                   if part_effect_is_dispatch(intent) &&
                     (error.is_provider_process_lost() || error.is_timeout()) {
                     return persist_provider_process_loss(
-                      repository,
-                      repository_adapters,
-                      snapshot,
-                      store_version,
-                      intent,
-                      dependencies,
-                      error.message(),
+                      repository, repository_adapters, snapshot, store_version, intent,
+                      dependencies, error,
                     )
                   }
                   return Err(error)
@@ -606,13 +608,8 @@ async fn drive_part_workflow(
               if part_effect_is_dispatch(intent) &&
                 (error.is_provider_process_lost() || error.is_timeout()) {
                 return persist_provider_process_loss(
-                  repository,
-                  repository_adapters,
-                  snapshot,
-                  store_version,
-                  intent,
-                  dependencies,
-                  error.message(),
+                  repository, repository_adapters, snapshot, store_version, intent,
+                  dependencies, error,
                 )
               }
               if part_effect_is_dispatch(intent) {

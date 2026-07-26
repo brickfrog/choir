@@ -40,9 +40,9 @@ test "durable identities round-trip in the shape their siblings use" {
   assert_eq(decoded_effect, effect)
   assert_eq(
     workflow.to_json().stringify().replace(old="WorkflowId", new="_"),
-    @control.GoalId("workflow-a").to_json().stringify().replace(
-      old="GoalId",
-      new="_",
-    ),
+    @control.GoalId("workflow-a")
+    .to_json()
+    .stringify()
+    .replace(old="GoalId", new="_"),
   )
 }

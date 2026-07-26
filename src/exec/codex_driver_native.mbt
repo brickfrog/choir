@@ -1459,6 +1459,79 @@ test "Codex turn usage is read from the spool for the exact turn" {
 }
 
 ///|
+/// What the surface last said about its own allowance, read from the
+/// `account/rateLimits/updated` notifications in the response spool. The last
+/// one wins: the snapshot is a rolling update, so an earlier reset instant has
+/// already been superseded.
+///
+/// This answers only once the app-server has reported that a limit is reached.
+/// A turn can fail for reasons that have nothing to do with the allowance, and
+/// attaching a reset to those would defer a surface that is able to serve.
+fn native_codex_allowance_from_events(
+  spool : String,
+) -> @types.ProviderAllowanceObservation? {
+  let mut allowance = None
+  for raw in spool.split("\n") {
+    let line = raw.trim().to_owned()
+    if line == "" {
+      continue
+    }
+    let json = @json.parse(line) catch { _ => continue }
+    guard json is Object(fields) else { continue }
+    if @types.json_field_string(fields, "method") !=
+      Some("account/rateLimits/updated") {
+      continue
+    }
+    let params = match native_codex_object_field(fields, "params") {
+      Some(value) => value
+      None => continue
+    }
+    match @harness.codex_rate_limit_allowance(params) {
+      Some(value) => allowance = Some(value)
+      None => ()
+    }
+  }
+  allowance
+}
+
+///|
+test "a Codex allowance is read only once the surface says it is reached" {
+  let healthy =
+    #|{"method":"account/rateLimits/updated","params":{"rateLimits":{"limitId":"codex","planType":"prolite","rateLimitReachedType":null,"primary":{"usedPercent":20,"windowDurationMins":10080,"resetsAt":1785614465}}}}
+  // A routine snapshot of a healthy window is not evidence of exhaustion.
+  assert_eq(native_codex_allowance_from_events(healthy), None)
+  let reached = healthy +
+    "\n" +
+    (
+      #|{"method":"account/rateLimits/updated","params":{"rateLimits":{"limitId":"codex","rateLimitReachedType":"rate_limit_reached","primary":{"usedPercent":100,"windowDurationMins":10080,"resetsAt":1785700000}}}}
+    )
+  assert_eq(
+    native_codex_allowance_from_events(reached),
+    Some({ reset_at: Some(1785700000L), retry_after_seconds: None }),
+  )
+  // The rolling update supersedes the earlier reset rather than accumulating.
+  let superseded = reached +
+    "\n" +
+    (
+      #|{"method":"account/rateLimits/updated","params":{"rateLimits":{"rateLimitReachedType":"workspace_owner_credits_depleted","primary":{"usedPercent":100,"resetsAt":1785800000}}}}
+    )
+  assert_eq(
+    native_codex_allowance_from_events(superseded),
+    Some({ reset_at: Some(1785800000L), retry_after_seconds: None }),
+  )
+  // The longer window answers only when the primary reported no reset.
+  assert_eq(
+    native_codex_allowance_from_events(
+      (
+        #|{"method":"account/rateLimits/updated","params":{"rateLimits":{"rateLimitReachedType":"rate_limit_reached","primary":{"usedPercent":100,"resetsAt":null},"secondary":{"usedPercent":100,"resetsAt":1785900000}}}}
+      ),
+    ),
+    Some({ reset_at: Some(1785900000L), retry_after_seconds: None }),
+  )
+  assert_eq(native_codex_allowance_from_events(""), None)
+}
+
+///|
 fn native_codex_turn_status_from_events(
   spool : String,
   turn_id : String,
@@ -1987,7 +2060,25 @@ pub async fn run_native_codex_take(
         }
         Some("failed") => {
           stop_native_codex_owned_server(config, manifest.server_pid)
-          return Err(native_codex_driver_error("provider turn failed"))
+          // A turn fails for reasons the allowance has nothing to do with, so
+          // only a surface that said it is spent reports as provider loss —
+          // the rest stays an ordinary driver failure.
+          let path = native_codex_log_path(config)
+          let allowance = if @sys.path_exists(path) {
+            native_codex_allowance_from_events(@sys.read_file(path))
+          } else {
+            None
+          }
+          return match allowance {
+            Some(_) =>
+              Err(
+                @types.ChoirError::provider_process_lost(
+                  "Codex turn failed against a spent allowance",
+                  allowance~,
+                ),
+              )
+            None => Err(native_codex_driver_error("provider turn failed"))
+          }
         }
         Some("inProgress") => ()
         _ =>

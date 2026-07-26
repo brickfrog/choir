@@ -566,14 +566,39 @@ pub fn start_claude_harness_session(
 }
 
 ///|
+/// The last allowance the trace reported. Claude Code retries internally and
+/// emits one `api_error` frame per attempt, so the last frame is the one that
+/// describes the state the process gave up in; an earlier frame's reset may
+/// already have passed.
+fn claude_capture_allowance(
+  output : String,
+) -> @types.ProviderAllowanceObservation? {
+  let mut observed : @types.ProviderAllowanceObservation? = None
+  for raw in output.split("\n") {
+    let json = @json.parse(raw.trim().to_owned()) catch { _ => continue }
+    guard json is Object(fields) else { continue }
+    guard startup_json_string(fields, "type") == "system" else { continue }
+    match claude_api_error_allowance(fields) {
+      Some(allowance) => observed = Some(allowance)
+      None => ()
+    }
+  }
+  observed
+}
+
+///|
 pub fn evaluate_claude_driver_capture(
   request : ClaudeDriverEvaluationRequest,
 ) -> Result[ClaudeDriverResult, @types.ChoirError] {
   if request.capture.exit_code != 0 {
+    // The surface may have said why on its way out. Carrying that observation
+    // is what lets a spent allowance defer to its own reset instead of burning
+    // the bounded recovery budget against a surface that cannot serve yet.
     return Err(
       @types.ChoirError::provider_process_lost(
         "provider process exited with status " +
         request.capture.exit_code.to_string(),
+        allowance=claude_capture_allowance(request.capture.output),
       ),
     )
   }

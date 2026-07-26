@@ -4402,3 +4402,35 @@ test "the driver classifies the same text it records as the failure cause" {
     @control.ProviderAvailability::ProviderUnavailable,
   )
 }
+
+///|
+test "a surface that reported its reset is deferred to that instant, not text" {
+  // The surface states the reset in its protocol, not in prose. Before this,
+  // the wording had to match a known phrase or the reset was discarded and the
+  // Take waited forever on an allowance nobody was scheduled to recheck.
+  let observed = @control.classify_provider_availability(
+    1,
+    "provider process lost: Codex turn failed against a spent allowance",
+    reset_at=Some(1_785_614_465L),
+  )
+  assert_eq(
+    observed,
+    @control.ProviderAvailability::ProviderAllowanceExhausted(
+      Some(1_785_614_465L),
+    ),
+  )
+  // Which makes the wait finite: the surface is admitted again at its reset.
+  assert_false(
+    @control.provider_availability_admits_dispatch(observed, 1_785_614_464L),
+  )
+  assert_true(
+    @control.provider_availability_admits_dispatch(observed, 1_785_614_465L),
+  )
+  // A failure the surface said nothing about still waits on nothing invented.
+  assert_eq(
+    @control.classify_provider_availability(
+      1, "provider process lost: nonresumable Claude process exited",
+    ),
+    @control.ProviderAvailability::ProviderUnavailable,
+  )
+}

@@ -1,6 +1,25 @@
 //|
 
 ///|
+/// What a provider surface reported about its own allowance when a dispatch
+/// failed. This is an observation, not a verdict: whether it means the surface
+/// must be deferred, and until when, is
+/// `@control.classify_provider_availability`'s decision.
+///
+/// Both supported protocols report the reset as an absolute epoch-second
+/// instant — Claude Code's `system/api_error` frame carries
+/// `error.rate_limits.resets_at` from the `anthropic-ratelimit-unified-reset`
+/// header, and the Codex app-server's `account/rateLimits/updated` carries
+/// `rateLimits.primary.resetsAt` — which is the same unit Choir's clock reads
+/// in, so neither needs converting.
+pub(all) struct ProviderAllowanceObservation {
+  /// When the surface said its window resets.
+  reset_at : Int64?
+  /// How long the surface asked the caller to wait.
+  retry_after_seconds : Int64?
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 /// Orchestrator error types (suberror for `raise` / `try?` interop).
 suberror ChoirError {
   AgentNotFound(String)
@@ -14,7 +33,7 @@ suberror ChoirError {
   PolicyBlocked(String)
   ProviderProtocolViolation(String)
   EventIngestionOverflow(String)
-  ProviderProcessLost(String)
+  ProviderProcessLost(String, ProviderAllowanceObservation?)
   ValidationError(String)
   Timeout(String)
   OperationCanceled(String)
@@ -39,7 +58,7 @@ pub fn ChoirError::to_wire_string(self : ChoirError) -> String {
     PolicyBlocked(_) => "policy_blocked"
     ProviderProtocolViolation(_) => "provider_protocol_violation"
     EventIngestionOverflow(_) => "event_ingestion_overflow"
-    ProviderProcessLost(_) => "provider_process_lost"
+    ProviderProcessLost(_, _) => "provider_process_lost"
     ValidationError(_) => "validation_error"
     Timeout(_) => "timeout"
     OperationCanceled(_) => "canceled"
@@ -66,7 +85,7 @@ pub fn ChoirError::message(self : ChoirError) -> String {
     PolicyBlocked(msg) => "policy blocked: " + msg
     ProviderProtocolViolation(msg) => "provider protocol violation: " + msg
     EventIngestionOverflow(msg) => "event ingestion overflow: " + msg
-    ProviderProcessLost(msg) => "provider process lost: " + msg
+    ProviderProcessLost(msg, _) => "provider process lost: " + msg
     ValidationError(msg) => "validation error: " + msg
     Timeout(msg) => "timeout error: " + msg
     OperationCanceled(msg) => "canceled: " + msg
@@ -138,8 +157,14 @@ pub fn ChoirError::event_ingestion_overflow(msg : String) -> ChoirError {
 }
 
 ///|
-pub fn ChoirError::provider_process_lost(msg : String) -> ChoirError {
-  ProviderProcessLost(msg)
+/// A provider dispatch was lost. `allowance` carries what the surface itself
+/// reported about its allowance, when it reported anything; classification of
+/// that observation belongs to the control plane, not here.
+pub fn ChoirError::provider_process_lost(
+  msg : String,
+  allowance? : ProviderAllowanceObservation? = None,
+) -> ChoirError {
+  ProviderProcessLost(msg, allowance)
 }
 
 ///|
@@ -273,8 +298,20 @@ pub fn ChoirError::is_event_ingestion_overflow(self : ChoirError) -> Bool {
 ///|
 pub fn ChoirError::is_provider_process_lost(self : ChoirError) -> Bool {
   match self {
-    ProviderProcessLost(_) => true
+    ProviderProcessLost(_, _) => true
     _ => false
+  }
+}
+
+///|
+/// What the surface reported about its own allowance, if it reported anything.
+/// Absent means Choir observed nothing, never that the allowance is intact.
+pub fn ChoirError::provider_allowance_observation(
+  self : ChoirError,
+) -> ProviderAllowanceObservation? {
+  match self {
+    ProviderProcessLost(_, allowance) => allowance
+    _ => None
   }
 }
 
@@ -293,7 +330,8 @@ pub fn choir_error_message_from_caught(e : Error) -> String {
       ChoirError::provider_protocol_violation(msg).message()
     EventIngestionOverflow(msg) =>
       ChoirError::event_ingestion_overflow(msg).message()
-    ProviderProcessLost(msg) => ChoirError::provider_process_lost(msg).message()
+    ProviderProcessLost(msg, allowance) =>
+      ChoirError::provider_process_lost(msg, allowance~).message()
     ValidationError(msg) => ChoirError::validation_error(msg).message()
     Timeout(msg) => ChoirError::timeout(msg).message()
     OperationCanceled(msg) => ChoirError::canceled(msg).message()
@@ -326,7 +364,7 @@ pub fn caught_error_is_choir_error(e : Error) -> Bool {
     | PolicyBlocked(_)
     | ProviderProtocolViolation(_)
     | EventIngestionOverflow(_)
-    | ProviderProcessLost(_)
+    | ProviderProcessLost(_, _)
     | ValidationError(_)
     | Timeout(_)
     | OperationCanceled(_)

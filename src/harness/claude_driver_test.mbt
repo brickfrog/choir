@@ -203,7 +203,38 @@ test "Claude driver classifies a nonzero provider exit as process loss" {
     capture: { exit_code: 1, output: "", started_at: 10L, finished_at: 20L },
   })
   match result {
-    Err(error) => assert_true(error.is_provider_process_lost())
+    Err(error) => {
+      assert_true(error.is_provider_process_lost())
+      // A trace that said nothing about the allowance claims nothing.
+      assert_eq(error.provider_allowance_observation(), None)
+    }
+    Ok(_) => fail("nonzero Claude exit was accepted")
+  }
+  // A trace that did say why carries that statement out with the failure, so
+  // the control plane can defer to the surface's own reset.
+  let exhausted = @harness.evaluate_claude_driver_capture({
+    session: started,
+    role: @harness.ClaudeTakeRole::ClaudeImplementationTake,
+    allowed_tools: tools,
+    expected_mcp_server: "choir_sandbox",
+    capture: {
+      exit_code: 1,
+      // Claude Code retries internally and emits one frame per attempt; the
+      // last one describes the state the process actually gave up in.
+      output: (
+        #|{"type":"system","subtype":"api_error","error":{"message":"rate limited","status":429,"formatted":"Rate limited","connection":null,"is_network_down":false,"rate_limits":{"resets_at":1785600000,"rate_limit_type":"five_hour"}},"retry_in_ms":8000,"retry_attempt":1,"max_retries":10}
+        #|{"type":"system","subtype":"api_error","error":{"message":"rate limited","status":429,"formatted":"Rate limited","connection":null,"is_network_down":false,"rate_limits":{"resets_at":1785614465,"rate_limit_type":"five_hour"}},"retry_in_ms":60000,"retry_attempt":2,"max_retries":10}
+      ),
+      started_at: 10L,
+      finished_at: 20L,
+    },
+  })
+  match exhausted {
+    Err(error) =>
+      assert_eq(
+        error.provider_allowance_observation(),
+        Some({ reset_at: Some(1785614465L), retry_after_seconds: Some(60L) }),
+      )
     Ok(_) => fail("nonzero Claude exit was accepted")
   }
 }

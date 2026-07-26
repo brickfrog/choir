@@ -27,57 +27,78 @@ pub fn claude_result_usage(fields : Map[String, Json]) -> @control.TakeUsage? {
 }
 
 ///|
-test "Claude result usage is read as reported, never estimated" {
-  let parse = fn(text : String) {
-    let json = @json.parse(text) catch { _ => return None }
-    match json {
-      Object(fields) => claude_result_usage(fields)
+fn allowance_instant(fields : Map[String, Json], name : String) -> Int64? {
+  match fields.get(name) {
+    Some(Number(value, ..)) if value > 0 => Some(value.to_int64())
+    _ => None
+  }
+}
+
+///|
+/// Read what a Claude `system` / `api_error` frame reported about the
+/// allowance. The shape comes from Claude Code's own wire schema for that
+/// frame: `error.rate_limits` is described there as the quota-429 headers, and
+/// is null whenever the failure was not a quota 429 — so an absent block means
+/// this failure said nothing about the allowance, not that it is intact.
+///
+/// `resets_at` is epoch seconds; `retry_in_ms` is a delay in milliseconds and
+/// is reported in seconds here so the caller resolves it against one clock.
+pub fn claude_api_error_allowance(
+  fields : Map[String, Json],
+) -> @types.ProviderAllowanceObservation? {
+  guard fields.get("subtype") is Some(String("api_error")) else { return None }
+  let retry_after_seconds = match fields.get("retry_in_ms") {
+    Some(Number(value, ..)) if value >= 1000 => Some(value.to_int64() / 1000L)
+    _ => None
+  }
+  let reset_at = match fields.get("error") {
+    Some(Object(error)) =>
+      match error.get("rate_limits") {
+        Some(Object(limits)) => allowance_instant(limits, "resets_at")
+        _ => None
+      }
+    _ => None
+  }
+  if reset_at is None && retry_after_seconds is None {
+    return None
+  }
+  Some({ reset_at, retry_after_seconds })
+}
+
+///|
+/// Read what a Codex `account/rateLimits/updated` notification reported, but
+/// only once the surface has said its limit is actually reached.
+///
+/// The app-server sends this notification routinely with a healthy window — a
+/// live read against a 20%-used account still carries a `resetsAt` — so the
+/// presence of a reset is not evidence of exhaustion. `rateLimitReachedType`
+/// is the surface's own statement that it is spent, and every variant of it
+/// (rate limit, usage limit, depleted credits) means the same thing here.
+///
+/// The snapshot is sparse by protocol contract, so a window that reported no
+/// reset contributes nothing rather than a zero. `primary` is the window the
+/// surface is limited by; `secondary` is the longer window and only answers
+/// when the primary said nothing.
+pub fn codex_rate_limit_allowance(
+  params : Map[String, Json],
+) -> @types.ProviderAllowanceObservation? {
+  guard params.get("rateLimits") is Some(Object(limits)) else { return None }
+  guard limits.get("rateLimitReachedType") is Some(String(_)) else {
+    return None
+  }
+  let window = fn(name : String) -> Int64? {
+    match limits.get(name) {
+      Some(Object(fields)) => allowance_instant(fields, "resetsAt")
       _ => None
     }
   }
-  let reported = parse(
-    (
-      #|{"type":"result","duration_ms":4200,"usage":{"input_tokens":120,"output_tokens":45,"cache_read_input_tokens":900,"cache_creation_input_tokens":30}}
-    ),
-  )
-  assert_eq(
-    reported,
-    Some({
-      input_tokens: 120,
-      output_tokens: 45,
-      cache_read_tokens: 900,
-      cache_creation_tokens: 30,
-      wall_time_ms: 4200,
-    }),
-  )
-  assert_eq(@control.take_usage_total_tokens(reported.unwrap()), 1095)
-  // A result with no usage block still reports its wall time.
-  assert_eq(
-    parse(
-      (
-        #|{"type":"result","duration_ms":900}
-      ),
-    ),
-    Some({ ..@control.empty_take_usage(), wall_time_ms: 900 }),
-  )
-  // A result that reported nothing contributes nothing.
-  assert_eq(
-    parse(
-      (
-        #|{"type":"result"}
-      ),
-    ),
-    None,
-  )
-  // Negative counts are not carried into an aggregate.
-  assert_eq(
-    parse(
-      (
-        #|{"type":"result","duration_ms":-1,"usage":{"input_tokens":-5,"output_tokens":7}}
-      ),
-    ),
-    Some({ ..@control.empty_take_usage(), output_tokens: 7 }),
-  )
+  let reset_at = match window("primary") {
+    Some(instant) => Some(instant)
+    None => window("secondary")
+  }
+  guard reset_at is Some(_) else { return None }
+  // The app-server reports an absolute instant and no retry delay.
+  Some({ reset_at, retry_after_seconds: None })
 }
 
 ///|
@@ -104,53 +125,4 @@ pub fn codex_turn_usage(params : Map[String, Json]) -> @control.TakeUsage? {
     cache_creation_tokens: usage_int(last, "cacheWriteInputTokens"),
     wall_time_ms: 0,
   })
-}
-
-///|
-test "Codex turn usage follows the app-server token breakdown" {
-  let parse = fn(text : String) {
-    let json = @json.parse(text) catch { _ => return None }
-    match json {
-      Object(fields) =>
-        match fields.get("params") {
-          Some(Object(params)) => codex_turn_usage(params)
-          _ => None
-        }
-      _ => None
-    }
-  }
-  let reported = parse(
-    (
-      #|{"method":"thread/tokenUsage/updated","params":{"threadId":"t","turnId":"u","tokenUsage":{"last":{"cachedInputTokens":900,"inputTokens":120,"outputTokens":45,"reasoningOutputTokens":15,"totalTokens":1080,"cacheWriteInputTokens":30},"total":{"cachedInputTokens":9000,"inputTokens":1200,"outputTokens":450,"reasoningOutputTokens":150,"totalTokens":10800}}}}
-    ),
-  )
-  // Only this turn is counted; the thread total would double count.
-  assert_eq(
-    reported,
-    Some({
-      input_tokens: 120,
-      output_tokens: 60,
-      cache_read_tokens: 900,
-      cache_creation_tokens: 30,
-      wall_time_ms: 0,
-    }),
-  )
-  // cacheWriteInputTokens is defaulted in the schema, so its absence is zero.
-  assert_eq(
-    parse(
-      (
-        #|{"params":{"tokenUsage":{"last":{"cachedInputTokens":0,"inputTokens":5,"outputTokens":1,"reasoningOutputTokens":0,"totalTokens":6}}}}
-      ),
-    ),
-    Some({ ..@control.empty_take_usage(), input_tokens: 5, output_tokens: 1 }),
-  )
-  // A notification with no breakdown contributes nothing.
-  assert_eq(
-    parse(
-      (
-        #|{"params":{"tokenUsage":{"total":{"inputTokens":5}}}}
-      ),
-    ),
-    None,
-  )
 }
