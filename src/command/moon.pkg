@@ -8,6 +8,7 @@ import {
 }
 
 import {
+  "moonbitlang/core/debug",
   "moonbitlang/quickcheck",
 } for "test"
 

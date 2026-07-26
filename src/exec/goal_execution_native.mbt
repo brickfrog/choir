@@ -1909,6 +1909,11 @@ async fn observe_native_goal_source_claim(
           @workflow.GoalSourceClaimObservation::GoalSourceClaimedByAnotherActor,
         )
       }
+    // Someone moved the Bead out from under the claim. Blocked and deferred are
+    // neither closed nor claimable, and guessing either way would let a Goal
+    // proceed on a Bead the tracker says is not startable.
+    @types.TaskStatus::Blocked | @types.TaskStatus::Deferred =>
+      Ok(@workflow.GoalSourceClaimObservation::GoalSourceAmbiguous)
   }
 }
 
@@ -1937,6 +1942,8 @@ async fn observe_native_goal_source_release(
       Ok(@workflow.GoalSourceClaimObservation::GoalSourceClosed)
     @types.TaskStatus::InProgress | @types.TaskStatus::Todo =>
       Ok(@workflow.GoalSourceClaimObservation::GoalSourceClaimedByAnotherActor)
+    @types.TaskStatus::Blocked | @types.TaskStatus::Deferred =>
+      Ok(@workflow.GoalSourceClaimObservation::GoalSourceAmbiguous)
   }
 }
 

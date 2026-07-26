@@ -81,6 +81,10 @@ fn native_conductor_task_status_for_beads(status : @types.TaskStatus) -> String 
   match status {
     Todo => "open"
     InProgress => "in_progress"
+    // Blocked and deferred are the tracker's own derived states. Choir reads
+    // them but never sets them, so there is nothing to write here.
+    Blocked => "blocked"
+    Deferred => "deferred"
     Done => "closed"
   }
 }
@@ -310,25 +314,42 @@ async fn native_conductor_capture_beads(
 ///|
 async fn dispatch_native_task_list(
   project_dir : String,
+  request : @types.Request,
   capture : async (Command) -> (Int, String),
 ) -> @types.Response {
+  // The query, the tracker arguments, the order, and the page are all decided
+  // in @command; this boundary only runs the tracker and hands back its text.
+  let query = match @command.bead_query_from_json(request.args.values) {
+    Ok(value) => value
+    Err(error) => return @types.Response::err(error)
+  }
+  let arguments = match @command.bead_query_arguments(query) {
+    Ok(value) => value
+    Err(error) => return @types.Response::err(error)
+  }
   let output = match
-    native_conductor_capture_beads(
-      project_dir,
-      "list",
-      ["list", "--json", "--all", "--readonly"],
-      capture,
-    ) {
+    native_conductor_capture_beads(project_dir, "list", arguments, capture) {
     Ok(value) => value
     Err(error) => return @types.Response::err(error)
   }
-  let tasks = match native_conductor_tasks_from_output(output) {
+  let parsed = @json.parse(output) catch {
+    _ =>
+      return @types.Response::err(
+        @types.ChoirError::validation_error("invalid Beads JSON"),
+      )
+  }
+  let records = match @command.bead_records_from_json(parsed) {
     Ok(value) => value
     Err(error) => return @types.Response::err(error)
   }
+  let page = @command.page_beads(records, query)
   @types.Response::ok_values({
     "status": "ok".to_json(),
-    "tasks": tasks.map(fn(task) { task.to_json() }).to_json(),
+    "tasks": page.beads.map(@command.bead_record_to_json).to_json(),
+    "next_cursor": match page.next_cursor {
+      Some(cursor) => cursor.to_json()
+      None => Json::null()
+    },
   })
 }
 
@@ -1291,7 +1312,7 @@ pub async fn dispatch_native_conductor_request(
     "goal_steer" => dispatch_native_goal_steer(project_dir, request)
     "goal_attach" => dispatch_native_goal_attach(project_dir, request)
     "goal_answer" => dispatch_native_goal_answer(project_dir, request, now)
-    "task_list" => dispatch_native_task_list(project_dir, capture)
+    "task_list" => dispatch_native_task_list(project_dir, request, capture)
     "task_get" => dispatch_native_task_get(project_dir, request, capture)
     "task_create" => dispatch_native_task_create(project_dir, request, capture)
     "task_update" => dispatch_native_task_update(project_dir, request, capture)

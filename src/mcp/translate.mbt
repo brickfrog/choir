@@ -154,7 +154,6 @@ fn conductor_tools() -> Array[CatalogTool] {
       "items": part_schema,
     }.to_json(),
   }
-  let empty_properties : Map[String, Json] = Map([])
   [
     {
       name: "goal_submit",
@@ -277,10 +276,66 @@ fn conductor_tools() -> Array[CatalogTool] {
     },
     {
       name: "task_list",
-      description: "List Beads used to discuss and select Parts for a Goal.",
+      description: "List Beads used to discuss and select Parts for a Goal. Results are totally ordered with Bead id as the final tie-breaker, so paging with the returned next_cursor never skips or repeats a Bead. Every filter is optional; omitting all of them lists every Bead.",
       input_schema: {
         "type": "object".to_json(),
-        "properties": empty_properties.to_json(),
+        "properties": {
+          "status": {
+            "type": "array".to_json(),
+            "description": "Keep only Beads in these states. Omit for every state.".to_json(),
+            "items": {
+              "type": "string".to_json(),
+              "enum": ["todo", "in_progress", "blocked", "deferred", "done"].to_json(),
+            }.to_json(),
+          }.to_json(),
+          "ready": {
+            "type": "boolean".to_json(),
+            "description": "Keep only Beads with no active blockers.".to_json(),
+          }.to_json(),
+          "type": {
+            "type": "array".to_json(),
+            "description": "Keep only these Bead types.".to_json(),
+            "items": {
+              "type": "string".to_json(),
+              "enum": [
+                "bug", "feature", "task", "epic", "chore", "decision", "merge-request",
+                "molecule", "gate", "convoy",
+              ].to_json(),
+            }.to_json(),
+          }.to_json(),
+          "labels_all": conductor_string_array_schema(
+            "Keep only Beads carrying every one of these labels",
+          ),
+          "labels_any": conductor_string_array_schema(
+            "Keep only Beads carrying at least one of these labels",
+          ),
+          "priority_min": {
+            "type": "integer".to_json(),
+            "description": "Highest priority to include, 0 (P0) through 4 (P4).".to_json(),
+            "minimum": (0 : Int).to_json(),
+            "maximum": (4 : Int).to_json(),
+          }.to_json(),
+          "priority_max": {
+            "type": "integer".to_json(),
+            "description": "Lowest priority to include, 0 (P0) through 4 (P4).".to_json(),
+            "minimum": (0 : Int).to_json(),
+            "maximum": (4 : Int).to_json(),
+          }.to_json(),
+          "order": {
+            "type": "string".to_json(),
+            "description": "Ordering key. Bead id always breaks ties.".to_json(),
+            "enum": ["priority", "updated", "id"].to_json(),
+          }.to_json(),
+          "limit": {
+            "type": "integer".to_json(),
+            "description": "Beads per page, 1 through 200. Defaults to 50.".to_json(),
+            "minimum": (1 : Int).to_json(),
+            "maximum": (200 : Int).to_json(),
+          }.to_json(),
+          "cursor": conductor_string_schema(
+            "Resume after this page cursor, returned as next_cursor by the previous call",
+          ),
+        }.to_json(),
         "additionalProperties": false.to_json(),
       }.to_json(),
       read_only: true,

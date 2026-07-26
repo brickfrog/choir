@@ -166,20 +166,30 @@ async test "native Conductor distinguishes Beads summaries from details" {
     (
       0,
       (
-        #|[{"id":"choir-parent","title":"Parent","status":"open","dependency_count":1}]
+        #|[{"id":"choir-parent","title":"Parent","status":"open","priority":1,"issue_type":"feature","updated_at":"2026-07-26T05:01:50Z","labels":["autonomy"],"dependencies":[{"depends_on_id":"choir-blocker","type":"blocks"},{"depends_on_id":"choir-epic","type":"parent-child"}]}]
       ),
     )
   })
   assert_true(summary.is_ok())
-  @debug.assert_eq(commands[0].args, ["list", "--json", "--all", "--readonly"])
+  // Paging and ordering are decided by Choir, so the tracker is asked for the
+  // whole filtered set rather than a limit that would truncate first.
+  @debug.assert_eq(commands[0].args, [
+    "list", "--json", "--readonly", "--flat", "--limit", "0", "--all",
+  ])
   let tasks = summary
     .ok_payload()
     .unwrap()
     .get_json("tasks")
     .unwrap()
     .stringify()
-  assert_true(tasks.contains("\"dependency_count\":1"))
-  assert_true(tasks.contains("\"dependencies_loaded\":false"))
+  // The metadata a planner selects on now survives the read.
+  assert_true(tasks.contains("\"priority\":1"))
+  assert_true(tasks.contains("\"issue_type\":\"feature\""))
+  assert_true(tasks.contains("\"labels\":[\"autonomy\"]"))
+  assert_true(tasks.contains("\"updated_at\":\"2026-07-26T05:01:50Z\""))
+  // Parent-child is retained as an edge but is not a blocker.
+  assert_true(tasks.contains("\"blocking_dependency_ids\":[\"choir-blocker\"]"))
+  assert_true(tasks.contains("\"depends_on_id\":\"choir-epic\""))
 
   let detail_request : @types.Request = {
     req_method: @types.WireMethod::WireToolsCall,
