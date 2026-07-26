@@ -736,6 +736,20 @@ pub async fn run_next_goal_execution_tick(
     Ok(value) => value
     Err(error) => return Err(error)
   }
+  // Refresh the WorkOrder counters that are derived from Part state, so the
+  // safety ceiling reflects the Takes this pass actually started.
+  let counted = refresh_goal_work_order_counters(current.record, after)
+  let current = if counted == current.record {
+    current
+  } else {
+    match
+      persist_goal_execution_transition(
+        repository, repository_adapters, current, counted,
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+  }
   for snapshot in after {
     if snapshot.part.lifecycle
       is @control.PartLifecycle::PartBlocked(

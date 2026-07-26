@@ -401,3 +401,50 @@ pub fn work_order_stop_digest(budget : WorkOrderBudget) -> @control.Digest {
     ),
   )
 }
+
+///|
+/// How many agentic Takes this Goal has started. Counted from durable Part
+/// state rather than incremented on dispatch: a per-Take write to the Goal
+/// record would contend with every Part, and a Take that left `TakePlanned`
+/// demonstrably started whether or not a counter update survived the crash.
+pub fn goal_agentic_takes_started(
+  snapshots : Array[PartWorkflowSnapshot],
+) -> Int {
+  let mut started = 0
+  for snapshot in snapshots {
+    started = started + snapshot.prior_takes.length()
+    for
+      take in [
+        snapshot.implementation_take,
+        snapshot.verification_take,
+        snapshot.audit_take,
+      ] {
+      if take.lifecycle != @control.TakeLifecycle::TakePlanned {
+        started = started + 1
+      }
+    }
+  }
+  started
+}
+
+///|
+/// Refresh the durable counters that are derived from Part state. Returns the
+/// record unchanged when nothing moved, so a quiet tick writes nothing.
+pub fn refresh_goal_work_order_counters(
+  record : GoalExecutionRecord,
+  snapshots : Array[PartWorkflowSnapshot],
+) -> GoalExecutionRecord {
+  guard record.work_order_budget is Some(budget) else { return record }
+  let started = goal_agentic_takes_started(snapshots)
+  if started <= budget.counters.agentic_takes_started {
+    return record
+  }
+  {
+    ..record,
+    work_order_budget: Some({
+      ..budget,
+      counters: { ..budget.counters, agentic_takes_started: started },
+    }),
+    durable_version: record.durable_version + 1,
+  }
+}

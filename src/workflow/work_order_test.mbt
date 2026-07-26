@@ -422,3 +422,56 @@ test "a malformed WorkOrder request is rejected at draft decode" {
     is Err(_),
   )
 }
+
+///|
+test "the safety ceiling counts Takes that actually started" {
+  let planned = workflow_fixture()
+  let baseline = @workflow.goal_agentic_takes_started([planned])
+  let started = @workflow.goal_agentic_takes_started([drive_to_verified()])
+  // Driving a Part to verified starts Takes the untouched fixture has not.
+  assert_true(started > baseline)
+  // Two Parts count independently.
+  assert_eq(
+    @workflow.goal_agentic_takes_started([
+      drive_to_verified(),
+      drive_to_verified(),
+    ]),
+    started * 2,
+  )
+  let record = workflow_execution_for_attach(planned)
+  // An unbudgeted Goal keeps no counters.
+  assert_eq(
+    @workflow.refresh_goal_work_order_counters(record, [drive_to_verified()]),
+    record,
+  )
+  let budget = @workflow.accept_work_order_budget(
+    @workflow.WorkOrderStopRequest::WorkOrderRequestSafetyCeiling(started),
+    @workflow.WorkOrderCutoffPolicy::WorkOrderDrainToSafeBoundary,
+    100L,
+  ).unwrap()
+  let budgeted = { ..record, work_order_budget: Some(budget) }
+  assert_eq(
+    @workflow.goal_execution_admits_new_agentic_work(budgeted, 101L),
+    @workflow.WorkOrderAdmission::WorkOrderAdmitsNewWork,
+  )
+  let counted = @workflow.refresh_goal_work_order_counters(budgeted, [
+    drive_to_verified(),
+  ])
+  assert_eq(
+    counted.work_order_budget.unwrap().counters.agentic_takes_started,
+    started,
+  )
+  assert_eq(counted.durable_version, budgeted.durable_version + 1)
+  // The ceiling is now reached, so no further agentic Take is authorized.
+  assert_eq(
+    @workflow.goal_execution_admits_new_agentic_work(counted, 101L),
+    @workflow.WorkOrderAdmission::WorkOrderExhausted(
+      @workflow.WorkOrderStopReason::WorkOrderSafetyCeilingReached,
+    ),
+  )
+  // A tick that started nothing new writes nothing.
+  assert_eq(
+    @workflow.refresh_goal_work_order_counters(counted, [drive_to_verified()]),
+    counted,
+  )
+}
