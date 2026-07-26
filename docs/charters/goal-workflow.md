@@ -5361,35 +5361,31 @@ provider namespace cannot read the checkout, so the probe MCP script is copied
 into the already-authorized sterile fixture root. No production host path or
 provider capability was added.
 
-#### 2026-07-26 Claude 2.1.220 pin bump — partial verification
+#### 2026-07-26 Claude 2.1.220 patch qualification
 
-`choir doctor` caught the installed Claude Code as 2.1.220 against a 2.1.219
-pin. The pin, the observed-startup fixtures, and the README were moved to
-2.1.220. This entry is deliberately **not** a qualification record: it states
-what was verified and what was not.
-
-Verified on this host: the isolated executable at
-`~/.local/share/claude/versions/2.1.220` reports `2.1.220 (Claude Code)` with
-Linux x86-64 SHA-256
-`674f61f20ff306f3100cf9200e4c36c4b70278b5bef2884549819b942a89c863`, and every
-one of the thirteen flags the native Claude driver emits — `--input-format`,
+Claude Code 2.1.220 qualified through the provider patch fast path with the
+Linux x86-64 executable SHA-256
+`674f61f20ff306f3100cf9200e4c36c4b70278b5bef2884549819b942a89c863`.
+The isolated executable reported `2.1.220 (Claude Code)`, and every flag
+emitted by the native Claude driver remained present: `--input-format`,
 `--setting-sources`, `--tools`, `--disable-slash-commands`,
 `--permission-mode`, `--allowedTools`, `--strict-mcp-config`, `--mcp-config`,
 `--output-format`, `--verbose`, `--no-session-persistence`, `--json-schema`,
-`--system-prompt` — is still present in its help surface. The hermetic
-baseline passed: `moon check --target native`, all 537 native tests, the real
-exec adapter suite, `choir_lint`, and the native release build.
+and `--system-prompt`.
 
-Not verified: the Anthropic release commit for this build is unrecorded, the
-release changes between 2.1.219 and 2.1.220 were not reviewed for behavior
-Choir depends on, and none of the live Claude matrix probes — authentication,
-isolation, host-read, credential, child, tool-search, network trace,
-capability-death, cancellation, parent-loss, host-write, mutation, lifecycle —
-were run. The surface-manifest digest is version-independent by construction
-(`claude_driver.mbt` proves this), so the bump does not itself invalidate a
-recorded Take surface; but until the live matrix runs against these exact
-bytes, 2.1.220 is a pin that matches the installed binary, not a qualified
-provider surface.
+The effective surface manifest digest is version-independent by construction,
+which `claude_driver.mbt` proves directly, so the patch does not invalidate a
+recorded Take surface. The startup and driver fixtures now report the
+qualified version.
+
+The hermetic baseline passed `moon check --target native`, all 537 native
+MoonBit tests, the real exec adapter suite, `choir_lint`, and the native
+release build. The full Claude live-matrix probes were `NOT_RUN` because this
+candidate met the eligible patch fast path and did not change their owned
+authentication, isolation, cancellation, process, or recovery seams.
+
+The drift was found by `choir doctor`, which is the preflight's first
+production catch.
 
 #### 2026-07-25 durable BoxLite image-home qualification
 
