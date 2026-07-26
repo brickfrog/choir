@@ -28,6 +28,7 @@ fn projection_part(
     audit_blocking_findings_count: 0,
     integration_receipt_present: false,
     dispatch_diagnostic: None,
+    usage: @control.empty_take_usage(),
   }
 }
 
@@ -89,6 +90,7 @@ fn projection_report(
     pull_request_delivery_policy: None,
     pull_request_draft: None,
     readiness_observed_draft: None,
+    usage: @control.empty_take_usage(),
     pull_request_merge_state: None,
     pull_request_receipt_present: false,
     pull_request_number: None,

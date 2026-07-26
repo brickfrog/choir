@@ -338,6 +338,65 @@ pub(all) enum HarnessSessionLifecycle {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+/// What one provider session consumed. Background Takes spend the user's paid
+/// subscription allowance, and without this Choir could not answer what a Goal
+/// cost or let anyone compare one provider surface against another.
+///
+/// Counts are what the provider reported. A surface that reports nothing
+/// leaves them zero rather than having a number invented for it.
+pub(all) struct TakeUsage {
+  input_tokens : Int
+  output_tokens : Int
+  cache_read_tokens : Int
+  cache_creation_tokens : Int
+  wall_time_ms : Int
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub fn empty_take_usage() -> TakeUsage {
+  {
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_read_tokens: 0,
+    cache_creation_tokens: 0,
+    wall_time_ms: 0,
+  }
+}
+
+///|
+/// Sum two usage observations. Negative counts are rejected upstream, so this
+/// is a plain addition and stays associative for aggregation in any order.
+pub fn add_take_usage(left : TakeUsage, right : TakeUsage) -> TakeUsage {
+  {
+    input_tokens: left.input_tokens + right.input_tokens,
+    output_tokens: left.output_tokens + right.output_tokens,
+    cache_read_tokens: left.cache_read_tokens + right.cache_read_tokens,
+    cache_creation_tokens: left.cache_creation_tokens +
+    right.cache_creation_tokens,
+    wall_time_ms: left.wall_time_ms + right.wall_time_ms,
+  }
+}
+
+///|
+/// A provider may report partial or absent counts; it may not report negative
+/// ones. Rejecting them here keeps an aggregate from silently shrinking.
+pub fn validate_take_usage(usage : TakeUsage) -> Bool {
+  usage.input_tokens >= 0 &&
+  usage.output_tokens >= 0 &&
+  usage.cache_read_tokens >= 0 &&
+  usage.cache_creation_tokens >= 0 &&
+  usage.wall_time_ms >= 0
+}
+
+///|
+pub fn take_usage_total_tokens(usage : TakeUsage) -> Int {
+  usage.input_tokens +
+  usage.output_tokens +
+  usage.cache_read_tokens +
+  usage.cache_creation_tokens
+}
+
+///|
 pub(all) struct HarnessSession {
   id : HarnessSessionId
   take_id : TakeId
@@ -349,6 +408,8 @@ pub(all) struct HarnessSession {
   last_choir_sequence : EventSequence
   open_tool_execution_ids : Array[String]
   lifecycle : HarnessSessionLifecycle
+  /// What this session reported consuming, once it reported anything.
+  usage : TakeUsage?
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|

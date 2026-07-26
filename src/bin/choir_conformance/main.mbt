@@ -256,6 +256,7 @@ async fn run_codex_live_cancellation_case(
     last_choir_sequence: @control.EventSequence(0L),
     open_tool_execution_ids: [],
     lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+    usage: None,
   }
   let started = match @harness.start_codex_harness_session(planned) {
     Ok(value) => value
@@ -518,6 +519,7 @@ async fn run_claude_required_tool_startup() -> Int {
     last_choir_sequence: @control.EventSequence(0L),
     open_tool_execution_ids: [],
     lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+    usage: None,
   }
   let started = match @harness.start_claude_harness_session(planned) {
     Ok(value) => value
@@ -661,6 +663,7 @@ async fn run_claude_live_cancellation_case(
     last_choir_sequence: @control.EventSequence(0L),
     open_tool_execution_ids: [],
     lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+    usage: None,
   }
   let started = match @harness.start_claude_harness_session(planned) {
     Ok(value) => value
@@ -969,6 +972,7 @@ async fn run_claude_live_driver_probe(probe : ClaudeLiveDriverProbe) -> Int {
     last_choir_sequence: @control.EventSequence(0L),
     open_tool_execution_ids: [],
     lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+    usage: None,
   }
   let started = match @harness.start_claude_harness_session(planned) {
     Ok(value) => value
@@ -1170,6 +1174,7 @@ async fn run_claude_capability_death() -> Int {
     last_choir_sequence: @control.EventSequence(0L),
     open_tool_execution_ids: [],
     lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+    usage: None,
   }
   let started = match @harness.start_claude_harness_session(planned) {
     Ok(value) => value
@@ -1278,6 +1283,7 @@ async fn run_claude_parent_loss_child(root : String) -> Int {
     last_choir_sequence: @control.EventSequence(0L),
     open_tool_execution_ids: [],
     lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+    usage: None,
   }
   let started = match @harness.start_claude_harness_session(planned) {
     Ok(value) => value
@@ -1590,6 +1596,7 @@ async fn run_codex_live_driver_at(
     last_choir_sequence: @control.EventSequence(0L),
     open_tool_execution_ids: [],
     lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+    usage: None,
   }
   let started = match @harness.start_codex_harness_session(planned) {
     Ok(value) => value

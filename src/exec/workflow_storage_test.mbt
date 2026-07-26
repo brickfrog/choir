@@ -103,6 +103,7 @@ fn workflow_store_goal_assurance_identities(
       last_choir_sequence: @control.EventSequence(0L),
       open_tool_execution_ids: [],
       lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+      usage: None,
     }
   }
   {
@@ -235,6 +236,7 @@ fn workflow_store_fixture() -> @workflow.PartWorkflowSnapshot raise {
       last_choir_sequence: @control.EventSequence(0L),
       open_tool_execution_ids: [],
       lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+      usage: None,
     }
   }
   let identities : @workflow.PartIdentityPlan = {
@@ -1406,6 +1408,7 @@ async test "Goal adapter persists an autonomous verification repair revision" {
           last_choir_sequence: @control.EventSequence(0L),
           open_tool_execution_ids: [],
           lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+          usage: None,
         },
         verification_take: verification,
         verification_sandbox,
@@ -1422,6 +1425,7 @@ async test "Goal adapter persists an autonomous verification repair revision" {
           last_choir_sequence: @control.EventSequence(0L),
           open_tool_execution_ids: [],
           lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+          usage: None,
         },
       },
       fn(_) { true },

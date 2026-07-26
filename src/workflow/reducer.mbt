@@ -181,6 +181,7 @@ test "closed trace adopts one bounded resumable provider cursor" {
     last_choir_sequence: @control.EventSequence(0L),
     open_tool_execution_ids: [],
     lifecycle: @control.HarnessSessionLifecycle::HarnessSessionAwaitingEvents,
+    usage: None,
   }
   let cursor = "thread-resumable:turn-resumable"
   let events : Array[@control.HarnessEventEnvelope] = [

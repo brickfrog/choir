@@ -856,6 +856,7 @@ fn native_goal_submission_session(
     last_choir_sequence: @control.EventSequence(0L),
     open_tool_execution_ids: [],
     lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+    usage: None,
   }
 }
 

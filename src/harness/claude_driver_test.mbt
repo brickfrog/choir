@@ -33,6 +33,7 @@ fn claude_driver_session(digest : @control.Digest) -> @control.HarnessSession {
     last_choir_sequence: @control.EventSequence(0L),
     open_tool_execution_ids: [],
     lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+    usage: None,
   }
 }
 

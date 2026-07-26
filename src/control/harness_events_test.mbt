@@ -16,6 +16,7 @@ fn event_session() -> @control.HarnessSession {
     last_choir_sequence: @control.EventSequence(0L),
     open_tool_execution_ids: [],
     lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+    usage: None,
   }
 }
 
@@ -161,6 +162,7 @@ test "source conflict replay cannot move the observer cursor backward" {
     ..event_session(),
     last_choir_sequence: @control.EventSequence(4L),
     lifecycle: @control.HarnessSessionLifecycle::HarnessSessionRunning,
+    usage: None,
   }
   let conflict = @control.ingest_harness_event(running, [original], {
     ..original,

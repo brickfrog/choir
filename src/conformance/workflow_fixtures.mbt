@@ -1778,6 +1778,7 @@ pub fn integration_conflict_repair_case() -> HermeticConformanceCase {
           last_choir_sequence: @control.EventSequence(0L),
           open_tool_execution_ids: [],
           lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+          usage: None,
         }
       }
       let decision = match
@@ -1952,6 +1953,7 @@ fn audit_fixture_session() -> @control.HarnessSession {
     lifecycle: @control.HarnessSessionLifecycle::HarnessSessionIngestionClosedCleanly(
       @control.HarnessTerminalObservation::HarnessCompleted,
     ),
+    usage: None,
   }
 }
 
@@ -2253,6 +2255,7 @@ fn cancellation_goal_assurance_identities(
       last_choir_sequence: @control.EventSequence(0L),
       open_tool_execution_ids: [],
       lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+      usage: None,
     }
   }
   {
@@ -4141,6 +4144,7 @@ fn goal_audit_fixture_session() -> @control.HarnessSession {
     lifecycle: @control.HarnessSessionLifecycle::HarnessSessionIngestionClosedCleanly(
       @control.HarnessTerminalObservation::HarnessCompleted,
     ),
+    usage: None,
   }
 }
 

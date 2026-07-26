@@ -23,7 +23,28 @@ pub(all) struct GoalPartStatus {
   audit_blocking_findings_count : Int
   integration_receipt_present : Bool
   dispatch_diagnostic : PartDispatchDiagnostic?
+  /// What this Part's provider sessions reported consuming. Background Takes
+  /// spend the user's paid subscription allowance, so the cost of a Goal is
+  /// reportable rather than invisible.
+  usage : @control.TakeUsage
 } derive(Debug, Eq, ToJson, FromJson)
+
+///|
+/// Sum what every provider session on this Part reported. Sessions that
+/// reported nothing contribute nothing rather than being estimated.
+pub fn part_reported_usage(
+  snapshot : PartWorkflowSnapshot,
+) -> @control.TakeUsage {
+  let mut total = @control.empty_take_usage()
+  for session in snapshot.harness_sessions {
+    match session.usage {
+      Some(usage) if @control.validate_take_usage(usage) =>
+        total = @control.add_take_usage(total, usage)
+      _ => ()
+    }
+  }
+  total
+}
 
 ///|
 fn goal_part_session_lifecycle(
@@ -137,6 +158,10 @@ pub(all) struct GoalStatusReport {
   /// awaiting-review never has to be inferred from pull request text.
   readiness_observed_draft : Bool?
   readiness_observation_sequence : Int64?
+  /// What every Part of this Goal reported consuming, so a Goal's cost against
+  /// the user's paid subscription allowance is one number rather than an
+  /// inference across sessions.
+  usage : @control.TakeUsage
   semantic_run_projection : SemanticRunProjection?
   parts : Array[GoalPartStatus]
 } derive(Debug, Eq, ToJson, FromJson)
@@ -657,6 +682,7 @@ pub fn goal_status_report(
       },
       integration_receipt_present: snapshot.integration_receipt is Some(_),
       dispatch_diagnostic: snapshot.dispatch_diagnostic,
+      usage: part_reported_usage(snapshot),
     })
   }
   match assurance {
@@ -780,6 +806,9 @@ pub fn goal_status_report(
     readiness_decision: finalization_status.1,
     readiness_observed_draft: finalization_status.2,
     readiness_observation_sequence: finalization_status.3,
+    usage: parts.fold(init=@control.empty_take_usage(), fn(total, part) {
+      @control.add_take_usage(total, part.usage)
+    }),
     semantic_run_projection,
     parts,
   })

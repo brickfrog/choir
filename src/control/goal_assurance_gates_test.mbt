@@ -153,6 +153,7 @@ fn goal_gate_audit_session() -> @control.HarnessSession {
     lifecycle: @control.HarnessSessionLifecycle::HarnessSessionIngestionClosedCleanly(
       @control.HarnessTerminalObservation::HarnessCompleted,
     ),
+    usage: None,
   }
 }
 

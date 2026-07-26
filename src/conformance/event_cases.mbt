@@ -16,6 +16,7 @@ fn event_case_session() -> @control.HarnessSession {
     last_choir_sequence: @control.EventSequence(0L),
     open_tool_execution_ids: [],
     lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+    usage: None,
   }
 }
 
@@ -142,6 +143,7 @@ fn event_authorized_provider_dispatch_fixture() -> (
       last_choir_sequence: @control.EventSequence(0L),
       open_tool_execution_ids: [],
       lifecycle,
+      usage: None,
     }
   }
   let implementation_session = session(
@@ -885,6 +887,7 @@ fn event_redaction_session(
     last_choir_sequence: @control.EventSequence(0L),
     open_tool_execution_ids: [],
     lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+    usage: None,
   }
 }
 
