@@ -60,20 +60,20 @@ pub fn classify_provider_availability(
   reset_at? : Int64? = None,
   retry_after_seconds? : Int64? = None,
   now? : Int64 = 0L,
-) -> @control.ProviderAvailability {
+) -> ProviderAvailability {
   if exit_code == 0 {
-    return @control.ProviderAvailability::ProviderAvailable
+    return ProviderAvailability::ProviderAvailable
   }
   let lowered = output.to_lower()
   if provider_output_reports_allowance(lowered) {
-    return @control.ProviderAvailability::ProviderAllowanceExhausted(reset_at)
+    return ProviderAvailability::ProviderAllowanceExhausted(reset_at)
   }
   match retry_after_seconds {
     Some(seconds) if seconds > 0L && now > 0L =>
-      return @control.ProviderAvailability::ProviderRetryAfter(now + seconds)
+      return ProviderAvailability::ProviderRetryAfter(now + seconds)
     _ => ()
   }
-  @control.ProviderAvailability::ProviderUnavailable
+  ProviderAvailability::ProviderUnavailable
 }
 
 ///|
@@ -90,16 +90,16 @@ fn provider_output_reports_allowance(lowered : String) -> Bool {
 test "provider classification names an exhausted allowance, never guesses one" {
   assert_eq(
     classify_provider_availability(0, "ok"),
-    @control.ProviderAvailability::ProviderAvailable,
+    ProviderAvailability::ProviderAvailable,
   )
   // An unrecognized failure is unavailable, not an invented allowance state.
   assert_eq(
     classify_provider_availability(1, "segmentation fault"),
-    @control.ProviderAvailability::ProviderUnavailable,
+    ProviderAvailability::ProviderUnavailable,
   )
   assert_eq(
     classify_provider_availability(1, "Claude usage limit reached"),
-    @control.ProviderAvailability::ProviderAllowanceExhausted(None),
+    ProviderAvailability::ProviderAllowanceExhausted(None),
   )
   // Trusted reset evidence is retained when the provider supplied it.
   assert_eq(
@@ -108,7 +108,7 @@ test "provider classification names an exhausted allowance, never guesses one" {
       "Rate limit exceeded",
       reset_at=Some(5_000L),
     ),
-    @control.ProviderAvailability::ProviderAllowanceExhausted(Some(5_000L)),
+    ProviderAvailability::ProviderAllowanceExhausted(Some(5_000L)),
   )
   // A retry-after is resolved to an absolute instant against the clock.
   assert_eq(
@@ -118,7 +118,7 @@ test "provider classification names an exhausted allowance, never guesses one" {
       retry_after_seconds=Some(30L),
       now=1_000L,
     ),
-    @control.ProviderAvailability::ProviderRetryAfter(1_030L),
+    ProviderAvailability::ProviderRetryAfter(1_030L),
   )
   // Allowance evidence wins over a retry hint: it names the actual condition.
   assert_eq(
@@ -128,41 +128,31 @@ test "provider classification names an exhausted allowance, never guesses one" {
       retry_after_seconds=Some(30L),
       now=1_000L,
     ),
-    @control.ProviderAvailability::ProviderAllowanceExhausted(None),
+    ProviderAvailability::ProviderAllowanceExhausted(None),
   )
 }
 
 ///|
 test "deferral waits only on trusted reset evidence" {
   let admits = fn(availability, now) {
-    @control.provider_availability_admits_dispatch(availability, now)
+    provider_availability_admits_dispatch(availability, now)
   }
-  assert_true(admits(@control.ProviderAvailability::ProviderAvailable, 10L))
+  assert_true(admits(ProviderAvailability::ProviderAvailable, 10L))
   // An unavailable surface retries under the ordinary bounded recovery path.
-  assert_true(admits(@control.ProviderAvailability::ProviderUnavailable, 10L))
+  assert_true(admits(ProviderAvailability::ProviderUnavailable, 10L))
   // An exhausted allowance with no reset evidence is never given an invented
   // one: it waits rather than burning the next Take against a spent surface.
   assert_false(
-    admits(@control.ProviderAvailability::ProviderAllowanceExhausted(None), 10L),
+    admits(ProviderAvailability::ProviderAllowanceExhausted(None), 10L),
   )
   assert_false(
-    admits(
-      @control.ProviderAvailability::ProviderAllowanceExhausted(Some(100L)),
-      99L,
-    ),
+    admits(ProviderAvailability::ProviderAllowanceExhausted(Some(100L)), 99L),
   )
   assert_true(
-    admits(
-      @control.ProviderAvailability::ProviderAllowanceExhausted(Some(100L)),
-      100L,
-    ),
+    admits(ProviderAvailability::ProviderAllowanceExhausted(Some(100L)), 100L),
   )
-  assert_false(
-    admits(@control.ProviderAvailability::ProviderRetryAfter(100L), 99L),
-  )
-  assert_true(
-    admits(@control.ProviderAvailability::ProviderRetryAfter(100L), 100L),
-  )
+  assert_false(admits(ProviderAvailability::ProviderRetryAfter(100L), 99L))
+  assert_true(admits(ProviderAvailability::ProviderRetryAfter(100L), 100L))
 }
 
 ///|
@@ -182,6 +172,6 @@ test "a retained excerpt describes the condition without carrying identifiers" {
   // The excerpt still classifies, which is the only reason it is retained.
   assert_eq(
     classify_provider_availability(1, excerpt),
-    @control.ProviderAvailability::ProviderAllowanceExhausted(None),
+    ProviderAvailability::ProviderAllowanceExhausted(None),
   )
 }

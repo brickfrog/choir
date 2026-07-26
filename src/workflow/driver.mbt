@@ -357,8 +357,15 @@ fn persist_provider_process_loss(
   dependencies : PartWorkflowDriverDependencies,
   detail : String,
 ) -> Result[PartWorkflowRunResult, @types.ChoirError] {
+  // Classify what the surface reported so an exhausted allowance defers to its
+  // own reset evidence instead of burning the bounded recovery budget.
   let uncertain = match
-    record_part_provider_process_loss(snapshot, intent, detail) {
+    record_part_provider_process_loss(
+      snapshot,
+      intent,
+      detail,
+      availability=@control.classify_provider_availability(1, detail),
+    ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }

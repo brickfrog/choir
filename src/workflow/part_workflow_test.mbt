@@ -4383,3 +4383,21 @@ test "a spent provider allowance defers recovery instead of burning a Take" {
     _ => fail("recovery was not planned after the reset instant")
   }
 }
+
+///|
+test "the driver classifies the same text it records as the failure cause" {
+  // Live provider output reaches the deferral decision instead of being
+  // flattened into a generic "the Take was lost".
+  assert_eq(
+    @control.classify_provider_availability(
+      1, "provider process lost: Claude usage limit reached",
+    ),
+    @control.ProviderAvailability::ProviderAllowanceExhausted(None),
+  )
+  assert_eq(
+    @control.classify_provider_availability(
+      1, "transport error: BoxLite Take runtime: result archive failed",
+    ),
+    @control.ProviderAvailability::ProviderUnavailable,
+  )
+}

@@ -1941,6 +1941,7 @@ pub fn record_part_provider_process_loss(
   snapshot : PartWorkflowSnapshot,
   intent : PartEffectIntent,
   detail : String,
+  availability? : @control.ProviderAvailability = @control.ProviderAvailability::ProviderUnavailable,
 ) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
   record_part_provider_dispatch_uncertainty(
     snapshot,
@@ -1949,5 +1950,6 @@ pub fn record_part_provider_process_loss(
     @control.HarnessSessionLifecycle::HarnessSessionRecoveryUncertain,
     "provider process loss",
     detail,
+    availability~,
   )
 }
