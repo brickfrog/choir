@@ -627,6 +627,64 @@ pub async fn run_next_goal_execution_tick(
       GoalExecutionTickResult::GoalExecutionTickAdvanced(advanced.record),
     )
   }
+  // A WorkOrder that has stopped admitting work must not sit idle: latch the
+  // stop durably, then honour the captured cutoff policy. Draining leaves the
+  // Goal to finish the effects it already authorized; the cutoff variant
+  // installs the existing durable cancellation cutoff.
+  match
+    goal_execution_admits_new_agentic_work(
+      selected.record,
+      @env.now().reinterpret_as_int64() / 1000L,
+    ) {
+    WorkOrderAdmission::WorkOrderAdmitsNewWork => ()
+    WorkOrderAdmission::WorkOrderExhausted(_) => {
+      let latched = record_goal_work_order_stop(
+        selected.record,
+        @env.now().reinterpret_as_int64() / 1000L,
+      )
+      let stopped = if latched == selected.record {
+        selected
+      } else {
+        match
+          persist_goal_execution_transition(
+            repository, repository_adapters, selected, latched,
+          ) {
+          Ok(value) => value
+          Err(error) => return Err(error)
+        }
+      }
+      guard stopped.record.work_order_budget is Some(budget) else {
+        return Err(goal_execution_error("stopped WorkOrder lost its budget"))
+      }
+      match budget.cutoff_policy {
+        WorkOrderCutoffPolicy::WorkOrderDrainToSafeBoundary =>
+          return Ok(
+            GoalExecutionTickResult::GoalExecutionTickAdvanced(stopped.record),
+          )
+        WorkOrderCutoffPolicy::WorkOrderInstallCancellationCutoff => {
+          let outcome = match
+            persist_goal_cancellation_request(
+              repository,
+              repository_adapters,
+              stopped.record.goal.id,
+              @env.now().reinterpret_as_int64() / 1000L,
+              cause=GoalCancellationCause::GoalCancellationWorkOrderStopped(
+                work_order_stop_digest(budget),
+              ),
+            ) {
+            Ok(value) => value
+            Err(error) => return Err(error)
+          }
+          let record = match outcome {
+            GoalCancellationPersisted(value)
+            | GoalCancellationReplayed(value) => value
+            GoalCancellationTerminal(_) => stopped.record
+          }
+          return Ok(GoalExecutionTickResult::GoalExecutionTickAdvanced(record))
+        }
+      }
+    }
+  }
   let running = match selected.record.state {
     GoalExecutionState::GoalExecutionQueued =>
       match

@@ -337,3 +337,88 @@ test "a compound WorkOrder policy stops on its first satisfied condition" {
     ),
   )
 }
+
+///|
+test "a Conductor draft carries a WorkOrder request without resolving it" {
+  let draft =
+    #|{"proposal_id":"proposal-wo","goal_id":"goal-wo","maximum_parallel_parts":1,
+    #|"pull_request":{"title":"feat: work order","body":"Body.","draft":false},
+    #|"work_order":{"cutoff":"cancel","stop":{"kind":"any_of","any_of":[
+    #|{"kind":"duration","seconds":3600},
+    #|{"kind":"delivered","basis":"closure","count":5}]}},
+    #|"parts":[{"part_id":"choir-a","commit_title":"feat: a","instruction":"Do the work.","repository_wide":true,"moon_args":["test"]}]}
+  let decoded = match @workflow.decode_conductor_goal_draft(draft) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  guard decoded.work_order is Some(work_order) else {
+    fail("draft dropped its WorkOrder")
+  }
+  assert_eq(
+    work_order.cutoff,
+    @workflow.WorkOrderCutoffPolicy::WorkOrderInstallCancellationCutoff,
+  )
+  // The duration is still relative in the draft: only acceptance may resolve it.
+  assert_eq(
+    work_order.stop,
+    @workflow.WorkOrderStopRequest::WorkOrderRequestFirstOf([
+      @workflow.WorkOrderStopRequest::WorkOrderRequestRelativeSeconds(3600L),
+      @workflow.WorkOrderStopRequest::WorkOrderRequestDeliveredQuota(
+        @workflow.WorkOrderQuotaBasis::WorkOrderDependencyClosure,
+        5,
+      ),
+    ]),
+  )
+  let accepted = @workflow.accept_work_order_budget(
+    work_order.stop,
+    work_order.cutoff,
+    1_000L,
+  ).unwrap()
+  assert_eq(
+    accepted.stop_policy,
+    @workflow.WorkOrderStopPolicy::WorkOrderStopAtFirstOf([
+      @workflow.WorkOrderStopPolicy::WorkOrderStopAtDeadline(4_600L),
+      @workflow.WorkOrderStopPolicy::WorkOrderStopAtDeliveredQuota(
+        @workflow.WorkOrderQuotaBasis::WorkOrderDependencyClosure,
+        5,
+      ),
+    ]),
+  )
+}
+
+///|
+test "a malformed WorkOrder request is rejected at draft decode" {
+  let draft = fn(work_order : String) {
+    @workflow.decode_conductor_goal_draft(
+      "{\"proposal_id\":\"p\",\"goal_id\":\"g\",\"maximum_parallel_parts\":1," +
+      "\"pull_request\":{\"title\":\"feat: a\",\"body\":\"B.\",\"draft\":false}," +
+      work_order +
+      "\"parts\":[{\"part_id\":\"choir-a\",\"commit_title\":\"feat: a\",\"instruction\":\"Do the work.\",\"repository_wide\":true,\"moon_args\":[\"test\"]}]}",
+    )
+  }
+  // A Goal with no WorkOrder is unbudgeted and still admitted.
+  match draft("") {
+    Ok(value) => assert_true(value.work_order is None)
+    Err(error) => fail(error.message())
+  }
+  assert_true(
+    draft("\"work_order\":{\"stop\":{\"kind\":\"whenever\"}},") is Err(_),
+  )
+  assert_true(draft("\"work_order\":{\"cutoff\":\"cancel\"},") is Err(_))
+  assert_true(
+    draft(
+      "\"work_order\":{\"stop\":{\"kind\":\"duration\",\"seconds\":60},\"cutoff\":\"maybe\"},",
+    )
+    is Err(_),
+  )
+  assert_true(
+    draft("\"work_order\":{\"stop\":{\"kind\":\"delivered\"}},") is Err(_),
+  )
+  // Compound policies stay flat so the winning stop reason is unambiguous.
+  assert_true(
+    draft(
+      "\"work_order\":{\"stop\":{\"kind\":\"any_of\",\"any_of\":[{\"kind\":\"any_of\",\"any_of\":[]}]}},",
+    )
+    is Err(_),
+  )
+}

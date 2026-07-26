@@ -235,6 +235,7 @@ pub async fn run_native_mixed_provider_goal_fixture(
         part_context_manifest: None,
       },
     ],
+    work_order_budget: None,
   }
   let selection = match
     @workflow.evaluate_goal_proposal(proposal, source_snapshot, fn(_) { true }) {

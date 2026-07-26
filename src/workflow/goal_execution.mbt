@@ -92,6 +92,9 @@ pub(all) enum GoalCancellationCause {
   GoalCancellationAuditRepairFailed(@control.Digest)
   GoalCancellationVerificationRepairFailed(@control.Digest)
   GoalCancellationAutoMergeFailed(@control.Digest)
+  /// The Goal's WorkOrder budget stopped admitting work under a cutoff policy
+  /// that installs the durable cancellation cutoff.
+  GoalCancellationWorkOrderStopped(@control.Digest)
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -753,7 +756,6 @@ pub fn goal_execution_record_from_selection(
   selection_decision_digest : @control.Digest,
   part_workflow_ids : Array[String],
   fencing_epoch? : @control.FencingEpoch = @control.FencingEpoch(1L),
-  work_order_budget? : WorkOrderBudget? = None,
 ) -> Result[GoalExecutionRecord, @types.ChoirError] {
   if decision.outcome != GoalSelectionOutcome::GoalSelectionAccepted ||
     selection_decision_digest != goal_selection_decision_digest(decision) {
@@ -817,7 +819,7 @@ pub fn goal_execution_record_from_selection(
     active_input_request: None,
     input_answers: [],
     cancellation_request: None,
-    work_order_budget,
+    work_order_budget: decision.proposal.work_order_budget,
     durable_version: 1,
     fencing_epoch,
   })
@@ -946,6 +948,8 @@ fn goal_execution_cancellation_shape_is_valid(
         GoalCancellationVerificationRepairFailed(digest) =>
           @storage.validate_digest(digest) is Ok(_)
         GoalCancellationAutoMergeFailed(digest) =>
+          @storage.validate_digest(digest) is Ok(_)
+        GoalCancellationWorkOrderStopped(digest) =>
           @storage.validate_digest(digest) is Ok(_)
       })
     (GoalExecutionCanceling | GoalExecutionCanceled, None) => false
@@ -1766,6 +1770,10 @@ pub fn request_goal_execution_cancellation(
             return Err(
               goal_execution_error("automatic merge digest is invalid"),
             )
+          }
+        GoalCancellationWorkOrderStopped(digest) =>
+          if @storage.validate_digest(digest) is Err(_) {
+            return Err(goal_execution_error("WorkOrder stop digest is invalid"))
           }
         GoalCancellationUserRequested => ()
       }

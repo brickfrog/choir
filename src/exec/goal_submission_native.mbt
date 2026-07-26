@@ -1322,6 +1322,22 @@ pub async fn submit_native_conductor_goal_draft(
     migration_production_admission,
     maximum_parallel_parts: draft.maximum_parallel_parts,
     parts,
+    // Resolve the requested WorkOrder once, here, against the host clock. The
+    // absolute result is persisted with the selection decision, so replay and
+    // restart read the same deadline instead of sliding it forward.
+    work_order_budget: match draft.work_order {
+      None => None
+      Some(requested) =>
+        match
+          @workflow.accept_work_order_budget(
+            requested.stop,
+            requested.cutoff,
+            @env.now().reinterpret_as_int64() / 1000L,
+          ) {
+          Ok(budget) => Some(budget)
+          Err(error) => return Err(error)
+        }
+    },
   }
   let decision = match
     @workflow.evaluate_goal_proposal(proposal, snapshot, is_nfc) {

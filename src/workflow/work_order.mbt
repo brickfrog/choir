@@ -390,3 +390,14 @@ pub fn decode_work_order_budget(
   }
   Ok(budget)
 }
+
+///|
+/// Retained evidence for a WorkOrder that stopped: the budget that stopped it,
+/// including which condition won and the counters at that moment.
+pub fn work_order_stop_digest(budget : WorkOrderBudget) -> @control.Digest {
+  @storage.artifact_digest(
+    @utf8.encode(
+      "choir.work-order-stop.v1\u{00}" + budget.to_json().stringify(indent=0),
+    ),
+  )
+}

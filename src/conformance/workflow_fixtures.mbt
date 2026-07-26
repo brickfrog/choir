@@ -1177,6 +1177,7 @@ fn selection_fixture_proposal(
     migration_production_admission: None,
     maximum_parallel_parts: 2,
     parts,
+    work_order_budget: None,
   }
 }
 

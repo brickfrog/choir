@@ -37,6 +37,16 @@ pub(all) struct ConductorGoalDraft {
   pull_request_document : PullRequestDocument?
   maximum_parallel_parts : Int
   parts : Array[ConductorPartDraft]
+  /// The finite WorkOrder this Goal runs under, when one was requested. The
+  /// request still carries a relative duration here; acceptance resolves it
+  /// against the host clock exactly once.
+  work_order : ConductorWorkOrderDraft?
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct ConductorWorkOrderDraft {
+  stop : WorkOrderStopRequest
+  cutoff : WorkOrderCutoffPolicy
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -528,7 +538,7 @@ pub fn decode_conductor_goal_draft(
   }
   let allowed_fields = [
     "proposal_id", "goal_id", "completion_mode", "evidence_only_binding_digest",
-    "pull_request", "maximum_parallel_parts", "parts",
+    "pull_request", "maximum_parallel_parts", "parts", "work_order",
   ]
   let unknown_fields = conductor_draft_unknown_fields(fields, allowed_fields)
   if unknown_fields.length() > 0 {
@@ -606,6 +616,10 @@ pub fn decode_conductor_goal_draft(
     }
     _ => return Err(goal_submission_error("parts is missing or invalid"))
   }
+  let work_order = match conductor_work_order_draft(fields) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
   Ok({
     proposal_id,
     goal_id,
@@ -613,7 +627,162 @@ pub fn decode_conductor_goal_draft(
     pull_request_document,
     maximum_parallel_parts,
     parts,
+    work_order,
   })
+}
+
+///|
+/// Decode the requested WorkOrder. Durations stay relative here on purpose:
+/// only acceptance may resolve one, and it resolves it exactly once.
+fn conductor_work_order_draft(
+  fields : Map[String, Json],
+) -> Result[ConductorWorkOrderDraft?, @types.ChoirError] {
+  let work_order = match fields.get("work_order") {
+    None => return Ok(None)
+    Some(Object(value)) => value
+    Some(_) => return Err(goal_submission_error("work_order must be an object"))
+  }
+  let allowed = ["stop", "cutoff"]
+  let unknown = conductor_draft_unknown_fields(work_order, allowed)
+  if unknown.length() > 0 {
+    return Err(
+      goal_submission_error(
+        "work_order has unknown fields: " +
+        unknown.join(", ") +
+        "; allowed fields: " +
+        allowed.join(", "),
+      ),
+    )
+  }
+  let stop = match work_order.get("stop") {
+    Some(Object(value)) =>
+      match conductor_work_order_stop_request(value, false) {
+        Ok(request) => request
+        Err(error) => return Err(error)
+      }
+    _ => return Err(goal_submission_error("work_order.stop is missing"))
+  }
+  let cutoff = match conductor_draft_string(work_order, "cutoff") {
+    None | Some("drain") => WorkOrderCutoffPolicy::WorkOrderDrainToSafeBoundary
+    Some("cancel") => WorkOrderCutoffPolicy::WorkOrderInstallCancellationCutoff
+    Some(_) =>
+      return Err(
+        goal_submission_error("work_order.cutoff must be drain or cancel"),
+      )
+  }
+  Ok(Some({ stop, cutoff }))
+}
+
+///|
+fn conductor_work_order_stop_request(
+  fields : Map[String, Json],
+  nested : Bool,
+) -> Result[WorkOrderStopRequest, @types.ChoirError] {
+  let allowed = [
+    "kind", "seconds", "deadline", "count", "basis", "rounds", "takes", "any_of",
+  ]
+  let unknown = conductor_draft_unknown_fields(fields, allowed)
+  if unknown.length() > 0 {
+    return Err(
+      goal_submission_error(
+        "work_order.stop has unknown fields: " + unknown.join(", "),
+      ),
+    )
+  }
+  let kind = match conductor_draft_string(fields, "kind") {
+    Some(value) => value
+    None => return Err(goal_submission_error("work_order.stop.kind is missing"))
+  }
+  let int_field = fn(field : String) -> Result[Int, @types.ChoirError] {
+    match conductor_draft_int(fields, field) {
+      Some(value) => Ok(value)
+      None =>
+        Err(goal_submission_error("work_order.stop." + field + " is missing"))
+    }
+  }
+  match kind {
+    "duration" =>
+      match conductor_draft_int64_or(fields, "seconds", 0L) {
+        Some(seconds) =>
+          Ok(WorkOrderStopRequest::WorkOrderRequestRelativeSeconds(seconds))
+        None => Err(goal_submission_error("work_order.stop.seconds is invalid"))
+      }
+    "deadline" =>
+      match conductor_draft_int64_or(fields, "deadline", 0L) {
+        Some(instant) =>
+          Ok(WorkOrderStopRequest::WorkOrderRequestAbsoluteDeadline(instant))
+        None =>
+          Err(goal_submission_error("work_order.stop.deadline is invalid"))
+      }
+    "delivered" => {
+      let basis = match conductor_draft_string(fields, "basis") {
+        None | Some("primary") => WorkOrderQuotaBasis::WorkOrderPrimaryTargets
+        Some("closure") => WorkOrderQuotaBasis::WorkOrderDependencyClosure
+        Some(_) =>
+          return Err(
+            goal_submission_error(
+              "work_order.stop.basis must be primary or closure",
+            ),
+          )
+      }
+      match int_field("count") {
+        Ok(count) =>
+          Ok(WorkOrderStopRequest::WorkOrderRequestDeliveredQuota(basis, count))
+        Err(error) => Err(error)
+      }
+    }
+    "no_eligible_work" =>
+      match int_field("rounds") {
+        Ok(rounds) =>
+          Ok(WorkOrderStopRequest::WorkOrderRequestNoEligibleWork(rounds))
+        Err(error) => Err(error)
+      }
+    "no_further_findings" =>
+      match int_field("rounds") {
+        Ok(rounds) =>
+          Ok(WorkOrderStopRequest::WorkOrderRequestNoFurtherFindings(rounds))
+        Err(error) => Err(error)
+      }
+    "safety_ceiling" =>
+      match int_field("takes") {
+        Ok(takes) =>
+          Ok(WorkOrderStopRequest::WorkOrderRequestSafetyCeiling(takes))
+        Err(error) => Err(error)
+      }
+    "any_of" => {
+      if nested {
+        return Err(
+          goal_submission_error("work_order.stop.any_of does not nest"),
+        )
+      }
+      let entries = match fields.get("any_of") {
+        Some(Array(values)) => values
+        _ =>
+          return Err(
+            goal_submission_error("work_order.stop.any_of must be an array"),
+          )
+      }
+      let requests : Array[WorkOrderStopRequest] = []
+      for entry in entries {
+        guard entry is Object(value) else {
+          return Err(
+            goal_submission_error(
+              "work_order.stop.any_of entry is not an object",
+            ),
+          )
+        }
+        match conductor_work_order_stop_request(value, true) {
+          Ok(request) => requests.push(request)
+          Err(error) => return Err(error)
+        }
+      }
+      Ok(WorkOrderStopRequest::WorkOrderRequestFirstOf(requests))
+    }
+    _ =>
+      Err(
+        goal_submission_error("work_order.stop.kind '" + kind + "' is unknown"),
+      )
+  }
 }
 
 ///|

@@ -72,6 +72,7 @@ fn selection_store_decision() -> @workflow.GoalSelectionDecision raise {
           draft: false,
         }),
         migration_production_admission: None,
+        work_order_budget: None,
         maximum_parallel_parts: 1,
         parts: [
           {

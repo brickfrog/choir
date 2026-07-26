@@ -101,6 +101,10 @@ pub(all) struct GoalProposal {
   migration_production_admission : @migration.MigrationProductionAdmissionRef?
   maximum_parallel_parts : Int
   parts : Array[ConductorPartProposal]
+  /// Resolved once here, at acceptance, and persisted with the selection
+  /// decision. Replay reads the same absolute deadline instead of re-resolving
+  /// a relative duration against a later clock.
+  work_order_budget : WorkOrderBudget?
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
