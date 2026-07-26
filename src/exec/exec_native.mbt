@@ -148,6 +148,17 @@ test "runtime assets resolve only from explicit installation layouts" {
 }
 
 ///|
+test "installer layout matches native runtime path contracts" {
+  let executable = "/opt/choir-prefix/bin/choir"
+  let sandbox = native_runtime_asset_candidates(executable, ChoirRuntimeAsset::ChoirSandboxMcp)
+  let owner = native_runtime_asset_candidates(executable, ChoirRuntimeAsset::ChoirBoxLiteOwner)
+  assert_true(sandbox.contains("/opt/choir-prefix/bin/../libexec/choir/choir_sandbox_mcp.mjs"))
+  assert_true(owner.contains("/opt/choir-prefix/bin/../libexec/choir/choir_boxlite_owner.mjs"))
+  assert_true(native_boxlite_binary_candidates(executable).contains("/opt/choir-prefix/bin/../libexec/choir/boxlite"))
+  assert_true(native_boxlite_runtime_candidates(executable).contains("/opt/choir-prefix/bin/../libexec/choir/boxlite-runtime"))
+}
+
+///|
 test "real exec integration: native path NFC oracle accepts composed Unicode and rejects decomposed Unicode" {
   if !real_exec_integration_enabled() {
     return
