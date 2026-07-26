@@ -4,12 +4,17 @@ fn should_skip_dir(name : String) -> Bool {
 }
 
 ///|
+fn is_package_manifest(path : String) -> Bool {
+  path.has_suffix("/moon.pkg") || path.has_suffix("/moon.pkg.json")
+}
+
+///|
 fn collect_source_files(dir : String, files : Array[String]) -> Unit {
   for entry in @sys.list_dir(dir) {
     if !should_skip_dir(entry) {
       let path = dir + "/" + entry
       if @sys.path_entry_exists(path) {
-        if path.has_suffix(".mbt") {
+        if path.has_suffix(".mbt") || is_package_manifest(path) {
           files.push(path)
         } else {
           collect_source_files(path, files)
@@ -44,6 +49,13 @@ fn main {
   let mut failed = false
   for file in files {
     let source = @sys.read_file(file)
+    if is_package_manifest(file) {
+      for finding in @lint.lint_package_manifest(file, source) {
+        @sys.write_stderr(render_finding(finding))
+        failed = true
+      }
+      continue
+    }
     match @lint.lint_source(file, source) {
       Ok(findings) =>
         for finding in findings {

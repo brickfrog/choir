@@ -1353,6 +1353,157 @@ fn package_aliases_from_manifest(content : String) -> Array[(String, String)] {
 }
 
 ///|
+/// Packages that own the authoritative control plane. Their code emits typed
+/// decisions and effects; it never performs host I/O itself.
+fn control_plane_package_directories() -> Array[String] {
+  [
+    "src/control", "src/workflow", "src/migration", "src/command", "src/harness",
+    "src/conformance", "src/sandbox", "src/storage", "src/types",
+  ]
+}
+
+///|
+/// Imports that carry host effects. `moonbitlang/async` itself is the async
+/// runtime and stays admissible; its subpackages are the process, filesystem,
+/// and socket surfaces, which are not.
+fn host_effect_import(spec : String) -> Bool {
+  spec == "choir/src/sys" ||
+  spec == "choir/src/exec" ||
+  spec.has_prefix("choir/src/sys/") ||
+  spec.has_prefix("choir/src/exec/") ||
+  spec.has_prefix("moonbitlang/async/")
+}
+
+///|
+fn manifest_directory(file : String) -> String {
+  file_parent_dir(canonical_file(file))
+}
+
+///|
+fn manifest_import_spec(line : String) -> String? {
+  let trimmed = line.trim().to_owned()
+  if trimmed.has_prefix("//") {
+    return None
+  }
+  let first_quote = match trimmed.find("\"") {
+    Some(index) => index
+    None => return None
+  }
+  let after_first = trimmed[first_quote + 1:].to_owned()
+  let second_quote = match after_first.find("\"") {
+    Some(index) => index
+    None => return None
+  }
+  let spec = after_first[:second_quote].to_owned()
+  if spec == "" || spec.contains(":") {
+    None
+  } else {
+    Some(spec)
+  }
+}
+
+///|
+fn manifest_finding(
+  file : String,
+  line_number : Int,
+  rule_id : String,
+  message : String,
+) -> LintFinding {
+  // The renderer already prints the file, so the position carries only the
+  // manifest line.
+  let position : @basic.Position = {
+    fname: "",
+    lnum: line_number,
+    bol: 0,
+    cnum: 0,
+  }
+  { file, rule_id, message, loc: { start: position, end: position } }
+}
+
+///|
+/// Turn the control-plane I/O boundary from a reviewed convention into a
+/// checked one: a control-plane manifest that imports a host-effect package
+/// fails the lint before the code that would use it is ever written.
+pub fn lint_package_manifest(
+  file : String,
+  content : String,
+) -> Array[LintFinding] {
+  let findings : Array[LintFinding] = []
+  let directory = manifest_directory(file)
+  if !control_plane_package_directories().contains(directory) {
+    return findings
+  }
+  let mut line_number = 0
+  for line in content.split("\n") {
+    line_number = line_number + 1
+    match manifest_import_spec(line.to_owned()) {
+      Some(spec) =>
+        if host_effect_import(spec) {
+          findings.push(
+            manifest_finding(
+              file,
+              line_number,
+              "control-plane-host-import",
+              "control-plane package '" +
+              directory +
+              "' may not import the host-effect package '" +
+              spec +
+              "'; keep host effects in src/exec and inject them as capabilities",
+            ),
+          )
+        }
+      None => ()
+    }
+  }
+  findings
+}
+
+///|
+test "the control-plane boundary rule admits the async runtime but not its I/O" {
+  let manifest =
+    #|import {
+    #|  "choir/src/types",
+    #|  "moonbitlang/async",
+    #|  "moonbitlang/core/json",
+    #|}
+  assert_eq(
+    lint_package_manifest("src/workflow/moon.pkg", manifest).length(),
+    0,
+  )
+  let violating =
+    #|import {
+    #|  "choir/src/types",
+    #|  "choir/src/sys",
+    #|  "moonbitlang/async/process",
+    #|}
+  let findings = lint_package_manifest("src/control/moon.pkg", violating)
+  assert_eq(findings.length(), 2)
+  assert_eq(findings[0].rule_id, "control-plane-host-import")
+  assert_eq(findings[0].loc.start.lnum, 3)
+  assert_eq(findings[1].loc.start.lnum, 4)
+  assert_true(findings[0].message.contains("choir/src/sys"))
+  assert_true(findings[1].message.contains("moonbitlang/async/process"))
+  // An alias does not launder the import.
+  assert_eq(
+    lint_package_manifest(
+      "src/storage/moon.pkg",
+      (
+        #|import {
+        #|  "choir/src/exec" as ex,
+        #|}
+      ),
+    ).length(),
+    1,
+  )
+  // Host-boundary packages are exactly where these imports belong.
+  assert_eq(lint_package_manifest("src/exec/moon.pkg", violating).length(), 0)
+  assert_eq(
+    lint_package_manifest("src/bin/choir/moon.pkg", violating).length(),
+    0,
+  )
+}
+
+///|
 fn package_manifest_path(dir : String, name : String) -> String {
   if dir == "/" {
     "/" + name
