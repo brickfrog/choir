@@ -5,7 +5,7 @@ fn projection_part(
   effect_receipt_count? : Int = 3,
 ) -> @workflow.GoalPartStatus {
   {
-    workflow_id: "wf-part-a",
+    workflow_id: @control.WorkflowId("wf-part-a"),
     part_id: @control.PartId("part-a"),
     provider_surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
     implementation_take_id: @control.TakeId("take-impl"),

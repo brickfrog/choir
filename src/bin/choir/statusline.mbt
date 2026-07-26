@@ -480,7 +480,7 @@ fn conductor_statusline_test_part(
     _ => abort("unknown Part stage tag: " + stage)
   }
   {
-    workflow_id: "wf-" + id,
+    workflow_id: @control.WorkflowId("wf-" + id),
     part_id: @control.PartId(id),
     provider_surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
     implementation_take_id: @control.TakeId("take-" + id + "-impl"),

@@ -1883,7 +1883,7 @@ test "Goal audit repair routes paths to their deterministic Part owners" {
   }
   let second = {
     ..first,
-    workflow_id: "part-2-workflow",
+    workflow_id: @control.WorkflowId("part-2-workflow"),
     part: second_part,
     task_contract: {
       ..first.task_contract,

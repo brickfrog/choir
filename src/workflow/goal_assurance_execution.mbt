@@ -31,7 +31,7 @@ pub(all) enum GoalAssuranceEffectLifecycle {
 
 ///|
 pub(all) struct GoalAssuranceEffectIntent {
-  effect_id : String
+  effect_id : @control.EffectId
   kind : GoalAssuranceEffectKind
   request_digest : @control.Digest
   lifecycle : GoalAssuranceEffectLifecycle
@@ -39,7 +39,7 @@ pub(all) struct GoalAssuranceEffectIntent {
 
 ///|
 pub(all) struct GoalAssuranceEffectReceipt {
-  effect_id : String
+  effect_id : @control.EffectId
   request_digest : @control.Digest
   observation_digest : @control.Digest
   observed_at : Int64
@@ -47,7 +47,7 @@ pub(all) struct GoalAssuranceEffectReceipt {
 
 ///|
 pub(all) struct GoalAssuranceEffectWitness {
-  effect_id : String
+  effect_id : @control.EffectId
   request_digest : @control.Digest
   observation : GoalAssuranceEffectObservation
   observation_digest : @control.Digest

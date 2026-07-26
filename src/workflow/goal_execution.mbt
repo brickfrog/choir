@@ -243,7 +243,7 @@ pub(all) struct GoalExecutionRecord {
   source_claims : Array[GoalSourceClaim]
   maximum_parallel_parts : Int
   policy_revisions : Array[GoalPolicyRevision]
-  part_workflow_ids : Array[String]
+  part_workflow_ids : Array[@control.WorkflowId]
   state : GoalExecutionState
   pause : GoalPause?
   active_input_request : GoalInputRequest?
@@ -754,7 +754,7 @@ pub fn goal_execution_ref(goal_id : @control.GoalId) -> GitRefName {
 pub fn goal_execution_record_from_selection(
   decision : GoalSelectionDecision,
   selection_decision_digest : @control.Digest,
-  part_workflow_ids : Array[String],
+  part_workflow_ids : Array[@control.WorkflowId],
   fencing_epoch? : @control.FencingEpoch = @control.FencingEpoch(1L),
 ) -> Result[GoalExecutionRecord, @types.ChoirError] {
   if decision.outcome != GoalSelectionOutcome::GoalSelectionAccepted ||
@@ -777,7 +777,7 @@ pub fn goal_execution_record_from_selection(
   }
   if part_workflow_ids.length() == 0 ||
     part_workflow_ids.length() != decision.accepted_parts.length() ||
-    part_workflow_ids.any(fn(id) { id == "" }) {
+    part_workflow_ids.any(fn(id) { id.0 == "" }) {
     return Err(goal_execution_error("Part workflow bindings are incomplete"))
   }
   Ok({
@@ -872,7 +872,7 @@ pub fn decode_goal_execution_record(
     ) ||
     !goal_migration_admission_is_valid(record.migration_production_admission) ||
     record.part_workflow_ids.length() == 0 ||
-    record.part_workflow_ids.any(fn(id) { id == "" }) ||
+    record.part_workflow_ids.any(fn(id) { id.0 == "" }) ||
     record.durable_version <= 0 ||
     record.fencing_epoch.0 <= 0L ||
     record.goal.lifecycle !=

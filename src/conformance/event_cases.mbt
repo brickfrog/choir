@@ -159,11 +159,11 @@ fn event_authorized_provider_dispatch_fixture() -> (
     @control.HarnessSessionLifecycle::HarnessSessionPlanned,
   )
   let intent : @workflow.PartEffectIntent = {
-    effect_id: "event-process-loss-dispatch",
+    effect_id: @control.EffectId("event-process-loss-dispatch"),
     kind: @workflow.PartEffectKind::DispatchImplementation(
       implementation_take.id,
       {
-        effect_id: "event-process-loss-command",
+        effect_id: @control.EffectId("event-process-loss-command"),
         session_id: implementation_session.id,
         command_id: @control.HarnessCommandId("event-process-loss-command-1"),
         command_sequence: 1,
@@ -224,7 +224,7 @@ fn event_authorized_provider_dispatch_fixture() -> (
     },
   }
   let snapshot : @workflow.PartWorkflowSnapshot = {
-    workflow_id: "event-process-loss-workflow",
+    workflow_id: @control.WorkflowId("event-process-loss-workflow"),
     durable_version: 7,
     fencing_epoch: epoch,
     stage: @workflow.PartWorkflowStage::PartImplementationHarnessStarted,
@@ -550,7 +550,7 @@ pub fn event_after_ingest_transaction_before_source_ack_case() -> HermeticConfor
       }
       let unrelated = event_apply_or_reconcile_observation(
         restarted,
-        { ..intent, effect_id: "event-unrelated-dispatch" },
+        { ..intent, effect_id: @control.EffectId("event-unrelated-dispatch") },
         observation,
       )
       if replayed != restarted ||

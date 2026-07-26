@@ -2,7 +2,7 @@
 fn process_fixture() -> @sandbox.ProcessExecution {
   {
     execution_id: @sandbox.ProcessExecutionId("effect-1.process"),
-    effect_intent_id: "effect-1",
+    effect_intent_id: @control.EffectId("effect-1"),
     runtime_execution_key: @sandbox.RuntimeExecutionKey("effect-1.process"),
     take_id: @control.TakeId("take-1"),
     process_authority: @sandbox.SandboxProcessAuthority::SandboxVerificationTool(

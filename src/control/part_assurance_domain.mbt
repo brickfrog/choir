@@ -414,7 +414,7 @@ pub(all) struct HarnessSession {
 
 ///|
 pub(all) struct HarnessSessionStartIntent {
-  effect_id : String
+  effect_id : EffectId
   session_id : HarnessSessionId
   take_id : TakeId
   provider_surface_and_profile_digest : Digest
@@ -425,7 +425,7 @@ pub(all) struct HarnessSessionStartIntent {
 
 ///|
 pub(all) struct HarnessCommandIntent {
-  effect_id : String
+  effect_id : EffectId
   session_id : HarnessSessionId
   command_id : HarnessCommandId
   command_sequence : Int

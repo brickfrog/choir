@@ -50,16 +50,16 @@ fn goal_assurance_event_key(
 
 ///|
 fn goal_assurance_witness_state_key(
-  effect_id : String,
+  effect_id : @control.EffectId,
 ) -> @storage.StateRecordKey {
-  @storage.StateRecordKey("goal-assurance-witness:" + effect_id)
+  @storage.StateRecordKey("goal-assurance-witness:" + effect_id.0)
 }
 
 ///|
 fn goal_assurance_witness_event_key(
-  effect_id : String,
+  effect_id : @control.EffectId,
 ) -> @storage.SemanticEventKey {
-  @storage.SemanticEventKey("goal-assurance-witness:" + effect_id)
+  @storage.SemanticEventKey("goal-assurance-witness:" + effect_id.0)
 }
 
 ///|

@@ -108,7 +108,7 @@ pub(all) enum PartEffectLifecycle {
 
 ///|
 pub(all) struct PartEffectIntent {
-  effect_id : String
+  effect_id : @control.EffectId
   kind : PartEffectKind
   request_digest : @control.Digest
   lifecycle : PartEffectLifecycle
@@ -116,7 +116,7 @@ pub(all) struct PartEffectIntent {
 
 ///|
 pub(all) struct PartEffectReceipt {
-  effect_id : String
+  effect_id : @control.EffectId
   request_digest : @control.Digest
   observation_digest : @control.Digest
   observed_at : Int64
@@ -124,7 +124,7 @@ pub(all) struct PartEffectReceipt {
 
 ///|
 pub(all) struct PartEffectWitness {
-  effect_id : String
+  effect_id : @control.EffectId
   request_digest : @control.Digest
   observation : PartEffectObservation
   observation_digest : @control.Digest
@@ -243,7 +243,7 @@ pub(all) struct PartDispatchDiagnostic {
 
 ///|
 pub(all) struct PartWorkflowSnapshot {
-  workflow_id : String
+  workflow_id : @control.WorkflowId
   durable_version : Int
   fencing_epoch : @control.FencingEpoch
   stage : PartWorkflowStage

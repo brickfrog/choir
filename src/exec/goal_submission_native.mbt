@@ -947,12 +947,14 @@ fn native_goal_submission_part_snapshot(
 pub fn native_goal_part_workflow_id(
   goal_id : @control.GoalId,
   part_id : @control.PartId,
-) -> String {
-  "goal-part-" +
-  @storage.digest_text(
-    native_goal_submission_digest(
-      "choir.goal-part-workflow.v1",
-      [goal_id.to_json(), part_id.to_json()].to_json(),
+) -> @control.WorkflowId {
+  @control.WorkflowId(
+    "goal-part-" +
+    @storage.digest_text(
+      native_goal_submission_digest(
+        "choir.goal-part-workflow.v1",
+        [goal_id.to_json(), part_id.to_json()].to_json(),
+      ),
     ),
   )
 }

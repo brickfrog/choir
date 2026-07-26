@@ -81,7 +81,7 @@ fn native_mixed_provider_accepted_part(
 ///|
 fn native_mixed_provider_stored_snapshot(
   repository : @workflow.PartWorkflowRepository,
-  workflow_id : String,
+  workflow_id : @control.WorkflowId,
 ) -> Result[@workflow.PartWorkflowSnapshot, @types.ChoirError] {
   match
     @workflow.load_part_snapshot(

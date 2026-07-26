@@ -38,18 +38,24 @@ pub(all) struct PartStoredSnapshot {
 } derive(Debug, Eq)
 
 ///|
-fn workflow_state_key(workflow_id : String) -> @storage.StateRecordKey {
-  @storage.StateRecordKey("workflow:" + workflow_id)
+fn workflow_state_key(
+  workflow_id : @control.WorkflowId,
+) -> @storage.StateRecordKey {
+  @storage.StateRecordKey("workflow:" + workflow_id.0)
 }
 
 ///|
-fn effect_witness_state_key(effect_id : String) -> @storage.StateRecordKey {
-  @storage.StateRecordKey("effect-witness:" + effect_id)
+fn effect_witness_state_key(
+  effect_id : @control.EffectId,
+) -> @storage.StateRecordKey {
+  @storage.StateRecordKey("effect-witness:" + effect_id.0)
 }
 
 ///|
-fn effect_witness_event_key(effect_id : String) -> @storage.SemanticEventKey {
-  @storage.SemanticEventKey("effect-witness:" + effect_id)
+fn effect_witness_event_key(
+  effect_id : @control.EffectId,
+) -> @storage.SemanticEventKey {
+  @storage.SemanticEventKey("effect-witness:" + effect_id.0)
 }
 
 ///|
@@ -58,7 +64,7 @@ fn workflow_snapshot_event_key(
 ) -> @storage.SemanticEventKey {
   @storage.SemanticEventKey(
     "workflow:" +
-    snapshot.workflow_id +
+    snapshot.workflow_id.0 +
     ":snapshot:" +
     snapshot.durable_version.to_string(),
   )
@@ -205,7 +211,7 @@ pub fn persist_part_snapshot_guarded(
 pub fn load_part_snapshot(
   repository : PartWorkflowRepository,
   adapters : PartWorkflowRepositoryAdapters,
-  workflow_id : String,
+  workflow_id : @control.WorkflowId,
 ) -> Result[PartStoredSnapshot?, @types.ChoirError] {
   match validate_workflow_repository(repository) {
     Ok(_) => ()

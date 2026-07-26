@@ -28,7 +28,7 @@ fn record_verification_completion(
     return Err(workflow_error("verification result is stale or incomplete"))
   }
   let receipt_id = @control.ReceiptId(
-    snapshot.workflow_id + ":verification-receipt-1",
+    snapshot.workflow_id.0 + ":verification-receipt-1",
   )
   let receipt : @control.VerificationReceipt = {
     receipt_id,
@@ -238,7 +238,9 @@ fn record_audit_completion(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let result_id = @control.AuditResultId(snapshot.workflow_id + ":audit-result")
+  let result_id = @control.AuditResultId(
+    snapshot.workflow_id.0 + ":audit-result",
+  )
   let result_identity = [
     result_id.to_json(),
     submission.to_json(),
@@ -672,7 +674,7 @@ fn record_integration_witness(
       }
     _ => return Err(workflow_error("integration witness has the wrong intent"))
   }
-  let receipt_key = snapshot.workflow_id + ":integration-receipt"
+  let receipt_key = snapshot.workflow_id.0 + ":integration-receipt"
   let outcome = @control.reconcile_integration_witness(
     intent,
     promotion,

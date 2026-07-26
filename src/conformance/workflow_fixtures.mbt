@@ -2356,7 +2356,7 @@ fn cancellation_goal_assurance_fixture_with_part_count(
     }
     snapshots.push({
       ..integrated,
-      workflow_id: integrated.workflow_id + "-second",
+      workflow_id: @control.WorkflowId(integrated.workflow_id.0 + "-second"),
       part: {
         ..integrated.part,
         id: second_part_id,
@@ -3068,7 +3068,7 @@ fn cancellation_integration_effect(
     second_parent_oid: intent.candidate_commit_oid,
   }
   {
-    effect_id: "cancellation-integration-effect",
+    effect_id: @control.EffectId("cancellation-integration-effect"),
     kind: @workflow.PartEffectKind::ApplyIntegration(intent.id, promotion),
     request_digest: audit_fixture_digest_b,
     lifecycle: @workflow.PartEffectLifecycle::PartEffectMayHaveOccurred,
@@ -3081,7 +3081,7 @@ fn cancellation_planned_integration_effect(
 ) -> @workflow.PartEffectIntent {
   let intent = cancellation_integration_intent(snapshot, false)
   {
-    effect_id: "cancellation-planned-integration-effect",
+    effect_id: @control.EffectId("cancellation-planned-integration-effect"),
     kind: @workflow.PartEffectKind::GeneratePromotion(intent),
     request_digest: audit_fixture_digest_b,
     lifecycle: @workflow.PartEffectLifecycle::PartEffectPlanned,
@@ -3094,11 +3094,11 @@ fn cancellation_provider_effect(
   lifecycle : @workflow.PartEffectLifecycle,
 ) -> @workflow.PartEffectIntent {
   {
-    effect_id: "cancellation-provider-effect",
+    effect_id: @control.EffectId("cancellation-provider-effect"),
     kind: @workflow.PartEffectKind::DispatchAudit(
       snapshot.audit_take.id,
       {
-        effect_id: "cancellation-audit-command",
+        effect_id: @control.EffectId("cancellation-audit-command"),
         session_id: snapshot.identities.audit_session.id,
         command_id: @control.HarnessCommandId("cancellation-audit-command-1"),
         command_sequence: 1,
@@ -3998,11 +3998,11 @@ pub fn audit_protocol_conflict_case() -> HermeticConformanceCase {
         lifecycle: @control.HarnessSessionLifecycle::HarnessSessionAwaitingEvents,
       }
       let intent : @workflow.PartEffectIntent = {
-        effect_id: "audit-conflicting-delivery",
+        effect_id: @control.EffectId("audit-conflicting-delivery"),
         kind: @workflow.PartEffectKind::DispatchAudit(
           base.audit_take.id,
           {
-            effect_id: "audit-conflicting-command",
+            effect_id: @control.EffectId("audit-conflicting-command"),
             session_id: session.id,
             command_id: @control.HarnessCommandId("audit-conflicting-command-1"),
             command_sequence: 1,

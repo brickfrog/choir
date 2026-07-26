@@ -234,11 +234,11 @@ fn persist_native_process_execution(
 
 ///|
 fn native_process_execution_id(
-  effect_intent_id : String,
+  effect_intent_id : @control.EffectId,
   discriminator : String,
 ) -> @sandbox.ProcessExecutionId {
   let suffix = if discriminator == "" { "" } else { "." + discriminator }
-  @sandbox.ProcessExecutionId(effect_intent_id + ".process" + suffix)
+  @sandbox.ProcessExecutionId(effect_intent_id.0 + ".process" + suffix)
 }
 
 ///|
@@ -262,7 +262,7 @@ fn native_process_lease(
 
 ///|
 fn planned_native_process_execution(
-  effect_intent_id : String,
+  effect_intent_id : @control.EffectId,
   execution_id : @sandbox.ProcessExecutionId,
   take_id : @control.TakeId,
   lease : @control.SandboxLease,
@@ -322,7 +322,7 @@ async fn execute_durable_native_process_with(
   runtime : NativePartEffectRuntime,
   goal_id : @control.GoalId,
   fencing_epoch : @control.FencingEpoch,
-  effect_intent_id : String,
+  effect_intent_id : @control.EffectId,
   discriminator : String,
   take_id : @control.TakeId,
   lease : @control.SandboxLease,
@@ -503,7 +503,7 @@ async fn execute_durable_native_process(
   runtime : NativePartEffectRuntime,
   goal_id : @control.GoalId,
   fencing_epoch : @control.FencingEpoch,
-  effect_intent_id : String,
+  effect_intent_id : @control.EffectId,
   discriminator : String,
   take_id : @control.TakeId,
   lease : @control.SandboxLease,
@@ -723,7 +723,7 @@ async test "process execution state persists and recovers every start boundary" 
   let fence = @control.FencingEpoch(3L)
   let planned : @sandbox.ProcessExecution = {
     execution_id: @sandbox.ProcessExecutionId("process-state-effect.process"),
-    effect_intent_id: "process-state-effect",
+    effect_intent_id: @control.EffectId("process-state-effect"),
     runtime_execution_key: @sandbox.RuntimeExecutionKey(
       "process-state-effect.process",
     ),
@@ -822,7 +822,7 @@ async test "process execution state persists and recovers every start boundary" 
   ]
   for index = 0; index < points.length(); index = index + 1 {
     let calls = @ref.new(0)
-    let effect_id = "process-fault-" + index.to_string()
+    let effect_id = @control.EffectId("process-fault-" + index.to_string())
     let runner = async fn() {
       @async.sleep(0)
       calls.val = calls.val + 1

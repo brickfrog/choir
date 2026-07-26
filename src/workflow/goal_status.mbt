@@ -1,6 +1,6 @@
 ///|
 pub(all) struct GoalPartStatus {
-  workflow_id : String
+  workflow_id : @control.WorkflowId
   part_id : @control.PartId
   provider_surface : @control.ProviderSurfaceId
   implementation_take_id : @control.TakeId

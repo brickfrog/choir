@@ -2069,7 +2069,7 @@ fn native_source_claim_test_record(
     ],
     maximum_parallel_parts: 1,
     policy_revisions: [@workflow.initial_goal_policy_revision(goal_id, 1)],
-    part_workflow_ids: ["source-claim-workflow"],
+    part_workflow_ids: [@control.WorkflowId("source-claim-workflow")],
     state: @workflow.GoalExecutionState::GoalExecutionRunning,
     pause: None,
     active_input_request: None,
@@ -4843,7 +4843,7 @@ async fn advance_native_goal_assurance(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let mut authorized_effect_id : String? = None
+  let mut authorized_effect_id : @control.EffectId? = None
   let mut cycles = 0
   while cycles < 64 {
     cycles = cycles + 1

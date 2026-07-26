@@ -29,7 +29,7 @@ fn process_execution_fixture() -> @sandbox.ProcessExecution {
   let process = valid_process_spec()
   {
     execution_id: @sandbox.ProcessExecutionId("process-effect.process"),
-    effect_intent_id: "process-effect",
+    effect_intent_id: @control.EffectId("process-effect"),
     runtime_execution_key: @sandbox.RuntimeExecutionKey(
       "process-effect.process",
     ),

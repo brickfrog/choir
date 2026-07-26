@@ -112,7 +112,7 @@ pub(all) enum PartWorkflowRunOutcome {
   PartRunBlocked
   PartRunRecoveryUncertain
   PartRunGoalNotAuthorizing
-  PartRunWaitingForEffectWitness(String)
+  PartRunWaitingForEffectWitness(@control.EffectId)
   PartRunPersistenceFault(
     PartPersistenceBoundary,
     @storage.StateStoreFaultPoint
@@ -862,7 +862,7 @@ pub async fn run_new_part_workflow(
 pub async fn resume_part_workflow(
   repository : PartWorkflowRepository,
   repository_adapters : PartWorkflowRepositoryAdapters,
-  workflow_id : String,
+  workflow_id : @control.WorkflowId,
   dependencies : PartWorkflowDriverDependencies,
 ) -> Result[PartWorkflowRunResult, @types.ChoirError] {
   match initialize_part_workflow_repository(repository, repository_adapters) {

@@ -25,7 +25,7 @@ pub fn decode_goal_assurance_effect_witness(
   let witness : GoalAssuranceEffectWitness = @json.from_json(json) catch {
     _ => return Err(goal_assurance_error("effect witness schema is invalid"))
   }
-  if witness.effect_id == "" ||
+  if witness.effect_id.0 == "" ||
     witness.observed_at <= 0L ||
     witness.observation_digest !=
     goal_assurance_observation_digest(witness.observation) {
@@ -154,9 +154,9 @@ pub fn plan_next_goal_assurance_effect(
           )
           Ok(
             Some({
-              effect_id: record.goal_id.0 +
-              ":assurance:" +
-              goal_assurance_effect_suffix(record),
+              effect_id: record.goal_id.effect(
+                "assurance:" + goal_assurance_effect_suffix(record),
+              ),
               kind,
               request_digest,
               lifecycle: GoalAssuranceEffectPlanned,

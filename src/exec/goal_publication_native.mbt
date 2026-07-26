@@ -1255,7 +1255,7 @@ fn publication_integrated_part(
     integrated_at: 1L,
   }
   {
-    workflow_id: "publication-workflow",
+    workflow_id: @control.WorkflowId("publication-workflow"),
     durable_version: 1,
     fencing_epoch: @control.FencingEpoch(1L),
     stage: @workflow.PartWorkflowStage::PartIntegrated,

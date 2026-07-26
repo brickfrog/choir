@@ -56,7 +56,7 @@ pub fn decode_part_effect_witness(
   let witness : PartEffectWitness = @json.from_json(json) catch {
     _ => return Err(workflow_error("effect witness does not match the schema"))
   }
-  if witness.effect_id == "" ||
+  if witness.effect_id.0 == "" ||
     witness.observed_at <= 0L ||
     witness.observation_digest !=
     part_effect_observation_digest(witness.observation) {
@@ -143,7 +143,7 @@ fn validate_planned_session(
 
 ///|
 pub fn initialize_part_workflow(
-  workflow_id : String,
+  workflow_id : @control.WorkflowId,
   goal : @control.Goal,
   part : @control.GoalPart,
   contract : @control.TaskContractRevision,
@@ -152,7 +152,7 @@ pub fn initialize_part_workflow(
   is_nfc : (String) -> Bool,
   part_context_manifest? : @migration.PartContextManifest? = None,
 ) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
-  if workflow_id == "" || workflow_id.contains("\u{00}") {
+  if workflow_id.0 == "" || workflow_id.0.contains("\u{00}") {
     return Err(workflow_error("workflow identity is empty or invalid"))
   }
   if goal.lifecycle !=
@@ -1076,7 +1076,7 @@ fn session_start_intent(
   prepared : PartPreparedCommand,
 ) -> @control.HarnessSessionStartIntent {
   {
-    effect_id: snapshot.workflow_id + ":" + session.id.0 + ":start",
+    effect_id: snapshot.workflow_id.effect(session.id.0 + ":start"),
     session_id: session.id,
     take_id: prepared.plan.take.id,
     provider_surface_and_profile_digest: prepared.plan.provider_surface_and_profile_digest,
@@ -1092,16 +1092,17 @@ fn harness_command_intent(
   session : @control.HarnessSession,
   prepared : PartPreparedCommand,
 ) -> @control.HarnessCommandIntent {
+  let effect_id = snapshot.workflow_id.effect(session.id.0 + ":command-1")
   {
-    effect_id: snapshot.workflow_id + ":" + session.id.0 + ":command-1",
+    effect_id,
     session_id: session.id,
     command_id: @control.HarnessCommandId(session.id.0 + ":command-1"),
     command_sequence: 1,
     required_provider_cursor: None,
     command_artifact_digest: prepared.command_artifact.digest,
-    provider_idempotency_token: Some(
-      snapshot.workflow_id + ":" + session.id.0 + ":command-1",
-    ),
+    // The provider dedupes on this token, so it must be the same identity
+    // Choir reconciles the effect under, not a parallel spelling of it.
+    provider_idempotency_token: Some(effect_id.0),
   }
 }
 
@@ -1436,11 +1437,11 @@ pub fn plan_next_part_effect(
           // that identity is stable for the life of one attempt, so it scopes
           // the effect id to the attempt without disturbing recovery within
           // an attempt across daemon restarts.
-          let effect_id = snapshot.workflow_id +
-            ":" +
+          let effect_id = snapshot.workflow_id.effect(
             snapshot.implementation_take.id.0 +
             ":" +
-            stage_effect_suffix(snapshot.stage)
+            stage_effect_suffix(snapshot.stage),
+          )
           Ok(
             Some({
               effect_id,
@@ -1720,7 +1721,7 @@ pub fn part_effect_is_dispatch(intent : PartEffectIntent) -> Bool {
 ///|
 test "a sandbox-only effect is not a provider dispatch" {
   let intent : PartEffectIntent = {
-    effect_id: "e",
+    effect_id: @control.EffectId("e"),
     kind: PartEffectKind::NormalizeImplementationCandidate(
       @control.TakeId("take-1"),
       @control.Digest("d"),

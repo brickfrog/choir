@@ -678,9 +678,7 @@ async fn reconcile_native_goal_processes_once(
             runtime,
             record.goal_id,
             record.fencing_epoch,
-            @sandbox.ProcessExecutionId(
-              intent.effect_id + ".process." + spec.id.0,
-            ),
+            native_process_execution_id(intent.effect_id, spec.id.0),
           ) {
           Ok(result) => result
           Err(error) => {

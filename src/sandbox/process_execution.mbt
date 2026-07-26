@@ -32,7 +32,7 @@ pub(all) enum ProcessRecoveryAction {
 ///|
 pub(all) struct ProcessExecution {
   execution_id : ProcessExecutionId
-  effect_intent_id : String
+  effect_intent_id : @control.EffectId
   runtime_execution_key : RuntimeExecutionKey
   take_id : @control.TakeId
   process_authority : SandboxProcessAuthority
@@ -76,7 +76,7 @@ pub fn validate_process_execution(
   execution : ProcessExecution,
 ) -> Result[Unit, @types.ChoirError] {
   if !valid_process_execution_token(execution.execution_id.0) ||
-    !valid_process_execution_token(execution.effect_intent_id) ||
+    !valid_process_execution_token(execution.effect_intent_id.0) ||
     execution.runtime_execution_key.0 == "" ||
     execution.take_id.0 == "" ||
     execution.sandbox_lease_id.0 == "" ||

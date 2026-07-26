@@ -60,6 +60,47 @@ pub(all) struct CancellationSummaryId(String) derive (
 )
 
 ///|
+/// The durable key of one Part's workflow record.
+pub(all) struct WorkflowId(String) derive (
+  Debug,
+  Eq,
+  Compare,
+  Hash,
+  ToJson,
+  FromJson,
+)
+
+///|
+/// The durable key of one authorized host effect.
+///
+/// Every effect id belongs to exactly one workflow, so it is always derived
+/// from that workflow rather than composed by the caller. `WorkflowId::effect`
+/// is the only place that knows the separator; a hand-built key that spells it
+/// differently loads nothing and the effect waits forever on a witness that
+/// cannot arrive.
+pub(all) struct EffectId(String) derive (
+  Debug,
+  Eq,
+  Compare,
+  Hash,
+  ToJson,
+  FromJson,
+)
+
+///|
+/// Mint an effect id inside this workflow's namespace.
+pub fn WorkflowId::effect(self : WorkflowId, suffix : String) -> EffectId {
+  EffectId(self.0 + ":" + suffix)
+}
+
+///|
+/// Mint an effect id inside this Goal's namespace, for the Goal-level
+/// assurance effects that no Part workflow owns.
+pub fn GoalId::effect(self : GoalId, suffix : String) -> EffectId {
+  EffectId(self.0 + ":" + suffix)
+}
+
+///|
 pub(all) struct Digest(String) derive(Debug, Eq, Compare, Hash, ToJson, FromJson)
 
 ///|

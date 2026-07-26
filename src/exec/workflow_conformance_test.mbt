@@ -108,7 +108,7 @@ test "provider effect witnesses retain the first terminal observation" {
   )
   // A retried Part plans a fresh effect id, so it never collides with this
   // witness at all. Under one id the request must match or the row is corrupt.
-  assert_true(intent.effect_id.contains(authorized.implementation_take.id.0))
+  assert_true(intent.effect_id.0.contains(authorized.implementation_take.id.0))
   let corrupt : @workflow.PartEffectIntent = {
     ..intent,
     request_digest: @control.Digest(
@@ -120,7 +120,7 @@ test "provider effect witnesses retain the first terminal observation" {
   )
   let retried : @workflow.PartEffectIntent = {
     ..intent,
-    effect_id: intent.effect_id + ":attempt-2",
+    effect_id: @control.EffectId(intent.effect_id.0 + ":attempt-2"),
   }
   assert_eq(
     @workflow.load_part_effect_witness(repository, adapters, retried).unwrap(),
