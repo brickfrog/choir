@@ -53,7 +53,7 @@ fn claude_driver_output(tool_name : String) -> String {
     #|{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tool-1","content":"ok"}]}}
     #|{"type":"assistant","message":{"model":"claude-opus-4-8","content":[{"type":"tool_use","id":"tool-2","name":"StructuredOutput"}]}}
     #|{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tool-2","content":"Structured output provided successfully"}]}}
-    #|{"type":"result","subtype":"success","is_error":false,"result":"{\"outcome\":\"completed\"}"}
+    #|{"type":"result","subtype":"success","is_error":false,"result":"{\"outcome\":\"completed\"}","duration_ms":4200,"usage":{"input_tokens":120,"output_tokens":45,"cache_read_input_tokens":900,"cache_creation_input_tokens":30}}
   )
 }
 
@@ -90,6 +90,18 @@ test "Claude driver normalizes one balanced restricted Take" {
     is @control.HarnessSessionLifecycle::HarnessSessionIngestionClosedCleanly(
       @control.HarnessTerminalObservation::HarnessCompleted
     ),
+  )
+  // What this Take spent reaches the session, so the Goal's cost against the
+  // user's paid subscription allowance is reportable rather than zero.
+  assert_eq(
+    result.session.usage,
+    Some({
+      input_tokens: 120,
+      output_tokens: 45,
+      cache_read_tokens: 900,
+      cache_creation_tokens: 30,
+      wall_time_ms: 4200,
+    }),
   )
 }
 

@@ -157,7 +157,6 @@ pub fn ingest_harness_event(
                 ..session,
                 last_choir_sequence: incoming.choir_sequence,
                 open_tool_execution_ids: open_tools,
-                usage: None,
               },
               event: Some(incoming),
               disposition: HarnessEventAppended,

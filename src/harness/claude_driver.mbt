@@ -238,11 +238,12 @@ test "an admitted Claude surface is independent of the client release" {
 ///|
 fn claude_driver_trace(
   output : String,
-) -> (Array[ClaudeObservedToolEvent], Bool, String, String) {
+) -> (Array[ClaudeObservedToolEvent], Bool, String, String, @control.TakeUsage?) {
   let tool_events : Array[ClaudeObservedToolEvent] = []
   let mut succeeded = false
   let mut response = ""
   let mut model_identity = ""
+  let mut usage : @control.TakeUsage? = None
   for raw in output.split("\n") {
     let json = @json.parse(raw.trim().to_owned()) catch { _ => continue }
     guard json is Object(fields) else { continue }
@@ -297,11 +298,14 @@ fn claude_driver_trace(
         succeeded = startup_json_bool(fields, "is_error") == Some(false) &&
           startup_json_string(fields, "subtype") == "success"
         response = startup_json_string(fields, "result")
+        // What this Take spent against the user's paid subscription
+        // allowance, exactly as the provider reported it.
+        usage = claude_result_usage(fields)
       }
       _ => ()
     }
   }
-  (tool_events, succeeded, response, model_identity)
+  (tool_events, succeeded, response, model_identity, usage)
 }
 
 ///|
@@ -604,7 +608,7 @@ pub fn evaluate_claude_driver_capture(
     EntitlementSubscriptionIncluded {
     return Err(claude_driver_error("subscription entitlement is not admitted"))
   }
-  let (tool_trace, succeeded, response, model_identity) = claude_driver_trace(
+  let (tool_trace, succeeded, response, model_identity, reported_usage) = claude_driver_trace(
     request.capture.output,
   )
   if !succeeded || response == "" || model_identity == "" {
@@ -621,7 +625,11 @@ pub fn evaluate_claude_driver_capture(
     Err(error) => return Err(claude_provider_violation(request.capture, error))
   }
   let events : Array[@control.HarnessEventEnvelope] = []
-  let mut session = request.session
+  let mut session = match reported_usage {
+    Some(usage) if @control.validate_take_usage(usage) =>
+      { ..request.session, usage: Some(usage) }
+    _ => request.session
+  }
   let mut sequence = 1L
   session = match
     append_claude_event(
