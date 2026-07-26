@@ -183,11 +183,11 @@ pub async fn advance_native_goal_finalization_with_adapters(
           native_pull_request_error("injected Goal finalization fault"),
         )
       }
-      // Close source Beads with the reviewable PR observed, before the success
-      // transaction: a crash in between retries idempotently on the next tick,
-      // while success-before-closure would strand open Beads on a Goal the
-      // runner never ticks again. Landing the PR on the trunk is the
-      // repository's merge queue, not a step Choir waits on.
+      // Close source Beads only after the configured delivery boundary is
+      // observed, before the success transaction: review-only Goals authorize
+      // an exact PR, while auto-merge Goals authorize only the exact merged PR.
+      // A crash in between retries idempotently on the next tick; committing
+      // success first would strand open Beads on a Goal the runner never ticks.
       match reconcile_sources(project_dir, repository, execution.record) {
         Ok(_) => ()
         Err(error) => return Err(error)
@@ -202,6 +202,14 @@ pub async fn advance_native_goal_finalization_with_adapters(
         Err(error) => Err(error)
       }
     }
+    @workflow.PullRequestReadinessDecision::PullRequestAwaitingMerge =>
+      Ok(@workflow.GoalFinalizationTickOutcome::GoalFinalizationPending)
+    @workflow.PullRequestReadinessDecision::PullRequestDeliveryFailed(digest) =>
+      Ok(
+        @workflow.GoalFinalizationTickOutcome::GoalFinalizationDeliveryFailed(
+          digest,
+        ),
+      )
     @workflow.PullRequestReadinessDecision::PullRequestReadinessNeedsInput(_) =>
       Ok(@workflow.GoalFinalizationTickOutcome::GoalFinalizationNeedsUserInput)
     @workflow.PullRequestReadinessDecision::PullRequestReadinessDrift(_) =>
@@ -257,6 +265,9 @@ async fn prepare_goal_finalization_fixture(
       remote_pull_request.val = Some(
         pull_request_fault_snapshot(intent, document),
       )
+    },
+    merge: (_, _, _, _) => {
+      @workflow.PullRequestMergeDispatchObservation::PullRequestMergeDispatchAccepted
     },
   }
   let pull_request_outcome = match
@@ -366,6 +377,7 @@ async fn observe_pull_request_remote_state(
     resolve_repository: fixture.4.resolve_repository,
     lookup: (_, _, _) => lookup,
     create: fixture.4.create,
+    merge: fixture.4.merge,
   }
   let outcome = match
     advance_native_goal_finalization_with_adapters(
@@ -530,6 +542,7 @@ pub async fn run_native_goal_finalization_race_conformance() -> NativeGoalFinali
       )
     },
     create: after.4.create,
+    merge: after.4.merge,
   }
   let original_body_digest = after_snapshot.body_digest
   let after_outcome = match

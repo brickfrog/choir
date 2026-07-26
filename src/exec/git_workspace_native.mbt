@@ -446,6 +446,7 @@ pub async fn normalize_native_git_candidate(
   goal_id : @control.GoalId,
   part_id : @control.PartId,
   take_id : @control.TakeId,
+  commit_title : @control.SemanticCommitTitle,
   base_commit_oid : @control.GitOid,
   expected_source_digest : @control.Digest,
   result_root : String,
@@ -453,6 +454,10 @@ pub async fn normalize_native_git_candidate(
   (@control.CandidateCommit, @control.CandidatePathEvidence),
   @types.ChoirError,
 ] {
+  match @control.validate_semantic_commit_title(commit_title) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   let index_file = match
     prepare_native_git_result_index(
       config, key, base_commit_oid, expected_source_digest, result_root,
@@ -487,14 +492,7 @@ pub async fn normalize_native_git_candidate(
   let commit_oid = match
     native_git_workspace_oid(
       config,
-      [
-        "commit-tree",
-        tree_oid.0,
-        "-p",
-        base_commit_oid.0,
-        "-m",
-        "choir: candidate for Part " + part_id.0,
-      ],
+      ["commit-tree", tree_oid.0, "-p", base_commit_oid.0, "-m", commit_title.0],
       index_file=Some(index_file),
       work_tree=Some(result_root),
       commit=true,
@@ -735,6 +733,7 @@ async test "native Git candidate evidence captures raw changed paths and symlink
       @control.GoalId("path-evidence-goal"),
       @control.PartId("path-evidence-part"),
       @control.TakeId("path-evidence-take"),
+      @control.SemanticCommitTitle("test: capture path evidence"),
       base_commit,
       source.source_digest,
       result,
@@ -752,6 +751,17 @@ async test "native Git candidate evidence captures raw changed paths and symlink
     @control.RepoPath("src/new_name.mbt"),
     @control.RepoPath("src/old_name.mbt"),
   ]
+  assert_eq(
+    native_git_evidence_test_command(repository, [
+      "show",
+      "-s",
+      "--format=%s",
+      normalized.0.commit_oid.0,
+    ])
+    .trim()
+    .to_owned(),
+    "test: capture path evidence",
+  )
   assert_eq(normalized.0.changed_paths.length(), expected.length())
   for path in expected {
     assert_true(

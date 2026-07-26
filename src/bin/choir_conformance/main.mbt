@@ -3285,7 +3285,7 @@ async fn run_conductor_reconnect_live() -> Int {
   }
   let goal_id = @control.GoalId("goal-conductor-reconnect")
   let draft =
-    #|{"proposal_id":"proposal-conductor-reconnect","goal_id":"goal-conductor-reconnect","maximum_parallel_parts":1,"parts":[{"part_id":"choir-reconnect","instruction":"Do not execute this paused conformance Part.","provider":"codex","repository_wide":true,"moon_args":["test","--target","native"]}]}
+    #|{"proposal_id":"proposal-conductor-reconnect","goal_id":"goal-conductor-reconnect","maximum_parallel_parts":1,"parts":[{"part_id":"choir-reconnect","commit_title":"test: reconnect Conductor","instruction":"Do not execute this paused conformance Part.","provider":"codex","repository_wide":true,"moon_args":["test","--target","native"]}]}
   let submitted = @exec.submit_native_conductor_goal_draft(root, draft, capture)
   let paused = match submitted {
     Ok(report) if report.accepted =>
@@ -3577,6 +3577,7 @@ async fn exercise_boxlite_take(
       @control.GoalId("live-goal"),
       @control.PartId("live-part"),
       @control.TakeId("live-take"),
+      @control.SemanticCommitTitle("test: run live roundtrip"),
       source.commit_oid,
       source.source_digest,
       result_root,
@@ -3591,6 +3592,7 @@ async fn exercise_boxlite_take(
       @control.GoalId("live-goal"),
       @control.PartId("live-part"),
       @control.TakeId("live-take"),
+      @control.SemanticCommitTitle("test: run live roundtrip"),
       source.commit_oid,
       source.source_digest,
       result_root,

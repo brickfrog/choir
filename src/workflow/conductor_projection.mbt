@@ -77,6 +77,8 @@ pub fn goal_report_material_fingerprint(report : GoalStatusReport) -> String {
       "assurance_block_reason": report.assurance_block_reason.to_json(),
       "publication_state": report.publication_state.to_json(),
       "pull_request_state": report.pull_request_state.to_json(),
+      "pull_request_delivery_policy": report.pull_request_delivery_policy.to_json(),
+      "pull_request_merge_state": report.pull_request_merge_state.to_json(),
       "finalization_id": report.finalization_id.to_json(),
       "readiness_decision": report.readiness_decision.to_json(),
       "parts": parts.to_json(),
@@ -150,6 +152,7 @@ pub(all) enum ConductorGoalPhase {
   ConductorPhaseAssure
   ConductorPhasePublish
   ConductorPhasePullRequest
+  ConductorPhaseMerge
 } derive(Debug, Eq)
 
 ///|
@@ -330,7 +333,17 @@ pub fn conductor_goal_display(
     GoalExecutionState::GoalExecutionAssured =>
       if report.publication_state ==
         Some(BranchPublicationState::BranchPublicationReceipted) {
-        ConductorGoalPhase::ConductorPhasePullRequest
+        if report.pull_request_state ==
+          Some(PullRequestIntentState::PullRequestReceipted) &&
+          report.pull_request_delivery_policy
+          .map(fn(policy) {
+            policy.mode == @types.PullRequestDeliveryMode::PullRequestAutoMerge
+          })
+          .unwrap_or(false) {
+          ConductorGoalPhase::ConductorPhaseMerge
+        } else {
+          ConductorGoalPhase::ConductorPhasePullRequest
+        }
       } else {
         ConductorGoalPhase::ConductorPhasePublish
       }

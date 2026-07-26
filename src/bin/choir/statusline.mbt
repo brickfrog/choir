@@ -9,6 +9,7 @@ fn conductor_phase_label(phase : @workflow.ConductorGoalPhase) -> String {
     @workflow.ConductorGoalPhase::ConductorPhaseAssure => "assure"
     @workflow.ConductorGoalPhase::ConductorPhasePublish => "publish"
     @workflow.ConductorGoalPhase::ConductorPhasePullRequest => "file PR"
+    @workflow.ConductorGoalPhase::ConductorPhaseMerge => "merge"
   }
 }
 
@@ -555,6 +556,8 @@ fn conductor_statusline_test_report(
     publication_receipt_present: false,
     published_oid: None,
     pull_request_state: None,
+    pull_request_delivery_policy: None,
+    pull_request_merge_state: None,
     pull_request_receipt_present: false,
     pull_request_number: None,
     pull_request_url: None,

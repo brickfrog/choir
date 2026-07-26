@@ -91,6 +91,7 @@ pub(all) enum GoalCancellationCause {
   GoalCancellationSupersededByContractRevision(@control.Digest)
   GoalCancellationAuditRepairFailed(@control.Digest)
   GoalCancellationVerificationRepairFailed(@control.Digest)
+  GoalCancellationAutoMergeFailed(@control.Digest)
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -939,6 +940,8 @@ fn goal_execution_cancellation_shape_is_valid(
           @storage.validate_digest(digest) is Ok(_)
         GoalCancellationVerificationRepairFailed(digest) =>
           @storage.validate_digest(digest) is Ok(_)
+        GoalCancellationAutoMergeFailed(digest) =>
+          @storage.validate_digest(digest) is Ok(_)
       })
     (GoalExecutionCanceling | GoalExecutionCanceled, None) => false
     (_, None) => true
@@ -1711,6 +1714,12 @@ pub fn request_goal_execution_cancellation(
           if @storage.validate_digest(digest) is Err(_) {
             return Err(
               goal_execution_error("verification repair digest is invalid"),
+            )
+          }
+        GoalCancellationAutoMergeFailed(digest) =>
+          if @storage.validate_digest(digest) is Err(_) {
+            return Err(
+              goal_execution_error("automatic merge digest is invalid"),
             )
           }
         GoalCancellationUserRequested => ()

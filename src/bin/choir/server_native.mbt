@@ -896,7 +896,7 @@ async fn conductor_goal_observer(project_dir : String) -> Unit {
 }
 
 ///|
-async fn conductor_goal_loop(project_dir : String) -> Unit {
+async fn conductor_goal_loop(config : @types.Config) -> Unit {
   let mut consecutive_failures = 0
   // A Goal whose ticks succeed while advancing nothing looks identical to one
   // that is working. Track the durable version the last advance reported so a
@@ -904,7 +904,11 @@ async fn conductor_goal_loop(project_dir : String) -> Unit {
   let mut ticks_without_progress = 0
   let mut last_progress = ""
   for ;; {
-    match @exec.run_native_goal_execution_tick(project_dir) {
+    match
+      @exec.run_native_goal_execution_tick(
+        config.project_dir,
+        pull_request_delivery=config.pull_request_delivery,
+      ) {
       Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickIdle) => {
         if @workflow.goal_execution_tick_failure_is_persistent(
             consecutive_failures,
@@ -966,7 +970,7 @@ async fn conductor_goal_loop(project_dir : String) -> Unit {
           @moontrace.field("goal_id", record.goal.id.0),
           @moontrace.field("state", record.state.to_json().stringify(indent=0)),
         ])
-        match @exec.inspect_native_goal(project_dir, record.goal.id) {
+        match @exec.inspect_native_goal(config.project_dir, record.goal.id) {
           Ok(report) => {
             match @workflow.goal_report_attention_summary(report) {
               Some(summary) =>
@@ -1147,7 +1151,7 @@ fn goal_worker_run() -> Unit {
   @async.run_async_main(async fn() {
     @async.with_task_group(async fn(group) {
       group.spawn_bg(async fn() { conductor_goal_observer(config.project_dir) })
-      conductor_goal_loop(config.project_dir)
+      conductor_goal_loop(config)
     })
   })
 }
@@ -1348,6 +1352,7 @@ test "Conductor strips caller identity before dispatch" {
 ///|
 test "Conductor parks an active durable Goal until its success event" {
   let state = ConductorServerState::new({
+    ..@types.Config::default(),
     project_dir: "/repo",
     listen_uds: "/repo/.choir/run/server.sock",
   })
@@ -1386,6 +1391,7 @@ test "Conductor parks an active durable Goal until its success event" {
 ///|
 test "persistent Goal worker failure releases the Conductor park" {
   let state = ConductorServerState::new({
+    ..@types.Config::default(),
     project_dir: "/repo",
     listen_uds: "/repo/.choir/run/server.sock",
   })
@@ -1404,6 +1410,7 @@ test "persistent Goal worker failure releases the Conductor park" {
 ///|
 test "Conductor replays a worker update that races Goal observation" {
   let state = ConductorServerState::new({
+    ..@types.Config::default(),
     project_dir: "/repo",
     listen_uds: "/repo/.choir/run/server.sock",
   })

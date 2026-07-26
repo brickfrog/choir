@@ -36,6 +36,9 @@ fn conductor_tools() -> Array[CatalogTool] {
     "part_id": conductor_string_schema(
       "Existing open Bead ID; this is the durable Part ID",
     ),
+    "commit_title": conductor_string_schema(
+      "Required semantic commit subject for this Part: one line, at most 72 characters, imperative, and prefixed with feat:, fix:, refactor:, test:, docs:, or chore:",
+    ),
     "instruction": conductor_string_schema(
       "Concrete implementation, verification, and acceptance instruction for this Part",
     ),
@@ -104,7 +107,8 @@ fn conductor_tools() -> Array[CatalogTool] {
     "type": "object".to_json(),
     "properties": part_properties.to_json(),
     "required": [
-      "part_id", "instruction", "exact_paths", "path_trees", "repository_wide", "moon_args",
+      "part_id", "commit_title", "instruction", "exact_paths", "path_trees", "repository_wide",
+      "moon_args",
     ].to_json(),
     "additionalProperties": false.to_json(),
   }.to_json()

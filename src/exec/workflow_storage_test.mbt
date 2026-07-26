@@ -136,6 +136,7 @@ fn workflow_store_fixture() -> @workflow.PartWorkflowSnapshot raise {
     part_id: part.id,
     revision: 1,
     digest: workflow_store_digest_a,
+    commit_title: @control.SemanticCommitTitle("test: persist workflow"),
     repair_conflict_id: None,
     repair_audit: None,
     repair_verification: None,

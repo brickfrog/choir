@@ -818,6 +818,7 @@ fn native_conductor_goal_draft_json(
 test "native Conductor mints Goal identity around structured submission arguments" {
   let part : Json = {
     "part_id": "bead-1".to_json(),
+    "commit_title": "docs: update the README".to_json(),
     "instruction": "implement the contract".to_json(),
     "provider": "codex".to_json(),
     "exact_paths": ["README.md"].to_json(),

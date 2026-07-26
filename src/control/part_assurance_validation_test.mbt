@@ -18,6 +18,7 @@ fn assurance_contract(
     part_id: @control.PartId("part-1"),
     revision: 1,
     digest: assurance_digest_a,
+    commit_title: @control.SemanticCommitTitle("test: validate assurance"),
     repair_conflict_id: None,
     repair_audit: None,
     repair_verification: None,
@@ -43,6 +44,34 @@ fn assurance_contract(
     implementation_capability_profile_digest: assurance_digest_a,
     verification_capability_profile_digest: assurance_digest_a,
     audit_capability_profile_digest: assurance_digest_a,
+  }
+}
+
+///|
+test "semantic commit titles enforce the repository commit contract" {
+  for
+    valid in [
+      "feat: add automatic delivery", "fix: preserve semantic history", "refactor: isolate merge policy",
+      "test: prove exact merge heads", "docs: explain Goal delivery", "chore: install Choir",
+    ] {
+    assert_true(
+      @control.validate_semantic_commit_title(
+        @control.SemanticCommitTitle(valid),
+      )
+      is Ok(_),
+    )
+  }
+  for
+    invalid in [
+      "choir: candidate for Part choir-5o2", "fix:", "Fix: wrong case", "fix: first line\nsecond line",
+      "fix: this semantic commit title is intentionally longer than seventy-two characters total",
+    ] {
+    assert_true(
+      @control.validate_semantic_commit_title(
+        @control.SemanticCommitTitle(invalid),
+      )
+      is Err(_),
+    )
   }
 }
 

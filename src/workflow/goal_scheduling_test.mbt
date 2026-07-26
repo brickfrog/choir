@@ -26,6 +26,7 @@ fn scheduling_record(
       part_id,
       revision: 1,
       digest: schedule_digest,
+      commit_title: @control.SemanticCommitTitle("test: schedule Part"),
       repair_conflict_id: None,
       repair_audit: None,
       repair_verification: None,

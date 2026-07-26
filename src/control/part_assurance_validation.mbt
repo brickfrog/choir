@@ -177,10 +177,38 @@ fn valid_verification_specs(specs : Array[VerificationSpec]) -> Bool {
 }
 
 ///|
+pub fn validate_semantic_commit_title(
+  title : SemanticCommitTitle,
+) -> Result[Unit, @types.ChoirError] {
+  let value = title.0
+  let prefixes = ["feat:", "fix:", "refactor:", "test:", "docs:", "chore:"]
+  if value == "" ||
+    value != value.trim().to_owned() ||
+    value.length() > 72 ||
+    value.contains("\n") ||
+    value.contains("\r") ||
+    value.contains("\u{00}") ||
+    !prefixes.any(fn(prefix) {
+      value.has_prefix(prefix + " ") && value.length() > prefix.length() + 1
+    }) {
+    return Err(
+      @types.ChoirError::validation_error(
+        "semantic commit title must be one line of at most 72 characters with a feat, fix, refactor, test, docs, or chore prefix",
+      ),
+    )
+  }
+  Ok(())
+}
+
+///|
 pub fn validate_task_contract_revision(
   contract : TaskContractRevision,
   is_nfc : (String) -> Bool,
 ) -> Result[Unit, @types.ChoirError] {
+  match validate_semantic_commit_title(contract.commit_title) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   let repair_identity_valid = match contract.repair_conflict_id {
     Some(value) => value.0 != ""
     None => true

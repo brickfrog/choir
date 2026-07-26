@@ -17,6 +17,7 @@ pub(all) struct ConductorMigrationContextDraft {
 ///|
 pub(all) struct ConductorPartDraft {
   part_id : @control.PartId
+  commit_title : @control.SemanticCommitTitle
   instruction : String
   exact_paths : Array[@control.RepoPath]
   path_trees : Array[@control.RepoPath]
@@ -380,11 +381,12 @@ fn decode_conductor_part_draft(
     return Err(goal_submission_error("Conductor Part draft must be an object"))
   }
   let allowed_fields = [
-    "part_id", "instruction", "provider", "exact_paths", "path_trees", "repository_wide",
-    "moon_args", "verify_timeout_ms", "migration_contract_id", "migration_lineage_id",
-    "migration_contract_revision", "migration_contract_artifact_digest", "context_assembly_policy_digest",
-    "rulebook_section_digests", "dependency_neighborhood_digest", "applicable_gap_entry_digests",
-    "source_path_manifest_digest", "prior_take_context_digest", "migration_continuation_ref_digest",
+    "part_id", "commit_title", "instruction", "provider", "exact_paths", "path_trees",
+    "repository_wide", "moon_args", "verify_timeout_ms", "migration_contract_id",
+    "migration_lineage_id", "migration_contract_revision", "migration_contract_artifact_digest",
+    "context_assembly_policy_digest", "rulebook_section_digests", "dependency_neighborhood_digest",
+    "applicable_gap_entry_digests", "source_path_manifest_digest", "prior_take_context_digest",
+    "migration_continuation_ref_digest",
   ]
   let unknown_fields = conductor_draft_unknown_fields(fields, allowed_fields)
   if unknown_fields.length() > 0 {
@@ -400,6 +402,15 @@ fn decode_conductor_part_draft(
   let part_id = match conductor_draft_string(fields, "part_id") {
     Some(value) => @control.PartId(value)
     None => return Err(goal_submission_error("Conductor Part ID is missing"))
+  }
+  let commit_title = match conductor_draft_string(fields, "commit_title") {
+    Some(value) => @control.SemanticCommitTitle(value)
+    None =>
+      return Err(goal_submission_error("Conductor commit title is missing"))
+  }
+  match @control.validate_semantic_commit_title(commit_title) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
   }
   let instruction = match conductor_draft_string(fields, "instruction") {
     Some(value) => value
@@ -489,6 +500,7 @@ fn decode_conductor_part_draft(
   }
   Ok({
     part_id,
+    commit_title,
     instruction,
     exact_paths,
     path_trees,

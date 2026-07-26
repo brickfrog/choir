@@ -86,6 +86,8 @@ fn projection_report(
     publication_receipt_present: false,
     published_oid: None,
     pull_request_state: None,
+    pull_request_delivery_policy: None,
+    pull_request_merge_state: None,
     pull_request_receipt_present: false,
     pull_request_number: None,
     pull_request_url: None,
@@ -262,5 +264,32 @@ test "a running Goal reports the stage its Parts reached, not queued" {
   assert_eq(
     phase_for(@workflow.PartWorkflowStage::PartAccepted),
     @workflow.ConductorGoalPhase::ConductorPhaseQueued,
+  )
+}
+
+///|
+test "an assured automatic-delivery Goal reports merge phase" {
+  let report = projection_report(
+    state=@workflow.GoalExecutionState::GoalExecutionAssured,
+  )
+  let merging = {
+    ..report,
+    publication_state: Some(
+      @workflow.BranchPublicationState::BranchPublicationReceipted,
+    ),
+    pull_request_state: Some(
+      @workflow.PullRequestIntentState::PullRequestReceipted,
+    ),
+    pull_request_delivery_policy: Some({
+      mode: @types.PullRequestDeliveryMode::PullRequestAutoMerge,
+      merge_method: @types.PullRequestMergeMethod::PullRequestSquashMerge,
+    }),
+    pull_request_merge_state: Some(
+      @workflow.PullRequestMergeState::PullRequestMergeEnabled,
+    ),
+  }
+  assert_eq(
+    @workflow.conductor_goal_display(merging).unwrap().phase,
+    @workflow.ConductorGoalPhase::ConductorPhaseMerge,
   )
 }

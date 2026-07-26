@@ -460,6 +460,7 @@ fn native_part_fixture_snapshot_for_definition(
     part_id,
     revision: 1,
     digest: contract_digest,
+    commit_title: @control.SemanticCommitTitle("test: run Part lifecycle"),
     repair_conflict_id: None,
     repair_audit: None,
     repair_verification: None,

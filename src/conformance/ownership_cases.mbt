@@ -26,6 +26,7 @@ fn ownership_contract(
     part_id: @control.PartId("ownership-part"),
     revision: 1,
     digest: ownership_digest_a,
+    commit_title: @control.SemanticCommitTitle("test: exercise ownership"),
     repair_conflict_id: None,
     repair_audit: None,
     repair_verification: None,

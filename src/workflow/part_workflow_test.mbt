@@ -149,6 +149,7 @@ fn workflow_fixture() -> @workflow.PartWorkflowSnapshot raise {
     part_id: part.id,
     revision: 1,
     digest: workflow_digest_a,
+    commit_title: @control.SemanticCommitTitle("test: exercise Part workflow"),
     repair_conflict_id: None,
     repair_audit: None,
     repair_verification: None,
@@ -2788,6 +2789,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     base_ref: assured_execution.integration_target_ref,
     observed_head_oid: promotion.commit_oid,
     state: @workflow.RemotePullRequestState::RemotePullRequestOpen,
+    auto_merge_enabled: false,
     marker_state: @workflow.PullRequestMarkerState::PullRequestMarkerExact,
     title_digest: @storage.artifact_digest(@utf8.encode(pr_document.title)),
     body_digest: @storage.artifact_digest(@utf8.encode(pr_document.body)),
@@ -2872,6 +2874,106 @@ test "integrated Parts authorize one immutable Goal branch seal" {
   assert_eq(
     adopted_pull_request.intent.state,
     @workflow.PullRequestIntentState::PullRequestReceipted,
+  )
+  let automatic_pull_request = @workflow.initialize_goal_pull_request(
+    assured_execution,
+    assured,
+    published,
+    @workflow.PullRequestProvider::GitHubPullRequestProvider,
+    @workflow.RemoteRepositoryId("remote-repository-assurance"),
+    pr_document,
+    delivery_policy={
+      mode: @types.PullRequestDeliveryMode::PullRequestAutoMerge,
+      merge_method: @types.PullRequestMergeMethod::PullRequestSquashMerge,
+    },
+  ).unwrap()
+  let automatic_receipted = @workflow.authorize_goal_pull_request(
+    automatic_pull_request,
+    assured_execution,
+    assured,
+    published,
+    promotion.commit_oid,
+    @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch(
+      remote_pull_request,
+    ),
+    43L,
+  ).unwrap()
+  assert_eq(
+    automatic_receipted.intent.merge_state,
+    @workflow.PullRequestMergeState::PullRequestMergePlanned,
+  )
+  let merge_authorized = @workflow.authorize_goal_pull_request_merge(
+    automatic_receipted,
+    @workflow.PullRequestLookupObservation::PullRequestStoredIdMatch(
+      remote_pull_request,
+    ),
+  ).unwrap()
+  assert_eq(
+    merge_authorized.intent.merge_state,
+    @workflow.PullRequestMergeState::PullRequestMergeAuthorized,
+  )
+  let merge_issued = @workflow.mark_goal_pull_request_merge_may_have_been_issued(
+    merge_authorized,
+  ).unwrap()
+  let merge_enabled = @workflow.reconcile_goal_pull_request_merge(
+    merge_issued,
+    @workflow.PullRequestLookupObservation::PullRequestStoredIdMatch({
+      ..remote_pull_request,
+      auto_merge_enabled: true,
+    }),
+  ).unwrap()
+  assert_eq(
+    merge_enabled.intent.merge_state,
+    @workflow.PullRequestMergeState::PullRequestMergeEnabled,
+  )
+  let awaiting_merge = @workflow.observe_goal_pull_request_readiness(
+    assured_execution,
+    assured,
+    published,
+    merge_enabled,
+    @workflow.PullRequestLookupObservation::PullRequestStoredIdMatch({
+      ..remote_pull_request,
+      auto_merge_enabled: true,
+    }),
+    None,
+    1L,
+    44L,
+    44L,
+  ).unwrap()
+  assert_eq(
+    awaiting_merge.readiness.decision,
+    @workflow.PullRequestReadinessDecision::PullRequestAwaitingMerge,
+  )
+  assert_true(
+    @workflow.authorize_goal_execution_success(
+      assured_execution, assured, published, merge_enabled, awaiting_merge,
+    )
+    is Err(_),
+  )
+  let merged_delivery = @workflow.observe_goal_pull_request_readiness(
+    assured_execution,
+    assured,
+    published,
+    merge_enabled,
+    @workflow.PullRequestLookupObservation::PullRequestStoredIdMatch({
+      ..remote_pull_request,
+      state: @workflow.RemotePullRequestState::RemotePullRequestMerged,
+      auto_merge_enabled: false,
+    }),
+    None,
+    2L,
+    45L,
+    45L,
+  ).unwrap()
+  assert_eq(
+    merged_delivery.readiness.decision,
+    @workflow.PullRequestReadinessDecision::PullRequestReady,
+  )
+  assert_true(
+    @workflow.authorize_goal_execution_success(
+      assured_execution, assured, published, merge_enabled, merged_delivery,
+    )
+    is Ok(_),
   )
   guard adopted_pull_request.receipt is Some(pull_request_receipt) else {
     fail("pull request receipt is absent")

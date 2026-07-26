@@ -421,6 +421,7 @@ pub fn plan_part_integration(
     id: input.intent_id,
     goal_id: snapshot.goal.id,
     part_id: snapshot.part.id,
+    commit_title: snapshot.task_contract.commit_title,
     candidate_id: candidate.id,
     candidate_commit_oid: candidate.commit_oid,
     candidate_tree_oid: candidate.tree_oid,

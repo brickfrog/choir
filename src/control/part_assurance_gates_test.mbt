@@ -265,6 +265,7 @@ test "integration authorization and witness bind the audited candidate" {
     id: @control.IntegrationIntentId("intent-1"),
     goal_id: @control.GoalId("goal-1"),
     part_id: @control.PartId("part-1"),
+    commit_title: @control.SemanticCommitTitle("test: exercise gate"),
     candidate_id: candidate.id,
     candidate_commit_oid: candidate.commit_oid,
     candidate_tree_oid: candidate.tree_oid,

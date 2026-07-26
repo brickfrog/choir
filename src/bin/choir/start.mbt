@@ -54,27 +54,40 @@ fn native_resolve_launch_config(
   } else {
     project_dir + "/" + config.listen_uds
   }
-  Ok({ project_dir, listen_uds })
+  Ok({ ..config, project_dir, listen_uds })
 }
 
 ///|
 test "native launch config gives the Goal worker absolute project and socket paths" {
   assert_eq(
     native_resolve_launch_config(
-      { project_dir: ".", listen_uds: ".choir/run/server.sock" },
+      {
+        ..@types.Config::default(),
+        project_dir: ".",
+        listen_uds: ".choir/run/server.sock",
+      },
       fn(path) { if path == "." { Some("/work/repo") } else { None } },
     ),
     Ok({
+      ..@types.Config::default(),
       project_dir: "/work/repo",
       listen_uds: "/work/repo/.choir/run/server.sock",
     }),
   )
   assert_eq(
     native_resolve_launch_config(
-      { project_dir: "/work/repo", listen_uds: "/tmp/choir.sock" },
+      {
+        ..@types.Config::default(),
+        project_dir: "/work/repo",
+        listen_uds: "/tmp/choir.sock",
+      },
       fn(path) { Some(path) },
     ),
-    Ok({ project_dir: "/work/repo", listen_uds: "/tmp/choir.sock" }),
+    Ok({
+      ..@types.Config::default(),
+      project_dir: "/work/repo",
+      listen_uds: "/tmp/choir.sock",
+    }),
   )
 }
 

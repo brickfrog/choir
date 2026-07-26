@@ -159,6 +159,7 @@ async test "native Conductor submission captures Beads and persists once" {
     #|  "parts": [
     #|    {
     #|      "part_id": "choir-a",
+    #|      "commit_title": "fix: change A",
     #|      "instruction": "Change only src/a.mbt so answer_a returns 2.",
     #|      "provider": "codex",
     #|      "exact_paths": ["src/a.mbt"],
@@ -540,7 +541,7 @@ async test "native Conductor submission stacks a dependent Goal on its open pare
     }
   }
   let parent_draft =
-    #|{"proposal_id":"proposal-stack-parent","goal_id":"goal-stack-parent","pull_request":{"title":"feat: publish stack parent","body":"Publishes the parent change."},"maximum_parallel_parts":1,"parts":[{"part_id":"choir-stack-parent","instruction":"Change only src/parent.mbt.","provider":"codex","exact_paths":["src/parent.mbt"],"moon_args":["test","--target","native"]}]}
+    #|{"proposal_id":"proposal-stack-parent","goal_id":"goal-stack-parent","pull_request":{"title":"feat: publish stack parent","body":"Publishes the parent change."},"maximum_parallel_parts":1,"parts":[{"part_id":"choir-stack-parent","commit_title":"feat: publish stack parent","instruction":"Change only src/parent.mbt.","provider":"codex","exact_paths":["src/parent.mbt"],"moon_args":["test","--target","native"]}]}
   match
     submit_native_conductor_goal_draft(
       root,
@@ -567,7 +568,7 @@ async test "native Conductor submission stacks a dependent Goal on its open pare
     @workflow.GoalDependencyDeliveryState::GoalDependencyPullRequestOpen
   }
   let child_draft =
-    #|{"proposal_id":"proposal-stack-child","goal_id":"goal-stack-child","pull_request":{"title":"feat: publish stack child","body":"Publishes the child change."},"maximum_parallel_parts":1,"parts":[{"part_id":"choir-stack-child","instruction":"Change only src/child.mbt.","provider":"codex","exact_paths":["src/child.mbt"],"moon_args":["test","--target","native"]}]}
+    #|{"proposal_id":"proposal-stack-child","goal_id":"goal-stack-child","pull_request":{"title":"feat: publish stack child","body":"Publishes the child change."},"maximum_parallel_parts":1,"parts":[{"part_id":"choir-stack-child","commit_title":"feat: publish stack child","instruction":"Change only src/child.mbt.","provider":"codex","exact_paths":["src/child.mbt"],"moon_args":["test","--target","native"]}]}
   let submitted = match
     submit_native_conductor_goal_draft(
       root,
@@ -626,7 +627,7 @@ async test "native Conductor submission stacks a dependent Goal on its open pare
 
   let other_goal_id = @control.GoalId("goal-stack-other")
   let other_draft =
-    #|{"proposal_id":"proposal-stack-other","goal_id":"goal-stack-other","pull_request":{"title":"feat: publish other stack parent","body":"Publishes the other parent change."},"maximum_parallel_parts":1,"parts":[{"part_id":"choir-stack-other","instruction":"Change only src/other.mbt.","provider":"codex","exact_paths":["src/other.mbt"],"moon_args":["test","--target","native"]}]}
+    #|{"proposal_id":"proposal-stack-other","goal_id":"goal-stack-other","pull_request":{"title":"feat: publish other stack parent","body":"Publishes the other parent change."},"maximum_parallel_parts":1,"parts":[{"part_id":"choir-stack-other","commit_title":"feat: publish other stack parent","instruction":"Change only src/other.mbt.","provider":"codex","exact_paths":["src/other.mbt"],"moon_args":["test","--target","native"]}]}
   match
     submit_native_conductor_goal_draft(
       root,
@@ -641,7 +642,7 @@ async test "native Conductor submission stacks a dependent Goal on its open pare
   ignore(mark_native_submission_test_goal_succeeded(root, other_goal_id))
   let multi_goal_id = @control.GoalId("goal-stack-multi")
   let multi_draft =
-    #|{"proposal_id":"proposal-stack-multi","goal_id":"goal-stack-multi","pull_request":{"title":"feat: reject non-linear stack","body":"Must not choose one parent arbitrarily."},"maximum_parallel_parts":1,"parts":[{"part_id":"choir-stack-multi","instruction":"Do not run until one dependency lands.","provider":"codex","exact_paths":["src/multi.mbt"],"moon_args":["test","--target","native"]}]}
+    #|{"proposal_id":"proposal-stack-multi","goal_id":"goal-stack-multi","pull_request":{"title":"feat: reject non-linear stack","body":"Must not choose one parent arbitrarily."},"maximum_parallel_parts":1,"parts":[{"part_id":"choir-stack-multi","commit_title":"feat: reject non-linear stack","instruction":"Do not run until one dependency lands.","provider":"codex","exact_paths":["src/multi.mbt"],"moon_args":["test","--target","native"]}]}
   match
     submit_native_conductor_goal_draft(
       root,
@@ -694,7 +695,7 @@ async test "native Conductor submission rejects a detached checkout" {
     }
   }
   let draft =
-    #|{"proposal_id":"proposal-detached","goal_id":"goal-detached","pull_request":{"title":"fix: change A","body":"Changes A."},"maximum_parallel_parts":1,"parts":[{"part_id":"choir-a","instruction":"Change src/a.mbt.","provider":"codex","exact_paths":["src/a.mbt"],"moon_args":["test","--target","native"]}]}
+    #|{"proposal_id":"proposal-detached","goal_id":"goal-detached","pull_request":{"title":"fix: change A","body":"Changes A."},"maximum_parallel_parts":1,"parts":[{"part_id":"choir-a","commit_title":"fix: change A","instruction":"Change src/a.mbt.","provider":"codex","exact_paths":["src/a.mbt"],"moon_args":["test","--target","native"]}]}
   match
     submit_native_conductor_goal_draft(
       root,
@@ -758,6 +759,7 @@ async test "durable Goal cancellation survives replay and starts no provider" {
     #|  "maximum_parallel_parts": 1,
     #|  "parts": [{
     #|    "part_id": "choir-cancel",
+    #|    "commit_title": "test: prove Goal cancellation",
     #|    "instruction": "Change only src/cancel.mbt.",
     #|    "provider": "codex",
     #|    "exact_paths": ["src/cancel.mbt"],
@@ -886,7 +888,7 @@ async test "rejected Conductor submission initializes no Part workflow" {
     }
   }
   let draft =
-    #|{"proposal_id":"proposal-native-reject","goal_id":"goal-native-reject","pull_request":{"title":"test: reject closed work","body":"Exercises closed-work rejection."},"maximum_parallel_parts":1,"parts":[{"part_id":"choir-closed","instruction":"Do not run.","provider":"claude","repository_wide":true,"moon_args":["test","--target","native"]}]}
+    #|{"proposal_id":"proposal-native-reject","goal_id":"goal-native-reject","pull_request":{"title":"test: reject closed work","body":"Exercises closed-work rejection."},"maximum_parallel_parts":1,"parts":[{"part_id":"choir-closed","commit_title":"test: reject closed work","instruction":"Do not run.","provider":"claude","repository_wide":true,"moon_args":["test","--target","native"]}]}
   let report = match
     submit_native_conductor_goal_draft(
       root,

@@ -246,6 +246,7 @@ fn event_authorized_provider_dispatch_fixture() -> (
       part_id,
       revision: 1,
       digest: event_case_digest,
+      commit_title: @control.SemanticCommitTitle("test: exercise event case"),
       repair_conflict_id: None,
       repair_audit: None,
       repair_verification: None,

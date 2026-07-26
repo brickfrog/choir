@@ -21,6 +21,7 @@ fn selection_store_decision() -> @workflow.GoalSelectionDecision raise {
     part_id,
     revision: 1,
     digest: selection_store_digest,
+    commit_title: @control.SemanticCommitTitle("test: persist submission"),
     repair_conflict_id: None,
     repair_audit: None,
     repair_verification: None,

@@ -211,12 +211,23 @@ pub(all) struct VerificationRepairReference {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) struct SemanticCommitTitle(String) derive (
+  Debug,
+  Eq,
+  Compare,
+  Hash,
+  ToJson,
+  FromJson,
+)
+
+///|
 pub(all) struct TaskContractRevision {
   id : RevisionId
   goal_id : GoalId
   part_id : PartId
   revision : Int
   digest : Digest
+  commit_title : SemanticCommitTitle
   repair_conflict_id : IntegrationConflictId?
   repair_audit : AuditRepairReference?
   repair_verification : VerificationRepairReference?
@@ -647,6 +658,7 @@ pub(all) struct IntegrationIntent {
   id : IntegrationIntentId
   goal_id : GoalId
   part_id : PartId
+  commit_title : SemanticCommitTitle
   candidate_id : CandidateId
   candidate_commit_oid : GitOid
   candidate_tree_oid : GitOid

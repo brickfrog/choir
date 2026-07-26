@@ -371,6 +371,28 @@ fn handle_goal_finalization_outcome(
       }
       Ok(GoalExecutionTickResult::GoalExecutionTickAdvanced(paused.record))
     }
+    GoalFinalizationTickOutcome::GoalFinalizationDeliveryFailed(digest) => {
+      let outcome = match
+        persist_goal_cancellation_request(
+          repository,
+          repository_adapters,
+          selected.record.goal.id,
+          @env.now().reinterpret_as_int64() / 1000L,
+          cause=GoalCancellationCause::GoalCancellationAutoMergeFailed(digest),
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let record = match outcome {
+        GoalCancellationPersisted(value) | GoalCancellationReplayed(value) =>
+          value
+        GoalCancellationTerminal(_) =>
+          return Err(
+            goal_execution_error("automatic merge cancellation lost a race"),
+          )
+      }
+      Ok(GoalExecutionTickResult::GoalExecutionTickAdvanced(record))
+    }
   }
 }
 
