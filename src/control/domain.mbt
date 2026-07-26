@@ -112,6 +112,10 @@ pub(all) enum GoalTransition {
   RequestGoalCancellation(EventSequence)
   CommitGoalSuccess(FinalizationId)
   CommitGoalCancellation(CancellationSummaryId)
+  /// Delivery beat cancellation: the exact authorized pull request was already
+  /// merged when the cancellation race resolved. Only an observed remote merge
+  /// authorizes this trigger.
+  CommitGoalDeliveredDuringCancellation(FinalizationId)
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|

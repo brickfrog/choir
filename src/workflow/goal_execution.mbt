@@ -1797,3 +1797,46 @@ pub fn commit_goal_execution_cancellation(
     durable_version: record.durable_version + 1,
   })
 }
+
+///|
+/// Delivery beat cancellation: the exact authorized pull request was already
+/// merged when the neutralization race resolved. The Goal succeeds, so its
+/// source Beads close at the delivery boundary instead of being released.
+pub fn commit_goal_delivery_during_cancellation(
+  record : GoalExecutionRecord,
+  pull_request : GoalPullRequestRecord,
+) -> Result[GoalExecutionRecord, @types.ChoirError] {
+  if record.state != GoalExecutionCanceling ||
+    !goal_execution_cancellation_shape_is_valid(record) ||
+    record.completion_mode != GoalCompletionMode::GoalPublishable ||
+    !goal_source_claims_are_receipted(record) ||
+    record.branch_initialization.lifecycle != GoalBranchInitReceipted ||
+    pull_request.goal_id != record.goal.id ||
+    pull_request.repository_id != record.repository_id ||
+    pull_request.goal_contract_digest != record.goal.contract_digest ||
+    !goal_pull_request_delivery_superseded_cancellation(pull_request) {
+    return Err(
+      goal_execution_error("Goal delivery did not supersede cancellation"),
+    )
+  }
+  let identity = @storage.digest_text(
+    goal_execution_identity_digest(record.goal.id),
+  )
+  let goal = match
+    @control.transition_goal(
+      record.goal,
+      @control.GoalTransition::CommitGoalDeliveredDuringCancellation(
+        @control.FinalizationId("finalization-" + identity),
+      ),
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  Ok({
+    ..record,
+    goal,
+    state: GoalExecutionSucceeded,
+    cancellation_request: None,
+    durable_version: record.durable_version + 1,
+  })
+}

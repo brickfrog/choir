@@ -2831,7 +2831,9 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     uncertain_pull_request.intent.state,
     @workflow.PullRequestIntentState::PullRequestRemoteCreateUncertain,
   )
-  assert_true(
+  // An uncertain remote keeps the Goal canceling: releasing claims here could
+  // strand a pull request the forge still has authority to merge.
+  assert_false(
     @workflow.goal_pull_request_cancellation_disposition_is_known(
       uncertain_pull_request,
     ),
@@ -2846,6 +2848,15 @@ test "integrated Parts authorize one immutable Goal branch seal" {
   assert_eq(
     cancellation_witnessed_pull_request.intent.state,
     @workflow.PullRequestIntentState::PullRequestReceipted,
+  )
+  assert_eq(
+    cancellation_witnessed_pull_request.intent.cancellation_state,
+    @workflow.PullRequestCancellationState::PullRequestCancellationPlanned,
+  )
+  assert_false(
+    @workflow.goal_pull_request_cancellation_disposition_is_known(
+      cancellation_witnessed_pull_request,
+    ),
   )
   let abandoned_pull_request = @workflow.record_goal_pull_request_cancellation(
     authorized_pull_request,

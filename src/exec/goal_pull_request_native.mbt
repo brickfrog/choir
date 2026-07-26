@@ -14,6 +14,16 @@ pub(all) struct NativePullRequestForgeAdapters {
     @workflow.PullRequestIntent,
     @workflow.PullRequestReceipt,
   ) -> @workflow.PullRequestMergeDispatchObservation
+  /// Strip the forge's authority to merge the exact pull request: disable
+  /// automatic merge, then close it. Both effects are idempotent and bound to
+  /// the receipted pull request number; the result is never trusted, so
+  /// cancellation always reconciles with a fresh lookup.
+  neutralize : async (
+    String,
+    String,
+    @workflow.PullRequestIntent,
+    @workflow.PullRequestReceipt,
+  ) -> Unit
 }
 
 ///|
@@ -447,6 +457,47 @@ fn native_pull_request_merge_arguments(
 }
 
 ///|
+fn native_pull_request_disable_auto_merge_arguments(
+  repository_name : String,
+  number : @workflow.PullRequestNumber,
+) -> Array[String] {
+  [
+    "pr",
+    "merge",
+    number.0.to_string(),
+    "--repo",
+    repository_name,
+    "--disable-auto",
+  ]
+}
+
+///|
+fn native_pull_request_close_arguments(
+  repository_name : String,
+  number : @workflow.PullRequestNumber,
+) -> Array[String] {
+  ["pr", "close", number.0.to_string(), "--repo", repository_name]
+}
+
+///|
+test "native neutralization disables automatic merge before closing" {
+  assert_eq(
+    native_pull_request_disable_auto_merge_arguments(
+      "brickfrog/choir",
+      @workflow.PullRequestNumber(7),
+    ),
+    ["pr", "merge", "7", "--repo", "brickfrog/choir", "--disable-auto"],
+  )
+  assert_eq(
+    native_pull_request_close_arguments(
+      "brickfrog/choir",
+      @workflow.PullRequestNumber(7),
+    ),
+    ["pr", "close", "7", "--repo", "brickfrog/choir"],
+  )
+}
+
+///|
 test "native automatic merge pins head and preserves semantic squash title" {
   let expected_head_oid = @control.GitOid(
     "0123456789012345678901234567890123456789",
@@ -575,12 +626,32 @@ pub fn native_pull_request_forge_adapters() -> NativePullRequestForgeAdapters {
         )
       }
     },
+    neutralize: async fn(repository_root, repository_name, _, receipt) {
+      // Disabling automatic merge first is what makes the close safe: closing
+      // alone would leave a queued merge to fire if the PR were reopened.
+      ignore(
+        native_gh_capture(
+          repository_root,
+          native_pull_request_disable_auto_merge_arguments(
+            repository_name,
+            receipt.number,
+          ),
+        ),
+      )
+      ignore(
+        native_gh_capture(
+          repository_root,
+          native_pull_request_close_arguments(repository_name, receipt.number),
+        ),
+      )
+    },
   }
 }
 
 ///|
 pub fn synthetic_pull_request_forge_adapters() -> NativePullRequestForgeAdapters {
   let created = Ref(false)
+  let neutralized = Ref(false)
   {
     resolve_repository: _ => Ok("choir/synthetic"),
     lookup: (_, _, intent) => {
@@ -599,11 +670,18 @@ pub fn synthetic_pull_request_forge_adapters() -> NativePullRequestForgeAdapters
         base_repository_id: intent.base_repository_id,
         base_ref: intent.base_ref,
         observed_head_oid: intent.expected_head_oid,
-        state: @workflow.RemotePullRequestState::RemotePullRequestOpen,
-        auto_merge_enabled: intent.merge_state ==
-        @workflow.PullRequestMergeState::PullRequestMergeMayHaveBeenIssued ||
-        intent.merge_state ==
-        @workflow.PullRequestMergeState::PullRequestMergeEnabled,
+        state: if neutralized.val {
+          @workflow.RemotePullRequestState::RemotePullRequestClosed
+        } else {
+          @workflow.RemotePullRequestState::RemotePullRequestOpen
+        },
+        auto_merge_enabled: !neutralized.val &&
+        (
+          intent.merge_state ==
+          @workflow.PullRequestMergeState::PullRequestMergeMayHaveBeenIssued ||
+          intent.merge_state ==
+          @workflow.PullRequestMergeState::PullRequestMergeEnabled
+        ),
         marker_state: @workflow.PullRequestMarkerState::PullRequestMarkerExact,
         title_digest: @storage.artifact_digest(
           @utf8.encode(intent.document.title),
@@ -617,6 +695,7 @@ pub fn synthetic_pull_request_forge_adapters() -> NativePullRequestForgeAdapters
     merge: (_, _, _, _) => {
       @workflow.PullRequestMergeDispatchObservation::PullRequestMergeDispatchAccepted
     },
+    neutralize: (_, _, _, _) => neutralized.val = true,
   }
 }
 
@@ -1247,6 +1326,7 @@ test "GitHub lookup parser distinguishes identity, possible match, and ambiguity
       merge_method: @types.PullRequestMergeMethod::PullRequestSquashMerge,
     },
     merge_state: @workflow.PullRequestMergeState::PullRequestMergeNotRequested,
+    cancellation_state: @workflow.PullRequestCancellationState::PullRequestCancellationNotRequested,
   }
   let exact =
     #|[{"id":"PR_1","number":7,"url":"https://example.test/pull/7","state":"OPEN","mergedAt":null,"headRefName":"choir/goals/fixture","headRefOid":"0123456789012345678901234567890123456789","headRepository":{"nameWithOwner":"choir/choir"},"baseRefName":"main","title":"Goal","body":"evidence\n<!-- choir-final-pr:fixture -->"}]
@@ -1360,6 +1440,15 @@ async fn prove_pull_request_fault_recovery(
     },
     merge: (_, _, _, _) => {
       @workflow.PullRequestMergeDispatchObservation::PullRequestMergeDispatchAccepted
+    },
+    neutralize: (_, _, _, _) => {
+      remote_pull_request.val = remote_pull_request.val.map(fn(snapshot) {
+        {
+          ..snapshot,
+          state: @workflow.RemotePullRequestState::RemotePullRequestClosed,
+          auto_merge_enabled: false,
+        }
+      })
     },
   }
   assert_true(

@@ -3196,6 +3196,139 @@ pub fn cancellation_part_effect_ordering_case() -> HermeticConformanceCase {
 }
 
 ///|
+
+///|
+/// Race rows for neutralizing the exact pull request a cancellation is racing:
+/// uncertainty and lost acknowledgements retry, a merge concurrent with the
+/// disable/close hands the win to delivery, and only a closed pull request
+/// without automatic merge settles cancellation.
+fn cancellation_neutralization_rows_hold(
+  receipted : @workflow.GoalPullRequestRecord,
+  remote : @workflow.RemotePullRequestSnapshot,
+) -> Result[Unit, @types.ChoirError] {
+  let auto_merge = receipted.intent.delivery_policy.mode ==
+    @types.PullRequestDeliveryMode::PullRequestAutoMerge
+  // Remote uncertainty never authorizes a neutralize dispatch.
+  let uncertain = match
+    @workflow.authorize_goal_pull_request_neutralization(
+      receipted,
+      @workflow.PullRequestLookupObservation::PullRequestLookupUncertain,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  // Neither does a pull request that is not this Goal's exact one.
+  let foreign = match
+    @workflow.authorize_goal_pull_request_neutralization(
+      receipted,
+      @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch({
+        ..remote,
+        remote_id: @workflow.RemotePullRequestId("cancellation-other-pr"),
+      }),
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let authorized = match
+    @workflow.authorize_goal_pull_request_neutralization(
+      receipted,
+      @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch({
+        ..remote,
+        auto_merge_enabled: auto_merge,
+      }),
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let dispatched = match
+    @workflow.mark_goal_pull_request_neutralize_may_have_been_issued(authorized) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let reconcile = fn(snapshot : @workflow.RemotePullRequestSnapshot) {
+    @workflow.reconcile_goal_pull_request_neutralization(
+      dispatched,
+      @workflow.PullRequestLookupObservation::PullRequestStoredIdMatch(snapshot),
+    )
+  }
+  // A lost acknowledgement leaves the pull request open: retry, do not settle.
+  let lost_ack = match reconcile({ ..remote, auto_merge_enabled: auto_merge }) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  // Closed but still carrying automatic merge is not neutralized.
+  let half_closed = match
+    reconcile({
+      ..remote,
+      state: @workflow.RemotePullRequestState::RemotePullRequestClosed,
+      auto_merge_enabled: true,
+    }) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let neutralized = match
+    reconcile({
+      ..remote,
+      state: @workflow.RemotePullRequestState::RemotePullRequestClosed,
+      auto_merge_enabled: false,
+    }) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let superseded = match
+    reconcile({
+      ..remote,
+      state: @workflow.RemotePullRequestState::RemotePullRequestMerged,
+      auto_merge_enabled: false,
+    }) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let pending = [uncertain, foreign].all(fn(value) { value == receipted }) &&
+    ![authorized, dispatched, lost_ack, half_closed].any(
+      @workflow.goal_pull_request_cancellation_disposition_is_known,
+    )
+  let retries = [lost_ack, half_closed].all(fn(value) {
+    value.intent.cancellation_state ==
+    @workflow.PullRequestCancellationState::PullRequestNeutralizeAuthorized
+  })
+  let settled = @workflow.goal_pull_request_cancellation_disposition_is_known(
+      neutralized,
+    ) &&
+    @workflow.goal_pull_request_cancellation_disposition_is_known(superseded) &&
+    !@workflow.goal_pull_request_delivery_superseded_cancellation(neutralized) &&
+    @workflow.goal_pull_request_delivery_superseded_cancellation(superseded)
+  let merge_authority_settled = if auto_merge {
+    neutralized.intent.merge_state
+    is @workflow.PullRequestMergeState::PullRequestMergeRejected(_) &&
+    superseded.intent.merge_state ==
+    @workflow.PullRequestMergeState::PullRequestMergeEnabled
+  } else {
+    [neutralized, superseded].all(fn(value) {
+      value.intent.merge_state ==
+      @workflow.PullRequestMergeState::PullRequestMergeNotRequested
+    })
+  }
+  // Repeating the cancellation observation over a settled record is a no-op.
+  let repeatable = [neutralized, superseded].all(fn(value) {
+    match
+      @workflow.record_goal_pull_request_cancellation(
+        value,
+        @workflow.PullRequestLookupObservation::PullRequestStoredIdMatch(remote),
+        170L,
+      ) {
+      Ok(replayed) => replayed == value
+      Err(_) => false
+    }
+  })
+  if pending && retries && settled && merge_authority_settled && repeatable {
+    Ok(())
+  } else {
+    Err(audit_fixture_error("pull-request neutralization ordering failed"))
+  }
+}
+
+///|
 pub fn cancellation_ordering_matrix_case() -> HermeticConformanceCase {
   {
     id: ConformanceCaseId("cancellation.ordering_matrix"),
@@ -3495,10 +3628,22 @@ pub fn cancellation_ordering_matrix_case() -> HermeticConformanceCase {
         Ok(value) => value
         Err(error) => return Err(error)
       }
-      let uncertain_pull_request = match
+      // A definitive empty lookup proves the create never reached the forge.
+      let abandoned_issued_pull_request = match
         @workflow.record_goal_pull_request_cancellation(
           issued,
           @workflow.PullRequestLookupObservation::PullRequestNoMatch,
+          153L,
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      // An unreachable forge is not evidence of absence: the Goal keeps its
+      // claims until it can see the exact pull request.
+      let uncertain_pull_request = match
+        @workflow.record_goal_pull_request_cancellation(
+          issued,
+          @workflow.PullRequestLookupObservation::PullRequestLookupUncertain,
           153L,
         ) {
         Ok(value) => value
@@ -3519,16 +3664,84 @@ pub fn cancellation_ordering_matrix_case() -> HermeticConformanceCase {
         @workflow.PullRequestIntentState::PullRequestAbandonedByCancellation &&
         abandoned_authorized_pull_request.intent.state ==
         @workflow.PullRequestIntentState::PullRequestAbandonedByCancellation &&
+        abandoned_issued_pull_request.intent.state ==
+        @workflow.PullRequestIntentState::PullRequestAbandonedByCancellation &&
         uncertain_pull_request.intent.state ==
         @workflow.PullRequestIntentState::PullRequestRemoteCreateUncertain &&
         receipted_pull_request.intent.state ==
         @workflow.PullRequestIntentState::PullRequestReceipted &&
+        receipted_pull_request.intent.cancellation_state ==
+        @workflow.PullRequestCancellationState::PullRequestCancellationPlanned &&
         [
-          abandoned_pull_request, abandoned_authorized_pull_request, uncertain_pull_request,
-          receipted_pull_request,
-        ].all(@workflow.goal_pull_request_cancellation_disposition_is_known)
+          abandoned_pull_request, abandoned_authorized_pull_request, abandoned_issued_pull_request,
+        ].all(@workflow.goal_pull_request_cancellation_disposition_is_known) &&
+        ![uncertain_pull_request, receipted_pull_request].any(
+          @workflow.goal_pull_request_cancellation_disposition_is_known,
+        )
       if !pr_rows_hold {
         return Err(audit_fixture_error("pull-request ordering failed"))
+      }
+      match
+        cancellation_neutralization_rows_hold(receipted_pull_request, remote) {
+        Ok(_) => ()
+        Err(error) => return Err(error)
+      }
+      // The same rows with automatic merge already enabled on the remote.
+      let auto_merge_pull_request = match
+        @workflow.initialize_goal_pull_request(
+          execution,
+          audited,
+          published,
+          @workflow.PullRequestProvider::GitHubPullRequestProvider,
+          @workflow.RemoteRepositoryId("cancellation-base-remote"),
+          document,
+          delivery_policy={
+            mode: @types.PullRequestDeliveryMode::PullRequestAutoMerge,
+            merge_method: @types.PullRequestMergeMethod::PullRequestSquashMerge,
+          },
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let auto_merge_receipted = match
+        @workflow.authorize_goal_pull_request(
+          auto_merge_pull_request,
+          execution,
+          audited,
+          published,
+          auto_merge_pull_request.intent.expected_head_oid,
+          @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch({
+            ..remote,
+            auto_merge_enabled: true,
+          }),
+          155L,
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let auto_merge_canceling = match
+        @workflow.record_goal_pull_request_cancellation(
+          auto_merge_receipted,
+          @workflow.PullRequestLookupObservation::PullRequestStoredIdMatch({
+            ..remote,
+            auto_merge_enabled: true,
+          }),
+          156L,
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      if @workflow.goal_pull_request_cancellation_disposition_is_known(
+          auto_merge_canceling,
+        ) {
+        return Err(
+          audit_fixture_error("enabled automatic merge settled cancellation"),
+        )
+      }
+      match
+        cancellation_neutralization_rows_hold(auto_merge_canceling, remote) {
+        Ok(_) => ()
+        Err(error) => return Err(error)
       }
       let cutoff = @control.EventSequence(200L)
       let canceling_goal = match
@@ -3565,9 +3778,26 @@ pub fn cancellation_ordering_matrix_case() -> HermeticConformanceCase {
         succeeded_goal,
         @control.GoalTransition::RequestGoalCancellation(cutoff),
       )
+      // Delivery observed after the cutoff is the one way a canceling Goal may
+      // still succeed, and it is available only from the canceling state.
+      let delivery_wins = @control.transition_goal(
+        canceling_goal,
+        @control.GoalTransition::CommitGoalDeliveredDuringCancellation(
+          @control.FinalizationId("delivered-during-cancellation"),
+        ),
+      )
+      let delivery_without_cutoff = @control.transition_goal(
+        execution.goal,
+        @control.GoalTransition::CommitGoalDeliveredDuringCancellation(
+          @control.FinalizationId("delivered-without-cutoff"),
+        ),
+      )
       if !(cancellation_wins is Ok(_)) ||
         !(success_after_cutoff is Err(_)) ||
-        !(cancellation_after_success is Err(_)) {
+        !(cancellation_after_success is Err(_)) ||
+        !(delivery_wins
+        is Ok({ lifecycle: @control.GoalLifecycle::GoalSucceeded(_), .. })) ||
+        !(delivery_without_cutoff is Err(_)) {
         return Err(audit_fixture_error("terminal ordering race failed"))
       }
       let assurance_replay = match
@@ -3607,8 +3837,8 @@ pub fn cancellation_ordering_matrix_case() -> HermeticConformanceCase {
         evidence: [
           ObservedCancellationCase(
             CancellationGoalOrderingMatrix,
-            23,
-            22,
+            43,
+            27,
             replay_stable,
           ),
         ],

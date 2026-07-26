@@ -609,3 +609,34 @@ pub fn persist_goal_cancellation_completion(
     Err(error) => Err(error)
   }
 }
+
+///|
+pub fn persist_goal_delivered_cancellation_success(
+  repository : PartWorkflowRepository,
+  adapters : PartWorkflowRepositoryAdapters,
+  stored : StoredGoalExecutionRecord,
+  pull_request : GoalPullRequestRecord,
+) -> Result[StoredGoalExecutionRecord, @types.ChoirError] {
+  let record = match
+    commit_goal_delivery_during_cancellation(stored.record, pull_request) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let receipt = match
+    persist_goal_execution_record(repository, adapters, {
+      record,
+      expected_store_version: Some(stored.state_record.version),
+      fault_point: None,
+    }) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if !goal_execution_transaction_persisted(receipt.transaction_outcome) {
+    return Err(goal_execution_error("delivered cancellation conflicted"))
+  }
+  match load_goal_execution_record(repository, adapters, record.goal.id) {
+    Ok(Some(observed)) if observed.record == record => Ok(observed)
+    Ok(_) => Err(goal_execution_error("delivered cancellation did not reload"))
+    Err(error) => Err(error)
+  }
+}

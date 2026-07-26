@@ -3092,7 +3092,6 @@ async fn reconcile_native_goal_part_cancellation(
   adapters : @workflow.PartWorkflowRepositoryAdapters,
   record : @workflow.GoalExecutionRecord,
   snapshots : Array[@workflow.PartWorkflowSnapshot],
-  forge : NativePullRequestForgeAdapters,
 ) -> Result[(Array[@workflow.PartWorkflowSnapshot], Bool), @types.ChoirError] {
   let needs_integration = snapshots.any(fn(snapshot) {
     snapshot.pending_effect
@@ -3168,14 +3167,7 @@ async fn reconcile_native_goal_part_cancellation(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let finalization_known = match
-    reconcile_native_goal_finalization_cancellation(
-      project_dir, repository, adapters, record, forge, observed_at,
-    ) {
-    Ok(value) => value
-    Err(error) => return Err(error)
-  }
-  Ok((reconciled, assurance_known && finalization_known))
+  Ok((reconciled, assurance_known))
 }
 
 ///|
@@ -3329,6 +3321,25 @@ async fn reconcile_native_goal_publication_cancellation(
 }
 
 ///|
+fn native_goal_pull_request_cancellation_disposition(
+  record : @workflow.GoalPullRequestRecord,
+) -> @workflow.GoalCancellationDisposition {
+  if !@workflow.goal_pull_request_cancellation_disposition_is_known(record) {
+    @workflow.GoalCancellationDisposition::GoalCancellationPending
+  } else if @workflow.goal_pull_request_delivery_superseded_cancellation(record) {
+    @workflow.GoalCancellationDisposition::GoalCancellationSupersededByDelivery(
+      record,
+    )
+  } else {
+    @workflow.GoalCancellationDisposition::GoalCancellationNeutralized
+  }
+}
+
+///|
+/// Cancellation must strip the forge's authority to merge this Goal's exact
+/// pull request before any source claim is released. Every step re-observes
+/// the exact remote pull request instead of trusting dispatch output, and at
+/// most one neutralize dispatch is issued per tick so retries stay idempotent.
 async fn reconcile_native_goal_pull_request_cancellation(
   project_dir : String,
   repository : @workflow.PartWorkflowRepository,
@@ -3336,51 +3347,123 @@ async fn reconcile_native_goal_pull_request_cancellation(
   execution : @workflow.GoalExecutionRecord,
   forge : NativePullRequestForgeAdapters,
   observed_at : Int64,
-) -> Result[Bool, @types.ChoirError] {
-  let stored = match
+) -> Result[@workflow.GoalCancellationDisposition, @types.ChoirError] {
+  let mut stored = match
     @workflow.load_goal_pull_request_record(
       repository,
       adapters,
       execution.goal.id,
     ) {
     Ok(Some(value)) => value
-    Ok(None) => return Ok(true)
+    Ok(None) =>
+      return Ok(
+        @workflow.GoalCancellationDisposition::GoalCancellationNeutralized,
+      )
     Err(error) => return Err(error)
   }
+  // A pull request that was never dispatched authorizes no remote effect, so
+  // it is abandoned without needing the forge to be reachable at all.
   match stored.record.intent.state {
-    @workflow.PullRequestIntentState::PullRequestReceipted
-    | @workflow.PullRequestIntentState::PullRequestNeedsInput(_)
-    | @workflow.PullRequestIntentState::PullRequestAbandonedByCancellation =>
-      return Ok(true)
+    @workflow.PullRequestIntentState::PullRequestPlanned
+    | @workflow.PullRequestIntentState::PullRequestAuthorized => {
+      let next = match
+        @workflow.record_goal_pull_request_cancellation(
+          stored.record,
+          @workflow.PullRequestLookupObservation::PullRequestLookupUncertain,
+          observed_at,
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      match
+        persist_native_goal_pull_request_record(
+          repository,
+          adapters,
+          execution,
+          next,
+          Some(stored.state_record.version),
+        ) {
+        Ok((Some(_), _)) =>
+          return Ok(native_goal_pull_request_cancellation_disposition(next))
+        Ok((None, _)) =>
+          return Ok(
+            @workflow.GoalCancellationDisposition::GoalCancellationPending,
+          )
+        Err(error) => return Err(error)
+      }
+    }
     _ => ()
   }
-  let lookup = match stored.record.intent.state {
-    @workflow.PullRequestIntentState::PullRequestPlanned
-    | @workflow.PullRequestIntentState::PullRequestAuthorized =>
-      @workflow.PullRequestLookupObservation::PullRequestLookupUncertain
-    _ => {
-      let git = match discover_native_goal_repository(project_dir, execution) {
-        Ok(value) => value
-        Err(error) => return Err(error)
-      }
-      let repository_name = match (forge.resolve_repository)(git.root) {
-        Ok(value) => value
-        Err(error) => return Err(error)
-      }
-      (forge.lookup)(git.root, repository_name, stored.record.intent)
-    }
-  }
-  let next = match
-    @workflow.record_goal_pull_request_cancellation(
+  if @workflow.goal_pull_request_cancellation_disposition_is_known(
       stored.record,
-      lookup,
-      observed_at,
     ) {
+    return Ok(native_goal_pull_request_cancellation_disposition(stored.record))
+  }
+  let git = match discover_native_goal_repository(project_dir, execution) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  if next != stored.record {
-    match
+  let repository_name = match (forge.resolve_repository)(git.root) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let mut dispatch_neutralize = false
+  let mut cycles = 0
+  while cycles < 6 {
+    cycles = cycles + 1
+    let record = stored.record
+    let lookup = (forge.lookup)(git.root, repository_name, record.intent)
+    let next = match record.intent.cancellation_state {
+      @workflow.PullRequestCancellationState::PullRequestCancellationNotRequested =>
+        match
+          @workflow.record_goal_pull_request_cancellation(
+            record, lookup, observed_at,
+          ) {
+          Ok(value) => value
+          Err(error) => return Err(error)
+        }
+      @workflow.PullRequestCancellationState::PullRequestCancellationPlanned =>
+        match
+          @workflow.authorize_goal_pull_request_neutralization(record, lookup) {
+          Ok(value) => value
+          Err(error) => return Err(error)
+        }
+      @workflow.PullRequestCancellationState::PullRequestNeutralizeAuthorized =>
+        match
+          @workflow.mark_goal_pull_request_neutralize_may_have_been_issued(
+            record,
+          ) {
+          Ok(value) => value
+          Err(error) => return Err(error)
+        }
+      @workflow.PullRequestCancellationState::PullRequestNeutralizeMayHaveBeenIssued => {
+        if dispatch_neutralize {
+          guard record.receipt is Some(receipt) else {
+            return Err(
+              native_goal_execution_error("neutralize receipt is absent"),
+            )
+          }
+          (forge.neutralize)(git.root, repository_name, record.intent, receipt)
+          dispatch_neutralize = false
+        }
+        match
+          @workflow.reconcile_goal_pull_request_neutralization(
+            record,
+            (forge.lookup)(git.root, repository_name, record.intent),
+          ) {
+          Ok(value) => value
+          Err(error) => return Err(error)
+        }
+      }
+      @workflow.PullRequestCancellationState::PullRequestNeutralized
+      | @workflow.PullRequestCancellationState::PullRequestSupersededByMerge =>
+        return Ok(native_goal_pull_request_cancellation_disposition(record))
+    }
+    if next == record {
+      // The remote disposition is still unknown. Keep the claims held.
+      return Ok(@workflow.GoalCancellationDisposition::GoalCancellationPending)
+    }
+    let persisted = match
       persist_native_goal_pull_request_record(
         repository,
         adapters,
@@ -3388,12 +3471,161 @@ async fn reconcile_native_goal_pull_request_cancellation(
         next,
         Some(stored.state_record.version),
       ) {
-      Ok((Some(_), _)) => ()
-      Ok((None, _)) => return Ok(false)
+      Ok((Some(value), committed)) => (value, committed)
+      Ok((None, _)) =>
+        return Ok(
+          @workflow.GoalCancellationDisposition::GoalCancellationPending,
+        )
       Err(error) => return Err(error)
     }
+    stored = persisted.0
+    if next.intent.cancellation_state ==
+      @workflow.PullRequestCancellationState::PullRequestNeutralizeAuthorized &&
+      record.intent.cancellation_state ==
+      @workflow.PullRequestCancellationState::PullRequestNeutralizeMayHaveBeenIssued {
+      // The exact pull request survived a neutralize attempt. Retry on the
+      // next tick rather than hammering the forge inside one cycle.
+      return Ok(@workflow.GoalCancellationDisposition::GoalCancellationPending)
+    }
+    if next.intent.cancellation_state ==
+      @workflow.PullRequestCancellationState::PullRequestNeutralizeMayHaveBeenIssued {
+      dispatch_neutralize = persisted.1
+    }
+    if @workflow.goal_pull_request_cancellation_disposition_is_known(next) {
+      return Ok(native_goal_pull_request_cancellation_disposition(next))
+    }
+  } nobreak {
+    Err(
+      native_goal_execution_error(
+        "PR cancellation reconciliation exceeded its cycle bound",
+      ),
+    )
   }
-  Ok(@workflow.goal_pull_request_cancellation_disposition_is_known(next))
+}
+
+///|
+async fn prove_native_pull_request_neutralization(
+  label : String,
+  merge_wins : Bool,
+) -> (
+  @workflow.GoalCancellationDisposition,
+  @workflow.GoalCancellationDisposition,
+  Int,
+  @workflow.PullRequestCancellationState,
+) {
+  let fixture = prepare_goal_finalization_fixture(label)
+  let root = fixture.0
+  let remote_root = fixture.1
+  let goal_id = fixture.2
+  let snapshot = fixture.3
+  // GitHub holds automatic merge authority over the exact pull request.
+  snapshot.val = snapshot.val.map(fn(value) {
+    { ..value, auto_merge_enabled: true }
+  })
+  let neutralize_calls = @ref.new(0)
+  let survives = @ref.new(true)
+  let forge : NativePullRequestForgeAdapters = {
+    ..fixture.4,
+    neutralize: (_, _, _, _) => {
+      neutralize_calls.val = neutralize_calls.val + 1
+      if survives.val {
+        return
+      }
+      snapshot.val = snapshot.val.map(fn(value) {
+        if merge_wins {
+          {
+            ..value,
+            state: @workflow.RemotePullRequestState::RemotePullRequestMerged,
+            auto_merge_enabled: false,
+          }
+        } else {
+          {
+            ..value,
+            state: @workflow.RemotePullRequestState::RemotePullRequestClosed,
+            auto_merge_enabled: false,
+          }
+        }
+      })
+    },
+  }
+  let repository = native_goal_repository(root)
+  let adapters = local_part_workflow_repository_adapters()
+  let execution = @workflow.load_goal_execution_record(
+      repository, adapters, goal_id,
+    )
+    .unwrap()
+    .unwrap().record
+  let first = reconcile_native_goal_pull_request_cancellation(
+    root, repository, adapters, execution, forge, 900L,
+  ).unwrap()
+  // Restart mid-neutralization: the durable state resumes and retries once.
+  survives.val = false
+  let second = reconcile_native_goal_pull_request_cancellation(
+    root, repository, adapters, execution, forge, 901L,
+  ).unwrap()
+  let dispatches = neutralize_calls.val
+  let replay = reconcile_native_goal_pull_request_cancellation(
+    root, repository, adapters, execution, forge, 902L,
+  ).unwrap()
+  assert_eq(replay, second)
+  assert_eq(neutralize_calls.val, dispatches)
+  let durable = @workflow.load_goal_pull_request_record(
+      repository, adapters, goal_id,
+    )
+    .unwrap()
+    .unwrap().record
+  ignore(@sys.rm_rf(root))
+  ignore(@sys.rm_rf(remote_root))
+  (first, second, dispatches, durable.intent.cancellation_state)
+}
+
+///|
+async test "real exec integration: cancellation strips merge authority before it settles" {
+  if !real_exec_integration_enabled() {
+    return
+  }
+  let observed = prove_native_pull_request_neutralization(
+    "cancellation-neutralize", false,
+  )
+  // An open pull request that survived the attempt keeps the Goal canceling.
+  assert_eq(
+    observed.0,
+    @workflow.GoalCancellationDisposition::GoalCancellationPending,
+  )
+  assert_eq(
+    observed.1,
+    @workflow.GoalCancellationDisposition::GoalCancellationNeutralized,
+  )
+  assert_eq(observed.2, 2)
+  assert_eq(
+    observed.3,
+    @workflow.PullRequestCancellationState::PullRequestNeutralized,
+  )
+}
+
+///|
+async test "real exec integration: a merge racing neutralization wins delivery" {
+  if !real_exec_integration_enabled() {
+    return
+  }
+  let observed = prove_native_pull_request_neutralization(
+    "cancellation-merge-race", true,
+  )
+  assert_eq(
+    observed.0,
+    @workflow.GoalCancellationDisposition::GoalCancellationPending,
+  )
+  assert_true(
+    observed.1
+    is @workflow.GoalCancellationDisposition::GoalCancellationSupersededByDelivery(
+      _
+    ),
+  )
+  assert_eq(observed.2, 2)
+  assert_eq(
+    observed.3,
+    @workflow.PullRequestCancellationState::PullRequestSupersededByMerge,
+  )
 }
 
 ///|
@@ -3404,7 +3636,7 @@ async fn reconcile_native_goal_finalization_cancellation(
   execution : @workflow.GoalExecutionRecord,
   forge : NativePullRequestForgeAdapters,
   observed_at : Int64,
-) -> Result[Bool, @types.ChoirError] {
+) -> Result[@workflow.GoalCancellationDisposition, @types.ChoirError] {
   let publication_known = match
     reconcile_native_goal_publication_cancellation(
       project_dir, repository, adapters, execution, observed_at,
@@ -3412,14 +3644,28 @@ async fn reconcile_native_goal_finalization_cancellation(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let pull_request_known = match
+  let pull_request = match
     reconcile_native_goal_pull_request_cancellation(
       project_dir, repository, adapters, execution, forge, observed_at,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  Ok(publication_known && pull_request_known)
+  // Delivery supersession is decided by the pull request alone: a merged exact
+  // pull request means the branch publication served its purpose.
+  match pull_request {
+    @workflow.GoalCancellationDisposition::GoalCancellationSupersededByDelivery(
+      _
+    ) => Ok(pull_request)
+    _ =>
+      if publication_known &&
+        pull_request ==
+        @workflow.GoalCancellationDisposition::GoalCancellationNeutralized {
+        Ok(@workflow.GoalCancellationDisposition::GoalCancellationNeutralized)
+      } else {
+        Ok(@workflow.GoalCancellationDisposition::GoalCancellationPending)
+      }
+  }
 }
 
 ///|
@@ -4881,6 +5127,54 @@ pub async fn run_native_goal_execution_tick_with_forge(
         }
       },
       cancel: async fn(record, snapshots) {
+        let pending = @workflow.GoalCancellationDisposition::GoalCancellationPending
+        let observed_at = match record.cancellation_request {
+          Some(request) => request.requested_at
+          None =>
+            return Err(
+              native_goal_execution_error(
+                "canceling Goal has no cancellation request",
+              ),
+            )
+        }
+        // Neutralize the remote pull request first. While the forge still has
+        // authority to merge this Goal's exact head, its source Beads are not
+        // free to release and cancellation must not commit.
+        let finalization = match
+          reconcile_native_goal_finalization_cancellation(
+            project_dir, repository, repository_adapters, record, forge, observed_at,
+          ) {
+          Ok(value) => value
+          Err(error) => return Err(error)
+        }
+        match finalization {
+          @workflow.GoalCancellationDisposition::GoalCancellationPending =>
+            return Ok(pending)
+          @workflow.GoalCancellationDisposition::GoalCancellationSupersededByDelivery(
+            _
+          ) =>
+            // Delivery beat cancellation. The integrated work shipped, so its
+            // source Beads close at the delivery boundary rather than being
+            // released back to the ready queue.
+            match
+              reconcile_native_integrated_part_sources(
+                project_dir,
+                repository,
+                record,
+                capture=beads_capture,
+              ) {
+              Ok(_) => {
+                match cleanup_native_goal_runtime(record) {
+                  Ok(_) => ()
+                  Err(error) => return Err(error)
+                }
+                return Ok(finalization)
+              }
+              Err(error) => return Err(error)
+            }
+          @workflow.GoalCancellationDisposition::GoalCancellationNeutralized =>
+            ()
+        }
         let sources_known = match
           advance_native_goal_source_releases(
             project_dir,
@@ -4893,7 +5187,7 @@ pub async fn run_native_goal_execution_tick_with_forge(
           Err(error) => return Err(error)
         }
         if !sources_known {
-          return Ok(false)
+          return Ok(pending)
         }
         let initialization = match
           advance_native_goal_branch_initialization(
@@ -4915,18 +5209,26 @@ pub async fn run_native_goal_execution_tick_with_forge(
         }
         if !initialization_known ||
           record.branch_initialization.lifecycle != initialization {
-          return Ok(false)
+          return Ok(pending)
         }
         match
           reconcile_native_goal_part_cancellation(
-            project_dir, repository, repository_adapters, record, snapshots, forge,
+            project_dir, repository, repository_adapters, record, snapshots,
           ) {
-          Ok((reconciled, finalization_known)) => {
+          Ok((reconciled, assurance_known)) => {
             let terminal_ready = native_goal_cancellation_can_finish(reconciled) &&
-              finalization_known
-            finish_native_goal_runtime(terminal_ready, async fn() {
-              cleanup_native_goal_runtime(record)
-            })
+              assurance_known
+            match
+              finish_native_goal_runtime(terminal_ready, async fn() {
+                cleanup_native_goal_runtime(record)
+              }) {
+              Ok(true) =>
+                Ok(
+                  @workflow.GoalCancellationDisposition::GoalCancellationNeutralized,
+                )
+              Ok(false) => Ok(pending)
+              Err(error) => Err(error)
+            }
           }
           Err(error) => Err(error)
         }

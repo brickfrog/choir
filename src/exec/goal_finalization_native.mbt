@@ -269,6 +269,15 @@ async fn prepare_goal_finalization_fixture(
     merge: (_, _, _, _) => {
       @workflow.PullRequestMergeDispatchObservation::PullRequestMergeDispatchAccepted
     },
+    neutralize: (_, _, _, _) => {
+      remote_pull_request.val = remote_pull_request.val.map(fn(snapshot) {
+        {
+          ..snapshot,
+          state: @workflow.RemotePullRequestState::RemotePullRequestClosed,
+          auto_merge_enabled: false,
+        }
+      })
+    },
   }
   let pull_request_outcome = match
     advance_native_goal_pull_request_with_adapters(fixture.0, fixture.2, forge) {
@@ -378,6 +387,7 @@ async fn observe_pull_request_remote_state(
     lookup: (_, _, _) => lookup,
     create: fixture.4.create,
     merge: fixture.4.merge,
+    neutralize: fixture.4.neutralize,
   }
   let outcome = match
     advance_native_goal_finalization_with_adapters(
@@ -543,6 +553,7 @@ pub async fn run_native_goal_finalization_race_conformance() -> NativeGoalFinali
     },
     create: after.4.create,
     merge: after.4.merge,
+    neutralize: after.4.neutralize,
   }
   let original_body_digest = after_snapshot.body_digest
   let after_outcome = match

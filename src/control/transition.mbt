@@ -21,14 +21,22 @@ pub fn transition_goal_lifecycle(
       Ok(GoalSucceeded(finalization_id))
     (GoalCanceling(_), CommitGoalCancellation(summary_id)) =>
       Ok(GoalCanceled(summary_id))
+    (GoalCanceling(_), CommitGoalDeliveredDuringCancellation(finalization_id)) =>
+      Ok(GoalSucceeded(finalization_id))
     (GoalActive(_), CommitGoalSuccess(_)) =>
       Err(
         invalid_transition("Goal", "success requires GoalActive(GoalRunning)"),
       )
     (GoalActive(_), CommitGoalCancellation(_)) =>
       Err(invalid_transition("Goal", "cancellation has no durable cutoff"))
+    (GoalActive(_), CommitGoalDeliveredDuringCancellation(_)) =>
+      Err(invalid_transition("Goal", "delivery supersession requires a cutoff"))
     (GoalCanceling(_), _) =>
-      Err(invalid_transition("Goal", "only cancellation may be committed"))
+      Err(
+        invalid_transition(
+          "Goal", "only cancellation or observed delivery may be committed",
+        ),
+      )
     (GoalSucceeded(_), _) | (GoalCanceled(_), _) =>
       Err(invalid_transition("Goal", "terminal decision already committed"))
   }

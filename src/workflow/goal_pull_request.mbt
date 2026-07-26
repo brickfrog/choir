@@ -82,6 +82,22 @@ pub(all) enum PullRequestMergeState {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+/// Cancellation of a Goal whose exact pull request already exists is itself a
+/// remote effect: GitHub keeps authority to merge that pull request until
+/// automatic merge is disabled and the pull request is closed. This state
+/// machine is what makes that neutralization durable, idempotent, and
+/// exact-identity bound, so source Beads are never released while the forge
+/// can still merge on the Goal's behalf.
+pub(all) enum PullRequestCancellationState {
+  PullRequestCancellationNotRequested
+  PullRequestCancellationPlanned
+  PullRequestNeutralizeAuthorized
+  PullRequestNeutralizeMayHaveBeenIssued
+  PullRequestNeutralized
+  PullRequestSupersededByMerge
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub(all) enum PullRequestMergeDispatchObservation {
   PullRequestMergeDispatchAccepted
   PullRequestMergeDispatchRejected(@control.Digest)
@@ -167,6 +183,7 @@ pub(all) struct PullRequestIntent {
   state : PullRequestIntentState
   delivery_policy : @types.PullRequestDeliveryPolicy
   merge_state : PullRequestMergeState
+  cancellation_state : PullRequestCancellationState
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -404,6 +421,12 @@ fn goal_pull_request_record_shape_is_valid(
     ) => @storage.validate_digest(digest) is Ok(_)
     _ => false
   }
+  // Neutralization only ever targets the exact receipted pull request, so any
+  // cancellation state past "not requested" must carry that receipt.
+  let cancellation_shape_valid = match record.intent.cancellation_state {
+    PullRequestCancellationState::PullRequestCancellationNotRequested => true
+    _ => record.receipt is Some(_)
+  }
   if record.goal_id.0 == "" ||
     record.repository_id.0 == "" ||
     record.intent.id != PullRequestIntentId("pr-intent-" + key_text) ||
@@ -422,6 +445,7 @@ fn goal_pull_request_record_shape_is_valid(
     !pull_request_document_is_valid(record.intent.document) ||
     !record.intent.document.body.contains(marker) ||
     !merge_shape_valid ||
+    !cancellation_shape_valid ||
     record.durable_version <= 0 ||
     record.fencing_epoch.0 <= 0L {
     return false
@@ -610,6 +634,7 @@ pub fn initialize_goal_pull_request(
       } else {
         PullRequestMergeState::PullRequestMergePlanned
       },
+      cancellation_state: PullRequestCancellationState::PullRequestCancellationNotRequested,
     },
     receipt: None,
     durable_version: 1,
@@ -903,7 +928,7 @@ pub fn reconcile_goal_pull_request_after_create(
 }
 
 ///|
-fn exact_pull_request_merge_snapshot(
+fn exact_pull_request_snapshot(
   record : GoalPullRequestRecord,
   lookup : PullRequestLookupObservation,
 ) -> RemotePullRequestSnapshot? {
@@ -932,7 +957,7 @@ pub fn authorize_goal_pull_request_merge(
     !goal_pull_request_record_shape_is_valid(record) {
     return Err(goal_pull_request_error("automatic merge is not authorizable"))
   }
-  let next_state = match exact_pull_request_merge_snapshot(record, lookup) {
+  let next_state = match exact_pull_request_snapshot(record, lookup) {
     Some(snapshot) =>
       match snapshot.state {
         RemotePullRequestState::RemotePullRequestMerged =>
@@ -1026,7 +1051,7 @@ pub fn reconcile_goal_pull_request_merge(
     !goal_pull_request_record_shape_is_valid(record) {
     return Err(goal_pull_request_error("merge reconciliation is invalid"))
   }
-  match exact_pull_request_merge_snapshot(record, lookup) {
+  match exact_pull_request_snapshot(record, lookup) {
     Some(snapshot) =>
       match snapshot.state {
         RemotePullRequestState::RemotePullRequestMerged =>
@@ -1092,6 +1117,62 @@ pub fn reconcile_goal_pull_request_merge(
 }
 
 ///|
+/// The exact remote pull request has no merge authority left: it is closed and
+/// carries no automatic merge. Nothing observed by identity alone is enough —
+/// the snapshot must be the exact authorized pull request.
+fn pull_request_neutralization_from_snapshot(
+  snapshot : RemotePullRequestSnapshot,
+) -> PullRequestCancellationState? {
+  match snapshot.state {
+    RemotePullRequestState::RemotePullRequestMerged =>
+      Some(PullRequestCancellationState::PullRequestSupersededByMerge)
+    RemotePullRequestState::RemotePullRequestClosed =>
+      if snapshot.auto_merge_enabled {
+        None
+      } else {
+        Some(PullRequestCancellationState::PullRequestNeutralized)
+      }
+    RemotePullRequestState::RemotePullRequestOpen => None
+  }
+}
+
+///|
+/// Cancellation transitions that also settle the automatic merge intent: a
+/// neutralized pull request can never merge, and a superseded one already did.
+fn apply_pull_request_cancellation_state(
+  record : GoalPullRequestRecord,
+  cancellation_state : PullRequestCancellationState,
+) -> GoalPullRequestRecord {
+  let merge_state = match
+    (record.intent.delivery_policy.mode, cancellation_state) {
+    (
+      @types.PullRequestDeliveryMode::PullRequestAutoMerge,
+      PullRequestCancellationState::PullRequestNeutralized,
+    ) =>
+      PullRequestMergeState::PullRequestMergeRejected(
+        pull_request_merge_failure_digest(
+          "canceled",
+          record.intent.id.to_json(),
+        ),
+      )
+    (
+      @types.PullRequestDeliveryMode::PullRequestAutoMerge,
+      PullRequestCancellationState::PullRequestSupersededByMerge,
+    ) => PullRequestMergeState::PullRequestMergeEnabled
+    _ => record.intent.merge_state
+  }
+  {
+    ..record,
+    intent: { ..record.intent, cancellation_state, merge_state },
+    durable_version: record.durable_version + 1,
+  }
+}
+
+///|
+/// Record the cancellation cutoff against the pull request intent. A pull
+/// request that was never dispatched is abandoned outright; one that may exist
+/// remotely is reconciled first, and an exact receipted pull request enters the
+/// neutralization state machine instead of being treated as already settled.
 pub fn record_goal_pull_request_cancellation(
   record : GoalPullRequestRecord,
   lookup : PullRequestLookupObservation,
@@ -1110,25 +1191,162 @@ pub fn record_goal_pull_request_cancellation(
         },
         durable_version: record.durable_version + 1,
       })
-    PullRequestCreateMayHaveBeenIssued | PullRequestRemoteCreateUncertain =>
-      reconcile_goal_pull_request_after_create(record, lookup, observed_at)
+    PullRequestCreateMayHaveBeenIssued | PullRequestRemoteCreateUncertain => {
+      // A definitive empty lookup proves the create never reached the forge,
+      // so the intent can be abandoned. Anything else keeps its uncertainty.
+      if lookup == PullRequestLookupObservation::PullRequestNoMatch {
+        return Ok({
+          ..record,
+          intent: {
+            ..record.intent,
+            state: PullRequestIntentState::PullRequestAbandonedByCancellation,
+          },
+          durable_version: record.durable_version + 1,
+        })
+      }
+      match
+        reconcile_goal_pull_request_after_create(record, lookup, observed_at) {
+        Ok(reconciled) => Ok(plan_goal_pull_request_cancellation(reconciled))
+        Err(error) => Err(error)
+      }
+    }
     PullRequestReceipted
     | PullRequestNeedsInput(_)
-    | PullRequestAbandonedByCancellation => Ok(record)
+    | PullRequestAbandonedByCancellation =>
+      Ok(plan_goal_pull_request_cancellation(record))
   }
 }
 
 ///|
+fn plan_goal_pull_request_cancellation(
+  record : GoalPullRequestRecord,
+) -> GoalPullRequestRecord {
+  if record.receipt is None ||
+    record.intent.cancellation_state !=
+    PullRequestCancellationState::PullRequestCancellationNotRequested {
+    return record
+  }
+  {
+    ..record,
+    intent: {
+      ..record.intent,
+      cancellation_state: PullRequestCancellationState::PullRequestCancellationPlanned,
+    },
+    durable_version: record.durable_version + 1,
+  }
+}
+
+///|
+/// Decide whether the exact pull request still needs a neutralizing effect.
+/// An unchanged record means the remote disposition is not yet known and the
+/// Goal must keep its claims.
+pub fn authorize_goal_pull_request_neutralization(
+  record : GoalPullRequestRecord,
+  lookup : PullRequestLookupObservation,
+) -> Result[GoalPullRequestRecord, @types.ChoirError] {
+  if record.intent.cancellation_state !=
+    PullRequestCancellationState::PullRequestCancellationPlanned ||
+    !goal_pull_request_record_shape_is_valid(record) {
+    return Err(goal_pull_request_error("neutralization is not authorizable"))
+  }
+  match exact_pull_request_snapshot(record, lookup) {
+    Some(snapshot) =>
+      match pull_request_neutralization_from_snapshot(snapshot) {
+        Some(settled) =>
+          Ok(apply_pull_request_cancellation_state(record, settled))
+        None =>
+          Ok(
+            apply_pull_request_cancellation_state(
+              record,
+              PullRequestCancellationState::PullRequestNeutralizeAuthorized,
+            ),
+          )
+      }
+    None => Ok(record)
+  }
+}
+
+///|
+pub fn mark_goal_pull_request_neutralize_may_have_been_issued(
+  record : GoalPullRequestRecord,
+) -> Result[GoalPullRequestRecord, @types.ChoirError] {
+  if record.intent.cancellation_state !=
+    PullRequestCancellationState::PullRequestNeutralizeAuthorized ||
+    !goal_pull_request_record_shape_is_valid(record) {
+    return Err(goal_pull_request_error("neutralize dispatch is not authorized"))
+  }
+  Ok(
+    apply_pull_request_cancellation_state(
+      record,
+      PullRequestCancellationState::PullRequestNeutralizeMayHaveBeenIssued,
+    ),
+  )
+}
+
+///|
+/// Reconcile the remote result of a neutralize dispatch. Dispatch output is
+/// never trusted: only a fresh exact-identity observation settles the state,
+/// and an open pull request re-authorizes another idempotent attempt.
+pub fn reconcile_goal_pull_request_neutralization(
+  record : GoalPullRequestRecord,
+  lookup : PullRequestLookupObservation,
+) -> Result[GoalPullRequestRecord, @types.ChoirError] {
+  if record.intent.cancellation_state !=
+    PullRequestCancellationState::PullRequestNeutralizeMayHaveBeenIssued ||
+    !goal_pull_request_record_shape_is_valid(record) {
+    return Err(goal_pull_request_error("neutralization is not reconcilable"))
+  }
+  match exact_pull_request_snapshot(record, lookup) {
+    Some(snapshot) =>
+      match pull_request_neutralization_from_snapshot(snapshot) {
+        Some(settled) =>
+          Ok(apply_pull_request_cancellation_state(record, settled))
+        None =>
+          Ok(
+            apply_pull_request_cancellation_state(
+              record,
+              PullRequestCancellationState::PullRequestNeutralizeAuthorized,
+            ),
+          )
+      }
+    None => Ok(record)
+  }
+}
+
+///|
+/// The exact pull request merged before cancellation could neutralize it.
+/// Delivery wins: the Goal succeeds and its source Beads close at the delivery
+/// boundary rather than being released.
+pub fn goal_pull_request_delivery_superseded_cancellation(
+  record : GoalPullRequestRecord,
+) -> Bool {
+  record.intent.cancellation_state ==
+  PullRequestCancellationState::PullRequestSupersededByMerge &&
+  record.receipt is Some(_)
+}
+
+///|
+/// Cancellation may only commit once no remote pull request retains authority
+/// to merge this Goal's exact head. Uncertain remotes are deliberately not
+/// "known": they keep the Goal canceling and its source claims held.
 pub fn goal_pull_request_cancellation_disposition_is_known(
   record : GoalPullRequestRecord,
 ) -> Bool {
   match record.intent.state {
-    PullRequestReceipted
-    | PullRequestNeedsInput(_)
-    | PullRequestRemoteCreateUncertain
-    | PullRequestAbandonedByCancellation => true
+    PullRequestAbandonedByCancellation => true
+    PullRequestReceipted | PullRequestNeedsInput(_) =>
+      match record.intent.cancellation_state {
+        PullRequestCancellationState::PullRequestNeutralized
+        | PullRequestCancellationState::PullRequestSupersededByMerge => true
+        // No exact receipt exists to neutralize: identity was never
+        // established, so this Goal never enabled a remote merge.
+        PullRequestCancellationState::PullRequestCancellationNotRequested =>
+          record.receipt is None
+        _ => false
+      }
     PullRequestPlanned
     | PullRequestAuthorized
-    | PullRequestCreateMayHaveBeenIssued => false
+    | PullRequestCreateMayHaveBeenIssued
+    | PullRequestRemoteCreateUncertain => false
   }
 }

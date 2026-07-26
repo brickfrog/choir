@@ -14,10 +14,20 @@ pub(all) struct GoalExecutionRunnerAdapters {
     @types.ChoirError,
   ]
   cancel : async (GoalExecutionRecord, Array[PartWorkflowSnapshot]) -> Result[
-    Bool,
+    GoalCancellationDisposition,
     @types.ChoirError,
   ]
 }
+
+///|
+/// How far a cancellation tick got. Cancellation may only commit once nothing
+/// remote retains authority over the Goal; an exact pull request that merged
+/// first wins instead, and the Goal succeeds.
+pub(all) enum GoalCancellationDisposition {
+  GoalCancellationPending
+  GoalCancellationNeutralized
+  GoalCancellationSupersededByDelivery(GoalPullRequestRecord)
+} derive(Debug, Eq)
 
 ///|
 pub(all) enum GoalAssuranceTickOutcome {
@@ -437,24 +447,32 @@ pub async fn run_next_goal_execution_tick(
       Ok(value) => value
       Err(error) => return Err(error)
     }
-    let can_finish = match (runner_adapters.cancel)(selected.record, parts) {
+    let disposition = match (runner_adapters.cancel)(selected.record, parts) {
       Ok(value) => value
       Err(error) => return Err(error)
     }
-    if !can_finish {
-      return Ok(
-        GoalExecutionTickResult::GoalExecutionTickAdvanced(selected.record),
-      )
+    let settled = match disposition {
+      GoalCancellationDisposition::GoalCancellationPending =>
+        return Ok(
+          GoalExecutionTickResult::GoalExecutionTickAdvanced(selected.record),
+        )
+      GoalCancellationDisposition::GoalCancellationNeutralized =>
+        persist_goal_cancellation_completion(
+          repository, repository_adapters, selected,
+        )
+      GoalCancellationDisposition::GoalCancellationSupersededByDelivery(
+        pull_request
+      ) =>
+        persist_goal_delivered_cancellation_success(
+          repository, repository_adapters, selected, pull_request,
+        )
     }
-    let canceled = match
-      persist_goal_cancellation_completion(
-        repository, repository_adapters, selected,
-      ) {
+    let committed = match settled {
       Ok(value) => value
       Err(error) => return Err(error)
     }
     return Ok(
-      GoalExecutionTickResult::GoalExecutionTickAdvanced(canceled.record),
+      GoalExecutionTickResult::GoalExecutionTickAdvanced(committed.record),
     )
   }
   if selected.record.state == GoalExecutionState::GoalExecutionAssured {

@@ -288,7 +288,9 @@ async test "native Conductor submission captures Beads and persists once" {
         },
         assure: (_, _) => fail("unintegrated Goal entered assurance"),
         finalize: (_, _) => fail("unassured Goal entered finalization"),
-        cancel: (_, _) => Ok(false),
+        cancel: (_, _) => {
+          Ok(@workflow.GoalCancellationDisposition::GoalCancellationPending)
+        },
       },
     ) {
     Ok(value) => value
@@ -357,7 +359,9 @@ async test "native Conductor submission captures Beads and persists once" {
         },
         assure: (_, _) => fail("unintegrated Goal entered assurance"),
         finalize: (_, _) => fail("unassured Goal entered finalization"),
-        cancel: (_, _) => Ok(false),
+        cancel: (_, _) => {
+          Ok(@workflow.GoalCancellationDisposition::GoalCancellationPending)
+        },
       },
     ) {
     Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickAdvanced(_)) => ()

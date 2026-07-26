@@ -624,10 +624,14 @@ unconnected product path usable.
   replay of the unresolved integration performs no mutation.
 - `cancellation.ordering_matrix` now composes the branch-initialization and
   Part-effect cases with the production Goal-assurance, publication, final-PR,
-  and terminal lifecycle transitions. It checks twenty-three cancellation
-  orderings: twenty-two reach a known or terminal disposition, while an
-  authorized branch seal correctly remains unresolved until its exact witness
-  is observed. Replaying the resulting records is mutation-free.
+  and terminal lifecycle transitions. It checks forty-three cancellation
+  orderings: twenty-seven reach a known or terminal disposition, while an
+  authorized branch seal, an unreachable forge, and a pull request that still
+  carries merge authority correctly remain unresolved until their exact
+  evidence is observed. Its neutralization rows cover cancellation before and
+  after PR creation, before and after automatic-merge enablement, a lost
+  neutralize acknowledgement, a merge that races the disable/close, and
+  repeated cancellation. Replaying the resulting records is mutation-free.
 - Codex Takes now use one restricted `codex app-server` process per Take over a
   private stdio FIFO and bounded owner-only response log. Choir durably binds
   the exact session, thread, turn, deterministic client-message ID, request
@@ -1015,6 +1019,18 @@ unconnected product path usable.
   explicitly uncertain. Publication distinguishes preflight uncertainty from
   post-mutation uncertainty, and both publication and PR reconciliation can
   recover from their uncertain states without resending a remote mutation.
+- A receipted pull request is not a settled cancellation: the forge keeps
+  authority to merge it. Cancellation now persists a typed neutralization
+  intent against the exact pull request, disables automatic merge, closes it,
+  and settles only on a fresh exact observation of a closed pull request with
+  no automatic merge. Neutralization runs before any source Bead is released
+  and before terminal cancellation commits; at most one neutralize dispatch is
+  issued per tick, and its output is never trusted. An unreachable forge, an
+  open pull request, and a pull request that is closed but still carries
+  automatic merge all keep the Goal canceling with its claims held. If the
+  exact pull request merged first, delivery wins: the Goal commits
+  `CommitGoalDeliveredDuringCancellation`, succeeds, and closes its source
+  Beads at the delivery boundary instead of releasing them.
 - Final-PR readiness now has an executable response-boundary and terminal-race
   oracle. A typed fault after durable readiness but before terminal success
   proves that cancellation can install its cutoff and permanently exclude
