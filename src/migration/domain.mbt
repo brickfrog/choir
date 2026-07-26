@@ -561,7 +561,6 @@ pub(all) enum MigrationFindingDisposition {
   ReviseContract
   ReviseJudge
   FollowUpGoalRequired
-  AwaitUserDecision
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|

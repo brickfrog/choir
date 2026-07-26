@@ -188,6 +188,21 @@ pub(all) struct MigrationContractRef {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) enum AuditRepairScope {
+  PartAuditRepair
+  GoalAuditRepair
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct AuditRepairReference {
+  scope : AuditRepairScope
+  audit_result_id : AuditResultId
+  audit_result_digest : Digest
+  findings_artifact : ArtifactReference
+  affected_paths : Array[RepoPath]
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub(all) struct TaskContractRevision {
   id : RevisionId
   goal_id : GoalId
@@ -195,6 +210,7 @@ pub(all) struct TaskContractRevision {
   revision : Int
   digest : Digest
   repair_conflict_id : IntegrationConflictId?
+  repair_audit : AuditRepairReference?
   instruction_artifact : ArtifactReference
   base_commit_oid : GitOid
   base_tree_oid : GitOid

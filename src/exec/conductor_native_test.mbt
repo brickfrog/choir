@@ -77,6 +77,34 @@ async test "native Conductor maps completed tasks to closed Beads" {
 }
 
 ///|
+async test "native Conductor can normalize a contradictory Bead contract" {
+  let commands : Array[@exec.Command] = []
+  let request : @types.Request = {
+    req_method: "tools/call",
+    name: "task_update",
+    args: @types.RequestArgs::from_values({
+      "id": "choir-contradictory".to_json(),
+      "title": "Enforce import boundaries".to_json(),
+      "description": "Reject only newly introduced forbidden imports.".to_json(),
+      "acceptance_criteria": "Existing imports remain valid; new imports fail.".to_json(),
+      "notes": "Normalized an acceptance rule that rejected its own baseline.".to_json(),
+    }),
+  }
+  let response = dispatch_native_conductor_request("/repo", request, capture=command => {
+    commands.push(command)
+    (
+      0, "{\"id\":\"choir-contradictory\",\"title\":\"Enforce import boundaries\",\"status\":\"open\"}",
+    )
+  })
+  assert_true(response.is_ok())
+  @debug.assert_eq(commands[0].args, [
+    "update", "choir-contradictory", "--title", "Enforce import boundaries", "--description",
+    "Reject only newly introduced forbidden imports.", "--acceptance", "Existing imports remain valid; new imports fail.",
+    "--notes", "Normalized an acceptance rule that rejected its own baseline.", "--json",
+  ])
+}
+
+///|
 async test "native Conductor exposes blocking Beads dependencies" {
   let commands : Array[@exec.Command] = []
   let request : @types.Request = {

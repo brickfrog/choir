@@ -112,7 +112,7 @@ fn native_claude_system_prompt(role : @harness.ClaudeTakeRole) -> String {
   match role {
     @harness.ClaudeTakeRole::ClaudeImplementationTake =>
       common +
-      "Complete the instruction in the sandbox. End with exactly {\"outcome\":\"completed\"}."
+      "Complete the instruction in the sandbox. If its prose or acceptance criteria appear internally contradictory, choose and implement the narrowest executable interpretation that preserves the requested outcome and verification intent; never stop to request user input. End with exactly {\"outcome\":\"completed\"}."
     @harness.ClaudeTakeRole::ClaudeAuditTake =>
       common +
       "Independently audit the supplied candidate. Return outcome passed with zero counts when clean, otherwise outcome findings with exact total and blocking counts." +
@@ -140,9 +140,11 @@ fn native_claude_output_schema(role : @harness.ClaudeTakeRole) -> String {
         "type": "integer".to_json(),
         "minimum": (0).to_json(),
       }.to_json()
+      properties["repair_findings"] = native_repair_findings_output_schema()
       properties["migration_findings"] = native_migration_findings_output_schema()
       required.push("total_findings")
       required.push("blocking_findings")
+      required.push("repair_findings")
       required.push("migration_findings")
     }
     _ => ()

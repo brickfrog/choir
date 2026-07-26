@@ -34,7 +34,7 @@ priv struct NativeOrphanedGoalSourceClaim {
 }
 
 ///|
-let native_goal_control_state_generation : String = "choir-control-state-v5"
+let native_goal_control_state_generation : String = "choir-control-state-v6"
 
 ///|
 priv struct NativeGoalPartRuntime {
@@ -524,6 +524,7 @@ fn plan_native_goal_conflict_repair(
     revision: snapshot.task_contract.revision + 1,
     digest: contract_digest,
     repair_conflict_id: Some(conflict.id),
+    repair_audit: None,
     base_commit_oid: conflict.expected_goal_head_oid,
     base_tree_oid: conflict.expected_goal_head_tree_oid,
   }
@@ -594,6 +595,251 @@ fn plan_native_goal_conflict_repair(
       ),
     },
     native_path_is_nfc,
+  )
+}
+
+///|
+fn adopt_native_audit_repair_instruction(
+  repository : @workflow.PartWorkflowRepository,
+  revision_id : @control.RevisionId,
+  goal_id : @control.GoalId,
+  previous : @control.ArtifactReference,
+  assigned_paths : Array[@control.RepoPath],
+  audit_output : String,
+) -> Result[@control.ArtifactReference, @types.ChoirError] {
+  let adapters = local_part_workflow_repository_adapters()
+  let original = match
+    (adapters.artifacts.read)(repository.artifact_store, {
+      digest: previous.digest,
+      max_bytes: 1048576,
+    }) {
+    Ok(value) => @utf8.decode_lossy(value)
+    Err(error) => return Err(error)
+  }
+  let paths = assigned_paths.map(@control.repo_path_text)
+  let content = @utf8.encode(
+    original +
+    "\n\nAutonomous audit repair\n\nRepair the blocking findings below only where they affect these assigned paths: " +
+    paths.join(", ") +
+    ". Sibling repair Takes own findings assigned to other paths. Stay within the mutation declaration. Do not merely explain the finding; change the implementation, run the declared verification, and leave the sandbox with a candidate commit.\n\n" +
+    audit_output,
+  )
+  let digest = @storage.artifact_digest(content)
+  let receipt = match
+    (adapters.artifacts.adopt)(repository.artifact_store, {
+      content,
+      expected_digest: digest,
+      provenance: @storage.ArtifactProvenance::ArtifactTaskInstruction(
+        revision_id,
+      ),
+      retention: @storage.ArtifactRetention::ArtifactUntilGoalTerminal(goal_id),
+    }) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if receipt.digest != digest || receipt.byte_length != content.length() {
+    return Err(native_goal_execution_error("audit repair instruction is false"))
+  }
+  Ok({ artifact_id: @storage.artifact_id_text(receipt.artifact_id), digest })
+}
+
+///|
+fn plan_native_audit_repair_attempt(
+  repository : @workflow.PartWorkflowRepository,
+  snapshot : @workflow.PartWorkflowSnapshot,
+  repair : @control.AuditRepairReference,
+  terminal_response : String,
+  base_commit_oid : @control.GitOid,
+  base_tree_oid : @control.GitOid,
+) -> Result[@workflow.PartAuditRepairDecision, @types.ChoirError] {
+  let repair_number = snapshot.task_contract_history.fold(init=1, fn(
+    count,
+    contract,
+  ) {
+    if contract.repair_audit is Some(_) {
+      count + 1
+    } else {
+      count
+    }
+  })
+  let identity_digest = @storage.artifact_digest(
+    @utf8.encode(
+      "choir.native-part-audit-repair.v1\u{00}" +
+      [
+        snapshot.task_contract.digest.to_json(),
+        repair.to_json(),
+        repair_number.to_json(),
+      ]
+      .to_json()
+      .stringify(indent=0),
+    ),
+  )
+  let key = @storage.digest_text(identity_digest)[:20].to_owned()
+  let revision_id = @control.RevisionId("audit-repair-" + key)
+  let instruction = match
+    adopt_native_audit_repair_instruction(
+      repository,
+      revision_id,
+      snapshot.goal.id,
+      snapshot.task_contract.instruction_artifact,
+      repair.affected_paths,
+      terminal_response,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let contract_digest = @storage.artifact_digest(
+    @utf8.encode(
+      "choir.task-contract-audit-repair.v1\u{00}" +
+      [
+        revision_id.to_json(),
+        snapshot.goal.id.to_json(),
+        snapshot.part.id.to_json(),
+        (snapshot.task_contract.revision + 1).to_json(),
+        repair.to_json(),
+        instruction.to_json(),
+        base_commit_oid.to_json(),
+        base_tree_oid.to_json(),
+        snapshot.task_contract.mutation_declaration.to_json(),
+        snapshot.task_contract.verification_specs.to_json(),
+        snapshot.task_contract.audit_policy_digest.to_json(),
+        snapshot.task_contract.implementation_capability_profile_digest.to_json(),
+        snapshot.task_contract.verification_capability_profile_digest.to_json(),
+        snapshot.task_contract.audit_capability_profile_digest.to_json(),
+      ]
+      .to_json()
+      .stringify(indent=0),
+    ),
+  )
+  let contract : @control.TaskContractRevision = {
+    ..snapshot.task_contract,
+    id: revision_id,
+    revision: snapshot.task_contract.revision + 1,
+    digest: contract_digest,
+    repair_conflict_id: None,
+    repair_audit: Some(repair),
+    instruction_artifact: instruction,
+    base_commit_oid,
+    base_tree_oid,
+  }
+  let implementation = native_goal_conflict_repair_take(
+    "take-" + key + "-implementation",
+    snapshot.implementation_take,
+    @control.TakePurpose::Implementation(snapshot.part.id, contract.id),
+  )
+  let verification = native_goal_conflict_repair_take(
+    "take-" + key + "-verification",
+    snapshot.verification_take,
+    @control.TakePurpose::PartVerification(
+      snapshot.part.id,
+      implementation.id,
+      contract.verification_specs[0].digest,
+    ),
+  )
+  let audit = native_goal_conflict_repair_take(
+    "take-" + key + "-audit",
+    snapshot.audit_take,
+    @control.TakePurpose::PartAudit(
+      snapshot.part.id,
+      implementation.id,
+      contract.audit_policy_digest,
+    ),
+  )
+  let implementation_sandbox = native_goal_conflict_repair_sandbox(
+    key,
+    "implementation",
+    implementation,
+    snapshot.identities.implementation_sandbox,
+  )
+  let verification_sandbox = native_goal_conflict_repair_sandbox(
+    key,
+    "verification",
+    verification,
+    snapshot.identities.verification_sandbox,
+  )
+  let audit_sandbox = native_goal_conflict_repair_sandbox(
+    key,
+    "audit",
+    audit,
+    snapshot.identities.audit_sandbox,
+  )
+  @workflow.plan_part_audit_repair(
+    snapshot,
+    repair,
+    contract,
+    {
+      implementation_take: implementation,
+      implementation_sandbox,
+      implementation_session: native_goal_conflict_repair_session(
+        key,
+        "implementation",
+        implementation,
+        implementation_sandbox,
+        snapshot.identities.implementation_session,
+      ),
+      verification_take: verification,
+      verification_sandbox,
+      audit_take: audit,
+      audit_sandbox,
+      audit_session: native_goal_conflict_repair_session(
+        key,
+        "audit",
+        audit,
+        audit_sandbox,
+        snapshot.identities.audit_session,
+      ),
+    },
+    native_path_is_nfc,
+  )
+}
+
+///|
+fn plan_native_part_audit_repair(
+  repository : @workflow.PartWorkflowRepository,
+  snapshot : @workflow.PartWorkflowSnapshot,
+) -> Result[@workflow.PartAuditRepairDecision, @types.ChoirError] {
+  let result = match snapshot.audit_result {
+    Some(value) => value
+    None =>
+      return Err(native_goal_execution_error("Part audit result is absent"))
+  }
+  let findings_artifact = match result.findings_artifact {
+    Some(value) => value
+    None =>
+      return Err(native_goal_execution_error("Part audit findings are absent"))
+  }
+  let bytes = match
+    (local_part_workflow_repository_adapters().artifacts.read)(
+      repository.artifact_store,
+      { digest: findings_artifact.digest, max_bytes: 1048576 },
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let terminal_response = @utf8.decode_lossy(bytes)
+  let affected_paths = match
+    native_blocking_audit_repair_paths(
+      terminal_response,
+      result.total_findings_count,
+      result.blocking_findings_count,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let repair : @control.AuditRepairReference = {
+    scope: @control.AuditRepairScope::PartAuditRepair,
+    audit_result_id: result.id,
+    audit_result_digest: result.result_digest,
+    findings_artifact,
+    affected_paths,
+  }
+  plan_native_audit_repair_attempt(
+    repository,
+    snapshot,
+    repair,
+    terminal_response,
+    snapshot.task_contract.base_commit_oid,
+    snapshot.task_contract.base_tree_oid,
   )
 }
 
@@ -2228,6 +2474,9 @@ async fn execute_native_goal_record(
     },
     integration_input: native_goal_integration_input,
     plan_conflict_repair: plan_native_goal_conflict_repair,
+    plan_audit_repair: fn(snapshot) {
+      plan_native_part_audit_repair(repository, snapshot)
+    },
     read_goal_head: async fn() {
       read_native_goal_head(integration, native_git_integration_adapters())
     },
@@ -3551,6 +3800,156 @@ fn native_goal_assurance_plan(
 }
 
 ///|
+fn plan_and_persist_native_goal_audit_repairs(
+  repository : @workflow.PartWorkflowRepository,
+  adapters : @workflow.PartWorkflowRepositoryAdapters,
+  execution : @workflow.GoalExecutionRecord,
+  assurance : @workflow.GoalAssuranceRecord,
+  snapshots : Array[@workflow.PartWorkflowSnapshot],
+) -> Result[@workflow.GoalAssuranceTickOutcome, @types.ChoirError] {
+  let result = match assurance.audit_result {
+    Some(value) => value
+    None =>
+      return Err(native_goal_execution_error("Goal audit result is absent"))
+  }
+  let findings_artifact = match result.findings_artifact {
+    Some(value) => value
+    None =>
+      return Err(native_goal_execution_error("Goal audit findings are absent"))
+  }
+  let bytes = match
+    (adapters.artifacts.read)(repository.artifact_store, {
+      digest: findings_artifact.digest,
+      max_bytes: 1048576,
+    }) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let terminal_response = @utf8.decode_lossy(bytes)
+  let affected_paths = match
+    native_blocking_audit_repair_paths(
+      terminal_response,
+      result.total_findings_count,
+      result.blocking_findings_count,
+    ) {
+    Ok(value) => value
+    Err(_) =>
+      return Ok(
+        @workflow.GoalAssuranceTickOutcome::GoalAssuranceRepairFailed(
+          result.result_digest,
+          result.finished_at,
+        ),
+      )
+  }
+  let routes = match
+    @workflow.plan_goal_audit_repair_routes(snapshots, affected_paths) {
+    Ok(value) => value
+    Err(_) =>
+      return Ok(
+        @workflow.GoalAssuranceTickOutcome::GoalAssuranceRepairFailed(
+          result.result_digest,
+          result.finished_at,
+        ),
+      )
+  }
+  let subject = result.subject
+  let mut planned = 0
+  for snapshot in snapshots {
+    let assigned : Array[@control.RepoPath] = []
+    for route in routes {
+      if route.part_id == snapshot.part.id {
+        for path in route.affected_paths {
+          assigned.push(path)
+        }
+      }
+    }
+    if assigned.length() == 0 {
+      continue
+    }
+    let repair : @control.AuditRepairReference = {
+      scope: @control.AuditRepairScope::GoalAuditRepair,
+      audit_result_id: result.id,
+      audit_result_digest: result.result_digest,
+      findings_artifact,
+      affected_paths: assigned,
+    }
+    let decision = match
+      plan_native_audit_repair_attempt(
+        repository,
+        snapshot,
+        repair,
+        terminal_response,
+        subject.goal_head_oid,
+        subject.goal_tree_oid,
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    let repaired = match decision {
+      @workflow.PartAuditRepairDecision::PartAuditRepairPlanned(value) => value
+      @workflow.PartAuditRepairDecision::PartAuditRepairLimitReached =>
+        return Ok(
+          @workflow.GoalAssuranceTickOutcome::GoalAssuranceRepairFailed(
+            result.result_digest,
+            result.finished_at,
+          ),
+        )
+    }
+    let current = match
+      @workflow.load_part_snapshot(repository, adapters, snapshot.workflow_id) {
+      Ok(Some(value)) => value
+      Ok(None) =>
+        return Err(native_goal_execution_error("repair Part disappeared"))
+      Err(error) => return Err(error)
+    }
+    if current.snapshot != snapshot {
+      return Ok(@workflow.GoalAssuranceTickOutcome::GoalAssuranceRepairing)
+    }
+    let persistence = match
+      @workflow.persist_part_snapshot_guarded(
+        repository,
+        adapters,
+        {
+          snapshot: repaired,
+          expected_store_version: Some(current.state_record.version),
+          fault_point: None,
+        },
+        @workflow.goal_execution_state_precondition(execution),
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    match persistence {
+      @workflow.GuardedPartSnapshotPersistenceResult::GuardedPartSnapshotPersisted(
+        receipt
+      ) =>
+        match receipt.transaction_outcome {
+          @storage.StateTransactionOutcome::StateTransactionCommitted
+          | @storage.StateTransactionOutcome::StateTransactionReplayed
+          | @storage.StateTransactionOutcome::StateTransactionCommittedAckLost =>
+            planned = planned + 1
+          _ =>
+            return Err(
+              native_goal_execution_error("Goal audit repair did not persist"),
+            )
+        }
+      @workflow.GuardedPartSnapshotPersistenceResult::GuardedPartSnapshotPreconditionConflict =>
+        return Ok(@workflow.GoalAssuranceTickOutcome::GoalAssurancePending)
+    }
+  }
+  if planned == 0 {
+    Ok(
+      @workflow.GoalAssuranceTickOutcome::GoalAssuranceRepairFailed(
+        result.result_digest,
+        result.finished_at,
+      ),
+    )
+  } else {
+    Ok(@workflow.GoalAssuranceTickOutcome::GoalAssuranceRepairing)
+  }
+}
+
+///|
 async fn advance_native_goal_assurance(
   project_dir : String,
   repository : @workflow.PartWorkflowRepository,
@@ -3633,7 +4032,99 @@ async fn advance_native_goal_assurance(
         }
         if stored.record.stage ==
           @workflow.GoalAssuranceStage::GoalAssuranceBlocked {
-          return Ok(@workflow.GoalAssuranceTickOutcome::GoalAssuranceBlocked)
+          match stored.record.blocked_reason {
+            Some(
+              @workflow.GoalAssuranceBlockReason::GoalAssuranceAuditBlocked(
+                @control.AuditGateObservation::AuditGateRejected(
+                  @control.AuditGateRejectionReason::AuditHasBlockingFindings
+                )
+              )
+            ) => {
+              let identity = match
+                native_goal_ref_identity(git, execution.goal_ref) {
+                Ok(value) => value
+                Err(error) => return Err(error)
+              }
+              let audited_head = match stored.record.audit_subject {
+                Some(value) => value.goal_head_oid
+                None =>
+                  return Err(
+                    native_goal_execution_error(
+                      "blocked Goal audit subject is absent",
+                    ),
+                  )
+              }
+              if identity.0 != audited_head {
+                let plan = match
+                  native_goal_assurance_plan(
+                    repository,
+                    execution,
+                    snapshots,
+                    identity.0,
+                  ) {
+                  Ok(value) => value
+                  Err(error) => return Err(error)
+                }
+                let replacement = match
+                  @workflow.initialize_goal_assurance(
+                    execution,
+                    snapshots,
+                    identity.0,
+                    identity.1,
+                    plan.0,
+                    plan.1,
+                  ) {
+                  Ok(value) =>
+                    {
+                      ..value,
+                      durable_version: stored.state_record.version + 1,
+                    }
+                  Err(error) => return Err(error)
+                }
+                current = match
+                  persist_native_goal_assurance_record(
+                    repository,
+                    adapters,
+                    execution,
+                    replacement,
+                    Some(stored.state_record.version),
+                  ) {
+                  Ok(value) => value
+                  Err(error) => return Err(error)
+                }
+                continue
+              }
+              return plan_and_persist_native_goal_audit_repairs(
+                repository,
+                adapters,
+                execution,
+                stored.record,
+                snapshots,
+              )
+            }
+            Some(
+              @workflow.GoalAssuranceBlockReason::GoalAssuranceAuditBlocked(_)
+            ) =>
+              match stored.record.audit_result {
+                Some(result) =>
+                  return Ok(
+                    @workflow.GoalAssuranceTickOutcome::GoalAssuranceRepairFailed(
+                      result.result_digest,
+                      result.finished_at,
+                    ),
+                  )
+                None =>
+                  return Err(
+                    native_goal_execution_error(
+                      "blocked Goal audit result is absent",
+                    ),
+                  )
+              }
+            _ =>
+              return Ok(
+                @workflow.GoalAssuranceTickOutcome::GoalAssuranceBlocked,
+              )
+          }
         }
         if stored.record.stage ==
           @workflow.GoalAssuranceStage::GoalAssuranceRecoveryUncertain {
@@ -3647,7 +4138,10 @@ async fn advance_native_goal_assurance(
               stored.record,
               {
                 receipt_id: @control.ReceiptId(
-                  stored.record.goal_id.0 + ":goal-audit-receipt",
+                  stored.record.goal_id.0 +
+                  ":" +
+                  stored.record.audit_take.id.0 +
+                  ":goal-audit-receipt",
                 ),
                 provider_surface_id: stored.record.identities.audit_session.surface,
                 provider_identity: match
@@ -4342,6 +4836,9 @@ test "control state generation requires both marker and store" {
     ),
   )
   assert_false(native_goal_control_state_is_current("", true))
+  assert_false(
+    native_goal_control_state_is_current("choir-control-state-v5", true),
+  )
   assert_false(
     native_goal_control_state_is_current("choir-control-state-v4", true),
   )

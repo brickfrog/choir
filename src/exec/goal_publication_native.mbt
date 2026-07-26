@@ -1275,6 +1275,7 @@ fn publication_integrated_part(
       revision: 1,
       digest: publication_digest("contract"),
       repair_conflict_id: None,
+      repair_audit: None,
       instruction_artifact: {
         artifact_id: "publication-instruction",
         digest: publication_digest("instruction"),

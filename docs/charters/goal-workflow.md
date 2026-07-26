@@ -18,7 +18,7 @@ provider-support claim remains provisional until implemented and proven by its
 stated conformance oracle.
 
 Research snapshot: 2026-07-19T19:50:26Z
-Implementation snapshot updated through: 2026-07-21T17:03:03-05:00
+Implementation snapshot updated through: 2026-07-25
 
 ## Charter Semantics and Readiness
 
@@ -44,7 +44,17 @@ unconnected product path usable.
 
 ### Implemented and directly exercised
 
-- The current checkout passes `moon check --target native`, all 376 native
+- Blocking Part and Goal audit findings now carry bounded repair text and
+  canonical affected paths. The owning workflow—not the passive audit
+  gate—mints a fresh task-contract revision and Take identities, reopens the
+  owning Part from the correct head, preserves prior integration evidence,
+  re-integrates, and reruns combined verification and audit. Part and Goal
+  repairs are bounded; exhaustion or an unroutable path automatically cancels
+  with `GoalCancellationAuditRepairFailed` rather than waiting for user input.
+  Before submission, the Conductor also normalizes internally contradictory
+  Bead prose through the typed Beads update surface and rereads the revision;
+  implementation Takes use the same narrowest-executable-interpretation rule.
+- The current checkout passes `moon check --target native`, all 506 native
   tests, the Choir lint command, every registered fault/race conformance
   command, the synthetic Part lifecycle, parallel promotion, scale scheduling,
   both native provider Part lifecycles, and the two-provider Goal fixture. The
@@ -781,8 +791,9 @@ unconnected product path usable.
   the real ChatGPT-authenticated Codex client inside BoxLite for implementation
   and independent audit, ran typed verification, and integrated the Part with
   exactly one verification, audit, and integration receipt. A preceding run
-  whose audit reported a blocking finding correctly stopped at
-  `GoalExecutionBlocked` and did not bypass the gate.
+  whose audit reported a blocking finding stopped at
+  `GoalExecutionBlocked` and did not bypass the gate. That behavior is
+  superseded by the autonomous audit-repair amendment below.
 - Goal-branch initialization is now a durable pre-dispatch protocol rather
   than an implicit Git side effect in Part execution. The Goal execution record
   carries the deterministic intent, witness ref, idempotency key, lifecycle,
@@ -1556,7 +1567,10 @@ cannot satisfy that policy; it does not invent one.
 
 Infrastructure failure or interruption may admit a new audit take under the
 bounded retry policy. Blocking findings require repair and a new candidate.
-Exhausted retries or no eligible auditor creates a typed blocked outcome.
+The owning workflow schedules that repair without a user-input transition.
+Exhausted repairs terminate the Goal with a typed audit-repair cancellation;
+no eligible auditor remains an integrity/infrastructure outcome rather than
+fabricated success.
 
 ### Verification receipts
 

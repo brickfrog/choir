@@ -866,7 +866,7 @@ MigrationFindingSeverity
 
 MigrationFindingDisposition
   RepairPart | ReviseContract | ReviseJudge
-  FollowUpGoalRequired | AwaitUserDecision
+  FollowUpGoalRequired
 
 MigrationFindingAnchor
   Rule(rule_id) | JudgeScenario(scenario_id) | InventoryUnit(stable_key)

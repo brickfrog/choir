@@ -737,6 +737,27 @@ async fn dispatch_native_task_update(
     Err(error) => return @types.Response::Err(error.message())
   }
   let arguments : Array[String] = ["update", id]
+  match native_conductor_optional_string(request, "title") {
+    Some(value) => {
+      arguments.push("--title")
+      arguments.push(value)
+    }
+    None => ()
+  }
+  match native_conductor_optional_string(request, "description") {
+    Some(value) => {
+      arguments.push("--description")
+      arguments.push(value)
+    }
+    None => ()
+  }
+  match native_conductor_optional_string(request, "acceptance_criteria") {
+    Some(value) => {
+      arguments.push("--acceptance")
+      arguments.push(value)
+    }
+    None => ()
+  }
   match native_conductor_optional_string(request, "status") {
     Some(raw) =>
       match native_conductor_task_status(raw) {

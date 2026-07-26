@@ -281,6 +281,7 @@ pub fn plan_part_migration_revision(
         audit_result: snapshot.audit_result,
         audit_receipt: snapshot.audit_receipt,
         integration_intent: snapshot.integration_intent,
+        integration_receipt: snapshot.integration_receipt,
       },
     ],
     sandbox_leases: snapshot.sandbox_leases,

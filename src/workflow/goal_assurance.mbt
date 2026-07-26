@@ -14,12 +14,9 @@ pub(all) enum GoalAssuranceStage {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-/// Why Goal-level assurance stopped, recorded when the stage becomes
-/// `GoalAssuranceBlocked`. A blocked Goal is a normal terminal answer — a
-/// failing combined verification or an auditor that reported findings — so the
-/// deciding gate observation is retained rather than discarded, and every
-/// consumer reads the reason from durable state instead of guessing at
-/// receipt counts.
+/// Why one Goal-level assurance attempt rejected its subject. The passive gate
+/// retains the exact observation; the Goal workflow may use an audit rejection
+/// to schedule a bounded repair and start a fresh assurance attempt.
 pub(all) enum GoalAssuranceBlockReason {
   GoalAssuranceVerificationBlocked(@control.VerificationGateObservation)
   GoalAssuranceAuditBlocked(@control.AuditGateObservation)
@@ -102,6 +99,21 @@ fn ordered_integration_receipts(
       return Err(goal_assurance_error("integration receipt identity is wrong"))
     }
     remaining.push(receipt)
+    for prior in snapshot.prior_take_evidence {
+      match prior.integration_receipt {
+        Some(value) => {
+          if value.goal_id != execution.goal.id ||
+            value.part_id != snapshot.part.id ||
+            remaining.any(fn(existing) { existing.id == value.id }) {
+            return Err(
+              goal_assurance_error("prior integration receipt is invalid"),
+            )
+          }
+          remaining.push(value)
+        }
+        None => ()
+      }
+    }
   }
   let ordered : Array[@control.IntegrationReceipt] = []
   let mut head = execution.base_commit_oid
@@ -343,8 +355,7 @@ fn goal_assurance_contract_is_valid(record : GoalAssuranceRecord) -> Bool {
     for other = index + 1
         other < record.integration_receipts.length()
         other = other + 1 {
-      if receipt.id == record.integration_receipts[other].id ||
-        receipt.part_id == record.integration_receipts[other].part_id {
+      if receipt.id == record.integration_receipts[other].id {
         return false
       }
     }

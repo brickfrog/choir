@@ -24,7 +24,6 @@ enum NativeMigrationFindingDisposition {
   ReviseContract
   ReviseJudge
   FollowUpGoalRequired
-  AwaitUserDecision
 } derive(Debug, Eq, FromJson)
 
 ///|
@@ -50,12 +49,53 @@ struct NativeMigrationFindingOutput {
 } derive(Debug, Eq, FromJson)
 
 ///|
+enum NativeRepairFindingSeverity {
+  Advisory
+  Blocking
+} derive(Debug, Eq, FromJson)
+
+///|
+struct NativeRepairFindingOutput {
+  severity : NativeRepairFindingSeverity
+  summary : String
+  evidence : String
+  affected_paths : Array[String]
+} derive(Debug, Eq, FromJson)
+
+///|
 struct NativeAuditStructuredOutput {
   outcome : String
   total_findings : Int
   blocking_findings : Int
+  repair_findings : Array[NativeRepairFindingOutput]?
   migration_findings : Array[NativeMigrationFindingOutput]?
 } derive(Debug, Eq, FromJson)
+
+///|
+fn native_repair_finding_output_schema() -> Json {
+  {
+    "type": "object".to_json(),
+    "properties": {
+      "severity": {
+        "type": "string".to_json(),
+        "enum": ["Advisory", "Blocking"].to_json(),
+      }.to_json(),
+      "summary": { "type": "string".to_json() }.to_json(),
+      "evidence": { "type": "string".to_json() }.to_json(),
+      "affected_paths": {
+        "type": "array".to_json(),
+        "items": { "type": "string".to_json() }.to_json(),
+      }.to_json(),
+    }.to_json(),
+    "required": ["severity", "summary", "evidence", "affected_paths"].to_json(),
+    "additionalProperties": false.to_json(),
+  }.to_json()
+}
+
+///|
+fn native_repair_findings_output_schema() -> Json {
+  { "type": "array".to_json(), "items": native_repair_finding_output_schema() }.to_json()
+}
 
 ///|
 fn native_migration_finding_output_schema() -> Json {
@@ -88,7 +128,6 @@ fn native_migration_finding_output_schema() -> Json {
         "type": "string".to_json(),
         "enum": [
           "RepairPart", "ReviseContract", "ReviseJudge", "FollowUpGoalRequired",
-          "AwaitUserDecision",
         ].to_json(),
       }.to_json(),
     }.to_json(),
@@ -110,7 +149,105 @@ fn native_migration_findings_output_schema() -> Json {
 
 ///|
 fn native_migration_audit_output_instruction() -> String {
-  " Always return migration_findings. For a migration Part, include one typed entry per finding; otherwise return an empty array. Use the exact enum labels from the output schema, set anchor_secondary to an empty string unless the anchor is a dependency edge, anchor the concrete rule, scenario, inventory unit, dependency edge, ownership claim, parity scenario, or accepted Contract, and include bounded evidence text. Return an empty migration_findings array when clean."
+  " Always return repair_findings with one entry per reported finding. Each entry must use the exact severity enum, contain a concise summary and bounded concrete evidence, and list every repository-relative path that a repair must change. A blocking finding must name at least one affected path, and every named path must be inside the supplied mutation surface. Return an empty repair_findings array only when clean. Always return migration_findings. For a migration Part, include one typed entry per finding; otherwise return an empty array. Use the exact enum labels from the output schema, set anchor_secondary to an empty string unless the anchor is a dependency edge, anchor the concrete rule, scenario, inventory unit, dependency edge, ownership claim, parity scenario, or accepted Contract, and include bounded evidence text. Return an empty migration_findings array when clean."
+}
+
+///|
+fn native_audit_repair_findings(
+  terminal_response : String,
+  total : Int,
+  blocking : Int,
+) -> Result[Array[NativeRepairFindingOutput], @types.ChoirError] {
+  let json = @json.parse(terminal_response) catch {
+    _ => return Err(native_part_effect_error("audit output is invalid"))
+  }
+  let output : NativeAuditStructuredOutput = @json.from_json(json) catch {
+    _ => return Err(native_part_effect_error("audit output is invalid"))
+  }
+  let findings = match output.repair_findings {
+    Some(value) => value
+    None =>
+      return Err(native_part_effect_error("audit repair findings are missing"))
+  }
+  if output.total_findings != total ||
+    output.blocking_findings != blocking ||
+    findings.length() != total ||
+    (if total == 0 {
+      output.outcome != "passed"
+    } else {
+      output.outcome != "findings"
+    }) {
+    return Err(native_part_effect_error("audit repair finding counts disagree"))
+  }
+  let mut observed_blocking = 0
+  for finding in findings {
+    let summary_bytes = @utf8.encode(finding.summary)
+    let evidence_bytes = @utf8.encode(finding.evidence)
+    if summary_bytes.length() == 0 ||
+      summary_bytes.length() > 4096 ||
+      evidence_bytes.length() == 0 ||
+      evidence_bytes.length() > 16384 {
+      return Err(
+        native_part_effect_error("audit repair finding text is invalid"),
+      )
+    }
+    if finding.severity == NativeRepairFindingSeverity::Blocking {
+      observed_blocking = observed_blocking + 1
+      if finding.affected_paths.length() == 0 {
+        return Err(
+          native_part_effect_error(
+            "blocking audit repair finding has no affected path",
+          ),
+        )
+      }
+    }
+    for raw_path in finding.affected_paths {
+      let path = @control.RepoPath(raw_path)
+      match @control.validate_repo_path(path, native_path_is_nfc) {
+        Ok(_) => ()
+        Err(_) =>
+          return Err(
+            native_part_effect_error("audit repair finding path is invalid"),
+          )
+      }
+    }
+  }
+  if observed_blocking != blocking {
+    return Err(
+      native_part_effect_error("audit repair blocking count disagrees"),
+    )
+  }
+  Ok(findings)
+}
+
+///|
+fn native_blocking_audit_repair_paths(
+  terminal_response : String,
+  total : Int,
+  blocking : Int,
+) -> Result[Array[@control.RepoPath], @types.ChoirError] {
+  let findings = match
+    native_audit_repair_findings(terminal_response, total, blocking) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let paths : Array[@control.RepoPath] = []
+  for finding in findings {
+    if finding.severity == NativeRepairFindingSeverity::Blocking {
+      for raw_path in finding.affected_paths {
+        let path = @control.RepoPath(raw_path)
+        if !paths.contains(path) {
+          paths.push(path)
+        }
+      }
+    }
+  }
+  paths.sort()
+  if blocking > 0 && paths.length() == 0 {
+    Err(native_part_effect_error("blocking audit has no repair paths"))
+  } else {
+    Ok(paths)
+  }
 }
 
 ///|
@@ -152,8 +289,6 @@ fn native_migration_finding_disposition(
     ReviseJudge => @migration.MigrationFindingDisposition::ReviseJudge
     FollowUpGoalRequired =>
       @migration.MigrationFindingDisposition::FollowUpGoalRequired
-    AwaitUserDecision =>
-      @migration.MigrationFindingDisposition::AwaitUserDecision
   }
 }
 
@@ -325,11 +460,22 @@ fn native_migration_findings_artifact(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
+  guard json is Object(output_fields) else {
+    return Err(native_part_effect_error("migration audit output is invalid"))
+  }
+  guard artifact.to_json() is Object(migration_fields) else {
+    return Err(
+      native_part_effect_error("migration findings artifact is invalid"),
+    )
+  }
+  for key, value in migration_fields {
+    output_fields[key] = value
+  }
   match
     adopt_native_effect_artifact(
       runtime,
       snapshot.goal.id,
-      @utf8.encode(artifact.to_json().stringify(indent=0)),
+      @utf8.encode(output_fields.to_json().stringify(indent=0)),
       @storage.ArtifactProvenance::ArtifactAuditFindings(take_id),
     ) {
     Ok(value) => Ok(Some(value))
@@ -340,7 +486,7 @@ fn native_migration_findings_artifact(
 ///|
 test "native migration audit output decodes closed finding domains" {
   let json = @json.parse(
-    "{\"outcome\":\"findings\",\"total_findings\":1,\"blocking_findings\":1,\"migration_findings\":[{\"class\":\"RuleViolation\",\"severity\":\"Blocking\",\"anchor_kind\":\"Rule\",\"anchor_primary\":\"rule-1\",\"anchor_secondary\":\"\",\"evidence\":\"observed host I/O\",\"disposition\":\"ReviseContract\"}]}",
+    "{\"outcome\":\"findings\",\"total_findings\":1,\"blocking_findings\":1,\"repair_findings\":[{\"severity\":\"Blocking\",\"summary\":\"host I/O remains\",\"evidence\":\"src/example.mbt invokes @sys\",\"affected_paths\":[\"src/example.mbt\"]}],\"migration_findings\":[{\"class\":\"RuleViolation\",\"severity\":\"Blocking\",\"anchor_kind\":\"Rule\",\"anchor_primary\":\"rule-1\",\"anchor_secondary\":\"\",\"evidence\":\"observed host I/O\",\"disposition\":\"ReviseContract\"}]}",
   )
   let output : NativeAuditStructuredOutput = @json.from_json(json)
   guard output.migration_findings is Some([finding]) else {
@@ -359,4 +505,8 @@ test "native migration audit output decodes closed finding domains" {
       "\"required\":[\"class\",\"severity\",\"anchor_kind\",\"anchor_primary\",\"anchor_secondary\",\"evidence\",\"disposition\"]",
     ),
   )
+  match native_audit_repair_findings(json.stringify(indent=0), 1, 1) {
+    Ok([{ affected_paths: ["src/example.mbt"], .. }]) => ()
+    _ => fail("expected one routable repair finding")
+  }
 }

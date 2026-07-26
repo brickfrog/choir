@@ -424,7 +424,12 @@ pub fn semantic_run_projection(
     publication.goal_contract_digest != record.goal.contract_digest ||
     pull_request.goal_contract_digest != record.goal.contract_digest ||
     finalization.goal_contract_digest != record.goal.contract_digest ||
-    assurance.integration_receipts.length() != snapshots.length() ||
+    assurance.integration_receipts.length() < snapshots.length() ||
+    snapshots.any(fn(snapshot) {
+      !assurance.integration_receipts.any(fn(receipt) {
+        receipt.part_id == snapshot.part.id
+      })
+    }) ||
     seal.head_oid != publication_receipt.published_oid ||
     seal.head_oid != pull_request_receipt.expected_head_oid ||
     publication.intent.goal_branch_seal_id != seal.id ||

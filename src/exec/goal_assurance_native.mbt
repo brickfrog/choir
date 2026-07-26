@@ -225,7 +225,14 @@ fn native_goal_assurance_task_summary(
       Ok(value) => value
       Err(error) => return Err(error)
     }
-    tasks.push("Part " + snapshot.part.id.0 + ":\n" + instruction)
+    tasks.push(
+      "Part " +
+      snapshot.part.id.0 +
+      "\nMutation declaration: " +
+      snapshot.task_contract.mutation_declaration.to_json().stringify(indent=0) +
+      "\nTask:\n" +
+      instruction,
+    )
   }
   if tasks.length() == 0 {
     Err(native_goal_execution_error("Goal has no Part tasks"))
@@ -501,6 +508,11 @@ async fn execute_native_goal_audit(
     NativeAuditFindings(total, blocking) =>
       (@control.AuditOutcome::AuditFindings, total, blocking)
     _ => return Err(native_goal_execution_error("audit outcome is invalid"))
+  }
+  match
+    native_audit_repair_findings(provider.terminal_response, total, blocking) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
   }
   let findings = if total == 0 {
     None

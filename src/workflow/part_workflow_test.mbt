@@ -150,6 +150,7 @@ fn workflow_fixture() -> @workflow.PartWorkflowSnapshot raise {
     revision: 1,
     digest: workflow_digest_a,
     repair_conflict_id: None,
+    repair_audit: None,
     instruction_artifact: {
       artifact_id: "instruction-workflow",
       digest: workflow_digest_a,
@@ -1304,6 +1305,190 @@ test "Part reaches a verified audited integration result" {
     snapshot.identities.implementation_session.id !=
     snapshot.identities.audit_session.id,
   )
+}
+
+///|
+test "Goal audit repair reopens an integrated Part and preserves its receipt" {
+  let mut integrated = drive_to_integration_authorized()
+  guard integrated.promotion_commit is Some(promotion) else {
+    fail("authorized integration has no promotion commit")
+  }
+  integrated = apply_observation(
+    integrated,
+    @workflow.PartEffectObservation::IntegrationWitnessObserved(
+      @control.IntegrationWitnessObservation::IntegrationWitnessApplied(
+        promotion.commit_oid,
+        promotion.commit_oid,
+      ),
+    ),
+    27L,
+  )
+  guard integrated.integration_receipt is Some(integration_receipt) else {
+    fail("integrated Part has no receipt")
+  }
+  let repair : @control.AuditRepairReference = {
+    scope: @control.AuditRepairScope::GoalAuditRepair,
+    audit_result_id: @control.AuditResultId("goal-audit-result-repair-1"),
+    audit_result_digest: workflow_digest_d,
+    findings_artifact: {
+      artifact_id: "goal-audit-findings-repair-1",
+      digest: workflow_digest_e,
+    },
+    affected_paths: [@control.RepoPath("src/feature.mbt")],
+  }
+  let contract : @control.TaskContractRevision = {
+    ..integrated.task_contract,
+    id: @control.RevisionId("audit-repair-revision-2"),
+    revision: integrated.task_contract.revision + 1,
+    digest: workflow_digest_d,
+    repair_conflict_id: None,
+    repair_audit: Some(repair),
+    instruction_artifact: {
+      artifact_id: "audit-repair-instruction-2",
+      digest: workflow_digest_e,
+    },
+    base_commit_oid: promotion.commit_oid,
+    base_tree_oid: promotion.tree_oid,
+  }
+  let implementation = {
+    ..workflow_take(
+      "audit-repair-implementation-take-2",
+      @control.TakePurpose::Implementation(integrated.part.id, contract.id),
+    ),
+    ordinal: 2,
+  }
+  let verification = {
+    ..workflow_take(
+      "audit-repair-verification-take-2",
+      @control.TakePurpose::PartVerification(
+        integrated.part.id,
+        implementation.id,
+        contract.verification_specs[0].digest,
+      ),
+    ),
+    ordinal: 2,
+  }
+  let audit = {
+    ..workflow_take(
+      "audit-repair-audit-take-2",
+      @control.TakePurpose::PartAudit(
+        integrated.part.id,
+        implementation.id,
+        contract.audit_policy_digest,
+      ),
+    ),
+    ordinal: 2,
+  }
+  let implementation_sandbox = workflow_sandbox(
+    "audit-repair-implementation-sandbox-2",
+    "audit-repair-implementation-generation-2",
+    implementation.id,
+    contract.implementation_capability_profile_digest,
+    workflow_digest_a,
+  )
+  let verification_sandbox = workflow_sandbox(
+    "audit-repair-verification-sandbox-2",
+    "audit-repair-verification-generation-2",
+    verification.id,
+    contract.verification_capability_profile_digest,
+    workflow_digest_d,
+  )
+  let audit_sandbox = workflow_sandbox(
+    "audit-repair-audit-sandbox-2",
+    "audit-repair-audit-generation-2",
+    audit.id,
+    contract.audit_capability_profile_digest,
+    workflow_digest_e,
+  )
+  let repaired = match
+    @workflow.plan_part_audit_repair(
+      integrated,
+      repair,
+      contract,
+      {
+        implementation_take: implementation,
+        implementation_sandbox,
+        implementation_session: workflow_session(
+          "audit-repair-implementation-session-2",
+          implementation.id,
+          implementation_sandbox.generation_id,
+          @control.ProviderSurfaceId::CodexSubscriptionCli,
+          workflow_digest_a,
+        ),
+        verification_take: verification,
+        verification_sandbox,
+        audit_take: audit,
+        audit_sandbox,
+        audit_session: workflow_session(
+          "audit-repair-audit-session-2",
+          audit.id,
+          audit_sandbox.generation_id,
+          @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+          workflow_digest_c,
+        ),
+      },
+      fn(_) { true },
+    ) {
+    Ok(@workflow.PartAuditRepairDecision::PartAuditRepairPlanned(value)) =>
+      value
+    Ok(_) => fail("first audit repair reached its retry limit")
+    Err(error) => fail(error.message())
+  }
+  assert_eq(repaired.stage, @workflow.PartWorkflowStage::PartAccepted)
+  assert_eq(
+    repaired.part.lifecycle,
+    @control.PartLifecycle::PartExecuting(implementation.id),
+  )
+  assert_eq(repaired.task_contract.repair_audit, Some(repair))
+  assert_true(repaired.integration_receipt is None)
+  assert_eq(
+    repaired.prior_take_evidence[0].integration_receipt,
+    Some(integration_receipt),
+  )
+}
+
+///|
+test "Goal audit repair routes paths to their deterministic Part owners" {
+  let first = workflow_fixture()
+  let second_part = {
+    ..first.part,
+    id: @control.PartId("part-2"),
+    task_contract_revision_id: @control.RevisionId("part-2-revision-1"),
+  }
+  let second = {
+    ..first,
+    workflow_id: "part-2-workflow",
+    part: second_part,
+    task_contract: {
+      ..first.task_contract,
+      id: second_part.task_contract_revision_id,
+      part_id: second_part.id,
+      mutation_declaration: @control.MutationDeclaration::CompleteMutationDeclaration([
+          @control.MutationClaim::ExactPath(
+            @control.RepoPath("src/lint/lint.mbt"),
+          ),
+        ],
+      ),
+    },
+  }
+  let routes = match
+    @workflow.plan_goal_audit_repair_routes([second, first], [
+      @control.RepoPath("src/feature.mbt"),
+      @control.RepoPath("src/lint/lint.mbt"),
+    ]) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(routes, [
+    {
+      part_id: first.part.id,
+      affected_paths: [@control.RepoPath("src/feature.mbt")],
+    },
+    {
+      part_id: second.part.id,
+      affected_paths: [@control.RepoPath("src/lint/lint.mbt")],
+    },
+  ])
 }
 
 ///|
@@ -2990,6 +3175,7 @@ test "promotion conflict blocks the Part without minting integration evidence" {
     revision: 2,
     digest: workflow_digest_d,
     repair_conflict_id: Some(conflict.id),
+    repair_audit: None,
     base_commit_oid: conflict.expected_goal_head_oid,
     base_tree_oid: conflict.expected_goal_head_tree_oid,
   }

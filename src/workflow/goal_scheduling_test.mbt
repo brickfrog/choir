@@ -27,6 +27,7 @@ fn scheduling_record(
       revision: 1,
       digest: schedule_digest,
       repair_conflict_id: None,
+      repair_audit: None,
       instruction_artifact: {
         artifact_id: "instruction-" + id,
         digest: schedule_digest,
@@ -734,6 +735,7 @@ async test "promotion conflict may return a versioned repair Take" {
             repair_conflict_id: Some(
               @control.IntegrationConflictId("integration-conflict-1"),
             ),
+            repair_audit: None,
           }
           Ok({
             part: {

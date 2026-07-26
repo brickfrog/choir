@@ -24,6 +24,8 @@ pub(all) enum GoalAssuranceTickOutcome {
   GoalAssurancePending
   GoalAssuranceComplete
   GoalAssuranceBlocked
+  GoalAssuranceRepairing
+  GoalAssuranceRepairFailed(@control.Digest, Int64)
 } derive(Debug, Eq)
 
 ///|
@@ -509,7 +511,19 @@ pub async fn run_next_goal_execution_tick(
     if !parts.all(fn(snapshot) {
         snapshot.part.lifecycle is @control.PartLifecycle::PartIntegrated(_)
       }) {
-      return Err(goal_execution_error("assurance started before integration"))
+      let advanced = match
+        persist_goal_execution_advance(
+          repository,
+          repository_adapters,
+          selected,
+          GoalExecutionState::GoalExecutionRunning,
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      return Ok(
+        GoalExecutionTickResult::GoalExecutionTickAdvanced(advanced.record),
+      )
     }
     let assurance = match (runner_adapters.assure)(selected.record, parts) {
       Ok(value) => value
@@ -522,6 +536,31 @@ pub async fn run_next_goal_execution_tick(
         )
       GoalAssuranceComplete => GoalExecutionState::GoalExecutionAssured
       GoalAssuranceBlocked => GoalExecutionState::GoalExecutionBlocked
+      GoalAssuranceRepairing => GoalExecutionState::GoalExecutionRunning
+      GoalAssuranceRepairFailed(digest, requested_at) => {
+        let outcome = match
+          persist_goal_cancellation_request(
+            repository,
+            repository_adapters,
+            selected.record.goal.id,
+            requested_at,
+            cause=GoalCancellationCause::GoalCancellationAuditRepairFailed(
+              digest,
+            ),
+          ) {
+          Ok(value) => value
+          Err(error) => return Err(error)
+        }
+        let record = match outcome {
+          GoalCancellationPersisted(value) | GoalCancellationReplayed(value) =>
+            value
+          GoalCancellationTerminal(_) =>
+            return Err(
+              goal_execution_error("audit repair cancellation lost a race"),
+            )
+        }
+        return Ok(GoalExecutionTickResult::GoalExecutionTickAdvanced(record))
+      }
     }
     let advanced = match
       persist_goal_execution_advance(
@@ -584,6 +623,54 @@ pub async fn run_next_goal_execution_tick(
     load_goal_execution_parts(repository, repository_adapters, current.record) {
     Ok(value) => value
     Err(error) => return Err(error)
+  }
+  for snapshot in after {
+    if snapshot.part.lifecycle
+      is @control.PartLifecycle::PartBlocked(
+        @control.PartBlockReason::PartAuditFindings
+      ) {
+      let repairs = snapshot.task_contract_history.fold(init=0, fn(
+        count,
+        contract,
+      ) {
+        if contract.repair_audit is Some(_) {
+          count + 1
+        } else {
+          count
+        }
+      })
+      let result = match snapshot.audit_result {
+        Some(value) => value
+        None => return Err(goal_execution_error("audit result is absent"))
+      }
+      let repairable = result.outcome == @control.AuditOutcome::AuditFindings &&
+        result.blocking_findings_count > 0 &&
+        result.findings_artifact is Some(_)
+      if !repairable || repairs >= maximum_part_audit_repairs() {
+        let outcome = match
+          persist_goal_cancellation_request(
+            repository,
+            repository_adapters,
+            current.record.goal.id,
+            result.finished_at,
+            cause=GoalCancellationCause::GoalCancellationAuditRepairFailed(
+              result.result_digest,
+            ),
+          ) {
+          Ok(value) => value
+          Err(error) => return Err(error)
+        }
+        let record = match outcome {
+          GoalCancellationPersisted(value) | GoalCancellationReplayed(value) =>
+            value
+          GoalCancellationTerminal(_) =>
+            return Err(
+              goal_execution_error("audit repair cancellation lost a race"),
+            )
+        }
+        return Ok(GoalExecutionTickResult::GoalExecutionTickAdvanced(record))
+      }
+    }
   }
   // Parts with work still outstanding imply no durable state change. Advancing
   // to Paused here parked the Goal under GoalPauseRecoveryUncertain whenever an

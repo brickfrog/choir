@@ -336,10 +336,17 @@ fn codex_audit_terminal_response(
   prefix : String,
   fields : Map[String, Json],
 ) -> String {
+  let with_repairs = match fields.get("repair_findings") {
+    Some(value) => prefix + ",\"repair_findings\":" + value.stringify(indent=0)
+    None => prefix
+  }
   match fields.get("migration_findings") {
     Some(value) =>
-      prefix + ",\"migration_findings\":" + value.stringify(indent=0) + "}"
-    None => prefix + "}"
+      with_repairs +
+      ",\"migration_findings\":" +
+      value.stringify(indent=0) +
+      "}"
+    None => with_repairs + "}"
   }
 }
 
@@ -398,12 +405,14 @@ fn validate_codex_response(
 }
 
 ///|
-test "Codex audit response retains typed migration findings" {
-  let response = "{\"outcome\":\"findings\",\"total_findings\":1,\"blocking_findings\":1,\"migration_findings\":[{\"class\":\"RuleViolation\"}]}"
+test "Codex audit response retains repair and migration findings" {
+  let response = "{\"outcome\":\"findings\",\"total_findings\":1,\"blocking_findings\":1,\"repair_findings\":[{\"affected_paths\":[\"src/example.mbt\"]}],\"migration_findings\":[{\"class\":\"RuleViolation\"}]}"
   let (_, retained) = validate_codex_response(
     CodexTakeRole::CodexAuditTake,
     response,
   ).unwrap()
+  assert_true(retained.contains("\"repair_findings\""))
+  assert_true(retained.contains("\"src/example.mbt\""))
   assert_true(retained.contains("\"migration_findings\""))
   assert_true(retained.contains("\"RuleViolation\""))
 }

@@ -297,6 +297,100 @@ pub fn maximum_part_conflict_repairs() -> Int {
 }
 
 ///|
+pub fn maximum_part_audit_repairs() -> Int {
+  2
+}
+
+///|
+fn audit_repair_mutation_score(
+  declaration : @control.MutationDeclaration,
+  path : @control.RepoPath,
+) -> Int {
+  let mut score = 0
+  match declaration {
+    @control.MutationDeclaration::CompleteMutationDeclaration(claims) =>
+      for claim in claims {
+        match claim {
+          @control.MutationClaim::ExactPath(exact) if exact == path =>
+            score = score.max(3000000)
+          @control.MutationClaim::PathTree(tree) if @control.mutation_claim_covers(
+              claim, path,
+            ) =>
+            score = score.max(2000000 + @control.repo_path_text(tree).length())
+          @control.MutationClaim::RepositoryWide => score = score.max(1000000)
+          _ => ()
+        }
+      }
+    _ => ()
+  }
+  score
+}
+
+///|
+fn goal_audit_repair_owner(
+  snapshots : Array[PartWorkflowSnapshot],
+  path : @control.RepoPath,
+) -> @control.PartId? {
+  let mut selected : @control.PartId? = None
+  let mut selected_score = 0
+  for snapshot in snapshots {
+    let mut score = audit_repair_mutation_score(
+      snapshot.task_contract.mutation_declaration,
+      path,
+    )
+    match snapshot.candidate {
+      Some(candidate) if candidate.changed_paths.contains(path) =>
+        score = score + 4000000
+      _ => ()
+    }
+    if score > selected_score {
+      selected = Some(snapshot.part.id)
+      selected_score = score
+    } else if score == selected_score && score > 0 {
+      match selected {
+        Some(current) if snapshot.part.id.compare(current) < 0 =>
+          selected = Some(snapshot.part.id)
+        _ => ()
+      }
+    }
+  }
+  selected
+}
+
+///|
+pub fn plan_goal_audit_repair_routes(
+  snapshots : Array[PartWorkflowSnapshot],
+  paths : Array[@control.RepoPath],
+) -> Result[Array[PartAuditRepairRoute], @types.ChoirError] {
+  if snapshots.length() == 0 || paths.length() == 0 {
+    return Err(workflow_error("Goal audit repair has no routable work"))
+  }
+  let routes : Array[PartAuditRepairRoute] = []
+  for path in paths {
+    let owner = match goal_audit_repair_owner(snapshots, path) {
+      Some(value) => value
+      None => return Err(workflow_error("Goal audit repair path is unowned"))
+    }
+    let mut route_index = -1
+    for index, route in routes {
+      if route.part_id == owner {
+        route_index = index
+      }
+    }
+    if route_index < 0 {
+      routes.push({ part_id: owner, affected_paths: [path] })
+    } else {
+      routes[route_index] = {
+        ..routes[route_index],
+        affected_paths: routes[route_index].affected_paths + [path],
+      }
+    }
+  }
+  routes.sort_by(fn(left, right) { left.part_id.compare(right.part_id) })
+  Ok(routes)
+}
+
+///|
 fn conflict_repair_take_is_fresh(
   previous : @control.Take,
   repair : @control.Take,
@@ -429,6 +523,167 @@ pub fn plan_part_conflict_repair(
           audit_result: snapshot.audit_result,
           audit_receipt: snapshot.audit_receipt,
           integration_intent: snapshot.integration_intent,
+          integration_receipt: snapshot.integration_receipt,
+        },
+      ],
+      sandbox_leases: snapshot.sandbox_leases,
+      harness_sessions: snapshot.harness_sessions,
+      harness_events: snapshot.harness_events,
+      integration_conflicts: snapshot.integration_conflicts,
+      effect_receipts: snapshot.effect_receipts,
+    }),
+  )
+}
+
+///|
+pub fn plan_part_audit_repair(
+  snapshot : PartWorkflowSnapshot,
+  repair : @control.AuditRepairReference,
+  contract : @control.TaskContractRevision,
+  identities : PartIdentityPlan,
+  is_nfc : (String) -> Bool,
+) -> Result[PartAuditRepairDecision, @types.ChoirError] {
+  if snapshot.pending_effect is Some(_) {
+    return Err(workflow_error("Part has an unresolved effect"))
+  }
+  let eligible = match (snapshot.part.lifecycle, repair.scope) {
+    (
+      @control.PartLifecycle::PartBlocked(
+        @control.PartBlockReason::PartAuditFindings
+      ),
+      @control.AuditRepairScope::PartAuditRepair,
+    ) =>
+      match snapshot.audit_result {
+        Some(result) =>
+          result.id == repair.audit_result_id &&
+          result.result_digest == repair.audit_result_digest &&
+          result.findings_artifact == Some(repair.findings_artifact)
+        None => false
+      }
+    (
+      @control.PartLifecycle::PartIntegrated(_),
+      @control.AuditRepairScope::GoalAuditRepair,
+    ) => true
+    _ => false
+  }
+  if !eligible ||
+    (snapshot.stage != PartBlocked && snapshot.stage != PartIntegrated) {
+    return Err(workflow_error("Part is not eligible for audit repair"))
+  }
+  let mut prior_repairs = 0
+  for previous in snapshot.task_contract_history {
+    if previous.repair_audit is Some(_) {
+      prior_repairs = prior_repairs + 1
+    }
+  }
+  if prior_repairs >= maximum_part_audit_repairs() {
+    return Ok(PartAuditRepairLimitReached)
+  }
+  if snapshot.task_contract_history.length() == 0 ||
+    snapshot.task_contract_history[snapshot.task_contract_history.length() - 1] !=
+    snapshot.task_contract ||
+    contract.id == snapshot.task_contract.id ||
+    contract.digest == snapshot.task_contract.digest ||
+    contract.goal_id != snapshot.goal.id ||
+    contract.part_id != snapshot.part.id ||
+    contract.revision != snapshot.task_contract.revision + 1 ||
+    contract.repair_conflict_id is Some(_) ||
+    contract.repair_audit != Some(repair) ||
+    contract.mutation_declaration != snapshot.task_contract.mutation_declaration ||
+    !conflict_repair_take_is_fresh(
+      snapshot.implementation_take,
+      identities.implementation_take,
+    ) ||
+    !conflict_repair_take_is_fresh(
+      snapshot.verification_take,
+      identities.verification_take,
+    ) ||
+    !conflict_repair_take_is_fresh(snapshot.audit_take, identities.audit_take) {
+    return Err(workflow_error("audit repair identity plan is invalid"))
+  }
+  match @control.validate_task_contract_revision(contract, is_nfc) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let used_take_ids = snapshot.prior_takes.map(fn(take) { take.id }) +
+    [
+      snapshot.implementation_take.id,
+      snapshot.verification_take.id,
+      snapshot.audit_take.id,
+    ]
+  if used_take_ids.contains(identities.implementation_take.id) ||
+    used_take_ids.contains(identities.verification_take.id) ||
+    used_take_ids.contains(identities.audit_take.id) {
+    return Err(workflow_error("audit repair reuses a prior Take identity"))
+  }
+  let pending_part = {
+    ..snapshot.part,
+    task_contract_revision_id: contract.id,
+    lifecycle: @control.PartLifecycle::PartPending,
+  }
+  let repair_context_manifest = match snapshot.part_context_manifest {
+    Some(manifest) =>
+      Some({
+        ..manifest,
+        migration_contract_ref: match contract.migration_contract_ref {
+          Some(reference) => reference
+          None =>
+            return Err(workflow_error("audit repair drops migration context"))
+        },
+        part_task_contract_revision_id: contract.id,
+        part_task_contract_digest: contract.digest,
+      })
+    None => None
+  }
+  let initialized = match
+    initialize_part_workflow(
+      snapshot.workflow_id,
+      snapshot.goal,
+      pending_part,
+      contract,
+      identities,
+      snapshot.fencing_epoch,
+      is_nfc,
+      part_context_manifest=repair_context_manifest,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let repaired_part = match
+    @control.transition_part(
+      snapshot.part,
+      @control.PartTransition::StartPartAuditRepair(
+        repair.audit_result_id,
+        identities.implementation_take.id,
+      ),
+    ) {
+    Ok(value) => { ..value, task_contract_revision_id: contract.id }
+    Err(error) => return Err(error)
+  }
+  Ok(
+    PartAuditRepairPlanned({
+      ..initialized,
+      durable_version: snapshot.durable_version + 1,
+      part: repaired_part,
+      task_contract_history: snapshot.task_contract_history + [contract],
+      prior_takes: snapshot.prior_takes +
+      [
+        snapshot.implementation_take,
+        snapshot.verification_take,
+        snapshot.audit_take,
+      ],
+      prior_take_evidence: snapshot.prior_take_evidence +
+      [
+        {
+          task_contract_revision_id: snapshot.task_contract.id,
+          implementation_result: snapshot.implementation_result,
+          candidate: snapshot.candidate,
+          verification_receipts: snapshot.verification_receipts,
+          verification_authorization: snapshot.verification_authorization,
+          audit_result: snapshot.audit_result,
+          audit_receipt: snapshot.audit_receipt,
+          integration_intent: snapshot.integration_intent,
+          integration_receipt: snapshot.integration_receipt,
         },
       ],
       sandbox_leases: snapshot.sandbox_leases,
@@ -532,6 +787,7 @@ pub fn plan_part_retry(
         audit_result: snapshot.audit_result,
         audit_receipt: snapshot.audit_receipt,
         integration_intent: snapshot.integration_intent,
+        integration_receipt: snapshot.integration_receipt,
       },
     ],
     sandbox_leases: snapshot.sandbox_leases,

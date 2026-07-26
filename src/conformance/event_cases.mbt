@@ -247,6 +247,7 @@ fn event_authorized_provider_dispatch_fixture() -> (
       revision: 1,
       digest: event_case_digest,
       repair_conflict_id: None,
+      repair_audit: None,
       instruction_artifact: {
         artifact_id: "event-process-loss-instruction",
         digest: event_case_digest,

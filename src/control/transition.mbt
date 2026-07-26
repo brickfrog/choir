@@ -106,6 +106,9 @@ pub fn transition_part_lifecycle(
       }
     (PartBlocked(PartIntegrationConflict), StartPartConflictRepair(_, take_id)) =>
       Ok(PartExecuting(take_id))
+    (PartBlocked(PartAuditFindings), StartPartAuditRepair(_, take_id))
+    | (PartIntegrated(_), StartPartAuditRepair(_, take_id)) =>
+      Ok(PartExecuting(take_id))
     (PartBlocked(PartIntegrationConflict), RestartBlockedPart(_)) =>
       Err(
         invalid_transition(
@@ -130,6 +133,12 @@ pub fn transition_part_lifecycle(
       Err(
         invalid_transition(
           "Part", "conflict repair requires an integration conflict",
+        ),
+      )
+    (PartBlocked(_), StartPartAuditRepair(_, _)) =>
+      Err(
+        invalid_transition(
+          "Part", "audit repair requires blocking audit findings",
         ),
       )
     (PartBlocked(_), _) =>

@@ -80,12 +80,34 @@ fn valid_conflict_repair_successor(
 }
 
 ///|
+fn valid_audit_repair_successor(
+  expected : GoalPartSchedulingRecord,
+  observed : GoalPartSchedulingRecord,
+) -> Bool {
+  same_part_identity(expected, observed) &&
+  expected.part.lifecycle
+  is @control.PartLifecycle::PartBlocked(
+    @control.PartBlockReason::PartAuditFindings
+  ) &&
+  observed.task_contract.revision == expected.task_contract.revision + 1 &&
+  observed.task_contract.repair_audit is Some(_) &&
+  (match observed.part.lifecycle {
+    @control.PartLifecycle::PartExecuting(_)
+    | @control.PartLifecycle::PartCandidate(_)
+    | @control.PartLifecycle::PartVerified(_, _)
+    | @control.PartLifecycle::PartAudited(_, _, _)
+    | @control.PartLifecycle::PartBlocked(_) => true
+    _ => false
+  })
+}
+
+///|
 fn valid_advance_result(
   expected : GoalPartSchedulingRecord,
   observed : GoalPartSchedulingRecord,
 ) -> Bool {
   if !same_part_contract(expected, observed) {
-    return false
+    return valid_audit_repair_successor(expected, observed)
   }
   if observed == expected {
     return true

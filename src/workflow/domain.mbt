@@ -44,6 +44,7 @@ pub(all) struct PriorPartTakeEvidence {
   audit_result : @control.AuditResult?
   audit_receipt : @control.AuditReceipt?
   integration_intent : @control.IntegrationIntent?
+  integration_receipt : @control.IntegrationReceipt?
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -280,4 +281,16 @@ pub(all) struct PartWorkflowSnapshot {
 pub(all) enum PartConflictRepairDecision {
   PartConflictRepairPlanned(PartWorkflowSnapshot)
   PartConflictRepairLimitReached
+} derive(Debug, Eq)
+
+///|
+pub(all) enum PartAuditRepairDecision {
+  PartAuditRepairPlanned(PartWorkflowSnapshot)
+  PartAuditRepairLimitReached
+} derive(Debug, Eq)
+
+///|
+pub(all) struct PartAuditRepairRoute {
+  part_id : @control.PartId
+  affected_paths : Array[@control.RepoPath]
 } derive(Debug, Eq)

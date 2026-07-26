@@ -89,6 +89,7 @@ pub(all) enum GoalCancellationCause {
   GoalCancellationUserRequested
   GoalCancellationEvidenceOnlyCompleted(@control.Digest, @control.Digest)
   GoalCancellationSupersededByContractRevision(@control.Digest)
+  GoalCancellationAuditRepairFailed(@control.Digest)
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -933,6 +934,8 @@ fn goal_execution_cancellation_shape_is_valid(
           @storage.validate_digest(assurance_digest) is Ok(_)
         GoalCancellationSupersededByContractRevision(digest) =>
           @storage.validate_digest(digest) is Ok(_)
+        GoalCancellationAuditRepairFailed(digest) =>
+          @storage.validate_digest(digest) is Ok(_)
       })
     (GoalExecutionCanceling | GoalExecutionCanceled, None) => false
     (_, None) => true
@@ -1696,6 +1699,10 @@ pub fn request_goal_execution_cancellation(
         GoalCancellationSupersededByContractRevision(digest) =>
           if @storage.validate_digest(digest) is Err(_) {
             return Err(goal_execution_error("supersession digest is invalid"))
+          }
+        GoalCancellationAuditRepairFailed(digest) =>
+          if @storage.validate_digest(digest) is Err(_) {
+            return Err(goal_execution_error("audit repair digest is invalid"))
           }
         GoalCancellationUserRequested => ()
       }

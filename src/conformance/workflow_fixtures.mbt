@@ -56,6 +56,7 @@ fn scheduling_fixture_record(
       revision: 1,
       digest: scheduling_fixture_digest,
       repair_conflict_id: None,
+      repair_audit: None,
       instruction_artifact: {
         artifact_id: "instruction-" + id,
         digest: scheduling_fixture_digest,
@@ -1101,6 +1102,7 @@ fn selection_fixture_part(
       revision: 1,
       digest: selection_fixture_digest,
       repair_conflict_id: None,
+      repair_audit: None,
       instruction_artifact: {
         artifact_id: "instruction-" + id,
         digest: selection_fixture_digest,
@@ -1684,6 +1686,7 @@ pub fn integration_conflict_repair_case() -> HermeticConformanceCase {
         revision: 2,
         digest: ownership_digest_b,
         repair_conflict_id: Some(conflict.id),
+        repair_audit: None,
         base_commit_oid: conflict.expected_goal_head_oid,
         base_tree_oid: conflict.expected_goal_head_tree_oid,
       }

@@ -137,6 +137,7 @@ fn workflow_store_fixture() -> @workflow.PartWorkflowSnapshot raise {
     revision: 1,
     digest: workflow_store_digest_a,
     repair_conflict_id: None,
+    repair_audit: None,
     instruction_artifact: {
       artifact_id: "instruction-store",
       digest: workflow_store_digest_a,
@@ -1207,6 +1208,9 @@ async test "Goal adapter accepts the exact stored contract revision" {
     plan_conflict_repair: fn(_) {
       Err(@types.ChoirError::validation_error("repair is not expected"))
     },
+    plan_audit_repair: fn(_) {
+      Err(@types.ChoirError::validation_error("repair is not expected"))
+    },
     read_goal_head: () => Ok(@control.GitOid("goal-head-store")),
   }
   let record : @workflow.GoalPartSchedulingRecord = {
@@ -1274,6 +1278,9 @@ async test "Goal adapter resumes promotion after a durable rollback" {
     plan_conflict_repair: fn(_) {
       Ok(@workflow.PartConflictRepairDecision::PartConflictRepairLimitReached)
     },
+    plan_audit_repair: fn(_) {
+      Ok(@workflow.PartAuditRepairDecision::PartAuditRepairLimitReached)
+    },
     read_goal_head: () => Ok(@control.GitOid("goal-head-store")),
   }
   let adapters = @exec.goal_part_workflow_adapters(config)
@@ -1339,6 +1346,9 @@ async test "Goal cancellation atomically rejects stale seal authorization" {
     },
     plan_conflict_repair: fn(_) {
       Ok(@workflow.PartConflictRepairDecision::PartConflictRepairLimitReached)
+    },
+    plan_audit_repair: fn(_) {
+      Ok(@workflow.PartAuditRepairDecision::PartAuditRepairLimitReached)
     },
     read_goal_head: () => Ok(@control.GitOid("goal-head-store")),
   }

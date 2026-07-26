@@ -193,6 +193,29 @@ pub fn validate_task_contract_revision(
       valid_lower_hex_digest(reference.contract_artifact_digest)
     None => true
   }
+  let audit_repair_valid = match contract.repair_audit {
+    Some(repair) => {
+      let mut previous : RepoPath? = None
+      let mut valid = contract.repair_conflict_id is None &&
+        repair.audit_result_id.0 != "" &&
+        valid_lower_hex_digest(repair.audit_result_digest) &&
+        repair.findings_artifact.artifact_id != "" &&
+        valid_lower_hex_digest(repair.findings_artifact.digest) &&
+        repair.affected_paths.length() > 0
+      for path in repair.affected_paths {
+        if validate_repo_path(path, is_nfc) is Err(_) ||
+          !mutation_declaration_covers(contract.mutation_declaration, path) {
+          valid = false
+        }
+        match previous {
+          Some(value) if value.compare(path) >= 0 => valid = false
+          _ => previous = Some(path)
+        }
+      }
+      valid
+    }
+    None => true
+  }
   let continuation_identity_valid = match
     contract.migration_continuation_ref_digest {
     Some(digest) =>
@@ -202,6 +225,8 @@ pub fn validate_task_contract_revision(
   }
   if contract.revision <= 0 ||
     !repair_identity_valid ||
+    !audit_repair_valid ||
+    (contract.repair_conflict_id is Some(_) && contract.repair_audit is Some(_)) ||
     !migration_identity_valid ||
     !continuation_identity_valid ||
     !valid_lower_hex_digest(contract.digest) ||

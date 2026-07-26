@@ -289,7 +289,6 @@ fn finding_disposition_tag(disposition : MigrationFindingDisposition) -> String 
     ReviseContract => "revise-contract"
     ReviseJudge => "revise-judge"
     FollowUpGoalRequired => "follow-up-goal-required"
-    AwaitUserDecision => "await-user-decision"
   }
 }
 

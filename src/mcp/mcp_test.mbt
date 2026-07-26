@@ -120,7 +120,8 @@ test "Conductor catalog exposes only Goal and Beads operations" {
   assert_true(rendered.contains("\"provider\""))
   assert_true(rendered.contains("\"enum\":[\"codex\",\"claude\"]"))
   assert_true(rendered.contains("\"default\":\"codex\""))
-  assert_true(rendered.contains("never authorizes an automatic retry"))
+  assert_true(rendered.contains("Audit repair is owned by choird"))
+  assert_true(rendered.contains("Never ask the user"))
   assert_true(
     rendered.contains("consumes the request's one mutation allowance"),
   )
@@ -209,7 +210,7 @@ test "initialize response reserves workflow authority for choird" {
   assert_true(instructions.contains("Do not execute a Part yourself"))
   // The block orients the Conductor and defers detail to the tool catalog it
   // ships alongside; it does not restate per-tool or per-field rules.
-  assert_true(instructions.contains("they are authoritative"))
+  assert_true(instructions.contains("schemas are authoritative"))
   assert_true(instructions.length() < 1400)
 }
 

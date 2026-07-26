@@ -124,7 +124,7 @@ fn native_codex_role_prompt(role : @harness.CodexTakeRole) -> String {
   match role {
     @harness.CodexTakeRole::CodexImplementationTake =>
       common +
-      "Complete the instruction in the sandbox. End with exactly {\"outcome\":\"completed\"}."
+      "Complete the instruction in the sandbox. If its prose or acceptance criteria appear internally contradictory, choose and implement the narrowest executable interpretation that preserves the requested outcome and verification intent; never stop to request user input. End with exactly {\"outcome\":\"completed\"}."
     @harness.CodexTakeRole::CodexAuditTake =>
       common +
       "Your first action must be a read_file call for a repository path named in the supplied Part task. Call read_file for every path the Part task permits to change, and do not return before those calls succeed. Independently audit the supplied candidate. Return outcome passed with zero counts when clean, otherwise outcome findings with exact total and blocking counts." +
@@ -152,9 +152,11 @@ fn native_codex_output_schema(role : @harness.CodexTakeRole) -> String {
         "type": "integer".to_json(),
         "minimum": (0).to_json(),
       }.to_json()
+      properties["repair_findings"] = native_repair_findings_output_schema()
       properties["migration_findings"] = native_migration_findings_output_schema()
       required.push("total_findings")
       required.push("blocking_findings")
+      required.push("repair_findings")
       required.push("migration_findings")
     }
     _ => ()
@@ -2359,10 +2361,11 @@ test "native Codex Take schemas constrain every terminal role" {
   assert_true(implementation.contains("\"completed\""))
   assert_true(audit.contains("\"total_findings\""))
   assert_true(audit.contains("\"blocking_findings\""))
+  assert_true(audit.contains("\"repair_findings\""))
   assert_true(audit.contains("\"migration_findings\""))
   assert_true(
     audit.contains(
-      "\"required\":[\"outcome\",\"total_findings\",\"blocking_findings\",\"migration_findings\"]",
+      "\"required\":[\"outcome\",\"total_findings\",\"blocking_findings\",\"repair_findings\",\"migration_findings\"]",
     ),
   )
   assert_true(audit.contains("\"additionalProperties\":false"))

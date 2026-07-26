@@ -1207,6 +1207,27 @@ async fn execute_native_audit(
       (@control.AuditOutcome::AuditFindings, total, blocking)
     _ => return Err(native_part_effect_error("audit outcome is invalid"))
   }
+  match
+    native_audit_repair_findings(provider.terminal_response, total, blocking) {
+    Ok(repair_findings) =>
+      for finding in repair_findings {
+        if finding.severity == NativeRepairFindingSeverity::Blocking {
+          for raw_path in finding.affected_paths {
+            if !@control.mutation_declaration_covers(
+                snapshot.task_contract.mutation_declaration,
+                @control.RepoPath(raw_path),
+              ) {
+              return Err(
+                native_part_effect_error(
+                  "blocking audit repair path is outside the Part mutation declaration",
+                ),
+              )
+            }
+          }
+        }
+      }
+    Err(error) => return Err(error)
+  }
   let findings = match snapshot.task_contract.migration_contract_ref {
     Some(_) =>
       match

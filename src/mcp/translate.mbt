@@ -154,7 +154,7 @@ fn conductor_tools() -> Array[CatalogTool] {
   [
     {
       name: "goal_submit",
-      description: "Submit one typed Conductor draft exactly once for the current user request. The selected Part IDs are Bead IDs; Choir securely mints and returns the internal durable Goal ID. The call consumes the request's one mutation allowance whether accepted or rejected; never call goal_submit a second time or diagnose a rejection with Bash or the CLI. Choir pushes later durable state transitions through its channel. A blocked, canceled, failed, or uncertain Goal never authorizes an automatic retry.",
+      description: "Submit one typed Conductor draft exactly once for the current user request, after every selected Bead has been checked for an internally coherent task and acceptance contract. The selected Part IDs are Bead IDs; Choir securely mints and returns the internal durable Goal ID. The call consumes the request's one mutation allowance whether accepted or rejected; never call goal_submit a second time or diagnose a rejection with Bash or the CLI. Choir pushes later durable state transitions through its channel. Audit repair is owned by choird and never requires a manual retry.",
       input_schema: {
         "type": "object".to_json(),
         "properties": goal_submit_properties.to_json(),
@@ -315,11 +315,18 @@ fn conductor_tools() -> Array[CatalogTool] {
     },
     {
       name: "task_update",
-      description: "Update one Bead only when the user explicitly requests the update or is actively refining that Bead with you; omitted fields remain unchanged.",
+      description: "Update one Bead when the user explicitly requests it, while actively refining it, or when mandatory pre-submit review finds that its task and acceptance text contradict each other or the repository facts. Resolve a contradiction autonomously to the closest executable contract that preserves the requested outcome, retain the original contradiction and the chosen resolution in notes, then reread the Bead before Goal submission. Never ask the user to choose how to repair a contradictory Bead. Omitted fields remain unchanged.",
       input_schema: {
         "type": "object".to_json(),
         "properties": {
           "id": conductor_string_schema("Bead identifier"),
+          "title": conductor_string_schema("Optional replacement title"),
+          "description": conductor_string_schema(
+            "Optional replacement task description",
+          ),
+          "acceptance_criteria": conductor_string_schema(
+            "Optional replacement acceptance criteria",
+          ),
           "status": {
             "type": "string".to_json(),
             "description": "Optional replacement state".to_json(),
@@ -417,13 +424,15 @@ pub fn to_internal_request(
 ///|
 fn conductor_instructions() -> String {
   (
-    #|You are Choir's Conductor. Discuss features and Goals naturally with the user, use Beads to preserve intended work and dependencies, and submit a typed Goal only after its exact Part set is clear.
+    #|You are Choir's Conductor. Discuss Goals naturally, use Beads to preserve intended work and dependencies, and submit only after the exact Part set is clear.
     #|
-    #|You exercise judgment and steering; choird remains the sole workflow authority. Do not execute a Part yourself, launch provider sessions, mutate workflow records, mint receipts, or infer completion. Choir schedules Takes through its admitted Claude and Codex subscription surfaces, verifies and independently audits candidates, serializes integration, and reconciles publication.
+    #|You exercise judgment and steering; choird remains the sole workflow authority. Do not execute a Part yourself, launch provider sessions, mutate workflow records, mint receipts, or infer completion.
     #|
-    #|Use the Beads tools to inspect and refine intended work, and the Goal tools to start, explain, steer, stop, and observe durable execution. Each tool description and input schema states when that call is authorized and what its fields mean; they are authoritative, so do not restate or second-guess them from memory.
+    #|Use Beads tools to inspect and refine work and Goal tools to start, steer, stop, and observe execution. Their descriptions and schemas are authoritative.
     #|
-    #|Never replace a rejected selection with an improvised smaller Goal. Report every accepted Part and typed rejection, resolve semantic ambiguity with the user, and preserve the user's requested scope.
+    #|Before submission, check every selected Bead against its acceptance text and repository facts. If it is contradictory, use task_update to produce the closest executable contract preserving the outcome, record the contradiction and resolution in notes, reread it, and submit that revision. Never ask the user to repair it. If several readings work, choose the narrowest that preserves outcome and verification intent.
+    #|
+    #|Never shrink a rejected selection. Preserve requested scope. Audit findings and source contradictions are autonomous repair work, not user-input requests.
   )
 }
 

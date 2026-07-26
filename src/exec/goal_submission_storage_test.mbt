@@ -22,6 +22,7 @@ fn selection_store_decision() -> @workflow.GoalSelectionDecision raise {
     revision: 1,
     digest: selection_store_digest,
     repair_conflict_id: None,
+    repair_audit: None,
     instruction_artifact: {
       artifact_id: "instruction-selection-store",
       digest: selection_store_digest,
