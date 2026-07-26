@@ -85,12 +85,47 @@ fn valid_audit_repair_successor(
   observed : GoalPartSchedulingRecord,
 ) -> Bool {
   same_part_identity(expected, observed) &&
-  expected.part.lifecycle
-  is @control.PartLifecycle::PartBlocked(
-    @control.PartBlockReason::PartAuditFindings
-  ) &&
+  (match expected.part.lifecycle {
+    @control.PartLifecycle::PartPending
+    | @control.PartLifecycle::PartReady
+    | @control.PartLifecycle::PartExecuting(_)
+    | @control.PartLifecycle::PartCandidate(_)
+    | @control.PartLifecycle::PartVerified(_, _)
+    | @control.PartLifecycle::PartBlocked(
+      @control.PartBlockReason::PartAuditFindings
+    ) => true
+    _ => false
+  }) &&
   observed.task_contract.revision == expected.task_contract.revision + 1 &&
   observed.task_contract.repair_audit is Some(_) &&
+  (match observed.part.lifecycle {
+    @control.PartLifecycle::PartExecuting(_)
+    | @control.PartLifecycle::PartCandidate(_)
+    | @control.PartLifecycle::PartVerified(_, _)
+    | @control.PartLifecycle::PartAudited(_, _, _)
+    | @control.PartLifecycle::PartBlocked(_) => true
+    _ => false
+  })
+}
+
+///|
+fn valid_verification_repair_successor(
+  expected : GoalPartSchedulingRecord,
+  observed : GoalPartSchedulingRecord,
+) -> Bool {
+  same_part_identity(expected, observed) &&
+  (match expected.part.lifecycle {
+    @control.PartLifecycle::PartPending
+    | @control.PartLifecycle::PartReady
+    | @control.PartLifecycle::PartExecuting(_)
+    | @control.PartLifecycle::PartCandidate(_)
+    | @control.PartLifecycle::PartBlocked(
+      @control.PartBlockReason::PartVerificationFailed
+    ) => true
+    _ => false
+  }) &&
+  observed.task_contract.revision == expected.task_contract.revision + 1 &&
+  observed.task_contract.repair_verification is Some(_) &&
   (match observed.part.lifecycle {
     @control.PartLifecycle::PartExecuting(_)
     | @control.PartLifecycle::PartCandidate(_)
@@ -107,7 +142,8 @@ fn valid_advance_result(
   observed : GoalPartSchedulingRecord,
 ) -> Bool {
   if !same_part_contract(expected, observed) {
-    return valid_audit_repair_successor(expected, observed)
+    return valid_audit_repair_successor(expected, observed) ||
+      valid_verification_repair_successor(expected, observed)
   }
   if observed == expected {
     return true

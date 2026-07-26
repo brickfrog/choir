@@ -302,6 +302,11 @@ pub fn maximum_part_audit_repairs() -> Int {
 }
 
 ///|
+pub fn maximum_part_verification_repairs() -> Int {
+  2
+}
+
+///|
 fn audit_repair_mutation_score(
   declaration : @control.MutationDeclaration,
   path : @control.RepoPath,
@@ -662,6 +667,166 @@ pub fn plan_part_audit_repair(
   }
   Ok(
     PartAuditRepairPlanned({
+      ..initialized,
+      durable_version: snapshot.durable_version + 1,
+      part: repaired_part,
+      task_contract_history: snapshot.task_contract_history + [contract],
+      prior_takes: snapshot.prior_takes +
+      [
+        snapshot.implementation_take,
+        snapshot.verification_take,
+        snapshot.audit_take,
+      ],
+      prior_take_evidence: snapshot.prior_take_evidence +
+      [
+        {
+          task_contract_revision_id: snapshot.task_contract.id,
+          implementation_result: snapshot.implementation_result,
+          candidate: snapshot.candidate,
+          verification_receipts: snapshot.verification_receipts,
+          verification_authorization: snapshot.verification_authorization,
+          audit_result: snapshot.audit_result,
+          audit_receipt: snapshot.audit_receipt,
+          integration_intent: snapshot.integration_intent,
+          integration_receipt: snapshot.integration_receipt,
+        },
+      ],
+      sandbox_leases: snapshot.sandbox_leases,
+      harness_sessions: snapshot.harness_sessions,
+      harness_events: snapshot.harness_events,
+      integration_conflicts: snapshot.integration_conflicts,
+      effect_receipts: snapshot.effect_receipts,
+    }),
+  )
+}
+
+///|
+pub fn plan_part_verification_repair(
+  snapshot : PartWorkflowSnapshot,
+  repair : @control.VerificationRepairReference,
+  contract : @control.TaskContractRevision,
+  identities : PartIdentityPlan,
+  is_nfc : (String) -> Bool,
+) -> Result[PartVerificationRepairDecision, @types.ChoirError] {
+  if snapshot.pending_effect is Some(_) {
+    return Err(workflow_error("Part has an unresolved effect"))
+  }
+  let mut evidence_matches = false
+  for receipt in snapshot.verification_receipts {
+    if receipt.receipt_id == repair.receipt_id &&
+      receipt.verification_execution_id == repair.verification_execution_id &&
+      receipt.subject.subject_digest == repair.subject_digest &&
+      receipt.evidence == repair.evidence_artifact &&
+      receipt.subject.task_contract_revision_id == snapshot.task_contract.id &&
+      receipt.outcome != @control.VerificationOutcome::VerificationPassed {
+      evidence_matches = true
+    }
+  }
+  if snapshot.stage != PartBlocked ||
+    !(snapshot.part.lifecycle
+    is @control.PartLifecycle::PartBlocked(
+      @control.PartBlockReason::PartVerificationFailed
+    )) ||
+    !evidence_matches {
+    return Err(workflow_error("Part is not eligible for verification repair"))
+  }
+  let mut prior_repairs = 0
+  for previous in snapshot.task_contract_history {
+    if previous.repair_verification is Some(_) {
+      prior_repairs = prior_repairs + 1
+    }
+  }
+  if prior_repairs >= maximum_part_verification_repairs() {
+    return Ok(PartVerificationRepairLimitReached)
+  }
+  if snapshot.task_contract_history.length() == 0 ||
+    snapshot.task_contract_history[snapshot.task_contract_history.length() - 1] !=
+    snapshot.task_contract ||
+    contract.id == snapshot.task_contract.id ||
+    contract.digest == snapshot.task_contract.digest ||
+    contract.goal_id != snapshot.goal.id ||
+    contract.part_id != snapshot.part.id ||
+    contract.revision != snapshot.task_contract.revision + 1 ||
+    contract.repair_conflict_id is Some(_) ||
+    contract.repair_audit is Some(_) ||
+    contract.repair_verification != Some(repair) ||
+    contract.mutation_declaration != snapshot.task_contract.mutation_declaration ||
+    !conflict_repair_take_is_fresh(
+      snapshot.implementation_take,
+      identities.implementation_take,
+    ) ||
+    !conflict_repair_take_is_fresh(
+      snapshot.verification_take,
+      identities.verification_take,
+    ) ||
+    !conflict_repair_take_is_fresh(snapshot.audit_take, identities.audit_take) {
+    return Err(workflow_error("verification repair identity plan is invalid"))
+  }
+  match @control.validate_task_contract_revision(contract, is_nfc) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let used_take_ids = snapshot.prior_takes.map(fn(take) { take.id }) +
+    [
+      snapshot.implementation_take.id,
+      snapshot.verification_take.id,
+      snapshot.audit_take.id,
+    ]
+  if used_take_ids.contains(identities.implementation_take.id) ||
+    used_take_ids.contains(identities.verification_take.id) ||
+    used_take_ids.contains(identities.audit_take.id) {
+    return Err(
+      workflow_error("verification repair reuses a prior Take identity"),
+    )
+  }
+  let pending_part = {
+    ..snapshot.part,
+    task_contract_revision_id: contract.id,
+    lifecycle: @control.PartLifecycle::PartPending,
+  }
+  let repair_context_manifest = match snapshot.part_context_manifest {
+    Some(manifest) =>
+      Some({
+        ..manifest,
+        migration_contract_ref: match contract.migration_contract_ref {
+          Some(reference) => reference
+          None =>
+            return Err(
+              workflow_error("verification repair drops migration context"),
+            )
+        },
+        part_task_contract_revision_id: contract.id,
+        part_task_contract_digest: contract.digest,
+      })
+    None => None
+  }
+  let initialized = match
+    initialize_part_workflow(
+      snapshot.workflow_id,
+      snapshot.goal,
+      pending_part,
+      contract,
+      identities,
+      snapshot.fencing_epoch,
+      is_nfc,
+      part_context_manifest=repair_context_manifest,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let repaired_part = match
+    @control.transition_part(
+      snapshot.part,
+      @control.PartTransition::StartPartVerificationRepair(
+        repair.receipt_id,
+        identities.implementation_take.id,
+      ),
+    ) {
+    Ok(value) => { ..value, task_contract_revision_id: contract.id }
+    Err(error) => return Err(error)
+  }
+  Ok(
+    PartVerificationRepairPlanned({
       ..initialized,
       durable_version: snapshot.durable_version + 1,
       part: repaired_part,

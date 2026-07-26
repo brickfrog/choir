@@ -120,7 +120,9 @@ test "Conductor catalog exposes only Goal and Beads operations" {
   assert_true(rendered.contains("\"provider\""))
   assert_true(rendered.contains("\"enum\":[\"codex\",\"claude\"]"))
   assert_true(rendered.contains("\"default\":\"codex\""))
-  assert_true(rendered.contains("Audit repair is owned by choird"))
+  assert_true(
+    rendered.contains("Verification and audit repair are owned by choird"),
+  )
   assert_true(rendered.contains("Never ask the user"))
   assert_true(
     rendered.contains("consumes the request's one mutation allowance"),

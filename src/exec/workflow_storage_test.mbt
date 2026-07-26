@@ -138,6 +138,7 @@ fn workflow_store_fixture() -> @workflow.PartWorkflowSnapshot raise {
     digest: workflow_store_digest_a,
     repair_conflict_id: None,
     repair_audit: None,
+    repair_verification: None,
     instruction_artifact: {
       artifact_id: "instruction-store",
       digest: workflow_store_digest_a,
@@ -1211,6 +1212,9 @@ async test "Goal adapter accepts the exact stored contract revision" {
     plan_audit_repair: fn(_) {
       Err(@types.ChoirError::validation_error("repair is not expected"))
     },
+    plan_verification_repair: fn(_) {
+      Err(@types.ChoirError::validation_error("repair is not expected"))
+    },
     read_goal_head: () => Ok(@control.GitOid("goal-head-store")),
   }
   let record : @workflow.GoalPartSchedulingRecord = {
@@ -1225,6 +1229,275 @@ async test "Goal adapter accepts the exact stored contract revision" {
   assert_eq(observed, record)
   assert_eq(execute_count.val, 0)
   assert_eq(reconcile_count.val, 0)
+  clean_workflow_repository(repository)
+}
+
+///|
+async test "Goal adapter persists an autonomous verification repair revision" {
+  let repository = workflow_repository("goal-adapter-verification-repair")
+  clean_workflow_repository(repository)
+  let adapters = workflow_repository_adapters()
+  guard @workflow.initialize_part_workflow_repository(repository, adapters)
+    is Ok(_) else {
+    fail("initialize verification-repair repository")
+  }
+  let initial = workflow_store_fixture()
+  let failed_subject : @control.PartVerificationSubject = {
+    part_id: initial.part.id,
+    candidate_take_id: initial.implementation_take.id,
+    candidate_commit_oid: @control.GitOid("candidate-store"),
+    candidate_tree_oid: @control.GitOid("candidate-tree-store"),
+    task_contract_revision_id: initial.task_contract.id,
+    task_contract_digest: initial.task_contract.digest,
+    subject_digest: workflow_store_digest_b,
+  }
+  let failed_receipt : @control.VerificationReceipt = {
+    receipt_id: @control.ReceiptId("verification-failed-receipt-store"),
+    verification_take_id: initial.verification_take.id,
+    verification_execution_id: @control.VerificationExecutionId(
+      "verification-failed-execution-store",
+    ),
+    subject: failed_subject,
+    verification_spec: initial.task_contract.verification_specs[0],
+    prepared_environment_and_image_digest: workflow_store_digest_a,
+    sandbox_runtime_and_policy_digest: workflow_store_digest_b,
+    subject_pre_tree_oid: failed_subject.candidate_tree_oid,
+    subject_post_tree_oid: failed_subject.candidate_tree_oid,
+    evidence: {
+      artifact_id: "verification-failed-evidence-store",
+      digest: workflow_store_digest_b,
+    },
+    started_at: 10L,
+    finished_at: 11L,
+    outcome: @control.VerificationOutcome::VerificationFailed,
+  }
+  let blocked_part = {
+    ..initial.part,
+    lifecycle: @control.PartLifecycle::PartBlocked(
+      @control.PartBlockReason::PartVerificationFailed,
+    ),
+  }
+  let blocked = {
+    ..initial,
+    stage: @workflow.PartWorkflowStage::PartBlocked,
+    part: blocked_part,
+    verification_take: {
+      ..initial.verification_take,
+      lifecycle: @control.TakeLifecycle::TakeTerminal(
+        @control.TakeTerminalDisposition::TakeFailed(
+          @control.TakeFailureReason::TakeVerificationFailed,
+        ),
+      ),
+    },
+    verification_receipts: [failed_receipt],
+  }
+  ignore(
+    @workflow.persist_part_snapshot(repository, adapters, {
+      snapshot: blocked,
+      expected_store_version: None,
+      fault_point: None,
+    }).unwrap(),
+  )
+  let repair : @control.VerificationRepairReference = {
+    receipt_id: failed_receipt.receipt_id,
+    verification_execution_id: failed_receipt.verification_execution_id,
+    subject_digest: failed_subject.subject_digest,
+    evidence_artifact: failed_receipt.evidence,
+  }
+  let revised_contract : @control.TaskContractRevision = {
+    ..initial.task_contract,
+    id: @control.RevisionId("verification-repair-revision-store"),
+    revision: 2,
+    digest: workflow_store_digest_b,
+    repair_conflict_id: None,
+    repair_audit: None,
+    repair_verification: Some(repair),
+    instruction_artifact: {
+      artifact_id: "verification-repair-instruction-store",
+      digest: workflow_store_digest_b,
+    },
+  }
+  let implementation = {
+    ..initial.implementation_take,
+    id: @control.TakeId("verification-repair-implementation-store"),
+    purpose: @control.TakePurpose::Implementation(
+      initial.part.id,
+      revised_contract.id,
+    ),
+    ordinal: 2,
+    lifecycle: @control.TakeLifecycle::TakePlanned,
+  }
+  let verification = {
+    ..initial.verification_take,
+    id: @control.TakeId("verification-repair-verification-store"),
+    purpose: @control.TakePurpose::PartVerification(
+      initial.part.id,
+      implementation.id,
+      revised_contract.verification_specs[0].digest,
+    ),
+    ordinal: 2,
+    lifecycle: @control.TakeLifecycle::TakePlanned,
+  }
+  let audit = {
+    ..initial.audit_take,
+    id: @control.TakeId("verification-repair-audit-store"),
+    purpose: @control.TakePurpose::PartAudit(
+      initial.part.id,
+      implementation.id,
+      revised_contract.audit_policy_digest,
+    ),
+    ordinal: 2,
+    lifecycle: @control.TakeLifecycle::TakePlanned,
+  }
+  let implementation_sandbox = {
+    ..initial.identities.implementation_sandbox,
+    id: @control.SandboxLeaseId(
+      "verification-repair-implementation-sandbox-store",
+    ),
+    take_id: implementation.id,
+    generation_id: @control.SandboxGenerationId(
+      "verification-repair-implementation-generation-store",
+    ),
+    lifecycle: @control.SandboxLeaseLifecycle::SandboxLeasePlanned,
+  }
+  let verification_sandbox = {
+    ..initial.identities.verification_sandbox,
+    id: @control.SandboxLeaseId(
+      "verification-repair-verification-sandbox-store",
+    ),
+    take_id: verification.id,
+    generation_id: @control.SandboxGenerationId(
+      "verification-repair-verification-generation-store",
+    ),
+    lifecycle: @control.SandboxLeaseLifecycle::SandboxLeasePlanned,
+  }
+  let audit_sandbox = {
+    ..initial.identities.audit_sandbox,
+    id: @control.SandboxLeaseId("verification-repair-audit-sandbox-store"),
+    take_id: audit.id,
+    generation_id: @control.SandboxGenerationId(
+      "verification-repair-audit-generation-store",
+    ),
+    lifecycle: @control.SandboxLeaseLifecycle::SandboxLeasePlanned,
+  }
+  let planned = match
+    @workflow.plan_part_verification_repair(
+      blocked,
+      repair,
+      revised_contract,
+      {
+        implementation_take: implementation,
+        implementation_sandbox,
+        implementation_session: {
+          ..initial.identities.implementation_session,
+          id: @control.HarnessSessionId(
+            "verification-repair-implementation-session-store",
+          ),
+          take_id: implementation.id,
+          sandbox_generation_id: implementation_sandbox.generation_id,
+          provider_cursor: None,
+          last_choir_sequence: @control.EventSequence(0L),
+          open_tool_execution_ids: [],
+          lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+        },
+        verification_take: verification,
+        verification_sandbox,
+        audit_take: audit,
+        audit_sandbox,
+        audit_session: {
+          ..initial.identities.audit_session,
+          id: @control.HarnessSessionId(
+            "verification-repair-audit-session-store",
+          ),
+          take_id: audit.id,
+          sandbox_generation_id: audit_sandbox.generation_id,
+          provider_cursor: None,
+          last_choir_sequence: @control.EventSequence(0L),
+          open_tool_execution_ids: [],
+          lifecycle: @control.HarnessSessionLifecycle::HarnessSessionPlanned,
+        },
+      },
+      fn(_) { true },
+    ) {
+    Ok(
+      @workflow.PartVerificationRepairDecision::PartVerificationRepairPlanned(
+        value
+      )
+    ) => value
+    Ok(_) => fail("verification repair unexpectedly reached its limit")
+    Err(error) => fail(error.message())
+  }
+  let execute_count = @ref.new(0)
+  let reconcile_count = @ref.new(0)
+  let repair_count = @ref.new(0)
+  let dependencies = workflow_driver_dependencies(
+    execute_count,
+    reconcile_count,
+    fn(_) { None },
+    workflow_driver_recover_observation,
+  )
+  let config : @exec.GoalPartWorkflowAdapterConfig = {
+    bindings: [
+      {
+        scheduling_record: {
+          part: blocked.part,
+          task_contract: blocked.task_contract,
+        },
+        initial_snapshot: initial,
+        repository,
+      },
+    ],
+    repository_adapters: adapters,
+    dependencies: fn(_, admission) {
+      Ok({ ..dependencies, integration_admission: fn(_) { Ok(admission) } })
+    },
+    integration_input: fn(_, _) {
+      Err(@types.ChoirError::validation_error("integration is not expected"))
+    },
+    plan_conflict_repair: fn(_) {
+      Err(@types.ChoirError::validation_error("repair is not expected"))
+    },
+    plan_audit_repair: fn(_) {
+      Err(@types.ChoirError::validation_error("repair is not expected"))
+    },
+    plan_verification_repair: fn(snapshot) {
+      if snapshot != blocked {
+        return Err(
+          @types.ChoirError::validation_error(
+            "verification repair received the wrong snapshot",
+          ),
+        )
+      }
+      repair_count.val = repair_count.val + 1
+      Ok(
+        @workflow.PartVerificationRepairDecision::PartVerificationRepairPlanned(
+          planned,
+        ),
+      )
+    },
+    read_goal_head: () => Ok(@control.GitOid("goal-head-store")),
+  }
+  let observed = match
+    (@exec.goal_part_workflow_adapters(config).advance_part)({
+      part: blocked.part,
+      task_contract: blocked.task_contract,
+    }) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(observed.part, planned.part)
+  assert_eq(observed.task_contract, revised_contract)
+  assert_eq(repair_count.val, 1)
+  assert_eq(execute_count.val, 0)
+  assert_eq(reconcile_count.val, 0)
+  let stored = @workflow.load_part_snapshot(
+      repository,
+      adapters,
+      initial.workflow_id,
+    )
+    .unwrap()
+    .unwrap().snapshot
+  assert_eq(stored, planned)
   clean_workflow_repository(repository)
 }
 
@@ -1280,6 +1553,11 @@ async test "Goal adapter resumes promotion after a durable rollback" {
     },
     plan_audit_repair: fn(_) {
       Ok(@workflow.PartAuditRepairDecision::PartAuditRepairLimitReached)
+    },
+    plan_verification_repair: fn(_) {
+      Ok(
+        @workflow.PartVerificationRepairDecision::PartVerificationRepairLimitReached,
+      )
     },
     read_goal_head: () => Ok(@control.GitOid("goal-head-store")),
   }
@@ -1349,6 +1627,11 @@ async test "Goal cancellation atomically rejects stale seal authorization" {
     },
     plan_audit_repair: fn(_) {
       Ok(@workflow.PartAuditRepairDecision::PartAuditRepairLimitReached)
+    },
+    plan_verification_repair: fn(_) {
+      Ok(
+        @workflow.PartVerificationRepairDecision::PartVerificationRepairLimitReached,
+      )
     },
     read_goal_head: () => Ok(@control.GitOid("goal-head-store")),
   }

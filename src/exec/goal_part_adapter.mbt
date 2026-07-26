@@ -25,6 +25,10 @@ pub(all) struct GoalPartWorkflowAdapterConfig {
     @workflow.PartAuditRepairDecision,
     @types.ChoirError,
   ]
+  plan_verification_repair : (@workflow.PartWorkflowSnapshot) -> Result[
+    @workflow.PartVerificationRepairDecision,
+    @types.ChoirError,
+  ]
   read_goal_head : async () -> Result[@control.GitOid, @types.ChoirError]
 }
 
@@ -137,30 +141,48 @@ async fn advance_bound_part(
   }
   match result {
     Ok(value) => {
-      if !(value.snapshot.part.lifecycle
-        is @control.PartLifecycle::PartBlocked(
+      let (repaired, repair_name) = match value.snapshot.part.lifecycle {
+        @control.PartLifecycle::PartBlocked(
           @control.PartBlockReason::PartAuditFindings
-        )) {
-        return Ok(scheduling_record_from_snapshot(value.snapshot))
-      }
-      guard value.snapshot.audit_result is Some(audit_result) &&
-        audit_result.outcome == @control.AuditOutcome::AuditFindings &&
-        audit_result.blocking_findings_count > 0 &&
-        audit_result.findings_artifact is Some(_) else {
-        return Ok(scheduling_record_from_snapshot(value.snapshot))
-      }
-      let repaired = match (config.plan_audit_repair)(value.snapshot) {
-        Ok(@workflow.PartAuditRepairDecision::PartAuditRepairPlanned(planned)) =>
-          planned
-        Ok(@workflow.PartAuditRepairDecision::PartAuditRepairLimitReached) =>
-          return Ok(scheduling_record_from_snapshot(value.snapshot))
-        Err(error) => return Err(error)
+        ) => {
+          guard value.snapshot.audit_result is Some(audit_result) &&
+            audit_result.outcome == @control.AuditOutcome::AuditFindings &&
+            audit_result.blocking_findings_count > 0 &&
+            audit_result.findings_artifact is Some(_) else {
+            return Ok(scheduling_record_from_snapshot(value.snapshot))
+          }
+          match (config.plan_audit_repair)(value.snapshot) {
+            Ok(
+              @workflow.PartAuditRepairDecision::PartAuditRepairPlanned(planned)
+            ) => (planned, "audit")
+            Ok(@workflow.PartAuditRepairDecision::PartAuditRepairLimitReached) =>
+              return Ok(scheduling_record_from_snapshot(value.snapshot))
+            Err(error) => return Err(error)
+          }
+        }
+        @control.PartLifecycle::PartBlocked(
+          @control.PartBlockReason::PartVerificationFailed
+        ) =>
+          match (config.plan_verification_repair)(value.snapshot) {
+            Ok(
+              @workflow.PartVerificationRepairDecision::PartVerificationRepairPlanned(
+                planned
+              )
+            ) => (planned, "verification")
+            Ok(
+              @workflow.PartVerificationRepairDecision::PartVerificationRepairLimitReached
+            ) => return Ok(scheduling_record_from_snapshot(value.snapshot))
+            Err(error) => return Err(error)
+          }
+        _ => return Ok(scheduling_record_from_snapshot(value.snapshot))
       }
       let current_version = match value.store_version {
         Some(version) => version
         None =>
           return Err(
-            goal_part_adapter_error("audit finding snapshot is unpersisted"),
+            goal_part_adapter_error(
+              repair_name + " repair snapshot is unpersisted",
+            ),
           )
       }
       let authorization = match (dependencies.goal_authorizes_new_effects)() {
@@ -210,7 +232,10 @@ async fn advance_bound_part(
             | @storage.StateTransactionOutcome::StateTransactionReplayed
             | @storage.StateTransactionOutcome::StateTransactionCommittedAckLost =>
               Ok(scheduling_record_from_snapshot(repaired))
-            _ => Err(goal_part_adapter_error("audit repair did not persist"))
+            _ =>
+              Err(
+                goal_part_adapter_error(repair_name + " repair did not persist"),
+              )
           }
         Err(error) => Err(error)
       }

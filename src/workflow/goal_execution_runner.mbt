@@ -627,6 +627,64 @@ pub async fn run_next_goal_execution_tick(
   for snapshot in after {
     if snapshot.part.lifecycle
       is @control.PartLifecycle::PartBlocked(
+        @control.PartBlockReason::PartVerificationFailed
+      ) {
+      let repairs = snapshot.task_contract_history.fold(init=0, fn(
+        count,
+        contract,
+      ) {
+        if contract.repair_verification is Some(_) {
+          count + 1
+        } else {
+          count
+        }
+      })
+      let mut failed : @control.VerificationReceipt? = None
+      for receipt in snapshot.verification_receipts {
+        if receipt.subject.task_contract_revision_id ==
+          snapshot.task_contract.id &&
+          receipt.subject.part_id == snapshot.part.id &&
+          receipt.outcome != @control.VerificationOutcome::VerificationPassed {
+          failed = Some(receipt)
+        }
+      }
+      if failed is None || repairs >= maximum_part_verification_repairs() {
+        let (digest, requested_at) = match failed {
+          Some(receipt) => (receipt.evidence.digest, receipt.finished_at)
+          None =>
+            (
+              snapshot.task_contract.digest,
+              current.record.durable_version.to_int64() + 1L,
+            )
+        }
+        let outcome = match
+          persist_goal_cancellation_request(
+            repository,
+            repository_adapters,
+            current.record.goal.id,
+            requested_at,
+            cause=GoalCancellationCause::GoalCancellationVerificationRepairFailed(
+              digest,
+            ),
+          ) {
+          Ok(value) => value
+          Err(error) => return Err(error)
+        }
+        let record = match outcome {
+          GoalCancellationPersisted(value) | GoalCancellationReplayed(value) =>
+            value
+          GoalCancellationTerminal(_) =>
+            return Err(
+              goal_execution_error(
+                "verification repair cancellation lost a race",
+              ),
+            )
+        }
+        return Ok(GoalExecutionTickResult::GoalExecutionTickAdvanced(record))
+      }
+    }
+    if snapshot.part.lifecycle
+      is @control.PartLifecycle::PartBlocked(
         @control.PartBlockReason::PartAuditFindings
       ) {
       let repairs = snapshot.task_contract_history.fold(init=0, fn(

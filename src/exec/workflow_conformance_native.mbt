@@ -108,6 +108,7 @@ fn conformance_snapshot_for(
     digest: semantic_digest,
     repair_conflict_id: None,
     repair_audit: None,
+    repair_verification: None,
     instruction_artifact: {
       artifact_id: "instruction-" + key,
       digest: semantic_digest,

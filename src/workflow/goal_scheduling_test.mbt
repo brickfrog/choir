@@ -28,6 +28,7 @@ fn scheduling_record(
       digest: schedule_digest,
       repair_conflict_id: None,
       repair_audit: None,
+      repair_verification: None,
       instruction_artifact: {
         artifact_id: "instruction-" + id,
         digest: schedule_digest,
@@ -736,6 +737,7 @@ async test "promotion conflict may return a versioned repair Take" {
               @control.IntegrationConflictId("integration-conflict-1"),
             ),
             repair_audit: None,
+            repair_verification: None,
           }
           Ok({
             part: {
@@ -770,4 +772,145 @@ async test "promotion conflict may return a versioned repair Take" {
   assert_eq(promotion_calls.val, 2)
   assert_eq(result.promotion_order, [audited.part.id])
   assert_eq(result.records[0].task_contract.revision, 2)
+}
+
+///|
+async test "verification failure may return an autonomous repair revision" {
+  let blocked = scheduling_record(
+    "verification-repair",
+    [],
+    @control.PartLifecycle::PartPending,
+    @control.MutationDeclaration::CompleteMutationDeclaration([
+      @control.MutationClaim::ExactPath(
+        @control.RepoPath("src/verification-repair.mbt"),
+      ),
+    ]),
+  )
+  let advance_calls = @ref.new(0)
+  let result = match
+    @workflow.run_goal_parts([blocked], 1, {
+      advance_part: record => {
+        advance_calls.val = advance_calls.val + 1
+        let contract = {
+          ..record.task_contract,
+          id: @control.RevisionId("revision-verification-repair-2"),
+          revision: 2,
+          repair_conflict_id: None,
+          repair_audit: None,
+          repair_verification: Some({
+            receipt_id: @control.ReceiptId("verification-failed-receipt"),
+            verification_execution_id: @control.VerificationExecutionId(
+              "verification-failed-execution",
+            ),
+            subject_digest: schedule_digest,
+            evidence_artifact: {
+              artifact_id: "verification-failed-evidence",
+              digest: schedule_digest,
+            },
+          }),
+        }
+        Ok({
+          part: {
+            ..record.part,
+            task_contract_revision_id: contract.id,
+            lifecycle: @control.PartLifecycle::PartAudited(
+              @control.CandidateId("candidate-verification-repaired"),
+              schedule_digest,
+              @control.ReceiptId("audit-verification-repaired"),
+            ),
+          },
+          task_contract: contract,
+        })
+      },
+      read_goal_head: () => Ok(@control.GitOid("goal-head")),
+      promote_part: (record, _) => {
+        Ok({
+          ..record,
+          part: {
+            ..record.part,
+            lifecycle: @control.PartLifecycle::PartIntegrated(
+              @control.ReceiptId("integration-verification-repaired"),
+            ),
+          },
+        })
+      },
+      resume_promotion: record => Ok(record),
+    }) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(result.outcome, @workflow.GoalRunOutcome::GoalRunSucceeded)
+  assert_eq(advance_calls.val, 1)
+  assert_eq(result.records[0].task_contract.revision, 2)
+  assert_true(result.records[0].task_contract.repair_verification is Some(_))
+}
+
+///|
+async test "audit finding may return an autonomous repair revision" {
+  let pending = scheduling_record(
+    "audit-repair",
+    [],
+    @control.PartLifecycle::PartPending,
+    @control.MutationDeclaration::CompleteMutationDeclaration([
+      @control.MutationClaim::ExactPath(
+        @control.RepoPath("src/audit-repair.mbt"),
+      ),
+    ]),
+  )
+  let advance_calls = @ref.new(0)
+  let result = match
+    @workflow.run_goal_parts([pending], 1, {
+      advance_part: record => {
+        advance_calls.val = advance_calls.val + 1
+        let contract = {
+          ..record.task_contract,
+          id: @control.RevisionId("revision-audit-repair-2"),
+          revision: 2,
+          repair_conflict_id: None,
+          repair_audit: Some({
+            scope: @control.AuditRepairScope::PartAuditRepair,
+            audit_result_id: @control.AuditResultId("audit-repair-result"),
+            audit_result_digest: schedule_digest,
+            findings_artifact: {
+              artifact_id: "audit-repair-findings",
+              digest: schedule_digest,
+            },
+            affected_paths: [@control.RepoPath("src/audit-repair.mbt")],
+          }),
+          repair_verification: None,
+        }
+        Ok({
+          part: {
+            ..record.part,
+            task_contract_revision_id: contract.id,
+            lifecycle: @control.PartLifecycle::PartAudited(
+              @control.CandidateId("candidate-audit-repaired"),
+              schedule_digest,
+              @control.ReceiptId("audit-repaired"),
+            ),
+          },
+          task_contract: contract,
+        })
+      },
+      read_goal_head: () => Ok(@control.GitOid("goal-head")),
+      promote_part: (record, _) => {
+        Ok({
+          ..record,
+          part: {
+            ..record.part,
+            lifecycle: @control.PartLifecycle::PartIntegrated(
+              @control.ReceiptId("integration-audit-repaired"),
+            ),
+          },
+        })
+      },
+      resume_promotion: record => Ok(record),
+    }) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(result.outcome, @workflow.GoalRunOutcome::GoalRunSucceeded)
+  assert_eq(advance_calls.val, 1)
+  assert_eq(result.records[0].task_contract.revision, 2)
+  assert_true(result.records[0].task_contract.repair_audit is Some(_))
 }

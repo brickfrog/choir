@@ -109,6 +109,10 @@ pub fn transition_part_lifecycle(
     (PartBlocked(PartAuditFindings), StartPartAuditRepair(_, take_id))
     | (PartIntegrated(_), StartPartAuditRepair(_, take_id)) =>
       Ok(PartExecuting(take_id))
+    (
+      PartBlocked(PartVerificationFailed),
+      StartPartVerificationRepair(_, take_id),
+    ) => Ok(PartExecuting(take_id))
     (PartBlocked(PartIntegrationConflict), RestartBlockedPart(_)) =>
       Err(
         invalid_transition(
@@ -139,6 +143,12 @@ pub fn transition_part_lifecycle(
       Err(
         invalid_transition(
           "Part", "audit repair requires blocking audit findings",
+        ),
+      )
+    (PartBlocked(_), StartPartVerificationRepair(_, _)) =>
+      Err(
+        invalid_transition(
+          "Part", "verification repair requires failed verification evidence",
         ),
       )
     (PartBlocked(_), _) =>

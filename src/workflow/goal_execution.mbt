@@ -90,6 +90,7 @@ pub(all) enum GoalCancellationCause {
   GoalCancellationEvidenceOnlyCompleted(@control.Digest, @control.Digest)
   GoalCancellationSupersededByContractRevision(@control.Digest)
   GoalCancellationAuditRepairFailed(@control.Digest)
+  GoalCancellationVerificationRepairFailed(@control.Digest)
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -936,6 +937,8 @@ fn goal_execution_cancellation_shape_is_valid(
           @storage.validate_digest(digest) is Ok(_)
         GoalCancellationAuditRepairFailed(digest) =>
           @storage.validate_digest(digest) is Ok(_)
+        GoalCancellationVerificationRepairFailed(digest) =>
+          @storage.validate_digest(digest) is Ok(_)
       })
     (GoalExecutionCanceling | GoalExecutionCanceled, None) => false
     (_, None) => true
@@ -1703,6 +1706,12 @@ pub fn request_goal_execution_cancellation(
         GoalCancellationAuditRepairFailed(digest) =>
           if @storage.validate_digest(digest) is Err(_) {
             return Err(goal_execution_error("audit repair digest is invalid"))
+          }
+        GoalCancellationVerificationRepairFailed(digest) =>
+          if @storage.validate_digest(digest) is Err(_) {
+            return Err(
+              goal_execution_error("verification repair digest is invalid"),
+            )
           }
         GoalCancellationUserRequested => ()
       }

@@ -38,23 +38,24 @@ authorize an open `String` domain.
 
 ## Current Implementation Snapshot
 
-This snapshot describes the branch as of 2026-07-21 local time. It separates
+This snapshot describes the branch as of 2026-07-25 local time. It separates
 working implementation from target behavior; passing fixtures do not make an
 unconnected product path usable.
 
 ### Implemented and directly exercised
 
-- Blocking Part and Goal audit findings now carry bounded repair text and
-  canonical affected paths. The owning workflow—not the passive audit
+- Blocking Part verification failures and Part or Goal audit findings now
+  retain their evidence for bounded repair. The owning workflow—not the passive
   gate—mints a fresh task-contract revision and Take identities, reopens the
-  owning Part from the correct head, preserves prior integration evidence,
-  re-integrates, and reruns combined verification and audit. Part and Goal
-  repairs are bounded; exhaustion or an unroutable path automatically cancels
-  with `GoalCancellationAuditRepairFailed` rather than waiting for user input.
-  Before submission, the Conductor also normalizes internally contradictory
-  Bead prose through the typed Beads update surface and rereads the revision;
-  implementation Takes use the same narrowest-executable-interpretation rule.
-- The current checkout passes `moon check --target native`, all 506 native
+  owning Part from the correct head, and reruns implementation, verification,
+  audit, and integration. Exhaustion or unusable evidence automatically
+  cancels with `GoalCancellationVerificationRepairFailed` or
+  `GoalCancellationAuditRepairFailed`; neither path asks the Conductor or user
+  to authorize a retry. Before submission, the Conductor also normalizes
+  internally contradictory Bead prose through the typed Beads update surface
+  and rereads the revision; implementation Takes use the same
+  narrowest-executable-interpretation rule.
+- The current checkout passes `moon check --target native`, all 510 native
   tests, the Choir lint command, every registered fault/race conformance
   command, the synthetic Part lifecycle, parallel promotion, scale scheduling,
   both native provider Part lifecycles, and the two-provider Goal fixture. The

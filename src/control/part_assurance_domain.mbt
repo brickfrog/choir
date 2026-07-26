@@ -203,6 +203,14 @@ pub(all) struct AuditRepairReference {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) struct VerificationRepairReference {
+  receipt_id : ReceiptId
+  verification_execution_id : VerificationExecutionId
+  subject_digest : Digest
+  evidence_artifact : ArtifactReference
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub(all) struct TaskContractRevision {
   id : RevisionId
   goal_id : GoalId
@@ -211,6 +219,7 @@ pub(all) struct TaskContractRevision {
   digest : Digest
   repair_conflict_id : IntegrationConflictId?
   repair_audit : AuditRepairReference?
+  repair_verification : VerificationRepairReference?
   instruction_artifact : ArtifactReference
   base_commit_oid : GitOid
   base_tree_oid : GitOid

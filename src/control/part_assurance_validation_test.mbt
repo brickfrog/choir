@@ -20,6 +20,7 @@ fn assurance_contract(
     digest: assurance_digest_a,
     repair_conflict_id: None,
     repair_audit: None,
+    repair_verification: None,
     instruction_artifact: {
       artifact_id: "instruction-1",
       digest: assurance_digest_a,

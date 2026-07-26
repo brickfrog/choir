@@ -34,7 +34,7 @@ priv struct NativeOrphanedGoalSourceClaim {
 }
 
 ///|
-let native_goal_control_state_generation : String = "choir-control-state-v6"
+let native_goal_control_state_generation : String = "choir-control-state-v7"
 
 ///|
 priv struct NativeGoalPartRuntime {
@@ -525,6 +525,7 @@ fn plan_native_goal_conflict_repair(
     digest: contract_digest,
     repair_conflict_id: Some(conflict.id),
     repair_audit: None,
+    repair_verification: None,
     base_commit_oid: conflict.expected_goal_head_oid,
     base_tree_oid: conflict.expected_goal_head_tree_oid,
   }
@@ -718,6 +719,7 @@ fn plan_native_audit_repair_attempt(
     digest: contract_digest,
     repair_conflict_id: None,
     repair_audit: Some(repair),
+    repair_verification: None,
     instruction_artifact: instruction,
     base_commit_oid,
     base_tree_oid,
@@ -840,6 +842,237 @@ fn plan_native_part_audit_repair(
     terminal_response,
     snapshot.task_contract.base_commit_oid,
     snapshot.task_contract.base_tree_oid,
+  )
+}
+
+///|
+fn adopt_native_verification_repair_instruction(
+  repository : @workflow.PartWorkflowRepository,
+  revision_id : @control.RevisionId,
+  goal_id : @control.GoalId,
+  previous : @control.ArtifactReference,
+  verification_evidence : String,
+) -> Result[@control.ArtifactReference, @types.ChoirError] {
+  let adapters = local_part_workflow_repository_adapters()
+  let original = match
+    (adapters.artifacts.read)(repository.artifact_store, {
+      digest: previous.digest,
+      max_bytes: 1048576,
+    }) {
+    Ok(value) => @utf8.decode_lossy(value)
+    Err(error) => return Err(error)
+  }
+  let content = @utf8.encode(
+    original +
+    "\n\nAutonomous verification repair\n\nThe preceding candidate did not pass its declared verification. Diagnose the durable evidence below, repair the implementation only within the existing mutation declaration, rerun the declared verification, and leave the sandbox with a new candidate commit. Do not ask for user input, weaken or remove the verification, conceal the failure, or change paths outside the mutation declaration. If the evidence reflects a transient execution failure, reproduce the verification before deciding whether code must change.\n\n" +
+    verification_evidence,
+  )
+  let digest = @storage.artifact_digest(content)
+  let receipt = match
+    (adapters.artifacts.adopt)(repository.artifact_store, {
+      content,
+      expected_digest: digest,
+      provenance: @storage.ArtifactProvenance::ArtifactTaskInstruction(
+        revision_id,
+      ),
+      retention: @storage.ArtifactRetention::ArtifactUntilGoalTerminal(goal_id),
+    }) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if receipt.digest != digest || receipt.byte_length != content.length() {
+    return Err(
+      native_goal_execution_error("verification repair instruction is false"),
+    )
+  }
+  Ok({ artifact_id: @storage.artifact_id_text(receipt.artifact_id), digest })
+}
+
+///|
+fn plan_native_verification_repair_attempt(
+  repository : @workflow.PartWorkflowRepository,
+  snapshot : @workflow.PartWorkflowSnapshot,
+  repair : @control.VerificationRepairReference,
+  verification_evidence : String,
+) -> Result[@workflow.PartVerificationRepairDecision, @types.ChoirError] {
+  let repair_number = snapshot.task_contract_history.fold(init=1, fn(
+    count,
+    contract,
+  ) {
+    if contract.repair_verification is Some(_) {
+      count + 1
+    } else {
+      count
+    }
+  })
+  let identity_digest = @storage.artifact_digest(
+    @utf8.encode(
+      "choir.native-part-verification-repair.v1\u{00}" +
+      [
+        snapshot.task_contract.digest.to_json(),
+        repair.to_json(),
+        repair_number.to_json(),
+      ]
+      .to_json()
+      .stringify(indent=0),
+    ),
+  )
+  let key = @storage.digest_text(identity_digest)[:20].to_owned()
+  let revision_id = @control.RevisionId("verification-repair-" + key)
+  let instruction = match
+    adopt_native_verification_repair_instruction(
+      repository,
+      revision_id,
+      snapshot.goal.id,
+      snapshot.task_contract.instruction_artifact,
+      verification_evidence,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let contract_digest = @storage.artifact_digest(
+    @utf8.encode(
+      "choir.task-contract-verification-repair.v1\u{00}" +
+      [
+        revision_id.to_json(),
+        snapshot.goal.id.to_json(),
+        snapshot.part.id.to_json(),
+        (snapshot.task_contract.revision + 1).to_json(),
+        repair.to_json(),
+        instruction.to_json(),
+        snapshot.task_contract.base_commit_oid.to_json(),
+        snapshot.task_contract.base_tree_oid.to_json(),
+        snapshot.task_contract.mutation_declaration.to_json(),
+        snapshot.task_contract.verification_specs.to_json(),
+        snapshot.task_contract.audit_policy_digest.to_json(),
+        snapshot.task_contract.implementation_capability_profile_digest.to_json(),
+        snapshot.task_contract.verification_capability_profile_digest.to_json(),
+        snapshot.task_contract.audit_capability_profile_digest.to_json(),
+      ]
+      .to_json()
+      .stringify(indent=0),
+    ),
+  )
+  let contract : @control.TaskContractRevision = {
+    ..snapshot.task_contract,
+    id: revision_id,
+    revision: snapshot.task_contract.revision + 1,
+    digest: contract_digest,
+    repair_conflict_id: None,
+    repair_audit: None,
+    repair_verification: Some(repair),
+    instruction_artifact: instruction,
+  }
+  let implementation = native_goal_conflict_repair_take(
+    "take-" + key + "-implementation",
+    snapshot.implementation_take,
+    @control.TakePurpose::Implementation(snapshot.part.id, contract.id),
+  )
+  let verification = native_goal_conflict_repair_take(
+    "take-" + key + "-verification",
+    snapshot.verification_take,
+    @control.TakePurpose::PartVerification(
+      snapshot.part.id,
+      implementation.id,
+      contract.verification_specs[0].digest,
+    ),
+  )
+  let audit = native_goal_conflict_repair_take(
+    "take-" + key + "-audit",
+    snapshot.audit_take,
+    @control.TakePurpose::PartAudit(
+      snapshot.part.id,
+      implementation.id,
+      contract.audit_policy_digest,
+    ),
+  )
+  let implementation_sandbox = native_goal_conflict_repair_sandbox(
+    key,
+    "implementation",
+    implementation,
+    snapshot.identities.implementation_sandbox,
+  )
+  let verification_sandbox = native_goal_conflict_repair_sandbox(
+    key,
+    "verification",
+    verification,
+    snapshot.identities.verification_sandbox,
+  )
+  let audit_sandbox = native_goal_conflict_repair_sandbox(
+    key,
+    "audit",
+    audit,
+    snapshot.identities.audit_sandbox,
+  )
+  @workflow.plan_part_verification_repair(
+    snapshot,
+    repair,
+    contract,
+    {
+      implementation_take: implementation,
+      implementation_sandbox,
+      implementation_session: native_goal_conflict_repair_session(
+        key,
+        "implementation",
+        implementation,
+        implementation_sandbox,
+        snapshot.identities.implementation_session,
+      ),
+      verification_take: verification,
+      verification_sandbox,
+      audit_take: audit,
+      audit_sandbox,
+      audit_session: native_goal_conflict_repair_session(
+        key,
+        "audit",
+        audit,
+        audit_sandbox,
+        snapshot.identities.audit_session,
+      ),
+    },
+    native_path_is_nfc,
+  )
+}
+
+///|
+fn plan_native_part_verification_repair(
+  repository : @workflow.PartWorkflowRepository,
+  snapshot : @workflow.PartWorkflowSnapshot,
+) -> Result[@workflow.PartVerificationRepairDecision, @types.ChoirError] {
+  let mut failed : @control.VerificationReceipt? = None
+  for receipt in snapshot.verification_receipts {
+    if receipt.subject.task_contract_revision_id == snapshot.task_contract.id &&
+      receipt.subject.part_id == snapshot.part.id &&
+      receipt.outcome != @control.VerificationOutcome::VerificationPassed {
+      failed = Some(receipt)
+    }
+  }
+  let receipt = match failed {
+    Some(value) => value
+    None =>
+      return Ok(
+        @workflow.PartVerificationRepairDecision::PartVerificationRepairLimitReached,
+      )
+  }
+  let bytes = match
+    (local_part_workflow_repository_adapters().artifacts.read)(
+      repository.artifact_store,
+      { digest: receipt.evidence.digest, max_bytes: 4194304 },
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let repair : @control.VerificationRepairReference = {
+    receipt_id: receipt.receipt_id,
+    verification_execution_id: receipt.verification_execution_id,
+    subject_digest: receipt.subject.subject_digest,
+    evidence_artifact: receipt.evidence,
+  }
+  plan_native_verification_repair_attempt(
+    repository,
+    snapshot,
+    repair,
+    @utf8.decode_lossy(bytes),
   )
 }
 
@@ -2476,6 +2709,9 @@ async fn execute_native_goal_record(
     plan_conflict_repair: plan_native_goal_conflict_repair,
     plan_audit_repair: fn(snapshot) {
       plan_native_part_audit_repair(repository, snapshot)
+    },
+    plan_verification_repair: fn(snapshot) {
+      plan_native_part_verification_repair(repository, snapshot)
     },
     read_goal_head: async fn() {
       read_native_goal_head(integration, native_git_integration_adapters())
@@ -4836,6 +5072,9 @@ test "control state generation requires both marker and store" {
     ),
   )
   assert_false(native_goal_control_state_is_current("", true))
+  assert_false(
+    native_goal_control_state_is_current("choir-control-state-v6", true),
+  )
   assert_false(
     native_goal_control_state_is_current("choir-control-state-v5", true),
   )

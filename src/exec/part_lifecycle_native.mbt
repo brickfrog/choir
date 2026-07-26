@@ -462,6 +462,7 @@ fn native_part_fixture_snapshot_for_definition(
     digest: contract_digest,
     repair_conflict_id: None,
     repair_audit: None,
+    repair_verification: None,
     instruction_artifact: instruction,
     base_commit_oid: git.base_commit_oid,
     base_tree_oid: git.base_tree_oid,

@@ -216,6 +216,17 @@ pub fn validate_task_contract_revision(
     }
     None => true
   }
+  let verification_repair_valid = match contract.repair_verification {
+    Some(repair) =>
+      contract.repair_conflict_id is None &&
+      contract.repair_audit is None &&
+      repair.receipt_id.0 != "" &&
+      repair.verification_execution_id.0 != "" &&
+      valid_lower_hex_digest(repair.subject_digest) &&
+      repair.evidence_artifact.artifact_id != "" &&
+      valid_lower_hex_digest(repair.evidence_artifact.digest)
+    None => true
+  }
   let continuation_identity_valid = match
     contract.migration_continuation_ref_digest {
     Some(digest) =>
@@ -226,7 +237,14 @@ pub fn validate_task_contract_revision(
   if contract.revision <= 0 ||
     !repair_identity_valid ||
     !audit_repair_valid ||
-    (contract.repair_conflict_id is Some(_) && contract.repair_audit is Some(_)) ||
+    !verification_repair_valid ||
+    (if contract.repair_conflict_id is Some(_) {
+      contract.repair_audit is Some(_) ||
+      contract.repair_verification is Some(_)
+    } else {
+      contract.repair_audit is Some(_) &&
+      contract.repair_verification is Some(_)
+    }) ||
     !migration_identity_valid ||
     !continuation_identity_valid ||
     !valid_lower_hex_digest(contract.digest) ||

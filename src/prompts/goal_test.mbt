@@ -38,6 +38,8 @@ test "Conductor prompt keeps the authority rules no schema can express" {
   assert_true(body.contains("complete open blocking-dependency closure"))
   assert_true(body.contains("The conversation is the product interface"))
   assert_true(body.contains("`choird` is the sole workflow authority"))
+  assert_true(body.contains("Verification and audit failures"))
+  assert_true(body.contains("never ask the user to retry"))
 }
 
 ///|

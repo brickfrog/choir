@@ -699,6 +699,7 @@ fn compile_native_conductor_part_proposal(
     digest: contract_digest,
     repair_conflict_id: None,
     repair_audit: None,
+    repair_verification: None,
     instruction_artifact: instruction,
     base_commit_oid: snapshot.base_commit_oid,
     base_tree_oid: snapshot.base_tree_oid,

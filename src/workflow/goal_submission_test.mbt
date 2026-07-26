@@ -37,6 +37,7 @@ fn submission_contract(
     digest: submission_digest,
     repair_conflict_id: None,
     repair_audit: None,
+    repair_verification: None,
     instruction_artifact: {
       artifact_id: "instruction-" + part_id.0,
       digest: submission_digest,

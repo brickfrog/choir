@@ -290,6 +290,12 @@ pub(all) enum PartAuditRepairDecision {
 } derive(Debug, Eq)
 
 ///|
+pub(all) enum PartVerificationRepairDecision {
+  PartVerificationRepairPlanned(PartWorkflowSnapshot)
+  PartVerificationRepairLimitReached
+} derive(Debug, Eq)
+
+///|
 pub(all) struct PartAuditRepairRoute {
   part_id : @control.PartId
   affected_paths : Array[@control.RepoPath]

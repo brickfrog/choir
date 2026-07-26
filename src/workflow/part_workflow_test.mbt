@@ -151,6 +151,7 @@ fn workflow_fixture() -> @workflow.PartWorkflowSnapshot raise {
     digest: workflow_digest_a,
     repair_conflict_id: None,
     repair_audit: None,
+    repair_verification: None,
     instruction_artifact: {
       artifact_id: "instruction-workflow",
       digest: workflow_digest_a,
@@ -1343,6 +1344,7 @@ test "Goal audit repair reopens an integrated Part and preserves its receipt" {
     digest: workflow_digest_d,
     repair_conflict_id: None,
     repair_audit: Some(repair),
+    repair_verification: None,
     instruction_artifact: {
       artifact_id: "audit-repair-instruction-2",
       digest: workflow_digest_e,
@@ -1445,6 +1447,223 @@ test "Goal audit repair reopens an integrated Part and preserves its receipt" {
     repaired.prior_take_evidence[0].integration_receipt,
     Some(integration_receipt),
   )
+}
+
+///|
+test "failed verification plans a bounded evidence-carrying repair revision" {
+  let verified = drive_to_verified()
+  guard verified.verification_receipts is [passed] else {
+    fail("verified Part has no single receipt")
+  }
+  let failed = {
+    ..passed,
+    receipt_id: @control.ReceiptId("verification-failed-receipt-1"),
+    verification_execution_id: @control.VerificationExecutionId(
+      "verification-failed-execution-1",
+    ),
+    evidence: {
+      artifact_id: "verification-failed-evidence-1",
+      digest: workflow_digest_d,
+    },
+    outcome: @control.VerificationOutcome::VerificationFailed,
+  }
+  let blocked_part = match
+    @control.transition_part(
+      verified.part,
+      @control.PartTransition::BlockPart(
+        @control.PartBlockReason::PartVerificationFailed,
+      ),
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  let blocked = {
+    ..verified,
+    stage: @workflow.PartWorkflowStage::PartBlocked,
+    part: blocked_part,
+    verification_receipts: [failed],
+    verification_authorization: None,
+    audit_subject: None,
+  }
+  let repair : @control.VerificationRepairReference = {
+    receipt_id: failed.receipt_id,
+    verification_execution_id: failed.verification_execution_id,
+    subject_digest: failed.subject.subject_digest,
+    evidence_artifact: failed.evidence,
+  }
+  let contract : @control.TaskContractRevision = {
+    ..blocked.task_contract,
+    id: @control.RevisionId("verification-repair-revision-2"),
+    revision: blocked.task_contract.revision + 1,
+    digest: workflow_digest_b,
+    repair_conflict_id: None,
+    repair_audit: None,
+    repair_verification: Some(repair),
+    instruction_artifact: {
+      artifact_id: "verification-repair-instruction-2",
+      digest: workflow_digest_e,
+    },
+  }
+  let implementation = {
+    ..workflow_take(
+      "verification-repair-implementation-take-2",
+      @control.TakePurpose::Implementation(blocked.part.id, contract.id),
+    ),
+    ordinal: 2,
+  }
+  let verification = {
+    ..workflow_take(
+      "verification-repair-verification-take-2",
+      @control.TakePurpose::PartVerification(
+        blocked.part.id,
+        implementation.id,
+        contract.verification_specs[0].digest,
+      ),
+    ),
+    ordinal: 2,
+  }
+  let audit = {
+    ..workflow_take(
+      "verification-repair-audit-take-2",
+      @control.TakePurpose::PartAudit(
+        blocked.part.id,
+        implementation.id,
+        contract.audit_policy_digest,
+      ),
+    ),
+    ordinal: 2,
+  }
+  let implementation_sandbox = workflow_sandbox(
+    "verification-repair-implementation-sandbox-2",
+    "verification-repair-implementation-generation-2",
+    implementation.id,
+    contract.implementation_capability_profile_digest,
+    workflow_digest_a,
+  )
+  let verification_sandbox = workflow_sandbox(
+    "verification-repair-verification-sandbox-2",
+    "verification-repair-verification-generation-2",
+    verification.id,
+    contract.verification_capability_profile_digest,
+    workflow_digest_d,
+  )
+  let audit_sandbox = workflow_sandbox(
+    "verification-repair-audit-sandbox-2",
+    "verification-repair-audit-generation-2",
+    audit.id,
+    contract.audit_capability_profile_digest,
+    workflow_digest_e,
+  )
+  let repaired = match
+    @workflow.plan_part_verification_repair(
+      blocked,
+      repair,
+      contract,
+      {
+        implementation_take: implementation,
+        implementation_sandbox,
+        implementation_session: workflow_session(
+          "verification-repair-implementation-session-2",
+          implementation.id,
+          implementation_sandbox.generation_id,
+          @control.ProviderSurfaceId::CodexSubscriptionCli,
+          workflow_digest_a,
+        ),
+        verification_take: verification,
+        verification_sandbox,
+        audit_take: audit,
+        audit_sandbox,
+        audit_session: workflow_session(
+          "verification-repair-audit-session-2",
+          audit.id,
+          audit_sandbox.generation_id,
+          @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+          workflow_digest_c,
+        ),
+      },
+      fn(_) { true },
+    ) {
+    Ok(
+      @workflow.PartVerificationRepairDecision::PartVerificationRepairPlanned(
+        value
+      )
+    ) => value
+    Ok(_) => fail("first verification repair reached its retry limit")
+    Err(error) => fail(error.message())
+  }
+  assert_eq(repaired.stage, @workflow.PartWorkflowStage::PartAccepted)
+  assert_eq(
+    repaired.part.lifecycle,
+    @control.PartLifecycle::PartExecuting(implementation.id),
+  )
+  assert_eq(repaired.task_contract.repair_verification, Some(repair))
+  assert_eq(repaired.prior_take_evidence[0].verification_receipts, [failed])
+  assert_true(repaired.verification_receipts.length() == 0)
+  let exhausted_contract : @control.TaskContractRevision = {
+    ..contract,
+    id: @control.RevisionId("verification-repair-revision-3"),
+    revision: 3,
+    digest: workflow_digest_c,
+  }
+  let exhausted_failed = {
+    ..failed,
+    receipt_id: @control.ReceiptId("verification-failed-receipt-3"),
+    verification_execution_id: @control.VerificationExecutionId(
+      "verification-failed-execution-3",
+    ),
+    subject: {
+      ..failed.subject,
+      task_contract_revision_id: exhausted_contract.id,
+    },
+  }
+  let exhausted_repair : @control.VerificationRepairReference = {
+    receipt_id: exhausted_failed.receipt_id,
+    verification_execution_id: exhausted_failed.verification_execution_id,
+    subject_digest: exhausted_failed.subject.subject_digest,
+    evidence_artifact: exhausted_failed.evidence,
+  }
+  let exhausted = {
+    ..blocked,
+    part: { ..blocked.part, task_contract_revision_id: exhausted_contract.id },
+    task_contract: exhausted_contract,
+    task_contract_history: [blocked.task_contract, contract, exhausted_contract],
+    verification_receipts: [exhausted_failed],
+  }
+  match
+    @workflow.plan_part_verification_repair(
+      exhausted,
+      exhausted_repair,
+      contract,
+      {
+        implementation_take: implementation,
+        implementation_sandbox,
+        implementation_session: workflow_session(
+          "unused-exhausted-implementation-session",
+          implementation.id,
+          implementation_sandbox.generation_id,
+          @control.ProviderSurfaceId::CodexSubscriptionCli,
+          workflow_digest_a,
+        ),
+        verification_take: verification,
+        verification_sandbox,
+        audit_take: audit,
+        audit_sandbox,
+        audit_session: workflow_session(
+          "unused-exhausted-audit-session",
+          audit.id,
+          audit_sandbox.generation_id,
+          @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+          workflow_digest_c,
+        ),
+      },
+      fn(_) { true },
+    ) {
+    Ok(
+      @workflow.PartVerificationRepairDecision::PartVerificationRepairLimitReached
+    ) => ()
+    Ok(_) => fail("third verification repair was not bounded")
+    Err(error) => fail(error.message())
+  }
 }
 
 ///|
@@ -3176,6 +3395,7 @@ test "promotion conflict blocks the Part without minting integration evidence" {
     digest: workflow_digest_d,
     repair_conflict_id: Some(conflict.id),
     repair_audit: None,
+    repair_verification: None,
     base_commit_oid: conflict.expected_goal_head_oid,
     base_tree_oid: conflict.expected_goal_head_tree_oid,
   }

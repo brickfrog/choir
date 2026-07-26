@@ -28,6 +28,7 @@ fn ownership_contract(
     digest: ownership_digest_a,
     repair_conflict_id: None,
     repair_audit: None,
+    repair_verification: None,
     instruction_artifact: {
       artifact_id: "ownership-instruction",
       digest: ownership_digest_a,

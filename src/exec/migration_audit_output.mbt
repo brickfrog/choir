@@ -153,10 +153,11 @@ fn native_migration_audit_output_instruction() -> String {
 }
 
 ///|
-fn native_audit_repair_findings(
+fn native_audit_repair_findings_with_nfc(
   terminal_response : String,
   total : Int,
   blocking : Int,
+  is_nfc : (String) -> Bool,
 ) -> Result[Array[NativeRepairFindingOutput], @types.ChoirError] {
   let json = @json.parse(terminal_response) catch {
     _ => return Err(native_part_effect_error("audit output is invalid"))
@@ -203,7 +204,7 @@ fn native_audit_repair_findings(
     }
     for raw_path in finding.affected_paths {
       let path = @control.RepoPath(raw_path)
-      match @control.validate_repo_path(path, native_path_is_nfc) {
+      match @control.validate_repo_path(path, is_nfc) {
         Ok(_) => ()
         Err(_) =>
           return Err(
@@ -218,6 +219,17 @@ fn native_audit_repair_findings(
     )
   }
   Ok(findings)
+}
+
+///|
+fn native_audit_repair_findings(
+  terminal_response : String,
+  total : Int,
+  blocking : Int,
+) -> Result[Array[NativeRepairFindingOutput], @types.ChoirError] {
+  native_audit_repair_findings_with_nfc(
+    terminal_response, total, blocking, native_path_is_nfc,
+  )
 }
 
 ///|
@@ -505,7 +517,12 @@ test "native migration audit output decodes closed finding domains" {
       "\"required\":[\"class\",\"severity\",\"anchor_kind\",\"anchor_primary\",\"anchor_secondary\",\"evidence\",\"disposition\"]",
     ),
   )
-  match native_audit_repair_findings(json.stringify(indent=0), 1, 1) {
+  match
+    native_audit_repair_findings_with_nfc(json.stringify(indent=0), 1, 1, fn(
+      _,
+    ) {
+      true
+    }) {
     Ok([{ affected_paths: ["src/example.mbt"], .. }]) => ()
     _ => fail("expected one routable repair finding")
   }

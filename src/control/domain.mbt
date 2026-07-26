@@ -154,6 +154,7 @@ pub(all) enum PartTransition {
   RecordPartIntegration(CandidateId, ReceiptId)
   StartPartConflictRepair(IntegrationConflictId, TakeId)
   StartPartAuditRepair(AuditResultId, TakeId)
+  StartPartVerificationRepair(ReceiptId, TakeId)
   RestartBlockedPart(TakeId)
   BlockPart(PartBlockReason)
   CancelPartNotRun

@@ -154,7 +154,7 @@ fn conductor_tools() -> Array[CatalogTool] {
   [
     {
       name: "goal_submit",
-      description: "Submit one typed Conductor draft exactly once for the current user request, after every selected Bead has been checked for an internally coherent task and acceptance contract. The selected Part IDs are Bead IDs; Choir securely mints and returns the internal durable Goal ID. The call consumes the request's one mutation allowance whether accepted or rejected; never call goal_submit a second time or diagnose a rejection with Bash or the CLI. Choir pushes later durable state transitions through its channel. Audit repair is owned by choird and never requires a manual retry.",
+      description: "Submit one typed Conductor draft exactly once for the current user request, after every selected Bead has been checked for an internally coherent task and acceptance contract. The selected Part IDs are Bead IDs; Choir securely mints and returns the internal durable Goal ID. The call consumes the request's one mutation allowance whether accepted or rejected; never call goal_submit a second time or diagnose a rejection with Bash or the CLI. Choir pushes later durable state transitions through its channel. Verification and audit repair are owned by choird and never require a manual retry.",
       input_schema: {
         "type": "object".to_json(),
         "properties": goal_submit_properties.to_json(),
@@ -432,7 +432,7 @@ fn conductor_instructions() -> String {
     #|
     #|Before submission, check every selected Bead against its acceptance text and repository facts. If it is contradictory, use task_update to produce the closest executable contract preserving the outcome, record the contradiction and resolution in notes, reread it, and submit that revision. Never ask the user to repair it. If several readings work, choose the narrowest that preserves outcome and verification intent.
     #|
-    #|Never shrink a rejected selection. Preserve requested scope. Audit findings and source contradictions are autonomous repair work, not user-input requests.
+    #|Never shrink a rejected selection. Preserve requested scope. Verification failures, audit findings, and source contradictions are autonomous repair work, not user-input requests.
   )
 }
 
