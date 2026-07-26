@@ -360,3 +360,66 @@ async test "native Conductor rejects removed dispatch" {
   })
   assert_true(removed.error_message().unwrap_or("").contains("unknown tool"))
 }
+
+///|
+/// A batch is a graph. Applying the half of it that happens to be valid leaves
+/// a shape the planner never asked for, so a rejected item must stop the whole
+/// delivery before anything is written.
+async test "a rejected batch item writes nothing at all" {
+  let commands : Array[@exec.Command] = []
+  let graph =
+    #|[{"id":"probe-a","title":"Existing","status":"open","priority":2,"issue_type":"task","updated_at":"2026-07-26T00:00:00Z"}]
+  async fn batch(items : String) {
+    dispatch_native_conductor_request(
+      "/repo",
+      {
+        req_method: @types.WireMethod::WireToolsCall,
+        name: "task_batch",
+        args: @types.RequestArgs::from_values({
+          "items": @json.parse(items) catch {
+            _ => Json::null()
+          },
+        }),
+      },
+      capture=command => {
+        commands.push(command)
+        (0, graph)
+      },
+    )
+  }
+  // The second item names a blocker that exists nowhere. The tracker would
+  // have created the Bead and merely warned about the missing edge.
+  let rejected = batch(
+    (
+      #|[{"id":"probe-b","intent":"create","title":"First"},
+      #|{"id":"probe-c","intent":"create","title":"Second","blocked_by":["probe-nowhere"]}]
+    ),
+  )
+  assert_true(rejected.is_ok())
+  let payload = rejected.ok_payload().unwrap()
+  assert_eq(payload.get("status"), Some("rejected"))
+  let rendered = payload.get_json("items").unwrap().stringify()
+  assert_true(rendered.contains("missing_dependency: probe-nowhere"))
+  // One read of the graph, and no write of any kind.
+  assert_eq(commands.length(), 1)
+  @debug.assert_eq(commands[0].args[0], "list")
+
+  // The same batch without the unresolvable edge writes both Beads and the
+  // edge between them, in the direction the planner declared.
+  commands.clear()
+  let applied = batch(
+    (
+      #|[{"id":"probe-b","intent":"create","title":"First"},
+      #|{"id":"probe-c","intent":"create","title":"Second","blocked_by":["probe-b"]}]
+    ),
+  )
+  assert_true(applied.is_ok())
+  assert_eq(applied.ok_payload().unwrap().get("status"), Some("ok"))
+  let written = commands.map(fn(command) { command.args })
+  @debug.assert_eq(written, [
+    ["list", "--json", "--readonly", "--flat", "--limit", "0", "--all"],
+    ["create", "First", "--id", "probe-b", "--json"],
+    ["create", "Second", "--id", "probe-c", "--json"],
+    ["dep", "add", "probe-c", "probe-b"],
+  ])
+}

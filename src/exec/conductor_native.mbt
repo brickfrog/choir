@@ -354,6 +354,88 @@ async fn dispatch_native_task_list(
 }
 
 ///|
+/// Read the graph the way the batch layer needs it. Shared by the batch
+/// dispatcher so validation and reconciliation see exactly what `task_list`
+/// would have shown.
+async fn native_conductor_bead_graph(
+  project_dir : String,
+  capture : async (Command) -> (Int, String),
+) -> Result[Array[@command.BeadRecord], @types.ChoirError] {
+  let arguments = match
+    @command.bead_query_arguments(@command.default_bead_query()) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let output = match
+    native_conductor_capture_beads(project_dir, "list", arguments, capture) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let parsed = @json.parse(output) catch {
+    _ => return Err(@types.ChoirError::validation_error("invalid Beads JSON"))
+  }
+  @command.bead_records_from_json(parsed)
+}
+
+///|
+/// Apply a batch of Bead writes.
+///
+/// The graph is reread first and every item is decided against it, because the
+/// tracker reports neither of the two failures that matter most: a create over
+/// a taken id silently overwrites that Bead, and a dependency naming a Bead
+/// that does not exist is a warning on the way to a zero exit with the edge
+/// simply missing.
+///
+/// A redelivery is reconciled rather than reapplied. One item is several
+/// tracker invocations, so a crash between them leaves a Bead without its
+/// edges; rereading decides what is left instead of trusting a record of what
+/// Choir believes it wrote.
+async fn dispatch_native_task_batch(
+  project_dir : String,
+  request : @types.Request,
+  capture : async (Command) -> (Int, String),
+) -> @types.Response {
+  let proposal = match @command.bead_batch_from_json(request.args.values) {
+    Ok(value) => value
+    Err(error) => return @types.Response::err(error)
+  }
+  let graph = match native_conductor_bead_graph(project_dir, capture) {
+    Ok(value) => value
+    Err(error) => return @types.Response::err(error)
+  }
+  let verdicts = @command.reconcile_bead_batch(proposal, graph)
+  if !@command.bead_batch_is_admitted_or_applied(verdicts) {
+    // Nothing runs. A batch is a graph, and applying the half of it that
+    // happens to be valid leaves a shape the planner never asked for.
+    return @types.Response::ok_values({
+      "status": "rejected".to_json(),
+      "items": verdicts.map(@command.bead_item_verdict_to_json).to_json(),
+    })
+  }
+  for index, verdict in verdicts {
+    let mutation = proposal.mutations[index]
+    let invocations = match
+      @command.bead_reconciled_arguments(mutation, verdict.outcome) {
+      Ok(value) => value
+      Err(error) => return @types.Response::err(error)
+    }
+    for invocation in invocations {
+      match
+        native_conductor_capture_beads(
+          project_dir, "batch", invocation, capture,
+        ) {
+        Ok(_) => ()
+        Err(error) => return @types.Response::err(error)
+      }
+    }
+  }
+  @types.Response::ok_values({
+    "status": "ok".to_json(),
+    "items": verdicts.map(@command.bead_item_verdict_to_json).to_json(),
+  })
+}
+
+///|
 async fn dispatch_native_task_get(
   project_dir : String,
   request : @types.Request,
@@ -1316,6 +1398,7 @@ pub async fn dispatch_native_conductor_request(
     "task_get" => dispatch_native_task_get(project_dir, request, capture)
     "task_create" => dispatch_native_task_create(project_dir, request, capture)
     "task_update" => dispatch_native_task_update(project_dir, request, capture)
+    "task_batch" => dispatch_native_task_batch(project_dir, request, capture)
     _ => native_conductor_error("unknown tool " + request.name)
   }
 }

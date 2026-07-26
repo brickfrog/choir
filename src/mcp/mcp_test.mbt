@@ -48,7 +48,7 @@ test "Conductor translation rejects stringified arguments" {
 test "Conductor catalog exposes only Goal and Beads operations" {
   assert_eq(@mcp.conductor_tool_names(), [
     "goal_submit", "goal_list", "goal_status", "goal_cancel", "goal_steer", "goal_attach",
-    "goal_answer", "task_list", "task_get", "task_create", "task_update",
+    "goal_answer", "task_list", "task_get", "task_create", "task_batch", "task_update",
   ])
   let response = @mcp.tools_list_response(Number(20), true)
   guard response.result is Some(Object(result)) else {
@@ -57,7 +57,7 @@ test "Conductor catalog exposes only Goal and Beads operations" {
   guard result.get("tools") is Some(Array(tools)) else {
     fail("expected tools array")
   }
-  assert_eq(tools.length(), 11)
+  assert_eq(tools.length(), 12)
   let mut goal_submit_schema : Json? = None
   let mut goal_status_schema : Json? = None
   for tool in tools {

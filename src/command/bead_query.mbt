@@ -453,7 +453,7 @@ pub fn bead_record_from_json(
     // Labels are hydrated separately by the tracker and may be absent.
     _ => ()
   }
-  labels.sort()
+  labels.sort_by(fn(left, right) { left.compare(right) })
   let edges : Array[BeadEdge] = []
   match fields.get("dependencies") {
     Some(Array(values)) =>

@@ -373,6 +373,70 @@ fn conductor_tools() -> Array[CatalogTool] {
       read_only: false,
     },
     {
+      name: "task_batch",
+      description: "Create or update several Beads in one delivery, including the blocking dependencies between them. Items may depend on Beads the same batch creates. Nothing is written unless every item is applicable, because a partially applied graph is a shape nobody asked for. Redelivering a batch that already landed reports it applied rather than writing it twice.",
+      input_schema: {
+        "type": "object".to_json(),
+        "properties": {
+          "items": {
+            "type": "array".to_json(),
+            "description": "The Beads to write, at most 100.".to_json(),
+            "items": {
+              "type": "object".to_json(),
+              "properties": {
+                "id": conductor_string_schema("Bead identifier"),
+                "intent": {
+                  "type": "string".to_json(),
+                  "description": "Whether this introduces a Bead or revises one that exists. A create naming a Bead that already exists is refused.".to_json(),
+                  "enum": ["create", "update"].to_json(),
+                }.to_json(),
+                "title": conductor_string_schema(
+                  "Short intended-work title; required when creating",
+                ),
+                "description": conductor_string_schema(
+                  "Task description; omit to leave unchanged",
+                ),
+                "acceptance_criteria": conductor_string_schema(
+                  "Acceptance criteria; omit to leave unchanged",
+                ),
+                "notes": conductor_string_schema(
+                  "Detailed context; omit to leave unchanged",
+                ),
+                "priority": {
+                  "type": "integer".to_json(),
+                  "description": "0 (P0) through 4 (P4).".to_json(),
+                  "minimum": (0 : Int).to_json(),
+                  "maximum": (4 : Int).to_json(),
+                }.to_json(),
+                "type": {
+                  "type": "string".to_json(),
+                  "description": "Bead type.".to_json(),
+                  "enum": [
+                    "bug", "feature", "task", "epic", "chore", "decision",
+                  ].to_json(),
+                }.to_json(),
+                "labels": conductor_string_array_schema(
+                  "Replaces the Bead's labels entirely; omit to leave them unchanged",
+                ),
+                "blocked_by": conductor_string_array_schema(
+                  "Beads that must close before this one can start",
+                ),
+                "parent": conductor_string_schema("Parent Bead identifier"),
+                "expected_updated_at": conductor_string_schema(
+                  "The updated_at last read for this Bead; a revision that no longer matches is reported as drift instead of overwriting it",
+                ),
+              }.to_json(),
+              "required": ["id", "intent"].to_json(),
+              "additionalProperties": false.to_json(),
+            }.to_json(),
+          }.to_json(),
+        }.to_json(),
+        "required": ["items"].to_json(),
+        "additionalProperties": false.to_json(),
+      }.to_json(),
+      read_only: false,
+    },
+    {
       name: "task_update",
       description: "Update one Bead when the user explicitly requests it, while actively refining it, or when mandatory pre-submit review finds that its task and acceptance text contradict each other or the repository facts. Resolve a contradiction autonomously to the closest executable contract that preserves the requested outcome, retain the original contradiction and the chosen resolution in notes, then reread the Bead before Goal submission. Never ask the user to choose how to repair a contradictory Bead. Omitted fields remain unchanged.",
       input_schema: {
