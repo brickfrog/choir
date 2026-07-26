@@ -2342,3 +2342,135 @@ async test "driver recovers every persisted transition after rollback" {
     clean_workflow_repository(repository)
   }
 }
+
+///|
+/// The budget's whole purpose is that a stopped WorkOrder stays stopped. That
+/// only holds if the latch is durable, so this exercises it through the real
+/// store rather than in memory: cross the deadline, latch, reload, and confirm
+/// a restart reading the record still refuses new agentic work.
+async test "a stopped WorkOrder budget survives restart and is not resurrected" {
+  let repository = workflow_repository("work-order-budget")
+  clean_workflow_repository(repository)
+  let adapters = workflow_repository_adapters()
+  @workflow.initialize_part_workflow_repository(repository, adapters).unwrap()
+  let fixture = workflow_store_fixture()
+  // Non-zero counters, so the round-trip proves they persist rather than
+  // being re-derived as zero on the way back in.
+  let budget = @workflow.record_work_order_agentic_take(
+    @workflow.record_work_order_delivery(
+      @workflow.accept_work_order_budget(
+        @workflow.WorkOrderStopRequest::WorkOrderRequestRelativeSeconds(3_600L),
+        @workflow.WorkOrderCutoffPolicy::WorkOrderInstallCancellationCutoff,
+        1_000L,
+      ).unwrap(),
+      2,
+      5,
+    ).unwrap(),
+  )
+  let execution : @workflow.GoalExecutionRecord = {
+    goal: fixture.goal,
+    repository_id: @workflow.RepositoryId("repository-work-order"),
+    selection_decision_digest: workflow_store_digest_a,
+    base_ref: @workflow.GitRefName("refs/heads/main"),
+    base_commit_oid: @control.GitOid("work-order-head"),
+    base_tree_oid: @control.GitOid("work-order-tree"),
+    integration_target_ref: @workflow.GitRefName("refs/heads/main"),
+    completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
+    pull_request_document: Some({
+      title: "test: exercise a WorkOrder budget",
+      body: "Exercises a durable WorkOrder budget.",
+      draft: false,
+    }),
+    migration_production_admission: None,
+    goal_ref: @workflow.goal_execution_ref(fixture.goal.id),
+    branch_initialization: @workflow.initial_goal_branch_initialization(
+      fixture.goal.id,
+      @workflow.RepositoryId("repository-work-order"),
+      @workflow.goal_execution_ref(fixture.goal.id),
+      @control.GitOid("work-order-head"),
+    ),
+    source_claims: [
+      @workflow.initial_goal_source_claim(
+        fixture.goal.id,
+        fixture.part.id,
+        workflow_store_digest_a,
+        workflow_store_digest_a,
+      ),
+    ],
+    maximum_parallel_parts: 1,
+    policy_revisions: [
+      @workflow.initial_goal_policy_revision(fixture.goal.id, 1),
+    ],
+    part_workflow_ids: [fixture.workflow_id],
+    state: @workflow.GoalExecutionState::GoalExecutionRunning,
+    pause: None,
+    active_input_request: None,
+    input_answers: [],
+    cancellation_request: None,
+    work_order_budget: Some(budget),
+    durable_version: 1,
+    fencing_epoch: fixture.fencing_epoch,
+  }
+  let receipt = @workflow.persist_goal_execution_record(repository, adapters, {
+    record: execution,
+    expected_store_version: None,
+    fault_point: None,
+  }).unwrap()
+  // The deadline resolved once at acceptance, so a restart reads the same
+  // absolute instant rather than re-deriving it from the new clock.
+  let stored = @workflow.load_goal_execution_record(
+      workflow_repository("work-order-budget"),
+      adapters,
+      fixture.goal.id,
+    )
+    .unwrap()
+    .unwrap()
+  assert_eq(stored.record.work_order_budget, Some(budget))
+  assert_eq(stored.record.work_order_budget.unwrap().counters, {
+    ..@workflow.initial_work_order_counters(),
+    delivered_primary_targets: 2,
+    delivered_dependency_closure: 5,
+    agentic_takes_started: 1,
+  })
+  // The cutoff is durable too: it decides whether the stop drains or cancels,
+  // and a restart that read the default would silently change that answer.
+  assert_eq(
+    stored.record.work_order_budget.unwrap().cutoff_policy,
+    @workflow.WorkOrderCutoffPolicy::WorkOrderInstallCancellationCutoff,
+  )
+  assert_eq(
+    @workflow.goal_execution_admits_new_agentic_work(stored.record, 4_599L),
+    @workflow.WorkOrderAdmission::WorkOrderAdmitsNewWork,
+  )
+  // Crossing the deadline latches the stop onto the durable record.
+  let stopped = @workflow.record_goal_work_order_stop(stored.record, 4_600L)
+  assert_true(stopped != stored.record)
+  ignore(
+    @workflow.persist_goal_execution_record(repository, adapters, {
+      record: stopped,
+      expected_store_version: Some(receipt.store_version),
+      fault_point: None,
+    }).unwrap(),
+  )
+  let restarted = @workflow.load_goal_execution_record(
+      workflow_repository("work-order-budget"),
+      adapters,
+      fixture.goal.id,
+    )
+    .unwrap()
+    .unwrap()
+  // A restart cannot resurrect the WorkOrder by reading an earlier clock: the
+  // latch is the answer, not the deadline comparison.
+  assert_eq(
+    @workflow.goal_execution_admits_new_agentic_work(restarted.record, 1_001L),
+    @workflow.WorkOrderAdmission::WorkOrderExhausted(
+      @workflow.WorkOrderStopReason::WorkOrderDeadlineReached,
+    ),
+  )
+  // Latching twice is idempotent, so a repeated tick writes nothing.
+  assert_eq(
+    @workflow.record_goal_work_order_stop(restarted.record, 9_000L),
+    restarted.record,
+  )
+  clean_workflow_repository(repository)
+}
