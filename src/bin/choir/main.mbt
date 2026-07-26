@@ -48,12 +48,79 @@ test "CLI help exposes only the current Conductor and Goal controls" {
 }
 
 ///|
-fn stop_run() -> Unit {
-  let pid_text = @sys.read_file(".choir/run/server.pid").trim().to_owned()
-  let pid = @string.parse_int(pid_text) catch { _ => 0 }
+/// What the recorded pid file says about a daemon, before anything is killed.
+/// A missing or unreadable pid file reads as `""`, which must not look like a
+/// daemon that was stopped successfully.
+pub(all) enum StopDaemonRecord {
+  StopDaemonRecorded(Int)
+  StopDaemonAbsent
+  StopDaemonUnreadable(String)
+} derive(Debug, Eq)
+
+///|
+pub fn stop_daemon_record(pid_text : String) -> StopDaemonRecord {
+  let trimmed = pid_text.trim().to_owned()
+  if trimmed == "" {
+    return StopDaemonAbsent
+  }
+  let pid = @string.parse_int(trimmed) catch {
+    _ => return StopDaemonUnreadable(trimmed)
+  }
   if pid > 1 {
-    @sys.write_stdout("Stopping choird (PID \{pid})...\n")
-    @sys.kill_server_tree_sequence_best_effort(pid)
+    StopDaemonRecorded(pid)
+  } else {
+    StopDaemonUnreadable(trimmed)
+  }
+}
+
+///|
+test "a missing pid file is not a stopped daemon" {
+  assert_eq(stop_daemon_record(""), StopDaemonAbsent)
+  assert_eq(stop_daemon_record("  \n"), StopDaemonAbsent)
+  assert_eq(stop_daemon_record("4321\n"), StopDaemonRecorded(4321))
+  // pid 0 and 1 are never this daemon, and neither is unparseable text.
+  assert_eq(stop_daemon_record("0"), StopDaemonUnreadable("0"))
+  assert_eq(stop_daemon_record("1"), StopDaemonUnreadable("1"))
+  assert_eq(stop_daemon_record("-9"), StopDaemonUnreadable("-9"))
+  assert_eq(stop_daemon_record("wedged"), StopDaemonUnreadable("wedged"))
+}
+
+///|
+fn stop_run() -> Unit {
+  let record = stop_daemon_record(@sys.read_file(".choir/run/server.pid"))
+  match record {
+    StopDaemonRecorded(pid) => {
+      @sys.write_stdout("Stopping choird (PID \{pid})...\n")
+      @sys.kill_server_tree_sequence_best_effort(pid)
+      // The kill sequence is best effort, so termination is verified rather
+      // than assumed: a wedged daemon must not report success.
+      if @sys.pid_is_alive(pid) {
+        @sys.write_stderr(
+          "choir stop: choird (PID \{pid}) is still running after the stop sequence\n",
+        )
+        @sys.exit(1)
+        return
+      }
+    }
+    // Nothing to kill, but `--purge` still has runtime artifacts to reclaim,
+    // so this reports honestly and continues rather than claiming a stop.
+    StopDaemonAbsent =>
+      @sys.write_stdout(
+        "No choird was running here (no .choir/run/server.pid).\n",
+      )
+    StopDaemonUnreadable(value) => {
+      @sys.write_stderr(
+        "choir stop: .choir/run/server.pid does not name a daemon process: \{value}\n",
+      )
+      @sys.exit(1)
+      return
+    }
+  }
+  let stopped_a_daemon = record is StopDaemonRecorded(_)
+  let terminal_message = if stopped_a_daemon {
+    "Choir stopped.\n"
+  } else {
+    "Nothing was running to stop.\n"
   }
   if @env.args().contains("--purge") {
     let project_dir = match @sys.realpath_native(".") {
@@ -73,7 +140,7 @@ fn stop_run() -> Unit {
           @sys.write_stdout(
             "Purged \{report.runtime_roots_removed} Goal runtime root(s), \{report.git_refs_removed} owned Git ref(s), and released \{report.source_claims_released} Bead claim(s).\n",
           )
-          @sys.write_stdout("Choir stopped.\n")
+          @sys.write_stdout(terminal_message)
         }
         Err(error) => {
           @sys.init_cleanup_runtime_artifacts_native()
@@ -86,7 +153,7 @@ fn stop_run() -> Unit {
     })
   } else {
     @sys.init_cleanup_runtime_artifacts_native()
-    @sys.write_stdout("Choir stopped.\n")
+    @sys.write_stdout(terminal_message)
   }
 }
 

@@ -65,7 +65,15 @@ fn goal_cli_call(tool : String, values : Map[String, Json]) -> @types.Response {
   }
   match client_call_uds(config, req, capability) {
     Ok(resp) => resp
-    Err(_) => goal_cli_no_serve_response()
+    // Only an unreachable socket means "no daemon". A rejected registration,
+    // a mid-stream close, or an unparseable response are different faults and
+    // reporting them as "start the daemon" sends the operator the wrong way.
+    Err(error) =>
+      if client_error_is_unreachable(error, config.listen_uds) {
+        goal_cli_no_serve_response()
+      } else {
+        @types.Response::Err(@types.ChoirError::transport_error(error).message())
+      }
   }
 }
 

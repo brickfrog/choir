@@ -212,7 +212,11 @@ work; doing so duplicates the repair Choir already owns.
 These are the commands that exist today, exactly as the CLI parses them
 (`src/bin/choir/main.mbt`, `src/bin/choir/goal_cli.mbt`). The `goal`
 subcommands require a running `choird`; without one they return
-``no `choir serve` is running — start it, then run `choir goal`.``
+``no `choir serve` is running — start it, then run `choir goal`.`` promptly,
+without waiting on the socket. That message means exactly one thing: the socket
+was unreachable. Any other transport fault — a rejected registration, a
+connection closed mid-stream, an unparseable response — is reported as itself,
+so "start the daemon" is never the advice for a daemon that is already up.
 
 The CLI is an operator and debugging fallback. **In a Conductor session the
 equivalent typed MCP tools — `goal_list`, `goal_status`, `goal_steer`,
@@ -249,7 +253,14 @@ tail -n 200 .choir/logs/serve.log
 
 **Symptom.** Every `choir goal` command returns
 ``no `choir serve` is running — start it, then run `choir goal`.``, or commands
-succeed but behave like an older build.
+succeed but behave like an older build. A different transport message means the
+daemon is reachable and something else failed — do not restart it on that
+evidence.
+
+`choir stop` is honest about what it found: it reports `No choird was running
+here` and exits 0 when there is no pid file, exits 1 when the pid file does not
+name a daemon process, and exits 1 when the daemon is still alive after the
+best-effort stop sequence. Only a verified termination prints `Choir stopped.`
 
 **Look at first.**
 

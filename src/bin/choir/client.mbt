@@ -120,17 +120,39 @@ fn client_register_local_cli(
 }
 
 ///|
+/// The one transport failure that genuinely means "no daemon". Every other
+/// failure is a distinct fault and must reach the operator as itself rather
+/// than being flattened into "no `choir serve` is running".
+fn client_unreachable_error(listen_uds : String) -> String {
+  "cannot connect to server at " + listen_uds
+}
+
+///|
+pub fn client_error_is_unreachable(error : String, listen_uds : String) -> Bool {
+  error == client_unreachable_error(listen_uds)
+}
+
+///|
+/// A one-shot CLI read must not sit in the daemon-start wait loop: a missing
+/// daemon is an answer, not something to block twelve seconds for. `choir
+/// start` owns the long wait and passes its own bound.
+let client_one_shot_connect_tries : Int = 1
+
+///|
 fn client_call_uds(
   config : @types.Config,
   request : @types.Request,
   capability : String?,
+  connect_tries~ : Int = client_one_shot_connect_tries,
 ) -> Result[@types.Response, String] {
   let mut fd = @uds.client_connect(config.listen_uds)
-  if fd < 0 && @sys.wait_for_socket(config.listen_uds, 60) {
+  if fd < 0 &&
+    connect_tries > 0 &&
+    @sys.wait_for_socket(config.listen_uds, connect_tries) {
     fd = @uds.client_connect(config.listen_uds)
   }
   if fd < 0 {
-    return Err("cannot connect to server at " + config.listen_uds)
+    return Err(client_unreachable_error(config.listen_uds))
   }
   let reader = UDSLineReader::new(fd)
   let registered = match capability {
