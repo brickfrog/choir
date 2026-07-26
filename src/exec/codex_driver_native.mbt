@@ -1403,6 +1403,62 @@ let native_codex_turn_read_interval_ms : Int = 30000
 /// and `turn/completed` notifications already carry `params.turn.status`, so
 /// the poll watches them instead and reads the thread only once the turn is no
 /// longer running.
+/// What this turn reported spending, read from the app-server's own
+/// `thread/tokenUsage/updated` notifications in the response spool. The last
+/// notification naming this turn wins: earlier ones are partial.
+fn native_codex_turn_usage_from_events(
+  spool : String,
+  turn_id : String,
+) -> @control.TakeUsage? {
+  let mut usage = None
+  for raw in spool.split("\n") {
+    let line = raw.trim().to_owned()
+    if line == "" {
+      continue
+    }
+    let json = @json.parse(line) catch { _ => continue }
+    guard json is Object(fields) else { continue }
+    if @types.json_field_string(fields, "method") !=
+      Some("thread/tokenUsage/updated") {
+      continue
+    }
+    let params = match native_codex_object_field(fields, "params") {
+      Some(value) => value
+      None => continue
+    }
+    if @types.json_field_string(params, "turnId") != Some(turn_id) {
+      continue
+    }
+    match @harness.codex_turn_usage(params) {
+      Some(value) => usage = Some(value)
+      None => ()
+    }
+  }
+  usage
+}
+
+///|
+test "Codex turn usage is read from the spool for the exact turn" {
+  let spool =
+    #|{"method":"thread/tokenUsage/updated","params":{"threadId":"t","turnId":"turn-other","tokenUsage":{"last":{"cachedInputTokens":1,"inputTokens":1,"outputTokens":1,"reasoningOutputTokens":0,"totalTokens":3}}}}
+    #|{"method":"thread/tokenUsage/updated","params":{"threadId":"t","turnId":"turn-1","tokenUsage":{"last":{"cachedInputTokens":10,"inputTokens":20,"outputTokens":5,"reasoningOutputTokens":0,"totalTokens":35}}}}
+    #|{"method":"thread/tokenUsage/updated","params":{"threadId":"t","turnId":"turn-1","tokenUsage":{"last":{"cachedInputTokens":900,"inputTokens":120,"outputTokens":45,"reasoningOutputTokens":15,"totalTokens":1080,"cacheWriteInputTokens":30}}}}
+  // The last notification for this turn wins; another turn's is ignored.
+  assert_eq(
+    native_codex_turn_usage_from_events(spool, "turn-1"),
+    Some({
+      input_tokens: 120,
+      output_tokens: 60,
+      cache_read_tokens: 900,
+      cache_creation_tokens: 30,
+      wall_time_ms: 0,
+    }),
+  )
+  assert_eq(native_codex_turn_usage_from_events(spool, "turn-absent"), None)
+  assert_eq(native_codex_turn_usage_from_events("", "turn-1"), None)
+}
+
+///|
 fn native_codex_turn_status_from_events(
   spool : String,
   turn_id : String,
@@ -1959,8 +2015,28 @@ pub async fn run_native_codex_take(
         native_codex_driver_error("terminal provider cursor is absent"),
       )
   }
+  // What this turn spent against the user's paid subscription allowance,
+  // taken from the app-server's own notifications rather than estimated.
+  let reported_usage = match manifest.turn_id {
+    Some(turn_id) => {
+      let path = native_codex_log_path(config)
+      if @sys.path_exists(path) {
+        native_codex_turn_usage_from_events(@sys.read_file(path), turn_id)
+      } else {
+        None
+      }
+    }
+    None => None
+  }
   @harness.evaluate_codex_driver_capture({
-    session: { ..session, provider_cursor: Some(provider_cursor) },
+    session: {
+      ..session,
+      provider_cursor: Some(provider_cursor),
+      usage: match reported_usage {
+        Some(usage) if @control.validate_take_usage(usage) => Some(usage)
+        _ => session.usage
+      },
+    },
     role,
     allowed_tools: config.allowed_tools,
     expected_mcp_server: config.mcp_server_name,
