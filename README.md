@@ -32,14 +32,14 @@ No separately metered model credential is required or supported by the default
 execution profiles.
 
 ```bash
-moon build --target native --release
-install -Dm755 _build/native/release/build/src/bin/choir/choir.exe ~/.local/libexec/choir/choir
-install -Dm644 scripts/choir_sandbox_mcp.mjs scripts/choir_boxlite_owner.mjs -t ~/.local/libexec/choir
-install -Dm755 /absolute/path/to/corrected-boxlite-v0.9.7 ~/.local/libexec/choir/boxlite
-cp -a /absolute/path/to/corrected-runtime ~/.local/libexec/choir/boxlite-runtime
-ln -sfn ../libexec/choir/choir ~/.local/bin/choir
+scripts/install-choir.sh --prefix "$HOME/.local" \
+  /absolute/path/to/corrected-boxlite-v0.9.7 \
+  /absolute/path/to/corrected-runtime
 choir init
 ```
+
+The prefix defaults to `$HOME/.local`. The corrected BoxLite paths may instead
+be supplied as `BOXLITE_BINARY` and `BOXLITE_RUNTIME`.
 
 This layout is self-contained: Choir resolves the admitted BoxLite executable,
 runtime bundle, and trusted runtime programs relative to its own executable.
