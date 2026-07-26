@@ -129,8 +129,13 @@ pub(all) struct GoalStatusReport {
   pull_request_receipt_present : Bool
   pull_request_number : PullRequestNumber?
   pull_request_url : PullRequestUrl?
+  /// Requested presentation state from the Goal's pull request document.
+  pull_request_draft : Bool?
   finalization_id : @control.FinalizationId?
   readiness_decision : PullRequestReadinessDecision?
+  /// Draft state of the exact remote pull request at the last observation, so
+  /// awaiting-review never has to be inferred from pull request text.
+  readiness_observed_draft : Bool?
   readiness_observation_sequence : Int64?
   semantic_run_projection : SemanticRunProjection?
   parts : Array[GoalPartStatus]
@@ -708,8 +713,9 @@ pub fn goal_status_report(
         value.receipt is Some(_),
         value.receipt.map(fn(receipt) { receipt.number }),
         value.receipt.map(fn(receipt) { receipt.url }),
+        Some(value.intent.document.draft),
       )
-    None => (None, None, None, false, None, None)
+    None => (None, None, None, false, None, None, None)
   }
   match finalization {
     Some(value) if value.goal_id != record.goal.id =>
@@ -721,9 +727,10 @@ pub fn goal_status_report(
       (
         Some(value.readiness.finalization_id),
         Some(value.readiness.decision),
+        value.readiness.observed_draft,
         Some(value.readiness.observation_sequence),
       )
-    None => (None, None, None)
+    None => (None, None, None, None)
   }
   let semantic_run_projection = match
     semantic_run_projection(
@@ -768,9 +775,11 @@ pub fn goal_status_report(
     pull_request_receipt_present: pull_request_status.3,
     pull_request_number: pull_request_status.4,
     pull_request_url: pull_request_status.5,
+    pull_request_draft: pull_request_status.6,
     finalization_id: finalization_status.0,
     readiness_decision: finalization_status.1,
-    readiness_observation_sequence: finalization_status.2,
+    readiness_observed_draft: finalization_status.2,
+    readiness_observation_sequence: finalization_status.3,
     semantic_run_projection,
     parts,
   })

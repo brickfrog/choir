@@ -11,6 +11,7 @@ pub(all) struct PullRequestReadinessSnapshotId(String) derive (
 ///|
 pub(all) enum PullRequestReadinessDecision {
   PullRequestReady
+  PullRequestAwaitingReview
   PullRequestAwaitingMerge
   PullRequestDeliveryFailed(@control.Digest)
   PullRequestReadinessNeedsInput(PullRequestReadinessNeedsInputReason)
@@ -45,6 +46,7 @@ pub(all) struct PullRequestReadinessSnapshot {
   observed_base_repository_id : RemoteRepositoryId?
   observed_base_ref : GitRefName?
   observed_head_oid : @control.GitOid?
+  observed_draft : Bool?
   observed_body_digest : @control.Digest?
   remote_version_token : String?
   observation_sequence : Int64
@@ -187,9 +189,15 @@ fn readiness_decision(
       match intent.delivery_policy.mode {
         @types.PullRequestDeliveryMode::PullRequestReviewOnly =>
           match snapshot.state {
-            RemotePullRequestState::RemotePullRequestOpen
-            | RemotePullRequestState::RemotePullRequestMerged =>
-              PullRequestReady
+            RemotePullRequestState::RemotePullRequestMerged => PullRequestReady
+            // An open draft is not offered for review, so it is not delivery.
+            // Reporting it ready closed source Beads on work nobody had seen.
+            RemotePullRequestState::RemotePullRequestOpen =>
+              if snapshot.draft {
+                PullRequestAwaitingReview
+              } else {
+                PullRequestReady
+              }
             RemotePullRequestState::RemotePullRequestClosed =>
               PullRequestReadinessNeedsInput(
                 PullRequestReadinessNeedsInputReason::PullRequestNotOpen,
@@ -202,7 +210,22 @@ fn readiness_decision(
               match intent.merge_state {
                 PullRequestMergeState::PullRequestMergeRejected(digest) =>
                   PullRequestDeliveryFailed(digest)
-                _ => PullRequestAwaitingMerge
+                // The forge will not merge a draft. Converting the exact pull
+                // request back to draft is a delivery failure with evidence,
+                // never an indefinite wait.
+                _ =>
+                  if snapshot.draft {
+                    PullRequestDeliveryFailed(
+                      @storage.artifact_digest(
+                        @utf8.encode(
+                          "choir.pull-request-delivery-draft.v1\u{00}" +
+                          snapshot.to_json().stringify(indent=0),
+                        ),
+                      ),
+                    )
+                  } else {
+                    PullRequestAwaitingMerge
+                  }
               }
             RemotePullRequestState::RemotePullRequestClosed =>
               PullRequestDeliveryFailed(
@@ -351,6 +374,7 @@ pub fn observe_goal_pull_request_readiness(
       }),
       observed_base_ref: observed.map(fn(value) { value.base_ref }),
       observed_head_oid: observed.map(fn(value) { value.observed_head_oid }),
+      observed_draft: observed.map(fn(value) { value.draft }),
       observed_body_digest: observed.map(fn(value) { value.body_digest }),
       remote_version_token,
       observation_sequence,

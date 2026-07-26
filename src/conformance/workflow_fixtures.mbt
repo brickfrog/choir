@@ -3585,6 +3585,7 @@ pub fn cancellation_ordering_matrix_case() -> HermeticConformanceCase {
         base_ref: pull_request.intent.base_ref,
         observed_head_oid: pull_request.intent.expected_head_oid,
         state: @workflow.RemotePullRequestState::RemotePullRequestOpen,
+        draft: false,
         auto_merge_enabled: false,
         marker_state: @workflow.PullRequestMarkerState::PullRequestMarkerExact,
         title_digest: audit_fixture_digest_a,

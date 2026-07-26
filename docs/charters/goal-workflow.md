@@ -53,6 +53,18 @@ unconnected product path usable.
   cancels with `GoalCancellationVerificationRepairFailed` or
   `GoalCancellationAuditRepairFailed`; neither path asks the Conductor or user
   to authorize a retry.
+- Draft is pull-request presentation state, never a delivery-policy override.
+  Initializing a Goal pull request no longer rewrites `auto_merge` to
+  `review_only` for a draft document: an automatic-merge Goal that asked for a
+  draft is rejected as `PullRequestDraftUnderAutoMerge` with a retained
+  rejection digest, so it never opens a pull request and never closes a source
+  Bead. In `review_only`, an exact open draft is `PullRequestAwaitingReview` —
+  nonterminal, claims retained — until the forge reports it ready for review or
+  merged; merely open is not delivery. The remote snapshot carries observed
+  draft state parsed from `draft`/`isDraft`, and both the requested and
+  observed draft flags appear in the Goal status projection alongside the
+  readiness decision, so no consumer infers review state from pull-request
+  prose.
 - A Part parked on provider-dispatch uncertainty now recovers without an
   operator `retry_part`. The Goal Part adapter resolves the uncertainty from
   the evidence the Part already holds before resuming it: an authorized effect

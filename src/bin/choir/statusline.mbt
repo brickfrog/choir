@@ -557,6 +557,8 @@ fn conductor_statusline_test_report(
     published_oid: None,
     pull_request_state: None,
     pull_request_delivery_policy: None,
+    pull_request_draft: None,
+    readiness_observed_draft: None,
     pull_request_merge_state: None,
     pull_request_receipt_present: false,
     pull_request_number: None,

@@ -2075,6 +2075,7 @@ fn scale_terminal_projection(
     base_ref: assured_execution.integration_target_ref,
     observed_head_oid: final_integration.promotion_commit_oid,
     state: @workflow.RemotePullRequestState::RemotePullRequestOpen,
+    draft: false,
     auto_merge_enabled: false,
     marker_state: @workflow.PullRequestMarkerState::PullRequestMarkerExact,
     title_digest: @storage.artifact_digest(@utf8.encode("scale-title")),

@@ -111,6 +111,7 @@ pub(all) enum PullRequestNeedsInputReason {
   PullRequestRemoteClosed
   PullRequestRemoteDrift
   PullRequestIdentityMarkerMissing
+  PullRequestDraftUnderAutoMerge
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -144,6 +145,9 @@ pub(all) struct RemotePullRequestSnapshot {
   base_ref : GitRefName
   observed_head_oid : @control.GitOid
   state : RemotePullRequestState
+  /// Presentation state, never a delivery-policy override: a draft pull
+  /// request is not offered for review and cannot be merged.
+  draft : Bool
   auto_merge_enabled : Bool
   marker_state : PullRequestMarkerState
   title_digest : @control.Digest
@@ -593,6 +597,8 @@ pub fn initialize_goal_pull_request(
   if !document.body.contains(marker.0) {
     return Err(goal_pull_request_error("document lacks its identity marker"))
   }
+  let draft_rejects_automatic_merge = document.draft &&
+    delivery_policy.mode == @types.PullRequestDeliveryMode::PullRequestAutoMerge
   let record : GoalPullRequestRecord = {
     goal_id: execution.goal.id,
     repository_id: execution.repository_id,
@@ -618,21 +624,31 @@ pub fn initialize_goal_pull_request(
       identity_marker: marker,
       idempotency_key: "pr-" + key_text,
       canonical_remote_pull_request_id: None,
-      state: PullRequestIntentState::PullRequestPlanned,
-      delivery_policy: if document.draft {
-        {
-          mode: @types.PullRequestDeliveryMode::PullRequestReviewOnly,
-          merge_method: delivery_policy.merge_method,
-        }
+      // A draft cannot merge, so an automatic-merge Goal that asked for one is
+      // rejected here with retained evidence rather than silently downgraded
+      // to review-only, which would have closed source Beads on an open draft.
+      state: if draft_rejects_automatic_merge {
+        PullRequestIntentState::PullRequestNeedsInput(
+          PullRequestNeedsInputReason::PullRequestDraftUnderAutoMerge,
+        )
       } else {
-        delivery_policy
+        PullRequestIntentState::PullRequestPlanned
       },
-      merge_state: if document.draft ||
-        delivery_policy.mode ==
-        @types.PullRequestDeliveryMode::PullRequestReviewOnly {
-        PullRequestMergeState::PullRequestMergeNotRequested
-      } else {
-        PullRequestMergeState::PullRequestMergePlanned
+      delivery_policy,
+      merge_state: match delivery_policy.mode {
+        @types.PullRequestDeliveryMode::PullRequestReviewOnly =>
+          PullRequestMergeState::PullRequestMergeNotRequested
+        @types.PullRequestDeliveryMode::PullRequestAutoMerge =>
+          if draft_rejects_automatic_merge {
+            PullRequestMergeState::PullRequestMergeRejected(
+              pull_request_merge_failure_digest(
+                "draft-under-auto-merge",
+                document.to_json(),
+              ),
+            )
+          } else {
+            PullRequestMergeState::PullRequestMergePlanned
+          }
       },
       cancellation_state: PullRequestCancellationState::PullRequestCancellationNotRequested,
     },

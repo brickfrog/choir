@@ -2990,6 +2990,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     base_ref: assured_execution.integration_target_ref,
     observed_head_oid: promotion.commit_oid,
     state: @workflow.RemotePullRequestState::RemotePullRequestOpen,
+    draft: false,
     auto_merge_enabled: false,
     marker_state: @workflow.PullRequestMarkerState::PullRequestMarkerExact,
     title_digest: @storage.artifact_digest(@utf8.encode(pr_document.title)),
@@ -3187,6 +3188,153 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     )
     is Ok(_),
   )
+  // Draft is presentation state. It never rewrites the checked-in delivery
+  // mode, and an automatic-merge Goal that asked for a draft is rejected with
+  // retained evidence instead of being downgraded to review-only.
+  let draft_document = { ..pr_document, draft: true }
+  let draft_automatic = @workflow.initialize_goal_pull_request(
+    assured_execution,
+    assured,
+    published,
+    @workflow.PullRequestProvider::GitHubPullRequestProvider,
+    @workflow.RemoteRepositoryId("remote-repository-assurance"),
+    draft_document,
+    delivery_policy={
+      mode: @types.PullRequestDeliveryMode::PullRequestAutoMerge,
+      merge_method: @types.PullRequestMergeMethod::PullRequestSquashMerge,
+    },
+  ).unwrap()
+  assert_eq(
+    draft_automatic.intent.delivery_policy.mode,
+    @types.PullRequestDeliveryMode::PullRequestAutoMerge,
+  )
+  assert_eq(
+    draft_automatic.intent.state,
+    @workflow.PullRequestIntentState::PullRequestNeedsInput(
+      @workflow.PullRequestNeedsInputReason::PullRequestDraftUnderAutoMerge,
+    ),
+  )
+  assert_true(
+    draft_automatic.intent.merge_state
+    is @workflow.PullRequestMergeState::PullRequestMergeRejected(_),
+  )
+  // The rejected intent never reaches an exact remote pull request, so nothing
+  // can adopt it and close source Beads.
+  assert_true(
+    @workflow.authorize_goal_pull_request(
+      draft_automatic,
+      assured_execution,
+      assured,
+      published,
+      promotion.commit_oid,
+      @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch({
+        ..remote_pull_request,
+        draft: true,
+      }),
+      46L,
+    )
+    is Err(_),
+  )
+
+  // A review-only draft keeps its delivery mode and stays nonterminal until it
+  // is observed ready for review.
+  let draft_review_only = @workflow.initialize_goal_pull_request(
+    assured_execution,
+    assured,
+    published,
+    @workflow.PullRequestProvider::GitHubPullRequestProvider,
+    @workflow.RemoteRepositoryId("remote-repository-assurance"),
+    draft_document,
+  ).unwrap()
+  let draft_receipted = @workflow.authorize_goal_pull_request(
+    draft_review_only,
+    assured_execution,
+    assured,
+    published,
+    promotion.commit_oid,
+    @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch({
+      ..remote_pull_request,
+      draft: true,
+    }),
+    47L,
+  ).unwrap()
+  let awaiting_review = @workflow.observe_goal_pull_request_readiness(
+    assured_execution,
+    assured,
+    published,
+    draft_receipted,
+    @workflow.PullRequestLookupObservation::PullRequestStoredIdMatch({
+      ..remote_pull_request,
+      draft: true,
+    }),
+    None,
+    1L,
+    48L,
+    48L,
+  ).unwrap()
+  assert_eq(
+    awaiting_review.readiness.decision,
+    @workflow.PullRequestReadinessDecision::PullRequestAwaitingReview,
+  )
+  assert_eq(awaiting_review.readiness.observed_draft, Some(true))
+  assert_true(
+    @workflow.authorize_goal_execution_success(
+      assured_execution, assured, published, draft_receipted, awaiting_review,
+    )
+    is Err(_),
+  )
+  // Ready for review advances at the configured boundary.
+  let ready_for_review = @workflow.observe_goal_pull_request_readiness(
+    assured_execution,
+    assured,
+    published,
+    draft_receipted,
+    @workflow.PullRequestLookupObservation::PullRequestStoredIdMatch(
+      remote_pull_request,
+    ),
+    None,
+    2L,
+    49L,
+    49L,
+  ).unwrap()
+  assert_eq(
+    ready_for_review.readiness.decision,
+    @workflow.PullRequestReadinessDecision::PullRequestReady,
+  )
+  assert_eq(ready_for_review.readiness.observed_draft, Some(false))
+  assert_true(
+    @workflow.authorize_goal_execution_success(
+      assured_execution, assured, published, draft_receipted, ready_for_review,
+    )
+    is Ok(_),
+  )
+  // Cancellation of the review-only draft still binds to the exact remote
+  // identity: a foreign pull request neutralizes nothing.
+  let draft_canceling = @workflow.record_goal_pull_request_cancellation(
+    draft_receipted,
+    @workflow.PullRequestLookupObservation::PullRequestStoredIdMatch({
+      ..remote_pull_request,
+      draft: true,
+    }),
+    50L,
+  ).unwrap()
+  assert_false(
+    @workflow.goal_pull_request_cancellation_disposition_is_known(
+      draft_canceling,
+    ),
+  )
+  match
+    @workflow.authorize_goal_pull_request_neutralization(
+      draft_canceling,
+      @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch({
+        ..remote_pull_request,
+        remote_id: @workflow.RemotePullRequestId("PR_other_draft"),
+        draft: true,
+      }),
+    ) {
+    Ok(value) => assert_eq(value, draft_canceling)
+    Err(error) => fail(error.message())
+  }
   guard adopted_pull_request.receipt is Some(pull_request_receipt) else {
     fail("pull request receipt is absent")
   }

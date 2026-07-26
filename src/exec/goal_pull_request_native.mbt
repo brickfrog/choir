@@ -111,6 +111,21 @@ fn native_pull_request_remote_state(
 }
 
 ///|
+/// GitHub reports draft state as `draft` on the REST resource and `isDraft`
+/// through the CLI's GraphQL projection.
+fn native_pull_request_draft(fields : Map[String, Json]) -> Bool {
+  match fields.get("draft") {
+    Some(True) => return true
+    Some(False) => return false
+    _ => ()
+  }
+  match fields.get("isDraft") {
+    Some(True) => true
+    _ => false
+  }
+}
+
+///|
 fn native_pull_request_auto_merge_enabled(fields : Map[String, Json]) -> Bool {
   match fields.get("auto_merge") {
     Some(Object(_)) => return true
@@ -185,6 +200,7 @@ fn native_pull_request_snapshot(
     base_ref: @workflow.GitRefName("refs/heads/" + base_name),
     observed_head_oid: head_oid,
     state,
+    draft: native_pull_request_draft(fields),
     auto_merge_enabled: native_pull_request_auto_merge_enabled(fields),
     marker_state: if body.contains(intent.identity_marker.0) {
       @workflow.PullRequestMarkerState::PullRequestMarkerExact
@@ -273,6 +289,7 @@ fn native_rest_pull_request_snapshot(
     base_ref: @workflow.GitRefName("refs/heads/" + base_name),
     observed_head_oid: head_oid,
     state,
+    draft: native_pull_request_draft(fields),
     auto_merge_enabled: native_pull_request_auto_merge_enabled(fields),
     marker_state: if body.contains(intent.identity_marker.0) {
       @workflow.PullRequestMarkerState::PullRequestMarkerExact
@@ -675,6 +692,7 @@ pub fn synthetic_pull_request_forge_adapters() -> NativePullRequestForgeAdapters
         } else {
           @workflow.RemotePullRequestState::RemotePullRequestOpen
         },
+        draft: intent.document.draft,
         auto_merge_enabled: !neutralized.val &&
         (
           intent.merge_state ==
@@ -1377,6 +1395,7 @@ fn pull_request_fault_snapshot(
     base_ref: intent.base_ref,
     observed_head_oid: intent.expected_head_oid,
     state: @workflow.RemotePullRequestState::RemotePullRequestOpen,
+    draft: document.draft,
     auto_merge_enabled: false,
     marker_state: @workflow.PullRequestMarkerState::PullRequestMarkerExact,
     title_digest: @storage.artifact_digest(@utf8.encode(document.title)),

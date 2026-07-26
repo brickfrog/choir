@@ -202,7 +202,10 @@ pub async fn advance_native_goal_finalization_with_adapters(
         Err(error) => Err(error)
       }
     }
-    @workflow.PullRequestReadinessDecision::PullRequestAwaitingMerge =>
+    // An exact open draft keeps its source claims: the Goal stays pending
+    // until the pull request is observed ready for review, merged, or canceled.
+    @workflow.PullRequestReadinessDecision::PullRequestAwaitingReview
+    | @workflow.PullRequestReadinessDecision::PullRequestAwaitingMerge =>
       Ok(@workflow.GoalFinalizationTickOutcome::GoalFinalizationPending)
     @workflow.PullRequestReadinessDecision::PullRequestDeliveryFailed(digest) =>
       Ok(
