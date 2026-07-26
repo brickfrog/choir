@@ -72,7 +72,9 @@ fn goal_cli_call(tool : String, values : Map[String, Json]) -> @types.Response {
       if client_error_is_unreachable(error, config.listen_uds) {
         goal_cli_no_serve_response()
       } else {
-        @types.Response::Err(@types.ChoirError::transport_error(error).message())
+        @types.Response::Err(
+          @types.ChoirError::transport_error(error).message(),
+        )
       }
   }
 }

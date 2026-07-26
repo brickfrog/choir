@@ -1,5 +1,6 @@
 import {
   "choir/src/types",
+  "choir/src/command",
   "choir/src/control",
   "choir/src/config",
   "choir/src/transport",

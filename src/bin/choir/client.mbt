@@ -143,7 +143,7 @@ fn client_call_uds(
   config : @types.Config,
   request : @types.Request,
   capability : String?,
-  connect_tries~ : Int = client_one_shot_connect_tries,
+  connect_tries? : Int = client_one_shot_connect_tries,
 ) -> Result[@types.Response, String] {
   let mut fd = @uds.client_connect(config.listen_uds)
   if fd < 0 &&

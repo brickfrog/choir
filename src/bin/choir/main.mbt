@@ -25,6 +25,7 @@ fn choir_usage() -> String {
     #|  goal answer <request-id> <answer>
     #|
     #|Control
+    #|  doctor                check every host dependency Choir needs
     #|  stop [--purge]        stop the server (optionally purge runtime state)
     #|
     #|Internal:
@@ -45,6 +46,7 @@ test "CLI help exposes only the current Conductor and Goal controls" {
   assert_true(usage.contains("goal answer <request-id> <answer>"))
   assert_false(usage.contains("<bead-id|text>"))
   assert_false(usage.contains("--verify"))
+  assert_true(usage.contains("doctor"))
 }
 
 ///|
@@ -83,6 +85,20 @@ test "a missing pid file is not a stopped daemon" {
   assert_eq(stop_daemon_record("1"), StopDaemonUnreadable("1"))
   assert_eq(stop_daemon_record("-9"), StopDaemonUnreadable("-9"))
   assert_eq(stop_daemon_record("wedged"), StopDaemonUnreadable("wedged"))
+}
+
+///|
+/// Read-only preflight over the full dependency matrix. Exits nonzero only
+/// when a required dependency is missing or drifted, so an operator without
+/// `gh` still gets a zero exit.
+fn doctor_run() -> Unit {
+  @async.run_async_main(async fn() {
+    let report = @exec.run_native_doctor()
+    @sys.write_stdout(@command.render_doctor_report(report))
+    if report.failures > 0 {
+      @sys.exit(1)
+    }
+  })
 }
 
 ///|
@@ -170,6 +186,7 @@ fn main {
     "run-goals" => goal_worker_run()
     "init" => init_run()
     "stop" => stop_run()
+    "doctor" => doctor_run()
     "goal" => goal_run()
     "help" | "-h" | "--help" | "" => @sys.write_stdout(choir_usage())
     _ => {

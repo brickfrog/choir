@@ -44,6 +44,7 @@ options(
     "goal_publication_native.mbt": [ "native" ],
     "goal_pull_request_native.mbt": [ "native" ],
     "goal_finalization_native.mbt": [ "native" ],
+    "doctor_native.mbt": [ "native" ],
     "interruptible_process_native.mbt": [ "native" ],
     "interruptible_process_native_test.mbt": [ "native" ],
     "boxlite_take_native.mbt": [ "native" ],
