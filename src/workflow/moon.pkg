@@ -11,6 +11,10 @@ import {
   "moonbitlang/core/ref",
 }
 
+import {
+  "moonbitlang/core/debug",
+} for "test"
+
 options(
   "is-main": false,
 )

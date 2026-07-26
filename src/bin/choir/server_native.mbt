@@ -6,12 +6,15 @@ priv struct ConductorServerState {
   mut statusline_cache_key : String?
   mut goal_worker_pid : Int?
   channel_fds : Array[Int]
-  mut watched_goal_id : String?
-  mut parked_for_goal_event : Bool
-  mut last_goal_update : String?
-  mut last_goal_update_fingerprint : String?
+  /// Per-channel subscriptions and per-Goal observation state. Replaces the
+  /// single watched Goal id, the single cached report, and the single stall
+  /// counter, all of which were Goal-scoped state kept once for the server.
+  channels : @workflow.ConductorChannelRegistry
+  /// Set when the Goal worker is persistently failing. The event the Stop hook
+  /// waits for cannot arrive, so the park is released regardless of what the
+  /// watched Goals say.
+  mut goal_worker_unhealthy : Bool
   mut last_goal_worker_health : String?
-  goal_updates : Map[String, String]
   mut server_identity : String
 }
 
@@ -24,12 +27,9 @@ fn ConductorServerState::new(config : @types.Config) -> ConductorServerState {
     statusline_cache_key: None,
     goal_worker_pid: None,
     channel_fds: [],
-    watched_goal_id: None,
-    parked_for_goal_event: false,
-    last_goal_update: None,
-    last_goal_update_fingerprint: None,
+    channels: @workflow.new_conductor_channel_registry(),
+    goal_worker_unhealthy: false,
     last_goal_worker_health: None,
-    goal_updates: Map([]),
     server_identity: "",
   }
 }
@@ -125,27 +125,55 @@ test "Conductor park releases on terminal states and cancellation cutoff" {
 }
 
 ///|
+/// Add a Goal to what every open channel watches.
+///
+/// Adding rather than replacing is the whole point: a Goal tool call used to
+/// overwrite one global watched id, which silently stopped delivering every
+/// other Goal. A channel that already watches this Goal is left alone, so a
+/// repeated inspection replays nothing.
 fn conductor_watch_goal(state : ConductorServerState, goal_id : String) -> Unit {
-  if state.watched_goal_id == Some(goal_id) {
+  let goal = @control.GoalId(goal_id)
+  // Recorded on the portfolio first, so a Goal named while no channel is
+  // connected is still watched by the channel that connects next.
+  @workflow.conductor_note_goal_interest(state.channels, goal)
+  let gained : Array[@workflow.ConductorDelivery] = []
+  for fd in state.channel_fds.copy() {
+    match
+      @workflow.conductor_watch_goal_on_channel(
+        state.channels,
+        @workflow.ConductorChannelId(fd),
+        goal,
+      ) {
+      Some(delivery) => gained.push(delivery)
+      None => ()
+    }
+  }
+  if gained.length() == 0 {
     return
   }
-  state.watched_goal_id = Some(goal_id)
-  state.last_goal_update = None
-  state.last_goal_update_fingerprint = None
   match state.statusline_cache_key {
     Some(key) =>
       conductor_statusline_activate_cache(state.config.project_dir, key, None)
     None => ()
   }
-  match state.goal_updates.get(goal_id) {
-    Some(serialized) => {
-      let report : Json? = Some(@json.parse(serialized)) catch { _ => None }
-      match report {
-        Some(value) => conductor_broadcast_goal_update(state, value)
-        None => ()
-      }
+  conductor_write_deliveries(state, gained)
+}
+
+///|
+/// Write what the registry decided, dropping any channel whose socket is gone.
+fn conductor_write_deliveries(
+  state : ConductorServerState,
+  deliveries : Array[@workflow.ConductorDelivery],
+) -> Unit {
+  for delivery in deliveries {
+    let report : Json? = Some(@json.parse(delivery.report)) catch { _ => None }
+    guard report is Some(value) else { continue }
+    if !conductor_write_all(
+        delivery.channel.0,
+        @utf8.encode(conductor_goal_update_line(value)),
+      ) {
+      conductor_remove_channel_fd(state, delivery.channel.0)
     }
-    None => ()
   }
 }
 
@@ -162,11 +190,18 @@ fn conductor_observe_goal_response(
     Some(identity) => Some(identity)
     None => request.args.get("goal_id")
   }
-  state.parked_for_goal_event = conductor_park_for_state_tag(
-    conductor_response_state(response),
-  )
   match goal_id {
-    Some(identity) => conductor_watch_goal(state, identity)
+    Some(identity) => {
+      // The response may name a state newer than the last observed report — a
+      // cancellation accepted between two observations — so the park follows it
+      // immediately rather than waiting for the next transition.
+      @workflow.conductor_note_goal_park(
+        state.channels,
+        @control.GoalId(identity),
+        conductor_park_for_state_tag(conductor_response_state(response)),
+      )
+      conductor_watch_goal(state, identity)
+    }
     None => ()
   }
 }
@@ -205,7 +240,42 @@ fn conductor_goal_worker_health_line(
 }
 
 ///|
+/// One Goal id to name in a server-wide event. The watched set is no longer a
+/// singleton, so a health event that concerns the worker rather than any one
+/// Goal names the first watched Goal in deterministic order, or none.
+/// Whether the Conductor's Stop hook should park.
+///
+/// The park follows every watched Goal, not the one most recently inspected: a
+/// terminal child must not release a Conductor whose siblings are still
+/// running. A persistently failing worker releases it regardless, because the
+/// event being waited on cannot arrive.
+fn conductor_stop_decision_parks(state : ConductorServerState) -> Bool {
+  !state.goal_worker_unhealthy &&
+  @workflow.conductor_registry_parks(state.channels)
+}
+
+///|
+fn conductor_first_watched_report(state : ConductorServerState) -> String? {
+  match @workflow.conductor_watched_goals(state.channels) {
+    [first, ..] => @workflow.conductor_goal_report(state.channels, first)
+    [] => None
+  }
+}
+
+///|
+fn conductor_reported_goal_id(state : ConductorServerState) -> String? {
+  match @workflow.conductor_watched_goals(state.channels) {
+    [first, ..] => Some(first.0)
+    [] => None
+  }
+}
+
+///|
 fn conductor_remove_channel_fd(state : ConductorServerState, fd : Int) -> Unit {
+  @workflow.conductor_release_channel(
+    state.channels,
+    @workflow.ConductorChannelId(fd),
+  )
   let mut index = 0
   while index < state.channel_fds.length() {
     if state.channel_fds[index] == fd {
@@ -236,43 +306,36 @@ fn conductor_broadcast_goal_update(
   let goal_id = conductor_goal_id_from_json(fields.get("goal_id"))
   guard goal_id is Some(identity) else { return }
   let serialized = report.stringify(indent=0)
-  // Cache updates before applying the watch filter. The Goal worker can win a
-  // race with goal_submit's response; watching that Goal must then replay the
-  // already-observed transition instead of sleeping until a later one.
-  state.goal_updates.set(identity, serialized)
-  if state.watched_goal_id != goal_id {
-    return
-  }
   let typed = conductor_typed_goal_report(report)
   let fingerprint = match typed {
     Some(value) => @workflow.goal_report_material_fingerprint(value)
     // Undecodable reports are always material and keep the park unchanged.
     None => serialized
   }
-  state.last_goal_update = Some(serialized)
-  if state.last_goal_update_fingerprint == Some(fingerprint) {
+  let parks = match typed {
+    Some(value) => @workflow.conductor_park_for_goal_state(Some(value.state))
+    None => true
+  }
+  // The registry caches every Goal it is told about, watched or not. The Goal
+  // worker can win a race with goal_submit's response, and watching that Goal
+  // afterwards must replay the transition that already happened rather than
+  // sleeping until a later one.
+  let deliveries = @workflow.conductor_observe_goal(
+    state.channels,
+    @control.GoalId(identity),
+    fingerprint,
+    serialized,
+    parks,
+  )
+  if deliveries.length() == 0 {
     return
   }
-  state.last_goal_update_fingerprint = Some(fingerprint)
   match state.statusline_cache_key {
     Some(key) =>
       conductor_statusline_update_cache(state.config.project_dir, key, report)
     None => ()
   }
-  match typed {
-    Some(value) =>
-      state.parked_for_goal_event = @workflow.conductor_park_for_goal_state(
-        Some(value.state),
-      )
-    None => ()
-  }
-  let wire = @utf8.encode(conductor_goal_update_line(report))
-  let targets = state.channel_fds.copy()
-  for fd in targets {
-    if !conductor_write_all(fd, wire) {
-      conductor_remove_channel_fd(state, fd)
-    }
-  }
+  conductor_write_deliveries(state, deliveries)
 }
 
 ///|
@@ -286,15 +349,13 @@ fn conductor_broadcast_goal_worker_health(
     healthy,
     consecutive_failures,
     detail,
-    state.watched_goal_id,
+    conductor_reported_goal_id(state),
   )
   state.last_goal_worker_health = Some(line)
-  if !healthy {
-    // A persistent worker failure means the event the Stop hook is waiting for
-    // cannot arrive. Deliver the health event and release the park instead of
-    // trapping the Conductor in repeated Stop-hook turns.
-    state.parked_for_goal_event = false
-  }
+  // A persistent worker failure means the event the Stop hook is waiting for
+  // cannot arrive. Release the park instead of trapping the Conductor in
+  // repeated Stop-hook turns; recovery restores it.
+  state.goal_worker_unhealthy = !healthy
   let wire = @utf8.encode(line)
   let targets = state.channel_fds.copy()
   for fd in targets {
@@ -378,7 +439,9 @@ fn conductor_bootstrap(
   }
   state.conductor_token = Some(token)
   state.statusline_cache_key = Some(statusline_cache_key)
-  let latest_report : Json? = match state.last_goal_update {
+  // The statusline shows one Goal, so it is seeded from the first watched Goal
+  // in deterministic order rather than from whichever was inspected last.
+  let latest_report : Json? = match conductor_first_watched_report(state) {
     Some(serialized) => Some(@json.parse(serialized)) catch { _ => None }
     None => None
   }
@@ -534,25 +597,25 @@ async fn conductor_handle_custom_line(
       if !state.channel_fds.contains(client.fd) {
         state.channel_fds.push(client.fd)
       }
-      // A channel reconnect can occur after the worker published a transition.
-      // Replay the latest projection so the Conductor cannot sleep forever
-      // waiting for an event that preceded the new transport connection.
-      match state.last_goal_update {
-        Some(serialized) => {
-          let report : Json? = Some(@json.parse(serialized)) catch { _ => None }
-          match report {
-            Some(value) =>
-              if !conductor_write_all(
-                  client.fd,
-                  @utf8.encode(conductor_goal_update_line(value)),
-                ) {
-                conductor_remove_channel_fd(state, client.fd)
-                client.close_after_response = true
-              }
-            None => ()
-          }
+      // A reconnect arrives on a new descriptor with no subscription of its
+      // own, so it resumes watching everything currently watched and is shown
+      // each of those Goals' latest state. Without this the Conductor sleeps
+      // forever waiting for events that preceded the new connection.
+      let channel_id = @workflow.ConductorChannelId(client.fd)
+      @workflow.conductor_subscribe_channel(
+        state.channels,
+        channel_id,
+        @workflow.conductor_watched_goals(state.channels),
+      )
+      let replay = @workflow.conductor_replay_channel(
+        state.channels,
+        channel_id,
+      )
+      if replay.length() > 0 {
+        conductor_write_deliveries(state, replay)
+        if !state.channel_fds.contains(client.fd) {
+          client.close_after_response = true
         }
-        None => ()
       }
       match state.last_goal_worker_health {
         Some(line) =>
@@ -620,9 +683,9 @@ async fn conductor_handle_custom_line(
   if request.req_method == @types.WireMethod::WireConductorStopDecision {
     let response = if client.authenticated {
       let fields : Map[String, Json] = {
-        "park": state.parked_for_goal_event.to_json(),
+        "park": conductor_stop_decision_parks(state).to_json(),
       }
-      match state.watched_goal_id {
+      match conductor_reported_goal_id(state) {
         Some(identity) => fields.set("goal_id", identity.to_json())
         None => ()
       }
@@ -1382,8 +1445,11 @@ test "Conductor parks an active durable Goal until its success event" {
       "goal_id": ["GoalId", "goal-a"].to_json(),
     }),
   )
-  assert_eq(state.watched_goal_id, Some("goal-a"))
-  assert_true(state.parked_for_goal_event)
+  // The response's Goal is now watched by name, and it parks.
+  @debug.assert_eq(@workflow.conductor_watched_goals(state.channels), [
+    @control.GoalId("goal-a"),
+  ])
+  assert_true(conductor_stop_decision_parks(state))
   let status : @types.Request = {
     req_method: @types.WireMethod::WireToolsCall,
     name: "goal_status",
@@ -1397,7 +1463,7 @@ test "Conductor parks an active durable Goal until its success event" {
       "state": @workflow.GoalExecutionState::GoalExecutionSucceeded.to_json(),
     }),
   )
-  assert_false(state.parked_for_goal_event)
+  assert_false(conductor_stop_decision_parks(state))
 }
 
 ///|
@@ -1407,12 +1473,17 @@ test "persistent Goal worker failure releases the Conductor park" {
     project_dir: "/repo",
     listen_uds: "/repo/.choir/run/server.sock",
   })
-  state.watched_goal_id = Some("goal-a")
-  state.parked_for_goal_event = true
+  @workflow.conductor_subscribe_channel(
+    state.channels,
+    @workflow.ConductorChannelId(7),
+    [@control.GoalId("goal-a")],
+  )
+  assert_true(conductor_stop_decision_parks(state))
   conductor_broadcast_goal_worker_health(
     state, false, 5, "record has the wrong schema",
   )
-  assert_false(state.parked_for_goal_event)
+  // The event the hook waits for cannot arrive while the worker is failing.
+  assert_false(conductor_stop_decision_parks(state))
   let line = state.last_goal_worker_health.unwrap()
   assert_true(line.contains("choir/goal_worker_health_changed"))
   assert_true(line.contains("\"goal_id\":\"goal-a\""))
@@ -1427,9 +1498,26 @@ test "Conductor replays a worker update that races Goal observation" {
     listen_uds: "/repo/.choir/run/server.sock",
   })
   let report = conductor_statusline_test_report("GoalExecutionRunning", 1, [])
+  // The worker publishes before anyone watches the Goal.
   conductor_broadcast_goal_update(state, report)
-  assert_eq(state.last_goal_update, None)
-  conductor_watch_goal(state, "goal-a")
-  assert_eq(state.last_goal_update, Some(report.stringify(indent=0)))
-  assert_true(state.parked_for_goal_event)
+  @workflow.conductor_subscribe_channel(
+    state.channels,
+    @workflow.ConductorChannelId(9),
+    [@control.GoalId("goal-a")],
+  )
+  // The transition that already happened is available to replay rather than
+  // lost, so the Conductor does not sleep waiting for a later one.
+  @debug.assert_eq(
+    @workflow.conductor_replay_channel(
+      state.channels,
+      @workflow.ConductorChannelId(9),
+    ),
+    [
+      {
+        channel: @workflow.ConductorChannelId(9),
+        report: report.stringify(indent=0),
+      },
+    ],
+  )
+  assert_true(conductor_stop_decision_parks(state))
 }
