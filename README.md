@@ -106,12 +106,6 @@ nonzero so the purge can be retried safely.
 Read the documentation overview in [English](docs/overview.md) or
 [简体中文](docs/overview.zh.md)（语言/中文）。
 
-## Architecture
-
-The accepted design records are retained under
-[docs/charters](docs/charters/README.md). They document the durable Goal
-workflow and its migration extension without occupying the repository root.
-
 ## Operations
 
 Use the [dependency and runtime upgrade runbook](docs/runbooks/dependency-upgrades.md)

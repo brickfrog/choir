@@ -175,7 +175,7 @@ values from these locations on every run.
 |---|---|---|
 | Claude and Codex versions and executable hashes | `src/harness/surface_probe.mbt`, `src/exec/claude_driver_native.mbt`, `src/exec/codex_driver_native.mbt` | `README.md` |
 | Provider identity recorded in Part evidence | `src/exec/part_lifecycle_native.mbt` | Dated charter evidence is historical |
-| Provider CLI arguments, sterile environment, MCP surface, recovery | `src/exec/claude_driver_native.mbt`, `src/exec/codex_driver_native.mbt`, `src/exec/exec_native.mbt` | `docs/charters/goal-workflow.md` records evidence |
+| Provider CLI arguments, sterile environment, MCP surface, recovery | `src/exec/claude_driver_native.mbt`, `src/exec/codex_driver_native.mbt`, `src/exec/exec_native.mbt` | Record evidence in the upgrade PR |
 | BoxLite release, executable, patch, six-file runtime bundle, probe image, and policy | `src/sandbox/boxlite_probe.mbt`, enforced by `src/exec/exec_native.mbt` and `src/exec/boxlite_take_native.mbt` | `README.md`, `docs/boxlite-runtime.md` |
 | Beads version and CLI contract | `src/exec/conductor_native.mbt` | `README.md` |
 | MoonBit toolchain artifacts | `flake.nix`, `flake.lock`, `scripts/install-moonbit.sh` | `README.md`; migration verification documents are historical |
