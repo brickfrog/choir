@@ -1813,6 +1813,7 @@ fn scale_terminal_projection(
     active_input_request: None,
     input_answers: [],
     cancellation_request: None,
+    work_order_budget: None,
     durable_version: 3,
     fencing_epoch: final_snapshot.fencing_epoch,
   }

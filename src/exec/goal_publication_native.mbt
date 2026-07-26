@@ -1583,6 +1583,7 @@ async fn prove_publication_fault_recovery(
     active_input_request: None,
     input_answers: [],
     cancellation_request: None,
+    work_order_budget: None,
     durable_version: 1,
     fencing_epoch: @control.FencingEpoch(1L),
   }

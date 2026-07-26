@@ -1709,6 +1709,7 @@ async test "Goal cancellation atomically rejects stale seal authorization" {
     active_input_request: None,
     input_answers: [],
     cancellation_request: None,
+    work_order_budget: None,
     durable_version: 1,
     fencing_epoch: integrated.fencing_epoch,
   }
@@ -1898,6 +1899,7 @@ async test "Goal steering persists revision history and paused Goals do not run"
     active_input_request: None,
     input_answers: [],
     cancellation_request: None,
+    work_order_budget: None,
     durable_version: 1,
     fencing_epoch: fixture.fencing_epoch,
   }
@@ -2035,6 +2037,7 @@ async test "Goal finalization input request and answer survive restart" {
     active_input_request: None,
     input_answers: [],
     cancellation_request: None,
+    work_order_budget: None,
     durable_version: 1,
     fencing_epoch: fixture.fencing_epoch,
   }

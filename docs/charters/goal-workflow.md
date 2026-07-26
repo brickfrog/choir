@@ -53,6 +53,27 @@ unconnected product path usable.
   cancels with `GoalCancellationVerificationRepairFailed` or
   `GoalCancellationAuditRepairFailed`; neither path asks the Conductor or user
   to authorize a retry.
+- A Goal may carry a durable WorkOrder budget: a typed stop policy, a cutoff
+  policy, and delivered-work counters, all enums and typed values rather than
+  strings. Stop conditions are an absolute deadline, a delivered target-Bead
+  quota on a recorded count basis, stable no-eligible-work, bounded
+  no-further-findings, a configured safety ceiling, and a flat first-condition-
+  wins compound of those. A relative duration exists only in the acceptance
+  request: `accept_work_order_budget` resolves it exactly once against an
+  injected clock reading, validates positive bounds and deadline overflow, and
+  stores only the absolute instant, so replay preserves the identical deadline.
+  Quotas count delivered Goals alone — attempts, started Takes, planning rounds,
+  canceled Goals, and open automatic-merge pull requests never advance one — and
+  both the primary-target and dependency-closure counts are reported while only
+  the recorded basis satisfies the quota. The budget gate sits at
+  `goal_authorizes_new_effects`, the single seam that admits new planner and
+  provider work: reconciliation, delivery observation, and safety cleanup
+  continue past the deadline, but no new agentic Take starts. A stop reason
+  latches durably, so a restart or a later counter or clock reading cannot
+  resurrect a stopped WorkOrder, and the terminal reasons distinguish deadline,
+  quota, no eligible work, no further findings, safety ceiling, and fatal
+  integrity stop. Tests drive an injected clock across the deadline between two
+  ready effects and prove the later one is refused.
 - Draft is pull-request presentation state, never a delivery-policy override.
   Initializing a Goal pull request no longer rewrites `auto_merge` to
   `review_only` for a draft document: an automatic-merge Goal that asked for a
@@ -114,7 +135,7 @@ unconnected product path usable.
   through. In `auto_merge` mode, an unmerged Goal retains its
   source Bead claims, making its merge a dependency barrier while unrelated
   Goals continue between ticks.
-- The current checkout passes `moon check --target native`, all 522 native
+- The current checkout passes `moon check --target native`, all 529 native
   tests, the Choir lint command, every registered fault/race conformance
   command, the synthetic Part lifecycle, parallel promotion, scale scheduling,
   both native provider Part lifecycles, and the two-provider Goal fixture. The

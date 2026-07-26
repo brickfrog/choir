@@ -2073,6 +2073,7 @@ fn native_source_claim_test_record(
     active_input_request: None,
     input_answers: [],
     cancellation_request: None,
+    work_order_budget: None,
     durable_version: 2,
     fencing_epoch: @control.FencingEpoch(1L),
   }
@@ -2711,8 +2712,18 @@ async fn execute_native_goal_record(
               local_part_workflow_repository_adapters(),
               record.goal.id,
             ) {
-            Ok(Some(current)) =>
-              if current.record.state ==
+            Ok(Some(current)) => {
+              // The WorkOrder budget gate sits here, at the one seam that
+              // admits new planner and provider work. Everything downstream of
+              // an already-authorized effect keeps reconciling past the
+              // deadline; only a new agentic Take is refused.
+              let budget_admits = @workflow.goal_execution_admits_new_agentic_work(
+                  current.record,
+                  @env.now().reinterpret_as_int64() / 1000L,
+                )
+                is @workflow.WorkOrderAdmission::WorkOrderAdmitsNewWork
+              if budget_admits &&
+                current.record.state ==
                 @workflow.GoalExecutionState::GoalExecutionRunning &&
                 current.record.goal.lifecycle ==
                 @control.GoalLifecycle::GoalActive(
@@ -2726,6 +2737,7 @@ async fn execute_native_goal_record(
               } else {
                 Ok(@workflow.PartGoalAuthorization::PartGoalNotAuthorized)
               }
+            }
             Ok(None) =>
               Err(native_goal_execution_error("Goal record disappeared"))
             Err(error) => Err(error)

@@ -2432,6 +2432,7 @@ fn cancellation_goal_assurance_fixture_with_part_count(
     active_input_request: None,
     input_answers: [],
     cancellation_request: None,
+    work_order_budget: None,
     durable_version: 3,
     fencing_epoch: base.fencing_epoch,
   }

@@ -246,6 +246,9 @@ pub(all) struct GoalExecutionRecord {
   active_input_request : GoalInputRequest?
   input_answers : Array[GoalInputAnswer]
   cancellation_request : GoalCancellationRequest?
+  /// The finite WorkOrder budget this Goal runs under, when one was accepted.
+  /// Absent means an unbudgeted Goal, which admits work exactly as before.
+  work_order_budget : WorkOrderBudget?
   durable_version : Int
   fencing_epoch : @control.FencingEpoch
 } derive(Debug, Eq, ToJson, FromJson)
@@ -750,6 +753,7 @@ pub fn goal_execution_record_from_selection(
   selection_decision_digest : @control.Digest,
   part_workflow_ids : Array[String],
   fencing_epoch? : @control.FencingEpoch = @control.FencingEpoch(1L),
+  work_order_budget? : WorkOrderBudget? = None,
 ) -> Result[GoalExecutionRecord, @types.ChoirError] {
   if decision.outcome != GoalSelectionOutcome::GoalSelectionAccepted ||
     selection_decision_digest != goal_selection_decision_digest(decision) {
@@ -813,6 +817,7 @@ pub fn goal_execution_record_from_selection(
     active_input_request: None,
     input_answers: [],
     cancellation_request: None,
+    work_order_budget,
     durable_version: 1,
     fencing_epoch,
   })
@@ -946,6 +951,46 @@ fn goal_execution_cancellation_shape_is_valid(
     (GoalExecutionCanceling | GoalExecutionCanceled, None) => false
     (_, None) => true
     (_, Some(_)) => false
+  }
+}
+
+///|
+/// Whether the Goal's WorkOrder budget still admits a new agentic Take at this
+/// clock reading. An unbudgeted Goal always admits work; reconciliation,
+/// delivery observation, and safety cleanup never consult this gate, so they
+/// continue past the deadline while no new agentic work starts.
+pub fn goal_execution_admits_new_agentic_work(
+  record : GoalExecutionRecord,
+  now : Int64,
+) -> WorkOrderAdmission {
+  match record.work_order_budget {
+    None => WorkOrderAdmission::WorkOrderAdmitsNewWork
+    Some(budget) => work_order_admits_new_work(budget, now)
+  }
+}
+
+///|
+/// Latch the WorkOrder stop reason onto the durable Goal record. The latch is
+/// what survives restart: a stopped WorkOrder stays stopped even if a later
+/// clock reading or counter would no longer reach the condition.
+pub fn record_goal_work_order_stop(
+  record : GoalExecutionRecord,
+  now : Int64,
+) -> GoalExecutionRecord {
+  match record.work_order_budget {
+    None => record
+    Some(budget) => {
+      let stopped = record_work_order_stop(budget, now)
+      if stopped == budget {
+        record
+      } else {
+        {
+          ..record,
+          work_order_budget: Some(stopped),
+          durable_version: record.durable_version + 1,
+        }
+      }
+    }
   }
 }
 
