@@ -1063,10 +1063,13 @@ fn plan_native_part_verification_repair(
     Err(error) => return Err(error)
   }
   let repair : @control.VerificationRepairReference = {
+    scope: @control.VerificationRepairScope::PartVerificationRepair,
     receipt_id: receipt.receipt_id,
     verification_execution_id: receipt.verification_execution_id,
     subject_digest: receipt.subject.subject_digest,
+    verification_spec: receipt.verification_spec,
     evidence_artifact: receipt.evidence,
+    affected_paths: [],
   }
   plan_native_verification_repair_attempt(
     repository,
@@ -4282,6 +4285,94 @@ fn native_goal_assurance_plan(
 }
 
 ///|
+/// Every repo path an integrated Part already owns: its declared exact
+/// mutations plus the paths its accepted candidate actually changed. Combined
+/// verification output is free-form command text, so routing never invents a
+/// path from it — it only recognizes paths a Part already claimed.
+fn native_goal_owned_repair_paths(
+  snapshots : Array[@workflow.PartWorkflowSnapshot],
+) -> Array[@control.RepoPath] {
+  let owned : Array[@control.RepoPath] = []
+  for snapshot in snapshots {
+    match snapshot.task_contract.mutation_declaration {
+      @control.MutationDeclaration::CompleteMutationDeclaration(claims) =>
+        for claim in claims {
+          match claim {
+            @control.MutationClaim::ExactPath(path) =>
+              if !owned.contains(path) {
+                owned.push(path)
+              }
+            _ => ()
+          }
+        }
+      _ => ()
+    }
+    match snapshot.candidate {
+      Some(candidate) =>
+        for path in candidate.changed_paths {
+          if !owned.contains(path) {
+            owned.push(path)
+          }
+        }
+      None => ()
+    }
+  }
+  owned.sort()
+  owned
+}
+
+///|
+/// Diagnose which owned paths the combined verification output implicates. A
+/// path counts only when the evidence names it literally, so unrelated Parts
+/// are never dragged into a repair they cannot perform.
+fn native_goal_verification_repair_paths(
+  evidence : String,
+  owned : Array[@control.RepoPath],
+) -> Array[@control.RepoPath] {
+  let implicated : Array[@control.RepoPath] = []
+  for path in owned {
+    if evidence.contains(@control.repo_path_text(path)) &&
+      !implicated.contains(path) {
+      implicated.push(path)
+    }
+  }
+  implicated
+}
+
+///|
+test "combined verification routing recognizes only paths a Part already owns" {
+  let owned = [
+    @control.RepoPath("src/alpha/main.mbt"),
+    @control.RepoPath("src/beta/main.mbt"),
+  ]
+  assert_eq(
+    native_goal_verification_repair_paths(
+      "FAILED src/beta/main.mbt:12 expected 1 got 2", owned,
+    ),
+    [@control.RepoPath("src/beta/main.mbt")],
+  )
+  // Undiagnosable output routes nowhere, which is what makes the Goal cancel
+  // with retained evidence instead of looping on a repair nobody can perform.
+  assert_eq(
+    native_goal_verification_repair_paths(
+      "combined verification exited 1 with no diagnosis", owned,
+    ),
+    [],
+  )
+  assert_eq(
+    native_goal_verification_repair_paths(
+      "src/alpha/main.mbt and src/beta/main.mbt disagree", owned,
+    ),
+    owned,
+  )
+  // A path no Part owns is never routable, however loudly the output names it.
+  assert_eq(
+    native_goal_verification_repair_paths("FAILED src/gamma/main.mbt:3", owned),
+    [],
+  )
+}
+
+///|
 fn plan_and_persist_native_goal_audit_repairs(
   repository : @workflow.PartWorkflowRepository,
   adapters : @workflow.PartWorkflowRepositoryAdapters,
@@ -4318,17 +4409,19 @@ fn plan_and_persist_native_goal_audit_repairs(
     Err(_) =>
       return Ok(
         @workflow.GoalAssuranceTickOutcome::GoalAssuranceRepairFailed(
+          @workflow.GoalAssuranceRepairKind::GoalAssuranceAuditRepair,
           result.result_digest,
           result.finished_at,
         ),
       )
   }
   let routes = match
-    @workflow.plan_goal_audit_repair_routes(snapshots, affected_paths) {
+    @workflow.plan_goal_repair_routes(snapshots, affected_paths) {
     Ok(value) => value
     Err(_) =>
       return Ok(
         @workflow.GoalAssuranceTickOutcome::GoalAssuranceRepairFailed(
+          @workflow.GoalAssuranceRepairKind::GoalAssuranceAuditRepair,
           result.result_digest,
           result.finished_at,
         ),
@@ -4372,6 +4465,7 @@ fn plan_and_persist_native_goal_audit_repairs(
       @workflow.PartAuditRepairDecision::PartAuditRepairLimitReached =>
         return Ok(
           @workflow.GoalAssuranceTickOutcome::GoalAssuranceRepairFailed(
+            @workflow.GoalAssuranceRepairKind::GoalAssuranceAuditRepair,
             result.result_digest,
             result.finished_at,
           ),
@@ -4422,10 +4516,267 @@ fn plan_and_persist_native_goal_audit_repairs(
   if planned == 0 {
     Ok(
       @workflow.GoalAssuranceTickOutcome::GoalAssuranceRepairFailed(
+        @workflow.GoalAssuranceRepairKind::GoalAssuranceAuditRepair,
         result.result_digest,
         result.finished_at,
       ),
     )
+  } else {
+    Ok(@workflow.GoalAssuranceTickOutcome::GoalAssuranceRepairing)
+  }
+}
+
+///|
+/// The latest combined verification receipt that rejected the exact sealed
+/// subject. Receipts from an earlier seal are stale evidence: repairing
+/// against them would diagnose a tree the Goal no longer has.
+fn native_failing_goal_verification_receipt(
+  subject : @control.GoalVerificationSubject,
+  receipts : Array[@control.GoalVerificationReceipt],
+) -> @control.GoalVerificationReceipt? {
+  let mut failing : @control.GoalVerificationReceipt? = None
+  for receipt in receipts {
+    if receipt.subject.subject_digest == subject.subject_digest &&
+      receipt.outcome != @control.VerificationOutcome::VerificationPassed {
+      match failing {
+        Some(current) if current.finished_at >= receipt.finished_at => ()
+        _ => failing = Some(receipt)
+      }
+    }
+  }
+  failing
+}
+
+///|
+test "combined verification repair selects the exact sealed subject's newest failure" {
+  let subject : @control.GoalVerificationSubject = {
+    goal_id: @control.GoalId("goal-repair"),
+    goal_branch_seal_id: @control.GoalBranchSealId("seal-repair"),
+    goal_branch_seal_digest: @control.Digest("sha256:seal"),
+    goal_head_oid: @control.GitOid("head-repair"),
+    goal_tree_oid: @control.GitOid("tree-repair"),
+    goal_contract_digest: @control.Digest("sha256:contract"),
+    assurance_policy_revision: @control.RevisionId("policy-1"),
+    integration_receipt_set_digest: @control.Digest("sha256:integrations"),
+    subject_digest: @control.Digest("sha256:subject-current"),
+  }
+  let spec : @control.VerificationSpec = {
+    id: @control.VerificationSpecId("spec-1"),
+    version: 1,
+    digest: @control.Digest("sha256:spec"),
+    process_spec_digest: @control.Digest("sha256:process"),
+  }
+  let receipt = fn(
+    label : String,
+    subject_digest : @control.Digest,
+    outcome : @control.VerificationOutcome,
+    finished_at : Int64,
+  ) -> @control.GoalVerificationReceipt {
+    {
+      receipt_id: @control.ReceiptId(label),
+      verification_take_id: @control.TakeId("take-" + label),
+      verification_execution_id: @control.VerificationExecutionId(
+        "execution-" + label,
+      ),
+      subject: { ..subject, subject_digest, },
+      verification_spec: spec,
+      prepared_environment_and_image_digest: @control.Digest("sha256:image"),
+      sandbox_runtime_and_policy_digest: @control.Digest("sha256:runtime"),
+      subject_pre_tree_oid: subject.goal_tree_oid,
+      subject_post_tree_oid: subject.goal_tree_oid,
+      evidence: {
+        artifact_id: "evidence-" + label,
+        digest: @control.Digest("sha256:evidence-" + label),
+      },
+      started_at: finished_at - 1L,
+      finished_at,
+      outcome,
+    }
+  }
+  let stale = receipt(
+    "stale",
+    @control.Digest("sha256:subject-previous"),
+    @control.VerificationOutcome::VerificationFailed,
+    900L,
+  )
+  let passed = receipt(
+    "passed",
+    subject.subject_digest,
+    @control.VerificationOutcome::VerificationPassed,
+    901L,
+  )
+  let first = receipt(
+    "first",
+    subject.subject_digest,
+    @control.VerificationOutcome::VerificationFailed,
+    902L,
+  )
+  let latest = receipt(
+    "latest",
+    subject.subject_digest,
+    @control.VerificationOutcome::VerificationErrored,
+    903L,
+  )
+  assert_eq(
+    native_failing_goal_verification_receipt(subject, [
+      stale, passed, latest, first,
+    ]),
+    Some(latest),
+  )
+  // A gate rejection with no failing receipt for this subject — a missing slot
+  // or receipt — is not repairable and must not adopt stale evidence.
+  assert_eq(
+    native_failing_goal_verification_receipt(subject, [stale, passed]),
+    None,
+  )
+}
+
+///|
+/// Combined Goal verification rejected the sealed tree. Route its retained
+/// evidence to the integrated Parts that own the implicated paths and mint one
+/// bounded repair revision each. Unrouteable evidence and exhausted repair
+/// budgets return a typed repair failure, which the runner turns into a
+/// cancellation carrying the failing receipt digest — never an inert block.
+fn plan_and_persist_native_goal_verification_repairs(
+  repository : @workflow.PartWorkflowRepository,
+  adapters : @workflow.PartWorkflowRepositoryAdapters,
+  execution : @workflow.GoalExecutionRecord,
+  assurance : @workflow.GoalAssuranceRecord,
+  snapshots : Array[@workflow.PartWorkflowSnapshot],
+) -> Result[@workflow.GoalAssuranceTickOutcome, @types.ChoirError] {
+  let subject = match assurance.verification_subject {
+    Some(value) => value
+    None =>
+      return Err(
+        native_goal_execution_error("Goal verification subject is absent"),
+      )
+  }
+  // No failing receipt means the gate rejected for a reason no repair can
+  // answer (a missing slot or receipt). Retain the sealed subject as evidence.
+  let receipt = match
+    native_failing_goal_verification_receipt(
+      subject,
+      assurance.verification_receipts,
+    ) {
+    Some(value) => value
+    None =>
+      return Ok(
+        @workflow.GoalAssuranceTickOutcome::GoalAssuranceRepairFailed(
+          @workflow.GoalAssuranceRepairKind::GoalAssuranceVerificationRepair,
+          subject.subject_digest,
+          assurance.seal_witnessed_at.unwrap_or(
+            execution.durable_version.to_int64() + 1L,
+          ),
+        ),
+      )
+  }
+  let exhausted = @workflow.GoalAssuranceTickOutcome::GoalAssuranceRepairFailed(
+    @workflow.GoalAssuranceRepairKind::GoalAssuranceVerificationRepair,
+    receipt.evidence.digest,
+    receipt.finished_at,
+  )
+  let bytes = match
+    (adapters.artifacts.read)(repository.artifact_store, {
+      digest: receipt.evidence.digest,
+      max_bytes: 4194304,
+    }) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let evidence = @utf8.decode_lossy(bytes)
+  let implicated = native_goal_verification_repair_paths(
+    evidence,
+    native_goal_owned_repair_paths(snapshots),
+  )
+  if implicated.length() == 0 {
+    return Ok(exhausted)
+  }
+  let routes = match @workflow.plan_goal_repair_routes(snapshots, implicated) {
+    Ok(value) => value
+    Err(_) => return Ok(exhausted)
+  }
+  let mut planned = 0
+  for snapshot in snapshots {
+    let assigned : Array[@control.RepoPath] = []
+    for route in routes {
+      if route.part_id == snapshot.part.id {
+        for path in route.affected_paths {
+          assigned.push(path)
+        }
+      }
+    }
+    if assigned.length() == 0 {
+      continue
+    }
+    let repair : @control.VerificationRepairReference = {
+      scope: @control.VerificationRepairScope::GoalVerificationRepair,
+      receipt_id: receipt.receipt_id,
+      verification_execution_id: receipt.verification_execution_id,
+      subject_digest: receipt.subject.subject_digest,
+      verification_spec: receipt.verification_spec,
+      evidence_artifact: receipt.evidence,
+      affected_paths: assigned,
+    }
+    let decision = match
+      plan_native_verification_repair_attempt(
+        repository, snapshot, repair, evidence,
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    let repaired = match decision {
+      @workflow.PartVerificationRepairDecision::PartVerificationRepairPlanned(
+        value
+      ) => value
+      @workflow.PartVerificationRepairDecision::PartVerificationRepairLimitReached =>
+        return Ok(exhausted)
+    }
+    let current = match
+      @workflow.load_part_snapshot(repository, adapters, snapshot.workflow_id) {
+      Ok(Some(value)) => value
+      Ok(None) =>
+        return Err(native_goal_execution_error("repair Part disappeared"))
+      Err(error) => return Err(error)
+    }
+    if current.snapshot != snapshot {
+      return Ok(@workflow.GoalAssuranceTickOutcome::GoalAssuranceRepairing)
+    }
+    let persistence = match
+      @workflow.persist_part_snapshot_guarded(
+        repository,
+        adapters,
+        {
+          snapshot: repaired,
+          expected_store_version: Some(current.state_record.version),
+          fault_point: None,
+        },
+        @workflow.goal_execution_state_precondition(execution),
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    match persistence {
+      @workflow.GuardedPartSnapshotPersistenceResult::GuardedPartSnapshotPersisted(
+        receipt
+      ) =>
+        match receipt.transaction_outcome {
+          @storage.StateTransactionOutcome::StateTransactionCommitted
+          | @storage.StateTransactionOutcome::StateTransactionReplayed
+          | @storage.StateTransactionOutcome::StateTransactionCommittedAckLost =>
+            planned = planned + 1
+          _ =>
+            return Err(
+              native_goal_execution_error(
+                "Goal verification repair did not persist",
+              ),
+            )
+        }
+      @workflow.GuardedPartSnapshotPersistenceResult::GuardedPartSnapshotPreconditionConflict =>
+        return Ok(@workflow.GoalAssuranceTickOutcome::GoalAssurancePending)
+    }
+  }
+  if planned == 0 {
+    Ok(exhausted)
   } else {
     Ok(@workflow.GoalAssuranceTickOutcome::GoalAssuranceRepairing)
   }
@@ -4591,6 +4942,7 @@ async fn advance_native_goal_assurance(
                 Some(result) =>
                   return Ok(
                     @workflow.GoalAssuranceTickOutcome::GoalAssuranceRepairFailed(
+                      @workflow.GoalAssuranceRepairKind::GoalAssuranceAuditRepair,
                       result.result_digest,
                       result.finished_at,
                     ),
@@ -4602,7 +4954,86 @@ async fn advance_native_goal_assurance(
                     ),
                   )
               }
-            _ =>
+            // Combined verification rejected the sealed tree. Route its
+            // evidence to the owning Parts and repair, exactly as a rejected
+            // Goal audit does; a stale gate observation reseals first.
+            Some(
+              @workflow.GoalAssuranceBlockReason::GoalAssuranceVerificationBlocked(
+                @control.VerificationGateObservation::VerificationGateRejected(
+                  _
+                )
+              )
+            ) => {
+              let identity = match
+                native_goal_ref_identity(git, execution.goal_ref) {
+                Ok(value) => value
+                Err(error) => return Err(error)
+              }
+              let verified_head = match stored.record.verification_subject {
+                Some(value) => value.goal_head_oid
+                None =>
+                  return Err(
+                    native_goal_execution_error(
+                      "blocked Goal verification subject is absent",
+                    ),
+                  )
+              }
+              if identity.0 != verified_head {
+                let plan = match
+                  native_goal_assurance_plan(
+                    repository,
+                    execution,
+                    snapshots,
+                    identity.0,
+                  ) {
+                  Ok(value) => value
+                  Err(error) => return Err(error)
+                }
+                let replacement = match
+                  @workflow.initialize_goal_assurance(
+                    execution,
+                    snapshots,
+                    identity.0,
+                    identity.1,
+                    plan.0,
+                    plan.1,
+                  ) {
+                  Ok(value) =>
+                    {
+                      ..value,
+                      durable_version: stored.state_record.version + 1,
+                    }
+                  Err(error) => return Err(error)
+                }
+                current = match
+                  persist_native_goal_assurance_record(
+                    repository,
+                    adapters,
+                    execution,
+                    replacement,
+                    Some(stored.state_record.version),
+                  ) {
+                  Ok(value) => value
+                  Err(error) => return Err(error)
+                }
+                continue
+              }
+              return plan_and_persist_native_goal_verification_repairs(
+                repository,
+                adapters,
+                execution,
+                stored.record,
+                snapshots,
+              )
+            }
+            // A stale or corrupt verification gate is an integrity problem, not
+            // a failing candidate: no repair can answer it.
+            Some(
+              @workflow.GoalAssuranceBlockReason::GoalAssuranceVerificationBlocked(
+                _
+              )
+            )
+            | None =>
               return Ok(
                 @workflow.GoalAssuranceTickOutcome::GoalAssuranceBlocked,
               )

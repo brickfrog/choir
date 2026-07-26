@@ -245,14 +245,35 @@ pub fn validate_task_contract_revision(
     None => true
   }
   let verification_repair_valid = match contract.repair_verification {
-    Some(repair) =>
-      contract.repair_conflict_id is None &&
-      contract.repair_audit is None &&
-      repair.receipt_id.0 != "" &&
-      repair.verification_execution_id.0 != "" &&
-      valid_lower_hex_digest(repair.subject_digest) &&
-      repair.evidence_artifact.artifact_id != "" &&
-      valid_lower_hex_digest(repair.evidence_artifact.digest)
+    Some(repair) => {
+      let mut previous : RepoPath? = None
+      let mut valid = contract.repair_conflict_id is None &&
+        contract.repair_audit is None &&
+        repair.receipt_id.0 != "" &&
+        repair.verification_execution_id.0 != "" &&
+        valid_lower_hex_digest(repair.subject_digest) &&
+        repair.verification_spec.id.0 != "" &&
+        repair.verification_spec.version > 0 &&
+        valid_lower_hex_digest(repair.verification_spec.digest) &&
+        valid_lower_hex_digest(repair.verification_spec.process_spec_digest) &&
+        repair.evidence_artifact.artifact_id != "" &&
+        valid_lower_hex_digest(repair.evidence_artifact.digest) &&
+        // Goal-scope repair exists only to carry routed paths; Part-scope
+        // repair answers the Part's own receipt and routes nothing.
+        (repair.affected_paths.length() > 0) ==
+        (repair.scope == VerificationRepairScope::GoalVerificationRepair)
+      for path in repair.affected_paths {
+        if validate_repo_path(path, is_nfc) is Err(_) ||
+          !mutation_declaration_covers(contract.mutation_declaration, path) {
+          valid = false
+        }
+        match previous {
+          Some(value) if value.compare(path) >= 0 => valid = false
+          _ => previous = Some(path)
+        }
+      }
+      valid
+    }
     None => true
   }
   let continuation_identity_valid = match

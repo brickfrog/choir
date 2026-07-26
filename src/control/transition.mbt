@@ -120,7 +120,9 @@ pub fn transition_part_lifecycle(
     (
       PartBlocked(PartVerificationFailed),
       StartPartVerificationRepair(_, take_id),
-    ) => Ok(PartExecuting(take_id))
+    )
+    | (PartIntegrated(_), StartPartVerificationRepair(_, take_id)) =>
+      Ok(PartExecuting(take_id))
     (PartBlocked(PartIntegrationConflict), RestartBlockedPart(_)) =>
       Err(
         invalid_transition(

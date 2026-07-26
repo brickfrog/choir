@@ -296,7 +296,7 @@ pub(all) enum PartVerificationRepairDecision {
 } derive(Debug, Eq)
 
 ///|
-pub(all) struct PartAuditRepairRoute {
+pub(all) struct PartRepairRoute {
   part_id : @control.PartId
   affected_paths : Array[@control.RepoPath]
 } derive(Debug, Eq)

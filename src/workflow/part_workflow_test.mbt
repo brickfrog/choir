@@ -1451,6 +1451,201 @@ test "Goal audit repair reopens an integrated Part and preserves its receipt" {
 }
 
 ///|
+test "combined verification repair reopens an integrated Part on routed paths" {
+  let mut integrated = drive_to_integration_authorized()
+  guard integrated.promotion_commit is Some(promotion) else {
+    fail("authorized integration has no promotion commit")
+  }
+  integrated = apply_observation(
+    integrated,
+    @workflow.PartEffectObservation::IntegrationWitnessObserved(
+      @control.IntegrationWitnessObservation::IntegrationWitnessApplied(
+        promotion.commit_oid,
+        promotion.commit_oid,
+      ),
+    ),
+    27L,
+  )
+  guard integrated.integration_receipt is Some(integration_receipt) else {
+    fail("integrated Part has no receipt")
+  }
+  let repair : @control.VerificationRepairReference = {
+    scope: @control.VerificationRepairScope::GoalVerificationRepair,
+    receipt_id: @control.ReceiptId("goal-verification-receipt-repair-1"),
+    verification_execution_id: @control.VerificationExecutionId(
+      "goal-verification-execution-repair-1",
+    ),
+    subject_digest: workflow_digest_d,
+    verification_spec: integrated.task_contract.verification_specs[0],
+    evidence_artifact: {
+      artifact_id: "goal-verification-evidence-repair-1",
+      digest: workflow_digest_e,
+    },
+    affected_paths: [@control.RepoPath("src/feature.mbt")],
+  }
+  let contract : @control.TaskContractRevision = {
+    ..integrated.task_contract,
+    id: @control.RevisionId("goal-verification-repair-revision-2"),
+    revision: integrated.task_contract.revision + 1,
+    digest: workflow_digest_d,
+    repair_conflict_id: None,
+    repair_audit: None,
+    repair_verification: Some(repair),
+    instruction_artifact: {
+      artifact_id: "goal-verification-repair-instruction-2",
+      digest: workflow_digest_e,
+    },
+    base_commit_oid: promotion.commit_oid,
+    base_tree_oid: promotion.tree_oid,
+  }
+  let identities = goal_verification_repair_identities(integrated, contract)
+  let repaired = match
+    @workflow.plan_part_verification_repair(
+      integrated,
+      repair,
+      contract,
+      identities,
+      fn(_) { true },
+    ) {
+    Ok(
+      @workflow.PartVerificationRepairDecision::PartVerificationRepairPlanned(
+        value
+      )
+    ) => value
+    Ok(_) => fail("first combined verification repair reached its retry limit")
+    Err(error) => fail(error.message())
+  }
+  assert_eq(repaired.stage, @workflow.PartWorkflowStage::PartAccepted)
+  assert_eq(
+    repaired.part.lifecycle,
+    @control.PartLifecycle::PartExecuting(identities.implementation_take.id),
+  )
+  assert_eq(repaired.task_contract.repair_verification, Some(repair))
+  assert_eq(
+    repaired.task_contract.mutation_declaration,
+    integrated.task_contract.mutation_declaration,
+  )
+  assert_eq(
+    repaired.task_contract.verification_specs,
+    integrated.task_contract.verification_specs,
+  )
+  assert_true(repaired.integration_receipt is None)
+  assert_eq(
+    repaired.prior_take_evidence[0].integration_receipt,
+    Some(integration_receipt),
+  )
+  // Goal-scope repair exists only to carry routed paths: an unrouteable
+  // failure must not reopen an integrated Part at all.
+  let unrouted = { ..repair, affected_paths: [] }
+  assert_true(
+    @workflow.plan_part_verification_repair(
+      integrated,
+      unrouted,
+      { ..contract, repair_verification: Some(unrouted) },
+      identities,
+      fn(_) { true },
+    )
+    is Err(_),
+  )
+  // Nor may Goal-scope evidence be replayed as a Part-scope repair, whose
+  // eligibility depends on the Part's own failing receipt.
+  let part_scoped = {
+    ..repair,
+    scope: @control.VerificationRepairScope::PartVerificationRepair,
+    affected_paths: [],
+  }
+  assert_true(
+    @workflow.plan_part_verification_repair(
+      integrated,
+      part_scoped,
+      { ..contract, repair_verification: Some(part_scoped) },
+      identities,
+      fn(_) { true },
+    )
+    is Err(_),
+  )
+}
+
+///|
+fn goal_verification_repair_identities(
+  snapshot : @workflow.PartWorkflowSnapshot,
+  contract : @control.TaskContractRevision,
+) -> @workflow.PartIdentityPlan {
+  let implementation = {
+    ..workflow_take(
+      "goal-verification-repair-implementation-take-2",
+      @control.TakePurpose::Implementation(snapshot.part.id, contract.id),
+    ),
+    ordinal: 2,
+  }
+  let verification = {
+    ..workflow_take(
+      "goal-verification-repair-verification-take-2",
+      @control.TakePurpose::PartVerification(
+        snapshot.part.id,
+        implementation.id,
+        contract.verification_specs[0].digest,
+      ),
+    ),
+    ordinal: 2,
+  }
+  let audit = {
+    ..workflow_take(
+      "goal-verification-repair-audit-take-2",
+      @control.TakePurpose::PartAudit(
+        snapshot.part.id,
+        implementation.id,
+        contract.audit_policy_digest,
+      ),
+    ),
+    ordinal: 2,
+  }
+  let implementation_sandbox = workflow_sandbox(
+    "goal-verification-repair-implementation-sandbox-2",
+    "goal-verification-repair-implementation-generation-2",
+    implementation.id,
+    contract.implementation_capability_profile_digest,
+    workflow_digest_a,
+  )
+  let verification_sandbox = workflow_sandbox(
+    "goal-verification-repair-verification-sandbox-2",
+    "goal-verification-repair-verification-generation-2",
+    verification.id,
+    contract.verification_capability_profile_digest,
+    workflow_digest_d,
+  )
+  let audit_sandbox = workflow_sandbox(
+    "goal-verification-repair-audit-sandbox-2",
+    "goal-verification-repair-audit-generation-2",
+    audit.id,
+    contract.audit_capability_profile_digest,
+    workflow_digest_e,
+  )
+  {
+    implementation_take: implementation,
+    implementation_sandbox,
+    implementation_session: workflow_session(
+      "goal-verification-repair-implementation-session-2",
+      implementation.id,
+      implementation_sandbox.generation_id,
+      @control.ProviderSurfaceId::CodexSubscriptionCli,
+      workflow_digest_a,
+    ),
+    verification_take: verification,
+    verification_sandbox,
+    audit_take: audit,
+    audit_sandbox,
+    audit_session: workflow_session(
+      "goal-verification-repair-audit-session-2",
+      audit.id,
+      audit_sandbox.generation_id,
+      @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+      workflow_digest_c,
+    ),
+  }
+}
+
+///|
 test "failed verification plans a bounded evidence-carrying repair revision" {
   let verified = drive_to_verified()
   guard verified.verification_receipts is [passed] else {
@@ -1487,10 +1682,13 @@ test "failed verification plans a bounded evidence-carrying repair revision" {
     audit_subject: None,
   }
   let repair : @control.VerificationRepairReference = {
+    scope: @control.VerificationRepairScope::PartVerificationRepair,
     receipt_id: failed.receipt_id,
     verification_execution_id: failed.verification_execution_id,
     subject_digest: failed.subject.subject_digest,
+    verification_spec: failed.verification_spec,
     evidence_artifact: failed.evidence,
+    affected_paths: [],
   }
   let contract : @control.TaskContractRevision = {
     ..blocked.task_contract,
@@ -1618,10 +1816,13 @@ test "failed verification plans a bounded evidence-carrying repair revision" {
     },
   }
   let exhausted_repair : @control.VerificationRepairReference = {
+    scope: @control.VerificationRepairScope::PartVerificationRepair,
     receipt_id: exhausted_failed.receipt_id,
     verification_execution_id: exhausted_failed.verification_execution_id,
     subject_digest: exhausted_failed.subject.subject_digest,
+    verification_spec: exhausted_failed.verification_spec,
     evidence_artifact: exhausted_failed.evidence,
+    affected_paths: [],
   }
   let exhausted = {
     ..blocked,
@@ -1692,7 +1893,7 @@ test "Goal audit repair routes paths to their deterministic Part owners" {
     },
   }
   let routes = match
-    @workflow.plan_goal_audit_repair_routes([second, first], [
+    @workflow.plan_goal_repair_routes([second, first], [
       @control.RepoPath("src/feature.mbt"),
       @control.RepoPath("src/lint/lint.mbt"),
     ]) {

@@ -44,14 +44,30 @@ unconnected product path usable.
 
 ### Implemented and directly exercised
 
-- Blocking Part verification failures and Part or Goal audit findings now
+- Blocking Part verification failures, combined Goal verification failures, and
+  Part or Goal audit findings now
   retain their evidence for bounded repair. The owning workflow—not the passive
   gate—mints a fresh task-contract revision and Take identities, reopens the
   owning Part from the correct head, and reruns implementation, verification,
   audit, and integration. Exhaustion or unusable evidence automatically
   cancels with `GoalCancellationVerificationRepairFailed` or
   `GoalCancellationAuditRepairFailed`; neither path asks the Conductor or user
-  to authorize a retry. Before submission, the Conductor also normalizes
+  to authorize a retry.
+- Combined Goal verification is repaired through the same router as a rejected
+  Goal audit. A rejected combined-verification gate keeps its receipts, command
+  output, failing spec identity, and exact sealed subject; the adapter selects
+  the newest failure against the current subject, ignoring receipts from an
+  earlier seal. Because combined verification output is free-form command text,
+  routing never invents a path: it recognizes only paths an integrated Part
+  already declared or changed, then assigns each to its deterministic owner.
+  Each routed Part gets one `GoalVerificationRepair` contract revision with the
+  same accepted Part set, mutation declaration, and verification specs. A
+  changed Goal head reseals and re-verifies first; unrouteable output, a stale
+  or corrupt gate, and an exhausted repair budget cancel with the failing
+  receipt digest instead of leaving an inert blocked Goal. A restart part-way
+  through a multi-Part repair converges: the runner returns a Goal whose Parts
+  are no longer all integrated to `Running`, so the repaired Parts rerun and
+  the Goal reseals before combined verification runs again. Before submission, the Conductor also normalizes
   internally contradictory Bead prose through the typed Beads update surface
   and rereads the revision; implementation Takes use the same
   narrowest-executable-interpretation rule.

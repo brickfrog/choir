@@ -1300,10 +1300,13 @@ async test "Goal adapter persists an autonomous verification repair revision" {
     }).unwrap(),
   )
   let repair : @control.VerificationRepairReference = {
+    scope: @control.VerificationRepairScope::PartVerificationRepair,
     receipt_id: failed_receipt.receipt_id,
     verification_execution_id: failed_receipt.verification_execution_id,
     subject_digest: failed_subject.subject_digest,
+    verification_spec: failed_receipt.verification_spec,
     evidence_artifact: failed_receipt.evidence,
+    affected_paths: [],
   }
   let revised_contract : @control.TaskContractRevision = {
     ..initial.task_contract,

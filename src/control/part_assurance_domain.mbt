@@ -203,11 +203,24 @@ pub(all) struct AuditRepairReference {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+/// Which verification rejected the candidate. Part-scope repair answers a
+/// Part's own failing verification receipt; Goal-scope repair answers combined
+/// verification over the sealed Goal tree, where the failure belongs to no
+/// single Part until its evidence is routed to the Parts that own the paths.
+pub(all) enum VerificationRepairScope {
+  PartVerificationRepair
+  GoalVerificationRepair
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub(all) struct VerificationRepairReference {
+  scope : VerificationRepairScope
   receipt_id : ReceiptId
   verification_execution_id : VerificationExecutionId
   subject_digest : Digest
+  verification_spec : VerificationSpec
   evidence_artifact : ArtifactReference
+  affected_paths : Array[RepoPath]
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|

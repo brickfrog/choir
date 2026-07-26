@@ -307,7 +307,7 @@ pub fn maximum_part_verification_repairs() -> Int {
 }
 
 ///|
-fn audit_repair_mutation_score(
+fn repair_mutation_score(
   declaration : @control.MutationDeclaration,
   path : @control.RepoPath,
 ) -> Int {
@@ -332,14 +332,14 @@ fn audit_repair_mutation_score(
 }
 
 ///|
-fn goal_audit_repair_owner(
+fn goal_repair_owner(
   snapshots : Array[PartWorkflowSnapshot],
   path : @control.RepoPath,
 ) -> @control.PartId? {
   let mut selected : @control.PartId? = None
   let mut selected_score = 0
   for snapshot in snapshots {
-    let mut score = audit_repair_mutation_score(
+    let mut score = repair_mutation_score(
       snapshot.task_contract.mutation_declaration,
       path,
     )
@@ -363,18 +363,18 @@ fn goal_audit_repair_owner(
 }
 
 ///|
-pub fn plan_goal_audit_repair_routes(
+pub fn plan_goal_repair_routes(
   snapshots : Array[PartWorkflowSnapshot],
   paths : Array[@control.RepoPath],
-) -> Result[Array[PartAuditRepairRoute], @types.ChoirError] {
+) -> Result[Array[PartRepairRoute], @types.ChoirError] {
   if snapshots.length() == 0 || paths.length() == 0 {
-    return Err(workflow_error("Goal audit repair has no routable work"))
+    return Err(workflow_error("Goal repair has no routable work"))
   }
-  let routes : Array[PartAuditRepairRoute] = []
+  let routes : Array[PartRepairRoute] = []
   for path in paths {
-    let owner = match goal_audit_repair_owner(snapshots, path) {
+    let owner = match goal_repair_owner(snapshots, path) {
       Some(value) => value
-      None => return Err(workflow_error("Goal audit repair path is unowned"))
+      None => return Err(workflow_error("Goal repair path is unowned"))
     }
     let mut route_index = -1
     for index, route in routes {
@@ -711,23 +711,36 @@ pub fn plan_part_verification_repair(
   if snapshot.pending_effect is Some(_) {
     return Err(workflow_error("Part has an unresolved effect"))
   }
-  let mut evidence_matches = false
-  for receipt in snapshot.verification_receipts {
-    if receipt.receipt_id == repair.receipt_id &&
-      receipt.verification_execution_id == repair.verification_execution_id &&
-      receipt.subject.subject_digest == repair.subject_digest &&
-      receipt.evidence == repair.evidence_artifact &&
-      receipt.subject.task_contract_revision_id == snapshot.task_contract.id &&
-      receipt.outcome != @control.VerificationOutcome::VerificationPassed {
-      evidence_matches = true
+  let eligible = match (snapshot.part.lifecycle, repair.scope) {
+    (
+      @control.PartLifecycle::PartBlocked(
+        @control.PartBlockReason::PartVerificationFailed
+      ),
+      @control.VerificationRepairScope::PartVerificationRepair,
+    ) => {
+      let mut evidence_matches = false
+      for receipt in snapshot.verification_receipts {
+        if receipt.receipt_id == repair.receipt_id &&
+          receipt.verification_execution_id == repair.verification_execution_id &&
+          receipt.subject.subject_digest == repair.subject_digest &&
+          receipt.evidence == repair.evidence_artifact &&
+          receipt.subject.task_contract_revision_id == snapshot.task_contract.id &&
+          receipt.outcome != @control.VerificationOutcome::VerificationPassed {
+          evidence_matches = true
+        }
+      }
+      evidence_matches
     }
+    // Combined verification failed over the sealed Goal tree. This Part's own
+    // receipts passed; the routed paths are what make it the repairer.
+    (
+      @control.PartLifecycle::PartIntegrated(_),
+      @control.VerificationRepairScope::GoalVerificationRepair,
+    ) => repair.affected_paths.length() > 0
+    _ => false
   }
-  if snapshot.stage != PartBlocked ||
-    !(snapshot.part.lifecycle
-    is @control.PartLifecycle::PartBlocked(
-      @control.PartBlockReason::PartVerificationFailed
-    )) ||
-    !evidence_matches {
+  if !eligible ||
+    (snapshot.stage != PartBlocked && snapshot.stage != PartIntegrated) {
     return Err(workflow_error("Part is not eligible for verification repair"))
   }
   let mut prior_repairs = 0

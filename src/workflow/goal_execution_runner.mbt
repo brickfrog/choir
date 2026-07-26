@@ -35,8 +35,16 @@ pub(all) enum GoalAssuranceTickOutcome {
   GoalAssuranceComplete
   GoalAssuranceBlocked
   GoalAssuranceRepairing
-  GoalAssuranceRepairFailed(@control.Digest, Int64)
+  GoalAssuranceRepairFailed(GoalAssuranceRepairKind, @control.Digest, Int64)
 } derive(Debug, Eq)
+
+///|
+/// Which Goal-level gate exhausted its bounded repair. The kind selects the
+/// typed cancellation cause, so retained evidence names the gate that failed.
+pub(all) enum GoalAssuranceRepairKind {
+  GoalAssuranceAuditRepair
+  GoalAssuranceVerificationRepair
+} derive(Debug, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum GoalExecutionTickResult {
@@ -577,16 +585,22 @@ pub async fn run_next_goal_execution_tick(
       GoalAssuranceComplete => GoalExecutionState::GoalExecutionAssured
       GoalAssuranceBlocked => GoalExecutionState::GoalExecutionBlocked
       GoalAssuranceRepairing => GoalExecutionState::GoalExecutionRunning
-      GoalAssuranceRepairFailed(digest, requested_at) => {
+      GoalAssuranceRepairFailed(kind, digest, requested_at) => {
+        let cause = match kind {
+          GoalAssuranceRepairKind::GoalAssuranceAuditRepair =>
+            GoalCancellationCause::GoalCancellationAuditRepairFailed(digest)
+          GoalAssuranceRepairKind::GoalAssuranceVerificationRepair =>
+            GoalCancellationCause::GoalCancellationVerificationRepairFailed(
+              digest,
+            )
+        }
         let outcome = match
           persist_goal_cancellation_request(
             repository,
             repository_adapters,
             selected.record.goal.id,
             requested_at,
-            cause=GoalCancellationCause::GoalCancellationAuditRepairFailed(
-              digest,
-            ),
+            cause~,
           ) {
           Ok(value) => value
           Err(error) => return Err(error)
@@ -596,7 +610,7 @@ pub async fn run_next_goal_execution_tick(
             value
           GoalCancellationTerminal(_) =>
             return Err(
-              goal_execution_error("audit repair cancellation lost a race"),
+              goal_execution_error("Goal repair cancellation lost a race"),
             )
         }
         return Ok(GoalExecutionTickResult::GoalExecutionTickAdvanced(record))

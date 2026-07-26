@@ -799,15 +799,18 @@ async test "verification failure may return an autonomous repair revision" {
           repair_conflict_id: None,
           repair_audit: None,
           repair_verification: Some({
+            scope: @control.VerificationRepairScope::PartVerificationRepair,
             receipt_id: @control.ReceiptId("verification-failed-receipt"),
             verification_execution_id: @control.VerificationExecutionId(
               "verification-failed-execution",
             ),
             subject_digest: schedule_digest,
+            verification_spec: record.task_contract.verification_specs[0],
             evidence_artifact: {
               artifact_id: "verification-failed-evidence",
               digest: schedule_digest,
             },
+            affected_paths: [],
           }),
         }
         Ok({
