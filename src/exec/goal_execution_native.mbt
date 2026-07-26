@@ -34,7 +34,7 @@ priv struct NativeOrphanedGoalSourceClaim {
 }
 
 ///|
-let native_goal_control_state_generation : String = "choir-control-state-v7"
+let native_goal_control_state_generation : String = "choir-control-state-v8"
 
 ///|
 priv struct NativeGoalPartRuntime {
@@ -4685,6 +4685,10 @@ async fn advance_native_goal_assurance(
 pub async fn run_native_goal_execution_tick_with_forge(
   project_dir : String,
   forge : NativePullRequestForgeAdapters,
+  pull_request_delivery? : @types.PullRequestDeliveryPolicy = {
+    mode: @types.PullRequestDeliveryMode::PullRequestReviewOnly,
+    merge_method: @types.PullRequestMergeMethod::PullRequestSquashMerge,
+  },
   beads_capture? : async (Command) -> (Int, String) = capture_command_merged,
 ) -> Result[@workflow.GoalExecutionTickResult, @types.ChoirError] {
   let repository = native_goal_repository(project_dir)
@@ -4746,17 +4750,39 @@ pub async fn run_native_goal_execution_tick_with_forge(
             @workflow.GoalPublicationTickOutcome::GoalPublicationRemoteUnavailable
           ) =>
             return Ok(
-              @workflow.GoalFinalizationTickOutcome::GoalFinalizationPublicationRemoteUnavailable,
+              if pull_request_delivery.mode ==
+                @types.PullRequestDeliveryMode::PullRequestAutoMerge {
+                @workflow.GoalFinalizationTickOutcome::GoalFinalizationPending
+              } else {
+                @workflow.GoalFinalizationTickOutcome::GoalFinalizationPublicationRemoteUnavailable
+              },
             )
           Ok(@workflow.GoalPublicationTickOutcome::GoalPublicationDrifted) =>
             return Ok(
-              @workflow.GoalFinalizationTickOutcome::GoalFinalizationDrifted,
+              if pull_request_delivery.mode ==
+                @types.PullRequestDeliveryMode::PullRequestAutoMerge {
+                @workflow.GoalFinalizationTickOutcome::GoalFinalizationDeliveryFailed(
+                  @storage.artifact_digest(
+                    @utf8.encode(
+                      "choir.automatic-delivery.publication-drift.v1\u{00}" +
+                      record.goal.id.0,
+                    ),
+                  ),
+                )
+              } else {
+                @workflow.GoalFinalizationTickOutcome::GoalFinalizationDrifted
+              },
             )
           Ok(
             @workflow.GoalPublicationTickOutcome::GoalPublicationRecoveryUncertain
           ) =>
             return Ok(
-              @workflow.GoalFinalizationTickOutcome::GoalFinalizationRecoveryUncertain,
+              if pull_request_delivery.mode ==
+                @types.PullRequestDeliveryMode::PullRequestAutoMerge {
+                @workflow.GoalFinalizationTickOutcome::GoalFinalizationPending
+              } else {
+                @workflow.GoalFinalizationTickOutcome::GoalFinalizationRecoveryUncertain
+              },
             )
           Ok(_) =>
             return Ok(
@@ -4769,6 +4795,7 @@ pub async fn run_native_goal_execution_tick_with_forge(
             project_dir,
             record.goal.id,
             forge,
+            delivery_policy=pull_request_delivery,
           ) {
           Ok(@workflow.GoalPullRequestTickOutcome::GoalPullRequestComplete) =>
             ()
@@ -4776,13 +4803,40 @@ pub async fn run_native_goal_execution_tick_with_forge(
             @workflow.GoalPullRequestTickOutcome::GoalPullRequestNeedsUserInput
           ) =>
             return Ok(
-              @workflow.GoalFinalizationTickOutcome::GoalFinalizationNeedsUserInput,
+              if pull_request_delivery.mode ==
+                @types.PullRequestDeliveryMode::PullRequestAutoMerge {
+                @workflow.GoalFinalizationTickOutcome::GoalFinalizationDeliveryFailed(
+                  @storage.artifact_digest(
+                    @utf8.encode(
+                      "choir.automatic-delivery.pull-request-input.v1\u{00}" +
+                      record.goal.id.0,
+                    ),
+                  ),
+                )
+              } else {
+                @workflow.GoalFinalizationTickOutcome::GoalFinalizationNeedsUserInput
+              },
             )
           Ok(
             @workflow.GoalPullRequestTickOutcome::GoalPullRequestRecoveryUncertain
           ) =>
             return Ok(
-              @workflow.GoalFinalizationTickOutcome::GoalFinalizationRecoveryUncertain,
+              if pull_request_delivery.mode ==
+                @types.PullRequestDeliveryMode::PullRequestAutoMerge {
+                @workflow.GoalFinalizationTickOutcome::GoalFinalizationPending
+              } else {
+                @workflow.GoalFinalizationTickOutcome::GoalFinalizationRecoveryUncertain
+              },
+            )
+          Ok(
+            @workflow.GoalPullRequestTickOutcome::GoalPullRequestDeliveryFailed(
+              digest
+            )
+          ) =>
+            return Ok(
+              @workflow.GoalFinalizationTickOutcome::GoalFinalizationDeliveryFailed(
+                digest,
+              ),
             )
           Ok(_) =>
             return Ok(
@@ -4790,11 +4844,41 @@ pub async fn run_native_goal_execution_tick_with_forge(
             )
           Err(error) => return Err(error)
         }
-        advance_native_goal_finalization_with_adapters(
-          project_dir,
-          record.goal.id,
-          forge,
-        )
+        let outcome = match
+          advance_native_goal_finalization_with_adapters(
+            project_dir,
+            record.goal.id,
+            forge,
+          ) {
+          Ok(value) => value
+          Err(error) => return Err(error)
+        }
+        if pull_request_delivery.mode ==
+          @types.PullRequestDeliveryMode::PullRequestAutoMerge {
+          match outcome {
+            @workflow.GoalFinalizationTickOutcome::GoalFinalizationPublicationRemoteUnavailable
+            | @workflow.GoalFinalizationTickOutcome::GoalFinalizationRecoveryUncertain =>
+              Ok(@workflow.GoalFinalizationTickOutcome::GoalFinalizationPending)
+            @workflow.GoalFinalizationTickOutcome::GoalFinalizationNeedsUserInput
+            | @workflow.GoalFinalizationTickOutcome::GoalFinalizationDrifted
+            | @workflow.GoalFinalizationTickOutcome::GoalFinalizationAmbiguous =>
+              Ok(
+                @workflow.GoalFinalizationTickOutcome::GoalFinalizationDeliveryFailed(
+                  @storage.artifact_digest(
+                    @utf8.encode(
+                      "choir.automatic-delivery.finalization.v1\u{00}" +
+                      record.goal.id.0 +
+                      "\u{00}" +
+                      outcome.to_json().stringify(indent=0),
+                    ),
+                  ),
+                ),
+              )
+            _ => Ok(outcome)
+          }
+        } else {
+          Ok(outcome)
+        }
       },
       cancel: async fn(record, snapshots) {
         let sources_known = match
@@ -4860,10 +4944,15 @@ pub async fn run_native_goal_execution_tick_with_forge(
 ///|
 pub async fn run_native_goal_execution_tick(
   project_dir : String,
+  pull_request_delivery? : @types.PullRequestDeliveryPolicy = {
+    mode: @types.PullRequestDeliveryMode::PullRequestReviewOnly,
+    merge_method: @types.PullRequestMergeMethod::PullRequestSquashMerge,
+  },
 ) -> Result[@workflow.GoalExecutionTickResult, @types.ChoirError] {
   run_native_goal_execution_tick_with_forge(
     project_dir,
     native_pull_request_forge_adapters(),
+    pull_request_delivery~,
   )
 }
 

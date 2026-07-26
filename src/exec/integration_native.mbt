@@ -192,13 +192,16 @@ fn validate_native_git_config(
       ),
     )
   }
+  match @control.validate_semantic_commit_title(intent.commit_title) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   Ok(())
 }
 
 ///|
 fn promotion_message(intent : @control.IntegrationIntent) -> String {
-  "choir: promote Part " +
-  intent.part_id.0 +
+  intent.commit_title.0 +
   "\n\nGoal: " +
   intent.goal_id.0 +
   "\nIntent: " +

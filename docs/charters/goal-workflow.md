@@ -55,7 +55,20 @@ unconnected product path usable.
   internally contradictory Bead prose through the typed Beads update surface
   and rereads the revision; implementation Takes use the same
   narrowest-executable-interpretation rule.
-- The current checkout passes `moon check --target native`, all 510 native
+- Every Part contract now carries a validated semantic commit title. Candidate
+  and promotion commits preserve it across repair revisions. Pull-request
+  delivery is typed configuration: `review_only` retains the review boundary,
+  while `auto_merge` persists and reconciles an exact-head automatic merge
+  request and succeeds only after the canonical PR is observed merged. The
+  checked-in Choir project selects squash auto-merge so the semantic PR title
+  is the one commit that lands on `main`.
+- A Goal remains the unit of publication, with its Parts scheduled as a stable
+  dependency DAG: only dependency-ready, mutation-compatible Parts fan out up
+  to `maximum_parallel_parts`. Multiple live Goals coexist and the runner
+  advances them round-robin. In `auto_merge` mode, an unmerged Goal retains its
+  source Bead claims, making its merge a dependency barrier while unrelated
+  Goals continue independently.
+- The current checkout passes `moon check --target native`, all 515 native
   tests, the Choir lint command, every registered fault/race conformance
   command, the synthetic Part lifecycle, parallel promotion, scale scheduling,
   both native provider Part lifecycles, and the two-provider Goal fixture. The
@@ -156,20 +169,21 @@ unconnected product path usable.
   removed one seeded recoverable root and its durable state together; a forced
   BoxLite cleanup failure exited nonzero and preserved both root and database
   for an honest retry.
-- An integrated Part now reconciles its source Bead to `closed` before Goal
-  execution advances. Choir rereads the exact Bead, compares its claim-neutral
-  content digest with Goal acceptance, and issues the typed `bd update` only
-  when the source remains claimed by the Goal's exact actor. A previously
-  delivered close replays as a no-op, while a later user edit or reassignment
-  is never overwritten. The
-  narrow adapter test covers update, ambiguous-delivery replay, and source
-  drift without mutating a real Beads database.
+- Source Beads remain claimed while their Goal implements, assures, publishes,
+  and delivers. Choir reconciles them to `closed` only at the configured Goal
+  delivery boundary: an exact open PR for `review_only`, or the exact merged PR
+  for `auto_merge`. It rereads each Bead, compares its claim-neutral content
+  digest with Goal acceptance, and issues the typed `bd update` only when the
+  source remains claimed by the Goal's exact actor. A previously delivered
+  close replays as a no-op, while a later user edit or reassignment is never
+  overwritten.
 - A fresh installed-layout Codex Conductor run exercised that projection with
   real Bead `live-close`. Goal `goal-live-close-20260721-codex-01` produced the
   one-file `lib.mbt` change, twelve Part effect receipts, Part verification,
   independent Part audit, integration, six combined-assurance effect receipts,
-  Goal verification, and independent Goal audit. The Bead changed from `open`
-  to `closed` immediately after authoritative Part integration; the one live
+  Goal verification, and independent Goal audit. That historical probe changed
+  the Bead from `open` to `closed` after Part integration; current delivery
+  semantics keep it claimed until the configured PR boundary. The one live
   `choir-take-goal-*` root remained through assurance and then fell to zero.
   Publication correctly paused for a missing remote. The first Conductor turn
   also exposed an invented `mutation` wrapper and was rejected before Goal
@@ -3107,6 +3121,11 @@ PullRequestIntent {
   idempotency_key
   canonical_remote_pull_request_id?
   state
+  delivery_policy {
+    mode
+    merge_method
+  }
+  merge_state
 }
 
 PullRequestIntentState
@@ -3117,6 +3136,14 @@ PullRequestIntentState
   NeedsInput(reason)
   RemoteCreateUncertain
   AbandonedByCancellation
+
+PullRequestMergeState
+  NotRequested
+  Planned
+  Authorized
+  MayHaveBeenIssued
+  Enabled
+  Rejected(failure_digest)
 ```
 
 For a publishable Goal, the Conductor must supply a semantic PR title and a
@@ -3126,6 +3153,13 @@ carry a PR document. The Conductor document contains no Goal IDs, evidence
 digests, receipt metadata, or Choir marker; after assurance and publication,
 choird appends the deterministic hidden marker and persists the exact final
 document directly in the intent before any remote effect.
+
+Each Part also carries a required semantic commit title in its immutable task
+contract. Candidate generation uses that title, repair revisions preserve it,
+and promotion commits retain it while adding Goal and intent metadata only in
+the commit body. This prevents a forge's rebase strategy from exposing an
+internal `candidate for Part` subject on the target branch. Automatic squash
+delivery also supplies the semantic PR title as the exact squash subject.
 
 The key derives from canonical repository identity, goal ID, head repository
 and ref, base repository and ref, and expected audited head OID. It is stored
@@ -5027,14 +5061,17 @@ the readiness-response boundary, success winning before late cancellation,
 cancellation winning after readiness but before success, and unique terminal
 outbox cardinality. The current report passes every field.
 
-Readiness is then observed separately against the canonical receipt. `Ready`
-requires an open PR with the exact repository identities, head and base refs,
-sealed head OID, and identity marker. The Goal-contract and evidence-manifest
-bindings are already durable typed fields in the intent and receipt chain. The
-terminal Goal write compare-and-sets `GoalExecutionAssured` to
+Readiness is then observed separately against the canonical receipt. Both
+delivery modes require the exact repository identities, head and base refs,
+sealed head OID, and identity marker. `review_only` is ready when that PR is
+open or already merged. `auto_merge` first persists a typed merge request,
+dispatches `gh pr merge --auto` with the exact expected head and configured
+method, reconciles GitHub's auto-merge state, and remains `AwaitingMerge` until
+the canonical PR is observed merged. Only that merged observation becomes
+`Ready`. The terminal Goal write compare-and-sets `GoalExecutionAssured` to
 `GoalExecutionSucceeded` while guarding that exact readiness state record in
-the same SQLite transaction. A later readiness observation or cancellation
-therefore displaces success instead of racing past it.
+the same SQLite transaction; Beads close immediately before that transaction
+and replay idempotently after a crash.
 
 The disposable published Goal exercised the complete control-plane protocol
 with an injected synthetic forge, so no external PR was created. The first run

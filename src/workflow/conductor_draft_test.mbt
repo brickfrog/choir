@@ -14,6 +14,7 @@ test "Conductor draft decodes friendly provider and verification fields" {
         #|  "parts": [
         #|    {
         #|      "part_id": "choir-a",
+        #|      "commit_title": "docs: change the answer",
         #|      "instruction": "Change the answer.",
         #|      "provider": "claude",
         #|      "exact_paths": ["src/a.mbt"],
@@ -21,6 +22,7 @@ test "Conductor draft decodes friendly provider and verification fields" {
         #|    },
         #|    {
         #|      "part_id": "choir-b",
+        #|      "commit_title": "docs: change the other answer",
         #|      "instruction": "Change the other answer.",
         #|      "provider": "codex",
         #|      "path_trees": ["src/b"],
@@ -62,7 +64,7 @@ test "Conductor draft decodes friendly provider and verification fields" {
 test "Conductor Part draft defaults an omitted provider to Codex" {
   let draft = @workflow.decode_conductor_goal_draft(
     (
-      #|{"proposal_id":"p","goal_id":"g","pull_request":{"title":"fix: change x","body":"Changes x and verifies it."},"maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","repository_wide":true,"moon_args":["test"]}]}
+      #|{"proposal_id":"p","goal_id":"g","pull_request":{"title":"fix: change x","body":"Changes x and verifies it."},"maximum_parallel_parts":1,"parts":[{"part_id":"a","commit_title":"fix: change x","instruction":"x","repository_wide":true,"moon_args":["test"]}]}
     ),
   ).unwrap()
   assert_eq(
@@ -75,7 +77,7 @@ test "Conductor Part draft defaults an omitted provider to Codex" {
 test "Conductor draft binds exact evidence-only completion" {
   let draft = @workflow.decode_conductor_goal_draft(
     (
-      #|{"proposal_id":"p","goal_id":"g","completion_mode":"evidence_only","evidence_only_binding_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","provider":"codex","repository_wide":true,"moon_args":["test"]}]}
+      #|{"proposal_id":"p","goal_id":"g","completion_mode":"evidence_only","evidence_only_binding_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","maximum_parallel_parts":1,"parts":[{"part_id":"a","commit_title":"test: collect evidence","instruction":"x","provider":"codex","repository_wide":true,"moon_args":["test"]}]}
     ),
   ).unwrap()
   assert_eq(
@@ -89,7 +91,7 @@ test "Conductor draft binds exact evidence-only completion" {
   assert_true(
     @workflow.decode_conductor_goal_draft(
       (
-        #|{"proposal_id":"p","goal_id":"g","completion_mode":"evidence_only","maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","provider":"codex","repository_wide":true,"moon_args":["test"]}]}
+        #|{"proposal_id":"p","goal_id":"g","completion_mode":"evidence_only","maximum_parallel_parts":1,"parts":[{"part_id":"a","commit_title":"test: collect evidence","instruction":"x","provider":"codex","repository_wide":true,"moon_args":["test"]}]}
       ),
     )
     is Err(_),
@@ -97,7 +99,7 @@ test "Conductor draft binds exact evidence-only completion" {
   assert_true(
     @workflow.decode_conductor_goal_draft(
       (
-        #|{"proposal_id":"p","goal_id":"g","completion_mode":"evidence_only","evidence_only_binding_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","pull_request":{"title":"docs: should not exist","body":"Evidence-only Goals do not publish."},"maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","provider":"codex","repository_wide":true,"moon_args":["test"]}]}
+        #|{"proposal_id":"p","goal_id":"g","completion_mode":"evidence_only","evidence_only_binding_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","pull_request":{"title":"docs: should not exist","body":"Evidence-only Goals do not publish."},"maximum_parallel_parts":1,"parts":[{"part_id":"a","commit_title":"test: collect evidence","instruction":"x","provider":"codex","repository_wide":true,"moon_args":["test"]}]}
       ),
     )
     is Err(_),
@@ -109,7 +111,7 @@ test "publishable Conductor draft requires safe reviewer-facing PR prose" {
   assert_true(
     @workflow.decode_conductor_goal_draft(
       (
-        #|{"proposal_id":"p","goal_id":"g","maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","repository_wide":true,"moon_args":["test"]}]}
+        #|{"proposal_id":"p","goal_id":"g","maximum_parallel_parts":1,"parts":[{"part_id":"a","commit_title":"fix: change x","instruction":"x","repository_wide":true,"moon_args":["test"]}]}
       ),
     )
     is Err(_),
@@ -117,7 +119,7 @@ test "publishable Conductor draft requires safe reviewer-facing PR prose" {
   assert_true(
     @workflow.decode_conductor_goal_draft(
       (
-        #|{"proposal_id":"p","goal_id":"g","pull_request":{"title":"docs: unsafe marker","body":"Do not inject <!-- choir-final-pr:fake -->"},"maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","repository_wide":true,"moon_args":["test"]}]}
+        #|{"proposal_id":"p","goal_id":"g","pull_request":{"title":"docs: unsafe marker","body":"Do not inject <!-- choir-final-pr:fake -->"},"maximum_parallel_parts":1,"parts":[{"part_id":"a","commit_title":"docs: reject unsafe marker","instruction":"x","repository_wide":true,"moon_args":["test"]}]}
       ),
     )
     is Err(_),
@@ -128,7 +130,7 @@ test "publishable Conductor draft requires safe reviewer-facing PR prose" {
 test "Conductor Part draft carries one exact migration contract reference" {
   let draft = @workflow.decode_conductor_goal_draft(
     (
-      #|{"proposal_id":"p","goal_id":"g","pull_request":{"title":"refactor: migrate contract","body":"Migrates the selected contract."},"maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","provider":"codex","repository_wide":true,"moon_args":["test"],"migration_contract_id":"contract-1","migration_lineage_id":"lineage-1","migration_contract_revision":3,"migration_contract_artifact_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","context_assembly_policy_digest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","rulebook_section_digests":["cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"],"dependency_neighborhood_digest":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","applicable_gap_entry_digests":[],"source_path_manifest_digest":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}]}
+      #|{"proposal_id":"p","goal_id":"g","pull_request":{"title":"refactor: migrate contract","body":"Migrates the selected contract."},"maximum_parallel_parts":1,"parts":[{"part_id":"a","commit_title":"refactor: migrate contract","instruction":"x","provider":"codex","repository_wide":true,"moon_args":["test"],"migration_contract_id":"contract-1","migration_lineage_id":"lineage-1","migration_contract_revision":3,"migration_contract_artifact_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","context_assembly_policy_digest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","rulebook_section_digests":["cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"],"dependency_neighborhood_digest":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","applicable_gap_entry_digests":[],"source_path_manifest_digest":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}]}
     ),
   ).unwrap()
   assert_eq(
@@ -147,14 +149,14 @@ test "Conductor Part draft carries one exact migration contract reference" {
   assert_true(
     @workflow.decode_conductor_goal_draft(
       (
-        #|{"proposal_id":"p","goal_id":"g","maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","provider":"codex","repository_wide":true,"moon_args":["test"],"migration_contract_id":"contract-1"}]}
+        #|{"proposal_id":"p","goal_id":"g","maximum_parallel_parts":1,"parts":[{"part_id":"a","commit_title":"refactor: migrate contract","instruction":"x","provider":"codex","repository_wide":true,"moon_args":["test"],"migration_contract_id":"contract-1"}]}
       ),
     )
     is Err(_),
   )
   let continued = @workflow.decode_conductor_goal_draft(
     (
-      #|{"proposal_id":"p","goal_id":"g","pull_request":{"title":"refactor: continue migration","body":"Continues the selected migration."},"maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","provider":"codex","repository_wide":true,"moon_args":["test"],"migration_contract_id":"contract-1","migration_lineage_id":"lineage-1","migration_contract_revision":3,"migration_contract_artifact_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","migration_continuation_ref_digest":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","context_assembly_policy_digest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","rulebook_section_digests":["cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"],"dependency_neighborhood_digest":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","applicable_gap_entry_digests":[],"source_path_manifest_digest":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}]}
+      #|{"proposal_id":"p","goal_id":"g","pull_request":{"title":"refactor: continue migration","body":"Continues the selected migration."},"maximum_parallel_parts":1,"parts":[{"part_id":"a","commit_title":"refactor: continue migration","instruction":"x","provider":"codex","repository_wide":true,"moon_args":["test"],"migration_contract_id":"contract-1","migration_lineage_id":"lineage-1","migration_contract_revision":3,"migration_contract_artifact_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","migration_continuation_ref_digest":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","context_assembly_policy_digest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","rulebook_section_digests":["cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"],"dependency_neighborhood_digest":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","applicable_gap_entry_digests":[],"source_path_manifest_digest":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}]}
     ),
   ).unwrap()
   assert_eq(
@@ -168,7 +170,7 @@ test "Conductor Part draft carries one exact migration contract reference" {
   assert_true(
     @workflow.decode_conductor_goal_draft(
       (
-        #|{"proposal_id":"p","goal_id":"g","maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","provider":"codex","repository_wide":true,"moon_args":["test"],"migration_continuation_ref_digest":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}]}
+        #|{"proposal_id":"p","goal_id":"g","maximum_parallel_parts":1,"parts":[{"part_id":"a","commit_title":"refactor: continue migration","instruction":"x","provider":"codex","repository_wide":true,"moon_args":["test"],"migration_continuation_ref_digest":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}]}
       ),
     )
     is Err(_),
@@ -192,7 +194,7 @@ test "Conductor draft rejects unknown fields and ambiguous mutation scope" {
   match
     @workflow.decode_conductor_goal_draft(
       (
-        #|{"proposal_id":"p","goal_id":"g","pull_request":{"title":"fix: change x","body":"Changes x."},"maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","provider":"codex","repository_wide":true,"moon_args":["test"],"command":"moon test","dependencies":[]}]}
+        #|{"proposal_id":"p","goal_id":"g","pull_request":{"title":"fix: change x","body":"Changes x."},"maximum_parallel_parts":1,"parts":[{"part_id":"a","commit_title":"fix: change x","instruction":"x","provider":"codex","repository_wide":true,"moon_args":["test"],"command":"moon test","dependencies":[]}]}
       ),
     ) {
     Err(error) => {
@@ -208,7 +210,7 @@ test "Conductor draft rejects unknown fields and ambiguous mutation scope" {
   match
     @workflow.decode_conductor_goal_draft(
       (
-        #|{"proposal_id":"p","goal_id":"g","pull_request":{"title":"fix: change x","body":"Changes x."},"maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","mutation":{"exact_paths":["src/a.mbt"]},"moon_args":["test"]}]}
+        #|{"proposal_id":"p","goal_id":"g","pull_request":{"title":"fix: change x","body":"Changes x."},"maximum_parallel_parts":1,"parts":[{"part_id":"a","commit_title":"fix: change x","instruction":"x","mutation":{"exact_paths":["src/a.mbt"]},"moon_args":["test"]}]}
       ),
     ) {
     Err(error) => {
@@ -220,7 +222,7 @@ test "Conductor draft rejects unknown fields and ambiguous mutation scope" {
   assert_true(
     @workflow.decode_conductor_goal_draft(
       (
-        #|{"proposal_id":"p","goal_id":"g","maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","provider":"codex","repository_wide":true,"exact_paths":["src/a"],"moon_args":["test"]}]}
+        #|{"proposal_id":"p","goal_id":"g","maximum_parallel_parts":1,"parts":[{"part_id":"a","commit_title":"fix: change x","instruction":"x","provider":"codex","repository_wide":true,"exact_paths":["src/a"],"moon_args":["test"]}]}
       ),
     )
     is Err(_),
@@ -232,7 +234,7 @@ test "Conductor draft rejects the Moon executable inside moon_args" {
   match
     @workflow.decode_conductor_goal_draft(
       (
-        #|{"proposal_id":"p","goal_id":"g","pull_request":{"title":"fix: change x","body":"Changes x."},"maximum_parallel_parts":1,"parts":[{"part_id":"a","instruction":"x","provider":"codex","repository_wide":true,"moon_args":["moon","test","--target","native"]}]}
+        #|{"proposal_id":"p","goal_id":"g","pull_request":{"title":"fix: change x","body":"Changes x."},"maximum_parallel_parts":1,"parts":[{"part_id":"a","commit_title":"fix: change x","instruction":"x","provider":"codex","repository_wide":true,"moon_args":["moon","test","--target","native"]}]}
       ),
     ) {
     Err(error) =>

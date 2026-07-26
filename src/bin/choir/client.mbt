@@ -50,6 +50,7 @@ fn goal_client_load_config_with(
     Err(error) => return Err(error.message())
   }
   Ok({
+    ..parsed,
     project_dir: client_environment_value(env_get, "CHOIR_WORKSPACE").unwrap_or(
       parsed.project_dir,
     ),

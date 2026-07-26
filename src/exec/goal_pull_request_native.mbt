@@ -8,6 +8,12 @@ pub(all) struct NativePullRequestForgeAdapters {
     @workflow.PullRequestIntent,
     @workflow.PullRequestDocument,
   ) -> Unit
+  merge : async (
+    String,
+    String,
+    @workflow.PullRequestIntent,
+    @workflow.PullRequestReceipt,
+  ) -> @workflow.PullRequestMergeDispatchObservation
 }
 
 ///|
@@ -95,6 +101,18 @@ fn native_pull_request_remote_state(
 }
 
 ///|
+fn native_pull_request_auto_merge_enabled(fields : Map[String, Json]) -> Bool {
+  match fields.get("auto_merge") {
+    Some(Object(_)) => return true
+    _ => ()
+  }
+  match fields.get("autoMergeRequest") {
+    Some(Object(_)) => true
+    _ => false
+  }
+}
+
+///|
 fn native_pull_request_snapshot(
   fields : Map[String, Json],
   repository_name : String,
@@ -157,6 +175,7 @@ fn native_pull_request_snapshot(
     base_ref: @workflow.GitRefName("refs/heads/" + base_name),
     observed_head_oid: head_oid,
     state,
+    auto_merge_enabled: native_pull_request_auto_merge_enabled(fields),
     marker_state: if body.contains(intent.identity_marker.0) {
       @workflow.PullRequestMarkerState::PullRequestMarkerExact
     } else {
@@ -244,6 +263,7 @@ fn native_rest_pull_request_snapshot(
     base_ref: @workflow.GitRefName("refs/heads/" + base_name),
     observed_head_oid: head_oid,
     state,
+    auto_merge_enabled: native_pull_request_auto_merge_enabled(fields),
     marker_state: if body.contains(intent.identity_marker.0) {
       @workflow.PullRequestMarkerState::PullRequestMarkerExact
     } else {
@@ -392,6 +412,71 @@ fn native_pull_request_create_arguments(
 }
 
 ///|
+fn native_pull_request_merge_arguments(
+  repository_name : String,
+  number : @workflow.PullRequestNumber,
+  expected_head_oid : @control.GitOid,
+  title : String,
+  merge_method : @types.PullRequestMergeMethod,
+) -> Array[String] {
+  let arguments = [
+    "pr",
+    "merge",
+    number.0.to_string(),
+    "--repo",
+    repository_name,
+    "--auto",
+    "--match-head-commit",
+    expected_head_oid.0,
+  ]
+  match merge_method {
+    @types.PullRequestMergeMethod::PullRequestSquashMerge => {
+      arguments.push("--squash")
+      arguments.push("--subject")
+      arguments.push(title)
+    }
+    @types.PullRequestMergeMethod::PullRequestRebaseMerge =>
+      arguments.push("--rebase")
+    @types.PullRequestMergeMethod::PullRequestMergeCommit => {
+      arguments.push("--merge")
+      arguments.push("--subject")
+      arguments.push(title)
+    }
+  }
+  arguments
+}
+
+///|
+test "native automatic merge pins head and preserves semantic squash title" {
+  let expected_head_oid = @control.GitOid(
+    "0123456789012345678901234567890123456789",
+  )
+  let title = "fix: merge the exact candidate"
+  assert_eq(
+    native_pull_request_merge_arguments(
+      "brickfrog/choir",
+      @workflow.PullRequestNumber(7),
+      expected_head_oid,
+      title,
+      @types.PullRequestMergeMethod::PullRequestSquashMerge,
+    ),
+    [
+      "pr",
+      "merge",
+      "7",
+      "--repo",
+      "brickfrog/choir",
+      "--auto",
+      "--match-head-commit",
+      expected_head_oid.0,
+      "--squash",
+      "--subject",
+      title,
+    ],
+  )
+}
+
+///|
 test "native PR create arguments include draft only when requested" {
   let ready = native_pull_request_create_arguments(
     "brickfrog/choir",
@@ -466,6 +551,30 @@ pub fn native_pull_request_forge_adapters() -> NativePullRequestForgeAdapters {
       )
       ignore(native_gh_capture(repository_root, arguments))
     },
+    merge: async fn(repository_root, repository_name, intent, receipt) {
+      let captured = match
+        native_gh_capture(
+          repository_root,
+          native_pull_request_merge_arguments(
+            repository_name,
+            receipt.number,
+            intent.expected_head_oid,
+            intent.document.title,
+            intent.delivery_policy.merge_method,
+          ),
+        ) {
+        Ok(value) => value
+        Err(_) =>
+          return @workflow.PullRequestMergeDispatchObservation::PullRequestMergeDispatchUncertain
+      }
+      if captured.exit_code == 0 {
+        @workflow.PullRequestMergeDispatchObservation::PullRequestMergeDispatchAccepted
+      } else {
+        @workflow.PullRequestMergeDispatchObservation::PullRequestMergeDispatchRejected(
+          @storage.artifact_digest(@utf8.encode(captured.output)),
+        )
+      }
+    },
   }
 }
 
@@ -491,6 +600,10 @@ pub fn synthetic_pull_request_forge_adapters() -> NativePullRequestForgeAdapters
         base_ref: intent.base_ref,
         observed_head_oid: intent.expected_head_oid,
         state: @workflow.RemotePullRequestState::RemotePullRequestOpen,
+        auto_merge_enabled: intent.merge_state ==
+        @workflow.PullRequestMergeState::PullRequestMergeMayHaveBeenIssued ||
+        intent.merge_state ==
+        @workflow.PullRequestMergeState::PullRequestMergeEnabled,
         marker_state: @workflow.PullRequestMarkerState::PullRequestMarkerExact,
         title_digest: @storage.artifact_digest(
           @utf8.encode(intent.document.title),
@@ -501,6 +614,9 @@ pub fn synthetic_pull_request_forge_adapters() -> NativePullRequestForgeAdapters
       })
     },
     create: (_, _, _, _) => created.val = true,
+    merge: (_, _, _, _) => {
+      @workflow.PullRequestMergeDispatchObservation::PullRequestMergeDispatchAccepted
+    },
   }
 }
 
@@ -623,6 +739,10 @@ pub async fn advance_native_goal_pull_request_with_adapters(
   project_dir : String,
   goal_id : @control.GoalId,
   forge : NativePullRequestForgeAdapters,
+  delivery_policy? : @types.PullRequestDeliveryPolicy = {
+    mode: @types.PullRequestDeliveryMode::PullRequestReviewOnly,
+    merge_method: @types.PullRequestMergeMethod::PullRequestSquashMerge,
+  },
   fault? : @workflow.GoalPullRequestFaultPoint? = None,
 ) -> Result[@workflow.GoalPullRequestTickOutcome, @types.ChoirError] {
   let repository = native_goal_repository(project_dir)
@@ -693,6 +813,7 @@ pub async fn advance_native_goal_pull_request_with_adapters(
     Err(error) => return Err(error)
   }
   let mut dispatch_create = false
+  let mut dispatch_merge = false
   let mut cycles = 0
   while cycles < 10 {
     cycles = cycles + 1
@@ -721,6 +842,7 @@ pub async fn advance_native_goal_pull_request_with_adapters(
             @workflow.PullRequestProvider::GitHubPullRequestProvider,
             base_repository_id,
             document,
+            delivery_policy~,
           ) {
           Ok(value) => value
           Err(error) => return Err(error)
@@ -912,13 +1034,161 @@ pub async fn advance_native_goal_pull_request_with_adapters(
             }
           }
           @workflow.PullRequestIntentState::PullRequestReceipted =>
-            return Ok(
-              @workflow.GoalPullRequestTickOutcome::GoalPullRequestComplete,
-            )
+            match stored.record.intent.merge_state {
+              @workflow.PullRequestMergeState::PullRequestMergeNotRequested
+              | @workflow.PullRequestMergeState::PullRequestMergeEnabled =>
+                return Ok(
+                  @workflow.GoalPullRequestTickOutcome::GoalPullRequestComplete,
+                )
+              @workflow.PullRequestMergeState::PullRequestMergeRejected(digest) =>
+                return Ok(
+                  @workflow.GoalPullRequestTickOutcome::GoalPullRequestDeliveryFailed(
+                    digest,
+                  ),
+                )
+              @workflow.PullRequestMergeState::PullRequestMergePlanned => {
+                let authorized = match
+                  @workflow.authorize_goal_pull_request_merge(
+                    stored.record,
+                    (forge.lookup)(
+                      git.root,
+                      repository_name,
+                      stored.record.intent,
+                    ),
+                  ) {
+                  Ok(value) => value
+                  Err(error) => return Err(error)
+                }
+                if authorized == stored.record {
+                  return Ok(
+                    @workflow.GoalPullRequestTickOutcome::GoalPullRequestPending,
+                  )
+                }
+                let persisted = match
+                  persist_native_goal_pull_request_record(
+                    repository,
+                    repository_adapters,
+                    execution,
+                    authorized,
+                    Some(stored.state_record.version),
+                  ) {
+                  Ok(value) => value
+                  Err(error) => return Err(error)
+                }
+                current = persisted.0
+              }
+              @workflow.PullRequestMergeState::PullRequestMergeAuthorized => {
+                let issued = match
+                  @workflow.mark_goal_pull_request_merge_may_have_been_issued(
+                    stored.record,
+                  ) {
+                  Ok(value) => value
+                  Err(error) => return Err(error)
+                }
+                let persisted = match
+                  persist_native_goal_pull_request_record(
+                    repository,
+                    repository_adapters,
+                    execution,
+                    issued,
+                    Some(stored.state_record.version),
+                  ) {
+                  Ok(value) => value
+                  Err(error) => return Err(error)
+                }
+                current = persisted.0
+                dispatch_merge = persisted.1
+              }
+              @workflow.PullRequestMergeState::PullRequestMergeMayHaveBeenIssued => {
+                if dispatch_merge {
+                  guard stored.record.receipt is Some(receipt) else {
+                    return Err(
+                      native_pull_request_error(
+                        "automatic merge receipt is absent",
+                      ),
+                    )
+                  }
+                  let observed = (forge.merge)(
+                    git.root,
+                    repository_name,
+                    stored.record.intent,
+                    receipt,
+                  )
+                  dispatch_merge = false
+                  let recorded = match
+                    @workflow.record_goal_pull_request_merge_dispatch(
+                      stored.record,
+                      observed,
+                    ) {
+                    Ok(value) => value
+                    Err(error) => return Err(error)
+                  }
+                  if recorded != stored.record {
+                    let persisted = match
+                      persist_native_goal_pull_request_record(
+                        repository,
+                        repository_adapters,
+                        execution,
+                        recorded,
+                        Some(stored.state_record.version),
+                      ) {
+                      Ok(value) => value
+                      Err(error) => return Err(error)
+                    }
+                    current = persisted.0
+                    continue
+                  }
+                }
+                let reconciled = match
+                  @workflow.reconcile_goal_pull_request_merge(
+                    stored.record,
+                    (forge.lookup)(
+                      git.root,
+                      repository_name,
+                      stored.record.intent,
+                    ),
+                  ) {
+                  Ok(value) => value
+                  Err(error) => return Err(error)
+                }
+                if reconciled == stored.record {
+                  return Ok(
+                    @workflow.GoalPullRequestTickOutcome::GoalPullRequestRecoveryUncertain,
+                  )
+                }
+                let persisted = match
+                  persist_native_goal_pull_request_record(
+                    repository,
+                    repository_adapters,
+                    execution,
+                    reconciled,
+                    Some(stored.state_record.version),
+                  ) {
+                  Ok(value) => value
+                  Err(error) => return Err(error)
+                }
+                current = persisted.0
+                if reconciled.intent.merge_state ==
+                  @workflow.PullRequestMergeState::PullRequestMergeAuthorized {
+                  return Ok(
+                    @workflow.GoalPullRequestTickOutcome::GoalPullRequestPending,
+                  )
+                }
+              }
+            }
           @workflow.PullRequestIntentState::PullRequestNeedsInput(_) =>
-            return Ok(
-              @workflow.GoalPullRequestTickOutcome::GoalPullRequestNeedsUserInput,
-            )
+            match stored.record.intent.merge_state {
+              @workflow.PullRequestMergeState::PullRequestMergeRejected(digest) =>
+                return Ok(
+                  @workflow.GoalPullRequestTickOutcome::GoalPullRequestDeliveryFailed(
+                    digest,
+                  ),
+                )
+              _ =>
+                return Ok(
+                  @workflow.GoalPullRequestTickOutcome::GoalPullRequestNeedsUserInput,
+                )
+            }
           @workflow.PullRequestIntentState::PullRequestAbandonedByCancellation =>
             return Ok(
               @workflow.GoalPullRequestTickOutcome::GoalPullRequestPending,
@@ -972,6 +1242,11 @@ test "GitHub lookup parser distinguishes identity, possible match, and ambiguity
     idempotency_key: "pr-fixture",
     canonical_remote_pull_request_id: None,
     state: @workflow.PullRequestIntentState::PullRequestPlanned,
+    delivery_policy: {
+      mode: @types.PullRequestDeliveryMode::PullRequestReviewOnly,
+      merge_method: @types.PullRequestMergeMethod::PullRequestSquashMerge,
+    },
+    merge_state: @workflow.PullRequestMergeState::PullRequestMergeNotRequested,
   }
   let exact =
     #|[{"id":"PR_1","number":7,"url":"https://example.test/pull/7","state":"OPEN","mergedAt":null,"headRefName":"choir/goals/fixture","headRefOid":"0123456789012345678901234567890123456789","headRepository":{"nameWithOwner":"choir/choir"},"baseRefName":"main","title":"Goal","body":"evidence\n<!-- choir-final-pr:fixture -->"}]
@@ -1022,6 +1297,7 @@ fn pull_request_fault_snapshot(
     base_ref: intent.base_ref,
     observed_head_oid: intent.expected_head_oid,
     state: @workflow.RemotePullRequestState::RemotePullRequestOpen,
+    auto_merge_enabled: false,
     marker_state: @workflow.PullRequestMarkerState::PullRequestMarkerExact,
     title_digest: @storage.artifact_digest(@utf8.encode(document.title)),
     body_digest: @storage.artifact_digest(@utf8.encode(document.body)),
@@ -1081,6 +1357,9 @@ async fn prove_pull_request_fault_recovery(
       remote_pull_request.val = Some(
         pull_request_fault_snapshot(intent, document),
       )
+    },
+    merge: (_, _, _, _) => {
+      @workflow.PullRequestMergeDispatchObservation::PullRequestMergeDispatchAccepted
     },
   }
   assert_true(

@@ -3,6 +3,23 @@ test "config defaults to the local project layout" {
   let config = parse_config("").unwrap()
   assert_eq(config.project_dir, ".")
   assert_eq(config.listen_uds, ".choir/run/server.sock")
+  assert_eq(config.pull_request_delivery, {
+    mode: @types.PullRequestDeliveryMode::PullRequestReviewOnly,
+    merge_method: @types.PullRequestMergeMethod::PullRequestSquashMerge,
+  })
+}
+
+///|
+test "checked-in delivery policy enables typed automatic merging" {
+  let config = parse_config(
+    "[delivery]\npull_requests = \"auto_merge\"\nmerge_method = \"rebase\"\n",
+  ).unwrap()
+  assert_eq(config.pull_request_delivery, {
+    mode: @types.PullRequestDeliveryMode::PullRequestAutoMerge,
+    merge_method: @types.PullRequestMergeMethod::PullRequestRebaseMerge,
+  })
+  assert_true(parse_config("[delivery]\npull_requests = \"guess\"\n") is Err(_))
+  assert_true(parse_config("[delivery]\nmerge_method = \"guess\"\n") is Err(_))
 }
 
 ///|

@@ -672,11 +672,12 @@ fn compile_native_conductor_part_proposal(
   )
   let mutation_declaration = native_goal_submission_mutation_declaration(part)
   let contract_digest = native_goal_submission_digest(
-    "choir.task-contract.v2",
+    "choir.task-contract.v3",
     [
       revision_id.to_json(),
       draft.goal_id.to_json(),
       part.part_id.to_json(),
+      part.commit_title.to_json(),
       source_revision_digest.to_json(),
       instruction.digest.to_json(),
       snapshot.base_commit_oid.to_json(),
@@ -697,6 +698,7 @@ fn compile_native_conductor_part_proposal(
     part_id: part.part_id,
     revision: 1,
     digest: contract_digest,
+    commit_title: part.commit_title,
     repair_conflict_id: None,
     repair_audit: None,
     repair_verification: None,
@@ -1460,7 +1462,7 @@ async test "real exec integration: stacked base capture reads parent Goal head" 
   ignore(run_git(["checkout", "-q", "main"]))
   let draft = @workflow.decode_conductor_goal_draft(
     (
-      #|{"proposal_id":"proposal-real-stack-child","goal_id":"goal-real-stack-child","pull_request":{"title":"feat: publish real stack child","body":"Publishes the real child change."},"maximum_parallel_parts":1,"parts":[{"part_id":"choir-real-child","instruction":"Change only src/child.mbt.","provider":"codex","exact_paths":["src/child.mbt"],"moon_args":["test","--target","native"]}]}
+      #|{"proposal_id":"proposal-real-stack-child","goal_id":"goal-real-stack-child","pull_request":{"title":"feat: publish real stack child","body":"Publishes the real child change."},"maximum_parallel_parts":1,"parts":[{"part_id":"choir-real-child","commit_title":"feat: publish real stack child","instruction":"Change only src/child.mbt.","provider":"codex","exact_paths":["src/child.mbt"],"moon_args":["test","--target","native"]}]}
     ),
   ).unwrap()
   let capture : async (Command) -> (Int, String) = command => {

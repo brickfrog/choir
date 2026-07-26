@@ -72,6 +72,23 @@ pub(all) enum PullRequestIntentState {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) enum PullRequestMergeState {
+  PullRequestMergeNotRequested
+  PullRequestMergePlanned
+  PullRequestMergeAuthorized
+  PullRequestMergeMayHaveBeenIssued
+  PullRequestMergeEnabled
+  PullRequestMergeRejected(@control.Digest)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum PullRequestMergeDispatchObservation {
+  PullRequestMergeDispatchAccepted
+  PullRequestMergeDispatchRejected(@control.Digest)
+  PullRequestMergeDispatchUncertain
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub(all) enum PullRequestNeedsInputReason {
   PullRequestPossibleExisting
   PullRequestAmbiguousIdentity
@@ -111,6 +128,7 @@ pub(all) struct RemotePullRequestSnapshot {
   base_ref : GitRefName
   observed_head_oid : @control.GitOid
   state : RemotePullRequestState
+  auto_merge_enabled : Bool
   marker_state : PullRequestMarkerState
   title_digest : @control.Digest
   body_digest : @control.Digest
@@ -147,6 +165,8 @@ pub(all) struct PullRequestIntent {
   idempotency_key : String
   canonical_remote_pull_request_id : RemotePullRequestId?
   state : PullRequestIntentState
+  delivery_policy : @types.PullRequestDeliveryPolicy
+  merge_state : PullRequestMergeState
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -193,6 +213,7 @@ pub(all) enum GoalPullRequestTickOutcome {
   GoalPullRequestComplete
   GoalPullRequestNeedsUserInput
   GoalPullRequestRecoveryUncertain
+  GoalPullRequestDeliveryFailed(@control.Digest)
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -216,6 +237,14 @@ fn goal_pull_request_digest(domain : String, value : Json) -> @control.Digest {
   @storage.artifact_digest(
     @utf8.encode(domain + "\u{00}" + value.stringify(indent=0)),
   )
+}
+
+///|
+fn pull_request_merge_failure_digest(
+  domain : String,
+  value : Json,
+) -> @control.Digest {
+  goal_pull_request_digest("choir.pull-request-merge." + domain + ".v1", value)
 }
 
 ///|
@@ -266,7 +295,8 @@ fn pull_request_intent_key(
 pub fn pull_request_document_is_valid(document : PullRequestDocument) -> Bool {
   let title = document.title.trim().to_owned()
   title != "" &&
-  title.length() <= 256 &&
+  @control.validate_semantic_commit_title(@control.SemanticCommitTitle(title))
+  is Ok(_) &&
   !title.contains("\u{00}") &&
   !title.contains("\n") &&
   !title.contains("\r") &&
@@ -355,6 +385,25 @@ fn goal_pull_request_record_shape_is_valid(
   )
   let key_text = @storage.digest_text(key)
   let marker = "<!-- choir-final-pr:" + key_text + " -->"
+  let merge_shape_valid = match
+    (record.intent.delivery_policy.mode, record.intent.merge_state) {
+    (
+      @types.PullRequestDeliveryMode::PullRequestReviewOnly,
+      PullRequestMergeState::PullRequestMergeNotRequested,
+    ) => true
+    (
+      @types.PullRequestDeliveryMode::PullRequestAutoMerge,
+      PullRequestMergeState::PullRequestMergePlanned
+      | PullRequestMergeState::PullRequestMergeAuthorized
+      | PullRequestMergeState::PullRequestMergeMayHaveBeenIssued
+      | PullRequestMergeState::PullRequestMergeEnabled,
+    ) => true
+    (
+      @types.PullRequestDeliveryMode::PullRequestAutoMerge,
+      PullRequestMergeState::PullRequestMergeRejected(digest),
+    ) => @storage.validate_digest(digest) is Ok(_)
+    _ => false
+  }
   if record.goal_id.0 == "" ||
     record.repository_id.0 == "" ||
     record.intent.id != PullRequestIntentId("pr-intent-" + key_text) ||
@@ -372,6 +421,7 @@ fn goal_pull_request_record_shape_is_valid(
     @storage.validate_digest(record.intent.evidence_manifest_digest) is Err(_) ||
     !pull_request_document_is_valid(record.intent.document) ||
     !record.intent.document.body.contains(marker) ||
+    !merge_shape_valid ||
     record.durable_version <= 0 ||
     record.fencing_epoch.0 <= 0L {
     return false
@@ -485,6 +535,10 @@ pub fn initialize_goal_pull_request(
   provider : PullRequestProvider,
   base_repository_id : RemoteRepositoryId,
   document : PullRequestDocument,
+  delivery_policy? : @types.PullRequestDeliveryPolicy = {
+    mode: @types.PullRequestDeliveryMode::PullRequestReviewOnly,
+    merge_method: @types.PullRequestMergeMethod::PullRequestSquashMerge,
+  },
 ) -> Result[GoalPullRequestRecord, @types.ChoirError] {
   if execution.completion_mode != GoalCompletionMode::GoalPublishable ||
     !pull_request_prerequisites_are_current(execution, assurance, publication) ||
@@ -541,6 +595,21 @@ pub fn initialize_goal_pull_request(
       idempotency_key: "pr-" + key_text,
       canonical_remote_pull_request_id: None,
       state: PullRequestIntentState::PullRequestPlanned,
+      delivery_policy: if document.draft {
+        {
+          mode: @types.PullRequestDeliveryMode::PullRequestReviewOnly,
+          merge_method: delivery_policy.merge_method,
+        }
+      } else {
+        delivery_policy
+      },
+      merge_state: if document.draft ||
+        delivery_policy.mode ==
+        @types.PullRequestDeliveryMode::PullRequestReviewOnly {
+        PullRequestMergeState::PullRequestMergeNotRequested
+      } else {
+        PullRequestMergeState::PullRequestMergePlanned
+      },
     },
     receipt: None,
     durable_version: 1,
@@ -571,6 +640,30 @@ fn goal_pull_request_record_is_current(
 }
 
 ///|
+fn record_pull_request_needs_input_or_delivery_failure(
+  record : GoalPullRequestRecord,
+  reason : PullRequestNeedsInputReason,
+  evidence : Json,
+) -> GoalPullRequestRecord {
+  {
+    ..record,
+    intent: {
+      ..record.intent,
+      state: PullRequestIntentState::PullRequestNeedsInput(reason),
+      merge_state: if record.intent.delivery_policy.mode ==
+        @types.PullRequestDeliveryMode::PullRequestAutoMerge {
+        PullRequestMergeState::PullRequestMergeRejected(
+          pull_request_merge_failure_digest("reconciliation", evidence),
+        )
+      } else {
+        record.intent.merge_state
+      },
+    },
+    durable_version: record.durable_version + 1,
+  }
+}
+
+///|
 fn receipt_goal_pull_request(
   record : GoalPullRequestRecord,
   snapshot : RemotePullRequestSnapshot,
@@ -581,30 +674,22 @@ fn receipt_goal_pull_request(
     return Err(goal_pull_request_error("remote PR observation is invalid"))
   }
   if snapshot.marker_state != PullRequestMarkerState::PullRequestMarkerExact {
-    return Ok({
-      ..record,
-      intent: {
-        ..record.intent,
-        canonical_remote_pull_request_id: Some(snapshot.remote_id),
-        state: PullRequestIntentState::PullRequestNeedsInput(
-          PullRequestNeedsInputReason::PullRequestIdentityMarkerMissing,
-        ),
-      },
-      durable_version: record.durable_version + 1,
-    })
+    return Ok(
+      record_pull_request_needs_input_or_delivery_failure(
+        record,
+        PullRequestNeedsInputReason::PullRequestIdentityMarkerMissing,
+        snapshot.to_json(),
+      ),
+    )
   }
   if !pull_request_receipt_matches_snapshot(record.intent, snapshot) {
-    return Ok({
-      ..record,
-      intent: {
-        ..record.intent,
-        canonical_remote_pull_request_id: Some(snapshot.remote_id),
-        state: PullRequestIntentState::PullRequestNeedsInput(
-          PullRequestNeedsInputReason::PullRequestRemoteDrift,
-        ),
-      },
-      durable_version: record.durable_version + 1,
-    })
+    return Ok(
+      record_pull_request_needs_input_or_delivery_failure(
+        record,
+        PullRequestNeedsInputReason::PullRequestRemoteDrift,
+        snapshot.to_json(),
+      ),
+    )
   }
   let key = match record.intent.id {
     PullRequestIntentId(value) =>
@@ -644,12 +729,23 @@ fn receipt_goal_pull_request(
       )
     _ => PullRequestIntentState::PullRequestReceipted
   }
+  let merge_state = if snapshot.state ==
+    RemotePullRequestState::RemotePullRequestClosed &&
+    record.intent.delivery_policy.mode ==
+    @types.PullRequestDeliveryMode::PullRequestAutoMerge {
+    PullRequestMergeState::PullRequestMergeRejected(
+      pull_request_merge_failure_digest("remote-closed", snapshot.to_json()),
+    )
+  } else {
+    record.intent.merge_state
+  }
   let next = {
     ..record,
     intent: {
       ..record.intent,
       canonical_remote_pull_request_id: Some(snapshot.remote_id),
       state,
+      merge_state,
     },
     receipt: Some(receipt),
     durable_version: record.durable_version + 1,
@@ -698,27 +794,21 @@ pub fn authorize_goal_pull_request(
         observed_at,
       )
     PullRequestLookupObservation::PullRequestMultipleMarkerMatches =>
-      Ok({
-        ..record,
-        intent: {
-          ..record.intent,
-          state: PullRequestIntentState::PullRequestNeedsInput(
-            PullRequestNeedsInputReason::PullRequestAmbiguousIdentity,
-          ),
-        },
-        durable_version: record.durable_version + 1,
-      })
+      Ok(
+        record_pull_request_needs_input_or_delivery_failure(
+          record,
+          PullRequestNeedsInputReason::PullRequestAmbiguousIdentity,
+          lookup.to_json(),
+        ),
+      )
     PullRequestLookupObservation::PullRequestPossibleExistingMatch(_) =>
-      Ok({
-        ..record,
-        intent: {
-          ..record.intent,
-          state: PullRequestIntentState::PullRequestNeedsInput(
-            PullRequestNeedsInputReason::PullRequestPossibleExisting,
-          ),
-        },
-        durable_version: record.durable_version + 1,
-      })
+      Ok(
+        record_pull_request_needs_input_or_delivery_failure(
+          record,
+          PullRequestNeedsInputReason::PullRequestPossibleExisting,
+          lookup.to_json(),
+        ),
+      )
     PullRequestLookupObservation::PullRequestLookupUncertain =>
       Ok({
         ..record,
@@ -779,27 +869,21 @@ pub fn reconcile_goal_pull_request_after_create(
         observed_at,
       )
     PullRequestLookupObservation::PullRequestMultipleMarkerMatches =>
-      Ok({
-        ..record,
-        intent: {
-          ..record.intent,
-          state: PullRequestIntentState::PullRequestNeedsInput(
-            PullRequestNeedsInputReason::PullRequestAmbiguousIdentity,
-          ),
-        },
-        durable_version: record.durable_version + 1,
-      })
+      Ok(
+        record_pull_request_needs_input_or_delivery_failure(
+          record,
+          PullRequestNeedsInputReason::PullRequestAmbiguousIdentity,
+          lookup.to_json(),
+        ),
+      )
     PullRequestLookupObservation::PullRequestPossibleExistingMatch(_) =>
-      Ok({
-        ..record,
-        intent: {
-          ..record.intent,
-          state: PullRequestIntentState::PullRequestNeedsInput(
-            PullRequestNeedsInputReason::PullRequestPossibleExisting,
-          ),
-        },
-        durable_version: record.durable_version + 1,
-      })
+      Ok(
+        record_pull_request_needs_input_or_delivery_failure(
+          record,
+          PullRequestNeedsInputReason::PullRequestPossibleExisting,
+          lookup.to_json(),
+        ),
+      )
     PullRequestLookupObservation::PullRequestNoMatch
     | PullRequestLookupObservation::PullRequestLookupUncertain =>
       if record.intent.state ==
@@ -814,6 +898,195 @@ pub fn reconcile_goal_pull_request_after_create(
           },
           durable_version: record.durable_version + 1,
         })
+      }
+  }
+}
+
+///|
+fn exact_pull_request_merge_snapshot(
+  record : GoalPullRequestRecord,
+  lookup : PullRequestLookupObservation,
+) -> RemotePullRequestSnapshot? {
+  let snapshot = match lookup {
+    PullRequestStoredIdMatch(value) | PullRequestUniqueMarkerMatch(value) =>
+      value
+    _ => return None
+  }
+  guard record.receipt is Some(receipt) &&
+    snapshot.remote_id == receipt.remote_pull_request_id &&
+    pull_request_receipt_matches_snapshot(record.intent, snapshot) else {
+    return None
+  }
+  Some(snapshot)
+}
+
+///|
+pub fn authorize_goal_pull_request_merge(
+  record : GoalPullRequestRecord,
+  lookup : PullRequestLookupObservation,
+) -> Result[GoalPullRequestRecord, @types.ChoirError] {
+  if record.intent.state != PullRequestIntentState::PullRequestReceipted ||
+    record.intent.delivery_policy.mode !=
+    @types.PullRequestDeliveryMode::PullRequestAutoMerge ||
+    record.intent.merge_state != PullRequestMergeState::PullRequestMergePlanned ||
+    !goal_pull_request_record_shape_is_valid(record) {
+    return Err(goal_pull_request_error("automatic merge is not authorizable"))
+  }
+  let next_state = match exact_pull_request_merge_snapshot(record, lookup) {
+    Some(snapshot) =>
+      match snapshot.state {
+        RemotePullRequestState::RemotePullRequestMerged =>
+          PullRequestMergeState::PullRequestMergeEnabled
+        RemotePullRequestState::RemotePullRequestOpen =>
+          if snapshot.auto_merge_enabled {
+            PullRequestMergeState::PullRequestMergeEnabled
+          } else {
+            PullRequestMergeState::PullRequestMergeAuthorized
+          }
+        RemotePullRequestState::RemotePullRequestClosed =>
+          PullRequestMergeState::PullRequestMergeRejected(
+            pull_request_merge_failure_digest(
+              "remote-closed",
+              snapshot.to_json(),
+            ),
+          )
+      }
+    None =>
+      match lookup {
+        PullRequestLookupUncertain => return Ok(record)
+        _ =>
+          PullRequestMergeState::PullRequestMergeRejected(
+            pull_request_merge_failure_digest("identity", lookup.to_json()),
+          )
+      }
+  }
+  Ok({
+    ..record,
+    intent: { ..record.intent, merge_state: next_state },
+    durable_version: record.durable_version + 1,
+  })
+}
+
+///|
+pub fn mark_goal_pull_request_merge_may_have_been_issued(
+  record : GoalPullRequestRecord,
+) -> Result[GoalPullRequestRecord, @types.ChoirError] {
+  if record.intent.state != PullRequestIntentState::PullRequestReceipted ||
+    record.intent.merge_state !=
+    PullRequestMergeState::PullRequestMergeAuthorized ||
+    !goal_pull_request_record_shape_is_valid(record) {
+    return Err(goal_pull_request_error("merge dispatch is not authorized"))
+  }
+  Ok({
+    ..record,
+    intent: {
+      ..record.intent,
+      merge_state: PullRequestMergeState::PullRequestMergeMayHaveBeenIssued,
+    },
+    durable_version: record.durable_version + 1,
+  })
+}
+
+///|
+pub fn record_goal_pull_request_merge_dispatch(
+  record : GoalPullRequestRecord,
+  observation : PullRequestMergeDispatchObservation,
+) -> Result[GoalPullRequestRecord, @types.ChoirError] {
+  if record.intent.merge_state !=
+    PullRequestMergeState::PullRequestMergeMayHaveBeenIssued ||
+    !goal_pull_request_record_shape_is_valid(record) {
+    return Err(goal_pull_request_error("merge dispatch observation is stale"))
+  }
+  match observation {
+    PullRequestMergeDispatchAccepted | PullRequestMergeDispatchUncertain =>
+      Ok(record)
+    PullRequestMergeDispatchRejected(digest) => {
+      if @storage.validate_digest(digest) is Err(_) {
+        return Err(goal_pull_request_error("merge rejection is invalid"))
+      }
+      Ok({
+        ..record,
+        intent: {
+          ..record.intent,
+          merge_state: PullRequestMergeState::PullRequestMergeRejected(digest),
+        },
+        durable_version: record.durable_version + 1,
+      })
+    }
+  }
+}
+
+///|
+pub fn reconcile_goal_pull_request_merge(
+  record : GoalPullRequestRecord,
+  lookup : PullRequestLookupObservation,
+) -> Result[GoalPullRequestRecord, @types.ChoirError] {
+  if record.intent.merge_state !=
+    PullRequestMergeState::PullRequestMergeMayHaveBeenIssued ||
+    !goal_pull_request_record_shape_is_valid(record) {
+    return Err(goal_pull_request_error("merge reconciliation is invalid"))
+  }
+  match exact_pull_request_merge_snapshot(record, lookup) {
+    Some(snapshot) =>
+      match snapshot.state {
+        RemotePullRequestState::RemotePullRequestMerged =>
+          Ok({
+            ..record,
+            intent: {
+              ..record.intent,
+              merge_state: PullRequestMergeState::PullRequestMergeEnabled,
+            },
+            durable_version: record.durable_version + 1,
+          })
+        RemotePullRequestState::RemotePullRequestOpen =>
+          if snapshot.auto_merge_enabled {
+            Ok({
+              ..record,
+              intent: {
+                ..record.intent,
+                merge_state: PullRequestMergeState::PullRequestMergeEnabled,
+              },
+              durable_version: record.durable_version + 1,
+            })
+          } else {
+            Ok({
+              ..record,
+              intent: {
+                ..record.intent,
+                merge_state: PullRequestMergeState::PullRequestMergeAuthorized,
+              },
+              durable_version: record.durable_version + 1,
+            })
+          }
+        RemotePullRequestState::RemotePullRequestClosed =>
+          Ok({
+            ..record,
+            intent: {
+              ..record.intent,
+              merge_state: PullRequestMergeState::PullRequestMergeRejected(
+                pull_request_merge_failure_digest(
+                  "remote-closed",
+                  snapshot.to_json(),
+                ),
+              ),
+            },
+            durable_version: record.durable_version + 1,
+          })
+      }
+    None =>
+      match lookup {
+        PullRequestLookupUncertain => Ok(record)
+        _ =>
+          Ok({
+            ..record,
+            intent: {
+              ..record.intent,
+              merge_state: PullRequestMergeState::PullRequestMergeRejected(
+                pull_request_merge_failure_digest("identity", lookup.to_json()),
+              ),
+            },
+            durable_version: record.durable_version + 1,
+          })
       }
   }
 }

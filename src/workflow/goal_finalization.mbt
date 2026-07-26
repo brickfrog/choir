@@ -11,6 +11,8 @@ pub(all) struct PullRequestReadinessSnapshotId(String) derive (
 ///|
 pub(all) enum PullRequestReadinessDecision {
   PullRequestReady
+  PullRequestAwaitingMerge
+  PullRequestDeliveryFailed(@control.Digest)
   PullRequestReadinessNeedsInput(PullRequestReadinessNeedsInputReason)
   PullRequestReadinessDrift(PullRequestReadinessDriftReason)
   PullRequestReadinessAmbiguous
@@ -73,6 +75,7 @@ pub(all) enum GoalFinalizationTickOutcome {
   GoalFinalizationDrifted
   GoalFinalizationAmbiguous
   GoalFinalizationRecoveryUncertain
+  GoalFinalizationDeliveryFailed(@control.Digest)
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -112,19 +115,58 @@ fn readiness_decision(
   lookup : PullRequestLookupObservation,
 ) -> PullRequestReadinessDecision {
   match lookup {
-    PullRequestMultipleMarkerMatches => PullRequestReadinessAmbiguous
+    PullRequestMultipleMarkerMatches =>
+      if intent.delivery_policy.mode ==
+        @types.PullRequestDeliveryMode::PullRequestAutoMerge {
+        PullRequestDeliveryFailed(
+          @storage.artifact_digest(
+            @utf8.encode(
+              "choir.pull-request-delivery-ambiguous.v1\u{00}" +
+              lookup.to_json().stringify(indent=0),
+            ),
+          ),
+        )
+      } else {
+        PullRequestReadinessAmbiguous
+      }
     PullRequestLookupUncertain =>
-      PullRequestReadinessNeedsInput(
-        PullRequestReadinessNeedsInputReason::PullRequestReadinessObservationUncertain,
-      )
+      if intent.delivery_policy.mode ==
+        @types.PullRequestDeliveryMode::PullRequestAutoMerge {
+        PullRequestAwaitingMerge
+      } else {
+        PullRequestReadinessNeedsInput(
+          PullRequestReadinessNeedsInputReason::PullRequestReadinessObservationUncertain,
+        )
+      }
     PullRequestNoMatch =>
-      PullRequestReadinessDrift(
-        PullRequestReadinessDriftReason::PullRequestCanonicalIdentityMissing,
-      )
+      if intent.delivery_policy.mode ==
+        @types.PullRequestDeliveryMode::PullRequestAutoMerge {
+        PullRequestDeliveryFailed(
+          @storage.artifact_digest(
+            @utf8.encode("choir.pull-request-delivery-missing.v1"),
+          ),
+        )
+      } else {
+        PullRequestReadinessDrift(
+          PullRequestReadinessDriftReason::PullRequestCanonicalIdentityMissing,
+        )
+      }
     PullRequestPossibleExistingMatch(_) =>
-      PullRequestReadinessDrift(
-        PullRequestReadinessDriftReason::PullRequestCanonicalIdentityChanged,
-      )
+      if intent.delivery_policy.mode ==
+        @types.PullRequestDeliveryMode::PullRequestAutoMerge {
+        PullRequestDeliveryFailed(
+          @storage.artifact_digest(
+            @utf8.encode(
+              "choir.pull-request-delivery-identity.v1\u{00}" +
+              lookup.to_json().stringify(indent=0),
+            ),
+          ),
+        )
+      } else {
+        PullRequestReadinessDrift(
+          PullRequestReadinessDriftReason::PullRequestCanonicalIdentityChanged,
+        )
+      }
     PullRequestStoredIdMatch(snapshot)
     | PullRequestUniqueMarkerMatch(snapshot) => {
       if snapshot.remote_id != receipt.remote_pull_request_id ||
@@ -142,17 +184,36 @@ fn readiness_decision(
           PullRequestReadinessDriftReason::PullRequestHeadOrBaseChanged,
         )
       }
-      // A Goal is delivered the moment its pull request is open and exact:
-      // Choir's autonomous work is a reviewable PR, and landing it is the
-      // repository's merge queue / branch-protection policy, not Choir's job.
-      // A remote that already reports merged or closed is no longer an open
-      // deliverable and needs user attention.
-      if snapshot.state == RemotePullRequestState::RemotePullRequestOpen {
-        PullRequestReady
-      } else {
-        PullRequestReadinessNeedsInput(
-          PullRequestReadinessNeedsInputReason::PullRequestNotOpen,
-        )
+      match intent.delivery_policy.mode {
+        @types.PullRequestDeliveryMode::PullRequestReviewOnly =>
+          match snapshot.state {
+            RemotePullRequestState::RemotePullRequestOpen
+            | RemotePullRequestState::RemotePullRequestMerged =>
+              PullRequestReady
+            RemotePullRequestState::RemotePullRequestClosed =>
+              PullRequestReadinessNeedsInput(
+                PullRequestReadinessNeedsInputReason::PullRequestNotOpen,
+              )
+          }
+        @types.PullRequestDeliveryMode::PullRequestAutoMerge =>
+          match snapshot.state {
+            RemotePullRequestState::RemotePullRequestMerged => PullRequestReady
+            RemotePullRequestState::RemotePullRequestOpen =>
+              match intent.merge_state {
+                PullRequestMergeState::PullRequestMergeRejected(digest) =>
+                  PullRequestDeliveryFailed(digest)
+                _ => PullRequestAwaitingMerge
+              }
+            RemotePullRequestState::RemotePullRequestClosed =>
+              PullRequestDeliveryFailed(
+                @storage.artifact_digest(
+                  @utf8.encode(
+                    "choir.pull-request-delivery-failed.v1\u{00}" +
+                    snapshot.to_json().stringify(indent=0),
+                  ),
+                ),
+              )
+          }
       }
     }
   }
@@ -331,11 +392,9 @@ fn goal_finalization_evidence_is_current(
 }
 
 ///|
-/// A Goal succeeds when its pull request is open and exact. That is Choir's
-/// deliverable — a reviewable PR — matching how Cursor, Codex, and Factory
-/// draw the "done" line. Landing it on the trunk is the repository's merge
-/// queue and branch-protection policy, not a step Choir waits on or performs.
-/// Bead completion follows this authorization.
+/// A review-only Goal succeeds when its pull request is exact and reviewable.
+/// An auto-merge Goal succeeds only after the forge reports that same exact
+/// pull request merged. Bead completion follows this delivery authorization.
 pub fn authorize_goal_execution_success(
   execution : GoalExecutionRecord,
   assurance : GoalAssuranceRecord,

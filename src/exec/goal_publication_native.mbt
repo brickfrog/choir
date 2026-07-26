@@ -1274,6 +1274,7 @@ fn publication_integrated_part(
       part_id,
       revision: 1,
       digest: publication_digest("contract"),
+      commit_title: @control.SemanticCommitTitle("test: publish fixture"),
       repair_conflict_id: None,
       repair_audit: None,
       repair_verification: None,

@@ -35,6 +35,7 @@ fn submission_contract(
     part_id,
     revision: 1,
     digest: submission_digest,
+    commit_title: @control.SemanticCommitTitle("test: submit Goal"),
     repair_conflict_id: None,
     repair_audit: None,
     repair_verification: None,

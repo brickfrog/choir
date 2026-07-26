@@ -36,6 +36,7 @@ fn native_git_test_intent(
     id: @control.IntegrationIntentId("intent-1"),
     goal_id: @control.GoalId("goal-1"),
     part_id: @control.PartId("part-1"),
+    commit_title: @control.SemanticCommitTitle("fix: integrate candidate"),
     candidate_id: @control.CandidateId("candidate-1"),
     candidate_commit_oid: git_candidate_oid,
     candidate_tree_oid: git_candidate_tree,
@@ -109,8 +110,9 @@ async test "native Git promotion uses witnessed deterministic parents" {
           assert_eq(candidate, git_candidate_oid)
           // The promotion inherits its newest parent rather than the epoch.
           assert_eq(commit_epoch, 1700000000L)
-          assert_true(message.contains("Part: ") == false)
-          assert_true(message.contains("promote Part part-1"))
+          assert_true(message.has_prefix("fix: integrate candidate\n\n"))
+          assert_true(message.contains("Goal: goal-1"))
+          assert_true(message.contains("Intent: intent-1"))
           { exit_code: 0, output: git_promotion_oid.0 + "\n" }
         }
         @exec.NativeGitIntegrationCommand::NativeGitReadCommitParents(oid) => {

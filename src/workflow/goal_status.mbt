@@ -124,6 +124,8 @@ pub(all) struct GoalStatusReport {
   publication_receipt_present : Bool
   published_oid : @control.GitOid?
   pull_request_state : PullRequestIntentState?
+  pull_request_delivery_policy : @types.PullRequestDeliveryPolicy?
+  pull_request_merge_state : PullRequestMergeState?
   pull_request_receipt_present : Bool
   pull_request_number : PullRequestNumber?
   pull_request_url : PullRequestUrl?
@@ -701,11 +703,13 @@ pub fn goal_status_report(
     Some(value) =>
       (
         Some(value.intent.state),
+        Some(value.intent.delivery_policy),
+        Some(value.intent.merge_state),
         value.receipt is Some(_),
         value.receipt.map(fn(receipt) { receipt.number }),
         value.receipt.map(fn(receipt) { receipt.url }),
       )
-    None => (None, false, None, None)
+    None => (None, None, None, false, None, None)
   }
   match finalization {
     Some(value) if value.goal_id != record.goal.id =>
@@ -759,9 +763,11 @@ pub fn goal_status_report(
     publication_receipt_present: publication_status.3,
     published_oid: publication_status.4,
     pull_request_state: pull_request_status.0,
-    pull_request_receipt_present: pull_request_status.1,
-    pull_request_number: pull_request_status.2,
-    pull_request_url: pull_request_status.3,
+    pull_request_delivery_policy: pull_request_status.1,
+    pull_request_merge_state: pull_request_status.2,
+    pull_request_receipt_present: pull_request_status.3,
+    pull_request_number: pull_request_status.4,
+    pull_request_url: pull_request_status.5,
     finalization_id: finalization_status.0,
     readiness_decision: finalization_status.1,
     readiness_observation_sequence: finalization_status.2,
