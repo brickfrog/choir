@@ -277,7 +277,7 @@ pub fn evaluate_host_surface_matrix(
 ///|
 pub fn expected_surface_version(surface : ProviderSurface) -> String {
   match surface {
-    ClaudeCli => "2.1.219"
+    ClaudeCli => "2.1.220"
     CodexCli => "0.145.0"
   }
 }
