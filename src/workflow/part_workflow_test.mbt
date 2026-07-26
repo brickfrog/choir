@@ -4081,3 +4081,76 @@ test "reconciliation refuses a Part that is not parked on uncertainty" {
     @workflow.reconcile_part_recovery_uncertainty(workflow_fixture()) is Err(_),
   )
 }
+
+///|
+test "provider loss with no artifact re-arms the Part without a user message" {
+  let uncertain = uncertain_implementation_dispatch()
+  let identities = workflow_revision_identities(
+    uncertain,
+    uncertain.task_contract,
+  )
+  let recovered = match
+    @workflow.plan_part_recovery_retry(uncertain, identities, fn(_) { true }) {
+    Ok(@workflow.PartRecoveryRetryDecision::PartRecoveryRetryPlanned(value)) =>
+      value
+    Ok(_) => fail("recovery was not planned")
+    Err(error) => fail(error.message())
+  }
+  // The Part is armed again under its existing contract with fresh identities,
+  // so the Goal worker dispatches it on the next tick with no operator step.
+  assert_eq(recovered.task_contract, uncertain.task_contract)
+  assert_eq(
+    recovered.part.lifecycle,
+    @control.PartLifecycle::PartExecuting(identities.implementation_take.id),
+  )
+  assert_true(recovered.pending_effect is None)
+  assert_true(
+    recovered.implementation_take.id != uncertain.implementation_take.id,
+  )
+  assert_eq(recovered.prior_takes.length(), uncertain.prior_takes.length() + 3)
+
+  // An effect that did leave its artifact is never guessed at.
+  let candidate : @control.CandidateCommit = {
+    id: @control.CandidateId("candidate-recovery"),
+    goal_id: uncertain.goal.id,
+    part_id: uncertain.part.id,
+    take_id: uncertain.implementation_take.id,
+    base_commit_oid: uncertain.task_contract.base_commit_oid,
+    commit_oid: @control.GitOid("candidate-commit"),
+    tree_oid: @control.GitOid("candidate-tree"),
+    canonical_change_digest: workflow_digest_d,
+    changed_paths: [@control.RepoPath("src/feature.mbt")],
+  }
+  let retained = { ..uncertain, candidate: Some(candidate) }
+  assert_true(
+    @workflow.plan_part_recovery_retry(
+      retained,
+      workflow_revision_identities(retained, retained.task_contract),
+      fn(_) { true },
+    )
+    is Ok(@workflow.PartRecoveryRetryDecision::PartRecoveryRetryRetained),
+  )
+
+  // A surface that keeps dying stops at the bound instead of looping forever.
+  let exhausted = {
+    ..uncertain,
+    prior_takes: uncertain.prior_takes +
+    Array::makei(@workflow.maximum_part_recovery_retries() * 3, fn(index) {
+      workflow_take(
+        "exhausted-prior-take-" + index.to_string(),
+        @control.TakePurpose::Implementation(
+          uncertain.part.id,
+          uncertain.task_contract.id,
+        ),
+      )
+    }),
+  }
+  assert_true(
+    @workflow.plan_part_recovery_retry(
+      exhausted,
+      workflow_revision_identities(exhausted, exhausted.task_contract),
+      fn(_) { true },
+    )
+    is Ok(@workflow.PartRecoveryRetryDecision::PartRecoveryRetryLimitReached),
+  )
+}

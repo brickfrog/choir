@@ -307,6 +307,14 @@ pub fn maximum_part_verification_repairs() -> Int {
 }
 
 ///|
+/// How many times a Part may be re-armed after a provider effect died without
+/// leaving an artifact. Unattended work must not need a human to press retry,
+/// but an unbounded loop against a surface that keeps dying is not recovery.
+pub fn maximum_part_recovery_retries() -> Int {
+  2
+}
+
+///|
 fn repair_mutation_score(
   declaration : @control.MutationDeclaration,
   path : @control.RepoPath,
@@ -1865,6 +1873,41 @@ pub fn reconcile_part_recovery_uncertainty(
       )
     PartEffectEvidencePresent | PartEffectEvidenceUnavailable =>
       Ok(PartUncertaintyRetained)
+  }
+}
+
+///|
+pub(all) enum PartRecoveryRetryDecision {
+  PartRecoveryRetryPlanned(PartWorkflowSnapshot)
+  PartRecoveryRetryRetained
+  PartRecoveryRetryLimitReached
+} derive(Debug, Eq)
+
+///|
+/// Autonomous counterpart to the operator retry path: discharge a provider
+/// effect that demonstrably left no artifact and re-arm the Part with fresh
+/// identities, without a user message.
+///
+/// An effect that may have occurred is deliberately retained — guessing there
+/// would duplicate a durable side effect — and a Part that has already burned
+/// its recovery budget stops, so a surface that keeps dying surfaces as a
+/// bounded blocker rather than an infinite loop.
+pub fn plan_part_recovery_retry(
+  snapshot : PartWorkflowSnapshot,
+  identities : PartIdentityPlan,
+  is_nfc : (String) -> Bool,
+) -> Result[PartRecoveryRetryDecision, @types.ChoirError] {
+  let discharged = match reconcile_part_recovery_uncertainty(snapshot) {
+    Ok(PartUncertaintyDischarged(value)) => value
+    Ok(PartUncertaintyRetained) => return Ok(PartRecoveryRetryRetained)
+    Err(error) => return Err(error)
+  }
+  if snapshot.prior_takes.length() / 3 >= maximum_part_recovery_retries() {
+    return Ok(PartRecoveryRetryLimitReached)
+  }
+  match plan_part_retry(discharged, identities, is_nfc) {
+    Ok(value) => Ok(PartRecoveryRetryPlanned(value))
+    Err(error) => Err(error)
   }
 }
 

@@ -29,6 +29,10 @@ pub(all) struct GoalPartWorkflowAdapterConfig {
     @workflow.PartVerificationRepairDecision,
     @types.ChoirError,
   ]
+  plan_recovery_retry : (@workflow.PartWorkflowSnapshot) -> Result[
+    @workflow.PartRecoveryRetryDecision,
+    @types.ChoirError,
+  ]
   read_goal_head : async () -> Result[@control.GitOid, @types.ChoirError]
 }
 
@@ -119,6 +123,38 @@ async fn advance_bound_part(
       if scheduling_record_from_snapshot(value.snapshot) != record {
         return Err(goal_part_adapter_error("advance record is stale"))
       }
+      // A Part parked on provider-dispatch uncertainty cannot resume: resolve
+      // it here from durable evidence so unattended work never waits on an
+      // operator `retry_part`.
+      if value.snapshot.stage ==
+        @workflow.PartWorkflowStage::PartRecoveryUncertain {
+        let recovered = match (config.plan_recovery_retry)(value.snapshot) {
+          Ok(
+            @workflow.PartRecoveryRetryDecision::PartRecoveryRetryPlanned(
+              planned
+            )
+          ) => planned
+          Ok(@workflow.PartRecoveryRetryDecision::PartRecoveryRetryRetained)
+          | Ok(
+            @workflow.PartRecoveryRetryDecision::PartRecoveryRetryLimitReached
+          ) => return Ok(scheduling_record_from_snapshot(value.snapshot))
+          Err(error) => return Err(error)
+        }
+        match
+          persist_bound_part_repair(
+            config,
+            binding,
+            dependencies,
+            recovered,
+            value.state_record.version,
+            "recovery",
+          ) {
+          Ok(Some(persisted)) =>
+            return Ok(scheduling_record_from_snapshot(persisted))
+          Ok(None) => return Ok(scheduling_record_from_snapshot(value.snapshot))
+          Err(error) => return Err(error)
+        }
+      }
       @workflow.resume_part_workflow(
         binding.repository,
         config.repository_adapters,
@@ -185,62 +221,77 @@ async fn advance_bound_part(
             ),
           )
       }
-      let authorization = match (dependencies.goal_authorizes_new_effects)() {
-        Ok(current) => current
-        Err(error) => return Err(error)
-      }
-      let persisted = match authorization {
-        @workflow.PartGoalAuthorization::PartGoalNotAuthorized =>
-          return Ok(scheduling_record_from_snapshot(value.snapshot))
-        @workflow.PartGoalAuthorization::PartGoalAuthorized(None) =>
-          @workflow.persist_part_snapshot(
-            binding.repository,
-            config.repository_adapters,
-            {
-              snapshot: repaired,
-              expected_store_version: Some(current_version),
-              fault_point: None,
-            },
-          )
-        @workflow.PartGoalAuthorization::PartGoalAuthorized(Some(precondition)) =>
-          match
-            @workflow.persist_part_snapshot_guarded(
-              binding.repository,
-              config.repository_adapters,
-              {
-                snapshot: repaired,
-                expected_store_version: Some(current_version),
-                fault_point: None,
-              },
-              precondition,
-            ) {
-            Ok(
-              @workflow.GuardedPartSnapshotPersistenceResult::GuardedPartSnapshotPersisted(
-                persisted
-              )
-            ) => Ok(persisted)
-            Ok(
-              @workflow.GuardedPartSnapshotPersistenceResult::GuardedPartSnapshotPreconditionConflict
-            ) => return Ok(scheduling_record_from_snapshot(value.snapshot))
-            Err(error) => Err(error)
-          }
-      }
-      match persisted {
-        Ok(receipt) =>
-          match receipt.transaction_outcome {
-            @storage.StateTransactionOutcome::StateTransactionCommitted
-            | @storage.StateTransactionOutcome::StateTransactionReplayed
-            | @storage.StateTransactionOutcome::StateTransactionCommittedAckLost =>
-              Ok(scheduling_record_from_snapshot(repaired))
-            _ =>
-              Err(
-                goal_part_adapter_error(repair_name + " repair did not persist"),
-              )
-          }
+      match
+        persist_bound_part_repair(
+          config, binding, dependencies, repaired, current_version, repair_name,
+        ) {
+        Ok(Some(persisted)) => Ok(scheduling_record_from_snapshot(persisted))
+        Ok(None) => Ok(scheduling_record_from_snapshot(value.snapshot))
         Err(error) => Err(error)
       }
     }
     Err(error) => Err(error)
+  }
+}
+
+///|
+/// Persist a re-armed Part under the Goal's current authorization. `None` means
+/// the Goal withdrew authority or another writer won the compare-and-set: the
+/// caller keeps the observed snapshot and retries on a later tick.
+fn persist_bound_part_repair(
+  config : GoalPartWorkflowAdapterConfig,
+  binding : GoalPartWorkflowBinding,
+  dependencies : @workflow.PartWorkflowDriverDependencies,
+  repaired : @workflow.PartWorkflowSnapshot,
+  current_version : Int,
+  label : String,
+) -> Result[@workflow.PartWorkflowSnapshot?, @types.ChoirError] {
+  let authorization = match (dependencies.goal_authorizes_new_effects)() {
+    Ok(current) => current
+    Err(error) => return Err(error)
+  }
+  let request : @workflow.PartSnapshotPersistenceRequest = {
+    snapshot: repaired,
+    expected_store_version: Some(current_version),
+    fault_point: None,
+  }
+  let persisted = match authorization {
+    @workflow.PartGoalAuthorization::PartGoalNotAuthorized => return Ok(None)
+    @workflow.PartGoalAuthorization::PartGoalAuthorized(None) =>
+      match
+        @workflow.persist_part_snapshot(
+          binding.repository,
+          config.repository_adapters,
+          request,
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+    @workflow.PartGoalAuthorization::PartGoalAuthorized(Some(precondition)) =>
+      match
+        @workflow.persist_part_snapshot_guarded(
+          binding.repository,
+          config.repository_adapters,
+          request,
+          precondition,
+        ) {
+        Ok(
+          @workflow.GuardedPartSnapshotPersistenceResult::GuardedPartSnapshotPersisted(
+            value
+          )
+        ) => value
+        Ok(
+          @workflow.GuardedPartSnapshotPersistenceResult::GuardedPartSnapshotPreconditionConflict
+        ) => return Ok(None)
+        Err(error) => return Err(error)
+      }
+  }
+  match persisted.transaction_outcome {
+    @storage.StateTransactionOutcome::StateTransactionCommitted
+    | @storage.StateTransactionOutcome::StateTransactionReplayed
+    | @storage.StateTransactionOutcome::StateTransactionCommittedAckLost =>
+      Ok(Some(repaired))
+    _ => Err(goal_part_adapter_error(label + " repair did not persist"))
   }
 }
 

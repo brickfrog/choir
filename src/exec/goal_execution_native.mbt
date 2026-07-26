@@ -1080,6 +1080,110 @@ fn plan_native_part_verification_repair(
 }
 
 ///|
+/// Fresh Take, sandbox, and session identities for re-arming a Part under its
+/// existing task contract. The identities are derived from the retry ordinal,
+/// so a restart between planning and persistence re-derives the same plan
+/// instead of leaking a second set of identities.
+fn native_part_retry_identity_plan(
+  snapshot : @workflow.PartWorkflowSnapshot,
+) -> @workflow.PartIdentityPlan {
+  let retry_number = snapshot.prior_takes.length() / 3 + 1
+  let identity_digest = @storage.artifact_digest(
+    @utf8.encode(
+      "choir.native-goal-part-retry.v1\u{00}" +
+      [
+        snapshot.task_contract.digest.to_json(),
+        snapshot.part.id.to_json(),
+        retry_number.to_json(),
+      ]
+      .to_json()
+      .stringify(indent=0),
+    ),
+  )
+  let key = @storage.digest_text(identity_digest)[:20].to_owned()
+  let implementation = native_goal_conflict_repair_take(
+    "take-" + key + "-implementation",
+    snapshot.implementation_take,
+    @control.TakePurpose::Implementation(
+      snapshot.part.id,
+      snapshot.task_contract.id,
+    ),
+  )
+  let verification = native_goal_conflict_repair_take(
+    "take-" + key + "-verification",
+    snapshot.verification_take,
+    @control.TakePurpose::PartVerification(
+      snapshot.part.id,
+      implementation.id,
+      snapshot.task_contract.verification_specs[0].digest,
+    ),
+  )
+  let audit = native_goal_conflict_repair_take(
+    "take-" + key + "-audit",
+    snapshot.audit_take,
+    @control.TakePurpose::PartAudit(
+      snapshot.part.id,
+      implementation.id,
+      snapshot.task_contract.audit_policy_digest,
+    ),
+  )
+  let implementation_sandbox = native_goal_conflict_repair_sandbox(
+    key,
+    "implementation",
+    implementation,
+    snapshot.identities.implementation_sandbox,
+  )
+  let verification_sandbox = native_goal_conflict_repair_sandbox(
+    key,
+    "verification",
+    verification,
+    snapshot.identities.verification_sandbox,
+  )
+  let audit_sandbox = native_goal_conflict_repair_sandbox(
+    key,
+    "audit",
+    audit,
+    snapshot.identities.audit_sandbox,
+  )
+  {
+    implementation_take: implementation,
+    implementation_sandbox,
+    implementation_session: native_goal_conflict_repair_session(
+      key,
+      "implementation",
+      implementation,
+      implementation_sandbox,
+      snapshot.identities.implementation_session,
+    ),
+    verification_take: verification,
+    verification_sandbox,
+    audit_take: audit,
+    audit_sandbox,
+    audit_session: native_goal_conflict_repair_session(
+      key,
+      "audit",
+      audit,
+      audit_sandbox,
+      snapshot.identities.audit_session,
+    ),
+  }
+}
+
+///|
+/// Unattended recovery from provider loss: discharge an effect that left no
+/// artifact and re-arm the Part in the same tick. Without this the Goal worker
+/// only ever parked the Part and waited for an operator `retry_part`.
+fn plan_native_part_recovery_retry(
+  snapshot : @workflow.PartWorkflowSnapshot,
+) -> Result[@workflow.PartRecoveryRetryDecision, @types.ChoirError] {
+  @workflow.plan_part_recovery_retry(
+    snapshot,
+    native_part_retry_identity_plan(snapshot),
+    native_path_is_nfc,
+  )
+}
+
+///|
 /// User-requested retry for a blocked Part: re-arm the Part workflow with
 /// fresh Take identities under the same task contract, then return the
 /// blocked Goal to Running so the scheduler dispatches the fresh Take.
@@ -1197,89 +1301,10 @@ pub fn retry_native_goal_part(
       }
   }
   let snapshot = selected.snapshot
-  let retry_number = snapshot.prior_takes.length() / 3 + 1
-  let identity_digest = @storage.artifact_digest(
-    @utf8.encode(
-      "choir.native-goal-part-retry.v1\u{00}" +
-      [
-        snapshot.task_contract.digest.to_json(),
-        snapshot.part.id.to_json(),
-        retry_number.to_json(),
-      ]
-      .to_json()
-      .stringify(indent=0),
-    ),
-  )
-  let key = @storage.digest_text(identity_digest)[:20].to_owned()
-  let implementation = native_goal_conflict_repair_take(
-    "take-" + key + "-implementation",
-    snapshot.implementation_take,
-    @control.TakePurpose::Implementation(
-      snapshot.part.id,
-      snapshot.task_contract.id,
-    ),
-  )
-  let verification = native_goal_conflict_repair_take(
-    "take-" + key + "-verification",
-    snapshot.verification_take,
-    @control.TakePurpose::PartVerification(
-      snapshot.part.id,
-      implementation.id,
-      snapshot.task_contract.verification_specs[0].digest,
-    ),
-  )
-  let audit = native_goal_conflict_repair_take(
-    "take-" + key + "-audit",
-    snapshot.audit_take,
-    @control.TakePurpose::PartAudit(
-      snapshot.part.id,
-      implementation.id,
-      snapshot.task_contract.audit_policy_digest,
-    ),
-  )
-  let implementation_sandbox = native_goal_conflict_repair_sandbox(
-    key,
-    "implementation",
-    implementation,
-    snapshot.identities.implementation_sandbox,
-  )
-  let verification_sandbox = native_goal_conflict_repair_sandbox(
-    key,
-    "verification",
-    verification,
-    snapshot.identities.verification_sandbox,
-  )
-  let audit_sandbox = native_goal_conflict_repair_sandbox(
-    key,
-    "audit",
-    audit,
-    snapshot.identities.audit_sandbox,
-  )
   let retried = match
     @workflow.plan_part_retry(
       snapshot,
-      {
-        implementation_take: implementation,
-        implementation_sandbox,
-        implementation_session: native_goal_conflict_repair_session(
-          key,
-          "implementation",
-          implementation,
-          implementation_sandbox,
-          snapshot.identities.implementation_session,
-        ),
-        verification_take: verification,
-        verification_sandbox,
-        audit_take: audit,
-        audit_sandbox,
-        audit_session: native_goal_conflict_repair_session(
-          key,
-          "audit",
-          audit,
-          audit_sandbox,
-          snapshot.identities.audit_session,
-        ),
-      },
+      native_part_retry_identity_plan(snapshot),
       native_path_is_nfc,
     ) {
     Ok(value) => value
@@ -2716,6 +2741,7 @@ async fn execute_native_goal_record(
     plan_verification_repair: fn(snapshot) {
       plan_native_part_verification_repair(repository, snapshot)
     },
+    plan_recovery_retry: plan_native_part_recovery_retry,
     read_goal_head: async fn() {
       read_native_goal_head(integration, native_git_integration_adapters())
     },

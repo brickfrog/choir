@@ -53,6 +53,17 @@ unconnected product path usable.
   cancels with `GoalCancellationVerificationRepairFailed` or
   `GoalCancellationAuditRepairFailed`; neither path asks the Conductor or user
   to authorize a retry.
+- A Part parked on provider-dispatch uncertainty now recovers without an
+  operator `retry_part`. The Goal Part adapter resolves the uncertainty from
+  the evidence the Part already holds before resuming it: an authorized effect
+  that left no candidate, verification receipt, or audit receipt did not occur,
+  so it is discharged and the Part is re-armed under its existing task contract
+  with fresh Take, sandbox, and session identities derived from the retry
+  ordinal. An effect that did leave an artifact, and promotion or integration
+  whose outcome the Part cannot see, keep their uncertainty rather than risk
+  duplicating a durable side effect. Recovery is bounded by
+  `maximum_part_recovery_retries`, so a surface that keeps dying becomes a
+  bounded blocker instead of an infinite loop.
 - Combined Goal verification is repaired through the same router as a rejected
   Goal audit. A rejected combined-verification gate keeps its receipts, command
   output, failing spec identity, and exact sealed subject; the adapter selects
