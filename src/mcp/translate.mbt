@@ -419,7 +419,7 @@ pub fn to_internal_request(
     None => Map([])
   }
   Ok({
-    req_method: rpc.req_method,
+    req_method: @types.wire_method_from_text(rpc.req_method),
     name,
     args: @types.RequestArgs::from_values(arguments),
   })

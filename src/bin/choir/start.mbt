@@ -138,7 +138,7 @@ fn start_conductor_bootstrap_request(
   statusline_cache_key : String,
 ) -> @types.Request {
   {
-    req_method: "conductor_bootstrap",
+    req_method: @types.WireMethod::WireConductorBootstrap,
     name: "conductor_bootstrap",
     args: @types.RequestArgs::from_values({
       "token": token.to_json(),
@@ -256,7 +256,7 @@ test "start replaces a recorded daemon whose build identity differs" {
 ///|
 fn start_probe_daemon_identity(fd : Int) -> String? {
   let request = @transport.format_request({
-      req_method: server_identity_method,
+      req_method: @types.WireMethod::WireServerIdentity,
       name: server_identity_method,
       args: @types.RequestArgs::from_values(Map([])),
     }) +
@@ -548,7 +548,7 @@ test "start selects only supported Conductor surfaces" {
 test "start Conductor bootstrap request contains no provider credential" {
   let token = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
   let request = start_conductor_bootstrap_request(token, "conductor-42")
-  assert_eq(request.req_method, "conductor_bootstrap")
+  assert_true(request.req_method == @types.WireMethod::WireConductorBootstrap)
   assert_eq(request.name, "conductor_bootstrap")
   @debug.assert_eq(request.args.get("token"), Some(token))
   @debug.assert_eq(

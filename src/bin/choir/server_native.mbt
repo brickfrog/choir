@@ -359,7 +359,7 @@ fn conductor_bootstrap(
   request : @types.Request,
   peer_is_choir : Bool,
 ) -> @types.Response {
-  if request.req_method != conductor_bootstrap_method ||
+  if request.req_method != @types.WireMethod::WireConductorBootstrap ||
     request.name != conductor_bootstrap_method ||
     !peer_is_choir {
     return @types.Response::err_text(
@@ -396,7 +396,7 @@ fn conductor_register(
   request : @types.Request,
 ) -> @types.Response {
   let presented = request.registration_token().unwrap_or("")
-  if request.req_method != "register" || presented == "" {
+  if request.req_method != @types.WireMethod::WireRegister || presented == "" {
     return @types.Response::err_text(
       "Conductor registration authentication failed",
     )
@@ -421,7 +421,7 @@ fn local_cli_register(
   request : @types.Request,
   peer_is_choir : Bool,
 ) -> @types.Response {
-  if request.req_method != local_cli_register_method ||
+  if request.req_method != @types.WireMethod::WireLocalCliRegister ||
     request.name != local_cli_register_method ||
     !peer_is_choir {
     @types.Response::err_text("local CLI authentication failed")
@@ -440,7 +440,7 @@ fn conductor_authenticated_request(request : @types.Request) -> @types.Request {
   })
   {
     ..request,
-    req_method: "tools/call",
+    req_method: @types.WireMethod::WireToolsCall,
     args: @types.RequestArgs::from_values(arguments),
   }
 }
@@ -491,7 +491,7 @@ async fn conductor_handle_custom_line(
   state : ConductorServerState,
   request : @types.Request,
 ) -> Unit {
-  if request.req_method == server_identity_method {
+  if request.req_method == @types.WireMethod::WireServerIdentity {
     // Answered without authentication: the socket is 0600, and the build
     // identity lets `choir start` decide whether this daemon is current
     // even when the on-disk binary was replaced underneath it.
@@ -507,7 +507,7 @@ async fn conductor_handle_custom_line(
     client.busy = false
     return
   }
-  if request.req_method == conductor_bootstrap_method {
+  if request.req_method == @types.WireMethod::WireConductorBootstrap {
     ignore(
       conductor_send_response(
         client.fd,
@@ -518,7 +518,7 @@ async fn conductor_handle_custom_line(
     client.busy = false
     return
   }
-  if request.req_method == "register" {
+  if request.req_method == @types.WireMethod::WireRegister {
     let response = conductor_register(state, request)
     let channel = request.args.get_bool("channel").unwrap_or(false)
     if response.is_ok() {
@@ -566,7 +566,7 @@ async fn conductor_handle_custom_line(
     client.busy = false
     return
   }
-  if request.req_method == local_cli_register_method {
+  if request.req_method == @types.WireMethod::WireLocalCliRegister {
     let response = local_cli_register(request, client.peer_is_choir)
     if response.is_ok() {
       client.authenticated = true
@@ -577,7 +577,7 @@ async fn conductor_handle_custom_line(
     client.busy = false
     return
   }
-  if request.req_method == conductor_goal_update_method {
+  if request.req_method == @types.WireMethod::WireConductorGoalUpdate {
     let response = if client.authenticated && client.peer_is_choir {
       match request.args.get_json("report") {
         Some(report) => {
@@ -593,7 +593,7 @@ async fn conductor_handle_custom_line(
     client.busy = false
     return
   }
-  if request.req_method == conductor_goal_worker_health_method {
+  if request.req_method == @types.WireMethod::WireConductorGoalWorkerHealth {
     let response = if client.authenticated && client.peer_is_choir {
       match
         (
@@ -617,7 +617,7 @@ async fn conductor_handle_custom_line(
     client.busy = false
     return
   }
-  if request.req_method == conductor_stop_decision_method {
+  if request.req_method == @types.WireMethod::WireConductorStopDecision {
     let response = if client.authenticated {
       let fields : Map[String, Json] = {
         "park": state.parked_for_goal_event.to_json(),
@@ -835,7 +835,7 @@ fn conductor_publish_goal_update(
     Err(error) => return Err(error)
   }
   let request : @types.Request = {
-    req_method: conductor_goal_update_method,
+    req_method: @types.WireMethod::WireConductorGoalUpdate,
     name: conductor_goal_update_method,
     args: @types.RequestArgs::from_values({ "report": report.to_json() }),
   }
@@ -861,7 +861,7 @@ fn conductor_publish_goal_worker_health(
     Err(error) => return Err(error)
   }
   let request : @types.Request = {
-    req_method: conductor_goal_worker_health_method,
+    req_method: @types.WireMethod::WireConductorGoalWorkerHealth,
     name: conductor_goal_worker_health_method,
     args: @types.RequestArgs::from_values({
       "healthy": healthy.to_json(),
@@ -1330,21 +1330,24 @@ test "Conductor tokens require an exact lowercase hexadecimal capability" {
 ///|
 test "local CLI registration requires the current Choir executable" {
   let request : @types.Request = {
-    req_method: local_cli_register_method,
+    req_method: @types.WireMethod::WireLocalCliRegister,
     name: local_cli_register_method,
     args: @types.RequestArgs::from_values(Map([])),
   }
   assert_true(local_cli_register(request, true).is_ok())
   assert_false(local_cli_register(request, false).is_ok())
   assert_false(
-    local_cli_register({ ..request, req_method: "register" }, true).is_ok(),
+    local_cli_register(
+      { ..request, req_method: @types.WireMethod::WireRegister },
+      true,
+    ).is_ok(),
   )
 }
 
 ///|
 test "Conductor strips caller identity before dispatch" {
   let request : @types.Request = {
-    req_method: "tools/call",
+    req_method: @types.WireMethod::WireToolsCall,
     name: "goal_status",
     args: @types.RequestArgs::from_values({
       "goal_id": "goal-a".to_json(),
@@ -1366,7 +1369,7 @@ test "Conductor parks an active durable Goal until its success event" {
     listen_uds: "/repo/.choir/run/server.sock",
   })
   let submit : @types.Request = {
-    req_method: "tools/call",
+    req_method: @types.WireMethod::WireToolsCall,
     name: "goal_submit",
     args: @types.RequestArgs::from_values(Map([])),
   }
@@ -1382,7 +1385,7 @@ test "Conductor parks an active durable Goal until its success event" {
   assert_eq(state.watched_goal_id, Some("goal-a"))
   assert_true(state.parked_for_goal_event)
   let status : @types.Request = {
-    req_method: "tools/call",
+    req_method: @types.WireMethod::WireToolsCall,
     name: "goal_status",
     args: @types.RequestArgs::from_values({ "goal_id": "goal-a".to_json() }),
   }

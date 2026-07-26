@@ -97,7 +97,7 @@ fn client_register_local_cli(
   reader : UDSLineReader,
 ) -> Result[Unit, String] {
   let request : @types.Request = {
-    req_method: local_cli_register_method,
+    req_method: @types.WireMethod::WireLocalCliRegister,
     name: local_cli_register_method,
     args: @types.RequestArgs::from_values(Map([])),
   }
@@ -255,7 +255,7 @@ fn conductor_stop_run() -> Unit {
     }
   }
   let request : @types.Request = {
-    req_method: conductor_stop_decision_method,
+    req_method: @types.WireMethod::WireConductorStopDecision,
     name: conductor_stop_decision_method,
     args: @types.RequestArgs::from_values(Map([])),
   }

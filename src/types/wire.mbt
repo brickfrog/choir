@@ -93,16 +93,71 @@ pub fn FieldMap::to_json_map(self : FieldMap) -> Map[String, Json] {
 pub let registration_token_arg : String = "token"
 
 ///|
+/// The closed set of methods the internal wire accepts. Dispatching on a raw
+/// string meant a typo produced a silent fallthrough instead of a compile
+/// error, and the daemon's dispatch chain could not be checked for coverage.
+pub(all) enum WireMethod {
+  WireRegister
+  WireConductorBootstrap
+  WireLocalCliRegister
+  WireConductorGoalUpdate
+  WireConductorGoalWorkerHealth
+  WireConductorStopDecision
+  WireServerIdentity
+  WireInitialize
+  WireToolsList
+  WireToolsCall
+  /// What an unrecognized peer asked for, retained verbatim so the rejection
+  /// can name it instead of reporting a generic parse failure.
+  WireUnknownMethod(String)
+} derive(Debug, Eq)
+
+///|
+pub fn wire_method_text(value : WireMethod) -> String {
+  match value {
+    WireRegister => "register"
+    WireConductorBootstrap => "conductor_bootstrap"
+    WireLocalCliRegister => "local_cli_register"
+    WireConductorGoalUpdate => "conductor_goal_update"
+    WireConductorGoalWorkerHealth => "conductor_goal_worker_health"
+    WireConductorStopDecision => "conductor_stop_decision"
+    WireServerIdentity => "server_identity"
+    WireInitialize => "initialize"
+    WireToolsList => "tools/list"
+    WireToolsCall => "tools/call"
+    WireUnknownMethod(value) => value
+  }
+}
+
+///|
+/// Parse the method once, at the wire boundary.
+pub fn wire_method_from_text(text : String) -> WireMethod {
+  match text {
+    "register" => WireRegister
+    "conductor_bootstrap" => WireConductorBootstrap
+    "local_cli_register" => WireLocalCliRegister
+    "conductor_goal_update" => WireConductorGoalUpdate
+    "conductor_goal_worker_health" => WireConductorGoalWorkerHealth
+    "conductor_stop_decision" => WireConductorStopDecision
+    "server_identity" => WireServerIdentity
+    "initialize" => WireInitialize
+    "tools/list" => WireToolsList
+    "tools/call" => WireToolsCall
+    _ => WireUnknownMethod(text)
+  }
+}
+
+///|
 /// Internal wire format request (UDS, not MCP JSON-RPC).
 pub(all) struct Request {
-  req_method : String
+  req_method : WireMethod
   name : String
   args : RequestArgs
 } derive(Eq)
 
 ///|
 pub fn Request::registration_token(self : Request) -> String? {
-  if self.req_method == "register" {
+  if self.req_method == WireMethod::WireRegister {
     self.args.get(registration_token_arg)
   } else {
     None

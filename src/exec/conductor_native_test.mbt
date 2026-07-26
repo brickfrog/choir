@@ -2,7 +2,7 @@
 async test "native Conductor task dispatch uses typed Beads commands" {
   let commands : Array[@exec.Command] = []
   let request : @types.Request = {
-    req_method: "tools/call",
+    req_method: @types.WireMethod::WireToolsCall,
     name: "task_create",
     args: @types.RequestArgs::from_values({
       "id": "choir-task".to_json(),
@@ -55,7 +55,7 @@ async test "native Conductor pins the Beads CLI contract" {
 async test "native Conductor maps completed tasks to closed Beads" {
   let commands : Array[@exec.Command] = []
   let request : @types.Request = {
-    req_method: "tools/call",
+    req_method: @types.WireMethod::WireToolsCall,
     name: "task_update",
     args: @types.RequestArgs::from_values({
       "id": "choir-task".to_json(),
@@ -80,7 +80,7 @@ async test "native Conductor maps completed tasks to closed Beads" {
 async test "native Conductor can normalize a contradictory Bead contract" {
   let commands : Array[@exec.Command] = []
   let request : @types.Request = {
-    req_method: "tools/call",
+    req_method: @types.WireMethod::WireToolsCall,
     name: "task_update",
     args: @types.RequestArgs::from_values({
       "id": "choir-contradictory".to_json(),
@@ -108,7 +108,7 @@ async test "native Conductor can normalize a contradictory Bead contract" {
 async test "native Conductor exposes blocking Beads dependencies" {
   let commands : Array[@exec.Command] = []
   let request : @types.Request = {
-    req_method: "tools/call",
+    req_method: @types.WireMethod::WireToolsCall,
     name: "task_get",
     args: @types.RequestArgs::from_values({ "id": "choir-parent".to_json() }),
   }
@@ -157,7 +157,7 @@ async test "native Conductor exposes blocking Beads dependencies" {
 async test "native Conductor distinguishes Beads summaries from details" {
   let commands : Array[@exec.Command] = []
   let list_request : @types.Request = {
-    req_method: "tools/call",
+    req_method: @types.WireMethod::WireToolsCall,
     name: "task_list",
     args: @types.RequestArgs::from_values(Map([])),
   }
@@ -182,7 +182,7 @@ async test "native Conductor distinguishes Beads summaries from details" {
   assert_true(tasks.contains("\"dependencies_loaded\":false"))
 
   let detail_request : @types.Request = {
-    req_method: "tools/call",
+    req_method: @types.WireMethod::WireToolsCall,
     name: "task_get",
     args: @types.RequestArgs::from_values({ "id": "choir-parent".to_json() }),
   }
@@ -341,7 +341,7 @@ async test "migration Bead conflict blocks before any mutation" {
 ///|
 async test "native Conductor rejects removed dispatch" {
   let base : @types.Request = {
-    req_method: "tools/call",
+    req_method: @types.WireMethod::WireToolsCall,
     name: "unknown_tool",
     args: @types.RequestArgs::from_values(Map([])),
   }

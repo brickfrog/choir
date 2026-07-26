@@ -594,7 +594,7 @@ test "Conductor MCP bridge exposes only current Goal and Beads tools" {
 ///|
 test "Conductor MCP bridge forwards no caller identity" {
   let request : @types.Request = {
-    req_method: "tools/call",
+    req_method: @types.WireMethod::WireToolsCall,
     name: "goal_status",
     args: @types.RequestArgs::from_values({ "goal_id": "goal-a".to_json() }),
   }

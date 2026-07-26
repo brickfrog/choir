@@ -6,14 +6,14 @@ test "Conductor request wire preserves structured arguments" {
     "selection": ["choir-a", "choir-b"].to_json(),
   }
   let request : @types.Request = {
-    req_method: "tools/call",
+    req_method: @types.WireMethod::WireToolsCall,
     name: "goal_submit",
     args: @types.RequestArgs::from_values(values),
   }
   let wire = format_request(request)
   match parse_request(wire) {
     Ok(parsed) => {
-      assert_eq(parsed.req_method, "tools/call")
+      assert_true(parsed.req_method == @types.WireMethod::WireToolsCall)
       assert_eq(parsed.name, "goal_submit")
       @debug.assert_eq(parsed.args.get_json("count"), Some((3 : Int).to_json()))
       @debug.assert_eq(parsed.args.get_json("enabled"), Some(true.to_json()))
@@ -31,7 +31,7 @@ test "Conductor registration contains only its capability" {
   let wire = format_conductor_registration_request("capability-token")
   match parse_request(wire) {
     Ok(parsed) => {
-      assert_eq(parsed.req_method, "register")
+      assert_true(parsed.req_method == @types.WireMethod::WireRegister)
       assert_eq(parsed.name, "register")
       @debug.assert_eq(
         parsed.args.get(@types.registration_token_arg),

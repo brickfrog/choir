@@ -827,7 +827,7 @@ test "native Conductor mints Goal identity around structured submission argument
     "moon_args": ["test", "--target", "native"].to_json(),
   }.to_json()
   let request : @types.Request = {
-    req_method: "tools/call",
+    req_method: @types.WireMethod::WireToolsCall,
     name: "goal_submit",
     args: @types.RequestArgs::from_values({
       "proposal_id": "proposal-1".to_json(),
@@ -1280,7 +1280,7 @@ pub async fn dispatch_native_conductor_request(
   now? : Int64 = @env.now().reinterpret_as_int64() / 1000L,
   capture? : async (Command) -> (Int, String) = capture_command_merged,
 ) -> @types.Response {
-  if request.req_method != "tools/call" {
+  if request.req_method != @types.WireMethod::WireToolsCall {
     return native_conductor_error("authenticated Conductor required")
   }
   match request.name {

@@ -19,7 +19,7 @@ pub fn parse_request(data : String) -> Result[@types.Request, String] {
     Some(Object(a)) => @types.RequestArgs::from_values(a)
     _ => @types.RequestArgs::from_values(Map([]))
   }
-  Ok({ req_method: method_val, name, args })
+  Ok({ req_method: @types.wire_method_from_text(method_val), name, args })
 }
 
 ///|
@@ -37,7 +37,7 @@ pub fn format_request(req : @types.Request) -> String {
   let args_map : Map[String, Json] = Map([])
   req.args.each_json(fn(k, v) { args_map.set(k, v) })
   {
-    "method": req.req_method.to_json(),
+    "method": @types.wire_method_text(req.req_method).to_json(),
     "name": req.name.to_json(),
     "args": args_map.to_json(),
   }
@@ -63,7 +63,7 @@ pub fn format_conductor_registration_request_with_channel(
     args.set("channel", true.to_json())
   }
   format_request({
-    req_method: "register",
+    req_method: @types.WireMethod::WireRegister,
     name: "register",
     args: @types.RequestArgs::from_values(args),
   })

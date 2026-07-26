@@ -59,7 +59,7 @@ fn goal_cli_call(tool : String, values : Map[String, Json]) -> @types.Response {
   }
   let capability = @sys.getenv("CHOIR_CONDUCTOR_TOKEN")
   let req : @types.Request = {
-    req_method: "tools/call",
+    req_method: @types.WireMethod::WireToolsCall,
     name: tool,
     args: @types.RequestArgs::from_values(values),
   }
