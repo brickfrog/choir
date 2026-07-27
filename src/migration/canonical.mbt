@@ -971,13 +971,6 @@ pub fn canonical_contract_revision_impact_set_bytes(
 }
 
 ///|
-pub fn contract_revision_impact_set_digest(
-  impact_set : MigrationContractRevisionImpactSet,
-) -> @control.Digest {
-  canonical_digest(canonical_contract_revision_impact_set_bytes(impact_set))
-}
-
-///|
 pub fn canonical_migration_supersession_bytes(
   supersession : MigrationSupersession,
 ) -> Bytes {

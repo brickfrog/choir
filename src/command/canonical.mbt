@@ -145,13 +145,6 @@ pub fn canonical_command_provenance_bytes(
 }
 
 ///|
-pub fn command_provenance_digest(
-  provenance : CommandPreparationProvenance,
-) -> @control.Digest {
-  digest_bytes(canonical_command_provenance_bytes(provenance))
-}
-
-///|
 fn canonical_context_projection_bytes(
   ordered_digests : Array[@control.Digest],
 ) -> Bytes {

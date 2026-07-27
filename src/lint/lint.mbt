@@ -1101,11 +1101,6 @@ fn scan_impls_with_package_aliases(
 }
 
 ///|
-fn scan_impls(file : String, impls : @syntax.Impls) -> Array[LintFinding] {
-  scan_impls_with_package_aliases(file, impls, Array::new(capacity=0))
-}
-
-///|
 impl @syntax.IterVisitor for LintEnv with fn visit_Impl_TopFuncDef(
   env,
   fun_decl~,
@@ -1244,11 +1239,6 @@ impl @syntax.IterVisitor for LintEnv with fn visit_Parameter_Optional(
     default~,
     ty~,
   )
-}
-
-///|
-pub fn lint_impls(file : String, impls : @syntax.Impls) -> Array[LintFinding] {
-  scan_impls(file, impls)
 }
 
 ///|

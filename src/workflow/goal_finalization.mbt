@@ -269,13 +269,6 @@ pub fn goal_finalization_record_bytes(record : GoalFinalizationRecord) -> Bytes 
 }
 
 ///|
-pub fn goal_finalization_record_digest(
-  record : GoalFinalizationRecord,
-) -> @control.Digest {
-  @storage.artifact_digest(goal_finalization_record_bytes(record))
-}
-
-///|
 pub fn decode_goal_finalization_record(
   content : Bytes,
 ) -> Result[GoalFinalizationRecord, @types.ChoirError] {

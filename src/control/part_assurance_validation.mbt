@@ -11,12 +11,6 @@ pub fn digest_text(digest : Digest) -> String {
 }
 
 ///|
-pub fn git_oid_text(oid : GitOid) -> String {
-  guard oid is GitOid(value) else { return "" }
-  value
-}
-
-///|
 fn valid_lower_hex_digest(digest : Digest) -> Bool {
   let value = digest_text(digest)
   if value.length() != 64 {
