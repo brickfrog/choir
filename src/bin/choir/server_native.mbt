@@ -106,6 +106,44 @@ fn conductor_response_state(response : @types.Response) -> String? {
 }
 
 ///|
+/// Append one rendered log line, rolling the file first when it has grown past
+/// its cap.
+///
+/// Both daemons appended to one file for the life of the workspace with no
+/// bound. The Goal tick logs a failure every second while a Goal is stuck, so
+/// the fastest-growing log is the one written when nobody is watching.
+fn conductor_append_log_line(path : String, line : String) -> Unit {
+  let plan = @command.plan_log_rotation(
+    path,
+    @sys.file_size(path),
+    @command.default_log_rotation_policy(),
+  )
+  for discarded in plan.discard {
+    ignore(@sys.delete_file_sync(discarded))
+  }
+  for step in plan.rotate {
+    ignore(@sys.rename_file_sync(step.0, step.1))
+  }
+  ignore(@sys.append_file_sync(path, line))
+}
+
+///|
+/// The level the daemons log at.
+///
+/// Debug was hard-coded, which is also why the file grew as fast as it did.
+/// It stays the default so nothing an operator relies on disappears, but it is
+/// now overridable rather than baked in.
+fn conductor_log_level() -> @moontrace.Level {
+  match @env.get_env_var("CHOIR_LOG_LEVEL") {
+    Some("error") => @moontrace.Level::Error_
+    Some("warn") => @moontrace.Level::Warn
+    Some("info") => @moontrace.Level::Info
+    Some("trace") => @moontrace.Level::Trace
+    _ => @moontrace.Level::Debug
+  }
+}
+
+///|
 fn conductor_park_for_state_tag(state : String?) -> Bool {
   @workflow.conductor_park_for_goal_state(
     match state {
@@ -1217,9 +1255,9 @@ fn goal_worker_run() -> Unit {
   let log_path = config.project_dir + "/.choir/logs/serve.log"
   @moontrace.set_subscriber(fn(event) {
     let rendered = @exec.strip_terminal_responses(event.format(color=false))
-    ignore(@sys.append_file_sync(log_path, rendered + "\n"))
+    conductor_append_log_line(log_path, rendered + "\n")
   })
-  @moontrace.set_min_level(@moontrace.Level::Debug)
+  @moontrace.set_min_level(conductor_log_level())
   @async.run_async_main(async fn() {
     @async.with_task_group(async fn(group) {
       group.spawn_bg(async fn() { conductor_goal_observer(config.project_dir) })
@@ -1338,9 +1376,9 @@ fn serve_run() -> Unit {
   let log_path = config.project_dir + "/.choir/logs/serve.log"
   @moontrace.set_subscriber(fn(event) {
     let rendered = @exec.strip_terminal_responses(event.format(color=false))
-    ignore(@sys.append_file_sync(log_path, rendered + "\n"))
+    conductor_append_log_line(log_path, rendered + "\n")
   })
-  @moontrace.set_min_level(@moontrace.Level::Debug)
+  @moontrace.set_min_level(conductor_log_level())
   let executable = match @sys.realpath_native("/proc/self/exe") {
     Some(value) => value
     None => {
@@ -1520,4 +1558,47 @@ test "Conductor replays a worker update that races Goal observation" {
     ],
   )
   assert_true(conductor_stop_decision_parks(state))
+}
+
+///|
+/// Rotation applied to a real file, because the ordering that makes it safe is
+/// only half the problem: the renames also have to actually happen, and the
+/// live file has to come back afterwards.
+test "the daemon log rolls and keeps a bounded set of generations" {
+  let path = "/tmp/choir-log-rotation-test-" +
+    @sys.get_pid().to_string() +
+    ".log"
+  let generations = @command.default_log_rotation_policy().retained_generations
+  ignore(@sys.delete_file_sync(path))
+  for index = 1; index <= generations + 1; index = index + 1 {
+    ignore(@sys.delete_file_sync(@command.log_generation_path(path, index)))
+  }
+  // Under the cap: appended in place, nothing rolled.
+  conductor_append_log_line(path, "first\n")
+  assert_eq(@sys.read_file(path), "first\n")
+  assert_false(@sys.path_exists(@command.log_generation_path(path, 1)))
+
+  // Past the cap: the live file becomes generation 1 and a fresh one starts.
+  let bulk = "x".repeat(@command.default_log_rotation_policy().maximum_bytes)
+  ignore(@sys.write_file_sync(path, bulk))
+  conductor_append_log_line(path, "second\n")
+  assert_eq(@sys.read_file(path), "second\n")
+  assert_eq(
+    @sys.file_size(@command.log_generation_path(path, 1)),
+    bulk.length(),
+  )
+
+  // Rolling repeatedly never grows the set past what the policy retains.
+  for round = 0; round < generations + 3; round = round + 1 {
+    ignore(@sys.write_file_sync(path, bulk))
+    conductor_append_log_line(path, "round\n")
+  }
+  assert_false(
+    @sys.path_exists(@command.log_generation_path(path, generations + 1)),
+  )
+  assert_true(@sys.path_exists(@command.log_generation_path(path, generations)))
+  ignore(@sys.delete_file_sync(path))
+  for index = 1; index <= generations + 1; index = index + 1 {
+    ignore(@sys.delete_file_sync(@command.log_generation_path(path, index)))
+  }
 }
