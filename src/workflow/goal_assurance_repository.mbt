@@ -32,7 +32,10 @@ fn goal_assurance_state_key(
   goal_id : @control.GoalId,
 ) -> @storage.StateRecordKey {
   let digest = @storage.artifact_digest(@utf8.encode(goal_id.0))
-  @storage.StateRecordKey("goal-assurance:" + @storage.digest_text(digest))
+  @storage.StateRecordKey(
+    durable_record_key_prefix(DurableGoalAssuranceRecord) +
+    @storage.digest_text(digest),
+  )
 }
 
 ///|
@@ -52,7 +55,9 @@ fn goal_assurance_event_key(
 fn goal_assurance_witness_state_key(
   effect_id : @control.EffectId,
 ) -> @storage.StateRecordKey {
-  @storage.StateRecordKey("goal-assurance-witness:" + effect_id.0)
+  @storage.StateRecordKey(
+    durable_record_key_prefix(DurableGoalAssuranceEffectWitness) + effect_id.0,
+  )
 }
 
 ///|

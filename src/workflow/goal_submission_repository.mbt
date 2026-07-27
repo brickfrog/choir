@@ -21,7 +21,10 @@ fn goal_selection_state_key(
   goal_id : @control.GoalId,
 ) -> @storage.StateRecordKey {
   let key_digest = @storage.artifact_digest(@utf8.encode(goal_id.0))
-  @storage.StateRecordKey("goal-selection:" + @storage.digest_text(key_digest))
+  @storage.StateRecordKey(
+    durable_record_key_prefix(DurableGoalSelectionDecision) +
+    @storage.digest_text(key_digest),
+  )
 }
 
 ///|

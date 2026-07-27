@@ -139,6 +139,27 @@ pub fn validate_process_execution(
 }
 
 ///|
+/// Read a stored process execution back.
+///
+/// The identity check runs here rather than at the call site because whether
+/// this build can read a stored record is a question about the record, and it
+/// has to have the same answer wherever it is asked.
+pub fn decode_process_execution(
+  content : Bytes,
+) -> Result[ProcessExecution, @types.ChoirError] {
+  let json = @json.parse(@utf8.decode_lossy(content)) catch {
+    _ => return Err(process_execution_error("durable content is not JSON"))
+  }
+  let execution : ProcessExecution = @json.from_json(json) catch {
+    _ => return Err(process_execution_error("durable schema is invalid"))
+  }
+  match validate_process_execution(execution) {
+    Ok(_) => Ok(execution)
+    Err(error) => Err(error)
+  }
+}
+
+///|
 pub fn authorize_process_start(
   execution : ProcessExecution,
   started_at : Int64,

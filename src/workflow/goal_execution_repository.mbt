@@ -44,7 +44,10 @@ fn goal_execution_state_key(
   goal_id : @control.GoalId,
 ) -> @storage.StateRecordKey {
   let digest = @storage.artifact_digest(@utf8.encode(goal_id.0))
-  @storage.StateRecordKey("goal-run:" + @storage.digest_text(digest))
+  @storage.StateRecordKey(
+    durable_record_key_prefix(DurableGoalExecutionRecord) +
+    @storage.digest_text(digest),
+  )
 }
 
 ///|

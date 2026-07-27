@@ -1323,8 +1323,10 @@ fn serve_run() -> Unit {
           report
         )
       ) => {
+        // The reason travels with the report so the one message about a
+        // destroyed control root names the evidence that authorized it.
         @sys.write_stdout(
-          "Choir reset stale control state and released \{report.source_claims_released} Bead claim(s).\n",
+          "Choir reset stale control state and released \{report.source_claims_released} Bead claim(s): \{report.reason.to_json().stringify(indent=0)}\n",
         )
         control_state_prepared.val = true
       }

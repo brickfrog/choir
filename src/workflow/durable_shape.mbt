@@ -1,9 +1,15 @@
 ///| The identity of the durable value shapes this build can decode.
 ///
 /// `@storage.decide_control_state` compares the generation recorded inside the
-/// control store against the one this build reports. If they disagree the store
-/// is destroyed, so the generation has to move exactly when the durable shapes
-/// move — no sooner, and never later.
+/// control store against the one this build reports. Equal means the store is
+/// usable without reading a record out of it. Not equal is a question rather
+/// than a verdict: the caller reads the stored records, and only a record this
+/// build cannot decode authorizes destroying anything.
+///
+/// So the generation has to move whenever the durable shapes move. A move that
+/// was not needed costs one scan of the store. A move that did not happen lets
+/// a store this build cannot read be adopted as current, and wedges the decode
+/// it was supposed to catch.
 ///
 /// It used to be a hand-edited `choir-control-state-v8` string in the host
 /// package. Deriving it from the SQL schema would have been worse than that:
@@ -12,9 +18,10 @@
 /// never detects an incompatible store at all.
 ///
 /// So the generation is derived from the shapes themselves. Every type that
-/// reaches a durable record is instantiated once below and its serialized key
-/// structure is digested. Adding a field to a stored record is a compile error
-/// until the instance here is updated, and the digest then moves on its own.
+/// reaches a durable record is instantiated once below, and
+/// `durable_shape_manifest.mbt` renders the key structure of those instances
+/// and digests it. Adding a field to a stored record is a compile error until
+/// the instance here is updated, and the digest then moves on its own.
 ///
 /// What this covers, and how strongly:
 ///
@@ -22,14 +29,26 @@
 ///   does not compile until it is given a value here, and the new JSON key
 ///   moves the digest. A removed or renamed field does the same. This one the
 ///   compiler proves.
+/// * Optionality. Whether a key may be absent is not read off these instances
+///   at all — it is measured against each type's own decoder, so a field that
+///   becomes required moves the digest even though the serialized form of the
+///   instance is byte-identical either way.
 /// * Enum variants. Each variant is named once in an array and once in an
 ///   exhaustive match, so a new variant does not compile until the match names
 ///   it. The array beside it is what the digest reads. They sit adjacent
 ///   because only the match is checked: the compiler stops the build, and the
 ///   edit it demands is right next to the list that has to grow with it.
 /// * Whole record types. A new kind of record stored under its own
-///   `@storage.StateRecordKey` has to be added to `durable_shape_table`.
-///   Nothing forces that, which is why the test names every stored record.
+///   `@storage.StateRecordKey` has to be added to `durable_shape_table` and to
+///   `DurableRecordKind`. Nothing forces that, which is why the test names
+///   every stored record and the key prefix it lives under.
+///
+/// Every option below is `Some`, and it has to stay that way. `None` serializes
+/// to no key at all, so the manifest would never mention that field and the
+/// digest would stop moving when its type changed. MoonBit has no reflection,
+/// so nothing can prove a key is missing from an instance that never carried
+/// it: the exact-key test compares `PartWorkflowSnapshot` against a snapshot
+/// the workflow itself produced, and every other type rests on this paragraph.
 ///
 /// What it does not cover: a change in the *meaning* of a field whose shape is
 /// unchanged. No mechanical scheme can see that.
@@ -64,7 +83,9 @@ let durable_shapes_part_block_reason : Array[@control.PartBlockReason] = [
 ///|
 /// Exhaustive: a new variant does not compile until it is listed here and
 /// in the array above.
-fn durable_guard_part_block_reason(value : @control.PartBlockReason) -> Json {
+fn durable_guard_part_block_reason(
+  value : @control.PartBlockReason,
+) -> @control.PartBlockReason {
   match value {
     PartDependencyBlocked
     | PartVerificationFailed
@@ -73,7 +94,7 @@ fn durable_guard_part_block_reason(value : @control.PartBlockReason) -> Json {
     | PartIntegrationConflict
     | PartOwnershipViolation
     | PartIntegrityBlocked
-    | PartRecoveryUncertain => value.to_json()
+    | PartRecoveryUncertain => value
   }
 }
 
@@ -106,7 +127,9 @@ let durable_shapes_part_lifecycle : Array[@control.PartLifecycle] = [
 ///|
 /// Exhaustive: a new variant does not compile until it is listed here and
 /// in the array above.
-fn durable_guard_part_lifecycle(value : @control.PartLifecycle) -> Json {
+fn durable_guard_part_lifecycle(
+  value : @control.PartLifecycle,
+) -> @control.PartLifecycle {
   match value {
     PartPending
     | PartReady
@@ -117,7 +140,7 @@ fn durable_guard_part_lifecycle(value : @control.PartLifecycle) -> Json {
     | PartPromoting(_, _, _)
     | PartIntegrated(_)
     | PartBlocked(_)
-    | PartCanceledNotRun => value.to_json()
+    | PartCanceledNotRun => value
   }
 }
 
@@ -175,9 +198,9 @@ let durable_shapes_provider_surface_id : Array[@control.ProviderSurfaceId] = [
 /// in the array above.
 fn durable_guard_provider_surface_id(
   value : @control.ProviderSurfaceId,
-) -> Json {
+) -> @control.ProviderSurfaceId {
   match value {
-    ClaudeSubscriptionCli | CodexSubscriptionCli => value.to_json()
+    ClaudeSubscriptionCli | CodexSubscriptionCli => value
   }
 }
 
@@ -196,9 +219,11 @@ let durable_shapes_audit_repair_scope : Array[@control.AuditRepairScope] = [
 ///|
 /// Exhaustive: a new variant does not compile until it is listed here and
 /// in the array above.
-fn durable_guard_audit_repair_scope(value : @control.AuditRepairScope) -> Json {
+fn durable_guard_audit_repair_scope(
+  value : @control.AuditRepairScope,
+) -> @control.AuditRepairScope {
   match value {
-    PartAuditRepair | GoalAuditRepair => value.to_json()
+    PartAuditRepair | GoalAuditRepair => value
   }
 }
 
@@ -237,9 +262,11 @@ let durable_shapes_mutation_claim : Array[@control.MutationClaim] = [
 ///|
 /// Exhaustive: a new variant does not compile until it is listed here and
 /// in the array above.
-fn durable_guard_mutation_claim(value : @control.MutationClaim) -> Json {
+fn durable_guard_mutation_claim(
+  value : @control.MutationClaim,
+) -> @control.MutationClaim {
   match value {
-    ExactPath(_) | PathTree(_) | RepositoryWide => value.to_json()
+    ExactPath(_) | PathTree(_) | RepositoryWide => value
   }
 }
 
@@ -258,12 +285,12 @@ let durable_shapes_unknown_mutation_reason : Array[
 /// in the array above.
 fn durable_guard_unknown_mutation_reason(
   value : @control.UnknownMutationReason,
-) -> Json {
+) -> @control.UnknownMutationReason {
   match value {
     SemanticScopeUnknown
     | GeneratedOutputsUnknown
     | RepositoryWideToolingUnknown
-    | ConductorCouldNotDetermine => value.to_json()
+    | ConductorCouldNotDetermine => value
   }
 }
 
@@ -283,11 +310,11 @@ let durable_shapes_mutation_declaration : Array[@control.MutationDeclaration] = 
 /// in the array above.
 fn durable_guard_mutation_declaration(
   value : @control.MutationDeclaration,
-) -> Json {
+) -> @control.MutationDeclaration {
   match value {
     CompleteMutationDeclaration(_)
     | UnknownMutationDeclaration(_)
-    | MissingMutationDeclaration => value.to_json()
+    | MissingMutationDeclaration => value
   }
 }
 
@@ -301,9 +328,9 @@ let durable_shapes_repository_path_mode : Array[@control.RepositoryPathMode] = [
 /// in the array above.
 fn durable_guard_repository_path_mode(
   value : @control.RepositoryPathMode,
-) -> Json {
+) -> @control.RepositoryPathMode {
   match value {
-    CaseSensitiveNfc => value.to_json()
+    CaseSensitiveNfc => value
   }
 }
 
@@ -330,9 +357,9 @@ let durable_shapes_verification_repair_scope : Array[
 /// in the array above.
 fn durable_guard_verification_repair_scope(
   value : @control.VerificationRepairScope,
-) -> Json {
+) -> @control.VerificationRepairScope {
   match value {
-    PartVerificationRepair | GoalVerificationRepair => value.to_json()
+    PartVerificationRepair | GoalVerificationRepair => value
   }
 }
 
@@ -409,11 +436,11 @@ let durable_shapes_audit_gate_corruption_reason : Array[
 /// in the array above.
 fn durable_guard_audit_gate_corruption_reason(
   value : @control.AuditGateCorruptionReason,
-) -> Json {
+) -> @control.AuditGateCorruptionReason {
   match value {
     AuditResultMismatch
     | AuditArtifactMissing
-    | AuditReceiptProtocolViolation => value.to_json()
+    | AuditReceiptProtocolViolation => value
   }
 }
 
@@ -432,12 +459,12 @@ let durable_shapes_audit_gate_rejection_reason : Array[
 /// in the array above.
 fn durable_guard_audit_gate_rejection_reason(
   value : @control.AuditGateRejectionReason,
-) -> Json {
+) -> @control.AuditGateRejectionReason {
   match value {
     AuditOutcomeNotPassing
     | AuditHasBlockingFindings
     | AuditNotIndependent
-    | AuditSessionNotCleanlyClosed => value.to_json()
+    | AuditSessionNotCleanlyClosed => value
   }
 }
 
@@ -456,12 +483,12 @@ let durable_shapes_audit_gate_stale_reason : Array[
 /// in the array above.
 fn durable_guard_audit_gate_stale_reason(
   value : @control.AuditGateStaleReason,
-) -> Json {
+) -> @control.AuditGateStaleReason {
   match value {
     AuditStaleSubject
     | AuditStalePolicy
     | AuditStaleCapabilityProfile
-    | AuditStaleProviderConformance => value.to_json()
+    | AuditStaleProviderConformance => value
   }
 }
 
@@ -485,13 +512,13 @@ let durable_shapes_audit_gate_observation : Array[@control.AuditGateObservation]
 /// in the array above.
 fn durable_guard_audit_gate_observation(
   value : @control.AuditGateObservation,
-) -> Json {
+) -> @control.AuditGateObservation {
   match value {
     AuditGateMissing
     | AuditGateValid(_)
     | AuditGateStale(_)
     | AuditGateRejected(_)
-    | AuditGateCorrupt(_) => value.to_json()
+    | AuditGateCorrupt(_) => value
   }
 }
 
@@ -506,10 +533,11 @@ let durable_shapes_audit_outcome : Array[@control.AuditOutcome] = [
 ///|
 /// Exhaustive: a new variant does not compile until it is listed here and
 /// in the array above.
-fn durable_guard_audit_outcome(value : @control.AuditOutcome) -> Json {
+fn durable_guard_audit_outcome(
+  value : @control.AuditOutcome,
+) -> @control.AuditOutcome {
   match value {
-    AuditPassed | AuditFindings | AuditFailed | AuditInterrupted =>
-      value.to_json()
+    AuditPassed | AuditFindings | AuditFailed | AuditInterrupted => value
   }
 }
 
@@ -527,9 +555,11 @@ let durable_shapes_model_identity : Array[@control.ModelIdentity] = [
 ///|
 /// Exhaustive: a new variant does not compile until it is listed here and
 /// in the array above.
-fn durable_guard_model_identity(value : @control.ModelIdentity) -> Json {
+fn durable_guard_model_identity(
+  value : @control.ModelIdentity,
+) -> @control.ModelIdentity {
   match value {
-    ReportedModelIdentity(_) | UnreportedModelIdentity => value.to_json()
+    ReportedModelIdentity(_) | UnreportedModelIdentity => value
   }
 }
 
@@ -635,7 +665,7 @@ let durable_shapes_branch_publication_state : Array[BranchPublicationState] = [
 /// in the array above.
 fn durable_guard_branch_publication_state(
   value : BranchPublicationState,
-) -> Json {
+) -> BranchPublicationState {
   match value {
     BranchPublicationPlanned
     | BranchPublicationAuthorized
@@ -643,7 +673,7 @@ fn durable_guard_branch_publication_state(
     | BranchPublicationDrift
     | BranchPublicationPreflightUncertain
     | BranchPublicationMutationUncertain
-    | BranchPublicationAbandonedByCancellation => value.to_json()
+    | BranchPublicationAbandonedByCancellation => value
   }
 }
 
@@ -691,10 +721,9 @@ let durable_shapes_branch_publication_receipt_origin : Array[
 /// in the array above.
 fn durable_guard_branch_publication_receipt_origin(
   value : BranchPublicationReceiptOrigin,
-) -> Json {
+) -> BranchPublicationReceiptOrigin {
   match value {
-    BranchPublicationMutationApplied | BranchPublicationAdopted =>
-      value.to_json()
+    BranchPublicationMutationApplied | BranchPublicationAdopted => value
   }
 }
 
@@ -755,10 +784,9 @@ let durable_shapes_command_execution_subject : Array[
 /// in the array above.
 fn durable_guard_command_execution_subject(
   value : @command.CommandExecutionSubject,
-) -> Json {
+) -> @command.CommandExecutionSubject {
   match value {
-    ImplementationCommandSubject(_, _, _) | PartAuditCommandSubject(_) =>
-      value.to_json()
+    ImplementationCommandSubject(_, _, _) | PartAuditCommandSubject(_) => value
   }
 }
 
@@ -792,9 +820,11 @@ let durable_shapes_command_role : Array[@command.CommandRole] = [
 ///|
 /// Exhaustive: a new variant does not compile until it is listed here and
 /// in the array above.
-fn durable_guard_command_role(value : @command.CommandRole) -> Json {
+fn durable_guard_command_role(
+  value : @command.CommandRole,
+) -> @command.CommandRole {
   match value {
-    ImplementationCommand | PartAuditCommand => value.to_json()
+    ImplementationCommand | PartAuditCommand => value
   }
 }
 
@@ -824,9 +854,9 @@ let durable_shapes_event_redaction_state : Array[@control.EventRedactionState] =
 /// in the array above.
 fn durable_guard_event_redaction_state(
   value : @control.EventRedactionState,
-) -> Json {
+) -> @control.EventRedactionState {
   match value {
-    EventNotSensitive | EventRedacted | EventWithheld => value.to_json()
+    EventNotSensitive | EventRedacted | EventWithheld => value
   }
 }
 
@@ -847,11 +877,11 @@ let durable_shapes_event_source_position : Array[@control.EventSourcePosition] =
 /// in the array above.
 fn durable_guard_event_source_position(
   value : @control.EventSourcePosition,
-) -> Json {
+) -> @control.EventSourcePosition {
   match value {
     EventProviderId(_)
     | EventProviderCursorTransition(_, _)
-    | EventNonResumableOrdinal(_, _) => value.to_json()
+    | EventNonResumableOrdinal(_, _) => value
   }
 }
 
@@ -875,14 +905,14 @@ let durable_shapes_goal_active_condition : Array[@control.GoalActiveCondition] =
 /// in the array above.
 fn durable_guard_goal_active_condition(
   value : @control.GoalActiveCondition,
-) -> Json {
+) -> @control.GoalActiveCondition {
   match value {
     GoalRunning
     | GoalNeedsInput
     | GoalDrift
     | GoalAmbiguous
     | GoalIntegrityBlocked
-    | GoalRecoveryUncertain => value.to_json()
+    | GoalRecoveryUncertain => value
   }
 }
 
@@ -897,10 +927,12 @@ let durable_shapes_goal_lifecycle : Array[@control.GoalLifecycle] = [
 ///|
 /// Exhaustive: a new variant does not compile until it is listed here and
 /// in the array above.
-fn durable_guard_goal_lifecycle(value : @control.GoalLifecycle) -> Json {
+fn durable_guard_goal_lifecycle(
+  value : @control.GoalLifecycle,
+) -> @control.GoalLifecycle {
   match value {
     GoalActive(_) | GoalCanceling(_) | GoalSucceeded(_) | GoalCanceled(_) =>
-      value.to_json()
+      value
   }
 }
 
@@ -926,12 +958,12 @@ let durable_shapes_verification_gate_corruption_reason : Array[
 /// in the array above.
 fn durable_guard_verification_gate_corruption_reason(
   value : @control.VerificationGateCorruptionReason,
-) -> Json {
+) -> @control.VerificationGateCorruptionReason {
   match value {
     VerificationDuplicateSlot
     | VerificationDuplicateReceipt
     | VerificationEvidenceMissing
-    | VerificationReceiptProtocolViolation => value.to_json()
+    | VerificationReceiptProtocolViolation => value
   }
 }
 
@@ -951,13 +983,13 @@ let durable_shapes_verification_gate_rejection_reason : Array[
 /// in the array above.
 fn durable_guard_verification_gate_rejection_reason(
   value : @control.VerificationGateRejectionReason,
-) -> Json {
+) -> @control.VerificationGateRejectionReason {
   match value {
     VerificationMissingSlot
     | VerificationMissingReceipt
     | VerificationOutcomeNotPassing
     | VerificationTreeChanged
-    | VerificationSessionNotCleanlyClosed => value.to_json()
+    | VerificationSessionNotCleanlyClosed => value
   }
 }
 
@@ -976,12 +1008,12 @@ let durable_shapes_verification_gate_stale_reason : Array[
 /// in the array above.
 fn durable_guard_verification_gate_stale_reason(
   value : @control.VerificationGateStaleReason,
-) -> Json {
+) -> @control.VerificationGateStaleReason {
   match value {
     VerificationStaleSubject
     | VerificationStaleSpec
     | VerificationStaleEnvironment
-    | VerificationStaleRuntime => value.to_json()
+    | VerificationStaleRuntime => value
   }
 }
 
@@ -1008,12 +1040,12 @@ let durable_shapes_verification_gate_observation : Array[
 /// in the array above.
 fn durable_guard_verification_gate_observation(
   value : @control.VerificationGateObservation,
-) -> Json {
+) -> @control.VerificationGateObservation {
   match value {
     VerificationGateValid(_)
     | VerificationGateStale(_)
     | VerificationGateRejected(_)
-    | VerificationGateCorrupt(_) => value.to_json()
+    | VerificationGateCorrupt(_) => value
   }
 }
 
@@ -1032,10 +1064,9 @@ let durable_shapes_goal_assurance_block_reason : Array[GoalAssuranceBlockReason]
 /// in the array above.
 fn durable_guard_goal_assurance_block_reason(
   value : GoalAssuranceBlockReason,
-) -> Json {
+) -> GoalAssuranceBlockReason {
   match value {
-    GoalAssuranceVerificationBlocked(_) | GoalAssuranceAuditBlocked(_) =>
-      value.to_json()
+    GoalAssuranceVerificationBlocked(_) | GoalAssuranceAuditBlocked(_) => value
   }
 }
 
@@ -1079,11 +1110,11 @@ let durable_shapes_harness_cursor_class : Array[@control.HarnessCursorClass] = [
 /// in the array above.
 fn durable_guard_harness_cursor_class(
   value : @control.HarnessCursorClass,
-) -> Json {
+) -> @control.HarnessCursorClass {
   match value {
     HarnessCursorNotResumable
     | HarnessCursorProviderEventId
-    | HarnessCursorTransition => value.to_json()
+    | HarnessCursorTransition => value
   }
 }
 
@@ -1101,9 +1132,9 @@ let durable_shapes_harness_terminal_observation : Array[
 /// in the array above.
 fn durable_guard_harness_terminal_observation(
   value : @control.HarnessTerminalObservation,
-) -> Json {
+) -> @control.HarnessTerminalObservation {
   match value {
-    HarnessCompleted | HarnessFailed | HarnessInterrupted => value.to_json()
+    HarnessCompleted | HarnessFailed | HarnessInterrupted => value
   }
 }
 
@@ -1129,7 +1160,7 @@ let durable_shapes_harness_session_lifecycle : Array[
 /// in the array above.
 fn durable_guard_harness_session_lifecycle(
   value : @control.HarnessSessionLifecycle,
-) -> Json {
+) -> @control.HarnessSessionLifecycle {
   match value {
     HarnessSessionPlanned
     | HarnessSessionAwaitingEvents
@@ -1137,7 +1168,7 @@ fn durable_guard_harness_session_lifecycle(
     | HarnessSessionTerminalObserved(_)
     | HarnessSessionIngestionClosedCleanly(_)
     | HarnessSessionProtocolViolated
-    | HarnessSessionRecoveryUncertain => value.to_json()
+    | HarnessSessionRecoveryUncertain => value
   }
 }
 
@@ -1185,12 +1216,12 @@ let durable_shapes_sandbox_lease_lifecycle : Array[
 /// in the array above.
 fn durable_guard_sandbox_lease_lifecycle(
   value : @control.SandboxLeaseLifecycle,
-) -> Json {
+) -> @control.SandboxLeaseLifecycle {
   match value {
     SandboxLeasePlanned
     | SandboxLeaseActive
     | SandboxLeaseReleased
-    | SandboxLeaseUncertain => value.to_json()
+    | SandboxLeaseUncertain => value
   }
 }
 
@@ -1224,13 +1255,13 @@ let durable_shapes_goal_assurance_effect_kind : Array[GoalAssuranceEffectKind] =
 /// in the array above.
 fn durable_guard_goal_assurance_effect_kind(
   value : GoalAssuranceEffectKind,
-) -> Json {
+) -> GoalAssuranceEffectKind {
   match value {
     PrepareGoalVerificationSandbox(_)
     | DispatchGoalVerification(_, _)
     | PrepareGoalAuditSandbox(_)
     | StartGoalAuditHarness(_)
-    | DispatchGoalAudit(_, _, _) => value.to_json()
+    | DispatchGoalAudit(_, _, _) => value
   }
 }
 
@@ -1250,13 +1281,13 @@ let durable_shapes_goal_assurance_effect_lifecycle : Array[
 /// in the array above.
 fn durable_guard_goal_assurance_effect_lifecycle(
   value : GoalAssuranceEffectLifecycle,
-) -> Json {
+) -> GoalAssuranceEffectLifecycle {
   match value {
     GoalAssuranceEffectPlanned
     | GoalAssuranceEffectMayHaveOccurred
     | GoalAssuranceEffectReceipted
     | GoalAssuranceEffectUncertain
-    | GoalAssuranceEffectAbandonedByCancellation => value.to_json()
+    | GoalAssuranceEffectAbandonedByCancellation => value
   }
 }
 
@@ -1296,12 +1327,12 @@ let durable_shapes_verification_outcome : Array[@control.VerificationOutcome] = 
 /// in the array above.
 fn durable_guard_verification_outcome(
   value : @control.VerificationOutcome,
-) -> Json {
+) -> @control.VerificationOutcome {
   match value {
     VerificationPassed
     | VerificationFailed
     | VerificationErrored
-    | VerificationInterrupted => value.to_json()
+    | VerificationInterrupted => value
   }
 }
 
@@ -1345,9 +1376,9 @@ let durable_shapes_harness_tool_disposition : Array[
 /// in the array above.
 fn durable_guard_harness_tool_disposition(
   value : @control.HarnessToolDisposition,
-) -> Json {
+) -> @control.HarnessToolDisposition {
   match value {
-    HarnessToolSucceeded | HarnessToolFailed => value.to_json()
+    HarnessToolSucceeded | HarnessToolFailed => value
   }
 }
 
@@ -1367,12 +1398,14 @@ let durable_shapes_harness_event_kind : Array[@control.HarnessEventKind] = [
 ///|
 /// Exhaustive: a new variant does not compile until it is listed here and
 /// in the array above.
-fn durable_guard_harness_event_kind(value : @control.HarnessEventKind) -> Json {
+fn durable_guard_harness_event_kind(
+  value : @control.HarnessEventKind,
+) -> @control.HarnessEventKind {
   match value {
     HarnessStarted
     | HarnessToolStarted(_)
     | HarnessToolFinished(_, _)
-    | HarnessTerminal(_) => value.to_json()
+    | HarnessTerminal(_) => value
   }
 }
 
@@ -1418,13 +1451,13 @@ let durable_shapes_goal_assurance_effect_observation : Array[
 /// in the array above.
 fn durable_guard_goal_assurance_effect_observation(
   value : GoalAssuranceEffectObservation,
-) -> Json {
+) -> GoalAssuranceEffectObservation {
   match value {
     GoalVerificationSandboxPrepared(_)
     | GoalVerificationCompleted(_)
     | GoalAuditSandboxPrepared(_)
     | GoalAuditHarnessStarted(_)
-    | GoalAuditCompleted(_, _, _) => value.to_json()
+    | GoalAuditCompleted(_, _, _) => value
   }
 }
 
@@ -1459,13 +1492,13 @@ let durable_shapes_take_failure_reason : Array[@control.TakeFailureReason] = [
 /// in the array above.
 fn durable_guard_take_failure_reason(
   value : @control.TakeFailureReason,
-) -> Json {
+) -> @control.TakeFailureReason {
   match value {
     TakeProviderFailed
     | TakeVerificationFailed
     | TakeAuditFindings
     | TakePolicyRejected
-    | TakeResourceLimit => value.to_json()
+    | TakeResourceLimit => value
   }
 }
 
@@ -1485,13 +1518,13 @@ let durable_shapes_take_uncertainty_reason : Array[
 /// in the array above.
 fn durable_guard_take_uncertainty_reason(
   value : @control.TakeUncertaintyReason,
-) -> Json {
+) -> @control.TakeUncertaintyReason {
   match value {
     TakeLeaseLost
     | TakeCursorGap
     | TakeEventConflict
     | TakeEffectUncertain
-    | TakeProtocolViolation => value.to_json()
+    | TakeProtocolViolation => value
   }
 }
 
@@ -1515,13 +1548,13 @@ let durable_shapes_take_terminal_disposition : Array[
 /// in the array above.
 fn durable_guard_take_terminal_disposition(
   value : @control.TakeTerminalDisposition,
-) -> Json {
+) -> @control.TakeTerminalDisposition {
   match value {
     TakeSucceeded
     | TakeFailed(_)
     | TakeInterrupted
     | TakeRecoveryUncertain(_)
-    | TakeCanceled => value.to_json()
+    | TakeCanceled => value
   }
 }
 
@@ -1539,13 +1572,15 @@ let durable_shapes_take_lifecycle : Array[@control.TakeLifecycle] = [
 ///|
 /// Exhaustive: a new variant does not compile until it is listed here and
 /// in the array above.
-fn durable_guard_take_lifecycle(value : @control.TakeLifecycle) -> Json {
+fn durable_guard_take_lifecycle(
+  value : @control.TakeLifecycle,
+) -> @control.TakeLifecycle {
   match value {
     TakePlanned
     | TakeLeased
     | TakeRunning
     | TakeResultRecorded(_)
-    | TakeTerminal(_) => value.to_json()
+    | TakeTerminal(_) => value
   }
 }
 
@@ -1569,13 +1604,15 @@ let durable_shapes_take_purpose : Array[@control.TakePurpose] = [
 ///|
 /// Exhaustive: a new variant does not compile until it is listed here and
 /// in the array above.
-fn durable_guard_take_purpose(value : @control.TakePurpose) -> Json {
+fn durable_guard_take_purpose(
+  value : @control.TakePurpose,
+) -> @control.TakePurpose {
   match value {
     Implementation(_, _)
     | PartVerification(_, _, _)
     | PartAudit(_, _, _)
     | GoalVerification(_, _, _)
-    | GoalAudit(_, _) => value.to_json()
+    | GoalAudit(_, _) => value
   }
 }
 
@@ -1616,7 +1653,9 @@ let durable_shapes_goal_assurance_stage : Array[GoalAssuranceStage] = [
 ///|
 /// Exhaustive: a new variant does not compile until it is listed here and
 /// in the array above.
-fn durable_guard_goal_assurance_stage(value : GoalAssuranceStage) -> Json {
+fn durable_guard_goal_assurance_stage(
+  value : GoalAssuranceStage,
+) -> GoalAssuranceStage {
   match value {
     GoalSealPlanned
     | GoalSealAuthorized
@@ -1628,7 +1667,7 @@ fn durable_guard_goal_assurance_stage(value : GoalAssuranceStage) -> Json {
     | GoalAudited
     | GoalAssuranceBlocked
     | GoalAssuranceRecoveryUncertain
-    | GoalAssuranceCanceled => value.to_json()
+    | GoalAssuranceCanceled => value
   }
 }
 
@@ -1714,13 +1753,13 @@ let durable_shapes_goal_branch_seal_failure_reason : Array[
 /// in the array above.
 fn durable_guard_goal_branch_seal_failure_reason(
   value : @control.GoalBranchSealFailureReason,
-) -> Json {
+) -> @control.GoalBranchSealFailureReason {
   match value {
     GoalBranchSealHeadDiverged
     | GoalBranchSealTreeDiverged
     | GoalBranchSealReceiptSetChanged
     | GoalBranchSealPolicyChanged
-    | GoalBranchSealWitnessConflict => value.to_json()
+    | GoalBranchSealWitnessConflict => value
   }
 }
 
@@ -1746,7 +1785,7 @@ let durable_shapes_goal_branch_seal_intent_lifecycle : Array[
 /// in the array above.
 fn durable_guard_goal_branch_seal_intent_lifecycle(
   value : @control.GoalBranchSealIntentLifecycle,
-) -> Json {
+) -> @control.GoalBranchSealIntentLifecycle {
   match value {
     GoalBranchSealPlanned
     | GoalBranchSealAuthorized
@@ -1754,7 +1793,7 @@ fn durable_guard_goal_branch_seal_intent_lifecycle(
     | GoalBranchSealed
     | GoalBranchSealIntegrityBlocked(_)
     | GoalBranchSealUncertain(_)
-    | GoalBranchSealAbandonedByCancellation => value.to_json()
+    | GoalBranchSealAbandonedByCancellation => value
   }
 }
 
@@ -1892,14 +1931,14 @@ let durable_shapes_goal_branch_init_lifecycle : Array[GoalBranchInitLifecycle] =
 /// in the array above.
 fn durable_guard_goal_branch_init_lifecycle(
   value : GoalBranchInitLifecycle,
-) -> Json {
+) -> GoalBranchInitLifecycle {
   match value {
     GoalBranchInitPlanned
     | GoalBranchInitAuthorized
     | GoalBranchInitReceipted
     | GoalBranchInitIntegrityBlocked
     | GoalBranchInitUncertain
-    | GoalBranchInitAbandonedByCancellation => value.to_json()
+    | GoalBranchInitAbandonedByCancellation => value
   }
 }
 
@@ -1947,7 +1986,9 @@ let durable_shapes_goal_cancellation_cause : Array[GoalCancellationCause] = [
 ///|
 /// Exhaustive: a new variant does not compile until it is listed here and
 /// in the array above.
-fn durable_guard_goal_cancellation_cause(value : GoalCancellationCause) -> Json {
+fn durable_guard_goal_cancellation_cause(
+  value : GoalCancellationCause,
+) -> GoalCancellationCause {
   match value {
     GoalCancellationUserRequested
     | GoalCancellationEvidenceOnlyCompleted(_, _)
@@ -1955,7 +1996,7 @@ fn durable_guard_goal_cancellation_cause(value : GoalCancellationCause) -> Json 
     | GoalCancellationAuditRepairFailed(_)
     | GoalCancellationVerificationRepairFailed(_)
     | GoalCancellationAutoMergeFailed(_)
-    | GoalCancellationWorkOrderStopped(_) => value.to_json()
+    | GoalCancellationWorkOrderStopped(_) => value
   }
 }
 
@@ -1976,9 +2017,11 @@ let durable_shapes_goal_completion_mode : Array[GoalCompletionMode] = [
 ///|
 /// Exhaustive: a new variant does not compile until it is listed here and
 /// in the array above.
-fn durable_guard_goal_completion_mode(value : GoalCompletionMode) -> Json {
+fn durable_guard_goal_completion_mode(
+  value : GoalCompletionMode,
+) -> GoalCompletionMode {
   match value {
-    GoalPublishable | GoalEvidenceOnly(_) => value.to_json()
+    GoalPublishable | GoalEvidenceOnly(_) => value
   }
 }
 
@@ -1998,7 +2041,9 @@ let durable_shapes_goal_execution_state : Array[GoalExecutionState] = [
 ///|
 /// Exhaustive: a new variant does not compile until it is listed here and
 /// in the array above.
-fn durable_guard_goal_execution_state(value : GoalExecutionState) -> Json {
+fn durable_guard_goal_execution_state(
+  value : GoalExecutionState,
+) -> GoalExecutionState {
   match value {
     GoalExecutionQueued
     | GoalExecutionRunning
@@ -2008,7 +2053,7 @@ fn durable_guard_goal_execution_state(value : GoalExecutionState) -> Json {
     | GoalExecutionBlocked
     | GoalExecutionCanceling
     | GoalExecutionSucceeded
-    | GoalExecutionCanceled => value.to_json()
+    | GoalExecutionCanceled => value
   }
 }
 
@@ -2035,12 +2080,12 @@ let durable_shapes_goal_input_reason : Array[GoalInputReason] = [
 ///|
 /// Exhaustive: a new variant does not compile until it is listed here and
 /// in the array above.
-fn durable_guard_goal_input_reason(value : GoalInputReason) -> Json {
+fn durable_guard_goal_input_reason(value : GoalInputReason) -> GoalInputReason {
   match value {
     GoalInputPublicationRemoteUnavailable
     | GoalInputFinalizationNeedsUserInput
     | GoalInputFinalizationDrifted
-    | GoalInputFinalizationAmbiguous => value.to_json()
+    | GoalInputFinalizationAmbiguous => value
   }
 }
 
@@ -2062,11 +2107,11 @@ let durable_shapes_goal_pause_reason : Array[GoalPauseReason] = [
 ///|
 /// Exhaustive: a new variant does not compile until it is listed here and
 /// in the array above.
-fn durable_guard_goal_pause_reason(value : GoalPauseReason) -> Json {
+fn durable_guard_goal_pause_reason(value : GoalPauseReason) -> GoalPauseReason {
   match value {
     GoalPauseRecoveryUncertain
     | GoalPauseRequested
-    | GoalPauseAwaitingAnswer(_) => value.to_json()
+    | GoalPauseAwaitingAnswer(_) => value
   }
 }
 
@@ -2087,12 +2132,14 @@ let durable_shapes_goal_policy_change : Array[GoalPolicyChange] = [
 ///|
 /// Exhaustive: a new variant does not compile until it is listed here and
 /// in the array above.
-fn durable_guard_goal_policy_change(value : GoalPolicyChange) -> Json {
+fn durable_guard_goal_policy_change(
+  value : GoalPolicyChange,
+) -> GoalPolicyChange {
   match value {
     GoalPolicyInitial
     | GoalPolicySetMaximumParallelParts(_)
     | GoalPolicyPause
-    | GoalPolicyResume => value.to_json()
+    | GoalPolicyResume => value
   }
 }
 
@@ -2127,12 +2174,12 @@ let durable_shapes_goal_source_claim_conflict_reason : Array[
 /// in the array above.
 fn durable_guard_goal_source_claim_conflict_reason(
   value : GoalSourceClaimConflictReason,
-) -> Json {
+) -> GoalSourceClaimConflictReason {
   match value {
     GoalSourceClaimContentDrift
     | GoalSourceClaimOwnedByAnotherActor
     | GoalSourceClaimClosedBeforeExecution
-    | GoalSourceClaimAmbiguous => value.to_json()
+    | GoalSourceClaimAmbiguous => value
   }
 }
 
@@ -2156,7 +2203,7 @@ let durable_shapes_goal_source_claim_lifecycle : Array[GoalSourceClaimLifecycle]
 /// in the array above.
 fn durable_guard_goal_source_claim_lifecycle(
   value : GoalSourceClaimLifecycle,
-) -> Json {
+) -> GoalSourceClaimLifecycle {
   match value {
     GoalSourceClaimPlanned
     | GoalSourceClaimAuthorized
@@ -2164,7 +2211,7 @@ fn durable_guard_goal_source_claim_lifecycle(
     | GoalSourceClaimConflict(_)
     | GoalSourceReleaseAuthorized
     | GoalSourceReleased
-    | GoalSourceReleaseConflict(_) => value.to_json()
+    | GoalSourceReleaseConflict(_) => value
   }
 }
 
@@ -2237,10 +2284,9 @@ let durable_shapes_work_order_cutoff_policy : Array[WorkOrderCutoffPolicy] = [
 /// in the array above.
 fn durable_guard_work_order_cutoff_policy(
   value : WorkOrderCutoffPolicy,
-) -> Json {
+) -> WorkOrderCutoffPolicy {
   match value {
-    WorkOrderDrainToSafeBoundary | WorkOrderInstallCancellationCutoff =>
-      value.to_json()
+    WorkOrderDrainToSafeBoundary | WorkOrderInstallCancellationCutoff => value
   }
 }
 
@@ -2253,9 +2299,11 @@ let durable_shapes_work_order_quota_basis : Array[WorkOrderQuotaBasis] = [
 ///|
 /// Exhaustive: a new variant does not compile until it is listed here and
 /// in the array above.
-fn durable_guard_work_order_quota_basis(value : WorkOrderQuotaBasis) -> Json {
+fn durable_guard_work_order_quota_basis(
+  value : WorkOrderQuotaBasis,
+) -> WorkOrderQuotaBasis {
   match value {
-    WorkOrderPrimaryTargets | WorkOrderDependencyClosure => value.to_json()
+    WorkOrderPrimaryTargets | WorkOrderDependencyClosure => value
   }
 }
 
@@ -2277,14 +2325,16 @@ let durable_shapes_work_order_stop_policy : Array[WorkOrderStopPolicy] = [
 ///|
 /// Exhaustive: a new variant does not compile until it is listed here and
 /// in the array above.
-fn durable_guard_work_order_stop_policy(value : WorkOrderStopPolicy) -> Json {
+fn durable_guard_work_order_stop_policy(
+  value : WorkOrderStopPolicy,
+) -> WorkOrderStopPolicy {
   match value {
     WorkOrderStopAtDeadline(_)
     | WorkOrderStopAtDeliveredQuota(_, _)
     | WorkOrderStopWhenNoEligibleWork(_)
     | WorkOrderStopWhenNoFurtherFindings(_)
     | WorkOrderStopAtSafetyCeiling(_)
-    | WorkOrderStopAtFirstOf(_) => value.to_json()
+    | WorkOrderStopAtFirstOf(_) => value
   }
 }
 
@@ -2304,14 +2354,16 @@ let durable_shapes_work_order_stop_reason : Array[WorkOrderStopReason] = [
 ///|
 /// Exhaustive: a new variant does not compile until it is listed here and
 /// in the array above.
-fn durable_guard_work_order_stop_reason(value : WorkOrderStopReason) -> Json {
+fn durable_guard_work_order_stop_reason(
+  value : WorkOrderStopReason,
+) -> WorkOrderStopReason {
   match value {
     WorkOrderDeadlineReached
     | WorkOrderQuotaSatisfied(_, _)
     | WorkOrderNoEligibleWorkRemains
     | WorkOrderNoFurtherFindingsRemain
     | WorkOrderSafetyCeilingReached
-    | WorkOrderFatalIntegrityStop(_) => value.to_json()
+    | WorkOrderFatalIntegrityStop(_) => value
   }
 }
 
@@ -2371,11 +2423,11 @@ let durable_shapes_pull_request_readiness_drift_reason : Array[
 /// in the array above.
 fn durable_guard_pull_request_readiness_drift_reason(
   value : PullRequestReadinessDriftReason,
-) -> Json {
+) -> PullRequestReadinessDriftReason {
   match value {
     PullRequestCanonicalIdentityMissing
     | PullRequestCanonicalIdentityChanged
-    | PullRequestHeadOrBaseChanged => value.to_json()
+    | PullRequestHeadOrBaseChanged => value
   }
 }
 
@@ -2392,10 +2444,9 @@ let durable_shapes_pull_request_readiness_needs_input_reason : Array[
 /// in the array above.
 fn durable_guard_pull_request_readiness_needs_input_reason(
   value : PullRequestReadinessNeedsInputReason,
-) -> Json {
+) -> PullRequestReadinessNeedsInputReason {
   match value {
-    PullRequestNotOpen | PullRequestReadinessObservationUncertain =>
-      value.to_json()
+    PullRequestNotOpen | PullRequestReadinessObservationUncertain => value
   }
 }
 
@@ -2421,7 +2472,7 @@ let durable_shapes_pull_request_readiness_decision : Array[
 /// in the array above.
 fn durable_guard_pull_request_readiness_decision(
   value : PullRequestReadinessDecision,
-) -> Json {
+) -> PullRequestReadinessDecision {
   match value {
     PullRequestReady
     | PullRequestAwaitingReview
@@ -2429,7 +2480,7 @@ fn durable_guard_pull_request_readiness_decision(
     | PullRequestDeliveryFailed(_)
     | PullRequestReadinessNeedsInput(_)
     | PullRequestReadinessDrift(_)
-    | PullRequestReadinessAmbiguous => value.to_json()
+    | PullRequestReadinessAmbiguous => value
   }
 }
 
@@ -2455,10 +2506,10 @@ let durable_shapes_remote_pull_request_state : Array[RemotePullRequestState] = [
 /// in the array above.
 fn durable_guard_remote_pull_request_state(
   value : RemotePullRequestState,
-) -> Json {
+) -> RemotePullRequestState {
   match value {
     RemotePullRequestOpen | RemotePullRequestClosed | RemotePullRequestMerged =>
-      value.to_json()
+      value
   }
 }
 
@@ -2522,9 +2573,11 @@ let durable_shapes_goal_selection_policy : Array[GoalSelectionPolicy] = [
 ///|
 /// Exhaustive: a new variant does not compile until it is listed here and
 /// in the array above.
-fn durable_guard_goal_selection_policy(value : GoalSelectionPolicy) -> Json {
+fn durable_guard_goal_selection_policy(
+  value : GoalSelectionPolicy,
+) -> GoalSelectionPolicy {
   match value {
-    ExactClosure => value.to_json()
+    ExactClosure => value
   }
 }
 
@@ -2584,14 +2637,14 @@ let durable_shapes_pull_request_cancellation_state : Array[
 /// in the array above.
 fn durable_guard_pull_request_cancellation_state(
   value : PullRequestCancellationState,
-) -> Json {
+) -> PullRequestCancellationState {
   match value {
     PullRequestCancellationNotRequested
     | PullRequestCancellationPlanned
     | PullRequestNeutralizeAuthorized
     | PullRequestNeutralizeMayHaveBeenIssued
     | PullRequestNeutralized
-    | PullRequestSupersededByMerge => value.to_json()
+    | PullRequestSupersededByMerge => value
   }
 }
 
@@ -2608,9 +2661,9 @@ let durable_shapes_pull_request_delivery_mode : Array[
 /// in the array above.
 fn durable_guard_pull_request_delivery_mode(
   value : @types.PullRequestDeliveryMode,
-) -> Json {
+) -> @types.PullRequestDeliveryMode {
   match value {
-    PullRequestReviewOnly | PullRequestAutoMerge => value.to_json()
+    PullRequestReviewOnly | PullRequestAutoMerge => value
   }
 }
 
@@ -2628,10 +2681,10 @@ let durable_shapes_pull_request_merge_method : Array[
 /// in the array above.
 fn durable_guard_pull_request_merge_method(
   value : @types.PullRequestMergeMethod,
-) -> Json {
+) -> @types.PullRequestMergeMethod {
   match value {
     PullRequestSquashMerge | PullRequestRebaseMerge | PullRequestMergeCommit =>
-      value.to_json()
+      value
   }
 }
 
@@ -2668,14 +2721,14 @@ let durable_shapes_pull_request_needs_input_reason : Array[
 /// in the array above.
 fn durable_guard_pull_request_needs_input_reason(
   value : PullRequestNeedsInputReason,
-) -> Json {
+) -> PullRequestNeedsInputReason {
   match value {
     PullRequestPossibleExisting
     | PullRequestAmbiguousIdentity
     | PullRequestRemoteClosed
     | PullRequestRemoteDrift
     | PullRequestIdentityMarkerMissing
-    | PullRequestDraftUnderAutoMerge => value.to_json()
+    | PullRequestDraftUnderAutoMerge => value
   }
 }
 
@@ -2697,7 +2750,7 @@ let durable_shapes_pull_request_intent_state : Array[PullRequestIntentState] = [
 /// in the array above.
 fn durable_guard_pull_request_intent_state(
   value : PullRequestIntentState,
-) -> Json {
+) -> PullRequestIntentState {
   match value {
     PullRequestPlanned
     | PullRequestAuthorized
@@ -2705,7 +2758,7 @@ fn durable_guard_pull_request_intent_state(
     | PullRequestReceipted
     | PullRequestNeedsInput(_)
     | PullRequestRemoteCreateUncertain
-    | PullRequestAbandonedByCancellation => value.to_json()
+    | PullRequestAbandonedByCancellation => value
   }
 }
 
@@ -2724,14 +2777,14 @@ let durable_shapes_pull_request_merge_state : Array[PullRequestMergeState] = [
 /// in the array above.
 fn durable_guard_pull_request_merge_state(
   value : PullRequestMergeState,
-) -> Json {
+) -> PullRequestMergeState {
   match value {
     PullRequestMergeNotRequested
     | PullRequestMergePlanned
     | PullRequestMergeAuthorized
     | PullRequestMergeMayHaveBeenIssued
     | PullRequestMergeEnabled
-    | PullRequestMergeRejected(_) => value.to_json()
+    | PullRequestMergeRejected(_) => value
   }
 }
 
@@ -2743,9 +2796,11 @@ let durable_shapes_pull_request_provider : Array[PullRequestProvider] = [
 ///|
 /// Exhaustive: a new variant does not compile until it is listed here and
 /// in the array above.
-fn durable_guard_pull_request_provider(value : PullRequestProvider) -> Json {
+fn durable_guard_pull_request_provider(
+  value : PullRequestProvider,
+) -> PullRequestProvider {
   match value {
-    GitHubPullRequestProvider => value.to_json()
+    GitHubPullRequestProvider => value
   }
 }
 
@@ -2786,9 +2841,9 @@ let durable_shapes_pull_request_marker_state : Array[PullRequestMarkerState] = [
 /// in the array above.
 fn durable_guard_pull_request_marker_state(
   value : PullRequestMarkerState,
-) -> Json {
+) -> PullRequestMarkerState {
   match value {
-    PullRequestMarkerExact | PullRequestMarkerMissing => value.to_json()
+    PullRequestMarkerExact | PullRequestMarkerMissing => value
   }
 }
 
@@ -2806,9 +2861,9 @@ let durable_shapes_pull_request_receipt_origin : Array[PullRequestReceiptOrigin]
 /// in the array above.
 fn durable_guard_pull_request_receipt_origin(
   value : PullRequestReceiptOrigin,
-) -> Json {
+) -> PullRequestReceiptOrigin {
   match value {
-    PullRequestCreated | PullRequestAdopted => value.to_json()
+    PullRequestCreated | PullRequestAdopted => value
   }
 }
 
@@ -2862,9 +2917,11 @@ let durable_shapes_goal_selection_outcome : Array[GoalSelectionOutcome] = [
 ///|
 /// Exhaustive: a new variant does not compile until it is listed here and
 /// in the array above.
-fn durable_guard_goal_selection_outcome(value : GoalSelectionOutcome) -> Json {
+fn durable_guard_goal_selection_outcome(
+  value : GoalSelectionOutcome,
+) -> GoalSelectionOutcome {
   match value {
-    GoalSelectionAccepted | GoalSelectionRejected => value.to_json()
+    GoalSelectionAccepted | GoalSelectionRejected => value
   }
 }
 
@@ -2887,7 +2944,7 @@ let durable_shapes_selection_rejection_reason : Array[SelectionRejectionReason] 
 /// in the array above.
 fn durable_guard_selection_rejection_reason(
   value : SelectionRejectionReason,
-) -> Json {
+) -> SelectionRejectionReason {
   match value {
     SelectionNotFound
     | SelectionDuplicate
@@ -2898,7 +2955,7 @@ fn durable_guard_selection_rejection_reason(
     | SelectionAmbiguous
     | SelectionInvalidTaskContract
     | SelectionInvalidMutationDeclaration
-    | SelectionPolicyExcluded => value.to_json()
+    | SelectionPolicyExcluded => value
   }
 }
 
@@ -2993,7 +3050,7 @@ let durable_shapes_integration_intent_lifecycle : Array[
 /// in the array above.
 fn durable_guard_integration_intent_lifecycle(
   value : @control.IntegrationIntentLifecycle,
-) -> Json {
+) -> @control.IntegrationIntentLifecycle {
   match value {
     IntegrationPlanned
     | IntegrationPrepared
@@ -3002,7 +3059,7 @@ fn durable_guard_integration_intent_lifecycle(
     | IntegrationConflict
     | IntegrationIntegrityBlocked
     | IntegrationUncertain
-    | IntegrationAbandonedByCancellation => value.to_json()
+    | IntegrationAbandonedByCancellation => value
   }
 }
 
@@ -3014,9 +3071,11 @@ let durable_shapes_promotion_strategy : Array[@control.PromotionStrategy] = [
 ///|
 /// Exhaustive: a new variant does not compile until it is listed here and
 /// in the array above.
-fn durable_guard_promotion_strategy(value : @control.PromotionStrategy) -> Json {
+fn durable_guard_promotion_strategy(
+  value : @control.PromotionStrategy,
+) -> @control.PromotionStrategy {
   match value {
-    NoFastForwardThreeWayV1 => value.to_json()
+    NoFastForwardThreeWayV1 => value
   }
 }
 
@@ -3058,12 +3117,12 @@ let durable_shapes_integration_witness_observation : Array[
 /// in the array above.
 fn durable_guard_integration_witness_observation(
   value : @control.IntegrationWitnessObservation,
-) -> Json {
+) -> @control.IntegrationWitnessObservation {
   match value {
     IntegrationWitnessApplied(_, _)
     | IntegrationWitnessNotApplied(_)
     | IntegrationWitnessDiverged
-    | IntegrationWitnessIntegrityError => value.to_json()
+    | IntegrationWitnessIntegrityError => value
   }
 }
 
@@ -3099,12 +3158,12 @@ let durable_shapes_provider_availability : Array[@control.ProviderAvailability] 
 /// in the array above.
 fn durable_guard_provider_availability(
   value : @control.ProviderAvailability,
-) -> Json {
+) -> @control.ProviderAvailability {
   match value {
     ProviderAvailable
     | ProviderUnavailable
     | ProviderAllowanceExhausted(_)
-    | ProviderRetryAfter(_) => value.to_json()
+    | ProviderRetryAfter(_) => value
   }
 }
 
@@ -3176,7 +3235,7 @@ let durable_shapes_part_effect_kind : Array[PartEffectKind] = [
 ///|
 /// Exhaustive: a new variant does not compile until it is listed here and
 /// in the array above.
-fn durable_guard_part_effect_kind(value : PartEffectKind) -> Json {
+fn durable_guard_part_effect_kind(value : PartEffectKind) -> PartEffectKind {
   match value {
     PrepareImplementationSandbox(_)
     | PrepareImplementationCommand(_)
@@ -3190,7 +3249,7 @@ fn durable_guard_part_effect_kind(value : PartEffectKind) -> Json {
     | StartAuditHarness(_, _)
     | DispatchAudit(_, _, _)
     | GeneratePromotion(_)
-    | ApplyIntegration(_, _) => value.to_json()
+    | ApplyIntegration(_, _) => value
   }
 }
 
@@ -3206,13 +3265,15 @@ let durable_shapes_part_effect_lifecycle : Array[PartEffectLifecycle] = [
 ///|
 /// Exhaustive: a new variant does not compile until it is listed here and
 /// in the array above.
-fn durable_guard_part_effect_lifecycle(value : PartEffectLifecycle) -> Json {
+fn durable_guard_part_effect_lifecycle(
+  value : PartEffectLifecycle,
+) -> PartEffectLifecycle {
   match value {
     PartEffectPlanned
     | PartEffectMayHaveOccurred
     | PartEffectReceipted
     | PartEffectUncertain
-    | PartEffectAbandonedByCancellation => value.to_json()
+    | PartEffectAbandonedByCancellation => value
   }
 }
 
@@ -3294,7 +3355,9 @@ let durable_shapes_part_effect_observation : Array[PartEffectObservation] = [
 ///|
 /// Exhaustive: a new variant does not compile until it is listed here and
 /// in the array above.
-fn durable_guard_part_effect_observation(value : PartEffectObservation) -> Json {
+fn durable_guard_part_effect_observation(
+  value : PartEffectObservation,
+) -> PartEffectObservation {
   match value {
     ImplementationSandboxPrepared(_)
     | ImplementationCommandPrepared(_)
@@ -3309,7 +3372,7 @@ fn durable_guard_part_effect_observation(value : PartEffectObservation) -> Json 
     | AuditCompleted(_, _, _)
     | PromotionGenerated(_)
     | PromotionConflictObserved(_)
-    | IntegrationWitnessObserved(_) => value.to_json()
+    | IntegrationWitnessObserved(_) => value
   }
 }
 
@@ -3369,7 +3432,9 @@ let durable_shapes_part_workflow_stage : Array[PartWorkflowStage] = [
 ///|
 /// Exhaustive: a new variant does not compile until it is listed here and
 /// in the array above.
-fn durable_guard_part_workflow_stage(value : PartWorkflowStage) -> Json {
+fn durable_guard_part_workflow_stage(
+  value : PartWorkflowStage,
+) -> PartWorkflowStage {
   match value {
     PartAccepted
     | PartImplementationSandboxPrepared
@@ -3390,7 +3455,7 @@ fn durable_guard_part_workflow_stage(value : PartWorkflowStage) -> Json {
     | PartIntegrated
     | PartCanceled
     | PartBlocked
-    | PartRecoveryUncertain => value.to_json()
+    | PartRecoveryUncertain => value
   }
 }
 
@@ -3499,7 +3564,7 @@ let durable_shapes_process_execution_disposition : Array[
 /// in the array above.
 fn durable_guard_process_execution_disposition(
   value : @sandbox.ProcessExecutionDisposition,
-) -> Json {
+) -> @sandbox.ProcessExecutionDisposition {
   match value {
     ProcessStartPlanned
     | ProcessStartMayHaveOccurred
@@ -3508,7 +3573,7 @@ fn durable_guard_process_execution_disposition(
     | ProcessLimitExceeded
     | ProcessInterrupted
     | ProcessSandboxLost
-    | ProcessStartUncertain => value.to_json()
+    | ProcessStartUncertain => value
   }
 }
 
@@ -3542,11 +3607,11 @@ let durable_shapes_sandbox_process_authority : Array[
 /// in the array above.
 fn durable_guard_sandbox_process_authority(
   value : @sandbox.SandboxProcessAuthority,
-) -> Json {
+) -> @sandbox.SandboxProcessAuthority {
   match value {
     SandboxImplementationTool(_, _)
     | SandboxVerificationTool(_, _, _)
-    | SandboxAuditTool(_, _) => value.to_json()
+    | SandboxAuditTool(_, _) => value
   }
 }
 
@@ -3581,820 +3646,781 @@ let durable_shape_process_execution : @sandbox.ProcessExecution = {
 /// a shape change there leaks artifacts rather than wedging a decode — not
 /// grounds to destroy the store. `@storage.ArtifactProvenance` is never
 /// persisted at all; it is returned in an adoption receipt and dropped.
-fn durable_shape_table() -> Array[(String, Array[Json])] {
+fn durable_shape_table() -> Array[DurableShapeEntry] {
   [
-    ("AcceptedGoalPart", [durable_shape_accepted_goal_part.to_json()]),
-    ("ArtifactReference", [durable_shape_artifact_reference.to_json()]),
-    (
+    durable_shape_entry("AcceptedGoalPart", [durable_shape_accepted_goal_part]),
+    durable_shape_entry("ArtifactReference", [durable_shape_artifact_reference]),
+    durable_shape_entry(
       "AuditGateCorruptionReason",
       durable_shapes_audit_gate_corruption_reason.map(
         durable_guard_audit_gate_corruption_reason,
       ),
     ),
-    (
+    durable_shape_entry(
       "AuditGateObservation",
       durable_shapes_audit_gate_observation.map(
         durable_guard_audit_gate_observation,
       ),
     ),
-    (
+    durable_shape_entry(
       "AuditGateRejectionReason",
       durable_shapes_audit_gate_rejection_reason.map(
         durable_guard_audit_gate_rejection_reason,
       ),
     ),
-    (
+    durable_shape_entry(
       "AuditGateStaleReason",
       durable_shapes_audit_gate_stale_reason.map(
         durable_guard_audit_gate_stale_reason,
       ),
     ),
-    (
+    durable_shape_entry(
       "AuditOutcome",
       durable_shapes_audit_outcome.map(durable_guard_audit_outcome),
     ),
-    ("AuditReceipt", [durable_shape_audit_receipt.to_json()]),
-    ("AuditRepairReference", [durable_shape_audit_repair_reference.to_json()]),
-    (
+    durable_shape_entry("AuditReceipt", [durable_shape_audit_receipt]),
+    durable_shape_entry("AuditRepairReference", [
+      durable_shape_audit_repair_reference,
+    ]),
+    durable_shape_entry(
       "AuditRepairScope",
       durable_shapes_audit_repair_scope.map(durable_guard_audit_repair_scope),
     ),
-    ("AuditResult", [durable_shape_audit_result.to_json()]),
-    ("AuditResultId", [durable_shape_audit_result_id.to_json()]),
-    ("AuditSubmission", [durable_shape_audit_submission.to_json()]),
-    (
-      "BranchPublicationIntent",
-      [durable_shape_branch_publication_intent.to_json()],
-    ),
-    (
-      "BranchPublicationIntentId",
-      [durable_shape_branch_publication_intent_id.to_json()],
-    ),
-    (
-      "BranchPublicationReceipt",
-      [durable_shape_branch_publication_receipt.to_json()],
-    ),
-    (
+    durable_shape_entry("AuditResult", [durable_shape_audit_result]),
+    durable_shape_entry("AuditResultId", [durable_shape_audit_result_id]),
+    durable_shape_entry("AuditSubmission", [durable_shape_audit_submission]),
+    durable_shape_entry("BranchPublicationIntent", [
+      durable_shape_branch_publication_intent,
+    ]),
+    durable_shape_entry("BranchPublicationIntentId", [
+      durable_shape_branch_publication_intent_id,
+    ]),
+    durable_shape_entry("BranchPublicationReceipt", [
+      durable_shape_branch_publication_receipt,
+    ]),
+    durable_shape_entry(
       "BranchPublicationReceiptOrigin",
       durable_shapes_branch_publication_receipt_origin.map(
         durable_guard_branch_publication_receipt_origin,
       ),
     ),
-    (
+    durable_shape_entry(
       "BranchPublicationState",
       durable_shapes_branch_publication_state.map(
         durable_guard_branch_publication_state,
       ),
     ),
-    ("CancellationSummaryId", [durable_shape_cancellation_summary_id.to_json()]),
-    ("CandidateCommit", [durable_shape_candidate_commit.to_json()]),
-    ("CandidateId", [durable_shape_candidate_id.to_json()]),
-    ("CandidatePathEvidence", [durable_shape_candidate_path_evidence.to_json()]),
-    (
+    durable_shape_entry("CancellationSummaryId", [
+      durable_shape_cancellation_summary_id,
+    ]),
+    durable_shape_entry("CandidateCommit", [durable_shape_candidate_commit]),
+    durable_shape_entry("CandidateId", [durable_shape_candidate_id]),
+    durable_shape_entry("CandidatePathEvidence", [
+      durable_shape_candidate_path_evidence,
+    ]),
+    durable_shape_entry(
       "CommandExecutionSubject",
       durable_shapes_command_execution_subject.map(
         durable_guard_command_execution_subject,
       ),
     ),
-    (
-      "CommandPreparationProvenance",
-      [durable_shape_command_preparation_provenance.to_json()],
+    durable_shape_entry("CommandPreparationProvenance", [
+      durable_shape_command_preparation_provenance,
+    ]),
+    durable_shape_entry(
+      "CommandRole",
+      durable_shapes_command_role.map(durable_guard_command_role),
     ),
-    ("CommandRole", durable_shapes_command_role.map(durable_guard_command_role)),
-    ("ConductorPartProposal", [durable_shape_conductor_part_proposal.to_json()]),
-    ("Digest", [durable_shape_digest.to_json()]),
-    ("EffectId", [durable_shape_effect_id.to_json()]),
-    (
+    durable_shape_entry("ConductorPartProposal", [
+      durable_shape_conductor_part_proposal,
+    ]),
+    durable_shape_entry("Digest", [durable_shape_digest]),
+    durable_shape_entry("EffectId", [durable_shape_effect_id]),
+    durable_shape_entry(
       "EventRedactionState",
       durable_shapes_event_redaction_state.map(
         durable_guard_event_redaction_state,
       ),
     ),
-    ("EventSequence", [durable_shape_event_sequence.to_json()]),
-    (
+    durable_shape_entry("EventSequence", [durable_shape_event_sequence]),
+    durable_shape_entry(
       "EventSourcePosition",
       durable_shapes_event_source_position.map(
         durable_guard_event_source_position,
       ),
     ),
-    ("FencingEpoch", [durable_shape_fencing_epoch.to_json()]),
-    ("FinalizationId", [durable_shape_finalization_id.to_json()]),
-    ("GitOid", [durable_shape_git_oid.to_json()]),
-    ("GitRefName", [durable_shape_git_ref_name.to_json()]),
-    ("Goal", [durable_shape_goal.to_json()]),
-    (
+    durable_shape_entry("FencingEpoch", [durable_shape_fencing_epoch]),
+    durable_shape_entry("FinalizationId", [durable_shape_finalization_id]),
+    durable_shape_entry("GitOid", [durable_shape_git_oid]),
+    durable_shape_entry("GitRefName", [durable_shape_git_ref_name]),
+    durable_shape_entry("Goal", [durable_shape_goal]),
+    durable_shape_entry(
       "GoalActiveCondition",
       durable_shapes_goal_active_condition.map(
         durable_guard_goal_active_condition,
       ),
     ),
-    (
+    durable_shape_entry(
       "GoalAssuranceBlockReason",
       durable_shapes_goal_assurance_block_reason.map(
         durable_guard_goal_assurance_block_reason,
       ),
     ),
-    (
-      "GoalAssuranceEffectIntent",
-      [durable_shape_goal_assurance_effect_intent.to_json()],
-    ),
-    (
+    durable_shape_entry("GoalAssuranceEffectIntent", [
+      durable_shape_goal_assurance_effect_intent,
+    ]),
+    durable_shape_entry(
       "GoalAssuranceEffectKind",
       durable_shapes_goal_assurance_effect_kind.map(
         durable_guard_goal_assurance_effect_kind,
       ),
     ),
-    (
+    durable_shape_entry(
       "GoalAssuranceEffectLifecycle",
       durable_shapes_goal_assurance_effect_lifecycle.map(
         durable_guard_goal_assurance_effect_lifecycle,
       ),
     ),
-    (
+    durable_shape_entry(
       "GoalAssuranceEffectObservation",
       durable_shapes_goal_assurance_effect_observation.map(
         durable_guard_goal_assurance_effect_observation,
       ),
     ),
-    (
-      "GoalAssuranceEffectReceipt",
-      [durable_shape_goal_assurance_effect_receipt.to_json()],
-    ),
-    (
-      "GoalAssuranceEffectWitness",
-      [durable_shape_goal_assurance_effect_witness.to_json()],
-    ),
-    (
-      "GoalAssuranceIdentityPlan",
-      [durable_shape_goal_assurance_identity_plan.to_json()],
-    ),
-    ("GoalAssuranceRecord", [durable_shape_goal_assurance_record.to_json()]),
-    (
+    durable_shape_entry("GoalAssuranceEffectReceipt", [
+      durable_shape_goal_assurance_effect_receipt,
+    ]),
+    durable_shape_entry("GoalAssuranceEffectWitness", [
+      durable_shape_goal_assurance_effect_witness,
+    ]),
+    durable_shape_entry("GoalAssuranceIdentityPlan", [
+      durable_shape_goal_assurance_identity_plan,
+    ]),
+    durable_shape_entry("GoalAssuranceRecord", [
+      durable_shape_goal_assurance_record,
+    ]),
+    durable_shape_entry(
       "GoalAssuranceStage",
       durable_shapes_goal_assurance_stage.map(
         durable_guard_goal_assurance_stage,
       ),
     ),
-    ("GoalAuditReceipt", [durable_shape_goal_audit_receipt.to_json()]),
-    ("GoalAuditResult", [durable_shape_goal_audit_result.to_json()]),
-    ("GoalAuditSubject", [durable_shape_goal_audit_subject.to_json()]),
-    ("GoalAuditSubmission", [durable_shape_goal_audit_submission.to_json()]),
-    (
-      "GoalBranchInitIntentId",
-      [durable_shape_goal_branch_init_intent_id.to_json()],
-    ),
-    (
+    durable_shape_entry("GoalAuditReceipt", [durable_shape_goal_audit_receipt]),
+    durable_shape_entry("GoalAuditResult", [durable_shape_goal_audit_result]),
+    durable_shape_entry("GoalAuditSubject", [durable_shape_goal_audit_subject]),
+    durable_shape_entry("GoalAuditSubmission", [
+      durable_shape_goal_audit_submission,
+    ]),
+    durable_shape_entry("GoalBranchInitIntentId", [
+      durable_shape_goal_branch_init_intent_id,
+    ]),
+    durable_shape_entry(
       "GoalBranchInitLifecycle",
       durable_shapes_goal_branch_init_lifecycle.map(
         durable_guard_goal_branch_init_lifecycle,
       ),
     ),
-    (
-      "GoalBranchInitReceipt",
-      [durable_shape_goal_branch_init_receipt.to_json()],
-    ),
-    (
-      "GoalBranchInitialization",
-      [durable_shape_goal_branch_initialization.to_json()],
-    ),
-    ("GoalBranchSeal", [durable_shape_goal_branch_seal.to_json()]),
-    (
+    durable_shape_entry("GoalBranchInitReceipt", [
+      durable_shape_goal_branch_init_receipt,
+    ]),
+    durable_shape_entry("GoalBranchInitialization", [
+      durable_shape_goal_branch_initialization,
+    ]),
+    durable_shape_entry("GoalBranchSeal", [durable_shape_goal_branch_seal]),
+    durable_shape_entry(
       "GoalBranchSealFailureReason",
       durable_shapes_goal_branch_seal_failure_reason.map(
         durable_guard_goal_branch_seal_failure_reason,
       ),
     ),
-    ("GoalBranchSealId", [durable_shape_goal_branch_seal_id.to_json()]),
-    ("GoalBranchSealIntent", [durable_shape_goal_branch_seal_intent.to_json()]),
-    (
-      "GoalBranchSealIntentId",
-      [durable_shape_goal_branch_seal_intent_id.to_json()],
-    ),
-    (
+    durable_shape_entry("GoalBranchSealId", [durable_shape_goal_branch_seal_id]),
+    durable_shape_entry("GoalBranchSealIntent", [
+      durable_shape_goal_branch_seal_intent,
+    ]),
+    durable_shape_entry("GoalBranchSealIntentId", [
+      durable_shape_goal_branch_seal_intent_id,
+    ]),
+    durable_shape_entry(
       "GoalBranchSealIntentLifecycle",
       durable_shapes_goal_branch_seal_intent_lifecycle.map(
         durable_guard_goal_branch_seal_intent_lifecycle,
       ),
     ),
-    (
+    durable_shape_entry(
       "GoalCancellationCause",
       durable_shapes_goal_cancellation_cause.map(
         durable_guard_goal_cancellation_cause,
       ),
     ),
-    (
-      "GoalCancellationRequest",
-      [durable_shape_goal_cancellation_request.to_json()],
-    ),
-    (
+    durable_shape_entry("GoalCancellationRequest", [
+      durable_shape_goal_cancellation_request,
+    ]),
+    durable_shape_entry(
       "GoalCompletionMode",
       durable_shapes_goal_completion_mode.map(
         durable_guard_goal_completion_mode,
       ),
     ),
-    ("GoalExecutionRecord", [durable_shape_goal_execution_record.to_json()]),
-    (
+    durable_shape_entry("GoalExecutionRecord", [
+      durable_shape_goal_execution_record,
+    ]),
+    durable_shape_entry(
       "GoalExecutionState",
       durable_shapes_goal_execution_state.map(
         durable_guard_goal_execution_state,
       ),
     ),
-    (
-      "GoalFinalizationRecord",
-      [durable_shape_goal_finalization_record.to_json()],
-    ),
-    ("GoalId", [durable_shape_goal_id.to_json()]),
-    ("GoalInputAnswer", [durable_shape_goal_input_answer.to_json()]),
-    (
+    durable_shape_entry("GoalFinalizationRecord", [
+      durable_shape_goal_finalization_record,
+    ]),
+    durable_shape_entry("GoalId", [durable_shape_goal_id]),
+    durable_shape_entry("GoalInputAnswer", [durable_shape_goal_input_answer]),
+    durable_shape_entry(
       "GoalInputReason",
       durable_shapes_goal_input_reason.map(durable_guard_goal_input_reason),
     ),
-    ("GoalInputRequest", [durable_shape_goal_input_request.to_json()]),
-    ("GoalInputRequestId", [durable_shape_goal_input_request_id.to_json()]),
-    ("GoalIntegrationLease", [durable_shape_goal_integration_lease.to_json()]),
-    (
+    durable_shape_entry("GoalInputRequest", [durable_shape_goal_input_request]),
+    durable_shape_entry("GoalInputRequestId", [
+      durable_shape_goal_input_request_id,
+    ]),
+    durable_shape_entry("GoalIntegrationLease", [
+      durable_shape_goal_integration_lease,
+    ]),
+    durable_shape_entry(
       "GoalLifecycle",
       durable_shapes_goal_lifecycle.map(durable_guard_goal_lifecycle),
     ),
-    ("GoalPart", [durable_shape_goal_part.to_json()]),
-    ("GoalPause", [durable_shape_goal_pause.to_json()]),
-    (
+    durable_shape_entry("GoalPart", [durable_shape_goal_part]),
+    durable_shape_entry("GoalPause", [durable_shape_goal_pause]),
+    durable_shape_entry(
       "GoalPauseReason",
       durable_shapes_goal_pause_reason.map(durable_guard_goal_pause_reason),
     ),
-    (
+    durable_shape_entry(
       "GoalPolicyChange",
       durable_shapes_goal_policy_change.map(durable_guard_goal_policy_change),
     ),
-    ("GoalPolicyRevision", [durable_shape_goal_policy_revision.to_json()]),
-    ("GoalProposal", [durable_shape_goal_proposal.to_json()]),
-    ("GoalProposalId", [durable_shape_goal_proposal_id.to_json()]),
-    ("GoalPublicationRecord", [durable_shape_goal_publication_record.to_json()]),
-    (
-      "GoalPullRequestRecord",
-      [durable_shape_goal_pull_request_record.to_json()],
-    ),
-    ("GoalSelectionDecision", [durable_shape_goal_selection_decision.to_json()]),
-    (
+    durable_shape_entry("GoalPolicyRevision", [
+      durable_shape_goal_policy_revision,
+    ]),
+    durable_shape_entry("GoalProposal", [durable_shape_goal_proposal]),
+    durable_shape_entry("GoalProposalId", [durable_shape_goal_proposal_id]),
+    durable_shape_entry("GoalPublicationRecord", [
+      durable_shape_goal_publication_record,
+    ]),
+    durable_shape_entry("GoalPullRequestRecord", [
+      durable_shape_goal_pull_request_record,
+    ]),
+    durable_shape_entry("GoalSelectionDecision", [
+      durable_shape_goal_selection_decision,
+    ]),
+    durable_shape_entry(
       "GoalSelectionOutcome",
       durable_shapes_goal_selection_outcome.map(
         durable_guard_goal_selection_outcome,
       ),
     ),
-    (
+    durable_shape_entry(
       "GoalSelectionPolicy",
       durable_shapes_goal_selection_policy.map(
         durable_guard_goal_selection_policy,
       ),
     ),
-    ("GoalSourceClaim", [durable_shape_goal_source_claim.to_json()]),
-    (
+    durable_shape_entry("GoalSourceClaim", [durable_shape_goal_source_claim]),
+    durable_shape_entry(
       "GoalSourceClaimConflictReason",
       durable_shapes_goal_source_claim_conflict_reason.map(
         durable_guard_goal_source_claim_conflict_reason,
       ),
     ),
-    (
-      "GoalSourceClaimIntentId",
-      [durable_shape_goal_source_claim_intent_id.to_json()],
-    ),
-    (
+    durable_shape_entry("GoalSourceClaimIntentId", [
+      durable_shape_goal_source_claim_intent_id,
+    ]),
+    durable_shape_entry(
       "GoalSourceClaimLifecycle",
       durable_shapes_goal_source_claim_lifecycle.map(
         durable_guard_goal_source_claim_lifecycle,
       ),
     ),
-    (
-      "GoalSourceClaimReceipt",
-      [durable_shape_goal_source_claim_receipt.to_json()],
-    ),
-    (
-      "GoalSourceReleaseReceipt",
-      [durable_shape_goal_source_release_receipt.to_json()],
-    ),
-    (
-      "GoalVerificationAuthorizationSet",
-      [durable_shape_goal_verification_authorization_set.to_json()],
-    ),
-    (
-      "GoalVerificationAuthorizationSlot",
-      [durable_shape_goal_verification_authorization_slot.to_json()],
-    ),
-    (
-      "GoalVerificationExecutionResult",
-      [durable_shape_goal_verification_execution_result.to_json()],
-    ),
-    (
-      "GoalVerificationReceipt",
-      [durable_shape_goal_verification_receipt.to_json()],
-    ),
-    (
-      "GoalVerificationSpecExecution",
-      [durable_shape_goal_verification_spec_execution.to_json()],
-    ),
-    (
-      "GoalVerificationSubject",
-      [durable_shape_goal_verification_subject.to_json()],
-    ),
-    ("HarnessCommandId", [durable_shape_harness_command_id.to_json()]),
-    ("HarnessCommandIntent", [durable_shape_harness_command_intent.to_json()]),
-    (
+    durable_shape_entry("GoalSourceClaimReceipt", [
+      durable_shape_goal_source_claim_receipt,
+    ]),
+    durable_shape_entry("GoalSourceReleaseReceipt", [
+      durable_shape_goal_source_release_receipt,
+    ]),
+    durable_shape_entry("GoalVerificationAuthorizationSet", [
+      durable_shape_goal_verification_authorization_set,
+    ]),
+    durable_shape_entry("GoalVerificationAuthorizationSlot", [
+      durable_shape_goal_verification_authorization_slot,
+    ]),
+    durable_shape_entry("GoalVerificationExecutionResult", [
+      durable_shape_goal_verification_execution_result,
+    ]),
+    durable_shape_entry("GoalVerificationReceipt", [
+      durable_shape_goal_verification_receipt,
+    ]),
+    durable_shape_entry("GoalVerificationSpecExecution", [
+      durable_shape_goal_verification_spec_execution,
+    ]),
+    durable_shape_entry("GoalVerificationSubject", [
+      durable_shape_goal_verification_subject,
+    ]),
+    durable_shape_entry("HarnessCommandId", [durable_shape_harness_command_id]),
+    durable_shape_entry("HarnessCommandIntent", [
+      durable_shape_harness_command_intent,
+    ]),
+    durable_shape_entry(
       "HarnessCursorClass",
       durable_shapes_harness_cursor_class.map(
         durable_guard_harness_cursor_class,
       ),
     ),
-    ("HarnessEventEnvelope", [durable_shape_harness_event_envelope.to_json()]),
-    ("HarnessEventId", [durable_shape_harness_event_id.to_json()]),
-    (
+    durable_shape_entry("HarnessEventEnvelope", [
+      durable_shape_harness_event_envelope,
+    ]),
+    durable_shape_entry("HarnessEventId", [durable_shape_harness_event_id]),
+    durable_shape_entry(
       "HarnessEventKind",
       durable_shapes_harness_event_kind.map(durable_guard_harness_event_kind),
     ),
-    ("HarnessSession", [durable_shape_harness_session.to_json()]),
-    ("HarnessSessionId", [durable_shape_harness_session_id.to_json()]),
-    (
+    durable_shape_entry("HarnessSession", [durable_shape_harness_session]),
+    durable_shape_entry("HarnessSessionId", [durable_shape_harness_session_id]),
+    durable_shape_entry(
       "HarnessSessionLifecycle",
       durable_shapes_harness_session_lifecycle.map(
         durable_guard_harness_session_lifecycle,
       ),
     ),
-    (
-      "HarnessSessionStartIntent",
-      [durable_shape_harness_session_start_intent.to_json()],
-    ),
-    (
+    durable_shape_entry("HarnessSessionStartIntent", [
+      durable_shape_harness_session_start_intent,
+    ]),
+    durable_shape_entry(
       "HarnessTerminalObservation",
       durable_shapes_harness_terminal_observation.map(
         durable_guard_harness_terminal_observation,
       ),
     ),
-    (
+    durable_shape_entry(
       "HarnessToolDisposition",
       durable_shapes_harness_tool_disposition.map(
         durable_guard_harness_tool_disposition,
       ),
     ),
-    (
-      "ImplementationExecutionResult",
-      [durable_shape_implementation_execution_result.to_json()],
-    ),
-    ("IntegrationConflict", [durable_shape_integration_conflict.to_json()]),
-    ("IntegrationConflictId", [durable_shape_integration_conflict_id.to_json()]),
-    ("IntegrationIntent", [durable_shape_integration_intent.to_json()]),
-    ("IntegrationIntentId", [durable_shape_integration_intent_id.to_json()]),
-    (
+    durable_shape_entry("ImplementationExecutionResult", [
+      durable_shape_implementation_execution_result,
+    ]),
+    durable_shape_entry("IntegrationConflict", [
+      durable_shape_integration_conflict,
+    ]),
+    durable_shape_entry("IntegrationConflictId", [
+      durable_shape_integration_conflict_id,
+    ]),
+    durable_shape_entry("IntegrationIntent", [durable_shape_integration_intent]),
+    durable_shape_entry("IntegrationIntentId", [
+      durable_shape_integration_intent_id,
+    ]),
+    durable_shape_entry(
       "IntegrationIntentLifecycle",
       durable_shapes_integration_intent_lifecycle.map(
         durable_guard_integration_intent_lifecycle,
       ),
     ),
-    ("IntegrationLeaseId", [durable_shape_integration_lease_id.to_json()]),
-    ("IntegrationReceipt", [durable_shape_integration_receipt.to_json()]),
-    ("IntegrationReceiptId", [durable_shape_integration_receipt_id.to_json()]),
-    (
+    durable_shape_entry("IntegrationLeaseId", [
+      durable_shape_integration_lease_id,
+    ]),
+    durable_shape_entry("IntegrationReceipt", [
+      durable_shape_integration_receipt,
+    ]),
+    durable_shape_entry("IntegrationReceiptId", [
+      durable_shape_integration_receipt_id,
+    ]),
+    durable_shape_entry(
       "IntegrationWitnessObservation",
       durable_shapes_integration_witness_observation.map(
         durable_guard_integration_witness_observation,
       ),
     ),
-    ("MigrationContractId", [durable_shape_migration_contract_id.to_json()]),
-    ("MigrationContractRef", [durable_shape_migration_contract_ref.to_json()]),
-    ("MigrationLineageId", [durable_shape_migration_lineage_id.to_json()]),
-    (
-      "MigrationProductionAdmissionRef",
-      [durable_shape_migration_production_admission_ref.to_json()],
-    ),
-    (
+    durable_shape_entry("MigrationContractId", [
+      durable_shape_migration_contract_id,
+    ]),
+    durable_shape_entry("MigrationContractRef", [
+      durable_shape_migration_contract_ref,
+    ]),
+    durable_shape_entry("MigrationLineageId", [
+      durable_shape_migration_lineage_id,
+    ]),
+    durable_shape_entry("MigrationProductionAdmissionRef", [
+      durable_shape_migration_production_admission_ref,
+    ]),
+    durable_shape_entry(
       "ModelIdentity",
       durable_shapes_model_identity.map(durable_guard_model_identity),
     ),
-    (
+    durable_shape_entry(
       "MutationClaim",
       durable_shapes_mutation_claim.map(durable_guard_mutation_claim),
     ),
-    (
+    durable_shape_entry(
       "MutationDeclaration",
       durable_shapes_mutation_declaration.map(
         durable_guard_mutation_declaration,
       ),
     ),
-    ("PartAuditSubject", [durable_shape_part_audit_subject.to_json()]),
-    (
+    durable_shape_entry("PartAuditSubject", [durable_shape_part_audit_subject]),
+    durable_shape_entry(
       "PartBlockReason",
       durable_shapes_part_block_reason.map(durable_guard_part_block_reason),
     ),
-    (
-      "PartCommandPreparationPlan",
-      [durable_shape_part_command_preparation_plan.to_json()],
-    ),
-    ("PartContextManifest", [durable_shape_part_context_manifest.to_json()]),
-    (
-      "PartDispatchDiagnostic",
-      [durable_shape_part_dispatch_diagnostic.to_json()],
-    ),
-    ("PartEffectIntent", [durable_shape_part_effect_intent.to_json()]),
-    (
+    durable_shape_entry("PartCommandPreparationPlan", [
+      durable_shape_part_command_preparation_plan,
+    ]),
+    durable_shape_entry("PartContextManifest", [
+      durable_shape_part_context_manifest,
+    ]),
+    durable_shape_entry("PartDispatchDiagnostic", [
+      durable_shape_part_dispatch_diagnostic,
+    ]),
+    durable_shape_entry("PartEffectIntent", [durable_shape_part_effect_intent]),
+    durable_shape_entry(
       "PartEffectKind",
       durable_shapes_part_effect_kind.map(durable_guard_part_effect_kind),
     ),
-    (
+    durable_shape_entry(
       "PartEffectLifecycle",
       durable_shapes_part_effect_lifecycle.map(
         durable_guard_part_effect_lifecycle,
       ),
     ),
-    (
+    durable_shape_entry(
       "PartEffectObservation",
       durable_shapes_part_effect_observation.map(
         durable_guard_part_effect_observation,
       ),
     ),
-    ("PartEffectReceipt", [durable_shape_part_effect_receipt.to_json()]),
-    ("PartEffectWitness", [durable_shape_part_effect_witness.to_json()]),
-    ("PartId", [durable_shape_part_id.to_json()]),
-    ("PartIdentityPlan", [durable_shape_part_identity_plan.to_json()]),
-    (
+    durable_shape_entry("PartEffectReceipt", [durable_shape_part_effect_receipt]),
+    durable_shape_entry("PartEffectWitness", [durable_shape_part_effect_witness]),
+    durable_shape_entry("PartId", [durable_shape_part_id]),
+    durable_shape_entry("PartIdentityPlan", [durable_shape_part_identity_plan]),
+    durable_shape_entry(
       "PartLifecycle",
       durable_shapes_part_lifecycle.map(durable_guard_part_lifecycle),
     ),
-    ("PartPreparedCommand", [durable_shape_part_prepared_command.to_json()]),
-    (
-      "PartSelectionRejection",
-      [durable_shape_part_selection_rejection.to_json()],
-    ),
-    (
-      "PartVerificationSubject",
-      [durable_shape_part_verification_subject.to_json()],
-    ),
-    ("PartWorkflowSnapshot", [durable_shape_part_workflow_snapshot.to_json()]),
-    (
+    durable_shape_entry("PartPreparedCommand", [
+      durable_shape_part_prepared_command,
+    ]),
+    durable_shape_entry("PartSelectionRejection", [
+      durable_shape_part_selection_rejection,
+    ]),
+    durable_shape_entry("PartVerificationSubject", [
+      durable_shape_part_verification_subject,
+    ]),
+    durable_shape_entry("PartWorkflowSnapshot", [
+      durable_shape_part_workflow_snapshot,
+    ]),
+    durable_shape_entry(
       "PartWorkflowStage",
       durable_shapes_part_workflow_stage.map(durable_guard_part_workflow_stage),
     ),
-    (
-      "PriorPartTakeEvidence",
-      [durable_shape_prior_part_take_evidence.to_json()],
-    ),
-    ("ProcessExecution", [durable_shape_process_execution.to_json()]),
-    (
+    durable_shape_entry("PriorPartTakeEvidence", [
+      durable_shape_prior_part_take_evidence,
+    ]),
+    durable_shape_entry("ProcessExecution", [durable_shape_process_execution]),
+    durable_shape_entry(
       "ProcessExecutionDisposition",
       durable_shapes_process_execution_disposition.map(
         durable_guard_process_execution_disposition,
       ),
     ),
-    ("ProcessExecutionId", [durable_shape_process_execution_id.to_json()]),
-    ("PromotionCommit", [durable_shape_promotion_commit.to_json()]),
-    (
+    durable_shape_entry("ProcessExecutionId", [
+      durable_shape_process_execution_id,
+    ]),
+    durable_shape_entry("PromotionCommit", [durable_shape_promotion_commit]),
+    durable_shape_entry(
       "PromotionStrategy",
       durable_shapes_promotion_strategy.map(durable_guard_promotion_strategy),
     ),
-    (
+    durable_shape_entry(
       "ProviderAvailability",
       durable_shapes_provider_availability.map(
         durable_guard_provider_availability,
       ),
     ),
-    (
+    durable_shape_entry(
       "ProviderSurfaceId",
       durable_shapes_provider_surface_id.map(durable_guard_provider_surface_id),
     ),
-    (
+    durable_shape_entry(
       "PullRequestCancellationState",
       durable_shapes_pull_request_cancellation_state.map(
         durable_guard_pull_request_cancellation_state,
       ),
     ),
-    (
+    durable_shape_entry(
       "PullRequestDeliveryMode",
       durable_shapes_pull_request_delivery_mode.map(
         durable_guard_pull_request_delivery_mode,
       ),
     ),
-    (
-      "PullRequestDeliveryPolicy",
-      [durable_shape_pull_request_delivery_policy.to_json()],
-    ),
-    ("PullRequestDocument", [durable_shape_pull_request_document.to_json()]),
-    (
-      "PullRequestIdentityMarker",
-      [durable_shape_pull_request_identity_marker.to_json()],
-    ),
-    ("PullRequestIntent", [durable_shape_pull_request_intent.to_json()]),
-    ("PullRequestIntentId", [durable_shape_pull_request_intent_id.to_json()]),
-    (
+    durable_shape_entry("PullRequestDeliveryPolicy", [
+      durable_shape_pull_request_delivery_policy,
+    ]),
+    durable_shape_entry("PullRequestDocument", [
+      durable_shape_pull_request_document,
+    ]),
+    durable_shape_entry("PullRequestIdentityMarker", [
+      durable_shape_pull_request_identity_marker,
+    ]),
+    durable_shape_entry("PullRequestIntent", [durable_shape_pull_request_intent]),
+    durable_shape_entry("PullRequestIntentId", [
+      durable_shape_pull_request_intent_id,
+    ]),
+    durable_shape_entry(
       "PullRequestIntentState",
       durable_shapes_pull_request_intent_state.map(
         durable_guard_pull_request_intent_state,
       ),
     ),
-    (
+    durable_shape_entry(
       "PullRequestMarkerState",
       durable_shapes_pull_request_marker_state.map(
         durable_guard_pull_request_marker_state,
       ),
     ),
-    (
+    durable_shape_entry(
       "PullRequestMergeMethod",
       durable_shapes_pull_request_merge_method.map(
         durable_guard_pull_request_merge_method,
       ),
     ),
-    (
+    durable_shape_entry(
       "PullRequestMergeState",
       durable_shapes_pull_request_merge_state.map(
         durable_guard_pull_request_merge_state,
       ),
     ),
-    (
+    durable_shape_entry(
       "PullRequestNeedsInputReason",
       durable_shapes_pull_request_needs_input_reason.map(
         durable_guard_pull_request_needs_input_reason,
       ),
     ),
-    ("PullRequestNumber", [durable_shape_pull_request_number.to_json()]),
-    (
+    durable_shape_entry("PullRequestNumber", [durable_shape_pull_request_number]),
+    durable_shape_entry(
       "PullRequestProvider",
       durable_shapes_pull_request_provider.map(
         durable_guard_pull_request_provider,
       ),
     ),
-    (
+    durable_shape_entry(
       "PullRequestReadinessDecision",
       durable_shapes_pull_request_readiness_decision.map(
         durable_guard_pull_request_readiness_decision,
       ),
     ),
-    (
+    durable_shape_entry(
       "PullRequestReadinessDriftReason",
       durable_shapes_pull_request_readiness_drift_reason.map(
         durable_guard_pull_request_readiness_drift_reason,
       ),
     ),
-    (
+    durable_shape_entry(
       "PullRequestReadinessNeedsInputReason",
       durable_shapes_pull_request_readiness_needs_input_reason.map(
         durable_guard_pull_request_readiness_needs_input_reason,
       ),
     ),
-    (
-      "PullRequestReadinessSnapshot",
-      [durable_shape_pull_request_readiness_snapshot.to_json()],
-    ),
-    (
-      "PullRequestReadinessSnapshotId",
-      [durable_shape_pull_request_readiness_snapshot_id.to_json()],
-    ),
-    ("PullRequestReceipt", [durable_shape_pull_request_receipt.to_json()]),
-    (
+    durable_shape_entry("PullRequestReadinessSnapshot", [
+      durable_shape_pull_request_readiness_snapshot,
+    ]),
+    durable_shape_entry("PullRequestReadinessSnapshotId", [
+      durable_shape_pull_request_readiness_snapshot_id,
+    ]),
+    durable_shape_entry("PullRequestReceipt", [
+      durable_shape_pull_request_receipt,
+    ]),
+    durable_shape_entry(
       "PullRequestReceiptOrigin",
       durable_shapes_pull_request_receipt_origin.map(
         durable_guard_pull_request_receipt_origin,
       ),
     ),
-    ("PullRequestUrl", [durable_shape_pull_request_url.to_json()]),
-    ("ReceiptId", [durable_shape_receipt_id.to_json()]),
-    ("RemoteName", [durable_shape_remote_name.to_json()]),
-    ("RemotePullRequestId", [durable_shape_remote_pull_request_id.to_json()]),
-    (
+    durable_shape_entry("PullRequestUrl", [durable_shape_pull_request_url]),
+    durable_shape_entry("ReceiptId", [durable_shape_receipt_id]),
+    durable_shape_entry("RemoteName", [durable_shape_remote_name]),
+    durable_shape_entry("RemotePullRequestId", [
+      durable_shape_remote_pull_request_id,
+    ]),
+    durable_shape_entry(
       "RemotePullRequestState",
       durable_shapes_remote_pull_request_state.map(
         durable_guard_remote_pull_request_state,
       ),
     ),
-    ("RemoteRepositoryId", [durable_shape_remote_repository_id.to_json()]),
-    ("RepoPath", [durable_shape_repo_path.to_json()]),
-    ("RepositoryId", [durable_shape_repository_id.to_json()]),
-    (
+    durable_shape_entry("RemoteRepositoryId", [
+      durable_shape_remote_repository_id,
+    ]),
+    durable_shape_entry("RepoPath", [durable_shape_repo_path]),
+    durable_shape_entry("RepositoryId", [durable_shape_repository_id]),
+    durable_shape_entry(
       "RepositoryPathMode",
       durable_shapes_repository_path_mode.map(
         durable_guard_repository_path_mode,
       ),
     ),
-    ("RevisionId", [durable_shape_revision_id.to_json()]),
-    ("RuntimeExecutionKey", [durable_shape_runtime_execution_key.to_json()]),
-    ("SandboxGenerationId", [durable_shape_sandbox_generation_id.to_json()]),
-    ("SandboxLease", [durable_shape_sandbox_lease.to_json()]),
-    ("SandboxLeaseId", [durable_shape_sandbox_lease_id.to_json()]),
-    (
+    durable_shape_entry("RevisionId", [durable_shape_revision_id]),
+    durable_shape_entry("RuntimeExecutionKey", [
+      durable_shape_runtime_execution_key,
+    ]),
+    durable_shape_entry("SandboxGenerationId", [
+      durable_shape_sandbox_generation_id,
+    ]),
+    durable_shape_entry("SandboxLease", [durable_shape_sandbox_lease]),
+    durable_shape_entry("SandboxLeaseId", [durable_shape_sandbox_lease_id]),
+    durable_shape_entry(
       "SandboxLeaseLifecycle",
       durable_shapes_sandbox_lease_lifecycle.map(
         durable_guard_sandbox_lease_lifecycle,
       ),
     ),
-    (
+    durable_shape_entry(
       "SandboxProcessAuthority",
       durable_shapes_sandbox_process_authority.map(
         durable_guard_sandbox_process_authority,
       ),
     ),
-    ("SelectionDecisionId", [durable_shape_selection_decision_id.to_json()]),
-    (
+    durable_shape_entry("SelectionDecisionId", [
+      durable_shape_selection_decision_id,
+    ]),
+    durable_shape_entry(
       "SelectionRejectionReason",
       durable_shapes_selection_rejection_reason.map(
         durable_guard_selection_rejection_reason,
       ),
     ),
-    ("SemanticCommitTitle", [durable_shape_semantic_commit_title.to_json()]),
-    ("Take", [durable_shape_take.to_json()]),
-    (
+    durable_shape_entry("SemanticCommitTitle", [
+      durable_shape_semantic_commit_title,
+    ]),
+    durable_shape_entry("Take", [durable_shape_take]),
+    durable_shape_entry(
       "TakeFailureReason",
       durable_shapes_take_failure_reason.map(durable_guard_take_failure_reason),
     ),
-    ("TakeId", [durable_shape_take_id.to_json()]),
-    (
+    durable_shape_entry("TakeId", [durable_shape_take_id]),
+    durable_shape_entry(
       "TakeLifecycle",
       durable_shapes_take_lifecycle.map(durable_guard_take_lifecycle),
     ),
-    ("TakePurpose", durable_shapes_take_purpose.map(durable_guard_take_purpose)),
-    (
+    durable_shape_entry(
+      "TakePurpose",
+      durable_shapes_take_purpose.map(durable_guard_take_purpose),
+    ),
+    durable_shape_entry(
       "TakeTerminalDisposition",
       durable_shapes_take_terminal_disposition.map(
         durable_guard_take_terminal_disposition,
       ),
     ),
-    (
+    durable_shape_entry(
       "TakeUncertaintyReason",
       durable_shapes_take_uncertainty_reason.map(
         durable_guard_take_uncertainty_reason,
       ),
     ),
-    ("TakeUsage", [durable_shape_take_usage.to_json()]),
-    ("TaskContractRevision", [durable_shape_task_contract_revision.to_json()]),
-    (
+    durable_shape_entry("TakeUsage", [durable_shape_take_usage]),
+    durable_shape_entry("TaskContractRevision", [
+      durable_shape_task_contract_revision,
+    ]),
+    durable_shape_entry(
       "UnknownMutationReason",
       durable_shapes_unknown_mutation_reason.map(
         durable_guard_unknown_mutation_reason,
       ),
     ),
-    (
-      "VerificationAuthorizationSet",
-      [durable_shape_verification_authorization_set.to_json()],
-    ),
-    (
-      "VerificationAuthorizationSlot",
-      [durable_shape_verification_authorization_slot.to_json()],
-    ),
-    (
-      "VerificationExecutionId",
-      [durable_shape_verification_execution_id.to_json()],
-    ),
-    (
-      "VerificationExecutionResult",
-      [durable_shape_verification_execution_result.to_json()],
-    ),
-    (
+    durable_shape_entry("VerificationAuthorizationSet", [
+      durable_shape_verification_authorization_set,
+    ]),
+    durable_shape_entry("VerificationAuthorizationSlot", [
+      durable_shape_verification_authorization_slot,
+    ]),
+    durable_shape_entry("VerificationExecutionId", [
+      durable_shape_verification_execution_id,
+    ]),
+    durable_shape_entry("VerificationExecutionResult", [
+      durable_shape_verification_execution_result,
+    ]),
+    durable_shape_entry(
       "VerificationGateCorruptionReason",
       durable_shapes_verification_gate_corruption_reason.map(
         durable_guard_verification_gate_corruption_reason,
       ),
     ),
-    (
+    durable_shape_entry(
       "VerificationGateObservation",
       durable_shapes_verification_gate_observation.map(
         durable_guard_verification_gate_observation,
       ),
     ),
-    (
+    durable_shape_entry(
       "VerificationGateRejectionReason",
       durable_shapes_verification_gate_rejection_reason.map(
         durable_guard_verification_gate_rejection_reason,
       ),
     ),
-    (
+    durable_shape_entry(
       "VerificationGateStaleReason",
       durable_shapes_verification_gate_stale_reason.map(
         durable_guard_verification_gate_stale_reason,
       ),
     ),
-    (
+    durable_shape_entry(
       "VerificationOutcome",
       durable_shapes_verification_outcome.map(
         durable_guard_verification_outcome,
       ),
     ),
-    ("VerificationReceipt", [durable_shape_verification_receipt.to_json()]),
-    (
-      "VerificationRepairReference",
-      [durable_shape_verification_repair_reference.to_json()],
-    ),
-    (
+    durable_shape_entry("VerificationReceipt", [
+      durable_shape_verification_receipt,
+    ]),
+    durable_shape_entry("VerificationRepairReference", [
+      durable_shape_verification_repair_reference,
+    ]),
+    durable_shape_entry(
       "VerificationRepairScope",
       durable_shapes_verification_repair_scope.map(
         durable_guard_verification_repair_scope,
       ),
     ),
-    ("VerificationSpec", [durable_shape_verification_spec.to_json()]),
-    ("VerificationSpecId", [durable_shape_verification_spec_id.to_json()]),
-    ("WorkOrderBudget", [durable_shape_work_order_budget.to_json()]),
-    ("WorkOrderCounters", [durable_shape_work_order_counters.to_json()]),
-    (
+    durable_shape_entry("VerificationSpec", [durable_shape_verification_spec]),
+    durable_shape_entry("VerificationSpecId", [
+      durable_shape_verification_spec_id,
+    ]),
+    durable_shape_entry("WorkOrderBudget", [durable_shape_work_order_budget]),
+    durable_shape_entry("WorkOrderCounters", [durable_shape_work_order_counters]),
+    durable_shape_entry(
       "WorkOrderCutoffPolicy",
       durable_shapes_work_order_cutoff_policy.map(
         durable_guard_work_order_cutoff_policy,
       ),
     ),
-    (
+    durable_shape_entry(
       "WorkOrderQuotaBasis",
       durable_shapes_work_order_quota_basis.map(
         durable_guard_work_order_quota_basis,
       ),
     ),
-    (
+    durable_shape_entry(
       "WorkOrderStopPolicy",
       durable_shapes_work_order_stop_policy.map(
         durable_guard_work_order_stop_policy,
       ),
     ),
-    (
+    durable_shape_entry(
       "WorkOrderStopReason",
       durable_shapes_work_order_stop_reason.map(
         durable_guard_work_order_stop_reason,
       ),
     ),
-    ("WorkflowId", [durable_shape_workflow_id.to_json()]),
+    durable_shape_entry("WorkflowId", [durable_shape_workflow_id]),
   ]
-}
-
-///|
-/// Render a serialized shape so that only its structure matters.
-///
-/// Object keys are sorted, because MoonBit emits them in declaration order and
-/// reordering a declaration does not change what decodes. Values are kept: the
-/// tag of an enum variant is a string in the serialized form, and losing it
-/// would let a renamed variant pass unnoticed. Every value below is a fixed
-/// placeholder, so nothing but the shape can move the result.
-fn durable_shape_text(value : Json) -> String {
-  let rendered = StringBuilder::new()
-  match value {
-    Json::Object(fields) => {
-      let keys : Array[String] = []
-      for key in fields.keys() {
-        keys.push(key)
-      }
-      keys.sort_by(fn(left, right) { left.compare(right) })
-      rendered.write_string("{")
-      for key in keys {
-        rendered.write_string(key)
-        rendered.write_string(":")
-        match fields.get(key) {
-          Some(field) => rendered.write_string(durable_shape_text(field))
-          None => ()
-        }
-        rendered.write_string(",")
-      }
-      rendered.write_string("}")
-    }
-    Json::Array(items) => {
-      rendered.write_string("[")
-      for item in items {
-        rendered.write_string(durable_shape_text(item))
-        rendered.write_string(",")
-      }
-      rendered.write_string("]")
-    }
-    Json::String(text) => {
-      rendered.write_string("\"")
-      rendered.write_string(text)
-      rendered.write_string("\"")
-    }
-    Json::Number(number, ..) => rendered.write_string(number.to_string())
-    Json::True => rendered.write_string("true")
-    Json::False => rendered.write_string("false")
-    Json::Null => rendered.write_string("null")
-  }
-  rendered.to_string()
-}
-
-///|
-/// The full serialized shape of everything this build can store, as one text.
-///
-/// Public because the generation is otherwise a digest with nothing behind it:
-/// this is the evidence a reset is decided on, and it is what lets a test
-/// check that a record's real keys are the ones being digested.
-pub fn durable_value_shape_manifest() -> String {
-  let table = durable_shape_table()
-  table.sort_by(fn(left, right) { left.0.compare(right.0) })
-  let rendered = StringBuilder::new()
-  for entry in table {
-    rendered.write_string(entry.0)
-    for shape in entry.1 {
-      rendered.write_string(" ")
-      rendered.write_string(durable_shape_text(shape))
-    }
-    rendered.write_string("\n")
-  }
-  rendered.to_string()
-}
-
-///|
-/// What this build calls the durable shapes it can decode.
-///
-/// Recorded in the control store when it is created or adopted, and compared
-/// on every start. A mismatch is affirmative evidence that the store holds
-/// records this build cannot read.
-pub fn durable_value_shape_generation() -> String {
-  "choir-durable-shape-" +
-  @storage.digest_text(
-    @storage.artifact_digest(@utf8.encode(durable_value_shape_manifest())),
-  )
 }

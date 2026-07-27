@@ -41,14 +41,18 @@ pub(all) struct PartStoredSnapshot {
 fn workflow_state_key(
   workflow_id : @control.WorkflowId,
 ) -> @storage.StateRecordKey {
-  @storage.StateRecordKey("workflow:" + workflow_id.0)
+  @storage.StateRecordKey(
+    durable_record_key_prefix(DurablePartWorkflowSnapshot) + workflow_id.0,
+  )
 }
 
 ///|
 fn effect_witness_state_key(
   effect_id : @control.EffectId,
 ) -> @storage.StateRecordKey {
-  @storage.StateRecordKey("effect-witness:" + effect_id.0)
+  @storage.StateRecordKey(
+    durable_record_key_prefix(DurablePartEffectWitness) + effect_id.0,
+  )
 }
 
 ///|

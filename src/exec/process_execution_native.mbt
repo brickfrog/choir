@@ -28,7 +28,12 @@ fn native_process_execution_error(message : String) -> @types.ChoirError {
 fn native_process_state_key(
   execution_id : @sandbox.ProcessExecutionId,
 ) -> @storage.StateRecordKey {
-  @storage.StateRecordKey("process-execution:" + execution_id.0)
+  @storage.StateRecordKey(
+    @workflow.durable_record_key_prefix(
+      @workflow.DurableRecordKind::DurableProcessExecution,
+    ) +
+    execution_id.0,
+  )
 }
 
 ///|
@@ -126,15 +131,8 @@ fn load_native_process_execution(
       native_process_execution_error("durable content digest is false"),
     )
   }
-  let json = @json.parse(@utf8.decode(content)) catch {
-    _ =>
-      return Err(native_process_execution_error("durable content is not JSON"))
-  }
-  let execution : @sandbox.ProcessExecution = @json.from_json(json) catch {
-    _ => return Err(native_process_execution_error("durable schema is invalid"))
-  }
-  match @sandbox.validate_process_execution(execution) {
-    Ok(_) => ()
+  let execution = match @sandbox.decode_process_execution(content) {
+    Ok(value) => value
     Err(error) => return Err(error)
   }
   if execution.execution_id != execution_id || record.fencing_epoch.0 <= 0L {
