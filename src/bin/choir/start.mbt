@@ -452,6 +452,21 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
         return
       }
     }
+    // A Conductor launched against a Claude that no longer advertises the flags
+    // the launch passes either dies at argument parsing or silently changes
+    // meaning. Refuse here, before a daemon and a credential exist, rather than
+    // discovering it from a Conductor that failed to start. Only the Claude
+    // surface is declared, so the Codex Conductor does not require Claude.
+    if options.conductor == StartClaudeConductor {
+      match @exec.validate_native_conductor_surface() {
+        Ok(_) => ()
+        Err(error) => {
+          @sys.write_stderr("choir start: " + error.message() + "\n")
+          @sys.exit(1)
+          return
+        }
+      }
+    }
     let self_identity = match server_executable_identity(executable) {
       Some(value) => value
       None => {

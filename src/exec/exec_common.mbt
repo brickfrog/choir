@@ -22,6 +22,30 @@ pub(all) struct ConductorProcessEnvironment {
 }
 
 ///|
+/// The environment the Conductor process is launched with: Choir's own handles
+/// plus every variable the declared surface says the CLI must read.
+///
+/// Built as a value so the declared requirements are provably the ones passed.
+/// The CLI-facing half is taken from `@harness.conductor_surface_environment()`
+/// rather than written here, because a literal at the spawn site is exactly the
+/// kind of undeclared dependency that went unnoticed through five launch
+/// changes in one day.
+pub fn conductor_process_environment_variables(
+  environment : ConductorProcessEnvironment,
+) -> Map[String, String] {
+  let variables : Map[String, String] = {
+    "CHOIR_CONDUCTOR_TOKEN": environment.conductor_token,
+    "CHOIR_STATUSLINE_CACHE_KEY": environment.statusline_cache_key,
+    "CHOIR_WORKSPACE": environment.workspace,
+    "CHOIR_LISTEN_UDS": environment.listen_uds,
+  }
+  for requirement in @harness.conductor_surface_environment() {
+    variables.set(requirement.name, requirement.value)
+  }
+  variables
+}
+
+///|
 fn conductor_claude_mcp_server_json(choir_executable : String) -> Json {
   {
     "type": "stdio".to_json(),

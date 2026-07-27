@@ -283,6 +283,58 @@ pub async fn validate_native_beads_cli(
 }
 
 ///|
+/// Refuse to launch the Conductor against a Claude whose advertised surface no
+/// longer matches the launch it is about to receive.
+///
+/// The capture is the existing fixed declaration probe — no caller supplies the
+/// executable or argv — and the decision is `@harness.qualify_conductor_surface`,
+/// which is pure. This adapter only carries help text from the host to it.
+///
+/// Help text is the only signal available: `--help` short-circuits argument
+/// validation, so passing a flag to see whether it is accepted proves nothing,
+/// and the only way to actually find out is to start a session. That limit is
+/// why the manifest declares each flag's visibility instead of assuming every
+/// flag Choir passes is advertised.
+pub async fn validate_native_conductor_surface(
+  probe? : async (@harness.HarnessProbeProcess) -> Result[
+    @harness.HarnessProbeCapture,
+    @types.ChoirError,
+  ] = capture_harness_probe,
+) -> Result[Unit, @types.ChoirError] {
+  let capture = match
+    probe({
+      surface: @harness.ProviderSurface::ClaudeCli,
+      command: @harness.HarnessProbeCommand::ProbeMainHelp,
+    }) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if capture.exit_code != 0 {
+    return Err(
+      @types.ChoirError::transport_error(
+        "unqualified Conductor surface: claude --help exited with status " +
+        capture.exit_code.to_string(),
+      ),
+    )
+  }
+  let findings = @harness.qualify_conductor_surface(
+    capture.output,
+    @harness.conductor_surface_flags(),
+  )
+  if @harness.conductor_surface_is_qualified(findings) {
+    Ok(())
+  } else {
+    Err(
+      @types.ChoirError::validation_error(
+        findings
+        .map(fn(finding) { @harness.conductor_surface_finding_text(finding) })
+        .join("; "),
+      ),
+    )
+  }
+}
+
+///|
 async fn native_conductor_capture_beads(
   project_dir : String,
   operation : String,

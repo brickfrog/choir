@@ -2376,16 +2376,7 @@ pub async fn run_conductor_process(
   environment : ConductorProcessEnvironment,
 ) -> Int {
   abort_if_hermetic_test_exec(command_to_shell_string(cmd))
-  let extra_env : Map[String, String] = {
-    "CHOIR_CONDUCTOR_TOKEN": environment.conductor_token,
-    "CHOIR_STATUSLINE_CACHE_KEY": environment.statusline_cache_key,
-    "CHOIR_WORKSPACE": environment.workspace,
-    "CHOIR_LISTEN_UDS": environment.listen_uds,
-    // Claude disables GrowthBook feature reads when telemetry is disabled.
-    // Keep telemetry disabled while allowing its cached Channel availability
-    // decision to be read.
-    "CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF": "1",
-  }
+  let extra_env = conductor_process_environment_variables(environment)
   match cmd.workdir {
     Some(dir) => @process.run(cmd.program, cmd.args[:], extra_env~, cwd=dir)
     None => @process.run(cmd.program, cmd.args[:], extra_env~)

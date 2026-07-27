@@ -3033,6 +3033,57 @@ fn cleanup_conductor_start_probe(root : String) -> Unit {
 }
 
 ///|
+/// Help recorded verbatim from the pinned Claude 2.1.220, so a fixture whose
+/// `claude` is a shell script still answers the surface qualification `choir
+/// start` runs before it launches the Conductor.
+///
+/// Recorded rather than generated from `@harness.conductor_surface_flags()`: a
+/// fixture derived from the manifest under test would agree with it whatever it
+/// declared, which is the self-referential assertion this whole check replaced.
+/// The `--bare` paragraph is kept because it is where the real help mentions
+/// `--append-system-prompt[-file]` in prose, a near-miss for a declared flag.
+let recorded_claude_help : String =
+  #|Usage: claude [options] [command] [prompt]
+  #|
+  #|Options:
+  #|  --allowedTools, --allowed-tools <tools...>
+  #|      Comma or space-separated list of tool names to allow (e.g. "Bash(git *)
+  #|      Edit")
+  #|  --bare                                Minimal mode: skip hooks, LSP, plugin
+  #|                                        sync. Explicitly provide context via:
+  #|                                        --system-prompt[-file],
+  #|                                        --append-system-prompt[-file], --add-dir
+  #|                                        (CLAUDE.md dirs), --mcp-config,
+  #|                                        --settings, --agents, --plugin-dir.
+  #|  --dangerously-skip-permissions        Bypass all permission checks.
+  #|                                        Recommended only for sandboxes with no
+  #|                                        internet access.
+  #|  --mcp-config <configs...>             Load MCP servers from JSON files or
+  #|                                        strings (space-separated)
+  #|  --setting-sources <sources>           Comma-separated list of setting sources
+  #|                                        to load (user, project, local).
+  #|  --settings <file-or-json>             Path to a settings JSON file or a JSON
+  #|                                        string to load additional settings from
+  #|  --strict-mcp-config                   Only use MCP servers from --mcp-config,
+  #|                                        ignoring all other MCP configurations
+  #|  --system-prompt <prompt>              System prompt to use for the session
+
+///|
+/// Both Conductor fixtures replace `claude` with a shell script, so both have
+/// to answer `--help`. The path is baked into the script rather than passed
+/// through the environment: the qualification probe is spawned by `choir start`
+/// itself, and a fixture that depended on that inheritance would fail for a
+/// reason that has nothing to do with what it is testing.
+fn write_recorded_claude_help(root : String) -> String? {
+  let path = root + "/recorded-claude-help.txt"
+  if @sys.write_file_sync(path, recorded_claude_help) {
+    Some(path)
+  } else {
+    None
+  }
+}
+
+///|
 async fn run_conductor_start_live() -> Int {
   let root = "/tmp/choir-conductor-start-" + @sys.get_pid().to_string()
   ignore(@sys.rm_rf(root))
@@ -3061,8 +3112,18 @@ async fn run_conductor_start_live() -> Int {
   }
   let socket_path = root + "/.choir/run/server.sock"
   let conductor_output = root + "/conductor-output.json"
+  let help_path = match write_recorded_claude_help(root) {
+    Some(value) => value
+    None => {
+      @sys.write_stderr("failed to write recorded Claude help\n")
+      cleanup_conductor_start_probe(root)
+      return 1
+    }
+  }
   let fake_conductor = root + "/bin/claude"
-  let fake_body = "#!/bin/sh\nif [ -n \"$CHOIR_CONDUCTOR_TOKEN\" ]; then token_state=present; else token_state=missing; fi\nprintf '%s|%s|%s|%s\\n' \"$CHOIR_WORKSPACE\" \"$token_state\" \"$CHOIR_LISTEN_UDS\" \"$CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF\" > \"$CHOIR_START_TEST_OUTPUT.env\"\nprintf '%s\\n' \"$*\" > \"$CHOIR_START_TEST_OUTPUT.args\"\n\"$CHOIR_START_TEST_BINARY\" goal status missing > \"$CHOIR_START_TEST_OUTPUT\" 2>&1 || true\nexit 0\n"
+  let fake_body = "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then printf 'probed\\n' > \"$CHOIR_START_TEST_OUTPUT.help\"; cat " +
+    help_path +
+    "; exit 0; fi\nif [ -n \"$CHOIR_CONDUCTOR_TOKEN\" ]; then token_state=present; else token_state=missing; fi\nprintf '%s|%s|%s|%s\\n' \"$CHOIR_WORKSPACE\" \"$token_state\" \"$CHOIR_LISTEN_UDS\" \"$CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF\" > \"$CHOIR_START_TEST_OUTPUT.env\"\nprintf '%s\\n' \"$*\" > \"$CHOIR_START_TEST_OUTPUT.args\"\n\"$CHOIR_START_TEST_BINARY\" goal status missing > \"$CHOIR_START_TEST_OUTPUT\" 2>&1 || true\nexit 0\n"
   if !@sys.write_file_sync(fake_conductor, fake_body) {
     @sys.write_stderr("failed to write fake Conductor\n")
     cleanup_conductor_start_probe(root)
@@ -3093,6 +3154,11 @@ async fn run_conductor_start_live() -> Int {
   let conductor_result = @sys.read_file(conductor_output)
   let conductor_environment = @sys.read_file(conductor_output + ".env")
   let conductor_args = @sys.read_file(conductor_output + ".args")
+  // Whether the launch was qualified against the CLI's own help before it
+  // happened, rather than against argv Choir generated.
+  let conductor_surface_qualified = @sys.read_file(conductor_output + ".help").contains(
+    "probed",
+  )
   let conductor_settings = @sys.read_file(
     root + "/.choir/state/claude-settings.json",
   )
@@ -3125,6 +3191,7 @@ async fn run_conductor_start_live() -> Int {
     conductor_args.contains("--append-system-prompt-file") &&
     !conductor_args.contains("--plugin-dir") &&
     conductor_surface_configured &&
+    conductor_surface_qualified &&
     conductor_environment.has_suffix("|1\n") &&
     mode_code == 0 &&
     socket_mode.trim().to_owned() == "600"
@@ -3146,6 +3213,7 @@ async fn run_conductor_start_live() -> Int {
     "project_initialized": project_initialized.to_json(),
     "zellij_required": false.to_json(),
     "conductor_surface_configured": conductor_surface_configured.to_json(),
+    "conductor_surface_qualified": conductor_surface_qualified.to_json(),
     "daemon_stopped": daemon_stopped.to_json(),
   }
   if !passed {
@@ -3252,8 +3320,21 @@ async fn run_conductor_reconnect_live() -> Int {
     }
   }
   let fake_claude = root + "/bin/claude"
+  let help_path = match write_recorded_claude_help(root) {
+    Some(value) => value
+    None => {
+      ignore(@sys.rm_rf(root))
+      @sys.write_stderr("failed to write recorded Claude help\n")
+      return 1
+    }
+  }
   let ambient_choir = root + "/bin/choir"
-  if !@sys.write_file_sync(fake_claude, "#!/bin/sh\nexit 0\n") ||
+  if !@sys.write_file_sync(
+      fake_claude,
+      "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then cat " +
+      help_path +
+      "; fi\nexit 0\n",
+    ) ||
     !@sys.write_file_sync(ambient_choir, "#!/bin/sh\nexit 97\n") {
     ignore(@sys.rm_rf(root))
     @sys.write_stderr("failed to prepare Conductor reconnect launchers\n")
@@ -3323,7 +3404,13 @@ async fn run_conductor_reconnect_live() -> Int {
     { "PATH": fixture_path },
     prompt + "\n/exit\n",
   )
-  let claude_wrapper = "#!/bin/sh\nexec \"$CHOIR_RECONNECT_REAL_CLAUDE\" \"$@\" -p --allowedTools mcp__choir__goal_status --output-format stream-json --verbose --no-session-persistence\n"
+  // The surface qualification `choir start` runs first is answered from the
+  // recorded help rather than by handing `--help` to the wrapper, whose appended
+  // `-p` would make what the real CLI does with it a second thing this scenario
+  // depends on. The session itself still runs against the installed Claude.
+  let claude_wrapper = "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then cat " +
+    help_path +
+    "; exit 0; fi\nexec \"$CHOIR_RECONNECT_REAL_CLAUDE\" \"$@\" -p --allowedTools mcp__choir__goal_status --output-format stream-json --verbose --no-session-persistence\n"
   let wrapper_ready = @sys.write_file_sync(fake_claude, claude_wrapper)
   let claude_prompt = "Call goal_status exactly once with goal_id goal-conductor-reconnect. Return exactly CLAUDE_RECONNECT_OK only if the tool result reports that exact goal_id and state GoalExecutionPaused."
   let claude = if wrapper_ready {
