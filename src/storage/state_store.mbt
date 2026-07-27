@@ -204,23 +204,10 @@ pub fn fencing_epoch_value(epoch : @control.FencingEpoch) -> Int64 {
 }
 
 ///|
-fn digest_is_lower_hex(value : String) -> Bool {
-  if value.length() != 64 {
-    return false
-  }
-  for char in value {
-    if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f')) {
-      return false
-    }
-  }
-  true
-}
-
-///|
 pub fn validate_digest(
   digest : @control.Digest,
 ) -> Result[Unit, @types.ChoirError] {
-  if digest_is_lower_hex(digest_text(digest)) {
+  if digest.is_valid() {
     Ok(())
   } else {
     Err(

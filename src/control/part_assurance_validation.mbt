@@ -11,21 +11,6 @@ pub fn digest_text(digest : Digest) -> String {
 }
 
 ///|
-fn valid_lower_hex_digest(digest : Digest) -> Bool {
-  let value = digest_text(digest)
-  if value.length() != 64 {
-    return false
-  }
-  for character in value {
-    if !((character >= '0' && character <= '9') ||
-      (character >= 'a' && character <= 'f')) {
-      return false
-    }
-  }
-  true
-}
-
-///|
 fn path_has_rejected_character(value : String) -> Bool {
   for character in value {
     if character == '\u{00}' ||
@@ -157,8 +142,8 @@ fn valid_verification_specs(specs : Array[VerificationSpec]) -> Bool {
   for index = 0; index < specs.length(); index = index + 1 {
     let spec = specs[index]
     if spec.version <= 0 ||
-      !valid_lower_hex_digest(spec.digest) ||
-      !valid_lower_hex_digest(spec.process_spec_digest) {
+      !Digest::is_valid(spec.digest) ||
+      !Digest::is_valid(spec.process_spec_digest) {
       return false
     }
     for other = index + 1; other < specs.length(); other = other + 1 {
@@ -212,7 +197,7 @@ pub fn validate_task_contract_revision(
       reference.contract_id.0 != "" &&
       reference.migration_lineage_id.0 != "" &&
       reference.revision > 0 &&
-      valid_lower_hex_digest(reference.contract_artifact_digest)
+      Digest::is_valid(reference.contract_artifact_digest)
     None => true
   }
   let audit_repair_valid = match contract.repair_audit {
@@ -220,9 +205,9 @@ pub fn validate_task_contract_revision(
       let mut previous : RepoPath? = None
       let mut valid = contract.repair_conflict_id is None &&
         repair.audit_result_id.0 != "" &&
-        valid_lower_hex_digest(repair.audit_result_digest) &&
+        Digest::is_valid(repair.audit_result_digest) &&
         repair.findings_artifact.artifact_id != "" &&
-        valid_lower_hex_digest(repair.findings_artifact.digest) &&
+        Digest::is_valid(repair.findings_artifact.digest) &&
         repair.affected_paths.length() > 0
       for path in repair.affected_paths {
         if validate_repo_path(path, is_nfc) is Err(_) ||
@@ -245,13 +230,13 @@ pub fn validate_task_contract_revision(
         contract.repair_audit is None &&
         repair.receipt_id.0 != "" &&
         repair.verification_execution_id.0 != "" &&
-        valid_lower_hex_digest(repair.subject_digest) &&
+        Digest::is_valid(repair.subject_digest) &&
         repair.verification_spec.id.0 != "" &&
         repair.verification_spec.version > 0 &&
-        valid_lower_hex_digest(repair.verification_spec.digest) &&
-        valid_lower_hex_digest(repair.verification_spec.process_spec_digest) &&
+        Digest::is_valid(repair.verification_spec.digest) &&
+        Digest::is_valid(repair.verification_spec.process_spec_digest) &&
         repair.evidence_artifact.artifact_id != "" &&
-        valid_lower_hex_digest(repair.evidence_artifact.digest) &&
+        Digest::is_valid(repair.evidence_artifact.digest) &&
         // Goal-scope repair exists only to carry routed paths; Part-scope
         // repair answers the Part's own receipt and routes nothing.
         (repair.affected_paths.length() > 0) ==
@@ -273,8 +258,7 @@ pub fn validate_task_contract_revision(
   let continuation_identity_valid = match
     contract.migration_continuation_ref_digest {
     Some(digest) =>
-      contract.migration_contract_ref is Some(_) &&
-      valid_lower_hex_digest(digest)
+      contract.migration_contract_ref is Some(_) && Digest::is_valid(digest)
     None => true
   }
   if contract.revision <= 0 ||
@@ -290,13 +274,13 @@ pub fn validate_task_contract_revision(
     }) ||
     !migration_identity_valid ||
     !continuation_identity_valid ||
-    !valid_lower_hex_digest(contract.digest) ||
+    !Digest::is_valid(contract.digest) ||
     contract.instruction_artifact.artifact_id == "" ||
-    !valid_lower_hex_digest(contract.instruction_artifact.digest) ||
-    !valid_lower_hex_digest(contract.audit_policy_digest) ||
-    !valid_lower_hex_digest(contract.implementation_capability_profile_digest) ||
-    !valid_lower_hex_digest(contract.verification_capability_profile_digest) ||
-    !valid_lower_hex_digest(contract.audit_capability_profile_digest) ||
+    !Digest::is_valid(contract.instruction_artifact.digest) ||
+    !Digest::is_valid(contract.audit_policy_digest) ||
+    !Digest::is_valid(contract.implementation_capability_profile_digest) ||
+    !Digest::is_valid(contract.verification_capability_profile_digest) ||
+    !Digest::is_valid(contract.audit_capability_profile_digest) ||
     !valid_verification_specs(contract.verification_specs) {
     return Err(
       @types.ChoirError::validation_error(

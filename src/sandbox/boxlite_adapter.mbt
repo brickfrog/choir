@@ -355,20 +355,6 @@ fn process_authority_take_id(
 }
 
 ///|
-fn valid_process_digest(digest : @control.Digest) -> Bool {
-  if digest.0.length() != 64 {
-    return false
-  }
-  for character in digest.0 {
-    if !((character >= '0' && character <= '9') ||
-      (character >= 'a' && character <= 'f')) {
-      return false
-    }
-  }
-  true
-}
-
-///|
 pub fn validate_sandbox_process_spec(
   process : SandboxProcessSpec,
   capability : SandboxEffectCapability,
@@ -555,7 +541,7 @@ pub fn dispatch_boxlite_execute(
       @types.ChoirError::validation_error("sandbox execution key is empty"),
     )
   }
-  if !valid_process_digest(request.validated_process_spec_digest) {
+  if !@control.Digest::is_valid(request.validated_process_spec_digest) {
     return Err(
       @types.ChoirError::validation_error(
         "validated sandbox process digest is invalid",

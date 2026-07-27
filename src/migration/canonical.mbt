@@ -27,21 +27,6 @@ fn canonical_digest(content : Bytes) -> @control.Digest {
 }
 
 ///|
-fn digest_is_valid(digest : @control.Digest) -> Bool {
-  let value = digest.0
-  if value.length() != 64 {
-    return false
-  }
-  for character in value {
-    if !((character >= '0' && character <= '9') ||
-      (character >= 'a' && character <= 'f')) {
-      return false
-    }
-  }
-  true
-}
-
-///|
 fn workflow_shape_tag(shape : MigrationWorkflowShape) -> String {
   match shape {
     MechanicalEvolution => "mechanical-evolution"

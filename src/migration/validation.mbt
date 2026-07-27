@@ -5,7 +5,7 @@ fn migration_validation_error(detail : String) -> @types.ChoirError {
 
 ///|
 fn all_digests_valid(digests : Array[@control.Digest]) -> Bool {
-  digests.all(fn(digest) { digest_is_valid(digest) })
+  digests.all(fn(digest) { @control.Digest::is_valid(digest) })
 }
 
 ///|
@@ -26,7 +26,7 @@ pub fn validate_migration_contract_ref(
   if reference.contract_id.0 == "" ||
     reference.migration_lineage_id.0 == "" ||
     reference.revision <= 0 ||
-    !digest_is_valid(reference.contract_artifact_digest) {
+    !@control.Digest::is_valid(reference.contract_artifact_digest) {
     Err(migration_validation_error("contract reference is invalid"))
   } else {
     Ok(())
@@ -40,7 +40,9 @@ pub fn validate_feasibility_report(
   let capacity_valid = match report.capacity_estimate {
     CapacityUnknown => true
     CapacityEvidenceRange(minimum, maximum, basis_digest) =>
-      minimum >= 0 && maximum >= minimum && digest_is_valid(basis_digest)
+      minimum >= 0 &&
+      maximum >= minimum &&
+      @control.Digest::is_valid(basis_digest)
   }
   if report.schema_version != 1 ||
     report.estimated_minimum_units < 0 ||
@@ -65,12 +67,13 @@ pub fn validate_feasibility_report(
 pub fn validate_feasibility_proposal(
   proposal : MigrationFeasibilityProposal,
 ) -> Result[Unit, @types.ChoirError] {
-  if !digest_is_valid(proposal.report_artifact_digest) {
+  if !@control.Digest::is_valid(proposal.report_artifact_digest) {
     return Err(migration_validation_error("feasibility report is missing"))
   }
   match (proposal.outcome, proposal.proposed_contract_artifact_digest) {
     (MigrationDecline, None) => Ok(())
-    (MigrationProceed, Some(digest)) if digest_is_valid(digest) => Ok(())
+    (MigrationProceed, Some(digest)) if @control.Digest::is_valid(digest) =>
+      Ok(())
     (MigrationDecline, Some(_)) =>
       Err(migration_validation_error("decline cannot create a contract"))
     (MigrationProceed, None) =>
@@ -84,12 +87,12 @@ pub fn validate_migration_contract(
   contract : MigrationContract,
 ) -> Result[Unit, @types.ChoirError] {
   let parity_valid = match contract.parity_definition_digest {
-    Some(digest) => digest_is_valid(digest)
+    Some(digest) => @control.Digest::is_valid(digest)
     None => true
   }
   let rehearsal_valid = match contract.rehearsal_policy {
     RehearsalNotRequired => true
-    RehearsalRequired(digest) => digest_is_valid(digest)
+    RehearsalRequired(digest) => @control.Digest::is_valid(digest)
   }
   if contract.id.0 == "" ||
     contract.migration_lineage_id.0 == "" ||
@@ -143,7 +146,8 @@ pub fn validate_contract_acceptance(
   }
   let authorization_valid = match acceptance.authorization {
     MigrationContractExplicitUserInput(digest)
-    | MigrationContractPreacceptedGoalPolicy(digest) => digest_is_valid(digest)
+    | MigrationContractPreacceptedGoalPolicy(digest) =>
+      @control.Digest::is_valid(digest)
   }
   if !authorization_valid ||
     acceptance.accepted_event_sequence.0 <= 0L ||
@@ -163,7 +167,7 @@ pub fn validate_part_context_manifest(
     Err(error) => return Err(error)
   }
   let prior_valid = match manifest.prior_take_context_digest {
-    Some(digest) => digest_is_valid(digest)
+    Some(digest) => @control.Digest::is_valid(digest)
     None => true
   }
   if manifest.part_task_contract_revision_id.0 == "" ||
@@ -210,8 +214,8 @@ pub fn validate_migration_finding(
     finding.audit_take_id.0 == "" ||
     !finding_anchor_is_valid(finding.anchor) ||
     finding.pattern_key != expected_pattern_key ||
-    !digest_is_valid(finding.audit_subject_digest) ||
-    !digest_is_valid(finding.evidence_digest) {
+    !@control.Digest::is_valid(finding.audit_subject_digest) ||
+    !@control.Digest::is_valid(finding.evidence_digest) {
     Err(migration_validation_error("finding is invalid"))
   } else {
     Ok(())
@@ -322,8 +326,8 @@ fn inventory_verification_spec_is_valid(
 ) -> Bool {
   spec.id.0 != "" &&
   spec.version > 0 &&
-  digest_is_valid(spec.digest) &&
-  digest_is_valid(spec.process_spec_digest)
+  @control.Digest::is_valid(spec.digest) &&
+  @control.Digest::is_valid(spec.process_spec_digest)
 }
 
 ///|
@@ -375,7 +379,7 @@ pub fn validate_migration_inventory(
 ) -> Result[Unit, @types.ChoirError] {
   if inventory.schema_version != 1 ||
     inventory.source_revision.0 == "" ||
-    !digest_is_valid(inventory.generator_digest) {
+    !@control.Digest::is_valid(inventory.generator_digest) {
     return Err(migration_validation_error("migration inventory is invalid"))
   }
   let stable_keys : Array[InventoryStableKey] = []
@@ -491,10 +495,10 @@ pub fn validate_qualified_migration_inventory_ref(
   reference : QualifiedMigrationInventoryRef,
 ) -> Result[Unit, @types.ChoirError] {
   if reference.source_revision.0 == "" ||
-    !digest_is_valid(reference.generator_digest) ||
-    !digest_is_valid(reference.inventory_artifact_digest) ||
-    !digest_is_valid(reference.canonical_inventory_digest) ||
-    !digest_is_valid(reference.execution_evidence_digest) ||
+    !@control.Digest::is_valid(reference.generator_digest) ||
+    !@control.Digest::is_valid(reference.inventory_artifact_digest) ||
+    !@control.Digest::is_valid(reference.canonical_inventory_digest) ||
+    !@control.Digest::is_valid(reference.execution_evidence_digest) ||
     reference.verification_receipt_id.0 == "" {
     Err(migration_validation_error("qualified inventory reference is invalid"))
   } else {
@@ -580,7 +584,7 @@ pub fn validate_migration_judge_definition(
 ) -> Result[Unit, @types.ChoirError] {
   let substitute_oracle_invalid = match
     definition.substitute_oracle_artifact_digest {
-    Some(digest) => !digest_is_valid(digest)
+    Some(digest) => !@control.Digest::is_valid(digest)
     None => false
   }
   if definition.schema_version != 1 ||
@@ -604,7 +608,7 @@ pub fn validate_migration_judge_definition(
       }
       for index, expectation in expectations {
         if expectation.scenario_id.0 == "" ||
-          !digest_is_valid(expectation.normalized_outcome_digest) ||
+          !@control.Digest::is_valid(expectation.normalized_outcome_digest) ||
           expectations[index + 1:].any(fn(candidate) {
             candidate.scenario_id == expectation.scenario_id
           }) {
@@ -617,7 +621,7 @@ pub fn validate_migration_judge_definition(
   }
   for index, control in definition.negative_controls {
     if control.scenario_id.0 == "" ||
-      !digest_is_valid(control.expected_failure_digest) ||
+      !@control.Digest::is_valid(control.expected_failure_digest) ||
       definition.negative_controls[index + 1:].any(fn(candidate) {
         candidate.scenario_id == control.scenario_id
       }) {
@@ -646,7 +650,7 @@ pub fn validate_judge_qualification_report(
   }
   for index, result in report.baseline_results {
     if result.scenario_id.0 == "" ||
-      !digest_is_valid(result.normalized_outcome_digest) ||
+      !@control.Digest::is_valid(result.normalized_outcome_digest) ||
       report.baseline_results[index + 1:].any(fn(candidate) {
         candidate.scenario_id == result.scenario_id
       }) {
@@ -688,7 +692,7 @@ pub fn validate_judge_qualification_report(
   }
   for index, result in report.negative_control_results {
     if result.scenario_id.0 == "" ||
-      !digest_is_valid(result.observed_failure_digest) ||
+      !@control.Digest::is_valid(result.observed_failure_digest) ||
       report.negative_control_results[index + 1:].any(fn(candidate) {
         candidate.scenario_id == result.scenario_id
       }) {
@@ -779,11 +783,11 @@ pub fn validate_migration_production_admission_ref(
     reference.judge_qualification_evidence_ref_digest,
   ]
   let rehearsal_invalid = match reference.rehearsal_evidence_ref_digest {
-    Some(digest) => !digest_is_valid(digest)
+    Some(digest) => !@control.Digest::is_valid(digest)
     None => false
   }
   let continuation_invalid = match reference.migration_continuation_ref_digest {
-    Some(digest) => !digest_is_valid(digest)
+    Some(digest) => !@control.Digest::is_valid(digest)
     None => false
   }
   if !all_digests_valid(digests) || rehearsal_invalid || continuation_invalid {
@@ -816,7 +820,7 @@ pub fn validate_migration_bead_proposal(
   let expected_title = match proposal.scope {
     MigrationProductionBead => "Migrate " + proposal.stable_key.0
     MigrationRehearsalBead(sample_digest) => {
-      if !digest_is_valid(sample_digest) {
+      if !@control.Digest::is_valid(sample_digest) {
         return Err(
           migration_validation_error("rehearsal Bead scope is invalid"),
         )
@@ -951,7 +955,7 @@ pub fn project_migration_rehearsal_bead_proposals(
   sampled_stable_keys : Array[InventoryStableKey],
   is_nfc : (String) -> Bool,
 ) -> Result[Array[MigrationBeadProposal], @types.ChoirError] {
-  if !digest_is_valid(sampled_inventory_digest) ||
+  if !@control.Digest::is_valid(sampled_inventory_digest) ||
     sampled_stable_keys.length() == 0 {
     return Err(migration_validation_error("rehearsal sample is invalid"))
   }
@@ -1079,8 +1083,8 @@ pub fn compute_migration_contract_revision_impact_set(
     )
   }
   for index, change in changes {
-    if !digest_is_valid(change.previous_digest) ||
-      !digest_is_valid(change.next_digest) ||
+    if !@control.Digest::is_valid(change.previous_digest) ||
+      !@control.Digest::is_valid(change.next_digest) ||
       change.previous_digest == change.next_digest ||
       changes[index + 1:].any(fn(candidate) { candidate.kind == change.kind }) {
       return Err(
@@ -1092,7 +1096,7 @@ pub fn compute_migration_contract_revision_impact_set(
     if part.part_id.0 == "" ||
       part.effective_task_contract_revision_id.0 == "" ||
       part.dependency_artifact_digests.any(fn(digest) {
-        !digest_is_valid(digest)
+        !@control.Digest::is_valid(digest)
       }) ||
       parts[index + 1:].any(fn(candidate) { candidate.part_id == part.part_id }) {
       return Err(
@@ -1198,7 +1202,7 @@ pub fn validate_migration_continuation_ref(
     Err(error) => return Err(error)
   }
   if continuation.prior_goal_id.0 == "" ||
-    !digest_is_valid(continuation.supersession_artifact_digest) ||
+    !@control.Digest::is_valid(continuation.supersession_artifact_digest) ||
     continuation.cancellation_summary_id.0 == "" ||
     continuation.terminal_preserved_head.0 == "" {
     Err(migration_validation_error("migration continuation is invalid"))
@@ -1226,7 +1230,7 @@ pub fn project_migration_status(
     Err(error) => return Err(error)
   }
   if required_continuation_ref_digest is Some(digest) &&
-    !digest_is_valid(digest) {
+    !@control.Digest::is_valid(digest) {
     return Err(migration_validation_error("status continuation is invalid"))
   }
   let counts = [
@@ -1253,7 +1257,7 @@ pub fn project_migration_status(
       validate_migration_contract_ref(status.effective_contract_ref) is Err(_) ||
       (
         status.continuation_ref_digest is Some(digest) &&
-        !digest_is_valid(digest)
+        !@control.Digest::is_valid(digest)
       ) {
       return Err(migration_validation_error("unit status is invalid"))
     }

@@ -104,6 +104,27 @@ pub fn GoalId::effect(self : GoalId, suffix : String) -> EffectId {
 pub(all) struct Digest(String) derive(Debug, Eq, Compare, Hash, ToJson, FromJson)
 
 ///|
+/// Whether this is a well-formed SHA-256 digest: 64 lowercase hex characters.
+///
+/// One implementation because this decides what evidence gates accept. It was
+/// hand-rolled identically in four packages — storage, sandbox, control, and
+/// migration — and a single copy drifting to accept uppercase or a different
+/// length would quietly change which receipts and artifacts are admitted, in
+/// one subsystem and not the others.
+pub fn Digest::is_valid(self : Digest) -> Bool {
+  if self.0.length() != 64 {
+    return false
+  }
+  for character in self.0 {
+    if !((character >= '0' && character <= '9') ||
+      (character >= 'a' && character <= 'f')) {
+      return false
+    }
+  }
+  true
+}
+
+///|
 pub(all) struct GitOid(String) derive(Debug, Eq, Compare, Hash, ToJson, FromJson)
 
 ///|

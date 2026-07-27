@@ -46,3 +46,25 @@ test "durable identities round-trip in the shape their siblings use" {
     .replace(old="GoalId", new="_"),
   )
 }
+
+///|
+/// One implementation, because this decides what evidence gates accept. Four
+/// packages hand-rolled it identically; a single copy drifting to accept
+/// uppercase or a different length would change which receipts and artifacts
+/// are admitted in one subsystem and not the others.
+test "a digest is valid only as 64 lowercase hex characters" {
+  let hex = "a1b2c3d4e5f6" + "0123456789abcdef".repeat(3) + "0123"
+  assert_eq(hex.length(), 64)
+  assert_true(@control.Digest(hex).is_valid())
+  // Uppercase is rejected: digests are compared as text, so admitting both
+  // spellings would make the same content hash to two different keys.
+  assert_false(@control.Digest(hex.to_upper()).is_valid())
+  // Length is exact in both directions.
+  assert_false(@control.Digest(hex[:63].to_owned()).is_valid())
+  assert_false(@control.Digest(hex + "0").is_valid())
+  assert_false(@control.Digest("").is_valid())
+  // Anything outside 0-9a-f is rejected, including characters that look like
+  // hex to a careless reader.
+  assert_false(@control.Digest(hex[:63].to_owned() + "g").is_valid())
+  assert_false(@control.Digest(hex[:63].to_owned() + " ").is_valid())
+}
