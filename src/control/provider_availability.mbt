@@ -93,7 +93,7 @@ pub fn classify_provider_availability(
 pub(all) struct ProviderSurfaceObservation {
   surface : ProviderSurfaceId
   availability : ProviderAvailability
-} derive(Debug, Eq, ToJson, FromJson)
+}
 
 ///|
 /// Choose which admitted surface the next bounded recovery attempt runs on,
@@ -102,8 +102,8 @@ pub(all) struct ProviderSurfaceObservation {
 /// Authority comes from the captured contract and nowhere else: only a
 /// surface the contract admitted can be returned, in the order the contract
 /// named them, so recovery never changes which provider a Take was authorized
-/// to spend. A candidate whose own last observation still defers dispatch at
-/// `now` is skipped, which is what keeps two spent surfaces from handing the
+/// to spend. A candidate is skipped when any observation of it still defers
+/// dispatch at `now`, which is what keeps two spent surfaces from handing the
 /// same Part back and forth. `None` means every admitted surface is either the
 /// one that just failed or is itself deferred, so the caller must wait.
 pub fn select_admitted_provider_surface(
