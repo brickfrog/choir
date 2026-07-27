@@ -275,3 +275,44 @@ test "every Conductor launch flag is declared in the qualified surface" {
     assert_true(passed.contains(flag))
   }
 }
+
+///|
+/// The live probe and the runtime Take path each built this argv independently,
+/// so a protocol change had to be made twice and the probe could silently stop
+/// exercising what the runtime actually does. One builder now, and this pins
+/// the wire contract it produces.
+test "a BoxLite request carries its auth and body exactly once" {
+  let with_body = boxlite_http_arguments(
+    "secret-key",
+    "http://127.0.0.1:22000",
+    "POST",
+    "/v1/boxes",
+    Some("{\"name\":\"box-1\"}"),
+    30,
+  )
+  @debug.assert_eq(with_body, [
+    "-fsS", "--max-time", "30", "-X", "POST", "-H", "Authorization: Bearer secret-key",
+    "-H", "Content-Type: application/json", "--data-binary", "{\"name\":\"box-1\"}",
+    "http://127.0.0.1:22000/v1/boxes",
+  ])
+  // A bodyless call sends no content type and no body flag, so a GET cannot
+  // accidentally carry an empty payload.
+  let without_body = boxlite_http_arguments(
+    "secret-key",
+    "http://127.0.0.1:22000",
+    "GET",
+    "/v1/boxes/box-1",
+    None,
+    20,
+  )
+  @debug.assert_eq(without_body, [
+    "-fsS", "--max-time", "20", "-X", "GET", "-H", "Authorization: Bearer secret-key",
+    "http://127.0.0.1:22000/v1/boxes/box-1",
+  ])
+  // The timeout is the only thing the two stacks disagree about, and it is a
+  // parameter rather than a second copy of the protocol.
+  assert_true(with_body.contains("30"))
+  assert_true(without_body.contains("20"))
+  // The clone body is one definition both stacks use.
+  assert_eq(boxlite_clone_request_body("box-2"), "{\"name\":\"box-2\"}")
+}

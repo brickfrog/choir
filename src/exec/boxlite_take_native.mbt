@@ -284,20 +284,30 @@ test "remote BoxLite clients get deterministic isolated homes" {
 }
 
 ///|
-async fn capture_native_boxlite_http(
-  server : NativeBoxLiteServerHandle,
+/// The curl invocation for one BoxLite REST call.
+///
+/// Shared because this is where the wire contract lives — the bearer header,
+/// the JSON content type, the body flag. The live probe and the runtime Take
+/// path each built it independently, so a protocol change had to be made twice
+/// and the probe could silently stop exercising what the runtime actually does.
+/// They still differ in timeout and in which process runner executes the call;
+/// only the argv is shared.
+pub fn boxlite_http_arguments(
+  api_key : String,
+  url : String,
   http_method : String,
   path : String,
   body : String?,
-) -> Result[@sandbox.BoxLiteProbeCapture, @types.ChoirError] {
+  max_seconds : Int,
+) -> Array[String] {
   let args : Array[String] = [
     "-fsS",
     "--max-time",
-    "30",
+    max_seconds.to_string(),
     "-X",
     http_method,
     "-H",
-    "Authorization: Bearer " + server.config.api_key,
+    "Authorization: Bearer " + api_key,
   ]
   match body {
     Some(value) => {
@@ -308,7 +318,33 @@ async fn capture_native_boxlite_http(
     }
     None => ()
   }
-  args.push(server.url + path)
+  args.push(url + path)
+  args
+}
+
+///|
+/// The body for a BoxLite box clone. One definition; the two stacks built the
+/// identical object.
+pub fn boxlite_clone_request_body(name : String) -> String {
+  let body : Map[String, Json] = { "name": name.to_json() }
+  body.to_json().stringify(indent=0)
+}
+
+///|
+async fn capture_native_boxlite_http(
+  server : NativeBoxLiteServerHandle,
+  http_method : String,
+  path : String,
+  body : String?,
+) -> Result[@sandbox.BoxLiteProbeCapture, @types.ChoirError] {
+  let args = boxlite_http_arguments(
+    server.config.api_key,
+    server.url,
+    http_method,
+    path,
+    body,
+    30,
+  )
   capture_boxlite_fixed_process(
     "/usr/bin/curl",
     args,
@@ -1176,8 +1212,7 @@ pub async fn prepare_native_boxlite_environment(
 
 ///|
 fn native_boxlite_clone_body(name : String) -> String {
-  let body : Map[String, Json] = { "name": name.to_json() }
-  body.to_json().stringify(indent=0)
+  boxlite_clone_request_body(name)
 }
 
 ///|

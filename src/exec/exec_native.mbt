@@ -964,26 +964,17 @@ async fn capture_boxlite_authorized_http(
   path : String,
   body : String?,
 ) -> Result[@sandbox.BoxLiteProbeCapture, @types.ChoirError] {
-  let args : Array[String] = [
-    "-fsS",
-    "--max-time",
-    "20",
-    "-X",
-    http_method,
-    "-H",
-    "Authorization: Bearer " + server.api_key,
-  ]
-  match body {
-    Some(value) => {
-      args.push("-H")
-      args.push("Content-Type: application/json")
-      args.push("--data-binary")
-      args.push(value)
-    }
-    None => ()
-  }
-  args.push(server.url + path)
-  capture_boxlite_curl(root, args)
+  capture_boxlite_curl(
+    root,
+    boxlite_http_arguments(
+      server.api_key,
+      server.url,
+      http_method,
+      path,
+      body,
+      20,
+    ),
+  )
 }
 
 ///|
@@ -1111,8 +1102,7 @@ fn boxlite_create_body(name : String, network_disabled : Bool) -> String {
 
 ///|
 fn boxlite_clone_body(name : String) -> String {
-  let body : Map[String, Json] = { "name": name.to_json() }
-  body.to_json().stringify(indent=0)
+  boxlite_clone_request_body(name)
 }
 
 ///|
