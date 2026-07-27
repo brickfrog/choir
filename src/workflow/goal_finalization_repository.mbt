@@ -30,7 +30,10 @@ fn goal_finalization_state_key(
   goal_id : @control.GoalId,
 ) -> @storage.StateRecordKey {
   let digest = @storage.artifact_digest(@utf8.encode(goal_id.0))
-  @storage.StateRecordKey("goal-finalization:" + @storage.digest_text(digest))
+  @storage.StateRecordKey(
+    durable_record_key_prefix(DurableGoalFinalizationRecord) +
+    @storage.digest_text(digest),
+  )
 }
 
 ///|

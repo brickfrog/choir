@@ -13,10 +13,15 @@ pub(all) struct NativeGoalPurgeReport {
 } derive(Debug, Eq)
 
 ///|
+/// What a reset destroyed, and the evidence that authorized it. The reason
+/// travels with the report because this is the one path that deletes durable
+/// state: an operator who finds the control root gone is told which record
+/// could not be read, not merely that a generation moved.
 pub(all) struct NativeGoalControlStateResetReport {
   source_claims_released : Int
   runtime_roots_removed : Int
   git_refs_removed : Int
+  reason : @storage.ControlStateResetReason
 } derive(Debug, Eq)
 
 ///|
@@ -31,26 +36,6 @@ priv struct NativeOrphanedGoalSourceClaim {
   part_id : @control.PartId
   claimant : String
   goal_id : @control.GoalId
-}
-
-///|
-/// The schema identity this build can decode.
-///
-/// Still declared rather than derived. Deriving it from the SQL schema would be
-/// actively worse than declaring it: that DDL is generic over record key,
-/// version, and value digest, so it does not change when the durable value
-/// shapes do — which is exactly what every past bump tracked. A generation that
-/// cannot change when the thing it identifies changes never detects an
-/// incompatible store at all.
-///
-/// Deriving it properly means digesting the durable value shapes, which needs
-/// an exhaustive canonical instance of each stored record so the compiler
-/// forces the digest to move when a field is added. That is the remaining work;
-/// what has changed is that forgetting to bump this is no longer catastrophic,
-/// because the generation now lives inside the store and its absence adopts
-/// rather than destroys.
-fn native_goal_control_state_generation() -> String {
-  "choir-control-state-v8"
 }
 
 ///|
@@ -99,8 +84,14 @@ pub fn native_goal_repository(
   {
     state_store: { path: project_dir + "/.choir/state/control/workflow.db" },
     artifact_store: { root: project_dir + "/.choir/state/control/artifacts" },
-    max_snapshot_bytes: 4 * 1024 * 1024,
+    max_snapshot_bytes: native_goal_max_snapshot_bytes(),
   }
+}
+
+///|
+/// The largest durable record this build will read back.
+fn native_goal_max_snapshot_bytes() -> Int {
+  4 * 1024 * 1024
 }
 
 ///|
@@ -6107,6 +6098,59 @@ fn observe_native_goal_control_state(
 }
 
 ///|
+/// Read every durable record and report the first this build cannot decode.
+///
+/// This is the evidence the destructive branch needs. A moved generation says
+/// the durable shapes changed, not that they changed incompatibly: derived
+/// decoding tolerates a missing optional key and ignores keys it does not know,
+/// so an added optional field or a new enum variant moves the generation while
+/// every stored record still reads. Asking the decoders is the only way to tell
+/// those apart, and it is asked only when the generations already disagree.
+///
+/// A record whose content is not in the artifact store is skipped rather than
+/// counted against the schema. Content that is not there cannot demonstrate
+/// that the shapes moved incompatibly, and this branch destroys the store.
+///
+/// A read that fails outright is neither evidence nor a verdict, so it comes
+/// back as an error and `choir serve` leaves the store alone and says so. The
+/// scan reads under the same size limit `native_goal_repository` reads under,
+/// so it does not accept a record the loader for this store would refuse.
+pub fn probe_native_durable_record_decoding(
+  control_root : String,
+) -> Result[@storage.StateRecordKey?, @types.ChoirError] {
+  let store : @storage.SqliteStateStore = {
+    path: control_root + "/workflow.db",
+  }
+  let artifacts : @storage.ArtifactStore = { root: control_root + "/artifacts" }
+  for kind in @workflow.durable_record_kinds() {
+    let records = match
+      list_state_records(store, @workflow.durable_record_key_prefix(kind)) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    for record in records {
+      match artifact_store_contains(artifacts, record.value_digest) {
+        Ok(true) => ()
+        Ok(false) => continue
+        Err(error) => return Err(error)
+      }
+      let content = match
+        read_artifact(artifacts, {
+          digest: record.value_digest,
+          max_bytes: native_goal_max_snapshot_bytes(),
+        }) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      if !@workflow.durable_record_decodes(kind, content) {
+        return Ok(Some(record.key))
+      }
+    }
+  }
+  Ok(None)
+}
+
+///|
 /// Bring the control store to a state this build can use.
 ///
 /// The decision is made in `@storage.decide_control_state` and only applied
@@ -6114,40 +6158,73 @@ fn observe_native_goal_control_state(
 /// purges Choir's ref namespace, and removes the whole control root, and it
 /// used to be authorized by a missing sibling file inside an effect path where
 /// nobody could test it in isolation.
+///
+/// Runtime cleanup and ref purging are injected for the same reason `capture`
+/// is: the branch that reaches them is the one worth driving in a test, and it
+/// otherwise needs a real repository to reach at all.
 pub async fn prepare_native_goal_control_state(
   project_dir : String,
   capture? : async (Command) -> (Int, String) = capture_command_merged,
+  cleanup_runtime? : async (@workflow.RepositoryId, @control.GoalId) -> Result[
+    Unit,
+    @types.ChoirError,
+  ] = cleanup_native_goal_runtime_identity,
+  purge_refs? : async (String) -> Result[Int, @types.ChoirError] = purge_native_goal_owned_git_ref_namespace,
 ) -> Result[NativeGoalControlStatePreparation, @types.ChoirError] {
   let control_root = project_dir + "/.choir/state/control"
   let workflow_store_path = control_root + "/workflow.db"
-  let generation = native_goal_control_state_generation()
-  match
+  // Derived from the durable value shapes themselves, so it moves exactly when
+  // what this build can decode moves. exec neither declares nor bumps it.
+  let generation = @workflow.durable_value_shape_generation()
+  let plan = match
     @storage.decide_control_state(
       observe_native_goal_control_state(control_root),
       generation,
     ) {
-    @storage.ControlStateDecision::ControlStateCurrent =>
+    @storage.ControlStateDecision::ControlStatePlanned(planned) => planned
+    // The generations disagree, which settles nothing on its own. Read the
+    // records and let what they decode to decide.
+    @storage.ControlStateDecision::ControlStateProveRecordsDecodable(
+      recorded,
+      expected
+    ) =>
+      match probe_native_durable_record_decoding(control_root) {
+        Ok(undecodable) =>
+          @storage.decide_control_state_from_records(
+            recorded, expected, undecodable,
+          )
+        Err(error) => return Err(error)
+      }
+  }
+  match plan {
+    @storage.ControlStatePlan::ControlStateCurrent =>
       Ok(NativeGoalControlStateCurrent)
-    // A readable store that never recorded its generation is adopted, not
-    // destroyed. Recording it is the whole of the migration.
-    @storage.ControlStateDecision::ControlStateMigrate(_, target) =>
+    // A store whose records still decode is adopted, not destroyed. Recording
+    // the generation it now answers to is the whole of the migration.
+    @storage.ControlStatePlan::ControlStateMigrate(_, target) =>
       match
         write_state_store_generation({ path: workflow_store_path }, target) {
         Ok(_) => Ok(NativeGoalControlStateCurrent)
         Err(error) => Err(error)
       }
-    @storage.ControlStateDecision::ControlStateInitialize =>
+    @storage.ControlStatePlan::ControlStateInitialize =>
       match native_goal_control_state_create(control_root, generation) {
         Ok(_) => Ok(NativeGoalControlStateInitialized)
         Err(error) => Err(error)
       }
-    @storage.ControlStateDecision::ControlStateAuthorizedReset(_) => {
-      let report = match
+    @storage.ControlStatePlan::ControlStateAuthorizedReset(reason) => {
+      let purged = match
         cleanup_native_goal_owned_resources(
-          project_dir, capture, cleanup_native_goal_runtime_identity, purge_native_goal_owned_git_ref_namespace,
+          project_dir, capture, cleanup_runtime, purge_refs,
         ) {
         Ok(value) => value
         Err(error) => return Err(error)
+      }
+      let report : NativeGoalControlStateResetReport = {
+        source_claims_released: purged.source_claims_released,
+        runtime_roots_removed: purged.runtime_roots_removed,
+        git_refs_removed: purged.git_refs_removed,
+        reason,
       }
       // The store is about to be replaced at the same path. A pooled
       // connection would survive the unlink and keep serving the deleted
@@ -6194,7 +6271,7 @@ async fn cleanup_native_goal_owned_resources(
     @types.ChoirError,
   ],
   purge_refs : async (String) -> Result[Int, @types.ChoirError],
-) -> Result[NativeGoalControlStateResetReport, @types.ChoirError] {
+) -> Result[NativeGoalPurgeReport, @types.ChoirError] {
   let claims = match
     inspect_native_orphaned_goal_source_claims(project_dir, capture) {
     Ok(value) => value
@@ -6284,18 +6361,9 @@ pub async fn purge_native_goal_resources(
   // Purge is the recovery path for incompatible durable state, so it must not
   // decode that state before deleting it. Discover owned live resources from
   // Bead claims and exact Git namespaces instead.
-  let report = match
-    cleanup_native_goal_owned_resources(
-      project_dir, capture, cleanup_runtime, purge_refs,
-    ) {
-    Ok(value) => value
-    Err(error) => return Err(error)
-  }
-  Ok({
-    source_claims_released: report.source_claims_released,
-    runtime_roots_removed: report.runtime_roots_removed,
-    git_refs_removed: report.git_refs_removed,
-  })
+  cleanup_native_goal_owned_resources(
+    project_dir, capture, cleanup_runtime, purge_refs,
+  )
 }
 
 ///|

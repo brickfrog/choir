@@ -551,22 +551,22 @@ test "the schema generation round-trips inside the store" {
   }
   // Freshly created: readable, and recording nothing yet.
   assert_true(read_state_store_generation(store) is Ok(None))
-  guard write_state_store_generation(store, "choir-control-state-v8") is Ok(_) else {
+  guard write_state_store_generation(store, "choir-durable-shape-aaaa") is Ok(_) else {
     fail("write generation")
   }
   let restarted : @storage.SqliteStateStore = { path, }
   assert_eq(
     read_state_store_generation(restarted).unwrap(),
-    Some("choir-control-state-v8"),
+    Some("choir-durable-shape-aaaa"),
   )
   // Recording it again replaces rather than duplicating, so a restart that
   // rewrites the same value stays readable.
-  guard write_state_store_generation(store, "choir-control-state-v9") is Ok(_) else {
+  guard write_state_store_generation(store, "choir-durable-shape-bbbb") is Ok(_) else {
     fail("rewrite generation")
   }
   assert_eq(
     read_state_store_generation(restarted).unwrap(),
-    Some("choir-control-state-v9"),
+    Some("choir-durable-shape-bbbb"),
   )
   // A file that is not a database at all must read as unreadable, not as a
   // store that simply records nothing. Adopting a corrupt store would keep
@@ -737,4 +737,248 @@ test "an artifact sweep collects only content whose every term expired" {
   // converges.
   assert_eq(sweep(2_000L, fn(_) { true }).unwrap(), 0)
   ignore(@sys.rm_rf(root))
+}
+
+///|
+/// A durable process execution this build reads without complaint.
+fn control_probe_execution(suffix : String) -> @sandbox.ProcessExecution {
+  {
+    execution_id: @sandbox.ProcessExecutionId("execution-" + suffix),
+    effect_intent_id: @control.EffectId("effect-" + suffix),
+    runtime_execution_key: @sandbox.RuntimeExecutionKey("runtime-" + suffix),
+    take_id: @control.TakeId("take-" + suffix),
+    process_authority: @sandbox.SandboxProcessAuthority::SandboxImplementationTool(
+      @control.TakeId("take-" + suffix),
+      store_digest_a,
+    ),
+    validated_process_spec_digest: store_digest_a,
+    sandbox_lease_id: @control.SandboxLeaseId("lease-" + suffix),
+    sandbox_generation_id: @control.SandboxGenerationId("generation-" + suffix),
+    capability_profile_digest: store_digest_b,
+    input_artifact_set_digest: store_digest_c,
+    output_artifact_set_digest: None,
+    started_at: None,
+    finished_at: None,
+    disposition: @sandbox.ProcessExecutionDisposition::ProcessStartPlanned,
+  }
+}
+
+///|
+/// Put one durable record in the control store: the content in the artifact
+/// store, and a state record pointing at it. Content of `None` records a state
+/// row whose content was never adopted.
+fn control_probe_record(
+  control_root : String,
+  key : String,
+  content : Bytes?,
+) -> Unit raise {
+  let digest = match content {
+    Some(bytes) => @storage.artifact_digest(bytes)
+    None => store_digest_a
+  }
+  let adopted = match content {
+    Some(bytes) =>
+      adopt_artifact({ root: control_root + "/artifacts" }, {
+        content: bytes,
+        expected_digest: digest,
+        provenance: @storage.ArtifactProvenance::ArtifactConformanceEvidence,
+        retention: @storage.ArtifactRetention::ArtifactPermanent,
+      })
+      is Ok(_)
+    None => true
+  }
+  guard adopted else { fail("adopt durable record content") }
+  guard commit_state_transaction({ path: control_root + "/workflow.db" }, {
+      state: {
+        key: @storage.StateRecordKey(key),
+        expected_version: None,
+        next_version: 1,
+        fencing_epoch: @control.FencingEpoch(1L),
+        value_digest: digest,
+      },
+      outbox: {
+        semantic_key: @storage.SemanticEventKey(key + ":state:1"),
+        payload_digest: digest,
+      },
+      fault_point: None,
+    })
+    is Ok(_) else {
+    fail("commit durable record")
+  }
+}
+
+///|
+/// The generation is a digest, so it reports only "different". Whether a
+/// different generation matters is answered by reading the records, and only a
+/// record this build cannot decode answers yes.
+test "the record scan names only a record this build cannot decode" {
+  let control_root = storage_test_path("control-probe")
+  ignore(@sys.rm_rf(control_root))
+  guard @sys.create_dir_all(control_root) else { fail("create control root") }
+  guard initialize_state_store({ path: control_root + "/workflow.db" }) is Ok(_) else {
+    fail("initialize state store")
+  }
+  // Nothing stored yet: nothing can be evidence of anything.
+  assert_true(probe_native_durable_record_decoding(control_root) is Ok(None))
+  let prefix = @workflow.durable_record_key_prefix(
+    @workflow.DurableRecordKind::DurableProcessExecution,
+  )
+  control_probe_record(
+    control_root,
+    prefix + "readable",
+    Some(
+      @utf8.encode(
+        control_probe_execution("readable").to_json().stringify(indent=0),
+      ),
+    ),
+  )
+  assert_true(probe_native_durable_record_decoding(control_root) is Ok(None))
+
+  // Content that is not in the store cannot demonstrate that the shapes moved
+  // incompatibly, and this evidence authorizes deleting the whole store.
+  control_probe_record(control_root, prefix + "missing", None)
+  assert_true(probe_native_durable_record_decoding(control_root) is Ok(None))
+
+  // A record that is present and does not decode is the evidence.
+  control_probe_record(control_root, prefix + "broken", Some(b"{}"))
+  assert_eq(
+    probe_native_durable_record_decoding(control_root).unwrap(),
+    Some(@storage.StateRecordKey(prefix + "broken")),
+  )
+  ignore(@sys.rm_rf(control_root))
+}
+
+///|
+/// The regression this guards: every additive shape change moves the derived
+/// generation, and treating a moved generation as authority to destroy would
+/// release source claims, purge Choir's whole git ref namespace, remove runtime
+/// roots and delete the control root — on records that read perfectly well.
+///
+/// The two effects that outlive the control root — releasing Bead claims and
+/// purging refs — are injected and counted, so the assertion is that they were
+/// not reached at all rather than that nothing observable happened.
+async test "a store from another generation whose records read is adopted" {
+  let reached : Array[String] = []
+  let project_dir = storage_test_path("control-adopt")
+  let control_root = project_dir + "/.choir/state/control"
+  ignore(@sys.rm_rf(project_dir))
+  guard @sys.create_dir_all(control_root) else { fail("create control root") }
+  guard initialize_state_store({ path: control_root + "/workflow.db" }) is Ok(_) else {
+    fail("initialize state store")
+  }
+  guard write_state_store_generation(
+      { path: control_root + "/workflow.db" },
+      "choir-durable-shape-from-an-older-build",
+    )
+    is Ok(_) else {
+    fail("record an older generation")
+  }
+  let prefix = @workflow.durable_record_key_prefix(
+    @workflow.DurableRecordKind::DurableProcessExecution,
+  )
+  control_probe_record(
+    control_root,
+    prefix + "readable",
+    Some(
+      @utf8.encode(
+        control_probe_execution("readable").to_json().stringify(indent=0),
+      ),
+    ),
+  )
+  let prepared = prepare_native_goal_control_state(
+    project_dir,
+    capture=fn(command) {
+      reached.push("capture:" + command.args[0])
+      (0, "[]")
+    },
+    cleanup_runtime=fn(_, goal_id) {
+      reached.push("runtime:" + goal_id.0)
+      Ok(())
+    },
+    purge_refs=fn(_) {
+      reached.push("refs")
+      Ok(0)
+    },
+  )
+  assert_eq(prepared.unwrap(), NativeGoalControlStateCurrent)
+  assert_eq(reached, [])
+  // Adopted, not rebuilt: the record is still there and the store now answers
+  // to this build's generation, so restarting is a no-op.
+  assert_eq(
+    read_state_store_generation({ path: control_root + "/workflow.db" }).unwrap(),
+    Some(@workflow.durable_value_shape_generation()),
+  )
+  assert_eq(
+    list_state_records({ path: control_root + "/workflow.db" }, prefix)
+    .unwrap()
+    .length(),
+    1,
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+/// The other half: a stored record this build cannot decode is the one thing
+/// that authorizes the destructive branch, and when it fires the report names
+/// the record rather than leaving an operator with a deleted control root and a
+/// pair of digests.
+async test "a record this build cannot decode authorizes the reset" {
+  let reached : Array[String] = []
+  let project_dir = storage_test_path("control-reset")
+  let control_root = project_dir + "/.choir/state/control"
+  let store : @storage.SqliteStateStore = {
+    path: control_root + "/workflow.db",
+  }
+  ignore(@sys.rm_rf(project_dir))
+  guard @sys.create_dir_all(control_root) else { fail("create control root") }
+  guard initialize_state_store(store) is Ok(_) else {
+    fail("initialize state store")
+  }
+  guard write_state_store_generation(
+      store, "choir-durable-shape-from-an-older-build",
+    )
+    is Ok(_) else {
+    fail("record an older generation")
+  }
+  let prefix = @workflow.durable_record_key_prefix(
+    @workflow.DurableRecordKind::DurableProcessExecution,
+  )
+  control_probe_record(control_root, prefix + "broken", Some(b"{}"))
+  let prepared = prepare_native_goal_control_state(
+    project_dir,
+    capture=fn(_) {
+      reached.push("capture")
+      (0, "[]")
+    },
+    cleanup_runtime=fn(_, goal_id) {
+      reached.push("runtime:" + goal_id.0)
+      Ok(())
+    },
+    purge_refs=fn(_) {
+      reached.push("refs")
+      Ok(3)
+    },
+  )
+  assert_eq(
+    prepared.unwrap(),
+    NativeGoalControlStatePreparation::NativeGoalControlStateReset({
+      source_claims_released: 0,
+      runtime_roots_removed: 0,
+      git_refs_removed: 3,
+      reason: @storage.ControlStateResetReason::ControlRecordUndecodable(
+        @storage.StateRecordKey(prefix + "broken"),
+        "choir-durable-shape-from-an-older-build",
+        @workflow.durable_value_shape_generation(),
+      ),
+    }),
+  )
+  assert_true(reached.contains("refs"))
+  // Rebuilt, not adopted: the record this build could not read is gone and the
+  // fresh store answers to this build's generation.
+  assert_eq(list_state_records(store, prefix).unwrap().length(), 0)
+  assert_eq(
+    read_state_store_generation(store).unwrap(),
+    Some(@workflow.durable_value_shape_generation()),
+  )
+  ignore(@sys.rm_rf(project_dir))
 }
