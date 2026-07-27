@@ -806,17 +806,15 @@ fn native_part_dependencies_with_admission(
     },
     is_nfc: native_path_is_nfc,
     audit_receipt_metadata: fn(snapshot) {
-      let (provider_identity, model_identity) = match surface {
+      let model_identity = match surface {
         @control.ProviderSurfaceId::ClaudeSubscriptionCli =>
-          (
-            "claude-code",
-            @control.ModelIdentity::ReportedModelIdentity(
-              "claude-subscription-runtime",
-            ),
+          @control.ModelIdentity::ReportedModelIdentity(
+            "claude-subscription-runtime",
           )
         @control.ProviderSurfaceId::CodexSubscriptionCli =>
-          ("codex-cli-0.145.0", @control.ModelIdentity::UnreportedModelIdentity)
+          @control.ModelIdentity::UnreportedModelIdentity
       }
+      let provider_identity = @harness.provider_receipt_identity(surface)
       Ok({
         receipt_id: @control.ReceiptId(
           "audit-receipt-" + snapshot.audit_take.id.0,

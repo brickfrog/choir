@@ -1431,7 +1431,9 @@ fn publication_audited_assurance(
     audit_sandbox_generation_id: planned.identities.audit_sandbox.generation_id,
     auditor_capability_profile_digest: result.auditor_capability_profile_digest,
     provider_surface_id: @control.ProviderSurfaceId::CodexSubscriptionCli,
-    provider_identity: "codex-cli",
+    provider_identity: @harness.provider_receipt_identity(
+      @control.ProviderSurfaceId::CodexSubscriptionCli,
+    ),
     model_identity: @control.ModelIdentity::ReportedModelIdentity("codex"),
     provider_conformance_report_digest: result.provider_conformance_report_digest,
     audit_policy_digest: result.audit_policy_digest,

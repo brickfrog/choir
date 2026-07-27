@@ -483,3 +483,28 @@ pub fn evaluate_surface_declaration(
     blocking_reasons: reasons,
   }
 }
+
+///|
+/// The provider identity recorded on an audit receipt.
+///
+/// Production wrote at least four spellings for the same provider —
+/// `codex-cli`, `codex-subscription-cli`, `codex-cli-0.145.0` — and two sites
+/// hard-coded an exact version, so a receipt claimed a stale one the moment the
+/// CLI updated. This derives both from the typed surface and the qualified
+/// version, so there is one spelling per provider and the version cannot go
+/// stale independently of the pin.
+///
+/// Naming the qualified version rather than an observed one is accurate by
+/// construction: the surface probe refuses to run a Take against a CLI whose
+/// version does not match, so a receipt only exists if the provider was that
+/// version.
+pub fn provider_receipt_identity(
+  surface : @control.ProviderSurfaceId,
+) -> String {
+  match surface {
+    @control.ProviderSurfaceId::ClaudeSubscriptionCli =>
+      "claude-code-" + expected_surface_version(ProviderSurface::ClaudeCli)
+    @control.ProviderSurfaceId::CodexSubscriptionCli =>
+      "codex-cli-" + expected_surface_version(ProviderSurface::CodexCli)
+  }
+}

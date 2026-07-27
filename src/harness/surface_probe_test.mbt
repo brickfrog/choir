@@ -168,3 +168,37 @@ test "host surface matrix completes only with all fifteen evidence rows" {
     @harness.HostSurfaceMatrixDisposition::HostSurfaceMatrixComplete,
   )
 }
+
+///|
+/// Production wrote four spellings for the same provider into durable receipts
+/// — codex-cli, codex-subscription-cli, codex-cli-0.145.0 — and hard-coded an
+/// exact version that went stale the moment the CLI updated.
+test "a receipt identity is one spelling per provider, carrying the pin" {
+  let claude = @harness.provider_receipt_identity(
+    @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+  )
+  let codex = @harness.provider_receipt_identity(
+    @control.ProviderSurfaceId::CodexSubscriptionCli,
+  )
+  assert_true(claude != codex)
+  // The version is the one the surface probe qualifies against, so bumping the
+  // pin moves the receipts with it and a hard-coded stale version cannot recur.
+  assert_true(
+    claude.has_suffix(
+      @harness.expected_surface_version(@harness.ProviderSurface::ClaudeCli),
+    ),
+  )
+  assert_true(
+    codex.has_suffix(
+      @harness.expected_surface_version(@harness.ProviderSurface::CodexCli),
+    ),
+  )
+  // Stable across calls: a receipt written twice for the same surface records
+  // the same identity.
+  assert_eq(
+    claude,
+    @harness.provider_receipt_identity(
+      @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+    ),
+  )
+}

@@ -5153,13 +5153,9 @@ async fn advance_native_goal_assurance(
                   ":goal-audit-receipt",
                 ),
                 provider_surface_id: stored.record.identities.audit_session.surface,
-                provider_identity: match
-                  stored.record.identities.audit_session.surface {
-                  @control.ProviderSurfaceId::CodexSubscriptionCli =>
-                    "codex-subscription-cli"
-                  @control.ProviderSurfaceId::ClaudeSubscriptionCli =>
-                    "claude-subscription-cli"
-                },
+                provider_identity: @harness.provider_receipt_identity(
+                  stored.record.identities.audit_session.surface,
+                ),
                 model_identity: @control.ModelIdentity::UnreportedModelIdentity,
               },
               fn(digest) {
