@@ -136,8 +136,9 @@ async fn advance_bound_part(
             )
           ) => (planned, "recovery")
           // The surface the Part was on cannot serve and its contract admits
-          // another: the fresh Take is armed there, under its own name so the
-          // transition is not filed as an ordinary recovery.
+          // another: the fresh Take is armed there. The durable record of the
+          // move is the snapshot's provider failovers; this label only names
+          // the transition if persisting it fails.
           Ok(
             @workflow.PartRecoveryRetryDecision::PartRecoveryRetryFailedOver(
               planned,

@@ -1946,14 +1946,15 @@ pub(all) enum PartRecoveryRetryDecision {
 } derive(Debug, Eq)
 
 ///|
-/// What each surface last told this Part.
+/// What each surface this Part has already left last told it.
 ///
-/// The live diagnostic speaks for the surface the Part is on now; every
-/// recorded failover speaks for the surface it left, and that memory is what
-/// keeps a Part from being handed back to a surface it already found spent.
+/// Only a surface the Part is not currently on can be a failover target, so
+/// the live diagnostic — which speaks for the current surface — is never an
+/// observation this decision can consult. The recorded failovers are: each one
+/// names the surface it left and why, and that memory is what keeps a Part
+/// from being handed back to a surface it already found spent.
 fn part_surface_observations(
   snapshot : PartWorkflowSnapshot,
-  diagnostic : PartDispatchDiagnostic,
 ) -> Array[@control.ProviderSurfaceObservation] {
   let observations : Array[@control.ProviderSurfaceObservation] = []
   for failover in snapshot.provider_failovers {
@@ -1962,10 +1963,6 @@ fn part_surface_observations(
       availability: failover.cause,
     })
   }
-  observations.push({
-    surface: snapshot.identities.implementation_session.surface,
-    availability: diagnostic.availability,
-  })
   observations
 }
 
@@ -2006,7 +2003,7 @@ pub fn plan_part_recovery_retry(
           @control.select_admitted_provider_surface(
             current,
             snapshot.admitted_provider_surfaces,
-            part_surface_observations(snapshot, diagnostic),
+            part_surface_observations(snapshot),
             now,
           ) {
           Some(target) =>

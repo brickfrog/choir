@@ -1085,10 +1085,17 @@ fn plan_native_part_verification_repair(
 
 ///|
 /// Fresh Take, sandbox, and session identities for re-arming a Part under its
-/// existing task contract, on the surface the control plane selected. The
-/// identities are derived from the retry ordinal and that surface, so a
-/// restart between planning and persistence re-derives the same plan instead
-/// of leaking a second set of identities.
+/// existing task contract, on the surface the control plane selected.
+///
+/// The identities are a pure derivation from the task contract, the Part, the
+/// retry ordinal, and that surface. A restart between planning and persistence
+/// therefore re-derives the same plan whenever it selects the same surface —
+/// but the failover decision reads the clock, so a restart after a deferral
+/// window expired can select a different surface and derive different
+/// identities. What keeps that from leaking a second set of live identities is
+/// not the derivation: every re-armed Part is written under
+/// `expected_store_version` in `persist_bound_part_repair`, so at most one of
+/// those plans can ever commit.
 fn native_part_retry_identity_plan(
   snapshot : @workflow.PartWorkflowSnapshot,
   surface : @control.ProviderSurfaceId,
@@ -1153,9 +1160,12 @@ fn native_part_retry_identity_plan(
     snapshot.identities.audit_sandbox,
   )
   // The session is built for the selected surface rather than copied from the
-  // previous one: a Part that moved to another admitted surface needs that
-  // surface's own manifest digest and cursor class, and for an unchanged
-  // surface these are the same values the Part was admitted with.
+  // previous one. A Part that moved to another admitted surface needs that
+  // surface's own manifest digest and cursor class; on an unchanged surface
+  // this recomputes exactly what submission minted, unless this binary's tool
+  // manifest has since changed — and then recomputing is the only thing that
+  // can dispatch at all, because both drivers refuse a session whose manifest
+  // digest disagrees with the one they derive at dispatch.
   {
     implementation_take: implementation,
     implementation_sandbox,
@@ -1176,6 +1186,137 @@ fn native_part_retry_identity_plan(
       surface,
     ),
   }
+}
+
+///|
+/// The smallest Part the retry identity plan accepts: accepted on `surface`,
+/// admitted under both surfaces, and derived without touching the host.
+fn native_retry_identity_fixture(
+  surface : @control.ProviderSurfaceId,
+  failover : @control.ProviderSurfaceId,
+) -> Result[@workflow.PartWorkflowSnapshot, @types.ChoirError] {
+  let goal_id = @control.GoalId("goal-retry-identity")
+  let part_id = @control.PartId("part-retry-identity")
+  let revision_id = @control.RevisionId("revision-retry-identity")
+  let digest = fn(text) { @storage.artifact_digest(@utf8.encode(text)) }
+  let contract : @control.TaskContractRevision = {
+    id: revision_id,
+    goal_id,
+    part_id,
+    revision: 1,
+    digest: digest("retry-identity-contract"),
+    commit_title: @control.SemanticCommitTitle("fix: re-arm the Part"),
+    repair_conflict_id: None,
+    repair_audit: None,
+    repair_verification: None,
+    instruction_artifact: {
+      artifact_id: "instruction-retry-identity",
+      digest: digest("retry-identity-instruction"),
+    },
+    base_commit_oid: @control.GitOid("retry-identity-base-commit"),
+    base_tree_oid: @control.GitOid("retry-identity-base-tree"),
+    path_mode: @control.RepositoryPathMode::CaseSensitiveNfc,
+    mutation_declaration: @control.MutationDeclaration::CompleteMutationDeclaration([
+        @control.MutationClaim::ExactPath(@control.RepoPath("src/answer.mbt")),
+      ],
+    ),
+    verification_specs: [
+      {
+        id: @control.VerificationSpecId("verify-retry-identity"),
+        version: 1,
+        digest: digest("retry-identity-verification-spec"),
+        process_spec_digest: digest("retry-identity-verification-process"),
+      },
+    ],
+    audit_policy_digest: digest("retry-identity-audit-policy"),
+    migration_contract_ref: None,
+    migration_continuation_ref_digest: None,
+    implementation_capability_profile_digest: digest(
+      "retry-identity-implementation-profile",
+    ),
+    verification_capability_profile_digest: digest(
+      "retry-identity-verification-profile",
+    ),
+    audit_capability_profile_digest: digest("retry-identity-audit-profile"),
+  }
+  native_goal_submission_part_snapshot(
+    {
+      id: goal_id,
+      contract_digest: digest("retry-identity-goal-contract"),
+      lifecycle: @control.GoalLifecycle::GoalActive(
+        @control.GoalActiveCondition::GoalRunning,
+      ),
+    },
+    {
+      part: {
+        id: part_id,
+        goal_id,
+        dependency_ids: [],
+        task_contract_revision_id: revision_id,
+        lifecycle: @control.PartLifecycle::PartPending,
+      },
+      source_revision_digest: digest("retry-identity-source-revision"),
+      source_content_digest: digest("retry-identity-source-content"),
+      task_contract: contract,
+      provider_surface: surface,
+      provider_failover_surfaces: [failover],
+      part_context_manifest: None,
+    },
+    fn(_) { true },
+  )
+}
+
+///|
+test "a re-armed Part is planned on the surface it was told to run on" {
+  let claude = @control.ProviderSurfaceId::ClaudeSubscriptionCli
+  let codex = @control.ProviderSurfaceId::CodexSubscriptionCli
+  let on_claude = match native_retry_identity_fixture(claude, codex) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  // An ordinary recovery stays where the Part already is, and rebuilding the
+  // session there reproduces exactly what submission minted. Both drivers
+  // re-derive this digest at dispatch and refuse a session that disagrees, so
+  // a plan that reproduced anything else could not run at all.
+  let same = native_part_retry_identity_plan(on_claude, claude)
+  assert_eq(same.implementation_session.surface, claude)
+  assert_eq(same.audit_session.surface, claude)
+  assert_eq(
+    same.implementation_session.effective_surface_manifest_digest,
+    on_claude.identities.implementation_session.effective_surface_manifest_digest,
+  )
+  assert_eq(
+    same.audit_session.effective_surface_manifest_digest,
+    on_claude.identities.audit_session.effective_surface_manifest_digest,
+  )
+  assert_eq(
+    same.implementation_session.cursor_class,
+    @control.HarnessCursorClass::HarnessCursorNotResumable,
+  )
+  // A failover target is honored: the host mints identities for the surface
+  // the control plane selected, never for the one the Part is leaving. The
+  // control plane refuses any plan that came back on another surface, so a
+  // host that ignored this argument would turn every failover into an error
+  // instead of a move.
+  let moved = native_part_retry_identity_plan(on_claude, codex)
+  assert_eq(moved.implementation_session.surface, codex)
+  assert_eq(moved.audit_session.surface, codex)
+  assert_eq(
+    moved.implementation_session.cursor_class,
+    @control.HarnessCursorClass::HarnessCursorProviderEventId,
+  )
+  assert_true(
+    moved.implementation_session.effective_surface_manifest_digest !=
+    same.implementation_session.effective_surface_manifest_digest,
+  )
+  // The surface feeds the identity digest, so the two plans are distinct Takes
+  // rather than one Take pointed at a different provider.
+  assert_true(moved.implementation_take.id != same.implementation_take.id)
+  assert_true(moved.audit_take.id != same.audit_take.id)
+  assert_true(
+    moved.implementation_sandbox.generation_id !=
+    same.implementation_sandbox.generation_id,
+  )
 }
 
 ///|
