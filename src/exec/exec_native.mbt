@@ -232,6 +232,10 @@ extern "C" fn state_store_write_generation_ffi(
 extern "C" fn state_store_ddl_version_ffi() -> Int = "choir_state_store_ddl_version"
 
 ///|
+#borrow(buf)
+extern "C" fn state_store_ddl_text_ffi(buf : Bytes, max_size : Int) -> Int = "choir_state_store_ddl_text"
+
+///|
 #borrow(path)
 extern "C" fn state_store_read_ddl_version_ffi(
   path : Bytes,

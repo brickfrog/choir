@@ -240,17 +240,22 @@ static void choir_sqlite_mark_schema_ready(sqlite3 *db) {
 
 /* The version of the DDL below.
  *
- * Bump this in the same edit that changes any statement in `schema`. It is the
- * only signal that says the tables on disk were built by a different DDL than
- * the one this build's SQL is written against, and there is no other: the
- * durable-value generation digests the record VALUES, which say nothing about
- * table shape, and `CREATE TABLE IF NOT EXISTS` silently accepts a table whose
- * columns are not these. Without it, adding a column here leaves every existing
- * store reporting Current and failing every query at runtime.
+ * Bump this in the same edit that changes any statement in
+ * `choir_state_store_schema`. It is the only signal that says the tables on
+ * disk were built by a different DDL than the one this build's SQL is written
+ * against, and there is no other: the durable-value generation digests the
+ * record VALUES, which say nothing about table shape, and `CREATE TABLE IF NOT
+ * EXISTS` silently accepts a table whose columns are not these. Without it,
+ * adding a column here leaves every existing store reporting Current and
+ * failing every query at runtime.
  *
- * It is stamped into `PRAGMA user_version` when the tables are created, which
- * is why the stamp lives in this function and not at some later call site: the
- * DDL and the number describing it are written together or not at all.
+ * It is stamped into `PRAGMA user_version` when the tables are created, so the
+ * DDL and the number describing it are written together or not at all. Nothing
+ * at runtime can check that: digesting the schema and comparing would mean a
+ * reformatting authorized destroying every store. What holds the two together
+ * is `choir_state_store_ddl_text`, which hands the DDL out so a test can pin
+ * its digest against this number and fail the build when one moved without the
+ * other.
  *
  * 0 is reserved and means "created before this was stamped at all". It is
  * adopted rather than reset, because every store that can hold 0 was created by
@@ -259,13 +264,57 @@ static void choir_sqlite_mark_schema_ready(sqlite3 *db) {
 #define CHOIR_STRINGIFY_INNER(value) #value
 #define CHOIR_STRINGIFY(value) CHOIR_STRINGIFY_INNER(value)
 
+/* The statements that build the control store, beside the version describing
+ * them so neither can be edited without the other in view. */
+static const char choir_state_store_schema[] =
+    "PRAGMA journal_mode=WAL;"
+    "PRAGMA synchronous=FULL;"
+    "PRAGMA foreign_keys=ON;"
+    "CREATE TABLE IF NOT EXISTS state_records("
+    " record_key TEXT PRIMARY KEY NOT NULL,"
+    " version INTEGER NOT NULL CHECK(version > 0),"
+    " fencing_epoch INTEGER NOT NULL CHECK(fencing_epoch > 0),"
+    " value_digest TEXT NOT NULL CHECK(length(value_digest) = 64)"
+    ") STRICT;"
+    "CREATE TABLE IF NOT EXISTS completion_outbox("
+    " semantic_key TEXT PRIMARY KEY NOT NULL,"
+    " payload_digest TEXT NOT NULL CHECK(length(payload_digest) = 64),"
+    " record_key TEXT NOT NULL,"
+    " state_version INTEGER NOT NULL CHECK(state_version > 0),"
+    " fencing_epoch INTEGER NOT NULL CHECK(fencing_epoch > 0),"
+    " state_value_digest TEXT NOT NULL CHECK(length(state_value_digest) = 64)"
+    ") STRICT;"
+    /* The schema generation lives in the store it describes. A sibling
+     * marker file could be lost on its own, and its absence used to
+     * authorize deleting the whole control store. */
+    "CREATE TABLE IF NOT EXISTS control_metadata("
+    " id INTEGER PRIMARY KEY CHECK(id = 1),"
+    " generation TEXT NOT NULL"
+    ") STRICT;";
+
 int choir_state_store_ddl_version(void) {
     return CHOIR_STATE_STORE_DDL_VERSION;
 }
 
-/* Whether this database holds no schema objects at all, i.e. the tables below
- * are about to be created rather than found. Returns 1 for empty, 0 for
- * populated, -1 when the file is not a usable database. */
+/* Copy the DDL text into `buf`, returning the byte count written or -1 when
+ * the buffer cannot hold it.
+ *
+ * The only caller is the test that digests it and refuses a DDL edit the
+ * version did not follow. Nothing decides anything from this at runtime: a
+ * digest over SQL text moves for whitespace, and this number authorizes
+ * destroying the store. */
+int choir_state_store_ddl_text(char *buf, int max_size) {
+    size_t len = sizeof(choir_state_store_schema) - 1;
+    if (buf == NULL || max_size < 0 || (size_t)max_size < len) {
+        return -1;
+    }
+    memcpy(buf, choir_state_store_schema, len);
+    return (int)len;
+}
+
+/* Whether this database holds no schema objects at all, i.e. the tables the
+ * DDL above names are about to be created rather than found. Returns 1 for
+ * empty, 0 for populated, -1 when the file is not a usable database. */
 static int choir_sqlite_database_empty(sqlite3 *db) {
     sqlite3_stmt *stmt = NULL;
     int empty = -1;
@@ -300,32 +349,7 @@ int choir_state_store_init(const char *path, int path_len) {
     if (empty < 0) {
         return -1;
     }
-    const char *schema =
-        "PRAGMA journal_mode=WAL;"
-        "PRAGMA synchronous=FULL;"
-        "PRAGMA foreign_keys=ON;"
-        "CREATE TABLE IF NOT EXISTS state_records("
-        " record_key TEXT PRIMARY KEY NOT NULL,"
-        " version INTEGER NOT NULL CHECK(version > 0),"
-        " fencing_epoch INTEGER NOT NULL CHECK(fencing_epoch > 0),"
-        " value_digest TEXT NOT NULL CHECK(length(value_digest) = 64)"
-        ") STRICT;"
-        "CREATE TABLE IF NOT EXISTS completion_outbox("
-        " semantic_key TEXT PRIMARY KEY NOT NULL,"
-        " payload_digest TEXT NOT NULL CHECK(length(payload_digest) = 64),"
-        " record_key TEXT NOT NULL,"
-        " state_version INTEGER NOT NULL CHECK(state_version > 0),"
-        " fencing_epoch INTEGER NOT NULL CHECK(fencing_epoch > 0),"
-        " state_value_digest TEXT NOT NULL CHECK(length(state_value_digest) = 64)"
-        ") STRICT;"
-        /* The schema generation lives in the store it describes. A sibling
-         * marker file could be lost on its own, and its absence used to
-         * authorize deleting the whole control store. */
-        "CREATE TABLE IF NOT EXISTS control_metadata("
-        " id INTEGER PRIMARY KEY CHECK(id = 1),"
-        " generation TEXT NOT NULL"
-        ") STRICT;";
-    if (choir_sqlite_exec(db, schema) != 0) {
+    if (choir_sqlite_exec(db, choir_state_store_schema) != 0) {
         return -1;
     }
     if (empty == 1 &&

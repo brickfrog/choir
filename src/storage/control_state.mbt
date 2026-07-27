@@ -44,7 +44,9 @@ pub(all) struct ControlStoreSchema {
   /// The version of the SQL DDL that creates the store's tables, declared
   /// beside those statements and bumped by hand with them. It is not derived
   /// and cannot be: a digest over the DDL text would move for a reformatting,
-  /// and this comparison authorizes destroying the store.
+  /// and this comparison authorizes destroying the store. What keeps the hand
+  /// bump honest is a test that pins the DDL text's digest to the version, so a
+  /// forgotten bump fails the build instead of shipping.
   ddl_version : Int
 } derive(Debug, Eq, ToJson, FromJson)
 

@@ -92,9 +92,48 @@ pub fn read_state_store_generation(
 /// same edit that changes them. Nothing derives it, and nothing can: the
 /// durable-value generation digests record VALUES, which say nothing about
 /// which columns a table has, and `CREATE TABLE IF NOT EXISTS` accepts a table
-/// whose columns are not these without complaint.
+/// whose columns are not these without complaint. The test below is what makes
+/// "in the same edit" more than an instruction in a comment.
 pub fn state_store_ddl_version() -> Int {
   state_store_ddl_version_ffi()
+}
+
+///|
+/// A DDL edit that did not bump the version fails here.
+///
+/// That failure is the whole point. `CREATE TABLE IF NOT EXISTS` accepts a
+/// table whose columns are not the ones this build's SQL names, and the version
+/// is the only thing that notices; hand-bumped and unchecked, forgetting it
+/// leaves every store in the field reporting Current and failing every query at
+/// runtime — the exact failure the version exists to prevent.
+///
+/// The check is a pinned digest rather than a runtime comparison because a
+/// digest over SQL text moves for a reindentation, and at runtime this number
+/// authorizes destroying the store. Here it costs a failing test.
+test "the control store DDL is pinned to the version it declares" {
+  // One digest per DDL version, oldest first: entry `i` pins the SQL text that
+  // version `i + 1` was declared for. Appending is the only way to add one, and
+  // the version is asserted to equal this array's length, so a new pin cannot
+  // be recorded without the version moving with it. Editing an entry in place
+  // is the way around that, and it is the wrong edit: it discards the pin for a
+  // DDL already stamped onto stores in the field.
+  let pins = [
+    "7a0eb3bd1ed169bdf66f683e43da2b61855cabb53d03b778936432bdaec54662",
+  ]
+  let buf = Bytes::new(4096)
+  let written = state_store_ddl_text_ffi(buf, 4096)
+  guard written > 0 else { fail("the control store DDL did not fit in 4096") }
+  // Bump `CHOIR_STATE_STORE_DDL_VERSION` in `store.c` to match, or drop the pin
+  // that should not have been appended.
+  assert_eq(state_store_ddl_version(), pins.length())
+  // Append the digest reported below and bump the version in the same edit; the
+  // DDL changed.
+  assert_eq(
+    @storage.digest_text(
+      @storage.artifact_digest(@utf8.encode(@utf8.decode_lossy(buf[:written]))),
+    ),
+    pins[pins.length() - 1],
+  )
 }
 
 ///|
