@@ -423,3 +423,75 @@ async test "a rejected batch item writes nothing at all" {
     ["dep", "add", "probe-c", "probe-b"],
   ])
 }
+
+///|
+/// Help in the shape the CLI prints it: one option per line, the flag first,
+/// then a wrapped paragraph that names other flags in prose. The last line is
+/// lifted from `--bare`'s real description, where `--append-system-prompt[-file]`
+/// sits one bracket away from a flag this manifest declares.
+fn conductor_help_output(flags : Array[String]) -> String {
+  let lines = flags.map(fn(flag) {
+    "  " + flag + " <value>   Description of the option"
+  })
+  lines.push(
+    "      Explicitly provide context via: --system-prompt[-file], --append-system-prompt[-file], --add-dir.",
+  )
+  "Usage: claude [options] [command] [prompt]\n\nOptions:\n" + lines.join("\n")
+}
+
+///|
+/// The Conductor launch was never checked against the Claude it launches: the
+/// only assertion compared Choir's argv to itself, so it would have stayed
+/// green while the installed CLI dropped a flag the launch passes.
+async test "the Conductor launch is qualified against the installed CLI's help" {
+  let documented = @harness.conductor_surface_flags()
+    .filter(fn(flag) {
+      flag.visibility
+      is @harness.ConductorFlagVisibility::ConductorFlagDocumented
+    })
+    .map(fn(flag) { flag.name })
+  let probed : Array[@harness.HarnessProbeProcess] = []
+  let qualified = validate_native_conductor_surface(probe=spec => {
+    probed.push(spec)
+    Ok({ exit_code: 0, output: conductor_help_output(documented) })
+  })
+  assert_true(qualified is Ok(_))
+  // The fixed declaration probe, so no argv or executable is caller-supplied.
+  @debug.assert_eq(probed, [
+    {
+      surface: @harness.ProviderSurface::ClaudeCli,
+      command: @harness.HarnessProbeCommand::ProbeMainHelp,
+    },
+  ])
+  // The failure this exists to catch.
+  let dropped = documented.filter(fn(name) { name != "--strict-mcp-config" })
+  let refused = validate_native_conductor_surface(probe=_ => {
+    Ok({ exit_code: 0, output: conductor_help_output(dropped) })
+  })
+  match refused {
+    Err(error) => {
+      assert_true(error.message().contains("unqualified Conductor surface"))
+      assert_true(error.message().contains("--strict-mcp-config"))
+    }
+    Ok(_) => fail("launched against a CLI missing a declared flag")
+  }
+  // Help that could not be read is not a qualification even when the text that
+  // came back would have satisfied every flag, and neither is a CLI that is
+  // not installed at all.
+  assert_true(
+    validate_native_conductor_surface(probe=_ => {
+      Ok({ exit_code: 1, output: conductor_help_output(documented) })
+    })
+    is Err(_),
+  )
+  assert_true(
+    validate_native_conductor_surface(probe=_ => {
+      Err(
+        @types.ChoirError::transport_error(
+          "provider probe executable unavailable",
+        ),
+      )
+    })
+    is Err(_),
+  )
+}

@@ -62,6 +62,46 @@ pub fn conductor_surface_flags() -> Array[ConductorFlag] {
 }
 
 ///|
+/// An environment variable the Conductor's Claude process requires.
+///
+/// Recorded, not qualified — and that asymmetry with `ConductorFlag` is the
+/// point rather than an omission. `--help` advertises flags; it says nothing
+/// about environment, and it cannot be used to probe acceptance either because
+/// it short-circuits argument validation. The installed executable does contain
+/// the variable's name, but a string present in a 275 MB bundle says nothing
+/// about whether the CLI still honours it, and scanning the bundle on every
+/// launch would buy that nothing at a real cost. So there is no signal here,
+/// and `qualify_conductor_surface` deliberately does not consult this list: a
+/// check that consulted nothing and always passed would claim a qualification
+/// Choir does not have, which is worse than admitting there is none.
+///
+/// Declaring it still buys the other half of what the flag manifest buys. The
+/// dependency is visible beside the flags instead of sitting as a bare literal
+/// at the process spawn, and it is single-sourced into the launch environment,
+/// so what the Conductor actually receives cannot drift from what is written
+/// down here.
+pub(all) struct ConductorEnvironmentRequirement {
+  name : String
+  value : String
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+/// Every environment variable the Conductor launch depends on the CLI reading.
+///
+/// Only variables belonging to Claude's own surface appear here. Choir's own
+/// handles — the Conductor credential, workspace, and socket — are values
+/// computed per launch, not a dependency on the installed CLI.
+pub fn conductor_surface_environment() -> Array[ConductorEnvironmentRequirement] {
+  [
+    // Claude stops reading its GrowthBook feature cache when telemetry is
+    // disabled. The Conductor keeps telemetry disabled and still needs that
+    // cached Channel availability decision, which is the whole reason the
+    // launch sets this.
+    { name: "CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF", value: "1" },
+  ]
+}
+
+///|
 /// Why a Conductor launch surface is not qualified.
 pub(all) enum ConductorSurfaceFinding {
   /// A flag declared documented is missing from the installed CLI's help. The

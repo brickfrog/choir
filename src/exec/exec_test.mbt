@@ -277,6 +277,37 @@ test "every Conductor launch flag is declared in the qualified surface" {
 }
 
 ///|
+/// The same coupling for the environment half. It cannot be qualified against
+/// the installed CLI — help advertises flags, not environment — so declaring it
+/// buys exactly one thing: what the Conductor receives cannot drift from what
+/// is written down. That is only true if this holds in both directions.
+test "the Conductor launch environment is exactly the declared surface" {
+  let variables = conductor_process_environment_variables({
+    conductor_token: "token",
+    statusline_cache_key: "conductor-42",
+    workspace: "/repo",
+    listen_uds: "/repo/.choir/run/server.sock",
+  })
+  for requirement in @harness.conductor_surface_environment() {
+    assert_eq(variables.get(requirement.name), Some(requirement.value))
+  }
+  // Nothing belonging to Claude's surface may be passed that the manifest does
+  // not declare: a new `CLAUDE_*` literal added at the spawn site is precisely
+  // the undeclared dependency this exists to prevent. Choir's own handles are
+  // per-launch values, not a dependency on the installed CLI.
+  let declared = @harness.conductor_surface_environment().map(fn(requirement) {
+    requirement.name
+  })
+  for name in variables.keys() {
+    if name.has_prefix("CLAUDE_") {
+      assert_true(declared.contains(name))
+    } else {
+      assert_true(name.has_prefix("CHOIR_"))
+    }
+  }
+}
+
+///|
 /// The live probe and the runtime Take path each built this argv independently,
 /// so a protocol change had to be made twice and the probe could silently stop
 /// exercising what the runtime actually does. One builder now, and this pins

@@ -177,6 +177,7 @@ values from these locations on every run.
 | Provider identity recorded in Part evidence | `src/exec/part_lifecycle_native.mbt` | Dated charter evidence is historical |
 | Provider CLI arguments, sterile environment, MCP surface, recovery | `src/exec/claude_driver_native.mbt`, `src/exec/codex_driver_native.mbt`, `src/exec/exec_native.mbt` | Record evidence in the upgrade PR |
 | BoxLite release, executable, patch, six-file runtime bundle, probe image, and policy | `src/sandbox/boxlite_probe.mbt`, enforced by `src/exec/exec_native.mbt` and `src/exec/boxlite_take_native.mbt` | `README.md`, `docs/boxlite-runtime.md` |
+| Conductor launch flags and required environment | `src/harness/conductor_surface.mbt`, enforced at `choir start` by `src/exec/conductor_native.mbt` | Recorded help fixture in `src/bin/choir_conformance/main.mbt` |
 | Beads version and CLI contract | `src/exec/conductor_native.mbt` | `README.md` |
 | MoonBit toolchain artifacts | `flake.nix`, `flake.lock`, `scripts/install-moonbit.sh` | `README.md`; migration verification documents are historical |
 | MoonBit packages | `moon.mod` and the resolved `.mooncakes` state | None |
@@ -403,7 +404,14 @@ as the reason.
   the provider auto-updater can replace it during qualification.
 - Preserve provider-managed subscription authentication, but run the candidate
   through a dedicated sterile home and the existing host boundary.
-- Review CLI help for every flag used by the Conductor and Take driver.
+- Review CLI help for every flag used by the Conductor and Take driver. The
+  Conductor half is mechanized: `choir start` qualifies each flag in
+  `@harness.conductor_surface_flags()` against the candidate's `--help` and
+  refuses to launch on any finding, including a flag declared undocumented that
+  the candidate has begun to advertise. Update the declaration and re-record the
+  conformance help fixture from the candidate rather than relaxing the check.
+  Environment is not advertised in help and is therefore recorded, not
+  qualified; confirm by hand that the candidate still honours it.
 
 ### Full qualification declaration and startup checks
 
