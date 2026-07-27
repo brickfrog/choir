@@ -550,14 +550,64 @@ pub fn artifact_retention_ledger_path(store : @storage.ArtifactStore) -> String 
 }
 
 ///|
-/// Collect every artifact whose every retention has expired.
+/// What the store is currently keeping each artifact for. An absent ledger
+/// reads as empty, which makes nothing collectable.
+pub fn read_artifact_retention_ledger(
+  store : @storage.ArtifactStore,
+) -> Array[@storage.ArtifactRetentionEntry] {
+  let path = artifact_retention_ledger_path(store)
+  if !@sys.path_exists(path) {
+    []
+  } else {
+    @storage.decode_artifact_retention_ledger(@sys.read_file(path))
+  }
+}
+
+///|
+/// Remove named content and drop its ledger entries.
 ///
 /// Ordered content-first: the ledger is only rewritten once the bytes are
 /// gone. A crash between them leaves an entry naming content that is already
-/// absent, and the next sweep removes it again — remove reports success on an
-/// already-absent artifact precisely so this converges. The reverse order
-/// would drop the record while the bytes remained, and nothing would ever know
-/// to collect them.
+/// absent, and the next collection removes it again — remove reports success
+/// on an already-absent artifact precisely so this converges. The reverse
+/// order would drop the record while the bytes remained, and nothing would
+/// ever know to collect them.
+///
+/// The caller decides what is collectable; this only executes the decision.
+pub fn collect_artifacts(
+  store : @storage.ArtifactStore,
+  collect : Array[@control.Digest],
+) -> Result[Int, @types.ChoirError] {
+  match validate_store_path(store.root) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  if collect.length() == 0 {
+    return Ok(0)
+  }
+  let (root, root_len) = exec_string_to_null_terminated_bytes(store.root)
+  for digest in collect {
+    let (encoded, digest_len) = exec_string_to_null_terminated_bytes(
+      @storage.digest_text(digest),
+    )
+    if artifact_store_remove_ffi(root, root_len, encoded, digest_len) != 0 {
+      return Err(artifact_store_failure("collection"))
+    }
+  }
+  let retained = read_artifact_retention_ledger(store).filter(fn(entry) {
+    !collect.contains(entry.digest)
+  })
+  if !@sys.write_file_atomic(
+      artifact_retention_ledger_path(store),
+      @storage.encode_artifact_retention_ledger(retained),
+    ) {
+    return Err(artifact_store_failure("collection ledger rewrite"))
+  }
+  Ok(collect.length())
+}
+
+///|
+/// Collect every artifact whose every retention has expired.
 pub fn sweep_artifact_store(
   store : @storage.ArtifactStore,
   now : Int64,
@@ -567,31 +617,12 @@ pub fn sweep_artifact_store(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  let path = artifact_retention_ledger_path(store)
-  if !@sys.path_exists(path) {
-    return Ok(0)
-  }
-  let ledger = @storage.decode_artifact_retention_ledger(@sys.read_file(path))
-  let plan = @storage.plan_artifact_sweep(ledger, now, goal_terminal)
-  if plan.collect.length() == 0 {
-    return Ok(0)
-  }
-  let (root, root_len) = exec_string_to_null_terminated_bytes(store.root)
-  for digest in plan.collect {
-    let (encoded, digest_len) = exec_string_to_null_terminated_bytes(
-      @storage.digest_text(digest),
-    )
-    if artifact_store_remove_ffi(root, root_len, encoded, digest_len) != 0 {
-      return Err(artifact_store_failure("sweep"))
-    }
-  }
-  if !@sys.write_file_atomic(
-      path,
-      @storage.encode_artifact_retention_ledger(plan.retain),
-    ) {
-    return Err(artifact_store_failure("sweep ledger rewrite"))
-  }
-  Ok(plan.collect.length())
+  let plan = @storage.plan_artifact_sweep(
+    read_artifact_retention_ledger(store),
+    now,
+    goal_terminal,
+  )
+  collect_artifacts(store, plan.collect)
 }
 
 ///|

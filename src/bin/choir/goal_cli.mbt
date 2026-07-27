@@ -1,6 +1,6 @@
 ///|
 fn goal_cli_usage() -> String {
-  "usage: choir goal list | choir goal status <goal-id|--part bead-id> | choir goal steer <goal-id|--part bead-id> <pause|resume|concurrency N|retry [bead-id]> | choir goal cancel <goal-id|--part bead-id> | choir goal attach <take-id> | choir goal answer <request-id> <answer>"
+  "usage: choir goal list | choir goal status <goal-id|--part bead-id> | choir goal steer <goal-id|--part bead-id> <pause|resume|concurrency N|retry [bead-id]> | choir goal cancel <goal-id|--part bead-id> | choir goal archive <goal-id|--part bead-id> [--dry-run] | choir goal attach <take-id> | choir goal answer <request-id> <answer>"
 }
 
 ///|
@@ -201,6 +201,57 @@ test "goal CLI parses typed steering operations" {
 }
 
 ///|
+/// Archive selects a Goal exactly like status and cancel; `--dry-run` may sit
+/// on either side of the selector, because an operator reaching for a preview
+/// should not have to remember which.
+fn goal_cli_archive_values(
+  args : Array[String],
+  start : Int,
+) -> Result[Map[String, Json], String] {
+  let selector : Array[String] = []
+  let mut dry_run = false
+  for index = start; index < args.length(); index = index + 1 {
+    if args[index] == "--dry-run" {
+      dry_run = true
+    } else {
+      selector.push(args[index])
+    }
+  }
+  let (values, next) = match goal_cli_selector(selector, 0) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if next != selector.length() {
+    return Err(goal_cli_usage())
+  }
+  values["dry_run"] = dry_run.to_json()
+  Ok(values)
+}
+
+///|
+test "goal archive parses a selector and an optional dry run" {
+  assert_eq(goal_cli_archive_values(["goal-a"], 0).unwrap(), {
+    "goal_id": "goal-a".to_json(),
+    "dry_run": false.to_json(),
+  })
+  assert_eq(goal_cli_archive_values(["goal-a", "--dry-run"], 0).unwrap(), {
+    "goal_id": "goal-a".to_json(),
+    "dry_run": true.to_json(),
+  })
+  assert_eq(goal_cli_archive_values(["--dry-run", "goal-a"], 0).unwrap(), {
+    "goal_id": "goal-a".to_json(),
+    "dry_run": true.to_json(),
+  })
+  assert_eq(
+    goal_cli_archive_values(["--part", "choir-x", "--dry-run"], 0).unwrap(),
+    { "part_id": "choir-x".to_json(), "dry_run": true.to_json() },
+  )
+  assert_true(goal_cli_archive_values([], 0) is Err(_))
+  assert_true(goal_cli_archive_values(["--dry-run"], 0) is Err(_))
+  assert_true(goal_cli_archive_values(["goal-a", "goal-b"], 0) is Err(_))
+}
+
+///|
 fn goal_cli_attach_values(
   args : Array[String],
   start : Int,
@@ -279,6 +330,17 @@ fn goal_run() -> Unit {
       }
     }
     client_emit(goal_cli_call("goal_cancel", values))
+    return
+  }
+  if args.length() >= 3 && args[2] == "archive" {
+    let values = match goal_cli_archive_values(args, 3) {
+      Ok(value) => value
+      Err(err) => {
+        client_emit(@types.Response::err_text(err))
+        return
+      }
+    }
+    client_emit(goal_cli_call("goal_archive", values))
     return
   }
   if args.length() >= 3 && args[2] == "steer" {

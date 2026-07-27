@@ -5907,18 +5907,29 @@ async fn release_native_orphaned_goal_source_claims(
 }
 
 ///|
-async fn purge_native_goal_owned_git_ref_namespace(
+/// The repository root every owned-ref operation resolves against.
+async fn native_goal_canonical_repository_root(
   project_dir : String,
-) -> Result[Int, @types.ChoirError] {
+) -> Result[String, @types.ChoirError] {
   let root = match
     native_goal_git_value(project_dir, ["rev-parse", "--show-toplevel"]) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let canonical_root = match @sys.realpath_native(root) {
-    Some(value) => value
-    None =>
-      return Err(native_goal_execution_error("repository is not canonical"))
+  match @sys.realpath_native(root) {
+    Some(value) => Ok(value)
+    None => Err(native_goal_execution_error("repository is not canonical"))
+  }
+}
+
+///|
+async fn purge_native_goal_owned_git_ref_namespace(
+  project_dir : String,
+) -> Result[Int, @types.ChoirError] {
+  let canonical_root = match
+    native_goal_canonical_repository_root(project_dir) {
+    Ok(value) => value
+    Err(error) => return Err(error)
   }
   let captured = match
     capture_native_goal_git(canonical_root, [
@@ -6284,6 +6295,210 @@ pub async fn purge_native_goal_resources(
     source_claims_released: report.source_claims_released,
     runtime_roots_removed: report.runtime_roots_removed,
     git_refs_removed: report.git_refs_removed,
+  })
+}
+
+///|
+/// What archiving one Goal did, or — for a dry run or a refusal — would have
+/// done. The counts are what the host actually observed removing, not what the
+/// plan asked for: a witness ref another process already deleted is not
+/// reported as removed here.
+pub(all) struct NativeGoalArchiveReport {
+  decision : @workflow.GoalArchiveDecision
+  /// False for every refusal and every dry run: nothing was changed.
+  applied : Bool
+  runtime_root_removed : Bool
+  refs_removed : Int
+  artifacts_released : Int
+} derive(Debug, Eq)
+
+///|
+/// Every ref this repository currently holds under the Goal namespaces.
+///
+/// The archive names refs from what was listed rather than from what it
+/// expects to exist, which is what lets a dry run promise exactly the set an
+/// apply removes.
+async fn list_native_goal_owned_git_refs(
+  project_dir : String,
+) -> Result[Array[@workflow.GitRefName], @types.ChoirError] {
+  let canonical_root = match
+    native_goal_canonical_repository_root(project_dir) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let captured = match
+    capture_native_goal_git(canonical_root, [
+      "for-each-ref", "--format=%(refname)", "refs/heads/choir/goals/", "refs/choir/goals/",
+    ]) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if captured.exit_code != 0 {
+    return Err(native_goal_execution_error("owned Git ref listing failed"))
+  }
+  let references : Array[@workflow.GitRefName] = []
+  for raw in captured.output.split("\n") {
+    let reference = raw.trim().to_owned()
+    if reference != "" {
+      references.push(@workflow.GitRefName(reference))
+    }
+  }
+  Ok(references)
+}
+
+///|
+async fn delete_native_goal_archived_git_refs(
+  project_dir : String,
+  references : Array[@workflow.GitRefName],
+) -> Result[Int, @types.ChoirError] {
+  if references.length() == 0 {
+    return Ok(0)
+  }
+  let canonical_root = match
+    native_goal_canonical_repository_root(project_dir) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let repository : NativeGoalRepositoryIdentity = {
+    root: canonical_root,
+    git_directory: "",
+    object_directory: "",
+  }
+  let mut removed = 0
+  for reference in references {
+    match delete_native_goal_owned_git_ref(repository, reference.0) {
+      Ok(true) => removed = removed + 1
+      Ok(false) => ()
+      Err(error) => return Err(error)
+    }
+  }
+  Ok(removed)
+}
+
+///|
+/// Archive one terminal Goal: observe what it still holds, let
+/// `@workflow.plan_goal_archive` decide, and apply that decision unless this
+/// is a dry run.
+///
+/// Nothing here decides what may be released. This gathers the durable record,
+/// the refs the repository actually has, the retention ledger, and whether the
+/// runtime root survives; every judgment about terminality and reachability is
+/// the control plane's.
+///
+/// Content is collected last and the ledger is rewritten after the bytes are
+/// gone, so an interrupted archive leaves entries naming absent content rather
+/// than content nothing records. A concurrent adoption of the same digest
+/// between the plan and the collection is not fenced: the store has no lock,
+/// and the archive inherits exactly the window `sweep_artifact_store` has.
+pub async fn archive_native_goal(
+  project_dir : String,
+  goal_id : @control.GoalId,
+  dry_run~ : Bool,
+  now~ : Int64,
+  list_refs? : async (String) -> Result[
+    Array[@workflow.GitRefName],
+    @types.ChoirError,
+  ] = list_native_goal_owned_git_refs,
+  delete_refs? : async (String, Array[@workflow.GitRefName]) -> Result[
+    Int,
+    @types.ChoirError,
+  ] = delete_native_goal_archived_git_refs,
+  cleanup_runtime? : async (@workflow.RepositoryId, @control.GoalId) -> Result[
+    Unit,
+    @types.ChoirError,
+  ] = cleanup_native_goal_runtime_identity,
+) -> Result[NativeGoalArchiveReport, @types.ChoirError] {
+  let repository = native_goal_repository(project_dir)
+  let adapters = local_part_workflow_repository_adapters()
+  match @workflow.initialize_part_workflow_repository(repository, adapters) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let records = match
+    @workflow.list_goal_execution_records(repository, adapters) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  // Terminality is read for every Goal, not just this one: content this Goal
+  // adopted may also be kept until a different Goal finishes.
+  let terminal_goal_ids : Array[@control.GoalId] = []
+  let mut found : @workflow.GoalArchiveSubject? = None
+  for stored in records {
+    if @workflow.goal_execution_state_is_terminal(stored.record.state) {
+      terminal_goal_ids.push(stored.record.goal.id)
+    }
+    if stored.record.goal.id == goal_id {
+      found = Some(@workflow.goal_archive_subject(stored.record))
+    }
+  }
+  let subject = match found {
+    Some(value) => value
+    None =>
+      return Err(
+        native_goal_execution_error("Goal is not recorded in this repository"),
+      )
+  }
+  let repository_id = match native_goal_repository_id(project_dir) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let runtime_root = native_goal_runtime_root(repository_id, goal_id)
+  let observed_refs = match list_refs(project_dir) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let decision = @workflow.plan_goal_archive(
+    {
+      subject,
+      observed_refs,
+      retention_ledger: read_artifact_retention_ledger(
+        repository.artifact_store,
+      ),
+      runtime_root_present: @sys.path_entry_exists(runtime_root),
+      now,
+    },
+    fn(candidate) { terminal_goal_ids.contains(candidate) },
+  )
+  guard decision is @workflow.GoalArchiveDecision::GoalArchivePlanned(plan) else {
+    return Ok({
+      decision,
+      applied: false,
+      runtime_root_removed: false,
+      refs_removed: 0,
+      artifacts_released: 0,
+    })
+  }
+  if dry_run {
+    return Ok({
+      decision,
+      applied: false,
+      runtime_root_removed: false,
+      refs_removed: 0,
+      artifacts_released: 0,
+    })
+  }
+  let refs_removed = match delete_refs(project_dir, plan.release_refs) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let mut runtime_root_removed = false
+  if plan.release_runtime_root {
+    match cleanup_runtime(repository_id, goal_id) {
+      Ok(_) => runtime_root_removed = !@sys.path_entry_exists(runtime_root)
+      Err(error) => return Err(error)
+    }
+  }
+  let artifacts_released = match
+    collect_artifacts(repository.artifact_store, plan.release_artifacts) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  Ok({
+    decision,
+    applied: true,
+    runtime_root_removed,
+    refs_removed,
+    artifacts_released,
   })
 }
 
