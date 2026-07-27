@@ -223,6 +223,7 @@ pub async fn run_native_mixed_provider_goal_fixture(
         dependency_ids: [],
         task_contract: claude_snapshot.task_contract,
         provider_surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+        provider_failover_surfaces: [],
         part_context_manifest: None,
       },
       {
@@ -232,6 +233,7 @@ pub async fn run_native_mixed_provider_goal_fixture(
         dependency_ids: [],
         task_contract: codex_snapshot.task_contract,
         provider_surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+        provider_failover_surfaces: [],
         part_context_manifest: None,
       },
     ],

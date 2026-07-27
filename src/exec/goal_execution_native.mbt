@@ -1085,11 +1085,13 @@ fn plan_native_part_verification_repair(
 
 ///|
 /// Fresh Take, sandbox, and session identities for re-arming a Part under its
-/// existing task contract. The identities are derived from the retry ordinal,
-/// so a restart between planning and persistence re-derives the same plan
-/// instead of leaking a second set of identities.
+/// existing task contract, on the surface the control plane selected. The
+/// identities are derived from the retry ordinal and that surface, so a
+/// restart between planning and persistence re-derives the same plan instead
+/// of leaking a second set of identities.
 fn native_part_retry_identity_plan(
   snapshot : @workflow.PartWorkflowSnapshot,
+  surface : @control.ProviderSurfaceId,
 ) -> @workflow.PartIdentityPlan {
   let retry_number = snapshot.prior_takes.length() / 3 + 1
   let identity_digest = @storage.artifact_digest(
@@ -1099,6 +1101,7 @@ fn native_part_retry_identity_plan(
         snapshot.task_contract.digest.to_json(),
         snapshot.part.id.to_json(),
         retry_number.to_json(),
+        surface.to_json(),
       ]
       .to_json()
       .stringify(indent=0),
@@ -1149,26 +1152,28 @@ fn native_part_retry_identity_plan(
     audit,
     snapshot.identities.audit_sandbox,
   )
+  // The session is built for the selected surface rather than copied from the
+  // previous one: a Part that moved to another admitted surface needs that
+  // surface's own manifest digest and cursor class, and for an unchanged
+  // surface these are the same values the Part was admitted with.
   {
     implementation_take: implementation,
     implementation_sandbox,
-    implementation_session: native_goal_conflict_repair_session(
-      key,
-      "implementation",
+    implementation_session: native_goal_submission_session(
+      "session-" + key + "-implementation",
       implementation,
       implementation_sandbox,
-      snapshot.identities.implementation_session,
+      surface,
     ),
     verification_take: verification,
     verification_sandbox,
     audit_take: audit,
     audit_sandbox,
-    audit_session: native_goal_conflict_repair_session(
-      key,
-      "audit",
+    audit_session: native_goal_submission_session(
+      "session-" + key + "-audit",
       audit,
       audit_sandbox,
-      snapshot.identities.audit_session,
+      surface,
     ),
   }
 }
@@ -1182,7 +1187,7 @@ fn plan_native_part_recovery_retry(
 ) -> Result[@workflow.PartRecoveryRetryDecision, @types.ChoirError] {
   @workflow.plan_part_recovery_retry(
     snapshot,
-    native_part_retry_identity_plan(snapshot),
+    fn(surface) { native_part_retry_identity_plan(snapshot, surface) },
     native_path_is_nfc,
     now=@env.now().reinterpret_as_int64() / 1000L,
   )
@@ -1309,7 +1314,12 @@ pub fn retry_native_goal_part(
   let retried = match
     @workflow.plan_part_retry(
       snapshot,
-      native_part_retry_identity_plan(snapshot),
+      // An operator retry re-arms the Part; it does not move it to another
+      // provider. Only a recorded failover decision changes the surface.
+      native_part_retry_identity_plan(
+        snapshot,
+        snapshot.identities.implementation_session.surface,
+      ),
       native_path_is_nfc,
     ) {
     Ok(value) => value

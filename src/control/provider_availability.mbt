@@ -85,6 +85,52 @@ pub fn classify_provider_availability(
 }
 
 ///|
+/// One provider surface and the last thing it told Choir about itself.
+///
+/// Selecting where the next Take runs needs more than the surface that just
+/// failed: a Part that already left a spent surface must not be sent back to
+/// it while it is still spent.
+pub(all) struct ProviderSurfaceObservation {
+  surface : ProviderSurfaceId
+  availability : ProviderAvailability
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+/// Choose which admitted surface the next bounded recovery attempt runs on,
+/// once `current` has said it cannot serve.
+///
+/// Authority comes from the captured contract and nowhere else: only a
+/// surface the contract admitted can be returned, in the order the contract
+/// named them, so recovery never changes which provider a Take was authorized
+/// to spend. A candidate whose own last observation still defers dispatch at
+/// `now` is skipped, which is what keeps two spent surfaces from handing the
+/// same Part back and forth. `None` means every admitted surface is either the
+/// one that just failed or is itself deferred, so the caller must wait.
+pub fn select_admitted_provider_surface(
+  current : ProviderSurfaceId,
+  admitted : Array[ProviderSurfaceId],
+  observed : Array[ProviderSurfaceObservation],
+  now : Int64,
+) -> ProviderSurfaceId? {
+  for candidate in admitted {
+    if candidate == current {
+      continue
+    }
+    let mut admits = true
+    for observation in observed {
+      if observation.surface == candidate &&
+        !provider_availability_admits_dispatch(observation.availability, now) {
+        admits = false
+      }
+    }
+    if admits {
+      return Some(candidate)
+    }
+  }
+  None
+}
+
+///|
 fn provider_output_reports_allowance(lowered : String) -> Bool {
   lowered.contains("usage limit") ||
   lowered.contains("rate limit") ||

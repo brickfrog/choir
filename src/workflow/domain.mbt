@@ -242,6 +242,24 @@ pub(all) struct PartDispatchDiagnostic {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+/// One recorded surface change, and the observation that caused it.
+///
+/// A Part that quietly started spending a different subscription would be
+/// indistinguishable from one that was always authorized to, so each move is
+/// recorded rather than inferred from the current identity plan.
+pub(all) struct PartProviderFailover {
+  from_surface : @control.ProviderSurfaceId
+  to_surface : @control.ProviderSurfaceId
+  /// What the surface being left reported. This is the whole reason the Part
+  /// moved, and it is the observation that also keeps the Part from being
+  /// sent back while it still holds.
+  cause : @control.ProviderAvailability
+  /// Which bounded recovery attempt this move armed.
+  retry_ordinal : Int
+  decided_at : Int64
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub(all) struct PartWorkflowSnapshot {
   workflow_id : @control.WorkflowId
   durable_version : Int
@@ -253,6 +271,13 @@ pub(all) struct PartWorkflowSnapshot {
   task_contract_history : Array[@control.TaskContractRevision]
   part_context_manifest : @migration.PartContextManifest?
   identities : PartIdentityPlan
+  /// Every provider surface this Part's captured contract admits, in the order
+  /// the contract named them. The identity plan runs on one of these and
+  /// recovery may move the next Take to another one; a Part admitted under a
+  /// single surface therefore waits rather than changing provider authority.
+  admitted_provider_surfaces : Array[@control.ProviderSurfaceId]
+  /// Each surface change this Part made, oldest first.
+  provider_failovers : Array[PartProviderFailover]
   implementation_take : @control.Take
   verification_take : @control.Take
   audit_take : @control.Take

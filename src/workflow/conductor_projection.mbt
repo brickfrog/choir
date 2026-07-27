@@ -62,6 +62,9 @@ pub fn goal_report_material_fingerprint(report : GoalStatusReport) -> String {
         "lifecycle": part.lifecycle.to_json(),
         "stage": part.stage.to_json(),
         "dispatch_diagnostic": part.dispatch_diagnostic.to_json(),
+        // A Part that started spending a different provider's allowance is a
+        // material change: the Conductor has to be able to explain it.
+        "provider_failovers": part.provider_failovers.to_json(),
       } : Map[String, Json]).to_json()
   })
   (

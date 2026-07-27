@@ -1137,6 +1137,7 @@ fn selection_fixture_part(
       audit_capability_profile_digest: selection_fixture_digest,
     },
     provider_surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+    provider_failover_surfaces: [],
     part_context_manifest: None,
   }
 }

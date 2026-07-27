@@ -1326,6 +1326,10 @@ fn publication_integrated_part(
         "publication-audit-session", audit, audit_sandbox,
       ),
     },
+    admitted_provider_surfaces: [
+      @control.ProviderSurfaceId::CodexSubscriptionCli,
+    ],
+    provider_failovers: [],
     implementation_take: implementation,
     verification_take: verification,
     audit_take: audit,

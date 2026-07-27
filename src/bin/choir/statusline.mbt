@@ -503,6 +503,7 @@ fn conductor_statusline_test_part(
     audit_blocking_findings_count: 0,
     integration_receipt_present: false,
     dispatch_diagnostic: None,
+    provider_failovers: [],
     usage: @control.empty_take_usage(),
   }
 }

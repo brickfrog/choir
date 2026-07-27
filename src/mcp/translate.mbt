@@ -48,6 +48,14 @@ fn conductor_tools() -> Array[CatalogTool] {
       "enum": ["codex", "claude"].to_json(),
       "default": "codex".to_json(),
     }.to_json(),
+    "provider_failover": {
+      "type": "array".to_json(),
+      "description": "Optional additional providers this Part's Takes may move to, in preference order, when the provider above reports it cannot serve; omit for [], which keeps the Part on one provider and waits. Include a provider here only when the user's current message explicitly authorizes spending that provider's allowance as a fallback; never infer it from an earlier Goal, a deferred Part, or repository context.".to_json(),
+      "items": {
+        "type": "string".to_json(),
+        "enum": ["codex", "claude"].to_json(),
+      }.to_json(),
+    }.to_json(),
     "exact_paths": conductor_string_array_schema(
       "Exact repository-relative files this Part may mutate; use [] for repository-wide or path-tree scope",
     ),

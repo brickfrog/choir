@@ -419,6 +419,7 @@ let durable_shape_accepted_goal_part : AcceptedGoalPart = {
   source_content_digest: durable_shape_digest,
   task_contract: durable_shape_task_contract_revision,
   provider_surface: durable_shapes_provider_surface_id[0],
+  provider_failover_surfaces: [durable_shapes_provider_surface_id[1]],
   part_context_manifest: Some(durable_shape_part_context_manifest),
 }
 
@@ -836,6 +837,7 @@ let durable_shape_conductor_part_proposal : ConductorPartProposal = {
   dependency_ids: [durable_shape_part_id],
   task_contract: durable_shape_task_contract_revision,
   provider_surface: durable_shapes_provider_surface_id[0],
+  provider_failover_surfaces: [durable_shapes_provider_surface_id[1]],
   part_context_manifest: Some(durable_shape_part_context_manifest),
 }
 
@@ -3154,6 +3156,15 @@ let durable_shapes_provider_availability : Array[@control.ProviderAvailability] 
 ]
 
 ///|
+let durable_shape_part_provider_failover : PartProviderFailover = {
+  from_surface: durable_shapes_provider_surface_id[0],
+  to_surface: durable_shapes_provider_surface_id[1],
+  cause: durable_shapes_provider_availability[1],
+  retry_ordinal: 0,
+  decided_at: 0L,
+}
+
+///|
 /// Exhaustive: a new variant does not compile until it is listed here and
 /// in the array above.
 fn durable_guard_provider_availability(
@@ -3543,6 +3554,8 @@ let durable_shape_part_workflow_snapshot : PartWorkflowSnapshot = {
   pending_effect: Some(durable_shape_part_effect_intent),
   effect_receipts: [durable_shape_part_effect_receipt],
   dispatch_diagnostic: Some(durable_shape_part_dispatch_diagnostic),
+  admitted_provider_surfaces: [durable_shapes_provider_surface_id[1]],
+  provider_failovers: [durable_shape_part_provider_failover],
 }
 
 ///|

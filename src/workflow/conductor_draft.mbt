@@ -24,6 +24,10 @@ pub(all) struct ConductorPartDraft {
   repository_wide : Bool
   verification : ConductorVerificationDraft
   provider_surface : @control.ProviderSurfaceId
+  /// Further surfaces this Part's Takes may run on, in preference order, when
+  /// the one above says it cannot serve. Empty is the default and means the
+  /// Part waits for its own surface rather than spending another allowance.
+  provider_failover_surfaces : Array[@control.ProviderSurfaceId]
   migration_contract_ref : @control.MigrationContractRef?
   migration_continuation_ref_digest : @control.Digest?
   migration_context : ConductorMigrationContextDraft?
@@ -160,6 +164,42 @@ fn conductor_provider_surface(value : String) -> @control.ProviderSurfaceId? {
       Some(@control.ProviderSurfaceId::CodexSubscriptionCli)
     _ => None
   }
+}
+
+///|
+/// Decode the surfaces this Part may fall back to. Spending a second
+/// provider's subscription allowance is authority the user has to grant, so
+/// the list is empty unless the draft names it, every entry must be a
+/// supported surface, and naming the primary again or repeating an entry is a
+/// malformed contract rather than a harmless duplicate.
+fn conductor_provider_failover_surfaces(
+  fields : Map[String, Json],
+  primary : @control.ProviderSurfaceId,
+) -> Result[Array[@control.ProviderSurfaceId], @types.ChoirError] {
+  guard fields.get("provider_failover") is Some(_) else { return Ok([]) }
+  let values = match conductor_draft_strings(fields, "provider_failover") {
+    Some(value) => value
+    None => return Err(goal_submission_error("provider_failover is invalid"))
+  }
+  let surfaces : Array[@control.ProviderSurfaceId] = []
+  for value in values {
+    let surface = match conductor_provider_surface(value) {
+      Some(surface) => surface
+      None =>
+        return Err(
+          goal_submission_error(
+            "provider_failover names an unsupported provider",
+          ),
+        )
+    }
+    if surface == primary || surfaces.contains(surface) {
+      return Err(
+        goal_submission_error("provider_failover repeats a provider surface"),
+      )
+    }
+    surfaces.push(surface)
+  }
+  Ok(surfaces)
 }
 
 ///|
@@ -391,8 +431,8 @@ fn decode_conductor_part_draft(
     return Err(goal_submission_error("Conductor Part draft must be an object"))
   }
   let allowed_fields = [
-    "part_id", "commit_title", "instruction", "provider", "exact_paths", "path_trees",
-    "repository_wide", "moon_args", "verify_timeout_ms", "migration_contract_id",
+    "part_id", "commit_title", "instruction", "provider", "provider_failover", "exact_paths",
+    "path_trees", "repository_wide", "moon_args", "verify_timeout_ms", "migration_contract_id",
     "migration_lineage_id", "migration_contract_revision", "migration_contract_artifact_digest",
     "context_assembly_policy_digest", "rulebook_section_digests", "dependency_neighborhood_digest",
     "applicable_gap_entry_digests", "source_path_manifest_digest", "prior_take_context_digest",
@@ -435,6 +475,11 @@ fn decode_conductor_part_draft(
           return Err(goal_submission_error("Conductor provider is unsupported"))
       }
     None => @control.ProviderSurfaceId::CodexSubscriptionCli
+  }
+  let provider_failover_surfaces = match
+    conductor_provider_failover_surfaces(fields, provider_surface) {
+    Ok(value) => value
+    Err(error) => return Err(error)
   }
   let exact_paths = match fields.get("exact_paths") {
     None => []
@@ -517,6 +562,7 @@ fn decode_conductor_part_draft(
     repository_wide,
     verification: { arguments, timeout_ms },
     provider_surface,
+    provider_failover_surfaces,
     migration_contract_ref,
     migration_continuation_ref_digest,
     migration_context,

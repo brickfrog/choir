@@ -84,6 +84,7 @@ fn selection_store_decision(
             dependency_ids: [],
             task_contract: contract,
             provider_surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+            provider_failover_surfaces: [],
             part_context_manifest: None,
           },
         ],

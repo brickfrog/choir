@@ -231,6 +231,7 @@ fn conformance_snapshot_for(
     identities,
     @control.FencingEpoch(7L),
     fn(_) { true },
+    admitted_provider_surfaces=[identities.implementation_session.surface],
   )
 }
 

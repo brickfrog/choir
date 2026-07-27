@@ -101,6 +101,10 @@ pub(all) struct ConductorPartProposal {
   dependency_ids : Array[@control.PartId]
   task_contract : @control.TaskContractRevision
   provider_surface : @control.ProviderSurfaceId
+  /// Further surfaces this Part may run on when its own cannot serve, in
+  /// preference order. Empty means the Part is admitted under one provider
+  /// authority and waits rather than spending another allowance.
+  provider_failover_surfaces : Array[@control.ProviderSurfaceId]
   part_context_manifest : @migration.PartContextManifest?
 } derive(Debug, Eq, ToJson, FromJson)
 
@@ -153,8 +157,19 @@ pub(all) struct AcceptedGoalPart {
   source_content_digest : @control.Digest
   task_contract : @control.TaskContractRevision
   provider_surface : @control.ProviderSurfaceId
+  provider_failover_surfaces : Array[@control.ProviderSurfaceId]
   part_context_manifest : @migration.PartContextManifest?
 } derive(Debug, Eq, ToJson, FromJson)
+
+///|
+/// Every surface this Part's captured contract admits, in the order the
+/// contract named them: the surface it starts on, then each admitted
+/// fallback. This is the whole provider authority a Part ever runs under.
+pub fn accepted_part_admitted_surfaces(
+  part : AcceptedGoalPart,
+) -> Array[@control.ProviderSurfaceId] {
+  [part.provider_surface] + part.provider_failover_surfaces
+}
 
 ///|
 pub(all) enum GoalSelectionOutcome {
@@ -536,6 +551,7 @@ fn canonical_goal_proposal_json(proposal : GoalProposal) -> Json {
         part.task_contract.id.to_json(),
         part.task_contract.digest.to_json(),
         part.provider_surface.to_json(),
+        part.provider_failover_surfaces.to_json(),
         context_manifest_digest.to_json(),
       ].to_json(),
     )
@@ -769,6 +785,7 @@ pub fn evaluate_goal_proposal(
         source_content_digest: part.source_content_digest,
         task_contract: part.task_contract,
         provider_surface: part.provider_surface,
+        provider_failover_surfaces: part.provider_failover_surfaces,
         part_context_manifest: part.part_context_manifest,
       })
     }
