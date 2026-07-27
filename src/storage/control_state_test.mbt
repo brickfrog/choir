@@ -202,6 +202,10 @@ test "an unstamped store is stamped rather than destroyed or waved through" {
 /// the resulting store again must be a no-op. The moved-generation and
 /// unstamped-DDL cases are included because adoption is what they settle on,
 /// and adopting twice would be a loop that rewrites the store on every start.
+/// A moved generation on an unstamped store is the one that has to travel the
+/// whole route — out through `ProveRecordsDecodable` and back in through
+/// `decide_control_state_from_records` — and land on a schema carrying both the
+/// new generation and the stamp.
 test "the state each decision leaves behind reads as current next time" {
   for
     observed in [
@@ -210,6 +214,10 @@ test "the state each decision leaves behind reads as current next time" {
       control_observation(recorded_generation=Some("gen-7")),
       control_observation(recorded_ddl_version=0),
       control_observation(recorded_generation=None, recorded_ddl_version=0),
+      control_observation(
+        recorded_generation=Some("gen-7"),
+        recorded_ddl_version=0,
+      ),
     ] {
     let plan = match @storage.decide_control_state(observed, control_schema) {
       @storage.ControlStateDecision::ControlStatePlanned(planned) => planned
