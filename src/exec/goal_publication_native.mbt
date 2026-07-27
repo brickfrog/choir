@@ -1531,12 +1531,7 @@ async fn prove_publication_fault_recovery(
   let goal_ref = @workflow.goal_execution_ref(goal_id)
   assert_eq(git(root, ["update-ref", goal_ref.0, head_oid]).0, 0)
   let canonical_root = @sys.realpath_native(root).unwrap()
-  let repository_id = @workflow.RepositoryId(
-    "sha256:" +
-    @storage.artifact_digest(
-      @utf8.encode("choir.repository.v1\u{00}" + canonical_root),
-    ).0,
-  )
+  let repository_id = @workflow.repository_id(canonical_root)
   let goal : @control.Goal = {
     id: goal_id,
     contract_digest: publication_digest("goal-contract-" + label),

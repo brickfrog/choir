@@ -178,12 +178,7 @@ async fn capture_native_goal_selection_source(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let repository_id = @workflow.RepositoryId(
-    "sha256:" +
-    @storage.digest_text(
-      @storage.artifact_digest(@utf8.encode("choir.repository.v1\u{00}" + root)),
-    ),
-  )
+  let repository_id = @workflow.repository_id(root)
   Ok({ repository_id, beads_json })
 }
 

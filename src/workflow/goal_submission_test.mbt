@@ -1734,3 +1734,43 @@ test "dependency cycle is a typed selection rejection" {
     }),
   )
 }
+
+///|
+/// This identity keys runtime roots, Bead claim reconciliation, and
+/// publication. It was copy-pasted at four call sites, so a copy drifting to a
+/// different scheme would make cleanup and restart compute a different identity
+/// than submission did and orphan everything keyed under the old one.
+///
+/// The digest format is pinned rather than merely exercised: changing it is a
+/// decision about existing on-disk state, not a refactor.
+test "a repository identity is derived one way and pinned to its format" {
+  let identity = @workflow.repository_id("/mnt/data/Code/choir")
+  assert_eq(
+    identity,
+    @workflow.RepositoryId(
+      "sha256:" +
+      @storage.digest_text(
+        @storage.artifact_digest(
+          @utf8.encode("choir.repository.v1\u{00}" + "/mnt/data/Code/choir"),
+        ),
+      ),
+    ),
+  )
+  // Stable: the same root always derives the same identity, which is what
+  // makes a runtime root findable again after a restart.
+  assert_eq(identity, @workflow.repository_id("/mnt/data/Code/choir"))
+  // Distinct roots are distinct identities, so two checkouts cannot share a
+  // runtime root or claim namespace.
+  assert_true(identity != @workflow.repository_id("/mnt/data/Code/other"))
+  // The domain prefix is load-bearing: the identity is not the bare path
+  // digest, so an unprefixed digest computed elsewhere cannot collide with it.
+  assert_true(
+    identity !=
+    @workflow.RepositoryId(
+      "sha256:" +
+      @storage.digest_text(
+        @storage.artifact_digest(@utf8.encode("/mnt/data/Code/choir")),
+      ),
+    ),
+  )
+}

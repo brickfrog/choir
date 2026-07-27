@@ -29,6 +29,25 @@ pub(all) struct RepositoryId(String) derive (
 )
 
 ///|
+/// The durable identity of a repository, derived from its canonical root.
+///
+/// One definition because this identity keys runtime roots
+/// (/tmp/choir-take-goal-<key>), Bead claim reconciliation, and publication.
+/// It was copy-pasted at four call sites across submission, publication, and
+/// execution — including the restart-reset path — and one of them already
+/// spelled the digest differently. A copy drifting to a v2 scheme would make
+/// cleanup and restart compute a different identity than submission did, and
+/// silently orphan the runtime roots and claims keyed under the old one.
+pub fn repository_id(canonical_root : String) -> RepositoryId {
+  RepositoryId(
+    "sha256:" +
+    @storage.artifact_digest(
+      @utf8.encode("choir.repository.v1\u{00}" + canonical_root),
+    ).0,
+  )
+}
+
+///|
 pub(all) struct GitRefName(String) derive (
   Debug,
   Eq,

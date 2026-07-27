@@ -220,12 +220,7 @@ async fn discover_native_goal_repository(
     None =>
       return Err(native_goal_execution_error("repository is not canonical"))
   }
-  let expected_repository_id = @workflow.RepositoryId(
-    "sha256:" +
-    @storage.artifact_digest(
-      @utf8.encode("choir.repository.v1\u{00}" + canonical_root),
-    ).0,
-  )
+  let expected_repository_id = @workflow.repository_id(canonical_root)
   if expected_repository_id != record.repository_id {
     return Err(native_goal_execution_error("repository identity changed"))
   }
@@ -1533,12 +1528,7 @@ fn native_goal_repository_id(
     None =>
       return Err(native_goal_execution_error("repository is not canonical"))
   }
-  Ok(
-    @workflow.RepositoryId(
-      "sha256:" +
-      @storage.artifact_digest(@utf8.encode("choir.repository.v1\u{00}" + root)).0,
-    ),
-  )
+  Ok(@workflow.repository_id(root))
 }
 
 ///|
