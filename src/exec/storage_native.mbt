@@ -43,6 +43,51 @@ pub fn initialize_state_store(
 }
 
 ///|
+/// What generation the store records for itself.
+///
+/// Three answers, deliberately distinguishable, because they call for opposite
+/// decisions: `Err` when the store cannot be opened at all, `Ok(None)` when it
+/// opens but predates recording a generation, and `Ok(Some(_))` when it says
+/// what it is. Collapsing the first two is how a lost marker used to authorize
+/// deleting healthy state.
+pub fn read_state_store_generation(
+  store : @storage.SqliteStateStore,
+) -> Result[String?, @types.ChoirError] {
+  match validate_store_path(store.path) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let (path, path_len) = exec_string_to_null_terminated_bytes(store.path)
+  let buf = Bytes::new(256)
+  let read = state_store_read_generation_ffi(path, path_len, buf, 256)
+  if read < 0 {
+    Err(state_store_failure("generation read"))
+  } else if read == 0 {
+    Ok(None)
+  } else {
+    Ok(Some(@utf8.decode_lossy(buf[:read])))
+  }
+}
+
+///|
+pub fn write_state_store_generation(
+  store : @storage.SqliteStateStore,
+  generation : String,
+) -> Result[Unit, @types.ChoirError] {
+  match validate_store_path(store.path) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let (path, path_len) = exec_string_to_null_terminated_bytes(store.path)
+  let (encoded, _) = exec_string_to_null_terminated_bytes(generation)
+  if state_store_write_generation_ffi(path, path_len, encoded) == 0 {
+    Ok(())
+  } else {
+    Err(state_store_failure("generation write"))
+  }
+}
+
+///|
 fn state_fault_code(point : @storage.StateStoreFaultPoint?) -> Int {
   match point {
     None => 0

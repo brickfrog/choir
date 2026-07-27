@@ -197,14 +197,117 @@ int choir_state_store_init(const char *path, int path_len) {
         " state_version INTEGER NOT NULL CHECK(state_version > 0),"
         " fencing_epoch INTEGER NOT NULL CHECK(fencing_epoch > 0),"
         " state_value_digest TEXT NOT NULL CHECK(length(state_value_digest) = 64)"
+        ") STRICT;"
+        /* The schema generation lives in the store it describes. A sibling
+         * marker file could be lost on its own, and its absence used to
+         * authorize deleting the whole control store. */
+        "CREATE TABLE IF NOT EXISTS control_metadata("
+        " id INTEGER PRIMARY KEY CHECK(id = 1),"
+        " generation TEXT NOT NULL"
         ") STRICT;";
     return choir_sqlite_exec(db, schema);
+}
+
+/* Read the recorded schema generation. Returns the byte count written to buf,
+ * 0 when the store records none, or -1 when the store cannot be opened. The
+ * two are deliberately distinguishable: an unreadable store and one that
+ * simply predates recording its generation call for opposite decisions. */
+int choir_state_store_read_generation(
+    const char *path, int path_len, char *buf, int max_size
+) {
+    sqlite3 *db = NULL;
+    sqlite3_stmt *stmt = NULL;
+    int written = 0;
+    if (buf == NULL || max_size <= 0) {
+        return -1;
+    }
+    if (choir_sqlite_acquire(path, path_len, &db) != 0) {
+        return -1;
+    }
+    /* Distinguish "not a usable database" from "no metadata table yet". Both
+     * fail to prepare the SELECT, and conflating them would adopt a corrupt
+     * store as if it were simply an older one. */
+    if (choir_sqlite.prepare_statement(
+            db, "SELECT count(*) FROM sqlite_master", -1, &stmt, NULL
+        ) != SQLITE_OK ||
+        choir_sqlite.step(stmt) != SQLITE_ROW) {
+        if (stmt != NULL) choir_sqlite.finalize(stmt);
+        return -1;
+    }
+    choir_sqlite.finalize(stmt);
+    stmt = NULL;
+    if (choir_sqlite.prepare_statement(
+            db,
+            "SELECT generation FROM control_metadata WHERE id = 1",
+            -1,
+            &stmt,
+            NULL
+        ) != SQLITE_OK) {
+        /* The store is usable and simply predates the metadata table, which is
+         * not an error and must not read as one. */
+        return 0;
+    }
+    if (choir_sqlite.step(stmt) == SQLITE_ROW) {
+        const unsigned char *text = choir_sqlite.column_text(stmt, 0);
+        if (text != NULL) {
+            int length = (int)strlen((const char *)text);
+            if (length > max_size) {
+                length = max_size;
+            }
+            memcpy(buf, text, (size_t)length);
+            written = length;
+        }
+    }
+    choir_sqlite.finalize(stmt);
+    return written;
 }
 
 static int choir_sqlite_bind_text(sqlite3_stmt *stmt, int index, const char *value) {
     return choir_sqlite.bind_text(stmt, index, value, -1, SQLITE_TRANSIENT) == SQLITE_OK
                ? 0
                : -1;
+}
+
+/* Record the schema generation transactionally. */
+int choir_state_store_write_generation(
+    const char *path, int path_len, const char *generation
+) {
+    sqlite3 *db = NULL;
+    if (generation == NULL) {
+        return -1;
+    }
+    if (choir_sqlite_acquire(path, path_len, &db) != 0) {
+        return -1;
+    }
+    if (choir_sqlite_exec(
+            db,
+            "CREATE TABLE IF NOT EXISTS control_metadata("
+            " id INTEGER PRIMARY KEY CHECK(id = 1),"
+            " generation TEXT NOT NULL"
+            ") STRICT;"
+        ) != 0 ||
+        choir_sqlite_exec(db, "BEGIN IMMEDIATE") != 0) {
+        return -1;
+    }
+    sqlite3_stmt *stmt = NULL;
+    int failed = choir_sqlite.prepare_statement(
+                     db,
+                     "INSERT INTO control_metadata(id, generation) VALUES(1, ?) "
+                     "ON CONFLICT(id) DO UPDATE SET generation = excluded.generation",
+                     -1,
+                     &stmt,
+                     NULL
+                 ) != SQLITE_OK;
+    if (!failed) {
+        failed = choir_sqlite_bind_text(stmt, 1, generation) != 0 ||
+                 choir_sqlite.step(stmt) != SQLITE_DONE;
+        choir_sqlite.finalize(stmt);
+    }
+    if (failed || choir_sqlite_exec(db, "COMMIT") != 0) {
+        choir_sqlite_exec(db, "ROLLBACK");
+        return -1;
+    }
+    return 0;
 }
 
 /*

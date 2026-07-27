@@ -34,7 +34,24 @@ priv struct NativeOrphanedGoalSourceClaim {
 }
 
 ///|
-let native_goal_control_state_generation : String = "choir-control-state-v8"
+/// The schema identity this build can decode.
+///
+/// Still declared rather than derived. Deriving it from the SQL schema would be
+/// actively worse than declaring it: that DDL is generic over record key,
+/// version, and value digest, so it does not change when the durable value
+/// shapes do — which is exactly what every past bump tracked. A generation that
+/// cannot change when the thing it identifies changes never detects an
+/// incompatible store at all.
+///
+/// Deriving it properly means digesting the durable value shapes, which needs
+/// an exhaustive canonical instance of each stored record so the compiler
+/// forces the digest to move when a field is added. That is the remaining work;
+/// what has changed is that forgetting to bump this is no longer catastrophic,
+/// because the generation now lives inside the store and its absence adopts
+/// rather than destroys.
+fn native_goal_control_state_generation() -> String {
+  "choir-control-state-v8"
+}
 
 ///|
 priv struct NativeGoalPartRuntime {
@@ -5952,45 +5969,6 @@ async fn purge_native_goal_owned_git_ref_namespace(
 }
 
 ///|
-fn native_goal_control_state_is_current(
-  generation : String,
-  workflow_store_present : Bool,
-) -> Bool {
-  generation.trim() == native_goal_control_state_generation &&
-  workflow_store_present
-}
-
-///|
-test "control state generation requires both marker and store" {
-  assert_true(
-    native_goal_control_state_is_current(
-      native_goal_control_state_generation, true,
-    ),
-  )
-  assert_false(
-    native_goal_control_state_is_current(
-      native_goal_control_state_generation, false,
-    ),
-  )
-  assert_false(native_goal_control_state_is_current("", true))
-  assert_false(
-    native_goal_control_state_is_current("choir-control-state-v6", true),
-  )
-  assert_false(
-    native_goal_control_state_is_current("choir-control-state-v5", true),
-  )
-  assert_false(
-    native_goal_control_state_is_current("choir-control-state-v4", true),
-  )
-  assert_false(
-    native_goal_control_state_is_current("choir-control-state-v2", true),
-  )
-  assert_false(
-    native_goal_control_state_is_current("choir-control-state-v1", true),
-  )
-}
-
-///|
 /// Goal identities this repository is still working on.
 pub fn list_native_active_goal_ids(
   project_dir : String,
@@ -6098,44 +6076,112 @@ pub async fn reclaim_native_goal_runtime_roots(
 }
 
 ///|
+/// Observe the control store without deciding anything about it.
+fn observe_native_goal_control_state(
+  control_root : String,
+) -> @storage.ControlStateObservation {
+  let workflow_store_path = control_root + "/workflow.db"
+  let store_present = @sys.path_entry_exists(workflow_store_path)
+  if !store_present {
+    return {
+      store_present: false,
+      store_readable: false,
+      recorded_generation: None,
+      // Anything left under the root with no store is an unfinished reset.
+      residue_present: @sys.list_dir_all(control_root).length() > 0,
+    }
+  }
+  match read_state_store_generation({ path: workflow_store_path }) {
+    Ok(recorded_generation) =>
+      {
+        store_present: true,
+        store_readable: true,
+        recorded_generation,
+        residue_present: false,
+      }
+    Err(_) =>
+      {
+        store_present: true,
+        store_readable: false,
+        recorded_generation: None,
+        residue_present: false,
+      }
+  }
+}
+
+///|
+/// Bring the control store to a state this build can use.
+///
+/// The decision is made in `@storage.decide_control_state` and only applied
+/// here. That separation is the point: the destructive branch releases claims,
+/// purges Choir's ref namespace, and removes the whole control root, and it
+/// used to be authorized by a missing sibling file inside an effect path where
+/// nobody could test it in isolation.
 pub async fn prepare_native_goal_control_state(
   project_dir : String,
   capture? : async (Command) -> (Int, String) = capture_command_merged,
 ) -> Result[NativeGoalControlStatePreparation, @types.ChoirError] {
   let control_root = project_dir + "/.choir/state/control"
-  let generation_path = control_root + "/generation"
   let workflow_store_path = control_root + "/workflow.db"
-  if native_goal_control_state_is_current(
-      @sys.read_file(generation_path),
-      @sys.path_entry_exists(workflow_store_path),
+  let generation = native_goal_control_state_generation()
+  match
+    @storage.decide_control_state(
+      observe_native_goal_control_state(control_root),
+      generation,
     ) {
-    return Ok(NativeGoalControlStateCurrent)
+    @storage.ControlStateDecision::ControlStateCurrent =>
+      Ok(NativeGoalControlStateCurrent)
+    // A readable store that never recorded its generation is adopted, not
+    // destroyed. Recording it is the whole of the migration.
+    @storage.ControlStateDecision::ControlStateMigrate(_, target) =>
+      match
+        write_state_store_generation({ path: workflow_store_path }, target) {
+        Ok(_) => Ok(NativeGoalControlStateCurrent)
+        Err(error) => Err(error)
+      }
+    @storage.ControlStateDecision::ControlStateInitialize =>
+      match native_goal_control_state_create(control_root, generation) {
+        Ok(_) => Ok(NativeGoalControlStateInitialized)
+        Err(error) => Err(error)
+      }
+    @storage.ControlStateDecision::ControlStateAuthorizedReset(_) => {
+      let report = match
+        cleanup_native_goal_owned_resources(
+          project_dir, capture, cleanup_native_goal_runtime_identity, purge_native_goal_owned_git_ref_namespace,
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      if !@sys.rm_rf(control_root) {
+        return Err(native_goal_execution_error("control state reset failed"))
+      }
+      match native_goal_control_state_create(control_root, generation) {
+        Ok(_) => Ok(NativeGoalControlStateReset(report))
+        Err(error) => Err(error)
+      }
+    }
   }
-  let had_control_state = @sys.path_entry_exists(workflow_store_path) ||
-    @sys.list_dir_all(control_root).length() > 0
-  let report = match
-    cleanup_native_goal_owned_resources(
-      project_dir, capture, cleanup_native_goal_runtime_identity, purge_native_goal_owned_git_ref_namespace,
-    ) {
-    Ok(value) => value
-    Err(error) => return Err(error)
-  }
-  if !@sys.rm_rf(control_root) ||
-    !@sys.create_dir_all(control_root) ||
-    !@sys.write_file_atomic(
-      generation_path,
-      native_goal_control_state_generation + "\n",
-    ) {
+}
+
+///|
+/// Create an empty control store and record what schema it holds. The
+/// generation is written into the store rather than beside it, so losing it
+/// separately is not possible.
+fn native_goal_control_state_create(
+  control_root : String,
+  generation : String,
+) -> Result[Unit, @types.ChoirError] {
+  if !@sys.create_dir_all(control_root) {
     return Err(native_goal_execution_error("control state reset failed"))
   }
-  if had_control_state ||
-    report.source_claims_released > 0 ||
-    report.runtime_roots_removed > 0 ||
-    report.git_refs_removed > 0 {
-    Ok(NativeGoalControlStateReset(report))
-  } else {
-    Ok(NativeGoalControlStateInitialized)
+  let store : @storage.SqliteStateStore = {
+    path: control_root + "/workflow.db",
   }
+  match initialize_state_store(store) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  write_state_store_generation(store, generation)
 }
 
 ///|

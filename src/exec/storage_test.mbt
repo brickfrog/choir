@@ -535,3 +535,48 @@ test "local artifact store rejects corrupt targets and symlinked roots" {
   ignore(@sys.rm_rf(linked_root))
   ignore(@sys.rm_rf(outside))
 }
+
+///|
+/// The schema generation lives in the store it describes, so it cannot be lost
+/// separately. A sibling marker could be, and its absence used to authorize
+/// deleting the whole control store.
+test "the schema generation round-trips inside the store" {
+  let path = storage_test_path("sqlite-generation.db")
+  ignore(@sys.rm_rf(path))
+  ignore(@sys.rm_rf(path + "-shm"))
+  ignore(@sys.rm_rf(path + "-wal"))
+  let store : @storage.SqliteStateStore = { path, }
+  guard initialize_state_store(store) is Ok(_) else {
+    fail("initialize state store")
+  }
+  // Freshly created: readable, and recording nothing yet.
+  assert_true(read_state_store_generation(store) is Ok(None))
+  guard write_state_store_generation(store, "choir-control-state-v8") is Ok(_) else {
+    fail("write generation")
+  }
+  let restarted : @storage.SqliteStateStore = { path, }
+  assert_eq(
+    read_state_store_generation(restarted).unwrap(),
+    Some("choir-control-state-v8"),
+  )
+  // Recording it again replaces rather than duplicating, so a restart that
+  // rewrites the same value stays readable.
+  guard write_state_store_generation(store, "choir-control-state-v9") is Ok(_) else {
+    fail("rewrite generation")
+  }
+  assert_eq(
+    read_state_store_generation(restarted).unwrap(),
+    Some("choir-control-state-v9"),
+  )
+  // A file that is not a database at all must read as unreadable, not as a
+  // store that simply records nothing. Adopting a corrupt store would keep
+  // Choir running against state it cannot decode.
+  let corrupt = storage_test_path("sqlite-corrupt.db")
+  ignore(@sys.rm_rf(corrupt))
+  ignore(@sys.write_file_sync(corrupt, "this is not a database"))
+  assert_true(read_state_store_generation({ path: corrupt }) is Err(_))
+  ignore(@sys.rm_rf(corrupt))
+  ignore(@sys.rm_rf(path))
+  ignore(@sys.rm_rf(path + "-shm"))
+  ignore(@sys.rm_rf(path + "-wal"))
+}

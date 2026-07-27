@@ -208,6 +208,23 @@ fn exec_string_to_null_terminated_bytes(s : String) -> (Bytes, Int) {
 extern "C" fn state_store_init_ffi(path : Bytes, path_len : Int) -> Int = "choir_state_store_init"
 
 ///|
+#borrow(path, buf)
+extern "C" fn state_store_read_generation_ffi(
+  path : Bytes,
+  path_len : Int,
+  buf : Bytes,
+  max_size : Int,
+) -> Int = "choir_state_store_read_generation"
+
+///|
+#borrow(path, generation)
+extern "C" fn state_store_write_generation_ffi(
+  path : Bytes,
+  path_len : Int,
+  generation : Bytes,
+) -> Int = "choir_state_store_write_generation"
+
+///|
 #borrow(path)
 extern "C" fn state_store_mint_epoch_ffi(path : Bytes, path_len : Int) -> Int64 = "choir_state_store_mint_epoch"
 
