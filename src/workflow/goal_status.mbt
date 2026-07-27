@@ -158,6 +158,17 @@ pub(all) struct GoalStatusReport {
   /// awaiting-review never has to be inferred from pull request text.
   readiness_observed_draft : Bool?
   readiness_observation_sequence : Int64?
+  /// The WorkOrder budget this Goal runs under, when it has one, so a reader
+  /// sees the target and deadline the counts are measured against.
+  work_order : WorkOrderBudget?
+  /// Why this Goal was canceled, carried as the durable typed cause rather
+  /// than prose. Every variant but a user request names the evidence digest
+  /// the decision was made from, so a reader never has to reconstruct why a
+  /// Goal stopped from surrounding state.
+  cancellation_cause : GoalCancellationCause?
+  /// When the cancellation cutoff was installed, so a report can be ordered
+  /// against the event stream it cut.
+  cancellation_cutoff_sequence : @control.EventSequence?
   /// What every Part of this Goal reported consuming, so a Goal's cost against
   /// the user's paid subscription allowance is one number rather than an
   /// inference across sessions.
@@ -806,6 +817,13 @@ pub fn goal_status_report(
     readiness_decision: finalization_status.1,
     readiness_observed_draft: finalization_status.2,
     readiness_observation_sequence: finalization_status.3,
+    work_order: record.work_order_budget,
+    cancellation_cause: record.cancellation_request.map(fn(request) {
+      request.cause
+    }),
+    cancellation_cutoff_sequence: record.cancellation_request.map(fn(request) {
+      request.cutoff_sequence
+    }),
     usage: parts.fold(init=@control.empty_take_usage(), fn(total, part) {
       @control.add_take_usage(total, part.usage)
     }),

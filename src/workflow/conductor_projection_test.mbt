@@ -43,6 +43,9 @@ fn projection_report(
   durable_version? : Int = 7,
   assurance_effect_receipt_count? : Int = 2,
   pause_reason? : @workflow.GoalPauseReason? = None,
+  work_order? : @workflow.WorkOrderBudget? = None,
+  pull_request_state? : @workflow.PullRequestIntentState? = None,
+  readiness_decision? : @workflow.PullRequestReadinessDecision? = None,
 ) -> @workflow.GoalStatusReport {
   let goal_id = @control.GoalId("goal-a")
   {
@@ -86,7 +89,7 @@ fn projection_report(
     publication_remote_head_ref: None,
     publication_receipt_present: false,
     published_oid: None,
-    pull_request_state: None,
+    pull_request_state,
     pull_request_delivery_policy: None,
     pull_request_draft: None,
     readiness_observed_draft: None,
@@ -96,8 +99,11 @@ fn projection_report(
     pull_request_number: None,
     pull_request_url: None,
     finalization_id: None,
-    readiness_decision: None,
+    readiness_decision,
     readiness_observation_sequence: None,
+    work_order,
+    cancellation_cause: None,
+    cancellation_cutoff_sequence: None,
     semantic_run_projection: None,
     parts,
   }
@@ -309,4 +315,154 @@ test "a spent-token figure stays short enough for a status line" {
   assert_eq(@workflow.compact_token_count(1_000_000), "1.0M")
   assert_eq(@workflow.compact_token_count(2_450_000), "2.4M")
   assert_eq(@workflow.compact_token_count(12_000_000), "12.0M")
+}
+
+///|
+fn portfolio_part(
+  stage : @workflow.PartWorkflowStage,
+  part_id : String,
+  availability? : @control.ProviderAvailability? = None,
+) -> @workflow.GoalPartStatus {
+  {
+    ..projection_part(stage),
+    part_id: @control.PartId(part_id),
+    dispatch_diagnostic: availability.map(fn(value) {
+      {
+        take_id: @control.TakeId("take-" + part_id),
+        session_id: None,
+        reason: None,
+        detail: "provider reported its state",
+        recovery: None,
+        availability: value,
+      }
+    }),
+  }
+}
+
+///|
+test "the WorkOrder portfolio counts every Part disposition once" {
+  let report = projection_report(parts=[
+    portfolio_part(@workflow.PartWorkflowStage::PartIntegrated, "delivered"),
+    portfolio_part(@workflow.PartWorkflowStage::PartAccepted, "eligible"),
+    portfolio_part(
+      @workflow.PartWorkflowStage::PartImplementationHarnessStarted,
+      "active",
+    ),
+    portfolio_part(@workflow.PartWorkflowStage::PartBlocked, "failed"),
+    portfolio_part(
+      @workflow.PartWorkflowStage::PartRecoveryUncertain,
+      "quarantined",
+    ),
+    portfolio_part(@workflow.PartWorkflowStage::PartCanceled, "skipped"),
+  ])
+  let portfolio = @workflow.work_order_portfolio(report, 1_000L)
+  // No pull request was intended, so integration alone is delivery.
+  assert_eq(portfolio.delivered, 1)
+  assert_eq(portfolio.awaiting_merge, 0)
+  assert_eq(portfolio.eligible, 1)
+  assert_eq(portfolio.active, 1)
+  assert_eq(portfolio.failed, 1)
+  assert_eq(portfolio.quarantined, 1)
+  assert_eq(portfolio.skipped, 1)
+  assert_eq(portfolio.provider_deferred, 0)
+  // No budget, so nothing to measure against and no terminal reason.
+  assert_eq(portfolio.target, None)
+  assert_eq(portfolio.deadline, None)
+  assert_eq(portfolio.terminal_reason, None)
+}
+
+///|
+/// Delivery is the merge. A Part integrated into the Goal branch whose pull
+/// request has not landed is awaiting merge, and counting it as delivered
+/// would report work as finished that nobody can see.
+test "an unmerged pull request leaves its Parts awaiting merge" {
+  let integrated = [
+    portfolio_part(@workflow.PartWorkflowStage::PartIntegrated, "one"),
+    portfolio_part(@workflow.PartWorkflowStage::PartIntegrated, "two"),
+  ]
+  let awaiting = @workflow.work_order_portfolio(
+    projection_report(
+      parts=integrated,
+      pull_request_state=Some(
+        @workflow.PullRequestIntentState::PullRequestReceipted,
+      ),
+      readiness_decision=Some(
+        @workflow.PullRequestReadinessDecision::PullRequestAwaitingMerge,
+      ),
+    ),
+    1_000L,
+  )
+  assert_eq(awaiting.delivered, 0)
+  assert_eq(awaiting.awaiting_merge, 2)
+  let landed = @workflow.work_order_portfolio(
+    projection_report(
+      parts=integrated,
+      pull_request_state=Some(
+        @workflow.PullRequestIntentState::PullRequestReceipted,
+      ),
+      readiness_decision=Some(
+        @workflow.PullRequestReadinessDecision::PullRequestReady,
+      ),
+    ),
+    1_000L,
+  )
+  assert_eq(landed.delivered, 2)
+  assert_eq(landed.awaiting_merge, 0)
+}
+
+///|
+/// A Part waiting on a spent provider surface is not a failed Part. Counting
+/// it as failed would report a healthy Goal as broken for as long as the
+/// surface is down.
+test "a Part deferred on its provider is counted apart from a failed one" {
+  let parts = [
+    portfolio_part(
+      @workflow.PartWorkflowStage::PartRecoveryUncertain,
+      "waiting",
+      availability=Some(
+        @control.ProviderAvailability::ProviderAllowanceExhausted(Some(2_000L)),
+      ),
+    ),
+  ]
+  let before = @workflow.work_order_portfolio(projection_report(parts~), 1_999L)
+  assert_eq(before.provider_deferred, 1)
+  // Past the reported reset the surface admits work again, so the Part is no
+  // longer deferred even though it is still quarantined.
+  let after = @workflow.work_order_portfolio(projection_report(parts~), 2_000L)
+  assert_eq(after.provider_deferred, 0)
+  assert_eq(after.quarantined, 1)
+}
+
+///|
+test "the portfolio reports the target and deadline it is measured against" {
+  let budget = @workflow.accept_work_order_budget(
+    @workflow.WorkOrderStopRequest::WorkOrderRequestFirstOf([
+      @workflow.WorkOrderStopRequest::WorkOrderRequestRelativeSeconds(3_600L),
+      @workflow.WorkOrderStopRequest::WorkOrderRequestDeliveredQuota(
+        @workflow.WorkOrderQuotaBasis::WorkOrderPrimaryTargets,
+        5,
+      ),
+    ]),
+    @workflow.WorkOrderCutoffPolicy::WorkOrderDrainToSafeBoundary,
+    1_000L,
+  ).unwrap()
+  // Both are read out of a compound policy, not just whichever came first.
+  let portfolio = @workflow.work_order_portfolio(
+    projection_report(work_order=Some(budget)),
+    1_000L,
+  )
+  assert_eq(portfolio.target, Some(5))
+  assert_eq(portfolio.deadline, Some(4_600L))
+  assert_eq(portfolio.terminal_reason, None)
+  // Once stopped, the reason is typed rather than inferred from the counts.
+  let stopped = @workflow.work_order_portfolio(
+    projection_report(
+      work_order=Some(@workflow.record_work_order_stop(budget, 4_600L)),
+    ),
+    4_600L,
+  )
+  assert_eq(
+    stopped.terminal_reason,
+    Some(@workflow.WorkOrderStopReason::WorkOrderDeadlineReached),
+  )
 }

@@ -583,6 +583,9 @@ fn conductor_statusline_test_report(
     finalization_id: None,
     readiness_decision: None,
     readiness_observation_sequence: None,
+    work_order: None,
+    cancellation_cause: None,
+    cancellation_cutoff_sequence: None,
     semantic_run_projection: None,
     parts,
   }

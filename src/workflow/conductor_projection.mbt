@@ -78,6 +78,9 @@ pub fn goal_report_material_fingerprint(report : GoalStatusReport) -> String {
       "publication_state": report.publication_state.to_json(),
       "pull_request_state": report.pull_request_state.to_json(),
       "pull_request_delivery_policy": report.pull_request_delivery_policy.to_json(),
+      // A cancellation is always material: it is the reason the Goal stopped,
+      // and a Conductor that never saw it cannot explain the outcome.
+      "cancellation_cause": report.cancellation_cause.to_json(),
       "pull_request_merge_state": report.pull_request_merge_state.to_json(),
       "finalization_id": report.finalization_id.to_json(),
       "readiness_decision": report.readiness_decision.to_json(),
@@ -401,4 +404,156 @@ pub fn conductor_goal_display(
     additional_attention,
     spent_tokens: @control.take_usage_total_tokens(report.usage),
   })
+}
+
+///|
+/// What a WorkOrder has actually produced, counted from the durable Goal
+/// report rather than from a running tally.
+///
+/// Every count is derived on read for the same reason the safety ceiling is:
+/// an incremented counter and the durable state it claims to describe drift
+/// apart the moment a crash lands between them, and the report is the thing a
+/// reader is entitled to trust.
+pub(all) struct WorkOrderPortfolio {
+  /// The delivered-Bead quota this WorkOrder is working toward, when its stop
+  /// policy names one.
+  target : Int?
+  /// The absolute instant work stops being admitted, when the policy names one.
+  deadline : Int64?
+  /// Reached the integration target. A Part that is integrated into the Goal
+  /// branch but whose pull request has not merged is not delivered yet; it is
+  /// counted as awaiting merge, because delivery is the merge.
+  delivered : Int
+  awaiting_merge : Int
+  /// Started and not yet finished.
+  active : Int
+  /// Accepted and not yet started.
+  eligible : Int
+  /// Blocked on something the Part cannot resolve itself.
+  failed : Int
+  /// Recovery-uncertain: an effect may have occurred and cannot be observed.
+  quarantined : Int
+  skipped : Int
+  /// Waiting on a provider surface that cannot serve yet. Counted separately
+  /// from failed because the Part is fine and the surface is not.
+  provider_deferred : Int
+  /// Why the WorkOrder stopped, once it has.
+  terminal_reason : WorkOrderStopReason?
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+fn work_order_stop_target(policy : WorkOrderStopPolicy) -> Int? {
+  match policy {
+    WorkOrderStopAtDeliveredQuota(_, count) => Some(count)
+    WorkOrderStopAtFirstOf(policies) => {
+      for policy in policies {
+        match work_order_stop_target(policy) {
+          Some(count) => return Some(count)
+          None => ()
+        }
+      }
+      None
+    }
+    _ => None
+  }
+}
+
+///|
+fn work_order_stop_deadline(policy : WorkOrderStopPolicy) -> Int64? {
+  match policy {
+    WorkOrderStopAtDeadline(instant) => Some(instant)
+    WorkOrderStopAtFirstOf(policies) => {
+      for policy in policies {
+        match work_order_stop_deadline(policy) {
+          Some(instant) => return Some(instant)
+          None => ()
+        }
+      }
+      None
+    }
+    _ => None
+  }
+}
+
+///|
+/// Whether this Goal's delivery has actually landed.
+///
+/// `PullRequestReady` is the repository's own answer to that question, and it
+/// is already delivery-mode aware: an auto-merge Goal is ready only once the
+/// exact pull request is observed merged, while a review-only Goal is ready
+/// once a non-draft pull request is open, because offering it for review is
+/// the delivery. Re-deriving this from the merge state would get review-only
+/// Goals wrong, and a merge that is only planned or authorized has not landed.
+fn goal_delivery_has_landed(report : GoalStatusReport) -> Bool {
+  match report.pull_request_state {
+    // A Goal that never intended a pull request delivers by integration alone.
+    None => true
+    Some(_) =>
+      report.readiness_decision
+      is Some(PullRequestReadinessDecision::PullRequestReady)
+  }
+}
+
+///|
+fn part_is_provider_deferred(part : GoalPartStatus, now : Int64) -> Bool {
+  match part.dispatch_diagnostic {
+    Some(diagnostic) =>
+      !@control.provider_availability_admits_dispatch(
+        diagnostic.availability,
+        now,
+      )
+    None => false
+  }
+}
+
+///|
+/// Project what a Goal's WorkOrder has produced, as of `now`.
+pub fn work_order_portfolio(
+  report : GoalStatusReport,
+  now : Int64,
+) -> WorkOrderPortfolio {
+  let landed = goal_delivery_has_landed(report)
+  let mut delivered = 0
+  let mut awaiting_merge = 0
+  let mut active = 0
+  let mut eligible = 0
+  let mut failed = 0
+  let mut quarantined = 0
+  let mut skipped = 0
+  let mut provider_deferred = 0
+  for part in report.parts {
+    if part_is_provider_deferred(part, now) {
+      provider_deferred = provider_deferred + 1
+    }
+    match part.stage {
+      PartWorkflowStage::PartIntegrated =>
+        if landed {
+          delivered = delivered + 1
+        } else {
+          awaiting_merge = awaiting_merge + 1
+        }
+      PartWorkflowStage::PartAccepted => eligible = eligible + 1
+      PartWorkflowStage::PartCanceled => skipped = skipped + 1
+      PartWorkflowStage::PartBlocked => failed = failed + 1
+      PartWorkflowStage::PartRecoveryUncertain => quarantined = quarantined + 1
+      _ => active = active + 1
+    }
+  }
+  {
+    target: report.work_order.bind(fn(budget) {
+      work_order_stop_target(budget.stop_policy)
+    }),
+    deadline: report.work_order.bind(fn(budget) {
+      work_order_stop_deadline(budget.stop_policy)
+    }),
+    delivered,
+    awaiting_merge,
+    active,
+    eligible,
+    failed,
+    quarantined,
+    skipped,
+    provider_deferred,
+    terminal_reason: report.work_order.bind(fn(budget) { budget.stopped }),
+  }
 }
