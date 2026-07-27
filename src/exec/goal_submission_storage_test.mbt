@@ -4,9 +4,11 @@ let selection_store_digest : @control.Digest = @control.Digest(
 )
 
 ///|
-fn selection_store_decision() -> @workflow.GoalSelectionDecision raise {
-  let goal_id = @control.GoalId("goal-selection-store")
-  let part_id = @control.PartId("part-selection-store")
+fn selection_store_decision(
+  label? : String = "selection-store",
+) -> @workflow.GoalSelectionDecision raise {
+  let goal_id = @control.GoalId("goal-" + label)
+  let part_id = @control.PartId("part-" + label)
   let repository_id = @workflow.RepositoryId("repository-selection-store")
   let source : @workflow.GoalSelectionSourcePart = {
     part_id,
@@ -16,7 +18,7 @@ fn selection_store_decision() -> @workflow.GoalSelectionDecision raise {
     state: @workflow.SelectionSourceState::SelectionSourceOpen,
   }
   let contract : @control.TaskContractRevision = {
-    id: @control.RevisionId("revision-selection-store"),
+    id: @control.RevisionId("revision-" + label),
     goal_id,
     part_id,
     revision: 1,
@@ -26,7 +28,7 @@ fn selection_store_decision() -> @workflow.GoalSelectionDecision raise {
     repair_audit: None,
     repair_verification: None,
     instruction_artifact: {
-      artifact_id: "instruction-selection-store",
+      artifact_id: "instruction-" + label,
       digest: selection_store_digest,
     },
     base_commit_oid: @control.GitOid("base-selection-store"),
@@ -40,7 +42,7 @@ fn selection_store_decision() -> @workflow.GoalSelectionDecision raise {
     ),
     verification_specs: [
       {
-        id: @control.VerificationSpecId("verify-selection-store"),
+        id: @control.VerificationSpecId("verify-" + label),
         version: 1,
         digest: selection_store_digest,
         process_spec_digest: selection_store_digest,
@@ -56,7 +58,7 @@ fn selection_store_decision() -> @workflow.GoalSelectionDecision raise {
   match
     @workflow.evaluate_goal_proposal(
       {
-        id: @workflow.GoalProposalId("proposal-selection-store"),
+        id: @workflow.GoalProposalId("proposal-" + label),
         goal_id,
         conductor_draft_digest: selection_store_digest,
         repository_id,

@@ -21,6 +21,8 @@ fn choir_usage() -> String {
     #|  goal status <goal-id>
     #|  goal steer <goal-id> <pause|resume|concurrency N>
     #|  goal cancel <goal-id>
+    #|  goal archive <goal-id> [--dry-run]
+    #|                        release a finished Goal's working storage
     #|  goal attach <take-id>
     #|  goal answer <request-id> <answer>
     #|
@@ -42,6 +44,7 @@ test "CLI help exposes only the current Conductor and Goal controls" {
   let usage = choir_usage()
   assert_true(usage.contains("--conductor <claude|codex>"))
   assert_true(usage.contains("goal status <goal-id>"))
+  assert_true(usage.contains("goal archive <goal-id> [--dry-run]"))
   assert_true(usage.contains("goal attach <take-id>"))
   assert_true(usage.contains("goal answer <request-id> <answer>"))
   assert_false(usage.contains("<bead-id|text>"))

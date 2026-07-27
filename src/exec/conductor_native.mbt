@@ -1230,6 +1230,90 @@ fn dispatch_native_goal_cancel(
 }
 
 ///|
+/// Reclaim one terminal Goal's working storage, or report exactly what that
+/// would reclaim.
+///
+/// Operator-facing only: it is deliberately absent from the Conductor tool
+/// list, because what an installation keeps on disk is the user's call rather
+/// than a steering decision. A non-terminal Goal is refused with the typed
+/// reason rendered by the control plane, never partially archived.
+///
+/// The Git surface is injected so a test can drive this whole path — the
+/// request's `dry_run` included — against a durable store without a repository
+/// on disk. `dry_run` is the feature's only safety affordance, and it is read
+/// here, so it is only pinned by a test that starts from a request.
+pub async fn dispatch_native_goal_archive(
+  project_dir : String,
+  request : @types.Request,
+  now : Int64,
+  list_refs? : async (String) -> Result[
+    Array[@workflow.GitRefName],
+    @types.ChoirError,
+  ] = list_native_goal_owned_git_refs,
+  delete_refs? : async (String, Array[@workflow.GitRefName]) -> Result[
+    Int,
+    @types.ChoirError,
+  ] = delete_native_goal_archived_git_refs,
+) -> @types.Response {
+  let goal = match native_conductor_resolve_goal_id(project_dir, request) {
+    Ok(value) => value
+    Err(error) => return @types.Response::err(error)
+  }
+  let dry_run = request.args.get_bool("dry_run").unwrap_or(false)
+  let report = match
+    archive_native_goal(
+      project_dir,
+      goal,
+      dry_run~,
+      now~,
+      list_refs~,
+      delete_refs~,
+    ) {
+    Ok(value) => value
+    Err(error) => return @types.Response::err(error)
+  }
+  match report.decision {
+    @workflow.GoalArchiveDecision::GoalArchiveRefused(refusal) =>
+      @types.Response::err(
+        @types.ChoirError::validation_error(
+          @workflow.goal_archive_refusal_message(goal, refusal),
+        ),
+      )
+    @workflow.GoalArchiveDecision::GoalArchivePlanned(plan) =>
+      @types.Response::ok_values(
+        native_goal_archive_response_fields(plan, report, dry_run~),
+      )
+  }
+}
+
+///|
+/// The archive response.
+///
+/// `goal_id` and `state` are top-level because the daemon resolves a
+/// Conductor's park from exactly those two fields of any `goal_` response. A
+/// response that buried them would read as an unknown state, and an unknown
+/// state parks — leaving a Conductor waiting on a Goal that has already
+/// finished and just had its storage reclaimed.
+pub fn native_goal_archive_response_fields(
+  plan : @workflow.GoalArchivePlan,
+  report : NativeGoalArchiveReport,
+  dry_run~ : Bool,
+) -> Map[String, Json] {
+  {
+    "goal_id": plan.goal_id.to_json(),
+    "state": plan.state.to_json(),
+    "dry_run": dry_run.to_json(),
+    "archived": report.applied.to_json(),
+    "release_refs": plan.release_refs.to_json(),
+    "release_artifacts": plan.release_artifacts.to_json(),
+    "retain_refs": plan.retain_refs.to_json(),
+    "retain_artifacts": plan.retain_artifacts.to_json(),
+    "refs_removed": report.refs_removed.to_json(),
+    "artifacts_released": report.artifacts_released.to_json(),
+  }
+}
+
+///|
 fn native_conductor_policy_change(
   request : @types.Request,
 ) -> Result[@workflow.GoalPolicyChange, @types.ChoirError] {
@@ -1439,6 +1523,7 @@ pub async fn dispatch_native_conductor_request(
     "goal_list" => dispatch_native_goal_list(project_dir)
     "goal_status" => dispatch_native_goal_status(project_dir, request)
     "goal_cancel" => dispatch_native_goal_cancel(project_dir, request, now)
+    "goal_archive" => dispatch_native_goal_archive(project_dir, request, now)
     "goal_steer" => dispatch_native_goal_steer(project_dir, request)
     "goal_attach" => dispatch_native_goal_attach(project_dir, request)
     "goal_answer" => dispatch_native_goal_answer(project_dir, request, now)

@@ -414,9 +414,7 @@ fn goal_branch_initialization_identity(
   base_oid : @control.GitOid,
 ) -> (GoalBranchInitIntentId, @control.Digest, GitRefName) {
   let witness_ref = GitRefName(
-    "refs/choir/goals/" +
-    @storage.digest_text(goal_execution_identity_digest(goal_id)) +
-    "/initialized",
+    goal_branch_witness_ref_prefix(goal_id) + "initialized",
   )
   let digest = @storage.artifact_digest(
     @utf8.encode(

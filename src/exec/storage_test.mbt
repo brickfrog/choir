@@ -674,6 +674,18 @@ test "an artifact sweep collects only content whose every term expired" {
   let root = storage_test_path("artifact-sweep")
   ignore(@sys.rm_rf(root))
   let store : @storage.ArtifactStore = { root, }
+  // A whole-store sweep is the ledger read, the sweep decision, and the
+  // collection composed: the store executes what the decision names.
+  let sweep = fn(now : Int64, goal_terminal : (@control.GoalId) -> Bool) {
+    collect_artifacts(
+      store,
+      @storage.plan_artifact_sweep(
+        read_artifact_retention_ledger(store),
+        now,
+        goal_terminal,
+      ).collect,
+    )
+  }
   let adopt = fn(content : String, retention : @storage.ArtifactRetention) {
     let bytes = @utf8.encode(content)
     adopt_artifact(store, {
@@ -706,23 +718,23 @@ test "an artifact sweep collects only content whose every term expired" {
     ),
   )
   // Before the deadline nothing is collectable.
-  assert_eq(sweep_artifact_store(store, 999L, fn(_) { false }).unwrap(), 0)
+  assert_eq(sweep(999L, fn(_) { false }).unwrap(), 0)
   assert_true(artifact_store_contains(store, expiring.digest).unwrap())
 
   // Past it, the timestamped one goes; the permanent one and the one still
   // held by a live Goal stay.
-  assert_eq(sweep_artifact_store(store, 1_000L, fn(_) { false }).unwrap(), 1)
+  assert_eq(sweep(1_000L, fn(_) { false }).unwrap(), 1)
   assert_false(artifact_store_contains(store, expiring.digest).unwrap())
   assert_true(artifact_store_contains(store, permanent.digest).unwrap())
   assert_true(artifact_store_contains(store, shared).unwrap())
 
   // Once the Goal is terminal too, the shared content becomes collectable.
-  assert_eq(sweep_artifact_store(store, 1_000L, fn(_) { true }).unwrap(), 1)
+  assert_eq(sweep(1_000L, fn(_) { true }).unwrap(), 1)
   assert_false(artifact_store_contains(store, shared).unwrap())
   assert_true(artifact_store_contains(store, permanent.digest).unwrap())
 
   // Sweeping again is a no-op rather than an error, so a rerun after a crash
   // converges.
-  assert_eq(sweep_artifact_store(store, 2_000L, fn(_) { true }).unwrap(), 0)
+  assert_eq(sweep(2_000L, fn(_) { true }).unwrap(), 0)
   ignore(@sys.rm_rf(root))
 }

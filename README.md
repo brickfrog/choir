@@ -89,6 +89,7 @@ choir goal steer <goal-id> pause
 choir goal steer <goal-id> resume
 choir goal steer <goal-id> concurrency 4
 choir goal cancel <goal-id>
+choir goal archive <goal-id> [--dry-run]
 choir goal attach <take-id>
 choir goal answer <request-id> <answer>
 choir stop
@@ -100,6 +101,17 @@ removes every recorded Goal runtime and exact local Goal/witness ref before
 deleting durable state. It does not delete user branches, remote branches, PRs,
 or source Beads. If external cleanup fails, Choir keeps the database and exits
 nonzero so the purge can be retried safely.
+
+`goal archive` is the selective alternative: it reclaims one finished Goal
+instead of wiping the installation. Archiving is not deleting. It keeps the
+durable Goal record, the Goal's branch, and any stored content another Goal or
+a permanent retention still needs; it releases that Goal's own idempotency
+witness refs and content whose every recorded retention has expired. A Goal
+that is still active, paused, blocked, or recovery-uncertain is refused with
+the reason, and `--dry-run` reports exactly what would be released without
+releasing it. Sandbox runtime roots are not archived: each one is removed when
+its Goal reaches a terminal state, and any residue is reclaimed on the next
+daemon start.
 
 ## Documentation
 

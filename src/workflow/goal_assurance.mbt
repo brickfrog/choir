@@ -516,11 +516,8 @@ pub fn initialize_goal_assurance(
       integration_receipt_set_digest: receipt_set_digest,
       assurance_policy_revision,
       assurance_policy_digest,
-      seal_witness_ref: "refs/choir/goals/" +
-      @storage.digest_text(
-        @storage.artifact_digest(@utf8.encode(execution.goal.id.0)),
-      ) +
-      "/sealed/" +
+      seal_witness_ref: goal_seal_witness_ref_prefix(execution.goal.id) +
+      "sealed/" +
       key,
       idempotency_key: "seal-" + key,
       lifecycle: @control.GoalBranchSealIntentLifecycle::GoalBranchSealPlanned,
