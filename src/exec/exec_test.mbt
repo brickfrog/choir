@@ -249,3 +249,29 @@ test "Goal runtime preflight fails before resolving later requirements" {
 }
 
 ///|
+
+///|
+/// The launch argv and the declared surface are two lists that used to drift —
+/// the flags changed five times in one day. This is the coupling: every flag
+/// the launch passes must be declared, or qualification would never check it
+/// against the installed CLI.
+test "every Conductor launch flag is declared in the qualified surface" {
+  let declared = @harness.conductor_surface_flags().map(fn(flag) { flag.name })
+  let passed : Array[String] = []
+  for lean in [false, true] {
+    let command = conductor_launch_command("/repo", "/usr/bin/choir", lean~)
+    for argument in command.args {
+      if argument.has_prefix("--") && !passed.contains(argument) {
+        passed.push(argument)
+      }
+    }
+  }
+  for argument in passed {
+    assert_true(declared.contains(argument))
+  }
+  // And nothing is declared that the launch never passes, so the surface is
+  // exactly what Choir depends on rather than a wish list.
+  for flag in declared {
+    assert_true(passed.contains(flag))
+  }
+}

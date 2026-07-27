@@ -132,6 +132,10 @@ pub fn conductor_launch_command(
   } else {
     []
   }
+  // Every flag here must also appear in @harness.conductor_surface_flags(),
+  // which is what qualification checks against the installed CLI. The coupling
+  // is asserted by test rather than by indexing into the manifest, so the two
+  // cannot drift and reordering the manifest cannot silently change the launch.
   {
     program: "claude",
     args: [

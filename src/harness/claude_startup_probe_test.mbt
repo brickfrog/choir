@@ -212,3 +212,139 @@ test "Claude live startup rejects any undeclared tool use" {
     @harness.HostSurfaceMatrixDisposition::HostSurfaceMatrixFailed,
   )
 }
+
+///|
+/// The shape of real `claude --help` output: flags introduced with two leading
+/// dashes, often followed by a value placeholder and a comma-separated alias.
+fn conductor_help_fixture(flags : Array[String]) -> String {
+  let rendered = StringBuilder::new()
+  rendered.write_string("Usage: claude [options] [command] [prompt]\n\n")
+  rendered.write_string("Options:\n")
+  for flag in flags {
+    rendered.write_string("  " + flag + " <value>    Some description here\n")
+  }
+  rendered.to_string()
+}
+
+///|
+test "a surface is qualified when the CLI advertises what it declares" {
+  let flags = @harness.conductor_surface_flags()
+  let documented = flags
+    .filter(fn(flag) {
+      flag.visibility
+      is @harness.ConductorFlagVisibility::ConductorFlagDocumented
+    })
+    .map(fn(flag) { flag.name })
+  let findings = @harness.qualify_conductor_surface(
+    conductor_help_fixture(documented),
+    flags,
+  )
+  assert_true(@harness.conductor_surface_is_qualified(findings))
+}
+
+///|
+/// The failure this exists to catch: the installed Claude stops advertising a
+/// flag Choir passes. Previously the only check compared Choir's argv to
+/// itself and would have stayed green.
+test "a documented flag the CLI no longer advertises fails qualification" {
+  let flags = @harness.conductor_surface_flags()
+  let without_settings = flags
+    .filter(fn(flag) {
+      flag.visibility
+      is @harness.ConductorFlagVisibility::ConductorFlagDocumented &&
+      flag.name != "--settings"
+    })
+    .map(fn(flag) { flag.name })
+  let findings = @harness.qualify_conductor_surface(
+    conductor_help_fixture(without_settings),
+    flags,
+  )
+  assert_false(@harness.conductor_surface_is_qualified(findings))
+  assert_true(
+    findings.contains(
+      @harness.ConductorSurfaceFinding::ConductorFlagMissing("--settings"),
+    ),
+  )
+  assert_true(
+    @harness.conductor_surface_finding_text(findings[0]).contains(
+      "unqualified Conductor surface",
+    ),
+  )
+}
+
+///|
+/// Real help contains genuine prefix pairs — `--agent`/`--agents`,
+/// `--allowed`/`--allowed-tools`, `--debug`/`--debug-file`. A prefix or
+/// substring match would let the longer flag satisfy a declaration of the
+/// shorter one, qualifying a surface whose flag had actually been removed.
+/// That is the one thing this check exists to notice.
+test "a longer flag does not satisfy a shorter one it starts with" {
+  let declared = fn(name : String) -> Array[@harness.ConductorFlag] {
+    [
+      {
+        name,
+        visibility: @harness.ConductorFlagVisibility::ConductorFlagDocumented,
+      },
+    ]
+  }
+  // Only the longer flag is advertised; the shorter declaration is unmet.
+  assert_true(
+    @harness.qualify_conductor_surface(
+      conductor_help_fixture(["--agents"]),
+      declared("--agent"),
+    ).contains(
+      @harness.ConductorSurfaceFinding::ConductorFlagMissing("--agent"),
+    ),
+  )
+  assert_true(
+    @harness.qualify_conductor_surface(
+      conductor_help_fixture(["--debug-file"]),
+      declared("--debug"),
+    ).contains(
+      @harness.ConductorSurfaceFinding::ConductorFlagMissing("--debug"),
+    ),
+  )
+  // The exact flag still qualifies.
+  assert_true(
+    @harness.conductor_surface_is_qualified(
+      @harness.qualify_conductor_surface(
+        conductor_help_fixture(["--agent"]),
+        declared("--agent"),
+      ),
+    ),
+  )
+}
+
+///|
+/// Two flags Choir depends on are accepted but absent from help, verified
+/// against 2.1.220. Declaring them undocumented is what stops qualification
+/// from failing on them — and what makes it notice if that ever changes.
+test "an undocumented flag that becomes documented is reported as stale" {
+  let flags = @harness.conductor_surface_flags()
+  let undocumented = flags
+    .filter(fn(flag) {
+      flag.visibility
+      is @harness.ConductorFlagVisibility::ConductorFlagUndocumented
+    })
+    .map(fn(flag) { flag.name })
+  // At least one exists, or the distinction would be dead weight.
+  assert_true(undocumented.length() > 0)
+  let documented = flags
+    .filter(fn(flag) {
+      flag.visibility
+      is @harness.ConductorFlagVisibility::ConductorFlagDocumented
+    })
+    .map(fn(flag) { flag.name })
+  let findings = @harness.qualify_conductor_surface(
+    conductor_help_fixture([..documented, ..undocumented]),
+    flags,
+  )
+  assert_false(@harness.conductor_surface_is_qualified(findings))
+  assert_true(
+    findings.contains(
+      @harness.ConductorSurfaceFinding::ConductorFlagNowDocumented(
+        undocumented[0],
+      ),
+    ),
+  )
+}
