@@ -120,6 +120,14 @@ test "Conductor catalog exposes only Goal and Beads operations" {
   assert_true(rendered.contains("\"provider\""))
   assert_true(rendered.contains("\"enum\":[\"codex\",\"claude\"]"))
   assert_true(rendered.contains("\"default\":\"codex\""))
+  // A Conductor cannot admit a second provider surface for a Part unless the
+  // tool it is given offers one.
+  assert_true(rendered.contains("\"provider_failover\""))
+  assert_true(
+    rendered.contains(
+      "explicitly authorizes spending that provider's allowance",
+    ),
+  )
   assert_true(
     rendered.contains("Verification and audit repair are owned by choird"),
   )

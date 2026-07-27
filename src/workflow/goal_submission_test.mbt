@@ -102,6 +102,7 @@ fn submission_part(
       ]),
     ),
     provider_surface: surface,
+    provider_failover_surfaces: [],
     part_context_manifest: None,
   }
 }
@@ -562,6 +563,63 @@ test "accepted migration Part retains its exact context manifest" {
     ).unwrap().outcome ==
     @workflow.GoalSelectionOutcome::GoalSelectionRejected,
   )
+}
+
+///|
+test "acceptance captures every provider surface a Part may run on" {
+  let goal_id = @control.GoalId("goal-failover-test")
+  let base = submission_part(
+    goal_id,
+    "failover-part",
+    [],
+    @control.ProviderSurfaceId::CodexSubscriptionCli,
+  )
+  let part = {
+    ..base,
+    provider_failover_surfaces: [
+      @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+    ],
+  }
+  let snapshot = submission_snapshot([
+    submission_source(
+      "failover-part",
+      [],
+      @workflow.SelectionSourceState::SelectionSourceOpen,
+    ),
+  ])
+  let decision = @workflow.evaluate_goal_proposal(
+    submission_proposal(goal_id, [part]),
+    snapshot,
+    fn(_) { true },
+  ).unwrap()
+  assert_eq(
+    decision.outcome,
+    @workflow.GoalSelectionOutcome::GoalSelectionAccepted,
+  )
+  // The admitted set travels to acceptance intact, so the Part's Takes carry
+  // the authority the proposal stated rather than a host default.
+  assert_eq(decision.accepted_parts[0].provider_failover_surfaces, [
+    @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+  ])
+  assert_eq(
+    @workflow.accepted_part_admitted_surfaces(decision.accepted_parts[0]),
+    [
+      @control.ProviderSurfaceId::CodexSubscriptionCli,
+      @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+    ],
+  )
+  // A Part admitted under one provider is a different contract than the same
+  // Part admitted under two, so the proposal digest has to separate them.
+  assert_true(
+    @workflow.goal_proposal_digest(submission_proposal(goal_id, [part])) !=
+    @workflow.goal_proposal_digest(submission_proposal(goal_id, [base])),
+  )
+  let admitted_once = @workflow.evaluate_goal_proposal(
+    submission_proposal(goal_id, [base]),
+    snapshot,
+    fn(_) { true },
+  ).unwrap()
+  assert_eq(admitted_once.accepted_parts[0].provider_failover_surfaces, [])
 }
 
 ///|

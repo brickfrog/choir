@@ -744,6 +744,7 @@ fn compile_native_conductor_part_proposal(
     dependency_ids,
     task_contract: contract,
     provider_surface: part.provider_surface,
+    provider_failover_surfaces: part.provider_failover_surfaces,
     part_context_manifest,
   })
 }
@@ -934,6 +935,9 @@ fn native_goal_submission_part_snapshot(
     },
     current_native_goal_fencing_epoch(),
     is_nfc,
+    admitted_provider_surfaces=@workflow.accepted_part_admitted_surfaces(
+      accepted,
+    ),
     part_context_manifest=accepted.part_context_manifest,
   )
 }

@@ -128,12 +128,22 @@ async fn advance_bound_part(
       // operator `retry_part`.
       if value.snapshot.stage ==
         @workflow.PartWorkflowStage::PartRecoveryUncertain {
-        let recovered = match (config.plan_recovery_retry)(value.snapshot) {
+        let (recovered, repair_name) = match
+          (config.plan_recovery_retry)(value.snapshot) {
           Ok(
             @workflow.PartRecoveryRetryDecision::PartRecoveryRetryPlanned(
               planned
             )
-          ) => planned
+          ) => (planned, "recovery")
+          // The surface the Part was on cannot serve and its contract admits
+          // another: the fresh Take is armed there, under its own name so the
+          // transition is not filed as an ordinary recovery.
+          Ok(
+            @workflow.PartRecoveryRetryDecision::PartRecoveryRetryFailedOver(
+              planned,
+              _
+            )
+          ) => (planned, "provider-failover")
           Ok(@workflow.PartRecoveryRetryDecision::PartRecoveryRetryRetained)
           | Ok(
             @workflow.PartRecoveryRetryDecision::PartRecoveryRetryLimitReached
@@ -150,7 +160,7 @@ async fn advance_bound_part(
             dependencies,
             recovered,
             value.state_record.version,
-            "recovery",
+            repair_name,
           ) {
           Ok(Some(persisted)) =>
             return Ok(scheduling_record_from_snapshot(persisted))

@@ -71,6 +71,37 @@ test "Conductor Part draft defaults an omitted provider to Codex" {
     draft.parts[0].provider_surface,
     @control.ProviderSurfaceId::CodexSubscriptionCli,
   )
+  // Spending a second provider's allowance is authority the draft has to
+  // state, so an omitted list admits nothing beyond the named provider.
+  assert_eq(draft.parts[0].provider_failover_surfaces, [])
+}
+
+///|
+test "Conductor draft admits only the failover providers it names" {
+  let draft = @workflow.decode_conductor_goal_draft(
+    (
+      #|{"proposal_id":"p","goal_id":"g","pull_request":{"title":"fix: change x","body":"Changes x and verifies it."},"maximum_parallel_parts":1,"parts":[{"part_id":"a","commit_title":"fix: change x","instruction":"x","provider":"codex","provider_failover":["claude"],"repository_wide":true,"moon_args":["test"]}]}
+    ),
+  ).unwrap()
+  assert_eq(draft.parts[0].provider_failover_surfaces, [
+    @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+  ])
+  fn rejected(failover : String) -> Bool {
+    @workflow.decode_conductor_goal_draft(
+      "{\"proposal_id\":\"p\",\"goal_id\":\"g\",\"pull_request\":{\"title\":\"fix: change x\",\"body\":\"Changes x and verifies it.\"},\"maximum_parallel_parts\":1,\"parts\":[{\"part_id\":\"a\",\"commit_title\":\"fix: change x\",\"instruction\":\"x\",\"provider\":\"codex\",\"provider_failover\":" +
+      failover +
+      ",\"repository_wide\":true,\"moon_args\":[\"test\"]}]}",
+    )
+    is Err(_)
+  }
+
+  // A surface Choir cannot drive is not authority, it is a typo.
+  assert_true(rejected("[\"gemini\"]"))
+  // Naming the Part's own provider again, or naming one twice, makes the
+  // admitted order ambiguous rather than adding a fallback.
+  assert_true(rejected("[\"codex\"]"))
+  assert_true(rejected("[\"claude\",\"claude\"]"))
+  assert_true(rejected("\"claude\""))
 }
 
 ///|

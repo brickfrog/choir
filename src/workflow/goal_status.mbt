@@ -23,6 +23,10 @@ pub(all) struct GoalPartStatus {
   audit_blocking_findings_count : Int
   integration_receipt_present : Bool
   dispatch_diagnostic : PartDispatchDiagnostic?
+  /// Every surface this Part moved to, and why. `provider_surface` reports
+  /// where it runs now; this reports how it got there, so a changed provider
+  /// is read rather than inferred.
+  provider_failovers : Array[PartProviderFailover]
   /// What this Part's provider sessions reported consuming. Background Takes
   /// spend the user's paid subscription allowance, so the cost of a Goal is
   /// reportable rather than invisible.
@@ -693,6 +697,7 @@ pub fn goal_status_report(
       },
       integration_receipt_present: snapshot.integration_receipt is Some(_),
       dispatch_diagnostic: snapshot.dispatch_diagnostic,
+      provider_failovers: snapshot.provider_failovers,
       usage: part_reported_usage(snapshot),
     })
   }

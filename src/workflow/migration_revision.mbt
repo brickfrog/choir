@@ -255,6 +255,7 @@ pub fn plan_part_migration_revision(
       identities,
       snapshot.fencing_epoch,
       is_nfc,
+      admitted_provider_surfaces=snapshot.admitted_provider_surfaces,
       part_context_manifest=context_manifest,
     ) {
     Ok(value) => value
@@ -289,5 +290,6 @@ pub fn plan_part_migration_revision(
     harness_events: snapshot.harness_events,
     integration_conflicts: snapshot.integration_conflicts,
     effect_receipts: snapshot.effect_receipts,
+    provider_failovers: snapshot.provider_failovers,
   })
 }

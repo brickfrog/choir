@@ -260,6 +260,7 @@ fn workflow_store_fixture() -> @workflow.PartWorkflowSnapshot raise {
       identities,
       @control.FencingEpoch(7L),
       fn(_) { true },
+      admitted_provider_surfaces=[identities.implementation_session.surface],
     ) {
     Ok(snapshot) => snapshot
     Err(error) => fail(error.message())
@@ -1235,6 +1236,123 @@ async test "Goal adapter accepts the exact stored contract revision" {
   assert_eq(observed, record)
   assert_eq(execute_count.val, 0)
   assert_eq(reconcile_count.val, 0)
+  clean_workflow_repository(repository)
+}
+
+///|
+async test "Goal adapter persists a Part that moved to another provider" {
+  let repository = workflow_repository("goal-adapter-provider-failover")
+  clean_workflow_repository(repository)
+  let adapters = workflow_repository_adapters()
+  guard @workflow.initialize_part_workflow_repository(repository, adapters)
+    is Ok(_) else {
+    fail("initialize provider-failover repository")
+  }
+  let initial = workflow_store_fixture()
+  let uncertain = {
+    ..initial,
+    stage: @workflow.PartWorkflowStage::PartRecoveryUncertain,
+    part: {
+      ..initial.part,
+      lifecycle: @control.PartLifecycle::PartBlocked(
+        @control.PartBlockReason::PartRecoveryUncertain,
+      ),
+    },
+    admitted_provider_surfaces: [
+      @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+      @control.ProviderSurfaceId::CodexSubscriptionCli,
+    ],
+  }
+  ignore(
+    @workflow.persist_part_snapshot(repository, adapters, {
+      snapshot: uncertain,
+      expected_store_version: None,
+      fault_point: None,
+    }).unwrap(),
+  )
+  let moved : @workflow.PartProviderFailover = {
+    from_surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+    to_surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+    cause: @control.ProviderAvailability::ProviderAllowanceExhausted(None),
+    retry_ordinal: 1,
+    decided_at: 500L,
+  }
+  let planned = {
+    ..uncertain,
+    durable_version: uncertain.durable_version + 1,
+    stage: @workflow.PartWorkflowStage::PartAccepted,
+    identities: {
+      ..uncertain.identities,
+      implementation_session: {
+        ..uncertain.identities.implementation_session,
+        surface: moved.to_surface,
+      },
+      audit_session: {
+        ..uncertain.identities.audit_session,
+        surface: moved.to_surface,
+      },
+    },
+    provider_failovers: [moved],
+  }
+  let execute_count = @ref.new(0)
+  let reconcile_count = @ref.new(0)
+  let dependencies = workflow_driver_dependencies(
+    execute_count,
+    reconcile_count,
+    fn(_) { None },
+    workflow_driver_recover_observation,
+  )
+  let record : @workflow.GoalPartSchedulingRecord = {
+    part: uncertain.part,
+    task_contract: uncertain.task_contract,
+  }
+  let config : @exec.GoalPartWorkflowAdapterConfig = {
+    bindings: [
+      { scheduling_record: record, initial_snapshot: initial, repository },
+    ],
+    repository_adapters: adapters,
+    dependencies: fn(_, admission) {
+      Ok({ ..dependencies, integration_admission: fn(_) { Ok(admission) } })
+    },
+    integration_input: fn(_, _) {
+      Err(@types.ChoirError::validation_error("integration is not expected"))
+    },
+    plan_conflict_repair: fn(_) {
+      Err(@types.ChoirError::validation_error("repair is not expected"))
+    },
+    plan_audit_repair: fn(_) {
+      Err(@types.ChoirError::validation_error("repair is not expected"))
+    },
+    plan_verification_repair: fn(_) {
+      Err(@types.ChoirError::validation_error("repair is not expected"))
+    },
+    plan_recovery_retry: fn(_) {
+      Ok(
+        @workflow.PartRecoveryRetryDecision::PartRecoveryRetryFailedOver(
+          planned, moved,
+        ),
+      )
+    },
+    read_goal_head: () => Ok(@control.GitOid("goal-head-store")),
+  }
+  ignore(
+    (@exec.goal_part_workflow_adapters(config).advance_part)(record).unwrap(),
+  )
+  // A failover the control plane decided is applied, not dropped: the stored
+  // Part now runs on the admitted surface and says why it moved.
+  let stored = @workflow.load_part_snapshot(
+      repository,
+      adapters,
+      initial.workflow_id,
+    )
+    .unwrap()
+    .unwrap().snapshot
+  assert_eq(
+    stored.identities.implementation_session.surface,
+    @control.ProviderSurfaceId::CodexSubscriptionCli,
+  )
+  assert_eq(stored.provider_failovers, [moved])
+  assert_eq(execute_count.val, 0)
   clean_workflow_repository(repository)
 }
 

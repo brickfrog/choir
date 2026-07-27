@@ -560,6 +560,7 @@ fn native_part_fixture_snapshot_for_definition(
     identities,
     @control.FencingEpoch(1L),
     fn(_) { true },
+    admitted_provider_surfaces=[definition.surface],
   )
 }
 

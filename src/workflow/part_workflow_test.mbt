@@ -245,6 +245,9 @@ fn workflow_fixture() -> @workflow.PartWorkflowSnapshot raise {
       identities,
       @control.FencingEpoch(7L),
       fn(_) { true },
+      admitted_provider_surfaces=[
+        @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+      ],
     ) {
     Ok(snapshot) => snapshot
     Err(error) => fail(error.message())
@@ -324,7 +327,7 @@ fn workflow_revision_identities(
       "audit-session-revision",
       audit.id,
       audit_sandbox.generation_id,
-      @control.ProviderSurfaceId::CodexSubscriptionCli,
+      @control.ProviderSurfaceId::ClaudeSubscriptionCli,
       workflow_digest_c,
     ),
   }
@@ -1420,7 +1423,7 @@ test "Goal audit repair reopens an integrated Part and preserves its receipt" {
           "audit-repair-implementation-session-2",
           implementation.id,
           implementation_sandbox.generation_id,
-          @control.ProviderSurfaceId::CodexSubscriptionCli,
+          @control.ProviderSurfaceId::ClaudeSubscriptionCli,
           workflow_digest_a,
         ),
         verification_take: verification,
@@ -1633,7 +1636,7 @@ fn goal_verification_repair_identities(
       "goal-verification-repair-implementation-session-2",
       implementation.id,
       implementation_sandbox.generation_id,
-      @control.ProviderSurfaceId::CodexSubscriptionCli,
+      @control.ProviderSurfaceId::ClaudeSubscriptionCli,
       workflow_digest_a,
     ),
     verification_take: verification,
@@ -1770,7 +1773,7 @@ test "failed verification plans a bounded evidence-carrying repair revision" {
           "verification-repair-implementation-session-2",
           implementation.id,
           implementation_sandbox.generation_id,
-          @control.ProviderSurfaceId::CodexSubscriptionCli,
+          @control.ProviderSurfaceId::ClaudeSubscriptionCli,
           workflow_digest_a,
         ),
         verification_take: verification,
@@ -1848,7 +1851,7 @@ test "failed verification plans a bounded evidence-carrying repair revision" {
           "unused-exhausted-implementation-session",
           implementation.id,
           implementation_sandbox.generation_id,
-          @control.ProviderSurfaceId::CodexSubscriptionCli,
+          @control.ProviderSurfaceId::ClaudeSubscriptionCli,
           workflow_digest_a,
         ),
         verification_take: verification,
@@ -3940,7 +3943,7 @@ test "promotion conflict blocks the Part without minting integration evidence" {
           "audit-session-2",
           audit.id,
           audit_sandbox.generation_id,
-          @control.ProviderSurfaceId::CodexSubscriptionCli,
+          @control.ProviderSurfaceId::ClaudeSubscriptionCli,
           workflow_digest_c,
         ),
       },
@@ -4040,7 +4043,7 @@ test "promotion conflict blocks the Part without minting integration evidence" {
       "audit-session-3",
       retry_audit.id,
       retry_audit_sandbox.generation_id,
-      @control.ProviderSurfaceId::CodexSubscriptionCli,
+      @control.ProviderSurfaceId::ClaudeSubscriptionCli,
       workflow_digest_c,
     ),
   }
@@ -4245,7 +4248,9 @@ test "provider loss with no artifact re-arms the Part without a user message" {
     uncertain.task_contract,
   )
   let recovered = match
-    @workflow.plan_part_recovery_retry(uncertain, identities, fn(_) { true }) {
+    @workflow.plan_part_recovery_retry(uncertain, fn(_) { identities }, fn(_) {
+      true
+    }) {
     Ok(@workflow.PartRecoveryRetryDecision::PartRecoveryRetryPlanned(value)) =>
       value
     Ok(_) => fail("recovery was not planned")
@@ -4280,7 +4285,7 @@ test "provider loss with no artifact re-arms the Part without a user message" {
   assert_true(
     @workflow.plan_part_recovery_retry(
       retained,
-      workflow_revision_identities(retained, retained.task_contract),
+      fn(_) { workflow_revision_identities(retained, retained.task_contract) },
       fn(_) { true },
     )
     is Ok(@workflow.PartRecoveryRetryDecision::PartRecoveryRetryRetained),
@@ -4303,7 +4308,7 @@ test "provider loss with no artifact re-arms the Part without a user message" {
   assert_true(
     @workflow.plan_part_recovery_retry(
       exhausted,
-      workflow_revision_identities(exhausted, exhausted.task_contract),
+      fn(_) { workflow_revision_identities(exhausted, exhausted.task_contract) },
       fn(_) { true },
     )
     is Ok(@workflow.PartRecoveryRetryDecision::PartRecoveryRetryLimitReached),
@@ -4334,7 +4339,7 @@ test "a spent provider allowance defers recovery instead of burning a Take" {
   match
     @workflow.plan_part_recovery_retry(
       exhausted,
-      identities,
+      fn(_) { identities },
       fn(_) { true },
       now=500L,
     ) {
@@ -4356,7 +4361,7 @@ test "a spent provider allowance defers recovery instead of burning a Take" {
   assert_true(
     @workflow.plan_part_recovery_retry(
       resets_at,
-      identities,
+      fn(_) { identities },
       fn(_) { true },
       now=999L,
     )
@@ -4365,7 +4370,7 @@ test "a spent provider allowance defers recovery instead of burning a Take" {
   assert_true(
     @workflow.plan_part_recovery_retry(
       resets_at,
-      identities,
+      fn(_) { identities },
       fn(_) { true },
       now=1_000L,
     )
@@ -4375,7 +4380,7 @@ test "a spent provider allowance defers recovery instead of burning a Take" {
   match
     @workflow.plan_part_recovery_retry(
       resets_at,
-      identities,
+      fn(_) { identities },
       fn(_) { true },
       now=1_000L,
     ) {
@@ -4383,6 +4388,300 @@ test "a spent provider allowance defers recovery instead of burning a Take" {
       assert_eq(planned.task_contract, uncertain.task_contract)
     _ => fail("recovery was not planned after the reset instant")
   }
+}
+
+///|
+/// Retry identities on a named surface, the way the native host mints them.
+fn workflow_identities_on_surface(
+  snapshot : @workflow.PartWorkflowSnapshot,
+  surface : @control.ProviderSurfaceId,
+) -> @workflow.PartIdentityPlan {
+  let base = workflow_revision_identities(snapshot, snapshot.task_contract)
+  {
+    ..base,
+    implementation_session: { ..base.implementation_session, surface, },
+    audit_session: { ..base.audit_session, surface, },
+  }
+}
+
+///|
+/// A Part parked on a spent surface, admitted under the surfaces given.
+fn spent_surface_part(
+  admitted : Array[@control.ProviderSurfaceId],
+  availability : @control.ProviderAvailability,
+) -> @workflow.PartWorkflowSnapshot raise {
+  let uncertain = uncertain_implementation_dispatch()
+  guard uncertain.dispatch_diagnostic is Some(diagnostic) else {
+    fail("the lost dispatch recorded no diagnostic")
+  }
+  {
+    ..uncertain,
+    admitted_provider_surfaces: admitted,
+    dispatch_diagnostic: Some({ ..diagnostic, availability, }),
+  }
+}
+
+///|
+test "a spent surface moves the next Take to a surface the contract admits" {
+  let spent = spent_surface_part(
+    [
+      @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+      @control.ProviderSurfaceId::CodexSubscriptionCli,
+    ],
+    @control.ProviderAvailability::ProviderAllowanceExhausted(None),
+  )
+  let (planned, moved) = match
+    @workflow.plan_part_recovery_retry(
+      spent,
+      fn(surface) { workflow_identities_on_surface(spent, surface) },
+      fn(_) { true },
+      now=500L,
+    ) {
+    Ok(
+      @workflow.PartRecoveryRetryDecision::PartRecoveryRetryFailedOver(
+        planned,
+        moved
+      )
+    ) => (planned, moved)
+    _ => fail("an admitted alternate surface was not selected")
+  }
+  // The move is to the admitted surface, from the one that said it is spent.
+  assert_eq(
+    moved.from_surface,
+    @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+  )
+  assert_eq(moved.to_surface, @control.ProviderSurfaceId::CodexSubscriptionCli)
+  assert_eq(
+    moved.cause,
+    @control.ProviderAvailability::ProviderAllowanceExhausted(None),
+  )
+  // The next Take actually runs there, and the change is readable from durable
+  // state rather than inferred by comparing identity plans.
+  assert_eq(
+    planned.identities.implementation_session.surface,
+    @control.ProviderSurfaceId::CodexSubscriptionCli,
+  )
+  assert_eq(
+    planned.identities.audit_session.surface,
+    @control.ProviderSurfaceId::CodexSubscriptionCli,
+  )
+  assert_eq(planned.provider_failovers, [moved])
+  // Only the surface moved: the contract, and the authority it captured, did
+  // not.
+  assert_eq(planned.task_contract, spent.task_contract)
+  assert_eq(
+    planned.admitted_provider_surfaces,
+    spent.admitted_provider_surfaces,
+  )
+  assert_true(planned.pending_effect is None)
+}
+
+///|
+test "a Part admitted under one surface waits instead of changing provider" {
+  let spent = spent_surface_part(
+    [@control.ProviderSurfaceId::ClaudeSubscriptionCli],
+    @control.ProviderAvailability::ProviderAllowanceExhausted(None),
+  )
+  match
+    @workflow.plan_part_recovery_retry(
+      spent,
+      fn(surface) { workflow_identities_on_surface(spent, surface) },
+      fn(_) { true },
+      now=500L,
+    ) {
+    Ok(@workflow.PartRecoveryRetryDecision::PartRecoveryRetryDeferred(observed)) =>
+      assert_eq(
+        observed,
+        @control.ProviderAvailability::ProviderAllowanceExhausted(None),
+      )
+    _ => fail("a Part with no admitted alternate did not wait")
+  }
+}
+
+///|
+test "failover never returns a Part to a surface it already found spent" {
+  let spent = spent_surface_part(
+    [
+      @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+      @control.ProviderSurfaceId::CodexSubscriptionCli,
+    ],
+    @control.ProviderAvailability::ProviderAllowanceExhausted(None),
+  )
+  // The Part already left Claude on a spent allowance and is now on Codex,
+  // which has just reported the same. Sending it back would be a loop between
+  // two surfaces that both said they cannot serve.
+  let left_claude : @workflow.PartProviderFailover = {
+    from_surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+    to_surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+    cause: @control.ProviderAvailability::ProviderAllowanceExhausted(None),
+    retry_ordinal: 1,
+    decided_at: 100L,
+  }
+  let on_codex = {
+    ..spent,
+    identities: workflow_identities_on_surface(
+      spent,
+      @control.ProviderSurfaceId::CodexSubscriptionCli,
+    ),
+    provider_failovers: [left_claude],
+  }
+  assert_true(
+    @workflow.plan_part_recovery_retry(
+      on_codex,
+      fn(surface) { workflow_identities_on_surface(on_codex, surface) },
+      fn(_) { true },
+      now=500L,
+    )
+    is Ok(@workflow.PartRecoveryRetryDecision::PartRecoveryRetryDeferred(_)),
+  )
+  // The memory is a wait, not a ban: a surface left on a retry-after that has
+  // since passed can take the work again.
+  let returnable = {
+    ..on_codex,
+    provider_failovers: [
+      {
+        ..left_claude,
+        cause: @control.ProviderAvailability::ProviderRetryAfter(400L),
+      },
+    ],
+  }
+  match
+    @workflow.plan_part_recovery_retry(
+      returnable,
+      fn(surface) { workflow_identities_on_surface(returnable, surface) },
+      fn(_) { true },
+      now=500L,
+    ) {
+    Ok(
+      @workflow.PartRecoveryRetryDecision::PartRecoveryRetryFailedOver(
+        planned,
+        moved
+      )
+    ) => {
+      assert_eq(
+        moved.to_surface,
+        @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+      )
+      // Re-arming the Part keeps the moves it already made. Losing them would
+      // erase the memory this decision reads, and a Part that had bounced
+      // between surfaces would look like one that never moved.
+      assert_eq(
+        planned.provider_failovers,
+        returnable.provider_failovers + [moved],
+      )
+    }
+    _ => fail("a recovered surface did not take the work back")
+  }
+}
+
+///|
+test "an uncertain effect that may have occurred is not failed over either" {
+  let spent = spent_surface_part(
+    [
+      @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+      @control.ProviderSurfaceId::CodexSubscriptionCli,
+    ],
+    @control.ProviderAvailability::ProviderAllowanceExhausted(None),
+  )
+  // The dispatch left a candidate, so it may have run. Moving it to another
+  // surface would duplicate the side effect the uncertainty exists to protect.
+  let retained = {
+    ..spent,
+    candidate: Some({
+      id: @control.CandidateId("candidate-failover"),
+      goal_id: spent.goal.id,
+      part_id: spent.part.id,
+      take_id: spent.implementation_take.id,
+      base_commit_oid: spent.task_contract.base_commit_oid,
+      commit_oid: @control.GitOid("candidate-failover-commit"),
+      tree_oid: @control.GitOid("candidate-failover-tree"),
+      canonical_change_digest: workflow_digest_d,
+      changed_paths: [@control.RepoPath("src/feature.mbt")],
+    }),
+  }
+  assert_true(
+    @workflow.plan_part_recovery_retry(
+      retained,
+      fn(surface) { workflow_identities_on_surface(retained, surface) },
+      fn(_) { true },
+      now=500L,
+    )
+    is Ok(@workflow.PartRecoveryRetryDecision::PartRecoveryRetryRetained),
+  )
+}
+
+///|
+test "the host cannot answer a failover with a plan on another surface" {
+  let spent = spent_surface_part(
+    [
+      @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+      @control.ProviderSurfaceId::CodexSubscriptionCli,
+    ],
+    @control.ProviderAvailability::ProviderAllowanceExhausted(None),
+  )
+  // The host mints identities; the surface is the control plane's decision.
+  // A plan that came back on the surface the Part was already on would move
+  // nothing while reporting that it had.
+  assert_true(
+    @workflow.plan_part_recovery_retry(
+      spent,
+      fn(_) {
+        workflow_identities_on_surface(
+          spent,
+          @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+        )
+      },
+      fn(_) { true },
+      now=500L,
+    )
+    is Err(_),
+  )
+}
+
+///|
+test "a Part may not be initialized on a surface its contract never admitted" {
+  let fixture = workflow_fixture()
+  assert_eq(fixture.admitted_provider_surfaces, [
+    @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+  ])
+  assert_true(
+    @workflow.initialize_part_workflow(
+      @control.WorkflowId("workflow-unadmitted"),
+      fixture.goal,
+      { ..fixture.part, lifecycle: @control.PartLifecycle::PartPending },
+      fixture.task_contract,
+      workflow_identities_on_surface(
+        fixture,
+        @control.ProviderSurfaceId::CodexSubscriptionCli,
+      ),
+      fixture.fencing_epoch,
+      fn(_) { true },
+      admitted_provider_surfaces=[
+        @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+      ],
+    )
+    is Err(_),
+  )
+  // The same plan is accepted once the contract admits that surface.
+  assert_true(
+    @workflow.initialize_part_workflow(
+      @control.WorkflowId("workflow-admitted"),
+      fixture.goal,
+      { ..fixture.part, lifecycle: @control.PartLifecycle::PartPending },
+      fixture.task_contract,
+      workflow_identities_on_surface(
+        fixture,
+        @control.ProviderSurfaceId::CodexSubscriptionCli,
+      ),
+      fixture.fencing_epoch,
+      fn(_) { true },
+      admitted_provider_surfaces=[
+        @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+        @control.ProviderSurfaceId::CodexSubscriptionCli,
+      ],
+    )
+    is Ok(_),
+  )
 }
 
 ///|

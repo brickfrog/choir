@@ -150,10 +150,25 @@ pub fn initialize_part_workflow(
   identities : PartIdentityPlan,
   fencing_epoch : @control.FencingEpoch,
   is_nfc : (String) -> Bool,
+  admitted_provider_surfaces~ : Array[@control.ProviderSurfaceId],
   part_context_manifest? : @migration.PartContextManifest? = None,
 ) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
   if workflow_id.0 == "" || workflow_id.0.contains("\u{00}") {
     return Err(workflow_error("workflow identity is empty or invalid"))
+  }
+  // Provider authority is captured, not chosen here. A Part may only run on a
+  // surface its contract admitted, so an identity plan naming any other
+  // surface is refused rather than silently accepted.
+  if !admitted_provider_surfaces_are_canonical(admitted_provider_surfaces) ||
+    !admitted_provider_surfaces.contains(
+      identities.implementation_session.surface,
+    ) ||
+    !admitted_provider_surfaces.contains(identities.audit_session.surface) {
+    return Err(
+      workflow_error(
+        "provider surface is not admitted by the captured contract",
+      ),
+    )
   }
   if goal.lifecycle !=
     @control.GoalLifecycle::GoalActive(
@@ -262,6 +277,8 @@ pub fn initialize_part_workflow(
     task_contract_history: [contract],
     part_context_manifest,
     identities,
+    admitted_provider_surfaces,
+    provider_failovers: [],
     implementation_take,
     verification_take: identities.verification_take,
     audit_take: identities.audit_take,
@@ -289,6 +306,26 @@ pub fn initialize_part_workflow(
     effect_receipts: [],
     dispatch_diagnostic: None,
   })
+}
+
+///|
+/// An admitted-surface set names each surface once and names at least one.
+/// A duplicate entry would make the selection order ambiguous, and an empty
+/// set would mean the Part was admitted under no provider authority at all.
+fn admitted_provider_surfaces_are_canonical(
+  surfaces : Array[@control.ProviderSurfaceId],
+) -> Bool {
+  if surfaces.length() == 0 {
+    return false
+  }
+  for index, surface in surfaces {
+    for earlier in 0..<index {
+      if surfaces[earlier] == surface {
+        return false
+      }
+    }
+  }
+  true
 }
 
 ///|
@@ -497,6 +534,7 @@ pub fn plan_part_conflict_repair(
       identities,
       snapshot.fencing_epoch,
       is_nfc,
+      admitted_provider_surfaces=snapshot.admitted_provider_surfaces,
       part_context_manifest=repair_context_manifest,
     ) {
     Ok(value) => value
@@ -544,6 +582,7 @@ pub fn plan_part_conflict_repair(
       harness_events: snapshot.harness_events,
       integration_conflicts: snapshot.integration_conflicts,
       effect_receipts: snapshot.effect_receipts,
+      provider_failovers: snapshot.provider_failovers,
     }),
   )
 }
@@ -657,6 +696,7 @@ pub fn plan_part_audit_repair(
       identities,
       snapshot.fencing_epoch,
       is_nfc,
+      admitted_provider_surfaces=snapshot.admitted_provider_surfaces,
       part_context_manifest=repair_context_manifest,
     ) {
     Ok(value) => value
@@ -704,6 +744,7 @@ pub fn plan_part_audit_repair(
       harness_events: snapshot.harness_events,
       integration_conflicts: snapshot.integration_conflicts,
       effect_receipts: snapshot.effect_receipts,
+      provider_failovers: snapshot.provider_failovers,
     }),
   )
 }
@@ -830,6 +871,7 @@ pub fn plan_part_verification_repair(
       identities,
       snapshot.fencing_epoch,
       is_nfc,
+      admitted_provider_surfaces=snapshot.admitted_provider_surfaces,
       part_context_manifest=repair_context_manifest,
     ) {
     Ok(value) => value
@@ -877,6 +919,7 @@ pub fn plan_part_verification_repair(
       harness_events: snapshot.harness_events,
       integration_conflicts: snapshot.integration_conflicts,
       effect_receipts: snapshot.effect_receipts,
+      provider_failovers: snapshot.provider_failovers,
     }),
   )
 }
@@ -936,6 +979,7 @@ pub fn plan_part_retry(
       identities,
       snapshot.fencing_epoch,
       is_nfc,
+      admitted_provider_surfaces=snapshot.admitted_provider_surfaces,
       part_context_manifest=snapshot.part_context_manifest,
     ) {
     Ok(value) => value
@@ -981,6 +1025,7 @@ pub fn plan_part_retry(
     harness_events: snapshot.harness_events,
     integration_conflicts: snapshot.integration_conflicts,
     effect_receipts: snapshot.effect_receipts,
+    provider_failovers: snapshot.provider_failovers,
   })
 }
 
@@ -1890,10 +1935,39 @@ pub(all) enum PartRecoveryRetryDecision {
   PartRecoveryRetryPlanned(PartWorkflowSnapshot)
   PartRecoveryRetryRetained
   PartRecoveryRetryLimitReached
-  /// The surface itself said it cannot serve yet. This is a wait, not a
-  /// failure, and it never changes which provider the contract authorized.
+  /// The surface itself said it cannot serve yet, and no other surface the
+  /// contract admits can take the work. This is a wait, not a failure, and it
+  /// never changes which provider the contract authorized.
   PartRecoveryRetryDeferred(@control.ProviderAvailability)
+  /// The surface cannot serve and the captured contract admits another one,
+  /// so the next bounded recovery Take is armed there. The Take that already
+  /// died is never retargeted; only the fresh one moves.
+  PartRecoveryRetryFailedOver(PartWorkflowSnapshot, PartProviderFailover)
 } derive(Debug, Eq)
+
+///|
+/// What each surface last told this Part.
+///
+/// The live diagnostic speaks for the surface the Part is on now; every
+/// recorded failover speaks for the surface it left, and that memory is what
+/// keeps a Part from being handed back to a surface it already found spent.
+fn part_surface_observations(
+  snapshot : PartWorkflowSnapshot,
+  diagnostic : PartDispatchDiagnostic,
+) -> Array[@control.ProviderSurfaceObservation] {
+  let observations : Array[@control.ProviderSurfaceObservation] = []
+  for failover in snapshot.provider_failovers {
+    observations.push({
+      surface: failover.from_surface,
+      availability: failover.cause,
+    })
+  }
+  observations.push({
+    surface: snapshot.identities.implementation_session.surface,
+    availability: diagnostic.availability,
+  })
+  observations
+}
 
 ///|
 /// Autonomous counterpart to the operator retry path: discharge a provider
@@ -1904,24 +1978,49 @@ pub(all) enum PartRecoveryRetryDecision {
 /// would duplicate a durable side effect — and a Part that has already burned
 /// its recovery budget stops, so a surface that keeps dying surfaces as a
 /// bounded blocker rather than an infinite loop.
+///
+/// `identities` is asked for a plan on a named surface rather than handed one,
+/// because the surface is this decision's to make: the captured contract says
+/// which surfaces are admitted, and only the host can mint identities and the
+/// surface manifest digest for the one that is chosen.
 pub fn plan_part_recovery_retry(
   snapshot : PartWorkflowSnapshot,
-  identities : PartIdentityPlan,
+  identities : (@control.ProviderSurfaceId) -> PartIdentityPlan,
   is_nfc : (String) -> Bool,
   now? : Int64 = 0L,
 ) -> Result[PartRecoveryRetryDecision, @types.ChoirError] {
-  // A surface that reported a spent allowance or a retry-after must not be
-  // hit again until its own evidence says it is ready. Re-arming here would
-  // burn the recovery budget against a surface that cannot serve.
-  match snapshot.dispatch_diagnostic {
+  let current = snapshot.identities.implementation_session.surface
+  // A surface that reported a spent allowance or a retry-after must not be hit
+  // again until its own evidence says it is ready. Re-arming there would burn
+  // the recovery budget against a surface that cannot serve, so the work
+  // either moves to another admitted surface or waits.
+  let failover : PartProviderFailover? = match snapshot.dispatch_diagnostic {
     Some(diagnostic) =>
-      if !@control.provider_availability_admits_dispatch(
+      if @control.provider_availability_admits_dispatch(
           diagnostic.availability,
           now,
         ) {
-        return Ok(PartRecoveryRetryDeferred(diagnostic.availability))
+        None
+      } else {
+        match
+          @control.select_admitted_provider_surface(
+            current,
+            snapshot.admitted_provider_surfaces,
+            part_surface_observations(snapshot, diagnostic),
+            now,
+          ) {
+          Some(target) =>
+            Some({
+              from_surface: current,
+              to_surface: target,
+              cause: diagnostic.availability,
+              retry_ordinal: snapshot.prior_takes.length() / 3 + 1,
+              decided_at: now,
+            })
+          None => return Ok(PartRecoveryRetryDeferred(diagnostic.availability))
+        }
       }
-    None => ()
+    None => None
   }
   let discharged = match reconcile_part_recovery_uncertainty(snapshot) {
     Ok(PartUncertaintyDischarged(value)) => value
@@ -1931,8 +2030,37 @@ pub fn plan_part_recovery_retry(
   if snapshot.prior_takes.length() / 3 >= maximum_part_recovery_retries() {
     return Ok(PartRecoveryRetryLimitReached)
   }
-  match plan_part_retry(discharged, identities, is_nfc) {
-    Ok(value) => Ok(PartRecoveryRetryPlanned(value))
+  let target = match failover {
+    Some(record) => record.to_surface
+    None => current
+  }
+  let plan = identities(target)
+  // The host mints identities; it does not get to decide the surface. A plan
+  // that came back on a different surface than the one selected would move
+  // provider authority without a recorded decision.
+  if plan.implementation_session.surface != target ||
+    plan.audit_session.surface != target {
+    return Err(
+      workflow_error(
+        "recovery identity plan uses an unselected provider surface",
+      ),
+    )
+  }
+  match plan_part_retry(discharged, plan, is_nfc) {
+    Ok(value) =>
+      match failover {
+        Some(record) =>
+          Ok(
+            PartRecoveryRetryFailedOver(
+              {
+                ..value,
+                provider_failovers: value.provider_failovers + [record],
+              },
+              record,
+            ),
+          )
+        None => Ok(PartRecoveryRetryPlanned(value))
+      }
     Err(error) => Err(error)
   }
 }

@@ -281,6 +281,8 @@ fn event_authorized_provider_dispatch_fixture() -> (
       audit_sandbox: audit_lease,
       audit_session,
     },
+    admitted_provider_surfaces: [implementation_session.surface],
+    provider_failovers: [],
     implementation_take,
     verification_take,
     audit_take,
