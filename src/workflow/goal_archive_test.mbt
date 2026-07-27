@@ -45,10 +45,9 @@ fn archive_observation(
   subject : @workflow.GoalArchiveSubject,
   observed_refs? : Array[@workflow.GitRefName] = [],
   retention_ledger? : Array[@storage.ArtifactRetentionEntry] = [],
-  runtime_root_present? : Bool = false,
   now? : Int64 = 1_000L,
 ) -> @workflow.GoalArchiveObservation {
-  { subject, observed_refs, retention_ledger, runtime_root_present, now }
+  { subject, observed_refs, retention_ledger, now }
 }
 
 ///|
@@ -206,24 +205,26 @@ test "an archive releases this Goal's witnesses and keeps its branch" {
   let seal_witness = @workflow.GitRefName(
     archive_seal_witness_prefix(archive_goal_id) + "sealed/intent-a",
   )
-  // Another Goal's witness, a Part-keyed witness whose Bead a later Goal may
-  // reselect, the integration target, and a branch that happens to sit inside
-  // this Goal's namespace: none of them are this Goal's to release.
+  // Another Goal's witness and a branch that happens to sit inside the Goal
+  // namespace are what the host actually enumerates alongside this Goal's own
+  // refs; neither is this Goal's to release. A Part-keyed witness and the
+  // integration target are outside the namespaces the host lists at all, so
+  // they only guard against a widened enumeration.
   let other_goal = @workflow.GitRefName(
     archive_seal_witness_prefix(@control.GoalId("goal-other")) +
     "sealed/intent-b",
   )
-  let part_witness = @workflow.GitRefName("refs/choir/witness/choir-part")
-  let integration = @workflow.GitRefName("refs/heads/main")
   let namespaced_branch = @workflow.GitRefName(
     "refs/heads/choir/goals/unexpected",
   )
+  let part_witness = @workflow.GitRefName("refs/choir/witness/choir-part")
+  let integration = @workflow.GitRefName("refs/heads/main")
   let plan = archive_plan(
     archive_observation(
       archive_subject(@workflow.GoalExecutionState::GoalExecutionSucceeded),
       observed_refs=[
-        branch, initialized, seal_witness, other_goal, part_witness, integration,
-        namespaced_branch,
+        branch, initialized, seal_witness, other_goal, namespaced_branch, part_witness,
+        integration,
       ],
     ),
   )
@@ -235,26 +236,32 @@ test "an archive releases this Goal's witnesses and keeps its branch" {
 
 ///|
 test "a canceled Goal archives exactly like a succeeded one" {
+  let branch = @workflow.goal_execution_ref(archive_goal_id)
+  let initialized = @workflow.GitRefName(
+    archive_branch_witness_prefix(archive_goal_id) + "initialized",
+  )
   let plan = archive_plan(
     archive_observation(
       archive_subject(@workflow.GoalExecutionState::GoalExecutionCanceled),
-      runtime_root_present=true,
+      observed_refs=[branch, initialized],
     ),
   )
   assert_eq(plan.state, @workflow.GoalExecutionState::GoalExecutionCanceled)
-  assert_true(plan.release_runtime_root)
+  assert_eq(plan.release_refs, [initialized])
+  assert_eq(plan.retain_refs, [branch])
 }
 
 ///|
-test "an archive names no runtime root the host did not observe" {
+test "an archive names nothing the host did not observe" {
   let plan = archive_plan(
     archive_observation(
       archive_subject(@workflow.GoalExecutionState::GoalExecutionSucceeded),
     ),
   )
-  assert_false(plan.release_runtime_root)
   assert_eq(plan.release_refs, [])
+  assert_eq(plan.retain_refs, [])
   assert_eq(plan.release_artifacts, [])
+  assert_eq(plan.retain_artifacts, [])
 }
 
 ///|

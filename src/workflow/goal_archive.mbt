@@ -9,9 +9,16 @@
 /// Goal *is* survives an archive untouched: its durable execution record and
 /// every other permanently adopted artifact, the branch holding the commits it
 /// produced, and any content something else still retains. What archiving
-/// releases is the working storage only this Goal could ever read again — its
-/// sandbox runtime root, the idempotency witness refs under namespaces derived
-/// from its own id, and content whose every recorded retention has expired.
+/// releases is the durable storage only this Goal could ever read again — the
+/// idempotency witness refs under namespaces derived from its own id, and
+/// content whose every recorded retention has expired.
+///
+/// The Goal's sandbox runtime root is deliberately not in that set. It is
+/// removed at the Goal's own terminal boundary and again by the daemon's
+/// start-up reclaim, and the only thing left to release with it — the BoxLite
+/// box store — is keyed per repository, not per Goal. Releasing it from a
+/// single Goal's archive would take a concurrently running Goal's boxes with
+/// it, so archival names refs and content only.
 ///
 /// Reachability is not re-derived here. An artifact is a candidate only when
 /// the retention ledger records it as kept for this Goal, and it is released
@@ -63,7 +70,6 @@ pub(all) struct GoalArchiveObservation {
   /// Every Choir-owned ref currently present in the repository.
   observed_refs : Array[GitRefName]
   retention_ledger : Array[@storage.ArtifactRetentionEntry]
-  runtime_root_present : Bool
   now : Int64
 }
 
@@ -73,8 +79,6 @@ pub(all) struct GoalArchivePlan {
   goal_id : @control.GoalId
   /// The terminal state being archived.
   state : GoalExecutionState
-  /// Whether the Goal's sandbox runtime root is still present to reclaim.
-  release_runtime_root : Bool
   /// Idempotency witness refs under this Goal's own namespaces.
   release_refs : Array[GitRefName]
   /// Digests reachable from this Goal whose every retention has expired.
@@ -110,9 +114,12 @@ fn goal_seal_witness_ref_prefix(goal_id : @control.GoalId) -> String {
 
 ///|
 /// Whether one observed ref is a witness under a namespace only this Goal can
-/// name. Part-keyed witnesses under `refs/choir/witness/` are deliberately not
-/// released: their key names an intent, and the Bead behind it may be
-/// reselected by a later Goal, so no Goal can prove one is its own.
+/// name.
+///
+/// Both namespaces are digests of this Goal's own id, so every other Goal's
+/// witnesses sit under `refs/choir/goals/` too and none of them match. That is
+/// the case worth guarding: the host enumerates the whole namespace, so an
+/// archive is handed every live Goal's witness on every run.
 fn goal_archive_ref_is_releasable(
   goal_id : @control.GoalId,
   reference : GitRefName,
@@ -178,7 +185,6 @@ pub fn plan_goal_archive(
   GoalArchiveDecision::GoalArchivePlanned({
     goal_id: subject.goal_id,
     state: subject.state,
-    release_runtime_root: observation.runtime_root_present,
     release_refs,
     release_artifacts: sweep.collect,
     retain_refs,

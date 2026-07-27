@@ -105,11 +105,13 @@ nonzero so the purge can be retried safely.
 `goal archive` is the selective alternative: it reclaims one finished Goal
 instead of wiping the installation. Archiving is not deleting. It keeps the
 durable Goal record, the Goal's branch, and any stored content another Goal or
-a permanent retention still needs; it releases that Goal's sandbox runtime
-root, its own idempotency witness refs, and content whose every recorded
-retention has expired. A Goal that is still active, paused, blocked, or
-recovery-uncertain is refused with the reason, and `--dry-run` reports exactly
-what would be released without releasing it.
+a permanent retention still needs; it releases that Goal's own idempotency
+witness refs and content whose every recorded retention has expired. A Goal
+that is still active, paused, blocked, or recovery-uncertain is refused with
+the reason, and `--dry-run` reports exactly what would be released without
+releasing it. Sandbox runtime roots are not archived: each one is removed when
+its Goal reaches a terminal state, and any residue is reclaimed on the next
+daemon start.
 
 ## Documentation
 

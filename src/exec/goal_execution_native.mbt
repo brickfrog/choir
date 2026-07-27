@@ -6307,7 +6307,6 @@ pub(all) struct NativeGoalArchiveReport {
   decision : @workflow.GoalArchiveDecision
   /// False for every refusal and every dry run: nothing was changed.
   applied : Bool
-  runtime_root_removed : Bool
   refs_removed : Int
   artifacts_released : Int
 } derive(Debug, Eq)
@@ -6381,15 +6380,24 @@ async fn delete_native_goal_archived_git_refs(
 /// is a dry run.
 ///
 /// Nothing here decides what may be released. This gathers the durable record,
-/// the refs the repository actually has, the retention ledger, and whether the
-/// runtime root survives; every judgment about terminality and reachability is
-/// the control plane's.
+/// the refs the repository actually has, and the retention ledger; every
+/// judgment about terminality and reachability is the control plane's.
+///
+/// The Goal's sandbox runtime root is not touched. `cleanup_native_goal_runtime`
+/// already removes it at the Goal's terminal boundary, and
+/// `reclaim_native_goal_runtime_roots` removes whatever a crash left behind on
+/// every daemon start. Both of those also run `boxlite rm --all` against a
+/// BoxLite home keyed on the repository, not on the Goal — safe where they run,
+/// because a terminal boundary owns its own boxes and a daemon start has no
+/// live ones. An operator-invoked archive has neither guarantee: it runs at an
+/// arbitrary moment with other Goals of the same repository running, so
+/// releasing that shared home here would destroy their boxes.
 ///
 /// Content is collected last and the ledger is rewritten after the bytes are
 /// gone, so an interrupted archive leaves entries naming absent content rather
 /// than content nothing records. A concurrent adoption of the same digest
-/// between the plan and the collection is not fenced: the store has no lock,
-/// and the archive inherits exactly the window `sweep_artifact_store` has.
+/// between the plan and the collection is not fenced: the artifact store has no
+/// lock.
 pub async fn archive_native_goal(
   project_dir : String,
   goal_id : @control.GoalId,
@@ -6403,10 +6411,6 @@ pub async fn archive_native_goal(
     Int,
     @types.ChoirError,
   ] = delete_native_goal_archived_git_refs,
-  cleanup_runtime? : async (@workflow.RepositoryId, @control.GoalId) -> Result[
-    Unit,
-    @types.ChoirError,
-  ] = cleanup_native_goal_runtime_identity,
 ) -> Result[NativeGoalArchiveReport, @types.ChoirError] {
   let repository = native_goal_repository(project_dir)
   let adapters = local_part_workflow_repository_adapters()
@@ -6438,11 +6442,6 @@ pub async fn archive_native_goal(
         native_goal_execution_error("Goal is not recorded in this repository"),
       )
   }
-  let repository_id = match native_goal_repository_id(project_dir) {
-    Ok(value) => value
-    Err(error) => return Err(error)
-  }
-  let runtime_root = native_goal_runtime_root(repository_id, goal_id)
   let observed_refs = match list_refs(project_dir) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -6454,7 +6453,6 @@ pub async fn archive_native_goal(
       retention_ledger: read_artifact_retention_ledger(
         repository.artifact_store,
       ),
-      runtime_root_present: @sys.path_entry_exists(runtime_root),
       now,
     },
     fn(candidate) { terminal_goal_ids.contains(candidate) },
@@ -6463,7 +6461,6 @@ pub async fn archive_native_goal(
     return Ok({
       decision,
       applied: false,
-      runtime_root_removed: false,
       refs_removed: 0,
       artifacts_released: 0,
     })
@@ -6472,7 +6469,6 @@ pub async fn archive_native_goal(
     return Ok({
       decision,
       applied: false,
-      runtime_root_removed: false,
       refs_removed: 0,
       artifacts_released: 0,
     })
@@ -6481,25 +6477,12 @@ pub async fn archive_native_goal(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let mut runtime_root_removed = false
-  if plan.release_runtime_root {
-    match cleanup_runtime(repository_id, goal_id) {
-      Ok(_) => runtime_root_removed = !@sys.path_entry_exists(runtime_root)
-      Err(error) => return Err(error)
-    }
-  }
   let artifacts_released = match
     collect_artifacts(repository.artifact_store, plan.release_artifacts) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  Ok({
-    decision,
-    applied: true,
-    runtime_root_removed,
-    refs_removed,
-    artifacts_released,
-  })
+  Ok({ decision, applied: true, refs_removed, artifacts_released })
 }
 
 ///|

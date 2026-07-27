@@ -1185,17 +1185,38 @@ fn dispatch_native_goal_cancel(
 /// list, because what an installation keeps on disk is the user's call rather
 /// than a steering decision. A non-terminal Goal is refused with the typed
 /// reason rendered by the control plane, never partially archived.
-async fn dispatch_native_goal_archive(
+///
+/// The Git surface is injected so a test can drive this whole path — the
+/// request's `dry_run` included — against a durable store without a repository
+/// on disk. `dry_run` is the feature's only safety affordance, and it is read
+/// here, so it is only pinned by a test that starts from a request.
+pub async fn dispatch_native_goal_archive(
   project_dir : String,
   request : @types.Request,
   now : Int64,
+  list_refs? : async (String) -> Result[
+    Array[@workflow.GitRefName],
+    @types.ChoirError,
+  ] = list_native_goal_owned_git_refs,
+  delete_refs? : async (String, Array[@workflow.GitRefName]) -> Result[
+    Int,
+    @types.ChoirError,
+  ] = delete_native_goal_archived_git_refs,
 ) -> @types.Response {
   let goal = match native_conductor_resolve_goal_id(project_dir, request) {
     Ok(value) => value
     Err(error) => return @types.Response::err(error)
   }
   let dry_run = request.args.get_bool("dry_run").unwrap_or(false)
-  let report = match archive_native_goal(project_dir, goal, dry_run~, now~) {
+  let report = match
+    archive_native_goal(
+      project_dir,
+      goal,
+      dry_run~,
+      now~,
+      list_refs~,
+      delete_refs~,
+    ) {
     Ok(value) => value
     Err(error) => return @types.Response::err(error)
   }
@@ -1231,12 +1252,10 @@ pub fn native_goal_archive_response_fields(
     "state": plan.state.to_json(),
     "dry_run": dry_run.to_json(),
     "archived": report.applied.to_json(),
-    "release_runtime_root": plan.release_runtime_root.to_json(),
     "release_refs": plan.release_refs.to_json(),
     "release_artifacts": plan.release_artifacts.to_json(),
     "retain_refs": plan.retain_refs.to_json(),
     "retain_artifacts": plan.retain_artifacts.to_json(),
-    "runtime_root_removed": report.runtime_root_removed.to_json(),
     "refs_removed": report.refs_removed.to_json(),
     "artifacts_released": report.artifacts_released.to_json(),
   }

@@ -37,13 +37,15 @@ fn archive_native_repository(
 }
 
 ///|
-fn archive_native_queued_record() -> @workflow.GoalExecutionRecord raise {
-  let decision = selection_store_decision()
+fn archive_native_queued_record(
+  label? : String = "selection-store",
+) -> @workflow.GoalExecutionRecord raise {
+  let decision = selection_store_decision(label~)
   match
     @workflow.goal_execution_record_from_selection(
       decision,
       @workflow.goal_selection_decision_digest(decision),
-      [@control.WorkflowId("workflow-archive")],
+      [@control.WorkflowId("workflow-" + label)],
     ) {
     Ok(value) => value
     Err(error) => fail(error.message())
@@ -77,6 +79,21 @@ fn archive_native_initialized(
 }
 
 ///|
+/// The same record, moved to a succeeded terminal state.
+fn archive_native_succeeded(
+  record : @workflow.GoalExecutionRecord,
+) -> @workflow.GoalExecutionRecord {
+  archive_native_initialized({
+    ..record,
+    state: @workflow.GoalExecutionState::GoalExecutionSucceeded,
+    goal: {
+      ..record.goal,
+      lifecycle: archive_succeeded_lifecycle(record.goal.id),
+    },
+  })
+}
+
+///|
 fn archive_native_persist(
   repository : @workflow.PartWorkflowRepository,
   adapters : @workflow.PartWorkflowRepositoryAdapters,
@@ -94,6 +111,21 @@ fn archive_native_persist(
 }
 
 ///|
+fn archive_native_adopt(
+  repository : @workflow.PartWorkflowRepository,
+  content : String,
+  retention : @storage.ArtifactRetention,
+) -> @control.Digest {
+  let bytes = @utf8.encode(content)
+  adopt_artifact(repository.artifact_store, {
+    content: bytes,
+    expected_digest: @storage.artifact_digest(bytes),
+    provenance: @storage.ArtifactProvenance::ArtifactConformanceEvidence,
+    retention,
+  }).unwrap().digest
+}
+
+///|
 /// The daemon reads a Conductor's park from the top-level `goal_id` and
 /// `state` of any `goal_` response, and an unrecognized state parks. An
 /// archive response that hid them would park a Conductor on a Goal that had
@@ -102,7 +134,6 @@ test "an archive response names the terminal state the park reads" {
   let plan : @workflow.GoalArchivePlan = {
     goal_id: @control.GoalId("goal-response"),
     state: @workflow.GoalExecutionState::GoalExecutionSucceeded,
-    release_runtime_root: true,
     release_refs: [@workflow.GitRefName("refs/choir/goals/abc/initialized")],
     release_artifacts: [],
     retain_refs: [@workflow.GitRefName("refs/heads/choir/goals/abc")],
@@ -113,7 +144,6 @@ test "an archive response names the terminal state the park reads" {
     {
       decision: @workflow.GoalArchiveDecision::GoalArchivePlanned(plan),
       applied: true,
-      runtime_root_removed: true,
       refs_removed: 1,
       artifacts_released: 0,
     },
@@ -153,66 +183,73 @@ test "an archive response names the terminal state the park reads" {
 }
 
 ///|
-/// Drive a whole archive against a real durable store: a persisted terminal
-/// Goal, real adopted content under three different retentions, and a real
-/// retention ledger. Only the Git surface is injected, so the test never needs
-/// a repository on disk.
+/// Drive a whole archive against a real durable store: two persisted Goals —
+/// one succeeded, one still queued — real adopted content under three
+/// different retentions, and a real retention ledger. Only the Git surface is
+/// injected, so the test never needs a repository on disk.
+///
+/// The live Goal is *recorded*, which is the point. `archive_native_goal`
+/// builds its terminality answer by walking the durable records, and a live
+/// Goal that is absent from the store answers "not terminal" whether or not
+/// that walk checks anything. Persisting a queued record is what makes the
+/// check load-bearing: drop the state guard and the shared content below
+/// becomes collectable.
 async test "an archived Goal releases only its own expired content" {
   let root = "/tmp/choir-goal-archive-" + @sys.get_pid().to_string()
   let (repository, adapters) = archive_native_repository(root)
-  let queued = archive_native_queued_record()
-  let goal_id = queued.goal.id
+  let terminal = archive_native_queued_record(label="archive-terminal")
+  let goal_id = terminal.goal.id
   archive_native_persist(
     repository,
     adapters,
-    archive_native_initialized({
-      ..queued,
-      state: @workflow.GoalExecutionState::GoalExecutionSucceeded,
-      goal: { ..queued.goal, lifecycle: archive_succeeded_lifecycle(goal_id) },
-    }),
+    archive_native_succeeded(terminal),
   )
-  let adopt = fn(content : String, retention : @storage.ArtifactRetention) {
-    let bytes = @utf8.encode(content)
-    adopt_artifact(repository.artifact_store, {
-      content: bytes,
-      expected_digest: @storage.artifact_digest(bytes),
-      provenance: @storage.ArtifactProvenance::ArtifactConformanceEvidence,
-      retention,
-    }).unwrap().digest
-  }
-  let mine = adopt(
+  let live = archive_native_queued_record(label="archive-live")
+  let live_goal_id = live.goal.id
+  archive_native_persist(repository, adapters, live)
+  let mine = archive_native_adopt(
+    repository,
     "archive-mine",
     @storage.ArtifactRetention::ArtifactUntilGoalTerminal(goal_id),
   )
-  // The same content, also kept until a Goal that is not recorded here has
-  // finished. Nothing may release it on this Goal's behalf.
-  let shared = adopt(
+  // The same content, also kept until the queued Goal finishes. Nothing may
+  // release it on the archived Goal's behalf while that Goal is still moving.
+  let shared = archive_native_adopt(
+    repository,
     "archive-shared",
     @storage.ArtifactRetention::ArtifactUntilGoalTerminal(goal_id),
   )
   ignore(
-    adopt(
+    archive_native_adopt(
+      repository,
       "archive-shared",
-      @storage.ArtifactRetention::ArtifactUntilGoalTerminal(
-        @control.GoalId("goal-live"),
-      ),
+      @storage.ArtifactRetention::ArtifactUntilGoalTerminal(live_goal_id),
     ),
   )
-  let permanent = adopt(
+  let permanent = archive_native_adopt(
+    repository,
     "archive-permanent",
     @storage.ArtifactRetention::ArtifactUntilGoalTerminal(goal_id),
   )
   ignore(
-    adopt("archive-permanent", @storage.ArtifactRetention::ArtifactPermanent),
+    archive_native_adopt(
+      repository,
+      "archive-permanent",
+      @storage.ArtifactRetention::ArtifactPermanent,
+    ),
   )
-  let branch = queued.goal_ref
-  let witness = queued.branch_initialization.initialization_witness_ref
-  let part_witness = @workflow.GitRefName("refs/choir/witness/part-archive")
+  let branch = terminal.goal_ref
+  let witness = terminal.branch_initialization.initialization_witness_ref
+  // Both refs the live Goal owns are inside the namespaces production's
+  // `for-each-ref` enumerates, so an archive really does see them. Neither is
+  // the archived Goal's to release.
+  let live_branch = live.goal_ref
+  let live_witness = live.branch_initialization.initialization_witness_ref
+  let listed = @ref.new([branch, witness, live_branch, live_witness])
   let deleted : Array[@workflow.GitRefName] = []
-  let mut cleanups = 0
   let list_refs = async fn(_project_dir : String) {
     @async.sleep(0)
-    Ok([branch, witness, part_witness])
+    Ok(listed.val)
   }
   let delete_refs = async fn(
     _project_dir : String,
@@ -224,14 +261,6 @@ async test "an archived Goal releases only its own expired content" {
     }
     Ok(references.length())
   }
-  let cleanup_runtime = async fn(
-    _repository_id : @workflow.RepositoryId,
-    _goal_id : @control.GoalId,
-  ) {
-    @async.sleep(0)
-    cleanups = cleanups + 1
-    Ok(())
-  }
   let preview = match
     archive_native_goal(
       root,
@@ -240,7 +269,6 @@ async test "an archived Goal releases only its own expired content" {
       now=1_000L,
       list_refs~,
       delete_refs~,
-      cleanup_runtime~,
     ) {
     Ok(value) => value
     Err(error) => fail("preview: " + error.message())
@@ -256,7 +284,6 @@ async test "an archived Goal releases only its own expired content" {
   assert_eq(planned.retain_artifacts, [shared, permanent])
   // A dry run reports and stops.
   assert_eq(deleted, [])
-  assert_eq(cleanups, 0)
   assert_true(artifact_store_contains(repository.artifact_store, mine).unwrap())
   let applied = archive_native_goal(
     root,
@@ -265,16 +292,12 @@ async test "an archived Goal releases only its own expired content" {
     now=1_000L,
     list_refs~,
     delete_refs~,
-    cleanup_runtime~,
   ).unwrap()
   assert_true(applied.applied)
   assert_eq(applied.decision, preview.decision)
   assert_eq(deleted, [witness])
   assert_eq(applied.refs_removed, 1)
   assert_eq(applied.artifacts_released, 1)
-  // No runtime root was observed, so none was reclaimed.
-  assert_false(applied.runtime_root_removed)
-  assert_eq(cleanups, 0)
   assert_false(
     artifact_store_contains(repository.artifact_store, mine).unwrap(),
   )
@@ -295,6 +318,33 @@ async test "an archived Goal releases only its own expired content" {
     Ok(None) => fail("archiving deleted the durable Goal record")
     Err(error) => fail(error.message())
   }
+  // Archiving is idempotent, which is why it mints no durable marker. Re-run
+  // it against a repository that reflects the deletion: the plan is empty, it
+  // still applies, and it removes nothing a second time.
+  listed.val = [branch, live_branch, live_witness]
+  let again = archive_native_goal(
+    root,
+    goal_id,
+    dry_run=false,
+    now=1_000L,
+    list_refs~,
+    delete_refs~,
+  ).unwrap()
+  assert_true(again.applied)
+  guard again.decision
+    is @workflow.GoalArchiveDecision::GoalArchivePlanned(replanned) else {
+    fail("an archived Goal was refused a second archive")
+  }
+  assert_eq(replanned.release_refs, [])
+  assert_eq(replanned.release_artifacts, [])
+  assert_eq(replanned.retain_refs, [branch])
+  assert_eq(replanned.retain_artifacts, [shared, permanent])
+  assert_eq(again.refs_removed, 0)
+  assert_eq(again.artifacts_released, 0)
+  assert_eq(deleted, [witness])
+  assert_true(
+    artifact_store_contains(repository.artifact_store, shared).unwrap(),
+  )
   ignore(@sys.rm_rf(root))
 }
 
@@ -305,15 +355,11 @@ async test "a refused archive touches nothing" {
   let queued = archive_native_queued_record()
   let goal_id = queued.goal.id
   archive_native_persist(repository, adapters, queued)
-  let bytes = @utf8.encode("archive-refused")
-  let digest = @storage.artifact_digest(bytes)
-  adopt_artifact(repository.artifact_store, {
-    content: bytes,
-    expected_digest: digest,
-    provenance: @storage.ArtifactProvenance::ArtifactConformanceEvidence,
-    retention: @storage.ArtifactRetention::ArtifactUntilGoalTerminal(goal_id),
-  }).unwrap()
-  |> ignore
+  let digest = archive_native_adopt(
+    repository,
+    "archive-refused",
+    @storage.ArtifactRetention::ArtifactUntilGoalTerminal(goal_id),
+  )
   let witness = queued.branch_initialization.initialization_witness_ref
   let deleted : Array[@workflow.GitRefName] = []
   let report = archive_native_goal(
@@ -335,13 +381,6 @@ async test "a refused archive touches nothing" {
       }
       Ok(references.length())
     },
-    cleanup_runtime=async fn(
-      _repository_id : @workflow.RepositoryId,
-      _goal_id : @control.GoalId,
-    ) {
-      @async.sleep(0)
-      Ok(())
-    },
   ).unwrap()
   assert_eq(
     report.decision,
@@ -356,5 +395,82 @@ async test "a refused archive touches nothing" {
   assert_true(
     artifact_store_contains(repository.artifact_store, digest).unwrap(),
   )
+  ignore(@sys.rm_rf(root))
+}
+
+///|
+/// `--dry-run` is the archive's only safety affordance, and the boolean the
+/// CLI puts on the wire is read in the dispatcher, not in the planner. Drive
+/// the dispatcher from a request so the read is what the test exercises: with
+/// `dry_run` on the request nothing may be released, and with it off the same
+/// request must release exactly what the preview named.
+async test "the dispatcher releases nothing for a dry-run request" {
+  let root = "/tmp/choir-goal-archive-wire-" + @sys.get_pid().to_string()
+  let (repository, adapters) = archive_native_repository(root)
+  let record = archive_native_queued_record(label="archive-wire")
+  let goal_id = record.goal.id
+  archive_native_persist(repository, adapters, archive_native_succeeded(record))
+  let digest = archive_native_adopt(
+    repository,
+    "archive-wire",
+    @storage.ArtifactRetention::ArtifactUntilGoalTerminal(goal_id),
+  )
+  let witness = record.branch_initialization.initialization_witness_ref
+  let deleted : Array[@workflow.GitRefName] = []
+  let list_refs = async fn(_project_dir : String) {
+    @async.sleep(0)
+    Ok([record.goal_ref, witness])
+  }
+  let delete_refs = async fn(
+    _project_dir : String,
+    references : Array[@workflow.GitRefName],
+  ) {
+    @async.sleep(0)
+    for reference in references {
+      deleted.push(reference)
+    }
+    Ok(references.length())
+  }
+  let archive = async fn(dry_run : Bool) {
+    dispatch_native_goal_archive(
+      root,
+      {
+        req_method: @types.WireMethod::WireToolsCall,
+        name: "goal_archive",
+        args: @types.RequestArgs::from_values({
+          "goal_id": goal_id.0.to_json(),
+          "dry_run": dry_run.to_json(),
+        }),
+      },
+      1_000L,
+      list_refs~,
+      delete_refs~,
+    )
+  }
+  let preview = archive(true).ok_payload().unwrap()
+  // What the host did, before what the response says about it: a response
+  // field is the dispatcher quoting itself, and this has to fail when the
+  // dry run stops holding the release back.
+  assert_eq(deleted, [])
+  assert_true(
+    artifact_store_contains(repository.artifact_store, digest).unwrap(),
+  )
+  assert_eq(preview.get_json("dry_run"), Some(true.to_json()))
+  assert_eq(preview.get_json("archived"), Some(false.to_json()))
+  // The preview named a witness and a digest to release, so "nothing
+  // happened" above is a dry run holding them back, not an empty plan.
+  assert_eq(preview.get_json("release_refs"), Some([witness].to_json()))
+  assert_eq(preview.get_json("release_artifacts"), Some([digest].to_json()))
+  assert_eq(preview.get_json("refs_removed"), Some((0).to_json()))
+  // The same request without the dry run releases exactly that.
+  let applied = archive(false).ok_payload().unwrap()
+  assert_eq(deleted, [witness])
+  assert_false(
+    artifact_store_contains(repository.artifact_store, digest).unwrap(),
+  )
+  assert_eq(applied.get_json("dry_run"), Some(false.to_json()))
+  assert_eq(applied.get_json("archived"), Some(true.to_json()))
+  assert_eq(applied.get_json("refs_removed"), Some((1).to_json()))
+  assert_eq(applied.get_json("artifacts_released"), Some((1).to_json()))
   ignore(@sys.rm_rf(root))
 }
