@@ -1164,8 +1164,11 @@ fn native_part_retry_identity_plan(
   // surface's own manifest digest and cursor class; on an unchanged surface
   // this recomputes exactly what submission minted, unless this binary's tool
   // manifest has since changed — and then recomputing is the only thing that
-  // can dispatch at all, because both drivers refuse a session whose manifest
-  // digest disagrees with the one they derive at dispatch.
+  // can dispatch at all, because neither driver will accept a session whose
+  // manifest digest disagrees with the one it derives. Codex checks before
+  // dispatch and refuses to launch; Claude checks at ingestion, against the
+  // manifest the provider reported, so its Take runs and is then rejected.
+  // Either way a stale copied digest cannot yield a usable Take.
   {
     implementation_take: implementation,
     implementation_sandbox,
@@ -1275,9 +1278,10 @@ test "a re-armed Part is planned on the surface it was told to run on" {
     Err(error) => fail(error.message())
   }
   // An ordinary recovery stays where the Part already is, and rebuilding the
-  // session there reproduces exactly what submission minted. Both drivers
-  // re-derive this digest at dispatch and refuse a session that disagrees, so
-  // a plan that reproduced anything else could not run at all.
+  // session there reproduces exactly what submission minted. Neither driver
+  // accepts a session whose digest disagrees with the one it derives — Codex
+  // before dispatch, Claude at ingestion — so a plan that reproduced anything
+  // else could not yield a usable Take.
   let same = native_part_retry_identity_plan(on_claude, claude)
   assert_eq(same.implementation_session.surface, claude)
   assert_eq(same.audit_session.surface, claude)
