@@ -461,6 +461,12 @@ At minimum, inspect:
   configuration or inherited feature flags.
 - Review `codex --help`, `codex exec --help`, and app-server protocol changes.
 - Re-evaluate every disabled feature and required MCP configuration entry.
+- Confirm `mcp_servers.<name>.env_vars` still forwards a named variable from the
+  app-server environment to the spawned stdio server. The app-server hands its
+  MCP servers only a filtered environment, so that key is how the BoxLite
+  capability reaches the sandbox bridge without appearing on any command line.
+  `codex app-server` answering `mcpServerStatus/list` spawns the servers without
+  starting a turn, so a stub server can witness the forward directly.
 
 ### Required declaration and live driver checks
 

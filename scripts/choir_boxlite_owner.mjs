@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { appendFileSync, chmodSync, rmSync } from "node:fs";
+import { appendFileSync, chmodSync, rmSync, statSync } from "node:fs";
 import net from "node:net";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -112,6 +112,32 @@ export function validateOwnerRequest(value) {
   });
 }
 
+// Whether only the owning user can reach the entry these stats describe.
+//
+// The exec capability must not be usable from another uid by a caller that
+// learned the token. Node exposes no SO_PEERCRED: neither net.Socket nor the
+// underlying Pipe handle offers a socket-option or peer-credential call, and
+// no builtin reaches getsockopt. The uid boundary is therefore held by the
+// kernel ahead of accept rather than checked after it — connect(2) on a Unix
+// socket requires write permission on its inode, and a 0700 directory is not
+// traversable by another user. Same intent as the Conductor UDS peer check.
+export function reachableOnlyByOwner(stat, uid) {
+  return stat.uid === uid && (stat.mode & 0o077) === 0;
+}
+
+function ownerOnlyPath(target) {
+  try {
+    return reachableOnlyByOwner(statSync(target), process.getuid());
+  } catch {
+    return false;
+  }
+}
+
+function parentDirectory(path) {
+  const index = path.lastIndexOf("/");
+  return index <= 0 ? "/" : path.slice(0, index);
+}
+
 function equalToken(presented, expected) {
   const left = Buffer.from(presented);
   const right = Buffer.from(expected);
@@ -187,6 +213,10 @@ export function startBoxLiteOwner(argv = process.argv.slice(2)) {
   if (!/^[a-f0-9]{64}$/.test(ownerSecret) || apiKey === "") {
     fail("owner credentials are unavailable");
   }
+  if (!ownerOnlyPath(parentDirectory(config.socket))) {
+    log("owner socket directory is reachable by another user");
+    process.exit(1);
+  }
   rmSync(config.socket, { force: true });
   const server = net.createServer((socket) => {
     let body = "";
@@ -225,8 +255,17 @@ export function startBoxLiteOwner(argv = process.argv.slice(2)) {
     log(`listen failed: ${error instanceof Error ? error.message : "unknown error"}`);
     process.exit(1);
   });
+  // bind(2) applies the umask, so the socket is owner-only from the instant it
+  // exists; chmod after listen would leave every connection made in between.
+  const inheritedUmask = process.umask(0o177);
   server.listen(config.socket, () => {
+    process.umask(inheritedUmask);
     chmodSync(config.socket, 0o600);
+    if (!ownerOnlyPath(config.socket)) {
+      log("owner socket is reachable by another user");
+      rmSync(config.socket, { force: true });
+      process.exit(1);
+    }
     log("ready");
   });
   const stop = () => server.close(() => {

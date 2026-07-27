@@ -218,7 +218,7 @@ fn native_claude_environment(
   // out of /proc/<pid>/cmdline, which any process can read, and out of the
   // inline MCP config blob that argv carried.
   if execution_token != "" {
-    environment["CHOIR_BOXLITE_EXECUTION_TOKEN"] = execution_token
+    environment[native_boxlite_execution_token_variable] = execution_token
   }
   environment
 }

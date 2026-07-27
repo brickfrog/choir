@@ -1599,6 +1599,12 @@ pub fn native_boxlite_take_mcp_arguments(
 }
 
 ///|
+/// The environment variable the sandbox bridge reads its capability from.
+/// Provider configuration may name it; only the provider process environment
+/// ever holds its value.
+let native_boxlite_execution_token_variable : String = "CHOIR_BOXLITE_EXECUTION_TOKEN"
+
+///|
 /// The capability that authorizes exec inside this box.
 ///
 /// Never placed on a command line. `/proc/<pid>/cmdline` is world-readable
