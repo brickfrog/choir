@@ -607,25 +607,6 @@ pub fn collect_artifacts(
 }
 
 ///|
-/// Collect every artifact whose every retention has expired.
-pub fn sweep_artifact_store(
-  store : @storage.ArtifactStore,
-  now : Int64,
-  goal_terminal : (@control.GoalId) -> Bool,
-) -> Result[Int, @types.ChoirError] {
-  match validate_store_path(store.root) {
-    Ok(_) => ()
-    Err(error) => return Err(error)
-  }
-  let plan = @storage.plan_artifact_sweep(
-    read_artifact_retention_ledger(store),
-    now,
-    goal_terminal,
-  )
-  collect_artifacts(store, plan.collect)
-}
-
-///|
 pub fn artifact_store_contains(
   store : @storage.ArtifactStore,
   digest_value : @control.Digest,
