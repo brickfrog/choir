@@ -47,8 +47,22 @@
 /// to no key at all, so the manifest would never mention that field and the
 /// digest would stop moving when its type changed. MoonBit has no reflection,
 /// so nothing can prove a key is missing from an instance that never carried
-/// it: the exact-key test compares `PartWorkflowSnapshot` against a snapshot
-/// the workflow itself produced, and every other type rests on this paragraph.
+/// it. What proves it instead is `assert_manifest_names_stored_keys`, which
+/// compares the manifest's keys for a type against the keys a record the
+/// workflow itself produced actually serializes, and it is called wherever the
+/// suite already builds an instance with every option populated. Seven of the
+/// ten `DurableRecordKind` types are covered that way: `PartWorkflowSnapshot`,
+/// `GoalExecutionRecord`, `GoalAssuranceRecord`, `GoalFinalizationRecord`,
+/// `GoalPublicationRecord`, `GoalPullRequestRecord`, and
+/// `GoalSelectionDecision`.
+///
+/// `PartEffectWitness`, `GoalAssuranceEffectWitness`, and `ProcessExecution`
+/// are not, because no test drives one to a maximal instance; for those three,
+/// and for every nested type reached only through a covered record, this
+/// paragraph is the whole guarantee. A durable type added below inherits that
+/// weaker state by default: give it an exact-key assertion at the point some
+/// test already produces a fully populated record of it, and if none does, that
+/// is the gap to close.
 ///
 /// What it does not cover: a change in the *meaning* of a field whose shape is
 /// unchanged. No mechanical scheme can see that.
