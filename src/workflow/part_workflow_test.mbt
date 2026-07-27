@@ -4474,6 +4474,27 @@ test "a spent surface moves the next Take to a surface the contract admits" {
     spent.admitted_provider_surfaces,
   )
   assert_true(planned.pending_effect is None)
+  // The Conductor only ever sees a Part through the status report, so a move
+  // that never reaches the report is a move nobody can explain — and the
+  // material-change fingerprint that is supposed to wake the Conductor for it
+  // would be inert.
+  let report = match
+    @workflow.goal_status_report(
+      workflow_execution_for_attach(planned),
+      [planned],
+      None,
+      None,
+      None,
+      None,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(report.parts[0].provider_failovers, [moved])
+  assert_eq(
+    report.parts[0].provider_surface,
+    @control.ProviderSurfaceId::CodexSubscriptionCli,
+  )
 }
 
 ///|

@@ -162,6 +162,7 @@ async test "native Conductor submission captures Beads and persists once" {
     #|      "commit_title": "fix: change A",
     #|      "instruction": "Change only src/a.mbt so answer_a returns 2.",
     #|      "provider": "codex",
+    #|      "provider_failover": ["claude"],
     #|      "exact_paths": ["src/a.mbt"],
     #|      "moon_args": ["test", "--target", "native", "src/a.mbt"]
     #|    }
@@ -208,6 +209,14 @@ async test "native Conductor submission captures Beads and persists once" {
     stored.identities.implementation_session.surface,
     @control.ProviderSurfaceId::CodexSubscriptionCli,
   )
+  // The whole provider authority the draft granted has to survive every hop
+  // from draft text to durable Part state, because recovery reads it from the
+  // stored snapshot and nowhere else. A Part that lost its admitted fallback
+  // here would silently wait out a spent surface instead of failing over.
+  assert_eq(stored.admitted_provider_surfaces, [
+    @control.ProviderSurfaceId::CodexSubscriptionCli,
+    @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+  ])
   assert_eq(stored.task_contract.base_commit_oid, @control.GitOid(base_commit))
   let process_content = match
     (local_part_workflow_repository_adapters().artifacts.read)(

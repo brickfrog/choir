@@ -3,6 +3,7 @@ fn projection_part(
   stage : @workflow.PartWorkflowStage,
   durable_version? : Int = 11,
   effect_receipt_count? : Int = 3,
+  provider_failovers? : Array[@workflow.PartProviderFailover] = [],
 ) -> @workflow.GoalPartStatus {
   {
     workflow_id: @control.WorkflowId("wf-part-a"),
@@ -28,7 +29,7 @@ fn projection_part(
     audit_blocking_findings_count: 0,
     integration_receipt_present: false,
     dispatch_diagnostic: None,
-    provider_failovers: [],
+    provider_failovers,
     usage: @control.empty_take_usage(),
   }
 }
@@ -136,6 +137,33 @@ test "material fingerprint ignores counter churn but tracks stage movement" {
   assert_true(
     @workflow.goal_report_material_fingerprint(running) !=
     @workflow.goal_report_material_fingerprint(stage_moved),
+  )
+}
+
+///|
+test "a Part that changed provider surface is a material change" {
+  let running = projection_report()
+  // The two reports differ in nothing but the recorded failover: same stage,
+  // same lifecycles, same counters. A fingerprint that dropped it would leave
+  // the Conductor unable to see that a Part started spending a different
+  // provider's allowance, and therefore unable to explain it.
+  let failed_over = projection_report(parts=[
+    projection_part(
+      @workflow.PartWorkflowStage::PartImplementationHarnessStarted,
+      provider_failovers=[
+        {
+          from_surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+          to_surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+          cause: @control.ProviderAvailability::ProviderAllowanceExhausted(None),
+          retry_ordinal: 1,
+          decided_at: 500L,
+        },
+      ],
+    ),
+  ])
+  assert_true(
+    @workflow.goal_report_material_fingerprint(running) !=
+    @workflow.goal_report_material_fingerprint(failed_over),
   )
 }
 
