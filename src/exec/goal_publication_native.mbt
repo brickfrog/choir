@@ -111,7 +111,10 @@ fn native_remote_branch_probe_to_json(probe : NativeRemoteBranchProbe) -> Json {
 
 ///|
 fn native_remote_branch_probe_detail(value : String) -> String {
-  let trimmed = value.trim().to_owned()
+  // Git quotes the remote it failed against, and a token-in-URL remote carries
+  // the credential into this text. It is persisted to disk and surfaced in
+  // diagnostics, so the credential is removed before either happens.
+  let trimmed = @control.redact_url_credentials(value.trim().to_owned())
   let bytes = @utf8.encode(trimmed)
   if bytes.length() <= 4096 {
     trimmed

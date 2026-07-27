@@ -183,3 +183,100 @@ test "a retained excerpt describes the condition without carrying identifiers" {
     ProviderAvailability::ProviderAllowanceExhausted(None),
   )
 }
+
+///|
+/// Remove credentials from a URL's userinfo while keeping the rest readable.
+///
+/// Git error text quotes the remote it failed against, and a token-in-URL
+/// remote — `https://x-access-token:TOKEN@host/owner/repo` — therefore carries
+/// the credential into anything that persists that text. The host, path, and
+/// the error itself are what make the diagnostic worth keeping, so only the
+/// userinfo between `://` and the next `@` is replaced.
+///
+/// Applied to whole lines rather than to a parsed URL: the input is arbitrary
+/// process output, not a URL, and a parser that failed to recognize one shape
+/// would silently pass the credential through.
+pub fn redact_url_credentials(text : String) -> String {
+  let out = StringBuilder::new()
+  let chars = text.to_array()
+  let mut index = 0
+  while index < chars.length() {
+    if url_scheme_separator_at(chars, index) {
+      out.write_string("://")
+      index = index + 3
+      // Userinfo ends at `@`, but only within this authority: a `/`, space, or
+      // quote first means there was no userinfo to remove.
+      let mut scan = index
+      let mut at = -1
+      while scan < chars.length() {
+        let char = chars[scan]
+        if char == '@' {
+          at = scan
+          break
+        }
+        if char == '/' ||
+          char == ' ' ||
+          char == '"' ||
+          char == '\'' ||
+          char == '\n' {
+          break
+        }
+        scan = scan + 1
+      }
+      if at >= 0 {
+        out.write_string("<redacted>@")
+        index = at + 1
+      }
+    } else {
+      out.write_char(chars[index])
+      index = index + 1
+    }
+  }
+  out.to_string()
+}
+
+///|
+fn url_scheme_separator_at(chars : Array[Char], index : Int) -> Bool {
+  index + 2 < chars.length() &&
+  chars[index] == ':' &&
+  chars[index + 1] == '/' &&
+  chars[index + 2] == '/'
+}
+
+///|
+/// A token-in-URL remote puts the credential in every git error that quotes
+/// it, and those errors are persisted to disk and shown in diagnostics.
+test "a persisted git diagnostic keeps the host but not the credential" {
+  let redacted = redact_url_credentials(
+    "fatal: could not read from 'https://x-access-token:ghs_SECRETVALUE@github.com/owner/repo.git'\n" +
+    "remote: Invalid username or password",
+  )
+  assert_false(redacted.contains("ghs_SECRETVALUE"))
+  assert_false(redacted.contains("x-access-token"))
+  // What makes the diagnostic worth keeping survives.
+  assert_true(redacted.contains("github.com/owner/repo.git"))
+  assert_true(redacted.contains("Invalid username or password"))
+  assert_true(redacted.contains("<redacted>@github.com"))
+}
+
+///|
+test "URL redaction leaves text that carries no credential alone" {
+  fn unchanged(text : String) raise {
+    assert_eq(redact_url_credentials(text), text)
+  }
+  // No userinfo to remove.
+  unchanged("fatal: repository 'https://github.com/owner/repo.git' not found")
+  unchanged("error: failed to push some refs to 'git@github.com:owner/repo'")
+  unchanged("")
+  unchanged("no url here at all")
+  // An `@` after the path is part of the path, not userinfo, so the authority
+  // scan must stop at the first `/`.
+  unchanged("https://github.com/owner/repo/blob/main/a@b.txt")
+  // Several remotes in one message are each redacted.
+  let many = redact_url_credentials(
+    "https://user:pw@a.example/x and https://tok@b.example/y",
+  )
+  assert_eq(
+    many, "https://<redacted>@a.example/x and https://<redacted>@b.example/y",
+  )
+}

@@ -268,6 +268,11 @@ pub fn chmod_mode(_path : String, _mode : Int) -> Bool {
 }
 
 ///|
+pub fn file_mode(_path : String) -> Int {
+  -1
+}
+
+///|
 pub fn symlink_force(_target : String, _linkpath : String) -> Bool {
   false
 }

@@ -1522,16 +1522,57 @@ int choir_create_dir_all(const char* path) {
     return 0;
 }
 
+/* Write bytes to a path the daemon owns.
+ *
+ * Opened rather than fopen'd so the mode and the symlink policy are stated
+ * instead of inherited. fopen(path,"wb") creates 0666&umask — typically
+ * world-readable — and follows a symlink at the final component, so anything
+ * that could plant one redirects the write. This path carries control-plane
+ * state, provider PID witnesses, and git diagnostics, so 0600 and O_NOFOLLOW
+ * match what the SQLite store has always used. */
+static int choir_write_fd_all(int fd, const char* content, int content_len) {
+    int written = 0;
+    while (written < content_len) {
+        ssize_t n = write(fd, content + written, (size_t)(content_len - written));
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        if (n == 0) return -1;
+        written += (int)n;
+    }
+    return 0;
+}
+
 int choir_write_file_sync(const char* path, const char* content, int content_len) {
     char dir[4096];
     snprintf(dir, sizeof(dir), "%s", path);
     char* slash = strrchr(dir, '/');
     if (slash) { *slash = '\0'; choir_ensure_dir_path(dir); }
-    FILE* f = fopen(path, "wb");
-    if (!f) return -1;
-    if (content_len > 0) fwrite(content, 1, (size_t)content_len, f);
-    fclose(f);
-    return 0;
+    int fd = open(
+        path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0600
+    );
+    if (fd < 0) return -1;
+    /* An existing file keeps its old mode through O_TRUNC, so a file created
+     * before this hardening is narrowed here rather than left world-readable
+     * forever. */
+    if (fchmod(fd, 0600) != 0) {
+        close(fd);
+        return -1;
+    }
+    if (content_len > 0 && choir_write_fd_all(fd, content, content_len) != 0) {
+        close(fd);
+        return -1;
+    }
+    return close(fd) == 0 ? 0 : -1;
+}
+
+/* Permission bits of a path, or -1 when it cannot be stat'd. Exposed so the
+ * modes Choir creates are assertable rather than assumed. */
+int choir_file_mode(const char* path) {
+    struct stat info;
+    if (path == NULL || lstat(path, &info) != 0) return -1;
+    return (int)(info.st_mode & 07777);
 }
 
 int choir_rename_file_sync(const char* from_path, const char* to_path) {
@@ -1543,11 +1584,15 @@ int choir_append_file_sync(const char* path, const char* content, int content_le
     snprintf(dir, sizeof(dir), "%s", path);
     char* slash = strrchr(dir, '/');
     if (slash) { *slash = '\0'; choir_ensure_dir_path(dir); }
-    FILE* f = fopen(path, "ab");
-    if (!f) return -1;
-    if (content_len > 0) fwrite(content, 1, (size_t)content_len, f);
-    fclose(f);
-    return 0;
+    int fd = open(
+        path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW, 0600
+    );
+    if (fd < 0) return -1;
+    if (content_len > 0 && choir_write_fd_all(fd, content, content_len) != 0) {
+        close(fd);
+        return -1;
+    }
+    return close(fd) == 0 ? 0 : -1;
 }
 
 int choir_delete_file_sync(const char* path) {

@@ -39,6 +39,10 @@ extern "C" fn c_read_file_prefix(
 ) -> Int = "choir_read_file_prefix"
 
 ///|
+#borrow(path)
+extern "C" fn c_file_mode(path : Bytes) -> Int = "choir_file_mode"
+
+///|
 #borrow(path, buf)
 extern "C" fn c_read_file_range(
   path : Bytes,
@@ -929,6 +933,13 @@ pub fn chmod_mode(path : String, mode : Int) -> Bool {
 
 ///|
 /// Replace `linkpath` with a symlink to `target` (`unlink` then `symlink(2)`).
+/// Permission bits of a path, or -1 when it cannot be read. Does not follow
+/// symlinks, so the mode reported is the one the caller created.
+pub fn file_mode(path : String) -> Int {
+  c_file_mode(string_to_null_terminated_bytes(path))
+}
+
+///|
 pub fn symlink_force(target : String, linkpath : String) -> Bool {
   c_symlink_force(
     string_to_null_terminated_bytes(target),

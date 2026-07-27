@@ -196,3 +196,32 @@ test "read_file_from follows appended bytes without losing a partial line" {
   assert_eq(read_file_from("/tmp/choir-read-file-from-missing", 0), ("", 0))
   ignore(delete_file_sync(path))
 }
+
+///|
+/// Control-plane state, PID witnesses, and git diagnostics all go through this
+/// writer. It used to inherit 0666&umask from fopen — world-readable — and
+/// follow a symlink at the final component.
+test "written files are owner-only and do not follow a symlink" {
+  let path = "/tmp/choir-write-mode-test.txt"
+  ignore(delete_file_sync(path))
+  assert_true(write_file_sync(path, "secret"))
+  assert_eq(file_mode(path), 0o600)
+  // An existing file keeps its mode through O_TRUNC, so one created before this
+  // hardening must be narrowed rather than left readable forever.
+  assert_true(write_file_sync(path, "secret again"))
+  assert_eq(file_mode(path), 0o600)
+  assert_eq(read_file(path), "secret again")
+  ignore(delete_file_sync(path))
+  // A symlink at the final component must not redirect the write.
+  let target = "/tmp/choir-write-mode-target.txt"
+  let link = "/tmp/choir-write-mode-link.txt"
+  ignore(delete_file_sync(target))
+  ignore(delete_file_sync(link))
+  assert_true(write_file_sync(target, "original"))
+  if symlink_force(target, link) {
+    assert_false(write_file_sync(link, "redirected"))
+    assert_eq(read_file(target), "original")
+  }
+  ignore(delete_file_sync(link))
+  ignore(delete_file_sync(target))
+}
