@@ -3,6 +3,9 @@ pub(all) struct NativeCodexDriverConfig {
   sterile_root : String
   mcp_executable : String
   mcp_arguments : Array[String]
+  /// The BoxLite capability the sandbox bridge authenticates with. Exported to
+  /// the app-server environment, never placed on any command line.
+  execution_token : String
   boxlite_owner_socket_root : String?
   mcp_server_name : String
   allowed_tools : Array[String]
@@ -234,6 +237,23 @@ fn push_native_codex_take_config(
     server_key + ".args",
     config.mcp_arguments.to_json().stringify(),
   )
+  // Also declared on the server config, not only inherited from the
+  // app-server environment. Codex spawns MCP servers lazily and its
+  // inheritance is unverified here, so the bridge is given the capability
+  // explicitly rather than assumed to receive it. This leaves the token on the
+  // Codex argv, which is no worse than before; moving it off entirely means
+  // writing the server config into the sterile CODEX_HOME instead of passing
+  // it with -c.
+  if config.execution_token != "" {
+    let environment : Map[String, String] = {
+      "CHOIR_BOXLITE_EXECUTION_TOKEN": config.execution_token,
+    }
+    push_codex_config(
+      args,
+      server_key + ".env",
+      environment.to_json().stringify(),
+    )
+  }
   push_codex_config(args, server_key + ".required", "true")
   push_codex_config(
     args,
@@ -349,12 +369,19 @@ fn native_codex_environment(
 ///|
 fn native_codex_app_server_environment(
   sterile_root : String,
+  execution_token : String,
 ) -> Map[String, String] {
   let environment = native_codex_environment(
     sterile_root + "/home",
     sterile_root,
   )
   environment["CODEX_HOME"] = sterile_root + "/codex-home"
+  // The sandbox bridge is spawned by the app-server and inherits this
+  // environment. Passing the capability here keeps it off every command line;
+  // Codex's `-c mcp_servers.<name>.args=<json>` put it on the argv otherwise.
+  if execution_token != "" {
+    environment["CHOIR_BOXLITE_EXECUTION_TOKEN"] = execution_token
+  }
   environment
 }
 
@@ -403,7 +430,7 @@ fn native_codex_ambient_configuration_present(
 
 ///|
 test "native Codex Take environment is an exact allowlist" {
-  let environment = native_codex_app_server_environment("/sterile-take")
+  let environment = native_codex_app_server_environment("/sterile-take", "")
   assert_eq(environment.length(), 6)
   assert_eq(environment["HOME"], "/sterile-take/home")
   assert_eq(environment["CODEX_HOME"], "/sterile-take/codex-home")
@@ -1174,7 +1201,10 @@ async fn spawn_native_codex_app_server(
   let pid = @process.spawn_orphan(
     "/usr/bin/setsid",
     arguments,
-    extra_env=native_codex_app_server_environment(config.sterile_root),
+    extra_env=native_codex_app_server_environment(
+      config.sterile_root,
+      config.execution_token,
+    ),
     inherit_env=false,
     stdout=sink,
     stderr=sink,
@@ -2328,6 +2358,7 @@ test "native Codex app-server argv removes native execution surfaces" {
     sterile_root: "/tmp/choir-codex-driver-test",
     mcp_executable: "/usr/bin/node",
     mcp_arguments: ["/opt/choir/sandbox-mcp.mjs"],
+    execution_token: "",
     boxlite_owner_socket_root: None,
     mcp_server_name: "choir_sandbox",
     allowed_tools: ["read_file", "run"],
@@ -2352,6 +2383,7 @@ test "native Codex connect observation is confined to the sterile root" {
     sterile_root: "/tmp/choir-codex-driver-test",
     mcp_executable: "/usr/bin/node",
     mcp_arguments: ["/opt/choir/sandbox-mcp.mjs"],
+    execution_token: "",
     boxlite_owner_socket_root: None,
     mcp_server_name: "choir_sandbox",
     allowed_tools: ["read_file"],
@@ -2377,6 +2409,7 @@ test "native Codex owner socket binding is exact and paired with MCP argv" {
     sterile_root: root,
     mcp_executable: "/usr/bin/node",
     mcp_arguments: ["/opt/choir/sandbox-mcp.mjs", "--owner-socket", target],
+    execution_token: "",
     boxlite_owner_socket_root: Some(source),
     mcp_server_name: "choir_sandbox",
     allowed_tools: ["read_file"],
@@ -2427,6 +2460,7 @@ test "native Codex initialization attests the sterile client identity" {
     sterile_root: "/tmp/choir-codex-driver-test",
     mcp_executable: "/usr/bin/node",
     mcp_arguments: [],
+    execution_token: "",
     boxlite_owner_socket_root: None,
     mcp_server_name: "choir_sandbox",
     allowed_tools: ["probe"],
@@ -2657,6 +2691,7 @@ test "a spooled response is found by scanning only appended bytes" {
     sterile_root: root,
     mcp_executable: "/usr/bin/node",
     mcp_arguments: [],
+    execution_token: "",
     boxlite_owner_socket_root: None,
     mcp_server_name: "choir_sandbox",
     allowed_tools: ["read_file"],
@@ -2712,6 +2747,7 @@ test "an app-server rejection keeps its JSON-RPC code" {
     sterile_root: root,
     mcp_executable: "/usr/bin/node",
     mcp_arguments: [],
+    execution_token: "",
     boxlite_owner_socket_root: None,
     mcp_server_name: "choir_sandbox",
     allowed_tools: ["read_file"],

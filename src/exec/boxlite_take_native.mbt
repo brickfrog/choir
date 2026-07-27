@@ -1547,27 +1547,46 @@ pub fn native_boxlite_take_mcp_arguments(
     @sandbox.BoxLiteWorkspaceAccess::BoxLiteReadOnlySubject =>
       "read-only-subject"
   }
-  let execution_token = @storage.artifact_digest(
-      @utf8.encode(
-        "choir.boxlite-exec.v1\u{00}" +
-        take.prepared.server.owner_token +
-        "\u{00}" +
-        take.box_id +
-        "\u{00}" +
-        access,
-      ),
-    ).0
+  // The execution token is deliberately absent. It is a bearer capability that
+  // authorizes exec inside the box, and the owner socket authenticates on
+  // possession alone, so an argv carrying it published it to every process that
+  // could read /proc/<pid>/cmdline. It reaches the bridge through the provider
+  // process environment instead.
   Ok([
     script,
     "--owner-socket",
     owner_socket,
-    "--owner-token",
-    execution_token,
     "--box",
     take.box_id,
     "--access",
     access,
   ])
+}
+
+///|
+/// The capability that authorizes exec inside this box.
+///
+/// Never placed on a command line. `/proc/<pid>/cmdline` is world-readable
+/// while `/proc/<pid>/environ` is owner-only, and the provider argv was
+/// additionally carrying it inside an inline MCP config blob.
+pub fn native_boxlite_take_execution_token(
+  take : NativeBoxLiteTakeSandbox,
+) -> String {
+  let access = match take.workspace_access {
+    @sandbox.BoxLiteWorkspaceAccess::BoxLiteMutableWorkspace => "mutable"
+    @sandbox.BoxLiteWorkspaceAccess::BoxLiteReadOnlySubject =>
+      "read-only-subject"
+  }
+  @storage.artifact_digest(
+    @utf8.encode(
+      "choir.boxlite-exec.v1\u{00}" +
+      take.prepared.server.owner_token +
+      "\u{00}" +
+      take.box_id +
+      "\u{00}" +
+      access,
+    ),
+  ).0
 }
 
 ///|
@@ -2452,26 +2471,30 @@ test "native BoxLite MCP launch binds one fixed box" {
     tool_manifest_digest: @sandbox.boxlite_take_tool_manifest_digest(),
     runtime_policy_digest: @sandbox.boxlite_take_runtime_policy_digest(),
   }
+  let take : NativeBoxLiteTakeSandbox = {
+    prepared,
+    box_id: "box-1",
+    source_digest: @control.Digest(
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    ),
+    workspace_access: @sandbox.BoxLiteWorkspaceAccess::BoxLiteMutableWorkspace,
+  }
   let args = native_boxlite_take_mcp_arguments(
-    {
-      prepared,
-      box_id: "box-1",
-      source_digest: @control.Digest(
-        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      ),
-      workspace_access: @sandbox.BoxLiteWorkspaceAccess::BoxLiteMutableWorkspace,
-    },
-    "/repo/scripts/choir_sandbox_mcp.mjs",
+    take, "/repo/scripts/choir_sandbox_mcp.mjs",
   ).unwrap()
   assert_true(args.contains("--box"))
   assert_true(args.contains("box-1"))
   assert_true(args.contains("--owner-socket"))
-  assert_true(args.contains("--owner-token"))
-  assert_true(
-    args.contains(
-      "4494355adc99b905a122f7753198715a048dfa99d69e943cfb588c691b909ed2",
-    ),
+  // The capability is not on the command line. /proc/<pid>/cmdline is
+  // world-readable and the owner socket authenticates on possession alone, so
+  // an argv carrying it handed exec-in-the-box to anything that could list
+  // processes. It reaches the bridge through the provider environment instead.
+  assert_false(args.contains("--owner-token"))
+  let token = native_boxlite_take_execution_token(take)
+  assert_eq(
+    token, "4494355adc99b905a122f7753198715a048dfa99d69e943cfb588c691b909ed2",
   )
+  assert_false(args.contains(token))
   assert_false(args.contains("--api-key"))
   assert_false(args.contains("--url"))
   assert_true(args.contains("--access"))

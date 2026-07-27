@@ -18,12 +18,12 @@ import {
 
 const launchArgs = [
   "--owner-socket", "/tmp/take/owner.sock",
-  "--owner-token", "a".repeat(64),
   "--box", "box-1",
   "--access", "mutable",
 ];
 
 test("launch arguments admit only the fixed local shape", () => {
+  process.env.CHOIR_BOXLITE_EXECUTION_TOKEN = "a".repeat(64);
   assert.equal(parseLaunchArgs(launchArgs).box, "box-1");
   assert.equal(parseLaunchArgs(launchArgs).access, "mutable");
   const relative = launchArgs.slice();
@@ -33,6 +33,21 @@ test("launch arguments admit only the fixed local shape", () => {
   const invalidAccess = launchArgs.slice();
   invalidAccess[invalidAccess.length - 1] = "broad";
   assert.throws(() => parseLaunchArgs(invalidAccess));
+});
+
+test("the execution token is read from the environment, never from argv", () => {
+  process.env.CHOIR_BOXLITE_EXECUTION_TOKEN = "b".repeat(64);
+  assert.equal(parseLaunchArgs(launchArgs).ownerToken, "b".repeat(64));
+  // No argv fallback: one would keep the leak alive for any caller that had
+  // not been updated, which is exactly the situation being removed.
+  assert.throws(() =>
+    parseLaunchArgs([...launchArgs, "--owner-token", "c".repeat(64)])
+  );
+  delete process.env.CHOIR_BOXLITE_EXECUTION_TOKEN;
+  assert.throws(() => parseLaunchArgs(launchArgs));
+  process.env.CHOIR_BOXLITE_EXECUTION_TOKEN = "d".repeat(63) + "Z";
+  assert.throws(() => parseLaunchArgs(launchArgs));
+  process.env.CHOIR_BOXLITE_EXECUTION_TOKEN = "a".repeat(64);
 });
 
 test("runtime owner admits only exact bounded guest execution", () => {

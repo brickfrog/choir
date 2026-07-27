@@ -3,6 +3,9 @@ pub(all) struct NativeClaudeDriverConfig {
   sterile_root : String
   mcp_executable : String
   mcp_arguments : Array[String]
+  /// The BoxLite capability the sandbox bridge authenticates with. Exported to
+  /// the provider process environment, never placed on any command line.
+  execution_token : String
   boxlite_owner_socket_root : String?
   mcp_server_name : String
   allowed_tools : Array[String]
@@ -201,14 +204,23 @@ fn native_claude_driver_args(
 fn native_claude_environment(
   provider_home : String,
   sterile_root : String,
+  execution_token : String,
 ) -> Map[String, String] {
-  {
+  let environment : Map[String, String] = {
     "HOME": provider_home,
     "TMPDIR": sterile_root + "/tmp",
     "PATH": "/usr/local/bin:/usr/bin:/bin",
     "COLUMNS": "200",
     "NO_COLOR": "1",
   }
+  // The sandbox bridge is spawned by this process and inherits its
+  // environment. Passing the capability here rather than on an argv keeps it
+  // out of /proc/<pid>/cmdline, which any process can read, and out of the
+  // inline MCP config blob that argv carried.
+  if execution_token != "" {
+    environment["CHOIR_BOXLITE_EXECUTION_TOKEN"] = execution_token
+  }
+  environment
 }
 
 ///|
@@ -312,7 +324,11 @@ async fn preflight_native_claude_mcp(
     @process.collect_output_merged(
       "/usr/bin/bwrap",
       bounded_args,
-      extra_env=native_claude_environment(provider_home, config.sterile_root),
+      extra_env=native_claude_environment(
+        provider_home,
+        config.sterile_root,
+        config.execution_token,
+      ),
       inherit_env=false,
       stdin=stdin_read,
       cwd=config.sterile_root,
@@ -463,13 +479,24 @@ pub fn reconcile_native_claude_process_witness(
 
 ///|
 test "native Claude Take environment is an exact allowlist" {
-  let environment = native_claude_environment("/provider-home", "/sterile-take")
+  let environment = native_claude_environment(
+    "/provider-home", "/sterile-take", "",
+  )
   assert_eq(environment.length(), 5)
   assert_eq(environment["HOME"], "/provider-home")
   assert_eq(environment["TMPDIR"], "/sterile-take/tmp")
   assert_false(environment.contains("ANTHROPIC_API_KEY"))
   assert_false(environment.contains("CLAUDE_CODE_OAUTH_TOKEN"))
   assert_false(environment.contains("CHOIR_CONDUCTOR_TOKEN"))
+  // The BoxLite capability travels here, where /proc exposure is owner-only,
+  // rather than on an argv every process can read.
+  let capable = native_claude_environment(
+    "/provider-home",
+    "/sterile-take",
+    "f".repeat(64),
+  )
+  assert_eq(capable["CHOIR_BOXLITE_EXECUTION_TOKEN"], "f".repeat(64))
+  assert_eq(capable.length(), 6)
 }
 
 ///|
@@ -481,6 +508,7 @@ test "native Claude owner socket binding is exact and paired with MCP argv" {
     sterile_root: root,
     mcp_executable: "/usr/bin/node",
     mcp_arguments: ["/opt/choir/sandbox-mcp.mjs", "--owner-socket", target],
+    execution_token: "",
     boxlite_owner_socket_root: Some(source),
     mcp_server_name: "choir_sandbox",
     allowed_tools: ["mcp__choir_sandbox__read_file"],
@@ -491,6 +519,7 @@ test "native Claude owner socket binding is exact and paired with MCP argv" {
   assert_true(
     validate_native_claude_config({
       ..config,
+      execution_token: "",
       mcp_arguments: [
         "/opt/choir/sandbox-mcp.mjs",
         "--owner-socket",
@@ -607,7 +636,11 @@ pub async fn run_native_claude_take(
     collect_interruptible_process(
       "/usr/bin/bwrap",
       bounded_args,
-      native_claude_environment(provider_home, config.sterile_root),
+      native_claude_environment(
+        provider_home,
+        config.sterile_root,
+        config.execution_token,
+      ),
       stdin_read,
       config.sterile_root,
       config.timeout_ms,
@@ -659,6 +692,7 @@ test "native Claude driver argv removes host tools and ambient configuration" {
       sterile_root: "/tmp/choir-claude-driver-test",
       mcp_executable: "/opt/choir/sandbox-mcp",
       mcp_arguments: ["serve", "sandbox-1"],
+      execution_token: "",
       boxlite_owner_socket_root: None,
       mcp_server_name: "choir_sandbox",
       allowed_tools: ["mcp__choir_sandbox__execute"],

@@ -544,6 +544,7 @@ fn native_claude_config(
     sterile_root: runtime.config.claude_root + session.id.0,
     mcp_executable: runtime.config.node_executable,
     mcp_arguments: arguments,
+    execution_token: native_boxlite_take_execution_token(sandbox),
     boxlite_owner_socket_root: Some(sandbox.prepared.server.owner_socket_root),
     mcp_server_name: "choir_sandbox",
     allowed_tools: match sandbox.workspace_access {
@@ -577,6 +578,7 @@ fn native_codex_config(
     sterile_root,
     mcp_executable: runtime.config.node_executable,
     mcp_arguments: arguments,
+    execution_token: native_boxlite_take_execution_token(sandbox),
     boxlite_owner_socket_root: Some(sandbox.prepared.server.owner_socket_root),
     mcp_server_name: "choir_sandbox",
     allowed_tools: match sandbox.workspace_access {

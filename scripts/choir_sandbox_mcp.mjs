@@ -21,12 +21,7 @@ export function parseLaunchArgs(argv) {
     }
     values.set(key, value);
   }
-  const required = [
-    "--owner-socket",
-    "--owner-token",
-    "--box",
-    "--access",
-  ];
+  const required = ["--owner-socket", "--box", "--access"];
   if (values.size !== required.length) fail("unknown launch argument");
   for (const key of required) {
     if (!values.get(key)) fail(`missing ${key}`);
@@ -34,7 +29,13 @@ export function parseLaunchArgs(argv) {
   if (!values.get("--owner-socket").startsWith("/")) {
     fail("owner socket must be absolute");
   }
-  if (!/^[a-f0-9]{64}$/.test(values.get("--owner-token"))) {
+  // The execution token arrives in the environment, never on argv.
+  // /proc/<pid>/cmdline is world-readable; /proc/<pid>/environ is 0400. This
+  // token is a bearer capability that authorizes exec inside the box and the
+  // owner socket authenticates on possession alone, so putting it on a command
+  // line published it to every process that could list the process table.
+  const ownerToken = process.env.CHOIR_BOXLITE_EXECUTION_TOKEN ?? "";
+  if (!/^[a-f0-9]{64}$/.test(ownerToken)) {
     fail("owner capability is invalid");
   }
   if (!/^[a-zA-Z0-9-]{1,180}$/.test(values.get("--box"))) {
@@ -45,7 +46,7 @@ export function parseLaunchArgs(argv) {
   }
   return Object.freeze({
     ownerSocket: values.get("--owner-socket"),
-    ownerToken: values.get("--owner-token"),
+    ownerToken,
     box: values.get("--box"),
     access: values.get("--access"),
   });
