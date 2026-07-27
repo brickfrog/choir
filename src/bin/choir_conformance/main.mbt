@@ -3477,7 +3477,9 @@ async fn exercise_boxlite_take(
   }
   if owner_mode_capture.0 != 0 ||
     owner_mode.trim() != "600" ||
-    arguments.length() != 9 ||
+    arguments.length() != 7 ||
+    arguments.contains(@exec.native_boxlite_take_execution_token(take)) ||
+    arguments.contains(take.prepared.server.owner_token) ||
     arguments.contains(take.prepared.server.config.api_key) ||
     arguments.contains(take.prepared.server.url) ||
     arguments.contains(take.prepared.server.config.binary) ||

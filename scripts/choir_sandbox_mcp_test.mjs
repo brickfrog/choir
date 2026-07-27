@@ -13,6 +13,7 @@ import {
 import {
   deriveExecutionToken,
   parseOwnerLaunchArgs,
+  reachableOnlyByOwner,
   validateOwnerRequest,
 } from "./choir_boxlite_owner.mjs";
 
@@ -78,6 +79,16 @@ test("runtime owner admits only exact bounded guest execution", () => {
   assert.throws(() => validateOwnerRequest({ ...request, cwd: "../host" }));
   assert.throws(() => validateOwnerRequest({ ...request, argv: ["sh", "-c", "true"] }));
   assert.throws(() => validateOwnerRequest({ ...request, extra: true }));
+});
+
+test("the owner socket is served only when no other user can reach it", () => {
+  const socket = 0o140000;
+  assert.equal(reachableOnlyByOwner({ uid: 1000, mode: socket | 0o600 }, 1000), true);
+  assert.equal(reachableOnlyByOwner({ uid: 1000, mode: socket | 0o660 }, 1000), false);
+  assert.equal(reachableOnlyByOwner({ uid: 1000, mode: socket | 0o606 }, 1000), false);
+  assert.equal(reachableOnlyByOwner({ uid: 1000, mode: socket | 0o755 }, 1000), false);
+  assert.equal(reachableOnlyByOwner({ uid: 1001, mode: socket | 0o600 }, 1000), false);
+  assert.equal(reachableOnlyByOwner({ uid: 0, mode: socket | 0o600 }, 1000), false);
 });
 
 test("graceful exit waits for responses before draining commands", async () => {

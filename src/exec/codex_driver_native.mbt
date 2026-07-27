@@ -237,21 +237,16 @@ fn push_native_codex_take_config(
     server_key + ".args",
     config.mcp_arguments.to_json().stringify(),
   )
-  // Also declared on the server config, not only inherited from the
-  // app-server environment. Codex spawns MCP servers lazily and its
-  // inheritance is unverified here, so the bridge is given the capability
-  // explicitly rather than assumed to receive it. This leaves the token on the
-  // Codex argv, which is no worse than before; moving it off entirely means
-  // writing the server config into the sterile CODEX_HOME instead of passing
-  // it with -c.
+  // The app-server does not hand its own environment to the MCP servers it
+  // spawns: a probed stdio server saw only HOME, PATH, and TMPDIR. `env_vars`
+  // names the variables to forward from the app-server environment, so the
+  // argv carries the name of the capability and never its value —
+  // /proc/<pid>/cmdline is world-readable, /proc/<pid>/environ is not.
   if config.execution_token != "" {
-    let environment : Map[String, String] = {
-      "CHOIR_BOXLITE_EXECUTION_TOKEN": config.execution_token,
-    }
     push_codex_config(
       args,
-      server_key + ".env",
-      environment.to_json().stringify(),
+      server_key + ".env_vars",
+      [native_boxlite_execution_token_variable].to_json().stringify(),
     )
   }
   push_codex_config(args, server_key + ".required", "true")
@@ -376,11 +371,11 @@ fn native_codex_app_server_environment(
     sterile_root,
   )
   environment["CODEX_HOME"] = sterile_root + "/codex-home"
-  // The sandbox bridge is spawned by the app-server and inherits this
-  // environment. Passing the capability here keeps it off every command line;
-  // Codex's `-c mcp_servers.<name>.args=<json>` put it on the argv otherwise.
+  // The app-server forwards this to the sandbox bridge because the server
+  // configuration names it in `env_vars`. Holding the capability here keeps it
+  // off every command line.
   if execution_token != "" {
-    environment["CHOIR_BOXLITE_EXECUTION_TOKEN"] = execution_token
+    environment[native_boxlite_execution_token_variable] = execution_token
   }
   environment
 }
@@ -2375,6 +2370,45 @@ test "native Codex app-server argv removes native execution surfaces" {
     ),
   )
   assert_false(args.contains("--dangerously-bypass-approvals-and-sandbox"))
+}
+
+///|
+test "native Codex app-server argv names the capability without carrying it" {
+  let token = "f".repeat(64)
+  let config : NativeCodexDriverConfig = {
+    sterile_root: "/tmp/choir-codex-driver-test",
+    mcp_executable: "/usr/bin/node",
+    mcp_arguments: ["/opt/choir/sandbox-mcp.mjs"],
+    execution_token: token,
+    boxlite_owner_socket_root: None,
+    mcp_server_name: "choir_sandbox",
+    allowed_tools: ["read_file", "run"],
+    timeout_ms: 60000,
+    connect_trace_path: None,
+  }
+  let args = native_codex_app_server_args(config)
+  assert_true(
+    args.contains(
+      "mcp_servers.choir_sandbox.env_vars=[\"CHOIR_BOXLITE_EXECUTION_TOKEN\"]",
+    ),
+  )
+  for argument in args {
+    assert_false(argument.contains(token))
+  }
+  let environment = native_codex_app_server_environment(
+    config.sterile_root,
+    token,
+  )
+  assert_eq(environment["CHOIR_BOXLITE_EXECUTION_TOKEN"], token)
+  let without_capability = native_codex_app_server_args({
+    ..config,
+    execution_token: "",
+  })
+  assert_false(
+    without_capability.contains(
+      "mcp_servers.choir_sandbox.env_vars=[\"CHOIR_BOXLITE_EXECUTION_TOKEN\"]",
+    ),
+  )
 }
 
 ///|
