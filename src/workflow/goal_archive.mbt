@@ -52,9 +52,21 @@ pub(all) struct GoalArchiveSubject {
   /// The per-Part integration witness refs this Goal's own durable records
   /// name. They are digests with no Goal in the name, so unlike the other two
   /// namespaces they cannot be recognized by looking at a ref; they are read
-  /// out of the Goal's Parts instead.
+  /// out of the Goal's Parts instead. Every one is under
+  /// `part_integration_witness_ref_prefix`, which `goal_archive_subject`
+  /// enforces on the way in.
   part_witness_refs : Array[GitRefName]
 } derive(Debug, Eq)
+
+///|
+/// The namespace every per-Part integration witness ref lives in.
+///
+/// The refs reach this module as durable record `String`s, and nothing in the
+/// control plane types them: `IntegrationIntent::git_witness_ref` and
+/// `IntegrationReceipt::witness_ref` are bare strings a record could hold
+/// anything in. Every writer produces this prefix, so a record that does not is
+/// not a witness and never becomes one here.
+let part_integration_witness_ref_prefix : String = "refs/choir/witness/"
 
 ///|
 /// Read the archive subject out of a Goal and its Parts.
@@ -63,15 +75,23 @@ pub(all) struct GoalArchiveSubject {
 /// different Goal contributes nothing: the whole safety of releasing a ref
 /// whose name carries no Goal is that the name came from this Goal's own
 /// record.
+///
+/// A recorded ref outside the witness namespace contributes nothing either.
+/// The release set is otherwise a function of the Goal id alone, and these two
+/// durable strings are the only thing that could widen it; without this guard a
+/// record naming the Goal's own branch would put that branch in the release
+/// set, which is the one ref archival exists to keep.
 pub fn goal_archive_subject(
   record : GoalExecutionRecord,
   parts : Array[PartWorkflowSnapshot],
 ) -> GoalArchiveSubject {
   let part_witness_refs : Array[GitRefName] = []
   let note = fn(reference : String) {
-    let named = GitRefName(reference)
-    if reference != "" && !part_witness_refs.contains(named) {
-      part_witness_refs.push(named)
+    if reference.has_prefix(part_integration_witness_ref_prefix) {
+      let named = GitRefName(reference)
+      if !part_witness_refs.contains(named) {
+        part_witness_refs.push(named)
+      }
     }
   }
   for snapshot in parts {
@@ -163,7 +183,9 @@ fn goal_seal_witness_ref_prefix(goal_id : @control.GoalId) -> String {
 /// read off its name, so it is not recognized — it is matched against the exact
 /// refs this Goal's own Parts recorded. The Goal id is in the digested
 /// preimage, so no other Goal's integration can produce one of these names, and
-/// the name was taken from a Part whose Goal is this one.
+/// the name was taken from a Part whose Goal is this one — and, because
+/// `goal_archive_subject` admits only the witness namespace, from a record that
+/// named a witness rather than some other ref entirely.
 fn goal_archive_ref_is_releasable(
   subject : GoalArchiveSubject,
   reference : GitRefName,
@@ -208,10 +230,13 @@ pub fn plan_goal_archive(
   let release_refs : Array[GitRefName] = []
   let retain_refs : Array[GitRefName] = []
   for reference in observation.observed_refs {
-    if goal_archive_ref_is_releasable(subject, reference) {
-      release_refs.push(reference)
-    } else if reference == subject.goal_ref {
+    // The branch is answered for first. It is the one ref this module promises
+    // to keep, so it is decided before anything that could widen the release
+    // set rather than after.
+    if reference == subject.goal_ref {
       retain_refs.push(reference)
+    } else if goal_archive_ref_is_releasable(subject, reference) {
+      release_refs.push(reference)
     }
   }
   let reachable : Array[@storage.ArtifactRetentionEntry] = []

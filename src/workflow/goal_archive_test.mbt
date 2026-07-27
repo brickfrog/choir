@@ -337,6 +337,56 @@ test "witness refs are read from this Goal's Parts and no other's" {
 }
 
 ///|
+/// The witness refs are the only part of the release set that comes from a
+/// durable string rather than from the Goal id, and nothing types those strings
+/// as witnesses: `IntegrationIntent::git_witness_ref` and
+/// `IntegrationReceipt::witness_ref` are bare `String`s. A record naming the
+/// Goal's own branch must not turn the branch into something the archive
+/// deletes, so the subject drops every recorded ref outside the witness
+/// namespace.
+test "a recorded ref outside the witness namespace is not a witness" {
+  let record = archive_execution_record()
+  let branch = record.goal_ref.0
+  let witness = "refs/choir/witness/" + archive_digest("real")
+  let subject = @workflow.goal_archive_subject(record, [
+    archive_part_snapshot(archive_goal_id, receipt_ref=Some(branch)),
+    archive_part_snapshot(
+      archive_goal_id,
+      intent_ref=Some("refs/heads/main"),
+      receipt_ref=Some(witness),
+    ),
+  ])
+  assert_eq(subject.part_witness_refs, [@workflow.GitRefName(witness)])
+  let plan = archive_plan(
+    archive_observation(subject, observed_refs=[
+      @workflow.GitRefName(branch),
+      @workflow.GitRefName("refs/heads/main"),
+      @workflow.GitRefName(witness),
+    ]),
+  )
+  assert_eq(plan.release_refs, [@workflow.GitRefName(witness)])
+  assert_eq(plan.retain_refs, [@workflow.GitRefName(branch)])
+}
+
+///|
+/// And the branch is retained even when the subject already carries it as a
+/// witness, because the plan answers for the branch before it asks whether
+/// anything else made the ref releasable.
+test "the Goal branch is retained even when named as a witness ref" {
+  let branch = @workflow.goal_execution_ref(archive_goal_id)
+  let plan = archive_plan(
+    archive_observation(
+      archive_subject(@workflow.GoalExecutionState::GoalExecutionSucceeded, part_witness_refs=[
+        branch,
+      ]),
+      observed_refs=[branch],
+    ),
+  )
+  assert_eq(plan.retain_refs, [branch])
+  assert_eq(plan.release_refs, [])
+}
+
+///|
 test "a canceled Goal archives exactly like a succeeded one" {
   let branch = @workflow.goal_execution_ref(archive_goal_id)
   let initialized = @workflow.GitRefName(
