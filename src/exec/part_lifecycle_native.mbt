@@ -1366,7 +1366,7 @@ async fn run_native_part_cancellation_fixture_for_surface(
     ),
   )
   match execution {
-    Err(error) if error.to_wire_string() == "canceled" => ()
+    Err(error) if error.is_canceled() => ()
     Err(error) =>
       return fail_native_part_runtime(
         runtime,

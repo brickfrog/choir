@@ -318,6 +318,27 @@ pub fn ChoirError::provider_rpc_rejection(self : ChoirError) -> (Int, String)? {
 }
 
 ///|
+/// Typed predicates for the classifications control flow branches on.
+///
+/// Without these, callers compared `to_wire_string()` to a literal, which put
+/// the wire vocabulary in the middle of cancellation and validation decisions:
+/// renaming a tag would silently change what a Part does on cancel instead of
+/// failing to compile.
+pub fn ChoirError::is_canceled(self : ChoirError) -> Bool {
+  self is OperationCanceled(_)
+}
+
+///|
+pub fn ChoirError::is_validation_error(self : ChoirError) -> Bool {
+  self is ValidationError(_)
+}
+
+///|
+pub fn ChoirError::is_transport_error(self : ChoirError) -> Bool {
+  self is TransportError(_)
+}
+
+///|
 pub fn ChoirError::is_provider_process_lost(self : ChoirError) -> Bool {
   match self {
     ProviderProcessLost(_, _) => true

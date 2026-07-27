@@ -1,10 +1,27 @@
 ///|
-/// Extract the string view used by text-valued wire callers.
-/// String → inner text (unquoted), everything else → .stringify().
-fn json_to_wire_string(json : Json) -> String {
+/// Render any JSON value as text, for the bulk views that exist to display or
+/// enumerate fields rather than to decide anything. `get` deliberately does not
+/// use this.
+fn json_to_display_string(json : Json) -> String {
   match json {
     String(s) => s
     _ => json.stringify()
+  }
+}
+
+///|
+/// Read a genuine JSON string, or nothing.
+///
+/// This used to stringify whatever it was given, so an object arrived as the
+/// text `{"x":1}` and was accepted wherever a string was expected — a Goal id
+/// lookup would happily use it. A caller that wants raw JSON has `get_json`;
+/// a caller reading a string field wants the field to actually be one, and a
+/// malformed argument to fail validation rather than flow onward as a garbage
+/// identifier.
+fn json_to_wire_string(json : Json) -> String? {
+  match json {
+    String(s) => Some(s)
+    _ => None
   }
 }
 
@@ -35,7 +52,7 @@ pub fn FieldMap::from_values(values : Map[String, Json]) -> FieldMap {
 ///|
 pub fn FieldMap::get(self : FieldMap, key : String) -> String? {
   match self.values.get(key) {
-    Some(value) => Some(json_to_wire_string(value))
+    Some(value) => json_to_wire_string(value)
     None => None
   }
 }
@@ -69,7 +86,7 @@ pub fn FieldMap::contains(self : FieldMap, key : String) -> Bool {
 
 ///|
 pub fn FieldMap::each(self : FieldMap, f : (String, String) -> Unit) -> Unit {
-  self.values.each(fn(k, v) { f(k, json_to_wire_string(v)) })
+  self.values.each(fn(k, v) { f(k, json_to_display_string(v)) })
 }
 
 ///|
@@ -80,7 +97,7 @@ pub fn FieldMap::each_json(self : FieldMap, f : (String, Json) -> Unit) -> Unit 
 ///|
 pub fn FieldMap::to_map(self : FieldMap) -> Map[String, String] {
   let converted : Map[String, String] = Map([])
-  self.values.each(fn(k, v) { converted.set(k, json_to_wire_string(v)) })
+  self.values.each(fn(k, v) { converted.set(k, json_to_display_string(v)) })
   converted
 }
 

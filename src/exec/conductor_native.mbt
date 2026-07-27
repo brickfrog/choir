@@ -1189,14 +1189,10 @@ fn native_conductor_policy_change(
     "pause" => Ok(@workflow.GoalPolicyChange::GoalPolicyPause)
     "resume" => Ok(@workflow.GoalPolicyChange::GoalPolicyResume)
     "set_concurrency" => {
-      let maximum = match request.args.get_int("maximum_parallel_parts") {
-        Some(value) => value
-        None =>
-          match request.args.get("maximum_parallel_parts") {
-            Some(raw) => @string.parse_int(raw) catch { _ => 0 }
-            None => 0
-          }
-      }
+      // No string fallback: a concurrency that arrived as text was already a
+      // malformed request, and re-parsing it let a bad argument through as a
+      // number instead of failing validation.
+      let maximum = request.args.get_int("maximum_parallel_parts").unwrap_or(0)
       if maximum <= 0 {
         Err(
           @types.ChoirError::validation_error(

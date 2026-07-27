@@ -293,7 +293,7 @@ async fn run_codex_live_cancellation_case(
     },
   )
   let error = match result {
-    Err(value) if value.to_wire_string() == "canceled" => value
+    Err(value) if value.is_canceled() => value
     Err(value) => return Err(value)
     Ok(_) =>
       return Err(
@@ -702,7 +702,7 @@ async fn run_claude_live_cancellation_case(
     },
   )
   let error = match result {
-    Err(value) if value.to_wire_string() == "canceled" => value
+    Err(value) if value.is_canceled() => value
     Err(value) => return Err(value)
     Ok(_) =>
       return Err(
@@ -1218,7 +1218,7 @@ async fn run_claude_capability_death() -> Int {
     }
   }
   @async.sleep(200)
-  let passed = error.to_wire_string() == "validation_error" &&
+  let passed = error.is_validation_error() &&
     error.message().contains("declared MCP tool call failed") &&
     @sys.read_file(tool_started) == "started\n" &&
     !@sys.path_entry_exists(sterile_root + "/provider.pid") &&
@@ -1683,11 +1683,11 @@ async fn run_codex_live_driver_at(
       if capability_death_probe &&
         (
           (
-            error.to_wire_string() == "validation_error" &&
+            error.is_validation_error() &&
             error.message().contains("every declared MCP tool call failed")
           ) ||
           (
-            error.to_wire_string() == "transport_error" &&
+            error.is_transport_error() &&
             error
             .message()
             .contains("required MCP servers failed to initialize") &&
