@@ -43,6 +43,22 @@ pub fn initialize_state_store(
 }
 
 ///|
+/// Drop any pooled connection to this store.
+///
+/// Required before replacing a store file in place: a pooled connection would
+/// still refer to the unlinked inode, so everything afterwards would read and
+/// write a file nothing else can see.
+pub fn forget_state_store(store : @storage.SqliteStateStore) -> Unit {
+  match validate_store_path(store.path) {
+    Ok(_) => {
+      let (path, path_len) = exec_string_to_null_terminated_bytes(store.path)
+      ignore(state_store_forget_ffi(path, path_len))
+    }
+    Err(_) => ()
+  }
+}
+
+///|
 /// What generation the store records for itself.
 ///
 /// Three answers, deliberately distinguishable, because they call for opposite
@@ -338,6 +354,22 @@ pub fn read_state_record(
 }
 
 ///|
+/// What the store returns when the rows did not fit the buffer it was given.
+/// Distinct from an ordinary failure so the caller can retry larger rather
+/// than report a listing error for a store that is merely bigger than
+/// expected.
+fn state_store_list_overflow() -> Int {
+  -2
+}
+
+///|
+/// The largest listing Choir will assemble in one call. A store past this is a
+/// real problem to report, not one to keep allocating against.
+fn maximum_state_listing_bytes() -> Int {
+  64 * 1024 * 1024
+}
+
+///|
 pub fn list_state_records(
   store : @storage.SqliteStateStore,
   prefix : String,
@@ -352,15 +384,26 @@ pub fn list_state_records(
   }
   let (path, path_len) = exec_string_to_null_terminated_bytes(store.path)
   let (prefix_bytes, prefix_len) = exec_string_to_null_terminated_bytes(prefix)
-  let output = Bytes::new(4 * 1024 * 1024)
-  let result = state_store_list_state_ffi(
-    path,
-    path_len,
-    prefix_bytes,
-    prefix_len,
-    output,
-    output.length(),
+  // Start small and grow only when the store says the rows did not fit. This
+  // ran once per Goal tick and allocated 4 MiB every time regardless of how
+  // little came back — and 4 MiB was also a silent ceiling, because an
+  // overflow reported as an ordinary listing failure.
+  let mut capacity = 64 * 1024
+  let mut output = Bytes::new(capacity)
+  let mut result = state_store_list_state_ffi(
+    path, path_len, prefix_bytes, prefix_len, output, capacity,
   )
+  while result == state_store_list_overflow() &&
+        capacity < maximum_state_listing_bytes() {
+    capacity = capacity * 4
+    if capacity > maximum_state_listing_bytes() {
+      capacity = maximum_state_listing_bytes()
+    }
+    output = Bytes::new(capacity)
+    result = state_store_list_state_ffi(
+      path, path_len, prefix_bytes, prefix_len, output, capacity,
+    )
+  }
   if result < 0 {
     return Err(state_store_failure("record listing"))
   }

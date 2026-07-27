@@ -6152,6 +6152,10 @@ pub async fn prepare_native_goal_control_state(
         Ok(value) => value
         Err(error) => return Err(error)
       }
+      // The store is about to be replaced at the same path. A pooled
+      // connection would survive the unlink and keep serving the deleted
+      // inode, so it is dropped before the file goes.
+      forget_state_store({ path: workflow_store_path })
       if !@sys.rm_rf(control_root) {
         return Err(native_goal_execution_error("control state reset failed"))
       }

@@ -208,6 +208,10 @@ fn exec_string_to_null_terminated_bytes(s : String) -> (Bytes, Int) {
 extern "C" fn state_store_init_ffi(path : Bytes, path_len : Int) -> Int = "choir_state_store_init"
 
 ///|
+#borrow(path)
+extern "C" fn state_store_forget_ffi(path : Bytes, path_len : Int) -> Int = "choir_state_store_forget"
+
+///|
 #borrow(path, buf)
 extern "C" fn state_store_read_generation_ffi(
   path : Bytes,

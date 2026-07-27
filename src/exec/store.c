@@ -113,6 +113,12 @@ static int choir_sqlite_exec(sqlite3 *db, const char *sql) {
 typedef struct {
     char *path;
     sqlite3 *db;
+    /* Whether the schema batch has already run on this connection. Connections
+     * are pooled, so re-executing PRAGMAs and CREATE TABLE IF NOT EXISTS on an
+     * already-prepared one is pure per-tick work. A connection evicted from
+     * the pool loses the flag with the slot, which is correct: the replacement
+     * genuinely has not been prepared. */
+    int schema_ready;
 } choir_sqlite_cached;
 
 static choir_sqlite_cached choir_sqlite_cache[CHOIR_SQLITE_CACHE_SLOTS];
@@ -170,15 +176,78 @@ static int choir_sqlite_acquire(const char *path, int path_len, sqlite3 **db) {
     }
     slot->path = copy;
     slot->db = opened;
+    /* A replaced slot must not inherit the evicted connection's readiness: this
+     * connection has had nothing applied to it. */
+    slot->schema_ready = 0;
     pthread_mutex_unlock(&choir_sqlite_cache_mutex);
     *db = opened;
     return 0;
+}
+
+/* Drop any pooled connection for this path.
+ *
+ * The control-state reset deletes and recreates workflow.db at the same path
+ * inside one daemon process. A pooled connection would still refer to the
+ * unlinked inode, so everything after the reset would read and write a file
+ * nothing else can see. Callers that replace a store must forget it first. */
+int choir_state_store_forget(const char *path, int path_len) {
+    char *copy = choir_store_copy_string(path, path_len);
+    if (copy == NULL) {
+        return -1;
+    }
+    pthread_mutex_lock(&choir_sqlite_cache_mutex);
+    for (int i = 0; i < CHOIR_SQLITE_CACHE_SLOTS; ++i) {
+        if (choir_sqlite_cache[i].path != NULL &&
+            strcmp(choir_sqlite_cache[i].path, copy) == 0) {
+            if (choir_sqlite.close != NULL) {
+                choir_sqlite.close(choir_sqlite_cache[i].db);
+            }
+            free(choir_sqlite_cache[i].path);
+            choir_sqlite_cache[i].path = NULL;
+            choir_sqlite_cache[i].db = NULL;
+            choir_sqlite_cache[i].schema_ready = 0;
+        }
+    }
+    pthread_mutex_unlock(&choir_sqlite_cache_mutex);
+    free(copy);
+    return 0;
+}
+
+/* Whether this connection has already had the schema applied. */
+static int choir_sqlite_schema_ready(sqlite3 *db) {
+    int ready = 0;
+    pthread_mutex_lock(&choir_sqlite_cache_mutex);
+    for (int i = 0; i < CHOIR_SQLITE_CACHE_SLOTS; ++i) {
+        if (choir_sqlite_cache[i].db == db) {
+            ready = choir_sqlite_cache[i].schema_ready;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&choir_sqlite_cache_mutex);
+    return ready;
+}
+
+static void choir_sqlite_mark_schema_ready(sqlite3 *db) {
+    pthread_mutex_lock(&choir_sqlite_cache_mutex);
+    for (int i = 0; i < CHOIR_SQLITE_CACHE_SLOTS; ++i) {
+        if (choir_sqlite_cache[i].db == db) {
+            choir_sqlite_cache[i].schema_ready = 1;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&choir_sqlite_cache_mutex);
 }
 
 int choir_state_store_init(const char *path, int path_len) {
     sqlite3 *db = NULL;
     if (choir_sqlite_acquire(path, path_len, &db) != 0) {
         return -1;
+    }
+    /* The Goal tick calls this every second. The statements are idempotent, so
+     * repeating them is harmless but not free: each one is parsed and run
+     * against the pooled connection. */
+    if (choir_sqlite_schema_ready(db)) {
+        return 0;
     }
     const char *schema =
         "PRAGMA journal_mode=WAL;"
@@ -205,7 +274,11 @@ int choir_state_store_init(const char *path, int path_len) {
         " id INTEGER PRIMARY KEY CHECK(id = 1),"
         " generation TEXT NOT NULL"
         ") STRICT;";
-    return choir_sqlite_exec(db, schema);
+    if (choir_sqlite_exec(db, schema) != 0) {
+        return -1;
+    }
+    choir_sqlite_mark_schema_ready(db);
+    return 0;
 }
 
 /* Read the recorded schema generation. Returns the byte count written to buf,
@@ -260,6 +333,25 @@ int choir_state_store_read_generation(
     }
     choir_sqlite.finalize(stmt);
     return written;
+}
+
+/* Smallest string strictly greater than every string starting with `prefix`,
+ * for a half-open range scan. Increments the last byte that can be
+ * incremented and drops the trailing 0xFF run; returns NULL when the prefix is
+ * entirely 0xFF, which has no upper bound and must scan to the end. */
+static char *choir_prefix_upper_bound(const char *prefix) {
+    if (prefix == NULL) return NULL;
+    size_t length = strlen(prefix);
+    while (length > 0 && (unsigned char)prefix[length - 1] == 0xFF) {
+        length--;
+    }
+    if (length == 0) return NULL;
+    char *upper = (char *)malloc(length + 1);
+    if (upper == NULL) return NULL;
+    memcpy(upper, prefix, length);
+    upper[length - 1] = (char)((unsigned char)upper[length - 1] + 1);
+    upper[length] = '\0';
+    return upper;
 }
 
 static int choir_sqlite_bind_text(sqlite3_stmt *stmt, int index, const char *value) {
@@ -735,13 +827,24 @@ int choir_state_store_list_state(
         return -1;
     }
     sqlite3_stmt *stmt = NULL;
+    /* A half-open key range rather than substr(record_key,1,n)=prefix. The
+     * function form is not sargable: SQLite has to evaluate it per row, so it
+     * SCANs the primary key index and the cost grows with total Goal history
+     * rather than with the number of matches. The range form SEARCHes. */
+    char *upper = choir_prefix_upper_bound(prefix);
     const char *sql =
-        "SELECT record_key, version, fencing_epoch, value_digest "
-        "FROM state_records WHERE substr(record_key, 1, length(?1)) = ?1 "
-        "ORDER BY record_key";
+        upper != NULL
+            ? "SELECT record_key, version, fencing_epoch, value_digest "
+              "FROM state_records WHERE record_key >= ?1 AND record_key < ?2 "
+              "ORDER BY record_key"
+            : "SELECT record_key, version, fencing_epoch, value_digest "
+              "FROM state_records WHERE record_key >= ?1 "
+              "ORDER BY record_key";
     if (choir_sqlite.prepare_statement(db, sql, -1, &stmt, NULL) != SQLITE_OK ||
-        choir_sqlite_bind_text(stmt, 1, prefix) != 0) {
+        choir_sqlite_bind_text(stmt, 1, prefix) != 0 ||
+        (upper != NULL && choir_sqlite_bind_text(stmt, 2, upper) != 0)) {
         if (stmt != NULL) choir_sqlite.finalize(stmt);
+        free(upper);
         free(prefix);
         return -1;
     }
@@ -777,6 +880,7 @@ int choir_state_store_list_state(
     }
     if (result == 0) result = used;
     choir_sqlite.finalize(stmt);
+    free(upper);
     free(prefix);
     return result;
 }

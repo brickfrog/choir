@@ -580,3 +580,87 @@ test "the schema generation round-trips inside the store" {
   ignore(@sys.rm_rf(path + "-shm"))
   ignore(@sys.rm_rf(path + "-wal"))
 }
+
+///|
+/// The prefix filter is a half-open key range rather than a per-row function,
+/// so it has to select exactly what the function form did — including not
+/// matching a sibling prefix one byte higher.
+test "a prefix listing selects its own keys and grows past one buffer" {
+  let path = storage_test_path("sqlite-listing.db")
+  ignore(@sys.rm_rf(path))
+  ignore(@sys.rm_rf(path + "-shm"))
+  ignore(@sys.rm_rf(path + "-wal"))
+  let store : @storage.SqliteStateStore = { path, }
+  guard initialize_state_store(store) is Ok(_) else {
+    fail("initialize state store")
+  }
+  let write = fn(key : String) {
+    let request = initial_state_request("listed:" + key, None)
+    ignore(
+      commit_state_transaction(store, {
+        ..request,
+        state: { ..request.state, key: @storage.StateRecordKey(key) },
+        outbox: {
+          ..request.outbox,
+          semantic_key: @storage.SemanticEventKey("listed:" + key),
+        },
+      }).unwrap(),
+    )
+  }
+  // Enough rows that the listing cannot fit the initial buffer, so the growth
+  // path is exercised rather than merely present.
+  for index = 0; index < 900; index = index + 1 {
+    write("goal-run-" + index.to_string().pad_start(6, '0'))
+  }
+  // The range's upper bound is the prefix with its last byte incremented, and
+  // '-' increments to '.', which is itself a legal key character. A key just
+  // above the bound must not be swept in.
+  write("goal-run.sibling")
+  write("goal-run")
+  write("other:thing")
+  let listed = list_state_records(store, "goal-run-").unwrap()
+  assert_eq(listed.length(), 900)
+  for record in listed {
+    assert_true(
+      @storage.state_record_key_text(record.key).has_prefix("goal-run-"),
+    )
+  }
+  // Ordering is still by key, which the runner relies on for determinism.
+  assert_eq(@storage.state_record_key_text(listed[0].key), "goal-run-000000")
+  assert_eq(@storage.state_record_key_text(listed[899].key), "goal-run-000899")
+  ignore(@sys.rm_rf(path))
+  ignore(@sys.rm_rf(path + "-shm"))
+  ignore(@sys.rm_rf(path + "-wal"))
+}
+
+///|
+/// Connections are pooled and the schema is applied once per connection, so a
+/// store replaced at the same path has to drop its pooled connection first.
+/// Otherwise the surviving connection serves the unlinked inode and the
+/// replacement is never initialized.
+test "a store replaced in place is reinitialized, not served from the old file" {
+  let path = storage_test_path("sqlite-replaced.db")
+  ignore(@sys.rm_rf(path))
+  let store : @storage.SqliteStateStore = { path, }
+  guard initialize_state_store(store) is Ok(_) else { fail("initialize") }
+  guard write_state_store_generation(store, "before") is Ok(_) else {
+    fail("write generation")
+  }
+  assert_eq(read_state_store_generation(store).unwrap(), Some("before"))
+  // Replace the file exactly as the control-state reset does.
+  forget_state_store(store)
+  ignore(@sys.rm_rf(path))
+  ignore(@sys.rm_rf(path + "-shm"))
+  ignore(@sys.rm_rf(path + "-wal"))
+  guard initialize_state_store(store) is Ok(_) else { fail("reinitialize") }
+  // A fresh store, not the old one still being served through a stale handle.
+  assert_eq(read_state_store_generation(store).unwrap(), None)
+  let request = initial_state_request("replaced", None)
+  assert_eq(
+    commit_state_transaction(store, request).unwrap(),
+    @storage.StateTransactionOutcome::StateTransactionCommitted,
+  )
+  ignore(@sys.rm_rf(path))
+  ignore(@sys.rm_rf(path + "-shm"))
+  ignore(@sys.rm_rf(path + "-wal"))
+}
