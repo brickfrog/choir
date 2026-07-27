@@ -34,26 +34,6 @@ priv struct NativeOrphanedGoalSourceClaim {
 }
 
 ///|
-/// The schema identity this build can decode.
-///
-/// Still declared rather than derived. Deriving it from the SQL schema would be
-/// actively worse than declaring it: that DDL is generic over record key,
-/// version, and value digest, so it does not change when the durable value
-/// shapes do — which is exactly what every past bump tracked. A generation that
-/// cannot change when the thing it identifies changes never detects an
-/// incompatible store at all.
-///
-/// Deriving it properly means digesting the durable value shapes, which needs
-/// an exhaustive canonical instance of each stored record so the compiler
-/// forces the digest to move when a field is added. That is the remaining work;
-/// what has changed is that forgetting to bump this is no longer catastrophic,
-/// because the generation now lives inside the store and its absence adopts
-/// rather than destroys.
-fn native_goal_control_state_generation() -> String {
-  "choir-control-state-v8"
-}
-
-///|
 priv struct NativeGoalPartRuntime {
   snapshot : @workflow.PartWorkflowSnapshot
   runtime : NativePartEffectRuntime
@@ -6109,7 +6089,9 @@ pub async fn prepare_native_goal_control_state(
 ) -> Result[NativeGoalControlStatePreparation, @types.ChoirError] {
   let control_root = project_dir + "/.choir/state/control"
   let workflow_store_path = control_root + "/workflow.db"
-  let generation = native_goal_control_state_generation()
+  // Derived from the durable value shapes themselves, so it moves exactly when
+  // what this build can decode moves. exec neither declares nor bumps it.
+  let generation = @workflow.durable_value_shape_generation()
   match
     @storage.decide_control_state(
       observe_native_goal_control_state(control_root),

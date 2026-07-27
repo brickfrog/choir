@@ -11,7 +11,9 @@
 ///
 /// The decision is pure and the reason is explicit, so the destructive branch
 /// is reviewable on its own terms rather than inferred from filesystem checks
-/// scattered through an effect path.
+/// scattered through an effect path. Neither wrong remains: the expected
+/// generation is now derived from the durable value shapes by
+/// `@workflow.durable_value_shape_generation`, and the store records its own.
 
 ///|
 /// What Choir observed about the control store before deciding anything.

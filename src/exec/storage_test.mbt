@@ -551,22 +551,22 @@ test "the schema generation round-trips inside the store" {
   }
   // Freshly created: readable, and recording nothing yet.
   assert_true(read_state_store_generation(store) is Ok(None))
-  guard write_state_store_generation(store, "choir-control-state-v8") is Ok(_) else {
+  guard write_state_store_generation(store, "choir-durable-shape-aaaa") is Ok(_) else {
     fail("write generation")
   }
   let restarted : @storage.SqliteStateStore = { path, }
   assert_eq(
     read_state_store_generation(restarted).unwrap(),
-    Some("choir-control-state-v8"),
+    Some("choir-durable-shape-aaaa"),
   )
   // Recording it again replaces rather than duplicating, so a restart that
   // rewrites the same value stays readable.
-  guard write_state_store_generation(store, "choir-control-state-v9") is Ok(_) else {
+  guard write_state_store_generation(store, "choir-durable-shape-bbbb") is Ok(_) else {
     fail("rewrite generation")
   }
   assert_eq(
     read_state_store_generation(restarted).unwrap(),
-    Some("choir-control-state-v9"),
+    Some("choir-durable-shape-bbbb"),
   )
   // A file that is not a database at all must read as unreadable, not as a
   // store that simply records nothing. Adopting a corrupt store would keep
