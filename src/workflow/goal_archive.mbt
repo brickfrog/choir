@@ -9,9 +9,9 @@
 /// Goal *is* survives an archive untouched: its durable execution record and
 /// every other permanently adopted artifact, the branch holding the commits it
 /// produced, and any content something else still retains. What archiving
-/// releases is the durable storage only this Goal could ever read again — the
-/// idempotency witness refs under namespaces derived from its own id, and
-/// content whose every recorded retention has expired.
+/// releases is the durable storage only this Goal could ever read again — its
+/// idempotency witness refs, and content whose every recorded retention has
+/// expired.
 ///
 /// The Goal's sandbox runtime root is deliberately not in that set. It is
 /// removed at the Goal's own terminal boundary and again by the daemon's
@@ -49,15 +49,52 @@ pub(all) struct GoalArchiveSubject {
   /// The branch holding this Goal's commits. Reported as retained, never
   /// released: the commits are the work the Goal was run to produce.
   goal_ref : GitRefName
+  /// The per-Part integration witness refs this Goal's own durable records
+  /// name. They are digests with no Goal in the name, so unlike the other two
+  /// namespaces they cannot be recognized by looking at a ref; they are read
+  /// out of the Goal's Parts instead.
+  part_witness_refs : Array[GitRefName]
 } derive(Debug, Eq)
 
 ///|
-pub fn goal_archive_subject(record : GoalExecutionRecord) -> GoalArchiveSubject {
+/// Read the archive subject out of a Goal and its Parts.
+///
+/// The Parts are needed only for the witness refs. A snapshot naming a
+/// different Goal contributes nothing: the whole safety of releasing a ref
+/// whose name carries no Goal is that the name came from this Goal's own
+/// record.
+pub fn goal_archive_subject(
+  record : GoalExecutionRecord,
+  parts : Array[PartWorkflowSnapshot],
+) -> GoalArchiveSubject {
+  let part_witness_refs : Array[GitRefName] = []
+  let note = fn(reference : String) {
+    let named = GitRefName(reference)
+    if reference != "" && !part_witness_refs.contains(named) {
+      part_witness_refs.push(named)
+    }
+  }
+  for snapshot in parts {
+    if snapshot.goal.id != record.goal.id {
+      continue
+    }
+    // Both, because a Goal canceled mid-integration has an intent whose ref may
+    // exist and no receipt naming it.
+    match snapshot.integration_intent {
+      Some(intent) => note(intent.git_witness_ref)
+      None => ()
+    }
+    match snapshot.integration_receipt {
+      Some(receipt) => note(receipt.witness_ref)
+      None => ()
+    }
+  }
   {
     goal_id: record.goal.id,
     state: record.state,
     pause: record.pause,
     goal_ref: record.goal_ref,
+    part_witness_refs,
   }
 }
 
@@ -79,7 +116,8 @@ pub(all) struct GoalArchivePlan {
   goal_id : @control.GoalId
   /// The terminal state being archived.
   state : GoalExecutionState
-  /// Idempotency witness refs under this Goal's own namespaces.
+  /// This Goal's idempotency witness refs: the ones under namespaces derived
+  /// from its id, and the per-Part integration witnesses its own Parts named.
   release_refs : Array[GitRefName]
   /// Digests reachable from this Goal whose every retention has expired.
   release_artifacts : Array[@control.Digest]
@@ -113,19 +151,26 @@ fn goal_seal_witness_ref_prefix(goal_id : @control.GoalId) -> String {
 }
 
 ///|
-/// Whether one observed ref is a witness under a namespace only this Goal can
-/// name.
+/// Whether one observed ref is a witness only this Goal can have named.
 ///
-/// Both namespaces are digests of this Goal's own id, so every other Goal's
-/// witnesses sit under `refs/choir/goals/` too and none of them match. That is
-/// the case worth guarding: the host enumerates the whole namespace, so an
-/// archive is handed every live Goal's witness on every run.
+/// Two of the three cases are namespaces digested from this Goal's own id, so
+/// every other Goal's witnesses sit under `refs/choir/goals/` too and none of
+/// them match. That is the case worth guarding: the host enumerates the whole
+/// namespace, so an archive is handed every live Goal's witness on every run.
+///
+/// The third is the per-Part integration witness under `refs/choir/witness/`,
+/// whose name is a digest with no Goal in it. Nothing about such a ref can be
+/// read off its name, so it is not recognized — it is matched against the exact
+/// refs this Goal's own Parts recorded. The Goal id is in the digested
+/// preimage, so no other Goal's integration can produce one of these names, and
+/// the name was taken from a Part whose Goal is this one.
 fn goal_archive_ref_is_releasable(
-  goal_id : @control.GoalId,
+  subject : GoalArchiveSubject,
   reference : GitRefName,
 ) -> Bool {
-  reference.0.has_prefix(goal_branch_witness_ref_prefix(goal_id)) ||
-  reference.0.has_prefix(goal_seal_witness_ref_prefix(goal_id))
+  reference.0.has_prefix(goal_branch_witness_ref_prefix(subject.goal_id)) ||
+  reference.0.has_prefix(goal_seal_witness_ref_prefix(subject.goal_id)) ||
+  subject.part_witness_refs.contains(reference)
 }
 
 ///|
@@ -163,7 +208,7 @@ pub fn plan_goal_archive(
   let release_refs : Array[GitRefName] = []
   let retain_refs : Array[GitRefName] = []
   for reference in observation.observed_refs {
-    if goal_archive_ref_is_releasable(subject.goal_id, reference) {
+    if goal_archive_ref_is_releasable(subject, reference) {
       release_refs.push(reference)
     } else if reference == subject.goal_ref {
       retain_refs.push(reference)

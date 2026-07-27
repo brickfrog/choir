@@ -6080,30 +6080,59 @@ fn observe_native_goal_control_state(
 ) -> @storage.ControlStateObservation {
   let workflow_store_path = control_root + "/workflow.db"
   let store_present = @sys.path_entry_exists(workflow_store_path)
-  if !store_present {
-    return {
-      store_present: false,
-      store_readable: false,
-      recorded_generation: None,
-      // Anything left under the root with no store is an unfinished reset.
-      residue_present: @sys.list_dir_all(control_root).length() > 0,
-    }
+  let unreadable : @storage.ControlStateObservation = {
+    store_present,
+    store_readable: false,
+    recorded_generation: None,
+    recorded_ddl_version: @storage.control_store_unstamped_ddl_version,
+    // Anything left under the root with no store is an unfinished reset.
+    residue_present: !store_present &&
+    @sys.list_dir_all(control_root).length() > 0,
   }
-  match read_state_store_generation({ path: workflow_store_path }) {
-    Ok(recorded_generation) =>
+  if !store_present {
+    return unreadable
+  }
+  let store : @storage.SqliteStateStore = { path: workflow_store_path }
+  // Both reads fail on a store that is not a database at all, and either one
+  // failing is the same answer: nothing recorded in it can be trusted.
+  match
+    (read_state_store_generation(store), read_state_store_ddl_version(store)) {
+    (Ok(recorded_generation), Ok(recorded_ddl_version)) =>
       {
         store_present: true,
         store_readable: true,
         recorded_generation,
+        recorded_ddl_version,
         residue_present: false,
       }
-    Err(_) =>
-      {
-        store_present: true,
-        store_readable: false,
-        recorded_generation: None,
-        residue_present: false,
-      }
+    _ => unreadable
+  }
+}
+
+///|
+/// What the control store has to say about itself for this build to use it.
+///
+/// Two independent halves. The generation is derived from the durable value
+/// shapes, so it moves when what this build can decode moves. The DDL version
+/// is declared beside the `CREATE TABLE` statements, because no digest over
+/// values can see that a table is missing a column.
+fn native_goal_control_store_schema() -> @storage.ControlStoreSchema {
+  {
+    generation: @workflow.durable_value_shape_generation(),
+    ddl_version: state_store_ddl_version(),
+  }
+}
+
+///|
+/// Record what the store now answers to. Both halves are written together
+/// because a plan that adopts a store adopts it whole.
+fn record_native_goal_control_store_schema(
+  store : @storage.SqliteStateStore,
+  schema : @storage.ControlStoreSchema,
+) -> Result[Unit, @types.ChoirError] {
+  match write_state_store_generation(store, schema.generation) {
+    Ok(_) => write_state_store_ddl_version(store, schema.ddl_version)
+    Err(error) => Err(error)
   }
 }
 
@@ -6183,25 +6212,23 @@ pub async fn prepare_native_goal_control_state(
 ) -> Result[NativeGoalControlStatePreparation, @types.ChoirError] {
   let control_root = project_dir + "/.choir/state/control"
   let workflow_store_path = control_root + "/workflow.db"
-  // Derived from the durable value shapes themselves, so it moves exactly when
-  // what this build can decode moves. exec neither declares nor bumps it.
-  let generation = @workflow.durable_value_shape_generation()
+  let schema = native_goal_control_store_schema()
   let plan = match
     @storage.decide_control_state(
       observe_native_goal_control_state(control_root),
-      generation,
+      schema,
     ) {
     @storage.ControlStateDecision::ControlStatePlanned(planned) => planned
     // The generations disagree, which settles nothing on its own. Read the
     // records and let what they decode to decide.
     @storage.ControlStateDecision::ControlStateProveRecordsDecodable(
       recorded,
-      expected
+      _
     ) =>
       match probe_native_durable_record_decoding(control_root) {
         Ok(undecodable) =>
           @storage.decide_control_state_from_records(
-            recorded, expected, undecodable,
+            recorded, schema, undecodable,
           )
         Err(error) => return Err(error)
       }
@@ -6210,15 +6237,18 @@ pub async fn prepare_native_goal_control_state(
     @storage.ControlStatePlan::ControlStateCurrent =>
       Ok(NativeGoalControlStateCurrent)
     // A store whose records still decode is adopted, not destroyed. Recording
-    // the generation it now answers to is the whole of the migration.
+    // what it now answers to is the whole of the migration.
     @storage.ControlStatePlan::ControlStateMigrate(_, target) =>
       match
-        write_state_store_generation({ path: workflow_store_path }, target) {
+        record_native_goal_control_store_schema(
+          { path: workflow_store_path },
+          target,
+        ) {
         Ok(_) => Ok(NativeGoalControlStateCurrent)
         Err(error) => Err(error)
       }
     @storage.ControlStatePlan::ControlStateInitialize =>
-      match native_goal_control_state_create(control_root, generation) {
+      match native_goal_control_state_create(control_root, schema) {
         Ok(_) => Ok(NativeGoalControlStateInitialized)
         Err(error) => Err(error)
       }
@@ -6243,7 +6273,7 @@ pub async fn prepare_native_goal_control_state(
       if !@sys.rm_rf(control_root) {
         return Err(native_goal_execution_error("control state reset failed"))
       }
-      match native_goal_control_state_create(control_root, generation) {
+      match native_goal_control_state_create(control_root, schema) {
         Ok(_) => Ok(NativeGoalControlStateReset(report))
         Err(error) => Err(error)
       }
@@ -6257,7 +6287,7 @@ pub async fn prepare_native_goal_control_state(
 /// separately is not possible.
 fn native_goal_control_state_create(
   control_root : String,
-  generation : String,
+  schema : @storage.ControlStoreSchema,
 ) -> Result[Unit, @types.ChoirError] {
   if !@sys.create_dir_all(control_root) {
     return Err(native_goal_execution_error("control state reset failed"))
@@ -6269,7 +6299,7 @@ fn native_goal_control_state_create(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  write_state_store_generation(store, generation)
+  record_native_goal_control_store_schema(store, schema)
 }
 
 ///|
@@ -6379,8 +6409,8 @@ pub async fn purge_native_goal_resources(
 ///|
 /// What archiving one Goal did, or — for a dry run or a refusal — would have
 /// done. The counts are what the host actually observed removing, not what the
-/// plan asked for: a witness ref another process already deleted is not
-/// reported as removed here.
+/// plan asked for: a witness ref another process already deleted, or content an
+/// interrupted earlier run already unlinked, is not reported as removed here.
 pub(all) struct NativeGoalArchiveReport {
   decision : @workflow.GoalArchiveDecision
   /// False for every refusal and every dry run: nothing was changed.
@@ -6403,9 +6433,14 @@ async fn list_native_goal_owned_git_refs(
     Ok(value) => value
     Err(error) => return Err(error)
   }
+  // `refs/choir/witness/` holds the per-Part integration witnesses, whose names
+  // are digests with no Goal in them. Listing them hands the planner every
+  // Goal's; only the ones the archived Goal's own Parts recorded come back as
+  // releasable.
   let captured = match
     capture_native_goal_git(canonical_root, [
       "for-each-ref", "--format=%(refname)", "refs/heads/choir/goals/", "refs/choir/goals/",
+      "refs/choir/witness/",
     ]) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -6464,12 +6499,23 @@ async fn delete_native_goal_archived_git_refs(
 /// The Goal's sandbox runtime root is not touched. `cleanup_native_goal_runtime`
 /// already removes it at the Goal's terminal boundary, and
 /// `reclaim_native_goal_runtime_roots` removes whatever a crash left behind on
-/// every daemon start. Both of those also run `boxlite rm --all` against a
-/// BoxLite home keyed on the repository, not on the Goal — safe where they run,
-/// because a terminal boundary owns its own boxes and a daemon start has no
-/// live ones. An operator-invoked archive has neither guarantee: it runs at an
-/// arbitrary moment with other Goals of the same repository running, so
-/// releasing that shared home here would destroy their boxes.
+/// every daemon start.
+///
+/// Both of those also run `boxlite rm --all --force` against a BoxLite home
+/// keyed on the repository (`native_goal_boxlite_home_at` digests the
+/// repository id and nothing else), and `--all` is scoped to that home: every
+/// box the repository has, whichever Goal made it. The daemon-start one is
+/// sound — it runs under the single-instance lock before the first tick, so no
+/// Goal of this daemon has a box yet. The terminal-boundary one is not. Ticks
+/// are serial, so two Goals never run at the same instant, but boxes outlive a
+/// tick on purpose: `NativeGoalRuntimeCurrent` exists so the next tick reuses
+/// them. So Goal A finishing destroys the boxes Goal B is between ticks on, and
+/// B's runtime root still holds the sandbox manifests that say to reuse them.
+/// That is a pre-existing exposure on those two paths and is not addressed
+/// here.
+///
+/// What this function does about it is refuse to add a third: an archive is
+/// operator-invoked at an arbitrary moment, so it releases no boxes at all.
 ///
 /// Content is collected last and the ledger is rewritten after the bytes are
 /// gone, so an interrupted archive leaves entries naming absent content rather
@@ -6510,7 +6556,19 @@ pub async fn archive_native_goal(
       terminal_goal_ids.push(stored.record.goal.id)
     }
     if stored.record.goal.id == goal_id {
-      found = Some(@workflow.goal_archive_subject(stored.record))
+      // The Parts are read for their integration witness refs, which are
+      // digests no ref listing can attribute to a Goal. A Part whose snapshot
+      // is gone contributes nothing rather than failing the archive: the
+      // consequence is a witness ref left behind, which is what happens today.
+      let parts : Array[@workflow.PartWorkflowSnapshot] = []
+      for workflow_id in stored.record.part_workflow_ids {
+        match @workflow.load_part_snapshot(repository, adapters, workflow_id) {
+          Ok(Some(part)) => parts.push(part.snapshot)
+          Ok(None) => ()
+          Err(error) => return Err(error)
+        }
+      }
+      found = Some(@workflow.goal_archive_subject(stored.record, parts))
     }
   }
   let subject = match found {

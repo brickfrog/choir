@@ -25,6 +25,35 @@
 /// without reading anything. Not equal means the question is still open, and
 /// the caller answers it by reading the records: they decode, or they do not,
 /// and only "they do not" authorizes a reset.
+///
+/// The generation answers for the record VALUES only. It says nothing about the
+/// SQL tables those values are stored in, which change independently and whose
+/// failure mode is the opposite: `CREATE TABLE IF NOT EXISTS` finds a table
+/// built by an older DDL, leaves it alone, and every query against a column
+/// that table does not have fails at runtime with no record ever read and no
+/// reset ever reached. Nothing about that is visible in a value digest, so the
+/// DDL carries its own declared version, and the two are compared separately.
+
+///|
+/// What the control store must say about itself for this build to use it as it
+/// stands.
+pub(all) struct ControlStoreSchema {
+  /// Digest of the durable value shapes, derived by
+  /// `@workflow.durable_value_shape_generation`.
+  generation : String
+  /// The version of the SQL DDL that creates the store's tables, declared
+  /// beside those statements and bumped by hand with them. It is not derived
+  /// and cannot be: a digest over the DDL text would move for a reformatting,
+  /// and this comparison authorizes destroying the store.
+  ddl_version : Int
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+/// The DDL version of a store whose tables were created before the version was
+/// stamped at all. Distinct from every real version, and never authority to
+/// destroy: the set of stores that can hold it is exactly the set created by
+/// the DDL this constant was introduced alongside.
+pub let control_store_unstamped_ddl_version : Int = 0
 
 ///|
 /// What Choir observed about the control store before deciding anything.
@@ -37,6 +66,9 @@ pub(all) struct ControlStateObservation {
   /// The schema generation recorded inside the store. Absent means the store
   /// predates recording it, not that it is incompatible.
   recorded_generation : String?
+  /// The DDL version the store's tables were created under, or
+  /// `control_store_unstamped_ddl_version` when they predate the stamp.
+  recorded_ddl_version : Int
   /// Whether anything else remains under the control root. Residue with no
   /// store is the leftovers of a partial reset.
   residue_present : Bool
@@ -51,6 +83,16 @@ pub(all) enum ControlStateResetReason {
   /// The store holds this record and this build cannot decode it. Carries the
   /// generations either side so a log says what moved as well as what broke.
   ControlRecordUndecodable(StateRecordKey, String, String)
+  /// The store's tables were created by a DDL this build has declared it does
+  /// not write SQL against. Carries the recorded and expected versions.
+  ///
+  /// Unlike a moved generation this is authority on its own, and the asymmetry
+  /// is deliberate. A generation is a digest, so "different" is all it can say
+  /// and the records are asked what it meant. A DDL version only moves because
+  /// somebody edited the `CREATE TABLE` statements and said so in the same
+  /// commit, and no probe can recover from it: the records cannot be read to
+  /// settle the question, because reading them is the query that fails.
+  ControlStoreDdlSuperseded(Int, Int)
   /// No store, but the control root is not empty: a previous reset did not
   /// finish, so what remains belongs to no live generation.
   ControlStoreResidue
@@ -64,10 +106,11 @@ pub(all) enum ControlStatePlan {
   ControlStateCurrent
   /// Nothing is there. Create it; there is nothing to destroy.
   ControlStateInitialize
-  /// Usable, but the recorded generation has to be brought up to date. Carries
-  /// what was recorded and what will be, so an adoption is distinguishable
-  /// from a no-op in a log.
-  ControlStateMigrate(String?, String)
+  /// Usable, but what the store records about itself has to be brought up to
+  /// date. Carries the generation that was recorded, if any, and the whole
+  /// schema that will be, so an adoption is distinguishable from a no-op in a
+  /// log.
+  ControlStateMigrate(String?, ControlStoreSchema)
   ControlStateAuthorizedReset(ControlStateResetReason)
 } derive(Debug, Eq, ToJson, FromJson)
 
@@ -85,14 +128,18 @@ pub(all) enum ControlStateDecision {
 ///|
 /// Decide what to do with the control store, as far as observing it allows.
 ///
-/// The ordering matters. Unreadable is checked before the generation, because
-/// a store that cannot be opened has no trustworthy generation to compare.
-/// A store that reads but has recorded no generation is adopted rather than
-/// destroyed: it decodes, and its schema is this one, so the only thing
-/// missing is the note saying so.
+/// The ordering matters. Unreadable is checked before anything recorded,
+/// because a store that cannot be opened has no trustworthy generation or
+/// version to compare. The DDL version is checked before the generation,
+/// because a table without the columns this build queries fails before any
+/// record is read, so the records cannot answer for it.
+///
+/// A store that reads but has recorded no generation, or whose tables predate
+/// the DDL stamp, is adopted rather than destroyed: it decodes, its tables are
+/// the ones this DDL creates, and the only thing missing is the note saying so.
 pub fn decide_control_state(
   observation : ControlStateObservation,
-  expected_generation : String,
+  expected : ControlStoreSchema,
 ) -> ControlStateDecision {
   if !observation.store_present {
     return ControlStatePlanned(
@@ -108,15 +155,33 @@ pub fn decide_control_state(
       ControlStateAuthorizedReset(ControlStoreUnreadable),
     )
   }
+  let ddl_stamped = observation.recorded_ddl_version !=
+    control_store_unstamped_ddl_version
+  if ddl_stamped && observation.recorded_ddl_version != expected.ddl_version {
+    return ControlStatePlanned(
+      ControlStateAuthorizedReset(
+        ControlStoreDdlSuperseded(
+          observation.recorded_ddl_version,
+          expected.ddl_version,
+        ),
+      ),
+    )
+  }
   match observation.recorded_generation {
-    Some(recorded) if recorded == expected_generation =>
+    // Current is the one answer that reads nothing and writes nothing, so it
+    // requires the store to already say everything this build expects. An
+    // unstamped store still has to be stamped, or the DDL version would never
+    // become load-bearing for it.
+    Some(recorded) if recorded == expected.generation && ddl_stamped =>
       ControlStatePlanned(ControlStateCurrent)
+    Some(recorded) if recorded == expected.generation =>
+      ControlStatePlanned(ControlStateMigrate(Some(recorded), expected))
     Some(recorded) =>
-      ControlStateProveRecordsDecodable(recorded, expected_generation)
+      ControlStateProveRecordsDecodable(recorded, expected.generation)
     // A readable store that never recorded its generation is this schema by
     // construction: an incompatible one would not have decoded. Adopting it is
     // what stops a lost marker from discarding healthy state.
-    None => ControlStatePlanned(ControlStateMigrate(None, expected_generation))
+    None => ControlStatePlanned(ControlStateMigrate(None, expected))
   }
 }
 
@@ -139,22 +204,14 @@ pub fn decide_control_state(
 /// durable field is renamed rather than reused deliberately or not at all.
 pub fn decide_control_state_from_records(
   recorded_generation : String,
-  expected_generation : String,
+  expected : ControlStoreSchema,
   undecodable : StateRecordKey?,
 ) -> ControlStatePlan {
   match undecodable {
     Some(key) =>
       ControlStateAuthorizedReset(
-        ControlRecordUndecodable(key, recorded_generation, expected_generation),
+        ControlRecordUndecodable(key, recorded_generation, expected.generation),
       )
-    None => ControlStateMigrate(Some(recorded_generation), expected_generation)
+    None => ControlStateMigrate(Some(recorded_generation), expected)
   }
-}
-
-///|
-/// Whether this plan authorizes destroying durable state. The one question a
-/// reviewer actually needs answered, kept in one place so no caller has to
-/// enumerate the variants and get it subtly wrong.
-pub fn control_state_plan_destroys(plan : ControlStatePlan) -> Bool {
-  plan is ControlStateAuthorizedReset(_)
 }

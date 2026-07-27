@@ -2823,6 +2823,14 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     Ok(decoded) => assert_eq(decoded, published)
     Err(error) => fail(error.message())
   }
+  // A receipted publication is a maximal instance of the record — its one
+  // optional field is populated — so it is the oracle the shape manifest is
+  // checked against. Asserted here rather than in the manifest test because
+  // this is where the workflow produces one.
+  assert_manifest_names_stored_keys(
+    "GoalPublicationRecord",
+    @workflow.goal_publication_record_bytes(published),
+  )
   let drifted = match
     @workflow.authorize_goal_publication(
       publication,
@@ -3419,6 +3427,10 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     Ok(decoded) => assert_eq(decoded, finalization)
     Err(error) => fail(error.message())
   }
+  assert_manifest_names_stored_keys(
+    "GoalFinalizationRecord",
+    @workflow.goal_finalization_record_bytes(finalization),
+  )
   // An open, exact pull request is the deliverable: success authorizes
   // directly from Assured, with no merge observation.
   let succeeded = match
@@ -3580,6 +3592,10 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     Ok(decoded) => assert_eq(decoded, adopted_pull_request)
     Err(error) => fail(error.message())
   }
+  assert_manifest_names_stored_keys(
+    "GoalPullRequestRecord",
+    @workflow.goal_pull_request_record_bytes(adopted_pull_request),
+  )
   let ambiguous_pull_request = match
     @workflow.authorize_goal_pull_request(
       pull_request,
@@ -3729,6 +3745,18 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     Ok(decoded) => assert_eq(decoded, assured)
     Err(error) => fail(error.message())
   }
+  // An audited record has no pending effect and no block reason — a record is
+  // not simultaneously blocked and mid-effect — so the maximal instance is
+  // `assured` carrying the two the same drive produced elsewhere. Still a
+  // workflow product rather than a hand-written literal.
+  assert_manifest_names_stored_keys(
+    "GoalAssuranceRecord",
+    @workflow.goal_assurance_record_bytes({
+      ..assured,
+      pending_effect: planned_effect.pending_effect,
+      blocked_reason: blocked_by_findings.blocked_reason,
+    }),
+  )
   let corrupted = { ..assured, base_commit_oid: @control.GitOid("other-base") }
   assert_true(
     @workflow.decode_goal_assurance_record(

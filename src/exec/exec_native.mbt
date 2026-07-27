@@ -229,6 +229,24 @@ extern "C" fn state_store_write_generation_ffi(
 ) -> Int = "choir_state_store_write_generation"
 
 ///|
+extern "C" fn state_store_ddl_version_ffi() -> Int = "choir_state_store_ddl_version"
+
+///|
+#borrow(path)
+extern "C" fn state_store_read_ddl_version_ffi(
+  path : Bytes,
+  path_len : Int,
+) -> Int = "choir_state_store_read_ddl_version"
+
+///|
+#borrow(path)
+extern "C" fn state_store_write_ddl_version_ffi(
+  path : Bytes,
+  path_len : Int,
+  version : Int,
+) -> Int = "choir_state_store_write_ddl_version"
+
+///|
 #borrow(path)
 extern "C" fn state_store_mint_epoch_ffi(path : Bytes, path_len : Int) -> Int64 = "choir_state_store_mint_epoch"
 

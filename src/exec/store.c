@@ -238,6 +238,49 @@ static void choir_sqlite_mark_schema_ready(sqlite3 *db) {
     pthread_mutex_unlock(&choir_sqlite_cache_mutex);
 }
 
+/* The version of the DDL below.
+ *
+ * Bump this in the same edit that changes any statement in `schema`. It is the
+ * only signal that says the tables on disk were built by a different DDL than
+ * the one this build's SQL is written against, and there is no other: the
+ * durable-value generation digests the record VALUES, which say nothing about
+ * table shape, and `CREATE TABLE IF NOT EXISTS` silently accepts a table whose
+ * columns are not these. Without it, adding a column here leaves every existing
+ * store reporting Current and failing every query at runtime.
+ *
+ * It is stamped into `PRAGMA user_version` when the tables are created, which
+ * is why the stamp lives in this function and not at some later call site: the
+ * DDL and the number describing it are written together or not at all.
+ *
+ * 0 is reserved and means "created before this was stamped at all". It is
+ * adopted rather than reset, because every store that can hold 0 was created by
+ * this exact DDL; from the first adoption on, the number is load-bearing. */
+#define CHOIR_STATE_STORE_DDL_VERSION 1
+#define CHOIR_STRINGIFY_INNER(value) #value
+#define CHOIR_STRINGIFY(value) CHOIR_STRINGIFY_INNER(value)
+
+int choir_state_store_ddl_version(void) {
+    return CHOIR_STATE_STORE_DDL_VERSION;
+}
+
+/* Whether this database holds no schema objects at all, i.e. the tables below
+ * are about to be created rather than found. Returns 1 for empty, 0 for
+ * populated, -1 when the file is not a usable database. */
+static int choir_sqlite_database_empty(sqlite3 *db) {
+    sqlite3_stmt *stmt = NULL;
+    int empty = -1;
+    if (choir_sqlite.prepare_statement(
+            db, "SELECT count(*) FROM sqlite_master", -1, &stmt, NULL
+        ) == SQLITE_OK &&
+        choir_sqlite.step(stmt) == SQLITE_ROW) {
+        empty = choir_sqlite.column_int64(stmt, 0) == 0 ? 1 : 0;
+    }
+    if (stmt != NULL) {
+        choir_sqlite.finalize(stmt);
+    }
+    return empty;
+}
+
 int choir_state_store_init(const char *path, int path_len) {
     sqlite3 *db = NULL;
     if (choir_sqlite_acquire(path, path_len, &db) != 0) {
@@ -248,6 +291,14 @@ int choir_state_store_init(const char *path, int path_len) {
      * against the pooled connection. */
     if (choir_sqlite_schema_ready(db)) {
         return 0;
+    }
+    /* Asked before the schema runs, because afterwards every database looks
+     * populated. Only a database this call creates the tables in may be
+     * stamped; stamping one that already had them would overwrite the very
+     * evidence that its DDL is older than this build's. */
+    int empty = choir_sqlite_database_empty(db);
+    if (empty < 0) {
+        return -1;
     }
     const char *schema =
         "PRAGMA journal_mode=WAL;"
@@ -277,8 +328,76 @@ int choir_state_store_init(const char *path, int path_len) {
     if (choir_sqlite_exec(db, schema) != 0) {
         return -1;
     }
+    if (empty == 1 &&
+        choir_sqlite_exec(
+            db,
+            "PRAGMA user_version = " CHOIR_STRINGIFY(
+                CHOIR_STATE_STORE_DDL_VERSION
+            )
+        ) != 0) {
+        return -1;
+    }
     choir_sqlite_mark_schema_ready(db);
     return 0;
+}
+
+/* Read the DDL version the store's tables were created under. Returns the
+ * recorded version, 0 when the store predates the stamp, or -1 when the file
+ * is not a usable database — the same three-way answer the generation read
+ * gives, and for the same reason: an unreadable store and an older one call for
+ * opposite decisions.
+ *
+ * `user_version` is a signed 32-bit field and sqlite accepts a negative one,
+ * which nothing here can have written. Such a store reads as unreadable rather
+ * than as some version, because a number this build's writer cannot produce is
+ * not evidence about this build's DDL. */
+int choir_state_store_read_ddl_version(const char *path, int path_len) {
+    sqlite3 *db = NULL;
+    sqlite3_stmt *stmt = NULL;
+    int version = -1;
+    if (choir_sqlite_acquire(path, path_len, &db) != 0) {
+        return -1;
+    }
+    /* `PRAGMA user_version` prepares against a file that is not a database at
+     * all and only fails when stepped, so the same sqlite_master probe the
+     * generation read uses decides readability first. */
+    if (choir_sqlite_database_empty(db) < 0) {
+        return -1;
+    }
+    if (choir_sqlite.prepare_statement(
+            db, "PRAGMA user_version", -1, &stmt, NULL
+        ) == SQLITE_OK &&
+        choir_sqlite.step(stmt) == SQLITE_ROW) {
+        sqlite3_int64 read = choir_sqlite.column_int64(stmt, 0);
+        version = read < 0 ? -1 : (int)read;
+    }
+    if (stmt != NULL) {
+        choir_sqlite.finalize(stmt);
+    }
+    return version;
+}
+
+/* Stamp the DDL version onto a store whose tables this build has decided it
+ * can serve. Used by the adoption path, which finds an unstamped store and
+ * records what it answers to from now on. */
+int choir_state_store_write_ddl_version(
+    const char *path, int path_len, int version
+) {
+    sqlite3 *db = NULL;
+    char statement[64];
+    if (version < 0) {
+        return -1;
+    }
+    if (choir_sqlite_acquire(path, path_len, &db) != 0) {
+        return -1;
+    }
+    /* `PRAGMA user_version = ?` does not accept a bound parameter, so the
+     * value is formatted in. It is an int by the signature, so there is nothing
+     * here to inject. */
+    if (snprintf(statement, sizeof(statement), "PRAGMA user_version = %d", version) < 0) {
+        return -1;
+    }
+    return choir_sqlite_exec(db, statement);
 }
 
 /* Read the recorded schema generation. Returns the byte count written to buf,
@@ -1094,9 +1213,13 @@ static int choir_artifact_path(
     return written < 0 || (size_t)written >= target_size ? -1 : 0;
 }
 
-/* Remove one artifact by digest. Reports success when the content is already
- * absent: a sweep that reruns after a crash must converge rather than fail on
- * work it already did. */
+/* Remove one artifact by digest. Returns 1 when this call unlinked the
+ * content, 0 when it was already absent, and -1 on any other failure.
+ *
+ * Already-absent is a success, because a sweep that reruns after a crash has to
+ * converge rather than fail on work it already did — but it is reported apart
+ * from a real removal, so a caller counting released content counts what it
+ * released rather than what it was asked to release. */
 int choir_artifact_store_remove(
     const char *root, int root_len, const char *digest, int digest_len
 ) {
@@ -1104,10 +1227,10 @@ int choir_artifact_store_remove(
     if (choir_artifact_path(root, root_len, digest, digest_len, target, sizeof(target)) != 0) {
         return -1;
     }
-    if (unlink(target) == 0 || errno == ENOENT) {
-        return 0;
+    if (unlink(target) == 0) {
+        return 1;
     }
-    return -1;
+    return errno == ENOENT ? 0 : -1;
 }
 
 int choir_artifact_store_size(

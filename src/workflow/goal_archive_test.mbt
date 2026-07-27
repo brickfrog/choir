@@ -23,20 +23,79 @@ fn archive_seal_witness_prefix(goal_id : @control.GoalId) -> String {
 }
 
 ///|
-fn archive_digest(value : String) -> @control.Digest {
+fn archive_digest(value : String) -> String {
+  @storage.digest_text(@storage.artifact_digest(@utf8.encode(value)))
+}
+
+///|
+fn archive_content_digest(value : String) -> @control.Digest {
   @storage.artifact_digest(@utf8.encode(value))
+}
+
+///|
+/// A terminal Goal record whose id is the one under archive. Which state it is
+/// terminal in has its own tests; here it only has to get past the gate.
+fn archive_execution_record() -> @workflow.GoalExecutionRecord {
+  let base = submission_execution()
+  {
+    ..base,
+    goal: { ..base.goal, id: archive_goal_id },
+    state: @workflow.GoalExecutionState::GoalExecutionSucceeded,
+  }
+}
+
+///|
+/// One Part driven to an observed integration witness, so both the intent and
+/// the receipt that name a witness ref are real.
+fn archive_part_snapshot(
+  goal_id : @control.GoalId,
+  intent_ref? : String? = None,
+  receipt_ref? : String? = None,
+) -> @workflow.PartWorkflowSnapshot raise {
+  let authorized = drive_to_integration_authorized()
+  guard authorized.promotion_commit is Some(promotion) else {
+    fail("authorized integration has no promotion commit")
+  }
+  let integrated = apply_observation(
+    authorized,
+    @workflow.PartEffectObservation::IntegrationWitnessObserved(
+      @control.IntegrationWitnessObservation::IntegrationWitnessApplied(
+        promotion.commit_oid,
+        promotion.commit_oid,
+      ),
+    ),
+    27L,
+  )
+  guard integrated.integration_intent is Some(intent) else {
+    fail("an integrated Part has no intent")
+  }
+  guard integrated.integration_receipt is Some(receipt) else {
+    fail("an integrated Part has no receipt")
+  }
+  {
+    ..integrated,
+    goal: { ..integrated.goal, id: goal_id },
+    integration_intent: intent_ref.map(fn(reference) {
+      { ..intent, git_witness_ref: reference }
+    }),
+    integration_receipt: receipt_ref.map(fn(reference) {
+      { ..receipt, witness_ref: reference }
+    }),
+  }
 }
 
 ///|
 fn archive_subject(
   state : @workflow.GoalExecutionState,
   pause? : @workflow.GoalPause? = None,
+  part_witness_refs? : Array[@workflow.GitRefName] = [],
 ) -> @workflow.GoalArchiveSubject {
   {
     goal_id: archive_goal_id,
     state,
     pause,
     goal_ref: @workflow.goal_execution_ref(archive_goal_id),
+    part_witness_refs,
   }
 }
 
@@ -207,9 +266,9 @@ test "an archive releases this Goal's witnesses and keeps its branch" {
   )
   // Another Goal's witness and a branch that happens to sit inside the Goal
   // namespace are what the host actually enumerates alongside this Goal's own
-  // refs; neither is this Goal's to release. A Part-keyed witness and the
-  // integration target are outside the namespaces the host lists at all, so
-  // they only guard against a widened enumeration.
+  // refs; neither is this Goal's to release. The integration target is outside
+  // the namespaces the host lists at all, so it only guards against a widened
+  // enumeration.
   let other_goal = @workflow.GitRefName(
     archive_seal_witness_prefix(@control.GoalId("goal-other")) +
     "sealed/intent-b",
@@ -217,21 +276,64 @@ test "an archive releases this Goal's witnesses and keeps its branch" {
   let namespaced_branch = @workflow.GitRefName(
     "refs/heads/choir/goals/unexpected",
   )
-  let part_witness = @workflow.GitRefName("refs/choir/witness/choir-part")
+  // Two Part-keyed integration witnesses. Their names are digests that say
+  // nothing about which Goal minted them, so the only one released is the one
+  // this Goal's own Part recorded.
+  let mine = @workflow.GitRefName("refs/choir/witness/" + archive_digest("a"))
+  let theirs = @workflow.GitRefName("refs/choir/witness/" + archive_digest("b"))
   let integration = @workflow.GitRefName("refs/heads/main")
   let plan = archive_plan(
     archive_observation(
-      archive_subject(@workflow.GoalExecutionState::GoalExecutionSucceeded),
+      archive_subject(@workflow.GoalExecutionState::GoalExecutionSucceeded, part_witness_refs=[
+        mine,
+      ]),
       observed_refs=[
-        branch, initialized, seal_witness, other_goal, namespaced_branch, part_witness,
+        branch, initialized, seal_witness, other_goal, namespaced_branch, mine, theirs,
         integration,
       ],
     ),
   )
-  assert_eq(plan.release_refs, [initialized, seal_witness])
+  assert_eq(plan.release_refs, [initialized, seal_witness, mine])
   assert_eq(plan.retain_refs, [branch])
   assert_eq(plan.state, @workflow.GoalExecutionState::GoalExecutionSucceeded)
   assert_eq(plan.goal_id, archive_goal_id)
+}
+
+///|
+/// The witness refs come out of the Goal's own Parts, because their names carry
+/// no Goal. A snapshot naming a different Goal contributes nothing, and a
+/// snapshot with neither an intent nor a receipt contributes nothing: releasing
+/// a ref this Goal did not record would delete another Goal's idempotency
+/// witness.
+test "witness refs are read from this Goal's Parts and no other's" {
+  let record = archive_execution_record()
+  let mine = "refs/choir/witness/" + archive_digest("mine")
+  let intent_only = "refs/choir/witness/" + archive_digest("intent")
+  let theirs = "refs/choir/witness/" + archive_digest("theirs")
+  let subject = @workflow.goal_archive_subject(record, [
+    archive_part_snapshot(archive_goal_id, receipt_ref=Some(mine)),
+    archive_part_snapshot(archive_goal_id, intent_ref=Some(intent_only)),
+    archive_part_snapshot(archive_goal_id),
+    archive_part_snapshot(
+      @control.GoalId("goal-other"),
+      receipt_ref=Some(theirs),
+    ),
+  ])
+  assert_eq(subject.part_witness_refs, [
+    @workflow.GitRefName(mine),
+    @workflow.GitRefName(intent_only),
+  ])
+  // And the plan releases exactly those, out of everything the host listed.
+  assert_eq(
+    archive_plan(
+      archive_observation(subject, observed_refs=[
+        @workflow.GitRefName(mine),
+        @workflow.GitRefName(theirs),
+        @workflow.GitRefName(intent_only),
+      ]),
+    ).release_refs,
+    [@workflow.GitRefName(mine), @workflow.GitRefName(intent_only)],
+  )
 }
 
 ///|
@@ -266,13 +368,13 @@ test "an archive names nothing the host did not observe" {
 
 ///|
 test "an archive releases only content nothing else still retains" {
-  let mine = archive_digest("mine")
-  let shared_with_live_goal = archive_digest("shared-live")
-  let shared_with_terminal_goal = archive_digest("shared-terminal")
-  let permanent = archive_digest("permanent")
-  let timed = archive_digest("timed")
-  let unexpired = archive_digest("unexpired")
-  let someone_else = archive_digest("someone-else")
+  let mine = archive_content_digest("mine")
+  let shared_with_live_goal = archive_content_digest("shared-live")
+  let shared_with_terminal_goal = archive_content_digest("shared-terminal")
+  let permanent = archive_content_digest("permanent")
+  let timed = archive_content_digest("timed")
+  let unexpired = archive_content_digest("unexpired")
+  let someone_else = archive_content_digest("someone-else")
   let live_goal = @control.GoalId("goal-live")
   let ledger : Array[@storage.ArtifactRetentionEntry] = [
     { digest: mine, retentions: [ArtifactUntilGoalTerminal(archive_goal_id)] },

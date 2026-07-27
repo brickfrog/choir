@@ -962,6 +962,62 @@ test "Goal scheduling policy changes form a durable revision chain" {
 }
 
 ///|
+/// A stored execution record with every optional field populated.
+///
+/// No point of the workflow has all of them at once — a record is not
+/// simultaneously paused for input, canceling, and budgeted — so each comes
+/// from the constructor that produces it rather than from a literal. It exists
+/// so the durable shape manifest can be checked against a record that has every
+/// key, which is what makes an option quietly left at `None` in the witness
+/// visible.
+fn maximal_goal_execution_record() -> @workflow.GoalExecutionRecord raise {
+  let running = submission_initialized_running(
+    @workflow.advance_goal_execution_state(
+      submission_execution(),
+      @workflow.GoalExecutionState::GoalExecutionRunning,
+    ).unwrap(),
+  )
+  let assured = @workflow.advance_goal_execution_state(
+    @workflow.advance_goal_execution_state(
+      running,
+      @workflow.GoalExecutionState::GoalExecutionAssuring,
+    ).unwrap(),
+    @workflow.GoalExecutionState::GoalExecutionAssured,
+  ).unwrap()
+  guard @workflow.request_goal_execution_input(
+      assured,
+      @workflow.GoalInputReason::GoalInputFinalizationNeedsUserInput,
+    ).unwrap()
+    is @workflow.GoalInputRequestDecision::GoalInputRequestCreated(paused, _) else {
+    fail("input request was not created")
+  }
+  guard @workflow.request_goal_execution_cancellation(paused, 100L).unwrap()
+    is @workflow.GoalCancellationDecision::GoalCancellationRequested(canceling) else {
+    fail("cancellation was not requested")
+  }
+  {
+    ..canceling,
+    pause: paused.pause,
+    active_input_request: paused.active_input_request,
+    work_order_budget: Some(
+      @workflow.accept_work_order_budget(
+        @workflow.WorkOrderStopRequest::WorkOrderRequestRelativeSeconds(100L),
+        @workflow.WorkOrderCutoffPolicy::WorkOrderInstallCancellationCutoff,
+        100L,
+      ).unwrap(),
+    ),
+    migration_production_admission: Some(
+      submission_migration_admission({
+        contract_id: @control.MigrationContractId("migration-contract-1"),
+        migration_lineage_id: @control.MigrationLineageId("migration-lineage-1"),
+        revision: 1,
+        contract_artifact_digest: submission_digest,
+      }),
+    ),
+  }
+}
+
+///|
 test "Goal policy steering is idempotent and distinguishes recovery pause" {
   let queued = submission_execution()
   guard @workflow.steer_goal_execution(
@@ -1130,6 +1186,10 @@ test "Conductor proposal accepts exact closure in deterministic order" {
     Err(error) => fail(error.message())
   }
   assert_eq(decoded, decision)
+  assert_manifest_names_stored_keys(
+    "GoalSelectionDecision",
+    @workflow.goal_selection_decision_bytes(decision),
+  )
   let queued = match
     @workflow.goal_execution_record_from_selection(
       decision,

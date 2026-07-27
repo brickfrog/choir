@@ -86,6 +86,59 @@ pub fn read_state_store_generation(
 }
 
 ///|
+/// The DDL version this build's SQL is written against.
+///
+/// Declared beside the `CREATE TABLE` statements in `store.c` and bumped in the
+/// same edit that changes them. Nothing derives it, and nothing can: the
+/// durable-value generation digests record VALUES, which say nothing about
+/// which columns a table has, and `CREATE TABLE IF NOT EXISTS` accepts a table
+/// whose columns are not these without complaint.
+pub fn state_store_ddl_version() -> Int {
+  state_store_ddl_version_ffi()
+}
+
+///|
+/// What DDL version the store's tables were created under.
+///
+/// `Ok(0)` means the store predates the stamp, which is adopted rather than
+/// reset; `Err` means the file is not a usable database. The two are kept apart
+/// for the same reason they are for the generation: they call for opposite
+/// decisions.
+pub fn read_state_store_ddl_version(
+  store : @storage.SqliteStateStore,
+) -> Result[Int, @types.ChoirError] {
+  match validate_store_path(store.path) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let (path, path_len) = exec_string_to_null_terminated_bytes(store.path)
+  let version = state_store_read_ddl_version_ffi(path, path_len)
+  if version < 0 {
+    Err(state_store_failure("DDL version read"))
+  } else {
+    Ok(version)
+  }
+}
+
+///|
+/// Stamp the DDL version onto a store this build has decided it can serve.
+pub fn write_state_store_ddl_version(
+  store : @storage.SqliteStateStore,
+  version : Int,
+) -> Result[Unit, @types.ChoirError] {
+  match validate_store_path(store.path) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let (path, path_len) = exec_string_to_null_terminated_bytes(store.path)
+  if state_store_write_ddl_version_ffi(path, path_len, version) == 0 {
+    Ok(())
+  } else {
+    Err(state_store_failure("DDL version write"))
+  }
+}
+
+///|
 pub fn write_state_store_generation(
   store : @storage.SqliteStateStore,
   generation : String,
@@ -574,6 +627,12 @@ pub fn read_artifact_retention_ledger(
 /// ever know to collect them.
 ///
 /// The caller decides what is collectable; this only executes the decision.
+///
+/// Returns how much content this call actually unlinked, which is not always
+/// how much was named: an archive resumed after a crash between the removal and
+/// the ledger rewrite is asked again for content that is already gone, and
+/// reporting that as released would tell an operator space was reclaimed that
+/// was reclaimed the first time.
 pub fn collect_artifacts(
   store : @storage.ArtifactStore,
   collect : Array[@control.Digest],
@@ -586,12 +645,15 @@ pub fn collect_artifacts(
     return Ok(0)
   }
   let (root, root_len) = exec_string_to_null_terminated_bytes(store.root)
+  let mut released = 0
   for digest in collect {
     let (encoded, digest_len) = exec_string_to_null_terminated_bytes(
       @storage.digest_text(digest),
     )
-    if artifact_store_remove_ffi(root, root_len, encoded, digest_len) != 0 {
-      return Err(artifact_store_failure("collection"))
+    match artifact_store_remove_ffi(root, root_len, encoded, digest_len) {
+      1 => released = released + 1
+      0 => ()
+      _ => return Err(artifact_store_failure("collection"))
     }
   }
   let retained = read_artifact_retention_ledger(store).filter(fn(entry) {
@@ -603,7 +665,7 @@ pub fn collect_artifacts(
     ) {
     return Err(artifact_store_failure("collection ledger rewrite"))
   }
-  Ok(collect.length())
+  Ok(released)
 }
 
 ///|

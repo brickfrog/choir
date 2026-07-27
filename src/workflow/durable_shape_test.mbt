@@ -196,29 +196,33 @@ fn maximal_part_snapshot() -> @workflow.PartWorkflowSnapshot raise {
 ///|
 /// The witness has to serialize the same keys the real record does, or the
 /// generation describes a shape nothing stores and stops moving when that key's
-/// type changes. Compared against a snapshot the workflow produced rather than
-/// against a second hand-written list, and compared as an exact set: a key the
-/// manifest describes and the snapshot does not have is a witness that drifted
-/// too, and a manifest missing a key the snapshot has is one whose option was
-/// quietly left at `None`.
-test "the manifest names exactly the keys a stored snapshot serializes" {
-  let serialized = @json.parse(
-    @utf8.decode_lossy(@workflow.part_snapshot_bytes(maximal_part_snapshot())),
-  )
-  let fields = match serialized {
+/// type changes.
+///
+/// The oracle is a record the workflow itself produced with every optional
+/// field populated, not a second hand-written list, and the comparison is an
+/// exact set: a key the manifest describes and the record does not have is a
+/// witness that drifted, and a manifest missing a key the record has is a
+/// witness whose option was quietly left at `None`.
+///
+/// Nothing here is specific to one type, so every stored type that has a
+/// maximal instance somewhere in this suite is checked through this function
+/// at the point that instance exists.
+fn assert_manifest_names_stored_keys(
+  shape : String,
+  content : Bytes,
+) -> Unit raise {
+  let fields = match @json.parse(@utf8.decode_lossy(content)) {
     Json::Object(value) => value
-    _ => fail("a snapshot serializes to an object")
+    _ => fail(shape + " does not serialize to an object")
   }
   let observed : Array[String] = []
   for key in fields.keys() {
     observed.push(key)
   }
+  let labels = manifest_top_level_labels(manifest_lines(), shape + "#0")
+  guard labels.length() > 0 else { fail(shape + " is not in the manifest") }
   let described : Array[String] = []
-  for
-    label in manifest_top_level_labels(
-      manifest_lines(),
-      "PartWorkflowSnapshot#0",
-    ) {
+  for label in labels {
     described.push(
       if label.has_suffix("?") {
         label[:label.length() - 1].to_owned()
@@ -228,4 +232,20 @@ test "the manifest names exactly the keys a stored snapshot serializes" {
     )
   }
   assert_eq(sorted_text(described), sorted_text(observed))
+}
+
+///|
+test "the manifest names exactly the keys a stored snapshot serializes" {
+  assert_manifest_names_stored_keys(
+    "PartWorkflowSnapshot",
+    @workflow.part_snapshot_bytes(maximal_part_snapshot()),
+  )
+}
+
+///|
+test "the manifest names exactly the keys a stored execution serializes" {
+  assert_manifest_names_stored_keys(
+    "GoalExecutionRecord",
+    @workflow.goal_execution_record_bytes(maximal_goal_execution_record()),
+  )
 }

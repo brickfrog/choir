@@ -582,6 +582,66 @@ test "the schema generation round-trips inside the store" {
 }
 
 ///|
+/// The DDL version says which `CREATE TABLE` statements built these tables, and
+/// it is stamped by the call that runs them — a store this build created can
+/// therefore never be mistaken for one an older DDL built.
+///
+/// The other half matters more: re-running the schema over tables that already
+/// exist must leave the stamp alone. `CREATE TABLE IF NOT EXISTS` does nothing
+/// to a table whose columns are not these, so stamping there would overwrite
+/// the only evidence that the tables on disk are not the ones this build's SQL
+/// names, and every query would fail at runtime with the store reporting
+/// itself current.
+test "the DDL version is stamped by the statements it describes, once" {
+  let path = storage_test_path("sqlite-ddl-version.db")
+  let clean = fn() {
+    ignore(@sys.rm_rf(path))
+    ignore(@sys.rm_rf(path + "-shm"))
+    ignore(@sys.rm_rf(path + "-wal"))
+  }
+  clean()
+  let store : @storage.SqliteStateStore = { path, }
+  guard initialize_state_store(store) is Ok(_) else {
+    fail("initialize state store")
+  }
+  assert_eq(
+    read_state_store_ddl_version(store).unwrap(),
+    state_store_ddl_version(),
+  )
+  // Stand in for a store whose tables predate the stamp.
+  guard write_state_store_ddl_version(
+      store, @storage.control_store_unstamped_ddl_version,
+    )
+    is Ok(_) else {
+    fail("clear the stamp")
+  }
+  // Drop the pooled connection so the schema batch actually runs again rather
+  // than being skipped as already applied.
+  forget_state_store(store)
+  guard initialize_state_store(store) is Ok(_) else { fail("re-initialize") }
+  assert_eq(
+    read_state_store_ddl_version(store).unwrap(),
+    @storage.control_store_unstamped_ddl_version,
+  )
+  // A file that is not a database at all is unreadable, not version 0: the two
+  // call for opposite decisions.
+  let corrupt = storage_test_path("sqlite-ddl-corrupt.db")
+  ignore(@sys.rm_rf(corrupt))
+  ignore(@sys.write_file_sync(corrupt, "this is not a database"))
+  assert_true(read_state_store_ddl_version({ path: corrupt }) is Err(_))
+  ignore(@sys.rm_rf(corrupt))
+  // The writer refuses a version it could never mean, and a store carrying one
+  // anyway reads as unreadable rather than as some version this build should
+  // compare against.
+  assert_true(write_state_store_ddl_version(store, -1) is Err(_))
+  assert_eq(
+    read_state_store_ddl_version(store).unwrap(),
+    @storage.control_store_unstamped_ddl_version,
+  )
+  clean()
+}
+
+///|
 /// The prefix filter is a half-open key range rather than a per-row function,
 /// so it has to select exactly what the function form did — including not
 /// matching a sibling prefix one byte higher.
@@ -736,6 +796,37 @@ test "an artifact sweep collects only content whose every term expired" {
   // Sweeping again is a no-op rather than an error, so a rerun after a crash
   // converges.
   assert_eq(sweep(2_000L, fn(_) { true }).unwrap(), 0)
+  ignore(@sys.rm_rf(root))
+}
+
+///|
+/// The count a collection reports is what it released, not what it was asked to
+/// release.
+///
+/// Content removal happens before the ledger rewrite, so an archive interrupted
+/// between them is asked for the same digests again on the next run. Removing
+/// content that is already gone still has to succeed — that is what makes the
+/// rerun converge — but counting it as released tells an operator space was
+/// reclaimed that the interrupted run reclaimed already.
+test "a collection counts the content it removed, not the content it was named" {
+  let root = storage_test_path("artifact-recollect")
+  ignore(@sys.rm_rf(root))
+  let store : @storage.ArtifactStore = { root, }
+  let content = @utf8.encode("collect me twice")
+  let digest = @storage.artifact_digest(content)
+  guard adopt_artifact(store, {
+      content,
+      expected_digest: digest,
+      provenance: @storage.ArtifactProvenance::ArtifactConformanceEvidence,
+      retention: @storage.ArtifactRetention::ArtifactUntilTimestamp(1_000L),
+    })
+    is Ok(_) else {
+    fail("adopt collectable content")
+  }
+  assert_eq(collect_artifacts(store, [digest]).unwrap(), 1)
+  assert_false(artifact_store_contains(store, digest).unwrap())
+  // The rerun: same digests, nothing left to release.
+  assert_eq(collect_artifacts(store, [digest]).unwrap(), 0)
   ignore(@sys.rm_rf(root))
 }
 
@@ -979,6 +1070,154 @@ async test "a record this build cannot decode authorizes the reset" {
   assert_eq(
     read_state_store_generation(store).unwrap(),
     Some(@workflow.durable_value_shape_generation()),
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+/// The failure the DDL version exists for, driven end to end.
+///
+/// The store here is healthy by every other measure: its generation is exactly
+/// this build's and its one record decodes, so the record probe would report
+/// nothing wrong. Only the DDL version says its tables were built by
+/// statements this build does not write SQL against — and once they were, every
+/// query naming a column those tables lack fails at runtime, with no record
+/// ever read and no reset ever reached.
+async test "tables built by a superseded DDL authorize the reset" {
+  let reached : Array[String] = []
+  let project_dir = storage_test_path("control-ddl-reset")
+  let control_root = project_dir + "/.choir/state/control"
+  let store : @storage.SqliteStateStore = {
+    path: control_root + "/workflow.db",
+  }
+  ignore(@sys.rm_rf(project_dir))
+  guard @sys.create_dir_all(control_root) else { fail("create control root") }
+  guard initialize_state_store(store) is Ok(_) else {
+    fail("initialize state store")
+  }
+  guard write_state_store_generation(
+      store,
+      @workflow.durable_value_shape_generation(),
+    )
+    is Ok(_) else {
+    fail("record this build's generation")
+  }
+  let superseded = state_store_ddl_version() + 1
+  guard write_state_store_ddl_version(store, superseded) is Ok(_) else {
+    fail("record another DDL version")
+  }
+  let prefix = @workflow.durable_record_key_prefix(
+    @workflow.DurableRecordKind::DurableProcessExecution,
+  )
+  control_probe_record(
+    control_root,
+    prefix + "readable",
+    Some(
+      @utf8.encode(
+        control_probe_execution("readable").to_json().stringify(indent=0),
+      ),
+    ),
+  )
+  let prepared = prepare_native_goal_control_state(
+    project_dir,
+    capture=fn(_) {
+      reached.push("capture")
+      (0, "[]")
+    },
+    cleanup_runtime=fn(_, goal_id) {
+      reached.push("runtime:" + goal_id.0)
+      Ok(())
+    },
+    purge_refs=fn(_) {
+      reached.push("refs")
+      Ok(2)
+    },
+  )
+  assert_eq(
+    prepared.unwrap(),
+    NativeGoalControlStatePreparation::NativeGoalControlStateReset({
+      source_claims_released: 0,
+      runtime_roots_removed: 0,
+      git_refs_removed: 2,
+      reason: @storage.ControlStateResetReason::ControlStoreDdlSuperseded(
+        superseded,
+        state_store_ddl_version(),
+      ),
+    }),
+  )
+  assert_true(reached.contains("refs"))
+  // Rebuilt by this build's statements, and stamped by them.
+  assert_eq(list_state_records(store, prefix).unwrap().length(), 0)
+  assert_eq(
+    read_state_store_ddl_version(store).unwrap(),
+    state_store_ddl_version(),
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+/// The other direction, which is the one every store in existence takes the
+/// first time this build starts: tables that predate the stamp are the tables
+/// this DDL creates, so they are stamped rather than destroyed. Not stamping
+/// them would leave the version at 0 forever and never load-bearing for them.
+async test "tables that predate the DDL stamp are stamped, not destroyed" {
+  let reached : Array[String] = []
+  let project_dir = storage_test_path("control-ddl-adopt")
+  let control_root = project_dir + "/.choir/state/control"
+  let store : @storage.SqliteStateStore = {
+    path: control_root + "/workflow.db",
+  }
+  ignore(@sys.rm_rf(project_dir))
+  guard @sys.create_dir_all(control_root) else { fail("create control root") }
+  guard initialize_state_store(store) is Ok(_) else {
+    fail("initialize state store")
+  }
+  guard write_state_store_generation(
+      store,
+      @workflow.durable_value_shape_generation(),
+    )
+    is Ok(_) else {
+    fail("record this build's generation")
+  }
+  guard write_state_store_ddl_version(
+      store, @storage.control_store_unstamped_ddl_version,
+    )
+    is Ok(_) else {
+    fail("clear the stamp")
+  }
+  let prefix = @workflow.durable_record_key_prefix(
+    @workflow.DurableRecordKind::DurableProcessExecution,
+  )
+  control_probe_record(
+    control_root,
+    prefix + "readable",
+    Some(
+      @utf8.encode(
+        control_probe_execution("readable").to_json().stringify(indent=0),
+      ),
+    ),
+  )
+  let prepared = prepare_native_goal_control_state(
+    project_dir,
+    capture=fn(_) {
+      reached.push("capture")
+      (0, "[]")
+    },
+    cleanup_runtime=fn(_, goal_id) {
+      reached.push("runtime:" + goal_id.0)
+      Ok(())
+    },
+    purge_refs=fn(_) {
+      reached.push("refs")
+      Ok(0)
+    },
+  )
+  assert_eq(prepared.unwrap(), NativeGoalControlStateCurrent)
+  assert_eq(reached, [])
+  assert_eq(list_state_records(store, prefix).unwrap().length(), 1)
+  assert_eq(
+    read_state_store_ddl_version(store).unwrap(),
+    state_store_ddl_version(),
   )
   ignore(@sys.rm_rf(project_dir))
 }
