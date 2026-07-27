@@ -1094,6 +1094,22 @@ static int choir_artifact_path(
     return written < 0 || (size_t)written >= target_size ? -1 : 0;
 }
 
+/* Remove one artifact by digest. Reports success when the content is already
+ * absent: a sweep that reruns after a crash must converge rather than fail on
+ * work it already did. */
+int choir_artifact_store_remove(
+    const char *root, int root_len, const char *digest, int digest_len
+) {
+    char target[4096];
+    if (choir_artifact_path(root, root_len, digest, digest_len, target, sizeof(target)) != 0) {
+        return -1;
+    }
+    if (unlink(target) == 0 || errno == ENOENT) {
+        return 0;
+    }
+    return -1;
+}
+
 int choir_artifact_store_size(
     const char *root,
     int root_len,

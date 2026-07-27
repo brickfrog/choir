@@ -664,3 +664,65 @@ test "a store replaced in place is reinitialized, not served from the old file" 
   ignore(@sys.rm_rf(path + "-shm"))
   ignore(@sys.rm_rf(path + "-wal"))
 }
+
+///|
+/// Retention was recorded in a receipt and dropped, so nothing could ever
+/// decide what was collectable. This drives the whole path against a real
+/// store: adopt under different terms, sweep, and confirm only the expired
+/// content is gone.
+test "an artifact sweep collects only content whose every term expired" {
+  let root = storage_test_path("artifact-sweep")
+  ignore(@sys.rm_rf(root))
+  let store : @storage.ArtifactStore = { root, }
+  let adopt = fn(content : String, retention : @storage.ArtifactRetention) {
+    let bytes = @utf8.encode(content)
+    adopt_artifact(store, {
+      content: bytes,
+      expected_digest: @storage.artifact_digest(bytes),
+      provenance: @storage.ArtifactProvenance::ArtifactConformanceEvidence,
+      retention,
+    }).unwrap()
+  }
+  let permanent = adopt(
+    "keep me",
+    @storage.ArtifactRetention::ArtifactPermanent,
+  )
+  let expiring = adopt(
+    "collect me",
+    @storage.ArtifactRetention::ArtifactUntilTimestamp(1_000L),
+  )
+  // The same bytes adopted twice under different terms must survive both.
+  let shared_bytes = @utf8.encode("shared")
+  let shared = @storage.artifact_digest(shared_bytes)
+  ignore(
+    adopt("shared", @storage.ArtifactRetention::ArtifactUntilTimestamp(1_000L)),
+  )
+  ignore(
+    adopt(
+      "shared",
+      @storage.ArtifactRetention::ArtifactUntilGoalTerminal(
+        @control.GoalId("goal-live"),
+      ),
+    ),
+  )
+  // Before the deadline nothing is collectable.
+  assert_eq(sweep_artifact_store(store, 999L, fn(_) { false }).unwrap(), 0)
+  assert_true(artifact_store_contains(store, expiring.digest).unwrap())
+
+  // Past it, the timestamped one goes; the permanent one and the one still
+  // held by a live Goal stay.
+  assert_eq(sweep_artifact_store(store, 1_000L, fn(_) { false }).unwrap(), 1)
+  assert_false(artifact_store_contains(store, expiring.digest).unwrap())
+  assert_true(artifact_store_contains(store, permanent.digest).unwrap())
+  assert_true(artifact_store_contains(store, shared).unwrap())
+
+  // Once the Goal is terminal too, the shared content becomes collectable.
+  assert_eq(sweep_artifact_store(store, 1_000L, fn(_) { true }).unwrap(), 1)
+  assert_false(artifact_store_contains(store, shared).unwrap())
+  assert_true(artifact_store_contains(store, permanent.digest).unwrap())
+
+  // Sweeping again is a no-op rather than an error, so a rerun after a crash
+  // converges.
+  assert_eq(sweep_artifact_store(store, 2_000L, fn(_) { true }).unwrap(), 0)
+  ignore(@sys.rm_rf(root))
+}

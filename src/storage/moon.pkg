@@ -2,8 +2,14 @@ import {
   "choir/src/control",
   "choir/src/types",
   "moonbitlang/core/json",
+  "moonbitlang/core/string",
   "moonbitlang/x/crypto",
 }
+
+import {
+  "moonbitlang/core/debug",
+  "moonbitlang/core/encoding/utf8",
+} for "test"
 
 options(
   "is-main": false,

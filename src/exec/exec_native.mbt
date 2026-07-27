@@ -297,6 +297,15 @@ extern "C" fn state_store_read_outbox_ffi(
 ) -> Int = "choir_state_store_read_outbox"
 
 ///|
+#borrow(root, digest)
+extern "C" fn artifact_store_remove_ffi(
+  root : Bytes,
+  root_len : Int,
+  digest : Bytes,
+  digest_len : Int,
+) -> Int = "choir_artifact_store_remove"
+
+///|
 #borrow(root, digest, content)
 extern "C" fn artifact_store_adopt_ffi(
   root : Bytes,
