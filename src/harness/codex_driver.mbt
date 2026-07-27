@@ -772,3 +772,51 @@ pub fn evaluate_codex_driver_capture(
     finished_at: request.capture.finished_at,
   })
 }
+
+///|
+/// What a `thread/read` rejection means for recovery.
+pub(all) enum CodexThreadReadDisposition {
+  /// The thread has no durable turns yet. Reading it is not a failure; the
+  /// caller continues with an empty thread.
+  CodexThreadNotMaterialized
+  /// A real rejection the caller must not paper over.
+  CodexThreadReadRejected
+} derive(Debug, Eq)
+
+///|
+/// Classify a `thread/read` rejection.
+///
+/// This has to read the message, and that is a deliberate choice rather than
+/// an oversight: the app-server answers `-32600` for an unknown method, a
+/// missing field, and a thread that is not loaded alike, so the numeric code
+/// cannot separate "nothing written yet" from "the request was wrong".
+/// Verified against the running app-server, not inferred from the schema.
+///
+/// The phrasings are therefore a closed, named set. The provider has already
+/// reworded this once — "is not materialized yet" became "thread not loaded" —
+/// which silently disabled the recovery branch, so both are matched and a
+/// phrasing nobody has seen is treated as a real rejection rather than
+/// optimistically recovered.
+pub fn codex_thread_read_disposition(
+  code : Int,
+  message : String,
+) -> CodexThreadReadDisposition {
+  if code != codex_invalid_request_code() {
+    return CodexThreadReadRejected
+  }
+  let lowered = message.to_lower()
+  if lowered.contains("is not materialized yet") ||
+    lowered.contains("thread not loaded") ||
+    lowered.contains("thread not found") {
+    CodexThreadNotMaterialized
+  } else {
+    CodexThreadReadRejected
+  }
+}
+
+///|
+/// The app-server's catch-all rejection code. Named rather than inlined so the
+/// one place that knows it is the one place that has to change.
+pub fn codex_invalid_request_code() -> Int {
+  -32600
+}

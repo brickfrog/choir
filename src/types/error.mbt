@@ -34,6 +34,10 @@ suberror ChoirError {
   ProviderProtocolViolation(String)
   EventIngestionOverflow(String)
   ProviderProcessLost(String, ProviderAllowanceObservation?)
+  /// A JSON-RPC peer rejected a request. The numeric code is retained rather
+  /// than flattened into prose so a caller deciding whether the rejection is
+  /// recoverable has something typed to look at.
+  ProviderRpcError(Int, String)
   ValidationError(String)
   Timeout(String)
   OperationCanceled(String)
@@ -59,6 +63,7 @@ pub fn ChoirError::to_wire_string(self : ChoirError) -> String {
     ProviderProtocolViolation(_) => "provider_protocol_violation"
     EventIngestionOverflow(_) => "event_ingestion_overflow"
     ProviderProcessLost(_, _) => "provider_process_lost"
+    ProviderRpcError(_, _) => "provider_rpc_error"
     ValidationError(_) => "validation_error"
     Timeout(_) => "timeout"
     OperationCanceled(_) => "canceled"
@@ -86,6 +91,8 @@ pub fn ChoirError::message(self : ChoirError) -> String {
     ProviderProtocolViolation(msg) => "provider protocol violation: " + msg
     EventIngestionOverflow(msg) => "event ingestion overflow: " + msg
     ProviderProcessLost(msg, _) => "provider process lost: " + msg
+    ProviderRpcError(code, msg) =>
+      "provider rpc error " + code.to_string() + ": " + msg
     ValidationError(msg) => "validation error: " + msg
     Timeout(msg) => "timeout error: " + msg
     OperationCanceled(msg) => "canceled: " + msg
@@ -296,6 +303,21 @@ pub fn ChoirError::is_event_ingestion_overflow(self : ChoirError) -> Bool {
 }
 
 ///|
+pub fn ChoirError::provider_rpc_error(code : Int, msg : String) -> ChoirError {
+  ProviderRpcError(code, msg)
+}
+
+///|
+/// The JSON-RPC code and message a peer rejected the request with, if it was a
+/// rejection at all.
+pub fn ChoirError::provider_rpc_rejection(self : ChoirError) -> (Int, String)? {
+  match self {
+    ProviderRpcError(code, msg) => Some((code, msg))
+    _ => None
+  }
+}
+
+///|
 pub fn ChoirError::is_provider_process_lost(self : ChoirError) -> Bool {
   match self {
     ProviderProcessLost(_, _) => true
@@ -332,6 +354,8 @@ pub fn choir_error_message_from_caught(e : Error) -> String {
       ChoirError::event_ingestion_overflow(msg).message()
     ProviderProcessLost(msg, allowance) =>
       ChoirError::provider_process_lost(msg, allowance~).message()
+    ProviderRpcError(code, msg) =>
+      ChoirError::provider_rpc_error(code, msg).message()
     ValidationError(msg) => ChoirError::validation_error(msg).message()
     Timeout(msg) => ChoirError::timeout(msg).message()
     OperationCanceled(msg) => ChoirError::canceled(msg).message()
@@ -365,6 +389,7 @@ pub fn caught_error_is_choir_error(e : Error) -> Bool {
     | ProviderProtocolViolation(_)
     | EventIngestionOverflow(_)
     | ProviderProcessLost(_, _)
+    | ProviderRpcError(_, _)
     | ValidationError(_)
     | Timeout(_)
     | OperationCanceled(_)

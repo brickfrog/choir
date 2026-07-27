@@ -39,6 +39,15 @@ extern "C" fn c_read_file_prefix(
 ) -> Int = "choir_read_file_prefix"
 
 ///|
+#borrow(path, buf)
+extern "C" fn c_read_file_range(
+  path : Bytes,
+  offset : Int,
+  buf : Bytes,
+  max_size : Int,
+) -> Int = "choir_read_file_range"
+
+///|
 #borrow(buf)
 extern "C" fn c_stdin_read_line(buf : Bytes, max_size : Int) -> Int = "choir_stdin_read_line"
 
@@ -328,6 +337,41 @@ pub fn read_file_prefix(path : String, max_size : Int) -> String {
   } else {
     @utf8.decode_lossy(buf[:size])
   }
+}
+
+///|
+/// Read the bytes a file has grown by since `offset`.
+///
+/// The caller supplies the offset it has already consumed, so following an
+/// append-only file costs the appended bytes rather than the whole file on
+/// every read. Returns the text read and the offset it ends at; a shrunken or
+/// unreadable file reports offset zero so the caller re-reads from the start
+/// rather than silently skipping content.
+pub fn read_file_from(path : String, offset : Int) -> (String, Int) {
+  let size = file_size(path)
+  if size < 0 {
+    return ("", 0)
+  }
+  if offset < 0 || offset > size {
+    // The file was replaced or truncated. Anything the caller believes about
+    // its position is meaningless now.
+    return (read_file(path), size)
+  }
+  let available = size - offset
+  if available == 0 {
+    return ("", offset)
+  }
+  let buf = Bytes::new(available)
+  let read = c_read_file_range(
+    string_to_null_terminated_bytes(path),
+    offset,
+    buf,
+    available,
+  )
+  if read <= 0 {
+    return ("", offset)
+  }
+  (@utf8.decode_lossy(buf[:read]), offset + read)
 }
 
 ///|

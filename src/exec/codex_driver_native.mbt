@@ -23,6 +23,18 @@ pub(all) struct NativeCodexConductorConfig {
 }
 
 ///|
+/// Whether a `thread/read` rejection means the thread simply has no durable
+/// turns yet. Only a typed rejection can answer; anything else is a failure.
+fn native_codex_thread_is_unmaterialized(error : @types.ChoirError) -> Bool {
+  match error.provider_rpc_rejection() {
+    Some((code, message)) =>
+      @harness.codex_thread_read_disposition(code, message)
+      is @harness.CodexThreadReadDisposition::CodexThreadNotMaterialized
+    None => false
+  }
+}
+
+///|
 fn native_codex_driver_error(message : String) -> @types.ChoirError {
   @types.ChoirError::transport_error("Codex driver: " + message)
 }
@@ -831,14 +843,18 @@ fn native_codex_array_field(
 }
 
 ///|
+/// Look for one request's response in the spool, scanning only what the spool
+/// has grown by since `from_offset`. Returns the response, if it has arrived,
+/// and the offset scanned to so the next poll resumes there.
 fn native_codex_response_from_log(
   config : NativeCodexDriverConfig,
   request_id : String,
   server_pid? : Int = 0,
-) -> Result[Json?, @types.ChoirError] {
+  from_offset? : Int = 0,
+) -> Result[(Json?, Int), @types.ChoirError] {
   let path = native_codex_log_path(config)
   if !@sys.path_exists(path) {
-    return Ok(None)
+    return Ok((None, from_offset))
   }
   let size = @sys.file_size(path)
   match @harness.validate_codex_event_spool_size(size) {
@@ -850,7 +866,19 @@ fn native_codex_response_from_log(
       return Err(error)
     }
   }
-  for raw in @sys.read_file(path).split("\n") {
+  // The spool is append-only, so each poll reads only what it has grown by.
+  // Re-reading and re-parsing all of it every 50ms cost up to 16 MiB per poll
+  // for as long as a request was outstanding.
+  let (appended, read_to) = @sys.read_file_from(path, from_offset)
+  // A trailing fragment is a line the app-server is still writing. Consuming
+  // the offset past it would drop that response entirely, so the scan stops at
+  // the last newline and the fragment is re-read next poll.
+  let complete = match appended.rev_find("\n") {
+    Some(index) => appended.view(end_offset=index + 1).to_owned()
+    None => ""
+  }
+  let scanned = from_offset + @utf8.encode(complete).length()
+  for raw in complete.split("\n") {
     let line = raw.trim().to_owned()
     if line == "" {
       continue
@@ -866,19 +894,29 @@ fn native_codex_response_from_log(
           Some(value) => value
           None => "unknown app-server error"
         }
-        return Err(native_codex_driver_error(message))
+        // The code is retained rather than flattened into prose. It does not
+        // discriminate on its own — the app-server answers -32600 for an
+        // unknown method, a missing field, and an unloaded thread alike — but
+        // a caller that must decide whether to recover deserves the typed
+        // value rather than only the text.
+        let code = match error.get("code") {
+          Some(Number(value, ..)) => value.to_int()
+          _ => @harness.codex_invalid_request_code()
+        }
+        return Err(@types.ChoirError::provider_rpc_error(code, message))
       }
       _ => ()
     }
     match fields.get("result") {
-      Some(result) => return Ok(Some(result))
+      Some(result) => return Ok((Some(result), scanned))
       None =>
         return Err(
           native_codex_driver_error("app-server response has no result"),
         )
     }
   }
-  Ok(None)
+  ignore(read_to)
+  Ok((None, scanned))
 }
 
 ///|
@@ -933,9 +971,12 @@ async fn request_native_codex_app_server(
   params : Json,
   server_pid? : Int = 0,
 ) -> Result[Json, @types.ChoirError] {
+  // The response may already be in the spool: a retried request must not be
+  // written twice.
+  let mut offset = 0
   match native_codex_response_from_log(config, request_id, server_pid~) {
-    Ok(Some(value)) => return Ok(value)
-    Ok(None) => ()
+    Ok((Some(value), _)) => return Ok(value)
+    Ok((None, scanned)) => offset = scanned
     Err(error) => return Err(error)
   }
   let request : Map[String, Json] = {
@@ -948,9 +989,18 @@ async fn request_native_codex_app_server(
     Err(error) => return Err(error)
   }
   for poll = 0; poll < 200; poll = poll + 1 {
-    match native_codex_response_from_log(config, request_id, server_pid~) {
-      Ok(Some(value)) => return Ok(value)
-      Ok(None) => @async.sleep(50)
+    match
+      native_codex_response_from_log(
+        config,
+        request_id,
+        server_pid~,
+        from_offset=offset,
+      ) {
+      Ok((Some(value), _)) => return Ok(value)
+      Ok((None, scanned)) => {
+        offset = scanned
+        @async.sleep(50)
+      }
       Err(error) => return Err(error)
     }
   }
@@ -1324,7 +1374,7 @@ async fn read_native_codex_thread(
       server_pid=next.server_pid,
     ) {
     Ok(value) => value
-    Err(error) if error.message().contains("is not materialized yet") => {
+    Err(error) if native_codex_thread_is_unmaterialized(error) => {
       let empty_thread : Map[String, Json] = {
         "id": thread_id.to_json(),
         "turns": ([] : Array[Json]).to_json(),
@@ -2593,4 +2643,101 @@ test "native Codex Conductor argv is resumable and restricted" {
     "019f80a5-df42-7411-9065-e0866506338c",
   )
   assert_eq(resumed[resumed.length() - 1], "-")
+}
+
+///|
+/// Responses are found by scanning only what the spool has grown by, so this
+/// exercises the offset threading directly: a response written after the first
+/// poll must still be found, and a line the app-server is midway through
+/// writing must not be consumed.
+test "a spooled response is found by scanning only appended bytes" {
+  let root = "/tmp/choir-codex-spool-test"
+  ignore(@sys.create_dir_all(root))
+  let config : NativeCodexDriverConfig = {
+    sterile_root: root,
+    mcp_executable: "/usr/bin/node",
+    mcp_arguments: [],
+    boxlite_owner_socket_root: None,
+    mcp_server_name: "choir_sandbox",
+    allowed_tools: ["read_file"],
+    timeout_ms: 60000,
+    connect_trace_path: None,
+  }
+  let path = native_codex_log_path(config)
+  let unrelated =
+    #|{"id":"other","result":{"ok":false}}
+  ignore(@sys.write_file_sync(path, unrelated + "\n"))
+  // Not here yet, and the scan reports how far it read.
+  let first = native_codex_response_from_log(config, "wanted").unwrap()
+  assert_eq(first.0, None)
+  assert_true(first.1 > 0)
+  // A half-written line must not advance the offset past itself, or the
+  // response it belongs to is lost when the writer finishes it.
+  let partial = unrelated + "\n" + "{\"id\":\"wanted\",\"resu"
+  ignore(@sys.write_file_sync(path, partial))
+  let second = native_codex_response_from_log(
+    config,
+    "wanted",
+    from_offset=first.1,
+  ).unwrap()
+  assert_eq(second.0, None)
+  assert_eq(second.1, first.1)
+  // The writer finishes the line and the response is found from that offset.
+  let complete = unrelated +
+    "\n" +
+    (
+      #|{"id":"wanted","result":{"threadId":"t-1"}}
+    ) +
+    "\n"
+  ignore(@sys.write_file_sync(path, complete))
+  let third = native_codex_response_from_log(
+    config,
+    "wanted",
+    from_offset=second.1,
+  ).unwrap()
+  guard third.0 is Some(Object(result)) else {
+    fail("the completed response was not found")
+  }
+  assert_eq(@types.json_field_string(result, "threadId"), Some("t-1"))
+  ignore(@sys.delete_file_sync(path))
+}
+
+///|
+/// An app-server rejection is carried as a typed JSON-RPC error so the caller
+/// deciding whether to recover has the code, not only prose.
+test "an app-server rejection keeps its JSON-RPC code" {
+  let root = "/tmp/choir-codex-rpc-error-test"
+  ignore(@sys.create_dir_all(root))
+  let config : NativeCodexDriverConfig = {
+    sterile_root: root,
+    mcp_executable: "/usr/bin/node",
+    mcp_arguments: [],
+    boxlite_owner_socket_root: None,
+    mcp_server_name: "choir_sandbox",
+    allowed_tools: ["read_file"],
+    timeout_ms: 60000,
+    connect_trace_path: None,
+  }
+  let path = native_codex_log_path(config)
+  ignore(
+    @sys.write_file_sync(
+      path,
+      (
+        #|{"id":"read-1","error":{"code":-32600,"message":"thread not loaded: t-9"}}
+      ) +
+      "\n",
+    ),
+  )
+  let failure = match native_codex_response_from_log(config, "read-1") {
+    Ok(_) => fail("a rejection was read as a result")
+    Err(error) => error
+  }
+  assert_eq(
+    failure.provider_rpc_rejection(),
+    Some((-32600, "thread not loaded: t-9")),
+  )
+  // And it classifies as a thread that simply has nothing written yet, which
+  // is the branch that had silently stopped firing.
+  assert_true(native_codex_thread_is_unmaterialized(failure))
+  ignore(@sys.delete_file_sync(path))
 }

@@ -169,3 +169,30 @@ test "server tree cleanup kills a provider child in a separate session" {
   assert_false(path_exists(sentinel_path))
   ignore(rm_rf(tmp))
 }
+
+///|
+/// Following an append-only file must cost what it grew by, and must never
+/// consume a line the writer has not finished.
+test "read_file_from follows appended bytes without losing a partial line" {
+  let path = "/tmp/choir-read-file-from-test.jsonl"
+  ignore(write_file_sync(path, "{\"id\":\"a\"}\n{\"id\":\"b\"}\n"))
+  let (first, offset) = read_file_from(path, 0)
+  assert_eq(first, "{\"id\":\"a\"}\n{\"id\":\"b\"}\n")
+  assert_eq(offset, first.length())
+  // Nothing appended: nothing read, and the position is unchanged.
+  assert_eq(read_file_from(path, offset), ("", offset))
+  ignore(
+    write_file_sync(path, "{\"id\":\"a\"}\n{\"id\":\"b\"}\n{\"id\":\"c\"}\n"),
+  )
+  let (appended, next) = read_file_from(path, offset)
+  assert_eq(appended, "{\"id\":\"c\"}\n")
+  assert_eq(next, offset + appended.length())
+  // A truncated or replaced file rereads from the start rather than skipping
+  // content that now sits before an offset that no longer means anything.
+  ignore(write_file_sync(path, "{\"id\":\"z\"}\n"))
+  let (rewound, rewound_offset) = read_file_from(path, next)
+  assert_eq(rewound, "{\"id\":\"z\"}\n")
+  assert_eq(rewound_offset, rewound.length())
+  assert_eq(read_file_from("/tmp/choir-read-file-from-missing", 0), ("", 0))
+  ignore(delete_file_sync(path))
+}

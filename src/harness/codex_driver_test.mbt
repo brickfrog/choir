@@ -357,3 +357,43 @@ test "Codex Conductor rejects native host-tool events and thread drift" {
     is Err(_),
   )
 }
+
+///|
+/// The app-server answers -32600 for an unknown method, a missing field, and a
+/// thread that is not loaded alike, so the numeric code cannot separate
+/// "nothing written yet" from "the request was wrong". Verified against the
+/// running app-server. The phrasings are therefore a closed, named set.
+test "a thread read rejection is classified from a named set of phrasings" {
+  let classify = @harness.codex_thread_read_disposition
+  let invalid = @harness.codex_invalid_request_code()
+  // The phrasing the provider used when this branch was written.
+  assert_eq(
+    classify(invalid, "thread 0000 is not materialized yet"),
+    @harness.CodexThreadReadDisposition::CodexThreadNotMaterialized,
+  )
+  // The phrasing it uses now. Choir matched only the old one, so the recovery
+  // branch had silently stopped firing and thread reads failed mid-Take.
+  assert_eq(
+    classify(invalid, "thread not loaded: 00000000-0000-0000-0000-000000000000"),
+    @harness.CodexThreadReadDisposition::CodexThreadNotMaterialized,
+  )
+  // Same code, genuinely wrong request: not something to paper over.
+  assert_eq(
+    classify(invalid, "Invalid request: missing field `threadId`"),
+    @harness.CodexThreadReadDisposition::CodexThreadReadRejected,
+  )
+  assert_eq(
+    classify(invalid, "Invalid request: unknown variant `no/such/method`"),
+    @harness.CodexThreadReadDisposition::CodexThreadReadRejected,
+  )
+  // A phrasing nobody has seen is a rejection, not an optimistic recovery.
+  assert_eq(
+    classify(invalid, "the thread has gone to lunch"),
+    @harness.CodexThreadReadDisposition::CodexThreadReadRejected,
+  )
+  // Any other code is a rejection regardless of what it says.
+  assert_eq(
+    classify(-32603, "thread not loaded: abc"),
+    @harness.CodexThreadReadDisposition::CodexThreadReadRejected,
+  )
+}

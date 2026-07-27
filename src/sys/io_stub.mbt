@@ -14,6 +14,11 @@ pub fn read_file_prefix(_path : String, _max_size : Int) -> String {
 }
 
 ///|
+pub fn read_file_from(_path : String, _offset : Int) -> (String, Int) {
+  ("", 0)
+}
+
+///|
 pub fn list_dir(_path : String) -> Array[String] {
   []
 }

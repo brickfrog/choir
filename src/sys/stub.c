@@ -680,6 +680,36 @@ void choir_read_file_to_buf(const char* path, char* buf, int size) {
     fclose(f);
 }
 
+/* Read at most max_size bytes starting at offset. Returns the byte count, or
+ * -1 when the file cannot be opened or the arguments are out of range. Used to
+ * follow an append-only spool without re-reading what was already consumed. */
+int choir_read_file_range(const char *path, int offset, char *buf, int max_size) {
+    if (path == NULL || buf == NULL || offset < 0 || max_size <= 0) {
+        return -1;
+    }
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        return -1;
+    }
+    if (lseek(fd, (off_t)offset, SEEK_SET) < 0) {
+        close(fd);
+        return -1;
+    }
+    int total = 0;
+    while (total < max_size) {
+        ssize_t n = read(fd, buf + total, (size_t)(max_size - total));
+        if (n < 0 && errno == EINTR) {
+            continue;
+        }
+        if (n <= 0) {
+            break;
+        }
+        total += (int)n;
+    }
+    close(fd);
+    return total;
+}
+
 int choir_read_file_prefix(const char *path, char *buf, int max_size) {
     if (path == NULL || buf == NULL || max_size <= 0 || max_size > 65536) {
         return -1;
