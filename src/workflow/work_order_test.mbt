@@ -35,13 +35,10 @@ test "a relative WorkOrder duration resolves once and survives replay" {
 
 ///|
 test "unattended WorkOrders never park on an input request" {
-  let budget = @workflow.accept_work_order_budget(
-    @workflow.WorkOrderStopRequest::WorkOrderRequestRelativeSeconds(60L),
-    @workflow.WorkOrderCutoffPolicy::WorkOrderDrainToSafeBoundary,
-    1_000L,
-  ).unwrap()
   assert_eq(
-    @workflow.goal_input_policy_disposition(Some(budget)),
+    @workflow.goal_input_policy_disposition(
+      Some(@workflow.WorkOrderId("work-order-test")),
+    ),
     @workflow.GoalInputPolicyDisposition::GoalInputPolicyCancelUnattended,
   )
   assert_eq(
@@ -277,47 +274,42 @@ test "each stop condition reports its own terminal reason" {
 
 ///|
 test "an exhausted WorkOrder budget stops the Goal admitting new agentic work" {
-  let record = workflow_execution_for_attach(workflow_fixture())
   // An unbudgeted Goal admits work exactly as before.
   assert_eq(
-    @workflow.goal_execution_admits_new_agentic_work(record, 5_000L),
+    @workflow.work_order_admits_new_agentic_work(None, 5_000L),
     @workflow.WorkOrderAdmission::WorkOrderAdmitsNewWork,
   )
-  assert_eq(@workflow.record_goal_work_order_stop(record, 5_000L), record)
   let budget = @workflow.accept_work_order_budget(
     @workflow.WorkOrderStopRequest::WorkOrderRequestRelativeSeconds(100L),
     @workflow.WorkOrderCutoffPolicy::WorkOrderInstallCancellationCutoff,
     100L,
   ).unwrap()
-  let budgeted = { ..record, work_order_budget: Some(budget) }
   assert_eq(
-    @workflow.goal_execution_admits_new_agentic_work(budgeted, 150L),
+    @workflow.work_order_admits_new_agentic_work(Some(budget), 150L),
     @workflow.WorkOrderAdmission::WorkOrderAdmitsNewWork,
   )
   assert_eq(
-    @workflow.goal_execution_admits_new_agentic_work(budgeted, 250L),
+    @workflow.work_order_admits_new_agentic_work(Some(budget), 250L),
     @workflow.WorkOrderAdmission::WorkOrderExhausted(
       @workflow.WorkOrderStopReason::WorkOrderDeadlineReached,
     ),
   )
-  // The latch is durable on the Goal record and bumps its version once.
-  let stopped = @workflow.record_goal_work_order_stop(budgeted, 250L)
-  assert_eq(stopped.durable_version, budgeted.durable_version + 1)
+  let stopped = @workflow.record_work_order_stop(budget, 250L)
   assert_eq(
-    stopped.work_order_budget.unwrap().stopped,
+    stopped.stopped,
     Some(@workflow.WorkOrderStopReason::WorkOrderDeadlineReached),
   )
   // Restart cannot resurrect it: an earlier clock reading is still refused,
   // and latching again is a no-op rather than a second version bump.
   assert_eq(
-    @workflow.goal_execution_admits_new_agentic_work(stopped, 150L),
+    @workflow.work_order_admits_new_agentic_work(Some(stopped), 150L),
     @workflow.WorkOrderAdmission::WorkOrderExhausted(
       @workflow.WorkOrderStopReason::WorkOrderDeadlineReached,
     ),
   )
-  assert_eq(@workflow.record_goal_work_order_stop(stopped, 250L), stopped)
+  assert_eq(@workflow.record_work_order_stop(stopped, 250L), stopped)
   assert_eq(
-    stopped.work_order_budget.unwrap().cutoff_policy,
+    stopped.cutoff_policy,
     @workflow.WorkOrderCutoffPolicy::WorkOrderInstallCancellationCutoff,
   )
 }
@@ -360,7 +352,7 @@ test "a Conductor draft carries a WorkOrder request without resolving it" {
   let draft =
     #|{"proposal_id":"proposal-wo","goal_id":"goal-wo","maximum_parallel_parts":1,
     #|"pull_request":{"title":"feat: work order","body":"Body.","draft":false},
-    #|"work_order":{"cutoff":"cancel","stop":{"kind":"any_of","any_of":[
+    #|"work_order":{"objective":"Deliver the selected Beads.","planner":{"provider":"codex"},"initial_primary_targets":["choir-a"],"cutoff":"cancel","stop":{"kind":"any_of","any_of":[
     #|{"kind":"duration","seconds":3600},
     #|{"kind":"delivered","basis":"closure","count":5}]}},
     #|"parts":[{"part_id":"choir-a","commit_title":"feat: a","instruction":"Do the work.","repository_wide":true,"moon_args":["test"]}]}
@@ -455,40 +447,29 @@ test "the safety ceiling counts Takes that actually started" {
     ]),
     started * 2,
   )
-  let record = workflow_execution_for_attach(planned)
-  // An unbudgeted Goal keeps no counters.
-  assert_eq(
-    @workflow.refresh_goal_work_order_counters(record, [drive_to_verified()]),
-    record,
-  )
   let budget = @workflow.accept_work_order_budget(
     @workflow.WorkOrderStopRequest::WorkOrderRequestSafetyCeiling(started),
     @workflow.WorkOrderCutoffPolicy::WorkOrderDrainToSafeBoundary,
     100L,
   ).unwrap()
-  let budgeted = { ..record, work_order_budget: Some(budget) }
   assert_eq(
-    @workflow.goal_execution_admits_new_agentic_work(budgeted, 101L),
+    @workflow.work_order_admits_new_agentic_work(Some(budget), 101L),
     @workflow.WorkOrderAdmission::WorkOrderAdmitsNewWork,
   )
-  let counted = @workflow.refresh_goal_work_order_counters(budgeted, [
+  let counted = @workflow.refresh_work_order_counters(budget, [
     drive_to_verified(),
   ])
-  assert_eq(
-    counted.work_order_budget.unwrap().counters.agentic_takes_started,
-    started,
-  )
-  assert_eq(counted.durable_version, budgeted.durable_version + 1)
+  assert_eq(counted.counters.agentic_takes_started, started)
   // The ceiling is now reached, so no further agentic Take is authorized.
   assert_eq(
-    @workflow.goal_execution_admits_new_agentic_work(counted, 101L),
+    @workflow.work_order_admits_new_agentic_work(Some(counted), 101L),
     @workflow.WorkOrderAdmission::WorkOrderExhausted(
       @workflow.WorkOrderStopReason::WorkOrderSafetyCeilingReached,
     ),
   )
   // A tick that started nothing new writes nothing.
   assert_eq(
-    @workflow.refresh_goal_work_order_counters(counted, [drive_to_verified()]),
+    @workflow.refresh_work_order_counters(counted, [drive_to_verified()]),
     counted,
   )
 }

@@ -1,4 +1,48 @@
 ///|
+pub(all) struct WorkOrderId(String) derive (
+  Debug,
+  Eq,
+  Compare,
+  Hash,
+  ToJson,
+  FromJson,
+)
+
+///|
+pub(all) enum WorkOrderSelectionPolicy {
+  WorkOrderExactBeadClosure
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct WorkOrderPlannerPolicy {
+  primary_surface : @control.ProviderSurfaceId
+  failover_surfaces : Array[@control.ProviderSurfaceId]
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum WorkOrderChildOutcome {
+  WorkOrderChildActive
+  WorkOrderChildSucceeded
+  WorkOrderChildCanceled(GoalCancellationCause)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct WorkOrderChildGoalBinding {
+  goal_id : @control.GoalId
+  selection_decision_digest : @control.Digest
+  primary_target_ids : Array[@control.PartId]
+  prerequisite_closure_ids : Array[@control.PartId]
+  outcome : WorkOrderChildOutcome
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum WorkOrderLifecycle {
+  WorkOrderActive
+  WorkOrderStopped(WorkOrderStopReason)
+  WorkOrderCompleted
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 /// Which Beads a delivered quota counts. A WorkOrder that asks for "five Beads"
 /// means five of the Beads it named, not five of anything the dependency
 /// closure dragged in — but both are reported so the difference is visible.
@@ -78,6 +122,26 @@ pub(all) struct WorkOrderBudget {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+/// Durable authority for a bounded campaign. Goals retain their immutable
+/// contracts; this record alone owns mutable campaign policy, counters, child
+/// bindings, outcomes, and the terminal lifecycle.
+pub(all) struct WorkOrderRecord {
+  id : WorkOrderId
+  repository_id : RepositoryId
+  objective : String
+  selection_policy : WorkOrderSelectionPolicy
+  planner : WorkOrderPlannerPolicy
+  initial_primary_target_ids : Array[@control.PartId]
+  initial_prerequisite_closure_ids : Array[@control.PartId]
+  max_active_child_goals : Int
+  budget : WorkOrderBudget
+  child_goals : Array[WorkOrderChildGoalBinding]
+  lifecycle : WorkOrderLifecycle
+  durable_version : Int
+  fencing_epoch : @control.FencingEpoch
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub(all) enum WorkOrderAdmission {
   WorkOrderAdmitsNewWork
   WorkOrderExhausted(WorkOrderStopReason)
@@ -86,6 +150,123 @@ pub(all) enum WorkOrderAdmission {
 ///|
 fn work_order_error(detail : String) -> @types.ChoirError {
   @types.ChoirError::validation_error("WorkOrder budget: " + detail)
+}
+
+///|
+pub fn work_order_id(
+  repository_id : RepositoryId,
+  proposal_id : GoalProposalId,
+) -> WorkOrderId {
+  WorkOrderId(
+    "work-order-" +
+    @storage.digest_text(
+      @storage.artifact_digest(
+        @utf8.encode(
+          "choir.work-order.v1\u{00}" +
+          repository_id.0 +
+          "\u{00}" +
+          proposal_id.0,
+        ),
+      ),
+    ),
+  )
+}
+
+///|
+fn work_order_sorted_part_ids(
+  ids : Array[@control.PartId],
+) -> Array[@control.PartId] {
+  let sorted = ids.copy()
+  sorted.sort_by(fn(left, right) { left.compare(right) })
+  sorted
+}
+
+///|
+fn work_order_unique_part_ids(ids : Array[@control.PartId]) -> Bool {
+  let sorted = work_order_sorted_part_ids(ids)
+  for index = 1; index < sorted.length(); index = index + 1 {
+    if sorted[index - 1] == sorted[index] {
+      return false
+    }
+  }
+  true
+}
+
+///|
+pub fn validate_work_order_record(
+  record : WorkOrderRecord,
+) -> Result[Unit, @types.ChoirError] {
+  if record.id.0 == "" || record.id.0.contains("\u{00}") {
+    return Err(work_order_error("identity is invalid"))
+  }
+  if record.objective.trim().to_owned() == "" ||
+    record.objective.contains("\u{00}") {
+    return Err(work_order_error("objective is invalid"))
+  }
+  if record.max_active_child_goals != 1 {
+    return Err(work_order_error("v1 admits exactly one active child Goal"))
+  }
+  if record.initial_primary_target_ids.length() == 0 ||
+    !work_order_unique_part_ids(record.initial_primary_target_ids) ||
+    !work_order_unique_part_ids(record.initial_prerequisite_closure_ids) {
+    return Err(work_order_error("initial Bead selection is invalid"))
+  }
+  for id in record.initial_primary_target_ids {
+    if record.initial_prerequisite_closure_ids.contains(id) {
+      return Err(
+        work_order_error("a primary target is also prerequisite closure"),
+      )
+    }
+  }
+  if record.planner.failover_surfaces.contains(record.planner.primary_surface) {
+    return Err(work_order_error("planner failover repeats its primary"))
+  }
+  for index = 0
+      index < record.planner.failover_surfaces.length()
+      index = index + 1 {
+    for other = index + 1
+        other < record.planner.failover_surfaces.length()
+        other = other + 1 {
+      if record.planner.failover_surfaces[index] ==
+        record.planner.failover_surfaces[other] {
+        return Err(work_order_error("planner failover is duplicated"))
+      }
+    }
+  }
+  if record.durable_version <= 0 || record.fencing_epoch.0 <= 0L {
+    return Err(work_order_error("durable identity is invalid"))
+  }
+  for binding in record.child_goals {
+    if @storage.validate_digest(binding.selection_decision_digest) is Err(_) {
+      return Err(work_order_error("child selection digest is invalid"))
+    }
+    if !work_order_unique_part_ids(binding.primary_target_ids) ||
+      !work_order_unique_part_ids(binding.prerequisite_closure_ids) {
+      return Err(work_order_error("child Bead selection is invalid"))
+    }
+  }
+  Ok(())
+}
+
+///|
+pub fn work_order_record_bytes(record : WorkOrderRecord) -> Bytes {
+  @utf8.encode(record.to_json().stringify(indent=0))
+}
+
+///|
+pub fn decode_work_order_record(
+  content : Bytes,
+) -> Result[WorkOrderRecord, @types.ChoirError] {
+  let json = @json.parse(@utf8.decode(content)) catch {
+    _ => return Err(work_order_error("record is not valid JSON"))
+  }
+  let record : WorkOrderRecord = @json.from_json(json) catch {
+    _ => return Err(work_order_error("record shape is invalid"))
+  }
+  match validate_work_order_record(record) {
+    Ok(_) => Ok(record)
+    Err(error) => Err(error)
+  }
 }
 
 ///|
@@ -430,21 +611,13 @@ pub fn goal_agentic_takes_started(
 ///|
 /// Refresh the durable counters that are derived from Part state. Returns the
 /// record unchanged when nothing moved, so a quiet tick writes nothing.
-pub fn refresh_goal_work_order_counters(
-  record : GoalExecutionRecord,
+pub fn refresh_work_order_counters(
+  budget : WorkOrderBudget,
   snapshots : Array[PartWorkflowSnapshot],
-) -> GoalExecutionRecord {
-  guard record.work_order_budget is Some(budget) else { return record }
+) -> WorkOrderBudget {
   let started = goal_agentic_takes_started(snapshots)
   if started <= budget.counters.agentic_takes_started {
-    return record
+    return budget
   }
-  {
-    ..record,
-    work_order_budget: Some({
-      ..budget,
-      counters: { ..budget.counters, agentic_takes_started: started },
-    }),
-    durable_version: record.durable_version + 1,
-  }
+  { ..budget, counters: { ..budget.counters, agentic_takes_started: started } }
 }

@@ -265,9 +265,8 @@ pub(all) struct GoalExecutionRecord {
   active_input_request : GoalInputRequest?
   input_answers : Array[GoalInputAnswer]
   cancellation_request : GoalCancellationRequest?
-  /// The finite WorkOrder budget this Goal runs under, when one was accepted.
-  /// Absent means an unbudgeted Goal, which admits work exactly as before.
-  work_order_budget : WorkOrderBudget?
+  /// Durable campaign authority for this Goal. Absent for one-off Goals.
+  work_order_id : WorkOrderId?
   durable_version : Int
   fencing_epoch : @control.FencingEpoch
 } derive(Debug, Eq, ToJson, FromJson)
@@ -833,7 +832,7 @@ pub fn goal_execution_record_from_selection(
     active_input_request: None,
     input_answers: [],
     cancellation_request: None,
-    work_order_budget: decision.proposal.work_order_budget,
+    work_order_id: decision.proposal.work_order_id,
     durable_version: 1,
     fencing_epoch,
   })
@@ -994,38 +993,13 @@ fn goal_execution_cancellation_shape_is_valid(
 /// old spend. So the driver's retry path consults this gate for provider
 /// dispatches (`src/workflow/driver.mbt`), and a Goal past its deadline
 /// reconciles what it can while starting nothing new on a surface.
-pub fn goal_execution_admits_new_agentic_work(
-  record : GoalExecutionRecord,
+pub fn work_order_admits_new_agentic_work(
+  budget : WorkOrderBudget?,
   now : Int64,
 ) -> WorkOrderAdmission {
-  match record.work_order_budget {
+  match budget {
     None => WorkOrderAdmission::WorkOrderAdmitsNewWork
     Some(budget) => work_order_admits_new_work(budget, now)
-  }
-}
-
-///|
-/// Latch the WorkOrder stop reason onto the durable Goal record. The latch is
-/// what survives restart: a stopped WorkOrder stays stopped even if a later
-/// clock reading or counter would no longer reach the condition.
-pub fn record_goal_work_order_stop(
-  record : GoalExecutionRecord,
-  now : Int64,
-) -> GoalExecutionRecord {
-  match record.work_order_budget {
-    None => record
-    Some(budget) => {
-      let stopped = record_work_order_stop(budget, now)
-      if stopped == budget {
-        record
-      } else {
-        {
-          ..record,
-          work_order_budget: Some(stopped),
-          durable_version: record.durable_version + 1,
-        }
-      }
-    }
   }
 }
 

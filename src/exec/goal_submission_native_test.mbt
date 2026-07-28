@@ -156,6 +156,15 @@ async test "native Conductor submission captures Beads and persists once" {
     #|    "body": "Changes A and verifies its focused native test."
     #|  },
     #|  "maximum_parallel_parts": 1,
+    #|  "work_order": {
+    #|    "objective": "Deliver the selected Bead and continue bounded planning.",
+    #|    "selection_policy": "exact_bead_closure",
+    #|    "planner": {"provider": "codex", "provider_failover": ["claude"]},
+    #|    "initial_primary_targets": ["choir-a"],
+    #|    "max_active_child_goals": 1,
+    #|    "stop": {"kind": "safety_ceiling", "takes": 12},
+    #|    "cutoff": "cancel"
+    #|  },
     #|  "parts": [
     #|    {
     #|      "part_id": "choir-a",
@@ -185,11 +194,34 @@ async test "native Conductor submission captures Beads and persists once" {
   assert_eq(first.initialized_part_count, 1)
   assert_true(first.execution_registered)
   assert_eq(first.rejections, [])
+  guard first.work_order_id is Some(work_order_id) else {
+    fail("accepted WorkOrder submission returned no identity")
+  }
   let repository : @workflow.PartWorkflowRepository = {
     state_store: { path: root + "/.choir/state/control/workflow.db" },
     artifact_store: { root: root + "/.choir/state/control/artifacts" },
     max_snapshot_bytes: 4 * 1024 * 1024,
   }
+  let owner = match
+    @workflow.load_work_order_record(
+      repository,
+      local_part_workflow_repository_adapters(),
+      work_order_id,
+    ) {
+    Ok(Some(value)) => value
+    Ok(None) => fail("WorkOrder owner was not persisted")
+    Err(error) => fail(error.message())
+  }
+  assert_eq(
+    owner.record.objective,
+    "Deliver the selected Bead and continue bounded planning.",
+  )
+  assert_eq(owner.record.initial_primary_target_ids, [
+    @control.PartId("choir-a"),
+  ])
+  assert_eq(owner.record.initial_prerequisite_closure_ids, [])
+  assert_eq(owner.record.child_goals.length(), 1)
+  assert_eq(owner.record.child_goals[0].goal_id, first.goal_id)
   let stored = match
     @workflow.load_part_snapshot(
       repository,
@@ -261,6 +293,7 @@ async test "native Conductor submission captures Beads and persists once" {
     Err(error) => fail(error.message())
   }
   assert_eq(execution.state, @workflow.GoalExecutionState::GoalExecutionQueued)
+  assert_eq(execution.work_order_id, Some(work_order_id))
   assert_eq(execution.base_ref, @workflow.GitRefName("refs/heads/main"))
   assert_eq(
     execution.integration_target_ref,
@@ -426,6 +459,7 @@ async test "native Conductor submission captures Beads and persists once" {
   assert_true(replay.replayed)
   assert_eq(replay.initialized_part_count, 1)
   assert_true(replay.execution_registered)
+  assert_eq(replay.work_order_id, Some(work_order_id))
   assert_eq(replay.selection_decision_digest, first.selection_decision_digest)
   let changed_replay_capture_called = @ref.new(false)
   let changed_replay = draft.replace(old="returns 2", new="returns 3")

@@ -2,6 +2,7 @@
 pub(all) struct NativeConductorGoalSubmissionReport {
   accepted : Bool
   goal_id : @control.GoalId
+  work_order_id : @workflow.WorkOrderId?
   proposal_digest : @control.Digest
   selection_decision_digest : @control.Digest
   source_snapshot_digest : @control.Digest
@@ -1031,6 +1032,109 @@ fn initialize_native_goal_parts(
 }
 
 ///|
+/// Establish the campaign owner before any child Part or runnable Goal is
+/// persisted. Reconciliation is exact: an acknowledgment-lost commit reloads
+/// the same record, while a different binding is a permanent identity conflict.
+fn ensure_native_work_order(
+  repository : @workflow.PartWorkflowRepository,
+  adapters : @workflow.PartWorkflowRepositoryAdapters,
+  decision : @workflow.GoalSelectionDecision,
+  decision_digest : @control.Digest,
+) -> Result[@workflow.WorkOrderId?, @types.ChoirError] {
+  guard decision.proposal.work_order_id is Some(id) else { return Ok(None) }
+  if decision.outcome != @workflow.GoalSelectionOutcome::GoalSelectionAccepted {
+    return Ok(Some(id))
+  }
+  let requested = match decision.proposal.work_order_budget {
+    Some(value) => value
+    None =>
+      return Err(
+        native_goal_submission_error("WorkOrder selection has no budget"),
+      )
+  }
+  let expected : @workflow.WorkOrderRecord = {
+    id,
+    repository_id: decision.proposal.repository_id,
+    // The objective and planner are captured in the durable Conductor draft.
+    // Their typed values are copied into the proposal below before evaluation.
+    objective: decision.proposal.work_order_objective.unwrap(),
+    selection_policy: decision.proposal.work_order_selection_policy.unwrap(),
+    planner: decision.proposal.work_order_planner.unwrap(),
+    initial_primary_target_ids: decision.primary_target_ids,
+    initial_prerequisite_closure_ids: decision.prerequisite_closure_ids,
+    max_active_child_goals: 1,
+    budget: requested,
+    child_goals: [
+      {
+        goal_id: decision.proposal.goal_id,
+        selection_decision_digest: decision_digest,
+        primary_target_ids: decision.primary_target_ids,
+        prerequisite_closure_ids: decision.prerequisite_closure_ids,
+        outcome: @workflow.WorkOrderChildOutcome::WorkOrderChildActive,
+      },
+    ],
+    lifecycle: @workflow.WorkOrderLifecycle::WorkOrderActive,
+    durable_version: 1,
+    fencing_epoch: current_native_goal_fencing_epoch(),
+  }
+  let matches = fn(stored : @workflow.WorkOrderRecord) {
+    stored.id == expected.id &&
+    stored.repository_id == expected.repository_id &&
+    stored.objective == expected.objective &&
+    stored.selection_policy == expected.selection_policy &&
+    stored.planner == expected.planner &&
+    stored.initial_primary_target_ids == expected.initial_primary_target_ids &&
+    stored.initial_prerequisite_closure_ids ==
+    expected.initial_prerequisite_closure_ids &&
+    stored.max_active_child_goals == expected.max_active_child_goals &&
+    stored.budget.accepted_at == expected.budget.accepted_at &&
+    stored.budget.stop_policy == expected.budget.stop_policy &&
+    stored.budget.cutoff_policy == expected.budget.cutoff_policy &&
+    stored.child_goals.any(fn(binding) {
+      let initial = expected.child_goals[0]
+      binding.goal_id == initial.goal_id &&
+      binding.selection_decision_digest == initial.selection_decision_digest &&
+      binding.primary_target_ids == initial.primary_target_ids &&
+      binding.prerequisite_closure_ids == initial.prerequisite_closure_ids
+    })
+  }
+  match @workflow.load_work_order_record(repository, adapters, id) {
+    Ok(Some(stored)) =>
+      if matches(stored.record) {
+        Ok(Some(id))
+      } else {
+        Err(
+          native_goal_submission_error(
+            "existing WorkOrder disagrees with its initial Goal binding",
+          ),
+        )
+      }
+    Ok(None) => {
+      let receipt = match
+        @workflow.persist_work_order_record(repository, adapters, {
+          record: expected,
+          expected_store_version: None,
+          fault_point: None,
+        }) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      if !native_goal_submission_persisted(receipt.transaction_outcome) {
+        return Err(
+          native_goal_submission_error("WorkOrder persistence conflicted"),
+        )
+      }
+      match @workflow.load_work_order_record(repository, adapters, id) {
+        Ok(Some(stored)) if matches(stored.record) => Ok(Some(id))
+        Ok(_) => Err(native_goal_submission_error("WorkOrder did not reload"))
+        Err(error) => Err(error)
+      }
+    }
+    Err(error) => Err(error)
+  }
+}
+
+///|
 fn native_goal_execution_plan_matches(
   stored : @workflow.GoalExecutionRecord,
   expected : @workflow.GoalExecutionRecord,
@@ -1048,7 +1152,8 @@ fn native_goal_execution_plan_matches(
   stored.goal_ref == expected.goal_ref &&
   stored.source_claims == expected.source_claims &&
   stored.maximum_parallel_parts == expected.maximum_parallel_parts &&
-  stored.part_workflow_ids == expected.part_workflow_ids
+  stored.part_workflow_ids == expected.part_workflow_ids &&
+  stored.work_order_id == expected.work_order_id
 }
 
 ///|
@@ -1122,6 +1227,7 @@ fn native_goal_submission_report(
     accepted: decision.outcome ==
     @workflow.GoalSelectionOutcome::GoalSelectionAccepted,
     goal_id: decision.proposal.goal_id,
+    work_order_id: decision.proposal.work_order_id,
     proposal_digest: decision.proposal_digest,
     selection_decision_digest,
     source_snapshot_digest: decision.source_snapshot_digest,
@@ -1196,6 +1302,16 @@ pub async fn submit_native_conductor_goal_draft(
             "the replayed draft disagrees with its durable selection; this identity conflict is permanent and must not be retried in this user turn",
           ),
         )
+      }
+      match
+        ensure_native_work_order(
+          repository,
+          adapters,
+          stored.decision,
+          stored.state_record.value_digest,
+        ) {
+        Ok(_) => ()
+        Err(error) => return Err(error)
       }
       let initialized_part_count = match
         initialize_native_goal_parts(
@@ -1324,6 +1440,18 @@ pub async fn submit_native_conductor_goal_draft(
     migration_production_admission,
     maximum_parallel_parts: draft.maximum_parallel_parts,
     parts,
+    work_order_id: draft.work_order.map(fn(_) {
+      @workflow.work_order_id(snapshot.repository_id, draft.proposal_id)
+    }),
+    work_order_objective: draft.work_order.map(fn(request) { request.objective }),
+    work_order_selection_policy: draft.work_order.map(fn(request) {
+      request.selection_policy
+    }),
+    work_order_planner: draft.work_order.map(fn(request) { request.planner }),
+    work_order_primary_target_ids: match draft.work_order {
+      Some(request) => request.initial_primary_target_ids
+      None => parts.map(fn(part) { part.part_id })
+    },
     // Resolve the requested WorkOrder once, here, against the host clock. The
     // absolute result is persisted with the selection decision, so replay and
     // restart read the same deadline instead of sliding it forward.
@@ -1395,6 +1523,16 @@ pub async fn submit_native_conductor_goal_draft(
   if loaded.decision != decision ||
     loaded.state_record.value_digest != persistence.decision_digest {
     return Err(native_goal_submission_error("selection reload disagrees"))
+  }
+  match
+    ensure_native_work_order(
+      repository,
+      adapters,
+      decision,
+      persistence.decision_digest,
+    ) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
   }
   let initialized_part_count = match
     initialize_native_goal_parts(repository, adapters, decision, is_nfc) {

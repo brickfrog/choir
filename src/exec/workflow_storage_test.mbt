@@ -2025,7 +2025,7 @@ async test "Goal cancellation atomically rejects stale seal authorization" {
     active_input_request: None,
     input_answers: [],
     cancellation_request: None,
-    work_order_budget: None,
+    work_order_id: None,
     durable_version: 1,
     fencing_epoch: integrated.fencing_epoch,
   }
@@ -2215,7 +2215,7 @@ async test "Goal steering persists revision history and paused Goals do not run"
     active_input_request: None,
     input_answers: [],
     cancellation_request: None,
-    work_order_budget: None,
+    work_order_id: None,
     durable_version: 1,
     fencing_epoch: fixture.fencing_epoch,
   }
@@ -2353,7 +2353,7 @@ async test "Goal finalization input request and answer survive restart" {
     active_input_request: None,
     input_answers: [],
     cancellation_request: None,
-    work_order_budget: None,
+    work_order_id: None,
     durable_version: 1,
     fencing_epoch: fixture.fencing_epoch,
   }
@@ -2755,15 +2755,53 @@ async test "a stopped WorkOrder budget survives restart and is not resurrected" 
     active_input_request: None,
     input_answers: [],
     cancellation_request: None,
-    work_order_budget: Some(budget),
+    work_order_id: Some(@workflow.WorkOrderId("work-order-storage")),
     durable_version: 1,
     fencing_epoch: fixture.fencing_epoch,
   }
-  let receipt = @workflow.persist_goal_execution_record(repository, adapters, {
-    record: execution,
-    expected_store_version: None,
-    fault_point: None,
-  }).unwrap()
+  let owner : @workflow.WorkOrderRecord = {
+    id: @workflow.WorkOrderId("work-order-storage"),
+    repository_id: execution.repository_id,
+    objective: "Prove durable WorkOrder ownership.",
+    selection_policy: @workflow.WorkOrderSelectionPolicy::WorkOrderExactBeadClosure,
+    planner: {
+      primary_surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+      failover_surfaces: [],
+    },
+    initial_primary_target_ids: [fixture.part.id],
+    initial_prerequisite_closure_ids: [],
+    max_active_child_goals: 1,
+    budget,
+    child_goals: [
+      {
+        goal_id: fixture.goal.id,
+        selection_decision_digest: workflow_store_digest_a,
+        primary_target_ids: [fixture.part.id],
+        prerequisite_closure_ids: [],
+        outcome: @workflow.WorkOrderChildOutcome::WorkOrderChildActive,
+      },
+    ],
+    lifecycle: @workflow.WorkOrderLifecycle::WorkOrderActive,
+    durable_version: 1,
+    fencing_epoch: fixture.fencing_epoch,
+  }
+  assert_true(
+    @workflow.load_goal_work_order(repository, adapters, execution) is Err(_),
+  )
+  ignore(
+    @workflow.persist_work_order_record(repository, adapters, {
+      record: owner,
+      expected_store_version: None,
+      fault_point: None,
+    }).unwrap(),
+  )
+  ignore(
+    @workflow.persist_goal_execution_record(repository, adapters, {
+      record: execution,
+      expected_store_version: None,
+      fault_point: None,
+    }).unwrap(),
+  )
   // The deadline resolved once at acceptance, so a restart reads the same
   // absolute instant rather than re-deriving it from the new clock.
   let stored = @workflow.load_goal_execution_record(
@@ -2773,8 +2811,14 @@ async test "a stopped WorkOrder budget survives restart and is not resurrected" 
     )
     .unwrap()
     .unwrap()
-  assert_eq(stored.record.work_order_budget, Some(budget))
-  assert_eq(stored.record.work_order_budget.unwrap().counters, {
+  let stored_owner = @workflow.load_goal_work_order(
+      repository,
+      adapters,
+      stored.record,
+    )
+    .unwrap()
+    .unwrap()
+  assert_eq(stored_owner.record.budget.counters, {
     ..@workflow.initial_work_order_counters(),
     delivered_primary_targets: 2,
     delivered_dependency_closure: 5,
@@ -2783,23 +2827,25 @@ async test "a stopped WorkOrder budget survives restart and is not resurrected" 
   // The cutoff is durable too: it decides whether the stop drains or cancels,
   // and a restart that read the default would silently change that answer.
   assert_eq(
-    stored.record.work_order_budget.unwrap().cutoff_policy,
+    stored_owner.record.budget.cutoff_policy,
     @workflow.WorkOrderCutoffPolicy::WorkOrderInstallCancellationCutoff,
   )
   assert_eq(
-    @workflow.goal_execution_admits_new_agentic_work(stored.record, 4_599L),
+    @workflow.work_order_admits_new_agentic_work(
+      Some(stored_owner.record.budget),
+      4_599L,
+    ),
     @workflow.WorkOrderAdmission::WorkOrderAdmitsNewWork,
   )
-  // Crossing the deadline latches the stop onto the durable record.
-  let stopped = @workflow.record_goal_work_order_stop(stored.record, 4_600L)
-  assert_true(stopped != stored.record)
-  ignore(
-    @workflow.persist_goal_execution_record(repository, adapters, {
-      record: stopped,
-      expected_store_version: Some(receipt.store_version),
-      fault_point: None,
-    }).unwrap(),
+  // Crossing the deadline latches the stop onto the WorkOrder owner.
+  let stopped = @workflow.record_work_order_stop(
+    stored_owner.record.budget,
+    4_600L,
   )
+  assert_true(stopped != stored_owner.record.budget)
+  let stopped_owner = @workflow.persist_work_order_budget(
+    repository, adapters, stored_owner, stopped,
+  ).unwrap()
   let restarted = @workflow.load_goal_execution_record(
       workflow_repository("work-order-budget"),
       adapters,
@@ -2810,15 +2856,22 @@ async test "a stopped WorkOrder budget survives restart and is not resurrected" 
   // A restart cannot resurrect the WorkOrder by reading an earlier clock: the
   // latch is the answer, not the deadline comparison.
   assert_eq(
-    @workflow.goal_execution_admits_new_agentic_work(restarted.record, 1_001L),
+    @workflow.work_order_admits_new_agentic_work(
+      Some(
+        @workflow.load_goal_work_order(repository, adapters, restarted.record)
+        .unwrap()
+        .unwrap().record.budget,
+      ),
+      1_001L,
+    ),
     @workflow.WorkOrderAdmission::WorkOrderExhausted(
       @workflow.WorkOrderStopReason::WorkOrderDeadlineReached,
     ),
   )
   // Latching twice is idempotent, so a repeated tick writes nothing.
   assert_eq(
-    @workflow.record_goal_work_order_stop(restarted.record, 9_000L),
-    restarted.record,
+    @workflow.record_work_order_stop(stopped_owner.record.budget, 9_000L),
+    stopped_owner.record.budget,
   )
   clean_workflow_repository(repository)
 }

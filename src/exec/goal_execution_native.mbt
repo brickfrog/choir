@@ -2365,7 +2365,7 @@ fn native_source_claim_test_record(
     active_input_request: None,
     input_answers: [],
     cancellation_request: None,
-    work_order_budget: None,
+    work_order_id: None,
     durable_version: 2,
     fencing_epoch: @control.FencingEpoch(1L),
   }
@@ -2905,8 +2905,13 @@ pub fn native_goal_effect_authorization(
   // reaches this gate for exactly that reason. A Goal past its budget, no
   // longer running, or no longer active therefore reads witnesses and finishes
   // what it can while starting nothing on a provider.
-  let budget_admits = @workflow.goal_execution_admits_new_agentic_work(
-      current.record,
+  let work_order = match
+    @workflow.load_goal_work_order(repository, adapters, current.record) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let budget_admits = @workflow.work_order_admits_new_agentic_work(
+      work_order.map(fn(stored) { stored.record.budget }),
       now,
     )
     is @workflow.WorkOrderAdmission::WorkOrderAdmitsNewWork
@@ -7852,6 +7857,12 @@ pub fn inspect_native_goal(
       }
     None => None
   }
+  let work_order = match
+    @workflow.load_goal_work_order(repository, adapters, record) {
+    Ok(Some(stored)) => Some(stored.record.budget)
+    Ok(None) => None
+    Err(error) => return Err(error)
+  }
   @workflow.goal_status_report(
     record,
     snapshots,
@@ -7859,6 +7870,7 @@ pub fn inspect_native_goal(
     publication,
     pull_request,
     finalization,
+    work_order~,
     provider_capacity=observation,
   )
 }

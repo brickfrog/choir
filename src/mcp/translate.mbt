@@ -161,6 +161,57 @@ fn conductor_tools() -> Array[CatalogTool] {
       "minItems": (1).to_json(),
       "items": part_schema,
     }.to_json(),
+    "work_order": {
+      "type": "object".to_json(),
+      "description": "Optional durable multi-Goal campaign. When present Choir returns a WorkOrder ID bound to this exact initial Goal; v1 runs one child Goal at a time.".to_json(),
+      "properties": {
+        "objective": conductor_string_schema(
+          "Stable campaign objective used by later planning rounds",
+        ),
+        "selection_policy": {
+          "type": "string".to_json(),
+          "enum": ["exact_bead_closure"].to_json(),
+          "default": "exact_bead_closure".to_json(),
+        }.to_json(),
+        "planner": {
+          "type": "object".to_json(),
+          "properties": {
+            "provider": {
+              "type": "string".to_json(),
+              "enum": ["codex", "claude"].to_json(),
+            }.to_json(),
+            "provider_failover": {
+              "type": "array".to_json(),
+              "items": {
+                "type": "string".to_json(),
+                "enum": ["codex", "claude"].to_json(),
+              }.to_json(),
+            }.to_json(),
+          }.to_json(),
+          "required": ["provider"].to_json(),
+          "additionalProperties": false.to_json(),
+        }.to_json(),
+        "initial_primary_targets": conductor_string_array_schema(
+          "Non-empty subset of parts that the campaign directly targets; remaining selected Parts are prerequisite closure",
+        ),
+        "max_active_child_goals": {
+          "type": "integer".to_json(),
+          "const": (1).to_json(),
+          "default": (1).to_json(),
+        }.to_json(),
+        "stop": {
+          "type": "object".to_json(),
+          "description": "Finite stop request: duration, deadline, delivered, no_eligible_work, no_further_findings, safety_ceiling, or a flat any_of".to_json(),
+        }.to_json(),
+        "cutoff": {
+          "type": "string".to_json(),
+          "enum": ["drain", "cancel"].to_json(),
+          "default": "drain".to_json(),
+        }.to_json(),
+      }.to_json(),
+      "required": ["objective", "planner", "initial_primary_targets", "stop"].to_json(),
+      "additionalProperties": false.to_json(),
+    }.to_json(),
   }
   [
     {

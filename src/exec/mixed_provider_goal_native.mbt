@@ -237,6 +237,14 @@ pub async fn run_native_mixed_provider_goal_fixture(
         part_context_manifest: None,
       },
     ],
+    work_order_id: None,
+    work_order_objective: None,
+    work_order_selection_policy: None,
+    work_order_planner: None,
+    work_order_primary_target_ids: [
+      claude_snapshot.part.id,
+      codex_snapshot.part.id,
+    ],
     work_order_budget: None,
   }
   let selection = match
