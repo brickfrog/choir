@@ -543,6 +543,42 @@ async fn verify_native_codex_file(
 }
 
 ///|
+fn native_codex_verification_paths(launcher : String) -> (String?, String) {
+  let suffix = "/@openai/codex/bin/codex.js"
+  if launcher.has_suffix(suffix) {
+    let modules_root = launcher[:launcher.length() - suffix.length()].to_owned()
+    (
+      Some(launcher),
+      modules_root +
+      "/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+    )
+  } else {
+    // Provider-managed standalone releases resolve directly to the same native
+    // executable npm packages carry. The content pin below remains the
+    // authority; no directory name or mutable `current` link is trusted.
+    (None, launcher)
+  }
+}
+
+///|
+test "native Codex verification paths cover npm and standalone releases" {
+  let npm = "/opt/lib/node_modules/@openai/codex/bin/codex.js"
+  assert_eq(
+    native_codex_verification_paths(npm),
+    (
+      Some(npm),
+      "/opt/lib/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+    ),
+  )
+  assert_eq(
+    native_codex_verification_paths(
+      "/home/user/.codex/packages/standalone/releases/0.145.0/bin/codex",
+    ),
+    (None, "/home/user/.codex/packages/standalone/releases/0.145.0/bin/codex"),
+  )
+}
+
+///|
 async fn verify_native_codex_binary(
   codex : String,
 ) -> Result[String, @types.ChoirError] {
@@ -550,23 +586,17 @@ async fn verify_native_codex_binary(
     Some(value) => value
     None => return Err(native_codex_driver_error("launcher path is invalid"))
   }
-  let suffix = "/@openai/codex/bin/codex.js"
-  if !launcher.has_suffix(suffix) {
-    return Err(
-      @types.ChoirError::policy_blocked(
-        "Codex launcher is outside the admitted package layout",
-      ),
-    )
-  }
-  let modules_root = launcher[:launcher.length() - suffix.length()].to_owned()
-  let native = modules_root +
-    "/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex"
-  match
-    verify_native_codex_file(
-      launcher, @harness.expected_codex_executable_sha256, "JavaScript launcher",
-    ) {
-    Ok(_) => ()
-    Err(error) => return Err(error)
+  let (javascript, native) = native_codex_verification_paths(launcher)
+  match javascript {
+    Some(path) =>
+      match
+        verify_native_codex_file(
+          path, @harness.expected_codex_executable_sha256, "JavaScript launcher",
+        ) {
+        Ok(_) => ()
+        Err(error) => return Err(error)
+      }
+    None => ()
   }
   match
     verify_native_codex_file(
