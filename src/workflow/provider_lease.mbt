@@ -3,17 +3,34 @@
 /// `maximum_parallel_parts` bounds one Goal's own concurrency. It says nothing
 /// about the portfolio, so two Goals that each respect it can still ask Claude
 /// or Codex for more sessions than the subscription serves. This file is the
-/// portfolio-wide bound: before a Goal may admit new Part-level provider work
-/// it has to hold a lease on the surface that work will run on.
+/// portfolio-wide bound: before a Goal may admit new provider work it has to
+/// hold a lease on the surface that work will run on.
 ///
-/// Scope, precisely, because the gap matters: the lease is taken at
-/// `goal_authorizes_new_effects`, which admits Part implementation, verification,
-/// and repair work. Goal-level assurance dispatches its own provider session
-/// through `advance_native_goal_assurance` without passing that seam, so a Goal
-/// audit is not counted against surface capacity. That is bounded today — one
-/// worker advances one Goal per tick — but it is a live oversubscription path
-/// the moment Goals run concurrently, and it is tracked rather than assumed
-/// away.
+/// Scope, precisely, because it used to be narrower than the claim: both
+/// provider dispatches a Goal makes are leased, from two call sites in
+/// `src/exec/goal_execution_native.mbt`. Part implementation, verification,
+/// repair, and audit work is leased at `native_goal_effect_authorization`, which
+/// is what `goal_authorizes_new_effects` is bound to. The Goal's own audit
+/// session — planned, dispatched, and reconciled by `advance_native_goal_assurance`,
+/// which never passes that seam — is leased at
+/// `native_goal_assurance_effect_admission` instead, keyed by
+/// `goal_assurance_provider_lease_id` rather than by a Part it does not have.
+/// Both call `acquire_provider_lease` below, so there is one held set and one
+/// bound rather than two. Goal *verification* takes no lease: it runs declared
+/// commands in a sandbox and reaches no provider surface.
+///
+/// Provider surfaces are the only capacity dimension here, and sandbox count is
+/// deliberately not a second one. A Take's box is a fixed shape — 2 vCPU,
+/// 2048 MiB, 4 GiB, pinned into `@sandbox.boxlite_take_runtime_policy_digest` —
+/// so a count would be a linear proxy for host memory, but there is no host
+/// budget anywhere to derive the number from and an invented default is either
+/// a stranded workstation or an out-of-memory CI box. Nor is the count
+/// currently free: every planned Part effect passes the gate above, including
+/// the sandbox-preparation kinds, and the audit box is inside the assurance
+/// lease, so the only box created outside a held lease is the Goal
+/// verification sandbox. The topology is also still moving — one BoxLite server
+/// per Goal, on a port derived from the daemon pid — so what a portfolio-wide
+/// box bound should count is not yet decided. See choir-g3n.5 and choir-g3n.6.
 ///
 /// One durable record per provider surface holds every lease currently held on
 /// it. That shape is the whole point rather than an implementation detail: with
@@ -181,6 +198,40 @@ pub fn provider_lease_id(
           goal_id.0 +
           "\u{00}" +
           part_id.0 +
+          "\u{00}" +
+          provider_surface_lease_tag(surface),
+        ),
+      ),
+    ),
+  )
+}
+
+///|
+/// The lease one Goal assurance attempt holds while its audit session runs.
+///
+/// Derived like `provider_lease_id`, and for the same reason, but from the
+/// audit Take instead of a Part: a Goal audit has no Part to key on. Every tick
+/// that advances the same assurance attempt re-derives this same id, so asking
+/// again returns the slot already held rather than taking a second one. A
+/// replanned attempt mints a fresh audit Take and therefore a different lease,
+/// which is right — it is a different session.
+///
+/// The domain prefix differs from the Part one, so a Goal and one of its Parts
+/// can never collide on a single slot.
+pub fn goal_assurance_provider_lease_id(
+  goal_id : @control.GoalId,
+  audit_take_id : @control.TakeId,
+  surface : @control.ProviderSurfaceId,
+) -> ProviderLeaseId {
+  ProviderLeaseId(
+    "provider-lease-" +
+    @storage.digest_text(
+      @storage.artifact_digest(
+        @utf8.encode(
+          "choir.goal-assurance-provider-lease.v1\u{00}" +
+          goal_id.0 +
+          "\u{00}" +
+          audit_take_id.0 +
           "\u{00}" +
           provider_surface_lease_tag(surface),
         ),

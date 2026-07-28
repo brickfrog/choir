@@ -2763,6 +2763,92 @@ async fn advance_native_goal_branch_initialization(
 }
 
 ///|
+/// One provider slot this process holds, and where to give it back.
+///
+/// The surface travels with the id because release is keyed by surface record,
+/// and the surface a lease was taken on is not recoverable from the id — it is
+/// hashed into it.
+pub(all) struct NativeProviderLeaseHold {
+  surface : @control.ProviderSurfaceId
+  lease_id : @workflow.ProviderLeaseId
+} derive(Debug, Eq)
+
+///|
+/// What the portfolio bound said.
+priv enum NativeProviderAdmission {
+  NativeProviderAdmitted(NativeProviderLeaseHold)
+  /// Refused, and when to come back. Never a bare no.
+  NativeProviderDeferredUntil(Int64, @workflow.PartGoalDeferralReason)
+}
+
+///|
+/// Take a portfolio provider slot.
+///
+/// Both admission gates below funnel through here, so the surface bound is
+/// decided once and a refusal is translated into a deferral reason once. A
+/// second gate that called `acquire_provider_lease` for itself would be a
+/// second bound the moment either translation drifted.
+///
+/// This is also the one place that reports what a surface did this tick, for
+/// the same reason. `observe` is what the daemon's sleep reads: a refusal that
+/// named an instant nobody recorded degrades a scheduled wake into a poll, and
+/// an admission that went unrecorded would let the daemon sleep on another
+/// surface's instant while this one was working. Reporting here rather than at
+/// each caller means the surface named is always the surface judged — a caller
+/// reading it back off a snapshot would name the pre-failover surface.
+fn native_provider_lease_admission(
+  repository : @workflow.PartWorkflowRepository,
+  surface : @control.ProviderSurfaceId,
+  request : @workflow.ProviderLeaseRequest,
+  capacity : @types.ProviderCapacityPolicy,
+  now : Int64,
+  observe~ : (@workflow.ProviderSurfaceTickReport) -> Unit,
+) -> Result[NativeProviderAdmission, @types.ChoirError] {
+  match
+    @workflow.acquire_provider_lease(
+      repository,
+      local_part_workflow_repository_adapters(),
+      surface,
+      request,
+      capacity,
+      now,
+    ) {
+    Ok(@workflow.ProviderLeaseDecision::ProviderLeaseGranted(_, lease)) => {
+      observe({
+        surface,
+        disposition: @workflow.ProviderSurfaceTickDisposition::ProviderSurfaceAdmitted,
+      })
+      Ok(NativeProviderAdmitted({ surface, lease_id: lease.id }))
+    }
+    Ok(
+      @workflow.ProviderLeaseDecision::ProviderLeaseDeferredUntil(
+        instant,
+        limit
+      )
+    ) => {
+      observe({
+        surface,
+        disposition: @workflow.ProviderSurfaceTickDisposition::ProviderSurfaceDeferredUntil(
+          instant,
+        ),
+      })
+      Ok(
+        NativeProviderDeferredUntil(
+          instant,
+          match limit {
+            @workflow.ProviderLeaseLimit::ProviderSurfaceLimit =>
+              @workflow.PartGoalDeferralReason::PartGoalProviderSurfaceAtCapacity
+            @workflow.ProviderLeaseLimit::ProviderGlobalLimit =>
+              @workflow.PartGoalDeferralReason::PartGoalProviderGlobalCeiling
+          },
+        ),
+      )
+    }
+    Err(error) => Err(error)
+  }
+}
+
+///|
 /// The one seam that admits new planner and provider work for a Part.
 ///
 /// Two gates, in this order. The WorkOrder budget and the Goal's own state come
@@ -2823,9 +2909,8 @@ pub fn native_goal_effect_authorization(
     return Ok(@workflow.PartGoalAuthorization::PartGoalNotAuthorized)
   }
   match
-    @workflow.acquire_provider_lease(
+    native_provider_lease_admission(
       repository,
-      adapters,
       surface,
       {
         lease_id: @workflow.provider_lease_id(goal_id, part_id, surface),
@@ -2835,43 +2920,165 @@ pub fn native_goal_effect_authorization(
       },
       capacity,
       now,
+      observe~,
     ) {
-    Ok(@workflow.ProviderLeaseDecision::ProviderLeaseGranted(_, _)) => {
-      observe({
-        surface,
-        disposition: @workflow.ProviderSurfaceTickDisposition::ProviderSurfaceAdmitted,
-      })
+    Ok(NativeProviderAdmitted(_)) =>
       Ok(
         @workflow.PartGoalAuthorization::PartGoalAuthorized(
           Some({ record: current.state_record }),
         ),
       )
-    }
-    Ok(
-      @workflow.ProviderLeaseDecision::ProviderLeaseDeferredUntil(
-        instant,
-        limit
-      )
-    ) => {
-      observe({
-        surface,
-        disposition: @workflow.ProviderSurfaceTickDisposition::ProviderSurfaceDeferredUntil(
-          instant,
-        ),
-      })
+    Ok(NativeProviderDeferredUntil(instant, reason)) =>
       Ok(
-        @workflow.PartGoalAuthorization::PartGoalDeferredUntil(
-          instant,
-          match limit {
-            @workflow.ProviderLeaseLimit::ProviderSurfaceLimit =>
-              @workflow.PartGoalDeferralReason::PartGoalProviderSurfaceAtCapacity
-            @workflow.ProviderLeaseLimit::ProviderGlobalLimit =>
-              @workflow.PartGoalDeferralReason::PartGoalProviderGlobalCeiling
-          },
+        @workflow.PartGoalAuthorization::PartGoalDeferredUntil(instant, reason),
+      )
+    Err(error) => Err(error)
+  }
+}
+
+///|
+/// Which provider surface one Goal assurance effect will reach.
+///
+/// The exhaustive match is the point: a new assurance effect kind does not
+/// compile until someone decides whether it dispatches a provider session. The
+/// three audit-session kinds run on the surface the audit session was planned
+/// for — the sandbox included, because that box is where the session runs and
+/// it exists only to serve it. Sealing and combined verification reach no
+/// provider: verification runs the Goal's declared commands in a sandbox, so
+/// leasing a subscription slot for it would hold a provider seat for the length
+/// of a test suite.
+fn native_goal_assurance_effect_surface(
+  identities : @workflow.GoalAssuranceIdentityPlan,
+  kind : @workflow.GoalAssuranceEffectKind,
+) -> @control.ProviderSurfaceId? {
+  match kind {
+    @workflow.GoalAssuranceEffectKind::PrepareGoalAuditSandbox(_)
+    | @workflow.GoalAssuranceEffectKind::StartGoalAuditHarness(_)
+    | @workflow.GoalAssuranceEffectKind::DispatchGoalAudit(_, _, _) =>
+      Some(identities.audit_session.surface)
+    @workflow.GoalAssuranceEffectKind::PrepareGoalVerificationSandbox(_)
+    | @workflow.GoalAssuranceEffectKind::DispatchGoalVerification(_, _) => None
+  }
+}
+
+///|
+/// The seam that admits the Goal's own audit session.
+///
+/// `native_goal_effect_authorization` cannot serve this: it demands a Part to
+/// key the lease on, and it refuses any Goal that is not `GoalExecutionRunning`
+/// — which every assuring Goal is not. So this is the same bound reached
+/// through the same `native_provider_lease_admission`, keyed on the audit Take
+/// instead. It decides capacity only; whether the Goal may assure at all is the
+/// execution tick's decision, made before this is ever called.
+///
+/// `None` means carry on: either the effect reaches no provider, or the slot it
+/// needs is now held and recorded in `holds`. `Some` is the tick's whole
+/// outcome — a deferral naming when to come back.
+///
+/// Idempotent by identity, not by memory: `goal_assurance_provider_lease_id` is
+/// derived from the Goal, the audit Take, and the surface, so a tick that
+/// re-enters this gate — after a crash, or several times inside one attempt —
+/// asks for the slot it already holds. Getting that wrong leaks a slot per
+/// tick.
+///
+/// `fencing_epoch` and `now` are parameters, and this is public, for the reason
+/// `native_goal_effect_authorization` is: a capacity test that stubs the gate
+/// out proves the stub.
+pub fn native_goal_assurance_effect_admission(
+  repository : @workflow.PartWorkflowRepository,
+  goal_id : @control.GoalId,
+  audit_take_id : @control.TakeId,
+  identities : @workflow.GoalAssuranceIdentityPlan,
+  kind : @workflow.GoalAssuranceEffectKind,
+  capacity : @types.ProviderCapacityPolicy,
+  fencing_epoch : @control.FencingEpoch,
+  now : Int64,
+  holds : Array[NativeProviderLeaseHold],
+  observe~ : (@workflow.ProviderSurfaceTickReport) -> Unit,
+) -> Result[@workflow.GoalAssuranceTickOutcome?, @types.ChoirError] {
+  let surface = match native_goal_assurance_effect_surface(identities, kind) {
+    Some(value) => value
+    None => return Ok(None)
+  }
+  match
+    native_provider_lease_admission(
+      repository,
+      surface,
+      {
+        lease_id: @workflow.goal_assurance_provider_lease_id(
+          goal_id, audit_take_id, surface,
+        ),
+        take_id: audit_take_id,
+        goal_id,
+        fencing_epoch,
+      },
+      capacity,
+      now,
+      observe~,
+    ) {
+    Ok(NativeProviderAdmitted(hold)) => {
+      if !holds.contains(hold) {
+        holds.push(hold)
+      }
+      Ok(None)
+    }
+    Ok(NativeProviderDeferredUntil(instant, reason)) =>
+      Ok(
+        Some(
+          @workflow.GoalAssuranceTickOutcome::GoalAssuranceDeferredUntil(
+            instant, reason,
+          ),
         ),
       )
-    }
     Err(error) => Err(error)
+  }
+}
+
+///|
+/// End one Goal assurance tick: give every slot it took back, whatever happened.
+///
+/// The attempt's own result wins, so a tick that failed still reports its
+/// failure — but the slot goes back first. An assurance attempt that failed
+/// while holding a Claude seat and did not return it would starve the surface
+/// until the daemon generation ended, which is the failure mode this exists to
+/// prevent rather than a detail of it.
+///
+/// This exit does not report the refusal's wake instant: the admission gate
+/// already did, against the surface it judged, which is the only place that
+/// knows which surface a refusal was about. Reporting again here would count
+/// one refusal twice.
+///
+/// Releasing is idempotent, so the sweep costs a read and writes nothing for a
+/// tick that took no slot. Public so a test can prove the failing path returns
+/// the slot without having to make a real provider session fail.
+pub fn finish_native_goal_assurance_leases(
+  repository : @workflow.PartWorkflowRepository,
+  holds : Array[NativeProviderLeaseHold],
+  result : Result[@workflow.GoalAssuranceTickOutcome, @types.ChoirError],
+  fencing_epoch : @control.FencingEpoch,
+) -> Result[@workflow.GoalAssuranceTickOutcome, @types.ChoirError] {
+  let adapters = local_part_workflow_repository_adapters()
+  let mut released : Result[Unit, @types.ChoirError] = Ok(())
+  for hold in holds {
+    match
+      @workflow.release_provider_lease(
+        repository,
+        adapters,
+        hold.surface,
+        hold.lease_id,
+        fencing_epoch,
+      ) {
+      Ok(_) => ()
+      Err(error) => released = Err(error)
+    }
+  }
+  match result {
+    Err(error) => Err(error)
+    Ok(value) =>
+      match released {
+        Err(error) => Err(error)
+        Ok(_) => Ok(value)
+      }
   }
 }
 
@@ -5236,12 +5443,50 @@ fn plan_and_persist_native_goal_verification_repairs(
 }
 
 ///|
+/// Advance one Goal's assurance, holding a portfolio provider slot for as long
+/// as its audit session needs one.
+///
+/// The slot is taken lazily rather than for the whole tick: a Goal whose
+/// assurance is already complete, blocked, or still sealing must not be refused
+/// because Claude is busy — it is not asking Claude for anything. It is taken
+/// before the first audit-session effect this tick touches and given back when
+/// the tick returns, failure included.
 async fn advance_native_goal_assurance(
   project_dir : String,
   repository : @workflow.PartWorkflowRepository,
   adapters : @workflow.PartWorkflowRepositoryAdapters,
   execution : @workflow.GoalExecutionRecord,
   snapshots : Array[@workflow.PartWorkflowSnapshot],
+  capacity : @types.ProviderCapacityPolicy,
+  observe~ : (@workflow.ProviderSurfaceTickReport) -> Unit,
+) -> Result[@workflow.GoalAssuranceTickOutcome, @types.ChoirError] {
+  let fencing_epoch = current_native_goal_fencing_epoch()
+  let holds : Array[NativeProviderLeaseHold] = []
+  let result = advance_native_goal_assurance_attempt(
+    project_dir,
+    repository,
+    adapters,
+    execution,
+    snapshots,
+    capacity,
+    fencing_epoch,
+    holds,
+    observe~,
+  )
+  finish_native_goal_assurance_leases(repository, holds, result, fencing_epoch)
+}
+
+///|
+async fn advance_native_goal_assurance_attempt(
+  project_dir : String,
+  repository : @workflow.PartWorkflowRepository,
+  adapters : @workflow.PartWorkflowRepositoryAdapters,
+  execution : @workflow.GoalExecutionRecord,
+  snapshots : Array[@workflow.PartWorkflowSnapshot],
+  capacity : @types.ProviderCapacityPolicy,
+  fencing_epoch : @control.FencingEpoch,
+  holds : Array[NativeProviderLeaseHold],
+  observe~ : (@workflow.ProviderSurfaceTickReport) -> Unit,
 ) -> Result[@workflow.GoalAssuranceTickOutcome, @types.ChoirError] {
   let git = match discover_native_goal_repository(project_dir, execution) {
     Ok(value) => value
@@ -5666,6 +5911,33 @@ async fn advance_native_goal_assurance(
           _ => ()
         }
         let record = stored.record
+        // Portfolio admission, before this tick authorizes or runs anything on
+        // a provider surface. It sits ahead of the whole `pending_effect`
+        // match, not inside one arm, so the authorize step and the retry-safe
+        // re-execute step are both covered by one decision: a slot has to be
+        // held before an audit effect becomes authorized, or the next tick
+        // inherits an effect that may have occurred without one.
+        match record.pending_effect {
+          Some(intent) =>
+            match
+              native_goal_assurance_effect_admission(
+                repository,
+                record.goal_id,
+                record.audit_take.id,
+                record.identities,
+                intent.kind,
+                capacity,
+                fencing_epoch,
+                @env.now().reinterpret_as_int64() / 1000L,
+                holds,
+                observe~,
+              ) {
+              Ok(Some(deferred)) => return Ok(deferred)
+              Ok(None) => ()
+              Err(error) => return Err(error)
+            }
+          None => ()
+        }
         match record.pending_effect {
           None => {
             let intent = match
@@ -5903,7 +6175,13 @@ pub async fn run_native_goal_execution_tick_with_forge(
       },
       assure: async fn(record, snapshots) {
         advance_native_goal_assurance(
-          project_dir, repository, repository_adapters, record, snapshots,
+          project_dir,
+          repository,
+          repository_adapters,
+          record,
+          snapshots,
+          provider_capacity,
+          observe=observe_native_goal_provider_surface,
         )
       },
       finalize: async fn(record, _) {

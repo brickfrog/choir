@@ -36,6 +36,12 @@ pub(all) enum GoalAssuranceTickOutcome {
   GoalAssuranceBlocked
   GoalAssuranceRepairing
   GoalAssuranceRepairFailed(GoalAssuranceRepairKind, @control.Digest, Int64)
+  /// A capacity bound refused the Goal's own audit session and named when to
+  /// come back. Distinct from `GoalAssurancePending`, which is "the attempt is
+  /// still running": nothing about this tick advanced, and the instant is the
+  /// only thing the scheduler learns from it. Carried rather than collapsed so
+  /// the tick can schedule a wake instead of polling for a slot.
+  GoalAssuranceDeferredUntil(Int64, PartGoalDeferralReason)
 } derive(Debug, Eq)
 
 ///|
@@ -775,6 +781,14 @@ pub async fn run_next_goal_execution_tick(
     }
     let next_state = match assurance {
       GoalAssurancePending =>
+        return Ok(
+          GoalExecutionTickResult::GoalExecutionTickAdvanced(selected.record),
+        )
+      // A refused attempt leaves the Goal exactly where it was: assuring, with
+      // its durable assurance record untouched, so the next tick resumes at the
+      // same effect. Advancing the execution state here would move a Goal that
+      // never ran anything.
+      GoalAssuranceDeferredUntil(_, _) =>
         return Ok(
           GoalExecutionTickResult::GoalExecutionTickAdvanced(selected.record),
         )
