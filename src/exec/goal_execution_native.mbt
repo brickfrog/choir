@@ -110,6 +110,21 @@ let native_goal_fencing_epoch_state : Ref[Int64] = Ref(1L)
 let native_goal_rotation_state : Ref[@control.GoalId?] = Ref(None)
 
 ///|
+/// The earliest instant, in epoch seconds, that a provider capacity bound told
+/// a Part to come back during the last execution tick. In-memory only: it
+/// describes the tick that just ran, and a restart simply re-observes it.
+let native_goal_provider_deferral_state : Ref[Int64?] = Ref(None)
+
+///|
+/// When the last execution tick was refused by a provider capacity bound.
+///
+/// The daemon schedules its next tick against this rather than polling: nothing
+/// frees a provider slot because the scheduler asked again sooner.
+pub fn native_goal_provider_deferral() -> Int64? {
+  native_goal_provider_deferral_state.val
+}
+
+///|
 pub fn current_native_goal_fencing_epoch() -> @control.FencingEpoch {
   @control.FencingEpoch(native_goal_fencing_epoch_state.val)
 }
@@ -2646,11 +2661,106 @@ async fn advance_native_goal_branch_initialization(
 }
 
 ///|
+/// The one seam that admits new planner and provider work for a Part.
+///
+/// Two gates, in this order. The WorkOrder budget and the Goal's own state come
+/// first because they are decided from a record this pass already has to read,
+/// and a Goal that is over budget or no longer running must not take a provider
+/// slot on its way to being refused. Only then is the portfolio-wide provider
+/// lease taken, which is the write.
+///
+/// The lease is derived from the Goal, the Part, and the surface, so the many
+/// times a single driver pass re-enters this gate all ask for the same slot and
+/// hold one between them. It is given back when that pass returns, and
+/// reclaimed by fencing epoch if this worker dies before it does.
+///
+/// `fencing_epoch` and `now` are parameters rather than reads so a narrow test
+/// can drive two generations and a fixed clock through the same code the daemon
+/// runs; every other input is read from the durable store here. Public for the
+/// same reason: an admission test that stubs this out proves nothing about
+/// whether the daemon oversubscribes.
+pub fn native_goal_effect_authorization(
+  repository : @workflow.PartWorkflowRepository,
+  goal_id : @control.GoalId,
+  part_id : @control.PartId,
+  surface : @control.ProviderSurfaceId,
+  take_id : @control.TakeId,
+  capacity : @types.ProviderCapacityPolicy,
+  fencing_epoch : @control.FencingEpoch,
+  now : Int64,
+) -> Result[@workflow.PartGoalAuthorization, @types.ChoirError] {
+  let adapters = local_part_workflow_repository_adapters()
+  let current = match
+    @workflow.load_goal_execution_record(repository, adapters, goal_id) {
+    Ok(Some(value)) => value
+    Ok(None) =>
+      return Err(native_goal_execution_error("Goal record disappeared"))
+    Err(error) => return Err(error)
+  }
+  // Everything downstream of an already-authorized effect keeps reconciling
+  // past the deadline; only a new agentic Take is refused.
+  let budget_admits = @workflow.goal_execution_admits_new_agentic_work(
+      current.record,
+      now,
+    )
+    is @workflow.WorkOrderAdmission::WorkOrderAdmitsNewWork
+  if !(budget_admits &&
+    current.record.state == @workflow.GoalExecutionState::GoalExecutionRunning &&
+    current.record.goal.lifecycle ==
+    @control.GoalLifecycle::GoalActive(
+      @control.GoalActiveCondition::GoalRunning,
+    )) {
+    return Ok(@workflow.PartGoalAuthorization::PartGoalNotAuthorized)
+  }
+  match
+    @workflow.acquire_provider_lease(
+      repository,
+      adapters,
+      surface,
+      {
+        lease_id: @workflow.provider_lease_id(goal_id, part_id, surface),
+        take_id,
+        goal_id,
+        fencing_epoch,
+      },
+      capacity,
+      now,
+    ) {
+    Ok(@workflow.ProviderLeaseDecision::ProviderLeaseGranted(_, _)) =>
+      Ok(
+        @workflow.PartGoalAuthorization::PartGoalAuthorized(
+          Some({ record: current.state_record }),
+        ),
+      )
+    Ok(
+      @workflow.ProviderLeaseDecision::ProviderLeaseDeferredUntil(
+        instant,
+        limit
+      )
+    ) =>
+      Ok(
+        @workflow.PartGoalAuthorization::PartGoalDeferredUntil(
+          instant,
+          match limit {
+            @workflow.ProviderLeaseLimit::ProviderSurfaceLimit =>
+              @workflow.PartGoalDeferralReason::PartGoalProviderSurfaceAtCapacity
+            @workflow.ProviderLeaseLimit::ProviderGlobalLimit =>
+              @workflow.PartGoalDeferralReason::PartGoalProviderGlobalCeiling
+          },
+        ),
+      )
+    Err(error) => Err(error)
+  }
+}
+
+///|
 async fn execute_native_goal_record(
   project_dir : String,
   repository : @workflow.PartWorkflowRepository,
   record : @workflow.GoalExecutionRecord,
   snapshots : Array[@workflow.PartWorkflowSnapshot],
+  capacity : @types.ProviderCapacityPolicy,
+  observe_provider_deferral : (Int64) -> Unit,
 ) -> Result[Unit, @types.ChoirError] {
   let git = match discover_native_goal_repository(project_dir, record) {
     Ok(value) => value
@@ -2868,42 +2978,16 @@ async fn execute_native_goal_record(
       Ok({
         ..dependencies,
         goal_authorizes_new_effects: fn() {
-          match
-            @workflow.load_goal_execution_record(
-              repository,
-              local_part_workflow_repository_adapters(),
-              record.goal.id,
-            ) {
-            Ok(Some(current)) => {
-              // The WorkOrder budget gate sits here, at the one seam that
-              // admits new planner and provider work. Everything downstream of
-              // an already-authorized effect keeps reconciling past the
-              // deadline; only a new agentic Take is refused.
-              let budget_admits = @workflow.goal_execution_admits_new_agentic_work(
-                  current.record,
-                  @env.now().reinterpret_as_int64() / 1000L,
-                )
-                is @workflow.WorkOrderAdmission::WorkOrderAdmitsNewWork
-              if budget_admits &&
-                current.record.state ==
-                @workflow.GoalExecutionState::GoalExecutionRunning &&
-                current.record.goal.lifecycle ==
-                @control.GoalLifecycle::GoalActive(
-                  @control.GoalActiveCondition::GoalRunning,
-                ) {
-                Ok(
-                  @workflow.PartGoalAuthorization::PartGoalAuthorized(
-                    Some({ record: current.state_record }),
-                  ),
-                )
-              } else {
-                Ok(@workflow.PartGoalAuthorization::PartGoalNotAuthorized)
-              }
-            }
-            Ok(None) =>
-              Err(native_goal_execution_error("Goal record disappeared"))
-            Err(error) => Err(error)
-          }
+          native_goal_effect_authorization(
+            repository,
+            record.goal.id,
+            part_id,
+            part.surface,
+            part.snapshot.identities.implementation_take.id,
+            capacity,
+            current_native_goal_fencing_epoch(),
+            @env.now().reinterpret_as_int64() / 1000L,
+          )
         },
       })
     },
@@ -2919,19 +3003,31 @@ async fn execute_native_goal_record(
     read_goal_head: async fn() {
       read_native_goal_head(integration, native_git_integration_adapters())
     },
+    observe_provider_deferral,
+    release_provider_lease: fn(part_id) {
+      match native_goal_part_runtime(parts, part_id) {
+        Some(part) =>
+          release_native_goal_provider_leases(repository, [part.snapshot])
+        None => Err(native_goal_execution_error("Part runtime is absent"))
+      }
+    },
   }
   let result = @workflow.run_goal_parts(
     config.bindings.map(fn(binding) { binding.scheduling_record }),
     record.maximum_parallel_parts,
     goal_part_workflow_adapters(config),
   )
+  // Each Part gives its slot back as its pass returns; this is the sweep for a
+  // pass that failed on its way out. Releasing is idempotent, so a slot already
+  // returned costs a read and writes nothing.
+  let released = release_native_goal_provider_leases(repository, snapshots)
   match result {
     // Source Beads deliberately stay claimed here: Part integration onto the
     // private Goal branch is not delivery. Closure happens at the Goal
     // delivery boundary, inside finalization once the PR is observed ready.
     Ok(_) => {
       ignore(cleanup_native_boxlite_server(prepared.server))
-      Ok(())
+      released
     }
     Err(error) => {
       // The authorized effect may still be retriable on the next tick. Keep
@@ -2940,6 +3036,42 @@ async fn execute_native_goal_record(
       Err(error)
     }
   }
+}
+
+///|
+/// Give back every provider slot this Goal's Parts held.
+///
+/// Derived from the same snapshots the admission gate was bound against, so the
+/// surface released is the surface leased. A Part that recorded a provider
+/// failover during the tick keeps running on the surface it started on — the
+/// move takes effect on the next tick, which leases and releases the new one.
+///
+/// Idempotent by construction: `release_provider_lease` writes nothing when the
+/// lease is not in the held set, so a Part that never reached the gate, a
+/// second release, and a lease already reclaimed with a dead generation all
+/// come back as "already released" without touching the count. Public so a
+/// narrow test can prove the identity released is the identity the gate leased;
+/// a mismatch there leaks a slot until the daemon generation ends.
+pub fn release_native_goal_provider_leases(
+  repository : @workflow.PartWorkflowRepository,
+  snapshots : Array[@workflow.PartWorkflowSnapshot],
+) -> Result[Unit, @types.ChoirError] {
+  let adapters = local_part_workflow_repository_adapters()
+  for snapshot in snapshots {
+    let surface = snapshot.identities.implementation_session.surface
+    match
+      @workflow.release_provider_lease(
+        repository,
+        adapters,
+        surface,
+        @workflow.provider_lease_id(snapshot.goal.id, snapshot.part.id, surface),
+        current_native_goal_fencing_epoch(),
+      ) {
+      Ok(_) => ()
+      Err(error) => return Err(error)
+    }
+  }
+  Ok(())
 }
 
 ///|
@@ -5594,6 +5726,7 @@ pub async fn run_native_goal_execution_tick_with_forge(
     mode: @types.PullRequestDeliveryMode::PullRequestReviewOnly,
     merge_method: @types.PullRequestMergeMethod::PullRequestSquashMerge,
   },
+  provider_capacity? : @types.ProviderCapacityPolicy = @types.Config::default().provider_capacity,
   beads_capture? : async (Command) -> (Int, String) = capture_command_merged,
 ) -> Result[@workflow.GoalExecutionTickResult, @types.ChoirError] {
   let repository = native_goal_repository(project_dir)
@@ -5604,6 +5737,16 @@ pub async fn run_native_goal_execution_tick_with_forge(
     ) {
     Ok(_) => ()
     Err(error) => return Err(error)
+  }
+  // The earliest instant a capacity bound told a Part to come back. Reset per
+  // tick, so what the daemon reads afterwards describes the tick that just ran.
+  native_goal_provider_deferral_state.val = None
+  let observe_provider_deferral = fn(instant : Int64) {
+    native_goal_provider_deferral_state.val = match
+      native_goal_provider_deferral_state.val {
+      Some(current) => Some(if instant < current { instant } else { current })
+      None => Some(instant)
+    }
   }
   let result = @workflow.run_next_goal_execution_tick(
     repository,
@@ -5640,7 +5783,9 @@ pub async fn run_native_goal_execution_tick_with_forge(
         }
       },
       execute: async fn(record, snapshots) {
-        execute_native_goal_record(project_dir, repository, record, snapshots)
+        execute_native_goal_record(
+          project_dir, repository, record, snapshots, provider_capacity, observe_provider_deferral,
+        )
       },
       assure: async fn(record, snapshots) {
         advance_native_goal_assurance(
@@ -5909,11 +6054,13 @@ pub async fn run_native_goal_execution_tick(
     mode: @types.PullRequestDeliveryMode::PullRequestReviewOnly,
     merge_method: @types.PullRequestMergeMethod::PullRequestSquashMerge,
   },
+  provider_capacity? : @types.ProviderCapacityPolicy = @types.Config::default().provider_capacity,
 ) -> Result[@workflow.GoalExecutionTickResult, @types.ChoirError] {
   run_native_goal_execution_tick_with_forge(
     project_dir,
     native_pull_request_forge_adapters(),
     pull_request_delivery~,
+    provider_capacity~,
   )
 }
 

@@ -1018,6 +1018,7 @@ async fn conductor_goal_loop(config : @types.Config) -> Unit {
       @exec.run_native_goal_execution_tick(
         config.project_dir,
         pull_request_delivery=config.pull_request_delivery,
+        provider_capacity=config.provider_capacity,
       ) {
       Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickIdle) => {
         if @workflow.goal_execution_tick_failure_is_persistent(
@@ -1147,7 +1148,16 @@ async fn conductor_goal_loop(config : @types.Config) -> Unit {
         }
       }
     }
-    @async.sleep(@workflow.goal_execution_tick_delay_ms(consecutive_failures))
+    // A tick that a provider capacity bound refused knows when a slot could
+    // free. Waiting for that instant is the difference between a scheduled
+    // wake and a spin against a full surface.
+    @async.sleep(
+      @workflow.goal_execution_tick_delay_ms_with_deferral(
+        consecutive_failures,
+        @exec.native_goal_provider_deferral(),
+        @env.now().reinterpret_as_int64() / 1000L,
+      ),
+    )
   }
 }
 
