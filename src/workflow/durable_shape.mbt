@@ -50,11 +50,11 @@
 /// it. What proves it instead is `assert_manifest_names_stored_keys`, which
 /// compares the manifest's keys for a type against the keys a record the
 /// workflow itself produced actually serializes, and it is called wherever the
-/// suite already builds an instance with every option populated. Seven of the
-/// ten `DurableRecordKind` types are covered that way: `PartWorkflowSnapshot`,
+/// suite already builds an instance with every option populated. Eight of the
+/// eleven `DurableRecordKind` types are covered that way: `PartWorkflowSnapshot`,
 /// `GoalExecutionRecord`, `GoalAssuranceRecord`, `GoalFinalizationRecord`,
-/// `GoalPublicationRecord`, `GoalPullRequestRecord`, and
-/// `GoalSelectionDecision`.
+/// `GoalPublicationRecord`, `GoalPullRequestRecord`, `GoalSelectionDecision`,
+/// and `ProviderSurfaceLeaseRecord`.
 ///
 /// `PartEffectWitness`, `GoalAssuranceEffectWitness`, and `ProcessExecution`
 /// are not, because no test drives one to a maximal instance; for those three,
@@ -3662,6 +3662,23 @@ let durable_shape_process_execution : @sandbox.ProcessExecution = {
 }
 
 ///|
+let durable_shape_provider_lease : ProviderLease = {
+  id: ProviderLeaseId(""),
+  take_id: durable_shape_take_id,
+  goal_id: durable_shape_goal_id,
+  fencing_epoch: durable_shape_fencing_epoch,
+  acquired_at: 0L,
+}
+
+///|
+let durable_shape_provider_surface_lease_record : ProviderSurfaceLeaseRecord = {
+  surface: durable_shapes_provider_surface_id[0],
+  held: [durable_shape_provider_lease],
+  durable_version: 0,
+  fencing_epoch: durable_shape_fencing_epoch,
+}
+
+///|
 /// Every type that reaches a durable record, paired with the serialized form
 /// of each shape it can take. Sorted by name at use so that moving a
 /// declaration in this file does not move the generation.
@@ -4164,6 +4181,10 @@ fn durable_shape_table() -> Array[DurableShapeEntry] {
       durable_shape_process_execution_id,
     ]),
     durable_shape_entry("PromotionCommit", [durable_shape_promotion_commit]),
+    durable_shape_entry("ProviderLease", [durable_shape_provider_lease]),
+    durable_shape_entry("ProviderSurfaceLeaseRecord", [
+      durable_shape_provider_surface_lease_record,
+    ]),
     durable_shape_entry(
       "PromotionStrategy",
       durable_shapes_promotion_strategy.map(durable_guard_promotion_strategy),

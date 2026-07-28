@@ -45,8 +45,47 @@ fn parse_pull_request_merge_method(
 }
 
 ///|
-/// Parse launcher paths and the checked-in pull-request delivery policy.
-/// Machine-local values override the checked-in project file.
+/// Read one positive capacity bound. An unparsable or absent value is the
+/// default rather than a silent zero, and anything else is refused: a bound
+/// nobody meant is a daemon that dispatches nothing or oversubscribes.
+fn parse_capacity_bound(
+  primary : TomlDoc,
+  machine : TomlDoc,
+  key : String,
+  fallback : Int,
+) -> Result[Int, @types.ChoirError] {
+  match config_value(primary, machine, key, "") {
+    "" => Ok(fallback)
+    text =>
+      Ok(@string.parse_int(text)) catch {
+        _ =>
+          Err(@types.ChoirError::validation_error(key + " must be an integer"))
+      }
+  }
+}
+
+///|
+/// Read the optional global ceiling. Absent means the per-surface bounds are
+/// the only ceiling, which is not the same as a ceiling of zero.
+fn parse_optional_capacity_bound(
+  primary : TomlDoc,
+  machine : TomlDoc,
+  key : String,
+) -> Result[Int?, @types.ChoirError] {
+  match config_value(primary, machine, key, "") {
+    "" => Ok(None)
+    text =>
+      Ok(Some(@string.parse_int(text))) catch {
+        _ =>
+          Err(@types.ChoirError::validation_error(key + " must be an integer"))
+      }
+  }
+}
+
+///|
+/// Parse launcher paths, the checked-in pull-request delivery policy, and the
+/// provider capacity ceilings. Machine-local values override the checked-in
+/// project file.
 pub fn parse_config(
   content : String,
   local_content? : String? = None,
@@ -68,6 +107,40 @@ pub fn parse_config(
     Ok(value) => value
     Err(error) => return Err(error)
   }
+  let claude = match
+    parse_capacity_bound(
+      primary,
+      machine,
+      "capacity.claude",
+      defaults.provider_capacity.claude_subscription_cli,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let codex = match
+    parse_capacity_bound(
+      primary,
+      machine,
+      "capacity.codex",
+      defaults.provider_capacity.codex_subscription_cli,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let global_execution_ceiling = match
+    parse_optional_capacity_bound(primary, machine, "capacity.global") {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let provider_capacity : @types.ProviderCapacityPolicy = {
+    claude_subscription_cli: claude,
+    codex_subscription_cli: codex,
+    global_execution_ceiling,
+  }
+  match @types.validate_provider_capacity_policy(provider_capacity) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   Ok({
     project_dir: config_value(
       primary,
@@ -82,5 +155,6 @@ pub fn parse_config(
       defaults.listen_uds,
     ),
     pull_request_delivery: { mode: delivery_mode, merge_method },
+    provider_capacity,
   })
 }

@@ -193,6 +193,42 @@ pub fn goal_execution_tick_delay_ms(consecutive_failures : Int) -> Int {
 }
 
 ///|
+/// How long to wait before the next tick when a provider capacity bound refused
+/// work and said when to come back.
+///
+/// Waiting less than the instant the gate named is a poll: nothing releases a
+/// provider slot because the scheduler asked again. So the deferral raises the
+/// delay rather than replacing it — a failing tick still backs off — and the
+/// same ceiling applies, because other Goals on other surfaces stay runnable
+/// and must not be held behind one surface's queue.
+///
+/// `deferred_until` and `now` are epoch seconds, which is the unit the
+/// admission gate works in; the result is milliseconds, which is the unit the
+/// daemon sleeps in.
+pub fn goal_execution_tick_delay_ms_with_deferral(
+  consecutive_failures : Int,
+  deferred_until : Int64?,
+  now : Int64,
+) -> Int {
+  let base = goal_execution_tick_delay_ms(consecutive_failures)
+  let instant = match deferred_until {
+    None => return base
+    Some(value) => value
+  }
+  if instant <= now {
+    return base
+  }
+  let ceiling = 30000L
+  let wait = (instant - now) * 1000L
+  let bounded = if wait > ceiling { ceiling } else { wait }
+  if bounded > base.to_int64() {
+    bounded.to_int()
+  } else {
+    base
+  }
+}
+
+///|
 /// Whether a run of ticks that changed nothing has gone on long enough to be
 /// reported.
 ///

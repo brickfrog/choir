@@ -34,6 +34,11 @@ pub(all) struct GoalPartWorkflowAdapterConfig {
     @types.ChoirError,
   ]
   read_goal_head : async () -> Result[@control.GitOid, @types.ChoirError]
+  /// Told the instant a capacity bound refused a Part, so the tick can report a
+  /// wake time instead of the scheduler polling until a slot happens to free.
+  observe_provider_deferral : (Int64) -> Unit
+  /// Give back the provider slot this Part's admission gate took.
+  release_provider_lease : (@control.PartId) -> Result[Unit, @types.ChoirError]
 }
 
 ///|
@@ -191,6 +196,17 @@ async fn advance_bound_part(
   }
   match result {
     Ok(value) => {
+      // A capacity bound refused this Part and named when to come back. Report
+      // it before anything else looks at the snapshot: the Part did not
+      // advance, and the only thing the scheduler learns from this pass is the
+      // instant.
+      if value.outcome
+        is @workflow.PartWorkflowRunOutcome::PartRunGoalDeferredUntil(
+          instant,
+          _
+        ) {
+        (config.observe_provider_deferral)(instant)
+      }
       let (repaired, repair_name) = match value.snapshot.part.lifecycle {
         @control.PartLifecycle::PartBlocked(
           @control.PartBlockReason::PartAuditFindings
@@ -270,7 +286,12 @@ fn persist_bound_part_repair(
     fault_point: None,
   }
   let persisted = match authorization {
-    @workflow.PartGoalAuthorization::PartGoalNotAuthorized => return Ok(None)
+    // A deferral and a standing refusal both mean the repair is not persisted
+    // on this pass. The instant reaches the scheduler from the run outcome the
+    // driver returns, not from here.
+    @workflow.PartGoalAuthorization::PartGoalNotAuthorized
+    | @workflow.PartGoalAuthorization::PartGoalDeferredUntil(_, _) =>
+      return Ok(None)
     @workflow.PartGoalAuthorization::PartGoalAuthorized(None) =>
       match
         @workflow.persist_part_snapshot(
@@ -389,7 +410,8 @@ async fn promote_bound_part(
     Err(error) => return Err(error)
   }
   let persisted = match authorization {
-    @workflow.PartGoalAuthorization::PartGoalNotAuthorized =>
+    @workflow.PartGoalAuthorization::PartGoalNotAuthorized
+    | @workflow.PartGoalAuthorization::PartGoalDeferredUntil(_, _) =>
       return Ok(scheduling_record_from_snapshot(result.snapshot))
     @workflow.PartGoalAuthorization::PartGoalAuthorized(None) =>
       match
@@ -509,13 +531,51 @@ pub fn goal_part_workflow_adapters(
   config : GoalPartWorkflowAdapterConfig,
 ) -> @workflow.GoalRunnerAdapters {
   {
-    advance_part: async fn(record) { advance_bound_part(config, record) },
+    advance_part: async fn(record) {
+      release_after_part_pass(
+        config,
+        record.part.id,
+        advance_bound_part(config, record),
+      )
+    },
     read_goal_head: config.read_goal_head,
     promote_part: async fn(record, selection) {
-      promote_bound_part(config, record, selection)
+      release_after_part_pass(
+        config,
+        record.part.id,
+        promote_bound_part(config, record, selection),
+      )
     },
     resume_promotion: async fn(record) {
-      resume_bound_promotion(config, record)
+      release_after_part_pass(
+        config,
+        record.part.id,
+        resume_bound_promotion(config, record),
+      )
     },
+  }
+}
+
+///|
+/// Give the Part's provider slot back now that its pass has returned.
+///
+/// Every pass goes through the admission gate, so every pass may have taken a
+/// slot. Holding it until the Goal tick ends would keep the Goal's other Parts
+/// — and every other Goal — out of a surface that is idle, so the slot is
+/// returned at the boundary the gate was entered at. Release is idempotent, so
+/// a pass that took no slot is not a special case, and a release error is only
+/// reported when the pass itself succeeded.
+fn release_after_part_pass(
+  config : GoalPartWorkflowAdapterConfig,
+  part_id : @control.PartId,
+  outcome : Result[@workflow.GoalPartSchedulingRecord, @types.ChoirError],
+) -> Result[@workflow.GoalPartSchedulingRecord, @types.ChoirError] {
+  match (config.release_provider_lease)(part_id) {
+    Ok(_) => outcome
+    Err(error) =>
+      match outcome {
+        Err(_) => outcome
+        Ok(_) => Err(error)
+      }
   }
 }

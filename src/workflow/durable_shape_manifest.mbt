@@ -265,6 +265,7 @@ pub(all) enum DurableRecordKind {
   DurableGoalPullRequestRecord
   DurableGoalSelectionDecision
   DurableProcessExecution
+  DurableProviderSurfaceLease
 } derive(Debug, Eq)
 
 ///|
@@ -280,6 +281,7 @@ pub fn durable_record_kinds() -> Array[DurableRecordKind] {
     DurableGoalPullRequestRecord,
     DurableGoalSelectionDecision,
     DurableProcessExecution,
+    DurableProviderSurfaceLease,
   ]
 }
 
@@ -297,6 +299,7 @@ pub fn durable_record_key_prefix(kind : DurableRecordKind) -> String {
     DurableGoalPullRequestRecord => "goal-pull-request:"
     DurableGoalSelectionDecision => "goal-selection:"
     DurableProcessExecution => "process-execution:"
+    DurableProviderSurfaceLease => "provider-lease:"
   }
 }
 
@@ -314,6 +317,7 @@ pub fn durable_record_shape_name(kind : DurableRecordKind) -> String {
     DurableGoalPullRequestRecord => "GoalPullRequestRecord"
     DurableGoalSelectionDecision => "GoalSelectionDecision"
     DurableProcessExecution => "ProcessExecution"
+    DurableProviderSurfaceLease => "ProviderSurfaceLeaseRecord"
   }
 }
 
@@ -345,5 +349,7 @@ pub fn durable_record_decodes(
       decode_goal_selection_decision(content) is Ok(_)
     DurableProcessExecution =>
       @sandbox.decode_process_execution(content) is Ok(_)
+    DurableProviderSurfaceLease =>
+      decode_provider_surface_lease_record(content) is Ok(_)
   }
 }

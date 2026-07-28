@@ -40,6 +40,9 @@ pub(all) enum ArtifactProvenance {
   ArtifactWorkflowSnapshot(@control.GoalId)
   ArtifactEffectWitness(@control.GoalId)
   ArtifactProcessExecution(@control.GoalId)
+  /// The held-lease set of one provider surface. Portfolio-wide rather than
+  /// per Goal, so it names no Goal.
+  ArtifactProviderSurfaceLease
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
