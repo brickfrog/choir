@@ -94,6 +94,25 @@ fn conductor_response_goal_id(response : @types.Response) -> String? {
 }
 
 ///|
+fn conductor_work_order_id_from_json(value : Json?) -> String? {
+  match value {
+    Some(String(identity)) if identity != "" => Some(identity)
+    Some(Array([String(_), String(identity)])) if identity != "" =>
+      Some(identity)
+    _ => None
+  }
+}
+
+///|
+fn conductor_response_work_order_id(response : @types.Response) -> String? {
+  match response.ok_payload() {
+    Some(fields) =>
+      conductor_work_order_id_from_json(fields.get_json("work_order_id"))
+    None => None
+  }
+}
+
+///|
 fn conductor_response_state(response : @types.Response) -> String? {
   match response.ok_payload() {
     Some(fields) =>
@@ -198,6 +217,29 @@ fn conductor_watch_goal(state : ConductorServerState, goal_id : String) -> Unit 
 }
 
 ///|
+fn conductor_watch_work_order(
+  state : ConductorServerState,
+  work_order_id : String,
+) -> Unit {
+  let work_order = @workflow.WorkOrderId(work_order_id)
+  @workflow.conductor_note_work_order_interest(state.channels, work_order)
+  let gained : Array[@workflow.ConductorDelivery] = []
+  for fd in state.channel_fds.copy() {
+    for
+      delivery in @workflow.conductor_watch_work_order_on_channel(
+        state.channels,
+        @workflow.ConductorChannelId(fd),
+        work_order,
+      ) {
+      gained.push(delivery)
+    }
+  }
+  if gained.length() > 0 {
+    conductor_write_deliveries(state, gained)
+  }
+}
+
+///|
 /// Write what the registry decided, dropping any channel whose socket is gone.
 fn conductor_write_deliveries(
   state : ConductorServerState,
@@ -228,6 +270,7 @@ fn conductor_observe_goal_response(
     Some(identity) => Some(identity)
     None => request.args.get("goal_id")
   }
+  let work_order_id = conductor_response_work_order_id(response)
   match goal_id {
     Some(identity) => {
       // The response may name a state newer than the last observed report — a
@@ -238,7 +281,27 @@ fn conductor_observe_goal_response(
         @control.GoalId(identity),
         conductor_park_for_state_tag(conductor_response_state(response)),
       )
+      match work_order_id {
+        Some(owner) =>
+          @workflow.conductor_note_work_order_child(
+            state.channels,
+            @workflow.WorkOrderId(owner),
+            @control.GoalId(identity),
+          )
+        None => ()
+      }
       conductor_watch_goal(state, identity)
+    }
+    None => ()
+  }
+  match work_order_id {
+    Some(identity) => {
+      @workflow.conductor_note_work_order_park(
+        state.channels,
+        @workflow.WorkOrderId(identity),
+        true,
+      )
+      conductor_watch_work_order(state, identity)
     }
     None => ()
   }
@@ -364,6 +427,14 @@ fn conductor_broadcast_goal_update(
     fingerprint,
     serialized,
     parks,
+    work_order_id=typed.bind(fn(value) { value.work_order_id }),
+    work_order_parks=typed.bind(fn(value) {
+      value.work_order_id.map(fn(_) {
+        value.work_order
+        .map(fn(budget) { budget.stopped is None })
+        .unwrap_or(true)
+      })
+    }),
   )
   if deliveries.length() == 0 {
     return
@@ -645,6 +716,15 @@ async fn conductor_handle_custom_line(
         channel_id,
         @workflow.conductor_watched_goals(state.channels),
       )
+      for work_order in @workflow.conductor_watched_work_orders(state.channels) {
+        ignore(
+          @workflow.conductor_watch_work_order_on_channel(
+            state.channels,
+            channel_id,
+            work_order,
+          ),
+        )
+      }
       let replay = @workflow.conductor_replay_channel(
         state.channels,
         channel_id,
@@ -1147,6 +1227,39 @@ fn conductor_publish_goal_record(
 }
 
 ///|
+/// WorkOrder advancement changes portfolio-level budget and terminal state,
+/// but those transitions do not necessarily coincide with another Goal tick.
+/// Re-project the latest child so WorkOrder-subscribed channels observe that
+/// durable state and release their park when the WorkOrder stops.
+fn conductor_publish_work_order_record(
+  config : @types.Config,
+  record : @workflow.WorkOrderRecord,
+) -> Unit {
+  match record.child_goals.last() {
+    Some(child) =>
+      match conductor_goal_report(config, child.goal_id) {
+        Ok(report) =>
+          match conductor_publish_goal_update(report) {
+            Ok(_) => ()
+            Err(error) =>
+              @moontrace.error("WorkOrder update delivery failed", fields=[
+                @moontrace.field("work_order_id", record.id.0),
+                @moontrace.field("goal_id", child.goal_id.0),
+                @moontrace.field("error", error),
+              ])
+          }
+        Err(error) =>
+          @moontrace.error("WorkOrder update projection failed", fields=[
+            @moontrace.field("work_order_id", record.id.0),
+            @moontrace.field("goal_id", child.goal_id.0),
+            @moontrace.field("error", error.message()),
+          ])
+      }
+    None => ()
+  }
+}
+
+///|
 /// Execute and settle one durably leased Goal without owning the portfolio
 /// loop. Every invocation has its own retry and provider-deferral observation.
 async fn conductor_run_leased_goal_job(
@@ -1296,11 +1409,13 @@ async fn conductor_run_leased_work_order_job(
       @exec.NativeWorkOrderExecutionTick::NativeWorkOrderExecutionAdvanced(
         record
       )
-    ) =>
+    ) => {
       @moontrace.info("WorkOrder execution advanced", fields=[
         @moontrace.field("work_order_id", record.id.0),
         @moontrace.field("durable_version", record.durable_version.to_string()),
       ])
+      conductor_publish_work_order_record(config, record)
+    }
     Ok(@exec.NativeWorkOrderExecutionTick::NativeWorkOrderExecutionIdle) => ()
     Err(error) =>
       @moontrace.error("WorkOrder execution job failed", fields=[
@@ -1874,6 +1989,52 @@ test "Conductor parks an active durable Goal until its success event" {
     }),
   )
   assert_false(conductor_stop_decision_parks(state))
+}
+
+///|
+test "Conductor subscribes to the WorkOrder returned by Goal submission" {
+  let state = ConductorServerState::new({
+    ..@types.Config::default(),
+    project_dir: "/repo",
+    listen_uds: "/repo/.choir/run/server.sock",
+  })
+  conductor_observe_goal_response(
+    state,
+    {
+      req_method: @types.WireMethod::WireToolsCall,
+      name: "goal_submit",
+      args: @types.RequestArgs::from_values(Map([])),
+    },
+    @types.Response::ok_values({
+      "accepted": true.to_json(),
+      "execution_registered": true.to_json(),
+      "goal_id": ["GoalId", "goal-a"].to_json(),
+      "work_order_id": ["WorkOrderId", "work-order-a"].to_json(),
+    }),
+  )
+  @debug.assert_eq(@workflow.conductor_watched_work_orders(state.channels), [
+    @workflow.WorkOrderId("work-order-a"),
+  ])
+  @workflow.conductor_subscribe_channel(
+    state.channels,
+    @workflow.ConductorChannelId(7),
+    [],
+  )
+  ignore(
+    @workflow.conductor_watch_work_order_on_channel(
+      state.channels,
+      @workflow.ConductorChannelId(7),
+      @workflow.WorkOrderId("work-order-a"),
+    ),
+  )
+  @debug.assert_eq(
+    @workflow.conductor_channel_subscription(
+      state.channels,
+      @workflow.ConductorChannelId(7),
+    ),
+    [@control.GoalId("goal-a")],
+  )
+  assert_true(conductor_stop_decision_parks(state))
 }
 
 ///|
