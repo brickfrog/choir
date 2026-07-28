@@ -27,7 +27,7 @@ fn control_plan(
 ) -> @storage.ControlStatePlan raise {
   match @storage.decide_control_state(observation, control_schema) {
     @storage.ControlStateDecision::ControlStatePlanned(plan) => plan
-    @storage.ControlStateDecision::ControlStateProveRecordsDecodable(_, _) =>
+    @storage.ControlStateDecision::ControlStateProveRecordsDecodable(_, _, _) =>
       fail("the decision needed the records read")
   }
 }
@@ -79,7 +79,9 @@ test "a store from another generation is not judged before it is read" {
       control_schema,
     ),
     @storage.ControlStateDecision::ControlStateProveRecordsDecodable(
-      "gen-7", "gen-8",
+      "gen-7",
+      "gen-8",
+      None,
     ),
   )
 }
@@ -171,6 +173,46 @@ test "tables built by a superseded DDL are reset, matching generation or not" {
 }
 
 ///|
+test "the additive outbox-owner DDL is migrated without resetting state" {
+  let expected : @storage.ControlStoreSchema = {
+    generation: "gen-8",
+    ddl_version: 2,
+  }
+  assert_eq(
+    @storage.decide_control_state(
+      control_observation(recorded_ddl_version=1),
+      expected,
+    ),
+    @storage.ControlStateDecision::ControlStatePlanned(
+      @storage.ControlStatePlan::ControlStateMigrateDdl(1, expected),
+    ),
+  )
+  assert_eq(
+    @storage.decide_control_state(
+      control_observation(
+        recorded_generation=Some("gen-7"),
+        recorded_ddl_version=1,
+      ),
+      expected,
+    ),
+    @storage.ControlStateDecision::ControlStateProveRecordsDecodable(
+      "gen-7",
+      "gen-8",
+      Some(1),
+    ),
+  )
+  assert_eq(
+    @storage.decide_control_state_from_records(
+      "gen-7",
+      expected,
+      None,
+      ddl_migration_from=Some(1),
+    ),
+    @storage.ControlStatePlan::ControlStateMigrateDdl(1, expected),
+  )
+}
+
+///|
 /// A store running ahead of this build is the same failure seen from the other
 /// side: its tables are not the ones this build's SQL names.
 test "tables built by a newer DDL are reset too" {
@@ -221,13 +263,24 @@ test "the state each decision leaves behind reads as current next time" {
     ] {
     let plan = match @storage.decide_control_state(observed, control_schema) {
       @storage.ControlStateDecision::ControlStatePlanned(planned) => planned
-      @storage.ControlStateDecision::ControlStateProveRecordsDecodable(from, _) =>
-        @storage.decide_control_state_from_records(from, control_schema, None)
+      @storage.ControlStateDecision::ControlStateProveRecordsDecodable(
+        from,
+        _,
+        ddl_migration_from
+      ) =>
+        @storage.decide_control_state_from_records(
+          from,
+          control_schema,
+          None,
+          ddl_migration_from~,
+        )
     }
     let settled = match plan {
       @storage.ControlStatePlan::ControlStateCurrent =>
         (observed.recorded_generation, observed.recorded_ddl_version)
       @storage.ControlStatePlan::ControlStateMigrate(_, recorded) =>
+        (Some(recorded.generation), recorded.ddl_version)
+      @storage.ControlStatePlan::ControlStateMigrateDdl(_, recorded) =>
         (Some(recorded.generation), recorded.ddl_version)
       _ => fail("a readable store whose records decode was not kept")
     }

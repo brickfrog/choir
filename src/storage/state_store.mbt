@@ -43,6 +43,10 @@ pub(all) struct StateMutation {
 pub(all) struct CompletionOutboxMutation {
   semantic_key : SemanticEventKey
   payload_digest : @control.Digest
+  /// A terminal Goal is the only lifecycle boundary that can prove these
+  /// idempotency witnesses cannot be submitted again. Global records stay
+  /// unowned and therefore are never pruned.
+  owner_goal_id : @control.GoalId?
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -198,6 +202,13 @@ pub fn semantic_event_key_text(key : SemanticEventKey) -> String {
 }
 
 ///|
+pub fn completion_outbox_owner_text(
+  mutation : CompletionOutboxMutation,
+) -> String? {
+  mutation.owner_goal_id.map(fn(goal_id) { goal_id.0 })
+}
+
+///|
 pub fn fencing_epoch_value(epoch : @control.FencingEpoch) -> Int64 {
   guard epoch is @control.FencingEpoch(value) else { return 0L }
   value
@@ -229,6 +240,17 @@ pub fn validate_state_transaction(
   match validate_semantic_event_key(request.outbox.semantic_key) {
     Ok(_) => ()
     Err(error) => return Err(error)
+  }
+  match request.outbox.owner_goal_id {
+    Some(goal_id) =>
+      if !valid_storage_key_text(goal_id.0) {
+        return Err(
+          @types.ChoirError::validation_error(
+            "invalid completion outbox owner Goal id",
+          ),
+        )
+      }
+    None => ()
   }
   match validate_digest(request.state.value_digest) {
     Ok(_) => ()

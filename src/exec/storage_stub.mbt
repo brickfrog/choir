@@ -6,6 +6,15 @@ pub fn initialize_state_store(
 }
 
 ///|
+pub fn migrate_state_store_ddl(
+  _store : @storage.SqliteStateStore,
+  _from_version : Int,
+  _to_version : Int,
+) -> Result[Unit, @types.ChoirError] {
+  Err(@types.ChoirError::workspace_error("SQLite state store is native-only"))
+}
+
+///|
 pub fn commit_state_transaction(
   _store : @storage.SqliteStateStore,
   _request : @storage.StateTransactionRequest,
@@ -42,6 +51,14 @@ pub fn read_completion_outbox(
   _store : @storage.SqliteStateStore,
   _key : @storage.SemanticEventKey,
 ) -> Result[@storage.CompletionOutboxRecord?, @types.ChoirError] {
+  Err(@types.ChoirError::workspace_error("SQLite state store is native-only"))
+}
+
+///|
+pub fn prune_completion_outbox_for_goal(
+  _store : @storage.SqliteStateStore,
+  _goal_id : @control.GoalId,
+) -> Result[Int, @types.ChoirError] {
   Err(@types.ChoirError::workspace_error("SQLite state store is native-only"))
 }
 

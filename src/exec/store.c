@@ -260,7 +260,7 @@ static void choir_sqlite_mark_schema_ready(sqlite3 *db) {
  * 0 is reserved and means "created before this was stamped at all". It is
  * adopted rather than reset, because every store that can hold 0 was created by
  * this exact DDL; from the first adoption on, the number is load-bearing. */
-#define CHOIR_STATE_STORE_DDL_VERSION 1
+#define CHOIR_STATE_STORE_DDL_VERSION 2
 #define CHOIR_STRINGIFY_INNER(value) #value
 #define CHOIR_STRINGIFY(value) CHOIR_STRINGIFY_INNER(value)
 
@@ -279,6 +279,7 @@ static const char choir_state_store_schema[] =
     "CREATE TABLE IF NOT EXISTS completion_outbox("
     " semantic_key TEXT PRIMARY KEY NOT NULL,"
     " payload_digest TEXT NOT NULL CHECK(length(payload_digest) = 64),"
+    " owner_goal_id TEXT,"
     " record_key TEXT NOT NULL,"
     " state_version INTEGER NOT NULL CHECK(state_version > 0),"
     " fencing_epoch INTEGER NOT NULL CHECK(fencing_epoch > 0),"
@@ -569,6 +570,52 @@ static long long choir_state_store_epoch_row(sqlite3 *db) {
     return epoch;
 }
 
+int choir_state_store_migrate_ddl(
+    const char *path,
+    int path_len,
+    int from_version,
+    int to_version
+) {
+    if (from_version != 1 || to_version != 2) {
+        return -1;
+    }
+    sqlite3 *db = NULL;
+    if (choir_sqlite_acquire(path, path_len, &db) != 0) {
+        return -1;
+    }
+    sqlite3_stmt *stmt = NULL;
+    int has_owner = -1;
+    if (choir_sqlite.prepare_statement(
+            db,
+            "SELECT count(*) FROM pragma_table_info('completion_outbox') "
+            "WHERE name = 'owner_goal_id'",
+            -1,
+            &stmt,
+            NULL
+        ) == SQLITE_OK &&
+        choir_sqlite.step(stmt) == SQLITE_ROW) {
+        has_owner = choir_sqlite.column_int64(stmt, 0) == 1 ? 1 : 0;
+    }
+    if (stmt != NULL) choir_sqlite.finalize(stmt);
+    if (has_owner < 0 || choir_sqlite_exec(db, "BEGIN IMMEDIATE") != 0) {
+        return -1;
+    }
+    if (has_owner == 0 &&
+        choir_sqlite_exec(
+            db,
+            "ALTER TABLE completion_outbox ADD COLUMN owner_goal_id TEXT"
+        ) != 0) {
+        choir_sqlite_exec(db, "ROLLBACK");
+        return -1;
+    }
+    if (choir_sqlite_exec(db, "PRAGMA user_version = 2") != 0 ||
+        choir_sqlite_exec(db, "COMMIT") != 0) {
+        choir_sqlite_exec(db, "ROLLBACK");
+        return -1;
+    }
+    return 0;
+}
+
 long long choir_state_store_mint_epoch(const char *path, int path_len) {
     sqlite3 *db = NULL;
     if (choir_sqlite_acquire(path, path_len, &db) != 0) {
@@ -645,6 +692,9 @@ static int choir_sqlite_read_outbox_transition(
     size_t payload_digest_size,
     char *record_key,
     size_t record_key_size,
+    char *owner_goal_id,
+    size_t owner_goal_id_size,
+    int *has_owner_goal_id,
     sqlite3_int64 *state_version,
     sqlite3_int64 *fence,
     char *state_digest,
@@ -652,7 +702,7 @@ static int choir_sqlite_read_outbox_transition(
 ) {
     sqlite3_stmt *stmt = NULL;
     const char *sql =
-        "SELECT payload_digest, record_key, state_version, fencing_epoch, "
+        "SELECT payload_digest, record_key, owner_goal_id, state_version, fencing_epoch, "
         "state_value_digest FROM completion_outbox WHERE semantic_key = ?1";
     if (choir_sqlite.prepare_statement(db, sql, -1, &stmt, NULL) != SQLITE_OK ||
         choir_sqlite_bind_text(stmt, 1, semantic_key) != 0) {
@@ -664,17 +714,24 @@ static int choir_sqlite_read_outbox_transition(
     if (step == SQLITE_ROW) {
         const unsigned char *payload = choir_sqlite.column_text(stmt, 0);
         const unsigned char *key = choir_sqlite.column_text(stmt, 1);
-        const unsigned char *value = choir_sqlite.column_text(stmt, 4);
+        const unsigned char *owner = choir_sqlite.column_text(stmt, 2);
+        const unsigned char *value = choir_sqlite.column_text(stmt, 5);
         if (payload == NULL || key == NULL || value == NULL ||
             strlen((const char *)payload) + 1U > payload_digest_size ||
             strlen((const char *)key) + 1U > record_key_size ||
+            (owner != NULL &&
+             strlen((const char *)owner) + 1U > owner_goal_id_size) ||
             strlen((const char *)value) + 1U > state_digest_size) {
             result = -1;
         } else {
             strcpy(payload_digest, (const char *)payload);
             strcpy(record_key, (const char *)key);
-            *state_version = choir_sqlite.column_int64(stmt, 2);
-            *fence = choir_sqlite.column_int64(stmt, 3);
+            *has_owner_goal_id = owner == NULL ? 0 : 1;
+            if (owner != NULL) {
+                strcpy(owner_goal_id, (const char *)owner);
+            }
+            *state_version = choir_sqlite.column_int64(stmt, 3);
+            *fence = choir_sqlite.column_int64(stmt, 4);
             strcpy(state_digest, (const char *)value);
             result = 1;
         }
@@ -743,6 +800,8 @@ int choir_state_store_commit(
     int semantic_key_len,
     const char *payload_digest,
     int payload_digest_len,
+    const char *owner_goal_id,
+    int owner_goal_id_len,
     int fault_point,
     int has_precondition,
     const char *precondition_key,
@@ -756,6 +815,9 @@ int choir_state_store_commit(
     char *value = choir_store_copy_string(value_digest, value_digest_len);
     char *semantic = choir_store_copy_string(semantic_key, semantic_key_len);
     char *payload = choir_store_copy_string(payload_digest, payload_digest_len);
+    char *owner = owner_goal_id_len > 0
+        ? choir_store_copy_string(owner_goal_id, owner_goal_id_len)
+        : NULL;
     char *guard_key = has_precondition
         ? choir_store_copy_string(precondition_key, precondition_key_len)
         : NULL;
@@ -763,20 +825,24 @@ int choir_state_store_commit(
         ? choir_store_copy_string(precondition_digest, precondition_digest_len)
         : NULL;
     if (key == NULL || value == NULL || semantic == NULL || payload == NULL ||
+        (owner_goal_id_len > 0 && owner == NULL) ||
         (has_precondition && (guard_key == NULL || guard_digest == NULL))) {
         free(key); free(value); free(semantic); free(payload);
+        free(owner);
         free(guard_key); free(guard_digest);
         return 6;
     }
     sqlite3 *db = NULL;
     if (choir_sqlite_acquire(path, path_len, &db) != 0) {
         free(key); free(value); free(semantic); free(payload);
+        free(owner);
         free(guard_key); free(guard_digest);
         return 6;
     }
     int begin_rc = choir_sqlite_exec_rc(db, "BEGIN IMMEDIATE");
     if (begin_rc != SQLITE_OK) {
         free(key); free(value); free(semantic); free(payload);
+        free(owner);
         free(guard_key); free(guard_digest);
         return begin_rc == SQLITE_BUSY ? 9 : 6;
     }
@@ -784,7 +850,9 @@ int choir_state_store_commit(
     int result = 6;
     char existing_payload[65] = {0};
     char existing_key[1025] = {0};
+    char existing_owner[1025] = {0};
     char existing_value[65] = {0};
+    int existing_has_owner = 0;
     sqlite3_int64 existing_version = 0;
     sqlite3_int64 existing_fence = 0;
     int outbox_found = choir_sqlite_read_outbox_transition(
@@ -794,6 +862,9 @@ int choir_state_store_commit(
         sizeof(existing_payload),
         existing_key,
         sizeof(existing_key),
+        existing_owner,
+        sizeof(existing_owner),
+        &existing_has_owner,
         &existing_version,
         &existing_fence,
         existing_value,
@@ -803,6 +874,8 @@ int choir_state_store_commit(
     if (outbox_found == 1) {
         if (strcmp(existing_payload, payload) == 0 &&
             strcmp(existing_key, key) == 0 &&
+            (!existing_has_owner ||
+             (owner != NULL && strcmp(existing_owner, owner) == 0)) &&
             existing_version == next_version &&
             existing_fence == fencing_epoch &&
             strcmp(existing_value, value) == 0) {
@@ -873,17 +946,31 @@ int choir_state_store_commit(
     }
 
     stmt = NULL;
+    const char *prune_sql =
+        "DELETE FROM completion_outbox "
+        "WHERE record_key = ?1 AND state_version < ?2";
+    if (choir_sqlite.prepare_statement(db, prune_sql, -1, &stmt, NULL) != SQLITE_OK ||
+        choir_sqlite_bind_text(stmt, 1, key) != 0 ||
+        choir_sqlite.bind_int64(stmt, 2, next_version) != SQLITE_OK ||
+        choir_sqlite.step(stmt) != SQLITE_DONE) {
+        if (stmt != NULL) choir_sqlite.finalize(stmt);
+        goto rollback;
+    }
+    choir_sqlite.finalize(stmt);
+
+    stmt = NULL;
     const char *outbox_sql =
-        "INSERT INTO completion_outbox(semantic_key, payload_digest, record_key, "
+        "INSERT INTO completion_outbox(semantic_key, payload_digest, owner_goal_id, record_key, "
         "state_version, fencing_epoch, state_value_digest) "
-        "VALUES(?1, ?2, ?3, ?4, ?5, ?6)";
+        "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)";
     if (choir_sqlite.prepare_statement(db, outbox_sql, -1, &stmt, NULL) != SQLITE_OK ||
         choir_sqlite_bind_text(stmt, 1, semantic) != 0 ||
         choir_sqlite_bind_text(stmt, 2, payload) != 0 ||
-        choir_sqlite_bind_text(stmt, 3, key) != 0 ||
-        choir_sqlite.bind_int64(stmt, 4, next_version) != SQLITE_OK ||
-        choir_sqlite.bind_int64(stmt, 5, fencing_epoch) != SQLITE_OK ||
-        choir_sqlite_bind_text(stmt, 6, value) != 0 ||
+        (owner != NULL && choir_sqlite_bind_text(stmt, 3, owner) != 0) ||
+        choir_sqlite_bind_text(stmt, 4, key) != 0 ||
+        choir_sqlite.bind_int64(stmt, 5, next_version) != SQLITE_OK ||
+        choir_sqlite.bind_int64(stmt, 6, fencing_epoch) != SQLITE_OK ||
+        choir_sqlite_bind_text(stmt, 7, value) != 0 ||
         choir_sqlite.step(stmt) != SQLITE_DONE) {
         if (stmt != NULL) choir_sqlite.finalize(stmt);
         goto rollback;
@@ -907,7 +994,74 @@ rollback:
     choir_sqlite_exec(db, "ROLLBACK");
 done:
     free(key); free(value); free(semantic); free(payload);
+    free(owner);
     free(guard_key); free(guard_digest);
+    return result;
+}
+
+int choir_state_store_prune_goal_outbox(
+    const char *path,
+    int path_len,
+    const char *goal_id,
+    int goal_id_len
+) {
+    char *owner = choir_store_copy_string(goal_id, goal_id_len);
+    if (owner == NULL || owner[0] == '\0') {
+        free(owner);
+        return -1;
+    }
+    sqlite3 *db = NULL;
+    if (choir_sqlite_acquire(path, path_len, &db) != 0) {
+        free(owner);
+        return -1;
+    }
+    int begin_rc = choir_sqlite_exec_rc(db, "BEGIN IMMEDIATE");
+    if (begin_rc != SQLITE_OK) {
+        free(owner);
+        return begin_rc == SQLITE_BUSY ? -2 : -1;
+    }
+    int result = -1;
+    sqlite3_stmt *stmt = NULL;
+    if (choir_sqlite.prepare_statement(
+            db,
+            "SELECT count(*) FROM completion_outbox WHERE owner_goal_id = ?1",
+            -1,
+            &stmt,
+            NULL
+        ) != SQLITE_OK ||
+        choir_sqlite_bind_text(stmt, 1, owner) != 0 ||
+        choir_sqlite.step(stmt) != SQLITE_ROW) {
+        if (stmt != NULL) choir_sqlite.finalize(stmt);
+        goto prune_rollback;
+    }
+    sqlite3_int64 count = choir_sqlite.column_int64(stmt, 0);
+    choir_sqlite.finalize(stmt);
+    stmt = NULL;
+    if (count < 0 || count > INT32_MAX ||
+        choir_sqlite.prepare_statement(
+            db,
+            "DELETE FROM completion_outbox WHERE owner_goal_id = ?1",
+            -1,
+            &stmt,
+            NULL
+        ) != SQLITE_OK ||
+        choir_sqlite_bind_text(stmt, 1, owner) != 0 ||
+        choir_sqlite.step(stmt) != SQLITE_DONE) {
+        if (stmt != NULL) choir_sqlite.finalize(stmt);
+        goto prune_rollback;
+    }
+    choir_sqlite.finalize(stmt);
+    stmt = NULL;
+    if (choir_sqlite_exec_rc(db, "COMMIT") != SQLITE_OK) {
+        goto prune_rollback;
+    }
+    result = (int)count;
+    goto prune_done;
+
+prune_rollback:
+    choir_sqlite_exec(db, "ROLLBACK");
+prune_done:
+    free(owner);
     return result;
 }
 

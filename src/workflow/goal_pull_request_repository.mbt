@@ -97,6 +97,7 @@ pub fn persist_goal_pull_request_record(
         outbox: {
           semantic_key: goal_pull_request_event_key(request.record),
           payload_digest: record_digest,
+          owner_goal_id: Some(request.record.goal_id),
         },
         fault_point: request.fault_point,
       },

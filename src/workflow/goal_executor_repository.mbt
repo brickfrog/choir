@@ -120,6 +120,7 @@ fn persist_goal_executor_schedule_record(
     outbox: {
       semantic_key: goal_executor_schedule_event_key(record),
       payload_digest: record_digest,
+      owner_goal_id: None,
     },
     fault_point: None,
   })
