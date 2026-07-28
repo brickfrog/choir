@@ -80,6 +80,7 @@ pub fn persist_goal_selection_decision(
           request.decision.proposal.goal_id,
         ),
         payload_digest: decision_digest,
+        owner_goal_id: Some(request.decision.proposal.goal_id),
       },
       fault_point: request.fault_point,
     }) {

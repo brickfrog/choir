@@ -252,6 +252,15 @@ extern "C" fn state_store_write_ddl_version_ffi(
 
 ///|
 #borrow(path)
+extern "C" fn state_store_migrate_ddl_ffi(
+  path : Bytes,
+  path_len : Int,
+  from_version : Int,
+  to_version : Int,
+) -> Int = "choir_state_store_migrate_ddl"
+
+///|
+#borrow(path)
 extern "C" fn state_store_mint_epoch_ffi(path : Bytes, path_len : Int) -> Int64 = "choir_state_store_mint_epoch"
 
 ///|
@@ -259,7 +268,7 @@ extern "C" fn state_store_mint_epoch_ffi(path : Bytes, path_len : Int) -> Int64 
 extern "C" fn state_store_read_epoch_ffi(path : Bytes, path_len : Int) -> Int64 = "choir_state_store_read_epoch"
 
 ///|
-#borrow(path, record_key, value_digest, semantic_key, payload_digest, precondition_key, precondition_digest)
+#borrow(path, record_key, value_digest, semantic_key, payload_digest, owner_goal_id, precondition_key, precondition_digest)
 extern "C" fn state_store_commit_ffi(
   path : Bytes,
   path_len : Int,
@@ -275,6 +284,8 @@ extern "C" fn state_store_commit_ffi(
   semantic_key_len : Int,
   payload_digest : Bytes,
   payload_digest_len : Int,
+  owner_goal_id : Bytes,
+  owner_goal_id_len : Int,
   fault_point : Int,
   has_precondition : Int,
   precondition_key : Bytes,
@@ -284,6 +295,15 @@ extern "C" fn state_store_commit_ffi(
   precondition_digest : Bytes,
   precondition_digest_len : Int,
 ) -> Int = "choir_state_store_commit"
+
+///|
+#borrow(path, goal_id)
+extern "C" fn state_store_prune_goal_outbox_ffi(
+  path : Bytes,
+  path_len : Int,
+  goal_id : Bytes,
+  goal_id_len : Int,
+) -> Int = "choir_state_store_prune_goal_outbox"
 
 ///|
 #borrow(path, record_key, output)

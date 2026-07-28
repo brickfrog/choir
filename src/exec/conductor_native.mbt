@@ -1379,6 +1379,7 @@ pub fn native_goal_archive_response_fields(
     "retain_artifacts": plan.retain_artifacts.to_json(),
     "refs_removed": report.refs_removed.to_json(),
     "artifacts_released": report.artifacts_released.to_json(),
+    "outbox_events_released": report.outbox_events_released.to_json(),
   }
 }
 

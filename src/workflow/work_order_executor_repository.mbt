@@ -127,6 +127,7 @@ fn persist_work_order_executor_schedule_record(
     outbox: {
       semantic_key: work_order_executor_schedule_event_key(record),
       payload_digest: digest,
+      owner_goal_id: None,
     },
     fault_point: None,
   })

@@ -203,6 +203,7 @@ fn persist_native_process_execution(
             next_version,
           ),
           payload_digest: digest,
+          owner_goal_id: None,
         },
         fault_point: None,
       },

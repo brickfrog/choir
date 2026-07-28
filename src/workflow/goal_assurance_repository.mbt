@@ -113,6 +113,7 @@ pub fn persist_goal_assurance_record(
         outbox: {
           semantic_key: goal_assurance_event_key(request.record),
           payload_digest: record_digest,
+          owner_goal_id: Some(request.record.goal_id),
         },
         fault_point: request.fault_point,
       },
@@ -281,6 +282,7 @@ pub fn record_goal_assurance_effect_witness(
       outbox: {
         semantic_key: goal_assurance_witness_event_key(intent.effect_id),
         payload_digest: digest,
+        owner_goal_id: Some(record.goal_id),
       },
       fault_point: None,
     }) {

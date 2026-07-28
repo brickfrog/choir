@@ -7098,12 +7098,16 @@ pub async fn prepare_native_goal_control_state(
     // records and let what they decode to decide.
     @storage.ControlStateDecision::ControlStateProveRecordsDecodable(
       recorded,
-      _
+      _,
+      ddl_migration_from
     ) =>
       match probe_native_durable_record_decoding(control_root) {
         Ok(undecodable) =>
           @storage.decide_control_state_from_records(
-            recorded, schema, undecodable,
+            recorded,
+            schema,
+            undecodable,
+            ddl_migration_from~,
           )
         Err(error) => return Err(error)
       }
@@ -7122,6 +7126,17 @@ pub async fn prepare_native_goal_control_state(
         Ok(_) => Ok(NativeGoalControlStateCurrent)
         Err(error) => Err(error)
       }
+    @storage.ControlStatePlan::ControlStateMigrateDdl(from, target) => {
+      let store : @storage.SqliteStateStore = { path: workflow_store_path }
+      match migrate_state_store_ddl(store, from, target.ddl_version) {
+        Ok(_) => ()
+        Err(error) => return Err(error)
+      }
+      match record_native_goal_control_store_schema(store, target) {
+        Ok(_) => Ok(NativeGoalControlStateCurrent)
+        Err(error) => Err(error)
+      }
+    }
     @storage.ControlStatePlan::ControlStateInitialize =>
       match native_goal_control_state_create(control_root, schema) {
         Ok(_) => Ok(NativeGoalControlStateInitialized)
@@ -7292,6 +7307,7 @@ pub(all) struct NativeGoalArchiveReport {
   applied : Bool
   refs_removed : Int
   artifacts_released : Int
+  outbox_events_released : Int
 } derive(Debug, Eq)
 
 ///|
@@ -7466,6 +7482,7 @@ pub async fn archive_native_goal(
       applied: false,
       refs_removed: 0,
       artifacts_released: 0,
+      outbox_events_released: 0,
     })
   }
   if dry_run {
@@ -7474,6 +7491,7 @@ pub async fn archive_native_goal(
       applied: false,
       refs_removed: 0,
       artifacts_released: 0,
+      outbox_events_released: 0,
     })
   }
   let refs_removed = match delete_refs(project_dir, plan.release_refs) {
@@ -7485,7 +7503,18 @@ pub async fn archive_native_goal(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  Ok({ decision, applied: true, refs_removed, artifacts_released })
+  let outbox_events_released = match
+    prune_completion_outbox_for_goal(repository.state_store, goal_id) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  Ok({
+    decision,
+    applied: true,
+    refs_removed,
+    artifacts_released,
+    outbox_events_released,
+  })
 }
 
 ///|

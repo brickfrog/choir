@@ -140,6 +140,7 @@ fn commit_work_order_planner_attempt(
       outbox: {
         semantic_key: work_order_planner_attempt_event_key(record),
         payload_digest: digest,
+        owner_goal_id: None,
       },
       fault_point: None,
     }) {

@@ -118,7 +118,7 @@ test "the control store DDL is pinned to the version it declares" {
   // is the way around that, and it is the wrong edit: it discards the pin for a
   // DDL already stamped onto stores in the field.
   let pins = [
-    "7a0eb3bd1ed169bdf66f683e43da2b61855cabb53d03b778936432bdaec54662",
+    "7a0eb3bd1ed169bdf66f683e43da2b61855cabb53d03b778936432bdaec54662", "9905a47a5e19f9ef5771e8d2dc9c6b7cead67345a1cbea9891ecaa742087b6d9",
   ]
   let buf = Bytes::new(4096)
   let written = state_store_ddl_text_ffi(buf, 4096)
@@ -178,6 +178,24 @@ pub fn write_state_store_ddl_version(
 }
 
 ///|
+pub fn migrate_state_store_ddl(
+  store : @storage.SqliteStateStore,
+  from_version : Int,
+  to_version : Int,
+) -> Result[Unit, @types.ChoirError] {
+  match validate_store_path(store.path) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let (path, path_len) = exec_string_to_null_terminated_bytes(store.path)
+  if state_store_migrate_ddl_ffi(path, path_len, from_version, to_version) == 0 {
+    Ok(())
+  } else {
+    Err(state_store_failure("DDL migration"))
+  }
+}
+
+///|
 pub fn write_state_store_generation(
   store : @storage.SqliteStateStore,
   generation : String,
@@ -203,6 +221,15 @@ fn state_fault_code(point : @storage.StateStoreFaultPoint?) -> Int {
     Some(@storage.StateStoreFaultPoint::StateAfterOutboxBeforeCommit) => 2
     Some(@storage.StateStoreFaultPoint::StateAfterCommitBeforeAck) => 3
   }
+}
+
+///|
+fn state_outbox_owner_bytes(
+  outbox : @storage.CompletionOutboxMutation,
+) -> (Bytes, Int) {
+  exec_string_to_null_terminated_bytes(
+    @storage.completion_outbox_owner_text(outbox).unwrap_or(""),
+  )
 }
 
 ///|
@@ -233,6 +260,9 @@ pub fn commit_state_transaction(
   let (payload, payload_len) = exec_string_to_null_terminated_bytes(
     payload_text,
   )
+  let (owner_goal_id, owner_goal_id_len) = state_outbox_owner_bytes(
+    request.outbox,
+  )
   let (has_expected, expected) = match request.state.expected_version {
     None => (0, 0)
     Some(version) => (1, version)
@@ -253,6 +283,8 @@ pub fn commit_state_transaction(
     semantic_len,
     payload,
     payload_len,
+    owner_goal_id,
+    owner_goal_id_len,
     state_fault_code(request.fault_point),
     0,
     empty,
@@ -314,6 +346,9 @@ pub fn commit_guarded_state_transaction(
   let (payload, payload_len) = exec_string_to_null_terminated_bytes(
     payload_text,
   )
+  let (owner_goal_id, owner_goal_id_len) = state_outbox_owner_bytes(
+    transaction.outbox,
+  )
   let precondition_key_text = @storage.state_record_key_text(precondition.key)
   let (precondition_key, precondition_key_len) = exec_string_to_null_terminated_bytes(
     precondition_key_text,
@@ -341,6 +376,8 @@ pub fn commit_guarded_state_transaction(
     semantic_len,
     payload,
     payload_len,
+    owner_goal_id,
+    owner_goal_id_len,
     state_fault_code(transaction.fault_point),
     1,
     precondition_key,
@@ -378,6 +415,29 @@ pub fn commit_guarded_state_transaction(
       outcome,
     ),
   )
+}
+
+///|
+/// Delete idempotency witnesses only for one explicitly terminal Goal. Rows
+/// without an owner are intentionally unreachable from this operation.
+pub fn prune_completion_outbox_for_goal(
+  store : @storage.SqliteStateStore,
+  goal_id : @control.GoalId,
+) -> Result[Int, @types.ChoirError] {
+  match validate_store_path(store.path) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  if goal_id.0 == "" || goal_id.0.contains("\u{00}") {
+    return Err(@types.ChoirError::validation_error("invalid outbox Goal id"))
+  }
+  let (path, path_len) = exec_string_to_null_terminated_bytes(store.path)
+  let (goal, goal_len) = exec_string_to_null_terminated_bytes(goal_id.0)
+  match state_store_prune_goal_outbox_ffi(path, path_len, goal, goal_len) {
+    value if value >= 0 => Ok(value)
+    -2 => Err(state_store_busy("outbox pruning"))
+    _ => Err(state_store_failure("outbox pruning"))
+  }
 }
 
 ///|

@@ -144,6 +144,7 @@ fn persist_part_snapshot_internal(
     outbox: {
       semantic_key: workflow_snapshot_event_key(request.snapshot),
       payload_digest: snapshot_digest,
+      owner_goal_id: Some(request.snapshot.goal.id),
     },
     fault_point: request.fault_point,
   }
@@ -488,6 +489,7 @@ pub fn record_part_effect_witness(
       outbox: {
         semantic_key: effect_witness_event_key(intent.effect_id),
         payload_digest: digest,
+        owner_goal_id: Some(snapshot.goal.id),
       },
       fault_point: None,
     }) {

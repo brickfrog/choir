@@ -34,6 +34,7 @@ fn initial_state_request(
     outbox: {
       semantic_key: @storage.SemanticEventKey("goal:g-1:" + semantic_suffix),
       payload_digest: store_digest_b,
+      owner_goal_id: None,
     },
     fault_point,
   }
@@ -121,6 +122,73 @@ test "SQLite state transaction persists atomically and replays after restart" {
 }
 
 ///|
+test "completion outbox pruning deletes only one typed Goal owner" {
+  let path = storage_test_path("outbox-owner-prune.db")
+  ignore(@sys.rm_rf(path))
+  ignore(@sys.rm_rf(path + "-shm"))
+  ignore(@sys.rm_rf(path + "-wal"))
+  let store : @storage.SqliteStateStore = { path, }
+  initialize_state_store(store).unwrap()
+  let request = fn(
+    state_key : String,
+    semantic_key : String,
+    owner_goal_id : @control.GoalId?,
+  ) -> @storage.StateTransactionRequest {
+    {
+      state: {
+        key: @storage.StateRecordKey(state_key),
+        expected_version: None,
+        next_version: 1,
+        fencing_epoch: @control.FencingEpoch(1L),
+        value_digest: store_digest_a,
+      },
+      outbox: {
+        semantic_key: @storage.SemanticEventKey(semantic_key),
+        payload_digest: store_digest_b,
+        owner_goal_id,
+      },
+      fault_point: None,
+    }
+  }
+  let goal_a_key = @storage.SemanticEventKey("goal:a:owned")
+  let goal_b_key = @storage.SemanticEventKey("goal:b:owned")
+  let global_key = @storage.SemanticEventKey("global:unowned")
+  for
+    transaction in [
+      request("state:a", "goal:a:owned", Some(@control.GoalId("goal-a"))),
+      request("state:b", "goal:b:owned", Some(@control.GoalId("goal-b"))),
+      request("state:global", "global:unowned", None),
+    ] {
+    assert_eq(
+      commit_state_transaction(store, transaction).unwrap(),
+      @storage.StateTransactionOutcome::StateTransactionCommitted,
+    )
+  }
+  assert_eq(
+    commit_state_transaction(
+      store,
+      request("state:a", "goal:a:owned", Some(@control.GoalId("goal-other"))),
+    ).unwrap(),
+    @storage.StateTransactionOutcome::StateTransactionSemanticConflict,
+  )
+  assert_eq(
+    prune_completion_outbox_for_goal(store, @control.GoalId("goal-a")).unwrap(),
+    1,
+  )
+  assert_eq(read_completion_outbox(store, goal_a_key).unwrap(), None)
+  assert_true(read_completion_outbox(store, goal_b_key).unwrap() is Some(_))
+  assert_true(read_completion_outbox(store, global_key).unwrap() is Some(_))
+  // Convergent after a crash or repeated archive.
+  assert_eq(
+    prune_completion_outbox_for_goal(store, @control.GoalId("goal-a")).unwrap(),
+    0,
+  )
+  ignore(@sys.rm_rf(path))
+  ignore(@sys.rm_rf(path + "-shm"))
+  ignore(@sys.rm_rf(path + "-wal"))
+}
+
+///|
 test "SQLite state listing returns only the requested durable prefix" {
   let path = storage_test_path("sqlite-list.db")
   ignore(@sys.rm_rf(path))
@@ -142,6 +210,7 @@ test "SQLite state listing returns only the requested durable prefix" {
       outbox: {
         semantic_key: @storage.SemanticEventKey("goal-run:first:created"),
         payload_digest: store_digest_a,
+        owner_goal_id: None,
       },
       fault_point: None,
     },
@@ -156,6 +225,7 @@ test "SQLite state listing returns only the requested durable prefix" {
       outbox: {
         semantic_key: @storage.SemanticEventKey("goal-run:second:created"),
         payload_digest: store_digest_b,
+        owner_goal_id: None,
       },
       fault_point: None,
     },
@@ -218,6 +288,7 @@ test "SQLite state transaction enforces semantic uniqueness versions and fences"
     outbox: {
       semantic_key: @storage.SemanticEventKey("goal:g-1:bad-version"),
       payload_digest: store_digest_c,
+      owner_goal_id: None,
     },
     fault_point: None,
   }
@@ -236,6 +307,7 @@ test "SQLite state transaction enforces semantic uniqueness versions and fences"
     outbox: {
       semantic_key: @storage.SemanticEventKey("goal:g-1:advanced"),
       payload_digest: store_digest_c,
+      owner_goal_id: None,
     },
     fault_point: None,
   }
@@ -245,7 +317,18 @@ test "SQLite state transaction enforces semantic uniqueness versions and fences"
   )
   expect_state_outcome(
     commit_state_transaction(store, initial),
-    @storage.StateTransactionOutcome::StateTransactionReplayed,
+    @storage.StateTransactionOutcome::StateTransactionVersionConflict,
+  )
+  // Once a newer version commits, replaying the old semantic event cannot
+  // mutate state: its expected version is stale. The superseded idempotency row
+  // is therefore safe to prune, while the current transition stays protected.
+  assert_eq(
+    read_completion_outbox(store, initial.outbox.semantic_key).unwrap(),
+    None,
+  )
+  assert_true(
+    read_completion_outbox(store, fenced_update.outbox.semantic_key).unwrap()
+    is Some(_),
   )
   let stale_update : @storage.StateTransactionRequest = {
     state: {
@@ -258,6 +341,7 @@ test "SQLite state transaction enforces semantic uniqueness versions and fences"
     outbox: {
       semantic_key: @storage.SemanticEventKey("goal:g-1:stale"),
       payload_digest: store_digest_a,
+      owner_goal_id: None,
     },
     fault_point: None,
   }
@@ -307,6 +391,7 @@ test "guarded state transaction orders Part authorization against Goal cutoff" {
     outbox: {
       semantic_key: @storage.SemanticEventKey("part:p-1:authorized"),
       payload_digest: store_digest_b,
+      owner_goal_id: None,
     },
     fault_point: None,
   }
@@ -330,6 +415,7 @@ test "guarded state transaction orders Part authorization against Goal cutoff" {
     outbox: {
       semantic_key: @storage.SemanticEventKey("goal:g-1:canceling"),
       payload_digest: store_digest_c,
+      owner_goal_id: None,
     },
     fault_point: None,
   }
@@ -342,6 +428,7 @@ test "guarded state transaction orders Part authorization against Goal cutoff" {
     outbox: {
       semantic_key: @storage.SemanticEventKey("part:p-2:authorized"),
       payload_digest: store_digest_b,
+      owner_goal_id: None,
     },
     fault_point: None,
   }
@@ -890,6 +977,7 @@ fn control_probe_record(
       outbox: {
         semantic_key: @storage.SemanticEventKey(key + ":state:1"),
         payload_digest: digest,
+        owner_goal_id: None,
       },
       fault_point: None,
     })
@@ -1086,6 +1174,55 @@ async test "a record this build cannot decode authorizes the reset" {
   assert_eq(
     read_state_store_generation(store).unwrap(),
     Some(@workflow.durable_value_shape_generation()),
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+/// Version 2 adds only a nullable owner column. Existing outbox rows remain
+/// unowned and must survive the migration; none of the destructive cleanup
+/// effects is authorized.
+async test "the outbox owner DDL migrates in place" {
+  let reached : Array[String] = []
+  let project_dir = storage_test_path("control-ddl-migrate")
+  let control_root = project_dir + "/.choir/state/control"
+  let store : @storage.SqliteStateStore = {
+    path: control_root + "/workflow.db",
+  }
+  ignore(@sys.rm_rf(project_dir))
+  guard @sys.create_dir_all(control_root) else { fail("create control root") }
+  initialize_state_store(store).unwrap()
+  write_state_store_generation(
+    store,
+    @workflow.durable_value_shape_generation(),
+  ).unwrap()
+  write_state_store_ddl_version(store, 1).unwrap()
+  let request = initial_state_request("before-ddl-migration", None)
+  assert_eq(
+    commit_state_transaction(store, request).unwrap(),
+    @storage.StateTransactionOutcome::StateTransactionCommitted,
+  )
+  let prepared = prepare_native_goal_control_state(
+    project_dir,
+    capture=fn(_) {
+      reached.push("claims")
+      (0, "[]")
+    },
+    cleanup_runtime=fn(_, _) {
+      reached.push("runtime")
+      Ok(())
+    },
+    purge_refs=fn(_) {
+      reached.push("refs")
+      Ok(0)
+    },
+  )
+  assert_eq(prepared.unwrap(), NativeGoalControlStateCurrent)
+  assert_eq(reached, [])
+  assert_eq(read_state_store_ddl_version(store).unwrap(), 2)
+  assert_true(
+    read_completion_outbox(store, request.outbox.semantic_key).unwrap()
+    is Some(_),
   )
   ignore(@sys.rm_rf(project_dir))
 }
