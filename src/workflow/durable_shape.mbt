@@ -3200,6 +3200,7 @@ let durable_shape_part_dispatch_diagnostic : PartDispatchDiagnostic = {
   detail: "",
   recovery: Some(""),
   availability: durable_shapes_provider_availability[0],
+  observed_at: 0L,
 }
 
 ///|

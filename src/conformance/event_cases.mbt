@@ -644,7 +644,10 @@ pub fn event_nonresumable_process_loss_case() -> HermeticConformanceCase {
       let (snapshot, intent) = event_authorized_provider_dispatch_fixture()
       let uncertain = match
         @workflow.record_part_provider_process_loss(
-          snapshot, intent, "provider process lost",
+          snapshot,
+          intent,
+          "provider process lost",
+          observed_at=110L,
         ) {
         Ok(value) => value
         Err(error) => return Err(error)
@@ -687,7 +690,10 @@ pub fn event_backpressure_case() -> HermeticConformanceCase {
       let (snapshot, intent) = event_authorized_provider_dispatch_fixture()
       let uncertain = match
         @workflow.record_part_event_ingestion_overflow(
-          snapshot, intent, "event ingestion overflow",
+          snapshot,
+          intent,
+          "event ingestion overflow",
+          observed_at=110L,
         ) {
         Ok(value) => value
         Err(error) => return Err(error)

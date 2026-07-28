@@ -4038,7 +4038,10 @@ pub fn audit_protocol_conflict_case() -> HermeticConformanceCase {
       }
       let violated = match
         @workflow.record_part_provider_protocol_violation(
-          authorized, intent, "provider lifecycle is incomplete",
+          authorized,
+          intent,
+          "provider lifecycle is incomplete",
+          observed_at=110L,
         ) {
         Ok(value) => value
         Err(error) => return Err(error)

@@ -808,35 +808,9 @@ pub(all) enum ProviderAvailability {
   ProviderUnavailable
   /// The paid subscription allowance is spent. The instant carries the
   /// provider's own reset time when it reported one; without trusted reset
-  /// evidence Choir waits rather than guessing.
+  /// evidence Choir re-checks on its own capped schedule rather than guessing
+  /// an instant or treating the observation as permanent.
   ProviderAllowanceExhausted(Int64?)
   /// The provider asked to be retried at a specific instant.
   ProviderRetryAfter(Int64)
 } derive(Debug, Eq, ToJson, FromJson)
-
-///|
-/// How long a dispatch classification defers new work against this surface.
-/// `None` means nothing to wait for: an unavailable surface is retried under
-/// the ordinary bounded recovery path, and an exhausted allowance with no
-/// trusted reset evidence is not given an invented one.
-pub fn provider_availability_deferred_until(
-  availability : ProviderAvailability,
-) -> Int64? {
-  match availability {
-    ProviderAvailable | ProviderUnavailable => None
-    ProviderAllowanceExhausted(reset) => reset
-    ProviderRetryAfter(instant) => Some(instant)
-  }
-}
-
-///|
-/// Whether a surface may serve a new dispatch at this clock reading.
-pub fn provider_availability_admits_dispatch(
-  availability : ProviderAvailability,
-  now : Int64,
-) -> Bool {
-  match provider_availability_deferred_until(availability) {
-    None => availability != ProviderAllowanceExhausted(None)
-    Some(instant) => now >= instant
-  }
-}

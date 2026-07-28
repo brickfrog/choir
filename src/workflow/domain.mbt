@@ -239,6 +239,11 @@ pub(all) struct PartDispatchDiagnostic {
   /// allowance and a crashed provider are both "the Take did not run", but
   /// only one of them clears at a known instant.
   availability : @control.ProviderAvailability
+  /// When `availability` was observed. An observation the surface dated
+  /// itself — a reported reset or retry-after — carries its own instant, but
+  /// one that dated nothing has to be aged out against the clock instead, and
+  /// an undated observation can only be treated as permanent.
+  observed_at : Int64
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|

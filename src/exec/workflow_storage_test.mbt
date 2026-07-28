@@ -1091,6 +1091,70 @@ async test "Goal cancellation persists an applied integration witness before fin
 }
 
 ///|
+/// A deferral is only finite because the observation behind it is dated. The
+/// driver is the only thing holding a clock at the moment a dispatch dies, so
+/// a diagnostic that reached durable state undated — or dated at the epoch —
+/// would age out before anything read it, and the next Take would go straight
+/// back at a surface that had just said its allowance is spent.
+async test "a lost provider dispatch is dated by the clock the driver ran on" {
+  let repository = workflow_repository("driver-dispatch-observed-at")
+  clean_workflow_repository(repository)
+  let execute_count = @ref.new(0)
+  let reconcile_count = @ref.new(0)
+  let admitted = workflow_driver_dependencies(
+    execute_count,
+    reconcile_count,
+    fn(_) { None },
+    workflow_driver_recover_observation,
+  )
+  let lost : @workflow.PartWorkflowDriverDependencies = {
+    ..admitted,
+    effects: {
+      execute: (snapshot, intent) => {
+        execute_count.val = execute_count.val + 1
+        if intent.kind is @workflow.PartEffectKind::DispatchImplementation(_, _) {
+          Err(
+            @types.ChoirError::provider_process_lost(
+              "provider process lost: Claude usage limit reached",
+            ),
+          )
+        } else {
+          workflow_driver_observation(snapshot, intent)
+        }
+      },
+      reconcile: admitted.effects.reconcile,
+    },
+  }
+  let result = match
+    @workflow.run_new_part_workflow(
+      repository,
+      workflow_repository_adapters(),
+      workflow_store_fixture(),
+      lost,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(
+    result.outcome,
+    @workflow.PartWorkflowRunOutcome::PartRunRecoveryUncertain,
+  )
+  guard result.snapshot.dispatch_diagnostic is Some(diagnostic) else {
+    fail("a lost provider dispatch recorded no diagnostic")
+  }
+  // The surface said its allowance is spent and named no reset instant, which
+  // is the observation that has to be re-checked rather than believed forever.
+  assert_eq(
+    diagnostic.availability,
+    @control.ProviderAvailability::ProviderAllowanceExhausted(None),
+  )
+  // So it carries the clock reading the run was driven on, and the re-check
+  // lands a fixed interval after the dispatch actually failed.
+  assert_eq(diagnostic.observed_at, 110L)
+  clean_workflow_repository(repository)
+}
+
+///|
 async test "audited Part waits durably for Goal promotion admission" {
   let repository = workflow_repository("driver-awaiting-promotion")
   clean_workflow_repository(repository)

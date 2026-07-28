@@ -189,6 +189,7 @@ fn maximal_part_snapshot() -> @workflow.PartWorkflowSnapshot raise {
       availability: @control.ProviderAvailability::ProviderAllowanceExhausted(
         Some(30L),
       ),
+      observed_at: 29L,
     }),
   }
 }
