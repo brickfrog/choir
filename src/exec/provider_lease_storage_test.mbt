@@ -947,3 +947,191 @@ test "a report built without a capacity observation claims no capacity" {
   }
   ignore(@sys.rm_rf(root))
 }
+
+///|
+/// PRESSURE REACHES THE READER WHILE IT IS HAPPENING.
+///
+/// `conductor_broadcast_goal_update` publishes nothing when a report's material
+/// fingerprint is unchanged, and a Goal parked at the admission gate has no
+/// other change to offer: the refusal is a `PartGoalDeferredUntil`, not a
+/// durable observation, so no stage, lifecycle, or diagnostic moves. If the
+/// fingerprint ignored capacity, the one condition whose whole point is that
+/// nothing is moving would be the one condition that never reached an operator.
+///
+/// Four moments of one store, and the Goal is untouched across all of them:
+/// same Part, same stage, same lifecycles. Every report is the one
+/// `conductor_goal_observer` would publish — `inspect_native_goal` reading the
+/// records the real admission gate committed — so what is fingerprinted here is
+/// the daemon's own projection rather than a shape this test invented.
+test "the fingerprint carries capacity pressure but not the wake instant" {
+  let root = "/tmp/choir-provider-capacity-delivery-" +
+    @sys.get_pid().to_string()
+  let (repository, adapters) = archive_native_repository(root)
+  let goal = provider_lease_running_record("store")
+  archive_native_persist(repository, adapters, goal)
+  let snapshot = provider_capacity_part_snapshot(repository, adapters)
+  let blocker = provider_lease_running_record("capacity-blocker")
+  archive_native_persist(repository, adapters, blocker)
+  let capacity = provider_lease_capacity(1)
+  let blocker_part = @control.PartId("part-capacity-blocker")
+  // Nothing held anywhere, and the tick that just ran asked for nothing.
+  let free = provider_capacity_report(root, goal.goal.id, capacity, [])
+  // A second Goal takes the only Claude slot. This Goal did not move.
+  let admitting_tick : Array[@workflow.ProviderSurfaceTickReport] = []
+  assert_true(
+    provider_capacity_authorize(
+      repository,
+      blocker.goal.id,
+      blocker_part,
+      capacity,
+      2_000L,
+      admitting_tick,
+    )
+    is @workflow.PartGoalAuthorization::PartGoalAuthorized(Some(_)),
+  )
+  let starved = provider_capacity_report(
+    root,
+    goal.goal.id,
+    capacity,
+    admitting_tick,
+  )
+  assert_eq(starved.parts[0].leased_provider_surface, None)
+  assert_true(
+    @workflow.goal_report_material_fingerprint(free) !=
+    @workflow.goal_report_material_fingerprint(starved),
+  )
+  // The next two ticks reach the gate with this Goal's Part and are refused at
+  // different instants. The gate named both; neither is a change a reader is
+  // owed a second delivery for, and a fingerprint that carried them would
+  // re-fire for as long as the surface stayed full.
+  let first_refusal : Array[@workflow.ProviderSurfaceTickReport] = []
+  assert_true(
+    provider_capacity_authorize(
+      repository,
+      goal.goal.id,
+      snapshot.part.id,
+      capacity,
+      2_400L,
+      first_refusal,
+    )
+    is @workflow.PartGoalAuthorization::PartGoalDeferredUntil(_, _),
+  )
+  let second_refusal : Array[@workflow.ProviderSurfaceTickReport] = []
+  assert_true(
+    provider_capacity_authorize(
+      repository,
+      goal.goal.id,
+      snapshot.part.id,
+      capacity,
+      2_600L,
+      second_refusal,
+    )
+    is @workflow.PartGoalAuthorization::PartGoalDeferredUntil(_, _),
+  )
+  let deferred_once = provider_capacity_report(
+    root,
+    goal.goal.id,
+    capacity,
+    first_refusal,
+  )
+  let deferred_again = provider_capacity_report(
+    root,
+    goal.goal.id,
+    capacity,
+    second_refusal,
+  )
+  assert_true(
+    deferred_once.provider_capacity[0].deferred_until !=
+    deferred_again.provider_capacity[0].deferred_until,
+  )
+  assert_eq(
+    @workflow.goal_report_material_fingerprint(starved),
+    @workflow.goal_report_material_fingerprint(deferred_once),
+  )
+  assert_eq(
+    @workflow.goal_report_material_fingerprint(deferred_once),
+    @workflow.goal_report_material_fingerprint(deferred_again),
+  )
+  // The blocking Goal gives the slot back and this Goal's Part takes it. The
+  // surface is exactly as full as it was, so nothing the capacity projection
+  // reports about it changed — only whose slot it is, which is the difference
+  // between waiting and working and the thing the operator is watching for.
+  assert_true(
+    provider_lease_release(
+      repository,
+      blocker,
+      "capacity-blocker",
+      current_native_goal_fencing_epoch().0,
+    )
+    is @workflow.ProviderLeaseReleaseDecision::ProviderLeaseReleased(_),
+  )
+  let serving_tick : Array[@workflow.ProviderSurfaceTickReport] = []
+  assert_true(
+    provider_capacity_authorize(
+      repository,
+      goal.goal.id,
+      snapshot.part.id,
+      capacity,
+      3_000L,
+      serving_tick,
+    )
+    is @workflow.PartGoalAuthorization::PartGoalAuthorized(Some(_)),
+  )
+  let served = provider_capacity_report(
+    root,
+    goal.goal.id,
+    capacity,
+    serving_tick,
+  )
+  assert_eq(served.provider_capacity, starved.provider_capacity)
+  assert_eq(
+    served.parts[0].leased_provider_surface,
+    Some(provider_lease_surface),
+  )
+  assert_true(
+    @workflow.goal_report_material_fingerprint(starved) !=
+    @workflow.goal_report_material_fingerprint(served),
+  )
+  // A surface no Part of this Goal runs on is still pressure its reader is
+  // shown — `conductor_goal_display` reports every pressured surface, not only
+  // the ones this Goal competes for — so it has to reach them too. This Goal's
+  // only Part holds its Claude slot throughout, so nothing here parks anything
+  // and the parked count cannot be what carries it.
+  let bounded = provider_lease_capacity(1, codex=1)
+  let codex_free = provider_capacity_report(
+    root,
+    goal.goal.id,
+    bounded,
+    serving_tick,
+  )
+  let codex_tick : Array[@workflow.ProviderSurfaceTickReport] = []
+  assert_true(
+    provider_lease_authorize(
+      repository,
+      blocker,
+      "capacity-blocker-codex",
+      bounded,
+      current_native_goal_fencing_epoch().0,
+      3_200L,
+      surface=@control.ProviderSurfaceId::CodexSubscriptionCli,
+      observed=codex_tick,
+    )
+    is @workflow.PartGoalAuthorization::PartGoalAuthorized(Some(_)),
+  )
+  let codex_full = provider_capacity_report(
+    root,
+    goal.goal.id,
+    bounded,
+    codex_tick,
+  )
+  assert_eq(codex_free.provider_capacity[1].held, 0)
+  assert_eq(codex_full.provider_capacity[1].held, 1)
+  let unparked = @workflow.conductor_goal_display(codex_full, 3_200L).unwrap()
+  assert_eq(unparked.provider_waiting, 0)
+  assert_eq(unparked.capacity_pressure.length(), 2)
+  assert_true(
+    @workflow.goal_report_material_fingerprint(codex_free) !=
+    @workflow.goal_report_material_fingerprint(codex_full),
+  )
+  ignore(@sys.rm_rf(root))
+}
