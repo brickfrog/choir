@@ -273,7 +273,7 @@ fn promotion_harness_config(
     @workflow.PartConflictRepairDecision,
     @types.ChoirError,
   ],
-  observed_deferral : Ref[Int64?],
+  released : Array[@control.PartId],
 ) -> @exec.GoalPartWorkflowAdapterConfig {
   {
     bindings: [binding],
@@ -297,10 +297,10 @@ fn promotion_harness_config(
       Err(@types.ChoirError::validation_error("recovery is not expected"))
     },
     read_goal_head: () => Ok(promotion_harness_head),
-    observe_provider_deferral: fn(instant) {
-      observed_deferral.val = Some(instant)
+    release_provider_lease: fn(part_id) {
+      released.push(part_id)
+      Ok(())
     },
-    release_provider_lease: fn(_) { Ok(()) },
   }
 }
 
@@ -340,7 +340,7 @@ async test "an admitted promotion integrates the Part and returns the integrated
     part: waiting.part,
     task_contract: waiting.task_contract,
   }
-  let observed_deferral : Ref[Int64?] = @ref.new(None)
+  let released : Array[@control.PartId] = []
   let config = promotion_harness_config(
     { scheduling_record: record, initial_snapshot: waiting, repository },
     adapters,
@@ -350,7 +350,7 @@ async test "an admitted promotion integrates the Part and returns the integrated
         @types.ChoirError::validation_error("conflict repair is not expected"),
       )
     },
-    observed_deferral,
+    released,
   )
   let promoted = match
     (@exec.goal_part_workflow_adapters(config).promote_part)(
@@ -374,20 +374,25 @@ async test "an admitted promotion integrates the Part and returns the integrated
   assert_eq(stored.stage, @workflow.PartWorkflowStage::PartIntegrated)
   assert_true(stored.integration_receipt is Some(_))
   assert_eq(stored.integration_conflicts, [])
-  assert_eq(observed_deferral.val, None)
+  // The provider slot the pass took goes back when it returns.
+  assert_eq(released, [record.part.id])
   clean_workflow_repository(repository)
 }
 
 ///|
 /// A promotion that conflicts and is then refused by a capacity bound has to
-/// name its wake instant.
+/// give its slot back and write nothing.
 ///
 /// The gate authorizes the promotion attempt, the promotion conflicts, and by
-/// the time the conflict repair asks for authority the surface is full. The
-/// outcome the pass returns describes the promotion, not the bound that refused
-/// the repair, so if this pass drops the instant nothing else carries it and the
-/// refusal degrades into polling.
-async test "a promotion repair refused by a capacity bound still names its wake instant" {
+/// the time the conflict repair asks for authority the surface is full. That
+/// pass did no work, so holding the seat it took on the way in would keep a
+/// surface busy for a Part that is going nowhere this tick.
+///
+/// The wake instant is not checked here because this pass no longer carries it:
+/// the admission gate reports the refusal against the surface it judged, which
+/// is the only place that knows which surface it was. See the surface reports
+/// in `provider_lease_storage_test.mbt`.
+async test "a promotion repair refused by a capacity bound returns its slot" {
   let repository = workflow_repository("goal-adapter-promotion-deferral")
   clean_workflow_repository(repository)
   let adapters = workflow_repository_adapters()
@@ -423,13 +428,13 @@ async test "a promotion repair refused by a capacity bound still names its wake 
     part: waiting.part,
     task_contract: waiting.task_contract,
   }
-  let observed_deferral : Ref[Int64?] = @ref.new(None)
+  let released : Array[@control.PartId] = []
   let config = promotion_harness_config(
     { scheduling_record: record, initial_snapshot: waiting, repository },
     adapters,
     bounded,
     promotion_harness_repair,
-    observed_deferral,
+    released,
   )
   let refused = match
     (@exec.goal_part_workflow_adapters(config).promote_part)(
@@ -439,7 +444,12 @@ async test "a promotion repair refused by a capacity bound still names its wake 
     Ok(value) => value
     Err(error) => fail(error.message())
   }
-  assert_eq(observed_deferral.val, Some(9_271L))
+  // A refused pass still returns its slot. This is the sharp one: a promotion
+  // that held a seat on its way to being refused would starve the surface for
+  // every other Goal while doing no work at all. The wake instant itself is
+  // reported by the gate that named it, not from here — see the surface
+  // reports in provider_lease_storage_test.mbt.
+  assert_eq(released, [record.part.id])
   // The other half: a refused repair is not written. The Part is still parked
   // on the conflict under its original contract, so the next tick re-plans the
   // repair instead of resuming a half-applied one.
@@ -468,9 +478,10 @@ async test "a promotion repair refused by a capacity bound still names its wake 
 ///|
 /// A standing refusal is not a deferral. The Goal withdrew authority — over
 /// budget, canceling, or no longer running — and nothing about that clears with
-/// time, so the pass must report no instant at all. Reporting one would make the
-/// daemon schedule a wake for a Goal that will still be refused when it fires.
-async test "a promotion repair the Goal refuses outright reports no wake instant" {
+/// time, so there is no instant to come back at and the repair is not written.
+/// The slot is still returned: a Goal that lost authority is the last one that
+/// should keep holding a surface.
+async test "a promotion repair the Goal refuses outright is not persisted" {
   let repository = workflow_repository("goal-adapter-promotion-refusal")
   clean_workflow_repository(repository)
   let adapters = workflow_repository_adapters()
@@ -501,13 +512,13 @@ async test "a promotion repair the Goal refuses outright reports no wake instant
     part: waiting.part,
     task_contract: waiting.task_contract,
   }
-  let observed_deferral : Ref[Int64?] = @ref.new(None)
+  let released : Array[@control.PartId] = []
   let config = promotion_harness_config(
     { scheduling_record: record, initial_snapshot: waiting, repository },
     adapters,
     withdrawn,
     promotion_harness_repair,
-    observed_deferral,
+    released,
   )
   let refused = match
     (@exec.goal_part_workflow_adapters(config).promote_part)(
@@ -517,7 +528,7 @@ async test "a promotion repair the Goal refuses outright reports no wake instant
     Ok(value) => value
     Err(error) => fail(error.message())
   }
-  assert_eq(observed_deferral.val, None)
+  assert_eq(released, [record.part.id])
   let stored = promotion_harness_stored(
     repository,
     adapters,
@@ -567,13 +578,13 @@ async test "an authorized promotion repair is persisted and re-armed under the r
     part: waiting.part,
     task_contract: waiting.task_contract,
   }
-  let observed_deferral : Ref[Int64?] = @ref.new(None)
+  let released : Array[@control.PartId] = []
   let config = promotion_harness_config(
     { scheduling_record: record, initial_snapshot: waiting, repository },
     adapters,
     authorized,
     promotion_harness_repair,
-    observed_deferral,
+    released,
   )
   let repaired = match
     (@exec.goal_part_workflow_adapters(config).promote_part)(
@@ -584,7 +595,7 @@ async test "an authorized promotion repair is persisted and re-armed under the r
     Err(error) => fail(error.message())
   }
   assert_true(conflicted.val)
-  assert_eq(observed_deferral.val, None)
+  assert_eq(released, [record.part.id])
   // The repair is durable, not just returned: a restart resumes the revised
   // contract rather than re-planning the same conflicted promotion.
   let stored = promotion_harness_stored(
@@ -649,7 +660,7 @@ async test "promotion recovery reconciles an authorized integration instead of r
     initial_snapshot: waiting,
     repository,
   }
-  let observed_deferral : Ref[Int64?] = @ref.new(None)
+  let released : Array[@control.PartId] = []
   let lost = promotion_harness_config(
     binding,
     adapters,
@@ -659,7 +670,7 @@ async test "promotion recovery reconciles an authorized integration instead of r
         @types.ChoirError::validation_error("conflict repair is not expected"),
       )
     },
-    observed_deferral,
+    released,
   )
   assert_true(
     (@exec.goal_part_workflow_adapters(lost).promote_part)(
@@ -712,7 +723,12 @@ async test "promotion recovery reconciles an authorized integration instead of r
   )
   assert_eq(stored.stage, @workflow.PartWorkflowStage::PartIntegrated)
   assert_true(stored.integration_receipt is Some(_))
-  assert_eq(observed_deferral.val, None)
+  // Both passes returned a slot: the promotion that died mid-dispatch, and the
+  // recovery that picked it up. The first is the one that matters — a pass
+  // whose integration effect was lost is exactly the pass most likely to leak
+  // the seat, and the surface would stay short one slot for the rest of the
+  // generation.
+  assert_eq(released, [record.part.id, recovering.part.id])
   clean_workflow_repository(repository)
 }
 
@@ -743,7 +759,7 @@ async test "promotion recovery refuses a record the store disagrees with" {
       revision: waiting.task_contract.revision + 1,
     },
   }
-  let observed_deferral : Ref[Int64?] = @ref.new(None)
+  let released : Array[@control.PartId] = []
   let config = promotion_harness_config(
     { scheduling_record: stale, initial_snapshot: waiting, repository },
     adapters,
@@ -753,7 +769,7 @@ async test "promotion recovery refuses a record the store disagrees with" {
         @types.ChoirError::validation_error("conflict repair is not expected"),
       )
     },
-    observed_deferral,
+    released,
   )
   let executed_before_recovery = execute_count.val
   assert_true(
