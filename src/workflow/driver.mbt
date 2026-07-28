@@ -581,7 +581,36 @@ async fn drive_part_workflow(
         } else {
           match (dependencies.effects.reconcile)(snapshot, intent) {
             Ok(EffectObservationRecovered(value)) => value
-            Ok(ExactEffectRetryAuthorized) =>
+            Ok(ExactEffectRetryAuthorized) => {
+              // A retry of a provider dispatch is a new provider session, not
+              // a reconciliation of the old one. No slot is held for it: the
+              // pass that authorized this effect either returned its slot on
+              // the way out or died and had it reclaimed with its generation.
+              // And the process that dispatch may have started is gone — which
+              // is why the reconciler asked for a retry. Without this the second
+              // session reaches the surface holding nothing, and the portfolio
+              // bound never counts it. Effects that reach no provider are not
+              // gated here: they consume no subscription allowance, and a pass
+              // that goes on to do anything else takes the slot at its next
+              // planning step below.
+              if part_effect_is_provider_dispatch(intent) {
+                match (dependencies.goal_authorizes_new_effects)() {
+                  Ok(PartGoalAuthorized(_)) => ()
+                  Ok(PartGoalNotAuthorized) =>
+                    return Ok({
+                      snapshot,
+                      store_version: Some(store_version),
+                      outcome: PartRunGoalNotAuthorizing,
+                    })
+                  Ok(PartGoalDeferredUntil(instant, reason)) =>
+                    return Ok({
+                      snapshot,
+                      store_version: Some(store_version),
+                      outcome: PartRunGoalDeferredUntil(instant, reason),
+                    })
+                  Err(error) => return Err(error)
+                }
+              }
               match (dependencies.effects.execute)(snapshot, intent) {
                 Ok(value) => value
                 Err(error) => {
@@ -619,6 +648,7 @@ async fn drive_part_workflow(
                   return Err(error)
                 }
               }
+            }
             Ok(EffectWitnessUnavailable) =>
               return Ok({
                 snapshot,

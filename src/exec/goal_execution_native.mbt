@@ -2862,6 +2862,14 @@ fn native_provider_lease_admission(
 /// hold one between them. It is given back when that pass returns, and
 /// reclaimed by fencing epoch if this worker dies before it does.
 ///
+/// `drive_part_workflow` enters here for two distinct reasons, and the second
+/// one is the one that is easy to omit: to authorize a planned effect, and
+/// again before re-executing a provider dispatch that an earlier pass left
+/// `PartEffectMayHaveOccurred`. That earlier pass returned its slot at
+/// `release_after_part_pass` on its way out, so a retry that skipped this gate
+/// would start a second provider session with nothing held for it and the
+/// portfolio bound would never count it.
+///
 /// `fencing_epoch` and `now` are parameters rather than reads so a narrow test
 /// can drive two generations and a fixed clock through the same code the daemon
 /// runs; every other input is read from the durable store here. Public for the

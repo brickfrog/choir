@@ -1155,6 +1155,136 @@ async test "a lost provider dispatch is dated by the clock the driver ran on" {
 }
 
 ///|
+/// A worker that dies between authorizing a dispatch and observing it leaves
+/// the effect durably `PartEffectMayHaveOccurred`, and gave its provider slot
+/// back on the way out. The next pass reconciles rather than authorizes, so it
+/// never reaches the planning branch that takes a slot — yet the retry starts a
+/// second provider session that spends the same subscription allowance as the
+/// first. If that path does not consult the admission gate, the portfolio bound
+/// is decided on a count that omits every retried dispatch.
+async test "a retried provider dispatch is refused while the surface is at capacity" {
+  let repository = workflow_repository("driver-retry-admission")
+  clean_workflow_repository(repository)
+  let adapters = workflow_repository_adapters()
+  let execute_count = @ref.new(0)
+  let reconcile_count = @ref.new(0)
+  let admitted = workflow_driver_dependencies(
+    execute_count,
+    reconcile_count,
+    fn(_) { None },
+    workflow_driver_recover_observation,
+  )
+  let interrupted : @workflow.PartWorkflowDriverDependencies = {
+    ..admitted,
+    effects: {
+      execute: (snapshot, intent) => {
+        execute_count.val = execute_count.val + 1
+        if intent.kind is @workflow.PartEffectKind::DispatchImplementation(_, _) {
+          Err(@types.ChoirError::canceled("worker died mid-dispatch"))
+        } else {
+          workflow_driver_observation(snapshot, intent)
+        }
+      },
+      reconcile: admitted.effects.reconcile,
+    },
+  }
+  assert_true(
+    @workflow.run_new_part_workflow(
+      repository,
+      adapters,
+      workflow_store_fixture(),
+      interrupted,
+    )
+    is Err(_),
+  )
+  let stored = @workflow.load_part_snapshot(
+      repository, adapters, "workflow-store",
+    )
+    .unwrap()
+    .unwrap()
+  guard stored.snapshot.pending_effect
+    is Some(
+      {
+        lifecycle: @workflow.PartEffectLifecycle::PartEffectMayHaveOccurred,
+        kind: @workflow.PartEffectKind::DispatchImplementation(_, _),
+        ..,
+      }
+    ) else {
+    fail("the implementation dispatch was not durably authorized")
+  }
+  let retrying = workflow_driver_dependencies(
+    execute_count,
+    reconcile_count,
+    fn(_) { None },
+    (_, _) => Ok(@workflow.PartEffectRecovery::ExactEffectRetryAuthorized),
+  )
+  let gate_calls = @ref.new(0)
+  let at_capacity : @workflow.PartWorkflowDriverDependencies = {
+    ..retrying,
+    goal_authorizes_new_effects: fn() {
+      gate_calls.val = gate_calls.val + 1
+      Ok(
+        @workflow.PartGoalAuthorization::PartGoalDeferredUntil(
+          900L,
+          @workflow.PartGoalDeferralReason::PartGoalProviderSurfaceAtCapacity,
+        ),
+      )
+    },
+  }
+  let executed_before_retry = execute_count.val
+  let refused = @workflow.resume_part_workflow(
+    repository, adapters, "workflow-store", at_capacity,
+  ).unwrap()
+  assert_eq(
+    refused.outcome,
+    @workflow.PartWorkflowRunOutcome::PartRunGoalDeferredUntil(
+      900L,
+      @workflow.PartGoalDeferralReason::PartGoalProviderSurfaceAtCapacity,
+    ),
+  )
+  // The reconciler ran and asked for the retry; the gate is what stopped the
+  // second session from reaching the surface. The outcome alone does not prove
+  // that — the pass would report the same deferral one planning step later,
+  // after the retry had already dispatched — so the dispatch count is the
+  // assertion that matters.
+  assert_eq(reconcile_count.val, 1)
+  assert_eq(gate_calls.val, 1)
+  if execute_count.val != executed_before_retry {
+    fail("the retried dispatch reached the provider holding no slot")
+  }
+  // A standing refusal stops the same retry too. The outcome is again not the
+  // discriminator — the planning step one effect later reports it as well — so
+  // what is asserted is that nothing was dispatched.
+  let withdrawn : @workflow.PartWorkflowDriverDependencies = {
+    ..retrying,
+    goal_authorizes_new_effects: fn() {
+      Ok(@workflow.PartGoalAuthorization::PartGoalNotAuthorized)
+    },
+  }
+  let refused_outright = @workflow.resume_part_workflow(
+    repository, adapters, "workflow-store", withdrawn,
+  ).unwrap()
+  assert_eq(
+    refused_outright.outcome,
+    @workflow.PartWorkflowRunOutcome::PartRunGoalNotAuthorizing,
+  )
+  if execute_count.val != executed_before_retry {
+    fail("the retried dispatch ran after the Goal withdrew authority")
+  }
+  // The same reconciler, admitted, does retry — so the refusals above are the
+  // gate's answer and not a path that could never dispatch.
+  let granted = @workflow.resume_part_workflow(
+    repository, adapters, "workflow-store", retrying,
+  ).unwrap()
+  assert_eq(
+    granted.outcome,
+    @workflow.PartWorkflowRunOutcome::PartRunIntegrated,
+  )
+  assert_true(execute_count.val > executed_before_retry)
+  clean_workflow_repository(repository)
+}
+
+///|
 async test "audited Part waits durably for Goal promotion admission" {
   let repository = workflow_repository("driver-awaiting-promotion")
   clean_workflow_repository(repository)
