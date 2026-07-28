@@ -110,18 +110,120 @@ let native_goal_fencing_epoch_state : Ref[Int64] = Ref(1L)
 let native_goal_rotation_state : Ref[@control.GoalId?] = Ref(None)
 
 ///|
-/// The earliest instant, in epoch seconds, that a provider capacity bound told
-/// a Part to come back during the last execution tick. In-memory only: it
-/// describes the tick that just ran, and a restart simply re-observes it.
-let native_goal_provider_deferral_state : Ref[Int64?] = Ref(None)
+/// What the Goal admission gate answered per provider surface during the last
+/// execution tick. In-memory only: it describes the tick that just ran, and a
+/// restart simply re-observes it.
+let native_goal_provider_surface_state : Ref[
+  Array[@workflow.ProviderSurfaceTickReport],
+] = Ref([])
 
 ///|
-/// When the last execution tick was refused by a provider capacity bound.
+/// Forget the previous tick's surface dispositions.
+///
+/// Called at the start of every tick, so what the daemon reads afterwards
+/// describes that tick alone rather than accumulating refusals whose instants
+/// have long since passed.
+fn reset_native_goal_provider_surfaces() -> Unit {
+  native_goal_provider_surface_state.val = []
+}
+
+///|
+/// Record one admission-gate answer against the surface it judged.
+fn observe_native_goal_provider_surface(
+  report : @workflow.ProviderSurfaceTickReport,
+) -> Unit {
+  native_goal_provider_surface_state.val = @workflow.record_provider_surface_tick_report(
+    native_goal_provider_surface_state.val,
+    report,
+  )
+}
+
+///|
+/// What each provider surface did during the last execution tick.
 ///
 /// The daemon schedules its next tick against this rather than polling: nothing
-/// frees a provider slot because the scheduler asked again sooner.
-pub fn native_goal_provider_deferral() -> Int64? {
-  native_goal_provider_deferral_state.val
+/// frees a provider slot because the scheduler asked again sooner. Per surface
+/// rather than one instant for the process, because a surface at capacity says
+/// nothing about the other one — `goal_execution_tick_delay_ms_with_deferral`
+/// waits on an instant only when every surface is refused and none admitted
+/// anything.
+pub fn native_goal_provider_surface_reports() -> Array[
+  @workflow.ProviderSurfaceTickReport,
+] {
+  native_goal_provider_surface_state.val
+}
+
+///|
+/// The observation the daemon reads is the one the gate wrote, and it survives
+/// only the tick that wrote it.
+test "surface dispositions accumulate within a tick and reset between them" {
+  let claude = @control.ProviderSurfaceId::ClaudeSubscriptionCli
+  let codex = @control.ProviderSurfaceId::CodexSubscriptionCli
+  reset_native_goal_provider_surfaces()
+  assert_eq(native_goal_provider_surface_reports(), [])
+  observe_native_goal_provider_surface({
+    surface: claude,
+    disposition: @workflow.ProviderSurfaceTickDisposition::ProviderSurfaceDeferredUntil(
+      90L,
+    ),
+  })
+  observe_native_goal_provider_surface({
+    surface: codex,
+    disposition: @workflow.ProviderSurfaceTickDisposition::ProviderSurfaceAdmitted,
+  })
+  observe_native_goal_provider_surface({
+    surface: claude,
+    disposition: @workflow.ProviderSurfaceTickDisposition::ProviderSurfaceDeferredUntil(
+      80L,
+    ),
+  })
+  assert_eq(native_goal_provider_surface_reports(), [
+    {
+      surface: claude,
+      disposition: @workflow.ProviderSurfaceTickDisposition::ProviderSurfaceDeferredUntil(
+        80L,
+      ),
+    },
+    {
+      surface: codex,
+      disposition: @workflow.ProviderSurfaceTickDisposition::ProviderSurfaceAdmitted,
+    },
+  ])
+  // Without the reset the next tick would sleep on an instant no gate named
+  // during it — see the tick test below.
+  reset_native_goal_provider_surfaces()
+  assert_eq(native_goal_provider_surface_reports(), [])
+}
+
+///|
+/// Every tick starts from a clean sheet.
+///
+/// Whitebox because seeding the previous tick's observation is the whole point,
+/// and only the tick may write it. A report that outlived the tick that made it
+/// would have the daemon sleeping on an instant no gate named during the tick
+/// that sleep is pacing — and once every surface carried one, on every tick
+/// after that too.
+async test "an execution tick forgets the previous tick's dispositions" {
+  let root = "/tmp/choir-provider-surface-reset-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(root))
+  if !@sys.create_dir_all(root + "/.choir/state/control") {
+    fail("create provider-surface reset root")
+  }
+  observe_native_goal_provider_surface({
+    surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+    disposition: @workflow.ProviderSurfaceTickDisposition::ProviderSurfaceDeferredUntil(
+      1L,
+    ),
+  })
+  // An empty project has no runnable Goal, so the tick reaches nothing but its
+  // own bookkeeping.
+  match run_native_goal_execution_tick(root) {
+    Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickIdle) => ()
+    Ok(_) => fail("an empty project produced a Goal tick")
+    Err(error) => fail(error.message())
+  }
+  assert_eq(native_goal_provider_surface_reports(), [])
+  ignore(@sys.rm_rf(root))
 }
 
 ///|
@@ -2679,6 +2781,13 @@ async fn advance_native_goal_branch_initialization(
 /// runs; every other input is read from the durable store here. Public for the
 /// same reason: an admission test that stubs this out proves nothing about
 /// whether the daemon oversubscribes.
+///
+/// `observe` is told what this gate decided about `surface`, and this gate is
+/// the only place that reports it. The alternative — each Part pass in
+/// `goal_part_adapter.mbt` forwarding its own refusal — has to name the surface
+/// from the snapshot it happens to hold, which after a provider failover is no
+/// longer the surface the lease was judged against, and has to be repeated at
+/// every pass that calls this gate.
 pub fn native_goal_effect_authorization(
   repository : @workflow.PartWorkflowRepository,
   goal_id : @control.GoalId,
@@ -2688,6 +2797,7 @@ pub fn native_goal_effect_authorization(
   capacity : @types.ProviderCapacityPolicy,
   fencing_epoch : @control.FencingEpoch,
   now : Int64,
+  observe~ : (@workflow.ProviderSurfaceTickReport) -> Unit,
 ) -> Result[@workflow.PartGoalAuthorization, @types.ChoirError] {
   let adapters = local_part_workflow_repository_adapters()
   let current = match
@@ -2726,18 +2836,29 @@ pub fn native_goal_effect_authorization(
       capacity,
       now,
     ) {
-    Ok(@workflow.ProviderLeaseDecision::ProviderLeaseGranted(_, _)) =>
+    Ok(@workflow.ProviderLeaseDecision::ProviderLeaseGranted(_, _)) => {
+      observe({
+        surface,
+        disposition: @workflow.ProviderSurfaceTickDisposition::ProviderSurfaceAdmitted,
+      })
       Ok(
         @workflow.PartGoalAuthorization::PartGoalAuthorized(
           Some({ record: current.state_record }),
         ),
       )
+    }
     Ok(
       @workflow.ProviderLeaseDecision::ProviderLeaseDeferredUntil(
         instant,
         limit
       )
-    ) =>
+    ) => {
+      observe({
+        surface,
+        disposition: @workflow.ProviderSurfaceTickDisposition::ProviderSurfaceDeferredUntil(
+          instant,
+        ),
+      })
       Ok(
         @workflow.PartGoalAuthorization::PartGoalDeferredUntil(
           instant,
@@ -2749,6 +2870,7 @@ pub fn native_goal_effect_authorization(
           },
         ),
       )
+    }
     Err(error) => Err(error)
   }
 }
@@ -2760,7 +2882,6 @@ async fn execute_native_goal_record(
   record : @workflow.GoalExecutionRecord,
   snapshots : Array[@workflow.PartWorkflowSnapshot],
   capacity : @types.ProviderCapacityPolicy,
-  observe_provider_deferral : (Int64) -> Unit,
 ) -> Result[Unit, @types.ChoirError] {
   let git = match discover_native_goal_repository(project_dir, record) {
     Ok(value) => value
@@ -2987,6 +3108,7 @@ async fn execute_native_goal_record(
             capacity,
             current_native_goal_fencing_epoch(),
             @env.now().reinterpret_as_int64() / 1000L,
+            observe=observe_native_goal_provider_surface,
           )
         },
       })
@@ -3003,7 +3125,6 @@ async fn execute_native_goal_record(
     read_goal_head: async fn() {
       read_native_goal_head(integration, native_git_integration_adapters())
     },
-    observe_provider_deferral,
     release_provider_lease: fn(part_id) {
       match native_goal_part_runtime(parts, part_id) {
         Some(part) =>
@@ -5738,16 +5859,9 @@ pub async fn run_native_goal_execution_tick_with_forge(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  // The earliest instant a capacity bound told a Part to come back. Reset per
-  // tick, so what the daemon reads afterwards describes the tick that just ran.
-  native_goal_provider_deferral_state.val = None
-  let observe_provider_deferral = fn(instant : Int64) {
-    native_goal_provider_deferral_state.val = match
-      native_goal_provider_deferral_state.val {
-      Some(current) => Some(if instant < current { instant } else { current })
-      None => Some(instant)
-    }
-  }
+  // What each surface's capacity bound answered. Reset per tick, so what the
+  // daemon reads afterwards describes the tick that just ran.
+  reset_native_goal_provider_surfaces()
   let result = @workflow.run_next_goal_execution_tick(
     repository,
     repository_adapters,
@@ -5784,7 +5898,7 @@ pub async fn run_native_goal_execution_tick_with_forge(
       },
       execute: async fn(record, snapshots) {
         execute_native_goal_record(
-          project_dir, repository, record, snapshots, provider_capacity, observe_provider_deferral,
+          project_dir, repository, record, snapshots, provider_capacity,
         )
       },
       assure: async fn(record, snapshots) {

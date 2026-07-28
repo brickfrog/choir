@@ -193,30 +193,190 @@ pub fn goal_execution_tick_delay_ms(consecutive_failures : Int) -> Int {
 }
 
 ///|
-/// How long to wait before the next tick when a provider capacity bound refused
-/// work and said when to come back.
+/// What one execution tick learned about one provider surface.
 ///
-/// Waiting less than the instant the gate named is a poll: nothing releases a
-/// provider slot because the scheduler asked again. So the deferral raises the
-/// delay rather than replacing it — a failing tick still backs off — and the
-/// same ceiling applies, because other Goals on other surfaces stay runnable
-/// and must not be held behind one surface's queue.
+/// The distinction is the whole scheduling rule: a surface that let a Part
+/// through has work in flight and is runnable now, and a surface every Part was
+/// refused on is not runnable again until the instant the gate named.
+pub(all) enum ProviderSurfaceTickDisposition {
+  /// At least one Part passed the Goal's admission gate on this surface.
+  ProviderSurfaceAdmitted
+  /// Every Part that reached the gate on this surface was refused by a capacity
+  /// bound. The instant is the earliest wake any of those refusals named.
+  ProviderSurfaceDeferredUntil(Int64)
+} derive(Debug, Eq)
+
+///|
+/// One provider surface's disposition for one execution tick.
+pub(all) struct ProviderSurfaceTickReport {
+  surface : @control.ProviderSurfaceId
+  disposition : ProviderSurfaceTickDisposition
+} derive(Debug, Eq)
+
+///|
+/// Fold one admission-gate answer into what the tick knows about each surface.
 ///
-/// `deferred_until` and `now` are epoch seconds, which is the unit the
+/// An admission beats a refusal on the same surface, and that asymmetry is the
+/// scheduler's "the tick advanced work" rule: a tick that admitted four Parts
+/// and was refused a fifth has work in flight on that surface, so it must not
+/// wait on the fifth Part's instant. Among refusals the earliest instant wins,
+/// because it is the first moment a slot on that surface could free.
+pub fn record_provider_surface_tick_report(
+  reports : Array[ProviderSurfaceTickReport],
+  next : ProviderSurfaceTickReport,
+) -> Array[ProviderSurfaceTickReport] {
+  let merged : Array[ProviderSurfaceTickReport] = []
+  let mut seen = false
+  for report in reports {
+    if report.surface != next.surface {
+      merged.push(report)
+      continue
+    }
+    seen = true
+    merged.push({
+      surface: next.surface,
+      disposition: merge_provider_surface_disposition(
+        report.disposition,
+        next.disposition,
+      ),
+    })
+  }
+  if !seen {
+    merged.push(next)
+  }
+  merged
+}
+
+///|
+fn merge_provider_surface_disposition(
+  held : ProviderSurfaceTickDisposition,
+  next : ProviderSurfaceTickDisposition,
+) -> ProviderSurfaceTickDisposition {
+  match (held, next) {
+    (ProviderSurfaceAdmitted, _) | (_, ProviderSurfaceAdmitted) =>
+      ProviderSurfaceAdmitted
+    (ProviderSurfaceDeferredUntil(held), ProviderSurfaceDeferredUntil(next)) =>
+      ProviderSurfaceDeferredUntil(if next < held { next } else { held })
+  }
+}
+
+///|
+/// The surface after `surface` in the scheduler's fixed order, or `None` at the
+/// end of it.
+///
+/// Written as a match rather than an index into a literal list so a new
+/// `@control.ProviderSurfaceId` does not compile until it is placed in the
+/// order. A surface left out of the order would be treated as permanently
+/// runnable, and no deferral could ever raise the tick delay again.
+fn provider_surface_after(
+  surface : @control.ProviderSurfaceId,
+) -> @control.ProviderSurfaceId? {
+  match surface {
+    ClaudeSubscriptionCli =>
+      Some(@control.ProviderSurfaceId::CodexSubscriptionCli)
+    CodexSubscriptionCli => None
+  }
+}
+
+///|
+/// Every provider surface the scheduler has to account for.
+fn scheduled_provider_surfaces() -> Array[@control.ProviderSurfaceId] {
+  let surfaces : Array[@control.ProviderSurfaceId] = []
+  let mut cursor : @control.ProviderSurfaceId? = Some(
+    @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+  )
+  for ;; {
+    match cursor {
+      None => break
+      Some(surface) => {
+        surfaces.push(surface)
+        cursor = provider_surface_after(surface)
+      }
+    }
+  }
+  surfaces
+}
+
+///|
+/// The instant a refusal on this surface named, or `None` if the tick got work
+/// onto it or never asked for it.
+///
+/// A surface the tick never asked for is runnable: no Part reached the gate on
+/// it, which says nothing about whether the Goal served next tick could. An
+/// instant that has already passed is not filtered out here — the caller turns
+/// it into a wait, and a wait that is not positive leaves the base delay
+/// standing.
+fn provider_surface_deferred_until(
+  reports : Array[ProviderSurfaceTickReport],
+  surface : @control.ProviderSurfaceId,
+) -> Int64? {
+  for report in reports {
+    if report.surface != surface {
+      continue
+    }
+    match report.disposition {
+      ProviderSurfaceAdmitted => return None
+      ProviderSurfaceDeferredUntil(instant) => return Some(instant)
+    }
+  }
+  None
+}
+
+///|
+/// The earliest instant to wake at when no provider surface can serve anything
+/// sooner.
+///
+/// `None` — something is still runnable — is the ordinary answer, including
+/// when a surface was refused: one surface at capacity says nothing about the
+/// other, and the Goals that would run there must not wait behind it.
+fn provider_surfaces_deferred_until(
+  reports : Array[ProviderSurfaceTickReport],
+) -> Int64? {
+  let mut earliest : Int64? = None
+  for surface in scheduled_provider_surfaces() {
+    match provider_surface_deferred_until(reports, surface) {
+      None => return None
+      Some(instant) =>
+        earliest = match earliest {
+          Some(held) => Some(if instant < held { instant } else { held })
+          None => Some(instant)
+        }
+    }
+  }
+  earliest
+}
+
+///|
+/// How long to wait before the next tick, given what the tick that just ran
+/// learned about each provider surface.
+///
+/// Waking earlier than the instant a capacity bound named is a poll: nothing
+/// frees a provider slot because the scheduler asked again. But one tick serves
+/// one Goal — `runnable_goal_execution` picks a single record and rotates — so
+/// this sleep is also how long every other Goal waits for its turn. Raising it
+/// for any refusal parks every other Goal and every other surface behind one
+/// surface's queue, which is the opposite of what the refusal asked for.
+///
+/// So the instant applies only when every surface in
+/// `scheduled_provider_surfaces` has a standing refusal and none of them
+/// admitted anything. A surface that let a Part through is running work; a
+/// surface the tick never asked for is free for the Goal the next tick serves.
+/// The deferral raises the delay rather than replacing it, so a failing tick
+/// still backs off, and the same ceiling applies so a refusal a long way out
+/// cannot stop the worker noticing a Goal that has become runnable.
+///
+/// The instants in `reports` and `now` are epoch seconds, which is the unit the
 /// admission gate works in; the result is milliseconds, which is the unit the
 /// daemon sleeps in.
 pub fn goal_execution_tick_delay_ms_with_deferral(
   consecutive_failures : Int,
-  deferred_until : Int64?,
+  reports : Array[ProviderSurfaceTickReport],
   now : Int64,
 ) -> Int {
   let base = goal_execution_tick_delay_ms(consecutive_failures)
-  let instant = match deferred_until {
+  let instant = match provider_surfaces_deferred_until(reports) {
     None => return base
     Some(value) => value
-  }
-  if instant <= now {
-    return base
   }
   let ceiling = 30000L
   let wait = (instant - now) * 1000L

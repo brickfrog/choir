@@ -1150,11 +1150,12 @@ async fn conductor_goal_loop(config : @types.Config) -> Unit {
     }
     // A tick that a provider capacity bound refused knows when a slot could
     // free. Waiting for that instant is the difference between a scheduled
-    // wake and a spin against a full surface.
+    // wake and a spin against a full surface — but only when no surface can
+    // serve anything sooner, which is what the per-surface report decides.
     @async.sleep(
       @workflow.goal_execution_tick_delay_ms_with_deferral(
         consecutive_failures,
-        @exec.native_goal_provider_deferral(),
+        @exec.native_goal_provider_surface_reports(),
         @env.now().reinterpret_as_int64() / 1000L,
       ),
     )
