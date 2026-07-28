@@ -1037,9 +1037,23 @@ async test "a record this build cannot decode authorizes the reset" {
   control_probe_record(control_root, prefix + "broken", Some(b"{}"))
   let prepared = prepare_native_goal_control_state(
     project_dir,
-    capture=fn(_) {
-      reached.push("capture")
-      (0, "[]")
+    capture=fn(command) {
+      reached.push("beads:" + command.args[0])
+      if command.args[0] == "list" {
+        (
+          0,
+          (
+            #|[{"id":"claimed-part","title":"Claimed","status":"in_progress","assignee":"choir:goal-reset"}]
+          ),
+        )
+      } else {
+        (
+          0,
+          (
+            #|[{"id":"claimed-part","title":"Claimed","status":"open","assignee":""}]
+          ),
+        )
+      }
     },
     cleanup_runtime=fn(_, goal_id) {
       reached.push("runtime:" + goal_id.0)
@@ -1053,7 +1067,7 @@ async test "a record this build cannot decode authorizes the reset" {
   assert_eq(
     prepared.unwrap(),
     NativeGoalControlStatePreparation::NativeGoalControlStateReset({
-      source_claims_released: 0,
+      source_claims_released: 1,
       runtime_roots_removed: 0,
       git_refs_removed: 3,
       reason: @storage.ControlStateResetReason::ControlRecordUndecodable(
@@ -1063,7 +1077,9 @@ async test "a record this build cannot decode authorizes the reset" {
       ),
     }),
   )
-  assert_true(reached.contains("refs"))
+  @debug.assert_eq(reached, [
+    "beads:list", "runtime:goal-reset", "refs", "beads:update",
+  ])
   // Rebuilt, not adopted: the record this build could not read is gone and the
   // fresh store answers to this build's generation.
   assert_eq(list_state_records(store, prefix).unwrap().length(), 0)
