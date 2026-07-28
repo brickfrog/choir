@@ -703,3 +703,44 @@ test "wbtest ordinary helpers remain enforced beside real exec fixtures" {
     Err(e) => fail(e.message())
   }
 }
+
+///|
+fn autonomy_guidance_fixture(
+  goal_audit_authorization? : String = "must not be sent to the user for authorization",
+) -> String {
+  [
+    "`PartVerificationFailed` automatically mints a fresh implementation/verification/audit revision instead of requesting user input",
+    "`PartAuditFindings` automatically mints a fresh repair revision; the Conductor and user do not authorize the repair",
+    "`GoalAssuranceVerificationBlocked rejected` `Rejected` is repaired automatically and must not be sent to the user for authorization",
+    "`GoalAssuranceAuditBlocked rejected` `AuditHasBlockingFindings` is repaired automatically and " +
+    goal_audit_authorization,
+  ].join("\n")
+}
+
+///|
+test "autonomy documentation lint accepts automatic non-user-authorized repair" {
+  let reads : Ref[Int] = @ref.new(0)
+  let read_path : Ref[String] = @ref.new("")
+  let findings = lint_autonomy_documentation(fn(path) {
+    reads.val += 1
+    read_path.val = path
+    autonomy_guidance_fixture()
+  })
+  assert_eq(findings.length(), 0)
+  // All four requirements share one document, which is read once.
+  assert_eq(reads.val, 1)
+  assert_eq(read_path.val, "docs/runbooks/troubleshooting.md")
+}
+
+///|
+test "autonomy documentation lint rejects manual Goal audit handoff" {
+  let findings = lint_autonomy_documentation(fn(_) {
+    autonomy_guidance_fixture(
+      goal_audit_authorization="may be sent to the user for authorization",
+    )
+  })
+  assert_eq(findings.length(), 1)
+  assert_eq(findings[0].rule_id, "autonomy-repair-guidance")
+  assert_eq(findings[0].file, "docs/runbooks/troubleshooting.md")
+  assert_eq(findings[0].loc.start.lnum, 4)
+}
