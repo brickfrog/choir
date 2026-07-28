@@ -226,6 +226,26 @@ async fn advance_bound_part(
             ) => return Ok(scheduling_record_from_snapshot(value.snapshot))
             Err(error) => return Err(error)
           }
+        @control.PartLifecycle::PartBlocked(
+          @control.PartBlockReason::PartOwnershipViolation
+        ) =>
+          match (config.plan_recovery_retry)(value.snapshot) {
+            Ok(
+              @workflow.PartRecoveryRetryDecision::PartRecoveryRetryPlanned(
+                planned
+              )
+            ) => (planned, "ownership")
+            Ok(
+              @workflow.PartRecoveryRetryDecision::PartRecoveryRetryLimitReached
+            ) => return Ok(scheduling_record_from_snapshot(value.snapshot))
+            Ok(_) =>
+              return Err(
+                goal_part_adapter_error(
+                  "ownership repair returned an invalid disposition",
+                ),
+              )
+            Err(error) => return Err(error)
+          }
         _ => return Ok(scheduling_record_from_snapshot(value.snapshot))
       }
       let current_version = match value.store_version {

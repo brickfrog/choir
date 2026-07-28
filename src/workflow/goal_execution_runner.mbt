@@ -59,6 +59,22 @@ pub(all) enum GoalExecutionTickResult {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) enum GoalInputPolicyDisposition {
+  GoalInputPolicyRequestInteractiveInput
+  GoalInputPolicyCancelUnattended
+} derive(Debug, Eq)
+
+///|
+pub fn goal_input_policy_disposition(
+  work_order_budget : WorkOrderBudget?,
+) -> GoalInputPolicyDisposition {
+  match work_order_budget {
+    Some(_) => GoalInputPolicyCancelUnattended
+    None => GoalInputPolicyRequestInteractiveInput
+  }
+}
+
+///|
 fn goal_execution_transaction_persisted(
   outcome : @storage.StateTransactionOutcome,
 ) -> Bool {
@@ -87,7 +103,8 @@ fn runnable_goal_execution(
       GoalExecutionState::GoalExecutionQueued
       | GoalExecutionState::GoalExecutionRunning
       | GoalExecutionState::GoalExecutionAssuring
-      | GoalExecutionState::GoalExecutionAssured => return Some(stored)
+      | GoalExecutionState::GoalExecutionAssured
+      | GoalExecutionState::GoalExecutionBlocked => return Some(stored)
       _ => ()
     }
   }
@@ -108,6 +125,7 @@ fn runnable_goal_execution_for_goal(
       | GoalExecutionState::GoalExecutionRunning
       | GoalExecutionState::GoalExecutionAssuring
       | GoalExecutionState::GoalExecutionAssured
+      | GoalExecutionState::GoalExecutionBlocked
       | GoalExecutionState::GoalExecutionCanceling => return Some(stored)
       _ => return None
     }
@@ -322,6 +340,71 @@ fn goal_execution_state_from_part_lifecycles(
 }
 
 ///|
+pub(all) enum UnattendedPartBlockDisposition {
+  UnattendedPartBlockRecoverable
+  UnattendedPartBlockTerminal
+} derive(Debug, Eq)
+
+///|
+/// Exhaustive unattended policy for the closed Part block domain.
+///
+/// Recoverable means a specialized bounded planner owns the next attempt; it
+/// does not authorize that planner here. Terminal means no safe automatic
+/// effect exists and the Goal must enter typed cancellation.
+pub fn unattended_part_block_disposition(
+  reason : @control.PartBlockReason,
+) -> UnattendedPartBlockDisposition {
+  match reason {
+    @control.PartBlockReason::PartVerificationFailed
+    | @control.PartBlockReason::PartAuditFindings
+    | @control.PartBlockReason::PartIntegrationConflict
+    | @control.PartBlockReason::PartOwnershipViolation =>
+      UnattendedPartBlockRecoverable
+    @control.PartBlockReason::PartDependencyBlocked
+    | @control.PartBlockReason::PartAuditUnavailable
+    | @control.PartBlockReason::PartIntegrityBlocked
+    | @control.PartBlockReason::PartRecoveryUncertain =>
+      UnattendedPartBlockTerminal
+  }
+}
+
+///|
+test "every Part block reason has an unattended disposition" {
+  assert_eq(
+    [
+      @control.PartBlockReason::PartVerificationFailed,
+      @control.PartBlockReason::PartAuditFindings,
+      @control.PartBlockReason::PartIntegrationConflict,
+      @control.PartBlockReason::PartOwnershipViolation,
+    ].map(unattended_part_block_disposition),
+    Array::make(4, UnattendedPartBlockRecoverable),
+  )
+  assert_eq(
+    [
+      @control.PartBlockReason::PartDependencyBlocked,
+      @control.PartBlockReason::PartAuditUnavailable,
+      @control.PartBlockReason::PartIntegrityBlocked,
+      @control.PartBlockReason::PartRecoveryUncertain,
+    ].map(unattended_part_block_disposition),
+    Array::make(4, UnattendedPartBlockTerminal),
+  )
+}
+
+///|
+fn unattended_part_block_is_exhausted(
+  snapshot : PartWorkflowSnapshot,
+  reason : @control.PartBlockReason,
+) -> Bool {
+  match reason {
+    @control.PartBlockReason::PartIntegrationConflict =>
+      snapshot.integration_conflicts.length() > maximum_part_conflict_repairs()
+    @control.PartBlockReason::PartOwnershipViolation =>
+      snapshot.prior_takes.length() / 3 >= maximum_part_recovery_retries()
+    _ => false
+  }
+}
+
+///|
 fn goal_execution_state_from_parts(
   snapshots : Array[PartWorkflowSnapshot],
 ) -> GoalExecutionState? {
@@ -429,6 +512,31 @@ fn handle_goal_finalization_outcome(
           GoalInputReason::GoalInputFinalizationAmbiguous
         _ => abort("unreachable finalization input outcome")
       }
+      if goal_input_policy_disposition(selected.record.work_order_budget) ==
+        GoalInputPolicyCancelUnattended {
+        let cancellation = match
+          persist_goal_cancellation_request(
+            repository,
+            repository_adapters,
+            selected.record.goal.id,
+            selected.record.durable_version.to_int64() + 1L,
+            cause=GoalCancellationCause::GoalCancellationUnattendedInputRequired(
+              reason,
+            ),
+          ) {
+          Ok(value) => value
+          Err(error) => return Err(error)
+        }
+        let record = match cancellation {
+          GoalCancellationPersisted(value) | GoalCancellationReplayed(value) =>
+            value
+          GoalCancellationTerminal(_) =>
+            return Err(
+              goal_execution_error("unattended input cancellation raced"),
+            )
+        }
+        return Ok(GoalExecutionTickResult::GoalExecutionTickAdvanced(record))
+      }
       let paused = match
         persist_goal_input_request(
           repository, repository_adapters, selected, reason,
@@ -439,17 +547,26 @@ fn handle_goal_finalization_outcome(
       Ok(GoalExecutionTickResult::GoalExecutionTickAdvanced(paused.record))
     }
     GoalFinalizationTickOutcome::GoalFinalizationRecoveryUncertain => {
-      let paused = match
-        persist_goal_execution_advance(
+      let outcome = match
+        persist_goal_cancellation_request(
           repository,
           repository_adapters,
-          selected,
-          GoalExecutionState::GoalExecutionPaused,
+          selected.record.goal.id,
+          selected.record.durable_version.to_int64() + 1L,
+          cause=GoalCancellationCause::GoalCancellationFinalizationRecoveryUncertain,
         ) {
         Ok(value) => value
         Err(error) => return Err(error)
       }
-      Ok(GoalExecutionTickResult::GoalExecutionTickAdvanced(paused.record))
+      let record = match outcome {
+        GoalCancellationPersisted(value) | GoalCancellationReplayed(value) =>
+          value
+        GoalCancellationTerminal(_) =>
+          return Err(
+            goal_execution_error("finalization cancellation lost a race"),
+          )
+      }
+      Ok(GoalExecutionTickResult::GoalExecutionTickAdvanced(record))
     }
     GoalFinalizationTickOutcome::GoalFinalizationDeliveryFailed(digest) => {
       let outcome = match
@@ -548,6 +665,120 @@ pub async fn run_next_goal_execution_tick(
     return Ok(
       GoalExecutionTickResult::GoalExecutionTickAdvanced(committed.record),
     )
+  }
+  if selected.record.state == GoalExecutionState::GoalExecutionBlocked {
+    let parts = match
+      load_goal_execution_parts(
+        repository,
+        repository_adapters,
+        selected.record,
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    let mut recoverable_part = false
+    for snapshot in parts {
+      match snapshot.part.lifecycle {
+        @control.PartLifecycle::PartBlocked(reason) =>
+          if unattended_part_block_disposition(reason) ==
+            UnattendedPartBlockRecoverable &&
+            !unattended_part_block_is_exhausted(snapshot, reason) {
+            recoverable_part = true
+          } else {
+            let outcome = match
+              persist_goal_cancellation_request(
+                repository,
+                repository_adapters,
+                selected.record.goal.id,
+                selected.record.durable_version.to_int64() + 1L,
+                cause=GoalCancellationCause::GoalCancellationPartBlocked(
+                  snapshot.part.id,
+                  reason,
+                ),
+              ) {
+              Ok(value) => value
+              Err(error) => return Err(error)
+            }
+            let record = match outcome {
+              GoalCancellationPersisted(value)
+              | GoalCancellationReplayed(value) => value
+              GoalCancellationTerminal(_) =>
+                return Err(
+                  goal_execution_error("blocked cancellation lost a race"),
+                )
+            }
+            return Ok(
+              GoalExecutionTickResult::GoalExecutionTickAdvanced(record),
+            )
+          }
+        @control.PartLifecycle::PartCanceledNotRun => {
+          let outcome = match
+            persist_goal_cancellation_request(
+              repository,
+              repository_adapters,
+              selected.record.goal.id,
+              selected.record.durable_version.to_int64() + 1L,
+              cause=GoalCancellationCause::GoalCancellationPartBlocked(
+                snapshot.part.id,
+                @control.PartBlockReason::PartDependencyBlocked,
+              ),
+            ) {
+            Ok(value) => value
+            Err(error) => return Err(error)
+          }
+          let record = match outcome {
+            GoalCancellationPersisted(value)
+            | GoalCancellationReplayed(value) => value
+            GoalCancellationTerminal(_) =>
+              return Err(
+                goal_execution_error("dependency cancellation lost a race"),
+              )
+          }
+          return Ok(GoalExecutionTickResult::GoalExecutionTickAdvanced(record))
+        }
+        _ => ()
+      }
+    }
+    if recoverable_part {
+      let running = match
+        persist_goal_execution_advance(
+          repository,
+          repository_adapters,
+          selected,
+          GoalExecutionState::GoalExecutionRunning,
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      return Ok(
+        GoalExecutionTickResult::GoalExecutionTickAdvanced(running.record),
+      )
+    }
+    let cause = match selected.record.branch_initialization.lifecycle {
+      GoalBranchInitIntegrityBlocked | GoalBranchInitUncertain =>
+        GoalCancellationCause::GoalCancellationBranchInitializationBlocked(
+          selected.record.branch_initialization.lifecycle,
+        )
+      _ => GoalCancellationCause::GoalCancellationAssuranceBlocked
+    }
+    let outcome = match
+      persist_goal_cancellation_request(
+        repository,
+        repository_adapters,
+        selected.record.goal.id,
+        selected.record.durable_version.to_int64() + 1L,
+        cause~,
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    let record = match outcome {
+      GoalCancellationPersisted(value) | GoalCancellationReplayed(value) =>
+        value
+      GoalCancellationTerminal(_) =>
+        return Err(goal_execution_error("blocked Goal cancellation raced"))
+    }
+    return Ok(GoalExecutionTickResult::GoalExecutionTickAdvanced(record))
   }
   if selected.record.state == GoalExecutionState::GoalExecutionAssured {
     let parts = match
@@ -657,7 +888,28 @@ pub async fn run_next_goal_execution_tick(
           GoalExecutionTickResult::GoalExecutionTickAdvanced(selected.record),
         )
       GoalAssuranceComplete => GoalExecutionState::GoalExecutionAssured
-      GoalAssuranceBlocked => GoalExecutionState::GoalExecutionBlocked
+      GoalAssuranceBlocked => {
+        let outcome = match
+          persist_goal_cancellation_request(
+            repository,
+            repository_adapters,
+            selected.record.goal.id,
+            selected.record.durable_version.to_int64() + 1L,
+            cause=GoalCancellationCause::GoalCancellationAssuranceBlocked,
+          ) {
+          Ok(value) => value
+          Err(error) => return Err(error)
+        }
+        let record = match outcome {
+          GoalCancellationPersisted(value) | GoalCancellationReplayed(value) =>
+            value
+          GoalCancellationTerminal(_) =>
+            return Err(
+              goal_execution_error("assurance cancellation lost a race"),
+            )
+        }
+        return Ok(GoalExecutionTickResult::GoalExecutionTickAdvanced(record))
+      }
       GoalAssuranceRepairing => GoalExecutionState::GoalExecutionRunning
       GoalAssuranceRepairFailed(kind, digest, requested_at) => {
         let cause = match kind {
@@ -929,6 +1181,48 @@ pub async fn run_next_goal_execution_tick(
         return Ok(GoalExecutionTickResult::GoalExecutionTickAdvanced(record))
       }
     }
+  }
+  for snapshot in after {
+    let reason = match snapshot.part.lifecycle {
+      @control.PartLifecycle::PartBlocked(value) => value
+      @control.PartLifecycle::PartCanceledNotRun =>
+        @control.PartBlockReason::PartDependencyBlocked
+      _ => continue
+    }
+    if unattended_part_block_disposition(reason) == UnattendedPartBlockTerminal ||
+      unattended_part_block_is_exhausted(snapshot, reason) {
+      let outcome = match
+        persist_goal_cancellation_request(
+          repository,
+          repository_adapters,
+          current.record.goal.id,
+          current.record.durable_version.to_int64() + 1L,
+          cause=GoalCancellationCause::GoalCancellationPartBlocked(
+            snapshot.part.id,
+            reason,
+          ),
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      let record = match outcome {
+        GoalCancellationPersisted(value) | GoalCancellationReplayed(value) =>
+          value
+        GoalCancellationTerminal(_) =>
+          return Err(goal_execution_error("Part cancellation lost a race"))
+      }
+      return Ok(GoalExecutionTickResult::GoalExecutionTickAdvanced(record))
+    }
+  }
+  // A bounded repair planner still owns every remaining blocked Part. Keep the
+  // Goal runnable so a capacity refusal or a lost CAS retries that planner;
+  // advancing to GoalExecutionBlocked here would remove it from the scheduler.
+  if after.any(fn(snapshot) {
+      snapshot.part.lifecycle is @control.PartLifecycle::PartBlocked(_)
+    }) {
+    return Ok(
+      GoalExecutionTickResult::GoalExecutionTickAdvanced(current.record),
+    )
   }
   // Parts with work still outstanding imply no durable state change. Advancing
   // to Paused here parked the Goal under GoalPauseRecoveryUncertain whenever an

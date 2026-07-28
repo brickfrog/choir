@@ -95,6 +95,22 @@ pub(all) enum GoalCancellationCause {
   /// The Goal's WorkOrder budget stopped admitting work under a cutoff policy
   /// that installs the durable cancellation cutoff.
   GoalCancellationWorkOrderStopped(@control.Digest)
+  /// Unattended execution reached a typed Part block whose bounded repair was
+  /// unavailable or exhausted. The Part snapshot retains the exact evidence.
+  GoalCancellationPartBlocked(@control.PartId, @control.PartBlockReason)
+  /// Goal assurance remained blocked after its specialized bounded repair
+  /// policy had the opportunity to act. The assurance record retains the gate.
+  GoalCancellationAssuranceBlocked
+  /// Branch initialization observed one-sided or divergent refs. Cancellation
+  /// reconciles only known resources and retains the anomalous disposition.
+  GoalCancellationBranchInitializationBlocked(GoalBranchInitLifecycle)
+  /// A source Bead could not be claimed under the accepted revision.
+  GoalCancellationSourceClaimBlocked(
+    @control.PartId,
+    GoalSourceClaimConflictReason
+  )
+  GoalCancellationFinalizationRecoveryUncertain
+  GoalCancellationUnattendedInputRequired(GoalInputReason)
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -949,6 +965,15 @@ fn goal_execution_cancellation_shape_is_valid(
           @storage.validate_digest(digest) is Ok(_)
         GoalCancellationWorkOrderStopped(digest) =>
           @storage.validate_digest(digest) is Ok(_)
+        GoalCancellationPartBlocked(_, _) | GoalCancellationAssuranceBlocked =>
+          true
+        GoalCancellationBranchInitializationBlocked(lifecycle) =>
+          lifecycle == GoalBranchInitIntegrityBlocked ||
+          lifecycle == GoalBranchInitUncertain
+        GoalCancellationSourceClaimBlocked(part_id, _) =>
+          record.source_claims.any(fn(claim) { claim.part_id == part_id })
+        GoalCancellationFinalizationRecoveryUncertain => true
+        GoalCancellationUnattendedInputRequired(_) => true
       })
     (GoalExecutionCanceling | GoalExecutionCanceled, None) => false
     (_, None) => true
@@ -1115,11 +1140,38 @@ pub fn reconcile_goal_source_claim(
   if !found {
     return Err(goal_execution_error("source claim Part is absent"))
   }
-  Ok({
+  let updated = {
     ..record,
     source_claims: claims,
     durable_version: record.durable_version + 1,
-  })
+  }
+  let mut conflict : GoalSourceClaimConflictReason? = None
+  for claim in claims {
+    if claim.part_id == part_id {
+      match claim.lifecycle {
+        GoalSourceClaimConflict(reason) => conflict = Some(reason)
+        _ => ()
+      }
+    }
+  }
+  match conflict {
+    Some(reason) =>
+      match
+        request_goal_execution_cancellation(
+          updated,
+          observed_at,
+          cause=GoalCancellationCause::GoalCancellationSourceClaimBlocked(
+            part_id, reason,
+          ),
+        ) {
+        Ok(GoalCancellationRequested(value))
+        | Ok(GoalCancellationAlreadyCanceling(value)) => Ok(value)
+        Ok(GoalCancellationAlreadyTerminal(_)) =>
+          Err(goal_execution_error("source claim cancellation raced"))
+        Err(error) => Err(error)
+      }
+    None => Ok(updated)
+  }
 }
 
 ///|
@@ -1303,19 +1355,32 @@ pub fn reconcile_goal_branch_initialization(
         None,
         record.cancellation_request,
       )
-      Ok(
-        GoalBranchInitObservationRecorded({
-          ..record,
-          goal: { ..record.goal, lifecycle, },
-          branch_initialization: {
-            ..initialization,
-            lifecycle: GoalBranchInitIntegrityBlocked,
-          },
-          state,
-          pause: None,
-          durable_version: record.durable_version + 1,
-        }),
-      )
+      let blocked = {
+        ..record,
+        goal: { ..record.goal, lifecycle, },
+        branch_initialization: {
+          ..initialization,
+          lifecycle: GoalBranchInitIntegrityBlocked,
+        },
+        state,
+        pause: None,
+        durable_version: record.durable_version + 1,
+      }
+      match
+        request_goal_execution_cancellation(
+          blocked,
+          observed_at,
+          cause=GoalCancellationCause::GoalCancellationBranchInitializationBlocked(
+            GoalBranchInitIntegrityBlocked,
+          ),
+        ) {
+        Ok(GoalCancellationRequested(value))
+        | Ok(GoalCancellationAlreadyCanceling(value)) =>
+          Ok(GoalBranchInitObservationRecorded(value))
+        Ok(GoalCancellationAlreadyTerminal(_)) =>
+          Err(goal_execution_error("branch initialization cancellation raced"))
+        Err(error) => Err(error)
+      }
     }
     GoalBranchInitRefsDiverged => {
       let state = if record.state == GoalExecutionCanceling {
@@ -1337,19 +1402,32 @@ pub fn reconcile_goal_branch_initialization(
         pause,
         record.cancellation_request,
       )
-      Ok(
-        GoalBranchInitObservationRecorded({
-          ..record,
-          goal: { ..record.goal, lifecycle, },
-          branch_initialization: {
-            ..initialization,
-            lifecycle: GoalBranchInitUncertain,
-          },
-          state,
-          pause,
-          durable_version: record.durable_version + 1,
-        }),
-      )
+      let uncertain = {
+        ..record,
+        goal: { ..record.goal, lifecycle, },
+        branch_initialization: {
+          ..initialization,
+          lifecycle: GoalBranchInitUncertain,
+        },
+        state,
+        pause,
+        durable_version: record.durable_version + 1,
+      }
+      match
+        request_goal_execution_cancellation(
+          uncertain,
+          observed_at,
+          cause=GoalCancellationCause::GoalCancellationBranchInitializationBlocked(
+            GoalBranchInitUncertain,
+          ),
+        ) {
+        Ok(GoalCancellationRequested(value))
+        | Ok(GoalCancellationAlreadyCanceling(value)) =>
+          Ok(GoalBranchInitObservationRecorded(value))
+        Ok(GoalCancellationAlreadyTerminal(_)) =>
+          Err(goal_execution_error("branch initialization cancellation raced"))
+        Err(error) => Err(error)
+      }
     }
   }
 }
@@ -1781,6 +1859,20 @@ pub fn request_goal_execution_cancellation(
           if @storage.validate_digest(digest) is Err(_) {
             return Err(goal_execution_error("WorkOrder stop digest is invalid"))
           }
+        GoalCancellationPartBlocked(_, _) | GoalCancellationAssuranceBlocked =>
+          ()
+        GoalCancellationBranchInitializationBlocked(lifecycle) =>
+          if lifecycle != GoalBranchInitIntegrityBlocked &&
+            lifecycle != GoalBranchInitUncertain {
+            return Err(
+              goal_execution_error(
+                "branch initialization cancellation cause is invalid",
+              ),
+            )
+          }
+        GoalCancellationSourceClaimBlocked(_, _) => ()
+        GoalCancellationFinalizationRecoveryUncertain => ()
+        GoalCancellationUnattendedInputRequired(_) => ()
         GoalCancellationUserRequested => ()
       }
       let request : GoalCancellationRequest = {

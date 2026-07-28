@@ -784,6 +784,19 @@ test "source drift records a typed conflict without minting a receipt" {
       @workflow.GoalSourceClaimConflictReason::GoalSourceClaimContentDrift,
     ),
   )
+  assert_eq(
+    conflicted.state,
+    @workflow.GoalExecutionState::GoalExecutionCanceling,
+  )
+  assert_eq(
+    conflicted.cancellation_request.map(fn(request) { request.cause }),
+    Some(
+      @workflow.GoalCancellationCause::GoalCancellationSourceClaimBlocked(
+        claim.part_id,
+        @workflow.GoalSourceClaimConflictReason::GoalSourceClaimContentDrift,
+      ),
+    ),
+  )
 }
 
 ///|
@@ -853,6 +866,10 @@ test "partial source delivery preserves earlier receipts when a later Part confl
   )
   assert_true(conflicted.source_claims[0].receipt is Some(_))
   assert_true(@workflow.goal_source_claims_have_conflict(conflicted))
+  assert_eq(
+    conflicted.state,
+    @workflow.GoalExecutionState::GoalExecutionCanceling,
+  )
 }
 
 ///|
@@ -1705,10 +1722,18 @@ test "partial and divergent Goal branch initialization fail closed" {
     ) else {
     fail("partial initialization was not recorded")
   }
-  assert_eq(blocked.state, @workflow.GoalExecutionState::GoalExecutionBlocked)
+  assert_eq(blocked.state, @workflow.GoalExecutionState::GoalExecutionCanceling)
   assert_eq(
     blocked.branch_initialization.lifecycle,
     @workflow.GoalBranchInitLifecycle::GoalBranchInitIntegrityBlocked,
+  )
+  assert_eq(
+    blocked.cancellation_request.map(fn(request) { request.cause }),
+    Some(
+      @workflow.GoalCancellationCause::GoalCancellationBranchInitializationBlocked(
+        @workflow.GoalBranchInitLifecycle::GoalBranchInitIntegrityBlocked,
+      ),
+    ),
   )
   guard @workflow.reconcile_goal_branch_initialization(
       authorized,
@@ -1720,10 +1745,21 @@ test "partial and divergent Goal branch initialization fail closed" {
     ) else {
     fail("divergent initialization was not recorded")
   }
-  assert_eq(uncertain.state, @workflow.GoalExecutionState::GoalExecutionPaused)
+  assert_eq(
+    uncertain.state,
+    @workflow.GoalExecutionState::GoalExecutionCanceling,
+  )
   assert_eq(
     uncertain.branch_initialization.lifecycle,
     @workflow.GoalBranchInitLifecycle::GoalBranchInitUncertain,
+  )
+  assert_eq(
+    uncertain.cancellation_request.map(fn(request) { request.cause }),
+    Some(
+      @workflow.GoalCancellationCause::GoalCancellationBranchInitializationBlocked(
+        @workflow.GoalBranchInitLifecycle::GoalBranchInitUncertain,
+      ),
+    ),
   )
 }
 

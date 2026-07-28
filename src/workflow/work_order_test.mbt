@@ -34,6 +34,23 @@ test "a relative WorkOrder duration resolves once and survives replay" {
 }
 
 ///|
+test "unattended WorkOrders never park on an input request" {
+  let budget = @workflow.accept_work_order_budget(
+    @workflow.WorkOrderStopRequest::WorkOrderRequestRelativeSeconds(60L),
+    @workflow.WorkOrderCutoffPolicy::WorkOrderDrainToSafeBoundary,
+    1_000L,
+  ).unwrap()
+  assert_eq(
+    @workflow.goal_input_policy_disposition(Some(budget)),
+    @workflow.GoalInputPolicyDisposition::GoalInputPolicyCancelUnattended,
+  )
+  assert_eq(
+    @workflow.goal_input_policy_disposition(None),
+    @workflow.GoalInputPolicyDisposition::GoalInputPolicyRequestInteractiveInput,
+  )
+}
+
+///|
 test "WorkOrder acceptance rejects nonpositive bounds and deadline overflow" {
   let reject = fn(request : @workflow.WorkOrderStopRequest) {
     @workflow.accept_work_order_budget(
