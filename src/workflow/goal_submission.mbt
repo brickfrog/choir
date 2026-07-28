@@ -125,6 +125,7 @@ pub(all) struct GoalProposal {
   maximum_parallel_parts : Int
   parts : Array[ConductorPartProposal]
   work_order_id : WorkOrderId?
+  work_order_planning_round_id : WorkOrderPlanningRoundId?
   work_order_objective : String?
   work_order_selection_policy : WorkOrderSelectionPolicy?
   work_order_planner : WorkOrderPlannerPolicy?
@@ -618,6 +619,7 @@ fn canonical_goal_proposal_json(proposal : GoalProposal) -> Json {
     .to_json(),
     proposal.maximum_parallel_parts.to_json(),
     proposal.work_order_id.to_json(),
+    proposal.work_order_planning_round_id.to_json(),
     proposal.work_order_objective.to_json(),
     proposal.work_order_selection_policy.to_json(),
     proposal.work_order_planner.to_json(),
@@ -674,6 +676,10 @@ pub fn evaluate_goal_proposal(
         return Err(goal_submission_error("WorkOrder objective is invalid"))
       }
     _ => return Err(goal_submission_error("WorkOrder contract is incomplete"))
+  }
+  if proposal.work_order_id is None &&
+    proposal.work_order_planning_round_id is Some(_) {
+    return Err(goal_submission_error("WorkOrder round has no owner"))
   }
   match proposal.completion_mode {
     GoalPublishable =>

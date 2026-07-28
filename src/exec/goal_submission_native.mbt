@@ -1071,6 +1071,8 @@ fn ensure_native_work_order(
         primary_target_ids: decision.primary_target_ids,
         prerequisite_closure_ids: decision.prerequisite_closure_ids,
         outcome: @workflow.WorkOrderChildOutcome::WorkOrderChildActive,
+        delivery_evidence: None,
+        delivery_accounted: false,
       },
     ],
     planning_rounds: [],
@@ -1084,13 +1086,12 @@ fn ensure_native_work_order(
     stored.objective == expected.objective &&
     stored.selection_policy == expected.selection_policy &&
     stored.planner == expected.planner &&
-    stored.initial_primary_target_ids == expected.initial_primary_target_ids &&
-    stored.initial_prerequisite_closure_ids ==
-    expected.initial_prerequisite_closure_ids &&
     stored.max_active_child_goals == expected.max_active_child_goals &&
     stored.budget.accepted_at == expected.budget.accepted_at &&
     stored.budget.stop_policy == expected.budget.stop_policy &&
-    stored.budget.cutoff_policy == expected.budget.cutoff_policy &&
+    stored.budget.cutoff_policy == expected.budget.cutoff_policy
+  }
+  let has_binding = fn(stored : @workflow.WorkOrderRecord) {
     stored.child_goals.any(fn(binding) {
       let initial = expected.child_goals[0]
       binding.goal_id == initial.goal_id &&
@@ -1101,16 +1102,60 @@ fn ensure_native_work_order(
   }
   match @workflow.load_work_order_record(repository, adapters, id) {
     Ok(Some(stored)) =>
-      if matches(stored.record) {
-        Ok(Some(id))
-      } else {
+      if !matches(stored.record) {
         Err(
           native_goal_submission_error(
             "existing WorkOrder disagrees with its initial Goal binding",
           ),
         )
+      } else if has_binding(stored.record) {
+        Ok(Some(id))
+      } else {
+        guard decision.proposal.work_order_planning_round_id is Some(round_id) &&
+          stored.record.planning_rounds.last() is Some(round) &&
+          round.id == round_id &&
+          round.phase ==
+          @workflow.WorkOrderPlanningPhase::WorkOrderPlanningBeadsDelivered &&
+          !stored.record.child_goals.any(fn(binding) {
+            binding.outcome ==
+            @workflow.WorkOrderChildOutcome::WorkOrderChildActive
+          }) else {
+          return Err(
+            native_goal_submission_error(
+              "successor Goal is not authorized by a delivered planning round",
+            ),
+          )
+        }
+        let children = stored.record.child_goals + expected.child_goals
+        let rounds = stored.record.planning_rounds.copy()
+        rounds[rounds.length() - 1] = {
+          ..round,
+          phase: @workflow.WorkOrderPlanningPhase::WorkOrderPlanningGoalReady,
+        }
+        let next = {
+          ..stored.record,
+          child_goals: children,
+          planning_rounds: rounds,
+          durable_version: stored.record.durable_version + 1,
+        }
+        match
+          @workflow.persist_work_order_transition(
+            repository, adapters, stored, next,
+          ) {
+          Ok(bound) if has_binding(bound.record) => Ok(Some(id))
+          Ok(_) =>
+            Err(
+              native_goal_submission_error("successor binding did not reload"),
+            )
+          Err(error) => Err(error)
+        }
       }
     Ok(None) => {
+      if decision.proposal.work_order_planning_round_id is Some(_) {
+        return Err(
+          native_goal_submission_error("successor WorkOrder owner is absent"),
+        )
+      }
       let receipt = match
         @workflow.persist_work_order_record(repository, adapters, {
           record: expected,
@@ -1126,7 +1171,8 @@ fn ensure_native_work_order(
         )
       }
       match @workflow.load_work_order_record(repository, adapters, id) {
-        Ok(Some(stored)) if matches(stored.record) => Ok(Some(id))
+        Ok(Some(stored)) if matches(stored.record) && has_binding(stored.record) =>
+          Ok(Some(id))
         Ok(_) => Err(native_goal_submission_error("WorkOrder did not reload"))
         Err(error) => Err(error)
       }
@@ -1246,6 +1292,9 @@ pub async fn submit_native_conductor_goal_draft(
   draft_json : String,
   capture : async (Command) -> (Int, String),
   migration_production_admission? : @migration.MigrationProductionAdmissionRef? = None,
+  work_order_authority? : @workflow.WorkOrderRecord? = None,
+  work_order_round_id? : @workflow.WorkOrderPlanningRoundId? = None,
+  work_order_primary_targets? : Array[@control.PartId]? = None,
   nfc_available? : () -> Bool = fn() { exec_path_nfc_available_ffi() == 1 },
   is_nfc? : (String) -> Bool = native_path_is_nfc,
   dependency_delivery_observer? : async (
@@ -1265,6 +1314,20 @@ pub async fn submit_native_conductor_goal_draft(
   let draft = match @workflow.decode_conductor_goal_draft(draft_json) {
     Ok(value) => value
     Err(error) => return Err(error)
+  }
+  if draft.work_order is Some(_) && work_order_authority is Some(_) {
+    return Err(
+      native_goal_submission_error(
+        "successor authority cannot replace a submitted WorkOrder draft",
+      ),
+    )
+  }
+  if (work_order_authority is Some(_)) != (work_order_round_id is Some(_)) {
+    return Err(
+      native_goal_submission_error(
+        "successor WorkOrder authority is incomplete",
+      ),
+    )
   }
   let state_root = project_dir + "/.choir/state/control"
   if !@sys.create_dir_all(state_root) {
@@ -1441,24 +1504,42 @@ pub async fn submit_native_conductor_goal_draft(
     migration_production_admission,
     maximum_parallel_parts: draft.maximum_parallel_parts,
     parts,
-    work_order_id: draft.work_order.map(fn(_) {
-      @workflow.work_order_id(snapshot.repository_id, draft.proposal_id)
-    }),
-    work_order_objective: draft.work_order.map(fn(request) { request.objective }),
-    work_order_selection_policy: draft.work_order.map(fn(request) {
-      request.selection_policy
-    }),
-    work_order_planner: draft.work_order.map(fn(request) { request.planner }),
-    work_order_primary_target_ids: match draft.work_order {
-      Some(request) => request.initial_primary_target_ids
-      None => parts.map(fn(part) { part.part_id })
+    work_order_id: match (draft.work_order, work_order_authority) {
+      (Some(_), None) =>
+        Some(@workflow.work_order_id(snapshot.repository_id, draft.proposal_id))
+      (None, Some(authority)) => Some(authority.id)
+      _ => None
+    },
+    work_order_planning_round_id: work_order_round_id,
+    work_order_objective: match (draft.work_order, work_order_authority) {
+      (Some(request), None) => Some(request.objective)
+      (None, Some(authority)) => Some(authority.objective)
+      _ => None
+    },
+    work_order_selection_policy: match
+      (draft.work_order, work_order_authority) {
+      (Some(request), None) => Some(request.selection_policy)
+      (None, Some(authority)) => Some(authority.selection_policy)
+      _ => None
+    },
+    work_order_planner: match (draft.work_order, work_order_authority) {
+      (Some(request), None) => Some(request.planner)
+      (None, Some(authority)) => Some(authority.planner)
+      _ => None
+    },
+    work_order_primary_target_ids: match
+      (draft.work_order, work_order_primary_targets) {
+      (Some(request), None) => request.initial_primary_target_ids
+      (None, Some(targets)) => targets
+      _ => parts.map(fn(part) { part.part_id })
     },
     // Resolve the requested WorkOrder once, here, against the host clock. The
     // absolute result is persisted with the selection decision, so replay and
     // restart read the same deadline instead of sliding it forward.
-    work_order_budget: match draft.work_order {
-      None => None
-      Some(requested) =>
+    work_order_budget: match (draft.work_order, work_order_authority) {
+      (None, Some(authority)) => Some(authority.budget)
+      (None, None) => None
+      (Some(requested), None) =>
         match
           @workflow.accept_work_order_budget(
             requested.stop,
@@ -1468,6 +1549,7 @@ pub async fn submit_native_conductor_goal_draft(
           Ok(budget) => Some(budget)
           Err(error) => return Err(error)
         }
+      _ => None
     },
   }
   let decision = match

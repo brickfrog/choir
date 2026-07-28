@@ -22,8 +22,26 @@ pub(all) struct WorkOrderPlannerPolicy {
 ///|
 pub(all) enum WorkOrderChildOutcome {
   WorkOrderChildActive
-  WorkOrderChildSucceeded
+  WorkOrderChildDelivered
   WorkOrderChildCanceled(GoalCancellationCause)
+  WorkOrderChildFailed(@control.Digest)
+  WorkOrderChildSkipped(@control.Digest)
+  WorkOrderChildQuarantined(@control.Digest)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum WorkOrderDeliveryBoundary {
+  WorkOrderReviewReadyPullRequest
+  WorkOrderExactMergedPullRequest
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct WorkOrderDeliveryEvidence {
+  boundary : WorkOrderDeliveryBoundary
+  remote_pull_request_id : RemotePullRequestId
+  observed_head_oid : @control.GitOid
+  observed_remote_state : RemotePullRequestState
+  receipt_digest : @control.Digest
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -33,6 +51,8 @@ pub(all) struct WorkOrderChildGoalBinding {
   primary_target_ids : Array[@control.PartId]
   prerequisite_closure_ids : Array[@control.PartId]
   outcome : WorkOrderChildOutcome
+  delivery_evidence : WorkOrderDeliveryEvidence?
+  delivery_accounted : Bool
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -207,6 +227,14 @@ pub fn validate_work_order_record(
   if record.max_active_child_goals != 1 {
     return Err(work_order_error("v1 admits exactly one active child Goal"))
   }
+  if record.child_goals
+    .filter(fn(binding) {
+      binding.outcome == WorkOrderChildOutcome::WorkOrderChildActive
+    })
+    .length() >
+    record.max_active_child_goals {
+    return Err(work_order_error("too many active child Goals"))
+  }
   if record.initial_primary_target_ids.length() == 0 ||
     !work_order_unique_part_ids(record.initial_primary_target_ids) ||
     !work_order_unique_part_ids(record.initial_prerequisite_closure_ids) {
@@ -244,6 +272,17 @@ pub fn validate_work_order_record(
     if !work_order_unique_part_ids(binding.primary_target_ids) ||
       !work_order_unique_part_ids(binding.prerequisite_closure_ids) {
       return Err(work_order_error("child Bead selection is invalid"))
+    }
+    match
+      (binding.outcome, binding.delivery_evidence, binding.delivery_accounted) {
+      (WorkOrderChildDelivered, Some(evidence), true) =>
+        if @storage.validate_digest(evidence.receipt_digest) is Err(_) {
+          return Err(work_order_error("child delivery evidence is invalid"))
+        }
+      (WorkOrderChildDelivered, _, _) =>
+        return Err(work_order_error("delivered child is not accounted"))
+      (_, None, false) => ()
+      _ => return Err(work_order_error("child delivery state is inconsistent"))
     }
   }
   for index = 0; index < record.planning_rounds.length(); index = index + 1 {

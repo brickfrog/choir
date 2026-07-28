@@ -162,6 +162,126 @@ pub async fn deliver_native_work_order_beads(
 }
 
 ///|
+/// Admit the finite Goal authorized by a delivered planning round from a
+/// caller-captured repository and tracker observation.
+pub async fn admit_observed_native_work_order_successor(
+  project_dir : String,
+  work_order_id : @workflow.WorkOrderId,
+  snapshot : NativeWorkOrderPlanningSnapshot,
+  capture : async (Command) -> (Int, String),
+) -> Result[NativeConductorGoalSubmissionReport, @types.ChoirError] {
+  let state_root = project_dir + "/.choir/state/control"
+  let repository : @workflow.PartWorkflowRepository = {
+    state_store: { path: state_root + "/workflow.db" },
+    artifact_store: { root: state_root + "/artifacts" },
+    max_snapshot_bytes: 4 * 1024 * 1024,
+  }
+  let repository_adapters = local_part_workflow_repository_adapters()
+  let stored = match
+    @workflow.load_work_order_record(
+      repository, repository_adapters, work_order_id,
+    ) {
+    Ok(Some(value)) => value
+    Ok(None) =>
+      return Err(native_work_order_planning_error("WorkOrder disappeared"))
+    Err(error) => return Err(error)
+  }
+  if stored.record.lifecycle != @workflow.WorkOrderLifecycle::WorkOrderActive {
+    return Err(
+      native_work_order_planning_error("WorkOrder no longer accepts new work"),
+    )
+  }
+  guard stored.record.planning_rounds.last() is Some(round) &&
+    (
+      round.phase ==
+      @workflow.WorkOrderPlanningPhase::WorkOrderPlanningBeadsDelivered ||
+      round.phase ==
+      @workflow.WorkOrderPlanningPhase::WorkOrderPlanningGoalReady
+    ) &&
+    round.proposal_artifact is Some(artifact) &&
+    round.delivered_bead_snapshot_digest is Some(delivered_bead_digest) else {
+    return Err(
+      native_work_order_planning_error(
+        "current round has no delivered successor authority",
+      ),
+    )
+  }
+  let content = match
+    (repository_adapters.artifacts.read)(repository.artifact_store, {
+      digest: artifact.digest,
+      max_bytes: repository.max_snapshot_bytes,
+    }) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let proposal = match @workflow.decode_work_order_planning_proposal(content) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  guard proposal.finite_goal is Some(goal) else {
+    return Err(
+      native_work_order_planning_error("delivered round has no finite Goal"),
+    )
+  }
+  if snapshot.repository_digest != round.repository_snapshot_digest {
+    return Err(
+      native_work_order_planning_error(
+        "repository changed after planning; successor admission requires a new round",
+      ),
+    )
+  }
+  if snapshot.bead_digest != delivered_bead_digest {
+    return Err(
+      native_work_order_planning_error(
+        "Bead graph changed after delivery; successor admission requires a new round",
+      ),
+    )
+  }
+  let draft_json = match @workflow.successor_conductor_goal_draft_input(goal) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let report = match
+    submit_native_conductor_goal_draft(
+      project_dir,
+      draft_json,
+      capture,
+      work_order_authority=Some(stored.record),
+      work_order_round_id=Some(round.id),
+      work_order_primary_targets=Some(proposal.primary_target_ids),
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if !report.accepted || report.work_order_id != Some(work_order_id) {
+    return Err(
+      native_work_order_planning_error(
+        "successor Goal was not accepted under its WorkOrder",
+      ),
+    )
+  }
+  Ok(report)
+}
+
+///|
+/// Recapture the repository and tracker after Bead delivery, then admit the
+/// finite Goal only if both observations still match durable round authority.
+pub async fn admit_native_work_order_successor(
+  project_dir : String,
+  work_order_id : @workflow.WorkOrderId,
+  capture : async (Command) -> (Int, String),
+) -> Result[NativeConductorGoalSubmissionReport, @types.ChoirError] {
+  let snapshot = match
+    capture_native_work_order_planning_snapshot(project_dir, capture) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  admit_observed_native_work_order_successor(
+    project_dir, work_order_id, snapshot, capture,
+  )
+}
+
+///|
 fn native_work_order_planner_lease_request(
   record : @workflow.WorkOrderRecord,
   round : @workflow.WorkOrderPlanningRound,

@@ -1179,6 +1179,7 @@ fn selection_fixture_proposal(
     maximum_parallel_parts: 2,
     parts,
     work_order_id: None,
+    work_order_planning_round_id: None,
     work_order_objective: None,
     work_order_selection_policy: None,
     work_order_planner: None,

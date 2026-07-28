@@ -71,6 +71,146 @@ pub fn conductor_goal_draft_digest(
 }
 
 ///|
+fn conductor_provider_surface_name(
+  surface : @control.ProviderSurfaceId,
+) -> Result[String, @types.ChoirError] {
+  match surface {
+    @control.ProviderSurfaceId::CodexSubscriptionCli => Ok("codex")
+    @control.ProviderSurfaceId::ClaudeSubscriptionCli => Ok("claude")
+  }
+}
+
+///|
+fn successor_conductor_part_input_json(
+  part : ConductorPartDraft,
+) -> Result[Json, @types.ChoirError] {
+  let provider = match conductor_provider_surface_name(part.provider_surface) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let failovers : Array[String] = []
+  for surface in part.provider_failover_surfaces {
+    match conductor_provider_surface_name(surface) {
+      Ok(value) => failovers.push(value)
+      Err(error) => return Err(error)
+    }
+  }
+  let fields : Map[String, Json] = {
+    "part_id": part.part_id.0.to_json(),
+    "commit_title": part.commit_title.0.to_json(),
+    "instruction": part.instruction.to_json(),
+    "provider": provider.to_json(),
+    "provider_failover": failovers.to_json(),
+    "exact_paths": part.exact_paths.map(fn(path) { path.0 }).to_json(),
+    "path_trees": part.path_trees.map(fn(path) { path.0 }).to_json(),
+    "repository_wide": part.repository_wide.to_json(),
+    "moon_args": part.verification.arguments.to_json(),
+    "verify_timeout_ms": part.verification.timeout_ms.to_int().to_json(),
+  }
+  match part.migration_contract_ref {
+    Some(reference) => {
+      fields.set("migration_contract_id", reference.contract_id.0.to_json())
+      fields.set(
+        "migration_lineage_id",
+        reference.migration_lineage_id.0.to_json(),
+      )
+      fields.set("migration_contract_revision", reference.revision.to_json())
+      fields.set(
+        "migration_contract_artifact_digest",
+        reference.contract_artifact_digest.0.to_json(),
+      )
+    }
+    None => ()
+  }
+  match part.migration_continuation_ref_digest {
+    Some(digest) =>
+      fields.set("migration_continuation_ref_digest", digest.0.to_json())
+    None => ()
+  }
+  match part.migration_context {
+    Some(context) => {
+      fields.set(
+        "context_assembly_policy_digest",
+        context.context_assembly_policy_digest.0.to_json(),
+      )
+      fields.set(
+        "rulebook_section_digests",
+        context.rulebook_section_digests.map(fn(digest) { digest.0 }).to_json(),
+      )
+      fields.set(
+        "dependency_neighborhood_digest",
+        context.dependency_neighborhood_digest.0.to_json(),
+      )
+      fields.set(
+        "applicable_gap_entry_digests",
+        context.applicable_gap_entry_digests
+        .map(fn(digest) { digest.0 })
+        .to_json(),
+      )
+      fields.set(
+        "source_path_manifest_digest",
+        context.source_path_manifest_digest.0.to_json(),
+      )
+      match context.prior_take_context_digest {
+        Some(digest) =>
+          fields.set("prior_take_context_digest", digest.0.to_json())
+        None => ()
+      }
+    }
+    None => ()
+  }
+  Ok(fields.to_json())
+}
+
+///|
+/// Encode a planner-produced finite Goal through the same strict input schema
+/// accepted by native Goal submission. A successor cannot recursively create a
+/// second WorkOrder; its ownership comes from durable round authority instead.
+pub fn successor_conductor_goal_draft_input(
+  draft : ConductorGoalDraft,
+) -> Result[String, @types.ChoirError] {
+  if draft.work_order is Some(_) {
+    return Err(
+      goal_submission_error("WorkOrder successor draft contains work_order"),
+    )
+  }
+  let parts : Array[Json] = []
+  for part in draft.parts {
+    match successor_conductor_part_input_json(part) {
+      Ok(value) => parts.push(value)
+      Err(error) => return Err(error)
+    }
+  }
+  let fields : Map[String, Json] = {
+    "proposal_id": draft.proposal_id.0.to_json(),
+    "goal_id": draft.goal_id.0.to_json(),
+    "maximum_parallel_parts": draft.maximum_parallel_parts.to_json(),
+    "parts": parts.to_json(),
+  }
+  match draft.completion_mode {
+    GoalCompletionMode::GoalPublishable =>
+      fields.set("completion_mode", "publishable".to_json())
+    GoalCompletionMode::GoalEvidenceOnly(digest) => {
+      fields.set("completion_mode", "evidence_only".to_json())
+      fields.set("evidence_only_binding_digest", digest.0.to_json())
+    }
+  }
+  match draft.pull_request_document {
+    Some(document) =>
+      fields.set(
+        "pull_request",
+        {
+          "title": document.title.to_json(),
+          "body": document.body.to_json(),
+          "draft": document.draft.to_json(),
+        }.to_json(),
+      )
+    None => ()
+  }
+  Ok(fields.to_json().stringify(indent=0))
+}
+
+///|
 fn conductor_draft_string(
   fields : Map[String, Json],
   field : String,
