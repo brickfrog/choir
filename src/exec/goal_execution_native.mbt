@@ -2909,6 +2909,12 @@ pub fn native_goal_assurance_effect_admission(
 /// until the daemon generation ended, which is the failure mode this exists to
 /// prevent rather than a detail of it.
 ///
+/// The same exit reports a refusal's wake instant. That is here rather than at
+/// the tick's call site because it is the other half of the same fact: this
+/// attempt is not running, and the scheduler needs the instant to sleep to. The
+/// typed outcome carries it onward regardless; `observe_provider_deferral` is
+/// what the daemon's sleep actually reads.
+///
 /// Releasing is idempotent, so the sweep costs a read and writes nothing for a
 /// tick that took no slot. Public so a test can prove the failing path returns
 /// the slot without having to make a real provider session fail.
@@ -2917,6 +2923,7 @@ pub fn finish_native_goal_assurance_leases(
   holds : Array[NativeProviderLeaseHold],
   result : Result[@workflow.GoalAssuranceTickOutcome, @types.ChoirError],
   fencing_epoch : @control.FencingEpoch,
+  observe_provider_deferral : (Int64) -> Unit,
 ) -> Result[@workflow.GoalAssuranceTickOutcome, @types.ChoirError] {
   let adapters = local_part_workflow_repository_adapters()
   let mut released : Result[Unit, @types.ChoirError] = Ok(())
@@ -2932,6 +2939,12 @@ pub fn finish_native_goal_assurance_leases(
       Ok(_) => ()
       Err(error) => released = Err(error)
     }
+  }
+  if result
+    is Ok(
+      @workflow.GoalAssuranceTickOutcome::GoalAssuranceDeferredUntil(instant, _)
+    ) {
+    observe_provider_deferral(instant)
   }
   match result {
     Err(error) => Err(error)
@@ -5320,6 +5333,7 @@ async fn advance_native_goal_assurance(
   execution : @workflow.GoalExecutionRecord,
   snapshots : Array[@workflow.PartWorkflowSnapshot],
   capacity : @types.ProviderCapacityPolicy,
+  observe_provider_deferral : (Int64) -> Unit,
 ) -> Result[@workflow.GoalAssuranceTickOutcome, @types.ChoirError] {
   let fencing_epoch = current_native_goal_fencing_epoch()
   let holds : Array[NativeProviderLeaseHold] = []
@@ -5327,7 +5341,9 @@ async fn advance_native_goal_assurance(
     project_dir, repository, adapters, execution, snapshots, capacity, fencing_epoch,
     holds,
   )
-  finish_native_goal_assurance_leases(repository, holds, result, fencing_epoch)
+  finish_native_goal_assurance_leases(
+    repository, holds, result, fencing_epoch, observe_provider_deferral,
+  )
 }
 
 ///|
@@ -6033,25 +6049,10 @@ pub async fn run_native_goal_execution_tick_with_forge(
         )
       },
       assure: async fn(record, snapshots) {
-        let outcome = match
-          advance_native_goal_assurance(
-            project_dir, repository, repository_adapters, record, snapshots, provider_capacity,
-          ) {
-          Ok(value) => value
-          Err(error) => return Err(error)
-        }
-        // The instant leaves the typed outcome for the scheduler here, the same
-        // way `advance_bound_part` reports a refused Part's. Without this the
-        // tick would sleep its ordinary interval and ask again, which is the
-        // poll the deferral exists to replace.
-        if outcome
-          is @workflow.GoalAssuranceTickOutcome::GoalAssuranceDeferredUntil(
-            instant,
-            _
-          ) {
-          observe_provider_deferral(instant)
-        }
-        Ok(outcome)
+        advance_native_goal_assurance(
+          project_dir, repository, repository_adapters, record, snapshots, provider_capacity,
+          observe_provider_deferral,
+        )
       },
       finalize: async fn(record, _) {
         match advance_native_goal_publication(project_dir, record.goal.id) {

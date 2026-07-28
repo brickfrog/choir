@@ -79,6 +79,68 @@ fn assurance_lease_admit(
 }
 
 ///|
+/// WHAT THE ASSURANCE LEASE IS KEYED ON. The identity is derived, so its inputs
+/// are the whole of its meaning: drop one and two things that must not share a
+/// slot start sharing one.
+///
+/// The Part collision is the sharp one. A Goal's assurance lease and its own
+/// Part's lease are written into the same held set, so if the two derivations
+/// ever agreed, a Goal audit would silently reuse the Part's slot — admitted
+/// while the surface was full, and released twice.
+test "a Goal assurance lease is keyed on the Goal, its audit Take, and surface" {
+  let goal = @control.GoalId("goal-lease-identity")
+  let take = @control.TakeId("goal-audit-take-identity")
+  let lease = @workflow.goal_assurance_provider_lease_id(
+    goal, take, provider_lease_surface,
+  )
+  // The same attempt asking again derives the same slot. That is what makes a
+  // retried tick idempotent rather than a leak.
+  assert_eq(
+    lease,
+    @workflow.goal_assurance_provider_lease_id(
+      goal, take, provider_lease_surface,
+    ),
+  )
+  // A replanned attempt mints a fresh audit Take, and that is a different
+  // session: it must not inherit the slot the previous attempt recorded for
+  // teardown.
+  assert_not_eq(
+    lease,
+    @workflow.goal_assurance_provider_lease_id(
+      goal,
+      @control.TakeId("goal-audit-take-identity-replanned"),
+      provider_lease_surface,
+    ),
+  )
+  assert_not_eq(
+    lease,
+    @workflow.goal_assurance_provider_lease_id(
+      @control.GoalId("goal-lease-identity-other"),
+      take,
+      provider_lease_surface,
+    ),
+  )
+  assert_not_eq(
+    lease,
+    @workflow.goal_assurance_provider_lease_id(
+      goal,
+      take,
+      @control.ProviderSurfaceId::CodexSubscriptionCli,
+    ),
+  )
+  // A Part of the same Goal, on the same surface, keyed by a Part id that reads
+  // like the audit Take: still a different slot.
+  assert_not_eq(
+    lease,
+    @workflow.provider_lease_id(
+      goal,
+      @control.PartId(take.0),
+      provider_lease_surface,
+    ),
+  )
+}
+
+///|
 /// GOAL ASSURANCE IS COUNTED. A Goal's own audit session is a provider dispatch
 /// like any other, so a surface a Part already filled refuses it and names when
 /// to come back. Before this gate existed the dispatch simply ran, and Goal
@@ -261,6 +323,8 @@ test "a failed assurance attempt returns its provider slot" {
   let capacity = provider_lease_capacity(1)
   let identities = assurance_lease_identities(assuring)
   let holds : Array[NativeProviderLeaseHold] = []
+  let reported : Ref[Int64?] = @ref.new(None)
+  let observe = fn(instant : Int64) { reported.val = Some(instant) }
   assert_eq(
     assurance_lease_admit(
       repository,
@@ -285,10 +349,14 @@ test "a failed assurance attempt returns its provider slot" {
       holds,
       Err(@types.ChoirError::validation_error("assurance dispatch failed")),
       @control.FencingEpoch(3L),
+      observe,
     )
     is Err(_),
   )
   assert_eq(provider_lease_held(repository), 0)
+  // A failure is not a deferral: nothing named an instant, so the scheduler is
+  // told nothing and keeps its ordinary backoff.
+  assert_eq(reported.val, None)
   // The freed slot is real: the next Goal takes it at capacity one.
   assert_eq(
     assurance_lease_admit(
@@ -314,9 +382,30 @@ test "a failed assurance attempt returns its provider slot" {
       holds,
       Ok(@workflow.GoalAssuranceTickOutcome::GoalAssurancePending),
       @control.FencingEpoch(3L),
+      observe,
     )
     is Ok(@workflow.GoalAssuranceTickOutcome::GoalAssurancePending),
   )
+  assert_eq(reported.val, None)
+  // A refused attempt is the one case that names an instant, and the same exit
+  // hands it to the scheduler. Without this the daemon would sleep its ordinary
+  // interval and ask again, which is the poll the deferral exists to replace.
+  assert_true(
+    finish_native_goal_assurance_leases(
+      repository,
+      [],
+      Ok(
+        @workflow.GoalAssuranceTickOutcome::GoalAssuranceDeferredUntil(
+          8_675L,
+          @workflow.PartGoalDeferralReason::PartGoalProviderGlobalCeiling,
+        ),
+      ),
+      @control.FencingEpoch(3L),
+      observe,
+    )
+    is Ok(_),
+  )
+  assert_eq(reported.val, Some(8_675L))
   assert_eq(provider_lease_held(repository), 1)
   ignore(@sys.rm_rf(root))
 }
@@ -379,4 +468,178 @@ test "Goal verification takes no provider slot" {
   assert_eq(holds, [])
   assert_eq(provider_lease_held(repository), 0)
   ignore(@sys.rm_rf(root))
+}
+
+///|
+/// A CAPACITY REFUSAL IS NOT A VERDICT. The execution tick must leave a Goal
+/// whose audit was refused exactly where it was — assuring, with its durable
+/// record untouched — so the next tick resumes at the same effect. Mapping the
+/// refusal onto any other state would turn a busy provider surface into a
+/// blocked or advanced Goal, permanently.
+async test "an assurance tick refused by capacity leaves the Goal assuring" {
+  let repository = workflow_repository("assurance-capacity-deferral")
+  clean_workflow_repository(repository)
+  let adapters = workflow_repository_adapters()
+  let snapshot = workflow_store_fixture()
+  let scheduling_record : @workflow.GoalPartSchedulingRecord = {
+    part: { ..snapshot.part, lifecycle: @control.PartLifecycle::PartPending },
+    task_contract: snapshot.task_contract,
+  }
+  let execute_count = @ref.new(0)
+  let reconcile_count = @ref.new(0)
+  let config : @exec.GoalPartWorkflowAdapterConfig = {
+    bindings: [{ scheduling_record, initial_snapshot: snapshot, repository }],
+    repository_adapters: adapters,
+    dependencies: fn(_, admission) {
+      let dependencies = workflow_driver_dependencies(
+        execute_count,
+        reconcile_count,
+        fn(_) { None },
+        workflow_driver_recover_observation,
+      )
+      Ok({ ..dependencies, integration_admission: fn(_) { Ok(admission) } })
+    },
+    integration_input: fn(current, selection) {
+      Ok({
+        lease: {
+          id: @control.IntegrationLeaseId("assurance-deferral-lease"),
+          goal_id: current.goal.id,
+          fencing_epoch: current.fencing_epoch,
+          holder: "choird-test",
+        },
+        intent_id: @control.IntegrationIntentId("assurance-deferral-intent"),
+        expected_goal_head_oid: selection.expected_goal_head_oid,
+        promotion_metadata_digest: workflow_store_digest_a,
+        git_witness_ref: "refs/choir/witness/assurance-deferral-intent",
+      })
+    },
+    plan_conflict_repair: fn(_) {
+      Ok(@workflow.PartConflictRepairDecision::PartConflictRepairLimitReached)
+    },
+    plan_audit_repair: fn(_) {
+      Ok(@workflow.PartAuditRepairDecision::PartAuditRepairLimitReached)
+    },
+    plan_verification_repair: fn(_) {
+      Ok(
+        @workflow.PartVerificationRepairDecision::PartVerificationRepairLimitReached,
+      )
+    },
+    plan_recovery_retry: fn(_) {
+      Err(@types.ChoirError::validation_error("recovery is not expected"))
+    },
+    read_goal_head: () => Ok(@control.GitOid("goal-head-store")),
+    observe_provider_deferral: fn(_) {  },
+    release_provider_lease: fn(_) { Ok(()) },
+  }
+  assert_eq(
+    @workflow.run_goal_parts(
+      [scheduling_record],
+      1,
+      @exec.goal_part_workflow_adapters(config),
+    ).unwrap().outcome,
+    @workflow.GoalRunOutcome::GoalRunSucceeded,
+  )
+  let integrated = @workflow.load_part_snapshot(
+      repository,
+      adapters,
+      snapshot.workflow_id,
+    )
+    .unwrap()
+    .unwrap().snapshot
+  let repository_id = @workflow.RepositoryId("repository-assurance-deferral")
+  let execution : @workflow.GoalExecutionRecord = {
+    goal: integrated.goal,
+    repository_id,
+    selection_decision_digest: workflow_store_digest_a,
+    base_ref: @workflow.GitRefName("refs/heads/main"),
+    base_commit_oid: @control.GitOid("goal-head-store"),
+    base_tree_oid: @control.GitOid("goal-tree-store"),
+    integration_target_ref: @workflow.GitRefName("refs/heads/main"),
+    completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
+    pull_request_document: Some({
+      title: "test: exercise a refused Goal assurance tick",
+      body: "Exercises the capacity deferral outcome.",
+      draft: false,
+    }),
+    migration_production_admission: None,
+    goal_ref: @workflow.goal_execution_ref(integrated.goal.id),
+    branch_initialization: workflow_store_initialized_branch(
+      integrated.goal.id,
+      repository_id,
+      @workflow.goal_execution_ref(integrated.goal.id),
+      @control.GitOid("goal-head-store"),
+    ),
+    source_claims: [
+      @workflow.receipted_goal_source_claim(
+        integrated.goal.id,
+        integrated.part.id,
+        workflow_store_digest_a,
+        workflow_store_digest_a,
+        1L,
+      ),
+    ],
+    maximum_parallel_parts: 1,
+    policy_revisions: [
+      @workflow.initial_goal_policy_revision(integrated.goal.id, 1),
+    ],
+    part_workflow_ids: [integrated.workflow_id],
+    state: @workflow.GoalExecutionState::GoalExecutionRunning,
+    pause: None,
+    active_input_request: None,
+    input_answers: [],
+    cancellation_request: None,
+    work_order_budget: None,
+    durable_version: 1,
+    fencing_epoch: integrated.fencing_epoch,
+  }
+  ignore(
+    @workflow.persist_goal_execution_record(repository, adapters, {
+      record: execution,
+      expected_store_version: None,
+      fault_point: None,
+    }).unwrap(),
+  )
+  let assuring = match
+    @workflow.run_next_goal_execution_tick(repository, adapters, {
+      initialize: _ => Ok(true),
+      execute: (_, _) => fail("integrated Goal dispatched another Part"),
+      assure: (_, _) => fail("assurance ran before its durable transition"),
+      finalize: (_, _) => fail("finalization ran before assurance"),
+      cancel: (_, _) => fail("running Goal entered cancellation"),
+    }) {
+    Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickAdvanced(advanced)) =>
+      advanced
+    Ok(_) => fail("integrated Goal did not enter assurance")
+    Err(error) => fail(error.message())
+  }
+  assert_eq(assuring.state, @workflow.GoalExecutionState::GoalExecutionAssuring)
+  let refused = match
+    @workflow.run_next_goal_execution_tick(repository, adapters, {
+      initialize: _ => Ok(true),
+      execute: (_, _) => fail("assuring Goal dispatched a Part"),
+      assure: (_, _) => {
+        Ok(
+          @workflow.GoalAssuranceTickOutcome::GoalAssuranceDeferredUntil(
+            9_000L,
+            @workflow.PartGoalDeferralReason::PartGoalProviderSurfaceAtCapacity,
+          ),
+        )
+      },
+      finalize: (_, _) => fail("a refused Goal entered finalization"),
+      cancel: (_, _) => fail("a refused Goal entered cancellation"),
+    }) {
+    Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickAdvanced(advanced)) =>
+      advanced
+    Ok(_) => fail("the refused tick reported idle")
+    Err(error) => fail(error.message())
+  }
+  // Nothing moved: the same state, the same durable version, no cancellation.
+  assert_eq(refused, assuring)
+  match
+    @workflow.load_goal_execution_record(repository, adapters, assuring.goal.id) {
+    Ok(Some(stored)) => assert_eq(stored.record, assuring)
+    Ok(None) => fail("the refused Goal record disappeared")
+    Err(error) => fail(error.message())
+  }
+  clean_workflow_repository(repository)
 }
