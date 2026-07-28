@@ -261,3 +261,81 @@ test "internal responses preserve structured content" {
   }
   assert_eq(content.get("goal_id"), Some("goal-a".to_json()))
 }
+
+///|
+/// The two fields a provider writes free prose into carry their own writing
+/// rules, because nothing downstream can enforce them.
+///
+/// `commit_title` is validated — `validate_semantic_commit_title` rejects a bad
+/// one at submission. `instruction` and `pull_request.body` are not, and cannot
+/// usefully be: "name each thing one way" is not a predicate. So the rules have
+/// to arrive as guidance at the point of writing, and the schema description is
+/// that point. `instruction` matters most: a Take receives it as its whole task
+/// and cannot ask what it meant, so ambiguity there becomes wrong work rather
+/// than an awkward sentence.
+///
+/// These live here rather than in the Conductor prompt on purpose. The prompt
+/// holds only rules no schema can express and is budgeted against exactly this
+/// kind of accretion — see `src/prompts/goal_test.mbt`.
+test "the free-prose submission fields carry writing rules" {
+  let response = @mcp.tools_list_response(Number(21), true)
+  guard response.result is Some(Object(result)) else {
+    fail("expected catalog response")
+  }
+  guard result.get("tools") is Some(Array(tools)) else {
+    fail("expected tools array")
+  }
+  let mut goal_submit_schema : Json? = None
+  for tool in tools {
+    guard tool is Object(fields) else { continue }
+    if fields.get("name") == Some("goal_submit".to_json()) {
+      goal_submit_schema = fields.get("inputSchema")
+    }
+  }
+  guard goal_submit_schema is Some(Object(goal_submit)) else {
+    fail("expected goal_submit schema")
+  }
+  guard goal_submit.get("properties") is Some(Object(goal_properties)) else {
+    fail("expected goal_submit properties")
+  }
+  guard goal_properties.get("parts") is Some(Object(parts)) else {
+    fail("expected parts schema")
+  }
+  guard parts.get("items") is Some(Object(part)) else {
+    fail("expected Part schema")
+  }
+  guard part.get("properties") is Some(Object(part_properties)) else {
+    fail("expected Part properties")
+  }
+  guard part_properties.get("instruction") is Some(Object(instruction)) else {
+    fail("expected instruction schema")
+  }
+  guard instruction.get("description") is Some(String(instruction_rules)) else {
+    fail("expected instruction description")
+  }
+  assert_true(instruction_rules.contains("one instruction per sentence"))
+  assert_true(instruction_rules.contains("active voice"))
+  assert_true(instruction_rules.contains("Name each thing one way"))
+  assert_true(instruction_rules.contains("condition before the command"))
+  // The reason the rules are there at all, kept in the text so a later editor
+  // trimming it for brevity has to read why it is not brevity's business.
+  assert_true(instruction_rules.contains("whole task"))
+  guard goal_properties.get("pull_request") is Some(Object(pull_request)) else {
+    fail("expected pull_request schema")
+  }
+  guard pull_request.get("properties") is Some(Object(pr_properties)) else {
+    fail("expected pull_request properties")
+  }
+  guard pr_properties.get("body") is Some(Object(body)) else {
+    fail("expected body schema")
+  }
+  guard body.get("description") is Some(String(body_rules)) else {
+    fail("expected body description")
+  }
+  assert_true(body_rules.contains("one claim per sentence"))
+  assert_true(body_rules.contains("Scale it to the change"))
+  assert_true(body_rules.contains("Do not narrate the development process"))
+  // Still the rule that predates this: reconciliation state is Choir's, not the
+  // reviewer's.
+  assert_true(body_rules.contains("Choir markers"))
+}

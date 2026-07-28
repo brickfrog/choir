@@ -40,7 +40,7 @@ fn conductor_tools() -> Array[CatalogTool] {
       "Required semantic commit subject for this Part: one line, at most 72 characters, imperative, and prefixed with feat:, fix:, refactor:, test:, docs:, or chore:",
     ),
     "instruction": conductor_string_schema(
-      "Concrete implementation, verification, and acceptance instruction for this Part",
+      "Concrete implementation, verification, and acceptance instruction for this Part. A Take receives this text as its whole task and cannot ask what it meant, so ambiguity here becomes wrong work. Write one instruction per sentence, in active voice, at most 20 words. Name each thing one way and use that name every time. Put the condition before the command. Use plain verbs: analyze the log, not perform an analysis. Drop marketing adjectives such as seamless, robust, or powerful. State what to build, what proves it, and what done means.",
     ),
     "provider": {
       "type": "string".to_json(),
@@ -140,7 +140,7 @@ fn conductor_tools() -> Array[CatalogTool] {
           "Semantic PR title describing the selected work, following the repository's title convention",
         ),
         "body": conductor_string_schema(
-          "Concise reviewer-facing summary and verification plan; do not include Goal IDs, digests, receipt metadata, or Choir markers",
+          "Concise reviewer-facing summary and verification plan. Scale it to the change: a single-Part PR needs a few lines. Write one claim per sentence, in active voice, at most 25 words. Name each thing one way. Drop marketing adjectives such as seamless, robust, or powerful. Say what changed and how it was verified. Do not narrate the development process, list every Part, or recount review history. Do not include Goal IDs, digests, receipt metadata, or Choir markers.",
         ),
         "draft": {
           "type": "boolean".to_json(),
