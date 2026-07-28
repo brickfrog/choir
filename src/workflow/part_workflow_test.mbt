@@ -4218,6 +4218,84 @@ fn uncertain_implementation_dispatch() -> @workflow.PartWorkflowSnapshot raise {
 }
 
 ///|
+test "ownership violation gets one bounded repair without widening its contract" {
+  let initial = workflow_fixture()
+  let blocked = {
+    ..initial,
+    stage: @workflow.PartWorkflowStage::PartBlocked,
+    part: {
+      ..initial.part,
+      lifecycle: @control.PartLifecycle::PartBlocked(
+        @control.PartBlockReason::PartOwnershipViolation,
+      ),
+    },
+    pending_effect: None,
+    dispatch_diagnostic: Some({
+      take_id: initial.implementation_take.id,
+      session_id: None,
+      reason: None,
+      detail: "candidate failed normalization: [\"CandidateOwnershipViolation\"]",
+      recovery: None,
+      availability: @control.ProviderAvailability::ProviderAvailable,
+      observed_at: 10L,
+    }),
+  }
+  let planned = match
+    @workflow.plan_part_ownership_repair(
+      blocked,
+      workflow_revision_identities(blocked, blocked.task_contract),
+      fn(_) { true },
+    ) {
+    Ok(@workflow.PartOwnershipRepairDecision::PartOwnershipRepairPlanned(value)) =>
+      value
+    Ok(_) => fail("first ownership repair was exhausted")
+    Err(error) => fail(error.message())
+  }
+  assert_eq(planned.task_contract, blocked.task_contract)
+  assert_eq(planned.prior_take_evidence.length(), 1)
+  assert_eq(planned.prior_take_evidence[0].candidate, blocked.candidate)
+  let exhausted = {
+    ..blocked,
+    prior_takes: Array::make(
+      @workflow.maximum_part_recovery_retries() * 3,
+      blocked.implementation_take,
+    ),
+  }
+  assert_eq(
+    @workflow.plan_part_ownership_repair(
+      exhausted,
+      workflow_revision_identities(exhausted, exhausted.task_contract),
+      fn(_) { true },
+    ).unwrap(),
+    @workflow.PartOwnershipRepairDecision::PartOwnershipRepairLimitReached,
+  )
+}
+
+///|
+test "every Goal assurance block names its bounded repair owner" {
+  assert_eq(
+    @workflow.unattended_goal_assurance_block_disposition(
+      @workflow.GoalAssuranceBlockReason::GoalAssuranceVerificationBlocked(
+        @control.VerificationGateObservation::VerificationGateRejected(
+          @control.VerificationGateRejectionReason::VerificationOutcomeNotPassing,
+        ),
+      ),
+    ),
+    @workflow.UnattendedGoalAssuranceBlockDisposition::UnattendedGoalAssuranceVerificationRepair,
+  )
+  assert_eq(
+    @workflow.unattended_goal_assurance_block_disposition(
+      @workflow.GoalAssuranceBlockReason::GoalAssuranceAuditBlocked(
+        @control.AuditGateObservation::AuditGateRejected(
+          @control.AuditGateRejectionReason::AuditHasBlockingFindings,
+        ),
+      ),
+    ),
+    @workflow.UnattendedGoalAssuranceBlockDisposition::UnattendedGoalAssuranceAuditRepair,
+  )
+}
+
+///|
 test "an uncertain Take that left no candidate is discharged and retryable" {
   let uncertain = uncertain_implementation_dispatch()
   assert_eq(uncertain.stage, @workflow.PartWorkflowStage::PartRecoveryUncertain)

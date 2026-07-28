@@ -1997,6 +1997,22 @@ let durable_shapes_goal_cancellation_cause : Array[GoalCancellationCause] = [
   ),
   GoalCancellationCause::GoalCancellationAutoMergeFailed(durable_shape_digest),
   GoalCancellationCause::GoalCancellationWorkOrderStopped(durable_shape_digest),
+  GoalCancellationCause::GoalCancellationPartBlocked(
+    durable_shape_part_id,
+    @control.PartBlockReason::PartIntegrityBlocked,
+  ),
+  GoalCancellationCause::GoalCancellationAssuranceBlocked,
+  GoalCancellationCause::GoalCancellationBranchInitializationBlocked(
+    GoalBranchInitLifecycle::GoalBranchInitIntegrityBlocked,
+  ),
+  GoalCancellationCause::GoalCancellationSourceClaimBlocked(
+    durable_shape_part_id,
+    GoalSourceClaimConflictReason::GoalSourceClaimAmbiguous,
+  ),
+  GoalCancellationCause::GoalCancellationFinalizationRecoveryUncertain,
+  GoalCancellationCause::GoalCancellationUnattendedInputRequired(
+    GoalInputReason::GoalInputFinalizationAmbiguous,
+  ),
 ]
 
 ///|
@@ -2012,7 +2028,13 @@ fn durable_guard_goal_cancellation_cause(
     | GoalCancellationAuditRepairFailed(_)
     | GoalCancellationVerificationRepairFailed(_)
     | GoalCancellationAutoMergeFailed(_)
-    | GoalCancellationWorkOrderStopped(_) => value
+    | GoalCancellationWorkOrderStopped(_)
+    | GoalCancellationPartBlocked(_, _)
+    | GoalCancellationAssuranceBlocked
+    | GoalCancellationBranchInitializationBlocked(_)
+    | GoalCancellationSourceClaimBlocked(_, _)
+    | GoalCancellationFinalizationRecoveryUncertain
+    | GoalCancellationUnattendedInputRequired(_) => value
   }
 }
 

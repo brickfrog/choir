@@ -247,6 +247,20 @@ test "new cancellation does not inherit an active attempt's retry state" {
 }
 
 ///|
+test "blocked Goals remain scheduler candidates until they converge" {
+  assert_eq(
+    @workflow.goal_execution_job_candidate(
+      @control.GoalId("goal-blocked"),
+      @workflow.GoalExecutionState::GoalExecutionBlocked,
+    ),
+    Some({
+      goal_id: @control.GoalId("goal-blocked"),
+      lane: @workflow.GoalExecutionJobLane::GoalExecutionProgressLane,
+    }),
+  )
+}
+
+///|
 test "restart fencing adopts an open job without duplicate same-epoch dispatch" {
   let old_epoch = @control.FencingEpoch(6L)
   let first = @workflow.plan_goal_executor_dispatches(

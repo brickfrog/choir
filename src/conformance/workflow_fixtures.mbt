@@ -1546,7 +1546,14 @@ pub fn branch_initialization_faults_case() -> HermeticConformanceCase {
           @workflow.GoalBranchInitReconciliation::GoalBranchInitObservationRecorded(
             value
           )
-        ) => value.state == @workflow.GoalExecutionState::GoalExecutionBlocked
+        ) =>
+          value.state == @workflow.GoalExecutionState::GoalExecutionCanceling &&
+          value.cancellation_request.map(fn(request) { request.cause }) ==
+          Some(
+            @workflow.GoalCancellationCause::GoalCancellationBranchInitializationBlocked(
+              @workflow.GoalBranchInitLifecycle::GoalBranchInitIntegrityBlocked,
+            ),
+          )
         _ => false
       }
       let divergence_uncertain = match
@@ -1561,7 +1568,8 @@ pub fn branch_initialization_faults_case() -> HermeticConformanceCase {
           )
         ) =>
           value.branch_initialization.lifecycle ==
-          @workflow.GoalBranchInitLifecycle::GoalBranchInitUncertain
+          @workflow.GoalBranchInitLifecycle::GoalBranchInitUncertain &&
+          value.state == @workflow.GoalExecutionState::GoalExecutionCanceling
         _ => false
       }
       let canceling = match

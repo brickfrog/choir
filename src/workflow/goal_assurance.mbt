@@ -23,6 +23,26 @@ pub(all) enum GoalAssuranceBlockReason {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) enum UnattendedGoalAssuranceBlockDisposition {
+  UnattendedGoalAssuranceVerificationRepair
+  UnattendedGoalAssuranceAuditRepair
+} derive(Debug, Eq)
+
+///|
+/// Exhaustive ownership of blocked assurance states. The gate remains passive:
+/// this names the bounded repair workflow that may consume its retained
+/// observation; it neither creates evidence nor performs the repair.
+pub fn unattended_goal_assurance_block_disposition(
+  reason : GoalAssuranceBlockReason,
+) -> UnattendedGoalAssuranceBlockDisposition {
+  match reason {
+    GoalAssuranceVerificationBlocked(_) =>
+      UnattendedGoalAssuranceVerificationRepair
+    GoalAssuranceAuditBlocked(_) => UnattendedGoalAssuranceAuditRepair
+  }
+}
+
+///|
 pub(all) struct GoalAssuranceRecord {
   goal_id : @control.GoalId
   repository_id : RepositoryId
