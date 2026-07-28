@@ -19,18 +19,46 @@
 /// bound rather than two. Goal *verification* takes no lease: it runs declared
 /// commands in a sandbox and reaches no provider surface.
 ///
+/// Both paths lease the retry as well as the first attempt, which is the half
+/// that is easy to lose. An effect a dying pass left `PartEffectMayHaveOccurred`
+/// is re-executed by a later pass that authorizes nothing, and no slot is held
+/// for it by then: the first pass either returned it — `release_after_part_pass`
+/// for a Part, `finish_native_goal_assurance_leases` for the Goal audit — or
+/// died and had it reclaimed with its generation by the rule below. The
+/// process the first dispatch may have started is gone, which is why the
+/// reconciler asks for a retry at all, so the retried session is a new session
+/// on the surface. `drive_part_workflow` therefore re-enters
+/// `goal_authorizes_new_effects` before re-executing a provider dispatch, and
+/// `advance_native_goal_assurance` puts its admission ahead of the whole
+/// `pending_effect` match rather than inside the authorize arm. Retries of
+/// effects that reach no provider stay unleased: they spend no allowance, and
+/// a pass that goes on to do anything else takes the slot at its next planning
+/// step.
+///
 /// Provider surfaces are the only capacity dimension here, and sandbox count is
 /// deliberately not a second one. A Take's box is a fixed shape — 2 vCPU,
 /// 2048 MiB, 4 GiB, pinned into `@sandbox.boxlite_take_runtime_policy_digest` —
 /// so a count would be a linear proxy for host memory, but there is no host
-/// budget anywhere to derive the number from and an invented default is either
-/// a stranded workstation or an out-of-memory CI box. Nor is the count
-/// currently free: every planned Part effect passes the gate above, including
-/// the sandbox-preparation kinds, and the audit box is inside the assurance
-/// lease, so the only box created outside a held lease is the Goal
-/// verification sandbox. The topology is also still moving — one BoxLite server
-/// per Goal, on a port derived from the daemon pid — so what a portfolio-wide
-/// box bound should count is not yet decided. See choir-g3n.5 and choir-g3n.6.
+/// budget anywhere to derive the number from, and an invented default is either
+/// a stranded workstation or an out-of-memory CI box. That is the whole of the
+/// reason, and it deliberately does not lean on the lease: a lease bounds
+/// provider sessions, not boxes, and boxes are demonstrably made without one.
+/// `prepare_native_boxlite_environment` creates and starts the per-Goal base box
+/// before `execute_native_goal_record` reaches `run_goal_parts` at all, and
+/// again from `create_native_goal_assurance_runtime` on the verification effects
+/// that take no lease by design. Counting held leases would not count either.
+///
+/// What bounds boxes today is the worker's shape: one Goal worker per daemon,
+/// one Goal per execution tick, one BoxLite server on a port derived from that
+/// process's pid — so two Goals could not even stand up two servers. Live boxes
+/// are that one Goal's base box plus the boxes of the at most
+/// `maximum_parallel_parts` Parts it advances at once. That is a real bound and
+/// it is not this file's; choir-g3n.6 is precisely the change that removes it.
+/// Bounding boxes for real needs two things this repository does not have yet:
+/// a declared host memory and disk budget to derive a ceiling from, and a
+/// decision about what the count is over — running boxes or created ones, per
+/// BoxLite server or across the portfolio — which the one-server-per-Goal
+/// topology has not settled. See choir-g3n.5 and choir-g3n.6.
 ///
 /// One durable record per provider surface holds every lease currently held on
 /// it. That shape is the whole point rather than an implementation detail: with
