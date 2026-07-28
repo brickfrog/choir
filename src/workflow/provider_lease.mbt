@@ -13,11 +13,24 @@
 /// is what `goal_authorizes_new_effects` is bound to. The Goal's own audit
 /// session — planned, dispatched, and reconciled by `advance_native_goal_assurance`,
 /// which never passes that seam — is leased at
-/// `native_goal_assurance_provider_admission` instead, keyed by
+/// `native_goal_assurance_effect_admission` instead, keyed by
 /// `goal_assurance_provider_lease_id` rather than by a Part it does not have.
 /// Both call `acquire_provider_lease` below, so there is one held set and one
 /// bound rather than two. Goal *verification* takes no lease: it runs declared
 /// commands in a sandbox and reaches no provider surface.
+///
+/// Provider surfaces are the only capacity dimension here, and sandbox count is
+/// deliberately not a second one. A Take's box is a fixed shape — 2 vCPU,
+/// 2048 MiB, 4 GiB, pinned into `@sandbox.boxlite_take_runtime_policy_digest` —
+/// so a count would be a linear proxy for host memory, but there is no host
+/// budget anywhere to derive the number from and an invented default is either
+/// a stranded workstation or an out-of-memory CI box. Nor is the count
+/// currently free: every planned Part effect passes the gate above, including
+/// the sandbox-preparation kinds, and the audit box is inside the assurance
+/// lease, so the only box created outside a held lease is the Goal
+/// verification sandbox. The topology is also still moving — one BoxLite server
+/// per Goal, on a port derived from the daemon pid — so what a portfolio-wide
+/// box bound should count is not yet decided. See choir-g3n.5 and choir-g3n.6.
 ///
 /// One durable record per provider surface holds every lease currently held on
 /// it. That shape is the whole point rather than an implementation detail: with
