@@ -1966,10 +1966,10 @@ pub(all) enum PartRecoveryRetryDecision {
 /// names the surface it left and why, and that memory is what keeps a Part
 /// from being handed back to a surface it already found spent.
 fn part_surface_observations(
-  snapshot : PartWorkflowSnapshot,
+  failovers : Array[PartProviderFailover],
 ) -> Array[@control.ProviderSurfaceObservation] {
   let observations : Array[@control.ProviderSurfaceObservation] = []
-  for failover in snapshot.provider_failovers {
+  for failover in failovers {
     observations.push({
       surface: failover.from_surface,
       availability: failover.cause,
@@ -2073,7 +2073,7 @@ pub fn plan_part_recovery_retry(
           @control.select_admitted_provider_surface(
             current,
             snapshot.admitted_provider_surfaces,
-            part_surface_observations(snapshot),
+            part_surface_observations(snapshot.provider_failovers),
             policy,
             now,
           ) {

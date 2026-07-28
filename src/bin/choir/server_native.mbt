@@ -982,6 +982,28 @@ fn conductor_publish_goal_worker_health(
 }
 
 ///|
+/// Read one Goal's durable state, with everything this process knows about
+/// provider capacity.
+///
+/// Both places the worker projects a Goal go through here, because both have
+/// to say the same thing: the configured bounds this daemon read, and what its
+/// own last execution tick answered per surface. A projection that passed
+/// neither would report a Goal with no capacity state at all; one that passed
+/// only the bounds would report a full surface with no wake instant, which is
+/// the pressure without the answer to "until when".
+fn conductor_goal_report(
+  config : @types.Config,
+  goal_id : @control.GoalId,
+) -> Result[@workflow.GoalStatusReport, @types.ChoirError] {
+  @exec.inspect_native_goal(
+    config.project_dir,
+    goal_id,
+    provider_capacity=Some(config.provider_capacity),
+    surface_reports=@exec.native_goal_provider_surface_reports(),
+  )
+}
+
+///|
 /// Project durable Goal state on its own cadence.
 ///
 /// The execute loop only projects when a tick returns, and a tick runs a
@@ -989,14 +1011,15 @@ fn conductor_publish_goal_worker_health(
 /// with nothing reaching the Conductor. This observes the same durable
 /// records the tick writes and publishes them; the server drops any report
 /// whose material fingerprint is unchanged, so an idle Goal emits nothing.
-async fn conductor_goal_observer(project_dir : String) -> Unit {
+async fn conductor_goal_observer(config : @types.Config) -> Unit {
+  let project_dir = config.project_dir
   for ;; {
     let active = match @exec.list_native_active_goal_ids(project_dir) {
       Ok(value) => value
       Err(_) => []
     }
     for goal_id in active {
-      match @exec.inspect_native_goal(project_dir, goal_id) {
+      match conductor_goal_report(config, goal_id) {
         Ok(report) => ignore(conductor_publish_goal_update(report))
         Err(_) => ()
       }
@@ -1081,7 +1104,7 @@ async fn conductor_goal_loop(config : @types.Config) -> Unit {
           @moontrace.field("goal_id", record.goal.id.0),
           @moontrace.field("state", record.state.to_json().stringify(indent=0)),
         ])
-        match @exec.inspect_native_goal(config.project_dir, record.goal.id) {
+        match conductor_goal_report(config, record.goal.id) {
           Ok(report) => {
             match @workflow.goal_report_attention_summary(report) {
               Some(summary) =>
@@ -1285,7 +1308,7 @@ fn goal_worker_run() -> Unit {
   @moontrace.set_min_level(conductor_log_level())
   @async.run_async_main(async fn() {
     @async.with_task_group(async fn(group) {
-      group.spawn_bg(async fn() { conductor_goal_observer(config.project_dir) })
+      group.spawn_bg(async fn() { conductor_goal_observer(config) })
       conductor_goal_loop(config)
     })
   })

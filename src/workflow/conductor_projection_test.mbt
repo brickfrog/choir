@@ -1,9 +1,25 @@
 ///|
+/// The display is asserted at one fixed instant: every test in this file is
+/// about the shape of a display rather than about time passing, and the two
+/// things that do age — a surface deferral and a provider observation — have
+/// their own tests that name their own instants.
+fn goal_display(
+  report : @workflow.GoalStatusReport,
+  now? : Int64 = 1_000L,
+) -> @workflow.ConductorGoalDisplay? {
+  @workflow.conductor_goal_display(report, now)
+}
+
+///|
 fn projection_part(
   stage : @workflow.PartWorkflowStage,
   durable_version? : Int = 11,
   effect_receipt_count? : Int = 3,
   provider_failovers? : Array[@workflow.PartProviderFailover] = [],
+  admitted_provider_surfaces? : Array[@control.ProviderSurfaceId] = [
+    @control.ProviderSurfaceId::CodexSubscriptionCli,
+  ],
+  leased_provider_surface? : @control.ProviderSurfaceId? = None,
 ) -> @workflow.GoalPartStatus {
   {
     workflow_id: @control.WorkflowId("wf-part-a"),
@@ -30,6 +46,8 @@ fn projection_part(
     integration_receipt_present: false,
     dispatch_diagnostic: None,
     provider_failovers,
+    admitted_provider_surfaces,
+    leased_provider_surface,
     usage: @control.empty_take_usage(),
   }
 }
@@ -48,6 +66,8 @@ fn projection_report(
   work_order? : @workflow.WorkOrderBudget? = None,
   pull_request_state? : @workflow.PullRequestIntentState? = None,
   readiness_decision? : @workflow.PullRequestReadinessDecision? = None,
+  maximum_parallel_parts? : Int = 1,
+  provider_capacity? : Array[@workflow.ProviderSurfaceCapacityStatus] = [],
 ) -> @workflow.GoalStatusReport {
   let goal_id = @control.GoalId("goal-a")
   {
@@ -59,14 +79,14 @@ fn projection_report(
     goal_ref: @workflow.GitRefName("refs/heads/choir/goals/goal-a"),
     integration_target_ref: @workflow.GitRefName("refs/heads/main"),
     durable_version,
-    maximum_parallel_parts: 1,
+    maximum_parallel_parts,
     active_policy_revision: {
       id: @control.RevisionId("revision-1"),
       goal_id,
       parent_revision_id: None,
       ordinal: 1,
       change: @workflow.GoalPolicyChange::GoalPolicyInitial,
-      maximum_parallel_parts: 1,
+      maximum_parallel_parts,
       digest: @control.Digest(
         "0000000000000000000000000000000000000000000000000000000000000000",
       ),
@@ -96,6 +116,7 @@ fn projection_report(
     pull_request_draft: None,
     readiness_observed_draft: None,
     usage: @control.empty_take_usage(),
+    provider_capacity,
     pull_request_merge_state: None,
     pull_request_receipt_present: false,
     pull_request_number: None,
@@ -200,7 +221,7 @@ test "park releases for terminal states and a durable cancellation cutoff" {
 ///|
 test "display projection hides terminal Goals and classifies attention" {
   assert_true(
-    @workflow.conductor_goal_display(
+    goal_display(
       projection_report(
         state=@workflow.GoalExecutionState::GoalExecutionSucceeded,
       ),
@@ -208,19 +229,19 @@ test "display projection hides terminal Goals and classifies attention" {
     is None,
   )
   assert_true(
-    @workflow.conductor_goal_display(
+    goal_display(
       projection_report(
         state=@workflow.GoalExecutionState::GoalExecutionCanceled,
       ),
     )
     is None,
   )
-  let active = @workflow.conductor_goal_display(projection_report()).unwrap()
+  let active = goal_display(projection_report()).unwrap()
   assert_eq(active.total_parts, 1)
   assert_eq(active.implementation_parts, 1)
   assert_eq(active.attention, None)
   assert_eq(active.single_part_id, Some("part-a"))
-  let blocked = @workflow.conductor_goal_display(
+  let blocked = goal_display(
     projection_report(parts=[
       projection_part(@workflow.PartWorkflowStage::PartBlocked),
     ]),
@@ -230,7 +251,7 @@ test "display projection hides terminal Goals and classifies attention" {
     Some(@workflow.ConductorGoalAttention::ConductorAttentionBlocked),
   )
   assert_eq(blocked.attention_target, Some("part-a"))
-  let paused = @workflow.conductor_goal_display(
+  let paused = goal_display(
     projection_report(
       state=@workflow.GoalExecutionState::GoalExecutionPaused,
       pause_reason=Some(@workflow.GoalPauseReason::GoalPauseRecoveryUncertain),
@@ -278,9 +299,7 @@ test "an attention summary names the durable cause, not the counters" {
 ///|
 test "a running Goal reports the stage its Parts reached, not queued" {
   let phase_for = fn(stage) {
-    @workflow.conductor_goal_display(
-      projection_report(parts=[projection_part(stage)]),
-    ).unwrap().phase
+    goal_display(projection_report(parts=[projection_part(stage)])).unwrap().phase
   }
   assert_eq(
     phase_for(@workflow.PartWorkflowStage::PartImplementationHarnessStarted),
@@ -330,7 +349,7 @@ test "an assured automatic-delivery Goal reports merge phase" {
     ),
   }
   assert_eq(
-    @workflow.conductor_goal_display(merging).unwrap().phase,
+    goal_display(merging).unwrap().phase,
     @workflow.ConductorGoalPhase::ConductorPhaseMerge,
   )
 }
@@ -354,9 +373,18 @@ fn portfolio_part(
   availability? : @control.ProviderAvailability? = None,
   observed_at? : Int64 = 1_000L,
   provider_failovers? : Array[@workflow.PartProviderFailover] = [],
+  admitted_provider_surfaces? : Array[@control.ProviderSurfaceId] = [
+    @control.ProviderSurfaceId::CodexSubscriptionCli,
+  ],
+  leased_provider_surface? : @control.ProviderSurfaceId? = None,
 ) -> @workflow.GoalPartStatus {
   {
-    ..projection_part(stage, provider_failovers~),
+    ..projection_part(
+      stage,
+      provider_failovers~,
+      admitted_provider_surfaces~,
+      leased_provider_surface~,
+    ),
     part_id: @control.PartId(part_id),
     dispatch_diagnostic: availability.map(fn(value) {
       {
@@ -500,6 +528,125 @@ test "a Part deferred on its provider is counted apart from a failed one" {
   assert_eq(deferred_at(1_060L, returned), 1)
   assert_eq(deferred_at(1_119L, returned), 1)
   assert_eq(deferred_at(1_120L, returned), 0)
+}
+
+///|
+/// A Part the machine would move is not a Part that is waiting.
+///
+/// `plan_part_recovery_retry` fails a Part whose surface reported a spent
+/// allowance over to another admitted surface, so counting it as waiting would
+/// report a Goal as blocked on a provider it is about to stop using. The
+/// report asks `select_admitted_provider_surface` the same question the
+/// recovery decision does.
+test "a Part with somewhere else to run is not counted as waiting" {
+  let claude = @control.ProviderSurfaceId::ClaudeSubscriptionCli
+  let codex = @control.ProviderSurfaceId::CodexSubscriptionCli
+  let spent = @control.ProviderAvailability::ProviderAllowanceExhausted(None)
+  let deferred_with = fn(
+    admitted : Array[@control.ProviderSurfaceId],
+    provider_failovers : Array[@workflow.PartProviderFailover],
+  ) {
+    @workflow.work_order_portfolio(
+      projection_report(parts=[
+        portfolio_part(
+          @workflow.PartWorkflowStage::PartRecoveryUncertain,
+          "moving",
+          availability=Some(spent),
+          observed_at=1_000L,
+          admitted_provider_surfaces=admitted,
+          provider_failovers~,
+        ),
+      ]),
+      1_010L,
+    ).provider_deferred
+  }
+  // Its own surface is the only one it may run on, so it waits.
+  assert_eq(deferred_with([codex], []), 1)
+  // Claude is admitted and has said nothing, so the retry moves there instead.
+  assert_eq(deferred_with([codex, claude], []), 0)
+  // Claude said the same thing when this Part left it, and that memory is
+  // still inside its own re-check interval: there is nowhere to go after all.
+  let left_claude : Array[@workflow.PartProviderFailover] = [
+    {
+      from_surface: claude,
+      to_surface: codex,
+      cause: spent,
+      retry_ordinal: 1,
+      decided_at: 1_000L,
+    },
+  ]
+  assert_eq(deferred_with([codex, claude], left_claude), 1)
+}
+
+///|
+/// Waiting on a provider is one count with two causes, and the Goal's own
+/// ceiling bounds the capacity one.
+///
+/// The lease record is the authority on who is dispatching: a Part holding a
+/// slot is being served by the full surface rather than starved by it. And
+/// `maximum_parallel_parts` is what decides how many of a Goal's Parts may
+/// dispatch at once, so Parts queued behind that ceiling are waiting on the
+/// Goal rather than on the surface.
+test "capacity waiting is bounded by the Goal's own parallelism ceiling" {
+  let codex = @control.ProviderSurfaceId::CodexSubscriptionCli
+  let full : Array[@workflow.ProviderSurfaceCapacityStatus] = [
+    { surface: codex, held: 2, capacity: 2, deferred_until: None },
+  ]
+  let pending = fn(id) {
+    portfolio_part(@workflow.PartWorkflowStage::PartAccepted, id)
+  }
+  let waiting_with = fn(maximum_parallel_parts, parts) {
+    @workflow.work_order_portfolio(
+      projection_report(parts~, maximum_parallel_parts~, provider_capacity=full),
+      1_000L,
+    ).provider_deferred
+  }
+  // Three Parts want the surface and the Goal may run two at once, so one of
+  // them is queued behind the Goal rather than behind Claude.
+  assert_eq(waiting_with(2, [pending("a"), pending("b"), pending("c")]), 2)
+  assert_eq(waiting_with(1, [pending("a"), pending("b"), pending("c")]), 1)
+  // One of the held slots is this Goal's: that Part is running, and it also
+  // spends one of the Goal's own two slots.
+  assert_eq(
+    waiting_with(2, [
+      { ..pending("a"), leased_provider_surface: Some(codex) },
+      pending("b"),
+      pending("c"),
+    ]),
+    1,
+  )
+  // With room to spare in the Goal's ceiling, the lease is the only thing
+  // separating the Part that is running on the full surface from the one
+  // waiting for it.
+  assert_eq(
+    waiting_with(4, [
+      { ..pending("a"), leased_provider_surface: Some(codex) },
+      pending("b"),
+    ]),
+    1,
+  )
+  // A finished Part is not waiting for anything.
+  assert_eq(
+    waiting_with(2, [
+      portfolio_part(@workflow.PartWorkflowStage::PartIntegrated, "done"),
+      pending("b"),
+    ]),
+    1,
+  )
+  // Room on the surface is the difference: same Parts, nothing to wait for.
+  assert_eq(
+    @workflow.work_order_portfolio(
+      projection_report(
+        parts=[pending("a"), pending("b")],
+        maximum_parallel_parts=2,
+        provider_capacity=[
+          { surface: codex, held: 1, capacity: 2, deferred_until: None },
+        ],
+      ),
+      1_000L,
+    ).provider_deferred,
+    0,
+  )
 }
 
 ///|

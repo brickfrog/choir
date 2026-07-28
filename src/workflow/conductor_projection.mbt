@@ -187,6 +187,14 @@ pub(all) struct ConductorGoalDisplay {
   /// Total tokens this Goal's Takes reported spending against the user's paid
   /// subscription allowance. Zero when no surface reported any.
   spent_tokens : Int
+  /// Only the surfaces that cannot serve another Take right now. A surface
+  /// with room and nothing refused on it is left out entirely, for the reason
+  /// a zero spend figure is: it is noise, and a reader who sees a capacity
+  /// figure at all should be seeing pressure.
+  capacity_pressure : Array[ProviderSurfaceCapacityStatus]
+  /// How many of this Goal's Parts are waiting on a provider rather than
+  /// working, from `goal_parts_awaiting_provider`. Zero when none are.
+  provider_waiting : Int
 } derive(Debug, Eq)
 
 ///|
@@ -253,8 +261,13 @@ fn conductor_recovery_target(
 /// Statusline display decision for an active Goal. Terminal Goals produce no
 /// display. This is the typed replacement for the binary's raw-JSON stage
 /// and state tag matching.
+///
+/// `now` is a parameter because two of the things a reader is entitled to see
+/// age: a surface deferral names an instant, and a provider observation stops
+/// deferring a Part once its re-check schedule says so.
 pub fn conductor_goal_display(
   report : GoalStatusReport,
+  now : Int64,
 ) -> ConductorGoalDisplay? {
   if goal_execution_state_is_terminal(report.state) {
     return None
@@ -406,6 +419,10 @@ pub fn conductor_goal_display(
     attention_target,
     additional_attention,
     spent_tokens: @control.take_usage_total_tokens(report.usage),
+    capacity_pressure: report.provider_capacity.filter(
+      provider_surface_is_pressured,
+    ),
+    provider_waiting: goal_parts_awaiting_provider(report, now),
   })
 }
 
@@ -437,8 +454,11 @@ pub(all) struct WorkOrderPortfolio {
   /// Recovery-uncertain: an effect may have occurred and cannot be observed.
   quarantined : Int
   skipped : Int
-  /// Waiting on a provider surface that cannot serve yet. Counted separately
-  /// from failed because the Part is fine and the surface is not.
+  /// Waiting on a provider surface that cannot serve yet, whether because the
+  /// surface said so or because it is at its portfolio bound — see
+  /// `goal_parts_awaiting_provider`, which is the one place either is decided.
+  /// Counted separately from failed because the Part is fine and the surface
+  /// is not.
   provider_deferred : Int
   /// Why the WorkOrder stopped, once it has.
   terminal_reason : WorkOrderStopReason?
@@ -498,33 +518,140 @@ fn goal_delivery_has_landed(report : GoalStatusReport) -> Bool {
 }
 
 ///|
-/// Whether this Part is waiting on the surface it runs on rather than working.
+/// Whether this Part's own surface has stopped admitting it, and no admitted
+/// surface would take it instead.
 ///
 /// The report is read against the same schedule the recovery decision uses, so
 /// it stops counting a Part at the instant that Part becomes eligible again. A
 /// schedule that could not be built is not itself a reason to report a Part as
 /// waiting.
 ///
-/// It is not equivalent to `plan_part_recovery_retry`, and cannot be:
-/// `GoalPartStatus` carries no admitted surface set, so this cannot see the
-/// failover branch. A Part whose other surface is still admitted is counted
-/// here as waiting while the machine would move it instead. The count is
-/// therefore an upper bound on Parts blocked on provider capacity.
-fn part_is_provider_deferred(part : GoalPartStatus, now : Int64) -> Bool {
+/// The failover branch is read rather than assumed: `plan_part_recovery_retry`
+/// moves a Part whose surface reported a spent allowance onto another admitted
+/// surface, and a Part with somewhere to go is not waiting. This asks
+/// `select_admitted_provider_surface` the same question with the same
+/// observations, so the two agree instead of this one over-counting.
+fn part_awaits_provider_availability(
+  part : GoalPartStatus,
+  now : Int64,
+) -> Bool {
   match (part.dispatch_diagnostic, part_provider_recheck_policy()) {
     (Some(diagnostic), Ok(policy)) =>
-      !@control.provider_availability_admits_dispatch(
-        diagnostic.availability,
-        observed_at=diagnostic.observed_at,
-        prior_deferrals=part_surface_prior_deferrals(
-          part.provider_failovers,
+      if @control.provider_availability_admits_dispatch(
+          diagnostic.availability,
+          observed_at=diagnostic.observed_at,
+          prior_deferrals=part_surface_prior_deferrals(
+            part.provider_failovers,
+            part.provider_surface,
+          ),
+          policy~,
+          now~,
+        ) {
+        false
+      } else {
+        @control.select_admitted_provider_surface(
           part.provider_surface,
-        ),
-        policy~,
-        now~,
-      )
+          part.admitted_provider_surfaces,
+          part_surface_observations(part.provider_failovers),
+          policy,
+          now,
+        )
+        is None
+      }
     _ => false
   }
+}
+
+///|
+/// Whether this Part still has provider or planner work the admission gate
+/// would have to authorize.
+///
+/// Exhaustive so a new stage has to decide: a stage left out would either
+/// count a finished Part as waiting for a slot forever or hide one that is.
+fn part_stage_awaits_provider(stage : PartWorkflowStage) -> Bool {
+  match stage {
+    PartWorkflowStage::PartIntegrated
+    | PartWorkflowStage::PartCanceled
+    | PartWorkflowStage::PartBlocked => false
+    PartWorkflowStage::PartAccepted
+    | PartWorkflowStage::PartImplementationSandboxPrepared
+    | PartWorkflowStage::PartImplementationCommandPrepared
+    | PartWorkflowStage::PartImplementationHarnessStarted
+    | PartWorkflowStage::PartImplementationCompleted
+    | PartWorkflowStage::PartCandidateRecorded
+    | PartWorkflowStage::PartVerificationSandboxPrepared
+    | PartWorkflowStage::PartVerified
+    | PartWorkflowStage::PartAuditSandboxPrepared
+    | PartWorkflowStage::PartAuditCommandPrepared
+    | PartWorkflowStage::PartAuditHarnessStarted
+    | PartWorkflowStage::PartAuditResultRecorded
+    | PartWorkflowStage::PartAudited
+    | PartWorkflowStage::PartIntegrationPlanned
+    | PartWorkflowStage::PartPromotionPrepared
+    | PartWorkflowStage::PartIntegrationAuthorized
+    | PartWorkflowStage::PartRecoveryUncertain => true
+  }
+}
+
+///|
+/// Whether this Part would be dispatching if its surface had room.
+///
+/// Decided from the durable lease state the gate itself commits against: the
+/// Part holds no slot, and the surface it runs on cannot serve another Take.
+/// A Part that holds a slot is running on that surface, which is why a full
+/// surface serving this Goal reads differently from one starving it.
+fn part_awaits_provider_capacity(
+  part : GoalPartStatus,
+  capacity : Array[ProviderSurfaceCapacityStatus],
+) -> Bool {
+  if part.leased_provider_surface is Some(_) ||
+    !part_stage_awaits_provider(part.stage) {
+    return false
+  }
+  for status in capacity {
+    if status.surface == part.provider_surface {
+      return provider_surface_is_pressured(status)
+    }
+  }
+  false
+}
+
+///|
+/// How many of this Goal's Parts are waiting on a provider rather than working.
+///
+/// One count, two ways to be waiting, and neither is inferred: a surface that
+/// reported it cannot serve (`dispatch_diagnostic`), and a surface at its
+/// portfolio bound (the durable lease records the report carries). A Part
+/// waiting for both reasons is counted once.
+///
+/// Capacity waiting is bounded by the Goal's own ceiling, which is what
+/// decides how many of its Parts may dispatch at once. Parts queued behind
+/// that ceiling are waiting on the Goal rather than on the surface, and
+/// reporting them as provider-deferred would blame a full surface for a local
+/// bound.
+fn goal_parts_awaiting_provider(report : GoalStatusReport, now : Int64) -> Int {
+  let mut waiting = 0
+  let mut capacity_candidates = 0
+  let mut leased = 0
+  for part in report.parts {
+    if part.leased_provider_surface is Some(_) {
+      leased = leased + 1
+    }
+    if part_awaits_provider_availability(part, now) {
+      waiting = waiting + 1
+    } else if part_awaits_provider_capacity(part, report.provider_capacity) {
+      capacity_candidates = capacity_candidates + 1
+    }
+  }
+  let local_slots = report.maximum_parallel_parts - leased
+  let admissible = if local_slots < 0 {
+    0
+  } else if capacity_candidates < local_slots {
+    capacity_candidates
+  } else {
+    local_slots
+  }
+  waiting + admissible
 }
 
 ///|
@@ -541,11 +668,7 @@ pub fn work_order_portfolio(
   let mut failed = 0
   let mut quarantined = 0
   let mut skipped = 0
-  let mut provider_deferred = 0
   for part in report.parts {
-    if part_is_provider_deferred(part, now) {
-      provider_deferred = provider_deferred + 1
-    }
     match part.stage {
       PartWorkflowStage::PartIntegrated =>
         if landed {
@@ -574,7 +697,7 @@ pub fn work_order_portfolio(
     failed,
     quarantined,
     skipped,
-    provider_deferred,
+    provider_deferred: goal_parts_awaiting_provider(report, now),
     terminal_reason: report.work_order.bind(fn(budget) { budget.stopped }),
   }
 }

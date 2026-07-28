@@ -31,11 +31,12 @@ fn conductor_attention_label(
 ///|
 fn conductor_statusline_goal_display(
   report : Json,
+  now : Int64,
 ) -> @workflow.ConductorGoalDisplay? {
   let typed : @workflow.GoalStatusReport = @json.from_json(report) catch {
     _ => return None
   }
-  @workflow.conductor_goal_display(typed)
+  @workflow.conductor_goal_display(typed, now)
 }
 
 ///|
@@ -69,12 +70,60 @@ fn conductor_statusline_spend(
 }
 
 ///|
-fn conductor_statusline_goal_segment(report : Json) -> String {
-  let display = match conductor_statusline_goal_display(report) {
+fn conductor_provider_surface_label(
+  surface : @control.ProviderSurfaceId,
+) -> String {
+  match surface {
+    @control.ProviderSurfaceId::ClaudeSubscriptionCli => "claude"
+    @control.ProviderSurfaceId::CodexSubscriptionCli => "codex"
+  }
+}
+
+///|
+/// The provider capacity this Goal is competing for, appended only while there
+/// is pressure.
+///
+/// Same rule as the spend figure it sits beside: a surface with room and
+/// nothing refused on it renders nothing at all, because "claude 0/4" tells a
+/// reader only that Choir can count. What earns the space is a surface that
+/// cannot serve — with the wait the admission gate itself named, so the figure
+/// is when the surface said to come back rather than a guess at it.
+fn conductor_statusline_capacity(
+  display : @workflow.ConductorGoalDisplay,
+  now : Int64,
+) -> String {
+  let segments : Array[String] = []
+  for status in display.capacity_pressure {
+    let wait = match status.deferred_until {
+      Some(instant) if instant > now => " " + (instant - now).to_string() + "s"
+      _ => ""
+    }
+    segments.push(
+      conductor_provider_surface_label(status.surface) +
+      " " +
+      status.held.to_string() +
+      "/" +
+      status.capacity.to_string() +
+      wait,
+    )
+  }
+  if segments.length() == 0 {
+    return ""
+  }
+  if display.provider_waiting > 0 {
+    segments.push(display.provider_waiting.to_string() + " waiting")
+  }
+  " · " + segments.join(" · ")
+}
+
+///|
+fn conductor_statusline_goal_segment(report : Json, now : Int64) -> String {
+  let display = match conductor_statusline_goal_display(report, now) {
     Some(value) => value
     None => return ""
   }
-  let spend = conductor_statusline_spend(display)
+  let trailer = conductor_statusline_spend(display) +
+    conductor_statusline_capacity(display, now)
   match display.attention {
     Some(attention) => {
       let label = conductor_attention_label(attention)
@@ -86,8 +135,9 @@ fn conductor_statusline_goal_segment(report : Json) -> String {
       match
         (display.total_parts, display.single_part_id, display.attention_target) {
         (1, Some(part_id), Some(target)) if part_id == target =>
-          part_id + ": " + label + additional + spend
-        (1, Some(part_id), None) => part_id + ": " + label + additional + spend
+          part_id + ": " + label + additional + trailer
+        (1, Some(part_id), None) =>
+          part_id + ": " + label + additional + trailer
         _ => {
           let target = match display.attention_target {
             Some(value) => ": " + value
@@ -102,14 +152,14 @@ fn conductor_statusline_goal_segment(report : Json) -> String {
           } else {
             ""
           }
-          "Choir " + label + target + additional + progress + spend
+          "Choir " + label + target + additional + progress + trailer
         }
       }
     }
     None =>
       match (display.total_parts, display.single_part_id) {
         (1, Some(part_id)) =>
-          part_id + ": " + conductor_statusline_active_phase(display) + spend
+          part_id + ": " + conductor_statusline_active_phase(display) + trailer
         _ => {
           let segments : Array[String] = [
             display.integrated_parts.to_string() +
@@ -150,7 +200,7 @@ fn conductor_statusline_goal_segment(report : Json) -> String {
             display.integrated_parts < display.total_parts {
             segments.push("cap " + display.maximum_parallel_parts.to_string())
           }
-          "Choir " + segments.join(" · ") + spend
+          "Choir " + segments.join(" · ") + trailer
         }
       }
   }
@@ -201,10 +251,24 @@ fn conductor_statusline_cache_content(report : Json?) -> String {
   // The cache stores the full report, not a projection: the statusline
   // decodes it as a typed GoalStatusReport, and any projection subset would
   // silently drop fields the typed decoder requires.
+  //
+  // What is cached is decided from the report alone rather than from a
+  // rendered display: the display is a function of the reading instant too —
+  // a surface deferral expires, an availability observation ages out — and
+  // caching or clearing on that would make the cache's content depend on when
+  // it happened to be written.
   match report {
-    Some(value) if conductor_statusline_goal_display(value) is Some(_) =>
-      value.stringify(indent=0) + "\n"
-    _ => ""
+    Some(value) => {
+      let typed : @workflow.GoalStatusReport = @json.from_json(value) catch {
+        _ => return ""
+      }
+      if @workflow.goal_execution_state_is_terminal(typed.state) {
+        ""
+      } else {
+        value.stringify(indent=0) + "\n"
+      }
+    }
+    None => ""
   }
 }
 
@@ -362,6 +426,7 @@ fn conductor_statusline_render(
   input : String,
   branch : String,
   report : Json?,
+  now : Int64,
 ) -> String {
   let parsed = @json.parse(input) catch { _ => return "" }
   guard parsed is Object(root) else { return "" }
@@ -418,7 +483,7 @@ fn conductor_statusline_render(
   }
   match report {
     Some(value) => {
-      let goal = conductor_statusline_goal_segment(value)
+      let goal = conductor_statusline_goal_segment(value, now)
       if goal != "" {
         groups.push(goal)
       }
@@ -463,6 +528,7 @@ fn conductor_statusline_run() -> Unit {
     input,
     conductor_statusline_git_branch(project_dir, @sys.read_file),
     report,
+    @env.now().reinterpret_as_int64() / 1000L,
   )
   if rendered != "" {
     @sys.write_stdout(rendered)
@@ -473,6 +539,7 @@ fn conductor_statusline_run() -> Unit {
 fn conductor_statusline_test_part(
   id : String,
   stage : String,
+  leased_provider_surface? : @control.ProviderSurfaceId? = None,
 ) -> @workflow.GoalPartStatus {
   let parsed_stage : @workflow.PartWorkflowStage = @json.from_json(
     Json::string(stage),
@@ -504,6 +571,10 @@ fn conductor_statusline_test_part(
     integration_receipt_present: false,
     dispatch_diagnostic: None,
     provider_failovers: [],
+    admitted_provider_surfaces: [
+      @control.ProviderSurfaceId::CodexSubscriptionCli,
+    ],
+    leased_provider_surface,
     usage: @control.empty_take_usage(),
   }
 }
@@ -515,6 +586,7 @@ fn conductor_statusline_test_report(
   parts : Array[@workflow.GoalPartStatus],
   input_reason? : @workflow.GoalInputReason,
   usage? : @control.TakeUsage = @control.empty_take_usage(),
+  provider_capacity? : Array[@workflow.ProviderSurfaceCapacityStatus] = [],
 ) -> Json {
   let parsed_state : @workflow.GoalExecutionState = @json.from_json(
     Json::string(state),
@@ -577,6 +649,7 @@ fn conductor_statusline_test_report(
     pull_request_draft: None,
     readiness_observed_draft: None,
     usage,
+    provider_capacity,
     pull_request_merge_state: None,
     pull_request_receipt_present: false,
     pull_request_number: None,
@@ -600,7 +673,10 @@ test "Conductor statusline renders single and parallel Part progress" {
       "choir-hdg", "PartVerificationSandboxPrepared",
     ),
   ])
-  assert_eq(conductor_statusline_goal_segment(single), "choir-hdg: verify")
+  assert_eq(
+    conductor_statusline_goal_segment(single, 1_000L),
+    "choir-hdg: verify",
+  )
   // Spend appears only once a surface reported something, and stays compact.
   let spent = conductor_statusline_test_report(
     "GoalExecutionRunning",
@@ -613,7 +689,7 @@ test "Conductor statusline renders single and parallel Part progress" {
     usage={ ..@control.empty_take_usage(), input_tokens: 45_600 },
   )
   assert_eq(
-    conductor_statusline_goal_segment(spent),
+    conductor_statusline_goal_segment(spent, 1_000L),
     "choir-hdg: verify · 45k tok",
   )
   let parallel = conductor_statusline_test_report("GoalExecutionRunning", 4, [
@@ -626,8 +702,73 @@ test "Conductor statusline renders single and parallel Part progress" {
     conductor_statusline_test_part("choir-e", "PartAccepted"),
   ])
   assert_eq(
-    conductor_statusline_goal_segment(parallel),
+    conductor_statusline_goal_segment(parallel, 1_000L),
     "Choir 1/5 done · 1 impl · 1 verify · 1 audit · cap 4",
+  )
+}
+
+///|
+/// Capacity earns statusline space only when there is pressure.
+///
+/// The rule the spend figure established: a figure that is always there stops
+/// being read. A surface with room and nothing refused on it renders nothing
+/// at all, and what does render is the bound, the wait the gate named, and how
+/// many of this Goal's Parts are behind it.
+test "Conductor statusline shows provider capacity only under pressure" {
+  let codex = @control.ProviderSurfaceId::CodexSubscriptionCli
+  let claude = @control.ProviderSurfaceId::ClaudeSubscriptionCli
+  let waiting_part = conductor_statusline_test_part("choir-a", "PartAccepted")
+  let spare = conductor_statusline_test_report(
+    "GoalExecutionRunning",
+    1,
+    [waiting_part],
+    provider_capacity=[
+      { surface: claude, held: 0, capacity: 4, deferred_until: None },
+      { surface: codex, held: 1, capacity: 4, deferred_until: None },
+    ],
+  )
+  assert_eq(conductor_statusline_goal_segment(spare, 1_000L), "choir-a: queued")
+  // The surface this Goal's Part runs on is full, and the gate said to come
+  // back in five seconds.
+  let full = conductor_statusline_test_report(
+    "GoalExecutionRunning",
+    1,
+    [waiting_part],
+    provider_capacity=[
+      { surface: claude, held: 0, capacity: 4, deferred_until: None },
+      { surface: codex, held: 4, capacity: 4, deferred_until: Some(1_005L) },
+    ],
+  )
+  assert_eq(
+    conductor_statusline_goal_segment(full, 1_000L),
+    "choir-a: queued · codex 4/4 5s · 1 waiting",
+  )
+  // Read after the instant the gate named, the wait is gone but the surface is
+  // still full.
+  assert_eq(
+    conductor_statusline_goal_segment(full, 1_006L),
+    "choir-a: queued · codex 4/4 · 1 waiting",
+  )
+  // The slot is this Goal's Part: the surface is serving it rather than
+  // starving it, so nothing is reported as waiting.
+  let serving = conductor_statusline_test_report(
+    "GoalExecutionRunning",
+    1,
+    [
+      conductor_statusline_test_part(
+        "choir-a",
+        "PartImplementationHarnessStarted",
+        leased_provider_surface=Some(codex),
+      ),
+    ],
+    provider_capacity=[
+      { surface: claude, held: 0, capacity: 4, deferred_until: None },
+      { surface: codex, held: 4, capacity: 4, deferred_until: None },
+    ],
+  )
+  assert_eq(
+    conductor_statusline_goal_segment(serving, 1_000L),
+    "choir-a: impl · codex 4/4",
   )
 }
 
@@ -640,7 +781,7 @@ test "Conductor statusline prioritizes exceptional parallel Parts" {
     conductor_statusline_test_part("choir-d", "PartAccepted"),
   ])
   assert_eq(
-    conductor_statusline_goal_segment(report),
+    conductor_statusline_goal_segment(report, 1_000L),
     "Choir RECOVERY UNCERTAIN: choir-a (+1) · 1/4 done",
   )
 }
@@ -654,7 +795,7 @@ test "Conductor statusline names Goal-level input and assurance phases" {
     input_reason=@workflow.GoalInputReason::GoalInputPublicationRemoteUnavailable,
   )
   assert_eq(
-    conductor_statusline_goal_segment(awaiting_input),
+    conductor_statusline_goal_segment(awaiting_input, 1_000L),
     "Choir NEEDS INPUT: publish",
   )
   let assuring = conductor_statusline_test_report("GoalExecutionAssuring", 2, [
@@ -662,7 +803,7 @@ test "Conductor statusline names Goal-level input and assurance phases" {
     conductor_statusline_test_part("choir-b", "PartIntegrated"),
   ])
   assert_eq(
-    conductor_statusline_goal_segment(assuring),
+    conductor_statusline_goal_segment(assuring, 1_000L),
     "Choir 2/2 done · assure",
   )
 }
@@ -674,7 +815,7 @@ test "Conductor statusline clears terminal Goals" {
     1,
     [conductor_statusline_test_part("choir-a", "PartIntegrated")],
   )
-  assert_eq(conductor_statusline_goal_segment(succeeded), "")
+  assert_eq(conductor_statusline_goal_segment(succeeded, 1_000L), "")
   assert_eq(conductor_statusline_cache_content(Some(succeeded)), "")
 }
 
@@ -718,7 +859,7 @@ test "Conductor statusline renders Claude context and branch compactly" {
   let input =
     #|{"model":{"display_name":"Opus 4.8"},"context_window":{"used_percentage":18},"rate_limits":{"five_hour":{"used_percentage":23},"seven_day":{"used_percentage":41}}}
   assert_eq(
-    conductor_statusline_render(input, "main", None),
+    conductor_statusline_render(input, "main", None, 1_000L),
     "Opus 4.8 · ctx 18% · 5h 23% · 7d 41% │ main",
   )
   assert_eq(
