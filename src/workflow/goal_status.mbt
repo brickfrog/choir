@@ -27,6 +27,15 @@ pub(all) struct GoalPartStatus {
   /// where it runs now; this reports how it got there, so a changed provider
   /// is read rather than inferred.
   provider_failovers : Array[PartProviderFailover]
+  /// Every surface this Part's captured contract allows it to run on. Carried
+  /// because a Part refused by its current surface is not waiting when another
+  /// admitted surface would take it — the recovery decision moves it instead,
+  /// and a report without this set cannot tell those apart.
+  admitted_provider_surfaces : Array[@control.ProviderSurfaceId]
+  /// The provider surface this Part holds a portfolio slot on right now, read
+  /// from the durable lease record. `Some` means this Part is dispatching, so
+  /// a full surface is one it is being served by rather than blocked on.
+  leased_provider_surface : @control.ProviderSurfaceId?
   /// What this Part's provider sessions reported consuming. Background Takes
   /// spend the user's paid subscription allowance, so the cost of a Goal is
   /// reportable rather than invisible.
@@ -177,6 +186,12 @@ pub(all) struct GoalStatusReport {
   /// the user's paid subscription allowance is one number rather than an
   /// inference across sessions.
   usage : @control.TakeUsage
+  /// What each provider surface is holding against its configured bound, on
+  /// the same reporting path as `usage`: the cost of this Goal and the
+  /// pressure it is competing for are read from one report rather than two.
+  /// Empty in a projection built without a capacity observation, which claims
+  /// nothing rather than reporting a bound it did not read.
+  provider_capacity : Array[ProviderSurfaceCapacityStatus]
   semantic_run_projection : SemanticRunProjection?
   parts : Array[GoalPartStatus]
 } derive(Debug, Eq, ToJson, FromJson)
@@ -631,6 +646,10 @@ pub fn semantic_run_projection(
 }
 
 ///|
+/// `provider_capacity` is the portfolio's lease state as this reader observed
+/// it, and `None` is a legitimate answer: a process that holds no capacity
+/// policy — a one-shot CLI, a conformance harness — reports no bound rather
+/// than a default one it never read.
 pub fn goal_status_report(
   record : GoalExecutionRecord,
   snapshots : Array[PartWorkflowSnapshot],
@@ -638,6 +657,7 @@ pub fn goal_status_report(
   publication : GoalPublicationRecord?,
   pull_request : GoalPullRequestRecord?,
   finalization : GoalFinalizationRecord?,
+  provider_capacity~ : ProviderCapacityObservation?,
 ) -> Result[GoalStatusReport, @types.ChoirError] {
   if snapshots.length() != record.part_workflow_ids.length() {
     return Err(goal_execution_error("status Part cardinality is inconsistent"))
@@ -698,6 +718,16 @@ pub fn goal_status_report(
       integration_receipt_present: snapshot.integration_receipt is Some(_),
       dispatch_diagnostic: snapshot.dispatch_diagnostic,
       provider_failovers: snapshot.provider_failovers,
+      admitted_provider_surfaces: snapshot.admitted_provider_surfaces,
+      leased_provider_surface: match provider_capacity {
+        Some(observation) =>
+          part_leased_provider_surface(
+            observation,
+            record.goal.id,
+            snapshot.part.id,
+          )
+        None => None
+      },
       usage: part_reported_usage(snapshot),
     })
   }
@@ -832,6 +862,10 @@ pub fn goal_status_report(
     usage: parts.fold(init=@control.empty_take_usage(), fn(total, part) {
       @control.add_take_usage(total, part.usage)
     }),
+    provider_capacity: match provider_capacity {
+      Some(observation) => provider_surface_capacity_statuses(observation)
+      None => []
+    },
     semantic_run_projection,
     parts,
   })

@@ -627,3 +627,323 @@ test "a Goal that is not running is refused without taking a slot" {
   assert_eq(provider_lease_held(repository), 0)
   ignore(@sys.rm_rf(root))
 }
+
+///|
+/// Ask the gate the daemon asks, keeping what it answered.
+///
+/// `observed` is the array the report below is built from, and the gate is the
+/// only thing that writes to it — an instant in the report is therefore one
+/// this gate named rather than one the test also wrote. The epoch is this
+/// process's current generation, so the reader's reclamation keeps what the
+/// gate just took.
+fn provider_capacity_authorize(
+  repository : @workflow.PartWorkflowRepository,
+  goal_id : @control.GoalId,
+  part_id : @control.PartId,
+  capacity : @types.ProviderCapacityPolicy,
+  now : Int64,
+  observed : Array[@workflow.ProviderSurfaceTickReport],
+) -> @workflow.PartGoalAuthorization raise {
+  match
+    native_goal_effect_authorization(
+      repository,
+      goal_id,
+      part_id,
+      provider_lease_surface,
+      @control.TakeId("take-" + part_id.0),
+      capacity,
+      current_native_goal_fencing_epoch(),
+      now,
+      observe=fn(report) { observed.push(report) },
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+}
+
+///|
+/// The report the daemon's observer publishes: the same durable store, the
+/// same configured bounds, and what the tick just answered.
+///
+/// The gate's answers are folded exactly as `observe_native_goal_provider_surface`
+/// folds them, because that folded observation is the one the daemon holds —
+/// one telemetry path for the scheduler's sleep and for this report rather
+/// than a second one built for reporting. Its rule shows here: a surface that
+/// admitted anything reports no wake instant, because it did not need one.
+fn provider_capacity_report(
+  root : String,
+  goal_id : @control.GoalId,
+  capacity : @types.ProviderCapacityPolicy,
+  observed : Array[@workflow.ProviderSurfaceTickReport],
+) -> @workflow.GoalStatusReport raise {
+  let mut folded : Array[@workflow.ProviderSurfaceTickReport] = []
+  for report in observed {
+    folded = @workflow.record_provider_surface_tick_report(folded, report)
+  }
+  match
+    inspect_native_goal(
+      root,
+      goal_id,
+      provider_capacity=Some(capacity),
+      surface_reports=folded,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+}
+
+///|
+fn provider_capacity_part_snapshot(
+  repository : @workflow.PartWorkflowRepository,
+  adapters : @workflow.PartWorkflowRepositoryAdapters,
+) -> @workflow.PartWorkflowSnapshot raise {
+  let snapshot = workflow_store_fixture()
+  match
+    @workflow.persist_part_snapshot(repository, adapters, {
+      snapshot,
+      expected_store_version: None,
+      fault_point: None,
+    }) {
+    Ok(_) => snapshot
+    Err(error) => fail(error.message())
+  }
+}
+
+///|
+/// CAPACITY PRESSURE IS VISIBLE. A surface at its bound with a Part waiting on
+/// it reports as such, and every figure in that report is read from the
+/// durable lease record the gate committed rather than handed to the
+/// projection.
+///
+/// Three moments of one store: the surface full while this Goal's Part waits,
+/// the surface free, and the surface full because this Goal's own Part is the
+/// one being served. Only the middle renders nothing, and only the first
+/// reports a Part as waiting — a projection that counted held slots without
+/// asking whose they are cannot tell the first from the third.
+test "a full provider surface and the Part waiting on it are read from lease state" {
+  let root = "/tmp/choir-provider-capacity-report-" + @sys.get_pid().to_string()
+  let (repository, adapters) = archive_native_repository(root)
+  let goal = provider_lease_running_record("store")
+  archive_native_persist(repository, adapters, goal)
+  let snapshot = provider_capacity_part_snapshot(repository, adapters)
+  assert_eq(snapshot.goal.id, goal.goal.id)
+  // A second Goal holds the only Claude slot, so this Goal's Part is refused
+  // by the capacity bound alone.
+  let blocker = provider_lease_running_record("capacity-blocker")
+  archive_native_persist(repository, adapters, blocker)
+  let capacity = provider_lease_capacity(1)
+  // One tick admits the blocking Goal and asks for nothing else.
+  let admitting_tick : Array[@workflow.ProviderSurfaceTickReport] = []
+  assert_true(
+    provider_capacity_authorize(
+      repository,
+      blocker.goal.id,
+      @control.PartId("part-capacity-blocker"),
+      capacity,
+      2_000L,
+      admitting_tick,
+    )
+    is @workflow.PartGoalAuthorization::PartGoalAuthorized(Some(_)),
+  )
+  let full = provider_capacity_report(
+    root,
+    goal.goal.id,
+    capacity,
+    admitting_tick,
+  )
+  // Held is the length of the surface's own held set, and it alone is what
+  // makes this pressure: this tick refused nothing.
+  assert_eq(full.provider_capacity, [
+    {
+      surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+      held: 1,
+      capacity: 1,
+      deferred_until: None,
+    },
+    {
+      surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+      held: 0,
+      capacity: 4,
+      deferred_until: None,
+    },
+  ])
+  assert_eq(full.parts[0].leased_provider_surface, None)
+  assert_eq(@workflow.work_order_portfolio(full, 2_000L).provider_deferred, 1)
+  let pressured = @workflow.conductor_goal_display(full, 2_000L).unwrap()
+  assert_eq(pressured.provider_waiting, 1)
+  assert_eq(pressured.capacity_pressure, [
+    {
+      surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+      held: 1,
+      capacity: 1,
+      deferred_until: None,
+    },
+  ])
+  // The next tick reaches the gate with this Goal's Part and is refused. The
+  // instant the report carries is the instant that refusal named.
+  let refusing_tick : Array[@workflow.ProviderSurfaceTickReport] = []
+  let refused = provider_capacity_authorize(
+    repository,
+    goal.goal.id,
+    snapshot.part.id,
+    capacity,
+    2_400L,
+    refusing_tick,
+  )
+  let deferred_until = match refused {
+    @workflow.PartGoalAuthorization::PartGoalDeferredUntil(instant, _) =>
+      instant
+    _ => fail("the gate admitted the Part the surface had no room for")
+  }
+  let waiting = provider_capacity_report(
+    root,
+    goal.goal.id,
+    capacity,
+    refusing_tick,
+  )
+  assert_eq(waiting.provider_capacity[0], {
+    surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+    held: 1,
+    capacity: 1,
+    deferred_until: Some(deferred_until),
+  })
+  assert_eq(
+    @workflow.work_order_portfolio(waiting, 2_400L).provider_deferred,
+    1,
+  )
+  // The blocking Goal gives the slot back, and the next tick refuses nothing:
+  // spare capacity with nothing waiting is not pressure.
+  assert_true(
+    provider_lease_release(
+      repository,
+      blocker,
+      "capacity-blocker",
+      current_native_goal_fencing_epoch().0,
+    )
+    is @workflow.ProviderLeaseReleaseDecision::ProviderLeaseReleased(_),
+  )
+  // The tick that follows asks for nothing on Claude, so it reports nothing.
+  let quiet_tick : Array[@workflow.ProviderSurfaceTickReport] = []
+  let free = provider_capacity_report(root, goal.goal.id, capacity, quiet_tick)
+  assert_eq(free.provider_capacity, [
+    {
+      surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+      held: 0,
+      capacity: 1,
+      deferred_until: None,
+    },
+    {
+      surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+      held: 0,
+      capacity: 4,
+      deferred_until: None,
+    },
+  ])
+  assert_eq(@workflow.work_order_portfolio(free, 2_000L).provider_deferred, 0)
+  let quiet = @workflow.conductor_goal_display(free, 2_000L).unwrap()
+  assert_eq(quiet.capacity_pressure, [])
+  assert_eq(quiet.provider_waiting, 0)
+  // The same surface, equally full, but the slot is this Goal's Part: it is
+  // being served rather than starved, and nothing is waiting.
+  assert_true(
+    provider_capacity_authorize(
+      repository,
+      goal.goal.id,
+      snapshot.part.id,
+      capacity,
+      3_000L,
+      quiet_tick,
+    )
+    is @workflow.PartGoalAuthorization::PartGoalAuthorized(Some(_)),
+  )
+  let serving = provider_capacity_report(
+    root,
+    goal.goal.id,
+    capacity,
+    quiet_tick,
+  )
+  assert_eq(serving.provider_capacity[0].held, 1)
+  assert_eq(
+    serving.parts[0].leased_provider_surface,
+    Some(@control.ProviderSurfaceId::ClaudeSubscriptionCli),
+  )
+  assert_eq(
+    @workflow.work_order_portfolio(serving, 3_000L).provider_deferred,
+    0,
+  )
+  let served = @workflow.conductor_goal_display(serving, 3_000L).unwrap()
+  assert_eq(served.provider_waiting, 0)
+  // The surface is still at its bound, so the pressure is still shown.
+  assert_eq(served.capacity_pressure.length(), 1)
+  // A slot whose worker no longer exists is not pressure. The gate reclaims it
+  // on its next read, and a report that counted it would have an operator
+  // waiting on a full surface that is in fact empty. Same durable record, read
+  // by the generation that replaced the one holding it.
+  let reclaimed = match
+    @workflow.list_provider_surface_lease_records(repository, adapters) {
+    Ok(lease_records) =>
+      match
+        @workflow.goal_status_report(
+          goal,
+          [snapshot],
+          None,
+          None,
+          None,
+          None,
+          provider_capacity=Some({
+            lease_records,
+            tick_reports: [],
+            policy: capacity,
+            fencing_epoch: @control.FencingEpoch(
+              current_native_goal_fencing_epoch().0 + 1L,
+            ),
+          }),
+        ) {
+        Ok(value) => value
+        Err(error) => fail(error.message())
+      }
+    Err(error) => fail(error.message())
+  }
+  assert_eq(reclaimed.provider_capacity[0].held, 0)
+  assert_eq(reclaimed.parts[0].leased_provider_surface, None)
+  assert_eq(
+    @workflow.conductor_goal_display(reclaimed, 3_000L).unwrap().capacity_pressure,
+    [],
+  )
+  ignore(@sys.rm_rf(root))
+}
+
+///|
+/// A reader without the configured bounds reports no bound.
+///
+/// The alternative is a default capacity nobody chose, which reads exactly
+/// like a real one: an operator would see "claude 4/4" on a project configured
+/// for two and have no way to tell.
+test "a report built without a capacity observation claims no capacity" {
+  let root = "/tmp/choir-provider-capacity-absent-" + @sys.get_pid().to_string()
+  let (repository, adapters) = archive_native_repository(root)
+  let goal = provider_lease_running_record("store")
+  archive_native_persist(repository, adapters, goal)
+  let snapshot = provider_capacity_part_snapshot(repository, adapters)
+  assert_true(
+    provider_capacity_authorize(
+      repository,
+      goal.goal.id,
+      snapshot.part.id,
+      provider_lease_capacity(1),
+      4_000L,
+      [],
+    )
+    is @workflow.PartGoalAuthorization::PartGoalAuthorized(Some(_)),
+  )
+  match inspect_native_goal(root, goal.goal.id) {
+    Ok(report) => {
+      assert_eq(report.provider_capacity, [])
+      // The slot is held, and a reader that did not read the bounds does not
+      // report it either: one observation rather than two.
+      assert_eq(report.parts[0].leased_provider_surface, None)
+    }
+    Err(error) => fail(error.message())
+  }
+  ignore(@sys.rm_rf(root))
+}

@@ -7573,9 +7573,50 @@ pub fn answer_native_goal_input(
 }
 
 ///|
+/// Read the portfolio's provider capacity state, for a reader that knows the
+/// configured bounds.
+///
+/// The held sets come from the durable lease records the admission gate
+/// commits against, so nothing is counted a second time here. The refusal
+/// instants cannot come from the store — no refusal is durable, and inventing
+/// one would be a wake nothing named — so they come from what the caller's own
+/// tick observed.
+fn native_provider_capacity_observation(
+  repository : @workflow.PartWorkflowRepository,
+  policy : @types.ProviderCapacityPolicy,
+  tick_reports : Array[@workflow.ProviderSurfaceTickReport],
+) -> Result[@workflow.ProviderCapacityObservation, @types.ChoirError] {
+  match
+    @workflow.list_provider_surface_lease_records(
+      repository,
+      local_part_workflow_repository_adapters(),
+    ) {
+    Ok(lease_records) =>
+      Ok({
+        lease_records,
+        tick_reports,
+        policy,
+        fencing_epoch: current_native_goal_fencing_epoch(),
+      })
+    Err(error) => Err(error)
+  }
+}
+
+///|
+/// Both capacity arguments are what this reader observed, and both default to
+/// having observed nothing.
+///
+/// `provider_capacity` is the configured bound, and `None` is honest rather
+/// than convenient: a caller without the daemon's configuration would
+/// otherwise report a default capacity nobody chose, which an operator cannot
+/// tell from a real one. `surface_reports` is what this process's last
+/// execution tick learned — `native_goal_provider_surface_reports()` in the
+/// worker, and legitimately empty in a process that runs no tick.
 pub fn inspect_native_goal(
   project_dir : String,
   goal_id : @control.GoalId,
+  provider_capacity? : @types.ProviderCapacityPolicy? = None,
+  surface_reports? : Array[@workflow.ProviderSurfaceTickReport] = [],
 ) -> Result[@workflow.GoalStatusReport, @types.ChoirError] {
   let repository = native_goal_repository(project_dir)
   if !@sys.path_entry_exists(repository.state_store.path) {
@@ -7622,8 +7663,25 @@ pub fn inspect_native_goal(
     Ok(None) => None
     Err(error) => return Err(error)
   }
+  let observation = match provider_capacity {
+    Some(policy) =>
+      match
+        native_provider_capacity_observation(
+          repository, policy, surface_reports,
+        ) {
+        Ok(value) => Some(value)
+        Err(error) => return Err(error)
+      }
+    None => None
+  }
   @workflow.goal_status_report(
-    record, snapshots, assurance, publication, pull_request, finalization,
+    record,
+    snapshots,
+    assurance,
+    publication,
+    pull_request,
+    finalization,
+    provider_capacity=observation,
   )
 }
 

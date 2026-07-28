@@ -2282,6 +2282,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
       None,
       None,
       None,
+      provider_capacity=None,
     ) {
     Ok(value) => value
     Err(error) => fail(error.message())
@@ -2341,6 +2342,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
       None,
       None,
       None,
+      provider_capacity=None,
     ) {
     Ok(value) => value
     Err(error) => fail(error.message())
@@ -2821,6 +2823,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
       Some(published),
       None,
       None,
+      provider_capacity=None,
     ) {
     Ok(value) => value
     Err(error) => fail(error.message())
@@ -3384,6 +3387,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
       Some(published),
       Some(adopted_pull_request),
       None,
+      provider_capacity=None,
     ) {
     Ok(value) => value
     Err(error) => fail(error.message())
@@ -3426,6 +3430,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
       Some(published),
       Some(adopted_pull_request),
       Some(finalization),
+      provider_capacity=None,
     ) {
     Ok(value) => value
     Err(error) => fail(error.message())
@@ -3467,6 +3472,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
       Some(published),
       Some(adopted_pull_request),
       Some(finalization),
+      provider_capacity=None,
     ) {
     Ok(value) => value
     Err(error) => fail(error.message())
@@ -3539,6 +3545,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     Some(published),
     Some(adopted_pull_request),
     Some(finalization),
+    provider_capacity=None,
   ).unwrap()
   assert_eq(other_concurrency_status.semantic_run_projection, Some(projection))
   let edited_prose = match
@@ -4544,6 +4551,7 @@ test "a spent surface moves the next Take to a surface the contract admits" {
       None,
       None,
       None,
+      provider_capacity=None,
     ) {
     Ok(value) => value
     Err(error) => fail(error.message())
@@ -4575,6 +4583,48 @@ test "a Part admitted under one surface waits instead of changing provider" {
       )
     _ => fail("a Part with no admitted alternate did not wait")
   }
+}
+
+///|
+/// The report says a Part is waiting on its provider exactly when the machine
+/// would make it wait.
+///
+/// The two cases above are the machine's: with an admitted alternate the next
+/// Take moves there, and without one the Part waits. The report is read at the
+/// same instant and has to agree — which it can only do by carrying the
+/// admitted set, because that set is the whole difference between them.
+test "the report counts a Part as waiting only when recovery would defer it" {
+  let waiting_count = fn(admitted : Array[@control.ProviderSurfaceId]) raise {
+    let spent = spent_surface_part(
+      admitted,
+      @control.ProviderAvailability::ProviderAllowanceExhausted(None),
+    )
+    let report = match
+      @workflow.goal_status_report(
+        workflow_execution_for_attach(spent),
+        [spent],
+        None,
+        None,
+        None,
+        None,
+        provider_capacity=None,
+      ) {
+      Ok(value) => value
+      Err(error) => fail(error.message())
+    }
+    @workflow.work_order_portfolio(report, 500L).provider_deferred
+  }
+  assert_eq(
+    waiting_count([@control.ProviderSurfaceId::ClaudeSubscriptionCli]),
+    1,
+  )
+  assert_eq(
+    waiting_count([
+      @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+      @control.ProviderSurfaceId::CodexSubscriptionCli,
+    ]),
+    0,
+  )
 }
 
 ///|
