@@ -108,24 +108,18 @@ pub(all) struct ProviderLeaseCapacity {
 }
 
 ///|
-/// Which bound refused the request.
-pub(all) enum ProviderLeaseLimit {
-  /// This surface is serving as many Takes as it is configured to serve.
-  ProviderSurfaceLimit
-  /// Every surface together is at the configured global ceiling.
-  ProviderGlobalLimit
-} derive(Debug, Eq)
-
-///|
 /// The answer, which is never a bare "no".
 ///
 /// A refusal names an instant, because a gate that can only say no leaves the
-/// caller polling. `ProviderLeaseGranted` carries the record to persist; when
-/// that record is identical to the one passed in, the lease was already held
-/// and there is nothing to write.
+/// caller polling. The instant is the whole of a refusal: which bound refused
+/// is not carried, because every caller does the same thing either way and a
+/// label nothing reads would have to be trusted without ever being checked.
+/// `ProviderLeaseGranted` carries the record to persist; when that record is
+/// identical to the one passed in, the lease was already held and there is
+/// nothing to write.
 pub(all) enum ProviderLeaseDecision {
   ProviderLeaseGranted(ProviderSurfaceLeaseRecord, ProviderLease)
-  ProviderLeaseDeferredUntil(Int64, ProviderLeaseLimit)
+  ProviderLeaseDeferredUntil(Int64)
 } derive(Debug, Eq)
 
 ///|
@@ -321,10 +315,7 @@ pub fn plan_provider_lease_acquisition(
     }
   }
   if live.length() >= capacity.surface {
-    return ProviderLeaseDeferredUntil(
-      now + capacity.deferral,
-      ProviderSurfaceLimit,
-    )
+    return ProviderLeaseDeferredUntil(now + capacity.deferral)
   }
   match capacity.global {
     Some(ceiling) => {
@@ -336,10 +327,7 @@ pub fn plan_provider_lease_acquisition(
         }
       }
       if live.length() + elsewhere >= ceiling {
-        return ProviderLeaseDeferredUntil(
-          now + capacity.deferral,
-          ProviderGlobalLimit,
-        )
+        return ProviderLeaseDeferredUntil(now + capacity.deferral)
       }
     }
     None => ()

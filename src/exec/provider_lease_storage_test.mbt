@@ -128,10 +128,7 @@ test "two running Goals cannot both take the last provider slot" {
   )
   assert_eq(
     refused,
-    @workflow.PartGoalAuthorization::PartGoalDeferredUntil(
-      1_005L,
-      @workflow.PartGoalDeferralReason::PartGoalProviderSurfaceAtCapacity,
-    ),
+    @workflow.PartGoalAuthorization::PartGoalDeferredUntil(1_005L),
   )
   // The refusal took no slot, so nothing leaked on the way out.
   assert_eq(provider_lease_held(repository), 1)
@@ -214,7 +211,7 @@ test "the gate reports the surface it admitted and the surface it refused" {
       surface=claude,
       observed~,
     )
-    is @workflow.PartGoalAuthorization::PartGoalDeferredUntil(_, _),
+    is @workflow.PartGoalAuthorization::PartGoalDeferredUntil(_),
   )
   assert_eq(observed, [
     {
@@ -258,10 +255,7 @@ test "a provider slot held by a dead generation does not block the next one" {
     provider_lease_authorize(
       repository, second, "restart-second", capacity, 3L, 2_000L,
     ),
-    @workflow.PartGoalAuthorization::PartGoalDeferredUntil(
-      2_005L,
-      @workflow.PartGoalDeferralReason::PartGoalProviderSurfaceAtCapacity,
-    ),
+    @workflow.PartGoalAuthorization::PartGoalDeferredUntil(2_005L),
   )
   // The daemon restarted and minted a greater epoch. The dead worker's lease is
   // reclaimed on this read, so the slot is free and no separate reconciliation
@@ -393,10 +387,10 @@ test "the tick releases exactly the slots its gate leased" {
 ///|
 /// A Part the gate refuses runs nothing and holds nothing.
 ///
-/// The wake instant itself is reported by the gate — see "the gate tells the
-/// tick which surface it admitted and which it refused" — so what is under test
-/// here is the other half: a refusal must not start an effect, and must not
-/// leave the Part sitting on a provider slot every other Goal is waiting for.
+/// The wake instant itself is reported by the gate — see "the gate reports the
+/// surface it admitted and the surface it refused" — so what is under test here
+/// is the other half: a refusal must not start an effect, and must not leave
+/// the Part sitting on a provider slot every other Goal is waiting for.
 async test "a deferred Part runs no effect and gives its slot back" {
   let repository = workflow_repository("provider-lease-deferral")
   clean_workflow_repository(repository)
@@ -428,12 +422,7 @@ async test "a deferred Part runs no effect and gives its slot back" {
       Ok({
         ..dependencies,
         goal_authorizes_new_effects: fn() {
-          Ok(
-            @workflow.PartGoalAuthorization::PartGoalDeferredUntil(
-              4_242L,
-              @workflow.PartGoalDeferralReason::PartGoalProviderSurfaceAtCapacity,
-            ),
-          )
+          Ok(@workflow.PartGoalAuthorization::PartGoalDeferredUntil(4_242L))
         },
       })
     },
@@ -552,12 +541,7 @@ async test "a repair refused by a capacity bound is not persisted" {
       Ok({
         ..dependencies,
         goal_authorizes_new_effects: fn() {
-          Ok(
-            @workflow.PartGoalAuthorization::PartGoalDeferredUntil(
-              7_314L,
-              @workflow.PartGoalDeferralReason::PartGoalProviderSurfaceAtCapacity,
-            ),
-          )
+          Ok(@workflow.PartGoalAuthorization::PartGoalDeferredUntil(7_314L))
         },
       })
     },
@@ -791,8 +775,7 @@ test "a full provider surface and the Part waiting on it are read from lease sta
     refusing_tick,
   )
   let deferred_until = match refused {
-    @workflow.PartGoalAuthorization::PartGoalDeferredUntil(instant, _) =>
-      instant
+    @workflow.PartGoalAuthorization::PartGoalDeferredUntil(instant) => instant
     _ => fail("the gate admitted the Part the surface had no room for")
   }
   let waiting = provider_capacity_report(

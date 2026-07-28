@@ -212,7 +212,7 @@ pub fn acquire_provider_lease(
     now,
   )
   let (next, lease) = match decision {
-    ProviderLeaseDeferredUntil(_, _) => return Ok(decision)
+    ProviderLeaseDeferredUntil(_) => return Ok(decision)
     ProviderLeaseGranted(next, lease) => (next, lease)
   }
   if next == current && stored is Some(_) {
@@ -226,13 +226,11 @@ pub fn acquire_provider_lease(
     | Ok(@storage.StateTransactionOutcome::StateTransactionReplayed)
     | Ok(@storage.StateTransactionOutcome::StateTransactionCommittedAckLost) =>
       Ok(ProviderLeaseGranted(next, lease))
+    // Another writer changed the surface record between the read and the
+    // compare-and-set, so what this worker judged is stale. The same deferral a
+    // full surface gets: come back and read the record again.
     Ok(@storage.StateTransactionOutcome::StateTransactionVersionConflict) =>
-      Ok(
-        ProviderLeaseDeferredUntil(
-          now + provider_lease_deferral_seconds(),
-          ProviderSurfaceLimit,
-        ),
-      )
+      Ok(ProviderLeaseDeferredUntil(now + provider_lease_deferral_seconds()))
     // A newer generation adopted this surface, so this worker has no authority
     // to take a slot on it and is not going to get one by asking again.
     Ok(@storage.StateTransactionOutcome::StateTransactionStaleFence) =>

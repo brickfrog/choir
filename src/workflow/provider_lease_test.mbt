@@ -39,7 +39,7 @@ fn granted_record(
 ) -> @workflow.ProviderSurfaceLeaseRecord raise {
   match decision {
     @workflow.ProviderLeaseDecision::ProviderLeaseGranted(record, _) => record
-    @workflow.ProviderLeaseDecision::ProviderLeaseDeferredUntil(_, _) =>
+    @workflow.ProviderLeaseDecision::ProviderLeaseDeferredUntil(_) =>
       fail("expected the lease to be granted")
   }
 }
@@ -69,10 +69,7 @@ test "one surface slot admits one Goal and defers the next" {
   )
   assert_eq(
     second,
-    @workflow.ProviderLeaseDecision::ProviderLeaseDeferredUntil(
-      105L,
-      @workflow.ProviderLeaseLimit::ProviderSurfaceLimit,
-    ),
+    @workflow.ProviderLeaseDecision::ProviderLeaseDeferredUntil(105L),
   )
   // Capacity two admits both, so the refusal above is the bound and not the
   // record shape.
@@ -138,10 +135,7 @@ test "a lease from a dead generation is reclaimed, a live one is not" {
       lease_capacity(1),
       9_000_000L,
     ),
-    @workflow.ProviderLeaseDecision::ProviderLeaseDeferredUntil(
-      9_000_005L,
-      @workflow.ProviderLeaseLimit::ProviderSurfaceLimit,
-    ),
+    @workflow.ProviderLeaseDecision::ProviderLeaseDeferredUntil(9_000_005L),
   )
   // A later generation: the dead worker's lease is gone and the slot is free.
   let after_restart = granted_record(
@@ -239,8 +233,9 @@ test "releasing an already-released lease changes nothing" {
 }
 
 ///|
-/// The global ceiling binds across surfaces, and is reported as its own limit
-/// so the deferral says which bound refused.
+/// The global ceiling binds across surfaces. The Claude record here is empty
+/// against a surface bound of four, so its own bound cannot be what refuses:
+/// only a lease another surface holds, counted against the ceiling, can.
 test "the global ceiling refuses a surface that has room of its own" {
   let epoch = @control.FencingEpoch(7L)
   let codex_held = granted_record(
@@ -259,10 +254,7 @@ test "the global ceiling refuses a surface that has room of its own" {
   )
   assert_eq(
     refused,
-    @workflow.ProviderLeaseDecision::ProviderLeaseDeferredUntil(
-      105L,
-      @workflow.ProviderLeaseLimit::ProviderGlobalLimit,
-    ),
+    @workflow.ProviderLeaseDecision::ProviderLeaseDeferredUntil(105L),
   )
   // Raise only the ceiling and the same request is admitted.
   assert_eq(
