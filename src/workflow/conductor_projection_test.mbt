@@ -189,6 +189,155 @@ test "a Part that changed provider surface is a material change" {
 }
 
 ///|
+/// Both scheduled surfaces in the order the projection emits them, so a
+/// fingerprint here is taken over the shape the daemon publishes rather than a
+/// one-surface shape no reader ever sees. Claude is at rest; the Part under
+/// test runs on Codex.
+fn projection_capacity(
+  claude_held? : Int = 0,
+  claude_capacity? : Int = 4,
+  claude_deferred_until? : Int64? = None,
+  codex_held? : Int = 1,
+  codex_capacity? : Int = 4,
+  codex_deferred_until? : Int64? = None,
+) -> Array[@workflow.ProviderSurfaceCapacityStatus] {
+  [
+    {
+      surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+      held: claude_held,
+      capacity: claude_capacity,
+      deferred_until: claude_deferred_until,
+    },
+    {
+      surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+      held: codex_held,
+      capacity: codex_capacity,
+      deferred_until: codex_deferred_until,
+    },
+  ]
+}
+
+///|
+fn capacity_fingerprint(
+  provider_capacity : Array[@workflow.ProviderSurfaceCapacityStatus],
+  parts? : Array[@workflow.GoalPartStatus] = [
+    projection_part(
+      @workflow.PartWorkflowStage::PartImplementationHarnessStarted,
+    ),
+  ],
+) -> String {
+  @workflow.goal_report_material_fingerprint(
+    projection_report(provider_capacity~, parts~),
+  )
+}
+
+///|
+/// PRESSURE REACHES THE READER WHILE IT IS HAPPENING.
+///
+/// A Goal parked at the admission gate has no material transition by
+/// construction: a capacity refusal is a deferral rather than a durable
+/// provider observation, so no stage, lifecycle, or diagnostic moves. Every
+/// report below is identical except in the portfolio's lease state, which is
+/// the state the fingerprint has to separate from the figures it is measured
+/// in.
+test "a Goal parked behind a full surface is a material change" {
+  let room = projection_capacity()
+  let full = projection_capacity(codex_held=4)
+  // Its surface reaching the bound while nothing else moves is the finding.
+  assert_true(capacity_fingerprint(room) != capacity_fingerprint(full))
+  // So is a surface below its own bound that the gate refused anyway: the
+  // surface bound is not the only bound, and a global ceiling refusal leaves
+  // this surface with room and still unable to serve.
+  assert_true(
+    capacity_fingerprint(room) !=
+    capacity_fingerprint(projection_capacity(codex_deferred_until=Some(1_005L))),
+  )
+  // A surface with room is not pressure, so its held figure moving is not
+  // something a reader is owed a wake for.
+  assert_eq(
+    capacity_fingerprint(room),
+    capacity_fingerprint(projection_capacity(codex_held=2)),
+  )
+  // The gate names a fresh wake on every refusal. That instant appearing, and
+  // then advancing tick after tick while the same surface stays full, is
+  // exactly the counter churn the fingerprint exists to drop.
+  assert_eq(
+    capacity_fingerprint(full),
+    capacity_fingerprint(
+      projection_capacity(codex_held=4, codex_deferred_until=Some(1_005L)),
+    ),
+  )
+  assert_eq(
+    capacity_fingerprint(
+      projection_capacity(codex_held=4, codex_deferred_until=Some(1_005L)),
+    ),
+    capacity_fingerprint(
+      projection_capacity(codex_held=4, codex_deferred_until=Some(1_010L)),
+    ),
+  )
+  // Same full surface, same figures, and the only difference is whose slot it
+  // is: this Goal's Part went from starved to served. Nothing else in the
+  // report moves when a lease is taken or given back, so no other field can
+  // carry it.
+  assert_true(
+    capacity_fingerprint(full) !=
+    capacity_fingerprint(full, parts=[
+      projection_part(
+        @workflow.PartWorkflowStage::PartImplementationHarnessStarted,
+        leased_provider_surface=Some(
+          @control.ProviderSurfaceId::CodexSubscriptionCli,
+        ),
+      ),
+    ]),
+  )
+}
+
+///|
+/// A surface this Goal has no Part on is still pressure a reader is shown —
+/// `conductor_goal_display` reports every pressured surface, not only the ones
+/// this Goal competes for — so it has to reach them too. Nothing below parks a
+/// Part: Codex has room throughout, and the parked count stays zero.
+test "a full surface no Part of this Goal runs on is still delivered" {
+  let quiet = projection_capacity(claude_held=3)
+  // Claude filling up is portfolio state this Goal's reader is entitled to,
+  // even though every Part of it runs on Codex.
+  assert_true(
+    capacity_fingerprint(quiet) !=
+    capacity_fingerprint(projection_capacity(claude_held=4)),
+  )
+  // While the pressure stands, the figures printed beside it are the reader's
+  // only measure of it: held moving, and the configured bound being raised,
+  // both change what the statusline says.
+  let refused = projection_capacity(
+    claude_held=1,
+    claude_deferred_until=Some(1_005L),
+  )
+  assert_true(
+    capacity_fingerprint(refused) !=
+    capacity_fingerprint(
+      projection_capacity(claude_held=2, claude_deferred_until=Some(1_005L)),
+    ),
+  )
+  assert_true(
+    capacity_fingerprint(refused) !=
+    capacity_fingerprint(
+      projection_capacity(
+        claude_held=1,
+        claude_capacity=6,
+        claude_deferred_until=Some(1_005L),
+      ),
+    ),
+  )
+  // The instant is no more material here than it is on this Goal's own surface.
+  assert_eq(
+    capacity_fingerprint(refused),
+    capacity_fingerprint(
+      projection_capacity(claude_held=1, claude_deferred_until=Some(1_010L)),
+    ),
+  )
+}
+
+///|
 test "park releases for terminal states and a durable cancellation cutoff" {
   assert_false(
     @workflow.conductor_park_for_goal_state(

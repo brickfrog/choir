@@ -43,11 +43,42 @@ pub fn parse_goal_execution_state(tag : String) -> GoalExecutionState? {
 }
 
 ///|
+/// The surfaces that cannot serve another Take, as the fingerprint sees them:
+/// which surface, and the figures a reader is shown — never the instant.
+///
+/// The admission gate names a fresh wake on every refusal
+/// (`now + provider_lease_deferral_seconds()`), so an instant in the
+/// fingerprint would re-fire delivery on every tick a surface stayed full,
+/// which is exactly the counter churn the fingerprint exists to exclude. Its
+/// absence costs a reader nothing: the delivered report still carries the
+/// instant, and `conductor_statusline_capacity` re-derives the countdown from
+/// it against a fresh `now` on every render.
+fn pressured_provider_surfaces(report : GoalStatusReport) -> Array[Json] {
+  report.provider_capacity
+  .filter(provider_surface_is_pressured)
+  .map(fn(status) {
+    (
+      {
+        "surface": status.surface.to_json(),
+        "held": status.held.to_json(),
+        "capacity": status.capacity.to_json(),
+      } : Map[String, Json]).to_json()
+  })
+}
+
+///|
 /// Projection of the report fields whose change is material to the
 /// Conductor: state transitions, lifecycle movement, pauses, input requests,
 /// and per-Part stage movement. Counter-only churn (receipt counts, durable
 /// versions) deliberately does not change the fingerprint, so it never wakes
 /// the Conductor or rewrites the statusline cache.
+///
+/// Reported token spend is left out on that rule and provider capacity
+/// pressure is not, which is not an inconsistency: spend is a figure a reader
+/// consults after something moved, and it only ever moves because something
+/// did. Pressure is the opposite — it is interesting precisely while nothing
+/// is moving, and a Goal parked behind a full surface produces no other change
+/// to ride along with.
 pub fn goal_report_material_fingerprint(report : GoalStatusReport) -> String {
   let parts = report.parts.map(fn(part) {
     (
@@ -87,6 +118,19 @@ pub fn goal_report_material_fingerprint(report : GoalStatusReport) -> String {
       "pull_request_merge_state": report.pull_request_merge_state.to_json(),
       "finalization_id": report.finalization_id.to_json(),
       "readiness_decision": report.readiness_decision.to_json(),
+      // Provider capacity pressure is the one condition whose whole point is
+      // that nothing else is moving. A Goal parked at the admission gate has
+      // no material transition by construction: no stage change, no lifecycle
+      // change, and no dispatch diagnostic, because a capacity refusal is a
+      // `PartGoalDeferredUntil` rather than a durable provider observation. So
+      // without these two terms the report is dropped and the statusline keeps
+      // whatever figures were current at the last stage change — which is to
+      // say, it goes blind exactly when the pressure it reports is happening.
+      //
+      // Both are pure over the report, so what fires is pressure starting and
+      // stopping rather than the figures it is measured in advancing.
+      "provider_capacity_pressure": pressured_provider_surfaces(report).to_json(),
+      "provider_parked_parts": goal_parts_parked_on_capacity(report).to_json(),
       "parts": parts.to_json(),
     } : Map[String, Json])
   .to_json()
@@ -652,6 +696,41 @@ fn goal_parts_awaiting_provider(report : GoalStatusReport, now : Int64) -> Int {
     local_slots
   }
   waiting + admissible
+}
+
+///|
+/// How many of this Goal's Parts hold no slot on a surface that cannot serve
+/// one.
+///
+/// The capacity half of `goal_parts_awaiting_provider`, on its own because it
+/// is the half no other fingerprint field stands in for. It moves when a lease
+/// is taken or given back on a full surface — the difference between a full
+/// surface serving this Goal and one starving it — and neither a stage, a
+/// lifecycle, nor a diagnostic changes when it does.
+///
+/// Deliberately not bounded by the Goal's own parallelism ceiling, which the
+/// waiting figure is. That bound decides how large a number to print; this is
+/// not a number anybody reads, it is the answer to "did the set of Parts stuck
+/// behind a full surface change", and clamping it would answer no for a change
+/// that happened.
+///
+/// The availability half of that count needs no term of its own. It is decided
+/// from `dispatch_diagnostic` and `provider_failovers`, both of which the
+/// per-Part fingerprint already carries, plus a re-check schedule that expires
+/// on the clock — and the clock is not something to wake a Conductor over,
+/// because the statusline re-derives that expiry against a fresh `now` on
+/// every render.
+///
+/// Clock-free by construction, which is what makes this half safe to
+/// fingerprint at all.
+fn goal_parts_parked_on_capacity(report : GoalStatusReport) -> Int {
+  let mut parked = 0
+  for part in report.parts {
+    if part_awaits_provider_capacity(part, report.provider_capacity) {
+      parked = parked + 1
+    }
+  }
+  parked
 }
 
 ///|
