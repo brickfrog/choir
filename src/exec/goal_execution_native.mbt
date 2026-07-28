@@ -7093,6 +7093,24 @@ pub async fn prepare_native_goal_control_state(
       observe_native_goal_control_state(control_root),
       schema,
     ) {
+    @storage.ControlStateDecision::ControlStatePlanned(
+      @storage.ControlStatePlan::ControlStateCurrent
+    ) =>
+      // The stamp is a fast description of the store, not proof about every
+      // row still present in it. A retained row can have been adopted under an
+      // incomplete shape witness or otherwise become undecodable while the
+      // metadata remains current. The real repository decoder would then fail
+      // every portfolio tick, so prove the rows at the startup boundary too.
+      match probe_native_durable_record_decoding(control_root) {
+        Ok(Some(key)) =>
+          @storage.decide_control_state_from_records(
+            schema.generation,
+            schema,
+            Some(key),
+          )
+        Ok(None) => @storage.ControlStatePlan::ControlStateCurrent
+        Err(error) => return Err(error)
+      }
     @storage.ControlStateDecision::ControlStatePlanned(planned) => planned
     // The generations disagree, which settles nothing on its own. Read the
     // records and let what they decode to decide.
