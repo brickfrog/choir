@@ -2812,7 +2812,7 @@ priv enum NativeProviderAdmission {
 ///
 /// Both admission gates below funnel through here, so the surface bound is
 /// decided once. A second gate that called `acquire_provider_lease` for itself
-/// would be a second bound the moment the two drifted.
+/// would be a second bound the moment either drifted from this one.
 ///
 /// This is also the one place that reports what a surface did this tick, for
 /// the same reason. `observe` is what the daemon's sleep reads: a refusal that
@@ -2911,8 +2911,13 @@ pub fn native_goal_effect_authorization(
       return Err(native_goal_execution_error("Goal record disappeared"))
     Err(error) => return Err(error)
   }
-  // Everything downstream of an already-authorized effect keeps reconciling
-  // past the deadline; only a new agentic Take is refused.
+  // Reconciling an already-authorized effect from durable evidence continues
+  // past the deadline; what this refuses is new spend. That includes a retried
+  // provider dispatch, which opens a second real session against the
+  // subscription even though the Take is not new — the driver's retry path
+  // reaches this gate for exactly that reason. A Goal past its budget, no
+  // longer running, or no longer active therefore reads witnesses and finishes
+  // what it can while starting nothing on a provider.
   let budget_admits = @workflow.goal_execution_admits_new_agentic_work(
       current.record,
       now,

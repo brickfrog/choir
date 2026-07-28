@@ -958,9 +958,17 @@ fn goal_execution_cancellation_shape_is_valid(
 
 ///|
 /// Whether the Goal's WorkOrder budget still admits a new agentic Take at this
-/// clock reading. An unbudgeted Goal always admits work; reconciliation,
-/// delivery observation, and safety cleanup never consult this gate, so they
-/// continue past the deadline while no new agentic work starts.
+/// clock reading. An unbudgeted Goal always admits work.
+///
+/// Reading durable evidence past the deadline is always allowed: reconciliation,
+/// delivery observation, and safety cleanup never consult this gate. What is
+/// refused is *spending*, and that includes re-dispatching an effect this Goal
+/// already authorized. A Take whose provider process died leaves an effect the
+/// reconciler will retry, and that retry opens a second real provider session
+/// against the subscription — new spend on the same Take, not observation of
+/// old spend. So the driver's retry path consults this gate for provider
+/// dispatches (`src/workflow/driver.mbt`), and a Goal past its deadline
+/// reconciles what it can while starting nothing new on a surface.
 pub fn goal_execution_admits_new_agentic_work(
   record : GoalExecutionRecord,
   now : Int64,

@@ -1223,12 +1223,7 @@ async test "a retried provider dispatch is refused while the surface is at capac
     ..retrying,
     goal_authorizes_new_effects: fn() {
       gate_calls.val = gate_calls.val + 1
-      Ok(
-        @workflow.PartGoalAuthorization::PartGoalDeferredUntil(
-          900L,
-          @workflow.PartGoalDeferralReason::PartGoalProviderSurfaceAtCapacity,
-        ),
-      )
+      Ok(@workflow.PartGoalAuthorization::PartGoalDeferredUntil(900L))
     },
   }
   let executed_before_retry = execute_count.val
@@ -1237,10 +1232,7 @@ async test "a retried provider dispatch is refused while the surface is at capac
   ).unwrap()
   assert_eq(
     refused.outcome,
-    @workflow.PartWorkflowRunOutcome::PartRunGoalDeferredUntil(
-      900L,
-      @workflow.PartGoalDeferralReason::PartGoalProviderSurfaceAtCapacity,
-    ),
+    @workflow.PartWorkflowRunOutcome::PartRunGoalNotAuthorizing,
   )
   // The reconciler ran and asked for the retry; the gate is what stopped the
   // second session from reaching the surface. The outcome alone does not prove

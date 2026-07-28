@@ -51,8 +51,9 @@
 /// What bounds boxes today is the worker's shape: one Goal worker per daemon,
 /// one Goal per execution tick, one BoxLite server on a port derived from that
 /// process's pid — so two Goals could not even stand up two servers. Live boxes
-/// are that one Goal's base box plus the boxes of the at most
-/// `maximum_parallel_parts` Parts it advances at once. That is a real bound and
+/// are that one Goal's base box plus, on an execution tick, the boxes of the at
+/// most `maximum_parallel_parts` Parts it advances at once, or, on an assurance
+/// tick, its audit and verification sandbox boxes instead. That is a real bound and
 /// it is not this file's; choir-g3n.6 is precisely the change that removes it.
 /// Bounding boxes for real needs two things this repository does not have yet:
 /// a declared host memory and disk budget to derive a ceiling from, and a

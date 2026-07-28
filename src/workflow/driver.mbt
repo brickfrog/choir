@@ -108,9 +108,11 @@ pub(all) enum PartIntegrationAdmission {
 /// to the scheduler, so the caller and the daemon's sleep are talking about the
 /// same moment.
 ///
-/// Which bound refused is not carried. The gate reports that against the
-/// surface it judged — the only place that knows which surface that was — so a
-/// copy here would be one nothing reads.
+/// Which bound refused — a surface's own capacity or the global ceiling — is
+/// not recorded anywhere. The gate reports the refusal against the surface it
+/// judged, which is the only place that knows which surface that was, and the
+/// report carries that surface and the wake instant only. A copy of the bound
+/// here would be one nothing reads.
 pub(all) enum PartGoalAuthorization {
   PartGoalNotAuthorized
   PartGoalAuthorized(@storage.StateRecordPrecondition?)
@@ -586,17 +588,11 @@ async fn drive_part_workflow(
               if part_effect_is_provider_dispatch(intent) {
                 match (dependencies.goal_authorizes_new_effects)() {
                   Ok(PartGoalAuthorized(_)) => ()
-                  Ok(PartGoalNotAuthorized) =>
+                  Ok(PartGoalNotAuthorized | PartGoalDeferredUntil(_)) =>
                     return Ok({
                       snapshot,
                       store_version: Some(store_version),
                       outcome: PartRunGoalNotAuthorizing,
-                    })
-                  Ok(PartGoalDeferredUntil(instant, reason)) =>
-                    return Ok({
-                      snapshot,
-                      store_version: Some(store_version),
-                      outcome: PartRunGoalDeferredUntil(instant, reason),
                     })
                   Err(error) => return Err(error)
                 }
