@@ -1411,6 +1411,103 @@ fn manifest_finding(
 }
 
 ///|
+priv struct DocumentationRequirement {
+  file : String
+  marker : String
+  required : Array[String]
+}
+
+///|
+fn autonomy_documentation_requirements() -> Array[DocumentationRequirement] {
+  [
+    {
+      file: "docs/runbooks/troubleshooting.md",
+      marker: "`PartVerificationFailed`",
+      required: [
+        "automatically mints a fresh implementation/verification/audit revision",
+        "instead of requesting user input",
+      ],
+    },
+    {
+      file: "docs/runbooks/troubleshooting.md",
+      marker: "`PartAuditFindings`",
+      required: [
+        "automatically mints a fresh repair revision", "Conductor and user do not authorize the repair",
+      ],
+    },
+    {
+      file: "docs/runbooks/troubleshooting.md",
+      marker: "`GoalAssuranceVerificationBlocked",
+      required: [
+        "`Rejected` is repaired automatically", "must not be sent to the user for authorization",
+      ],
+    },
+    {
+      file: "docs/runbooks/troubleshooting.md",
+      marker: "`GoalAssuranceAuditBlocked",
+      required: [
+        "`AuditHasBlockingFindings` is repaired automatically", "must not be sent to the user for authorization",
+      ],
+    },
+  ]
+}
+
+///|
+fn documentation_requirement_finding(
+  requirement : DocumentationRequirement,
+  line_number : Int,
+) -> LintFinding {
+  manifest_finding(
+    requirement.file,
+    line_number,
+    "autonomy-repair-guidance",
+    "the guidance row " +
+    requirement.marker +
+    " must say that bounded repair is automatic and is not user-authorized",
+  )
+}
+
+///|
+/// Pin only the safety-critical operator decision, not whole prompt or runbook
+/// bodies. The reader is injected so tests remain hermetic and the binary is
+/// the only layer that chooses the real filesystem adapter.
+pub fn lint_autonomy_documentation(
+  read_file : (String) -> String,
+) -> Array[LintFinding] {
+  let findings : Array[LintFinding] = []
+  let documents : Map[String, String] = Map([])
+  for requirement in autonomy_documentation_requirements() {
+    let content = match documents.get(requirement.file) {
+      Some(value) => value
+      None => {
+        let value = read_file(requirement.file)
+        documents.set(requirement.file, value)
+        value
+      }
+    }
+    let mut matching_line : String? = None
+    let mut line_number = 0
+    for line in content.split("\n") {
+      line_number = line_number + 1
+      if line.contains(requirement.marker) {
+        matching_line = Some(line.to_owned())
+        break
+      }
+    }
+    match matching_line {
+      Some(line) =>
+        if requirement.required.any(fn(fragment) { !line.contains(fragment) }) {
+          findings.push(
+            documentation_requirement_finding(requirement, line_number),
+          )
+        }
+      None => findings.push(documentation_requirement_finding(requirement, 1))
+    }
+  }
+  findings
+}
+
+///|
 /// Turn the control-plane I/O boundary from a reviewed convention into a
 /// checked one: a control-plane manifest that imports a host-effect package
 /// fails the lint before the code that would use it is ever written.

@@ -47,6 +47,10 @@ fn render_finding(finding : @lint.LintFinding) -> String {
 fn main {
   let files = cli_files()
   let mut failed = false
+  for finding in @lint.lint_autonomy_documentation(@sys.read_file) {
+    @sys.write_stderr(render_finding(finding))
+    failed = true
+  }
   for file in files {
     let source = @sys.read_file(file)
     if is_package_manifest(file) {
