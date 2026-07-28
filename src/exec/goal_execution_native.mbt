@@ -2804,16 +2804,15 @@ pub(all) struct NativeProviderLeaseHold {
 priv enum NativeProviderAdmission {
   NativeProviderAdmitted(NativeProviderLeaseHold)
   /// Refused, and when to come back. Never a bare no.
-  NativeProviderDeferredUntil(Int64, @workflow.PartGoalDeferralReason)
+  NativeProviderDeferredUntil(Int64)
 }
 
 ///|
 /// Take a portfolio provider slot.
 ///
 /// Both admission gates below funnel through here, so the surface bound is
-/// decided once and a refusal is translated into a deferral reason once. A
-/// second gate that called `acquire_provider_lease` for itself would be a
-/// second bound the moment either translation drifted.
+/// decided once. A second gate that called `acquire_provider_lease` for itself
+/// would be a second bound the moment the two drifted.
 ///
 /// This is also the one place that reports what a surface did this tick, for
 /// the same reason. `observe` is what the daemon's sleep reads: a refusal that
@@ -2846,29 +2845,14 @@ fn native_provider_lease_admission(
       })
       Ok(NativeProviderAdmitted({ surface, lease_id: lease.id }))
     }
-    Ok(
-      @workflow.ProviderLeaseDecision::ProviderLeaseDeferredUntil(
-        instant,
-        limit
-      )
-    ) => {
+    Ok(@workflow.ProviderLeaseDecision::ProviderLeaseDeferredUntil(instant)) => {
       observe({
         surface,
         disposition: @workflow.ProviderSurfaceTickDisposition::ProviderSurfaceDeferredUntil(
           instant,
         ),
       })
-      Ok(
-        NativeProviderDeferredUntil(
-          instant,
-          match limit {
-            @workflow.ProviderLeaseLimit::ProviderSurfaceLimit =>
-              @workflow.PartGoalDeferralReason::PartGoalProviderSurfaceAtCapacity
-            @workflow.ProviderLeaseLimit::ProviderGlobalLimit =>
-              @workflow.PartGoalDeferralReason::PartGoalProviderGlobalCeiling
-          },
-        ),
-      )
+      Ok(NativeProviderDeferredUntil(instant))
     }
     Err(error) => Err(error)
   }
@@ -2954,10 +2938,8 @@ pub fn native_goal_effect_authorization(
           Some({ record: current.state_record }),
         ),
       )
-    Ok(NativeProviderDeferredUntil(instant, reason)) =>
-      Ok(
-        @workflow.PartGoalAuthorization::PartGoalDeferredUntil(instant, reason),
-      )
+    Ok(NativeProviderDeferredUntil(instant)) =>
+      Ok(@workflow.PartGoalAuthorization::PartGoalDeferredUntil(instant))
     Err(error) => Err(error)
   }
 }
@@ -3048,11 +3030,11 @@ pub fn native_goal_assurance_effect_admission(
       }
       Ok(None)
     }
-    Ok(NativeProviderDeferredUntil(instant, reason)) =>
+    Ok(NativeProviderDeferredUntil(instant)) =>
       Ok(
         Some(
           @workflow.GoalAssuranceTickOutcome::GoalAssuranceDeferredUntil(
-            instant, reason,
+            instant,
           ),
         ),
       )

@@ -176,12 +176,7 @@ test "a Goal audit cannot dispatch onto a surface a Part filled" {
     assurance_lease_admit(
       repository, assuring, "assurance-goal", dispatch, capacity, 3L, 2_000L, holds,
     ),
-    Some(
-      @workflow.GoalAssuranceTickOutcome::GoalAssuranceDeferredUntil(
-        2_005L,
-        @workflow.PartGoalDeferralReason::PartGoalProviderSurfaceAtCapacity,
-      ),
-    ),
+    Some(@workflow.GoalAssuranceTickOutcome::GoalAssuranceDeferredUntil(2_005L)),
   )
   // A refused attempt holds nothing, so the tick's teardown has nothing to give
   // back and the Part's slot is untouched.
@@ -304,9 +299,7 @@ test "a retried assurance tick takes the slot it already holds" {
       1_300L,
       [],
     )
-    is Some(
-      @workflow.GoalAssuranceTickOutcome::GoalAssuranceDeferredUntil(_, _)
-    ),
+    is Some(@workflow.GoalAssuranceTickOutcome::GoalAssuranceDeferredUntil(_)),
   )
   ignore(@sys.rm_rf(root))
 }
@@ -450,12 +443,7 @@ test "a refused Goal audit reports the surface it was refused on" {
       [],
       observed~,
     ),
-    Some(
-      @workflow.GoalAssuranceTickOutcome::GoalAssuranceDeferredUntil(
-        2_005L,
-        @workflow.PartGoalDeferralReason::PartGoalProviderSurfaceAtCapacity,
-      ),
-    ),
+    Some(@workflow.GoalAssuranceTickOutcome::GoalAssuranceDeferredUntil(2_005L)),
   )
   // The refusal took no slot on its way out.
   assert_eq(provider_lease_held(repository), 1)
@@ -682,10 +670,7 @@ async test "an assurance tick refused by capacity leaves the Goal assuring" {
       execute: (_, _) => fail("assuring Goal dispatched a Part"),
       assure: (_, _) => {
         Ok(
-          @workflow.GoalAssuranceTickOutcome::GoalAssuranceDeferredUntil(
-            9_000L,
-            @workflow.PartGoalDeferralReason::PartGoalProviderSurfaceAtCapacity,
-          ),
+          @workflow.GoalAssuranceTickOutcome::GoalAssuranceDeferredUntil(9_000L),
         )
       },
       finalize: (_, _) => fail("a refused Goal entered finalization"),

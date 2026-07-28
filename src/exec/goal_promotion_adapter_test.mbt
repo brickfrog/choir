@@ -413,12 +413,7 @@ async test "a promotion repair refused by a capacity bound returns its slot" {
     ),
     goal_authorizes_new_effects: fn() {
       if conflicted.val {
-        Ok(
-          @workflow.PartGoalAuthorization::PartGoalDeferredUntil(
-            9_271L,
-            @workflow.PartGoalDeferralReason::PartGoalProviderSurfaceAtCapacity,
-          ),
-        )
+        Ok(@workflow.PartGoalAuthorization::PartGoalDeferredUntil(9_271L))
       } else {
         Ok(@workflow.PartGoalAuthorization::PartGoalAuthorized(None))
       }

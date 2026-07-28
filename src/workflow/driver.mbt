@@ -99,28 +99,22 @@ pub(all) enum PartIntegrationAdmission {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-/// Why the Goal is not admitting new work right now, when the reason will
-/// clear on its own.
-pub(all) enum PartGoalDeferralReason {
-  /// The provider surface this Part runs on is serving as many Takes as the
-  /// configuration allows.
-  PartGoalProviderSurfaceAtCapacity
-  /// Every provider surface together is at the configured global ceiling.
-  PartGoalProviderGlobalCeiling
-} derive(Debug, Eq, ToJson, FromJson)
-
-///|
 /// Whether the Goal admits new provider or planner work.
 ///
-/// Three states, not two, because a refusal that carries no instant leaves the
-/// caller with nothing to do but ask again immediately. `PartGoalNotAuthorized`
-/// is a standing refusal — the Goal is over its WorkOrder budget, canceling, or
-/// no longer running — and needs the Goal itself to change.
-/// `PartGoalDeferredUntil` is a refusal that clears with time, and names when.
+/// Three states, not two. `PartGoalNotAuthorized` is a standing refusal — the
+/// Goal is over its WorkOrder budget, canceling, or no longer running — and
+/// needs the Goal itself to change. `PartGoalDeferredUntil` is a refusal that
+/// clears on its own, and names the instant the gate that made it also reported
+/// to the scheduler, so the caller and the daemon's sleep are talking about the
+/// same moment.
+///
+/// Which bound refused is not carried. The gate reports that against the
+/// surface it judged — the only place that knows which surface that was — so a
+/// copy here would be one nothing reads.
 pub(all) enum PartGoalAuthorization {
   PartGoalNotAuthorized
   PartGoalAuthorized(@storage.StateRecordPrecondition?)
-  PartGoalDeferredUntil(Int64, PartGoalDeferralReason)
+  PartGoalDeferredUntil(Int64)
 } derive(Debug, Eq)
 
 ///|
@@ -130,10 +124,12 @@ pub(all) enum PartWorkflowRunOutcome {
   PartRunAwaitingPromotion
   PartRunBlocked
   PartRunRecoveryUncertain
+  /// The Goal's admission gate refused this pass — a standing refusal, or a
+  /// capacity bound deferring it. One outcome for both, because both stop the
+  /// pass in the same place with nothing written, and the wake instant a
+  /// deferral names reaches the scheduler from the gate that named it rather
+  /// than from here.
   PartRunGoalNotAuthorizing
-  /// The Goal would admit this work but a capacity bound refused it. The
-  /// instant is when the scheduler should look again.
-  PartRunGoalDeferredUntil(Int64, PartGoalDeferralReason)
   PartRunWaitingForEffectWitness(@control.EffectId)
   PartRunPersistenceFault(
     PartPersistenceBoundary,
@@ -478,17 +474,11 @@ async fn drive_part_workflow(
         }
         let authorization_precondition = match authorizes {
           PartGoalAuthorized(value) => value
-          PartGoalNotAuthorized =>
+          PartGoalNotAuthorized | PartGoalDeferredUntil(_) =>
             return Ok({
               snapshot,
               store_version: Some(store_version),
               outcome: PartRunGoalNotAuthorizing,
-            })
-          PartGoalDeferredUntil(instant, reason) =>
-            return Ok({
-              snapshot,
-              store_version: Some(store_version),
-              outcome: PartRunGoalDeferredUntil(instant, reason),
             })
         }
         let authorized = match
@@ -749,17 +739,11 @@ async fn drive_part_workflow(
         }
         let authorization_precondition = match authorizes {
           PartGoalAuthorized(value) => value
-          PartGoalNotAuthorized =>
+          PartGoalNotAuthorized | PartGoalDeferredUntil(_) =>
             return Ok({
               snapshot,
               store_version: Some(store_version),
               outcome: PartRunGoalNotAuthorizing,
-            })
-          PartGoalDeferredUntil(instant, reason) =>
-            return Ok({
-              snapshot,
-              store_version: Some(store_version),
-              outcome: PartRunGoalDeferredUntil(instant, reason),
             })
         }
         let admission = match (dependencies.integration_admission)(snapshot) {
@@ -788,17 +772,11 @@ async fn drive_part_workflow(
         }
         let authorization_precondition = match authorizes {
           PartGoalAuthorized(value) => value
-          PartGoalNotAuthorized =>
+          PartGoalNotAuthorized | PartGoalDeferredUntil(_) =>
             return Ok({
               snapshot,
               store_version: Some(store_version),
               outcome: PartRunGoalNotAuthorizing,
-            })
-          PartGoalDeferredUntil(instant, reason) =>
-            return Ok({
-              snapshot,
-              store_version: Some(store_version),
-              outcome: PartRunGoalDeferredUntil(instant, reason),
             })
         }
         let next = match
@@ -821,17 +799,11 @@ async fn drive_part_workflow(
         }
         let authorization_precondition = match authorizes {
           PartGoalAuthorized(value) => value
-          PartGoalNotAuthorized =>
+          PartGoalNotAuthorized | PartGoalDeferredUntil(_) =>
             return Ok({
               snapshot,
               store_version: Some(store_version),
               outcome: PartRunGoalNotAuthorizing,
-            })
-          PartGoalDeferredUntil(instant, reason) =>
-            return Ok({
-              snapshot,
-              store_version: Some(store_version),
-              outcome: PartRunGoalDeferredUntil(instant, reason),
             })
         }
         let intent = match plan_next_part_effect(snapshot) {

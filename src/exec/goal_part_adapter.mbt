@@ -274,10 +274,10 @@ fn persist_bound_part_repair(
   let persisted = match authorization {
     // A deferral and a standing refusal both mean the repair is not persisted
     // on this pass. The gate itself told the tick which surface refused and
-    // when, so nothing has to be forwarded from here.
-    @workflow.PartGoalAuthorization::PartGoalDeferredUntil(_, _) =>
-      return Ok(None)
-    @workflow.PartGoalAuthorization::PartGoalNotAuthorized => return Ok(None)
+    // when, so nothing has to be forwarded from here — and with nothing to
+    // forward, one arm rather than two identical ones.
+    @workflow.PartGoalAuthorization::PartGoalDeferredUntil(_)
+    | @workflow.PartGoalAuthorization::PartGoalNotAuthorized => return Ok(None)
     @workflow.PartGoalAuthorization::PartGoalAuthorized(None) =>
       match
         @workflow.persist_part_snapshot(
@@ -396,11 +396,12 @@ async fn promote_bound_part(
     Err(error) => return Err(error)
   }
   let persisted = match authorization {
-    // A promotion the gate refused keeps the observed snapshot; the gate has
-    // already told the tick which surface refused it and when.
-    @workflow.PartGoalAuthorization::PartGoalDeferredUntil(_, _) =>
-      return Ok(scheduling_record_from_snapshot(result.snapshot))
-    @workflow.PartGoalAuthorization::PartGoalNotAuthorized =>
+    // A promotion the gate refused keeps the observed snapshot, whether the
+    // refusal was standing or a capacity deferral: the gate has already told
+    // the tick which surface refused it and when, so neither arm has anything
+    // of its own left to do.
+    @workflow.PartGoalAuthorization::PartGoalDeferredUntil(_)
+    | @workflow.PartGoalAuthorization::PartGoalNotAuthorized =>
       return Ok(scheduling_record_from_snapshot(result.snapshot))
     @workflow.PartGoalAuthorization::PartGoalAuthorized(None) =>
       match
