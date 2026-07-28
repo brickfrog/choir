@@ -109,6 +109,7 @@ test "the manifest covers every durably stored record" {
     (DurableGoalSelectionDecision, "goal-selection:"),
     (DurableProcessExecution, "process-execution:"),
     (DurableProviderSurfaceLease, "provider-lease:"),
+    (DurableGoalExecutorSchedule, "goal-executor:"),
   ]
   assert_eq(expected.length(), @workflow.durable_record_kinds().length())
   let lines = manifest_lines()

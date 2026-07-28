@@ -649,10 +649,9 @@ fn provider_capacity_authorize(
 /// The report the daemon's observer publishes: the same durable store, the
 /// same configured bounds, and what the tick just answered.
 ///
-/// The gate's answers are folded exactly as `observe_native_goal_provider_surface`
-/// folds them, because that folded observation is the one the daemon holds —
-/// one telemetry path for the scheduler's sleep and for this report rather
-/// than a second one built for reporting. Its rule shows here: a surface that
+/// The gate's answers are folded exactly as one durable Goal executor job folds
+/// them, so its due-at decision and this report read the same observation
+/// rather than two reconstructions. Its rule shows here: a surface that
 /// admitted anything reports no wake instant, because it did not need one.
 fn provider_capacity_report(
   root : String,

@@ -40,7 +40,7 @@ pub(all) enum GoalAssuranceTickOutcome {
   /// come back. Distinct from `GoalAssurancePending`, which is "the attempt is
   /// still running": nothing about this tick advanced, so the Goal stays
   /// exactly where it was. The instant is the one the gate reported against the
-  /// surface it judged, which is what the daemon paces its sleep from.
+  /// surface it judged, which becomes this Goal job's bounded next due instant.
   GoalAssuranceDeferredUntil(Int64)
 } derive(Debug, Eq)
 
@@ -71,56 +71,45 @@ fn goal_execution_transaction_persisted(
 }
 
 ///|
-fn rotate_goal_records(
-  records : Array[StoredGoalExecutionRecord],
-  after : @control.GoalId?,
-) -> Array[StoredGoalExecutionRecord] {
-  let pivot = match after {
-    None => return records
-    Some(id) => {
-      let mut found = -1
-      for index = 0; index < records.length(); index = index + 1 {
-        if records[index].record.goal.id == id {
-          found = index
-          break
-        }
-      }
-      if found < 0 {
-        return records
-      }
-      found
-    }
-  }
-  let rotated : Array[StoredGoalExecutionRecord] = []
-  for index = pivot + 1; index < records.length(); index = index + 1 {
-    rotated.push(records[index])
-  }
-  for index = 0; index <= pivot; index = index + 1 {
-    rotated.push(records[index])
-  }
-  rotated
-}
-
-///|
-/// Pick the next Goal to tick. Cancellations always run first; otherwise the
-/// scan starts just after the previously served Goal so concurrent Goals
-/// round-robin instead of the first runnable Goal starving the rest.
+/// Pick one Goal for the one-shot runner. The daemon's portfolio scheduler
+/// targets exact leased Goals; this untargeted path remains for narrow adapter
+/// tests and gives cancellation the first opportunity.
 fn runnable_goal_execution(
   records : Array[StoredGoalExecutionRecord],
-  after : @control.GoalId?,
 ) -> StoredGoalExecutionRecord? {
   for stored in records {
     if stored.record.state == GoalExecutionState::GoalExecutionCanceling {
       return Some(stored)
     }
   }
-  for stored in rotate_goal_records(records, after) {
+  for stored in records {
     match stored.record.state {
       GoalExecutionState::GoalExecutionQueued
       | GoalExecutionState::GoalExecutionRunning
       | GoalExecutionState::GoalExecutionAssuring
       | GoalExecutionState::GoalExecutionAssured => return Some(stored)
       _ => ()
+    }
+  }
+  None
+}
+
+///|
+fn runnable_goal_execution_for_goal(
+  records : Array[StoredGoalExecutionRecord],
+  goal_id : @control.GoalId,
+) -> StoredGoalExecutionRecord? {
+  for stored in records {
+    if stored.record.goal.id != goal_id {
+      continue
+    }
+    match stored.record.state {
+      GoalExecutionState::GoalExecutionQueued
+      | GoalExecutionState::GoalExecutionRunning
+      | GoalExecutionState::GoalExecutionAssuring
+      | GoalExecutionState::GoalExecutionAssured
+      | GoalExecutionState::GoalExecutionCanceling => return Some(stored)
+      _ => return None
     }
   }
   None
@@ -149,14 +138,6 @@ fn load_goal_execution_parts(
 }
 
 ///|
-/// Delay before the next Goal execution tick.
-///
-/// A tick that fails for a durable reason — a host runtime that cannot start a
-/// sandbox, a snapshot that no longer decodes — fails the same way immediately
-/// afterwards, so a fixed one-second retry spins the machine and buries the
-/// cause under a log line per second. Back off geometrically to a ceiling so a
-/// persistent failure settles into a slow poll while a transient one still
-/// recovers promptly.
 /// How long to wait between projections of durable Goal state.
 ///
 /// Publishing is otherwise bolted to the execute tick, and the tick runs a
@@ -181,6 +162,13 @@ test "observation keeps a tighter cadence only while a Goal is active" {
 }
 
 ///|
+/// Delay before the next portfolio-scheduler attempt.
+///
+/// A scheduler failure — an unavailable control store or a record that no
+/// longer decodes — fails the same way immediately afterwards, so a fixed
+/// one-second retry spins the machine and buries the cause under a log line per
+/// second. Adapter failures belong to individual durable Goal jobs and use
+/// their own retry clocks instead.
 pub fn goal_execution_tick_delay_ms(consecutive_failures : Int) -> Int {
   let base = 1000
   let ceiling = 30000
@@ -210,14 +198,14 @@ pub(all) enum ProviderSurfaceTickDisposition {
   /// Every Part that reached the gate on this surface was refused by a capacity
   /// bound. The instant is the earliest wake any of those refusals named.
   ProviderSurfaceDeferredUntil(Int64)
-} derive(Debug, Eq)
+} derive(Debug, Eq, ToJson, FromJson)
 
 ///|
 /// One provider surface's disposition for one execution tick.
 pub(all) struct ProviderSurfaceTickReport {
   surface : @control.ProviderSurfaceId
   disposition : ProviderSurfaceTickDisposition
-} derive(Debug, Eq)
+} derive(Debug, Eq, ToJson, FromJson)
 
 ///|
 /// Fold one admission-gate answer into what the tick knows about each surface.
@@ -263,134 +251,6 @@ fn merge_provider_surface_disposition(
       ProviderSurfaceAdmitted
     (ProviderSurfaceDeferredUntil(held), ProviderSurfaceDeferredUntil(next)) =>
       ProviderSurfaceDeferredUntil(if next < held { next } else { held })
-  }
-}
-
-///|
-/// The surface after `surface` in the scheduler's fixed order, or `None` at the
-/// end of it.
-///
-/// Written as a match rather than an index into a literal list so a new
-/// `@control.ProviderSurfaceId` does not compile until it is placed in the
-/// order. A surface left out of the order would be treated as permanently
-/// runnable, and no deferral could ever raise the tick delay again.
-fn provider_surface_after(
-  surface : @control.ProviderSurfaceId,
-) -> @control.ProviderSurfaceId? {
-  match surface {
-    ClaudeSubscriptionCli =>
-      Some(@control.ProviderSurfaceId::CodexSubscriptionCli)
-    CodexSubscriptionCli => None
-  }
-}
-
-///|
-/// Every provider surface the scheduler has to account for.
-fn scheduled_provider_surfaces() -> Array[@control.ProviderSurfaceId] {
-  let surfaces : Array[@control.ProviderSurfaceId] = []
-  let mut cursor : @control.ProviderSurfaceId? = Some(
-    @control.ProviderSurfaceId::ClaudeSubscriptionCli,
-  )
-  for ;; {
-    match cursor {
-      None => break
-      Some(surface) => {
-        surfaces.push(surface)
-        cursor = provider_surface_after(surface)
-      }
-    }
-  }
-  surfaces
-}
-
-///|
-/// The instant a refusal on this surface named, or `None` if the tick got work
-/// onto it or never asked for it.
-///
-/// A surface the tick never asked for is runnable: no Part reached the gate on
-/// it, which says nothing about whether the Goal served next tick could. An
-/// instant that has already passed is not filtered out here — the caller turns
-/// it into a wait, and a wait that is not positive leaves the base delay
-/// standing.
-fn provider_surface_deferred_until(
-  reports : Array[ProviderSurfaceTickReport],
-  surface : @control.ProviderSurfaceId,
-) -> Int64? {
-  for report in reports {
-    if report.surface != surface {
-      continue
-    }
-    match report.disposition {
-      ProviderSurfaceAdmitted => return None
-      ProviderSurfaceDeferredUntil(instant) => return Some(instant)
-    }
-  }
-  None
-}
-
-///|
-/// The earliest instant to wake at when no provider surface can serve anything
-/// sooner.
-///
-/// `None` — something is still runnable — is the ordinary answer, including
-/// when a surface was refused: one surface at capacity says nothing about the
-/// other, and the Goals that would run there must not wait behind it.
-fn provider_surfaces_deferred_until(
-  reports : Array[ProviderSurfaceTickReport],
-) -> Int64? {
-  let mut earliest : Int64? = None
-  for surface in scheduled_provider_surfaces() {
-    match provider_surface_deferred_until(reports, surface) {
-      None => return None
-      Some(instant) =>
-        earliest = match earliest {
-          Some(held) => Some(if instant < held { instant } else { held })
-          None => Some(instant)
-        }
-    }
-  }
-  earliest
-}
-
-///|
-/// How long to wait before the next tick, given what the tick that just ran
-/// learned about each provider surface.
-///
-/// Waking earlier than the instant a capacity bound named is a poll: nothing
-/// frees a provider slot because the scheduler asked again. But one tick serves
-/// one Goal — `runnable_goal_execution` picks a single record and rotates — so
-/// this sleep is also how long every other Goal waits for its turn. Raising it
-/// for any refusal parks every other Goal and every other surface behind one
-/// surface's queue, which is the opposite of what the refusal asked for.
-///
-/// So the instant applies only when every surface in
-/// `scheduled_provider_surfaces` has a standing refusal and none of them
-/// admitted anything. A surface that let a Part through is running work; a
-/// surface the tick never asked for is free for the Goal the next tick serves.
-/// The deferral raises the delay rather than replacing it, so a failing tick
-/// still backs off, and the same ceiling applies so a refusal a long way out
-/// cannot stop the worker noticing a Goal that has become runnable.
-///
-/// The instants in `reports` and `now` are epoch seconds, which is the unit the
-/// admission gate works in; the result is milliseconds, which is the unit the
-/// daemon sleeps in.
-pub fn goal_execution_tick_delay_ms_with_deferral(
-  consecutive_failures : Int,
-  reports : Array[ProviderSurfaceTickReport],
-  now : Int64,
-) -> Int {
-  let base = goal_execution_tick_delay_ms(consecutive_failures)
-  let instant = match provider_surfaces_deferred_until(reports) {
-    None => return base
-    Some(value) => value
-  }
-  let ceiling = 30000L
-  let wait = (instant - now) * 1000L
-  let bounded = if wait > ceiling { ceiling } else { wait }
-  if bounded > base.to_int64() {
-    bounded.to_int()
-  } else {
-    base
   }
 }
 
@@ -622,14 +482,18 @@ pub async fn run_next_goal_execution_tick(
   repository_adapters : PartWorkflowRepositoryAdapters,
   runner_adapters : GoalExecutionRunnerAdapters,
   fencing_epoch? : @control.FencingEpoch = @control.FencingEpoch(1L),
-  after? : @control.GoalId? = None,
+  goal_id? : @control.GoalId? = None,
 ) -> Result[GoalExecutionTickResult, @types.ChoirError] {
   let listed = match
     list_goal_execution_records(repository, repository_adapters) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let candidate = match runnable_goal_execution(listed, after) {
+  let selected_candidate = match goal_id {
+    Some(id) => runnable_goal_execution_for_goal(listed, id)
+    None => runnable_goal_execution(listed)
+  }
+  let candidate = match selected_candidate {
     Some(value) => value
     None => return Ok(GoalExecutionTickResult::GoalExecutionTickIdle)
   }

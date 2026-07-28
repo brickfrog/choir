@@ -2364,6 +2364,42 @@ async test "Goal finalization input request and answer survive restart" {
       fault_point: None,
     }).unwrap(),
   )
+  // Merge observation is finalization work, not provider work. Pin the runner
+  // boundary directly: an assured Goal waiting on its finalizer must not enter
+  // either provider-capable adapter, and a pending observation leaves it due
+  // for another ordinary Goal job.
+  let provider_path_called = @ref.new(false)
+  let waiting = @workflow.run_next_goal_execution_tick(
+    repository,
+    adapters,
+    {
+      initialize: _ => fail("assured Goal initialized"),
+      execute: (_, _) => {
+        provider_path_called.val = true
+        fail("merge wait executed Parts")
+      },
+      assure: (_, _) => {
+        provider_path_called.val = true
+        fail("merge wait repeated assurance")
+      },
+      finalize: (_, _) => {
+        Ok(@workflow.GoalFinalizationTickOutcome::GoalFinalizationPending)
+      },
+      cancel: (_, _) => fail("merge wait entered cancellation"),
+    },
+    goal_id=Some(execution.goal.id),
+  ).unwrap()
+  assert_false(provider_path_called.val)
+  guard waiting
+    is @workflow.GoalExecutionTickResult::GoalExecutionTickAdvanced(
+      waiting_record
+    ) else {
+    fail("merge wait did not return its Goal")
+  }
+  assert_eq(
+    waiting_record.state,
+    @workflow.GoalExecutionState::GoalExecutionAssured,
+  )
   let tick = @workflow.run_next_goal_execution_tick(repository, adapters, {
     initialize: _ => fail("assured Goal initialized"),
     execute: (_, _) => fail("answered Goal executed Parts"),

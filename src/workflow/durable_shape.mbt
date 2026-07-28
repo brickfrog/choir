@@ -50,11 +50,11 @@
 /// it. What proves it instead is `assert_manifest_names_stored_keys`, which
 /// compares the manifest's keys for a type against the keys a record the
 /// workflow itself produced actually serializes, and it is called wherever the
-/// suite already builds an instance with every option populated. Eight of the
-/// eleven `DurableRecordKind` types are covered that way: `PartWorkflowSnapshot`,
+/// suite already builds an instance with every option populated. Nine of the
+/// twelve `DurableRecordKind` types are covered that way: `PartWorkflowSnapshot`,
 /// `GoalExecutionRecord`, `GoalAssuranceRecord`, `GoalFinalizationRecord`,
 /// `GoalPublicationRecord`, `GoalPullRequestRecord`, `GoalSelectionDecision`,
-/// and `ProviderSurfaceLeaseRecord`.
+/// `ProviderSurfaceLeaseRecord`, and `GoalExecutorScheduleRecord`.
 ///
 /// `PartEffectWitness`, `GoalAssuranceEffectWitness`, and `ProcessExecution`
 /// are not, because no test drives one to a maximal instance; for those three,
@@ -3679,6 +3679,75 @@ let durable_shape_provider_surface_lease_record : ProviderSurfaceLeaseRecord = {
 }
 
 ///|
+let durable_shapes_goal_execution_job_lane : Array[GoalExecutionJobLane] = [
+  GoalExecutionJobLane::GoalExecutionProgressLane,
+  GoalExecutionJobLane::GoalExecutionCancellationLane,
+]
+
+///|
+/// Exhaustive: a new variant does not compile until it is listed here and in
+/// the array above.
+fn durable_guard_goal_execution_job_lane(
+  value : GoalExecutionJobLane,
+) -> GoalExecutionJobLane {
+  match value {
+    GoalExecutionProgressLane | GoalExecutionCancellationLane => value
+  }
+}
+
+///|
+let durable_shape_goal_execution_job_id : GoalExecutionJobId = goal_execution_job_id(
+  durable_shape_goal_id,
+)
+
+///|
+let durable_shape_goal_executor_lease_id : GoalExecutorLeaseId = GoalExecutorLeaseId(
+  "",
+)
+
+///|
+let durable_shape_goal_executor_lease : GoalExecutorLease = {
+  id: GoalExecutorLeaseId("lease"),
+  job_id: durable_shape_goal_execution_job_id,
+  goal_id: durable_shape_goal_id,
+  slot: 0,
+  dispatch_sequence: 1L,
+  fencing_epoch: durable_shape_fencing_epoch,
+  acquired_at: 0L,
+}
+
+///|
+let durable_shape_provider_surface_tick_report : ProviderSurfaceTickReport = {
+  surface: durable_shapes_provider_surface_id[0],
+  disposition: ProviderSurfaceTickDisposition::ProviderSurfaceDeferredUntil(0L),
+}
+
+///|
+let durable_shape_goal_execution_job : GoalExecutionJob = {
+  id: durable_shape_goal_execution_job_id,
+  goal_id: durable_shape_goal_id,
+  lane: durable_shapes_goal_execution_job_lane[0],
+  due_at: 0L,
+  consecutive_failures: 0,
+  last_failure_digest: Some(durable_shape_digest),
+  last_dispatch_sequence: 1L,
+  last_completed_lease_id: Some(durable_shape_goal_executor_lease_id),
+  last_goal_durable_version: Some(0),
+  ticks_without_progress: 0,
+  provider_reports: [durable_shape_provider_surface_tick_report],
+  lease: Some(durable_shape_goal_executor_lease),
+}
+
+///|
+let durable_shape_goal_executor_schedule_record : GoalExecutorScheduleRecord = {
+  jobs: [durable_shape_goal_execution_job],
+  next_dispatch_sequence: 2L,
+  next_lane: durable_shapes_goal_execution_job_lane[0],
+  durable_version: 1,
+  fencing_epoch: durable_shape_fencing_epoch,
+}
+
+///|
 /// Every type that reaches a durable record, paired with the serialized form
 /// of each shape it can take. Sorted by name at use so that moving a
 /// declaration in this file does not move the generation.
@@ -3909,6 +3978,16 @@ fn durable_shape_table() -> Array[DurableShapeEntry] {
     durable_shape_entry("GoalExecutionRecord", [
       durable_shape_goal_execution_record,
     ]),
+    durable_shape_entry("GoalExecutionJob", [durable_shape_goal_execution_job]),
+    durable_shape_entry("GoalExecutionJobId", [
+      durable_shape_goal_execution_job_id,
+    ]),
+    durable_shape_entry(
+      "GoalExecutionJobLane",
+      durable_shapes_goal_execution_job_lane.map(
+        durable_guard_goal_execution_job_lane,
+      ),
+    ),
     durable_shape_entry(
       "GoalExecutionState",
       durable_shapes_goal_execution_state.map(
@@ -4182,6 +4261,20 @@ fn durable_shape_table() -> Array[DurableShapeEntry] {
     ]),
     durable_shape_entry("PromotionCommit", [durable_shape_promotion_commit]),
     durable_shape_entry("ProviderLease", [durable_shape_provider_lease]),
+    durable_shape_entry("GoalExecutorLease", [durable_shape_goal_executor_lease]),
+    durable_shape_entry("GoalExecutorLeaseId", [
+      durable_shape_goal_executor_lease_id,
+    ]),
+    durable_shape_entry("GoalExecutorScheduleRecord", [
+      durable_shape_goal_executor_schedule_record,
+    ]),
+    durable_shape_entry("ProviderSurfaceTickReport", [
+      durable_shape_provider_surface_tick_report,
+    ]),
+    durable_shape_entry("ProviderSurfaceTickDisposition", [
+      ProviderSurfaceTickDisposition::ProviderSurfaceAdmitted,
+      ProviderSurfaceTickDisposition::ProviderSurfaceDeferredUntil(0L),
+    ]),
     durable_shape_entry("ProviderSurfaceLeaseRecord", [
       durable_shape_provider_surface_lease_record,
     ]),

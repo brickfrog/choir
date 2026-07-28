@@ -43,6 +43,8 @@ pub(all) enum ArtifactProvenance {
   /// The held-lease set of one provider surface. Portfolio-wide rather than
   /// per Goal, so it names no Goal.
   ArtifactProviderSurfaceLease
+  /// The portfolio's per-Goal jobs and bounded executor held set.
+  ArtifactGoalExecutorSchedule
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|

@@ -4,6 +4,7 @@ async fn create_native_goal_assurance_runtime(
   execution : @workflow.GoalExecutionRecord,
   git : NativeGoalRepositoryIdentity,
   assurance : @workflow.GoalAssuranceRecord,
+  executor_slot : Int,
 ) -> Result[NativePartEffectRuntime, @types.ChoirError] {
   let runtime_key = native_goal_runtime_key(
     execution.repository_id,
@@ -17,7 +18,8 @@ async fn create_native_goal_assurance_runtime(
     @sys.realpath_native(runtime_root) != Some(runtime_root) {
     return Err(native_goal_execution_error("runtime root is unavailable"))
   }
-  let server_config = match native_goal_boxlite_server_config(execution) {
+  let server_config = match
+    native_goal_boxlite_server_config(execution, executor_slot~) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -629,9 +631,12 @@ async fn execute_native_goal_assurance_effect_once(
   git : NativeGoalRepositoryIdentity,
   record : @workflow.GoalAssuranceRecord,
   intent : @workflow.GoalAssuranceEffectIntent,
+  executor_slot : Int,
 ) -> Result[@workflow.GoalAssuranceEffectObservation, @types.ChoirError] {
   let runtime = match
-    create_native_goal_assurance_runtime(repository, execution, git, record) {
+    create_native_goal_assurance_runtime(
+      repository, execution, git, record, executor_slot,
+    ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -663,9 +668,12 @@ async fn reconcile_native_goal_processes_once(
   git : NativeGoalRepositoryIdentity,
   record : @workflow.GoalAssuranceRecord,
   intent : @workflow.GoalAssuranceEffectIntent,
+  executor_slot : Int,
 ) -> Result[Bool, @types.ChoirError] {
   let runtime = match
-    create_native_goal_assurance_runtime(repository, execution, git, record) {
+    create_native_goal_assurance_runtime(
+      repository, execution, git, record, executor_slot,
+    ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }

@@ -12,6 +12,7 @@ import {
   "choir/src/workflow",
   "moonbitlang/core/env",
   "moonbitlang/core/json",
+  "moonbitlang/core/ref",
   "moonbitlang/core/string",
   "moonbitlang/async",
   "moonbitlang/core/debug",

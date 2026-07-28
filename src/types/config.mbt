@@ -41,6 +41,41 @@ pub(all) struct ProviderCapacityPolicy {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+/// How many Goal executor jobs this daemon may keep in flight.
+///
+/// A Goal executor owns one bounded execution tick. The tick may spend most of
+/// an hour inside a provider Take, so this is deliberately independent from
+/// provider capacity: the provider policy bounds subscription sessions, while
+/// this policy bounds concurrent Goal runtimes and their BoxLite servers.
+pub(all) struct GoalExecutorCapacityPolicy {
+  maximum_parallel_jobs : Int
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub fn maximum_goal_executor_jobs() -> Int {
+  1024
+}
+
+///|
+/// Executor slots become BoxLite ports in the native host adapter. Keep the
+/// configured range both positive and within the durable slot/port domain
+/// before the daemon can launch it. The deliberately small default is the
+/// ordinary host-capacity protection; larger explicit values are operator
+/// policy.
+pub fn validate_goal_executor_capacity_policy(
+  policy : GoalExecutorCapacityPolicy,
+) -> Result[Unit, ChoirError] {
+  if policy.maximum_parallel_jobs <= 0 ||
+    policy.maximum_parallel_jobs > maximum_goal_executor_jobs() {
+    Err(
+      ChoirError::validation_error("capacity.goals must be between 1 and 1024"),
+    )
+  } else {
+    Ok(())
+  }
+}
+
+///|
 /// Reject a capacity policy that cannot admit work.
 ///
 /// A non-positive bound is not "unlimited", it is a daemon that never
@@ -71,6 +106,7 @@ pub(all) struct Config {
   listen_uds : String
   pull_request_delivery : PullRequestDeliveryPolicy
   provider_capacity : ProviderCapacityPolicy
+  goal_executor_capacity : GoalExecutorCapacityPolicy
 } derive(Debug, Eq)
 
 ///|
@@ -93,5 +129,9 @@ pub fn Config::default() -> Config {
       codex_subscription_cli: 4,
       global_execution_ceiling: None,
     },
+    // Four Goal runtimes can advance independently without turning a newly
+    // accepted portfolio into an unbounded number of BoxLite servers. Provider
+    // leases remain the tighter bound whenever these jobs reach a subscription.
+    goal_executor_capacity: { maximum_parallel_jobs: 4 },
   }
 }

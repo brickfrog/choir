@@ -995,11 +995,16 @@ fn conductor_goal_report(
   config : @types.Config,
   goal_id : @control.GoalId,
 ) -> Result[@workflow.GoalStatusReport, @types.ChoirError] {
+  let surface_reports = match
+    @exec.native_goal_executor_provider_reports(config.project_dir, goal_id) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
   @exec.inspect_native_goal(
     config.project_dir,
     goal_id,
     provider_capacity=Some(config.provider_capacity),
-    surface_reports=@exec.native_goal_provider_surface_reports(),
+    surface_reports~,
   )
 }
 
@@ -1029,160 +1034,277 @@ async fn conductor_goal_observer(config : @types.Config) -> Unit {
 }
 
 ///|
-async fn conductor_goal_loop(config : @types.Config) -> Unit {
-  let mut consecutive_failures = 0
-  // A Goal whose ticks succeed while advancing nothing looks identical to one
-  // that is working. Track the durable version the last advance reported so a
-  // run of ticks that changes nothing is reported instead of staying silent.
-  let mut ticks_without_progress = 0
-  let mut last_progress = ""
-  for ;; {
-    match
-      @exec.run_native_goal_execution_tick(
-        config.project_dir,
-        pull_request_delivery=config.pull_request_delivery,
-        provider_capacity=config.provider_capacity,
-      ) {
-      Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickIdle) => {
-        if @workflow.goal_execution_tick_failure_is_persistent(
-            consecutive_failures,
-          ) {
-          match
-            conductor_publish_goal_worker_health(
-              true, 0, "Goal execution ticks recovered",
-            ) {
-            Ok(_) => ()
-            Err(error) =>
-              @moontrace.error("Goal worker recovery delivery failed", fields=[
-                @moontrace.field("error", error),
-              ])
-          }
-        }
-        consecutive_failures = 0
+fn conductor_publish_goal_record(
+  config : @types.Config,
+  record : @workflow.GoalExecutionRecord,
+) -> Unit {
+  @moontrace.info("Goal execution advanced", fields=[
+    @moontrace.field("goal_id", record.goal.id.0),
+    @moontrace.field("state", record.state.to_json().stringify(indent=0)),
+  ])
+  match conductor_goal_report(config, record.goal.id) {
+    Ok(report) => {
+      match @workflow.goal_report_attention_summary(report) {
+        Some(summary) =>
+          @moontrace.error("Goal needs attention", fields=[
+            @moontrace.field("goal_id", record.goal.id.0),
+            @moontrace.field(
+              "state",
+              record.state.to_json().stringify(indent=0),
+            ),
+            @moontrace.field("cause", summary),
+          ])
+        None => ()
       }
-      Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickAdvanced(record)) => {
-        if @workflow.goal_execution_tick_failure_is_persistent(
-            consecutive_failures,
-          ) {
-          match
-            conductor_publish_goal_worker_health(
-              true, 0, "Goal execution ticks recovered",
-            ) {
-            Ok(_) => ()
-            Err(error) =>
-              @moontrace.error("Goal worker recovery delivery failed", fields=[
-                @moontrace.field("error", error),
-              ])
-          }
-        }
-        consecutive_failures = 0
-        let progress = record.goal.id.0 +
-          "@" +
-          record.durable_version.to_string()
-        if progress == last_progress {
-          ticks_without_progress = ticks_without_progress + 1
-          if @workflow.goal_execution_tick_stall_is_reportable(
-              ticks_without_progress,
-            ) {
-            @moontrace.error("Goal execution is not advancing", fields=[
-              @moontrace.field("goal_id", record.goal.id.0),
-              @moontrace.field(
-                "durable_version",
-                record.durable_version.to_string(),
-              ),
-              @moontrace.field(
-                "ticks_without_progress",
-                ticks_without_progress.to_string(),
-              ),
-            ])
-          }
-        } else {
-          ticks_without_progress = 0
-          last_progress = progress
-        }
-        @moontrace.info("Goal execution advanced", fields=[
+      match conductor_publish_goal_update(report) {
+        Ok(_) => ()
+        Err(error) =>
+          @moontrace.error("Goal update delivery failed", fields=[
+            @moontrace.field("goal_id", record.goal.id.0),
+            @moontrace.field("error", error),
+          ])
+      }
+    }
+    Err(error) =>
+      @moontrace.error("Goal update projection failed", fields=[
+        @moontrace.field("goal_id", record.goal.id.0),
+        @moontrace.field("error", error.message()),
+      ])
+  }
+}
+
+///|
+/// Execute and settle one durably leased Goal without owning the portfolio
+/// loop. Every invocation has its own retry and provider-deferral observation.
+async fn conductor_run_leased_goal_job(
+  config : @types.Config,
+  lease : @workflow.GoalExecutorLease,
+) -> Unit {
+  let observed = @exec.run_native_goal_execution_job(
+    config.project_dir,
+    lease,
+    pull_request_delivery=config.pull_request_delivery,
+    provider_capacity=config.provider_capacity,
+  )
+  let outcome = match observed.0 {
+    Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickIdle) =>
+      @workflow.GoalExecutionJobTickOutcome::GoalExecutionJobTickSucceeded(
+        None,
+        observed.1,
+      )
+    Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickAdvanced(record)) =>
+      @workflow.GoalExecutionJobTickOutcome::GoalExecutionJobTickSucceeded(
+        Some(record.durable_version),
+        observed.1,
+      )
+    Err(error) =>
+      @workflow.GoalExecutionJobTickOutcome::GoalExecutionJobTickFailed(
+        @workflow.goal_execution_job_failure_digest(error),
+        observed.1,
+      )
+  }
+  let completed = match
+    @exec.complete_native_goal_executor_dispatch(
+      config.project_dir,
+      lease,
+      outcome,
+    ) {
+    Ok(value) => value
+    Err(error) => {
+      // A worker that cannot durably return an executor slot cannot safely
+      // schedule around it. Restart under a new fence so adoption reclaims the
+      // orphan instead of leaving portfolio capacity silently reduced.
+      @moontrace.error("Goal executor lease release failed", fields=[
+        @moontrace.field("goal_id", lease.goal_id.0),
+        @moontrace.field("error", error.message()),
+      ])
+      @sys.exit(1)
+      return
+    }
+  }
+  match observed.0 {
+    Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickAdvanced(record)) => {
+      if @workflow.goal_execution_tick_stall_is_reportable(
+          completed.ticks_without_progress,
+        ) {
+        @moontrace.error("Goal execution is not advancing", fields=[
           @moontrace.field("goal_id", record.goal.id.0),
-          @moontrace.field("state", record.state.to_json().stringify(indent=0)),
+          @moontrace.field(
+            "durable_version",
+            record.durable_version.to_string(),
+          ),
+          @moontrace.field(
+            "ticks_without_progress",
+            completed.ticks_without_progress.to_string(),
+          ),
         ])
-        match conductor_goal_report(config, record.goal.id) {
-          Ok(report) => {
-            match @workflow.goal_report_attention_summary(report) {
-              Some(summary) =>
-                @moontrace.error("Goal needs attention", fields=[
-                  @moontrace.field("goal_id", record.goal.id.0),
-                  @moontrace.field(
-                    "state",
-                    record.state.to_json().stringify(indent=0),
-                  ),
-                  @moontrace.field("cause", summary),
-                ])
-              None => ()
-            }
-            match conductor_publish_goal_update(report) {
+      }
+      conductor_publish_goal_record(config, record)
+    }
+    Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickIdle) => ()
+    Err(error) =>
+      if @workflow.goal_execution_tick_failure_is_persistent(
+          completed.consecutive_failures,
+        ) {
+        @moontrace.error("Goal execution is not advancing", fields=[
+          @moontrace.field("goal_id", lease.goal_id.0),
+          @moontrace.field("error", error.message()),
+          @moontrace.field(
+            "consecutive_failures",
+            completed.consecutive_failures.to_string(),
+          ),
+          @moontrace.field("due_at", completed.due_at.to_string()),
+        ])
+      } else {
+        @moontrace.error("Goal execution job failed", fields=[
+          @moontrace.field("goal_id", lease.goal_id.0),
+          @moontrace.field("error", error.message()),
+          @moontrace.field(
+            "consecutive_failures",
+            completed.consecutive_failures.to_string(),
+          ),
+          @moontrace.field("due_at", completed.due_at.to_string()),
+        ])
+      }
+  }
+}
+
+///|
+fn conductor_launch_goal_executor_batch(
+  group : @async.TaskGroup[Unit],
+  config : @types.Config,
+  leases : Array[@workflow.GoalExecutorLease],
+  run : async (@types.Config, @workflow.GoalExecutorLease) -> Unit,
+) -> Unit {
+  for lease in leases {
+    @moontrace.info("Goal executor leased", fields=[
+      @moontrace.field("goal_id", lease.goal_id.0),
+      @moontrace.field("slot", lease.slot.to_string()),
+    ])
+    group.spawn_bg(async fn() { run(config, lease) })
+  }
+}
+
+///|
+/// Plan portfolio work and launch each leased Goal as an independent
+/// background task. The task group lives for the worker process, so an
+/// hour-long Take does not make the scheduler wait before leasing another Goal.
+async fn conductor_goal_scheduler_loop(config : @types.Config) -> Unit {
+  @async.with_task_group(async fn(group) {
+    let mut consecutive_failures = 0
+    for ;; {
+      match
+        @exec.plan_native_goal_executor_dispatches(
+          config.project_dir,
+          config.goal_executor_capacity,
+        ) {
+        Ok(batch) => {
+          if @workflow.goal_execution_tick_failure_is_persistent(
+              consecutive_failures,
+            ) {
+            match
+              conductor_publish_goal_worker_health(
+                true, 0, "Goal portfolio scheduling recovered",
+              ) {
               Ok(_) => ()
               Err(error) =>
-                @moontrace.error("Goal update delivery failed", fields=[
-                  @moontrace.field("goal_id", record.goal.id.0),
+                @moontrace.error("Goal worker recovery delivery failed", fields=[
                   @moontrace.field("error", error),
                 ])
             }
           }
-          Err(error) =>
-            @moontrace.error("Goal update projection failed", fields=[
-              @moontrace.field("goal_id", record.goal.id.0),
-              @moontrace.field("error", error.message()),
-            ])
+          consecutive_failures = 0
+          conductor_launch_goal_executor_batch(
+            group,
+            config,
+            batch.leases,
+            conductor_run_leased_goal_job,
+          )
         }
-      }
-      Err(error) => {
-        consecutive_failures = consecutive_failures + 1
-        let error_message = error.message()
-        if @workflow.goal_execution_tick_failure_should_notify(
-            consecutive_failures,
-          ) {
-          match
-            conductor_publish_goal_worker_health(
-              false, consecutive_failures, error_message,
+        Err(error) => {
+          consecutive_failures = consecutive_failures + 1
+          let detail = error.message()
+          if @workflow.goal_execution_tick_failure_should_notify(
+              consecutive_failures,
             ) {
-            Ok(_) => ()
-            Err(delivery_error) =>
-              @moontrace.error("Goal worker health delivery failed", fields=[
-                @moontrace.field("error", delivery_error),
-              ])
+            ignore(
+              conductor_publish_goal_worker_health(
+                false, consecutive_failures, detail,
+              ),
+            )
           }
-        }
-        // A tick that keeps failing is a Goal that is not advancing. Report the
-        // run of failures, not just the latest one, so a standing stall is
-        // distinguishable from a passing error in the log.
-        if @workflow.goal_execution_tick_failure_is_persistent(
-            consecutive_failures,
-          ) {
-          @moontrace.error("Goal execution is not advancing", fields=[
-            @moontrace.field("error", error_message),
+          @moontrace.error("Goal portfolio scheduling failed", fields=[
+            @moontrace.field("error", detail),
             @moontrace.field(
               "consecutive_failures",
               consecutive_failures.to_string(),
             ),
           ])
-        } else {
-          @moontrace.error("Goal execution tick failed", fields=[
-            @moontrace.field("error", error_message),
-          ])
         }
       }
+      @async.sleep(@workflow.goal_execution_tick_delay_ms(consecutive_failures))
     }
-    // A tick that a provider capacity bound refused knows when a slot could
-    // free. Waiting for that instant is the difference between a scheduled
-    // wake and a spin against a full surface — but only when no surface can
-    // serve anything sooner, which is what the per-surface report decides.
-    @async.sleep(
-      @workflow.goal_execution_tick_delay_ms_with_deferral(
-        consecutive_failures,
-        @exec.native_goal_provider_surface_reports(),
-        @env.now().reinterpret_as_int64() / 1000L,
-      ),
-    )
+  })
+}
+
+///|
+async test "a slow leased Goal does not block another leased Goal" {
+  let epoch = @control.FencingEpoch(1L)
+  let goal_a = @control.GoalId("latch-goal-a")
+  let goal_b = @control.GoalId("latch-goal-b")
+  let lease = fn(
+    goal_id : @control.GoalId,
+    slot : Int,
+    sequence : Int64,
+  ) -> @workflow.GoalExecutorLease {
+    {
+      id: @workflow.GoalExecutorLeaseId("latch-lease-" + sequence.to_string()),
+      job_id: @workflow.goal_execution_job_id(goal_id),
+      goal_id,
+      slot,
+      dispatch_sequence: sequence,
+      fencing_epoch: epoch,
+      acquired_at: 1L,
+    }
   }
+  let a_open = @ref.new(false)
+  let b_advanced = @ref.new(false)
+  let release_a = @ref.new(false)
+  @async.with_task_group(async fn(group) {
+    conductor_launch_goal_executor_batch(
+      group,
+      @types.Config::default(),
+      [lease(goal_a, 0, 1L), lease(goal_b, 1, 2L)],
+      async fn(_, held) {
+        if held.goal_id == goal_a {
+          a_open.val = true
+          while !release_a.val {
+            @async.sleep(1)
+          }
+        } else {
+          let mut polls = 0
+          while !a_open.val && polls < 100 {
+            polls = polls + 1
+            @async.sleep(1)
+          }
+          b_advanced.val = a_open.val
+          release_a.val = true
+        }
+      },
+    )
+    let mut polls = 0
+    while !b_advanced.val && polls < 100 {
+      polls = polls + 1
+      @async.sleep(1)
+    }
+    let observed_a_open = a_open.val
+    let observed_b_advanced = b_advanced.val
+    // Always let the slow task return before asserting, so a broken dispatcher
+    // fails this test instead of leaving the task group latched forever.
+    release_a.val = true
+    assert_true(observed_a_open)
+    assert_true(observed_b_advanced)
+  })
 }
 
 ///|
@@ -1309,7 +1431,7 @@ fn goal_worker_run() -> Unit {
   @async.run_async_main(async fn() {
     @async.with_task_group(async fn(group) {
       group.spawn_bg(async fn() { conductor_goal_observer(config) })
-      conductor_goal_loop(config)
+      conductor_goal_scheduler_loop(config)
     })
   })
 }

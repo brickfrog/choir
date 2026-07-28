@@ -10,8 +10,8 @@
 /// surface's own held set after reclamation, which is the exact quantity
 /// `plan_provider_lease_acquisition` compares against the bound, and the
 /// deferral instant is the one the gate named — carried through
-/// `ProviderSurfaceTickReport`, the same observation the daemon paces its
-/// sleep with.
+/// `ProviderSurfaceTickReport`, the same observation the durable Goal job uses
+/// to choose only that Goal's next due instant.
 
 ///|
 /// One provider surface's admission state as of the report that carries it.
@@ -67,6 +67,62 @@ fn provider_surface_is_pressured(
 }
 
 ///|
+/// The surface after `surface` in the report's fixed order, or `None` at the
+/// end of it.
+///
+/// Keeping the order exhaustive over the enum means adding a provider surface
+/// cannot silently omit it from operator reports.
+fn reported_provider_surface_after(
+  surface : @control.ProviderSurfaceId,
+) -> @control.ProviderSurfaceId? {
+  match surface {
+    ClaudeSubscriptionCli =>
+      Some(@control.ProviderSurfaceId::CodexSubscriptionCli)
+    CodexSubscriptionCli => None
+  }
+}
+
+///|
+/// Every provider surface represented by the capacity report.
+fn reported_provider_surfaces() -> Array[@control.ProviderSurfaceId] {
+  let surfaces : Array[@control.ProviderSurfaceId] = []
+  let mut cursor : @control.ProviderSurfaceId? = Some(
+    @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+  )
+  for ;; {
+    match cursor {
+      None => break
+      Some(surface) => {
+        surfaces.push(surface)
+        cursor = reported_provider_surface_after(surface)
+      }
+    }
+  }
+  surfaces
+}
+
+///|
+/// The deferral named for `surface` by this Goal's latest execution attempt.
+///
+/// An admitted observation dominates during report folding, so at most one
+/// report exists per surface.
+fn reported_provider_surface_deferred_until(
+  reports : Array[ProviderSurfaceTickReport],
+  surface : @control.ProviderSurfaceId,
+) -> Int64? {
+  for report in reports {
+    if report.surface != surface {
+      continue
+    }
+    match report.disposition {
+      ProviderSurfaceAdmitted => return None
+      ProviderSurfaceDeferredUntil(instant) => return Some(instant)
+    }
+  }
+  None
+}
+
+///|
 /// Project every scheduled surface's admission state.
 ///
 /// Every surface appears, including the quiet ones: a surface missing from the
@@ -75,7 +131,7 @@ fn provider_surface_is_pressured(
 fn provider_surface_capacity_statuses(
   observation : ProviderCapacityObservation,
 ) -> Array[ProviderSurfaceCapacityStatus] {
-  scheduled_provider_surfaces().map(fn(surface) {
+  reported_provider_surfaces().map(fn(surface) {
     let mut held = 0
     for record in observation.lease_records {
       if record.surface == surface {
@@ -90,7 +146,7 @@ fn provider_surface_capacity_statuses(
       surface,
       held,
       capacity: provider_surface_capacity(observation.policy, surface),
-      deferred_until: provider_surface_deferred_until(
+      deferred_until: reported_provider_surface_deferred_until(
         observation.tick_reports,
         surface,
       ),

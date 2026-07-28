@@ -103,156 +103,6 @@ fn native_goal_max_snapshot_bytes() -> Int {
 let native_goal_fencing_epoch_state : Ref[Int64] = Ref(1L)
 
 ///|
-/// Goal id served by the previous execution tick. The runner starts its scan
-/// just after this Goal so concurrent Goals round-robin instead of the first
-/// runnable Goal starving the rest. In-memory only: a worker restart merely
-/// restarts the rotation.
-let native_goal_rotation_state : Ref[@control.GoalId?] = Ref(None)
-
-///|
-/// What the Goal admission gate answered per provider surface during the last
-/// execution tick. In-memory only: it describes the tick that just ran, and a
-/// restart simply re-observes it.
-let native_goal_provider_surface_state : Ref[
-  Array[@workflow.ProviderSurfaceTickReport],
-] = Ref([])
-
-///|
-/// Forget the previous tick's surface dispositions.
-///
-/// Called at the start of every tick, so what the daemon reads afterwards
-/// describes that tick alone rather than accumulating refusals whose instants
-/// have long since passed.
-fn reset_native_goal_provider_surfaces() -> Unit {
-  native_goal_provider_surface_state.val = []
-}
-
-///|
-/// Record one admission-gate answer against the surface it judged.
-fn observe_native_goal_provider_surface(
-  report : @workflow.ProviderSurfaceTickReport,
-) -> Unit {
-  native_goal_provider_surface_state.val = @workflow.record_provider_surface_tick_report(
-    native_goal_provider_surface_state.val,
-    report,
-  )
-}
-
-///|
-/// What each provider surface did during the last execution tick.
-///
-/// The daemon schedules its next tick against this rather than polling: nothing
-/// frees a provider slot because the scheduler asked again sooner. Per surface
-/// rather than one instant for the process, because a surface at capacity says
-/// nothing about the other one — `goal_execution_tick_delay_ms_with_deferral`
-/// waits on an instant only when every surface is refused and none admitted
-/// anything.
-pub fn native_goal_provider_surface_reports() -> Array[
-  @workflow.ProviderSurfaceTickReport,
-] {
-  native_goal_provider_surface_state.val
-}
-
-///|
-/// The observation the daemon reads is the one the gate wrote, and it survives
-/// only the tick that wrote it.
-test "surface dispositions accumulate within a tick and reset between them" {
-  let claude = @control.ProviderSurfaceId::ClaudeSubscriptionCli
-  let codex = @control.ProviderSurfaceId::CodexSubscriptionCli
-  reset_native_goal_provider_surfaces()
-  assert_eq(native_goal_provider_surface_reports(), [])
-  observe_native_goal_provider_surface({
-    surface: claude,
-    disposition: @workflow.ProviderSurfaceTickDisposition::ProviderSurfaceDeferredUntil(
-      90L,
-    ),
-  })
-  observe_native_goal_provider_surface({
-    surface: codex,
-    disposition: @workflow.ProviderSurfaceTickDisposition::ProviderSurfaceAdmitted,
-  })
-  observe_native_goal_provider_surface({
-    surface: claude,
-    disposition: @workflow.ProviderSurfaceTickDisposition::ProviderSurfaceDeferredUntil(
-      80L,
-    ),
-  })
-  assert_eq(native_goal_provider_surface_reports(), [
-    {
-      surface: claude,
-      disposition: @workflow.ProviderSurfaceTickDisposition::ProviderSurfaceDeferredUntil(
-        80L,
-      ),
-    },
-    {
-      surface: codex,
-      disposition: @workflow.ProviderSurfaceTickDisposition::ProviderSurfaceAdmitted,
-    },
-  ])
-  // Without the reset the next tick would sleep on an instant no gate named
-  // during it — see the tick test below.
-  reset_native_goal_provider_surfaces()
-  assert_eq(native_goal_provider_surface_reports(), [])
-}
-
-///|
-/// Every tick starts from a clean sheet.
-///
-/// Whitebox because seeding the previous tick's observation is the whole point,
-/// and only the tick may write it. A report that outlived the tick that made it
-/// would have the daemon sleeping on an instant no gate named during the tick
-/// that sleep is pacing — and once every surface carried one, on every tick
-/// after that too.
-async test "an execution tick forgets the previous tick's dispositions" {
-  let root = "/tmp/choir-provider-surface-reset-" + @sys.get_pid().to_string()
-  ignore(@sys.rm_rf(root))
-  if !@sys.create_dir_all(root + "/.choir/state/control") {
-    fail("create provider-surface reset root")
-  }
-  observe_native_goal_provider_surface({
-    surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
-    disposition: @workflow.ProviderSurfaceTickDisposition::ProviderSurfaceDeferredUntil(
-      1L,
-    ),
-  })
-  // An empty project has no runnable Goal, so the tick reaches nothing but its
-  // own bookkeeping.
-  match run_native_goal_execution_tick(root) {
-    Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickIdle) => ()
-    Ok(_) => fail("an empty project produced a Goal tick")
-    Err(error) => fail(error.message())
-  }
-  assert_eq(native_goal_provider_surface_reports(), [])
-  ignore(@sys.rm_rf(root))
-}
-
-///|
-/// A tick that never reaches a gate still forgets what the last one said.
-///
-/// The control store initialization above the runner returns early on failure,
-/// so the reset has to precede it. Behind it, a tick that ended before any
-/// surface was judged would leave the previous tick's refusal standing, and
-/// `goal_execution_tick_delay_ms_with_deferral` would pace this tick's sleep by
-/// an instant named during a tick that has already finished — indefinitely,
-/// because whatever skipped the reset skips it again next time.
-///
-/// `/dev/null` is a character device, so no directory under it can be created
-/// and the SQLite store cannot be opened. Nothing on disk is touched.
-async test "a tick that cannot open its control store still resets its surfaces" {
-  observe_native_goal_provider_surface({
-    surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
-    disposition: @workflow.ProviderSurfaceTickDisposition::ProviderSurfaceDeferredUntil(
-      1L,
-    ),
-  })
-  assert_true(
-    run_native_goal_execution_tick("/dev/null/choir-unopenable-control-store")
-    is Err(_),
-  )
-  assert_eq(native_goal_provider_surface_reports(), [])
-}
-
-///|
 pub fn current_native_goal_fencing_epoch() -> @control.FencingEpoch {
   @control.FencingEpoch(native_goal_fencing_epoch_state.val)
 }
@@ -2018,9 +1868,69 @@ test "Goal runtime recovery selects an exact durable sandbox manifest" {
 }
 
 ///|
+fn native_goal_executor_port_for_process(
+  process_id : Int,
+  executor_slot : Int,
+) -> Result[Int, @types.ChoirError] {
+  if process_id <= 0 ||
+    executor_slot < 0 ||
+    executor_slot >= @types.maximum_goal_executor_jobs() {
+    return Err(
+      native_goal_execution_error("executor process or slot is invalid"),
+    )
+  }
+  // Preserve the old process-derived namespace so independent Choir daemons do
+  // not all claim the same ports, while keeping every slot in this worker
+  // distinct. The slot stride is coprime to the complete 40000..65535 ring, so
+  // no two of the maximum 1,024 slots in one process can wrap onto each other;
+  // spreading slots around the ring also avoids the guaranteed overlap that
+  // contiguous ranges would give workers with neighboring pids.
+  let port_span = 25536
+  let slot_stride = 7919
+  Ok(40000 + (process_id % port_span + executor_slot * slot_stride) % port_span)
+}
+
+///|
+fn native_goal_executor_port(
+  executor_slot : Int,
+) -> Result[Int, @types.ChoirError] {
+  native_goal_executor_port_for_process(@sys.get_pid(), executor_slot)
+}
+
+///|
+test "Goal executor ports retain process identity and distinct bounded slots" {
+  assert_eq(native_goal_executor_port_for_process(12345, 0).unwrap(), 52345)
+  assert_eq(native_goal_executor_port_for_process(12345, 1).unwrap(), 60264)
+  assert_eq(native_goal_executor_port_for_process(19999, 1).unwrap(), 42382)
+  let all_slots : Array[Int] = []
+  for slot = 0; slot < @types.maximum_goal_executor_jobs(); slot = slot + 1 {
+    let port = native_goal_executor_port_for_process(12345, slot).unwrap()
+    assert_false(all_slots.contains(port))
+    assert_true(port >= 40000 && port <= 65535)
+    all_slots.push(port)
+  }
+  assert_eq(all_slots.length(), @types.maximum_goal_executor_jobs())
+  let neighbor : Array[Int] = []
+  for slot = 0; slot < 4; slot = slot + 1 {
+    neighbor.push(native_goal_executor_port_for_process(12346, slot).unwrap())
+  }
+  for port in all_slots[:4] {
+    assert_false(neighbor.contains(port))
+  }
+  assert_true(native_goal_executor_port_for_process(0, 0) is Err(_))
+  assert_true(native_goal_executor_port_for_process(12345, -1) is Err(_))
+  assert_true(native_goal_executor_port_for_process(12345, 1024) is Err(_))
+}
+
+///|
 fn native_goal_boxlite_server_config(
   record : @workflow.GoalExecutionRecord,
+  executor_slot? : Int = 0,
 ) -> Result[NativeBoxLiteServerConfig, @types.ChoirError] {
+  let port = match native_goal_executor_port(executor_slot) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
   let runtime_key = native_goal_runtime_key(
     record.repository_id,
     record.goal.id,
@@ -2042,7 +1952,7 @@ fn native_goal_boxlite_server_config(
     runtime_dir,
     root: native_goal_runtime_root(record.repository_id, record.goal.id),
     home,
-    port: 40000 + @sys.get_pid() % 10000,
+    port,
     api_key: "choir-goal-" + runtime_key,
   })
 }
@@ -3110,6 +3020,8 @@ async fn execute_native_goal_record(
   record : @workflow.GoalExecutionRecord,
   snapshots : Array[@workflow.PartWorkflowSnapshot],
   capacity : @types.ProviderCapacityPolicy,
+  executor_slot? : Int = 0,
+  observe? : (@workflow.ProviderSurfaceTickReport) -> Unit = fn(_) { () },
 ) -> Result[Unit, @types.ChoirError] {
   let git = match discover_native_goal_repository(project_dir, record) {
     Ok(value) => value
@@ -3138,7 +3050,8 @@ async fn execute_native_goal_record(
     NativeGoalRuntimeCurrent(generation_id) => Some(generation_id)
     _ => None
   }
-  let server_config = match native_goal_boxlite_server_config(record) {
+  let server_config = match
+    native_goal_boxlite_server_config(record, executor_slot~) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -3336,7 +3249,7 @@ async fn execute_native_goal_record(
             capacity,
             current_native_goal_fencing_epoch(),
             @env.now().reinterpret_as_int64() / 1000L,
-            observe=observe_native_goal_provider_surface,
+            observe~,
           )
         },
       })
@@ -5479,6 +5392,7 @@ async fn advance_native_goal_assurance(
   execution : @workflow.GoalExecutionRecord,
   snapshots : Array[@workflow.PartWorkflowSnapshot],
   capacity : @types.ProviderCapacityPolicy,
+  executor_slot? : Int = 0,
   observe~ : (@workflow.ProviderSurfaceTickReport) -> Unit,
 ) -> Result[@workflow.GoalAssuranceTickOutcome, @types.ChoirError] {
   let fencing_epoch = current_native_goal_fencing_epoch()
@@ -5492,6 +5406,7 @@ async fn advance_native_goal_assurance(
     capacity,
     fencing_epoch,
     holds,
+    executor_slot,
     observe~,
   )
   finish_native_goal_assurance_leases(repository, holds, result, fencing_epoch)
@@ -5507,6 +5422,7 @@ async fn advance_native_goal_assurance_attempt(
   capacity : @types.ProviderCapacityPolicy,
   fencing_epoch : @control.FencingEpoch,
   holds : Array[NativeProviderLeaseHold],
+  executor_slot : Int,
   observe~ : (@workflow.ProviderSurfaceTickReport) -> Unit,
 ) -> Result[@workflow.GoalAssuranceTickOutcome, @types.ChoirError] {
   let git = match discover_native_goal_repository(project_dir, execution) {
@@ -6046,7 +5962,7 @@ async fn advance_native_goal_assurance_attempt(
                   ignore(
                     match
                       reconcile_native_goal_processes_once(
-                        repository, execution, git, record, intent,
+                        repository, execution, git, record, intent, executor_slot,
                       ) {
                       Ok(value) => value
                       Err(error) => return Err(error)
@@ -6076,7 +5992,7 @@ async fn advance_native_goal_assurance_attempt(
                 }
                 let value = match
                   execute_native_goal_assurance_effect_once(
-                    repository, execution, git, record, intent,
+                    repository, execution, git, record, intent, executor_slot,
                   ) {
                   Ok(value) => value
                   Err(error) => return Err(error)
@@ -6142,15 +6058,12 @@ pub async fn run_native_goal_execution_tick_with_forge(
   },
   provider_capacity? : @types.ProviderCapacityPolicy = @types.Config::default().provider_capacity,
   beads_capture? : async (Command) -> (Int, String) = capture_command_merged,
+  goal_id? : @control.GoalId? = None,
+  executor_slot? : Int = 0,
+  observe? : (@workflow.ProviderSurfaceTickReport) -> Unit = fn(_) { () },
 ) -> Result[@workflow.GoalExecutionTickResult, @types.ChoirError] {
   let repository = native_goal_repository(project_dir)
   let repository_adapters = local_part_workflow_repository_adapters()
-  // What each surface's capacity bound answered. Reset per tick, so what the
-  // daemon reads afterwards describes the tick that just ran. Ahead of the
-  // store initialization below, whose failure returns early: a tick that ends
-  // before any gate ran must leave nothing behind either, or the daemon paces
-  // its next sleep by an instant a previous tick named.
-  reset_native_goal_provider_surfaces()
   match
     @workflow.initialize_part_workflow_repository(
       repository, repository_adapters,
@@ -6162,7 +6075,7 @@ pub async fn run_native_goal_execution_tick_with_forge(
     repository,
     repository_adapters,
     fencing_epoch=current_native_goal_fencing_epoch(),
-    after=native_goal_rotation_state.val,
+    goal_id~,
     {
       initialize: async fn(record) {
         let claimed = match
@@ -6194,7 +6107,13 @@ pub async fn run_native_goal_execution_tick_with_forge(
       },
       execute: async fn(record, snapshots) {
         execute_native_goal_record(
-          project_dir, repository, record, snapshots, provider_capacity,
+          project_dir,
+          repository,
+          record,
+          snapshots,
+          provider_capacity,
+          executor_slot~,
+          observe~,
         )
       },
       assure: async fn(record, snapshots) {
@@ -6205,7 +6124,8 @@ pub async fn run_native_goal_execution_tick_with_forge(
           record,
           snapshots,
           provider_capacity,
-          observe=observe_native_goal_provider_surface,
+          executor_slot~,
+          observe~,
         )
       },
       finalize: async fn(record, _) {
@@ -6455,12 +6375,149 @@ pub async fn run_native_goal_execution_tick_with_forge(
       },
     },
   )
-  match result {
-    Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickAdvanced(record)) =>
-      native_goal_rotation_state.val = Some(record.goal.id)
-    _ => ()
-  }
   result
+}
+
+///|
+/// Run one exact durably leased Goal job.
+///
+/// The lease check is passive: it authorizes this executor but does not create
+/// or repair the lease. Provider observations are task-local so one Goal's
+/// deferral becomes only that Goal's due-at state.
+pub async fn run_native_goal_execution_job_with_forge(
+  project_dir : String,
+  lease : @workflow.GoalExecutorLease,
+  forge : NativePullRequestForgeAdapters,
+  pull_request_delivery? : @types.PullRequestDeliveryPolicy = {
+    mode: @types.PullRequestDeliveryMode::PullRequestReviewOnly,
+    merge_method: @types.PullRequestMergeMethod::PullRequestSquashMerge,
+  },
+  provider_capacity? : @types.ProviderCapacityPolicy = @types.Config::default().provider_capacity,
+  beads_capture? : async (Command) -> (Int, String) = capture_command_merged,
+) -> (
+  Result[@workflow.GoalExecutionTickResult, @types.ChoirError],
+  Array[@workflow.ProviderSurfaceTickReport],
+) {
+  if lease.fencing_epoch != current_native_goal_fencing_epoch() {
+    return (
+      Err(native_goal_execution_error("Goal executor lease fence is stale")),
+      [],
+    )
+  }
+  let repository = native_goal_repository(project_dir)
+  let adapters = local_part_workflow_repository_adapters()
+  match @workflow.initialize_part_workflow_repository(repository, adapters) {
+    Ok(_) => ()
+    Err(error) => return (Err(error), [])
+  }
+  match
+    @workflow.goal_executor_lease_is_authorized(repository, adapters, lease) {
+    Ok(true) => ()
+    Ok(false) =>
+      return (
+        Err(native_goal_execution_error("Goal executor lease is not held")),
+        [],
+      )
+    Err(error) => return (Err(error), [])
+  }
+  let reports : Array[@workflow.ProviderSurfaceTickReport] = []
+  let result = run_native_goal_execution_tick_with_forge(
+    project_dir,
+    forge,
+    pull_request_delivery~,
+    provider_capacity~,
+    beads_capture~,
+    goal_id=Some(lease.goal_id),
+    executor_slot=lease.slot,
+    observe=fn(report) {
+      let merged = @workflow.record_provider_surface_tick_report(
+        reports, report,
+      )
+      reports.clear()
+      for value in merged {
+        reports.push(value)
+      }
+    },
+  )
+  (result, reports)
+}
+
+///|
+pub async fn run_native_goal_execution_job(
+  project_dir : String,
+  lease : @workflow.GoalExecutorLease,
+  pull_request_delivery? : @types.PullRequestDeliveryPolicy = {
+    mode: @types.PullRequestDeliveryMode::PullRequestReviewOnly,
+    merge_method: @types.PullRequestMergeMethod::PullRequestSquashMerge,
+  },
+  provider_capacity? : @types.ProviderCapacityPolicy = @types.Config::default().provider_capacity,
+) -> (
+  Result[@workflow.GoalExecutionTickResult, @types.ChoirError],
+  Array[@workflow.ProviderSurfaceTickReport],
+) {
+  run_native_goal_execution_job_with_forge(
+    project_dir,
+    lease,
+    native_pull_request_forge_adapters(),
+    pull_request_delivery~,
+    provider_capacity~,
+  )
+}
+
+///|
+pub fn plan_native_goal_executor_dispatches(
+  project_dir : String,
+  capacity : @types.GoalExecutorCapacityPolicy,
+) -> Result[@workflow.GoalExecutorDispatchBatch, @types.ChoirError] {
+  match @types.validate_goal_executor_capacity_policy(capacity) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let repository = native_goal_repository(project_dir)
+  let adapters = local_part_workflow_repository_adapters()
+  match @workflow.initialize_part_workflow_repository(repository, adapters) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  @workflow.acquire_goal_executor_dispatches(
+    repository,
+    adapters,
+    capacity.maximum_parallel_jobs,
+    @env.now().reinterpret_as_int64() / 1000L,
+    current_native_goal_fencing_epoch(),
+  )
+}
+
+///|
+pub fn complete_native_goal_executor_dispatch(
+  project_dir : String,
+  lease : @workflow.GoalExecutorLease,
+  outcome : @workflow.GoalExecutionJobTickOutcome,
+) -> Result[@workflow.GoalExecutionJob, @types.ChoirError] {
+  @workflow.persist_goal_executor_completion(
+    native_goal_repository(project_dir),
+    local_part_workflow_repository_adapters(),
+    lease,
+    outcome,
+    @env.now().reinterpret_as_int64() / 1000L,
+  )
+}
+
+///|
+pub fn native_goal_executor_provider_reports(
+  project_dir : String,
+  goal_id : @control.GoalId,
+) -> Result[Array[@workflow.ProviderSurfaceTickReport], @types.ChoirError] {
+  match
+    @workflow.load_goal_execution_job(
+      native_goal_repository(project_dir),
+      local_part_workflow_repository_adapters(),
+      goal_id,
+    ) {
+    Ok(Some(job)) => Ok(job.provider_reports)
+    Ok(None) => Ok([])
+    Err(error) => Err(error)
+  }
 }
 
 ///|
@@ -7633,9 +7690,9 @@ fn native_provider_capacity_observation(
 /// `provider_capacity` is the configured bound, and `None` is honest rather
 /// than convenient: a caller without the daemon's configuration would
 /// otherwise report a default capacity nobody chose, which an operator cannot
-/// tell from a real one. `surface_reports` is what this process's last
-/// execution tick learned — `native_goal_provider_surface_reports()` in the
-/// worker, and legitimately empty in a process that runs no tick.
+/// tell from a real one. `surface_reports` is what this Goal's durable executor
+/// job learned on its last attempt, and is legitimately empty before any
+/// provider gate was reached.
 pub fn inspect_native_goal(
   project_dir : String,
   goal_id : @control.GoalId,

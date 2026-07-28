@@ -35,31 +35,14 @@
 /// a pass that goes on to do anything else takes the slot at its next planning
 /// step.
 ///
-/// Provider surfaces are the only capacity dimension here, and sandbox count is
-/// deliberately not a second one. A Take's box is a fixed shape — 2 vCPU,
-/// 2048 MiB, 4 GiB, pinned into `@sandbox.boxlite_take_runtime_policy_digest` —
-/// so a count would be a linear proxy for host memory, but there is no host
-/// budget anywhere to derive the number from, and an invented default is either
-/// a stranded workstation or an out-of-memory CI box. That is the whole of the
-/// reason, and it deliberately does not lean on the lease: a lease bounds
-/// provider sessions, not boxes, and boxes are demonstrably made without one.
-/// `prepare_native_boxlite_environment` creates and starts the per-Goal base box
-/// before `execute_native_goal_record` reaches `run_goal_parts` at all, and
-/// again from `create_native_goal_assurance_runtime` on the verification effects
-/// that take no lease by design. Counting held leases would not count either.
-///
-/// What bounds boxes today is the worker's shape: one Goal worker per daemon,
-/// one Goal per execution tick, one BoxLite server on a port derived from that
-/// process's pid — so two Goals could not even stand up two servers. Live boxes
-/// are that one Goal's base box plus, on an execution tick, the boxes of the at
-/// most `maximum_parallel_parts` Parts it advances at once, or, on an assurance
-/// tick, its audit and verification sandbox boxes instead. That is a real bound and
-/// it is not this file's; choir-g3n.6 is precisely the change that removes it.
-/// Bounding boxes for real needs two things this repository does not have yet:
-/// a declared host memory and disk budget to derive a ceiling from, and a
-/// decision about what the count is over — running boxes or created ones, per
-/// BoxLite server or across the portfolio — which the one-server-per-Goal
-/// topology has not settled. See choir-g3n.5 and choir-g3n.6.
+/// Provider surfaces are only this capacity dimension. Concurrent Goal
+/// runtimes are bounded separately by the durable executor schedule in
+/// `goal_executor.mbt`: one configured executor slot owns one Goal tick and one
+/// distinct BoxLite server port. Within that Goal, `maximum_parallel_parts`
+/// bounds the Part fan-out; its base and assurance boxes still belong to the
+/// same bounded Goal runtime. This separation is intentional. A Goal can create
+/// a verification box without spending a provider session, and a provider
+/// lease must therefore never masquerade as a sandbox lease.
 ///
 /// One durable record per provider surface holds every lease currently held on
 /// it. That shape is the whole point rather than an implementation detail: with
