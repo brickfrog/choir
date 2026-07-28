@@ -1240,10 +1240,13 @@ async test "a retried provider dispatch is refused while the surface is at capac
   // after the retry had already dispatched — so the dispatch count is the
   // assertion that matters.
   assert_eq(reconcile_count.val, 1)
-  assert_eq(gate_calls.val, 1)
+  // The dispatch count is asserted before the gate-call count so that a
+  // regression in the refusal arm reports the property that was violated
+  // rather than an arithmetic mismatch on a counter that is only scaffolding.
   if execute_count.val != executed_before_retry {
     fail("the retried dispatch reached the provider holding no slot")
   }
+  assert_eq(gate_calls.val, 1)
   // A standing refusal stops the same retry too. The outcome is again not the
   // discriminator — the planning step one effect later reports it as well — so
   // what is asserted is that nothing was dispatched.
