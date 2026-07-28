@@ -143,7 +143,20 @@ fn validate_closed_trace(
         _ => return Err(workflow_error("resumable session omitted its cursor"))
       }
   }
-  let mut projected = { ..initial, provider_cursor: projected_cursor }
+  let projected_usage = match observed_final.usage {
+    Some(usage) =>
+      if @control.validate_take_usage(usage) {
+        Some(usage)
+      } else {
+        return Err(workflow_error("adapter reported invalid provider usage"))
+      }
+    None => initial.usage
+  }
+  let mut projected = {
+    ..initial,
+    provider_cursor: projected_cursor,
+    usage: projected_usage,
+  }
   for incoming in incoming_events {
     let result = @control.ingest_harness_event(projected, durable, incoming)
     match result.disposition {
@@ -223,10 +236,22 @@ test "closed trace adopts one bounded resumable provider cursor" {
     lifecycle: @control.HarnessSessionLifecycle::HarnessSessionIngestionClosedCleanly(
       @control.HarnessTerminalObservation::HarnessCompleted,
     ),
+    usage: Some({
+      input_tokens: 20,
+      output_tokens: 5,
+      cache_read_tokens: 10,
+      cache_creation_tokens: 0,
+      wall_time_ms: 100,
+    }),
   }
   assert_eq(
     validate_closed_trace(initial, events, observed).unwrap().0,
     observed,
+  )
+  let observed_without_usage = { ..observed, usage: None }
+  assert_eq(
+    validate_closed_trace(initial, events, observed_without_usage).unwrap().0,
+    observed_without_usage,
   )
   assert_true(
     validate_closed_trace(
@@ -234,6 +259,19 @@ test "closed trace adopts one bounded resumable provider cursor" {
       events,
       observed,
     )
+    is Err(_),
+  )
+  assert_true(
+    validate_closed_trace(initial, events, {
+      ..observed,
+      usage: Some({
+        input_tokens: -1,
+        output_tokens: 5,
+        cache_read_tokens: 10,
+        cache_creation_tokens: 0,
+        wall_time_ms: 100,
+      }),
+    })
     is Err(_),
   )
 }
