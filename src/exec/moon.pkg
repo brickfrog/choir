@@ -42,6 +42,7 @@ options(
     "goal_submission_native_test.mbt": [ "native" ],
     "goal_archive_native_test.mbt": [ "native" ],
     "provider_lease_storage_test.mbt": [ "native" ],
+    "goal_assurance_loop_wbtest.mbt": [ "native" ],
     "goal_execution_native.mbt": [ "native" ],
     "goal_publication_native.mbt": [ "native" ],
     "goal_pull_request_native.mbt": [ "native" ],
