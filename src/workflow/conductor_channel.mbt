@@ -49,6 +49,10 @@ pub(all) struct ConductorChannelRegistry {
   /// to subscribe to.
   interest : Array[@control.GoalId]
   subscriptions : Map[ConductorChannelId, Array[@control.GoalId]]
+  work_order_interest : Array[WorkOrderId]
+  work_order_subscriptions : Map[ConductorChannelId, Array[WorkOrderId]]
+  goal_work_orders : Map[@control.GoalId, WorkOrderId]
+  work_order_parks : Map[WorkOrderId, Bool]
   observations : Map[@control.GoalId, ConductorGoalObservation]
   progress : Map[@control.GoalId, ConductorGoalProgress]
 }
@@ -65,6 +69,10 @@ pub fn new_conductor_channel_registry() -> ConductorChannelRegistry {
   {
     interest: [],
     subscriptions: Map([]),
+    work_order_interest: [],
+    work_order_subscriptions: Map([]),
+    goal_work_orders: Map([]),
+    work_order_parks: Map([]),
     observations: Map([]),
     progress: Map([]),
   }
@@ -84,6 +92,27 @@ pub fn conductor_note_goal_interest(
 }
 
 ///|
+pub fn conductor_note_work_order_interest(
+  registry : ConductorChannelRegistry,
+  work_order : WorkOrderId,
+) -> Unit {
+  if !registry.work_order_interest.contains(work_order) {
+    registry.work_order_interest.push(work_order)
+  }
+}
+
+///|
+pub fn conductor_note_work_order_child(
+  registry : ConductorChannelRegistry,
+  work_order : WorkOrderId,
+  goal : @control.GoalId,
+) -> Unit {
+  conductor_note_work_order_interest(registry, work_order)
+  conductor_note_goal_interest(registry, goal)
+  registry.goal_work_orders.set(goal, work_order)
+}
+
+///|
 fn conductor_sorted_goal_ids(
   ids : Array[@control.GoalId],
 ) -> Array[@control.GoalId] {
@@ -95,12 +124,19 @@ fn conductor_sorted_goal_ids(
 }
 
 ///|
+fn conductor_sorted_work_order_ids(
+  ids : Array[WorkOrderId],
+) -> Array[WorkOrderId] {
+  let sorted = ids.copy()
+  sorted.sort_by(fn(left, right) { left.0.compare(right.0) })
+  sorted
+}
+
+///|
 /// Point a channel at an explicit set of Goals, replacing whatever it watched
 /// before. Only this channel's subscription changes: another channel watching
 /// a different Goal keeps receiving it.
 ///
-/// Subscribing to a WorkOrder rather than an enumerated set needs WorkOrders to
-/// have an identity that outlives one Goal record, which they do not yet.
 pub fn conductor_subscribe_channel(
   registry : ConductorChannelRegistry,
   channel : ConductorChannelId,
@@ -146,11 +182,44 @@ pub fn conductor_watch_goal_on_channel(
 }
 
 ///|
+/// Add one durable WorkOrder to a channel. Its current and future child Goals
+/// are selected through the reciprocal identity carried by Goal reports.
+pub fn conductor_watch_work_order_on_channel(
+  registry : ConductorChannelRegistry,
+  channel : ConductorChannelId,
+  work_order : WorkOrderId,
+) -> Array[ConductorDelivery] {
+  let current = registry.work_order_subscriptions.get(channel).unwrap_or([])
+  if current.contains(work_order) {
+    return []
+  }
+  let before = conductor_channel_subscription(registry, channel)
+  conductor_note_work_order_interest(registry, work_order)
+  registry.work_order_subscriptions.set(
+    channel,
+    conductor_sorted_work_order_ids([..current, work_order]),
+  )
+  let deliveries : Array[ConductorDelivery] = []
+  for goal in conductor_channel_subscription(registry, channel) {
+    if before.contains(goal) {
+      continue
+    }
+    match registry.observations.get(goal) {
+      Some(observation) if observation.report != "" =>
+        deliveries.push({ channel, report: observation.report })
+      _ => ()
+    }
+  }
+  deliveries
+}
+
+///|
 pub fn conductor_release_channel(
   registry : ConductorChannelRegistry,
   channel : ConductorChannelId,
 ) -> Unit {
   registry.subscriptions.remove(channel)
+  registry.work_order_subscriptions.remove(channel)
 }
 
 ///|
@@ -158,7 +227,15 @@ pub fn conductor_channel_subscription(
   registry : ConductorChannelRegistry,
   channel : ConductorChannelId,
 ) -> Array[@control.GoalId] {
-  registry.subscriptions.get(channel).unwrap_or([])
+  let goals = registry.subscriptions.get(channel).unwrap_or([]).copy()
+  for work_order in registry.work_order_subscriptions.get(channel).unwrap_or([]) {
+    registry.goal_work_orders.each(fn(goal, owner) {
+      if owner == work_order && !goals.contains(goal) {
+        goals.push(goal)
+      }
+    })
+  }
+  conductor_sorted_goal_ids(goals)
 }
 
 ///|
@@ -172,6 +249,15 @@ fn conductor_subscribed_channels(
       channels.push(channel)
     }
   })
+  match registry.goal_work_orders.get(goal) {
+    Some(work_order) =>
+      registry.work_order_subscriptions.each(fn(channel, work_orders) {
+        if work_orders.contains(work_order) && !channels.contains(channel) {
+          channels.push(channel)
+        }
+      })
+    None => ()
+  }
   channels.sort_by(fn(left, right) { left.0.compare(right.0) })
   channels
 }
@@ -189,7 +275,19 @@ pub fn conductor_observe_goal(
   fingerprint : String,
   report : String,
   parks : Bool,
+  work_order_id? : WorkOrderId? = None,
+  work_order_parks? : Bool? = None,
 ) -> Array[ConductorDelivery] {
+  match work_order_id {
+    Some(work_order) => {
+      registry.goal_work_orders.set(goal, work_order)
+      match work_order_parks {
+        Some(value) => registry.work_order_parks.set(work_order, value)
+        None => ()
+      }
+    }
+    None => ()
+  }
   let unchanged = match registry.observations.get(goal) {
     Some(previous) => previous.fingerprint == fingerprint
     None => false
@@ -234,9 +332,13 @@ pub fn conductor_replay_channel(
 /// must not release the Conductor. A watched Goal that has never been observed
 /// parks, matching the pre-observation default.
 pub fn conductor_registry_parks(registry : ConductorChannelRegistry) -> Bool {
-  if registry.interest.length() == 0 {
+  if registry.interest.length() == 0 &&
+    registry.work_order_interest.length() == 0 {
     return false
   }
+  registry.work_order_interest.any(fn(work_order) {
+    registry.work_order_parks.get(work_order).unwrap_or(true)
+  }) ||
   registry.interest.any(fn(goal) {
     match registry.observations.get(goal) {
       Some(observation) => observation.parks
@@ -273,6 +375,7 @@ pub fn conductor_forget_goal(
 ) -> Unit {
   registry.observations.remove(goal)
   registry.progress.remove(goal)
+  registry.goal_work_orders.remove(goal)
   let mut index = 0
   while index < registry.interest.length() {
     if registry.interest[index] == goal {
@@ -290,6 +393,23 @@ pub fn conductor_watched_goals(
   registry : ConductorChannelRegistry,
 ) -> Array[@control.GoalId] {
   conductor_sorted_goal_ids(registry.interest)
+}
+
+///|
+pub fn conductor_watched_work_orders(
+  registry : ConductorChannelRegistry,
+) -> Array[WorkOrderId] {
+  conductor_sorted_work_order_ids(registry.work_order_interest)
+}
+
+///|
+pub fn conductor_note_work_order_park(
+  registry : ConductorChannelRegistry,
+  work_order : WorkOrderId,
+  parks : Bool,
+) -> Unit {
+  conductor_note_work_order_interest(registry, work_order)
+  registry.work_order_parks.set(work_order, parks)
 }
 
 ///|

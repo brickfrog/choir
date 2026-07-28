@@ -374,3 +374,126 @@ test "two interleaved Goals on two channels each stay delivered and parked" {
   ignore(@workflow.conductor_observe_goal(registry, b, "fp-b3", "b3", false))
   assert_false(@workflow.conductor_registry_parks(registry))
 }
+
+///|
+test "a WorkOrder subscription follows current and future child Goals" {
+  let registry = @workflow.new_conductor_channel_registry()
+  let work_order = @workflow.WorkOrderId("work-order-a")
+  assert_eq(
+    @workflow.conductor_watch_work_order_on_channel(
+      registry,
+      channel(1),
+      work_order,
+    ),
+    [],
+  )
+  @workflow.conductor_subscribe_channel(registry, channel(2), [
+    @control.GoalId("explicit-goal"),
+  ])
+  @debug.assert_eq(
+    channel_lines(
+      @workflow.conductor_observe_goal(
+        registry,
+        @control.GoalId("goal-a"),
+        "fp-a",
+        "line-a",
+        false,
+        work_order_id=Some(work_order),
+        work_order_parks=Some(true),
+      ),
+    ),
+    [(1, "line-a")],
+  )
+  // A successor discovered after subscription is selected by durable owner
+  // identity; no channel mutation or Conductor message is needed.
+  @debug.assert_eq(
+    channel_lines(
+      @workflow.conductor_observe_goal(
+        registry,
+        @control.GoalId("goal-b"),
+        "fp-b",
+        "line-b",
+        true,
+        work_order_id=Some(work_order),
+        work_order_parks=Some(true),
+      ),
+    ),
+    [(1, "line-b")],
+  )
+  @debug.assert_eq(
+    @workflow.conductor_channel_subscription(registry, channel(1)),
+    [@control.GoalId("goal-a"), @control.GoalId("goal-b")],
+  )
+  @debug.assert_eq(
+    @workflow.conductor_channel_subscription(registry, channel(2)),
+    [@control.GoalId("explicit-goal")],
+  )
+}
+
+///|
+test "WorkOrder reconnect replays every child once in Goal order" {
+  let registry = @workflow.new_conductor_channel_registry()
+  let work_order = @workflow.WorkOrderId("work-order-replay")
+  for goal in ["goal-c", "goal-a", "goal-b"] {
+    ignore(
+      @workflow.conductor_observe_goal(
+        registry,
+        @control.GoalId(goal),
+        "fp-" + goal,
+        "line-" + goal,
+        true,
+        work_order_id=Some(work_order),
+        work_order_parks=Some(true),
+      ),
+    )
+  }
+  @workflow.conductor_note_work_order_interest(registry, work_order)
+  ignore(
+    @workflow.conductor_watch_work_order_on_channel(
+      registry,
+      channel(7),
+      work_order,
+    ),
+  )
+  let expected = [(7, "line-goal-a"), (7, "line-goal-b"), (7, "line-goal-c")]
+  @debug.assert_eq(
+    channel_lines(@workflow.conductor_replay_channel(registry, channel(7))),
+    expected,
+  )
+  @debug.assert_eq(
+    channel_lines(@workflow.conductor_replay_channel(registry, channel(7))),
+    expected,
+  )
+  @debug.assert_eq(@workflow.conductor_watched_work_orders(registry), [
+    work_order,
+  ])
+}
+
+///|
+test "WorkOrder activity parks between terminal child Goals" {
+  let registry = @workflow.new_conductor_channel_registry()
+  let work_order = @workflow.WorkOrderId("work-order-park")
+  ignore(
+    @workflow.conductor_watch_work_order_on_channel(
+      registry,
+      channel(1),
+      work_order,
+    ),
+  )
+  ignore(
+    @workflow.conductor_observe_goal(
+      registry,
+      @control.GoalId("goal-terminal"),
+      "fp-terminal",
+      "line-terminal",
+      false,
+      work_order_id=Some(work_order),
+      work_order_parks=Some(true),
+    ),
+  )
+  // No child is running in this instant, but the WorkOrder is planning its
+  // successor and therefore still owns the Stop-hook park.
+  assert_true(@workflow.conductor_registry_parks(registry))
+  @workflow.conductor_note_work_order_park(registry, work_order, false)
+  assert_false(@workflow.conductor_registry_parks(registry))
+}

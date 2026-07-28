@@ -124,6 +124,7 @@ fn projection_report(
     finalization_id: None,
     readiness_decision,
     readiness_observation_sequence: None,
+    work_order_id: None,
     work_order,
     cancellation_cause: None,
     cancellation_cutoff_sequence: None,
@@ -159,6 +160,36 @@ test "material fingerprint ignores counter churn but tracks stage movement" {
     @workflow.goal_report_material_fingerprint(running) !=
     @workflow.goal_report_material_fingerprint(stage_moved),
   )
+}
+
+///|
+test "material fingerprint tracks WorkOrder progress and terminality" {
+  let accepted = @workflow.accept_work_order_budget(
+    @workflow.WorkOrderStopRequest::WorkOrderRequestDeliveredQuota(
+      @workflow.WorkOrderQuotaBasis::WorkOrderPrimaryTargets,
+      2,
+    ),
+    @workflow.WorkOrderCutoffPolicy::WorkOrderDrainToSafeBoundary,
+    1_000L,
+  ).unwrap()
+  let delivered = @workflow.record_work_order_delivery(accepted, 1, 1).unwrap()
+  let stopped = @workflow.record_work_order_integrity_stop(
+    delivered,
+    @control.Digest(
+      "0000000000000000000000000000000000000000000000000000000000000000",
+    ),
+  ).unwrap()
+  let accepted_fingerprint = @workflow.goal_report_material_fingerprint(
+    projection_report(work_order=Some(accepted)),
+  )
+  let delivered_fingerprint = @workflow.goal_report_material_fingerprint(
+    projection_report(work_order=Some(delivered)),
+  )
+  let stopped_fingerprint = @workflow.goal_report_material_fingerprint(
+    projection_report(work_order=Some(stopped)),
+  )
+  assert_true(accepted_fingerprint != delivered_fingerprint)
+  assert_true(delivered_fingerprint != stopped_fingerprint)
 }
 
 ///|

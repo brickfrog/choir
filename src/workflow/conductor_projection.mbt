@@ -118,6 +118,8 @@ pub fn goal_report_material_fingerprint(report : GoalStatusReport) -> String {
       "pull_request_merge_state": report.pull_request_merge_state.to_json(),
       "finalization_id": report.finalization_id.to_json(),
       "readiness_decision": report.readiness_decision.to_json(),
+      "work_order_id": report.work_order_id.to_json(),
+      "work_order": report.work_order.to_json(),
       // Provider capacity pressure is the one condition whose whole point is
       // that nothing else is moving. A Goal parked at the admission gate has
       // no material transition by construction: no stage change, no lifecycle
