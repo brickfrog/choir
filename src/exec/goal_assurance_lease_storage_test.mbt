@@ -639,7 +639,7 @@ async test "an assurance tick refused by capacity leaves the Goal assuring" {
     active_input_request: None,
     input_answers: [],
     cancellation_request: None,
-    work_order_budget: None,
+    work_order_id: None,
     durable_version: 1,
     fencing_epoch: integrated.fencing_epoch,
   }

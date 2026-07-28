@@ -49,6 +49,11 @@ pub(all) struct ConductorGoalDraft {
 
 ///|
 pub(all) struct ConductorWorkOrderDraft {
+  objective : String
+  selection_policy : WorkOrderSelectionPolicy
+  planner : WorkOrderPlannerPolicy
+  initial_primary_target_ids : Array[@control.PartId]
+  max_active_child_goals : Int
   stop : WorkOrderStopRequest
   cutoff : WorkOrderCutoffPolicy
 } derive(Debug, Eq, ToJson, FromJson)
@@ -666,6 +671,21 @@ pub fn decode_conductor_goal_draft(
     Ok(value) => value
     Err(error) => return Err(error)
   }
+  match work_order {
+    Some(request) =>
+      for target in request.initial_primary_target_ids {
+        if !parts.any(fn(part) { part.part_id == target }) {
+          return Err(
+            goal_submission_error(
+              "work_order initial primary target " +
+              target.0 +
+              " is absent from parts",
+            ),
+          )
+        }
+      }
+    None => ()
+  }
   Ok({
     proposal_id,
     goal_id,
@@ -688,7 +708,10 @@ fn conductor_work_order_draft(
     Some(Object(value)) => value
     Some(_) => return Err(goal_submission_error("work_order must be an object"))
   }
-  let allowed = ["stop", "cutoff"]
+  let allowed = [
+    "objective", "selection_policy", "planner", "initial_primary_targets", "max_active_child_goals",
+    "stop", "cutoff",
+  ]
   let unknown = conductor_draft_unknown_fields(work_order, allowed)
   if unknown.length() > 0 {
     return Err(
@@ -699,6 +722,89 @@ fn conductor_work_order_draft(
         allowed.join(", "),
       ),
     )
+  }
+  let objective = match conductor_draft_string(work_order, "objective") {
+    Some(value) => value
+    None => return Err(goal_submission_error("work_order.objective is missing"))
+  }
+  let selection_policy = match
+    conductor_draft_string(work_order, "selection_policy") {
+    None | Some("exact_bead_closure") =>
+      WorkOrderSelectionPolicy::WorkOrderExactBeadClosure
+    Some(_) =>
+      return Err(
+        goal_submission_error(
+          "work_order.selection_policy must be exact_bead_closure",
+        ),
+      )
+  }
+  let planner_fields = match work_order.get("planner") {
+    Some(Object(value)) => value
+    _ => return Err(goal_submission_error("work_order.planner is missing"))
+  }
+  let planner_unknown = conductor_draft_unknown_fields(planner_fields, [
+    "provider", "provider_failover",
+  ])
+  if planner_unknown.length() > 0 {
+    return Err(
+      goal_submission_error(
+        "work_order.planner has unknown fields: " + planner_unknown.join(", "),
+      ),
+    )
+  }
+  let planner_primary = match
+    conductor_draft_string(planner_fields, "provider").bind(
+      conductor_provider_surface,
+    ) {
+    Some(value) => value
+    None =>
+      return Err(
+        goal_submission_error("work_order.planner.provider is invalid"),
+      )
+  }
+  let planner_failovers = match
+    conductor_provider_failover_surfaces(planner_fields, planner_primary) {
+    Ok(value) => value
+    Err(_) =>
+      return Err(
+        goal_submission_error("work_order.planner.provider_failover is invalid"),
+      )
+  }
+  let primary_values = match
+    conductor_draft_strings(work_order, "initial_primary_targets") {
+    Some(values) if values.length() > 0 => values
+    _ =>
+      return Err(
+        goal_submission_error(
+          "work_order.initial_primary_targets is missing or invalid",
+        ),
+      )
+  }
+  let initial_primary_target_ids = primary_values.map(fn(value) {
+    @control.PartId(value)
+  })
+  for index = 0; index < initial_primary_target_ids.length(); index = index + 1 {
+    for other = index + 1
+        other < initial_primary_target_ids.length()
+        other = other + 1 {
+      if initial_primary_target_ids[index] == initial_primary_target_ids[other] {
+        return Err(
+          goal_submission_error(
+            "work_order.initial_primary_targets contains a duplicate",
+          ),
+        )
+      }
+    }
+  }
+  let max_active_child_goals = match
+    conductor_draft_int(work_order, "max_active_child_goals") {
+    None | Some(1) => 1
+    _ =>
+      return Err(
+        goal_submission_error(
+          "work_order.max_active_child_goals must be one in v1",
+        ),
+      )
   }
   let stop = match work_order.get("stop") {
     Some(Object(value)) =>
@@ -716,7 +822,20 @@ fn conductor_work_order_draft(
         goal_submission_error("work_order.cutoff must be drain or cancel"),
       )
   }
-  Ok(Some({ stop, cutoff }))
+  Ok(
+    Some({
+      objective,
+      selection_policy,
+      planner: {
+        primary_surface: planner_primary,
+        failover_surfaces: planner_failovers,
+      },
+      initial_primary_target_ids,
+      max_active_child_goals,
+      stop,
+      cutoff,
+    }),
+  )
 }
 
 ///|

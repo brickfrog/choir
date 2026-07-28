@@ -267,6 +267,7 @@ pub(all) enum DurableRecordKind {
   DurableProcessExecution
   DurableProviderSurfaceLease
   DurableGoalExecutorSchedule
+  DurableWorkOrderRecord
 } derive(Debug, Eq)
 
 ///|
@@ -284,6 +285,7 @@ pub fn durable_record_kinds() -> Array[DurableRecordKind] {
     DurableProcessExecution,
     DurableProviderSurfaceLease,
     DurableGoalExecutorSchedule,
+    DurableWorkOrderRecord,
   ]
 }
 
@@ -303,6 +305,7 @@ pub fn durable_record_key_prefix(kind : DurableRecordKind) -> String {
     DurableProcessExecution => "process-execution:"
     DurableProviderSurfaceLease => "provider-lease:"
     DurableGoalExecutorSchedule => "goal-executor:"
+    DurableWorkOrderRecord => "work-order:"
   }
 }
 
@@ -322,6 +325,7 @@ pub fn durable_record_shape_name(kind : DurableRecordKind) -> String {
     DurableProcessExecution => "ProcessExecution"
     DurableProviderSurfaceLease => "ProviderSurfaceLeaseRecord"
     DurableGoalExecutorSchedule => "GoalExecutorScheduleRecord"
+    DurableWorkOrderRecord => "WorkOrderRecord"
   }
 }
 
@@ -357,5 +361,6 @@ pub fn durable_record_decodes(
       decode_provider_surface_lease_record(content) is Ok(_)
     DurableGoalExecutorSchedule =>
       decode_goal_executor_schedule_record(content) is Ok(_)
+    DurableWorkOrderRecord => decode_work_order_record(content) is Ok(_)
   }
 }

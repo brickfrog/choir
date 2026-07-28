@@ -143,6 +143,11 @@ fn submission_proposal(
     migration_production_admission: None,
     maximum_parallel_parts: 2,
     parts,
+    work_order_id: None,
+    work_order_objective: None,
+    work_order_selection_policy: None,
+    work_order_planner: None,
+    work_order_primary_target_ids: parts.map(fn(part) { part.part_id }),
     work_order_budget: None,
   }
 }
@@ -1016,13 +1021,7 @@ fn maximal_goal_execution_record() -> @workflow.GoalExecutionRecord raise {
     ..canceling,
     pause: paused.pause,
     active_input_request: paused.active_input_request,
-    work_order_budget: Some(
-      @workflow.accept_work_order_budget(
-        @workflow.WorkOrderStopRequest::WorkOrderRequestRelativeSeconds(100L),
-        @workflow.WorkOrderCutoffPolicy::WorkOrderInstallCancellationCutoff,
-        100L,
-      ).unwrap(),
-    ),
+    work_order_id: Some(@workflow.WorkOrderId("work-order-maximal")),
     migration_production_admission: Some(
       submission_migration_admission({
         contract_id: @control.MigrationContractId("migration-contract-1"),
@@ -1193,6 +1192,8 @@ test "Conductor proposal accepts exact closure in deterministic order" {
     part_a.part_id,
     part_b.part_id,
   ])
+  assert_eq(decision.primary_target_ids, [part_a.part_id, part_b.part_id])
+  assert_eq(decision.prerequisite_closure_ids, [])
   assert_eq(decision.rejections, [])
   assert_true(decision.goal is Some(_))
   let decoded = match
@@ -1275,6 +1276,75 @@ test "Conductor proposal accepts exact closure in deterministic order" {
     )
     is Err(_),
   )
+}
+
+///|
+test "WorkOrder selection distinguishes primary targets from prerequisite closure" {
+  let goal_id = @control.GoalId("goal-work-order-selection")
+  let prerequisite = submission_part(
+    goal_id,
+    "prerequisite",
+    [],
+    @control.ProviderSurfaceId::CodexSubscriptionCli,
+  )
+  let primary = submission_part(
+    goal_id,
+    "primary",
+    [prerequisite.part_id],
+    @control.ProviderSurfaceId::CodexSubscriptionCli,
+  )
+  let base = submission_proposal(goal_id, [primary, prerequisite])
+  let id = @workflow.WorkOrderId("work-order-selection")
+  let proposal = {
+    ..base,
+    work_order_id: Some(id),
+    work_order_objective: Some("Deliver the primary Bead."),
+    work_order_selection_policy: Some(
+      @workflow.WorkOrderSelectionPolicy::WorkOrderExactBeadClosure,
+    ),
+    work_order_planner: Some({
+      primary_surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+      failover_surfaces: [],
+    }),
+    work_order_primary_target_ids: [primary.part_id],
+    work_order_budget: Some(
+      @workflow.accept_work_order_budget(
+        @workflow.WorkOrderStopRequest::WorkOrderRequestSafetyCeiling(8),
+        @workflow.WorkOrderCutoffPolicy::WorkOrderDrainToSafeBoundary,
+        100L,
+      ).unwrap(),
+    ),
+  }
+  let decision = @workflow.evaluate_goal_proposal(
+    proposal,
+    submission_snapshot([
+      submission_source(
+        "primary",
+        [prerequisite.part_id],
+        @workflow.SelectionSourceState::SelectionSourceOpen,
+      ),
+      submission_source(
+        "prerequisite",
+        [],
+        @workflow.SelectionSourceState::SelectionSourceOpen,
+      ),
+    ]),
+    fn(_) { true },
+  ).unwrap()
+  assert_eq(decision.primary_target_ids, [primary.part_id])
+  assert_eq(decision.prerequisite_closure_ids, [prerequisite.part_id])
+  assert_eq(decision.accepted_parts.map(fn(part) { part.part.id }), [
+    prerequisite.part_id,
+    primary.part_id,
+  ])
+  let execution = @workflow.goal_execution_record_from_selection(
+    decision,
+    @workflow.goal_selection_decision_digest(decision),
+    ["workflow-prerequisite", "workflow-primary"],
+  ).unwrap()
+  assert_eq(execution.work_order_id, Some(id))
+  let json = @workflow.goal_execution_record_bytes(execution)
+  assert_false(@utf8.decode_lossy(json).contains("work_order_budget"))
 }
 
 ///|

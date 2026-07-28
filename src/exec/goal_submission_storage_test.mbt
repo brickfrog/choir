@@ -74,6 +74,11 @@ fn selection_store_decision(
           draft: false,
         }),
         migration_production_admission: None,
+        work_order_id: None,
+        work_order_objective: None,
+        work_order_selection_policy: None,
+        work_order_planner: None,
+        work_order_primary_target_ids: [part_id],
         work_order_budget: None,
         maximum_parallel_parts: 1,
         parts: [
@@ -99,6 +104,48 @@ fn selection_store_decision(
     ) {
     Ok(value) => value
     Err(error) => fail(error.message())
+  }
+}
+
+///|
+fn work_order_store_record(label : String) -> @workflow.WorkOrderRecord raise {
+  let decision = selection_store_decision(label~)
+  let part_id = decision.accepted_parts[0].part.id
+  let id = @workflow.work_order_id(
+    decision.proposal.repository_id,
+    decision.proposal.id,
+  )
+  {
+    id,
+    repository_id: decision.proposal.repository_id,
+    objective: "Persist the campaign owner before its Goal.",
+    selection_policy: @workflow.WorkOrderSelectionPolicy::WorkOrderExactBeadClosure,
+    planner: {
+      primary_surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+      failover_surfaces: [],
+    },
+    initial_primary_target_ids: [part_id],
+    initial_prerequisite_closure_ids: [],
+    max_active_child_goals: 1,
+    budget: @workflow.accept_work_order_budget(
+      @workflow.WorkOrderStopRequest::WorkOrderRequestSafetyCeiling(10),
+      @workflow.WorkOrderCutoffPolicy::WorkOrderDrainToSafeBoundary,
+      1_000L,
+    ).unwrap(),
+    child_goals: [
+      {
+        goal_id: decision.proposal.goal_id,
+        selection_decision_digest: @workflow.goal_selection_decision_digest(
+          decision,
+        ),
+        primary_target_ids: [part_id],
+        prerequisite_closure_ids: [],
+        outcome: @workflow.WorkOrderChildOutcome::WorkOrderChildActive,
+      },
+    ],
+    lifecycle: @workflow.WorkOrderLifecycle::WorkOrderActive,
+    durable_version: 1,
+    fencing_epoch: @control.FencingEpoch(1L),
   }
 }
 
@@ -157,4 +204,82 @@ test "Goal selection decision persists once and reloads after restart" {
     @storage.StateTransactionOutcome::StateTransactionReplayed,
   )
   ignore(@sys.rm_rf(root))
+}
+
+///|
+test "WorkOrder persistence rolls back or reconciles every crash boundary" {
+  let points = [
+    @storage.StateStoreFaultPoint::StateAfterMutationBeforeOutbox,
+    @storage.StateStoreFaultPoint::StateAfterOutboxBeforeCommit,
+    @storage.StateStoreFaultPoint::StateAfterCommitBeforeAck,
+  ]
+  for index = 0; index < points.length(); index = index + 1 {
+    let root = "/tmp/choir-work-order-fault-" +
+      index.to_string() +
+      "-" +
+      @sys.get_pid().to_string()
+    ignore(@sys.rm_rf(root))
+    if !@sys.create_dir_all(root) {
+      fail("failed to create WorkOrder fault root")
+    }
+    let repository : @workflow.PartWorkflowRepository = {
+      state_store: { path: root + "/state.db" },
+      artifact_store: { root: root + "/artifacts" },
+      max_snapshot_bytes: 1024 * 1024,
+    }
+    let adapters = local_part_workflow_repository_adapters()
+    @workflow.initialize_part_workflow_repository(repository, adapters).unwrap()
+    let record = work_order_store_record("fault-" + index.to_string())
+    let receipt = @workflow.persist_work_order_record(repository, adapters, {
+      record,
+      expected_store_version: None,
+      fault_point: Some(points[index]),
+    }).unwrap()
+    match points[index] {
+      @storage.StateStoreFaultPoint::StateAfterMutationBeforeOutbox
+      | @storage.StateStoreFaultPoint::StateAfterOutboxBeforeCommit => {
+        assert_eq(
+          receipt.transaction_outcome,
+          @storage.StateTransactionOutcome::StateTransactionFaultRolledBack(
+            points[index],
+          ),
+        )
+        assert_true(
+          @workflow.load_work_order_record(repository, adapters, record.id).unwrap()
+          is None,
+        )
+        let retried = @workflow.persist_work_order_record(
+          repository,
+          adapters,
+          { record, expected_store_version: None, fault_point: None },
+        ).unwrap()
+        assert_eq(
+          retried.transaction_outcome,
+          @storage.StateTransactionOutcome::StateTransactionCommitted,
+        )
+      }
+      @storage.StateStoreFaultPoint::StateAfterCommitBeforeAck => {
+        assert_eq(
+          receipt.transaction_outcome,
+          @storage.StateTransactionOutcome::StateTransactionCommittedAckLost,
+        )
+        assert_eq(
+          @workflow.load_work_order_record(repository, adapters, record.id)
+          .unwrap()
+          .unwrap().record,
+          record,
+        )
+        let replayed = @workflow.persist_work_order_record(
+          repository,
+          adapters,
+          { record, expected_store_version: None, fault_point: None },
+        ).unwrap()
+        assert_eq(
+          replayed.transaction_outcome,
+          @storage.StateTransactionOutcome::StateTransactionReplayed,
+        )
+      }
+    }
+    ignore(@sys.rm_rf(root))
+  }
 }
