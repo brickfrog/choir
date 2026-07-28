@@ -436,12 +436,8 @@ async test "real exec integration: a full surface refuses the Goal assurance loo
     observe=fn(report) { observed.push(report) },
   )
   let instant = match outcome {
-    Ok(
-      @workflow.GoalAssuranceTickOutcome::GoalAssuranceDeferredUntil(
-        value,
-        @workflow.PartGoalDeferralReason::PartGoalProviderSurfaceAtCapacity
-      )
-    ) => value
+    Ok(@workflow.GoalAssuranceTickOutcome::GoalAssuranceDeferredUntil(value)) =>
+      value
     Ok(_) => fail("the assurance loop was not refused")
     Err(error) => fail(error.message())
   }

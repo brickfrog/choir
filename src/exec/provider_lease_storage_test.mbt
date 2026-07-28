@@ -997,7 +997,7 @@ test "the fingerprint carries capacity pressure but not the wake instant" {
       2_400L,
       first_refusal,
     )
-    is @workflow.PartGoalAuthorization::PartGoalDeferredUntil(_, _),
+    is @workflow.PartGoalAuthorization::PartGoalDeferredUntil(_),
   )
   let second_refusal : Array[@workflow.ProviderSurfaceTickReport] = []
   assert_true(
@@ -1009,7 +1009,7 @@ test "the fingerprint carries capacity pressure but not the wake instant" {
       2_600L,
       second_refusal,
     )
-    is @workflow.PartGoalAuthorization::PartGoalDeferredUntil(_, _),
+    is @workflow.PartGoalAuthorization::PartGoalDeferredUntil(_),
   )
   let deferred_once = provider_capacity_report(
     root,
