@@ -963,7 +963,11 @@ pub async fn run_native_work_order_execution_job(
         Err(error) => return Err(error)
       }
       admit_observed_native_work_order_successor(
-        project_dir, work_order_id, snapshot, capture_command_merged,
+        project_dir,
+        work_order_id,
+        snapshot,
+        capture_command_merged,
+        lease.fencing_epoch,
       )
     },
   )
@@ -1131,6 +1135,7 @@ pub async fn admit_observed_native_work_order_successor(
   work_order_id : @workflow.WorkOrderId,
   snapshot : NativeWorkOrderPlanningSnapshot,
   capture : async (Command) -> (Int, String),
+  fencing_epoch : @control.FencingEpoch,
 ) -> Result[NativeConductorGoalSubmissionReport, @types.ChoirError] {
   let state_root = project_dir + "/.choir/state/control"
   let repository : @workflow.PartWorkflowRepository = {
@@ -1148,14 +1153,10 @@ pub async fn admit_observed_native_work_order_successor(
       return Err(native_work_order_planning_error("WorkOrder disappeared"))
     Err(error) => return Err(error)
   }
-  let stored = if stored.record.fencing_epoch.0 <
-    current_native_goal_fencing_epoch().0 {
+  let stored = if stored.record.fencing_epoch.0 < fencing_epoch.0 {
     match
       @workflow.persist_work_order_fencing_epoch_adoption(
-        repository,
-        repository_adapters,
-        stored,
-        current_native_goal_fencing_epoch(),
+        repository, repository_adapters, stored, fencing_epoch,
       ) {
       Ok(value) => value
       Err(error) => return Err(error)
@@ -1223,6 +1224,7 @@ pub async fn admit_observed_native_work_order_successor(
       project_dir,
       draft_json,
       capture,
+      fencing_epoch~,
       work_order_authority=Some(stored.record),
       work_order_round_id=Some(round.id),
       work_order_primary_targets=Some(proposal.primary_target_ids),
@@ -1247,6 +1249,7 @@ pub async fn admit_native_work_order_successor(
   project_dir : String,
   work_order_id : @workflow.WorkOrderId,
   capture : async (Command) -> (Int, String),
+  fencing_epoch? : @control.FencingEpoch = current_native_goal_fencing_epoch(),
 ) -> Result[NativeConductorGoalSubmissionReport, @types.ChoirError] {
   let snapshot = match
     capture_native_work_order_planning_snapshot(project_dir, capture) {
@@ -1254,7 +1257,7 @@ pub async fn admit_native_work_order_successor(
     Err(error) => return Err(error)
   }
   admit_observed_native_work_order_successor(
-    project_dir, work_order_id, snapshot, capture,
+    project_dir, work_order_id, snapshot, capture, fencing_epoch,
   )
 }
 
