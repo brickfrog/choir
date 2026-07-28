@@ -991,21 +991,94 @@ fn conductor_publish_goal_worker_health(
 /// neither would report a Goal with no capacity state at all; one that passed
 /// only the bounds would report a full surface with no wake instant, which is
 /// the pressure without the answer to "until when".
+fn conductor_inspect_goal_with_capacity(
+  project_dir : String,
+  goal_id : @control.GoalId,
+  provider_capacity : @types.ProviderCapacityPolicy,
+  surface_reports : Array[@workflow.ProviderSurfaceTickReport],
+) -> Result[@workflow.GoalStatusReport, @types.ChoirError] {
+  @exec.inspect_native_goal(
+    project_dir,
+    goal_id,
+    provider_capacity=Some(provider_capacity),
+    surface_reports~,
+  )
+}
+
+///|
+fn conductor_read_goal_provider_reports(
+  project_dir : String,
+  goal_id : @control.GoalId,
+) -> Result[Array[@workflow.ProviderSurfaceTickReport], @types.ChoirError] {
+  @exec.native_goal_executor_provider_reports(project_dir, goal_id)
+}
+
+///|
 fn conductor_goal_report(
   config : @types.Config,
   goal_id : @control.GoalId,
+  read_surface_reports? : (String, @control.GoalId) -> Result[
+    Array[@workflow.ProviderSurfaceTickReport],
+    @types.ChoirError,
+  ] = conductor_read_goal_provider_reports,
+  inspect? : (
+    String,
+    @control.GoalId,
+    @types.ProviderCapacityPolicy,
+    Array[@workflow.ProviderSurfaceTickReport],
+  ) -> Result[@workflow.GoalStatusReport, @types.ChoirError] = conductor_inspect_goal_with_capacity,
 ) -> Result[@workflow.GoalStatusReport, @types.ChoirError] {
   let surface_reports = match
-    @exec.native_goal_executor_provider_reports(config.project_dir, goal_id) {
+    read_surface_reports(config.project_dir, goal_id) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  @exec.inspect_native_goal(
+  inspect(
     config.project_dir,
     goal_id,
-    provider_capacity=Some(config.provider_capacity),
-    surface_reports~,
+    config.provider_capacity,
+    surface_reports,
   )
+}
+
+///|
+test "daemon Goal projection carries configured capacity and executor reports" {
+  let capacity : @types.ProviderCapacityPolicy = {
+    claude_subscription_cli: 2,
+    codex_subscription_cli: 3,
+    global_execution_ceiling: Some(4),
+  }
+  let config = { ..@types.Config::default(), provider_capacity: capacity }
+  let goal_id = @control.GoalId("goal-capacity-wiring")
+  let report : @workflow.ProviderSurfaceTickReport = {
+    surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+    disposition: @workflow.ProviderSurfaceTickDisposition::ProviderSurfaceDeferredUntil(
+      1_234L,
+    ),
+  }
+  let reads = @ref.new(0)
+  let read_arguments : Ref[(String, @control.GoalId)?] = @ref.new(None)
+  let projected : Ref[
+    (@types.ProviderCapacityPolicy, Array[@workflow.ProviderSurfaceTickReport])?,
+  ] = @ref.new(None)
+  let result = conductor_goal_report(
+    config,
+    goal_id,
+    read_surface_reports=fn(project_dir, observed_goal_id) {
+      reads.val = reads.val + 1
+      read_arguments.val = Some((project_dir, observed_goal_id))
+      Ok([report])
+    },
+    inspect=fn(project_dir, observed_goal_id, observed_capacity, reports) {
+      read_arguments.val = Some((project_dir, observed_goal_id))
+      projected.val = Some((observed_capacity, reports))
+      Err(@types.ChoirError::validation_error("projection captured"))
+    },
+  )
+  assert_true(result is Err(_))
+  assert_eq(reads.val, 1)
+  assert_eq(read_arguments.val, Some((config.project_dir, goal_id)))
+  assert_eq(projected.val, Some((capacity, [report])))
 }
 
 ///|
