@@ -1179,6 +1179,121 @@ async test "a record this build cannot decode authorizes the reset" {
 }
 
 ///|
+/// A matching generation stamp cannot override what the real record decoder
+/// says. This is the live failure: startup accepted the stamp, then the same
+/// retained row made every portfolio tick fail before any Goal could advance.
+async test "a current stamp with an undecodable record authorizes the reset" {
+  let reached : Array[String] = []
+  let project_dir = storage_test_path("control-current-record-reset")
+  let control_root = project_dir + "/.choir/state/control"
+  let store : @storage.SqliteStateStore = {
+    path: control_root + "/workflow.db",
+  }
+  ignore(@sys.rm_rf(project_dir))
+  guard @sys.create_dir_all(control_root) else { fail("create control root") }
+  guard initialize_state_store(store) is Ok(_) else {
+    fail("initialize state store")
+  }
+  guard write_state_store_generation(
+      store,
+      @workflow.durable_value_shape_generation(),
+    )
+    is Ok(_) else {
+    fail("record this build's generation")
+  }
+  let prefix = @workflow.durable_record_key_prefix(
+    @workflow.DurableRecordKind::DurableGoalExecutionRecord,
+  )
+  control_probe_record(control_root, prefix + "stale", Some(b"{}"))
+  let prepared = prepare_native_goal_control_state(
+    project_dir,
+    capture=fn(command) {
+      reached.push("beads:" + command.args[0])
+      (0, "[]")
+    },
+    cleanup_runtime=fn(_, goal_id) {
+      reached.push("runtime:" + goal_id.0)
+      Ok(())
+    },
+    purge_refs=fn(_) {
+      reached.push("refs")
+      Ok(2)
+    },
+  )
+  assert_eq(
+    prepared.unwrap(),
+    NativeGoalControlStatePreparation::NativeGoalControlStateReset({
+      source_claims_released: 0,
+      runtime_roots_removed: 0,
+      git_refs_removed: 2,
+      reason: @storage.ControlStateResetReason::ControlRecordUndecodable(
+        @storage.StateRecordKey(prefix + "stale"),
+        @workflow.durable_value_shape_generation(),
+        @workflow.durable_value_shape_generation(),
+      ),
+    }),
+  )
+  @debug.assert_eq(reached, ["beads:list", "refs"])
+  assert_eq(list_state_records(store, prefix).unwrap().length(), 0)
+  assert_eq(
+    read_state_store_generation(store).unwrap(),
+    Some(@workflow.durable_value_shape_generation()),
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+/// Revalidating a current store is observational when its rows still decode.
+async test "a current stamp with a decodable record remains untouched" {
+  let reached : Array[String] = []
+  let project_dir = storage_test_path("control-current-record-keep")
+  let control_root = project_dir + "/.choir/state/control"
+  let store : @storage.SqliteStateStore = {
+    path: control_root + "/workflow.db",
+  }
+  ignore(@sys.rm_rf(project_dir))
+  guard @sys.create_dir_all(control_root) else { fail("create control root") }
+  guard initialize_state_store(store) is Ok(_) else {
+    fail("initialize state store")
+  }
+  write_state_store_generation(
+    store,
+    @workflow.durable_value_shape_generation(),
+  ).unwrap()
+  let prefix = @workflow.durable_record_key_prefix(
+    @workflow.DurableRecordKind::DurableProcessExecution,
+  )
+  control_probe_record(
+    control_root,
+    prefix + "current",
+    Some(
+      @utf8.encode(
+        control_probe_execution("current").to_json().stringify(indent=0),
+      ),
+    ),
+  )
+  let prepared = prepare_native_goal_control_state(
+    project_dir,
+    capture=fn(_) {
+      reached.push("claims")
+      (0, "[]")
+    },
+    cleanup_runtime=fn(_, _) {
+      reached.push("runtime")
+      Ok(())
+    },
+    purge_refs=fn(_) {
+      reached.push("refs")
+      Ok(0)
+    },
+  )
+  assert_eq(prepared.unwrap(), NativeGoalControlStateCurrent)
+  assert_eq(reached, [])
+  assert_eq(list_state_records(store, prefix).unwrap().length(), 1)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 /// Version 2 adds only a nullable owner column. Existing outbox rows remain
 /// unowned and must survive the migration; none of the destructive cleanup
 /// effects is authorized.
