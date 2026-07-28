@@ -67,7 +67,11 @@ fn native_planning_work_order() -> @workflow.WorkOrderRecord {
         selection_decision_digest: digest,
         primary_target_ids: [@control.PartId("choir-initial")],
         prerequisite_closure_ids: [],
-        outcome: @workflow.WorkOrderChildOutcome::WorkOrderChildSucceeded,
+        outcome: @workflow.WorkOrderChildOutcome::WorkOrderChildQuarantined(
+          digest,
+        ),
+        delivery_evidence: None,
+        delivery_accounted: false,
       },
     ],
     planning_rounds: [],
@@ -75,6 +79,153 @@ fn native_planning_work_order() -> @workflow.WorkOrderRecord {
     durable_version: 1,
     fencing_epoch: @control.FencingEpoch(1L),
   }
+}
+
+///|
+async test "delivered round admits one durable successor and replays it" {
+  let root = "/tmp/choir-native-successor-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(root))
+  if !@sys.create_dir_all(root + "/.choir/state/control") {
+    fail("failed to create native successor root")
+  }
+  let base_commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  let base_tree = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  let bead_json =
+    #|[{"id":"choir-native-next","title":"Deliver native planning","description":"Implement the bounded native planned change.","acceptance_criteria":"The native test passes.","status":"open","priority":0,"issue_type":"task","dependency_count":0,"updated_at":"2026-07-28T00:00:00Z"}]
+  let capture : async (Command) -> (Int, String) = command => {
+    match (command.program, command.args) {
+      ("git", ["symbolic-ref", "--quiet", "HEAD"]) => (0, "refs/heads/main\n")
+      ("git", ["rev-parse", "--show-toplevel"]) => (0, root + "\n")
+      ("git", ["rev-parse", "--verify", "HEAD^{commit}"]) =>
+        (0, base_commit + "\n")
+      ("git", ["rev-parse", "--verify", "refs/heads/main^{commit}"]) =>
+        (0, base_commit + "\n")
+      (
+        "git",
+        [
+          "show",
+          "-s",
+          "--format=%T",
+          "--no-show-signature",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ],
+      ) => (0, base_tree + "\n")
+      ("bd", arguments) =>
+        if arguments[0] == "list" {
+          (0, bead_json)
+        } else if arguments[0] == "show" && arguments[1] == "choir-native-next" {
+          (0, bead_json)
+        } else {
+          (-1, "unexpected Beads command")
+        }
+      _ => (-1, "unexpected capture")
+    }
+  }
+  let repository : @workflow.PartWorkflowRepository = {
+    state_store: { path: root + "/.choir/state/control/workflow.db" },
+    artifact_store: { root: root + "/.choir/state/control/artifacts" },
+    max_snapshot_bytes: 4 * 1024 * 1024,
+  }
+  let repository_adapters = local_part_workflow_repository_adapters()
+  @workflow.initialize_part_workflow_repository(repository, repository_adapters).unwrap()
+  let beads = @command.bead_records_from_json(@json.parse(bead_json)).unwrap()
+  let snapshot : NativeWorkOrderPlanningSnapshot = {
+    repository_digest: @storage.artifact_digest(
+      @utf8.encode(
+        "choir.work-order-repository-snapshot.v1\u{00}" +
+        @workflow.repository_id(root).0 +
+        "\u{00}" +
+        base_commit +
+        "\u{00}" +
+        base_tree,
+      ),
+    ),
+    bead_digest: @command.bead_graph_digest(beads),
+    beads,
+  }
+  let owner = {
+    ..native_planning_work_order(),
+    repository_id: @workflow.repository_id(root),
+  }
+  let planned = @workflow.plan_work_order_round(
+    owner,
+    snapshot.repository_digest,
+    snapshot.bead_digest,
+  ).unwrap()
+  let dispatched = @workflow.dispatch_work_order_planning_round(planned, 101L).unwrap()
+  let proposal = native_planning_proposal()
+  let content = @workflow.work_order_planning_proposal_bytes(proposal)
+  let proposal_digest = @storage.artifact_digest(content)
+  let artifact = (repository_adapters.artifacts.adopt)(
+    repository.artifact_store,
+    {
+      content,
+      expected_digest: proposal_digest,
+      provenance: @storage.ArtifactProvenance::ArtifactWorkOrderRecord,
+      retention: @storage.ArtifactRetention::ArtifactPermanent,
+    },
+  ).unwrap()
+  let received = @workflow.record_work_order_planning_proposal(
+    dispatched,
+    { artifact_id: artifact.artifact_id.0, digest: artifact.digest },
+    content,
+    snapshot.repository_digest,
+    snapshot.bead_digest,
+    snapshot.beads,
+    101L,
+  ).unwrap()
+  let delivered = @workflow.complete_work_order_bead_delivery(
+    @workflow.begin_work_order_bead_delivery(received).unwrap(),
+    @command.bead_batch_digest(proposal.bead_mutations),
+    snapshot.bead_digest,
+  ).unwrap()
+  match
+    @workflow.persist_work_order_record(repository, repository_adapters, {
+      record: { ..delivered, durable_version: 1 },
+      expected_store_version: None,
+      fault_point: None,
+    }) {
+    Ok(_) => ()
+    Err(error) => fail(error.message())
+  }
+  let first = admit_observed_native_work_order_successor(
+    root,
+    owner.id,
+    snapshot,
+    capture,
+  ).unwrap()
+  assert_true(first.accepted)
+  assert_false(first.replayed)
+  assert_eq(first.work_order_id, Some(owner.id))
+  let replay = admit_observed_native_work_order_successor(
+    root,
+    owner.id,
+    snapshot,
+    capture,
+  ).unwrap()
+  assert_true(replay.replayed)
+  assert_eq(replay.selection_decision_digest, first.selection_decision_digest)
+  let stored = @workflow.load_work_order_record(
+      repository,
+      repository_adapters,
+      owner.id,
+    )
+    .unwrap()
+    .unwrap()
+  assert_eq(stored.record.child_goals.length(), 2)
+  assert_eq(
+    stored.record.child_goals
+    .filter(fn(child) {
+      child.outcome == @workflow.WorkOrderChildOutcome::WorkOrderChildActive
+    })
+    .length(),
+    1,
+  )
+  assert_eq(
+    stored.record.planning_rounds[0].phase,
+    @workflow.WorkOrderPlanningPhase::WorkOrderPlanningGoalReady,
+  )
+  ignore(@sys.rm_rf(root))
 }
 
 ///|

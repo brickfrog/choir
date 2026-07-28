@@ -238,6 +238,7 @@ pub async fn run_native_mixed_provider_goal_fixture(
       },
     ],
     work_order_id: None,
+    work_order_planning_round_id: None,
     work_order_objective: None,
     work_order_selection_policy: None,
     work_order_planner: None,

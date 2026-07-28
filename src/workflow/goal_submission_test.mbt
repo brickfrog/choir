@@ -144,6 +144,7 @@ fn submission_proposal(
     maximum_parallel_parts: 2,
     parts,
     work_order_id: None,
+    work_order_planning_round_id: None,
     work_order_objective: None,
     work_order_selection_policy: None,
     work_order_planner: None,
@@ -1298,6 +1299,9 @@ test "WorkOrder selection distinguishes primary targets from prerequisite closur
   let proposal = {
     ..base,
     work_order_id: Some(id),
+    work_order_planning_round_id: Some(
+      @workflow.WorkOrderPlanningRoundId("round-selection"),
+    ),
     work_order_objective: Some("Deliver the primary Bead."),
     work_order_selection_policy: Some(
       @workflow.WorkOrderSelectionPolicy::WorkOrderExactBeadClosure,

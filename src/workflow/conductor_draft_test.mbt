@@ -105,6 +105,20 @@ test "Conductor draft admits only the failover providers it names" {
 }
 
 ///|
+test "planner finite Goal input encoding preserves the strict draft" {
+  let draft = @workflow.decode_conductor_goal_draft(
+    (
+      #|{"proposal_id":"successor-proposal","goal_id":"successor-goal","pull_request":{"title":"feat: admit successor","body":"Admits one planned successor.","draft":false},"maximum_parallel_parts":1,"parts":[{"part_id":"choir-successor","commit_title":"feat: admit successor","instruction":"Implement the planned successor.","provider":"codex","provider_failover":["claude"],"exact_paths":["src/successor.mbt"],"moon_args":["test","--target","native"],"verify_timeout_ms":180000}]}
+    ),
+  ).unwrap()
+  let encoded = @workflow.successor_conductor_goal_draft_input(draft).unwrap()
+  match @workflow.decode_conductor_goal_draft(encoded) {
+    Ok(decoded) => assert_eq(decoded, draft)
+    Err(error) => fail(error.message() + ": " + encoded)
+  }
+}
+
+///|
 test "Conductor draft binds exact evidence-only completion" {
   let draft = @workflow.decode_conductor_goal_draft(
     (

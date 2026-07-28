@@ -2779,6 +2779,8 @@ async test "a stopped WorkOrder budget survives restart and is not resurrected" 
         primary_target_ids: [fixture.part.id],
         prerequisite_closure_ids: [],
         outcome: @workflow.WorkOrderChildOutcome::WorkOrderChildActive,
+        delivery_evidence: None,
+        delivery_accounted: false,
       },
     ],
     planning_rounds: [],

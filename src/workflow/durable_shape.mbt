@@ -2440,8 +2440,11 @@ let durable_shape_work_order_planner_policy : WorkOrderPlannerPolicy = {
 ///|
 let durable_shapes_work_order_child_outcome : Array[WorkOrderChildOutcome] = [
   WorkOrderChildActive,
-  WorkOrderChildSucceeded,
+  WorkOrderChildDelivered,
   WorkOrderChildCanceled(durable_shapes_goal_cancellation_cause[0]),
+  WorkOrderChildFailed(durable_shape_digest),
+  WorkOrderChildSkipped(durable_shape_digest),
+  WorkOrderChildQuarantined(durable_shape_digest),
 ]
 
 ///|
@@ -2450,9 +2453,35 @@ fn durable_guard_work_order_child_outcome(
 ) -> WorkOrderChildOutcome {
   match value {
     WorkOrderChildActive
-    | WorkOrderChildSucceeded
-    | WorkOrderChildCanceled(_) => value
+    | WorkOrderChildDelivered
+    | WorkOrderChildCanceled(_)
+    | WorkOrderChildFailed(_)
+    | WorkOrderChildSkipped(_)
+    | WorkOrderChildQuarantined(_) => value
   }
+}
+
+///|
+let durable_shapes_work_order_delivery_boundary : Array[
+  WorkOrderDeliveryBoundary,
+] = [WorkOrderReviewReadyPullRequest, WorkOrderExactMergedPullRequest]
+
+///|
+fn durable_guard_work_order_delivery_boundary(
+  value : WorkOrderDeliveryBoundary,
+) -> WorkOrderDeliveryBoundary {
+  match value {
+    WorkOrderReviewReadyPullRequest | WorkOrderExactMergedPullRequest => value
+  }
+}
+
+///|
+let durable_shape_work_order_delivery_evidence : WorkOrderDeliveryEvidence = {
+  boundary: durable_shapes_work_order_delivery_boundary[0],
+  remote_pull_request_id: durable_shape_remote_pull_request_id,
+  observed_head_oid: durable_shape_git_oid,
+  observed_remote_state: durable_shapes_remote_pull_request_state[0],
+  receipt_digest: durable_shape_digest,
 }
 
 ///|
@@ -2461,7 +2490,9 @@ let durable_shape_work_order_child_goal_binding : WorkOrderChildGoalBinding = {
   selection_decision_digest: durable_shape_digest,
   primary_target_ids: [durable_shape_part_id],
   prerequisite_closure_ids: [],
-  outcome: durable_shapes_work_order_child_outcome[0],
+  outcome: durable_shapes_work_order_child_outcome[1],
+  delivery_evidence: Some(durable_shape_work_order_delivery_evidence),
+  delivery_accounted: true,
 }
 
 ///|
@@ -2930,6 +2961,7 @@ let durable_shape_goal_proposal : GoalProposal = {
   maximum_parallel_parts: 0,
   parts: [durable_shape_conductor_part_proposal],
   work_order_id: Some(WorkOrderId("work-order")),
+  work_order_planning_round_id: Some(durable_shape_work_order_planning_round_id),
   work_order_objective: Some("objective"),
   work_order_selection_policy: Some(WorkOrderExactBeadClosure),
   work_order_planner: Some({
@@ -4895,6 +4927,15 @@ fn durable_shape_table() -> Array[DurableShapeEntry] {
         durable_guard_work_order_cutoff_policy,
       ),
     ),
+    durable_shape_entry(
+      "WorkOrderDeliveryBoundary",
+      durable_shapes_work_order_delivery_boundary.map(
+        durable_guard_work_order_delivery_boundary,
+      ),
+    ),
+    durable_shape_entry("WorkOrderDeliveryEvidence", [
+      durable_shape_work_order_delivery_evidence,
+    ]),
     durable_shape_entry(
       "WorkOrderLifecycle",
       durable_shapes_work_order_lifecycle.map(

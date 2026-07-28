@@ -500,7 +500,11 @@ fn planning_work_order() -> @workflow.WorkOrderRecord {
         selection_decision_digest: digest,
         primary_target_ids: [@control.PartId("choir-initial")],
         prerequisite_closure_ids: [],
-        outcome: @workflow.WorkOrderChildOutcome::WorkOrderChildSucceeded,
+        outcome: @workflow.WorkOrderChildOutcome::WorkOrderChildQuarantined(
+          digest,
+        ),
+        delivery_evidence: None,
+        delivery_accounted: false,
       },
     ],
     planning_rounds: [],
@@ -655,5 +659,133 @@ test "planning proposal snapshot drift is a typed terminal outcome" {
     is @workflow.WorkOrderPlanningOutcome::WorkOrderPlanningFailed(
       @workflow.WorkOrderPlanningFailure::WorkOrderPlannerRepositorySnapshotDrift
     ),
+  )
+}
+
+///|
+test "terminal child dispositions permit the next round and replay exactly" {
+  let record = {
+    ..planning_work_order(),
+    child_goals: [
+      {
+        ..planning_work_order().child_goals[0],
+        outcome: @workflow.WorkOrderChildOutcome::WorkOrderChildActive,
+      },
+    ],
+  }
+  let failure = @storage.artifact_digest(@utf8.encode("child failed"))
+  let disposed = @workflow.record_work_order_child_disposition(
+    record,
+    @control.GoalId("goal-initial"),
+    @workflow.WorkOrderChildOutcome::WorkOrderChildFailed(failure),
+    101L,
+  ).unwrap()
+  assert_true(
+    disposed.lifecycle == @workflow.WorkOrderLifecycle::WorkOrderActive,
+  )
+  assert_eq(
+    @workflow.record_work_order_child_disposition(
+      disposed,
+      @control.GoalId("goal-initial"),
+      @workflow.WorkOrderChildOutcome::WorkOrderChildFailed(failure),
+      101L,
+    ).unwrap(),
+    disposed,
+  )
+  let digest = @storage.artifact_digest(@utf8.encode("next snapshot"))
+  assert_true(
+    @workflow.plan_work_order_round(disposed, digest, digest) is Ok(_),
+  )
+}
+
+///|
+test "a child integrity disposition terminally stops its WorkOrder" {
+  let record = {
+    ..planning_work_order(),
+    child_goals: [
+      {
+        ..planning_work_order().child_goals[0],
+        outcome: @workflow.WorkOrderChildOutcome::WorkOrderChildActive,
+      },
+    ],
+  }
+  let stopped = @workflow.record_work_order_child_disposition(
+    record,
+    @control.GoalId("goal-initial"),
+    @workflow.WorkOrderChildOutcome::WorkOrderChildCanceled(
+      @workflow.GoalCancellationCause::GoalCancellationPartBlocked(
+        @control.PartId("choir-initial"),
+        @control.PartBlockReason::PartIntegrityBlocked,
+      ),
+    ),
+    101L,
+  ).unwrap()
+  assert_true(
+    stopped.lifecycle
+    is @workflow.WorkOrderLifecycle::WorkOrderStopped(
+      @workflow.WorkOrderStopReason::WorkOrderFatalIntegrityStop(_)
+    ),
+  )
+  let digest = @storage.artifact_digest(@utf8.encode("next snapshot"))
+  assert_true(
+    @workflow.plan_work_order_round(stopped, digest, digest) is Err(_),
+  )
+}
+
+///|
+test "review-ready and exact-merge delivery count once from latched closure" {
+  let verify = fn(
+    boundary : @workflow.WorkOrderDeliveryBoundary,
+    remote_state : @workflow.RemotePullRequestState,
+  ) raise {
+    let record = {
+      ..planning_work_order(),
+      child_goals: [
+        {
+          ..planning_work_order().child_goals[0],
+          outcome: @workflow.WorkOrderChildOutcome::WorkOrderChildActive,
+          primary_target_ids: [
+            @control.PartId("choir-primary-a"),
+            @control.PartId("choir-primary-b"),
+          ],
+          prerequisite_closure_ids: [@control.PartId("choir-prerequisite")],
+        },
+      ],
+    }
+    let evidence : @workflow.WorkOrderDeliveryEvidence = {
+      boundary,
+      remote_pull_request_id: @workflow.RemotePullRequestId("PR_delivery"),
+      observed_head_oid: @control.GitOid(
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      ),
+      observed_remote_state: remote_state,
+      receipt_digest: @storage.artifact_digest(@utf8.encode("delivery receipt")),
+    }
+    let delivered = @workflow.record_work_order_child_delivery(
+      record,
+      @control.GoalId("goal-initial"),
+      evidence,
+      101L,
+    ).unwrap()
+    assert_eq(delivered.budget.counters.delivered_primary_targets, 2)
+    assert_eq(delivered.budget.counters.delivered_dependency_closure, 3)
+    assert_true(delivered.child_goals[0].delivery_accounted)
+    assert_eq(
+      @workflow.record_work_order_child_delivery(
+        delivered,
+        @control.GoalId("goal-initial"),
+        evidence,
+        101L,
+      ).unwrap(),
+      delivered,
+    )
+  }
+  verify(
+    @workflow.WorkOrderDeliveryBoundary::WorkOrderReviewReadyPullRequest,
+    @workflow.RemotePullRequestState::RemotePullRequestOpen,
+  )
+  verify(
+    @workflow.WorkOrderDeliveryBoundary::WorkOrderExactMergedPullRequest,
+    @workflow.RemotePullRequestState::RemotePullRequestMerged,
   )
 }
